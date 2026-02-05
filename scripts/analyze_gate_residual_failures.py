@@ -197,11 +197,35 @@ def analyze_residual_failures(
 
     # 2. 计算 failure 标签
     print(f"   计算 failure 子标签...")
-    failure_df = compute_failure_subtypes(
-        df=gate_passed,
-        direction=direction,
-        horizon=horizon,
-    )
+
+    # 支持多币种：按 _symbol 分组调用 compute_failure_subtypes
+    if "_symbol" in gate_passed.columns and gate_passed["_symbol"].nunique() > 1:
+        failure_parts: list[pd.DataFrame] = []
+        for sym in gate_passed["_symbol"].unique():
+            sym_mask = gate_passed["_symbol"] == sym
+            sym_df = gate_passed[sym_mask].copy()
+            if sym_df.empty:
+                continue
+            sym_fail = compute_failure_subtypes(
+                df=sym_df,
+                direction=direction,
+                horizon=horizon,
+            )
+            # 使用原始索引对齐，避免 concat 后索引错乱
+            sym_fail.index = gate_passed[sym_mask].index
+            failure_parts.append(sym_fail)
+
+        if not failure_parts:
+            print("   ⚠️  多币种场景下未能计算出任何 failure 子标签，直接返回空结果。")
+            return {}
+
+        failure_df = pd.concat(failure_parts, axis=0).sort_index()
+    else:
+        failure_df = compute_failure_subtypes(
+            df=gate_passed,
+            direction=direction,
+            horizon=horizon,
+        )
 
     # 合并
     gate_passed = gate_passed.join(failure_df, how="inner")

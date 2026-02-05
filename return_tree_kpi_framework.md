@@ -231,6 +231,58 @@ Gate (过滤) → Evidence (Return Tree规则) → PCM (执行)
 
 ---
 
+## 🧱 BPC Gate 规则提炼备忘
+
+> 目标：从树模型规则导出（`bpc_tree_rules.md`）和自动草稿（`risk_gate_draft.yaml`）中，提炼出少量**宪法级 Gate 规则**，只负责结构性 veto，而不干扰 timing / execution。
+
+- **信息来源拆分**：
+  - `bpc_tree_rules.md`：告诉我们“模型在什么维度上频繁切割”（高频分裂条件）。
+  - `risk_gate_draft.yaml`：把这些高频条件机械展开为一堆一维 soft_filter 草稿。
+  - 真实 Gate 需要再经过一层**人类语义筛选**，只留下“结构性失效”维度。
+
+- **优先考虑作为 Gate 的特征族（结构性维度）**：
+  - **BPC 形态本身是否成立**：`bpc_pullback_depth`、`bpc_pullback_quality`、`bpc_score_pullback`、`bpc_score_continuation`、`bpc_dir_consistency_long`。
+  - **价格相对 SR 的危险位置**：`dist_to_nearest_sr`、`sr_strength_max`（避免在 SR 内部或旧坑深处做 BPC）。
+  - **VP / WPT 场景极端态**：`vp_compression_score`、`vp_exhaustion_score`、`wpt_compression_score`、`wick_ignition_score` 等（流动性/能量状态极端时，容易踩结构性坑）。
+  - 这几类更适合作为 Gate 的 veto 条件；而 `macd_atr`、`vol_slope_*`、`vol_zscore` 等偏“数学 proxy”的信号，优先交给 Evidence/PCM，而非 Gate。
+
+- **Hard Gate 与 Soft Filter 的分工**：
+  - **Hard Gate**：只承载“结构性不合法”的否决，例如：
+    - `bpc_pullback_depth` 过小 → 形态过浅、疑似假 BPC（`hard_bpc_pullback_too_shallow`）。
+    - `bpc_dir_consistency_long` 很低 → 形态内部方向严重不一致（`hard_bpc_dir_inconsistent`）。
+  - **Soft Filter**：对同一维度的“次优区域”做降权，而不直接否决，例如：
+    - `filter_bpc_pullback_depth`：在 Hard Gate 之外，对偏浅形态进一步减信心。
+    - `filter_dist_to_nearest_sr` / `filter_vp_compression_score` / `filter_vp_exhaustion_score` 等：落在 SR 内部、高压缩或趋势末端时下调置信度。
+  - 这样实现 Gate 的职责边界：**只负责 veto 结构性坏场景，不替代趋势判断和执行节奏。**
+
+- **验证路径（必须回到 Trades + Failure Analysis）**：
+  - 先在 `risk_gate_draft.yaml` 中按上述原则填充 `hard_gates.rules` 与精简后的 `soft_filters.rules`。
+  - 使用 `mlbot train` + 回测，看：
+    - `Trades` 数量变化（Hard Gate 不应把交易打到接近 0）。
+    - Failure Analysis 中，被 Hard Gate 拦截样本的 `failure_rr_extreme` 是否显著高于全局。
+  - 若某条 Hard Gate 触发频率极高但并未显著降低 failure，则应降级为 Soft Filter；反之，则可保留为“宪法级 veto 规则”。
+
+---
+
+## 🧭 模型分析作用域与阈值使用备忘
+
+- **Gate 阈值与回测阈值的角色区分**：
+  - 训练脚本和 HTML 报告中的 Gate 评估，应基于 **Failure Analysis 的 lift 曲线** 以及 **lift vs coverage 平坦高原** 来选阈值；
+  - 回测里将 `long_entry_threshold` 暂时设为 0.6 之类的数值，只是为了“先有一些交易、验证行为不离谱”，**不能当作 Gate 宪法级阈值**；
+  - 后续正式使用时，应先在百分位空间（Top20/30/40% 等）扫一遍 lift plateau，再反推对应的分数/概率阈值。
+
+- **残差分析的作用域**：
+  - `analyze_failure_distribution` / HTML 报告中的 Failure Analysis，是 **在 Gate 模型自身的输出空间上评估 veto 能力**，适合作为 Gate KPI；
+  - `mlbot analyze gate-residual` 更适合作为 **早期 debug 工具**：在某个临时选定的 Gate cut（如 success_prob ≥ 某值）上，画出 Gate 通过后剩余失败的“画像”；
+  - 严格意义上的残差拆解（Gate vs Evidence vs PCM 谁背锅），应该在 **完整分层策略的回测输出** 上做，而不是直接在 Gate Tree 或 forward_rr Tree 上做，因为这些树模型本身只是“规则发现器”，不是最终交易模型。
+
+- **树规则与最终规则边界的关系**：
+  - LightGBM Split 提供的是“模型在什么维度、什么大致阈值附近频繁切割”的 **语义线索**，适合用来验证先验、发现候选规则族；
+  - 最终用于 Gate/Evidence 的规则边界，建议通过 **在 holdout 上做分箱曲线 / plateau 搜索** 来重新定位（例如在 `bpc_pullback_depth` 对 failure_rate 的曲线上找一段平坦高原，再选中段作为阈值）；
+  - 像 imodels 这类显式规则拟合工具可以作为“第二意见”或局部实验，用来压缩成少量 if-then 规则，但当前主线仍以 “GBDT 分裂点 + plateau 手工调整” 为准，以保证规则语义与分层架构职责一致。
+
+---
+
 ## 🔗 相关文档链接
 
 - [树模型训练流程](./cmd:%20树模型到archetype.md)

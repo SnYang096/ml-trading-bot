@@ -157,16 +157,65 @@ mlbot train final --no-docker \
   --holdout-end-date 2025-11-30 \
   --seed 42
 
+mlbot train final --no-docker \
+  --config config/strategies/bpc \
+  --features config/strategies/bpc/features_gate.yaml \
+  --labels config/strategies/bpc/labels_rr_extreme.yaml \
+  --symbol BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 240T \
+  --data-path data/parquet_data \
+  --start-date 2023-01-01 \
+  --end-date 2025-11-30 \
+  --holdout-start-date 2024-05-01 \
+  --holdout-end-date 2025-11-30 \
+  --seed 42
+
+mlbot train final --no-docker \
+  --config config/strategies/bpc \
+  --features config/strategies/bpc/features_evidence.yaml \
+  --labels config/strategies/bpc/labels_rr_extreme.yaml \
+  --symbol BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 240T \
+  --data-path data/parquet_data \
+  --start-date 2023-01-01 \
+  --end-date 2025-11-30 \
+  --holdout-start-date 2024-05-01 \
+  --holdout-end-date 2025-11-30 \
+  --seed 42  
+
 
 # 📜 Tree rules exported to results/train_final_20260205_230351_rr_extreme/bpc/bpc_tree_rules.md
 # 📜 Risk gate draft exported to results/train_final_20260205_230351_rr_extreme/bpc/risk_gate_draft.yaml
 
 # 分析 Gate 剩余失败归因（推荐使用这个新命令）
-# ❗ 重要：训练时必须使用 features_evidence.yaml 才能分析 Evidence 特征！
+# ❗ 提示：只有当训练使用的 features.yaml 含 Evidence 特征（如 features_evidence.yaml 中的列）时，本命令才能在 Evidence 语义空间做归因；否则会自动跳过缺失列。
+
+# 只有结构化的
 mlbot analyze gate-residual \
   --model-dir results/train_final_20260205_230351_rr_extreme/bpc \
   --threshold 0.6 \
   --split holdout
+
+# 有完整订单流得
+mlbot analyze gate-residual \
+  --model-dir results/train_final_20260205_230711_rr_extreme/bpc \
+  --threshold 0.6 \
+  --split holdout
+  
+
+# 想在 Evidence 语义空间里看 Gate 残差画像
+mlbot train final --no-docker \
+  --config config/strategies/bpc \
+  --features config/strategies/bpc/features_evidence.yaml \
+  --labels config/strategies/bpc/labels_rr_extreme.yaml \
+  --symbol BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 240T \
+  --data-path data/parquet_data \
+  --start-date 2023-01-01 \
+  --end-date 2025-11-30 \
+  --holdout-start-date 2024-05-01 \
+  --holdout-end-date 2025-11-30 \
+  --seed 42  
 
 # 这个命令会：
 # 1. 加载 Gate 模型的预测结果（从 predictions.parquet）
@@ -184,13 +233,12 @@ mlbot analyze gate-residual \
 #    - 如果没有样本通过，工具会显示预测分布，建议降低 threshold
 #    - 一般建议使用 q75-q90 之间的值（选择 top 10-25% 的样本）
 #    - 对于 failure 模型（invert=true），预测值是 success_prob，通常在 0.5-0.9 范围
-
-# 旧的分析命令（可选，但数据集可能不一致）
-python scripts/analyze_failure_distribution.py \
-  --model-dir results/train_final_20260205_160523_no_opportunity/bpc \
-  --symbol BTCUSDT \
-  --timeframe 240T \
-  --entry-threshold 0.8
+#
+# ⚖️ Gate 评价与本命令的关系：
+#    - Gate 的核心 KPI 是 Failure Analysis 中的 lift（以及 lift vs coverage 曲线），而不是“剩余失败能否被 Evidence 解释”。
+#    - 本命令的角色是给出 Gate 通过后剩余失败的“画像”，帮助判断这些失败更像 Evidence/执行层职责，还是 Gate 还可以继续学习的结构性坑。
+#    - Evidence / Return Tree 层的优化则使用 GOOD 样本上的执行 Sharpe plateau 做阈值搜索，与 Gate 的 lift plateau 解耦。
+#
 
 # 也可以不训练下面，因为情况非常罕见
 # 训练 failure_no_opportunity 入场即反
