@@ -373,6 +373,20 @@ def compute_failure_subtypes(
     if missing:
         raise KeyError(f"缺少必需列: {missing}")
 
+    # 🔍 DEBUG: 检查数据完整性（多币种场景）
+    if "_symbol" in df.columns:
+        symbols = df["_symbol"].unique()
+        if len(symbols) > 1:
+            # 多币种场景：不应该混在一起计算
+            raise ValueError(
+                f"compute_failure_subtypes 不支持多币种混合计算！"
+                f"发现 {len(symbols)} 个币种: {symbols.tolist()}。"
+                f"请按币种分别调用。"
+            )
+
+    # 重置索引，确保连续（避免多币种合并后索引不连续的问题）
+    df = df.reset_index(drop=True)
+
     close = df[price_col].values
     high = df[high_col].values
     low = df[low_col].values
@@ -393,6 +407,17 @@ def compute_failure_subtypes(
     for i in range(n - horizon):
         entry_price = close[i]
         current_atr = atr[i]
+
+        # 处理 current_atr 可能是数组的情况
+        if isinstance(current_atr, (np.ndarray, pd.Series)):
+            if len(current_atr) > 0:
+                current_atr = float(
+                    current_atr.iloc[0]
+                    if isinstance(current_atr, pd.Series)
+                    else current_atr[0]
+                )
+            else:
+                continue
 
         if np.isnan(current_atr) or current_atr <= EPS:
             continue
@@ -463,19 +488,41 @@ def compute_bpc_failure_rr_extreme_label(
     Returns:
         pd.Series: 二值标签
     """
-    subtypes = compute_failure_subtypes(
-        df=df,
-        direction=direction,
-        horizon=horizon,
-        price_col=kwargs.get("price_col", "close"),
-        high_col=kwargs.get("high_col", "high"),
-        low_col=kwargs.get("low_col", "low"),
-        atr_col=kwargs.get("atr_col", "atr"),
-        expected_stop_atr=kwargs.get("expected_stop_atr", 1.0),
-        expected_target_atr=kwargs.get("expected_target_atr", 2.0),
-    )
-
-    failure_label = subtypes["failure_rr_extreme"]
+    # 🔍 多币种支持：按 symbol 分别计算
+    if "_symbol" in df.columns and df["_symbol"].nunique() > 1:
+        results = []
+        for symbol in df["_symbol"].unique():
+            sym_mask = df["_symbol"] == symbol
+            sym_df = df[sym_mask].copy()
+            sym_subtypes = compute_failure_subtypes(
+                df=sym_df,
+                direction=direction,
+                horizon=horizon,
+                price_col=kwargs.get("price_col", "close"),
+                high_col=kwargs.get("high_col", "high"),
+                low_col=kwargs.get("low_col", "low"),
+                atr_col=kwargs.get("atr_col", "atr"),
+                expected_stop_atr=kwargs.get("expected_stop_atr", 1.0),
+                expected_target_atr=kwargs.get("expected_target_atr", 2.0),
+            )
+            sym_failure = sym_subtypes["failure_rr_extreme"].copy()
+            sym_failure.index = df[sym_mask].index
+            results.append(sym_failure)
+        failure_label = pd.concat(results, sort=False).sort_index()
+    else:
+        # 单币种场景
+        subtypes = compute_failure_subtypes(
+            df=df,
+            direction=direction,
+            horizon=horizon,
+            price_col=kwargs.get("price_col", "close"),
+            high_col=kwargs.get("high_col", "high"),
+            low_col=kwargs.get("low_col", "low"),
+            atr_col=kwargs.get("atr_col", "atr"),
+            expected_stop_atr=kwargs.get("expected_stop_atr", 1.0),
+            expected_target_atr=kwargs.get("expected_target_atr", 2.0),
+        )
+        failure_label = subtypes["failure_rr_extreme"]
 
     if invert:
         success_label = 1.0 - failure_label
@@ -514,19 +561,41 @@ def compute_bpc_failure_no_opportunity_label(
     Returns:
         pd.Series: 二值标签
     """
-    subtypes = compute_failure_subtypes(
-        df=df,
-        direction=direction,
-        horizon=horizon,
-        price_col=kwargs.get("price_col", "close"),
-        high_col=kwargs.get("high_col", "high"),
-        low_col=kwargs.get("low_col", "low"),
-        atr_col=kwargs.get("atr_col", "atr"),
-        expected_stop_atr=kwargs.get("expected_stop_atr", 1.0),
-        expected_target_atr=kwargs.get("expected_target_atr", 2.0),
-    )
-
-    failure_label = subtypes["failure_no_opportunity"]
+    # 🔍 多币种支持：按 symbol 分别计算
+    if "_symbol" in df.columns and df["_symbol"].nunique() > 1:
+        results = []
+        for symbol in df["_symbol"].unique():
+            sym_mask = df["_symbol"] == symbol
+            sym_df = df[sym_mask].copy()
+            sym_subtypes = compute_failure_subtypes(
+                df=sym_df,
+                direction=direction,
+                horizon=horizon,
+                price_col=kwargs.get("price_col", "close"),
+                high_col=kwargs.get("high_col", "high"),
+                low_col=kwargs.get("low_col", "low"),
+                atr_col=kwargs.get("atr_col", "atr"),
+                expected_stop_atr=kwargs.get("expected_stop_atr", 1.0),
+                expected_target_atr=kwargs.get("expected_target_atr", 2.0),
+            )
+            sym_failure = sym_subtypes["failure_no_opportunity"].copy()
+            sym_failure.index = df[sym_mask].index
+            results.append(sym_failure)
+        failure_label = pd.concat(results, sort=False).sort_index()
+    else:
+        # 单币种场景
+        subtypes = compute_failure_subtypes(
+            df=df,
+            direction=direction,
+            horizon=horizon,
+            price_col=kwargs.get("price_col", "close"),
+            high_col=kwargs.get("high_col", "high"),
+            low_col=kwargs.get("low_col", "low"),
+            atr_col=kwargs.get("atr_col", "atr"),
+            expected_stop_atr=kwargs.get("expected_stop_atr", 1.0),
+            expected_target_atr=kwargs.get("expected_target_atr", 2.0),
+        )
+        failure_label = subtypes["failure_no_opportunity"]
 
     if invert:
         success_label = 1.0 - failure_label
@@ -623,6 +692,47 @@ def compute_return_tree_label(
 
     Returns:
         pd.Series: forward_rr 值，失败样本为 NaN
+    """
+    # 🔍 多币种支持：按 _symbol 分组计算
+    if "_symbol" in df.columns and df["_symbol"].nunique() > 1:
+        results = []
+        for symbol in df["_symbol"].unique():
+            sym_mask = df["_symbol"] == symbol
+            sym_df = df[sym_mask].copy()
+            sym_labels = _compute_return_tree_single_symbol(
+                sym_df,
+                direction=direction,
+                horizon=horizon,
+                filter_good_only=filter_good_only,
+                **kwargs,
+            )
+            # 重要：使用原始 DataFrame 的索引，而不是 sym_df 的索引
+            # 这样可以确保合并后的 Series 索引与原始 df 对齐
+            sym_labels.index = df[sym_mask].index
+            results.append(sym_labels)
+
+        # 合并结果，使用 sort=False 保持原始顺序
+        return pd.concat(results, sort=False).sort_index()
+    else:
+        # 单币种场景
+        return _compute_return_tree_single_symbol(
+            df,
+            direction=direction,
+            horizon=horizon,
+            filter_good_only=filter_good_only,
+            **kwargs,
+        )
+
+
+def _compute_return_tree_single_symbol(
+    df: pd.DataFrame,
+    direction: Literal["long", "short"] = "long",
+    horizon: int = 50,
+    filter_good_only: bool = True,
+    **kwargs,
+) -> pd.Series:
+    """
+    单币种 Return Tree label 计算（内部函数）。
     """
     # 计算 failure 子标签
     failure_df = compute_failure_subtypes(

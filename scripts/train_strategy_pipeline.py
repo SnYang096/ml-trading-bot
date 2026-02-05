@@ -819,6 +819,230 @@ def generate_training_html_report(
                 )
             html_parts.append("    </table>")
 
+        # Failure Analysis
+        failure_analysis = results.get("failure_analysis", {})
+        if failure_analysis:
+            global_rr = failure_analysis.get("global_failure_rr_extreme", 0)
+            global_no_opp = failure_analysis.get("global_failure_no_opportunity", 0)
+            selected_rr = failure_analysis.get("selected_failure_rr_extreme", 0)
+            selected_no_opp = failure_analysis.get("selected_failure_no_opportunity", 0)
+            lift_rr = failure_analysis.get("lift_rr_extreme", 0)
+            lift_no_opp = failure_analysis.get("lift_no_opportunity", 0)
+            n_selected = failure_analysis.get("n_selected", 0)
+            n_total = failure_analysis.get("n_total", 0)
+
+            # 判断 lift 的正负性
+            rr_class = "positive" if lift_rr < 1.0 else "negative"  # lift < 1 表示改善
+            no_opp_class = "positive" if lift_no_opp < 1.0 else "negative"
+
+            html_parts.extend(
+                [
+                    "    <h2>🔬 Failure Sub-label Analysis</h2>",
+                    "    <p style='color: #666; margin-bottom: 15px;'>比较模型选中的交易 (top 30%) 与所有交易的失败率。Lift < 1.0 表示模型有效降低了失败率。</p>",
+                    "    <div class='metrics-grid'>",
+                    f"      <div class='metric-card neutral'><div class='metric-value'>{n_selected:,} / {n_total:,}</div><div class='metric-label'>Selected / Total Trades</div></div>",
+                    f"      <div class='metric-card {rr_class}'><div class='metric-value'>{lift_rr:.2f}x</div><div class='metric-label'>RR Extreme Lift</div></div>",
+                    f"      <div class='metric-card {no_opp_class}'><div class='metric-value'>{lift_no_opp:.2f}x</div><div class='metric-label'>No Opportunity Lift</div></div>",
+                    "    </div>",
+                    "    <table>",
+                    "      <tr><th>Failure Type</th><th>Global Rate</th><th>Selected Rate</th><th>Lift</th></tr>",
+                    f"      <tr><td>RR Extreme (踩大坑)</td><td>{global_rr:.1%}</td><td>{selected_rr:.1%}</td><td>{lift_rr:.2f}x</td></tr>",
+                    f"      <tr><td>No Opportunity (入场即反)</td><td>{global_no_opp:.1%}</td><td>{selected_no_opp:.1%}</td><td>{lift_no_opp:.2f}x</td></tr>",
+                    "    </table>",
+                ]
+            )
+
+            # Lift vs Coverage Curve
+            lift_curve = failure_analysis.get("lift_curve", [])
+            if lift_curve:
+                html_parts.extend(
+                    [
+                        "    <h3 style='margin-top: 25px; color: #666;'>📈 Lift vs Coverage Curve</h3>",
+                        "    <p style='color: #666; margin-bottom: 15px;'>不同阈值（Top 20%-80%）下的 Lift 和覆盖率权衡。评估 Gate 的 veto 能力上限。</p>",
+                        "    <table>",
+                        "      <tr><th>Percentile</th><th>Coverage</th><th>n_selected</th><th>RR Extreme Lift</th><th>No Opportunity Lift</th></tr>",
+                    ]
+                )
+                for curve_point in lift_curve:
+                    percentile = curve_point.get("percentile", 0)
+                    coverage = curve_point.get("coverage", 0)
+                    n_sel = curve_point.get("n_selected", 0)
+                    lift_rr = curve_point.get("lift_rr_extreme", 0)
+                    lift_no_opp = curve_point.get("lift_no_opportunity", 0)
+
+                    # 计算这行的颜色类（越低越好）
+                    rr_class = (
+                        "success"
+                        if lift_rr < 0.9
+                        else ("warning" if lift_rr < 1.0 else "error")
+                    )
+                    no_opp_class = (
+                        "success"
+                        if lift_no_opp < 0.7
+                        else ("warning" if lift_no_opp < 1.0 else "error")
+                    )
+
+                    html_parts.append(
+                        f"      <tr>"
+                        f"<td>Top {100-percentile}% (p{percentile})</td>"
+                        f"<td>{coverage:.1%}</td>"
+                        f"<td>{n_sel:,}</td>"
+                        f"<td class='{rr_class}'><strong>{lift_rr:.2f}x</strong></td>"
+                        f"<td class='{no_opp_class}'><strong>{lift_no_opp:.2f}x</strong></td>"
+                        f"</tr>"
+                    )
+                html_parts.append("    </table>")
+
+                # 添加 SVG 折线图
+                # 准备数据点
+                chart_width = 800
+                chart_height = 400
+                padding = 60
+                plot_width = chart_width - 2 * padding
+                plot_height = chart_height - 2 * padding
+
+                # 提取数据
+                coverages = [p["coverage"] * 100 for p in lift_curve]  # 转为百分比
+                lift_rr_values = [p["lift_rr_extreme"] for p in lift_curve]
+                lift_no_opp_values = [p["lift_no_opportunity"] for p in lift_curve]
+
+                # 计算坐标转换函数（coverage: 0-100%, lift: 0-max）
+                max_lift = (
+                    max(max(lift_rr_values), max(lift_no_opp_values)) * 1.1
+                )  # 留10%余量
+
+                def x_coord(coverage_pct):
+                    return padding + (coverage_pct / 100.0) * plot_width
+
+                def y_coord(lift_val):
+                    return chart_height - padding - (lift_val / max_lift) * plot_height
+
+                # 生成 RR Extreme 折线路径
+                rr_path_parts = []
+                for i, (cov, lift) in enumerate(zip(coverages, lift_rr_values)):
+                    x = x_coord(cov)
+                    y = y_coord(lift)
+                    if i == 0:
+                        rr_path_parts.append(f"M {x:.1f},{y:.1f}")
+                    else:
+                        rr_path_parts.append(f"L {x:.1f},{y:.1f}")
+                rr_path = " ".join(rr_path_parts)
+
+                # 生成 No Opportunity 折线路径
+                no_opp_path_parts = []
+                for i, (cov, lift) in enumerate(zip(coverages, lift_no_opp_values)):
+                    x = x_coord(cov)
+                    y = y_coord(lift)
+                    if i == 0:
+                        no_opp_path_parts.append(f"M {x:.1f},{y:.1f}")
+                    else:
+                        no_opp_path_parts.append(f"L {x:.1f},{y:.1f}")
+                no_opp_path = " ".join(no_opp_path_parts)
+
+                # 1.0 基准线
+                baseline_y = y_coord(1.0)
+
+                # 生成网格线（Y轴：lift 0.5, 0.75, 1.0, 1.25...）
+                y_grid_lines = []
+                y_grid_step = 0.25
+                y_val = 0
+                while y_val <= max_lift:
+                    y_pos = y_coord(y_val)
+                    y_grid_lines.append(
+                        f"    <line x1='{padding}' y1='{y_pos:.1f}' x2='{chart_width - padding}' y2='{y_pos:.1f}' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>"
+                    )
+                    y_grid_lines.append(
+                        f"    <text x='{padding - 10}' y='{y_pos:.1f}' text-anchor='end' font-size='12' fill='#666'>{y_val:.2f}</text>"
+                    )
+                    y_val += y_grid_step
+
+                # 生成网格线（X轴：coverage 0%, 20%, 40%, 60%, 80%, 100%）
+                x_grid_lines = []
+                for cov_pct in [0, 20, 40, 60, 80, 100]:
+                    x_pos = x_coord(cov_pct)
+                    x_grid_lines.append(
+                        f"    <line x1='{x_pos:.1f}' y1='{padding}' x2='{x_pos:.1f}' y2='{chart_height - padding}' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>"
+                    )
+                    x_grid_lines.append(
+                        f"    <text x='{x_pos:.1f}' y='{chart_height - padding + 20}' text-anchor='middle' font-size='12' fill='#666'>{cov_pct}%</text>"
+                    )
+
+                html_parts.extend(
+                    [
+                        "    <div style='margin: 30px 0; text-align: center;'>",
+                        f"      <svg width='{chart_width}' height='{chart_height}' style='border: 1px solid #ddd; border-radius: 5px; background: white;'>",
+                        "        <!-- 网格线 -->",
+                    ]
+                    + y_grid_lines
+                    + x_grid_lines
+                    + [
+                        "        <!-- 1.0 基准线 -->",
+                        f"        <line x1='{padding}' y1='{baseline_y:.1f}' x2='{chart_width - padding}' y2='{baseline_y:.1f}' stroke='#ff9800' stroke-width='2' stroke-dasharray='5,5'/>",
+                        f"        <text x='{chart_width - padding - 50}' y='{baseline_y - 5:.1f}' font-size='12' fill='#ff9800'>Lift = 1.0 (无效)</text>",
+                        "        <!-- No Opportunity Lift 曲线 -->",
+                        f"        <path d='{no_opp_path}' stroke='#2196F3' stroke-width='3' fill='none'/>",
+                        "        <!-- RR Extreme Lift 曲线 -->",
+                        f"        <path d='{rr_path}' stroke='#4CAF50' stroke-width='3' fill='none'/>",
+                        "        <!-- 数据点 -->",
+                    ]
+                )
+
+                # 添加数据点（圆圈）
+                for cov, lift_rr, lift_no_opp in zip(
+                    coverages, lift_rr_values, lift_no_opp_values
+                ):
+                    x = x_coord(cov)
+                    y_rr = y_coord(lift_rr)
+                    y_no_opp = y_coord(lift_no_opp)
+                    html_parts.append(
+                        f"        <circle cx='{x:.1f}' cy='{y_rr:.1f}' r='4' fill='#4CAF50' stroke='white' stroke-width='2'/>"
+                    )
+                    html_parts.append(
+                        f"        <circle cx='{x:.1f}' cy='{y_no_opp:.1f}' r='4' fill='#2196F3' stroke='white' stroke-width='2'/>"
+                    )
+
+                html_parts.extend(
+                    [
+                        "        <!-- 坐标轴标签 -->",
+                        f"        <text x='{chart_width / 2}' y='{chart_height - 10}' text-anchor='middle' font-size='14' font-weight='bold' fill='#333'>Coverage (%)</text>",
+                        f"        <text x='15' y='{chart_height / 2}' text-anchor='middle' font-size='14' font-weight='bold' fill='#333' transform='rotate(-90 15 {chart_height / 2})'>Lift (改善倍数)</text>",
+                        "        <!-- 图例 -->",
+                        f"        <rect x='{chart_width - 200}' y='20' width='15' height='15' fill='#4CAF50'/>",
+                        f"        <text x='{chart_width - 180}' y='32' font-size='12' fill='#333'>RR Extreme Lift</text>",
+                        f"        <rect x='{chart_width - 200}' y='40' width='15' height='15' fill='#2196F3'/>",
+                        f"        <text x='{chart_width - 180}' y='52' font-size='12' fill='#333'>No Opportunity Lift</text>",
+                        "      </svg>",
+                        "    </div>",
+                    ]
+                )
+
+            # Per-symbol failure analysis
+            by_symbol = failure_analysis.get("by_symbol", {})
+            if by_symbol:
+                html_parts.extend(
+                    [
+                        "    <h3 style='margin-top: 25px; color: #666;'>🔍 Per-Symbol Failure Analysis</h3>",
+                        "    <table>",
+                        "      <tr><th>Symbol</th><th>Global RR</th><th>Selected RR</th><th>RR Lift</th><th>Global NoOpp</th><th>Selected NoOpp</th><th>NoOpp Lift</th><th>n_selected</th></tr>",
+                    ]
+                )
+                for sym, stats in by_symbol.items():
+                    sym_global_rr = stats.get("global_failure_rr_extreme", 0)
+                    sym_sel_rr = stats.get("selected_failure_rr_extreme", 0)
+                    sym_lift_rr = stats.get("lift_rr_extreme", 0)
+                    sym_global_no_opp = stats.get("global_failure_no_opportunity", 0)
+                    sym_sel_no_opp = stats.get("selected_failure_no_opportunity", 0)
+                    sym_lift_no_opp = stats.get("lift_no_opportunity", 0)
+                    sym_n_sel = stats.get("n_selected", 0)
+
+                    html_parts.append(
+                        f"      <tr><td><strong>{sym}</strong></td>"
+                        f"<td>{sym_global_rr:.1%}</td><td>{sym_sel_rr:.1%}</td><td>{sym_lift_rr:.2f}x</td>"
+                        f"<td>{sym_global_no_opp:.1%}</td><td>{sym_sel_no_opp:.1%}</td><td>{sym_lift_no_opp:.2f}x</td>"
+                        f"<td>{sym_n_sel}</td></tr>"
+                    )
+                html_parts.append("    </table>")
+
         # Feature importance
         if top_features:
             max_importance = top_features[0][1] if top_features else 1
@@ -2152,6 +2376,37 @@ def train_strategy(
         f"pos: {(test_labels==1).sum()}, neg: {(test_labels==0).sum()}"
     )
 
+    # 🔍 DEBUG: 检查多币种场景下的 symbol 分布
+    if is_multi_symbol and "_symbol" in df_train_features.columns:
+        print(f"   🔍 [DEBUG] Train set symbol distribution (before filtering):")
+        train_sym_dist = df_train_features["_symbol"].value_counts()
+        for sym, count in train_sym_dist.items():
+            non_null = (
+                df_train_features[df_train_features["_symbol"] == sym][
+                    strategy_config.labels.target_column
+                ]
+                .notna()
+                .sum()
+            )
+            print(
+                f"      {sym}: {count} rows, {non_null} non-null labels ({non_null/count*100:.1f}%)"
+            )
+
+    if is_multi_symbol and "_symbol" in df_test_features.columns:
+        print(f"   🔍 [DEBUG] Test set symbol distribution (before filtering):")
+        test_sym_dist = df_test_features["_symbol"].value_counts()
+        for sym, count in test_sym_dist.items():
+            non_null = (
+                df_test_features[df_test_features["_symbol"] == sym][
+                    strategy_config.labels.target_column
+                ]
+                .notna()
+                .sum()
+            )
+            print(
+                f"      {sym}: {count} rows, {non_null} non-null labels ({non_null/count*100:.1f}%)"
+            )
+
     df_train_filtered = apply_filters(df_train_features, strategy_config.labels.filters)
     df_test_filtered = apply_filters(df_test_features, strategy_config.labels.filters)
 
@@ -2165,6 +2420,25 @@ def train_strategy(
         strategy_config.labels.post_label_filters,
         feature_cols,
     )
+
+    # 🔍 DEBUG: 检查过滤后的 symbol 分布
+    if is_multi_symbol and "_symbol" in df_train_filtered.columns:
+        print(f"   🔍 [DEBUG] Train set symbol distribution (AFTER filtering):")
+        train_sym_dist_after = df_train_filtered["_symbol"].value_counts()
+        for sym, count in train_sym_dist_after.items():
+            print(f"      {sym}: {count} rows")
+        if len(train_sym_dist_after) < len(symbol_list):
+            missing = set(symbol_list) - set(train_sym_dist_after.index)
+            print(f"      ⚠️  Missing symbols: {missing}")
+
+    if is_multi_symbol and "_symbol" in df_test_filtered.columns:
+        print(f"   🔍 [DEBUG] Test set symbol distribution (AFTER filtering):")
+        test_sym_dist_after = df_test_filtered["_symbol"].value_counts()
+        for sym, count in test_sym_dist_after.items():
+            print(f"      {sym}: {count} rows")
+        if len(test_sym_dist_after) < len(symbol_list):
+            missing = set(symbol_list) - set(test_sym_dist_after.index)
+            print(f"      ⚠️  Missing symbols: {missing}")
 
     def _debug_inf(df: pd.DataFrame, name: str):
         if not feature_cols:
@@ -2743,6 +3017,53 @@ def train_strategy(
             json.dump(results, fh, indent=2, default=str)
         print(f"   💾 Results saved to {results_file}")
 
+        # 保存 predictions.parquet （用于 analyze gate-residual 等分析工具）
+        try:
+            import pyarrow.parquet as pq
+            import pyarrow as pa
+
+            # 构建 predictions DataFrame
+            pred_df = df_test_filtered.copy()
+            pred_df["pred"] = preds
+            pred_df["split"] = "holdout"  # 标记为 holdout/test 集
+
+            # 保留必需列（用于 failure 计算）
+            required_cols = [
+                "timestamp",
+                "close",
+                "high",
+                "low",
+                "open",
+                "volume",
+                "atr",
+                "pred",
+                "split",
+            ]
+            keep_cols = [c for c in required_cols if c in pred_df.columns]
+
+            if "_symbol" in pred_df.columns:
+                keep_cols.insert(1, "_symbol")  # 多币种时包含symbol
+
+            # 添加所有特征列（用于后续分析）
+            for col in used_features:
+                if col not in keep_cols and col in pred_df.columns:
+                    keep_cols.append(col)
+
+            # 过滤存在的列
+            keep_cols = [c for c in keep_cols if c in pred_df.columns]
+            pred_df_save = pred_df[keep_cols]
+
+            # 保存为 parquet
+            pred_file = output_dir / "predictions.parquet"
+            table = pa.Table.from_pandas(pred_df_save)
+            pq.write_table(table, pred_file)
+            print(
+                f"   💾 Predictions saved to {pred_file} ({len(pred_df_save):,} rows, {len(keep_cols)} columns)"
+            )
+
+        except Exception as exc:  # noqa: BLE001
+            print(f"   ⚠️  Failed to save predictions.parquet: {exc}")
+
         # Generate HTML training report (输出到 output_dir)
         html_report_path = generate_training_html_report(
             results=results,
@@ -2780,9 +3101,23 @@ def train_strategy(
             if preds_list:
                 preds = np.mean(preds_list, axis=0)
 
-                # Determine entry threshold based on prediction distribution
-                entry_threshold = np.percentile(preds, 70)  # Top 30%
-                selected_mask = preds >= entry_threshold
+                # 📊 扫描多个阈值，评估 lift vs 覆盖率
+                percentile_thresholds = [
+                    80,
+                    70,
+                    60,
+                    50,
+                    40,
+                    30,
+                    20,
+                ]  # top 20%, 30%, ..., 80%
+                lift_curve_data = []
+
+                print(f"\n      📈 Lift vs Coverage Curve:")
+                print(
+                    f"      {'Percentile':>12s} | {'Coverage':>10s} | {'n_selected':>12s} | {'RR Lift':>10s} | {'NoOpp Lift':>12s}"
+                )
+                print(f"      {'-'*12}-+-{'-'*10}-+-{'-'*12}-+-{'-'*10}-+-{'-'*12}")
 
                 # Compute failure subtypes
                 direction = str(
@@ -2796,25 +3131,119 @@ def train_strategy(
                     )
                 )
 
-                failure_df = compute_failure_subtypes(
-                    df=analysis_df,
-                    direction=direction,
-                    horizon=horizon,
-                )
+                # 多币种支持：按 symbol 分别计算 failure
+                if is_multi_symbol and "_symbol" in analysis_df.columns:
+                    # 按币种分别计算
+                    failure_by_symbol = {}
+                    for sym in symbol_list:
+                        sym_mask = analysis_df["_symbol"] == sym
+                        if sym_mask.sum() == 0:
+                            continue
 
-                # Merge and analyze
-                failure_df["selected"] = selected_mask
+                        sym_df = analysis_df[sym_mask].copy()
+                        sym_failure_df = compute_failure_subtypes(
+                            df=sym_df,
+                            direction=direction,
+                            horizon=horizon,
+                        )
+                        # 保持原始索引对齐
+                        sym_failure_df.index = analysis_df[sym_mask].index
+                        failure_by_symbol[sym] = sym_failure_df
+
+                    # 合并所有币种的 failure 结果
+                    if failure_by_symbol:
+                        failure_df = pd.concat(
+                            list(failure_by_symbol.values()), sort=False
+                        ).sort_index()
+                    else:
+                        failure_df = None
+                else:
+                    # 单币种场景
+                    failure_df = compute_failure_subtypes(
+                        df=analysis_df,
+                        direction=direction,
+                        horizon=horizon,
+                    )
+
+                if failure_df is None:
+                    raise ValueError("Failed to compute failure subtypes")
+
+                # 添加 _symbol 列到 failure_df（用于后续按币种分组）
+                if is_multi_symbol and "_symbol" in analysis_df.columns:
+                    failure_df["_symbol"] = analysis_df.loc[
+                        failure_df.index, "_symbol"
+                    ].values
+
+                # 计算 global baseline
                 valid_mask = failure_df["failure_any"].notna()
                 failure_valid = failure_df[valid_mask]
 
-                if len(failure_valid) > 0:
-                    # Global failure rates
+                if len(failure_valid) == 0:
+                    print(f"      ⚠️  No valid failure data")
+                else:
                     global_rr_extreme = (
                         failure_valid["failure_rr_extreme"] == 1
                     ).mean()
                     global_no_opp = (
                         failure_valid["failure_no_opportunity"] == 1
                     ).mean()
+
+                    # 🔄 循环扫描多个阈值
+                    for percentile in percentile_thresholds:
+                        entry_threshold = np.percentile(preds, percentile)
+                        selected_mask = preds >= entry_threshold
+
+                        # 计算该阈值下的 lift
+                        failure_df_copy = failure_df.copy()
+                        failure_df_copy["selected"] = selected_mask
+                        failure_valid_copy = failure_df_copy[valid_mask]
+
+                        selected_df = failure_valid_copy[failure_valid_copy["selected"]]
+                        coverage = (
+                            len(selected_df) / len(failure_valid_copy)
+                            if len(failure_valid_copy) > 0
+                            else 0
+                        )
+
+                        if len(selected_df) > 0:
+                            selected_rr = (
+                                selected_df["failure_rr_extreme"] == 1
+                            ).mean()
+                            selected_no_opp = (
+                                selected_df["failure_no_opportunity"] == 1
+                            ).mean()
+                            lift_rr = (
+                                selected_rr / global_rr_extreme
+                                if global_rr_extreme > 0
+                                else 0
+                            )
+                            lift_no_opp = (
+                                selected_no_opp / global_no_opp
+                                if global_no_opp > 0
+                                else 0
+                            )
+
+                            print(
+                                f"      Top {100-percentile:2d}% (p{percentile:2d}) | {coverage:9.1%} | {len(selected_df):12,} | {lift_rr:9.2f}x | {lift_no_opp:11.2f}x"
+                            )
+
+                            lift_curve_data.append(
+                                {
+                                    "percentile": percentile,
+                                    "coverage": float(coverage),
+                                    "n_selected": int(len(selected_df)),
+                                    "lift_rr_extreme": float(lift_rr),
+                                    "lift_no_opportunity": float(lift_no_opp),
+                                }
+                            )
+
+                    # 使用 top 30% (p70) 作为默认报告阈值
+                    entry_threshold = np.percentile(preds, 70)
+                    selected_mask = preds >= entry_threshold
+
+                    # 重新计算 top 30% 的详细统计（用于主报告）
+                    failure_df["selected"] = selected_mask
+                    failure_valid = failure_df[valid_mask]
 
                     # Selected trades failure rates
                     selected_df = failure_valid[failure_valid["selected"]]
@@ -2871,6 +3300,70 @@ def train_strategy(
                             if reduction < 0:
                                 print(f"      ⚠️  警告: 模型选中的 trades 失败率更高!")
 
+                        # 🔍 多币种场景：按币种分别统计
+                        failure_by_symbol_stats = {}
+                        if is_multi_symbol and "_symbol" in failure_valid.columns:
+                            print(f"\n      🔍 Per-Symbol Failure Analysis:")
+
+                            for sym in symbol_list:
+                                sym_mask = failure_valid["_symbol"] == sym
+                                if sym_mask.sum() == 0:
+                                    continue
+
+                                sym_failure = failure_valid[sym_mask]
+                                sym_selected = sym_failure[sym_failure["selected"]]
+
+                                if len(sym_failure) > 0:
+                                    sym_global_rr = (
+                                        sym_failure["failure_rr_extreme"] == 1
+                                    ).mean()
+                                    sym_global_no_opp = (
+                                        sym_failure["failure_no_opportunity"] == 1
+                                    ).mean()
+
+                                    if len(sym_selected) > 0:
+                                        sym_sel_rr = (
+                                            sym_selected["failure_rr_extreme"] == 1
+                                        ).mean()
+                                        sym_sel_no_opp = (
+                                            sym_selected["failure_no_opportunity"] == 1
+                                        ).mean()
+                                        sym_lift_rr = (
+                                            sym_sel_rr / sym_global_rr
+                                            if sym_global_rr > 0
+                                            else 0
+                                        )
+                                        sym_lift_no_opp = (
+                                            sym_sel_no_opp / sym_global_no_opp
+                                            if sym_global_no_opp > 0
+                                            else 0
+                                        )
+
+                                        print(
+                                            f"         {sym:10s}: RR={sym_sel_rr:.1%} (lift={sym_lift_rr:.2f}x), NoOpp={sym_sel_no_opp:.1%} (lift={sym_lift_no_opp:.2f}x), n={len(sym_selected)}"
+                                        )
+
+                                        failure_by_symbol_stats[sym] = {
+                                            "global_failure_rr_extreme": float(
+                                                sym_global_rr
+                                            ),
+                                            "global_failure_no_opportunity": float(
+                                                sym_global_no_opp
+                                            ),
+                                            "selected_failure_rr_extreme": float(
+                                                sym_sel_rr
+                                            ),
+                                            "selected_failure_no_opportunity": float(
+                                                sym_sel_no_opp
+                                            ),
+                                            "lift_rr_extreme": float(sym_lift_rr),
+                                            "lift_no_opportunity": float(
+                                                sym_lift_no_opp
+                                            ),
+                                            "n_selected": int(len(sym_selected)),
+                                            "n_total": int(len(sym_failure)),
+                                        }
+
                         # Save to results
                         results["failure_analysis"] = {
                             "global_failure_rr_extreme": float(global_rr_extreme),
@@ -2881,9 +3374,34 @@ def train_strategy(
                             "lift_no_opportunity": float(lift_no_opp),
                             "n_selected": int(len(selected_df)),
                             "n_total": int(len(failure_valid)),
+                            "lift_curve": lift_curve_data,  # 添加 lift vs coverage 曲线
                         }
+
+                        # 添加按币种的统计
+                        if failure_by_symbol_stats:
+                            results["failure_analysis"][
+                                "by_symbol"
+                            ] = failure_by_symbol_stats
         except Exception as exc:
             print(f"   ⚠️  Failure analysis skipped: {exc}")
+
+        # 💾 重新保存 results.json（包含 failure_analysis 数据）
+        if output_cfg.get("save_results", True):
+            filename = output_cfg.get("filename", "results.json")
+            results_file = output_dir / filename
+            with open(results_file, "w", encoding="utf-8") as fh:
+                json.dump(results, fh, indent=2, default=str)
+            # print(f"   💾 Results updated with failure_analysis to {results_file}")
+
+            # 📄 重新生成 HTML 报告（包含 failure_analysis）
+            html_report_path = generate_training_html_report(
+                results=results,
+                output_dir=output_dir,
+                strategy_name=strategy_config.name,
+                args=args,
+            )
+            # if html_report_path:
+            #     print(f"   📄 HTML report updated with failure_analysis to {html_report_path}")
 
         # Save preprocessor (required for inference consistency)
         import joblib

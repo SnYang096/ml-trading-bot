@@ -64,7 +64,6 @@ feature_pipeline:
     # ========== 波动 ==========
     - atr_percentile_f
     - bb_width_normalized_pct_f  # 自包含：内部计算 BB width/ATR 再转百分位
-    - atr_f
     
     # ========== Volatility Regime ==========
     # 识别"踩大坑"的波动率状态
@@ -82,6 +81,18 @@ feature_pipeline:
     # ========== SR 相关 ==========
     - sr_strength_max_f  # 输出包含 sr_strength_max 和 dist_to_nearest_sr
     
+    # ========== 基础 ==========
+    - sma_200_f
+    - jump_risk_pct_f         # 跳空风险分位
+    
+    # ========== 数学特征（用于 execution_noise_penalty）==========
+    # 这些特征只影响"如何执行"，不影响"是否执行"
+    # - hurst_price_f           # Hurst 指数（时序记忆性）
+    # - spectrum_features_f     # 频谱特征
+    # - hilbert_phase_f         # Hilbert 变换（包络+相位）
+    # - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
+    # - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
+
     # ========== 订单流 ==========
     - vpin_features_f
     - volume_ratio_pct_f      # 自包含：内部计算 volume/rolling_mean 再转百分位
@@ -96,18 +107,6 @@ feature_pipeline:
     - trade_cluster_max_buy_run_zscore_features_f
     - trade_cluster_max_sell_run_zscore_features_f
     
-    # ========== 基础 ==========
-    - sma_200_f
-    - jump_risk_pct_f         # 跳空风险分位
-    
-    # ========== 数学特征（用于 execution_noise_penalty）==========
-    # 这些特征只影响"如何执行"，不影响"是否执行"
-    - hurst_price_f           # Hurst 指数（时序记忆性）
-    - spectrum_features_f     # 频谱特征
-    - hilbert_phase_f         # Hilbert 变换（包络+相位）
-    - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
-    - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
-
   ensure_signal_column:
     name: signal
     default_value: 0

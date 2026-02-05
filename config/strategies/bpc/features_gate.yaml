@@ -4,7 +4,6 @@
 # 
 # Gate 只回答："这是一个明显不该碰的市场状态吗？"
 # 不判断强弱、不判断好不好赚、不判断执行细节
-
 name: bpc
 description: |
   BPC Gate 特征配置：专门用于 failure_rr_extreme / failure_no_opportunity 的 veto 学习。
@@ -20,7 +19,6 @@ description: |
   - 波动率 Regime (Vol相关)
   - 末端/衰竭信号 (Exhaustion/Terminal Risk)
   - 执行质量/噪声 (数学特征)
-
 feature_pipeline:
   exclude_columns:
     - atr
@@ -29,22 +27,52 @@ feature_pipeline:
     # ========== 必需的 scale 列（用于 label 计算，不参与模型训练）==========
     - atr_f                       # ATR（label 计算必需，通过 exclude_columns 排除模型输入）
     
-    # ========== 结构合法性（BPC 身份证）==========
+    # ========== BPC 核心：软阶段分数 ==========
+    - bpc_soft_phase_f  # 输出: bpc_score_breakout/pullback/continuation/neutral
+    
+    # ========== BPC 结构特征 ==========
     - bpc_pullback_depth_pct_f    # 回踩深度 (side-aware)
     - bpc_pullback_duration_f     # 回踩持续时间
+    - bpc_pullback_speed_f        # 回踩速度 = depth/(duration+1)
+    - bpc_impulse_return_atr_f    # impulse 收益/ATR (带方向)
     
-    # ========== 方向一致性（防 chop/微趋势幻觉）==========
+    # ========== BPC 方向一致性 ==========
     - bpc_dir_consistency_multi_f # 多尺度方向一致性 (short/mid/long)
     - bpc_dir_flip_count_f        # 方向翻转次数
-    - price_dir_consistency_pct_f # price 自身方向一致性
     
     # ========== 趋势清晰度 / Regime ==========
-    - trend_r2_20_f               # 趋势拟合优度
-    - path_efficiency_pct_f       # 走势路径效率（防极度绕行）
+    - trend_r2_20_f
+    - path_efficiency_pct_f
+    - path_length_pct_f
+    - price_dir_consistency_pct_f
     
-    # ========== 极端风险 / 事故场景 ==========
-    - jump_risk_pct_f             # 跳空风险分位
-
+    # ========== 动量 ==========
+    - macd_atr_f
+    - rsi_f
+    
+    # ========== 波动 ==========
+    - atr_percentile_f
+    - bb_width_normalized_pct_f  # 自包含：内部计算 BB width/ATR 再转百分位
+    
+    # ========== Volatility Regime ==========
+    # 识别"踩大坑"的波动率状态
+    - vol_regime_features_f       # vol_zscore, vol_percentile_approx
+    - vol_trend_features_f        # vol_slope, vol_accel (波动率趋势)
+    - vol_mom_features_f          # vol_mom_5/10/20 (波动率动量)
+    
+    # ========== Trend Exhaustion ==========
+    # 识别趋势衰竭/反转信号
+    - wick_scene_semantic_scores_f   # wick_exhaustion_score (影线衰竭)
+    - wpt_scene_semantic_scores_f    # wpt_exhaustion_score (小波变换衰竭)
+    - volume_profile_scene_semantic_scores_f  # vp_exhaustion_score (成交量分布衰竭)
+    - liquidity_void_scene_semantic_scores_f  # 流动性真空场景语义 (V2 连续化)
+    
+    # ========== SR 相关 ==========
+    - sr_strength_max_f  # 输出包含 sr_strength_max 和 dist_to_nearest_sr
+    
+    # ========== 基础 ==========
+    - sma_200_f
+    - jump_risk_pct_f         # 跳空风险分位
   ensure_signal_column:
     name: signal
     default_value: 0

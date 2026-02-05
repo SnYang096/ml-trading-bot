@@ -115,7 +115,7 @@ rm cache/timeframes/BTCUSDT_240T.parquet
 find cache/features/monthly -name "*2024*" -delete
 # FeatureStore 用 --force-rebuild 重建
 ```
-## 训练树模型，效果好就可以导出规则
+## 训练树模型，效果好就可以导出规则，kpi是lift<1.0
 注意点：
 1. 分两个label训练
 ① 子类型不均衡：常见的那种 failure 吃掉了模型容量
@@ -143,6 +143,7 @@ find cache/features/monthly -name "*2024*" -delete
   # --end-date 2025-11-30 ← 改为包含 holdout 期间
 
 # 训练 failure_rr_extreme “未来这 50 根 K 的路径里，会不会出现非常极端的不利 RR（比如一路亏到 -0.8R 以下）。
+# 修改features_gate不需要重新build feature store
 mlbot train final --no-docker \
   --config config/strategies/bpc \
   --features config/strategies/bpc/features_gate.yaml \
@@ -157,7 +158,51 @@ mlbot train final --no-docker \
   --seed 42
 
 
+# 📜 Tree rules exported to results/train_final_20260205_230351_rr_extreme/bpc/bpc_tree_rules.md
+# 📜 Risk gate draft exported to results/train_final_20260205_230351_rr_extreme/bpc/risk_gate_draft.yaml
+
+# 分析 Gate 剩余失败归因（推荐使用这个新命令）
+# ❗ 重要：训练时必须使用 features_evidence.yaml 才能分析 Evidence 特征！
+mlbot analyze gate-residual \
+  --model-dir results/train_final_20260205_230351_rr_extreme/bpc \
+  --threshold 0.6 \
+  --split holdout
+
+# 这个命令会：
+# 1. 加载 Gate 模型的预测结果（从 predictions.parquet）
+# 2. 筛选 success_prob >= threshold 的样本（Gate 通过）
+# 3. 在这些样本上重新计算 failure 标签
+# 4. 对比失败 vs 成功样本的 Evidence 特征分布
+# 5. 输出 Cohen's d 效应量，判断剩余失败主要来自哪些特征类别
+#    - 波动regime（vol_regime_*）
+#    - 追末端风险（terminal_risk_score_f）
+#    - execution时机（volume_participation_score_f）
+#    - 节奏错位（bpc_pullback_speed_f）
+#    - 订单流支持（cvd_divergence_v2_f）
+#
+# 💡 Threshold 选择指南：
+#    - 如果没有样本通过，工具会显示预测分布，建议降低 threshold
+#    - 一般建议使用 q75-q90 之间的值（选择 top 10-25% 的样本）
+#    - 对于 failure 模型（invert=true），预测值是 success_prob，通常在 0.5-0.9 范围
+
+# 旧的分析命令（可选，但数据集可能不一致）
+python scripts/analyze_failure_distribution.py \
+  --model-dir results/train_final_20260205_160523_no_opportunity/bpc \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --entry-threshold 0.8
+
+# 也可以不训练下面，因为情况非常罕见
 # 训练 failure_no_opportunity 入场即反
+# ⚠️  重要：训练前必须手动修改 config/strategies/bpc/backtest.yaml！
+# 因为 failure_no_opportunity 只占 4.4%，模型预测均值高达 95.6%
+# 必须使用 long_entry_threshold: 0.95 才能筛选出优质机会！
+#
+# 步骤1: 修改 config/strategies/bpc/backtest.yaml
+#   long_entry_threshold: 0.8  # 改为
+#   long_entry_threshold: 0.95 # 对于 no_opportunity
+#
+# 步骤2: 运行训练
 mlbot train final --no-docker \
   --config config/strategies/bpc \
   --features config/strategies/bpc/features_gate.yaml \
@@ -170,10 +215,35 @@ mlbot train final --no-docker \
   --holdout-start-date 2024-05-01 \
   --holdout-end-date 2025-11-30 \
   --seed 42
+
+# 步骤3: 训练后记得改回 long_entry_threshold: 0.8！
 ```
 
-##  训练 Return Tree
+##  训练 Return Tree，kpi比较复杂，主要有语义是否可用
 
+> 📖 **详细评估框架**: 参见 [Return Tree KPI 量化评估文档](./return_tree_kpi_framework.md)
+
+如果前面gate已经过滤了一些差得机会，我们可以训练 Return Tree
+目的：让 Return Tree 在"已被 Gate 过滤后的样本"上学习，看它能否进一步区分好坏。
+如果 Return Tree 的 特征重要性 主要来自：
+  vol_regime_*（波动regime）
+  terminal_risk_score（追末端）
+  volume_participation_score（execution时机）
+  exhaustion_*（节奏错位）
+→ ✅ 证明剩余失败确实来自 Evidence/Execution 层面
+如果特征重要性主要来自：
+  bpc_dir_*（方向）
+  trend_r2_*（趋势结构）
+  jump_risk_*（极端风险）
+→ ❌ 说明 Gate 还不够，需要加强
+
+判断标准：
+Return Tree 的 Top 10 重要特征中：
+如果 ≥7个 是 Evidence 特征（vol/terminal/exhaustion/execution）
+→ ✅ Gate 已经足够
+如果 ≥5个 是 Gate 特征（dir/structure/trend/jump）
+→ ❌ Gate 需要加强
+训练完后，查看 feature_importance 和 tree_rules.md 就能验证您的假设！
 ┌─────────────────────────────────────────────────────────────┐
 │ 1. 标签生成函数 compute_bpc_return_tree_label               │
 │    ├── 计算所有样本的 failure_any                           │
@@ -213,6 +283,8 @@ mlbot train final --no-docker \
   --holdout-end-date 2025-11-30 \
   --seed 42
 ```
+
+
 
 ## 审核 risk_gate.yaml 和 evidence_candidates.yaml 是否有语义意义
 TODO：注意重跑一下训练，特征改了

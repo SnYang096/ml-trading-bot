@@ -6994,6 +6994,77 @@ def analyze_timeframe_comparison(output_dir, results_1h, results_4h, docker):
     )
 
 
+@analyze.command("gate-residual")
+@click.option(
+    "--model-dir",
+    "-m",
+    required=True,
+    help="模型目录（如 results/train_final_xxx/bpc）",
+)
+@click.option(
+    "--threshold",
+    "-t",
+    type=float,
+    default=0.8,
+    help="Gate 阈值（success_prob >= threshold 视为通过）",
+)
+@click.option(
+    "--split",
+    type=click.Choice(["train", "holdout", "all"]),
+    default="holdout",
+    help="数据集划分",
+)
+@click.option(
+    "--direction",
+    type=click.Choice(["long", "short"]),
+    default="long",
+    help="交易方向",
+)
+@click.option(
+    "--horizon",
+    type=int,
+    default=50,
+    help="持仓窗口（bars）",
+)
+@click.option(
+    "--output",
+    "-o",
+    default=None,
+    help="输出详细 CSV 路径（可选）",
+)
+def analyze_gate_residual(
+    model_dir, threshold, split, direction, horizon, output
+):
+    """
+    Gate 剩余失败归因分析。
+    
+    分析 Gate 模型通过后剩余失败的特征分布，判断是否来自 Evidence/Execution 层。
+    
+    示例：
+        mlbot analyze gate-residual \\
+            --model-dir results/train_final_20260205_011545_rr_extreme/bpc \\
+            --threshold 0.8 \\
+            --split holdout
+    """
+    args = [
+        "--model-dir",
+        model_dir,
+        "--threshold",
+        str(threshold),
+        "--split",
+        split,
+        "--direction",
+        direction,
+        "--horizon",
+        str(horizon),
+    ]
+    
+    if output:
+        args.extend(["--output", output])
+    
+    sys.exit(run_script("scripts/analyze_gate_residual_failures.py", args, docker=False))
+
+
 # =============================================================================
 # Diagnostic Commands
 # =============================================================================
