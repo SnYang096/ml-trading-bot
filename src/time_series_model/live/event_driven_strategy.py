@@ -54,9 +54,9 @@ from src.time_series_model.live.execution_manager import (
     ExecutionManager,
     GuardedOrderContext,
 )
-from src.time_series_model.nnmultihead.strategy_profile import (
-    resolve_execution_profile,
-    resolve_execution_profile_paths,
+from src.time_series_model.archetype import (
+    load_strategy_archetype,
+    load_all_strategy_archetypes,
 )
 from src.time_series_model.live.live_runtime_paths import resolve_live_runtime_paths
 from src.time_series_model.diagnostics.execution_log import (
@@ -543,16 +543,16 @@ class EventDrivenStrategy(Strategy):
                 self._constitution_executor is not None
                 and self._constitution_runtime_state is not None
             ):
-                root, reg = resolve_execution_profile_paths()
-                ex = resolve_execution_profile(
-                    strategy_id=str(self.strategy_name),
-                    profile_root=root,
-                    archetype_registry_path=reg,
-                )
-                if ex is None:
-                    # Default: infer from strategy name
-                    name = str(self.strategy_name).lower()
-                    if "reversal" in name or "mean" in name:
+                # 使用新的 archetype 加载器
+                strategy_name = str(self.strategy_name).lower()
+                try:
+                    arch = load_strategy_archetype(strategy_name)
+                    archetype = arch.name
+                    exec_id = arch.name
+                    rules = arch.evidence_rules
+                except Exception:
+                    # Fallback: infer from strategy name
+                    if "reversal" in strategy_name or "mean" in strategy_name:
                         archetype, exec_id, rules = (
                             "FailureReversionFR",
                             "FailedBreakoutFade",
@@ -564,24 +564,7 @@ class EventDrivenStrategy(Strategy):
                             "MomentumExpansion",
                             [],
                         )
-                else:
-                    # Use execution profile: exec_id contains archetype info (TC/TE/FR/ET)
-                    exec_id = ex.execution_strategy_id
-                    exec_id_upper = exec_id.upper()
-                    if "TC" in exec_id_upper or "TE" in exec_id_upper:
-                        archetype = exec_id  # Use exec_id as archetype
-                    elif "FR" in exec_id_upper or "ET" in exec_id_upper:
-                        archetype = exec_id  # Use exec_id as archetype
-                    else:
-                        # Fallback: use router_mode
-                        archetype = ex.router_mode
-                    rules = ex.evidence_rules
-                # For backward compatibility, mode is derived from archetype
-                mode = (
-                    "MEAN"
-                    if ("FR" in archetype.upper() or "ET" in archetype.upper())
-                    else "TREND"
-                )
+
                 # Build evidence from merged feature set keys (all_features+orderflow_features are used upstream)
                 merged_feats = {}
                 try:
@@ -609,7 +592,7 @@ class EventDrivenStrategy(Strategy):
                     runtime_state=self._constitution_runtime_state,
                     position_id=f"{self.strategy_name}:{int(self.clock.timestamp_ns())}",
                     symbol=str(self.instrument_id),
-                    archetype=mode,
+                    archetype=archetype,
                     execution_strategy=exec_id,
                     execution_tags=[str(reason)],
                     execution_evidence=evidence,
@@ -630,7 +613,7 @@ class EventDrivenStrategy(Strategy):
                     ctx=GuardedOrderContext(
                         position_id=f"{self.strategy_name}:{int(self.clock.timestamp_ns())}",
                         symbol=str(self.instrument_id),
-                        archetype=mode,
+                        archetype=archetype,
                         execution_strategy=exec_id,
                         execution_tags=[str(reason)],
                         execution_evidence=evidence,

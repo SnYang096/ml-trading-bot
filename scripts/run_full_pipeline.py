@@ -129,6 +129,11 @@ def main() -> int:
         help="跳过反身性特征添加步骤",
     )
     parser.add_argument(
+        "--strategy",
+        default="bpc",
+        help="策略名称，如 bpc, htf",
+    )
+    parser.add_argument(
         "--no-docker",
         action="store_true",
         help="不使用Docker",
@@ -262,8 +267,8 @@ def main() -> int:
     gate_cmd = [
         "python3",
         "src/cli/main.py",
-        "rule",
-        "apply-tree-gate",
+        "gate",
+        "apply-archetype",
         "--logs",
         str(logs_file),
         "--out",
@@ -272,10 +277,10 @@ def main() -> int:
         args.feature_store_layer or "",
         "--features-store-root",
         args.feature_store_root,
-        "--execution-archetypes",
-        "config/nnmultihead/execution_archetypes.yaml",
-        "--db-path",
-        os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
+        "--strategies-root",
+        "config/strategies",
+        "--strategy",
+        args.strategy,
     ] + docker_flag
 
     success = run_command(

@@ -1063,6 +1063,173 @@ def generate_training_html_report(
                 )
             html_parts.append("    </table>")
 
+        # Return Tree KPI Section (if available)
+        return_tree_kpi = results.get("return_tree_kpi", {})
+        if return_tree_kpi and return_tree_kpi.get("spearman_corr") is not None:
+            spearman = return_tree_kpi.get("spearman_corr", 0)
+            monotonicity = return_tree_kpi.get("quantile_monotonicity")
+            q5_q1_spread = return_tree_kpi.get("q5_q1_spread")
+            top10_ratio = return_tree_kpi.get("top10_importance_ratio")
+
+            # Status color classes
+            spearman_class = (
+                "positive"
+                if spearman >= 0.15
+                else ("neutral" if spearman >= 0 else "negative")
+            )
+            mono_class = (
+                "positive"
+                if monotonicity and monotonicity >= 0.8
+                else ("neutral" if monotonicity and monotonicity >= 0.5 else "negative")
+            )
+            spread_class = (
+                "positive"
+                if q5_q1_spread and q5_q1_spread >= 0.3
+                else ("neutral" if q5_q1_spread and q5_q1_spread >= 0.1 else "negative")
+            )
+            ratio_class = (
+                "positive" if top10_ratio and 0.3 <= top10_ratio <= 0.6 else "neutral"
+            )
+
+            html_parts.extend(
+                [
+                    "    <h2>🎯 Return Tree KPI</h2>",
+                    "    <p style='color: #666; margin-bottom: 15px;'>Return Tree 的核心目标不是 lift（只要不变差即可），而是排序能力和语义集中度。</p>",
+                    "    <div class='metrics-grid'>",
+                    f"      <div class='metric-card {spearman_class}'><div class='metric-value'>{spearman:.3f}</div><div class='metric-label'>Spearman Corr (≥0.15)</div></div>",
+                ]
+            )
+            if monotonicity is not None:
+                html_parts.append(
+                    f"      <div class='metric-card {mono_class}'><div class='metric-value'>{monotonicity:.0%}</div><div class='metric-label'>分位单调性 (≥80%)</div></div>"
+                )
+            if q5_q1_spread is not None:
+                html_parts.append(
+                    f"      <div class='metric-card {spread_class}'><div class='metric-value'>{q5_q1_spread:.3f}R</div><div class='metric-label'>Q5-Q1 Spread (≥0.3R)</div></div>"
+                )
+            if top10_ratio is not None:
+                html_parts.append(
+                    f"      <div class='metric-card {ratio_class}'><div class='metric-value'>{top10_ratio:.0%}</div><div class='metric-label'>Top10 重要性 (30-60%)</div></div>"
+                )
+            html_parts.append("    </div>")
+
+            # KPI 评估表格
+            html_parts.extend(
+                [
+                    "    <h3 style='margin-top: 25px; color: #666;'>📊 KPI 达标评估</h3>",
+                    "    <table>",
+                    "      <tr><th>KPI</th><th>当前值</th><th>目标</th><th>状态</th></tr>",
+                ]
+            )
+            # Spearman
+            spearman_status = (
+                "✅ 达标"
+                if spearman >= 0.15
+                else ("⚠️ 接近" if spearman >= 0 else "❌ 未达标")
+            )
+            spearman_status_class = (
+                "success"
+                if spearman >= 0.15
+                else ("warning" if spearman >= 0 else "error")
+            )
+            html_parts.append(
+                f"      <tr><td>Spearman 相关系数</td><td><strong>{spearman:.3f}</strong></td><td>≥ 0.15</td><td class='{spearman_status_class}'>{spearman_status}</td></tr>"
+            )
+            # Monotonicity
+            if monotonicity is not None:
+                mono_status = (
+                    "✅ 达标"
+                    if monotonicity >= 0.8
+                    else ("⚠️ 接近" if monotonicity >= 0.5 else "❌ 未达标")
+                )
+                mono_status_class = (
+                    "success"
+                    if monotonicity >= 0.8
+                    else ("warning" if monotonicity >= 0.5 else "error")
+                )
+                html_parts.append(
+                    f"      <tr><td>分位单调性</td><td><strong>{monotonicity:.0%}</strong></td><td>≥ 80%</td><td class='{mono_status_class}'>{mono_status}</td></tr>"
+                )
+            # Q5-Q1 Spread
+            if q5_q1_spread is not None:
+                spread_status = (
+                    "✅ 达标"
+                    if q5_q1_spread >= 0.3
+                    else ("⚠️ 接近" if q5_q1_spread >= 0.1 else "❌ 未达标")
+                )
+                spread_status_class = (
+                    "success"
+                    if q5_q1_spread >= 0.3
+                    else ("warning" if q5_q1_spread >= 0.1 else "error")
+                )
+                html_parts.append(
+                    f"      <tr><td>Q5-Q1 Spread</td><td><strong>{q5_q1_spread:.3f}R</strong></td><td>≥ 0.3R</td><td class='{spread_status_class}'>{spread_status}</td></tr>"
+                )
+            # Top10 ratio
+            if top10_ratio is not None:
+                ratio_status = "✅ 达标" if 0.3 <= top10_ratio <= 0.6 else "⚠️ 偏离"
+                ratio_status_class = (
+                    "success" if 0.3 <= top10_ratio <= 0.6 else "warning"
+                )
+                html_parts.append(
+                    f"      <tr><td>Top10 重要性占比</td><td><strong>{top10_ratio:.0%}</strong></td><td>30%-60%</td><td class='{ratio_status_class}'>{ratio_status}</td></tr>"
+                )
+            html_parts.append("    </table>")
+
+            # 分位组 RR 均值详情
+            quantile_means = return_tree_kpi.get("quantile_means", {})
+            if quantile_means:
+                html_parts.extend(
+                    [
+                        "    <h3 style='margin-top: 25px; color: #666;'>📊 分位组 RR 均值</h3>",
+                        "    <table>",
+                        "      <tr><th>分位</th><th>RR 均值</th></tr>",
+                    ]
+                )
+                for q in ["Q1", "Q2", "Q3", "Q4", "Q5"]:
+                    q_val = quantile_means.get(q, 0)
+                    html_parts.append(
+                        f"      <tr><td>{q}</td><td>{q_val:+.3f}R</td></tr>"
+                    )
+                html_parts.append("    </table>")
+
+            # Top5 特征
+            top5_features = return_tree_kpi.get("top5_features", [])
+            if top5_features:
+                html_parts.extend(
+                    [
+                        "    <h3 style='margin-top: 25px; color: #666;'>🎯 Top5 特征重要性</h3>",
+                        "    <table>",
+                        "      <tr><th>Rank</th><th>特征</th><th>Importance</th></tr>",
+                    ]
+                )
+                for i, (feat, imp) in enumerate(top5_features, 1):
+                    html_parts.append(
+                        f"      <tr><td>{i}</td><td><code>{feat}</code></td><td>{imp:.2f}</td></tr>"
+                    )
+                html_parts.append("    </table>")
+
+            # 跨符号稳定性
+            symbol_spearman = return_tree_kpi.get("symbol_spearman", {})
+            symbol_consistency = return_tree_kpi.get("symbol_consistency", 0)
+            if symbol_spearman:
+                cons_class = "positive" if symbol_consistency >= 0.6 else "neutral"
+                html_parts.extend(
+                    [
+                        "    <h3 style='margin-top: 25px; color: #666;'>🔗 跨符号稳定性</h3>",
+                        f"    <p style='margin-bottom: 10px;'>符号一致性: <strong class='{cons_class}'>{symbol_consistency:.0%}</strong> (target: ≥60%)</p>",
+                        "    <table>",
+                        "      <tr><th>Symbol</th><th>Spearman</th><th>状态</th></tr>",
+                    ]
+                )
+                for sym, corr in symbol_spearman.items():
+                    status = "✅" if corr > 0 else "❌"
+                    status_class = "success" if corr > 0 else "error"
+                    html_parts.append(
+                        f"      <tr><td>{sym}</td><td>{corr:.3f}</td><td class='{status_class}'>{status}</td></tr>"
+                    )
+                html_parts.append("    </table>")
+
         # Footer
         html_parts.extend(
             [
@@ -3024,10 +3191,20 @@ def train_strategy(
 
             # 构建 predictions DataFrame
             pred_df = df_test_filtered.copy()
+
+            # 确保 timestamp 列存在（可能在 index 中）
+            if "timestamp" not in pred_df.columns:
+                if isinstance(pred_df.index, pd.DatetimeIndex):
+                    pred_df["timestamp"] = pred_df.index
+                elif pred_df.index.name == "timestamp":
+                    pred_df = pred_df.reset_index()
+                elif "datetime" in pred_df.columns:
+                    pred_df["timestamp"] = pred_df["datetime"]
+
             pred_df["pred"] = preds
             pred_df["split"] = "holdout"  # 标记为 holdout/test 集
 
-            # 保留必需列（用于 failure 计算）
+            # 保留必需列（用于 failure 计算和 gated backtest）
             required_cols = [
                 "timestamp",
                 "close",
@@ -3039,6 +3216,16 @@ def train_strategy(
                 "pred",
                 "split",
             ]
+
+            # 添加标签列（用于 gated backtest 计算 Sharpe）
+            target_col = strategy_config.labels.target_column
+            if target_col in pred_df.columns:
+                required_cols.append(target_col)
+            # 常见收益列
+            for rr_col in ["forward_rr", "success_no_rr_extreme", "ret_mean"]:
+                if rr_col in pred_df.columns and rr_col not in required_cols:
+                    required_cols.append(rr_col)
+
             keep_cols = [c for c in required_cols if c in pred_df.columns]
 
             if "_symbol" in pred_df.columns:
@@ -3063,16 +3250,6 @@ def train_strategy(
 
         except Exception as exc:  # noqa: BLE001
             print(f"   ⚠️  Failed to save predictions.parquet: {exc}")
-
-        # Generate HTML training report (输出到 output_dir)
-        html_report_path = generate_training_html_report(
-            results=results,
-            output_dir=output_dir,
-            strategy_name=strategy_config.name,
-            args=args,
-        )
-        if html_report_path:
-            print(f"   📄 HTML report saved to {html_report_path}")
 
         # ========== Failure Sub-label Analysis ==========
         # Analyze failure distribution in model-selected vs unselected trades
@@ -3385,6 +3562,198 @@ def train_strategy(
         except Exception as exc:
             print(f"   ⚠️  Failure analysis skipped: {exc}")
 
+        # ========== Return Tree KPI Analysis ==========
+        # 如果有 kpi_definition，计算排序能力/语义集中度等指标
+        kpi_definition = getattr(strategy_config.labels, "kpi_definition", {})
+        if kpi_definition and task_type == "regression":
+            try:
+                from scipy.stats import spearmanr
+
+                print(f"\n   🎯 Return Tree KPI Analysis...")
+
+                # 获取特征重要性（从已保存的 results 中）
+                feature_importance = results.get("feature_importance", {})
+                top_features = (
+                    list(feature_importance.items())[:20] if feature_importance else []
+                )
+
+                # 使用测试集
+                analysis_df = df_test_filtered.copy()
+                X_test = analysis_df[used_features].values
+                y_actual = analysis_df[strategy_config.labels.target_column].values
+
+                # 获取预测
+                preds_for_kpi = []
+                for model in models:
+                    if model is not None:
+                        try:
+                            preds_for_kpi.append(model.predict(X_test))
+                        except Exception:
+                            pass
+
+                if preds_for_kpi:
+                    y_pred = np.mean(preds_for_kpi, axis=0)
+
+                    # 初始化 KPI 变量
+                    spearman_corr = 0.0
+                    monotonicity = 0.0
+                    q5_q1_spread = 0.0
+                    top10_ratio = 0.0
+
+                    # 1️⃣ 排序能力 KPI
+                    print(f"\n      📊 排序能力 (Ranking Ability):")
+
+                    # Spearman 相关系数
+                    valid_mask = ~(np.isnan(y_actual) | np.isnan(y_pred))
+                    if valid_mask.sum() > 10:
+                        spearman_corr, _ = spearmanr(
+                            y_actual[valid_mask], y_pred[valid_mask]
+                        )
+                        spearman_status = (
+                            "✅"
+                            if spearman_corr >= 0.15
+                            else ("⚠️" if spearman_corr >= 0 else "❌")
+                        )
+                        print(
+                            f"         Spearman Corr: {spearman_corr:.3f} {spearman_status} (target: >= 0.15)"
+                        )
+                    else:
+                        spearman_corr = 0.0
+                        print(f"         Spearman Corr: N/A (insufficient data)")
+
+                    # 分位单调性: Q5_RR > Q4_RR > ... > Q1_RR
+                    valid_df = analysis_df[valid_mask].copy()
+                    valid_df["pred"] = y_pred[valid_mask]
+                    valid_df["actual"] = y_actual[valid_mask]
+
+                    try:
+                        valid_df["quantile"] = pd.qcut(
+                            valid_df["pred"], q=5, labels=["Q1", "Q2", "Q3", "Q4", "Q5"]
+                        )
+                        q_means = valid_df.groupby("quantile")["actual"].mean()
+
+                        # 检查单调性
+                        monotonic_count = sum(
+                            q_means.get(f"Q{i+1}", 0) > q_means.get(f"Q{i}", 0)
+                            for i in range(1, 5)
+                        )
+                        monotonicity = monotonic_count / 4
+                        mono_status = (
+                            "✅"
+                            if monotonicity >= 0.8
+                            else ("⚠️" if monotonicity >= 0.5 else "❌")
+                        )
+                        print(
+                            f"         分位单调性: {monotonicity:.0%} {mono_status} (target: >= 80%)"
+                        )
+
+                        # Q5-Q1 差距
+                        q5_rr = q_means.get("Q5", 0)
+                        q1_rr = q_means.get("Q1", 0)
+                        q5_q1_spread = q5_rr - q1_rr
+                        spread_status = (
+                            "✅"
+                            if q5_q1_spread >= 0.3
+                            else ("⚠️" if q5_q1_spread >= 0.1 else "❌")
+                        )
+                        print(
+                            f"         Q5-Q1 Spread: {q5_q1_spread:.3f}R {spread_status} (target: >= 0.3R)"
+                        )
+
+                        # 打印分位详情
+                        print(f"\n         分位组 RR 均值:")
+                        for q in ["Q1", "Q2", "Q3", "Q4", "Q5"]:
+                            q_val = q_means.get(q, 0)
+                            n_q = (valid_df["quantile"] == q).sum()
+                            print(f"           {q}: {q_val:+.3f}R (n={n_q})")
+
+                    except Exception as qe:
+                        print(f"         分位分析失败: {qe}")
+                        monotonicity = 0
+                        q5_q1_spread = 0
+
+                    # 2️⃣ 语义集中度 KPI
+                    print(f"\n      📊 语义集中度 (Semantic Concentration):")
+                    if top_features:
+                        total_imp = sum(imp for _, imp in top_features)
+                        top10_imp = sum(imp for _, imp in top_features[:10])
+                        top10_ratio = top10_imp / total_imp if total_imp > 0 else 0
+                        ratio_status = "✅" if 0.3 <= top10_ratio <= 0.6 else "⚠️"
+                        print(
+                            f"         Top10 重要性占比: {top10_ratio:.1%} {ratio_status} (target: 30%-60%)"
+                        )
+
+                        # 显示 Top5 特征
+                        print(f"         Top5 特征:")
+                        for i, (feat, imp) in enumerate(top_features[:5], 1):
+                            print(f"           {i}. {feat}: {imp:.3f}")
+                    else:
+                        top10_ratio = 0
+                        print(f"         Top10 重要性: N/A")
+
+                    # 3️⃣ 稳定性 KPI (跨符号)
+                    if is_multi_symbol and "_symbol" in analysis_df.columns:
+                        print(f"\n      📊 跨符号稳定性 (Cross-Symbol Stability):")
+                        symbol_spearman = {}
+                        for sym in symbol_list:
+                            sym_mask = analysis_df["_symbol"] == sym
+                            if sym_mask.sum() < 30:
+                                continue
+                            y_sym = y_actual[sym_mask]
+                            p_sym = y_pred[sym_mask]
+                            valid_sym = ~(np.isnan(y_sym) | np.isnan(p_sym))
+                            if valid_sym.sum() > 10:
+                                corr, _ = spearmanr(y_sym[valid_sym], p_sym[valid_sym])
+                                symbol_spearman[sym] = corr
+                                status = "✅" if corr > 0 else "❌"
+                                print(f"           {sym}: {corr:.3f} {status}")
+
+                        if symbol_spearman:
+                            positive_count = sum(
+                                1 for c in symbol_spearman.values() if c > 0
+                            )
+                            consistency = positive_count / len(symbol_spearman)
+                            cons_status = "✅" if consistency >= 0.6 else "⚠️"
+                            print(
+                                f"         符号一致性: {consistency:.0%} ({positive_count}/{len(symbol_spearman)} positive) {cons_status}"
+                            )
+                    else:
+                        symbol_spearman = {}
+                        consistency = 0.0
+
+                    # 保存 KPI 结果（包含详细数据）
+                    results["return_tree_kpi"] = {
+                        "spearman_corr": float(spearman_corr),
+                        "quantile_monotonicity": float(monotonicity),
+                        "q5_q1_spread": float(q5_q1_spread),
+                        "top10_importance_ratio": float(top10_ratio),
+                        # 详细数据
+                        "quantile_means": (
+                            {
+                                q: float(q_means.get(q, 0))
+                                for q in ["Q1", "Q2", "Q3", "Q4", "Q5"]
+                            }
+                            if "q_means" in dir()
+                            else {}
+                        ),
+                        "top5_features": (
+                            [(f, float(imp)) for f, imp in top_features[:5]]
+                            if top_features
+                            else []
+                        ),
+                        "symbol_spearman": (
+                            {k: float(v) for k, v in symbol_spearman.items()}
+                            if symbol_spearman
+                            else {}
+                        ),
+                        "symbol_consistency": (
+                            float(consistency) if "consistency" in dir() else 0.0
+                        ),
+                    }
+
+            except Exception as kpi_exc:
+                print(f"   ⚠️  Return Tree KPI analysis failed: {kpi_exc}")
+
         # 💾 重新保存 results.json（包含 failure_analysis 数据）
         if output_cfg.get("save_results", True):
             filename = output_cfg.get("filename", "results.json")
@@ -3393,15 +3762,15 @@ def train_strategy(
                 json.dump(results, fh, indent=2, default=str)
             # print(f"   💾 Results updated with failure_analysis to {results_file}")
 
-            # 📄 重新生成 HTML 报告（包含 failure_analysis）
+            # 📄 生成 HTML 报告（包含 failure_analysis + return_tree_kpi）
             html_report_path = generate_training_html_report(
                 results=results,
                 output_dir=output_dir,
                 strategy_name=strategy_config.name,
                 args=args,
             )
-            # if html_report_path:
-            #     print(f"   📄 HTML report updated with failure_analysis to {html_report_path}")
+            if html_report_path:
+                print(f"   📄 HTML report saved to {html_report_path}")
 
         # Save preprocessor (required for inference consistency)
         import joblib

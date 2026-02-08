@@ -1,0 +1,223 @@
+# BPC Evidence Archetype
+# 来源: results/train_final_20260206_140036_return_tree/bpc/evidence_candidates.yaml
+# 职责: 影响置信度/排序/仓位，不做硬 veto
+
+schema:
+  label_semantics:
+    suppress: 强烈不利 - 极度限制仓位/信心
+    downweight: 不利 - 降低信心/仓位
+    neutral: 中性 - 标准执行
+    favor: 有利 - 提高信心/仓位
+    amplify: 强烈有利 - 最大化执行
+
+# ============================================================
+# 🔍 EVIDENCE: 从 Return Tree 发现的执行质量调节器
+# ============================================================
+# 这些特征不做硬 veto，只影响：
+# - 置信度调整（confidence_boost/penalty）
+# - 仓位大小（position_size multiplier）
+# - TP/SL 动态调整（tp_range / trailing_speed）
+
+evidence:
+  # Rank 1: SR 强度 - 影响 TP 拉伸与 trail 速度
+  - id: evidence_sr_strength
+    feature: sr_strength_max
+    rank: 1
+    split_count: 15
+    usage_hint: SR 强度越高，TP 可拉得更远，trailing 可更激进
+    affects:
+      - tp_range
+      - trailing_speed
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.6, 4.2262]
+    distribution_hint: 密集分布在 0.6–4.23 区间
+
+  # Rank 2: VPIN MA20 - 订单流强度，影响仓位与信心
+  - id: evidence_vpin_ma20
+    feature: vpin_ma20
+    rank: 2
+    split_count: 14
+    usage_hint: VPIN 越高，信息交易者越活跃，可增加仓位与信心
+    affects:
+      - position_size
+      - confidence_boost
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.2688, 0.3051, 0.3068, 0.3195, 0.3207]
+    distribution_hint: 密集分布在 0.269–0.321 区间
+
+  # Rank 3: Vol Slope 20 - 成交量趋势，影响 TP 与加仓
+  - id: evidence_vol_slope_20
+    feature: vol_slope_20
+    rank: 3
+    split_count: 8
+    usage_hint: 成交量上升趋势，支持 TP 拉伸与允许加仓
+    affects:
+      - tp_range
+      - scale_in_allowed
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.0001, 0.0003]
+    distribution_hint: 密集分布在 0.0001–0.0003 区间
+
+  # Rank 4: CVD Exhaustion Score - 订单流力竭，影响仓位与 TP
+  - id: evidence_cvd_exhaustion
+    feature: cvd_exhaustion_score
+    rank: 4
+    split_count: 7
+    usage_hint: CVD 力竭低时订单流健康，可增加仓位与 TP 拉伸
+    affects:
+      - position_size
+      - tp_range
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.0025, 0.0835]
+    distribution_hint: 密集分布在 0.0025–0.0835 区间
+
+  # Rank 5: MACD Signal ATR - 动量确认，影响 trailing 与仓位
+  - id: evidence_macd_signal_atr
+    feature: macd_signal_atr
+    rank: 5
+    split_count: 6
+    usage_hint: MACD 信号强度，影响 trailing 速度与仓位调整
+    affects:
+      - trailing_speed
+      - position_size
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [-0.809, -0.7741, -0.6023]
+    distribution_hint: 密集分布在 -0.809–-0.602 区间
+
+  # Rank 6: Dist to Nearest SR - SR 距离，影响 TP 与入场信心
+  - id: evidence_dist_to_sr
+    feature: dist_to_nearest_sr
+    rank: 6
+    split_count: 5
+    usage_hint: 距离 SR 越近，TP 压缩，信心调整
+    affects:
+      - tp_range
+      - confidence_boost
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [-0.9602, -0.8556, -0.2728, 0.5428]
+    distribution_hint: 密集分布在 -0.96–0.543 区间
+
+  # Rank 7: VPIN Max20 - 订单流峰值，影响信心与仓位
+  - id: evidence_vpin_max20
+    feature: vpin_max20
+    rank: 7
+    split_count: 4
+    usage_hint: VPIN 近期峰值，反映订单流活跃度
+    affects:
+      - confidence_boost
+      - position_size
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.3131, 0.369]
+    distribution_hint: 密集分布在 0.313–0.369 区间
+
+  # Rank 8: BPC Volume Compression - 成交量压缩度，影响仓位
+  - id: evidence_bpc_volume_compression
+    feature: bpc_volume_compression_pct
+    rank: 8
+    split_count: 2
+    usage_hint: 成交量压缩度，影响仓位大小
+    affects:
+      - position_size
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.2299]
+    distribution_hint: 单一阈值 0.2299
+
+  # Rank 9: Vol Slope 10 - 短期成交量趋势
+  - id: evidence_vol_slope_10
+    feature: vol_slope_10
+    rank: 9
+    split_count: 2
+    usage_hint: 短期成交量趋势，影响加仓决策
+    affects:
+      - scale_in_allowed
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.0001]
+    distribution_hint: 单一阈值 0.0001
+
+  # Rank 10: Terminal Risk Score - 终端风险，影响仓位与 TP
+  - id: evidence_terminal_risk
+    feature: terminal_risk_score
+    rank: 10
+    split_count: 2
+    usage_hint: 终端风险评分，高风险时压缩仓位与 TP
+    affects:
+      - position_size
+      - tp_range
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.0039]
+    distribution_hint: 单一阈值 0.0039
+
+  # Rank 11: WPT Ignition Score - 小波点火分，影响 trailing
+  - id: evidence_wpt_ignition
+    feature: wpt_ignition_score
+    rank: 11
+    split_count: 2
+    usage_hint: 小波点火分，高时可激进 trailing
+    affects:
+      - trailing_speed
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.2274]
+    distribution_hint: 单一阈值 0.2274
+
+  # Rank 12: SMA 200 Position - 价格相对位置，影响 TP 拉伸
+  - id: evidence_sma_200_position
+    feature: sma_200_position
+    rank: 12
+    split_count: 2
+    usage_hint: 价格在 200MA 上方越远，TP 可拉得更远
+    affects:
+      - tp_range
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.0078, 0.0242]
+    distribution_hint: 密集分布在 0.0078–0.0242 区间
+
+  # Rank 13: VP Compression Score - VP 压缩度，影响信心
+  - id: evidence_vp_compression
+    feature: vp_compression_score
+    rank: 13
+    split_count: 2
+    usage_hint: VP 压缩度，高时订单簿集中，支持更大仓位
+    affects:
+      - position_size
+      - confidence_boost
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    threshold_examples: [0.281, 0.2923]
+    distribution_hint: 密集分布在 0.281–0.292 区间
+
+# ============================================================
+# 📊 Evidence 使用指南
+# ============================================================
+# 1. Evidence 不做硬 veto，只调整执行参数
+# 2. 通过 quantile_mapping 将特征值映射到 5 档语义标签
+# 3. 根据 affects 字段，调整对应的 execution 参数：
+#    - tp_range: TP 拉伸范围 [1.5R, 3.5R]
+#    - trailing_speed: trailing stop 速度 [slow, medium, fast]
+#    - scale_in_allowed: 是否允许加仓 [true, false]
+#    - position_size: 仓位大小 multiplier [0.5x, 1.0x, 1.5x]
+#    - confidence_boost: 置信度调整 [-0.2, +0.2]

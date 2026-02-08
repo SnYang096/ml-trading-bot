@@ -9077,29 +9077,103 @@ def gate():
 
 @gate.command("apply-archetype")
 @click.option("--logs", required=True, help="Input logs file (parquet)")
-@click.option("--out", required=True, help="Output gated logs file (parquet)")
-@click.option("--features-store-layer", required=True, help="FeatureStore layer name")
+@click.option("--out", default=None, help="Output gated logs file (auto: latest train dir if not specified)")
+@click.option("--features-store-layer", default=None, help="FeatureStore layer name (auto-detect latest if not specified)")
 @click.option("--features-store-root", default="feature_store", help="FeatureStore root directory")
 @click.option(
-    "--execution-archetypes",
-    default="config/nnmultihead/execution_archetypes.yaml",
-    help="Path to execution_archetypes.yaml",
+    "--strategy",
+    default=None,
+    help="Strategy name (e.g., bpc, htf). Loads from config/strategies/{strategy}/archetypes/",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def gate_apply_archetype(logs, out, features_store_layer, features_store_root, execution_archetypes, docker):
+@click.option(
+    "--strategies-root",
+    default="config/strategies",
+    help="Root directory for strategy configs",
+)
+@click.option("--docker/--no-docker", default=False, help="Run in Docker (default: no-docker)")
+def gate_apply_archetype(logs, out, features_store_layer, features_store_root, strategy, strategies_root, docker):
     """Apply archetype gate rules to logs."""
+    import json
+    # 自动检测匹配 strategy 的最新 feature store layer
+    if features_store_layer is None:
+        from pathlib import Path
+        fs_root = Path(features_store_root)
+        if fs_root.exists():
+            layers = [d for d in fs_root.iterdir() if d.is_dir() and not d.name.startswith('.')]
+            matching_layers = []
+            for layer_dir in layers:
+                meta_file = fs_root / f"{layer_dir.name}.meta.json"
+                if meta_file.exists():
+                    try:
+                        with open(meta_file) as f:
+                            meta = json.load(f)
+                        config_dir = meta.get("config_dir", "")
+                        # 匹配 strategy
+                        if strategy and f"/strategies/{strategy}" in config_dir:
+                            matching_layers.append(layer_dir)
+                        elif not strategy:
+                            matching_layers.append(layer_dir)
+                    except:
+                        pass
+            
+            if matching_layers:
+                # 按修改时间排序，取最新的
+                latest = max(matching_layers, key=lambda p: p.stat().st_mtime)
+                features_store_layer = latest.name
+                click.echo(f"ℹ️ Auto-detected feature store layer for {strategy or 'all'}: {features_store_layer}")
+            elif layers:
+                # 无匹配的 layer，回退到最新的任意 layer
+                latest = max(layers, key=lambda p: p.stat().st_mtime)
+                features_store_layer = latest.name
+                click.echo(f"⚠️ No layer found for strategy '{strategy}', using latest: {features_store_layer}")
+            else:
+                click.echo(f"❌ No feature store layers found in {features_store_root}", err=True)
+                sys.exit(1)
+        else:
+            click.echo(f"❌ Feature store root not found: {features_store_root}", err=True)
+            sys.exit(1)
+    
+    # 自动检测输出目录：放到最新的训练结果目录下
+    if out is None:
+        from pathlib import Path
+        results_dir = Path("results")
+        if results_dir.exists():
+            # 查找匹配 strategy 的最新训练目录
+            train_dirs = []
+            for d in results_dir.iterdir():
+                if d.is_dir() and d.name.startswith("train_final_"):
+                    strategy_dir = d / strategy if strategy else None
+                    if strategy_dir and strategy_dir.exists():
+                        train_dirs.append(strategy_dir)
+                    elif not strategy:
+                        train_dirs.append(d)
+            
+            if train_dirs:
+                latest_train = max(train_dirs, key=lambda p: p.stat().st_mtime)
+                out = str(latest_train / "logs_gated.parquet")
+                click.echo(f"ℹ️ Auto output to: {out}")
+            else:
+                out = "results/logs_gated.parquet"
+                click.echo(f"⚠️ No train dir found, output to: {out}")
+        else:
+            out = "results/logs_gated.parquet"
+            click.echo(f"⚠️ Results dir not found, output to: {out}")
+    
+    use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--logs",
-        f"/workspace/{logs}" if docker and not _is_in_docker() else logs,
+        f"/workspace/{logs}" if use_workspace_prefix else logs,
         "--out",
-        f"/workspace/{out}" if docker and not _is_in_docker() else out,
+        f"/workspace/{out}" if use_workspace_prefix else out,
         "--features-store-layer",
         features_store_layer,
         "--features-store-root",
-        f"/workspace/{features_store_root}" if docker and not _is_in_docker() else features_store_root,
-        "--execution-archetypes",
-        f"/workspace/{execution_archetypes}" if docker and not _is_in_docker() else execution_archetypes,
+        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        "--strategies-root",
+        f"/workspace/{strategies_root}" if use_workspace_prefix else strategies_root,
     ]
+    if strategy:
+        args.extend(["--strategy", strategy])
     sys.exit(run_script("scripts/apply_archetype_gate.py", args, docker=docker))
 
 

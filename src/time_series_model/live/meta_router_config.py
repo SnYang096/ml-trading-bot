@@ -28,7 +28,7 @@ _DEFAULT_CONFIG_PATH = "config/live/live_config_defaults.yaml"
 def load_meta_router_live_config(
     *,
     config_path: Optional[str] = None,
-    archetype_registry_path: Optional[str] = None,
+    strategies_root: Optional[str] = None,
 ) -> MetaRouterLiveConfig:
     """
     Load live config from YAML file. Used at startup; no database.
@@ -42,14 +42,10 @@ def load_meta_router_live_config(
     # enabled_archetypes
     enabled_raw = raw.get("enabled_archetypes", "ALL")
     if isinstance(enabled_raw, str) and enabled_raw.strip().upper() == "ALL":
-        reg_path = (
-            archetype_registry_path or "config/nnmultihead/execution_archetypes.yaml"
-        )
-        from src.time_series_model.nnmultihead.strategy_profile import (
-            load_execution_archetypes_registry,
-        )
+        strategies_root = strategies_root or "config/strategies"
+        from src.time_series_model.archetype import load_all_strategy_archetypes
 
-        arches = load_execution_archetypes_registry(reg_path)
+        arches = load_all_strategy_archetypes(strategies_root)
         enabled_archetypes = list(arches.keys())
     elif isinstance(enabled_raw, list):
         enabled_archetypes = [str(x) for x in enabled_raw]

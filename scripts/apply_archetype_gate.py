@@ -38,8 +38,9 @@ from src.time_series_model.core.constitution.execution_evidence import (  # noqa
     load_evidence_quantiles,
 )
 from src.time_series_model.live.tree_gate import apply_gate_rules  # noqa: E402
-from src.time_series_model.nnmultihead.strategy_profile import (  # noqa: E402
-    load_execution_archetypes_registry,
+from src.time_series_model.archetype import (  # noqa: E402
+    load_strategy_archetype,
+    load_all_strategy_archetypes,
 )
 
 
@@ -251,8 +252,14 @@ def main() -> int:
     p.add_argument("--start-date", default=None)
     p.add_argument("--end-date", default=None)
     p.add_argument(
-        "--execution-archetypes",
-        default="config/nnmultihead/execution_archetypes.yaml",
+        "--strategy",
+        default=None,
+        help="Strategy name (e.g., bpc, htf). If set, loads from config/strategies/{strategy}/archetypes/",
+    )
+    p.add_argument(
+        "--strategies-root",
+        default="config/strategies",
+        help="Root directory for strategy configs",
     )
     p.add_argument(
         "--db-path",
@@ -288,8 +295,22 @@ def main() -> int:
     args = p.parse_args()
 
     logs_df = _ensure_timestamp_col(_read_any(Path(args.logs)))
+
+    # 兼容 _symbol 列名（训练输出使用 _symbol）
+    if "_symbol" in logs_df.columns and "symbol" not in logs_df.columns:
+        logs_df["symbol"] = logs_df["_symbol"]
+
+    # 如果没有 timestamp 列，尝试从 index 获取
+    if "timestamp" not in logs_df.columns:
+        if isinstance(logs_df.index, pd.DatetimeIndex):
+            logs_df["timestamp"] = logs_df.index
+        elif logs_df.index.name == "timestamp":
+            logs_df = logs_df.reset_index()
+
     if "symbol" not in logs_df.columns or "timestamp" not in logs_df.columns:
-        raise KeyError("logs file must include symbol and timestamp columns")
+        raise KeyError(
+            f"logs file must include symbol and timestamp columns. Found: {list(logs_df.columns)[:10]}..."
+        )
     # Regime column is optional (not used by gate rules, but kept for diagnostics)
     if "regime" not in logs_df.columns:
         logs_df["regime"] = "NO_TRADE"  # Default for diagnostics only
@@ -363,8 +384,20 @@ def main() -> int:
             semantic_floors = json.load(f)
         # Expected keys: tc_semantic_score_p95 (ceiling), te_semantic_score_p10 (floor)
 
-    arches = load_execution_archetypes_registry(str(args.execution_archetypes))
-    # Filter out VolMeanCompressionExpansionReversion (not suitable for current framework)
+    # Load archetypes from new layered structure
+    if args.strategy:
+        # Load single strategy archetype
+        try:
+            arch = load_strategy_archetype(args.strategy, args.strategies_root)
+            arches = {arch.name: arch}
+        except Exception as e:
+            print(f"❌ Failed to load strategy '{args.strategy}': {e}", file=sys.stderr)
+            return 1
+    else:
+        # Load all strategy archetypes
+        arches = load_all_strategy_archetypes(args.strategies_root)
+
+    # Filter out unsupported archetypes
     arches = {
         k: v for k, v in arches.items() if k != "VolMeanCompressionExpansionReversion"
     }
@@ -810,6 +843,38 @@ def main() -> int:
         "   gate_decisions:",
         json.dumps(out["gate_decision"].value_counts().to_dict(), ensure_ascii=False),
     )
+
+    # 计算 gated Sharpe（如果有收益列）
+    rr_col = None
+    for col in ["forward_rr", "success_no_rr_extreme", "ret_mean"]:
+        if col in out.columns:
+            rr_col = col
+            break
+
+    if rr_col:
+        allowed = out[out["gate_decision"] == "allow"]
+        if len(allowed) > 0:
+            rr_values = allowed[rr_col].dropna()
+            if len(rr_values) > 1:
+                mean_rr = float(rr_values.mean())
+                std_rr = float(rr_values.std(ddof=1))
+                sharpe = mean_rr / std_rr if std_rr > 0 else 0.0
+                print(f"\n   📈 Gated Backtest (allow only):")
+                print(f"      Trades: {len(allowed)}")
+                print(f"      Mean {rr_col}: {mean_rr:.4f}")
+                print(f"      Std {rr_col}: {std_rr:.4f}")
+                print(f"      Sharpe: {sharpe:.4f}")
+
+                # 对比 veto 的
+                vetoed = out[out["gate_decision"] == "veto"]
+                if len(vetoed) > 0:
+                    veto_rr = vetoed[rr_col].dropna()
+                    if len(veto_rr) > 0:
+                        veto_mean = float(veto_rr.mean())
+                        print(f"      Vetoed Mean {rr_col}: {veto_mean:.4f}")
+                        print(
+                            f"      → Gate 效果: {'+' if mean_rr > veto_mean else ''}{mean_rr - veto_mean:.4f}"
+                        )
 
     # Print statistics for multiple archetypes passing gate
     if multi_archetype_stats:

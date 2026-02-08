@@ -9,9 +9,10 @@ from src.time_series_model.core.constitution.execution_evidence import (
 )
 from src.time_series_model.live.direction_resolver import resolve_direction
 from src.time_series_model.live.tree_gate import apply_gate_rules
-from src.time_series_model.nnmultihead.strategy_profile import (
-    ExecutionArchetype,
-    load_execution_archetypes_registry,
+from src.time_series_model.archetype import (
+    StrategyArchetype,
+    load_strategy_archetype,
+    load_all_strategy_archetypes,
 )
 from src.time_series_model.portfolio.pcm import (
     SymbolDecision,
@@ -46,7 +47,7 @@ class TradeIntent:
 
 @dataclass
 class MetaRouterCoreConfig:
-    archetype_registry_path: str = "config/nnmultihead/execution_archetypes.yaml"
+    strategies_root: str = "config/strategies"
     evidence_quantiles_path: Optional[str] = None
     enabled_archetypes: Optional[List[str]] = (
         None  # Changed: direct list, no mode grouping
@@ -69,7 +70,7 @@ class MetaRouterCore:
 
     def __init__(self, cfg: Optional[MetaRouterCoreConfig] = None) -> None:
         self.cfg = cfg or MetaRouterCoreConfig()
-        self._arches: Dict[str, ExecutionArchetype] = {}
+        self._arches: Dict[str, StrategyArchetype] = {}
         self._quantiles: Dict[str, Any] | None = None
         self._live_config: Optional[MetaRouterLiveConfig] = None
         self._load_configs()
@@ -80,15 +81,13 @@ class MetaRouterCore:
             try:
                 self._live_config = load_meta_router_live_config(
                     config_path=self.cfg.live_config_path,
-                    archetype_registry_path=self.cfg.archetype_registry_path,
+                    strategies_root=self.cfg.strategies_root,
                 )
             except Exception:
                 self._live_config = None
 
         try:
-            self._arches = load_execution_archetypes_registry(
-                self.cfg.archetype_registry_path
-            )
+            self._arches = load_all_strategy_archetypes(self.cfg.strategies_root)
         except Exception:
             self._arches = {}
         self._quantiles = load_evidence_quantiles(self.cfg.evidence_quantiles_path)

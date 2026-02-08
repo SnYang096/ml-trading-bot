@@ -49,6 +49,8 @@ class LabelConfig:
     # Optional: model_hints to override model.yaml defaults (e.g., task_type, objective)
     # Useful for labels like labels_return_tree.yaml that need regression instead of binary
     model_hints: Dict[str, Any] = field(default_factory=dict)
+    # Optional: KPI definitions for specialized evaluation (e.g., Return Tree ranking KPIs)
+    kpi_definition: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -277,12 +279,14 @@ class StrategyConfigLoader:
         filters = data.get("filters", []) or []
         post_filters = data.get("post_label_filters", []) or []
         model_hints = data.get("model_hints", {}) or {}
+        kpi_definition = data.get("kpi_definition", {}) or {}
         return LabelConfig(
             target_column=target,
             generator=generator,
             filters=filters,
             post_label_filters=post_filters,
             model_hints=model_hints,
+            kpi_definition=kpi_definition,
         )
 
     def _parse_model_config(self, data: Dict[str, Any]) -> ModelConfig:

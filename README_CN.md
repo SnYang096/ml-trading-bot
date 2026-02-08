@@ -3,6 +3,14 @@
 **English**: [README.md](README.md)  
 **文档索引**: [docs/README.md](docs/README.md)
 
+## 框架目的
+
+核心地位的是启发式规则（domain heuristics）：
+比如“订单流真空不要做突破”、“BPC pullback 太浅是假形态”，这些本质上是你的交易哲学
+框架里所有的树模型、lift 曲线、Failure Analysis，都是在帮你验证这些启发式在历史数据上的有效性，而不是要推翻它们
+
+大概率启发式规则本身（比如订单流/结构/VP 场景）是对的，框架的职责是在历史上反证“在哪些子场景成功率明显掉下去”，然后把这些场景排除掉或降权。
+
 ## 底层哲学
 [系统哲学基础](docs/architecture/系统哲学基础.md)
 [顶级量化团队.md](docs/architecture/顶级量化团队.md)

@@ -34,4 +34,46 @@ filters:
   - column: success_no_rr_extreme
     notna: true
 
+# Gate 模型专属 KPI 定义
+# 注意：Gate 的核心目标是 Lift（降低失败率），不是 AUC
+kpi_definition:
+  # 1️⃣ Veto 能力 KPI（核心）
+  veto_ability:
+    description: "Gate 是否能有效降低 failure_rr_extreme 发生率"
+    metrics:
+      - name: lift_at_70pct
+        description: "Top 70% 覆盖时的 Lift (failure rate reduction)"
+        target: "<= 0.90x"  # 至少降低 10% 失败率
+        critical: true
+      - name: lift_at_50pct
+        description: "Top 50% 覆盖时的 Lift"
+        target: "<= 0.85x"  # 降低 15% 失败率
+        critical: true
+      - name: plateau_stability
+        description: "Lift 在 50%-80% 覆盖区间的稳定性"
+        target: "std <= 0.05"  # 高原区域 lift 波动小
+        critical: false
+
+  # 2️⃣ 覆盖率-精度权衡 KPI
+  coverage_precision:
+    description: "在保持覆盖率的同时提高精度"
+    metrics:
+      - name: auc_roc
+        description: "ROC AUC (辅助指标)"
+        target: ">= 0.55"  # 略高于随机即可
+        critical: false
+      - name: precision_at_recall_70
+        description: "Recall=70% 时的 Precision"
+        target: ">= 0.70"  # 保留 70% 样本时，好样本占比 >= 70%
+        critical: false
+
+  # 3️⃣ 跨符号一致性 KPI
+  stability:
+    description: "Gate 在不同符号上的 veto 能力一致性"
+    metrics:
+      - name: symbol_lift_consistency
+        description: "各符号 lift < 1.0 的比例"
+        target: ">= 60%"  # 60% 的符号都有正向 lift
+        critical: false
+
 post_label_filters: []

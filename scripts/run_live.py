@@ -75,9 +75,9 @@ async def main() -> None:
     window_minutes = live_cfg.window_minutes
 
     core_cfg = MetaRouterCoreConfig(
-        archetype_registry_path=os.getenv(
-            "MLBOT_ARCHETYPE_REGISTRY",
-            "config/nnmultihead/execution_archetypes.yaml",
+        strategies_root=os.getenv(
+            "MLBOT_STRATEGIES_ROOT",
+            "config/strategies",
         ),
         evidence_quantiles_path=os.getenv("MLBOT_EVIDENCE_QUANTILES_JSON"),
         live_config_path=live_config_path,

@@ -1,0 +1,93 @@
+# BPC Gate Archetype (structure-only, no math proxies / orderflow)
+# 来源: config/strategies/bpc/risk_gate.yaml 简化版
+# Hard Gate：没有稳定平台 = 不准调阈值
+# Soft Filter：没有稳定平台 = 降级为弱约束或只参与累积权重
+# System Safety：一律不做 lift / robustness，只做人为上限
+# 不是所有 gate 都“应该”有 plateau
+
+# Hard Gate 必须有 plateau，否则不配存在
+# Soft Filter 不需要 plateau，只要语义正确 + 不造成系统脆弱性
+# https://chatgpt.com/s/t_69882ac7f714819187b27340e6087082
+
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - soft_filter
+    - preconditions
+    - evidence
+    - decision
+  evaluation_order: system_safety -> hard_gate -> soft_filter -> preconditions -> evidence -> decision
+  governance:
+    soft_filter_floor:
+      enabled: true
+      min_cumulative_weight: 0.25
+    failure_budget:
+      max_hard_deny_rate: 0.50
+      alert_threshold: 0.45
+
+hard_gates:
+  - id: gate_direction_not_committed
+    tag: HARD_DIRECTION_NOT_COMMITTED
+    phase: hard_gate
+    priority: 0
+    reason: "[HARD] 方向结构不稳 — BPC 语义不成立"
+    when:
+      any_of:
+        - bpc_dir_consistency_long:
+            value_lt: 0.55
+        - bpc_breakout_direction:
+            value_lte: 0
+    then:
+      action: deny
+
+  # - id: hard_bpc_pullback_too_shallow
+  #   tag: HARD_BPC_PULLBACK_TOO_SHALLOW
+  #   phase: hard_gate
+  #   priority: 1
+  #   reason: "[HARD] 回踩过浅 — BPC 形态疑似假结构"
+  #   when:
+  #     bpc_pullback_depth:
+  #       value_lt: 0.13
+  #   then:
+  #     action: deny
+
+soft_filters:
+  - id: filter_price_awkward_zone
+    tag: SOFT_PRICE_AWKWARD_ZONE
+    phase: soft_filter
+    priority: 1
+    reason: "[SOFT] 价格在尴尬区 — RR 不理想"
+    when:
+      all_of:
+        - sma_200_position:
+            value_gt: -0.10
+        - sma_200_position:
+            value_lt: 0.10
+    then:
+      action: downweight
+      weight: 0.5
+
+  - id: filter_direction_flip_frequent
+    tag: SOFT_DIRECTION_FLIP_FREQUENT
+    phase: soft_filter
+    priority: 1
+    reason: "[SOFT] 方向翻转频繁 — RR 预期下降"
+    when:
+      bpc_dir_flip_count:
+        value_gt: 0.65
+    then:
+      action: downweight
+      weight: 0.7
+
+system_safety:
+  - id: safety_reflexivity_crowded
+    tag: SYSTEM_REFLEXIVITY_CROWDED
+    phase: system_safety
+    priority: 0
+    reason: "[SYSTEM] 反身性拥挤 — 市场单边过度"
+    when:
+      ofci_pct:
+        quantile_gt: 0.85
+    then:
+      action: deny
