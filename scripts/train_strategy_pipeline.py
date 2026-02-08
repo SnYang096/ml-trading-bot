@@ -87,6 +87,8 @@ BASE_DATA_COLUMNS = {
 
 # 缓存 output_columns 集合（方案 C：基于元数据自动过滤）
 _VALID_OUTPUT_COLUMNS: Optional[set] = None
+# 缓存 price_unit 列集合（方案 D：基于 output_normalization_map 排除绝对价格特征）
+_PRICE_UNIT_COLUMNS: Optional[set] = None
 
 # 归一化后缀（方案 A + C 结合）
 NORMALIZED_SUFFIXES = ("_pct", "_rank", "_zscore", "_normalized", "_f")
@@ -136,8 +138,9 @@ def _load_valid_output_columns(
 
     只有在 output_columns 中声明的列才允许进入模型训练。
     原始数据列（如 cvd_change_1、macd 等）不在任何 output_columns 中，自动被排除。
+    同时收集 output_normalization_map 中标记为 price_unit/raw/usd 的列，用于方案 D 过滤。
     """
-    global _VALID_OUTPUT_COLUMNS
+    global _VALID_OUTPUT_COLUMNS, _PRICE_UNIT_COLUMNS
     if _VALID_OUTPUT_COLUMNS is not None:
         return _VALID_OUTPUT_COLUMNS
 
@@ -149,16 +152,29 @@ def _load_valid_output_columns(
         features = obj.get("features", {}) or {}
 
         valid_cols = set()
+        price_unit_cols = set()
         for feat_name, feat_info in features.items():
             if isinstance(feat_info, dict):
                 out_cols = feat_info.get("output_columns") or []
                 for c in out_cols:
                     valid_cols.add(str(c))
+                # 方案 D：收集 price_unit / raw / usd 特征
+                norm_map = (feat_info.get("compute_params") or {}).get(
+                    "output_normalization_map"
+                ) or {}
+                for col_name, norm_type in norm_map.items():
+                    if str(norm_type) in {"price_unit", "raw", "usd"}:
+                        price_unit_cols.add(str(col_name))
 
         _VALID_OUTPUT_COLUMNS = valid_cols
+        _PRICE_UNIT_COLUMNS = price_unit_cols
         print(
             f"   ℹ️  Loaded {len(valid_cols)} valid output columns from feature_dependencies.yaml"
         )
+        if price_unit_cols:
+            print(
+                f"   ℹ️  Found {len(price_unit_cols)} price_unit columns to exclude: {sorted(price_unit_cols)}"
+            )
         return valid_cols
     except Exception as e:
         print(
@@ -572,6 +588,16 @@ def determine_feature_columns(
     filtered_count = before_count - len(cols)
     if filtered_count > 0:
         print(f"   ℹ️  Auto-filtered {filtered_count} raw features (not normalized)")
+
+    # 方案 D：排除 output_normalization_map 中标记为 price_unit/raw/usd 的绝对价格特征
+    if _PRICE_UNIT_COLUMNS:
+        before_count = len(cols)
+        cols = [c for c in cols if c not in _PRICE_UNIT_COLUMNS]
+        filtered_count = before_count - len(cols)
+        if filtered_count > 0:
+            print(
+                f"   ℹ️  Auto-filtered {filtered_count} price_unit features (not cross-asset comparable)"
+            )
 
     if exclude_cols:
         cols = [c for c in cols if c not in set(exclude_cols)]

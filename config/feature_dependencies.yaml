@@ -593,6 +593,10 @@ features:
       wavelet: db4
       level: 4
       normalized: true
+      output_normalization_map:
+        wpt_price_trend: price_unit  # 绝对价格值，跨品种不可比
+        wpt_price_fluctuation: price_unit  # 绝对价格波动，跨品种不可比
+        wpt_price_reconstructed: price_unit  # 绝对重构价格，跨品种不可比
     notes: '所有 SR（POC、HAL、Swing、ZigZag）都应基于 WPT 重构价格计算，实现天然多尺度对齐。
 
       - 低频子带（''aaaa''）→ 长期 SR（周线级）
@@ -631,9 +635,9 @@ features:
       return_reconstructed_price: false
       normalized: true
       output_normalization_map:
-        wpt_price_trend: unitless
-        wpt_price_fluctuation: unitless
-        wpt_price_reconstructed: unitless
+        wpt_price_trend: price_unit  # 绝对价格值，跨品种不可比，禁止直接用于训练
+        wpt_price_fluctuation: price_unit  # 绝对价格波动，跨品种不可比
+        wpt_price_reconstructed: price_unit  # 绝对重构价格，跨品种不可比
         wpt_price_energy_low_ratio: bounded_0_1
         wpt_price_energy_mid_ratio: bounded_0_1
         wpt_price_energy_high_ratio: bounded_0_1
@@ -878,8 +882,8 @@ features:
       use_log_returns: true  # 对 log returns 做 WPT，避免趋势能量主导低频带
       normalized: true
       output_normalization_map:
-        wpt_price_fluctuation: unitless
-        wpt_price_trend: unitless
+        wpt_price_fluctuation: price_unit  # 绝对价格波动，跨品种不可比
+        wpt_price_trend: price_unit  # 绝对价格值，跨品种不可比
         wpt_price_energy_low_ratio: bounded_0_1
         wpt_price_energy_mid_ratio: bounded_0_1
         wpt_price_energy_high_ratio: bounded_0_1

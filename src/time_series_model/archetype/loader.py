@@ -32,6 +32,7 @@ class GateRule:
     reason: str
     when: Dict[str, Any]
     then: Dict[str, Any]
+    frozen: bool = False  # 禁止优化阈值
 
     @property
     def is_hard(self) -> bool:
@@ -96,6 +97,7 @@ class GateConfig:
                         reason=str(r.get("reason", "")),
                         when=dict(r.get("when") or {}),
                         then=dict(r.get("then") or {}),
+                        frozen=bool(r.get("frozen", False)),
                     )
                 )
             return result
@@ -114,6 +116,18 @@ class GateConfig:
 # Evidence Config
 # =============================================================================
 
+_DIRECTION_MAP = {
+    "positive": "higher_is_better",
+    "negative": "lower_is_better",
+    "higher_is_better": "higher_is_better",
+    "lower_is_better": "lower_is_better",
+}
+
+
+def _map_direction(raw: str) -> str:
+    """Map YAML direction values to internal direction constants."""
+    return _DIRECTION_MAP.get(str(raw).lower().strip(), "higher_is_better")
+
 
 @dataclass
 class EvidenceFeature:
@@ -129,6 +143,10 @@ class EvidenceFeature:
     quantile_labels: List[str]
     threshold_examples: List[float]
     distribution_hint: str
+    # ❗ Bug 1 修复: 特征方向
+    # "higher_is_better": 值越大越好 (如 strength, momentum)
+    # "lower_is_better": 值越小越好 (如 volatility, risk, drawdown)
+    direction: str = "higher_is_better"
 
     def compute_label(self, value: float, quantiles: Dict[str, float]) -> str:
         """
@@ -271,6 +289,7 @@ class EvidenceConfig:
                     ),
                     threshold_examples=list(e.get("threshold_examples") or []),
                     distribution_hint=str(e.get("distribution_hint", "")),
+                    direction=_map_direction(e.get("direction", "positive")),
                 )
             )
 

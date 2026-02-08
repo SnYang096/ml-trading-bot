@@ -84,11 +84,27 @@ class UnifiedOptimizationConfig:
     threshold_step: float = 0.05  # 阈值扫描步长
     threshold_range: Tuple[float, float] = (0.05, 0.95)  # 阈值范围
 
+    # Hard gate 严格模式：没有 plateau 则不允许 fallback 到单点
+    # 默认 False，允许 robustness fallback（过渡态）
+    strict_hard: bool = False
+
+    # =========================================================================
+    # Hard Gate NaN Lift 例外通道配置 https://chatgpt.com/s/t_69886fc99e7481918ad7880c8a65f732
+    # 语义：Hard Gate 的合法性来源是"结构稳定性 + 执行风险厌恶"，不是 lift
+    # 只有同时满足以下所有条件，才允许 lift=NaN 的 Hard Gate 进入 robustness 仲裁
+    # =========================================================================
+    allow_hard_nan_lift: bool = True  # 是否允许 Hard Gate 的 NaN lift 例外
+    nan_lift_max_pass_rate_bad: float = 0.01  # pass_rate_bad 必须极低
+    nan_lift_min_pass_rate_good: float = 0.20  # pass_rate_good 必须足够高
+    nan_lift_min_coverage: float = 0.15  # 特征覆盖率下限
+    nan_lift_min_robustness: float = 0.60  # robustness 下限
+    nan_lift_min_plateau_width: float = 0.03  # 阈值区间宽度下限（排除点估计）
+
 
 def compute_lift_for_threshold(
     df: pd.DataFrame,
     feature_col: str,
-    operator: str,  # 'lt', 'gt', 'le', 'ge'
+    operator: str,  # 'lt', 'gt', 'le', 'ge' - 这是 DENY 条件的 operator
     threshold: float,
     label_col: str = "is_good",
 ) -> Dict[str, float]:
@@ -98,12 +114,19 @@ def compute_lift_for_threshold(
     Args:
         df: 包含特征和标签的 DataFrame
         feature_col: 特征列名
-        operator: 比较运算符
+        operator: DENY 条件的比较运算符 (来自 gate.yaml 的 value_lt/value_gt 等)
         threshold: 阈值
         label_col: 标签列 (1=good, 0=bad)
 
     Returns:
         包含 lift, pass_rate_good, pass_rate_bad, pass_rate_all 的字典
+
+    Note:
+        operator 是 DENY 条件，所以 PASS 条件是其反面:
+        - deny when `value_lt X` → pass when `>= X`
+        - deny when `value_gt X` → pass when `<= X`
+        - deny when `value_le X` → pass when `> X`
+        - deny when `value_ge X` → pass when `< X`
     """
     if feature_col not in df.columns:
         return {
@@ -113,18 +136,28 @@ def compute_lift_for_threshold(
             "pass_rate_all": 0.0,
         }
 
-    # 计算 pass 条件
+    # 计算 PASS 条件 (deny 条件的反面)
     feat_values = df[feature_col]
-    if operator == "lt":
-        passed = feat_values < threshold
-    elif operator == "le":
-        passed = feat_values <= threshold
-    elif operator == "gt":
-        passed = feat_values > threshold
-    elif operator == "ge":
-        passed = feat_values >= threshold
+
+    # ❗ 问题 1 修复: NaN 特征的显式处理
+    # Policy: NaN = 不参与 gate（既不是 pass 也不是 deny）
+    # 这样避免数据缺失导致的假稳态
+    valid_mask = feat_values.notna()
+    n_valid = valid_mask.sum()
+
+    if operator == "lt":  # deny when < threshold, so pass when >= threshold
+        passed = valid_mask & (feat_values >= threshold)
+    elif operator == "le":  # deny when <= threshold, so pass when > threshold
+        passed = valid_mask & (feat_values > threshold)
+    elif operator == "gt":  # deny when > threshold, so pass when <= threshold
+        passed = valid_mask & (feat_values <= threshold)
+    elif operator == "ge":  # deny when >= threshold, so pass when < threshold
+        passed = valid_mask & (feat_values < threshold)
     else:
-        passed = pd.Series([True] * len(df))
+        # ❗ 无效 operator 不应静默通过，返回错误状态
+        raise ValueError(
+            f"Invalid operator: {operator}. Expected one of: lt, le, gt, ge"
+        )
 
     # 分组
     is_good = df[label_col] == 1
@@ -142,30 +175,44 @@ def compute_lift_for_threshold(
             "pass_rate_all": 0.0,
         }
 
-    # 计算各组通过率
-    pass_rate_good = (passed & is_good).sum() / n_good if n_good > 0 else 0.0
-    pass_rate_bad = (passed & is_bad).sum() / n_bad if n_bad > 0 else 0.0
-    pass_rate_all = passed.sum() / n_all if n_all > 0 else 0.0
+    # =========================================================================
+    # ❗ Bug A 修复: pass_rate 分母用 valid (参与 gate 的) 样本数
+    # NaN 样本不参与 gate，所以不应计入分母
+    # 语义: "在参与 gate 的样本中，通过率是多少"
+    # =========================================================================
+    valid_good = (is_good & valid_mask).sum()
+    valid_bad = (is_bad & valid_mask).sum()
+
+    # 计算各组通过率（分母是 valid 样本数）
+    pass_rate_good = (passed & is_good).sum() / valid_good if valid_good > 0 else 0.0
+    pass_rate_bad = (passed & is_bad).sum() / valid_bad if valid_bad > 0 else 0.0
+    pass_rate_all = passed.sum() / n_valid if n_valid > 0 else 0.0
 
     # 计算 lift
-    # lift = pass_rate_good / pass_rate_bad - 1 (如果 pass_rate_bad > 0.01)
-    if pass_rate_bad > 0.01:  # 避免除零
+    # lift = pass_rate_good / pass_rate_bad - 1
+    # ❗ 当 pass_rate_bad 太小时，直接返回 NaN，不使用任何 fallback 公式
+    # 避免制造“假高原”和虚假高 lift
+    if pass_rate_bad < 0.01:
+        # bad 样本几乎全被拒绝，lift 无法可靠计算
+        lift = float("nan")
+    elif pass_rate_bad > 0:
         lift = pass_rate_good / pass_rate_bad - 1.0
     else:
-        # 使用替代公式: lift = (pass_rate_good - pass_rate_all) / pass_rate_all
-        if pass_rate_all > 0:
-            lift = (pass_rate_good - pass_rate_all) / pass_rate_all
-        else:
-            lift = 0.0
+        lift = float("nan")
 
     return {
         "lift": lift,
+        "lift_valid": np.isfinite(lift),  # ❗ 问题 2 修复: 显式标记 lift 是否有效
         "pass_rate_good": pass_rate_good,
         "pass_rate_bad": pass_rate_bad,
         "pass_rate_all": pass_rate_all,
         "n_good": int(n_good),
         "n_bad": int(n_bad),
         "n_passed": int(passed.sum()),
+        "n_valid": int(n_valid),  # 有效样本数（非 NaN）
+        # ❗ Bug 1 修复: 输出 valid_good / valid_bad，供 robustness 使用
+        "valid_good": int(valid_good),  # 参与 gate 的 good 样本数
+        "valid_bad": int(valid_bad),  # 参与 gate 的 bad 样本数
     }
 
 
@@ -203,6 +250,27 @@ def compute_robustness_score(
     base_metrics = compute_lift_for_threshold(
         df, feature_col, operator, threshold, label_col
     )
+
+    # =========================================================================
+    # ❗ Bug 1 修复: robustness 与 lift 完全解耦
+    # robustness = "决策边界稳不稳"  (decision boundary stability)
+    # lift = "值不值得 gate"       (另一个阶段的决策)
+    # 这里只检查样本约束，不检查 lift 是否有限
+    # ❗ Bug 1 增强: 使用 valid_good / valid_bad（参与 gate 的样本数）
+    # 而不是全样本数，避免低覆盖率 feature 被误判为"样本充分"
+    # =========================================================================
+    valid_good = base_metrics.get("valid_good", base_metrics["n_good"])
+    valid_bad = base_metrics.get("valid_bad", base_metrics["n_bad"])
+
+    if valid_bad < config.min_samples_bad or valid_good < config.min_samples_good:
+        # 样本不足，统计不可信
+        return RobustnessScore(
+            param_stability=0.0,
+            temporal_stability=0.0,
+            sample_efficiency=0.0,
+            overall_score=0.0,
+        )
+
     base_pass_rate_all = base_metrics["pass_rate_all"]
     base_pass_rate_good = base_metrics["pass_rate_good"]
     base_pass_rate_bad = base_metrics["pass_rate_bad"]
@@ -211,6 +279,7 @@ def compute_robustness_score(
     # 1. Decision Boundary 平缓性 (Param Stability)
     # 核心问题：阈值附近 pass/fail 的判定结构稳不稳？
     # 衡量：pass_rate 随阈值扰动的变化程度（越小越平缓）
+    # ❗ Bug fix #4: 对变化做相对 scale，避免对不同量纲 feature 不可比
     # =========================================================================
     perturbations = [
         config.param_sensitivity_epsilon,
@@ -236,56 +305,138 @@ def compute_robustness_score(
         combined_change = delta_all + 0.5 * (delta_good + delta_bad)
         pass_rate_changes.append(combined_change)
 
-    if pass_rate_changes:
+    if pass_rate_changes and base_pass_rate_all > 0:
         avg_pass_rate_change = np.mean(pass_rate_changes)
+        # ❗ 问题 4 修复: 加 floor 避免 tight gate 虚高
+        # 当 base_pass_rate_all 很小时，小变化会被放大
+        # 设置 floor=0.1，确保只惩罚 unstable，不惩罚 tight
+        denom = max(base_pass_rate_all, 0.1)
+        relative_change = avg_pass_rate_change / denom
         # decision boundary 越平缓，变化越小，稳定性越高
-        # 使用更敏感的衡量：变化超过 5% 就开始惩罚
-        param_stability = 1.0 / (1.0 + 10 * avg_pass_rate_change)
+        param_stability = 1.0 / (1.0 + 10 * relative_change)
+
+        # ❗ Bug B 修复: 结构性惩罚 - 极端不对称 gate 不应被当成稳定结构
+        # 当 pass_rate_bad 极低时，这是 "全杀 bad" 型 knife-edge gate
+        # 看起来稳定，其实是因为已经没有 bad 可以 pass 了
+        if base_pass_rate_bad < 0.05:
+            param_stability *= 0.7
     else:
         param_stability = 1.0
 
     # =========================================================================
     # 2. 时间稳定性 (Temporal Stability)
     # 核心问题：前后半段数据的 pass_rate 是否一致？
-    # 衡量：样本结构的时间稳定性
+    # ❗ 问题 3 修复: multi-asset 场景用 per-symbol 计算，然后取中位数
     # =========================================================================
+    temporal_stability = 1.0
+    temporal_stability_valid = True  # 标记这个 score 是否可信
+
     if len(df) >= 100:
-        mid_point = len(df) // 2
-        df_first_half = df.iloc[:mid_point].copy()
-        df_second_half = df.iloc[mid_point:].copy()
+        # multi-asset 检测
+        if "symbol" in df.columns and df["symbol"].nunique() > 1:
+            # ❗ 问题 3 修复: per-symbol temporal stability
+            # ❗ 问题 5 修复: 使用样本数加权平均，避免小币与 BTC 权重相同
+            per_symbol_scores = []
+            per_symbol_weights = []  # 样本数作为权重
+            for sym, sym_df in df.groupby("symbol"):
+                if len(sym_df) >= 50:  # 每个 symbol 至少 50 个样本
+                    if "timestamp" in sym_df.columns:
+                        sym_df = sym_df.sort_values("timestamp")
+                    mid_point = len(sym_df) // 2
+                    df_first = sym_df.iloc[:mid_point]
+                    df_second = sym_df.iloc[mid_point:]
 
-        metrics_first = compute_lift_for_threshold(
-            df_first_half, feature_col, operator, threshold, label_col
-        )
-        metrics_second = compute_lift_for_threshold(
-            df_second_half, feature_col, operator, threshold, label_col
-        )
+                    m1 = compute_lift_for_threshold(
+                        df_first, feature_col, operator, threshold, label_col
+                    )
+                    m2 = compute_lift_for_threshold(
+                        df_second, feature_col, operator, threshold, label_col
+                    )
 
-        # 比较 pass_rate 的时间差异
-        temporal_diff_all = abs(
-            metrics_first["pass_rate_all"] - metrics_second["pass_rate_all"]
-        )
-        temporal_diff_good = abs(
-            metrics_first["pass_rate_good"] - metrics_second["pass_rate_good"]
-        )
-        temporal_diff_bad = abs(
-            metrics_first["pass_rate_bad"] - metrics_second["pass_rate_bad"]
-        )
+                    diff = abs(m1["pass_rate_all"] - m2["pass_rate_all"]) + 0.5 * (
+                        abs(m1["pass_rate_good"] - m2["pass_rate_good"])
+                        + abs(m1["pass_rate_bad"] - m2["pass_rate_bad"])
+                    )
 
-        # 综合时间差异
-        combined_temporal_diff = temporal_diff_all + 0.5 * (
-            temporal_diff_good + temporal_diff_bad
-        )
-        temporal_stability = 1.0 / (1.0 + 5 * combined_temporal_diff)
-    else:
-        temporal_stability = 1.0
+                    # ❗ Bug C 修复: temporal diff 加入 feature coverage drift
+                    # 如果前后半段 NaN 比例不同，说明特征覆盖率不稳
+                    valid_ratio_1 = (
+                        m1["n_valid"] / len(df_first) if len(df_first) > 0 else 0
+                    )
+                    valid_ratio_2 = (
+                        m2["n_valid"] / len(df_second) if len(df_second) > 0 else 0
+                    )
+                    valid_ratio_diff = abs(valid_ratio_1 - valid_ratio_2)
+                    diff += 0.5 * valid_ratio_diff  # 加入 coverage drift 惩罚
+
+                    score = 1.0 / (1.0 + 5 * diff)
+                    per_symbol_scores.append(score)
+                    per_symbol_weights.append(len(sym_df))
+
+            if per_symbol_scores:
+                # ❗ 问题 5 修复: 加权平均，大币种权重更高
+                temporal_stability = float(
+                    np.average(per_symbol_scores, weights=per_symbol_weights)
+                )
+            else:
+                temporal_stability = 0.5  # 没有足够样本的 symbol
+                temporal_stability_valid = False
+        else:
+            # 单资产: 确保按时间排序
+            if "timestamp" in df.columns:
+                df = df.sort_values("timestamp")
+            mid_point = len(df) // 2
+            df_first_half = df.iloc[:mid_point].copy()
+            df_second_half = df.iloc[mid_point:].copy()
+
+            metrics_first = compute_lift_for_threshold(
+                df_first_half, feature_col, operator, threshold, label_col
+            )
+            metrics_second = compute_lift_for_threshold(
+                df_second_half, feature_col, operator, threshold, label_col
+            )
+
+            # 比较 pass_rate 的时间差异
+            temporal_diff_all = abs(
+                metrics_first["pass_rate_all"] - metrics_second["pass_rate_all"]
+            )
+            temporal_diff_good = abs(
+                metrics_first["pass_rate_good"] - metrics_second["pass_rate_good"]
+            )
+            temporal_diff_bad = abs(
+                metrics_first["pass_rate_bad"] - metrics_second["pass_rate_bad"]
+            )
+
+            # 综合时间差异
+            combined_temporal_diff = temporal_diff_all + 0.5 * (
+                temporal_diff_good + temporal_diff_bad
+            )
+
+            # ❗ Bug C 修复: temporal diff 加入 feature coverage drift
+            # 如果前后半段 NaN 比例不同，说明特征覆盖率不稳
+            valid_ratio_first = (
+                metrics_first["n_valid"] / len(df_first_half)
+                if len(df_first_half) > 0
+                else 0
+            )
+            valid_ratio_second = (
+                metrics_second["n_valid"] / len(df_second_half)
+                if len(df_second_half) > 0
+                else 0
+            )
+            valid_ratio_diff = abs(valid_ratio_first - valid_ratio_second)
+            combined_temporal_diff += 0.5 * valid_ratio_diff  # coverage drift 惩罚
+
+            temporal_stability = 1.0 / (1.0 + 5 * combined_temporal_diff)
 
     # =========================================================================
     # 3. 样本效率 (Sample Efficiency)
     # 核心问题：有足够的 good/bad 样本支撑这个判定吗？
+    # ❗ Bug 2 修复: 使用 valid_good/valid_bad（参与 gate 的样本数）
+    # 而不是全样本数，避免低覆盖率 feature 被误判为"样本充分"
     # =========================================================================
-    n_good = base_metrics["n_good"]
-    n_bad = base_metrics["n_bad"]
+    n_good = base_metrics.get("valid_good", base_metrics["n_good"])
+    n_bad = base_metrics.get("valid_bad", base_metrics["n_bad"])
     n_passed = base_metrics["n_passed"]
 
     min_samples = min(config.min_samples_good, config.min_samples_bad)
@@ -327,13 +478,15 @@ def compute_robustness_score(
 def find_stable_lift_plateau(
     results: List[Dict[str, Any]],
     config: UnifiedOptimizationConfig,
+    actual_step: float = None,  # ❗ 问题 4 修复: 传入实际扫描步长
 ) -> Optional[Dict[str, Any]]:
     """
     找到稳定的lift平台区间 - 改进版，基于稳定性而非连续性
 
     Args:
-        results: 扫描结果列表
+        results: 扫描结果列表（应传入已筛选的 valid_results，避免在不可执行域上建立 plateau）
         config: 配置对象
+        actual_step: 实际扫描步长（用于 plateau 连续性判断）
 
     Returns:
         稳定平台信息，包含 start, end, mid, metrics 等
@@ -341,10 +494,22 @@ def find_stable_lift_plateau(
     if not results:
         return None
 
+    # ❗ Bug fix: 过滤 NaN lift，避免污染 plateau 搜索
+    # NaN >= anything 是 False，但 np.mean([..., NaN]) = NaN
+    results = [r for r in results if np.isfinite(r.get("lift", float("nan")))]
+    if not results:
+        return None
+
     # 按阈值排序
     results_sorted = sorted(results, key=lambda x: x["threshold"])
 
+    # ❗ 问题 4 修复: 使用实际步长，避免与 config.threshold_step 不一致
+    step_for_continuity = (
+        actual_step if actual_step is not None else config.threshold_step
+    )
+
     # 筛选满足基础条件的阈值
+    # 注意：如果调用方已经传入 valid_results，这里会重复筛选（但不会出错）
     valid_thresholds = []
     for r in results_sorted:
         if (
@@ -364,7 +529,9 @@ def find_stable_lift_plateau(
     i = 0
     while i < len(valid_thresholds):
         start_idx = i
-        current_lift = valid_thresholds[i]["lift"]
+        # ❗ Bug fix #2: 使用 anchor_lift 而不是 rolling current_lift
+        # 避免 plateau 结果依赖扫描顺序
+        anchor_lift = valid_thresholds[i]["lift"]
         current_threshold = valid_thresholds[i]["threshold"]
 
         # 寻找稳定区间
@@ -374,16 +541,37 @@ def find_stable_lift_plateau(
             next_lift = valid_thresholds[j]["lift"]
 
             # 检查阈值连续性（相邻阈值间隔不能过大）
-            if next_threshold - current_threshold > config.threshold_step * 2:
+            # ❗ 问题 4 修复: 使用实际步长
+            if next_threshold - current_threshold > step_for_continuity * 2:
                 break
 
-            # 检查lift稳定性（lift变化不能过大）
-            lift_change = abs(next_lift - current_lift)
-            if lift_change > config.max_lift_std_ratio * abs(current_lift):
+            # =========================================================================
+            # ❗ 问题 2 修复: plateau 加入 pass_rate 稳定性条件
+            # 实盘真正炸的不是 lift 波动，而是 pass/fail 边界抖动
+            # =========================================================================
+            anchor_pass_rate = valid_thresholds[start_idx]["pass_rate_all"]
+            pass_rate_change = abs(
+                valid_thresholds[j]["pass_rate_all"] - anchor_pass_rate
+            )
+            if pass_rate_change > 0.15:  # pass_rate 变化超过 15% 就认为不稳定
                 break
+
+            # ❗ Bug fix #2: lift稳定性基于 anchor，不是 rolling
+            # 这样 plateau 是区间性质，不是路径性质
+            lift_change = abs(next_lift - anchor_lift)
+            if lift_change > config.max_lift_std_ratio * abs(anchor_lift):
+                break
+
+            # ❗ Bug 2 修复: plateau 要求 coverage 稳定，不仅仅是 decision 稳定
+            # 如果 n_valid 在不同阈值之间变化过大，说明 coverage 不稳定
+            anchor_n_valid = valid_thresholds[start_idx].get("n_valid", 0)
+            current_n_valid = valid_thresholds[j].get("n_valid", 0)
+            if anchor_n_valid > 0:
+                coverage_change = abs(current_n_valid - anchor_n_valid) / anchor_n_valid
+                if coverage_change > 0.1:  # coverage 变化超过 10% 就认为不稳定
+                    break
 
             current_threshold = next_threshold
-            current_lift = next_lift
             j += 1
 
         # 如果找到了长度>=2的稳定区间
@@ -398,7 +586,25 @@ def find_stable_lift_plateau(
 
             # 检查区间宽度是否满足要求
             interval_width = interval[-1]["threshold"] - interval[0]["threshold"]
-            if interval_width >= config.min_plateau_width:
+
+            # ❗ Bug fix #6: 使用相对宽度，避免不同 feature 的 plateau 宽度不可比
+            # threshold_range 会在上层传入，这里使用 valid_thresholds 的范围作为近似
+            if len(valid_thresholds) > 1:
+                total_range = (
+                    valid_thresholds[-1]["threshold"] - valid_thresholds[0]["threshold"]
+                )
+                relative_width = (
+                    interval_width / total_range if total_range > 0 else 0.0
+                )
+            else:
+                relative_width = 0.0
+
+            # ❗ 问题 3 修复: 使用相对宽度判断，避免不同 feature 的 plateau 宽度不可比
+            # 绝对宽度仍然保留作为下限（防止极端情况）
+            if (
+                relative_width >= config.min_plateau_width
+                or interval_width >= config.min_plateau_width
+            ):
                 stable_intervals.append(
                     {
                         "interval": interval,
@@ -407,13 +613,16 @@ def find_stable_lift_plateau(
                         "start_threshold": interval[0]["threshold"],
                         "end_threshold": interval[-1]["threshold"],
                         "width": interval_width,
+                        "relative_width": relative_width,  # ❗ Bug fix #6
                         "lift_mean": lift_mean,
                         "lift_std": lift_std,
                         "lift_min": lift_min,
                         "lift_max": lift_max,
                         "lift_stability_ratio": (
-                            lift_std / lift_mean if lift_mean != 0 else float("inf")
-                        ),
+                            lift_std / max(lift_mean, 0.2)
+                            if lift_mean != 0
+                            else float("inf")
+                        ),  # ❗ Bug 3 修复: 使用 floor 避免弱 lift 平台被过度惩罚
                         "num_points": len(interval),
                     }
                 )
@@ -444,6 +653,7 @@ def find_stable_lift_plateau(
         "plateau_end": end_th,
         "plateau_mid": mid_th,
         "recommended_threshold": mid_th,
+        "recommended_threshold_type": "plateau_mid",  # ❗ Bug fix #3: 显式语义
         "lift_mean": best_interval["lift_mean"],
         "lift_std": best_interval["lift_std"],
         "lift_min": best_interval["lift_min"],
@@ -452,6 +662,9 @@ def find_stable_lift_plateau(
         "pass_rate_at_mid": mid_metrics["pass_rate_all"],
         "lift_at_mid": mid_metrics["lift"],
         "plateau_width": best_interval["width"],
+        "plateau_relative_width": best_interval.get(
+            "relative_width", 0.0
+        ),  # ❗ Bug fix #6
         "num_valid_thresholds": best_interval["num_points"],
         "interval_details": [r for r in interval],  # 包含所有点的详细信息
     }
@@ -529,6 +742,11 @@ def _parse_gate_when_condition(
                 return feature_col, operator, float(threshold)
 
             # quantile_lt, quantile_gt
+            # ❗ 问题 6 确认: quantile_* 语义假设
+            # 当前实现假设 feature 已经是预计算的 quantile score (0-1)
+            # 即 quantile_gt 0.8 意思是 "feature_value > 0.8"
+            # 而不是 "feature_value > df[feature].quantile(0.8)"
+            # 如果 feature 是原始值，需要在特征工程阶段先转为 quantile
             if op_key.startswith("quantile_"):
                 op_suffix = op_key[9:]  # 去掉 "quantile_" 前缀
                 operator = op_suffix.replace("lte", "le").replace("gte", "ge")
@@ -607,6 +825,80 @@ def optimize_gate_rule_unified(
     ]
 
     if not valid_results:
+        # =========================================================================
+        # Hard Gate NaN Lift 例外通道
+        # 语义：Hard Gate 的合法性来源是"结构稳定性 + 执行风险厌恶"，不是 lift
+        # 只有同时满足所有严格条件，才允许 lift=NaN 的 Hard Gate 进入 robustness 仲裁
+        # =========================================================================
+        if config.allow_hard_nan_lift and rule.tag and "gate_" in rule.id:
+            # 检查是否有符合 NaN lift 例外条件的阈值
+            nan_lift_candidates = []
+            for r in results:
+                # 条件 1: lift 是 NaN（pass_rate_bad 极低）
+                if not np.isfinite(r.get("lift", 0)):
+                    # 条件 2: pass_rate_bad 必须极低
+                    if r.get("pass_rate_bad", 1.0) > config.nan_lift_max_pass_rate_bad:
+                        continue
+                    # 条件 3: pass_rate_good 必须足够高
+                    if r.get("pass_rate_good", 0) < config.nan_lift_min_pass_rate_good:
+                        continue
+                    # 条件 4: 覆盖率必须足够
+                    n_valid = r.get("n_valid", 0)
+                    n_all = len(df)
+                    coverage = n_valid / n_all if n_all > 0 else 0
+                    if coverage < config.nan_lift_min_coverage:
+                        continue
+                    nan_lift_candidates.append(r)
+
+            if nan_lift_candidates:
+                # 在候选中找 robustness 最高的
+                best_nan_result = None
+                best_nan_robustness = -1
+
+                for r in nan_lift_candidates:
+                    robustness = compute_robustness_score(
+                        df, feature_col, operator, r["threshold"], label_col, config
+                    )
+                    # 条件 5: robustness 必须足够高
+                    if robustness.overall_score >= config.nan_lift_min_robustness:
+                        if robustness.overall_score > best_nan_robustness:
+                            best_nan_robustness = robustness.overall_score
+                            best_nan_result = {
+                                **r,
+                                "robustness_score": robustness.to_dict(),
+                                "recommended_threshold": r["threshold"],
+                                "recommended_threshold_type": "robust_but_unproven",
+                            }
+
+                if best_nan_result:
+                    # 条件 6: 检查阈值区间宽度（排除点估计）
+                    # 找到所有通过条件的阈值范围
+                    valid_thresholds = [
+                        r["threshold"]
+                        for r in nan_lift_candidates
+                        if compute_robustness_score(
+                            df, feature_col, operator, r["threshold"], label_col, config
+                        ).overall_score
+                        >= config.nan_lift_min_robustness
+                    ]
+                    if len(valid_thresholds) >= 2:
+                        interval_width = max(valid_thresholds) - min(valid_thresholds)
+                        if interval_width >= config.nan_lift_min_plateau_width:
+                            return {
+                                "rule_id": rule.id,
+                                "feature": feature_col,
+                                "operator": operator,
+                                "current_threshold": current_threshold,
+                                "status": "robust_but_unproven",  # 明确标记语义
+                                "eligibility": "deny_only",  # 只能作为 deny-only safety gate
+                                "robustness_selection": True,
+                                "nan_lift_exception": True,
+                                "nan_lift_reason": "Hard Gate with pass_rate_bad < 1%, structural stability validated",
+                                "interval_width": interval_width,
+                                **best_nan_result,
+                                "scan_results": results,
+                            }
+
         return {
             "rule_id": rule.id,
             "feature": feature_col,
@@ -616,9 +908,25 @@ def optimize_gate_rule_unified(
         }
 
     # 寻找稳定的平台区间
-    stable_plateau = find_stable_lift_plateau(results, config)
+    # ❗ Bug fix: 必须传入 valid_results，不能在不可执行域上建立 plateau
+    # ❗ 问题 4 修复: 传入实际步长，保证连续性判断一致
+    stable_plateau = find_stable_lift_plateau(valid_results, config, actual_step=step)
 
     if stable_plateau is None:
+        # ❗ 设计决策点：Hard gate 没有 plateau 时是否允许 fallback
+        # strict_hard=True: 不允许 fallback，Hard gate 必须有结构支撑
+        # strict_hard=False: 允许 fallback 到 robustness 单点（过渡态）
+        if config.strict_hard:
+            return {
+                "rule_id": rule.id,
+                "feature": feature_col,
+                "operator": operator,
+                "current_threshold": current_threshold,
+                "status": "no_stable_plateau_strict",
+                "reason": "Hard gate requires stable plateau (strict mode enabled)",
+                "scan_results": results,
+            }
+
         # 找不到稳定平台，使用robustness导向的选择策略
         # 在满足基础条件的阈值中选择robustness最高的
         best_result = None
@@ -634,6 +942,7 @@ def optimize_gate_rule_unified(
                     **r,
                     "robustness_score": robustness.to_dict(),
                     "recommended_threshold": r["threshold"],
+                    "recommended_threshold_type": "robust_fallback",  # ❗ Bug fix #3
                 }
 
         if best_result:
@@ -644,6 +953,7 @@ def optimize_gate_rule_unified(
                 "current_threshold": current_threshold,
                 "status": "no_stable_plateau",
                 "robustness_selection": True,
+                "fallback_warning": "Hard gate (weak mode): robustness fallback enabled",
                 **best_result,
                 "scan_results": results,
             }
@@ -671,6 +981,7 @@ def optimize_gate_rule_unified(
                 **r,
                 "robustness_score": robustness.to_dict(),
                 "recommended_threshold": r["threshold"],
+                "recommended_threshold_type": "plateau_best",  # ❗ Bug fix #3
             }
 
     # 如果平台内的最佳点与中位数不同，提供选择依据
@@ -693,18 +1004,23 @@ def optimize_gate_rule_unified(
 
             if best_robustness_in_plateau > mid_robustness.overall_score:
                 recommended_threshold = best_result_in_plateau["threshold"]
+                recommended_threshold_type = "plateau_best"  # ❗ Bug fix #3
             else:
                 recommended_threshold = stable_plateau["plateau_mid"]
+                recommended_threshold_type = "plateau_mid"  # ❗ Bug fix #3
                 best_result_in_plateau = {
                     **mid_result,
                     "robustness_score": mid_robustness.to_dict(),
                     "recommended_threshold": stable_plateau["plateau_mid"],
+                    "recommended_threshold_type": "plateau_mid",
                 }
         else:
             # 如果找不到mid附近的结果，使用best_result_in_plateau
             recommended_threshold = best_result_in_plateau["threshold"]
+            recommended_threshold_type = "plateau_best"  # ❗ Bug fix #3
     else:
         recommended_threshold = best_result_in_plateau["threshold"]
+        recommended_threshold_type = "plateau_best"  # ❗ Bug fix #3
 
     return {
         "rule_id": rule.id,
@@ -715,6 +1031,7 @@ def optimize_gate_rule_unified(
         "robustness_selection": True,
         **stable_plateau,
         "recommended_threshold": recommended_threshold,
+        "recommended_threshold_type": recommended_threshold_type,  # ❗ Bug fix #3
         "best_result_in_plateau": best_result_in_plateau,
         "scan_results": results,
     }
@@ -1094,6 +1411,17 @@ def main() -> int:
         print("\n📋 Optimizing Hard Gates:")
         for rule in arch.gate.hard_gates:
             print(f"  Processing: {rule.id}")
+
+            # 跳过 frozen 规则
+            if getattr(rule, "frozen", False):
+                print(f"    ⚠️  FROZEN: 禁止优化，保持当前阈值")
+                all_results[rule.id] = {
+                    "rule_id": rule.id,
+                    "status": "frozen",
+                    "reason": "Rule marked as frozen, threshold optimization disabled",
+                }
+                continue
+
             result = optimize_gate_rule_unified(
                 df, rule, args.label_col, config, args.step
             )
@@ -1143,6 +1471,17 @@ def main() -> int:
         print("\n📋 Optimizing Soft Filters:")
         for rule in arch.gate.soft_filters:
             print(f"  Processing: {rule.id}")
+
+            # 跳过 frozen 规则
+            if getattr(rule, "frozen", False):
+                print(f"    ⚠️  FROZEN: 禁止优化，保持当前阈值")
+                all_results[rule.id] = {
+                    "rule_id": rule.id,
+                    "status": "frozen",
+                    "reason": "Rule marked as frozen, threshold optimization disabled",
+                }
+                continue
+
             result = optimize_gate_rule_unified(
                 df, rule, args.label_col, config, args.step
             )
