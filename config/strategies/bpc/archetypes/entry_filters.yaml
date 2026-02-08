@@ -1,0 +1,468 @@
+# BPC Entry Filters Archetype
+# 入场时机过滤器 — 控制"现在该入场吗？"
+#
+# 职责定位（与其他 archetype 层的关系）:
+#   Gate:         "这笔交易能做吗？"   → 硬二值过滤坏交易
+#   Entry Filter: "现在该入场吗？"     → 硬二值控制入场时机（耐心等待）
+#   Evidence:     "入场后下多少注？"   → 软连续值调整执行参数
+#
+# 设计原则:
+#   1. 每个 filter 是一组 AND 条件，描述一种关键K线的语义场景
+#   2. enabled: true/false 控制是否生效
+#   3. 条件使用 feature + operator + threshold 描述，代码动态解析
+#   4. 所有回测数据基于 predictions.parquet (20430 bars, 6 symbols)
+#   5. 基线对比: none (全部入场) Sharpe=0.308, Trades=20424, Win=46.7%
+#
+# 使用方式:
+#   python scripts/backtest_execution_layer.py \
+#     --logs ... --strategy bpc --entry-filter deep_pullback_cvd
+#
+# 评估时间: 2026-02-09
+
+# ============================================================
+# 📋 全局设置
+# ============================================================
+schema:
+  # 基础条件: 所有 filter 隐含要求 entry_direction != 0
+  # 条件运算符: ">", ">=", "<", "<=", "==", "!="
+  # 多个条件之间是 AND 关系
+  base_description: |
+    BPC 策略方向由 bpc_breakout_direction (Donchian 20-bar 突破) 决定。
+    原始状态 100% bar 都有方向 (forward-fill)，每根 bar 都入场。
+    Entry Filter 用于筛选「关键K线」— 只在结构性条件满足时入场。
+
+# ============================================================
+# ✅ 已启用的入场模式
+# ============================================================
+filters:
+
+  # ----------------------------------------------------------------
+  # 1. 深回踩底部 (基础层 — 所有高级 filter 的必要条件)
+  # ----------------------------------------------------------------
+  - id: deep_pullback
+    enabled: true
+    description: "深回踩底部入场: pullback depth ≥ 0.6 且已确认在回踩中"
+    semantic: |
+      BPC 理想入场时机: Breakout 后价格深度回踩至 60%+ 位置，
+      在回踩底部等待 Continuation 启动。
+      深回踩提供更好的 R/R: 离止损更近，离目标更远。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+    backtest:
+      sharpe: 0.328
+      trades: 1762
+      win_rate: 0.506
+      mean_r: 14.78
+    notes: "基础层，Sharpe +6.5% vs baseline。所有高级 filter 都基于此条件。"
+
+  # ----------------------------------------------------------------
+  # 2. 深回踩 + CVD 吸收 (推荐 — 最佳 Sharpe/Trades 平衡)
+  # ----------------------------------------------------------------
+  - id: deep_pullback_cvd
+    enabled: true
+    description: "深回踩 + CVD 订单流吸收确认"
+    semantic: |
+      在深回踩底部，CVD (累积成交量差) 显示卖方力量被吸收。
+      CVD absorption = 1 表示订单流方向与回踩方向相反 — 买方在底部接盘。
+      这是典型的 "smart money absorption" 信号。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: bpc_cvd_absorption
+        operator: "=="
+        value: 1
+    backtest:
+      sharpe: 0.381
+      trades: 993
+      win_rate: 0.521
+      mean_r: 15.34
+    notes: "推荐默认: Sharpe +24% vs baseline, 993 trades 足够稳健。"
+
+  # ----------------------------------------------------------------
+  # 3. 深回踩 + 缩量压缩
+  # ----------------------------------------------------------------
+  - id: deep_pullback_vol
+    enabled: true
+    description: "深回踩 + 成交量压缩/缩量确认"
+    semantic: |
+      深回踩中成交量萎缩 — 卖方耗尽，供应枯竭。
+      bpc_vol_pullback_confirm > 0.7 或 bpc_vol_compression > 0.7 表示
+      回踩阶段的量能已大幅缩减，预示即将反转。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: bpc_vol_pullback_confirm
+        operator: ">"
+        value: 0.7
+    backtest:
+      sharpe: 0.424
+      trades: 429
+      win_rate: 0.517
+      mean_r: 12.76
+    notes: "Sharpe +38%，但 trades 较少 (429)。适合保守策略。"
+
+  # ----------------------------------------------------------------
+  # 4. 深回踩 + 影线吸收
+  # ----------------------------------------------------------------
+  - id: deep_pullback_wick
+    enabled: true
+    description: "深回踩 + 影线(下影线)吸收形态"
+    semantic: |
+      深回踩底部出现长影线 — 价格探底后被强力拉回。
+      wick_absorption_score > 0.3 表示 K 线实体小、影线长，
+      典型的 hammer/pin bar 底部反转形态。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: wick_absorption_score
+        operator: ">"
+        value: 0.3
+    backtest:
+      sharpe: 0.409
+      trades: 241
+      win_rate: 0.485
+      mean_r: 11.09
+    notes: "Sharpe +33%，trades 少 (241)。影线形态确认力强。"
+
+  # ----------------------------------------------------------------
+  # 5. 深回踩 + 影线 + CVD 全确认
+  # ----------------------------------------------------------------
+  - id: deep_pullback_full
+    enabled: true
+    description: "深回踩 + 影线吸收 + CVD 吸收 (全维度确认)"
+    semantic: |
+      三重确认: 价格结构(深回踩) + K线形态(影线) + 订单流(CVD吸收)。
+      最严格的入场条件，只在所有维度同时满足时入场。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: wick_absorption_score
+        operator: ">"
+        value: 0.3
+      - feature: bpc_cvd_absorption
+        operator: "=="
+        value: 1
+    backtest:
+      sharpe: 0.492
+      trades: 121
+      win_rate: 0.521
+      mean_r: 13.42
+    notes: "Sharpe +60%! 但仅 121 trades，适合高确信度场景。"
+
+  # ----------------------------------------------------------------
+  # 6. 深回踩 + 动量确认 (新发现)
+  # ----------------------------------------------------------------
+  - id: deep_pullback_momentum
+    enabled: true
+    description: "深回踩 + BPC 动量方向确认"
+    semantic: |
+      深回踩底部，短期动量已转向突破方向。
+      bpc_momentum_confirm = 1 表示 RSI/动量指标确认方向反转。
+      等动量确认后入场，避免抄底抄在半山腰。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: bpc_momentum_confirm
+        operator: "=="
+        value: 1
+    backtest:
+      sharpe: 0.418
+      trades: 302
+      win_rate: 0.510
+      mean_r: 11.70
+    notes: "Sharpe +36%，302 trades。动量反转确认，避免提前入场。"
+
+  # ----------------------------------------------------------------
+  # 7. 深回踩 + BB 压缩 (新发现)
+  # ----------------------------------------------------------------
+  - id: deep_pullback_bb
+    enabled: true
+    description: "深回踩 + 布林带压缩 (波动率收窄)"
+    semantic: |
+      深回踩中布林带收窄 — 波动率急剧下降，预示即将爆发。
+      bb_compression > 0.7 表示布林带宽度处于近期低位，
+      回踩阶段的波动率耗尽 → 下一步大概率是趋势延续。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: bpc_bb_compression
+        operator: ">"
+        value: 0.7
+    backtest:
+      sharpe: 0.370
+      trades: 585
+      win_rate: 0.518
+      mean_r: 14.17
+    notes: "Sharpe +20%，585 trades（量最大的高级 filter）。适合需要更多交易频率的场景。"
+
+  # ----------------------------------------------------------------
+  # 8. 深回踩 + WPT 吸收 (新发现)
+  # ----------------------------------------------------------------
+  - id: deep_pullback_wpt
+    enabled: true
+    description: "深回踩 + 小波变换 (WPT) 吸收确认"
+    semantic: |
+      WPT 吸收检测小波空间中的能量吸收模式 —
+      回踩中高频分量被吸收，留下低频趋势信号。
+      wpt_absorption_score > 0.2 表示小波能量结构利于反转。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: wpt_absorption_score
+        operator: ">"
+        value: 0.2
+    backtest:
+      sharpe: 0.375
+      trades: 336
+      win_rate: 0.512
+      mean_r: 21.70
+    notes: "Sharpe +22%，Mean R 很高 (21.70)。WPT 捕捉形态不同于 CVD/Wick。"
+
+  # ----------------------------------------------------------------
+  # 9. 深回踩 + 流动性空洞吸收 (类 footprint)
+  # ----------------------------------------------------------------
+  - id: deep_pullback_liq_void
+    enabled: true
+    description: "深回踩 + 流动性空洞区域的吸收 (footprint-like)"
+    semantic: |
+      在流动性空洞 (Liquidity Void) 区域检测到吸收行为 —
+      价格进入之前快速穿越的区域后，被稳定吸收。
+      类似于 footprint chart 的 absorption 模式。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: liquidity_void_absorption_score
+        operator: ">"
+        value: 0
+    backtest:
+      sharpe: 0.376
+      trades: 342
+      win_rate: 0.482
+      mean_r: 7.55
+    notes: "Sharpe +22%。类 footprint 吸收，维度独立于其他 filter。"
+
+# ============================================================
+# ❌ 已测试但未启用的入场模式 (含原因)
+# ============================================================
+disabled_filters:
+
+  # ----------------------------------------------------------------
+  # SR 质量 — 深回踩 + 强支撑阻力
+  # ----------------------------------------------------------------
+  - id: deep_pullback_sr
+    enabled: false
+    description: "深回踩 + SR 强度 top 20%"
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: sr_strength_max
+        operator: ">"
+        value: 3.86  # p80 分位
+    backtest:
+      sharpe: 0.278
+      trades: 345
+      win_rate: 0.507
+      mean_r: 15.22
+    reject_reason: |
+      Sharpe (0.278) 低于 baseline (0.308)!
+      强 SR 附近容易产生反复测试的假信号，不利于 BPC continuation。
+      SR 在 evidence 中也已被移除 (bad_supp=-0.026)。
+
+  # ----------------------------------------------------------------
+  # VPIN 确认
+  # ----------------------------------------------------------------
+  - id: deep_pullback_vpin
+    enabled: false
+    description: "深回踩 + VPIN breakout 确认"
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: bpc_vpin_breakout_confirm
+        operator: ">"
+        value: 0.6
+    backtest:
+      sharpe: 0.280
+      trades: 201
+      win_rate: 0.507
+      mean_r: 19.77
+    reject_reason: |
+      Sharpe (0.280) 低于 deep_pullback 基础版 (0.328)。
+      VPIN 在回踩底部不是好的确认信号 — 它更适合 breakout 阶段。
+
+  # ----------------------------------------------------------------
+  # Direction Confidence > 0
+  # ----------------------------------------------------------------
+  - id: confidence_only
+    enabled: false
+    description: "仅 bpc_direction_confidence > 0 (无深回踩要求)"
+    conditions:
+      - feature: bpc_direction_confidence
+        operator: ">"
+        value: 0
+    backtest:
+      sharpe: 0.299
+      trades: 2186
+      win_rate: 0.425
+      mean_r: 13.07
+    reject_reason: |
+      Sharpe (0.299) 低于 baseline。仅依赖 confidence 不够 —
+      它标记的是 breakout 时刻，不是最佳入场时机。
+
+  # ----------------------------------------------------------------
+  # 纯 SR 高质量 (不依赖深回踩)
+  # ----------------------------------------------------------------
+  - id: sr_quality_top10
+    enabled: false
+    description: "SR 强度 top 10% (不依赖深回踩)"
+    conditions:
+      - feature: sr_strength_max
+        operator: ">"
+        value: 4.18  # p90 分位
+    backtest:
+      sharpe: 0.322
+      trades: 2041
+      win_rate: 0.494
+      mean_r: 23.96
+    reject_reason: |
+      比 baseline 仅好一点 (0.322 vs 0.308)，但交易太多 (2041)。
+      SR 强度作为入场 filter 区分度不够。
+      可能更适合作为 Evidence 的软权重。
+
+  # ----------------------------------------------------------------
+  # P→C 转折 (BPC score 组合)
+  # ----------------------------------------------------------------
+  - id: pc_transition
+    enabled: false
+    description: "经典 BPC P→C 转折: was_in_pullback + continuation > 0.1"
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_score_continuation
+        operator: ">"
+        value: 0.1
+    backtest:
+      sharpe: 0.305
+      trades: 6861
+      win_rate: 0.449
+      mean_r: 13.59
+    reject_reason: |
+      Sharpe (0.305) 接近 baseline。BPC score_continuation 触发太早，
+      不能精确识别回踩底部。深回踩 (depth≥0.6) 是更好的替代。
+
+  # ----------------------------------------------------------------
+  # VP 吸收 (Volume Profile) — 太少
+  # ----------------------------------------------------------------
+  - id: deep_pullback_vp
+    enabled: false
+    description: "深回踩 + Volume Profile 吸收"
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: vp_absorption_score
+        operator: ">"
+        value: 0.2
+    backtest:
+      sharpe: 0.431
+      trades: 58
+      win_rate: 0.466
+      mean_r: 6.65
+    reject_reason: |
+      Sharpe 好 (0.431) 但仅 58 trades — 样本不足以信赖。
+      胜率也偏低 (46.6%)。VP absorption 阈值 0.2 过高。
+
+  # ----------------------------------------------------------------
+  # 脉冲方向一致 + 缩量 — 组合效果一般
+  # ----------------------------------------------------------------
+  - id: deep_pullback_impulse_vol
+    enabled: false
+    description: "深回踩 + 脉冲方向一致 + 缩量压缩"
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: bpc_impulse_direction_match
+        operator: "=="
+        value: 1
+      - feature: bpc_vol_compression
+        operator: ">"
+        value: 0.7
+    backtest:
+      sharpe: 0.389
+      trades: 176
+      win_rate: 0.455
+      mean_r: 9.11
+    reject_reason: |
+      Sharpe 不错 (0.389) 但 trades 少 (176) 且胜率低 (45.5%)。
+      impulse_match 单独 (0.332) 已比 deep_pb 差，组合收益有限。
+
+# ============================================================
+# 📊 模式排名 (按 Sharpe 降序，仅 enabled=true)
+# ============================================================
+# Rank | ID                      | Sharpe | Trades | Win%  | 特征维度
+# -----|-------------------------|--------|--------|-------|----------
+#  1   | deep_pullback_full      | 0.492  |    121 | 52.1% | 结构+形态+订单流
+#  2   | deep_pullback_vol       | 0.424  |    429 | 51.7% | 结构+量能
+#  3   | deep_pullback_momentum  | 0.418  |    302 | 51.0% | 结构+动量
+#  4   | deep_pullback_wick      | 0.409  |    241 | 48.5% | 结构+形态
+#  5   | deep_pullback_cvd       | 0.381  |    993 | 52.1% | 结构+订单流
+#  6   | deep_pullback_liq_void  | 0.376  |    342 | 48.2% | 结构+footprint
+#  7   | deep_pullback_wpt       | 0.375  |    336 | 51.2% | 结构+小波
+#  8   | deep_pullback_bb        | 0.370  |    585 | 51.8% | 结构+波动率
+#  9   | deep_pullback           | 0.328  |   1762 | 50.6% | 结构
+#
+# 推荐: deep_pullback_cvd (Sharpe/Trades 最佳平衡)
+# 保守: deep_pullback_vol (Sharpe 更高，Trades 适中)
+# 激进: deep_pullback (Trades 最多)
