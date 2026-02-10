@@ -209,7 +209,7 @@ class BPCLiveStrategy:
             logger.error(traceback.format_exc())
 
     # ────────────────────────────────────────────────────
-    # 核心决策接口 — 与 MetaRouterCore.decide() 对齐
+    # 核心决策接口 — decide(features, symbol) → List[TradeIntent]
     # ────────────────────────────────────────────────────
 
     def decide(

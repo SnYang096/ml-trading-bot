@@ -49,13 +49,15 @@ def _collect_features_from_when(when: Any, out: Set[str]) -> None:
 
 
 def extract_required_features_from_execution_archetypes(
-    execution_archetypes_path: str | Path = "config/nnmultihead/execution_archetypes.yaml",
+    execution_archetypes_path: str | Path = "config/strategies/bpc/archetypes/gate.yaml",
 ) -> Set[str]:
     """
-    从execution_archetypes.yaml中提取所有gate rules需要的特征
+    从 gate / execution_archetypes 配置中提取所有 gate rules 需要的特征。
 
-    支持格式: config.archetypes[].when_then_rules[].when (递归提取特征名)
-    
+    支持两种格式:
+      - BPC gate.yaml: hard_gates[] / soft_gates[] / guardrails[] 各有 when 字段
+      - Legacy execution_archetypes.yaml: archetypes[].when_then_rules[].when
+
     Returns:
         需要的特征名称集合
     """
@@ -74,7 +76,19 @@ def extract_required_features_from_execution_archetypes(
     
     required_features: Set[str] = set()
     
-    # 从 when_then_rules 中提取特征名
+    # Format 1: BPC gate.yaml (hard_gates / soft_gates / guardrails)
+    for section_key in ('hard_gates', 'soft_gates', 'guardrails'):
+        rules = config.get(section_key)
+        if not isinstance(rules, list):
+            continue
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            when = rule.get('when')
+            if when:
+                _collect_features_from_when(when, required_features)
+    
+    # Format 2: Legacy execution_archetypes.yaml (archetypes[].when_then_rules[])
     for arch_name, arch_data in config.get('archetypes', {}).items():
         if not isinstance(arch_data, dict):
             continue
@@ -317,7 +331,7 @@ def ensure_tier_features(
 
 def auto_detect_compute_requirements(
     task_spec_path: str | Path,
-    execution_archetypes_path: str | Path = "config/nnmultihead/execution_archetypes.yaml",
+    execution_archetypes_path: str | Path = "config/strategies/bpc/archetypes/gate.yaml",
     feature_dependencies_path: str | Path = "config/feature_dependencies.yaml",
 ) -> Set[str]:
     """
@@ -391,7 +405,7 @@ def auto_detect_compute_requirements(
 def auto_detect_tier_features(
     task_spec_path: str | Path,
     base_config_dir: str | Path,
-    execution_archetypes_path: str | Path = "config/nnmultihead/execution_archetypes.yaml",
+    execution_archetypes_path: str | Path = "config/strategies/bpc/archetypes/gate.yaml",
     feature_dependencies_path: str | Path = "config/feature_dependencies.yaml",
 ) -> List[str]:
     """

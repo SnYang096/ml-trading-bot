@@ -125,10 +125,10 @@ def load_live_feature_plan(
             else Path(__file__).resolve().parents[3]
         )
         gate_features = extract_required_features_from_execution_archetypes(
-            project_root / "config/nnmultihead/execution_archetypes.yaml"
+            project_root / "config/strategies/bpc/archetypes/gate.yaml"
         )
         if gate_features:
-            base_features |= gate_features  # gate rule keys (e.g. cvd_change_5) in case filled by IncrementalFeatureComputer
+            base_features |= gate_features  # gate rule keys (e.g. bpc_dir_consistency_long) in case filled by IncrementalFeatureComputer
             deps = _load_yaml(feature_deps_path)
             if deps:
                 gate_nodes = map_features_to_tier_nodes(gate_features, deps)
@@ -199,7 +199,7 @@ def load_live_feature_nodes(
 
         # 提取gate规则需要的特征列名
         gate_features = extract_required_features_from_execution_archetypes(
-            project_root / "config/nnmultihead/execution_archetypes.yaml"
+            project_root / "config/strategies/bpc/archetypes/gate.yaml"
         )
 
         if gate_features:
