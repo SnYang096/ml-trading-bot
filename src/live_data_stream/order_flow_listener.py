@@ -1,12 +1,13 @@
-"""
-订单流监听器
+"""订单流监听器
 
-使用 Nautilus Trader 监听订单流数据，实现：
-1. 实时接收 TradeTick 事件
+实盘数据管线，实现：
+1. 实时接收 tick 事件（dict 格式）
 2. 按1分钟聚合tick数据
 3. 每15分钟计算特征并保存
 4. 每4小时聚合特征并保存
-5. 支持从断线中恢复
+5. 可插拔决策路由（MetaRouterCore / BPCLiveStrategy / 自定义）
+6. 增强持仓管理（breakeven lock, activation trailing, time stop）
+7. 支持从断线中恢复
 """
 
 from __future__ import annotations
@@ -19,27 +20,8 @@ from collections import deque
 import pandas as pd
 import numpy as np
 
-try:
-    from nautilus_trader.model import TradeTick, Bar
-    from nautilus_trader.model.enums import AggressorSide
-    from nautilus_trader.model.data import BarType
-    from nautilus_trader.model.identifiers import InstrumentId, Symbol
-    from nautilus_trader.model.objects import Price, Quantity
-    from nautilus_trader.model.enums import BarAggregation, PriceType
-
-    NAUTILUS_AVAILABLE = True
-except ImportError:
-    NAUTILUS_AVAILABLE = False
-    TradeTick = None
-    Bar = None
-    AggressorSide = None
-    BarType = None
-    InstrumentId = None
-    Symbol = None
-    Price = None
-    Quantity = None
-    BarAggregation = None
-    PriceType = None
+# Nautilus 已废弃
+NAUTILUS_AVAILABLE = False
 
 from .feature_storage import StorageManager
 from .memory_window import MemoryWindow
@@ -93,6 +75,7 @@ class OrderFlowListener:
         runtime_state: Optional[ConstitutionRuntimeState] = None,
         order_manager: Optional[Any] = None,
         trade_size: Optional[float] = None,
+        decision_handler: Optional[Any] = None,
     ):
         """
         Args:
@@ -111,6 +94,10 @@ class OrderFlowListener:
             runtime_state: 宪法运行时状态（可选）
             order_manager: 订单管理器（可选）
             trade_size: 默认下单数量（可选）
+            decision_handler: 可插拔决策路由器（可选），需实现
+                decide(*, features, symbol, bars=None) -> List[TradeIntent]
+                如 BPCLiveStrategy 或任何与 MetaRouterCore 同签名的对象。
+                优先级: decision_handler > meta_router_core
         """
         self.symbol = symbol
         self.storage_manager = storage_manager
@@ -148,6 +135,7 @@ class OrderFlowListener:
         self.runtime_state = runtime_state
         self.order_manager = order_manager
         self.trade_size = trade_size
+        self.decision_handler = decision_handler
         self._open_positions: Dict[str, Dict[str, Any]] = {}
         
         # 1分钟聚合状态
@@ -162,12 +150,12 @@ class OrderFlowListener:
         self.is_running = False
         self._stop_event: Optional[asyncio.Event] = None
     
-    def on_trade_tick(self, tick: TradeTick | Any) -> None:
+    def on_trade_tick(self, tick: Any) -> None:
         """
-        处理 TradeTick 事件
+        处理 tick 事件
         
         Args:
-            tick: Nautilus Trader TradeTick 对象或Mock对象
+            tick: dict 或 SimpleNamespace，需有 price/size/side 字段
         """
         # 转换时间戳（支持多种格式）
         if hasattr(tick, 'ts_init'):
@@ -225,10 +213,7 @@ class OrderFlowListener:
         # 判断买卖方向（支持多种格式）
         if hasattr(tick, 'aggressor_side'):
             aggressor_side = tick.aggressor_side
-            if isinstance(aggressor_side, str):
-                is_buy = aggressor_side in ("BUY", "BUYER") or (NAUTILUS_AVAILABLE and aggressor_side == AggressorSide.BUYER)
-            else:
-                is_buy = NAUTILUS_AVAILABLE and aggressor_side == AggressorSide.BUYER
+            is_buy = str(aggressor_side) in ("BUY", "BUYER")
         else:
             # 尝试从其他属性推断
             is_buy = getattr(tick, 'side', 1) == 1
@@ -240,21 +225,14 @@ class OrderFlowListener:
             self.current_1min_bar["sell_volume"] += size
             self.current_1min_bar["sell_count"] += 1
         
-        # 传递给特征计算器
-        # incremental_feature_computer可以直接接受TradeTick对象，会自动转换
-        # 如果是Mock对象，传递字典格式（使用ts字段，纳秒时间戳）
-        if NAUTILUS_AVAILABLE and isinstance(tick, TradeTick):
-            # 直接传递TradeTick对象，incremental_feature_computer会自动处理
-            self.feature_computer.on_tick(tick)
-        else:
-            # Mock对象，传递字典格式
-            side_value = 1 if is_buy else -1
-            self.feature_computer.on_tick({
-                "ts": tick_ts.value,  # 纳秒时间戳
-                "price": price,
-                "volume": size,  # 使用volume而不是size
-                "side": side_value,  # 使用1/-1格式
-            })
+        # 传递给特征计算器（统一 dict 格式）
+        side_value = 1 if is_buy else -1
+        self.feature_computer.on_tick({
+            "ts": tick_ts.value,  # 纳秒时间戳
+            "price": price,
+            "volume": size,
+            "side": side_value,
+        })
         
         # 定期保存未完成的bar（用于恢复）
         self._periodic_save_incomplete_bar()
@@ -387,22 +365,41 @@ class OrderFlowListener:
         self.storage_manager.save_4h_features(self.symbol, features_df, now)
 
     def _handle_features(self, all_features: Dict[str, Any]) -> None:
+        """处理计算完的特征 — 路由决策 + 执行 + 持仓管理"""
         if self.on_feature_callback:
             self.on_feature_callback(all_features)
-        if (
-            self.meta_router_core is None
-            or self.constitution_executor is None
-            or self.runtime_state is None
-            or self.order_manager is None
+
+        # 检查下单所需依赖
+        if self.order_manager is None:
+            return
+
+        intents = []
+
+        # 优先使用 decision_handler（BPCLiveStrategy 等）
+        if self.decision_handler is not None:
+            intents = self.decision_handler.decide(
+                features=all_features,
+                symbol=self.symbol,
+                bars=self.memory_window.get_latest(240) if self.memory_window else [],
+            )
+        elif (
+            self.meta_router_core is not None
+            and self.constitution_executor is not None
+            and self.runtime_state is not None
         ):
+            intents = self.meta_router_core.decide(
+                features=all_features,
+                symbol=self.symbol,
+                bars=self.memory_window.get_latest(240) if self.memory_window else [],
+            )
+        else:
             return
-        intents = self.meta_router_core.decide(
-            features=all_features,
-            symbol=self.symbol,
-            bars=self.memory_window.get_latest(240),
-        )
+
         if not intents:
+            # 即使没有新 intent，仍需管理已有持仓
+            self._enforce_open_positions(features=all_features)
             return
+
         for intent in intents:
             self._execute_intent(intent=intent, features=all_features)
         self._enforce_open_positions(features=all_features)
@@ -528,7 +525,22 @@ class OrderFlowListener:
             "allow_trailing": allow_trailing,
             "trailing_atr": trailing_atr,
             "max_holding_bars": max_holding_bars,
+            # BPC 扩展字段（从 execution_profile.bpc_position_config 读取）
+            "atr_at_entry": atr,
         }
+        # 写入 BPC 持仓管理配置（如果有）
+        bpc_cfg = exec_profile.get("bpc_position_config") or {}
+        if bpc_cfg:
+            pos = self._open_positions[position_id]
+            pos["activation_r"] = bpc_cfg.get("activation_r")
+            pos["trail_r"] = bpc_cfg.get("trail_r")
+            pos["trailing_activated"] = False
+            pos["high_water_mark"] = entry_price if str(intent.action).upper() in {"LONG", "BUY"} else None
+            pos["low_water_mark"] = entry_price if str(intent.action).upper() in {"SHORT", "SELL"} else None
+            pos["breakeven_enabled"] = bpc_cfg.get("breakeven_enabled", False)
+            pos["breakeven_trigger_r"] = bpc_cfg.get("breakeven_trigger_r", 1.0)
+            pos["breakeven_locked"] = False
+            pos["bar_minutes"] = bpc_cfg.get("bar_minutes", 240)
 
         if intent.add_position and intent.parent_position_id:
             self.constitution_executor.record_add_position(
@@ -560,6 +572,7 @@ class OrderFlowListener:
         return None
 
     def _enforce_open_positions(self, features: Dict[str, Any]) -> None:
+        """管理已有持仓 — time stop / trailing / breakeven / TP/SL hit"""
         if not self._open_positions:
             return
         now = features.get("timestamp")
@@ -574,8 +587,9 @@ class OrderFlowListener:
         if current_price is None:
             return
         atr = pick_atr(features) or 0.0
-        bar_minutes = int(self.feature_4h_interval_hours * 60)
+        default_bar_minutes = int(self.feature_4h_interval_hours * 60)
         to_close: List[str] = []
+
         for pid, pos in self._open_positions.items():
             entry_time = pos.get("entry_time")
             if isinstance(entry_time, str):
@@ -585,21 +599,83 @@ class OrderFlowListener:
                     entry_time = None
             if not isinstance(entry_time, datetime):
                 entry_time = datetime.now(timezone.utc)
+
+            side_str = str(pos.get("side", "")).upper()
+            is_long = side_str in {"LONG", "BUY"}
+            entry_price = pos.get("entry_price") or current_price
+            pos_atr = pos.get("atr_at_entry") or atr
+            bar_minutes = pos.get("bar_minutes", default_bar_minutes)
+
+            close_reason = None
+
+            # ── 1. Time stop ──
             if holding_expired(
                 entry_time=entry_time,
                 now=now,
                 max_holding_bars=pos.get("max_holding_bars"),
                 bar_minutes=bar_minutes,
             ):
-                self._close_position(
-                    position_id=pid,
-                    side=str(pos.get("side")),
-                    qty=float(pos.get("qty") or 0.0),
-                    reason="max_holding_bars",
-                )
-                to_close.append(pid)
-                continue
-            if pos.get("allow_trailing") and atr > 0:
+                close_reason = "max_holding_bars"
+
+            # ── 2. Breakeven lock (BPC) ──
+            if (
+                close_reason is None
+                and pos.get("breakeven_enabled")
+                and not pos.get("breakeven_locked")
+                and pos_atr > 0
+            ):
+                if is_long:
+                    profit_r = (current_price - entry_price) / pos_atr
+                else:
+                    profit_r = (entry_price - current_price) / pos_atr
+                if profit_r >= pos.get("breakeven_trigger_r", 1.0):
+                    pos["breakeven_locked"] = True
+                    pos["stop_loss_price"] = entry_price
+
+            # ── 3. Update high/low water mark (BPC) ──
+            if is_long and pos.get("high_water_mark") is not None:
+                if current_price > pos["high_water_mark"]:
+                    pos["high_water_mark"] = current_price
+            elif not is_long and pos.get("low_water_mark") is not None:
+                if current_price < pos["low_water_mark"]:
+                    pos["low_water_mark"] = current_price
+
+            # ── 4. Activation-based trailing (BPC) ──
+            if (
+                close_reason is None
+                and pos.get("activation_r") is not None
+                and pos_atr > 0
+            ):
+                if is_long:
+                    profit_r = (current_price - entry_price) / pos_atr
+                else:
+                    profit_r = (entry_price - current_price) / pos_atr
+                activation_r = pos["activation_r"]
+                trail_r = pos.get("trail_r", 1.0)
+                if profit_r >= activation_r:
+                    if not pos.get("trailing_activated"):
+                        pos["trailing_activated"] = True
+                    if is_long:
+                        hwm = pos.get("high_water_mark", current_price)
+                        trail_sl = hwm - trail_r * pos_atr
+                    else:
+                        lwm = pos.get("low_water_mark", current_price)
+                        trail_sl = lwm + trail_r * pos_atr
+                    old_sl = pos.get("stop_loss_price")
+                    if old_sl is not None:
+                        if is_long and trail_sl > old_sl:
+                            pos["stop_loss_price"] = trail_sl
+                        elif not is_long and trail_sl < old_sl:
+                            pos["stop_loss_price"] = trail_sl
+                    else:
+                        pos["stop_loss_price"] = trail_sl
+
+            # ── 5. Simple trailing (MetaRouter) ──
+            elif (
+                close_reason is None
+                and pos.get("allow_trailing")
+                and atr > 0
+            ):
                 trailing_atr = pos.get("trailing_atr")
                 trail_stop = compute_trailing_stop(
                     side=str(pos.get("side")),
@@ -609,28 +685,41 @@ class OrderFlowListener:
                 )
                 if trail_stop is not None:
                     stop_loss_price = pos.get("stop_loss_price")
-                    if str(pos.get("side")).upper() in {"LONG", "BUY"}:
+                    if is_long:
                         if stop_loss_price is None or trail_stop > float(stop_loss_price):
                             pos["stop_loss_price"] = float(trail_stop)
-                        if float(current_price) <= float(pos["stop_loss_price"]):
-                            self._close_position(
-                                position_id=pid,
-                                side=str(pos.get("side")),
-                                qty=float(pos.get("qty") or 0.0),
-                                reason="trailing_stop",
-                            )
-                            to_close.append(pid)
                     else:
                         if stop_loss_price is None or trail_stop < float(stop_loss_price):
                             pos["stop_loss_price"] = float(trail_stop)
-                        if float(current_price) >= float(pos["stop_loss_price"]):
-                            self._close_position(
-                                position_id=pid,
-                                side=str(pos.get("side")),
-                                qty=float(pos.get("qty") or 0.0),
-                                reason="trailing_stop",
-                            )
-                            to_close.append(pid)
+
+            # ── 6. Check SL hit ──
+            if close_reason is None:
+                sl = pos.get("stop_loss_price")
+                if sl is not None:
+                    if is_long and current_price <= float(sl):
+                        close_reason = "stop_loss_hit"
+                    elif not is_long and current_price >= float(sl):
+                        close_reason = "stop_loss_hit"
+
+            # ── 7. Check TP hit ──
+            if close_reason is None:
+                tp = pos.get("take_profit_price")
+                if tp is not None:
+                    if is_long and current_price >= float(tp):
+                        close_reason = "take_profit_hit"
+                    elif not is_long and current_price <= float(tp):
+                        close_reason = "take_profit_hit"
+
+            # ── 8. Execute close ──
+            if close_reason:
+                self._close_position(
+                    position_id=pid,
+                    side=str(pos.get("side")),
+                    qty=float(pos.get("qty") or 0.0),
+                    reason=close_reason,
+                )
+                to_close.append(pid)
+
         for pid in to_close:
             self._open_positions.pop(pid, None)
 

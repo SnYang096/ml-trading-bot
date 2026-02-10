@@ -1,0 +1,31 @@
+version: 1
+description: "BPC strategy live feature plan"
+
+# Reuse NN multihead base plan for common features (gate/evidence dependencies).
+base_feature_plan: "config/nnmultihead/path_primitives_4h_80h_min/feature_plan.yaml"
+base_feature_plan_mode: "tiers"
+
+# BPC-specific: add bpc_soft_phase_f node to compute all BPC features
+# (bpc_breakout_direction, bpc_score_*, bpc_was_in_pullback, etc.)
+#
+# Dependencies of bpc_soft_phase_f:
+#   - atr_f              (already in tier0)
+#   - cvd_change_5_pct_f (already in tier0)
+#   - bb_width_normalized_pct_f (already in tier0)
+#   - vpin_features_f    (optional, from tick data if available)
+#   - ofci_pct_f         (optional, from tick data if available)
+#
+# The BPC function handles missing optional inputs gracefully (falls back to defaults).
+overlay:
+  add_feature_nodes:
+    - bpc_soft_phase_f
+  add_features:
+    # Ensure key BPC outputs are in the live feature set
+    - bpc_breakout_direction
+    - bpc_was_in_pullback
+    - bpc_score_breakout
+    - bpc_score_pullback
+    - bpc_score_continuation
+    - bpc_score_neutral
+    - bpc_direction_confidence
+    - bpc_is_after_breakout

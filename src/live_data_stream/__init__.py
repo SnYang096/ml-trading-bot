@@ -1,9 +1,8 @@
-"""
-Live data stream utilities.
+"""Live data stream utilities.
 
 This package contains:
 - WebSocket client for Binance trade streams
-- Order flow listener with Nautilus Trader integration
+- Order flow listener (tick → bar → feature → decision → order)
 - Feature storage (4h, 15min, 1min ticks)
 - Memory window management
 - Data gap filling with Feature Store integration
@@ -21,13 +20,6 @@ from .order_flow_listener import OrderFlowListener
 from .listener_config import OrderFlowListenerConfig
 from .multi_symbol_manager import MultiSymbolManager
 
-try:
-    from .live_test_strategy import LiveTestStrategy
-    LIVE_TEST_STRATEGY_AVAILABLE = True
-except ImportError:
-    LIVE_TEST_STRATEGY_AVAILABLE = False
-    LiveTestStrategy = None
-
 __all__ = [
     "StorageManager",
     "Feature4HStorage",
@@ -39,6 +31,3 @@ __all__ = [
     "OrderFlowListenerConfig",
     "MultiSymbolManager",
 ]
-
-if LIVE_TEST_STRATEGY_AVAILABLE:
-    __all__.append("LiveTestStrategy")

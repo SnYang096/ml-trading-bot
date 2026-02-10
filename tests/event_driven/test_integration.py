@@ -30,6 +30,7 @@ class TestIncrementalFeatureComputerIntegration:
             bar_window_size=100,
             vpin_bucket_volume_usd=100000.0,
             vpin_n_buckets=50,
+            live_feature_plan_path="/dev/null",  # 跳过 feature plan 让所有 key 可见
         )
 
         base_ts = int(datetime.now().timestamp() * 1e9)
@@ -62,9 +63,12 @@ class TestIncrementalFeatureComputerIntegration:
 
         # 验证特征存在
         assert len(features) > 0
-        assert "vpin" in features or "orderflow_imbalance" in features
-        assert "1H_close" in features
-        assert "1H_volume" in features
+        # vpin 在 orderflow features 而非 bar features
+        orderflow = computer.get_orderflow_features(window_minutes=15)
+        assert "vpin" in orderflow or "imbalance" in orderflow
+        # IFC 将 bar 特征存储为不带前缀的 key（当只有一个 timeframe 或为 primary 时）
+        assert "close" in features
+        assert "volume" in features
 
     def test_vpin_continuity(self):
         """测试 VPIN 跨 bucket 连续性"""
@@ -96,7 +100,8 @@ class TestIncrementalFeatureComputerIntegration:
     def test_multiple_timeframes(self):
         """测试多时间框架特征"""
         computer = IncrementalFeatureComputer(
-            bar_window_size=1000,
+            bar_window_size=200,
+            live_feature_plan_path="/dev/null",  # 跳过 feature plan 避免慢计算
         )
 
         base_ts = int(datetime.now().timestamp() * 1e9)
@@ -128,11 +133,14 @@ class TestIncrementalFeatureComputerIntegration:
         # 获取特征
         features = computer.get_features()
 
-        # 验证多时间框架特征
-        assert "15T_close" in features
-        assert "1H_close" in features
-        assert "15T_volume" in features
-        assert "1H_volume" in features
+        # 验证多时间框架特征（IFC 将 bar OHLCV 存储为不带前缀的 key）
+        assert "close" in features
+        assert "volume" in features
+        # timeframe_features 内部按 timeframe 分组
+        assert "15T" in computer.timeframe_features
+        assert "1H" in computer.timeframe_features
+        assert "close" in computer.timeframe_features["15T"]
+        assert "close" in computer.timeframe_features["1H"]
 
 
 class TestWebSocketIntegration:
@@ -223,6 +231,7 @@ class TestEndToEndIntegration:
             bar_window_size=100,
             vpin_bucket_volume_usd=50000.0,
             vpin_n_buckets=20,
+            live_feature_plan_path="/dev/null",  # 跳过 feature plan
         )
 
         base_ts = int(datetime.now().timestamp() * 1e9)

@@ -47,6 +47,80 @@ from src.time_series_model.archetype import (
 )
 
 
+# ================================================================
+# FeatureStore 补全缺失特征 (复用 eval_soft_gates 的 merge-by-(symbol,close) 逻辑)
+# ================================================================
+
+
+def _load_missing_features_from_store(
+    df: pd.DataFrame,
+    missing_features: list,
+    features_store_root: str,
+    features_store_layer: str,
+    timeframe: str = "240T",
+) -> pd.DataFrame:
+    """从 FeatureStore 加载缺失特征，通过 (symbol, close) 对齐 merge 到 df。"""
+    from src.feature_store.feature_store import FeatureStore, FeatureStoreSpec
+
+    store = FeatureStore(features_store_root)
+    sym_col = "symbol" if "symbol" in df.columns else "_symbol"
+    if sym_col not in df.columns:
+        print("   ⚠️  No symbol column, cannot merge from FeatureStore")
+        return df
+    symbols = df[sym_col].unique().tolist()
+
+    fs_parts = []
+    for sym in symbols:
+        spec = FeatureStoreSpec(
+            layer=features_store_layer, symbol=sym, timeframe=timeframe
+        )
+        try:
+            df_sym = store.read_range(
+                spec,
+                start=pd.Timestamp("1970-01-01"),
+                end=pd.Timestamp("2100-01-01"),
+            )
+            if df_sym.empty:
+                continue
+            df_sym = df_sym.copy()
+            if df_sym.index.name == "timestamp":
+                df_sym = df_sym.reset_index()
+            keep_cols = ["close"] + [f for f in missing_features if f in df_sym.columns]
+            if len(keep_cols) <= 1:
+                continue
+            df_sym = df_sym[keep_cols].copy()
+            df_sym[sym_col] = sym
+            fs_parts.append(df_sym)
+        except Exception as e:
+            print(f"   ⚠️  FeatureStore read failed for {sym}: {e}")
+
+    if not fs_parts:
+        return df
+
+    fs_all = pd.concat(fs_parts, ignore_index=True)
+    loaded_feats = [c for c in fs_all.columns if c in missing_features]
+    if not loaded_feats:
+        return df
+
+    # 对齐: 用 (symbol, close_rounded) 做 merge key
+    df["_merge_key"] = df["close"].round(8).astype(str) + "|" + df[sym_col].astype(str)
+    fs_all["_merge_key"] = (
+        fs_all["close"].round(8).astype(str) + "|" + fs_all[sym_col].astype(str)
+    )
+
+    fs_dedup = fs_all.drop_duplicates(subset=["_merge_key"], keep="last")
+    merge_cols = ["_merge_key"] + loaded_feats
+    merged = df.merge(fs_dedup[merge_cols], on="_merge_key", how="left")
+    merged.drop(columns=["_merge_key"], inplace=True)
+
+    matched = merged[loaded_feats[0]].notna().sum()
+    print(
+        f"   📦 FeatureStore merge: {matched}/{len(df)} rows matched, loaded {loaded_feats}"
+    )
+
+    return merged
+
+
 @dataclass
 class EvidenceOptimizationConfig:
     """Evidence optimization configuration"""
@@ -908,6 +982,21 @@ def main() -> int:
         default=0.05,
         help="Minimum sharpness requirement",
     )
+    parser.add_argument(
+        "--features-store-root",
+        default="feature_store",
+        help="FeatureStore root directory (default: feature_store)",
+    )
+    parser.add_argument(
+        "--features-store-layer",
+        default=None,
+        help="FeatureStore layer for missing features (auto-detect if omitted)",
+    )
+    parser.add_argument(
+        "--timeframe",
+        default="240T",
+        help="Timeframe (default: 240T)",
+    )
     args = parser.parse_args()
 
     # Load strategy archetype
@@ -958,6 +1047,38 @@ def main() -> int:
     n_bad = (df[args.label_col] == 0).sum()
     print(f"   Good samples: {n_good}, Bad samples: {n_bad}")
     print(f"   Good rate: {n_good/(n_good+n_bad):.3f}")
+
+    # ================================================================
+    # FeatureStore: 自动补全 evidence 候选特征中缺失的列
+    # ================================================================
+    needed_features = {ef.feature for ef in arch.evidence.features}
+    missing = [f for f in needed_features if f not in df.columns]
+    if missing:
+        print(f"\n   ⚠️  缺失 {len(missing)} 个 evidence 特征: {missing}")
+        fs_layer = args.features_store_layer
+        if not fs_layer:
+            try:
+                from src.feature_store.layer_naming import detect_layer_for_strategy
+
+                fs_layer = detect_layer_for_strategy(
+                    args.strategy, args.features_store_root
+                )
+            except Exception:
+                pass
+        if fs_layer:
+            print(f"   📦 从 FeatureStore 补全 (layer={fs_layer})...")
+            df = _load_missing_features_from_store(
+                df, missing, args.features_store_root, fs_layer, args.timeframe
+            )
+            still_missing = [
+                f for f in missing if f not in df.columns or df[f].isna().all()
+            ]
+            if still_missing:
+                print(f"   ⚠️  仍缺失 (将被 skip): {still_missing}")
+        else:
+            print(
+                "   💡 提示: 使用 --features-store-layer 指定 FeatureStore layer 以补全"
+            )
 
     # Create config
     config = EvidenceOptimizationConfig(

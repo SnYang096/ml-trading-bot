@@ -88,7 +88,6 @@ class TestBinanceWebSocketClient:
 
         assert client.symbols == ["BTCUSDT", "ETHUSDT"]
         assert client.use_futures is True
-        assert client.reconnect_delay == 5
         assert len(client._callbacks) == 0
 
     def test_init_empty_symbols(self):
@@ -180,8 +179,8 @@ class TestBinanceWebSocketClient:
         client = BinanceWebSocketClient(symbols=["BTCUSDT"])
 
         # 测试基本功能（不测试实际 WebSocket 连接）
-        # 实际 WebSocket 错误处理在 stream_ticks 方法中实现
-        assert client.reconnect_delay == 5
+        # reconnect_delay 已移至 ReconnectionConfig
+        assert client.symbols == ["BTCUSDT"]
 
     def test_callbacks(self):
         """测试回调调用"""

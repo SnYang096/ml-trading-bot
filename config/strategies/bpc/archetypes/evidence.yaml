@@ -1,6 +1,6 @@
 # BPC Evidence Archetype
 # 基于 optimize_evidence_plateau.py 评估结果
-# 评估时间: 2026-02-08 (gate-conditioned quantile threshold 模式)
+# 评估时间: 2026-02-09 (gate-conditioned quantile threshold 模式)
 # 职责: 影响置信度/排序/仓位，不做硬 veto
 # 排序依据: bad_suppression (主 KPI)
 
@@ -117,10 +117,25 @@ evidence:
       bins: [0.15, 0.35, 0.55, 0.75]
       labels: [amplify, favor, neutral, downweight, suppress]  # 反转
 
-  # Rank 8: Spectrum Price Flatness - 价格谱平坦度 (bad_supp: 0.123, sharpness: 0.085)
+  # Rank 8: EVT Right-tail Scale - 右尾极值尺度 (bad_supp: 0.215, sharpness: 0.158)
+  # 🆕 2026-02-09 从 soft gate 迁移，plateau 验证通过
+  - id: evidence_evt_scale_right
+    feature: evt_scale_right
+    rank: 8
+    sharpness: 0.158
+    direction: positive  # 高值=好 (右尾尺度大=上行空间大)
+    usage_hint: EVT右尾尺度越大，上行极值概率越高
+    affects:
+      - tp_range
+      - confidence_boost
+    quantile_mapping:
+      bins: [0.15, 0.35, 0.55, 0.75]
+      labels: [suppress, downweight, neutral, favor, amplify]
+
+  # Rank 9: Spectrum Price Flatness - 价格谱平坦度 (bad_supp: 0.123, sharpness: 0.085)
   - id: evidence_spectrum_price_flatness
     feature: spectrum_price_flatness
-    rank: 8
+    rank: 9
     sharpness: 0.085
     direction: negative  # 高平坦度 = 无结构 = 不利
     usage_hint: 价格谱越平坦，结构越差，应缩小仓位
@@ -132,22 +147,18 @@ evidence:
       labels: [amplify, favor, neutral, downweight, suppress]  # 反转
 
 # ============================================================
-# 📋 已移除特征 (2026-02-08 optimize_evidence_plateau.py)
+# 📋 已移除特征
 # ============================================================
-# no_valid_bins (bad_suppression ≤ 0, 无区分力):
-#   - sr_strength_max: bad_supp=-0.026, 方向性矛盾
-#   - vol_slope_20: bad_supp=-0.220
-#   - hilbert_price_env: bad_supp=-0.093
-#   - spectrum_cvd_low_freq_ratio: bad_supp=0.002
-#   - spectrum_cvd_centroid: bad_supp=0.040
-# rejected (no plateau, 参数不稳定):
-#   - vpin_ma20: bad_supp=0.145, 但邻域不足
-#   - evt_tail_shape_right: bad_supp=0.122, 但邻域不足
-# 旧版移除 (Sharpness < 0.05):
-#   - wpt_ignition_score: -0.022
-#   - cvd_change_5_normalized: +0.017
-# 跨品种不可比:
-#   - wpt_price_trend: 绝对价格值 (274-20361)
+# 2026-02-09 soft gate → evidence 迁移失败:
+#   - sr_strength_max: no_valid_bins (不满足 bad_suppression + good_amplification 双重约束)
+#   - evt_var_99: bad_supp=0.100, rejected (no plateau: neighbors ❌, semantic ❌)
+#   - evt_tail_shape_left: bad_supp=0.084, rejected (no plateau: neighbors ❌, semantic ❌)
+# 2026-02-08 optimize_evidence_plateau.py:
+#   no_valid_bins: vol_slope_20(-0.220), hilbert_price_env(-0.093),
+#                  spectrum_cvd_low_freq_ratio(0.002), spectrum_cvd_centroid(0.040)
+#   rejected (no plateau): vpin_ma20(0.145), evt_tail_shape_right(0.122)
+#   旧版 (Sharpness < 0.05): wpt_ignition_score(-0.022), cvd_change_5_normalized(+0.017)
+#   跨品种不可比: wpt_price_trend (绝对价格值 274-20361)
 
 # ============================================================
 # 📊 Evidence 使用指南

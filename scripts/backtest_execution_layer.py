@@ -4,31 +4,25 @@ Execution Layer Backtest - 逐K线路径模拟 (Bar-by-Bar Execution Simulation)
 
 使用 archetypes/execution.yaml 的止损/移动止损参数，对每个入场信号进行逐 bar 前向模拟。
 
+自动行为:
+    - Gate 过滤: 自动检测 gate_decision 列，无需手动指定
+    - Entry Filter: 自动读取 entry_filters.yaml 中所有 enabled=true 的 filter，OR 组合
+    - Grid Search: 已移至 optimize_execution_grid.py
+
 用法:
-    # 单次回测
+    # 单次回测 (自动应用 gate + entry filter)
     python scripts/backtest_execution_layer.py \\
         --logs results/train_final_xxx/bpc/predictions.parquet \\
         --strategy bpc
 
-    # 网格搜索
+    # 启用 Tiers + Noise Penalty
     python scripts/backtest_execution_layer.py \\
         --logs results/train_final_xxx/bpc/predictions.parquet \\
-        --strategy bpc --grid-search
-
-    # 入场时机过滤 (深回踩底部)
-    python scripts/backtest_execution_layer.py \\
-        --logs results/train_final_xxx/bpc/predictions.parquet \\
-        --strategy bpc --entry-filter deep_pullback
-
-    # 使用 gate 过滤的日志
-    python scripts/backtest_execution_layer.py \\
-        --logs results/train_final_xxx/bpc/logs_gated.parquet \\
-        --strategy bpc --filter-allowed
+        --strategy bpc --tiers --noise-penalty
 
 输出:
     - Sharpe Ratio (bar-by-bar 模拟)
     - Per-symbol 交易地图 HTML 报告
-    - Grid Search Sharpe Heatmap
 """
 from __future__ import annotations
 
@@ -237,119 +231,22 @@ def assign_tiers(
 
 # ================================================================
 # Entry Filter: 入场时机过滤 (Config-Driven)
+# 实现已抽取到 src/time_series_model/execution/entry_filter.py
+# 此处 re-export 保持向后兼容
 # ================================================================
 
-_OP_MAP = {
-    ">": lambda s, v: s > v,
-    ">=": lambda s, v: s >= v,
-    "<": lambda s, v: s < v,
-    "<=": lambda s, v: s <= v,
-    "==": lambda s, v: s == v,
-    "!=": lambda s, v: s != v,
-}
-
-
-def load_entry_filters_config(
-    strategy: str, strategies_root: str = "config/strategies"
-) -> Dict[str, Any]:
-    """加载 archetypes/entry_filters.yaml 配置"""
-    path = Path(strategies_root) / strategy / "archetypes" / "entry_filters.yaml"
-    if not path.exists():
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def get_available_filters(
-    entry_cfg: Dict[str, Any],
-) -> List[str]:
-    """返回 entry_filters.yaml 中所有 enabled=true 的 filter id 列表"""
-    ids = ["none"]
-    for f in entry_cfg.get("filters", []):
-        if f.get("enabled", True):
-            ids.append(f["id"])
-    return ids
-
-
-def _build_mask_from_conditions(
-    df: pd.DataFrame,
-    conditions: List[Dict[str, Any]],
-    silent: bool = False,
-) -> pd.Series:
-    """从 conditions 列表构建 AND 组合的 boolean mask"""
-    mask = pd.Series(True, index=df.index)
-    for cond in conditions:
-        feat = cond["feature"]
-        op_str = cond["operator"]
-        val = cond["value"]
-        if feat not in df.columns:
-            if not silent:
-                print(f"   ⚠️  Missing feature '{feat}', condition skipped")
-            continue
-        op_fn = _OP_MAP.get(op_str)
-        if op_fn is None:
-            if not silent:
-                print(f"   ⚠️  Unknown operator '{op_str}', condition skipped")
-            continue
-        mask = mask & op_fn(df[feat].astype(float), float(val))
-    return mask
-
-
-def apply_entry_filter(
-    df: pd.DataFrame,
-    filter_name: str,
-    entry_cfg: Optional[Dict[str, Any]] = None,
-    silent: bool = False,
-) -> int:
-    """
-    Config-driven 入场时机过滤器。
-
-    从 entry_filters.yaml 读取 filter 定义（conditions），
-    将不满足条件的 bar 的 entry_direction 置 0。
-
-    Returns:
-        过滤后剩余的入场信号数
-    """
-    if filter_name == "none":
-        return int((df["entry_direction"] != 0).sum())
-
-    n_before = int((df["entry_direction"] != 0).sum())
-
-    # 查找 filter 定义
-    filter_def = None
-    if entry_cfg:
-        for f in entry_cfg.get("filters", []):
-            if f.get("id") == filter_name:
-                filter_def = f
-                break
-
-    if filter_def is None:
-        if not silent:
-            print(f"   ⚠️  Filter '{filter_name}' not found in entry_filters.yaml")
-        return n_before
-
-    conditions = filter_def.get("conditions", [])
-    if not conditions:
-        if not silent:
-            print(f"   ⚠️  Filter '{filter_name}' has no conditions")
-        return n_before
-
-    # 构建 mask
-    mask = _build_mask_from_conditions(df, conditions, silent=silent)
-
-    # 应用: 不满足 mask 的行 entry_direction → 0
-    df.loc[~mask, "entry_direction"] = 0.0
-    n_after = int((df["entry_direction"] != 0).sum())
-
-    if not silent:
-        pct = n_after / n_before * 100 if n_before > 0 else 0
-        desc = filter_def.get("description", "")
-        print(
-            f"   🔍 Entry filter '{filter_name}': {n_before} → {n_after} entries ({pct:.1f}% pass)"
-        )
-        print(f"      {desc}")
-
-    return n_after
+from src.time_series_model.execution.entry_filter import (  # noqa: F401
+    _OP_MAP,
+    _build_mask_from_conditions,
+    apply_entry_filter,
+    apply_entry_filters_or,
+    check_conditions_single,
+    check_entry_filters_or_single,
+    compute_derived_entry_features,
+    get_available_filters,
+    load_entry_filters_config,
+    DerivedEntryFeatureState,
+)
 
 
 def load_execution_config(
@@ -383,15 +280,17 @@ def simulate_rr_execution(
     direction_col: str = "entry_direction",
     silent: bool = False,
     use_tier_params: bool = False,
+    breakeven_lock_r: float = 0.0,
 ) -> pd.Series:
     """
     逐K线路径模拟 (Bar-by-Bar Execution Simulation)
 
     对每一行（视为入场点），从下一根 bar 开始逐 bar 检查：
     1. 止损 (SL)：long → low ≤ stop_price; short → high ≥ stop_price
-    2. 移动止损激活：MFE ≥ activation_r × ATR
-    3. 移动止损触发：激活后，价格回撤 trail_r × ATR
-    4. 超时平仓：持仓超过 time_stop_bars 根 K 线
+    2. 保本锁定：MFE ≥ breakeven_lock_r × ATR → SL 移至入场价
+    3. 移动止损激活：MFE ≥ activation_r × ATR
+    4. 移动止损触发：激活后，价格回撤 trail_r × ATR
+    5. 超时平仓：持仓超过 time_stop_bars 根 K 线
 
     数据要求：df 须包含同一 symbol 的连续 OHLC 时间序列（按时间排序）。
     每个 symbol 内需要有足够的后续 bar 供前向模拟。
@@ -399,6 +298,8 @@ def simulate_rr_execution(
     Args:
         use_tier_params: 是否使用 per-entry tier 参数列
                          (需要 _tier_initial_r, _tier_activation_r, _tier_trail_r, _tier_timeout)
+        breakeven_lock_r: 保本锁定触发 R 值 (0 = 禁用)。浮盈达到此 R 后，
+                          SL 移至入场价，不允许再亏。
 
     Returns:
         pd.Series: 每行对应的 realized R/R (方向=0 或 ATR 无效为 NaN)
@@ -475,6 +376,7 @@ def simulate_rr_execution(
     results = pd.Series(np.nan, index=df.index, dtype=float)
 
     total_entries = 0
+    breakeven_lock_count = 0
     exit_stats = {"sl": 0, "trailing_sl": 0, "tp": 0, "timeout": 0, "no_data": 0}
 
     for sym, group in df.groupby(sym_col, sort=False):
@@ -527,6 +429,7 @@ def simulate_rr_execution(
                 sl_price = entry_price + initial_r * entry_atr
 
             trailing_active = False
+            breakeven_locked = False
             best_price = entry_price
             exit_price = None
             exit_reason = None
@@ -560,7 +463,7 @@ def simulate_rr_execution(
                         exit_reason = "tp"
                         break
 
-                # 3. 更新最优价 + 移动止损
+                # 3. 更新最优价
                 if direction == 1:
                     if h > best_price:
                         best_price = h
@@ -568,6 +471,19 @@ def simulate_rr_execution(
                     if l < best_price:
                         best_price = l
 
+                # 4. 保本锁定: MFE >= breakeven_lock_r → SL 移至入场价
+                if breakeven_lock_r > 0 and not breakeven_locked:
+                    mfe_r_be = abs(best_price - entry_price) / entry_atr
+                    if mfe_r_be >= breakeven_lock_r:
+                        breakeven_locked = True
+                        if direction == 1:
+                            if entry_price > sl_price:
+                                sl_price = entry_price
+                        else:
+                            if entry_price < sl_price:
+                                sl_price = entry_price
+
+                # 5. 移动止损
                 if stop_type == "trailing":
                     mfe_r = abs(best_price - entry_price) / entry_atr
                     if not trailing_active and mfe_r >= activation_r:
@@ -600,6 +516,8 @@ def simulate_rr_execution(
             results.iloc[results.index.get_loc(idx_arr[i])] = realized_rr
             total_entries += 1
             exit_stats[exit_reason] += 1
+            if breakeven_locked:
+                breakeven_lock_count += 1
 
     if not silent:
         print(
@@ -608,12 +526,27 @@ def simulate_rr_execution(
             f"TP={exit_stats['tp']}, Timeout={exit_stats['timeout']}, "
             f"NoData={exit_stats['no_data']}"
         )
+        if breakeven_lock_r > 0:
+            pct = breakeven_lock_count / total_entries * 100 if total_entries > 0 else 0
+            print(
+                f"   🔒 Breakeven lock: {breakeven_lock_count}/{total_entries} trades ({pct:.1f}%) reached {breakeven_lock_r}R"
+            )
 
     return results
 
 
-def compute_sharpe(returns: pd.Series, annualize: bool = False) -> float:
-    """计算 Sharpe Ratio"""
+def compute_sharpe(
+    returns: pd.Series,
+    annualize: bool = False,
+    span_years: float = 0.0,
+) -> float:
+    """计算 Sharpe Ratio
+
+    Args:
+        returns: per-trade R 倍数序列
+        annualize: 是否年化
+        span_years: 数据跨度(年)。年化公式: per_trade_sharpe × √(trades/year)
+    """
     returns = returns.dropna()
     if len(returns) < 2:
         return 0.0
@@ -626,15 +559,24 @@ def compute_sharpe(returns: pd.Series, annualize: bool = False) -> float:
 
     sharpe = mean_r / std_r
 
-    if annualize:
-        # 假设 4H 时间框架，每年约 6*365 = 2190 个 bar
-        sharpe *= np.sqrt(2190)
+    if annualize and span_years > 0:
+        trades_per_year = len(returns) / span_years
+        sharpe *= np.sqrt(trades_per_year)
 
     return float(sharpe)
 
 
+def _estimate_span_years(df: pd.DataFrame, bars_per_year: float = 2190.0) -> float:
+    """从 DataFrame 估算数据跨度(年)。按每个 symbol 的 bar 数推算。"""
+    sym_col = "symbol" if "symbol" in df.columns else "_symbol"
+    if sym_col not in df.columns:
+        return 0.0
+    bars_per_symbol = df.groupby(sym_col).size().median()
+    return float(bars_per_symbol / bars_per_year)
+
+
 # ================================================================
-# Grid Search
+# Grid Search (imported by optimize_execution_grid.py)
 # ================================================================
 
 
@@ -680,6 +622,7 @@ def run_grid_search(
     param_names: List[str],
     param_values: List[List[float]],
     atr_col: str = "atr",
+    span_years: float = 1.0,
 ) -> List[Dict[str, Any]]:
     """
     执行全量网格搜索
@@ -707,7 +650,10 @@ def run_grid_search(
 
         if len(valid) >= 2 and valid.std() > 1e-8:
             sharpe = float(valid.mean() / valid.std())
-            sharpe_ann = sharpe * np.sqrt(2190)
+            trades_per_year = len(valid) / span_years if span_years > 0 else 0
+            sharpe_ann = (
+                sharpe * np.sqrt(trades_per_year) if trades_per_year > 0 else 0.0
+            )
         else:
             sharpe = 0.0
             sharpe_ann = 0.0
@@ -1140,6 +1086,7 @@ def _generate_per_symbol_html(
     exec_returns: pd.Series,
     exec_config: Dict[str, Any],
     strategy: str,
+    span_years: float = 1.0,
 ) -> str:
     """
     生成 per-symbol 交易地图 HTML 报告
@@ -1165,7 +1112,9 @@ def _generate_per_symbol_html(
     overall_sharpe = (
         valid.mean() / valid.std() if len(valid) > 1 and valid.std() > 1e-8 else 0.0
     )
-    overall_sharpe_ann = overall_sharpe * np.sqrt(2190)
+    overall_sharpe_ann = (
+        overall_sharpe * np.sqrt(len(valid) / span_years) if span_years > 0 else 0.0
+    )
 
     # Per-symbol stats
     sym_stats = []
@@ -1181,7 +1130,7 @@ def _generate_per_symbol_html(
             "mean_r": rr.mean(),
             "std_r": rr.std(),
             "sharpe": sh,
-            "sharpe_ann": sh * np.sqrt(2190),
+            "sharpe_ann": sh * np.sqrt(len(rr) / span_years) if span_years > 0 else 0.0,
             "win_rate": (rr > 0).mean(),
             "pf": (
                 rr[rr > 0].sum() / abs(rr[rr < 0].sum())
@@ -1401,11 +1350,11 @@ stop_loss:
     <div class="card">
         <div class="kpi-grid">
             <div class="kpi-item {'success' if overall_sharpe > 0.1 else 'warning'}">
-                <div class="kpi-label">Sharpe (raw)</div>
+                <div class="kpi-label">Sharpe (per-trade)</div>
                 <div class="kpi-value">{overall_sharpe:.4f}</div>
             </div>
-            <div class="kpi-item info">
-                <div class="kpi-label">Annualized Sharpe</div>
+            <div class="kpi-item {'success' if overall_sharpe_ann > 2 else 'info'}">
+                <div class="kpi-label">Sharpe (annualized)</div>
                 <div class="kpi-value">{overall_sharpe_ann:.1f}</div>
             </div>
             <div class="kpi-item primary">
@@ -1483,16 +1432,6 @@ def main() -> int:
     )
     p.add_argument("--timeframe", default="240T")
     p.add_argument(
-        "--filter-allowed",
-        action="store_true",
-        help="Only include gate_decision=allow rows",
-    )
-    p.add_argument(
-        "--grid-search",
-        action="store_true",
-        help="Run grid search using optimization section in execution.yaml",
-    )
-    p.add_argument(
         "--tiers",
         action="store_true",
         help="Enable tier-based execution: per-entry params from evidence_score + tiers config",
@@ -1503,21 +1442,23 @@ def main() -> int:
         help="Apply noise penalty adjustments (requires FeatureStore math features)",
     )
     p.add_argument(
-        "--entry-filter",
-        default="none",
-        help=(
-            "Entry timing filter ID from entry_filters.yaml. "
-            "Use 'none' to disable. "
-            "Common: deep_pullback, deep_pullback_cvd, deep_pullback_vol, "
-            "deep_pullback_wick, deep_pullback_full, deep_pullback_momentum, "
-            "deep_pullback_bb, deep_pullback_wpt, deep_pullback_liq_void. "
-            "Default: none"
-        ),
+        "--no-entry-filter",
+        action="store_true",
+        help="Disable automatic entry filter (skip entry_filters.yaml)",
+    )
+    p.add_argument(
+        "--breakeven",
+        nargs="?",
+        const=1.0,
+        type=float,
+        default=None,
+        help="Enable breakeven lock. MFE >= R triggers SL move to entry price. "
+        "Default trigger: 1.0R (from holding.yaml). Example: --breakeven or --breakeven 1.5",
     )
     p.add_argument(
         "--output",
         default=None,
-        help="Output path for results (JSON + HTML). Works in both single-run and grid-search mode.",
+        help="Output path for results (HTML report).",
     )
     args = p.parse_args()
 
@@ -1575,18 +1516,21 @@ def main() -> int:
     else:
         df["entry_direction"] = 0.0
 
-    # Gate 过滤：不删除行（保持 OHLC 连续性），而是将非 allow 行的方向设为 0
-    if args.filter_allowed:
-        if "gate_decision" in df.columns:
-            veto_mask = df["gate_decision"] != "allow"
-            n_allowed = int((~veto_mask).sum())
-            df.loc[veto_mask, "entry_direction"] = 0.0
-            print(f"   Gate filter: {n_allowed} allow entries / {len(df)} total bars")
-        elif "gate_ok" in df.columns:
-            veto_mask = df["gate_ok"] != True
-            n_allowed = int((~veto_mask).sum())
-            df.loc[veto_mask, "entry_direction"] = 0.0
-            print(f"   Gate filter: {n_allowed} allow entries / {len(df)} total bars")
+    # Gate 过滤（自动检测）：不删除行（保持 OHLC 连续性），而是将非 allow 行的方向设为 0
+    if "gate_decision" in df.columns:
+        veto_mask = df["gate_decision"] != "allow"
+        n_allowed = int((~veto_mask).sum())
+        df.loc[veto_mask, "entry_direction"] = 0.0
+        print(
+            f"   🚪 Gate filter (auto): {n_allowed} allow entries / {len(df)} total bars"
+        )
+    elif "gate_ok" in df.columns:
+        veto_mask = df["gate_ok"] != True
+        n_allowed = int((~veto_mask).sum())
+        df.loc[veto_mask, "entry_direction"] = 0.0
+        print(
+            f"   🚪 Gate filter (auto): {n_allowed} allow entries / {len(df)} total bars"
+        )
 
     n_entries = int((df["entry_direction"] != 0).sum())
     if n_entries == 0:
@@ -1671,29 +1615,22 @@ def main() -> int:
         )
 
     # ================================================================
-    # Entry Filter: 入场时机过滤 (Config-Driven from entry_filters.yaml)
+    # Entry Filter: 入场时机过滤 (自动读取 entry_filters.yaml, OR 组合)
     # ================================================================
-    entry_filters_cfg = None
-    if args.entry_filter != "none":
+    if not args.no_entry_filter:
         entry_filters_cfg = load_entry_filters_config(
             args.strategy, args.strategies_root
         )
-        if not entry_filters_cfg:
-            print(f"\n⚠️  entry_filters.yaml not found, entry filter disabled")
+        if entry_filters_cfg:
+            compute_derived_entry_features(merged)
+            n_entries = apply_entry_filters_or(merged, entry_filters_cfg)
+            if n_entries == 0:
+                print("❌ No entry signals after entry filter")
+                return 1
         else:
-            available = get_available_filters(entry_filters_cfg)
-            if args.entry_filter not in available:
-                print(
-                    f"\n⚠️  Filter '{args.entry_filter}' not in available: {available}"
-                )
-            else:
-                print(f"\n🔍 Entry Filter: {args.entry_filter}")
-                n_entries = apply_entry_filter(
-                    merged, args.entry_filter, entry_cfg=entry_filters_cfg
-                )
-                if n_entries == 0:
-                    print("❌ No entry signals after filtering")
-                    return 1
+            print("   ℹ️  entry_filters.yaml not found, skipping entry filter")
+    else:
+        print("   ℹ️  Entry filter disabled (--no-entry-filter)")
 
     # ================================================================
     # Tiers 模式: 计算 evidence_score + 分配 per-entry 参数
@@ -1859,129 +1796,25 @@ def main() -> int:
                 print("   ✅ Noise penalty applied to global params (per-entry)")
 
     # ================================================================
-    # Grid Search 模式
+    # Breakeven Lock: 保本锁定
     # ================================================================
-    if args.grid_search:
-        if args.tiers:
-            print(
-                "⚠️  --tiers 和 --grid-search 不同时使用。Grid Search 优化全局参数，忽略 tier 分档。"
-            )
-        opt_cfg = exec_config.get("optimization", {})
-        if not opt_cfg.get("enabled"):
-            print("❌ optimization.enabled=false in execution.yaml")
-            return 1
-
-        param_names, param_values = _parse_optimization_grid(opt_cfg)
-        total_combos = 1
-        for pv in param_values:
-            total_combos *= len(pv)
-
-        print(f"\n🔍 Grid Search Mode")
-        print(f"   Parameters: {len(param_names)}")
-        for i, (n, v) in enumerate(zip(param_names, param_values)):
-            print(f"   [{i+1}] {n}: {v}")
-        print(f"   Total combinations: {total_combos}")
-        print()
-
-        # 运行网格搜索
-        print("📈 Running grid search...")
-        results = run_grid_search(
-            merged, exec_config, param_names, param_values, atr_col="atr"
-        )
-
-        # 平坦高原分析
-        plateau = _identify_plateau(results)
-        best = plateau["best"]
-
-        # 打印摘要
-        print("\n" + "=" * 80)
-        print("📊 GRID SEARCH RESULTS")
-        print("=" * 80)
-        print(
-            f"\n   🏆 Best Sharpe: {best['sharpe']:.4f}  (annualized: {best['sharpe_ann']:.1f})"
-        )
-        short_names = [n.split(".")[-1] for n in param_names]
-        print(
-            f"   Best params: {', '.join(f'{short_names[i]}={best[param_names[i]]:.1f}' for i in range(len(param_names)))}"
-        )
-        print(
-            f"   Trades: {best['trades']}  |  Mean R: {best['mean_r']:.4f}  |  Win Rate: {best['win_rate']:.1%}"
-        )
-        print(f"\n   Plateau: {'✅ 稳定' if plateau['is_plateau'] else '⚠️ 不稳定'}")
-        print(
-            f"   Top-{plateau['top_n']} mean={plateau['mean_sharpe']:.4f}  std={plateau['std_sharpe']:.4f}  CV={plateau['cv']:.3f}"
-        )
-
-        # 输出文件
-        if args.output:
-            output_path = Path(args.output)
-        else:
-            output_path = Path(args.logs).parent / "execution_grid_search.json"
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # JSON 结果
-        json_data = {
-            "strategy": args.strategy,
-            "param_names": param_names,
-            "param_values": [[float(v) for v in pv] for pv in param_values],
-            "total_combinations": total_combos,
-            "best": {
-                k: (
-                    float(v)
-                    if isinstance(v, (np.floating, np.integer))
-                    else bool(v) if isinstance(v, np.bool_) else v
-                )
-                for k, v in best.items()
-            },
-            "plateau": {
-                "is_plateau": bool(plateau["is_plateau"]),
-                "mean_sharpe": float(plateau["mean_sharpe"]),
-                "std_sharpe": float(plateau["std_sharpe"]),
-                "cv": float(plateau["cv"]),
-            },
-            "results": [
-                {
-                    k: (
-                        float(v)
-                        if isinstance(v, (np.floating, np.integer))
-                        else bool(v) if isinstance(v, np.bool_) else v
-                    )
-                    for k, v in r.items()
-                }
-                for r in results
-            ],
-        }
-        json_path = output_path.with_suffix(".json")
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(json_data, f, indent=2, ensure_ascii=False)
-        print(f"\n   📄 JSON: {json_path}")
-
-        # HTML 报告
-        html = _generate_grid_search_html(
-            results=results,
-            param_names=param_names,
-            param_values=param_values,
-            plateau=plateau,
-            exec_config=exec_config,
-            strategy=args.strategy,
-            n_trades_total=n_entries,
-        )
-        html_path = output_path.with_suffix(".html")
-        Path(html_path).write_text(html, encoding="utf-8")
-        print(f"   📊 HTML: {html_path}")
-        print("\n" + "=" * 80)
-
-        return 0
+    breakeven_lock_r = 0.0
+    if args.breakeven is not None:
+        breakeven_lock_r = args.breakeven
+        print(f"\n🔒 Breakeven lock enabled: trigger at {breakeven_lock_r}R")
 
     # ================================================================
-    # 单次回测模式（默认）
+    # 单次回测模式
     # ================================================================
 
     # 使用 execution.yaml 配置模拟 RR
     print("\n📈 Simulating with execution.yaml config...")
     exec_returns = simulate_rr_execution(
-        merged, exec_config, atr_col="atr", use_tier_params=use_tier_params
+        merged,
+        exec_config,
+        atr_col="atr",
+        use_tier_params=use_tier_params,
+        breakeven_lock_r=breakeven_lock_r,
     )
 
     valid_returns = exec_returns.dropna()
@@ -1990,18 +1823,26 @@ def main() -> int:
         return 1
 
     # 计算 Sharpe
+    span_years = _estimate_span_years(merged)
     exec_sharpe = compute_sharpe(valid_returns, annualize=False)
-    exec_sharpe_ann = compute_sharpe(valid_returns, annualize=True)
+    exec_sharpe_ann = compute_sharpe(
+        valid_returns, annualize=True, span_years=span_years
+    )
+    trades_per_year = len(valid_returns) / span_years if span_years > 0 else 0
 
     print("\n" + "=" * 80)
     print("📊 EXECUTION LAYER BACKTEST RESULTS")
     print("=" * 80)
-    print(f"\n   Trades: {len(valid_returns)}")
+    print(
+        f"\n   Trades: {len(valid_returns)}  ({trades_per_year:.0f}/year, span={span_years:.2f}yr)"
+    )
     print(f"   Mean R: {valid_returns.mean():.4f}")
     print(f"   Std R:  {valid_returns.std():.4f}")
     print(f"   Win Rate: {(valid_returns > 0).mean():.2%}")
-    print(f"\n   Sharpe (raw): {exec_sharpe:.4f}")
-    print(f"   Sharpe (annualized): {exec_sharpe_ann:.4f}")
+    print(f"\n   Sharpe (per-trade): {exec_sharpe:.4f}")
+    print(
+        f"   Sharpe (annualized): {exec_sharpe_ann:.2f}  = {exec_sharpe:.4f} × √{trades_per_year:.0f}"
+    )
 
     # Per-symbol breakdown
     sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
@@ -2062,6 +1903,7 @@ def main() -> int:
             exec_returns=exec_returns,
             exec_config=exec_config,
             strategy=args.strategy,
+            span_years=span_years,
         )
         html_path = output_path.with_suffix(".html")
         Path(html_path).write_text(html, encoding="utf-8")

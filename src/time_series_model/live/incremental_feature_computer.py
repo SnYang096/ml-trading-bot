@@ -33,6 +33,7 @@ from src.features.time_series.utils_volatility_features import (
     extract_volume_profile_volatility_features_from_series,
 )
 
+# Nautilus Trader types (optional — dict format is always supported)
 try:
     from nautilus_trader.model import TradeTick, Bar
     from nautilus_trader.model.enums import AggressorSide
@@ -165,21 +166,20 @@ class IncrementalFeatureComputer:
         处理 tick 数据
 
         Args:
-            tick: TradeTick 对象或字典
+            tick: dict 或 TradeTick 对象
         """
-        if not NAUTILUS_AVAILABLE:
-            return
-
         # 转换为统一格式
-        if isinstance(tick, TradeTick):
+        if isinstance(tick, dict):
+            tick_data = tick
+        elif (
+            NAUTILUS_AVAILABLE and TradeTick is not None and isinstance(tick, TradeTick)
+        ):
             tick_data = {
                 "ts": tick.ts_event,
                 "price": float(tick.price),
                 "volume": float(tick.size),
                 "side": 1 if tick.aggressor_side == AggressorSide.BUYER else -1,
             }
-        elif isinstance(tick, dict):
-            tick_data = tick
         else:
             return
 
@@ -206,14 +206,13 @@ class IncrementalFeatureComputer:
         处理 bar 数据
 
         Args:
-            bar: Bar 对象或字典
-            timeframe: 时间框架（如 "15T", "1H"）
+            bar: dict 或 Bar 对象
+            timeframe: 时间框架（如 "15T", "1H")
         """
-        if not NAUTILUS_AVAILABLE:
-            return
-
         # 转换为统一格式
-        if isinstance(bar, Bar):
+        if isinstance(bar, dict):
+            bar_data = bar
+        elif NAUTILUS_AVAILABLE and Bar is not None and isinstance(bar, Bar):
             bar_data = {
                 "ts": bar.ts_event,
                 "open": float(bar.open),
@@ -222,8 +221,6 @@ class IncrementalFeatureComputer:
                 "close": float(bar.close),
                 "volume": float(bar.volume),
             }
-        elif isinstance(bar, dict):
-            bar_data = bar
         else:
             return
 
