@@ -34,9 +34,6 @@ from src.feature_store import FeatureStore, FeatureStoreSpec  # noqa: E402
 from src.time_series_model.core.constitution.execution_evidence import (  # noqa: E402
     load_evidence_quantiles,
 )
-from src.time_series_model.live.meta_router_config import (  # noqa: E402
-    load_meta_router_live_config,
-)
 from src.time_series_model.live.tree_gate import apply_gate_rules  # noqa: E402
 from src.time_series_model.nnmultihead.strategy_profile import (  # noqa: E402
     load_execution_archetypes_registry,
@@ -239,9 +236,8 @@ def _enabled_archetypes(
     config_path: Optional[str] = None,
     archetypes: Dict[str, object],
 ) -> List[str]:
-    cfg = load_meta_router_live_config(config_path=config_path)
-    xs = cfg.enabled_archetypes or []
-    return [x for x in xs if x in archetypes]
+    """Return all archetype names that exist in the loaded archetypes dict."""
+    return list(archetypes.keys())
 
 
 def main() -> int:

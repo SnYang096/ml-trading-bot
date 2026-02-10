@@ -1,8 +1,7 @@
-"""
-Live trading integration module.
+"""Live trading integration module.
 
 This module provides live trading components.
-The main entry point is MetaRouterCore (in core.meta_router_core).
+Main entry: BPCLiveStrategy (bpc_live_strategy.py) + OrderFlowListener.
 """
 
 __all__ = []

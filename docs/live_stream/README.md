@@ -21,7 +21,7 @@
 
 ## 实盘启动（当前主入口）
 
-当前实盘启动脚本已统一为 **WebSocket + OrderFlowListener + MetaRouterCore** 链路，入口在：
+当前实盘启动脚本已统一为 **WebSocket + OrderFlowListener + BPCLiveStrategy** 链路，入口在：
 
 - `scripts/run_live.py`
 

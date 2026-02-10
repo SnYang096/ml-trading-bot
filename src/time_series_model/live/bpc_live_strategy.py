@@ -12,7 +12,7 @@ BPC = Breakout → Pullback → Continuation
 
 不使用 ML 模型。所有信号来自 BPC 结构特征。
 
-输出 TradeIntent（与 MetaRouterCore 同接口），可直接
+输出 TradeIntent，可直接
 由 OrderFlowListener._execute_intent() 执行。
 """
 
@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
-from src.time_series_model.core.meta_router_core import TradeIntent
+from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.archetype.loader import (
     StrategyArchetype,
     load_strategy_archetype,
@@ -94,7 +94,7 @@ class BPCLiveStrategy:
     """
     BPC 实盘决策引擎 — 纯逻辑，不依赖 Nautilus
 
-    接口与 MetaRouterCore 对齐:
+    接口与 OrderFlowListener 对齐:
         decide(features, symbol) → List[TradeIntent]
 
     可直接赋给 OrderFlowListener.decision_handler 使用。
@@ -222,7 +222,7 @@ class BPCLiveStrategy:
         """
         BPC 决策管线 → 产出 TradeIntent list (0 or 1 items)
 
-        与 MetaRouterCore.decide() 同签名，可直接替换。
+        与 decide() 标准签名，可直接替换。
         """
         should_enter, signal_info = self._evaluate_entry_signal(features)
         if not should_enter:

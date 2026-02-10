@@ -156,8 +156,8 @@ def load_execution_profile_runtime_config(
 ) -> Dict[str, Any]:
     """
     DEPRECATED: This config file has been removed.
-    New live trading pipeline uses MetaRouterCore which reads directly from execution_archetypes.yaml.
-    This function is kept for backward compatibility with legacy EventDrivenStrategy.
+    New live trading pipeline uses BPCLiveStrategy which reads from execution.yaml + gate.yaml.
+    This function is kept for backward compatibility with legacy scripts.
     """
     p = Path(path)
     if not p.exists():
@@ -173,8 +173,8 @@ def resolve_execution_profile_paths(
     runtime_config_path: Optional[str | Path] = None,
 ) -> Tuple[str, str]:
     """
-    DEPRECATED: This function is only used by legacy EventDrivenStrategy.
-    New live trading pipeline uses MetaRouterCore which reads directly from execution_archetypes.yaml.
+    DEPRECATED: This function is only used by legacy scripts.
+    New live trading pipeline uses BPCLiveStrategy which reads from execution.yaml + gate.yaml.
     """
     cfg_path = (
         runtime_config_path

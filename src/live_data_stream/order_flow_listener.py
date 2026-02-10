@@ -5,7 +5,7 @@
 2. 按1分钟聚合tick数据
 3. 每15分钟计算特征并保存
 4. 每4小时聚合特征并保存
-5. 可插拔决策路由（MetaRouterCore / BPCLiveStrategy / 自定义）
+5. 可插拔决策路由（BPCLiveStrategy / 自定义 decision_handler）
 6. 增强持仓管理（breakeven lock, activation trailing, time stop）
 7. 支持从断线中恢复
 """
@@ -34,12 +34,11 @@ from src.time_series_model.core.constitution.constitution_executor import (
 from src.time_series_model.core.constitution.runtime_state import (
     ConstitutionRuntimeState,
 )
-from src.time_series_model.core.meta_router_core import MetaRouterCore, TradeIntent
+from src.time_series_model.core.trade_intent import TradeIntent
 from src.order_management.models import OrderSide, OrderType
 from src.time_series_model.live.execution_profile_apply import (
     pick_atr,
     compute_rr_prices,
-    compute_trailing_stop,
     holding_expired,
 )
 
@@ -70,7 +69,6 @@ class OrderFlowListener:
         storage_base_path: str = "data/live_storage",
         on_bar_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         on_feature_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
-        meta_router_core: Optional[MetaRouterCore] = None,
         constitution_executor: Optional[ConstitutionExecutor] = None,
         runtime_state: Optional[ConstitutionRuntimeState] = None,
         order_manager: Optional[Any] = None,
@@ -89,15 +87,13 @@ class OrderFlowListener:
             storage_base_path: 存储根目录
             on_bar_callback: 收到新bar时的回调函数
             on_feature_callback: 计算完特征时的回调函数
-            meta_router_core: 纯逻辑 MetaRouterCore（可选）
             constitution_executor: 宪法执行器（可选）
             runtime_state: 宪法运行时状态（可选）
             order_manager: 订单管理器（可选）
             trade_size: 默认下单数量（可选）
             decision_handler: 可插拔决策路由器（可选），需实现
                 decide(*, features, symbol, bars=None) -> List[TradeIntent]
-                如 BPCLiveStrategy 或任何与 MetaRouterCore 同签名的对象。
-                优先级: decision_handler > meta_router_core
+                如 BPCLiveStrategy 或任何自定义决策引擎。
         """
         self.symbol = symbol
         self.storage_manager = storage_manager
@@ -130,7 +126,6 @@ class OrderFlowListener:
         self.on_feature_callback = on_feature_callback
 
         # Optional trading pipeline
-        self.meta_router_core = meta_router_core
         self.constitution_executor = constitution_executor
         self.runtime_state = runtime_state
         self.order_manager = order_manager
@@ -375,19 +370,9 @@ class OrderFlowListener:
 
         intents = []
 
-        # 优先使用 decision_handler（BPCLiveStrategy 等）
+        # 使用 decision_handler（BPCLiveStrategy 等）
         if self.decision_handler is not None:
             intents = self.decision_handler.decide(
-                features=all_features,
-                symbol=self.symbol,
-                bars=self.memory_window.get_latest(240) if self.memory_window else [],
-            )
-        elif (
-            self.meta_router_core is not None
-            and self.constitution_executor is not None
-            and self.runtime_state is not None
-        ):
-            intents = self.meta_router_core.decide(
                 features=all_features,
                 symbol=self.symbol,
                 bars=self.memory_window.get_latest(240) if self.memory_window else [],
@@ -670,29 +655,8 @@ class OrderFlowListener:
                     else:
                         pos["stop_loss_price"] = trail_sl
 
-            # ── 5. Simple trailing (MetaRouter) ──
-            elif (
-                close_reason is None
-                and pos.get("allow_trailing")
-                and atr > 0
-            ):
-                trailing_atr = pos.get("trailing_atr")
-                trail_stop = compute_trailing_stop(
-                    side=str(pos.get("side")),
-                    current_price=float(current_price),
-                    atr=float(atr),
-                    trailing_atr=trailing_atr,
-                )
-                if trail_stop is not None:
-                    stop_loss_price = pos.get("stop_loss_price")
-                    if is_long:
-                        if stop_loss_price is None or trail_stop > float(stop_loss_price):
-                            pos["stop_loss_price"] = float(trail_stop)
-                    else:
-                        if stop_loss_price is None or trail_stop < float(stop_loss_price):
-                            pos["stop_loss_price"] = float(trail_stop)
 
-            # ── 6. Check SL hit ──
+            # ── 5. Check SL hit ──
             if close_reason is None:
                 sl = pos.get("stop_loss_price")
                 if sl is not None:
@@ -701,7 +665,7 @@ class OrderFlowListener:
                     elif not is_long and current_price >= float(sl):
                         close_reason = "stop_loss_hit"
 
-            # ── 7. Check TP hit ──
+            # ── 6. Check TP hit ──
             if close_reason is None:
                 tp = pos.get("take_profit_price")
                 if tp is not None:
@@ -710,7 +674,7 @@ class OrderFlowListener:
                     elif not is_long and current_price <= float(tp):
                         close_reason = "take_profit_hit"
 
-            # ── 8. Execute close ──
+            # ── 7. Execute close ──
             if close_reason:
                 self._close_position(
                     position_id=pid,

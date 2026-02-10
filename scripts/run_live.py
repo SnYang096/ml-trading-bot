@@ -1,17 +1,10 @@
-"""run_live.py — 统一 Live 入口
+"""run_live.py — BPC Live 入口
 
-支持两种模式（通过 MLBOT_LIVE_MODE 环境变量选择）：
+BPCLiveStrategy → 纯规则决策引擎
+无 ML 依赖；使用 Gate + Entry Filter + Evidence + Tier
 
-  meta_router (默认):
-    MetaRouterCore + ConstitutionExecutor → 多 archetype 决策
-    需要 ML 模型预测 (pred_dir_prob 等)
-
-  bpc:
-    BPCLiveStrategy → 纯规则决策引擎
-    无 ML 依赖；使用 Gate + Entry Filter + Evidence + Tier
-
-两种模式共享同一个数据管线:
-  BinanceWS → MultiSymbolManager → OrderFlowListener → 决策 → OrderManager
+数据管线:
+  BinanceWS → MultiSymbolManager → OrderFlowListener → BPC decide → OrderManager
 """
 
 from __future__ import annotations
@@ -68,83 +61,7 @@ def _build_gap_filler(storage: StorageManager):
         return None
 
 
-# ────────────────────────────────────────────────────
-# Mode: meta_router
-# ────────────────────────────────────────────────────
-
-
-def _setup_meta_router_mode(
-    symbols: List[str],
-    storage: StorageManager,
-    gap_filler,
-    trade_size: float,
-):
-    """MetaRouterCore + ConstitutionExecutor 模式"""
-    from src.time_series_model.core.meta_router_core import (
-        MetaRouterCore,
-        MetaRouterCoreConfig,
-    )
-    from src.time_series_model.core.constitution.constitution_executor import (
-        ConstitutionExecutor,
-    )
-    from src.time_series_model.live.meta_router_config import (
-        load_meta_router_live_config,
-    )
-
-    live_config_path = os.getenv(
-        "MLBOT_LIVE_CONFIG_YAML",
-        "config/live/live_config_defaults.yaml",
-    )
-    live_cfg = load_meta_router_live_config(config_path=live_config_path)
-    window_minutes = live_cfg.window_minutes
-
-    core_cfg = MetaRouterCoreConfig(
-        strategies_root=os.getenv("MLBOT_STRATEGIES_ROOT", "config/strategies"),
-        evidence_quantiles_path=os.getenv("MLBOT_EVIDENCE_QUANTILES_JSON"),
-        live_config_path=live_config_path,
-    )
-    meta_router = MetaRouterCore(core_cfg)
-
-    constitution_yaml = os.getenv(
-        "MLBOT_CONSTITUTION_YAML", "config/constitution/constitution.yaml"
-    )
-    executor = ConstitutionExecutor(constitution_yaml=constitution_yaml)
-    runtime_state = executor.load_runtime_state()
-    order_manager = init_order_manager_from_env()
-
-    manager = MultiSymbolManager(
-        symbols=symbols,
-        storage_manager=storage,
-        gap_filler=gap_filler,
-        feature_compute_interval_minutes=window_minutes,
-        orderflow_window_minutes=window_minutes,
-        order_manager=order_manager,
-    )
-
-    for sym in symbols:
-        listener = manager.get_listener(sym)
-        if listener is None:
-            continue
-        listener.meta_router_core = meta_router
-        listener.constitution_executor = executor
-        listener.runtime_state = runtime_state
-        listener.order_manager = order_manager
-        if trade_size > 0:
-            listener.trade_size = trade_size
-
-    logger.info(
-        f"[meta_router] Initialized: {len(symbols)} symbols, "
-        f"window={window_minutes}min, archetypes={live_cfg.enabled_archetypes}"
-    )
-    return manager
-
-
-# ────────────────────────────────────────────────────
-# Mode: bpc
-# ────────────────────────────────────────────────────
-
-
-def _setup_bpc_mode(
+def _setup_bpc(
     symbols: List[str],
     storage: StorageManager,
     gap_filler,
@@ -209,11 +126,6 @@ def _setup_bpc_mode(
     return manager
 
 
-# ────────────────────────────────────────────────────
-# Main
-# ────────────────────────────────────────────────────
-
-
 async def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -224,7 +136,6 @@ async def main() -> None:
     if not symbols:
         raise ValueError("No symbols provided. Set MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT")
 
-    mode = os.getenv("MLBOT_LIVE_MODE", "meta_router").strip().lower()
     storage_base = os.getenv("MLBOT_LIVE_STORAGE_BASE", "data/live_storage")
     use_futures = os.getenv("MLBOT_LIVE_USE_FUTURES", "true").lower() in {
         "1",
@@ -237,16 +148,9 @@ async def main() -> None:
     storage = StorageManager(base_path=storage_base)
     gap_filler = _build_gap_filler(storage)
 
-    logger.info(f"🚀 Starting live trading: mode={mode}, symbols={symbols}")
+    logger.info(f"🚀 Starting live trading: symbols={symbols}")
 
-    if mode == "bpc":
-        manager = _setup_bpc_mode(symbols, storage, gap_filler, trade_size)
-    elif mode in {"meta_router", "meta"}:
-        manager = _setup_meta_router_mode(symbols, storage, gap_filler, trade_size)
-    else:
-        raise ValueError(
-            f"Unknown MLBOT_LIVE_MODE={mode!r}. Use 'meta_router' or 'bpc'."
-        )
+    manager = _setup_bpc(symbols, storage, gap_filler, trade_size)
 
     if warmup_days > 0:
         await manager.warmup_all(days=warmup_days, use_gap_filler=bool(gap_filler))

@@ -16,7 +16,6 @@ from src.time_series_model.core.constitution.execution_evidence import (
     load_evidence_quantiles,
 )
 from src.time_series_model.diagnostics.kpi_gate import check_kpi_gate
-from src.time_series_model.live.meta_router_config import load_meta_router_live_config
 from src.time_series_model.live.tree_gate import apply_gate_rules
 from src.time_series_model.nnmultihead.strategy_profile import (
     ExecutionArchetype,
@@ -125,9 +124,8 @@ def _enabled_archetypes(
     config_path: Optional[str] = None,
     archetypes: Dict[str, ExecutionArchetype],
 ) -> List[str]:
-    cfg = load_meta_router_live_config(config_path=config_path)
-    xs = cfg.enabled_archetypes or []
-    return [x for x in xs if x in archetypes]
+    """Return all archetype names that exist in the loaded archetypes dict."""
+    return list(archetypes.keys())
 
 
 def _compute_returns_from_archetype(

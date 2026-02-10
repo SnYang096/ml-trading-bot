@@ -23,7 +23,7 @@ from src.time_series_model.live.bpc_live_strategy import (
     BPCLiveStrategy,
     select_tier,
 )
-from src.time_series_model.core.meta_router_core import TradeIntent
+from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.archetype.loader import (
     StrategyArchetype,
     load_strategy_archetype,
