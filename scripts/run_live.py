@@ -152,8 +152,43 @@ async def main() -> None:
 
     manager = _setup_bpc(symbols, storage, gap_filler, trade_size)
 
+    # Warmup 与启动质量闸门
     if warmup_days > 0:
-        await manager.warmup_all(days=warmup_days, use_gap_filler=bool(gap_filler))
+        logger.info(f"🔄 Starting warmup: {warmup_days} days...")
+        warmup_results = await manager.warmup_all(
+            days=warmup_days, use_gap_filler=bool(gap_filler), max_retries=3
+        )
+
+        # 根据warmup结果决定启动模式
+        decision = manager.decide_startup_mode(warmup_results)
+        manager.mode_manager.set_mode(decision)
+
+        logger.info(f"⚡ Startup mode: {decision.mode.value}")
+        logger.info(f"   Reason: {decision.reason}")
+        logger.info(
+            f"   Data: {decision.bar_count} bars, {decision.data_coverage_hours:.2f}h coverage"
+        )
+
+        # 策略B：OFFLINE模式不再崩溃，而是继续运行等待实时数据累积
+        if decision.mode.value == "OFFLINE":
+            logger.warning("⚠️  System starting in OFFLINE mode (Strategy B)")
+            logger.warning(
+                f"   Got: {decision.bar_count} bars, need >= 120 (2h) for DEGRADED, >= 240 (4h) for NORMAL"
+            )
+            logger.warning(
+                "   Trading is DISABLED. Waiting for real-time data accumulation..."
+            )
+            logger.warning(
+                "   System will auto-upgrade: OFFLINE → DEGRADED (2h) → NORMAL (4h)"
+            )
+
+        # DEGRADED模式警告
+        if decision.mode.value == "DEGRADED":
+            logger.warning("⚠️  System starting in DEGRADED mode")
+            logger.warning("   Trading is DISABLED. Observation only.")
+            logger.warning(
+                "   System will auto-upgrade to NORMAL when data is complete."
+            )
 
     await manager.start_all()
 

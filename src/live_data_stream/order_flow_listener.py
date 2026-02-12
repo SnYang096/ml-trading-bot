@@ -74,6 +74,7 @@ class OrderFlowListener:
         order_manager: Optional[Any] = None,
         trade_size: Optional[float] = None,
         decision_handler: Optional[Any] = None,
+        mode_manager: Optional[Any] = None,
     ):
         """
         Args:
@@ -94,6 +95,7 @@ class OrderFlowListener:
             decision_handler: 可插拔决策路由器（可选），需实现
                 decide(*, features, symbol, bars=None) -> List[TradeIntent]
                 如 BPCLiveStrategy 或任何自定义决策引擎。
+            mode_manager: 系统模式管理器（可选），用于检查是否允许交易
         """
         self.symbol = symbol
         self.storage_manager = storage_manager
@@ -105,6 +107,7 @@ class OrderFlowListener:
             else int(feature_compute_interval_minutes)
         )
         self.feature_4h_interval_hours = feature_4h_interval_hours
+        self.mode_manager = mode_manager  # 模式管理器
         
         # 特征计算器
         if feature_computer is None:
@@ -133,9 +136,16 @@ class OrderFlowListener:
         self.decision_handler = decision_handler
         self._open_positions: Dict[str, Dict[str, Any]] = {}
         
-        # 1分钟聚合状态
+        # 1分钟聚合状态（bar级别）
         self.current_1min_bar: Optional[Dict[str, Any]] = None
         self.current_1min_start: Optional[pd.Timestamp] = None
+        
+        # 1分钟tick聚合缓冲区（tick级别，按买卖分离）
+        self.tick_1min_buffer: Dict[str, Any] = {
+            "start_time": None,
+            "buy_ticks": [],  # 买方tick列表
+            "sell_ticks": [],  # 卖方tick列表
+        }
         
         # 定时器状态
         self.last_feature_compute_time: Optional[pd.Timestamp] = None
@@ -229,6 +239,30 @@ class OrderFlowListener:
             "side": side_value,
         })
         
+        # 新增：缓存tick到1分钟缓冲区（按买卖分离）
+        bar_start = tick_ts.floor("1min")
+        if self.tick_1min_buffer["start_time"] != bar_start:
+            # 新的一分钟，保存上一分钟的tick
+            if self.tick_1min_buffer["start_time"] is not None:
+                self._save_1min_ticks()
+            # 重置缓冲区
+            self.tick_1min_buffer = {
+                "start_time": bar_start,
+                "buy_ticks": [],
+                "sell_ticks": [],
+            }
+        
+        # 累加tick（按方向分类）
+        tick_record = {
+            "timestamp": tick_ts,
+            "price": price,
+            "volume": size,
+        }
+        if is_buy:
+            self.tick_1min_buffer["buy_ticks"].append(tick_record)
+        else:
+            self.tick_1min_buffer["sell_ticks"].append(tick_record)
+        
         # 定期保存未完成的bar（用于恢复）
         self._periodic_save_incomplete_bar()
     
@@ -275,6 +309,51 @@ class OrderFlowListener:
         # 重置当前bar
         self.current_1min_bar = None
         self.current_1min_start = None
+    
+    def _save_1min_ticks(self) -> None:
+        """保存1分钟聚合tick数据（按买卖分离，与研究pipeline格式一致）
+        
+        格式：每1分钟生成2条tick记录（buy和sell分开）
+        [timestamp, price, volume, side]
+        """
+        if not self.tick_1min_buffer.get("start_time"):
+            return
+        
+        buy_ticks = self.tick_1min_buffer.get("buy_ticks", [])
+        sell_ticks = self.tick_1min_buffer.get("sell_ticks", [])
+        start_time = self.tick_1min_buffer["start_time"]
+        
+        tick_records = []
+        
+        # 处理买方ticks：聚合成一条
+        if buy_ticks:
+            total_volume = sum(t["volume"] for t in buy_ticks)
+            # 使用VWAP作为价格
+            vwap = sum(t["price"] * t["volume"] for t in buy_ticks) / total_volume
+            tick_records.append({
+                "timestamp": start_time,
+                "price": vwap,
+                "volume": total_volume,
+                "side": 1,  # buy
+            })
+        
+        # 处理卖方ticks：聚合成一条（时间戳稍微错开）
+        if sell_ticks:
+            total_volume = sum(t["volume"] for t in sell_ticks)
+            vwap = sum(t["price"] * t["volume"] for t in sell_ticks) / total_volume
+            tick_records.append({
+                "timestamp": start_time + pd.Timedelta(milliseconds=1),  # 错开时间戳
+                "price": vwap,
+                "volume": total_volume,
+                "side": -1,  # sell
+            })
+        
+        # 保存到存储
+        if tick_records:
+            tick_df = pd.DataFrame(tick_records)
+            # 使用storage_manager的ticks存储（将在Task 2中添加）
+            if hasattr(self.storage_manager, "save_ticks"):
+                self.storage_manager.save_ticks(self.symbol, tick_df)
     
     def _periodic_save_incomplete_bar(self) -> None:
         """定期保存未完成的bar（每10秒）"""
@@ -367,6 +446,12 @@ class OrderFlowListener:
         # 检查下单所需依赖
         if self.order_manager is None:
             return
+        
+        # 检查系统模式：如果是DEGRADED或OFFLINE，不执行交易
+        if self.mode_manager is not None:
+            if not self.mode_manager.is_trading_allowed():
+                # DEGRADED模式：只观察不交易
+                return
 
         intents = []
 

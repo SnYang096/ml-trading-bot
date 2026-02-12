@@ -145,6 +145,43 @@ def main() -> None:
 
     # IMPORTANT: disable FeatureComputer's own monthly cache so warmup context can flow across month boundaries.
     feature_loader = StrategyFeatureLoader(use_monthly_cache=False)
+
+    # 💡 动态注入 freq 参数：从 strategy meta.yaml 的 timeframe 读取
+    # 注意：cfg.meta 直接对应 meta.yaml 的 strategy 节点内容
+    meta_timeframe = (cfg.meta or {}).get("timeframe")
+
+    if meta_timeframe:
+        print(f"   ℹ️  Detected strategy.timeframe from meta.yaml: {meta_timeframe}")
+        # 注入到需要 freq 参数的特征配置中
+        feature_deps = feature_loader.feature_deps.get("features", {})
+        freq_required_features = [
+            "vpin_base_aligned_features_f",
+            "trade_cluster_base_aligned_features_f",
+        ]
+        injected_count = 0
+        for feat_name in freq_required_features:
+            if feat_name in feature_deps:
+                compute_params = feature_deps[feat_name].setdefault(
+                    "compute_params", {}
+                )
+                if "freq" not in compute_params:
+                    compute_params["freq"] = meta_timeframe
+                    print(f"   ✅ Injected freq='{meta_timeframe}' to {feat_name}")
+                    injected_count += 1
+                else:
+                    # 已有配置，不覆盖（保留用户显式配置的优先级）
+                    print(
+                        f"   ℹ️  {feat_name} already has freq='{compute_params['freq']}', skipping"
+                    )
+        if injected_count == 0 and freq_required_features:
+            print(
+                f"   ℹ️  No freq injection needed (features not in requested list or already configured)"
+            )
+    else:
+        print(
+            "   ⚠️  No strategy.timeframe found in meta.yaml, freq parameter will not be injected"
+        )
+
     feature_cache_version = getattr(feature_loader.computer, "cache_version", None)
     requested = cfg.features.requested_features
 

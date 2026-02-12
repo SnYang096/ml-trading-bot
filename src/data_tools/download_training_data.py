@@ -35,13 +35,22 @@ class BinanceMultiSymbolDownloader:
         self,
         data_dir: str = "data/agg_data",
         parquet_dir: Optional[str] = None,
+        granularity: str = "monthly",  # "monthly" or "daily"
     ):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.parquet_dir = Path(parquet_dir) if parquet_dir else None
+        self.granularity = granularity
 
         # Binance数据基础URL
-        self.base_url = "https://data.binance.vision/data/futures/um/monthly/aggTrades"
+        if granularity == "daily":
+            self.base_url = (
+                "https://data.binance.vision/data/futures/um/daily/aggTrades"
+            )
+        else:
+            self.base_url = (
+                "https://data.binance.vision/data/futures/um/monthly/aggTrades"
+            )
 
         # Reusable HTTP session (better resilience for large ZIP downloads)
         self.session = requests.Session()
@@ -131,6 +140,38 @@ class BinanceMultiSymbolDownloader:
 
         return months
 
+    def get_date_list(
+        self,
+        start_date: str,  # "YYYY-MM-DD"
+        end_date: Optional[str] = None,  # "YYYY-MM-DD"
+    ) -> List[str]:
+        """生成日期列表（用于每日数据下载）
+
+        Args:
+            start_date: 开始日期 "YYYY-MM-DD"
+            end_date: 结束日期 "YYYY-MM-DD"，默认为昨天（Binance每日数据有延迟）
+
+        Returns:
+            日期列表 ["YYYY-MM-DD", ...]
+        """
+        from datetime import datetime, timedelta
+
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+
+        if end_date is None:
+            # 默认到昨天（因为Binance每日数据次日10:00 UTC生成）
+            end = datetime.utcnow() - timedelta(days=1)
+        else:
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+
+        dates = []
+        current = start
+        while current <= end:
+            dates.append(current.strftime("%Y-%m-%d"))
+            current += timedelta(days=1)
+
+        return dates
+
     def normalize_symbol(self, symbol: str) -> Optional[str]:
         """标准化交易对名称，支持别名（如BTC -> BTCUSDT）"""
         if not symbol:
@@ -156,8 +197,10 @@ class BinanceMultiSymbolDownloader:
             normalized = f"{normalized}USDT"
         return normalized
 
-    def check_local_file(self, symbol: str, year: int, month: int) -> Optional[str]:
-        """检查本地是否已具备该月份数据：优先检查 Parquet；其次检查 ZIP
+    def check_local_file(
+        self, symbol: str, year: int, month: int, day: Optional[int] = None
+    ) -> Optional[str]:
+        """检查本地是否已具备该月份/日期数据：优先检查 Parquet；其次检查 ZIP
 
         Returns:
             "parquet" if parquet exists, "zip" if zip exists, None if missing
@@ -165,14 +208,22 @@ class BinanceMultiSymbolDownloader:
         # 1) 检查 Parquet
         if self.parquet_dir:
             parquet_symbol = self._parquet_symbol(symbol)
-            parquet_name = f"{parquet_symbol}_{year}-{month:02d}.parquet"
+            if day is not None:
+                # 每日数据
+                parquet_name = f"{parquet_symbol}_{year}-{month:02d}-{day:02d}.parquet"
+            else:
+                # 月度数据
+                parquet_name = f"{parquet_symbol}_{year}-{month:02d}.parquet"
             parquet_path = self.parquet_dir / parquet_name
             if parquet_path.exists() and parquet_path.stat().st_size > 0:
                 print(f"✅ Parquet 已存在: {parquet_name}")
                 return "parquet"
 
         # 2) 检查 ZIP
-        filename = f"{symbol}-aggTrades-{year}-{month:02d}.zip"
+        if day is not None:
+            filename = f"{symbol}-aggTrades-{year}-{month:02d}-{day:02d}.zip"
+        else:
+            filename = f"{symbol}-aggTrades-{year}-{month:02d}.zip"
         file_path = self.data_dir / filename
 
         if not file_path.exists():
@@ -180,7 +231,8 @@ class BinanceMultiSymbolDownloader:
 
         # 检查文件大小（至少应该有1MB，避免下载不完整的文件）
         file_size = file_path.stat().st_size
-        if file_size < 1 * 1024 * 1024:  # 1MB
+        min_size = 1 * 1024 * 1024 if day is None else 100 * 1024  # 每日文件至少100KB
+        if file_size < min_size:
             print(f"   ⚠️  {filename} 文件太小 ({file_size} bytes)，将重新下载")
             file_path.unlink()  # 删除不完整的文件
             return None
@@ -193,11 +245,15 @@ class BinanceMultiSymbolDownloader:
         symbol: str,
         year: int,
         month: int,
+        day: Optional[int] = None,
         retry_times: int = 3,
         timeout: int = 600,
     ) -> bool:
         """下载单个文件"""
-        filename = f"{symbol}-aggTrades-{year}-{month:02d}.zip"
+        if day is not None:
+            filename = f"{symbol}-aggTrades-{year}-{month:02d}-{day:02d}.zip"
+        else:
+            filename = f"{symbol}-aggTrades-{year}-{month:02d}.zip"
         file_path = self.data_dir / filename
         tmp_path = file_path.with_suffix(file_path.suffix + ".part")
         url = f"{self.base_url}/{symbol}/{filename}"
@@ -320,6 +376,59 @@ class BinanceMultiSymbolDownloader:
 
             # 下载文件
             if self.download_file(symbol, year, month):
+                symbol_stats["downloaded"] += 1
+            else:
+                symbol_stats["failed"] += 1
+
+            # 避免请求过快
+            time.sleep(0.5)
+
+        return symbol_stats
+
+    def download_symbol_daily_data(self, symbol: str, dates: List[str]) -> Dict:
+        """下载单个币种的每日数据
+
+        Args:
+            symbol: 交易对符号
+            dates: 日期列表 ["YYYY-MM-DD", ...]
+
+        Returns:
+            统计信息字典
+        """
+        symbol_name = self.symbols.get(symbol, symbol)
+        print(f"\n{'='*60}")
+        print(f"📊 {symbol_name} ({symbol})")
+        print(f"{'='*60}")
+
+        symbol_stats = {
+            "total": len(dates),
+            "downloaded": 0,
+            "skipped": 0,
+            "failed": 0,
+        }
+
+        for i, date_str in enumerate(dates, 1):
+            print(f"[{i}/{len(dates)}] {date_str}:", end=" ")
+
+            self.stats["total"] += 1
+
+            # 解析日期
+            year, month, day = map(int, date_str.split("-"))
+
+            # 检查本地是否已有文件
+            existing_type = self.check_local_file(symbol, year, month, day)
+            if existing_type:
+                if existing_type == "zip":
+                    filename = f"{symbol}-aggTrades-{date_str}.zip"
+                    file_path = self.data_dir / filename
+                    size_kb = file_path.stat().st_size / 1024
+                    print(f"✅ 已存在 ({size_kb:.1f}KB)")
+                symbol_stats["skipped"] += 1
+                self.stats["skipped"] += 1
+                continue
+
+            # 下载文件
+            if self.download_file(symbol, year, month, day):
                 symbol_stats["downloaded"] += 1
             else:
                 symbol_stats["failed"] += 1

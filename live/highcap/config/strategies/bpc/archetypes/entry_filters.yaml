@@ -1,0 +1,635 @@
+# BPC Entry Filters Archetype
+# 入场时机过滤器 — 控制"现在该入场吗？"
+#
+# 职责定位（与其他 archetype 层的关系）:
+#   Gate:         "这笔交易能做吗？"   → 硬二值过滤坏交易
+#   Entry Filter: "现在该入场吗？"     → 硬二值控制入场时机（耐心等待）
+#   Evidence:     "入场后下多少注？"   → 软连续值调整执行参数
+#
+# 设计原则:
+#   1. 每个 filter 是一组 AND 条件，描述一种关键K线的语义场景
+#   2. enabled: true/false 控制是否生效
+#   3. 多个 enabled=true 的 filter 之间是 OR 关系（任一满足即可入场）
+#      → 每个 filter 内部的 conditions 仍是 AND 关系
+#      → OR 逻辑使得更多 trades 通过，语义上 = "满足任一有利场景即入场"
+#   4. 条件使用 feature + operator + threshold 描述，代码动态解析
+#   5. 所有回测数据基于 predictions.parquet (20430 bars, 6 symbols)
+#      → bar-by-bar 回测基于 return_tree predictions (11113 bars)
+#   6. 基线对比: none (全部入场) snotio=13.20, Trades=11107, Stop=50.6%, Win=46.6%
+#   7. 阈值来源: optimize_entry_filter_plateau.py 扫描，双 CV 约束 + 20% 偏宽容侧
+#
+# 执行方式（自动）:
+#   backtest_execution_layer.py 自动读取本文件中所有 enabled=true 的 filter，
+#   用 OR 逻辑组合应用。无需 CLI 参数。
+#
+# 评估方式:
+#   python scripts/optimize_entry_filter_plateau.py \
+#     --logs ... --strategy bpc
+#
+# 评估时间: 2026-02-10
+
+# ============================================================
+# 📋 全局设置
+# ============================================================
+schema:
+  # 基础条件: 所有 filter 隐含要求 entry_direction != 0
+  # 条件运算符: ">", ">=", "<", "<=", "==", "!="
+  # 多个条件之间是 AND 关系
+  base_description: |
+    BPC 策略方向由 bpc_breakout_direction (Donchian 20-bar 突破) 决定。
+    原始状态 100% bar 都有方向 (forward-fill)，每根 bar 都入场。
+    Entry Filter 用于筛选「关键K线」— 只在结构性条件满足时入场。
+
+# ============================================================
+# ✅ 已启用的入场模式
+# ============================================================
+filters:
+
+  # ----------------------------------------------------------------
+  # 1. 深回踩底部 (基础层 — 所有高级 filter 的必要条件)
+  # ----------------------------------------------------------------
+  - id: deep_pullback
+    enabled: false
+    description: "深回踩底部入场: pullback depth ≥ 0.55 且已确认在回踩中"
+    semantic: |
+      BPC 理想入场时机: Breakout 后价格深度回踩至 55%+ 位置，
+      在回踩底部等待 Continuation 启动。
+      深回踩提供更好的 R/R: 离止损更近，离目标更远。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.55
+    backtest:
+      sharpe: 0.328
+      trades: 1762
+      win_rate: 0.506
+      mean_r: 14.78
+    notes: "基础层，Sharpe +6.5% vs baseline。所有高级 filter 都基于此条件。"
+
+  # ----------------------------------------------------------------
+  # 2. 深回踩 + CVD 吸收 (推荐 — 最佳 Sharpe/Trades 平衡)
+  # ----------------------------------------------------------------
+  - id: deep_pullback_cvd
+    enabled: false
+    description: "深回踩 + CVD 订单流吸收确认"
+    semantic: |
+      在深回踩底部，CVD (累积成交量差) 显示卖方力量被吸收。
+      CVD absorption = 1 表示订单流方向与回踩方向相反 — 买方在底部接盘。
+      这是典型的 "smart money absorption" 信号。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.55
+      - feature: bpc_cvd_absorption
+        operator: "=="
+        value: 1
+    backtest:
+      sharpe: 0.381
+      trades: 993
+      win_rate: 0.521
+      mean_r: 15.34
+    notes: "推荐默认: Sharpe +24% vs baseline, 993 trades 足够稳健。"
+
+  # ----------------------------------------------------------------
+  # 3. 深回踩 + 缩量压缩
+  # ----------------------------------------------------------------
+  - id: deep_pullback_vol
+    enabled: false
+    description: "深回踩 + 成交量压缩/缩量确认"
+    semantic: |
+      深回踩中成交量萎缩 — 卖方耗尽，供应枯竭。
+      bpc_vol_pullback_confirm > 0.75 或 bpc_vol_compression > 0.7 表示
+      回踩阶段的量能已大幅缩减，预示即将反转。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.5
+      - feature: bpc_vol_pullback_confirm
+        operator: ">"
+        value: 0.77
+    backtest:
+      sharpe: 0.424
+      trades: 429
+      win_rate: 0.517
+      mean_r: 12.76
+    notes: "Sharpe +38%，但 trades 较少 (429)。适合保守策略。"
+
+  # ----------------------------------------------------------------
+  # 4. 深回踩 + 影线吸收
+  # ----------------------------------------------------------------
+  - id: deep_pullback_wick
+    enabled: false
+    description: "深回踩 + 影线(下影线)吸收形态"
+    semantic: |
+      深回踩底部出现长影线 — 价格探底后被强力拉回。
+      wick_absorption_score > 0.2 表示 K 线实体小、影线长，
+      典型的 hammer/pin bar 底部反转形态。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.55
+      - feature: wick_absorption_score
+        operator: ">"
+        value: 0.2
+    backtest:
+      sharpe: 0.409
+      trades: 241
+      win_rate: 0.485
+      mean_r: 11.09
+    notes: "Sharpe +33%，trades 少 (241)。影线形态确认力强。"
+
+  # ----------------------------------------------------------------
+  # 5. 深回踩 + 影线 + CVD 全确认
+  # ----------------------------------------------------------------
+  - id: deep_pullback_full
+    enabled: false
+    description: "深回踩 + 影线吸收 + CVD 吸收 (全维度确认)"
+    semantic: |
+      三重确认: 价格结构(深回踩) + K线形态(影线) + 订单流(CVD吸收)。
+      最严格的入场条件，只在所有维度同时满足时入场。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.67
+      - feature: wick_absorption_score
+        operator: ">"
+        value: 0.2
+      - feature: bpc_cvd_absorption
+        operator: "=="
+        value: 1
+    backtest:
+      sharpe: 0.492
+      trades: 121
+      win_rate: 0.521
+      mean_r: 13.42
+    notes: "Sharpe +60%! 但仅 121 trades，适合高确信度场景。"
+
+  # ----------------------------------------------------------------
+  # 6. 深回踩 + 动量确认 (新发现)
+  # ----------------------------------------------------------------
+  - id: deep_pullback_momentum
+    enabled: false
+    description: "深回踩 + BPC 动量方向确认"
+    semantic: |
+      深回踩底部，短期动量已转向突破方向。
+      bpc_momentum_confirm = 1 表示 RSI/动量指标确认方向反转。
+      等动量确认后入场，避免抄底抄在半山腰。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.45
+      - feature: bpc_momentum_confirm
+        operator: "=="
+        value: 1
+    backtest:
+      sharpe: 0.418
+      trades: 302
+      win_rate: 0.510
+      mean_r: 11.70
+    notes: "Sharpe +36%，302 trades。动量反转确认，避免提前入场。"
+
+  # ----------------------------------------------------------------
+  # 7. 深回踩 + BB 压缩 (新发现)
+  # ----------------------------------------------------------------
+  - id: deep_pullback_bb
+    enabled: true
+    description: "深回踩 + 布林带压缩 (波动率收窄)"
+    semantic: |
+      深回踩中布林带收窄 — 波动率急剧下降，预示即将爆发。
+      bb_compression > 0.72 表示布林带宽度处于近期低位，
+      回踩阶段的波动率耗尽 → 下一步大概率是趋势延续。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: bpc_bb_compression
+        operator: ">"
+        value: 0.72
+    backtest:
+      sharpe: 0.396
+      trades: 330
+      win_rate: 0.573
+      mean_r: 16.43
+    notes: "snotio=16.43, stop=40.3%, 正交维度(波动率压缩), GARCH因果性"
+
+  # ----------------------------------------------------------------
+  # 10. 深回踩 + 流动性沉默 (正交维度: 流动性枯竭)
+  # ----------------------------------------------------------------
+  - id: liquidity_silence
+    enabled: true
+    description: "深回踩 + 成交量处于历史低位 (vol_percentile < 0.2)"
+    semantic: |
+      流动性沉默：成交量处于历史底部 20% — 参与者极少，市场"冻结"。
+      与 vol_pullback_confirm 的区别：
+        - vol_pullback_confirm: 当前 bar 缩量 vs 近期均值（相对变化）
+        - liquidity_silence: 当前 bar 成交量在长期历史中的绝对百分位
+      极端安静往往预示着大动作——流动性枯竭后任何一笔大单都能推动价格。
+      与 bb 的正交性：
+        - bb: 波动率压缩 (GARCH聚类) — 价格范围窄
+        - liq: 流动性枯竭 — 参与者少
+        两者重叠仅 19% (86/456 bar)，捕捉不同市场状态。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.55
+      - feature: ef_liquidity_silence
+        operator: "<"
+        value: 0.2
+    backtest:
+      sharpe: 0.299
+      trades: 211
+      win_rate: 0.545
+      mean_r: 18.29
+    notes: "snotio=18.29 (排名#4), stop=42.2%, OR组合后 snotio=19.18/stop=39.3%/win=58.7%/455笔"
+
+  # ----------------------------------------------------------------
+  # 8. 深回踩 + WPT 吸收 (新发现)
+  # ----------------------------------------------------------------
+  - id: deep_pullback_wpt
+    enabled: false
+    description: "深回踩 + 小波变换 (WPT) 吸收确认"
+    semantic: |
+      WPT 吸收检测小波空间中的能量吸收模式 —
+      回踩中高频分量被吸收，留下低频趋势信号。
+      wpt_absorption_score > 0.17 表示小波能量结构利于反转。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.5
+      - feature: wpt_absorption_score
+        operator: ">"
+        value: 0.17
+    backtest:
+      sharpe: 0.375
+      trades: 336
+      win_rate: 0.512
+      mean_r: 21.70
+    notes: "Sharpe +22%，Mean R 很高 (21.70)。WPT 捕捉形态不同于 CVD/Wick。"
+
+  # ----------------------------------------------------------------
+  # 9. 深回踩 + 流动性空洞吸收 (类 footprint)
+  # ----------------------------------------------------------------
+  - id: deep_pullback_liq_void
+    enabled: false
+    description: "深回踩 + 流动性空洞区域的吸收 (footprint-like)"
+    semantic: |
+      在流动性空洞 (Liquidity Void) 区域检测到吸收行为 —
+      价格进入之前快速穿越的区域后，被稳定吸收。
+      类似于 footprint chart 的 absorption 模式。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.45
+      - feature: liquidity_void_absorption_score
+        operator: ">"
+        value: 0
+    backtest:
+      sharpe: 0.376
+      trades: 342
+      win_rate: 0.482
+      mean_r: 7.55
+    notes: "Sharpe +22%。类 footprint 吸收，维度独立于其他 filter。"
+
+# ============================================================
+# ❌ 已测试但未启用的入场模式 (含原因)
+# ============================================================
+disabled_filters:
+
+  # ----------------------------------------------------------------
+  # SR 质量 — 深回踩 + 强支撑阻力
+  # ----------------------------------------------------------------
+  - id: deep_pullback_sr
+    enabled: false
+    description: "深回踩 + SR 强度 top 20%"
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: sr_strength_max
+        operator: ">"
+        value: 3.86  # p80 分位
+    backtest:
+      sharpe: 0.278
+      trades: 345
+      win_rate: 0.507
+      mean_r: 15.22
+    reject_reason: |
+      Sharpe (0.278) 低于 baseline (0.308)!
+      强 SR 附近容易产生反复测试的假信号，不利于 BPC continuation。
+      SR 在 evidence 中也已被移除 (bad_supp=-0.026)。
+
+  # ----------------------------------------------------------------
+  # VPIN 确认
+  # ----------------------------------------------------------------
+  - id: deep_pullback_vpin
+    enabled: false
+    description: "深回踩 + VPIN breakout 确认"
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: bpc_vpin_breakout_confirm
+        operator: ">"
+        value: 0.6
+    backtest:
+      sharpe: 0.280
+      trades: 201
+      win_rate: 0.507
+      mean_r: 19.77
+    reject_reason: |
+      Sharpe (0.280) 低于 deep_pullback 基础版 (0.328)。
+      VPIN 在回踩底部不是好的确认信号 — 它更适合 breakout 阶段。
+
+  # ----------------------------------------------------------------
+  # Direction Confidence > 0
+  # ----------------------------------------------------------------
+  - id: confidence_only
+    enabled: false
+    description: "仅 bpc_direction_confidence > 0 (无深回踩要求)"
+    conditions:
+      - feature: bpc_direction_confidence
+        operator: ">"
+        value: 0
+    backtest:
+      sharpe: 0.299
+      trades: 2186
+      win_rate: 0.425
+      mean_r: 13.07
+    reject_reason: |
+      Sharpe (0.299) 低于 baseline。仅依赖 confidence 不够 —
+      它标记的是 breakout 时刻，不是最佳入场时机。
+
+  # ----------------------------------------------------------------
+  # 纯 SR 高质量 (不依赖深回踩)
+  # ----------------------------------------------------------------
+  - id: sr_quality_top10
+    enabled: false
+    description: "SR 强度 top 10% (不依赖深回踩)"
+    conditions:
+      - feature: sr_strength_max
+        operator: ">"
+        value: 4.18  # p90 分位
+    backtest:
+      sharpe: 0.322
+      trades: 2041
+      win_rate: 0.494
+      mean_r: 23.96
+    reject_reason: |
+      比 baseline 仅好一点 (0.322 vs 0.308)，但交易太多 (2041)。
+      SR 强度作为入场 filter 区分度不够。
+      可能更适合作为 Evidence 的软权重。
+
+  # ----------------------------------------------------------------
+  # P→C 转折 (BPC score 组合)
+  # ----------------------------------------------------------------
+  - id: pc_transition
+    enabled: false
+    description: "经典 BPC P→C 转折: was_in_pullback + continuation > 0.1"
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_score_continuation
+        operator: ">"
+        value: 0.1
+    backtest:
+      sharpe: 0.305
+      trades: 6861
+      win_rate: 0.449
+      mean_r: 13.59
+    reject_reason: |
+      Sharpe (0.305) 接近 baseline。BPC score_continuation 触发太早，
+      不能精确识别回踩底部。深回踩 (depth≥0.6) 是更好的替代。
+
+  # ----------------------------------------------------------------
+  # VP 吸收 (Volume Profile) — 太少
+  # ----------------------------------------------------------------
+  - id: deep_pullback_vp
+    enabled: false
+    description: "深回踩 + Volume Profile 吸收"
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: vp_absorption_score
+        operator: ">"
+        value: 0.2
+    backtest:
+      sharpe: 0.431
+      trades: 58
+      win_rate: 0.466
+      mean_r: 6.65
+    reject_reason: |
+      Sharpe 好 (0.431) 但仅 58 trades — 样本不足以信赖。
+      胜率也偏低 (46.6%)。VP absorption 阈值 0.2 过高。
+
+  # ----------------------------------------------------------------
+  # 脉冲方向一致 + 缩量 — 组合效果一般
+  # ----------------------------------------------------------------
+  - id: deep_pullback_impulse_vol
+    enabled: false
+    description: "深回踩 + 脉冲方向一致 + 缩量压缩"
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.6
+      - feature: bpc_impulse_direction_match
+        operator: "=="
+        value: 1
+      - feature: bpc_vol_compression
+        operator: ">"
+        value: 0.7
+    backtest:
+      sharpe: 0.389
+      trades: 176
+      win_rate: 0.455
+      mean_r: 9.11
+    reject_reason: |
+      Sharpe 不错 (0.389) 但 trades 少 (176) 且胜率低 (45.5%)。
+      impulse_match 单独 (0.332) 已比 deep_pb 差，组合收益有限。
+
+  # ================================================================
+  # 🆕 正交维度 filter (非吸收型，独立维度)
+  # ================================================================
+
+  # ----------------------------------------------------------------
+  # 维度 1: 波动率 regime 切换 — 波动率正在下降 → 爆发前兆
+  # ----------------------------------------------------------------
+  - id: vol_regime_shift
+    enabled: false
+    description: "深回踩 + 波动率正在下降 (bb_width 5-bar 变化 < -0.15)"
+    semantic: |
+      波动率 regime 切换：不只是"波动率低"（bb_compression 已覆盖），
+      而是"波动率正在从高位向低位切换"。
+      这捕捉的是 GARCH 集群的转折点——从扩张到收缩的过程中入场。
+      与 bb_compression 的区别：
+        - bb_compression: 波动率水平（静态）
+        - vol_regime_shift: 波动率变化方向（动态）
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.55
+      - feature: ef_vol_regime_shift
+        operator: "<"
+        value: -0.15
+    backtest:
+      sharpe: 0.335
+      trades: 442
+      win_rate: 0.527
+      mean_r: 13.34
+    reject_reason: |
+      snotio(13.34) ≈ baseline(13.20)，stop=45.0% 比 baseline(50.6%) 低但不如 bb。
+      波动率动态方向不够强——仅说明波动率在下降，但不保证已到极端压缩状态。
+
+  # ----------------------------------------------------------------
+  # 维度 2: 流动性沉默 (liquidity_silence) — 已迁移到 filters 段启用
+  # ----------------------------------------------------------------
+  # → 见 filters 段 id: liquidity_silence (enabled: true)
+  #   snotio=18.29, stop=42.2%, 与 bb OR 后 snotio=19.18/stop=39.3%
+
+  # ----------------------------------------------------------------
+  # 维度 3: 盘整持续时间 — 回踩盘整越久，蓄势越充分
+  # ----------------------------------------------------------------
+  - id: consolidation_time
+    enabled: false
+    description: "深回踩 + 连续盘整 ≥ 5 bar (was_in_pullback 连续为 1)"
+    semantic: |
+      时间压缩：连续多少 bar 处于回踩状态。
+      急促的 3-bar 回踩和缓慢的 15-bar 盘整，pullback_depth 可能一样，
+      但后者积累了更多流动性和止损单，爆发后更有持续力。
+      与 bpc_pullback_duration 的区别：
+        - bpc_pullback_duration: 连续 close < rolling_high × 0.9（几乎永远为 0）
+        - consolidation_time: 连续 was_in_pullback==1 的 bar 数（BPC 语义对齐）
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.55
+      - feature: ef_consolidation_bars
+        operator: ">="
+        value: 0.125
+    backtest:
+      sharpe: 0.364
+      trades: 169
+      win_rate: 0.556
+      mean_r: 11.64
+    reject_reason: |
+      stop_rate=37.9% 最低！但 snotio(11.64) < baseline(13.20)，交易太少(169)。
+      时间积累维度有效但单独用不够——可考虑作为未来组合候选。
+
+# ============================================================
+# 📊 模式排名 (阈值优化后，bar-by-bar 模拟)
+# ============================================================
+# 数据源: return_tree predictions.parquet (11113 bars, 6 symbols, span=0.86yr)
+# 执行参数: SL=2.0R (trailing), activation=1.0R, trail=1.5R
+# 阈值来源: optimize_entry_filter_plateau.py (双 CV + 20% 偏宽容侧)
+#
+# 层级 KPI 定位:
+#   Entry Filter → snotio (mean R) / loss_rate / stop_rate  ← 主 KPI
+#   Evidence     → failure rate / drawdown
+#   Execution    → Sharpe / Calmar / MDD
+#   全系统       → OOS Sharpe (最后看)
+#
+# 评估工具: optimize_entry_filter_snotio.py (2^N-1 子集穷举 + HTML 报告)
+# 更新时间: 2026-02-09
+#
+# 当前启用: 2 filters (bb OR liquidity_silence)
+# 启用原因: bb OR liq 是帕累托改进——所有维度优于 bb-only
+#   snotio: 19.18 (+17% vs bb-only), stop: 39.3% (-1.0pp), loss: 41.3% (-1.4pp)
+#   win: 58.7% (+1.4pp), trades: 455 (+38%)  
+#   重叠仅 86 bar (19%)，两者捕捉不同市场状态
+#
+# 全量 19 Filter 排名 (by snotio = mean R, --all 模式, 含 3 个正交维度新增):
+# Rank | ID                      | snotio | Loss%  | Stop%  | Sh_pt  | Trades | Win%  | 判定
+# -----|-------------------------|--------|--------|--------|--------|--------|-------|----------
+#  1   | deep_pullback_sr        | 24.41  | 54.7%  | 54.7%  | 0.250  |     53 | 45.3% | ❌ snotio高但stop>基线,53笔
+#  2   | sr_quality_top10        | 21.41  | 59.4%  | 58.3%  | 0.282  |    357 | 40.6% | ❌ stop>>基线,win40%
+#  3   | deep_pullback_vpin      | 19.83  | 53.3%  | 50.5%  | 0.309  |    107 | 46.7% | ❌ stop≈基线,107笔
+#  ★   | liquidity_silence       | 18.29  | 45.5%  | 42.2%  | 0.299  |    211 | 54.5% | ✅ snotio↑+stop↓ (正交:流动性枯竭)
+#  ★   | deep_pullback_bb        | 16.43  | 42.7%  | 40.3%  | 0.396  |    330 | 57.3% | ✅ snotio↑+stop↓ (正交:波动率压缩)
+#  6   | deep_pullback_wpt       | 15.47  | 50.1%  | 47.6%  | 0.349  |    437 | 49.9% | ❌ stop≈基线
+#  7   | deep_pullback_cvd       | 13.55  | 44.6%  | 41.2%  | 0.347  |    650 | 55.4% | ⚠️ stop好但snotio≈基线
+#  8   | vol_regime_shift        | 13.34  | 47.3%  | 45.0%  | 0.335  |    442 | 52.7% | ❌ snotio≈基线
+#  9   | deep_pullback           | 13.16  | 48.2%  | 45.1%  | 0.329  |   1202 | 51.8% | ⚠️ 基础层
+# 10   | consolidation_time      | 11.64  | 44.4%  | 37.9%  | 0.364  |    169 | 55.6% | ⚠️ stop最低但snotio差
+# 11   | pc_transition           | 11.43  | 55.0%  | 52.3%  | 0.313  |   3793 | 45.0% | ❌ stop>基线
+# 12   | deep_pullback_momentum  | 11.39  | 52.6%  | 49.5%  | 0.360  |    380 | 47.4% | ❌ snotio差
+# 13   | confidence_only         | 11.23  | 54.0%  | 51.9%  | 0.304  |   1211 | 46.0% | ❌ stop>基线
+# 14   | deep_pullback_vp        |  9.84  | 35.0%  | 35.0%  | 0.630  |     40 | 65.0% | ❌ 40笔样本不足
+# 15   | deep_pullback_wick      |  9.14  | 49.0%  | 45.5%  | 0.422  |    343 | 51.0% | ❌ snotio差
+# 16   | deep_pullback_vol       |  8.83  | 49.1%  | 45.6%  | 0.443  |    285 | 50.9% | ❌ snotio差
+# 17   | deep_pullback_full      |  8.70  | 44.8%  | 43.8%  | 0.449  |     96 | 55.2% | ❌ snotio差
+# 18   | deep_pullback_impulse_v |  8.00  | 41.5%  | 41.5%  | 0.499  |     94 | 58.5% | ❌ snotio差+94笔
+# 19   | deep_pullback_liq_void  |  6.87  | 54.4%  | 49.5%  | 0.322  |    408 | 45.6% | ❌ snotio极差
+#
+# Baseline:                      | 13.20  | 53.4%  | 50.6%  | 0.308  |  11107 | 46.6% |
+#
+# OR 组合对比:
+# Config               | snotio | Loss%  | Stop%  | Win%  | Trades | 判定
+# ---------------------|--------|--------|--------|-------|--------|----------
+# bb only              | 16.43  | 42.7%  | 40.3%  | 57.3% |    330 | 旧配置
+# liq_silence only     | 18.29  | 45.5%  | 42.2%  | 54.5% |    211 | 单独也好
+# ★ bb OR liq_silence  | 19.18  | 41.3%  | 39.3%  | 58.7% |    455 | 帕累托改进
+# bb AND liq_silence   |  6.45  | 57.0%  | 50.0%  | 43.0% |     86 | ❌ 严重退化
+# bb OR liq OR consol  | 17.82  | 42.1%  | 38.9%  | 57.9% |    563 | 加consol边际为负
+# Baseline             | 13.20  | 53.4%  | 50.6%  | 46.6% |  11107 | 对照
+#
+# 重叠分析 (bb vs liquidity_silence):
+#   bb total=330, liq total=212, 交集=86(19%), bb独有=244, liq独有=126
+#   liq ONLY 126 笔交易补充了 bb 未覆盖的高质量入场(流动性枯竭场景)
+#
+# 结论:
+#   - bb + liquidity_silence 是仅有的两个同时 snotio↑ + stop↓ 的 filter
+#   - bb: GARCH 波动率聚类（低波动→爆发）, liq: 流动性枯竭（极低成交量→大动作）
+#   - 两者正交（重叠 19%），OR 组合是帕累托改进——所有维度同时变好
+#   - vol_regime_shift/consolidation_time 不够强，暂不启用
+# 全量评估命令:
+#   python scripts/optimize_entry_filter_snotio.py --all \
+#     --logs results/.../predictions.parquet --strategy bpc

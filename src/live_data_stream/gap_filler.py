@@ -104,7 +104,7 @@ class GapFiller:
             return None
         
         try:
-            # 创建Feature Store规格
+            # 创建 Feature Store 规格
             spec = FeatureStoreSpec(
                 layer=self.feature_store_layer,
                 symbol=symbol,
@@ -120,33 +120,37 @@ class GapFiller:
             dfs = []
             for period in months:
                 month = f"{period.year:04d}-{period.month:02d}"
-                
+                        
                 if not self.feature_store.has_month(spec, month):
                     continue
-                
+                        
                 try:
-                    df_month = self.feature_store.load_month(spec, month)
-                    if len(df_month) > 0:
+                    df_month = self.feature_store.read_month(spec, month)
+                    if df_month is not None and len(df_month) > 0:
                         # 过滤日期范围
-                        df_month = df_month[
+                        df_filtered = df_month[
                             (df_month.index >= pd.Timestamp(start_date))
                             & (df_month.index <= pd.Timestamp(end_date))
                         ]
-                        if len(df_month) > 0:
-                            dfs.append(df_month)
+                        if len(df_filtered) > 0:
+                            dfs.append(df_filtered)
                 except Exception as e:
-                    print(f"⚠️ 加载Feature Store月份 {month} 失败: {e}")
+                    print(f"⚠️ 加载 Feature Store 月份 {month} 失败: {e}")
                     continue
-            
+                    
             if not dfs:
                 return None
-            
+                    
             # 合并数据
             combined = pd.concat(dfs)
             combined = combined.sort_index()
             combined = combined.drop_duplicates()
             
-            print(f"✅ 从Feature Store加载了 {len(combined)} 条特征（{start_date} 到 {end_date}）")
+            # 确保 timestamp 作为列存在（Feature Store 使用 timestamp 作为索引）
+            if combined.index.name == 'timestamp' and 'timestamp' not in combined.columns:
+                combined = combined.reset_index()
+                    
+            print(f"✅ 从 Feature Store 加载了 {len(combined)} 条特征（{start_date} 到 {end_date}）")
             return combined
             
         except Exception as e:
@@ -159,40 +163,49 @@ class GapFiller:
         start_date: str,
         end_date: str,
         use_ticks: bool = True,
+        use_bars: bool = False,
         use_features_15min: bool = False,
         use_features_4h: bool = False,
     ) -> Dict[str, pd.DataFrame]:
         """
-        从Parquet文件加载数据（备选方案）
-        
+        从parquet文件加载数据（备选方案）
+            
         Args:
             symbol: 交易对符号
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
-            use_ticks: 是否加载ticks数据
+            use_ticks: 是否加载tick数据（按买卖分离，用于VPIN等）
+            use_bars: 是否加载1分钟bar数据（OHLCV）
             use_features_15min: 是否加载15分钟特征
             use_features_4h: 是否加载4小时特征
-        
+            
         Returns:
             包含不同类型数据的字典
         """
         result = {}
-        
+            
         if use_ticks:
-            result["ticks_1min"] = self.storage_manager.tick_1min.load_range(
+            # 新增：加载1分钟聚合tick（按买卖分离）
+            result["ticks"] = self.storage_manager.ticks.load_range(
                 symbol, start_date, end_date
             )
-        
+            
+        if use_bars:
+            # 加载1分钟OHLCV bar
+            result["bars_1min"] = self.storage_manager.bar_1min.load_range(
+                symbol, start_date, end_date
+            )
+            
         if use_features_15min:
             result["features_15min"] = self.storage_manager.feature_15min.load_range(
                 symbol, start_date, end_date
             )
-        
+            
         if use_features_4h:
             result["features_4h"] = self.storage_manager.feature_4h.load_range(
                 symbol, start_date, end_date
             )
-        
+            
         return result
     
     def fill_from_binance_api(
@@ -264,26 +277,29 @@ class GapFiller:
         
         result = {}
         
-        # 1. 优先从Feature Store加载特征
+        # 1. 优先从 Feature Store 加载特征
         if prefer_feature_store:
+            # 注意：Feature Store 使用 Pandas offset 格式（240T, 15T）
+            # 而不是人类可读格式（4h, 15min）
             features_4h = self.warmup_from_feature_store(
-                symbol, start_date, end_date, timeframe="4h"
+                symbol, start_date, end_date, timeframe="240T"  # 4h = 240T
             )
             if features_4h is not None and len(features_4h) > 0:
                 result["features_4h"] = features_4h
-            
+                    
             features_15min = self.warmup_from_feature_store(
-                symbol, start_date, end_date, timeframe="15min"
+                symbol, start_date, end_date, timeframe="15T"  # 15min = 15T
             )
             if features_15min is not None and len(features_15min) > 0:
                 result["features_15min"] = features_15min
         
-        # 2. 从Parquet加载数据（如果Feature Store没有或需要补充）
+        # 2. 从parquet加载数据（如果Feature Store没有或需要补充）
         parquet_data = self.warmup_from_parquet(
             symbol,
             start_date,
             end_date,
-            use_ticks=True,
+            use_ticks=True,  # 加载tick数据（用于VPIN等计算）
+            use_bars=True,   # 加载bar数据（用于技术指标）
             use_features_15min=("features_15min" not in result),
             use_features_4h=("features_4h" not in result),
         )
@@ -303,9 +319,9 @@ class GapFiller:
                 result[key] = df
         
         # 3. 检查数据缺失，如果缺失超过一天，从币安API获取
-        if "ticks_1min" in result and len(result["ticks_1min"]) > 0:
+        if "ticks" in result and len(result["ticks"]) > 0:
             # 检查最后一条数据的时间
-            last_timestamp = result["ticks_1min"]["timestamp"].max()
+            last_timestamp = result["ticks"]["timestamp"].max()
             now = pd.Timestamp.now(tz="UTC")
             
             # 如果缺失超过1天，从币安API获取
@@ -320,10 +336,10 @@ class GapFiller:
                 
                 if len(fill_data) > 0:
                     # 合并数据
-                    combined = pd.concat([result["ticks_1min"], fill_data])
+                    combined = pd.concat([result["ticks"], fill_data])
                     combined = combined.drop_duplicates(subset=["timestamp"], keep="last")
                     combined = combined.sort_values("timestamp").reset_index(drop=True)
-                    result["ticks_1min"] = combined
+                    result["ticks"] = combined
         
         return result
     
@@ -368,8 +384,8 @@ class GapFiller:
             start_date = start_time.strftime("%Y-%m-%d")
             end_date = end_time.strftime("%Y-%m-%d")
             data = self.warmup_from_parquet(symbol, start_date, end_date, use_ticks=True)
-            if "ticks_1min" in data:
-                return data["ticks_1min"]
+            if "ticks" in data:
+                return data["ticks"]
         
         if source == "binance":
             return self.fill_from_binance_api(symbol, start_time, end_time)

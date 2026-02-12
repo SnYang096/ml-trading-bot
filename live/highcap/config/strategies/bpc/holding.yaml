@@ -1,0 +1,181 @@
+# BPC Holding 配置
+# 版本: 1.0
+# 创建时间: 2026-02-10
+#
+# ╔═══════════════════════════════════════════════════════════╗
+# ║  Holding is not optimized.                               ║
+# ║  Holding exists to prevent good paths from being ruined, ║
+# ║  not to create alpha.                                    ║
+# ╚═══════════════════════════════════════════════════════════╝
+#
+# ── 职责边界 ──────────────────────────────────────────────
+#
+#   Execution = "那一刻该不该进、怎么进"（单点、静态、条件独立）
+#   Holding   = "进了之后，怎么不把好交易玩坏"（多点、动态、路径依赖）
+#
+#   Alpha 来源: Gate → Evidence → Entry Filter → Execution
+#   Holding 不是 Alpha 源，是 Alpha 保全层。
+#
+# ── 设计原则 ──────────────────────────────────────────────
+#
+#   1. 只用确定性规则（无优化、无学习、无权重）
+#   2. ≤ 3 个核心参数
+#   3. 不依赖 regime、不依赖 volatility
+#   4. Holding 优化是"反因果"的（强路径依赖 + 反事实），
+#      用 Sharpe/PnL 反推 Holding 参数本质是回溯性拟合
+#
+# ── 与其他配置的关系 ─────────────────────────────────────
+#
+#   execution.yaml   → 开仓瞬间参数（SL 距离、tier、size_multiplier）
+#   本文件            → 持仓期间确定性规则（时间止损、保本锁、trail 执行模式）
+#   constitution.yaml → 系统底线（加仓政策、kill switch、slot 约束）
+#
+# ── 参数迁移映射 ─────────────────────────────────────────
+#
+#   本文件参数              ← 迁移前位置
+#   ─────────────────────  ──────────────────────────────────────────
+#   time_stop.default_bars ← execution.yaml > holding > time_stop_bars (当前值: 50)
+#   time_stop.tier_override← execution.yaml > tiers > levels[*] > time_stop_bars
+#   breakeven_lock.trigger_r ← constitution.yaml > add_position > lock_profit_breakeven_trigger_r (当前值: 1.0)
+#   trailing_stop.mode     ← execution.yaml > stop_loss > type (当前值: trailing)
+#
+
+version: 1
+
+# ============================================================
+# 📌 参数 1: 时间止损（路径放弃条件）
+# ============================================================
+#
+# 不是止损，是"路径放弃"。
+# 如果市场既没证明你对、也没证明你错 → 放弃。
+# 不依赖 PnL，不依赖 R，只依赖时间。
+#
+time_stop:
+  default_bars: 96          # 4h × 24根 = 4 天
+                             #
+                             # 选择依据:
+                             #   - BPC 是 4H 趋势策略
+                             #   - 4 天 = 足够让趋势确认或否认
+                             #   - 太短(50) → 砍掉还在酝酿的好交易
+                             #   - 太长(200) → 占用资金和认知
+                             #
+                             # 注: 不做 grid search 优化
+                             #   因为 time_stop_bars 不是 alpha 来源
+
+  # Tier 覆盖策略:
+  # 当 --tiers 模式下，execution.yaml 中各 tier 的 time_stop_bars
+  # 将覆盖此默认值。这是设计允许的——tier 选择发生在 Execution 层，
+  # 但 time_stop 执行发生在 Holding 层。
+  #
+  # 当前 tier 覆盖值（参考，实际以 execution.yaml 为准）:
+  #   强证据(≥0.70):   200 bars ≈ 33 天
+  #   中等证据(≥0.50):  150 bars ≈ 25 天
+  #   弱证据(≥0.30):   100 bars ≈ 17 天
+  #   边缘证据(≥0.10):   80 bars ≈ 13 天
+  allow_tier_override: true
+
+
+# ============================================================
+# 📌 参数 2: 保本锁定
+# ============================================================
+#
+# 一旦市场证明你是对的，就不允许你再亏。
+# 人类交易史上最稳定的 holding 规则之一。
+#
+# 触发后:
+#   - SL → entry price（保本）
+#   - 后续只允许正期望
+#   - 同时解锁 constitution.yaml 中的加仓资格
+#
+breakeven_lock:
+  enabled: true
+  trigger_r: 1.0             # 浮盈达到 1R 后，SL 移至入场价
+                              #
+                              # 与 constitution.yaml 的关系:
+                              #   constitution.add_position.lock_profit_breakeven_trigger_r
+                              #   引用同一个语义: "R > 1.0 时认为风险已释放"
+                              #   本文件定义 SL 行为，constitution 定义加仓资格
+                              #
+                              # 不做优化:
+                              #   1R 是"刚好覆盖初始风险"的自然边界
+                              #   不存在比这更合理的 breakeven 触发点
+
+
+# ============================================================
+# 📌 参数 3: 移动止损执行模式
+# ============================================================
+#
+# 核心分工:
+#   - Execution 层定义 trail 的"几何形状":
+#       initial_r, activation_r, trail_r（开仓瞬间锁定）
+#   - Holding 层每 bar 执行这个几何规则（只更新，不改变形状）
+#
+# Holding 层不重新定义 trail_r 的数值——
+# 那是 Execution 的职责（且已经 grid search 确认处于平坦高原）。
+#
+trailing_stop:
+  mode: fixed_r              # fixed_r = 固定 R 倍数
+                              #
+                              # 明确排除的模式:
+                              #   - adaptive: 根据波动率动态调整 → 不做
+                              #   - regime_aware: 根据 regime 切换 → 不做
+                              #   - stepped: 每达到 N×R 收紧一档 → 暂不做
+                              #
+                              # 原因: 一旦 trail 变成 adaptive，
+                              # Holding 就成了第二个 Execution
+
+  # trail_r / activation_r 的值由 execution.yaml 定义:
+  #   全局: activation_r=1.0, trail_r=1.5
+  #   Grid Search Best: activation_r=2.0, trail_r=0.5
+  #   (高原极平坦, CV=0.6%, 任何合理值均可)
+
+
+# ============================================================
+# 🚫 明确排除（设计决策，非遗漏）
+# ============================================================
+#
+# 以下功能明确不在 Holding 层:
+#
+#   ❌ 加仓/减仓比例优化
+#      → 加仓政策由 constitution.yaml 管理 (max_add_times=1, require_locked_profit)
+#      → PCM (pcm.py) 决定是否执行加仓
+#
+#   ❌ 动态减仓 (partial profit taking)
+#      → 趋势策略的收益来自"让利润奔跑"，主动减仓破坏这个假设
+#
+#   ❌ 波动率自适应退出 (volatility-based exit)
+#      → 波动率判断属于 Gate 层职责（已在 gate.yaml 中覆盖）
+#
+#   ❌ Regime-aware holding
+#      → Regime 判断属于 Gate 层职责
+#      → 如果 regime 变坏，Gate 会阻止新入场，不需要 Holding 层重复判断
+#
+# 原因: 一旦这些进来，Holding 就会变成第二个 Execution，
+#       破坏"每层只负责一段路径"的因果隔离。
+#
+# PCM 的兜底效应:
+#   Slot 限制 (max_slots=2) + Risk per slot (1.5%)
+#   已经在系统层面限制了 Holding 失败的最大代价。
+#   Holding 只需要"防止拖死"，不需要"精细管理"。
+
+
+# ============================================================
+# 📊 Holding 层的 KPI（诊断用，不用于优化）
+# ============================================================
+#
+# 如果未来需要评估 Holding 规则是否合理（纯诊断，不反推参数）:
+#
+#   1. giveback_ratio = (MFE - realized) / MFE
+#      → 衡量"到手的利润还回去多少"
+#      → 好的 Holding: giveback < 40%
+#
+#   2. time_efficiency = realized_r / holding_bars
+#      → 衡量"每根 bar 的 R 效率"
+#      → 避免长时间占用资金却没收益
+#
+#   3. breakeven_lock_hit_rate
+#      → 触发保本锁后，最终正 R 的比例
+#      → 应该 > 85%（否则 trigger_r 设太低）
+#
+# ⚠️ 这些 KPI 只用于"确认规则没坏"，不用于"让规则更好"。
+#    Holding 参数不允许被 KPI 反推调整。

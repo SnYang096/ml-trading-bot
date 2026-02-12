@@ -734,52 +734,30 @@ def extract_order_flow_features(
             vpin_events = vpin_series
         else:
             vpin_events = vpin_series.to_frame(name="vpin")
-        # 推断 df 的频率（假设 df 是等频 K 线）
-        # 改进：优先使用用户提供的 freq，否则自动推断
+        
+        # freq 参数是必需的，由上层配置（meta.yaml strategy.timeframe）动态注入
         if freq is None:
-            freq = pd.infer_freq(df.index)
-        if freq is None:
-            # 如果无法推断，尝试从时间间隔估算
-            if len(df.index) > 1:
-                # 使用多个样本点计算平均间隔（更可靠）
-                if len(df.index) >= 10:
-                    # 使用前 10 个间隔的平均值
-                    time_diffs = [df.index[i+1] - df.index[i] for i in range(min(10, len(df.index)-1))]
-                    freq_td = pd.Timedelta(np.mean([td.total_seconds() for td in time_diffs]), unit='s')
-                else:
-                    # 使用第一个间隔
-                    freq_td = df.index[1] - df.index[0]
-                # 尝试转换为标准频率字符串（更宽松的匹配）
-                freq = None
-                std_freqs = ["1T", "5T", "15T", "30T", "1H", "4H", "1D"]
-                for std_freq in std_freqs:
-                    std_td = pd.Timedelta(std_freq)
-                    # 允许 5% 的误差（处理非标准 K 线）
-                    if abs((freq_td - std_td).total_seconds()) < abs(std_td.total_seconds() * 0.05):
-                        freq = std_freq
-                        break
-                # 如果仍无法匹配，使用计算出的 freq_td（freq 保持为 None）
-                if freq is None:
-                    # freq_td 已经在上面计算好了，直接使用
-                    pass
-            else:
-                freq = "1min"  # fallback（使用新格式）
-                freq_td = pd.Timedelta(minutes=1)
+            raise ValueError(
+                "freq parameter is required for VPIN alignment. "
+                "This should be automatically injected from strategy meta.yaml (strategy.timeframe). "
+                "If you see this error, check that: "
+                "1) meta.yaml has 'strategy.timeframe' defined, "
+                "2) build_feature_store_from_config.py dynamic injection is working."
+            )
+        
+        # 解析 freq 为 Timedelta
+        if isinstance(freq, str):
+            # 处理旧格式（向后兼容）
+            if freq == "1T":
+                freq = "1min"
+            elif freq == "1S":
+                freq = "1s"
+            try:
+                freq_td = pd.Timedelta(freq)
+            except ValueError:
+                raise ValueError(f"Invalid freq format: {freq}")
         else:
-            # freq 不为 None，尝试解析
-            if isinstance(freq, str):
-                # 处理旧格式（向后兼容）
-                if freq == "1T":
-                    freq = "1min"
-                elif freq == "1S":
-                    freq = "1s"
-                try:
-                    freq_td = pd.Timedelta(freq)
-                except ValueError:
-                    # 如果解析失败，使用默认值
-                    freq_td = pd.Timedelta(minutes=1)
-            else:
-                freq_td = freq if freq is not None else pd.Timedelta(minutes=1)
+            freq_td = freq if freq is not None else pd.Timedelta(minutes=1)
         # 方法1：严格右对齐的向量化实现（极快，O(N log M)）
         aligned_vpin = None
         aligned_signed = None
@@ -2342,18 +2320,16 @@ def extract_trade_clustering_features(
         # 如已落盘：不要把所有月份拼成一个超大 tick-level DF（会 OOM）。
         # 直接“流式对齐到 K 线”并累计（sum/count），最后再求均值。
         if persist_monthly and cluster_paths and isinstance(df.index, pd.DatetimeIndex):
-            # Infer freq/td early for alignment.
+            # freq 参数是必需的，由上层配置（meta.yaml strategy.timeframe）动态注入
             if freq is None:
-                freq = pd.infer_freq(df.index)
-                if freq is None and len(df.index) > 1:
-                    time_diff = df.index[1] - df.index[0]
-                    freq_td = pd.Timedelta(time_diff)
-                elif freq is None:
-                    freq_td = pd.Timedelta(minutes=1)
-                else:
-                    freq_td = pd.to_timedelta(freq)
-            else:
-                freq_td = pd.to_timedelta(freq)
+                raise ValueError(
+                    "freq parameter is required for Trade Clustering streaming alignment. "
+                    "This should be automatically injected from strategy meta.yaml (strategy.timeframe). "
+                    "If you see this error, check that: "
+                    "1) meta.yaml has 'strategy.timeframe' defined, "
+                    "2) build_feature_store_from_config.py dynamic injection is working."
+                )
+            freq_td = pd.to_timedelta(freq)
 
             print(
                 f"      📊 Streaming-aligning {len(cluster_paths)} persisted months of trade clustering results...",
@@ -2476,27 +2452,16 @@ def extract_trade_clustering_features(
     
     # 对齐到 df 的时间索引（右对齐，避免未来信息泄露）
     if isinstance(df.index, pd.DatetimeIndex):
-        # 推断 df 的频率
+        # freq 参数是必需的，由上层配置（meta.yaml strategy.timeframe）动态注入
         if freq is None:
-            freq = pd.infer_freq(df.index)
-            if freq is None:
-                if len(df.index) > 1:
-                    time_diff = df.index[1] - df.index[0]
-                    freq_td = pd.Timedelta(time_diff)
-                    # 尝试转换为标准频率字符串
-                    for std_freq in ["1T", "5T", "15T", "30T", "1H", "4H", "1D"]:
-                        if abs(pd.Timedelta(std_freq) - freq_td) < pd.Timedelta(seconds=1):
-                            freq = std_freq
-                            break
-                    if freq is None:
-                        freq_td = freq_td
-                else:
-                    freq = "1T"
-                    freq_td = pd.Timedelta(minutes=1)
-            else:
-                freq_td = pd.Timedelta(freq) if isinstance(freq, str) else freq
-        else:
-            freq_td = pd.Timedelta(freq) if isinstance(freq, str) else freq
+            raise ValueError(
+                "freq parameter is required for Trade Clustering alignment. "
+                "This should be automatically injected from strategy meta.yaml (strategy.timeframe). "
+                "If you see this error, check that: "
+                "1) meta.yaml has 'strategy.timeframe' defined, "
+                "2) build_feature_store_from_config.py dynamic injection is working."
+            )
+        freq_td = pd.Timedelta(freq) if isinstance(freq, str) else freq
         # 严格右对齐的向量化实现
         aligned_features = {}
         

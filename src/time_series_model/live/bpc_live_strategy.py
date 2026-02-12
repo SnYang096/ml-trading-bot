@@ -180,7 +180,6 @@ class BPCLiveStrategy:
             holding_path = self._holding_yaml_path
             if holding_path is None:
                 candidates = [
-                    "z实验_001_bpc/holding.yaml",
                     "config/strategies/bpc/archetypes/holding.yaml",
                 ]
                 for c in candidates:

@@ -1,0 +1,10 @@
+name: highcap
+description: "高流动性主流合约（highcap universe 默认组合）"
+
+symbols:
+  BTCUSDT: "基准资产，最高成交量与深度"
+  ETHUSDT: "主流公链，高流动性"
+  BNBUSDT: "平台币，深度好、点差小"
+  SOLUSDT: "高波动高流动，适合趋势策略"
+  XRPUSDT: "成交量恢复后的传统大盘币"
+  ADAUSDT: "高市值+中等波动"

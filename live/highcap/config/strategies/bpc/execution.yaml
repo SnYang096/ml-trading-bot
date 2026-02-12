@@ -1,0 +1,127 @@
+# BPC Execution 配置
+# 版本: 5.0
+# 更新时间: 2026-02-09
+#
+# 职责:
+#   1. 定义基础执行结构（止损/止盈类型）
+#   2. 定义方向策略
+#   3. 定义网格搜索参数范围
+#
+# 配置文件关系:
+#   evidence.yaml  → 定义 Evidence 特征列表和分位数映射
+#   gate.yaml      → 定义 Gate 规则
+#   本文件         → 定义执行参数和网格搜索范围
+#
+# tiers 段落定义按 evidence_score 分档的执行参数。
+# noise_penalty 仍硬编码在 noise_penalty.py。
+
+version: 5
+
+# ============================================================
+# 📌 基础执行结构
+# ============================================================
+
+execution_constraints:
+  allow_add_on: true
+  min_order_interval_minutes: 15
+
+# 止损配置
+stop_loss:
+  type: trailing              # trailing = 移动止损, fixed = 固定止损
+  initial_r: 2.0              # 初始止损距离 (R倍数)
+  trailing:
+    activation_r: 1.0         # 盈利达到 1R 后激活移动止损
+    trail_r: 1.5              # 移动止损距离最高点 1.5R
+    step_r: 0.5               # 每上涨 0.5R 收紧一次止损
+
+# 止盈配置
+take_profit:
+  enabled: false              # 趋势策略不设固定止盈
+
+# 持仓约束
+holding:
+  max_holding_bars: null      # 不限制，由市场和止损决定
+  time_stop_bars: 50          # 时间止损 (超过50根K线未达目标则平仓)
+
+# 方向策略
+direction_policy:
+  direction_source: structure
+  structure_direction:
+    method: trend_sign
+    lookback_bars: 5
+    min_consistency: 0.6
+
+# ============================================================
+# 🎯 Tiers: 按 evidence_score 分档执行参数
+# ============================================================
+# 用法: python scripts/backtest_execution_layer.py --tiers
+#
+# evidence_score 由 evidence.yaml 中 8 个特征加权计算。
+# 每个入场信号根据 score 落入对应 tier，使用该 tier 的执行参数。
+# 未启用 --tiers 时，所有入场使用上方全局 stop_loss 参数。
+
+tiers:
+  enabled: true
+  # 从高到低匹配（第一个 score >= evidence_min 的 tier 生效）
+  levels:
+    - name: 强证据
+      evidence_min: 0.70
+      stop_loss:
+        initial_r: 0.8
+        trailing:
+          activation_r: 0.5
+          trail_r: 0.5
+      size_multiplier: 1.2
+      time_stop_bars: 200
+
+    - name: 中等证据
+      evidence_min: 0.50
+      stop_loss:
+        initial_r: 1.0
+        trailing:
+          activation_r: 1.0
+          trail_r: 0.8
+      size_multiplier: 1.0
+      time_stop_bars: 150
+
+    - name: 弱证据
+      evidence_min: 0.30
+      stop_loss:
+        initial_r: 1.2
+        trailing:
+          activation_r: 1.5
+          trail_r: 1.0
+      size_multiplier: 0.8
+      time_stop_bars: 100
+
+    - name: 边缘证据
+      evidence_min: 0.10
+      stop_loss:
+        initial_r: 1.5
+        trailing:
+          activation_r: 2.0
+          trail_r: 1.5
+      size_multiplier: 0.5
+      time_stop_bars: 80
+
+# ============================================================
+# 🔧 网格搜索参数范围
+# ============================================================
+# 用法: python scripts/backtest_execution_layer.py --grid-search
+#
+# 注意: Grid Search 优化全局参数（不按 tier 分别优化）。
+#       --tiers 和 --grid-search 不同时使用。
+
+optimization:
+  enabled: true
+  params:
+    stop_loss.initial_r:
+      range: [1.0, 3.0]        # 5 值: 1.0/1.5/2.0/2.5/3.0
+      step: 0.5
+    stop_loss.trailing.activation_r:
+      range: [0.5, 3.0]        # 6 值: 0.5/1.0/1.5/2.0/2.5/3.0
+      step: 0.5
+    stop_loss.trailing.trail_r:
+      range: [0.5, 2.5]        # 5 值: 0.5/1.0/1.5/2.0/2.5
+      step: 0.5
+  # Total: 5 × 6 × 5 = 150 组 (约 5 秒)

@@ -7,15 +7,20 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 import pandas as pd
+import logging
 
 from .order_flow_listener import OrderFlowListener
 from .feature_storage import StorageManager
 from .gap_filler import GapFiller
 from .order_manager_factory import init_order_manager_from_env
+from .system_mode import SystemMode, SystemModeManager, ModeDecision
 from src.time_series_model.live.incremental_feature_computer import IncrementalFeatureComputer
+
+logger = logging.getLogger(__name__)
 
 try:
     import ccxt
@@ -64,6 +69,9 @@ class MultiSymbolManager:
         self.feature_4h_interval_hours = feature_4h_interval_hours
         self.order_manager = order_manager or init_order_manager_from_env()
         
+        # 系统模式管理器
+        self.mode_manager = SystemModeManager()
+        
         # 为每个symbol创建独立的OrderFlowListener
         self.listeners: Dict[str, OrderFlowListener] = {}
         
@@ -88,6 +96,7 @@ class MultiSymbolManager:
                 orderflow_window_minutes=orderflow_window_minutes,
                 feature_4h_interval_hours=feature_4h_interval_hours,
                 order_manager=self.order_manager,
+                mode_manager=self.mode_manager,  # 传入模式管理器
             )
             
             self.listeners[symbol] = listener
@@ -122,27 +131,111 @@ class MultiSymbolManager:
         self,
         days: int = 30,
         use_gap_filler: bool = True,
+        max_retries: int = 3,
     ) -> Dict[str, Dict[str, pd.DataFrame]]:
         """
-        为所有symbol执行warmup
+        为所有symbol执行warmup（支持重试）
         
         Args:
             days: 加载最近N天的数据
             use_gap_filler: 是否使用GapFiller进行补数据
+            max_retries: 最大重试次数
         
         Returns:
             包含每个symbol的warmup数据的字典
         """
         results = {}
+        
         for symbol, listener in self.listeners.items():
-            try:
-                warmup_data = listener.warmup(days=days, use_gap_filler=use_gap_filler)
-                results[symbol] = warmup_data
-            except Exception as e:
-                print(f"⚠️ Warmup failed for {symbol}: {e}")
+            success = False
+            last_exception = None
+            
+            # 重试机制（指数退避）
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"🔄 Warmup {symbol} (attempt {attempt + 1}/{max_retries})...")
+                    warmup_data = listener.warmup(days=days, use_gap_filler=use_gap_filler)
+                    results[symbol] = warmup_data
+                    success = True
+                    logger.info(f"✅ Warmup {symbol} succeeded")
+                    break
+                    
+                except Exception as e:
+                    last_exception = e
+                    logger.warning(
+                        f"⚠️ Warmup {symbol} failed (attempt {attempt + 1}/{max_retries}): {e}"
+                    )
+                    
+                    # 如果还有重试机会，等待后重试（指数退避）
+                    if attempt < max_retries - 1:
+                        backoff_seconds = 2 ** attempt  # 1s, 2s, 4s
+                        logger.info(f"   Retrying in {backoff_seconds}s...")
+                        time.sleep(backoff_seconds)
+            
+            # 如果所有重试都失败，记录空结果
+            if not success:
+                logger.error(
+                    f"❌ Warmup {symbol} failed after {max_retries} attempts: {last_exception}"
+                )
                 results[symbol] = {}
         
         return results
+    
+    def decide_startup_mode(self, warmup_results: Dict[str, Dict[str, pd.DataFrame]]) -> ModeDecision:
+        """根据warmup结果决定启动模式
+        
+        Args:
+            warmup_results: warmup_all返回的结果
+        
+        Returns:
+            ModeDecision对象
+        """
+        # 合并所有symbol的数据进行决策（选择最严格的模式）
+        decisions = []
+        
+        for symbol, data in warmup_results.items():
+            decision = self.mode_manager.decide_mode(data)
+            decisions.append((symbol, decision))
+            logger.info(
+                f"  {symbol}: {decision.mode.value} ({decision.bar_count} bars, "
+                f"{decision.data_coverage_hours:.2f}h)"
+            )
+        
+        # 如果任何symbol返回OFFLINE，整体OFFLINE
+        if any(d[1].mode == SystemMode.OFFLINE for d in decisions):
+            offline_symbols = [d[0] for d in decisions if d[1].mode == SystemMode.OFFLINE]
+            return ModeDecision(
+                mode=SystemMode.OFFLINE,
+                reason=f"Insufficient data for symbols: {', '.join(offline_symbols)}",
+                bar_count=min(d[1].bar_count for d in decisions),
+                data_coverage_hours=min(d[1].data_coverage_hours for d in decisions),
+            )
+        
+        # 如果任何symbol返回DEGRADED，整体DEGRADED
+        if any(d[1].mode == SystemMode.DEGRADED for d in decisions):
+            degraded_symbols = [d[0] for d in decisions if d[1].mode == SystemMode.DEGRADED]
+            return ModeDecision(
+                mode=SystemMode.DEGRADED,
+                reason=f"Incomplete data for symbols: {', '.join(degraded_symbols)}",
+                bar_count=min(d[1].bar_count for d in decisions),
+                data_coverage_hours=min(d[1].data_coverage_hours for d in decisions),
+            )
+        
+        # 所有symbol都NORMAL
+        return ModeDecision(
+            mode=SystemMode.NORMAL,
+            reason="All symbols have complete data",
+            bar_count=min(d[1].bar_count for d in decisions),
+            data_coverage_hours=min(d[1].data_coverage_hours for d in decisions),
+        )
+    
+    def get_current_mode(self) -> SystemMode:
+        """获取当前系统模式"""
+        return self.mode_manager.get_current_mode()
+    
+    def is_trading_allowed(self) -> bool:
+        """是否允许交易"""
+        return self.mode_manager.is_trading_allowed()
     
     async def start_all(self) -> None:
         """启动所有listener"""

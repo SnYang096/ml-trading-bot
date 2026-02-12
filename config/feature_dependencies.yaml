@@ -2096,6 +2096,8 @@ features:
       include_trade_clustering: false
       compute_vpin_derived: false
       normalized: true
+      # freq 从策略 meta.yaml 的 strategy.timeframe 读取
+      # 此处不再硬编码，由 FeatureLoader 动态注入
     run_sequential: true
     pass_full_df: false
     column_mappings:
@@ -2593,6 +2595,8 @@ features:
       ticks_dir: data/parquet_data
       lookback_minutes: 60
       normalized: true
+      # freq 从策略 meta.yaml 的 strategy.timeframe 读取
+      # 此处不再硬编码，由 FeatureLoader 动态注入
       output_normalization_map:
         trade_cluster_max_buy_run: bounded_0_1
         trade_cluster_max_sell_run: bounded_0_1

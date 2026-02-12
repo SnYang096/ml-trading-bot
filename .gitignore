@@ -457,3 +457,6 @@ terraform/.terraform/
 terraform/.terraform.lock.hcl
 terraform/.terraform-config.zip
 .qoder/
+# Live API keys (binance)
+live/binance_mainnet.env
+live/binance_testnet.env

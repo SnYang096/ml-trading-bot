@@ -871,7 +871,7 @@ def _data_convert_impl(
 @click.option(
     "--parquet-dir", default="data/parquet_data", help="Output directory for Parquet"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def data_download(
     symbols,
     universe_config,
@@ -942,7 +942,7 @@ def data_download(
     help="Print progress every N tasks (0 disables)",
 )
 @click.option("--force/--no-force", default=False, show_default=True)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def data_download_funding_rate(
     symbols,
     universe_config,
@@ -1014,7 +1014,7 @@ def data_download_funding_rate(
 @click.option("--force/--no-force", default=False, show_default=True)
 @click.option("--max-age-days", type=int, default=1, show_default=True)
 @click.option("--sleep-sec", type=float, default=0.1, show_default=True)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def data_update_market_cap(
     config,
     symbols,
@@ -1074,7 +1074,7 @@ def data_update_market_cap(
     "Examples: '1s' (1 second), '1T' (1 minute), '5T' (5 minutes). "
     "Uses pandas resample frequency strings.",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def data_convert(
     pattern, symbols, input_dir, output_dir, force, aggregate_freq, docker
 ):
@@ -1135,7 +1135,7 @@ def data_convert_1min(input_dir, output_dir, pattern, symbol, force, docker):
 @click.option(
     "--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 @click.pass_context
 def data_pipeline(ctx, symbols, docker):
     """Download and convert data (full pipeline)."""
@@ -1179,7 +1179,7 @@ def data_pipeline(ctx, symbols, docker):
 @click.option("--end-month", default=None)
 @click.option("--data-dir", default="data/agg_data")
 @click.option("--parquet-dir", default="data/parquet_data")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def data_pipeline_universe(
     universe_config,
     universe_set,
@@ -1249,7 +1249,7 @@ def data_pipeline_universe(
     help="Parquet directory",
 )
 @click.option("--show-missing/--no-show-missing", default=False, show_default=True)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def data_check_month_coverage(
     symbol: str,
     start_ym: str,
@@ -1320,7 +1320,7 @@ def train():
 @click.option("--max-conditions", type=int, default=3, help="Maximum conditions per rule")
 @click.option("--max-rule-len", type=int, default=120, help="Maximum rule string length")
 @click.option("--random-state", type=int, default=42, help="Random state")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def train_export_rules_to_readme(
     strategy_config,
     rules_md,
@@ -1548,7 +1548,7 @@ def feature_store():
     default=False,
     help="Delete existing layer data and rebuild from scratch. Without this flag, existing months are skipped.",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def feature_store_build(
     config,
     symbols,
@@ -1867,7 +1867,7 @@ def rl_exec():
 @click.option("--max-cost-p95", type=float, default=0.01)
 @click.option("--max-nan-ratio", type=float, default=0.001)
 @click.option("--max-abs-return", type=float, default=0.5)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rl_exec_control_check(
     logs_path,
     out_dir,
@@ -1924,7 +1924,7 @@ def rl_exec_control_check(
 @click.option("--slippage-bps", type=float, default=0.0)
 @click.option("--cost-per-turnover", type=float, default=0.0002)
 @click.option("--entry-delay", type=int, default=1)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rl_exec_chaos_test(
     logs_path,
     out_dir,
@@ -1989,7 +1989,7 @@ def rl_router():
     default=60,
     help="Min periods for rolling drift metrics.",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rl_router_diagnose(logs_path, out_dir, rolling_window, rolling_min_periods, docker):
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
@@ -2027,7 +2027,7 @@ def rl_router_diagnose(logs_path, out_dir, rolling_window, rolling_min_periods, 
     default=4,
     help="Number of regime buckets for one-hot embedding.",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rl_router_embed_eval(logs_path, out_dir, train_ratio, regime_buckets, docker):
     """A/B eval: BC baseline vs +regime(one-hot) embedding."""
     use_workspace_prefix = docker and not _is_in_docker()
@@ -2140,7 +2140,7 @@ def rl_router_embed_eval(logs_path, out_dir, train_ratio, regime_buckets, docker
 @click.option(
     "--output", "output_path", required=True, help="Output logs path (.parquet/.csv)"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rl_build_execution_logs(
     preds_path,
     mode_path,
@@ -2263,7 +2263,7 @@ def rl_build_execution_logs(
     show_default=True,
     help="If gate_decision exists, filter plotted points.",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_plot_router_modes_kline(
     mode_path,
     feature_store_root,
@@ -2337,7 +2337,7 @@ def rule_plot_router_modes_kline(
     default=None,
     help="Markdown output path for scan summary.",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_physics_regime(
     preds,
     feature_store_root,
@@ -2405,7 +2405,7 @@ def rule_physics_regime(
 @click.option("--regime", "regime_path", required=True, help="physics_regime parquet")
 @click.option("--output-json", required=True, help="Output JSON path")
 @click.option("--output-md", required=True, help="Output Markdown path")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_diagnose_tc_regime_execution(
     logs_path,
     regime_path,
@@ -2475,7 +2475,7 @@ def rule_diagnose_fr_et_filtering(
     help="Output Markdown path (default: results/e2e_kpi/e2e_kpi_report.md)",
 )
 @click.option("--no-regime-filter", is_flag=True, help="Generate comparison report without regime filtering")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_diagnose_e2e_kpi(
     logs_path,
     regime_path,
@@ -2544,7 +2544,7 @@ def rule_diagnose_e2e_kpi(
 @click.option("--target-fbf-veto", default=0.1, show_default=True, help="target veto rate on labels")
 @click.option("--min-samples", default=200, show_default=True, help="min samples to suggest thresholds")
 @click.option("--out", "out_path", required=True, help="output json path")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_diagnose_gate_label_loosen(
     labels_path,
     config_path,
@@ -2615,7 +2615,7 @@ def rule_diagnose_gate_label_loosen(
 @click.option("--timeframe", default="240T", show_default=True)
 @click.option("--start-date", default=None)
 @click.option("--end-date", default=None)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_diagnose_gate_application(
     logs_path,
     config_path,
@@ -2674,7 +2674,7 @@ def rule_diagnose_gate_application(
     show_default=True,
 )
 @click.option("--out", "out_path", required=True, help="output json path")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_build_evidence_quantiles(
     feature_store_root,
     layer,
@@ -2720,7 +2720,7 @@ def rule_build_evidence_quantiles(
     show_default=True,
     help="execution_archetypes.yaml path",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_extract_evidence_keys(config_path, docker):
     """Extract quantile_* evidence keys from when_then_rules."""
     use_workspace_prefix = docker and not _is_in_docker()
@@ -2785,7 +2785,7 @@ def rule_extract_evidence_keys(config_path, docker):
     default=None,
     help="JSON file with semantic score floors (optional)",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_apply_tree_gate(
     logs_path,
     out_path,
@@ -2846,7 +2846,7 @@ def rule_apply_tree_gate(
     help="Order management DB path",
 )
 @click.option("--output-md", required=True, help="Output Markdown path")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_diagnose_gate_filtering(
     logs_path,
     regime_path,
@@ -2874,7 +2874,7 @@ def rule_diagnose_gate_filtering(
 @click.option("--regime", "regime_path", required=True, help="physics_regime parquet")
 @click.option("--output-json", required=True, help="Output JSON path")
 @click.option("--output-md", required=True, help="Output Markdown path")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_diagnose_e2e_symbol_regime_archetype(
     logs_path,
     regime_path,
@@ -3107,7 +3107,7 @@ def experiment_regime_gate(
 @click.option("--regime", "regime_path", required=True, help="physics_regime parquet")
 @click.option("--output-json", required=True, help="Output JSON path")
 @click.option("--output-md", required=True, help="Output Markdown path")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_diagnose_e2e_symbol_regime_archetype(
     logs_path,
     regime_path,
@@ -3151,7 +3151,7 @@ def rule_diagnose_e2e_symbol_regime_archetype(
     default=0.7,
     help="Train ratio per symbol (time-ordered).",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rl_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
     click.echo(
         "Note: `mlbot rl shadow-eval-3action` is deprecated for v0 mainline. "
@@ -3218,7 +3218,7 @@ def rl_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
     default=None,
     help="Router threshold override: dir_conf_trend_min (for counterfactual report diagnostics).",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rl_counterfactual_eval_3action(
     logs_path,
     out_dir,
@@ -3332,7 +3332,7 @@ def rl_counterfactual_eval_3action(
 @click.option(
     "--out", "out_path", default=None, help="Optional path to write decision json."
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rl_fsm_decide(
     metrics_path,
     state,
@@ -3435,7 +3435,7 @@ def rl_fsm_decide(
 @click.option("--fsm-state", default="RL_CANDIDATE", help="Initial FSM state.")
 @click.option("--promote-days", type=int, default=10)
 @click.option("--cooldown-days", type=int, default=20)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rl_run_e2e_3action(
     logs_path,
     out_dir,
@@ -3614,7 +3614,7 @@ def rl_run_e2e_3action(
     default=None,
     help="If set, pool all symbols into GLOBAL quantiles.",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_train(
     task_spec,
     symbols,
@@ -3811,7 +3811,7 @@ def nnmultihead_train(
     default="feature_store",
     help="FeatureStore root dir (default: feature_store). Usually no need to change.",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_predict(
     task_spec,
     symbols,
@@ -4011,7 +4011,7 @@ def nnmultihead_predict(
     default=None,
     help="Output dir for router plots (default: <out>/router_plots).",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_pipeline_3action_e2e(
     symbols,
     timeframe,
@@ -4629,7 +4629,7 @@ def nnmultihead_pipeline_3action_e2e(
 @click.option(
     "--output", "output_path", required=True, help="Output logs path (.parquet/.csv)"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_build_execution_logs(
     preds_path,
     mode_path,
@@ -4765,7 +4765,7 @@ def nnmultihead_build_execution_logs(
 @click.option("--fsm-state", default="RL_CANDIDATE", help="Initial FSM state.")
 @click.option("--promote-days", type=int, default=10)
 @click.option("--cooldown-days", type=int, default=20)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_run_e2e_3action(
     logs_path,
     out_dir,
@@ -4872,7 +4872,7 @@ def nnmultihead_run_e2e_3action(
     default=0.7,
     help="Train ratio per symbol (time-ordered).",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
     """Mainline shadow evaluation (behavioral consistency)."""
     use_workspace_prefix = docker and not _is_in_docker()
@@ -4904,7 +4904,7 @@ def nnmultihead_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
     required=True,
     help="Output directory for the derived nnmultihead config (will be overwritten).",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_materialize_config_from_task_spec(task_spec, base_config, out_config, docker):
     """
     Generate a concrete config directory so tiers are *real* (not just metadata).
@@ -4989,7 +4989,7 @@ def nnmultihead_materialize_config_from_task_spec(task_spec, base_config, out_co
     default=False,
     help="Enable faster feature computation for DTW/Spectrum where supported (FEATURE_FAST_MODE=1).",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_build_feature_store(
     task_spec,
     symbols,
@@ -5135,7 +5135,7 @@ def nnmultihead_build_feature_store(
     default="results/nnmultihead_eval",
     help="Output directory for eval artifacts",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_eval(
     task_spec,
     symbols,
@@ -5226,7 +5226,7 @@ def nnmultihead_eval(
     default=None,
     help="Optional output summary markdown path (default: <run-dir>/metrics_summary.md)",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_render_report(run_dir, out_html, out_summary, docker):
     """
     Re-render nnmultihead training report artifacts (report.html + metrics_summary.md)
@@ -5330,7 +5330,7 @@ def nnmultihead_render_report(run_dir, out_html, out_summary, docker):
 )
 @click.option("--output-dir", default=None, help="Override output directory")
 @click.option("--export-yaml", default=None, help="Override export YAML path")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_factor_eval(
     config_dir,
     candidates_yaml,
@@ -5440,7 +5440,7 @@ def nnmultihead_factor_eval(
     default=None,
     help="Output directory for report JSON/MD. Default: results/feature_compare/<task_id>__<poolb_stem>",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, docker):
     """
     Compare feature sets: TaskSpec-tier required nodes vs PoolB suggestion YAML.
@@ -5949,7 +5949,7 @@ def nnmultihead_compare_runs(runs, out):
 )
 @click.option("--export-shortlist-max-groups", type=int, default=0, show_default=True)
 @click.option("--output-dir", required=True)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def nnmultihead_feature_group_search(
     task_spec,
     base_config,
@@ -6200,7 +6200,7 @@ def _train_strategy_pipeline(
     default="results/strategies/sr_reversal_long",
     help="Output directory",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def train_sr_reversal_long(
     symbol,
     timeframe,
@@ -6239,7 +6239,7 @@ def train_sr_reversal_long(
     default="results/strategies/sr_reversal_short",
     help="Output directory",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def train_sr_reversal_short(
     symbol,
     timeframe,
@@ -6278,7 +6278,7 @@ def train_sr_reversal_short(
 @click.option("--start", help="Rolling start date (YYYY-MM-DD)")
 @click.option("--end", help="Rolling end date (YYYY-MM-DD)")
 @click.option("--update-only", is_flag=True, help="Only update existing models")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def train_rolling(
     symbol,
     timeframe,
@@ -6363,7 +6363,7 @@ def train_rolling(
 @click.option(
     "--deterministic/--non-deterministic", default=True, help="Deterministic training"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 @click.option(
     "--labels",
     default=None,
@@ -6489,7 +6489,7 @@ def test_unit(verbose, pattern):
 @test.command("integration")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 @click.option("--fast", is_flag=True, help="Skip slow tests")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def test_integration(verbose, fast, docker):
     """Run integration tests."""
     args = ["tests/integration/"]
@@ -6664,7 +6664,7 @@ def analyze():
 @click.option(
     "--output-dir", default="results/feature_evaluation", help="Output directory"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def analyze_feature_eval(
     symbol, timeframe, horizon, feature_types, start_date, end_date, output_dir, docker
 ):
@@ -6769,7 +6769,7 @@ def analyze_feature_eval(
     default=5,
     help="Tolerance for target lag matching (default: 5)",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def analyze_factor_eval(
     strategy_config,
     symbol,
@@ -6876,7 +6876,7 @@ def analyze_factor_eval(
     default="none",
     help="Probability calibration method (none/platt/isotonic)",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def analyze_strategy_feature_compare(
     strategy_config,
     symbol,
@@ -6945,7 +6945,7 @@ def analyze_strategy_feature_compare(
 @analyze.command("archetype-performance")
 @click.option("--logs", required=True, help="Input logs file (parquet)")
 @click.option("--output", required=True, help="Output markdown report path")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def analyze_archetype_performance(logs, output, docker):
     """Analyze archetype performance metrics."""
     args = [
@@ -6973,7 +6973,7 @@ def analyze_archetype_performance(logs, output, docker):
     default="results/model_comparison_240h/comparison_results.csv",
     help="4h timeframe results CSV",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def analyze_timeframe_comparison(output_dir, results_1h, results_4h, docker):
     """Generate comprehensive comparison between 1h and 4h timeframes."""
     args = [
@@ -7093,7 +7093,7 @@ def diagnose():
     default=None,
     help="Optional output JSON path for the report",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_feature_contract(feature_deps, mode, out_json, docker):
     """
     Feature contract checks (normalization + semantic safety).
@@ -7137,7 +7137,7 @@ def diagnose_feature_contract(feature_deps, mode, out_json, docker):
     default=None,
     help="Optional output path for gate result json (ok/hard_failures/warnings).",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_kpi_gate(metrics_json, gate_yaml, out_json, docker):
     """
     KPI gate checker.
@@ -7213,7 +7213,7 @@ def diagnose_kpi_journal(run_dir, stage, docker):
 @click.option("--quantiles", default="0.1,0.5,0.9")
 @click.option("--out", required=True, help="Output JSON path")
 @click.option("--global/--per-symbol", "global_pool", default=False)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_evidence_quantiles(
     feature_store_root,
     layer,
@@ -7284,7 +7284,7 @@ def diagnose_evidence_quantiles(
 @click.option("--plateau-frac", default=0.05, type=float)
 @click.option("--score-key", default="gate_exec_score")
 @click.option("--global/--per-symbol", "global_pool", default=False)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_evidence_quantiles_plateau(
     feature_store_root,
     layer,
@@ -7383,7 +7383,7 @@ def diagnose_evidence_quantiles_plateau(
 @click.option("--plateau-frac", default=0.05, type=float)
 @click.option("--score-key", default="gate_exec_score")
 @click.option("--out", required=True)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_execution_gate_plateau(
     feature_store_root,
     layer,
@@ -7462,7 +7462,7 @@ def diagnose_execution_gate_plateau(
 @click.option("--plateau-frac", default=0.05, type=float)
 @click.option("--score-key", default="gate_exec_score")
 @click.option("--out", required=True)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_execution_constraints_plateau(
     logs,
     min_interval_grid,
@@ -7503,7 +7503,7 @@ def diagnose_execution_constraints_plateau(
 @click.option("--mode-col", default="mode")
 @click.option("--archetype-col", default="gate_archetype")
 @click.option("--gate-decision-col", default="gate_decision")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_archetype_trade_counts(
     mode,
     out,
@@ -7542,7 +7542,7 @@ def diagnose_archetype_trade_counts(
 @click.option("--run-id", default=None)
 @click.option("--timeframe", default=None)
 @click.option("--strategy-name", default="pipeline")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_execution_log_stages(
     preds, mode, logs, out_dir, run_id, timeframe, strategy_name, docker
 ):
@@ -7570,7 +7570,7 @@ def diagnose_execution_log_stages(
 @diagnose.command("execution-log-aggregate")
 @click.option("--stage-dir", required=True, help="Base dir with stage subdirs")
 @click.option("--out", required=True, help="Output canonical jsonl path")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_execution_log_aggregate(stage_dir, out, docker):
     """Aggregate stage logs into canonical execution log."""
     use_workspace_prefix = docker and not _is_in_docker()
@@ -7600,7 +7600,7 @@ def diagnose_execution_log_aggregate(stage_dir, out, docker):
 @click.option("--timeline-ts-col", default="timestamp", show_default=True)
 @click.option("--timeline-symbol-col", default="symbol", show_default=True)
 @click.option("--seed", default=42, show_default=True)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_backtest_time_windows(
     trades,
     out,
@@ -7673,7 +7673,7 @@ def diagnose_backtest_time_windows(
 @click.option("--preds", default=None, help="Path to backtest_preds.npy")
 @click.option("--out", required=True, help="Output trades JSON path")
 @click.option("--max-trades", default=None)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_export_vectorbt_trades(
     artifacts_dir,
     meta,
@@ -7776,7 +7776,7 @@ def diagnose_export_vectorbt_trades(
 @click.option("--heuristic-qmin", default=0.05, type=float, show_default=True)
 @click.option("--heuristic-qmax", default=0.95, type=float, show_default=True)
 @click.option("--seed", default=0, type=int, show_default=True)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_threshold_plateau(
     preds,
     logs,
@@ -7919,7 +7919,7 @@ def diagnose_threshold_plateau(
 @click.option("--survival-horizon-bars", default=50, type=int, show_default=True)
 @click.option("--equity-floor-frac", default=0.5, type=float, show_default=True)
 @click.option("--dd-floor", default=0.5, type=float, show_default=True)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_extinction_replay_3action(
     logs,
     out,
@@ -7981,7 +7981,7 @@ def diagnose_extinction_replay_3action(
     show_default=True,
     help="Survival head config YAML.",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_survival_head_train(logs, labels, out, config_yaml, docker):
     """
     [DEPRECATED - Research only] Train Survival Head (tiny MLP) from extinction replay labels.
@@ -8014,7 +8014,7 @@ def diagnose_survival_head_train(logs, labels, out, config_yaml, docker):
     show_default=True,
     help="Config YAML (bins/archetypes/temperature/min_samples).",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_ood_to_archetype_weights(logs, labels, out, config_yaml, docker):
     """
     [DEPRECATED - Research only] Learn OOD -> Archetype weights via Conditional Survival Table (baseline).
@@ -8065,7 +8065,7 @@ def diagnose_ood_to_archetype_weights(logs, labels, out, config_yaml, docker):
     type=int,
     help="Maximum holding bars (overrides config)",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_rule_baseline(
     strategy_config,
     symbol,
@@ -8125,7 +8125,7 @@ def diagnose_rule_baseline(
     default="data/parquet_data",
     help="Data directory",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_test_vpin_thresholds(
     strategy_config, symbol, timeframe, start_date, end_date, data_path, docker
 ):
@@ -8155,7 +8155,7 @@ def diagnose_test_vpin_thresholds(
 
 
 @diagnose.command("ml-volatility")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_ml_volatility(docker):
     """Analyze ML+Volatility Model Performance Issues."""
     sys.exit(
@@ -8168,7 +8168,7 @@ def diagnose_ml_volatility(docker):
 
 
 @diagnose.command("dtw-volatility")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_dtw_volatility(docker):
     """Analyze DTW Features and Volatility Model."""
     sys.exit(
@@ -8209,7 +8209,7 @@ def diagnose_dtw_volatility(docker):
     default="data/parquet_data",
     help="Data directory",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_model_comparison(
     strategy_config,
     symbol,
@@ -8307,7 +8307,7 @@ def diagnose_model_comparison(
     default=None,
     help="Python module path for rule-based strategy entry point",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_sr_reversal_model_comparison(
     strategy_config,
     symbol,
@@ -8513,7 +8513,7 @@ def diagnose_sr_reversal_model_comparison(
 @click.option(
     "--deterministic/--non-deterministic", default=True, help="Deterministic training"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_feature_group_search(
     base_strategy_config,
     symbol,
@@ -8815,7 +8815,7 @@ def diagnose_poolb_semantic_search(
 @click.option("--output-json", default=None, help="Output JSON report path")
 @click.option("--ret-mean-col", default="ret_mean", help="Column name for mean returns")
 @click.option("--ret-trend-col", default="ret_trend", help="Column name for trend returns")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_e2e_kpi(logs, output_md, output_json, ret_mean_col, ret_trend_col, docker):
     """Generate E2E KPI diagnostics report."""
     args = [
@@ -8837,7 +8837,7 @@ def diagnose_e2e_kpi(logs, output_md, output_json, ret_mean_col, ret_trend_col, 
 @click.option("--logs", required=True, help="Input logs file (parquet)")
 @click.option("--baseline", default=None, help="Baseline logs file for comparison (optional)")
 @click.option("--output", required=True, help="Output report path (markdown)")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_pcm_performance(logs, baseline, output, docker):
     """Diagnose PCM (Portfolio Capital Management) layer performance."""
     args = [
@@ -8860,7 +8860,7 @@ def diagnose_pcm_performance(logs, baseline, output, docker):
     default='{"consecutive_losses": 5, "sharpe_drop": -0.5, "trade_count_drop": 0.2}',
     help="JSON string with alert thresholds",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_production_attribution(production_logs, baseline_logs, output_dir, alert_thresholds, docker):
     """Comprehensive production attribution analysis across all layers."""
     args = [
@@ -8880,7 +8880,7 @@ def diagnose_production_attribution(production_logs, baseline_logs, output_dir, 
 @click.option("--logs", required=True, help="Input logs file (parquet)")
 @click.option("--baseline", default=None, help="Baseline logs file for comparison (optional)")
 @click.option("--output", required=True, help="Output report path (markdown)")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_outcome_attribution(logs, baseline, output, docker):
     """Diagnose outcome/attribution layer performance."""
     args = [
@@ -9007,7 +9007,7 @@ def diagnose_export_fgs_shortlist(
 @click.option(
     "--deterministic/--non-deterministic", default=True, help="Deterministic training"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_holdout_eval(
     config,
     symbol,
@@ -9167,7 +9167,7 @@ def optimize():
 @click.option("--min-sharpe-threshold", type=float, default=0.5, help="Minimum Sharpe threshold for plateau")
 @click.option("--threshold-step", type=float, default=0.05, help="Threshold step size for scanning")
 @click.option("--execution-archetypes", default="config/nnmultihead/execution_archetypes.yaml", help="Path to execution_archetypes.yaml")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_gate_plateau(
     archetype,
     rule_name,
@@ -9214,7 +9214,7 @@ def optimize_gate_plateau(
 @click.option("--min-trade-rate", type=float, default=0.005, help="Minimum trade rate threshold")
 @click.option("--min-trades-per-bucket", type=int, default=10, help="Minimum trades per bucket")
 @click.option("--execution-archetypes", default="config/nnmultihead/execution_archetypes.yaml", help="Path to execution_archetypes.yaml")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_gate_plateau_all(
     gated_logs,
     raw_logs,
@@ -9253,7 +9253,7 @@ def optimize_gate_plateau_all(
 @click.option("--start-date", default=None, help="Start date (optional)")
 @click.option("--end-date", default=None, help="End date (optional)")
 @click.option("--experiments", multiple=True, default=["all"], help="Experiments to run (baseline, progressive, hard_gate, all)")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_gate_experiments(
     gated_logs,
     raw_logs,
@@ -9296,7 +9296,7 @@ def optimize_gate_experiments(
 @optimize.command("gate-compare")
 @click.option("--results-file", required=True, help="Experiment results JSON file")
 @click.option("--output-dir", required=True, help="Output directory")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_gate_compare(
     results_file,
     output_dir,
@@ -9344,7 +9344,7 @@ def optimize_gate_compare(
     default="100",
     help="Number of optimization trials",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_rule(
     strategy_config,
     symbol,
@@ -9399,7 +9399,7 @@ def optimize_rule(
     default="results/rule_optimization/optimization_report.html",
     help="Report HTML file",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_rule_plateau_charts(results_csv, report_html, docker):
     """Generate rule plateau heatmaps and scatter charts."""
     args = [
@@ -9440,7 +9440,7 @@ def optimize_rule_plateau_charts(results_csv, report_html, docker):
     default="data/parquet_data",
     help="Data directory",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_ml_param_sweep(
     strategy_config,
     symbol,
@@ -9493,7 +9493,7 @@ def optimize_ml_param_sweep(
     "--report-html",
     help="Report HTML file (default: results/model_comparison/{timeframe}/comparison_report.html)",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_ml_plateau_charts(timeframe, results_csv, report_html, docker):
     """Generate ML plateau heatmaps and scatter charts."""
     if not results_csv:
@@ -9536,7 +9536,7 @@ def backtest():
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
 @click.option("--start", help="Start date (YYYY-MM-DD)")
 @click.option("--end", help="End date (YYYY-MM-DD)")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def backtest_vectorbot(model, symbol, start, end, docker):
     """Run VectorBot risk-managed backtest."""
     args = []
@@ -9776,7 +9776,7 @@ def cross_section():
     show_default=True,
     help="Overwrite existing month files",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_build_store(
     symbols,
     timeframe,
@@ -9887,7 +9887,7 @@ def cross_section_build_store(
     show_default=True,
     help="Add built-in crypto CS factors",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_report(
     inputs,
     panel_path,
@@ -10033,7 +10033,7 @@ def cross_section_report(
     show_default=True,
     help="Rank stat for selection",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_train(
     inputs,
     panel_path,
@@ -10134,7 +10134,7 @@ def cross_section_train(
     show_default=True,
     help="Output directory for exported factor sets",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_catalog(input_path, output_dir, docker):
     """Export factor catalog (IC/IR summary)."""
     use_workspace_prefix = docker and not _is_in_docker()
@@ -10194,7 +10194,7 @@ def cross_section_catalog(input_path, output_dir, docker):
 @click.option(
     "--include-categories", default=None, help="Comma-separated categories to include"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_select(
     input_path,
     output,
@@ -10271,7 +10271,7 @@ def cross_section_select(
 @click.option(
     "--topk", default=10, show_default=True, help="Top-K features for dependence plots"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 @click.option(
     "--output-dir",
     default="results/cross_sectional/shap_reports",
@@ -10360,7 +10360,7 @@ def cross_section_shap(
     show_default=True,
     help="Output markdown report path",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_logic_check(shap_manifest, expectations, tolerance, output, docker):
     """Run factor logic consistency checks."""
     use_workspace_prefix = docker and not _is_in_docker()
@@ -10420,7 +10420,7 @@ def cross_section_logic_check(shap_manifest, expectations, tolerance, output, do
     default=False,
     help="Overwrite baseline with current metrics if no alerts",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_shap_drift(
     current, baseline, threshold, output, update_baseline, docker
 ):
@@ -10518,7 +10518,7 @@ def cross_section_shap_drift(
     show_default=True,
     help="Output directory.",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_factor_eval(
     config_path,
     input_path,
@@ -10630,7 +10630,7 @@ def cross_section_factor_eval(
 @click.option(
     "--config", "config_path", required=True, help="Pipeline YAML config path"
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_pipeline(config_path, docker):
     """Run end-to-end cross-sectional pipeline from a YAML config."""
     use_workspace_prefix = docker and not _is_in_docker()
@@ -10708,7 +10708,7 @@ def cross_section_pipeline(config_path, docker):
 )
 @click.option("--top", default=50, show_default=True, help="Top-N rows to print")
 @click.option("--output", default=None, help="Optional output path (.csv or .json)")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_rank(
     date,
     factor,
@@ -10867,7 +10867,7 @@ def cross_section_rank(
     show_default=True,
     help="Annualisation factor or 'auto'",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def cross_section_workflow(
     config_path,
     symbols,
@@ -10950,7 +10950,7 @@ def visualize():
     default=False,
     help="Force rebuild FeatureStore cache (requires --use-cache)",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def visualize_feature_indicators(
     symbol,
     timeframe,
@@ -11062,7 +11062,7 @@ def visualize_feature_indicators(
     default="10",
     help="Top features per group for config generation",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def analyze_timeframe_forward_report(
     symbols,
     timeframes,

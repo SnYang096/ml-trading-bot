@@ -1,0 +1,152 @@
+# Constitution v1 (YAML-first)
+# This is a non-negotiable contract: the system must NEVER violate it.
+# It encodes the "freedom limits" and "survival + controlled escalation" philosophy.
+
+version: 1
+name: "Constitution_v1"
+created_at: "2026-01-12"
+
+# -----------------------------------------------------------------------------
+# 1) Kill-switch (hard stops)
+# -----------------------------------------------------------------------------
+kill_switch:
+  enabled: true
+  # Account-level loss limits (fraction of equity).
+  daily_loss_limit: 0.04   # -4% => stop new risk for the day
+  weekly_loss_limit: 0.08  # -8% => stop new risk for the week
+  monthly_loss_limit: 0.12 # -12% => stop new risk for the month
+  # Cooldown after a hard stop (minutes). Recovery requires cooldown + metrics OK.
+  cooldown_minutes: 240
+  # Daily loss reset is evaluated in this timezone.
+  daily_reset_timezone: "UTC"
+
+  # Execution / data sanity caps (must match execution control checks when used)
+  # Note: Currently only max_dd is enforced at runtime; others are checked in offline evaluation
+  # See: src/time_series_model/core/constitution/constitution_executor.py:validate_drawdown() for max_dd
+  # See: src/time_series_model/rl/exec_control.py for turnover/cost checks (offline only)
+  max_dd: 0.20
+  # Max drawdown (peak-to-trough): 20% hard limit
+  # - Runtime check: YES (in enforce_before_order() safety gate)
+  # - Implementation: src/time_series_model/core/constitution/safety_runtime.py
+  # - Live usage: src/time_series_model/live/enforcement.py
+  max_turnover_mean: 0.35
+  # Mean turnover per step: 35% (fraction of equity)
+  # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
+  # - Implementation: src/time_series_model/rl/exec_control.py:121-128
+  # - Usage: scripts/rl_exec_control_check.py, counterfactual evaluation
+  # - Definition: turnover = abs(target_exposure - prev_exposure) per step
+  # - Example: If prev_exposure=0.5 (50% long), target=0.8 (80% long), then turnover = |0.8-0.5| = 0.3 (30%)
+  # - Example: If prev_exposure=0.0 (flat), target=1.0 (100% long), then turnover = |1.0-0.0| = 1.0 (100%)
+  # - Why check: High turnover = excessive trading = high transaction costs = poor execution
+  # - Recommendation: Should add runtime check to prevent excessive position changes
+  max_turnover_p95: 1.00
+  # 95th percentile turnover: 100% (fraction of equity)
+  # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
+  # - Implementation: src/time_series_model/rl/exec_control.py:122-129
+  # - Definition: 95% of all steps have turnover <= 1.0 (100%)
+  # - Example: If 95% of steps have turnover <= 1.0, but 5% exceed it, this is a violation
+  # - Why check: Prevents extreme position swings that indicate unstable strategy
+  max_cost_mean: 0.002
+  # Mean cost per step: 0.2% (20 bps = 0.002)
+  # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
+  # - Implementation: src/time_series_model/rl/exec_control.py:123-130
+  # - Definition: cost = cost_per_turnover * turnover + slippage_bps * abs(target_exposure)
+  # - Example: If turnover=0.3, cost_per_turnover=0.0002, slippage=0.0001, target=0.8:
+  #            cost = 0.0002 * 0.3 + 0.0001 * 0.8 = 0.00006 + 0.00008 = 0.00014 (1.4 bps)
+  # - Why check: High mean cost = strategy is eating into profits with excessive trading
+  # - Recommendation: Should add runtime check to prevent cost accumulation
+  # 
+  # Binance BTCUSDT Perpetual Contract Cost Calculation:
+  # 1. Trading Fee (per turnover):
+  #    - Maker: 0.02% (2 bps) - if you provide liquidity (limit orders)
+  #    - Taker: 0.04% (4 bps) - if you take liquidity (market orders)
+  #    - With BNB discount (25%): Maker 0.015%, Taker 0.03%
+  #    - cost_per_turnover = 0.0002 (2 bps) assumes mostly maker orders
+  #    - For taker-heavy: cost_per_turnover = 0.0004 (4 bps)
+  # 
+  # 2. Funding Rate (per 8 hours, applied to exposure):
+  #    - Typically: -0.01% to 0.01% per 8h (-10 bps to +10 bps)
+  #    - For 4H timeframe (2 funding periods per step): ~0.0002 to 0.0002 (2-2 bps)
+  #    - If long: pay funding (cost); if short: receive funding (negative cost)
+  #    - slippage_bps can include funding: slippage_bps = 0.0001 (1 bps) for funding
+  # 
+  # 3. Slippage (per exposure, depends on order size):
+  #    - Small orders (< 1 BTC): < 0.01% (1 bps) on BTCUSDT
+  #    - Medium orders (1-10 BTC): 0.01-0.05% (1-5 bps)
+  #    - Large orders (> 10 BTC): 0.05-0.2% (5-20 bps) or more
+  #    - slippage_bps = 0.0001 (1 bps) assumes small-medium orders
+  # 
+  # Example for Binance BTCUSDT:
+  # - Scenario: Change from 0% to 50% long position (turnover = 0.5)
+  # - Trading fee (maker): 0.0002 * 0.5 = 0.0001 (1 bps)
+  # - Funding (long, 4H): 0.0001 * 0.5 = 0.00005 (0.5 bps)
+  # - Slippage (small order): 0.0001 * 0.5 = 0.00005 (0.5 bps)
+  # - Total cost: 0.0001 + 0.00005 + 0.00005 = 0.0002 (2 bps)
+  # 
+  # - If using market orders (taker): 0.0004 * 0.5 = 0.0002 (2 bps) just for trading fee
+  # - Total cost (taker): 0.0002 + 0.00005 + 0.00005 = 0.0003 (3 bps)
+  max_cost_p95: 0.010
+  # 95th percentile cost: 1.0% (100 bps = 0.01)
+  # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
+  # - Implementation: src/time_series_model/rl/exec_control.py:124-131
+  # - Definition: 95% of all steps have cost <= 0.01 (100 bps)
+  # - Example: If 95% of steps have cost <= 0.01, but 5% exceed it, this is a violation
+  # - Why check: Prevents extreme cost spikes that indicate execution problems or excessive trading
+  # 
+  # Binance BTCUSDT: When would cost exceed 1.0% (100 bps)?
+  # - Extreme turnover: 100% position flip with taker orders = 0.0004 * 1.0 = 0.0004 (4 bps)
+  # - High slippage: Large order (10+ BTC) with poor timing = 0.002 (20 bps) or more
+  # - Extreme funding: Rare but possible funding rate spikes = 0.01 (100 bps) per 8h
+  # - Combined: 4 bps (fee) + 20 bps (slippage) + 100 bps (funding) = 124 bps > 100 bps limit
+  # - This threshold catches execution problems, not normal trading
+
+  # Kill-switch policy: If true, ANY hard violation => global_pause (force NO_TRADE for new entries)
+  # - When enabled: Any violation (max_dd, daily_loss_limit, weekly_loss_limit, monthly_loss_limit, 
+  #   data_bad, hard_violation) will trigger ConstitutionViolation exception
+  # - Effect: System enters global pause state, all new trades forced to NO_TRADE
+  # - Implementation: src/time_series_model/core/constitution/constitution_executor.py:586-591
+  # - Usage: Prevents system from continuing to trade when critical limits are breached
+  # - Recommendation: Keep enabled for production (safety first)
+  # - If false: Violations are logged but don't stop trading (dangerous, not recommended)
+  kill_on_any_hard_violation: true
+
+# -----------------------------------------------------------------------------
+# 1.1) Safety state persistence (for restart-safe halts)
+# -----------------------------------------------------------------------------
+safety_state:
+  persist_to: "../data/order_management.db"
+
+# -----------------------------------------------------------------------------
+# 2) Slots (low freedom position structure)
+# -----------------------------------------------------------------------------
+slots:
+  enabled: true
+  slot_count: 2
+  # Risk budget per slot (fraction of equity). This is NOT "cash allocation".
+  risk_per_slot: 0.015
+  # If not enough margin/slots, replacement policy decides what to close/replace.
+  allow_replacement: true
+
+  # Slot state tracking (for live / restart safety).
+  slot_state_tracking:
+    persist_to: "../data/order_management.db"
+
+# -----------------------------------------------------------------------------
+# 3) Add-position policy (Trend-only) — "adding is allowed only by freed risk budget"
+# -----------------------------------------------------------------------------
+add_position:
+  enabled: true
+  # Mean path is constitutionally forbidden to add.
+  mean_allow_add: false
+  trend_allow_add: true
+  # Max number of add actions per position lifecycle (keep freedom low).
+  max_add_times: 1
+  # Adding fuel must come from realized or locked-in profit (never from hope).
+  require_locked_profit: true
+  # Example lock rule: once R>1, move stop to breakeven and "free" risk budget.
+  lock_profit_breakeven_trigger_r: 1.0
+
+  # State tracking to enforce add-position rules (fields are not configurable).
+  state_tracking:
+    persist_to: "../data/order_management.db"
+
