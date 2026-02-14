@@ -68,130 +68,130 @@ hard_gates:
     then:
       action: deny
 
-# ============================================================
-# 🟡 Soft Filters (增强条件 - 不满足则降权)
-# ============================================================
-soft_filters:
-  # ✅ Lift=23.9% | PassRate=31.6% | Stable Plateau
-  - id: filter_sr_strength_high
-    tag: SOFT_SR_STRENGTH_HIGH
-    phase: soft_filter
-    priority: 1
-    reason: "[SOFT] SR强度过高 — 支撑/阻力过强"
-    when:
-      sr_strength_max:
-        value_gt: 3.204
-    then:
-      action: downweight
-      weight: 0.7
+# # ============================================================
+# # 🟡 Soft Filters (增强条件 - 不满足则降权)
+# # ============================================================
+# soft_filters:
+#   # ✅ Lift=23.9% | PassRate=31.6% | Stable Plateau
+#   - id: filter_sr_strength_high
+#     tag: SOFT_SR_STRENGTH_HIGH
+#     phase: soft_filter
+#     priority: 1
+#     reason: "[SOFT] SR强度过高 — 支撑/阻力过强"
+#     when:
+#       sr_strength_max:
+#         value_gt: 3.204
+#     then:
+#       action: downweight
+#       weight: 0.7
 
-  # ✅ Lift=1288% | PassRate=30.0% | Robustness=0.74
-  - id: filter_vp_absorption_high
-    tag: SOFT_VP_ABSORPTION_HIGH
-    phase: soft_filter
-    priority: 2
-    reason: "[SOFT] VP 吸收度过高 — 订单簿流动性过强"
-    when:
-      vp_absorption_score:
-        value_gt: 0.051
-    then:
-      action: downweight
-      weight: 0.7
+#   # ✅ Lift=1288% | PassRate=30.0% | Robustness=0.74
+#   - id: filter_vp_absorption_high
+#     tag: SOFT_VP_ABSORPTION_HIGH
+#     phase: soft_filter
+#     priority: 2
+#     reason: "[SOFT] VP 吸收度过高 — 订单簿流动性过强"
+#     when:
+#       vp_absorption_score:
+#         value_gt: 0.051
+#     then:
+#       action: downweight
+#       weight: 0.7
 
-  # 🔄 重新评估: VPIN 极端
-  - id: filter_vpin_extreme
-    tag: SOFT_VPIN_EXTREME
-    phase: soft_filter
-    priority: 3
-    reason: "[SOFT] VPIN 极端 — 信息不对称过高"
-    when:
-      vpin_max20:
-        value_gt: 0.7
-    then:
-      action: downweight
-      weight: 0.7
+#   # 🔄 重新评估: VPIN 极端
+#   - id: filter_vpin_extreme
+#     tag: SOFT_VPIN_EXTREME
+#     phase: soft_filter
+#     priority: 3
+#     reason: "[SOFT] VPIN 极端 — 信息不对称过高"
+#     when:
+#       vpin_max20:
+#         value_gt: 0.7
+#     then:
+#       action: downweight
+#       weight: 0.7
 
-  # 🔄 重新评估: CVD 参与度低
-  - id: filter_cvd_participation_low
-    tag: SOFT_CVD_PARTICIPATION_LOW
-    phase: soft_filter
-    priority: 4
-    reason: "[SOFT] CVD 参与度低 — 订单流不活跃"
-    when:
-      cvd_change_5_normalized:
-        value_lt: 0.1
-    then:
-      action: downweight
-      weight: 0.7
+#   # 🔄 重新评估: CVD 参与度低
+#   - id: filter_cvd_participation_low
+#     tag: SOFT_CVD_PARTICIPATION_LOW
+#     phase: soft_filter
+#     priority: 4
+#     reason: "[SOFT] CVD 参与度低 — 订单流不活跃"
+#     when:
+#       cvd_change_5_normalized:
+#         value_lt: 0.1
+#     then:
+#       action: downweight
+#       weight: 0.7
 
-  # 🔄 重新评估: BB 压缩缺失
-  - id: filter_bb_compression_missing
-    tag: SOFT_BB_COMPRESSION_MISSING
-    phase: soft_filter
-    priority: 5
-    reason: "[SOFT] BB 压缩缺失 — 波动率未收窄"
-    when:
-      bpc_bb_compression:
-        value_lt: 0.3
-    then:
-      action: downweight
-      weight: 0.7
+#   # 🔄 重新评估: BB 压缩缺失
+#   - id: filter_bb_compression_missing
+#     tag: SOFT_BB_COMPRESSION_MISSING
+#     phase: soft_filter
+#     priority: 5
+#     reason: "[SOFT] BB 压缩缺失 — 波动率未收窄"
+#     when:
+#       bpc_bb_compression:
+#         value_lt: 0.3
+#     then:
+#       action: downweight
+#       weight: 0.7
 
-  # ============================================================
-  # 🆕 新增规则 (2026-02-08 rr_extreme 训练产出)
-  # ============================================================
+#   # ============================================================
+#   # 🆕 新增规则 (2026-02-08 rr_extreme 训练产出)
+#   # ============================================================
 
-  # 🆕 Lift=7.98 | SMA200位置
-  - id: filter_sma_200_position_low
-    tag: SOFT_SMA_200_POSITION_LOW
-    phase: soft_filter
-    priority: 12
-    reason: "[SOFT] SMA200位置过低 — 价格距200均线过远"
-    when:
-      sma_200_position:
-        value_lt: -0.0019
-    then:
-      action: downweight
-      weight: 0.8
+#   # 🆕 Lift=7.98 | SMA200位置
+#   - id: filter_sma_200_position_low
+#     tag: SOFT_SMA_200_POSITION_LOW
+#     phase: soft_filter
+#     priority: 12
+#     reason: "[SOFT] SMA200位置过低 — 价格距200均线过远"
+#     when:
+#       sma_200_position:
+#         value_lt: -0.0019
+#     then:
+#       action: downweight
+#       weight: 0.8
 
-  # 🆕 分裂4次 | EVT右尾尺度
-  - id: filter_evt_scale_right_low
-    tag: SOFT_EVT_SCALE_RIGHT_LOW
-    phase: soft_filter
-    priority: 14
-    reason: "[SOFT] EVT右尾尺度低 — 极值风险结构异常"
-    when:
-      evt_scale_right:
-        value_lt: 0.3433
-    then:
-      action: downweight
-      weight: 0.8
+#   # 🆕 分裂4次 | EVT右尾尺度
+#   - id: filter_evt_scale_right_low
+#     tag: SOFT_EVT_SCALE_RIGHT_LOW
+#     phase: soft_filter
+#     priority: 14
+#     reason: "[SOFT] EVT右尾尺度低 — 极值风险结构异常"
+#     when:
+#       evt_scale_right:
+#         value_lt: 0.3433
+#     then:
+#       action: downweight
+#       weight: 0.8
 
-  # 🆕 Stable Plateau | EVT VaR99
-  - id: filter_evt_var_99_low
-    tag: SOFT_EVT_VAR_99_LOW
-    phase: soft_filter
-    priority: 16
-    reason: "[SOFT] EVT VaR99低 — 尾部风险估计异常"
-    when:
-      evt_var_99:
-        value_lt: 0.8917
-    then:
-      action: downweight
-      weight: 0.8
+#   # 🆕 Stable Plateau | EVT VaR99
+#   - id: filter_evt_var_99_low
+#     tag: SOFT_EVT_VAR_99_LOW
+#     phase: soft_filter
+#     priority: 16
+#     reason: "[SOFT] EVT VaR99低 — 尾部风险估计异常"
+#     when:
+#       evt_var_99:
+#         value_lt: 0.8917
+#     then:
+#       action: downweight
+#       weight: 0.8
 
-  # 🆕 Stable Plateau | EVT左尾形状
-  - id: filter_evt_tail_shape_left_low
-    tag: SOFT_EVT_TAIL_SHAPE_LEFT_LOW
-    phase: soft_filter
-    priority: 20
-    reason: "[SOFT] EVT左尾形状低 — 左尾风险结构异常"
-    when:
-      evt_tail_shape_left:
-        value_lt: 0.5298
-    then:
-      action: downweight
-      weight: 0.8
+#   # 🆕 Stable Plateau | EVT左尾形状
+#   - id: filter_evt_tail_shape_left_low
+#     tag: SOFT_EVT_TAIL_SHAPE_LEFT_LOW
+#     phase: soft_filter
+#     priority: 20
+#     reason: "[SOFT] EVT左尾形状低 — 左尾风险结构异常"
+#     when:
+#       evt_tail_shape_left:
+#         value_lt: 0.5298
+#     then:
+#       action: downweight
+#       weight: 0.8
 
 # ============================================================
 # 🛡️ Strategy Guardrails (策略一致性护栏 - 不参与 Lift 优化)

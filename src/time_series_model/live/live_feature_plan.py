@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Set
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import yaml
 
@@ -44,6 +45,147 @@ def _node_to_output_columns(
         else:
             out.add(str(node))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Archetypes auto-detect (no NN dependency)
+# ---------------------------------------------------------------------------
+
+
+def _extract_features_from_when(when: Any) -> Set[str]:
+    """Extract feature column names from a gate-style 'when' clause."""
+    out: Set[str] = set()
+    if isinstance(when, dict):
+        for k, v in when.items():
+            # keys like 'and', 'or', 'not' are logical operators
+            if k in ("and", "or"):
+                if isinstance(v, list):
+                    for item in v:
+                        out |= _extract_features_from_when(item)
+            elif k == "not":
+                out |= _extract_features_from_when(v)
+            else:
+                # k is a feature name (e.g. bpc_dir_consistency_long)
+                out.add(str(k))
+    return out
+
+
+def _extract_features_from_gate(cfg: Dict[str, Any]) -> Set[str]:
+    """Extract all feature columns referenced in gate.yaml."""
+    features: Set[str] = set()
+    for section in ("hard_gates", "soft_filters", "guardrails", "system_safety"):
+        rules = cfg.get(section)
+        if not isinstance(rules, list):
+            continue
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            when = rule.get("when")
+            if when:
+                features |= _extract_features_from_when(when)
+    return features
+
+
+def _extract_features_from_evidence(cfg: Dict[str, Any]) -> Set[str]:
+    """Extract all feature columns referenced in evidence.yaml."""
+    features: Set[str] = set()
+    items = cfg.get("evidence")
+    if not isinstance(items, list):
+        return features
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        feat = item.get("feature")
+        if feat:
+            features.add(str(feat))
+    return features
+
+
+def _extract_features_from_entry_filters(cfg: Dict[str, Any]) -> Set[str]:
+    """Extract feature columns from *enabled* entry filters."""
+    features: Set[str] = set()
+    filters = cfg.get("filters")
+    if not isinstance(filters, list):
+        return features
+    for f in filters:
+        if not isinstance(f, dict):
+            continue
+        if not f.get("enabled", False):
+            continue
+        for cond in f.get("conditions") or []:
+            if isinstance(cond, dict) and cond.get("feature"):
+                features.add(str(cond["feature"]))
+    return features
+
+
+def extract_features_from_archetypes(
+    archetypes_dir: str | Path,
+    feature_deps_path: str | Path = "config/feature_dependencies.yaml",
+) -> Tuple[Set[str], List[str]]:
+    """
+    从 archetypes 目录自动提取实盘所需的全部特征。
+
+    扫描 gate.yaml / evidence.yaml / entry_filters.yaml，
+    收集引用的特征列，映射为 feature nodes。
+    FeatureComputer 自己会解析依赖，此处不做递归展开。
+
+    Returns:
+        (live_feature_set, live_feature_nodes)
+    """
+    d = Path(archetypes_dir)
+    feature_columns: Set[str] = set()
+
+    # 1. Gate
+    gate_path = d / "gate.yaml"
+    if gate_path.exists():
+        feature_columns |= _extract_features_from_gate(_load_yaml(gate_path))
+
+    # 2. Evidence
+    evidence_path = d / "evidence.yaml"
+    if evidence_path.exists():
+        feature_columns |= _extract_features_from_evidence(_load_yaml(evidence_path))
+
+    # 3. Entry Filters (enabled only)
+    ef_path = d / "entry_filters.yaml"
+    if ef_path.exists():
+        feature_columns |= _extract_features_from_entry_filters(_load_yaml(ef_path))
+
+    if not feature_columns:
+        return set(), []
+
+    # Map columns → feature nodes (pick ONE per column — smallest output set)
+    deps = _load_yaml(feature_deps_path)
+    feats = deps.get("features") or {}
+
+    # Build col → list of (node_name, output_count)
+    col_to_nodes: Dict[str, List[Tuple[str, int]]] = {}
+    for node_name, node_cfg in feats.items():
+        if not isinstance(node_cfg, dict):
+            continue
+        out_cols = node_cfg.get("output_columns") or []
+        for c in out_cols:
+            col_to_nodes.setdefault(str(c), []).append((node_name, len(out_cols)))
+
+    # For each needed column, pick the node with fewest outputs (most specific)
+    selected_nodes: Set[str] = set()
+    for col in feature_columns:
+        candidates = col_to_nodes.get(col)
+        if not candidates:
+            continue
+        # Sort by output_count ascending → pick most specific
+        best = min(candidates, key=lambda x: x[1])
+        selected_nodes.add(best[0])
+
+    # Build output column set from selected nodes
+    live_feature_set = _node_to_output_columns(nodes=selected_nodes, feature_deps=deps)
+    # Also include raw archetype columns (some computed inline, e.g. ef_*)
+    live_feature_set |= feature_columns
+    # Always include OHLCV
+    live_feature_set |= {"open", "high", "low", "close", "volume"}
+
+    # Deduplicated ordered list
+    ordered = sorted(selected_nodes)
+    return live_feature_set, ordered
 
 
 def load_live_feature_plan(

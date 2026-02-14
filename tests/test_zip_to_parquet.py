@@ -200,6 +200,8 @@ class TestZipToParquet:
         assert "side" in result.columns
         assert len(result) == 3
         assert isinstance(result["timestamp"].iloc[0], pd.Timestamp)
+        # 新规范：mlbot data convert 输出 tz-aware UTC
+        assert result["timestamp"].iloc[0].tz is not None
 
         # 检查 side 值（is_buyer_maker=False 应该是 1，True 应该是 -1）
         assert result["side"].iloc[0] == 1  # False -> 1 (buy)
@@ -224,7 +226,56 @@ class TestZipToParquet:
         assert output_file.endswith(".parquet")
         assert temp_dirs["output_dir"] in output_file
 
-        print("✅ 输出文件名生成功能正常")
+        print("\u2705 输出文件名生成功能正常")
+
+    def test_output_filename_generation_monthly_vs_daily(self, temp_dirs):
+        """测试输出文件名生成：区分 monthly 和 daily 格式
+
+        Bug 修复验证：
+        - Monthly ZIP (SYMBOL-aggTrades-2025-12.zip) → SYMBOL_2025-12.parquet
+        - Daily ZIP (SYMBOL-aggTrades-2025-12-01.zip) → SYMBOL_2025-12-01.parquet
+
+        之前的 bug：daily ZIP 也会生成 SYMBOL_2025-12.parquet，导致多个 daily 文件互相覆盖
+        """
+        from src.data_tools.zip_to_parquet import DataConverter
+
+        converter = DataConverter(
+            input_dir=temp_dirs["input_dir"],
+            output_dir=temp_dirs["output_dir"],
+        )
+
+        # 1. Monthly 格式：应该生成 SYMBOL_2025-12.parquet
+        monthly_file = "/path/to/BTCUSDT-aggTrades-2025-12.zip"
+        monthly_output = converter._generate_output_filename(monthly_file, "BTCUSDT")
+        assert "BTCUSDT_2025-12.parquet" in monthly_output
+        assert "2025-12-" not in monthly_output  # 不应该有日期部分
+
+        # 2. Daily 格式：应该生成 SYMBOL_2025-12-01.parquet
+        daily_file_1 = "/path/to/BTCUSDT-aggTrades-2025-12-01.zip"
+        daily_output_1 = converter._generate_output_filename(daily_file_1, "BTCUSDT")
+        assert "BTCUSDT_2025-12-01.parquet" in daily_output_1
+
+        # 3. 另一个 Daily 文件：应该生成不同的文件名
+        daily_file_2 = "/path/to/BTCUSDT-aggTrades-2025-12-15.zip"
+        daily_output_2 = converter._generate_output_filename(daily_file_2, "BTCUSDT")
+        assert "BTCUSDT_2025-12-15.parquet" in daily_output_2
+
+        # 关键断言：两个 daily 文件应该生成不同的输出文件名
+        assert daily_output_1 != daily_output_2, (
+            f"Bug: daily files should generate different output names! "
+            f"Got same: {daily_output_1}"
+        )
+
+        print("\u2705 Monthly/Daily 文件名区分功能正常")
+        print(
+            f"   Monthly: BTCUSDT-2025-12.zip \u2192 {os.path.basename(monthly_output)}"
+        )
+        print(
+            f"   Daily:   BTCUSDT-2025-12-01.zip \u2192 {os.path.basename(daily_output_1)}"
+        )
+        print(
+            f"   Daily:   BTCUSDT-2025-12-15.zip \u2192 {os.path.basename(daily_output_2)}"
+        )
 
     def test_convert_all_files_empty(self, temp_dirs):
         """测试批量转换（空目录）"""

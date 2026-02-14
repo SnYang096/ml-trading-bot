@@ -35,6 +35,7 @@ class DataConverter:
         input_dir: str,
         output_dir: str,
         *,
+        backup_dir: Optional[str] = None,
         force: bool = False,
         aggregate_freq: str = "1s",
     ):
@@ -50,9 +51,12 @@ class DataConverter:
         """
         self.input_dir = input_dir
         self.output_dir = output_dir
+        self.backup_dir = backup_dir
         self.force = bool(force)
         self.aggregate_freq = aggregate_freq
         os.makedirs(self.output_dir, exist_ok=True)
+        if self.backup_dir is not None:
+            os.makedirs(self.backup_dir, exist_ok=True)
 
     def convert_zip_to_parquet(
         self, zip_file: str, symbol: Optional[str] = None
@@ -205,7 +209,7 @@ class DataConverter:
                 logger.warning("Missing required columns in %s", df.columns.tolist())
                 return None
 
-            df["timestamp"] = pd.to_datetime(df["transact_time"], unit="ms")
+            df["timestamp"] = pd.to_datetime(df["transact_time"], unit="ms", utc=True)
             df["price"] = pd.to_numeric(df["price"], errors="coerce")
             df["volume"] = pd.to_numeric(df["quantity"], errors="coerce")
             df = df.dropna(subset=["timestamp", "price", "volume"])
@@ -281,20 +285,29 @@ class DataConverter:
 
         Returns:
             输出文件完整路径
+
+        文件名规则：
+            - Monthly ZIP (SYMBOL-aggTrades-2025-12.zip) → SYMBOL_2025-12.parquet
+            - Daily ZIP (SYMBOL-aggTrades-2025-12-01.zip) → SYMBOL_2025-12-01.parquet
         """
         zip_basename = os.path.basename(zip_file)
 
-        # 提取日期信息 - 支持多种格式
-        match = re.search(r"(\d{4})-(\d{2})", zip_basename)
+        # 先尝试提取完整日期 YYYY-MM-DD（daily 格式）
+        match = re.search(r"(\d{4})-(\d{2})-(\d{2})", zip_basename)
         if match:
-            date_part = f"{match.group(1)}-{match.group(2)}"
+            date_part = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
         else:
-            date_part = datetime.now().strftime("%Y-%m")
-            logger.warning(
-                "Could not extract date from filename %s, using %s",
-                zip_basename,
-                date_part,
-            )
+            # 再尝试提取月度格式 YYYY-MM（monthly 格式）
+            match = re.search(r"(\d{4})-(\d{2})", zip_basename)
+            if match:
+                date_part = f"{match.group(1)}-{match.group(2)}"
+            else:
+                date_part = datetime.now().strftime("%Y-%m")
+                logger.warning(
+                    "Could not extract date from filename %s, using %s",
+                    zip_basename,
+                    date_part,
+                )
 
         # 生成输出文件名
         output_filename = f"{symbol}_{date_part}.parquet"
@@ -395,6 +408,18 @@ class DataConverter:
                 else:
                     converted_files.append(result)
                     print(f"{progress_prefix} ✅ Success: {file_name}")
+                    # 可选：备份原始 ZIP 到 backup_dir
+                    if self.backup_dir is not None:
+                        try:
+                            backup_path = os.path.join(self.backup_dir, file_name)
+                            shutil.copy2(zip_file, backup_path)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to backup %s to %s: %s",
+                                file_name,
+                                self.backup_dir,
+                                e,
+                            )
             else:
                 failed_files.append(zip_file)
                 print(f"{progress_prefix} ❌ Failed: {file_name}")

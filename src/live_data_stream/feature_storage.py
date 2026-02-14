@@ -75,8 +75,11 @@ class Feature4HStorage:
         target = self._path(symbol, trading_date)
         if not target.exists():
             return pd.DataFrame()
-        return pd.read_parquet(target)
-    
+        df = pd.read_parquet(target)
+        # 统一为 tz-aware UTC
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        return df    
     def load_range(
         self, 
         symbol: str, 
@@ -157,8 +160,11 @@ class Feature15MinStorage:
         target = self._path(symbol, trading_date)
         if not target.exists():
             return pd.DataFrame()
-        return pd.read_parquet(target)
-    
+        df = pd.read_parquet(target)
+        # 统一为 tz-aware UTC
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        return df    
     def load_range(
         self, 
         symbol: str, 
@@ -254,12 +260,15 @@ class TickStorage:
         return target
     
     def load(self, symbol: str, trading_date: str) -> pd.DataFrame:
-        """加製1分钟聚合tick数据"""
+        """加载1分钟聚合tick数据"""
         target = self._path(symbol, trading_date)
         if not target.exists():
             return pd.DataFrame(columns=["timestamp", "price", "volume", "side"])
-        return pd.read_parquet(target)
-    
+        df = pd.read_parquet(target)
+        # 统一为 tz-aware UTC，避免 tz-naive / tz-aware 混用
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        return df    
     def load_range(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """加製日期范围内的1分钟聚合tick数据"""
         start = datetime.strptime(start_date, "%Y-%m-%d")
@@ -362,8 +371,11 @@ class Tick1MinStorage:
         target = self._path(symbol, trading_date)
         if not target.exists():
             return pd.DataFrame()
-        return pd.read_parquet(target)
-    
+        df = pd.read_parquet(target)
+        # 统一为 tz-aware UTC，避免 tz-naive / tz-aware 混用
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        return df    
     def load_range(
         self, 
         symbol: str, 
@@ -514,7 +526,7 @@ class StorageManager:
             - features_4h: 4小时特征
             - features_15min: 15分钟特征
             - bars_1min: 1分钟OHLCV bar数据
-            - ticks: 1分钟聚合tick数据（按买卖分离）
+            - ticks_1min: 1分钟聚合tick数据（按买卖分离）
         """
         if end_date is None:
             end_date = datetime.now().strftime("%Y-%m-%d")
@@ -527,7 +539,7 @@ class StorageManager:
             "features_4h": self.feature_4h.load_range(symbol, start_date, end_date),
             "features_15min": self.feature_15min.load_range(symbol, start_date, end_date),
             "bars_1min": self.bar_1min.load_range(symbol, start_date, end_date),
-            "ticks": self.ticks.load_range(symbol, start_date, end_date),  # 新增
+            "ticks_1min": self.ticks.load_range(symbol, start_date, end_date),  # 新增
         }
     
     def get_recovery_state(

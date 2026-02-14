@@ -21,9 +21,9 @@ export MLBOT_LIVE_GAP_FILL="true"
 
 # BPC策略配置
 export MLBOT_STRATEGIES_ROOT="config/strategies"
-export MLBOT_BPC_FEATURE_PLAN_YAML="config/live/live_feature_plan.yaml"
 export MLBOT_BPC_BAR_MINUTES="240"  # 4小时
 export MLBOT_BPC_WINDOW_MINUTES="15"  # 15分钟
+# 特征自动从 archetypes (gate/evidence/entry_filters) 提取，无需 feature plan
 
 # 特征存储（可选）
 export MLBOT_FEATURE_STORE_DIR="feature_store"

@@ -13,12 +13,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Callable
 from collections import deque
 import pandas as pd
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Nautilus 已废弃
 NAUTILUS_AVAILABLE = False
@@ -151,6 +154,10 @@ class OrderFlowListener:
         self.last_feature_compute_time: Optional[pd.Timestamp] = None
         self.last_4h_save_time: Optional[pd.Timestamp] = None
         
+        # 心跳计数器
+        self._tick_count: int = 0
+        self._bar_count: int = 0
+        
         # 运行状态
         self.is_running = False
         self._stop_event: Optional[asyncio.Event] = None
@@ -238,6 +245,7 @@ class OrderFlowListener:
             "volume": size,
             "side": side_value,
         })
+        self._tick_count += 1
         
         # 新增：缓存tick到1分钟缓冲区（按买卖分离）
         bar_start = tick_ts.floor("1min")
@@ -351,9 +359,8 @@ class OrderFlowListener:
         # 保存到存储
         if tick_records:
             tick_df = pd.DataFrame(tick_records)
-            # 使用storage_manager的ticks存储（将在Task 2中添加）
-            if hasattr(self.storage_manager, "save_ticks"):
-                self.storage_manager.save_ticks(self.symbol, tick_df)
+            trading_date = start_time.strftime("%Y-%m-%d")
+            self.storage_manager.ticks.append(self.symbol, trading_date, tick_df)
     
     def _periodic_save_incomplete_bar(self) -> None:
         """定期保存未完成的bar（每10秒）"""
@@ -367,33 +374,224 @@ class OrderFlowListener:
             )
     
     def _compute_and_save_15min_features(self) -> None:
-        """计算并保存15分钟特征"""
-        # 获取特征
-        features = self.feature_computer.get_features()
-        orderflow_features = self.feature_computer.get_orderflow_features(
-            window_minutes=self.orderflow_window_minutes
+        """从磁盘+Buffer批量计算特征（和研发流程一致）
+        
+        流程：
+        1. 从磁盘读取 90+ 天 1min bars（用于 atr_percentile(540) 等长 lookback）
+        2. 从磁盘读取 7 天 1min ticks（用于 VPIN 自适应桶）
+        3. 合并内存buffer数据（memory_window + tick_buffer）
+        4. 调用 feature_computer.compute_features_batch()
+        5. 保存 + 传给决策引擎
+        
+        v2 优化 (2026-02-13):
+        - 磁盘数据可能有1-2分钟延迟（最新bars还在内存未落盘）
+        - 合并buffer确保计算用到最新数据
+        """
+        now = pd.Timestamp.now(tz="UTC")
+        
+        # ── 1. 从磁盘读取数据 (历史主体) ──
+        # 1min bars: 100 天（覆盖 atr_percentile window=540 × 4h = 90 天）
+        bar_lookback_days = 100
+        bar_start = (now - timedelta(days=bar_lookback_days)).strftime("%Y-%m-%d")
+        bar_end = now.strftime("%Y-%m-%d")
+        bars_disk = self.storage_manager.bar_1min.load_range(
+            self.symbol, bar_start, bar_end
         )
         
-        if not features and not orderflow_features:
+        # 1min ticks: 8 天（覆盖 VPIN 7 天滚动窗口）
+        # 如果近期数据有缺口，向前扩展查找（最多100天）
+        tick_lookback_days = 8
+        tick_start = (now - timedelta(days=tick_lookback_days)).strftime("%Y-%m-%d")
+        ticks_disk = self.storage_manager.ticks.load_range(
+            self.symbol, tick_start, bar_end
+        )
+        
+        # 如果ticks不足（VPIN需要7天×1440×2=20160条），向前查找更多数据
+        min_ticks_required = 7 * 1440 * 2  # 20160
+        recent_ticks_count = len(ticks_disk)
+        if recent_ticks_count < min_ticks_required:
+            # 尝试加载更早的数据（从100天前开始）
+            extended_tick_start = (now - timedelta(days=100)).strftime("%Y-%m-%d")
+            ticks_disk_extended = self.storage_manager.ticks.load_range(
+                self.symbol, extended_tick_start, bar_end
+            )
+            if len(ticks_disk_extended) > len(ticks_disk):
+                ticks_disk = ticks_disk_extended
+                logger.info(
+                    "[%s] 扩展tick加载范围: %s ~ %s, 共%d条",
+                    self.symbol, extended_tick_start, bar_end, len(ticks_disk)
+                )
+        
+        # 检测最近几天数据缺口：如果近8天数据不足，但100天有足够数据，说明中间有缺口
+        if recent_ticks_count < min_ticks_required and len(ticks_disk) >= min_ticks_required:
+            # 计算缺口天数：近8天应有 8*1440*2=23040条，实际只有recent_ticks_count
+            expected_recent = 8 * 1440 * 2
+            gap_ratio = 1 - (recent_ticks_count / expected_recent)
+            gap_days = int(gap_ratio * 8)
+            
+            logger.warning(
+                "[%s] ⚠️ 最近7天数据有缺口（约%d天），已用历史数据替代。"
+                "建议运行: bash live/scripts/prepare_warmup_ticks.sh %s 1 --fill-gap",
+                self.symbol, gap_days, "highcap"
+            )
+        
+        # 如果扩展后仍不足，报错退出
+        if len(ticks_disk) < min_ticks_required:
+            logger.error(
+                "[%s] ❌ tick数据不足（需要%d条，实际%d条），VPIN无法计算",
+                self.symbol, min_ticks_required, len(ticks_disk)
+            )
+            raise RuntimeError(
+                f"tick数据不足 (symbol={self.symbol}, 需要{min_ticks_required}条, 实际{len(ticks_disk)}条)。"
+                f"请运行: bash live/scripts/prepare_warmup_ticks.sh highcap 1 --fill-gap"
+            )
+        
+        # ── 2. 从内存buffer读取数据 (最新补充) ──
+        bars_buffer = self.memory_window.to_dataframe()
+        ticks_buffer = self._get_tick_buffer_df()
+        
+        # ── 3. 验证磁盘数据 ──
+        if bars_disk.empty:
+            logger.error(
+                "[%s] ❌ 磁盘bars数据为空，需要先执行warmup准备历史数据",
+                self.symbol,
+            )
+            raise RuntimeError(
+                f"磁盘bars数据为空 (symbol={self.symbol})。"
+                "请先执行warmup准备历史数据，或检查存储路径配置。"
+            )
+        
+        # ── 4. 合并 + 去重 ──
+        bars_merged = self._merge_bars(bars_disk, bars_buffer)
+        ticks_merged = self._merge_ticks(ticks_disk, ticks_buffer)
+        
+        logger.info(
+            "[%s] 批量计算: bars=%d (disk=%d + buffer=%d), ticks=%d (disk=%d + buffer=%d)",
+            self.symbol,
+            len(bars_merged), len(bars_disk), len(bars_buffer),
+            len(ticks_merged), len(ticks_disk), len(ticks_buffer),
+        )
+        
+        # ── 5. 批量计算 ──
+        features = self.feature_computer.compute_features_batch(
+            bars_1min=bars_merged,
+            ticks_1min=ticks_merged,
+            primary_timeframe=self.feature_computer.primary_timeframe or "240T",
+        )
+        
+        if not features:
+            logger.info("[%s] 特征计算跳过（无可用数据）", self.symbol)
             return
         
-        # 合并特征
-        all_features = {**(features or {}), **(orderflow_features or {})}
-        
-        # 添加时间戳
-        now = pd.Timestamp.now(tz="UTC")
+        # ── 6. 保存 + 决策 ──
+        all_features = dict(features)
         all_features["timestamp"] = now
-        
-        # 转换为DataFrame
         features_df = pd.DataFrame([all_features])
-        
-        # 保存
         self.storage_manager.save_15min_features(self.symbol, features_df, now)
+        
+        n_feat = len([k for k in all_features if k != "timestamp"])
+        logger.info(
+            "[%s] 特征计算完成: %d 个特征, bars_disk=%d, ticks_disk=%d",
+            self.symbol, n_feat, len(bars_disk), len(ticks_disk),
+        )
         
         self._handle_features(all_features)
     
+    def _get_tick_buffer_df(self) -> pd.DataFrame:
+        """从incrementalFeatureComputer.tick_buffer提取最近ticks为DataFrame
+        
+        Returns:
+            DataFrame with columns: ts, timestamp, price, volume, side
+        """
+        if not hasattr(self.feature_computer, 'tick_buffer') or not self.feature_computer.tick_buffer:
+            return pd.DataFrame()
+        
+        ticks = list(self.feature_computer.tick_buffer)
+        if not ticks:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(ticks)
+        # 转换ts (纳秒) -> timestamp
+        if "ts" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["ts"], unit="ns", utc=True)
+        
+        return df
+    
+    def _merge_bars(self, disk_df: pd.DataFrame, buffer_df: pd.DataFrame) -> pd.DataFrame:
+        """合并磁盘和内存buffer的bars，按timestamp去重
+        
+        Args:
+            disk_df: 从磁盘加载的1min bars
+            buffer_df: 从memory_window提取的bars
+        
+        Returns:
+            合并后的DataFrame（按timestamp排序，无重复）
+        """
+        if disk_df.empty and buffer_df.empty:
+            return pd.DataFrame()
+        if disk_df.empty:
+            return buffer_df
+        if buffer_df.empty:
+            return disk_df
+        
+        # 统一timestamp格式
+        disk_df = disk_df.copy()
+        buffer_df = buffer_df.copy()
+        
+        if "timestamp" in disk_df.columns:
+            disk_df["timestamp"] = pd.to_datetime(disk_df["timestamp"], utc=True)
+        if "timestamp" in buffer_df.columns:
+            buffer_df["timestamp"] = pd.to_datetime(buffer_df["timestamp"], utc=True)
+        
+        # 合并 + 去重 (keep='last' 保留buffer的最新数据)
+        merged = pd.concat([disk_df, buffer_df], ignore_index=True)
+        merged = merged.drop_duplicates(subset=["timestamp"], keep="last")
+        merged = merged.sort_values("timestamp").reset_index(drop=True)
+        
+        return merged
+    
+    def _merge_ticks(self, disk_df: pd.DataFrame, buffer_df: pd.DataFrame) -> pd.DataFrame:
+        """合并磁盘和内存buffer的ticks
+        
+        Args:
+            disk_df: 从磁盘加载的1min聚合ticks
+            buffer_df: 从tick_buffer提取的ticks
+        
+        Returns:
+            合并后的DataFrame（按timestamp排序）
+        
+        Note:
+            tick可以有重复时间戳（同一毫秒多笔交易），不去重
+        """
+        if disk_df.empty and buffer_df.empty:
+            return pd.DataFrame()
+        if disk_df.empty:
+            return buffer_df
+        if buffer_df.empty:
+            return disk_df
+        
+        # 统一timestamp
+        disk_df = disk_df.copy()
+        buffer_df = buffer_df.copy()
+        
+        if "timestamp" in disk_df.columns:
+            disk_df["timestamp"] = pd.to_datetime(disk_df["timestamp"], utc=True)
+        if "timestamp" in buffer_df.columns:
+            buffer_df["timestamp"] = pd.to_datetime(buffer_df["timestamp"], utc=True)
+        
+        # 合并 + 按时间排序
+        merged = pd.concat([disk_df, buffer_df], ignore_index=True)
+        merged = merged.sort_values("timestamp").reset_index(drop=True)
+        
+        # tick可以有重复时间戳，不去重
+        return merged
+    
     def _aggregate_and_save_4h_features(self) -> None:
-        """聚合并保存4小时特征（从15分钟特征聚合）"""
+        """保存4小时特征（从最近15分钟特征取最后一条）
+        
+        15min 特征已经是在 4h bar 上计算的（compute_features_batch 重采样为 4h），
+        4h 特征直接取最近一条 15min 特征即可。
+        """
         # 从Parquet加载最近4小时的15分钟特征
         now = pd.Timestamp.now(tz="UTC")
         start_time = now - timedelta(hours=4)
@@ -407,35 +605,18 @@ class OrderFlowListener:
         )
         
         if len(features_15min) == 0:
-            # 如果没有15分钟特征，使用当前计算的特征
-            features = self.feature_computer.get_features()
-            orderflow_features = self.feature_computer.get_orderflow_features(
-                window_minutes=max(self.orderflow_window_minutes, 240)
-            )
-            
-            if not features and not orderflow_features:
-                return
-            
-            all_features = {**(features or {}), **(orderflow_features or {})}
-            all_features["timestamp"] = now
-            features_df = pd.DataFrame([all_features])
-        else:
-            # 过滤时间范围
-            features_15min = features_15min[
-                (features_15min["timestamp"] >= start_time) &
-                (features_15min["timestamp"] <= now)
-            ]
-            
-            if len(features_15min) == 0:
-                return
-            
-            # 聚合15分钟特征到4小时（取平均值或最后值）
-            # 这里简化实现：取最后一条特征
-            last_features = features_15min.iloc[-1].to_dict()
-            last_features["timestamp"] = now
-            features_df = pd.DataFrame([last_features])
+            return
         
-        # 保存
+        # 取最近 4h 内的最后一条
+        features_15min = features_15min[
+            features_15min["timestamp"] >= start_time
+        ]
+        if len(features_15min) == 0:
+            return
+        
+        last_features = features_15min.iloc[-1].to_dict()
+        last_features["timestamp"] = now
+        features_df = pd.DataFrame([last_features])
         self.storage_manager.save_4h_features(self.symbol, features_df, now)
 
     def _handle_features(self, all_features: Dict[str, Any]) -> None:
@@ -450,7 +631,8 @@ class OrderFlowListener:
         # 检查系统模式：如果是DEGRADED或OFFLINE，不执行交易
         if self.mode_manager is not None:
             if not self.mode_manager.is_trading_allowed():
-                # DEGRADED模式：只观察不交易
+                mode = self.mode_manager.get_current_mode()
+                logger.info("[%s] 当前模式=%s，仅观察", self.symbol, mode.value)
                 return
 
         intents = []
@@ -466,11 +648,13 @@ class OrderFlowListener:
             return
 
         if not intents:
+            logger.info("[%s] 无交易信号", self.symbol)
             # 即使没有新 intent，仍需管理已有持仓
             self._enforce_open_positions(features=all_features)
             return
 
         for intent in intents:
+            logger.info("[%s] 交易信号: %s", self.symbol, intent)
             self._execute_intent(intent=intent, features=all_features)
         self._enforce_open_positions(features=all_features)
 
@@ -793,6 +977,16 @@ class OrderFlowListener:
         while not self._stop_event.is_set():
             now = pd.Timestamp.now(tz="UTC")
             
+            # 心跳日志：每60秒打印一次
+            price_str = ""
+            if self.current_1min_bar is not None:
+                price_str = f", price={self.current_1min_bar['close']:.2f}"
+            bars_in_window = self.memory_window.size() if self.memory_window else 0
+            logger.info(
+                "[%s] ❤ ticks=%d, bars=%d%s",
+                self.symbol, self._tick_count, bars_in_window, price_str,
+            )
+            
             # 检查是否需要计算15分钟特征
             if (
                 self.last_feature_compute_time is None
@@ -837,15 +1031,23 @@ class OrderFlowListener:
     
     def _restore_state(self, data: Dict[str, pd.DataFrame]) -> None:
         """
-        恢复状态（特征计算器和内存窗口）
+        恢复状态（简化版：只恢复时间戳 + memory_window）
+        
+        特征计算已改为磁盘批量模式 (compute_features_batch)，
+        不再需要通过回放 bars/ticks 重建流式状态。
         
         Args:
-            data: warmup数据字典
+            data: warmup数据字典，可包含：
+                - ticks_1min: 1分钟聚合tick
+                - bars_1min: 1分钟 OHLCV bar
+                - features_15min: 15分钟特征
+                - features_4h: 4小时特征
         """
-        # 恢复特征计算器状态（从15分钟特征恢复）
+        import pandas as pd
+        
+        # 恢复特征计算时间戳
         if len(data.get("features_15min", pd.DataFrame())) > 0:
             features_15min = data["features_15min"]
-            # 获取最新的特征时间戳
             latest_ts = features_15min["timestamp"].max()
             self.last_feature_compute_time = pd.Timestamp(latest_ts)
         
@@ -855,16 +1057,27 @@ class OrderFlowListener:
             latest_ts = features_4h["timestamp"].max()
             self.last_4h_save_time = pd.Timestamp(latest_ts)
         
-        # 恢复内存窗口和特征计算器状态（从1分钟tick数据）
-        if len(data.get("ticks_1min", pd.DataFrame())) > 0:
-            ticks_1min = data["ticks_1min"]
-            # 转换为字典列表
-            bars = ticks_1min.to_dict("records")
-            # 添加到内存窗口和特征计算器（重建状态）
-            for bar in bars:
-                self.memory_window.add(bar)
-                # 传递给特征计算器（重建状态）
-                self.feature_computer.on_bar(bar, timeframe="1min")
+        # 恢复 memory_window（BPC 决策引擎需要近期 bars）
+        bars_1min = data.get("bars_1min", pd.DataFrame())
+        if len(bars_1min) > 0:
+            logger.info("  → Restoring memory_window: %d bars", len(bars_1min))
+            for row in bars_1min.itertuples(index=False):
+                bar_data = {
+                    "timestamp": row.timestamp,
+                    "open": float(getattr(row, "open", 0)),
+                    "high": float(getattr(row, "high", 0)),
+                    "low": float(getattr(row, "low", 0)),
+                    "close": float(getattr(row, "close", 0)),
+                    "volume": float(getattr(row, "volume", 0)),
+                }
+                self.memory_window.add(bar_data)
+            logger.info("  → memory_window restored: %d bars", self.memory_window.size())
+        
+        # NOTE: 不再回放 ticks/bars 到 feature_computer
+        # 特征计算现在通过 compute_features_batch() 从磁盘直接读取
+        ticks_count = len(data.get("ticks_1min", pd.DataFrame()))
+        if ticks_count > 0:
+            logger.info("  → Skip tick replay (%d ticks on disk, batch compute)", ticks_count)
     
     def get_recovery_state(self) -> Dict[str, Any]:
         """获取恢复状态（用于从断线中恢复）"""
@@ -923,7 +1136,7 @@ class OrderFlowListener:
             
             # 如果缺失超过1天，从币安API补数据
             if (now - latest_ts).total_seconds() > 86400:
-                print(f"⚠️ 检测到数据缺失超过1天，开始补数据...")
+                logger.warning("⚠️ 检测到数据缺失超过1天，开始补数据...")
                 fill_data = self.gap_filler.fill_from_binance_api(
                     self.symbol,
                     latest_ts + timedelta(minutes=1),

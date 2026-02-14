@@ -35,6 +35,7 @@ class StrategyFeatureLoader:
         max_workers: Optional[int] = None,
         parallel_backend: str = "process",
         normalization_contract_mode: str = "warn",  # "warn" | "error"
+        verbose: bool = True,  # 研究=True（详细日志），实盘=False（只打印异常+摘要）
     ):
         """
         初始化特征加载器
@@ -81,6 +82,7 @@ class StrategyFeatureLoader:
             monthly_warmup_months=monthly_warmup_months,
             max_workers=max_workers,
             parallel_backend=parallel_backend,
+            verbose=verbose,
         )
 
     def _load_yaml(self, path: str) -> Dict:

@@ -8,9 +8,10 @@
 5. 数据回调接口
 6. 与 Nautilus Trader 集成
 
-注意：底层使用 websocket-client（同步库）在线程中运行，
-      因为 websockets（异步库）在 TUN 代理环境下连接超时。
-      通过 asyncio.Queue 桥接回异步接口。
+底层使用 aiohttp 纯异步 WebSocket。
+连接策略：先直连探测，失败则自动 fallback 到 HTTP_PROXY 环境变量代理。
+- 远程服务器：直连成功，不走代理
+- 本地开发（Clash/TUN）：直连超时，自动走 HTTP CONNECT 代理
 """
 
 from __future__ import annotations
@@ -18,24 +19,22 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import threading
 import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Callable
 import logging
 
 try:
-    import websocket as _ws_sync  # websocket-client (同步库)
+    import aiohttp
 
-    WS_CLIENT_AVAILABLE = True
+    AIOHTTP_AVAILABLE = True
 except ImportError:
-    WS_CLIENT_AVAILABLE = False
-    _ws_sync = None  # type: ignore
+    AIOHTTP_AVAILABLE = False
+    aiohttp = None  # type: ignore
 
-# 保留 websockets 检测用于向后兼容
+# 保留 websockets / websocket-client 检测用于向后兼容
 try:
     import websockets
-
     WEBSOCKETS_AVAILABLE = True
 except ImportError:
     WEBSOCKETS_AVAILABLE = False
@@ -137,8 +136,8 @@ class BinanceWebSocketClient:
             heartbeat_timeout: 心跳超时时间（秒）
             health_check_interval: 健康检查间隔（秒）
         """
-        if not WS_CLIENT_AVAILABLE:
-            raise ImportError("websocket-client 模块未安装，请安装: pip install websocket-client")
+        if not AIOHTTP_AVAILABLE:
+            raise ImportError("aiohttp 模块未安装，请安装: pip install aiohttp")
         
         if not symbols:
             raise ValueError("symbols must not be empty")
@@ -232,83 +231,80 @@ class BinanceWebSocketClient:
         # 触发重连（通过抛出异常）
         # 注意：这会在stream_ticks的异常处理中被捕获
     
-    def _run_ws_thread(
-        self,
-        url: str,
-        queue: asyncio.Queue,
-        loop: asyncio.AbstractEventLoop,
-        thread_stop: threading.Event,
-    ) -> None:
+    @staticmethod
+    def _detect_proxy() -> Optional[str]:
         """
-        在后台线程中运行同步 WebSocket 连接。
+        从环境变量检测 HTTP 代理地址。
         
-        使用 websocket-client 库（同步），通过 queue 将消息桥接到异步世界。
+        优先级：HTTPS_PROXY > https_proxy > HTTP_PROXY > http_proxy
+        返回格式："http://127.0.0.1:7897" 或 None
         """
-        # websocket-client 会自动读取 HTTP_PROXY/HTTPS_PROXY 环境变量
-        # 在 TUN + HTTP 代理环境下，这些变量可以正常工作，不需要清除
+        for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            val = os.environ.get(key)
+            if val:
+                return val
+        return None
+    
+    async def _resolve_proxy(
+        self, session: aiohttp.ClientSession, probe_timeout: float = 5.0,
+    ) -> Optional[str]:
+        """
+        自适应探测连接方式：先直连，失败则 fallback 到代理。
         
-        def on_message(ws, msg):
-            try:
-                data = json.loads(msg)
-            except json.JSONDecodeError:
-                return
-            
-            # 处理 Binance 数据格式
-            payload = data.get("data") if isinstance(data, dict) and "data" in data else data
-            if not isinstance(payload, dict):
-                return
-            
-            event_type = payload.get("e", "")
-            if event_type not in ("trade", "aggTrade"):
-                return
-            
-            # 通过 loop.call_soon_threadsafe 把 payload 放入 asyncio.Queue
-            loop.call_soon_threadsafe(queue.put_nowait, payload)
+        1. 直连 Binance WebSocket (probe_timeout 秒)
+           - 成功 → return None     （服务器环境，无需代理）
+           - 超时/失败 → 进入步骤 2
+        2. 通过 HTTP_PROXY 代理连接
+           - 有代理环境变量且连接成功 → return proxy_url
+           - 无代理或连接失败 → return None（报错留给上层重连逻辑处理）
         
-        def on_open(ws):
-            logger.info(f"✅ WebSocket connected (sync thread): {url}")
-            loop.call_soon_threadsafe(queue.put_nowait, {"__event__": "connected"})
+        Returns:
+            proxy URL 或 None
+        """
+        base = FUTURES_WS_BASE if self.use_futures else SPOT_WS_BASE
+        # 用单个轻量流做探测，避免组合流 URL 太长
+        probe_url = f"{base}/ws/btcusdt@aggTrade"
         
-        def on_error(ws, error):
-            logger.error(f"WebSocket thread error: {error}")
-            loop.call_soon_threadsafe(queue.put_nowait, {"__event__": "error", "error": str(error)})
+        async def _try_connect(px: Optional[str]) -> bool:
+            """尝试连接并接收 1 条消息，成功返回 True。"""
+            ct = aiohttp.ClientTimeout(total=probe_timeout, connect=probe_timeout)
+            async with session.ws_connect(
+                probe_url, proxy=px, timeout=ct,
+            ) as ws:
+                await ws.receive()
+                await ws.close()
+            return True
         
-        def on_close(ws, close_status_code, close_msg):
-            logger.info(f"WebSocket thread closed: code={close_status_code}, msg={close_msg}")
-            loop.call_soon_threadsafe(queue.put_nowait, {"__event__": "closed"})
+        # --- 步骤 1：直连探测 ---
+        try:
+            await asyncio.wait_for(_try_connect(None), timeout=probe_timeout)
+            logger.info("✅ Direct connection OK — no proxy needed")
+            return None
+        except Exception as e:
+            logger.info(f"⚠️  Direct probe failed ({type(e).__name__}), trying proxy...")
         
-        def on_ping(ws, data):
-            # websocket-client 自动回 pong
-            pass
+        # --- 步骤 2：代理探测 ---
+        env_proxy = self._detect_proxy()
+        if not env_proxy:
+            logger.warning("⚠️  No proxy env var found (HTTP_PROXY/HTTPS_PROXY). "
+                           "Will attempt direct connection anyway.")
+            return None
         
         try:
-            ws = _ws_sync.WebSocketApp(
-                url,
-                on_message=on_message,
-                on_open=on_open,
-                on_error=on_error,
-                on_close=on_close,
-                on_ping=on_ping,
-            )
-            # run_forever 阻塞直到连接关闭或 thread_stop 被设置
-            ws.run_forever(
-                ping_interval=self.ping_interval,
-                ping_timeout=self.ping_timeout,
-                reconnect=0,  # 不让 websocket-client 自动重连，由我们的 reconnect_manager 管理
-            )
+            await asyncio.wait_for(_try_connect(env_proxy), timeout=probe_timeout)
+            logger.info(f"✅ Proxy connection OK — using {env_proxy}")
+            return env_proxy
         except Exception as e:
-            logger.error(f"WebSocket thread exception: {e}")
-            loop.call_soon_threadsafe(queue.put_nowait, {"__event__": "error", "error": str(e)})
-        finally:
-            # 标记线程结束
-            loop.call_soon_threadsafe(queue.put_nowait, {"__event__": "thread_exit"})
+            logger.warning(f"⚠️  Proxy probe also failed ({type(e).__name__}: {e}). "
+                           f"Will attempt direct connection as fallback.")
+            return None
     
     async def stream_ticks(self, stop_event: asyncio.Event) -> AsyncIterator[BinanceTick]:
         """
         流式获取 tick 数据（带重连机制）
         
-        底层使用 websocket-client（同步）在线程中运行，
-        通过 asyncio.Queue 桥接回异步接口。
+        底层使用 aiohttp 纯异步 WebSocket。
+        启动时自动探测连接方式：直连 OK 则不走代理，失败则 fallback 到 HTTP_PROXY。
         
         Args:
             stop_event: 停止事件
@@ -318,94 +314,112 @@ class BinanceWebSocketClient:
         """
         self._stop_event = stop_event
         url = self._ws_url()
-        loop = asyncio.get_running_loop()
         
         # 启动连接监控
         self.connection_monitor.start_monitoring()
         
         try:
-            while not stop_event.is_set():
-                # 检查是否应该继续重连
-                if not self.reconnect_manager.should_continue():
-                    logger.error("Max reconnection retries reached. Stopping.")
-                    break
+            async with aiohttp.ClientSession() as session:
+                # 探测连接方式：直连 or 代理（只在首次启动时探测）
+                proxy = await self._resolve_proxy(session)
+                if proxy:
+                    logger.info(f"🔌 WebSocket using proxy: {proxy}")
+                else:
+                    logger.info("🔌 WebSocket: direct connection (no proxy)")
                 
-                # 等待重连延迟（如果需要）
-                if self.reconnect_manager.is_reconnecting():
-                    should_continue = await self.reconnect_manager.wait_before_reconnect()
-                    if not should_continue:
+                while not stop_event.is_set():
+                    # 检查是否应该继续重连
+                    if not self.reconnect_manager.should_continue():
+                        logger.error("Max reconnection retries reached. Stopping.")
                         break
-                
-                # 建立连接
-                self.reconnect_manager._set_state(ConnectionState.CONNECTING)
-                
-                queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
-                thread_stop = threading.Event()
-                
-                # 在后台线程启动同步 WebSocket
-                ws_thread = threading.Thread(
-                    target=self._run_ws_thread,
-                    args=(url, queue, loop, thread_stop),
-                    daemon=True,
-                    name="ws-binance",
-                )
-                ws_thread.start()
-                
-                try:
-                    connected = False
-                    while not stop_event.is_set():
-                        try:
-                            # 从队列读消息，超时1秒检查 stop_event
-                            payload = await asyncio.wait_for(queue.get(), timeout=1.0)
-                        except asyncio.TimeoutError:
-                            continue
-                        
-                        # 处理内部控制事件
-                        if isinstance(payload, dict) and "__event__" in payload:
-                            evt = payload["__event__"]
-                            if evt == "connected":
-                                connected = True
-                                self.reconnect_manager.on_connection_success()
+                    
+                    # 等待重连延迟（如果需要）
+                    if self.reconnect_manager.is_reconnecting():
+                        should_continue = await self.reconnect_manager.wait_before_reconnect()
+                        if not should_continue:
+                            break
+                    
+                    # 建立连接
+                    self.reconnect_manager._set_state(ConnectionState.CONNECTING)
+                    
+                    try:
+                        async with session.ws_connect(
+                            url,
+                            proxy=proxy,
+                            heartbeat=self.ping_interval,
+                            timeout=aiohttp.ClientTimeout(
+                                total=None,      # 无总超时（长连接）
+                                connect=30.0,    # 连接超时 30秒
+                                sock_connect=30.0,
+                                sock_read=None,  # 无读超时（流式读取）
+                            ),
+                            max_msg_size=2**23,  # 8MB
+                        ) as ws:
+                            logger.info(f"✅ WebSocket connected: {url}")
+                            self.reconnect_manager.on_connection_success()
+                            self.connection_monitor.record_heartbeat()
+                            
+                            # 消息接收循环
+                            async for msg in ws:
+                                if stop_event.is_set():
+                                    break
+                                
+                                # 记录心跳
                                 self.connection_monitor.record_heartbeat()
-                                continue
-                            elif evt in ("error", "closed", "thread_exit"):
-                                if evt == "error":
-                                    err_msg = payload.get("error", "unknown")
-                                    exc = ConnectionError(err_msg)
-                                    self.reconnect_manager.on_connection_failure(exc)
-                                break  # 退出内循环，进入重连
-                        
-                        # 正常 tick 数据
-                        self.connection_monitor.record_heartbeat()
-                        
-                        try:
-                            tick = BinanceTick.from_binance(payload)
-                            self.connection_monitor.record_message()
-                            
-                            for callback in self._callbacks:
-                                try:
-                                    callback(tick)
-                                except Exception as e:
-                                    logger.error(f"Callback error: {e}")
-                            
-                            yield tick
-                        except Exception as e:
-                            logger.error(f"Error parsing tick: {e}")
-                            continue
-                
-                except Exception as exc:
-                    logger.error(f"WebSocket stream error: {exc}")
-                    self.reconnect_manager.on_connection_failure(exc)
-                
-                finally:
-                    # 通知线程停止
-                    thread_stop.set()
-                
-                # 如果不是因为 stop_event 退出，走重连流程
-                if not stop_event.is_set():
-                    should_continue = await self.reconnect_manager.wait_before_reconnect()
-                    if not should_continue:
-                        break
+                                
+                                if msg.type == aiohttp.WSMsgType.TEXT:
+                                    try:
+                                        data = json.loads(msg.data)
+                                    except json.JSONDecodeError:
+                                        logger.warning(f"Invalid JSON: {str(msg.data)[:100]}")
+                                        continue
+                                    
+                                    # 处理 Binance 数据格式
+                                    payload = data.get("data") if isinstance(data, dict) and "data" in data else data
+                                    if not isinstance(payload, dict):
+                                        continue
+                                    
+                                    # 只处理 trade / aggTrade 事件
+                                    event_type = payload.get("e", "")
+                                    if event_type not in ("trade", "aggTrade"):
+                                        continue
+                                    
+                                    try:
+                                        tick = BinanceTick.from_binance(payload)
+                                        self.connection_monitor.record_message()
+                                        
+                                        for callback in self._callbacks:
+                                            try:
+                                                callback(tick)
+                                            except Exception as e:
+                                                logger.error(f"Callback error: {e}")
+                                        
+                                        yield tick
+                                    except Exception as e:
+                                        logger.error(f"Error parsing tick: {e}")
+                                        continue
+                                
+                                elif msg.type == aiohttp.WSMsgType.ERROR:
+                                    logger.error(f"WebSocket error: {ws.exception()}")
+                                    break
+                                
+                                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING):
+                                    logger.info("WebSocket closed by server")
+                                    break
+                    
+                    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+                        logger.error(f"WebSocket connection error: {exc}")
+                        self.reconnect_manager.on_connection_failure(exc)
+                    
+                    except Exception as exc:
+                        logger.error(f"WebSocket unexpected error: {exc}")
+                        self.reconnect_manager.on_connection_failure(exc)
+                    
+                    # 如果不是因为 stop_event 退出，走重连流程
+                    if not stop_event.is_set():
+                        should_continue = await self.reconnect_manager.wait_before_reconnect()
+                        if not should_continue:
+                            break
         
         finally:
             # 停止连接监控

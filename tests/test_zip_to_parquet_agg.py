@@ -14,7 +14,7 @@ def test_preprocess_tick_data_aggregate_1s():
     dc = DataConverter(input_dir=".", output_dir=".")
 
     # 构造同一秒内的 buy/sell ticks（100ms 间隔）
-    ts_base = pd.Timestamp("2024-01-01 00:00:00")
+    ts_base = pd.Timestamp("2024-01-01 00:00:00", tz="UTC")
     df = pd.DataFrame(
         {
             "agg_trade_id": [1, 2, 3],
@@ -52,6 +52,6 @@ def test_preprocess_tick_data_aggregate_1s():
     assert sell_row["volume"] == pytest.approx(5.0)
     assert sell_row["price"] == pytest.approx(expected_vwap)
 
-    # 时间戳应为该秒的起始（00:00:00）
+    # 时间戳应为该秒的起始（00:00:00，UTC tz-aware）
     assert buy_row["timestamp"] == ts_base
     assert sell_row["timestamp"] == ts_base

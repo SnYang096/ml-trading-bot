@@ -186,6 +186,88 @@ class DataGapFiller:
 
         return pd.DataFrame()
 
+    def fill_missing_trades(
+        self,
+        symbol: str,
+        start_time: pd.Timestamp,
+        end_time: pd.Timestamp,
+        max_retries: int = 3,
+    ) -> pd.DataFrame:
+        """
+        从交易所 API 下载缺失的 trades 数据
+        
+        使用 Binance GET /fapi/v1/aggTrades 接口
+        
+        Args:
+            symbol: 交易对符号（ccxt 格式，如 "BTC/USDT:USDT"）
+            start_time: 开始时间
+            end_time: 结束时间
+            max_retries: 最大重试次数
+        
+        Returns:
+            trades 数据 DataFrame，列: [timestamp, price, volume, side]
+        """
+        all_trades = []
+        current_start = int(start_time.timestamp() * 1000)
+        end_ms = int(end_time.timestamp() * 1000)
+        
+        for attempt in range(max_retries):
+            try:
+                while current_start < end_ms:
+                    # 使用 ccxt 的 fetch_trades（内部调用 aggTrades）
+                    trades = self.exchange.fetch_trades(
+                        symbol,
+                        since=current_start,
+                        limit=1000,  # Binance 限制每次最多 1000 条
+                    )
+                    
+                    if not trades:
+                        break
+                    
+                    for trade in trades:
+                        trade_ts = trade.get('timestamp', 0)
+                        if trade_ts > end_ms:
+                            break
+                        
+                        all_trades.append({
+                            'timestamp': pd.Timestamp(trade_ts, unit='ms', tz='UTC'),
+                            'price': float(trade.get('price', 0)),
+                            'volume': float(trade.get('amount', 0)),
+                            # Binance: side='sell' 表示 taker 是卖方（即 buyer is maker）
+                            'side': 1 if trade.get('side') == 'buy' else -1,
+                        })
+                    
+                    # 更新起始时间为最后一条 trade 的时间 + 1ms
+                    if trades:
+                        last_ts = trades[-1].get('timestamp', current_start)
+                        if last_ts <= current_start:
+                            break  # 避免无限循环
+                        current_start = last_ts + 1
+                    else:
+                        break
+                    
+                    # 速率限制
+                    time.sleep(0.1)
+                
+                if all_trades:
+                    df = pd.DataFrame(all_trades)
+                    df = df.drop_duplicates(subset=['timestamp', 'price', 'volume'])
+                    df = df.sort_values('timestamp').reset_index(drop=True)
+                    print(f"✅ 下载了 {len(df)} 条 trades（{start_time} 到 {end_time}）")
+                    return df
+                else:
+                    return pd.DataFrame()
+                    
+            except Exception as e:
+                print(f"⚠️ 下载 trades 失败（尝试 {attempt + 1}/{max_retries}）: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                else:
+                    print(f"❌ 下载失败，已重试 {max_retries} 次")
+                    return pd.DataFrame()
+        
+        return pd.DataFrame()
+
     def _convert_timeframe(self, timeframe: str) -> str:
         """
         转换时间框架格式

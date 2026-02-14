@@ -71,12 +71,11 @@ def _setup_bpc(
     from src.time_series_model.live.bpc_live_strategy import BPCLiveStrategy
 
     strategies_root = os.getenv("MLBOT_STRATEGIES_ROOT", "config/strategies")
-    bpc_feature_plan = os.getenv(
-        "MLBOT_BPC_FEATURE_PLAN_YAML",
-        "config/live/live_feature_plan.yaml",
-    )
     bar_minutes = int(os.getenv("MLBOT_BPC_BAR_MINUTES", "240"))
     window_minutes = int(os.getenv("MLBOT_BPC_WINDOW_MINUTES", "15"))
+
+    # Archetypes directory: auto-detect features from gate/evidence/entry_filters
+    archetypes_dir = os.path.join(strategies_root, "bpc", "archetypes")
 
     # 创建 BPC 决策引擎
     bpc = BPCLiveStrategy(
@@ -90,12 +89,12 @@ def _setup_bpc(
 
     order_manager = init_order_manager_from_env()
 
-    # 为每个 symbol 创建带 BPC feature plan 的 IncrementalFeatureComputer
+    # 为每个 symbol 创建 IncrementalFeatureComputer (archetypes auto-detect)
     def _make_feature_computer(symbol: str) -> IncrementalFeatureComputer:
         return IncrementalFeatureComputer(
             tick_window_minutes=bar_minutes,
             bar_window_size=bar_minutes * 2,
-            live_feature_plan_path=bpc_feature_plan,
+            archetypes_dir=archetypes_dir,
             primary_timeframe=f"{bar_minutes}T",
         )
 
@@ -142,7 +141,9 @@ async def main() -> None:
         "true",
         "yes",
     }
-    warmup_days = int(os.getenv("MLBOT_LIVE_WARMUP_DAYS", "30"))
+    # warmup 只需恢复 memory_window + 时间戳（7 天足够）
+    # 特征计算通过 compute_features_batch() 从磁盘直接读取 90+ 天数据
+    warmup_days = int(os.getenv("MLBOT_LIVE_WARMUP_DAYS", "7"))
     trade_size = float(os.getenv("MLBOT_LIVE_TRADE_SIZE", "0.0"))
 
     storage = StorageManager(base_path=storage_base)

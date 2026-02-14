@@ -65,6 +65,7 @@ class IncrementalFeatureComputer:
         vpin_n_buckets: int = 50,
         live_feature_plan_path: Optional[str] = None,
         primary_timeframe: Optional[str] = None,
+        archetypes_dir: Optional[str] = None,
     ):
         """
         Args:
@@ -112,30 +113,61 @@ class IncrementalFeatureComputer:
         # Live feature plan (optional)
         self.primary_timeframe = str(primary_timeframe) if primary_timeframe else None
         self.live_feature_set: Set[str] = set()
-        try:
-            from src.time_series_model.live.live_feature_plan import (
-                load_live_feature_plan,
-                load_live_feature_nodes,
-            )
+        self.live_feature_nodes: List[str] = []
 
-            plan_path = (
-                live_feature_plan_path
-                if live_feature_plan_path is not None
-                else os.getenv(
-                    "MLBOT_LIVE_FEATURE_PLAN_YAML",
-                    "config/live/live_feature_plan.yaml",
+        # Strategy A: archetypes auto-detect (preferred — no NN dependency)
+        if archetypes_dir is not None:
+            try:
+                from src.time_series_model.live.live_feature_plan import (
+                    extract_features_from_archetypes,
                 )
-            )
-            self.live_feature_set = load_live_feature_plan(plan_path=plan_path) or set()
-            self.live_feature_nodes = load_live_feature_nodes(plan_path=plan_path) or []
-        except Exception:
-            self.live_feature_set = set()
-            self.live_feature_nodes = []
+
+                feat_set, feat_nodes = extract_features_from_archetypes(
+                    archetypes_dir=archetypes_dir,
+                )
+                self.live_feature_set = feat_set
+                self.live_feature_nodes = feat_nodes
+                print(
+                    f"   \U0001f4cb Archetypes auto-detect: "
+                    f"{len(feat_set)} columns, {len(feat_nodes)} nodes "
+                    f"(from {archetypes_dir})"
+                )
+            except Exception as e:
+                print(f"   \u26a0\ufe0f Archetypes auto-detect failed: {e}")
+                self.live_feature_set = set()
+                self.live_feature_nodes = []
+        else:
+            # Strategy B: legacy live_feature_plan.yaml (NN tier-based)
+            try:
+                from src.time_series_model.live.live_feature_plan import (
+                    load_live_feature_plan,
+                    load_live_feature_nodes,
+                )
+
+                plan_path = (
+                    live_feature_plan_path
+                    if live_feature_plan_path is not None
+                    else os.getenv(
+                        "MLBOT_LIVE_FEATURE_PLAN_YAML",
+                        "config/live/live_feature_plan.yaml",
+                    )
+                )
+                self.live_feature_set = (
+                    load_live_feature_plan(plan_path=plan_path) or set()
+                )
+                self.live_feature_nodes = (
+                    load_live_feature_nodes(plan_path=plan_path) or []
+                )
+            except Exception:
+                self.live_feature_set = set()
+                self.live_feature_nodes = []
 
         self._feature_loader = None
         self._feature_deps = None
         self._last_missing_log_ts: Optional[float] = None
         self._last_skipped_nodes: List[str] = []
+        self._warmup_mode: bool = False  # warmup 期间跳过重型特征计算
+        self._batch_features: Dict[str, float] = {}  # 批量计算结果缓存
         if self.live_feature_nodes:
             try:
                 from src.features.loader.strategy_feature_loader import (
@@ -152,6 +184,7 @@ class IncrementalFeatureComputer:
                     max_workers=None,
                     parallel_backend="process",
                     normalization_contract_mode="warn",
+                    verbose=False,  # 实盘模式：只打印摘要+异常
                 )
                 self._feature_deps = self._feature_loader.feature_deps or {}
             except Exception:
@@ -164,6 +197,10 @@ class IncrementalFeatureComputer:
     def on_tick(self, tick: Any) -> None:
         """
         处理 tick 数据
+
+        仅维护 CVD 累加器（用于 1min bar 的 cvd_change_1/cvd 列）。
+        VPIN / 订单流特征已改为磁盘批量计算（compute_features_batch），
+        不再在 tick 级增量更新。
 
         Args:
             tick: dict 或 TradeTick 对象
@@ -183,7 +220,7 @@ class IncrementalFeatureComputer:
         else:
             return
 
-        # 添加到缓冲区
+        # 添加到缓冲区（保留用于 get_orderflow_features 实时查询）
         self.tick_buffer.append(tick_data)
 
         # CVD accumulation for the current bar
@@ -195,11 +232,8 @@ class IncrementalFeatureComputer:
             self._cvd_bar_total_flow += abs(vol)
             self._cvd_cum += vol if side == 1 else -vol
 
-        # 更新 VPIN
-        self._update_vpin(tick_data)
-
-        # 更新订单流特征
-        self._update_orderflow_features()
+        # NOTE: _update_vpin / _update_orderflow_features 已移除
+        # VPIN 和订单流特征现在通过 compute_features_batch() 从磁盘批量计算
 
     def on_bar(self, bar: Any, timeframe: str = "1H") -> None:
         """
@@ -246,12 +280,11 @@ class IncrementalFeatureComputer:
         self._cvd_bar_delta = 0.0
         self._cvd_bar_total_flow = 0.0
 
-        # 添加到缓冲区
+        # 添加到缓冲区（用于 get_recent_bars() — BPC 执行规则需要）
         self.bar_buffer.append(bar_data)
 
-        # 更新时间框架特征
-        self.primary_timeframe = str(timeframe)
-        self._update_timeframe_features(bar_data, timeframe)
+        # NOTE: 特征计算已改为磁盘批量模式 (compute_features_batch)
+        # on_bar 只维护 bar_buffer + CVD，不再触发 _update_timeframe_features
 
     def _update_vpin(self, tick_data: Dict[str, Any]) -> None:
         """更新 VPIN（增量计算）"""
@@ -744,11 +777,18 @@ class IncrementalFeatureComputer:
 
     def get_features(self) -> Dict[str, float]:
         """
-        获取当前所有特征
+        获取当前所有特征（兼容接口）
+
+        注意：实盘主路径已改为 compute_features_batch()，
+        此方法保留用于后向兼容。
 
         Returns:
             特征字典
         """
+        # 优先返回批量计算结果（如果有）
+        if self._batch_features:
+            return dict(self._batch_features)
+
         features = {}
 
         # Tick 级特征
@@ -768,6 +808,258 @@ class IncrementalFeatureComputer:
 
         self._log_missing_features(features)
 
+        return features
+
+    def compute_features_batch(
+        self,
+        bars_1min: pd.DataFrame,
+        ticks_1min: pd.DataFrame,
+        primary_timeframe: Optional[str] = None,
+    ) -> Dict[str, float]:
+        """
+        从磁盘数据批量计算特征（和研发流程一致）。
+
+        每 15 分钟调用一次：
+        1. 1min bars → 重采样为 primary_timeframe (4h) bars
+        2. 1min ticks → 计算 VPIN/TC/FP 订单流特征
+        3. StrategyFeatureLoader 计算 OHLCV 特征
+        4. 返回最后一行的特征字典
+
+        Args:
+            bars_1min: 90+ 天的 1min OHLCV bars（从磁盘读取）
+            ticks_1min: 7 天的 1min 聚合 ticks（从磁盘读取）
+            primary_timeframe: 主时间框架（如 "240T"）
+
+        Returns:
+            特征字典（最后一行）
+        """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        ptf = primary_timeframe or self.primary_timeframe or "240T"
+
+        if bars_1min is None or bars_1min.empty:
+            _logger.warning("compute_features_batch: bars_1min is empty")
+            return {}
+
+        # ── 1. 重采样 1min bars → primary_timeframe (4h) ──
+        bars = bars_1min.copy()
+
+        # 确保 DatetimeIndex
+        if not isinstance(bars.index, pd.DatetimeIndex):
+            if "timestamp" in bars.columns:
+                bars.index = pd.to_datetime(bars["timestamp"], utc=True)
+            else:
+                _logger.warning("compute_features_batch: no timestamp column")
+                return {}
+
+        # 确保 tz-aware (UTC)
+        if bars.index.tz is None:
+            bars.index = bars.index.tz_localize("UTC")
+
+        # 重采样
+        agg_dict = {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }
+        for col, agg in [
+            ("buy_volume", "sum"),
+            ("sell_volume", "sum"),
+            ("buy_count", "sum"),
+            ("sell_count", "sum"),
+            ("trade_count", "sum"),
+            ("delta", "sum"),
+        ]:
+            if col in bars.columns:
+                agg_dict[col] = agg
+
+        bars_tf = bars.resample(ptf).agg(agg_dict).dropna(subset=["close"])
+
+        # 添加 buy_qty / sell_qty（研发格式，用于 CVD 等特征节点）
+        if "buy_volume" in bars_tf.columns and "sell_volume" in bars_tf.columns:
+            bars_tf["buy_qty"] = bars_tf["buy_volume"]
+            bars_tf["sell_qty"] = bars_tf["sell_volume"]
+
+            # 计算 CVD 相关特征（研发格式）
+            delta = bars_tf["buy_volume"] - bars_tf["sell_volume"]
+            total_flow = bars_tf["buy_volume"] + bars_tf["sell_volume"]
+
+            bars_tf["cvd_change_1"] = delta
+            bars_tf["cvd_change_5"] = delta.rolling(window=5, min_periods=1).sum()
+            bars_tf["cvd_change_20"] = delta.rolling(window=20, min_periods=1).sum()
+            bars_tf["cvd_short"] = delta.rolling(window=20, min_periods=1).sum()
+            bars_tf["cvd_medium"] = delta.rolling(window=60, min_periods=1).sum()
+            bars_tf["cvd_long"] = delta.rolling(window=288, min_periods=1).sum()
+            bars_tf["cvd"] = delta.cumsum()
+            bars_tf["cvd_normalized"] = (delta / total_flow.replace(0, np.nan)).fillna(
+                0
+            )
+            total_flow_5 = total_flow.rolling(window=5, min_periods=1).sum()
+            bars_tf["cvd_change_5_normalized"] = (
+                bars_tf["cvd_change_5"] / total_flow_5.replace(0, np.nan)
+            ).fillna(0)
+            bars_tf["taker_buy_ratio"] = (
+                bars_tf["buy_volume"] / total_flow.replace(0, np.nan)
+            ).fillna(0.5)
+
+        _logger.info(
+            "compute_features_batch: %d 1min bars → %d %s bars",
+            len(bars_1min),
+            len(bars_tf),
+            ptf,
+        )
+
+        if len(bars_tf) < 10:
+            _logger.warning("compute_features_batch: too few bars (%d)", len(bars_tf))
+            return {}
+
+        # ── 2. 计算订单流特征 (VPIN / Trade Clustering / Footprint) ──
+        if ticks_1min is not None and not ticks_1min.empty:
+            try:
+                ticks = ticks_1min.copy()
+                if not isinstance(ticks.index, pd.DatetimeIndex):
+                    if "timestamp" in ticks.columns:
+                        ticks.index = pd.to_datetime(ticks["timestamp"], utc=True)
+                if ticks.index.tz is None:
+                    ticks.index = ticks.index.tz_localize("UTC")
+
+                # VPIN + Trade Clustering (自适应桶，和研发一致)
+                of_df = extract_order_flow_features(
+                    bars_tf,
+                    ticks=ticks,
+                    freq=ptf,
+                    include_trade_clustering=True,
+                    compute_vpin_derived=True,
+                )
+                # 注意：extract_order_flow_features返回完整df（包含OHLCV+新特征）
+                # 只提取新增的列，避免重复列报错
+                existing_cols = set(bars_tf.columns)
+                new_cols = [c for c in of_df.columns if c not in existing_cols]
+                if new_cols:
+                    bars_tf = bars_tf.join(of_df[new_cols], how="left")
+
+                try:
+                    vpin_derived = compute_vpin_derived_features_from_base(bars_tf)
+                    for c in vpin_derived.columns:
+                        if c not in bars_tf.columns:
+                            bars_tf[c] = vpin_derived[c]
+                except Exception:
+                    pass
+
+                try:
+                    tc_derived = compute_trade_cluster_derived_features_from_base(
+                        bars_tf
+                    )
+                    for c in tc_derived.columns:
+                        if c not in bars_tf.columns:
+                            bars_tf[c] = tc_derived[c]
+                except Exception:
+                    pass
+
+                # Footprint
+                try:
+                    fp_df = compute_footprint_features(
+                        bars_tf.tail(200),
+                        ticks=ticks,
+                        persist_monthly=False,
+                    )
+                    # 只提取新增的列，避免重复列报错
+                    fp_new_cols = [c for c in fp_df.columns if c not in bars_tf.columns]
+                    if fp_new_cols:
+                        bars_tf = bars_tf.join(fp_df[fp_new_cols], how="left")
+                except Exception:
+                    pass
+
+                _logger.info(
+                    "  OF features: %d cols from %d ticks",
+                    len(of_df.columns),
+                    len(ticks_1min),
+                )
+            except Exception as e:
+                _logger.warning("  OF features failed: %s", e)
+
+        # ── 3. StrategyFeatureLoader 批量计算 ──
+        if self._feature_loader is not None and self.live_feature_nodes:
+            try:
+                req = list(self.live_feature_nodes)
+                feats_cfg = (self._feature_deps or {}).get("features") or {}
+                bar_cols = set(bars_tf.columns)
+
+                # 需要 tick 数据的特征节点（已在第2步 extract_order_flow_features 中计算）
+                # 这些节点依赖 ticks_dir 配置，但实盘环境的 tick 目录与研发不同
+                tick_dependent_nodes = {
+                    "trade_cluster_base_aligned_features_f",
+                    "vpin_base_aligned_features_f",
+                    "footprint_base_features_f",
+                }
+
+                def _has_tick_dependency(node_name: str, visited: set = None) -> bool:
+                    """递归检查节点是否依赖 tick_dependent_nodes"""
+                    if visited is None:
+                        visited = set()
+                    if node_name in visited:
+                        return False
+                    visited.add(node_name)
+                    if node_name in tick_dependent_nodes:
+                        return True
+                    info = feats_cfg.get(node_name)
+                    if isinstance(info, dict):
+                        deps = info.get("dependencies") or []
+                        for dep in deps:
+                            if _has_tick_dependency(dep, visited):
+                                return True
+                    return False
+
+                filtered = []
+                skipped = []
+                for n in req:
+                    # 跳过需要 tick 的节点及其依赖（已在第2步计算）
+                    if _has_tick_dependency(n):
+                        skipped.append(str(n))
+                        continue
+
+                    info = feats_cfg.get(n)
+                    if isinstance(info, dict):
+                        req_cols = set(info.get("required_columns") or [])
+                        deps = info.get("dependencies") or []
+                        if req_cols and not req_cols.issubset(bar_cols) and not deps:
+                            skipped.append(str(n))
+                            continue
+                    filtered.append(n)
+
+                bars_tf = self._feature_loader.load_features_from_requested(
+                    bars_tf, requested_features=filtered, fit=False
+                )
+                _logger.info(
+                    "  Loader: %d nodes (%d skipped tick-dep) → %d cols",
+                    len(filtered),
+                    len(skipped),
+                    len(bars_tf.columns),
+                )
+            except Exception as e:
+                _logger.warning("  Loader failed: %s", e)
+
+        # ── 4. 提取最后一行 ──
+        features: Dict[str, float] = {}
+        if len(bars_tf) > 0:
+            last_row = bars_tf.iloc[-1].to_dict()
+            for k, v in last_row.items():
+                if self._want(str(k)):
+                    try:
+                        if v is not None and np.isscalar(v) and not pd.isna(v):
+                            features[str(k)] = float(v)
+                    except (ValueError, TypeError):
+                        continue
+
+        # 缓存结果（用于 get_features() 兼容接口）
+        self._batch_features = features
+
+        _logger.info("  Final: %d features", len(features))
+        self._log_missing_features(features)
         return features
 
     def _log_missing_features(self, features: Dict[str, float]) -> None:
@@ -852,3 +1144,4 @@ class IncrementalFeatureComputer:
         }
         self.current_features.clear()
         self.timeframe_features.clear()
+        self._batch_features.clear()

@@ -447,6 +447,7 @@ class FeatureComputer:
         use_monthly_cache: bool = True,  # 是否使用按月缓存
         enable_parallel: bool = False,  # deprecated (sequential-only)
         monthly_warmup_months: Optional[int] = None,
+        verbose: bool = True,  # 研究=True（打印详细），实盘=False（只打印异常）
     ):
         """
         Args:
@@ -456,6 +457,7 @@ class FeatureComputer:
             max_workers: 最大并行数（None 表示使用 CPU 核心数）
             parallel_backend: 并行后端（process/thread）
             use_monthly_cache: 是否使用按月缓存（增量计算）
+            verbose: 是否打印详细日志（研究True，实盘False）
         """
         self.cache_dir = Path(cache_dir) if cache_dir else None
         if self.cache_dir:
@@ -464,6 +466,7 @@ class FeatureComputer:
         self.use_disk_cache = use_disk_cache
         self.use_memory_cache = use_memory_cache
         self.use_monthly_cache = use_monthly_cache
+        self.verbose = verbose
         try:
             env_warmup = int(os.getenv("FEATURE_MONTHLY_WARMUP_MONTHS", "3"))
         except Exception:
@@ -496,12 +499,13 @@ class FeatureComputer:
         self.max_workers = 1
         self.parallel_backend = "sequential"
         self.executor = None
-        self._print_memory_info()
-        print("   🔧 Feature-level parallelism disabled. Running sequentially.")
-        if self.monthly_workers > 1 and self.use_monthly_cache and self.cache_dir:
-            print(
-                f"   ⚡ Monthly parallelism enabled: workers={self.monthly_workers}, backend={self.monthly_backend}"
-            )
+        if self.verbose:
+            self._print_memory_info()
+            print("   🔧 Feature-level parallelism disabled. Running sequentially.")
+            if self.monthly_workers > 1 and self.use_monthly_cache and self.cache_dir:
+                print(
+                    f"   ⚡ Monthly parallelism enabled: workers={self.monthly_workers}, backend={self.monthly_backend}"
+                )
 
         # 内存缓存：使用 (df_signature, feature_name) 作为键，而不是全局清空
         # 这样即使 DataFrame 切换，相同 DataFrame 签名的特征结果仍可复用
@@ -1242,9 +1246,10 @@ class FeatureComputer:
 
         # 打印缓存统计
         if cached_months > 0 or computed_months > 0:
-            print(
-                f"       💾 [monthly] Used {cached_months} cached months, computed {computed_months} new months"
-            )
+            if self.verbose:
+                print(
+                    f"       💾 [monthly] Used {cached_months} cached months, computed {computed_months} new months"
+                )
             # 更新月度缓存命中总数（按月份数累加）
             self._debug_stats["cache_hits"]["monthly"] += cached_months
 
@@ -1336,9 +1341,10 @@ class FeatureComputer:
                 ) >= len(feature_missing[:20]) * 0.7  # 70% are optional block features
                 
                 if not is_mostly_optional and len(feature_missing) <= 20:
-                    print(
-                        f"   ⚠️  Missing feature columns (will be computed via dependencies): {feature_missing[:10]}..."
-                    )
+                    if self.verbose:
+                        print(
+                            f"   ⚠️  Missing feature columns (will be computed via dependencies): {feature_missing[:10]}..."
+                        )
                 # If mostly optional blocks or too many missing, suppress warning (expected behavior)
             elif feature_missing and len(feature_missing) > 20:
                 # Too many missing columns, likely all will be computed - suppress verbose warning
@@ -1349,13 +1355,15 @@ class FeatureComputer:
 
         # 3. 按层级顺序计算特征
         computed_features = set()
+        total_start_time = time.perf_counter()
         for level in sorted(levels.keys()):
             level_features = levels[level]
-            print(
-                f"   📊 Memory usage before level {level}: Process={psutil.Process(os.getpid()).memory_info().rss / 1024**3:.2f}GB, "
-                f"System={psutil.virtual_memory().used / 1024**3:.1f}GB/{psutil.virtual_memory().total / 1024**3:.1f}GB "
-                f"({psutil.virtual_memory().percent:.1f}%)"
-            )
+            level_start_time = time.perf_counter()
+            if self.verbose:
+                print(
+                    f"   ▶️ Level {level}: {len(level_features)} features "
+                    f"(Mem: {psutil.Process(os.getpid()).memory_info().rss / 1024**3:.2f}GB)"
+                )
 
             # 在同一层内做一个简单的拓扑顺序：优先计算依赖已完成的特征
             pending = list(level_features)
@@ -1468,12 +1476,12 @@ class FeatureComputer:
 
                 # 如果没有缓存，计算特征
                 compute_params = feature_info.get("compute_params", {})
-                print(f"     ▶️ {feature_name}: start (level {level})")
+                print(f"     ▶️ {feature_name}: start (level {level})") if self.verbose else None
 
                 # 检查是否使用月度缓存
                 if self.use_monthly_cache and self.monthly_cache_dir:
                     # 使用月度缓存计算
-                    print(f"     🔸 Running {feature_name} sequentially (monthly)")
+                    print(f"     🔸 Running {feature_name} sequentially (monthly)") if self.verbose else None
                     # Always use monthly cache path (even for small DataFrames).
                     # Rationale: the goal of monthly caching is cross-run reuse; bypassing it
                     # destroys cache hit-rate in multi-seed / multi-step workflows.
@@ -1614,7 +1622,7 @@ class FeatureComputer:
                         "source": "computed",
                     }
 
-                print(f"     ✅ Computed {feature_name}")
+                print(f"     ✅ Computed {feature_name}") if self.verbose else None
                 # Simple "alarm" for very slow features (usually tick-heavy or cache-miss).
                 try:
                     dt_val = float(self._debug_stats["perf"]["per_feature"][feature_name]["seconds"])
@@ -1634,11 +1642,21 @@ class FeatureComputer:
                     pass
                 computed_features.add(feature_name)
 
-            print(
-                f"   📊 Memory usage after level {level}: Process={psutil.Process(os.getpid()).memory_info().rss / 1024**3:.2f}GB, "
-                f"System={psutil.virtual_memory().used / 1024**3:.1f}GB/{psutil.virtual_memory().total / 1024**3:.1f}GB "
-                f"({psutil.virtual_memory().percent:.1f}%)"
-            )
+            if self.verbose:
+                print(
+                    f"   ✅ Level {level} done: {len([f for f in level_features if f in computed_features])} features "
+                    f"in {time.perf_counter() - level_start_time:.1f}s "
+                    f"(Mem: {psutil.Process(os.getpid()).memory_info().rss / 1024**3:.2f}GB)"
+                )
+
+        # 无论 verbose 与否，打印一行最终摘要
+        total_time = time.perf_counter() - total_start_time
+        slow = [s for s in self._debug_stats["perf"]["slow_features"]]
+        slow_msg = f" (⚠️ {len(slow)} slow)" if slow else ""
+        print(
+            f"   📊 Features computed: {len(computed_features)}/{len(requested_features)} "
+            f"in {total_time:.1f}s{slow_msg}"
+        )
 
         # 4. 清理内存
         if self.use_memory_cache:

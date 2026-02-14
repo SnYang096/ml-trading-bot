@@ -29,7 +29,7 @@ class TestSystemModeManager:
 
         assert decision.mode == SystemMode.OFFLINE
         assert decision.bar_count == 0
-        assert "No warmup data" in decision.reason
+        assert "No ticks_1min data" in decision.reason
 
     def test_decide_mode_offline_insufficient_data(self):
         """测试：数据 < 2小时 → OFFLINE"""

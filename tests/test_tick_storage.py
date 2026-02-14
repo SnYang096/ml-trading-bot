@@ -227,14 +227,14 @@ def test_storage_manager_integration():
     for key in warmup_data.keys():
         print(f"   - {key}")
 
-    assert "ticks" in warmup_data, "warmup_load应该包含ticks"
+    assert "ticks_1min" in warmup_data, "warmup_load应该包含ticks_1min"
     assert "bars_1min" in warmup_data, "warmup_load应该包含bars_1min"
     assert "features_4h" in warmup_data
     assert "features_15min" in warmup_data
 
     # 验证ticks数据
-    loaded_ticks = warmup_data["ticks"]
-    print(f"\n✅ ticks数据验证:")
+    loaded_ticks = warmup_data["ticks_1min"]
+    print(f"\n✅ ticks_1min数据验证:")
     print(f"   加载记录数: {len(loaded_ticks)}")
     print(f"   数据格式: {list(loaded_ticks.columns)}")
 

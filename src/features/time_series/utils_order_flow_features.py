@@ -226,7 +226,7 @@ def compute_vpin_from_ticks(
     if not valid_side_mask.all():
         invalid_count = (~valid_side_mask).sum()
         if invalid_count > 0:
-            print(f"   ⚠️  Filtering {invalid_count} ticks with invalid side values")
+            logger.debug("Filtering %d ticks with invalid side values", invalid_count)
         ticks = ticks[valid_side_mask].copy()
     if len(ticks) == 0:
         return pd.DataFrame(columns=["vpin", "signed_imbalance"], dtype=float)
@@ -665,7 +665,7 @@ def extract_order_flow_features(
                 f"Tick data must contain columns: {required_tick_cols}. "
                 f"Missing columns: {missing_cols}"
             )
-        print("   📊 Computing real VPIN from tick data (adaptive bucket)...")
+        logger.debug("Computing real VPIN from tick data (adaptive bucket)...")
         vpin_series = compute_vpin_adaptive_bucket(
             ticks,
             rolling_window_minutes=vpin_rolling_window_minutes,
@@ -677,7 +677,7 @@ def extract_order_flow_features(
     elif ticks_loader_json:
         loader_params = deserialize_tick_loader_params(ticks_loader_json)
         tick_files = loader_params.get("tick_files", [])
-        print(f"   📊 Loading ticks from {len(tick_files)} files for adaptive VPIN...")
+        logger.debug("Loading ticks from %d files for adaptive VPIN...", len(tick_files))
         
         # 加载tick数据
         start_ts = pd.to_datetime(loader_params["start_ts"], utc=True).tz_convert(None)
@@ -701,11 +701,11 @@ def extract_order_flow_features(
                 if len(tick_df) > 0:
                     all_ticks.append(tick_df)
             except Exception as e:
-                print(f"      ⚠️ Failed to load {tick_file}: {e}")
+                logger.debug("Failed to load %s: %s", tick_file, e)
         
         if all_ticks:
             ticks_loaded = pd.concat(all_ticks, ignore_index=True)
-            print(f"      Loaded {len(ticks_loaded)} ticks")
+            logger.debug("Loaded %d ticks", len(ticks_loaded))
             vpin_series = compute_vpin_adaptive_bucket(
                 ticks_loaded,
                 rolling_window_minutes=vpin_rolling_window_minutes,
@@ -893,7 +893,7 @@ def extract_order_flow_features(
                 aligned_signed_last = pd.Series(0.0, index=df.index, dtype=float)
         except Exception as e:
             # 向量化方法失败，回退到循环方法
-            print(f"   ⚠️  Vectorized alignment failed ({e}), falling back to loop method")
+            logger.debug("Vectorized alignment failed (%s), falling back to loop method", e)
             aligned_vpin = None
             aligned_signed = None
             # 清除之前初始化的变量，让循环方法重新初始化
@@ -1044,7 +1044,7 @@ def extract_order_flow_features(
     # Trade Clustering 特征（与 VPIN 互补）
     # VPIN 关注 volume-bucketed 的净买卖差，Trade Clustering 关注连续同向成交的聚集性
     if include_trade_clustering and ticks is not None and len(ticks) > 0:
-        print("   📊 Computing trade clustering features...")
+        logger.debug("Computing trade clustering features...")
         try:
             cluster_features = extract_trade_clustering_features(
                 df=df,
@@ -1057,10 +1057,10 @@ def extract_order_flow_features(
             for c in cluster_features.columns:
                 df[c] = cluster_features[c]
         except Exception as e:
-            print(f"   ⚠️  Trade clustering feature extraction failed: {e}")
+            logger.debug("Trade clustering feature extraction failed: %s", e)
     elif include_trade_clustering and ticks_loader_json:
         # 使用 ticks_loader_json 计算 Trade Clustering
-        print("   📊 Computing trade clustering features from tick files...")
+        logger.debug("Computing trade clustering features from tick files...")
         try:
             cluster_features = extract_trade_clustering_features(
                 df=df,
@@ -1073,9 +1073,7 @@ def extract_order_flow_features(
             for c in cluster_features.columns:
                 df[c] = cluster_features[c]
         except Exception as e:
-            print(f"   ⚠️  Trade clustering feature extraction failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.warning("Trade clustering feature extraction failed: %s", e, exc_info=True)
 
     # ------------------------------------------------------------------
     # Contract-focused normalization (cross-asset comparable):
@@ -1274,8 +1272,8 @@ def compute_vpin_spike_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
                     pd.Series(rolling_mad_values, index=df.index).bfill().fillna(0.0)
                 )
             except Exception as e:
-                print(
-                    f"   ⚠️  Numba MAD calculation failed ({e}), falling back to pandas apply"
+                logger.debug(
+                    "Numba MAD calculation failed (%s), falling back to pandas apply", e
                 )
                 rolling_median = df["vpin"].rolling(window=w, min_periods=1).median()
                 rolling_mad = (
@@ -2001,7 +1999,7 @@ def extract_trade_clustering_features(
                 f"Tick data must contain columns: {required_tick_cols}. "
                 f"Missing columns: {missing_cols}"
             )
-        print("   📊 Computing trade clustering from tick data (in-memory, K-line aligned)...")
+        logger.debug("Computing trade clustering from tick data (in-memory, K-line aligned)...")
         # 性能优化：传入 K 线边界时间戳，只在这些时间点输出结果
         # 这可以将计算量从 52万tick 减少到 2千K线，提升 ~240倍
         cluster_df, _ = compute_trade_clustering_from_ticks(
@@ -2013,7 +2011,7 @@ def extract_trade_clustering_features(
     elif ticks_loader_json:
         # 使用 tick loader 加载数据并计算 Trade Clustering
         # 优化：按月分批处理，避免一次性加载所有数据导致内存不足
-        print("   📊 Computing trade clustering from tick files (monthly batches)...")
+        logger.debug("Computing trade clustering from tick files (monthly batches)...")
         loader_params = deserialize_tick_loader_params(ticks_loader_json)
         tick_files = loader_params.get("tick_files", [])
         if not tick_files:
@@ -2105,7 +2103,7 @@ def extract_trade_clustering_features(
                         _, prev_state = prev_cached_result
                         if prev_state is not None:
                             state = prev_state
-                            print(f"      📥 Loaded prev_month state for {current_month.strftime('%Y-%m')}")
+                            logger.debug("Loaded prev_month state for %s", current_month.strftime('%Y-%m'))
             
             # 生成缓存键（包含 state 信息，如果存在）
             standard_cache_key = None
@@ -2146,10 +2144,10 @@ def extract_trade_clustering_features(
                         cluster_results.append(month_cluster_df)
                         cached_count += 1
                         state = cached_state  # 更新 state 供下一个月使用
-                        print(f"      ✅ Loaded {month_start.strftime('%Y-%m')} (cached): {len(month_cluster_df)} features")
+                        logger.debug("Loaded %s (cached): %d features", month_start.strftime('%Y-%m'), len(month_cluster_df))
                     else:
                         # 标准缓存只保存了 state，需要重新计算 DataFrame
-                        print(f"      ✅ Computing {month_start.strftime('%Y-%m')} (cached state only, recomputing DataFrame)...")
+                        logger.debug("Computing %s (cached state only, recomputing DataFrame)...", month_start.strftime('%Y-%m'))
                         state = cached_state  # 使用缓存的 state
                         cached_result = None  # 继续到计算逻辑
                 else:
@@ -2160,10 +2158,10 @@ def extract_trade_clustering_features(
                             cluster_results.append(month_cluster_df)
                             cached_count += 1
                             state = cached_state
-                            print(f"      ✅ Loaded {month_start.strftime('%Y-%m')} (cached, with state): {len(month_cluster_df)} features")
+                            logger.debug("Loaded %s (cached, with state): %d features", month_start.strftime('%Y-%m'), len(month_cluster_df))
                         else:
                             # 状态缓存只保存了 state，需要重新计算 DataFrame
-                            print(f"      ✅ Computing {month_start.strftime('%Y-%m')} (cached state only, recomputing DataFrame)...")
+                            logger.debug("Computing %s (cached state only, recomputing DataFrame)...", month_start.strftime('%Y-%m'))
                             state = cached_state  # 使用缓存的 state
                             cached_result = None  # 继续到计算逻辑
                     else:
@@ -2173,12 +2171,12 @@ def extract_trade_clustering_features(
                             cluster_results.append(month_cluster_df)
                             cached_count += 1
                             state = cached_state
-                            print(
-                                f"      ⚠️  Loaded {month_start.strftime('%Y-%m')} (cached, standard; state mismatch accepted): "
-                                f"{len(month_cluster_df)} features"
+                            logger.debug(
+                                "Loaded %s (cached, standard; state mismatch accepted): %d features",
+                                month_start.strftime('%Y-%m'), len(month_cluster_df)
                             )
                         else:
-                            print(f"      ✅ Computing {month_start.strftime('%Y-%m')} (state mismatch, recomputing)...")
+                            logger.debug("Computing %s (state mismatch, recomputing)...", month_start.strftime('%Y-%m'))
                             state = cached_state  # 使用缓存的 state（但需要重新计算 DataFrame）
                             cached_result = None  # 继续到计算逻辑
             
@@ -2208,7 +2206,7 @@ def extract_trade_clustering_features(
                         if "volume" in month_ticks.columns:
                             cols_to_keep.append("volume")
                         month_ticks = month_ticks[cols_to_keep].copy()
-                        print(f"      ✅ Loaded {month_start.strftime('%Y-%m')}: {len(month_ticks)} ticks")
+                        logger.debug("Loaded %s: %d ticks", month_start.strftime('%Y-%m'), len(month_ticks))
                         
                         # 性能优化：筛选当月的 K 线时间戳，只在这些时间点输出结果
                         # 这可以将计算量从每个 tick 减少到每个 K 线，提升 ~240 倍
@@ -2239,7 +2237,7 @@ def extract_trade_clustering_features(
                         # 保存该月的结果
                         cluster_results.append(month_cluster_df)
                         computed_count += 1
-                        print(f"      ✅ Computed {month_start.strftime('%Y-%m')}: {len(month_cluster_df)} features")
+                        logger.debug("Computed %s: %d features", month_start.strftime('%Y-%m'), len(month_cluster_df))
                         
                         # 保存缓存
                         # 标准缓存：保存 DataFrame + final_state（speed-first; disk is cheap, ticks are expensive）
@@ -2258,25 +2256,23 @@ def extract_trade_clustering_features(
                         del month_ticks
                     else:
                         # 没有 tick 数据，跳过该月
-                        print(f"      ⚠️  Skipping {month_start.strftime('%Y-%m')}: No tick data available")
+                        logger.debug("Skipping %s: No tick data available", month_start.strftime('%Y-%m'))
                 except (FileNotFoundError, ValueError) as e:
                     # 预期的错误：该月没有 tick 数据文件或数据为空，跳过
                     error_msg = str(e)
                     if "No tick" in error_msg or "No tick parquet files" in error_msg:
-                        print(f"      ⚠️  Skipping {month_start.strftime('%Y-%m')}: No tick data available")
+                        logger.debug("Skipping %s: No tick data available", month_start.strftime('%Y-%m'))
                     else:
-                        print(f"      ⚠️  Skipping {month_start.strftime('%Y-%m')}: {error_msg}")
+                        logger.debug("Skipping %s: %s", month_start.strftime('%Y-%m'), error_msg)
                 except Exception as e:
-                    print(f"      ⚠️  Failed to process {month_start.strftime('%Y-%m')}: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    logger.warning("Failed to process %s: %s", month_start.strftime('%Y-%m'), e, exc_info=True)
             
             # 移动到下一个月
             current_month = current_month + pd.DateOffset(months=1)
             
             # 批次合并，降低一次性 concat 的内存峰值
             if merge_batch_size and len(cluster_results) >= merge_batch_size:
-                print(f"      📊 Merging a batch of {len(cluster_results)} months of trade clustering results...")
+                logger.debug("Merging a batch of %d months of trade clustering results...", len(cluster_results))
                 if persist_monthly and cache_dir:
                     # 将本批次先落盘为 parquet，再清空内存
                     for df_month in cluster_results:
@@ -2298,7 +2294,7 @@ def extract_trade_clustering_features(
         
         # 合并剩余的批次（只合并特征结果，不合并原始 tick 数据）
         if cluster_results:
-            print(f"      📊 Merging remaining {len(cluster_results)} months of trade clustering results...")
+            logger.debug("Merging remaining %d months of trade clustering results...", len(cluster_results))
             if persist_monthly and cache_dir:
                 for df_month in cluster_results:
                     month_start_ts = df_month.index.min()
@@ -2331,9 +2327,9 @@ def extract_trade_clustering_features(
                 )
             freq_td = pd.to_timedelta(freq)
 
-            print(
-                f"      📊 Streaming-aligning {len(cluster_paths)} persisted months of trade clustering results...",
-                flush=True,
+            logger.debug(
+                "Streaming-aligning %d persisted months of trade clustering results...",
+                len(cluster_paths),
             )
             cluster_paths = sorted(cluster_paths)
             n_bars = len(df.index)
@@ -2427,7 +2423,7 @@ def extract_trade_clustering_features(
 
         # 如果既无在内存的累积结果，又没有任何落盘文件：返回空特征块（保持窄输出契约）
         if cluster_df_accum is None and not cluster_paths:
-            print("   ⚠️  Trade clustering produced no results; returning empty features block.")
+            logger.debug("Trade clustering produced no results; returning empty features block.")
             return pd.DataFrame(
                 {
                     "trade_cluster_max_buy_run": 0.0,
@@ -2466,11 +2462,9 @@ def extract_trade_clustering_features(
         aligned_features = {}
         
         # 打印对齐前的统计信息
-        print(f"   📊 Trade Clustering alignment:")
-        print(f"      Cluster events: {len(cluster_df)}")
-        print(f"      K-line bars: {len(df)}")
-        print(f"      K-line time range: {df.index.min()} to {df.index.max()}")
-        print(f"      Cluster time range: {cluster_df.index.min()} to {cluster_df.index.max()}")
+        logger.debug("Trade Clustering alignment: %d cluster events, %d K-line bars", len(cluster_df), len(df))
+        logger.debug("K-line time range: %s to %s", df.index.min(), df.index.max())
+        logger.debug("Cluster time range: %s to %s", cluster_df.index.min(), cluster_df.index.max())
         
         for col in cluster_df.columns:
             aligned_series = None
@@ -2497,14 +2491,12 @@ def extract_trade_clustering_features(
                     
                     # 统计对齐结果
                     non_zero_count = (aligned_series != 0.0).sum()
-                    print(f"      {col}: {non_zero_count}/{len(df)} bars have values")
+                    logger.debug("%s: %d/%d bars have values", col, non_zero_count, len(df))
                 else:
                     aligned_series = pd.Series(0.0, index=df.index, dtype=float)
-                    print(f"      ⚠️  {col}: No valid alignment (time range mismatch?)")
+                    logger.debug("%s: No valid alignment (time range mismatch?)", col)
             except Exception as e:
-                print(f"   ⚠️  Trade clustering alignment failed for {col} ({e})")
-                import traceback
-                traceback.print_exc()
+                logger.warning("Trade clustering alignment failed for %s: %s", col, e, exc_info=True)
                 aligned_series = pd.Series(0.0, index=df.index, dtype=float)
             aligned_features[col] = aligned_series
         # Build base features-only result

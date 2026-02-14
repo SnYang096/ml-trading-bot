@@ -186,7 +186,7 @@ class GapFiller:
             
         if use_ticks:
             # 新增：加载1分钟聚合tick（按买卖分离）
-            result["ticks"] = self.storage_manager.ticks.load_range(
+            result["ticks_1min"] = self.storage_manager.ticks.load_range(
                 symbol, start_date, end_date
             )
             
@@ -319,9 +319,9 @@ class GapFiller:
                 result[key] = df
         
         # 3. 检查数据缺失，如果缺失超过一天，从币安API获取
-        if "ticks" in result and len(result["ticks"]) > 0:
+        if "ticks_1min" in result and len(result["ticks_1min"]) > 0:
             # 检查最后一条数据的时间
-            last_timestamp = result["ticks"]["timestamp"].max()
+            last_timestamp = result["ticks_1min"]["timestamp"].max()
             now = pd.Timestamp.now(tz="UTC")
             
             # 如果缺失超过1天，从币安API获取
@@ -336,10 +336,10 @@ class GapFiller:
                 
                 if len(fill_data) > 0:
                     # 合并数据
-                    combined = pd.concat([result["ticks"], fill_data])
+                    combined = pd.concat([result["ticks_1min"], fill_data])
                     combined = combined.drop_duplicates(subset=["timestamp"], keep="last")
                     combined = combined.sort_values("timestamp").reset_index(drop=True)
-                    result["ticks"] = combined
+                    result["ticks_1min"] = combined
         
         return result
     
@@ -384,8 +384,8 @@ class GapFiller:
             start_date = start_time.strftime("%Y-%m-%d")
             end_date = end_time.strftime("%Y-%m-%d")
             data = self.warmup_from_parquet(symbol, start_date, end_date, use_ticks=True)
-            if "ticks" in data:
-                return data["ticks"]
+            if "ticks_1min" in data:
+                return data["ticks_1min"]
         
         if source == "binance":
             return self.fill_from_binance_api(symbol, start_time, end_time)
@@ -406,3 +406,104 @@ class GapFiller:
             base = symbol.replace("USDT", "")
             return f"{base}/USDT:USDT"
         return symbol
+
+    def fill_missing_ticks(
+        self,
+        symbol: str,
+        start_time: pd.Timestamp,
+        end_time: pd.Timestamp,
+        existing_ticks: pd.DataFrame = None,
+    ) -> pd.DataFrame:
+        """
+        补充缺失的 ticks 数据（短时断线后调用）
+        
+        使用 Binance GET /fapi/v1/aggTrades 接口
+        
+        Args:
+            symbol: 交易对符号（如 "BTCUSDT"）
+            start_time: 开始时间（断线开始）
+            end_time: 结束时间（重连成功）
+            existing_ticks: 已有的 ticks 数据（用于去重，避免覆盖）
+        
+        Returns:
+            补充的 trades 数据 DataFrame，列: [timestamp, price, volume, side]
+            只返回缺失的部分，不包含 existing_ticks 中已有的数据
+        """
+        if not self.data_gap_filler:
+            print("⚠️ 数据补全器未初始化（需要提供 exchange）")
+            return pd.DataFrame()
+        
+        # 转换符号格式
+        ccxt_symbol = self._convert_symbol(symbol)
+        
+        # 下载缺失的 trades
+        df = self.data_gap_filler.fill_missing_trades(
+            symbol=ccxt_symbol,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        
+        if len(df) == 0:
+            return pd.DataFrame()
+        
+        # 如果有已有数据，去除重复的 ticks
+        if existing_ticks is not None and len(existing_ticks) > 0:
+            original_count = len(df)
+            
+            # 确保 timestamp 列存在且格式一致
+            if 'timestamp' in existing_ticks.columns:
+                existing_ts = pd.to_datetime(existing_ticks['timestamp'], utc=True)
+                df_ts = pd.to_datetime(df['timestamp'], utc=True)
+                
+                # 按时间戳去重（只保留 existing 中没有的）
+                # 使用时间戳字符串比较，精度到毫秒
+                existing_ts_set = set(existing_ts.dt.strftime('%Y-%m-%d %H:%M:%S.%f'))
+                mask = ~df_ts.dt.strftime('%Y-%m-%d %H:%M:%S.%f').isin(existing_ts_set)
+                df = df[mask].reset_index(drop=True)
+                
+                removed_count = original_count - len(df)
+                if removed_count > 0:
+                    print(f"   跳过 {removed_count} 条已存在的 ticks")
+        
+        if len(df) > 0:
+            gap_duration = (end_time - start_time).total_seconds()
+            print(f"✅ 补充了 {len(df)} 条 ticks（断线 {gap_duration:.1f} 秒）")
+        
+        return df
+
+    def merge_ticks(
+        self,
+        existing_ticks: pd.DataFrame,
+        new_ticks: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """
+        合并 ticks 数据（去重 + 排序）
+        
+        Args:
+            existing_ticks: 已有的 ticks 数据
+            new_ticks: 新下载的 ticks 数据
+        
+        Returns:
+            合并后的 DataFrame（去重、按时间排序）
+        """
+        if existing_ticks is None or len(existing_ticks) == 0:
+            return new_ticks
+        if new_ticks is None or len(new_ticks) == 0:
+            return existing_ticks
+        
+        # 合并
+        combined = pd.concat([existing_ticks, new_ticks], ignore_index=True)
+        
+        # 确保 timestamp 格式一致
+        combined['timestamp'] = pd.to_datetime(combined['timestamp'], utc=True)
+        
+        # 去重（基于 timestamp + price + volume）
+        combined = combined.drop_duplicates(
+            subset=['timestamp', 'price', 'volume'],
+            keep='first'  # 保留已有的（existing_ticks 在前面）
+        )
+        
+        # 按时间排序
+        combined = combined.sort_values('timestamp').reset_index(drop=True)
+        
+        return combined
