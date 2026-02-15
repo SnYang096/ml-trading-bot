@@ -68,8 +68,9 @@ def _setup_bpc(
     gap_filler,
     trade_size: float,
 ):
-    """BPCLiveStrategy 纯规则决策模式"""
+    """BPCLiveStrategy 纯规则决策模式（通过 LivePCM 包装）"""
     from src.time_series_model.live.bpc_live_strategy import BPCLiveStrategy
+    from src.time_series_model.portfolio.live_pcm import LivePCM
 
     strategies_root = os.getenv("MLBOT_STRATEGIES_ROOT", "config/strategies")
     bar_minutes = int(os.getenv("MLBOT_BPC_BAR_MINUTES", "240"))
@@ -87,6 +88,12 @@ def _setup_bpc(
         bar_minutes=bar_minutes,
     )
     bpc.load_configs()
+
+    # 包装进 LivePCM（单策略时行为等价直接挂 BPC）
+    pcm = LivePCM(
+        max_slots=int(os.getenv("MLBOT_MAX_SLOTS", "2")),
+    )
+    pcm.register("bpc", bpc)
 
     order_manager = init_order_manager_from_env()
 
@@ -109,37 +116,40 @@ def _setup_bpc(
         order_manager=order_manager,
     )
 
-    # 给每个 listener 注入 decision_handler
+    # 给每个 listener 注入 LivePCM 作为 decision_handler
     for sym in symbols:
         listener = manager.get_listener(sym)
         if listener is None:
             continue
-        listener.decision_handler = bpc
+        listener.decision_handler = pcm
         listener.order_manager = order_manager
         if trade_size > 0:
             listener.trade_size = trade_size
 
     logger.info(
-        f"[bpc] Initialized: {len(symbols)} symbols, "
-        f"bar_minutes={bar_minutes}, window={window_minutes}min"
+        f"[bpc] Initialized via LivePCM: {len(symbols)} symbols, "
+        f"bar_minutes={bar_minutes}, window={window_minutes}min, "
+        f"archetypes={pcm.registered_archetypes}"
     )
-    return manager, bpc
+    return manager, pcm
 
 
 def _compute_initial_quantiles(
-    bpc,
+    decision_handler,
     manager: MultiSymbolManager,
     storage: StorageManager,
 ) -> None:
-    """Warmup 后为 BPC 的 Evidence 模块计算分位数阈值。
+    """Warmup 后为 Evidence 模块计算分位数阈值。
 
     从磁盘加载每个 symbol 的历史 bars + ticks，用
     compute_features_dataframe() 得到完整 DataFrame，然后
     合并所有 symbol 的数据计算 quantiles。
-    """
-    from src.time_series_model.live.bpc_live_strategy import BPCLiveStrategy
 
-    if not isinstance(bpc, BPCLiveStrategy):
+    支持 BPCLiveStrategy 和 LivePCM（自动透传给内部策略）。
+    """
+    if not hasattr(decision_handler, "set_quantiles") and not hasattr(
+        decision_handler, "set_quantiles_from_df"
+    ):
         return
 
     # 使用全部可用历史数据（与 warmup 准备的数据一致）
@@ -187,7 +197,11 @@ def _compute_initial_quantiles(
         return
 
     combined = pd.concat(all_dfs, ignore_index=True)
-    bpc.set_quantiles_from_df(combined)
+    # LivePCM.set_quantiles() 或 BPCLiveStrategy.set_quantiles_from_df()
+    if hasattr(decision_handler, "set_quantiles_from_df"):
+        decision_handler.set_quantiles_from_df(combined)
+    elif hasattr(decision_handler, "set_quantiles"):
+        decision_handler.set_quantiles(combined)
     logger.info(
         "[quantiles] 完成: %d symbols, %d 总行数",
         len(all_dfs),
@@ -221,7 +235,7 @@ async def main() -> None:
 
     logger.info(f"🚀 Starting live trading: symbols={symbols}")
 
-    manager, bpc = _setup_bpc(symbols, storage, gap_filler, trade_size)
+    manager, pcm = _setup_bpc(symbols, storage, gap_filler, trade_size)
 
     # Warmup 与启动质量闸门
     if warmup_days > 0:
@@ -262,7 +276,7 @@ async def main() -> None:
             )
 
     # ── 计算 Evidence 分位数阈值（从历史数据）──
-    _compute_initial_quantiles(bpc, manager, storage)
+    _compute_initial_quantiles(pcm, manager, storage)
 
     await manager.start_all()
 
