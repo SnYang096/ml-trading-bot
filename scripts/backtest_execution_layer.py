@@ -10,7 +10,7 @@ Execution Layer Backtest - 逐K线路径模拟 (Bar-by-Bar Execution Simulation)
     - Grid Search: 已移至 optimize_execution_grid.py
 
 用法:
-    # 单次回测 (自动应用 gate + entry filter)
+    # 单 archetype 回测 (自动应用 gate + entry filter)
     python scripts/backtest_execution_layer.py \\
         --logs results/train_final_xxx/bpc/predictions.parquet \\
         --strategy bpc
@@ -21,9 +21,16 @@ Execution Layer Backtest - 逐K线路径模拟 (Bar-by-Bar Execution Simulation)
         --strategy bpc --tiers --noise-penalty \\
         --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01
 
+    # 多 archetype PCM 仲裁回测
+    python scripts/backtest_execution_layer.py \\
+        --pcm bpc:results/bpc/predictions.parquet \\
+             me:results/me/predictions.parquet \\
+        --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01
+
 输出:
     - Sharpe Ratio (bar-by-bar 模拟)
     - Per-symbol 交易地图 HTML 报告
+    - PCM 模式: Per-archetype 统计 + 反事实分析
 """
 from __future__ import annotations
 
@@ -647,6 +654,488 @@ def _estimate_span_years(df: pd.DataFrame, bars_per_year: float = 2190.0) -> flo
         return 0.0
     bars_per_symbol = df.groupby(sym_col).size().median()
     return float(bars_per_symbol / bars_per_year)
+
+
+# ================================================================
+# Multi-Archetype PCM Mode
+# ================================================================
+
+# 默认优先级（与 live_pcm.py 一致）
+_PCM_DEFAULT_PRIORITY = ["Reversal", "ME", "BPC"]
+
+
+def _detect_direction_col(df: pd.DataFrame, archetype: str) -> Optional[str]:
+    """检测 archetype 的方向列名"""
+    candidates = [
+        f"{archetype}_breakout_direction",
+        "breakout_direction",
+        "entry_direction",
+        "direction",
+    ]
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
+def _pcm_get_priority_rank(archetype: str, priority: List[str]) -> int:
+    """获取 archetype 的优先级排名（越小越优先，与 live_pcm.py 一致）"""
+    arch_lower = archetype.lower()
+    for i, a in enumerate(priority):
+        if a.lower() == arch_lower:
+            return i
+    return len(priority)  # 未知 archetype 排最后
+
+
+def _compute_evidence_for_archetype(
+    df: pd.DataFrame,
+    arch_name: str,
+    strategies_root: str,
+    quantile_train_start: Optional[str],
+    quantile_train_end: Optional[str],
+) -> pd.Series:
+    """为单个 archetype 计算 evidence scores。
+
+    如果提供了 quantile-train-start/end，从校准数据预计算 quantiles。
+    否则返回 0.5（中性）。
+    """
+    evidence_cfg = load_evidence_config(arch_name, strategies_root)
+    if not evidence_cfg or not evidence_cfg.get("evidence"):
+        return pd.Series(0.5, index=df.index)
+
+    if not quantile_train_start or not quantile_train_end:
+        return pd.Series(0.5, index=df.index)
+
+    # 找 timestamp 列
+    ts_col = None
+    if "timestamp" in df.columns:
+        ts_col = "timestamp"
+    elif isinstance(df.index, pd.DatetimeIndex):
+        df["_ts_tmp"] = df.index
+        ts_col = "_ts_tmp"
+
+    if ts_col is None:
+        print(f"   ⚠️  {arch_name}: 无 timestamp 列，evidence 默认 0.5")
+        return pd.Series(0.5, index=df.index)
+
+    train_start = pd.Timestamp(quantile_train_start)
+    train_end = pd.Timestamp(quantile_train_end)
+    if (train_end - train_start).days < 180:
+        print(
+            f"❌ 校准数据时间范围不足 6 个月: "
+            f"{train_start.date()} ~ {train_end.date()}"
+        )
+        if "_ts_tmp" in df.columns:
+            df.drop(columns=["_ts_tmp"], inplace=True)
+        return pd.Series(0.5, index=df.index)
+
+    df[ts_col] = pd.to_datetime(df[ts_col], utc=True)
+    calib_mask = (df[ts_col] >= train_start.tz_localize("UTC")) & (
+        df[ts_col] < train_end.tz_localize("UTC")
+    )
+    calib_df = df[calib_mask]
+
+    if len(calib_df) < 50:
+        print(
+            f"   ⚠️  {arch_name}: 校准数据不足 ({len(calib_df)} 行), evidence 默认 0.5"
+        )
+        if "_ts_tmp" in df.columns:
+            df.drop(columns=["_ts_tmp"], inplace=True)
+        return pd.Series(0.5, index=df.index)
+
+    precomputed_quantiles = compute_evidence_quantiles(
+        calib_df, evidence_cfg, silent=True
+    )
+    scores = compute_evidence_scores(
+        df, evidence_cfg, precomputed_quantiles=precomputed_quantiles, silent=True
+    )
+    print(
+        f"   📊 {arch_name} evidence: mean={scores.mean():.3f}, "
+        f"calibration={len(calib_df)} rows ({train_start.date()}~{train_end.date()})"
+    )
+    if "_ts_tmp" in df.columns:
+        df.drop(columns=["_ts_tmp"], inplace=True)
+    return scores
+
+
+def _run_pcm_mode(args) -> int:  # noqa: C901
+    """Multi-archetype PCM arbitration backtest mode.
+
+    用法:
+        python scripts/backtest_execution_layer.py \\
+            --pcm bpc:results/bpc/predictions.parquet \\
+                  me:results/me/predictions.parquet \\
+            --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01
+    """
+    print("=" * 80)
+    print("🎯 PCM Multi-Archetype Backtest")
+    print("=" * 80)
+
+    strategies_root = args.strategies_root
+    priority = _PCM_DEFAULT_PRIORITY
+    max_slots = getattr(args, "max_slots", 2)
+
+    # ── 1. 解析 --pcm 参数 ──
+    arch_specs: Dict[str, str] = {}  # {archetype: logs_path}
+    for spec in args.pcm:
+        parts = spec.split(":", 1)
+        if len(parts) != 2:
+            print(f"❌ Invalid --pcm format: {spec}. Expected archetype:path")
+            return 1
+        arch_name, logs_path = parts
+        arch_specs[arch_name] = logs_path
+
+    arch_names = list(arch_specs.keys())
+    print(f"\n📋 Archetypes: {arch_names}")
+    print(f"   Priority: {' > '.join(priority)}")
+    print(f"   决策依据: 按语义要求的条件严格性划分（越严格越优先）")
+
+    # ── 2. 加载各 archetype 配置 + 处理信号 ──
+    arch_exec_configs: Dict[str, Dict] = {}
+    arch_processed: Dict[str, pd.DataFrame] = {}  # direction + evidence
+    base_df = None
+
+    for arch_name, logs_path in arch_specs.items():
+        path = Path(logs_path)
+        if not path.exists():
+            print(f"❌ {arch_name}: file not found: {path}")
+            return 1
+
+        # 加载配置
+        try:
+            exec_cfg = load_execution_config(arch_name, strategies_root)
+            arch_exec_configs[arch_name] = exec_cfg
+        except FileNotFoundError as e:
+            print(f"❌ {arch_name}: {e}")
+            return 1
+
+        # 加载数据
+        df = pd.read_parquet(path)
+        if "_symbol" in df.columns and "symbol" not in df.columns:
+            df["symbol"] = df["_symbol"]
+        print(f"\n📂 {arch_name}: {len(df)} rows from {path}")
+
+        # 检测方向列
+        dir_col = _detect_direction_col(df, arch_name)
+        if dir_col is None:
+            print(
+                f"❌ {arch_name}: no direction column found in {list(df.columns)[:10]}..."
+            )
+            return 1
+        df["entry_direction"] = df[dir_col].astype(float).copy()
+        print(f"   Direction col: {dir_col}")
+
+        # Gate 过滤
+        if "gate_decision" in df.columns:
+            veto_mask = df["gate_decision"] != "allow"
+            df.loc[veto_mask, "entry_direction"] = 0.0
+            n_allowed = int((~veto_mask).sum())
+            print(f"   🚪 Gate: {n_allowed} allow / {len(df)} total")
+        elif "gate_ok" in df.columns:
+            veto_mask = df["gate_ok"] != True  # noqa: E712
+            df.loc[veto_mask, "entry_direction"] = 0.0
+            n_allowed = int((~veto_mask).sum())
+            print(f"   🚪 Gate: {n_allowed} allow / {len(df)} total")
+
+        # Entry Filter
+        if not args.no_entry_filter:
+            ef_cfg = load_entry_filters_config(arch_name, strategies_root)
+            if ef_cfg:
+                compute_derived_entry_features(df)
+                n_entries = apply_entry_filters_or(df, ef_cfg)
+            else:
+                print(f"   ℹ️  {arch_name}: entry_filters.yaml not found, skipping")
+        else:
+            print(f"   ℹ️  Entry filter disabled")
+
+        # Evidence 计算
+        evidence_scores = _compute_evidence_for_archetype(
+            df,
+            arch_name,
+            strategies_root,
+            args.quantile_train_start,
+            args.quantile_train_end,
+        )
+        df["evidence_score"] = evidence_scores.values
+
+        n_entries = int((df["entry_direction"] != 0).sum())
+        print(f"   📊 Active entries: {n_entries}")
+
+        arch_processed[arch_name] = df
+        if base_df is None:
+            base_df = df  # 第一个 archetype 作为 OHLC 基准
+
+    # ── 3. 构建合并 DataFrame ──
+    # 用 base_df 作为基准（包含 OHLC），添加每个 archetype 的信号列
+    ohlc_cols = ["symbol", "high", "low", "close", "atr"]
+    if "timestamp" in base_df.columns:
+        ohlc_cols.insert(1, "timestamp")
+    missing_ohlc = [c for c in ohlc_cols if c not in base_df.columns]
+    if missing_ohlc:
+        print(f"❌ Base data missing OHLC columns: {missing_ohlc}")
+        return 1
+
+    merged = base_df[ohlc_cols].copy()
+    merged = merged.sort_values(
+        ["symbol"] + (["timestamp"] if "timestamp" in merged.columns else [])
+    ).reset_index(drop=True)
+
+    # 初始化结果列
+    merged["entry_direction"] = 0.0
+    merged["evidence_score"] = 0.5
+    merged["_pcm_archetype"] = ""
+
+    # 为每个 archetype 添加 direction + evidence 列
+    for arch_name, df in arch_processed.items():
+        df_sorted = df.sort_values(
+            ["symbol"] + (["timestamp"] if "timestamp" in df.columns else [])
+        ).reset_index(drop=True)
+
+        if len(df_sorted) != len(merged):
+            # 不同长度 → 按 (symbol, timestamp) 合并
+            if "timestamp" in merged.columns and "timestamp" in df_sorted.columns:
+                merge_key = ["symbol", "timestamp"]
+                tmp = df_sorted[
+                    [*merge_key, "entry_direction", "evidence_score"]
+                ].rename(
+                    columns={
+                        "entry_direction": f"_{arch_name}_dir",
+                        "evidence_score": f"_{arch_name}_ev",
+                    }
+                )
+                merged = merged.merge(tmp, on=merge_key, how="left")
+                merged[f"_{arch_name}_dir"] = merged[f"_{arch_name}_dir"].fillna(0.0)
+                merged[f"_{arch_name}_ev"] = merged[f"_{arch_name}_ev"].fillna(0.5)
+            else:
+                print(
+                    f"⚠️  {arch_name}: 行数不一致 ({len(df_sorted)} vs {len(merged)}) 且无 timestamp，跳过"
+                )
+                merged[f"_{arch_name}_dir"] = 0.0
+                merged[f"_{arch_name}_ev"] = 0.5
+        else:
+            # 同长度 → 直接对齐
+            merged[f"_{arch_name}_dir"] = df_sorted["entry_direction"].values
+            merged[f"_{arch_name}_ev"] = df_sorted["evidence_score"].values
+
+    # ── 4. PCM 仲裁 ──
+    print(f"\n🏗️  PCM arbitration...")
+    dir_cols = [f"_{a}_dir" for a in arch_names]
+    has_any_signal = (merged[dir_cols].abs() > 0).any(axis=1)
+    signal_indices = merged.index[has_any_signal]
+    n_conflicts = 0
+    arch_win_counts: Dict[str, int] = {a: 0 for a in arch_names}
+
+    for idx in signal_indices:
+        active: List[Tuple[str, float, float]] = []  # (arch, direction, evidence)
+        for arch_name in arch_names:
+            d = float(merged.at[idx, f"_{arch_name}_dir"])
+            if d != 0.0:
+                ev = float(merged.at[idx, f"_{arch_name}_ev"])
+                active.append((arch_name, d, ev))
+
+        if not active:
+            continue
+
+        if len(active) == 1:
+            winner_arch, winner_dir, winner_ev = active[0]
+        else:
+            # 多个 archetype 冲突 → 固定优先级 + Evidence
+            n_conflicts += 1
+
+            def _sort_key(x):
+                arch, d, ev = x
+                rank = _pcm_get_priority_rank(arch, priority)
+                return (rank, -(ev if ev is not None else 0.5))
+
+            winner_arch, winner_dir, winner_ev = min(active, key=_sort_key)
+
+        merged.at[idx, "entry_direction"] = winner_dir
+        merged.at[idx, "evidence_score"] = winner_ev
+        merged.at[idx, "_pcm_archetype"] = winner_arch
+        arch_win_counts[winner_arch] = arch_win_counts.get(winner_arch, 0) + 1
+
+    n_total_entries = int((merged["entry_direction"] != 0).sum())
+    print(f"   Total entries: {n_total_entries}")
+    print(f"   Conflicts resolved: {n_conflicts}")
+    for arch_name in arch_names:
+        cnt = arch_win_counts.get(arch_name, 0)
+        print(f"   {arch_name}: {cnt} entries")
+
+    if n_total_entries == 0:
+        print("❌ No entry signals after PCM arbitration")
+        return 1
+
+    # ── 5. Per-entry 执行参数（来自 winning archetype 的 execution.yaml）──
+    # 初始化 per-entry 参数列
+    first_exec = list(arch_exec_configs.values())[0]
+    first_sl = first_exec.get("stop_loss", {})
+    first_trail = first_sl.get("trailing", {})
+    first_holding = first_exec.get("holding", {})
+
+    merged["_tier_initial_r"] = float(first_sl.get("initial_r", 2.0))
+    merged["_tier_activation_r"] = float(first_trail.get("activation_r", 1.0))
+    merged["_tier_trail_r"] = float(first_trail.get("trail_r", 1.5))
+    merged["_tier_timeout"] = int(first_holding.get("time_stop_bars", 50) or 50)
+    merged["_tier_size"] = 1.0
+    merged["_tier_name"] = "default"
+
+    # 按 winning archetype 覆盖执行参数
+    for arch_name in arch_names:
+        if arch_name not in arch_exec_configs:
+            continue
+        ec = arch_exec_configs[arch_name]
+        sl = ec.get("stop_loss", {})
+        trail = sl.get("trailing", {})
+        holding = ec.get("holding", {})
+
+        mask = merged["_pcm_archetype"] == arch_name
+        if mask.sum() == 0:
+            continue
+
+        merged.loc[mask, "_tier_initial_r"] = float(sl.get("initial_r", 2.0))
+        merged.loc[mask, "_tier_activation_r"] = float(trail.get("activation_r", 1.0))
+        merged.loc[mask, "_tier_trail_r"] = float(trail.get("trail_r", 1.5))
+        merged.loc[mask, "_tier_timeout"] = int(holding.get("time_stop_bars", 50) or 50)
+        merged.loc[mask, "_tier_name"] = arch_name
+
+    # ── 6. Bar-by-bar 执行模拟 ──
+    breakeven_lock_r = args.breakeven if args.breakeven is not None else 0.0
+    print(f"\n📈 Simulating bar-by-bar with per-archetype execution params...")
+    exec_returns = simulate_rr_execution(
+        merged,
+        first_exec,  # 全局 fallback config
+        atr_col="atr",
+        use_tier_params=True,
+        breakeven_lock_r=breakeven_lock_r,
+    )
+
+    valid_returns = exec_returns.dropna()
+    if len(valid_returns) == 0:
+        print("❌ No valid returns computed")
+        return 1
+
+    # ── 7. 结果报告 ──
+    span_years = _estimate_span_years(merged)
+    exec_sharpe = compute_sharpe(valid_returns, annualize=False)
+    exec_sharpe_ann = compute_sharpe(
+        valid_returns, annualize=True, span_years=span_years
+    )
+    trades_per_year = len(valid_returns) / span_years if span_years > 0 else 0
+
+    print("\n" + "=" * 80)
+    print("📊 PCM MULTI-ARCHETYPE BACKTEST RESULTS")
+    print("=" * 80)
+    print(
+        f"\n   Trades: {len(valid_returns)}  "
+        f"({trades_per_year:.0f}/year, span={span_years:.2f}yr)"
+    )
+    print(f"   Mean R: {valid_returns.mean():.4f}")
+    print(f"   Std R:  {valid_returns.std():.4f}")
+    print(f"   Win Rate: {(valid_returns > 0).mean():.2%}")
+    print(f"\n   Sharpe (per-trade): {exec_sharpe:.4f}")
+    print(
+        f"   Sharpe (annualized): {exec_sharpe_ann:.2f}  "
+        f"= {exec_sharpe:.4f} × √{trades_per_year:.0f}"
+    )
+
+    # Per-symbol breakdown
+    sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
+    print(f"\n   📋 Per-Symbol Breakdown:")
+    print(f"   {'Symbol':<12} {'Trades':>7} {'Mean R':>8} {'Sharpe':>8} {'Win%':>7}")
+    print(f"   {'-' * 46}")
+    for sym in sorted(merged[sym_col].unique()):
+        mask = merged[sym_col] == sym
+        rr = exec_returns.loc[mask].dropna()
+        if len(rr) > 1:
+            sh = rr.mean() / rr.std() if rr.std() > 1e-8 else 0
+            print(
+                f"   {sym:<12} {len(rr):>7} {rr.mean():>8.4f} "
+                f"{sh:>8.4f} {(rr > 0).mean() * 100:>6.1f}%"
+            )
+
+    # Per-archetype breakdown
+    merged["_exec_rr"] = exec_returns.values
+    print(f"\n   🏷️  Per-Archetype Breakdown:")
+    print(
+        f"   {'Archetype':<14} {'Trades':>7} {'Mean R':>8} "
+        f"{'Sharpe':>8} {'Win%':>7} {'Conflicts':>10}"
+    )
+    print(f"   {'-' * 58}")
+    entry_mask = merged["entry_direction"] != 0
+    for arch_name in arch_names:
+        arch_mask = entry_mask & (merged["_pcm_archetype"] == arch_name)
+        rr = merged.loc[arch_mask, "_exec_rr"].dropna()
+        if len(rr) > 0:
+            sh = rr.mean() / rr.std() if len(rr) > 1 and rr.std() > 1e-8 else 0
+            # 该 archetype 参与冲突但被选中的次数 vs 被其他 archetype 挤掉的次数
+            print(
+                f"   {arch_name:<14} {len(rr):>7} {rr.mean():>8.4f} "
+                f"{sh:>8.4f} {(rr > 0).mean() * 100:>6.1f}%"
+            )
+    merged.drop(columns=["_exec_rr"], inplace=True)
+
+    # 反事实分析: 被 PCM 丢弃的信号表现
+    print(f"\n   🔍 Counterfactual (被丢弃信号的后续 R):")
+    for arch_name in arch_names:
+        # 该 archetype 有信号但被其他 archetype 抢走的 bar
+        has_signal = merged[f"_{arch_name}_dir"] != 0
+        was_rejected = merged["_pcm_archetype"] != arch_name
+        rejected_mask = has_signal & was_rejected & entry_mask
+        n_rejected = int(rejected_mask.sum())
+        if n_rejected > 0:
+            # 模拟这些被丢弃信号的 R
+            tmp = merged.copy()
+            tmp["entry_direction"] = 0.0
+            tmp.loc[rejected_mask, "entry_direction"] = tmp.loc[
+                rejected_mask, f"_{arch_name}_dir"
+            ]
+            ec = arch_exec_configs.get(arch_name, first_exec)
+            cf_returns = simulate_rr_execution(
+                tmp,
+                ec,
+                atr_col="atr",
+                silent=True,
+            )
+            cf_valid = cf_returns.dropna()
+            if len(cf_valid) > 0:
+                print(
+                    f"   {arch_name} rejected: {len(cf_valid)} trades, "
+                    f"mean_R={cf_valid.mean():.4f}, win={( cf_valid > 0).mean():.2%}"
+                )
+
+    # ── 8. 可选输出 ──
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        html = _generate_per_symbol_html(
+            df=merged,
+            exec_returns=exec_returns,
+            exec_config=first_exec,
+            strategy="pcm_" + "_".join(arch_names),
+            span_years=span_years,
+        )
+        html_path = output_path.with_suffix(".html")
+        Path(html_path).write_text(html, encoding="utf-8")
+        print(f"\n   📊 Per-Symbol HTML Report: {html_path}")
+
+    if args.export_signals:
+        export_path = Path(args.export_signals)
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        has_dir = merged["entry_direction"] != 0
+        export_data = {
+            "symbol": merged.loc[has_dir, sym_col].values,
+            "archetype": merged.loc[has_dir, "_pcm_archetype"].values,
+            "direction": merged.loc[has_dir, "entry_direction"].values,
+            "evidence_score": merged.loc[has_dir, "evidence_score"].values,
+        }
+        if "timestamp" in merged.columns:
+            export_data["timestamp"] = merged.loc[has_dir, "timestamp"].values
+        export_df = pd.DataFrame(export_data)
+        export_df.to_csv(export_path, index=False)
+        print(f"\n   📤 Signals exported: {len(export_df)} rows → {export_path}")
+
+    print("\n" + "=" * 80)
+    return 0
 
 
 # ================================================================
@@ -1493,11 +1982,27 @@ def main() -> int:
     )
     p.add_argument(
         "--logs",
-        required=True,
+        required=False,
+        default=None,
         help="Input logs file (predictions.parquet or logs_gated.parquet)",
     )
-    p.add_argument("--strategy", required=True, help="Strategy name (e.g., bpc)")
+    p.add_argument(
+        "--strategy", required=False, default=None, help="Strategy name (e.g., bpc)"
+    )
     p.add_argument("--strategies-root", default="config/strategies")
+    p.add_argument(
+        "--pcm",
+        nargs="+",
+        default=None,
+        help="Multi-archetype PCM mode: archetype:path pairs. "
+        "Example: --pcm bpc:results/bpc/predictions.parquet me:results/me/predictions.parquet",
+    )
+    p.add_argument(
+        "--max-slots",
+        type=int,
+        default=2,
+        help="Max concurrent slots for PCM mode (default: 2)",
+    )
     p.add_argument("--features-store-root", default="feature_store")
     p.add_argument(
         "--features-store-layer",
@@ -1556,6 +2061,16 @@ def main() -> int:
         help="Output path for results (HTML report).",
     )
     args = p.parse_args()
+
+    # ── PCM mode: multi-archetype ──
+    if args.pcm:
+        return _run_pcm_mode(args)
+
+    # ── Single-archetype mode: validate required args ──
+    if not args.logs:
+        p.error("--logs is required (or use --pcm for multi-archetype mode)")
+    if not args.strategy:
+        p.error("--strategy is required (or use --pcm for multi-archetype mode)")
 
     # Auto-detect feature store layer if not specified (may not be needed if logs have OHLC)
     if not args.features_store_layer:
@@ -1651,8 +2166,11 @@ def main() -> int:
     if has_ohlc:
         # 日志已包含连续 OHLC → 直接使用（常见路径: predictions.parquet）
         merged = df.copy()
-        # 按 symbol 排序，保证每个 symbol 内部按原始顺序连续
-        merged = merged.sort_values(["symbol"]).reset_index(drop=True)
+        # 按 (symbol, timestamp) 排序，保证每个 symbol 内部按时间连续
+        sort_cols = ["symbol"]
+        if "timestamp" in merged.columns:
+            sort_cols.append("timestamp")
+        merged = merged.sort_values(sort_cols).reset_index(drop=True)
         print(
             f"\n🔄 Using OHLC from logs: {len(merged)} continuous bars, {n_entries} entries"
         )

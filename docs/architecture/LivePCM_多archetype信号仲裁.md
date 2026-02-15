@@ -131,7 +131,41 @@ pcm.register("me", me)
 # 完成。无需改动 run_live.py 的其他代码。
 ```
 
-## 7. 测试覆盖
+## 7. 研究回测评估
+
+### 7.1 功能
+
+`backtest_execution_layer.py --pcm` 模式支持多 archetype PCM 仲裁回测：
+
+1. 同时加载多个 archetype 的 `predictions.parquet`
+2. 各自独立处理 gate / entry_filter / evidence
+3. 合并后用 PCM 仲裁选 winner（固定优先级 + Evidence）
+4. 用 winner archetype 的 `execution.yaml` 参数做逐 bar 执行模拟
+5. 输出：总体 Sharpe、Per-Symbol、Per-Archetype 统计 + 反事实分析
+
+### 7.2 用法
+
+```bash
+# 单 archetype（无 PCM）
+python scripts/backtest_execution_layer.py \
+    --logs results/.../bpc/predictions.parquet \
+    --strategy bpc
+
+# 多 archetype PCM 仲裁
+python scripts/backtest_execution_layer.py \
+    --pcm bpc:results/bpc/predictions.parquet \
+         me:results/me/predictions.parquet \
+    --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01
+```
+
+### 7.3 设计要点
+
+- 单 archetype `--pcm bpc:path` 与 `--logs path --strategy bpc` 结果完全一致（已验证）
+- 仲裁逻辑与实盘 LivePCM 一致：`(priority_rank, -evidence)` 排序
+- Per-entry 执行参数：每笔交易使用 winning archetype 的 `execution.yaml`（`_tier_*` 列）
+- 反事实分析：统计被 PCM 丢弃信号的后续 R-multiple
+
+## 8. 测试覆盖
 
 ### 单元测试（24 个）
 
