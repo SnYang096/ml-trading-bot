@@ -63,9 +63,9 @@ def load_raw_data(
                 order_flow_cols = [
                     "cvd",
                     "taker_buy_ratio",
-                    "cvd_short",
-                    "cvd_medium",
-                    "cvd_long",
+                    "cvd_roll20",
+                    "cvd_roll60",
+                    "cvd_roll288",
                     "cvd_change_1",
                     "cvd_change_5",
                     "cvd_change_20",

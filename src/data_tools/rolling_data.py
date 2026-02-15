@@ -187,9 +187,9 @@ def add_order_flow_features(
         per_interval["taker_buy_ratio"] = per_interval["taker_buy_ratio"].fillna(0.5)
 
         delta = per_interval["buy_qty"] - per_interval["sell_qty"]
-        per_interval["cvd_short"] = delta.rolling(window=20, min_periods=1).sum()
-        per_interval["cvd_medium"] = delta.rolling(window=60, min_periods=1).sum()
-        per_interval["cvd_long"] = delta.rolling(window=288, min_periods=1).sum()
+        per_interval["cvd_roll20"] = delta.rolling(window=20, min_periods=1).sum()
+        per_interval["cvd_roll60"] = delta.rolling(window=60, min_periods=1).sum()
+        per_interval["cvd_roll288"] = delta.rolling(window=288, min_periods=1).sum()
         per_interval["cvd_change_1"] = delta
         per_interval["cvd_change_5"] = delta.rolling(window=5).sum()
         per_interval["cvd_change_20"] = delta.rolling(window=20).sum()
@@ -208,9 +208,9 @@ def add_order_flow_features(
                         "sell_qty",
                         "taker_buy_ratio",
                         "cvd",
-                        "cvd_short",
-                        "cvd_medium",
-                        "cvd_long",
+                        "cvd_roll20",
+                        "cvd_roll60",
+                        "cvd_roll288",
                         "cvd_change_1",
                         "cvd_change_5",
                         "cvd_change_20",

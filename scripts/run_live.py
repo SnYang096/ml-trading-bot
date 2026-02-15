@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
@@ -122,7 +123,76 @@ def _setup_bpc(
         f"[bpc] Initialized: {len(symbols)} symbols, "
         f"bar_minutes={bar_minutes}, window={window_minutes}min"
     )
-    return manager
+    return manager, bpc
+
+
+def _compute_initial_quantiles(
+    bpc,
+    manager: MultiSymbolManager,
+    storage: StorageManager,
+) -> None:
+    """Warmup 后为 BPC 的 Evidence 模块计算分位数阈值。
+
+    从磁盘加载每个 symbol 的历史 bars + ticks，用
+    compute_features_dataframe() 得到完整 DataFrame，然后
+    合并所有 symbol 的数据计算 quantiles。
+    """
+    from src.time_series_model.live.bpc_live_strategy import BPCLiveStrategy
+
+    if not isinstance(bpc, BPCLiveStrategy):
+        return
+
+    # 使用全部可用历史数据（与 warmup 准备的数据一致）
+    # 默认 180 天 = 6 个月，可通过环境变量覆盖
+    quantile_lookback_days = int(os.getenv("MLBOT_QUANTILE_LOOKBACK_DAYS", "180"))
+
+    all_dfs: List[pd.DataFrame] = []
+    now = pd.Timestamp.now(tz="UTC")
+
+    for symbol, listener in manager.listeners.items():
+        try:
+            # 加载全部可用 bars（默认 180 天，覆盖 atr_percentile 等长 lookback）
+            bar_start = (now - timedelta(days=quantile_lookback_days)).strftime(
+                "%Y-%m-%d"
+            )
+            bar_end = now.strftime("%Y-%m-%d")
+            bars_disk = storage.bar_1min.load_range(symbol, bar_start, bar_end)
+            if bars_disk.empty:
+                logger.warning("[quantiles] %s: bars 为空，跳过", symbol)
+                continue
+
+            # 加载 ticks（VPIN 需要 7 天，用 8 天保险）
+            tick_start = (now - timedelta(days=8)).strftime("%Y-%m-%d")
+            ticks_disk = storage.ticks.load_range(symbol, tick_start, bar_end)
+
+            # 计算完整特征 DataFrame
+            fc = listener.feature_computer
+            features_df = fc.compute_features_dataframe(
+                bars_1min=bars_disk,
+                ticks_1min=ticks_disk,
+            )
+            if features_df is not None and not features_df.empty:
+                all_dfs.append(features_df)
+                logger.info(
+                    "[quantiles] %s: %d rows × %d cols",
+                    symbol,
+                    len(features_df),
+                    len(features_df.columns),
+                )
+        except Exception as e:
+            logger.warning("[quantiles] %s 失败: %s", symbol, e)
+
+    if not all_dfs:
+        logger.warning("[quantiles] 无可用数据，跳过 quantile 计算")
+        return
+
+    combined = pd.concat(all_dfs, ignore_index=True)
+    bpc.set_quantiles_from_df(combined)
+    logger.info(
+        "[quantiles] 完成: %d symbols, %d 总行数",
+        len(all_dfs),
+        len(combined),
+    )
 
 
 async def main() -> None:
@@ -151,7 +221,7 @@ async def main() -> None:
 
     logger.info(f"🚀 Starting live trading: symbols={symbols}")
 
-    manager = _setup_bpc(symbols, storage, gap_filler, trade_size)
+    manager, bpc = _setup_bpc(symbols, storage, gap_filler, trade_size)
 
     # Warmup 与启动质量闸门
     if warmup_days > 0:
@@ -190,6 +260,9 @@ async def main() -> None:
             logger.warning(
                 "   System will auto-upgrade to NORMAL when data is complete."
             )
+
+    # ── 计算 Evidence 分位数阈值（从历史数据）──
+    _compute_initial_quantiles(bpc, manager, storage)
 
     await manager.start_all()
 

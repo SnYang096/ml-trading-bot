@@ -22,6 +22,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+import pandas as pd
 import yaml
 
 from src.time_series_model.core.trade_intent import TradeIntent
@@ -129,6 +131,9 @@ class BPCLiveStrategy:
         self._holding_cfg: Dict[str, Any] = {}
         self._ef_state: Optional[DerivedEntryFeatureState] = None
 
+        # Evidence 分位数查找表（从历史数据计算）
+        self._quantiles: Dict[str, Dict[str, float]] = {}
+
         # 当前决策缓存 (上一次 decide() 的 tier params，供日志用)
         self._last_tier_params: Optional[Dict[str, Any]] = None
 
@@ -206,6 +211,100 @@ class BPCLiveStrategy:
             import traceback
 
             logger.error(traceback.format_exc())
+
+    # ────────────────────────────────────────────────────
+    # Evidence Quantile 计算
+    # ────────────────────────────────────────────────────
+
+    def set_quantiles_from_df(self, features_df: pd.DataFrame) -> None:
+        """从历史特征 DataFrame 计算 evidence + gate 分位数阈值。
+
+        应在初始化完成、首次特征批量计算后调用（模拟或实盘均可）。
+        quantiles 格式: {feature_name: {"0.1": val, "0.3": val, ...}}
+        """
+        if self._archetype is None:
+            logger.warning("set_quantiles_from_df: archetype 未加载，跳过")
+            return
+
+        quantiles: Dict[str, Dict[str, float]] = {}
+        n_computed = 0
+
+        # 1. Evidence 特征 quantiles
+        for feat in self._archetype.evidence.features:
+            col = feat.feature
+            if col not in features_df.columns:
+                logger.debug("  evidence feature %s 不在 DataFrame 中", col)
+                continue
+
+            values = pd.to_numeric(features_df[col], errors="coerce").dropna()
+            if len(values) < 10:
+                logger.debug("  evidence feature %s 有效值不足 (%d)", col, len(values))
+                continue
+
+            feat_q: Dict[str, float] = {}
+            for b in feat.quantile_bins:
+                q_val = float(values.quantile(b))
+                q_key = f"{b:.2f}".rstrip("0").rstrip(".")
+                feat_q[q_key] = q_val
+            quantiles[col] = feat_q
+            n_computed += 1
+
+        # 2. Gate quantile 规则 — 扫描 gate 中引用 quantile_* 的特征
+        n_gate_quantiles = 0
+        for rule in self._archetype.gate.all_rules:
+            for feat_name, cond in rule.when.items():
+                if not isinstance(cond, dict):
+                    continue
+                has_q = any(
+                    k in cond
+                    for k in (
+                        "quantile_lt",
+                        "quantile_lte",
+                        "quantile_gt",
+                        "quantile_gte",
+                    )
+                )
+                if not has_q or feat_name in quantiles:
+                    continue
+                if feat_name not in features_df.columns:
+                    continue
+                values = pd.to_numeric(features_df[feat_name], errors="coerce").dropna()
+                if len(values) < 10:
+                    continue
+                # 计算常用百分位
+                feat_q = {}
+                for b in [
+                    0.05,
+                    0.1,
+                    0.15,
+                    0.2,
+                    0.25,
+                    0.3,
+                    0.5,
+                    0.7,
+                    0.75,
+                    0.8,
+                    0.85,
+                    0.9,
+                    0.95,
+                ]:
+                    q_val = float(values.quantile(b))
+                    q_key = f"{b:.2f}".rstrip("0").rstrip(".")
+                    feat_q[q_key] = q_val
+                quantiles[feat_name] = feat_q
+                n_gate_quantiles += 1
+
+        self._quantiles = quantiles
+        logger.info(
+            "Quantiles 已计算: evidence=%d/%d, gate=%d, 基于 %d 行数据",
+            n_computed,
+            len(self._archetype.evidence.features),
+            n_gate_quantiles,
+            len(features_df),
+        )
+        if quantiles:
+            for col, q in quantiles.items():
+                logger.info("  %s: %s", col, q)
 
     # ────────────────────────────────────────────────────
     # 核心决策接口 — decide(features, symbol) → List[TradeIntent]
@@ -309,7 +408,7 @@ class BPCLiveStrategy:
         # ── 2. Gate 检查 ──
         if self._archetype is not None:
             gate_passed, gate_reasons, gate_weight = self._archetype.apply_gate(
-                features
+                features, self._quantiles or None
             )
             if not gate_passed:
                 return False, {
@@ -336,7 +435,7 @@ class BPCLiveStrategy:
         evidence_breakdown = {}
         if self._archetype is not None:
             evidence_score, evidence_breakdown = self._archetype.compute_evidence_score(
-                features
+                features, self._quantiles or None
             )
 
         # 应用 gate soft filter weight

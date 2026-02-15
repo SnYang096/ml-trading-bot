@@ -1,8 +1,11 @@
 """
-基线策略Demo
-基于测试网实现：开一次空单、开一次多单、关闭它们
+订单管理系统测试Demo
 
-这是一个简单的基线demo，用于验证订单管理系统的功能。
+测试场景：
+1. 开多单 + 止损/止盈
+2. 加仓（独立多单 + 独立止损/止盈）
+3. 移动止损
+4. 反向开仓（平多 → 开空）
 """
 
 import os
@@ -490,17 +493,103 @@ def print_summary(system: dict):
     logger.info("=" * 80)
 
 
-async def run_demo_async(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False):
+def place_stop_loss(system: dict, symbol: str, position_size: float, stop_price: float) -> Optional[str]:
     """
-    异步版本的运行基线策略demo
+    下止损单（STOP_MARKET, reduceOnly=true）
+    
+    Args:
+        system: 系统组件
+        symbol: 交易对
+        position_size: 持仓数量
+        stop_price: 止损价格
+    
+    Returns:
+        订单ID
+    """
+    order_manager = system["order_manager"]
+    
+    try:
+        # 多单止损 = 下跌时触发卖出
+        order = order_manager.place_order(
+            symbol=symbol,
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_MARKET,
+            quantity=position_size,
+            stop_price=stop_price,
+            reduce_only=True,
+        )
+        logger.info(f"✅ 止损单已下: order_id={order.order_id}, stop_price={stop_price}")
+        return order.order_id
+    except Exception as e:
+        logger.error(f"❌ 下止损单失败: {e}", exc_info=True)
+        return None
+
+
+def place_take_profit(system: dict, symbol: str, position_size: float, take_profit_price: float) -> Optional[str]:
+    """
+    下止盈单（TAKE_PROFIT_MARKET, reduceOnly=true）
+    
+    Args:
+        system: 系统组件
+        symbol: 交易对
+        position_size: 持仓数量
+        take_profit_price: 止盈价格
+    
+    Returns:
+        订单ID
+    """
+    order_manager = system["order_manager"]
+    
+    try:
+        # 多单止盈 = 上涨时触发卖出
+        order = order_manager.place_order(
+            symbol=symbol,
+            side=OrderSide.SELL,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            quantity=position_size,
+            stop_price=take_profit_price,
+            reduce_only=True,
+        )
+        logger.info(f"✅ 止盈单已下: order_id={order.order_id}, take_profit_price={take_profit_price}")
+        return order.order_id
+    except Exception as e:
+        logger.error(f"❌ 下止盈单失败: {e}", exc_info=True)
+        return None
+
+
+def get_binance_positions(binance_api: BinanceAPI, symbol: str) -> dict:
+    """
+    查询 Binance 真实持仓
+    
+    Returns:
+        {'long': float, 'short': float}
+    """
+    positions = binance_api.get_positions(symbol)
+    result = {'long': 0.0, 'short': 0.0}
+    
+    for pos in positions:
+        side = pos.get('side', '').lower()
+        amount = abs(pos.get('contracts', 0.0) or pos.get('amount', 0.0))
+        
+        if side == 'long':
+            result['long'] = amount
+        elif side == 'short':
+            result['short'] = amount
+    
+    return result
+
+
+async def run_demo_async(symbol: str = "XRPUSDT", size: float = 50.0, testnet: bool = False):
+    """
+    测试订单管理系统的完整流程
 
     Args:
-        symbol: 交易对符号（默认: BTCUSDT）
-        size: 仓位大小（默认: 0.001）
+        symbol: 交易对符号（默认: XRPUSDT）
+        size: 仓位大小（默认: 50）
         testnet: 是否使用测试网（默认: False，使用主网）
     """
     logger.info("=" * 80)
-    logger.info("🚀 启动基线策略Demo")
+    logger.info("🚀 启动订单管理测试Demo")
     logger.info("=" * 80)
     logger.info(f"交易对: {symbol}")
     logger.info(f"仓位大小: {size}")
@@ -518,6 +607,8 @@ async def run_demo_async(symbol: str = "BTCUSDT", size: float = 0.001, testnet: 
         system = setup_system(testnet=testnet)
         user_stream = system["user_stream"]
         backup_manager = system.get("backup_manager")
+        binance_api = system["binance_api"]
+        order_manager = system["order_manager"]
 
         # 2. 启动 User Data Stream
         await user_stream.start()
@@ -528,46 +619,170 @@ async def run_demo_async(symbol: str = "BTCUSDT", size: float = 0.001, testnet: 
             await backup_manager.start()
             logger.info("✅ 数据库备份任务已启动")
 
-        # 4. 开空单（SHORT）
-        short_position_id, short_order_id = open_short_position(system, symbol, size)
-        if not short_position_id:
-            logger.error("❌ 开空单失败，终止demo")
-            return
-
-        time.sleep(1)  # 短暂等待
-
-        # 5. 开多单（LONG）
-        long_position_id, long_order_id = open_long_position(system, symbol, size)
+        # ===== 场景 1: 开多单 + 止损/止盈 =====
+        logger.info("\n" + "=" * 80)
+        logger.info("场景 1: 开多单 + 止损/止盈")
+        logger.info("=" * 80)
+        
+        long_position_id, _ = open_long_position(system, symbol, size)
         if not long_position_id:
-            logger.error("❌ 开多单失败，终止demo")
+            logger.error("❌ 开多单失败，终止测试")
             return
-
-        time.sleep(1)  # 短暂等待
-
-        # 6. 关闭仓位
+        
+        time.sleep(2)
+        
+        # 获取当前价格
+        current_price = get_current_price(binance_api, symbol)
+        stop_loss_price = current_price * 0.98  # 止损 -2%
+        take_profit_price = current_price * 1.02  # 止盈 +2%
+        
+        logger.info(f"当前价格: {current_price}")
+        logger.info(f"止损价格: {stop_loss_price}")
+        logger.info(f"止盈价格: {take_profit_price}")
+        
+        sl_order_id = place_stop_loss(system, symbol, size, stop_loss_price)
+        tp_order_id = place_take_profit(system, symbol, size, take_profit_price)
+        
+        time.sleep(2)
+        
+        # 验证挂单状态
+        open_orders = order_manager.get_open_orders(symbol)
+        logger.info(f"\n📋 当前挂单数: {len(open_orders)}")
+        for order in open_orders:
+            logger.info(f"  - {order.order_type.value}: {order.side.value}, stop_price={order.stop_price}")
+        
+        # ===== 场景 2: 加仓 =====
+        logger.info("\n" + "=" * 80)
+        logger.info("场景 2: 加仓（独立多单 + 独立止损/止盈）")
         logger.info("=" * 80)
-        logger.info("开始关闭仓位")
+        
+        add_size = size * 0.6  # 加仓 60%
+        long_position_id_2, _ = open_long_position(system, symbol, add_size)
+        if not long_position_id_2:
+            logger.error("❌ 加仓失败")
+        else:
+            time.sleep(2)
+            current_price = get_current_price(binance_api, symbol)
+            sl_order_id_2 = place_stop_loss(system, symbol, add_size, current_price * 0.98)
+            tp_order_id_2 = place_take_profit(system, symbol, add_size, current_price * 1.02)
+        
+        time.sleep(2)
+        
+        # 查询 Binance 真实持仓
+        positions = get_binance_positions(binance_api, symbol)
+        logger.info(f"\n📊 Binance 真实持仓:")
+        logger.info(f"  多单: {positions['long']}")
+        logger.info(f"  空单: {positions['short']}")
+        
+        # ===== 场景 3: 移动止损 =====
+        logger.info("\n" + "=" * 80)
+        logger.info("场景 3: 移动止损")
         logger.info("=" * 80)
-
-        # 关闭SHORT仓位
+        
+        if sl_order_id:
+            try:
+                # 取消旧止损单
+                order_manager.cancel_order(sl_order_id)
+                logger.info(f"✅ 已取消旧止损单: {sl_order_id}")
+                time.sleep(1)
+                
+                # 下新止损单（价格上移）
+                current_price = get_current_price(binance_api, symbol)
+                new_stop_loss = current_price * 0.99  # 新止损 -1%
+                logger.info(f"新止损价格: {new_stop_loss}")
+                sl_order_id = place_stop_loss(system, symbol, size, new_stop_loss)
+            except Exception as e:
+                logger.error(f"❌ 移动止损失败: {e}", exc_info=True)
+        
+        time.sleep(2)
+        
+        # ===== 场景 4: 反向开仓（平多 → 开空）=====
+        logger.info("\n" + "=" * 80)
+        logger.info("场景 4: 反向开仓（平多 → 开空）")
+        logger.info("=" * 80)
+        
+        # 先取消所有挂单
+        open_orders = order_manager.get_open_orders(symbol)
+        logger.info(f"取消 {len(open_orders)} 个挂单...")
+        for order in open_orders:
+            try:
+                order_manager.cancel_order(order.order_id)
+                logger.info(f"  ✅ 已取消: {order.order_id}")
+            except Exception as e:
+                logger.warning(f"  ⚠️ 取消失败: {e}")
+        
+        time.sleep(2)
+        
+        # 查询真实持仓
+        positions = get_binance_positions(binance_api, symbol)
+        total_long = positions['long']
+        
+        if total_long > 0:
+            logger.info(f"平掉所有多单: {total_long}")
+            
+            # 市价平多（reduceOnly=true）
+            order = order_manager.place_order(
+                symbol=symbol,
+                side=OrderSide.SELL,
+                order_type=OrderType.MARKET,
+                quantity=total_long,
+                reduce_only=True,
+            )
+            logger.info(f"✅ 平多单已提交: {order.order_id}")
+            
+            time.sleep(3)
+            
+            # 验证持仓已平
+            positions = get_binance_positions(binance_api, symbol)
+            logger.info(f"平仓后持仓: 多={positions['long']}, 空={positions['short']}")
+        
+        # 开空单
+        logger.info(f"\n开空单: {size}")
+        short_position_id, _ = open_short_position(system, symbol, size)
         if short_position_id:
-            close_position(system, short_position_id, symbol)
-            time.sleep(1)
-
-        # 关闭LONG仓位
-        if long_position_id:
-            close_position(system, long_position_id, symbol)
-            time.sleep(1)
-
+            time.sleep(2)
+            current_price = get_current_price(binance_api, symbol)
+            
+            # 空单止损 = 上涨时触发买入
+            sl_short = order_manager.place_order(
+                symbol=symbol,
+                side=OrderSide.BUY,
+                order_type=OrderType.STOP_MARKET,
+                quantity=size,
+                stop_price=current_price * 1.02,
+                reduce_only=True,
+            )
+            logger.info(f"✅ 空单止损已下: {sl_short.order_id}")
+        
+        time.sleep(2)
+        
+        # 最终清理：平掉所有持仓
+        logger.info("\n" + "=" * 80)
+        logger.info("最终清理：平掉所有持仓")
+        logger.info("=" * 80)
+        
+        positions = get_binance_positions(binance_api, symbol)
+        if positions['short'] > 0:
+            order = order_manager.place_order(
+                symbol=symbol,
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                quantity=positions['short'],
+                reduce_only=True,
+            )
+            logger.info(f"✅ 平空单已提交: {order.order_id}")
+        
+        time.sleep(2)
+        
         # 7. 打印统计信息
         print_summary(system)
 
-        logger.info("=" * 80)
-        logger.info("✅ Demo执行完成")
+        logger.info("\n" + "=" * 80)
+        logger.info("✅ 测试完成")
         logger.info("=" * 80)
 
     except Exception as e:
-        logger.error(f"❌ Demo执行失败: {e}", exc_info=True)
+        logger.error(f"❌ 测试执行失败: {e}", exc_info=True)
     finally:
         # 停止数据库备份
         if backup_manager:
@@ -579,13 +794,13 @@ async def run_demo_async(symbol: str = "BTCUSDT", size: float = 0.001, testnet: 
             logger.info("✅ User Data Stream已停止")
 
 
-def run_demo(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False):
+def run_demo(symbol: str = "XRPUSDT", size: float = 50.0, testnet: bool = False):
     """
-    运行基线策略demo（同步包装器）
+    运行测试demo（同步包装器）
 
     Args:
-        symbol: 交易对符号（默认: BTCUSDT）
-        size: 仓位大小（默认: 0.001）
+        symbol: 交易对符号（默认: XRPUSDT）
+        size: 仓位大小（默认: 50）
         testnet: 是否使用测试网（默认: False，使用主网）
     """
     asyncio.run(run_demo_async(symbol, size, testnet))
@@ -594,12 +809,12 @@ def run_demo(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="基线策略Demo")
+    parser = argparse.ArgumentParser(description="订单管理测试Demo")
     parser.add_argument(
-        "--symbol", type=str, default="BTCUSDT", help="交易对符号（默认: BTCUSDT）"
+        "--symbol", type=str, default="XRPUSDT", help="交易对符号（默认: XRPUSDT）"
     )
     parser.add_argument(
-        "--size", type=float, default=0.001, help="仓位大小（默认: 0.001）"
+        "--size", type=float, default=50.0, help="仓位大小（默认: 50）"
     )
     parser.add_argument(
         "--testnet", action="store_true", help="使用测试网（默认: False，使用主网）"

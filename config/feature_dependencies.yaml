@@ -4502,7 +4502,7 @@ features:
     - trend_r2_20_f
     required_columns:
     - close
-    - cvd
+    - cvd_roll288
     output_columns:
     - cvd_divergence_score
     - cvd_divergence_score_pct
@@ -4521,7 +4521,7 @@ features:
     pass_full_df: false
     column_mappings:
       close: close
-      cvd: cvd
+      cvd: cvd_roll288
       trend_strength: trend_r2_20
     output_normalization_map:
       cvd_divergence_score: bounded_neg1_1

@@ -48,6 +48,18 @@ def _node_to_output_columns(
 
 
 # ---------------------------------------------------------------------------
+# Derived (ef_*) feature → source column dependencies
+# ---------------------------------------------------------------------------
+# DerivedEntryFeatureState 动态计算的 ef_* 特征依赖这些 DAG 特征列，
+# 但 archetype YAML 中只引用 ef_* 名称，自动检测无法发现底层依赖。
+_DERIVED_FEATURE_SOURCE_DEPS: Dict[str, List[str]] = {
+    "ef_liquidity_silence": ["vol_percentile_approx"],
+    "ef_vol_regime_shift": ["bb_width_normalized_pct"],
+    # ef_consolidation_bars 依赖 bpc_was_in_pullback（已由 bpc_soft_phase_f 产出）
+}
+
+
+# ---------------------------------------------------------------------------
 # Archetypes auto-detect (no NN dependency)
 # ---------------------------------------------------------------------------
 
@@ -180,8 +192,27 @@ def extract_features_from_archetypes(
     live_feature_set = _node_to_output_columns(nodes=selected_nodes, feature_deps=deps)
     # Also include raw archetype columns (some computed inline, e.g. ef_*)
     live_feature_set |= feature_columns
-    # Always include OHLCV
-    live_feature_set |= {"open", "high", "low", "close", "volume"}
+
+    # Expand ef_* derived features → their source column dependencies
+    for col in list(feature_columns):
+        src_deps = _DERIVED_FEATURE_SOURCE_DEPS.get(col)
+        if src_deps:
+            for src_col in src_deps:
+                live_feature_set.add(src_col)
+                # Also resolve src_col → feature node
+                candidates = col_to_nodes.get(src_col)
+                if candidates:
+                    best = min(candidates, key=lambda x: x[1])
+                    selected_nodes.add(best[0])
+                    # Add output columns of that node
+                    live_feature_set |= _node_to_output_columns(
+                        nodes=[best[0]], feature_deps=deps
+                    )
+
+    # Always include OHLCV + execution-critical columns
+    # atr is needed by pick_atr() for stop loss distance calculation
+    # bb_width_normalized_pct is an intermediate for bpc_bb_compression but useful for diagnostics
+    live_feature_set |= {"open", "high", "low", "close", "volume", "atr"}
 
     # Deduplicated ordered list
     ordered = sorted(selected_nodes)

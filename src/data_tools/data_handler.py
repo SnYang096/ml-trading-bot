@@ -28,6 +28,13 @@ from src.data_tools.processors import (
 TIMEFRAME_CACHE_DIR = Path("cache/timeframes")
 TIMEFRAME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+# Backward-compatible rename map: old parquet column names -> new names
+_CVD_RENAME_MAP = {
+    "cvd_short": "cvd_roll20",
+    "cvd_medium": "cvd_roll60",
+    "cvd_long": "cvd_roll288",
+}
+
 
 class MarketDataLoader:
     """Handles loading of tick-level parquet and resamples to requested timeframe."""
@@ -134,6 +141,15 @@ class MarketDataLoader:
                 )
                 df_cached.to_parquet(cache_file)
                 df_cached.index = pd.to_datetime(df_cached.index)
+
+        # Backward-compat: rename old CVD column names from cache/parquet files
+        rename_cols = {
+            k: v
+            for k, v in _CVD_RENAME_MAP.items()
+            if k in df_cached.columns and v not in df_cached.columns
+        }
+        if rename_cols:
+            df_cached = df_cached.rename(columns=rename_cols)
 
         df_subset = df_cached.loc[
             (df_cached.index >= start_ts) & (df_cached.index <= end_ts)
@@ -315,6 +331,15 @@ class MarketDataLoader:
             df = df.set_index("timestamp")
         df = df.sort_index()
 
+        # Backward-compat: rename old CVD column names from existing parquet files
+        rename_cols = {
+            k: v
+            for k, v in _CVD_RENAME_MAP.items()
+            if k in df.columns and v not in df.columns
+        }
+        if rename_cols:
+            df = df.rename(columns=rename_cols)
+
         agg_dict = {
             "open": "first",
             "high": "max",
@@ -327,9 +352,9 @@ class MarketDataLoader:
             "sell_qty",
             "taker_buy_ratio",
             "cvd",
-            "cvd_short",
-            "cvd_medium",
-            "cvd_long",
+            "cvd_roll20",
+            "cvd_roll60",
+            "cvd_roll288",
             "cvd_change_1",
             "cvd_change_5",
             "cvd_change_20",
@@ -378,9 +403,9 @@ class MarketDataLoader:
             result["cvd_change_1"] = delta
             result["cvd_change_5"] = delta.rolling(window=5, min_periods=1).sum()
             result["cvd_change_20"] = delta.rolling(window=20, min_periods=1).sum()
-            result["cvd_short"] = delta.rolling(window=20, min_periods=1).sum()
-            result["cvd_medium"] = delta.rolling(window=60, min_periods=1).sum()
-            result["cvd_long"] = delta.rolling(window=288, min_periods=1).sum()
+            result["cvd_roll20"] = delta.rolling(window=20, min_periods=1).sum()
+            result["cvd_roll60"] = delta.rolling(window=60, min_periods=1).sum()
+            result["cvd_roll288"] = delta.rolling(window=288, min_periods=1).sum()
             result["cvd"] = delta.cumsum()
             result["cvd_normalized"] = delta / total_flow.replace(0, np.nan)
             result["cvd_normalized"] = result["cvd_normalized"].fillna(0)
@@ -397,9 +422,9 @@ class MarketDataLoader:
                 "sell_qty",
                 "taker_buy_ratio",
                 "cvd",
-                "cvd_short",
-                "cvd_medium",
-                "cvd_long",
+                "cvd_roll20",
+                "cvd_roll60",
+                "cvd_roll288",
                 "cvd_change_1",
                 "cvd_change_5",
                 "cvd_change_20",
@@ -509,9 +534,9 @@ class DataHandler:
         "sell_qty",
         "taker_buy_ratio",
         "cvd",
-        "cvd_short",
-        "cvd_medium",
-        "cvd_long",
+        "cvd_roll20",
+        "cvd_roll60",
+        "cvd_roll288",
         "cvd_change_1",
         "cvd_change_5",
         "cvd_change_20",

@@ -18,7 +18,8 @@ Execution Layer Backtest - 逐K线路径模拟 (Bar-by-Bar Execution Simulation)
     # 启用 Tiers + Noise Penalty
     python scripts/backtest_execution_layer.py \\
         --logs results/train_final_xxx/bpc/predictions.parquet \\
-        --strategy bpc --tiers --noise-penalty
+        --strategy bpc --tiers --noise-penalty \\
+        --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01
 
 输出:
     - Sharpe Ratio (bar-by-bar 模拟)
@@ -62,10 +63,63 @@ def load_evidence_config(
         return yaml.safe_load(f) or {}
 
 
+def compute_evidence_quantiles(
+    df: pd.DataFrame,
+    evidence_cfg: Dict[str, Any],
+    silent: bool = False,
+) -> Dict[str, List[float]]:
+    """从 DataFrame 计算 evidence 分位数阈值。
+
+    与实盘 BPCLiveStrategy.set_quantiles_from_df() 完全一致的逻辑。
+    返回 {feature_name: [threshold_at_bin0, threshold_at_bin1, ...]}。
+
+    用于在 backtest 中从训练/校准数据预计算阈值，
+    避免用整个 OOS 数据计算导致 look-ahead bias。
+    """
+    evidence_list = evidence_cfg.get("evidence", [])
+    quantiles: Dict[str, List[float]] = {}
+    n_computed = 0
+
+    for ev in evidence_list:
+        feat = ev.get("feature", "")
+        if feat not in df.columns:
+            continue
+
+        qmap = ev.get("quantile_mapping", {})
+        bins = qmap.get("bins", [])
+        if not bins:
+            continue
+
+        values = pd.to_numeric(df[feat], errors="coerce").dropna()
+        if len(values) < 10:
+            continue
+
+        thresholds = [float(values.quantile(b)) for b in bins]
+        quantiles[feat] = thresholds
+        n_computed += 1
+
+    if not silent:
+        print(
+            f"   📊 Evidence quantiles 已计算: {n_computed}/{len(evidence_list)} features, "
+            f"基于 {len(df)} 行校准数据"
+        )
+        for feat, thresholds in quantiles.items():
+            bins = []
+            for ev in evidence_list:
+                if ev.get("feature") == feat:
+                    bins = ev.get("quantile_mapping", {}).get("bins", [])
+                    break
+            pairs = [f"{b:.2f}→{t:.4f}" for b, t in zip(bins, thresholds)]
+            print(f"      {feat}: [{', '.join(pairs)}]")
+
+    return quantiles
+
+
 def compute_evidence_scores(
     df: pd.DataFrame,
     evidence_cfg: Dict[str, Any],
     silent: bool = False,
+    precomputed_quantiles: Optional[Dict[str, List[float]]] = None,
 ) -> pd.Series:
     """
     计算 Evidence 综合评分（向量化版本）
@@ -77,7 +131,23 @@ def compute_evidence_scores(
       - quantile_mapping: { bins, labels }
 
     对每个 bar，按加权平均计算 composite evidence_score ∈ [0,1]。
+
+    Args:
+        precomputed_quantiles: 预计算的分位数阈值（必须）。
+            格式: {feature_name: [threshold_at_bin0, ...]}。
+            由 compute_evidence_quantiles() 从校准数据预先计算。
+            与实盘 BPCLiveStrategy.set_quantiles_from_df() 对齐。
+
+    Raises:
+        ValueError: 如果 precomputed_quantiles 为 None（禁止 look-ahead）。
     """
+    if precomputed_quantiles is None:
+        raise ValueError(
+            "precomputed_quantiles 不能为 None。"
+            "必须先用 compute_evidence_quantiles() 从校准数据预计算分位数阈值，"
+            "避免 look-ahead bias。参见 --quantile-train-start / --quantile-train-end 参数。"
+        )
+
     evidence_list = evidence_cfg.get("evidence", [])
     if not evidence_list:
         return pd.Series(0.5, index=df.index)  # 无 evidence → 中性
@@ -110,9 +180,13 @@ def compute_evidence_scores(
         if not bins or not labels:
             continue
 
-        # 计算分位数阈值（从 bins 百分位转为实际值）
+        # 使用预计算的分位数阈值（与实盘一致，无 look-ahead）
         values = df[feat].astype(float)
-        thresholds = [values.quantile(b) for b in bins]
+        if feat in precomputed_quantiles:
+            thresholds = precomputed_quantiles[feat]
+        else:
+            # 该特征不在校准数据中（可能校准数据缺列），跳过
+            continue
 
         # 向量化分箱
         scores_arr = np.full(len(df), 0.5)  # 默认中性
@@ -1447,6 +1521,27 @@ def main() -> int:
         help="Disable automatic entry filter (skip entry_filters.yaml)",
     )
     p.add_argument(
+        "--quantile-train-start",
+        type=str,
+        default=None,
+        help="Evidence quantile 校准数据开始日期 (YYYY-MM-DD)。"
+        "与 --quantile-train-end 配合，范围须 >= 6 个月，否则报错退出。",
+    )
+    p.add_argument(
+        "--quantile-train-end",
+        type=str,
+        default=None,
+        help="Evidence quantile 校准数据截止日期 (YYYY-MM-DD)。"
+        "用 start~end 范围的数据计算分位数阈值，避免 look-ahead。"
+        "--tiers 模式下必须与 --quantile-train-start 一起指定。",
+    )
+    p.add_argument(
+        "--export-signals",
+        type=str,
+        default=None,
+        help="导出逐 bar 信号决策 CSV，用于与 simulate_bpc_e2e.py 对比验证信号对齐。",
+    )
+    p.add_argument(
         "--breakeven",
         nargs="?",
         const=1.0,
@@ -1515,6 +1610,9 @@ def main() -> int:
         df["entry_direction"] = df["bpc_breakout_direction"].astype(float).copy()
     else:
         df["entry_direction"] = 0.0
+
+    # 保存原始方向（gate/entry_filter 前），用于 --export-signals
+    df["_orig_direction"] = df["entry_direction"].copy()
 
     # Gate 过滤（自动检测）：不删除行（保持 OHLC 连续性），而是将非 allow 行的方向设为 0
     if "gate_decision" in df.columns:
@@ -1601,6 +1699,7 @@ def main() -> int:
         # FeatureStore 的 bpc_breakout_direction 作为入场方向
         if "bpc_breakout_direction" in merged.columns:
             merged["entry_direction"] = merged["bpc_breakout_direction"].astype(float)
+            merged["_orig_direction"] = merged["entry_direction"].copy()
         else:
             print("❌ No bpc_breakout_direction in FeatureStore")
             return 1
@@ -1645,7 +1744,67 @@ def main() -> int:
         else:
             print("\n🏷️  Tier Mode: computing evidence scores...")
             evidence_cfg = load_evidence_config(args.strategy, args.strategies_root)
-            evidence_scores = compute_evidence_scores(merged, evidence_cfg)
+
+            # ── 预计算 quantiles（避免 look-ahead，与实盘对齐）──
+            if not args.quantile_train_start or not args.quantile_train_end:
+                print(
+                    "❌ --tiers 模式需要 --quantile-train-start DATE --quantile-train-end DATE"
+                )
+                print(
+                    "   示例: --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01"
+                )
+                return 1
+
+            train_start = pd.Timestamp(args.quantile_train_start)
+            train_end = pd.Timestamp(args.quantile_train_end)
+            if (train_end - train_start).days < 180:
+                print(
+                    f"❌ 校准数据时间范围不足 6 个月: "
+                    f"{train_start.date()} ~ {train_end.date()} "
+                    f"({(train_end - train_start).days} 天)"
+                )
+                return 1
+
+            # 确保 merged 有 timestamp 列
+            ts_col = None
+            if "timestamp" in merged.columns:
+                ts_col = "timestamp"
+            elif isinstance(merged.index, pd.DatetimeIndex):
+                merged["_ts_tmp"] = merged.index
+                ts_col = "_ts_tmp"
+
+            if ts_col is None:
+                print("❌ 数据中没有 timestamp 列，无法按日期切分校准数据")
+                return 1
+
+            merged[ts_col] = pd.to_datetime(merged[ts_col], utc=True)
+            calib_mask = (merged[ts_col] >= train_start.tz_localize("UTC")) & (
+                merged[ts_col] < train_end.tz_localize("UTC")
+            )
+            calib_df = merged[calib_mask]
+
+            if len(calib_df) < 50:
+                print(
+                    f"❌ 校准数据不足: {len(calib_df)} 行 "
+                    f"(需要 {train_start.date()} ~ {train_end.date()} 至少 6 个月数据)"
+                )
+                return 1
+
+            print(
+                f"   📐 Quantile calibration: {len(calib_df)} rows "
+                f"({train_start.date()} ~ {train_end.date()}, no look-ahead)"
+            )
+            precomputed_quantiles = compute_evidence_quantiles(calib_df, evidence_cfg)
+
+            # 清理临时列
+            if "_ts_tmp" in merged.columns:
+                merged.drop(columns=["_ts_tmp"], inplace=True)
+
+            evidence_scores = compute_evidence_scores(
+                merged,
+                evidence_cfg,
+                precomputed_quantiles=precomputed_quantiles,
+            )
             merged["evidence_score"] = evidence_scores.values
 
             assign_tiers(merged, tiers_cfg, evidence_scores, exec_config)
@@ -1908,6 +2067,29 @@ def main() -> int:
         html_path = output_path.with_suffix(".html")
         Path(html_path).write_text(html, encoding="utf-8")
         print(f"\n   📊 Per-Symbol HTML Report: {html_path}")
+
+    # ── Export signals CSV（信号对齐验证）──
+    if args.export_signals:
+        export_path = Path(args.export_signals)
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
+        has_dir = merged["_orig_direction"] != 0
+        export_data = {
+            "symbol": merged.loc[has_dir, sym_col].values,
+        }
+        if "timestamp" in merged.columns:
+            export_data["timestamp"] = merged.loc[has_dir, "timestamp"].values
+        elif isinstance(merged.index, pd.DatetimeIndex):
+            export_data["timestamp"] = merged.index[has_dir]
+        export_data["direction"] = merged.loc[has_dir, "_orig_direction"].values
+        export_data["entry_direction"] = merged.loc[has_dir, "entry_direction"].values
+        if "evidence_score" in merged.columns:
+            export_data["evidence_score"] = merged.loc[has_dir, "evidence_score"].values
+        if "_tier_name" in merged.columns:
+            export_data["tier"] = merged.loc[has_dir, "_tier_name"].values
+        export_df = pd.DataFrame(export_data)
+        export_df.to_csv(export_path, index=False)
+        print(f"\n   📤 Signals exported: {len(export_df)} rows → {export_path}")
 
     print("\n" + "=" * 80)
 

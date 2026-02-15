@@ -580,31 +580,53 @@ def _evaluate_when_clause(
                 return False
 
         # 分位数比较
-        if quantiles:
+        has_quantile_cond = any(
+            k in cond
+            for k in ("quantile_lt", "quantile_lte", "quantile_gt", "quantile_gte")
+        )
+        if has_quantile_cond:
+            if not quantiles:
+                raise ValueError(
+                    f"Gate rule requires quantiles for '{key}' but quantiles=None. "
+                    f"Ensure set_quantiles_from_df() is called before apply_gate()."
+                )
             feat_q = quantiles.get(key, {})
+            if not feat_q:
+                raise ValueError(
+                    f"Gate rule requires quantile for '{key}' but it is missing from quantiles dict. "
+                    f"Available keys: {list(quantiles.keys())}"
+                )
 
             if "quantile_lt" in cond:
                 q = float(cond["quantile_lt"])
                 thresh = _get_quantile_threshold(feat_q, q)
-                if thresh is not None and not (value < thresh):
+                if thresh is None:
+                    return False  # 无法获取阈值 → 不匹配
+                if not (value < thresh):
                     return False
 
             if "quantile_lte" in cond:
                 q = float(cond["quantile_lte"])
                 thresh = _get_quantile_threshold(feat_q, q)
-                if thresh is not None and not (value <= thresh):
+                if thresh is None:
+                    return False
+                if not (value <= thresh):
                     return False
 
             if "quantile_gt" in cond:
                 q = float(cond["quantile_gt"])
                 thresh = _get_quantile_threshold(feat_q, q)
-                if thresh is not None and not (value > thresh):
+                if thresh is None:
+                    return False
+                if not (value > thresh):
                     return False
 
             if "quantile_gte" in cond:
                 q = float(cond["quantile_gte"])
                 thresh = _get_quantile_threshold(feat_q, q)
-                if thresh is not None and not (value >= thresh):
+                if thresh is None:
+                    return False
+                if not (value >= thresh):
                     return False
 
     return True

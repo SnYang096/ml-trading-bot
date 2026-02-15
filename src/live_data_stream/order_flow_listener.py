@@ -158,6 +158,10 @@ class OrderFlowListener:
         self._tick_count: int = 0
         self._bar_count: int = 0
         
+        # 节流：上次保存未完成bar的时间
+        self._last_incomplete_save_time: float = 0.0
+        self._incomplete_save_interval: float = 10.0  # 每10秒保存一次
+        
         # 运行状态
         self.is_running = False
         self._stop_event: Optional[asyncio.Event] = None
@@ -363,15 +367,26 @@ class OrderFlowListener:
             self.storage_manager.ticks.append(self.symbol, trading_date, tick_df)
     
     def _periodic_save_incomplete_bar(self) -> None:
-        """定期保存未完成的bar（每10秒）"""
-        # 简化实现：每次tick都保存（实际可以优化为每10秒保存一次）
+        """定期保存未完成的bar（每10秒节流，避免高频 I/O 损坏文件）"""
+        import time as _time
+        now = _time.monotonic()
+        if now - self._last_incomplete_save_time < self._incomplete_save_interval:
+            return  # 节流：距上次保存不到10秒
+        self._last_incomplete_save_time = now
+        
         if self.current_1min_bar is not None:
-            bar_df = pd.DataFrame([self.current_1min_bar])
-            self.storage_manager.save_1min_ticks(
-                self.symbol,
-                bar_df,
-                include_incomplete=True,  # 未完成的bar
-            )
+            try:
+                bar_df = pd.DataFrame([self.current_1min_bar])
+                self.storage_manager.save_1min_ticks(
+                    self.symbol,
+                    bar_df,
+                    include_incomplete=True,  # 未完成的bar
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "save incomplete bar failed: %s", e
+                )
     
     def _compute_and_save_15min_features(self) -> None:
         """从磁盘+Buffer批量计算特征（和研发流程一致）

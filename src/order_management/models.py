@@ -56,7 +56,16 @@ class OperationType(str, Enum):
 
 @dataclass
 class Position:
-    """仓位模型"""
+    """
+    仓位模型
+    
+    archetype: 策略原型（如 'trend', 'mean_reversion'）
+    - 相同 archetype 的订单视为加仓
+    - 不同 archetype 的订单是独立仓位
+    
+    add_count: 加仓次数（用于 slot 控制）
+    parent_position_id: 父仓位 ID（如果是加仓）
+    """
     position_id: str
     symbol: str
     side: PositionSide
@@ -79,6 +88,10 @@ class Position:
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # 新增字段
+    archetype: Optional[str] = None  # 策略原型: 'trend', 'mean_reversion', etc.
+    add_count: int = 0  # 加仓次数
+    parent_position_id: Optional[str] = None  # 父仓位 ID（加仓时指向原始仓位）
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""

@@ -2099,29 +2099,30 @@ def compute_atr_percentile(
     window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
-    """ATR 百分位（压缩检测）。"""
+    """ATR 百分位（压缩检测）。
+
+    warmup 不足（前 window-1 行）保持 NaN，禁止静默降级为 0.5。
+    """
     if "atr" not in df.columns:
         df["atr"] = compute_atr(df["high"], df["low"], df["close"])
     if "atr_percentile" in df.columns:
         return df
 
     series = df["atr"].astype(float)
-    eps = 1e-9
 
     def _percentile(arr: np.ndarray) -> float:
         if len(arr) == 0:
-            return 0.5
+            return np.nan
         current = arr[-1]
         return float(np.mean(arr <= current))
 
     pct = (
         series.rolling(window=window, min_periods=window)
         .apply(_percentile, raw=True)
-        .fillna(0.5)
     )
     if shift:
         pct = pct.shift(shift)
-    df["atr_percentile"] = pct.clip(0.0, 1.0).fillna(0.5)
+    df["atr_percentile"] = pct.clip(0.0, 1.0)
     return df
 
 
@@ -3725,7 +3726,10 @@ def compute_atr_percentile_from_series(
     window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
-    """Narrow-IO ATR percentile (compression detector)."""
+    """Narrow-IO ATR percentile (compression detector).
+
+    warmup 不足（前 window-1 行）保持 NaN，禁止静默降级为 0.5。
+    """
     high = pd.to_numeric(high, errors="coerce").astype(float)
     low = pd.to_numeric(low, errors="coerce").astype(float)
     close = pd.to_numeric(close, errors="coerce").astype(float)
@@ -3733,18 +3737,17 @@ def compute_atr_percentile_from_series(
 
     def _percentile(arr: np.ndarray) -> float:
         if len(arr) == 0:
-            return 0.5
+            return np.nan
         current = arr[-1]
         return float(np.mean(arr <= current))
 
     pct = (
         atr.rolling(window=window, min_periods=window)
         .apply(_percentile, raw=True)
-        .fillna(0.5)
     )
     if shift:
         pct = pct.shift(shift)
-    out = pct.clip(0.0, 1.0).fillna(0.5).rename("atr_percentile")
+    out = pct.clip(0.0, 1.0).rename("atr_percentile")
     return out.to_frame()
 
 
@@ -3761,26 +3764,27 @@ def compute_percentile_rank_from_series(
     
     This is a generic function for computing percentile ranks of any feature.
     Used for features like cvd_change_5_pct, volume_ratio_pct, etc.
+
+    warmup 不足（前 window-1 行）保持 NaN，禁止静默降级为 0.5。
     """
     series = pd.to_numeric(series, errors="coerce").astype(float)
     
     def _percentile(arr: np.ndarray) -> float:
         if len(arr) == 0:
-            return 0.5
+            return np.nan
         current = arr[-1]
         history = arr[:-1]  # Use history only (causal)
         if len(history) == 0:
-            return 0.5
+            return np.nan
         return float(np.mean(history <= current))
     
     pct = (
         series.rolling(window=window, min_periods=window)
         .apply(_percentile, raw=True)
-        .fillna(0.5)
     )
     if shift:
         pct = pct.shift(shift)
-    out = pct.clip(0.0, 1.0).fillna(0.5).rename(output_name)
+    out = pct.clip(0.0, 1.0).rename(output_name)
     return out.to_frame()
 
 

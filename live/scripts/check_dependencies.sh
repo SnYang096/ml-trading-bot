@@ -43,16 +43,21 @@ check_item "universe.yaml 存在" "[ -f ${LIVE_ROOT}/universe.yaml ]"
 check_item "config 目录存在" "[ -d ${LIVE_ROOT}/config ]"
 echo ""
 
-echo "📦 2. feature_store 检查"
+echo "📦 2. Feature Store 状态（已废弃）"
 echo "-----------------------------------------------------------"
-check_item "feature_store 目录存在" "[ -d ${LIVE_ROOT}/feature_store ]"
-
-if [ -d "${LIVE_ROOT}/feature_store/bpc_live_240T" ]; then
-    SYMBOL_COUNT=$(find "${LIVE_ROOT}/feature_store/bpc_live_240T" -mindepth 1 -maxdepth 1 -type d | wc -l)
-    echo "  ℹ️  币种数量: $SYMBOL_COUNT"
-    check_item "至少有 1 个币种的 feature_store" "[ $SYMBOL_COUNT -ge 1 ]"
+echo "  ⚠️  [已废弃] Feature Store 不再使用。"
+echo "  原因: 当前 pipeline 无法基于特征流式计算，只能基于 ticks/bars 流式计算。"
+echo "  现已改为: 基于 ticks/bars 数据实时重算全部特征。"
+echo "  数据来源: ${LIVE_ROOT}/data/ticks/ 和 ${LIVE_ROOT}/data/bars/"
+if [ -d "${LIVE_ROOT}/data/ticks" ]; then
+    TICK_SYMS=$(ls -d ${LIVE_ROOT}/data/ticks/*/ 2>/dev/null | wc -l)
+    echo "  ✅ ticks 数据目录存在: $TICK_SYMS 个币种"
+    TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+    PASSED_CHECKS=$((PASSED_CHECKS + 1))
 else
-    echo "  ⚠️  feature_store layer 不存在，请先运行: ./live/scripts/build_feature_store.sh ${UNIVERSE} 3"
+    echo "  ❌ ${LIVE_ROOT}/data/ticks/ 不存在"
+    echo "  💡 运行: bash live/scripts/prepare_warmup_ticks.sh ${UNIVERSE} 6 --from-local"
+    TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
     FAILED_CHECKS=$((FAILED_CHECKS + 1))
 fi
 echo ""
@@ -103,13 +108,92 @@ fi
 TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
 echo ""
 
-echo "⚙️  5. 策略配置检查"
+echo "⚙️  5. 策略配置检查（实盘目录）"
 echo "-----------------------------------------------------------"
-check_item "config/strategies/bpc 存在" "[ -d config/strategies/bpc ]"
-check_item "meta.yaml 存在" "[ -f config/strategies/bpc/meta.yaml ]"
-check_item "archetypes/gate.yaml 存在" "[ -f config/strategies/bpc/archetypes/gate.yaml ]"
-check_item "archetypes/evidence.yaml 存在" "[ -f config/strategies/bpc/archetypes/evidence.yaml ]"
-check_item "archetypes/execution.yaml 存在" "[ -f config/strategies/bpc/archetypes/execution.yaml ]"
+check_item "${LIVE_ROOT}/config/strategies/bpc 存在" "[ -d ${LIVE_ROOT}/config/strategies/bpc ]"
+check_item "meta.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/bpc/meta.yaml ]"
+check_item "archetypes/gate.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/gate.yaml ]"
+check_item "archetypes/evidence.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/evidence.yaml ]"
+check_item "archetypes/execution.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/execution.yaml ]"
+check_item "archetypes/entry_filters.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/entry_filters.yaml ]"
+echo ""
+
+echo "📅 6. Warmup 数据时间覆盖检查 (至少 6 个月)"
+echo "-----------------------------------------------------------"
+SIX_MONTHS_AGO=$(date -d "6 months ago" +%Y-%m-%d)
+echo "  ℹ️  要求最早数据日期: $SIX_MONTHS_AGO"
+
+WARMUP_OK=true
+if [ -d "${LIVE_ROOT}/data/bars" ]; then
+    for SYM_DIR in "${LIVE_ROOT}/data/bars/"*/; do
+        if [ ! -d "$SYM_DIR" ]; then continue; fi
+        SYM_NAME=$(basename "$SYM_DIR")
+        EARLIEST_FILE=$(ls "$SYM_DIR" 2>/dev/null | sort | head -1)
+        LATEST_FILE=$(ls "$SYM_DIR" 2>/dev/null | sort | tail -1)
+        if [ -z "$EARLIEST_FILE" ]; then
+            echo "  ⚠️  $SYM_NAME: 无 bars 数据"
+            WARMUP_OK=false
+            continue
+        fi
+        # 提取日期 (文件名格式: YYYY-MM-DD.parquet)
+        EARLIEST_DATE=$(echo "$EARLIEST_FILE" | sed 's/\.parquet$//')
+        LATEST_DATE=$(echo "$LATEST_FILE" | sed 's/\.parquet$//')
+        if [[ "$EARLIEST_DATE" > "$SIX_MONTHS_AGO" ]]; then
+            echo "  ⚠️  $SYM_NAME: 最早=$EARLIEST_DATE, 不足 6 个月 (需要 <= $SIX_MONTHS_AGO)"
+            WARMUP_OK=false
+        else
+            echo "  ✅ $SYM_NAME: $EARLIEST_DATE ~ $LATEST_DATE"
+        fi
+    done
+else
+    echo "  ⚠️  ${LIVE_ROOT}/data/bars 目录不存在"
+    WARMUP_OK=false
+fi
+
+TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+if $WARMUP_OK; then
+    echo "  ✅ 所有币种 warmup 数据覆盖充足 (≥ 6 个月)"
+    PASSED_CHECKS=$((PASSED_CHECKS + 1))
+else
+    echo "  ❌ 部分币种 warmup 数据不足 6 个月"
+    echo "  💡 补全命令: bash live/scripts/prepare_warmup_ticks.sh ${UNIVERSE} 6 --from-local"
+    FAILED_CHECKS=$((FAILED_CHECKS + 1))
+fi
+echo ""
+
+echo "📊 7. Evidence 配置完整性检查（实盘目录）"
+echo "-----------------------------------------------------------"
+# 检查 evidence.yaml 非空且有 evidence 节点
+TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+if [ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/evidence.yaml ]; then
+    EV_COUNT=$(grep -c '^ *- id:' ${LIVE_ROOT}/config/strategies/bpc/archetypes/evidence.yaml 2>/dev/null || echo 0)
+    if [ "$EV_COUNT" -ge 1 ]; then
+        echo "  ✅ evidence.yaml: $EV_COUNT 个 evidence 特征"
+        PASSED_CHECKS=$((PASSED_CHECKS + 1))
+    else
+        echo "  ❌ evidence.yaml 存在但无 evidence 特征配置"
+        FAILED_CHECKS=$((FAILED_CHECKS + 1))
+    fi
+else
+    echo "  ❌ evidence.yaml 不存在"
+    FAILED_CHECKS=$((FAILED_CHECKS + 1))
+fi
+
+# 检查 gate.yaml 非空
+TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+if [ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/gate.yaml ]; then
+    GATE_COUNT=$(grep -c '^ *- id:' ${LIVE_ROOT}/config/strategies/bpc/archetypes/gate.yaml 2>/dev/null || echo 0)
+    if [ "$GATE_COUNT" -ge 1 ]; then
+        echo "  ✅ gate.yaml: $GATE_COUNT 个 gate 规则"
+        PASSED_CHECKS=$((PASSED_CHECKS + 1))
+    else
+        echo "  ❌ gate.yaml 存在但无 gate 规则"
+        FAILED_CHECKS=$((FAILED_CHECKS + 1))
+    fi
+else
+    echo "  ❌ gate.yaml 不存在"
+    FAILED_CHECKS=$((FAILED_CHECKS + 1))
+fi
 echo ""
 
 echo "============================================================"

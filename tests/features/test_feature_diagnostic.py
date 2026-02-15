@@ -353,7 +353,7 @@ class TestPercentileRankWarmup:
     """测试百分位 rank 的 warmup 行为"""
 
     def test_shd_pct_warmup_behavior(self):
-        """测试 shd_pct 在 warmup 期间的行为"""
+        """测试 shd_pct 在 warmup 期间的行为: warmup 期间应为 NaN（禁止静默降级为 0.5）"""
         n = 400
         idx = pd.date_range("2024-01-01", periods=n, freq="4H")
 
@@ -366,20 +366,23 @@ class TestPercentileRankWarmup:
 
         shd_pct = result["shd_pct"]
 
-        # 前 288 个点应该是 fillna(0.5)
+        # 前 288 个点应该是 NaN（warmup 不足，不再静默降级为 0.5）
         warmup_period = shd_pct.iloc[:288]
-        warmup_is_constant = (warmup_period == 0.5).all()
+        warmup_all_nan = warmup_period.isna().all()
 
-        # 之后的点应该有变化
+        # 之后的点应该有变化（且不为 NaN）
         post_warmup = shd_pct.iloc[290:]
         post_warmup_has_variance = post_warmup.std() > 0.1
+        post_warmup_no_nan = post_warmup.notna().all()
 
         print(f"\n=== shd_pct warmup 诊断 ===")
-        print(f"前 288 个点是否全为 0.5: {warmup_is_constant}")
+        print(f"前 288 个点是否全为 NaN: {warmup_all_nan}")
         print(f"之后的标准差: {post_warmup.std():.4f}")
+        print(f"之后是否无 NaN: {post_warmup_no_nan}")
 
-        assert warmup_is_constant, "warmup 期间应全为 0.5"
+        assert warmup_all_nan, "warmup 期间应全为 NaN（禁止静默降级为 0.5）"
         assert post_warmup_has_variance, "warmup 后应有变化"
+        assert post_warmup_no_nan, "warmup 后不应有 NaN"
 
 
 class TestIntegrationDiagnostic:

@@ -51,6 +51,12 @@ class BinanceAPI:
         if use_proxy is None:
             # 从环境变量读取
             use_proxy = os.environ.get("USE_SOCKS5_PROXY", "false").lower() == "true"
+            # 或检查是否有 HTTP_PROXY/HTTPS_PROXY 环境变量（主网通常需要）
+            if not use_proxy and not testnet:
+                has_http_proxy = bool(os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY"))
+                if has_http_proxy:
+                    use_proxy = True
+                    proxy_type = "http"  # 环境变量中的代理通常是 HTTP 代理
 
         self.use_proxy = use_proxy  # 允许测试网也使用代理
         self.proxy_type = proxy_type
@@ -126,6 +132,19 @@ class BinanceAPI:
         self.exchange = ccxt.binance(
             {"apiKey": api_key, "secret": api_secret, **exchange_options}
         )
+        
+        # Monkey patch nonce 方法以自动修正时间偏移
+        original_nonce = self.exchange.nonce
+        
+        def patched_nonce():
+            """Binance 的 nonce 就是 timestamp，自动应用偏移修正"""
+            timestamp = original_nonce()
+            # 如果有时间偏移，自动修正
+            if hasattr(self, 'time_offset'):
+                timestamp += self.time_offset
+            return int(timestamp)
+        
+        self.exchange.nonce = patched_nonce
 
         # 如果是测试网，确保URLs正确设置（在创建后手动设置）
         if self.testnet:
@@ -217,6 +236,9 @@ class BinanceAPI:
             logger.info("✅ Markets信息已加载")
         except Exception as e:
             logger.warning(f"⚠️ 预加载markets失败，将在下单时自动加载: {e}")
+        
+        # 检测服务器时间偏移
+        self._check_time_sync()
 
         # 如果是测试网，确保URLs正确设置（在创建后手动设置）
         if self.testnet:
@@ -244,11 +266,43 @@ class BinanceAPI:
         return "wss://fstream.binance.com/ws"
 
     def _get_requests_proxies(self) -> Optional[Dict[str, str]]:
-        """构建requests代理配置"""
+        """构建 requests 代理配置"""
         if not self.use_proxy:
             return None
         proxy_url = f"{self.proxy_type}://{self.proxy_host}:{self.proxy_port}"
         return {"http": proxy_url, "https": proxy_url}
+        
+    def _check_time_sync(self) -> None:
+        """
+        检查本地时间与 Binance 服务器时间的偏移
+            
+        Binance 要求时间误差 < 1000ms，否则订单会被拒绝
+        """
+        try:
+            url = f"{self._get_futures_base_url()}/fapi/v1/time"
+            resp = requests.get(
+                url,
+                timeout=5,
+                proxies=self._get_requests_proxies()
+            )
+            resp.raise_for_status()
+            server_time = resp.json()["serverTime"]
+            local_time = int(datetime.now().timestamp() * 1000)
+            time_diff = server_time - local_time  # 服务器时间 - 本地时间
+                
+            # 保存时间偏移，用于后续签名时自动修正
+            self.time_offset = time_diff
+                
+            if abs(time_diff) > 1000:
+                logger.warning(
+                    f"⚠️ 时间偏移过大: {abs(time_diff)}ms > 1000ms"
+                )
+                logger.warning(f"⚠️ 将自动修正时间偏移: {time_diff}ms")
+            else:
+                logger.info(f"✅ 时间同步正常: 偏移 {time_diff}ms")
+        except Exception as e:
+            logger.warning(f"⚠️ 无法检查时间同步: {e}")
+            self.time_offset = 0
 
     def get_listen_key(self) -> str:
         """创建User Data Stream listenKey（合约）"""

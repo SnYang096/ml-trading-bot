@@ -27,9 +27,9 @@ BASE_DATA_COLUMNS: Set[str] = {
     "delta",
     "taker_buy_ratio",
     "cvd",
-    "cvd_short",
-    "cvd_medium",
-    "cvd_long",
+    "cvd_roll20",
+    "cvd_roll60",
+    "cvd_roll288",
 }
 
 EXCLUDE_PREFIXES: Tuple[str, ...] = (

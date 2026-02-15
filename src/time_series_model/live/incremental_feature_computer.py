@@ -891,9 +891,9 @@ class IncrementalFeatureComputer:
             bars_tf["cvd_change_1"] = delta
             bars_tf["cvd_change_5"] = delta.rolling(window=5, min_periods=1).sum()
             bars_tf["cvd_change_20"] = delta.rolling(window=20, min_periods=1).sum()
-            bars_tf["cvd_short"] = delta.rolling(window=20, min_periods=1).sum()
-            bars_tf["cvd_medium"] = delta.rolling(window=60, min_periods=1).sum()
-            bars_tf["cvd_long"] = delta.rolling(window=288, min_periods=1).sum()
+            bars_tf["cvd_roll20"] = delta.rolling(window=20, min_periods=1).sum()
+            bars_tf["cvd_roll60"] = delta.rolling(window=60, min_periods=1).sum()
+            bars_tf["cvd_roll288"] = delta.rolling(window=288, min_periods=1).sum()
             bars_tf["cvd"] = delta.cumsum()
             bars_tf["cvd_normalized"] = (delta / total_flow.replace(0, np.nan)).fillna(
                 0
@@ -1031,6 +1031,23 @@ class IncrementalFeatureComputer:
                             continue
                     filtered.append(n)
 
+                # ── 3a-fix. 将 skipped 节点的 非-tick 依赖加入 filtered ──
+                # 例如 bpc_soft_phase_f 被跳过（依赖 vpin_features_f），
+                # 但它还依赖 atr_f, bb_width_normalized_pct_f 等非-tick 节点，
+                # 这些必须在 first pass 计算，second pass 才能运行。
+                filtered_set = set(filtered)
+                for n in skipped:
+                    if n in tick_dependent_nodes:
+                        continue  # leaf tick reader，不需要添加依赖
+                    info = feats_cfg.get(n)
+                    if isinstance(info, dict):
+                        for dep in info.get("dependencies") or []:
+                            if dep not in filtered_set and not _has_tick_dependency(
+                                dep
+                            ):
+                                filtered.append(dep)
+                                filtered_set.add(dep)
+
                 bars_tf = self._feature_loader.load_features_from_requested(
                     bars_tf, requested_features=filtered, fit=False
                 )
@@ -1040,6 +1057,88 @@ class IncrementalFeatureComputer:
                     len(skipped),
                     len(bars_tf.columns),
                 )
+
+                # ── 3b. Second pass: compute skipped nodes whose inputs
+                #        are now available (e.g. bpc_soft_phase_f depends on
+                #        vpin/cvd/ofci which were already computed in step 2) ──
+                if skipped:
+                    bar_cols_updated = set(bars_tf.columns)
+                    second_pass = []
+                    for n in skipped:
+                        if n in tick_dependent_nodes:
+                            continue  # leaf tick reader — truly skip
+                        info = feats_cfg.get(n)
+                        if not isinstance(info, dict):
+                            continue
+                        # Collect all columns this node needs as input
+                        col_mappings = info.get("column_mappings") or {}
+                        mapped_cols: set = set()
+                        for v in col_mappings.values():
+                            if isinstance(v, str):
+                                mapped_cols.add(v)
+                            elif isinstance(v, list):
+                                mapped_cols.update(v)
+                        req_cols = set(info.get("required_columns") or [])
+                        all_inputs = mapped_cols | req_cols
+                        if all_inputs and all_inputs.issubset(bar_cols_updated):
+                            second_pass.append(n)
+
+                    if second_pass:
+                        from src.features.registry import get_compute_func
+                        from src.features.loader.feature_computer import (
+                            _build_call_args,
+                        )
+                        import inspect
+
+                        for n in second_pass:
+                            try:
+                                info = feats_cfg.get(n)
+                                compute_func_name = info.get("compute_func", n)
+                                cfn = get_compute_func(compute_func_name)
+                                if cfn is None:
+                                    continue
+                                call_args, call_kwargs = _build_call_args(
+                                    info, bars_tf, n
+                                )
+                                sig = inspect.signature(cfn)
+                                accepts_var_kw = any(
+                                    p.kind == inspect.Parameter.VAR_KEYWORD
+                                    for p in sig.parameters.values()
+                                )
+                                if not accepts_var_kw and call_kwargs:
+                                    allowed = set(sig.parameters.keys())
+                                    call_kwargs = {
+                                        k: v
+                                        for k, v in call_kwargs.items()
+                                        if k in allowed
+                                    }
+                                result = cfn(*call_args, **call_kwargs)
+                                # Handle tuple return
+                                output_cols = info.get("output_columns", [n])
+                                if isinstance(result, tuple):
+                                    if len(result) == len(output_cols):
+                                        result = pd.DataFrame(
+                                            dict(zip(output_cols, result))
+                                        )
+                                if isinstance(result, pd.DataFrame):
+                                    new_cols = [
+                                        c
+                                        for c in result.columns
+                                        if c not in bars_tf.columns
+                                    ]
+                                    if new_cols:
+                                        aligned = result[new_cols].reindex(
+                                            bars_tf.index
+                                        )
+                                        bars_tf = pd.concat([bars_tf, aligned], axis=1)
+                                elif isinstance(result, pd.Series):
+                                    if result.name not in bars_tf.columns:
+                                        bars_tf[result.name] = result.reindex(
+                                            bars_tf.index
+                                        )
+                                _logger.info("  Second pass: %s → OK", n)
+                            except Exception as e:
+                                _logger.warning("  Second pass failed for %s: %s", n, e)
             except Exception as e:
                 _logger.warning("  Loader failed: %s", e)
 
@@ -1055,12 +1154,317 @@ class IncrementalFeatureComputer:
                     except (ValueError, TypeError):
                         continue
 
+        # ── 5. 校验: 百分位特征不得为 NaN (warmup 不足) ──
+        _PERCENTILE_SUFFIXES = ("_pct", "_percentile", "percentile_approx")
+        nan_pct_features = []
+        for k in self.live_feature_set or []:
+            if any(k.endswith(s) or s in k for s in _PERCENTILE_SUFFIXES):
+                if k not in features:
+                    nan_pct_features.append(k)
+        if nan_pct_features:
+            raise RuntimeError(
+                f"Warmup 不足: {len(nan_pct_features)} 个百分位特征为 NaN "
+                f"(rolling window 未满足 min_periods). "
+                f"缺失特征: {nan_pct_features}. "
+                f"请增加 warmup 数据量（当前 bars: {len(bars_tf)}）。"
+            )
+
         # 缓存结果（用于 get_features() 兼容接口）
         self._batch_features = features
 
         _logger.info("  Final: %d features", len(features))
         self._log_missing_features(features)
         return features
+
+    def compute_features_dataframe(
+        self,
+        bars_1min: pd.DataFrame,
+        ticks_1min: pd.DataFrame,
+        primary_timeframe: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """与 compute_features_batch 完全一致，但返回完整 DataFrame（所有行）而非仅最后一行。
+
+        用于回放模拟测试：一次性计算全量特征，然后逐行喂给 BPC.decide()。
+        """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        ptf = primary_timeframe or self.primary_timeframe or "240T"
+
+        if bars_1min is None or bars_1min.empty:
+            return pd.DataFrame()
+
+        # ── 1. 重采样 ──
+        bars = bars_1min.copy()
+        if not isinstance(bars.index, pd.DatetimeIndex):
+            if "timestamp" in bars.columns:
+                bars.index = pd.to_datetime(bars["timestamp"], utc=True)
+            else:
+                return pd.DataFrame()
+        if bars.index.tz is None:
+            bars.index = bars.index.tz_localize("UTC")
+
+        agg_dict = {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }
+        for col, agg in [
+            ("buy_volume", "sum"),
+            ("sell_volume", "sum"),
+            ("buy_count", "sum"),
+            ("sell_count", "sum"),
+            ("trade_count", "sum"),
+            ("delta", "sum"),
+        ]:
+            if col in bars.columns:
+                agg_dict[col] = agg
+
+        bars_tf = bars.resample(ptf).agg(agg_dict).dropna(subset=["close"])
+
+        if "buy_volume" in bars_tf.columns and "sell_volume" in bars_tf.columns:
+            bars_tf["buy_qty"] = bars_tf["buy_volume"]
+            bars_tf["sell_qty"] = bars_tf["sell_volume"]
+            delta = bars_tf["buy_volume"] - bars_tf["sell_volume"]
+            total_flow = bars_tf["buy_volume"] + bars_tf["sell_volume"]
+            bars_tf["cvd_change_1"] = delta
+            bars_tf["cvd_change_5"] = delta.rolling(5, min_periods=1).sum()
+            bars_tf["cvd_change_20"] = delta.rolling(20, min_periods=1).sum()
+            bars_tf["cvd_roll20"] = delta.rolling(20, min_periods=1).sum()
+            bars_tf["cvd_roll60"] = delta.rolling(60, min_periods=1).sum()
+            bars_tf["cvd_roll288"] = delta.rolling(288, min_periods=1).sum()
+            bars_tf["cvd"] = delta.cumsum()
+            bars_tf["cvd_normalized"] = (delta / total_flow.replace(0, np.nan)).fillna(
+                0
+            )
+            total_flow_5 = total_flow.rolling(5, min_periods=1).sum()
+            bars_tf["cvd_change_5_normalized"] = (
+                bars_tf["cvd_change_5"] / total_flow_5.replace(0, np.nan)
+            ).fillna(0)
+            bars_tf["taker_buy_ratio"] = (
+                bars_tf["buy_volume"] / total_flow.replace(0, np.nan)
+            ).fillna(0.5)
+
+        _logger.info(
+            "compute_features_dataframe: %d 1min bars → %d %s bars",
+            len(bars_1min),
+            len(bars_tf),
+            ptf,
+        )
+        if len(bars_tf) < 10:
+            return pd.DataFrame()
+
+        # ── 2. 订单流特征 ── (same as compute_features_batch)
+        if ticks_1min is not None and not ticks_1min.empty:
+            try:
+                ticks = ticks_1min.copy()
+                if not isinstance(ticks.index, pd.DatetimeIndex):
+                    if "timestamp" in ticks.columns:
+                        ticks.index = pd.to_datetime(ticks["timestamp"], utc=True)
+                if ticks.index.tz is None:
+                    ticks.index = ticks.index.tz_localize("UTC")
+                of_df = extract_order_flow_features(
+                    bars_tf,
+                    ticks=ticks,
+                    freq=ptf,
+                    include_trade_clustering=True,
+                    compute_vpin_derived=True,
+                )
+                existing_cols = set(bars_tf.columns)
+                new_cols = [c for c in of_df.columns if c not in existing_cols]
+                if new_cols:
+                    bars_tf = bars_tf.join(of_df[new_cols], how="left")
+                try:
+                    vpin_derived = compute_vpin_derived_features_from_base(bars_tf)
+                    for c in vpin_derived.columns:
+                        if c not in bars_tf.columns:
+                            bars_tf[c] = vpin_derived[c]
+                except Exception:
+                    pass
+                try:
+                    tc_derived = compute_trade_cluster_derived_features_from_base(
+                        bars_tf
+                    )
+                    for c in tc_derived.columns:
+                        if c not in bars_tf.columns:
+                            bars_tf[c] = tc_derived[c]
+                except Exception:
+                    pass
+                try:
+                    fp_df = compute_footprint_features(
+                        bars_tf.tail(200),
+                        ticks=ticks,
+                        persist_monthly=False,
+                    )
+                    fp_new_cols = [c for c in fp_df.columns if c not in bars_tf.columns]
+                    if fp_new_cols:
+                        bars_tf = bars_tf.join(fp_df[fp_new_cols], how="left")
+                except Exception:
+                    pass
+                _logger.info(
+                    "  OF features: %d cols from %d ticks",
+                    len(of_df.columns),
+                    len(ticks_1min),
+                )
+            except Exception as e:
+                _logger.warning("  OF features failed: %s", e)
+
+        # ── 3. StrategyFeatureLoader ──
+        if self._feature_loader is not None and self.live_feature_nodes:
+            try:
+                req = list(self.live_feature_nodes)
+                feats_cfg = (self._feature_deps or {}).get("features") or {}
+                bar_cols = set(bars_tf.columns)
+                tick_dependent_nodes = {
+                    "trade_cluster_base_aligned_features_f",
+                    "vpin_base_aligned_features_f",
+                    "footprint_base_features_f",
+                }
+
+                def _has_tick_dependency(node_name, visited=None):
+                    if visited is None:
+                        visited = set()
+                    if node_name in visited:
+                        return False
+                    visited.add(node_name)
+                    if node_name in tick_dependent_nodes:
+                        return True
+                    info = feats_cfg.get(node_name)
+                    if isinstance(info, dict):
+                        for dep in info.get("dependencies") or []:
+                            if _has_tick_dependency(dep, visited):
+                                return True
+                    return False
+
+                filtered, skipped = [], []
+                for n in req:
+                    if _has_tick_dependency(n):
+                        skipped.append(str(n))
+                        continue
+                    info = feats_cfg.get(n)
+                    if isinstance(info, dict):
+                        req_cols = set(info.get("required_columns") or [])
+                        deps = info.get("dependencies") or []
+                        if req_cols and not req_cols.issubset(bar_cols) and not deps:
+                            skipped.append(str(n))
+                            continue
+                    filtered.append(n)
+
+                # 将 skipped 节点的非-tick 依赖加入 filtered
+                filtered_set = set(filtered)
+                for n in skipped:
+                    if n in tick_dependent_nodes:
+                        continue
+                    info = feats_cfg.get(n)
+                    if isinstance(info, dict):
+                        for dep in info.get("dependencies") or []:
+                            if dep not in filtered_set and not _has_tick_dependency(
+                                dep
+                            ):
+                                filtered.append(dep)
+                                filtered_set.add(dep)
+
+                bars_tf = self._feature_loader.load_features_from_requested(
+                    bars_tf, requested_features=filtered, fit=False
+                )
+                _logger.info(
+                    "  Loader: %d nodes (%d skipped tick-dep) → %d cols",
+                    len(filtered),
+                    len(skipped),
+                    len(bars_tf.columns),
+                )
+                # second pass
+                if skipped:
+                    bar_cols_updated = set(bars_tf.columns)
+                    second_pass = []
+                    for n in skipped:
+                        if n in tick_dependent_nodes:
+                            continue
+                        info = feats_cfg.get(n)
+                        if not isinstance(info, dict):
+                            continue
+                        col_mappings = info.get("column_mappings") or {}
+                        mapped_cols = set()
+                        for v in col_mappings.values():
+                            if isinstance(v, str):
+                                mapped_cols.add(v)
+                            elif isinstance(v, list):
+                                mapped_cols.update(v)
+                        req_cols = set(info.get("required_columns") or [])
+                        all_inputs = mapped_cols | req_cols
+                        if all_inputs and all_inputs.issubset(bar_cols_updated):
+                            second_pass.append(n)
+                    if second_pass:
+                        from src.features.registry import get_compute_func
+                        from src.features.loader.feature_computer import (
+                            _build_call_args,
+                        )
+                        import inspect
+
+                        for n in second_pass:
+                            try:
+                                info = feats_cfg.get(n)
+                                compute_func_name = info.get("compute_func", n)
+                                cfn = get_compute_func(compute_func_name)
+                                if cfn is None:
+                                    continue
+                                call_args, call_kwargs = _build_call_args(
+                                    info, bars_tf, n
+                                )
+                                sig = inspect.signature(cfn)
+                                accepts_var_kw = any(
+                                    p.kind == inspect.Parameter.VAR_KEYWORD
+                                    for p in sig.parameters.values()
+                                )
+                                if not accepts_var_kw and call_kwargs:
+                                    allowed = set(sig.parameters.keys())
+                                    call_kwargs = {
+                                        k: v
+                                        for k, v in call_kwargs.items()
+                                        if k in allowed
+                                    }
+                                result = cfn(*call_args, **call_kwargs)
+                                output_cols = info.get("output_columns", [n])
+                                if isinstance(result, tuple):
+                                    if len(result) == len(output_cols):
+                                        result = pd.DataFrame(
+                                            dict(zip(output_cols, result))
+                                        )
+                                if isinstance(result, pd.DataFrame):
+                                    new_cols = [
+                                        c
+                                        for c in result.columns
+                                        if c not in bars_tf.columns
+                                    ]
+                                    if new_cols:
+                                        aligned = result[new_cols].reindex(
+                                            bars_tf.index
+                                        )
+                                        bars_tf = pd.concat([bars_tf, aligned], axis=1)
+                                elif isinstance(result, pd.Series):
+                                    if result.name not in bars_tf.columns:
+                                        bars_tf[result.name] = result.reindex(
+                                            bars_tf.index
+                                        )
+                            except Exception:
+                                pass
+            except Exception as e:
+                _logger.warning("  Loader failed: %s", e)
+
+        # ── 4. 过滤列，只保留 live_feature_set 需要的 ──
+        if self.live_feature_set:
+            keep = [c for c in bars_tf.columns if self._want(str(c))]
+            bars_tf = bars_tf[keep]
+
+        _logger.info(
+            "  compute_features_dataframe done: %d rows × %d cols",
+            len(bars_tf),
+            len(bars_tf.columns),
+        )
+        return bars_tf
 
     def _log_missing_features(self, features: Dict[str, float]) -> None:
         if not self.live_feature_set:

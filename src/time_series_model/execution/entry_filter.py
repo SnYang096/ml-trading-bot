@@ -104,7 +104,9 @@ def compute_derived_entry_features(df: pd.DataFrame) -> None:
     # --- 2. liquidity_silence: 直接用 vol_percentile_approx ---
     # vol_percentile_approx [0,1], 低 = 成交量极低 = 流动性沉默
     if "vol_percentile_approx" in df.columns:
-        df["ef_liquidity_silence"] = df["vol_percentile_approx"].fillna(0.5)
+        df["ef_liquidity_silence"] = df[
+            "vol_percentile_approx"
+        ]  # NaN = warmup 不足，禁止静默降级为 0.5
     elif "bpc_vol_ratio" in df.columns:
         # fallback: vol_ratio < 0.6 → 低于均量 60% → 沉默
         df["ef_liquidity_silence"] = df["bpc_vol_ratio"].fillna(1.0)

@@ -247,7 +247,14 @@ class TickStorage:
         
         # 如果文件已存在，合并数据
         if target.exists():
-            existing = pd.read_parquet(target)
+            try:
+                existing = pd.read_parquet(target)
+            except Exception:
+                # 文件损坏，删除后重写
+                target.unlink(missing_ok=True)
+                ticks = ticks.sort_values("timestamp").reset_index(drop=True)
+                ticks.to_parquet(target, index=False)
+                return target
             combined = pd.concat([existing, ticks])
             # 去重（基于timestamp和side），保留最新的
             combined = combined.drop_duplicates(subset=["timestamp", "side"], keep="last")
@@ -340,7 +347,14 @@ class Tick1MinStorage:
         
         # 如果文件已存在，合并数据
         if target.exists():
-            existing = pd.read_parquet(target)
+            try:
+                existing = pd.read_parquet(target)
+            except Exception:
+                # 文件损坏，删除后重写
+                target.unlink(missing_ok=True)
+                bars = bars.sort_values("timestamp").reset_index(drop=True)
+                bars.to_parquet(target, index=False)
+                return target
             
             # 如果include_incomplete=True，保留未完成的bar（最后一条）
             # 否则，只保留已完成的bar

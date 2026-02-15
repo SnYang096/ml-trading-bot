@@ -77,6 +77,26 @@ class Storage:
         except sqlite3.Error:
             # 如果表不存在或其他错误，忽略以保持初始化流程
             pass
+        
+        # 确保 positions 表包含新增字段
+        self._ensure_position_columns(conn)
+    
+    def _ensure_position_columns(self, conn: sqlite3.Connection) -> None:
+        """确保positions表包含新增字段（archetype, add_count, parent_position_id）"""
+        try:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(positions)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            
+            if "archetype" not in existing_cols:
+                cursor.execute("ALTER TABLE positions ADD COLUMN archetype TEXT")
+            if "add_count" not in existing_cols:
+                cursor.execute("ALTER TABLE positions ADD COLUMN add_count INTEGER DEFAULT 0")
+            if "parent_position_id" not in existing_cols:
+                cursor.execute("ALTER TABLE positions ADD COLUMN parent_position_id TEXT")
+            conn.commit()
+        except sqlite3.Error:
+            pass
 
     def _ensure_safety_state_table(self, conn: sqlite3.Connection) -> None:
         """确保safety_state表存在"""
@@ -341,8 +361,9 @@ class Storage:
                     entry_price, exit_price, initial_size, current_size,
                     total_cost, total_value, unrealized_pnl, realized_pnl,
                     status, stop_loss_price, take_profit_price,
-                    trailing_stop_config, exit_reason, strategy_id, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    trailing_stop_config, exit_reason, strategy_id, notes,
+                    archetype, add_count, parent_position_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 position.position_id,
                 position.symbol,
@@ -363,7 +384,10 @@ class Storage:
                 json.dumps(position.trailing_stop_config) if position.trailing_stop_config else None,
                 position.exit_reason,
                 position.strategy_id,
-                position.notes
+                position.notes,
+                position.archetype,
+                position.add_count,
+                position.parent_position_id,
             ))
             conn.commit()
             return cursor.rowcount > 0
@@ -413,6 +437,7 @@ class Storage:
                     total_cost = ?, total_value = ?, unrealized_pnl = ?, realized_pnl = ?,
                     status = ?, stop_loss_price = ?, take_profit_price = ?,
                     trailing_stop_config = ?, exit_reason = ?, strategy_id = ?, notes = ?,
+                    archetype = ?, add_count = ?, parent_position_id = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE position_id = ?
             """, (
@@ -435,6 +460,9 @@ class Storage:
                 position.exit_reason,
                 position.strategy_id,
                 position.notes,
+                position.archetype,
+                position.add_count,
+                position.parent_position_id,
                 position.position_id
             ))
             conn.commit()

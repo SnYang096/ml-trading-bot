@@ -80,9 +80,9 @@ BASE_DATA_COLUMNS = {
     "delta",
     "taker_buy_ratio",
     "cvd",
-    "cvd_short",
-    "cvd_medium",
-    "cvd_long",
+    "cvd_roll20",
+    "cvd_roll60",
+    "cvd_roll288",
 }
 
 # 缓存 output_columns 集合（方案 C：基于元数据自动过滤）
