@@ -392,3 +392,259 @@ def compute_momentum_expansion_context_from_series(
         "me_reflex_risk": me_reflex_risk,
         "me_regime_suitable": me_regime_suitable,
     }, index=close.index)
+
+
+# =============================================================================
+# 🚀 ME Gate 专属特征：Breakout 结构语义
+# =============================================================================
+
+@register_feature(
+    "compute_me_gate_features_from_series",
+    category="momentum_expansion",
+    description="ME Gate features: breakout structure quality for failure detection",
+    outputs=[
+        # === 扩张质量类 ===
+        "me_impulse_ratio",           # breakout_bar_range / ATR (真突破 > 1.5)
+        "me_cps",                     # close position strength (收盘强度)
+        "me_multi_bar_acceleration",  # 多根K线加速度
+        # === 区间破坏强度 ===
+        "me_escape_dist",             # (close - prior_range_high) / prior_range_height
+        "me_compression_depth",       # rolling_volatility_percentile (压缩程度)
+        # === 延续潜力类 ===
+        "me_air_pocket_score",        # distance_to_next_resistance / ATR
+        # === 订单流一致性 ===
+        "me_flow_alignment",          # sign(delta_cvd) == breakout_dir
+        "me_aggression_ratio",        # buy_aggression vs sell_aggression
+        # === 动量质量 ===
+        "me_slope_consistency",       # momentum slope consistency
+        "me_pullback_depth_after_break",  # 突破后回撤深度
+        # === 组合分数 ===
+        "me_gate_breakout_quality",   # 综合突破质量分数
+        "me_gate_structure_score",    # 综合结构分数
+    ],
+)
+def compute_me_gate_features_from_series(
+    *,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    open_: pd.Series = None,
+    volume: pd.Series,
+    atr: pd.Series,
+    # 可选订单流特征
+    cvd_change_5: pd.Series = None,
+    delta: pd.Series = None,
+    # 可选 SR 特征
+    hal_high: pd.Series = None,
+    hal_low: pd.Series = None,
+    # 参数
+    lookback: int = 20,
+    compression_window: int = 40,
+) -> pd.DataFrame:
+    """
+    ME Gate 专属特征：用于识别突破结构质量，检测 failure
+    
+    设计理念：
+    - BPC 有 pullback 结构特征，ME 需要 breakout 结构特征
+    - 核心问题：ME 的失败是"结构错误"，不是"方向错误"
+    - 需要捕捉的语义：扩张质量、区间破坏强度、延续潜力、订单流一致性
+    
+    Args:
+        close: 收盘价序列
+        high: 最高价序列
+        low: 最低价序列
+        open_: 开盘价序列（可选，用于CPS）
+        volume: 成交量序列
+        atr: ATR 序列
+        cvd_change_5: CVD 5周期变化（可选）
+        delta: Delta（买卖差值，可选）
+        hal_high: HAL 高点（可选，用于空间计算）
+        hal_low: HAL 低点（可选，用于空间计算）
+        lookback: 基础回看窗口
+        compression_window: 压缩计算窗口
+    
+    Returns:
+        DataFrame with ME Gate features
+    """
+    # ========== 类型转换 ==========
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    volume = pd.to_numeric(volume, errors="coerce").astype(float).clip(lower=1)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).clip(lower=1e-8)
+    
+    if open_ is not None:
+        open_s = pd.to_numeric(open_, errors="coerce").astype(float)
+    else:
+        open_s = close.shift(1).fillna(close)
+    
+    n = len(close)
+    eps = 1e-8
+    
+    # ========== 1️⃣ 扩张质量类 ==========
+    
+    # 1.1 Impulse Ratio: breakout_bar_range / ATR
+    # 真突破通常 > 1.5 ATR，假突破 < 1.0 ATR
+    bar_range = high - low
+    me_impulse_ratio = (bar_range / atr_s.clip(lower=eps)).clip(0, 5)
+    # 归一化到 0-1：使用 sigmoid 映射，1.5 ATR 对应 0.5
+    me_impulse_ratio_norm = 1 / (1 + np.exp(-2 * (me_impulse_ratio - 1.5)))
+    
+    # 1.2 CPS (Close Position Strength): (close - low) / (high - low)
+    # 参考 sr_strength_max_f 的设计：有 sr 位置和 sr 质量
+    # CPS = 收盘在当日区间的位置，1.0 = 强势收盘（收在最高点）
+    bar_range_safe = bar_range.clip(lower=eps)
+    me_cps = ((close - low) / bar_range_safe).clip(0, 1)
+    
+    # 1.3 Multi-bar Acceleration: 多根K线加速度
+    # 比较最近 lookback/2 根K线的平均涨幅 vs 前 lookback/2 根K线
+    returns = close.pct_change().fillna(0)
+    recent_returns = returns.rolling(lookback // 2, min_periods=1).mean()
+    prior_returns = returns.shift(lookback // 2).rolling(lookback // 2, min_periods=1).mean().fillna(0)
+    accel_raw = recent_returns - prior_returns
+    # 使用 ATR 归一化的百分位，保持方差
+    accel_atr_normalized = accel_raw / atr_s.rolling(lookback).mean().clip(lower=eps)
+    accel_percentile = _stream_safe_percentile(accel_atr_normalized.fillna(0), compression_window)
+    me_multi_bar_acceleration = accel_percentile.clip(0, 1)
+    
+    # ========== 2️⃣ 区间破坏强度 ==========
+    
+    # 2.1 Escape Distance: (close - prior_range_high) / prior_range_height
+    # 衡量价格"逃离"之前区间的距离
+    rolling_high = high.rolling(lookback, min_periods=1).max().shift(1)
+    rolling_low = low.rolling(lookback, min_periods=1).min().shift(1)
+    prior_range_height = (rolling_high - rolling_low).clip(lower=eps)
+    
+    # 做多方向的逃离距离（以 ATR 为单位）
+    escape_up = (close - rolling_high) / atr_s.clip(lower=eps)
+    # 做空方向的逃离距离
+    escape_down = (rolling_low - close) / atr_s.clip(lower=eps)
+    # 取绝对方向的最大逃离距离，保留原始值（以 ATR 为单位）
+    escape_dist_raw = pd.Series(np.where(
+        escape_up > escape_down,
+        escape_up.clip(-2, 5),  # 允许负值（未突破）
+        -escape_down.clip(-5, 2)
+    ), index=close.index)
+    # 使用百分位保持分布，而不是线性归一化
+    me_escape_dist_norm = _stream_safe_percentile(escape_dist_raw, compression_window)
+    
+    # 2.2 Compression Depth: rolling_volatility_percentile
+    # 突破前的压缩程度，压缩越深，突破后动能越强
+    # 使用 ATR 归一化的波动率，而不是 rank
+    rolling_vol = bar_range.rolling(lookback, min_periods=1).std()
+    rolling_vol_normalized = rolling_vol / atr_s.clip(lower=eps)
+    # 使用百分位，但窗口更长，保持历史趋势
+    rolling_vol_pct = _stream_safe_percentile(rolling_vol_normalized, compression_window)
+    me_compression_depth = 1 - rolling_vol_pct  # 反转：压缩程度越高，分数越高
+    
+    # ========== 3️⃣ 延续潜力类 ==========
+    
+    # 3.1 Air Pocket Score: distance_to_next_resistance / ATR
+    # 衡量突破后的"空间"，即到下一个阻力/支撑的距离
+    if hal_high is not None and hal_low is not None:
+        hal_high_s = pd.to_numeric(hal_high, errors="coerce").fillna(0)
+        hal_low_s = pd.to_numeric(hal_low, errors="coerce").fillna(0)
+        # 做多：到上方阻力的距离
+        dist_to_resistance = (hal_high_s - close).clip(lower=0) / atr_s.clip(lower=eps)
+        # 做空：到下方支撑的距离
+        dist_to_support = (close - hal_low_s).clip(lower=0) / atr_s.clip(lower=eps)
+        # 取较小的距离（更近的 SR）
+        me_air_pocket_score = np.minimum(dist_to_resistance, dist_to_support).clip(0, 5)
+    else:
+        # 无 SR 信息时，使用 rolling high/low 估算
+        dist_to_rolling_high = (rolling_high - close).abs() / atr_s.clip(lower=eps)
+        me_air_pocket_score = dist_to_rolling_high.clip(0, 5)
+    # 归一化：2 ATR 距离 = 1.0（充足空间）
+    me_air_pocket_score_norm = (me_air_pocket_score / 2).clip(0, 1)
+    
+    # ========== 4️⃣ 订单流一致性 ==========
+    
+    # 4.1 Flow Alignment: sign(delta_cvd) == breakout_dir
+    # 订单流方向是否与突破方向一致
+    price_direction = np.sign(close - close.shift(1)).fillna(0)
+    
+    if cvd_change_5 is not None:
+        cvd = pd.to_numeric(cvd_change_5, errors="coerce").fillna(0)
+        cvd_direction = np.sign(cvd)
+        # 1 = 完全一致，0 = 不一致，0.5 = 中性（CVD 为 0）
+        alignment_raw = (price_direction * cvd_direction)
+        me_flow_alignment = (alignment_raw + 1) / 2  # 归一化到 0-1
+    else:
+        me_flow_alignment = pd.Series(0.5, index=close.index)
+    
+    # 4.2 Aggression Ratio: buy vs sell aggression
+    if delta is not None:
+        delta_s = pd.to_numeric(delta, errors="coerce").fillna(0)
+        # 使用 delta 作为 aggression 的代理
+        delta_ma = delta_s.rolling(lookback, min_periods=1).mean()
+        delta_std = delta_s.rolling(lookback, min_periods=1).std().clip(lower=eps)
+        me_aggression_ratio = ((delta_s - delta_ma) / delta_std).clip(-3, 3)
+        me_aggression_ratio = (me_aggression_ratio / 3 + 1) / 2  # 归一化到 0-1
+    else:
+        # 无 delta 时，使用 volume 和 price change 估算
+        vol_pct_change = volume.pct_change().fillna(0)
+        price_pct_change = close.pct_change().fillna(0)
+        # 价格上涨 + 放量 = 买入进攻，价格下跌 + 放量 = 卖出进攻
+        aggression_raw = vol_pct_change * np.sign(price_pct_change)
+        me_aggression_ratio = (aggression_raw.clip(-0.5, 0.5) + 0.5).clip(0, 1)
+    
+    # ========== 5️⃣ 动量质量 ==========
+    
+    # 5.1 Slope Consistency: momentum slope 的一致性
+    # 连续上涨/下跌的斜率是否稳定
+    returns_sign = np.sign(returns)
+    sign_consistency = returns_sign.rolling(lookback // 2, min_periods=1).mean().abs()
+    me_slope_consistency = sign_consistency.clip(0, 1)
+    
+    # 5.2 Pullback Depth After Break: 突破后的回撤深度
+    # 健康的突破应该回撤浅（< 50%）
+    max_high_5 = high.rolling(5, min_periods=1).max()
+    min_low_5 = low.rolling(5, min_periods=1).min()
+    recent_range = max_high_5 - min_low_5
+    # 突破后回撤 = (recent_high - current_close) / recent_range
+    pullback_from_high = (max_high_5 - close) / recent_range.clip(lower=eps)
+    me_pullback_depth_after_break = pullback_from_high.clip(0, 1)
+    # 反转：回撤越浅，分数越高
+    me_pullback_depth_after_break = 1 - me_pullback_depth_after_break
+    
+    # ========== 6️⃣ 组合分数 ==========
+    
+    # 6.1 Breakout Quality: 综合突破质量
+    # 高 impulse_ratio + 高 CPS + 高 flow_alignment = 高质量突破
+    me_gate_breakout_quality = (
+        me_impulse_ratio_norm * 0.35 +
+        me_cps * 0.30 +
+        me_flow_alignment * 0.35
+    ).clip(0, 1)
+    
+    # 6.2 Structure Score: 综合结构分数
+    # 考虑压缩深度、逃离距离、空间、动量一致性
+    me_gate_structure_score = (
+        me_compression_depth * 0.20 +
+        me_escape_dist_norm * 0.25 +
+        pd.Series(me_air_pocket_score_norm, index=close.index) * 0.20 +
+        me_slope_consistency * 0.15 +
+        me_pullback_depth_after_break * 0.20
+    ).clip(0, 1)
+    
+    # ========== 输出 ==========
+    return pd.DataFrame({
+        # === 扩张质量类 ===
+        "me_impulse_ratio": me_impulse_ratio_norm,
+        "me_cps": me_cps,
+        "me_multi_bar_acceleration": me_multi_bar_acceleration,
+        # === 区间破坏强度 ===
+        "me_escape_dist": me_escape_dist_norm,
+        "me_compression_depth": me_compression_depth,
+        # === 延续潜力类 ===
+        "me_air_pocket_score": pd.Series(me_air_pocket_score_norm, index=close.index),
+        # === 订单流一致性 ===
+        "me_flow_alignment": me_flow_alignment,
+        "me_aggression_ratio": me_aggression_ratio,
+        # === 动量质量 ===
+        "me_slope_consistency": me_slope_consistency,
+        "me_pullback_depth_after_break": me_pullback_depth_after_break,
+        # === 组合分数 ===
+        "me_gate_breakout_quality": me_gate_breakout_quality,
+        "me_gate_structure_score": me_gate_structure_score,
+    }, index=close.index)

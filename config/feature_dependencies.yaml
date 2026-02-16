@@ -7263,3 +7263,77 @@ features:
       close: close
       cvd_change_5: cvd_change_5
       atr: atr
+
+# =============================================================================
+# ME (MomentumExpansion) Gate 专属特征
+# =============================================================================
+
+  me_gate_features_f:
+    module: momentum_expansion
+    compute_func: compute_me_gate_features_from_series
+    dependencies:
+    - atr_f
+    - cvd_change_features_f
+    required_columns:
+    - close
+    - high
+    - low
+    - volume
+    - atr
+    - cvd_change_5
+    output_columns:
+    # 扩张质量类
+    - me_impulse_ratio
+    - me_cps
+    - me_multi_bar_acceleration
+    # 区间破坏强度
+    - me_escape_dist
+    - me_compression_depth
+    # 延续潜力类
+    - me_air_pocket_score
+    # 订单流一致性
+    - me_flow_alignment
+    - me_aggression_ratio
+    # 动量质量
+    - me_slope_consistency
+    - me_pullback_depth_after_break
+    # 组合分数
+    - me_gate_breakout_quality
+    - me_gate_structure_score
+    category: momentum_expansion
+    description: |
+      ME Gate 专属特征：用于识别 breakout 结构质量，检测 failure。
+      包含扩张质量、区间破坏强度、延续潜力、订单流一致性等语义特征。
+    pass_full_df: false
+    compute_params:
+      lookback: 20
+      compression_window: 40
+      normalized: true
+      output_normalization_map:
+        me_impulse_ratio: bounded_0_1
+        me_cps: bounded_0_1
+        me_multi_bar_acceleration: bounded_0_1
+        me_escape_dist: bounded_0_1
+        me_compression_depth: bounded_0_1
+        me_air_pocket_score: bounded_0_1
+        me_flow_alignment: bounded_0_1
+        me_aggression_ratio: bounded_0_1
+        me_slope_consistency: bounded_0_1
+        me_pullback_depth_after_break: bounded_0_1
+        me_gate_breakout_quality: bounded_0_1
+        me_gate_structure_score: bounded_0_1
+    column_mappings:
+      close: close
+      high: high
+      low: low
+      volume: volume
+      atr: atr
+      cvd_change_5: cvd_change_5
+    notes: |
+      ME Gate 特征设计理念：
+      - BPC 有 pullback 结构特征，ME 需要 breakout 结构特征
+      - 核心问题：ME 的失败是"结构错误"，不是"方向错误"
+      - impulse_ratio: breakout_bar_range / ATR（真突破 > 1.5 ATR）
+      - cps: close position strength（收盘强度，参考 sr_strength_max）
+      - escape_dist: 价格逃离区间的距离
+      - flow_alignment: 订单流方向与突破方向一致性

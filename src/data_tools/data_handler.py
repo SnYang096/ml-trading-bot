@@ -645,7 +645,11 @@ class DataHandler:
                         ):
                             agg_dict[col] = "last"
 
-                    df_single = df_single.resample(timeframe).agg(agg_dict).dropna()
+                    df_single = (
+                        df_single.resample(timeframe)
+                        .agg(agg_dict)
+                        .dropna(subset=["close"])
+                    )
 
                 # Ensure _symbol column
                 if "_symbol" not in df_single.columns:

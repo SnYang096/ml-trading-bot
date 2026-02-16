@@ -1,33 +1,35 @@
-# ME (MomentumExpansion) 策略特征配置
-# 语义：压缩后波动/区间扩张，放量突破
+# ME Evidence 训练特征配置
+# 目的：训练 Return Tree，用于识别"RR 放大"的条件
+# 策略：包含全部特征，包括细节数学特征
 
-name: me
+name: me_evidence
 description: |
-  MomentumExpansion archetype: 压缩后波动/区间扩张，放量突破。
-  核心特征：compression → expansion (atr/range/volume)。
+  ME Evidence 特征集：用于训练 Return Tree，学习在 GOOD 样本上如何放大 RR。
+  包含全部特征，包括 WPT/Spectrum/Hurst 等细节数学特征。
 
 feature_pipeline:
   exclude_columns:
     - atr
   requested_features:
-    # ----- ME 专属 Breakout 结构特征 -----
-    - me_gate_features_f  # ME 专属 Gate 特征（12个）
-    
-    # ----- MomentumExpansion 核心特征 -----
+    # ----- 全部 ME 特征 -----
     # Safety: reflexivity
     - shd_pct_f
     - ofci_pct_f
-    # Exclusions / preconditions: jump_risk, atr_percentile, bb_width
+    
+    # Exclusions / preconditions
     - jump_risk_pct_f
     - atr_percentile_f
     - bb_width_normalized_pct_f
+    
     # Evidence: vpin, volume_ratio_pct
     - volume_ratio_pct_f
     - vpin_features_f
+    
     # Structure / path
     - path_efficiency_pct_f
     - path_length_pct_f
     - price_dir_consistency_pct_f
+    
     # ----- Compression / WPT / spectrum -----
     - macd_atr_f
     - rsi_f
@@ -36,22 +38,33 @@ feature_pipeline:
     - trend_r2_20_f
     - sr_strength_max_f
     - volume_profile_volatility_features_f
+    
+    # WPT features (细节特征)
     - wpt_price_reconstructed_f
     - wpt_price_fluctuation_f
     - wpt_volume_energy_f
     - wpt_cvd_fluctuation_f
+    
+    # Spectrum features (细节特征)
     - spectrum_features_compression_breakout_f
+    
+    # Advanced features
     - liquidity_void_f
     - hilbert_phase_f
     - hurst_price_f
     - hurst_cvd_f
     - footprint_basic_f
+    
+    # Cross features (交叉特征)
     - liquidity_void_x_wpt_risk_rank_f
     - compression_energy_x_ofi_short_rank_f
     - vpin_x_compression_rank_f
     - vpin_zscore_x_trade_cluster_max_buy_run_rank_f
     - vpin_x_trade_cluster_entropy_rank_f
+    
+    # DTW features
     - dtw_features_compression_f
+    
   ensure_signal_column:
     name: signal
     default_value: 0

@@ -320,6 +320,8 @@ FEATURE_MODULES = [
     "src.features.time_series.alpha_factors.alpha_ts_wrappers",
     # BPC (Breakout-Pullback-Continuation) features
     "src.features.time_series.bpc_features",
+    # MomentumExpansion features
+    "src.features.time_series.momentum_expansion_features",
 ]
 
 _features_registered = False

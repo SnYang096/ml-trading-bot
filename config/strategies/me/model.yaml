@@ -7,13 +7,12 @@ trainer:
   function: train_strategy_model
   params:
     model_type: lightgbm
-    task_type: multiclass
-    target_col: label_class
+    task_type: binary
+    target_col: success_label
     n_splits: 5
     tscv_gap: 24
-    use_gpu: true
+    use_gpu: false
     model_params:
-      num_class: 3
       n_estimators: 800
       learning_rate: 0.05
       num_leaves: 63

@@ -48,62 +48,10 @@ def load_raw_data(
         )
 
         if df_single is not None and not df_single.empty:
-            # Resample
-            if isinstance(df_single.index, pd.DatetimeIndex):
-                # Define aggregation rules for different column types
-                agg_dict = {
-                    "open": "first",
-                    "high": "max",
-                    "low": "min",
-                    "close": "last",
-                    "volume": "sum",
-                }
-
-                # Add order flow columns if they exist (use last value for resampling)
-                order_flow_cols = [
-                    "cvd",
-                    "taker_buy_ratio",
-                    "cvd_roll20",
-                    "cvd_roll60",
-                    "cvd_roll288",
-                    "cvd_change_1",
-                    "cvd_change_5",
-                    "cvd_change_20",
-                    "cvd_normalized",
-                    "cvd_change_5_normalized",
-                    "buy_qty",
-                    "sell_qty",
-                    "delta",
-                ]
-                for col in order_flow_cols:
-                    if col in df_single.columns:
-                        agg_dict[col] = "last"
-
-                # Add other numeric columns (use last value as default)
-                for col in df_single.columns:
-                    if col not in agg_dict and pd.api.types.is_numeric_dtype(
-                        df_single[col]
-                    ):
-                        agg_dict[col] = "last"
-
-                df_single = df_single.resample(timeframe).agg(agg_dict).dropna()
-
-                # 监控：检查重采样后的数据质量
-                try:
-                    from src.features.utils.data_monitor import check_data_quality
-
-                    check_data_quality(
-                        df_single[["open", "high", "low", "close", "volume"]],
-                        data_source="DATA_LOADER",
-                        stage=f"after_resample_{timeframe}",
-                        raise_on_inf=False,
-                    )
-                except Exception:
-                    pass  # 监控失败不影响主流程
-
-            if df_single is not None and not df_single.empty:
-                df_single["_symbol"] = sym
-                all_dfs.append(df_single)
+            # MarketDataLoader already handles resampling, no need to resample again
+            # Just add the symbol column and append
+            df_single["_symbol"] = sym
+            all_dfs.append(df_single)
 
     if not all_dfs:
         raise ValueError(f"No data found for symbol(s): {symbol}")

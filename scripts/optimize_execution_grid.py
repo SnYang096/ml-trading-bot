@@ -128,10 +128,24 @@ def main() -> int:
         df["symbol"] = df["_symbol"]
 
     # 创建 entry_direction 列
-    if "bpc_breakout_direction" in df.columns:
-        df["entry_direction"] = df["bpc_breakout_direction"].astype(float).copy()
+    # 按优先级检测方向列：entry_direction > archetype_breakout_direction > bpc_breakout_direction
+    if "entry_direction" not in df.columns:
+        direction_col = None
+        # 检测 archetype 特定的方向列
+        archetype_dir_col = f"{args.strategy}_breakout_direction"
+        if archetype_dir_col in df.columns:
+            direction_col = archetype_dir_col
+        elif "bpc_breakout_direction" in df.columns:
+            direction_col = "bpc_breakout_direction"
+
+        if direction_col:
+            df["entry_direction"] = df[direction_col].astype(float).copy()
+            print(f"   📍 Using direction from: {direction_col}")
+        else:
+            df["entry_direction"] = 0.0
+            print("   ⚠️  No direction column found, using 0.0")
     else:
-        df["entry_direction"] = 0.0
+        print(f"   📍 Using existing entry_direction column")
 
     # Gate 过滤（自动检测）
     if "gate_decision" in df.columns:

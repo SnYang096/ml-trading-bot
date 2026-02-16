@@ -368,6 +368,20 @@ def compute_failure_subtypes(
         - mfe_atr: 最大有利偏移
         - mae_atr: 最大不利偏移
     """
+    # Handle empty DataFrame - return empty result with correct structure
+    if len(df) == 0:
+        return pd.DataFrame(
+            {
+                "failure_rr_extreme": pd.Series(dtype=float),
+                "failure_no_opportunity": pd.Series(dtype=float),
+                "failure_any": pd.Series(dtype=float),
+                "forward_rr": pd.Series(dtype=float),
+                "mfe_atr": pd.Series(dtype=float),
+                "mae_atr": pd.Series(dtype=float),
+            },
+            index=df.index,
+        )
+
     required_cols = [price_col, high_col, low_col, atr_col]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
@@ -523,6 +537,8 @@ def compute_bpc_failure_rr_extreme_label(
             expected_target_atr=kwargs.get("expected_target_atr", 2.0),
         )
         failure_label = subtypes["failure_rr_extreme"]
+        # 修复索引：compute_failure_subtypes 内部 reset_index 会导致返回 RangeIndex
+        failure_label.index = df.index
 
     if invert:
         success_label = 1.0 - failure_label
@@ -596,6 +612,8 @@ def compute_bpc_failure_no_opportunity_label(
             expected_target_atr=kwargs.get("expected_target_atr", 2.0),
         )
         failure_label = subtypes["failure_no_opportunity"]
+        # 修复索引：compute_failure_subtypes 内部 reset_index 会导致返回 RangeIndex
+        failure_label.index = df.index
 
     if invert:
         success_label = 1.0 - failure_label
@@ -715,13 +733,17 @@ def compute_return_tree_label(
         return pd.concat(results, sort=False).sort_index()
     else:
         # 单币种场景
-        return _compute_return_tree_single_symbol(
+        result = _compute_return_tree_single_symbol(
             df,
             direction=direction,
             horizon=horizon,
             filter_good_only=filter_good_only,
             **kwargs,
         )
+        # 修复索引：_compute_return_tree_single_symbol 调用 compute_failure_subtypes
+        # 内部 reset_index 会导致返回 RangeIndex
+        result.index = df.index
+        return result
 
 
 def _compute_return_tree_single_symbol(

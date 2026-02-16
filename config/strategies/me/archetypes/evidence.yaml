@@ -1,0 +1,81 @@
+# ME Evidence Archetype
+# 优化完成: 基于RR分层(Q20/Q80) + bad_suppression KPI
+# 优化时间: 2026-02-16
+# 样本: Good=74 (RR>15.61), Bad=74 (RR<1.88)
+
+# ============================================================
+# 🔍 EVIDENCE: 执行质量调节器
+# ============================================================
+# ME策略语义: 压缩后波动扩张 + 放量突破
+# Evidence职责: 在Gate通过后,调节执行参数(不做硬veto)
+# 优化结果: 15个候选特征 → 3个有效特征(有稳定plateau)
+
+evidence:
+  # === Rank 1: VPIN - 订单流活跃度 (bad_supp: 0.243 ⭐⭐⭐) ===
+  - id: evidence_vpin
+    feature: vpin
+    rank: 1
+    sharpness: 0.111
+    direction: positive  # 高值=好,订单流活跃
+    usage_hint: VPIN活跃度,影响执行速度和信心
+    affects:
+      - trailing_speed
+      - confidence_boost
+    quantile_mapping:
+      bins: [0.1, 0.3, 0.5, 0.7]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    optimization:
+      bad_suppression: 0.243
+      good_amplification: 0.108
+      neighbors: 4
+      semantic_drift: 0.095
+
+  # === Rank 2: RSI - 技术指标位置 (bad_supp: 0.230 ⭐⭐) ===
+  - id: evidence_rsi
+    feature: rsi
+    rank: 2
+    sharpness: 0.074
+    direction: positive  # 高值=好(ME策略做多为主)
+    usage_hint: RSI位置,影响仓位和信心
+    affects:
+      - position_size
+      - confidence_boost
+    quantile_mapping:
+      bins: [0.25, 0.45, 0.65, 0.85]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    optimization:
+      bad_suppression: 0.230
+      good_amplification: 0.162
+      neighbors: 4
+      semantic_drift: 0.095
+
+  # === Rank 3: MACD ATR - 动量确认 (bad_supp: 0.203 ⭐⭐) ===
+  - id: evidence_macd_atr
+    feature: macd_atr
+    rank: 3
+    sharpness: 0.074
+    direction: positive  # 高值=好,动量强
+    usage_hint: MACD强度,影响持有时间和trailing速度
+    affects:
+      - hold_time
+      - trailing_speed
+    quantile_mapping:
+      bins: [0.25, 0.45, 0.55, 0.75]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    optimization:
+      bad_suppression: 0.203
+      good_amplification: 0.189
+      neighbors: 3
+      semantic_drift: 0.068
+
+# ============================================================
+# 📊 Evidence 优化说明
+# ============================================================
+# 当前配置: 基于ME策略语义手工选择16个初始候选特征
+# 下一步: 运行 optimize_evidence_plateau.py 基于RR分层(Q20/Q80)优化
+#   - Good样本: forward_rr > Q80 (高RR交易)
+#   - Bad样本: forward_rr < Q20 (低RR交易)
+#   - 目标KPI: bad_suppression (区分高RR和低RR的能力)
+#
+# 优化后,保留有plateau的evidence特征,移除knife-edge特征
+# 参考: z实验_001_bpc/return_tree_kpi_framework.md

@@ -1,0 +1,22 @@
+# ME Holding 配置
+# 持仓管理规则
+# 版本: 1.0 (初始配置，后续可优化)
+
+# 最大持仓时间
+max_holding_bars: 50  # ME动量策略，50个4小时bar = 200小时约8天
+
+# 时间止损
+time_stop:
+  enabled: true
+  bars: 50
+  reason: "超时未达目标"
+
+# 盈利保护
+profit_protection:
+  enabled: true
+  min_profit_r: 0.5  # 盈利超过 0.5R 后启用保护
+  trailing_stop_r: 1.0  # 回撤 1R 则止损
+
+# 加仓规则
+add_on:
+  enabled: false  # ME 单次入场

@@ -1,0 +1,68 @@
+# ME Gate 训练特征配置
+# 目的：训练 Gate 树模型，用于识别"踩大坑"的结构条件
+# 策略：使用 ME 专属 breakout 结构特征 + 通用结构特征
+
+name: me_gate
+description: |
+  ME Gate 特征集：用于训练识别 failure_rr_extreme 的 Gate 规则。
+  核心语义：ME 的失败是"结构错误"，不是"方向错误"。
+  包含：
+  - ME 专属 breakout 结构特征（me_gate_features_f）
+  - 通用结构特征
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    # ========== ME 专属 breakout 结构特征 ==========
+    # 核心：识别"结构错误"的语义特征
+    - me_gate_features_f  # 输出: me_impulse_ratio, me_cps, me_escape_dist, me_flow_alignment, etc.
+    
+    # ========== 通用结构特征 ==========
+    # Safety: reflexivity
+    - shd_pct_f
+    - ofci_pct_f
+    
+    # Risk exclusions
+    - jump_risk_pct_f
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+    
+    # Volume & liquidity
+    - volume_ratio_pct_f
+    # - vpin_features_f  # 暂时禁用：需要 tick streaming alignment（freq 参数问题）
+    - liquidity_void_f
+    
+    # Price structure
+    - path_efficiency_pct_f
+    - path_length_pct_f
+    - price_dir_consistency_pct_f
+    
+    # Basic indicators
+    - macd_atr_f
+    - rsi_f
+    - sma_200_f
+    - atr_f
+    - trend_r2_20_f
+    - sr_strength_max_f
+    
+    # Volume profile (structural)
+    - volume_profile_volatility_features_f
+    
+    # Footprint (basic)
+    - footprint_basic_f
+    
+    # CVD divergence (突破质量相关)
+    - cvd_divergence_v2_f
+    
+    # 注：排除以下细节特征（留给 Evidence）：
+    # - wpt_* (小波变换)
+    # - spectrum_* (频谱分析)
+    # - hilbert_* (希尔伯特变换)
+    # - hurst_* (分形维度)
+    # - dtw_* (动态时间规整)
+    # - 交叉特征 (*_x_*)
+    
+  ensure_signal_column:
+    name: signal
+    default_value: 0

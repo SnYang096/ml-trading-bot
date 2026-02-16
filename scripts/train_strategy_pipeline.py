@@ -2421,6 +2421,42 @@ def train_strategy(
             test_end = df_test_raw.index.max()
             print(f"   📅 Test set time range: {test_start} to {test_end}")
 
+    # 💡 动态注入 freq 参数：从 strategy meta.yaml 的 timeframe 读取
+    # 注意：strategy_config.meta 直接对应 meta.yaml 的 strategy 节点内容
+    meta_timeframe = (strategy_config.meta or {}).get("timeframe")
+
+    if meta_timeframe:
+        print(f"   ℹ️  Detected strategy.timeframe from meta.yaml: {meta_timeframe}")
+        # 注入到需要 freq 参数的特征配置中
+        feature_deps = feature_loader.feature_deps.get("features", {})
+        freq_required_features = [
+            "vpin_base_aligned_features_f",
+            "trade_cluster_base_aligned_features_f",
+        ]
+        injected_count = 0
+        for feat_name in freq_required_features:
+            if feat_name in feature_deps:
+                compute_params = feature_deps[feat_name].setdefault(
+                    "compute_params", {}
+                )
+                if "freq" not in compute_params:
+                    compute_params["freq"] = meta_timeframe
+                    print(f"   ✅ Injected freq='{meta_timeframe}' to {feat_name}")
+                    injected_count += 1
+                else:
+                    # 已有配置，不覆盖（保留用户显式配置的优先级）
+                    print(
+                        f"   ℹ️  {feat_name} already has freq='{compute_params['freq']}', skipping"
+                    )
+        if injected_count == 0 and freq_required_features:
+            print(
+                f"   ℹ️  No freq injection needed (features not in requested list or already configured)"
+            )
+    else:
+        print(
+            "   ⚠️  No strategy.timeframe found in meta.yaml, freq parameter will not be injected"
+        )
+
     requested = list(strategy_config.features.requested_features)
     inv = getattr(strategy_config.features, "invert_features", None) or []
     effective_requested = requested + [c for c in inv if c not in requested]
@@ -2569,37 +2605,6 @@ def train_strategy(
         f"pos: {(test_labels==1).sum()}, neg: {(test_labels==0).sum()}"
     )
 
-    # 🔍 DEBUG: 检查多币种场景下的 symbol 分布
-    if is_multi_symbol and "_symbol" in df_train_features.columns:
-        print(f"   🔍 [DEBUG] Train set symbol distribution (before filtering):")
-        train_sym_dist = df_train_features["_symbol"].value_counts()
-        for sym, count in train_sym_dist.items():
-            non_null = (
-                df_train_features[df_train_features["_symbol"] == sym][
-                    strategy_config.labels.target_column
-                ]
-                .notna()
-                .sum()
-            )
-            print(
-                f"      {sym}: {count} rows, {non_null} non-null labels ({non_null/count*100:.1f}%)"
-            )
-
-    if is_multi_symbol and "_symbol" in df_test_features.columns:
-        print(f"   🔍 [DEBUG] Test set symbol distribution (before filtering):")
-        test_sym_dist = df_test_features["_symbol"].value_counts()
-        for sym, count in test_sym_dist.items():
-            non_null = (
-                df_test_features[df_test_features["_symbol"] == sym][
-                    strategy_config.labels.target_column
-                ]
-                .notna()
-                .sum()
-            )
-            print(
-                f"      {sym}: {count} rows, {non_null} non-null labels ({non_null/count*100:.1f}%)"
-            )
-
     df_train_filtered = apply_filters(df_train_features, strategy_config.labels.filters)
     df_test_filtered = apply_filters(df_test_features, strategy_config.labels.filters)
 
@@ -2613,25 +2618,6 @@ def train_strategy(
         strategy_config.labels.post_label_filters,
         feature_cols,
     )
-
-    # 🔍 DEBUG: 检查过滤后的 symbol 分布
-    if is_multi_symbol and "_symbol" in df_train_filtered.columns:
-        print(f"   🔍 [DEBUG] Train set symbol distribution (AFTER filtering):")
-        train_sym_dist_after = df_train_filtered["_symbol"].value_counts()
-        for sym, count in train_sym_dist_after.items():
-            print(f"      {sym}: {count} rows")
-        if len(train_sym_dist_after) < len(symbol_list):
-            missing = set(symbol_list) - set(train_sym_dist_after.index)
-            print(f"      ⚠️  Missing symbols: {missing}")
-
-    if is_multi_symbol and "_symbol" in df_test_filtered.columns:
-        print(f"   🔍 [DEBUG] Test set symbol distribution (AFTER filtering):")
-        test_sym_dist_after = df_test_filtered["_symbol"].value_counts()
-        for sym, count in test_sym_dist_after.items():
-            print(f"      {sym}: {count} rows")
-        if len(test_sym_dist_after) < len(symbol_list):
-            missing = set(symbol_list) - set(test_sym_dist_after.index)
-            print(f"      ⚠️  Missing symbols: {missing}")
 
     def _debug_inf(df: pd.DataFrame, name: str):
         if not feature_cols:

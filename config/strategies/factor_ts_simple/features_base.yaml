@@ -1,5 +1,0 @@
-# Factor TS 策略的基础特征（feature-group-search 必需）
-# 这些特征是标签生成器和回测所必需的，不参与搜索优化
-
-# 回测依赖
-- atr_f                        # ATR (回测必需)

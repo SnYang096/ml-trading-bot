@@ -1027,11 +1027,19 @@ def main() -> int:
 
     if args.label_col not in df.columns:
         if rr_col is not None:
-            # 基于 rr_extreme 标签定义: Good = RR >= -0.8, Bad = RR < -0.8
-            df[args.label_col] = (df[rr_col] >= -0.8).astype(int)
-            print(
-                f"ℹ️ Auto-generated '{args.label_col}' column from '{rr_col}' (threshold: -0.8)"
-            )
+            # ❗ Evidence优化基于RR分层: Good = Q4-Q5 (高RR), Bad = Q1-Q2 (低RR)
+            # 参考: return_tree_kpi_framework.md 预测值分位数一致性
+            q20 = df[rr_col].quantile(0.2)
+            q80 = df[rr_col].quantile(0.8)
+            # Good: RR > Q80, Bad: RR < Q20, Middle: 排除
+            df_good = df[df[rr_col] > q80].copy()
+            df_bad = df[df[rr_col] < q20].copy()
+            df_good[args.label_col] = 1
+            df_bad[args.label_col] = 0
+            df = pd.concat([df_good, df_bad], ignore_index=True)
+            print(f"ℹ️ Auto-generated '{args.label_col}' based on RR stratification")
+            print(f"   Q20={q20:.2f}, Q80={q80:.2f}")
+            print(f"   Good (RR > Q80): {len(df_good)}, Bad (RR < Q20): {len(df_bad)}")
         else:
             print(f"❌ Cannot auto-generate '{args.label_col}': no RR column found")
             print(f"   Tried: bpc_impulse_return_atr, forward_rr, rr, return_atr")

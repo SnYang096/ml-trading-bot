@@ -19,6 +19,61 @@ from src.time_series_model.strategies.labels.sr_reversal_label import _ensure_at
 from src.time_series_model.pipeline.training.label_utils import compute_rr_label
 
 
+def compute_path_extreme_rr(
+    df: pd.DataFrame,
+    direction: str,
+    horizon: int,
+    atr_col: str,
+    price_col: str = "close",
+    high_col: str = "high",
+    low_col: str = "low",
+) -> pd.Series:
+    """
+    计算路径极值型的 forward_rr = (MFE - MAE) / ATR。
+
+    这个值可以是负数（MAE 大于 MFE），用于识别"踩大坑"的情况。
+
+    Args:
+        direction: 'long' 或 'short'
+        horizon: 前向观察的 bar 数量
+
+    Returns:
+        pd.Series: forward_rr 值，无信号处为 NaN
+    """
+    labels = np.full(len(df), np.nan)
+
+    close = df[price_col].values
+    high = df[high_col].values
+    low = df[low_col].values
+    atr = df[atr_col].values
+
+    for i in range(len(df) - horizon):
+        entry_price = close[i]
+        risk_unit = atr[i]
+
+        if pd.isna(risk_unit) or risk_unit <= 0:
+            continue
+
+        # 使用下一根 bar 到 horizon 范围内的 high/low
+        future_high = high[i + 1 : i + 1 + horizon]
+        future_low = low[i + 1 : i + 1 + horizon]
+
+        if len(future_high) == 0 or len(future_low) == 0:
+            continue
+
+        if direction == "long":
+            mfe = np.nanmax(future_high) - entry_price  # 最大有利偏移
+            mae = entry_price - np.nanmin(future_low)  # 最大不利偏移
+        else:  # short
+            mfe = entry_price - np.nanmin(future_low)
+            mae = np.nanmax(future_high) - entry_price
+
+        # forward_rr = (MFE - MAE) / ATR
+        labels[i] = (mfe - mae) / risk_unit
+
+    return pd.Series(labels, index=df.index, name=f"forward_rr_{direction}")
+
+
 def detect_compression(
     df: pd.DataFrame,
     atr_col: str = "atr",
@@ -213,3 +268,190 @@ def compute_me_label(
     rr_series.name = "rr_label"
 
     return rr_series
+
+
+def compute_me_failure_rr_extreme_label(
+    df: pd.DataFrame,
+    direction: str = "long",
+    horizon: int = 50,
+    invert: bool = True,
+    price_col: str = "close",
+    high_col: str = "high",
+    low_col: str = "low",
+    volume_col: str = "volume",
+    atr_col: str = "atr",
+    atr_window: int = 14,
+    stop_loss_r: float = 1.0,
+    take_profit_r: float = 2.0,
+    compression_lookback: int = 20,
+    compression_percentile: float = 30,
+    breakout_lookback: int = 10,
+    volume_mult: float = 1.2,
+    failure_threshold: float = -0.8,
+) -> pd.Series:
+    """
+    计算 ME failure_rr_extreme 标签（Gate 训练用）。
+
+    识别动量扩张后会"踩大坑"的条件：
+    - failure_rr_extreme = forward_rr < -0.8R
+
+    使用路径极值型 RR：(MFE - MAE) / ATR，可以是负数。
+
+    Args:
+        invert: True = 返回 success_no_rr_extreme (1=不踩坑, 0=踩坑)
+                False = 返回 failure_rr_extreme (1=踩坑, 0=不踩坑)
+        failure_threshold: 失败阈值（默认 -0.8R）
+
+    Returns:
+        pd.Series: 二分类标签
+    """
+    work_df = df.copy()
+    atr_series = _ensure_atr(work_df, atr_col, price_col, high_col, low_col, atr_window)
+    work_df[atr_col] = atr_series
+
+    # 1. 检测压缩和突破信号
+    compression_mask = detect_compression(
+        work_df,
+        atr_col=atr_col,
+        lookback=compression_lookback,
+        compression_percentile=compression_percentile,
+    )
+
+    breakout_up, breakout_down = detect_expansion_breakout(
+        work_df,
+        price_col=price_col,
+        high_col=high_col,
+        low_col=low_col,
+        volume_col=volume_col,
+        atr_col=atr_col,
+        compression_mask=compression_mask,
+        breakout_lookback=breakout_lookback,
+        volume_mult=volume_mult,
+    )
+
+    # 根据方向确定信号掩码
+    if direction == "long":
+        signal_mask = breakout_up
+    else:
+        signal_mask = breakout_down
+
+    # 2. 计算路径极值型 RR（可以是负数）
+    rr_series = compute_path_extreme_rr(
+        work_df,
+        direction=direction,
+        horizon=horizon,
+        atr_col=atr_col,
+        price_col=price_col,
+        high_col=high_col,
+        low_col=low_col,
+    )
+
+    # 3. 只保留有突破信号的点
+    rr_series = rr_series.where(signal_mask)
+
+    # 4. 识别 failure_rr_extreme: forward_rr < failure_threshold
+    failure_mask = rr_series < failure_threshold
+
+    # 5. 生成标签
+    if invert:
+        # success_no_rr_extreme: 1=不踩坑, 0=踩坑
+        label = (~failure_mask).astype(int)
+        label = label.where(rr_series.notna())
+        label.name = "success_no_rr_extreme"
+    else:
+        # failure_rr_extreme: 1=踩坑, 0=不踩坑
+        label = failure_mask.astype(int)
+        label = label.where(rr_series.notna())
+        label.name = "failure_rr_extreme"
+
+    return label
+
+
+def compute_me_return_tree_label(
+    df: pd.DataFrame,
+    direction: str = "long",
+    horizon: int = 50,
+    filter_good_only: bool = True,
+    price_col: str = "close",
+    high_col: str = "high",
+    low_col: str = "low",
+    volume_col: str = "volume",
+    atr_col: str = "atr",
+    atr_window: int = 14,
+    stop_loss_r: float = 1.0,
+    take_profit_r: float = 2.0,
+    compression_lookback: int = 20,
+    compression_percentile: float = 30,
+    breakout_lookback: int = 10,
+    volume_mult: float = 1.2,
+    good_threshold: float = -0.8,
+) -> pd.Series:
+    """
+    计算 ME Return Tree 标签（Evidence 训练用）。
+
+    目标：在 GOOD 样本（不踩坑）上学习如何放大 RR。
+
+    使用路径极值型 RR：(MFE - MAE) / ATR。
+
+    Args:
+        filter_good_only: True = 只返回 GOOD 样本（forward_rr >= good_threshold），
+                                 BAD 样本设为 NaN
+        good_threshold: GOOD 样本的阈值（默认 -0.8R）
+
+    Returns:
+        pd.Series: forward_rr 连续值（GOOD 样本）或 NaN（BAD 样本）
+    """
+    work_df = df.copy()
+    atr_series = _ensure_atr(work_df, atr_col, price_col, high_col, low_col, atr_window)
+    work_df[atr_col] = atr_series
+
+    # 1. 检测压缩和突破信号
+    compression_mask = detect_compression(
+        work_df,
+        atr_col=atr_col,
+        lookback=compression_lookback,
+        compression_percentile=compression_percentile,
+    )
+
+    breakout_up, breakout_down = detect_expansion_breakout(
+        work_df,
+        price_col=price_col,
+        high_col=high_col,
+        low_col=low_col,
+        volume_col=volume_col,
+        atr_col=atr_col,
+        compression_mask=compression_mask,
+        breakout_lookback=breakout_lookback,
+        volume_mult=volume_mult,
+    )
+
+    # 根据方向确定信号掩码
+    if direction == "long":
+        signal_mask = breakout_up
+    else:
+        signal_mask = breakout_down
+
+    # 2. 计算路径极值型 RR
+    rr_series = compute_path_extreme_rr(
+        work_df,
+        direction=direction,
+        horizon=horizon,
+        atr_col=atr_col,
+        price_col=price_col,
+        high_col=high_col,
+        low_col=low_col,
+    )
+
+    # 3. 只保留有突破信号的点
+    rr_series = rr_series.where(signal_mask)
+
+    # 4. 过滤 GOOD 样本
+    if filter_good_only:
+        # GOOD = forward_rr >= good_threshold
+        good_mask = rr_series >= good_threshold
+        forward_rr = rr_series.where(good_mask)
+    else:
+        forward_rr = rr_series
+
+    forward_rr.name = "forward_rr"
+    return forward_rr
