@@ -1,0 +1,469 @@
+"""
+GenericLiveStrategy - 配置驱动的通用策略解析引擎
+
+将策略逻辑完全从代码中解耦，通过 YAML 配置文件驱动决策流程。
+支持任意策略的统一实现，只需提供对应的 archetype 配置。
+
+核心组件：
+1. DirectionEvaluator: 解析 direction.yaml 规则
+2. GateEvaluator: 评估 gate.yaml 条件
+3. EntryFilterChecker: 检查 entry_filters.yaml
+4. EvidenceScorer: 计算 evidence.yaml 评分
+5. ExecutionParamGenerator: 生成 execution.yaml 参数
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+import numpy as np
+import yaml
+
+from src.time_series_model.core.trade_intent import TradeIntent
+from src.time_series_model.archetype.loader import (
+    StrategyArchetype,
+    load_strategy_archetype,
+)
+from src.time_series_model.execution.entry_filter import (
+    DerivedEntryFeatureState,
+    check_entry_filters_or_single,
+    load_entry_filters_config,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# 1. 方向规则解析器
+# =============================================================================
+
+
+class DirectionEvaluator:
+    """解析 direction.yaml 规则，确定交易方向"""
+
+    def __init__(self, direction_config: Dict[str, Any]):
+        self.config = direction_config
+        self.rules = direction_config.get("direction_rules", [])
+        self.causal_source = direction_config.get("causal_source", "unknown")
+
+    def evaluate(self, features: Dict[str, Any]) -> Tuple[int, Optional[str]]:
+        """
+        评估方向规则
+
+        Returns:
+            (direction: int, matched_rule_id: Optional[str])
+            direction: +1(多) / -1(空) / 0(无方向)
+        """
+        if not self.rules:
+            return 0, None
+
+        for rule in self.rules:
+            rule_id = rule.get("id", "unknown")
+            feature_name = rule.get("feature", "")
+            transform = rule.get("transform", "raw")
+            description = rule.get("description", "")
+
+            # 获取特征值
+            value = features.get(feature_name)
+            if value is None:
+                continue
+
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                continue
+
+            # 应用变换
+            direction = self._apply_transform(value, transform)
+
+            if direction != 0:
+                logger.debug(
+                    f"方向匹配: rule={rule_id}, feature={feature_name}, "
+                    f"value={value:.4f}, transform={transform} → direction={direction}"
+                )
+                return direction, rule_id
+
+        return 0, None
+
+    def _apply_transform(self, value: float, transform: str) -> int:
+        """应用变换函数"""
+        if transform == "raw":
+            return int(value)
+        elif transform == "sign":
+            return int(np.sign(value))
+        elif transform == "negate_sign":
+            return int(-np.sign(value))
+        elif transform == "threshold":
+            # 需要额外参数
+            threshold = 0.0
+            return 1 if value > threshold else -1
+        else:
+            return int(value)  # 默认 raw
+
+
+# =============================================================================
+# 2. Gate 条件评估引擎
+# =============================================================================
+
+
+class GateEvaluator:
+    """评估 gate.yaml 条件，进行结构性过滤"""
+
+    def __init__(self, archetype: StrategyArchetype):
+        self.archetype = archetype
+
+    def evaluate(
+        self, features: Dict[str, Any], quantiles: Optional[Dict[str, Any]] = None
+    ) -> Tuple[bool, List[str], float]:
+        """
+        评估 Gate 条件
+
+        Returns:
+            (passed: bool, reasons: List[str], weight: float)
+        """
+        if self.archetype is None:
+            return True, [], 1.0
+
+        return self.archetype.apply_gate(features, quantiles)
+
+
+# =============================================================================
+# 3. Entry Filter 检查器
+# =============================================================================
+
+
+class EntryFilterChecker:
+    """检查 entry_filters.yaml 条件"""
+
+    def __init__(self, entry_config: Dict[str, Any]):
+        self.config = entry_config
+        self.ef_state = DerivedEntryFeatureState()
+
+    def check(self, features: Dict[str, Any]) -> bool:
+        """检查是否满足入场条件"""
+        if not self.config:
+            return True
+
+        # 更新派生特征
+        ef_features = self.ef_state.update(features)
+        merged = {**features, **ef_features}
+
+        return check_entry_filters_or_single(merged, self.config)
+
+
+# =============================================================================
+# 4. Evidence 评分计算
+# =============================================================================
+
+
+class EvidenceScorer:
+    """计算 evidence.yaml 评分"""
+
+    def __init__(self, archetype: StrategyArchetype):
+        self.archetype = archetype
+
+    def score(
+        self, features: Dict[str, Any], quantiles: Optional[Dict[str, Any]] = None
+    ) -> Tuple[float, Dict[str, float]]:
+        """
+        计算 Evidence 评分
+
+        Returns:
+            (score: float, breakdown: Dict[feature_name, contribution])
+        """
+        if self.archetype is None:
+            return 0.5, {}
+
+        return self.archetype.compute_evidence_score(features, quantiles)
+
+
+# =============================================================================
+# 5. Execution 参数生成器
+# =============================================================================
+
+
+class ExecutionParamGenerator:
+    """根据 evidence score 生成执行参数"""
+
+    def __init__(self, execution_config: Dict[str, Any]):
+        self.config = execution_config
+        self.tiers_cfg = execution_config.get("tiers", {})
+
+    def generate_params(self, evidence_score: float) -> Dict[str, Any]:
+        """生成执行参数"""
+        # Tier 选择
+        tier_params = self._select_tier(evidence_score)
+
+        # 基础执行参数
+        base_params = {
+            "initial_r": self.config.get("stop_loss", {}).get("initial_r", 2.0),
+            "take_profit_r": self.config.get("take_profit", {}).get("multiple", 2.5),
+            "max_holding_bars": self.config.get("holding", {}).get(
+                "time_stop_bars", 50
+            ),
+        }
+
+        return {**base_params, **tier_params}
+
+    def _select_tier(self, evidence_score: float) -> Dict[str, Any]:
+        """根据 evidence score 选择 tier"""
+        levels = self.tiers_cfg.get("levels", [])
+        # 按 evidence_min 从高到低排序
+        levels = sorted(levels, key=lambda x: x.get("evidence_min", 0), reverse=True)
+
+        for level in levels:
+            if evidence_score >= level.get("evidence_min", 0):
+                sl_cfg = level.get("stop_loss", {})
+                trail_cfg = sl_cfg.get("trailing", {})
+                return {
+                    "tier_name": level.get("name", "unknown"),
+                    "initial_r": sl_cfg.get("initial_r", 2.0),
+                    "activation_r": trail_cfg.get("activation_r", 1.0),
+                    "trail_r": trail_cfg.get("trail_r", 1.5),
+                    "time_stop_bars": level.get("time_stop_bars", 50),
+                    "size_multiplier": level.get("size_multiplier", 1.0),
+                }
+
+        # 默认参数
+        global_sl = self.config.get("stop_loss", {})
+        global_trail = global_sl.get("trailing", {})
+        return {
+            "tier_name": "default",
+            "initial_r": global_sl.get("initial_r", 2.0),
+            "activation_r": global_trail.get("activation_r", 1.0),
+            "trail_r": global_trail.get("trail_r", 1.5),
+            "time_stop_bars": self.config.get("holding", {}).get("time_stop_bars", 50),
+            "size_multiplier": 1.0,
+        }
+
+
+# =============================================================================
+# 6. 通用 LiveStrategy 主类
+# =============================================================================
+
+
+class GenericLiveStrategy:
+    """
+    配置驱动的通用 LiveStrategy 解析引擎
+
+    通过加载策略的 archetype 配置文件，自动构建决策管线。
+    支持任意策略，只需提供标准的配置文件结构。
+    """
+
+    def __init__(
+        self,
+        strategy_name: str,
+        strategies_root: str = "config/strategies",
+        holding_yaml_path: Optional[str] = None,
+        trade_size: float = 1.0,
+        primary_timeframe: str = "240T",
+        bar_minutes: int = 240,
+    ):
+        self.strategy_name = strategy_name
+        self.strategies_root = strategies_root
+        self.trade_size = trade_size
+        self.primary_timeframe = primary_timeframe
+        self.bar_minutes = bar_minutes
+        self.holding_yaml_path = holding_yaml_path
+
+        # 配置组件
+        self.archetype: Optional[StrategyArchetype] = None
+        self.direction_evaluator: Optional[DirectionEvaluator] = None
+        self.gate_evaluator: Optional[GateEvaluator] = None
+        self.entry_filter_checker: Optional[EntryFilterChecker] = None
+        self.evidence_scorer: Optional[EvidenceScorer] = None
+        self.execution_generator: Optional[ExecutionParamGenerator] = None
+
+        # 状态
+        self._quantiles: Dict[str, Dict[str, float]] = {}
+        self._last_tier_params: Optional[Dict[str, Any]] = None
+
+        # 加载配置
+        self.load_configs()
+
+    def load_configs(self) -> None:
+        """加载所有配置文件"""
+        try:
+            # 1. 加载 Archetype (Gate + Evidence + Execution)
+            self.archetype = load_strategy_archetype(
+                self.strategy_name, self.strategies_root
+            )
+            logger.info(
+                f"✅ Archetype loaded: {len(self.archetype.gate.all_rules)} gate rules, "
+                f"{len(self.archetype.evidence.features)} evidence features"
+            )
+
+            # 2. 加载 Direction 配置
+            dir_path = (
+                Path(self.strategies_root)
+                / self.strategy_name
+                / "archetypes"
+                / "direction.yaml"
+            )
+            if dir_path.exists():
+                with open(dir_path, "r", encoding="utf-8") as f:
+                    direction_cfg = yaml.safe_load(f) or {}
+                self.direction_evaluator = DirectionEvaluator(direction_cfg)
+                logger.info(
+                    f"✅ Direction config loaded: "
+                    f"{len(direction_cfg.get('direction_rules', []))} rules, "
+                    f"source={direction_cfg.get('causal_source', 'unknown')}"
+                )
+            else:
+                logger.warning(f"⚠️  Direction config not found: {dir_path}")
+
+            # 3. 加载 Entry Filter 配置
+            self.entry_filter_checker = EntryFilterChecker(
+                load_entry_filters_config(self.strategy_name, self.strategies_root)
+            )
+            logger.info("✅ Entry filter config loaded")
+
+            # 4. 初始化其他评估器
+            self.gate_evaluator = GateEvaluator(self.archetype)
+            self.evidence_scorer = EvidenceScorer(self.archetype)
+            self.execution_generator = ExecutionParamGenerator(
+                self.archetype.execution.raw or {}
+            )
+
+        except Exception as e:
+            logger.error(f"❌ Failed to load configs for {self.strategy_name}: {e}")
+            raise
+
+    def set_quantiles(self, features_df) -> None:
+        """设置分位数阈值（用于 evidence 评分）"""
+        if self.archetype is None:
+            return
+
+        quantiles = {}
+        n_computed = 0
+
+        # 为每个 evidence 特征计算分位数
+        for feat_spec in self.archetype.evidence.features:
+            feat_name = feat_spec.name
+            if feat_name in features_df.columns:
+                values = features_df[feat_name].dropna()
+                if len(values) == 0:
+                    continue
+
+                feat_q = {}
+                for b in [0.2, 0.5, 0.8, 0.9, 0.95]:
+                    q_val = float(values.quantile(b))
+                    q_key = f"{b:.2f}".rstrip("0").rstrip(".")
+                    feat_q[q_key] = q_val
+                quantiles[feat_name] = feat_q
+                n_computed += 1
+
+        self._quantiles = quantiles
+        logger.info(
+            f"✅ Quantiles computed: {n_computed}/{len(self.archetype.evidence.features)} "
+            f"features, based on {len(features_df)} rows"
+        )
+
+    def decide(
+        self,
+        *,
+        features: Dict[str, Any],
+        symbol: str,
+        bars: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[TradeIntent]:
+        """
+        核心决策接口 - 通用策略解析引擎
+
+        决策管线:
+          1. Direction: 从 direction.yaml 确定方向
+          2. Gate: 从 gate.yaml 进行结构性过滤
+          3. Entry Filter: 从 entry_filters.yaml 检查入场时机
+          4. Evidence: 从 evidence.yaml 计算评分
+          5. Execution: 从 execution.yaml 生成执行参数
+        """
+        if not features:
+            return []
+
+        # ── 1. 方向判定 ──
+        if self.direction_evaluator is None:
+            logger.error("❌ Direction evaluator not initialized")
+            return []
+
+        direction, rule_id = self.direction_evaluator.evaluate(features)
+        if direction == 0:
+            logger.debug("❌ No valid direction found")
+            return []
+
+        side_str = "BUY" if direction == 1 else "SELL"
+        logger.debug(f"🎯 Direction: {side_str} (rule: {rule_id})")
+
+        # ── 2. Gate 过滤 ──
+        if self.gate_evaluator is not None:
+            gate_passed, gate_reasons, gate_weight = self.gate_evaluator.evaluate(
+                features, self._quantiles
+            )
+            if not gate_passed:
+                logger.debug(f"❌ Gate denied: {gate_reasons}")
+                return []
+            logger.debug(f"✅ Gate passed (weight: {gate_weight:.3f})")
+
+        # ── 3. Entry Filter 检查 ──
+        if self.entry_filter_checker is not None:
+            ef_passed = self.entry_filter_checker.check(features)
+            if not ef_passed:
+                logger.debug("❌ Entry filter denied")
+                return []
+            logger.debug("✅ Entry filter passed")
+
+        # ── 4. Evidence 评分 ──
+        evidence_score = 0.5
+        evidence_breakdown = {}
+        if self.evidence_scorer is not None:
+            evidence_score, evidence_breakdown = self.evidence_scorer.score(
+                features, self._quantiles
+            )
+            # 应用 gate weight
+            evidence_score = evidence_score * gate_weight
+            logger.debug(f"📊 Evidence score: {evidence_score:.3f}")
+
+        # ── 5. 执行参数生成 ──
+        exec_params = {}
+        if self.execution_generator is not None:
+            exec_params = self.execution_generator.generate_params(evidence_score)
+            self._last_tier_params = exec_params
+            logger.debug(f"⚙️  Execution params: {exec_params}")
+
+        # ── 6. 构建 TradeIntent ──
+        action = "LONG" if direction == 1 else "SHORT"
+        intent = TradeIntent(
+            action=action,
+            symbol=symbol,
+            archetype=self.strategy_name,
+            execution_strategy=self.strategy_name,
+            confidence=evidence_score,
+            size_multiplier=exec_params.get("size_multiplier", 1.0),
+            execution_tags=[self.strategy_name, side_str],
+            execution_profile={
+                "rr_constraints": {
+                    "stop_loss_r": exec_params.get("initial_r", 2.0),
+                    "take_profit_r": exec_params.get("take_profit_r", 2.5),
+                    "allow_trailing": True,
+                    "trailing_atr": exec_params.get("trail_r", 1.5),
+                    "max_holding_bars": exec_params.get("time_stop_bars", 50),
+                },
+                "strategy_specific": {
+                    "direction_rule": rule_id,
+                    "evidence_score": evidence_score,
+                    "gate_weight": gate_weight,
+                    "tier_name": exec_params.get("tier_name", "default"),
+                },
+            },
+        )
+
+        logger.info(
+            f"✅ Signal generated: {action} {symbol} "
+            f"(evidence={evidence_score:.3f}, tier={exec_params.get('tier_name')})"
+        )
+        return [intent]
+
+    def reset(self) -> None:
+        """重置状态"""
+        if self.entry_filter_checker and self.entry_filter_checker.ef_state:
+            self.entry_filter_checker.ef_state.reset()
+        self._last_tier_params = None

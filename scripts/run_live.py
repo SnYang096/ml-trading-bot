@@ -134,6 +134,92 @@ def _setup_bpc(
     return manager, pcm
 
 
+def _setup_three_strategies(
+    symbols: List[str],
+    storage: StorageManager,
+    gap_filler,
+    trade_size: float,
+):
+    """三策略实盘启动 (BPC + ME + FER)"""
+    from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
+    from src.time_series_model.portfolio.live_pcm import LivePCM
+    from src.time_series_model.live.incremental_feature_computer import (
+        IncrementalFeatureComputer,
+    )
+
+    strategies_root = os.getenv(
+        "MLBOT_STRATEGIES_ROOT", "live/highcap/config/strategies"
+    )
+    bar_minutes = int(os.getenv("MLBOT_BPC_BAR_MINUTES", "240"))
+    window_minutes = int(os.getenv("MLBOT_BPC_WINDOW_MINUTES", "15"))
+
+    # 创建三个策略实例
+    logger.info("🚀 初始化三策略...")
+
+    bpc = GenericLiveStrategy(strategy_name="bpc", strategies_root=strategies_root)
+    me = GenericLiveStrategy(strategy_name="me", strategies_root=strategies_root)
+    fer = GenericLiveStrategy(strategy_name="fer", strategies_root=strategies_root)
+
+    # 加载配置
+    bpc.load_configs()
+    me.load_configs()
+    fer.load_configs()
+
+    logger.info("✅ 三策略配置加载完成")
+
+    # 创建 PCM 仲裁层 (FER > ME > BPC)
+    pcm = LivePCM(
+        archetype_priority=["fer", "me", "bpc"],
+        max_slots=int(os.getenv("MLBOT_MAX_SLOTS", "2")),
+    )
+    pcm.register("bpc", bpc)
+    pcm.register("me", me)
+    pcm.register("fer", fer)
+
+    logger.info(f"✅ PCM 仲裁层初始化: 优先级={pcm.archetype_priority}")
+
+    order_manager = init_order_manager_from_env()
+
+    # 为每个 symbol 创建 IncrementalFeatureComputer
+    # 注意：这里需要支持多策略特征计算
+    def _make_feature_computer(symbol: str) -> IncrementalFeatureComputer:
+        # 使用 BPC 的 archetypes_dir 作为默认
+        archetypes_dir = os.path.join(strategies_root, "bpc", "archetypes")
+        return IncrementalFeatureComputer(
+            tick_window_minutes=bar_minutes,
+            bar_window_size=bar_minutes * 2,
+            archetypes_dir=archetypes_dir,
+            primary_timeframe=f"{bar_minutes}T",
+        )
+
+    manager = MultiSymbolManager(
+        symbols=symbols,
+        storage_manager=storage,
+        feature_computer_factory=_make_feature_computer,
+        gap_filler=gap_filler,
+        feature_compute_interval_minutes=window_minutes,
+        orderflow_window_minutes=window_minutes,
+        order_manager=order_manager,
+    )
+
+    # 给每个 listener 注入 LivePCM 作为 decision_handler
+    for sym in symbols:
+        listener = manager.get_listener(sym)
+        if listener is None:
+            continue
+        listener.decision_handler = pcm
+        listener.order_manager = order_manager
+        if trade_size > 0:
+            listener.trade_size = trade_size
+
+    logger.info(
+        f"✅ 三策略实盘启动完成: {len(symbols)} symbols, "
+        f"bar_minutes={bar_minutes}, window={window_minutes}min, "
+        f"archetypes={pcm.registered_archetypes}"
+    )
+    return manager, pcm
+
+
 def _compute_initial_quantiles(
     decision_handler,
     manager: MultiSymbolManager,

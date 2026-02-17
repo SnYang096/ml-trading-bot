@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Callable
@@ -422,7 +423,8 @@ class OrderFlowListener:
         )
         
         # 如果ticks不足（VPIN需要7天×1440×2=20160条），向前查找更多数据
-        min_ticks_required = 7 * 1440 * 2  # 20160
+        # 临时降低阈值以适应周末/假期数据不足的情况
+        min_ticks_required = int(os.getenv("MLBOT_MIN_TICKS_REQUIRED", "15000"))  # 默认15000
         recent_ticks_count = len(ticks_disk)
         if recent_ticks_count < min_ticks_required:
             # 尝试加载更早的数据（从100天前开始）
