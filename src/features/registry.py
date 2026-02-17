@@ -322,6 +322,8 @@ FEATURE_MODULES = [
     "src.features.time_series.bpc_features",
     # MomentumExpansion features
     "src.features.time_series.momentum_expansion_features",
+    # FER (FailureExhaustionReversal) features
+    "src.features.time_series.fer_features",
 ]
 
 _features_registered = False

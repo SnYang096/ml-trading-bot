@@ -1,0 +1,96 @@
+================================================================================
+Direction Determination 统一研究报告
+生成时间: 2026-02-16 21:42
+================================================================================
+
+## 设计原则 (来自 方向问题.md)
+
+| Archetype | 方向来自 | 因果来源 | 原则 |
+|-----------|---------|---------|------|
+| BPC       | 结构方向 | 突破    | 跟结构走 |
+| ME        | 动能方向 | 加速    | 跟钱走   |
+| FER       | 失败方向 | 反转    | 跟失败走 |
+
+方向是 deterministic 的，不让模型学。
+三者绝对不能共用 direction head。
+
+--------------------------------------------------------------------------------
+### BPC
+数据行数: 11113
+
+**旧逻辑 (legacy)**
+  使用列: bpc_breakout_direction
+  分布: Long=5567 (50.1%) | Short=5546 (49.9%) | Zero=0 (0.0%)
+
+**新逻辑 (direction.yaml)**
+  因果来源: structure
+  命中规则: bpc_breakout_direction (raw)
+  分布: Long=5567 (50.1%) | Short=5546 (49.9%) | Zero=0 (0.0%)
+
+**方向对比**
+  一致率: 100.0%
+  变更数: 0
+
+--------------------------------------------------------------------------------
+### ME
+数据行数: 11696
+
+**旧逻辑 (legacy)**
+  使用列: entry_direction
+  分布: Long=11696 (100.0%) | Short=0 (0.0%) | Zero=0 (0.0%)
+
+**新逻辑 (direction.yaml)**
+  因果来源: momentum
+  命中规则: entry_direction (raw)
+  分布: Long=11696 (100.0%) | Short=0 (0.0%) | Zero=0 (0.0%)
+
+**方向对比**
+  一致率: 100.0%
+  变更数: 0
+
+--------------------------------------------------------------------------------
+### FER
+数据行数: 11616
+
+**旧逻辑 (legacy)**
+  使用列: entry_direction
+  分布: Long=8475 (73.0%) | Short=3141 (27.0%) | Zero=0 (0.0%)
+
+**新逻辑 (direction.yaml)**
+  因果来源: failure_reversal
+  命中规则: cvd_change_5_normalized (negate_sign)
+  分布: Long=8475 (73.0%) | Short=3141 (27.0%) | Zero=0 (0.0%)
+
+**方向对比**
+  一致率: 100.0%
+  变更数: 0
+
+================================================================================
+## 汇总
+
+| Archetype | 旧方向来源 | 新因果来源 | 命中规则 | 一致率 | 变更数 |
+|-----------|-----------|-----------|---------|-------|-------|
+| BPC       | bpc_breakout_directi | structure      | bpc_breakout_direction (r | 100.0% |     0 |
+| ME        | entry_direction      | momentum       | entry_direction (raw)     | 100.0% |     0 |
+| FER       | entry_direction      | failure_reversal | cvd_change_5_normalized ( | 100.0% |     0 |
+
+## direction.yaml 配置摘要
+
+### BPC
+  causal_source: structure
+  规则 1: bpc_breakout_direction (transform=raw) — Donchian 20-bar channel breakout direction (+1/-1)
+  规则 2: breakout_direction (transform=raw) — 通用突破方向列
+
+### ME
+  causal_source: momentum
+  规则 1: wpt_volume_energy_f (transform=sign) — sign(wpt_energy): 小波变换能量方向
+  规则 2: delta_rolling_sum (transform=sign) — sign(delta_rolling_sum): 资金流方向
+  规则 3: entry_direction (transform=raw) — 训练产出的方向列
+  规则 4: price_velocity_pct (transform=sign) — sign(price_velocity): 价格速度方向
+
+### FER
+  causal_source: failure_reversal
+  规则 1: impulse_failure_direction (transform=negate_sign) — 失败脉冲方向的反向: -sign(impulse_failure_direction)
+  规则 2: cvd_change_5_normalized (transform=negate_sign) — CVD 5-bar 变化的反向: -sign(cvd)
+  规则 3: trapped_side (transform=negate_sign) — 被困方向的反向: -sign(trapped_side)
+  规则 4: entry_direction (transform=raw) — 训练产出的方向列

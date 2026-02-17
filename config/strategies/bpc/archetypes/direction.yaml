@@ -1,0 +1,51 @@
+# BPC Direction Determination
+# 版本: 1.0
+# 创建时间: 2026-02-16
+#
+# 职责: 确定 BPC archetype 的交易方向 (long/short)
+# 原则: 方向来自"结构突破方向"，是 deterministic 的，不让模型学
+#
+# Pipeline 位置:
+#   Direction (本文件) → Gate → Entry Filter → Evidence → Execution
+#
+# 语义:
+#   BPC = Breakout Pullback Continuation
+#   方向 = 结构突破方向 (Donchian channel breakout)
+#   "跟结构走"
+#
+# 禁止使用的特征 (会导致语义污染):
+#   - 当下 delta / wick / absorption (瞬时流逻辑)
+#   - HTF MA 方向
+#   - RSI / 动量指标
+
+version: 1
+
+# 方向因果来源
+causal_source: structure  # 结构突破
+
+# 方向确定规则 (按优先级从高到低)
+# 命中第一个 method 后停止
+direction_rules:
+  # 规则 1: BPC 专属列 — Donchian 突破方向
+  - method: feature_column
+    feature: bpc_breakout_direction
+    description: "Donchian 20-bar channel breakout direction (+1/-1)"
+    transform: raw  # 直接使用值，不做变换
+
+  # 规则 2: 通用突破方向列 (兜底)
+  - method: feature_column
+    feature: breakout_direction
+    description: "通用突破方向列"
+    transform: raw
+
+# 方向验证 (可选，direction != 0 才有效)
+validation:
+  require_nonzero: true   # direction == 0 视为无信号
+  allowed_values: [-1, 1] # 只允许 -1 (short) 和 +1 (long)
+
+# 适合的特征 (供参考，不直接用于计算)
+semantic_features:
+  - sr_structure.breakout_direction
+  - swing_high_low_structure
+  - volume_profile_acceptance_side
+  - price_relative_to_value_area

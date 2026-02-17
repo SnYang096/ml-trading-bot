@@ -664,17 +664,56 @@ def _estimate_span_years(df: pd.DataFrame, bars_per_year: float = 2190.0) -> flo
 _PCM_DEFAULT_PRIORITY = ["Reversal", "ME", "BPC"]
 
 
-def _detect_direction_col(df: pd.DataFrame, archetype: str) -> Optional[str]:
-    """检测 archetype 的方向列名"""
-    candidates = [
-        f"{archetype}_breakout_direction",
-        "breakout_direction",
-        "entry_direction",
-        "direction",
-    ]
-    for col in candidates:
-        if col in df.columns:
-            return col
+def load_direction_config(
+    strategy: str, strategies_root: str = "config/strategies"
+) -> Dict[str, Any]:
+    """加载 archetypes/direction.yaml 配置"""
+    path = Path(strategies_root) / strategy / "archetypes" / "direction.yaml"
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def apply_direction_rules(
+    df: pd.DataFrame,
+    archetype: str,
+    direction_cfg: Dict[str, Any],
+) -> str:
+    """根据 direction.yaml 规则确定方向列。
+
+    按 direction_rules 优先级从高到低尝试，命中第一个可用的 method 即返回。
+    如果所有规则都不匹配，返回 None（调用方应报错终止）。
+
+    Returns:
+        使用的方向列名（已写入 df['entry_direction']）或 None
+    """
+    rules = direction_cfg.get("direction_rules", [])
+
+    for rule in rules:
+        feature = rule.get("feature", "")
+        transform = rule.get("transform", "raw")
+
+        if feature not in df.columns:
+            continue
+
+        series = pd.to_numeric(df[feature], errors="coerce").fillna(0.0)
+
+        if transform == "raw":
+            df["entry_direction"] = series.values
+        elif transform == "sign":
+            df["entry_direction"] = np.sign(series).values
+        elif transform == "negate_sign":
+            df["entry_direction"] = (-np.sign(series)).values
+        else:
+            df["entry_direction"] = series.values
+
+        # replace 0 with 0 (no direction)
+        desc = rule.get("description", feature)
+        print(f"   Direction: {feature} (transform={transform}) | {desc}")
+        return feature
+
+    # 所有规则都不匹配
     return None
 
 
@@ -815,15 +854,23 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             df["symbol"] = df["_symbol"]
         print(f"\n📂 {arch_name}: {len(df)} rows from {path}")
 
-        # 检测方向列
-        dir_col = _detect_direction_col(df, arch_name)
-        if dir_col is None:
+        # 检测方向列 —— 严格使用 direction.yaml
+        dir_cfg = load_direction_config(arch_name, strategies_root)
+        if not dir_cfg:
             print(
-                f"❌ {arch_name}: no direction column found in {list(df.columns)[:10]}..."
+                f"❌ {arch_name}: direction.yaml 不存在 ({strategies_root}/{arch_name}/archetypes/direction.yaml)"
             )
             return 1
-        df["entry_direction"] = df[dir_col].astype(float).copy()
-        print(f"   Direction col: {dir_col}")
+        applied = apply_direction_rules(df, arch_name, dir_cfg)
+        if applied is None:
+            available_cols = [
+                c for c in df.columns if "dir" in c.lower() or "breakout" in c.lower()
+            ]
+            print(
+                f"❌ {arch_name}: direction.yaml 规则无一命中。"
+                f"可用方向相关列: {available_cols}"
+            )
+            return 1
 
         # Gate 过滤
         if "gate_decision" in df.columns:

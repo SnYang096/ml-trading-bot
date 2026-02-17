@@ -31,14 +31,8 @@ holding:
   max_holding_bars: null
   time_stop_bars: 50
 
-# 方向策略
-# ME 使用 breakout_sign 判断方向
-direction_policy:
-  direction_source: structure
-  structure_direction:
-    method: breakout_sign  # 突破方向
-    lookback_bars: 10
-    min_consistency: 0.6
+# 方向策略 → 已迁移至 direction.yaml
+# direction_policy: see archetypes/direction.yaml
 
 # ============================================================
 # 🎯 Tiers: 按 evidence_score 分档执行参数

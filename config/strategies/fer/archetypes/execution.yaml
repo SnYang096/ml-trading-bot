@@ -1,0 +1,64 @@
+# FER Execution Archetype
+# 职责：执行参数动态调整
+# 训练后根据 optimize_execution_grid.py 结果调整
+
+schema:
+  base_params:      # 基础参数
+  dynamic_adjust:   # 动态调整规则
+
+# ==============================================================
+# 📊 BASE EXECUTION PARAMS (初始模板)
+# ==============================================================
+
+base_params:
+  # 止损止盈
+  stop_loss:
+    type: atr_multiple
+    value: 2.0           # 2倍ATR止损
+  
+  take_profit:
+    type: atr_multiple
+    value: 4.0           # 4倍ATR止盈（反转空间大）
+  
+  # 仓位管理
+  position_sizing:
+    method: fixed_risk
+    risk_per_trade: 0.02  # 2%风险
+  
+  # 时间管理
+  max_hold_time: 20      # 最大持仓20 bars
+  
+  # Trailing
+  trailing_stop:
+    enabled: true
+    activation_profit: 2.0  # 盈利2R后启动
+    trail_distance: 1.0     # trailing距离1R
+
+# ==============================================================
+# 🎛️ DYNAMIC ADJUST: 根据Evidence动态调整
+# ==============================================================
+
+dynamic_adjust:
+  # 高置信度时放大仓位
+  - condition:
+      evidence_score:
+        gte: 0.7
+    adjust:
+      position_multiplier: 1.5
+      take_profit_multiplier: 1.2
+  
+  # 低置信度时收紧
+  - condition:
+      evidence_score:
+        lt: 0.4
+    adjust:
+      position_multiplier: 0.7
+      stop_loss_multiplier: 0.8
+  
+  # 高波动时收紧止损
+  - condition:
+      volatility_regime:
+        gt: 2.0
+    adjust:
+      stop_loss_multiplier: 0.8
+      take_profit_multiplier: 1.2

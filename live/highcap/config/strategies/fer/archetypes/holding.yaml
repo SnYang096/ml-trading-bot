@@ -1,0 +1,70 @@
+# FER Holding Archetype
+# 职责：持仓管理规则
+
+schema:
+  exit_signals:      # 退出信号
+  stop_management:   # 止损管理
+
+# ==============================================================
+# 🚪 EXIT SIGNALS: 主动退出条件
+# ==============================================================
+
+exit_signals:
+  # 反转失败：价格重回impulse方向
+  - id: exit_reversal_failure
+    tag: EXIT_REVERSAL_FAIL
+    priority: 0
+    reason: "[EXIT] 反转失败，价格重回原方向"
+    when:
+      price_momentum:
+        crosses_above: 0  # 动量转正（重回原方向）
+    then:
+      action: exit_full
+  
+  # 时间止损：持仓过长
+  - id: exit_time_stop
+    tag: EXIT_TIME
+    priority: 1
+    reason: "[EXIT] 持仓时间过长"
+    when:
+      bars_in_position:
+        gte: 20
+    then:
+      action: exit_full
+  
+  # 反转动能衰竭
+  - id: exit_momentum_exhausted
+    tag: EXIT_MOMENTUM
+    priority: 2
+    reason: "[EXIT] 反转动能衰竭"
+    when:
+      reversal_strength:
+        lt: 0.3  # 反转强度 < 0.3
+    then:
+      action: exit_partial
+      params:
+        exit_ratio: 0.5  # 减仓50%
+
+# ==============================================================
+# 🛡️ STOP MANAGEMENT: 止损动态管理
+# ==============================================================
+
+stop_management:
+  # Trailing止损规则
+  trailing:
+    enabled: true
+    trigger:
+      profit_multiple: 2.0  # 盈利2R后启动
+    distance:
+      atr_multiple: 1.0     # trailing距离1R
+    step:
+      profit_step: 0.5      # 每盈利0.5R上移一次
+  
+  # 时间衰减止损
+  time_based:
+    enabled: true
+    schedule:
+      - bars: 10
+        stop_tighten: 0.9   # 持仓10 bars后收紧10%
+      - bars: 15
+        stop_tighten: 0.8   # 持仓15 bars后收紧20%

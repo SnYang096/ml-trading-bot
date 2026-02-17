@@ -19,6 +19,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -108,6 +109,7 @@ class MELiveStrategy:
 
         # 配置 — 在 load_configs() 中初始化
         self._archetype: Optional[StrategyArchetype] = None
+        self._direction_cfg: Dict[str, Any] = {}  # direction.yaml
         self._entry_cfg: Dict[str, Any] = {}
         self._exec_config: Dict[str, Any] = {}
         self._tiers_cfg: Dict[str, Any] = {}
@@ -125,7 +127,7 @@ class MELiveStrategy:
     # ────────────────────────────────────────────────────
 
     def load_configs(self) -> None:
-        """加载所有 ME 配置（archetype / entry_filter / execution / holding）"""
+        """加载所有 ME 配置（archetype / direction / entry_filter / execution / holding）"""
         try:
             # 1. StrategyArchetype（Gate + Evidence + Execution）
             self._archetype = load_strategy_archetype(
@@ -136,6 +138,19 @@ class MELiveStrategy:
                 f"{len(self._archetype.gate.all_rules)} gate rules, "
                 f"{len(self._archetype.evidence.features)} evidence features"
             )
+
+            # 1.5 Direction 配置
+            dir_path = (
+                Path(self.strategies_root) / "me" / "archetypes" / "direction.yaml"
+            )
+            if dir_path.exists():
+                with open(dir_path, "r", encoding="utf-8") as f:
+                    self._direction_cfg = yaml.safe_load(f) or {}
+                logger.info(
+                    f"✅ Direction config loaded: "
+                    f"{len(self._direction_cfg.get('direction_rules', []))} rules, "
+                    f"source={self._direction_cfg.get('causal_source', 'unknown')}"
+                )
 
             # 2. Entry Filters
             self._entry_cfg = load_entry_filters_config(
@@ -313,15 +328,31 @@ class MELiveStrategy:
         if not expansion:
             return False, 0
 
-        # 方向判断：使用 breakout_sign
-        # 简化实现：使用价格方向一致性
-        dir_consistency = features.get("price_dir_consistency_pct", 0.5)
-        if dir_consistency > 0.6:
-            direction = 1  # 上涨突破
-        elif dir_consistency < 0.4:
-            direction = -1  # 下跌突破
-        else:
-            direction = 0  # 无明确方向
+        # 方向判断：严格使用 direction.yaml 规则
+        if not self._direction_cfg:
+            logger.error("direction.yaml 未加载，无法判断方向")
+            return False, 0
+
+        direction = 0
+        for rule in self._direction_cfg.get("direction_rules", []):
+            feat = rule.get("feature", "")
+            val = features.get(feat)
+            if val is None:
+                continue
+            try:
+                val = float(val)
+            except (TypeError, ValueError):
+                continue
+            transform = rule.get("transform", "raw")
+            if transform == "raw":
+                direction = int(val)
+            elif transform == "sign":
+                direction = int(np.sign(val))
+            elif transform == "negate_sign":
+                direction = int(-np.sign(val))
+            else:
+                direction = int(val)
+            break
 
         return True, direction
 

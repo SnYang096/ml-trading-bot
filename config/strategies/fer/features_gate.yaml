@@ -1,0 +1,41 @@
+# FER Gate 训练特征配置
+# 目标：识别"单边博弈失败"的结构性条件
+# V2: 加入 FER 专属因果特征
+
+feature_pipeline:
+  requested_features:
+    # ===== FER 专属因果特征 (核心) =====
+    - fer_failure_signals_f
+
+    # ===== 核心：反转/衰竭相关 =====
+    - exhaustion_score_f
+    - path_efficiency_pct_f
+    - atr_percentile_f
+
+    # ===== 订单流 =====
+    - vpin_features_f
+    - cvd_change_features_f
+    - volume_imbalance_f
+
+    # ===== 价格动量 =====
+    - rsi_f
+    - macd_atr_f
+
+    # ===== 波动率 =====
+    - atr_f
+    - bb_width_normalized_pct_f
+    - volatility_regime_f
+
+    # ===== 趋势/方向 =====
+    - trend_strength_f
+    - trend_r2_20_f
+
+    # ===== 支撑阻力 (sr_strength_max_f 移除: 计算太慢, 非FER核心) =====
+
+    # ===== 辅助 =====
+    - ofci_pct_f
+    - price_dir_consistency_pct_f
+
+  scaling_method: robust
+  handle_nan: median_fill
+  clip_outliers: 5.0

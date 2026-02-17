@@ -547,7 +547,31 @@ def main() -> int:
     if "bpc_breakout_direction" in df.columns:
         df["entry_direction"] = df["bpc_breakout_direction"].astype(float).copy()
     else:
-        df["entry_direction"] = 0.0
+        # 使用 direction.yaml 确定方向
+        from scripts.backtest_execution_layer import (
+            load_direction_config,
+            apply_direction_rules,
+        )
+
+        dir_cfg = load_direction_config(args.strategy, args.strategies_root)
+        if dir_cfg:
+            applied = apply_direction_rules(df, args.strategy, dir_cfg)
+            if applied:
+                print(f"   Direction: {applied} (from direction.yaml)")
+            else:
+                # direction.yaml 规则无一命中
+                if "entry_direction" in df.columns:
+                    print(f"   Direction: entry_direction (原始列)")
+                else:
+                    print(f"❌ direction.yaml 规则无一命中，且无 entry_direction 列")
+                    return 1
+        elif "entry_direction" in df.columns:
+            print(f"   Direction: entry_direction (原始列, 无 direction.yaml)")
+        else:
+            print(
+                f"❌ 无法确定方向: 无 bpc_breakout_direction / direction.yaml / entry_direction"
+            )
+            return 1
 
     # 直接使用 logs 中的 OHLC（需要 high, low, close, atr）
     has_ohlc = all(c in df.columns for c in ["high", "low", "close", "atr"])

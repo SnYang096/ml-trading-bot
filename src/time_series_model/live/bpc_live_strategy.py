@@ -125,6 +125,7 @@ class BPCLiveStrategy:
 
         # 配置 — 在 load_configs() 中初始化
         self._archetype: Optional[StrategyArchetype] = None
+        self._direction_cfg: Dict[str, Any] = {}  # direction.yaml
         self._entry_cfg: Dict[str, Any] = {}
         self._exec_config: Dict[str, Any] = {}
         self._tiers_cfg: Dict[str, Any] = {}
@@ -142,7 +143,7 @@ class BPCLiveStrategy:
     # ────────────────────────────────────────────────────
 
     def load_configs(self) -> None:
-        """加载所有 BPC 配置（archetype / entry_filter / execution / holding）"""
+        """加载所有 BPC 配置（archetype / direction / entry_filter / execution / holding）"""
         try:
             # 1. StrategyArchetype（Gate + Evidence + Execution 三层）
             self._archetype = load_strategy_archetype(
@@ -153,6 +154,19 @@ class BPCLiveStrategy:
                 f"{len(self._archetype.gate.all_rules)} gate rules, "
                 f"{len(self._archetype.evidence.features)} evidence features"
             )
+
+            # 1.5 Direction 配置
+            dir_path = (
+                Path(self.strategies_root) / "bpc" / "archetypes" / "direction.yaml"
+            )
+            if dir_path.exists():
+                with open(dir_path, "r", encoding="utf-8") as f:
+                    self._direction_cfg = yaml.safe_load(f) or {}
+                logger.info(
+                    f"✅ Direction config loaded: "
+                    f"{len(self._direction_cfg.get('direction_rules', []))} rules, "
+                    f"source={self._direction_cfg.get('causal_source', 'unknown')}"
+                )
 
             # 2. Entry Filters
             self._entry_cfg = load_entry_filters_config(
@@ -384,7 +398,7 @@ class BPCLiveStrategy:
         BPC 入场信号评估
 
         管线:
-          1. bpc_breakout_direction → 方向
+          1. direction.yaml 规则 → 方向
           2. Gate → 结构性否决
           3. Entry Filter → 入场时机
           4. Evidence → Tier 选择
@@ -393,12 +407,31 @@ class BPCLiveStrategy:
         if not features:
             return False, {}
 
-        # ── 1. 方向: bpc_breakout_direction ──
-        direction = features.get("bpc_breakout_direction", 0)
-        try:
-            direction = int(float(direction))
-        except (TypeError, ValueError):
-            direction = 0
+        # ── 1. 方向: 严格从 direction.yaml 规则确定 ──
+        if not self._direction_cfg:
+            logger.error("direction.yaml 未加载，无法判断方向")
+            return False, {"reject_reason": "no_direction_config"}
+
+        direction = 0
+        for rule in self._direction_cfg.get("direction_rules", []):
+            feat = rule.get("feature", "")
+            val = features.get(feat)
+            if val is None:
+                continue
+            try:
+                val = float(val)
+            except (TypeError, ValueError):
+                continue
+            transform = rule.get("transform", "raw")
+            if transform == "raw":
+                direction = int(val)
+            elif transform == "sign":
+                direction = int(np.sign(val))
+            elif transform == "negate_sign":
+                direction = int(-np.sign(val))
+            else:
+                direction = int(val)
+            break  # 命中第一个即停止
 
         if direction == 0:
             return False, {"reject_reason": "no_direction"}

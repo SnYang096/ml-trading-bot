@@ -1,0 +1,54 @@
+# FER Failure 子标签：failure_rr_extreme（踩大坑）
+# 🟥 只学习识别"单边博弈失败"的结构条件
+# - failure_rr_extreme = forward_rr < -0.8R
+# - 目标：识别哪些条件下反向清算会失败
+
+name: fer_rr_extreme
+target_column: success_no_rr_extreme  # invert=True
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_rr_extreme_label
+  params:
+    direction: long
+    horizon: 50
+    invert: true  # 1=好机会（不会踩坑），0=踩坑
+    # 复用 BPC 标签管线，MAE < -0.8R 判定 failure
+
+# 标签元信息
+label_meta:
+  label_type: binary
+  failure_subtype: rr_extreme
+  semantic: |
+    success_no_rr_extreme = 1 - failure_rr_extreme
+    1 = 不会踩大坑（forward_rr >= -0.8R）
+    0 = 踩大坑（forward_rr < -0.8R）
+  failure_definition: |
+    failure_rr_extreme = forward_rr < -0.8R
+    FER特定：单边博弈失败后的反向清算踩坑
+  horizon: 50 bars
+  description: |
+    FER Failure 子标签训练：
+    - 只学习识别"反向清算踩坑"的结构条件
+    - FER 专注于单边impulse失败后的反转失败模式
+    - 高预测值 = 安全（反转时机正确）
+
+filters:
+  - column: success_no_rr_extreme
+    notna: true
+
+# Gate 模型专属 KPI 定义
+kpi_definition:
+  veto_ability:
+    description: "Gate 是否能有效降低 failure_rr_extreme 发生率"
+    metrics:
+      - name: lift_at_70pct
+        description: "Top 70% 覆盖时的 Lift (failure rate reduction)"
+        target: "<= 0.90x"
+        critical: true
+      - name: lift_at_50pct
+        description: "Top 50% 覆盖时的 Lift"
+        target: "<= 0.85x"
+        critical: true
+
+post_label_filters: []

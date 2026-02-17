@@ -10,20 +10,20 @@
 # 位置: Execution 阶段（gate 放行之后）
 #
 # 参考 BPC 的 bb 和 liquidity_silence filter，
-ME 的 Entry Filter 应该检测：
+# ME 的 Entry Filter 应该检测：
 # 1. 订单流一致性：VPIN 活跃 + CVD 方向性
 # 2. 空间确认：距离 SR 有足够空间
 
 filters:
   # Entry Filter 1: 订单流确认
   # 检测 VPIN 活跃度，确保订单流支持突破方向
-  - name: orderflow_confirm
+  - id: orderflow_confirm
     description: "订单流一致性确认"
     enabled: true
     conditions:
       - feature: vpin
-        operator: quantile_gte
-        threshold: 0.50  # VPIN >= P50 表示订单流活跃
+        operator: ">="
+        value: 0.50  # VPIN >= P50 表示订单流活跃
     priority: 1
     comment: |
       ME 策略需要订单流支持。VPIN 过低表示订单流不活跃，
@@ -32,13 +32,13 @@ filters:
 
   # Entry Filter 2: 空间确认
   # 检测到最近 SR 的距离，确保有足够的盈利空间
-  - name: space_confirm
+  - id: space_confirm
     description: "盈利空间确认"
     enabled: false  # 默认禁用，需要回测验证
     conditions:
       - feature: distance_to_nearest_sr
-        operator: value_gte
-        threshold: 2.0  # 距离 SR >= 2.0 ATR
+        operator: ">="
+        value: 2.0  # 距离 SR >= 2.0 ATR
     priority: 2
     comment: |
       ME 突破需要空间。如果离最近 SR 太近（< 2 ATR），

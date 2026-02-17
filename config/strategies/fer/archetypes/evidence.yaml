@@ -1,0 +1,84 @@
+# FER Evidence Archetype
+# 训练后需根据 optimize_evidence_plateau.py 结果填充
+# 职责：影响置信度/排序/仓位，不做硬veto
+
+schema:
+  label_semantics:
+    suppress: 强烈不利 - 极度限制仓位/信心
+    downweight: 不利 - 降低信心/仓位
+    neutral: 中性 - 标准执行
+    favor: 有利 - 提高信心/仓位
+    amplify: 强烈有利 - 最大化执行
+
+# ==============================================================
+# 🔍 EVIDENCE: 执行质量调节器
+# ==============================================================
+# 训练后填充特征
+# 从 Return Tree 的特征重要性中提取Top特征
+# 基于 bad_suppression KPI 排序
+
+evidence:
+  - id: evidence_rsi
+    feature: rsi
+    rank: 1
+    direction: positive  # RSI越高=超买=反转机会
+    usage_hint: RSI超买/超卖程度，影响TP目标和trailing速度
+    affects:
+      - tp_range
+      - trailing_speed
+      - position_size
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    split_count: 48
+    
+  - id: evidence_bb_position
+    feature: bb_position
+    rank: 2
+    direction: positive  # 靠近上轨=超买=反转机会
+    usage_hint: 布林带位置，影响入场激进度和TP
+    affects:
+      - tp_range
+      - position_size
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    split_count: 38
+    
+  - id: evidence_cvd_change
+    feature: cvd_change_5_normalized
+    rank: 3
+    direction: negative  # CVD负值=卖压=有利空头反转
+    usage_hint: 订单流方向，影响方向判断和仓位
+    affects:
+      - entry_direction
+      - position_size
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [amplify, favor, neutral, downweight, suppress]
+    split_count: 37
+    
+  - id: evidence_bb_width
+    feature: bb_width_normalized
+    rank: 4
+    direction: positive  # 宽度大=波动大=机会大
+    usage_hint: 波动率，影响TP范围和止损
+    affects:
+      - tp_range
+      - stop_loss_multiple
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    split_count: 37
+    
+  - id: evidence_volume_ratio
+    feature: volume_ratio
+    rank: 5
+    direction: positive  # 放量=更可靠
+    usage_hint: 成交量确认，影响信心
+    affects:
+      - position_size
+    quantile_mapping:
+      bins: [0.2, 0.4, 0.6, 0.8]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    split_count: 11

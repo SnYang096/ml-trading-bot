@@ -1,0 +1,65 @@
+# FER Direction Determination
+# 版本: 1.0
+# 创建时间: 2026-02-16
+#
+# 职责: 确定 FER archetype 的交易方向 (long/short)
+# 原则: 方向来自"失败方向的反向"，是 deterministic 的，不让模型学
+#
+# Pipeline 位置:
+#   Direction (本文件) → Gate → Entry Filter → Evidence → Execution
+#
+# 语义:
+#   FER = Failed Expansion Reversal
+#   方向 = -failed_impulse_direction (失败方向的反向)
+#   "跟失败走" — 谁失败了，就做反方向
+#
+# 禁止使用的特征 (会导致语义污染):
+#   - HTF trend (趋势逻辑, 属于 BPC)
+#   - MA 方向
+#   - WPT 当前值 (动能逻辑, 属于 ME)
+
+version: 1
+
+# 方向因果来源
+causal_source: failure_reversal  # 失败反转
+
+# 方向确定规则 (按优先级从高到低)
+# 命中第一个可用 method 后停止
+direction_rules:
+  # 规则 1: Impulse failure score 方向的反向
+  # impulse_failure_score > 0 表示多头失败 → 做空
+  # impulse_failure_score < 0 表示空头失败 → 做多
+  - method: feature_sign
+    feature: impulse_failure_direction
+    description: "失败脉冲方向的反向: -sign(impulse_failure_direction)"
+    transform: negate_sign  # direction = -sign(feature_value)
+
+  # 规则 2: CVD 反向 — 多头推进失败 (CVD正但价格没涨)
+  - method: feature_sign
+    feature: cvd_change_5_normalized
+    description: "CVD 5-bar 变化的反向: -sign(cvd)"
+    transform: negate_sign
+
+  # 规则 3: 被困方向的反向 (trapped_longs → 做空)
+  - method: feature_sign
+    feature: trapped_side
+    description: "被困方向的反向: -sign(trapped_side)"
+    transform: negate_sign
+
+  # 规则 4: 已有 entry_direction 列 (训练产出)
+  - method: feature_column
+    feature: entry_direction
+    description: "训练产出的方向列"
+    transform: raw
+
+# 方向验证
+validation:
+  require_nonzero: true
+  allowed_values: [-1, 1]
+
+# 适合的特征 (供参考)
+semantic_features:
+  - false_breakout_direction
+  - liquidity_sweep_side
+  - aggressive_but_stuck_side
+  - trapped_cluster_side

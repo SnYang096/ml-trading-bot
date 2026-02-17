@@ -43,13 +43,8 @@ holding:
   max_holding_bars: null      # 不限制，由市场和止损决定
   time_stop_bars: 50          # 时间止损 (超过50根K线未达目标则平仓)
 
-# 方向策略
-direction_policy:
-  direction_source: structure
-  structure_direction:
-    method: trend_sign
-    lookback_bars: 5
-    min_consistency: 0.6
+# 方向策略 → 已迁移至 direction.yaml
+# direction_policy: see archetypes/direction.yaml
 
 # ============================================================
 # 🎯 Tiers: 按 evidence_score 分档执行参数
