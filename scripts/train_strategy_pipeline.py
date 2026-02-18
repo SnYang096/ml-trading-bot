@@ -56,11 +56,20 @@ from src.time_series_model.pipeline.training.volatility_model_config import (
     prepare_volatility_model_data,
     get_volatility_model_params,
 )
-from src.time_series_model.strategies.backtesting.vectorbt_backtest import (
-    VectorBTBacktest,
-)
 
 import yaml
+
+
+# ============================================================
+# Stub for deprecated VectorBTBacktest (old backtest class deleted)
+# Training pipeline quick-eval now returns None; use backtest_execution_layer.py for proper backtest.
+# ============================================================
+class VectorBTBacktest:
+    """Stub: VectorBTBacktest was removed. Use backtest_execution_layer.py instead."""
+
+    def run(self, **kwargs):
+        return None  # Skip quick backtest during training; real backtest done via CLI
+
 
 # 原始/未归一化列：不传入模型，只用于标签或 backtest
 BASE_DATA_COLUMNS = {

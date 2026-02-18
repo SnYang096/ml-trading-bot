@@ -97,8 +97,6 @@ endif
 	ts-feature-eval ts-factor-eval ts-timeframe-forward-report \
 	ts-strategy-feature-compare feature-indicators \
 	vectorbot-backtest nautilus-backtest feature-eval timeframe-forward-report \
-	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
-	cs-report cs-train \
 	test-wpt-volume-profile test-wpt-volume-profile-simple test-extended-volatility-features test-spectrum-features \
 	test-vpin-future-leak test-vpin-multi-dimensional test-wpt-future-leak test-volume-profile-volatility-future-leak test-key-features-all \
 	docker-build-gpu \
@@ -175,10 +173,6 @@ help:
 	@echo "    make ts-strategy-feature-compare # Ablation Study: Compare multiple feature configs for a strategy"
 	@echo "    make ts-vectorbot-backtest # Run VectorBot risk-managed backtest"
 	@echo "    make ts-nautilus-backtest  # Run Nautilus Trader backtest"
-	@echo "    make cs-factor-eval    # Cross-sectional factor evaluation (IC, decay, quantile spread)"
-	@echo "    make cs-report         # Fama-MacBeth + Newey-West + IC/IR markdown report"
-	@echo "    make cs-train          # Train cross-sectional models (boosting/Fama-MacBeth)"
-	@echo "    make cs-catalog        # Categorise factors from an existing panel"
 	@echo ""
 	@echo ""
 	@echo "Override defaults, e.g. \"make rolling SYMBOLS=\"BTCUSDT ETHUSDT\" ROLLING_START=2024-10 ROLLING_END=2024-12\""
@@ -193,10 +187,10 @@ clean:
 	find . -type d -name "__pycache__" -delete
 
 format:
-	PYTHONPATH=src $(PYTHON) -m black src/time_series_model/ src/cross_sectional/ src/data_tools/ tests/ scripts/
+	PYTHONPATH=src $(PYTHON) -m black src/time_series_model/ src/data_tools/ tests/ scripts/
 
 lint:
-	PYTHONPATH=src $(PYTHON) -m flake8 src/time_series_model/ src/cross_sectional/ src/data_tools/ tests/ scripts/
+	PYTHONPATH=src $(PYTHON) -m flake8 src/time_series_model/ src/data_tools/ tests/ scripts/
 
 # ---------------------------------------------------------------------------
 # Feature Registry commands
@@ -1045,191 +1039,6 @@ verify-feature-correlation:
 
 
 # ---------------------------------------------------------------------------
-# Cross-sectional analysis (panels must be provided externally / via FeatureStore pipeline)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Cross-sectional Fama-MacBeth + Newey-West reporting
-# ---------------------------------------------------------------------------
-
-CS_INPUT ?= $(RESULTS_DIR)/feature_exports/*.parquet
-CS_OUTPUT ?= $(RESULTS_DIR)/cross_sectional/fama_macbeth_report.md
-CS_HORIZON ?= 12
-CS_MAX_LAG ?= 5
-CS_PERIODS_PER_YEAR ?= auto
-CS_WINSOR ?= 3.0
-CS_REPORT_EXTRA ?=
-
-cs-report:
-	@echo "📊 Cross-sectional Fama-MacBeth analysis for $(SYMBOLS)..."
-	@mkdir -p $(dir $(CS_OUTPUT))
-	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/run_famacbeth_report.py \
-		--input $(CS_INPUT) \
-		--output $(CS_OUTPUT) \
-		--symbols "$(SYMBOLS)" \
-		--horizon $(CS_HORIZON) \
-		--max-lag $(CS_MAX_LAG) \
-		--periods-per-year $(CS_PERIODS_PER_YEAR) \
-		--winsor $(CS_WINSOR) \
-		$(CS_REPORT_EXTRA)
-	@echo "✅ Report generated: $(CS_OUTPUT)"
-
-# ---------------------------------------------------------------------------
-# Cross-sectional training (boosting / Fama-MacBeth)
-# ---------------------------------------------------------------------------
-
-CS_TRAIN_INPUT ?= $(CS_INPUT)
-CS_TRAIN_OUTPUT_DIR ?= $(RESULTS_DIR)/cross_sectional/models
-CS_TRAIN_MODEL ?= boosting
-CS_TRAIN_MODEL_NAME ?= cs_boosting.joblib
-CS_TRAIN_FEATURE_COLS ?=
-CS_TRAIN_FEATURE_FILE ?=
-CS_TRAIN_EXTRA ?=
-CS_TRAIN_PRED_NAME ?= predictions.parquet
-CS_TRAIN_METRICS_NAME ?= metrics.json
-CS_TRAIN_AUTO_SELECT ?= 0
-CS_TRAIN_SELECT_TOPK ?=
-CS_TRAIN_IC_THRESHOLD ?=
-CS_TRAIN_IR_THRESHOLD ?=
-CS_TRAIN_SELECTION_STAT ?= ic
-
-cs-train:
-	@echo "🚀 Cross-sectional training ($(CS_TRAIN_MODEL)) for $(SYMBOLS)..."
-	@mkdir -p $(CS_TRAIN_OUTPUT_DIR)
-	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/train_cross_sectional_model.py \
-		--input $(CS_TRAIN_INPUT) \
-		--output-dir $(CS_TRAIN_OUTPUT_DIR) \
-		--symbols "$(SYMBOLS)" \
-		--horizon $(CS_HORIZON) \
-		--model $(CS_TRAIN_MODEL) \
-		--winsor $(CS_WINSOR) \
-		--periods-per-year $(CS_PERIODS_PER_YEAR) \
-		--model-name $(CS_TRAIN_MODEL_NAME) \
-		--predictions-name $(CS_TRAIN_PRED_NAME) \
-		--metrics-name $(CS_TRAIN_METRICS_NAME) \
-		$(if $(CS_TRAIN_FEATURE_FILE),--feature-file $(CS_TRAIN_FEATURE_FILE),) \
-		$(if $(filter 1,$(CS_TRAIN_AUTO_SELECT)),--auto-select,) \
-		$(if $(CS_TRAIN_SELECT_TOPK),--select-topk $(CS_TRAIN_SELECT_TOPK),) \
-		$(if $(CS_TRAIN_IC_THRESHOLD),--ic-threshold $(CS_TRAIN_IC_THRESHOLD),) \
-		$(if $(CS_TRAIN_IR_THRESHOLD),--ir-threshold $(CS_TRAIN_IR_THRESHOLD),) \
-		$(if $(CS_TRAIN_SELECTION_STAT),--selection-stat $(CS_TRAIN_SELECTION_STAT),) \
-		$(if $(CS_TRAIN_FEATURE_COLS),--feature-cols "$(CS_TRAIN_FEATURE_COLS)",) \
-		$(CS_TRAIN_EXTRA)
-	@echo "✅ Cross-sectional artefacts saved under $(CS_TRAIN_OUTPUT_DIR)"
-
-# ---------------------------------------------------------------------------
-# Full cross-sectional workflow (panel -> report -> training)
-# ---------------------------------------------------------------------------
-
-cs-workflow:
-	@echo "cs-workflow has been removed. Use `mlbot cross-section workflow --config ...` (YAML-driven) instead."
-	@exit 1
-
-CS_CATALOG_INPUT ?= $(CS_INPUT)
-CS_CATALOG_OUTPUT ?= results/cross_sectional/factor_sets
-
-cs-catalog:
-	@echo "🗂  Exporting factor catalogue from $(CS_CATALOG_INPUT)..."
-	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/export_factor_catalog.py \
-		--input $(CS_CATALOG_INPUT) \
-		--output-dir $(CS_CATALOG_OUTPUT)
-	@echo "✅ Factor sets saved to $(CS_CATALOG_OUTPUT)"
-
-CS_SELECT_INPUT ?= $(CS_INPUT)
-CS_SELECT_OUTPUT ?= results/cross_sectional/selected_factors.txt
-CS_SELECT_OUTPUT_JSON ?= results/cross_sectional/selection_summary.json
-CS_SELECT_TARGET ?=
-CS_SELECT_MIN_ASSETS ?= 4
-CS_SELECT_PER_CATEGORY_TOP ?= 2
-CS_SELECT_GLOBAL_TOP ?= 12
-CS_SELECT_IC_THRESHOLD ?=
-CS_SELECT_IR_THRESHOLD ?=
-CS_SELECT_RANKING ?= ic
-CS_SELECT_INCLUDE ?=
-CS_SELECT_EXTRA ?=
-
-cs-select:
-	@echo "🧠 Auto-selecting factors from $(CS_SELECT_INPUT)..."
-	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/auto_select_factors.py \
-		--input $(CS_SELECT_INPUT) \
-		$(if $(CS_SELECT_TARGET),--target $(CS_SELECT_TARGET),) \
-		--min-assets $(CS_SELECT_MIN_ASSETS) \
-		--per-category-top $(CS_SELECT_PER_CATEGORY_TOP) \
-		--global-top $(CS_SELECT_GLOBAL_TOP) \
-		$(if $(CS_SELECT_IC_THRESHOLD),--ic-threshold $(CS_SELECT_IC_THRESHOLD),) \
-		$(if $(CS_SELECT_IR_THRESHOLD),--ir-threshold $(CS_SELECT_IR_THRESHOLD),) \
-		--ranking-stat $(CS_SELECT_RANKING) \
-		$(if $(CS_SELECT_INCLUDE),--include-categories $(CS_SELECT_INCLUDE),) \
-		--output $(CS_SELECT_OUTPUT) \
-		--output-json $(CS_SELECT_OUTPUT_JSON) \
-		$(CS_SELECT_EXTRA)
-	@echo "✅ Selected factors saved to $(CS_SELECT_OUTPUT)"
-
-CS_SHAP_MODEL ?= $(CS_TRAIN_OUTPUT_DIR)/$(CS_TRAIN_MODEL_NAME)
-CS_SHAP_PANEL ?= $(CS_INPUT)
-CS_SHAP_FEATURE_FILE ?= $(CS_AUTO_FEATURE_FILE)
-CS_SHAP_TARGET ?=
-CS_SHAP_TOPK ?= 10
-CS_SHAP_OUTPUT ?= results/cross_sectional/shap_reports
-CS_SHAP_MAX_SAMPLES ?= 2000
-CS_SHAP_ADDITIONAL ?=
-
-cs-shap:
-	@echo "📈 Running SHAP analysis..."
-	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/run_shap_analysis.py \
-		--model $(CS_SHAP_MODEL) \
-		--panel $(CS_SHAP_PANEL) \
-		$(if $(CS_SHAP_FEATURE_FILE),--feature-file $(CS_SHAP_FEATURE_FILE),) \
-		$(if $(CS_SHAP_TARGET),--target $(CS_SHAP_TARGET),) \
-		--topk $(CS_SHAP_TOPK) \
-		--output-dir $(CS_SHAP_OUTPUT) \
-		--max-samples $(CS_SHAP_MAX_SAMPLES) \
-		$(CS_SHAP_ADDITIONAL)
-
-CS_LOGIC_EXPECTATIONS ?=
-CS_LOGIC_OUTPUT ?= results/cross_sectional/shap_logic_report.md
-CS_LOGIC_TOLERANCE ?= 0.0
-CS_LOGIC_EXTRA ?=
-
-cs-logic-check:
-	@echo "🧐 Validating factor economic logic..."
-	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/run_factor_logic_check.py \
-		--shap-manifest $(CS_SHAP_OUTPUT)/manifest.json \
-		--expectations $(CS_LOGIC_EXPECTATIONS) \
-		--tolerance $(CS_LOGIC_TOLERANCE) \
-		--output $(CS_LOGIC_OUTPUT) \
-		$(CS_LOGIC_EXTRA)
-
-CS_DRIFT_BASELINE ?= results/cross_sectional/shap_baseline.json
-CS_DRIFT_THRESHOLD ?= 0.5
-CS_DRIFT_OUTPUT ?= results/cross_sectional/shap_drift_report.md
-CS_DRIFT_UPDATE ?= 0
-CS_DRIFT_EXTRA ?=
-
-cs-shap-drift:
-	@echo "📉 Checking SHAP drift..."
-	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/run_shap_drift_monitor.py \
-		--current $(CS_SHAP_OUTPUT)/manifest.json \
-		--baseline $(CS_DRIFT_BASELINE) \
-		--threshold $(CS_DRIFT_THRESHOLD) \
-		--output $(CS_DRIFT_OUTPUT) \
-		$(if $(filter 1,$(CS_DRIFT_UPDATE)),--update-baseline,) \
-		$(CS_DRIFT_EXTRA)
-
-CS_AUTO_PER_CATEGORY_TOP ?= 2
-CS_AUTO_GLOBAL_TOP ?= 12
-CS_AUTO_IC_THRESHOLD ?= 0.01
-CS_AUTO_IR_THRESHOLD ?= 0.5
-CS_AUTO_MIN_ASSETS ?= 4
-CS_AUTO_FEATURE_FILE ?= results/cross_sectional/selected_factors.txt
-
-cs-auto:
-	@echo "cs-auto has been removed. Use `mlbot cross-section workflow --config ...` (YAML-driven) instead."
-	@exit 1
-
-
-
-# ---------------------------------------------------------------------------
 # Alphalens test (verify installation and basic functionality)
 # ---------------------------------------------------------------------------
 
@@ -1305,30 +1114,6 @@ alphalens-evaluate:
 	@echo "📊 Evaluating trading signal quality using Alphalens..."
 	$(DOCKER_RUN_NO_TTY) python3 scripts/alphalens_evaluate_predictions.py
 
-
-CS_FACTOR_FEATURES_CONFIG ?= config/tests/factor_test/features.yaml
-CS_FACTOR_SYMBOLS ?= BTCUSDT,ETHUSDT
-CS_FACTOR_TIMEFRAME ?= 240T
-CS_FACTOR_HORIZON ?= 24
-CS_FACTOR_QUANTILES ?= 5
-CS_FACTOR_IC_LAGS ?= 1,3,5
-CS_FACTOR_MIN_XS ?= 3
-CS_FACTOR_OUTPUT_DIR ?= results/cross_sectional_eval
-
-cs-factor-eval:
-	@echo "📊 Cross-sectional factor evaluation for $(CS_FACTOR_SYMBOLS) ($(START_DATE) → $(END_DATE))"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.cross_sectional_eval \
-		--features-config $(CS_FACTOR_FEATURES_CONFIG) \
-		--symbols $(CS_FACTOR_SYMBOLS) \
-		--data-path /workspace/$(DATA_DIR) \
-		--timeframe $(CS_FACTOR_TIMEFRAME) \
-		$(if $(START_DATE),--start-date $(START_DATE),) \
-		$(if $(END_DATE),--end-date $(END_DATE),) \
-		--horizon $(CS_FACTOR_HORIZON) \
-		--quantiles $(CS_FACTOR_QUANTILES) \
-		--ic-decay-lags $(CS_FACTOR_IC_LAGS) \
-		--min-cross-sectional $(CS_FACTOR_MIN_XS) \
-		--output-dir /workspace/$(CS_FACTOR_OUTPUT_DIR)
 
 # ---------------------------------------------------------------------------
 # VPIN Multi-Dimensional Features Test

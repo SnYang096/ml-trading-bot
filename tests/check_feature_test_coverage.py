@@ -22,12 +22,10 @@ def get_feature_test_files() -> list[str]:
 
     Repo has migrated most feature tests under:
       - tests/features/test_*.py
-      - tests/cross_sectional/test_*.py (CS feature store / factor eval)
     """
     root = Path(__file__).resolve().parents[1]
     patterns = [
         root / "tests" / "features" / "test_*.py",
-        root / "tests" / "cross_sectional" / "test_*.py",
         root / "tests" / "test_*.py",
     ]
     files: list[str] = []

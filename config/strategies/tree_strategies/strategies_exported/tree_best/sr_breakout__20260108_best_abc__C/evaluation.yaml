@@ -1,9 +1,0 @@
-evaluation:
-  metrics:
-    - name: test_rank_ic
-      type: rank_ic
-      params:
-        target_col: label
-  save_details: true
-  results_file: evaluation.json
-

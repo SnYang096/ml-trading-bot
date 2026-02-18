@@ -82,8 +82,7 @@ class TestTrainCommands:
         """Test train group help."""
         result = runner.invoke(cli, ["train", "--help"])
         assert result.exit_code == 0
-        assert "sr-reversal-long" in result.output
-        assert "sr-reversal-short" in result.output
+        # Old sr-reversal commands were removed
         assert "rolling" in result.output
         assert "final" in result.output
 
@@ -101,14 +100,7 @@ class TestRLCommands:
         assert "fsm-decide" in result.output
         assert "run-e2e-3action" in result.output
 
-    def test_train_sr_reversal_long_help(self, runner):
-        """Test sr-reversal-long train help."""
-        result = runner.invoke(cli, ["train", "sr-reversal-long", "--help"])
-        assert result.exit_code == 0
-        assert "--symbol" in result.output
-        assert "--timeframe" in result.output
-        # training entrypoints are config-driven via default strategy config; this command takes data path instead
-        assert "--data-path" in result.output
+    # test_train_sr_reversal_long_help removed - command deleted
 
 
 class TestDataCommands:

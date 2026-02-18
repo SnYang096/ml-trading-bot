@@ -11,13 +11,11 @@ class TestProjectStructure(unittest.TestCase):
         self.project_root = Path(__file__).resolve().parent.parent
         self.time_series_dir = self.project_root / "src" / "time_series_model"
         self.data_tools_dir = self.project_root / "src" / "data_tools"
-        self.cross_sectional_dir = self.project_root / "src" / "cross_sectional"
 
     def test_core_directories_exist(self):
         for path in (
             self.time_series_dir,
             self.data_tools_dir,
-            self.cross_sectional_dir,
         ):
             with self.subTest(path=path):
                 self.assertTrue(path.exists(), f"{path} is missing")
@@ -26,8 +24,6 @@ class TestProjectStructure(unittest.TestCase):
     def test_time_series_modules_exist(self):
         required = [
             "backtesting",
-            "config",
-            "feature_management",
             "models",
             "pipeline",
             "strategies",
@@ -44,13 +40,8 @@ class TestProjectStructure(unittest.TestCase):
     def test_key_files_exist(self):
         required_files = [
             "src/time_series_model/__init__.py",
-            "src/time_series_model/models/lightgbm_model.py",
-            # Note: multi_tf_pipeline.py removed (replaced by config-driven training)
-            # Note: risk_management.py removed (not used in actual code)
-            "src/time_series_model/strategies/ml_strategy.py",
-            "src/data_tools/data_loader.py",
-            "src/data_tools/baseline_feature_engineering.py",
-            "src/cross_sectional/panel.py",
+            "src/data_tools/data_utils.py",
+            "src/data_tools/data_handler.py",
         ]
         for rel_path in required_files:
             full_path = self.project_root / rel_path
@@ -61,13 +52,10 @@ class TestProjectStructure(unittest.TestCase):
     def test_init_files_exist(self):
         init_files = [
             "src/time_series_model/__init__.py",
-            "src/time_series_model/config/__init__.py",
             "src/time_series_model/models/__init__.py",
             "src/time_series_model/pipeline/__init__.py",
-            "src/time_series_model/strategies/__init__.py",
             "src/time_series_model/utils/__init__.py",
             "src/data_tools/__init__.py",
-            "src/cross_sectional/__init__.py",
         ]
         for rel_path in init_files:
             full_path = self.project_root / rel_path

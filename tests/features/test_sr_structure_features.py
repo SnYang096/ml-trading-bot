@@ -33,7 +33,6 @@ from src.features.time_series.baseline_features import (
     compute_poc_hal_features_from_series,
     compute_sqs_hal_high_from_series,
     compute_sqs_hal_low_from_series,
-    compute_sqs_combined_from_series,
     compute_sr_strength_max_from_series,
     compute_zigzag_high_low_from_series,
 )

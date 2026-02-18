@@ -17,6 +17,7 @@ universe_sets:
         - BNB
         - XRP
         - ADA
+      alt:
         - AVAX
         - LINK
         - DOT
@@ -30,7 +31,6 @@ universe_sets:
         - XLM
         - XTZ
         - HYPE
-      alt:
         - NEAR
         - APT
         - SUI
