@@ -1,2 +1,74 @@
-filters: []
+# ME Entry Filter Archetype v3.0
+# ME = Energy × Acceleration × Participation
+# Entry 语义: Micro Accel 2K + Flow/Volume Burst（入场时机触发）
+# Entry 职责: Gate 通过 + Evidence 评估后，检测"现在是最佳入场点吗？"
+#
+# 待训练: 需要运行 optimize_entry_filters.py 发现有效阈值
+# 更新: 2026-02-17 - 迁移到 v3.0 三因子模型
+
+# === Entry Filters: 入场时机筛选 ===
+# 语义: 现在不是最佳入场时机 → 暂时等待（可以做但等更好时机）
+# 位置: Execution 阶段（gate 放行 + evidence 评估之后）
+#
+# ME v3.0 Entry 语义:
+# 1. 微观加速触发：me_accel_2k 检测 2K 窗口的瞬时加速
+# 2. 订单流爆发确认：me_cvd_strength 确认资金推动
+# 3. 成交量配合：me_volume_surge 确认放量
+#
+# 候选特征 (v3.0 三因子 - Entry 聚焦微观触发):
+#   Acceleration: me_accel_2k (2K微观加速，主触发)
+#   Participation: me_cvd_strength, me_volume_surge, me_volume_accel
+#   Failure: me_failure_score (衰竭时不入场)
+
+filters:
+  # Entry Filter 1: 微观加速触发
+  # 检测 2K 窗口的瞬时加速度，确认动量正在加强
+  - id: micro_accel_trigger
+    description: "微观加速度触发 - 2K窗口动量加强确认"
+    enabled: true
+    conditions:
+      - feature: me_accel_2k
+        operator: ">="
+        value: 0.50  # |加速度| >= P50 表示动量正在增强
+    priority: 1
+    comment: |
+      ME v3.0 Entry 核心触发器。me_accel_2k 是 2K 窗口的微观加速度，
+      相比 5K 更敏感、更适合做入场时机判断。
+      值 >= 0.50 表示加速度处于中位以上，动量正在增强。
+      待训练: 阈值需要基于回测数据优化。
+
+  # Entry Filter 2: 订单流爆发确认
+  # 检测 CVD 强度，确认有真实资金推动
+  - id: flow_burst_confirm
+    description: "订单流爆发确认 - CVD 强度支持"
+    enabled: true
+    conditions:
+      - feature: me_cvd_strength
+        operator: ">="
+        value: 0.40  # CVD 强度 >= P40 表示资金在推动
+    priority: 2
+    comment: |
+      ME v3.0 Participation 确认。me_cvd_strength 衡量 CVD 的相对强度，
+      确保入场时有真实资金推动，而非虚假波动。
+      值 >= 0.40 表示 CVD 强度处于中低位以上。
+      待训练: 阈值需要基于回测数据优化。
+
+  # Entry Filter 3: 成交量配合
+  # 检测成交量爆发，确认市场参与度
+  - id: volume_burst_confirm
+    description: "成交量爆发确认 - 放量支持"
+    enabled: false  # 默认禁用，与 Gate guardrail 可能重叠
+    conditions:
+      - feature: me_volume_surge
+        operator: ">="
+        value: 0.40  # 成交量爆发 >= P40
+    priority: 3
+    comment: |
+      ME v3.0 Participation 辅助确认。me_volume_surge 衡量成交量爆发程度。
+      注意: Gate guardrail 已有 me_volume_surge >= 0.30 的底线检查，
+      此处是更严格的入场时机要求。默认禁用，避免与 Gate 重叠过多。
+      待训练: 是否启用需要基于回测数据验证。
+
+# OR 逻辑组合
+# 多个 enabled filter 之间用 OR：任一满足即入场
 combination_mode: or

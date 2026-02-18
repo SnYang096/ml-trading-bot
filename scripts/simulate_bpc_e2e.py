@@ -7,7 +7,7 @@ BPC 端到端模拟测试 — 用磁盘历史数据回放，验证完整链路
   2. 逐行喂给 BPC decide()，毫秒级
   3. 详细诊断每一步（direction/gate/entry_filter/evidence）
 
-链路: 磁盘 bars/ticks → 特征计算(全量) → 逐行 BPC decide → TradeIntent 输出
+链路: 磁盘 bars/ticks → 特征计算(全量) → 逐行 GenericLiveStrategy decide → TradeIntent 输出
 
 用法:
     python scripts/simulate_bpc_e2e.py --symbol BTCUSDT --days 7
@@ -33,7 +33,7 @@ from src.live_data_stream.feature_storage import StorageManager
 from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
-from src.time_series_model.live.bpc_live_strategy import BPCLiveStrategy
+from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,7 +46,7 @@ logger = logging.getLogger("e2e_sim")
 # 辅助：从 DataFrame 行提取特征 dict
 # ============================================================
 def row_to_features(row: pd.Series) -> Dict[str, float]:
-    """把 DataFrame 的一行转为 BPC 需要的 features dict"""
+    """把 DataFrame 的一行转为策略需要的 features dict"""
     features = {}
     for k, v in row.items():
         try:
@@ -111,12 +111,12 @@ def main():
         archetypes_dir=archetypes_dir,
     )
 
-    bpc = BPCLiveStrategy(
+    bpc = GenericLiveStrategy(
+        strategy_name="bpc",
         strategies_root=args.strategies_root,
         primary_timeframe="240T",
         bar_minutes=240,
     )
-    bpc.load_configs()
 
     # ── 3. 一次性计算全部特征 ──
     logger.info("一次性批量计算全部特征 ...")

@@ -280,6 +280,8 @@ FEATURE_MODULES = [
     "src.features.time_series.market_cap_features",
     # Funding rate features
     "src.features.time_series.funding_rate_features",
+    # Open Interest features
+    "src.features.time_series.open_interest_features",
     # Order flow features
     "src.features.time_series.utils_order_flow_features",
     # Volatility features

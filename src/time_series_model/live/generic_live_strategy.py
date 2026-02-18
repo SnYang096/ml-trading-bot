@@ -18,6 +18,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
+import pandas as pd
 import yaml
 
 from src.time_series_model.core.trade_intent import TradeIntent
@@ -338,27 +339,82 @@ class GenericLiveStrategy:
         quantiles = {}
         n_computed = 0
 
-        # 为每个 evidence 特征计算分位数
+        # 1. 为每个 evidence 特征计算分位数
         for feat_spec in self.archetype.evidence.features:
-            feat_name = feat_spec.name
+            feat_name = feat_spec.feature
             if feat_name in features_df.columns:
-                values = features_df[feat_name].dropna()
-                if len(values) == 0:
+                values = pd.to_numeric(features_df[feat_name], errors="coerce").dropna()
+                if len(values) < 10:
                     continue
 
+                # 使用 evidence 特征自身的 quantile_bins（如果有）
+                bins = getattr(feat_spec, "quantile_bins", None)
+                if not bins:
+                    bins = [0.2, 0.5, 0.8, 0.9, 0.95]
+
                 feat_q = {}
-                for b in [0.2, 0.5, 0.8, 0.9, 0.95]:
+                for b in bins:
                     q_val = float(values.quantile(b))
                     q_key = f"{b:.2f}".rstrip("0").rstrip(".")
                     feat_q[q_key] = q_val
                 quantiles[feat_name] = feat_q
                 n_computed += 1
 
+        # 2. Gate quantile 规则 — 扫描 gate 中引用 quantile_* 的特征
+        n_gate_quantiles = 0
+        for rule in self.archetype.gate.all_rules:
+            for feat_name, cond in rule.when.items():
+                if not isinstance(cond, dict):
+                    continue
+                has_q = any(
+                    k in cond
+                    for k in (
+                        "quantile_lt",
+                        "quantile_lte",
+                        "quantile_gt",
+                        "quantile_gte",
+                    )
+                )
+                if not has_q or feat_name in quantiles:
+                    continue
+                if feat_name not in features_df.columns:
+                    continue
+                values = pd.to_numeric(features_df[feat_name], errors="coerce").dropna()
+                if len(values) < 10:
+                    continue
+                feat_q = {}
+                for b in [
+                    0.05,
+                    0.1,
+                    0.15,
+                    0.2,
+                    0.25,
+                    0.3,
+                    0.5,
+                    0.7,
+                    0.75,
+                    0.8,
+                    0.85,
+                    0.9,
+                    0.95,
+                ]:
+                    q_val = float(values.quantile(b))
+                    q_key = f"{b:.2f}".rstrip("0").rstrip(".")
+                    feat_q[q_key] = q_val
+                quantiles[feat_name] = feat_q
+                n_gate_quantiles += 1
+
         self._quantiles = quantiles
         logger.info(
-            f"✅ Quantiles computed: {n_computed}/{len(self.archetype.evidence.features)} "
-            f"features, based on {len(features_df)} rows"
+            "Quantiles 已计算: evidence=%d/%d, gate=%d, 基于 %d 行数据",
+            n_computed,
+            len(self.archetype.evidence.features),
+            n_gate_quantiles,
+            len(features_df),
         )
+
+    # set_quantiles_from_df: 兼容别名
+    set_quantiles_from_df = set_quantiles
 
     def decide(
         self,
@@ -461,6 +517,95 @@ class GenericLiveStrategy:
             f"(evidence={evidence_score:.3f}, tier={exec_params.get('tier_name')})"
         )
         return [intent]
+
+    # ── 兼容属性: 脚本通过 strat._archetype 访问 archetype ──
+
+    @property
+    def _archetype(self):
+        """兼容属性: 脚本通过 strat._archetype 访问"""
+        return self.archetype
+
+    # ── 诊断接口: _evaluate_entry_signal ──
+
+    def _evaluate_entry_signal(
+        self,
+        features: Dict[str, Any],
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        入场信号评估（诊断用）
+
+        管线:
+          1. direction.yaml 规则 → 方向
+          2. Gate → 结构性否决
+          3. Entry Filter → 入场时机
+          4. Evidence → Tier 选择
+          5. 返回 (should_enter, signal_info)
+        """
+        if not features:
+            return False, {}
+
+        # ── 1. 方向判定 ──
+        if self.direction_evaluator is None:
+            return False, {"reject_reason": "no_direction_config"}
+
+        direction, rule_id = self.direction_evaluator.evaluate(features)
+        if direction == 0:
+            return False, {"reject_reason": "no_direction"}
+
+        side_str = "BUY" if direction == 1 else "SELL"
+
+        # ── 2. Gate 检查 ──
+        gate_weight = 1.0
+        if self.gate_evaluator is not None:
+            gate_passed, gate_reasons, gate_weight = self.gate_evaluator.evaluate(
+                features, self._quantiles
+            )
+            if not gate_passed:
+                return False, {
+                    "reject_reason": "gate_deny",
+                    "gate_reasons": gate_reasons,
+                }
+
+        # ── 3. Entry Filter 检查 ──
+        if self.entry_filter_checker is not None:
+            ef_passed = self.entry_filter_checker.check(features)
+            if not ef_passed:
+                return False, {"reject_reason": "entry_filter_deny"}
+
+        # ── 4. Evidence Score + Tier 选择 ──
+        evidence_score = 0.5
+        evidence_breakdown = {}
+        if self.evidence_scorer is not None:
+            evidence_score, evidence_breakdown = self.evidence_scorer.score(
+                features, self._quantiles
+            )
+
+        adjusted_score = evidence_score * gate_weight
+
+        # Tier 选择
+        exec_params = {}
+        if self.execution_generator is not None:
+            exec_params = self.execution_generator.generate_params(adjusted_score)
+            self._last_tier_params = exec_params
+
+        # ── 5. 构建 signal_info ──
+        signal_info = {
+            "side": side_str,
+            "direction": direction,
+            "reason": (
+                f"{self.strategy_name.upper()}_{side_str} "
+                f"(evidence={adjusted_score:.2f}, "
+                f"tier={exec_params.get('tier_name', 'default')}, "
+                f"gate_w={gate_weight:.2f})"
+            ),
+            "evidence_score": adjusted_score,
+            "evidence_breakdown": evidence_breakdown,
+            "gate_weight": gate_weight,
+            "tier": exec_params,
+            "atr": features.get("atr", 0.0),
+        }
+
+        return True, signal_info
 
     def reset(self) -> None:
         """重置状态"""

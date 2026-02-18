@@ -1,10 +1,10 @@
-"""run_live.py — BPC Live 入口
+"""run_live.py — Live 实盘入口
 
-BPCLiveStrategy → 纯规则决策引擎
-无 ML 依赖；使用 Gate + Entry Filter + Evidence + Tier
+GenericLiveStrategy → 配置驱动通用决策引擎
+支持 BPC/ME/FER 任意策略，通过 YAML 配置驱动。
 
 数据管线:
-  BinanceWS → MultiSymbolManager → OrderFlowListener → BPC decide → OrderManager
+  BinanceWS → MultiSymbolManager → OrderFlowListener → GenericLiveStrategy decide → OrderManager
 """
 
 from __future__ import annotations
@@ -68,8 +68,8 @@ def _setup_bpc(
     gap_filler,
     trade_size: float,
 ):
-    """BPCLiveStrategy 纯规则决策模式（通过 LivePCM 包装）"""
-    from src.time_series_model.live.bpc_live_strategy import BPCLiveStrategy
+    """BPC 单策略模式（通过 GenericLiveStrategy + LivePCM 包装）"""
+    from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
     from src.time_series_model.portfolio.live_pcm import LivePCM
 
     strategies_root = os.getenv("MLBOT_STRATEGIES_ROOT", "config/strategies")
@@ -79,17 +79,16 @@ def _setup_bpc(
     # Archetypes directory: auto-detect features from gate/evidence/entry_filters
     archetypes_dir = os.path.join(strategies_root, "bpc", "archetypes")
 
-    # 创建 BPC 决策引擎
-    bpc = BPCLiveStrategy(
+    # 创建 BPC 决策引擎（使用通用 GenericLiveStrategy）
+    bpc = GenericLiveStrategy(
+        strategy_name="bpc",
         strategies_root=strategies_root,
-        holding_yaml_path=os.getenv("MLBOT_BPC_HOLDING_YAML"),
         trade_size=trade_size,
         primary_timeframe=f"{bar_minutes}T",
         bar_minutes=bar_minutes,
     )
-    bpc.load_configs()
 
-    # 包装进 LivePCM（单策略时行为等价直接挂 BPC）
+    # 包装进 LivePCM
     pcm = LivePCM(
         max_slots=int(os.getenv("MLBOT_MAX_SLOTS", "2")),
     )
@@ -167,10 +166,16 @@ def _setup_three_strategies(
 
     logger.info("✅ 三策略配置加载完成")
 
-    # 创建 PCM 仲裁层 (FER > ME > BPC)
+    # 创建 PCM 仲裁层 (使用 Regime 动态优先级)
+    # NORMAL: BPC > ME > FER > LV
+    # HIGH_VOL: ME > BPC > FER > LV
+    # HIGH_LEVERAGE: LV > FER > ME > BPC
     pcm = LivePCM(
-        archetype_priority=["fer", "me", "bpc"],
+        archetype_priority=["BPC", "ME", "FER", "LV"],
         max_slots=int(os.getenv("MLBOT_MAX_SLOTS", "2")),
+        regime_config_path=os.getenv(
+            "MLBOT_PCM_REGIME_CONFIG", "config/pcm_regime.yaml"
+        ),
     )
     pcm.register("bpc", bpc)
     pcm.register("me", me)
@@ -231,7 +236,7 @@ def _compute_initial_quantiles(
     compute_features_dataframe() 得到完整 DataFrame，然后
     合并所有 symbol 的数据计算 quantiles。
 
-    支持 BPCLiveStrategy 和 LivePCM（自动透传给内部策略）。
+    支持 GenericLiveStrategy 和 LivePCM（自动透传给内部策略）。
     """
     if not hasattr(decision_handler, "set_quantiles") and not hasattr(
         decision_handler, "set_quantiles_from_df"
@@ -283,7 +288,7 @@ def _compute_initial_quantiles(
         return
 
     combined = pd.concat(all_dfs, ignore_index=True)
-    # LivePCM.set_quantiles() 或 BPCLiveStrategy.set_quantiles_from_df()
+    # LivePCM.set_quantiles() 或 GenericLiveStrategy.set_quantiles_from_df()
     if hasattr(decision_handler, "set_quantiles_from_df"):
         decision_handler.set_quantiles_from_df(combined)
     elif hasattr(decision_handler, "set_quantiles"):

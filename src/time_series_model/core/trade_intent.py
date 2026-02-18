@@ -1,6 +1,6 @@
 """TradeIntent — 统一交易意图数据结构
 
-BPCLiveStrategy 和 OrderFlowListener 共用。
+GenericLiveStrategy 和 OrderFlowListener 共用。
 """
 
 from __future__ import annotations

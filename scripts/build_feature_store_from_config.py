@@ -80,6 +80,13 @@ def parse_args() -> argparse.Namespace:
         help="Delete existing layer data and rebuild from scratch. "
         "Without this flag, existing months are skipped.",
     )
+    p.add_argument(
+        "--allow-partial",
+        action="store_true",
+        default=True,
+        help="Allow partial tick data (some symbols may not have data for full range). "
+        "Missing months are skipped instead of raising an error. Default: True.",
+    )
     return p.parse_args()
 
 
@@ -216,23 +223,39 @@ def main() -> None:
                 all_missing[sym] = missing
 
         if all_missing:
-            error_lines = ["\n❌ Missing tick data detected!"]
-            error_lines.append(
-                f"   Requested range: {args.start_date} to {args.end_date}"
-            )
-            error_lines.append(f"   Data path: {args.data_path}\n")
-            for sym, months in all_missing.items():
-                months_str = ", ".join(months[:5])
-                if len(months) > 5:
-                    months_str += f"... (+{len(months) - 5} more)"
-                error_lines.append(
-                    f"   - {sym}: missing {len(months)} month(s): {months_str}"
+            if args.allow_partial:
+                print(
+                    "   ⚠️  Partial tick data detected (some symbols listed later than start date):"
                 )
-            error_lines.append("\n💡 Please convert the missing tick data first:")
-            error_lines.append(
-                "   mlbot data convert --pattern '<SYMBOL>-aggTrades-*.zip'"
-            )
-            raise ValueError("\n".join(error_lines))
+                for sym, months in all_missing.items():
+                    months_str = ", ".join(months[:5])
+                    if len(months) > 5:
+                        months_str += f"... (+{len(months) - 5} more)"
+                    print(f"     - {sym}: missing {len(months)} month(s): {months_str}")
+                print(
+                    "   ℹ️  --allow-partial: missing months will be skipped automatically\n"
+                )
+            else:
+                error_lines = ["\n❌ Missing tick data detected!"]
+                error_lines.append(
+                    f"   Requested range: {args.start_date} to {args.end_date}"
+                )
+                error_lines.append(f"   Data path: {args.data_path}\n")
+                for sym, months in all_missing.items():
+                    months_str = ", ".join(months[:5])
+                    if len(months) > 5:
+                        months_str += f"... (+{len(months) - 5} more)"
+                    error_lines.append(
+                        f"   - {sym}: missing {len(months)} month(s): {months_str}"
+                    )
+                error_lines.append("\n💡 Please convert the missing tick data first:")
+                error_lines.append(
+                    "   mlbot data convert --pattern '<SYMBOL>-aggTrades-*.zip'"
+                )
+                error_lines.append(
+                    "\n💡 Or use --allow-partial to skip missing months."
+                )
+                raise ValueError("\n".join(error_lines))
         print("   ✅ All symbols have complete tick data for requested range\n")
 
     for sym_idx, sym in enumerate(symbols, 1):

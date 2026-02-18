@@ -106,7 +106,32 @@ feature_pipeline:
     - trade_cluster_net_runs_zscore_features_f
     - trade_cluster_max_buy_run_zscore_features_f
     - trade_cluster_max_sell_run_zscore_features_f
-    
+
+    # ========== 资金费率 (期货独有情绪/拥挤度) ==========
+    - funding_rate_features_f              # funding_rate, funding_rate_zscore_50 等
+    - funding_scene_semantic_scores_f      # 资金费率场景语义 (compression/ignition/absorption/exhaustion)
+
+    # ========== OI (期货持仓量) ==========
+    - oi_features_f                        # oi_usd, oi_change_pct, oi_zscore, oi_delta_price_sign
+    - oi_scene_semantic_scores_f           # OI 场景语义 (compression/ignition/absorption/exhaustion)
+
+    # ========== GARCH 波动率建模 ==========
+    - garch_features_f                     # garch_volatility, garch_persistence, garch_leverage_gamma
+
+    # ========== 场景语义 (补充) ==========
+    - fp_imbalance_scene_semantic_scores_f # Footprint 不平衡场景语义
+    - vpin_scene_semantic_scores_f         # VPIN 场景语义
+
+    # ========== VWAP ==========
+    - vwap_position_f                      # 价格相对 VWAP 位置 (日内锚点)
+
+    # ========== 交叉特征 ==========
+    - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空
+    - dual_compression_f                   # 资金+VPIN双源压缩 (BPC核心)
+    - dual_ignition_f                      # 资金+FP双源点火 (ME核心)
+    - dual_exhaustion_f                    # 资金+VPIN双源力竭 (FER核心)
+    - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
+
   ensure_signal_column:
     name: signal
     default_value: 0

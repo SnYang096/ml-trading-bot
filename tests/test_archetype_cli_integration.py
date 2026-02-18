@@ -106,10 +106,6 @@ def test_archetype_loading_from_cli():
     for g in arch.gate.hard_gates:
         when_str = format_when_condition(g.when)
         print(f"    - {g.id}: {g.tag} ({when_str})")
-    print(f"  - Soft Filters: {len(arch.gate.soft_filters)}")
-    for f in arch.gate.soft_filters:
-        when_str = format_when_condition(f.when)
-        print(f"    - {f.id}: {f.tag} (weight={f.weight}, {when_str})")
 
     print(f"\nEvidence Configuration:")
     print(f"  - Features: {len(arch.evidence.features)}")

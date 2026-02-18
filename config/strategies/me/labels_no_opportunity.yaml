@@ -1,0 +1,52 @@
+# ME Failure 子标签：failure_no_opportunity（入场即反）
+# 🟥 只学习识别"入场后立刻反向"的结构条件
+# - failure_no_opportunity = (MAE > 1.2*stop) AND (MFE < 0.3*target)
+# - 目标：识别哪些条件下会入场即反
+
+name: me_no_opportunity
+target_column: success_has_opportunity  # invert=True
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_no_opportunity_label
+  params:
+    direction: long
+    horizon: 50
+    invert: true  # 1=有机会（不会入场即反），0=入场即反
+
+# 标签元信息
+label_meta:
+  label_type: binary
+  failure_subtype: no_opportunity
+  semantic: |
+    success_has_opportunity = 1 - failure_no_opportunity
+    1 = 有机会（不会入场即反）
+    0 = 入场即反（MAE大且MFE小）
+  failure_definition: |
+    failure_no_opportunity = (MAE > 1.2*stop) AND (MFE < 0.3*target)
+  horizon: 50 bars
+  description: |
+    ME Failure 子标签训练：
+    - 只学习识别"入场即反"的结构条件
+    - ME 专注于动量扩张后入场即反的失败模式
+    - 高预测值 = 有机会（不会入场即反）
+
+filters:
+  - column: success_has_opportunity
+    notna: true
+
+# Gate 模型专属 KPI 定义
+kpi_definition:
+  veto_ability:
+    description: "Gate 是否能有效降低 failure_no_opportunity 发生率"
+    metrics:
+      - name: lift_at_70pct
+        description: "Top 70% 覆盖时的 Lift (failure rate reduction)"
+        target: "<= 0.90x"
+        critical: true
+      - name: lift_at_50pct
+        description: "Top 50% 覆盖时的 Lift"
+        target: "<= 0.85x"
+        critical: true
+
+post_label_filters: []

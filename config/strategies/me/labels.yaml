@@ -1,5 +1,5 @@
 # ME (MomentumExpansion) 策略标签配置
-# 语义：压缩后波动/区间扩张，放量突破
+# 语义：流动性加速 + 波动扩张驱动
 
 name: me
 target_column: rr_label
@@ -12,9 +12,6 @@ label_generator:
     max_holding_bars: 50
     take_profit_r: 2.0
     stop_loss_r: 1.0
-    # 压缩检测参数
-    compression_lookback: 20
-    compression_percentile: 30
     # 突破检测参数
     breakout_lookback: 10
     volume_mult: 1.2

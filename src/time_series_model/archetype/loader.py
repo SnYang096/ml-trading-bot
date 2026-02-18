@@ -27,7 +27,7 @@ class GateRule:
 
     id: str
     tag: str
-    phase: str  # system_safety / hard_gate / soft_filter
+    phase: str  # system_safety / hard_gate / guardrail
     priority: int
     reason: str
     when: Dict[str, Any]
@@ -36,14 +36,7 @@ class GateRule:
 
     @property
     def is_hard(self) -> bool:
-        return self.phase in ("system_safety", "hard_gate")
-
-    @property
-    def weight(self) -> float:
-        """soft_filter 的降权权重，hard 返回 0"""
-        if self.is_hard:
-            return 0.0
-        return float(self.then.get("weight", 1.0))
+        return self.phase in ("system_safety", "hard_gate", "guardrail")
 
 
 @dataclass
@@ -51,15 +44,14 @@ class GateConfig:
     """Gate 配置 - 从 gate.yaml 加载"""
 
     hard_gates: List[GateRule] = field(default_factory=list)
-    soft_filters: List[GateRule] = field(default_factory=list)
     system_safety: List[GateRule] = field(default_factory=list)
     governance: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def all_rules(self) -> List[GateRule]:
         """按 phase -> priority 排序的所有规则"""
-        phase_order = {"system_safety": 0, "hard_gate": 1, "soft_filter": 2}
-        all_rules = self.system_safety + self.hard_gates + self.soft_filters
+        phase_order = {"system_safety": 0, "hard_gate": 1, "guardrail": 2}
+        all_rules = self.system_safety + self.hard_gates
         return sorted(
             all_rules, key=lambda r: (phase_order.get(r.phase, 99), r.priority)
         )
@@ -68,14 +60,6 @@ class GateConfig:
     def hard_rules(self) -> List[GateRule]:
         """所有硬规则 (system_safety + hard_gate)"""
         return self.system_safety + self.hard_gates
-
-    @property
-    def soft_filter_floor(self) -> float:
-        """soft_filter 累积权重下限"""
-        floor_cfg = self.governance.get("soft_filter_floor", {})
-        if floor_cfg.get("enabled", True):
-            return float(floor_cfg.get("min_cumulative_weight", 0.25))
-        return 0.0
 
     @classmethod
     def from_yaml(cls, path: Path) -> "GateConfig":
@@ -104,7 +88,6 @@ class GateConfig:
 
         return cls(
             hard_gates=_parse_rules(raw.get("hard_gates"), "hard_gate"),
-            soft_filters=_parse_rules(raw.get("soft_filters"), "soft_filter"),
             system_safety=_parse_rules(raw.get("system_safety"), "system_safety"),
             governance=dict(
                 raw.get("governance") or raw.get("schema", {}).get("governance") or {}
@@ -455,34 +438,20 @@ class StrategyArchetype:
             (passed, deny_reasons, cumulative_weight)
             - passed: 是否通过 Gate
             - deny_reasons: 触发的 deny 规则 tag 列表
-            - cumulative_weight: soft_filter 累积权重 (1.0 = 无降权)
+            - cumulative_weight: 始终返回 1.0（保持接口兼容）
         """
         deny_reasons = []
-        cumulative_weight = 1.0
 
         for rule in self.gate.all_rules:
             matched = _evaluate_when_clause(rule.when, features, quantiles)
 
             if matched:
-                if rule.is_hard:
-                    # 硬规则：直接 deny
-                    action = rule.then.get("action", "deny")
-                    if action == "deny":
-                        deny_reasons.append(rule.tag)
-                        return False, deny_reasons, 0.0
-                else:
-                    # 软规则：累积降权
-                    action = rule.then.get("action", "downweight")
-                    if action == "downweight":
-                        weight = rule.weight
-                        cumulative_weight *= weight
+                action = rule.then.get("action", "deny")
+                if action == "deny":
+                    deny_reasons.append(rule.tag)
+                    return False, deny_reasons, 0.0
 
-        # 应用 floor 保护
-        floor = self.gate.soft_filter_floor
-        if cumulative_weight < floor:
-            cumulative_weight = floor
-
-        return True, deny_reasons, cumulative_weight
+        return True, deny_reasons, 1.0
 
     def compute_evidence_score(
         self,

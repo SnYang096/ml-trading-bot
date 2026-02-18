@@ -1379,7 +1379,7 @@ features:
     compute_params:
       funding_rate_dir: data/funding_rate/parquet
       on_missing: nan
-      node_cache_version: v1
+      node_cache_version: v2
       z_window: 50
       z_min_periods: 20
       normalized: true
@@ -1387,8 +1387,8 @@ features:
         funding_rate: unitless
         funding_rate_abs: unitless
         funding_rate_change_1: unitless
-        funding_rate_zscore_50: zscore_rolling
-        funding_rate_abs_zscore_50: zscore_rolling
+        funding_rate_zscore_50: zscore_robust
+        funding_rate_abs_zscore_50: zscore_robust
   funding_scene_semantic_scores_f:
     module: funding_rate
     compute_func: compute_funding_scene_semantic_scores_from_df
@@ -1421,6 +1421,77 @@ features:
         funding_ignition_score: bounded_0_1
         funding_absorption_score: bounded_0_1
         funding_exhaustion_scene_score: bounded_0_1
+  oi_features_f:
+    module: open_interest
+    compute_func: compute_oi_features_from_df
+    dependencies: []
+    required_columns: []
+    output_columns:
+    - oi_usd
+    - oi_change_pct
+    - oi_zscore
+    - oi_delta_price_sign
+    - oi_flow_zscore
+    category: order_flow
+    description: Open Interest features aligned to bar timestamps (Binance futures,
+      merge_asof backward, no look-ahead). Inventory layer (oi_usd, oi_zscore) +
+      Flow layer (oi_change_pct, oi_flow_zscore).
+    pass_full_df: true
+    compute_params:
+      oi_dir: data/open_interest/parquet
+      oi_period: 5m
+      on_missing: nan
+      node_cache_version: v1
+      z_window: 50
+      z_min_periods: 20
+      normalized: true
+      output_normalization_map:
+        oi_usd: usd
+        oi_change_pct: bounded_neg1_1
+        oi_zscore: zscore_rolling
+        oi_delta_price_sign: bounded_neg1_1
+        oi_flow_zscore: zscore_rolling
+  oi_scene_semantic_scores_f:
+    module: open_interest
+    compute_func: compute_oi_scene_semantic_scores_from_df
+    dependencies:
+    - oi_features_f
+    - compression_score_f
+    - trend_r2_20_f
+    - atr_percentile_f
+    required_columns:
+    - oi_zscore
+    - oi_flow_zscore
+    - compression_score
+    - trend_r2_20
+    - atr_percentile
+    output_columns:
+    - oi_compression_score
+    - oi_ignition_score
+    - oi_absorption_score
+    - oi_exhaustion_score
+    - oi_trend_divergence_score
+    category: interaction
+    description: 'OI scene semantics: compression/ignition/absorption/exhaustion/trend-divergence
+      (0..1). Inventory-based scenes use oi_zscore; trend divergence uses
+      sigmoid(-oi_flow_zscore) x atr_percentile (ME->FER last-leg signal).'
+    pass_full_df: true
+    compute_params:
+      oi_z_col: oi_zscore
+      oi_flow_z_col: oi_flow_zscore
+      compression_col: compression_score
+      trend_col: trend_r2_20
+      volatility_col: atr_percentile
+      divergence_flow_scale: 1.5
+      z_shift: 0.5
+      z_scale: 1.0
+      normalized: true
+      output_normalization_map:
+        oi_compression_score: bounded_0_1
+        oi_ignition_score: bounded_0_1
+        oi_absorption_score: bounded_0_1
+        oi_exhaustion_score: bounded_0_1
+        oi_trend_divergence_score: bounded_0_1
   fp_imbalance_exhaustion_f:
     module: enhanced
     compute_func: compute_fp_imbalance_exhaustion_from_series
@@ -4354,6 +4425,102 @@ features:
       trade_cluster_exhaustion_score: trade_cluster_exhaustion_score
       liquidity_void_detected: liquidity_void_detected
       liquidity_void_false_breakout_risk: liquidity_void_false_breakout_risk
+
+  # ========== Dual-Source Scene Semantic Cross Features ==========
+  dual_compression_f:
+    module: interaction
+    compute_func: compute_dual_compression_from_series
+    dependencies:
+    - funding_scene_semantic_scores_f
+    - vpin_scene_semantic_scores_f
+    required_columns:
+    - funding_compression_score
+    - vpin_compression_score
+    output_columns:
+    - dual_compression_score
+    category: interaction
+    description: 'Dual-source compression: funding_compression × vpin_compression. BPC-aligned
+      — both independent sources show compression = stronger structural confirmation.'
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        dual_compression_score: bounded_0_1
+    pass_full_df: false
+    column_mappings:
+      funding_compression_score: funding_compression_score
+      vpin_compression_score: vpin_compression_score
+  dual_ignition_f:
+    module: interaction
+    compute_func: compute_dual_ignition_from_series
+    dependencies:
+    - funding_scene_semantic_scores_f
+    - fp_imbalance_scene_semantic_scores_f
+    required_columns:
+    - funding_ignition_score
+    - fp_imbalance_ignition_score
+    output_columns:
+    - dual_ignition_score
+    category: interaction
+    description: 'Dual-source ignition: funding_ignition × fp_imbalance_ignition. ME-aligned
+      — both funding and footprint show ignition = stronger momentum confirmation.'
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        dual_ignition_score: bounded_0_1
+    pass_full_df: false
+    column_mappings:
+      funding_ignition_score: funding_ignition_score
+      fp_imbalance_ignition_score: fp_imbalance_ignition_score
+  dual_exhaustion_f:
+    module: interaction
+    compute_func: compute_dual_exhaustion_from_series
+    dependencies:
+    - funding_scene_semantic_scores_f
+    - vpin_scene_semantic_scores_f
+    required_columns:
+    - funding_exhaustion_scene_score
+    - vpin_exhaustion_scene_score
+    output_columns:
+    - dual_exhaustion_score
+    category: interaction
+    description: 'Dual-source exhaustion: funding_exhaustion × vpin_exhaustion. FER-aligned
+      — both funding and VPIN show exhaustion = stronger reversal confirmation.'
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        dual_exhaustion_score: bounded_0_1
+    pass_full_df: false
+    column_mappings:
+      funding_exhaustion_scene_score: funding_exhaustion_scene_score
+      vpin_exhaustion_scene_score: vpin_exhaustion_scene_score
+  funding_oi_crowding_f:
+    module: interaction
+    compute_func: compute_funding_oi_crowding_from_series
+    dependencies:
+    - funding_rate_features_f
+    - oi_features_f
+    required_columns:
+    - funding_rate_abs_zscore_50
+    - oi_zscore
+    output_columns:
+    - funding_oi_crowding_score
+    category: interaction
+    description: 'Funding x OI crowding confirmation: sigmoid(funding_abs_z) x sigmoid(oi_z).
+      True crowding = high funding stress + high OI buildup. Single funding alone
+      may be short-term sentiment; OI confirms structural positioning.'
+    compute_params:
+      funding_shift: 1.0
+      funding_scale: 1.0
+      oi_shift: 0.5
+      oi_scale: 1.0
+      normalized: true
+      output_normalization_map:
+        funding_oi_crowding_score: bounded_0_1
+    pass_full_df: false
+    column_mappings:
+      funding_rate_abs_zscore_50: funding_rate_abs_zscore_50
+      oi_zscore: oi_zscore
+
   vpin_semantic_scores_f:
     module: enhanced
     compute_func: compute_vpin_semantic_scores_from_series
@@ -7264,80 +7431,6 @@ features:
       cvd_change_5: cvd_change_5
       atr: atr
 
-# =============================================================================
-# ME (MomentumExpansion) Gate 专属特征
-# =============================================================================
-
-  me_gate_features_f:
-    module: momentum_expansion
-    compute_func: compute_me_gate_features_from_series
-    dependencies:
-    - atr_f
-    - cvd_change_features_f
-    required_columns:
-    - close
-    - high
-    - low
-    - volume
-    - atr
-    - cvd_change_5
-    output_columns:
-    # 扩张质量类
-    - me_impulse_ratio
-    - me_cps
-    - me_multi_bar_acceleration
-    # 区间破坏强度
-    - me_escape_dist
-    - me_compression_depth
-    # 延续潜力类
-    - me_air_pocket_score
-    # 订单流一致性
-    - me_flow_alignment
-    - me_aggression_ratio
-    # 动量质量
-    - me_slope_consistency
-    - me_pullback_depth_after_break
-    # 组合分数
-    - me_gate_breakout_quality
-    - me_gate_structure_score
-    category: momentum_expansion
-    description: |
-      ME Gate 专属特征：用于识别 breakout 结构质量，检测 failure。
-      包含扩张质量、区间破坏强度、延续潜力、订单流一致性等语义特征。
-    pass_full_df: false
-    compute_params:
-      lookback: 20
-      compression_window: 40
-      normalized: true
-      output_normalization_map:
-        me_impulse_ratio: bounded_0_1
-        me_cps: bounded_0_1
-        me_multi_bar_acceleration: bounded_0_1
-        me_escape_dist: bounded_0_1
-        me_compression_depth: bounded_0_1
-        me_air_pocket_score: bounded_0_1
-        me_flow_alignment: bounded_0_1
-        me_aggression_ratio: bounded_0_1
-        me_slope_consistency: bounded_0_1
-        me_pullback_depth_after_break: bounded_0_1
-        me_gate_breakout_quality: bounded_0_1
-        me_gate_structure_score: bounded_0_1
-    column_mappings:
-      close: close
-      high: high
-      low: low
-      volume: volume
-      atr: atr
-      cvd_change_5: cvd_change_5
-    notes: |
-      ME Gate 特征设计理念：
-      - BPC 有 pullback 结构特征，ME 需要 breakout 结构特征
-      - 核心问题：ME 的失败是"结构错误"，不是"方向错误"
-      - impulse_ratio: breakout_bar_range / ATR（真突破 > 1.5 ATR）
-      - cps: close position strength（收盘强度，参考 sr_strength_max）
-      - escape_dist: 价格逃离区间的距离
-      - flow_alignment: 订单流方向与突破方向一致性
-
   # =========================================================================
   # FER (FailureExhaustionReversal) 专属特征
   # =========================================================================
@@ -7406,3 +7499,126 @@ features:
       atr: atr
       cvd: cvd
       cvd_change_5: cvd_change_5
+
+  # ---------------------------------------------------------------------------
+  # ME (MomentumExpansion) v3.0 - Energy × Acceleration × Participation
+  # ---------------------------------------------------------------------------
+  me_soft_phase_f:
+    module: momentum_expansion
+    compute_func: compute_momentum_expansion_soft_phase_from_series
+    dependencies:
+    - atr_f
+    - cvd_change_5_pct_f
+    required_columns:
+    - close
+    - high
+    - low
+    - atr
+    - volume
+    output_columns:
+    # === Energy (能量环境) ===
+    - me_atr_pct
+    - me_vol_regime
+    # === Acceleration (方向加速) ===
+    - me_accel_2k
+    - me_accel_5k
+    - me_accel_persistence
+    - me_multi_tf_alignment
+    # === Participation (参与确认) ===
+    - me_cvd_alignment
+    - me_cvd_strength
+    - me_volume_surge
+    - me_volume_accel
+    - me_delta_net_flow
+    category: momentum_expansion
+    description: ME v3.0 Energy × Acceleration × Participation three-factor model with 11 core features.
+    pass_full_df: false
+    compute_params:
+      lookback: 20
+      pct_window: 100
+      normalized: true
+      output_normalization_map:
+        # Energy
+        me_atr_pct: bounded_0_1
+        me_vol_regime: bounded_0_1
+        # Acceleration
+        me_accel_2k: bounded_neg3_3
+        me_accel_5k: bounded_neg3_3
+        me_accel_persistence: bounded_0_1
+        me_multi_tf_alignment: bounded_0_1
+        # Participation
+        me_cvd_alignment: bounded_0_1
+        me_cvd_strength: bounded_0_1
+        me_volume_surge: bounded_0_1
+        me_volume_accel: bounded_0_1
+        me_delta_net_flow: bounded_neg1_1
+    column_mappings:
+      close: close
+      high: high
+      low: low
+      atr: atr
+      volume: volume
+      cvd_change_5: cvd_change_5
+
+  me_failure_f:
+    module: momentum_expansion
+    compute_func: compute_momentum_expansion_failure_from_series
+    dependencies:
+    - atr_f
+    - me_soft_phase_f
+    required_columns:
+    - close
+    - volume
+    - me_atr_pct
+    - me_accel_5k
+    - me_cvd_alignment
+    output_columns:
+    - me_false_expansion
+    - me_vol_divergence
+    - me_flow_exhaustion
+    - me_failure_score
+    category: momentum_expansion
+    description: ME failure signals - expansion without follow-through.
+    pass_full_df: false
+    compute_params:
+      lookback: 10
+      normalized: true
+      output_normalization_map:
+        me_false_expansion: bounded_0_1
+        me_vol_divergence: bounded_0_1
+        me_flow_exhaustion: bounded_0_1
+        me_failure_score: bounded_0_1
+    column_mappings:
+      close: close
+      volume: volume
+      me_atr_pct: me_atr_pct
+      me_accel_5k: me_accel_5k
+      me_cvd_alignment: me_cvd_alignment
+
+  me_context_f:
+    module: momentum_expansion
+    compute_func: compute_momentum_expansion_context_from_series
+    dependencies:
+    - jump_risk_pct_f
+    - shd_pct_f
+    - ofci_pct_f
+    required_columns:
+    - close
+    output_columns:
+    - me_jump_risk_suitable
+    - me_reflex_risk
+    - me_regime_suitable
+    category: momentum_expansion
+    description: ME context features - jump risk suitability and reflexivity risk.
+    pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        me_jump_risk_suitable: bounded_0_1
+        me_reflex_risk: bounded_0_1
+        me_regime_suitable: bounded_0_1
+    column_mappings:
+      close: close
+      jump_risk_pct: jump_risk_pct
+      shd_pct: shd_pct
+      ofci_pct: ofci_pct

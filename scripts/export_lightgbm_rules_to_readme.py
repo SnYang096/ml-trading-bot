@@ -180,19 +180,12 @@ def _generate_risk_gate_yaml(
     """
     import yaml
 
-    # 分类规则：根据特征名语义分组
-    hard_gate_features = {"vpin", "direction", "vacuum", "committed", "regime"}
-
+    # 所有规则统一为 hard gate
     hard_gates = []
-    soft_filters = []
 
     for name, thr, op, count in rules[:top_n]:
-        # 判断是 hard gate 还是 soft filter
-        name_lower = name.lower()
-        is_hard = any(kw in name_lower for kw in hard_gate_features)
-
         # 生成规则 ID
-        rule_id = f"{'gate' if is_hard else 'filter'}_{name.replace('.', '_').lower()}"
+        rule_id = f"gate_{name.replace('.', '_').lower()}"
 
         # 构造规则
         rule = {
@@ -200,16 +193,10 @@ def _generate_risk_gate_yaml(
             "key": name,
             "operator": "<" if op == "<=" else op.replace("<=", "<"),
             "quantile_value": round(thr, 4),
-            "tag": f"{'HARD' if is_hard else 'SOFT'}_{name.upper().replace('.', '_')}",
+            "tag": f"HARD_{name.upper().replace('.', '_')}",
             "_comment": f"树模型分裂 {count} 次 | 阈值 {thr:.4g} | 需人工确认语义",
         }
-
-        if is_hard:
-            hard_gates.append(rule)
-        else:
-            # soft filter 需要权重
-            rule["weight"] = 0.8  # 默认权重，需人工调整
-            soft_filters.append(rule)
+        hard_gates.append(rule)
 
     # 构建完整配置
     config = {
@@ -230,15 +217,7 @@ def _generate_risk_gate_yaml(
             "_description": "硬规则：任一触发则拒绝交易",
             "rules": hard_gates,
         },
-        "soft_filters": {
-            "_description": "软规则：触发则降低置信度",
-            "rules": soft_filters,
-        },
         "governance": {
-            "soft_filter_floor": {
-                "min_cumulative_weight": 0.25,
-                "_comment": "软规则累计权重下限，防止过度降权",
-            },
             "failure_budget": {
                 "max_hard_deny_rate": 0.50,
                 "_comment": "硬规则拒绝率上限，超过需审查规则",

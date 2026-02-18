@@ -46,15 +46,6 @@ class TestArchetypeLoading:
             assert rule.phase in ("system_safety", "hard_gate")
             assert rule.is_hard is True
 
-        # 检查 soft filters
-        assert len(arch.gate.soft_filters) >= 1
-        for rule in arch.gate.soft_filters:
-            assert rule.id is not None
-            assert rule.tag is not None
-            assert rule.phase == "soft_filter"
-            assert rule.is_hard is False
-            assert 0 < rule.weight <= 1.0
-
     def test_evidence_config_structure(self):
         """测试 Evidence 配置结构"""
         from src.time_series_model.archetype import load_strategy_archetype

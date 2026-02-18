@@ -1,0 +1,36 @@
+# LV Entry Filters
+# 微观入场确认：清算瀑布已开始的信号
+
+version: 1
+
+entry_filters:
+  # 条件 1: OI 开始快速下降 (清算已触发)
+  - name: oi_dropping
+    description: "OI % change 为负 — 持仓正在被强平"
+    feature: oi_change_pct
+    operator: lt
+    threshold: -0.01    # OI 下降超过 1%
+    weight: 0.4
+    required: false
+
+  # 条件 2: VPIN 跳升 (知情/强制交易增加)
+  - name: vpin_spike
+    description: "VPIN 高 — 大单/强制平仓活动"
+    feature: vpin
+    operator: gt
+    threshold: 0.6
+    weight: 0.3
+    required: false
+
+  # 条件 3: 波动率正在扩张
+  - name: vol_expanding
+    description: "ATR 百分位高 — 波动正在放大"
+    feature: atr_percentile
+    operator: gt
+    threshold: 0.7
+    weight: 0.3
+    required: false
+
+# 入场逻辑: 加权分数 > min_score 时允许入场
+min_score: 0.4
+logic: weighted_sum

@@ -3,15 +3,15 @@
 strategy:
   name: me
   description: |
-    MomentumExpansion archetype: 压缩后波动/区间扩张，放量突破。
-    当市场经历低波动压缩期后，识别动量扩张突破机会。
+    MomentumExpansion archetype: 流动性加速 + 波动扩张驱动。
+    识别市场流动性加速和波动扩张的机会，而非压缩突破。
   tags:
     - momentum
     - expansion
     - breakout
-    - compression
+
   owner: quant_team
   archetype: MomentumExpansion
   
   # 默认时间粒度（研发 + 实盘统一）
-  timeframe: "240T"  # 4小时，与 BPC 保持一致
+  timeframe: "60T"  # 1小时，ME 动量扩张适合更快的时间粒度

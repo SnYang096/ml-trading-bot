@@ -1,68 +1,114 @@
 # ME Gate 训练特征配置
-# 目的：训练 Gate 树模型，用于识别"踩大坑"的结构条件
-# 策略：使用 ME 专属 breakout 结构特征 + 通用结构特征
+# 目的：训练 Gate 树模型，用于识别"动能衰竭"的条件
+# 更新：2026-02-17 参考 BPC features_gate.yaml 结构补全通用特征组
 
 name: me_gate
 description: |
   ME Gate 特征集：用于训练识别 failure_rr_extreme 的 Gate 规则。
-  核心语义：ME 的失败是"结构错误"，不是"方向错误"。
-  包含：
-  - ME 专属 breakout 结构特征（me_gate_features_f）
-  - 通用结构特征
+  核心语义：ME 的失败是"动能衰竭"，不是"结构错误"。
+  包含 ME 专有特征 + 大量通用特征，让 Gate 树自行发现否决模式。
 
 feature_pipeline:
   exclude_columns:
     - atr
   requested_features:
-    # ========== ME 专属 breakout 结构特征 ==========
-    # 核心：识别"结构错误"的语义特征
-    - me_gate_features_f  # 输出: me_impulse_ratio, me_cps, me_escape_dist, me_flow_alignment, etc.
-    
-    # ========== 通用结构特征 ==========
-    # Safety: reflexivity
-    - shd_pct_f
-    - ofci_pct_f
-    
-    # Risk exclusions
-    - jump_risk_pct_f
-    - atr_percentile_f
-    - bb_width_normalized_pct_f
-    
-    # Volume & liquidity
-    - volume_ratio_pct_f
-    # - vpin_features_f  # 暂时禁用：需要 tick streaming alignment（freq 参数问题）
-    - liquidity_void_f
-    
-    # Price structure
+    # ========== 必需的 scale 列 ==========
+    - atr_f
+
+    # ========== ME v3.0 三因子核心 ==========
+    - me_soft_phase_f
+    - me_failure_f
+    - me_context_f
+
+    # ========== 趋势强度 ==========
+    - trend_r2_20_f
     - path_efficiency_pct_f
     - path_length_pct_f
     - price_dir_consistency_pct_f
-    
-    # Basic indicators
+
+    # ========== 动量 ==========
     - macd_atr_f
     - rsi_f
-    - sma_200_f
-    - atr_f
-    - trend_r2_20_f
+
+    # ========== 波动 ==========
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+
+    # ========== Volatility Regime ==========
+    - vol_regime_features_f
+    - vol_trend_features_f
+    - vol_mom_features_f
+
+    # ========== Trend Exhaustion ==========
+    - wick_scene_semantic_scores_f
+    - wpt_scene_semantic_scores_f
+    - volume_profile_scene_semantic_scores_f
+    - liquidity_void_scene_semantic_scores_f
+
+    # ========== SR ==========
     - sr_strength_max_f
-    
-    # Volume profile (structural)
-    - volume_profile_volatility_features_f
-    
-    # Footprint (basic)
-    - footprint_basic_f
-    
-    # CVD divergence (突破质量相关)
+
+    # ========== 基础 ==========
+    - sma_200_f
+    - jump_risk_pct_f
+
+    # ========== 数学特征 ==========
+    - hurst_price_f
+    - spectrum_features_f
+    - hilbert_phase_f
+    - wpt_price_fluctuation_f
+    - evt_features_f
+
+    # ========== 订单流 ==========
+    - vpin_features_f
+    - volume_ratio_pct_f
+    - ofci_pct_f
+    - shd_pct_f
+    - cvd_change_5_pct_f
     - cvd_divergence_v2_f
-    
-    # 注：排除以下细节特征（留给 Evidence）：
-    # - wpt_* (小波变换)
-    # - spectrum_* (频谱分析)
-    # - hilbert_* (希尔伯特变换)
-    # - hurst_* (分形维度)
-    # - dtw_* (动态时间规整)
-    # - 交叉特征 (*_x_*)
-    
+    - price_momentum_divergence_f
+    - terminal_risk_score_f
+    - volume_participation_score_f
+
+    # ========== Volume Profile ==========
+    - volume_profile_volatility_features_f
+    - liquidity_void_f
+
+    # ========== Footprint ==========
+    - footprint_basic_f
+
+    # ========== Trade Cluster zscore ==========
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f
+
+    # ========== 资金费率 (期货独有情绪/拥挤度) ==========
+    - funding_rate_features_f              # funding_rate, funding_rate_zscore_50 等
+    - funding_scene_semantic_scores_f      # 资金费率场景语义 (compression/ignition/absorption/exhaustion)
+
+    # ========== OI (期货持仓量) ==========
+    - oi_features_f                        # oi_usd, oi_change_pct, oi_zscore, oi_delta_price_sign
+    - oi_scene_semantic_scores_f           # OI 场景语义 (compression/ignition/absorption/exhaustion)
+
+    # ========== GARCH 波动率建模 ==========
+    - garch_features_f                     # garch_volatility, garch_persistence, garch_leverage_gamma
+
+    # ========== 场景语义 (补充) ==========
+    - fp_imbalance_scene_semantic_scores_f # Footprint 不平衡场景语义
+    - vpin_scene_semantic_scores_f         # VPIN 场景语义
+
+    # ========== VWAP ==========
+    - vwap_position_f                      # 价格相对 VWAP 位置 (日内锚点)
+
+    # ========== 交叉特征 ==========
+    - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空
+    - dual_compression_f                   # 资金+VPIN双源压缩 (BPC核心)
+    - dual_ignition_f                      # 资金+FP双源点火 (ME核心)
+    - dual_exhaustion_f                    # 资金+VPIN双源力竭 (FER核心)
+    - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
+
   ensure_signal_column:
     name: signal
     default_value: 0

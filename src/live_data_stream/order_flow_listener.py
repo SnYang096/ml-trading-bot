@@ -5,7 +5,7 @@
 2. 按1分钟聚合tick数据
 3. 每15分钟计算特征并保存
 4. 每4小时聚合特征并保存
-5. 可插拔决策路由（BPCLiveStrategy / 自定义 decision_handler）
+5. 可插拔决策路由（GenericLiveStrategy / 自定义 decision_handler）
 6. 增强持仓管理（breakeven lock, activation trailing, time stop）
 7. 支持从断线中恢复
 """
@@ -98,7 +98,7 @@ class OrderFlowListener:
             trade_size: 默认下单数量（可选）
             decision_handler: 可插拔决策路由器（可选），需实现
                 decide(*, features, symbol, bars=None) -> List[TradeIntent]
-                如 BPCLiveStrategy 或任何自定义决策引擎。
+                如 GenericLiveStrategy 或任何自定义决策引擎。
             mode_manager: 系统模式管理器（可选），用于检查是否允许交易
         """
         self.symbol = symbol
@@ -654,7 +654,7 @@ class OrderFlowListener:
 
         intents = []
 
-        # 使用 decision_handler（BPCLiveStrategy 等）
+        # 使用 decision_handler（GenericLiveStrategy / LivePCM 等）
         if self.decision_handler is not None:
             intents = self.decision_handler.decide(
                 features=all_features,

@@ -31,7 +31,7 @@ from src.live_data_stream.feature_storage import StorageManager
 from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
-from src.time_series_model.live.bpc_live_strategy import BPCLiveStrategy
+from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
 
 
 # ================================================================
@@ -204,19 +204,19 @@ def main():
     all_signal_records = []
 
     # 初始化 BPC (用于信号级对比)
-    bpc_research = BPCLiveStrategy(
+    bpc_research = GenericLiveStrategy(
+        strategy_name="bpc",
         strategies_root=args.strategies_root,
         primary_timeframe="240T",
         bar_minutes=240,
     )
-    bpc_research.load_configs()
 
-    bpc_live = BPCLiveStrategy(
+    bpc_live = GenericLiveStrategy(
+        strategy_name="bpc",
         strategies_root=args.strategies_root,
         primary_timeframe="240T",
         bar_minutes=240,
     )
-    bpc_live.load_configs()
 
     for sym in symbols:
         if sym not in live_features_all:

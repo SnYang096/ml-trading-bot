@@ -3,24 +3,24 @@
 
 name: me
 description: |
-  MomentumExpansion archetype: 压缩后波动/区间扩张，放量突破。
-  核心特征：compression → expansion (atr/range/volume)。
+  MomentumExpansion archetype: 流动性加速 + 波动扩张驱动。
+  核心特征：流动性加速 + 波动扩张 (atr/range/volume)。
 
 feature_pipeline:
   exclude_columns:
     - atr
   requested_features:
-    # ----- ME 专属 Breakout 结构特征 -----
-    - me_gate_features_f  # ME 专属 Gate 特征（12个）
-    
-    # ----- MomentumExpansion 核心特征 -----
+    # ----- ME v3.0 三因子核心特征 -----
+    - me_soft_phase_f
+    - me_failure_f
+    - me_context_f
+    # ----- 通用特征 -----
     # Safety: reflexivity
     - shd_pct_f
     - ofci_pct_f
-    # Exclusions / preconditions: jump_risk, atr_percentile, bb_width
+    # Exclusions / preconditions: jump_risk, atr_percentile
     - jump_risk_pct_f
     - atr_percentile_f
-    - bb_width_normalized_pct_f
     # Evidence: vpin, volume_ratio_pct
     - volume_ratio_pct_f
     - vpin_features_f
@@ -28,7 +28,7 @@ feature_pipeline:
     - path_efficiency_pct_f
     - path_length_pct_f
     - price_dir_consistency_pct_f
-    # ----- Compression / WPT / spectrum -----
+    # ----- Momentum Expansion Core Features -----
     - macd_atr_f
     - rsi_f
     - sma_200_f
@@ -40,18 +40,14 @@ feature_pipeline:
     - wpt_price_fluctuation_f
     - wpt_volume_energy_f
     - wpt_cvd_fluctuation_f
-    - spectrum_features_compression_breakout_f
     - liquidity_void_f
     - hilbert_phase_f
     - hurst_price_f
     - hurst_cvd_f
     - footprint_basic_f
     - liquidity_void_x_wpt_risk_rank_f
-    - compression_energy_x_ofi_short_rank_f
-    - vpin_x_compression_rank_f
     - vpin_zscore_x_trade_cluster_max_buy_run_rank_f
     - vpin_x_trade_cluster_entropy_rank_f
-    - dtw_features_compression_f
   ensure_signal_column:
     name: signal
     default_value: 0

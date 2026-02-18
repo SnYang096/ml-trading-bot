@@ -812,6 +812,111 @@ def compute_wick_scene_semantic_scores_from_series(
     )
 
 
+# ========================================================================
+# Dual-Source Scene Semantic Cross Features (乘法交叉)
+# ========================================================================
+
+
+@register_feature("compute_dual_compression_from_series", category="interaction")
+def compute_dual_compression_from_series(
+    *,
+    funding_compression_score: pd.Series,
+    vpin_compression_score: pd.Series,
+) -> pd.DataFrame:
+    """
+    Dual-source compression confirmation: funding × VPIN.
+
+    Semantic (BPC-aligned):
+    - Both funding AND VPIN show compression simultaneously
+    - Higher value = stronger structural compression evidence from two independent sources
+    - Reduces false BPC signals: single-source compression may be noise
+
+    Both inputs are bounded [0, 1], so the product is also [0, 1].
+    """
+    fc = pd.to_numeric(funding_compression_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    vc = pd.to_numeric(vpin_compression_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    return (fc * vc).rename("dual_compression_score").to_frame()
+
+
+@register_feature("compute_dual_ignition_from_series", category="interaction")
+def compute_dual_ignition_from_series(
+    *,
+    funding_ignition_score: pd.Series,
+    fp_imbalance_ignition_score: pd.Series,
+) -> pd.DataFrame:
+    """
+    Dual-source ignition confirmation: funding × footprint imbalance.
+
+    Semantic (ME-aligned):
+    - Both funding AND footprint show ignition simultaneously
+    - Higher value = stronger momentum expansion evidence from two independent sources
+    - Reduces false ME signals: single-source ignition may be noise
+
+    Both inputs are bounded [0, 1], so the product is also [0, 1].
+    """
+    fi = pd.to_numeric(funding_ignition_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    fpi = pd.to_numeric(fp_imbalance_ignition_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    return (fi * fpi).rename("dual_ignition_score").to_frame()
+
+
+@register_feature("compute_dual_exhaustion_from_series", category="interaction")
+def compute_dual_exhaustion_from_series(
+    *,
+    funding_exhaustion_scene_score: pd.Series,
+    vpin_exhaustion_scene_score: pd.Series,
+) -> pd.DataFrame:
+    """
+    Dual-source exhaustion confirmation: funding × VPIN.
+
+    Semantic (FER-aligned):
+    - Both funding AND VPIN show exhaustion simultaneously
+    - Higher value = stronger reversal evidence from two independent sources
+    - Reduces false FER signals: single-source exhaustion may be noise
+
+    Both inputs are bounded [0, 1], so the product is also [0, 1].
+    """
+    fe = pd.to_numeric(funding_exhaustion_scene_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    ve = pd.to_numeric(vpin_exhaustion_scene_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    return (fe * ve).rename("dual_exhaustion_score").to_frame()
+
+
+@register_feature("compute_funding_oi_crowding_from_series", category="interaction")
+def compute_funding_oi_crowding_from_series(
+    *,
+    funding_rate_abs_zscore_50: pd.Series,
+    oi_zscore: pd.Series,
+    funding_shift: float = 1.0,
+    funding_scale: float = 1.0,
+    oi_shift: float = 0.5,
+    oi_scale: float = 1.0,
+) -> pd.DataFrame:
+    """Funding \u00d7 OI crowding confirmation score.
+
+    True crowding = **high funding stress** + **high OI buildup**.
+    Single funding alone may be short-term sentiment; OI confirms
+    structural positioning (actual open contracts, not just fee premium).
+
+    Formula::
+
+        crowding = sigmoid(funding_abs_z) \u00d7 sigmoid(oi_z)
+
+    Both sigmoids map z-scores to (0, 1), product is in [0, 1].
+
+    Use-cases:
+    * **LV**: crowded + high vol \u2192 liquidation cascade risk
+    * **FER**: crowded trend \u2192 reversal fuel
+    * **BPC**: crowded compression \u2192 stronger breakout potential
+    """
+    fr_z = pd.to_numeric(funding_rate_abs_zscore_50, errors="coerce").fillna(0.0).astype(float)
+    oi_z = pd.to_numeric(oi_zscore, errors="coerce").fillna(0.0).astype(float)
+
+    funding_stress = 1.0 / (1.0 + np.exp(-(fr_z - float(funding_shift)) / float(funding_scale)))
+    oi_activity = 1.0 / (1.0 + np.exp(-(oi_z - float(oi_shift)) / float(oi_scale)))
+
+    crowding = (funding_stress * oi_activity).clip(0.0, 1.0)
+    return crowding.rename("funding_oi_crowding_score").to_frame()
+
+
 @register_feature("compute_compression_energy_x_ofi_short", category="interaction")
 def compute_compression_energy_x_ofi_short(
     df: pd.DataFrame,

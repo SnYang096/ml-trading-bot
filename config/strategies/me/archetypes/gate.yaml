@@ -1,22 +1,23 @@
-# ME Gate Archetype
-# 训练结果: Lift RR Extreme = 0.4172x (目标 < 1.0) ✅
-# 训练时间: 2026-02-16
-# 更新: 2026-02-16 - 添加 ME 策略前提的 guardrail 规则
+# ME Gate Archetype v3.0
+# ME = Energy × Acceleration × Participation
+# Gate 语义: Energy + Flow + Volume（不看 acceleration）
+# Gate 只回答"环境允许吗？"
+#
+# 优化完成: 2026-02-17
+#   rr_extreme: me_atr_pct 稳定 plateau (Lift=18.1%, Th=0.65)
+#   no_oppo: me_volume_surge 弱信号 (Lift=13%, Th=0.80, 不稳定)
+#   Failure 类特征在两个标签下均无区分力
 
 schema:
   phases:
     - system_safety
     - hard_gate
     - guardrail
-    - soft_filter
     - preconditions
     - evidence
     - decision
-  evaluation_order: system_safety -> hard_gate -> guardrail -> soft_filter -> preconditions -> evidence -> decision
+  evaluation_order: system_safety -> hard_gate -> guardrail -> preconditions -> evidence -> decision
   governance:
-    soft_filter_floor:
-      enabled: true
-      min_cumulative_weight: 0.25
     failure_budget:
       max_hard_deny_rate: 0.50
       alert_threshold: 0.45
@@ -24,53 +25,92 @@ schema:
 # ============================================================
 # 🔴 Hard Gates (必要条件 - 不满足则拒绝)
 # ============================================================
-# 训练后 Gate 优化未找到有效规则
-# Gate 模型本身有效（Lift=0.4172x），但无法提取出可解释的阈值规则
-# Top特征: fp_exhaustion_price(105.84), vp_width_ratio(56.94)
-hard_gates: []
-
-# ============================================================
-# 🟡 Soft Filters (增强条件 - 不满足则降权)
-# ============================================================
-# 用户要求: Soft gate应迁移到 Evidence 层评估，无效则丢弃
-# 由于 Gate优化未产出 soft gate，此处保持为空
-soft_filters: []
+# 优化结果: rr_extreme + no_oppo 双标签扫描
+# Failure 类特征 (failure_score/false_expansion/flow_exhaustion/vol_divergence)
+#   在两个标签下均无区分力，已移除
+hard_gates:
+  # [rr_extreme] 稳定 plateau: Lift=18.1%, PassRate=29.9%
+  - id: me_hg_energy_low
+    tag: ME_ENERGY_LOW
+    phase: hard_gate
+    priority: 10
+    frozen: true  # optimizer 验证，不再自动调整
+    reason: "ME ATR百分位过低（optimizer: Lift=18.1%）"
+    when:
+      me_atr_pct:
+        value_lt: 0.65
+    then:
+      action: deny
+    comment: |
+      rr_extreme 标签下唯一稳定 plateau。
+      deny ATR百分位 < 0.65 → 保留 ~30% 交易，failure rate 降低 18.1%。
 
 # ============================================================
 # 🛡️ Strategy Guardrails (策略前提护栏)
 # ============================================================
-# ME 策略前提: ATR扩张 + 放量确认
-# 语义: 不满足策略前提 → 永久否决（不该做）
+# ME v3.0 策略前提: Energy + Flow + Volume（三因子 Gate 语义）
+# 语义: 不满足策略前提 → 永久否决（环境不允许扩张）
 guardrails:
-  # Guardrail 1: ATR 扩张确认
-  - id: me_guardrail_atr_expansion
-    tag: ME_ATR_EXPANSION
+  # Guardrail 1: Energy 不足 → 不做
+  - id: me_guardrail_energy_insufficient
+    tag: ME_ENERGY_INSUFFICIENT
     phase: guardrail
     priority: 1
-    reason: "ME 策略前提: ATR扩张不足"
+    reason: "ME 策略前提: Energy 不足（ATR 百分位过低）"
     when:
-      atr_percentile:
-        quantile_lt: 0.40  # ATR 百分位 < 40% 表示处于低波动状态
+      me_atr_pct:
+        value_lt: 0.40
     then:
       action: deny
     comment: |
-      ME 策略语义：压缩后扩张。如果 ATR 处于低位（< P40），
-      说明没有充分的扩张，突破信号不成立。
+      ME 策略语义：动能扩张。如果 me_atr_pct < 0.40，
+      说明市场波动率处于低位，不处于"能动"状态。
 
-  # Guardrail 2: 放量确认
-  - id: me_guardrail_volume_surge
-    tag: ME_VOLUME_SURGE
+  # Guardrail 2: Flow 不一致 → 不做
+  - id: me_guardrail_flow_inconsistent
+    tag: ME_FLOW_INCONSISTENT
     phase: guardrail
     priority: 2
-    reason: "ME 策略前提: 成交量不足"
+    reason: "ME 策略前提: 订单流方向不一致"
     when:
-      volume_ratio_pct:
-        quantile_lt: 0.30  # 成交量比率 < 30% 表示缩量状态
+      me_cvd_alignment:
+        value_lt: 0.40
     then:
       action: deny
     comment: |
-      ME 策略语义：放量突破。如果 volume_ratio 处于低位（< P30），
-      说明成交量不配合，突破可能是假突破。
+      ME 策略语义：真实资金推动。如果 me_cvd_alignment < 0.40，
+      说明 CVD 方向与价格方向不一致，可能是虚假波动。
+
+  # Guardrail 3: Volume 不配合 → 不做
+  - id: me_guardrail_volume_insufficient
+    tag: ME_VOLUME_INSUFFICIENT
+    phase: guardrail
+    priority: 3
+    reason: "ME 策略前提: 成交量不足"
+    when:
+      me_volume_surge:
+        value_lt: 0.30
+    then:
+      action: deny
+    comment: |
+      ME 策略语义：放量扩张。如果 me_volume_surge < 0.30，
+      说明成交量不配合，扩张可能是假突破。
+
+  # Guardrail 4: 通用成交量比率 → 不做
+  # 原 _detect_me_expansion 硬编码 volume_ratio_pct > 0.6，迁移至此
+  - id: me_guardrail_volume_ratio_low
+    tag: ME_VOLUME_RATIO_LOW
+    phase: guardrail
+    priority: 4
+    reason: "ME 策略前提: 成交量比率过低（原 _detect_me_expansion）"
+    when:
+      volume_ratio_pct:
+        value_lt: 0.60
+    then:
+      action: deny
+    comment: |
+      原 _detect_me_expansion 的 volume_ratio_pct > 0.6 前置条件。
+      已迁移为 Gate 规则，确保训练/实盘一致性。
 
 # ============================================================
 # 🔵 System Safety (市场级保护)

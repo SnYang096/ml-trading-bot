@@ -1405,7 +1405,6 @@ def main() -> int:
         arch = load_strategy_archetype(args.strategy, args.strategies_root)
         print(f"✅ Loaded strategy: {arch.name}")
         print(f"   Hard gates: {len(arch.gate.hard_gates)}")
-        print(f"   Soft filters: {len(arch.gate.soft_filters)}")
 
         # Process hard gates
         print("\n📋 Optimizing Hard Gates:")
@@ -1441,66 +1440,6 @@ def main() -> int:
                     else "⚠️ No stable plateau"
                 )
                 # 安全格式化，避免 None 或字符串导致错误
-                th_str = (
-                    f"{rec_thresh:.3f}"
-                    if isinstance(rec_thresh, (int, float))
-                    else str(rec_thresh)
-                )
-                lift_str = (
-                    f"{lift_val:.3f}"
-                    if isinstance(lift_val, (int, float))
-                    else str(lift_val)
-                )
-                pr_str = (
-                    f"{pass_rate:.3f}"
-                    if isinstance(pass_rate, (int, float))
-                    else str(pass_rate)
-                )
-                rob_str = (
-                    f"{rob_score:.3f}"
-                    if isinstance(rob_score, (int, float))
-                    else str(rob_score)
-                )
-                print(
-                    f"    {status_msg}: Threshold={th_str}, Lift={lift_str}, PassRate={pr_str}, Robustness={rob_str}"
-                )
-            else:
-                print(f"    ⚠️  {result.get('status')}: {result.get('reason', 'N/A')}")
-
-        # Process soft filters
-        print("\n📋 Optimizing Soft Filters:")
-        for rule in arch.gate.soft_filters:
-            print(f"  Processing: {rule.id}")
-
-            # 跳过 frozen 规则
-            if getattr(rule, "frozen", False):
-                print(f"    ⚠️  FROZEN: 禁止优化，保持当前阈值")
-                all_results[rule.id] = {
-                    "rule_id": rule.id,
-                    "status": "frozen",
-                    "reason": "Rule marked as frozen, threshold optimization disabled",
-                }
-                continue
-
-            result = optimize_gate_rule_unified(
-                df, rule, args.label_col, config, args.step
-            )
-            all_results[rule.id] = result
-
-            if result.get("status") in ["stable_plateau_found", "no_stable_plateau"]:
-                rec_thresh = result.get(
-                    "recommended_threshold", result.get("threshold")
-                )
-                lift_val = result.get("lift_at_mid", result.get("lift"))
-                pass_rate = result.get("pass_rate_at_mid", result.get("pass_rate_all"))
-                rob_score = result.get("robustness_score", {}).get("overall_score")
-
-                status_msg = (
-                    "✅ Stable plateau"
-                    if result.get("status") == "stable_plateau_found"
-                    else "⚠️ No stable plateau"
-                )
-                # 安全格式化
                 th_str = (
                     f"{rec_thresh:.3f}"
                     if isinstance(rec_thresh, (int, float))

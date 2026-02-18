@@ -174,34 +174,11 @@ def _format_risk_gate_section(risk_gate: Dict[str, Any]) -> List[str]:
             lines.append(f"| {gate_id} | `{tag}` | {cond_str} | {reason} |")
         lines.append("")
 
-    # Soft Filters
-    soft_filters = risk_gate.get("soft_filters", [])
-    if soft_filters:
-        lines.append("### 🟡 Soft Filters (经济性失败 → downweight)")
-        lines.append("")
-        lines.append("| ID | 标签 | 权重 | 原因 |")
-        lines.append("|---|---|---|---|")
-        for filt in soft_filters:
-            filt_id = filt.get("id", "-")
-            tag = filt.get("tag", "-")
-            weight = filt.get("then", {}).get("weight", filt.get("weight", "-"))
-            if isinstance(weight, (int, float)):
-                weight = f"{weight:.0%}" if weight <= 1 else str(weight)
-            reason = filt.get("reason", "-").replace("[", "").replace("]", "")
-            lines.append(f"| {filt_id} | `{tag}` | {weight} | {reason} |")
-        lines.append("")
-
     # Governance
     governance = risk_gate.get("schema", {}).get("governance", {})
     if governance:
         lines.append("### ⚙️ 治理机制")
         lines.append("")
-        floor_cfg = governance.get("soft_filter_floor", {})
-        if floor_cfg.get("enabled"):
-            min_weight = floor_cfg.get("min_cumulative_weight", 0.25)
-            lines.append(
-                f"- **Soft Filter 地板保护**: 即使全部 soft 触发，最低置信度为 `{min_weight:.0%}`"
-            )
         budget_cfg = governance.get("failure_budget", {})
         if budget_cfg:
             max_deny = budget_cfg.get("max_hard_deny_rate", 0.5)

@@ -83,13 +83,19 @@ feature_pipeline:
     - sma_200_f
     - jump_risk_pct_f         # 跳空风险分位
     
-    # ========== 数学特征（用于 execution_noise_penalty）==========
-    # 这些特征只影响"如何执行"，不影响"是否执行"
+    # ========== 数学特征 ==========
     - hurst_price_f           # Hurst 指数（时序记忆性）
     - spectrum_features_f     # 频谱特征
     - hilbert_phase_f         # Hilbert 变换（包络+相位）
     - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
     - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
+
+    # ========== Volume Profile ==========
+    - volume_profile_volatility_features_f
+    - liquidity_void_f
+
+    # ========== Footprint ==========
+    - footprint_basic_f
 
     # ========== 订单流 ==========
     - vpin_features_f
@@ -104,7 +110,32 @@ feature_pipeline:
     - trade_cluster_net_runs_zscore_features_f
     - trade_cluster_max_buy_run_zscore_features_f
     - trade_cluster_max_sell_run_zscore_features_f
-    
+
+    # ========== 资金费率 (期货独有情绪/拥挤度) ==========
+    - funding_rate_features_f              # funding_rate, funding_rate_zscore_50 等
+    - funding_scene_semantic_scores_f      # 资金费率场景语义 (compression/ignition/absorption/exhaustion)
+
+    # ========== OI (期货持仓量) ==========
+    - oi_features_f                        # oi_usd, oi_change_pct, oi_zscore, oi_delta_price_sign
+    - oi_scene_semantic_scores_f           # OI 场景语义 (compression/ignition/absorption/exhaustion)
+
+    # ========== GARCH 波动率建模 ==========
+    - garch_features_f                     # garch_volatility, garch_persistence, garch_leverage_gamma
+
+    # ========== 场景语义 (补充) ==========
+    - fp_imbalance_scene_semantic_scores_f # Footprint 不平衡场景语义
+    - vpin_scene_semantic_scores_f         # VPIN 场景语义
+
+    # ========== VWAP ==========
+    - vwap_position_f                      # 价格相对 VWAP 位置 (日内锚点)
+
+    # ========== 交叉特征 ==========
+    - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空
+    - dual_compression_f                   # 资金+VPIN双源压缩 (BPC核心)
+    - dual_ignition_f                      # 资金+FP双源点火 (ME核心)
+    - dual_exhaustion_f                    # 资金+VPIN双源力竭 (FER核心)
+    - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
+
   ensure_signal_column:
     name: signal
     default_value: 0

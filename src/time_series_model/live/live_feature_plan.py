@@ -85,7 +85,7 @@ def _extract_features_from_when(when: Any) -> Set[str]:
 def _extract_features_from_gate(cfg: Dict[str, Any]) -> Set[str]:
     """Extract all feature columns referenced in gate.yaml."""
     features: Set[str] = set()
-    for section in ("hard_gates", "soft_filters", "guardrails", "system_safety"):
+    for section in ("hard_gates", "guardrails", "system_safety"):
         rules = cfg.get(section)
         if not isinstance(rules, list):
             continue

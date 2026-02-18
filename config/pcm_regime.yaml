@@ -1,0 +1,121 @@
+# ================================================================
+# PCM Regime Configuration
+# ================================================================
+# 动态优先级状态机：只做优先级动态，不做 budget 动态
+# 参考: z实验_005_统一研究/一个 "Archetype Slot 分配与覆盖逻辑".md
+#
+# 设计原则:
+#   - BPC = equity 曲线骨架（稳定现金流）
+#   - ME  = 收益分布右尾增强器
+#   - FER = 均衡偏离反转
+#   - LV  = 中断型信号（高优先级覆盖权，低 budget）
+#
+# 状态机:
+#   NORMAL       → 常态，BPC 优先（骨架角色）
+#   HIGH_VOL     → 高波动扩张期，ME 捕捉尾部收益
+#   HIGH_LEVERAGE → 高杠杆脆弱期，LV 覆盖一切
+# ================================================================
+
+version: 1
+
+# ── 3 个 Regime 的优先级定义 ──
+# 列表顺序 = 优先级（索引越小越优先）
+regimes:
+  NORMAL:
+    description: "常态：BPC 提供稳定骨架"
+    priority: ["BPC", "ME", "FER", "LV"]
+
+  HIGH_VOL:
+    description: "高波动扩张：ME 捕捉尾部收益"
+    priority: ["ME", "BPC", "FER", "LV"]
+
+  HIGH_LEVERAGE:
+    description: "高杠杆脆弱：LV 中断型覆盖"
+    priority: ["LV", "FER", "ME", "BPC"]
+
+# ── 默认 Regime ──
+default_regime: "NORMAL"
+
+# ── Regime 检测阈值 ──
+# 检测顺序：HIGH_LEVERAGE → HIGH_VOL → NORMAL（优先匹配严格条件）
+detection:
+  HIGH_LEVERAGE:
+    # OI 异常高 + 资金费率极端 → 清算风险
+    conditions:
+      - feature: "oi_zscore"
+        operator: ">"
+        threshold: 1.5
+      - feature: "funding_rate_abs_zscore"
+        operator: ">"
+        threshold: 2.0
+    # 所有条件必须同时满足
+    logic: "AND"
+
+  HIGH_VOL:
+    # ATR 百分位高 → 波动扩张期
+    conditions:
+      - feature: "atr_percentile"
+        operator: ">"
+        threshold: 0.7
+    logic: "AND"
+
+# ── Regime 切换防抖 ──
+# 防止频繁切换（至少保持 N 根 bar 才允许切换）
+min_bars_in_regime: 3
+
+# ── Slot 配置 ──
+max_slots: 2
+
+# ── 各 Archetype 固定风险参数（不随 regime 变化）──
+archetype_risk:
+  BPC:
+    max_risk_per_trade: 0.015   # 1.5% 每笔
+    max_concurrent: 2
+  ME:
+    max_risk_per_trade: 0.015
+    max_concurrent: 2
+  FER:
+    max_risk_per_trade: 0.015
+    max_concurrent: 2
+  LV:
+    max_risk_per_trade: 0.010   # LV 低 budget, 1.0% 每笔
+    max_concurrent: 1           # LV 快进快出，最多 1 个
+
+# ================================================================
+# Layer 3: Override（极端信号覆盖）
+# ================================================================
+# 文档精神: 当极端事件出现时允许跨层覆盖
+# 检查顺序: LV → FER → ME（按抢占权高低）
+#
+# 优先级哲学:
+#   系统默认：BPC > ME
+#   强动能机会：ME > BPC
+#   极端事件：LV > ALL
+#   失败信号：FER 覆盖 ME
+# ================================================================
+override:
+  LV:
+    description: "LV 覆盖所有 - 非线性事件最高抢占权"
+    overrides: "ALL"
+    # LV gate 本身已严格筛选 (liquidation cluster + OI 异常)
+    # gate 通过即可覆盖，无额外 evidence 要求
+    min_evidence: 0.0
+    conditions: []
+
+  FER:
+    description: "FER 覆盖 ME - 均衡偏离反转信号"
+    overrides: ["ME"]
+    # FER gate 通过即代表反转条件成立，要求中等 evidence
+    min_evidence: 0.6
+    conditions: []
+
+  ME:
+    description: "ME 覆盖 BPC - 强动能机会"
+    overrides: ["BPC"]
+    # 要求: me_evidence 强 + ATR percentile 高
+    min_evidence: 0.7
+    conditions:
+      - feature: "atr_percentile"
+        operator: ">"
+        threshold: 0.75
+    logic: "AND"

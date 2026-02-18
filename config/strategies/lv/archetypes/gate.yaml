@@ -1,0 +1,63 @@
+# LV Gate Archetype
+# 初始配置：待 optimize_gate_unified.py 训练后更新
+
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+    - preconditions
+    - evidence
+    - decision
+  evaluation_order: system_safety -> hard_gate -> guardrail -> preconditions -> evidence -> decision
+  governance:
+    failure_budget:
+      max_hard_deny_rate: 0.50
+      alert_threshold: 0.45
+
+# ============================================================
+# 🔴 Hard Gates (必要条件 - 初始设定，待训练后精化)
+# ============================================================
+hard_gates:
+  # OI 异常低时不做 (没有清算燃料)
+  - id: gate_oi_too_low
+    tag: HARD_OI_TOO_LOW
+    phase: hard_gate
+    priority: 0
+    reason: "[HARD] OI z-score 过低 — 无清算燃料"
+    when:
+      oi_zscore:
+        value_lt: -1.0
+    then:
+      action: deny
+
+  # Funding 太平淡时不做 (无偏向)
+  - id: gate_funding_neutral
+    tag: HARD_FUNDING_NEUTRAL
+    phase: hard_gate
+    priority: 1
+    reason: "[HARD] Funding Rate 绝对值太低 — 无杠杆偏向"
+    when:
+      funding_rate_abs_zscore_50:
+        value_lt: 0.0
+    then:
+      action: deny
+
+# ============================================================
+# 🟡 Guardrails (护栏 - 不参与优化)
+# ============================================================
+guardrails: []
+
+# ============================================================
+# 候选 Hard Gates (待训练发现)
+# ============================================================
+candidate_hard_gates:
+  - oi_features_f
+  - oi_scene_semantic_scores_f
+  - funding_rate_features_f
+  - funding_scene_semantic_scores_f
+  - liquidity_void_scene_semantic_scores_f
+  - vpin_features_f
+  - vol_regime_features_f
+  - garch_features_f
+  - evt_features_f

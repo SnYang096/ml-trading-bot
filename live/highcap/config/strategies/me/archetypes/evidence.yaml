@@ -1,81 +1,148 @@
-# ME Evidence Archetype
-# 优化完成: 基于RR分层(Q20/Q80) + bad_suppression KPI
-# 优化时间: 2026-02-16
-# 样本: Good=74 (RR>15.61), Bad=74 (RR<1.88)
+# ME Evidence Archetype v3.0
+# ME = Energy × Acceleration × Participation
+# Evidence 语义: Energy × |Acceleration_5K| × Participation（乘法）
+# Evidence 职责: 在 Gate 通过后，调节执行参数（不做硬 veto）
+#
+# 待训练: 需要运行 optimize_evidence_plateau.py 基于 RR 分层优化
+# 更新: 2026-02-17 - 迁移到 v3.0 三因子模型
+
+schema:
+  label_semantics:
+    suppress: 强烈不利 - 极度限制仓位/信心
+    downweight: 不利 - 降低信心/仓位
+    neutral: 中性 - 标准执行
+    favor: 有利 - 提高信心/仓位
+    amplify: 强烈有利 - 最大化执行
 
 # ============================================================
 # 🔍 EVIDENCE: 执行质量调节器
 # ============================================================
-# ME策略语义: 压缩后波动扩张 + 放量突破
-# Evidence职责: 在Gate通过后,调节执行参数(不做硬veto)
-# 优化结果: 15个候选特征 → 3个有效特征(有稳定plateau)
+# ME v3.0 核心公式: Evidence = Energy × |Acceleration_5K| × Participation
+# 这些特征不做硬 veto，只影响置信度/仓位/TP/SL
+#
+# 候选特征池 (v3.0 三因子):
+#   Energy:        me_atr_pct, me_vol_regime
+#   Acceleration:  me_accel_5k, me_accel_persistence, me_multi_tf_alignment
+#   Participation: me_cvd_alignment, me_cvd_strength, me_volume_surge, me_volume_accel, me_delta_net_flow
+#   Composite:     me_evidence_signal (Energy × |Accel_5K| × Participation)
+#   Failure:       me_false_expansion, me_vol_divergence, me_flow_exhaustion, me_failure_score
+#   Context:       me_regime_suitable
+#   通用:          wpt_exhaustion_score, vpin, rsi, macd_atr, sma_200_position
+#
+# 排序依据: bad_suppression (主 KPI)
 
+# ============================================================
+# 🎯 Evidence 特征 (待训练优化)
+# ============================================================
 evidence:
-  # === Rank 1: VPIN - 订单流活跃度 (bad_supp: 0.243 ⭐⭐⭐) ===
-  - id: evidence_vpin
-    feature: vpin
+  # Rank 1: ME Evidence Signal - 三因子乘积 (待训练验证)
+  - id: evidence_me_signal
+    feature: me_evidence_signal
     rank: 1
-    sharpness: 0.111
-    direction: positive  # 高值=好,订单流活跃
-    usage_hint: VPIN活跃度,影响执行速度和信心
+    sharpness: null  # 待训练
+    direction: positive  # 高值=好，三因子共振
+    usage_hint: ME 三因子乘积信号，影响整体置信度
     affects:
-      - trailing_speed
       - confidence_boost
+      - position_size
     quantile_mapping:
       bins: [0.1, 0.3, 0.5, 0.7]
       labels: [suppress, downweight, neutral, favor, amplify]
     optimization:
-      bad_suppression: 0.243
-      good_amplification: 0.108
-      neighbors: 4
-      semantic_drift: 0.095
+      bad_suppression: null  # 待训练
+      status: pending_training
 
-  # === Rank 2: RSI - 技术指标位置 (bad_supp: 0.230 ⭐⭐) ===
-  - id: evidence_rsi
-    feature: rsi
+  # Rank 2: ME Acceleration 5K - 速度增强 (待训练验证)
+  - id: evidence_me_accel_5k
+    feature: me_accel_5k
     rank: 2
-    sharpness: 0.074
-    direction: positive  # 高值=好(ME策略做多为主)
-    usage_hint: RSI位置,影响仓位和信心
+    sharpness: null
+    direction: positive  # |accel| 大=动量正在增强
+    usage_hint: 5K加速度强度，影响 trailing 速度
+    affects:
+      - trailing_speed
+    quantile_mapping:
+      bins: [0.1, 0.3, 0.5, 0.7]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    optimization:
+      bad_suppression: null
+      status: pending_training
+
+  # Rank 3: ME CVD Strength - 订单流强度 (待训练验证)
+  - id: evidence_me_cvd_strength
+    feature: me_cvd_strength
+    rank: 3
+    sharpness: null
+    direction: positive  # 高值=订单流强劲
+    usage_hint: CVD 相对强度，影响仓位调整
     affects:
       - position_size
       - confidence_boost
     quantile_mapping:
-      bins: [0.25, 0.45, 0.65, 0.85]
+      bins: [0.15, 0.35, 0.55, 0.75]
       labels: [suppress, downweight, neutral, favor, amplify]
     optimization:
-      bad_suppression: 0.230
-      good_amplification: 0.162
-      neighbors: 4
-      semantic_drift: 0.095
+      bad_suppression: null
+      status: pending_training
 
-  # === Rank 3: MACD ATR - 动量确认 (bad_supp: 0.203 ⭐⭐) ===
-  - id: evidence_macd_atr
-    feature: macd_atr
-    rank: 3
-    sharpness: 0.074
-    direction: positive  # 高值=好,动量强
-    usage_hint: MACD强度,影响持有时间和trailing速度
+  # Rank 4: ME Volume Surge - 成交量爆发 (待训练验证)
+  - id: evidence_me_volume_surge
+    feature: me_volume_surge
+    rank: 4
+    sharpness: null
+    direction: positive  # 高值=放量
+    usage_hint: 成交量爆发百分位，影响信心
+    affects:
+      - confidence_boost
+    quantile_mapping:
+      bins: [0.15, 0.35, 0.55, 0.75]
+      labels: [suppress, downweight, neutral, favor, amplify]
+    optimization:
+      bad_suppression: null
+      status: pending_training
+
+  # Rank 5: ME Acceleration Persistence - 加速持续性 (待训练验证)
+  - id: evidence_me_accel_persistence
+    feature: me_accel_persistence
+    rank: 5
+    sharpness: null
+    direction: positive  # 高值=加速方向稳定
+    usage_hint: 加速方向一致性，影响持有时间
     affects:
       - hold_time
       - trailing_speed
     quantile_mapping:
-      bins: [0.25, 0.45, 0.55, 0.75]
+      bins: [0.2, 0.4, 0.6, 0.8]
       labels: [suppress, downweight, neutral, favor, amplify]
     optimization:
-      bad_suppression: 0.203
-      good_amplification: 0.189
-      neighbors: 3
-      semantic_drift: 0.068
+      bad_suppression: null
+      status: pending_training
+
+  # Rank 6: ME Failure Score - 动能衰竭 (待训练验证)
+  - id: evidence_me_failure_score
+    feature: me_failure_score
+    rank: 6
+    sharpness: null
+    direction: negative  # 高值=坏，标签反转
+    usage_hint: 动能衰竭综合分，高值应降低仓位
+    affects:
+      - position_size
+      - confidence_boost
+    quantile_mapping:
+      bins: [0.15, 0.35, 0.55, 0.75]
+      labels: [amplify, favor, neutral, downweight, suppress]  # 反转
+    optimization:
+      bad_suppression: null
+      status: pending_training
 
 # ============================================================
-# 📊 Evidence 优化说明
+# 📊 Evidence 训练说明
 # ============================================================
-# 当前配置: 基于ME策略语义手工选择16个初始候选特征
-# 下一步: 运行 optimize_evidence_plateau.py 基于RR分层(Q20/Q80)优化
+# 当前配置: 基于 ME v3.0 三因子语义选择 6 个初始候选特征
+# 下一步: 运行 optimize_evidence_plateau.py 基于 RR 分层(Q20/Q80) 优化
 #   - Good样本: forward_rr > Q80 (高RR交易)
 #   - Bad样本: forward_rr < Q20 (低RR交易)
 #   - 目标KPI: bad_suppression (区分高RR和低RR的能力)
 #
-# 优化后,保留有plateau的evidence特征,移除knife-edge特征
+# 优化后保留有 plateau 的 evidence 特征，移除 knife-edge 特征
 # 参考: z实验_001_bpc/return_tree_kpi_framework.md

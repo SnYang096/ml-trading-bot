@@ -1,50 +1,74 @@
-# ME Entry Filter Archetype
-# 优化结果: 未找到有效的 Entry Filter 规则
-# 训练时间: 2026-02-16
-# 说明: ME策略不需要额外的 Entry Filter，Gate和Evidence已经足够
+# ME Entry Filter Archetype v3.0
+# ME = Energy × Acceleration × Participation
+# Entry 语义: Micro Accel 2K + Flow/Volume Burst（入场时机触发）
+# Entry 职责: Gate 通过 + Evidence 评估后，检测"现在是最佳入场点吗？"
+#
+# 待训练: 需要运行 optimize_entry_filters.py 发现有效阈值
+# 更新: 2026-02-17 - 迁移到 v3.0 三因子模型
 
-# Entry Filter 规则（优化后为空）
-# 用于判断“现在是否入场”
 # === Entry Filters: 入场时机筛选 ===
 # 语义: 现在不是最佳入场时机 → 暂时等待（可以做但等更好时机）
-# 位置: Execution 阶段（gate 放行之后）
+# 位置: Execution 阶段（gate 放行 + evidence 评估之后）
 #
-# 参考 BPC 的 bb 和 liquidity_silence filter，
-# ME 的 Entry Filter 应该检测：
-# 1. 订单流一致性：VPIN 活跃 + CVD 方向性
-# 2. 空间确认：距离 SR 有足够空间
+# ME v3.0 Entry 语义:
+# 1. 微观加速触发：me_accel_2k 检测 2K 窗口的瞬时加速
+# 2. 订单流爆发确认：me_cvd_strength 确认资金推动
+# 3. 成交量配合：me_volume_surge 确认放量
+#
+# 候选特征 (v3.0 三因子 - Entry 聚焦微观触发):
+#   Acceleration: me_accel_2k (2K微观加速，主触发)
+#   Participation: me_cvd_strength, me_volume_surge, me_volume_accel
+#   Failure: me_failure_score (衰竭时不入场)
 
 filters:
-  # Entry Filter 1: 订单流确认
-  # 检测 VPIN 活跃度，确保订单流支持突破方向
-  - id: orderflow_confirm
-    description: "订单流一致性确认"
+  # Entry Filter 1: 微观加速触发
+  # 检测 2K 窗口的瞬时加速度，确认动量正在加强
+  - id: micro_accel_trigger
+    description: "微观加速度触发 - 2K窗口动量加强确认"
     enabled: true
     conditions:
-      - feature: vpin
+      - feature: me_accel_2k
         operator: ">="
-        value: 0.50  # VPIN >= P50 表示订单流活跃
+        value: 0.50  # |加速度| >= P50 表示动量正在增强
     priority: 1
     comment: |
-      ME 策略需要订单流支持。VPIN 过低表示订单流不活跃，
-      突破可能缺乏后续动能。
-      参考: BPC liquidity_silence filter (snotio 18.29, stop% 42.2%)
+      ME v3.0 Entry 核心触发器。me_accel_2k 是 2K 窗口的微观加速度，
+      相比 5K 更敏感、更适合做入场时机判断。
+      值 >= 0.50 表示加速度处于中位以上，动量正在增强。
+      待训练: 阈值需要基于回测数据优化。
 
-  # Entry Filter 2: 空间确认
-  # 检测到最近 SR 的距离，确保有足够的盈利空间
-  - id: space_confirm
-    description: "盈利空间确认"
-    enabled: false  # 默认禁用，需要回测验证
+  # Entry Filter 2: 订单流爆发确认
+  # 检测 CVD 强度，确认有真实资金推动
+  - id: flow_burst_confirm
+    description: "订单流爆发确认 - CVD 强度支持"
+    enabled: true
     conditions:
-      - feature: distance_to_nearest_sr
+      - feature: me_cvd_strength
         operator: ">="
-        value: 2.0  # 距离 SR >= 2.0 ATR
+        value: 0.40  # CVD 强度 >= P40 表示资金在推动
     priority: 2
     comment: |
-      ME 突破需要空间。如果离最近 SR 太近（< 2 ATR），
-      盈利空间不足，风报比不佳。
-      参考: BPC bb filter (snotio 16.43, stop% 40.3%)
+      ME v3.0 Participation 确认。me_cvd_strength 衡量 CVD 的相对强度，
+      确保入场时有真实资金推动，而非虚假波动。
+      值 >= 0.40 表示 CVD 强度处于中低位以上。
+      待训练: 阈值需要基于回测数据优化。
+
+  # Entry Filter 3: 成交量配合
+  # 检测成交量爆发，确认市场参与度
+  - id: volume_burst_confirm
+    description: "成交量爆发确认 - 放量支持"
+    enabled: false  # 默认禁用，与 Gate guardrail 可能重叠
+    conditions:
+      - feature: me_volume_surge
+        operator: ">="
+        value: 0.40  # 成交量爆发 >= P40
+    priority: 3
+    comment: |
+      ME v3.0 Participation 辅助确认。me_volume_surge 衡量成交量爆发程度。
+      注意: Gate guardrail 已有 me_volume_surge >= 0.30 的底线检查，
+      此处是更严格的入场时机要求。默认禁用，避免与 Gate 重叠过多。
+      待训练: 是否启用需要基于回测数据验证。
 
 # OR 逻辑组合
-# 多个 filter 之间用 OR：任一满足即入场
+# 多个 enabled filter 之间用 OR：任一满足即入场
 combination_mode: or

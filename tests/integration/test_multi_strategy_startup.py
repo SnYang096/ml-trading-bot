@@ -20,21 +20,22 @@ def test_current_strategy_status():
     # 1. 检查策略实现文件
     strategies = {
         "BPC": {
-            "live_strategy": "src/time_series_model/live/bpc_live_strategy.py",
+            "live_strategy": "src/time_series_model/live/generic_live_strategy.py",
             "status": "✅ 已实现",
-            "class": "BPCLiveStrategy",
+            "class": "GenericLiveStrategy",
+            "note": 'strategy_name="bpc"',
         },
         "FER": {
-            "live_strategy": "src/time_series_model/live/fer_live_strategy.py",
-            "status": "❌ 未实现",
-            "class": "FERLiveStrategy",
-            "todo": 'z实验_004_fer/todo.md 标注为"待执行"',
+            "live_strategy": "src/time_series_model/live/generic_live_strategy.py",
+            "status": "✅ 已实现",
+            "class": "GenericLiveStrategy",
+            "note": 'strategy_name="fer"',
         },
         "ME": {
-            "live_strategy": "src/time_series_model/live/me_live_strategy.py",
-            "status": "❌ 未实现",
-            "class": "MELiveStrategy",
-            "todo": 'z实验_003_me/todo.md 标注为"待执行"',
+            "live_strategy": "src/time_series_model/live/generic_live_strategy.py",
+            "status": "✅ 已实现",
+            "class": "GenericLiveStrategy",
+            "note": 'strategy_name="me"',
         },
     }
 
@@ -57,25 +58,19 @@ def test_current_strategy_status():
         content = f.read()
 
     bpc_imported = (
-        "from src.time_series_model.live.bpc_live_strategy import BPCLiveStrategy"
+        "from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy"
         in content
     )
-    fer_imported = (
-        "from src.time_series_model.live.fer_live_strategy import FERLiveStrategy"
-        in content
-    )
-    me_imported = (
-        "from src.time_series_model.live.me_live_strategy import MELiveStrategy"
-        in content
-    )
+    fer_imported = "GenericLiveStrategy" in content and 'strategy_name="fer"' in content
+    me_imported = "GenericLiveStrategy" in content and 'strategy_name="me"' in content
 
     pcm_registered_bpc = 'pcm.register("bpc", bpc)' in content
     pcm_registered_fer = 'pcm.register("fer", fer)' in content
     pcm_registered_me = 'pcm.register("me", me)' in content
 
-    print(f"   BPC 导入: {'✅' if bpc_imported else '❌'}")
-    print(f"   FER 导入: {'✅' if fer_imported else '❌'}")
-    print(f"   ME 导入: {'✅' if me_imported else '❌'}")
+    print(f"   BPC 导入 (GenericLiveStrategy): {'✅' if bpc_imported else '❌'}")
+    print(f"   FER 导入 (GenericLiveStrategy): {'✅' if fer_imported else '❌'}")
+    print(f"   ME 导入 (GenericLiveStrategy): {'✅' if me_imported else '❌'}")
     print()
     print(f"   BPC 注册: {'✅' if pcm_registered_bpc else '❌'}")
     print(f"   FER 注册: {'✅' if pcm_registered_fer else '❌'}")
@@ -226,25 +221,24 @@ def test_required_next_steps():
 
     steps = [
         {
-            "task": "实现 FERLiveStrategy",
-            "status": "❌ 未完成",
-            "file": "src/time_series_model/live/fer_live_strategy.py",
-            "reference": "参考 BPCLiveStrategy 实现模式",
+            "task": "实现 FER 策略",
+            "status": "✅ 已完成（通过 GenericLiveStrategy）",
+            "file": "src/time_series_model/live/generic_live_strategy.py",
+            "reference": '使用 GenericLiveStrategy(strategy_name="fer")',
         },
         {
-            "task": "实现 MELiveStrategy",
-            "status": "❌ 未完成",
-            "file": "src/time_series_model/live/me_live_strategy.py",
-            "reference": "参考 BPCLiveStrategy 实现模式",
+            "task": "实现 ME 策略",
+            "status": "✅ 已完成（通过 GenericLiveStrategy）",
+            "file": "src/time_series_model/live/generic_live_strategy.py",
+            "reference": '使用 GenericLiveStrategy(strategy_name="me")',
         },
         {
             "task": "修改 run_live.py 集成所有策略",
-            "status": "❌ 未完成",
+            "status": "✅ 已完成",
             "actions": [
-                "导入 FERLiveStrategy 和 MELiveStrategy",
+                "导入 GenericLiveStrategy",
                 "创建对应的策略实例",
-                '注册到 LivePCM: pcm.register("fer", fer_strategy)',
-                '注册到 LivePCM: pcm.register("me", me_strategy)',
+                '注册到 LivePCM: pcm.register("bpc/fer/me", strategy)',
             ],
         },
         {

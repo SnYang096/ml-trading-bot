@@ -3,7 +3,7 @@ Archetype module - 三层配置加载器 (Gate / Evidence / Execution)
 
 配置结构：
   config/strategies/{strategy}/archetypes/
-    gate.yaml       # Gate 规则 (hard_gates / soft_filters / system_safety)
+    gate.yaml       # Gate 规则 (hard_gates / guardrails / system_safety)
     evidence.yaml   # Evidence 规则 (quantile_mapping / affects)
     execution.yaml  # Execution 约束 (RR / holding_bars / direction_policy)
 

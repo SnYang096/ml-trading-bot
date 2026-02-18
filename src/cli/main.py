@@ -1000,6 +1000,104 @@ def data_download_funding_rate(
     sys.exit(run_script("src/data_tools/download_funding_rate.py", args))
 
 
+@data.command("download-open-interest")
+@click.option(
+    "--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols"
+)
+@click.option(
+    "--universe-config",
+    default=None,
+    help="YAML universe config (if set, overrides --symbols).",
+)
+@click.option("--universe-set", default="starter_a")
+@click.option("--universe-groups", default=None)
+@click.option("--start-year", default="2023", help="Start year")
+@click.option("--start-month", default="1", help="Start month")
+@click.option("--end-year", help="End year (default: current)")
+@click.option("--end-month", help="End month (default: current)")
+@click.option(
+    "--period",
+    default="5m",
+    type=click.Choice(["5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"]),
+    show_default=True,
+    help="OI aggregation period",
+)
+@click.option(
+    "--parquet-dir",
+    default="data/open_interest/parquet",
+    help="Output directory for OI Parquet",
+)
+@click.option(
+    "--sleep-sec",
+    type=float,
+    default=0.35,
+    show_default=True,
+    help="Sleep between API calls (rate-limit friendly)",
+)
+@click.option(
+    "--progress-every",
+    type=int,
+    default=25,
+    show_default=True,
+    help="Print progress every N tasks (0 disables)",
+)
+@click.option("--force/--no-force", default=False, show_default=True)
+def data_download_open_interest(
+    symbols,
+    universe_config,
+    universe_set,
+    universe_groups,
+    start_year,
+    start_month,
+    end_year,
+    end_month,
+    period,
+    parquet_dir,
+    sleep_sec,
+    progress_every,
+    force,
+):
+    """Download Binance futures Open Interest history (API → Parquet)."""
+    if universe_config:
+        from src.data_tools.universe_config import load_universe_config
+
+        cfg = load_universe_config(universe_config)
+        groups = (
+            [g.strip() for g in str(universe_groups).split(",") if g.strip()]
+            if universe_groups
+            else None
+        )
+        resolved = cfg.resolve_symbols_usdt(
+            universe_set=str(universe_set), groups=groups
+        )
+        symbols = ",".join(resolved)
+
+    args = [
+        "--parquet-dir",
+        parquet_dir,
+        "--period",
+        period,
+        "--symbols",
+        *[s for s in symbols.split(",") if s.strip()],
+        "--start-year",
+        str(start_year),
+        "--start-month",
+        str(start_month),
+        "--sleep-sec",
+        str(sleep_sec),
+        "--progress-every",
+        str(progress_every),
+    ]
+    if force:
+        args.append("--force")
+    if end_year:
+        args.extend(["--end-year", str(end_year)])
+    if end_month:
+        args.extend(["--end-month", str(end_month)])
+
+    sys.exit(run_script("src/data_tools/download_open_interest.py", args))
+
+
 @data.command("update-market-cap")
 @click.option("--config", default="config/market_cap/market_cap.yaml", show_default=True)
 @click.option(

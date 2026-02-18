@@ -1,70 +1,132 @@
 # ME Evidence 训练特征配置
 # 目的：训练 Return Tree，用于识别"RR 放大"的条件
-# 策略：包含全部特征，包括细节数学特征
+# 策略：包含 ME 专有特征 + 大量通用特征，让 Return Tree 自行发现有效特征
+# 更新：2026-02-17 参考 BPC features_evidence.yaml 结构补全通用特征组
+#
+# 设计理念：
+# - ME 专有特征描述 "entry condition"  (expansion/accel/flow)
+# - 通用特征描述 "trade quality"     (exhaustion/risk/regime/execution)
+# - Return Tree 会自动筛选哪些能区分 good vs bad
 
 name: me_evidence
 description: |
   ME Evidence 特征集：用于训练 Return Tree，学习在 GOOD 样本上如何放大 RR。
-  包含全部特征，包括 WPT/Spectrum/Hurst 等细节数学特征。
+  包含 ME v3.0 专有特征 + 大量通用特征（参照 BPC features_evidence.yaml 结构）。
 
 feature_pipeline:
   exclude_columns:
     - atr
   requested_features:
-    # ----- 全部 ME 特征 -----
-    # Safety: reflexivity
+    # ========== 必需的 scale 列（用于 label 计算，不参与模型训练）==========
+    - atr_f
+
+    # ========== ME v3.0 三因子核心特征 ==========
+    - me_soft_phase_f
+    - me_failure_f
+    - me_context_f
+
+    # ========== Safety: reflexivity ==========
     - shd_pct_f
     - ofci_pct_f
-    
-    # Exclusions / preconditions
+
+    # ========== Exclusions / preconditions ==========
     - jump_risk_pct_f
     - atr_percentile_f
-    - bb_width_normalized_pct_f
-    
-    # Evidence: vpin, volume_ratio_pct
-    - volume_ratio_pct_f
-    - vpin_features_f
-    
-    # Structure / path
+
+    # ========== 趋势强度 ==========
+    - trend_r2_20_f
     - path_efficiency_pct_f
     - path_length_pct_f
     - price_dir_consistency_pct_f
-    
-    # ----- Compression / WPT / spectrum -----
+
+    # ========== 动量 ==========
     - macd_atr_f
     - rsi_f
+
+    # ========== 波动 ==========
+    - bb_width_normalized_pct_f
+
+    # ========== Volatility Regime ==========
+    # 识别"踩大坑"的波动率状态
+    - vol_regime_features_f        # vol_zscore, vol_percentile_approx
+    - vol_trend_features_f         # vol_slope, vol_accel (波动率趋势)
+    - vol_mom_features_f           # vol_mom_5/10/20 (波动率动量)
+
+    # ========== Trend Exhaustion ==========
+    # 识别趋势衰竭/反转信号
+    - wick_scene_semantic_scores_f             # wick_exhaustion_score
+    - wpt_scene_semantic_scores_f              # wpt_exhaustion_score
+    - volume_profile_scene_semantic_scores_f   # vp_exhaustion_score, vp_absorption_score
+    - liquidity_void_scene_semantic_scores_f   # 流动性真空场景语义
+
+    # ========== SR 相关 ==========
+    - sr_strength_max_f            # sr_strength_max + dist_to_nearest_sr
+
+    # ========== 基础 ==========
     - sma_200_f
-    - atr_f
-    - trend_r2_20_f
-    - sr_strength_max_f
     - volume_profile_volatility_features_f
-    
-    # WPT features (细节特征)
+
+    # ========== 数学特征 ==========
+    - hurst_price_f                # Hurst 指数（时序记忆性）
+    - hurst_cvd_f                  # CVD Hurst
+    - spectrum_features_f          # 频谱特征
+    - hilbert_phase_f              # Hilbert 变换（包络+相位）
+    - wpt_price_fluctuation_f      # 小波包变换（多尺度分解）
     - wpt_price_reconstructed_f
-    - wpt_price_fluctuation_f
     - wpt_volume_energy_f
     - wpt_cvd_fluctuation_f
-    
-    # Spectrum features (细节特征)
-    - spectrum_features_compression_breakout_f
-    
-    # Advanced features
-    - liquidity_void_f
-    - hilbert_phase_f
-    - hurst_price_f
-    - hurst_cvd_f
+    - evt_features_f               # EVT 极值理论（尾部风险）
     - footprint_basic_f
-    
-    # Cross features (交叉特征)
+
+    # ========== 订单流 ==========
+    - vpin_features_f
+    - volume_ratio_pct_f
+    - cvd_change_5_pct_f
+    - cvd_divergence_v2_f          # CVD 背离
+    - price_momentum_divergence_f  # 价格-动量背离
+
+    # ========== Execution 质量 ==========
+    - terminal_risk_score_f        # 末端风险评分（追单风险）
+    - volume_participation_score_f # 市场参与度评分
+
+    # ========== 流动性真空 + 交叉特征 ==========
+    - liquidity_void_f
     - liquidity_void_x_wpt_risk_rank_f
-    - compression_energy_x_ofi_short_rank_f
-    - vpin_x_compression_rank_f
     - vpin_zscore_x_trade_cluster_max_buy_run_rank_f
     - vpin_x_trade_cluster_entropy_rank_f
-    
-    # DTW features
-    - dtw_features_compression_f
-    
+
+    # ========== Trade Cluster 归一化版本 (zscore) ==========
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f
+
+    # ========== 资金费率 (期货独有情绪/拥挤度) ==========
+    - funding_rate_features_f              # funding_rate, funding_rate_zscore_50 等
+    - funding_scene_semantic_scores_f      # 资金费率场景语义 (compression/ignition/absorption/exhaustion)
+
+    # ========== OI (期货持仓量) ==========
+    - oi_features_f                        # oi_usd, oi_change_pct, oi_zscore, oi_delta_price_sign
+    - oi_scene_semantic_scores_f           # OI 场景语义 (compression/ignition/absorption/exhaustion)
+
+    # ========== GARCH 波动率建模 ==========
+    - garch_features_f                     # garch_volatility, garch_persistence, garch_leverage_gamma
+
+    # ========== 场景语义 (补充) ==========
+    - fp_imbalance_scene_semantic_scores_f # Footprint 不平衡场景语义
+    - vpin_scene_semantic_scores_f         # VPIN 场景语义
+
+    # ========== VWAP ==========
+    - vwap_position_f                      # 价格相对 VWAP 位置 (日内锚点)
+
+    # ========== 交叉特征 ==========
+    - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空
+    - dual_compression_f                   # 资金+VPIN双源压缩 (BPC核心)
+    - dual_ignition_f                      # 资金+FP双源点火 (ME核心)
+    - dual_exhaustion_f                    # 资金+VPIN双源力竭 (FER核心)
+    - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
+
   ensure_signal_column:
     name: signal
     default_value: 0

@@ -77,7 +77,7 @@ def compute_evidence_quantiles(
 ) -> Dict[str, List[float]]:
     """从 DataFrame 计算 evidence 分位数阈值。
 
-    与实盘 BPCLiveStrategy.set_quantiles_from_df() 完全一致的逻辑。
+    与实盘 GenericLiveStrategy.set_quantiles_from_df() 完全一致的逻辑。
     返回 {feature_name: [threshold_at_bin0, threshold_at_bin1, ...]}。
 
     用于在 backtest 中从训练/校准数据预计算阈值，
@@ -143,7 +143,7 @@ def compute_evidence_scores(
         precomputed_quantiles: 预计算的分位数阈值（必须）。
             格式: {feature_name: [threshold_at_bin0, ...]}。
             由 compute_evidence_quantiles() 从校准数据预先计算。
-            与实盘 BPCLiveStrategy.set_quantiles_from_df() 对齐。
+            与实盘 GenericLiveStrategy.set_quantiles_from_df() 对齐。
 
     Raises:
         ValueError: 如果 precomputed_quantiles 为 None（禁止 look-ahead）。
@@ -661,7 +661,7 @@ def _estimate_span_years(df: pd.DataFrame, bars_per_year: float = 2190.0) -> flo
 # ================================================================
 
 # 默认优先级（与 live_pcm.py 一致）
-_PCM_DEFAULT_PRIORITY = ["Reversal", "ME", "BPC"]
+_PCM_DEFAULT_PRIORITY = ["BPC", "ME", "FER", "LV"]
 
 
 def load_direction_config(

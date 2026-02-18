@@ -1,0 +1,80 @@
+# LV Gate 训练特征配置
+# 目标：识别"清算风险虚假信号"的条件
+# 时间粒度：15分钟
+
+name: lv_gate
+description: |
+  LV Gate 特征集：用于训练识别 failure_rr_extreme 的 Gate 规则。
+  核心语义：LV 的失败是"杠杆脆弱性未真正触发强迫移动"。
+  
+  Gate 重点排除：
+  - OI 异常但市场消化了（不触发清算）
+  - Funding 极端但有对手盘承接
+  - 流动性真空但深度已恢复
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    # ========== 必需的 scale 列 ==========
+    - atr_f
+
+    # ========== LV 核心：OI + Funding ==========
+    - oi_features_f                        # oi_usd, oi_change_pct, oi_zscore, oi_delta_price_sign
+    - oi_scene_semantic_scores_f           # OI 场景语义
+    - funding_rate_features_f              # funding_rate, funding_rate_zscore_50 等
+    - funding_scene_semantic_scores_f      # 资金费率场景语义
+
+    # ========== 流动性深度/真空 ==========
+    - liquidity_void_f                     # 流动性真空检测
+    - liquidity_void_scene_semantic_scores_f  # 流动性真空场景语义
+
+    # ========== 订单流不平衡 ==========
+    - footprint_basic_f                    # FP 基础特征
+    - fp_imbalance_scene_semantic_scores_f # FP 不平衡场景语义
+    - vpin_features_f                      # VPIN (知情交易概率)
+    - vpin_scene_semantic_scores_f         # VPIN 场景语义
+
+    # ========== 波动率 ==========
+    - atr_percentile_f
+    - vol_regime_features_f
+    - vol_trend_features_f
+    - vol_mom_features_f
+    - garch_features_f                     # garch_volatility, garch_persistence
+
+    # ========== 趋势/方向 (辅助判断市场状态) ==========
+    - trend_r2_20_f
+    - rsi_f
+    - macd_atr_f
+    - path_efficiency_pct_f
+
+    # ========== 风险/极端 ==========
+    - evt_features_f                       # 尾部风险
+    - jump_risk_pct_f
+    - wick_scene_semantic_scores_f         # 影线衰竭
+    - wpt_scene_semantic_scores_f          # 小波变换衰竭
+
+    # ========== SR ==========
+    - sr_strength_max_f
+
+    # ========== Volume Profile ==========
+    - volume_profile_volatility_features_f
+    - volume_profile_scene_semantic_scores_f
+
+    # ========== 数学特征 ==========
+    - hurst_price_f
+    - spectrum_features_f
+
+    # ========== VWAP ==========
+    - vwap_position_f
+
+    # ========== 交叉特征 ==========
+    - exhaustion_at_liquidity_void_f
+    - dual_compression_f
+    - dual_ignition_f
+    - dual_exhaustion_f
+    - funding_oi_crowding_f                # Funding×OI拥挤度 (LV核心: 拥挤+高波动=清算瀑布)
+
+  ensure_signal_column:
+    name: signal
+    default_value: 0

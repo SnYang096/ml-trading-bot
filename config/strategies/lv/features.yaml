@@ -1,0 +1,104 @@
+# LV (LeverageVulnerability) 策略特征配置
+# 语义：杠杆脆弱性驱动的清算型策略
+# 时间粒度：15分钟
+#
+# 核心关注: OI异常 + Funding极端 + 流动性薄弱 → 强迫移动
+# 不依赖: 价格压缩/breakout 结构、趋势 acceleration
+
+name: lv
+description: |
+  LeverageVulnerability archetype: 杠杆脆弱性 → 清算瀑布。
+  核心特征：OI + Funding + 流动性深度 + 订单流。
+  
+  LV 因果模型：
+  - OI 堆积 + 资金费率偏离 → 清算燃料
+  - 流动性真空 + 订单流不平衡 → 触发条件
+  - 波动放大 → 瀑布效应
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    # ========== 必需的 scale 列 ==========
+    - atr_f
+
+    # ========== LV 核心：OI + Funding (一级因果) ==========
+    - oi_features_f                        # oi_usd, oi_change_pct, oi_zscore, oi_delta_price_sign
+    - oi_scene_semantic_scores_f           # OI 场景语义
+    - funding_rate_features_f              # funding_rate, funding_rate_zscore_50
+    - funding_scene_semantic_scores_f      # 资金费率场景语义
+
+    # ========== 流动性深度/真空 (二级因果) ==========
+    - liquidity_void_f                     # 流动性真空检测
+    - liquidity_void_scene_semantic_scores_f  # 流动性真空场景语义
+
+    # ========== 订单流不平衡 ==========
+    - footprint_basic_f                    # FP 基础特征
+    - fp_imbalance_scene_semantic_scores_f # FP 不平衡场景语义
+    - vpin_features_f                      # VPIN (知情交易概率)
+    - vpin_scene_semantic_scores_f         # VPIN 场景语义
+    - volume_ratio_pct_f
+    - ofci_pct_f
+    - shd_pct_f
+    - cvd_change_5_pct_f
+    - cvd_divergence_v2_f
+    - price_momentum_divergence_f
+    - terminal_risk_score_f
+    - volume_participation_score_f
+
+    # ========== 波动率 ==========
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+    - vol_regime_features_f
+    - vol_trend_features_f
+    - vol_mom_features_f
+    - garch_features_f                     # garch_volatility, garch_persistence, leverage_gamma
+
+    # ========== 趋势/方向 (辅助) ==========
+    - trend_r2_20_f
+    - rsi_f
+    - macd_atr_f
+    - roc_5_f
+    - path_efficiency_pct_f
+    - path_length_pct_f
+    - price_dir_consistency_pct_f
+
+    # ========== 风险/极端 ==========
+    - evt_features_f                       # 尾部风险
+    - jump_risk_pct_f
+    - wick_scene_semantic_scores_f         # 影线衰竭
+    - wpt_scene_semantic_scores_f          # 小波变换衰竭
+
+    # ========== SR ==========
+    - sr_strength_max_f
+    - sma_200_f
+
+    # ========== Volume Profile ==========
+    - volume_profile_volatility_features_f
+    - volume_profile_scene_semantic_scores_f
+
+    # ========== 数学特征 ==========
+    - hurst_price_f
+    - spectrum_features_f
+    - hilbert_phase_f
+    - wpt_price_fluctuation_f
+
+    # ========== VWAP ==========
+    - vwap_position_f
+
+    # ========== Trade Cluster ==========
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f
+
+    # ========== 交叉特征 ==========
+    - exhaustion_at_liquidity_void_f
+    - dual_compression_f
+    - dual_ignition_f
+    - dual_exhaustion_f
+
+  ensure_signal_column:
+    name: signal
+    default_value: 0

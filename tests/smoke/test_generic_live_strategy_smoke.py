@@ -54,13 +54,6 @@ def test_end_to_end_signal_generation():
                     "then": {"action": "allow"},
                 }
             ],
-            "soft_filter": [
-                {
-                    "id": "pullback_boost",
-                    "when": {"bpc_was_in_pullback": {"value_eq": 1}},
-                    "then": {"weight": 1.2},
-                }
-            ],
         }
         with open(strategy_dir / "gate.yaml", "w") as f:
             yaml.dump(gate_config, f)
@@ -307,7 +300,7 @@ def test_multi_strategy_support():
                 ],
             }
 
-            gate_config = {"hard_gate": [], "soft_filter": []}
+            gate_config = {"hard_gate": []}
             evidence_config = {"features": []}
             execution_config = {
                 "stop_loss": {"initial_r": 2.0},

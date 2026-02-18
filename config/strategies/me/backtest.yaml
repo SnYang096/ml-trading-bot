@@ -4,7 +4,7 @@ backtest:
   enabled: true
   params:
     price_col: close
-    freq: 4H
+    freq: 1H
     multiclass:
       long_class: 2
       short_class: 0

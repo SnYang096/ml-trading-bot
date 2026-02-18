@@ -31,7 +31,7 @@ from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
-from src.time_series_model.live.bpc_live_strategy import BPCLiveStrategy
+from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
 from src.time_series_model.live.live_feature_plan import (
     extract_features_from_archetypes,
 )
@@ -585,19 +585,19 @@ def compare_one_symbol(args, archetypes_dir, live_feature_set, live_feature_node
     print("  信号级对比")
     print(f"{'='*95}")
 
-    bpc_research = BPCLiveStrategy(
+    bpc_research = GenericLiveStrategy(
+        strategy_name="bpc",
         strategies_root=args.strategies_root,
         primary_timeframe="240T",
         bar_minutes=240,
     )
-    bpc_research.load_configs()
 
-    bpc_live = BPCLiveStrategy(
+    bpc_live = GenericLiveStrategy(
+        strategy_name="bpc",
         strategies_root=args.strategies_root,
         primary_timeframe="240T",
         bar_minutes=240,
     )
-    bpc_live.load_configs()
 
     # 用前 50% 数据校准 quantiles (避免 look-ahead)
     calib_cutoff = overlap_idx[len(overlap_idx) // 2]

@@ -2,7 +2,7 @@
 冒烟测试: LivePCM 接入 run_live.py 链路
 
 验证:
-1. _setup_bpc 返回 LivePCM（而非裸 BPCLiveStrategy）
+1. _setup_bpc 返回 LivePCM（而非裸策略实例）
 2. LivePCM 注册了 bpc 策略
 3. listener.decision_handler 指向 LivePCM
 4. quantiles 可以透传
@@ -22,11 +22,13 @@ class TestLivePCMSmoke:
 
     @patch("scripts.run_live.init_order_manager_from_env")
     @patch("scripts.run_live.MultiSymbolManager")
-    @patch("src.time_series_model.live.bpc_live_strategy.BPCLiveStrategy.load_configs")
+    @patch(
+        "src.time_series_model.live.generic_live_strategy.GenericLiveStrategy.load_configs"
+    )
     def test_setup_bpc_returns_live_pcm(
         self, mock_load_configs, mock_multi_mgr_cls, mock_init_om
     ):
-        """_setup_bpc 返回 LivePCM 而非裸 BPCLiveStrategy"""
+        """_setup_bpc 返回 LivePCM 而非裸策略实例"""
         from time_series_model.portfolio.live_pcm import LivePCM
 
         # Mock MultiSymbolManager
@@ -65,7 +67,7 @@ class TestLivePCMSmoke:
         assert mock_listener.decision_handler is pcm
 
     def test_live_pcm_quantiles_passthrough(self):
-        """quantiles 可以透传到内部 BPC 策略"""
+        """quantiles 可以透传到内部策略"""
         from time_series_model.portfolio.live_pcm import LivePCM
 
         # Mock BPC strategy

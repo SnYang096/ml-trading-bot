@@ -1,0 +1,56 @@
+# LV Evidence Archetype
+# 初始配置：待 optimize_evidence_plateau.py 训练后更新
+
+version: 2
+
+# Evidence 特征权重 (待训练后填充)
+# 初始权重基于因果语义重要性
+evidence_features:
+  # 一级因果: OI + Funding
+  - feature: oi_zscore
+    weight: 0.20
+    direction: positive  # 高 OI z-score = 更多清算燃料
+    
+  - feature: funding_rate_abs_zscore_50
+    weight: 0.20
+    direction: positive  # 高 funding abs = 更极端偏向
+    
+  # 二级因果: 流动性
+  - feature: oi_compression_score
+    weight: 0.15
+    direction: positive  # OI 堆积 + 价格压缩 = 清算弹簧
+    
+  - feature: funding_exhaustion_scene_score
+    weight: 0.10
+    direction: positive  # Funding 极端 + 衰竭 = 反转
+
+  # 订单流确认
+  - feature: vpin
+    weight: 0.10
+    direction: positive  # 知情交易增加
+    
+  # 波动放大
+  - feature: garch_volatility
+    weight: 0.10
+    direction: positive  # 波动率高 = 清算更猛
+
+  # 风险
+  - feature: evt_tail_risk
+    weight: 0.10
+    direction: positive  # 尾部风险高 = 极端事件概率高
+
+  # 流动性真空
+  - feature: lv_void_severity
+    weight: 0.05
+    direction: positive  # 流动性真空 = 无阻力移动
+
+# 分位数映射 (待训练后填充 Q10/Q25/Q50/Q75/Q90)
+quantile_map: {}
+
+# Evidence → 执行参数
+score_interpretation:
+  high_threshold: 0.70
+  low_threshold: 0.30
+  semantic: |
+    evidence_score 高 = OI堆积+Funding极端+流动性薄弱 → 清算瀑布概率高
+    evidence_score 低 = 条件不充分 → 可能不触发或快速消化

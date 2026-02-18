@@ -42,6 +42,8 @@ def load_execution_archetypes_registry(
     path: str | Path = "config/nnmultihead/execution_archetypes.yaml",
 ) -> Dict[str, ExecutionArchetype]:
     p = Path(path)
+    if not p.exists():
+        return {}
     obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     out: Dict[str, ExecutionArchetype] = {}
     archetypes = obj.get("archetypes")
@@ -156,7 +158,7 @@ def load_execution_profile_runtime_config(
 ) -> Dict[str, Any]:
     """
     DEPRECATED: This config file has been removed.
-    New live trading pipeline uses BPCLiveStrategy which reads from execution.yaml + gate.yaml.
+    New live trading pipeline uses GenericLiveStrategy which reads from execution.yaml + gate.yaml.
     This function is kept for backward compatibility with legacy scripts.
     """
     p = Path(path)
@@ -174,7 +176,7 @@ def resolve_execution_profile_paths(
 ) -> Tuple[str, str]:
     """
     DEPRECATED: This function is only used by legacy scripts.
-    New live trading pipeline uses BPCLiveStrategy which reads from execution.yaml + gate.yaml.
+    New live trading pipeline uses GenericLiveStrategy which reads from execution.yaml + gate.yaml.
     """
     cfg_path = (
         runtime_config_path

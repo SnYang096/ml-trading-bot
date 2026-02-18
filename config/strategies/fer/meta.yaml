@@ -16,7 +16,7 @@ strategy:
   archetype: FailureExhaustionReversal
   
   # 默认时间粒度（研发 + 实盘统一）
-  timeframe: "240T"  # 4小时，与 BPC/ME 保持一致
+  timeframe: "240T"  # 4小时，与 BPC 保持一致
   
   # PCM仲裁优先级
   pcm_priority: 0  # 最高优先级（条件最严格）

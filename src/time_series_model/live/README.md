@@ -6,17 +6,17 @@ This folder contains live-trading helpers.
 - **Run real trading quickly** → `scripts/run_live.py` (main entry).  
   Command:  
   `MLBOT_LIVE_SYMBOLS=BTCUSDT python scripts/run_live.py`
-- **Understand the live strategy logic** → see `bpc_live_strategy.py` (BPC decision engine).
+- **Understand the live strategy logic** → see `generic_live_strategy.py` (config-driven decision engine).
 
 ## Files
-- `bpc_live_strategy.py` — BPC pure-logic decision engine (Gate → Entry Filter → Evidence → Tier → TradeIntent).
+- `generic_live_strategy.py` — Config-driven decision engine (Gate → Entry Filter → Evidence → Tier → TradeIntent).
 - `live_feature_plan.py` — live feature plan resolver (base training plan + live overlay).
 - `execution_intelligence.py` — execution profile builder (SL/TP, holding time, confidence).
 - `execution_profile_apply.py` — utilities for applying execution profiles to orders.
 - `enforcement.py` — Constitution enforcement layer.
 
 ## Architecture
-The live trading flow is: **WebSocket → OrderFlowListener → BPCLiveStrategy → ConstitutionExecutor → OrderManager**
+The live trading flow is: **WebSocket → OrderFlowListener → GenericLiveStrategy / LivePCM → ConstitutionExecutor → OrderManager**
 
 See `docs/live_stream/README.md` for details.
 
