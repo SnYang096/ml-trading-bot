@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import yaml
+from pathlib import Path
 
 
 def test_make_temp_strategy_handles_long_suffix(tmp_path: Path):

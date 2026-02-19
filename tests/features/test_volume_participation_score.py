@@ -8,16 +8,9 @@ Volume Participation Score 特征测试
 4. 语义功能正确性：各子分项计算逻辑及最终score在[0,1]区间连续输出
 """
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.time_series.utils_interaction_features import (
     compute_volume_participation_score_from_series,

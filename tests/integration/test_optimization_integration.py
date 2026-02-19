@@ -18,10 +18,6 @@ import optuna
 import sys
 import importlib.util
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 
 class TestTSRReversalOptuna:
     """测试 ts_sr_reversal_optuna.py 的核心功能"""

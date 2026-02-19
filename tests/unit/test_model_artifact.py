@@ -3,7 +3,6 @@ Unit tests for ModelArtifact class.
 """
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -12,6 +11,7 @@ import pytest
 
 from src.time_series_model.strategies.models.model_artifact import ModelArtifact
 from src.time_series_model.strategies.models.strategy_trainer import FeaturePreprocessor
+from pathlib import Path
 
 
 class MockModel:

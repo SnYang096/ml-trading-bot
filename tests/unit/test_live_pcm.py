@@ -27,7 +27,6 @@ from time_series_model.portfolio.live_pcm import (
     DEFAULT_REGIME_PRIORITIES,
 )
 
-
 # ── Fake Strategy ──
 
 
@@ -75,7 +74,6 @@ def _make_intent(
 
 
 FEATURES = {"close": 50000.0, "volume": 100.0}
-
 
 # ── 测试 ──
 

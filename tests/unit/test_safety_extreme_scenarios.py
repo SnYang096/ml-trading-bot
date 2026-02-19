@@ -7,7 +7,6 @@ and verify that safety halts trading before drawdown exceeds limits.
 """
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 

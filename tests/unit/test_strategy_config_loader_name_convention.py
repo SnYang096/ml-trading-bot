@@ -23,8 +23,8 @@ def test_strategy_config_loader_name_is_dir_name_even_if_yaml_declares_other(
             [
                 "target_column: y",
                 "generator:",
-                "  module: src.time_series_model.strategies.labels.sr_reversal_label",
-                "  function: compute_sr_reversal_label",
+                "  module: src.time_series_model.strategies.labels.bpc_label",
+                "  function: compute_bpc_label",
                 "  params: {}",
             ]
         )
@@ -67,8 +67,8 @@ def test_strategy_config_loader_strict_name_match_raises(tmp_path):
             [
                 "target_column: y",
                 "generator:",
-                "  module: src.time_series_model.strategies.labels.sr_reversal_label",
-                "  function: compute_sr_reversal_label",
+                "  module: src.time_series_model.strategies.labels.bpc_label",
+                "  function: compute_bpc_label",
                 "  params: {}",
             ]
         )

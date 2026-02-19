@@ -9,14 +9,8 @@
 4. ET风险指标计算
 """
 
-import sys
-from pathlib import Path
 import pytest
 import numpy as np
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.time_series_model.execution.et_hedge import (
     compute_et_risk_score,

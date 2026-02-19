@@ -8,14 +8,8 @@
 3. 验证两个模块使用相同的公共函数，结果一致
 """
 
-import sys
-from pathlib import Path
 import pytest
 import yaml
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.cli.auto_detect_compute_requirements import (
     resolve_feature_dependencies,

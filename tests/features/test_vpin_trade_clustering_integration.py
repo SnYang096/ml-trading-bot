@@ -250,7 +250,6 @@ class TestVPINTradeClusteringIntegration:
 
     def test_memory_efficiency_streaming(self, tick_data_dir, temp_cache_dir):
         """测试流式处理的内存效率（跨多个月）"""
-        import sys
         import tracemalloc
 
         # 开始内存追踪

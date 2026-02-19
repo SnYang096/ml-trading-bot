@@ -11,11 +11,6 @@ FER特征函数测试套件
 import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.time_series_model.features.fer_features import (
     price_delta_efficiency_f,
@@ -25,7 +20,6 @@ from src.time_series_model.features.fer_features import (
     momentum_efficiency_decay_f,
     volume_price_divergence_f,
 )
-
 
 # ============================================================
 # 辅助函数

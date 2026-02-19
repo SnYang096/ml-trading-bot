@@ -9,17 +9,11 @@
 4. _compute_and_save_15min_features(): 完整流程集成测试
 """
 
-import sys
-from pathlib import Path
 import pytest
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, MagicMock, patch
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.live_data_stream.order_flow_listener import OrderFlowListener
 from src.live_data_stream.feature_storage import StorageManager

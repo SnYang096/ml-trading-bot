@@ -10,9 +10,10 @@ Key requirements:
 """
 
 import textwrap
-from pathlib import Path
 
 import pytest
+
+from pathlib import Path
 
 from src.time_series_model.models.nn.feature_contract import (
     _feature_name_to_output_columns,

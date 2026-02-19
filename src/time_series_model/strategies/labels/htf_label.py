@@ -15,7 +15,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from src.time_series_model.strategies.labels.sr_reversal_label import _ensure_atr
+from src.time_series_model.pipeline.training.label_utils import _ensure_atr
 from src.time_series_model.pipeline.training.label_utils import compute_rr_label
 
 

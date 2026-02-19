@@ -5,15 +5,8 @@
 模拟完整的训练流程，在每个关键步骤检查 RSI 状态
 """
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
-
-# Add project root to path
-project_root = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(project_root))
 
 from src.data_tools.data_handler import MarketDataLoader
 from src.time_series_model.strategy_config import StrategyConfigLoader

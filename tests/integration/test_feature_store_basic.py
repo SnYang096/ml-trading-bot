@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
 from src.feature_store.feature_store import FeatureStore, FeatureStoreSpec
+from pathlib import Path
 
 
 def test_feature_store_write_read_range(tmp_path: Path) -> None:

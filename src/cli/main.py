@@ -8042,32 +8042,6 @@ def diagnose_ood_to_archetype_weights(logs, labels, out, config_yaml, docker):
     sys.exit(run_script("scripts/learn_ood_to_archetype_weights_table.py", args, docker=docker))
 
 
-@diagnose.command("ml-volatility")
-@click.option("--docker/--no-docker", default=False, help="Run in Docker")
-def diagnose_ml_volatility(docker):
-    """Analyze ML+Volatility Model Performance Issues."""
-    sys.exit(
-        run_python_module(
-            "src.time_series_model.diagnostics.analyze_ml_volatility_model",
-            [],
-            docker=docker,
-        )
-    )
-
-
-@diagnose.command("dtw-volatility")
-@click.option("--docker/--no-docker", default=False, help="Run in Docker")
-def diagnose_dtw_volatility(docker):
-    """Analyze DTW Features and Volatility Model."""
-    sys.exit(
-        run_python_module(
-            "src.time_series_model.diagnostics.analyze_dtw_and_volatility",
-            [],
-            docker=docker,
-        )
-    )
-
-
 @diagnose.command("model-comparison")
 @click.option(
     "--strategy-config",

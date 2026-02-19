@@ -13,7 +13,6 @@ import pandas as pd
 import time
 from typing import Dict, List
 import warnings
-from pathlib import Path
 import sys
 
 # pytest 是可选的（如果可用则使用，否则跳过）
@@ -34,8 +33,6 @@ except ImportError:
 warnings.filterwarnings("ignore")
 
 # 添加项目根目录到路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from src.features.time_series.utils_order_flow_features import (
     compute_vpin_from_ticks,

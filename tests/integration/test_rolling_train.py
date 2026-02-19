@@ -7,15 +7,12 @@ Rolling 训练流程测试
 import unittest
 import pandas as pd
 import numpy as np
-import sys
 import tempfile
 import shutil
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 # 添加项目根目录到路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 # 直接导入函数，避免导入整个模块（避免 data_tools 依赖问题）
 import re

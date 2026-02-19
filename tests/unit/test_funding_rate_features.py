@@ -19,7 +19,6 @@ from src.features.time_series.funding_rate_features import (
     _rolling_robust_zscore,
 )
 
-
 # ─────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────

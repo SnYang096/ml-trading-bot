@@ -1,9 +1,9 @@
 import textwrap
-from pathlib import Path
 
 import pytest
 
 from src.time_series_model.strategy_config.loader import StrategyConfigLoader
+from pathlib import Path
 
 
 def _write_yaml(path: Path, content: str) -> None:

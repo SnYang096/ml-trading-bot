@@ -7,21 +7,14 @@ FER (FailureExhaustionReversal) v2.1 特征测试
 3. 功能正确性：值域、CVD 掩码、方向语义 ⭐⭐⭐
 """
 
-import sys
-from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.time_series.fer_features import (
     compute_fer_failure_signals_from_series,
     FEATURE_VERSION,
 )
-
 
 # =============================================================================
 # 📊 测试数据生成器
@@ -73,7 +66,6 @@ PRICE_ONLY_COLS = [
 ]
 
 ALL_COLS = CVD_DEPENDENT_COLS + PRICE_ONLY_COLS
-
 
 # =============================================================================
 # 1️⃣ 未来函数检测

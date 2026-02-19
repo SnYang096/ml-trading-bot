@@ -17,7 +17,6 @@ from src.features.time_series.open_interest_features import (
     compute_oi_scene_semantic_scores_from_df,
 )
 
-
 # ─────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────

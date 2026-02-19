@@ -93,9 +93,6 @@ feature_pipeline:
 
     # ========== 交叉特征 ==========
     - exhaustion_at_liquidity_void_f
-    - dual_compression_f
-    - dual_ignition_f
-    - dual_exhaustion_f
     - funding_oi_crowding_f                # Funding×OI拥挤度 (LV核心: 拥挤+高波动=清算瀑布)
 
   ensure_signal_column:

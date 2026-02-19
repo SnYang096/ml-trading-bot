@@ -3,21 +3,13 @@
 验证所有特征是否正确生成，使用模拟数据
 """
 
-import sys
-from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 from src.features.time_series.utils_volatility_features import (
     extract_extended_volatility_features,
 )
-
 
 # 期望的所有特征列表（从feature_dependencies.yaml和volatility_model.yaml）
 EXPECTED_FEATURES = [

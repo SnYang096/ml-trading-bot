@@ -19,6 +19,44 @@ import numpy as np
 import pandas as pd
 
 
+def _ensure_atr(
+    df: pd.DataFrame,
+    atr_col: str,
+    price_col: str,
+    high_col: str,
+    low_col: str,
+    atr_window: int,
+) -> pd.Series:
+    """Return an ATR series, computing it if missing."""
+    if atr_col in df.columns:
+        atr_series = df[atr_col].copy()
+    else:
+        if not {price_col, high_col, low_col}.issubset(df.columns):
+            return pd.Series(np.nan, index=df.index)
+
+        try:
+            import talib
+
+            atr_values = talib.ATR(
+                df[high_col].values,
+                df[low_col].values,
+                df[price_col].values,
+                timeperiod=atr_window,
+            )
+            atr_series = pd.Series(atr_values, index=df.index)
+        except ImportError:
+            tr = np.maximum(
+                df[high_col] - df[low_col],
+                np.maximum(
+                    (df[high_col] - df[price_col].shift(1)).abs(),
+                    (df[low_col] - df[price_col].shift(1)).abs(),
+                ),
+            )
+            atr_series = tr.rolling(window=atr_window, min_periods=1).mean()
+
+    return atr_series.ffill()
+
+
 def log_return_magnitude(y_return: pd.Series) -> pd.Series:
     """Project raw returns into log-amplitude space (>=0)."""
     log_mag = np.log1p(np.abs(y_return.to_numpy()))

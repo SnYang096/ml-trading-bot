@@ -6,10 +6,6 @@
 import pytest
 import os
 from unittest.mock import Mock, patch
-import sys
-
-# 添加项目路径
-sys.path.insert(0, "/home/yin/trading/ml_trading_bot")
 
 
 def test_current_strategy_status():

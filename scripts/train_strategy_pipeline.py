@@ -1625,7 +1625,7 @@ def run_vectorbt_backtest(
             # Ensure ATR if needed and possible (uses RR atr_window if provided)
             if not have_atr:
                 try:
-                    from src.time_series_model.strategies.labels.sr_reversal_label import (
+                    from src.time_series_model.pipeline.training.label_utils import (
                         _ensure_atr,
                     )
 
@@ -2441,6 +2441,7 @@ def train_strategy(
         freq_required_features = [
             "vpin_base_aligned_features_f",
             "trade_cluster_base_aligned_features_f",
+            "trade_cluster_semantic_scores_f",
         ]
         injected_count = 0
         for feat_name in freq_required_features:

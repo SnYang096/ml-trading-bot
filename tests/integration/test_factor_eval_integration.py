@@ -14,7 +14,6 @@ import numpy as np
 
 IMPORT_ERROR_TS = ""
 
-
 # Try to import functions, skip tests if imports fail
 try:
     from src.time_series_model.diagnostics.factor_ts_eval import (

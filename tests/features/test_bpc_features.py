@@ -13,15 +13,9 @@ BPC (Breakout-Pullback-Continuation) 软阶段特征测试
 """
 
 import sys
-from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.time_series.bpc_features import (
     compute_bpc_soft_phase_from_series,
@@ -37,7 +31,6 @@ from src.features.time_series.bpc_features import (
     FEATURE_VERSION,
     DEFAULT_LOOKBACK_BREAKOUT,
 )
-
 
 # =============================================================================
 # 📊 测试数据生成器
@@ -962,7 +955,6 @@ def run_all_tests():
 if __name__ == "__main__":
     success = run_all_tests()
     sys.exit(0 if success else 1)
-
 
 # =============================================================================
 # 📋 测试类：BPC 上下文特征（新增）

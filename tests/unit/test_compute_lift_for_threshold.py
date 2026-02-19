@@ -10,10 +10,6 @@
 import pandas as pd
 import numpy as np
 import pytest
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.optimize_gate_unified import compute_lift_for_threshold
 

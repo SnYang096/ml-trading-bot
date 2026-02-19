@@ -9,14 +9,8 @@
 4. 集成测试：完整的自动检测流程
 """
 
-import sys
-from pathlib import Path
 import pytest
 import yaml
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.cli.auto_detect_compute_requirements import (
     resolve_feature_dependencies,

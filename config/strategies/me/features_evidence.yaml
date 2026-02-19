@@ -122,9 +122,7 @@ feature_pipeline:
 
     # ========== 交叉特征 ==========
     - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空
-    - dual_compression_f                   # 资金+VPIN双源压缩 (BPC核心)
     - dual_ignition_f                      # 资金+FP双源点火 (ME核心)
-    - dual_exhaustion_f                    # 资金+VPIN双源力竭 (FER核心)
     - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
 
   ensure_signal_column:

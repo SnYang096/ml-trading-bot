@@ -1,6 +1,3 @@
-from pathlib import Path
-
-
 def test_groups_source_auto_uses_global_config_when_present(monkeypatch, tmp_path):
     from src.time_series_model.diagnostics import feature_group_search as fgs
 

@@ -11,7 +11,6 @@ WPT Volume Profile 修复验证测试
 import numpy as np
 import pandas as pd
 import warnings
-from pathlib import Path
 import sys
 
 # pytest 是可选的（如果可用则使用，否则跳过）
@@ -32,8 +31,6 @@ except ImportError:
 warnings.filterwarnings("ignore")
 
 # 添加项目根目录到路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from src.features.time_series.utils_volume_profile import (
     compute_wpt_volume_profile,

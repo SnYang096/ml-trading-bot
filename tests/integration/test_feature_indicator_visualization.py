@@ -13,10 +13,6 @@ import numpy as np
 import yaml
 from datetime import datetime
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 
 class TestFeatureIndicatorVisualization:
     """测试特征指标可视化脚本"""

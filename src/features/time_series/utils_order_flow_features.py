@@ -1391,6 +1391,7 @@ def compute_trade_cluster_semantic_scores_from_series(
     use_range_disp: bool = True,
     activity_clip: float = 3.0,
     monthly_cache_dir: Optional[str] = "cache/features/monthly",
+    freq: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Turn trade-cluster raw stats into *path semantics*:
@@ -1421,7 +1422,7 @@ def compute_trade_cluster_semantic_scores_from_series(
         ticks=ticks,
         ticks_loader_json=ticks_loader_json,
         window_size=int(window_size),
-        freq=None,
+        freq=freq,
         monthly_cache_dir=monthly_cache_dir,
         merge_batch_size=4,
         persist_monthly=True,

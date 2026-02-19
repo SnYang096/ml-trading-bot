@@ -3,12 +3,6 @@
 import pytest
 import yaml
 from pathlib import Path
-import sys
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.time_series_model.strategy_config import (
@@ -158,8 +152,8 @@ feature_pipeline:
 name: test_strategy
 target_column: label
 label_generator:
-  module: src.time_series_model.strategies.labels.sr_reversal_label
-  function: compute_sr_reversal_label
+  module: src.time_series_model.strategies.labels.bpc_label
+  function: compute_bpc_label
   params:
     signal_col: signal
     max_holding_bars: 50

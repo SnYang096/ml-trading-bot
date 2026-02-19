@@ -9,15 +9,9 @@
 4. 边界情况处理
 """
 
-import sys
-from pathlib import Path
 import pytest
 import numpy as np
 import pandas as pd
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.time_series.reflexivity_features import (
     compute_ofci_from_trades,

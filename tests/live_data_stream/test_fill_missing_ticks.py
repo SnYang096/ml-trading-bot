@@ -8,11 +8,6 @@
 3. merge_ticks 正确去重和排序
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 import pytest
 import pandas as pd
 import numpy as np

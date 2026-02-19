@@ -15,15 +15,9 @@
 load_features_from_requested() 来使用特征，依赖会自动解析和计算。
 """
 
-import sys
-from pathlib import Path
 import pytest
 import pandas as pd
 import numpy as np
-
-# Add project root to path
-project_root = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(project_root))
 
 from src.features.loader.feature_wrappers import (
     compute_sr_strength_max,

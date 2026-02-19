@@ -3,14 +3,7 @@
 
 验证：当 ticks_1min 为空但 features_4h 有数据时，系统能够正确判断为 NORMAL 模式
 """
-import sys
 import pandas as pd
-from pathlib import Path
-
-# 添加项目路径
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "src"))
 
 from live_data_stream.system_mode import SystemModeManager, SystemMode
 

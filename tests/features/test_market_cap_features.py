@@ -8,18 +8,12 @@ Market Cap 特征测试
 4. 特征数学正确性验证
 """
 
-import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
 import tempfile
 import shutil
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.time_series.market_cap_features import (
     compute_market_cap_normalized_orderflow_from_df,

@@ -5,13 +5,6 @@
 但单独训练时没问题。需要找出 ticks_loader_json 为什么没有正确传递。
 """
 
-import sys
-from pathlib import Path
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta

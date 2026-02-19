@@ -8,13 +8,8 @@
 4. quantiles 可以透传
 """
 
-import sys
-import os
 import pytest
 from unittest.mock import MagicMock, patch
-
-# Ensure project root is on path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 
 class TestLivePCMSmoke:

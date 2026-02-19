@@ -1,13 +1,5 @@
 import pandas as pd
 import numpy as np
-import sys
-from pathlib import Path
-
-# Ensure src is on path so time_series_model imports inside pipeline resolve
-ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
 
 from scripts.train_strategy_pipeline import drop_inf_rows
 

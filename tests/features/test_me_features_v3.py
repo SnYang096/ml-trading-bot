@@ -22,7 +22,6 @@ from src.features.time_series.momentum_expansion_features import (
     compute_momentum_expansion_context_from_series,
 )
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================

@@ -164,6 +164,7 @@ def main() -> None:
         freq_required_features = [
             "vpin_base_aligned_features_f",
             "trade_cluster_base_aligned_features_f",
+            "trade_cluster_semantic_scores_f",
         ]
         injected_count = 0
         for feat_name in freq_required_features:

@@ -16,15 +16,11 @@ data or tick caches.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import Any, Dict
 
 import pandas as pd
 
 # Ensure project root is on sys.path for direct execution
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.loader.feature_computer import FeatureComputer  # type: ignore  # noqa: E402
 

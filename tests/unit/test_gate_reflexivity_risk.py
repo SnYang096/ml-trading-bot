@@ -10,13 +10,7 @@
 5. 快速hard veto检查
 """
 
-import sys
-from pathlib import Path
 import pytest
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.time_series_model.nnmultihead.gate_reflexivity_risk import (
     gate_reflexivity_risk,

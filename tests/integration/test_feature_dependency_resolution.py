@@ -9,14 +9,8 @@
 4. 自动修复机制是否在正确时机触发
 """
 
-import sys
-from pathlib import Path
 import pandas as pd
 import numpy as np
-
-# Add project root to path
-project_root = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(project_root))
 
 from src.data_tools.data_handler import MarketDataLoader
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader

@@ -5,16 +5,9 @@ End-to-End Tests for Archetype Module
 验证三层配置架构 (Gate / Evidence / Execution) 的完整流程
 """
 
-import sys
-from pathlib import Path
-
 import pandas as pd
 import numpy as np
 import pytest
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 class TestArchetypeLoading:

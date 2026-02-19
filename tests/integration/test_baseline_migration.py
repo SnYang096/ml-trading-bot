@@ -27,7 +27,6 @@ from src.features.registry import (
     ensure_features_registered,
 )
 
-
 # 在模块加载时就注册所有特征
 ensure_features_registered()
 

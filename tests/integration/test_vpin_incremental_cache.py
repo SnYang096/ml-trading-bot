@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 
 from src.data_tools import tick_loader
+from pathlib import Path
 
 
 def _write_month_ticks(path: Path, start: str, n: int) -> None:

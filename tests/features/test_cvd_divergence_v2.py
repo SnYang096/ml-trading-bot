@@ -8,14 +8,9 @@ CVD Divergence V2 特征测试
 3. 未来函数测试（无 look-ahead bias）
 """
 
-import sys
-from pathlib import Path
 import pytest
 import numpy as np
 import pandas as pd
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.time_series.utils_interaction_features import (
     compute_cvd_divergence_v2_from_series,
