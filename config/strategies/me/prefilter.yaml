@@ -1,0 +1,32 @@
+# ME 语义预筛选候选特征
+# 职责: 声明待验证的 pre-filter 候选特征 (Step 2 分位数分层分析的输入)
+# 脚本通过 feature_dependencies.yaml 的 output_columns 解析出实际列名
+#
+# 用法:
+#   python scripts/analyze_archetype_feature_stratification.py \
+#       --logs results/train_final_xxx/me/predictions.parquet \
+#       --strategy me \
+#       --config config/strategies/me/prefilter.yaml
+
+description: "ME 语义预筛选候选特征 — Energy × Acceleration × Participation 三因子"
+
+candidates:
+  # ========== ME 核心三因子 ==========
+  # → me_atr_pct, me_vol_regime, me_accel_2k, me_accel_5k, me_accel_persistence,
+  #   me_multi_tf_alignment, me_cvd_alignment, me_cvd_strength, me_volume_surge,
+  #   me_volume_accel, me_delta_net_flow
+  - me_soft_phase_f
+
+  # ========== ME 失败信号 ==========
+  # → me_false_expansion, me_vol_divergence, me_flow_exhaustion
+  - me_failure_f
+
+  # ========== ME 上下文 ==========
+  # → me_jump_risk_suitable, me_reflex_risk, me_regime_suitable
+  - me_context_f
+
+  # ========== 通用候选 (验证跨策略区分力) ==========
+  # → vol_zscore, vol_percentile_approx
+  - vol_regime_features_f
+  # → atr_percentile
+  - atr_percentile_f

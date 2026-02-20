@@ -863,8 +863,9 @@ def extract_order_flow_features(
                         
                         if HAS_SCIPY and linregress is not None:
                             # 使用 scipy 的线性回归
-                            slope, _, _, _, _ = linregress(time_seconds, vpin_vals)
-                            aligned_vpin_trend.iloc[kline_pos] = slope
+                            if np.std(time_seconds) > EPS:
+                                slope, _, _, _, _ = linregress(time_seconds, vpin_vals)
+                                aligned_vpin_trend.iloc[kline_pos] = slope
                         else:
                             # 手动计算斜率：最小二乘法
                             if len(time_seconds) > 1 and np.std(time_seconds) > EPS:
@@ -976,8 +977,9 @@ def extract_order_flow_features(
                         # 转换为相对于第一个时间戳的秒数
                         time_seconds = (vpin_times - vpin_times[0]).astype('timedelta64[s]').astype(float)
                         if HAS_SCIPY and linregress is not None:
-                            slope, _, _, _, _ = linregress(time_seconds, vpin_values)
-                            aligned_vpin_trend.loc[kline_time] = slope
+                            if np.std(time_seconds) > EPS:
+                                slope, _, _, _, _ = linregress(time_seconds, vpin_values)
+                                aligned_vpin_trend.loc[kline_time] = slope
                         else:
                             # 手动计算斜率
                             if len(time_seconds) > 1 and np.std(time_seconds) > EPS:

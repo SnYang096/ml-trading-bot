@@ -1,0 +1,29 @@
+# LV 语义预筛选候选特征
+# 职责: 声明待验证的 pre-filter 候选特征 (Step 2 分位数分层分析的输入)
+# 脚本通过 feature_dependencies.yaml 的 output_columns 解析出实际列名
+#
+# 用法:
+#   python scripts/analyze_archetype_feature_stratification.py \
+#       --logs results/train_final_xxx/lv/predictions.parquet \
+#       --strategy lv \
+#       --config config/strategies/lv/prefilter.yaml
+
+description: "LV 语义预筛选候选特征 — 杠杆脆弱性 (OI + Funding + 流动性)"
+
+candidates:
+  # ========== LV 核心: OI 持仓量 ==========
+  # → oi_usd, oi_change_pct, oi_zscore, oi_delta_price_sign, oi_flow_zscore
+  - oi_features_f
+
+  # ========== LV 核心: 资金费率 ==========
+  # → funding_rate, funding_rate_abs, funding_rate_change_1,
+  #   funding_rate_zscore_50, funding_rate_abs_zscore_50
+  - funding_rate_features_f
+
+  # ========== 通用候选 (验证跨策略区分力) ==========
+  # → vol_zscore, vol_percentile_approx
+  - vol_regime_features_f
+  # → atr_percentile
+  - atr_percentile_f
+  # → garch_volatility, garch_persistence, garch_leverage_gamma, garch_alpha, garch_beta
+  - garch_features_f

@@ -196,10 +196,18 @@ def compute_momentum_expansion_soft_phase_from_series(
     ).clip(0, 1)
 
     # P5. Delta净流：delta z-score × 方向一致性
+    #     优先用 footprint delta；若无则用 cvd_change_5 作为代理
+    #     （cvd_change_5 IS net buying/selling flow, 只是窗口更长）
+    delta_source = None
     if delta is not None:
-        delta_s = pd.to_numeric(delta, errors="coerce").fillna(0)
-        delta_std = delta_s.rolling(lookback, min_periods=1).std().clip(lower=eps)
-        delta_zscore = (delta_s / delta_std).clip(-3, 3)
+        delta_source = pd.to_numeric(delta, errors="coerce").fillna(0)
+    elif cvd_change_5 is not None:
+        # Fallback: cvd_change_5 作为 delta 代理
+        delta_source = pd.to_numeric(cvd_change_5, errors="coerce").fillna(0)
+
+    if delta_source is not None:
+        delta_std = delta_source.rolling(lookback, min_periods=1).std().clip(lower=eps)
+        delta_zscore = (delta_source / delta_std).clip(-3, 3)
         # 方向对齐：delta正且价格涨→正信号；delta正但价格跌→负信号
         me_delta_net_flow = (delta_zscore * price_dir / 3).clip(-1, 1)
     else:
@@ -400,9 +408,10 @@ def compute_momentum_expansion_failure_from_series(
     ).astype(float)
     me_vol_divergence = me_vol_divergence * accel.abs().clip(0, 1)
 
-    # 订单流力竭：CVD对齐度从高位下降
-    flow_declining = flow < flow.shift(lookback // 2)
-    me_flow_exhaustion = (flow_declining & (accel.abs() > 0.5)).astype(float)
+    # 订单流力竭：CVD对齐度从高位下降 × 加速强度（连续值）
+    #     原版是 binary（仅 2.6% 非零），改为连续值让树模型有更多信息
+    flow_drop = (flow.shift(lookback // 2) - flow).clip(lower=0)  # 正值=对齐度下降
+    me_flow_exhaustion = (flow_drop * accel.abs()).clip(0, 1)
 
     # 综合失败分数（独立子信号，让树模型自学权重）
     me_failure_score = (

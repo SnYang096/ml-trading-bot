@@ -44,6 +44,7 @@ feature_pipeline:
     # ========== BPC 量能/订单流 ==========
     - bpc_volume_compression_pct_f    # 成交量压缩百分位
     - bpc_pullback_delta_absorption_f # 回踩期间 delta 吸收
+
     - cvd_divergence_v2_f           # CVD 背离
     - price_momentum_divergence_f  # 价格-动量背离（与 CVD 背离正交）
     - terminal_risk_score_f        # 末端风险评分（Execution 层追单风险）
@@ -79,30 +80,12 @@ feature_pipeline:
     # ========== SR 相关 ==========
     - sr_strength_max_f  # 输出包含 sr_strength_max 和 dist_to_nearest_sr
     
-    # ========== 基础 ==========
-    - sma_200_f
-    - jump_risk_pct_f         # 跳空风险分位
-    
-    # ========== 数学特征 ==========
-    - hurst_price_f           # Hurst 指数（时序记忆性）
-    - spectrum_features_f     # 频谱特征
-    - hilbert_phase_f         # Hilbert 变换（包络+相位）
-    - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
-    - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
-
-    # ========== Volume Profile ==========
-    - volume_profile_volatility_features_f
-    - liquidity_void_f
-
-    # ========== Footprint ==========
-    - footprint_basic_f
-
     # ========== 订单流 ==========
     - vpin_features_f
     - volume_ratio_pct_f      # 自包含：内部计算 volume/rolling_mean 再转百分位
     - ofci_pct_f              # 自包含：内部加载tick数据计算OFCI再转百分位
     - shd_pct_f               # 自包含：内部计算rolling_corr(ΔCVD, returns)再转百分位
-    - cvd_change_5_pct_f  # CVD 变化的归一化版本
+    - cvd_change_features_f  # CVD 变化的归一化版本
     
     # ========== Trade Cluster 归一化版本 (zscore) ==========
     - trade_cluster_entropy_zscore_features_f
@@ -110,6 +93,17 @@ feature_pipeline:
     - trade_cluster_net_runs_zscore_features_f
     - trade_cluster_max_buy_run_zscore_features_f
     - trade_cluster_max_sell_run_zscore_features_f
+    
+    # ========== 基础 ==========
+    - sma_200_f
+    - jump_risk_pct_f         # 跳空风险分位
+
+    # ========== Volume Profile ==========
+    - volume_profile_volatility_features_f
+    - liquidity_void_f
+
+    # ========== Footprint ==========
+    - footprint_basic_f
 
     # ========== 资金费率 (期货独有情绪/拥挤度) ==========
     - funding_rate_features_f              # funding_rate, funding_rate_zscore_50 等
@@ -135,6 +129,14 @@ feature_pipeline:
     - dual_ignition_f                      # 资金+FP双源点火 (ME核心)
     - dual_exhaustion_f                    # 资金+VPIN双源力竭 (FER核心)
     - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
+
+    
+    # ========== 数学特征 ==========
+    # - hurst_price_f           # Hurst 指数（时序记忆性）
+    # - spectrum_features_f     # 频谱特征
+    # - hilbert_phase_f         # Hilbert 变换（包络+相位）
+    # - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
+    # - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
 
   ensure_signal_column:
     name: signal

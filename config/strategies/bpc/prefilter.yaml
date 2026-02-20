@@ -1,0 +1,37 @@
+# BPC 语义预筛选候选特征
+# 职责: 声明待验证的 pre-filter 候选特征 (Step 2 分位数分层分析的输入)
+# 脚本通过 feature_dependencies.yaml 的 output_columns 解析出实际列名
+#
+# 用法:
+#   python scripts/analyze_archetype_feature_stratification.py \
+#       --logs results/train_final_xxx/bpc/predictions.parquet \
+#       --strategy bpc \
+#       --config config/strategies/bpc/prefilter.yaml
+
+description: "BPC 语义预筛选候选特征 — Breakout-Pullback-Continuation 结构特征"
+
+candidates:
+  # ========== BPC 核心: 软阶段分数 ==========
+  # → bpc_price_breakout_strength, bpc_vol_breakout_confirm, bpc_cvd_breakout_confirm,
+  #   bpc_pullback_depth, bpc_pullback_quality, bpc_vol_pullback_confirm, bpc_cvd_absorption,
+  #   bpc_recovery_strength, bpc_momentum_confirm, bpc_score_breakout, bpc_score_pullback,
+  #   bpc_score_continuation, bpc_score_neutral, bpc_breakout_direction, bpc_direction_confidence, ...
+  - bpc_soft_phase_f
+
+  # ========== BPC 结构: 回踩深度 ==========
+  # → bpc_pullback_depth_long, bpc_pullback_depth_short, bpc_pullback_depth_pct
+  - bpc_pullback_depth_pct_f
+
+  # ========== BPC 方向一致性 ==========
+  # → bpc_dir_consistency_short, bpc_dir_consistency_mid, bpc_dir_consistency_long
+  - bpc_dir_consistency_multi_f
+
+  # ========== BPC 量能压缩 ==========
+  # → bpc_volume_compression_pct
+  - bpc_volume_compression_pct_f
+
+  # ========== 通用候选 (验证跨策略区分力) ==========
+  # → vol_zscore, vol_percentile_approx
+  - vol_regime_features_f
+  # → atr_percentile
+  - atr_percentile_f

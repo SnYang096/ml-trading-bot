@@ -46,6 +46,7 @@ feature_pipeline:
     # ========== BPC 量能/订单流 ==========
     - bpc_volume_compression_pct_f    # 成交量压缩百分位
     - bpc_pullback_delta_absorption_f # 回踩期间 delta 吸收
+
     - cvd_divergence_v2_f           # CVD 背离
     - price_momentum_divergence_f  # 价格-动量背离（与 CVD 背离正交）
     - terminal_risk_score_f        # 末端风险评分（Execution 层追单风险）
@@ -83,22 +84,14 @@ feature_pipeline:
     
     # ========== 基础 ==========
     - sma_200_f
-    - jump_risk_pct_f         # 跳空风险分位
     
-    # ========== 数学特征（用于 execution_noise_penalty）==========
-    # 这些特征只影响"如何执行"，不影响"是否执行"
-    - hurst_price_f           # Hurst 指数（时序记忆性）
-    - spectrum_features_f     # 频谱特征
-    - hilbert_phase_f         # Hilbert 变换（包络+相位）
-    - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
-    - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
 
     # ========== 订单流 ==========
     - vpin_features_f
     - volume_ratio_pct_f      # 自包含：内部计算 volume/rolling_mean 再转百分位
     - ofci_pct_f              # 自包含：内部加载tick数据计算OFCI再转百分位
     - shd_pct_f               # 自包含：内部计算rolling_corr(ΔCVD, returns)再转百分位
-    - cvd_change_5_pct_f  # CVD 变化的归一化版本
+    - cvd_change_features_f           # CVD 变化特征
     
     # ========== Trade Cluster 归一化版本 (zscore) ==========
     - trade_cluster_entropy_zscore_features_f
@@ -111,10 +104,7 @@ feature_pipeline:
     - funding_rate_features_f              # funding_rate, funding_rate_zscore_50 等
     - funding_scene_semantic_scores_f      # 资金费率场景语义 (compression/ignition/absorption/exhaustion)
 
-    # ========== OI (期货持仓量) ==========
-    - oi_features_f                        # oi_usd, oi_change_pct, oi_zscore, oi_delta_price_sign
-    - oi_scene_semantic_scores_f           # OI 场景语义 (compression/ignition/absorption/exhaustion)
-
+   
     # ========== GARCH 波动率建模 ==========
     - garch_features_f                     # garch_volatility, garch_persistence, garch_leverage_gamma
 
@@ -128,7 +118,6 @@ feature_pipeline:
     # ========== 交叉特征 ==========
     - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空
     - dual_compression_f                   # 资金+VPIN双源压缩 (BPC核心)
-    - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
 
   ensure_signal_column:
     name: signal

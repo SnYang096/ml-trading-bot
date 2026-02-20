@@ -25,14 +25,6 @@ feature_pipeline:
     - me_failure_f
     - me_context_f
 
-    # ========== Safety: reflexivity ==========
-    - shd_pct_f
-    - ofci_pct_f
-
-    # ========== Exclusions / preconditions ==========
-    - jump_risk_pct_f
-    - atr_percentile_f
-
     # ========== 趋势强度 ==========
     - trend_r2_20_f
     - path_efficiency_pct_f
@@ -44,6 +36,7 @@ feature_pipeline:
     - rsi_f
 
     # ========== 波动 ==========
+    - atr_percentile_f
     - bb_width_normalized_pct_f
 
     # ========== Volatility Regime ==========
@@ -52,41 +45,27 @@ feature_pipeline:
     - vol_trend_features_f         # vol_slope, vol_accel (波动率趋势)
     - vol_mom_features_f           # vol_mom_5/10/20 (波动率动量)
 
-    # ========== Trend Exhaustion ==========
-    # 识别趋势衰竭/反转信号
-    - wick_scene_semantic_scores_f             # wick_exhaustion_score
-    - wpt_scene_semantic_scores_f              # wpt_exhaustion_score
-    - volume_profile_scene_semantic_scores_f   # vp_exhaustion_score, vp_absorption_score
-    - liquidity_void_scene_semantic_scores_f   # 流动性真空场景语义
-
-    # ========== SR 相关 ==========
-    - sr_strength_max_f            # sr_strength_max + dist_to_nearest_sr
 
     # ========== 基础 ==========
     - sma_200_f
-    - volume_profile_volatility_features_f
+    - jump_risk_pct_f         # 跳空风险分位
 
-    # ========== 数学特征 ==========
-    - hurst_price_f                # Hurst 指数（时序记忆性）
-    - hurst_cvd_f                  # CVD Hurst
-    - spectrum_features_f          # 频谱特征
-    - hilbert_phase_f              # Hilbert 变换（包络+相位）
-    - wpt_price_fluctuation_f      # 小波包变换（多尺度分解）
-    - wpt_price_reconstructed_f
-    - wpt_volume_energy_f
-    - wpt_cvd_fluctuation_f
-    - evt_features_f               # EVT 极值理论（尾部风险）
+    # ========== Volume Profile ==========
+    - volume_profile_volatility_features_f
+    - liquidity_void_f
+
+    # ========== Footprint ==========
     - footprint_basic_f
 
     # ========== 订单流 ==========
     - vpin_features_f
     - volume_ratio_pct_f
-    - cvd_change_5_pct_f
+    - cvd_change_features_f
     - cvd_divergence_v2_f          # CVD 背离
     - price_momentum_divergence_f  # 价格-动量背离
 
+
     # ========== Execution 质量 ==========
-    - terminal_risk_score_f        # 末端风险评分（追单风险）
     - volume_participation_score_f # 市场参与度评分
 
     # ========== 流动性真空 + 交叉特征 ==========
@@ -121,9 +100,7 @@ feature_pipeline:
     - vwap_position_f                      # 价格相对 VWAP 位置 (日内锚点)
 
     # ========== 交叉特征 ==========
-    - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空
     - dual_ignition_f                      # 资金+FP双源点火 (ME核心)
-    - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
 
   ensure_signal_column:
     name: signal

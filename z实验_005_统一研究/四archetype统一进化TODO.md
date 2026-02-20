@@ -233,23 +233,90 @@ python src/data_tools/download_funding_rate.py \
 
 ---
 
+## 🔨 Phase 5.5: 语义预筛选 (Semantic Pre-filter) — Gate v3 核心改进
+
+> 详细设计: `gate_v3_semantic_prefilter_TODO.md`
+> 实验报告: `docs/architecture/gate_semantic_prefilter_design.md`
+
+### 5.5.0 问题根因
+
+当前 Gate v1/v2 训练在**全量 bar** 上（ME: 26K bars），大部分 bar 与 archetype 语义无关：
+- ME 专属特征 (me_accel_5k 等) 在非扩张 bar 上是纯噪声 → importance=0
+- 模型退化为"通用市场 vs 踩坑"分类器，失去 archetype 语义
+
+### 5.5.1 核心思想：从"拍脑袋"到"因果语义驱动"
+
+**旧方案 (v1/v2)**：`labels_rr_extreme.yaml` 的 `filters` 仅做 `notna: true`（全量 bar）
+
+**新方案 (v3)**：在 `filters` 段加 `min`/`max` 条件，只保留 archetype 语义匹配的 bar
+
+> 关键发现：`train_strategy_pipeline.py` 的 `apply_filters()` (L616-L632) **已原生支持** `min`/`max` 操作符 → **零代码修改**，只改 YAML
+
+### 5.5.2 一举两得
+
+同一组预筛选条件同时解决两个问题：
+1. **训练噪声** → 剥离不相关样本，专属特征重获区分力
+2. **archetype 分配** → 定义"哪些 bar 属于此 archetype"的语义边界
+
+### 5.5.3 预筛选条件来源链路
+
+```
+Step 1: 启发式因果设计 → 基于 archetype 语义写特征计算代码
+  ↓  脚本: momentum_expansion_features.py / fer_features.py / bpc_features.py
+Step 2: 分位数分层验证 → 用百分位阈值切数据, 对比 bad rate
+  ↓  脚本: scripts/analyze_archetype_feature_stratification.py
+  ↓  报告: z实验_005_统一研究/gate_semantic_prefilter_design.md
+Step 3: Plateau 稳健性搜索 → 用 Lift + Stable Plateau 找稳定阈值区间
+  ↓  脚本: scripts/optimize_gate_unified.py
+输出: guardrail/hard_gate 规则 → 复用为 pre_filter 条件
+```
+
+### 5.5.4 四策略预筛选条件 (加入 labels_rr_extreme.yaml filters)
+
+| 策略 | 预筛选条件 | 预期样本量 |
+|---|---|---|
+| ME | `me_atr_pct ≥ 0.40 AND me_cvd_alignment ≥ 0.40 AND me_volume_surge ≥ 0.30` | ~5-8K (从26K) |
+| FER | `fer_trapped_longs_score ≥ 2.75 OR fer_trapped_shorts_score ≥ 3.75` | 待评估 |
+| LV | `oi_zscore ≥ 0.5 AND funding_rate_abs_zscore_50 ≥ 0.5` | 待评估 |
+| BPC | `bpc_volume_compression_pct ≥ 0.30 AND price_position ≤ 0.90` | 待评估 |
+
+> 注意: FER 的 OR 逻辑当前 `apply_filters()` 不支持，需新增 `any_of` 支持或拆为两次训练
+
+### 5.5.5 Plateau 优化 pre_filter 阈值
+
+当前阈值来自 guardrail（人工设定），可用 Plateau 算法自动搜索最优语义边界：
+
+```bash
+# 复用现有优化器搜索 pre_filter 阈值
+python scripts/optimize_gate_unified.py \
+  --logs results/train_final_xxx/me/predictions.parquet \
+  --strategy me --label-col success_no_rr_extreme
+```
+
+### 5.5.6 执行清单
+
+- [ ] ME `labels_rr_extreme.yaml` 的 filters 段加 min 条件
+- [ ] FER `labels_rr_extreme.yaml` 加 min 条件 (OR 逻辑待解决)
+- [ ] LV `labels_rr_extreme.yaml` 加 min 条件
+- [ ] BPC `labels_rr_extreme.yaml` 加 min + max 条件
+- [ ] (可选) 用 Plateau 搜索优化 pre_filter 阈值
+- [ ] 重建 FS + 重训 Gate v3 → 对比 CV 和 feature importance
+
+---
+
 ## ✅ Phase 6: 全量训练
 
 ### 6.0 训练自动化脚本
 
 - [x] 创建 `scripts/train_all_archetypes.sh`
-  - Step 0a: Feature Store 构建 (4H, BPC config)
-  - Step 0b: Feature Store 构建 (1H, ME config)
-  - Step 0c: Feature Store 构建 (15min, LV config)
-  - Step 1: BPC (4H): train → gate → optimize gate → optimize evidence
-  - Step 2: ME (1H): train → gate → optimize gate → optimize evidence
-  - Step 3: FER (4H): train → gate → optimize gate → optimize evidence
-  - Step 4: LV (15min): train → gate → optimize gate → optimize evidence
+  - Step 0: Feature Store 构建 (4H / 1H / 15min)
+  - **Step 0.5: 语义预筛选 — 修改 labels_rr_extreme.yaml filters** (Phase 5.5)
+  - Step 1-4: 各策略 train → gate → optimize
   - Step 5: PCM 联合回测 + KPI 评估
 - [x] 报告输出路径: `z实验_005_统一研究/reports/train_<timestamp>/`
   - 每个策略子目录: `bpc/`, `me/`, `fer/`, `lv/`
   - 每个子目录含: train.log, gate.log, gate_optimized.json, evidence_optimized.json
-- [ ] 执行全量训练 (依赖 Phase 5 数据下载完成)
+- [ ] 执行全量训练 (依赖 Phase 5 数据下载完成 + Phase 5.5 pre_filter 配置)
 
 ```bash
 # 一键训练 (后台运行)
@@ -280,10 +347,17 @@ mlbot feature-store build --config config/strategies/lv \
 
 ### 6.2 训练四个 Archetype
 
-每个 archetype 完整流程: Gate → Evidence → Entry Filter → Execution
+每个 archetype 完整流程: **语义预筛选 → Gate 训练 → Apply → Optimize → Evidence → Entry → Backtest**
+
+> 与旧流程的区别: 在 `mlbot train final` **之前**，先确保 `labels_rr_extreme.yaml` 的 `filters` 段包含语义预筛选条件（Phase 5.5），让模型只在 archetype 相关 bar 上训练。
 
 ```bash
-# BPC (4H)
+# ──── BPC (4H) ────
+# Step 0: 确认 labels_rr_extreme.yaml 已加入 pre_filter:
+#   - column: bpc_volume_compression_pct
+#     min: 0.30
+#   - column: price_position
+#     max: 0.90
 mlbot train final --strategy bpc --label-config labels_rr_extreme.yaml
 python scripts/apply_archetype_gate.py --strategy bpc
 python scripts/optimize_gate_unified.py --strategy bpc
@@ -291,7 +365,14 @@ python scripts/optimize_evidence_plateau.py --logs <bpc_predictions> --strategy 
 python scripts/optimize_entry_filter_plateau.py --logs <bpc_predictions> --strategy bpc
 python scripts/backtest_execution_layer.py --logs <bpc_predictions> --strategy bpc
 
-# ME (1H) — 新时间粒度
+# ──── ME (1H) ────
+# Step 0: 确认 labels_rr_extreme.yaml 已加入 pre_filter:
+#   - column: me_atr_pct
+#     min: 0.40
+#   - column: me_cvd_alignment
+#     min: 0.40
+#   - column: me_volume_surge
+#     min: 0.30
 mlbot train final --strategy me --timeframe 60T --label-config labels_rr_extreme.yaml
 python scripts/apply_archetype_gate.py --strategy me
 python scripts/optimize_gate_unified.py --strategy me
@@ -299,7 +380,11 @@ python scripts/optimize_evidence_plateau.py --logs <me_predictions> --strategy m
 python scripts/optimize_entry_filter_plateau.py --logs <me_predictions> --strategy me
 python scripts/backtest_execution_layer.py --logs <me_predictions> --strategy me
 
-# FER (4H)
+# ──── FER (4H) ────
+# Step 0: 确认 labels_rr_extreme.yaml 已加入 pre_filter:
+#   - column: fer_trapped_longs_score
+#     min: 2.75
+#   注意: OR 逻辑 (trapped_shorts ≥ 3.75) 需 any_of 支持
 mlbot train final --strategy fer --label-config labels_rr_extreme.yaml
 python scripts/apply_archetype_gate.py --strategy fer
 python scripts/optimize_gate_unified.py --strategy fer
@@ -307,8 +392,13 @@ python scripts/optimize_evidence_plateau.py --logs <fer_predictions> --strategy 
 python scripts/optimize_entry_filter_plateau.py --logs <fer_predictions> --strategy fer
 python scripts/backtest_execution_layer.py --logs <fer_predictions> --strategy fer
 
-# LV (15min) — 新策略
-mlbot train final --strategy lv --label-config labels_return_tree.yaml
+# ──── LV (15min) ────
+# Step 0: 确认 labels_rr_extreme.yaml 已加入 pre_filter:
+#   - column: oi_zscore
+#     min: 0.5
+#   - column: funding_rate_abs_zscore_50
+#     min: 0.5
+mlbot train final --strategy lv --label-config labels_rr_extreme.yaml
 python scripts/apply_archetype_gate.py --strategy lv
 python scripts/optimize_gate_unified.py --strategy lv
 python scripts/optimize_evidence_plateau.py --logs <lv_predictions> --strategy lv
@@ -465,10 +555,10 @@ L1 (15m) ───────────────  LV
 
 ```
 Phase 1 (组合特征)  ──┐
-Phase 2 (OI 特征)   ──┤──→ Phase 5 (数据) ──→ Phase 6 (训练)
-Phase 3 (LV 配置)   ──┤                            │
-Phase 4 (PCM 重构)  ──┘                            ▼
-                                          Phase 7 (多时间框架)
+Phase 2 (OI 特征)   ──┤──→ Phase 5 (数据) ──→ Phase 5.5 (语义预筛选) ──→ Phase 6 (训练)
+Phase 3 (LV 配置)   ──┤                                                        │
+Phase 4 (PCM 重构)  ──┘                                                        ▼
+                                                                      Phase 7 (多时间框架)
 ```
 
 - Phase 1-4 可并行开发
@@ -487,5 +577,6 @@ Phase 4 (PCM 重构)  ──┘                            ▼
 | Phase 3: LV 配置 | ✅ 完成 | 15min LV archetype 全套配置 |
 | Phase 4: PCM 重构 | ✅ 完成 | 3-Layer (静态budget + Regime动态优先级 + Override覆盖) + 5 KPI + 54 测试 |
 | Phase 5: 数据 | ✅ 完成 | OI 59 symbols 1947 files (2023-01~2026-02), FR 59 symbols 2860 files |
-| Phase 6: 训练 | 🔨 待执行 | 脚本就绪, 报告输出到 reports/ |
+| Phase 5.5: 语义预筛选 | 🔨 设计完成 | 详见 gate_v3_semantic_prefilter_TODO.md |
+| Phase 6: 训练 | 🔨 待执行 | 依赖 Phase 5.5 pre_filter 配置, 报告输出到 reports/ |
 | Phase 7: 多时间框架 | ✅ 研究路径完成 | ME→1H, BPC/FER→4H, LV→15min, 实盘路径待升级 |

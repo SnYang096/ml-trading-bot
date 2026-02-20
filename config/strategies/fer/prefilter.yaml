@@ -1,0 +1,26 @@
+# FER 语义预筛选候选特征
+# 职责: 声明待验证的 pre-filter 候选特征 (Step 2 分位数分层分析的输入)
+# 脚本通过 feature_dependencies.yaml 的 output_columns 解析出实际列名
+#
+# 用法:
+#   python scripts/analyze_archetype_feature_stratification.py \
+#       --logs results/train_final_xxx/fer/predictions.parquet \
+#       --strategy fer \
+#       --config config/strategies/fer/prefilter.yaml
+
+description: "FER 语义预筛选候选特征 — 单边博弈失败/反转信号"
+
+candidates:
+  # ========== FER 核心: 因果失败信号 ==========
+  # → fer_signed_efficiency, fer_signed_efficiency_pct, fer_efficiency_flip,
+  #   fer_efficiency_flip_strength, fer_aggressor_absorption, fer_absorption_streak,
+  #   fer_trapped_longs_score, fer_trapped_shorts_score, fer_impulse_failure_score,
+  #   fer_impulse_failure_direction, fer_momentum_efficiency_decay,
+  #   fer_volume_price_divergence
+  - fer_failure_signals_f
+
+  # ========== 通用候选 (验证跨策略区分力) ==========
+  # → vol_zscore, vol_percentile_approx
+  - vol_regime_features_f
+  # → atr_percentile
+  - atr_percentile_f

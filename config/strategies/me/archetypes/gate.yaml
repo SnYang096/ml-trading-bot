@@ -45,6 +45,38 @@ hard_gates:
       rr_extreme 标签下唯一稳定 plateau。
       deny ATR百分位 < 0.65 → 保留 ~30% 交易，failure rate 降低 18.1%。
 
+  # [NEW] 极端减速: me_accel_5k < P5 时 bad=55% vs 44.2%
+  # 语义: 价格正在剧烈减速，动能耗竭
+  - id: me_hg_extreme_decel
+    tag: ME_EXTREME_DECEL
+    phase: hard_gate
+    priority: 11
+    reason: "ME 极端减速（accel_5k极低，动能耗竭）"
+    when:
+      me_accel_5k:
+        value_lt: -0.53  # P5 阈值，让 optimizer 扫描
+    then:
+      action: deny
+    comment: |
+      实验数据: me_accel_5k P5(<-0.531): bad=55.0% vs 44.2%, medRR=-1.65
+      语义: 价格的短期均速远低于中期均速 = 动能正在衰竭
+
+  # [NEW] 成交量背离: me_vol_divergence > P95 时 bad=52.1% vs 44.4%
+  # 语义: 价格加速但成交量萎缩 = 虚假扩张
+  - id: me_hg_vol_divergence_high
+    tag: ME_VOL_DIVERGENCE_HIGH
+    phase: hard_gate
+    priority: 12
+    reason: "ME 成交量背离过高（价格扩张但量能不配合）"
+    when:
+      me_vol_divergence:
+        value_gt: 0.53  # P95 阈值，让 optimizer 扫描
+    then:
+      action: deny
+    comment: |
+      实验数据: me_vol_divergence P95(>0.529): bad=52.1% vs 44.4%, medRR=-1.17
+      语义: 价格在加速但成交量不配合 = 虚假动能扩张
+
 # ============================================================
 # 🛡️ Strategy Guardrails (策略前提护栏)
 # ============================================================
