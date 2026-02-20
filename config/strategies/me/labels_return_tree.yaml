@@ -19,10 +19,11 @@ label_generator:
   module: src.time_series_model.strategies.labels.failure_first_label
   function: compute_bpc_return_tree_label
   params:
-    direction: long
+    direction: long  # base direction (used when direction_aware=false)
     horizon: 50
     filter_good_only: true  # 只返回 GOOD 样本
-    # 复用 BPC 标签管线，forward_rr 连续值
+    direction_aware: true  # per-bar direction from direction.yaml
+    strategy: me  # load config/strategies/me/archetypes/direction.yaml
 
 # 标签元信息
 label_meta:

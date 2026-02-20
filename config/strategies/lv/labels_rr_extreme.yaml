@@ -15,9 +15,11 @@ label_generator:
   module: src.time_series_model.strategies.labels.failure_first_label
   function: compute_bpc_failure_rr_extreme_label
   params:
-    direction: long
+    direction: long  # base direction (used when direction_aware=false)
     horizon: 20       # 15min × 20 = 5小时 (LV 快进快出)
     invert: true  # 1=好机会（不会踩坑），0=踩坑
+    direction_aware: true  # per-bar direction from direction.yaml
+    strategy: lv  # load config/strategies/lv/archetypes/direction.yaml
 
 # 标签元信息
 label_meta:

@@ -10,9 +10,11 @@ label_generator:
   module: src.time_series_model.strategies.labels.failure_first_label
   function: compute_bpc_failure_no_opportunity_label
   params:
-    direction: long
+    direction: long  # base direction (used when direction_aware=false)
     horizon: 50
     invert: true  # 1=有机会（不会入场即反），0=入场即反
+    direction_aware: true  # per-bar direction from direction.yaml
+    strategy: me  # load config/strategies/me/archetypes/direction.yaml
 
 # 标签元信息
 label_meta:

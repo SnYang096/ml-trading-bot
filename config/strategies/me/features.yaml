@@ -108,15 +108,15 @@ feature_pipeline:
 
     # ========== 数学特征（实验性，观察是否被选中） ==========
     # 只做execution_noise_penalty
-    # - hurst_price_f           # Hurst 指数（时序记忆性）
-    # - spectrum_features_f     # 频谱特征
-    # - hilbert_phase_f         # Hilbert 变换（包络+相位）
-    # - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
-    # - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
-    # - wpt_price_reconstructed_f
-    # - wpt_volume_energy_f
-    # - wpt_cvd_fluctuation_f
-    # - hurst_cvd_f
+    - hurst_price_f           # Hurst 指数（时序记忆性）
+    - spectrum_features_f     # 频谱特征
+    - hilbert_phase_f         # Hilbert 变换（包络+相位）
+    - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
+    - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
+    - wpt_price_reconstructed_f
+    - wpt_volume_energy_f
+    - wpt_cvd_fluctuation_f
+    - hurst_cvd_f
 
   ensure_signal_column:
     name: signal

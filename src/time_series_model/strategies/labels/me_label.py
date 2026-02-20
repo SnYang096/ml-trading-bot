@@ -243,7 +243,10 @@ def compute_me_label(
     else:
         # any_success: 两个方向
         signal_mask = breakout_up | breakout_down
-        signal_direction = 1.0
+        # BUG FIX: 按突破方向分配 direction，而不是固定 = 1.0
+        signal_direction = np.where(
+            breakout_up, 1.0, np.where(breakout_down, -1.0, 0.0)
+        )
 
     # 4. 计算 RR 标签
     work_df["__signal"] = signal_direction

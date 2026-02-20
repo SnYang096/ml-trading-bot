@@ -16,11 +16,14 @@ Failure-first Binary Label 模块
 
 from __future__ import annotations
 
+import warnings
+from pathlib import Path
 from typing import Literal, Optional
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+import yaml
 
 
 EPS = 1e-8
@@ -475,11 +478,278 @@ def compute_failure_subtypes(
 # ============================================================
 
 
+# ---- Direction-aware helpers ----
+
+
+def _load_direction_config_for_label(strategy: str) -> dict:
+    """Load direction.yaml for a given strategy.
+
+    Searches:
+      1. config/strategies/{strategy}/archetypes/direction.yaml
+      2. config/strategies/{strategy}/direction.yaml
+    """
+    project_root = Path(__file__).resolve().parents[4]
+    candidates = [
+        project_root
+        / "config"
+        / "strategies"
+        / strategy
+        / "archetypes"
+        / "direction.yaml",
+        project_root / "config" / "strategies" / strategy / "direction.yaml",
+    ]
+    for path in candidates:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+    raise FileNotFoundError(
+        f"direction.yaml not found for strategy '{strategy}'. "
+        f"Searched: {[str(p) for p in candidates]}"
+    )
+
+
+def _compute_direction_from_rules(direction_cfg: dict, df: pd.DataFrame) -> np.ndarray:
+    """Compute per-bar direction from direction.yaml rules.
+
+    Returns:
+        np.ndarray of +1.0 (long), -1.0 (short), or 0.0 (unknown).
+    """
+    rules = direction_cfg.get("direction_rules", [])
+    n = len(df)
+    direction = np.zeros(n, dtype=float)
+    assigned = np.zeros(n, dtype=bool)
+
+    for rule in rules:
+        feature = rule.get("feature", "")
+        transform = rule.get("transform", "raw")
+        if feature not in df.columns:
+            continue
+
+        series = pd.to_numeric(df[feature], errors="coerce").fillna(0.0).values
+
+        if transform == "sign":
+            vals = np.sign(series)
+        elif transform == "negate_sign":
+            vals = -np.sign(series)
+        elif transform == "negate":
+            vals = -series
+        else:
+            vals = series
+
+        unassigned = ~assigned
+        direction[unassigned] = vals[unassigned]
+        newly = unassigned & (direction != 0)
+        assigned = assigned | newly
+        if assigned.all():
+            break
+
+    return direction
+
+
+def _direction_aware_subtypes_single_symbol(
+    df: pd.DataFrame,
+    horizon: int,
+    direction_cfg: dict,
+    **kwargs,
+) -> pd.DataFrame:
+    """单币种方向感知 failure subtypes 计算。
+
+    返回与 compute_failure_subtypes 相同 schema 的 DataFrame，
+    但 forward_rr / mfe / mae / failure 标签均按 per-bar 方向翻转。
+
+    数学基础:
+      forward_rr_short = -forward_rr_long
+      MFE_short = MAE_long,  MAE_short = MFE_long
+      direction=-1 → forward_rr, MFE, MAE 全部翻转
+      direction= 0 → 保守处理，假定 long
+    """
+    failure_def = FailureDefinition()
+    expected_stop_atr = kwargs.get("expected_stop_atr", 1.0)
+    expected_target_atr = kwargs.get("expected_target_atr", 2.0)
+
+    # Step 1: 始终以 direction="long" 计算基础 subtypes
+    subtypes = compute_failure_subtypes(
+        df=df,
+        direction="long",
+        horizon=horizon,
+        price_col=kwargs.get("price_col", "close"),
+        high_col=kwargs.get("high_col", "high"),
+        low_col=kwargs.get("low_col", "low"),
+        atr_col=kwargs.get("atr_col", "atr"),
+        expected_stop_atr=expected_stop_atr,
+        expected_target_atr=expected_target_atr,
+    )
+
+    # Step 2: 计算 per-bar direction
+    df_reset = df.reset_index(drop=True)
+    direction_arr = _compute_direction_from_rules(direction_cfg, df_reset)
+    short_mask = direction_arr == -1
+
+    # Step 3: 翻转 forward_rr
+    forward_rr = subtypes["forward_rr"].values.copy()
+    forward_rr[short_mask] = -forward_rr[short_mask]
+
+    # Step 4: 交换 MFE/MAE (short 时 MFE_long 变 MAE_short，反之亦然)
+    mfe_atr = subtypes["mfe_atr"].values.copy()
+    mae_atr = subtypes["mae_atr"].values.copy()
+    mfe_short_tmp = mae_atr[short_mask].copy()
+    mae_short_tmp = mfe_atr[short_mask].copy()
+    mfe_atr[short_mask] = mfe_short_tmp
+    mae_atr[short_mask] = mae_short_tmp
+
+    # Step 5: 重新计算 failure 标签
+    valid = ~np.isnan(forward_rr)
+    failure_rr = np.full(len(forward_rr), np.nan)
+    failure_rr[valid] = (forward_rr[valid] < failure_def.rr_threshold).astype(float)
+
+    valid_opp = ~np.isnan(mfe_atr) & ~np.isnan(mae_atr)
+    failure_no_opp = np.full(len(forward_rr), np.nan)
+    cond_mae = mae_atr > failure_def.mae_mult * expected_stop_atr
+    cond_mfe = mfe_atr < failure_def.mfe_mult * expected_target_atr
+    failure_no_opp[valid_opp] = (cond_mae[valid_opp] & cond_mfe[valid_opp]).astype(
+        float
+    )
+
+    failure_any = np.full(len(forward_rr), np.nan)
+    valid_any = valid & valid_opp
+    failure_any[valid_any] = (
+        (failure_rr[valid_any] == 1) | (failure_no_opp[valid_any] == 1)
+    ).astype(float)
+
+    # 打印方向统计
+    n_total = len(direction_arr)
+    n_long = int((direction_arr == 1).sum())
+    n_short = int((direction_arr == -1).sum())
+    n_zero = int((direction_arr == 0).sum())
+    print(
+        f"   \U0001f4d0 Direction-aware labels: "
+        f"long={n_long}({n_long/max(n_total,1)*100:.1f}%), "
+        f"short={n_short}({n_short/max(n_total,1)*100:.1f}%), "
+        f"zero={n_zero}({n_zero/max(n_total,1)*100:.1f}%)"
+    )
+    if n_zero > 0:
+        warnings.warn(
+            f"Direction coverage not 100%: {n_zero} bars have direction=0 "
+            f"(treated as long). Check direction.yaml feature availability.",
+            stacklevel=2,
+        )
+
+    return pd.DataFrame(
+        {
+            "forward_rr": forward_rr,
+            "mfe_atr": mfe_atr,
+            "mae_atr": mae_atr,
+            "failure_rr_extreme": failure_rr,
+            "failure_no_opportunity": failure_no_opp,
+            "failure_any": failure_any,
+        },
+        index=subtypes.index,
+    )
+
+
+def _direction_aware_subtypes(
+    df: pd.DataFrame,
+    horizon: int,
+    strategy: str,
+    **kwargs,
+) -> pd.DataFrame:
+    """方向感知 failure subtypes（多币种调度）。"""
+    direction_cfg = _load_direction_config_for_label(strategy)
+
+    if "_symbol" in df.columns and df["_symbol"].nunique() > 1:
+        results = []
+        for symbol in df["_symbol"].unique():
+            sym_mask = df["_symbol"] == symbol
+            sym_df = df[sym_mask].copy()
+            sym_result = _direction_aware_subtypes_single_symbol(
+                sym_df, horizon, direction_cfg, **kwargs
+            )
+            sym_result.index = df[sym_mask].index
+            results.append(sym_result)
+        return pd.concat(results, sort=False).sort_index()
+    else:
+        result = _direction_aware_subtypes_single_symbol(
+            df, horizon, direction_cfg, **kwargs
+        )
+        result.index = df.index
+        return result
+
+
+def _compute_direction_aware_rr_extreme(
+    df: pd.DataFrame,
+    horizon: int = 50,
+    invert: bool = True,
+    strategy: str = "",
+    **kwargs,
+) -> pd.Series:
+    """方向感知的 rr_extreme 标签计算。"""
+    subtypes = _direction_aware_subtypes(df, horizon, strategy, **kwargs)
+    failure_label = subtypes["failure_rr_extreme"]
+
+    if invert:
+        success_label = 1.0 - failure_label
+        success_label.name = "success_no_rr_extreme"
+        return success_label
+    failure_label.name = "failure_rr_extreme"
+    return failure_label
+
+
+def _compute_direction_aware_no_opportunity(
+    df: pd.DataFrame,
+    horizon: int = 50,
+    invert: bool = True,
+    strategy: str = "",
+    **kwargs,
+) -> pd.Series:
+    """方向感知的 no_opportunity 标签计算。
+
+    Short 时 MFE/MAE 互换:
+      MAE_short = MFE_long,  MFE_short = MAE_long
+      failure_no_opp = (MAE_actual > 1.2*stop) AND (MFE_actual < 0.3*target)
+    """
+    subtypes = _direction_aware_subtypes(df, horizon, strategy, **kwargs)
+    failure_label = subtypes["failure_no_opportunity"]
+
+    if invert:
+        success_label = 1.0 - failure_label
+        success_label.name = "success_has_opportunity"
+        return success_label
+    failure_label.name = "failure_no_opportunity"
+    return failure_label
+
+
+def _compute_direction_aware_return_tree(
+    df: pd.DataFrame,
+    horizon: int = 50,
+    filter_good_only: bool = True,
+    strategy: str = "",
+    **kwargs,
+) -> pd.Series:
+    """方向感知的 return_tree 标签计算。
+
+    forward_rr 按方向翻转，GOOD 样本筛选也使用方向感知的 failure_any。
+    """
+    subtypes = _direction_aware_subtypes(df, horizon, strategy, **kwargs)
+    forward_rr = subtypes["forward_rr"].copy()
+    forward_rr.name = "forward_rr"
+
+    if filter_good_only:
+        failure_any = subtypes["failure_any"]
+        forward_rr = forward_rr.where(failure_any == 0)
+
+    return forward_rr
+
+
+# ---- End direction-aware helpers ----
+
+
 def compute_bpc_failure_rr_extreme_label(
     df: pd.DataFrame,
     direction: Literal["long", "short"] = "long",
     horizon: int = 50,
     invert: bool = True,
+    direction_aware: bool = False,
+    strategy: str = "",
     **kwargs,
 ) -> pd.Series:
     """
@@ -493,15 +763,34 @@ def compute_bpc_failure_rr_extreme_label(
     - 输出: 1=好机会（不会踩坑），0=踩坑
     - 适配回测代码的 `preds >= threshold` 逻辑
 
+    📐 direction_aware=True 时（方向感知模式）：
+    - 先以 direction="long" 计算 forward_rr_long
+    - 再从 direction.yaml 规则计算 per-bar 方向
+    - 翻转: forward_rr = forward_rr_long × direction
+    - 需要 strategy 参数指定策略名（加载 direction.yaml）
+
     Args:
         df: 价格数据
-        direction: 交易方向
+        direction: 基础交易方向 (direction_aware=False 时使用)
         horizon: 持仓窗口
         invert: 是否反转标签
+        direction_aware: 是否启用方向感知模式
+        strategy: 策略名（direction_aware=True 时必须提供）
 
     Returns:
         pd.Series: 二值标签
     """
+    # 方向感知模式：per-bar direction 翻转 forward_rr
+    if direction_aware:
+        if not strategy:
+            raise ValueError(
+                "direction_aware=True requires 'strategy' parameter "
+                "(e.g., strategy='me') to load direction.yaml"
+            )
+        return _compute_direction_aware_rr_extreme(
+            df=df, horizon=horizon, invert=invert, strategy=strategy, **kwargs
+        )
+
     # 🔍 多币种支持：按 symbol 分别计算
     if "_symbol" in df.columns and df["_symbol"].nunique() > 1:
         results = []
@@ -554,6 +843,8 @@ def compute_bpc_failure_no_opportunity_label(
     direction: Literal["long", "short"] = "long",
     horizon: int = 50,
     invert: bool = True,
+    direction_aware: bool = False,
+    strategy: str = "",
     **kwargs,
 ) -> pd.Series:
     """
@@ -562,21 +853,29 @@ def compute_bpc_failure_no_opportunity_label(
     🟥 核心语义：
     - failure_no_opportunity = (MAE > 1.2*stop) AND (MFE < 0.3*target)
     - 被打穿止损，且没给赚钱机会
-    - 意味着"入场后立刻反向，没有任何转戴空间"
+    - 意味着"入场后立刻反向，没有任何转载空间"
 
-    ❗ invert=True 时（默认）：
-    - 输出: 1=好机会（不会入场即反），0=入场即反
-    - 适配回测代码的 `preds >= threshold` 逻辑
+    📐 direction_aware=True 时：
+    - Short 时 MFE/MAE 互换: MAE_short=MFE_long, MFE_short=MAE_long
+    - 再用互换后的值判断 no_opportunity
 
     Args:
         df: 价格数据
-        direction: 交易方向
+        direction: 基础交易方向 (direction_aware=False 时使用)
         horizon: 持仓窗口
         invert: 是否反转标签
+        direction_aware: 是否启用方向感知模式
+        strategy: 策略名 (direction_aware=True 时必须提供)
 
     Returns:
         pd.Series: 二值标签
     """
+    if direction_aware:
+        if not strategy:
+            raise ValueError("direction_aware=True requires 'strategy' parameter")
+        return _compute_direction_aware_no_opportunity(
+            df=df, horizon=horizon, invert=invert, strategy=strategy, **kwargs
+        )
     # 🔍 多币种支持：按 symbol 分别计算
     if "_symbol" in df.columns and df["_symbol"].nunique() > 1:
         results = []
@@ -782,12 +1081,18 @@ def compute_bpc_return_tree_label(
     direction: Literal["long", "short"] = "long",
     horizon: int = 50,
     filter_good_only: bool = True,
+    direction_aware: bool = False,
+    strategy: str = "",
     **kwargs,
 ) -> pd.Series:
     """
     BPC 策略的 Return Tree 标签（训练流水线适配）。
 
-    🟢 Phase 2 核心任务：在 GOOD 样本中学习“如何让 RR 更大”
+    🟢 Phase 2 核心任务：在 GOOD 样本中学习"如何让 RR 更大"
+
+    📐 direction_aware=True 时：
+    - forward_rr 按 per-bar 方向翻转
+    - GOOD 样本筛选也使用方向感知的 failure_any
 
     输出：
     - forward_rr: 路径 RR 值
@@ -797,6 +1102,16 @@ def compute_bpc_return_tree_label(
     - ~failure_rr_extreme: forward_rr >= -0.8R
     - ~failure_no_opportunity: 有机会的交易
     """
+    if direction_aware:
+        if not strategy:
+            raise ValueError("direction_aware=True requires 'strategy' parameter")
+        return _compute_direction_aware_return_tree(
+            df=df,
+            horizon=horizon,
+            filter_good_only=filter_good_only,
+            strategy=strategy,
+            **kwargs,
+        )
     return compute_return_tree_label(
         df=df,
         direction=direction,

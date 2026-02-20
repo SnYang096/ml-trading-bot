@@ -726,7 +726,7 @@ python scripts/analyze_archetype_feature_stratification.py \
 
 ---
 
-## TODO Phase B: 数学特征加入 ME/LV
+## Phase B: 数学特征加入 ME/LV
 
 ### B.1 决策依据
 

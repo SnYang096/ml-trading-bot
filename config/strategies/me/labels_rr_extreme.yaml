@@ -10,10 +10,11 @@ label_generator:
   module: src.time_series_model.strategies.labels.failure_first_label
   function: compute_bpc_failure_rr_extreme_label
   params:
-    direction: long
+    direction: long  # base direction (used when direction_aware=false)
     horizon: 50
     invert: true  # 1=好机会（不会踩坑），0=踩坑
-    # 复用 BPC 标签管线，MAE < -0.8R 判定 failure
+    direction_aware: true  # per-bar direction from direction.yaml
+    strategy: me  # load config/strategies/me/archetypes/direction.yaml
 
 # 标签元信息
 label_meta:
