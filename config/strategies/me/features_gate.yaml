@@ -20,6 +20,9 @@ feature_pipeline:
     - me_failure_f
     - me_context_f
 
+    - roc_5_f
+    - roc_10_f
+    - roc_20_f
     - cvd_divergence_v2_f           # CVD 背离
     - price_momentum_divergence_f  # 价格-动量背离（与 CVD 背离正交）
     - terminal_risk_score_f        # 末端风险评分（Execution 层追单风险）

@@ -39,6 +39,9 @@ feature_pipeline:
     - bpc_volume_compression_pct_f    # 成交量压缩百分位
     - bpc_pullback_delta_absorption_f # 回踩期间 delta 吸收
 
+    - roc_5_f
+    - roc_10_f
+    - roc_20_f
     - cvd_divergence_v2_f           # CVD 背离
     - price_momentum_divergence_f  # 价格-动量背离（与 CVD 背离正交）
     - terminal_risk_score_f        # 末端风险评分（Execution 层追单风险）
@@ -134,15 +137,15 @@ feature_pipeline:
     # Spectrum	"这次动量是真趋势(低频)还是噪音(高频)？"	ME 核心：区分真突破 vs 假扩张
     # Hurst	"当前行情是持续性的还是均值回归？"	H>0.5=趋势延续，H<0.5=即将反转
     # WPT	"能量集中在哪个时间尺度？"	多尺度能量分布揭示结构稳定性
-    # - hurst_price_f           # Hurst 指数（时序记忆性）
-    # - spectrum_features_f     # 频谱特征
-    # - hilbert_phase_f         # Hilbert 变换（包络+相位）
-    # - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
-    # - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
-    # - wpt_price_reconstructed_f
-    # - wpt_volume_energy_f
-    # - wpt_cvd_fluctuation_f
-    # - hurst_cvd_f
+    - hurst_price_f           # Hurst 指数（时序记忆性）
+    - spectrum_features_f     # 频谱特征
+    - hilbert_phase_f         # Hilbert 变换（包络+相位）
+    - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
+    - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
+    - wpt_price_reconstructed_f
+    - wpt_volume_energy_f
+    - wpt_cvd_fluctuation_f
+    - hurst_cvd_f
   ensure_signal_column:
     name: signal
     default_value: 0

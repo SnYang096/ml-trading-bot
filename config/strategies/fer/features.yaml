@@ -17,6 +17,9 @@ feature_pipeline:
     # ===== FER 专属特征 (核心) =====
     - fer_failure_signals_f
 
+    - roc_5_f
+    - roc_10_f
+    - roc_20_f
     - cvd_divergence_v2_f           # CVD 背离
     - price_momentum_divergence_f  # 价格-动量背离（与 CVD 背离正交）
     - terminal_risk_score_f        # 末端风险评分（Execution 层追单风险）
@@ -106,16 +109,15 @@ feature_pipeline:
     - vpin_x_trade_cluster_entropy_rank_f
 
     # ========== 数学特征（实验性，观察是否被选中） ==========
-    # 只做execution_noise_penalty
-    # - hurst_price_f           # Hurst 指数（时序记忆性）
-    # - spectrum_features_f     # 频谱特征
-    # - hilbert_phase_f         # Hilbert 变换（包络+相位）
-    # - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
-    # - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
-    # - wpt_price_reconstructed_f
-    # - wpt_volume_energy_f
-    # - wpt_cvd_fluctuation_f
-    # - hurst_cvd_f
+    - hurst_price_f           # Hurst 指数（时序记忆性）
+    - spectrum_features_f     # 频谱特征
+    - hilbert_phase_f         # Hilbert 变换（包络+相位）
+    - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
+    - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
+    - wpt_price_reconstructed_f
+    - wpt_volume_energy_f
+    - wpt_cvd_fluctuation_f
+    - hurst_cvd_f
 
   ensure_signal_column:
     name: signal

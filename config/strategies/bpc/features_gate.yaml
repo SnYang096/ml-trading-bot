@@ -16,9 +16,7 @@ description: |
   
   不包含的（全部下放给 Evidence/Execution）：
   - 订单流细节 (VPIN/Cluster/CVD细节)
-  - 波动率 Regime (Vol相关)
   - 末端/衰竭信号 (Exhaustion/Terminal Risk)
-  - 执行质量/噪声 (数学特征)
 
 feature_pipeline:
   exclude_columns:
@@ -45,6 +43,9 @@ feature_pipeline:
     - bpc_volume_compression_pct_f    # 成交量压缩百分位
     - bpc_pullback_delta_absorption_f # 回踩期间 delta 吸收
 
+    - roc_5_f
+    - roc_10_f
+    - roc_20_f
     - cvd_divergence_v2_f           # CVD 背离
     - price_momentum_divergence_f  # 价格-动量背离（与 CVD 背离正交）
     - terminal_risk_score_f        # 末端风险评分（Execution 层追单风险）
@@ -131,12 +132,16 @@ feature_pipeline:
     - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
 
     
-    # ========== 数学特征 ==========
-    # - hurst_price_f           # Hurst 指数（时序记忆性）
-    # - spectrum_features_f     # 频谱特征
-    # - hilbert_phase_f         # Hilbert 变换（包络+相位）
-    # - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
-    # - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
+    # ========== 数学特征（实验性，观察是否被选中） ==========
+    - hurst_price_f           # Hurst 指数（时序记忆性）
+    - spectrum_features_f     # 频谱特征
+    - hilbert_phase_f         # Hilbert 变换（包络+相位）
+    - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
+    - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
+    - wpt_price_reconstructed_f
+    - wpt_volume_energy_f
+    - wpt_cvd_fluctuation_f
+    - hurst_cvd_f
 
   ensure_signal_column:
     name: signal
