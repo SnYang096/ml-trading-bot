@@ -49,10 +49,11 @@ def check_data_quality(
         "nan_details": {},
     }
     
-    # 检查 inf 值
+    # 检查 inf 值（严格区分 inf 和 NaN，避免误报）
     for col in df.columns:
         if df[col].dtype in [np.float64, np.float32, np.int64, np.int32]:
-            inf_mask = ~np.isfinite(df[col])
+            inf_mask = np.isinf(df[col])
+            nan_mask = df[col].isna()
             if inf_mask.any():
                 result["has_inf"] = True
                 result["inf_columns"].append(col)
@@ -105,6 +106,13 @@ def check_data_quality(
                 
                 if raise_on_inf:
                     raise ValueError(f"Inf values found in column '{col}' at stage '{stage}'")
+            # NaN 单独报告（仅当 NaN 比例较高时警告，不算 inf）
+            elif nan_mask.any():
+                nan_count = int(nan_mask.sum())
+                nan_pct = 100.0 * nan_count / len(df)
+                if nan_pct > 50:  # 超过 50% NaN 才报警
+                    print(f"\n   ⚠️  [DATA MONITOR] {data_source} @ {stage}")
+                    print(f"      Column '{col}' contains {nan_count} NaN values ({nan_pct:.2f}%) — not inf")
     
     # 检查 NaN 值（仅报告，不抛出异常，因为 NaN 可能是正常的）
     for col in df.columns:

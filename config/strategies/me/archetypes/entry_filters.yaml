@@ -1,74 +1,94 @@
-# ME Entry Filter Archetype v3.0
+# ME Entry Filter Archetype v6.0 (60T)
 # ME = Energy × Acceleration × Participation
-# Entry 语义: Micro Accel 2K + Flow/Volume Burst（入场时机触发）
-# Entry 职责: Gate 通过 + Evidence 评估后，检测"现在是最佳入场点吗？"
+# 更新: 2026-02-21 - 全特征 scan + plateau + greedy dedup 重建
 #
-# 待训练: 需要运行 optimize_entry_filters.py 发现有效阈值
-# 更新: 2026-02-17 - 迁移到 v3.0 三因子模型
-
-# === Entry Filters: 入场时机筛选 ===
-# 语义: 现在不是最佳入场时机 → 暂时等待（可以做但等更好时机）
-# 位置: Execution 阶段（gate 放行 + evidence 评估之后）
+# 职责定位:
+#   Gate:         "这笔交易能做吗？"   → cvd_alignment 硬门槛
+#   Entry Filter: "现在该入场吗？"     → 波动率爆发 (bb_width)
+#   Evidence:     "下多少注？"         → volume_surge 软权重
 #
-# ME v3.0 Entry 语义:
-# 1. 微观加速触发：me_accel_2k 检测 2K 窗口的瞬时加速
-# 2. 订单流爆发确认：me_cvd_strength 确认资金推动
-# 3. 成交量配合：me_volume_surge 确认放量
+# 数据基础:
+#   predictions.parquet: 5120 bars (全量)
+#   Baseline (全部入场): snotio=18.20, Loss=37.7%, Stop=37.7%, Trades=5120
+#   方向: me_delta_net_flow (sign transform), from direction.yaml
 #
-# 候选特征 (v3.0 三因子 - Entry 聚焦微观触发):
-#   Acceleration: me_accel_2k (2K微观加速，主触发)
-#   Participation: me_cvd_strength, me_volume_surge, me_volume_accel
-#   Failure: me_failure_score (衰竭时不入场)
+# 验证流程:
+#   1. --scan 全特征 execution 模拟 (224 features × 6 thresholds)
+#   2. --all execution 验证 (18 候选 filter)
+#   3. plateau 高原验证 (snotio 作 KPI, 阈值稳定性)
+#   4. greedy dedup 去冗余 (Jaccard + 贪心前向选择)
+#
+# 评估命令:
+#   EVIDENCE_RESULT_DIR="results/train_final_20260221_215306_return_tree/me"
+#   # execution + scan:
+#   python scripts/optimize_entry_filter_snotio.py --all \
+#     --logs ${EVIDENCE_RESULT_DIR}/predictions.parquet --strategy me
+#   python scripts/optimize_entry_filter_snotio.py --scan \
+#     --logs ${EVIDENCE_RESULT_DIR}/predictions.parquet --strategy me
+#   # plateau + dedup:
+#   python scripts/optimize_entry_filter_plateau.py --research \
+#     --logs ${EVIDENCE_RESULT_DIR}/predictions.parquet --strategy me
 
-filters:
-  # Entry Filter 1: 微观加速触发
-  # 检测 2K 窗口的瞬时加速度，确认动量正在加强
-  - id: micro_accel_trigger
-    description: "微观加速度触发 - 2K窗口动量加强确认"
-    enabled: true
-    conditions:
-      - feature: me_accel_2k
-        operator: ">="
-        value: 0.50  # |加速度| >= P50 表示动量正在增强
-    priority: 1
-    comment: |
-      ME v3.0 Entry 核心触发器。me_accel_2k 是 2K 窗口的微观加速度，
-      相比 5K 更敏感、更适合做入场时机判断。
-      值 >= 0.50 表示加速度处于中位以上，动量正在增强。
-      待训练: 阈值需要基于回测数据优化。
-
-  # Entry Filter 2: 订单流爆发确认
-  # 检测 CVD 强度，确认有真实资金推动
-  - id: flow_burst_confirm
-    description: "订单流爆发确认 - CVD 强度支持"
-    enabled: true
-    conditions:
-      - feature: me_cvd_strength
-        operator: ">="
-        value: 0.40  # CVD 强度 >= P40 表示资金在推动
-    priority: 2
-    comment: |
-      ME v3.0 Participation 确认。me_cvd_strength 衡量 CVD 的相对强度，
-      确保入场时有真实资金推动，而非虚假波动。
-      值 >= 0.40 表示 CVD 强度处于中低位以上。
-      待训练: 阈值需要基于回测数据优化。
-
-  # Entry Filter 3: 成交量配合
-  # 检测成交量爆发，确认市场参与度
-  - id: volume_burst_confirm
-    description: "成交量爆发确认 - 放量支持"
-    enabled: false  # 默认禁用，与 Gate guardrail 可能重叠
-    conditions:
-      - feature: me_volume_surge
-        operator: ">="
-        value: 0.40  # 成交量爆发 >= P40
-    priority: 3
-    comment: |
-      ME v3.0 Participation 辅助确认。me_volume_surge 衡量成交量爆发程度。
-      注意: Gate guardrail 已有 me_volume_surge >= 0.30 的底线检查，
-      此处是更严格的入场时机要求。默认禁用，避免与 Gate 重叠过多。
-      待训练: 是否启用需要基于回测数据验证。
-
-# OR 逻辑组合
-# 多个 enabled filter 之间用 OR：任一满足即入场
+# ============================================================
+# 📋 全局设置
+# ============================================================
 combination_mode: or
+
+# ============================================================
+# ✅ 已启用的入场模式
+# ============================================================
+filters:
+
+  # ----------------------------------------------------------------
+  # 布林带宽度极端扩张 (波动率爆发)
+  #   scan #1, greedy dedup 唯一选中
+  # ----------------------------------------------------------------
+  - id: bb_width_high
+    enabled: true
+    description: "布林带宽度百分位 ≥ 0.873 (波动率极端扩张)"
+    semantic: |
+      bb_width 极端宽 = 波动率已在爆发状态。
+      与 ME 动能爆发语义完美匹配：波动率扩张是动能释放的前提。
+    conditions:
+      - feature: bb_width_normalized_pct
+        operator: ">="
+        value: 0.873
+    plateau:
+      bb_width_normalized_pct:
+        scan_original: 0.957      # --scan P90 原始阈值
+        recommended: 0.873        # plateau 推荐 (偏宽容侧)
+        range: [0.842, 0.968]     # plateau 稳定区间
+        width: 0.126
+        confidence: LOW           # 区间较窄,但原始P90在区间内
+    backtest:
+      snotio_scan: 33.81         # scan P90 原始阈值
+      snotio_plateau: 24.37      # plateau 推荐阈值
+      trades_scan: 534
+      trades_plateau: 1220
+    dedup:
+      greedy_rank: 1
+      or_snotio: 24.37           # 单 filter = 最终 OR 组合
+      vs_baseline: "+33.9%"
+      reason: "贪心选择唯一胜出; 任何第二 filter OR 均稀释 snotio"
+
+# ============================================================
+# 📊 Greedy Dedup 去冗余结果
+# ============================================================
+# 18 候选 → 贪心前向选择 → 仅 1 个 filter 入选
+#
+# 主要冗余簇 (Jaccard ≥ 0.9):
+#   VPIN 簇: vpin_high, scan_funding_rate_abs_low, scan_vpin_ma20_high,
+#            scan_vpin_ma10_p80 (Jac=0.98~1.00)
+#   BB 簇:   scan_bb_width_high, scan_bb_width_p80 (Jac=0.90)
+#   OI 簇:   oi_absorption, oi_absorption_loose (Jac=1.00)
+#
+# 单独 snotio (plateau 推荐阈值, 降序):
+#   scan_bb_width_high      24.37  ← 选中
+#   scan_cvd_divergence_low 24.15  (Jac=0.10, 但 OR 后稀释)
+#   scan_bb_width_p80       23.38  (与 bb_width_high 重叠 0.90)
+#   scan_vpin_max20_high    22.62
+#   wick_compression_high   19.14
+#   vpin_rank_high          19.07
+#   其余 ≤ baseline
+#
+# Baseline=18.20 → Final OR=24.37 (+33.9%)

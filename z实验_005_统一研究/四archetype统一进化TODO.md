@@ -575,8 +575,105 @@ Phase 4 (PCM 重构)  ──┘                                                 
 | Phase 1: 组合特征 | ✅ 完成 | 3 个乘法交叉特征 (dual_compression/ignition/exhaustion) |
 | Phase 2: OI 体系 | ✅ 完成 | 下载器 + 特征 + 场景语义 + 交叉特征 |
 | Phase 3: LV 配置 | ✅ 完成 | 15min LV archetype 全套配置 |
-| Phase 4: PCM 重构 | ✅ 完成 | 3-Layer (静态budget + Regime动态优先级 + Override覆盖) + 5 KPI + 54 测试 |
+| Phase 4: PCM 重构 | ✅ 完成 | v2: 单一优先级制 (LV>FER>ME>BPC, 按条件严格性), 移除 Override 层 |
 | Phase 5: 数据 | ✅ 完成 | OI 59 symbols 1947 files (2023-01~2026-02), FR 59 symbols 2860 files |
 | Phase 5.5: 语义预筛选 | 🔨 设计完成 | 详见 gate_v3_semantic_prefilter_TODO.md |
 | Phase 6: 训练 | 🔨 待执行 | 依赖 Phase 5.5 pre_filter 配置, 报告输出到 reports/ |
 | Phase 7: 多时间框架 | ✅ 研究路径完成 | ME→1H, BPC/FER→4H, LV→15min, 实盘路径待升级 |
+
+---
+
+## 🔍 Phase 4.5: PCM 优先级验证 (v2 严格性排序)
+
+> 目标: 验证 v2 优先级 (LV>FER>ME>BPC) 相比 v1 (BPC>ME>FER>LV) 有优势
+> 设计文档: `PCM优先级简化设计.md`
+> 假设监控: `系统每层假设与实盘监控.md`
+
+### 验证方法
+
+- [ ] 用历史 predictions.parquet 重跑 PCM 回测，对比 v1 vs v2 的冲突解决效果
+  - 指标: Sharpe, 胜率, 平均 R, max DD
+  - 期望: v2 在冲突场景下 Sharpe ≥ v1（冲突率低，预期影响小）
+- [ ] 反事实分析: v2 被拒信号的事后 R 和胜率
+  - 关注: v2 被拒的 BPC 信号（之前是最高优先级）事后表现
+- [ ] Regime 分层验证: HIGH_VOL 下 ME>FER 是否给出更好的冲突解决
+
+### 实盘监控要点
+
+- [ ] 每周检查 PCM 冲突日志，对比被选 vs 被拒信号事后 R
+- [ ] 若被拒信号事后 R 系统性高于被选 → 优先级需要调整
+- [ ] 监控各层假设是否成立（见 `系统每层假设与实盘监控.md`）
+
+---
+
+## 📡 Phase 8: 实盘假设监控
+
+> 依据: `系统每层假设与实盘监控.md`
+> 目标: 验证系统 9 层假设在实盘环境中是否持续成立，失效时触发调整
+
+### 监控范围
+
+| 层 | 假设 | 关键指标 | 失效阈值 |
+|----|------|----------|----------|
+| L1 特征 | 历史统计规律在新数据上保持 | feature_drift_zscore | > 3.0 连续 3 天 |
+| L2 预筛选 | 语义场景条件有效过滤噪声 | prefilter_pass_rate | 偏离训练期 ±50% |
+| L3 Gate | 通过 Gate 的信号有显著正向 lift | gate_pass_rate, gate_lift | lift < 1.2 |
+| L4 Evidence | 高 evidence score → 高 R | evidence_r_correlation | Spearman < 0.05 |
+| L5 Direction | 方向判断增加胜率 | direction_accuracy | < 55% (30日滚动) |
+| L6 Entry Filter | 入场过滤器提升信号质量 | entry_filter_lift | lift < 1.0 |
+| L7 Execution Tier | 高 tier 的 R 和胜率优于低 tier | per_tier_mean_r | T1 ≤ T3 连续 2 周 |
+| L8 PCM | 被选信号 > 被拒信号 | counterfactual_r | 被拒 avg R > 被选持续 1 周 |
+| L9 宪法 | 安全边界合理且不过度限制 | kill_switch_trigger_count | 月触发 > 3 次需审查 |
+
+### 实施清单
+
+- [ ] 日频监控脚本: 特征漂移 / Gate 通过率 / Direction 准确率 / 当日 PnL
+- [ ] 周频监控脚本: Evidence 相关性 / PCM 冲突分析 / Tier 分层表现
+- [ ] 月频全层验证报告: 9 层假设逐一检查 + 正交性验证
+- [ ] 假设失效告警: 任何层指标越过阈值 → 自动通知
+- [ ] 假设失效归因 SOP: 失效 → 定位层 → 分析原因 → 制定调整方案
+
+---
+
+## ⚡ Phase 9: 实盘性能监控
+
+> 目标: 确保系统在生产环境运行的延迟、吞吐、稳定性满足交易需求
+
+### 延迟监控
+
+| 环节 | 指标 | 目标值 | 告警阈值 |
+|------|------|--------|----------|
+| Tick 接收 → 特征计算完成 | feature_latency_ms | < 200ms | > 500ms |
+| 特征计算 → Gate/Evidence 推理 | inference_latency_ms | < 100ms | > 300ms |
+| 信号生成 → PCM 仲裁完成 | pcm_latency_ms | < 50ms | > 150ms |
+| PCM 决策 → 下单提交 | order_submit_latency_ms | < 100ms | > 300ms |
+| 端到端 (Tick → Order) | e2e_latency_ms | < 500ms | > 1000ms |
+
+### 稳定性监控
+
+| 指标 | 说明 | 告警条件 |
+|------|------|----------|
+| WebSocket 断线次数 | 每日断线统计 | > 5 次/天 |
+| Tick 缺失率 | 预期 tick 数 vs 实际接收数 | > 2% |
+| 特征计算异常率 | NaN/Inf 产出比例 | > 0.1% |
+| 内存使用 | 进程 RSS | > 4GB 或持续增长 |
+| CPU 使用率 | 进程 CPU 占比 | > 80% 持续 5 分钟 |
+| 磁盘 I/O | 日志/数据写入速率 | 磁盘使用 > 90% |
+
+### 交易执行监控
+
+| 指标 | 说明 | 告警条件 |
+|------|------|----------|
+| 下单成功率 | 提交 vs 成交 | < 95% |
+| 滑点 | 信号价 vs 成交价 | avg slippage > 0.1% |
+| 持仓偏离 | 目标仓位 vs 实际仓位 | 偏离 > 5% |
+| API 错误率 | 交易所 API 调用失败率 | > 1% |
+
+### 实施清单
+
+- [ ] 延迟打点埋入: 各环节 start/end timestamp 记录
+- [ ] Prometheus/Grafana 看板搭建 (或轻量替代方案)
+- [ ] 日频性能报告: 延迟 P50/P95/P99 + 异常统计
+- [ ] 告警通道接入: 关键指标越限 → 即时通知
+- [ ] 性能基线建立: 上线首周记录各指标基线，后续对比
+- [ ] 降级策略: 延迟过高时自动降低交易频率或暂停非核心 archetype

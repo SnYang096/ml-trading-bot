@@ -620,13 +620,15 @@ def compute_sharpe(
     returns: pd.Series,
     annualize: bool = False,
     span_years: float = 0.0,
+    n_symbols: int = 1,
 ) -> float:
     """计算 Sharpe Ratio
 
     Args:
         returns: per-trade R 倍数序列
         annualize: 是否年化
-        span_years: 数据跨度(年)。年化公式: per_trade_sharpe × √(trades/year)
+        span_years: 数据跨度(年)。年化公式: per_trade_sharpe × √(trades_per_symbol_per_year)
+        n_symbols: symbol 数量，年化时用 per-symbol 交易频率
     """
     returns = returns.dropna()
     if len(returns) < 2:
@@ -641,7 +643,8 @@ def compute_sharpe(
     sharpe = mean_r / std_r
 
     if annualize and span_years > 0:
-        trades_per_year = len(returns) / span_years
+        n_sym = max(1, n_symbols)
+        trades_per_year = len(returns) / n_sym / span_years
         sharpe *= np.sqrt(trades_per_year)
 
     return float(sharpe)
@@ -656,12 +659,68 @@ def _estimate_span_years(df: pd.DataFrame, bars_per_year: float = 2190.0) -> flo
     return float(bars_per_symbol / bars_per_year)
 
 
+def compute_daily_sharpe(
+    df: pd.DataFrame,
+    exec_returns: pd.Series,
+) -> float:
+    """计算日收益 Sharpe Ratio = daily_mean / daily_std × √252
+
+    将 per-trade R-multiples 按入场日期汇总为日收益，无交易日填 0。
+    这是与业界可比的 Sharpe（2~3 为优秀）。
+
+    Args:
+        df: 包含 timestamp 和 symbol 的 DataFrame
+        exec_returns: 与 df 行对齐的 per-trade R-multiples (NaN = 无交易)
+
+    Returns:
+        年化日收益 Sharpe，无法计算时返回 0.0
+    """
+    # 找 timestamp 列
+    ts_col = None
+    if "timestamp" in df.columns:
+        ts_col = "timestamp"
+    elif isinstance(df.index, pd.DatetimeIndex):
+        ts_col = "__index_ts"
+        df = df.copy()
+        df[ts_col] = df.index
+
+    if ts_col is None:
+        return 0.0
+
+    # 构建日期 + R 序列
+    trade_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(df[ts_col]).dt.date,
+            "r": exec_returns.values,
+        }
+    )
+    # 只保留有交易的行
+    trade_df = trade_df.dropna(subset=["r"])
+    if len(trade_df) < 2:
+        return 0.0
+
+    # 每日 R 汇总
+    daily_r = trade_df.groupby("date")["r"].sum()
+
+    # 填充无交易日为 0
+    full_range = pd.date_range(
+        start=daily_r.index.min(), end=daily_r.index.max(), freq="D"
+    )
+    daily_r = daily_r.reindex(full_range, fill_value=0.0)
+
+    if len(daily_r) < 10 or daily_r.std() < 1e-8:
+        return 0.0
+
+    return float(daily_r.mean() / daily_r.std() * np.sqrt(252))
+
+
 # ================================================================
 # Multi-Archetype PCM Mode
 # ================================================================
 
 # 默认优先级（与 live_pcm.py 一致）
-_PCM_DEFAULT_PRIORITY = ["BPC", "ME", "FER", "LV"]
+# 默认优先级: 按信号条件严格性排序（与 pcm_regime.yaml v2 NORMAL 一致）
+_PCM_DEFAULT_PRIORITY = ["LV", "FER", "ME", "BPC"]
 
 
 def load_direction_config(
@@ -705,6 +764,8 @@ def apply_direction_rules(
             df["entry_direction"] = np.sign(series).values
         elif transform == "negate_sign":
             df["entry_direction"] = (-np.sign(series)).values
+        elif transform == "center_sign":
+            df["entry_direction"] = np.sign(series - 0.5).values
         else:
             df["entry_direction"] = series.values
 
@@ -1063,11 +1124,17 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
 
     # ── 7. 结果报告 ──
     span_years = _estimate_span_years(merged)
+    sym_col_pcm = "symbol" if "symbol" in merged.columns else "_symbol"
+    n_symbols_pcm = (
+        merged[sym_col_pcm].nunique() if sym_col_pcm in merged.columns else 1
+    )
     exec_sharpe = compute_sharpe(valid_returns, annualize=False)
     exec_sharpe_ann = compute_sharpe(
-        valid_returns, annualize=True, span_years=span_years
+        valid_returns, annualize=True, span_years=span_years, n_symbols=n_symbols_pcm
     )
-    trades_per_year = len(valid_returns) / span_years if span_years > 0 else 0
+    trades_per_year = (
+        len(valid_returns) / max(1, n_symbols_pcm) / span_years if span_years > 0 else 0
+    )
 
     print("\n" + "=" * 80)
     print("📊 PCM MULTI-ARCHETYPE BACKTEST RESULTS")
@@ -1082,7 +1149,11 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     print(f"\n   Sharpe (per-trade): {exec_sharpe:.4f}")
     print(
         f"   Sharpe (annualized): {exec_sharpe_ann:.2f}  "
-        f"= {exec_sharpe:.4f} × √{trades_per_year:.0f}"
+        f"= {exec_sharpe:.4f} \u00d7 \u221a{trades_per_year:.0f}"
+    )
+    daily_sharpe_pcm = compute_daily_sharpe(merged, exec_returns)
+    print(
+        f"   Sharpe (daily, \u00d7\u221a252): {daily_sharpe_pcm:.2f}  \u2190 \u4e1a\u754c\u53ef\u6bd4\u6307\u6807"
     )
 
     # Per-symbol breakdown
@@ -1233,9 +1304,14 @@ def run_grid_search(
     param_values: List[List[float]],
     atr_col: str = "atr",
     span_years: float = 1.0,
+    n_symbols: int = 1,
 ) -> List[Dict[str, Any]]:
     """
     执行全量网格搜索
+
+    Args:
+        n_symbols: symbol 数量，年化时用 per-symbol 交易频率
+                   trades_per_year = trades / n_symbols / span_years
 
     Returns:
         每组参数的回测结果列表
@@ -1260,7 +1336,9 @@ def run_grid_search(
 
         if len(valid) >= 2 and valid.std() > 1e-8:
             sharpe = float(valid.mean() / valid.std())
-            trades_per_year = len(valid) / span_years if span_years > 0 else 0
+            # per-symbol 交易频率年化，避免多 symbol 合计膨胀
+            n_sym = max(1, n_symbols)
+            trades_per_year = len(valid) / n_sym / span_years if span_years > 0 else 0
             sharpe_ann = (
                 sharpe * np.sqrt(trades_per_year) if trades_per_year > 0 else 0.0
             )
@@ -2168,10 +2246,22 @@ def main() -> int:
 
     # 创建 entry_direction 列：标记入场信号
     # 默认：每个有方向的 bar 都是入场信号
-    if "bpc_breakout_direction" in df.columns:
+    if "entry_direction" in df.columns:
+        print(f"   📍 Using existing entry_direction column")
+    elif "bpc_breakout_direction" in df.columns:
         df["entry_direction"] = df["bpc_breakout_direction"].astype(float).copy()
     else:
-        df["entry_direction"] = 0.0
+        # 尝试 direction.yaml 规则
+        dir_cfg = load_direction_config(args.strategy, args.strategies_root)
+        if dir_cfg:
+            applied = apply_direction_rules(df, args.strategy, dir_cfg)
+            if applied:
+                print(f"   📍 Direction: {applied} (from direction.yaml)")
+            elif "entry_direction" not in df.columns:
+                print("❌ direction.yaml 规则无一命中，且无 entry_direction 列")
+                return 1
+        else:
+            df["entry_direction"] = 0.0
 
     # 保存原始方向（gate/entry_filter 前），用于 --export-signals
     df["_orig_direction"] = df["entry_direction"].copy()
@@ -2548,11 +2638,15 @@ def main() -> int:
 
     # 计算 Sharpe
     span_years = _estimate_span_years(merged)
+    sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
+    n_symbols = merged[sym_col].nunique() if sym_col in merged.columns else 1
     exec_sharpe = compute_sharpe(valid_returns, annualize=False)
     exec_sharpe_ann = compute_sharpe(
-        valid_returns, annualize=True, span_years=span_years
+        valid_returns, annualize=True, span_years=span_years, n_symbols=n_symbols
     )
-    trades_per_year = len(valid_returns) / span_years if span_years > 0 else 0
+    trades_per_year = (
+        len(valid_returns) / max(1, n_symbols) / span_years if span_years > 0 else 0
+    )
 
     print("\n" + "=" * 80)
     print("📊 EXECUTION LAYER BACKTEST RESULTS")
@@ -2565,7 +2659,11 @@ def main() -> int:
     print(f"   Win Rate: {(valid_returns > 0).mean():.2%}")
     print(f"\n   Sharpe (per-trade): {exec_sharpe:.4f}")
     print(
-        f"   Sharpe (annualized): {exec_sharpe_ann:.2f}  = {exec_sharpe:.4f} × √{trades_per_year:.0f}"
+        f"   Sharpe (annualized): {exec_sharpe_ann:.2f}  = {exec_sharpe:.4f} \u00d7 \u221a{trades_per_year:.0f}"
+    )
+    daily_sharpe = compute_daily_sharpe(merged, exec_returns)
+    print(
+        f"   Sharpe (daily, \u00d7\u221a252): {daily_sharpe:.2f}  \u2190 \u4e1a\u754c\u53ef\u6bd4\u6307\u6807"
     )
 
     # Per-symbol breakdown

@@ -1,74 +1,467 @@
-# ME Entry Filter Archetype v3.0
-# ME = Energy × Acceleration × Participation
-# Entry 语义: Micro Accel 2K + Flow/Volume Burst（入场时机触发）
-# Entry 职责: Gate 通过 + Evidence 评估后，检测"现在是最佳入场点吗？"
+# ME Entry Filter 研究文件 — 候选 + 已测试失败项
+# 本文件供 optimize_entry_filter_snotio.py 读取 (research=True)
+# 验证通过的 filter 写入 archetypes/entry_filters.yaml (production)
 #
-# 待训练: 需要运行 optimize_entry_filters.py 发现有效阈值
-# 更新: 2026-02-17 - 迁移到 v3.0 三因子模型
+# 职责定位:
+#   Gate:         "这笔交易能做吗？"   → cvd_alignment 硬门槛
+#   Entry Filter: "现在该入场吗？"     → 微观时机确认
+#   Evidence:     "下多少注？"         → volume_surge 软权重
+#
+# 数据基础:
+#   logs_gated.parquet: 5126 bars → gate allow: 3140 bars (gated)
+#   predictions.parquet: 5120 bars (全量, optimize 脚本用)
+#   Baseline (全部入场): snotio=18.20, Loss=37.7%, Stop=37.7%, Trades=5120
+#   方向: me_delta_net_flow (sign transform), from direction.yaml
+#
+# 评估命令:
+#   EVIDENCE_RESULT_DIR="results/train_final_20260221_215306_return_tree/me"
+#   # execution 验证 (定义在本文件的 filter):
+#   python scripts/optimize_entry_filter_snotio.py --all \
+#     --logs ${EVIDENCE_RESULT_DIR}/predictions.parquet --strategy me
+#   # 全特征 scan (自动扫描所有数值列):
+#   python scripts/optimize_entry_filter_snotio.py --scan \
+#     --logs ${EVIDENCE_RESULT_DIR}/predictions.parquet --strategy me
+#
+# 评估时间: 2026-02-21
+# 时间框架: 60T
 
-# === Entry Filters: 入场时机筛选 ===
-# 语义: 现在不是最佳入场时机 → 暂时等待（可以做但等更好时机）
-# 位置: Execution 阶段（gate 放行 + evidence 评估之后）
-#
-# ME v3.0 Entry 语义:
-# 1. 微观加速触发：me_accel_2k 检测 2K 窗口的瞬时加速
-# 2. 订单流爆发确认：me_cvd_strength 确认资金推动
-# 3. 成交量配合：me_volume_surge 确认放量
-#
-# 候选特征 (v3.0 三因子 - Entry 聚焦微观触发):
-#   Acceleration: me_accel_2k (2K微观加速，主触发)
-#   Participation: me_cvd_strength, me_volume_surge, me_volume_accel
-#   Failure: me_failure_score (衰竭时不入场)
+combination_mode: or
 
+# ============================================================
+# ✅ execution 验证通过 — 按 snotio 降序
+# ============================================================
 filters:
-  # Entry Filter 1: 微观加速触发
-  # 检测 2K 窗口的瞬时加速度，确认动量正在加强
-  - id: micro_accel_trigger
-    description: "微观加速度触发 - 2K窗口动量加强确认"
+
+  # ----------------------------------------------------------------
+  # 1. Wick 压缩形态 (大实体K线)  🏆 snotio 最高
+  # ----------------------------------------------------------------
+  - id: wick_compression_high
     enabled: true
+    description: "Wick 压缩分数 ≥ 0.8 (大实体、小影线)"
+    semantic: |
+      高 wick_compression = 实体占比大、影线小 → 趋势型K线。
+      与 ME 动能爆发语义匹配：爆发时K线应该是实体大、方向明确的。
+    conditions:
+      - feature: wick_compression_score
+        operator: ">="
+        value: 0.8
+    backtest:
+      snotio: 21.31
+      loss_rate: 0.364
+      stop_rate: 0.364
+      sharpe_pt: 0.428
+      trades: 645
+      win_rate: 0.636
+    marginal:
+      snotio: 19.25
+      stop_rate: 0.371
+      trades: 178
+      verdict: "✅ 较好"
+    notes: |
+      snotio=21.31 (+17.1% vs baseline), 整体最高
+      边际贡献: snotio=19.25, Stop=37.1% (178 独有笔)
+
+  # ----------------------------------------------------------------
+  # 2. VPIN 高位 (信息不对称爆发)
+  # ----------------------------------------------------------------
+  - id: vpin_high
+    enabled: true
+    description: "VPIN ≥ 0.4 (信息不对称活跃)"
+    semantic: |
+      VPIN (Volume-Synchronized Probability of Informed Trading) 高位
+      表示知情交易者活跃，与 ME 动能爆发的 "participation" 维度对应。
+    conditions:
+      - feature: vpin
+        operator: ">="
+        value: 0.4
+    backtest:
+      snotio: 21.05
+      loss_rate: 0.398
+      stop_rate: 0.398
+      sharpe_pt: 0.359
+      trades: 825
+      win_rate: 0.602
+    marginal:
+      snotio: 47.37
+      stop_rate: 0.385
+      trades: 26
+      verdict: "❌ 样本不足 (仅26独有)"
+    notes: |
+      snotio=21.05 (+15.7% vs baseline), 但独有仅 26 笔 → 与其他 filter 重叠严重
+
+  # ----------------------------------------------------------------
+  # 3. VPIN 分位数高位 (20bar 窗口)  🏆 边际贡献最强
+  # ----------------------------------------------------------------
+  - id: vpin_rank_high
+    enabled: true
+    description: "VPIN 20bar 分位数 ≥ 0.8 (近期极值)"
+    conditions:
+      - feature: vpin_quantile_rank_20
+        operator: ">="
+        value: 0.8
+    backtest:
+      snotio: 19.07
+      loss_rate: 0.382
+      stop_rate: 0.382
+      sharpe_pt: 0.379
+      trades: 1000
+      win_rate: 0.618
+    marginal:
+      snotio: 23.90
+      stop_rate: 0.308
+      trades: 26
+      verdict: "✅ 真正好 Entry"
+    notes: |
+      边际 snotio=23.90, Stop=30.8% — 独有交易质量远超 baseline
+      边际贡献最强的 filter
+
+  # ----------------------------------------------------------------
+  # 4. VP 吸收 (Volume Profile)
+  # ----------------------------------------------------------------
+  - id: vp_absorption
+    enabled: true
+    description: "Volume Profile 吸收分数 ≥ 0.25"
+    conditions:
+      - feature: vp_absorption_score
+        operator: ">="
+        value: 0.25
+    backtest:
+      snotio: 19.03
+      loss_rate: 0.372
+      stop_rate: 0.372
+      sharpe_pt: 0.421
+      trades: 653
+      win_rate: 0.628
+    marginal:
+      snotio: 12.66
+      stop_rate: 0.377
+      trades: 106
+      verdict: "❌ 无过滤效果"
+    notes: |
+      snotio=19.03 (+4.6%), 但边际 snotio=12.66 < baseline → 独有交易质量差
+
+  # ----------------------------------------------------------------
+  # 5. 成交量参与度
+  # ----------------------------------------------------------------
+  - id: volume_participation
+    enabled: true
+    description: "成交量参与度 ≥ 0.3 (volume_participation_score)"
+    conditions:
+      - feature: volume_participation_score
+        operator: ">="
+        value: 0.3
+    backtest:
+      snotio: 18.97
+      loss_rate: 0.362
+      stop_rate: 0.362
+      sharpe_pt: 0.390
+      trades: 1307
+      win_rate: 0.638
+    marginal:
+      snotio: 20.96
+      stop_rate: 0.358
+      trades: 190
+      verdict: "✅ 较好"
+    notes: |
+      snotio=18.97 (+4.2%), 边际 snotio=20.96, Stop=35.8% (190 独有) — 较好
+
+  # ----------------------------------------------------------------
+  # 6. OI 吸收 (持仓量吸收模式)
+  # ----------------------------------------------------------------
+  - id: oi_absorption
+    enabled: true
+    description: "OI 吸收分数 ≥ 0.3 (oi_absorption_score)"
+    semantic: |
+      OI absorption 衡量持仓量被吸收的程度。
+      RR 扫描 Lift=+0.757 (最高), 但 execution 模拟后改善仅 +3.7%。
+    conditions:
+      - feature: oi_absorption_score
+        operator: ">="
+        value: 0.3
+    backtest:
+      snotio: 18.88
+      loss_rate: 0.380
+      stop_rate: 0.380
+      sharpe_pt: 0.363
+      trades: 1262
+      win_rate: 0.620
+    marginal:
+      snotio: 0.00
+      trades: 0
+      verdict: "样本不足 (与其他 filter 完全重叠)"
+    notes: |
+      RR Lift=+0.757 极高, execution snotio=18.88 仅 +3.7%
+      无独有边际 → 完全被其他 filter 覆盖
+
+  # ----------------------------------------------------------------
+  # 7. OI 吸收 (宽松版)
+  # ----------------------------------------------------------------
+  - id: oi_absorption_loose
+    enabled: true
+    description: "OI 吸收分数 ≥ 0.2 (宽松版)"
+    conditions:
+      - feature: oi_absorption_score
+        operator: ">="
+        value: 0.2
+    backtest:
+      snotio: 18.30
+      loss_rate: 0.374
+      stop_rate: 0.374
+      sharpe_pt: 0.372
+      trades: 1665
+      win_rate: 0.626
+    marginal:
+      snotio: 17.76
+      stop_rate: 0.286
+      trades: 147
+      verdict: "⚠️ 边际"
+
+  # ----------------------------------------------------------------
+  # 8. 方向一致性 (价格方向连续性)
+  # ----------------------------------------------------------------
+  - id: price_dir_consistency
+    enabled: true
+    description: "价格方向一致性 ≥ 0.9 (price_dir_consistency_pct)"
+    conditions:
+      - feature: price_dir_consistency_pct
+        operator: ">="
+        value: 0.9
+    backtest:
+      snotio: 18.38
+      loss_rate: 0.412
+      stop_rate: 0.412
+      sharpe_pt: 0.384
+      trades: 1059
+      win_rate: 0.588
+    marginal:
+      snotio: 17.44
+      stop_rate: 0.445
+      trades: 211
+      verdict: "⚠️ 边际"
+
+  # ----------------------------------------------------------------
+  # 9. VPIN Spike (短期爆发)
+  # ----------------------------------------------------------------
+  - id: vpin_spike
+    enabled: true
+    description: "VPIN 20bar 突刺标志 (vpin_spike_flag_20 == 1)"
+    conditions:
+      - feature: vpin_spike_flag_20
+        operator: "=="
+        value: 1
+    backtest:
+      snotio: 17.11
+      loss_rate: 0.394
+      stop_rate: 0.394
+      sharpe_pt: 0.378
+      trades: 913
+      win_rate: 0.606
+    marginal:
+      snotio: 18.39
+      stop_rate: 0.143
+      trades: 21
+      verdict: "✅ 较好 (极少独有)"
+
+  # ----------------------------------------------------------------
+  # 10. 加速爆发 + 波动率扩张  ❌ 低于 baseline
+  # ----------------------------------------------------------------
+  - id: accel_burst_vol_regime
+    enabled: true
+    description: "微观加速 (me_accel_2k ≥ 0.5) + 波动率正在扩张 (me_vol_regime ≥ 0.5)"
     conditions:
       - feature: me_accel_2k
         operator: ">="
-        value: 0.50  # |加速度| >= P50 表示动量正在增强
-    priority: 1
-    comment: |
-      ME v3.0 Entry 核心触发器。me_accel_2k 是 2K 窗口的微观加速度，
-      相比 5K 更敏感、更适合做入场时机判断。
-      值 >= 0.50 表示加速度处于中位以上，动量正在增强。
-      待训练: 阈值需要基于回测数据优化。
+        value: 0.5
+      - feature: me_vol_regime
+        operator: ">="
+        value: 0.5
+    backtest:
+      snotio: 14.68
+      loss_rate: 0.366
+      stop_rate: 0.366
+      sharpe_pt: 0.439
+      trades: 966
+      win_rate: 0.633
+    marginal:
+      snotio: 12.86
+      stop_rate: 0.358
+      trades: 148
+      verdict: "❌ 无过滤效果"
+    notes: |
+      snotio=14.68 < baseline(18.20) ❌
+      RR扫描 Lift=+0.406 但 execution 模拟后信号消失
 
-  # Entry Filter 2: 订单流爆发确认
-  # 检测 CVD 强度，确认有真实资金推动
-  - id: flow_burst_confirm
-    description: "订单流爆发确认 - CVD 强度支持"
+  # ----------------------------------------------------------------
+  # 11-18. --scan 全特征扫描发现 (snotio 排序, 待 plateau 验证)
+  # ----------------------------------------------------------------
+  - id: scan_bb_width_high
     enabled: true
+    description: "布林带宽度百分位 ≥ P90 (波动率极端扩张)"
+    semantic: |
+      bb_width 极端宽 = 波动率已经在爆发状态。
+      与 ME 动能爆发语义完美匹配：波动率扩张是动能释放的前提。
     conditions:
-      - feature: me_cvd_strength
+      - feature: bb_width_normalized_pct
         operator: ">="
-        value: 0.40  # CVD 强度 >= P40 表示资金在推动
-    priority: 2
-    comment: |
-      ME v3.0 Participation 确认。me_cvd_strength 衡量 CVD 的相对强度，
-      确保入场时有真实资金推动，而非虚假波动。
-      值 >= 0.40 表示 CVD 强度处于中低位以上。
-      待训练: 阈值需要基于回测数据优化。
+        value: 0.957
+    backtest:
+      snotio: 33.81
+      loss_rate: 0.331
+      stop_rate: 0.331
+      sharpe_pt: 0.439
+      trades: 534
+      win_rate: 0.668
+    notes: |
+      --scan #1, snotio=33.81 (+85.8% vs baseline) 🏆 全特征最高
 
-  # Entry Filter 3: 成交量配合
-  # 检测成交量爆发，确认市场参与度
-  - id: volume_burst_confirm
-    description: "成交量爆发确认 - 放量支持"
-    enabled: false  # 默认禁用，与 Gate guardrail 可能重叠
+  - id: scan_vpin_max20_high
+    enabled: true
+    description: "20bar VPIN 极值 ≥ P90 (知情交易爆发)"
     conditions:
-      - feature: me_volume_surge
+      - feature: vpin_max20
         operator: ">="
-        value: 0.40  # 成交量爆发 >= P40
-    priority: 3
-    comment: |
-      ME v3.0 Participation 辅助确认。me_volume_surge 衡量成交量爆发程度。
-      注意: Gate guardrail 已有 me_volume_surge >= 0.30 的底线检查，
-      此处是更严格的入场时机要求。默认禁用，避免与 Gate 重叠过多。
-      待训练: 是否启用需要基于回测数据验证。
+        value: 0.774
+    backtest:
+      snotio: 30.55
+      loss_rate: 0.333
+      stop_rate: 0.333
+      sharpe_pt: 0.397
+      trades: 528
+      win_rate: 0.667
+    notes: "--scan #2, snotio=30.55 (+67.9%)"
 
-# OR 逻辑组合
-# 多个 enabled filter 之间用 OR：任一满足即入场
-combination_mode: or
+  - id: scan_funding_rate_abs_low
+    enabled: true
+    description: "资金费率绝对值 ≤ P10 (低摩擦成本)"
+    conditions:
+      - feature: funding_rate_abs
+        operator: "<="
+        value: 0.000005
+    backtest:
+      snotio: 28.38
+      loss_rate: 0.385
+      stop_rate: 0.385
+      sharpe_pt: 0.487
+      trades: 515
+      win_rate: 0.616
+    notes: "--scan #3, snotio=28.38 (+55.9%)"
+
+  - id: scan_vpin_ma20_high
+    enabled: true
+    description: "VPIN 20均线 ≥ P90 (持续知情交易)"
+    conditions:
+      - feature: vpin_ma20
+        operator: ">="
+        value: 0.391
+    backtest:
+      snotio: 27.41
+      loss_rate: 0.347
+      stop_rate: 0.347
+      sharpe_pt: 0.420
+      trades: 513
+      win_rate: 0.653
+    notes: "--scan #4, snotio=27.41 (+50.6%)"
+
+  - id: scan_spectrum_price_hf_high
+    enabled: true
+    description: "价格高频占比 ≥ P90 (微观波动活跃)"
+    conditions:
+      - feature: spectrum_price_high_freq_ratio
+        operator: ">="
+        value: 0.615
+    backtest:
+      snotio: 26.75
+      loss_rate: 0.422
+      stop_rate: 0.422
+      sharpe_pt: 0.383
+      trades: 512
+      win_rate: 0.578
+    notes: "--scan #5, snotio=26.75 (+47.0%), 但 Win=57.8% 偏低"
+
+  - id: scan_bb_width_p80
+    enabled: true
+    description: "布林带宽度百分位 ≥ P80 (宽松版)"
+    conditions:
+      - feature: bb_width_normalized_pct
+        operator: ">="
+        value: 0.896
+    backtest:
+      snotio: 26.36
+      loss_rate: 0.344
+      stop_rate: 0.344
+      sharpe_pt: 0.423
+      trades: 1032
+      win_rate: 0.656
+    notes: "--scan #6, snotio=26.36 (+44.8%), 更宽覆盖 (1032 trades)"
+
+  - id: scan_cvd_divergence_low
+    enabled: true
+    description: "CVD 背离分数 ≤ P10 (强背离)"
+    conditions:
+      - feature: cvd_divergence_score
+        operator: "<="
+        value: -0.776
+    backtest:
+      snotio: 26.24
+      loss_rate: 0.303
+      stop_rate: 0.303
+      sharpe_pt: 0.400
+      trades: 555
+      win_rate: 0.697
+    notes: "--scan #7, snotio=26.24 (+44.2%), Win=69.7% 极高"
+
+  - id: scan_vpin_ma10_p80
+    enabled: true
+    description: "VPIN 10均线 ≥ P80"
+    conditions:
+      - feature: vpin_ma10
+        operator: ">="
+        value: 0.383
+    backtest:
+      snotio: 25.45
+      loss_rate: 0.380
+      stop_rate: 0.380
+      sharpe_pt: 0.395
+      trades: 1026
+      win_rate: 0.620
+    notes: "--scan #8, snotio=25.45 (+39.8%)"
+
+# ============================================================
+# 📊 execution 验证排序 (optimize_entry_filter_snotio.py --all)
+# ============================================================
+# Rank  Filter                     | snotio | Loss%  | Stop%  | Trades | Verdict
+# ------|--------------------------|--------|--------|--------|--------|----------
+#   1   wick_compression_high      | 21.31  | 36.4%  | 36.4%  |    645 | ✅ +17.1%
+#   2   vpin_high                  | 21.05  | 39.8%  | 39.8%  |    825 | ✅ +15.7%
+#   3   vpin_rank_high             | 19.07  | 38.2%  | 38.2%  |   1000 | ⚠️ +4.8%
+#   4   vp_absorption              | 19.03  | 37.2%  | 37.2%  |    653 | ⚠️ +4.6%
+#   5   volume_participation       | 18.97  | 36.2%  | 36.2%  |   1307 | ⚠️ +4.2%
+#   6   oi_absorption              | 18.88  | 38.0%  | 38.0%  |   1262 | ⚠️ +3.7%
+#   7   oi_absorption_loose        | 18.30  | 37.4%  | 37.4%  |   1665 | ≈ baseline
+#   8   price_dir_consistency      | 18.38  | 41.2%  | 41.2%  |   1059 | ≈ baseline
+#   9   vpin_spike                 | 17.11  | 39.4%  | 39.4%  |    913 | ❌ < baseline
+#  10   accel_burst_vol_regime     | 14.68  | 36.6%  | 36.6%  |    966 | ❌ < baseline
+#       Baseline (none)            | 18.20  | 37.7%  | 37.7%  |   5120 | 对照
+#
+# 📊 --scan 全特征扫描 Top 8 (execution 模拟):
+# Rank  Feature                               Condition   snotio  vs BL
+#   1   bb_width_normalized_pct               >= P90       33.81  +85.8% 🏆
+#   2   vpin_max20                            >= P90       30.55  +67.9%
+#   3   funding_rate_abs                      <= P10       28.38  +55.9%
+#   4   vpin_ma20                             >= P90       27.41  +50.6%
+#   5   spectrum_price_high_freq_ratio        >= P90       26.75  +47.0%
+#   6   bb_width_normalized_pct               >= P80       26.36  +44.8%
+#   7   cvd_divergence_score                  <= P10       26.24  +44.2%
+#   8   vpin_ma10                             >= P80       25.45  +39.8%
+#
+# 边际贡献分析 (独有交易质量):
+#   vpin_rank_high:         边际 snotio=23.90, Stop=30.8% — ✅ 真正好
+#   volume_participation:   边际 snotio=20.96, Stop=35.8% — ✅ 较好
+#   wick_compression_high:  边际 snotio=19.25, Stop=37.1% — ✅ 较好
+#   vpin_spike:             边际 snotio=18.39, Stop=14.3% — ✅ (极少独有)
+#   oi_absorption_loose:    边际 snotio=17.76, Stop=28.6% — ⚠️ 边际
+#   price_dir_consistency:  边际 snotio=17.44, Stop=44.5% — ⚠️ 边际
+#   accel_burst_vol_regime: 边际 snotio=12.86, Stop=35.8% — ❌ 无效
+#   vp_absorption:          边际 snotio=12.66, Stop=37.7% — ❌ 无效
+#   oi_absorption:          边际 N=0 — 完全被其他覆盖
+#   vpin_high:              边际 N=26 — 样本不足

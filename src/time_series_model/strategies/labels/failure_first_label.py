@@ -531,6 +531,8 @@ def _compute_direction_from_rules(direction_cfg: dict, df: pd.DataFrame) -> np.n
             vals = np.sign(series)
         elif transform == "negate_sign":
             vals = -np.sign(series)
+        elif transform == "center_sign":
+            vals = np.sign(series - 0.5)
         elif transform == "negate":
             vals = -series
         else:
@@ -686,6 +688,10 @@ def _compute_direction_aware_rr_extreme(
     subtypes = _direction_aware_subtypes(df, horizon, strategy, **kwargs)
     failure_label = subtypes["failure_rr_extreme"]
 
+    # 回传 forward_rr 到输入 df（与 sample_weight 同模式，供 --prepare-only 导出）
+    if "forward_rr" in subtypes.columns:
+        df["forward_rr"] = subtypes["forward_rr"].values
+
     if invert:
         success_label = 1.0 - failure_label
         success_label.name = "success_no_rr_extreme"
@@ -794,6 +800,7 @@ def compute_bpc_failure_rr_extreme_label(
     # 🔍 多币种支持：按 symbol 分别计算
     if "_symbol" in df.columns and df["_symbol"].nunique() > 1:
         results = []
+        rr_parts = []
         for symbol in df["_symbol"].unique():
             sym_mask = df["_symbol"] == symbol
             sym_df = df[sym_mask].copy()
@@ -811,7 +818,14 @@ def compute_bpc_failure_rr_extreme_label(
             sym_failure = sym_subtypes["failure_rr_extreme"].copy()
             sym_failure.index = df[sym_mask].index
             results.append(sym_failure)
+            # 回传 forward_rr
+            if "forward_rr" in sym_subtypes.columns:
+                sym_rr = sym_subtypes["forward_rr"].copy()
+                sym_rr.index = df[sym_mask].index
+                rr_parts.append(sym_rr)
         failure_label = pd.concat(results, sort=False).sort_index()
+        if rr_parts:
+            df["forward_rr"] = pd.concat(rr_parts, sort=False).sort_index()
     else:
         # 单币种场景
         subtypes = compute_failure_subtypes(
@@ -828,6 +842,9 @@ def compute_bpc_failure_rr_extreme_label(
         failure_label = subtypes["failure_rr_extreme"]
         # 修复索引：compute_failure_subtypes 内部 reset_index 会导致返回 RangeIndex
         failure_label.index = df.index
+        # 回传 forward_rr
+        if "forward_rr" in subtypes.columns:
+            df["forward_rr"] = subtypes["forward_rr"].values
 
     if invert:
         success_label = 1.0 - failure_label

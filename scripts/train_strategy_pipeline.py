@@ -290,6 +290,26 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override features config file path (e.g. config/strategies/bpc/features_gate.yaml)",
     )
+    parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help=(
+            "Only run feature pipeline + label generation, save features_labeled.parquet "
+            "(full period), then exit. Skips model training. "
+            "Use for prefilter analysis and direction validation before training."
+        ),
+    )
+    parser.add_argument(
+        "--archetype-prefilter",
+        type=str,
+        default=None,
+        help=(
+            "Path to archetypes/prefilter.yaml. "
+            "Applies environment prerequisite rules to filter training data BEFORE model training. "
+            "Only rows satisfying ALL rules are kept for train/test. "
+            "Example: config/strategies/me/archetypes/prefilter.yaml"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -2605,6 +2625,11 @@ def train_strategy(
         df_train_features["sample_weight"] = _train_tmp["sample_weight"]
     if "sample_weight" in _test_tmp.columns:
         df_test_features["sample_weight"] = _test_tmp["sample_weight"]
+    # Propagate forward_rr from label generation (needed for --prepare-only export)
+    if "forward_rr" in _train_tmp.columns:
+        df_train_features["forward_rr"] = _train_tmp["forward_rr"]
+    if "forward_rr" in _test_tmp.columns:
+        df_test_features["forward_rr"] = _test_tmp["forward_rr"]
     train_labels = df_train_features[strategy_config.labels.target_column]
     test_labels = df_test_features[strategy_config.labels.target_column]
     print(
@@ -2678,9 +2703,154 @@ def train_strategy(
     df_test_filtered = drop_inf_rows(df_test_filtered, feature_cols)
 
     print(
-        f"   ✅ Valid samples after filtering - "
+        f"   \u2705 Valid samples after filtering - "
         f"Train: {len(df_train_filtered)}, Test: {len(df_test_filtered)}"
     )
+
+    # ------------------------------------------------------------------
+    # --archetype-prefilter: 读取 archetypes/prefilter.yaml 过滤训练数据
+    # 语义: archetype 成立的前置条件，不满足的样本不应参与训练
+    # ------------------------------------------------------------------
+    prefilter_path = getattr(args, "archetype_prefilter", None)
+    if prefilter_path:
+        import yaml as _yaml
+        import operator as _op
+
+        pf_path = Path(prefilter_path)
+        if not pf_path.exists():
+            print(f"\u274c --archetype-prefilter 文件不存在: {pf_path}")
+            return
+
+        with open(pf_path, "r") as f:
+            pf_cfg = _yaml.safe_load(f)
+
+        pf_rules = pf_cfg.get("rules", [])
+        if not pf_rules:
+            print(f"\u26a0\ufe0f  --archetype-prefilter: {pf_path} 中没有 rules，跳过")
+        else:
+            _OPS = {
+                ">=": _op.ge,
+                ">": _op.gt,
+                "<=": _op.le,
+                "<": _op.lt,
+                "==": _op.eq,
+                "!=": _op.ne,
+            }
+            print(f"\n\U0001f6e1\ufe0f  Archetype Prefilter: {pf_path}")
+            print(
+                f"   \u89c4\u5219\u6570: {len(pf_rules)}, \u8bad\u7ec3\u524d Train={len(df_train_filtered)}, Test={len(df_test_filtered)}"
+            )
+
+            for rule in pf_rules:
+                feat = rule["feature"]
+                op_str = rule["operator"]
+                val = rule["value"]
+                op_func = _OPS.get(op_str)
+                if op_func is None:
+                    print(
+                        f"   \u274c \u672a\u77e5 operator: {op_str}，\u8df3\u8fc7\u89c4\u5219 {feat}"
+                    )
+                    continue
+                if feat not in df_train_filtered.columns:
+                    print(
+                        f"   \u274c \u7279\u5f81\u5217 '{feat}' \u4e0d\u5b58\u5728\uff0c\u8df3\u8fc7\u89c4\u5219"
+                    )
+                    continue
+
+                n_before_train = len(df_train_filtered)
+                n_before_test = len(df_test_filtered)
+                df_train_filtered = df_train_filtered[
+                    op_func(df_train_filtered[feat], val)
+                ].copy()
+                df_test_filtered = df_test_filtered[
+                    op_func(df_test_filtered[feat], val)
+                ].copy()
+                rationale = rule.get("rationale", "")
+                print(
+                    f"   \u2705 {feat} {op_str} {val}: "
+                    f"Train {n_before_train}\u2192{len(df_train_filtered)} "
+                    f"(-{n_before_train - len(df_train_filtered)}), "
+                    f"Test {n_before_test}\u2192{len(df_test_filtered)} "
+                    f"(-{n_before_test - len(df_test_filtered)})"
+                    + (f"  [{rationale}]" if rationale else "")
+                )
+
+            total_remain = len(df_train_filtered) + len(df_test_filtered)
+            print(
+                f"   \u21b3 Prefilter \u540e\u603b\u6837\u672c: {total_remain:,} (Train={len(df_train_filtered):,}, Test={len(df_test_filtered):,})"
+            )
+
+            # \u6570\u636e\u91cf < 1080 \u5fc5\u987b\u62a5\u9519\u7ec8\u6b62
+            if len(df_train_filtered) < 1080:
+                print(
+                    f"\u274c Prefilter \u540e Train \u6837\u672c\u91cf {len(df_train_filtered)} < 1080\uff0c\u7edf\u8ba1\u4e0d\u53ef\u4fe1\uff0c\u7ec8\u6b62"
+                )
+                return
+            if len(df_test_filtered) < 1080:
+                print(
+                    f"\u26a0\ufe0f  Prefilter \u540e Test \u6837\u672c\u91cf {len(df_test_filtered)} < 1080\uff0c\u7edf\u8ba1\u53ef\u4fe1\u5ea6\u4f4e"
+                )
+
+    # ------------------------------------------------------------------
+    # --prepare-only: 导出 features_labeled.parquet 并提前退出
+    # ------------------------------------------------------------------
+    if getattr(args, "prepare_only", False):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        # 合并 train + test 为全周期数据
+        df_all = pd.concat([df_train_filtered, df_test_filtered], axis=0)
+        df_all = df_all.sort_index()
+
+        # 保留: 特征列 + 标签列 + 元数据列
+        target_col = strategy_config.labels.target_column
+        meta_cols = [
+            c
+            for c in [
+                "timestamp",
+                "datetime",
+                "date",
+                "symbol",
+                "_symbol",
+                "forward_rr",
+                target_col,
+            ]
+            if c in df_all.columns
+        ]
+        keep_cols = list(dict.fromkeys(meta_cols + feature_cols))  # 去重保序
+        # 也保留 direction 相关列
+        for c in df_all.columns:
+            if "direction" in c.lower() and c not in keep_cols:
+                keep_cols.append(c)
+        keep_cols = [c for c in keep_cols if c in df_all.columns]
+
+        df_save = df_all[keep_cols]
+        out_file = output_dir / "features_labeled.parquet"
+        table = pa.Table.from_pandas(df_save)
+        pq.write_table(table, out_file)
+
+        print(f"\n{'='*80}")
+        print(f"\u2705 --prepare-only: 导出完成")
+        print(f"   文件: {out_file}")
+        print(
+            f"   行数: {len(df_save):,} (train {len(df_train_filtered):,} + test {len(df_test_filtered):,})"
+        )
+        print(f"   列数: {len(keep_cols)} (特征 {len(feature_cols)} + 元数据)")
+        print(f"   标签: {target_col}")
+        print(f"\n用法示例:")
+        print(f"   # Prefilter 分析")
+        print(f"   python scripts/analyze_archetype_feature_stratification.py \\")
+        print(f"     --logs {out_file} --strategy {strategy_config.name} \\")
+        print(
+            f"     --config config/strategies/{strategy_config.name}/prefilter.yaml --select-recent 6"
+        )
+        print(f"\n   # Direction 验证")
+        print(
+            f"   python z\u5b9e\u9a8c_005_\u7edf\u4e00\u7814\u7a76/direction_strict_validation.py \\"
+        )
+        print(f"     --logs {out_file} --strategy {strategy_config.name}")
+        print(f"{'='*80}")
+        return
 
     # ------------------------------------------------------------------
     # Diagnostics snapshot (always persisted to results.json later)

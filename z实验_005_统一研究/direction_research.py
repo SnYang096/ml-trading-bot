@@ -73,6 +73,8 @@ def apply_direction_rules_series(
             result[unassigned] = np.sign(series[unassigned])
         elif transform == "negate_sign":
             result[unassigned] = -np.sign(series[unassigned])
+        elif transform == "center_sign":
+            result[unassigned] = np.sign(series[unassigned] - 0.5)
         else:
             result[unassigned] = series[unassigned]
 

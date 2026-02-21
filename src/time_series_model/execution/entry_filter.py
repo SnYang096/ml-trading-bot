@@ -52,10 +52,26 @@ _OP_MAP_SCALAR: Dict[str, Callable[[float, float], bool]] = {
 
 
 def load_entry_filters_config(
-    strategy: str, strategies_root: str = "config/strategies"
+    strategy: str,
+    strategies_root: str = "config/strategies",
+    *,
+    research: bool = False,
 ) -> Dict[str, Any]:
-    """加载 archetypes/entry_filters.yaml 配置"""
-    path = Path(strategies_root) / strategy / "archetypes" / "entry_filters.yaml"
+    """加载 entry_filters.yaml 配置。
+
+    Args:
+        research: True → 读根目录研究文件 (含全部候选 + disabled);
+                  False → 读 archetypes/ 生产文件 (默认, backtest/live 用).
+    """
+    base = Path(strategies_root) / strategy
+    if research:
+        # 研究文件: config/strategies/{strategy}/entry_filters.yaml
+        path = base / "entry_filters.yaml"
+        if not path.exists():
+            # fallback to archetypes
+            path = base / "archetypes" / "entry_filters.yaml"
+    else:
+        path = base / "archetypes" / "entry_filters.yaml"
     if not path.exists():
         return {}
     with open(path, "r", encoding="utf-8") as f:

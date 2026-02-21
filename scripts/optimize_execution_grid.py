@@ -51,6 +51,9 @@ from scripts.backtest_execution_layer import (
     run_grid_search,
     _identify_plateau,
     _generate_grid_search_html,
+    load_direction_config,
+    apply_direction_rules,
+    compute_daily_sharpe,
 )
 
 
@@ -142,8 +145,22 @@ def main() -> int:
             df["entry_direction"] = df[direction_col].astype(float).copy()
             print(f"   📍 Using direction from: {direction_col}")
         else:
-            df["entry_direction"] = 0.0
-            print("   ⚠️  No direction column found, using 0.0")
+            # 尝试 direction.yaml 规则
+            dir_cfg = load_direction_config(args.strategy, args.strategies_root)
+            if dir_cfg:
+                applied = apply_direction_rules(df, args.strategy, dir_cfg)
+                if applied:
+                    print(f"   📍 Direction: {applied} (from direction.yaml)")
+                elif "entry_direction" in df.columns:
+                    print(f"   📍 Direction: entry_direction (原始列)")
+                else:
+                    print("❌ direction.yaml 规则无一命中，且无 entry_direction 列")
+                    return 1
+            elif "entry_direction" in df.columns:
+                print(f"   📍 Direction: entry_direction (原始列, 无 direction.yaml)")
+            else:
+                df["entry_direction"] = 0.0
+                print("   ⚠️  No direction column found, using 0.0")
     else:
         print(f"   📍 Using existing entry_direction column")
 
@@ -261,6 +278,8 @@ def main() -> int:
 
     # 运行网格搜索
     span_years = _estimate_span_years(merged)
+    sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
+    n_symbols = merged[sym_col].nunique() if sym_col in merged.columns else 1
     print("📈 Running grid search...")
     results = run_grid_search(
         merged,
@@ -269,6 +288,7 @@ def main() -> int:
         param_values,
         atr_col="atr",
         span_years=span_years,
+        n_symbols=n_symbols,
     )
 
     # 平坦高原分析
@@ -289,7 +309,29 @@ def main() -> int:
     print(
         f"   Trades: {best['trades']}  |  Mean R: {best['mean_r']:.4f}  |  Win Rate: {best['win_rate']:.1%}"
     )
-    print(f"\n   Plateau: {'✅ 稳定' if plateau['is_plateau'] else '⚠️ 不稳定'}")
+
+    # 用 best params 计算日收益 Sharpe
+    import copy as _copy
+
+    best_config = _copy.deepcopy(exec_config)
+    from scripts.backtest_execution_layer import _set_nested
+
+    for name in param_names:
+        _set_nested(best_config, name, best[name])
+    import io, contextlib
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        best_returns = simulate_rr_execution(
+            merged, best_config, atr_col="atr", silent=True
+        )
+    daily_sh = compute_daily_sharpe(merged, best_returns)
+    print(
+        f"   Sharpe (daily, \u00d7\u221a252): {daily_sh:.2f}  \u2190 \u4e1a\u754c\u53ef\u6bd4\u6307\u6807"
+    )
+
+    print(
+        f"\n   Plateau: {'\u2705 \u7a33\u5b9a' if plateau['is_plateau'] else '\u26a0\ufe0f \u4e0d\u7a33\u5b9a'}"
+    )
     print(
         f"   Top-{plateau['top_n']} mean={plateau['mean_sharpe']:.4f}  std={plateau['std_sharpe']:.4f}  CV={plateau['cv']:.3f}"
     )

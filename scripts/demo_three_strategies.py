@@ -162,9 +162,9 @@ def setup_pcm(strategies):
     print("\n=== 设置 PCM 仲裁层 ===\n")
 
     # 创建 LivePCM 实例
-    # Regime-Aware: NORMAL(BPC>ME>FER), HIGH_VOL(ME>BPC>FER), HIGH_LEVERAGE(LV>FER>ME>BPC)
+    # Regime-Aware: NORMAL(LV>FER>ME>BPC), HIGH_VOL(LV>ME>FER>BPC)
     pcm = LivePCM(
-        archetype_priority=["BPC", "ME", "FER", "LV"],
+        archetype_priority=["LV", "FER", "ME", "BPC"],
         max_slots=int(os.environ.get("MLBOT_MAX_SLOTS", "2")),
         regime_config_path=os.environ.get(
             "MLBOT_PCM_REGIME_CONFIG", "config/pcm_regime.yaml"

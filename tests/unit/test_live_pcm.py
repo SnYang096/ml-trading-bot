@@ -111,7 +111,7 @@ class TestLivePCMPriority:
     """多策略场景：静态优先级（无 regime detector）"""
 
     def test_bpc_beats_me_default(self):
-        """默认优先级：BPC 优先于 ME"""
+        """默认优先级：ME 优先于 BPC（条件严格性）"""
         bpc_intent = _make_intent("BPC", confidence=0.5)
         me_intent = _make_intent("ME", confidence=0.9)
 
@@ -122,10 +122,10 @@ class TestLivePCMPriority:
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
 
         assert len(result) == 1
-        assert result[0].archetype == "BPC"
+        assert result[0].archetype == "ME"
 
     def test_me_beats_fer(self):
-        """默认优先级：ME 优先于 FER"""
+        """默认优先级：FER 优先于 ME（条件严格性）"""
         me_intent = _make_intent("ME", confidence=0.6)
         fer_intent = _make_intent("FER", confidence=1.0)
 
@@ -136,10 +136,10 @@ class TestLivePCMPriority:
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
 
         assert len(result) == 1
-        assert result[0].archetype == "ME"
+        assert result[0].archetype == "FER"
 
     def test_bpc_beats_lv_in_normal(self):
-        """常态下 BPC 优先于 LV"""
+        """常态下 LV 优先于 BPC（条件最严格）"""
         bpc_intent = _make_intent("BPC", confidence=0.3)
         lv_intent = _make_intent("LV", confidence=1.0)
 
@@ -150,10 +150,10 @@ class TestLivePCMPriority:
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
 
         assert len(result) == 1
-        assert result[0].archetype == "BPC"
+        assert result[0].archetype == "LV"
 
     def test_all_four_bpc_wins_default(self):
-        """四个 archetype 同时触发 → BPC 胜出（默认优先级）"""
+        """四个 archetype 同时触发 → LV 胜出（条件最严格）"""
         bpc = _make_intent("BPC", confidence=0.5)
         me = _make_intent("ME", confidence=0.9)
         fer = _make_intent("FER", confidence=1.0)
@@ -168,7 +168,7 @@ class TestLivePCMPriority:
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
 
         assert len(result) == 1
-        assert result[0].archetype == "BPC"
+        assert result[0].archetype == "LV"
 
     def test_same_priority_compare_evidence(self):
         """同优先级（不太可能但测试兜底）→ 比 Evidence"""
@@ -214,9 +214,9 @@ class TestLivePCMPriority:
 
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
 
-        # BPC priority > ME priority 在默认优先级中，所以 BPC 胜出
+        # ME priority > BPC priority 在默认优先级中，所以 ME 胜出
         assert len(result) == 1
-        assert result[0].archetype == "BPC"
+        assert result[0].archetype == "ME"
 
     def test_custom_priority_order(self):
         """自定义优先级顺序"""
@@ -330,7 +330,7 @@ class TestLivePCMManagement:
         assert pcm.archetype_priority == list(DEFAULT_ARCHETYPE_PRIORITY)
 
     def test_default_priority(self):
-        assert DEFAULT_ARCHETYPE_PRIORITY == ["BPC", "ME", "FER", "LV"]
+        assert DEFAULT_ARCHETYPE_PRIORITY == ["LV", "FER", "ME", "BPC"]
 
 
 # ────────────────────────────────────────
@@ -345,14 +345,14 @@ class TestRegimeDetector:
         """默认 regime = NORMAL"""
         rd = RegimeDetector()
         assert rd.current_regime == REGIME_NORMAL
-        assert rd.current_priority == ["BPC", "ME", "FER", "LV"]
+        assert rd.current_priority == ["LV", "FER", "ME", "BPC"]
 
     def test_detect_high_vol(self):
         """atr_percentile > 0.7 → HIGH_VOL"""
         rd = RegimeDetector(min_bars_in_regime=1)
         rd.detect({"atr_percentile": 0.8})
         assert rd.current_regime == REGIME_HIGH_VOL
-        assert rd.current_priority == ["ME", "BPC", "FER", "LV"]
+        assert rd.current_priority == ["LV", "ME", "FER", "BPC"]
 
     def test_detect_high_leverage(self):
         """oi_zscore > 1.5 AND funding > 2.0 → HIGH_LEVERAGE"""
@@ -481,21 +481,21 @@ class TestLivePCMWithRegime:
         assert pcm.current_regime == REGIME_HIGH_LEVERAGE
 
     def test_regime_switch_changes_winner(self):
-        """regime 切换后优胜者变化"""
+        """regime 切换后优胜者变化: NORMAL FER>ME, HIGH_VOL ME>FER"""
         rd = RegimeDetector(min_bars_in_regime=1)
         pcm = LivePCM(regime_detector=rd, max_slots=2)
 
-        bpc = _make_intent("BPC", confidence=0.8)
+        fer = _make_intent("FER", confidence=0.8)
         me = _make_intent("ME", confidence=0.8)
 
-        pcm.register("bpc", FakeStrategy(intents=[bpc]))
+        pcm.register("fer", FakeStrategy(intents=[fer]))
         pcm.register("me", FakeStrategy(intents=[me]))
 
-        # NORMAL: BPC wins
+        # NORMAL: FER wins (条件更严格)
         r1 = pcm.decide(features={**FEATURES, "atr_percentile": 0.3}, symbol="BTCUSDT")
-        assert r1[0].archetype == "BPC"
+        assert r1[0].archetype == "FER"
 
-        # HIGH_VOL: ME wins
+        # HIGH_VOL: ME wins (ME 擅长的环境，ME 提升至 FER 之上)
         r2 = pcm.decide(features={**FEATURES, "atr_percentile": 0.9}, symbol="BTCUSDT")
         assert r2[0].archetype == "ME"
 
@@ -602,7 +602,7 @@ class TestLivePCMOverride:
 
         result = pcm.decide(features=features, symbol="BTCUSDT")
         assert len(result) == 1
-        assert result[0].archetype == "BPC"  # 普通优先级 BPC > ME
+        assert result[0].archetype == "ME"  # 普通优先级 ME > BPC
 
     def test_me_no_override_low_atr(self):
         """ME 不覆盖：atr_percentile 不足 0.75 → 回退到普通优先级"""
@@ -617,7 +617,7 @@ class TestLivePCMOverride:
 
         result = pcm.decide(features=features, symbol="BTCUSDT")
         assert len(result) == 1
-        assert result[0].archetype == "BPC"  # 普通优先级 BPC > ME
+        assert result[0].archetype == "ME"  # 普通优先级 ME > BPC
 
     def test_fer_overrides_me(self):
         """FER 覆盖 ME：反转信号覆盖动能扩张"""
@@ -643,7 +643,7 @@ class TestLivePCMOverride:
 
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
         assert len(result) == 1
-        assert result[0].archetype == "ME"  # 普通优先级 ME > FER
+        assert result[0].archetype == "FER"  # 普通优先级 FER > ME
 
     def test_override_not_active_without_config(self):
         """无 override 配置 → 不触发覆盖，维持原始优先级"""
@@ -656,7 +656,7 @@ class TestLivePCMOverride:
 
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
         assert len(result) == 1
-        assert result[0].archetype == "BPC"  # 默认优先级 BPC > LV
+        assert result[0].archetype == "LV"  # 默认优先级 LV > BPC
 
     def test_lv_override_respects_slot_limit(self):
         """LV override 仍然受 slot 限制"""
@@ -690,7 +690,7 @@ class TestLivePCMOverride:
         assert result[0].archetype == "LV"  # LV 抢占权最高
 
     def test_fer_override_only_targets_me(self):
-        """FER 只覆盖 ME，不覆盖 BPC"""
+        """FER 只覆盖 ME，不覆盖 BPC（但新优先级下 FER 本身 > BPC）"""
         bpc = _make_intent("BPC", confidence=0.5)
         fer = _make_intent("FER", confidence=0.9)
 
@@ -700,7 +700,7 @@ class TestLivePCMOverride:
 
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
         assert len(result) == 1
-        assert result[0].archetype == "BPC"  # FER 不覆盖 BPC，普通优先级 BPC > FER
+        assert result[0].archetype == "FER"  # FER 不覆盖 BPC，但普通优先级 FER > BPC
 
     def test_me_override_only_targets_bpc(self):
         """ME 只覆盖 BPC，不覆盖 FER"""
@@ -715,7 +715,7 @@ class TestLivePCMOverride:
 
         result = pcm.decide(features=features, symbol="BTCUSDT")
         assert len(result) == 1
-        assert result[0].archetype == "ME"  # ME 普通优先级 > FER
+        assert result[0].archetype == "FER"  # ME 不覆盖 FER，普通优先级 FER > ME
 
     def test_override_with_regime_detector(self):
         """Override + Regime 共存：Override (Layer 3) 优先于 Regime (Layer 2)"""

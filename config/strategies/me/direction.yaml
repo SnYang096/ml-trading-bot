@@ -1,64 +1,144 @@
-# ME Direction Determination
-# 版本: 1.0
-# 创建时间: 2026-02-16
+# ME 方向特征候选声明
+# 职责: 声明待验证的方向候选特征 (--compare-features 的输入)
+# 对应生产配置: config/strategies/me/archetypes/direction.yaml (选中的规则)
 #
-# 职责: 确定 ME archetype 的交易方向 (long/short)
-# 原则: 方向来自"动能方向"，是 deterministic 的，不让模型学
+# 用法:
+#   # 默认模式: 只对比本文件 candidates 中的特征
+#   python z实验_005_统一研究/direction_strict_validation.py \
+#       --logs results/train_final_xxx/me/features_labeled.parquet \
+#       --strategy me --compare-features
 #
-# Pipeline 位置:
-#   Direction (本文件) → Gate → Entry Filter → Evidence → Execution
+#   # 发现模式: 扫描全部数值特征 (169+), 用于发现新候选
+#   python z实验_005_统一研究/direction_strict_validation.py \
+#       --logs results/train_final_xxx/me/features_labeled.parquet \
+#       --strategy me --compare-features --all-features
 #
-# 语义:
-#   ME = Momentum Expansion
-#   方向 = 动能方向 (钱在加速进来的方向)
-#   "跟钱走"
+#   # 加 --temporal 查看时间稳定性
+#   ... --compare-features --temporal
+
+description: "ME 方向特征候选 — 动能方向 (跟钱走)"
+
+# ════════════════════════════════════════════════════════════════
+# 候选特征 (输入) — 脚本从这里读取待评估的特征列表
+# ════════════════════════════════════════════════════════════════
+# 每个条目: feature (必须), transform (可选, 自动检测)
+# transform: sign (有正负的特征) | center_sign (百分位数 [0,1])
 #
-# 禁止使用的特征 (会导致语义污染):
-#   - SR 方向 (结构逻辑, 属于 BPC)
-#   - HTF MA 方向
-#   - 结构 break 方向 (属于 BPC)
+# 语义约束:
+#   ME = Momentum Expansion, 方向 = "跟钱走"
+#   禁止: SR 方向、HTF MA、结构 break (属 BPC 语义)
 
-version: 1
+candidates:
+  # ── ME 核心三因子 (Participation + Acceleration) ──
+  - feature: me_delta_net_flow       # 资金净流向 [-1,1]
+  - feature: me_cvd_alignment        # CVD 对齐 [0,1]
+  - feature: me_cvd_strength         # CVD 强度 [0,1]
+  - feature: me_volume_accel         # 成交量加速 [0,1]
+  - feature: me_accel_2k             # 2k 加速度 [-3,3]
+  - feature: me_multi_tf_alignment   # 多时间框架对齐 [0,1]
 
-# 方向因果来源
-causal_source: momentum  # 动能
+  # ── 动量指标 ──
+  - feature: macd_atr                # MACD/ATR (有正负)
+  - feature: macd_signal_atr         # MACD signal/ATR
+  - feature: roc_20                  # 20 期 ROC
+  - feature: price_velocity_pct      # 价格速度百分位 [0,1]
+    transform: center_sign
+  - feature: price_accel_pct         # 价格加速度百分位 [0,1]
+    transform: center_sign
+  - feature: price_position          # 价格位置 [0,1]
+    transform: center_sign
+  - feature: sma_200_position        # SMA200 相对位置
 
-# 方向确定规则 (按优先级从高到低)
-# 命中第一个可用 method 后停止
-direction_rules:
-  # 规则 1: WPT 能量方向 — 最符合文档语义
-  - method: feature_sign
-    feature: wpt_volume_energy_f
-    description: "sign(wpt_energy): 小波变换能量方向"
-    transform: sign  # direction = sign(feature_value)
+  # ── 资金流 / 订单流 ──
+  - feature: oi_delta_price_sign     # OI 变化 × 价格方向
+  - feature: vpin_signed_imbalance_max  # VPIN 签名不平衡
+  - feature: fp_volume_skew          # Footprint 成交量偏斜
 
-  # 规则 2: Delta rolling sum 方向
-  - method: feature_sign
-    feature: delta_rolling_sum
-    description: "sign(delta_rolling_sum): 资金流方向"
-    transform: sign
+  # ── 趋势一致性 ──
+  - feature: price_dir_consistency_pct  # 价格方向一致性 [0,1]
+    transform: center_sign
 
-  # 规则 3: 已有 entry_direction 列 (训练产出)
-  - method: feature_column
-    feature: entry_direction
-    description: "训练产出的方向列"
-    transform: raw
+# ════════════════════════════════════════════════════════════════
+# 上次评估结果 (输出) — 由 --compare-features 生成
+# ════════════════════════════════════════════════════════════════
+# 评估时间: 2026-02-21
+# 数据源: features_labeled.parquet, 157,086 行, 2023-01 ~ 2025-12
+# 基线: always-long  Median RR=+0.0593, Bad Rate=44.2%
 
-  # 规则 4: 价格速度方向 (兜底)
-  - method: feature_sign
-    feature: price_velocity_pct
-    description: "sign(price_velocity): 价格速度方向"
-    transform: sign
+last_evaluation:
+  # ── 自动生成 by --compare-features (2026-02-21) ──
+  timestamp: "2026-02-21"
+  data_source: "features_labeled.parquet"
+  n_rows: 157086
+  baseline_median_rr: +0.0593
+  baseline_bad_rate: 0.4419
 
-# 方向验证
-validation:
-  require_nonzero: true
-  allowed_values: [-1, 1]
+  # ── Median Lift > 0 (4 个) ──
+  positive_lift:
+    - feature: me_delta_net_flow
+      transform: sign
+      median_lift: +0.0778
+      bad_rate_reduction_pct: +0.50
+      short_pct: 43.4
+      temporal_cv: 3.53
+      recent_decay: "0/3"
+    - feature: me_cvd_alignment
+      transform: center_sign
+      median_lift: +0.0778
+      bad_rate_reduction_pct: +0.50
+      short_pct: 43.4
+      temporal_cv: 3.53
+      recent_decay: "0/3"
+    - feature: macd_signal_atr
+      transform: sign
+      median_lift: +0.0082
+      bad_rate_reduction_pct: +0.03
+      short_pct: 48.7
+      temporal_cv: 12.89
+      recent_decay: "2/3"
+    - feature: macd_atr
+      transform: sign
+      median_lift: +0.0044
+      bad_rate_reduction_pct: +0.00
+      short_pct: 48.8
+      temporal_cv: 23.31
+      recent_decay: "2/3"
 
-# 适合的特征 (供参考)
-semantic_features:
-  - wpt_energy_slope
-  - directional_cluster_consecutive
-  - imbalance_direction_consecutive
-  - delta_rolling_sum
-  - price_velocity_percentile
+  # ── Lift <= 0 (兜底候选, 前 5) ──
+  fallback:
+    - feature: oi_delta_price_sign
+      transform: sign
+      median_lift: -0.0043
+      bad_rate_reduction_pct: -0.06
+      short_pct: 51.9
+      temporal_cv: 2.29
+      recent_decay: "0/3"
+    - feature: me_multi_tf_alignment
+      transform: center_sign
+      median_lift: -0.0056
+      bad_rate_reduction_pct: -0.11
+      short_pct: 42.4
+      temporal_cv: 7.45
+      recent_decay: "3/3"
+    - feature: price_dir_consistency_pct
+      transform: center_sign
+      median_lift: -0.0057
+      bad_rate_reduction_pct: -0.08
+      short_pct: 25.9
+      temporal_cv: 2.71
+      recent_decay: "0/3"
+    - feature: price_position
+      transform: center_sign
+      median_lift: -0.0099
+      bad_rate_reduction_pct: -0.09
+      short_pct: 48.7
+      temporal_cv: 3.77
+      recent_decay: "1/3"
+    - feature: roc_20
+      transform: sign
+      median_lift: -0.0124
+      bad_rate_reduction_pct: -0.13
+      short_pct: 49.2
+      temporal_cv: 4.77
+      recent_decay: "2/3"
+

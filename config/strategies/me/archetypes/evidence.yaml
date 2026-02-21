@@ -1,10 +1,16 @@
-# ME Evidence Archetype v3.0
+# ME Evidence Archetype v4.0 (60T)
 # ME = Energy × Acceleration × Participation
 # Evidence 语义: Energy × |Acceleration_5K| × Participation（乘法）
 # Evidence 职责: 在 Gate 通过后，调节执行参数（不做硬 veto）
 #
-# 待训练: 需要运行 optimize_evidence_plateau.py 基于 RR 分层优化
-# 更新: 2026-02-17 - 迁移到 v3.0 三因子模型
+# 更新: 2026-02-21 - 60T plateau 优化完成
+# 数据源: train_final_20260221_215306_return_tree (5126 gated samples)
+# RR 分层: Q20=0.48, Q80=5.74, Good/Bad 各 1025
+#
+# 60T 优化结论:
+#   1. me_volume_surge 是唯一通过 plateau 验证的 evidence 特征
+#   2. me_evidence_signal 缺失（FS 中无此特征）
+#   3. me_accel_5k / me_cvd_strength / me_accel_persistence / me_failure_score 无有效分箱
 
 schema:
   label_semantics:
@@ -32,119 +38,66 @@ schema:
 # 排序依据: bad_suppression (主 KPI)
 
 # ============================================================
-# 🎯 Evidence 特征 (待训练优化)
+# 🎯 Evidence 特征 (60T plateau 优化完成)
 # ============================================================
 evidence:
-  # Rank 1: ME Evidence Signal - 三因子乘积 (待训练验证)
-  - id: evidence_me_signal
-    feature: me_evidence_signal
-    rank: 1
-    sharpness: null  # 待训练
-    direction: positive  # 高值=好，三因子共振
-    usage_hint: ME 三因子乘积信号，影响整体置信度
-    affects:
-      - confidence_boost
-      - position_size
-    quantile_mapping:
-      bins: [0.1, 0.3, 0.5, 0.7]
-      labels: [suppress, downweight, neutral, favor, amplify]
-    optimization:
-      bad_suppression: null  # 待训练
-      status: pending_training
-
-  # Rank 2: ME Acceleration 5K - 速度增强 (待训练验证)
-  - id: evidence_me_accel_5k
-    feature: me_accel_5k
-    rank: 2
-    sharpness: null
-    direction: positive  # |accel| 大=动量正在增强
-    usage_hint: 5K加速度强度，影响 trailing 速度
-    affects:
-      - trailing_speed
-    quantile_mapping:
-      bins: [0.1, 0.3, 0.5, 0.7]
-      labels: [suppress, downweight, neutral, favor, amplify]
-    optimization:
-      bad_suppression: null
-      status: pending_training
-
-  # Rank 3: ME CVD Strength - 订单流强度 (待训练验证)
-  - id: evidence_me_cvd_strength
-    feature: me_cvd_strength
-    rank: 3
-    sharpness: null
-    direction: positive  # 高值=订单流强劲
-    usage_hint: CVD 相对强度，影响仓位调整
-    affects:
-      - position_size
-      - confidence_boost
-    quantile_mapping:
-      bins: [0.15, 0.35, 0.55, 0.75]
-      labels: [suppress, downweight, neutral, favor, amplify]
-    optimization:
-      bad_suppression: null
-      status: pending_training
-
-  # Rank 4: ME Volume Surge - 成交量爆发 (待训练验证)
+  # ✅ Rank 1: ME Volume Surge - 成交量爆发 (plateau validated)
   - id: evidence_me_volume_surge
     feature: me_volume_surge
-    rank: 4
-    sharpness: null
+    rank: 1
+    sharpness: 0.067
     direction: positive  # 高值=放量
     usage_hint: 成交量爆发百分位，影响信心
     affects:
       - confidence_boost
     quantile_mapping:
-      bins: [0.15, 0.35, 0.55, 0.75]
+      bins: [0.25, 0.45, 0.65, 0.85]  # plateau-validated
       labels: [suppress, downweight, neutral, favor, amplify]
     optimization:
-      bad_suppression: null
-      status: pending_training
+      bad_suppression: 0.083
+      good_amplification: 0.083
+      neighbors: 3
+      semantic_drift: 0.058
+      status: plateau_validated
 
-  # Rank 5: ME Acceleration Persistence - 加速持续性 (待训练验证)
-  - id: evidence_me_accel_persistence
-    feature: me_accel_persistence
-    rank: 5
-    sharpness: null
-    direction: positive  # 高值=加速方向稳定
-    usage_hint: 加速方向一致性，影响持有时间
-    affects:
-      - hold_time
-      - trailing_speed
-    quantile_mapping:
-      bins: [0.2, 0.4, 0.6, 0.8]
-      labels: [suppress, downweight, neutral, favor, amplify]
-    optimization:
-      bad_suppression: null
-      status: pending_training
+  # --- 以下特征 60T 下无有效分箱，保留配置备查 ---
 
-  # Rank 6: ME Failure Score - 动能衰竭 (待训练验证)
-  - id: evidence_me_failure_score
-    feature: me_failure_score
-    rank: 6
-    sharpness: null
-    direction: negative  # 高值=坏，标签反转
-    usage_hint: 动能衰竭综合分，高值应降低仓位
-    affects:
-      - position_size
-      - confidence_boost
-    quantile_mapping:
-      bins: [0.15, 0.35, 0.55, 0.75]
-      labels: [amplify, favor, neutral, downweight, suppress]  # 反转
-    optimization:
-      bad_suppression: null
-      status: pending_training
+  # ❌ [DISABLED] ME Evidence Signal - FS 中缺失
+  # - id: evidence_me_signal
+  #   feature: me_evidence_signal
+  #   status: skip_feature_not_found
+
+  # ❌ [DISABLED] ME Acceleration 5K - 无有效分箱
+  # - id: evidence_me_accel_5k
+  #   feature: me_accel_5k
+  #   status: no_valid_bins_60T
+
+  # ❌ [DISABLED] ME CVD Strength - 无有效分箱
+  # - id: evidence_me_cvd_strength
+  #   feature: me_cvd_strength
+  #   status: no_valid_bins_60T
+
+  # ❌ [DISABLED] ME Acceleration Persistence - 无有效分箱
+  # - id: evidence_me_accel_persistence
+  #   feature: me_accel_persistence
+  #   status: no_valid_bins_60T
+
+  # ❌ [DISABLED] ME Failure Score - 无有效分箱
+  # - id: evidence_me_failure_score
+  #   feature: me_failure_score
+  #   status: no_valid_bins_60T
 
 # ============================================================
-# 📊 Evidence 训练说明
+# 📊 Evidence 优化记录
 # ============================================================
-# 当前配置: ME v3.0 6 个专有候选特征 (待训练验证)
-# 下一步: 运行 optimize_evidence_plateau.py 基于 RR 分层(Q20/Q80) 优化
-#   - Good样本: forward_rr > Q80 (高RR交易)
-#   - Bad样本: forward_rr < Q20 (低RR交易)
-#   - 目标KPI: bad_suppression (区分高RR和低RR的能力)
+# 60T 优化结果 (2026-02-21):
+#   ✅ me_volume_surge: bins=[0.25,0.45,0.65,0.85], bad_suppression=0.083
+#   ❌ me_evidence_signal: FS 中无此特征
+#   ❌ me_accel_5k: 无有效分箱 (dual constraint 不满足)
+#   ❌ me_cvd_strength: 无有效分箱
+#   ❌ me_accel_persistence: 无有效分箱
+#   ❌ me_failure_score: 无有效分箱
 #
-# 注意: features_evidence.yaml 包含大量通用特征用于 Return Tree 发现
-#       但 evidence.yaml 只保留经过 plateau 验证的特征
-# 优化后保留有 plateau 的 evidence 特征，移除 knife-edge 特征
-# 参考: z实验_001_bpc/return_tree_kpi_framework.md
+# 结论: ME 60T 仅 volume_surge 有 evidence 区分力
+#       与 gate 层一致 — 60T 下大部分 ME 专属特征失效
+# 参考: results/train_final_20260221_215306_return_tree/me/evidence_optimization.json

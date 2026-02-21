@@ -5,28 +5,20 @@
 对比「有语义信号」vs「无语义信号」的 bad rate 和 median RR。
 
 用法:
-    # 配置驱动 (推荐: 从 prefilter.yaml 读取候选特征)
+    # 默认: 自动读取 config/strategies/{strategy}/prefilter.yaml
     python scripts/analyze_archetype_feature_stratification.py \
         --logs results/train_final_xxx/bpc/predictions.parquet \
-        --strategy bpc \
-        --config config/strategies/bpc/prefilter.yaml
-
-    # 前缀模式 (fallback: 硬编码前缀匹配)
-    python scripts/analyze_archetype_feature_stratification.py \
-        --logs results/train_final_xxx/me/predictions.parquet \
-        --strategy me --prefix me_
+        --strategy bpc
 
     # 指定阈值百分位
     python scripts/analyze_archetype_feature_stratification.py \
         --logs results/train_final_xxx/fer/predictions.parquet \
-        --strategy fer --percentiles 5,10,80,90,95 \
-        --config config/strategies/fer/prefilter.yaml
+        --strategy fer --percentiles 5,10,80,90,95
 
     # 输出 JSON 报告
     python scripts/analyze_archetype_feature_stratification.py \
         --logs results/train_final_xxx/bpc/predictions.parquet \
-        --strategy bpc --output results/bpc_stratification.json \
-        --config config/strategies/bpc/prefilter.yaml
+        --strategy bpc --output results/bpc_stratification.json
 
 算法:
     对每个候选特征:
@@ -37,10 +29,10 @@
          - median forward_rr
       4. 差异越大 → 该特征在此阈值处有区分力
 
-特征来源 (二选一):
-    --config: 读 prefilter.yaml 的 candidates 列表 → 查 feature_dependencies.yaml
-             的 output_columns 解析实际列名 → 匹配 parquet 中存在的列
-    --prefix: 按前缀匹配 parquet 中的列 (旧方案, fallback)
+特征来源:
+    config/strategies/{strategy}/prefilter.yaml 的 candidates 列表
+    → 查 feature_dependencies.yaml 的 output_columns 解析实际列名
+    → 匹配 parquet 中存在的列
 """
 
 from __future__ import annotations
@@ -49,19 +41,12 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 import numpy as np
 import pandas as pd
-
-# ── 默认前缀映射 (fallback, 无 --config 时使用) ─────────────────
-STRATEGY_PREFIX_MAP = {
-    "bpc": ["bpc_"],
-    "me": ["me_"],
-    "fer": ["fer_"],
-    "lv": ["oi_", "funding_rate_abs_zscore", "funding_rate_zscore"],
-}
 
 # ── 默认百分位 ────────────────────────────────────────────────
 DEFAULT_PERCENTILES = [5, 10, 20, 80, 90, 95]
@@ -71,6 +56,10 @@ DEFAULT_MIN_SAMPLES = 30
 
 # ── 默认 feature_dependencies.yaml 路径 ───────────────────────
 DEFAULT_DEPS_PATH = "config/feature_dependencies.yaml"
+
+# ── Temporal analysis constants ─────────────────────────────
+TEMPORAL_WINDOW_MONTHS = [2, 3, 4, 6]
+TEMPORAL_MIN_SAMPLES_PER_WINDOW = 1080  # 统计可信最小样本量
 
 
 def _resolve_features_from_config(
@@ -121,22 +110,6 @@ def _resolve_features_from_config(
             print(f"  ℹ️  {feat_f}: {len(skipped)} 列不在 parquet 中: {skipped[:5]}")
 
     return sorted(set(resolved_columns))
-
-
-def _resolve_prefixes(strategy: str, prefix_override: Optional[str]) -> List[str]:
-    """解析特征前缀列表 (fallback 模式)。"""
-    if prefix_override:
-        return [p.strip() for p in prefix_override.split(",")]
-    return STRATEGY_PREFIX_MAP.get(strategy.lower(), [f"{strategy.lower()}_"])
-
-
-def _find_archetype_features(columns: List[str], prefixes: List[str]) -> List[str]:
-    """从 DataFrame 列中找出匹配前缀的 archetype 专属特征 (fallback 模式)。"""
-    features = []
-    for col in sorted(columns):
-        if any(col.startswith(p) for p in prefixes):
-            features.append(col)
-    return features
 
 
 def _compute_stratification(
@@ -308,6 +281,333 @@ def _classify_results(
     return positive, anti, absence
 
 
+def _find_time_column(df: pd.DataFrame) -> Optional[str]:
+    """找到 DataFrame 中的时间列。"""
+    if isinstance(df.index, pd.DatetimeIndex) and df.index.name:
+        return "__index__"
+    for col in ["timestamp", "date", "datetime", "time", "ts"]:
+        if col in df.columns:
+            return col
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            return col
+    # 尝试解析 index
+    if not isinstance(df.index, pd.DatetimeIndex):
+        try:
+            pd.to_datetime(df.index[:10])
+            return "__index__"
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
+def _get_times(df: pd.DataFrame, time_col: str) -> pd.Series:
+    """获取时间序列。"""
+    if time_col == "__index__":
+        return pd.to_datetime(df.index)
+    return pd.to_datetime(df[time_col])
+
+
+def _temporal_stability_analysis(
+    df: pd.DataFrame,
+    significant_results: List[Dict[str, Any]],
+    label_col: str,
+    time_col: str,
+) -> Dict[str, Any]:
+    """
+    对每个显著特征×阈值，计算不同窗口下的 rolling bad_rate_diff + CV。
+
+    输出:
+    - 每个窗口大小的平均 CV
+    - 最优窗口选择
+    - 每个特征的时间曲线 + 稳定性判定
+    """
+    times = _get_times(df, time_col)
+    t_min, t_max = times.min(), times.max()
+    total_months = (t_max.year - t_min.year) * 12 + (t_max.month - t_min.month)
+
+    print(f"\n{'='*110}")
+    print(f"🕰️  时间稳定性分析 (--temporal)")
+    print(
+        f"   时间范围: {t_min.strftime('%Y-%m')} → {t_max.strftime('%Y-%m')}, 共 {total_months} 个月"
+    )
+
+    # 去重 feature × percentile × direction
+    combos = []
+    seen = set()
+    for r in significant_results:
+        key = (r["feature"], r["percentile"], r["direction"])
+        if key not in seen:
+            seen.add(key)
+            combos.append(r)
+
+    if not combos:
+        print("   ⚠️  无显著特征可分析")
+        return {}
+
+    print(f"   分析 {len(combos)} 个显著特征×阈值组合")
+    print(f"   候选窗口: {', '.join(f'{w}m' for w in TEMPORAL_WINDOW_MONTHS)}")
+
+    # 对每个窗口大小，对每个 combo 计算 rolling bad_rate_diff
+    window_results: Dict[int, List[Dict]] = {}
+
+    for wm in TEMPORAL_WINDOW_MONTHS:
+        window_results[wm] = []
+
+        # 生成窗口 (步长 1 个月)
+        window_start = t_min
+        windows = []
+        while True:
+            window_end = window_start + pd.DateOffset(months=wm)
+            if window_end > t_max + pd.Timedelta(days=1):
+                break
+            windows.append((window_start, window_end))
+            window_start = window_start + pd.DateOffset(months=1)
+
+        if len(windows) < 3:
+            continue
+
+        for combo in combos:
+            feat = combo["feature"]
+            threshold = combo["threshold"]
+            direction = combo["direction"]
+
+            diffs = []
+            window_details = []
+
+            for w_start, w_end in windows:
+                mask = (times >= w_start) & (times < w_end)
+                w_df = df.loc[mask.values]
+
+                if len(w_df) < TEMPORAL_MIN_SAMPLES_PER_WINDOW:
+                    continue
+
+                # 用全周期阈值（不是 per-window 阈值，保持可比性）
+                if direction == "high":
+                    signal_mask = w_df[feat] >= threshold
+                else:
+                    signal_mask = w_df[feat] <= threshold
+
+                signal_df = w_df.loc[signal_mask]
+                rest_df = w_df.loc[~signal_mask]
+
+                if len(signal_df) < 30 or len(rest_df) < 30:
+                    continue
+
+                br_signal = (signal_df[label_col] == 0).mean()
+                br_rest = (rest_df[label_col] == 0).mean()
+                diff = br_signal - br_rest
+
+                diffs.append(diff)
+                window_details.append(
+                    {
+                        "period": f"{w_start.strftime('%Y-%m')}→{w_end.strftime('%Y-%m')}",
+                        "n": len(w_df),
+                        "bad_rate_diff": round(diff, 4),
+                    }
+                )
+
+            if len(diffs) < 3:
+                continue
+
+            diffs_arr = np.array(diffs)
+            mean_diff = float(np.mean(diffs_arr))
+            std_diff = float(np.std(diffs_arr))
+            cv = abs(std_diff / mean_diff) if abs(mean_diff) > 1e-6 else float("inf")
+
+            window_results[wm].append(
+                {
+                    "feature": feat,
+                    "percentile": combo["percentile"],
+                    "direction": direction,
+                    "threshold": threshold,
+                    "full_period_diff": combo["bad_rate_diff"],
+                    "mean_diff": round(mean_diff, 4),
+                    "std_diff": round(std_diff, 4),
+                    "cv": round(cv, 2),
+                    "n_windows": len(diffs),
+                    "latest_diff": round(diffs[-1], 4),
+                    "windows": window_details,
+                }
+            )
+
+    # 找最优窗口 (平均 CV 最小)
+    best_window = None
+    best_avg_cv = float("inf")
+    window_summary: Dict[int, Dict] = {}
+
+    for wm, results in window_results.items():
+        if not results:
+            continue
+        cvs = [r["cv"] for r in results if r["cv"] < float("inf")]
+        if not cvs:
+            continue
+        avg_cv = float(np.mean(cvs))
+        window_summary[wm] = {"avg_cv": round(avg_cv, 2), "n_features": len(results)}
+        if avg_cv < best_avg_cv:
+            best_avg_cv = avg_cv
+            best_window = wm
+
+    # 输出窗口对比
+    print(f"\n   窗口对比:")
+    for wm in sorted(window_summary.keys()):
+        ws = window_summary[wm]
+        marker = " ← 最优" if wm == best_window else ""
+        print(
+            f"     {wm}m: avg CV={ws['avg_cv']:.2f}, {ws['n_features']} 个特征{marker}"
+        )
+
+    if best_window is None:
+        print("   ❌ 无有效窗口 (每个窗口最少需 1080 样本)")
+        return {}
+
+    print(f"\n   ✅ 最优窗口: {best_window} 个月 (avg CV={best_avg_cv:.2f})")
+
+    # 详细表格
+    best_results = window_results[best_window]
+    best_results.sort(key=lambda x: x["cv"])
+
+    print(f"\n{'─'*110}")
+    print(
+        f"{'  特征 × 阈值':<40s} {'全周期':>8s} {'最近窗口':>8s} "
+        f"{'CV':>8s} {'判定':>8s}"
+    )
+    print(f"{'─'*110}")
+
+    for r in best_results:
+        op_str = ">=" if r["direction"] == "high" else "<="
+        feat_str = f"{r['feature']} {r['percentile']}({op_str}{r['threshold']:.3f})"
+        full_str = f"{r['full_period_diff']:+.1%}"
+        latest_str = f"{r['latest_diff']:+.1%}"
+        cv_str = f"{r['cv']:.2f}"
+
+        if r["cv"] < 0.3:
+            verdict = "✅ 稳定"
+        elif r["cv"] < 0.5:
+            verdict = "⚠️  一般"
+        else:
+            verdict = "❌ 不稳"
+
+        print(
+            f"  {feat_str:<38s} {full_str:>8s} {latest_str:>8s} {cv_str:>8s} {verdict}"
+        )
+
+    # Rolling 曲线 (top 5)
+    print(f"\n📈 Rolling bad_rate_diff 曲线 ({best_window}m 窗口, 前 5 个特征):")
+    for r in best_results[:5]:
+        op_str = ">=" if r["direction"] == "high" else "<="
+        print(
+            f"\n  {r['feature']} {r['percentile']}"
+            f"({op_str}{r['threshold']:.3f}) [CV={r['cv']:.2f}]:"
+        )
+        for w in r["windows"]:
+            diff = w["bad_rate_diff"]
+            bar_len = int(abs(diff) * 200)  # 200x 放大
+            bar = "█" * min(bar_len, 30)
+            sign_indicator = "-" if diff < 0 else "+"
+            print(f"    {w['period']}: {diff:+.1%} {sign_indicator}{bar}")
+
+    return {
+        "best_window_months": best_window,
+        "best_avg_cv": round(best_avg_cv, 2),
+        "window_summary": {str(k): v for k, v in window_summary.items()},
+        "feature_stability": best_results,
+    }
+
+
+# ── 自动回写 last_evaluation ─────────────────────────────────────
+
+
+def _write_prefilter_evaluation(
+    config_path: str,
+    positive: List[Dict],
+    anti: List[Dict],
+    absence: List[Dict],
+    temporal_report: Optional[Dict] = None,
+    data_source: str = "",
+    n_rows: int = 0,
+    baseline_bad_rate: float = 0.0,
+    baseline_median_rr: float = 0.0,
+) -> None:
+    """回写分析结果到 prefilter.yaml 的 last_evaluation 段。
+
+    保留 candidates 段和注释，仅替换 last_evaluation 段。
+    """
+    path = Path(config_path)
+    if not path.exists():
+        print(f"\n⚠️  {path} 不存在, 跳过回写")
+        return
+
+    # Build temporal CV map: (feature, percentile, direction) -> cv
+    temporal_cv_map: Dict[tuple, float] = {}
+    if temporal_report and "feature_stability" in temporal_report:
+        for tr in temporal_report["feature_stability"]:
+            key = (tr["feature"], tr.get("percentile", ""), tr.get("direction", ""))
+            temporal_cv_map[key] = tr.get("cv", None)
+
+    lines: list[str] = []
+    lines.append("last_evaluation:")
+    lines.append(f"  # ── 自动生成 ({date.today()}) ──")
+    lines.append(f'  timestamp: "{date.today()}"')
+    lines.append(f'  data_source: "{data_source}"')
+    lines.append(f"  n_rows: {n_rows}")
+    lines.append(f"  baseline_bad_rate: {baseline_bad_rate:.4f}")
+    lines.append(f"  baseline_median_rr: {baseline_median_rr:+.4f}")
+    lines.append("")
+
+    def _fmt_signals(signals: List[Dict], max_items: int = 10) -> None:
+        if not signals:
+            lines.append("    []")
+            return
+        for s in signals[:max_items]:
+            lines.append(f"    - feature: {s['feature']}")
+            lines.append(f"      percentile: {s['percentile']}")
+            lines.append(f"      direction: {s['direction']}")
+            lines.append(f"      threshold: {s['threshold']}")
+            lines.append(f"      bad_rate_signal: {s['bad_rate_signal']:.4f}")
+            lines.append(f"      bad_rate_rest: {s['bad_rate_rest']:.4f}")
+            lines.append(f"      bad_rate_diff: {s['bad_rate_diff']:+.4f}")
+            key = (s["feature"], s.get("percentile", ""), s.get("direction", ""))
+            cv = temporal_cv_map.get(key)
+            if cv is not None:
+                lines.append(f"      temporal_cv: {cv}")
+
+    lines.append(f"  # ── 正信号 ({len(positive)} 个) ──")
+    lines.append("  positive_signals:")
+    _fmt_signals(positive)
+    lines.append("")
+
+    lines.append(f"  # ── 反信号 ({len(anti)} 个) ──")
+    lines.append("  anti_signals:")
+    _fmt_signals(anti)
+    lines.append("")
+
+    lines.append(f"  # ── 低端信号 ({len(absence)} 个) ──")
+    lines.append("  absence_signals:")
+    _fmt_signals(absence)
+    lines.append("")
+
+    eval_text = "\n".join(lines) + "\n"
+
+    # Read & replace
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    marker = "\nlast_evaluation:"
+    idx = content.find(marker)
+    if idx >= 0:
+        new_content = content[: idx + 1] + eval_text
+    else:
+        new_content = content.rstrip() + "\n\n" + eval_text
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+
+    n_total = len(positive) + len(anti) + len(absence)
+    print(f"\n💾 已回写 last_evaluation → {path}")
+    print(f"   正信号: {len(positive)}, 反信号: {len(anti)}, 低端: {len(absence)}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="分位数分层分析：验证 archetype 语义特征的预测力"
@@ -324,14 +624,14 @@ def main() -> int:
         help="策略名称",
     )
     parser.add_argument(
-        "--prefix",
-        default=None,
-        help="特征前缀 (逗号分隔, fallback 模式: 未指定 --config 时使用)",
-    )
-    parser.add_argument(
         "--config",
         default=None,
-        help="prefilter.yaml 路径 (推荐: 配置驱动特征发现)",
+        help="prefilter.yaml 路径 (默认: config/strategies/{strategy}/prefilter.yaml)",
+    )
+    parser.add_argument(
+        "--all-features",
+        action="store_true",
+        help="发现模式: 跳过 prefilter.yaml, 扫描 parquet 全部数值特征",
     )
     parser.add_argument(
         "--deps",
@@ -364,6 +664,28 @@ def main() -> int:
         default=DEFAULT_MIN_SAMPLES,
         help=f"每组最小样本量 (默认: {DEFAULT_MIN_SAMPLES})",
     )
+    parser.add_argument(
+        "--temporal",
+        action="store_true",
+        help="启用时间稳定性分析: rolling bad_rate 曲线 + CV + 多窗口自动选择",
+    )
+    parser.add_argument(
+        "--select-recent",
+        type=int,
+        default=None,
+        metavar="MONTHS",
+        help="Mode A: 用最近 N 个月做特征选择, 全周期做 temporal rolling 验证 (隐含 --temporal)",
+    )
+    parser.add_argument(
+        "--start-date",
+        default=None,
+        help="过滤数据开始日期 (如 2025-07-01)",
+    )
+    parser.add_argument(
+        "--end-date",
+        default=None,
+        help="过滤数据结束日期 (如 2026-01-01)",
+    )
     args = parser.parse_args()
 
     min_samples = args.min_samples
@@ -376,6 +698,59 @@ def main() -> int:
 
     df = pd.read_parquet(logs_path)
     print(f"✅ 加载 {len(df)} 行, {len(df.columns)} 列 from {logs_path}")
+
+    # --select-recent 隐含 --temporal
+    if args.select_recent:
+        args.temporal = True
+
+    # ── 1b. 日期过滤 (可选) ──────────────────────────────
+    if args.start_date or args.end_date:
+        time_col = _find_time_column(df)
+        if time_col is None:
+            print("❌ 无法找到时间列, --start-date/--end-date 无法使用")
+            return 1
+        times = _get_times(df, time_col)
+        n_before = len(df)
+        if args.start_date:
+            df = df.loc[times >= pd.Timestamp(args.start_date)]
+            times = times.loc[df.index]
+        if args.end_date:
+            df = df.loc[times < pd.Timestamp(args.end_date)]
+        print(f"📅 日期过滤: {n_before} → {len(df)} 行", end="")
+        if args.start_date:
+            print(f" (>= {args.start_date})", end="")
+        if args.end_date:
+            print(f" (< {args.end_date})", end="")
+        print()
+        if len(df) < TEMPORAL_MIN_SAMPLES_PER_WINDOW:
+            print(
+                f"❌ 过滤后样本量 {len(df)} < {TEMPORAL_MIN_SAMPLES_PER_WINDOW}, 统计不可信"
+            )
+            return 1
+
+    # ── 1c. select-recent: 分离 df_full 和 df_recent ─────
+    df_full = df  # 全周期数据 (temporal rolling 用)
+    select_recent_months = args.select_recent
+    if select_recent_months:
+        time_col_sr = _find_time_column(df)
+        if time_col_sr is None:
+            print("❌ 无法找到时间列, --select-recent 无法使用")
+            return 1
+        times_sr = _get_times(df, time_col_sr)
+        t_max = times_sr.max()
+        cutoff = t_max - pd.DateOffset(months=select_recent_months)
+        df = df.loc[times_sr.values >= cutoff].copy()
+        print(
+            f"🎯 Mode A: 特征选择窗口 = 最近 {select_recent_months} 个月 "
+            f"({cutoff.strftime('%Y-%m-%d')} → {t_max.strftime('%Y-%m-%d')}), "
+            f"{len(df)} 行"
+        )
+        print(f"   全周期数据保留 {len(df_full)} 行用于 temporal rolling")
+        if len(df) < TEMPORAL_MIN_SAMPLES_PER_WINDOW:
+            print(
+                f"❌ 选择窗口样本量 {len(df)} < {TEMPORAL_MIN_SAMPLES_PER_WINDOW}, 统计不可信"
+            )
+            return 1
 
     # ── 2. 检查标签列 ────────────────────────────────────────
     rr_col = args.rr_col
@@ -413,47 +788,71 @@ def main() -> int:
     print(f"   {n_valid} valid rows, {symbols} symbols")
     print(f"   全局 bad rate: {bad_rate:.1%}, median RR: {med_rr:+.2f}")
 
-    # ── 3. 找候选特征 (config 驱动 / prefix fallback) ────────
-    if args.config:
-        # 配置驱动模式: prefilter.yaml → feature_dependencies.yaml → parquet 列
-        config_path = Path(args.config)
-        deps_path = Path(args.deps)
+    # ── 3. 找候选特征 ────────────────────────────────────────
+    config_path = (
+        Path(args.config)
+        if args.config
+        else Path(f"config/strategies/{args.strategy}/prefilter.yaml")
+    )
+    deps_path = Path(args.deps)
+
+    if getattr(args, "all_features", False):
+        # ── 发现模式: 扫描 parquet 全部数值特征 ──
+        _exclude = {
+            rr_col,
+            "forward_rr",
+            "forward_rr_long",
+            label_col,
+            "success_no_rr_extreme",
+            "failure_rr_extreme",
+            "target",
+            "sample_weight",
+            "pred",
+            "pred_proba",
+            "timestamp",
+            "datetime",
+            "date",
+            "symbol",
+            "_symbol",
+            "direction",
+            "signal_direction",
+        }
+        features = []
+        for col in sorted(df.columns):
+            if col in _exclude:
+                continue
+            if df[col].dtype not in ["float64", "float32", "int64", "int32"]:
+                continue
+            s = df[col].dropna()
+            if len(s) < min_samples * 2:
+                continue
+            features.append(col)
+        print(f"\n🔍 --all-features: 扫描到 {len(features)} 个数值特征")
+        if not features:
+            print("❌ parquet 中无有效数值特征")
+            return 1
+    else:
+        # ── 配置模式: 从 prefilter.yaml 读取 ──
         if not config_path.exists():
             print(f"❌ prefilter.yaml 不存在: {config_path}")
             return 1
         if not deps_path.exists():
             print(f"❌ feature_dependencies.yaml 不存在: {deps_path}")
             return 1
-        print(f"\n🔧 配置驱动模式: {config_path}")
+        print(f"\n📖 读取 {config_path}")
         features = _resolve_features_from_config(
             str(config_path), str(deps_path), list(df.columns)
         )
-        feature_mode = "config"
-    else:
-        # Fallback: 前缀模式
-        prefixes = _resolve_prefixes(args.strategy, args.prefix)
-        features = _find_archetype_features(list(df.columns), prefixes)
-        feature_mode = "prefix"
-
-    if not features:
-        if feature_mode == "config":
+        if not features:
             print(f"❌ 从 prefilter.yaml 解析后无匹配列")
             print(f"   提示: 检查 prefilter.yaml 的 candidates 是否与 parquet 列名对应")
-        else:
-            print(f"❌ 未找到前缀为 {prefixes} 的特征")
-            print(
-                f"   提示: 使用 --prefix 手动指定, 或使用 --config 指定 prefilter.yaml"
-            )
-        return 1
+            return 1
 
-    mode_desc = (
-        f"config: {args.config}" if feature_mode == "config" else f"prefix: {prefixes}"
-    )
-    print(f"\n📊 找到 {len(features)} 个候选特征 ({mode_desc})")
-    for f in features:
-        n_valid_f = df[f].notna().sum()
-        n_nonzero = (df[f] != 0).sum() if df[f].notna().any() else 0
-        print(f"   {f}: {n_valid_f} valid, {n_nonzero} nonzero")
+        print(f"\n📊 找到 {len(features)} 个候选特征")
+        for f in features:
+            n_valid_f = df[f].notna().sum()
+            n_nonzero = (df[f] != 0).sum() if df[f].notna().any() else 0
+            print(f"   {f}: {n_valid_f} valid, {n_nonzero} nonzero")
 
     # ── 4. 逐特征分层分析 ────────────────────────────────────
     percentiles = [int(p) for p in args.percentiles.split(",")]
@@ -473,7 +872,7 @@ def main() -> int:
     positive, anti, absence = _classify_results(all_results)
 
     print(f"\n{'='*110}")
-    print(f"📊 {args.strategy.upper()} 语义特征分位数分层分析 (mode={feature_mode})")
+    print(f"📊 {args.strategy.upper()} 语义特征分位数分层分析")
     print(
         f"   数据: {n_valid} rows, {symbols} symbols, bad rate={bad_rate:.1%}, medRR={med_rr:+.2f}"
     )
@@ -512,6 +911,41 @@ def main() -> int:
             f"(差异 {best['bad_rate_diff']:+.1%})"
         )
 
+    # ── 6b. 时间稳定性分析 (可选) ─────────────────────
+    temporal_report = None
+    if args.temporal:
+        # Mode A: rolling 在 df_full 上做; Mode B: rolling 在 df 上做
+        df_for_rolling = df_full if select_recent_months else df
+        time_col = _find_time_column(df_for_rolling)
+        if time_col is None:
+            print("\n⚠️  无法找到时间列, 跳过 --temporal 分析")
+        else:
+            # 只分析显著特征 (bad_rate_diff > 2%)
+            significant = positive + anti + absence
+            if not significant:
+                print("\n⚠️  无显著特征, 跳过 --temporal 分析")
+            else:
+                if select_recent_months:
+                    print(
+                        f"\n🔄 Mode A: 用近 {select_recent_months}m 选出的 {len(significant)} 个特征, 在全周期 {len(df_for_rolling)} 行上做 rolling 验证"
+                    )
+                temporal_report = _temporal_stability_analysis(
+                    df_for_rolling, significant, label_col, time_col
+                )
+
+    # ── 6c. 回写 last_evaluation ──────────────────────────
+    _write_prefilter_evaluation(
+        config_path=str(config_path),
+        positive=positive,
+        anti=anti,
+        absence=absence,
+        temporal_report=temporal_report,
+        data_source=str(logs_path.name),
+        n_rows=n_total,
+        baseline_bad_rate=float(bad_rate),
+        baseline_median_rr=float(med_rr),
+    )
+
     # ── 7. 输出 JSON ─────────────────────────────────────────
     if args.output:
         output_path = Path(args.output)
@@ -519,8 +953,7 @@ def main() -> int:
 
         report = {
             "strategy": args.strategy,
-            "feature_mode": feature_mode,
-            "config_path": args.config,
+            "config_path": str(config_path),
             "data": {
                 "n_rows": n_total,
                 "n_valid": int(n_valid),
@@ -543,6 +976,9 @@ def main() -> int:
             "absence_signals": absence,
             "all_results": all_results,
         }
+
+        if temporal_report:
+            report["temporal_stability"] = temporal_report
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, ensure_ascii=False)

@@ -31,10 +31,12 @@ import argparse
 import itertools
 import os
 import sys
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Set
 
 import numpy as np
 import pandas as pd
+import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -45,7 +47,9 @@ from src.time_series_model.execution.entry_filter import (
 )
 from scripts.backtest_execution_layer import (
     _estimate_span_years,
+    apply_direction_rules,
     compute_sharpe,
+    load_direction_config,
     load_execution_config,
     simulate_rr_execution,
 )
@@ -106,6 +110,215 @@ def compute_stop_rate(
     if len(valid) < 1:
         return 0.0
     return float((valid <= -(sl_r - eps)).mean())
+
+
+# ================================================================
+# Feature Scan (--scan mode)
+# ================================================================
+
+# 系统列 / 标签列 / 方向列 — 不应作为 entry filter 候选
+_SCAN_EXCLUDE_PREFIXES = ("ef_",)  # 衍生 entry filter 特征
+_SCAN_EXCLUDE_COLS = {
+    # index / meta
+    "symbol",
+    "_symbol",
+    "timestamp",
+    "date",
+    "datetime",
+    "index",
+    # target / label
+    "forward_rr",
+    "label",
+    "target",
+    "forward_return",
+    # direction
+    "entry_direction",
+    "bpc_breakout_direction",
+    "me_delta_net_flow",
+    # gate
+    "gate_decision",
+    "gate_score",
+    "gate_allow",
+    # OHLCV / price
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "atr",
+    # evidence
+    "evidence_score",
+    "position_size",
+}
+
+
+def _load_raw_scale_columns(
+    config_path: str = "config/feature_dependencies.yaml",
+) -> Set[str]:
+    """Load raw_scale_columns from feature_dependencies.yaml.
+
+    Returns flat set of column names that should be excluded from
+    cross-asset scans (unnormalized price/flow/energy columns).
+    """
+    p = Path(config_path)
+    if not p.exists():
+        return set()
+    with open(p, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    raw = cfg.get("raw_scale_columns", {})
+    cols: Set[str] = set()
+    for category_list in raw.values():
+        if isinstance(category_list, list):
+            cols.update(str(c) for c in category_list)
+    return cols
+
+
+def run_feature_scan(
+    merged: pd.DataFrame,
+    orig_dir: pd.Series,
+    exec_config: Dict[str, Any],
+    span_years: float,
+    min_samples: int = 200,
+    silent: bool = False,
+) -> List[Dict[str, Any]]:
+    """全特征自动扫描: 每个数值列 × 多阈值 → execution 模拟 → snotio 排序
+
+    对每个数值特征:
+      - 高阈值: P70, P80, P90 (>=)
+      - 低阈值: P10, P20, P30 (<=)
+    共 6 个切点, 过滤后运行 simulate_rr_execution 计算 snotio。
+    """
+    # 筛选数值列
+    raw_scale = _load_raw_scale_columns()
+    if not silent and raw_scale:
+        print(
+            f"   Excluding {len(raw_scale)} raw-scale columns from feature_dependencies.yaml"
+        )
+    numeric_cols = []
+    for c in merged.columns:
+        if c in _SCAN_EXCLUDE_COLS:
+            continue
+        if c in raw_scale:
+            continue
+        if any(c.startswith(p) for p in _SCAN_EXCLUDE_PREFIXES):
+            continue
+        if pd.api.types.is_numeric_dtype(merged[c]):
+            vals = pd.to_numeric(merged[c], errors="coerce")
+            if vals.isna().sum() > len(merged) * 0.5:
+                continue
+            # 跳过常量列
+            if vals.nunique() < 3:
+                continue
+            numeric_cols.append(c)
+
+    pct_high = [0.70, 0.80, 0.90]
+    pct_low = [0.10, 0.20, 0.30]
+    total_evals = len(numeric_cols) * (len(pct_high) + len(pct_low))
+
+    if not silent:
+        print(
+            f"   Numeric features: {len(numeric_cols)}, thresholds: {len(pct_high)+len(pct_low)} per feature"
+        )
+        print(f"   Total evaluations: {total_evals} (est. ~{total_evals * 0.15:.0f}s)")
+
+    orig_merged = merged.copy()
+    results = []
+    done = 0
+
+    for col in numeric_cols:
+        vals = pd.to_numeric(merged[col], errors="coerce")
+
+        # --- high thresholds (>=) ---
+        for pct in pct_high:
+            done += 1
+            threshold = float(vals.quantile(pct))
+            mask = vals >= threshold
+            n_pass = int(mask.sum())
+            if n_pass < min_samples or n_pass > len(merged) * 0.90:
+                continue
+
+            test_df = orig_merged.copy()
+            test_df["entry_direction"] = orig_dir.copy()
+            test_df.loc[~mask, "entry_direction"] = 0.0
+            if int((test_df["entry_direction"] != 0).sum()) < 20:
+                continue
+
+            rr = simulate_rr_execution(test_df, exec_config, atr_col="atr", silent=True)
+            valid = rr.dropna()
+            if len(valid) < 10:
+                continue
+
+            results.append(
+                {
+                    "feature": col,
+                    "operator": ">=",
+                    "threshold": round(threshold, 6),
+                    "percentile": f"P{int(pct*100)}",
+                    "n": 1,
+                    "filters": f"{col}>={threshold:.4f}(P{int(pct*100)})",
+                    "trades": len(valid),
+                    "snotio": round(compute_snotio(valid), 4),
+                    "worst_10": round(compute_worst_pct(valid, 10.0), 4),
+                    "worst_5": round(compute_worst_pct(valid, 5.0), 4),
+                    "mae_risk": round(compute_mae_per_risk(valid), 4),
+                    "loss_rate": round(compute_loss_rate(valid), 4),
+                    "stop_rate": round(compute_stop_rate(valid), 4),
+                    "sharpe_pt": round(compute_sharpe(valid, annualize=False), 4),
+                    "win_rate": round(float((valid > 0).mean()), 4),
+                }
+            )
+
+        # --- low thresholds (<=) ---
+        for pct in pct_low:
+            done += 1
+            threshold = float(vals.quantile(pct))
+            mask = vals <= threshold
+            n_pass = int(mask.sum())
+            if n_pass < min_samples or n_pass > len(merged) * 0.90:
+                continue
+
+            test_df = orig_merged.copy()
+            test_df["entry_direction"] = orig_dir.copy()
+            test_df.loc[~mask, "entry_direction"] = 0.0
+            if int((test_df["entry_direction"] != 0).sum()) < 20:
+                continue
+
+            rr = simulate_rr_execution(test_df, exec_config, atr_col="atr", silent=True)
+            valid = rr.dropna()
+            if len(valid) < 10:
+                continue
+
+            results.append(
+                {
+                    "feature": col,
+                    "operator": "<=",
+                    "threshold": round(threshold, 6),
+                    "percentile": f"P{int(pct*100)}",
+                    "n": 1,
+                    "filters": f"{col}<={threshold:.4f}(P{int(pct*100)})",
+                    "trades": len(valid),
+                    "snotio": round(compute_snotio(valid), 4),
+                    "worst_10": round(compute_worst_pct(valid, 10.0), 4),
+                    "worst_5": round(compute_worst_pct(valid, 5.0), 4),
+                    "mae_risk": round(compute_mae_per_risk(valid), 4),
+                    "loss_rate": round(compute_loss_rate(valid), 4),
+                    "stop_rate": round(compute_stop_rate(valid), 4),
+                    "sharpe_pt": round(compute_sharpe(valid, annualize=False), 4),
+                    "win_rate": round(float((valid > 0).mean()), 4),
+                }
+            )
+
+        # progress
+        if not silent and done % 300 == 0:
+            print(f"   ... {done}/{total_evals} evaluated, {len(results)} valid so far")
+
+    if not silent:
+        print(
+            f"   Scan complete: {done}/{total_evals} evaluated, {len(results)} valid results"
+        )
+
+    results.sort(key=lambda x: -x["snotio"])
+    return results
 
 
 # ================================================================
@@ -840,6 +1053,18 @@ def main():
         default=False,
         help="全量评估: 包含 filters + disabled_filters 中所有有 conditions 的 filter",
     )
+    parser.add_argument(
+        "--scan",
+        action="store_true",
+        default=False,
+        help="全特征扫描: 自动测试所有数值列 × 多阈值 (P10-P90), execution 模拟排序",
+    )
+    parser.add_argument(
+        "--scan-top",
+        type=int,
+        default=40,
+        help="--scan 模式下终端显示前 N 条 (默认 40)",
+    )
     args = parser.parse_args()
 
     # Load data
@@ -849,10 +1074,10 @@ def main():
         merged = merged.rename(columns={"_symbol": "symbol"})
 
     exec_config = load_execution_config(args.strategy)
-    entry_cfg = load_entry_filters_config(args.strategy)
+    entry_cfg = load_entry_filters_config(args.strategy, research=True)
 
     # --all: 合并 filters + disabled_filters 为一个列表，全部当作 enabled 评估
-    if args.all:
+    if args.all and not args.scan:
         all_filters = list(entry_cfg.get("filters", []))
         disabled = entry_cfg.get("disabled_filters", [])
         if disabled:
@@ -871,7 +1096,20 @@ def main():
         entry_cfg["filters"] = deduped
         print(f"   --all mode: {len(deduped)} filters (filters + disabled_filters)")
 
-    merged["entry_direction"] = merged["bpc_breakout_direction"].astype(float)
+    # 策略感知的方向确定 (direction.yaml)
+    dir_cfg = load_direction_config(args.strategy)
+    if dir_cfg and dir_cfg.get("direction_rules"):
+        used = apply_direction_rules(merged, args.strategy, dir_cfg)
+        if used is None:
+            print("❌ No direction rule matched, check direction.yaml")
+            return
+    elif "bpc_breakout_direction" in merged.columns:
+        merged["entry_direction"] = merged["bpc_breakout_direction"].astype(float)
+    else:
+        print(
+            "❌ No direction column found (no direction.yaml and no bpc_breakout_direction)"
+        )
+        return
     merged = merged.sort_values(["symbol"]).reset_index(drop=True)
 
     # 计算衍生 entry filter 特征（正交维度）
@@ -884,7 +1122,85 @@ def main():
     orig_dir = merged["entry_direction"].copy()
     span_years = _estimate_span_years(merged)
 
-    # Run search
+    # ============================================================
+    # --scan 模式: 全特征自动扫描
+    # ============================================================
+    if args.scan:
+        print(f"\n🔍 Running full feature scan (execution simulation)...")
+        baseline = compute_baseline(merged, orig_dir, exec_config)
+        scan_results = run_feature_scan(
+            merged, orig_dir, exec_config, span_years, min_samples=200
+        )
+
+        # Terminal output
+        top_n = args.scan_top
+        print()
+        print("=" * 140)
+        print(
+            f"FEATURE SCAN — snotio KPI ({len(scan_results)} valid, span={span_years:.2f}yr)"
+        )
+        print("=" * 140)
+        print(
+            f"{'Rank':>4} {'snotio':>8} {'Loss%':>6} {'Stop%':>6} {'Sh_pt':>7} {'Win%':>6} {'Trades':>7}  "
+            f"{'Feature':<40} {'Op':>3} {'Thresh':>10} {'Pct':>4}"
+        )
+        print("-" * 140)
+        for i, r in enumerate(scan_results[:top_n], 1):
+            delta = r["snotio"] - baseline["snotio"]
+            marker = " ★" if delta > baseline["snotio"] * 0.1 else ""
+            print(
+                f"{i:>4} {r['snotio']:>8.4f} {r['loss_rate']*100:>5.1f}% {r['stop_rate']*100:>5.1f}% "
+                f"{r['sharpe_pt']:>7.4f} {r['win_rate']*100:>5.1f}% {r['trades']:>7}  "
+                f"{r['feature']:<40} {r['operator']:>3} {r['threshold']:>10.4f} {r['percentile']:>4}{marker}"
+            )
+
+        print(
+            f"\n   Baseline (none): snotio={baseline['snotio']:.4f}, Loss={baseline['loss_rate']:.1%}, "
+            f"Stop={baseline['stop_rate']:.1%}, Sh_pt={baseline['sharpe_pt']:.4f}, Trades={baseline['trades']}"
+        )
+
+        if scan_results:
+            best = scan_results[0]
+            delta = best["snotio"] - baseline["snotio"]
+            print(
+                f"\n   🏆 BEST: {best['feature']} {best['operator']} {best['threshold']:.4f} ({best['percentile']})"
+            )
+            print(
+                f"      snotio={best['snotio']:.4f}, Trades={best['trades']}, "
+                f"Δ snotio vs baseline: {'+' if delta > 0 else ''}{delta:.4f} ({delta/baseline['snotio']*100:+.1f}%)"
+            )
+
+        # 输出 YAML 片段 (top 5)
+        print(f"\n   📋 Top 5 YAML 片段 (可直接复制到 entry_filters.yaml):")
+        for i, r in enumerate(scan_results[:5], 1):
+            fid = r["feature"].replace(".", "_")
+            op_str = "high" if r["operator"] == ">=" else "low"
+            print(
+                f"      # {i}. {r['feature']} {r['operator']} {r['threshold']:.4f} | snotio={r['snotio']:.4f}"
+            )
+            print(f"      - id: scan_{fid}_{op_str}")
+            print(f"        enabled: true")
+            print(f"        conditions:")
+            print(f'          - feature: {r["feature"]}')
+            print(f'            operator: "{r["operator"]}"')
+            print(f"            value: {r['threshold']}")
+            print()
+
+        # HTML
+        if args.output:
+            out_path = args.output
+        else:
+            out_dir = os.path.dirname(args.logs)
+            out_path = os.path.join(out_dir, "entry_filter_scan.html")
+        generate_html_report(
+            scan_results, baseline, [], span_years, args.strategy, out_path
+        )
+        print(f"   📄 HTML report: {out_path}")
+        return
+
+    # ============================================================
+    # 正常模式: combo search
+    # ============================================================
     max_n = 1 if args.all else 0  # --all: 只跑单 filter (N=1)，避免 2^16 组合爆炸
     print(
         f"\n🔍 Running combo search (snotio KPI, max_n={'all' if max_n == 0 else max_n})..."

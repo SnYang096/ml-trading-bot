@@ -3,7 +3,10 @@
 Entry Filter 阈值平坦高原扫描
 
 对每个 entry filter 中的连续阈值条件（>=, >, <=, <），
-扫描阈值范围，计算 Sharpe/Trades，找到平坦高原区间。
+扫描阈值范围，计算 snotio/Trades，找到平坦高原区间。
+
+snotio = mean(R-multiples) = 平均每笔交易的风险调整收益。
+Entry Filter 主 KPI。不受 trade count 影响，只有 per-trade 质量提升才会改善。
 
 用法:
     # 扫描所有 filter 的所有连续阈值
@@ -18,7 +21,7 @@ Entry Filter 阈值平坦高原扫描
         --filter deep_pullback_vol
 
 输出:
-    - HTML 报告（含 Sharpe vs Threshold 图表）
+    - HTML 报告（含 snotio vs Threshold 图表）
 """
 from __future__ import annotations
 
@@ -78,22 +81,24 @@ def _generate_scan_range(
 ) -> List[float]:
     """根据当前阈值和运算符生成扫描范围。
 
-    对于 >= / > : 从 0.1 到 0.95 扫描（高阈值 = 更严格）
-    对于 <= / < : 从 0.05 到 0.9 扫描（低阈值 = 更严格）
-    特殊处理 value=0 的情况（如 liquidity_void > 0）
+    对于 >= / > : 高阈值更严格
+    对于 <= / < : 低阈值更严格
+    支持负值范围（如 cvd_divergence_score <= -0.776）
     """
-    if operator in (">=", ">"):
-        # 高阈值更严格，扫描 [low, high]
-        low = max(0.0, current_value - 0.4)
-        high = min(1.0, current_value + 0.4)
-    else:
-        # <=, < : 低阈值更严格
-        low = max(0.0, current_value - 0.4)
-        high = min(1.0, current_value + 0.4)
+    # 动态范围: 当前值 ± 0.4，不截断到 [0, 1]
+    margin = 0.4
+    low = current_value - margin
+    high = current_value + margin
 
-    if low == high:
-        low = 0.0
-        high = 1.0
+    # 对于归一化特征 (0~1 范围)，适当截断
+    if current_value >= 0 and current_value <= 1:
+        low = max(0.0, low)
+        high = min(1.0, high)
+
+    if abs(high - low) < 1e-8:
+        # fallback: 当前值 ± 0.5
+        low = current_value - 0.5
+        high = current_value + 0.5
 
     step = (high - low) / (n_steps - 1)
     return [round(low + i * step, 3) for i in range(n_steps)]
@@ -149,6 +154,7 @@ def _scan_single_threshold(
                 {
                     "threshold": val,
                     "trades": n_entries,
+                    "snotio": 0.0,
                     "sharpe": 0.0,
                     "win_rate": 0.0,
                     "mean_r": 0.0,
@@ -166,6 +172,7 @@ def _scan_single_threshold(
                 {
                     "threshold": val,
                     "trades": n_entries,
+                    "snotio": 0.0,
                     "sharpe": 0.0,
                     "win_rate": 0.0,
                     "mean_r": 0.0,
@@ -175,13 +182,15 @@ def _scan_single_threshold(
             continue
 
         sh = compute_sharpe(valid, annualize=False)
+        snotio_val = float(valid.mean())  # snotio = mean(R-multiples)
         results.append(
             {
                 "threshold": val,
                 "trades": len(valid),
+                "snotio": snotio_val,
                 "sharpe": float(sh),
                 "win_rate": float((valid > 0).mean()),
-                "mean_r": float(valid.mean()),
+                "mean_r": snotio_val,
                 "too_few": False,
             }
         )
@@ -200,7 +209,7 @@ def _find_plateau(
     """分析扫描结果，找到平坦高原区间。
 
     使用滑动窗口双 CV 判定：
-      - Sharpe CV < 0.3（收益稳定性）
+      - snotio CV < 0.3（收益稳定性）
       - Trades CV < 0.4（执行节奏稳定性 — Entry Filter 特有）
 
     recommended 不取中点，取 plateau 偏宽容侧：
@@ -212,10 +221,10 @@ def _find_plateau(
 
     原理：plateau 的存在证明了「严格 ≠ 更好」，
     Entry Filter 的错误成本是「错过」而非「多等一次确认」。
-    在 Sharpe 无本质差别的区间内，选更容易触发入场的一侧。
+    在 snotio 无本质差别的区间内，选更容易触发入场的一侧。
 
-    plateau 排序用 mean_sharpe × plateau_width（鲁棒性最大化），
-    而非单纯 mean_sharpe 最大化，让宽而稳的高原优先于窄而高的尖峰。
+    plateau 排序用 mean_snotio × plateau_width（鲁棒性最大化），
+    而非单纯 mean_snotio 最大化，让宽而稳的高原优先于窄而高的尖峰。
 
     输出 plateau_width 作为置信度指标（宽度越大 = 越稳定 = 越可部署）。
     """
@@ -229,21 +238,21 @@ def _find_plateau(
     best_plateau = None
     for i in range(len(valid) - window + 1):
         w = valid[i : i + window]
-        sharpes = [r["sharpe"] for r in w]
+        snotios = [r["snotio"] for r in w]
         trades_list = [r["trades"] for r in w]
-        mean_sh = np.mean(sharpes)
-        std_sh = np.std(sharpes)
-        cv_sharpe = std_sh / mean_sh if mean_sh > 1e-8 else 999
+        mean_sn = np.mean(snotios)
+        std_sn = np.std(snotios)
+        cv_snotio = std_sn / mean_sn if mean_sn > 1e-8 else 999
         mean_tr = np.mean(trades_list)
         std_tr = np.std(trades_list)
         cv_trades = std_tr / mean_tr if mean_tr > 1e-8 else 999
 
-        if cv_sharpe < 0.3 and cv_trades < 0.4 and mean_sh > 0:
+        if cv_snotio < 0.3 and cv_trades < 0.4 and mean_sn > 0:
             start_t = w[0]["threshold"]
             end_t = w[-1]["threshold"]
-            plateau_width = end_t - start_t
-            # 排序: mean_sharpe × plateau_width（鲁棒性最大化）
-            robustness = mean_sh * plateau_width
+            plateau_width = abs(end_t - start_t)
+            # 排序: mean_snotio × plateau_width（鲁棒性最大化）
+            robustness = mean_sn * plateau_width
             if best_plateau is None or robustness > best_plateau.get("_robustness", -1):
                 # bias 动态绑定 width: 窄高原偏多，宽高原偏少
                 bias = 0.2 if plateau_width < 0.25 else 0.1
@@ -260,25 +269,25 @@ def _find_plateau(
                     "end_threshold": end_t,
                     "plateau_width": float(plateau_width),
                     "confidence": _width_to_confidence(plateau_width),
-                    "mean_sharpe": float(mean_sh),
-                    "cv_sharpe": float(cv_sharpe),
+                    "mean_snotio": float(mean_sn),
+                    "cv_snotio": float(cv_snotio),
                     "cv_trades": float(cv_trades),
                     "mean_trades": float(mean_tr),
                     "recommended": float(w[rec_idx]["threshold"]),
                 }
 
     if best_plateau is None:
-        # 尝试只用 Sharpe CV（放宽 Trades CV 约束）
+        # 尝试只用 snotio CV（放宽 Trades CV 约束）
         for i in range(len(valid) - window + 1):
             w = valid[i : i + window]
-            sharpes = [r["sharpe"] for r in w]
-            mean_sh = np.mean(sharpes)
-            cv_sharpe = np.std(sharpes) / mean_sh if mean_sh > 1e-8 else 999
-            if cv_sharpe < 0.3 and mean_sh > 0:
+            snotios = [r["snotio"] for r in w]
+            mean_sn = np.mean(snotios)
+            cv_snotio = np.std(snotios) / mean_sn if mean_sn > 1e-8 else 999
+            if cv_snotio < 0.3 and mean_sn > 0:
                 start_t = w[0]["threshold"]
                 end_t = w[-1]["threshold"]
-                pw = end_t - start_t
-                robustness = mean_sh * pw
+                pw = abs(end_t - start_t)
+                robustness = mean_sn * pw
                 if best_plateau is None or robustness > best_plateau.get(
                     "_robustness", -1
                 ):
@@ -301,8 +310,8 @@ def _find_plateau(
                         "end_threshold": w[-1]["threshold"],
                         "plateau_width": float(pw),
                         "confidence": _width_to_confidence(pw),
-                        "mean_sharpe": float(mean_sh),
-                        "cv_sharpe": float(cv_sharpe),
+                        "mean_snotio": float(mean_sn),
+                        "cv_snotio": float(cv_snotio),
                         "cv_trades": float(cv_trades),
                         "cv_trades_warning": True,  # Trades CV 超标
                         "mean_trades": float(np.mean(trades_list)),
@@ -310,14 +319,14 @@ def _find_plateau(
                     }
 
     if best_plateau is None:
-        sharpes = [r["sharpe"] for r in valid]
-        best_idx = int(np.argmax(sharpes))
+        snotios = [r["snotio"] for r in valid]
+        best_idx = int(np.argmax(snotios))
         return {
             "is_plateau": False,
             "reason": "无 CV<0.3 的稳定窗口",
             "best_single": {
                 "threshold": valid[best_idx]["threshold"],
-                "sharpe": valid[best_idx]["sharpe"],
+                "snotio": valid[best_idx]["snotio"],
                 "trades": valid[best_idx]["trades"],
             },
         }
@@ -347,7 +356,7 @@ def _generate_html_report(
     all_results: Dict[str, Any],
     strategy: str,
 ) -> str:
-    """生成 HTML 报告，含 Sharpe vs Threshold 图表。"""
+    """生成 HTML 报告，含 snotio vs Threshold 图表。"""
 
     filter_sections = ""
     for filter_name, filter_data in all_results.items():
@@ -359,21 +368,21 @@ def _generate_html_report(
             scan_data = cond_result["scan_results"]
             plateau = cond_result["plateau"]
 
-            # 构造 SVG 图表（Sharpe vs Threshold）
+            # 构造 SVG 图表（snotio vs Threshold）
             valid_pts = [r for r in scan_data if not r.get("too_few")]
             if not valid_pts:
                 conditions_html += f"<div class='cond'><h4>{feature} {operator} {current} — 无有效数据</h4></div>"
                 continue
 
             thresholds = [r["threshold"] for r in valid_pts]
-            sharpes = [r["sharpe"] for r in valid_pts]
+            snotios = [r["snotio"] for r in valid_pts]
             trades = [r["trades"] for r in valid_pts]
 
             # 简单 SVG 折线图
             w, h = 600, 250
             pad = 50
-            min_sh = min(sharpes) * 0.9 if min(sharpes) > 0 else -0.05
-            max_sh = max(sharpes) * 1.1 if max(sharpes) > 0 else 0.5
+            min_sh = min(snotios) * 0.9 if min(snotios) > 0 else -0.05
+            max_sh = max(snotios) * 1.1 if max(snotios) > 0 else 0.5
             min_t = min(thresholds)
             max_t = max(thresholds)
             t_range = max_t - min_t if max_t > min_t else 1
@@ -385,9 +394,9 @@ def _generate_html_report(
             def ty(v):
                 return h - pad - (v - min_sh) / sh_range * (h - 2 * pad)
 
-            # Sharpe line
+            # snotio line
             pts = " ".join(
-                f"{tx(t):.1f},{ty(s):.1f}" for t, s in zip(thresholds, sharpes)
+                f"{tx(t):.1f},{ty(s):.1f}" for t, s in zip(thresholds, snotios)
             )
             # Current value marker
             cx = tx(current)
@@ -413,8 +422,8 @@ def _generate_html_report(
                     f"[{plateau['start_threshold']:.3f}, {plateau['end_threshold']:.3f}] "
                     f"width={plateau['plateau_width']:.3f} "
                     f"<span style='color:{conf_color};font-weight:bold'>conf={plateau['confidence']}</span> "
-                    f"mean Sharpe={plateau['mean_sharpe']:.4f} "
-                    f"CV(Sharpe={plateau['cv_sharpe']:.3f}, Trades={plateau['cv_trades']:.3f}) "
+                    f"mean snotio={plateau['mean_snotio']:.4f} "
+                    f"CV(snotio={plateau['cv_snotio']:.3f}, Trades={plateau['cv_trades']:.3f}) "
                     f"推荐阈值={plateau['recommended']:.3f} "
                     f"(当前={current}){warn_html}</div>"
                 )
@@ -425,7 +434,7 @@ def _generate_html_report(
                 if best:
                     plateau_text += (
                         f" | 最佳单点: threshold={best.get('threshold')}, "
-                        f"Sharpe={best.get('sharpe', 0):.4f}, "
+                        f"snotio={best.get('snotio', 0):.4f}, "
                         f"Trades={best.get('trades', 0)}"
                     )
                 plateau_text += "</div>"
@@ -444,10 +453,10 @@ def _generate_html_report(
                 {plateau_rect}
                 {bars}
                 <polyline points="{pts}" fill="none" stroke="#FF5722" stroke-width="2"/>
-                {''.join(f'<circle cx="{tx(t):.1f}" cy="{ty(s):.1f}" r="3" fill="#FF5722"/>' for t, s in zip(thresholds, sharpes))}
+                {''.join(f'<circle cx="{tx(t):.1f}" cy="{ty(s):.1f}" r="3" fill="#FF5722"/>' for t, s in zip(thresholds, snotios))}
                 <line x1="{cx:.0f}" y1="{pad}" x2="{cx:.0f}" y2="{h-pad}" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
                 <text x="{cx:.0f}" y="{pad-5}" text-anchor="middle" font-size="10" fill="#333">current={current}</text>
-                <text x="{pad-5}" y="{pad-5}" text-anchor="end" font-size="10" fill="#999">Sharpe</text>
+                <text x="{pad-5}" y="{pad-5}" text-anchor="end" font-size="10" fill="#999">snotio</text>
                 <text x="{w-pad+5}" y="{h-pad+15}" font-size="10" fill="#999">threshold</text>
                 <text x="{pad}" y="{h-5}" font-size="9" fill="#999">{min_t:.2f}</text>
                 <text x="{w-pad}" y="{h-5}" font-size="9" fill="#999">{max_t:.2f}</text>
@@ -463,7 +472,7 @@ def _generate_html_report(
                 if r.get("too_few"):
                     rows += f"<tr{style}><td>{r['threshold']:.3f}</td><td>{r['trades']}</td><td colspan='3'>trades < 20{marker}</td></tr>"
                 else:
-                    rows += f"<tr{style}><td>{r['threshold']:.3f}</td><td>{r['trades']}</td><td>{r['sharpe']:.4f}</td><td>{r['win_rate']*100:.1f}%</td><td>{r['mean_r']:.4f}{marker}</td></tr>"
+                    rows += f"<tr{style}><td>{r['threshold']:.3f}</td><td>{r['trades']}</td><td>{r['snotio']:.4f}</td><td>{r['win_rate']*100:.1f}%</td><td>{r['mean_r']:.4f}{marker}</td></tr>"
 
             conditions_html += f"""
             <div class="cond">
@@ -472,7 +481,7 @@ def _generate_html_report(
                 {plateau_text}
                 <details><summary>详细数据</summary>
                 <table class="small">
-                    <tr><th>Threshold</th><th>Trades</th><th>Sharpe</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
                     {rows}
                 </table></details>
             </div>"""
@@ -511,7 +520,7 @@ def _generate_html_report(
 </style></head><body>
 <h1>🎯 {strategy.upper()} Entry Filter Threshold Plateau</h1>
 <p>对每个 entry filter 的连续阈值条件做 plateau 扫描。
-红线 = Sharpe，蓝色柱 = Trades，虚线 = 当前阈值，绿色区域 = 平坦高原。</p>
+红线 = snotio (mean R-multiples)，蓝色柱 = Trades，虚线 = 当前阈值，绿色区域 = 平坦高原。</p>
 {filter_sections}
 </body></html>"""
     return html
@@ -532,6 +541,11 @@ def main() -> int:
     )
     p.add_argument("--steps", type=int, default=15, help="每个阈值条件的扫描步数")
     p.add_argument("--output", default=None, help="输出 HTML 路径")
+    p.add_argument(
+        "--research",
+        action="store_true",
+        help="读取研究文件 (config/strategies/{strategy}/entry_filters.yaml) 而非 archetypes 生产文件",
+    )
     args = p.parse_args()
 
     # 加载数据
@@ -584,7 +598,11 @@ def main() -> int:
 
     # 加载配置
     exec_config = load_execution_config(args.strategy, args.strategies_root)
-    entry_cfg = load_entry_filters_config(args.strategy, args.strategies_root)
+    entry_cfg = load_entry_filters_config(
+        args.strategy, args.strategies_root, research=args.research
+    )
+    src_label = "研究文件" if args.research else "archetypes"
+    print(f"   Config: {src_label}")
     if not entry_cfg:
         print("❌ entry_filters.yaml not found")
         return 1
@@ -655,8 +673,8 @@ def main() -> int:
                 print(
                     f"         {status}: [{plateau['start_threshold']:.3f}, {plateau['end_threshold']:.3f}] "
                     f"width={plateau['plateau_width']:.3f} conf={plateau['confidence']} "
-                    f"mean Sharpe={plateau['mean_sharpe']:.4f} "
-                    f"CV(sh={plateau['cv_sharpe']:.3f}, tr={plateau['cv_trades']:.3f}) "
+                    f"mean snotio={plateau['mean_snotio']:.4f} "
+                    f"CV(sn={plateau['cv_snotio']:.3f}, tr={plateau['cv_trades']:.3f}) "
                     f"推荐={plateau['recommended']:.3f}{warn}"
                 )
             else:
@@ -713,7 +731,230 @@ def main() -> int:
                 print(f"   {fname}.{feat}: 无平坦高原 — {p_info.get('reason', '')}")
     print()
 
+    # ================================================================
+    # 去冗余分析: Jaccard 重叠 + 贪心前向选择
+    # ================================================================
+    if len(filters_to_scan) >= 2:
+        dedup_result = _run_dedup_analysis(
+            merged,
+            exec_config,
+            filters_to_scan,
+            all_results,
+            span_years,
+        )
+        if dedup_result:
+            print("\n" + "=" * 70)
+            print("🧩 DEDUP: 贪心前向选择 (OR 组合 snotio 最大化)")
+            print("=" * 70)
+
+            # Jaccard 矩阵
+            names = dedup_result["names"]
+            jmat = dedup_result["jaccard_matrix"]
+            n = len(names)
+            max_name_len = max(len(nm) for nm in names)
+
+            print(f"\n   📊 Jaccard 重叠矩阵 (>0.5 = 高度重叠):")
+            # header
+            hdr = " " * (max_name_len + 4)
+            for j in range(n):
+                hdr += f" {j:>4d}"
+            print(hdr)
+            for i in range(n):
+                row = f"   {i:>2d}. {names[i]:<{max_name_len}s}"
+                for j in range(n):
+                    v = jmat[i][j]
+                    if i == j:
+                        row += "    -"
+                    elif v >= 0.5:
+                        row += f" \033[91m{v:.2f}\033[0m"  # red
+                    elif v >= 0.3:
+                        row += f" \033[93m{v:.2f}\033[0m"  # yellow
+                    else:
+                        row += f" {v:.2f}"
+                print(row)
+
+            # 单独 snotio
+            singles = dedup_result["single_snotios"]
+            print(f"\n   🎯 单独 snotio (用 plateau 推荐阈值):")
+            for nm, sn in sorted(singles.items(), key=lambda x: -x[1]):
+                print(f"      {nm:<{max_name_len}s}  snotio={sn:.2f}")
+
+            # 贪心选择结果
+            selected = dedup_result["selected"]
+            print(f"\n   ✅ 推荐组合 ({len(selected)} 个 filter, OR):")
+            for step in selected:
+                print(
+                    f"      Step {step['step']}: +{step['name']:<{max_name_len}s} "
+                    f"OR-snotio={step['combined_snotio']:.2f} "
+                    f"(±{step['delta_snotio']:+.2f}) "
+                    f"trades={step['combined_trades']}"
+                )
+
+            bl_snotio = dedup_result.get("baseline_snotio", 0)
+            final_snotio = selected[-1]["combined_snotio"] if selected else 0
+            print(
+                f"\n   Baseline={bl_snotio:.2f} → "
+                f"Final OR={final_snotio:.2f} ({(final_snotio/bl_snotio - 1)*100:+.1f}%)"
+            )
+            print()
+
     return 0
+
+
+def _run_dedup_analysis(
+    merged: pd.DataFrame,
+    exec_config: Dict[str, Any],
+    filters_to_scan: List[Dict[str, Any]],
+    all_results: Dict[str, Any],
+    span_years: float,
+) -> Optional[Dict[str, Any]]:
+    """去冗余分析: Jaccard 重叠矩阵 + 贪心前向选择。
+
+    1. 用 plateau 推荐阈值重建每个 filter 的 pass mask
+    2. 计算 pairwise Jaccard 相似度
+    3. 单独评估每个 filter 的 execution snotio
+    4. 贪心前向选择: 每轮加入 OR 后 snotio 提升最大的 filter
+    """
+    original_entry = merged["entry_direction"].copy()
+
+    # --- Step 1: 构建 masks ---
+    masks: Dict[str, pd.Series] = {}
+    plateau_thresholds: Dict[str, Dict[str, float]] = (
+        {}
+    )  # {filter_id: {feature: rec_val}}
+
+    for fdef in filters_to_scan:
+        fname = fdef["id"]
+        fdata = all_results.get(fname, {})
+
+        # 收集 plateau 推荐阈值
+        rec_map: Dict[str, float] = {}
+        for cr in fdata.get("scanned_conditions", []):
+            p = cr["plateau"]
+            if p.get("is_plateau"):
+                rec_map[cr["feature"]] = p["recommended"]
+        plateau_thresholds[fname] = rec_map
+
+        # 用推荐阈值重建 conditions
+        adjusted_conds = []
+        for cond in fdef.get("conditions", []):
+            c = dict(cond)  # shallow copy
+            feat = c["feature"]
+            if feat in rec_map:
+                c["value"] = rec_map[feat]
+            adjusted_conds.append(c)
+
+        mask = _build_mask_from_conditions(merged, adjusted_conds, silent=True)
+        masks[fname] = mask
+
+    if not masks:
+        return None
+
+    names = list(masks.keys())
+    n = len(names)
+
+    # --- Step 2: Jaccard 矩阵 ---
+    jmat = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        mi = masks[names[i]]
+        for j in range(i + 1, n):
+            mj = masks[names[j]]
+            intersection = (mi & mj).sum()
+            union = (mi | mj).sum()
+            jac = float(intersection / union) if union > 0 else 0.0
+            jmat[i][j] = jac
+            jmat[j][i] = jac
+        jmat[i][i] = 1.0
+
+    # --- Step 3: 单独评估 snotio ---
+    single_snotios: Dict[str, float] = {}
+    single_trades: Dict[str, int] = {}
+    for fname in names:
+        merged["entry_direction"] = original_entry.copy()
+        merged.loc[~masks[fname], "entry_direction"] = 0.0
+        n_entries = int((merged["entry_direction"] != 0).sum())
+        if n_entries < 20:
+            single_snotios[fname] = 0.0
+            single_trades[fname] = n_entries
+            continue
+        exec_returns = simulate_rr_execution(
+            merged, exec_config, atr_col="atr", use_tier_params=False
+        )
+        valid = exec_returns.dropna()
+        single_snotios[fname] = float(valid.mean()) if len(valid) >= 10 else 0.0
+        single_trades[fname] = len(valid)
+
+    # Baseline (no filter)
+    merged["entry_direction"] = original_entry.copy()
+    bl_exec = simulate_rr_execution(
+        merged, exec_config, atr_col="atr", use_tier_params=False
+    )
+    bl_valid = bl_exec.dropna()
+    bl_snotio = float(bl_valid.mean()) if len(bl_valid) >= 10 else 0.0
+
+    # --- Step 4: 贪心前向选择 ---
+    remaining = set(names)
+    selected_steps = []
+    combined_mask = pd.Series(False, index=merged.index)
+    prev_snotio = 0.0
+
+    for step_idx in range(1, n + 1):
+        best_name = None
+        best_snotio = -999.0
+        best_trades = 0
+
+        for cand in remaining:
+            trial_mask = combined_mask | masks[cand]
+            merged["entry_direction"] = original_entry.copy()
+            merged.loc[~trial_mask, "entry_direction"] = 0.0
+            n_entries = int((merged["entry_direction"] != 0).sum())
+            if n_entries < 20:
+                continue
+            exec_returns = simulate_rr_execution(
+                merged, exec_config, atr_col="atr", use_tier_params=False
+            )
+            valid = exec_returns.dropna()
+            if len(valid) < 10:
+                continue
+            sn = float(valid.mean())
+            if sn > best_snotio:
+                best_snotio = sn
+                best_name = cand
+                best_trades = len(valid)
+
+        if best_name is None:
+            break
+
+        delta = best_snotio - prev_snotio if step_idx > 1 else best_snotio
+        # 停止条件: snotio 不再提升或下降
+        if step_idx > 1 and best_snotio <= prev_snotio:
+            break
+
+        combined_mask = combined_mask | masks[best_name]
+        remaining.discard(best_name)
+        prev_snotio = best_snotio
+
+        selected_steps.append(
+            {
+                "step": step_idx,
+                "name": best_name,
+                "combined_snotio": best_snotio,
+                "delta_snotio": delta,
+                "combined_trades": best_trades,
+            }
+        )
+
+    # 恢复
+    merged["entry_direction"] = original_entry
+
+    return {
+        "names": names,
+        "jaccard_matrix": jmat,
+        "single_snotios": single_snotios,
+        "single_trades": single_trades,
+        "selected": selected_steps,
+        "baseline_snotio": bl_snotio,
+    }
 
 
 if __name__ == "__main__":

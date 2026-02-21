@@ -1,0 +1,14 @@
+# ME Archetype Prefilter v1.0
+# 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
+# 对应研究配置: config/strategies/me/prefilter.yaml (候选特征声明)
+#
+# 数据依据: prefilter_实验报告.md (2026-02-21)
+#   - 数据源: features_labeled.parquet, 全周期 2023-01 ~ 2025-12, 157,086 行
+#   - 分析方法: Mode A (--select-recent 6), 21 候选特征, 5 分位
+#   - 时间验证: rolling [2m, 3m, 4m, 6m] 窗口
+
+rules:
+  - feature: atr_percentile
+    operator: ">="
+    value: 0.922
+    rationale: "P90 阈值, CV=0.70 (稳定), 近6月 bad_rate 降低 10.9%, 3年无信号反转"

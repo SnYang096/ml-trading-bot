@@ -1,36 +1,52 @@
 # ================================================================
-# PCM Regime Configuration
+# PCM Regime Configuration — 单一优先级制 (v2)
 # ================================================================
-# 动态优先级状态机：只做优先级动态，不做 budget 动态
-# 参考: z实验_005_统一研究/一个 "Archetype Slot 分配与覆盖逻辑".md
+# v2 变更: 移除 Override 层，统一为每个 Regime 一个确定性优先级
 #
-# 设计原则:
-#   - BPC = equity 曲线骨架（稳定现金流）
+# 变更原因 (v1 → v2):
+#   v1 同时有 Layer 2 (Regime 优先级) 和 Layer 3 (Override 覆盖)，
+#   两层对同一冲突给出相反结论:
+#     - NORMAL Layer 2: BPC > ME > FER
+#     - Override Layer 3: FER 覆盖 ME, ME 覆盖 BPC (即 FER > ME > BPC)
+#   代码先查 Override 再走 Layer 2，Override 条件宽松 (FER evidence ≥ 0.6)，
+#   实际上 Layer 2 排序在大多数冲突场景下被 Override 架空。
+#   v2 合并为单一优先级，消除语义矛盾。
+#
+# 设计原则 (v2):
+#   1. 每个 Regime 只有一个确定性优先级列表
+#   2. 优先级按"信号条件严格性"排序（越严格越优先）
+#      LV (liquidation cluster + OI 异常) > FER (均衡偏离反转) > ME (动能扩张) > BPC (趋势延续)
+#   3. BPC 作为"骨架"靠触发频率 (94% 交易来自 BPC/FER)，不靠冲突优先级
+#   4. 冲突率仅 5.52%，绝大部分时间只有一个信号触发，优先级不影响
+#
+# Archetype 角色:
+#   - BPC = equity 曲线骨架（稳定现金流，高频触发）
 #   - ME  = 收益分布右尾增强器
 #   - FER = 均衡偏离反转
-#   - LV  = 中断型信号（高优先级覆盖权，低 budget）
+#   - LV  = 中断型信号（最高优先级，最严格条件）
 #
 # 状态机:
-#   NORMAL       → 常态，BPC 优先（骨架角色）
-#   HIGH_VOL     → 高波动扩张期，ME 捕捉尾部收益
-#   HIGH_LEVERAGE → 高杠杆脆弱期，LV 覆盖一切
+#   NORMAL       → 常态，按条件严格性排序
+#   HIGH_VOL     → 高波动扩张期，ME 提升至 FER 之上
+#   HIGH_LEVERAGE → 高杠杆脆弱期，与 NORMAL 相同（LV 已在首位）
 # ================================================================
 
-version: 1
+version: 2
 
 # ── 3 个 Regime 的优先级定义 ──
 # 列表顺序 = 优先级（索引越小越优先）
+# 决策依据: 信号条件严格性（越严格的 archetype 触发越稀有，冲突时应被尊重）
 regimes:
   NORMAL:
-    description: "常态：BPC 提供稳定骨架"
-    priority: ["BPC", "ME", "FER", "LV"]
+    description: "常态：按条件严格性排序"
+    priority: ["LV", "FER", "ME", "BPC"]
 
   HIGH_VOL:
-    description: "高波动扩张：ME 捕捉尾部收益"
-    priority: ["ME", "BPC", "FER", "LV"]
+    description: "高波动扩张：ME 擅长的环境，提升至 FER 之上"
+    priority: ["LV", "ME", "FER", "BPC"]
 
   HIGH_LEVERAGE:
-    description: "高杠杆脆弱：LV 中断型覆盖"
+    description: "高杠杆脆弱：LV 最高优先（与 NORMAL 相同，语义强调）"
     priority: ["LV", "FER", "ME", "BPC"]
 
 # ── 默认 Regime ──
@@ -80,42 +96,3 @@ archetype_risk:
   LV:
     max_risk_per_trade: 0.010   # LV 低 budget, 1.0% 每笔
     max_concurrent: 1           # LV 快进快出，最多 1 个
-
-# ================================================================
-# Layer 3: Override（极端信号覆盖）
-# ================================================================
-# 文档精神: 当极端事件出现时允许跨层覆盖
-# 检查顺序: LV → FER → ME（按抢占权高低）
-#
-# 优先级哲学:
-#   系统默认：BPC > ME
-#   强动能机会：ME > BPC
-#   极端事件：LV > ALL
-#   失败信号：FER 覆盖 ME
-# ================================================================
-override:
-  LV:
-    description: "LV 覆盖所有 - 非线性事件最高抢占权"
-    overrides: "ALL"
-    # LV gate 本身已严格筛选 (liquidation cluster + OI 异常)
-    # gate 通过即可覆盖，无额外 evidence 要求
-    min_evidence: 0.0
-    conditions: []
-
-  FER:
-    description: "FER 覆盖 ME - 均衡偏离反转信号"
-    overrides: ["ME"]
-    # FER gate 通过即代表反转条件成立，要求中等 evidence
-    min_evidence: 0.6
-    conditions: []
-
-  ME:
-    description: "ME 覆盖 BPC - 强动能机会"
-    overrides: ["BPC"]
-    # 要求: me_evidence 强 + ATR percentile 高
-    min_evidence: 0.7
-    conditions:
-      - feature: "atr_percentile"
-        operator: ">"
-        threshold: 0.75
-    logic: "AND"

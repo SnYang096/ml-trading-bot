@@ -6384,6 +6384,17 @@ def train_rolling(
     default=None,
     help="Override features config file (e.g. config/strategies/bpc/features_gate.yaml)",
 )
+@click.option(
+    "--prepare-only",
+    is_flag=True,
+    default=False,
+    help="Only run feature pipeline + label generation, save features_labeled.parquet. Skips model training.",
+)
+@click.option(
+    "--archetype-prefilter",
+    default=None,
+    help="Path to archetypes/prefilter.yaml. Filters training data by archetype prerequisites before model training.",
+)
 def train_final(
     symbol,
     timeframe,
@@ -6401,6 +6412,8 @@ def train_final(
     docker,
     labels,
     features,
+    prepare_only,
+    archetype_prefilter,
 ):
     """Train a final model and save ModelArtifact. With --holdout-*: train/test split by date (no overlap); without: train on full window (--train-all)."""
     from datetime import datetime
@@ -6468,6 +6481,10 @@ def train_final(
         args.extend(["--labels", f"/workspace/{labels}" if use_workspace_prefix else labels])
     if features:
         args.extend(["--features", f"/workspace/{features}" if use_workspace_prefix else features])
+    if prepare_only:
+        args.append("--prepare-only")
+    if archetype_prefilter:
+        args.extend(["--archetype-prefilter", f"/workspace/{archetype_prefilter}" if use_workspace_prefix else archetype_prefilter])
     sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 
@@ -8849,18 +8866,38 @@ def gate():
 @click.option("--docker/--no-docker", default=False, help="Run in Docker (default: no-docker)")
 def gate_apply_archetype(logs, out, features_store_layer, features_store_root, strategy, strategies_root, docker):
     """Apply archetype gate rules to logs."""
-    # 自动检测匹配 strategy 的最新 feature store layer
+    from src.feature_store.layer_naming import detect_layer_for_strategy, detect_layer_timeframe
+
+    # --- 尝试从 predictions 旁边的 metadata 获取 timeframe ---
+    _inferred_timeframe: str | None = None
+    try:
+        from pathlib import Path as _P
+        import json as _json
+        _meta_path = _P(logs).parent / "model_artifact_metadata.json"
+        if _meta_path.exists():
+            with open(_meta_path) as _f:
+                _inferred_timeframe = _json.load(_f).get("timeframe")
+    except Exception:
+        pass
+
+    # 自动检测匹配 strategy (+timeframe) 的最新 feature store layer
     if features_store_layer is None:
-        from src.feature_store.layer_naming import detect_layer_for_strategy
         features_store_layer = detect_layer_for_strategy(
             strategy=strategy,
             features_store_root=features_store_root,
+            timeframe=_inferred_timeframe,
         )
         if features_store_layer:
             click.echo(f"ℹ️ Auto-detected feature store layer for {strategy or 'all'}: {features_store_layer}")
         else:
             click.echo(f"❌ No feature store layers found in {features_store_root}", err=True)
             sys.exit(1)
+
+    # 从 FS meta 读取 timeframe（优先用 metadata 推断结果）
+    _layer_tf = detect_layer_timeframe(features_store_layer, features_store_root)
+    timeframe = _inferred_timeframe or _layer_tf or "240T"
+    if _layer_tf:
+        click.echo(f"ℹ️ Timeframe from FS layer meta: {_layer_tf}")
     
     # 自动检测输出目录：放到最新的训练结果目录下
     if out is None:
@@ -8900,6 +8937,8 @@ def gate_apply_archetype(logs, out, features_store_layer, features_store_root, s
         f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
         "--strategies-root",
         f"/workspace/{strategies_root}" if use_workspace_prefix else strategies_root,
+        "--timeframe",
+        timeframe,
     ]
     if strategy:
         args.extend(["--strategy", strategy])

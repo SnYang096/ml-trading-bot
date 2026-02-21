@@ -39,31 +39,83 @@ class GateRule:
         return self.phase in ("system_safety", "hard_gate", "guardrail")
 
 
+# Prefilter operator → gate deny-condition mapping.
+# Prefilter says "pass if feature >= 0.922"; gate denies the complement.
+_PREFILTER_OP_TO_DENY: Dict[str, str] = {
+    ">=": "value_lt",  # pass >= X  → deny < X
+    ">": "value_lte",  # pass > X   → deny <= X
+    "<=": "value_gt",  # pass <= X  → deny > X
+    "<": "value_gte",  # pass < X   → deny >= X
+}
+
+
+def _load_prefilter_as_guardrails(prefilter_path: Path) -> List[GateRule]:
+    """Load ``prefilter.yaml`` and convert each rule to a guardrail :class:`GateRule`.
+
+    The conversion inverts the prefilter's *pass* condition so the gate
+    **denies** rows that would NOT have passed prefilter during training.
+    This keeps ``prefilter.yaml`` as the single source of truth for the
+    archetype's semantic boundary — no need to duplicate rules in gate.yaml.
+    """
+    if not prefilter_path.exists():
+        return []
+    raw = yaml.safe_load(prefilter_path.read_text(encoding="utf-8")) or {}
+    rules_list = raw.get("rules") or []
+    guardrails: List[GateRule] = []
+    for idx, r in enumerate(rules_list):
+        feature = str(r.get("feature", ""))
+        operator = str(r.get("operator", "")).strip()
+        value = r.get("value")
+        rationale = str(r.get("rationale", ""))
+        deny_op = _PREFILTER_OP_TO_DENY.get(operator)
+        if not deny_op or not feature:
+            continue
+        guardrails.append(
+            GateRule(
+                id=f"prefilter_{feature}",
+                tag=f"PREFILTER_{feature.upper()}",
+                phase="guardrail",
+                priority=100 + idx,  # after hard_gates
+                reason=f"Prefilter guardrail: {feature} {operator} {value} ({rationale})",
+                when={feature: {deny_op: value}},
+                then={"action": "deny"},
+                frozen=True,  # prefilter 阈值由 prefilter.yaml 管理
+            )
+        )
+    return guardrails
+
+
 @dataclass
 class GateConfig:
-    """Gate 配置 - 从 gate.yaml 加载"""
+    """Gate 配置 - 从 gate.yaml + prefilter.yaml 加载"""
 
     hard_gates: List[GateRule] = field(default_factory=list)
     system_safety: List[GateRule] = field(default_factory=list)
+    guardrails: List[GateRule] = field(default_factory=list)
     governance: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def all_rules(self) -> List[GateRule]:
-        """按 phase -> priority 排序的所有规则"""
+        """按 phase -> priority 排序的所有规则（含 guardrails）"""
         phase_order = {"system_safety": 0, "hard_gate": 1, "guardrail": 2}
-        all_rules = self.system_safety + self.hard_gates
+        all_rules = self.system_safety + self.hard_gates + self.guardrails
         return sorted(
             all_rules, key=lambda r: (phase_order.get(r.phase, 99), r.priority)
         )
 
     @property
     def hard_rules(self) -> List[GateRule]:
-        """所有硬规则 (system_safety + hard_gate)"""
-        return self.system_safety + self.hard_gates
+        """所有硬规则 (system_safety + hard_gate + guardrail)"""
+        return self.system_safety + self.hard_gates + self.guardrails
 
     @classmethod
-    def from_yaml(cls, path: Path) -> "GateConfig":
-        """从 YAML 文件加载"""
+    def from_yaml(
+        cls,
+        path: Path,
+        *,
+        prefilter_path: Optional[Path] = None,
+    ) -> "GateConfig":
+        """从 gate.yaml 加载，可选自动注入 prefilter.yaml 作为 guardrails。"""
         if not path.exists():
             return cls()
 
@@ -86,9 +138,18 @@ class GateConfig:
                 )
             return result
 
+        # gate.yaml 中的 guardrails（向后兼容）+ prefilter.yaml 自动注入
+        yaml_guardrails = _parse_rules(raw.get("guardrails"), "guardrail")
+        prefilter_guardrails = (
+            _load_prefilter_as_guardrails(prefilter_path)
+            if prefilter_path is not None
+            else []
+        )
+
         return cls(
             hard_gates=_parse_rules(raw.get("hard_gates"), "hard_gate"),
             system_safety=_parse_rules(raw.get("system_safety"), "system_safety"),
+            guardrails=yaml_guardrails + prefilter_guardrails,
             governance=dict(
                 raw.get("governance") or raw.get("schema", {}).get("governance") or {}
             ),
@@ -635,6 +696,9 @@ def load_strategy_archetype(
     """
     加载单个策略的 Archetype 配置
 
+    自动检测 ``archetypes/prefilter.yaml``，将其规则作为 guardrails
+    注入 GateConfig，保持 prefilter.yaml 为 single source of truth。
+
     Args:
         strategy: 策略名 (如 "bpc")
         strategies_root: 策略配置根目录
@@ -648,9 +712,14 @@ def load_strategy_archetype(
     if not arch_dir.exists():
         raise FileNotFoundError(f"Archetype directory not found: {arch_dir}")
 
+    prefilter_path = arch_dir / "prefilter.yaml"
+
     return StrategyArchetype(
         name=strategy,
-        gate=GateConfig.from_yaml(arch_dir / "gate.yaml"),
+        gate=GateConfig.from_yaml(
+            arch_dir / "gate.yaml",
+            prefilter_path=prefilter_path if prefilter_path.exists() else None,
+        ),
         evidence=EvidenceConfig.from_yaml(arch_dir / "evidence.yaml"),
         execution=ExecutionConfig.from_yaml(arch_dir / "execution.yaml"),
     )

@@ -95,6 +95,8 @@ class DirectionEvaluator:
             return int(np.sign(value))
         elif transform == "negate_sign":
             return int(-np.sign(value))
+        elif transform == "center_sign":
+            return int(np.sign(value - 0.5))
         elif transform == "threshold":
             # 需要额外参数
             threshold = 0.0

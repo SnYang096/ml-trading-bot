@@ -167,11 +167,11 @@ def _setup_three_strategies(
     logger.info("✅ 三策略配置加载完成")
 
     # 创建 PCM 仲裁层 (使用 Regime 动态优先级)
-    # NORMAL: BPC > ME > FER > LV
-    # HIGH_VOL: ME > BPC > FER > LV
+    # NORMAL: LV > FER > ME > BPC (按条件严格性)
+    # HIGH_VOL: LV > ME > FER > BPC
     # HIGH_LEVERAGE: LV > FER > ME > BPC
     pcm = LivePCM(
-        archetype_priority=["BPC", "ME", "FER", "LV"],
+        archetype_priority=["LV", "FER", "ME", "BPC"],
         max_slots=int(os.getenv("MLBOT_MAX_SLOTS", "2")),
         regime_config_path=os.getenv(
             "MLBOT_PCM_REGIME_CONFIG", "config/pcm_regime.yaml"

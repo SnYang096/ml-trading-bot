@@ -1,21 +1,17 @@
-"""LivePCM — Live Portfolio Control Manager (Regime-Aware + Override)
+"""LivePCM — Live Portfolio Control Manager (Regime-Aware)
 
-多 archetype 信号仲裁层，支持三层控制框架。
+多 archetype 信号仲裁层，单一优先级制 (v2)。
 
-三层控制框架（来自 slot 分配文档）:
+控制框架:
   Layer 1: 静态资金结构 — 固定 budget，不随 regime 变化
   Layer 2: 优先级动态 — Regime 检测驱动优先级切换
-     - NORMAL:        BPC > ME > FER > LV  (常态)
-     - HIGH_VOL:      ME > BPC > FER > LV  (高波动扩张)
-     - HIGH_LEVERAGE:  LV > FER > ME > BPC  (高杠杆脆弱)
-  Layer 3: Override（极端信号覆盖）— 特定条件下允许跨层覆盖
-     - LV 覆盖所有: 非线性事件最高抢占权
-     - ME 覆盖 BPC: 强动能机会
-     - FER 覆盖 ME: 失败/反转信号
+     - NORMAL:        LV > FER > ME > BPC  (按条件严格性)
+     - HIGH_VOL:      LV > ME > FER > BPC  (ME 擅长的环境)
+     - HIGH_LEVERAGE:  LV > FER > ME > BPC  (与 NORMAL 相同)
 
-优先级哲学:
-  系统默认：BPC > ME | 强动能机会：ME > BPC
-  极端事件：LV > ALL | 失败信号：FER 覆盖 ME
+优先级依据: 信号条件严格性（越严格越优先）
+  LV (liquidation cluster) > FER (均衡偏离反转) > ME (动能扩张) > BPC (趋势延续)
+  BPC 作为骨架靠触发频率 (94% 交易)，不靠冲突优先级
 
 单策略时行为等价于直接挂 GenericLiveStrategy（零额外开销）。
 """
@@ -62,9 +58,10 @@ REGIME_HIGH_VOL = "HIGH_VOL"
 REGIME_HIGH_LEVERAGE = "HIGH_LEVERAGE"
 
 # 每个 Regime 的默认优先级（可被 YAML 覆盖）
+# 决策依据: 信号条件严格性（越严格越优先）
 DEFAULT_REGIME_PRIORITIES = {
-    REGIME_NORMAL: ["BPC", "ME", "FER", "LV"],
-    REGIME_HIGH_VOL: ["ME", "BPC", "FER", "LV"],
+    REGIME_NORMAL: ["LV", "FER", "ME", "BPC"],
+    REGIME_HIGH_VOL: ["LV", "ME", "FER", "BPC"],
     REGIME_HIGH_LEVERAGE: ["LV", "FER", "ME", "BPC"],
 }
 
@@ -256,8 +253,8 @@ def create_regime_detector_from_config(
 # LivePCM
 # ────────────────────────────────────────────────────
 
-# 向后兼容：旧的固定优先级常量
-DEFAULT_ARCHETYPE_PRIORITY = ["BPC", "ME", "FER", "LV"]
+# 默认优先级（按信号条件严格性排序）
+DEFAULT_ARCHETYPE_PRIORITY = ["LV", "FER", "ME", "BPC"]
 
 
 class LivePCM:
