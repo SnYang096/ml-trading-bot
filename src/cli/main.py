@@ -8863,8 +8863,13 @@ def gate():
     default="config/strategies",
     help="Root directory for strategy configs",
 )
+@click.option(
+    "--gate-path",
+    default=None,
+    help="Custom gate YAML path (e.g., config/strategies/fer/gate_draft.yaml)",
+)
 @click.option("--docker/--no-docker", default=False, help="Run in Docker (default: no-docker)")
-def gate_apply_archetype(logs, out, features_store_layer, features_store_root, strategy, strategies_root, docker):
+def gate_apply_archetype(logs, out, features_store_layer, features_store_root, strategy, strategies_root, gate_path, docker):
     """Apply archetype gate rules to logs."""
     from src.feature_store.layer_naming import detect_layer_for_strategy, detect_layer_timeframe
 
@@ -8942,6 +8947,8 @@ def gate_apply_archetype(logs, out, features_store_layer, features_store_root, s
     ]
     if strategy:
         args.extend(["--strategy", strategy])
+    if gate_path:
+        args.extend(["--gate-path", f"/workspace/{gate_path}" if use_workspace_prefix else gate_path])
     sys.exit(run_script("scripts/apply_archetype_gate.py", args, docker=docker))
 
 

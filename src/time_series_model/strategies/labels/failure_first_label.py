@@ -525,7 +525,11 @@ def _compute_direction_from_rules(direction_cfg: dict, df: pd.DataFrame) -> np.n
         if feature not in df.columns:
             continue
 
-        series = pd.to_numeric(df[feature], errors="coerce").fillna(0.0).values
+        col_data = df[feature]
+        # Guard against duplicate column names: df[feature] may return a DataFrame
+        if isinstance(col_data, pd.DataFrame):
+            col_data = col_data.iloc[:, 0]
+        series = pd.to_numeric(col_data, errors="coerce").fillna(0.0).values
 
         if transform == "sign":
             vals = np.sign(series)
@@ -793,9 +797,19 @@ def compute_bpc_failure_rr_extreme_label(
                 "direction_aware=True requires 'strategy' parameter "
                 "(e.g., strategy='me') to load direction.yaml"
             )
-        return _compute_direction_aware_rr_extreme(
-            df=df, horizon=horizon, invert=invert, strategy=strategy, **kwargs
-        )
+        try:
+            return _compute_direction_aware_rr_extreme(
+                df=df, horizon=horizon, invert=invert, strategy=strategy, **kwargs
+            )
+        except FileNotFoundError:
+            warnings.warn(
+                f"⚠️  direction.yaml not found for strategy '{strategy}'. "
+                f"Falling back to direction='{direction}' (all-long). "
+                f"This is expected during --prepare-only analysis phase. "
+                f"For training (Step 5+), create direction.yaml first (Step 4).",
+                stacklevel=2,
+            )
+            # Fall through to non-direction-aware computation below
 
     # 🔍 多币种支持：按 symbol 分别计算
     if "_symbol" in df.columns and df["_symbol"].nunique() > 1:
@@ -890,9 +904,18 @@ def compute_bpc_failure_no_opportunity_label(
     if direction_aware:
         if not strategy:
             raise ValueError("direction_aware=True requires 'strategy' parameter")
-        return _compute_direction_aware_no_opportunity(
-            df=df, horizon=horizon, invert=invert, strategy=strategy, **kwargs
-        )
+        try:
+            return _compute_direction_aware_no_opportunity(
+                df=df, horizon=horizon, invert=invert, strategy=strategy, **kwargs
+            )
+        except FileNotFoundError:
+            warnings.warn(
+                f"⚠️  direction.yaml not found for strategy '{strategy}'. "
+                f"Falling back to direction='{direction}' (all-long). "
+                f"For training, create direction.yaml first.",
+                stacklevel=2,
+            )
+            # Fall through to non-direction-aware computation below
     # 🔍 多币种支持：按 symbol 分别计算
     if "_symbol" in df.columns and df["_symbol"].nunique() > 1:
         results = []
@@ -1122,13 +1145,21 @@ def compute_bpc_return_tree_label(
     if direction_aware:
         if not strategy:
             raise ValueError("direction_aware=True requires 'strategy' parameter")
-        return _compute_direction_aware_return_tree(
-            df=df,
-            horizon=horizon,
-            filter_good_only=filter_good_only,
-            strategy=strategy,
-            **kwargs,
-        )
+        try:
+            return _compute_direction_aware_return_tree(
+                df=df,
+                horizon=horizon,
+                filter_good_only=filter_good_only,
+                strategy=strategy,
+                **kwargs,
+            )
+        except FileNotFoundError:
+            warnings.warn(
+                f"⚠️  direction.yaml not found for strategy '{strategy}'. "
+                f"Falling back to direction='{direction}' (all-long). "
+                f"For training, create direction.yaml first.",
+                stacklevel=2,
+            )
     return compute_return_tree_label(
         df=df,
         direction=direction,

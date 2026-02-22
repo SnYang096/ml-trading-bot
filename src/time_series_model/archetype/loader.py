@@ -56,6 +56,11 @@ def _load_prefilter_as_guardrails(prefilter_path: Path) -> List[GateRule]:
     **denies** rows that would NOT have passed prefilter during training.
     This keeps ``prefilter.yaml`` as the single source of truth for the
     archetype's semantic boundary — no need to duplicate rules in gate.yaml.
+
+    Supports ``any_of`` OR groups via De Morgan's law:
+        pass = (A >= x OR B >= y)  →  deny = (A < x AND B < y)
+    The deny condition naturally maps to a single ``when`` dict with multiple
+    feature keys (which ``_evaluate_when_clause`` evaluates as AND).
     """
     if not prefilter_path.exists():
         return []
@@ -63,10 +68,44 @@ def _load_prefilter_as_guardrails(prefilter_path: Path) -> List[GateRule]:
     rules_list = raw.get("rules") or []
     guardrails: List[GateRule] = []
     for idx, r in enumerate(rules_list):
+        rationale = str(r.get("rationale", ""))
+
+        # ── any_of OR group ──
+        if "any_of" in r:
+            sub_rules = r["any_of"]
+            when_conditions: Dict[str, Any] = {}
+            desc_parts: List[str] = []
+            for sub in sub_rules:
+                feature = str(sub.get("feature", ""))
+                operator = str(sub.get("operator", "")).strip()
+                value = sub.get("value")
+                deny_op = _PREFILTER_OP_TO_DENY.get(operator)
+                if not deny_op or not feature:
+                    continue
+                when_conditions[feature] = {deny_op: value}
+                desc_parts.append(f"{feature} {operator} {value}")
+            if when_conditions:
+                guardrails.append(
+                    GateRule(
+                        id=f"prefilter_or_{idx}",
+                        tag=f"PREFILTER_OR_{idx}",
+                        phase="guardrail",
+                        priority=100 + idx,
+                        reason=(
+                            f"Prefilter OR guardrail: "
+                            f"{' OR '.join(desc_parts)} ({rationale})"
+                        ),
+                        when=when_conditions,
+                        then={"action": "deny"},
+                        frozen=True,
+                    )
+                )
+            continue
+
+        # ── 普通 AND 规则 (向后兼容) ──
         feature = str(r.get("feature", ""))
         operator = str(r.get("operator", "")).strip()
         value = r.get("value")
-        rationale = str(r.get("rationale", ""))
         deny_op = _PREFILTER_OP_TO_DENY.get(operator)
         if not deny_op or not feature:
             continue
@@ -692,6 +731,8 @@ def _get_quantile_threshold(feat_q: Dict[str, Any], q: float) -> Optional[float]
 def load_strategy_archetype(
     strategy: str,
     strategies_root: str | Path = "config/strategies",
+    *,
+    gate_path: str | Path | None = None,
 ) -> StrategyArchetype:
     """
     加载单个策略的 Archetype 配置
@@ -702,6 +743,8 @@ def load_strategy_archetype(
     Args:
         strategy: 策略名 (如 "bpc")
         strategies_root: 策略配置根目录
+        gate_path: 自定义 gate YAML 路径 (如 gate_draft.yaml)，
+                   默认 None 表示读取 archetypes/gate.yaml
 
     Returns:
         StrategyArchetype 实例
@@ -714,10 +757,13 @@ def load_strategy_archetype(
 
     prefilter_path = arch_dir / "prefilter.yaml"
 
+    # gate_path 优先级: 显式指定 > archetypes/gate.yaml
+    effective_gate_path = Path(gate_path) if gate_path else arch_dir / "gate.yaml"
+
     return StrategyArchetype(
         name=strategy,
         gate=GateConfig.from_yaml(
-            arch_dir / "gate.yaml",
+            effective_gate_path,
             prefilter_path=prefilter_path if prefilter_path.exists() else None,
         ),
         evidence=EvidenceConfig.from_yaml(arch_dir / "evidence.yaml"),

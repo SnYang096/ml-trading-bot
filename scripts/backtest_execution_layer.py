@@ -756,11 +756,87 @@ def compute_daily_sharpe(
     return float(daily_r.mean() / daily_r.std() * np.sqrt(252))
 
 
+def load_meta_timeframe(
+    strategy: str, strategies_root: str = "config/strategies"
+) -> Optional[str]:
+    """从 meta.yaml 读取 archetype 的 timeframe (如 '240T', '60T')。"""
+    meta_path = Path(strategies_root) / strategy / "meta.yaml"
+    if not meta_path.exists():
+        return None
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = yaml.safe_load(f) or {}
+    return meta.get("timeframe")
+
+
+def _load_full_ohlc_for_map(
+    features_store_root: str,
+    features_store_layer: str,
+    symbols: List[str],
+    timeframe: str,
+    start: Optional[pd.Timestamp] = None,
+    end: Optional[pd.Timestamp] = None,
+) -> Optional[pd.DataFrame]:
+    """从 FeatureStore 加载全量连续 OHLC (用于 trading map K线背景).
+
+    Returns None if FeatureStore unavailable or load fails.
+    """
+    try:
+        from src.feature_store import FeatureStore, FeatureStoreSpec
+    except ImportError:
+        return None
+
+    if not features_store_layer:
+        return None
+
+    store = FeatureStore(str(features_store_root))
+    parts: List[pd.DataFrame] = []
+    for sym in symbols:
+        spec = FeatureStoreSpec(
+            layer=str(features_store_layer), symbol=str(sym), timeframe=str(timeframe)
+        )
+        try:
+            df_sym = store.read_range(
+                spec,
+                start=start or pd.Timestamp("1970-01-01"),
+                end=end or pd.Timestamp("2100-01-01"),
+            )
+            if df_sym.empty:
+                continue
+            df_sym = df_sym.copy()
+            if "symbol" not in df_sym.columns:
+                df_sym["symbol"] = sym
+            if df_sym.index.name == "timestamp":
+                df_sym = df_sym.reset_index()
+            elif isinstance(df_sym.index, pd.DatetimeIndex):
+                df_sym["timestamp"] = df_sym.index
+                df_sym = df_sym.reset_index(drop=True)
+            # 只保留 K线必需列
+            keep = ["timestamp", "symbol"]
+            for c in ["open", "high", "low", "close"]:
+                if c in df_sym.columns:
+                    keep.append(c)
+            parts.append(df_sym[keep])
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Full OHLC load failed for {sym}: {e}")
+
+    if not parts:
+        return None
+
+    full = pd.concat(parts, axis=0, ignore_index=True)
+    full["timestamp"] = pd.to_datetime(full["timestamp"])
+    n_bars = len(full)
+    n_syms = full["symbol"].nunique()
+    print(f"   \U0001f5fa  Full OHLC for map: {n_bars} bars ({n_syms} symbols)")
+    return full
+
+
 def _generate_trading_map_html(
     df: pd.DataFrame,
     trade_details: List[Dict[str, Any]],
     title: str = "Trading Map",
     timeframe: str = None,
+    arch_timeframes: Optional[Dict[str, str]] = None,
+    full_ohlc: Optional[pd.DataFrame] = None,
 ) -> str:
     """生成 per-symbol K线 + 交易标记的 HTML 图表 (Bokeh)。
 
@@ -769,6 +845,8 @@ def _generate_trading_map_html(
         trade_details: simulate_rr_execution 返回的交易详情列表
         title: 页面标题
         timeframe: K线聚合周期 (如 '240T'), None 则不聚合
+        arch_timeframes: per-archetype 时间粒度 (如 {'bpc':'240T','me':'60T'})
+                         提供时每个 archetype 独立分区显示
 
     Returns:
         完整 HTML 字符串
@@ -793,105 +871,180 @@ def _generate_trading_map_html(
 
     all_layouts = []
 
-    for sym in symbols:
-        sym_df = df[df[sym_col] == sym].copy()
-        sym_trades = [t for t in trade_details if t["symbol"] == sym]
-        if not sym_trades:
-            continue
-        sym_df = sym_df.sort_values(ts_col)
+    # “橡皮人”: 确定分区列表 (archetype, timeframe, trades)
+    if arch_timeframes and len(arch_timeframes) > 1:
+        # PCM 多 archetype → 每个 archetype 独立一组图
+        sections = []
+        for arch_name, tf in arch_timeframes.items():
+            arch_trades = [
+                t
+                for t in trade_details
+                if t.get("archetype", "").lower() == arch_name.lower()
+            ]
+            if not arch_trades:
+                continue
+            color = _ARCH_PALETTE.get(arch_name.lower(), _DEFAULT_ARCH_COLOR)
+            sections.append((arch_name, tf, arch_trades, color))
+    else:
+        # 单 archetype → 全部交易一组
+        single_tf = timeframe
+        if not single_tf and arch_timeframes:
+            single_tf = list(arch_timeframes.values())[0]
+        sections = [(None, single_tf, trade_details, None)]
 
-        # ---- OHLC 聚合 (可选) ----
-        if timeframe:
+    for section_arch, section_tf, section_trades, section_color in sections:
+
+        for sym in symbols:
+            sym_trades = [t for t in section_trades if t["symbol"] == sym]
+            if not sym_trades:
+                continue
+
+            # ---- 选择 K线数据源: 优先 full_ohlc (连续), fallback df (稀疏) ----
+            _use_full = False
+            if full_ohlc is not None:
+                _ohlc_sc = "symbol" if "symbol" in full_ohlc.columns else "_symbol"
+                _sym_ohlc = full_ohlc[full_ohlc[_ohlc_sc] == sym].copy()
+                if (
+                    not _sym_ohlc.empty
+                    and "timestamp" in _sym_ohlc.columns
+                    and all(
+                        c in _sym_ohlc.columns for c in ["open", "high", "low", "close"]
+                    )
+                ):
+                    # 截取交易时间范围 ± buffer
+                    _trade_ts = []
+                    for _t in sym_trades:
+                        try:
+                            _trade_ts.append(
+                                pd.Timestamp(df.loc[_t["entry_idx"], ts_col])
+                            )
+                            _trade_ts.append(
+                                pd.Timestamp(df.loc[_t["exit_idx"], ts_col])
+                            )
+                        except (KeyError, ValueError):
+                            pass
+                    if _trade_ts:
+                        _min_ts = min(_trade_ts)
+                        _max_ts = max(_trade_ts)
+                        _buf = max((_max_ts - _min_ts) * 0.03, pd.Timedelta(hours=96))
+                        _sym_ohlc = _sym_ohlc[
+                            (_sym_ohlc["timestamp"] >= _min_ts - _buf)
+                            & (_sym_ohlc["timestamp"] <= _max_ts + _buf)
+                        ]
+                    sym_df = (
+                        _sym_ohlc.rename(columns={"timestamp": ts_col})
+                        if ts_col != "timestamp"
+                        else _sym_ohlc
+                    )
+                    _use_full = True
+
+            if not _use_full:
+                sym_df = df[df[sym_col] == sym].copy()
+
+            sym_df = sym_df.sort_values(ts_col)
+
+            # ---- OHLC 聚合 (使用当前 section 的 timeframe) ----
+            tf_for_chart = section_tf
+            if tf_for_chart and not _use_full:
+                # 只对稀疏数据做 resample; full_ohlc 已按正确 timeframe 存储
+                if "open" not in sym_df.columns:
+                    sym_df["open"] = sym_df["close"].shift(1).fillna(sym_df["close"])
+                sym_df = sym_df.set_index(ts_col)
+                ohlc = (
+                    sym_df[["open", "high", "low", "close"]]
+                    .resample(tf_for_chart)
+                    .agg(
+                        {"open": "first", "high": "max", "low": "min", "close": "last"}
+                    )
+                    .dropna()
+                )
+                ohlc = ohlc.reset_index()
+                sym_df = ohlc
+                ts_col_local = sym_df.columns[0]  # resample 后第一列是时间
+            else:
+                ts_col_local = ts_col
+
+            sym_df = sym_df.reset_index(drop=True)
             if "open" not in sym_df.columns:
                 sym_df["open"] = sym_df["close"].shift(1).fillna(sym_df["close"])
-            sym_df = sym_df.set_index(ts_col)
-            ohlc = (
-                sym_df[["open", "high", "low", "close"]]
-                .resample(timeframe)
-                .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
-                .dropna()
+
+            # ---- 序号 x 轴 (消除时间间隙) ----
+            sym_df["_seq"] = range(len(sym_df))
+            x_labels = sym_df[ts_col_local].dt.strftime("%Y-%m-%d %H:%M").tolist()
+            seq_to_label = {i: lbl for i, lbl in enumerate(x_labels)}
+            # timestamp(str) → seq 快查
+            ts_str_to_seq = dict(
+                zip(
+                    sym_df[ts_col_local].astype(str).values,
+                    sym_df["_seq"].values,
+                )
             )
-            ohlc = ohlc.reset_index()
-            sym_df = ohlc
-            ts_col_local = sym_df.columns[0]  # resample 后第一列是时间
-        else:
-            ts_col_local = ts_col
 
-        sym_df = sym_df.reset_index(drop=True)
-        if "open" not in sym_df.columns:
-            sym_df["open"] = sym_df["close"].shift(1).fillna(sym_df["close"])
+            inc = sym_df["close"] >= sym_df["open"]
+            dec = ~inc
 
-        # ---- 序号 x 轴 (消除时间间隙) ----
-        sym_df["_seq"] = range(len(sym_df))
-        x_labels = sym_df[ts_col_local].dt.strftime("%Y-%m-%d %H:%M").tolist()
-        seq_to_label = {i: lbl for i, lbl in enumerate(x_labels)}
-        # timestamp(str) → seq 快查
-        ts_str_to_seq = dict(
-            zip(
-                sym_df[ts_col_local].astype(str).values,
+            # ---- 价格图 ----
+            arch_label = section_arch.upper() if section_arch else ""
+            tf_label = f" ({section_tf})" if section_tf else ""
+            chart_title = (
+                f"{arch_label} {sym}{tf_label}" if arch_label else f"{sym}{tf_label}"
+            )
+
+            p = bk_figure(
+                title=chart_title,
+                width=1600,
+                height=450,
+                tools="pan,wheel_zoom,box_zoom,reset,save,crosshair",
+                active_drag="pan",
+                active_scroll="wheel_zoom",
+            )
+            _apply_dark_theme(p, title_size="14px")
+
+            # Candlestick: wicks + bodies
+            p.segment(
                 sym_df["_seq"].values,
+                sym_df["high"].values,
+                sym_df["_seq"].values,
+                sym_df["low"].values,
+                color="#78909C",
+                line_width=0.7,
             )
-        )
+            w = 0.45
+            if inc.any():
+                p.vbar(
+                    sym_df.loc[inc, "_seq"].values,
+                    w,
+                    sym_df.loc[inc, "open"].values,
+                    sym_df.loc[inc, "close"].values,
+                    fill_color="#26a69a",
+                    line_color="#26a69a",
+                )
+            if dec.any():
+                p.vbar(
+                    sym_df.loc[dec, "_seq"].values,
+                    w,
+                    sym_df.loc[dec, "open"].values,
+                    sym_df.loc[dec, "close"].values,
+                    fill_color="#ef5350",
+                    line_color="#ef5350",
+                )
 
-        inc = sym_df["close"] >= sym_df["open"]
-        dec = ~inc
+            # ---- 交易标记 ----
+            # 箭头方向 = 交易方向 (long=▲, short=▼)
+            # 颜色 = 盈亏 (绿=盈利, 红=亏损)
+            _WIN_COLOR = "#26a69a"  # 绿 (盈利)
+            _LOSS_COLOR = "#ef5350"  # 红 (亏损)
 
-        # ---- 价格图 ----
-        p = bk_figure(
-            title=f"{sym}",
-            width=1600,
-            height=450,
-            tools="pan,wheel_zoom,box_zoom,reset,save,crosshair",
-            active_drag="pan",
-            active_scroll="wheel_zoom",
-        )
-        _apply_dark_theme(p, title_size="14px")
+            # 按 (direction, win/loss) 分 4 组
+            groups: Dict[str, Dict[str, list]] = {
+                "long_win": {"x": [], "y": [], "info": []},
+                "long_loss": {"x": [], "y": [], "info": []},
+                "short_win": {"x": [], "y": [], "info": []},
+                "short_loss": {"x": [], "y": [], "info": []},
+            }
+            all_rr = []
 
-        # Candlestick: wicks + bodies
-        p.segment(
-            sym_df["_seq"].values,
-            sym_df["high"].values,
-            sym_df["_seq"].values,
-            sym_df["low"].values,
-            color="#78909C",
-            line_width=0.7,
-        )
-        w = 0.45
-        if inc.any():
-            p.vbar(
-                sym_df.loc[inc, "_seq"].values,
-                w,
-                sym_df.loc[inc, "open"].values,
-                sym_df.loc[inc, "close"].values,
-                fill_color="#26a69a",
-                line_color="#26a69a",
-            )
-        if dec.any():
-            p.vbar(
-                sym_df.loc[dec, "_seq"].values,
-                w,
-                sym_df.loc[dec, "open"].values,
-                sym_df.loc[dec, "close"].values,
-                fill_color="#ef5350",
-                line_color="#ef5350",
-            )
-
-        # ---- 交易标记 (per-archetype 颜色区分) ----
-        unique_archs = sorted(set(t.get("archetype", "") for t in sym_trades))
-
-        for arch in unique_archs:
-            arch_trades = [t for t in sym_trades if t.get("archetype", "") == arch]
-            color = (
-                _ARCH_PALETTE.get(arch.lower(), _DEFAULT_ARCH_COLOR)
-                if arch
-                else _DEFAULT_ARCH_COLOR
-            )
-            arch_label = arch.upper() if arch else "Default"
-
-            win_x, win_y, win_text = [], [], []
-            loss_x, loss_y, loss_text = [], [], []
-
-            for t in arch_trades:
+            for t in sym_trades:
                 try:
                     entry_ts_str = str(df.loc[t["entry_idx"], ts_col])
                     exit_ts_str = str(df.loc[t["exit_idx"], ts_col])
@@ -903,126 +1056,163 @@ def _generate_trading_map_html(
                     continue
 
                 rr = t["realized_rr"]
-                d_str = "L" if t["direction"] == 1 else "S"
-                hover_text = f"{d_str} R={rr:+.2f} ({t['exit_reason']})"
+                all_rr.append(rr)
+                is_long = t["direction"] == 1
+                is_win = rr >= 0
+                d_str = "L" if is_long else "S"
+                arch = t.get("archetype", "")
+                arch_tag = f" [{arch.upper()}]" if arch else ""
+                hover_text = f"{d_str} R={rr:+.2f} ({t['exit_reason']}){arch_tag}"
 
-                # 入场→出场连线
+                line_color = _WIN_COLOR if is_win else _LOSS_COLOR
                 p.line(
                     [entry_seq, exit_seq],
                     [t["entry_price"], t["exit_price"]],
                     line_dash="dotted",
-                    line_color=color,
+                    line_color=line_color,
                     line_width=1,
                     line_alpha=0.5,
                 )
 
-                if rr >= 0:
-                    win_x.append(entry_seq)
-                    win_y.append(t["entry_price"])
-                    win_text.append(hover_text)
-                else:
-                    loss_x.append(entry_seq)
-                    loss_y.append(t["entry_price"])
-                    loss_text.append(hover_text)
+                key = f"{'long' if is_long else 'short'}_{'win' if is_win else 'loss'}"
+                groups[key]["x"].append(entry_seq)
+                groups[key]["y"].append(t["entry_price"])
+                groups[key]["info"].append(hover_text)
 
-            n_w, n_l = len(win_x), len(loss_x)
-            all_rr = [t["realized_rr"] for t in arch_trades]
+            n_total = sum(len(g["x"]) for g in groups.values())
+            n_w = len(groups["long_win"]["x"]) + len(groups["short_win"]["x"])
+            n_l = n_total - n_w
             mean_r = sum(all_rr) / len(all_rr) if all_rr else 0
-            legend_label = f"{arch_label} ({n_w}W/{n_l}L, avg={mean_r:+.2f}R)"
 
-            if win_x:
-                src = ColumnDataSource({"x": win_x, "y": win_y, "info": win_text})
+            # Long Win: ▲ 绿
+            if groups["long_win"]["x"]:
+                src = ColumnDataSource(groups["long_win"])
                 p.scatter(
                     "x",
                     "y",
                     source=src,
                     marker="triangle",
                     size=10,
-                    fill_color=color,
+                    fill_color=_WIN_COLOR,
                     line_color="white",
                     line_width=0.5,
-                    legend_label=legend_label,
+                    legend_label=f"Long Win ({len(groups['long_win']['x'])})",
                 )
-            if loss_x:
-                src = ColumnDataSource({"x": loss_x, "y": loss_y, "info": loss_text})
+            # Long Loss: ▲ 红
+            if groups["long_loss"]["x"]:
+                src = ColumnDataSource(groups["long_loss"])
+                p.scatter(
+                    "x",
+                    "y",
+                    source=src,
+                    marker="triangle",
+                    size=10,
+                    fill_color=_LOSS_COLOR,
+                    line_color="white",
+                    line_width=0.5,
+                    alpha=0.7,
+                    legend_label=f"Long Loss ({len(groups['long_loss']['x'])})",
+                )
+            # Short Win: ▼ 绿
+            if groups["short_win"]["x"]:
+                src = ColumnDataSource(groups["short_win"])
                 p.scatter(
                     "x",
                     "y",
                     source=src,
                     marker="inverted_triangle",
                     size=10,
-                    fill_color=color,
+                    fill_color=_WIN_COLOR,
+                    line_color="white",
+                    line_width=0.5,
+                    legend_label=f"Short Win ({len(groups['short_win']['x'])})",
+                )
+            # Short Loss: ▼ 红
+            if groups["short_loss"]["x"]:
+                src = ColumnDataSource(groups["short_loss"])
+                p.scatter(
+                    "x",
+                    "y",
+                    source=src,
+                    marker="inverted_triangle",
+                    size=10,
+                    fill_color=_LOSS_COLOR,
                     line_color="white",
                     line_width=0.5,
                     alpha=0.7,
-                    legend_label=legend_label,
+                    legend_label=f"Short Loss ({len(groups['short_loss']['x'])})",
                 )
 
-        # HoverTool (仅交易标记)
-        hover = HoverTool(tooltips=[("Trade", "@info")], mode="mouse")
-        p.add_tools(hover)
+            # 总计 legend
+            if n_total > 0:
+                p.scatter(
+                    [],
+                    [],
+                    marker="circle",
+                    size=0,
+                    legend_label=f"Total: {n_w}W/{n_l}L avg={mean_r:+.2f}R",
+                )
 
-        # x 轴标签
-        n_ticks = min(30, len(sym_df))
-        tick_step = max(1, len(sym_df) // n_ticks)
-        p.xaxis.ticker = list(range(0, len(sym_df), tick_step))
-        p.xaxis.major_label_overrides = seq_to_label
-        p.yaxis.axis_label = "Price"
+            # HoverTool (仅交易标记)
+            hover = HoverTool(tooltips=[("Trade", "@info")], mode="mouse")
+            p.add_tools(hover)
 
-        # 图例
-        if p.legend:
-            p.legend.location = "top_left"
-            p.legend.background_fill_alpha = 0.6
-            p.legend.background_fill_color = "#16213e"
-            p.legend.label_text_color = "#e0e0e0"
-            p.legend.label_text_font_size = "11px"
-            p.legend.border_line_color = "#333"
-            p.legend.click_policy = "hide"
+            # x 轴标签
+            n_ticks = min(30, len(sym_df))
+            tick_step = max(1, len(sym_df) // n_ticks)
+            p.xaxis.ticker = list(range(0, len(sym_df), tick_step))
+            p.xaxis.major_label_overrides = seq_to_label
+            p.yaxis.axis_label = "Price"
 
-        # ---- R-Multiples 柱状图 (联动 x 轴) ----
-        r_fig = bk_figure(
-            title="R-Multiples (每笔交易的盈亏 R 倍数，1R = 1倍 ATR)",
-            width=1600,
-            height=170,
-            x_range=p.x_range,
-            tools="pan,wheel_zoom,reset",
-            active_drag="pan",
-            active_scroll="wheel_zoom",
-        )
-        _apply_dark_theme(r_fig, title_size="11px")
-        r_fig.add_layout(
-            Span(location=0, dimension="width", line_color="#555", line_width=0.5)
-        )
+            # 图例
+            if p.legend:
+                p.legend.location = "top_left"
+                p.legend.background_fill_alpha = 0.6
+                p.legend.background_fill_color = "#16213e"
+                p.legend.label_text_color = "#e0e0e0"
+                p.legend.label_text_font_size = "11px"
+                p.legend.border_line_color = "#333"
+                p.legend.click_policy = "hide"
 
-        for t in sym_trades:
-            try:
-                t_ts_str = str(df.loc[t["entry_idx"], ts_col])
-                t_seq = ts_str_to_seq.get(t_ts_str)
-            except KeyError:
-                continue
-            if t_seq is None:
-                continue
-            rr = t["realized_rr"]
-            arch = t.get("archetype", "")
-            bar_color = (
-                _ARCH_PALETTE.get(arch.lower(), _DEFAULT_ARCH_COLOR)
-                if arch
-                else ("#26a69a" if rr >= 0 else "#ef5350")
+            # ---- R-Multiples 柱状图 (联动 x 轴) ----
+            r_fig = bk_figure(
+                title="R-Multiples",
+                width=1600,
+                height=170,
+                x_range=p.x_range,
+                tools="pan,wheel_zoom,reset",
+                active_drag="pan",
+                active_scroll="wheel_zoom",
             )
-            r_fig.vbar(
-                x=[t_seq],
-                top=[rr],
-                width=0.4,
-                fill_color=bar_color,
-                line_color=bar_color,
-                fill_alpha=0.7,
+            _apply_dark_theme(r_fig, title_size="11px")
+            r_fig.add_layout(
+                Span(location=0, dimension="width", line_color="#555", line_width=0.5)
             )
 
-        r_fig.xaxis.ticker = p.xaxis.ticker
-        r_fig.xaxis.major_label_overrides = seq_to_label
-        r_fig.yaxis.axis_label = "R"
+            for t in sym_trades:
+                try:
+                    t_ts_str = str(df.loc[t["entry_idx"], ts_col])
+                    t_seq = ts_str_to_seq.get(t_ts_str)
+                except KeyError:
+                    continue
+                if t_seq is None:
+                    continue
+                rr = t["realized_rr"]
+                bar_color = "#26a69a" if rr >= 0 else "#ef5350"
+                r_fig.vbar(
+                    x=[t_seq],
+                    top=[rr],
+                    width=0.4,
+                    fill_color=bar_color,
+                    line_color=bar_color,
+                    fill_alpha=0.7,
+                )
 
-        all_layouts.append(bk_column(p, r_fig))
+            r_fig.xaxis.ticker = p.xaxis.ticker
+            r_fig.xaxis.major_label_overrides = seq_to_label
+            r_fig.yaxis.axis_label = "R"
+
+            all_layouts.append(bk_column(p, r_fig))
 
     if not all_layouts:
         return "<p>No charts generated</p>"
@@ -1579,11 +1769,42 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         first_parquet = list(arch_specs.values())[0]
         map_dir = Path(first_parquet).parent
         map_path = map_dir / f"trading_map_pcm_{'_'.join(arch_names)}.html"
+        # 每个 archetype 用自己 meta.yaml 的 timeframe
+        arch_tfs: Dict[str, str] = {}
+        for a in arch_names:
+            tf = load_meta_timeframe(a, strategies_root)
+            if tf:
+                arch_tfs[a] = tf
+        # 尝试加载全量连续 OHLC (消除 prefilter 导致的 K 线跳空)
+        _pcm_map_ohlc = None
+        _fs_root = getattr(args, "features_store_root", "feature_store")
+        _ts_col = "timestamp" if "timestamp" in merged.columns else None
+        _start = pd.Timestamp(merged[_ts_col].min()) if _ts_col else None
+        _end = pd.Timestamp(merged[_ts_col].max()) if _ts_col else None
+        _syms = merged["symbol"].unique().tolist() if "symbol" in merged.columns else []
+        if _syms and arch_tfs:
+            # 用第一个 archetype 的 timeframe 和 layer 加载
+            _first_arch = list(arch_tfs.keys())[0]
+            _first_tf = arch_tfs[_first_arch]
+            from src.feature_store.layer_naming import detect_layer_for_strategy
+
+            _fs_layer = detect_layer_for_strategy(_first_arch, _fs_root)
+            if _fs_layer:
+                _pcm_map_ohlc = _load_full_ohlc_for_map(
+                    features_store_root=_fs_root,
+                    features_store_layer=_fs_layer,
+                    symbols=_syms,
+                    timeframe=_first_tf,
+                    start=_start,
+                    end=_end,
+                )
         map_html = _generate_trading_map_html(
             merged,
             trade_details,
             title=f"PCM {'_'.join(arch_names)} Trading Map",
+            arch_timeframes=arch_tfs if arch_tfs else None,
             timeframe=getattr(args, "timeframe", None),
+            full_ohlc=_pcm_map_ohlc,
         )
         map_path.write_text(map_html, encoding="utf-8")
         print(f"   🗺️  Trading Map: {map_path}")
@@ -3087,11 +3308,39 @@ def main() -> int:
     if trade_details:
         logs_path = Path(args.logs)
         map_path = logs_path.parent / f"trading_map_{args.strategy or 'backtest'}.html"
+        # 从 meta.yaml 读取 timeframe
+        auto_tf = (
+            load_meta_timeframe(
+                args.strategy, getattr(args, "strategies_root", "config/strategies")
+            )
+            if args.strategy
+            else None
+        )
+        map_tf = getattr(args, "timeframe", None) or auto_tf
+        # 尝试加载全量连续 OHLC (消除 prefilter 导致的 K 线跳空)
+        _map_ohlc = None
+        if getattr(args, "features_store_layer", None):
+            _ts_col = "timestamp" if "timestamp" in merged.columns else None
+            _start = pd.Timestamp(merged[_ts_col].min()) if _ts_col else None
+            _end = pd.Timestamp(merged[_ts_col].max()) if _ts_col else None
+            _syms = (
+                merged["symbol"].unique().tolist() if "symbol" in merged.columns else []
+            )
+            if _syms:
+                _map_ohlc = _load_full_ohlc_for_map(
+                    features_store_root=args.features_store_root,
+                    features_store_layer=args.features_store_layer,
+                    symbols=_syms,
+                    timeframe=map_tf or args.timeframe or "240T",
+                    start=_start,
+                    end=_end,
+                )
         map_html = _generate_trading_map_html(
             merged,
             trade_details,
             title=f"{args.strategy or 'Backtest'} Trading Map",
-            timeframe=getattr(args, "timeframe", None),
+            timeframe=map_tf,
+            full_ohlc=_map_ohlc,
         )
         map_path.write_text(map_html, encoding="utf-8")
         print(f"   🗺️  Trading Map: {map_path}")

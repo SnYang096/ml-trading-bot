@@ -891,6 +891,11 @@ def main() -> int:
         action="store_true",
         help="时间稳定性分析: 对 Top 20 特征做 rolling Median Lift + CV (需配合 --compare-features)",
     )
+    parser.add_argument(
+        "--promote",
+        action="store_true",
+        help="验证通过后自动复制 direction.yaml 到 archetypes/direction.yaml",
+    )
     args = parser.parse_args()
 
     print("=" * 70)
@@ -975,8 +980,21 @@ def main() -> int:
     print(f"\n{'=' * 70}")
     if all_pass:
         print("✅ 全部通过")
+        # --promote: 复制 direction.yaml 到 archetypes/
+        if getattr(args, "promote", False):
+            for arch_name in targets:
+                src = STRATEGIES_ROOT / arch_name / "direction.yaml"
+                dst = STRATEGIES_ROOT / arch_name / "archetypes" / "direction.yaml"
+                if src.exists():
+                    import shutil
+                    shutil.copy2(src, dst)
+                    print(f"\U0001f4e6 Promoted direction.yaml → {dst}")
+                else:
+                    print(f"\u26a0\ufe0f  Cannot promote: {src} not found")
     else:
         print("❌ 存在问题，请检查上方详情")
+        if getattr(args, "promote", False):
+            print("⚠️  --promote 跳过: 验证未通过")
     print("=" * 70)
     return 0 if all_pass else 1
 

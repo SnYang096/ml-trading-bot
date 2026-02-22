@@ -262,6 +262,12 @@ def main() -> int:
         help="Root directory for strategy configs",
     )
     p.add_argument(
+        "--gate-path",
+        default=None,
+        help="Custom gate YAML path (e.g., config/strategies/fer/gate_draft.yaml). "
+        "Default: archetypes/gate.yaml",
+    )
+    p.add_argument(
         "--db-path",
         default=os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
         help="Order management DB path",
@@ -388,7 +394,11 @@ def main() -> int:
     if args.strategy:
         # Load single strategy archetype
         try:
-            arch = load_strategy_archetype(args.strategy, args.strategies_root)
+            arch = load_strategy_archetype(
+                args.strategy,
+                args.strategies_root,
+                gate_path=args.gate_path,
+            )
             arches = {arch.name: arch}
         except Exception as e:
             print(f"❌ Failed to load strategy '{args.strategy}': {e}", file=sys.stderr)
@@ -871,10 +881,29 @@ def main() -> int:
                     veto_rr = vetoed[rr_col].dropna()
                     if len(veto_rr) > 0:
                         veto_mean = float(veto_rr.mean())
+                        gate_effect = mean_rr - veto_mean
                         print(f"      Vetoed Mean {rr_col}: {veto_mean:.4f}")
                         print(
-                            f"      → Gate 效果: {'+' if mean_rr > veto_mean else ''}{mean_rr - veto_mean:.4f}"
+                            f"      → Gate 效果: {'+' if gate_effect > 0 else ''}{gate_effect:.4f}"
                         )
+                        if gate_effect < 0:
+                            print()
+                            print("      " + "=" * 60)
+                            print("      ❌ GATE 效果为负 — 被否决的交易反而更好!")
+                            print(
+                                f"         Allow 均值: {mean_rr:.4f}  vs  Veto 均值: {veto_mean:.4f}"
+                            )
+                            print(
+                                "         原因: Gate 规则可能语义方向错误或模型欠训练"
+                            )
+                            print(
+                                "         建议: 1) 清空 hard_gates 只保留 prefilter guardrail"
+                            )
+                            print("                2) 用更大数据集重新训练 Gate 模型")
+                            print(
+                                "                3) 检查 gate_draft.yaml 中规则的语义方向 (value_lt vs value_gt)"
+                            )
+                            print("      " + "=" * 60)
 
     # Print statistics for multiple archetypes passing gate
     if multi_archetype_stats:

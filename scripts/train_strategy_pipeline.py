@@ -2741,20 +2741,65 @@ def train_strategy(
                 f"   \u89c4\u5219\u6570: {len(pf_rules)}, \u8bad\u7ec3\u524d Train={len(df_train_filtered)}, Test={len(df_test_filtered)}"
             )
 
+            def _apply_single_rule(df, feat, op_str, val, _OPS):
+                """Apply a single prefilter rule, return (mask, ok)."""
+                op_func = _OPS.get(op_str)
+                if op_func is None:
+                    print(f"   ❌ 未知 operator: {op_str}，跳过规则 {feat}")
+                    return None, False
+                if feat not in df.columns:
+                    print(f"   ❌ 特征列 '{feat}' 不存在，跳过规则")
+                    return None, False
+                return op_func(df[feat], val), True
+
             for rule in pf_rules:
+                # ── any_of OR 组: 满足任一子条件即通过 ──
+                if "any_of" in rule:
+                    sub_rules = rule["any_of"]
+                    rationale = rule.get("rationale", "")
+                    n_before_train = len(df_train_filtered)
+                    n_before_test = len(df_test_filtered)
+
+                    or_mask_train = pd.Series(False, index=df_train_filtered.index)
+                    or_mask_test = pd.Series(False, index=df_test_filtered.index)
+                    sub_descs = []
+                    for sub in sub_rules:
+                        sf, sop, sv = sub["feature"], sub["operator"], sub["value"]
+                        m_tr, ok_tr = _apply_single_rule(
+                            df_train_filtered, sf, sop, sv, _OPS
+                        )
+                        m_te, ok_te = _apply_single_rule(
+                            df_test_filtered, sf, sop, sv, _OPS
+                        )
+                        if ok_tr and m_tr is not None:
+                            or_mask_train |= m_tr
+                        if ok_te and m_te is not None:
+                            or_mask_test |= m_te
+                        sub_descs.append(f"{sf}{sop}{sv}")
+
+                    df_train_filtered = df_train_filtered[or_mask_train].copy()
+                    df_test_filtered = df_test_filtered[or_mask_test].copy()
+                    desc = " OR ".join(sub_descs)
+                    print(
+                        f"   ✅ any_of({desc}): "
+                        f"Train {n_before_train}→{len(df_train_filtered)} "
+                        f"(-{n_before_train - len(df_train_filtered)}), "
+                        f"Test {n_before_test}→{len(df_test_filtered)} "
+                        f"(-{n_before_test - len(df_test_filtered)})"
+                        + (f"  [{rationale}]" if rationale else "")
+                    )
+                    continue
+
+                # ── 普通 AND 规则 (向后兼容) ──
                 feat = rule["feature"]
                 op_str = rule["operator"]
                 val = rule["value"]
                 op_func = _OPS.get(op_str)
                 if op_func is None:
-                    print(
-                        f"   \u274c \u672a\u77e5 operator: {op_str}，\u8df3\u8fc7\u89c4\u5219 {feat}"
-                    )
+                    print(f"   ❌ 未知 operator: {op_str}，跳过规则 {feat}")
                     continue
                 if feat not in df_train_filtered.columns:
-                    print(
-                        f"   \u274c \u7279\u5f81\u5217 '{feat}' \u4e0d\u5b58\u5728\uff0c\u8df3\u8fc7\u89c4\u5219"
-                    )
+                    print(f"   ❌ 特征列 '{feat}' 不存在，跳过规则")
                     continue
 
                 n_before_train = len(df_train_filtered)
@@ -2767,10 +2812,10 @@ def train_strategy(
                 ].copy()
                 rationale = rule.get("rationale", "")
                 print(
-                    f"   \u2705 {feat} {op_str} {val}: "
-                    f"Train {n_before_train}\u2192{len(df_train_filtered)} "
+                    f"   ✅ {feat} {op_str} {val}: "
+                    f"Train {n_before_train}→{len(df_train_filtered)} "
                     f"(-{n_before_train - len(df_train_filtered)}), "
-                    f"Test {n_before_test}\u2192{len(df_test_filtered)} "
+                    f"Test {n_before_test}→{len(df_test_filtered)} "
                     f"(-{n_before_test - len(df_test_filtered)})"
                     + (f"  [{rationale}]" if rationale else "")
                 )
@@ -4061,8 +4106,17 @@ def train_strategy(
                         )
                     else:
                         risk_gate_path = output_dir / "risk_gate_draft.yaml"
+                        _predictions_path = output_dir / "predictions.parquet"
                         _generate_risk_gate_yaml(
-                            risk_gate_path, rules, strategy_config.name, str(output_dir)
+                            risk_gate_path,
+                            rules,
+                            strategy_config.name,
+                            str(output_dir),
+                            predictions_path=(
+                                _predictions_path
+                                if _predictions_path.exists()
+                                else None
+                            ),
                         )
                         print(
                             f"   \U0001f4dc Risk gate draft exported to {risk_gate_path}"

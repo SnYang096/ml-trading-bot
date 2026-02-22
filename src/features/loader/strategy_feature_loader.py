@@ -429,11 +429,26 @@ class StrategyFeatureLoader:
                                 )
                             )
 
+                    # Deduplicate output_cols (two features may declare the same output column)
+                    _seen_oc: set = set()
+                    _dedup_oc: List[str] = []
+                    for _c in output_cols:
+                        if _c not in _seen_oc:
+                            _seen_oc.add(_c)
+                            _dedup_oc.append(_c)
+                    output_cols = _dedup_oc
+
                     # if store already has all needed outputs, return joined frame
                     if output_cols and all(c in df_store.columns for c in output_cols):
-                        # Use pd.concat to avoid DataFrame fragmentation from multiple column assignments
-                        feature_subset = df_store[output_cols]
-                        merged = pd.concat([result_df, feature_subset], axis=1)
+                        # Only concat columns NOT already present in result_df
+                        # to avoid duplicate column names (e.g. cvd_change_features_f
+                        # declares output_columns that overlap with raw data columns).
+                        new_cols = [c for c in output_cols if c not in result_df.columns]
+                        if new_cols:
+                            feature_subset = df_store[new_cols]
+                            merged = pd.concat([result_df, feature_subset], axis=1)
+                        else:
+                            merged = result_df
                         return merged
             except Exception:
                 pass

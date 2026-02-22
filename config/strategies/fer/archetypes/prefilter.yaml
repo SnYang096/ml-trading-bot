@@ -1,0 +1,48 @@
+# FER Archetype Prefilter v3.0 — trapped OR
+# 职责: archetype 成立的因果前提 — 不满足的样本不参与 Gate 训练
+# 对应研究配置: config/strategies/fer/prefilter.yaml (候选特征声明)
+#
+# 设计依据: gate_v3_semantic_prefilter_TODO.md
+#   FER 的语义前提 = "有人被套": trapped_longs 高分 OR trapped_shorts 高分
+#   v2.0 的 3 条 AND(oi+rsi+macd) 导致 train 仅 1,145 样本 vs 231 特征 = 5:1 → 模型欠拟合
+#   v3.0 改用 trapped OR, train=4,657 样本, 20:1 比率, 语义更直接
+#
+# 数据依据: feature_store/features_c55ff81197 (2026-02-22)
+#   全量: 39,426 行 (6 symbols, 2023-03~2025-12)
+#   OR pass: 10,882 (27.6%), Train(<2024-05): 4,657 (26.7%), Test: 6,225 (28.3%)
+#
+# 推理时行为: loader.py 将 any_of 转为单条 guardrail
+#   deny = (longs < 4.4843 AND shorts < 3.7682)  [De Morgan]
+
+rules:
+  # ──────────────────────────────────────────────────────────────
+  # FER 因果前提: 有人被套 (trapped_longs>P90 OR trapped_shorts>P80)
+  # 语义: 极端反转失败 → 必须先有被套的一方, 否则无因果基础
+  # ──────────────────────────────────────────────────────────────
+  - any_of:
+      - feature: fer_trapped_longs_score
+        operator: ">="
+        value: 4.4843
+      - feature: fer_trapped_shorts_score
+        operator: ">="
+        value: 3.7682
+    rationale: "FER因果前提: 有人被套 (longs>=P90 OR shorts>=P80), train=4657, 20:1"
+
+  # ──────────────────────────────────────────────────────────────
+  # [ARCHIVE] v2.0 方案: 3 条 AND P20 (3,137 样本, 8.1%)
+  #   问题: train 仅 1,145 vs 231 特征 = 5:1 → 模型欠拟合
+  # ──────────────────────────────────────────────────────────────
+  # - feature: oi_compression_score
+  #   operator: "<="
+  #   value: 0.0634
+  #   rationale: "P20阈值, OI未压缩=方向性市场"
+  #
+  # - feature: rsi
+  #   operator: "<="
+  #   value: 39.9352
+  #   rationale: "P20阈值, 中度弱势环境"
+  #
+  # - feature: macd_atr
+  #   operator: "<="
+  #   value: -0.6227
+  #   rationale: "P20阈值, 动量确认下行"

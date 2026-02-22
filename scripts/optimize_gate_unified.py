@@ -1270,6 +1270,134 @@ def _generate_html_report(
         f.write(html)
 
 
+# Optimization statuses that are considered "validated" for promotion
+_VALID_OPT_STATUSES = {
+    "stable_plateau_found",
+    "no_stable_plateau",  # robustness fallback is still validated
+    "nan_lift_hard_gate",  # NaN-lift exception for hard gates
+}
+
+
+def _promote_gate_to_archetypes(
+    strategy: str,
+    strategies_root: str,
+    arch: "StrategyArchetype",
+    optimization_results: Dict[str, Any],
+    source_gate_path: Optional[str] = None,
+) -> None:
+    """
+    将优化后的 gate 规则写入 archetypes/gate.yaml。
+
+    读取源 gate YAML (草稿或现有 gate.yaml)，用优化结果更新阈值，
+    写入 archetypes/gate.yaml。
+
+    关键行为: 优化失败的规则 (no_valid_threshold/skip) 会被移除，
+    不会把未验证的噪声阈值写入生产配置。
+    """
+    import yaml
+
+    root = Path(strategies_root)
+    arch_dir = root / strategy / "archetypes"
+    target_path = arch_dir / "gate.yaml"
+
+    # 读取源 YAML (草稿或现有 gate.yaml)
+    if source_gate_path:
+        source = Path(source_gate_path)
+    else:
+        source = target_path
+
+    if not source.exists():
+        print(f"\u26a0\ufe0f  Cannot promote: source gate not found: {source}")
+        return
+
+    raw_text = source.read_text(encoding="utf-8")
+    config = yaml.safe_load(raw_text) or {}
+
+    # ── Filter hard_gates: only keep rules that passed optimization ──
+    hard_gates = config.get("hard_gates", [])
+    kept_rules = []
+    removed_rules = []
+    updated_count = 0
+
+    for rule in hard_gates:
+        rule_id = rule.get("id", "")
+        opt = optimization_results.get(rule_id)
+
+        if not opt:
+            # No optimization result for this rule → keep as-is (e.g. frozen)
+            kept_rules.append(rule)
+            continue
+
+        status = opt.get("status", "")
+        rec = opt.get("recommended_threshold")
+
+        if status not in _VALID_OPT_STATUSES or rec is None:
+            # Optimization failed → remove from production gate
+            removed_rules.append(
+                {
+                    "id": rule_id,
+                    "status": status,
+                    "reason": opt.get("reason", "unknown"),
+                }
+            )
+            continue
+
+        # Update threshold from optimization result
+        when = rule.get("when", {})
+        for feature, conditions in when.items():
+            if isinstance(conditions, dict):
+                for cond_key in list(conditions.keys()):
+                    if cond_key.startswith("value_"):
+                        conditions[cond_key] = round(rec, 4)
+                        updated_count += 1
+
+        # Add optimization metadata to comment
+        lift = opt.get("lift_at_mid", opt.get("lift"))
+        rule["comment"] = (
+            f"optimizer: {status}, " f"threshold={rec:.4f}, " f"lift={lift:.3f}"
+            if isinstance(lift, (int, float))
+            else f"optimizer: {status}"
+        )
+        kept_rules.append(rule)
+
+    config["hard_gates"] = kept_rules
+
+    # Report removed rules
+    if removed_rules:
+        print(
+            f"\n  \u26a0\ufe0f  {len(removed_rules)} 条规则优化失败, 已从 gate.yaml 移除:"
+        )
+        for rm in removed_rules:
+            print(f"     - {rm['id']}: {rm['status']} ({rm['reason']})")
+
+    if not kept_rules:
+        print(
+            f"\n  \u274c  所有规则优化失败, gate.yaml 将只含 guardrails (无 hard_gates)"
+        )
+        print(f"     建议: 检查训练数据量是否充足, 或放宽优化参数")
+
+    # 写入 archetypes/gate.yaml
+    n_total = len(hard_gates)
+    header = (
+        f"# {strategy.upper()} Gate (optimized, auto-promoted)\n"
+        f"# 来源: {source}\n"
+        f"# 优化规则: {updated_count}/{n_total} 条通过优化"
+        f"{f', {len(removed_rules)} 条已移除' if removed_rules else ''}\n\n"
+    )
+    yaml_content = yaml.dump(
+        config,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+        width=120,
+    )
+    target_path.write_text(header + yaml_content, encoding="utf-8")
+    print(
+        f"\n\U0001f4e6 Promoted to {target_path} ({updated_count} thresholds updated, "
+        f"{len(kept_rules)} rules kept, {len(removed_rules)} removed)"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Unified Gate Optimization - Production Grade Gate Parameter Optimizer"
@@ -1346,6 +1474,18 @@ def main() -> int:
         default="plateau",
         help="Method to determine intervals: plateau bounds or robustness-driven",
     )
+    parser.add_argument(
+        "--gate-path",
+        default=None,
+        help="Custom gate YAML path (e.g., config/strategies/fer/gate_draft.yaml). "
+        "Default: archetypes/gate.yaml",
+    )
+    parser.add_argument(
+        "--promote",
+        action="store_true",
+        help="After optimization, write updated gate.yaml with optimized thresholds "
+        "to archetypes/gate.yaml (promote draft to production)",
+    )
     args = parser.parse_args()
 
     # Load logs
@@ -1402,7 +1542,11 @@ def main() -> int:
 
     # Load strategy archetype
     try:
-        arch = load_strategy_archetype(args.strategy, args.strategies_root)
+        arch = load_strategy_archetype(
+            args.strategy,
+            args.strategies_root,
+            gate_path=args.gate_path,
+        )
         print(f"✅ Loaded strategy: {arch.name}")
         print(f"   Hard gates: {len(arch.gate.hard_gates)}")
 
@@ -1552,6 +1696,18 @@ def main() -> int:
     html_path = output_path.with_suffix(".html")
     _generate_html_report(df, final_results, html_path, args.label_col)
     print(f"✅ HTML report saved to: {html_path}")
+
+    # ==========================================================================
+    # --promote: 将优化后的规则写入 archetypes/gate.yaml
+    # ==========================================================================
+    if args.promote:
+        _promote_gate_to_archetypes(
+            args.strategy,
+            args.strategies_root,
+            arch,
+            all_results,
+            args.gate_path,
+        )
 
     return 0
 

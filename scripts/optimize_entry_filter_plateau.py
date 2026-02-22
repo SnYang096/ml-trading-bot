@@ -31,6 +31,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -546,6 +547,11 @@ def main() -> int:
         action="store_true",
         help="读取研究文件 (config/strategies/{strategy}/entry_filters.yaml) 而非 archetypes 生产文件",
     )
+    p.add_argument(
+        "--promote",
+        action="store_true",
+        help="自动写入 archetypes/entry_filters.yaml (Tier A: plateau验证 + Tier B: snotio>baseline放过)",
+    )
     args = p.parse_args()
 
     # 加载数据
@@ -798,7 +804,218 @@ def main() -> int:
             )
             print()
 
+    # --promote: 自动写入 archetypes/entry_filters.yaml
+    if args.promote:
+        _promote_entry_filters_yaml(
+            all_results=all_results,
+            filters_scanned=filters_to_scan,
+            entry_cfg=entry_cfg,
+            strategy=args.strategy,
+            strategies_root=args.strategies_root,
+            merged=merged,
+            exec_config=exec_config,
+        )
+
     return 0
+
+
+def _promote_entry_filters_yaml(
+    all_results: Dict[str, Any],
+    filters_scanned: List[Dict[str, Any]],
+    entry_cfg: Dict[str, Any],
+    strategy: str,
+    strategies_root: str,
+    merged: Optional[pd.DataFrame] = None,
+    exec_config: Optional[Dict[str, Any]] = None,
+) -> None:
+    """将优化结果写入 archetypes/entry_filters.yaml。
+
+    两级准入 (OR 组合下，放入只增加入场，不移除):
+      Tier A (PLATEAU): 有稳定高原 → 用推荐阈值
+      Tier B (SNOTIO):  无高原但 snotio > baseline → 用原始阈值直接放过
+
+    两级都需要通过 z-test 显著性检验 (p < 0.05):
+      H0: filter snotio = baseline snotio (无效)
+      不显著 = 可能是噪声，自动排除
+    """
+    import yaml
+    from scipy.stats import norm as _norm_dist
+
+    # --- 计算 baseline snotio (如果有数据) ---
+    bl_snotio = 0.0
+    bl_std = 1.5
+    filter_snotios: Dict[str, Tuple[float, int]] = {}  # {fname: (snotio, trades)}
+    can_eval = merged is not None and exec_config is not None
+
+    if can_eval:
+        original_dir = merged["entry_direction"].copy()
+        # baseline: 全部入场
+        bl_ret, _ = simulate_rr_execution(
+            merged, exec_config, atr_col="atr", use_tier_params=False
+        )
+        bl_valid = bl_ret.dropna()
+        bl_snotio = float(bl_valid.mean()) if len(bl_valid) >= 10 else 0.0
+        # 计算 R-multiple 标准差 (用于显著性检验)
+        bl_std = float(bl_valid.std()) if len(bl_valid) >= 10 else 1.5
+        print(
+            f"   📏 Baseline snotio={bl_snotio:.4f} (trades={len(bl_valid)}, σ={bl_std:.3f})"
+        )
+
+        # 逐个 filter 评估 snotio
+        for fdef in filters_scanned:
+            fname = fdef["id"]
+            mask = _build_mask_from_conditions(
+                merged, fdef.get("conditions", []), silent=True
+            )
+            merged["entry_direction"] = original_dir.copy()
+            merged.loc[~mask, "entry_direction"] = 0.0
+            n_entries = int((merged["entry_direction"] != 0).sum())
+            if n_entries < 5:
+                filter_snotios[fname] = (0.0, n_entries)
+                continue
+            exec_ret, _ = simulate_rr_execution(
+                merged, exec_config, atr_col="atr", use_tier_params=False
+            )
+            valid = exec_ret.dropna()
+            sn = float(valid.mean()) if len(valid) >= 5 else 0.0
+            filter_snotios[fname] = (sn, len(valid))
+        merged["entry_direction"] = original_dir  # 恢复
+
+    # --- 显著性检验函数 ---
+    def _is_significant(
+        sn: float, n: int, sigma: float = 1.5
+    ) -> Tuple[bool, float, float]:
+        """z-test: H0 为 filter snotio = baseline snotio。
+        返回 (is_significant, z_score, p_value)。
+        """
+        if n < 5 or sigma <= 0:
+            return False, 0.0, 1.0
+        se = sigma / np.sqrt(n)
+        z = (sn - bl_snotio) / se
+        p = 1 - _norm_dist.cdf(z)
+        return p < 0.05, z, p
+
+    # 用实际数据的 std 替代假设值
+    sigma_for_test = bl_std if can_eval and bl_std > 0 else 1.5
+
+    # --- 分级准入 ---
+    promoted_filters = []
+    tier_a_count = 0
+    tier_b_count = 0
+
+    for fdef in filters_scanned:
+        fname = fdef["id"]
+        fdata = all_results.get(fname, {})
+
+        # 收集 plateau 推荐阈值
+        rec_map: Dict[str, float] = {}
+        has_any_plateau = False
+        for cr in fdata.get("scanned_conditions", []):
+            p = cr["plateau"]
+            if p.get("is_plateau"):
+                rec_map[cr["feature"]] = round(p["recommended"], 4)
+                has_any_plateau = True
+
+        # Tier A: 有 plateau + 显著性检验
+        if has_any_plateau:
+            # 显著性检查
+            if can_eval and fname in filter_snotios:
+                sn, trades = filter_snotios[fname]
+                sig, z, p = _is_significant(sn, trades, sigma_for_test)
+                if not sig:
+                    print(
+                        f"      ❌ {fname}: plateau通过但snotio不显著 (sn={sn:.4f} z={z:.2f} p={p:.4f}), 排除"
+                    )
+                    continue
+                sig_note = f", z={z:.2f} p={p:.4f}"
+            else:
+                sig_note = ""
+
+            new_conditions = []
+            for cond in fdef.get("conditions", []):
+                c = dict(cond)
+                if c["feature"] in rec_map:
+                    c["value"] = rec_map[c["feature"]]
+                new_conditions.append(c)
+
+            plateau_notes = []
+            for cr in fdata.get("scanned_conditions", []):
+                p = cr["plateau"]
+                if p.get("is_plateau"):
+                    plateau_notes.append(
+                        f"{cr['feature']}={p['recommended']:.3f}(conf={p.get('confidence','?')})"
+                    )
+
+            pf = {
+                "id": fname,
+                "enabled": True,
+                "description": fdef.get("description", ""),
+                "conditions": new_conditions,
+                "tier": "A_PLATEAU",
+                "notes": f"plateau: {', '.join(plateau_notes)}{sig_note}",
+            }
+            promoted_filters.append(pf)
+            tier_a_count += 1
+            continue
+
+        # Tier B: 无 plateau 但 snotio > baseline + 显著性检验
+        if can_eval and fname in filter_snotios:
+            sn, trades = filter_snotios[fname]
+            sig, z, p = _is_significant(sn, trades, sigma_for_test)
+            if sn > bl_snotio and trades >= 5 and sig:
+                pf = {
+                    "id": fname,
+                    "enabled": True,
+                    "description": fdef.get("description", ""),
+                    "conditions": [dict(c) for c in fdef.get("conditions", [])],
+                    "tier": "B_SNOTIO",
+                    "notes": f"snotio={sn:.4f}(>{bl_snotio:.4f} bl), trades={trades}, z={z:.2f} p={p:.4f}, 无plateau用原始阈值",
+                }
+                promoted_filters.append(pf)
+                tier_b_count += 1
+
+    if not promoted_filters:
+        print("\n   ⚠️ --promote: 没有 filter 通过准入, 跳过写入")
+        return
+
+    arch_dir = Path(strategies_root) / strategy / "archetypes"
+    arch_dir.mkdir(parents=True, exist_ok=True)
+    output_path = arch_dir / "entry_filters.yaml"
+
+    header = (
+        f"# {strategy.upper()} Entry Filter Archetype\n"
+        f"# Auto-promoted by optimize_entry_filter_plateau.py\n"
+        f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        f"# Promoted: {len(promoted_filters)} filters ({tier_a_count} plateau + {tier_b_count} snotio-only)\n"
+        f"# Baseline snotio: {bl_snotio:.4f}, \u03c3={sigma_for_test:.3f}\n"
+        f"# Significance: z-test p<0.05 required for all tiers\n"
+        f"#\n"
+        f'# 职责: "现在该入场吗?" \u2192 硬二值控制入场时机\n'
+        f"# 多个 filter 之间是 OR 关系\n"
+        f"# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)\n"
+        f"\n"
+    )
+
+    out_cfg = {
+        "filters": promoted_filters,
+        "combination_mode": entry_cfg.get("combination_mode", "or"),
+    }
+
+    yaml_content = yaml.dump(
+        out_cfg,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+        width=120,
+    )
+
+    output_path.write_text(header + yaml_content, encoding="utf-8")
+    print(f"\n   ✅ --promote: 写入 {output_path}")
+    print(f"      Tier A (PLATEAU):  {tier_a_count} filters")
+    print(f"      Tier B (SNOTIO):   {tier_b_count} filters")
+    for pf in promoted_filters:
+        tier_label = "🅰" if pf.get("tier") == "A_PLATEAU" else "🅱"
+        print(f"      {tier_label} {pf['id']}: {pf['notes']}")
 
 
 def _run_dedup_analysis(
@@ -886,7 +1103,7 @@ def _run_dedup_analysis(
 
     # Baseline (no filter)
     merged["entry_direction"] = original_entry.copy()
-    bl_exec = simulate_rr_execution(
+    bl_exec, _ = simulate_rr_execution(
         merged, exec_config, atr_col="atr", use_tier_params=False
     )
     bl_valid = bl_exec.dropna()
@@ -910,7 +1127,7 @@ def _run_dedup_analysis(
             n_entries = int((merged["entry_direction"] != 0).sum())
             if n_entries < 20:
                 continue
-            exec_returns = simulate_rr_execution(
+            exec_returns, _ = simulate_rr_execution(
                 merged, exec_config, atr_col="atr", use_tier_params=False
             )
             valid = exec_returns.dropna()

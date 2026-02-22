@@ -171,61 +171,101 @@ def _write_standalone_rules(
 
 
 def _generate_risk_gate_yaml(
-    output_path: Path, rules: list, strategy: str, model_source: str, top_n: int = 10
+    output_path: Path,
+    rules: list,
+    strategy: str,
+    model_source: str,
+    top_n: int = 10,
+    predictions_path: "Path | str | None" = None,
 ):
     """
     从树模型分裂规则生成 risk_gate_draft.yaml 草稿。
 
-    生成的 YAML 包含语义注释，需人工审核修改后使用。
+    ✅ 生成 archetype 兼容格式 (when/then/action)，可直接用于 gate apply-archetype。
+    ✅ 自动用 predictions 数据确定语义方向（deny 收益更差的那一侧）。
+    同时写入 config/strategies/{strategy}/archetypes/gate_draft.yaml。
     """
     import yaml
 
-    # 所有规则统一为 hard gate
+    # 加载 predictions 数据用于自动判定方向
+    pred_df = None
+    rr_col_name = None
+    if predictions_path is not None:
+        try:
+            import pandas as pd
+
+            pred_df = pd.read_parquet(predictions_path)
+            for _rc in ["forward_rr", "success_no_rr_extreme", "ret_mean"]:
+                if _rc in pred_df.columns:
+                    rr_col_name = _rc
+                    break
+            if rr_col_name is None:
+                pred_df = None  # 无收益列，退化为旧逻辑
+        except Exception:
+            pred_df = None
+
+    # 生成 archetype 兼容的 hard_gates
     hard_gates = []
+    for i, (name, thr, op, count) in enumerate(rules[:top_n]):
+        direction_source = "tree_split"  # 方向来源标记
 
-    for name, thr, op, count in rules[:top_n]:
-        # 生成规则 ID
+        if pred_df is not None and name in pred_df.columns and rr_col_name:
+            # 数据驱动: 比较阈值两侧的平均收益，deny 差的那边
+            feat_vals = pred_df[name].dropna()
+            rr_vals = pred_df.loc[feat_vals.index, rr_col_name]
+            low_mask = feat_vals < thr
+            high_mask = feat_vals >= thr
+            mean_low = float(rr_vals[low_mask].mean()) if low_mask.any() else 0.0
+            mean_high = float(rr_vals[high_mask].mean()) if high_mask.any() else 0.0
+
+            if mean_low < mean_high:
+                # 低值收益更差 → deny 低值
+                condition_key = "value_lt"
+            else:
+                # 高值收益更差 → deny 高值
+                condition_key = "value_gt"
+            direction_source = (
+                f"data_verified (low={mean_low:.3f}, high={mean_high:.3f})"
+            )
+        else:
+            # 无数据: 树分裂操作符无法判断方向，跳过该规则
+            print(f"   ⚠️  {name}: 无 predictions 数据无法确定方向，跳过")
+            continue
+
         rule_id = f"gate_{name.replace('.', '_').lower()}"
+        tag = f"HARD_{name.upper().replace('.', '_')}"
 
-        # 构造规则
         rule = {
             "id": rule_id,
-            "key": name,
-            "operator": "<" if op == "<=" else op.replace("<=", "<"),
-            "quantile_value": round(thr, 4),
-            "tag": f"HARD_{name.upper().replace('.', '_')}",
-            "_comment": f"树模型分裂 {count} 次 | 阈值 {thr:.4g} | 需人工确认语义",
+            "tag": tag,
+            "phase": "hard_gate",
+            "priority": 10 + i,
+            "reason": f"{name} 触发树分裂条件 (分裂 {count} 次)",
+            "when": {
+                name: {condition_key: round(thr, 4)},
+            },
+            "then": {"action": "deny"},
+            "comment": f"自动生成: 分裂 {count} 次 | 阈值 {thr:.4g} | 方向: {direction_source}",
         }
         hard_gates.append(rule)
 
-    # 构建完整配置
+    # 构建完整 archetype gate 配置
     config = {
-        "_meta": {
-            "generated_from": str(model_source),
-            "strategy": strategy,
-            "note": "此为自动生成的草稿，需人工审核修改后使用",
-        },
-        "system_safety": {
-            "pre_checks": [
-                {
-                    "id": "check_feature_freshness",
-                    "description": "检查特征数据时效性",
+        "schema": {
+            "phases": ["system_safety", "hard_gate", "guardrail"],
+            "evaluation_order": "system_safety -> hard_gate -> guardrail",
+            "governance": {
+                "failure_budget": {
+                    "max_hard_deny_rate": 0.50,
+                    "alert_threshold": 0.45,
                 },
-            ],
-        },
-        "hard_gates": {
-            "_description": "硬规则：任一触发则拒绝交易",
-            "rules": hard_gates,
-        },
-        "governance": {
-            "failure_budget": {
-                "max_hard_deny_rate": 0.50,
-                "_comment": "硬规则拒绝率上限，超过需审查规则",
             },
         },
+        "hard_gates": hard_gates,
+        "guardrails": [],  # guardrails 应基于实际特征数据验证后手动添加
     }
 
-    # 使用自定义 dumper 保留注释字段
+    # 写入 results 目录 (备份)
     yaml_content = yaml.dump(
         config,
         allow_unicode=True,
@@ -233,8 +273,30 @@ def _generate_risk_gate_yaml(
         sort_keys=False,
         width=120,
     )
-
     output_path.write_text(yaml_content, encoding="utf-8")
+
+    # 同时写入策略配置目录 (config/strategies/{strategy}/gate_draft.yaml)
+    # 与 prefilter.yaml / direction.yaml 同级，审核后复制到 archetypes/gate.yaml
+    project_root = Path(__file__).resolve().parents[1]
+    strategy_dir = project_root / "config" / "strategies" / strategy
+    if strategy_dir.is_dir():
+        draft_path = strategy_dir / "gate_draft.yaml"
+        direction_note = (
+            "# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)\n"
+            if pred_df is not None
+            else "# ⚠️ 无 predictions 数据，无法自动确定方向，规则可能为空\n"
+        )
+        header = (
+            f"# {strategy.upper()} Gate Draft (auto-generated)\n"
+            f"# 来源: {model_source}\n"
+            f"{direction_note}"
+            f"# 已是 archetype 兼容格式，可直接用于:\n"
+            f"#   mlbot gate apply-archetype --strategy {strategy}\n"
+            f"#   python scripts/optimize_gate_unified.py --strategy {strategy} --promote\n\n"
+        )
+        draft_path.write_text(header + yaml_content, encoding="utf-8")
+        print(f"   \U0001f4c1 Gate draft (archetype format) → {draft_path}")
+
     return output_path
 
 
@@ -472,10 +534,17 @@ def main():
                 if args.risk_gate_output
                 else artifact_dir / "risk_gate_draft.yaml"
             )
+            # 尝试加载 predictions 数据自动确定方向
+            _pred_path = artifact_dir / "predictions.parquet"
             _generate_risk_gate_yaml(
-                risk_gate_path, rules, args.strategy, str(artifact_dir)
+                risk_gate_path,
+                rules,
+                args.strategy,
+                str(artifact_dir),
+                predictions_path=_pred_path if _pred_path.exists() else None,
             )
-            print(f"  ✅ {risk_gate_path} (草稿，需人工审核)")
+            _dir_msg = "方向已自动确定" if _pred_path.exists() else "需人工审核方向"
+            print(f"  ✅ {risk_gate_path} ({_dir_msg})")
 
         return 0
 

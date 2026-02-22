@@ -29,10 +29,12 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -84,6 +86,11 @@ def main() -> int:
         "--output",
         default=None,
         help="Output path for results (JSON + HTML).",
+    )
+    p.add_argument(
+        "--promote",
+        action="store_true",
+        help="Auto-promote best params to archetypes/execution.yaml",
     )
     args = p.parse_args()
 
@@ -394,9 +401,120 @@ def main() -> int:
     html_path = output_path.with_suffix(".html")
     Path(html_path).write_text(html, encoding="utf-8")
     print(f"   📊 HTML: {html_path}")
+
+    # ================================================================
+    # --promote: 自动回写最优参数到 archetypes/execution.yaml
+    # ================================================================
+    if args.promote:
+        promoted = _promote_execution_yaml(
+            strategy=args.strategy,
+            strategies_root=args.strategies_root,
+            param_names=param_names,
+            best=best,
+            plateau=plateau,
+            daily_sharpe=daily_sh,
+        )
+        if promoted:
+            print(f"\n   ✅ Promoted to: {promoted}")
+        else:
+            print(f"\n   ⚠️  Promote skipped (see above)")
+
     print("\n" + "=" * 80)
 
     return 0
+
+
+def _promote_execution_yaml(
+    strategy: str,
+    strategies_root: str,
+    param_names: List[str],
+    best: Dict[str, Any],
+    plateau: Dict[str, Any],
+    daily_sharpe: float,
+) -> Optional[Path]:
+    """
+    将 grid search 最优参数写回 archetypes/execution.yaml。
+
+    保留结构:
+      - execution_constraints (不动)
+      - take_profit (不动)
+      - holding (不动)
+      - tiers (不动)
+      - optimization (不动, grid 定义)
+    只更新:
+      - stop_loss 中被 grid search 优化的参数
+      - header 注释 (优化元数据)
+    """
+    from scripts.backtest_execution_layer import _set_nested
+
+    arch_dir = Path(strategies_root) / strategy / "archetypes"
+    exec_path = arch_dir / "execution.yaml"
+
+    if not exec_path.exists():
+        print(f"   ⚠️  Cannot promote: {exec_path} not found")
+        return None
+
+    # 读取现有配置
+    config = yaml.safe_load(exec_path.read_text(encoding="utf-8")) or {}
+
+    # 记录旧值用于对比
+    old_values = {}
+    for name in param_names:
+        parts = name.split(".")
+        cur = config
+        for part in parts:
+            cur = cur.get(part, {}) if isinstance(cur, dict) else {}
+        if not isinstance(cur, dict):
+            old_values[name] = cur
+
+    # 写入最优参数
+    for name in param_names:
+        val = best[name]
+        _set_nested(config, name, round(float(val), 2))
+
+    # 递增 version
+    old_ver = config.get("version", 1)
+    config["version"] = old_ver + 1
+
+    # 生成 header 注释
+    is_plateau = plateau.get("is_plateau", False)
+    cv = plateau.get("cv", float("inf"))
+    param_summary = ", ".join(f"{n.split('.')[-1]}={best[n]:.1f}" for n in param_names)
+    old_summary = ", ".join(
+        f"{n.split('.')[-1]}: {old_values.get(n, '?')} → {best[n]:.1f}"
+        for n in param_names
+    )
+
+    header = f"""# {strategy.upper()} Execution 配置
+# 版本: {config['version']}
+# 更新时间: {datetime.now().strftime('%Y-%m-%d')}
+#
+# ┌─────────────────────────────────────────────────────────┐
+# │  Grid Search auto-promoted                              │
+# │  Sharpe (daily): {daily_sharpe:.2f}                                   │
+# │  Best: {param_summary:<50s}│
+# │  Plateau: {'✅ stable' if is_plateau else '⚠️  unstable'} (CV={cv:.3f})                            │
+# │  Changes: {old_summary:<47s}│
+# └─────────────────────────────────────────────────────────┘
+#
+"""
+
+    # 写入 YAML
+    yaml_content = yaml.dump(
+        config,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+        width=120,
+    )
+    exec_path.write_text(header + yaml_content, encoding="utf-8")
+    print(f"   📝 Updated stop_loss: {param_summary}")
+    print(
+        f"   📝 Plateau: {'✅ stable' if is_plateau else '⚠️  unstable'} (CV={cv:.3f})"
+    )
+    print(f"   📝 Sharpe (daily): {daily_sharpe:.2f}")
+
+    return exec_path
 
 
 if __name__ == "__main__":

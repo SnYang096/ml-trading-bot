@@ -281,6 +281,1085 @@ def _classify_results(
     return positive, anti, absence
 
 
+# ── Prefilter AND 组合样本量测算 + Jaccard 冗余矩阵 ──────────────────────
+
+
+def _build_prefilter_mask(
+    df: pd.DataFrame,
+    result: Dict[str, Any],
+    category: str,
+) -> pd.Series:
+    """为单条 prefilter 候选构建 pass mask (True = 保留的行)。
+
+    - positive (high=good): 保留高端 → feature >= threshold
+    - anti (high=bad):      拒绝高端 → feature < threshold
+    - absence (low=bad):    拒绝低端 → feature > threshold
+    """
+    feat = result["feature"]
+    thr = result["threshold"]
+    col = df[feat]
+    if isinstance(col, pd.DataFrame):
+        col = col.iloc[:, 0]
+
+    if category == "positive":
+        if result["direction"] == "high":
+            return col >= thr
+        else:  # positive from low direction (low端 bad_rate < rest)
+            return col <= thr
+    elif category == "anti":
+        return col < thr  # 拒绝高端
+    elif category == "absence":
+        return col > thr  # 拒绝低端
+    return pd.Series(True, index=df.index)
+
+
+def _best_per_feature(
+    results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """每个 feature 只保留 bad_rate_diff_abs 最大的一条。"""
+    best: Dict[str, Dict[str, Any]] = {}
+    for r in results:
+        feat = r["feature"]
+        if feat not in best or r["bad_rate_diff_abs"] > best[feat]["bad_rate_diff_abs"]:
+            best[feat] = r
+    return list(best.values())
+
+
+def _prefilter_combination_analysis(
+    df: pd.DataFrame,
+    positive: List[Dict[str, Any]],
+    anti: List[Dict[str, Any]],
+    absence: List[Dict[str, Any]],
+    label_col: str,
+    rr_col: str,
+    n_total: int,
+) -> Optional[Dict[str, Any]]:
+    """Prefilter AND 组合分析：Jaccard 冗余 + 贪心样本量测算。
+
+    输出:
+    1. 每条候选的 pass mask 统计
+    2. Jaccard 对称矩阵 (高 Jaccard = 高冗余)
+    3. 贪心前向选择: 每步加 AND 后 bad_rate 降幅最大的 + 样本量
+    """
+    # ── 1. 收集候选 (每 feature 取最强信号) ──
+    candidates: List[Tuple[Dict[str, Any], str]] = []  # (result, category)
+    for r in _best_per_feature(positive):
+        candidates.append((r, "positive"))
+    for r in _best_per_feature(anti):
+        candidates.append((r, "anti"))
+    for r in _best_per_feature(absence):
+        candidates.append((r, "absence"))
+
+    if len(candidates) < 2:
+        return None
+
+    # 按 bad_rate_diff_abs 排序
+    candidates.sort(key=lambda x: x[0]["bad_rate_diff_abs"], reverse=True)
+
+    # ── 2. 构建 pass masks ──
+    names: List[str] = []
+    masks: List[np.ndarray] = []
+    meta: List[Dict[str, Any]] = []
+
+    baseline_bad_rate = float((df[label_col] == 0).mean())
+
+    for r, cat in candidates:
+        mask = _build_prefilter_mask(df, r, cat).fillna(False).values
+        feat = r["feature"]
+        pct = r["percentile"]
+        direction = r["direction"]
+        thr = r["threshold"]
+
+        # 标签: 方向+特征名+百分位
+        if cat == "positive":
+            if direction == "high":
+                op_str = f">={thr:.3f}"
+            else:
+                op_str = f"<={thr:.3f}"
+        elif cat == "anti":
+            op_str = f"<{thr:.3f}"
+        else:  # absence
+            op_str = f">{thr:.3f}"
+
+        label = f"{feat} {op_str} ({pct})"
+        pass_count = int(mask.sum())
+        pass_bad = (
+            float((df.loc[mask, label_col] == 0).mean())
+            if pass_count > 0
+            else float("nan")
+        )
+
+        names.append(label)
+        masks.append(mask)
+        meta.append(
+            {
+                "feature": feat,
+                "percentile": pct,
+                "category": cat,
+                "operator": op_str,
+                "threshold": thr,
+                "pass_count": pass_count,
+                "pass_pct": round(pass_count / n_total * 100, 1),
+                "pass_bad_rate": round(pass_bad, 4),
+                "bad_rate_diff": round(r["bad_rate_diff"], 4),
+            }
+        )
+
+    # ── 3. Jaccard 矩阵 ──
+    n = len(masks)
+    jaccard_matrix = np.zeros((n, n), dtype=float)
+    for i in range(n):
+        for j in range(i, n):
+            inter = np.sum(masks[i] & masks[j])
+            union = np.sum(masks[i] | masks[j])
+            jac = inter / union if union > 0 else 0.0
+            jaccard_matrix[i, j] = jac
+            jaccard_matrix[j, i] = jac
+
+    # ── 4. 贪心前向选择 (AND, bad_rate 最低优先) ──
+    remaining = set(range(n))
+    selected_steps: List[Dict[str, Any]] = []
+    combined_mask = np.ones(len(df), dtype=bool)
+
+    for step in range(min(n, 8)):  # 最多 8 步
+        best_idx = -1
+        best_bad_rate = float("inf")
+        best_combined = None
+
+        for idx in remaining:
+            trial = combined_mask & masks[idx]
+            trial_count = int(trial.sum())
+            if trial_count < TEMPORAL_MIN_SAMPLES_PER_WINDOW:  # 样本量保底
+                continue
+            trial_bad = float((df.loc[trial, label_col] == 0).mean())
+            if trial_bad < best_bad_rate:
+                best_bad_rate = trial_bad
+                best_idx = idx
+                best_combined = trial
+
+        if best_idx < 0:
+            break
+
+        combined_mask = best_combined
+        remaining.discard(best_idx)
+        combo_count = int(combined_mask.sum())
+        combo_bad = float((df.loc[combined_mask, label_col] == 0).mean())
+        combo_med_rr = (
+            float(df.loc[combined_mask, rr_col].median())
+            if rr_col in df.columns
+            else float("nan")
+        )
+
+        selected_steps.append(
+            {
+                "step": step + 1,
+                "name": names[best_idx],
+                "feature": meta[best_idx]["feature"],
+                "pass_count_solo": meta[best_idx]["pass_count"],
+                "combined_count": combo_count,
+                "combined_pct": round(combo_count / n_total * 100, 1),
+                "combined_bad_rate": round(combo_bad, 4),
+                "combined_med_rr": (
+                    round(combo_med_rr, 2) if not np.isnan(combo_med_rr) else None
+                ),
+                "delta_bad_rate": round(combo_bad - baseline_bad_rate, 4),
+            }
+        )
+
+    # ── 5. 打印 ──
+    print(f"\n{'='*110}")
+    print("🧩 Prefilter AND 组合分析 (冗余检测 + 贪心前向选择)")
+    print(f"{'='*110}")
+
+    # 5a. 单条候选概览 (显示 top 20，其余折叠)
+    DISPLAY_CAP = 20
+    display_n = min(len(names), DISPLAY_CAP)
+    print(
+        f"\n  📊 候选 Prefilter ({len(names)} 条, 每特征取最强信号, 显示 top {display_n}):"
+    )
+    max_name_len = max(len(nm) for nm in names[:display_n])
+    print(
+        f"  {'条件':<{max_name_len+2}s} {'通过':>7s} {'占比':>6s} {'bad_rate':>9s} {'vs基线':>8s} {'类型':>8s}"
+    )
+    print(f"  {'-'*(max_name_len+2+7+6+9+8+8+5)}")
+    for i in range(display_n):
+        nm = names[i]
+        m = meta[i]
+        delta = m["pass_bad_rate"] - baseline_bad_rate
+        cat_label = {"positive": "正信号", "anti": "反信号", "absence": "低端"}[
+            m["category"]
+        ]
+        print(
+            f"  {nm:<{max_name_len+2}s} {m['pass_count']:>7,d} {m['pass_pct']:>5.1f}% "
+            f"{m['pass_bad_rate']:>8.1%} {delta:>+7.1%} {cat_label:>8s}"
+        )
+    if len(names) > DISPLAY_CAP:
+        print(
+            f"  ... 还有 {len(names) - DISPLAY_CAP} 条未显示 (保存至 JSON --output 查看全部)"
+        )
+
+    # 5b. Jaccard 矩阵 (仅 top 20 候选, 避免 all-features 模式下矩阵爆炸)
+    JACCARD_CAP = 20
+    if n >= 2:
+        jac_n = min(n, JACCARD_CAP)
+        # 缩短名称用于矩阵显示
+        short_names = []
+        for i in range(jac_n):
+            feat = meta[i]["feature"]
+            pct = meta[i]["percentile"]
+            short = f"{feat[:25]}_{pct}" if len(feat) > 25 else f"{feat}_{pct}"
+            short_names.append(short)
+
+        max_sn = max(len(s) for s in short_names)
+        extra_note = f" (top {jac_n}/{n})" if n > JACCARD_CAP else ""
+        print(f"\n  📐 Jaccard 重叠矩阵{extra_note} (高值=高冗余, >=0.5 标 ⚠️):")
+        header = "  " + " " * (max_sn + 5)
+        for j in range(jac_n):
+            header += f" {j:>5d}"
+        print(header)
+        for i in range(jac_n):
+            row = f"  {i:>3d}: {short_names[i]:<{max_sn}s}"
+            for j in range(jac_n):
+                if j < i:
+                    row += "      "
+                elif j == i:
+                    row += "   1.0"
+                else:
+                    jv = jaccard_matrix[i, j]
+                    if jv < 0.05:
+                        row += "    . "
+                    else:
+                        warn = "⚠" if jv >= 0.5 else " "
+                        row += f" {jv:.2f}{warn}"
+            print(row)
+        if n > JACCARD_CAP:
+            print(f"  ... 完整 {n}×{n} 矩阵保存至 JSON --output")
+
+    # 5c. 贪心 AND 组合
+    if selected_steps:
+        print(f"\n  🔗 贪心前向选择 (AND 组合, 每步选 bad_rate 最低):")
+        print(
+            f"  {'Step':>4s}  {'+ Prefilter':<{max_name_len+2}s} {'样本量':>8s} {'占比':>6s} {'bad_rate':>9s} {'vs基线':>8s} {'medRR':>7s}"
+        )
+        print(f"  {'-'*(4+2+max_name_len+2+8+6+9+8+7+6)}")
+
+        # Baseline row
+        baseline_med_rr = (
+            float(df[rr_col].median()) if rr_col in df.columns else float("nan")
+        )
+        print(
+            f"  {'base':>4s}  {'(无 prefilter)':<{max_name_len+2}s} "
+            f"{n_total:>8,d} {100.0:>5.1f}% {baseline_bad_rate:>8.1%} {0:>+7.1%} "
+            f"{baseline_med_rr:>+6.2f}"
+        )
+
+        for s in selected_steps:
+            rr_str = (
+                f"{s['combined_med_rr']:>+6.2f}"
+                if s["combined_med_rr"] is not None
+                else "   N/A"
+            )
+            print(
+                f"  {s['step']:>4d}  +{s['name']:<{max_name_len+1}s} "
+                f"{s['combined_count']:>8,d} {s['combined_pct']:>5.1f}% "
+                f"{s['combined_bad_rate']:>8.1%} {s['delta_bad_rate']:>+7.1%} "
+                f"{rr_str}"
+            )
+
+        final = selected_steps[-1]
+        print(
+            f"\n  ✅ {len(selected_steps)} 条 AND 组合: "
+            f"样本 {n_total:,d} → {final['combined_count']:,d} ({final['combined_pct']:.1f}%), "
+            f"bad_rate {baseline_bad_rate:.1%} → {final['combined_bad_rate']:.1%} "
+            f"({final['delta_bad_rate']:+.1%})"
+        )
+        if final["combined_count"] < TEMPORAL_MIN_SAMPLES_PER_WINDOW:
+            print(
+                f"  ⚠️  最终样本量 {final['combined_count']} < {TEMPORAL_MIN_SAMPLES_PER_WINDOW}, 统计不可信!"
+            )
+    else:
+        print(
+            f"\n  ⚠️  无法构建有效 AND 组合 (所有组合样本量 < {TEMPORAL_MIN_SAMPLES_PER_WINDOW})"
+        )
+
+    return {
+        "candidates": meta,
+        "jaccard_matrix": jaccard_matrix.tolist(),
+        "candidate_names": names,
+        "greedy_and_steps": selected_steps,
+        "baseline_bad_rate": round(baseline_bad_rate, 4),
+        "n_total": n_total,
+    }
+
+
+# ── 综合评分精选推荐 + rules: YAML 生成 ────────────────────────────
+
+
+def _compute_robustness(
+    feature: str,
+    percentile: str,
+    direction: str,
+    bad_rate_diff: float,
+    all_results: List[Dict[str, Any]],
+) -> Tuple[float, int]:
+    """Check adjacent percentile consistency for robustness.
+
+    Only compares with same-feature, same-direction results at other percentiles.
+    E.g. sma_200_position P5 low vs P10 low, P20 low (not P80 high).
+
+    Returns (robustness_score, n_adjacent_agree).
+    """
+    same_feat_dir = [
+        r
+        for r in all_results
+        if r["feature"] == feature
+        and r.get("direction") == direction
+        and r.get("percentile") != percentile
+    ]
+    if not same_feat_dir:
+        return 0.5, 0  # no adjacent to compare, neutral
+
+    # Reference sign: does this candidate improve (diff < 0) or worsen (diff > 0)?
+    ref_negative = bad_rate_diff < 0
+    agree = 0
+    for r in same_feat_dir:
+        other_diff = r["bad_rate_diff"]
+        if ref_negative and other_diff < -0.01:
+            agree += 1
+        elif not ref_negative and other_diff > 0.01:
+            agree += 1
+
+    return (agree / len(same_feat_dir)), agree
+
+
+def _prefilter_recommendation(
+    positive: List[Dict[str, Any]],
+    anti: List[Dict[str, Any]],
+    absence: List[Dict[str, Any]],
+    all_results: List[Dict[str, Any]],
+    temporal_report: Optional[Dict] = None,
+    strategy: str = "",
+    df: Optional[pd.DataFrame] = None,
+    label_col: str = "success_no_rr_extreme",
+    n_gate_features: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Generate composite-scored recommendation table + rules: YAML.
+
+    Scoring: robustness (40%) > CV (30%) > bad_rate_diff (30%)
+    Signal routing:
+      - positive + absence -> prefilter rules
+      - anti -> leave to Gate
+
+    Includes:
+      - 覆盖率列 (% of total)
+      - Tier 自动分级 (T1 >= 0.80, T2 >= 0.70, T3 >= 0.50)
+      - AND 累积模拟: 逐条 AND 后剩余样本量 + bad_rate
+      - 实用方案推荐: 自动找出满足最低训练量的 AND 组合
+      - 方案 E: 语义 OR 组合 (自动检测 longs/shorts 互补对)
+    """
+    import operator as op_module
+
+    # Operator map for AND simulation
+    _SIM_OPS = {
+        ">=": op_module.ge,
+        "<=": op_module.le,
+        ">": op_module.gt,
+        "<": op_module.lt,
+    }
+
+    n_dataset = len(df) if df is not None else 0
+    MIN_TRAIN_SAMPLES = 1080  # train_strategy_pipeline.py hard floor
+
+    # Build temporal CV map
+    cv_map: Dict[Tuple[str, str, str], float] = {}
+    if temporal_report and "feature_stability" in temporal_report:
+        for tr in temporal_report["feature_stability"]:
+            key = (tr["feature"], tr.get("percentile", ""), tr.get("direction", ""))
+            cv_map[key] = tr.get("cv", None)
+
+    # Collect prefilter-eligible candidates (positive + absence, per-feature best)
+    prefilter_pool: List[Dict[str, Any]] = []
+    seen_feat: set = set()
+
+    # positive signals -> prefilter candidates
+    for r in positive:
+        feat = r["feature"]
+        if feat in seen_feat:
+            continue
+        seen_feat.add(feat)
+        prefilter_pool.append({**r, "_category": "positive"})
+
+    # absence signals -> prefilter candidates (reject low end)
+    for r in absence:
+        feat = r["feature"]
+        if feat in seen_feat:
+            continue
+        seen_feat.add(feat)
+        prefilter_pool.append({**r, "_category": "absence"})
+
+    if not prefilter_pool:
+        return None
+
+    # Score each candidate
+    scored: List[Dict[str, Any]] = []
+    for r in prefilter_pool:
+        feat = r["feature"]
+        pct = r["percentile"]
+        direction = r["direction"]
+        bad_diff = abs(r["bad_rate_diff"])
+
+        # Robustness: adjacent percentile consistency
+        rob_score, n_adj = _compute_robustness(
+            feat, pct, direction, r["bad_rate_diff"], all_results
+        )
+
+        # Temporal CV
+        cv_key = (feat, pct, direction)
+        cv = cv_map.get(cv_key)
+        if cv is None:
+            cv_weight = 0.6  # unknown CV, penalize moderately
+        elif cv < 0.3:
+            cv_weight = 1.0
+        elif cv < 0.5:
+            cv_weight = 0.8
+        elif cv < 1.0:
+            cv_weight = 0.5
+        else:
+            cv_weight = 0.3
+
+        # Robustness weight
+        if rob_score >= 0.8:
+            rob_weight = 1.0
+        elif rob_score >= 0.5:
+            rob_weight = 0.7
+        else:
+            rob_weight = 0.4
+
+        # Composite: robustness (40%) + CV (30%) + bad_rate_diff (30%)
+        # Normalize bad_diff to [0, 1] range (cap at 20%)
+        bad_norm = min(bad_diff / 0.20, 1.0)
+        composite = rob_weight * 0.40 + cv_weight * 0.30 + bad_norm * 0.30
+
+        # Build operator for rules: YAML
+        cat = r["_category"]
+        if cat == "positive":
+            if direction == "high":
+                op = ">="
+                val = r["threshold"]
+            else:
+                op = "<="
+                val = r["threshold"]
+        else:  # absence: reject low end -> pass = feature > threshold
+            op = ">"
+            val = r["threshold"]
+
+        # Tier classification
+        if composite >= 0.80:
+            tier = "T1"
+            verdict = "✅ T1"
+        elif composite >= 0.70:
+            tier = "T2"
+            verdict = "✅ T2"
+        elif composite >= 0.50:
+            tier = "T3"
+            verdict = "❓ T3"
+        else:
+            tier = "-"
+            verdict = "❌ 弱"
+
+        # Coverage (single rule)
+        coverage_pct = r["n_signal"] / n_dataset * 100 if n_dataset > 0 else 0.0
+
+        scored.append(
+            {
+                "feature": feat,
+                "percentile": pct,
+                "direction": direction,
+                "category": cat,
+                "bad_rate_diff": r["bad_rate_diff"],
+                "cv": cv,
+                "robustness": round(rob_score, 2),
+                "n_adjacent": n_adj,
+                "cv_weight": round(cv_weight, 2),
+                "rob_weight": round(rob_weight, 2),
+                "composite": round(composite, 3),
+                "tier": tier,
+                "verdict": verdict,
+                "operator": op,
+                "value": round(val, 4),
+                "threshold": r["threshold"],
+                "n_signal": r["n_signal"],
+                "coverage_pct": round(coverage_pct, 1),
+            }
+        )
+
+    scored.sort(key=lambda x: x["composite"], reverse=True)
+
+    # ── Print recommendation table ──
+    print(f"\n{'='*130}")
+    print("🏆 Prefilter 精选推荐 (综合评分 = 鲁棒性 40% + CV 30% + 信号强度 30%)")
+    print(f"{'='*130}")
+    print(f"  • 此表只含 prefilter 候选 (正信号 + 低端信号); 反信号留给 Gate 学习")
+    print(f"  • 鲁棒性 = 相邻分位数方向一致性 (0~1); CV = 时间窗口稳定性")
+    print(f"  • Tier: T1(>=0.80) T2(>=0.70) T3(>=0.50)")
+    if n_dataset > 0:
+        ratio_info = ""
+        if n_gate_features and n_gate_features > 0:
+            ratio_info = (
+                f" | Gate 特征数: {n_gate_features}, 最低要求 sample:feat >= 20:1"
+            )
+        print(
+            f"  • 数据集: {n_dataset:,} 行 | 训练最低要求: {MIN_TRAIN_SAMPLES:,} 行{ratio_info}"
+        )
+    print()
+
+    print(
+        f"  {'#':>3s} {'tier':>5s}  {'feature':<30s} {'cond':<20s} {'bad_diff':>8s} "
+        f"{'CV':>6s} {'robust':>6s} {'评分':>6s} {'n':>6s} {'覆盖率':>6s}"
+    )
+    print(f"  {'-'*120}")
+
+    for i, s in enumerate(scored[:30]):
+        cv_str = f"{s['cv']:.2f}" if s["cv"] is not None else "  N/A"
+        cond_str = f"{s['operator']} {s['value']:.4g}"
+        cov_str = f"{s['coverage_pct']:5.1f}%"
+        print(
+            f"  {i+1:>3d} {s['verdict']:>5s}  {s['feature']:<30s} {cond_str:<20s} "
+            f"{s['bad_rate_diff']:>+7.1%} {cv_str:>6s} {s['robustness']:>5.2f} "
+            f"{s['composite']:>6.3f} {s['n_signal']:>6,d} {cov_str:>6s}"
+        )
+    if len(scored) > 30:
+        print(f"  ... 剩余 {len(scored) - 30} 条省略")
+
+    # ── AND 累积模拟 ──
+    recommended = [s for s in scored if s["composite"] >= 0.5]
+    if recommended and df is not None and n_dataset > 0:
+        # Estimate train ratio from data (assume temporal split around ~44%)
+        _time_col = _find_time_column(df)
+        _train_ratio = 0.44  # default estimate
+        if _time_col is not None:
+            if _time_col == "__index__":
+                _ts = df.index
+            else:
+                _ts = pd.to_datetime(df[_time_col], errors="coerce")
+            if hasattr(_ts, "year"):
+                # Use 2024-05-01 as typical split point
+                _split_ts = pd.Timestamp("2024-05-01")
+                if hasattr(_ts, "tz") and _ts.tz is not None:
+                    _split_ts = _split_ts.tz_localize(_ts.tz)
+                _n_before = int((_ts < _split_ts).sum())
+                if _n_before > 0:
+                    _train_ratio = _n_before / n_dataset
+        _TRAIN_RATIO = _train_ratio
+
+        print(f"\n{'='*130}")
+        print("📊 AND 累积覆盖率模拟 (训练管线逐条 AND 过滤, 按评分排序)")
+        print(f"{'='*130}")
+        print(f"  ℹ️  模拟基于全量数据集 ({n_dataset:,} 行), 与训练管线一致")
+        print(f"  ⚠️  P5 规则单条仅保留 ~5%, 多条 AND 会指数级衰减!")
+        print(
+            f"  📐 训练最低要求: {MIN_TRAIN_SAMPLES:,} 行 (Train 估算比例: {_TRAIN_RATIO:.0%})\n"
+        )
+
+        # Tier summary counts
+        tier_counts = {}
+        for s in recommended:
+            tier_counts[s["tier"]] = tier_counts.get(s["tier"], 0) + 1
+        tier_summary = ", ".join(f"{t}: {c}条" for t, c in sorted(tier_counts.items()))
+        print(f"  推荐规则统计: {len(recommended)}条 ({tier_summary})")
+        print()
+
+        # Simulate AND
+        df_sim = df.copy()
+        baseline_bad = float((df_sim[label_col] == 0).mean())
+        print(
+            f"  {'#':>3s} {'tier':>4s} {'feature':<30s} {'cond':<20s} "
+            f"{'\u5269\u4f59':>8s} {'\u8986\u76d6\u7387':>7s} {'bad_rate':>9s} {'vs\u57fa\u7ebf':>8s} {'train_est':>10s}  \u72b6\u6001"
+        )
+        print(f"  {'-'*130}")
+        print(
+            f"  {'':>3s} {'':>4s} {'(\u57fa\u7ebf)':<30s} {'':20s} "
+            f"{n_dataset:>8,d} {'100.0%':>7s} {baseline_bad:>8.1%} {'':>8s} {int(n_dataset * _TRAIN_RATIO):>10,d}  \u2500"
+        )
+
+        hit_floor = False
+        last_viable_idx = -1
+        and_results = []  # track for practical recommendation
+        n_skipped_redundant = 0
+        for i, s in enumerate(recommended):
+            feat = s["feature"]
+            op_str = s["operator"]
+            val = s["value"]
+            op_func = _SIM_OPS.get(op_str)
+            if op_func is None or feat not in df_sim.columns:
+                continue
+            n_before = len(df_sim)
+            df_sim = df_sim[op_func(df_sim[feat], val)].copy()
+            n_remain = len(df_sim)
+
+            # Skip redundant rule (no change = fully subsumed by previous rules)
+            if n_remain == n_before and i > 0:
+                n_skipped_redundant += 1
+                cond_str = f"{op_str} {val:.4g}"
+                print(
+                    f"  {i+1:>3d} {s['tier']:>4s} {feat:<30s} {cond_str:<20s} "
+                    f"{'':>8s} {'':>7s} {'':>9s} {'':>8s}  ⚙️ 冗余(跳过)"
+                )
+                continue
+
+            pct_remain = n_remain / n_dataset * 100
+            bad_now = float((df_sim[label_col] == 0).mean()) if n_remain > 0 else 0.0
+            bad_delta = bad_now - baseline_bad
+
+            if n_remain >= MIN_TRAIN_SAMPLES:
+                train_est = int(n_remain * _TRAIN_RATIO)
+                if train_est < MIN_TRAIN_SAMPLES:
+                    status = "⚠️ train不足"
+                    # total OK but train split too small
+                else:
+                    status = "✅"
+                    last_viable_idx = i
+            elif n_remain > 0:
+                status = "⚠️ 不足" if not hit_floor else "❌ 危险"
+                hit_floor = True
+            else:
+                status = "❌ 清零"
+                hit_floor = True
+
+            cond_str = f"{op_str} {val:.4g}"
+            train_est = int(n_remain * _TRAIN_RATIO)
+            and_results.append(
+                {
+                    "idx": i + 1,
+                    "feature": feat,
+                    "tier": s["tier"],
+                    "n_remain": n_remain,
+                    "pct_remain": pct_remain,
+                    "bad_rate": bad_now,
+                    "bad_delta": bad_delta,
+                    "status": status,
+                    "cond_str": cond_str,
+                    "train_est": train_est,
+                }
+            )
+            print(
+                f"  {i+1:>3d} {s['tier']:>4s} {feat:<30s} {cond_str:<20s} "
+                f"{n_remain:>8,d} {pct_remain:>6.1f}% {bad_now:>8.1%} {bad_delta:>+7.1%} {train_est:>10,d}  {status}"
+            )
+            if n_remain == 0:
+                print(f"  ... 后续规则跳过 (已清零)")
+                break
+
+        if n_skipped_redundant > 0:
+            print(
+                f"\n  ℹ️  {n_skipped_redundant} 条冗余规则已跳过 (AND后样本量不变 = 完全被前序规则包含)"
+            )
+
+        # ── 实用方案推荐 ──
+        print(f"\n{'='*130}")
+        print("💡 实用方案推荐")
+        print(f"{'='*130}")
+
+        if last_viable_idx >= 0:
+            viable = and_results[last_viable_idx]
+            viable_rules = recommended[: last_viable_idx + 1]
+            print(f"\n  方案 A: 前 {last_viable_idx + 1} 条规则 AND (评分排序截断)")
+            print(f"  ────────────────────────────────")
+            print(f"    剩余样本: {viable['n_remain']:,} ({viable['pct_remain']:.1f}%)")
+            print(
+                f"    bad_rate: {viable['bad_rate']:.1%} (基线 {baseline_bad:.1%}, "
+                f"差异 {viable['bad_delta']:+.1%})"
+            )
+            print(f"    规则:")
+            for s in viable_rules:
+                print(
+                    f"      - {s['feature']} {s['operator']} {s['value']} [{s['tier']}, 评分={s['composite']:.3f}]"
+                )
+        else:
+            print(
+                f"\n  ⚠️  按评分排序逐条 AND, 任何单条规则都低于训练最低 {MIN_TRAIN_SAMPLES:,}"
+            )
+            print(f"  ⚠️  可能需要放宽阈值 (P5→P10/P20)")
+
+        # 方案 B: 只用 T1 rules (if available)
+        t1_rules = [s for s in recommended if s["tier"] == "T1"]
+        if t1_rules and len(t1_rules) != (
+            last_viable_idx + 1 if last_viable_idx >= 0 else 0
+        ):
+            df_t1 = df.copy()
+            for s in t1_rules:
+                op_func = _SIM_OPS.get(s["operator"])
+                if op_func and s["feature"] in df_t1.columns:
+                    df_t1 = df_t1[op_func(df_t1[s["feature"]], s["value"])].copy()
+            n_t1 = len(df_t1)
+            pct_t1 = n_t1 / n_dataset * 100
+            bad_t1 = float((df_t1[label_col] == 0).mean()) if n_t1 > 0 else 0.0
+            status_t1 = "✅" if n_t1 >= MIN_TRAIN_SAMPLES else "⚠️ 不足"
+            print(f"\n  方案 B: 仅 T1 规则 AND ({len(t1_rules)} 条, composite >= 0.80)")
+            print(f"  ────────────────────────────────")
+            print(f"    剩余样本: {n_t1:,} ({pct_t1:.1f}%) {status_t1}")
+            print(
+                f"    bad_rate: {bad_t1:.1%} (基线 {baseline_bad:.1%}, "
+                f"差异 {bad_t1 - baseline_bad:+.1%})"
+            )
+            print(f"    规则:")
+            for s in t1_rules:
+                print(
+                    f"      - {s['feature']} {s['operator']} {s['value']} [{s['tier']}, 评分={s['composite']:.3f}]"
+                )
+
+        # 方案 C: 单条最强
+        best = recommended[0]
+        print(f"\n  方案 C: 单条最强规则")
+        print(f"  ────────────────────────────────")
+        print(f"    {best['feature']} {best['operator']} {best['value']}")
+        print(
+            f"    样本: {best['n_signal']:,} ({best['coverage_pct']:.1f}%), "
+            f"bad_rate 差异: {best['bad_rate_diff']:+.1%}, 评分: {best['composite']:.3f}"
+        )
+
+        # 方案 D: 宽松阈值探索 (找同特征 P20 替代 P5)
+        _relaxed_candidates = []
+        _relaxed_feats_seen = set()  # dedup for _left/_right variants
+        for s in recommended[:5]:  # top 5 by composite
+            feat = s["feature"]
+            pct_num = int(s["percentile"].replace("P", ""))
+            if pct_num > 20:
+                continue  # already wide enough
+            # Skip redundant _left/_right variant if base feature already included
+            base_feat = feat.replace("_left", "").replace("_right", "")
+            if base_feat in _relaxed_feats_seen:
+                continue
+            _relaxed_feats_seen.add(base_feat)
+            # Find P20 for same feature, same direction
+            for r in all_results:
+                if r["feature"] == feat and r.get("direction") == s["direction"]:
+                    r_pct_num = int(r["percentile"].replace("P", ""))
+                    if r_pct_num == 20:
+                        _relaxed_candidates.append(
+                            {
+                                "feature": feat,
+                                "original_pct": s["percentile"],
+                                "relaxed_pct": "P20",
+                                "operator": s["operator"],
+                                "value": round(r["threshold"], 4),
+                                "n_signal": r["n_signal"],
+                                "bad_rate_diff": r["bad_rate_diff"],
+                            }
+                        )
+                        break
+        if _relaxed_candidates:
+            # Simulate AND with relaxed
+            df_relax = df.copy()
+            for rc in _relaxed_candidates:
+                op_func = _SIM_OPS.get(rc["operator"])
+                if op_func and rc["feature"] in df_relax.columns:
+                    df_relax = df_relax[
+                        op_func(df_relax[rc["feature"]], rc["value"])
+                    ].copy()
+            n_relax = len(df_relax)
+            pct_relax = n_relax / n_dataset * 100
+            bad_relax = float((df_relax[label_col] == 0).mean()) if n_relax > 0 else 0.0
+            status_relax = "✅" if n_relax >= MIN_TRAIN_SAMPLES else "⚠️ 不足"
+            print(f"\n  方案 D: Top-{len(_relaxed_candidates)} 放宽至 P20 AND")
+            print(f"  ────────────────────────────────")
+            print(f"    剩余样本: {n_relax:,} ({pct_relax:.1f}%) {status_relax}")
+            print(
+                f"    bad_rate: {bad_relax:.1%} (基线 {baseline_bad:.1%}, "
+                f"差异 {bad_relax - baseline_bad:+.1%})"
+            )
+            print(f"    规则:")
+            for rc in _relaxed_candidates:
+                print(
+                    f"      - {rc['feature']} {rc['operator']} {rc['value']} "
+                    f"[{rc['original_pct']}→{rc['relaxed_pct']}, bad_diff={rc['bad_rate_diff']:+.1%}]"
+                )
+
+        print()
+
+        # ── 方案 E: 语义 OR 组合 (自动检测 longs/shorts 互补对) ──
+        import re as _re
+
+        _OR_PAIR_PATTERNS = [
+            (_re.compile(r"^(.+)_longs_(.+)$"), "_shorts_"),
+            (_re.compile(r"^(.+)_long_(.+)$"), "_short_"),
+        ]
+        # Build map: feature -> signals from ALL categories (positive + anti + absence)
+        # trapped scores may be absence/anti signals, not positive
+        _sig_map: Dict[str, List[Dict]] = {}
+        for r in positive:
+            _sig_map.setdefault(r["feature"], []).append(r)
+        for r in anti:
+            _sig_map.setdefault(r["feature"], []).append(r)
+        for r in absence:
+            _sig_map.setdefault(r["feature"], []).append(r)
+
+        or_pairs_found = []
+        _seen_pairs: set = set()
+        for feat_a in _sig_map:
+            for pat, replace_part in _OR_PAIR_PATTERNS:
+                m = pat.match(feat_a)
+                if m:
+                    prefix, suffix = m.groups()
+                    feat_b = f"{prefix}{replace_part}{suffix}"
+                    pair_key = tuple(sorted([feat_a, feat_b]))
+                    if pair_key in _seen_pairs:
+                        continue
+                    if feat_b in _sig_map or feat_b in [
+                        r["feature"]
+                        for r in all_results
+                        if abs(r.get("bad_rate_diff", 0)) > 0.02
+                    ]:
+                        _seen_pairs.add(pair_key)
+                        or_pairs_found.append((feat_a, feat_b))
+
+        if or_pairs_found and df is not None and n_dataset > 0:
+            print(f"{'='*130}")
+            print("🔀 方案 E: 语义 OR 组合 (自动检测的互补特征对)")
+            print(f"{'='*130}")
+            print(f"  ℹ️  OR 逻辑: 满足任一即通过 (不是 AND 全部满足)")
+            print(
+                f"  💡 适用场景: 互补语义 (如 longs+shorts 被套分数), 且 AND 样本量不足\n"
+            )
+
+            best_or_pair = None
+            for feat_a, feat_b in or_pairs_found:
+                if feat_a not in df.columns or feat_b not in df.columns:
+                    continue
+                # Collect "high" direction entries for each feature at various percentiles.
+                # OR pairs (longs/shorts) = domain presence: HIGH value = concept present.
+                # Use relaxed threshold for OR pairs — we care about domain presence, not signal strength.
+                entries_a_high = [
+                    r
+                    for r in all_results
+                    if r["feature"] == feat_a and r["direction"] == "high"
+                ]
+                entries_a_low = [
+                    r
+                    for r in all_results
+                    if r["feature"] == feat_a
+                    and r["direction"] == "low"
+                    and abs(r.get("bad_rate_diff", 0)) > 0.02
+                ]
+                entries_b_high = [
+                    r
+                    for r in all_results
+                    if r["feature"] == feat_b and r["direction"] == "high"
+                ]
+                entries_b_low = [
+                    r
+                    for r in all_results
+                    if r["feature"] == feat_b
+                    and r["direction"] == "low"
+                    and abs(r.get("bad_rate_diff", 0)) > 0.02
+                ]
+
+                # Prefer high direction (domain presence); fallback to any
+                pool_a = entries_a_high if entries_a_high else entries_a_low
+                pool_b = entries_b_high if entries_b_high else entries_b_low
+                if not pool_a:
+                    continue
+
+                # Determine operator and threshold
+                def _or_rule(r):
+                    if r["direction"] == "high":
+                        return ">=", r["threshold"]
+                    else:
+                        return "<=", r["threshold"]
+
+                # Try multiple percentile combinations and report each
+                tested_combos = []
+                for r_a in pool_a:
+                    op_a, val_a = _or_rule(r_a)
+                    op_func_a = _SIM_OPS.get(op_a)
+                    mask_a = (
+                        op_func_a(df[feat_a], val_a)
+                        if op_func_a
+                        else pd.Series(False, index=df.index)
+                    )
+                    if pool_b:
+                        for r_b in pool_b:
+                            op_b, val_b = _or_rule(r_b)
+                            op_func_b = _SIM_OPS.get(op_b)
+                            mask_b = (
+                                op_func_b(df[feat_b], val_b)
+                                if op_func_b
+                                else pd.Series(False, index=df.index)
+                            )
+                            or_mask = mask_a | mask_b
+                            tested_combos.append(
+                                {
+                                    "r_a": r_a,
+                                    "r_b": r_b,
+                                    "op_a": op_a,
+                                    "val_a": val_a,
+                                    "op_b": op_b,
+                                    "val_b": val_b,
+                                    "or_mask": or_mask,
+                                    "desc": f"{feat_a} {op_a} {val_a:.4f} OR {feat_b} {op_b} {val_b:.4f}",
+                                    "pct_info": f"{r_a['percentile']}+{r_b['percentile']}",
+                                }
+                            )
+                    else:
+                        or_mask = mask_a
+                        tested_combos.append(
+                            {
+                                "r_a": r_a,
+                                "r_b": None,
+                                "op_a": op_a,
+                                "val_a": val_a,
+                                "op_b": None,
+                                "val_b": None,
+                                "or_mask": or_mask,
+                                "desc": f"{feat_a} {op_a} {val_a:.4f} (single)",
+                                "pct_info": r_a["percentile"],
+                            }
+                        )
+
+                # Deduplicate by n_or (same threshold combo may repeat)
+                seen_n = set()
+                unique_combos = []
+                for c in tested_combos:
+                    n = int(c["or_mask"].sum())
+                    if n not in seen_n:
+                        seen_n.add(n)
+                        unique_combos.append(c)
+                # Sort by train_est descending (prefer more training samples)
+                unique_combos.sort(key=lambda c: int(c["or_mask"].sum()), reverse=True)
+
+                for combo in unique_combos[:5]:  # show top 5 variants
+                    or_mask = combo["or_mask"]
+                    n_or = int(or_mask.sum())
+                    pct_or = n_or / n_dataset * 100
+                    bad_or = (
+                        float((df.loc[or_mask, label_col] == 0).mean())
+                        if n_or > 0
+                        else 0.0
+                    )
+                    train_est_or = int(n_or * _TRAIN_RATIO)
+
+                    ratio_str = ""
+                    ratio_ok = True
+                    if n_gate_features and n_gate_features > 0:
+                        ratio = train_est_or / n_gate_features
+                        ratio_str = f", ratio={ratio:.1f}:1"
+                        ratio_ok = ratio >= 20
+
+                    if n_or >= MIN_TRAIN_SAMPLES and train_est_or >= MIN_TRAIN_SAMPLES:
+                        status_or = "✅" if ratio_ok else "⚠️ ratio低"
+                    else:
+                        status_or = "⚠️ 不足"
+
+                    print(f"  🔀 {combo['desc']} [{combo['pct_info']}]")
+                    print(
+                        f"     剩余: {n_or:,} ({pct_or:.1f}%), train_est: {train_est_or:,}{ratio_str}"
+                    )
+                    print(
+                        f"     bad_rate: {bad_or:.1%} (vs 基线 {baseline_bad:.1%}, 差异 {bad_or - baseline_bad:+.1%})  {status_or}"
+                    )
+
+                    # Track best viable OR pair
+                    if best_or_pair is None or train_est_or > best_or_pair["train_est"]:
+                        or_sub_rules = [
+                            {
+                                "feature": feat_a,
+                                "operator": combo["op_a"],
+                                "value": round(combo["val_a"], 4),
+                                "percentile": combo["r_a"]["percentile"],
+                            }
+                        ]
+                        if combo["r_b"]:
+                            or_sub_rules.append(
+                                {
+                                    "feature": feat_b,
+                                    "operator": combo["op_b"],
+                                    "value": round(combo["val_b"], 4),
+                                    "percentile": combo["r_b"]["percentile"],
+                                }
+                            )
+                        best_or_pair = {
+                            "n_or": n_or,
+                            "pct_or": pct_or,
+                            "bad_or": bad_or,
+                            "train_est": train_est_or,
+                            "status": status_or,
+                            "sub_rules": or_sub_rules,
+                            "rationale": f"semantic OR: {feat_a} OR {feat_b}",
+                        }
+
+            # If best AND is insufficient but OR is sufficient, highlight
+            if best_or_pair:
+                _and_best_train = (
+                    and_results[last_viable_idx]["train_est"]
+                    if last_viable_idx >= 0 and and_results
+                    else 0
+                )
+                _or_train = best_or_pair["train_est"]
+                if _or_train > _and_best_train:
+                    print(
+                        f"\n  🎯 推荐: OR 方案优于 AND (训练样本 {_or_train:,} vs {_and_best_train:,})"
+                    )
+                    print(
+                        f"     语义让计: prefilter 应定义 archetype 因果前提，不要贪滤; 细粒度留给 Gate"
+                    )
+            print()
+        elif not or_pairs_found:
+            # No pairs detected, just end
+            print()
+    if recommended:
+        print(f"\n{'─'*130}")
+        print(f"📝 推荐 rules: YAML (将以下内容复制到 archetypes/prefilter.yaml)")
+        print(f"{'─'*130}")
+        print(f"rules:")
+        for s in recommended:
+            rationale_parts = [f"{s['percentile']}阈值"]
+            if s["cv"] is not None:
+                rationale_parts.append(f"CV={s['cv']:.2f}")
+            rationale_parts.append(f"bad_rate {s['bad_rate_diff']:+.1%}")
+            rationale_parts.append(f"鲁棒性={s['robustness']:.2f}")
+            rationale_parts.append(f"评分={s['composite']:.3f}")
+            rationale_parts.append(f"覆盖率={s['coverage_pct']:.1f}%")
+            rationale = ", ".join(rationale_parts)
+            print(f'  - feature: {s["feature"]}')
+            print(f'    operator: "{s["operator"]}"')
+            print(f'    value: {s["value"]}')
+            print(f'    rationale: "{rationale}"')
+        print()
+        print(
+            f"  ℹ️  {len(recommended)} 条推荐 (composite >= 0.5), "
+            f"human review 后复制到 config/strategies/{strategy}/archetypes/prefilter.yaml"
+        )
+        print(f"  ⚠️  切勿全部 AND! 请参考上方「实用方案推荐」选择合适的子集")
+
+        # Also output any_of YAML for detected OR pairs
+        _best_or = locals().get("best_or_pair")
+        if _best_or and _best_or.get("sub_rules"):
+            print(f"\n{'─'*130}")
+            print(
+                f"🔀 推荐 OR rules: YAML (any_of 语法, 直接可用于 archetypes/prefilter.yaml)"
+            )
+            print(f"{'─'*130}")
+            print(f"rules:")
+            print(f"  - any_of:")
+            for sub in _best_or["sub_rules"]:
+                print(f'      - feature: {sub["feature"]}')
+                print(f'        operator: "{sub["operator"]}"')
+                print(f'        value: {sub["value"]}')
+            print(
+                f'    rationale: "{_best_or["rationale"]}, '
+                f'train_est={_best_or["train_est"]:,}, '
+                f'bad_rate={_best_or["bad_or"]:.1%}"'
+            )
+            print()
+    else:
+        print(f"\n  ⚠️  无足够强的 prefilter 候选 (composite < 0.5)")
+
+    return {
+        "scored_candidates": scored,
+        "recommended_rules": recommended,
+    }
+
+
 def _find_time_column(df: pd.DataFrame) -> Optional[str]:
     """找到 DataFrame 中的时间列。"""
     if isinstance(df.index, pd.DatetimeIndex) and df.index.name:
@@ -674,7 +1753,7 @@ def main() -> int:
         type=int,
         default=None,
         metavar="MONTHS",
-        help="Mode A: 用最近 N 个月做特征选择, 全周期做 temporal rolling 验证 (隐含 --temporal)",
+        help="Mode A: 用最近 N 个月做特征选择, 全量数据做 AND 覆盖率模拟 (可选加 --temporal 做 CV 分析)",
     )
     parser.add_argument(
         "--start-date",
@@ -685,6 +1764,18 @@ def main() -> int:
         "--end-date",
         default=None,
         help="过滤数据结束日期 (如 2026-01-01)",
+    )
+    parser.add_argument(
+        "--promote",
+        action="store_true",
+        help="分析完成后自动复制 prefilter.yaml 到 archetypes/prefilter.yaml",
+    )
+    parser.add_argument(
+        "--n-gate-features",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Gate 训练特征数 (可选). 提供后会警告 sample:feature 比 < 20:1 的方案",
     )
     args = parser.parse_args()
 
@@ -699,9 +1790,10 @@ def main() -> int:
     df = pd.read_parquet(logs_path)
     print(f"✅ 加载 {len(df)} 行, {len(df.columns)} 列 from {logs_path}")
 
-    # --select-recent 隐含 --temporal
-    if args.select_recent:
-        args.temporal = True
+    # --select-recent 不再强制 --temporal; 覆盖率/AND模拟不依赖 temporal
+    # 用户需要 CV 分析时显式加 --temporal
+    # if args.select_recent:
+    #     args.temporal = True
 
     # ── 1b. 日期过滤 (可选) ──────────────────────────────
     if args.start_date or args.end_date:
@@ -760,6 +1852,13 @@ def main() -> int:
     if label_col not in df.columns and rr_col in df.columns:
         df[label_col] = (df[rr_col] >= -0.8).astype(int)
         print(f"ℹ️  自动生成 '{label_col}' from '{rr_col}' (threshold: -0.8R)")
+    # Mode A: df_full 也需要标签列 (用于 AND 模拟)
+    if (
+        select_recent_months
+        and label_col not in df_full.columns
+        and rr_col in df_full.columns
+    ):
+        df_full[label_col] = (df_full[rr_col] >= -0.8).astype(int)
 
     if label_col not in df.columns:
         print(f"❌ 标签列 '{label_col}' 不存在")
@@ -911,6 +2010,17 @@ def main() -> int:
             f"(差异 {best['bad_rate_diff']:+.1%})"
         )
 
+    # ── 6a. Prefilter AND 组合样本量测算 + Jaccard 冗余矩阵 ──
+    combo_report = _prefilter_combination_analysis(
+        df,
+        positive,
+        anti,
+        absence,
+        label_col,
+        rr_col,
+        n_valid,
+    )
+
     # ── 6b. 时间稳定性分析 (可选) ─────────────────────
     temporal_report = None
     if args.temporal:
@@ -933,7 +2043,23 @@ def main() -> int:
                     df_for_rolling, significant, label_col, time_col
                 )
 
-    # ── 6c. 回写 last_evaluation ──────────────────────────
+    # ── 6c. 综合评分精选推荐 + rules: YAML ──────────────────
+    # Mode A: AND 模拟用全量数据 (df_full), 因为训练管线用全量数据
+    # Mode B: AND 模拟用 df (就是全量)
+    df_for_sim = df_full if select_recent_months else df
+    recommendation_report = _prefilter_recommendation(
+        positive,
+        anti,
+        absence,
+        all_results,
+        temporal_report=temporal_report,
+        strategy=args.strategy,
+        df=df_for_sim,
+        label_col=label_col,
+        n_gate_features=args.n_gate_features,
+    )
+
+    # ── 6d. 回写 last_evaluation ──────────────────────────
     _write_prefilter_evaluation(
         config_path=str(config_path),
         positive=positive,
@@ -945,6 +2071,17 @@ def main() -> int:
         baseline_bad_rate=float(bad_rate),
         baseline_median_rr=float(med_rr),
     )
+
+    # ── 6e. --promote: 复制 prefilter.yaml 到 archetypes/ ──────
+    if args.promote:
+        arch_prefilter = Path(config_path).parent / "archetypes" / "prefilter.yaml"
+        if Path(config_path).exists():
+            import shutil
+
+            shutil.copy2(config_path, arch_prefilter)
+            print(f"\n\U0001f4e6 Promoted prefilter.yaml → {arch_prefilter}")
+        else:
+            print(f"\n⚠️  Cannot promote: {config_path} not found")
 
     # ── 7. 输出 JSON ─────────────────────────────────────────
     if args.output:
@@ -979,6 +2116,12 @@ def main() -> int:
 
         if temporal_report:
             report["temporal_stability"] = temporal_report
+
+        if combo_report:
+            report["prefilter_combination"] = combo_report
+
+        if recommendation_report:
+            report["prefilter_recommendation"] = recommendation_report
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, ensure_ascii=False)

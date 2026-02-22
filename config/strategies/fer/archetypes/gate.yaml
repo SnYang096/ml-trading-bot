@@ -1,100 +1,28 @@
-# FER Gate Archetype
-# 训练后需根据 optimize_gate_unified.py 结果填充
-# 职责：硬veto，过滤“假反转”（单边尚未失败）
+# FER Gate (optimized, auto-promoted)
+# 来源: config/strategies/fer/gate_draft.yaml
+# 优化规则: 1/10 条通过优化, 9 条已移除
+# ✅ 方向已由数据验证: shd_pct 低值收益更高 (6.13 vs 4.17), deny 高值
 
 schema:
   phases:
-    - system_safety
-    - hard_gate      # 硬门禁：识别假反转
-    - guardrail      # 护栏：极端风险
+  - system_safety
+  - hard_gate
+  - guardrail
   evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
     failure_budget:
-      max_hard_deny_rate: 0.50
+      max_hard_deny_rate: 0.5
       alert_threshold: 0.45
-
-# ==============================================================
-# 🔴 HARD GATE: Trapped Score 结构规则 + 模型预测
-# ==============================================================
-# 实验发现（gate_semantic_prefilter_design.md）：
-#   FER 12个特征中仅 trapped_longs/trapped_shorts 有效
-#   语义：“有人被套住了” = 反转燃料存在
-#   fer_trapped_longs_score P90(>4.615): bad=37.4% vs 49.4%, medRR=+1.84
-#   fer_trapped_shorts_score P80(>3.860): bad=44.8% vs 49.1%
-
 hard_gates:
-  # 被套多头分数过低 → 无多头被套燃料
-  - id: fer_hg_no_trapped_longs
-    tag: FER_NO_TRAPPED_LONGS
-    phase: hard_gate
-    priority: 10
-    frozen: true  # optimizer 验证稳定 plateau
-    reason: "FER 多头被套分数过低（无反转燃料）"
-    when:
-      fer_trapped_longs_score:
-        value_lt: 2.75  # optimizer: stable plateau, Lift=31.0%
-    then:
-      action: deny
-    comment: |
-      optimizer 结果: Lift=31.0%, PassRate=30.3%, 稳定平台
-      语义: 多头被套分数 < 2.75 → 无反转燃料，拒绝交易
-
-  # 被套空头分数过低 → 无空头被套燃料
-  - id: fer_hg_no_trapped_shorts
-    tag: FER_NO_TRAPPED_SHORTS
-    phase: hard_gate
-    priority: 11
-    frozen: true  # optimizer 验证稳定 plateau
-    reason: "FER 空头被套分数过低（无反转燃料）"
-    when:
-      fer_trapped_shorts_score:
-        value_lt: 3.75  # optimizer: stable plateau, Lift=13.8%
-    then:
-      action: deny
-    comment: |
-      optimizer 结果: Lift=13.8%, PassRate=23.0%, 稳定平台
-      语义: 空头被套分数 < 3.75 → 无反转燃料，拒绝交易
-
-  # Gate 模型预测 (Lift=0.94x，保留作为补充)
-  - id: gate_model_filter
-    tag: GATE_MODEL
-    phase: hard_gate
-    priority: 20
-    reason: "[GATE] Gate模型预测失败概率过高"
-    when:
-      gate_pred:
-        value_gt: 0.70
-    then:
-      action: deny
-    model_info:
-      model_path: results/train_final_20260216_182917_rr_extreme/fer/model.pkl
-      preprocessor_path: results/train_final_20260216_182917_rr_extreme/fer/preprocessor.pkl
-      lift: 0.94
-      coverage: 0.299
-      threshold_percentile: 70
-
-# ==============================================================
-# 🛡️ GUARDRAIL: 极端风险护栏
-# ==============================================================
-guardrail:
-  - id: guardrail_extreme_volatility
-    tag: GUARDRAIL_VOLATILITY
-    phase: guardrail
-    priority: 0
-    reason: "[GUARDRAIL] 极端波动环境不适合反转"
-    when:
-      volatility_regime:
-        value_gt: 2.5
-    then:
-      action: deny
-
-  - id: guardrail_low_liquidity
-    tag: GUARDRAIL_LIQUIDITY
-    phase: guardrail
-    priority: 1
-    reason: "[GUARDRAIL] 流动性过低"
-    when:
-      bid_ask_spread_ratio:
-        value_gt: 0.05
-    then:
-      action: deny
+- id: gate_shd_pct
+  tag: HARD_SHD_PCT
+  phase: hard_gate
+  priority: 11
+  reason: shd_pct 触发树分裂条件 (分裂 1 次)
+  when:
+    shd_pct:
+      value_gt: 0.25
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.2500 | 方向修正: deny high (data_verified)'
+guardrails: []

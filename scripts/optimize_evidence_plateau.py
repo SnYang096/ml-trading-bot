@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -45,6 +46,225 @@ from src.time_series_model.archetype import (
     StrategyArchetype,
     load_strategy_archetype,
 )
+
+
+# ================================================================
+# Candidates → EvidenceFeature 转换 (从训练导出到优化器)
+# ================================================================
+
+
+def _parse_candidates_yaml(
+    candidates_path: Path,
+    predictions_path: Optional[Path] = None,
+) -> List[EvidenceFeature]:
+    """
+    将训练导出的 evidence_candidates.yaml 转换为 EvidenceFeature 列表。
+
+    candidates.yaml 格式 (训练管线输出):
+        evidence_candidates:
+          - rank: 1
+            feature: fer_trapped_longs_score
+            split_count_total: 1
+            threshold_examples: [1.477]
+            quantile_mapping: {bins: [0.2, 0.4, 0.6, 0.8], labels: [...]}
+            affects: {candidates: [tp_range, ...]}
+
+    archetypes/evidence.yaml 格式 (loader 消费):
+        evidence:
+          - id: evidence_xxx
+            feature: xxx
+            rank: 1
+            direction: positive/negative
+            split_count: 1
+            quantile_mapping: {bins: [...], labels: [...]}
+            affects: [tp_range, ...]
+    """
+    raw = yaml.safe_load(candidates_path.read_text(encoding="utf-8")) or {}
+    candidates = raw.get("evidence_candidates") or []
+
+    if not candidates:
+        print(f"   ⚠️  candidates 文件为空: {candidates_path}")
+        return []
+
+    # 加载 predictions 数据用于自动判定方向
+    pred_df = None
+    rr_col = None
+    if predictions_path and predictions_path.exists():
+        try:
+            pred_df = pd.read_parquet(predictions_path)
+            for _rc in [
+                "forward_rr",
+                "success_no_rr_extreme",
+                "ret_mean",
+                "bpc_impulse_return_atr",
+                "rr",
+                "return_atr",
+            ]:
+                if _rc in pred_df.columns:
+                    rr_col = _rc
+                    break
+            if rr_col is None:
+                pred_df = None
+        except Exception as e:
+            print(f"   ⚠️  加载 predictions 失败: {e}")
+            pred_df = None
+
+    features = []
+    for c in candidates:
+        feat_name = c.get("feature", "")
+        if not feat_name:
+            continue
+
+        rank = int(c.get("rank", 99))
+        split_count = int(c.get("split_count_total", c.get("split_count", 0)))
+
+        # 方向自动判定: 用数据比较高/低值与 RR 的关系
+        direction = "higher_is_better"  # 默认
+        direction_source = "default"
+        if pred_df is not None and feat_name in pred_df.columns and rr_col:
+            feat_vals = pred_df[feat_name].dropna()
+            rr_vals = pred_df.loc[feat_vals.index, rr_col]
+            median = feat_vals.median()
+            low_mask = feat_vals < median
+            high_mask = feat_vals >= median
+            mean_low = float(rr_vals[low_mask].mean()) if low_mask.any() else 0.0
+            mean_high = float(rr_vals[high_mask].mean()) if high_mask.any() else 0.0
+            if mean_high >= mean_low:
+                direction = "higher_is_better"
+            else:
+                direction = "lower_is_better"
+            direction_source = (
+                f"data_verified (low_rr={mean_low:.4f}, high_rr={mean_high:.4f})"
+            )
+        elif pred_df is not None and feat_name not in pred_df.columns:
+            direction_source = "default (feature not in predictions)"
+
+        print(f"   📊 {feat_name}: direction={direction} [{direction_source}]")
+
+        # quantile_mapping
+        qm = c.get("quantile_mapping") or {}
+        bins = list(qm.get("bins") or [0.2, 0.4, 0.6, 0.8])
+        labels = list(
+            qm.get("labels")
+            or ["suppress", "downweight", "neutral", "favor", "amplify"]
+        )
+
+        # affects: candidates 格式可能是 {candidates: [...]} 或直接 [...]
+        affects_raw = c.get("affects") or []
+        if isinstance(affects_raw, dict):
+            affects = list(affects_raw.get("candidates") or [])
+        else:
+            affects = list(affects_raw)
+
+        features.append(
+            EvidenceFeature(
+                id=f"evidence_{feat_name}",
+                feature=feat_name,
+                rank=rank,
+                split_count=split_count,
+                usage_hint=str(c.get("usage_hint", "")),
+                affects=affects,
+                quantile_bins=bins,
+                quantile_labels=labels,
+                threshold_examples=list(c.get("threshold_examples") or []),
+                distribution_hint=str(c.get("distribution_hint", "")),
+                direction=direction,
+            )
+        )
+
+    return features
+
+
+def _promote_evidence_yaml(
+    results: Dict[str, Any],
+    evidence_features: List[EvidenceFeature],
+    strategy: str,
+    strategies_root: str,
+    candidates_source: str = "",
+) -> Optional[Path]:
+    """
+    将优化成功的 evidence 写入 archetypes/evidence.yaml。
+
+    只 promote status=optimized 的特征。
+    """
+    # 收集 optimized 的特征
+    optimized = []
+    ef_map = {ef.id: ef for ef in evidence_features}
+
+    for ef_id, result in results.items():
+        if result.get("status") != "optimized":
+            continue
+        ef = ef_map.get(ef_id)
+        if ef is None:
+            continue
+        optimized.append((ef, result))
+
+    if not optimized:
+        print("   ⚠️  没有 optimized 的 evidence 特征，跳过 promote")
+        return None
+
+    # 生成 evidence.yaml 内容
+    evidence_list = []
+    for ef, result in optimized:
+        direction_yaml = (
+            "positive" if ef.direction == "higher_is_better" else "negative"
+        )
+        # 使用优化后的 bins (四舍五入避免浮点噪声)
+        rec_bins = [
+            round(b, 4) for b in result.get("recommended_bins", ef.quantile_bins)
+        ]
+
+        entry = {
+            "id": ef.id,
+            "feature": ef.feature,
+            "rank": ef.rank,
+            "direction": direction_yaml,
+            "usage_hint": ef.usage_hint
+            or f"auto-optimized (bad_supp={result.get('bad_suppression', 0):.3f})",
+            "affects": ef.affects if ef.affects else ["tp_range", "position_size"],
+            "quantile_mapping": {
+                "bins": rec_bins,
+                "labels": ["suppress", "downweight", "neutral", "favor", "amplify"],
+            },
+            "split_count": ef.split_count,
+        }
+        evidence_list.append(entry)
+
+    config = {
+        "schema": {
+            "label_semantics": {
+                "suppress": "强烈不利 - 极度限制仓位/信心",
+                "downweight": "不利 - 降低信心/仓位",
+                "neutral": "中性 - 标准执行",
+                "favor": "有利 - 提高信心/仓位",
+                "amplify": "强烈有利 - 最大化执行",
+            }
+        },
+        "evidence": evidence_list,
+    }
+
+    # 写入 archetypes/evidence.yaml
+    arch_dir = Path(strategies_root) / strategy / "archetypes"
+    arch_dir.mkdir(parents=True, exist_ok=True)
+    output_path = arch_dir / "evidence.yaml"
+
+    # header 注释
+    header = f"""# {strategy.upper()} Evidence Archetype (auto-promoted)
+# 来源: {candidates_source or 'evidence_candidates.yaml'}
+# 优化规则: {len(optimized)}/{len(evidence_features)} 条通过 plateau 验证
+# ✅ 方向已由数据自动验证
+
+"""
+    yaml_content = yaml.dump(
+        config,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+        width=120,
+    )
+
+    output_path.write_text(header + yaml_content, encoding="utf-8")
+    return output_path
 
 
 # ================================================================
@@ -962,6 +1182,22 @@ def main() -> int:
         help="Root directory for strategy configs",
     )
     parser.add_argument(
+        "--candidates",
+        default=None,
+        help="Path to evidence_candidates.yaml (training output). "
+        "优先从训练导出的候选读取，而非 archetypes/evidence.yaml",
+    )
+    parser.add_argument(
+        "--predictions",
+        default=None,
+        help="Path to predictions.parquet (用于自动判定特征方向)",
+    )
+    parser.add_argument(
+        "--promote",
+        action="store_true",
+        help="优化后自动写入 archetypes/evidence.yaml",
+    )
+    parser.add_argument(
         "--logs",
         required=True,
         help="Trade logs parquet with features and labels",
@@ -999,15 +1235,47 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # Load strategy archetype
-    try:
-        arch = load_strategy_archetype(args.strategy, args.strategies_root)
-    except Exception as e:
-        print(f"❌ Failed to load strategy '{args.strategy}': {e}")
-        return 1
+    # ================================================================
+    # 确定 evidence 特征来源: --candidates > archetypes/evidence.yaml
+    # ================================================================
+    candidates_source = None
+    evidence_features: List[EvidenceFeature] = []
 
-    print(f"✅ Loaded strategy: {arch.name}")
-    print(f"   Evidence features: {len(arch.evidence.features)}")
+    if args.candidates:
+        candidates_path = Path(args.candidates)
+        if not candidates_path.exists():
+            print(f"❌ Candidates file not found: {candidates_path}")
+            return 1
+
+        predictions_path = Path(args.predictions) if args.predictions else None
+        print(f"📥 从训练导出的 candidates 加载 evidence 特征:")
+        print(f"   candidates: {candidates_path}")
+        if predictions_path:
+            print(f"   predictions: {predictions_path} (用于方向判定)")
+
+        evidence_features = _parse_candidates_yaml(candidates_path, predictions_path)
+        candidates_source = str(candidates_path)
+
+        if not evidence_features:
+            print("❌ candidates 中没有有效的 evidence 特征")
+            return 1
+
+        print(f"✅ 从 candidates 加载了 {len(evidence_features)} 个 evidence 特征")
+    else:
+        # Fallback: 读 archetypes/evidence.yaml (旧流程)
+        try:
+            arch = load_strategy_archetype(args.strategy, args.strategies_root)
+        except Exception as e:
+            print(f"❌ Failed to load strategy '{args.strategy}': {e}")
+            return 1
+
+        evidence_features = arch.evidence.features
+        print(f"✅ Loaded strategy: {arch.name} (从 archetypes/evidence.yaml)")
+        print(f"   ⚠️  建议使用 --candidates 从训练导出的候选加载，确保特征名与数据一致")
+
+    print(f"   Evidence features: {len(evidence_features)}")
+    for ef in evidence_features:
+        print(f"     - {ef.feature} (rank={ef.rank}, direction={ef.direction})")
 
     # Load logs
     logs_path = Path(args.logs)
@@ -1059,7 +1327,7 @@ def main() -> int:
     # ================================================================
     # FeatureStore: 自动补全 evidence 候选特征中缺失的列
     # ================================================================
-    needed_features = {ef.feature for ef in arch.evidence.features}
+    needed_features = {ef.feature for ef in evidence_features}
     missing = [f for f in needed_features if f not in df.columns]
     if missing:
         print(f"\n   ⚠️  缺失 {len(missing)} 个 evidence 特征: {missing}")
@@ -1097,10 +1365,8 @@ def main() -> int:
     results = {}
 
     print("\n📋 Optimizing Evidence Features:")
-    for ef in arch.evidence.features:
+    for ef in evidence_features:
         feature_col = ef.feature
-        # ❗ Bug 1 修复: 从 EvidenceFeature 获取 direction (如果有)
-        # 默认 "higher_is_better"，但 volatility/risk 类特征应该配置为 "lower_is_better"
         direction = getattr(ef, "direction", "higher_is_better")
         print(f"  Processing: {feature_col} (direction: {direction})")
 
@@ -1176,6 +1442,21 @@ def main() -> int:
                 print(f"  ✅ {ef_id}:")
                 print(f"    quantile_bins: {result['recommended_bins']}")
                 print(f"    bad_suppression: {result.get('bad_suppression', 0):.3f}")
+
+    # --promote: 自动写入 archetypes/evidence.yaml
+    if args.promote:
+        print("\n🚀 Promote: 写入 archetypes/evidence.yaml")
+        promoted_path = _promote_evidence_yaml(
+            results,
+            evidence_features,
+            args.strategy,
+            args.strategies_root,
+            candidates_source=candidates_source or "archetypes/evidence.yaml",
+        )
+        if promoted_path:
+            print(f"   ✅ 已写入: {promoted_path}")
+        else:
+            print("   ⚠️  无 optimized 特征，未写入")
 
     # 生成美化的 HTML 报告
     html_path = output_path.with_suffix(".html")
