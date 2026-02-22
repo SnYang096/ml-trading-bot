@@ -243,7 +243,9 @@ def run_feature_scan(
             if int((test_df["entry_direction"] != 0).sum()) < 20:
                 continue
 
-            rr = simulate_rr_execution(test_df, exec_config, atr_col="atr", silent=True)
+            rr, _ = simulate_rr_execution(
+                test_df, exec_config, atr_col="atr", silent=True
+            )
             valid = rr.dropna()
             if len(valid) < 10:
                 continue
@@ -283,7 +285,9 @@ def run_feature_scan(
             if int((test_df["entry_direction"] != 0).sum()) < 20:
                 continue
 
-            rr = simulate_rr_execution(test_df, exec_config, atr_col="atr", silent=True)
+            rr, _ = simulate_rr_execution(
+                test_df, exec_config, atr_col="atr", silent=True
+            )
             valid = rr.dropna()
             if len(valid) < 10:
                 continue
@@ -381,7 +385,9 @@ def run_combo_search(
             if n_entries < 20:
                 continue
 
-            rr = simulate_rr_execution(test_df, exec_config, atr_col="atr", silent=True)
+            rr, _ = simulate_rr_execution(
+                test_df, exec_config, atr_col="atr", silent=True
+            )
             valid = rr.dropna()
             if len(valid) < 10:
                 continue
@@ -432,7 +438,7 @@ def compute_baseline(
     """baseline: 无 entry filter"""
     test_df = merged.copy()
     test_df["entry_direction"] = orig_dir.copy()
-    rr = simulate_rr_execution(test_df, exec_config, atr_col="atr", silent=True)
+    rr, _ = simulate_rr_execution(test_df, exec_config, atr_col="atr", silent=True)
     valid = rr.dropna()
     return {
         "n": 0,
@@ -509,7 +515,7 @@ def run_marginal_analysis(
         test_this = orig_merged.copy()
         test_this["entry_direction"] = orig_dir.copy()
         test_this.loc[~this_mask, "entry_direction"] = 0.0
-        rr_this = simulate_rr_execution(
+        rr_this, _ = simulate_rr_execution(
             test_this, exec_config, atr_col="atr", silent=True
         )
         valid_this = rr_this.dropna()
@@ -518,7 +524,7 @@ def run_marginal_analysis(
         test_other = orig_merged.copy()
         test_other["entry_direction"] = orig_dir.copy()
         test_other.loc[~other_mask, "entry_direction"] = 0.0
-        rr_other = simulate_rr_execution(
+        rr_other, _ = simulate_rr_execution(
             test_other, exec_config, atr_col="atr", silent=True
         )
         valid_other = rr_other.dropna()
@@ -529,7 +535,7 @@ def run_marginal_analysis(
         test_marginal = orig_merged.copy()
         test_marginal["entry_direction"] = orig_dir.copy()
         test_marginal.loc[~marginal_mask, "entry_direction"] = 0.0
-        rr_marginal = simulate_rr_execution(
+        rr_marginal, _ = simulate_rr_execution(
             test_marginal, exec_config, atr_col="atr", silent=True
         )
         valid_marginal = rr_marginal.dropna()

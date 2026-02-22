@@ -1,0 +1,75 @@
+_meta:
+  generated_from: results/train_final_20260221_165955_rr_extreme/me
+  strategy: me
+  note: 此为自动生成的草稿，需人工审核修改后使用
+system_safety:
+  pre_checks:
+  - id: check_feature_freshness
+    description: 检查特征数据时效性
+hard_gates:
+  _description: 硬规则：任一触发则拒绝交易
+  rules:
+  - id: gate_cvd_change_5_normalized
+    key: cvd_change_5_normalized
+    operator: <
+    quantile_value: -0.0088
+    tag: HARD_CVD_CHANGE_5_NORMALIZED
+    _comment: 树模型分裂 2 次 | 阈值 -0.008775 | 需人工确认语义
+  - id: gate_me_cvd_alignment
+    key: me_cvd_alignment
+    operator: <
+    quantile_value: 0.0
+    tag: HARD_ME_CVD_ALIGNMENT
+    _comment: 树模型分裂 1 次 | 阈值 0 | 需人工确认语义
+  - id: gate_funding_rate_zscore_50
+    key: funding_rate_zscore_50
+    operator: <
+    quantile_value: 4.1949
+    tag: HARD_FUNDING_RATE_ZSCORE_50
+    _comment: 树模型分裂 1 次 | 阈值 4.195 | 需人工确认语义
+  - id: gate_evt_scale_left
+    key: evt_scale_left
+    operator: <
+    quantile_value: 0.7242
+    tag: HARD_EVT_SCALE_LEFT
+    _comment: 树模型分裂 1 次 | 阈值 0.7242 | 需人工确认语义
+  - id: gate_sma_200_position
+    key: sma_200_position
+    operator: <
+    quantile_value: 0.0779
+    tag: HARD_SMA_200_POSITION
+    _comment: 树模型分裂 1 次 | 阈值 0.07786 | 需人工确认语义
+  - id: gate_macd_histogram_atr
+    key: macd_histogram_atr
+    operator: <
+    quantile_value: 0.0781
+    tag: HARD_MACD_HISTOGRAM_ATR
+    _comment: 树模型分裂 1 次 | 阈值 0.07809 | 需人工确认语义
+  - id: gate_sma_200_position
+    key: sma_200_position
+    operator: <
+    quantile_value: 0.1335
+    tag: HARD_SMA_200_POSITION
+    _comment: 树模型分裂 1 次 | 阈值 0.1335 | 需人工确认语义
+  - id: gate_spectrum_volume_entropy
+    key: spectrum_volume_entropy
+    operator: <
+    quantile_value: 0.8877
+    tag: HARD_SPECTRUM_VOLUME_ENTROPY
+    _comment: 树模型分裂 1 次 | 阈值 0.8877 | 需人工确认语义
+  - id: gate_location_amplifier
+    key: location_amplifier
+    operator: <
+    quantile_value: 0.8163
+    tag: HARD_LOCATION_AMPLIFIER
+    _comment: 树模型分裂 1 次 | 阈值 0.8163 | 需人工确认语义
+  - id: gate_wpt_price_energy_low_ratio
+    key: wpt_price_energy_low_ratio
+    operator: <
+    quantile_value: 1.0
+    tag: HARD_WPT_PRICE_ENERGY_LOW_RATIO
+    _comment: 树模型分裂 1 次 | 阈值 1 | 需人工确认语义
+governance:
+  failure_budget:
+    max_hard_deny_rate: 0.5
+    _comment: 硬规则拒绝率上限，超过需审查规则

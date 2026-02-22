@@ -201,17 +201,16 @@ python3 scripts/diagnose_e2e_kpi.py \
 echo "✅ E2E KPI报告生成完成"
 
 # 步骤8: 生成FBF交易地图（HTML）
+# NOTE: visualize_fbf_trades_html.py 已删除，交易地图已集成到 backtest_execution_layer.py
 echo ""
-echo "步骤8: 生成FBF交易地图（HTML）..."
-mkdir -p "${OUTPUT_DIR}/fbf_trade_html"
-python3 scripts/visualize_fbf_trades_html.py \
-    --logs "${OUTPUT_DIR}/logs_execution_gated.parquet" \
-    --start-date "${START_DATE}" \
-    --end-date "${END_DATE}" \
-    --timeframe "${TIMEFRAME}" \
-    --output-dir "${OUTPUT_DIR}/fbf_trade_html" \
-    2>&1 | tee "${OUTPUT_DIR}/fbf_trade_html.log"
-echo "✅ FBF交易地图生成完成"
+echo "步骤8: 跳过（交易地图已集成到 backtest_execution_layer）"
+# python3 scripts/visualize_fbf_trades_html.py \
+#     --logs "${OUTPUT_DIR}/logs_execution_gated.parquet" \
+#     --start-date "${START_DATE}" \
+#     --end-date "${END_DATE}" \
+#     --timeframe "${TIMEFRAME}" \
+#     --output-dir "${OUTPUT_DIR}/fbf_trade_html" \
+#     2>&1 | tee "${OUTPUT_DIR}/fbf_trade_html.log"
 
 echo ""
 echo "=========================================="

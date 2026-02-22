@@ -1,0 +1,47 @@
+{
+  "me_hg_flow_misaligned": {
+    "rule_id": "me_hg_flow_misaligned",
+    "feature": "me_cvd_alignment",
+    "operator": "lt",
+    "current_threshold": 0.5,
+    "status": "stable_plateau_found",
+    "robustness_selection": true,
+    "plateau_start": 0.05,
+    "plateau_end": 1.0,
+    "plateau_mid": 0.525,
+    "recommended_threshold": 0.525,
+    "recommended_threshold_type": "plateau_mid",
+    "lift_mean": 0.3636918262986583,
+    "lift_std": 5.551115123125783e-17,
+    "lift_min": 0.36369182629865837,
+    "lift_max": 0.36369182629865837,
+    "lift_stability_ratio": 1.5263238604013304e-16,
+    "pass_rate_at_mid": 0.5451420714940421,
+    "lift_at_mid": 0.36369182629865837,
+    "plateau_width": 0.95,
+    "plateau_relative_width": 1.0,
+    "num_valid_thresholds": 20,
+    "best_result_in_plateau": {
+      "lift": 0.36369182629865837,
+      "lift_valid": "True",
+      "pass_rate_good": 0.6125634022629731,
+      "pass_rate_bad": 0.4491948917268184,
+      "pass_rate_all": 0.5451420714940421,
+      "n_good": 5126,
+      "n_bad": 3602,
+      "n_passed": 4758,
+      "n_valid": 8728,
+      "valid_good": 5126,
+      "valid_bad": 3602,
+      "threshold": 0.5,
+      "robustness_score": {
+        "param_stability": 1.0,
+        "temporal_stability": 0.7818212306601173,
+        "sample_efficiency": 1.0,
+        "overall_score": 0.9236374307310411
+      },
+      "recommended_threshold": 0.525,
+      "recommended_threshold_type": "plateau_mid"
+    }
+  }
+}

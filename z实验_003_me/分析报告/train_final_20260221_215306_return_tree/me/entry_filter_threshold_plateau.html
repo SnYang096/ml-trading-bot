@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>me Entry Filter Threshold Plateau</title>
+<style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           margin: 20px; background: #fafafa; max-width: 900px; margin: 0 auto; padding: 20px; }
+    h1 { color: #333; border-bottom: 2px solid #FF5722; padding-bottom: 8px; }
+    h3 { color: #FF5722; margin-top: 30px; }
+    h4 { color: #666; margin-bottom: 5px; }
+    .filter-block { background: white; padding: 15px 20px; margin: 15px 0; border-radius: 8px;
+                     box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .cond { margin: 15px 0; padding: 10px; background: #f9f9f9; border-radius: 5px; }
+    .desc { color: #666; font-size: 0.9em; }
+    .skip { color: #999; font-style: italic; }
+    .plateau-ok { color: #2E7D32; font-weight: bold; margin: 8px 0; padding: 8px;
+                   background: #E8F5E9; border-radius: 4px; }
+    .plateau-no { color: #E65100; margin: 8px 0; padding: 8px;
+                   background: #FFF3E0; border-radius: 4px; }
+    table.small { font-size: 0.85em; border-collapse: collapse; margin-top: 8px; }
+    table.small th { background: #FF5722; color: white; padding: 5px 10px; }
+    table.small td { padding: 4px 10px; border-bottom: 1px solid #eee; }
+    details { margin-top: 8px; }
+    summary { cursor: pointer; color: #2196F3; }
+</style></head><body>
+<h1>🎯 ME Entry Filter Threshold Plateau</h1>
+<p>对每个 entry filter 的连续阈值条件做 plateau 扫描。
+红线 = snotio (mean R-multiples)，蓝色柱 = Trades，虚线 = 当前阈值，绿色区域 = 平坦高原。</p>
+
+        <div class="filter-block">
+            <h3>🔍 wick_compression_high</h3>
+            <p class="desc">Wick 压缩分数 ≥ 0.8 (大实体、小影线)</p>
+            
+            <div class="cond">
+                <h4>wick_compression_score >= <strong>0.8</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="242" y="50" width="154" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="39.3" y="155.0" width="21.4" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="77.9" y="158.5" width="21.4" height="41.5" fill="#2196F3" opacity="0.25"/><rect x="116.5" y="163.1" width="21.4" height="36.9" fill="#2196F3" opacity="0.25"/><rect x="155.1" y="167.5" width="21.4" height="32.5" fill="#2196F3" opacity="0.25"/><rect x="192.8" y="171.6" width="21.4" height="28.4" fill="#2196F3" opacity="0.25"/><rect x="231.4" y="175.8" width="21.4" height="24.2" fill="#2196F3" opacity="0.25"/><rect x="270.0" y="180.0" width="21.4" height="20.0" fill="#2196F3" opacity="0.25"/><rect x="308.6" y="184.1" width="21.4" height="15.9" fill="#2196F3" opacity="0.25"/><rect x="347.2" y="187.9" width="21.4" height="12.1" fill="#2196F3" opacity="0.25"/><rect x="385.8" y="191.4" width="21.4" height="8.6" fill="#2196F3" opacity="0.25"/><rect x="424.4" y="194.4" width="21.4" height="5.6" fill="#2196F3" opacity="0.25"/><rect x="462.1" y="196.8" width="21.4" height="3.2" fill="#2196F3" opacity="0.25"/><rect x="500.7" y="198.5" width="21.4" height="1.5" fill="#2196F3" opacity="0.25"/><rect x="539.3" y="199.7" width="21.4" height="0.3" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,164.4 88.6,165.0 127.2,161.3 165.8,161.7 203.5,164.2 242.1,163.0 280.7,157.8 319.3,144.7 357.9,138.2 396.5,120.3 435.1,114.6 472.8,88.6 511.4,95.4 550.0,169.5" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="164.4" r="3" fill="#FF5722"/><circle cx="88.6" cy="165.0" r="3" fill="#FF5722"/><circle cx="127.2" cy="161.3" r="3" fill="#FF5722"/><circle cx="165.8" cy="161.7" r="3" fill="#FF5722"/><circle cx="203.5" cy="164.2" r="3" fill="#FF5722"/><circle cx="242.1" cy="163.0" r="3" fill="#FF5722"/><circle cx="280.7" cy="157.8" r="3" fill="#FF5722"/><circle cx="319.3" cy="144.7" r="3" fill="#FF5722"/><circle cx="357.9" cy="138.2" r="3" fill="#FF5722"/><circle cx="396.5" cy="120.3" r="3" fill="#FF5722"/><circle cx="435.1" cy="114.6" r="3" fill="#FF5722"/><circle cx="472.8" cy="88.6" r="3" fill="#FF5722"/><circle cx="511.4" cy="95.4" r="3" fill="#FF5722"/><circle cx="550.0" cy="169.5" r="3" fill="#FF5722"/>
+                <line x1="409" y1="50" x2="409" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="409" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.8</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.40</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.96</text>
+                <text x="5" y="50" font-size="9" fill="#999">25.656</text>
+                <text x="5" y="200" font-size="9" fill="#999">16.583</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.614, 0.786] width=0.172 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=19.9228 CV(snotio=0.046, Trades=0.342) 推荐阈值=0.657 (当前=0.8)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.400</td><td>3904</td><td>18.7377</td><td>63.0%</td><td>18.7377</td></tr><tr><td>0.443</td><td>3598</td><td>18.7006</td><td>63.6%</td><td>18.7006</td></tr><tr><td>0.486</td><td>3204</td><td>18.9248</td><td>63.6%</td><td>18.9248</td></tr><tr><td>0.529</td><td>2818</td><td>18.9016</td><td>63.8%</td><td>18.9016</td></tr><tr><td>0.571</td><td>2467</td><td>18.7484</td><td>64.2%</td><td>18.7484</td></tr><tr><td>0.614</td><td>2099</td><td>18.8235</td><td>64.1%</td><td>18.8235</td></tr><tr><td>0.657</td><td>1732</td><td>19.1371</td><td>63.9%</td><td>19.1371</td></tr><tr><td>0.700</td><td>1382</td><td>19.9257</td><td>63.8%</td><td>19.9257</td></tr><tr><td>0.743</td><td>1051</td><td>20.3226</td><td>63.3%</td><td>20.3226</td></tr><tr><td>0.786</td><td>744</td><td>21.4052</td><td>63.6%</td><td>21.4052</td></tr><tr><td>0.829</td><td>486</td><td>21.7515</td><td>62.3%</td><td>21.7515</td></tr><tr><td>0.871</td><td>280</td><td>23.3240</td><td>64.6%</td><td>23.3240</td></tr><tr><td>0.914</td><td>127</td><td>22.9086</td><td>68.5%</td><td>22.9086</td></tr><tr><td>0.957</td><td>24</td><td>18.4256</td><td>58.3%</td><td>18.4256</td></tr><tr><td>1.000</td><td>0</td><td colspan='3'>trades < 20</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 vpin_high</h3>
+            <p class="desc">VPIN ≥ 0.4 (信息不对称活跃)</p>
+            
+            <div class="cond">
+                <h4>vpin >= <strong>0.4</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="121" y="50" width="143" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="40.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="75.6" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="111.2" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="146.9" y="156.0" width="20.0" height="44.0" fill="#2196F3" opacity="0.25"/><rect x="183.1" y="162.8" width="20.0" height="37.2" fill="#2196F3" opacity="0.25"/><rect x="218.7" y="175.2" width="20.0" height="24.8" fill="#2196F3" opacity="0.25"/><rect x="254.4" y="186.7" width="20.0" height="13.3" fill="#2196F3" opacity="0.25"/><rect x="290.0" y="192.7" width="20.0" height="7.3" fill="#2196F3" opacity="0.25"/><rect x="325.6" y="195.8" width="20.0" height="4.2" fill="#2196F3" opacity="0.25"/><rect x="361.2" y="197.5" width="20.0" height="2.5" fill="#2196F3" opacity="0.25"/><rect x="396.9" y="198.6" width="20.0" height="1.4" fill="#2196F3" opacity="0.25"/><rect x="433.1" y="199.0" width="20.0" height="1.0" fill="#2196F3" opacity="0.25"/><rect x="468.8" y="199.4" width="20.0" height="0.6" fill="#2196F3" opacity="0.25"/><rect x="504.4" y="199.6" width="20.0" height="0.4" fill="#2196F3" opacity="0.25"/><rect x="540.0" y="199.8" width="20.0" height="0.2" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,131.5 85.6,131.5 121.2,131.5 156.9,130.4 193.1,121.6 228.7,115.3 264.4,104.6 300.0,103.3 335.6,117.8 371.2,126.6 406.9,136.1 443.1,87.7 478.8,73.7 514.4,103.1 550.0,187.7" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="131.5" r="3" fill="#FF5722"/><circle cx="85.6" cy="131.5" r="3" fill="#FF5722"/><circle cx="121.2" cy="131.5" r="3" fill="#FF5722"/><circle cx="156.9" cy="130.4" r="3" fill="#FF5722"/><circle cx="193.1" cy="121.6" r="3" fill="#FF5722"/><circle cx="228.7" cy="115.3" r="3" fill="#FF5722"/><circle cx="264.4" cy="104.6" r="3" fill="#FF5722"/><circle cx="300.0" cy="103.3" r="3" fill="#FF5722"/><circle cx="335.6" cy="117.8" r="3" fill="#FF5722"/><circle cx="371.2" cy="126.6" r="3" fill="#FF5722"/><circle cx="406.9" cy="136.1" r="3" fill="#FF5722"/><circle cx="443.1" cy="87.7" r="3" fill="#FF5722"/><circle cx="478.8" cy="73.7" r="3" fill="#FF5722"/><circle cx="514.4" cy="103.1" r="3" fill="#FF5722"/><circle cx="550.0" cy="187.7" r="3" fill="#FF5722"/>
+                <line x1="300" y1="50" x2="300" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="300" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.4</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.00</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.80</text>
+                <text x="5" y="50" font-size="9" fill="#999">26.457</text>
+                <text x="5" y="200" font-size="9" fill="#999">11.260</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.114, 0.343] width=0.229 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=19.2929 CV(snotio=0.052, Trades=0.369) 推荐阈值=0.171 (当前=0.4)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.000</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.057</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.114</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.171</td><td>5006</td><td>18.3066</td><td>62.4%</td><td>18.3066</td></tr><tr><td>0.229</td><td>4234</td><td>19.1992</td><td>62.5%</td><td>19.1992</td></tr><tr><td>0.286</td><td>2820</td><td>19.8366</td><td>62.0%</td><td>19.8366</td></tr><tr><td>0.343</td><td>1516</td><td>20.9227</td><td>62.2%</td><td>20.9227</td></tr><tr style="background:#fff3e0"><td>0.400</td><td>825</td><td>21.0536</td><td>60.2%</td><td>21.0536 ← current</td></tr><tr><td>0.457</td><td>480</td><td>19.5876</td><td>60.4%</td><td>19.5876</td></tr><tr><td>0.514</td><td>283</td><td>18.6980</td><td>58.3%</td><td>18.6980</td></tr><tr><td>0.571</td><td>162</td><td>17.7360</td><td>57.4%</td><td>17.7360</td></tr><tr><td>0.629</td><td>111</td><td>22.6337</td><td>64.0%</td><td>22.6337</td></tr><tr><td>0.686</td><td>71</td><td>24.0517</td><td>64.8%</td><td>24.0517</td></tr><tr><td>0.743</td><td>41</td><td>21.0791</td><td>70.7%</td><td>21.0791</td></tr><tr><td>0.800</td><td>23</td><td>12.5114</td><td>60.9%</td><td>12.5114</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 vpin_rank_high</h3>
+            <p class="desc">VPIN 20bar 分位数 ≥ 0.8 (近期极值)</p>
+            
+            <div class="cond">
+                <h4>vpin_quantile_rank_20 >= <strong>0.8</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="358" y="50" width="154" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="39.3" y="155.0" width="21.4" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="77.9" y="159.0" width="21.4" height="41.0" fill="#2196F3" opacity="0.25"/><rect x="116.5" y="163.1" width="21.4" height="36.9" fill="#2196F3" opacity="0.25"/><rect x="155.1" y="166.4" width="21.4" height="33.6" fill="#2196F3" opacity="0.25"/><rect x="192.8" y="166.4" width="21.4" height="33.6" fill="#2196F3" opacity="0.25"/><rect x="231.4" y="169.8" width="21.4" height="30.2" fill="#2196F3" opacity="0.25"/><rect x="270.0" y="173.5" width="21.4" height="26.5" fill="#2196F3" opacity="0.25"/><rect x="308.6" y="177.6" width="21.4" height="22.4" fill="#2196F3" opacity="0.25"/><rect x="347.2" y="181.0" width="21.4" height="19.0" fill="#2196F3" opacity="0.25"/><rect x="385.8" y="184.4" width="21.4" height="15.6" fill="#2196F3" opacity="0.25"/><rect x="424.4" y="188.2" width="21.4" height="11.8" fill="#2196F3" opacity="0.25"/><rect x="462.1" y="188.2" width="21.4" height="11.8" fill="#2196F3" opacity="0.25"/><rect x="500.7" y="191.9" width="21.4" height="8.1" fill="#2196F3" opacity="0.25"/><rect x="539.3" y="195.7" width="21.4" height="4.3" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,143.9 88.6,142.2 127.2,133.3 165.8,129.0 203.5,129.0 242.1,139.1 280.7,136.5 319.3,141.4 357.9,147.5 396.5,114.3 435.1,106.0 472.8,106.0 511.4,104.3 550.0,150.3" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="143.9" r="3" fill="#FF5722"/><circle cx="88.6" cy="142.2" r="3" fill="#FF5722"/><circle cx="127.2" cy="133.3" r="3" fill="#FF5722"/><circle cx="165.8" cy="129.0" r="3" fill="#FF5722"/><circle cx="203.5" cy="129.0" r="3" fill="#FF5722"/><circle cx="242.1" cy="139.1" r="3" fill="#FF5722"/><circle cx="280.7" cy="136.5" r="3" fill="#FF5722"/><circle cx="319.3" cy="141.4" r="3" fill="#FF5722"/><circle cx="357.9" cy="147.5" r="3" fill="#FF5722"/><circle cx="396.5" cy="114.3" r="3" fill="#FF5722"/><circle cx="435.1" cy="106.0" r="3" fill="#FF5722"/><circle cx="472.8" cy="106.0" r="3" fill="#FF5722"/><circle cx="511.4" cy="104.3" r="3" fill="#FF5722"/><circle cx="550.0" cy="150.3" r="3" fill="#FF5722"/>
+                <line x1="409" y1="50" x2="409" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="409" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.8</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.40</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.96</text>
+                <text x="5" y="50" font-size="9" fill="#999">21.374</text>
+                <text x="5" y="200" font-size="9" fill="#999">16.008</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.743, 0.914] width=0.171 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=19.0256 CV(snotio=0.031, Trades=0.282) 推荐阈值=0.786 (当前=0.8)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.400</td><td>2882</td><td>18.0135</td><td>62.3%</td><td>18.0135</td></tr><tr><td>0.443</td><td>2625</td><td>18.0773</td><td>62.2%</td><td>18.0773</td></tr><tr><td>0.486</td><td>2364</td><td>18.3930</td><td>62.6%</td><td>18.3930</td></tr><tr><td>0.529</td><td>2150</td><td>18.5497</td><td>62.6%</td><td>18.5497</td></tr><tr><td>0.571</td><td>2150</td><td>18.5497</td><td>62.6%</td><td>18.5497</td></tr><tr><td>0.614</td><td>1933</td><td>18.1869</td><td>62.2%</td><td>18.1869</td></tr><tr><td>0.657</td><td>1696</td><td>18.2786</td><td>62.0%</td><td>18.2786</td></tr><tr><td>0.700</td><td>1435</td><td>18.1029</td><td>61.7%</td><td>18.1029</td></tr><tr><td>0.743</td><td>1220</td><td>17.8852</td><td>61.8%</td><td>17.8852</td></tr><tr><td>0.786</td><td>1000</td><td>19.0740</td><td>61.8%</td><td>19.0740</td></tr><tr><td>0.829</td><td>756</td><td>19.3690</td><td>63.1%</td><td>19.3690</td></tr><tr><td>0.871</td><td>756</td><td>19.3690</td><td>63.1%</td><td>19.3690</td></tr><tr><td>0.914</td><td>519</td><td>19.4311</td><td>64.5%</td><td>19.4311</td></tr><tr><td>0.957</td><td>277</td><td>17.7864</td><td>64.6%</td><td>17.7864</td></tr><tr><td>1.000</td><td>0</td><td colspan='3'>trades < 20</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 vp_absorption</h3>
+            <p class="desc">Volume Profile 吸收分数 ≥ 0.25</p>
+            
+            <div class="cond">
+                <h4>vp_absorption_score >= <strong>0.25</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="50" y="50" width="286" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="31.2" y="155.0" width="37.5" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="102.0" y="164.2" width="37.5" height="35.8" fill="#2196F3" opacity="0.25"/><rect x="174.3" y="169.4" width="37.5" height="30.6" fill="#2196F3" opacity="0.25"/><rect x="245.1" y="175.4" width="37.5" height="24.6" fill="#2196F3" opacity="0.25"/><rect x="317.4" y="182.6" width="37.5" height="17.4" fill="#2196F3" opacity="0.25"/><rect x="388.2" y="191.3" width="37.5" height="8.7" fill="#2196F3" opacity="0.25"/><rect x="460.5" y="197.7" width="37.5" height="2.3" fill="#2196F3" opacity="0.25"/><rect x="531.2" y="199.8" width="37.5" height="0.2" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,142.0 120.8,150.9 193.1,160.1 263.8,163.3 336.2,156.2 406.9,121.8 479.2,93.6 550.0,103.3" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="142.0" r="3" fill="#FF5722"/><circle cx="120.8" cy="150.9" r="3" fill="#FF5722"/><circle cx="193.1" cy="160.1" r="3" fill="#FF5722"/><circle cx="263.8" cy="163.3" r="3" fill="#FF5722"/><circle cx="336.2" cy="156.2" r="3" fill="#FF5722"/><circle cx="406.9" cy="121.8" r="3" fill="#FF5722"/><circle cx="479.2" cy="93.6" r="3" fill="#FF5722"/><circle cx="550.0" cy="103.3" r="3" fill="#FF5722"/>
+                <line x1="435" y1="50" x2="435" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="435" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.25</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.00</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.33</text>
+                <text x="5" y="50" font-size="9" fill="#999">22.514</text>
+                <text x="5" y="200" font-size="9" fill="#999">15.479</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.000, 0.186] width=0.186 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=17.6129 CV(snotio=0.020, Trades=0.307) 推荐阈值=0.046 (当前=0.25)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.000</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.046</td><td>4076</td><td>17.7799</td><td>61.9%</td><td>17.7799</td></tr><tr><td>0.093</td><td>3481</td><td>17.3505</td><td>61.6%</td><td>17.3505</td></tr><tr><td>0.139</td><td>2800</td><td>17.1994</td><td>61.6%</td><td>17.1994</td></tr><tr><td>0.186</td><td>1979</td><td>17.5351</td><td>61.5%</td><td>17.5351</td></tr><tr><td>0.232</td><td>991</td><td>19.1459</td><td>60.8%</td><td>19.1459</td></tr><tr><td>0.279</td><td>265</td><td>20.4670</td><td>65.3%</td><td>20.4670</td></tr><tr><td>0.325</td><td>23</td><td>20.0150</td><td>69.6%</td><td>20.0150</td></tr><tr><td>0.371</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.418</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.464</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.511</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.557</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.604</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.650</td><td>0</td><td colspan='3'>trades < 20</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 volume_participation</h3>
+            <p class="desc">成交量参与度 ≥ 0.3 (volume_participation_score)</p>
+            
+            <div class="cond">
+                <h4>volume_participation_score >= <strong>0.3</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="407" y="50" width="143" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="40.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="75.7" y="165.3" width="20.0" height="34.7" fill="#2196F3" opacity="0.25"/><rect x="111.4" y="175.0" width="20.0" height="25.0" fill="#2196F3" opacity="0.25"/><rect x="147.1" y="180.5" width="20.0" height="19.5" fill="#2196F3" opacity="0.25"/><rect x="182.9" y="184.1" width="20.0" height="15.9" fill="#2196F3" opacity="0.25"/><rect x="218.6" y="186.4" width="20.0" height="13.6" fill="#2196F3" opacity="0.25"/><rect x="254.3" y="188.5" width="20.0" height="11.5" fill="#2196F3" opacity="0.25"/><rect x="290.0" y="190.1" width="20.0" height="9.9" fill="#2196F3" opacity="0.25"/><rect x="325.7" y="191.6" width="20.0" height="8.4" fill="#2196F3" opacity="0.25"/><rect x="361.4" y="192.7" width="20.0" height="7.3" fill="#2196F3" opacity="0.25"/><rect x="397.1" y="194.0" width="20.0" height="6.0" fill="#2196F3" opacity="0.25"/><rect x="432.9" y="194.8" width="20.0" height="5.2" fill="#2196F3" opacity="0.25"/><rect x="468.6" y="195.7" width="20.0" height="4.3" fill="#2196F3" opacity="0.25"/><rect x="504.3" y="196.5" width="20.0" height="3.5" fill="#2196F3" opacity="0.25"/><rect x="540.0" y="197.2" width="20.0" height="2.8" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,145.8 85.7,149.0 121.4,150.4 157.1,126.6 192.9,116.9 228.6,118.7 264.3,124.6 300.0,135.5 335.7,132.7 371.4,133.7 407.1,107.9 442.9,137.1 478.6,125.3 514.3,104.2 550.0,116.3" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="145.8" r="3" fill="#FF5722"/><circle cx="85.7" cy="149.0" r="3" fill="#FF5722"/><circle cx="121.4" cy="150.4" r="3" fill="#FF5722"/><circle cx="157.1" cy="126.6" r="3" fill="#FF5722"/><circle cx="192.9" cy="116.9" r="3" fill="#FF5722"/><circle cx="228.6" cy="118.7" r="3" fill="#FF5722"/><circle cx="264.3" cy="124.6" r="3" fill="#FF5722"/><circle cx="300.0" cy="135.5" r="3" fill="#FF5722"/><circle cx="335.7" cy="132.7" r="3" fill="#FF5722"/><circle cx="371.4" cy="133.7" r="3" fill="#FF5722"/><circle cx="407.1" cy="107.9" r="3" fill="#FF5722"/><circle cx="442.9" cy="137.1" r="3" fill="#FF5722"/><circle cx="478.6" cy="125.3" r="3" fill="#FF5722"/><circle cx="514.3" cy="104.2" r="3" fill="#FF5722"/><circle cx="550.0" cy="116.3" r="3" fill="#FF5722"/>
+                <line x1="264" y1="50" x2="264" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="264" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.3</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.00</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.70</text>
+                <text x="5" y="50" font-size="9" fill="#999">21.684</text>
+                <text x="5" y="200" font-size="9" fill="#999">16.231</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.500, 0.700] width=0.200 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=19.2054 CV(snotio=0.023, Trades=0.266) 推荐阈值=0.550 (当前=0.3)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.000</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.050</td><td>3948</td><td>18.0859</td><td>62.3%</td><td>18.0859</td></tr><tr><td>0.100</td><td>2841</td><td>18.0349</td><td>62.0%</td><td>18.0349</td></tr><tr><td>0.150</td><td>2215</td><td>18.8997</td><td>62.9%</td><td>18.8997</td></tr><tr><td>0.200</td><td>1808</td><td>19.2527</td><td>63.3%</td><td>19.2527</td></tr><tr><td>0.250</td><td>1544</td><td>19.1870</td><td>63.7%</td><td>19.1870</td></tr><tr style="background:#fff3e0"><td>0.300</td><td>1307</td><td>18.9726</td><td>63.8%</td><td>18.9726 ← current</td></tr><tr><td>0.350</td><td>1127</td><td>18.5772</td><td>64.0%</td><td>18.5772</td></tr><tr><td>0.400</td><td>952</td><td>18.6761</td><td>64.5%</td><td>18.6761</td></tr><tr><td>0.450</td><td>831</td><td>18.6430</td><td>63.7%</td><td>18.6430</td></tr><tr><td>0.500</td><td>688</td><td>19.5773</td><td>64.4%</td><td>19.5773</td></tr><tr><td>0.550</td><td>596</td><td>18.5181</td><td>64.4%</td><td>18.5181</td></tr><tr><td>0.600</td><td>488</td><td>18.9452</td><td>63.5%</td><td>18.9452</td></tr><tr><td>0.650</td><td>393</td><td>19.7123</td><td>63.1%</td><td>19.7123</td></tr><tr><td>0.700</td><td>323</td><td>19.2739</td><td>61.9%</td><td>19.2739</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 oi_absorption</h3>
+            <p class="desc">OI 吸收分数 ≥ 0.3 (oi_absorption_score)</p>
+            
+            <div class="cond">
+                <h4>oi_absorption_score >= <strong>0.3</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="229" y="50" width="143" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="40.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="75.7" y="171.4" width="20.0" height="28.6" fill="#2196F3" opacity="0.25"/><rect x="111.4" y="179.1" width="20.0" height="20.9" fill="#2196F3" opacity="0.25"/><rect x="147.1" y="183.0" width="20.0" height="17.0" fill="#2196F3" opacity="0.25"/><rect x="182.9" y="185.4" width="20.0" height="14.6" fill="#2196F3" opacity="0.25"/><rect x="218.6" y="187.3" width="20.0" height="12.7" fill="#2196F3" opacity="0.25"/><rect x="254.3" y="188.9" width="20.0" height="11.1" fill="#2196F3" opacity="0.25"/><rect x="290.0" y="190.5" width="20.0" height="9.5" fill="#2196F3" opacity="0.25"/><rect x="325.7" y="191.8" width="20.0" height="8.2" fill="#2196F3" opacity="0.25"/><rect x="361.4" y="193.3" width="20.0" height="6.7" fill="#2196F3" opacity="0.25"/><rect x="397.1" y="194.6" width="20.0" height="5.4" fill="#2196F3" opacity="0.25"/><rect x="432.9" y="196.0" width="20.0" height="4.0" fill="#2196F3" opacity="0.25"/><rect x="468.6" y="197.5" width="20.0" height="2.5" fill="#2196F3" opacity="0.25"/><rect x="504.3" y="198.8" width="20.0" height="1.2" fill="#2196F3" opacity="0.25"/><rect x="540.0" y="199.5" width="20.0" height="0.5" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,136.0 85.7,142.2 121.4,143.7 157.1,138.5 192.9,134.1 228.6,127.4 264.3,123.1 300.0,114.9 335.7,109.8 371.4,118.5 407.1,144.5 442.9,130.5 478.6,169.0 514.3,123.2 550.0,89.0" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="136.0" r="3" fill="#FF5722"/><circle cx="85.7" cy="142.2" r="3" fill="#FF5722"/><circle cx="121.4" cy="143.7" r="3" fill="#FF5722"/><circle cx="157.1" cy="138.5" r="3" fill="#FF5722"/><circle cx="192.9" cy="134.1" r="3" fill="#FF5722"/><circle cx="228.6" cy="127.4" r="3" fill="#FF5722"/><circle cx="264.3" cy="123.1" r="3" fill="#FF5722"/><circle cx="300.0" cy="114.9" r="3" fill="#FF5722"/><circle cx="335.7" cy="109.8" r="3" fill="#FF5722"/><circle cx="371.4" cy="118.5" r="3" fill="#FF5722"/><circle cx="407.1" cy="144.5" r="3" fill="#FF5722"/><circle cx="442.9" cy="130.5" r="3" fill="#FF5722"/><circle cx="478.6" cy="169.0" r="3" fill="#FF5722"/><circle cx="514.3" cy="123.2" r="3" fill="#FF5722"/><circle cx="550.0" cy="89.0" r="3" fill="#FF5722"/>
+                <line x1="264" y1="50" x2="264" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="264" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.3</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.00</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.70</text>
+                <text x="5" y="50" font-size="9" fill="#999">22.758</text>
+                <text x="5" y="200" font-size="9" fill="#999">14.806</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.250, 0.450] width=0.200 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=19.1145 CV(snotio=0.017, Trades=0.217) 推荐阈值=0.300 (当前=0.3)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.000</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.050</td><td>3252</td><td>17.8688</td><td>62.4%</td><td>17.8688</td></tr><tr><td>0.100</td><td>2378</td><td>17.7918</td><td>63.2%</td><td>17.7918</td></tr><tr><td>0.150</td><td>1937</td><td>18.0666</td><td>62.9%</td><td>18.0666</td></tr><tr><td>0.200</td><td>1665</td><td>18.3016</td><td>62.6%</td><td>18.3016</td></tr><tr><td>0.250</td><td>1442</td><td>18.6535</td><td>62.1%</td><td>18.6535</td></tr><tr style="background:#fff3e0"><td>0.300</td><td>1262</td><td>18.8841</td><td>62.0%</td><td>18.8841 ← current</td></tr><tr><td>0.350</td><td>1082</td><td>19.3199</td><td>61.2%</td><td>19.3199</td></tr><tr><td>0.400</td><td>932</td><td>19.5860</td><td>61.6%</td><td>19.5860</td></tr><tr><td>0.450</td><td>767</td><td>19.1290</td><td>60.8%</td><td>19.1290</td></tr><tr><td>0.500</td><td>609</td><td>17.7504</td><td>59.6%</td><td>17.7504</td></tr><tr><td>0.550</td><td>451</td><td>18.4884</td><td>58.1%</td><td>18.4884</td></tr><tr><td>0.600</td><td>285</td><td>16.4513</td><td>58.2%</td><td>16.4513</td></tr><tr><td>0.650</td><td>136</td><td>18.8786</td><td>54.4%</td><td>18.8786</td></tr><tr><td>0.700</td><td>62</td><td>20.6893</td><td>53.2%</td><td>20.6893</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 oi_absorption_loose</h3>
+            <p class="desc">OI 吸收分数 ≥ 0.2 (宽松版)</p>
+            
+            <div class="cond">
+                <h4>oi_absorption_score >= <strong>0.2</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="264" y="50" width="143" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="40.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="75.8" y="169.7" width="20.0" height="30.3" fill="#2196F3" opacity="0.25"/><rect x="111.7" y="177.6" width="20.0" height="22.4" fill="#2196F3" opacity="0.25"/><rect x="147.5" y="181.6" width="20.0" height="18.4" fill="#2196F3" opacity="0.25"/><rect x="182.5" y="184.1" width="20.0" height="15.9" fill="#2196F3" opacity="0.25"/><rect x="218.3" y="185.9" width="20.0" height="14.1" fill="#2196F3" opacity="0.25"/><rect x="254.2" y="187.5" width="20.0" height="12.5" fill="#2196F3" opacity="0.25"/><rect x="290.0" y="188.9" width="20.0" height="11.1" fill="#2196F3" opacity="0.25"/><rect x="325.8" y="190.3" width="20.0" height="9.7" fill="#2196F3" opacity="0.25"/><rect x="361.7" y="191.4" width="20.0" height="8.6" fill="#2196F3" opacity="0.25"/><rect x="397.5" y="192.7" width="20.0" height="7.3" fill="#2196F3" opacity="0.25"/><rect x="432.5" y="193.9" width="20.0" height="6.1" fill="#2196F3" opacity="0.25"/><rect x="468.3" y="195.0" width="20.0" height="5.0" fill="#2196F3" opacity="0.25"/><rect x="504.2" y="196.3" width="20.0" height="3.7" fill="#2196F3" opacity="0.25"/><rect x="540.0" y="197.5" width="20.0" height="2.5" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,122.6 85.8,120.6 121.7,126.2 157.5,126.8 192.5,114.8 228.3,118.3 264.2,112.0 300.0,107.0 335.8,94.3 371.7,96.1 407.5,101.5 442.5,139.9 478.3,140.5 514.2,128.9 550.0,162.5" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="122.6" r="3" fill="#FF5722"/><circle cx="85.8" cy="120.6" r="3" fill="#FF5722"/><circle cx="121.7" cy="126.2" r="3" fill="#FF5722"/><circle cx="157.5" cy="126.8" r="3" fill="#FF5722"/><circle cx="192.5" cy="114.8" r="3" fill="#FF5722"/><circle cx="228.3" cy="118.3" r="3" fill="#FF5722"/><circle cx="264.2" cy="112.0" r="3" fill="#FF5722"/><circle cx="300.0" cy="107.0" r="3" fill="#FF5722"/><circle cx="335.8" cy="94.3" r="3" fill="#FF5722"/><circle cx="371.7" cy="96.1" r="3" fill="#FF5722"/><circle cx="407.5" cy="101.5" r="3" fill="#FF5722"/><circle cx="442.5" cy="139.9" r="3" fill="#FF5722"/><circle cx="478.3" cy="140.5" r="3" fill="#FF5722"/><circle cx="514.2" cy="128.9" r="3" fill="#FF5722"/><circle cx="550.0" cy="162.5" r="3" fill="#FF5722"/>
+                <line x1="217" y1="50" x2="217" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="217" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.2</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.00</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.60</text>
+                <text x="5" y="50" font-size="9" fill="#999">21.382</text>
+                <text x="5" y="200" font-size="9" fill="#999">14.806</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.257, 0.429] width=0.172 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=19.0935 CV(snotio=0.015, Trades=0.185) 推荐阈值=0.300 (当前=0.2)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.000</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.043</td><td>3452</td><td>18.2884</td><td>62.6%</td><td>18.2884</td></tr><tr><td>0.086</td><td>2553</td><td>18.0391</td><td>63.2%</td><td>18.0391</td></tr><tr><td>0.129</td><td>2088</td><td>18.0133</td><td>63.2%</td><td>18.0133</td></tr><tr><td>0.171</td><td>1810</td><td>18.5390</td><td>62.6%</td><td>18.5390</td></tr><tr><td>0.214</td><td>1609</td><td>18.3867</td><td>62.5%</td><td>18.3867</td></tr><tr><td>0.257</td><td>1418</td><td>18.6626</td><td>61.9%</td><td>18.6626</td></tr><tr><td>0.300</td><td>1262</td><td>18.8841</td><td>62.0%</td><td>18.8841</td></tr><tr><td>0.343</td><td>1105</td><td>19.4378</td><td>61.4%</td><td>19.4378</td></tr><tr><td>0.386</td><td>978</td><td>19.3603</td><td>62.1%</td><td>19.3603</td></tr><tr><td>0.429</td><td>830</td><td>19.1228</td><td>61.4%</td><td>19.1228</td></tr><tr><td>0.471</td><td>696</td><td>17.4408</td><td>59.8%</td><td>17.4408</td></tr><tr><td>0.514</td><td>566</td><td>17.4145</td><td>58.7%</td><td>17.4145</td></tr><tr><td>0.557</td><td>424</td><td>17.9217</td><td>57.1%</td><td>17.9217</td></tr><tr><td>0.600</td><td>285</td><td>16.4513</td><td>58.2%</td><td>16.4513</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 price_dir_consistency</h3>
+            <p class="desc">价格方向一致性 ≥ 0.9 (price_dir_consistency_pct)</p>
+            
+            <div class="cond">
+                <h4>price_dir_consistency_pct >= <strong>0.9</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="121" y="50" width="143" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="40.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="76.0" y="159.2" width="20.0" height="40.8" fill="#2196F3" opacity="0.25"/><rect x="111.0" y="164.4" width="20.0" height="35.6" fill="#2196F3" opacity="0.25"/><rect x="147.0" y="167.5" width="20.0" height="32.5" fill="#2196F3" opacity="0.25"/><rect x="183.0" y="168.8" width="20.0" height="31.2" fill="#2196F3" opacity="0.25"/><rect x="219.0" y="169.8" width="20.0" height="30.2" fill="#2196F3" opacity="0.25"/><rect x="254.0" y="171.3" width="20.0" height="28.7" fill="#2196F3" opacity="0.25"/><rect x="290.0" y="173.5" width="20.0" height="26.5" fill="#2196F3" opacity="0.25"/><rect x="326.0" y="177.8" width="20.0" height="22.2" fill="#2196F3" opacity="0.25"/><rect x="361.0" y="181.3" width="20.0" height="18.7" fill="#2196F3" opacity="0.25"/><rect x="397.0" y="183.8" width="20.0" height="16.2" fill="#2196F3" opacity="0.25"/><rect x="433.0" y="186.6" width="20.0" height="13.4" fill="#2196F3" opacity="0.25"/><rect x="469.0" y="189.8" width="20.0" height="10.2" fill="#2196F3" opacity="0.25"/><rect x="504.0" y="193.7" width="20.0" height="6.3" fill="#2196F3" opacity="0.25"/><rect x="540.0" y="199.0" width="20.0" height="1.0" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,169.6 86.0,173.4 121.0,167.1 157.0,162.5 193.0,162.1 229.0,163.9 264.0,162.3 300.0,169.5 336.0,171.7 371.0,165.2 407.0,154.8 443.0,161.8 479.0,165.6 514.0,181.9 550.0,78.5" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="169.6" r="3" fill="#FF5722"/><circle cx="86.0" cy="173.4" r="3" fill="#FF5722"/><circle cx="121.0" cy="167.1" r="3" fill="#FF5722"/><circle cx="157.0" cy="162.5" r="3" fill="#FF5722"/><circle cx="193.0" cy="162.1" r="3" fill="#FF5722"/><circle cx="229.0" cy="163.9" r="3" fill="#FF5722"/><circle cx="264.0" cy="162.3" r="3" fill="#FF5722"/><circle cx="300.0" cy="169.5" r="3" fill="#FF5722"/><circle cx="336.0" cy="171.7" r="3" fill="#FF5722"/><circle cx="371.0" cy="165.2" r="3" fill="#FF5722"/><circle cx="407.0" cy="154.8" r="3" fill="#FF5722"/><circle cx="443.0" cy="161.8" r="3" fill="#FF5722"/><circle cx="479.0" cy="165.6" r="3" fill="#FF5722"/><circle cx="514.0" cy="181.9" r="3" fill="#FF5722"/><circle cx="550.0" cy="78.5" r="3" fill="#FF5722"/>
+                <line x1="450" y1="50" x2="450" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="450" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.9</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.50</text>
+                <text x="550" y="245" font-size="9" fill="#999">1.00</text>
+                <text x="5" y="50" font-size="9" fill="#999">28.850</text>
+                <text x="5" y="200" font-size="9" fill="#999">15.031</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.571, 0.714] width=0.143 <span style='color:#E65100;font-weight:bold'>conf=LOW</span> mean snotio=18.3865 CV(snotio=0.009, Trades=0.074) 推荐阈值=0.607 (当前=0.9)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.500</td><td>3728</td><td>17.8288</td><td>61.6%</td><td>17.8288</td></tr><tr><td>0.536</td><td>3376</td><td>17.4847</td><td>61.7%</td><td>17.4847</td></tr><tr><td>0.571</td><td>2946</td><td>18.0604</td><td>62.4%</td><td>18.0604</td></tr><tr><td>0.607</td><td>2690</td><td>18.4819</td><td>62.3%</td><td>18.4819</td></tr><tr><td>0.643</td><td>2585</td><td>18.5246</td><td>62.5%</td><td>18.5246</td></tr><tr><td>0.679</td><td>2498</td><td>18.3589</td><td>62.2%</td><td>18.3589</td></tr><tr><td>0.714</td><td>2375</td><td>18.5070</td><td>61.9%</td><td>18.5070</td></tr><tr><td>0.750</td><td>2193</td><td>17.8370</td><td>61.2%</td><td>17.8370</td></tr><tr><td>0.786</td><td>1842</td><td>17.6387</td><td>60.5%</td><td>17.6387</td></tr><tr><td>0.821</td><td>1553</td><td>18.2361</td><td>60.1%</td><td>18.2361</td></tr><tr><td>0.857</td><td>1342</td><td>19.1944</td><td>60.2%</td><td>19.1944</td></tr><tr><td>0.893</td><td>1106</td><td>18.5464</td><td>58.8%</td><td>18.5464</td></tr><tr><td>0.929</td><td>842</td><td>18.2015</td><td>58.1%</td><td>18.2015</td></tr><tr><td>0.964</td><td>525</td><td>16.7015</td><td>57.3%</td><td>16.7015</td></tr><tr><td>1.000</td><td>82</td><td>26.2269</td><td>67.1%</td><td>26.2269</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 vpin_spike</h3>
+            <p class="desc">VPIN 20bar 突刺标志 (vpin_spike_flag_20 == 1)</p>
+            <p class="skip">无可扫描的连续阈值条件</p>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 accel_burst_vol_regime</h3>
+            <p class="desc">微观加速 (me_accel_2k ≥ 0.5) + 波动率正在扩张 (me_vol_regime ≥ 0.5)</p>
+            
+            <div class="cond">
+                <h4>me_accel_2k >= <strong>0.5</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="407" y="50" width="143" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="40.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="75.6" y="157.2" width="20.0" height="42.8" fill="#2196F3" opacity="0.25"/><rect x="111.2" y="158.8" width="20.0" height="41.2" fill="#2196F3" opacity="0.25"/><rect x="146.9" y="160.7" width="20.0" height="39.3" fill="#2196F3" opacity="0.25"/><rect x="183.1" y="162.2" width="20.0" height="37.8" fill="#2196F3" opacity="0.25"/><rect x="218.8" y="163.6" width="20.0" height="36.4" fill="#2196F3" opacity="0.25"/><rect x="254.4" y="165.0" width="20.0" height="35.0" fill="#2196F3" opacity="0.25"/><rect x="290.0" y="166.4" width="20.0" height="33.6" fill="#2196F3" opacity="0.25"/><rect x="325.6" y="167.9" width="20.0" height="32.1" fill="#2196F3" opacity="0.25"/><rect x="361.2" y="169.1" width="20.0" height="30.9" fill="#2196F3" opacity="0.25"/><rect x="396.9" y="170.6" width="20.0" height="29.4" fill="#2196F3" opacity="0.25"/><rect x="433.1" y="172.0" width="20.0" height="28.0" fill="#2196F3" opacity="0.25"/><rect x="468.8" y="173.6" width="20.0" height="26.4" fill="#2196F3" opacity="0.25"/><rect x="504.4" y="174.9" width="20.0" height="25.1" fill="#2196F3" opacity="0.25"/><rect x="540.0" y="176.3" width="20.0" height="23.7" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,152.8 85.6,140.1 121.2,145.9 156.9,145.2 193.1,137.6 228.8,129.4 264.4,133.3 300.0,128.7 335.6,122.3 371.2,124.9 406.9,123.4 443.1,113.1 478.8,107.4 514.4,102.3 550.0,117.4" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="152.8" r="3" fill="#FF5722"/><circle cx="85.6" cy="140.1" r="3" fill="#FF5722"/><circle cx="121.2" cy="145.9" r="3" fill="#FF5722"/><circle cx="156.9" cy="145.2" r="3" fill="#FF5722"/><circle cx="193.1" cy="137.6" r="3" fill="#FF5722"/><circle cx="228.8" cy="129.4" r="3" fill="#FF5722"/><circle cx="264.4" cy="133.3" r="3" fill="#FF5722"/><circle cx="300.0" cy="128.7" r="3" fill="#FF5722"/><circle cx="335.6" cy="122.3" r="3" fill="#FF5722"/><circle cx="371.2" cy="124.9" r="3" fill="#FF5722"/><circle cx="406.9" cy="123.4" r="3" fill="#FF5722"/><circle cx="443.1" cy="113.1" r="3" fill="#FF5722"/><circle cx="478.8" cy="107.4" r="3" fill="#FF5722"/><circle cx="514.4" cy="102.3" r="3" fill="#FF5722"/><circle cx="550.0" cy="117.4" r="3" fill="#FF5722"/>
+                <line x1="300" y1="50" x2="300" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="300" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.5</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.10</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.90</text>
+                <text x="5" y="50" font-size="9" fill="#999">17.005</text>
+                <text x="5" y="200" font-size="9" fill="#999">12.567</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.671, 0.900] width=0.229 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=15.1501 CV(snotio=0.014, Trades=0.076) 推荐阈值=0.729 (当前=0.5)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.100</td><td>1293</td><td>13.9638</td><td>62.7%</td><td>13.9638</td></tr><tr><td>0.157</td><td>1231</td><td>14.3393</td><td>63.3%</td><td>14.3393</td></tr><tr><td>0.214</td><td>1184</td><td>14.1668</td><td>63.5%</td><td>14.1668</td></tr><tr><td>0.271</td><td>1130</td><td>14.1891</td><td>63.5%</td><td>14.1891</td></tr><tr><td>0.329</td><td>1085</td><td>14.4130</td><td>63.7%</td><td>14.4130</td></tr><tr><td>0.386</td><td>1046</td><td>14.6563</td><td>63.9%</td><td>14.6563</td></tr><tr><td>0.443</td><td>1005</td><td>14.5396</td><td>63.4%</td><td>14.5396</td></tr><tr style="background:#fff3e0"><td>0.500</td><td>966</td><td>14.6755</td><td>63.4%</td><td>14.6755 ← current</td></tr><tr><td>0.557</td><td>922</td><td>14.8671</td><td>63.3%</td><td>14.8671</td></tr><tr><td>0.614</td><td>888</td><td>14.7881</td><td>63.2%</td><td>14.7881</td></tr><tr><td>0.671</td><td>845</td><td>14.8344</td><td>63.4%</td><td>14.8344</td></tr><tr><td>0.729</td><td>805</td><td>15.1371</td><td>63.6%</td><td>15.1371</td></tr><tr><td>0.786</td><td>759</td><td>15.3069</td><td>63.5%</td><td>15.3069</td></tr><tr><td>0.843</td><td>721</td><td>15.4594</td><td>63.5%</td><td>15.4594</td></tr><tr><td>0.900</td><td>681</td><td>15.0127</td><td>64.2%</td><td>15.0127</td></tr>
+                </table></details>
+            </div>
+            <div class="cond">
+                <h4>me_vol_regime >= <strong>0.5</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="50" y="50" width="143" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="40.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="75.6" y="157.0" width="20.0" height="43.0" fill="#2196F3" opacity="0.25"/><rect x="111.2" y="158.7" width="20.0" height="41.3" fill="#2196F3" opacity="0.25"/><rect x="146.9" y="160.9" width="20.0" height="39.1" fill="#2196F3" opacity="0.25"/><rect x="183.1" y="162.2" width="20.0" height="37.8" fill="#2196F3" opacity="0.25"/><rect x="218.8" y="164.7" width="20.0" height="35.3" fill="#2196F3" opacity="0.25"/><rect x="254.4" y="167.2" width="20.0" height="32.8" fill="#2196F3" opacity="0.25"/><rect x="290.0" y="169.6" width="20.0" height="30.4" fill="#2196F3" opacity="0.25"/><rect x="325.6" y="171.8" width="20.0" height="28.2" fill="#2196F3" opacity="0.25"/><rect x="361.2" y="174.8" width="20.0" height="25.2" fill="#2196F3" opacity="0.25"/><rect x="396.9" y="177.7" width="20.0" height="22.3" fill="#2196F3" opacity="0.25"/><rect x="433.1" y="180.4" width="20.0" height="19.6" fill="#2196F3" opacity="0.25"/><rect x="468.8" y="183.2" width="20.0" height="16.8" fill="#2196F3" opacity="0.25"/><rect x="504.4" y="186.9" width="20.0" height="13.1" fill="#2196F3" opacity="0.25"/><rect x="540.0" y="190.4" width="20.0" height="9.6" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,116.3 85.6,107.4 121.2,128.8 156.9,141.8 193.1,146.5 228.8,138.7 264.4,136.5 300.0,137.7 335.6,143.1 371.2,134.2 406.9,133.3 443.1,145.2 478.8,145.5 514.4,135.3 550.0,130.0" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="116.3" r="3" fill="#FF5722"/><circle cx="85.6" cy="107.4" r="3" fill="#FF5722"/><circle cx="121.2" cy="128.8" r="3" fill="#FF5722"/><circle cx="156.9" cy="141.8" r="3" fill="#FF5722"/><circle cx="193.1" cy="146.5" r="3" fill="#FF5722"/><circle cx="228.8" cy="138.7" r="3" fill="#FF5722"/><circle cx="264.4" cy="136.5" r="3" fill="#FF5722"/><circle cx="300.0" cy="137.7" r="3" fill="#FF5722"/><circle cx="335.6" cy="143.1" r="3" fill="#FF5722"/><circle cx="371.2" cy="134.2" r="3" fill="#FF5722"/><circle cx="406.9" cy="133.3" r="3" fill="#FF5722"/><circle cx="443.1" cy="145.2" r="3" fill="#FF5722"/><circle cx="478.8" cy="145.5" r="3" fill="#FF5722"/><circle cx="514.4" cy="135.3" r="3" fill="#FF5722"/><circle cx="550.0" cy="130.0" r="3" fill="#FF5722"/>
+                <line x1="300" y1="50" x2="300" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="300" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.5</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.10</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.90</text>
+                <text x="5" y="50" font-size="9" fill="#999">17.042</text>
+                <text x="5" y="200" font-size="9" fill="#999">12.997</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.100, 0.329] width=0.229 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=14.9339 CV(snotio=0.027, Trades=0.064) 推荐阈值=0.157 (当前=0.5)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.100</td><td>1430</td><td>15.2546</td><td>63.3%</td><td>15.2546</td></tr><tr><td>0.157</td><td>1368</td><td>15.4924</td><td>63.4%</td><td>15.4924</td></tr><tr><td>0.214</td><td>1311</td><td>14.9158</td><td>62.8%</td><td>14.9158</td></tr><tr><td>0.271</td><td>1241</td><td>14.5662</td><td>63.1%</td><td>14.5662</td></tr><tr><td>0.329</td><td>1200</td><td>14.4406</td><td>63.0%</td><td>14.4406</td></tr><tr><td>0.386</td><td>1123</td><td>14.6483</td><td>63.5%</td><td>14.6483</td></tr><tr><td>0.443</td><td>1041</td><td>14.7097</td><td>63.7%</td><td>14.7097</td></tr><tr style="background:#fff3e0"><td>0.500</td><td>966</td><td>14.6755</td><td>63.4%</td><td>14.6755 ← current</td></tr><tr><td>0.557</td><td>896</td><td>14.5303</td><td>63.3%</td><td>14.5303</td></tr><tr><td>0.614</td><td>801</td><td>14.7713</td><td>63.0%</td><td>14.7713</td></tr><tr><td>0.671</td><td>710</td><td>14.7960</td><td>62.7%</td><td>14.7960</td></tr><tr><td>0.729</td><td>623</td><td>14.4731</td><td>62.4%</td><td>14.4731</td></tr><tr><td>0.786</td><td>535</td><td>14.4675</td><td>61.1%</td><td>14.4675</td></tr><tr><td>0.843</td><td>416</td><td>14.7425</td><td>61.8%</td><td>14.7425</td></tr><tr><td>0.900</td><td>304</td><td>14.8844</td><td>61.2%</td><td>14.8844</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 scan_bb_width_high</h3>
+            <p class="desc">布林带宽度百分位 ≥ P90 (波动率极端扩张)</p>
+            
+            <div class="cond">
+                <h4>bb_width_normalized_pct >= <strong>0.957</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="372" y="50" width="142" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="40.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="76.1" y="157.1" width="20.0" height="42.9" fill="#2196F3" opacity="0.25"/><rect x="111.1" y="159.5" width="20.0" height="40.5" fill="#2196F3" opacity="0.25"/><rect x="147.2" y="162.0" width="20.0" height="38.0" fill="#2196F3" opacity="0.25"/><rect x="183.3" y="164.5" width="20.0" height="35.5" fill="#2196F3" opacity="0.25"/><rect x="218.3" y="167.4" width="20.0" height="32.6" fill="#2196F3" opacity="0.25"/><rect x="254.4" y="170.1" width="20.0" height="29.9" fill="#2196F3" opacity="0.25"/><rect x="289.4" y="173.1" width="20.0" height="26.9" fill="#2196F3" opacity="0.25"/><rect x="325.6" y="176.2" width="20.0" height="23.8" fill="#2196F3" opacity="0.25"/><rect x="361.7" y="179.4" width="20.0" height="20.6" fill="#2196F3" opacity="0.25"/><rect x="396.7" y="182.8" width="20.0" height="17.2" fill="#2196F3" opacity="0.25"/><rect x="432.8" y="186.6" width="20.0" height="13.4" fill="#2196F3" opacity="0.25"/><rect x="468.9" y="190.3" width="20.0" height="9.7" fill="#2196F3" opacity="0.25"/><rect x="503.9" y="193.8" width="20.0" height="6.2" fill="#2196F3" opacity="0.25"/><rect x="540.0" y="198.5" width="20.0" height="1.5" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,188.0 86.1,186.8 121.1,185.9 157.2,184.2 193.3,183.7 228.3,181.7 264.4,181.3 299.4,178.0 335.6,170.0 371.7,163.8 406.7,150.9 442.8,132.1 478.9,111.6 513.9,73.4 550.0,126.9" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="188.0" r="3" fill="#FF5722"/><circle cx="86.1" cy="186.8" r="3" fill="#FF5722"/><circle cx="121.1" cy="185.9" r="3" fill="#FF5722"/><circle cx="157.2" cy="184.2" r="3" fill="#FF5722"/><circle cx="193.3" cy="183.7" r="3" fill="#FF5722"/><circle cx="228.3" cy="181.7" r="3" fill="#FF5722"/><circle cx="264.4" cy="181.3" r="3" fill="#FF5722"/><circle cx="299.4" cy="178.0" r="3" fill="#FF5722"/><circle cx="335.6" cy="170.0" r="3" fill="#FF5722"/><circle cx="371.7" cy="163.8" r="3" fill="#FF5722"/><circle cx="406.7" cy="150.9" r="3" fill="#FF5722"/><circle cx="442.8" cy="132.1" r="3" fill="#FF5722"/><circle cx="478.9" cy="111.6" r="3" fill="#FF5722"/><circle cx="513.9" cy="73.4" r="3" fill="#FF5722"/><circle cx="550.0" cy="126.9" r="3" fill="#FF5722"/>
+                <line x1="501" y1="50" x2="501" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="501" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.957</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.56</text>
+                <text x="550" y="245" font-size="9" fill="#999">1.00</text>
+                <text x="5" y="50" font-size="9" fill="#999">40.043</text>
+                <text x="5" y="200" font-size="9" fill="#999">16.749</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.842, 0.968] width=0.126 <span style='color:#E65100;font-weight:bold'>conf=LOW</span> mean snotio=28.1823 CV(snotio=0.175, Trades=0.383) 推荐阈值=0.873 (当前=0.957)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.557</td><td>3194</td><td>18.6103</td><td>62.5%</td><td>18.6103</td></tr><tr><td>0.589</td><td>3043</td><td>18.8067</td><td>62.9%</td><td>18.8067</td></tr><tr><td>0.620</td><td>2872</td><td>18.9363</td><td>63.1%</td><td>18.9363</td></tr><tr><td>0.652</td><td>2698</td><td>19.2066</td><td>63.1%</td><td>19.2066</td></tr><tr><td>0.684</td><td>2520</td><td>19.2840</td><td>62.7%</td><td>19.2840</td></tr><tr><td>0.715</td><td>2311</td><td>19.5978</td><td>63.0%</td><td>19.5978</td></tr><tr><td>0.747</td><td>2119</td><td>19.6576</td><td>63.4%</td><td>19.6576</td></tr><tr><td>0.778</td><td>1906</td><td>20.1590</td><td>62.9%</td><td>20.1590</td></tr><tr><td>0.810</td><td>1689</td><td>21.4146</td><td>63.9%</td><td>21.4146</td></tr><tr><td>0.842</td><td>1462</td><td>22.3666</td><td>64.4%</td><td>22.3666</td></tr><tr><td>0.873</td><td>1220</td><td>24.3719</td><td>64.5%</td><td>24.3719</td></tr><tr><td>0.905</td><td>954</td><td>27.2885</td><td>65.7%</td><td>27.2885</td></tr><tr><td>0.937</td><td>685</td><td>30.4811</td><td>66.4%</td><td>30.4811</td></tr><tr><td>0.968</td><td>439</td><td>36.4032</td><td>66.5%</td><td>36.4032</td></tr><tr><td>1.000</td><td>106</td><td>28.1026</td><td>64.2%</td><td>28.1026</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 scan_vpin_max20_high</h3>
+            <p class="desc">20bar VPIN 极值 ≥ P90 (知情交易爆发)</p>
+            
+            <div class="cond">
+                <h4>vpin_max20 >= <strong>0.774</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="204" y="50" width="154" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="39.3" y="155.0" width="21.4" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="78.0" y="159.7" width="21.4" height="40.3" fill="#2196F3" opacity="0.25"/><rect x="115.9" y="165.1" width="21.4" height="34.9" fill="#2196F3" opacity="0.25"/><rect x="154.6" y="171.2" width="21.4" height="28.8" fill="#2196F3" opacity="0.25"/><rect x="193.3" y="176.7" width="21.4" height="23.3" fill="#2196F3" opacity="0.25"/><rect x="232.1" y="182.3" width="21.4" height="17.7" fill="#2196F3" opacity="0.25"/><rect x="269.9" y="186.0" width="21.4" height="14.0" fill="#2196F3" opacity="0.25"/><rect x="308.6" y="190.2" width="21.4" height="9.8" fill="#2196F3" opacity="0.25"/><rect x="347.4" y="192.5" width="21.4" height="7.5" fill="#2196F3" opacity="0.25"/><rect x="385.2" y="195.1" width="21.4" height="4.9" fill="#2196F3" opacity="0.25"/><rect x="424.0" y="196.3" width="21.4" height="3.7" fill="#2196F3" opacity="0.25"/><rect x="462.7" y="197.8" width="21.4" height="2.2" fill="#2196F3" opacity="0.25"/><rect x="501.4" y="198.7" width="21.4" height="1.3" fill="#2196F3" opacity="0.25"/><rect x="539.3" y="199.6" width="21.4" height="0.4" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,130.0 88.7,130.6 126.6,127.5 165.3,120.1 204.0,112.5 242.8,108.8 280.6,105.4 319.4,95.7 358.1,87.7 396.0,66.1 434.7,100.0 473.4,109.6 512.1,101.8 550.0,197.0" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="130.0" r="3" fill="#FF5722"/><circle cx="88.7" cy="130.6" r="3" fill="#FF5722"/><circle cx="126.6" cy="127.5" r="3" fill="#FF5722"/><circle cx="165.3" cy="120.1" r="3" fill="#FF5722"/><circle cx="204.0" cy="112.5" r="3" fill="#FF5722"/><circle cx="242.8" cy="108.8" r="3" fill="#FF5722"/><circle cx="280.6" cy="105.4" r="3" fill="#FF5722"/><circle cx="319.4" cy="95.7" r="3" fill="#FF5722"/><circle cx="358.1" cy="87.7" r="3" fill="#FF5722"/><circle cx="396.0" cy="66.1" r="3" fill="#FF5722"/><circle cx="434.7" cy="100.0" r="3" fill="#FF5722"/><circle cx="473.4" cy="109.6" r="3" fill="#FF5722"/><circle cx="512.1" cy="101.8" r="3" fill="#FF5722"/><circle cx="550.0" cy="197.0" r="3" fill="#FF5722"/>
+                <line x1="394" y1="50" x2="394" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="394" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.774</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.37</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.95</text>
+                <text x="5" y="50" font-size="9" fill="#999">33.872</text>
+                <text x="5" y="200" font-size="9" fill="#999">5.155</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.553, 0.732] width=0.179 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=23.9139 CV(snotio=0.073, Trades=0.390) 推荐阈值=0.598 (当前=0.774)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.374</td><td>4629</td><td>18.5590</td><td>61.9%</td><td>18.5590</td></tr><tr><td>0.419</td><td>4144</td><td>18.4383</td><td>61.6%</td><td>18.4383</td></tr><tr><td>0.463</td><td>3590</td><td>19.0420</td><td>62.3%</td><td>19.0420</td></tr><tr><td>0.508</td><td>2965</td><td>20.4489</td><td>62.8%</td><td>20.4489</td></tr><tr><td>0.553</td><td>2395</td><td>21.9058</td><td>64.0%</td><td>21.9058</td></tr><tr><td>0.598</td><td>1816</td><td>22.6235</td><td>62.6%</td><td>22.6235</td></tr><tr><td>0.642</td><td>1440</td><td>23.2649</td><td>63.6%</td><td>23.2649</td></tr><tr><td>0.687</td><td>1006</td><td>25.1224</td><td>64.9%</td><td>25.1224</td></tr><tr><td>0.732</td><td>769</td><td>26.6528</td><td>65.1%</td><td>26.6528</td></tr><tr style="background:#fff3e0"><td>0.776</td><td>508</td><td>30.7926</td><td>66.1%</td><td>30.7926 ← current</td></tr><tr><td>0.821</td><td>381</td><td>24.2988</td><td>65.9%</td><td>24.2988</td></tr><tr><td>0.866</td><td>228</td><td>22.4645</td><td>72.4%</td><td>22.4645</td></tr><tr><td>0.911</td><td>129</td><td>23.9607</td><td>65.1%</td><td>23.9607</td></tr><tr><td>0.955</td><td>37</td><td>5.7276</td><td>54.1%</td><td>5.7276</td></tr><tr><td>1.000</td><td>9</td><td colspan='3'>trades < 20</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 scan_funding_rate_abs_low</h3>
+            <p class="desc">资金费率绝对值 ≤ P10 (低摩擦成本)</p>
+            
+            <div class="cond">
+                <h4>funding_rate_abs <= <strong>5e-06</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="192" y="50" width="144" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="40.0" y="196.2" width="20.0" height="3.8" fill="#2196F3" opacity="0.25"/><rect x="76.2" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="111.2" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="147.5" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="182.5" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="218.7" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="253.8" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="290.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="326.2" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="361.2" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="397.5" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="432.5" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="468.8" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="503.8" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="540.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,83.6 86.2,175.6 121.2,175.6 157.5,175.6 192.5,175.6 228.7,175.6 263.8,175.6 300.0,175.6 336.2,175.6 371.2,175.6 407.5,175.6 442.5,175.6 478.8,175.6 513.8,175.6 550.0,175.6" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="83.6" r="3" fill="#FF5722"/><circle cx="86.2" cy="175.6" r="3" fill="#FF5722"/><circle cx="121.2" cy="175.6" r="3" fill="#FF5722"/><circle cx="157.5" cy="175.6" r="3" fill="#FF5722"/><circle cx="192.5" cy="175.6" r="3" fill="#FF5722"/><circle cx="228.7" cy="175.6" r="3" fill="#FF5722"/><circle cx="263.8" cy="175.6" r="3" fill="#FF5722"/><circle cx="300.0" cy="175.6" r="3" fill="#FF5722"/><circle cx="336.2" cy="175.6" r="3" fill="#FF5722"/><circle cx="371.2" cy="175.6" r="3" fill="#FF5722"/><circle cx="407.5" cy="175.6" r="3" fill="#FF5722"/><circle cx="442.5" cy="175.6" r="3" fill="#FF5722"/><circle cx="478.8" cy="175.6" r="3" fill="#FF5722"/><circle cx="513.8" cy="175.6" r="3" fill="#FF5722"/><circle cx="550.0" cy="175.6" r="3" fill="#FF5722"/>
+                <line x1="50" y1="50" x2="50" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="50" y="45" text-anchor="middle" font-size="10" fill="#333">current=5e-06</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.00</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.40</text>
+                <text x="5" y="50" font-size="9" fill="#999">27.563</text>
+                <text x="5" y="200" font-size="9" fill="#999">16.380</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.114, 0.229] width=0.115 <span style='color:#E65100;font-weight:bold'>conf=LOW</span> mean snotio=18.1996 CV(snotio=0.000, Trades=0.000) 推荐阈值=0.200 (当前=5e-06)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr style="background:#fff3e0"><td>0.000</td><td>431</td><td>25.0576</td><td>62.6%</td><td>25.0576 ← current</td></tr><tr><td>0.029</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.057</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.086</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.114</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.143</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.171</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.200</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.229</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.257</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.286</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.314</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.343</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.371</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.400</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 scan_vpin_ma20_high</h3>
+            <p class="desc">VPIN 20均线 ≥ P90 (持续知情交易)</p>
+            
+            <div class="cond">
+                <h4>vpin_ma20 >= <strong>0.391</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="175" y="50" width="250" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="33.3" y="155.0" width="33.3" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="96.4" y="155.0" width="33.3" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="158.3" y="155.0" width="33.3" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="221.4" y="155.0" width="33.3" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="283.3" y="156.3" width="33.3" height="43.7" fill="#2196F3" opacity="0.25"/><rect x="346.4" y="164.5" width="33.3" height="35.5" fill="#2196F3" opacity="0.25"/><rect x="408.3" y="183.6" width="33.3" height="16.4" fill="#2196F3" opacity="0.25"/><rect x="471.4" y="196.2" width="33.3" height="3.8" fill="#2196F3" opacity="0.25"/><rect x="533.3" y="199.3" width="33.3" height="0.7" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,180.9 113.1,180.9 175.0,180.9 238.1,180.9 300.0,179.3 363.1,163.2 425.0,130.9 488.1,79.2 550.0,147.1" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="180.9" r="3" fill="#FF5722"/><circle cx="113.1" cy="180.9" r="3" fill="#FF5722"/><circle cx="175.0" cy="180.9" r="3" fill="#FF5722"/><circle cx="238.1" cy="180.9" r="3" fill="#FF5722"/><circle cx="300.0" cy="179.3" r="3" fill="#FF5722"/><circle cx="363.1" cy="163.2" r="3" fill="#FF5722"/><circle cx="425.0" cy="130.9" r="3" fill="#FF5722"/><circle cx="488.1" cy="79.2" r="3" fill="#FF5722"/><circle cx="550.0" cy="147.1" r="3" fill="#FF5722"/>
+                <line x1="483" y1="50" x2="483" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="483" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.391</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.00</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.45</text>
+                <text x="5" y="50" font-size="9" fill="#999">30.702</text>
+                <text x="5" y="200" font-size="9" fill="#999">16.380</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.113, 0.339] width=0.226 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=19.5254 CV(snotio=0.094, Trades=0.295) 推荐阈值=0.170 (当前=0.391)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.000</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.057</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.113</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.170</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.226</td><td>4975</td><td>18.3533</td><td>62.6%</td><td>18.3533</td></tr><tr><td>0.283</td><td>4044</td><td>19.8919</td><td>62.4%</td><td>19.8919</td></tr><tr><td>0.339</td><td>1868</td><td>22.9823</td><td>62.2%</td><td>22.9823</td></tr><tr><td>0.396</td><td>433</td><td>27.9112</td><td>66.3%</td><td>27.9112</td></tr><tr><td>0.452</td><td>79</td><td>21.4271</td><td>67.1%</td><td>21.4271</td></tr><tr><td>0.509</td><td>13</td><td colspan='3'>trades < 20</td></tr><tr><td>0.565</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.622</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.678</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.735</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.791</td><td>0</td><td colspan='3'>trades < 20</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 scan_spectrum_price_hf_high</h3>
+            <p class="desc">价格高频占比 ≥ P90 (微观波动活跃)</p>
+            
+            <div class="cond">
+                <h4>spectrum_price_high_freq_ratio >= <strong>0.615</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="105" y="50" width="222" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="35.0" y="155.0" width="30.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="90.4" y="155.8" width="30.0" height="44.2" fill="#2196F3" opacity="0.25"/><rect x="145.9" y="158.5" width="30.0" height="41.5" fill="#2196F3" opacity="0.25"/><rect x="201.3" y="163.1" width="30.0" height="36.9" fill="#2196F3" opacity="0.25"/><rect x="256.8" y="171.4" width="30.0" height="28.6" fill="#2196F3" opacity="0.25"/><rect x="312.2" y="181.0" width="30.0" height="19.0" fill="#2196F3" opacity="0.25"/><rect x="367.7" y="188.7" width="30.0" height="11.3" fill="#2196F3" opacity="0.25"/><rect x="423.1" y="194.8" width="30.0" height="5.2" fill="#2196F3" opacity="0.25"/><rect x="479.6" y="198.2" width="30.0" height="1.8" fill="#2196F3" opacity="0.25"/><rect x="535.0" y="199.5" width="30.0" height="0.5" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,130.3 105.4,128.6 160.9,125.8 216.3,122.3 271.8,111.8 327.2,103.4 382.7,99.6 438.1,68.3 494.6,108.4 550.0,194.3" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="130.3" r="3" fill="#FF5722"/><circle cx="105.4" cy="128.6" r="3" fill="#FF5722"/><circle cx="160.9" cy="125.8" r="3" fill="#FF5722"/><circle cx="216.3" cy="122.3" r="3" fill="#FF5722"/><circle cx="271.8" cy="111.8" r="3" fill="#FF5722"/><circle cx="327.2" cy="103.4" r="3" fill="#FF5722"/><circle cx="382.7" cy="99.6" r="3" fill="#FF5722"/><circle cx="438.1" cy="68.3" r="3" fill="#FF5722"/><circle cx="494.6" cy="108.4" r="3" fill="#FF5722"/><circle cx="550.0" cy="194.3" r="3" fill="#FF5722"/>
+                <line x1="446" y1="50" x2="446" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="446" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.615</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.21</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.72</text>
+                <text x="5" y="50" font-size="9" fill="#999">30.349</text>
+                <text x="5" y="200" font-size="9" fill="#999">7.746</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.271, 0.495] width=0.224 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=20.0455 CV(snotio=0.071, Trades=0.270) 推荐阈值=0.327 (当前=0.615)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.215</td><td>5098</td><td>18.2526</td><td>62.2%</td><td>18.2526</td></tr><tr><td>0.271</td><td>5009</td><td>18.5015</td><td>62.2%</td><td>18.5015</td></tr><tr><td>0.327</td><td>4697</td><td>18.9270</td><td>61.8%</td><td>18.9270</td></tr><tr><td>0.383</td><td>4185</td><td>19.4600</td><td>61.6%</td><td>19.4600</td></tr><tr><td>0.439</td><td>3239</td><td>21.0343</td><td>62.1%</td><td>21.0343</td></tr><tr><td>0.495</td><td>2156</td><td>22.3043</td><td>61.7%</td><td>22.3043</td></tr><tr><td>0.551</td><td>1279</td><td>22.8747</td><td>60.3%</td><td>22.8747</td></tr><tr><td>0.607</td><td>591</td><td>27.5900</td><td>58.2%</td><td>27.5900</td></tr><tr><td>0.664</td><td>200</td><td>21.5459</td><td>56.5%</td><td>21.5459</td></tr><tr><td>0.720</td><td>51</td><td>8.6071</td><td>60.8%</td><td>8.6071</td></tr><tr><td>0.776</td><td>15</td><td colspan='3'>trades < 20</td></tr><tr><td>0.832</td><td>4</td><td colspan='3'>trades < 20</td></tr><tr><td>0.888</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.944</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>1.000</td><td>0</td><td colspan='3'>trades < 20</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 scan_bb_width_p80</h3>
+            <p class="desc">布林带宽度百分位 ≥ P80 (宽松版)</p>
+            
+            <div class="cond">
+                <h4>bb_width_normalized_pct >= <strong>0.896</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="371" y="50" width="143" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="40.0" y="155.0" width="20.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="75.7" y="157.0" width="20.0" height="43.0" fill="#2196F3" opacity="0.25"/><rect x="111.4" y="158.9" width="20.0" height="41.1" fill="#2196F3" opacity="0.25"/><rect x="147.1" y="161.4" width="20.0" height="38.6" fill="#2196F3" opacity="0.25"/><rect x="182.9" y="163.7" width="20.0" height="36.3" fill="#2196F3" opacity="0.25"/><rect x="218.6" y="166.5" width="20.0" height="33.5" fill="#2196F3" opacity="0.25"/><rect x="254.3" y="169.4" width="20.0" height="30.6" fill="#2196F3" opacity="0.25"/><rect x="290.0" y="172.5" width="20.0" height="27.5" fill="#2196F3" opacity="0.25"/><rect x="325.7" y="175.7" width="20.0" height="24.3" fill="#2196F3" opacity="0.25"/><rect x="361.4" y="178.8" width="20.0" height="21.2" fill="#2196F3" opacity="0.25"/><rect x="397.1" y="182.4" width="20.0" height="17.6" fill="#2196F3" opacity="0.25"/><rect x="432.9" y="186.1" width="20.0" height="13.9" fill="#2196F3" opacity="0.25"/><rect x="468.6" y="190.1" width="20.0" height="9.9" fill="#2196F3" opacity="0.25"/><rect x="504.3" y="193.9" width="20.0" height="6.1" fill="#2196F3" opacity="0.25"/><rect x="540.0" y="198.6" width="20.0" height="1.4" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,187.5 85.7,186.2 121.4,185.3 157.1,184.9 192.9,183.1 228.6,181.8 264.3,179.9 300.0,178.4 335.7,175.1 371.4,165.9 407.1,153.3 442.9,133.5 478.6,108.3 514.3,73.9 550.0,121.1" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="187.5" r="3" fill="#FF5722"/><circle cx="85.7" cy="186.2" r="3" fill="#FF5722"/><circle cx="121.4" cy="185.3" r="3" fill="#FF5722"/><circle cx="157.1" cy="184.9" r="3" fill="#FF5722"/><circle cx="192.9" cy="183.1" r="3" fill="#FF5722"/><circle cx="228.6" cy="181.8" r="3" fill="#FF5722"/><circle cx="264.3" cy="179.9" r="3" fill="#FF5722"/><circle cx="300.0" cy="178.4" r="3" fill="#FF5722"/><circle cx="335.7" cy="175.1" r="3" fill="#FF5722"/><circle cx="371.4" cy="165.9" r="3" fill="#FF5722"/><circle cx="407.1" cy="153.3" r="3" fill="#FF5722"/><circle cx="442.9" cy="133.5" r="3" fill="#FF5722"/><circle cx="478.6" cy="108.3" r="3" fill="#FF5722"/><circle cx="514.3" cy="73.9" r="3" fill="#FF5722"/><circle cx="550.0" cy="121.1" r="3" fill="#FF5722"/>
+                <line x1="447" y1="50" x2="447" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="447" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.896</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.50</text>
+                <text x="550" y="245" font-size="9" fill="#999">1.00</text>
+                <text x="5" y="50" font-size="9" fill="#999">38.525</text>
+                <text x="5" y="200" font-size="9" fill="#999">16.532</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.820, 0.964] width=0.144 <span style='color:#E65100;font-weight:bold'>conf=LOW</span> mean snotio=27.2365 CV(snotio=0.177, Trades=0.388) 推荐阈值=0.856 (当前=0.896)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.496</td><td>3448</td><td>18.3685</td><td>62.4%</td><td>18.3685</td></tr><tr><td>0.532</td><td>3296</td><td>18.5523</td><td>62.4%</td><td>18.5523</td></tr><tr><td>0.568</td><td>3146</td><td>18.6813</td><td>62.5%</td><td>18.6813</td></tr><tr><td>0.604</td><td>2955</td><td>18.7443</td><td>63.1%</td><td>18.7443</td></tr><tr><td>0.640</td><td>2779</td><td>19.0101</td><td>63.0%</td><td>19.0101</td></tr><tr><td>0.676</td><td>2564</td><td>19.2004</td><td>62.7%</td><td>19.2004</td></tr><tr><td>0.712</td><td>2343</td><td>19.4799</td><td>62.8%</td><td>19.4799</td></tr><tr><td>0.748</td><td>2109</td><td>19.7038</td><td>63.6%</td><td>19.7038</td></tr><tr><td>0.784</td><td>1860</td><td>20.1891</td><td>63.0%</td><td>20.1891</td></tr><tr><td>0.820</td><td>1622</td><td>21.5289</td><td>64.0%</td><td>21.5289</td></tr><tr><td>0.856</td><td>1351</td><td>23.3782</td><td>64.3%</td><td>23.3782</td></tr><tr style="background:#fff3e0"><td>0.892</td><td>1065</td><td>26.2750</td><td>65.7%</td><td>26.2750 ← current</td></tr><tr><td>0.928</td><td>761</td><td>29.9773</td><td>66.5%</td><td>29.9773</td></tr><tr><td>0.964</td><td>471</td><td>35.0228</td><td>66.9%</td><td>35.0228</td></tr><tr><td>1.000</td><td>106</td><td>28.1026</td><td>64.2%</td><td>28.1026</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 scan_cvd_divergence_low</h3>
+            <p class="desc">CVD 背离分数 ≤ P10 (强背离)</p>
+            
+            <div class="cond">
+                <h4>cvd_divergence_score <= <strong>-0.776</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="100" y="50" width="200" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="36.4" y="197.1" width="27.3" height="2.9" fill="#2196F3" opacity="0.25"/><rect x="86.3" y="193.4" width="27.3" height="6.6" fill="#2196F3" opacity="0.25"/><rect x="136.2" y="188.7" width="27.3" height="11.3" fill="#2196F3" opacity="0.25"/><rect x="186.1" y="185.5" width="27.3" height="14.5" fill="#2196F3" opacity="0.25"/><rect x="236.0" y="181.2" width="27.3" height="18.8" fill="#2196F3" opacity="0.25"/><rect x="285.9" y="176.6" width="27.3" height="23.4" fill="#2196F3" opacity="0.25"/><rect x="335.8" y="172.2" width="27.3" height="27.8" fill="#2196F3" opacity="0.25"/><rect x="386.6" y="167.8" width="27.3" height="32.2" fill="#2196F3" opacity="0.25"/><rect x="436.5" y="164.8" width="27.3" height="35.2" fill="#2196F3" opacity="0.25"/><rect x="486.5" y="159.9" width="27.3" height="40.1" fill="#2196F3" opacity="0.25"/><rect x="536.4" y="155.0" width="27.3" height="45.0" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,81.3 99.9,126.2 149.8,125.9 199.7,119.7 249.6,133.2 299.6,134.3 349.5,135.7 400.3,152.0 450.2,163.3 500.1,170.6 550.0,178.4" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="81.3" r="3" fill="#FF5722"/><circle cx="99.9" cy="126.2" r="3" fill="#FF5722"/><circle cx="149.8" cy="125.9" r="3" fill="#FF5722"/><circle cx="199.7" cy="119.7" r="3" fill="#FF5722"/><circle cx="249.6" cy="133.2" r="3" fill="#FF5722"/><circle cx="299.6" cy="134.3" r="3" fill="#FF5722"/><circle cx="349.5" cy="135.7" r="3" fill="#FF5722"/><circle cx="400.3" cy="152.0" r="3" fill="#FF5722"/><circle cx="450.2" cy="163.3" r="3" fill="#FF5722"/><circle cx="500.1" cy="170.6" r="3" fill="#FF5722"/><circle cx="550.0" cy="178.4" r="3" fill="#FF5722"/>
+                <line x1="200" y1="50" x2="200" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="200" y="45" text-anchor="middle" font-size="10" fill="#333">current=-0.776</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">-0.95</text>
+                <text x="550" y="245" font-size="9" fill="#999">-0.38</text>
+                <text x="5" y="50" font-size="9" fill="#999">31.856</text>
+                <text x="5" y="200" font-size="9" fill="#999">17.976</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [-0.890, -0.662] width=0.228 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=24.6526 CV(snotio=0.020, Trades=0.391) 推荐阈值=-0.719 (当前=-0.776)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>-1.176</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>-1.119</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>-1.062</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>-1.005</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>-0.947</td><td>101</td><td>28.9596</td><td>79.2%</td><td>28.9596</td></tr><tr><td>-0.890</td><td>231</td><td>24.8065</td><td>76.6%</td><td>24.8065</td></tr><tr><td>-0.833</td><td>397</td><td>24.8366</td><td>71.3%</td><td>24.8366</td></tr><tr style="background:#fff3e0"><td>-0.776</td><td>508</td><td>25.4084</td><td>69.7%</td><td>25.4084 ← current</td></tr><tr><td>-0.719</td><td>661</td><td>24.1528</td><td>69.1%</td><td>24.1528</td></tr><tr><td>-0.662</td><td>822</td><td>24.0589</td><td>68.7%</td><td>24.0589</td></tr><tr><td>-0.605</td><td>976</td><td>23.9237</td><td>68.6%</td><td>23.9237</td></tr><tr><td>-0.547</td><td>1133</td><td>22.4147</td><td>67.9%</td><td>22.4147</td></tr><tr><td>-0.490</td><td>1236</td><td>21.3697</td><td>67.6%</td><td>21.3697</td></tr><tr><td>-0.433</td><td>1410</td><td>20.6974</td><td>67.1%</td><td>20.6974</td></tr><tr><td>-0.376</td><td>1581</td><td>19.9734</td><td>67.4%</td><td>19.9734</td></tr>
+                </table></details>
+            </div>
+        </div>
+        <div class="filter-block">
+            <h3>🔍 scan_vpin_ma10_p80</h3>
+            <p class="desc">VPIN 10均线 ≥ P80</p>
+            
+            <div class="cond">
+                <h4>vpin_ma10 >= <strong>0.383</strong></h4>
+                <svg width="600" height="250" style="border:1px solid #ddd; background:white">
+                <rect x="161" y="50" width="223" height="150" fill="#4CAF50" opacity="0.15"/>
+                <rect x="35.0" y="155.0" width="30.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="90.7" y="155.0" width="30.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="146.3" y="155.0" width="30.0" height="45.0" fill="#2196F3" opacity="0.25"/><rect x="202.0" y="155.1" width="30.0" height="44.9" fill="#2196F3" opacity="0.25"/><rect x="257.7" y="157.5" width="30.0" height="42.5" fill="#2196F3" opacity="0.25"/><rect x="313.3" y="166.0" width="30.0" height="34.0" fill="#2196F3" opacity="0.25"/><rect x="369.0" y="180.3" width="30.0" height="19.7" fill="#2196F3" opacity="0.25"/><rect x="424.7" y="192.7" width="30.0" height="7.3" fill="#2196F3" opacity="0.25"/><rect x="479.3" y="197.8" width="30.0" height="2.2" fill="#2196F3" opacity="0.25"/><rect x="535.0" y="199.5" width="30.0" height="0.5" fill="#2196F3" opacity="0.25"/>
+                <polyline points="50.0,187.7 105.7,187.7 161.3,187.7 217.0,187.5 272.7,185.3 328.3,177.5 384.0,166.5 439.7,136.4 494.3,146.2 550.0,73.7" fill="none" stroke="#FF5722" stroke-width="2"/>
+                <circle cx="50.0" cy="187.7" r="3" fill="#FF5722"/><circle cx="105.7" cy="187.7" r="3" fill="#FF5722"/><circle cx="161.3" cy="187.7" r="3" fill="#FF5722"/><circle cx="217.0" cy="187.5" r="3" fill="#FF5722"/><circle cx="272.7" cy="185.3" r="3" fill="#FF5722"/><circle cx="328.3" cy="177.5" r="3" fill="#FF5722"/><circle cx="384.0" cy="166.5" r="3" fill="#FF5722"/><circle cx="439.7" cy="136.4" r="3" fill="#FF5722"/><circle cx="494.3" cy="146.2" r="3" fill="#FF5722"/><circle cx="550.0" cy="73.7" r="3" fill="#FF5722"/>
+                <line x1="431" y1="50" x2="431" y2="200" stroke="#333" stroke-width="1.5" stroke-dasharray="5,3"/>
+                <text x="431" y="45" text-anchor="middle" font-size="10" fill="#333">current=0.383</text>
+                <text x="45" y="45" text-anchor="end" font-size="10" fill="#999">snotio</text>
+                <text x="555" y="215" font-size="10" fill="#999">threshold</text>
+                <text x="50" y="245" font-size="9" fill="#999">0.00</text>
+                <text x="550" y="245" font-size="9" fill="#999">0.50</text>
+                <text x="5" y="50" font-size="9" fill="#999">38.592</text>
+                <text x="5" y="200" font-size="9" fill="#999">16.380</text>
+            </svg>
+                <div class='plateau-ok'>✅ 平坦高原: [0.112, 0.336] width=0.224 <span style='color:#F57F17;font-weight:bold'>conf=MEDIUM</span> mean snotio=19.2067 CV(snotio=0.062, Trades=0.259) 推荐阈值=0.168 (当前=0.383)</div>
+                <details><summary>详细数据</summary>
+                <table class="small">
+                    <tr><th>Threshold</th><th>Trades</th><th>snotio</th><th>Win%</th><th>Mean R</th></tr>
+                    <tr><td>0.000</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.056</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.112</td><td>5120</td><td>18.1996</td><td>62.3%</td><td>18.1996</td></tr><tr><td>0.168</td><td>5110</td><td>18.2315</td><td>62.4%</td><td>18.2315</td></tr><tr><td>0.224</td><td>4840</td><td>18.5575</td><td>62.8%</td><td>18.5575</td></tr><tr><td>0.280</td><td>3873</td><td>19.7052</td><td>62.4%</td><td>19.7052</td></tr><tr><td>0.336</td><td>2246</td><td>21.3397</td><td>61.0%</td><td>21.3397</td></tr><tr><td>0.392</td><td>836</td><td>25.7944</td><td>62.3%</td><td>25.7944</td></tr><tr><td>0.447</td><td>255</td><td>24.3479</td><td>58.8%</td><td>24.3479</td></tr><tr><td>0.503</td><td>62</td><td>35.0832</td><td>64.5%</td><td>35.0832</td></tr><tr><td>0.559</td><td>9</td><td colspan='3'>trades < 20</td></tr><tr><td>0.615</td><td>2</td><td colspan='3'>trades < 20</td></tr><tr><td>0.671</td><td>1</td><td colspan='3'>trades < 20</td></tr><tr><td>0.727</td><td>0</td><td colspan='3'>trades < 20</td></tr><tr><td>0.783</td><td>0</td><td colspan='3'>trades < 20</td></tr>
+                </table></details>
+            </div>
+        </div>
+</body></html>

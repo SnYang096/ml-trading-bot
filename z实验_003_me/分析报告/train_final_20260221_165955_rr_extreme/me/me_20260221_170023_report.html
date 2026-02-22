@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+  <meta charset='UTF-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+  <title>me Training Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 20px; background: #f5f5f5; }
+    .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }
+    h2 { color: #555; margin-top: 30px; }
+    .meta-info { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+    .meta-info span { margin-right: 20px; }
+    .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+    .metric-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; text-align: center; }
+    .metric-card.positive { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+    .metric-card.negative { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }
+    .metric-card.neutral { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+    .metric-value { font-size: 28px; font-weight: bold; }
+    .metric-label { font-size: 12px; opacity: 0.9; margin-top: 5px; }
+    table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+    th { background: #f8f9fa; font-weight: 600; }
+    tr:hover { background: #f5f5f5; }
+    .importance-bar { background: #4CAF50; height: 20px; border-radius: 3px; }
+    .warning { color: #f57c00; }
+    .error { color: #d32f2f; }
+    .success { color: #388e3c; }
+  </style>
+</head>
+<body>
+  <div class='container'>
+    <h1>📊 me Training Report</h1>
+    <div class='meta-info'>
+      <span><strong>Model:</strong> lightgbm</span>
+      <span><strong>Task:</strong> binary</span>
+      <span><strong>Generated:</strong> 2026-02-21 17:00:23</span>
+    </div>
+    <h2>🔧 Training Parameters</h2>
+    <table>
+      <tr><td>Symbol(s)</td><td>BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT</td></tr>
+      <tr><td>Timeframe</td><td>60T</td></tr>
+      <tr><td>Start Date</td><td>2023-01-01</td></tr>
+      <tr><td>End Date</td><td>2026-01-01</td></tr>
+      <tr><td>Holdout Start</td><td>2024-05-01</td></tr>
+      <tr><td>Holdout End</td><td>2026-01-01</td></tr>
+      <tr><td>Seed</td><td>42</td></tr>
+    </table>
+    <h2>📈 Sample Statistics</h2>
+    <div class='metrics-grid'>
+      <div class='metric-card neutral'><div class='metric-value'>7,933</div><div class='metric-label'>Training Samples</div></div>
+      <div class='metric-card neutral'><div class='metric-value'>8,728</div><div class='metric-label'>Test Samples</div></div>
+      <div class='metric-card neutral'><div class='metric-value'>289</div><div class='metric-label'>Features Used</div></div>
+      <div class='metric-card neutral'><div class='metric-value'>0.0031</div><div class='metric-label'>Avg CV Metric</div></div>
+    </div>
+    <h2>💰 Backtest Results</h2>
+    <p class='error'>❌ Backtest failed or skipped: unknown reason</p>
+    <h2>🔬 Failure Sub-label Analysis</h2>
+    <p style='color: #666; margin-bottom: 15px;'>比较模型选中的交易 (top 30%) 与所有交易的失败率。Lift < 1.0 表示模型有效降低了失败率。</p>
+    <div class='metrics-grid'>
+      <div class='metric-card neutral'><div class='metric-value'>2,510 / 8,428</div><div class='metric-label'>Selected / Total Trades</div></div>
+      <div class='metric-card positive'><div class='metric-value'>0.92x</div><div class='metric-label'>RR Extreme Lift</div></div>
+      <div class='metric-card positive'><div class='metric-value'>0.98x</div><div class='metric-label'>No Opportunity Lift</div></div>
+    </div>
+    <table>
+      <tr><th>Failure Type</th><th>Global Rate</th><th>Selected Rate</th><th>Lift</th></tr>
+      <tr><td>RR Extreme (踩大坑)</td><td>42.0%</td><td>38.5%</td><td>0.92x</td></tr>
+      <tr><td>No Opportunity (入场即反)</td><td>10.8%</td><td>10.6%</td><td>0.98x</td></tr>
+    </table>
+    <h3 style='margin-top: 25px; color: #666;'>📈 Lift vs Coverage Curve</h3>
+    <p style='color: #666; margin-bottom: 15px;'>不同阈值（Top 20%-80%）下的 Lift 和覆盖率权衡。评估 Gate 的 veto 能力上限。</p>
+    <table>
+      <tr><th>Percentile</th><th>Coverage</th><th>n_selected</th><th>RR Extreme Lift</th><th>No Opportunity Lift</th></tr>
+      <tr><td>Top 20% (p80)</td><td>19.8%</td><td>1,666</td><td class='success'><strong>0.89x</strong></td><td class='warning'><strong>0.97x</strong></td></tr>
+      <tr><td>Top 30% (p70)</td><td>29.8%</td><td>2,510</td><td class='warning'><strong>0.92x</strong></td><td class='warning'><strong>0.98x</strong></td></tr>
+      <tr><td>Top 40% (p60)</td><td>39.9%</td><td>3,361</td><td class='warning'><strong>0.94x</strong></td><td class='warning'><strong>0.95x</strong></td></tr>
+      <tr><td>Top 50% (p50)</td><td>50.0%</td><td>4,211</td><td class='warning'><strong>0.96x</strong></td><td class='warning'><strong>0.96x</strong></td></tr>
+      <tr><td>Top 60% (p40)</td><td>59.9%</td><td>5,051</td><td class='warning'><strong>0.97x</strong></td><td class='warning'><strong>0.96x</strong></td></tr>
+      <tr><td>Top 70% (p30)</td><td>69.9%</td><td>5,890</td><td class='warning'><strong>0.96x</strong></td><td class='warning'><strong>0.93x</strong></td></tr>
+      <tr><td>Top 80% (p20)</td><td>80.0%</td><td>6,741</td><td class='warning'><strong>0.97x</strong></td><td class='warning'><strong>0.95x</strong></td></tr>
+    </table>
+    <div style='margin: 30px 0; text-align: center;'>
+      <svg width='800' height='400' style='border: 1px solid #ddd; border-radius: 5px; background: white;'>
+        <!-- 网格线 -->
+    <line x1='60' y1='340.0' x2='740' y2='340.0' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='50' y='340.0' text-anchor='end' font-size='12' fill='#666'>0.00</text>
+    <line x1='60' y1='274.9' x2='740' y2='274.9' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='50' y='274.9' text-anchor='end' font-size='12' fill='#666'>0.25</text>
+    <line x1='60' y1='209.8' x2='740' y2='209.8' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='50' y='209.8' text-anchor='end' font-size='12' fill='#666'>0.50</text>
+    <line x1='60' y1='144.6' x2='740' y2='144.6' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='50' y='144.6' text-anchor='end' font-size='12' fill='#666'>0.75</text>
+    <line x1='60' y1='79.5' x2='740' y2='79.5' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='50' y='79.5' text-anchor='end' font-size='12' fill='#666'>1.00</text>
+    <line x1='60.0' y1='60' x2='60.0' y2='340' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='60.0' y='360' text-anchor='middle' font-size='12' fill='#666'>0%</text>
+    <line x1='196.0' y1='60' x2='196.0' y2='340' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='196.0' y='360' text-anchor='middle' font-size='12' fill='#666'>20%</text>
+    <line x1='332.0' y1='60' x2='332.0' y2='340' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='332.0' y='360' text-anchor='middle' font-size='12' fill='#666'>40%</text>
+    <line x1='468.0' y1='60' x2='468.0' y2='340' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='468.0' y='360' text-anchor='middle' font-size='12' fill='#666'>60%</text>
+    <line x1='604.0' y1='60' x2='604.0' y2='340' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='604.0' y='360' text-anchor='middle' font-size='12' fill='#666'>80%</text>
+    <line x1='740.0' y1='60' x2='740.0' y2='340' stroke='#e0e0e0' stroke-width='1' stroke-dasharray='2,2'/>
+    <text x='740.0' y='360' text-anchor='middle' font-size='12' fill='#666'>100%</text>
+        <!-- 1.0 基准线 -->
+        <line x1='60' y1='79.5' x2='740' y2='79.5' stroke='#ff9800' stroke-width='2' stroke-dasharray='5,5'/>
+        <text x='690' y='74.5' font-size='12' fill='#ff9800'>Lift = 1.0 (无效)</text>
+        <!-- No Opportunity Lift 曲线 -->
+        <path d='M 194.4,86.3 L 262.5,85.5 L 331.2,92.7 L 399.8,90.2 L 467.5,89.4 L 535.2,98.2 L 603.9,91.6' stroke='#2196F3' stroke-width='3' fill='none'/>
+        <!-- RR Extreme Lift 曲线 -->
+        <path d='M 194.4,108.2 L 262.5,101.1 L 331.2,95.2 L 399.8,89.1 L 467.5,86.3 L 535.2,88.9 L 603.9,86.3' stroke='#4CAF50' stroke-width='3' fill='none'/>
+        <!-- 数据点 -->
+        <circle cx='194.4' cy='108.2' r='4' fill='#4CAF50' stroke='white' stroke-width='2'/>
+        <circle cx='194.4' cy='86.3' r='4' fill='#2196F3' stroke='white' stroke-width='2'/>
+        <circle cx='262.5' cy='101.1' r='4' fill='#4CAF50' stroke='white' stroke-width='2'/>
+        <circle cx='262.5' cy='85.5' r='4' fill='#2196F3' stroke='white' stroke-width='2'/>
+        <circle cx='331.2' cy='95.2' r='4' fill='#4CAF50' stroke='white' stroke-width='2'/>
+        <circle cx='331.2' cy='92.7' r='4' fill='#2196F3' stroke='white' stroke-width='2'/>
+        <circle cx='399.8' cy='89.1' r='4' fill='#4CAF50' stroke='white' stroke-width='2'/>
+        <circle cx='399.8' cy='90.2' r='4' fill='#2196F3' stroke='white' stroke-width='2'/>
+        <circle cx='467.5' cy='86.3' r='4' fill='#4CAF50' stroke='white' stroke-width='2'/>
+        <circle cx='467.5' cy='89.4' r='4' fill='#2196F3' stroke='white' stroke-width='2'/>
+        <circle cx='535.2' cy='88.9' r='4' fill='#4CAF50' stroke='white' stroke-width='2'/>
+        <circle cx='535.2' cy='98.2' r='4' fill='#2196F3' stroke='white' stroke-width='2'/>
+        <circle cx='603.9' cy='86.3' r='4' fill='#4CAF50' stroke='white' stroke-width='2'/>
+        <circle cx='603.9' cy='91.6' r='4' fill='#2196F3' stroke='white' stroke-width='2'/>
+        <!-- 坐标轴标签 -->
+        <text x='400.0' y='390' text-anchor='middle' font-size='14' font-weight='bold' fill='#333'>Coverage (%)</text>
+        <text x='15' y='200.0' text-anchor='middle' font-size='14' font-weight='bold' fill='#333' transform='rotate(-90 15 200.0)'>Lift (改善倍数)</text>
+        <!-- 图例 -->
+        <rect x='600' y='20' width='15' height='15' fill='#4CAF50'/>
+        <text x='620' y='32' font-size='12' fill='#333'>RR Extreme Lift</text>
+        <rect x='600' y='40' width='15' height='15' fill='#2196F3'/>
+        <text x='620' y='52' font-size='12' fill='#333'>No Opportunity Lift</text>
+      </svg>
+    </div>
+    <h3 style='margin-top: 25px; color: #666;'>🔍 Per-Symbol Failure Analysis</h3>
+    <table>
+      <tr><th>Symbol</th><th>Global RR</th><th>Selected RR</th><th>RR Lift</th><th>Global NoOpp</th><th>Selected NoOpp</th><th>NoOpp Lift</th><th>n_selected</th></tr>
+      <tr><td><strong>BTCUSDT</strong></td><td>42.7%</td><td>36.9%</td><td>0.86x</td><td>13.4%</td><td>13.8%</td><td>1.03x</td><td>377</td></tr>
+      <tr><td><strong>ETHUSDT</strong></td><td>45.8%</td><td>44.1%</td><td>0.96x</td><td>11.2%</td><td>11.2%</td><td>1.00x</td><td>410</td></tr>
+      <tr><td><strong>BNBUSDT</strong></td><td>32.1%</td><td>27.9%</td><td>0.87x</td><td>9.9%</td><td>8.0%</td><td>0.81x</td><td>326</td></tr>
+      <tr><td><strong>SOLUSDT</strong></td><td>44.2%</td><td>42.6%</td><td>0.96x</td><td>11.6%</td><td>11.2%</td><td>0.97x</td><td>507</td></tr>
+      <tr><td><strong>XRPUSDT</strong></td><td>41.9%</td><td>38.3%</td><td>0.91x</td><td>9.7%</td><td>11.2%</td><td>1.16x</td><td>446</td></tr>
+      <tr><td><strong>ADAUSDT</strong></td><td>45.5%</td><td>38.1%</td><td>0.84x</td><td>9.3%</td><td>7.9%</td><td>0.84x</td><td>444</td></tr>
+    </table>
+    <h2>🎯 Top 20 Feature Importance</h2>
+    <table>
+      <tr><th>Rank</th><th>Feature</th><th>Importance</th><th></th></tr>
+      <tr><td>1</td><td><code>me_cvd_alignment</code></td><td>100.69</td><td><div class='importance-bar' style='width:100%'></div></td></tr>
+      <tr><td>2</td><td><code>sma_200_position</code></td><td>58.98</td><td><div class='importance-bar' style='width:58%'></div></td></tr>
+      <tr><td>3</td><td><code>funding_rate_zscore_50</code></td><td>57.16</td><td><div class='importance-bar' style='width:56%'></div></td></tr>
+      <tr><td>4</td><td><code>roc_20</code></td><td>39.38</td><td><div class='importance-bar' style='width:39%'></div></td></tr>
+      <tr><td>5</td><td><code>evt_tail_shape_right</code></td><td>28.38</td><td><div class='importance-bar' style='width:28%'></div></td></tr>
+      <tr><td>6</td><td><code>oi_exhaustion_score</code></td><td>24.51</td><td><div class='importance-bar' style='width:24%'></div></td></tr>
+      <tr><td>7</td><td><code>shd_pct</code></td><td>22.67</td><td><div class='importance-bar' style='width:22%'></div></td></tr>
+      <tr><td>8</td><td><code>trend_div_tension</code></td><td>18.63</td><td><div class='importance-bar' style='width:18%'></div></td></tr>
+      <tr><td>9</td><td><code>cvd_divergence_score</code></td><td>16.25</td><td><div class='importance-bar' style='width:16%'></div></td></tr>
+      <tr><td>10</td><td><code>vol_slope_20</code></td><td>14.82</td><td><div class='importance-bar' style='width:14%'></div></td></tr>
+      <tr><td>11</td><td><code>vp_entropy</code></td><td>12.93</td><td><div class='importance-bar' style='width:12%'></div></td></tr>
+      <tr><td>12</td><td><code>macd_histogram_atr</code></td><td>11.57</td><td><div class='importance-bar' style='width:11%'></div></td></tr>
+      <tr><td>13</td><td><code>price_velocity_pct</code></td><td>8.60</td><td><div class='importance-bar' style='width:8%'></div></td></tr>
+      <tr><td>14</td><td><code>location_amplifier</code></td><td>6.60</td><td><div class='importance-bar' style='width:6%'></div></td></tr>
+      <tr><td>15</td><td><code>cvd_exhaustion_score</code></td><td>6.56</td><td><div class='importance-bar' style='width:6%'></div></td></tr>
+      <tr><td>16</td><td><code>me_reflex_risk</code></td><td>6.29</td><td><div class='importance-bar' style='width:6%'></div></td></tr>
+      <tr><td>17</td><td><code>me_vol_regime</code></td><td>2.70</td><td><div class='importance-bar' style='width:2%'></div></td></tr>
+      <tr><td>18</td><td><code>vpin_signed_imbalance_max</code></td><td>2.21</td><td><div class='importance-bar' style='width:2%'></div></td></tr>
+      <tr><td>19</td><td><code>path_efficiency_pct</code></td><td>1.98</td><td><div class='importance-bar' style='width:1%'></div></td></tr>
+      <tr><td>20</td><td><code>jump_risk_pct</code></td><td>1.25</td><td><div class='importance-bar' style='width:1%'></div></td></tr>
+    </table>
+    <hr style='margin-top: 40px; border: none; border-top: 1px solid #eee;'>
+    <p style='color: #999; font-size: 12px;'>Generated by mlbot train • results/train_final_20260221_165955_rr_extreme/me</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "strategy": "me",
+  "model_type": "lightgbm",
+  "task_type": "regression",
+  "avg_cv_metric": 0.11151953274474691,
+  "n_train_samples": 4619,
+  "n_test_samples": 5126
+}

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evidence 优化报告</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; color: #2c3e50; line-height: 1.6; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { text-align: center; color: #8e44ad; margin-bottom: 30px; font-size: 28px; }
+        h2 { color: #34495e; border-bottom: 3px solid #8e44ad; padding-bottom: 10px; margin: 30px 0 20px; }
+        .card { background: white; border-radius: 12px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; }
+        .kpi-item { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; }
+        .kpi-item.primary { background: linear-gradient(135deg, #8e44ad 0%, #9b59b6 100%); }
+        .kpi-item.success { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+        .kpi-item.warning { background: linear-gradient(135deg, #f39c12 0%, #f1c40f 100%); }
+        .kpi-value { font-size: 28px; font-weight: bold; margin: 10px 0; }
+        .kpi-label { font-size: 13px; opacity: 0.9; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ecf0f1; }
+        th { background: #f8f9fa; color: #2c3e50; font-weight: 600; }
+        tr:hover { background: #f8f9fa; }
+        .status-ok { color: #27ae60; font-weight: bold; }
+        .status-warn { color: #f39c12; font-weight: bold; }
+        .status-fail { color: #e74c3c; font-weight: bold; }
+        .secondary { color: #7f8c8d; font-size: 14px; margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; }
+        .timestamp { text-align: center; color: #95a5a6; font-size: 12px; margin-top: 30px; }
+        .hint { background: #fff3cd; border-left: 4px solid #f39c12; padding: 15px; margin-top: 20px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📊 Evidence 层优化报告</h1>
+    <p style="text-align:center;color:#7f8c8d;margin-bottom:30px;">Relative Rank Based Evidence Score Optimization (多 Symbol 模式)</p>
+
+    <h2>🎯 核心 KPI</h2>
+    <div class="card">
+        <div class="kpi-grid">
+            <div class="kpi-item primary">
+                <div class="kpi-label">平均 Bad Suppression</div>
+                <div class="kpi-value">0.083</div>
+                <div class="kpi-label">⭐ 主 KPI: Bad 被选择性压制</div>
+            </div>
+            <div class="kpi-item success">
+                <div class="kpi-label">最大 Bad Suppression</div>
+                <div class="kpi-value">0.083</div>
+                <div class="kpi-label">最佳特征</div>
+            </div>
+            <div class="kpi-item">
+                <div class="kpi-label">稳定平台</div>
+                <div class="kpi-value">1</div>
+                <div class="kpi-label">共 6 个特征</div>
+            </div>
+            <div class="kpi-item warning">
+                <div class="kpi-label">Knife-edge</div>
+                <div class="kpi-value">0</div>
+                <div class="kpi-label">无稳定平台</div>
+            </div>
+        </div>
+        <div class="secondary">
+            <strong>参考指标:</strong> 平均 Sharpness = 0.067 | 无效: 4 | 跳过: 1
+        </div>
+    </div>
+
+    <h2>📋 样本分布</h2>
+    <div class="card">
+        <div class="kpi-grid">
+            <div class="kpi-item">
+                <div class="kpi-label">总样本</div>
+                <div class="kpi-value">2,050</div>
+            </div>
+            <div class="kpi-item success">
+                <div class="kpi-label">Good 样本</div>
+                <div class="kpi-value">1,025</div>
+                <div class="kpi-label">50.0%</div>
+            </div>
+            <div class="kpi-item warning">
+                <div class="kpi-label">Bad 样本</div>
+                <div class="kpi-value">1,025</div>
+                <div class="kpi-label">50.0%</div>
+            </div>
+        </div>
+    </div>
+
+    <h2>🔧 Evidence 特征优化结果</h2>
+    <div class="card">
+        <table>
+            <thead>
+                <tr>
+                    <th>Evidence ID</th>
+                    <th>Feature</th>
+                    <th>状态</th>
+                    <th>Bad Supp ⭐</th>
+                    <th>Good Amp ⭐</th>
+                    <th>P(supp|bad) / P(favor|good)</th>
+                    <th>Sharpness</th>
+                    <th>Plateau CV</th>
+                    <th>推荐 Quantile Bins</th>
+                </tr>
+            </thead>
+            <tbody>
+            <tr>
+                <td><code>evidence_me_signal</code></td>
+                <td>me_evidence_signal</td>
+                <td><span class="status-fail">⏭ 跳过</span></td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td style="font-size:11px;">-</td>
+            </tr>
+            <tr>
+                <td><code>evidence_me_accel_5k</code></td>
+                <td>me_accel_5k</td>
+                <td><span class="status-fail">❌ 无有效划分</span></td>
+                <td>-0.024</td>
+                <td>-0.036</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td style="font-size:11px;">-</td>
+            </tr>
+            <tr>
+                <td><code>evidence_me_cvd_strength</code></td>
+                <td>me_cvd_strength</td>
+                <td><span class="status-fail">❌ 无有效划分</span></td>
+                <td>0.048</td>
+                <td>0.015</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td style="font-size:11px;">-</td>
+            </tr>
+            <tr>
+                <td><code>evidence_me_volume_surge</code></td>
+                <td>me_volume_surge</td>
+                <td><span class="status-ok">✅ 稳定平台</span></td>
+                <td><strong>0.083</strong></td>
+                <td><strong>0.083</strong></td>
+                <td>53.8% / 34.3%</td>
+                <td>0.067</td>
+                <td>0.00</td>
+                <td style="font-size:11px;">[0.25, 0.45, 0.65, 0.8500000000000001]</td>
+            </tr>
+            <tr>
+                <td><code>evidence_me_accel_persistence</code></td>
+                <td>me_accel_persistence</td>
+                <td><span class="status-fail">❌ 无有效划分</span></td>
+                <td>-0.033</td>
+                <td>-0.010</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td style="font-size:11px;">-</td>
+            </tr>
+            <tr>
+                <td><code>evidence_me_failure_score</code></td>
+                <td>me_failure_score</td>
+                <td><span class="status-fail">❌ 无有效划分</span></td>
+                <td>0.041</td>
+                <td>0.036</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td style="font-size:11px;">-</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="hint">
+        <strong>💡 KPI 解读：</strong><br>
+        <strong>Bad Suppression (主 KPI)</strong> = P(score &lt; 0.3 | bad) - P(score &lt; 0.3 | good) — Bad 被选择性压制<br>
+        <strong>Good Amplification (双重约束)</strong> = P(score &gt; 0.7 | good) - P(score &gt; 0.7 | bad) — Good 被选择性放大<br>
+        ❗ Evidence 必须同时满足双重约束，否则只是"无效过滤器"。<br><br>
+        <strong>Plateau 判断</strong> = CV &lt; 0.5 (数值稳定) AND bins 距离 &lt; 0.15 (空间连续)<br>
+        同时满足才认为是稳定平台，否则是 knife-edge。<br><br>
+        <strong>❗ 多 Symbol 模式</strong>: Score 基于 within-gate relative rank，而非绝对分位数<br>
+        这确保不同 symbol 的 evidence 可比较。
+    </div>
+
+    <p class="timestamp">生成时间: 2026-02-21 21:59:38</p>
+</div>
+</body>
+</html>

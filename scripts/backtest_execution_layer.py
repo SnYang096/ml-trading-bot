@@ -47,6 +47,27 @@ import numpy as np
 import pandas as pd
 import yaml
 
+try:
+    from bokeh.plotting import figure as bk_figure
+    from bokeh.models import ColumnDataSource, HoverTool, Span, Range1d
+    from bokeh.layouts import column as bk_column
+    from bokeh.resources import INLINE as BK_RESOURCES
+    from bokeh.embed import file_html as bk_file_html
+
+    BOKEH_AVAILABLE = True
+except ImportError:
+    BOKEH_AVAILABLE = False
+
+# Archetype 颜色方案 (用于交易地图)
+_ARCH_PALETTE = {
+    "bpc": "#2196F3",  # Blue
+    "me": "#FF9800",  # Orange
+    "fer": "#AB47BC",  # Purple
+    "lv": "#66BB6A",  # Green
+    "reversal": "#EC407A",  # Pink
+}
+_DEFAULT_ARCH_COLOR = "#00d4aa"  # Teal
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -455,6 +476,7 @@ def simulate_rr_execution(
     # 按 symbol 分组处理
     sym_col = "symbol" if "symbol" in df.columns else "_symbol"
     results = pd.Series(np.nan, index=df.index, dtype=float)
+    trade_details: List[Dict[str, Any]] = []  # 交易详情 (for chart)
 
     total_entries = 0
     breakeven_lock_count = 0
@@ -600,6 +622,26 @@ def simulate_rr_execution(
             if breakeven_locked:
                 breakeven_lock_count += 1
 
+            # 记录交易详情
+            exit_bar_idx = j if exit_reason != "timeout" else max_j - 1
+            trade_details.append(
+                {
+                    "symbol": sym,
+                    "entry_idx": int(idx_arr[i]),
+                    "exit_idx": int(idx_arr[min(exit_bar_idx, n - 1)]),
+                    "entry_price": float(entry_price),
+                    "exit_price": float(exit_price),
+                    "direction": direction,
+                    "realized_rr": float(realized_rr),
+                    "exit_reason": exit_reason,
+                    "archetype": (
+                        str(df.iloc[i].get("_pcm_archetype", ""))
+                        if "_pcm_archetype" in df.columns
+                        else ""
+                    ),
+                }
+            )
+
     if not silent:
         print(
             f"   📊 Simulated {total_entries} trades: "
@@ -613,7 +655,7 @@ def simulate_rr_execution(
                 f"   🔒 Breakeven lock: {breakeven_lock_count}/{total_entries} trades ({pct:.1f}%) reached {breakeven_lock_r}R"
             )
 
-    return results
+    return results, trade_details
 
 
 def compute_sharpe(
@@ -712,6 +754,301 @@ def compute_daily_sharpe(
         return 0.0
 
     return float(daily_r.mean() / daily_r.std() * np.sqrt(252))
+
+
+def _generate_trading_map_html(
+    df: pd.DataFrame,
+    trade_details: List[Dict[str, Any]],
+    title: str = "Trading Map",
+    timeframe: str = None,
+) -> str:
+    """生成 per-symbol K线 + 交易标记的 HTML 图表 (Bokeh)。
+
+    Args:
+        df: 包含 OHLC + timestamp + symbol 的 DataFrame
+        trade_details: simulate_rr_execution 返回的交易详情列表
+        title: 页面标题
+        timeframe: K线聚合周期 (如 '240T'), None 则不聚合
+
+    Returns:
+        完整 HTML 字符串
+    """
+    if not BOKEH_AVAILABLE:
+        return "<p>⚠️ Bokeh not installed. pip install bokeh</p>"
+
+    if not trade_details:
+        return "<p>No trades to visualize</p>"
+
+    # 准备 timestamp
+    ts_col = "timestamp" if "timestamp" in df.columns else None
+    if ts_col is None and isinstance(df.index, pd.DatetimeIndex):
+        df = df.copy()
+        df["timestamp"] = df.index
+        ts_col = "timestamp"
+    if ts_col is None:
+        return "<p>⚠️ No timestamp column for chart</p>"
+
+    sym_col = "symbol" if "symbol" in df.columns else "_symbol"
+    symbols = sorted(df[sym_col].unique())
+
+    all_layouts = []
+
+    for sym in symbols:
+        sym_df = df[df[sym_col] == sym].copy()
+        sym_trades = [t for t in trade_details if t["symbol"] == sym]
+        if not sym_trades:
+            continue
+        sym_df = sym_df.sort_values(ts_col)
+
+        # ---- OHLC 聚合 (可选) ----
+        if timeframe:
+            if "open" not in sym_df.columns:
+                sym_df["open"] = sym_df["close"].shift(1).fillna(sym_df["close"])
+            sym_df = sym_df.set_index(ts_col)
+            ohlc = (
+                sym_df[["open", "high", "low", "close"]]
+                .resample(timeframe)
+                .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+                .dropna()
+            )
+            ohlc = ohlc.reset_index()
+            sym_df = ohlc
+            ts_col_local = sym_df.columns[0]  # resample 后第一列是时间
+        else:
+            ts_col_local = ts_col
+
+        sym_df = sym_df.reset_index(drop=True)
+        if "open" not in sym_df.columns:
+            sym_df["open"] = sym_df["close"].shift(1).fillna(sym_df["close"])
+
+        # ---- 序号 x 轴 (消除时间间隙) ----
+        sym_df["_seq"] = range(len(sym_df))
+        x_labels = sym_df[ts_col_local].dt.strftime("%Y-%m-%d %H:%M").tolist()
+        seq_to_label = {i: lbl for i, lbl in enumerate(x_labels)}
+        # timestamp(str) → seq 快查
+        ts_str_to_seq = dict(
+            zip(
+                sym_df[ts_col_local].astype(str).values,
+                sym_df["_seq"].values,
+            )
+        )
+
+        inc = sym_df["close"] >= sym_df["open"]
+        dec = ~inc
+
+        # ---- 价格图 ----
+        p = bk_figure(
+            title=f"{sym}",
+            width=1600,
+            height=450,
+            tools="pan,wheel_zoom,box_zoom,reset,save,crosshair",
+            active_drag="pan",
+            active_scroll="wheel_zoom",
+        )
+        _apply_dark_theme(p, title_size="14px")
+
+        # Candlestick: wicks + bodies
+        p.segment(
+            sym_df["_seq"].values,
+            sym_df["high"].values,
+            sym_df["_seq"].values,
+            sym_df["low"].values,
+            color="#78909C",
+            line_width=0.7,
+        )
+        w = 0.45
+        if inc.any():
+            p.vbar(
+                sym_df.loc[inc, "_seq"].values,
+                w,
+                sym_df.loc[inc, "open"].values,
+                sym_df.loc[inc, "close"].values,
+                fill_color="#26a69a",
+                line_color="#26a69a",
+            )
+        if dec.any():
+            p.vbar(
+                sym_df.loc[dec, "_seq"].values,
+                w,
+                sym_df.loc[dec, "open"].values,
+                sym_df.loc[dec, "close"].values,
+                fill_color="#ef5350",
+                line_color="#ef5350",
+            )
+
+        # ---- 交易标记 (per-archetype 颜色区分) ----
+        unique_archs = sorted(set(t.get("archetype", "") for t in sym_trades))
+
+        for arch in unique_archs:
+            arch_trades = [t for t in sym_trades if t.get("archetype", "") == arch]
+            color = (
+                _ARCH_PALETTE.get(arch.lower(), _DEFAULT_ARCH_COLOR)
+                if arch
+                else _DEFAULT_ARCH_COLOR
+            )
+            arch_label = arch.upper() if arch else "Default"
+
+            win_x, win_y, win_text = [], [], []
+            loss_x, loss_y, loss_text = [], [], []
+
+            for t in arch_trades:
+                try:
+                    entry_ts_str = str(df.loc[t["entry_idx"], ts_col])
+                    exit_ts_str = str(df.loc[t["exit_idx"], ts_col])
+                except KeyError:
+                    continue
+                entry_seq = ts_str_to_seq.get(entry_ts_str)
+                exit_seq = ts_str_to_seq.get(exit_ts_str)
+                if entry_seq is None or exit_seq is None:
+                    continue
+
+                rr = t["realized_rr"]
+                d_str = "L" if t["direction"] == 1 else "S"
+                hover_text = f"{d_str} R={rr:+.2f} ({t['exit_reason']})"
+
+                # 入场→出场连线
+                p.line(
+                    [entry_seq, exit_seq],
+                    [t["entry_price"], t["exit_price"]],
+                    line_dash="dotted",
+                    line_color=color,
+                    line_width=1,
+                    line_alpha=0.5,
+                )
+
+                if rr >= 0:
+                    win_x.append(entry_seq)
+                    win_y.append(t["entry_price"])
+                    win_text.append(hover_text)
+                else:
+                    loss_x.append(entry_seq)
+                    loss_y.append(t["entry_price"])
+                    loss_text.append(hover_text)
+
+            n_w, n_l = len(win_x), len(loss_x)
+            all_rr = [t["realized_rr"] for t in arch_trades]
+            mean_r = sum(all_rr) / len(all_rr) if all_rr else 0
+            legend_label = f"{arch_label} ({n_w}W/{n_l}L, avg={mean_r:+.2f}R)"
+
+            if win_x:
+                src = ColumnDataSource({"x": win_x, "y": win_y, "info": win_text})
+                p.scatter(
+                    "x",
+                    "y",
+                    source=src,
+                    marker="triangle",
+                    size=10,
+                    fill_color=color,
+                    line_color="white",
+                    line_width=0.5,
+                    legend_label=legend_label,
+                )
+            if loss_x:
+                src = ColumnDataSource({"x": loss_x, "y": loss_y, "info": loss_text})
+                p.scatter(
+                    "x",
+                    "y",
+                    source=src,
+                    marker="inverted_triangle",
+                    size=10,
+                    fill_color=color,
+                    line_color="white",
+                    line_width=0.5,
+                    alpha=0.7,
+                    legend_label=legend_label,
+                )
+
+        # HoverTool (仅交易标记)
+        hover = HoverTool(tooltips=[("Trade", "@info")], mode="mouse")
+        p.add_tools(hover)
+
+        # x 轴标签
+        n_ticks = min(30, len(sym_df))
+        tick_step = max(1, len(sym_df) // n_ticks)
+        p.xaxis.ticker = list(range(0, len(sym_df), tick_step))
+        p.xaxis.major_label_overrides = seq_to_label
+        p.yaxis.axis_label = "Price"
+
+        # 图例
+        if p.legend:
+            p.legend.location = "top_left"
+            p.legend.background_fill_alpha = 0.6
+            p.legend.background_fill_color = "#16213e"
+            p.legend.label_text_color = "#e0e0e0"
+            p.legend.label_text_font_size = "11px"
+            p.legend.border_line_color = "#333"
+            p.legend.click_policy = "hide"
+
+        # ---- R-Multiples 柱状图 (联动 x 轴) ----
+        r_fig = bk_figure(
+            title="R-Multiples (每笔交易的盈亏 R 倍数，1R = 1倍 ATR)",
+            width=1600,
+            height=170,
+            x_range=p.x_range,
+            tools="pan,wheel_zoom,reset",
+            active_drag="pan",
+            active_scroll="wheel_zoom",
+        )
+        _apply_dark_theme(r_fig, title_size="11px")
+        r_fig.add_layout(
+            Span(location=0, dimension="width", line_color="#555", line_width=0.5)
+        )
+
+        for t in sym_trades:
+            try:
+                t_ts_str = str(df.loc[t["entry_idx"], ts_col])
+                t_seq = ts_str_to_seq.get(t_ts_str)
+            except KeyError:
+                continue
+            if t_seq is None:
+                continue
+            rr = t["realized_rr"]
+            arch = t.get("archetype", "")
+            bar_color = (
+                _ARCH_PALETTE.get(arch.lower(), _DEFAULT_ARCH_COLOR)
+                if arch
+                else ("#26a69a" if rr >= 0 else "#ef5350")
+            )
+            r_fig.vbar(
+                x=[t_seq],
+                top=[rr],
+                width=0.4,
+                fill_color=bar_color,
+                line_color=bar_color,
+                fill_alpha=0.7,
+            )
+
+        r_fig.xaxis.ticker = p.xaxis.ticker
+        r_fig.xaxis.major_label_overrides = seq_to_label
+        r_fig.yaxis.axis_label = "R"
+
+        all_layouts.append(bk_column(p, r_fig))
+
+    if not all_layouts:
+        return "<p>No charts generated</p>"
+
+    full_layout = bk_column(*all_layouts)
+    html = bk_file_html(full_layout, BK_RESOURCES, title=title)
+    return html
+
+
+def _apply_dark_theme(fig, title_size="14px"):
+    """给 Bokeh figure 应用深色主题。"""
+    fig.background_fill_color = "#16213e"
+    fig.border_fill_color = "#0f3460"
+    fig.title.text_color = "#00d4aa"
+    fig.title.text_font_size = title_size
+    fig.outline_line_color = None
+    fig.grid.grid_line_color = "#1a3a5c"
+    fig.grid.grid_line_alpha = 0.5
+    fig.xaxis.axis_line_color = "#555"
+    fig.xaxis.major_tick_line_color = "#555"
+    fig.xaxis.major_label_text_color = "#aaa"
+    fig.xaxis.major_label_orientation = 0.7
+    fig.yaxis.axis_line_color = "#555"
+    fig.yaxis.major_tick_line_color = "#555"
+    fig.yaxis.major_label_text_color = "#aaa"
+    fig.yaxis.axis_label_text_color = "#aaa"
 
 
 # ================================================================
@@ -970,23 +1307,29 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         print(f"   📊 Active entries: {n_entries}")
 
         arch_processed[arch_name] = df
-        if base_df is None:
-            base_df = df  # 第一个 archetype 作为 OHLC 基准
 
     # ── 3. 构建合并 DataFrame ──
-    # 用 base_df 作为基准（包含 OHLC），添加每个 archetype 的信号列
+    # 用所有 archetype 的 OHLC 行取 union 作为统一时间线
     ohlc_cols = ["symbol", "high", "low", "close", "atr"]
-    if "timestamp" in base_df.columns:
+    sample_df = next(iter(arch_processed.values()))
+    if "timestamp" in sample_df.columns:
         ohlc_cols.insert(1, "timestamp")
-    missing_ohlc = [c for c in ohlc_cols if c not in base_df.columns]
+    missing_ohlc = [c for c in ohlc_cols if c not in sample_df.columns]
     if missing_ohlc:
-        print(f"❌ Base data missing OHLC columns: {missing_ohlc}")
+        print(f"❌ Data missing OHLC columns: {missing_ohlc}")
         return 1
 
-    merged = base_df[ohlc_cols].copy()
-    merged = merged.sort_values(
-        ["symbol"] + (["timestamp"] if "timestamp" in merged.columns else [])
-    ).reset_index(drop=True)
+    # 合并所有 archetype 的 OHLC 行，取 union (去重)
+    ohlc_frames = []
+    for arch_name, df in arch_processed.items():
+        ohlc_frames.append(df[ohlc_cols].copy())
+    merged = pd.concat(ohlc_frames, ignore_index=True)
+    merge_key = ["symbol", "timestamp"] if "timestamp" in merged.columns else ["symbol"]
+    merged = merged.drop_duplicates(subset=merge_key, keep="first")
+    merged = merged.sort_values(merge_key).reset_index(drop=True)
+    print(
+        f"   📐 Unified timeline: {len(merged)} rows (union of {len(arch_processed)} archetypes)"
+    )
 
     # 初始化结果列
     merged["entry_direction"] = 0.0
@@ -995,35 +1338,29 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
 
     # 为每个 archetype 添加 direction + evidence 列
     for arch_name, df in arch_processed.items():
-        df_sorted = df.sort_values(
-            ["symbol"] + (["timestamp"] if "timestamp" in df.columns else [])
-        ).reset_index(drop=True)
+        df_sorted = df.sort_values(merge_key).reset_index(drop=True)
 
-        if len(df_sorted) != len(merged):
-            # 不同长度 → 按 (symbol, timestamp) 合并
-            if "timestamp" in merged.columns and "timestamp" in df_sorted.columns:
-                merge_key = ["symbol", "timestamp"]
-                tmp = df_sorted[
-                    [*merge_key, "entry_direction", "evidence_score"]
-                ].rename(
-                    columns={
-                        "entry_direction": f"_{arch_name}_dir",
-                        "evidence_score": f"_{arch_name}_ev",
-                    }
-                )
-                merged = merged.merge(tmp, on=merge_key, how="left")
-                merged[f"_{arch_name}_dir"] = merged[f"_{arch_name}_dir"].fillna(0.0)
-                merged[f"_{arch_name}_ev"] = merged[f"_{arch_name}_ev"].fillna(0.5)
-            else:
-                print(
-                    f"⚠️  {arch_name}: 行数不一致 ({len(df_sorted)} vs {len(merged)}) 且无 timestamp，跳过"
-                )
-                merged[f"_{arch_name}_dir"] = 0.0
-                merged[f"_{arch_name}_ev"] = 0.5
-        else:
+        if len(df_sorted) == len(merged):
             # 同长度 → 直接对齐
             merged[f"_{arch_name}_dir"] = df_sorted["entry_direction"].values
             merged[f"_{arch_name}_ev"] = df_sorted["evidence_score"].values
+        elif "timestamp" in merged.columns and "timestamp" in df_sorted.columns:
+            # 不同长度 → 按 (symbol, timestamp) left merge
+            tmp = df_sorted[[*merge_key, "entry_direction", "evidence_score"]].rename(
+                columns={
+                    "entry_direction": f"_{arch_name}_dir",
+                    "evidence_score": f"_{arch_name}_ev",
+                }
+            )
+            merged = merged.merge(tmp, on=merge_key, how="left")
+            merged[f"_{arch_name}_dir"] = merged[f"_{arch_name}_dir"].fillna(0.0)
+            merged[f"_{arch_name}_ev"] = merged[f"_{arch_name}_ev"].fillna(0.5)
+        else:
+            print(
+                f"⚠️  {arch_name}: 行数不一致 ({len(df_sorted)} vs {len(merged)}) 且无 timestamp，跳过"
+            )
+            merged[f"_{arch_name}_dir"] = 0.0
+            merged[f"_{arch_name}_ev"] = 0.5
 
     # ── 4. PCM 仲裁 ──
     print(f"\n🏗️  PCM arbitration...")
@@ -1109,7 +1446,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     # ── 6. Bar-by-bar 执行模拟 ──
     breakeven_lock_r = args.breakeven if args.breakeven is not None else 0.0
     print(f"\n📈 Simulating bar-by-bar with per-archetype execution params...")
-    exec_returns = simulate_rr_execution(
+    exec_returns, trade_details = simulate_rr_execution(
         merged,
         first_exec,  # 全局 fallback config
         atr_col="atr",
@@ -1208,7 +1545,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
                 rejected_mask, f"_{arch_name}_dir"
             ]
             ec = arch_exec_configs.get(arch_name, first_exec)
-            cf_returns = simulate_rr_execution(
+            cf_returns, _ = simulate_rr_execution(
                 tmp,
                 ec,
                 atr_col="atr",
@@ -1235,6 +1572,21 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         html_path = output_path.with_suffix(".html")
         Path(html_path).write_text(html, encoding="utf-8")
         print(f"\n   📊 Per-Symbol HTML Report: {html_path}")
+
+    # 生成交易地图 (K线 + 入场/出场标记)
+    if trade_details:
+        # PCM 模式: 输出到第一个 archetype 的目录
+        first_parquet = list(arch_specs.values())[0]
+        map_dir = Path(first_parquet).parent
+        map_path = map_dir / f"trading_map_pcm_{'_'.join(arch_names)}.html"
+        map_html = _generate_trading_map_html(
+            merged,
+            trade_details,
+            title=f"PCM {'_'.join(arch_names)} Trading Map",
+            timeframe=getattr(args, "timeframe", None),
+        )
+        map_path.write_text(map_html, encoding="utf-8")
+        print(f"   🗺️  Trading Map: {map_path}")
 
     if args.export_signals:
         export_path = Path(args.export_signals)
@@ -1331,7 +1683,7 @@ def run_grid_search(
 
         # 静默运行模拟（抑制 print 输出）
         with contextlib.redirect_stdout(io.StringIO()):
-            returns = simulate_rr_execution(df, modified, atr_col, silent=True)
+            returns, _ = simulate_rr_execution(df, modified, atr_col, silent=True)
         valid = returns.dropna()
 
         if len(valid) >= 2 and valid.std() > 1e-8:
@@ -2623,7 +2975,7 @@ def main() -> int:
 
     # 使用 execution.yaml 配置模拟 RR
     print("\n📈 Simulating with execution.yaml config...")
-    exec_returns = simulate_rr_execution(
+    exec_returns, trade_details = simulate_rr_execution(
         merged,
         exec_config,
         atr_col="atr",
@@ -2730,6 +3082,19 @@ def main() -> int:
         html_path = output_path.with_suffix(".html")
         Path(html_path).write_text(html, encoding="utf-8")
         print(f"\n   📊 Per-Symbol HTML Report: {html_path}")
+
+    # 生成交易地图 (K线 + 入场/出场标记)
+    if trade_details:
+        logs_path = Path(args.logs)
+        map_path = logs_path.parent / f"trading_map_{args.strategy or 'backtest'}.html"
+        map_html = _generate_trading_map_html(
+            merged,
+            trade_details,
+            title=f"{args.strategy or 'Backtest'} Trading Map",
+            timeframe=getattr(args, "timeframe", None),
+        )
+        map_path.write_text(map_html, encoding="utf-8")
+        print(f"   🗺️  Trading Map: {map_path}")
 
     # ── Export signals CSV（信号对齐验证）──
     if args.export_signals:

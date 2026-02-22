@@ -1,0 +1,431 @@
+_meta:
+  generated_from: results/train_final_20260221_215306_return_tree/me
+  strategy: me
+  purpose: Evidence 轴候选列表（从 Return Tree 发现）
+  note: 此为自动生成的草稿，需人工审核后使用
+label_semantics:
+  suppress: 强烈不利 - 拒绝或极度限制
+  downweight: 不利 - 降低信心/仓位
+  neutral: 中性 - 标准执行
+  favor: 有利 - 提高信心/仓位
+  amplify: 强烈有利 - 最大化执行
+evidence_candidates:
+- rank: 1
+  feature: wpt_price_energy_low_ratio
+  split_count_total: 5
+  threshold_examples:
+  - 1.0
+  - 1.0
+  distribution_hint: 密集分布在 1–1 区间
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 2
+  feature: wpt_price_energy_high_ratio
+  split_count_total: 4
+  threshold_examples:
+  - 0.0
+  - 0.0
+  distribution_hint: 密集分布在 0–0 区间
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 3
+  feature: garch_leverage_gamma
+  split_count_total: 3
+  threshold_examples:
+  - 0.01
+  distribution_hint: 单一阈值 0.01
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 4
+  feature: fp_poc
+  split_count_total: 3
+  threshold_examples:
+  - 1357.3963
+  distribution_hint: 单一阈值 1357
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 5
+  feature: sma_200_position
+  split_count_total: 3
+  threshold_examples:
+  - 0.0642
+  - 0.0747
+  distribution_hint: 密集分布在 0.0642–0.0747 区间
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 6
+  feature: evt_es_99_right
+  split_count_total: 3
+  threshold_examples:
+  - 0.998
+  - 0.998
+  distribution_hint: 密集分布在 0.998–0.998 区间
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 7
+  feature: oi_zscore
+  split_count_total: 3
+  threshold_examples:
+  - -1.0674
+  - -1.0117
+  - 0.0
+  distribution_hint: 密集分布在 -1.07–0 区间
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 8
+  feature: oi_compression_score
+  split_count_total: 3
+  threshold_examples:
+  - 0.1009
+  - 0.1118
+  - 0.1387
+  distribution_hint: 密集分布在 0.101–0.139 区间
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 9
+  feature: spectrum_volume_centroid
+  split_count_total: 2
+  threshold_examples:
+  - 0.252
+  distribution_hint: 单一阈值 0.252
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 10
+  feature: garch_volatility
+  split_count_total: 2
+  threshold_examples:
+  - 0.0079
+  distribution_hint: 单一阈值 0.0079
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 11
+  feature: evt_tail_shape
+  split_count_total: 2
+  threshold_examples:
+  - 0.5813
+  distribution_hint: 单一阈值 0.5813
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 12
+  feature: wpt_price_energy_mid_ratio
+  split_count_total: 2
+  threshold_examples:
+  - 0.0
+  distribution_hint: 单一阈值 0
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 13
+  feature: evt_scale_right
+  split_count_total: 2
+  threshold_examples:
+  - 0.9266
+  - 0.9544
+  distribution_hint: 密集分布在 0.927–0.954 区间
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 14
+  feature: wpt_cvd_fluctuation
+  split_count_total: 1
+  threshold_examples:
+  - -3780.2486
+  distribution_hint: 单一阈值 -3780
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+- rank: 15
+  feature: sr_strength_max
+  split_count_total: 1
+  threshold_examples:
+  - 3.2976
+  distribution_hint: 单一阈值 3.298
+  quantile_mapping:
+    _comment: 树告诉你'区间'，不是点。根据 threshold_examples 定义 bins
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+    _comment: 标注该 Evidence 影响哪些 execution 参数
+    candidates:
+    - tp_range
+    - trailing_speed
+    - scale_in_allowed
+    - position_size
+usage_guide:
+  step_1: 审核 feature 是否有语义意义
+  step_2: 根据 threshold_examples 和 distribution_hint 定义 bins
+  step_3: 填写 usage_hint 和 affects
+  step_4: 将确认的 Evidence 轴复制到 execution_archetype.yaml

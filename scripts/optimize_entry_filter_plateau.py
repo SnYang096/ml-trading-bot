@@ -163,7 +163,7 @@ def _scan_single_threshold(
             )
             continue
 
-        exec_returns = simulate_rr_execution(
+        exec_returns, _ = simulate_rr_execution(
             merged, exec_config, atr_col="atr", use_tier_params=False
         )
         valid = exec_returns.dropna()
@@ -877,7 +877,7 @@ def _run_dedup_analysis(
             single_snotios[fname] = 0.0
             single_trades[fname] = n_entries
             continue
-        exec_returns = simulate_rr_execution(
+        exec_returns, _ = simulate_rr_execution(
             merged, exec_config, atr_col="atr", use_tier_params=False
         )
         valid = exec_returns.dropna()

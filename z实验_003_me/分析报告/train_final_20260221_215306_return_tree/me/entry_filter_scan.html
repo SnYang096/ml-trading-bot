@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Entry Filter snotio Combo Search — me</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         margin: 20px; background: #f5f6fa; color: #2c3e50; }
+  h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+  h2 { color: #34495e; margin-top: 30px; }
+  .card { background: white; border-radius: 8px; padding: 20px; margin: 15px 0;
+           box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+               gap: 15px; margin: 15px 0; }
+  .kpi-item { background: white; border-radius: 8px; padding: 18px; text-align: center;
+               box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+  .kpi-item.primary { border-left: 4px solid #3498db; }
+  .kpi-item.success { border-left: 4px solid #27ae60; }
+  .kpi-item.warning { border-left: 4px solid #f39c12; }
+  .kpi-item.danger  { border-left: 4px solid #e74c3c; }
+  .kpi-item.info    { border-left: 4px solid #9b59b6; }
+  .kpi-label { font-size: 12px; color: #7f8c8d; text-transform: uppercase; letter-spacing: 0.5px; }
+  .kpi-value { font-size: 28px; font-weight: bold; margin: 5px 0; }
+  .kpi-sub   { font-size: 11px; color: #95a5a6; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+  th, td { padding: 8px 12px; text-align: right; border: 1px solid #ddd; font-size: 13px; }
+  th { background: #34495e; color: white; }
+  td:last-child { text-align: left; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+  tr:hover { background: #ecf0f1; }
+  .info-box { background: #eaf2f8; border-left: 4px solid #3498db; padding: 12px 16px;
+               margin: 15px 0; border-radius: 4px; font-size: 13px; }
+  .warn-box { background: #fef9e7; border-left: 4px solid #f39c12; padding: 12px 16px;
+               margin: 15px 0; border-radius: 4px; font-size: 13px; }
+  canvas { max-width: 100%; }
+  code { background: #ecf0f1; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+
+<h1>🎯 Entry Filter snotio Combo Search — me</h1>
+
+<div class="info-box">
+  <strong>snotio</strong> = mean(R-multiples) = 平均每笔交易的风险调整收益。<br>
+  Entry Filter 主 KPI。不受 trade count 影响，只有 per-trade 质量提升才会改善。<br>
+  Sharpe 仅作辅助参考（全系统毕业指标），不参与 Entry 层排序。
+</div>
+
+<div class="kpi-grid">
+  <div class="kpi-item primary">
+    <div class="kpi-label">Best snotio</div>
+    <div class="kpi-value">33.8060</div>
+    <div class="kpi-sub">N=1, 534 trades</div>
+  </div>
+  <div class="kpi-item success">
+    <div class="kpi-label">vs Baseline</div>
+    <div class="kpi-value">+15.6064</div>
+    <div class="kpi-sub">baseline snotio=18.1996</div>
+  </div>
+  <div class="kpi-item danger">
+    <div class="kpi-label">Worst 10% Δ</div>
+    <div class="kpi-value">0.0000</div>
+    <div class="kpi-sub">best=-2.0000 vs bl=-2.0000</div>
+  </div>
+  <div class="kpi-item info">
+    <div class="kpi-label">Execution Load</div>
+    <div class="kpi-value">534</div>
+    <div class="kpi-sub">vs baseline 5120 (10.4%)</div>
+  </div>
+  <div class="kpi-item success">
+    <div class="kpi-label">Loss Rate</div>
+    <div class="kpi-value">33.1%</div>
+    <div class="kpi-sub">baseline 37.7%</div>
+  </div>
+  <div class="kpi-item success">
+    <div class="kpi-label">Stop Rate</div>
+    <div class="kpi-value">33.1%</div>
+    <div class="kpi-sub">baseline 37.7%</div>
+  </div>
+</div>
+
+<h2>📈 snotio vs Filter 数量 (Best-per-N)</h2>
+<div class="card">
+  <div class="warn-box">
+    理想曲线: N=0→k <strong>快速上升</strong>（删垃圾）→ N=k→m <strong>平台</strong>（够用了）→ N&gt;m <strong>下降</strong>（过拟合）<br>
+    <strong>选平台中段，不选峰值。</strong>
+  </div>
+  <canvas id="snotioChart" height="100"></canvas>
+</div>
+
+<h2>📊 Best per N (by snotio)</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>N</th><th>snotio</th><th>Loss%</th><th>Stop%</th><th>Worst10%</th><th>Worst5%</th><th>MAE/risk</th>
+          <th>Sharpe_pt</th><th>Win%</th><th>Trades</th><th>Filters</th></tr>
+    </thead>
+    <tbody>
+      <tr style="background:#fff3cd;">
+        <td>N=0 (none)</td>
+        <td>18.1996</td>
+        <td>37.7%</td>
+        <td>37.7%</td>
+        <td>-2.0000</td>
+        <td>-2.0000</td>
+        <td>-2.0000</td>
+        <td>0.3924</td>
+        <td>62.3%</td>
+        <td>5120</td>
+        <td><code>none</code></td>
+    </tr>
+      
+    </tbody>
+  </table>
+</div>
+
+<h2>🏆 Top 30 Combos (by snotio)</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>Rank</th><th>N</th><th>snotio</th><th>Loss%</th><th>Stop%</th><th>Worst10%</th><th>Worst5%</th>
+          <th>MAE/risk</th><th>Sharpe_pt</th><th>Win%</th><th>Trades</th><th>Filters</th></tr>
+    </thead>
+    <tbody>
+      <tr style="background:#d4edda;font-weight:bold;">
+            <td>1 ⭐</td>
+            <td>1</td>
+            <td><strong>33.8060</strong></td>
+            <td>33.1%</td>
+            <td>33.1%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4393</td>
+            <td>66.8%</td>
+            <td>534</td>
+            <td title="bb_width_normalized_pct>=0.9573(P90)"><code>bb_width_normalized_pct>=0.9573(P90)</code></td>
+        </tr>
+<tr>
+            <td>2</td>
+            <td>1</td>
+            <td><strong>30.5537</strong></td>
+            <td>33.3%</td>
+            <td>33.3%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3968</td>
+            <td>66.7%</td>
+            <td>528</td>
+            <td title="vpin_max20>=0.7735(P90)"><code>vpin_max20>=0.7735(P90)</code></td>
+        </tr>
+<tr>
+            <td>3</td>
+            <td>1</td>
+            <td><strong>28.3787</strong></td>
+            <td>38.5%</td>
+            <td>38.5%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4867</td>
+            <td>61.6%</td>
+            <td>515</td>
+            <td title="funding_rate_abs<=0.0000(P10)"><code>funding_rate_abs<=0.0000(P10)</code></td>
+        </tr>
+<tr>
+            <td>4</td>
+            <td>1</td>
+            <td><strong>27.4114</strong></td>
+            <td>34.7%</td>
+            <td>34.7%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4198</td>
+            <td>65.3%</td>
+            <td>513</td>
+            <td title="vpin_ma20>=0.3905(P90)"><code>vpin_ma20>=0.3905(P90)</code></td>
+        </tr>
+<tr>
+            <td>5</td>
+            <td>1</td>
+            <td><strong>26.7525</strong></td>
+            <td>42.2%</td>
+            <td>42.2%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3828</td>
+            <td>57.8%</td>
+            <td>512</td>
+            <td title="spectrum_price_high_freq_ratio>=0.6148(P90)"><code>spectrum_price_high_freq_ratio>=0.6148(P90)</code></td>
+        </tr>
+<tr>
+            <td>6</td>
+            <td>1</td>
+            <td><strong>26.3614</strong></td>
+            <td>34.4%</td>
+            <td>34.4%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4226</td>
+            <td>65.6%</td>
+            <td>1032</td>
+            <td title="bb_width_normalized_pct>=0.8961(P80)"><code>bb_width_normalized_pct>=0.8961(P80)</code></td>
+        </tr>
+<tr>
+            <td>7</td>
+            <td>1</td>
+            <td><strong>26.2435</strong></td>
+            <td>30.3%</td>
+            <td>30.3%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3999</td>
+            <td>69.7%</td>
+            <td>555</td>
+            <td title="cvd_divergence_score<=-0.7755(P10)"><code>cvd_divergence_score<=-0.7755(P10)</code></td>
+        </tr>
+<tr>
+            <td>8</td>
+            <td>1</td>
+            <td><strong>25.4512</strong></td>
+            <td>38.0%</td>
+            <td>38.0%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3951</td>
+            <td>62.0%</td>
+            <td>1026</td>
+            <td title="vpin_ma10>=0.3832(P80)"><code>vpin_ma10>=0.3832(P80)</code></td>
+        </tr>
+<tr>
+            <td>9</td>
+            <td>1</td>
+            <td><strong>25.4302</strong></td>
+            <td>38.8%</td>
+            <td>38.8%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3812</td>
+            <td>61.2%</td>
+            <td>513</td>
+            <td title="vpin_ma10>=0.4148(P90)"><code>vpin_ma10>=0.4148(P90)</code></td>
+        </tr>
+<tr>
+            <td>10</td>
+            <td>1</td>
+            <td><strong>25.4069</strong></td>
+            <td>35.2%</td>
+            <td>35.2%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3884</td>
+            <td>64.8%</td>
+            <td>512</td>
+            <td title="vpin_volatility_10>=0.1443(P90)"><code>vpin_volatility_10>=0.1443(P90)</code></td>
+        </tr>
+<tr>
+            <td>11</td>
+            <td>1</td>
+            <td><strong>25.3263</strong></td>
+            <td>44.0%</td>
+            <td>44.0%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4013</td>
+            <td>56.0%</td>
+            <td>511</td>
+            <td title="vp_entropy<=0.8793(P10)"><code>vp_entropy<=0.8793(P10)</code></td>
+        </tr>
+<tr>
+            <td>12</td>
+            <td>1</td>
+            <td><strong>25.2487</strong></td>
+            <td>40.9%</td>
+            <td>40.9%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4840</td>
+            <td>59.1%</td>
+            <td>513</td>
+            <td title="garch_volatility<=0.0054(P10)"><code>garch_volatility<=0.0054(P10)</code></td>
+        </tr>
+<tr>
+            <td>13</td>
+            <td>1</td>
+            <td><strong>25.2201</strong></td>
+            <td>35.1%</td>
+            <td>35.1%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3848</td>
+            <td>64.9%</td>
+            <td>530</td>
+            <td title="path_length_pct>=0.9814(P90)"><code>path_length_pct>=0.9814(P90)</code></td>
+        </tr>
+<tr>
+            <td>14</td>
+            <td>1</td>
+            <td><strong>25.0902</strong></td>
+            <td>38.6%</td>
+            <td>38.6%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3887</td>
+            <td>61.4%</td>
+            <td>1026</td>
+            <td title="vpin_ma20>=0.3674(P80)"><code>vpin_ma20>=0.3674(P80)</code></td>
+        </tr>
+<tr>
+            <td>15</td>
+            <td>1</td>
+            <td><strong>25.0345</strong></td>
+            <td>35.5%</td>
+            <td>35.5%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3755</td>
+            <td>64.5%</td>
+            <td>512</td>
+            <td title="vp_width_ratio<=0.4622(P10)"><code>vp_width_ratio<=0.4622(P10)</code></td>
+        </tr>
+<tr>
+            <td>16</td>
+            <td>1</td>
+            <td><strong>24.9305</strong></td>
+            <td>38.1%</td>
+            <td>38.1%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3707</td>
+            <td>61.9%</td>
+            <td>1027</td>
+            <td title="vpin_max10>=0.6125(P80)"><code>vpin_max10>=0.6125(P80)</code></td>
+        </tr>
+<tr>
+            <td>17</td>
+            <td>1</td>
+            <td><strong>24.9098</strong></td>
+            <td>35.6%</td>
+            <td>35.6%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3675</td>
+            <td>64.4%</td>
+            <td>1025</td>
+            <td title="vpin_max20>=0.6848(P80)"><code>vpin_max20>=0.6848(P80)</code></td>
+        </tr>
+<tr>
+            <td>18</td>
+            <td>1</td>
+            <td><strong>24.8553</strong></td>
+            <td>33.4%</td>
+            <td>33.4%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3438</td>
+            <td>66.6%</td>
+            <td>512</td>
+            <td title="spectrum_cvd_low_freq_ratio<=0.1592(P10)"><code>spectrum_cvd_low_freq_ratio<=0.1592(P10)</code></td>
+        </tr>
+<tr>
+            <td>19</td>
+            <td>1</td>
+            <td><strong>24.7816</strong></td>
+            <td>41.9%</td>
+            <td>41.9%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4995</td>
+            <td>58.1%</td>
+            <td>513</td>
+            <td title="pred>=5.0651(P90)"><code>pred>=5.0651(P90)</code></td>
+        </tr>
+<tr>
+            <td>20</td>
+            <td>1</td>
+            <td><strong>24.7575</strong></td>
+            <td>38.5%</td>
+            <td>38.5%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4087</td>
+            <td>61.5%</td>
+            <td>545</td>
+            <td title="me_reflex_risk>=0.9796(P90)"><code>me_reflex_risk>=0.9796(P90)</code></td>
+        </tr>
+<tr>
+            <td>21</td>
+            <td>1</td>
+            <td><strong>24.6507</strong></td>
+            <td>36.3%</td>
+            <td>36.3%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3920</td>
+            <td>63.7%</td>
+            <td>512</td>
+            <td title="vp_compression_score>=0.2934(P90)"><code>vp_compression_score>=0.2934(P90)</code></td>
+        </tr>
+<tr>
+            <td>22</td>
+            <td>1</td>
+            <td><strong>24.5833</strong></td>
+            <td>36.3%</td>
+            <td>36.3%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3987</td>
+            <td>63.7%</td>
+            <td>513</td>
+            <td title="vp_ignition_score>=0.0528(P90)"><code>vp_ignition_score>=0.0528(P90)</code></td>
+        </tr>
+<tr>
+            <td>23</td>
+            <td>1</td>
+            <td><strong>24.5282</strong></td>
+            <td>46.2%</td>
+            <td>46.2%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3527</td>
+            <td>53.8%</td>
+            <td>597</td>
+            <td title="vp_lv_ratio>=0.3000(P90)"><code>vp_lv_ratio>=0.3000(P90)</code></td>
+        </tr>
+<tr>
+            <td>24</td>
+            <td>1</td>
+            <td><strong>24.5244</strong></td>
+            <td>35.4%</td>
+            <td>35.4%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3647</td>
+            <td>64.6%</td>
+            <td>512</td>
+            <td title="vpin_max10>=0.7000(P90)"><code>vpin_max10>=0.7000(P90)</code></td>
+        </tr>
+<tr>
+            <td>25</td>
+            <td>1</td>
+            <td><strong>24.4662</strong></td>
+            <td>39.5%</td>
+            <td>39.5%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3899</td>
+            <td>60.6%</td>
+            <td>512</td>
+            <td title="vol_mom_10>=0.8539(P90)"><code>vol_mom_10>=0.8539(P90)</code></td>
+        </tr>
+<tr>
+            <td>26</td>
+            <td>1</td>
+            <td><strong>24.4013</strong></td>
+            <td>33.8%</td>
+            <td>33.8%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3906</td>
+            <td>66.2%</td>
+            <td>1024</td>
+            <td title="spectrum_cvd_high_freq_ratio>=0.5405(P80)"><code>spectrum_cvd_high_freq_ratio>=0.5405(P80)</code></td>
+        </tr>
+<tr>
+            <td>27</td>
+            <td>1</td>
+            <td><strong>24.3582</strong></td>
+            <td>36.8%</td>
+            <td>36.8%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4060</td>
+            <td>63.2%</td>
+            <td>1540</td>
+            <td title="evt_scale_right>=0.9603(P70)"><code>evt_scale_right>=0.9603(P70)</code></td>
+        </tr>
+<tr>
+            <td>28</td>
+            <td>1</td>
+            <td><strong>24.2195</strong></td>
+            <td>38.0%</td>
+            <td>38.0%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4161</td>
+            <td>62.0%</td>
+            <td>511</td>
+            <td title="vpin_zscore_x_trade_cluster_max_buy_run_rank<=0.1092(P10)"><code>vpin_zscore_x_trade_cluster_max_buy_run_rank<=0.1092(P10)</code></td>
+        </tr>
+<tr>
+            <td>29</td>
+            <td>1</td>
+            <td><strong>24.2140</strong></td>
+            <td>33.8%</td>
+            <td>33.8%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.4055</td>
+            <td>66.2%</td>
+            <td>512</td>
+            <td title="me_accel_2k<=-1.2784(P10)"><code>me_accel_2k<=-1.2784(P10)</code></td>
+        </tr>
+<tr>
+            <td>30</td>
+            <td>1</td>
+            <td><strong>23.9803</strong></td>
+            <td>40.1%</td>
+            <td>40.1%</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>-2.0000</td>
+            <td>0.3884</td>
+            <td>59.9%</td>
+            <td>1025</td>
+            <td title="spectrum_price_high_freq_ratio>=0.5699(P80)"><code>spectrum_price_high_freq_ratio>=0.5699(P80)</code></td>
+        </tr>
+
+    </tbody>
+  </table>
+</div>
+
+<h2>🔬 边际贡献分析 (Marginal Contribution)</h2>
+<div class="card">
+  <div class="info-box" style="margin-bottom:15px;">
+    <strong>边际交易</strong> = 该 filter 触发但其他所有 filter 都未触发的交易。<br>
+    如果边际 snotio ≈ baseline 且 stop_rate ≈ baseline → 该 filter 没有独立过滤能力，不值得启用。
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Filter</th>
+        <th>整体 snotio</th><th>整体 Stop%</th><th>整体 Trades</th>
+        <th style="border-left:2px solid #3498db;">边际 snotio</th><th>边际 Loss%</th><th>边际 Stop%</th><th>边际 Trades</th>
+        <th>重叠</th><th>判定</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+      <tr style="background:#f8f9fa;font-style:italic;">
+        <td>Baseline (none)</td>
+        <td>18.1996</td><td>37.7%</td><td>5120</td>
+        <td style="border-left:2px solid #3498db;">—</td><td>—</td><td>—</td><td>—</td>
+        <td>—</td><td>对照</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>🔍 Loss Rate / Stop Rate 分析</h2>
+<div class="card">
+  <canvas id="rateChart" height="80"></canvas>
+  <div class="info-box" style="margin-top:15px;">
+    <strong>Loss Rate</strong> = 亏损交易占比 (R &lt; 0)。<strong>Stop Rate</strong> = 触发止损占比 (R ≈ -SL)。<br>
+    好的 Entry Filter 应同时降低两者。如果 snotio 提升但 stop_rate 不变 → filter 只是挑 easy trade（伪改进）。
+  </div>
+</div>
+
+<h2>🔍 Worst-10% Trade 分析</h2>
+<div class="card">
+  <canvas id="worstChart" height="80"></canvas>
+  <div class="info-box" style="margin-top:15px;">
+    Entry Filter 的真正功劳 = <strong>把最烂的交易赶出去</strong>。<br>
+    如果 worst-10% 明显改善但 snotio 不动 → filter 在精准狙击坏 trade。<br>
+    如果 worst-10% 不动但 snotio 变好 → filter 可能在挑 easy trade（警惕过拟合）。
+  </div>
+</div>
+
+<script>
+const ns = [0];
+const snotioData = [18.1996];
+const worst10Data = [-2.0];
+const tradesData = [5120];
+const lossRateData = [0.3766];
+const stopRateData = [0.3766];
+
+new Chart(document.getElementById('snotioChart'), {
+  type: 'line',
+  data: {
+    labels: ns.map(n => n === 0 ? 'none' : 'N=' + n),
+    datasets: [
+      {
+        label: 'snotio (mean R)',
+        data: snotioData,
+        borderColor: '#3498db',
+        backgroundColor: 'rgba(52,152,219,0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 6,
+        pointBackgroundColor: '#3498db',
+        yAxisID: 'y',
+      },
+      {
+        label: 'Trades',
+        data: tradesData,
+        borderColor: '#95a5a6',
+        borderDash: [5, 5],
+        pointRadius: 4,
+        pointBackgroundColor: '#95a5a6',
+        yAxisID: 'y1',
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    plugins: { title: { display: true, text: 'snotio vs Entry Filter 数量 (higher = better per-trade quality)' } },
+    scales: {
+      y: { position: 'left', title: { display: true, text: 'snotio (mean R)' } },
+      y1: { position: 'right', title: { display: true, text: 'Trades' }, grid: { drawOnChartArea: false } }
+    }
+  }
+});
+
+new Chart(document.getElementById('worstChart'), {
+  type: 'bar',
+  data: {
+    labels: ns.map(n => n === 0 ? 'none' : 'N=' + n),
+    datasets: [{
+      label: 'Worst 10% mean R',
+      data: worst10Data,
+      backgroundColor: worst10Data.map(v => v < -1.5 ? '#e74c3c' : v < -1.0 ? '#f39c12' : '#27ae60'),
+      borderRadius: 4,
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: { title: { display: true, text: 'Worst 10% Trade 平均 R (越接近 0 越好 = 坏 trade 被过滤)' } },
+    scales: { y: { title: { display: true, text: 'Worst 10% mean R' } } }
+  }
+});
+
+new Chart(document.getElementById('rateChart'), {
+  type: 'bar',
+  data: {
+    labels: ns.map(n => n === 0 ? 'none' : 'N=' + n),
+    datasets: [
+      {
+        label: 'Loss Rate',
+        data: lossRateData.map(v => v * 100),
+        backgroundColor: '#e74c3c',
+        borderRadius: 4,
+      },
+      {
+        label: 'Stop Rate',
+        data: stopRateData.map(v => v * 100),
+        backgroundColor: '#e67e22',
+        borderRadius: 4,
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    plugins: { title: { display: true, text: 'Loss Rate & Stop Rate vs N (低 = Entry Filter 有效过滤坑交易)' } },
+    scales: { y: { title: { display: true, text: 'Rate (%)' } } }
+  }
+});
+</script>
+
+<div class="card" style="margin-top:30px; background:#ecf0f1; font-size:12px; color:#7f8c8d;">
+  <strong>层级 KPI 定位:</strong>
+  Entry Filter → <strong>snotio / loss_rate / stop_rate</strong> |
+  Evidence → failure rate / drawdown |
+  Execution → Sharpe / Calmar / MDD |
+  全系统 → OOS Sharpe<br>
+  <strong>数据:</strong> me predictions.parquet, span=0.39yr, 1199 combos evaluated
+</div>
+
+</body>
+</html>

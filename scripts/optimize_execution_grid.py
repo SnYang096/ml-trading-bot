@@ -321,7 +321,7 @@ def main() -> int:
     import io, contextlib
 
     with contextlib.redirect_stdout(io.StringIO()):
-        best_returns = simulate_rr_execution(
+        best_returns, _ = simulate_rr_execution(
             merged, best_config, atr_col="atr", silent=True
         )
     daily_sh = compute_daily_sharpe(merged, best_returns)
