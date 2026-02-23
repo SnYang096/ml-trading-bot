@@ -1,7 +1,31 @@
 # 四 Archetype 统一进化计划
 
 > 创建时间: 2026-02-17
+> 最后更新: 2026-02-22
 > 目标: BPC / ME / FER / LV 四策略完整进化 + PCM 动态分配 + 全量训练
+
+---
+
+## 📌 当前状态总览
+
+| 领域 | 状态 | 说明 |
+|------|------|------|
+| 特征体系 (Phase 0-2) | ✅ 完成 | 7 基础 + 3 交叉 + OI 体系 |
+| LV 配置 (Phase 3) | ✅ 完成 | 15min archetype 全套配置 |
+| PCM 重构 (Phase 4) | ✅ 完成 | v2 严格性排序 |
+| 数据 (Phase 5) | ✅ 完成 | highcap symbols 数据齐全 |
+| 语义预筛选 (Phase 5.5) | ✅ 完成 | BPC/ME/FER 均有 prefilter |
+| 训练 (Phase 6) | ✅ BPC/ME/FER | 手动训练完成; LV 暂缓 (15min FS 太慢) |
+| 多时间框架-研究 (Phase 7-R) | ✅ 完成 | ME→1H 配置完成 |
+| **本地研究 pipeline** | 🔨 完善中 | auto_research_pipeline.py + 实验隔离 |
+| **实盘部署** | 📋 规划中 | 多时间框架实盘 + 监控 + 部署脚本 |
+
+---
+
+# Part A: 本地研究 Pipeline TODO
+
+> 目标: 完善本地研究全自动 pipeline，确保可重复、可比较、可追溯
+> 完成后即可进入实盘部署
 
 ---
 
@@ -188,337 +212,226 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 
 ---
 
-## 🔄 Phase 5: 数据准备 — 进行中
+## ✅ Phase 5: 数据准备 — 完成
 
-### 5.0 数据源选择
+> highcap symbols (BTC/ETH/BNB/SOL/XRP/ADA) 数据已齐全，无需全量 59 symbols
 
-> **注意**: Binance REST API (`/futures/data/openInterestHist`) 的 `startTime` 参数仅支持最近 ~30 天，
-> 超过 40 天即返回 400 错误。因此改用 **Binance Data Vision (S3)** 作为 OI 历史数据源。
-
-- 数据源: `https://data.binance.vision/data/futures/um/daily/metrics/{SYMBOL}/{SYMBOL}-metrics-{YYYY-MM-DD}.zip`
-- 每个 ZIP 包含 5 分钟精度 CSV (288 rows/day)
-- 列: `create_time, symbol, sum_open_interest, sum_open_interest_value, ...`
-
-### 5.1 OI 数据下载
-
-- [x] 创建 `scripts/download_oi_from_data_vision.py` (308 lines) — 从 Data Vision S3 下载
-- [x] 创建 `scripts/download_all_data.sh` — 整合 OI + Funding Rate 一键下载
-- [ ] 执行全量下载 (59 symbols × 37 months, 后台运行中)
-
-```bash
-# 一键下载 (OI + Funding Rate)
-nohup bash scripts/download_all_data.sh > /tmp/download_all.log 2>&1 &
-
-# 或仅下载 OI:
-python scripts/download_oi_from_data_vision.py \
-  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
-  --universe-set starter_a \
-  --start-date 2023-01-01 \
-  --parquet-dir data/open_interest/parquet
-```
-
-输出格式: `{SYMBOL}_{YYYY}-{MM}_oi_5m.parquet` (DatetimeIndex, columns: oi_contracts, oi_usd, _symbol)
-
-### 5.2 Funding Rate 补全
-
-- [x] 已有 2741 个文件覆盖 58 个 symbol (到 2025-11)
-- [ ] 补全到最新 (download_all_data.sh Step 2 自动执行)
-
-```bash
-python src/data_tools/download_funding_rate.py \
-  --symbols <all_symbols> \
-  --start-year 2023 --start-month 1 \
-  --parquet-dir data/funding_rate/parquet
-```
+- [x] OI 下载器: `scripts/download_oi_from_data_vision.py` (308 lines)
+- [x] 一键下载: `scripts/download_all_data.sh`
+- [x] highcap symbols OI + Funding Rate 数据齐全 (2023-01 ~ 2026-02)
 
 ---
 
-## 🔨 Phase 5.5: 语义预筛选 (Semantic Pre-filter) — Gate v3 核心改进
+## ✅ Phase 5.5: 语义预筛选 (Semantic Pre-filter) — 完成
 
-> 详细设计: `gate_v3_semantic_prefilter_TODO.md`
+> 设计文档: `gate_v3_semantic_prefilter_TODO.md`
 > 实验报告: `docs/architecture/gate_semantic_prefilter_design.md`
 
-### 5.5.0 问题根因
-
-当前 Gate v1/v2 训练在**全量 bar** 上（ME: 26K bars），大部分 bar 与 archetype 语义无关：
-- ME 专属特征 (me_accel_5k 等) 在非扩张 bar 上是纯噪声 → importance=0
-- 模型退化为"通用市场 vs 踩坑"分类器，失去 archetype 语义
-
-### 5.5.1 核心思想：从"拍脑袋"到"因果语义驱动"
-
-**旧方案 (v1/v2)**：`labels_rr_extreme.yaml` 的 `filters` 仅做 `notna: true`（全量 bar）
-
-**新方案 (v3)**：在 `filters` 段加 `min`/`max` 条件，只保留 archetype 语义匹配的 bar
-
-> 关键发现：`train_strategy_pipeline.py` 的 `apply_filters()` (L616-L632) **已原生支持** `min`/`max` 操作符 → **零代码修改**，只改 YAML
-
-### 5.5.2 一举两得
+### 核心思想
 
 同一组预筛选条件同时解决两个问题：
 1. **训练噪声** → 剥离不相关样本，专属特征重获区分力
 2. **archetype 分配** → 定义"哪些 bar 属于此 archetype"的语义边界
 
-### 5.5.3 预筛选条件来源链路
+### 已实现的预筛选规则
 
-```
-Step 1: 启发式因果设计 → 基于 archetype 语义写特征计算代码
-  ↓  脚本: momentum_expansion_features.py / fer_features.py / bpc_features.py
-Step 2: 分位数分层验证 → 用百分位阈值切数据, 对比 bad rate
-  ↓  脚本: scripts/analyze_archetype_feature_stratification.py
-  ↓  报告: z实验_005_统一研究/gate_semantic_prefilter_design.md
-Step 3: Plateau 稳健性搜索 → 用 Lift + Stable Plateau 找稳定阈值区间
-  ↓  脚本: scripts/optimize_gate_unified.py
-输出: guardrail/hard_gate 规则 → 复用为 pre_filter 条件
-```
+| 策略 | 规则文件 | 实现状态 |
+|------|----------|----------|
+| BPC | `archetypes/gate.yaml` guardrails: `bpc_volume_compression_pct ≥ 0.3 AND price_position ≤ 0.9` | ✅ |
+| ME | `archetypes/prefilter.yaml`: `atr_percentile ≥ 0.922` (P90, CV=0.70) | ✅ |
+| FER | `archetypes/prefilter.yaml`: `trapped_longs ≥ 4.48 OR trapped_shorts ≥ 3.77` (any_of) | ✅ |
+| LV | 待训练后确定 | ⛏️ 暂缓 |
 
-### 5.5.4 四策略预筛选条件 (加入 labels_rr_extreme.yaml filters)
+### 关键实现
 
-| 策略 | 预筛选条件 | 预期样本量 |
-|---|---|---|
-| ME | `me_atr_pct ≥ 0.40 AND me_cvd_alignment ≥ 0.40 AND me_volume_surge ≥ 0.30` | ~5-8K (从26K) |
-| FER | `fer_trapped_longs_score ≥ 2.75 OR fer_trapped_shorts_score ≥ 3.75` | 待评估 |
-| LV | `oi_zscore ≥ 0.5 AND funding_rate_abs_zscore_50 ≥ 0.5` | 待评估 |
-| BPC | `bpc_volume_compression_pct ≥ 0.30 AND price_position ≤ 0.90` | 待评估 |
-
-> 注意: FER 的 OR 逻辑当前 `apply_filters()` 不支持，需新增 `any_of` 支持或拆为两次训练
-
-### 5.5.5 Plateau 优化 pre_filter 阈值
-
-当前阈值来自 guardrail（人工设定），可用 Plateau 算法自动搜索最优语义边界：
-
-```bash
-# 复用现有优化器搜索 pre_filter 阈值
-python scripts/optimize_gate_unified.py \
-  --logs results/train_final_xxx/me/predictions.parquet \
-  --strategy me --label-col success_no_rr_extreme
-```
-
-### 5.5.6 执行清单
-
-- [ ] ME `labels_rr_extreme.yaml` 的 filters 段加 min 条件
-- [ ] FER `labels_rr_extreme.yaml` 加 min 条件 (OR 逻辑待解决)
-- [ ] LV `labels_rr_extreme.yaml` 加 min 条件
-- [ ] BPC `labels_rr_extreme.yaml` 加 min + max 条件
-- [ ] (可选) 用 Plateau 搜索优化 pre_filter 阈值
-- [ ] 重建 FS + 重训 Gate v3 → 对比 CV 和 feature importance
+- [x] `train_strategy_pipeline.py` 支持 `any_of` OR 逻辑 prefilter
+- [x] `loader.py` 支持 `any_of → De Morgan AND deny` guardrail 转换
+- [x] `analyze_archetype_feature_stratification.py` 支持 OR 对检测 + AND 累积模拟
+- [x] BPC/ME/FER 三策略 prefilter 均已配置并训练验证
 
 ---
 
-## ✅ Phase 6: 全量训练
+## ✅ Phase 6: 训练 — BPC/ME/FER 完成
 
-### 6.0 训练自动化脚本
+> BPC、ME、FER 均已手动训练完成
+> LV 暂缓: 15min Feature Store 计算成本太高，上线后再处理
 
-- [x] 创建 `scripts/train_all_archetypes.sh`
-  - Step 0: Feature Store 构建 (4H / 1H / 15min)
-  - **Step 0.5: 语义预筛选 — 修改 labels_rr_extreme.yaml filters** (Phase 5.5)
-  - Step 1-4: 各策略 train → gate → optimize
-  - Step 5: PCM 联合回测 + KPI 评估
-- [x] 报告输出路径: `z实验_005_统一研究/reports/train_<timestamp>/`
-  - 每个策略子目录: `bpc/`, `me/`, `fer/`, `lv/`
-  - 每个子目录含: train.log, gate.log, gate_optimized.json, evidence_optimized.json
-- [ ] 执行全量训练 (依赖 Phase 5 数据下载完成 + Phase 5.5 pre_filter 配置)
+### 已完成
 
-```bash
-# 一键训练 (后台运行)
-nohup bash scripts/train_all_archetypes.sh > /tmp/train_all.log 2>&1 &
-```
+- [x] BPC (4H): 全流程训练 + Gate/Evidence/EntryFilter/Execution 优化
+- [x] ME (1H): 全流程训练 + 优化
+- [x] FER (4H): 全流程训练 + 优化 (trapped OR prefilter v3.0)
+- [x] 自动化脚本: `scripts/train_all_archetypes.sh`
+- [x] 自动研究流水线: `scripts/auto_research_pipeline.py` (实验隔离 + ADOPT/KEEP/ALERT 决策)
 
-### 6.1 构建 Feature Store (含新特征)
+### 暂缓
 
-```bash
-# 4H (BPC/FER)
-mlbot feature-store build --config config/strategies/bpc \
-  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
-  --universe-set starter_a --timeframe 240T \
-  --start-date 2023-01-01 --end-date 2025-12-31 --warmup-months 3 --no-docker
-
-# 1H (ME)
-mlbot feature-store build --config config/strategies/me \
-  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
-  --universe-set starter_a --timeframe 60T \
-  --start-date 2023-01-01 --end-date 2025-12-31 --warmup-months 3 --no-docker
-
-# 15min (LV)
-mlbot feature-store build --config config/strategies/lv \
-  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
-  --universe-set starter_a --timeframe 15T \
-  --start-date 2023-01-01 --end-date 2025-12-31 --warmup-months 3 --no-docker
-```
-
-### 6.2 训练四个 Archetype
-
-每个 archetype 完整流程: **语义预筛选 → Gate 训练 → Apply → Optimize → Evidence → Entry → Backtest**
-
-> 与旧流程的区别: 在 `mlbot train final` **之前**，先确保 `labels_rr_extreme.yaml` 的 `filters` 段包含语义预筛选条件（Phase 5.5），让模型只在 archetype 相关 bar 上训练。
-
-```bash
-# ──── BPC (4H) ────
-# Step 0: 确认 labels_rr_extreme.yaml 已加入 pre_filter:
-#   - column: bpc_volume_compression_pct
-#     min: 0.30
-#   - column: price_position
-#     max: 0.90
-mlbot train final --strategy bpc --label-config labels_rr_extreme.yaml
-python scripts/apply_archetype_gate.py --strategy bpc
-python scripts/optimize_gate_unified.py --strategy bpc
-python scripts/optimize_evidence_plateau.py --logs <bpc_predictions> --strategy bpc
-python scripts/optimize_entry_filter_plateau.py --logs <bpc_predictions> --strategy bpc
-python scripts/backtest_execution_layer.py --logs <bpc_predictions> --strategy bpc
-
-# ──── ME (1H) ────
-# Step 0: 确认 labels_rr_extreme.yaml 已加入 pre_filter:
-#   - column: me_atr_pct
-#     min: 0.40
-#   - column: me_cvd_alignment
-#     min: 0.40
-#   - column: me_volume_surge
-#     min: 0.30
-mlbot train final --strategy me --timeframe 60T --label-config labels_rr_extreme.yaml
-python scripts/apply_archetype_gate.py --strategy me
-python scripts/optimize_gate_unified.py --strategy me
-python scripts/optimize_evidence_plateau.py --logs <me_predictions> --strategy me
-python scripts/optimize_entry_filter_plateau.py --logs <me_predictions> --strategy me
-python scripts/backtest_execution_layer.py --logs <me_predictions> --strategy me
-
-# ──── FER (4H) ────
-# Step 0: 确认 labels_rr_extreme.yaml 已加入 pre_filter:
-#   - column: fer_trapped_longs_score
-#     min: 2.75
-#   注意: OR 逻辑 (trapped_shorts ≥ 3.75) 需 any_of 支持
-mlbot train final --strategy fer --label-config labels_rr_extreme.yaml
-python scripts/apply_archetype_gate.py --strategy fer
-python scripts/optimize_gate_unified.py --strategy fer
-python scripts/optimize_evidence_plateau.py --logs <fer_predictions> --strategy fer
-python scripts/optimize_entry_filter_plateau.py --logs <fer_predictions> --strategy fer
-python scripts/backtest_execution_layer.py --logs <fer_predictions> --strategy fer
-
-# ──── LV (15min) ────
-# Step 0: 确认 labels_rr_extreme.yaml 已加入 pre_filter:
-#   - column: oi_zscore
-#     min: 0.5
-#   - column: funding_rate_abs_zscore_50
-#     min: 0.5
-mlbot train final --strategy lv --label-config labels_rr_extreme.yaml
-python scripts/apply_archetype_gate.py --strategy lv
-python scripts/optimize_gate_unified.py --strategy lv
-python scripts/optimize_evidence_plateau.py --logs <lv_predictions> --strategy lv
-python scripts/optimize_entry_filter_plateau.py --logs <lv_predictions> --strategy lv
-python scripts/backtest_execution_layer.py --logs <lv_predictions> --strategy lv
-```
-
-### 6.3 PCM 联合回测
-
-```bash
-python scripts/backtest_execution_layer.py \
-  --pcm bpc:<bpc_predictions> \
-        me:<me_predictions> \
-        fer:<fer_predictions> \
-        lv:<lv_predictions>
-
-python scripts/evaluate_pcm_allocation.py \
-  --pcm-report <pcm_report>
-```
-
+- [ ] LV (15min): Feature Store 计算太慢，延后到上线阶段
 
 ---
 
-## 🔀 Phase 7: 多时间框架架构升级 (Multi-Timeframe)
+## ✅ Phase 7-R: 多时间框架 — 研究路径完成
 
-> **目标频谱**:
-> - L3 结构层 (4H): BPC + FER
-> - L2 推进层 (1H): ME
-> - L1 微观层 (15min): LV
-> - 统一 15min 决策节奏
+```
+时间频谱 ↑
 
-### 7.0 当前架构评估
+L3 (4H)  ───────────────  BPC     FER
+          （结构突破）   （结构失败）
 
-**已支持 ✅**:
-- GenericLiveStrategy 每个 instance 有独立 `primary_timeframe` + `bar_minutes`
-- Feature Store 支持多 timeframe layer (4H + 15min 已有)
-- `mlbot train final --timeframe X` 可指定每个策略的 timeframe
-- `train_all_archetypes.sh` 已分 `TIMEFRAME_4H` / `TIMEFRAME_15M`
-- IncrementalFeatureComputer.compute_features_batch(primary_timeframe=) 支持不同 timeframe 聚合
-- 15min 统一决策节奏已在 OrderFlowListener 中
+L2 (1H)  ───────────────  ME
+          （动能推进）
 
-**需要升级 ❌**:
-- `_setup_three_strategies()` 使用单一 `bar_minutes=240` 给所有策略
-- IncrementalFeatureComputer 每次只产出一个 timeframe 的特征
-- OrderFlowListener._compute_and_save_15min_features() 只调一次 compute_features_batch
-- PCM.decide() 只收到一组 features，无法按 archetype timeframe 区分
-- ME meta.yaml timeframe 仍是 "240T"（需改 "60T"）
-- 无 1H Feature Store layer
+L1 (15m) ───────────────  LV
+          （流动性挤压）
+```
 
-### 7.1 研究路径升级 (训练/回测)
-
-- [x] ME `config/strategies/me/meta.yaml`: timeframe "240T" → "60T"
-- [ ] ME labels 适配 1H: forward_bars / max_holding_bars 重新计算
+- [x] ME `meta.yaml`: timeframe "240T" → "60T"
 - [x] 构建 1H Feature Store layer (`unified_1h_2023_2025`)
 - [x] ME 独立训练: `mlbot train final --strategy me --timeframe 60T`
-- [x] 更新 `train_all_archetypes.sh`: 添加 `TIMEFRAME_1H="60T"`, ME 使用 1H
-- [ ] 回测验证: ME@1H vs ME@4H 对比（RR / Sharpe / 与 BPC 正交性）
+- [x] `train_all_archetypes.sh` 添加 `TIMEFRAME_1H="60T"`
 
-```bash
-# ME (1H) - 独立训练
-mlbot train final --strategy me --timeframe 60T --label-config labels_rr_extreme.yaml
-python scripts/apply_archetype_gate.py --strategy me --timeframe 60T
-python scripts/optimize_gate_unified.py --strategy me
-python scripts/optimize_evidence_plateau.py --logs <me_1h_predictions> --strategy me
+---
+
+### A.1 研究 Pipeline 自动化
+
+> 已实现: `scripts/auto_research_pipeline.py` (实验隔离 + ADOPT/KEEP/ALERT 决策)
+> 配置: `config/research_pipeline.yaml`
+> 命令文档: `z实验_006_统一实盘/本地研究pipeline命令.md`
+
+- [x] 一键自动化: `python scripts/auto_research_pipeline.py --strategy fer`
+- [x] 实验目录隔离: config 随实验走，不覆盖生产
+- [x] 实验管理 CLI: `--list` / `--adopt` / `--diff` / `--no-adopt`
+- [x] 确定性决策规则: Sharpe 比值驱动 ADOPT/KEEP/ALERT
+- [ ] Pipeline 端到端验证: 跑一次完整 pipeline 确认无报错 → 见 `z实验_005_统一研究/快速启动命令.md` 第一节
+- [x] DEPLOY 脚本: `scripts/deploy_config_to_live.py` (diff + deploy + git-commit + rollback)
+
+### A.2 研究待验证项
+
+- [ ] ME@1H vs ME@4H 对比回测 (RR / Sharpe / 与 BPC 正交性)
+- [ ] ME labels 适配 1H: forward_bars / max_holding_bars 是否需要重算
+- [ ] PCM 联合回测: BPC + ME + FER 三策略联合 Sharpe / 冲突率
+
+### A.3 LV (暂缓)
+
+> 15min Feature Store 计算成本过高，上线后再推进
+
+- [ ] LV Feature Store 构建 (15min)
+- [ ] LV 全流程训练
+- [ ] LV prefilter 阈值确定
+
+---
+
+### A.4 研究 Pipeline 目录结构
+
+```
+config/strategies/{strategy}/          ← 研究模板 (git 管理)
+  ├── archetypes/                      ← ADOPT 时更新
+  │   ├── gate.yaml
+  │   ├── evidence.yaml
+  │   ├── entry_filters.yaml
+  │   ├── execution.yaml
+  │   ├── direction.yaml
+  │   ├── prefilter.yaml
+  │   └── holding.yaml
+  ├── features.yaml / features_gate.yaml / features_evidence.yaml
+  ├── labels*.yaml / model.yaml / meta.yaml / backtest.yaml
+  └── prefilter.yaml (候选特征声明)
+
+results/research_history/{strategy}/{YYYYMMDD_HHMMSS}/   ← 实验快照 (不进 git)
+  ├── strategies/{strategy}/           ← 隔离的 config 副本
+  │   └── archetypes/                  ← 所有 --promote 写这里
+  ├── archetypes/                      ← 快照副本 (方便查看)
+  ├── report.json                      ← metrics + 决策
+  ├── comparison.json                  ← 与上次对比
+  └── pipeline.log                     ← 运行日志
 ```
 
-### 7.2 实盘路径升级 (Live)
+---
 
-#### 7.2.1 IncrementalFeatureComputer 多 timeframe 输出
+### A.5 研究 Pipeline 11 步训练链
 
-- [ ] 新增 `compute_features_multi_timeframe()` 方法
-  - 从同一份 1min bars，分别聚合到 4H/1H/15min
-  - 返回 `Dict[str, Dict[str, float]]`（key = timeframe, value = features）
-  - 或合并为一组 features，用前缀区分（如 `4h_atr_percentile`, `1h_atr_percentile`）
+```
+Step 0:  Data Download + Convert (增量, 容错)
+Step 1:  Feature Store Build
+Step 2:  Prepare Only (features_labeled.parquet)
+Step 3:  Prefilter Analyze (--promote → 实验目录)
+Step 4:  Direction Validation (--promote → 实验目录)
+Step 5:  Gate Optimize (--promote → 实验目录)
+Step 6:  Evidence Optimize (--promote → 实验目录)
+Step 7:  Entry Filter Optimize (--promote → 实验目录)
+Step 8:  Execution Grid Optimize (--promote → 实验目录)
+Step 9:  Backtest
+Step 10: Export Training Baseline (容错)
+  ↓
+决策: ADOPT → 实验 archetypes/ → config/strategies/{strategy}/archetypes/
+      KEEP  → 保留实验, 不更新生产
+      ALERT → 保留实验 + 告警
+```
+
+---
+
+# Part B: 实盘部署 TODO
+
+> 目标: 研究 pipeline 验证通过后，部署到实盘环境
+> 前置条件: Part A 完成 (至少 BPC + ME + FER pipeline 端到端通过)
+
+---
+
+## B.1 配置部署 (config → live)
+
+> 当前: `run_live.py` 读取 `live/highcap/config/strategies/`
+> 研究确认后需要复制: `config/strategies/ → live/highcap/config/strategies/`
+
+- [x] DEPLOY 脚本: `scripts/deploy_config_to_live.py` (diff + deploy + git-commit + rollback)
+- [ ] 部署时自动 git commit live/ 目录变更 → `--git-commit` 已支持
+- [ ] 回滚机制: `--rollback` 指引 + `git revert` 可快速恢复 live/ 配置
+
+```
+研究实验 (results/research_history/) 
+  → ADOPT → config/strategies/ (研究确认, git)
+  → DEPLOY → live/highcap/config/strategies/ (生产部署, git)
+```
+
+---
+
+## B.2 多时间框架实盘路径 (Phase 7-L)
+
+> 研究路径已完成: BPC/FER→4H, ME→1H, LV→15min
+> 实盘需要升级以支持多 timeframe 并行
+
+### B.2.1 IncrementalFeatureComputer 多 timeframe 输出
+
+- [ ] 方案 A（推荐）: 多次调用，复用现有代码
 
 ```python
-# ✅ 方案 A（推荐）: 多次调用，复用现有已验证代码
-# 优点: 零新代码、独立故障隔离、调试简单
-# 性能: 多花 ~5s（VPIN/TC 重复计算），15min 周期内可忽略
 features_4h = fc.compute_features_batch(bars, ticks, "240T")
 features_1h = fc.compute_features_batch(bars, ticks, "60T")
 features_15m = fc.compute_features_batch(bars, ticks, "15T")
-
-# ❌ 方案 B: 一次调用，共享 tick 处理（暂不实现）
-# 理由: 过早优化，需要大量新代码+测试，收益不值得复杂度成本
-# 如果将来 15min 周期内计算时间不够，再考虑
 ```
 
-#### 7.2.2 OrderFlowListener 多 timeframe 特征计算
+### B.2.2 OrderFlowListener 多 timeframe 特征计算
 
-- [ ] `_compute_and_save_15min_features()` 支持按策略 timeframe 计算多组特征
-- [ ] 特征传递: 按 archetype 的 primary_timeframe 路由对应特征
+- [ ] `_compute_and_save_15min_features()` 支持多组 timeframe 特征
+- [ ] 按 archetype 的 primary_timeframe 路由对应特征
 
-#### 7.2.3 PCM 多 timeframe 决策
+### B.2.3 PCM 多 timeframe 决策
 
-- [ ] `LivePCM.decide()` 接收多组 timeframe features
-- [ ] 每个 registered strategy 用其对应 timeframe 的 features 调用 decide()
-- [ ] 方案: PCM 内部维护 `archetype → timeframe` 映射
+- [ ] `LivePCM.decide()` 接收 `features_by_timeframe`
+- [ ] 每个 strategy 用其对应 timeframe 的 features
 
 ```python
-# PCM 知道每个策略的 timeframe
 pcm.register("bpc", bpc, timeframe="240T")
 pcm.register("me", me, timeframe="60T")
 pcm.register("fer", fer, timeframe="240T")
 pcm.register("lv", lv, timeframe="15T")
-
-# decide 时按 timeframe 路由
-def decide(self, *, symbol, features_by_timeframe, ...):
-    for name, strategy in self._strategies.items():
-        tf = self._timeframes[name]
-        intents = strategy.decide(features=features_by_timeframe[tf], ...)
 ```
 
-#### 7.2.4 run_live.py 升级
+### B.2.4 run_live.py 升级
 
 - [ ] `_setup_four_strategies()`: 每个策略独立 primary_timeframe
-- [ ] `IncrementalFeatureComputer` 配置多个 timeframe 输出
 - [ ] 环境变量: `MLBOT_ME_BAR_MINUTES=60`, `MLBOT_LV_BAR_MINUTES=15`
 
-### 7.3 架构设计原则
+### B.2.5 架构设计原则
 
 ```
 时间频谱 ↑
@@ -535,35 +448,69 @@ L1 (15m) ───────────────  LV
 统一 15min 决策节奏 → 高周期只作 slow state feature / regime filter
 ```
 
-**关键约束**:
-1. 触发节奏统一 15min，高周期只是 context（不是触发周期）
-2. 每层最多 1-2 个主 archetype，避免频谱冲突
-3. ME@1H 和 BPC@4H 正交（一个做"速度"，一个做"结构"）
-4. FER@4H 和 BPC@4H 构成 continuation ↔ reversal 对
-5. 特征计算从 1min bars 起始，不同 timeframe 只是聚合粒度
+---
 
-### 7.4 验证清单
+## B.3 PCM 优先级验证 (Phase 4.5)
 
-- [ ] ME@1H 训练: Sharpe > 0.5, 与 BPC@4H 相关性 < 0.3
-- [ ] 实盘多 timeframe 特征计算: 15min/1h/4h 三组特征正确
-- [ ] PCM 多 timeframe 仲裁: 不同 timeframe 策略可正常竞争
-- [ ] 回归测试: 原 4H-only 模式行为不变（向后兼容）
+> 目标: 验证 v2 优先级 (LV>FER>ME>BPC) 相比 v1 有优势
+> 设计文档: `PCM优先级简化设计.md`
+
+- [ ] 历史 predictions 重跑 PCM 回测，v1 vs v2 冲突解决
+- [ ] 反事实分析: v2 被拒信号事后 R 和胜率
+- [ ] Regime 分层验证: HIGH_VOL 下 ME>FER 是否更优
+- [ ] 实盘后每周检查 PCM 冲突日志
 
 ---
 
-## 📋 执行顺序与依赖
+## B.4 实盘假设监控 (Phase 8)
 
-```
-Phase 1 (组合特征)  ──┐
-Phase 2 (OI 特征)   ──┤──→ Phase 5 (数据) ──→ Phase 5.5 (语义预筛选) ──→ Phase 6 (训练)
-Phase 3 (LV 配置)   ──┤                                                        │
-Phase 4 (PCM 重构)  ──┘                                                        ▼
-                                                                      Phase 7 (多时间框架)
-```
+> 依据: `系统每层假设与实盘监控.md`
+> 已实现脚本 (本地可用):
+>   - `scripts/local_monitor_feature_drift.py` — PSI/KS 特征漂移
+>   - `scripts/local_monitor_weekly.py` — 周频快速检查
+>   - `scripts/local_monitor_monthly.py` — 月频全层报告
+>   - `scripts/export_training_baseline.py` — 训练基线导出
+>   - `scripts/monitor_retrain.py` — 重训触发器
 
-- Phase 1-4 可并行开发
-- Phase 5 依赖 Phase 2 (OI 下载器)
-- Phase 6 依赖 Phase 1-5 全部完成
+| 层 | 假设 | 关键指标 | 失效阈值 |
+|----|------|----------|----------|
+| L1 特征 | 统计规律保持 | feature_drift_zscore | > 3.0 连续 3 天 |
+| L2 预筛选 | 有效过滤噪声 | prefilter_pass_rate | 偏离训练期 ±50% |
+| L3 Gate | 正向 lift | gate_lift | < 1.2 |
+| L4 Evidence | score↔R 相关 | evidence_r_correlation | Spearman < 0.05 |
+| L5 Direction | 增加胜率 | direction_accuracy | < 55% (30日) |
+| L6 Entry Filter | 提升质量 | entry_filter_lift | < 1.0 |
+| L7 Execution Tier | 高tier优于低tier | per_tier_mean_r | T1 ≤ T3 连续 2 周 |
+| L8 PCM | 被选 > 被拒 | counterfactual_r | 被拒 > 被选持续 1 周 |
+| L9 宪法 | 安全不过限 | kill_switch_count | 月 > 3 次 |
+
+### 实施清单
+
+- [ ] 接入实盘数据后验证监控脚本
+- [ ] 假设失效告警通道
+- [ ] 假设失效归因 SOP
+
+---
+
+## B.5 实盘性能监控 (Phase 9)
+
+### 延迟目标
+
+| 环节 | 目标值 | 告警阈值 |
+|------|--------|----------|
+| Tick → 特征计算 | < 200ms | > 500ms |
+| 推理 | < 100ms | > 300ms |
+| PCM 仲裁 | < 50ms | > 150ms |
+| 下单 | < 100ms | > 300ms |
+| 端到端 | < 500ms | > 1000ms |
+
+### 实施清单
+
+- [ ] 延迟打点埋入
+- [ ] 轻量监控看板 (Prometheus/Grafana 或替代)
+- [ ] 告警通道接入
+- [ ] 性能基线建立 (上线首周)
+- [ ] 降级策略: 延迟过高时暂停非核心 archetype
 
 ---
 
@@ -572,108 +519,13 @@ Phase 4 (PCM 重构)  ──┘                                                 
 | Phase | 状态 | 备注 |
 |-------|------|------|
 | Phase 0: 审查 | ✅ 完成 | 7 特征全部合理 |
-| Phase 1: 组合特征 | ✅ 完成 | 3 个乘法交叉特征 (dual_compression/ignition/exhaustion) |
-| Phase 2: OI 体系 | ✅ 完成 | 下载器 + 特征 + 场景语义 + 交叉特征 |
-| Phase 3: LV 配置 | ✅ 完成 | 15min LV archetype 全套配置 |
-| Phase 4: PCM 重构 | ✅ 完成 | v2: 单一优先级制 (LV>FER>ME>BPC, 按条件严格性), 移除 Override 层 |
-| Phase 5: 数据 | ✅ 完成 | OI 59 symbols 1947 files (2023-01~2026-02), FR 59 symbols 2860 files |
-| Phase 5.5: 语义预筛选 | 🔨 设计完成 | 详见 gate_v3_semantic_prefilter_TODO.md |
-| Phase 6: 训练 | 🔨 待执行 | 依赖 Phase 5.5 pre_filter 配置, 报告输出到 reports/ |
-| Phase 7: 多时间框架 | ✅ 研究路径完成 | ME→1H, BPC/FER→4H, LV→15min, 实盘路径待升级 |
-
----
-
-## 🔍 Phase 4.5: PCM 优先级验证 (v2 严格性排序)
-
-> 目标: 验证 v2 优先级 (LV>FER>ME>BPC) 相比 v1 (BPC>ME>FER>LV) 有优势
-> 设计文档: `PCM优先级简化设计.md`
-> 假设监控: `系统每层假设与实盘监控.md`
-
-### 验证方法
-
-- [ ] 用历史 predictions.parquet 重跑 PCM 回测，对比 v1 vs v2 的冲突解决效果
-  - 指标: Sharpe, 胜率, 平均 R, max DD
-  - 期望: v2 在冲突场景下 Sharpe ≥ v1（冲突率低，预期影响小）
-- [ ] 反事实分析: v2 被拒信号的事后 R 和胜率
-  - 关注: v2 被拒的 BPC 信号（之前是最高优先级）事后表现
-- [ ] Regime 分层验证: HIGH_VOL 下 ME>FER 是否给出更好的冲突解决
-
-### 实盘监控要点
-
-- [ ] 每周检查 PCM 冲突日志，对比被选 vs 被拒信号事后 R
-- [ ] 若被拒信号事后 R 系统性高于被选 → 优先级需要调整
-- [ ] 监控各层假设是否成立（见 `系统每层假设与实盘监控.md`）
-
----
-
-## 📡 Phase 8: 实盘假设监控
-
-> 依据: `系统每层假设与实盘监控.md`
-> 目标: 验证系统 9 层假设在实盘环境中是否持续成立，失效时触发调整
-
-### 监控范围
-
-| 层 | 假设 | 关键指标 | 失效阈值 |
-|----|------|----------|----------|
-| L1 特征 | 历史统计规律在新数据上保持 | feature_drift_zscore | > 3.0 连续 3 天 |
-| L2 预筛选 | 语义场景条件有效过滤噪声 | prefilter_pass_rate | 偏离训练期 ±50% |
-| L3 Gate | 通过 Gate 的信号有显著正向 lift | gate_pass_rate, gate_lift | lift < 1.2 |
-| L4 Evidence | 高 evidence score → 高 R | evidence_r_correlation | Spearman < 0.05 |
-| L5 Direction | 方向判断增加胜率 | direction_accuracy | < 55% (30日滚动) |
-| L6 Entry Filter | 入场过滤器提升信号质量 | entry_filter_lift | lift < 1.0 |
-| L7 Execution Tier | 高 tier 的 R 和胜率优于低 tier | per_tier_mean_r | T1 ≤ T3 连续 2 周 |
-| L8 PCM | 被选信号 > 被拒信号 | counterfactual_r | 被拒 avg R > 被选持续 1 周 |
-| L9 宪法 | 安全边界合理且不过度限制 | kill_switch_trigger_count | 月触发 > 3 次需审查 |
-
-### 实施清单
-
-- [ ] 日频监控脚本: 特征漂移 / Gate 通过率 / Direction 准确率 / 当日 PnL
-- [ ] 周频监控脚本: Evidence 相关性 / PCM 冲突分析 / Tier 分层表现
-- [ ] 月频全层验证报告: 9 层假设逐一检查 + 正交性验证
-- [ ] 假设失效告警: 任何层指标越过阈值 → 自动通知
-- [ ] 假设失效归因 SOP: 失效 → 定位层 → 分析原因 → 制定调整方案
-
----
-
-## ⚡ Phase 9: 实盘性能监控
-
-> 目标: 确保系统在生产环境运行的延迟、吞吐、稳定性满足交易需求
-
-### 延迟监控
-
-| 环节 | 指标 | 目标值 | 告警阈值 |
-|------|------|--------|----------|
-| Tick 接收 → 特征计算完成 | feature_latency_ms | < 200ms | > 500ms |
-| 特征计算 → Gate/Evidence 推理 | inference_latency_ms | < 100ms | > 300ms |
-| 信号生成 → PCM 仲裁完成 | pcm_latency_ms | < 50ms | > 150ms |
-| PCM 决策 → 下单提交 | order_submit_latency_ms | < 100ms | > 300ms |
-| 端到端 (Tick → Order) | e2e_latency_ms | < 500ms | > 1000ms |
-
-### 稳定性监控
-
-| 指标 | 说明 | 告警条件 |
-|------|------|----------|
-| WebSocket 断线次数 | 每日断线统计 | > 5 次/天 |
-| Tick 缺失率 | 预期 tick 数 vs 实际接收数 | > 2% |
-| 特征计算异常率 | NaN/Inf 产出比例 | > 0.1% |
-| 内存使用 | 进程 RSS | > 4GB 或持续增长 |
-| CPU 使用率 | 进程 CPU 占比 | > 80% 持续 5 分钟 |
-| 磁盘 I/O | 日志/数据写入速率 | 磁盘使用 > 90% |
-
-### 交易执行监控
-
-| 指标 | 说明 | 告警条件 |
-|------|------|----------|
-| 下单成功率 | 提交 vs 成交 | < 95% |
-| 滑点 | 信号价 vs 成交价 | avg slippage > 0.1% |
-| 持仓偏离 | 目标仓位 vs 实际仓位 | 偏离 > 5% |
-| API 错误率 | 交易所 API 调用失败率 | > 1% |
-
-### 实施清单
-
-- [ ] 延迟打点埋入: 各环节 start/end timestamp 记录
-- [ ] Prometheus/Grafana 看板搭建 (或轻量替代方案)
-- [ ] 日频性能报告: 延迟 P50/P95/P99 + 异常统计
-- [ ] 告警通道接入: 关键指标越限 → 即时通知
-- [ ] 性能基线建立: 上线首周记录各指标基线，后续对比
-- [ ] 降级策略: 延迟过高时自动降低交易频率或暂停非核心 archetype
+| Phase 1: 组合特征 | ✅ 完成 | 3 个乘法交叉特征 |
+| Phase 2: OI 体系 | ✅ 完成 | 下载器 + 特征 + 场景语义 + 交叉 |
+| Phase 3: LV 配置 | ✅ 完成 | 15min archetype 全套配置 |
+| Phase 4: PCM 重构 | ✅ 完成 | v2 严格性排序 |
+| Phase 5: 数据 | ✅ 完成 | highcap symbols 数据齐全 |
+| Phase 5.5: 预筛选 | ✅ 完成 | BPC/ME/FER 均已配置 |
+| Phase 6: 训练 | ✅ BPC/ME/FER | LV 暂缓 |
+| Phase 7-R: 多TF研究 | ✅ 完成 | ME→1H 配置完成 |
+| **Part A: 研究 pipeline** | 🔨 完善中 | 实验隔离已完成，待端到端验证 |
+| **Part B: 实盘部署** | 📋 规划中 | 等 Part A 完成后推进 |

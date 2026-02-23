@@ -896,7 +896,18 @@ def main() -> int:
         action="store_true",
         help="验证通过后自动复制 direction.yaml 到 archetypes/direction.yaml",
     )
+    parser.add_argument(
+        "--strategies-root",
+        default=None,
+        help="策略配置根目录 (默认: config/strategies, 实验隔离时传入实验目录)",
+    )
     args = parser.parse_args()
+
+    # 支持实验目录隔离: 覆盖 STRATEGIES_ROOT
+    if args.strategies_root:
+        global STRATEGIES_ROOT
+        sr = Path(args.strategies_root)
+        STRATEGIES_ROOT = sr if sr.is_absolute() else (PROJECT_ROOT / sr)
 
     print("=" * 70)
     print("Direction.yaml 验证 (Phase 1: 覆盖率 + Phase 2: 方向质量)")

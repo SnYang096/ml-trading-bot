@@ -1,0 +1,90 @@
+# ============================================================
+# 自动研究流水线 + 实盘监控重训 统一配置
+# ============================================================
+# 用法:
+#   python scripts/auto_research_pipeline.py --strategy bpc
+#   python scripts/auto_research_pipeline.py --all
+#   python scripts/monitor_retrain.py  (cron 定时 / 手动触发)
+
+# ── 时间窗口规则 ──────────────────────────────────────────────
+dates:
+  start_date: "2023-01-01"     # 最早可用训练数据
+  holdout_months: 14           # Holdout 固定窗口 (月)
+  # end_date: auto             # 默认自动检测 data/parquet_data 最新日期
+  # holdout_start: auto        # = end_date - holdout_months
+
+# ── Token Universe ────────────────────────────────────────────
+symbols: "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT"
+data_path: "data/parquet_data"
+
+# ── 数据下载 (Step 0) ─────────────────────────────────────────
+# 训练链开头自动下载 + 转换最新月度数据 (增量, 已有月份自动跳过)
+download:
+  enabled: true                  # false 则跳过下载, 直接用本地数据
+  data_dir: "data/agg_data"      # Binance aggTrades ZIP 存放目录
+  parquet_dir: "data/parquet_data" # 转换后的 parquet 输出目录
+  # start_year/month 使用 dates.start_date 自动推算
+  # end_year/month 使用 end_date 自动推算
+
+# ── 策略定义 ──────────────────────────────────────────────────
+strategies:
+  bpc:
+    config: config/strategies/bpc
+    timeframe: "240T"
+    features_gate: features_gate.yaml
+    features_evidence: features_evidence.yaml
+    labels_gate: labels_rr_extreme.yaml
+    labels_evidence: labels_return_tree.yaml
+    has_prefilter: true
+    has_direction: true
+
+  fer:
+    config: config/strategies/fer
+    timeframe: "240T"
+    features_gate: features_gate.yaml
+    features_evidence: features_evidence.yaml
+    labels_gate: labels_rr_extreme.yaml
+    labels_evidence: labels_return_tree.yaml
+    has_prefilter: true
+    has_direction: true
+
+  me:
+    config: config/strategies/me
+    timeframe: "60T"
+    features_gate: features_gate.yaml
+    features_evidence: features_evidence.yaml
+    labels_gate: labels_rr_extreme.yaml
+    labels_evidence: labels_return_tree.yaml
+    has_prefilter: true
+    has_direction: true
+
+# ── 对比决策规则 (全确定性, 无人工判断) ────────────────────────
+comparison:
+  min_trades: 10               # < 此值 → ERROR, 数据或配置有问题
+  sharpe_adopt_ratio: 0.7      # new / prev >= 0.7 → ADOPT (正常漂移)
+  sharpe_reject_floor: 0.0     # new_sharpe <= 0 → KEEP + ALERT (策略失效)
+  threshold_drift_warn: 1.0    # 单个阈值变化 > 100% → WARNING (仍可 adopt)
+
+  # 决策优先级 (从高到低):
+  # 1. new_trades < min_trades        → ERROR
+  # 2. new_sharpe <= sharpe_reject_floor → KEEP + ALERT
+  # 3. new_sharpe / prev >= adopt_ratio → ADOPT
+  # 4. new_sharpe / prev < adopt_ratio  → KEEP + ALERT (显著衰减)
+  # 5. 首次运行 (无 prev)               → ADOPT
+
+# ── 重训触发条件 (monitor_retrain.py 使用) ────────────────────
+retrain_triggers:
+  schedule_days: 90            # 定期重训间隔 (天)
+  sharpe_decay_ratio: 0.5      # 实盘滚动Sharpe / 回测Sharpe < 50% → 触发
+  consecutive_losses: 8        # 连续亏损次数 >= 8 → 触发
+  max_data_age_days: 120       # 上次训练距今 > 120 天 → 触发
+
+# ── 输出 ──────────────────────────────────────────────────────
+output:
+  history_dir: "results/research_history"
+  # 每次运行产出:
+  #   {history_dir}/{strategy}/{YYYYMMDD_HHMMSS}/
+  #     ├── report.json          # 结构化指标 + 阈值 + 对比决策
+  #     ├── archetypes/          # 配置快照 (gate/evidence/entry_filters/execution)
+  #     ├── pipeline.log         # 完整运行日志
+  #     └── comparison.json      # 与上次运行的对比详情
