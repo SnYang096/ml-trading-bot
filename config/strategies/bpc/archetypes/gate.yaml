@@ -1,140 +1,16 @@
-# BPC Gate Archetype
-# 基于 optimize_gate_unified.py 评估结果整理
-# 评估时间: 2026-02-08
-# ❗ 规则方向已根据数据实际相关性修正
-
-# 语义说明（基于特征与 RR 的实际相关性）：
-# - 高 wpt_ignition_score → 低 RR（实际负相关）
-# - 低 wpt_exhaustion_score → 低 RR（实际负相关）
-# - 高 sr_strength_max → 低 RR（实际负相关）
-# - 高 vp_absorption_score → 低 RR（实际负相关）
-# - 高 bpc_dir_consistency_long → 低 RR（实际负相关）
+# BPC Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/bpc/20260224_012156/strategies/bpc/gate_draft.yaml
+# 优化规则: 0/4 条通过优化, 4 条已移除
 
 schema:
   phases:
-    - system_safety
-    - hard_gate
-    - guardrail        # 策略一致性护栏（不参与优化）
-    - preconditions
-    - evidence
-    - decision
-  evaluation_order: system_safety -> hard_gate -> guardrail -> preconditions -> evidence -> decision
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
     failure_budget:
-      max_hard_deny_rate: 0.50
+      max_hard_deny_rate: 0.5
       alert_threshold: 0.45
-
-# ============================================================
-# 🔴 Hard Gates (必要条件 - 不满足则拒绝)
-# ============================================================
-hard_gates:
-  # ✅ Lift=11.4% | PassRate=74.3% | 方向已修正
-  - id: gate_direction_not_committed
-    tag: HARD_DIRECTION_NOT_COMMITTED
-    phase: hard_gate
-    priority: 0
-    reason: "[HARD] 方向结构过强 — 过度拥挤"
-    when:
-      bpc_dir_consistency_long:
-        value_gt: 0.55
-    then:
-      action: deny
-
-  # ✅ Lift=21.2% | PassRate=35.8% | 方向已修正
-  - id: gate_wpt_ignition_fail
-    tag: HARD_WPT_IGNITION_FAIL
-    phase: hard_gate
-    priority: 1
-    reason: "[HARD] WPT 点火过强 — 小波动能过度"
-    when:
-      wpt_ignition_score:
-        value_gt: 0.209
-    then:
-      action: deny
-
-  # ✅ Lift=562% | PassRate=44.4% | 方向已修正
-  - id: gate_wpt_exhaustion
-    tag: HARD_WPT_EXHAUSTION
-    phase: hard_gate
-    priority: 2
-    reason: "[HARD] WPT 未力竭 — 小波动能未释放"
-    when:
-      wpt_exhaustion_score:
-        value_lt: 0.309
-    then:
-      action: deny
-
-# ============================================================
-# 🛡️ Strategy Guardrails (策略一致性护栏 - 不参与 Lift 优化)
-# ============================================================
-# 这些规则不是 Alpha 信号，而是策略语义约束。
-# 它们的 Lift 异常高，但这是“同义反复”的结果，不是预测信息。
-# 固定宽松阈值，防止 execution 违背策略前提。
-guardrails:
-  # 🛡️ 价格位置护栏
-  # 语义：BPC = 低位压缩→突破，不应在极端高位追单
-  # 固定阈值 0.9（不参与优化）
-  - id: guardrail_price_position_extreme_high
-    tag: GUARDRAIL_PRICE_POSITION_EXTREME_HIGH
-    phase: guardrail
-    priority: 0
-    reason: "[GUARDRAIL] 价格位置极端高 — 违背 BPC 低位压缩语义"
-    when:
-      price_position:
-        value_gt: 0.9
-    then:
-      action: deny
-    meta:
-      is_alpha: false
-      rationale: |
-        price_position 的高 Lift 是“同义反复”的结果：
-        BPC 策略本身就是低位压缩→突破，模型发出信号时，
-        价格大概率就在低位。这不是预测信息，是策略定义的显式化。
-        作为 Guardrail 保留，防止 execution 犯常识错误。
-
-  # 🛡️ BPC 成交量压缩护栏
-  # 语义：BPC 核心语义是“缩量压缩”，不应在缩量不足时做单
-  # 固定阈值 0.3（不参与优化）
-  - id: guardrail_bpc_volume_compression_missing
-    tag: GUARDRAIL_BPC_VOLUME_COMPRESSION_MISSING
-    phase: guardrail
-    priority: 1
-    reason: "[GUARDRAIL] BPC缩量不足 — 违背 BPC 压缩语义"
-    when:
-      bpc_volume_compression_pct:
-        value_lt: 0.3
-    then:
-      action: deny
-    meta:
-      is_alpha: false
-      rationale: |
-        bpc_volume_compression_pct 是 BPC 策略的核心语义特征。
-        它在 Gate 层会产生假阳性的高 Lift，因为模型本身就依赖它。
-        作为 Guardrail 保留，确保不在“完全没有压缩”的情况下做单。
-
-# ============================================================
-# ⚫ System Safety (系统安全 - 不做 lift 优化)
-# ============================================================
-system_safety:
-  - id: safety_reflexivity_crowded
-    tag: SYSTEM_REFLEXIVITY_CROWDED
-    phase: system_safety
-    priority: 0
-    reason: "[SYSTEM] 反身性拥挤 — 市场单边过度"
-    when:
-      ofci_pct:
-        quantile_gt: 0.85
-    then:
-      action: deny
-
-# ============================================================
-# 📋 移除的无效规则
-# ============================================================
-# no_valid_threshold (无法找到有效阈值):
-#   - vol_slope_20, vp_compression_score, wpt_absorption_score
-#   - liquidity_void_compression_score
-# Lift < 0.1 (几乎无效):
-#   - vpin_ma20 (0.06), wpt_compression_score (0.06)
-#   - spectrum_price_high_freq_ratio (0.06)
-#   - spectrum_volume_high_freq_ratio (0.07)
-#   - spectrum_cvd_low_freq_ratio (0.10)
+hard_gates: []
+guardrails: []

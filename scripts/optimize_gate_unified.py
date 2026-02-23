@@ -66,7 +66,10 @@ class UnifiedOptimizationConfig:
     """统一优化配置"""
 
     # Lift相关参数
-    min_lift: float = 0.10  # 最低lift要求
+    # lift = pass_rate_good / pass_rate_bad - 1
+    # lift=1.0 表示 good 通过率是 bad 的 2 倍, 是有意义的最低标准
+    # lift=0.1 只提升 10%, 几乎无用
+    min_lift: float = 1.0  # 最低 lift 要求 (之前 0.10 太低, 会保留无效规则)
     min_pass_rate: float = 0.20  # 最低通过率
     max_pass_rate: float = 0.80  # 最高通过率
 
@@ -1486,6 +1489,12 @@ def main() -> int:
         help="After optimization, write updated gate.yaml with optimized thresholds "
         "to archetypes/gate.yaml (promote draft to production)",
     )
+    parser.add_argument(
+        "--prefilter",
+        default=None,
+        help="Prefilter YAML path. If provided, filter logs by prefilter rules "
+        "before optimization (ensures plateau validation on production distribution)",
+    )
     args = parser.parse_args()
 
     # Load logs
@@ -1496,6 +1505,52 @@ def main() -> int:
 
     df = pd.read_parquet(logs_path)
     print(f"✅ Loaded {len(df)} rows from {logs_path}")
+
+    # ── Prefilter: 在生产分布上验证 plateau ──
+    if args.prefilter:
+        _pf_path = Path(args.prefilter)
+        if _pf_path.exists():
+            import yaml
+            import operator as _op
+
+            _PF_OPS = {
+                ">=": _op.ge,
+                ">": _op.gt,
+                "<=": _op.le,
+                "<": _op.lt,
+                "==": _op.eq,
+                "!=": _op.ne,
+            }
+            with open(_pf_path, "r", encoding="utf-8") as _f:
+                _pf_cfg = yaml.safe_load(_f)
+            _pf_rules = _pf_cfg.get("rules", []) if _pf_cfg else []
+            if _pf_rules:
+                _n_before = len(df)
+                for _rule in _pf_rules:
+                    if "any_of" in _rule:
+                        # OR 组: 满足任一条件即通过
+                        _or_mask = pd.Series(False, index=df.index)
+                        for _sub in _rule["any_of"]:
+                            _sf = _sub["feature"]
+                            _sop = _PF_OPS.get(_sub["operator"])
+                            if _sop and _sf in df.columns:
+                                _or_mask |= _sop(df[_sf], _sub["value"])
+                        df = df[_or_mask].copy()
+                    else:
+                        _feat = _rule.get("feature", "")
+                        _op_str = _rule.get("operator", "")
+                        _val = _rule.get("value")
+                        _op_func = _PF_OPS.get(_op_str)
+                        if _op_func and _feat in df.columns:
+                            df = df[_op_func(df[_feat], _val)].copy()
+                print(
+                    f"🛡️  Prefilter applied: {_n_before} → {len(df)} rows "
+                    f"({len(df)/_n_before:.1%} retained)"
+                )
+            else:
+                print(f"ℹ️  Prefilter {_pf_path}: rules 为空, 不过滤")
+        else:
+            print(f"⚠️  Prefilter file not found: {args.prefilter}, 跳过")
 
     # 自动生成 is_good 列 (如果不存在)
     rr_col = None

@@ -49,7 +49,7 @@ import yaml
 
 try:
     from bokeh.plotting import figure as bk_figure
-    from bokeh.models import ColumnDataSource, HoverTool, Span, Range1d
+    from bokeh.models import ColumnDataSource, HoverTool, Span, Range1d, Div
     from bokeh.layouts import column as bk_column
     from bokeh.resources import INLINE as BK_RESOURCES
     from bokeh.embed import file_html as bk_file_html
@@ -1153,6 +1153,27 @@ def _generate_trading_map_html(
                     legend_label=f"Total: {n_w}W/{n_l}L avg={mean_r:+.2f}R",
                 )
 
+            # 添加统计摘要信息
+            stats_div = Div(
+                text=f"""
+            <div style="padding: 10px; background-color: #16213e; border-radius: 5px; margin-bottom: 10px;">
+                <h3 style="color: #00d4aa; margin-top: 0;">交易统计摘要 - {sym}</h3>
+                <div style="display: flex; justify-content: space-between; flex-wrap: wrap;">
+                    <div style="margin-right: 20px;">
+                        <strong style="color: #e0e0e0;">总交易数:</strong> <span style="color: #4fc3f7;">{n_total}</span><br>
+                        <strong style="color: #e0e0e0;">胜率:</strong> <span style="color: #4fc3f7;">{n_w/n_total*100:.1f}%</span><br>
+                        <strong style="color: #e0e0e0;">平均R回报:</strong> <span style="color: #{'26a69a' if mean_r >= 0 else 'ef5350'};">{mean_r:+.3f}R</span><br>
+                    </div>
+                    <div>
+                        <strong style="color: #e0e0e0;">盈利交易:</strong> <span style="color: #26a69a;">{n_w}</span><br>
+                        <strong style="color: #e0e0e0;">亏损交易:</strong> <span style="color: #ef5350;">{n_l}</span><br>
+                        <strong style="color: #e0e0e0;">盈亏比:</strong> <span style="color: #4fc3f7;">{n_w/n_l:.2f} (W/L)</span><br>
+                    </div>
+                </div>
+            </div>
+            """
+            )
+
             # HoverTool (仅交易标记)
             hover = HoverTool(tooltips=[("Trade", "@info")], mode="mouse")
             p.add_tools(hover)
@@ -1212,7 +1233,7 @@ def _generate_trading_map_html(
             r_fig.xaxis.major_label_overrides = seq_to_label
             r_fig.yaxis.axis_label = "R"
 
-            all_layouts.append(bk_column(p, r_fig))
+            all_layouts.append(bk_column(stats_div, p, r_fig))
 
     if not all_layouts:
         return "<p>No charts generated</p>"
@@ -3307,7 +3328,13 @@ def main() -> int:
     # 生成交易地图 (K线 + 入场/出场标记)
     if trade_details:
         logs_path = Path(args.logs)
-        map_path = logs_path.parent / f"trading_map_{args.strategy or 'backtest'}.html"
+        # 如果提供了 --output 参数，则使用该路径，否则使用默认路径
+        if args.output:
+            map_path = Path(args.output)
+        else:
+            map_path = (
+                logs_path.parent / f"trading_map_{args.strategy or 'backtest'}.html"
+            )
         # 从 meta.yaml 读取 timeframe
         auto_tf = (
             load_meta_timeframe(

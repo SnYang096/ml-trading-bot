@@ -3,7 +3,7 @@
 Direction.yaml 严格验证 — 覆盖率 + 方向质量
 
 验证每个策略的 predictions 数据是否能通过 direction.yaml 规则确定方向，
-以及方向模块是否优于 always-long 基线。
+以及方向模块是否优于随机方向基线。
 
 验证项:
   Phase 1 - 覆盖率验证:
@@ -11,8 +11,8 @@ Direction.yaml 严格验证 — 覆盖率 + 方向质量
     - 命中规则统计
     - 方向分布 (Long / Short / Zero)
   Phase 2 - 方向质量验证:
-    - median(rr_in_direction) vs median(rr_always_long)
-    - bad rate(按方向) vs bad rate(always-long)
+    - median(rr × direction) > 0 → 方向信号优于随机 (置换检验 p<0.05)
+    - bad rate(按方向) vs bad rate(随机)
     - 每个方向子集的样本量校验 (>= 1080)
 
 用法:
@@ -178,21 +178,46 @@ def compute_direction_series(
     return direction
 
 
+def _permutation_p_value(
+    rr_arr: np.ndarray,
+    dir_arr: np.ndarray,
+    observed_median: float,
+    n_perm: int = 200,
+) -> float:
+    """置换检验: 方向信号是否优于随机方向。
+
+    H0: direction 与 forward_rr 无关 (随机方向, 期望 median ≈ 0)
+    H1: median(rr × direction) > 0 (方向信号有信息)
+
+    方法: 保持 +1/-1 比例不变, 随机打乱 direction 的行分配,
+    计算 n_perm 次 median(rr × shuffled_dir)。
+    p = (#{perm_median >= observed} + 1) / (n_perm + 1)
+    """
+    count_ge = 0
+    rng = np.random.default_rng(42)
+    for _ in range(n_perm):
+        perm_dir = rng.permutation(dir_arr)
+        perm_med = float(np.median(rr_arr * perm_dir))
+        if perm_med >= observed_median:
+            count_ge += 1
+    return (count_ge + 1) / (n_perm + 1)
+
+
 def validate_direction_quality(
     arch_name: str,
     df: pd.DataFrame,
     direction: pd.Series,
 ) -> Optional[Dict[str, Any]]:
-    """Phase 2: 方向质量验证 — 方向模块是否优于 always-long。
+    """Phase 2: 方向质量验证 — 方向信号是否优于随机方向。
 
     核心公式:
-        rr_in_direction = forward_rr_long * direction
-        (direction=-1 时, rr = -forward_rr_long = forward_rr_short)
+        rr_in_direction = forward_rr_long × direction
+        随机方向基线: median(rr × random_direction) ≈ 0
 
     通过标准:
-        1. median(rr_in_direction) > median(forward_rr_long)  → 方向有正贡献
-        2. bad_rate(按方向) < bad_rate(always-long)           → 失败率更低
-        3. short 子集样本量 >= MIN_CREDIBLE_SAMPLES            → 统计可信
+        1. median(rr × direction) > 0  → 方向信号优于随机
+        2. 置换检验 p < 0.05             → 统计显著
+        3. short 子集样本量 >= MIN_CREDIBLE_SAMPLES → 统计可信
     """
     rr_col = _find_rr_column(df)
     if rr_col is None:
@@ -212,17 +237,21 @@ def validate_direction_quality(
 
     # ── 核心指标 ──────────────────────────────────────────
     rr_in_dir = rr * dir_s  # 按方向调整后的 RR
-    rr_long = rr  # always-long 基线
 
-    # 中位数 / 均值
+    # 中位数 / 均值 (vs 随机基线 = 0)
     med_in_dir = float(rr_in_dir.median())
-    med_long = float(rr_long.median())
     mean_in_dir = float(rr_in_dir.mean())
-    mean_long = float(rr_long.mean())
+
+    # Always-long 参考 (仅供对比, 不作为通过标准)
+    med_long = float(rr.median())
+    mean_long = float(rr.mean())
 
     # Bad rate: failure_rr_extreme (rr < -0.8)
     bad_in_dir = float((rr_in_dir < FAILURE_RR_THRESHOLD).mean())
-    bad_long = float((rr_long < FAILURE_RR_THRESHOLD).mean())
+    bad_long = float((rr < FAILURE_RR_THRESHOLD).mean())
+
+    # 置换检验: 方向信号 vs 随机方向
+    p_random = _permutation_p_value(rr.values, dir_s.values, med_in_dir, n_perm=500)
 
     # ── Long / Short 子集分析 ──────────────────────────────
     long_mask = dir_s > 0
@@ -232,19 +261,17 @@ def validate_direction_quality(
 
     long_med_rr = float(rr[long_mask].median()) if n_long > 0 else float("nan")
     short_med_rr = float((-rr[short_mask]).median()) if n_short > 0 else float("nan")
-    # short_med_rr: -forward_rr_long = forward_rr_short，正值表示做空盈利
 
     long_bad = float((rr[long_mask] < FAILURE_RR_THRESHOLD).mean()) if n_long > 0 else float("nan")
     short_bad = float((-rr[short_mask] < FAILURE_RR_THRESHOLD).mean()) if n_short > 0 else float("nan")
 
-    # ── 判定 ──────────────────────────────────────────────
-    direction_lift_median = med_in_dir - med_long
+    # ── 判定 (基线: 随机方向) ──────────────────────────────
     direction_lift_bad = bad_long - bad_in_dir  # 正 = 方向模块降低了 bad rate
 
     passes = []
-    passes.append(("median_lift", direction_lift_median > 0, direction_lift_median))
+    passes.append(("median_rr_positive", med_in_dir > 0, med_in_dir))
+    passes.append(("perm_significant", p_random < 0.05, p_random))
     passes.append(("mean_positive", mean_in_dir > 0, mean_in_dir))
-    passes.append(("bad_rate_reduction", direction_lift_bad > 0, direction_lift_bad))
     passes.append(("short_credible", n_short >= MIN_CREDIBLE_SAMPLES, n_short))
     passes.append(("short_ratio", n_short / (n_long + n_short) > 0.15 if (n_long + n_short) > 0 else False,
                    round(n_short / (n_long + n_short) * 100, 1) if (n_long + n_short) > 0 else 0))
@@ -253,13 +280,15 @@ def validate_direction_quality(
         "status": "OK",
         "rr_col": rr_col,
         "n_valid": len(rr),
-        # 全局对比
+        # vs 随机基线 (主要标准)
         "median_in_direction": round(med_in_dir, 4),
-        "median_always_long": round(med_long, 4),
-        "direction_lift_median": round(direction_lift_median, 4),
+        "p_random": round(p_random, 4),
         "mean_in_direction": round(mean_in_dir, 4),
-        "mean_always_long": round(mean_long, 4),
         "bad_rate_in_direction": round(bad_in_dir, 4),
+        # vs always-long (仅参考)
+        "median_always_long": round(med_long, 4),
+        "lift_vs_long": round(med_in_dir - med_long, 4),
+        "mean_always_long": round(mean_long, 4),
         "bad_rate_always_long": round(bad_long, 4),
         "bad_rate_reduction": round(direction_lift_bad, 4),
         # 子集
@@ -308,7 +337,7 @@ def _print_coverage(arch_name: str, r: dict) -> bool:
 
 def _print_quality(arch_name: str, q: Optional[Dict]) -> bool:
     """打印 Phase 2 方向质量验证结果，返回是否通过。"""
-    print(f"  \n  Phase 2: 方向质量验证")
+    print(f"  \n  Phase 2: 方向质量验证 (基线: 随机方向)")
 
     if q is None:
         print(f"  ⬜ 无 forward_rr 列，跳过质量验证")
@@ -321,27 +350,30 @@ def _print_quality(arch_name: str, q: Optional[Dict]) -> bool:
     print(f"  RR 列: {q['rr_col']}  |  有效行: {q['n_valid']}")
     print(f"")
     print(f"  ┌─────────────────────┬──────────────┬──────────────┬──────────────┐")
-    print(f"  │ 指标                │ 按方向交易   │ Always-Long  │  Lift        │")
+    print(f"  │ 指标                │ 按方向交易   │ 随机方向     │ Always-Long  │")
     print(f"  ├─────────────────────┼──────────────┼──────────────┼──────────────┤")
-    print(f"  │ Median RR           │ {q['median_in_direction']:>+11.4f} │ {q['median_always_long']:>+11.4f} │ {q['direction_lift_median']:>+11.4f} │")
-    print(f"  │ Mean RR             │ {q['mean_in_direction']:>+11.4f} │ {q['mean_always_long']:>+11.4f} │ {q['mean_in_direction'] - q['mean_always_long']:>+11.4f} │")
-    print(f"  │ Bad Rate (<-0.8R)   │ {q['bad_rate_in_direction']:>10.1%}  │ {q['bad_rate_always_long']:>10.1%}  │ {-q['bad_rate_reduction']:>+10.1%}  │")
+    print(f"  │ Median RR           │ {q['median_in_direction']:>+11.4f} │      ≈0      │ {q['median_always_long']:>+11.4f} │")
+    print(f"  │ Mean RR             │ {q['mean_in_direction']:>+11.4f} │      ≈0      │ {q['mean_always_long']:>+11.4f} │")
+    print(f"  │ Bad Rate (<-0.8R)   │ {q['bad_rate_in_direction']:>10.1%}  │     ~50%     │ {q['bad_rate_always_long']:>10.1%}  │")
     print(f"  └─────────────────────┴──────────────┴──────────────┴──────────────┘")
+    p_str = f"{q['p_random']:.4f}" if 'p_random' in q else 'N/A'
+    print(f"  置换检验 p-value: {p_str} {'✅ 显著' if q.get('p_random', 1) < 0.05 else '❌ 不显著'}")
     print(f"")
     print(f"  Long 子集:  n={q['n_long']:>6d}  median_rr={q['long_median_rr']:>+.4f}  bad_rate={q['long_bad_rate']:.1%}")
     print(f"  Short 子集: n={q['n_short']:>6d}  median_rr={q['short_median_rr']:>+.4f}  bad_rate={q['short_bad_rate']:.1%}")
     print(f"  Short 占比: {q['short_pct']:.1f}%")
+    print(f"  (参考) vs Always-Long lift: {q.get('lift_vs_long', 0):+.4f}")
     print(f"")
 
     all_ok = True
     for name, passed, value in q["checks"]:
         icon = "✅" if passed else "❌"
-        if name == "median_lift":
-            desc = f"Median Lift > 0: {value:+.4f}"
+        if name == "median_rr_positive":
+            desc = f"Median RR > 0 (优于随机): {value:+.4f}"
+        elif name == "perm_significant":
+            desc = f"置换检验 p<0.05: p={value:.4f}"
         elif name == "mean_positive":
             desc = f"Mean RR > 0: {value:+.4f}"
-        elif name == "bad_rate_reduction":
-            desc = f"Bad Rate 降低: {value:+.1%}"
         elif name == "short_credible":
             desc = f"Short 样本量 >= {MIN_CREDIBLE_SAMPLES}: n={value}"
         elif name == "short_ratio":
@@ -470,9 +502,14 @@ def compare_direction_features(
         valid = direction != 0
         rr_dir_valid = rr_in_dir[valid]
 
-        med_dir = float(rr_dir_valid.median())
+        med_dir = float(rr_dir_valid.median())   # median(rr × direction), vs random ≈ 0
         mean_dir = float(rr_dir_valid.mean())
         bad_dir = float((rr_dir_valid < FAILURE_RR_THRESHOLD).mean())
+
+        # 置换检验: 方向信号 vs 随机方向
+        p_rand = _permutation_p_value(
+            rr[valid].values, direction[valid].values, med_dir, n_perm=200
+        )
 
         results.append({
             "feature": feat,
@@ -480,41 +517,61 @@ def compare_direction_features(
             "n_long": n_long,
             "n_short": n_short,
             "short_pct": round(n_short / n_total * 100, 1),
-            "median_lift": round(med_dir - rr_long_median, 4),
+            "median_rr_in_dir": round(med_dir, 4),      # 主指标 (vs random=0)
+            "p_random": round(p_rand, 4),                # 置换检验 p-value
+            "lift_vs_long": round(med_dir - rr_long_median, 4),  # 参考: vs always-long
             "mean_rr": round(mean_dir, 4),
             "bad_rate_reduction": round((bad_long - bad_dir) * 100, 2),
         })
 
-    # Sort by median_lift descending
-    results.sort(key=lambda x: x["median_lift"], reverse=True)
+    # Sort by median_rr_in_dir descending (vs random baseline)
+    results.sort(key=lambda x: x["median_rr_in_dir"], reverse=True)
     return results
 
 
 def _print_compare_table(results: list, rr_col: str) -> None:
-    """打印方向特征对比排名表。"""
-    print(f"\n{'=' * 90}")
-    print(f"Direction 特征对比排名 (RR列: {rr_col}, 按 Median Lift 排序)")
-    print(f"{'=' * 90}")
-    print(f"{'Rank':>4s}  {'特征':<32s} {'Transform':<13s} {'Short%':>7s} {'Med.Lift':>9s} {'MeanRR':>9s} {'BadR↓%':>7s}")
-    print(f"{'-' * 90}")
+    """打印方向特征对比排名表 (基线: 随机方向)。"""
+    print(f"\n{'=' * 110}")
+    print(f"Direction 特征对比排名 (RR列: {rr_col}, 基线: 随机方向, 按 Med.RR 排序)")
+    print(f"{'=' * 110}")
+    print(
+        f"{'Rank':>4s}  {'特征':<32s} {'Transform':<13s} "
+        f"{'Short%':>7s} {'Med.RR':>9s} {'p_rand':>7s} {'vsLong':>9s} {'MeanRR':>9s} {'BadR↓%':>7s}"
+    )
+    print(f"{'-' * 110}")
 
     for i, r in enumerate(results, 1):
+        p_str = f"{r['p_random']:.3f}" if r['p_random'] >= 0.001 else "<.001"
+        sig = "*" if r['p_random'] < 0.05 else " "
         marker = " 🏆" if i == 1 else ""
+        # 标注常数偏差警告: short% > 80% 或 < 20%
+        bias_warn = ""
+        if r['short_pct'] > DIR_RULE_MAX_SHORT_PCT:
+            bias_warn = " ⚠️常数做空"
+        elif r['short_pct'] < DIR_RULE_MIN_SHORT_PCT:
+            bias_warn = " ⚠️常数做多"
         print(
             f"{i:>4d}  {r['feature']:<32s} {r['transform']:<13s} "
-            f"{r['short_pct']:>6.1f}% {r['median_lift']:>+8.4f} "
-            f"{r['mean_rr']:>+8.4f} {r['bad_rate_reduction']:>+6.2f}%{marker}"
+            f"{r['short_pct']:>6.1f}% {r['median_rr_in_dir']:>+8.4f} "
+            f"{p_str:>6s}{sig} {r['lift_vs_long']:>+8.4f} "
+            f"{r['mean_rr']:>+8.4f} {r['bad_rate_reduction']:>+6.2f}%{marker}{bias_warn}"
         )
 
-    print(f"{'-' * 90}")
+    print(f"{'-' * 110}")
     print(f"  共 {len(results)} 个候选特征通过双向分布筛选 (Short >= {MIN_CREDIBLE_SAMPLES})")
-    print(f"  Median Lift = median(rr*direction) - median(rr_always_long)")
+    print(f"  Med.RR = median(rr × direction) — 随机方向基线 ≈ 0, >0 即优于随机")
+    print(f"  p_rand = 置换检验 p-value (*=显著 p<0.05)")
+    print(f"  vsLong = Med.RR - median(rr_always_long) — 参考, 非主要标准")
     print(f"  BadR↓% = bad_rate_always_long - bad_rate_in_direction (正=更好)")
     if results:
         best = results[0]
+        sig_str = "显著" if best['p_random'] < 0.05 else "不显著"
         print(f"\n  🏆 推荐: {best['feature']} ({best['transform']})")
-        print(f"     Median Lift={best['median_lift']:+.4f}, Short={best['short_pct']:.1f}%, BadRate降低={best['bad_rate_reduction']:+.2f}%")
-    print(f"{'=' * 90}")
+        print(
+            f"     Med.RR={best['median_rr_in_dir']:+.4f} (p={best['p_random']:.4f} {sig_str}), "
+            f"Short={best['short_pct']:.1f}%, vsLong={best['lift_vs_long']:+.4f}"
+        )
+    print(f"{'=' * 110}")
 
 
 # ── Temporal stability for compare-features ───────────────────────
@@ -544,15 +601,17 @@ def _get_times(df: pd.DataFrame, time_col: str) -> pd.Series:
 def _compute_window_lift(
     rr: pd.Series,
     direction: pd.Series,
-    rr_long_median: float,
     min_samples: int = TEMPORAL_MIN_SAMPLES,
 ) -> Optional[float]:
-    """计算单个窗口的 Median Lift。"""
+    """计算单个窗口的 median(rr × direction)。
+
+    随机方向基线 = 0, 所以 median(rr × direction) 本身就是 lift。
+    """
     valid = direction != 0
     rr_dir = (rr * direction)[valid]
     if len(rr_dir) < min_samples:
         return None
-    return float(rr_dir.median()) - rr_long_median
+    return float(rr_dir.median())
 
 
 def temporal_direction_stability(
@@ -623,9 +682,7 @@ def temporal_direction_stability(
                 w_rr = rr[mask.values]
                 w_dir = direction_eval[mask.values]
 
-                # always-long baseline per window
-                rr_long_med_w = float(w_rr.median()) if len(w_rr) > 0 else 0.0
-                lift = _compute_window_lift(w_rr, w_dir, rr_long_med_w)
+                lift = _compute_window_lift(w_rr, w_dir)
                 if lift is None:
                     continue
 
@@ -649,7 +706,7 @@ def temporal_direction_stability(
             window_results[wm].append({
                 "feature": feat,
                 "transform": transform,
-                "full_lift": r["median_lift"],
+                "full_lift": r.get("median_rr_in_dir", r.get("median_lift", 0)),
                 "mean_lift": round(mean_lift, 4),
                 "std_lift": round(std_lift, 4),
                 "cv": round(cv, 2),
@@ -800,20 +857,23 @@ def _write_direction_evaluation(
     lines.append(f'  timestamp: "{date.today()}"')
     lines.append(f'  data_source: "{data_source}"')
     lines.append(f"  n_rows: {n_rows}")
-    lines.append(f"  baseline_median_rr: {baseline_median_rr:+.4f}")
-    lines.append(f"  baseline_bad_rate: {baseline_bad_rate:.4f}")
+    lines.append(f"  baseline: random_direction  # 随机方向 (期望 median ≈ 0)")
+    lines.append(f"  always_long_median_rr: {baseline_median_rr:+.4f}  # 参考")
+    lines.append(f"  always_long_bad_rate: {baseline_bad_rate:.4f}  # 参考")
     lines.append("")
 
-    positive = [r for r in results if r["median_lift"] > 0]
-    negative = [r for r in results if r["median_lift"] <= 0]
+    positive = [r for r in results if r.get("median_rr_in_dir", 0) > 0]
+    negative = [r for r in results if r.get("median_rr_in_dir", 0) <= 0]
 
-    lines.append(f"  # ── Median Lift > 0 ({len(positive)} 个) ──")
+    lines.append(f"  # ── Med.RR > 0 (优于随机, {len(positive)} 个) ──")
     lines.append("  positive_lift:")
     if positive:
         for r in positive:
             lines.append(f"    - feature: {r['feature']}")
             lines.append(f"      transform: {r['transform']}")
-            lines.append(f"      median_lift: {r['median_lift']:+.4f}")
+            lines.append(f"      median_rr_in_dir: {r.get('median_rr_in_dir', 0):+.4f}")
+            lines.append(f"      p_random: {r.get('p_random', 1):.4f}")
+            lines.append(f"      lift_vs_long: {r.get('lift_vs_long', 0):+.4f}")
             lines.append(f"      bad_rate_reduction_pct: {r['bad_rate_reduction']:+.2f}")
             lines.append(f"      short_pct: {r['short_pct']}")
             if temporal_data and r["feature"] in temporal_data:
@@ -824,14 +884,16 @@ def _write_direction_evaluation(
         lines.append("    []")
     lines.append("")
 
-    lines.append(f"  # ── Lift <= 0 (兜底候选, 前 5) ──")
+    lines.append(f"  # ── Med.RR <= 0 (不优于随机, 前 5) ──")
     lines.append("  fallback:")
     top_neg = negative[:5]
     if top_neg:
         for r in top_neg:
             lines.append(f"    - feature: {r['feature']}")
             lines.append(f"      transform: {r['transform']}")
-            lines.append(f"      median_lift: {r['median_lift']:+.4f}")
+            lines.append(f"      median_rr_in_dir: {r.get('median_rr_in_dir', 0):+.4f}")
+            lines.append(f"      p_random: {r.get('p_random', 1):.4f}")
+            lines.append(f"      lift_vs_long: {r.get('lift_vs_long', 0):+.4f}")
             lines.append(f"      bad_rate_reduction_pct: {r['bad_rate_reduction']:+.2f}")
             lines.append(f"      short_pct: {r['short_pct']}")
             if temporal_data and r["feature"] in temporal_data:
@@ -859,7 +921,151 @@ def _write_direction_evaluation(
         f.write(new_content)
 
     print(f"\n💾 已回写 last_evaluation → {path}")
-    print(f"   正 Lift: {len(positive)}, 兜底: {len(top_neg)}")
+    print(f"   优于随机: {len(positive)}, 兜底: {len(top_neg)}")
+
+
+# ── 自动生成 direction_rules ─────────────────────────────────
+
+# 选择门槛
+DIR_RULE_MIN_LIFT = 0.0         # median_rr_in_dir 必须 > 0 (优于随机方向)
+DIR_RULE_MIN_SHORT_PCT = 20.0   # short_pct 必须 >= 20% (不能是假方向)
+DIR_RULE_MAX_SHORT_PCT = 80.0   # short_pct 必须 <= 80% (不能是常数偏差)
+DIR_RULE_MAX_CV = 1.5           # temporal_cv < 1.5 (时间稳定性)
+DIR_RULE_MAX_DECAY = "3/3"      # recent_decay 不能是 3/3 (完全衰减)
+DIR_RULE_MAX_RULES = 3          # 最多 3 条级联规则
+
+
+def _auto_generate_direction_rules(
+    strategy: str,
+    results: list,
+    temporal_data: Optional[Dict[str, Dict]] = None,
+) -> list:
+    """从 compare-features 结果自动选择 top 候选生成 direction_rules.
+
+    选择标准 (全部必须满足):
+      1. median_rr_in_dir > 0 — 优于随机方向基线
+      2. p_random < 0.05       — 置换检验统计显著
+      3. 20% <= short_pct <= 80% — 不能是假方向或常数偏差
+      4. temporal_cv < 1.5     — 时间稳定 (如有 temporal 数据)
+      5. recent_decay != 3/3   — 信号未完全衰减 (如有 temporal 数据)
+      6. 最多 3 条, 按 median_rr_in_dir 降序
+
+    Returns:
+        list of direction rule dicts (FER 格式), 空则无合格候选
+    """
+    qualified = []
+    for r in results:
+        # 必须优于随机方向 (median > 0)
+        if r.get("median_rr_in_dir", 0) <= 0:
+            continue
+        # 置换检验必须显著
+        if r.get("p_random", 1.0) >= 0.05:
+            continue
+        # short_pct 不能太低 (几乎全 long)
+        if r.get("short_pct", 0) < DIR_RULE_MIN_SHORT_PCT:
+            continue
+        # short_pct 不能太高 (常数做空偏差, 如 center_sign 加在强度分数上)
+        if r.get("short_pct", 100) > DIR_RULE_MAX_SHORT_PCT:
+            continue
+        # temporal 质量门槛 (如果有 temporal 数据)
+        if temporal_data and r["feature"] in temporal_data:
+            td = temporal_data[r["feature"]]
+            cv = td.get("cv", 0)
+            decay = td.get("recent_decay", "0/3")
+            if cv >= DIR_RULE_MAX_CV:
+                continue
+            if decay == DIR_RULE_MAX_DECAY:
+                continue
+        qualified.append(r)
+
+    # 按 median_rr_in_dir 降序, 取前 N
+    qualified.sort(key=lambda x: x.get("median_rr_in_dir", 0), reverse=True)
+    selected = qualified[:DIR_RULE_MAX_RULES]
+
+    if not selected:
+        return []
+
+    # 生成 direction_rules 格式 (FER 兼容)
+    rules = []
+    for i, r in enumerate(selected, 1):
+        feat = r["feature"]
+        transform = r.get("transform", "sign")
+        med_rr = r.get("median_rr_in_dir", 0)
+        p_val = r.get("p_random", 1)
+        short_pct = r.get("short_pct", 0)
+        cv_info = ""
+        if temporal_data and feat in temporal_data:
+            cv_info = f", CV={temporal_data[feat]['cv']:.2f}"
+        rules.append({
+            "method": "feature_sign",
+            "feature": feat,
+            "transform": transform,
+            "description": f"规则{i}: {feat} (med_rr={med_rr:+.4f}, p={p_val:.3f}, short={short_pct:.0f}%{cv_info})",
+        })
+
+    return rules
+
+
+def _write_direction_rules(
+    strategy: str,
+    rules: list,
+) -> bool:
+    """将自动生成的 direction_rules 写入 direction.yaml.
+
+    写入位置: 在 last_evaluation: 之前、candidates: 之后.
+    """
+    path = STRATEGIES_ROOT / strategy / "direction.yaml"
+    if not path.exists():
+        print(f"\n⚠️  {path} 不存在, 无法写入 direction_rules")
+        return False
+
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # 生成 direction_rules YAML 文本
+    lines = []
+    lines.append(f"# ── direction_rules (自动生成 by --promote {date.today()}) ──")
+    lines.append(f"# 选择标准: med_rr>0 + p<0.05 + short%>=20% + temporal CV<1.5 + 未衰减")
+    lines.append(f"# 级联规则: 规则1覆盖的行不再用规则2, 依此类推")
+    lines.append("direction_rules:")
+    for r in rules:
+        lines.append(f"  - method: {r['method']}")
+        lines.append(f"    feature: {r['feature']}")
+        lines.append(f"    transform: {r['transform']}")
+        lines.append(f'    description: "{r["description"]}"')
+    lines.append("")
+    rules_text = "\n".join(lines) + "\n"
+
+    # 写入位置: 替换现有 direction_rules 或插入在 last_evaluation 之前
+    marker_existing = "\ndirection_rules:"
+    marker_eval = "\nlast_evaluation:"
+    idx_existing = content.find(marker_existing)
+    idx_eval = content.find(marker_eval)
+
+    if idx_existing >= 0:
+        # 替换现有 direction_rules 段 (到下一个顶层 key 为止)
+        after = content[idx_existing + 1:]
+        # 找下一个非缩进的 key (或 last_evaluation / candidates)
+        end_idx = None
+        for candidate_marker in ["\nlast_evaluation:", "\ncandidates:", "\ndescription:"]:
+            pos = after.find(candidate_marker)
+            if pos >= 0 and (end_idx is None or pos < end_idx):
+                end_idx = pos
+        if end_idx is not None:
+            new_content = content[:idx_existing + 1] + rules_text + after[end_idx + 1:]
+        else:
+            new_content = content[:idx_existing + 1] + rules_text
+    elif idx_eval >= 0:
+        # 插入在 last_evaluation 之前
+        new_content = content[:idx_eval + 1] + rules_text + content[idx_eval + 1:]
+    else:
+        # 追加到末尾
+        new_content = content.rstrip() + "\n\n" + rules_text
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+
+    return True
 
 
 def main() -> int:
@@ -879,7 +1085,7 @@ def main() -> int:
     parser.add_argument(
         "--compare-features",
         action="store_true",
-        help="对比模式: 读 config/strategies/{strategy}/direction.yaml 候选, 按 Median Lift 排名",
+        help="对比模式: 读 config/strategies/{strategy}/direction.yaml 候选, 按 Med.RR 排名 (vs 随机方向)",
     )
     parser.add_argument(
         "--all-features",
@@ -935,17 +1141,28 @@ def main() -> int:
         if "_symbol" in df.columns and "symbol" not in df.columns:
             df["symbol"] = df["_symbol"]
 
-        # Phase 1: 覆盖率
-        r = validate_archetype(arch_name, df)
-        p1_pass = _print_coverage(arch_name, r)
+        # 检查 direction_rules 是否存在
+        _dir_cfg = load_direction_config(arch_name)
+        _has_rules = bool(_dir_cfg.get("direction_rules", []))
 
-        # Phase 2: 方向质量
-        direction = compute_direction_series(arch_name, df)
-        q = validate_direction_quality(arch_name, df, direction)
-        p2_pass = _print_quality(arch_name, q)
+        if _has_rules:
+            # Phase 1: 覆盖率
+            r = validate_archetype(arch_name, df)
+            p1_pass = _print_coverage(arch_name, r)
 
-        if not (p1_pass and p2_pass):
-            all_pass = False
+            # Phase 2: 方向质量
+            direction = compute_direction_series(arch_name, df)
+            q = validate_direction_quality(arch_name, df, direction)
+            p2_pass = _print_quality(arch_name, q)
+
+            if not (p1_pass and p2_pass):
+                all_pass = False
+        else:
+            print(f"\nℹ️  {arch_name}: direction.yaml 无 direction_rules, 跳过 Phase 1/2")
+            if not getattr(args, "compare_features", False):
+                print(f"   ⚠️  无规则且未指定 --compare-features, 无法验证")
+                all_pass = False
+                continue
 
         # Compare-features 模式: 对比方向候选特征
         if getattr(args, "compare_features", False):
@@ -987,6 +1204,33 @@ def main() -> int:
                     baseline_median_rr=rr_baseline,
                     baseline_bad_rate=bad_baseline,
                 )
+
+                # 自动生成 direction_rules (如果当前没有)
+                if not _has_rules and getattr(args, "promote", False):
+                    auto_rules = _auto_generate_direction_rules(
+                        arch_name, results, temporal_data
+                    )
+                    if auto_rules:
+                        ok = _write_direction_rules(arch_name, auto_rules)
+                        if ok:
+                            print(f"\n✨ 自动生成 {len(auto_rules)} 条 direction_rules:")
+                            for ar in auto_rules:
+                                print(f"   → {ar['feature']} ({ar['transform']}) — {ar['description']}")
+                        # 重新加载并验证
+                        _dir_cfg2 = load_direction_config(arch_name)
+                        if _dir_cfg2.get("direction_rules"):
+                            print(f"\n🔄 重新验证自动生成的 direction_rules...")
+                            r2 = validate_archetype(arch_name, df)
+                            p1 = _print_coverage(arch_name, r2)
+                            d2 = compute_direction_series(arch_name, df)
+                            q2 = validate_direction_quality(arch_name, df, d2)
+                            p2 = _print_quality(arch_name, q2)
+                            if not (p1 and p2):
+                                all_pass = False
+                    else:
+                        print(f"\n⚠️  无候选满足自动 direction_rules 标准")
+                        print(f"   (需要: med_rr>0 + p<0.05 + short%>=20% + CV<1.5 + 未衰减)")
+                        # 无规则不阻止 promote, 只是无 direction 功能
 
     print(f"\n{'=' * 70}")
     if all_pass:

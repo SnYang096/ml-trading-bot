@@ -1,0 +1,63 @@
+# LV 方向特征候选声明
+# 职责: 声明待验证的方向候选特征 (--compare-features 的输入)
+# 对应生产配置: config/strategies/lv/archetypes/direction.yaml (选中的规则)
+#
+# 用法:
+#   python z实验_005_统一研究/direction_strict_validation.py \
+#       --logs results/train_final_xxx/lv/features_labeled.parquet \
+#       --strategy lv --compare-features
+#
+#   # 发现模式: 扫描全部数值特征
+#   ... --compare-features --all-features
+#
+#   # 加 --temporal 查看时间稳定性
+#   ... --compare-features --temporal
+
+description: "LV 方向特征候选 — 杠杆偏向的反方向 (清算方向)"
+
+# ════════════════════════════════════════════════════════════════
+# 候选特征 (输入) — 脚本从这里读取待评估的特征列表
+# ════════════════════════════════════════════════════════════════
+# 每个条目: feature (必须), transform (可选, 自动检测)
+# transform: sign | center_sign | negate_sign | raw
+#
+# 语义约束:
+#   LV = Leverage Vulnerability, 方向 = "杠杆偏向的反方向"
+#   如果空头杠杆过度 → 做多 (逼空)
+#   如果多头杠杆过度 → 做空 (清算瀑布)
+#   禁止: SR 方向 (属 BPC)
+#   禁止: 瞬时动能方向 (属 ME)
+
+candidates:
+  # ── LV 核心: 杠杆偏向 ──
+  - feature: funding_rate              # Funding rate (正=多头付费)
+    transform: negate_sign             # 反向: 多头拥挤→做空
+  - feature: oi_delta_price_sign       # OI 变化 × 价格方向
+    transform: negate_sign
+
+  # ── 杠杆结构 ──
+  - feature: oi_compression_score      # OI 压缩得分 [0,1]
+    transform: center_sign
+  - feature: oi_exhaustion_score       # OI 枯竭得分 [0,1]
+    transform: center_sign
+  - feature: oi_trend_divergence_score # OI 趋势背离 [0,1]
+    transform: center_sign
+
+  # ── 通用动量 (兜底) ──
+  - feature: roc_20                    # 20 期 ROC
+    transform: negate_sign             # 反向: 动能耗尽方向
+  - feature: macd_atr                  # MACD/ATR
+    transform: negate_sign
+  - feature: price_velocity_pct        # 价格速度百分位 [0,1]
+    transform: center_sign
+
+  # ── 流动性 ──
+  - feature: vpin_signed_imbalance_max # VPIN 签名不平衡
+    transform: negate_sign
+  - feature: fp_volume_skew            # Footprint 成交量偏斜
+    transform: negate_sign
+
+# ════════════════════════════════════════════════════════════════
+# 上次评估结果 (输出) — 由 --compare-features 自动生成
+# ════════════════════════════════════════════════════════════════
+# 尚未评估, 运行上方命令后此处会自动填充

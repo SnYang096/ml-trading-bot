@@ -1,0 +1,10 @@
+# Feature Indicators Visualization Configuration
+# 特征组自动从 --strategy-config 的 requested_features 发现
+# 此文件仅控制显示参数
+
+display:
+  show_plots: true
+  max_columns_per_chart: 6
+  chart_height_per_row: 250
+  show_samples: true
+  sample_count: 5

@@ -1,0 +1,9 @@
+# LV Archetype Prefilter
+# 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
+# 对应研究配置: config/strategies/lv/prefilter.yaml (候选特征声明)
+#
+# ⚠️ 初始模板 — 需要运行 auto_research_pipeline.py 自动生成规则
+# LV (15min) 暂缓, Feature Store 计算成本太高
+
+# 暂无规则, 等待自动研究管线生成
+rules: []

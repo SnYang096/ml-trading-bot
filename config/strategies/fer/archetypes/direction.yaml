@@ -80,688 +80,613 @@ last_evaluation:
   # ── 自动生成 by --compare-features (2026-02-23) ──
   timestamp: "2026-02-23"
   data_source: "features_labeled.parquet"
-  n_rows: 39126
-  baseline_median_rr: -0.0803
-  baseline_bad_rate: 0.4518
+  n_rows: 36630
+  baseline_median_rr: -0.0573
+  baseline_bad_rate: 0.4505
 
-  # ── Median Lift > 0 (122 个) ──
+  # ── Median Lift > 0 (115 个) ──
   positive_lift:
-    - feature: cvd_divergence_score
-      transform: sign
-      median_lift: +0.3262
-      bad_rate_reduction_pct: +2.14
-      short_pct: 77.8
-      temporal_cv: 1.04
-      recent_decay: "0/3"
-    - feature: trend_div_alignment
-      transform: sign
-      median_lift: +0.3262
-      bad_rate_reduction_pct: +2.14
-      short_pct: 77.8
-      temporal_cv: 1.04
-      recent_decay: "0/3"
-    - feature: direction_to_nearest_sr
-      transform: sign
-      median_lift: +0.2650
-      bad_rate_reduction_pct: +1.66
-      short_pct: 52.8
-      temporal_cv: 0.93
-      recent_decay: "0/3"
-    - feature: price_momentum_div_score
-      transform: sign
-      median_lift: +0.2610
-      bad_rate_reduction_pct: +1.75
-      short_pct: 50.8
-      temporal_cv: 0.95
-      recent_decay: "0/3"
     - feature: momentum_exhaustion_score
       transform: center_sign
-      median_lift: +0.2401
-      bad_rate_reduction_pct: +1.46
-      short_pct: 77.5
-      temporal_cv: 1.59
-      recent_decay: "0/3"
-    - feature: cvd_divergence_score_pct
-      transform: center_sign
-      median_lift: +0.2398
-      bad_rate_reduction_pct: +1.53
-      short_pct: 49.5
-      temporal_cv: 0.96
-      recent_decay: "0/3"
-    - feature: price_momentum_div_score_pct
-      transform: center_sign
-      median_lift: +0.2377
-      bad_rate_reduction_pct: +1.59
-      short_pct: 49.6
-      temporal_cv: 0.96
-      recent_decay: "0/3"
+      median_lift: +0.2787
+      bad_rate_reduction_pct: +1.68
+      short_pct: 77.2
+    - feature: direction_to_nearest_sr
+      transform: sign
+      median_lift: +0.2621
+      bad_rate_reduction_pct: +1.63
+      short_pct: 53.4
+    - feature: cvd_divergence_score
+      transform: sign
+      median_lift: +0.2606
+      bad_rate_reduction_pct: +1.73
+      short_pct: 78.3
+    - feature: trend_div_alignment
+      transform: sign
+      median_lift: +0.2606
+      bad_rate_reduction_pct: +1.73
+      short_pct: 78.3
     - feature: volume_activity_pct
       transform: center_sign
-      median_lift: +0.2326
-      bad_rate_reduction_pct: +1.40
-      short_pct: 51.7
-      temporal_cv: 0.8
-      recent_decay: "0/3"
-    - feature: fer_signed_efficiency_pct
+      median_lift: +0.2304
+      bad_rate_reduction_pct: +1.38
+      short_pct: 51.1
+    - feature: cvd_divergence_score_pct
       transform: center_sign
-      median_lift: +0.2067
-      bad_rate_reduction_pct: +1.20
-      short_pct: 51.8
-      temporal_cv: 0.97
-      recent_decay: "0/3"
-    - feature: volume_participation_score
-      transform: center_sign
-      median_lift: +0.1985
-      bad_rate_reduction_pct: +1.19
-      short_pct: 91.6
-      temporal_cv: 1.62
-      recent_decay: "0/3"
+      median_lift: +0.2239
+      bad_rate_reduction_pct: +1.41
+      short_pct: 50.3
+    - feature: price_momentum_div_score
+      transform: sign
+      median_lift: +0.2219
+      bad_rate_reduction_pct: +1.46
+      short_pct: 52.0
     - feature: fer_volume_price_divergence
       transform: center_sign
-      median_lift: +0.1960
-      bad_rate_reduction_pct: +1.32
-      short_pct: 54.4
-      temporal_cv: 0.88
-      recent_decay: "0/3"
+      median_lift: +0.2177
+      bad_rate_reduction_pct: +1.44
+      short_pct: 54.5
+    - feature: price_momentum_div_score_pct
+      transform: center_sign
+      median_lift: +0.2125
+      bad_rate_reduction_pct: +1.38
+      short_pct: 50.1
     - feature: vp_width_ratio
       transform: center_sign
-      median_lift: +0.1954
-      bad_rate_reduction_pct: +1.36
-      short_pct: 37.7
-      temporal_cv: 1.02
-      recent_decay: "0/3"
-    - feature: momentum_location_pressure
-      transform: center_sign
-      median_lift: +0.1904
-      bad_rate_reduction_pct: +1.17
-      short_pct: 91.5
-      temporal_cv: 1.49
-      recent_decay: "0/3"
+      median_lift: +0.2050
+      bad_rate_reduction_pct: +1.37
+      short_pct: 37.1
     - feature: fer_signed_efficiency
       transform: sign
-      median_lift: +0.1898
-      bad_rate_reduction_pct: +1.20
-      short_pct: 36.6
-      temporal_cv: 0.97
-      recent_decay: "0/3"
-    - feature: wick_absorption_score
+      median_lift: +0.2042
+      bad_rate_reduction_pct: +1.31
+      short_pct: 37.2
+    - feature: fer_signed_efficiency_pct
       transform: center_sign
-      median_lift: +0.1859
-      bad_rate_reduction_pct: +1.08
-      short_pct: 87.2
-      temporal_cv: 1.31
-      recent_decay: "0/3"
-    - feature: wick_ignition_score
-      transform: center_sign
-      median_lift: +0.1859
-      bad_rate_reduction_pct: +1.08
-      short_pct: 87.2
-      temporal_cv: 1.31
-      recent_decay: "0/3"
-    - feature: trend_r2_20
-      transform: center_sign
-      median_lift: +0.1816
-      bad_rate_reduction_pct: +1.01
-      short_pct: 57.2
-      temporal_cv: 1.41
-      recent_decay: "0/3"
-    - feature: garch_alpha
-      transform: center_sign
-      median_lift: +0.1731
-      bad_rate_reduction_pct: +1.06
-      short_pct: 96.0
-      temporal_cv: 2.0
-      recent_decay: "0/3"
-    - feature: vpin_signed_imbalance_last
-      transform: sign
-      median_lift: +0.1684
-      bad_rate_reduction_pct: +1.14
-      short_pct: 66.4
-      temporal_cv: 1.44
-      recent_decay: "0/3"
-    - feature: funding_oi_crowding_score
-      transform: center_sign
-      median_lift: +0.1682
+      median_lift: +0.1855
       bad_rate_reduction_pct: +1.07
-      short_pct: 97.2
-      temporal_cv: 1.73
-      recent_decay: "0/3"
-    - feature: location_amplifier
-      transform: center_sign
-      median_lift: +0.1670
-      bad_rate_reduction_pct: +0.90
-      short_pct: 34.2
-    - feature: funding_compression_score
-      transform: center_sign
-      median_lift: +0.1644
-      bad_rate_reduction_pct: +1.07
-      short_pct: 97.0
-    - feature: evt_tail_shape
-      transform: center_sign
-      median_lift: +0.1640
-      bad_rate_reduction_pct: +0.98
-      short_pct: 48.5
-    - feature: evt_tail_shape_left
-      transform: center_sign
-      median_lift: +0.1640
-      bad_rate_reduction_pct: +0.98
-      short_pct: 48.5
-    - feature: path_efficiency_pct
-      transform: center_sign
-      median_lift: +0.1518
-      bad_rate_reduction_pct: +0.81
-      short_pct: 50.3
-    - feature: spectrum_cvd_low_freq_ratio
-      transform: center_sign
-      median_lift: +0.1518
-      bad_rate_reduction_pct: +0.97
-      short_pct: 95.4
-    - feature: volume_ratio_pct
-      transform: center_sign
-      median_lift: +0.1512
-      bad_rate_reduction_pct: +0.97
-      short_pct: 49.8
-    - feature: momentum_div_tension
-      transform: center_sign
-      median_lift: +0.1466
-      bad_rate_reduction_pct: +0.91
-      short_pct: 77.8
-    - feature: atr_percentile
-      transform: center_sign
-      median_lift: +0.1453
-      bad_rate_reduction_pct: +1.08
-      short_pct: 50.2
-    - feature: evt_scale
-      transform: center_sign
-      median_lift: +0.1395
-      bad_rate_reduction_pct: +0.98
-      short_pct: 51.2
-    - feature: evt_scale_left
-      transform: center_sign
-      median_lift: +0.1395
-      bad_rate_reduction_pct: +0.98
-      short_pct: 51.2
+      short_pct: 51.8
     - feature: shd_pct
       transform: center_sign
-      median_lift: +0.1391
-      bad_rate_reduction_pct: +0.86
-      short_pct: 52.7
-    - feature: vpin_max20
+      median_lift: +0.1667
+      bad_rate_reduction_pct: +0.99
+      short_pct: 52.9
+    - feature: wick_absorption_score
       transform: center_sign
-      median_lift: +0.1391
-      bad_rate_reduction_pct: +0.83
-      short_pct: 77.8
-    - feature: vpin_spike_flag_20
+      median_lift: +0.1493
+      bad_rate_reduction_pct: +0.85
+      short_pct: 87.1
+    - feature: wick_ignition_score
       transform: center_sign
-      median_lift: +0.1376
-      bad_rate_reduction_pct: +0.81
-      short_pct: 83.3
-    - feature: vpin_trend
-      transform: sign
-      median_lift: +0.1354
-      bad_rate_reduction_pct: +0.78
+      median_lift: +0.1493
+      bad_rate_reduction_pct: +0.85
+      short_pct: 87.1
+    - feature: volume_participation_score
+      transform: center_sign
+      median_lift: +0.1492
+      bad_rate_reduction_pct: +0.87
+      short_pct: 91.6
+    - feature: atr_percentile
+      transform: center_sign
+      median_lift: +0.1490
+      bad_rate_reduction_pct: +1.08
+      short_pct: 48.5
+    - feature: momentum_location_pressure
+      transform: center_sign
+      median_lift: +0.1437
+      bad_rate_reduction_pct: +0.87
+      short_pct: 91.6
+    - feature: evt_scale
+      transform: center_sign
+      median_lift: +0.1362
+      bad_rate_reduction_pct: +0.95
+      short_pct: 51.1
+    - feature: evt_scale_left
+      transform: center_sign
+      median_lift: +0.1362
+      bad_rate_reduction_pct: +0.95
+      short_pct: 51.1
+    - feature: volume_ratio_pct
+      transform: center_sign
+      median_lift: +0.1350
+      bad_rate_reduction_pct: +0.84
       short_pct: 49.8
-    - feature: evt_var_99_right
+    - feature: path_efficiency_pct
       transform: center_sign
-      median_lift: +0.1341
-      bad_rate_reduction_pct: +0.90
-      short_pct: 54.3
+      median_lift: +0.1265
+      bad_rate_reduction_pct: +0.62
+      short_pct: 50.1
     - feature: vpin_count
       transform: sign
-      median_lift: +0.1327
-      bad_rate_reduction_pct: +0.70
+      median_lift: +0.1255
+      bad_rate_reduction_pct: +0.63
       short_pct: 50.1
-    - feature: hilbert_price_env
-      transform: center_sign
-      median_lift: +0.1322
-      bad_rate_reduction_pct: +0.91
-      short_pct: 50.5
-    - feature: cvd_exhaustion_score
-      transform: center_sign
-      median_lift: +0.1307
-      bad_rate_reduction_pct: +0.78
-      short_pct: 89.5
-    - feature: vpin_signed_imbalance_zscore_50
-      transform: sign
-      median_lift: +0.1301
-      bad_rate_reduction_pct: +0.93
-      short_pct: 50.0
-    - feature: trade_cluster_directional_entropy_change
-      transform: sign
-      median_lift: +0.1296
-      bad_rate_reduction_pct: +0.78
-      short_pct: 50.2
-    - feature: trade_cluster_directional_entropy_zscore_50
-      transform: sign
-      median_lift: +0.1263
-      bad_rate_reduction_pct: +0.81
-      short_pct: 49.3
-    - feature: oi_compression_score
-      transform: center_sign
-      median_lift: +0.1248
-      bad_rate_reduction_pct: +0.71
-      short_pct: 91.2
-    - feature: trade_cluster_directional_entropy_zscore_20
-      transform: sign
-      median_lift: +0.1244
-      bad_rate_reduction_pct: +0.80
-      short_pct: 48.9
-    - feature: trend_div_tension
-      transform: center_sign
-      median_lift: +0.1223
-      bad_rate_reduction_pct: +0.70
-      short_pct: 79.4
-    - feature: fer_momentum_efficiency_decay
-      transform: center_sign
-      median_lift: +0.1220
-      bad_rate_reduction_pct: +0.88
-      short_pct: 80.1
-    - feature: evt_scale_right
-      transform: center_sign
-      median_lift: +0.1206
-      bad_rate_reduction_pct: +0.93
-      short_pct: 50.5
-    - feature: funding_rate_abs_zscore_50
-      transform: sign
-      median_lift: +0.1161
-      bad_rate_reduction_pct: +0.82
-      short_pct: 50.7
-    - feature: wick_exhaustion_score
-      transform: center_sign
-      median_lift: +0.1136
-      bad_rate_reduction_pct: +0.84
-      short_pct: 90.7
-    - feature: hilbert_price_env_slope
-      transform: sign
-      median_lift: +0.1126
-      bad_rate_reduction_pct: +0.76
-      short_pct: 56.8
-    - feature: vpin_max
-      transform: center_sign
-      median_lift: +0.1117
-      bad_rate_reduction_pct: +0.66
-      short_pct: 90.5
-    - feature: wpt_exhaustion_score
-      transform: center_sign
-      median_lift: +0.1113
-      bad_rate_reduction_pct: +0.80
-      short_pct: 87.0
     - feature: spectrum_price_has_dominant_freq
       transform: center_sign
-      median_lift: +0.1111
-      bad_rate_reduction_pct: +0.67
-      short_pct: 35.1
-    - feature: funding_rate_zscore_50
-      transform: sign
-      median_lift: +0.1101
-      bad_rate_reduction_pct: +0.61
-      short_pct: 48.3
-    - feature: vpin_max10
+      median_lift: +0.1245
+      bad_rate_reduction_pct: +0.76
+      short_pct: 35.0
+    - feature: trend_r2_20
       transform: center_sign
-      median_lift: +0.1101
-      bad_rate_reduction_pct: +0.71
-      short_pct: 87.8
-    - feature: oi_flow_zscore
-      transform: sign
-      median_lift: +0.1097
-      bad_rate_reduction_pct: +0.71
-      short_pct: 48.8
-    - feature: oi_absorption_score
-      transform: center_sign
-      median_lift: +0.1079
+      median_lift: +0.1235
       bad_rate_reduction_pct: +0.68
-      short_pct: 91.5
-    - feature: vol_accel
-      transform: sign
-      median_lift: +0.1079
-      bad_rate_reduction_pct: +0.70
-      short_pct: 50.7
-    - feature: vpin_signed_imbalance
-      transform: sign
-      median_lift: +0.1066
-      bad_rate_reduction_pct: +0.83
-      short_pct: 70.1
-    - feature: vpin_signed_imbalance_zscore_20
-      transform: sign
-      median_lift: +0.1050
-      bad_rate_reduction_pct: +0.77
-      short_pct: 49.9
-    - feature: oi_delta_price_sign
-      transform: sign
-      median_lift: +0.1030
-      bad_rate_reduction_pct: +0.74
-      short_pct: 51.8
-    - feature: vpin_zscore_20
-      transform: sign
-      median_lift: +0.1027
-      bad_rate_reduction_pct: +0.55
-      short_pct: 56.7
-    - feature: trade_cluster_max_sell_run_zscore_20
-      transform: sign
-      median_lift: +0.1024
-      bad_rate_reduction_pct: +0.70
       short_pct: 57.4
-    - feature: vpin_momentum
+    - feature: funding_compression_score
+      transform: center_sign
+      median_lift: +0.1232
+      bad_rate_reduction_pct: +0.76
+      short_pct: 97.0
+    - feature: trade_cluster_directional_entropy_zscore_50
       transform: sign
-      median_lift: +0.1015
-      bad_rate_reduction_pct: +0.62
-      short_pct: 50.4
-    - feature: vpin_max5
-      transform: center_sign
-      median_lift: +0.0997
-      bad_rate_reduction_pct: +0.66
-      short_pct: 93.5
-    - feature: wpt_false_breakout_risk
-      transform: center_sign
-      median_lift: +0.0984
-      bad_rate_reduction_pct: +0.59
-      short_pct: 48.3
-    - feature: vpin_spike_flag_50
-      transform: center_sign
-      median_lift: +0.0979
-      bad_rate_reduction_pct: +0.51
-      short_pct: 83.5
-    - feature: ofci_pct
-      transform: center_sign
-      median_lift: +0.0974
-      bad_rate_reduction_pct: +0.65
+      median_lift: +0.1228
+      bad_rate_reduction_pct: +0.74
+      short_pct: 49.2
+    - feature: trade_cluster_directional_entropy_zscore_20
+      transform: sign
+      median_lift: +0.1224
+      bad_rate_reduction_pct: +0.75
       short_pct: 48.8
-    - feature: trade_cluster_max_sell_run_zscore_50
-      transform: sign
-      median_lift: +0.0962
+    - feature: evt_tail_shape
+      transform: center_sign
+      median_lift: +0.1215
       bad_rate_reduction_pct: +0.68
-      short_pct: 57.9
-    - feature: oi_change_pct
+      short_pct: 48.3
+    - feature: evt_tail_shape_left
+      transform: center_sign
+      median_lift: +0.1215
+      bad_rate_reduction_pct: +0.68
+      short_pct: 48.3
+    - feature: evt_var_99_right
+      transform: center_sign
+      median_lift: +0.1197
+      bad_rate_reduction_pct: +0.76
+      short_pct: 53.6
+    - feature: trade_cluster_directional_entropy_change
       transform: sign
-      median_lift: +0.0955
-      bad_rate_reduction_pct: +0.60
-      short_pct: 49.5
-    - feature: vpin_quantile_rank_20
+      median_lift: +0.1197
+      bad_rate_reduction_pct: +0.70
+      short_pct: 50.2
+    - feature: garch_alpha
       transform: center_sign
-      median_lift: +0.0952
-      bad_rate_reduction_pct: +0.50
-      short_pct: 49.3
-    - feature: vpin_zscore_x_trade_cluster_max_buy_run_rank
+      median_lift: +0.1194
+      bad_rate_reduction_pct: +0.67
+      short_pct: 96.2
+    - feature: spectrum_cvd_low_freq_ratio
       transform: center_sign
-      median_lift: +0.0952
-      bad_rate_reduction_pct: +0.50
-      short_pct: 50.0
+      median_lift: +0.1106
+      bad_rate_reduction_pct: +0.65
+      short_pct: 95.4
+    - feature: location_amplifier
+      transform: center_sign
+      median_lift: +0.1096
+      bad_rate_reduction_pct: +0.52
+      short_pct: 34.2
+    - feature: vpin_signed_imbalance_last
+      transform: sign
+      median_lift: +0.1068
+      bad_rate_reduction_pct: +0.69
+      short_pct: 66.8
+    - feature: vpin_trend
+      transform: sign
+      median_lift: +0.1059
+      bad_rate_reduction_pct: +0.57
+      short_pct: 49.8
     - feature: volume_velocity_pct
       transform: center_sign
-      median_lift: +0.0948
-      bad_rate_reduction_pct: +0.45
-      short_pct: 49.5
-    - feature: funding_rate_change_1
-      transform: sign
-      median_lift: +0.0941
-      bad_rate_reduction_pct: +0.74
-      short_pct: 49.9
+      median_lift: +0.1053
+      bad_rate_reduction_pct: +0.51
+      short_pct: 49.4
+    - feature: vpin_max20
+      transform: center_sign
+      median_lift: +0.0984
+      bad_rate_reduction_pct: +0.54
+      short_pct: 77.1
+    - feature: momentum_div_tension
+      transform: center_sign
+      median_lift: +0.0978
+      bad_rate_reduction_pct: +0.59
+      short_pct: 77.9
     - feature: evt_tail_shape_right
       transform: center_sign
-      median_lift: +0.0923
-      bad_rate_reduction_pct: +0.52
-      short_pct: 48.6
-    - feature: vol_mom_3
-      transform: sign
-      median_lift: +0.0878
-      bad_rate_reduction_pct: +0.44
+      median_lift: +0.0955
+      bad_rate_reduction_pct: +0.46
       short_pct: 49.4
+    - feature: hilbert_price_env
+      transform: center_sign
+      median_lift: +0.0932
+      bad_rate_reduction_pct: +0.65
+      short_pct: 48.4
+    - feature: evt_scale_right
+      transform: center_sign
+      median_lift: +0.0929
+      bad_rate_reduction_pct: +0.72
+      short_pct: 50.7
+    - feature: fer_momentum_efficiency_decay
+      transform: center_sign
+      median_lift: +0.0920
+      bad_rate_reduction_pct: +0.64
+      short_pct: 79.9
+    - feature: vpin_spike_flag_20
+      transform: center_sign
+      median_lift: +0.0899
+      bad_rate_reduction_pct: +0.47
+      short_pct: 83.2
     - feature: wick_compression_score
       transform: center_sign
-      median_lift: +0.0875
-      bad_rate_reduction_pct: +0.45
+      median_lift: +0.0899
+      bad_rate_reduction_pct: +0.41
       short_pct: 39.8
-    - feature: liquidity_void_detected
-      transform: center_sign
-      median_lift: +0.0869
-      bad_rate_reduction_pct: +0.63
-      short_pct: 76.8
-    - feature: liquidity_void_x_wpt_risk_rank
-      transform: center_sign
-      median_lift: +0.0869
-      bad_rate_reduction_pct: +0.63
-      short_pct: 76.8
-    - feature: fp_delta_divergence
-      transform: center_sign
-      median_lift: +0.0864
-      bad_rate_reduction_pct: +0.61
-      short_pct: 57.6
-    - feature: volume_stability
-      transform: center_sign
-      median_lift: +0.0849
-      bad_rate_reduction_pct: +0.48
-      short_pct: 54.0
-    - feature: spectrum_volume_centroid
-      transform: center_sign
-      median_lift: +0.0835
-      bad_rate_reduction_pct: +0.39
-      short_pct: 50.8
-    - feature: trade_cluster_imbalance_zscore_50
+    - feature: vol_accel
       transform: sign
-      median_lift: +0.0826
-      bad_rate_reduction_pct: +0.57
-      short_pct: 52.1
-    - feature: trade_cluster_max_buy_run_zscore_20
-      transform: sign
-      median_lift: +0.0824
-      bad_rate_reduction_pct: +0.61
-      short_pct: 57.1
-    - feature: evt_es_99_right
-      transform: center_sign
-      median_lift: +0.0794
-      bad_rate_reduction_pct: +0.52
-      short_pct: 52.4
-    - feature: vpin_skewness
-      transform: sign
-      median_lift: +0.0794
-      bad_rate_reduction_pct: +0.57
-      short_pct: 48.0
-    - feature: price_dir_consistency_pct
-      transform: center_sign
-      median_lift: +0.0785
-      bad_rate_reduction_pct: +0.47
-      short_pct: 27.9
-    - feature: fp_delta_poc
-      transform: sign
-      median_lift: +0.0776
-      bad_rate_reduction_pct: +0.49
-      short_pct: 57.0
-    - feature: trade_cluster_max_buy_run_zscore_50
-      transform: sign
-      median_lift: +0.0775
-      bad_rate_reduction_pct: +0.59
-      short_pct: 57.5
-    - feature: wpt_multi_scale_consistency
-      transform: center_sign
-      median_lift: +0.0747
-      bad_rate_reduction_pct: +0.25
-      short_pct: 62.1
-    - feature: trade_cluster_net_runs_zscore_50
-      transform: sign
-      median_lift: +0.0742
-      bad_rate_reduction_pct: +0.55
-      short_pct: 51.9
-    - feature: vpin_signed_imbalance_max
-      transform: sign
-      median_lift: +0.0742
-      bad_rate_reduction_pct: +0.48
-      short_pct: 19.9
-    - feature: vpin_zscore_50
-      transform: sign
-      median_lift: +0.0706
-      bad_rate_reduction_pct: +0.33
-      short_pct: 56.5
-    - feature: hilbert_cvd_env_slope
-      transform: sign
-      median_lift: +0.0702
-      bad_rate_reduction_pct: +0.42
-      short_pct: 63.1
-    - feature: vpin_quantile_rank_50
-      transform: center_sign
-      median_lift: +0.0639
-      bad_rate_reduction_pct: +0.28
-      short_pct: 48.6
-    - feature: fer_impulse_failure_score
-      transform: center_sign
-      median_lift: +0.0633
-      bad_rate_reduction_pct: +0.27
-      short_pct: 83.2
-    - feature: vpin_x_trade_cluster_entropy_rank
-      transform: center_sign
-      median_lift: +0.0625
-      bad_rate_reduction_pct: +0.25
-      short_pct: 48.9
-    - feature: wpt_breakout_confidence
-      transform: center_sign
-      median_lift: +0.0622
-      bad_rate_reduction_pct: +0.44
-      short_pct: 51.7
+      median_lift: +0.0884
+      bad_rate_reduction_pct: +0.54
+      short_pct: 50.6
     - feature: spectrum_volume_flatness
       transform: center_sign
-      median_lift: +0.0603
-      bad_rate_reduction_pct: +0.29
-      short_pct: 19.3
-    - feature: div_location_pressure
+      median_lift: +0.0883
+      bad_rate_reduction_pct: +0.37
+      short_pct: 19.0
+    - feature: funding_rate_abs_zscore_50
+      transform: sign
+      median_lift: +0.0870
+      bad_rate_reduction_pct: +0.64
+      short_pct: 51.0
+    - feature: vpin_quantile_rank_20
       transform: center_sign
-      median_lift: +0.0600
-      bad_rate_reduction_pct: +0.32
+      median_lift: +0.0816
+      bad_rate_reduction_pct: +0.40
+      short_pct: 49.4
+    - feature: wpt_false_breakout_risk
+      transform: center_sign
+      median_lift: +0.0816
+      bad_rate_reduction_pct: +0.46
+      short_pct: 47.8
+    - feature: spectrum_volume_centroid
+      transform: center_sign
+      median_lift: +0.0814
+      bad_rate_reduction_pct: +0.37
+      short_pct: 49.7
+    - feature: vpin_zscore_20
+      transform: sign
+      median_lift: +0.0812
+      bad_rate_reduction_pct: +0.40
+      short_pct: 56.7
+    - feature: funding_rate_zscore_50
+      transform: sign
+      median_lift: +0.0793
+      bad_rate_reduction_pct: +0.41
+      short_pct: 48.6
+    - feature: vpin_zscore_x_trade_cluster_max_buy_run_rank
+      transform: center_sign
+      median_lift: +0.0789
+      bad_rate_reduction_pct: +0.37
+      short_pct: 50.0
+    - feature: oi_compression_score
+      transform: center_sign
+      median_lift: +0.0780
+      bad_rate_reduction_pct: +0.36
+      short_pct: 91.1
+    - feature: wick_exhaustion_score
+      transform: center_sign
+      median_lift: +0.0777
+      bad_rate_reduction_pct: +0.56
+      short_pct: 90.6
+    - feature: vpin_signed_imbalance_zscore_50
+      transform: sign
+      median_lift: +0.0775
+      bad_rate_reduction_pct: +0.58
+      short_pct: 49.9
+    - feature: wpt_exhaustion_score
+      transform: center_sign
+      median_lift: +0.0731
+      bad_rate_reduction_pct: +0.49
+      short_pct: 86.7
+    - feature: fer_impulse_failure_score
+      transform: center_sign
+      median_lift: +0.0724
+      bad_rate_reduction_pct: +0.27
+      short_pct: 83.4
+    - feature: vpin_momentum
+      transform: sign
+      median_lift: +0.0722
+      bad_rate_reduction_pct: +0.40
+      short_pct: 50.6
+    - feature: wpt_multi_scale_consistency
+      transform: center_sign
+      median_lift: +0.0700
+      bad_rate_reduction_pct: +0.21
+      short_pct: 62.1
+    - feature: trade_cluster_max_sell_run_zscore_20
+      transform: sign
+      median_lift: +0.0687
+      bad_rate_reduction_pct: +0.45
+      short_pct: 57.3
+    - feature: vpin_spike_flag_50
+      transform: center_sign
+      median_lift: +0.0665
+      bad_rate_reduction_pct: +0.27
       short_pct: 83.5
-    - feature: sma_200_position
+    - feature: trade_cluster_max_sell_run_zscore_50
       transform: sign
-      median_lift: +0.0600
+      median_lift: +0.0650
+      bad_rate_reduction_pct: +0.45
+      short_pct: 57.8
+    - feature: oi_flow_zscore
+      transform: sign
+      median_lift: +0.0645
+      bad_rate_reduction_pct: +0.35
+      short_pct: 48.8
+    - feature: volume_stability
+      transform: center_sign
+      median_lift: +0.0629
+      bad_rate_reduction_pct: +0.32
+      short_pct: 54.2
+    - feature: trade_cluster_max_buy_run_zscore_20
+      transform: sign
+      median_lift: +0.0615
+      bad_rate_reduction_pct: +0.48
+      short_pct: 57.1
+    - feature: oi_delta_price_sign
+      transform: sign
+      median_lift: +0.0613
+      bad_rate_reduction_pct: +0.44
+      short_pct: 51.8
+    - feature: vpin_max10
+      transform: center_sign
+      median_lift: +0.0602
+      bad_rate_reduction_pct: +0.33
+      short_pct: 87.5
+    - feature: cvd_exhaustion_score
+      transform: center_sign
+      median_lift: +0.0596
+      bad_rate_reduction_pct: +0.26
+      short_pct: 89.1
+    - feature: vpin_max
+      transform: center_sign
+      median_lift: +0.0593
+      bad_rate_reduction_pct: +0.28
+      short_pct: 90.6
+    - feature: hilbert_price_env_slope
+      transform: sign
+      median_lift: +0.0566
+      bad_rate_reduction_pct: +0.34
+      short_pct: 56.9
+    - feature: trade_cluster_imbalance_zscore_50
+      transform: sign
+      median_lift: +0.0559
       bad_rate_reduction_pct: +0.38
-      short_pct: 50.1
-    - feature: fp_delta_skew
+      short_pct: 52.4
+    - feature: fp_delta_poc
       transform: sign
-      median_lift: +0.0591
-      bad_rate_reduction_pct: +0.50
-      short_pct: 55.4
+      median_lift: +0.0546
+      bad_rate_reduction_pct: +0.29
+      short_pct: 57.2
+    - feature: vpin_signed_imbalance_zscore_20
+      transform: sign
+      median_lift: +0.0541
+      bad_rate_reduction_pct: +0.42
+      short_pct: 49.9
+    - feature: liquidity_void_volume_ratio
+      transform: center_sign
+      median_lift: +0.0538
+      bad_rate_reduction_pct: +0.28
+      short_pct: 8.5
+    - feature: garch_beta
+      transform: center_sign
+      median_lift: +0.0534
+      bad_rate_reduction_pct: +0.42
+      short_pct: 31.4
+    - feature: trend_div_tension
+      transform: center_sign
+      median_lift: +0.0534
+      bad_rate_reduction_pct: +0.19
+      short_pct: 79.3
+    - feature: vol_mom_3
+      transform: sign
+      median_lift: +0.0517
+      bad_rate_reduction_pct: +0.16
+      short_pct: 49.5
+    - feature: trade_cluster_max_buy_run_zscore_50
+      transform: sign
+      median_lift: +0.0502
+      bad_rate_reduction_pct: +0.41
+      short_pct: 57.4
+    - feature: trade_cluster_net_runs_zscore_50
+      transform: sign
+      median_lift: +0.0499
+      bad_rate_reduction_pct: +0.36
+      short_pct: 52.3
+    - feature: oi_change_pct
+      transform: sign
+      median_lift: +0.0481
+      bad_rate_reduction_pct: +0.27
+      short_pct: 49.4
+    - feature: funding_rate_change_1
+      transform: sign
+      median_lift: +0.0448
+      bad_rate_reduction_pct: +0.44
+      short_pct: 50.0
+    - feature: vpin_signed_imbalance_max
+      transform: sign
+      median_lift: +0.0448
+      bad_rate_reduction_pct: +0.27
+      short_pct: 19.9
+    - feature: vpin_skewness
+      transform: sign
+      median_lift: +0.0435
+      bad_rate_reduction_pct: +0.30
+      short_pct: 48.0
+    - feature: vpin_quantile_rank_50
+      transform: center_sign
+      median_lift: +0.0430
+      bad_rate_reduction_pct: +0.15
+      short_pct: 48.7
+    - feature: ofci_pct
+      transform: center_sign
+      median_lift: +0.0429
+      bad_rate_reduction_pct: +0.26
+      short_pct: 48.8
+    - feature: vpin_max5
+      transform: center_sign
+      median_lift: +0.0429
+      bad_rate_reduction_pct: +0.26
+      short_pct: 93.2
+    - feature: vpin_signed_imbalance
+      transform: sign
+      median_lift: +0.0424
+      bad_rate_reduction_pct: +0.38
+      short_pct: 70.4
+    - feature: vpin_zscore_50
+      transform: sign
+      median_lift: +0.0424
+      bad_rate_reduction_pct: +0.15
+      short_pct: 56.8
+    - feature: price_dir_consistency_pct
+      transform: center_sign
+      median_lift: +0.0418
+      bad_rate_reduction_pct: +0.24
+      short_pct: 27.5
+    - feature: trade_cluster_net_runs_zscore_20
+      transform: sign
+      median_lift: +0.0397
+      bad_rate_reduction_pct: +0.27
+      short_pct: 50.6
+    - feature: spectrum_cvd_high_freq_ratio
+      transform: center_sign
+      median_lift: +0.0394
+      bad_rate_reduction_pct: +0.33
+      short_pct: 75.4
+    - feature: evt_es_99_right
+      transform: center_sign
+      median_lift: +0.0380
+      bad_rate_reduction_pct: +0.27
+      short_pct: 52.5
+    - feature: evt_var_99
+      transform: center_sign
+      median_lift: +0.0361
+      bad_rate_reduction_pct: +0.18
+      short_pct: 48.7
+    - feature: evt_var_99_left
+      transform: center_sign
+      median_lift: +0.0361
+      bad_rate_reduction_pct: +0.18
+      short_pct: 48.7
+    - feature: trade_cluster_imbalance_zscore_20
+      transform: sign
+      median_lift: +0.0353
+      bad_rate_reduction_pct: +0.23
+      short_pct: 50.9
+    - feature: hilbert_cvd_env_slope
+      transform: sign
+      median_lift: +0.0339
+      bad_rate_reduction_pct: +0.13
+      short_pct: 63.0
+    - feature: oi_absorption_score
+      transform: center_sign
+      median_lift: +0.0331
+      bad_rate_reduction_pct: +0.16
+      short_pct: 91.3
+    - feature: wpt_breakout_confidence
+      transform: center_sign
+      median_lift: +0.0329
+      bad_rate_reduction_pct: +0.22
+      short_pct: 52.2
+    - feature: fp_delta_divergence
+      transform: center_sign
+      median_lift: +0.0326
+      bad_rate_reduction_pct: +0.22
+      short_pct: 57.7
+    - feature: vpin_x_trade_cluster_entropy_rank
+      transform: center_sign
+      median_lift: +0.0326
+      bad_rate_reduction_pct: +0.04
+      short_pct: 48.8
+    - feature: vpin_change
+      transform: sign
+      median_lift: +0.0313
+      bad_rate_reduction_pct: +0.01
+      short_pct: 51.0
+    - feature: vpin_change_pct
+      transform: sign
+      median_lift: +0.0313
+      bad_rate_reduction_pct: +0.01
+      short_pct: 51.0
     - feature: vol_mom_5
       transform: sign
-      median_lift: +0.0591
-      bad_rate_reduction_pct: +0.26
-      short_pct: 49.5
-    - feature: price_accel_pct
-      transform: center_sign
-      median_lift: +0.0568
-      bad_rate_reduction_pct: +0.39
-      short_pct: 50.1
-    - feature: vol_slope_5
-      transform: sign
-      median_lift: +0.0555
-      bad_rate_reduction_pct: +0.27
+      median_lift: +0.0251
+      bad_rate_reduction_pct: -0.01
       short_pct: 49.5
     - feature: spectrum_cvd_centroid
       transform: center_sign
-      median_lift: +0.0504
-      bad_rate_reduction_pct: +0.36
-      short_pct: 49.0
-    - feature: trade_cluster_imbalance_zscore_20
-      transform: sign
-      median_lift: +0.0501
-      bad_rate_reduction_pct: +0.35
-      short_pct: 50.8
-    - feature: vpin_change
-      transform: sign
-      median_lift: +0.0481
-      bad_rate_reduction_pct: +0.15
-      short_pct: 50.9
-    - feature: vpin_change_pct
-      transform: sign
-      median_lift: +0.0481
-      bad_rate_reduction_pct: +0.15
-      short_pct: 50.9
-    - feature: trade_cluster_net_runs_zscore_20
-      transform: sign
-      median_lift: +0.0472
-      bad_rate_reduction_pct: +0.35
-      short_pct: 50.5
-    - feature: jump_risk_pct
-      transform: center_sign
-      median_lift: +0.0426
-      bad_rate_reduction_pct: +0.33
-      short_pct: 49.9
-    - feature: spectrum_cvd_high_freq_ratio
-      transform: center_sign
-      median_lift: +0.0418
-      bad_rate_reduction_pct: +0.33
-      short_pct: 74.9
-    - feature: evt_var_99
-      transform: center_sign
-      median_lift: +0.0385
-      bad_rate_reduction_pct: +0.15
-      short_pct: 48.5
-    - feature: evt_var_99_left
-      transform: center_sign
-      median_lift: +0.0385
-      bad_rate_reduction_pct: +0.15
-      short_pct: 48.5
-    - feature: garch_beta
-      transform: center_sign
-      median_lift: +0.0362
-      bad_rate_reduction_pct: +0.31
-      short_pct: 32.1
-    - feature: liquidity_void_volume_ratio
-      transform: center_sign
-      median_lift: +0.0328
-      bad_rate_reduction_pct: +0.14
-      short_pct: 8.9
-    - feature: spectrum_price_centroid
-      transform: center_sign
-      median_lift: +0.0201
-      bad_rate_reduction_pct: +0.13
-      short_pct: 49.4
-    - feature: spectrum_price_high_freq_ratio
-      transform: center_sign
-      median_lift: +0.0179
+      median_lift: +0.0213
       bad_rate_reduction_pct: +0.17
-      short_pct: 51.5
-    - feature: vol_slope_10
-      transform: sign
-      median_lift: +0.0148
-      bad_rate_reduction_pct: +0.11
-      short_pct: 50.0
+      short_pct: 49.5
     - feature: fp_volume_skew
       transform: sign
-      median_lift: +0.0141
-      bad_rate_reduction_pct: +0.06
-      short_pct: 20.6
-    - feature: funding_rate
+      median_lift: +0.0190
+      bad_rate_reduction_pct: +0.05
+      short_pct: 20.7
+    - feature: vol_slope_5
       transform: sign
-      median_lift: +0.0114
-      bad_rate_reduction_pct: +0.01
-      short_pct: 19.0
-    - feature: hurst_cvd_rolling
+      median_lift: +0.0165
+      bad_rate_reduction_pct: -0.04
+      short_pct: 49.4
+    - feature: sma_200_position
+      transform: sign
+      median_lift: +0.0143
+      bad_rate_reduction_pct: +0.04
+      short_pct: 46.5
+    - feature: spectrum_price_centroid
       transform: center_sign
-      median_lift: +0.0014
-      bad_rate_reduction_pct: -0.06
-      short_pct: 3.6
+      median_lift: +0.0102
+      bad_rate_reduction_pct: +0.09
+      short_pct: 50.2
+    - feature: fp_delta_skew
+      transform: sign
+      median_lift: +0.0052
+      bad_rate_reduction_pct: +0.17
+      short_pct: 55.5
+    - feature: liquidity_void_detected
+      transform: center_sign
+      median_lift: +0.0042
+      bad_rate_reduction_pct: +0.06
+      short_pct: 77.2
+    - feature: liquidity_void_x_wpt_risk_rank
+      transform: center_sign
+      median_lift: +0.0042
+      bad_rate_reduction_pct: +0.06
+      short_pct: 77.2
+    - feature: spectrum_price_high_freq_ratio
+      transform: center_sign
+      median_lift: +0.0002
+      bad_rate_reduction_pct: +0.06
+      short_pct: 51.3
 
   # ── Lift <= 0 (兜底候选, 前 5) ──
   fallback:
-    - feature: bb_width_normalized_pct
+    - feature: jump_risk_pct
       transform: center_sign
       median_lift: -0.0003
-      bad_rate_reduction_pct: -0.08
-      short_pct: 50.0
-    - feature: vp_skewness
-      transform: sign
-      median_lift: -0.0028
-      bad_rate_reduction_pct: -0.14
-      short_pct: 15.9
-    - feature: vol_mom_10
-      transform: sign
-      median_lift: -0.0058
-      bad_rate_reduction_pct: -0.08
-      short_pct: 50.0
-    - feature: wpt_energy_cascade
-      transform: sign
-      median_lift: -0.0074
-      bad_rate_reduction_pct: -0.02
-      short_pct: 47.2
+      bad_rate_reduction_pct: +0.01
+      short_pct: 50.4
     - feature: evt_es_99
       transform: center_sign
-      median_lift: -0.0155
-      bad_rate_reduction_pct: -0.13
-      short_pct: 48.8
+      median_lift: -0.0006
+      bad_rate_reduction_pct: -0.09
+      short_pct: 48.9
+    - feature: evt_es_99_left
+      transform: center_sign
+      median_lift: -0.0006
+      bad_rate_reduction_pct: -0.09
+      short_pct: 48.9
+    - feature: hilbert_cvd_price_env_ratio
+      transform: sign
+      median_lift: -0.0044
+      bad_rate_reduction_pct: -0.08
+      short_pct: 52.2
+    - feature: funding_rate
+      transform: sign
+      median_lift: -0.0075
+      bad_rate_reduction_pct: -0.12
+      short_pct: 18.3
 

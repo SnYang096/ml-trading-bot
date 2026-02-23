@@ -4085,6 +4085,16 @@ def train_strategy(
                     feature_names = booster.feature_name() or []
 
                 rules = _collect_splits(booster, feature_names, max_splits=30)
+                if not rules:
+                    print(
+                        f"   ⚠️  模型无树分裂规则可导出 "
+                        f"(可能训练样本过少/min_data_in_leaf过大)"
+                    )
+                    if task_type == "regression":
+                        print(
+                            f"   → evidence_candidates.yaml 未生成, "
+                            f"Evidence Optimize 将失败"
+                        )
                 if rules:
                     # Export tree rules
                     rules_path = output_dir / f"{strategy_config.name}_tree_rules.md"

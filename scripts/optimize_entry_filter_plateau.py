@@ -974,13 +974,32 @@ def _promote_entry_filters_yaml(
                 promoted_filters.append(pf)
                 tier_b_count += 1
 
-    if not promoted_filters:
-        print("\n   ⚠️ --promote: 没有 filter 通过准入, 跳过写入")
-        return
-
     arch_dir = Path(strategies_root) / strategy / "archetypes"
     arch_dir.mkdir(parents=True, exist_ok=True)
     output_path = arch_dir / "entry_filters.yaml"
+
+    if not promoted_filters:
+        # 没有 filter 通过 → 清空 archetypes/entry_filters.yaml
+        empty_header = (
+            f"# {strategy.upper()} Entry Filter Archetype\n"
+            f"# Auto-promoted by optimize_entry_filter_plateau.py\n"
+            f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+            f"# Promoted: 0 filters (全部未通过显著性检验)\n"
+            f"# Baseline snotio: {bl_snotio:.4f}, \u03c3={sigma_for_test:.3f}\n"
+            f"#\n"
+            f"# 没有 entry filter 通过准入, 策略将无条件入场\n"
+            f"\n"
+        )
+        empty_cfg = {"filters": [], "combination_mode": "or"}
+        yaml_content = yaml.dump(
+            empty_cfg,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
+        output_path.write_text(empty_header + yaml_content, encoding="utf-8")
+        print(f"\n   ⚠️ --promote: 没有 filter 通过准入, 已清空 {output_path}")
+        return
 
     header = (
         f"# {strategy.upper()} Entry Filter Archetype\n"

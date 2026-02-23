@@ -703,7 +703,9 @@ def run_strategy_pipeline(
         )
 
     # ── Step 5: Gate 训练 ──
-    prefilter_path = f"{config_dir}/archetypes/prefilter.yaml"
+    # ⚠️ Gate Train 现在使用 prefilter (见 BPC pipeline 文档):
+    #   - 只在 archetype 适用样本上学习 → 专注策略特有特征
+    #   - 避免学习 "archetype vs 非 archetype" 而不是 "好 archetype vs 坏 archetype"
     gate_train_args = [
         "mlbot",
         "train",
@@ -715,15 +717,29 @@ def run_strategy_pipeline(
         f"{config_dir}/{scfg['features_gate']}",
         "--labels",
         f"{config_dir}/{scfg['labels_gate']}",
+        "--archetype-prefilter",
+        f"{config_dir}/archetypes/prefilter.yaml",
         *common_train_args,
     ]
-    if Path(prefilter_path).exists():
-        gate_train_args += ["--archetype-prefilter", prefilter_path]
 
     rc, out = run_step("Gate Train", gate_train_args, log, dry_run=dry_run)
     gate_dir = find_output_dir(out, strategy) or prepare_dir
 
-    # Gate apply (用 gate_draft)
+    # ── Early termination: if Gate Train failed, downstream steps are useless ──
+    gate_pred = Path(f"{gate_dir}/predictions.parquet")
+    if rc != 0 or (not dry_run and not gate_pred.exists()):
+        print(
+            f"\n\u274c Gate Train 失败或未产出 predictions.parquet"
+            f" (rc={rc}, exists={gate_pred.exists() if not dry_run else 'N/A'})"
+        )
+        print(
+            "   可能原因: prefilter 过滤过严 (样本量不足), "
+            "或训练参数错误. 请检查上方日志."
+        )
+        if not dry_run:
+            return {"error": "gate_train_failed", "gate_dir": gate_dir}
+
+    # Gate apply (用 gate_draft 作为中间件)
     gate_draft = f"{config_dir}/gate_draft.yaml"
     run_step(
         "Gate Apply",
@@ -742,7 +758,7 @@ def run_strategy_pipeline(
         dry_run=dry_run,
     )
 
-    # Gate optimize (--promote)
+    # Gate optimize (--promote, 在 gate 应用后的数据上做 plateau 验证)
     run_step(
         "Gate Optimize",
         [
@@ -783,6 +799,10 @@ def run_strategy_pipeline(
     )
 
     # ── Step 6: Evidence 训练 ──
+    # ⚠️ Evidence Train 不使用 prefilter (见 BPC pipeline 文档):
+    #   - 全量训练 → 更多候选 → 更好的概率校准
+    #   - Evidence Optimize 在 logs_gated.parquet（已过 gate）上做 plateau 验证
+    #   - 因此不影响生产一致性：只在 gated 人群有效的候选才能 promote
     evidence_train_args = [
         "mlbot",
         "train",
@@ -796,11 +816,24 @@ def run_strategy_pipeline(
         f"{config_dir}/{scfg['labels_evidence']}",
         *common_train_args,
     ]
-    if Path(prefilter_path).exists():
-        evidence_train_args += ["--archetype-prefilter", prefilter_path]
 
     rc, out = run_step("Evidence Train", evidence_train_args, log, dry_run=dry_run)
     evidence_dir = find_output_dir(out, strategy) or gate_dir
+
+    # ── Early termination: if Evidence Train failed ──
+    ev_pred = Path(f"{evidence_dir}/predictions.parquet")
+    if rc != 0 or (not dry_run and not ev_pred.exists()):
+        print(
+            f"\n\u274c Evidence Train 失败或未产出 predictions.parquet"
+            f" (rc={rc}, exists={ev_pred.exists() if not dry_run else 'N/A'})"
+        )
+        print("   可能原因: prefilter 过滤过严, 或 Gate 配置问题. " "请检查上方日志.")
+        if not dry_run:
+            return {
+                "error": "evidence_train_failed",
+                "gate_dir": gate_dir,
+                "evidence_dir": evidence_dir,
+            }
 
     # Evidence gate apply
     run_step(
@@ -886,6 +919,8 @@ def run_strategy_pipeline(
     )
 
     # ── Step 9: Backtest ──
+    # 生成交易地图到实验目录
+    experiment_map_path = f"{run_dir}/trading_map_{strategy}.html"
     rc, bt_out = run_step(
         "Backtest",
         [
@@ -895,6 +930,8 @@ def run_strategy_pipeline(
             f"{evidence_dir}/predictions.parquet",
             "--strategy",
             strategy,
+            "--output",
+            experiment_map_path,
         ],
         log,
         dry_run=dry_run,
@@ -1220,40 +1257,44 @@ def main():
         )
 
         bt = pipeline_result["backtest_metrics"]
-        print(f"\n{'='*70}")
-        print(f"📊 {strategy.upper()} 研究结果")
-        print(f"{'='*70}")
-        print(f"   Trades:      {bt.get('total_trades', 'N/A')}")
-        print(f"   Sharpe:      {bt.get('sharpe_per_trade', 'N/A')}")
-        print(f"   Win Rate:    {bt.get('win_rate', 'N/A')}")
-        print(f"   Mean R:      {bt.get('mean_r', 'N/A')}")
-        if prev:
-            prev_bt = prev.get("backtest_metrics", {})
-            print(f"\n   上次 Sharpe:  {prev_bt.get('sharpe_per_trade', 'N/A')}")
-            print(f"   变化比:       {comparison.get('sharpe_ratio', 'N/A')}")
-        print(f"\n   {emoji} 决策: {decision}")
-        for r in comparison.get("reasons", []):
-            print(f"      → {r}")
-        print(f"\n   📁 Report: {report_path}")
-        print(f"   📦 实验配置: {run_dir}/strategies/{strategy}/archetypes/")
 
-        # ── 漂移报告 (当存在上次实验时自动输出) ──
-        drift_levels = None
+        # ── 分层汇总表 (每层规则/阈值 + 与上次对比) ──
+        cur_arch = _find_arch_dir(run_dir, strategy)
+        prev_arch = None
+        prev_bt = {}
         if prev and not args.dry_run:
             prev_ts = prev.get("timestamp", "")
             prev_dir = history_dir / strategy / prev_ts
             prev_arch = _find_arch_dir(prev_dir, strategy)
-            cur_arch = _find_arch_dir(run_dir, strategy)
-            if prev_arch and cur_arch:
-                drift_levels = _print_drift_report(
-                    strategy,
-                    prev_ts,
-                    timestamp,
-                    prev_arch,
-                    cur_arch,
-                    prev.get("backtest_metrics", {}),
-                    bt,
-                )
+            prev_bt = prev.get("backtest_metrics", {})
+        if cur_arch:
+            print_layer_summary(
+                strategy,
+                timestamp,
+                cur_arch,
+                bt,
+                prev_arch_dir=prev_arch,
+                prev_metrics=prev_bt if prev_bt else None,
+            )
+
+        print(f"\n   {emoji} 决策: {decision}")
+        for r in comparison.get("reasons", []):
+            print(f"      → {r}")
+        print(f"   📁 Report: {report_path}")
+        print(f"   📦 实验配置: {run_dir}/strategies/{strategy}/archetypes/")
+
+        # ── 漂移报告 (当存在上次实验时自动输出) ──
+        drift_levels = None
+        if prev and not args.dry_run and prev_arch and cur_arch:
+            drift_levels = _print_drift_report(
+                strategy,
+                prev.get("timestamp", ""),
+                timestamp,
+                prev_arch,
+                cur_arch,
+                prev_bt,
+                bt,
+            )
 
         # ── Deploy 门禁检查 ──
         deploy_cfg = cfg.get("deploy_gate", {})
@@ -1461,6 +1502,240 @@ def _load_report_metrics(run_dir: Path) -> Dict[str, Any]:
         r = json.loads(rpt.read_text(encoding="utf-8"))
         return r.get("backtest_metrics", {})
     return {}
+
+
+# ── 分层汇总表 ─────────────────────────────────────────────────────
+
+
+def _read_yaml_safe(path: Path) -> dict:
+    if path.exists():
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {}
+
+
+def _extract_layer_info(arch_dir: Path) -> Dict[str, Any]:
+    """Extract per-layer summary from archetypes directory."""
+    info: Dict[str, Any] = {}
+
+    # Prefilter
+    pf = _read_yaml_safe(arch_dir / "prefilter.yaml")
+    pf_rules = pf.get("rules", [])
+    pf_descs = []
+    for r in pf_rules:
+        if "any_of" in r:
+            subs = [
+                f"{s.get('feature', '?')}{s.get('operator', '')}{s.get('value', '')}"
+                for s in r["any_of"]
+            ]
+            pf_descs.append("(" + " OR ".join(subs) + ")")
+        else:
+            pf_descs.append(
+                f"{r.get('feature', '?')} {r.get('operator', '')} {r.get('value', '')}"
+            )
+    info["prefilter"] = {"count": len(pf_rules), "rules": pf_descs}
+
+    # Direction
+    dr = _read_yaml_safe(arch_dir / "direction.yaml")
+    dr_rules = dr.get("direction_rules", [])
+    dr_descs = [f"{r.get('feature', '?')}(w={r.get('weight', 1)})" for r in dr_rules]
+    info["direction"] = {"count": len(dr_rules), "rules": dr_descs}
+
+    # Gate
+    gt = _read_yaml_safe(arch_dir / "gate.yaml")
+    hg = gt.get("hard_gates", [])
+    gr = gt.get("guardrails", [])
+    hg_descs = []
+    for r in hg:
+        rid = r.get("id", "")
+        w = r.get("when", {})
+        for feat, cond in w.items():
+            for op, val in cond.items():
+                op_s = op.replace("value_", "")
+                hg_descs.append(f"{feat} {op_s} {val}")
+    info["gate"] = {"hard_gates": len(hg), "guardrails": len(gr), "rules": hg_descs}
+
+    # Evidence
+    ev = _read_yaml_safe(arch_dir / "evidence.yaml")
+    ev_axes = ev.get("evidence_axes", ev.get("evidence", []))
+    ev_descs = []
+    for r in ev_axes:
+        feat = r.get("feature", "?")
+        direction = r.get("direction", "")
+        qm = r.get("quantile_mapping", {})
+        bins = qm.get("bins", [])
+        if bins:
+            ev_descs.append(f"{feat}({direction}, bins={len(bins)})")
+        else:
+            ev_descs.append(f"{feat}({direction})")
+    info["evidence"] = {"count": len(ev_axes), "rules": ev_descs}
+
+    # Entry Filters
+    ef = _read_yaml_safe(arch_dir / "entry_filters.yaml")
+    ef_filters = ef.get("filters", [])
+    ef_descs = [f.get("id", f.get("name", "?")) for f in ef_filters]
+    info["entry_filters"] = {"count": len(ef_filters), "rules": ef_descs}
+
+    # Execution
+    ex = _read_yaml_safe(arch_dir / "execution.yaml")
+    ex_summary = {}
+    if ex.get("stop_loss"):
+        sl = ex["stop_loss"]
+        init_r = sl.get("initial_r", sl.get("r_multiple", sl.get("atr_multiple", "?")))
+        trail = sl.get("trailing", {})
+        act_r = trail.get("activation_r", "")
+        trail_r = trail.get("trail_r", "")
+        sl_s = f"{init_r}R"
+        if act_r:
+            sl_s += f"(act={act_r},trail={trail_r})"
+        ex_summary["SL"] = sl_s
+    if ex.get("take_profit") and ex["take_profit"].get("enabled", True):
+        tp = ex["take_profit"]
+        tp_val = tp.get("r_multiple", tp.get("target_r", tp.get("atr_multiple", "?")))
+        ex_summary["TP"] = f"{tp_val}R"
+    if ex.get("holding"):
+        h = ex["holding"]
+        mb = h.get("max_holding_bars", h.get("max_bars", None))
+        ts = h.get("time_stop_bars", None)
+        if ts:
+            ex_summary["time_stop"] = f"{ts}bars"
+        elif mb:
+            ex_summary["max_bars"] = mb
+    if ex.get("tiers", {}).get("enabled"):
+        ex_summary["tiers"] = len(ex["tiers"].get("levels", []))
+    # fallback: generic params
+    ex_params = ex.get("params", ex.get("execution_params", {}))
+    if ex_params:
+        ex_summary.update({k: v for k, v in list(ex_params.items())[:3]})
+    info["execution"] = ex_summary
+
+    return info
+
+
+def _fmt_rules(rules: list, max_show: int = 3) -> str:
+    if not rules:
+        return ""
+    shown = rules[:max_show]
+    rest = len(rules) - max_show
+    s = ", ".join(str(r) for r in shown)
+    if rest > 0:
+        s += f" (+{rest}更多)"
+    return s
+
+
+def _delta_str(cur: int, prev: int) -> str:
+    if prev == cur:
+        return "—"
+    diff = cur - prev
+    return f"{diff:+d}" if diff != 0 else "—"
+
+
+def print_layer_summary(
+    strategy: str,
+    timestamp: str,
+    arch_dir: Path,
+    backtest_metrics: Dict[str, Any],
+    prev_arch_dir: Optional[Path] = None,
+    prev_metrics: Optional[Dict[str, Any]] = None,
+):
+    """Pipeline 结束时打印分层汇总表."""
+    cur = _extract_layer_info(arch_dir)
+    prev = _extract_layer_info(prev_arch_dir) if prev_arch_dir else None
+    w = 74
+    sep = "─" * w
+
+    print(f"\n{'═' * w}")
+    print(f"  {strategy.upper()} 分层配置汇总  ({timestamp})")
+    print(f"{'═' * w}")
+
+    # ── Prefilter ──
+    pf = cur["prefilter"]
+    line = f"  L2 Prefilter     {pf['count']} rule(s)"
+    if prev:
+        pp = prev["prefilter"]
+        line += f"  ← prev {pp['count']}  {_delta_str(pf['count'], pp['count'])}"
+    print(line)
+    if pf["rules"]:
+        print(f"                   {_fmt_rules(pf['rules'])}")
+
+    # ── Direction ──
+    dr = cur["direction"]
+    line = f"  L3 Direction     {dr['count']} feature(s)"
+    if prev:
+        pd_ = prev["direction"]
+        line += f"  ← prev {pd_['count']}  {_delta_str(dr['count'], pd_['count'])}"
+    print(line)
+    if dr["rules"]:
+        print(f"                   {_fmt_rules(dr['rules'])}")
+
+    # ── Gate ──
+    gt = cur["gate"]
+    line = f"  L4 Gate          {gt['hard_gates']} hard_gate(s), {gt['guardrails']} guardrail(s)"
+    if prev:
+        pg = prev["gate"]
+        line += f"  ← prev {pg['hard_gates']}+{pg['guardrails']}  {_delta_str(gt['hard_gates'], pg['hard_gates'])}"
+    print(line)
+    if gt["rules"]:
+        print(f"                   {_fmt_rules(gt['rules'])}")
+
+    # ── Evidence ──
+    ev = cur["evidence"]
+    line = f"  L5 Evidence      {ev['count']} axis/axes"
+    if prev:
+        pe = prev["evidence"]
+        line += f"  ← prev {pe['count']}  {_delta_str(ev['count'], pe['count'])}"
+    print(line)
+    if ev["rules"]:
+        print(f"                   {_fmt_rules(ev['rules'], max_show=5)}")
+
+    # ── Entry Filters ──
+    ef = cur["entry_filters"]
+    line = f"  L6 Entry Filter  {ef['count']} filter(s)"
+    if prev:
+        pef = prev["entry_filters"]
+        line += f"  ← prev {pef['count']}  {_delta_str(ef['count'], pef['count'])}"
+    print(line)
+    if ef["rules"]:
+        print(f"                   {_fmt_rules(ef['rules'])}")
+
+    # ── Execution ──
+    ex = cur.get("execution", {})
+    ex_parts = [f"{k}={v}" for k, v in list(ex.items())[:5]] if ex else ["(默认)"]
+    print(f"  L7 Execution     {', '.join(ex_parts)}")
+
+    # ── Backtest ──
+    print(f"  {sep}")
+    bt = backtest_metrics
+    sharpe_pt = bt.get("sharpe_per_trade", "N/A")
+    sharpe_d = bt.get("sharpe_daily", "")
+    trades = bt.get("total_trades", "N/A")
+    winr = bt.get("win_rate", "N/A")
+    mean_r = bt.get("mean_r", "N/A")
+    sharpe_s = (
+        f"{sharpe_pt:.4f}" if isinstance(sharpe_pt, (int, float)) else str(sharpe_pt)
+    )
+    daily_s = f" (daily {sharpe_d:.2f})" if isinstance(sharpe_d, (int, float)) else ""
+    winr_s = f"{winr:.1%}" if isinstance(winr, (int, float)) else str(winr)
+    mean_r_s = f"{mean_r:.4f}" if isinstance(mean_r, (int, float)) else str(mean_r)
+    line = f"  Backtest         Sharpe={sharpe_s}{daily_s}  Trades={trades}  Win={winr_s}  MeanR={mean_r_s}"
+    print(line)
+    if prev_metrics:
+        p_sharpe = prev_metrics.get("sharpe_per_trade")
+        p_trades = prev_metrics.get("total_trades")
+        p_winr = prev_metrics.get("win_rate")
+        parts = []
+        if isinstance(p_sharpe, (int, float)):
+            parts.append(f"Sharpe={p_sharpe:.4f}")
+            if isinstance(sharpe_pt, (int, float)) and p_sharpe != 0:
+                pct = (sharpe_pt - p_sharpe) / abs(p_sharpe) * 100
+                parts.append(f"Δ={pct:+.1f}%")
+        if p_trades is not None:
+            parts.append(f"Trades={p_trades}")
+        if isinstance(p_winr, (int, float)):
+            parts.append(f"Win={p_winr:.1%}")
+        if parts:
+            print(f"     prev:         {', '.join(parts)}")
+
+    print(f"{'═' * w}")
 
 
 # ── 漂移报告核心 ─────────────────────────────────────────────────

@@ -1355,23 +1355,162 @@ def _prefilter_recommendation(
         print(f"\n  ⚠️  无足够强的 prefilter 候选 (composite < 0.5)")
 
     # Build top_rules for auto-generation (with rationale)
+    # ── CRITICAL: simulate cumulative AND to avoid over-filtering ──
+    # Guards:
+    #   1. Absolute row minimum: 累积 AND 后至少保留 MIN_PREFILTER_ROWS 行
+    #      (Gate/Evidence/Entry plateau 检测最低需 ~500 行即可)
+    #   2. Actual train count (rows < split) >= MIN_TRAIN_SAMPLES
+    #      (虽然模型用全量训练, 但 prefilter 后的子集需要足够 pre-split 数据做 plateau 验证)
+    #
+    # 为什么不用百分比?
+    #   模型训练已用全量数据, prefilter 只影响 Gate Optimize 的 plateau 检测.
+    #   Plateau 需要的是绝对样本量(~500), 不是比例.
+    #   P5/P10 级特征虽然只选 5-10% 数据, 但信号更强, 应该允许选用.
+    MIN_PREFILTER_ROWS = 500  # plateau 检测的绝对最低行数
     top_rules = []
-    for s in recommended[:3]:
-        rationale_parts = [f"{s['percentile']}阈值"]
-        if s["cv"] is not None:
-            rationale_parts.append(f"CV={s['cv']:.2f}")
-        rationale_parts.append(f"bad_rate {s['bad_rate_diff']:+.1%}")
-        rationale_parts.append(f"鲁棒性={s['robustness']:.2f}")
-        rationale_parts.append(f"评分={s['composite']:.3f}")
-        top_rules.append(
-            {
-                "feature": s["feature"],
-                "operator": s["operator"],
-                "value": s["value"],
-                "composite": s["composite"],
-                "rationale": ", ".join(rationale_parts),
-            }
+    _skip_log = []  # 记录跳过原因，最后汇总输出
+    if df is not None and n_dataset > 0:
+        _sim_df = df.copy()
+        _train_ratio = locals().get("_TRAIN_RATIO", 0.44)
+        # Resolve time column + split for actual train count
+        _time_col_tr = _find_time_column(df)
+        _split_ts = pd.Timestamp("2024-05-01")
+        if _time_col_tr:
+            _ts_all = _get_times(df, _time_col_tr)
+            if hasattr(_ts_all, "tz") and _ts_all.dt.tz is not None:
+                _split_ts = _split_ts.tz_localize(_ts_all.dt.tz)
+        else:
+            _ts_all = None
+        _n_scanned = 0
+        for s in recommended[:5]:  # scan up to 5 candidates
+            if len(top_rules) >= 3:
+                break
+            _n_scanned += 1
+            _feat = s["feature"]
+            _op_str = s["operator"]
+            _val = s["value"]
+            _pct = s.get("percentile", "?")
+            _op_func = _SIM_OPS.get(_op_str)
+            if _op_func is None or _feat not in _sim_df.columns:
+                continue
+            _trial = _sim_df[_op_func(_sim_df[_feat], _val)]
+
+            # Guard 1: absolute row minimum (plateau 检测需要足够样本)
+            _coverage = len(_trial) / n_dataset if n_dataset > 0 else 0
+            _is_cumulative = len(_sim_df) < n_dataset  # 前面已有规则通过
+            if len(_trial) < MIN_PREFILTER_ROWS:
+                if _is_cumulative:
+                    _reason = (
+                        f"累积 AND 后行数不足: "
+                        f"前序规则已筛至 {len(_sim_df):,} 行, "
+                        f"再加此规则({_pct}阈值)仅剩 {len(_trial):,} 行 < {MIN_PREFILTER_ROWS} (plateau 最低需求)"
+                    )
+                else:
+                    _reason = (
+                        f"规则本身行数不足: "
+                        f"{_pct}阈值仅选中 {len(_trial):,} 行 < {MIN_PREFILTER_ROWS} (plateau 最低需求)"
+                    )
+                _skip_log.append(
+                    {
+                        "rule": f"{_feat} {_op_str} {_val}",
+                        "percentile": _pct,
+                        "reason": _reason,
+                        "guard": "rows",
+                    }
+                )
+                print(
+                    f"  ⛔ top_rules 跳过 {_feat} {_op_str} {_val} ({_pct}): {_reason}"
+                )
+                continue
+
+            # Guard 2: actual train count (rows before split)
+            if _ts_all is not None:
+                _trial_ts = _ts_all.loc[_trial.index]
+                _actual_train = int((_trial_ts < _split_ts).sum())
+            else:
+                _actual_train = int(len(_trial) * _train_ratio)
+            if _actual_train < MIN_TRAIN_SAMPLES:
+                _reason = (
+                    f"split前样本不足: "
+                    f"总行数={len(_trial):,}, 但 split 前仅 {_actual_train:,} 行 < {MIN_TRAIN_SAMPLES:,} (plateau时序验证要求)"
+                )
+                _skip_log.append(
+                    {
+                        "rule": f"{_feat} {_op_str} {_val}",
+                        "percentile": _pct,
+                        "reason": _reason,
+                        "guard": "train_samples",
+                    }
+                )
+                print(
+                    f"  ⛔ top_rules 跳过 {_feat} {_op_str} {_val} ({_pct}): {_reason}"
+                )
+                continue
+            # ✅ 通过所有护栏
+            print(
+                f"  ✅ top_rules 接受 {_feat} {_op_str} {_val} ({_pct}): "
+                f"{len(_trial):,} 行 ({_coverage:.1%}), train={_actual_train if _ts_all is not None else '~' + str(_actual_train):,}"
+            )
+            _sim_df = _trial.copy()
+            rationale_parts = [f"{s['percentile']}阈值"]
+            if s["cv"] is not None:
+                rationale_parts.append(f"CV={s['cv']:.2f}")
+            rationale_parts.append(f"bad_rate {s['bad_rate_diff']:+.1%}")
+            rationale_parts.append(f"鲁棒性={s['robustness']:.2f}")
+            rationale_parts.append(f"评分={s['composite']:.3f}")
+            top_rules.append(
+                {
+                    "feature": s["feature"],
+                    "operator": s["operator"],
+                    "value": s["value"],
+                    "composite": s["composite"],
+                    "rationale": ", ".join(rationale_parts),
+                }
+            )
+    else:
+        # Fallback: no df available, use top-3 without simulation
+        for s in recommended[:3]:
+            rationale_parts = [f"{s['percentile']}阈值"]
+            if s["cv"] is not None:
+                rationale_parts.append(f"CV={s['cv']:.2f}")
+            rationale_parts.append(f"bad_rate {s['bad_rate_diff']:+.1%}")
+            rationale_parts.append(f"鲁棒性={s['robustness']:.2f}")
+            rationale_parts.append(f"评分={s['composite']:.3f}")
+            top_rules.append(
+                {
+                    "feature": s["feature"],
+                    "operator": s["operator"],
+                    "value": s["value"],
+                    "composite": s["composite"],
+                    "rationale": ", ".join(rationale_parts),
+                }
+            )
+
+    # ── top_rules 选择汇总 ──
+    _n_total_scanned = locals().get("_n_scanned", len(recommended[:5]))
+    if top_rules:
+        print(
+            f"\n  ✅ top_rules for --promote: {len(top_rules)} 条通过 "
+            f"(扫描 {_n_total_scanned} 个候选, 跳过 {len(_skip_log)} 个)"
         )
+        print(
+            f"     护栏: 绝对行数>={MIN_PREFILTER_ROWS}, split前train>={MIN_TRAIN_SAMPLES:,}"
+        )
+    else:
+        print(
+            f"\n  ⚠️  top_rules 为空: 扫描了 {_n_total_scanned} 个候选, 全部未通过安全护栏"
+        )
+        print(
+            f"     护栏: 绝对行数>={MIN_PREFILTER_ROWS} (plateau最低需求), split前train>={MIN_TRAIN_SAMPLES:,}"
+        )
+        if _skip_log:
+            _rows_skip = sum(1 for x in _skip_log if x["guard"] == "rows")
+            _train_skip = sum(1 for x in _skip_log if x["guard"] == "train_samples")
+            if _rows_skip:
+                print(f"     → {_rows_skip} 个因行数<{MIN_PREFILTER_ROWS} 跳过")
+            if _train_skip:
+                print(f"     → {_train_skip} 个因训练样本<{MIN_TRAIN_SAMPLES:,} 跳过")
+            print(f"     💡 提示: 可增加扫描范围(当前仅扫描 top-5), 或检查数据总量")
 
     _best_or = locals().get("best_or_pair")
 
