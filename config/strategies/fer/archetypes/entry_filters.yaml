@@ -1,8 +1,8 @@
 # FER Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-02-22 21:59
-# Promoted: 2 filters (2 plateau + 0 snotio-only)
-# Baseline snotio: 1.1322, σ=2.128
+# Date: 2026-02-23 16:16
+# Promoted: 3 filters (3 plateau + 0 snotio-only)
+# Baseline snotio: 1.3241, σ=1.736
 # Significance: z-test p<0.05 required for all tiers
 #
 # 职责: "现在该入场吗?" → 硬二值控制入场时机
@@ -19,16 +19,25 @@ filters:
     value: 46.714
   - feature: price_position
     operator: '>='
-    value: 0.8
+    value: 0.6
   tier: A_PLATEAU
-  notes: 'plateau: rsi=46.714(conf=MEDIUM), price_position=0.800(conf=MEDIUM), z=4.19 p=0.0000'
+  notes: 'plateau: rsi=46.714(conf=MEDIUM), price_position=0.600(conf=MEDIUM), z=2.15 p=0.0157'
+- id: momentum_exhaustion
+  enabled: true
+  description: '动量力竭: 价格推进但动量衰减'
+  conditions:
+  - feature: momentum_exhaustion_score
+    operator: '>='
+    value: 0.614
+  tier: A_PLATEAU
+  notes: 'plateau: momentum_exhaustion_score=0.614(conf=MEDIUM), z=2.44 p=0.0074'
 - id: fer_absorption
   enabled: true
   description: 'FER 吸收: 激进方被对手方吸收'
   conditions:
   - feature: fer_aggressor_absorption
     operator: '>='
-    value: 0.329
+    value: 0.271
   tier: A_PLATEAU
-  notes: 'plateau: fer_aggressor_absorption=0.329(conf=MEDIUM), z=2.45 p=0.0072'
+  notes: 'plateau: fer_aggressor_absorption=0.271(conf=MEDIUM), z=1.85 p=0.0324'
 combination_mode: or

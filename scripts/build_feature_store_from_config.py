@@ -31,6 +31,67 @@ from src.features.loader.strategy_feature_loader import (
 from src.time_series_model.strategy_config import StrategyConfigLoader  # noqa: E402
 
 
+def _get_expected_output_columns(features_cfg: dict, requested_features: list) -> set:
+    """Return the set of output column names from all requested features."""
+    cols: set = set()
+    for feat_name in requested_features:
+        if feat_name in features_cfg:
+            for col in features_cfg[feat_name].get("output_columns", [feat_name]):
+                cols.add(col)
+        else:
+            cols.add(feat_name)
+    return cols
+
+
+def _find_missing_features(
+    features_cfg: dict, requested_features: list, existing_columns: set
+) -> list:
+    """Find requested features whose output columns are not fully present."""
+    missing = []
+    for feat_name in requested_features:
+        if feat_name in features_cfg:
+            outputs = set(features_cfg[feat_name].get("output_columns", [feat_name]))
+            if not outputs.issubset(existing_columns):
+                missing.append(feat_name)
+        else:
+            if feat_name not in existing_columns:
+                missing.append(feat_name)
+    return missing
+
+
+def _find_donor_months(
+    store: "FeatureStore",
+    spec: FeatureStoreSpec,
+    months_needed: list,
+    root_dir: Path,
+) -> dict:
+    """For months not in current layer, find donor layers with the same data."""
+    if not months_needed:
+        return {}
+    donors: dict = {}
+    for layer_dir in sorted(
+        root_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+    ):
+        if (
+            not layer_dir.is_dir()
+            or layer_dir.name == spec.layer
+            or layer_dir.name.startswith(".")
+        ):
+            continue
+        check_dir = layer_dir / spec.symbol / spec.timeframe
+        if not check_dir.exists():
+            continue
+        donor_spec = FeatureStoreSpec(
+            layer=layer_dir.name, symbol=spec.symbol, timeframe=spec.timeframe
+        )
+        for m in months_needed:
+            if m not in donors and store.has_month(donor_spec, m):
+                donors[m] = donor_spec
+        if len(donors) == len(months_needed):
+            break
+    return donors
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Build monthly FeatureStore from a config directory."
@@ -86,6 +147,13 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Allow partial tick data (some symbols may not have data for full range). "
         "Missing months are skipped instead of raising an error. Default: True.",
+    )
+    p.add_argument(
+        "--no-reuse",
+        action="store_true",
+        default=False,
+        help="Disable cross-layer reuse. By default, missing months are copied from "
+        "other layers with same symbol/timeframe before computing new features.",
     )
     return p.parse_args()
 
@@ -193,12 +261,18 @@ def main() -> None:
     feature_cache_version = getattr(feature_loader.computer, "cache_version", None)
     requested = cfg.features.requested_features
 
+    # Compute expected output columns for incremental feature detection
+    features_cfg = feature_loader.feature_deps.get("features", {})
+    expected_output_cols = _get_expected_output_columns(features_cfg, requested)
+
     # Global statistics
     stats = {
         "symbols_processed": 0,
         "symbols_failed": 0,
         "months_skipped": 0,
         "months_built": 0,
+        "months_incremental": 0,
+        "months_reused": 0,
         "months_failed": 0,
         "failed_symbols": [],
         "failed_months": [],
@@ -319,22 +393,94 @@ def main() -> None:
                     continue
                 all_months.append(period.strftime("%Y-%m"))
 
-            # Check which months exist
-            existing_months = [m for m in all_months if store.has_month(spec, m)]
-            missing_months = [m for m in all_months if not store.has_month(spec, m)]
+            # Classify months: complete / partial (need incremental) / new
+            complete_months = []
+            partial_months = []  # (month, missing_features)
+            new_months = []
+            for m in all_months:
+                if store.has_month(spec, m):
+                    try:
+                        meta = store.read_month_meta(spec, m)
+                        existing_cols = set(meta.get("columns", []))
+                    except Exception:
+                        existing_cols = set()
+                    missing = _find_missing_features(
+                        features_cfg, requested, existing_cols
+                    )
+                    if missing:
+                        partial_months.append((m, missing))
+                    else:
+                        complete_months.append(m)
+                else:
+                    new_months.append(m)
 
-            stats["months_skipped"] += len(existing_months)
+            stats["months_skipped"] += len(complete_months)
 
-            if existing_months:
+            # Repair metadata for complete months missing feature_cache_version.
+            # Older builds may not have written this field; patching the sidecar
+            # JSON here ensures the version gate in train pipeline won't
+            # incorrectly mark these months as stale.
+            if feature_cache_version and complete_months:
+                _repaired = 0
+                for _cm in complete_months:
+                    try:
+                        _meta = store.read_month_meta(spec, _cm)
+                        _md = _meta.get("metadata", {}) or {}
+                        if _md.get("feature_cache_version") != feature_cache_version:
+                            _md["feature_cache_version"] = feature_cache_version
+                            if "config_dir" not in _md:
+                                _md["config_dir"] = str(cfg_dir)
+                            _meta["metadata"] = _md
+                            _meta_path = (
+                                root
+                                / layer
+                                / sym
+                                / str(args.timeframe)
+                                / f"{_cm}.meta.json"
+                            )
+                            _meta_path.write_text(
+                                json.dumps(_meta, ensure_ascii=False, indent=2)
+                            )
+                            _repaired += 1
+                    except Exception:
+                        pass
+                if _repaired:
+                    print(
+                        f"  \U0001f527 Repaired metadata for {_repaired} month(s) (added feature_cache_version)"
+                    )
+
+            # Find donor layers for new months (cross-layer reuse)
+            donor_map: dict = {}
+            if new_months and not args.no_reuse:
+                donor_map = _find_donor_months(store, spec, new_months, root)
+
+            if complete_months:
                 print(
-                    f"  ⏭️  Skipping {len(existing_months)} existing month(s): {', '.join(existing_months[:5])}{'...' if len(existing_months) > 5 else ''}"
+                    f"  \u23ed\ufe0f  Complete {len(complete_months)} month(s): "
+                    f"{', '.join(complete_months[:5])}"
+                    f"{'...' if len(complete_months) > 5 else ''}"
                 )
-            if missing_months:
+            if partial_months:
+                sample_missing = partial_months[0][1]
                 print(
-                    f"  🔨 Building {len(missing_months)} missing month(s): {', '.join(missing_months[:5])}{'...' if len(missing_months) > 5 else ''}"
+                    f"  \U0001f504 Incremental {len(partial_months)} month(s): "
+                    f"+{len(sample_missing)} features "
+                    f"({', '.join(sample_missing[:3])}"
+                    f"{'...' if len(sample_missing) > 3 else ''})"
                 )
-            elif not existing_months and not missing_months:
-                print(f"  ⚠️  No months to process for {sym}")
+            if new_months:
+                reuse_count = len([m for m in new_months if m in donor_map])
+                fresh_count = len(new_months) - reuse_count
+                parts = []
+                if reuse_count:
+                    parts.append(f"{reuse_count} reusable")
+                if fresh_count:
+                    parts.append(f"{fresh_count} from scratch")
+                print(
+                    f"  \U0001f528 New {len(new_months)} month(s): {', '.join(parts)}"
+                )
+            if not complete_months and not partial_months and not new_months:
+                print(f"  \u26a0\ufe0f  No months to process for {sym}")
 
             # Process each month with error handling
             for period, df_month in monthly_groups:
@@ -346,15 +492,72 @@ def main() -> None:
 
                 # Filter months by start_date and end_date if provided
                 if start_ts is not None and month_end < start_ts:
-                    continue  # Skip months before start_date
+                    continue
                 if end_ts is not None and month_start > end_ts:
-                    continue  # Skip months after end_date
-
-                month_str = period.strftime("%Y-%m")
-                if store.has_month(spec, month_str):
                     continue
 
-                print(f"\n  📅 Building {sym} {month_str}...")
+                month_str = period.strftime("%Y-%m")
+
+                # Determine action: skip / incremental / reuse+incremental / full build
+                features_to_compute = requested
+                merge_mode = False
+
+                if store.has_month(spec, month_str):
+                    try:
+                        meta = store.read_month_meta(spec, month_str)
+                        existing_cols = set(meta.get("columns", []))
+                    except Exception:
+                        existing_cols = set()
+                    missing_feats = _find_missing_features(
+                        features_cfg, requested, existing_cols
+                    )
+                    if not missing_feats:
+                        continue  # complete, skip
+                    features_to_compute = missing_feats
+                    merge_mode = True
+                    print(
+                        f"\n  \U0001f504 Incremental {sym} {month_str}: "
+                        f"+{len(missing_feats)} features "
+                        f"({', '.join(missing_feats[:3])}"
+                        f"{'...' if len(missing_feats) > 3 else ''})"
+                    )
+                elif month_str in donor_map:
+                    # Copy from donor layer first
+                    donor_spec = donor_map[month_str]
+                    try:
+                        donor_df = store.read_month(donor_spec, month_str)
+                        store.write_month(
+                            spec,
+                            month_str,
+                            donor_df,
+                            base_columns=list(donor_df.columns),
+                            feature_columns=[],
+                            overwrite=True,
+                        )
+                        existing_cols = set(donor_df.columns)
+                        missing_feats = _find_missing_features(
+                            features_cfg, requested, existing_cols
+                        )
+                        if not missing_feats:
+                            stats["months_reused"] += 1
+                            print(
+                                f"  \U0001f4cb Reused {sym} {month_str} "
+                                f"from layer {donor_spec.layer}"
+                            )
+                            continue
+                        features_to_compute = missing_feats
+                        merge_mode = True
+                        print(
+                            f"\n  \U0001f4cb Reused {sym} {month_str} from {donor_spec.layer}, "
+                            f"+{len(missing_feats)} features to compute"
+                        )
+                    except Exception as e:
+                        print(
+                            f"  \u26a0\ufe0f  Donor reuse failed for {month_str}: {e}, "
+                            f"building from scratch"
+                        )
+                else:
+                    print(f"\n  \U0001f4c5 Building {sym} {month_str}...")
 
                 try:
                     if warmup_months > 0:
@@ -374,7 +577,7 @@ def main() -> None:
                         ]
 
                     df_feats_window = feature_loader.load_features_from_requested(
-                        df_window, requested_features=requested, fit=True
+                        df_window, requested_features=features_to_compute, fit=True
                     )
                     if "symbol" not in df_feats_window.columns:
                         df_feats_window["symbol"] = sym
@@ -383,10 +586,30 @@ def main() -> None:
                         & (df_feats_window.index <= month_end)
                     ]
 
-                    # Extract feature columns (all columns except base columns)
-                    feature_cols = [
-                        c for c in df_feats_month.columns if c not in base_cols
-                    ]
+                    # Determine feature columns to write
+                    if merge_mode:
+                        # Only write newly computed feature columns
+                        feature_cols = []
+                        for feat_name in features_to_compute:
+                            if feat_name in features_cfg:
+                                for col in features_cfg[feat_name].get(
+                                    "output_columns", [feat_name]
+                                ):
+                                    if (
+                                        col in df_feats_month.columns
+                                        and col not in base_cols
+                                    ):
+                                        feature_cols.append(col)
+                            elif (
+                                feat_name in df_feats_month.columns
+                                and feat_name not in base_cols
+                            ):
+                                feature_cols.append(feat_name)
+                        feature_cols = list(dict.fromkeys(feature_cols))
+                    else:
+                        feature_cols = [
+                            c for c in df_feats_month.columns if c not in base_cols
+                        ]
 
                     store.write_month(
                         spec,
@@ -395,29 +618,35 @@ def main() -> None:
                         base_columns=base_cols,
                         feature_columns=feature_cols,
                         overwrite=False,
+                        merge_existing=merge_mode,
                         metadata={
                             "config_dir": str(cfg_dir),
                             "warmup_months": warmup_months,
                             "warmup_bars": warmup_bars,
-                            "requested_features": requested,
+                            "requested_features": features_to_compute,
                             "feature_cache_version": feature_cache_version,
                         },
                     )
-                    stats["months_built"] += 1
-                    print(f"  ✅ Successfully built {sym} {month_str}")
+                    if merge_mode:
+                        stats["months_incremental"] += 1
+                    else:
+                        stats["months_built"] += 1
+                    label = "incremental" if merge_mode else "built"
+                    print(f"  \u2705 Successfully {label} {sym} {month_str}")
                 except Exception as e:
                     stats["months_failed"] += 1
                     error_msg = str(e)
                     stats["failed_months"].append((sym, month_str, error_msg))
-                    print(f"  ❌ Failed to build {sym} {month_str}: {error_msg}")
+                    print(f"  \u274c Failed to build {sym} {month_str}: {error_msg}")
                     import traceback
 
                     print(f"     Traceback: {traceback.format_exc()}")
                     # Continue to next month instead of crashing
 
             stats["symbols_processed"] += 1
+            n_actions = len(partial_months) + len(new_months)
             print(
-                f"✅ Completed {sym}: {len(existing_months)} skipped, {len(missing_months)} built"
+                f"\u2705 Completed {sym}: {len(complete_months)} skipped, {n_actions} processed"
             )
 
         except Exception as e:
@@ -436,8 +665,10 @@ def main() -> None:
     print(f"{'='*60}")
     print(f"  ✅ Symbols processed: {stats['symbols_processed']}/{len(symbols)}")
     print(f"  ❌ Symbols failed: {stats['symbols_failed']}")
-    print(f"  ⏭️  Months skipped (already exist): {stats['months_skipped']}")
-    print(f"  🔨 Months built: {stats['months_built']}")
+    print(f"  ⏭️  Months skipped (complete): {stats['months_skipped']}")
+    print(f"  🔄 Months incremental (features added): {stats['months_incremental']}")
+    print(f"  📋 Months reused (from other layers): {stats['months_reused']}")
+    print(f"  🔨 Months built (from scratch): {stats['months_built']}")
     print(f"  ❌ Months failed: {stats['months_failed']}")
 
     if stats["failed_symbols"]:

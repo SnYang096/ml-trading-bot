@@ -393,7 +393,10 @@ class StrategyFeatureLoader:
                         try:
                             meta = store.read_month_meta(spec, month)
                             md = meta.get("metadata", {}) or {}
-                            if md.get("feature_cache_version") != expected_cache_version:
+                            stored_version = md.get("feature_cache_version")
+                            # Tolerate missing version (old builds); only flag
+                            # stale when an explicit *different* version is found.
+                            if stored_version is not None and stored_version != expected_cache_version:
                                 stale = True
                                 break
                         except Exception:
@@ -449,9 +452,34 @@ class StrategyFeatureLoader:
                             merged = pd.concat([result_df, feature_subset], axis=1)
                         else:
                             merged = result_df
+                        print(
+                            f"   ✅ FeatureStore hit: {feature_store_symbol}/{feature_store_timeframe} "
+                            f"({len(df_store)} rows, {len(output_cols)} feature cols)"
+                        )
                         return merged
-            except Exception:
-                pass
+                    else:
+                        _missing = [c for c in output_cols if c not in df_store.columns]
+                        print(
+                            f"   ⚠️  FeatureStore partial: {feature_store_symbol}/{feature_store_timeframe} "
+                            f"missing {len(_missing)} cols: {_missing[:5]}{'...' if len(_missing)>5 else ''}. "
+                            f"Falling back to compute."
+                        )
+                else:
+                    print(
+                        f"   ⚠️  FeatureStore empty: {feature_store_symbol}/{feature_store_timeframe} "
+                        f"(layer={feature_store_layer}). Falling back to compute."
+                    )
+            except Exception as _fs_err:
+                import sys as _sys
+                print(
+                    f"⚠️  FeatureStore read failed for "
+                    f"{feature_store_symbol}/{feature_store_timeframe} "
+                    f"(layer={feature_store_layer}): "
+                    f"{type(_fs_err).__name__}: {_fs_err}. "
+                    f"Falling back to compute.",
+                    file=_sys.stderr,
+                    flush=True,
+                )
 
         features = self.feature_deps.get("features", {})
 

@@ -1,0 +1,74 @@
+# BPC Gate Draft (auto-generated)
+# 来源: results/train_final_20260223_161246_rr_extreme/bpc
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy bpc
+#   python scripts/optimize_gate_unified.py --strategy bpc --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    failure_budget:
+      max_hard_deny_rate: 0.5
+      alert_threshold: 0.45
+hard_gates:
+- id: gate_bpc_breakout_direction
+  tag: HARD_BPC_BREAKOUT_DIRECTION
+  phase: hard_gate
+  priority: 10
+  reason: bpc_breakout_direction 触发树分裂条件 (分裂 1 次)
+  when:
+    bpc_breakout_direction:
+      value_gt: 0.0
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 0 | 方向: data_verified (low=0.528, high=-0.319)'
+- id: gate_wpt_compression_score
+  tag: HARD_WPT_COMPRESSION_SCORE
+  phase: hard_gate
+  priority: 11
+  reason: wpt_compression_score 触发树分裂条件 (分裂 1 次)
+  when:
+    wpt_compression_score:
+      value_gt: 0.1918
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 0.1918 | 方向: data_verified (low=0.682, high=-0.243)'
+- id: gate_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED
+  phase: hard_gate
+  priority: 12
+  reason: cvd_change_5_normalized 触发树分裂条件 (分裂 1 次)
+  when:
+    cvd_change_5_normalized:
+      value_gt: -0.0138
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 -0.01382 | 方向: data_verified (low=0.145, high=-0.035)'
+- id: gate_bpc_vol_continuation_confirm
+  tag: HARD_BPC_VOL_CONTINUATION_CONFIRM
+  phase: hard_gate
+  priority: 13
+  reason: bpc_vol_continuation_confirm 触发树分裂条件 (分裂 1 次)
+  when:
+    bpc_vol_continuation_confirm:
+      value_gt: 0.5837
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 0.5837 | 方向: data_verified (low=1.291, high=-0.381)'
+- id: gate_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED
+  phase: hard_gate
+  priority: 14
+  reason: cvd_change_5_normalized 触发树分裂条件 (分裂 1 次)
+  when:
+    cvd_change_5_normalized:
+      value_gt: 0.0104
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 0.01044 | 方向: data_verified (low=0.179, high=-0.398)'
+guardrails: []

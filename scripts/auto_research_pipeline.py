@@ -263,6 +263,136 @@ def find_previous_report(history_dir: Path, strategy: str) -> Optional[Dict[str,
     return None
 
 
+def check_deploy_gate(
+    decision: str,
+    comparison: Dict[str, Any],
+    drift_levels: Optional[Dict[str, str]],
+    deploy_cfg: dict,
+) -> Dict[str, Any]:
+    """检查是否满足 deploy 门禁条件.
+
+    双层逻辑:
+      1. 触发条件 (OR): 至少一个满足才「值得」deploy
+         - Sharpe 显著提升 (>= trigger_sharpe_improve)
+         - 漂移 >= HIGH 且 |Sharpe 变化| > min_sharpe_change (参数过时 + 性能有变)
+      2. 安全门禁 (AND): 全部满足才「允许」deploy
+         - ADOPT 决策
+         - min_trades >= 阈值
+
+    Returns: {"deploy_ready": bool, "triggers": [...], "safety": [...],
+              "blocked_by": [...], "skip_reason": str|None}
+    """
+    triggers: List[Dict[str, Any]] = []
+    safety: List[Dict[str, Any]] = []
+    blocked: List[str] = []
+    skip_reason: Optional[str] = None
+
+    DRIFT_ORDER = {
+        "NONE": 0,
+        "LOW": 1,
+        "STABLE": 1,
+        "MONITOR": 2,
+        "MEDIUM": 2,
+        "REVIEW": 3,
+        "HIGH": 3,
+        "ADJUST": 4,
+    }
+
+    # ── 触发条件 (OR) ─────────────────────────────────────
+    triggered = False
+
+    # T1. Sharpe 提升
+    sharpe_thresh = deploy_cfg.get("trigger_sharpe_improve", 0.05)
+    prev_sharpe = comparison.get("previous_sharpe")
+    cur_sharpe = comparison.get("current_sharpe", 0)
+    if prev_sharpe is not None and prev_sharpe != 0:
+        improve = (cur_sharpe - prev_sharpe) / abs(prev_sharpe)
+        t1_ok = improve >= sharpe_thresh
+        triggers.append(
+            {
+                "rule": "sharpe_improve",
+                "value": f"{improve:+.1%}",
+                "threshold": f">= {sharpe_thresh:.0%}",
+                "pass": t1_ok,
+            }
+        )
+        if t1_ok:
+            triggered = True
+    else:
+        # 首次运行, 无对比基准 → 视为触发 (首版本必须 deploy)
+        triggers.append({"rule": "sharpe_improve", "value": "首次运行", "pass": True})
+        triggered = True
+
+    # T2. 漂移级别 + Sharpe 稳定性保护
+    trigger_drift = deploy_cfg.get("trigger_drift_level", "HIGH")
+    min_sharpe_chg = deploy_cfg.get("min_sharpe_change", 0.03)
+    if drift_levels:
+        overall = max(
+            drift_levels.values(), key=lambda x: DRIFT_ORDER.get(x, 0), default="NONE"
+        )
+        drift_ok = DRIFT_ORDER.get(overall, 0) >= DRIFT_ORDER.get(trigger_drift, 3)
+        # 稳定性保护: 即使漂移达标, |Sharpe变化| 须 > min_sharpe_change 才触发
+        sharpe_changed = True  # 默认有变化
+        if prev_sharpe is not None and prev_sharpe != 0:
+            abs_chg = abs(cur_sharpe - prev_sharpe) / abs(prev_sharpe)
+            sharpe_changed = abs_chg > min_sharpe_chg
+        t2_ok = drift_ok and sharpe_changed
+        t2_note = f">= {trigger_drift}"
+        if drift_ok and not sharpe_changed:
+            t2_note += f" (Sharpe稳定, |变化|<={min_sharpe_chg:.0%}, 不触发)"
+        triggers.append(
+            {
+                "rule": "drift_level",
+                "value": overall,
+                "threshold": t2_note,
+                "pass": t2_ok,
+            }
+        )
+        if t2_ok:
+            triggered = True
+    else:
+        triggers.append({"rule": "drift_level", "value": "无历史对比", "pass": False})
+
+    if not triggered:
+        skip_reason = "无触发条件: Sharpe 提升不足 且 漂移较小 → 不需要 deploy"
+
+    # ── 安全门禁 (AND) ────────────────────────────────────
+    # S1. require_adopt
+    if deploy_cfg.get("require_adopt", True):
+        s1_ok = decision == "ADOPT"
+        safety.append({"rule": "require_adopt", "value": decision, "pass": s1_ok})
+        if not s1_ok:
+            blocked.append(f"决策={decision}, 需要 ADOPT")
+
+    # S2. min_trades
+    min_trades = deploy_cfg.get("min_trades", 50)
+    cur_trades = comparison.get("current_trades", 0)
+    s2_ok = cur_trades >= min_trades
+    safety.append(
+        {
+            "rule": "min_trades",
+            "value": cur_trades,
+            "threshold": min_trades,
+            "pass": s2_ok,
+        }
+    )
+    if not s2_ok:
+        blocked.append(f"trades={cur_trades} < {min_trades}")
+
+    # ── 最终判定 ──────────────────────────────────────────
+    # 必须: 有触发 AND 安全门禁全过
+    deploy_ready = triggered and len(blocked) == 0
+    return {
+        "deploy_ready": deploy_ready,
+        "triggered": triggered,
+        "triggers": triggers,
+        "safety": safety,
+        "blocked_by": blocked,
+        "skip_reason": skip_reason,
+        "require_human_confirm": deploy_cfg.get("require_human_confirm", True),
+    }
+
+
 def compare_runs(
     current: Dict[str, Any],
     previous: Optional[Dict[str, Any]],
@@ -785,21 +915,30 @@ def run_strategy_pipeline(
     )
 
     # ── Step 10: 导出训练基线 JSON ──
-    from scripts.export_training_baseline import export_training_baseline
+    if not dry_run:
+        try:
+            import importlib
+            import sys as _sys
 
-    try:
-        export_training_baseline(
-            strategy=strategy,
-            result_dir=Path(evidence_dir),
-            gate_dir=Path(gate_dir),
-            evidence_dir=Path(evidence_dir),
-            backtest_metrics=backtest_metrics,
-            config_root=strategies_root,
-            training_period={"start": start_date, "end": holdout_start},
-            holdout_period={"start": holdout_start, "end": end_date},
-        )
-    except Exception as exc:
-        print(f"\n⚠️  Baseline export failed: {exc}")
+            # 确保项目根目录在 sys.path 中
+            root_str = str(PROJECT_ROOT)
+            if root_str not in _sys.path:
+                _sys.path.insert(0, root_str)
+            mod = importlib.import_module("scripts.export_training_baseline")
+            mod.export_training_baseline(
+                strategy=strategy,
+                result_dir=Path(evidence_dir),
+                gate_dir=Path(gate_dir),
+                evidence_dir=Path(evidence_dir),
+                backtest_metrics=backtest_metrics,
+                config_root=strategies_root,
+                training_period={"start": start_date, "end": holdout_start},
+                holdout_period={"start": holdout_start, "end": end_date},
+            )
+        except Exception as exc:
+            print(f"\n⚠️  Baseline export failed: {exc}")
+    else:
+        print("\n  Step 10: Export Training Baseline (dry-run, 跳过)")
 
     return {
         "gate_dir": gate_dir,
@@ -874,17 +1013,7 @@ def save_report(
     )
 
     # 实验 archetypes 已在 run_dir/strategies/{strategy}/archetypes/ 中
-    # 同时复制一份到 run_dir/archetypes/ 方便快速查看
-    if exp_config_dir:
-        src_arch = Path(exp_config_dir) / "archetypes"
-        if src_arch.exists():
-            dest = run_dir / "archetypes"
-            dest.mkdir(parents=True, exist_ok=True)
-            for f in src_arch.iterdir():
-                if f.is_file():
-                    shutil.copy2(f, dest / f.name)
-    else:
-        snapshot_archetypes(strategy, scfg, run_dir / "archetypes")
+    # 不再复制快照副本到 run_dir/archetypes/ (冗余)
 
     # Save comparison
     comp_path = run_dir / "comparison.json"
@@ -894,6 +1023,26 @@ def save_report(
     )
 
     return report_path
+
+
+def _patch_report_deploy(report_path: Path, deploy_result: Dict[str, Any]):
+    """将 deploy 门禁结果追加到已保存的 report.json."""
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["deploy_gate"] = {
+            "deploy_ready": deploy_result["deploy_ready"],
+            "triggered": deploy_result.get("triggered", False),
+            "triggers": deploy_result.get("triggers", []),
+            "safety": deploy_result.get("safety", []),
+            "blocked_by": deploy_result.get("blocked_by", []),
+            "skip_reason": deploy_result.get("skip_reason"),
+        }
+        report_path.write_text(
+            json.dumps(report, indent=2, default=str, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass  # 非关键路径, 不影响主流程
 
 
 # ====================================================================
@@ -1088,6 +1237,53 @@ def main():
         print(f"\n   📁 Report: {report_path}")
         print(f"   📦 实验配置: {run_dir}/strategies/{strategy}/archetypes/")
 
+        # ── 漂移报告 (当存在上次实验时自动输出) ──
+        drift_levels = None
+        if prev and not args.dry_run:
+            prev_ts = prev.get("timestamp", "")
+            prev_dir = history_dir / strategy / prev_ts
+            prev_arch = _find_arch_dir(prev_dir, strategy)
+            cur_arch = _find_arch_dir(run_dir, strategy)
+            if prev_arch and cur_arch:
+                drift_levels = _print_drift_report(
+                    strategy,
+                    prev_ts,
+                    timestamp,
+                    prev_arch,
+                    cur_arch,
+                    prev.get("backtest_metrics", {}),
+                    bt,
+                )
+
+        # ── Deploy 门禁检查 ──
+        deploy_cfg = cfg.get("deploy_gate", {})
+        deploy_result = check_deploy_gate(
+            decision, comparison, drift_levels, deploy_cfg
+        )
+        deploy_ready = deploy_result["deploy_ready"]
+
+        # 打印 deploy 状态
+        if deploy_ready:
+            print(f"\n   🚀 Deploy: ✅ 值得且允许 deploy")
+            if deploy_result.get("require_human_confirm"):
+                print(
+                    f"      运行: python scripts/deploy_config_to_live.py --diff --strategy {strategy}"
+                )
+                print(
+                    f"      确认后: python scripts/deploy_config_to_live.py --deploy --strategy {strategy}"
+                )
+        elif not deploy_result.get("triggered"):
+            print(
+                f"\n   ⏭️  Deploy: SKIP — {deploy_result.get('skip_reason', '无触发条件')}"
+            )
+        else:
+            print(f"\n   🚫 Deploy: ❌ 有触发但安全门禁未通过")
+            for b in deploy_result["blocked_by"]:
+                print(f"      ❌ {b}")
+
+        # 写入 report.json
+        _patch_report_deploy(report_path, deploy_result)
+
         # ── 自动采纳 ──
         prod_config_dir = pipeline_result.get("prod_config_dir")
         exp_cfg_dir = pipeline_result.get("exp_config_dir")
@@ -1227,7 +1423,7 @@ def _cmd_adopt_experiment(history_dir: Path, cfg: dict, strategy: str, timestamp
 
 
 def _cmd_diff_experiments(history_dir: Path, strategy: str, ts1: str, ts2: str):
-    """对比两次实验的 archetypes 差异."""
+    """对比两次实验 — 输出结构化漂移报告."""
     dir1 = history_dir / strategy / ts1
     dir2 = history_dir / strategy / ts2
 
@@ -1236,25 +1432,408 @@ def _cmd_diff_experiments(history_dir: Path, strategy: str, ts1: str, ts2: str):
             print(f"❌ 实验不存在: {d}")
             return
 
-    # 查找 archetypes 目录 (优先实验隔离版, fallback 快照)
-    def _find_arch(run_dir: Path) -> Optional[Path]:
-        exp_arch = run_dir / "strategies" / strategy / "archetypes"
-        if exp_arch.exists():
-            return exp_arch
-        snap_arch = run_dir / "archetypes"
-        if snap_arch.exists():
-            return snap_arch
-        return None
-
-    arch1 = _find_arch(dir1)
-    arch2 = _find_arch(dir2)
+    arch1 = _find_arch_dir(dir1, strategy)
+    arch2 = _find_arch_dir(dir2, strategy)
     if not arch1 or not arch2:
         print("❌ 至少一个实验缺少 archetypes 数据")
         return
 
-    print(f"\n🔍 对比 {strategy.upper()} archetypes: {ts1} vs {ts2}")
-    print(f"{'═'*80}")
+    rpt1 = _load_report_metrics(dir1)
+    rpt2 = _load_report_metrics(dir2)
 
+    _print_drift_report(strategy, ts1, ts2, arch1, arch2, rpt1, rpt2)
+
+
+def _find_arch_dir(run_dir: Path, strategy: str) -> Optional[Path]:
+    """查找 archetypes 目录 (优先实验隔离版, fallback 快照)."""
+    exp_arch = run_dir / "strategies" / strategy / "archetypes"
+    if exp_arch.exists():
+        return exp_arch
+    snap_arch = run_dir / "archetypes"
+    if snap_arch.exists():
+        return snap_arch
+    return None
+
+
+def _load_report_metrics(run_dir: Path) -> Dict[str, Any]:
+    rpt = run_dir / "report.json"
+    if rpt.exists():
+        r = json.loads(rpt.read_text(encoding="utf-8"))
+        return r.get("backtest_metrics", {})
+    return {}
+
+
+# ── 漂移报告核心 ─────────────────────────────────────────────────
+
+
+def _pct_change(old: float, new: float) -> str:
+    if old == 0:
+        return "N/A"
+    pct = (new - old) / abs(old) * 100
+    return f"{pct:+.1f}%"
+
+
+def _drift_level(changes: List[str]) -> str:
+    """从子项漂移标记列表中取最高."""
+    order = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "NONE": 0}
+    level = max(changes, key=lambda x: order.get(x, 0), default="NONE")
+    return level
+
+
+def _drift_emoji(level: str) -> str:
+    return {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢", "NONE": "⚪"}.get(level, "❓")
+
+
+def _analyze_prefilter(y1: dict, y2: dict) -> Tuple[List[str], str]:
+    """分析 prefilter.yaml 漂移."""
+    lines: List[str] = []
+    drifts: List[str] = []
+
+    r1 = y1.get("rules", [])
+    r2 = y2.get("rules", [])
+
+    # 提取所有 feature->value 对
+    def _extract_features(rules: list) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        for rule in rules:
+            if isinstance(rule, dict):
+                if "any_of" in rule:
+                    for sub in rule["any_of"]:
+                        out[sub.get("feature", "?")] = sub.get("value", 0)
+                elif "feature" in rule:
+                    out[rule["feature"]] = rule.get("value", 0)
+        return out
+
+    f1 = _extract_features(r1)
+    f2 = _extract_features(r2)
+    feats1 = set(f1.keys())
+    feats2 = set(f2.keys())
+
+    if feats1 == feats2:
+        lines.append(f"   Rules 特征: 不变 ({', '.join(sorted(feats1))})")
+    else:
+        added = feats2 - feats1
+        removed = feats1 - feats2
+        if added:
+            lines.append(f"   Rules 新增特征: {', '.join(sorted(added))}")
+        if removed:
+            lines.append(f"   Rules 移除特征: {', '.join(sorted(removed))}")
+        drifts.append("HIGH")
+
+    # 共有特征的阈值漂移
+    for feat in sorted(feats1 & feats2):
+        v1, v2 = f1[feat], f2[feat]
+        if v1 != v2:
+            lines.append(f"   阈值漂移: {feat} {v1} → {v2} ({_pct_change(v1, v2)})")
+            pct = abs(v2 - v1) / max(abs(v1), 1e-9) * 100
+            drifts.append("MEDIUM" if pct < 20 else "HIGH")
+        else:
+            drifts.append("NONE")
+
+    if not drifts:
+        drifts.append("NONE")
+    level = _drift_level(drifts)
+    return lines, level
+
+
+def _analyze_gate(y1: dict, y2: dict) -> Tuple[List[str], str]:
+    """分析 gate.yaml 漂移."""
+    lines: List[str] = []
+    drifts: List[str] = []
+
+    hg1 = y1.get("hard_gates", [])
+    hg2 = y2.get("hard_gates", [])
+    ids1 = {r.get("id", f"rule_{i}"): r for i, r in enumerate(hg1)}
+    ids2 = {r.get("id", f"rule_{i}"): r for i, r in enumerate(hg2)}
+    set1, set2 = set(ids1.keys()), set(ids2.keys())
+
+    lines.append(f"   规则数: {len(hg1)} → {len(hg2)}")
+    added = set2 - set1
+    removed = set1 - set2
+    common = set1 & set2
+
+    if added:
+        lines.append(f"   新增规则: {', '.join(sorted(added))}")
+        drifts.append("MEDIUM")
+    if removed:
+        lines.append(f"   移除规则: {', '.join(sorted(removed))}")
+        drifts.append("HIGH" if len(removed) > 2 else "MEDIUM")
+
+    # 共有规则阈值对比
+    changed_count = 0
+    for rid in sorted(common):
+        r1, r2 = ids1[rid], ids2[rid]
+        w1, w2 = r1.get("when", {}), r2.get("when", {})
+
+        # 提取阈值
+        def _get_threshold(when: dict) -> Optional[float]:
+            for feat, conds in when.items():
+                if isinstance(conds, dict):
+                    for k, v in conds.items():
+                        if k.startswith("value_") and isinstance(v, (int, float)):
+                            return float(v)
+            return None
+
+        t1, t2 = _get_threshold(w1), _get_threshold(w2)
+        if t1 is not None and t2 is not None and t1 != t2:
+            lines.append(f"   {rid}: 阈值 {t1:.4f} → {t2:.4f} ({_pct_change(t1, t2)})")
+            changed_count += 1
+            pct = abs(t2 - t1) / max(abs(t1), 1e-9) * 100
+            drifts.append("MEDIUM" if pct < 30 else "HIGH")
+
+    if changed_count == 0 and not added and not removed:
+        lines.append("   阈值: 全部不变")
+        drifts.append("NONE")
+
+    level = _drift_level(drifts) if drifts else "NONE"
+    return lines, level
+
+
+def _analyze_evidence(y1: dict, y2: dict) -> Tuple[List[str], str]:
+    """分析 evidence.yaml 漂移."""
+    lines: List[str] = []
+    drifts: List[str] = []
+
+    def _get_features(y: dict) -> Dict[str, dict]:
+        feats = y.get("features", y.get("evidence_features", []))
+        if isinstance(feats, list):
+            return {
+                f.get("name", f.get("feature", f"feat_{i}")): f
+                for i, f in enumerate(feats)
+            }
+        return {}
+
+    f1, f2 = _get_features(y1), _get_features(y2)
+    set1, set2 = set(f1.keys()), set(f2.keys())
+
+    if set1 == set2:
+        lines.append(f"   特征集合: 不变 ({len(set1)} 个)")
+    else:
+        added = set2 - set1
+        removed = set1 - set2
+        if added:
+            lines.append(f"   新增特征: {', '.join(sorted(added))}")
+            drifts.append("MEDIUM")
+        if removed:
+            lines.append(f"   移除特征: {', '.join(sorted(removed))}")
+            drifts.append("MEDIUM")
+
+    # 共有特征阈值对比
+    for fname in sorted(set1 & set2):
+        e1, e2 = f1[fname], f2[fname]
+        for key in ["threshold", "weight", "min_score", "value"]:
+            v1 = e1.get(key)
+            v2 = e2.get(key)
+            if v1 is not None and v2 is not None and v1 != v2:
+                lines.append(
+                    f"   {fname}.{key}: {v1} → {v2} ({_pct_change(float(v1), float(v2))})"
+                )
+                drifts.append("LOW")
+
+    if not drifts:
+        drifts.append("NONE")
+    return lines, _drift_level(drifts)
+
+
+def _analyze_execution(y1: dict, y2: dict) -> Tuple[List[str], str]:
+    """分析 execution.yaml 漂移."""
+    lines: List[str] = []
+    drifts: List[str] = []
+
+    for section in ["stop_loss", "take_profit", "trailing_stop"]:
+        s1 = y1.get(section, {})
+        s2 = y2.get(section, {})
+        if not isinstance(s1, dict) or not isinstance(s2, dict):
+            continue
+        all_keys = sorted(set(list(s1.keys()) + list(s2.keys())))
+        for k in all_keys:
+            v1, v2 = s1.get(k), s2.get(k)
+            if v1 == v2:
+                continue
+            if isinstance(v1, (int, float)) and isinstance(v2, (int, float)):
+                lines.append(
+                    f"   {section}.{k}: {v1} → {v2} ({_pct_change(float(v1), float(v2))})"
+                )
+                pct = abs(v2 - v1) / max(abs(v1), 1e-9) * 100
+                drifts.append("LOW" if pct < 15 else "MEDIUM")
+            elif v1 != v2:
+                lines.append(f"   {section}.{k}: {v1} → {v2}")
+                drifts.append("LOW")
+
+    if not drifts:
+        lines.append("   参数: 全部不变")
+        drifts.append("NONE")
+    return lines, _drift_level(drifts)
+
+
+def _analyze_direction(y1: dict, y2: dict) -> Tuple[List[str], str]:
+    """分析 direction.yaml 漂移."""
+    lines: List[str] = []
+    drifts: List[str] = []
+
+    # primary feature
+    p1 = y1.get("primary", y1.get("direction_feature", ""))
+    p2 = y2.get("primary", y2.get("direction_feature", ""))
+    if p1 == p2:
+        lines.append(f"   主特征: {p1} (不变)")
+    else:
+        lines.append(f"   主特征: {p1} → {p2}")
+        drifts.append("HIGH")
+
+    # fallback features
+    eval1 = y1.get("last_evaluation", {})
+    eval2 = y2.get("last_evaluation", {})
+    fb1 = [f.get("feature", "") for f in eval1.get("fallback", [])]
+    fb2 = [f.get("feature", "") for f in eval2.get("fallback", [])]
+    fb_common = len(set(fb1) & set(fb2))
+    fb_total = max(len(set(fb1) | set(fb2)), 1)
+    if fb1 == fb2:
+        lines.append(f"   Fallback 候选: 不变 ({len(fb1)} 个)")
+    else:
+        lines.append(f"   Fallback 候选: {fb_common}/{fb_total} 个重合")
+        overlap = fb_common / fb_total
+        drifts.append("LOW" if overlap > 0.6 else "MEDIUM")
+
+    # n_rows change
+    nr1 = eval1.get("n_rows", 0)
+    nr2 = eval2.get("n_rows", 0)
+    if nr1 and nr2 and nr1 != nr2:
+        lines.append(f"   数据量: {nr1:,} → {nr2:,} ({_pct_change(nr1, nr2)})")
+
+    if not drifts:
+        drifts.append("NONE")
+    return lines, _drift_level(drifts)
+
+
+def _analyze_entry_filters(y1: dict, y2: dict) -> Tuple[List[str], str]:
+    """分析 entry_filters.yaml 漂移."""
+    lines: List[str] = []
+    drifts: List[str] = []
+
+    filters1 = y1.get("filters", [])
+    filters2 = y2.get("filters", [])
+    ids1 = {f.get("id", f"f{i}"): f for i, f in enumerate(filters1)}
+    ids2 = {f.get("id", f"f{i}"): f for i, f in enumerate(filters2)}
+    set1, set2 = set(ids1.keys()), set(ids2.keys())
+
+    lines.append(f"   Filter 数: {len(filters1)} → {len(filters2)}")
+    added = set2 - set1
+    removed = set1 - set2
+    if added:
+        lines.append(f"   新增: {', '.join(sorted(added))}")
+        drifts.append("MEDIUM")
+    if removed:
+        lines.append(f"   移除: {', '.join(sorted(removed))}")
+        drifts.append("MEDIUM")
+
+    # 共有 filter 的 enabled/threshold 对比
+    for fid in sorted(set1 & set2):
+        ef1, ef2 = ids1[fid], ids2[fid]
+        en1, en2 = ef1.get("enabled", True), ef2.get("enabled", True)
+        if en1 != en2:
+            lines.append(f"   {fid}: enabled {en1} → {en2}")
+            drifts.append("MEDIUM")
+        # threshold
+        for key in ["threshold", "value", "min_value", "max_value"]:
+            v1, v2 = ef1.get(key), ef2.get(key)
+            if v1 is not None and v2 is not None and v1 != v2:
+                lines.append(f"   {fid}.{key}: {v1} → {v2}")
+                drifts.append("LOW")
+
+    if not drifts:
+        drifts.append("NONE")
+    return lines, _drift_level(drifts)
+
+
+def _analyze_generic(y1: dict, y2: dict) -> Tuple[List[str], str]:
+    """通用 YAML 对比 (holding.yaml 等)."""
+    if y1 == y2:
+        return ["   无变化"], "NONE"
+    lines: List[str] = []
+    _flat_diff(y1, y2, lines, prefix="   ")
+    level = "LOW" if len(lines) <= 3 else "MEDIUM"
+    return lines, level
+
+
+def _flat_diff(
+    d1: dict, d2: dict, lines: List[str], prefix: str = "", max_lines: int = 10
+):
+    """递归扁平化 diff, 最多 max_lines 行."""
+    all_keys = sorted(set(list(d1.keys()) + list(d2.keys())))
+    for k in all_keys:
+        if len(lines) >= max_lines:
+            lines.append(f"{prefix}... (更多差异省略)")
+            return
+        v1, v2 = d1.get(k), d2.get(k)
+        if v1 == v2:
+            continue
+        if k not in d1:
+            lines.append(f"{prefix}+ {k}")
+        elif k not in d2:
+            lines.append(f"{prefix}- {k}")
+        elif isinstance(v1, dict) and isinstance(v2, dict):
+            _flat_diff(v1, v2, lines, prefix, max_lines)
+        elif isinstance(v1, (int, float)) and isinstance(v2, (int, float)):
+            lines.append(
+                f"{prefix}{k}: {v1} → {v2} ({_pct_change(float(v1), float(v2))})"
+            )
+        else:
+            # 对于 list 等复杂类型, 只显示有/无变化
+            lines.append(f"{prefix}{k}: 已变更")
+
+
+_FILE_ANALYZERS = {
+    "prefilter.yaml": _analyze_prefilter,
+    "gate.yaml": _analyze_gate,
+    "evidence.yaml": _analyze_evidence,
+    "execution.yaml": _analyze_execution,
+    "direction.yaml": _analyze_direction,
+    "entry_filters.yaml": _analyze_entry_filters,
+}
+
+
+def _print_drift_report(
+    strategy: str,
+    ts1: str,
+    ts2: str,
+    arch1: Path,
+    arch2: Path,
+    metrics1: Dict[str, Any],
+    metrics2: Dict[str, Any],
+) -> Dict[str, str]:
+    """输出结构化漂移报告, 返回 {filename: drift_level}."""
+    w = 72
+    print(f"\n{'╔' + '═' * w + '╗'}")
+    print(f"║  {strategy.upper()} Archetype 漂移报告{' ' * (w - len(strategy) - 22)}║")
+    print(f"║  旧: {ts1}   新: {ts2}{' ' * (w - len(ts1) - len(ts2) - 12)}║")
+    print(f"{'╚' + '═' * w + '╝'}")
+
+    # ── Metrics 对比 ──
+    print(f"\n📊 Metrics 对比")
+    print(f"   {'─' * 56}")
+    print(f"   {'指标':<16s} {'旧':>12s} {'新':>12s} {'变化':>10s}")
+    print(f"   {'─' * 56}")
+    for key, label, fmt in [
+        ("sharpe_per_trade", "Sharpe", ".4f"),
+        ("total_trades", "Trades", ".0f"),
+        ("win_rate", "Win Rate", ".2%"),
+        ("mean_r", "Mean R", ".4f"),
+    ]:
+        v1 = metrics1.get(key)
+        v2 = metrics2.get(key)
+        if v1 is not None and v2 is not None:
+            s1 = f"{v1:{fmt}}" if isinstance(v1, (int, float)) else str(v1)
+            s2 = f"{v2:{fmt}}" if isinstance(v2, (int, float)) else str(v2)
+            chg = (
+                _pct_change(float(v1), float(v2))
+                if isinstance(v1, (int, float)) and v1 != 0
+                else ""
+            )
+            print(f"   {label:<16s} {s1:>12s} {s2:>12s} {chg:>10s}")
+    print(f"   {'─' * 56}")
+
+    # ── 逐文件分析 ──
+    file_drifts: Dict[str, str] = {}
     all_files = sorted(
         set(
             [f.name for f in arch1.iterdir() if f.is_file()]
@@ -1263,73 +1842,66 @@ def _cmd_diff_experiments(history_dir: Path, strategy: str, ts1: str, ts2: str):
     )
 
     for fname in all_files:
-        f1, f2 = arch1 / fname, arch2 / fname
-        if not f1.exists():
-            print(f"\n  📄 {fname}: 仅存在于 {ts2}")
+        f1_path, f2_path = arch1 / fname, arch2 / fname
+        if not f1_path.exists():
+            print(f"\n📄 {fname}: 仅存在于新版 ⚡")
+            file_drifts[fname] = "HIGH"
             continue
-        if not f2.exists():
-            print(f"\n  📄 {fname}: 仅存在于 {ts1}")
+        if not f2_path.exists():
+            print(f"\n📄 {fname}: 新版中已移除 ⚡")
+            file_drifts[fname] = "HIGH"
             continue
 
-        text1 = f1.read_text(encoding="utf-8")
-        text2 = f2.read_text(encoding="utf-8")
+        text1, text2 = f1_path.read_text(encoding="utf-8"), f2_path.read_text(
+            encoding="utf-8"
+        )
         if text1 == text2:
-            print(f"\n  📄 {fname}: 无变化 ✓")
-        else:
-            print(f"\n  📄 {fname}: 有差异 ⚡")
-            # YAML-level diff: 逐 key 对比
-            try:
-                y1 = yaml.safe_load(text1) or {}
-                y2 = yaml.safe_load(text2) or {}
-                _yaml_diff(y1, y2, prefix="    ", label1=ts1, label2=ts2)
-            except Exception:
-                # fallback to text diff
-                import difflib
-
-                diff = difflib.unified_diff(
-                    text1.splitlines(),
-                    text2.splitlines(),
-                    fromfile=f"{ts1}/{fname}",
-                    tofile=f"{ts2}/{fname}",
-                    lineterm="",
-                )
-                for line in list(diff)[:30]:
-                    print(f"    {line}")
-
-    # 也对比 metrics
-    for d, ts in [(dir1, ts1), (dir2, ts2)]:
-        rpt = d / "report.json"
-        if rpt.exists():
-            r = json.loads(rpt.read_text(encoding="utf-8"))
-            bt = r.get("backtest_metrics", {})
-            print(
-                f"\n  📊 {ts}: Sharpe={bt.get('sharpe_per_trade', 'N/A'):.4f}"
-                if isinstance(bt.get("sharpe_per_trade"), (int, float))
-                else f"\n  📊 {ts}: Sharpe={bt.get('sharpe_per_trade', 'N/A')}"
-            )
-            print(
-                f"    Trades={bt.get('total_trades', 'N/A')} Win={bt.get('win_rate', 'N/A')} MeanR={bt.get('mean_r', 'N/A')}"
-            )
-
-
-def _yaml_diff(
-    d1: dict, d2: dict, prefix: str = "", label1: str = "old", label2: str = "new"
-):
-    """递归对比两个 dict, 打印差异."""
-    all_keys = sorted(set(list(d1.keys()) + list(d2.keys())))
-    for k in all_keys:
-        v1, v2 = d1.get(k), d2.get(k)
-        if v1 == v2:
+            print(f"\n📄 {fname}: 无变化 ✅")
+            file_drifts[fname] = "NONE"
             continue
-        if k not in d1:
-            print(f"{prefix}+ {k}: {v2}")
-        elif k not in d2:
-            print(f"{prefix}- {k}: {v1}")
-        elif isinstance(v1, dict) and isinstance(v2, dict):
-            print(f"{prefix}{k}:")
-            _yaml_diff(v1, v2, prefix + "  ", label1, label2)
-        else:
-            print(f"{prefix}~ {k}: {v1} → {v2}")
+
+        try:
+            y1 = yaml.safe_load(text1) or {}
+            y2 = yaml.safe_load(text2) or {}
+        except Exception:
+            print(f"\n📄 {fname}: 有差异 (YAML 解析失败)")
+            file_drifts[fname] = "MEDIUM"
+            continue
+
+        analyzer = _FILE_ANALYZERS.get(fname, _analyze_generic)
+        detail_lines, level = analyzer(y1, y2)
+        emoji = _drift_emoji(level)
+        print(f"\n📄 {fname}: {emoji} {level}")
+        for line in detail_lines:
+            print(line)
+        file_drifts[fname] = level
+
+    # ── 综合判定 ──
+    overall = _drift_level(list(file_drifts.values()))
+    overall_emoji = _drift_emoji(overall)
+
+    # 决定建议
+    sharpe1 = metrics1.get("sharpe_per_trade", 0)
+    sharpe2 = metrics2.get("sharpe_per_trade", 0)
+    sharpe_stable = abs(sharpe2 - sharpe1) / max(abs(sharpe1), 1e-9) < 0.05  # < 5% 变化
+
+    if overall == "NONE" or (overall == "LOW" and sharpe_stable):
+        advice = "STABLE — 参数稳定, 可直接 ADOPT"
+    elif overall in ("LOW", "MEDIUM") and sharpe_stable:
+        advice = "MONITOR — Sharpe 稳定但参数有漂移, 建议检查变动项后 ADOPT"
+    elif overall == "MEDIUM" and not sharpe_stable:
+        advice = "REVIEW — 参数与 Sharpe 同时漂移, 需人工审查变动原因"
+    else:  # HIGH
+        high_files = [f for f, l in file_drifts.items() if l == "HIGH"]
+        advice = f"ADJUST — 大幅漂移 ({', '.join(high_files)}), 需人工审查并可能回退"
+
+    print(f"\n{'━' * 74}")
+    print(f"🎯 综合判定")
+    print(f"   总体漂移: {overall_emoji} {overall}")
+    print(f"   建议:     {advice}")
+    print(f"{'━' * 74}")
+
+    return file_drifts
 
 
 if __name__ == "__main__":

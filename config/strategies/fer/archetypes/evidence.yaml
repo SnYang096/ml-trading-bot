@@ -1,6 +1,6 @@
 # FER Evidence Archetype (auto-promoted)
-# 来源: results/train_final_20260222_203635_return_tree/fer/evidence_candidates.yaml
-# 优化规则: 2/2 条通过 plateau 验证
+# 来源: results/train_final_20260223_161624_return_tree/fer/evidence_candidates.yaml
+# 优化规则: 1/3 条通过 plateau 验证
 # ✅ 方向已由数据自动验证
 
 schema:
@@ -11,9 +11,9 @@ schema:
     favor: 有利 - 提高信心/仓位
     amplify: 强烈有利 - 最大化执行
 evidence:
-- id: evidence_fer_trapped_longs_score
-  feature: fer_trapped_longs_score
-  rank: 1
+- id: evidence_price_to_vwap_pct
+  feature: price_to_vwap_pct
+  rank: 3
   direction: positive
   usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
   affects:
@@ -23,33 +23,10 @@ evidence:
   - position_size
   quantile_mapping:
     bins:
-    - 0.2
-    - 0.4
-    - 0.6
-    - 0.8
-    labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
-    - amplify
-  split_count: 1
-- id: evidence_wpt_price_energy_mid_ratio
-  feature: wpt_price_energy_mid_ratio
-  rank: 2
-  direction: negative
-  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.15
-    - 0.35
-    - 0.55
-    - 0.75
+    - 0.1
+    - 0.3
+    - 0.5
+    - 0.7
     labels:
     - suppress
     - downweight

@@ -1,7 +1,6 @@
 # FER Gate (optimized, auto-promoted)
-# 来源: config/strategies/fer/gate_draft.yaml
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260223_161520/strategies/fer/gate_draft.yaml
 # 优化规则: 1/10 条通过优化, 9 条已移除
-# ✅ 方向已由数据验证: shd_pct 低值收益更高 (6.13 vs 4.17), deny 高值
 
 schema:
   phases:
@@ -14,15 +13,15 @@ schema:
       max_hard_deny_rate: 0.5
       alert_threshold: 0.45
 hard_gates:
-- id: gate_shd_pct
-  tag: HARD_SHD_PCT
+- id: gate_vpin_zscore_50
+  tag: HARD_VPIN_ZSCORE_50
   phase: hard_gate
-  priority: 11
-  reason: shd_pct 触发树分裂条件 (分裂 1 次)
+  priority: 17
+  reason: vpin_zscore_50 触发树分裂条件 (分裂 1 次)
   when:
-    shd_pct:
-      value_gt: 0.25
+    vpin_zscore_50:
+      value_gt: -0.7094
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.2500 | 方向修正: deny high (data_verified)'
+  comment: 'optimizer: stable_plateau_found, threshold=-0.7094, lift=0.199'
 guardrails: []

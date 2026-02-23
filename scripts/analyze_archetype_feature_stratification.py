@@ -1354,9 +1354,32 @@ def _prefilter_recommendation(
     else:
         print(f"\n  ⚠️  无足够强的 prefilter 候选 (composite < 0.5)")
 
+    # Build top_rules for auto-generation (with rationale)
+    top_rules = []
+    for s in recommended[:3]:
+        rationale_parts = [f"{s['percentile']}阈值"]
+        if s["cv"] is not None:
+            rationale_parts.append(f"CV={s['cv']:.2f}")
+        rationale_parts.append(f"bad_rate {s['bad_rate_diff']:+.1%}")
+        rationale_parts.append(f"鲁棒性={s['robustness']:.2f}")
+        rationale_parts.append(f"评分={s['composite']:.3f}")
+        top_rules.append(
+            {
+                "feature": s["feature"],
+                "operator": s["operator"],
+                "value": s["value"],
+                "composite": s["composite"],
+                "rationale": ", ".join(rationale_parts),
+            }
+        )
+
+    _best_or = locals().get("best_or_pair")
+
     return {
         "scored_candidates": scored,
         "recommended_rules": recommended,
+        "or_pair": _best_or if _best_or and _best_or.get("sub_rules") else None,
+        "top_rules": top_rules,
     }
 
 
@@ -1685,6 +1708,89 @@ def _write_prefilter_evaluation(
     n_total = len(positive) + len(anti) + len(absence)
     print(f"\n💾 已回写 last_evaluation → {path}")
     print(f"   正信号: {len(positive)}, 反信号: {len(anti)}, 低端: {len(absence)}")
+
+
+def _generate_promoted_prefilter(
+    output_path: Path,
+    recommendation_report: Optional[Dict],
+    strategy: str,
+    positive: List[Dict],
+    anti: List[Dict],
+    absence: List[Dict],
+    temporal_report: Optional[Dict] = None,
+    data_source: str = "",
+    n_rows: int = 0,
+    baseline_bad_rate: float = 0.0,
+    baseline_median_rr: float = 0.0,
+) -> None:
+    """Generate archetypes/prefilter.yaml with rules: from recommendation results.
+
+    Strategy:
+      1. If OR pair was recommended -> use any_of rule
+      2. Else use top-1 rule from recommendation
+      3. Always append last_evaluation section
+    """
+    from datetime import date as _date
+
+    lines = []
+    lines.append(f"# {strategy.upper()} Archetype Prefilter (auto-generated)")
+    lines.append(f"# 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练")
+    lines.append(f"# 自动生成: {_date.today()}")
+    lines.append(f"# 数据源: {data_source}, {n_rows} 行")
+    lines.append("")
+
+    # Try to extract OR pair from recommendation
+    or_pair = None
+    if recommendation_report and "or_pair" in recommendation_report:
+        or_pair = recommendation_report["or_pair"]
+
+    # Also check locals from recommendation_report dict
+    if or_pair and or_pair.get("sub_rules"):
+        lines.append("rules:")
+        lines.append("  - any_of:")
+        for sub in or_pair["sub_rules"]:
+            lines.append(f'      - feature: {sub["feature"]}')
+            lines.append(f'        operator: "{sub["operator"]}"')
+            lines.append(f'        value: {sub["value"]}')
+        rationale = or_pair.get("rationale", "auto-generated OR rule")
+        lines.append(f'    rationale: "{rationale}"')
+    elif recommendation_report and recommendation_report.get("top_rules"):
+        # Use top recommended rules (max 3 to avoid over-filtering)
+        top = recommendation_report["top_rules"][:3]
+        lines.append("rules:")
+        for r in top:
+            lines.append(f'  - feature: {r["feature"]}')
+            lines.append(f'    operator: "{r["operator"]}"')
+            lines.append(f'    value: {r["value"]}')
+            rationale = r.get(
+                "rationale", f"auto, composite={r.get('composite', 'N/A')}"
+            )
+            lines.append(f'    rationale: "{rationale}"')
+    else:
+        # Fallback: no rules could be generated
+        lines.append("# ⚠️  无法自动生成 rules, 请手动配置")
+        lines.append("# rules:")
+        lines.append("#   - feature: xxx")
+        lines.append('#     operator: ">="')
+        lines.append("#     value: 0.0")
+        print("  ⚠️  无推荐结果可用, 生成了模板文件 (无有效 rules)")
+
+    lines.append("")
+
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Append last_evaluation
+    _write_prefilter_evaluation(
+        config_path=str(output_path),
+        positive=positive,
+        anti=anti,
+        absence=absence,
+        temporal_report=temporal_report,
+        data_source=data_source,
+        n_rows=n_rows,
+        baseline_bad_rate=baseline_bad_rate,
+        baseline_median_rr=baseline_median_rr,
+    )
 
 
 def main() -> int:
@@ -2072,16 +2178,29 @@ def main() -> int:
         baseline_median_rr=float(med_rr),
     )
 
-    # ── 6e. --promote: 复制 prefilter.yaml 到 archetypes/ ──────
+    # ── 6e. --promote: 更新 archetypes/prefilter.yaml ──────
+    #  关键逻辑:
+    #    - 始终从本次推荐结果生成最新 rules (每次 promote 都是最新优化)
+    #    - 绝不把候选声明文件 (candidates:) 覆盖到 archetypes/
     if args.promote:
         arch_prefilter = Path(config_path).parent / "archetypes" / "prefilter.yaml"
-        if Path(config_path).exists():
-            import shutil
+        arch_prefilter.parent.mkdir(parents=True, exist_ok=True)
 
-            shutil.copy2(config_path, arch_prefilter)
-            print(f"\n\U0001f4e6 Promoted prefilter.yaml → {arch_prefilter}")
-        else:
-            print(f"\n⚠️  Cannot promote: {config_path} not found")
+        _generate_promoted_prefilter(
+            arch_prefilter,
+            recommendation_report=recommendation_report,
+            strategy=args.strategy,
+            positive=positive,
+            anti=anti,
+            absence=absence,
+            temporal_report=temporal_report,
+            data_source=str(logs_path.name),
+            n_rows=n_total,
+            baseline_bad_rate=float(bad_rate),
+            baseline_median_rr=float(med_rr),
+        )
+        print(f"\n📦 Promoted prefilter.yaml → {arch_prefilter}")
+        print(f"   (从本次推荐结果生成最新 rules)")
 
     # ── 7. 输出 JSON ─────────────────────────────────────────
     if args.output:

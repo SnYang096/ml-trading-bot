@@ -1,0 +1,73 @@
+{
+  "timestamp": "2026-02-23T16:28:25.624024",
+  "strategies": [
+    {
+      "strategy": "bpc",
+      "triggered": true,
+      "trigger_count": 1,
+      "reasons": [
+        "Sharpe 双负: baseline=0.000, live=0.000"
+      ],
+      "details": {
+        "days_since_last_train": 0,
+        "schedule_threshold": 90,
+        "baseline_sharpe": 0.0,
+        "live_sharpe_30d": 0.0,
+        "sharpe_ratio": null,
+        "consecutive_losses": 0,
+        "consecutive_threshold": 8,
+        "data_age_days": 22,
+        "data_age_threshold": 120
+      }
+    },
+    {
+      "strategy": "fer",
+      "triggered": true,
+      "trigger_count": 1,
+      "reasons": [
+        "Sharpe 衰减: live=0.000 / baseline=0.541 = 0.00 < 0.5"
+      ],
+      "details": {
+        "days_since_last_train": 0,
+        "schedule_threshold": 90,
+        "baseline_sharpe": 0.5407,
+        "live_sharpe_30d": 0.0,
+        "sharpe_ratio": 0.0,
+        "consecutive_losses": 0,
+        "consecutive_threshold": 8,
+        "data_age_days": 22,
+        "data_age_threshold": 120
+      }
+    },
+    {
+      "strategy": "me",
+      "triggered": true,
+      "trigger_count": 3,
+      "reasons": [
+        "定期重训: 距上次研究 9999 天 >= 90 天",
+        "Sharpe 双负: baseline=0.000, live=0.000",
+        "数据过期: 训练数据距今 9999 天 >= 120 天"
+      ],
+      "details": {
+        "days_since_last_train": 9999,
+        "schedule_threshold": 90,
+        "baseline_sharpe": 0.0,
+        "live_sharpe_30d": 0.0,
+        "sharpe_ratio": null,
+        "consecutive_losses": 0,
+        "consecutive_threshold": 8,
+        "data_age_days": 9999,
+        "data_age_threshold": 120
+      }
+    }
+  ],
+  "summary": {
+    "total_checked": 3,
+    "triggered": 3,
+    "strategies_triggered": [
+      "bpc",
+      "fer",
+      "me"
+    ]
+  }
+}

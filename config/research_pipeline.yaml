@@ -79,6 +79,27 @@ retrain_triggers:
   consecutive_losses: 8        # 连续亏损次数 >= 8 → 触发
   max_data_age_days: 120       # 上次训练距今 > 120 天 → 触发
 
+# ── Deploy 门禁 (config/ → live/ 的前置条件) ────────────────────
+# 触发场景: 不是每次研究变了就 deploy, 而是:
+#   A. 新版本显著优于旧版本 (Sharpe 提升 >= trigger_sharpe_improve)
+#   B. 参数大幅漂移 + 性能有变 (漂移 >= HIGH 且 |Sharpe变化| > min_sharpe_change)
+# 即: "旧的不行了, 新的更好" 才 deploy
+deploy_gate:
+  # ── 触发条件 (OR, 至少一个满足才值得 deploy) ──
+  trigger_sharpe_improve: 0.05    # new/old - 1 >= 5% → 有实质性改善
+  trigger_drift_level: "HIGH"     # 漂移 >= HIGH → 参数大幅变动
+  min_sharpe_change: 0.03         # 漂移触发的前提: |Sharpe变化| > 3% (防止自然漂移误触发)
+
+  # ── 安全门禁 (AND, 全部满足才允许 deploy) ──
+  require_adopt: true              # pipeline 决策必须 = ADOPT (新版不比旧版差)
+  min_trades: 50                   # 新实验交易数 >= 50 (统计显著性)
+  require_human_confirm: true      # 强制人工确认 (deploy --yes 跳过, 仅限 CI)
+
+  # 决策矩阵:
+  # │ 漂移\Sharpe变化 │ 提升>=5%    │ |变化|>3%   │ |变化|<=3%  │
+  # │ HIGH            │ ✅ DEPLOY    │ ✅ DEPLOY    │ ❌ SKIP     │  漂移大但性能没变→不动
+  # │ < HIGH          │ ✅ DEPLOY    │ ❌ SKIP      │ ❌ SKIP     │  小漂移只有大提升才动
+
 # ── 输出 ──────────────────────────────────────────────────────
 output:
   history_dir: "results/research_history"

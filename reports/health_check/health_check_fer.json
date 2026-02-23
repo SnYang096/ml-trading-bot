@@ -1,0 +1,163 @@
+{
+  "timestamp": "2026-02-23T16:50:50.593842",
+  "strategy": "fer",
+  "n_runs": 10,
+  "runs": [
+    {
+      "source": "rolling_deploy_test",
+      "timestamp": "month_2025-05-01",
+      "end_date": "2025-05-01",
+      "sharpe": 0.6125,
+      "trades": 513,
+      "report_path": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-05-01/report.json",
+      "dir": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-05-01"
+    },
+    {
+      "source": "rolling_deploy_test",
+      "timestamp": "month_2025-06-01",
+      "end_date": "2025-06-01",
+      "sharpe": 0.5622,
+      "trades": 623,
+      "report_path": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-06-01/report.json",
+      "dir": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-06-01"
+    },
+    {
+      "source": "rolling_deploy_test",
+      "timestamp": "month_2025-07-01",
+      "end_date": "2025-07-01",
+      "sharpe": 0.5666,
+      "trades": 656,
+      "report_path": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-07-01/report.json",
+      "dir": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-07-01"
+    },
+    {
+      "source": "rolling_deploy_test",
+      "timestamp": "month_2025-08-01",
+      "end_date": "2025-08-01",
+      "sharpe": 0.522,
+      "trades": 600,
+      "report_path": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-08-01/report.json",
+      "dir": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-08-01"
+    },
+    {
+      "source": "rolling_deploy_test",
+      "timestamp": "month_2025-09-01",
+      "end_date": "2025-09-01",
+      "sharpe": 0.5571,
+      "trades": 630,
+      "report_path": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-09-01/report.json",
+      "dir": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-09-01"
+    },
+    {
+      "source": "rolling_deploy_test",
+      "timestamp": "month_2025-10-01",
+      "end_date": "2025-10-01",
+      "sharpe": 0.5473,
+      "trades": 655,
+      "report_path": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-10-01/report.json",
+      "dir": "/home/yin/trading/ml_trading_bot/results/rolling_deploy_test/fer/month_2025-10-01"
+    },
+    {
+      "source": "research_history",
+      "timestamp": "20260223_121438",
+      "end_date": "2025-11-01",
+      "sharpe": 0.5064,
+      "trades": 449,
+      "report_path": "/home/yin/trading/ml_trading_bot/results/research_history/fer/20260223_121438/report.json",
+      "dir": "/home/yin/trading/ml_trading_bot/results/research_history/fer/20260223_121438"
+    },
+    {
+      "source": "train_final",
+      "timestamp": "train_final_20260223_132234_return_tree",
+      "end_date": "2025-12-01",
+      "sharpe": 0.5426,
+      "trades": 627,
+      "baseline_path": "/home/yin/trading/ml_trading_bot/results/train_final_20260223_132234_return_tree/fer/training_baseline.json",
+      "dir": "/home/yin/trading/ml_trading_bot/results/train_final_20260223_132234_return_tree/fer"
+    },
+    {
+      "source": "train_final",
+      "timestamp": "train_final_20260223_132338_return_tree",
+      "end_date": "2026-01-01",
+      "sharpe": 0.5416,
+      "trades": 653,
+      "baseline_path": "/home/yin/trading/ml_trading_bot/results/train_final_20260223_132338_return_tree/fer/training_baseline.json",
+      "dir": "/home/yin/trading/ml_trading_bot/results/train_final_20260223_132338_return_tree/fer"
+    },
+    {
+      "source": "research_history",
+      "timestamp": "20260223_161520",
+      "end_date": "2026-02-01",
+      "sharpe": 0.5407,
+      "trades": 615,
+      "report_path": "/home/yin/trading/ml_trading_bot/results/research_history/fer/20260223_161520/report.json",
+      "dir": "/home/yin/trading/ml_trading_bot/results/research_history/fer/20260223_161520"
+    }
+  ],
+  "drift_results": [
+    {
+      "status": "NONE",
+      "drift_rate": 0.0,
+      "checked": 200,
+      "drifted": 0
+    },
+    {
+      "status": "NONE",
+      "drift_rate": 0.0,
+      "checked": 200,
+      "drifted": 0
+    },
+    {
+      "status": "NONE",
+      "drift_rate": 0.0,
+      "checked": 200,
+      "drifted": 0
+    },
+    {
+      "status": "NONE",
+      "drift_rate": 0.0,
+      "checked": 200,
+      "drifted": 0
+    },
+    {
+      "status": "NONE",
+      "drift_rate": 0.0,
+      "checked": 200,
+      "drifted": 0
+    },
+    {
+      "status": "NONE",
+      "drift_rate": 0.0,
+      "checked": 200,
+      "drifted": 0
+    },
+    {
+      "status": "NONE",
+      "drift_rate": 0.0,
+      "checked": 200,
+      "drifted": 0
+    },
+    {
+      "status": "NONE",
+      "drift_rate": 0.0,
+      "checked": 200,
+      "drifted": 0
+    },
+    {
+      "status": "NONE",
+      "drift_rate": 0.0,
+      "checked": 200,
+      "drifted": 0
+    },
+    {
+      "status": "NONE",
+      "drift_rate": 0.0,
+      "checked": 200,
+      "drifted": 0
+    }
+  ],
+  "verdict": {
+    "verdict": "STABLE",
+    "reasons": []
+  }
+}
