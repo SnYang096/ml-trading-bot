@@ -79,10 +79,16 @@ export MLBOT_LIVE_TRADE_SIZE="0.0"  # 0表示观察模式
 export MLBOT_LIVE_USE_FUTURES="true"
 export MLBOT_LIVE_GAP_FILL="true"
 
-# BPC策略配置（使用live目录）
+# 策略配置（使用live目录）
 export MLBOT_STRATEGIES_ROOT="$LIVE_ROOT/config/strategies"
-export MLBOT_BPC_BAR_MINUTES="240"  # 4小时
 export MLBOT_BPC_WINDOW_MINUTES="15"  # 15分钟
+
+# PCM / Constitution 配置（全局配置在 live/highcap/config/ 下）
+export MLBOT_PCM_REGIME_CONFIG="$LIVE_ROOT/config/pcm_regime.yaml"
+export MLBOT_CONSTITUTION_YAML="$LIVE_ROOT/config/constitution/constitution.yaml"
+
+# 启动模式: bpc (单策略) 或 three_strategies (三策略多时间框架)
+export MLBOT_LIVE_MODE="${MLBOT_LIVE_MODE:-three_strategies}"
 
 # 策略B：live 不再依赖 Feature Store，所有特征基于 ticks/bars 实时重算
 # export MLBOT_FEATURE_STORE_DIR="$LIVE_ROOT/feature_store"  # 已废弃

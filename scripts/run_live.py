@@ -28,6 +28,24 @@ from src.time_series_model.live.incremental_feature_computer import (
 logger = logging.getLogger(__name__)
 
 
+def _load_strategy_timeframe(strategies_root: str, strategy_name: str) -> str:
+    """从 meta.yaml 读取策略的 timeframe，缺失时 fallback 到 240T。"""
+    import yaml
+
+    meta_path = os.path.join(strategies_root, strategy_name, "meta.yaml")
+    try:
+        with open(meta_path) as f:
+            meta = yaml.safe_load(f) or {}
+        tf = (meta.get("strategy") or {}).get("timeframe")
+        if tf:
+            return str(tf)
+    except FileNotFoundError:
+        logger.warning("meta.yaml 不存在: %s，使用默认 240T", meta_path)
+    except Exception as e:
+        logger.warning("读取 meta.yaml 失败: %s — %s，使用默认 240T", meta_path, e)
+    return "240T"
+
+
 def _parse_symbols(raw: str) -> List[str]:
     return [s.strip().upper() for s in (raw or "").split(",") if s.strip()]
 
@@ -139,82 +157,150 @@ def _setup_three_strategies(
     gap_filler,
     trade_size: float,
 ):
-    """三策略实盘启动 (BPC + ME + FER)"""
+    """三策略实盘启动 (BPC + ME + FER) — 多时间框架
+
+    时间框架:
+      BPC: 4H (240T)
+      FER: 4H (240T)
+      ME:  1H (60T)
+
+    数据管线:
+      同一组 1min bars/ticks → 分别重采样为 240T/60T → 各策略拿对应 timeframe 的特征
+    """
     from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
     from src.time_series_model.portfolio.live_pcm import LivePCM
     from src.time_series_model.live.incremental_feature_computer import (
         IncrementalFeatureComputer,
     )
+    from src.time_series_model.live.live_feature_plan import (
+        extract_features_from_archetypes,
+    )
 
     strategies_root = os.getenv(
         "MLBOT_STRATEGIES_ROOT", "live/highcap/config/strategies"
     )
-    bar_minutes = int(os.getenv("MLBOT_BPC_BAR_MINUTES", "240"))
     window_minutes = int(os.getenv("MLBOT_BPC_WINDOW_MINUTES", "15"))
 
-    # 创建三个策略实例
-    logger.info("🚀 初始化三策略...")
+    # ── 1. 从 meta.yaml 读取各策略 timeframe (不再硬编码) ──
+    tf_bpc = _load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
+    tf_me = _load_strategy_timeframe(strategies_root, "me")  # 默认 60T
+    tf_fer = _load_strategy_timeframe(strategies_root, "fer")  # 默认 240T
 
-    bpc = GenericLiveStrategy(strategy_name="bpc", strategies_root=strategies_root)
-    me = GenericLiveStrategy(strategy_name="me", strategies_root=strategies_root)
-    fer = GenericLiveStrategy(strategy_name="fer", strategies_root=strategies_root)
+    def _tf_to_bar_minutes(tf: str) -> int:
+        """'240T' → 240, '60T' → 60"""
+        return int(tf.replace("T", ""))
 
-    # 加载配置
-    bpc.load_configs()
-    me.load_configs()
-    fer.load_configs()
+    bar_minutes_bpc = _tf_to_bar_minutes(tf_bpc)
+    bar_minutes_me = _tf_to_bar_minutes(tf_me)
+    bar_minutes_fer = _tf_to_bar_minutes(tf_fer)
 
-    logger.info("✅ 三策略配置加载完成")
+    logger.info("🚀 初始化三策略 (timeframe 从 meta.yaml 读取)...")
+    logger.info("  BPC=%s, ME=%s, FER=%s", tf_bpc, tf_me, tf_fer)
 
-    # 创建 PCM 仲裁层 (使用 Regime 动态优先级 + 仓位缩放)
-    # 硬约束 (slot_count, risk_per_slot) 从 constitution.yaml 读取
-    # Regime 优先级 + 仓位缩放从 pcm_regime.yaml 读取
+    bpc = GenericLiveStrategy(
+        strategy_name="bpc",
+        strategies_root=strategies_root,
+        trade_size=trade_size,
+        primary_timeframe=tf_bpc,
+        bar_minutes=bar_minutes_bpc,
+    )
+    me = GenericLiveStrategy(
+        strategy_name="me",
+        strategies_root=strategies_root,
+        trade_size=trade_size,
+        primary_timeframe=tf_me,
+        bar_minutes=bar_minutes_me,
+    )
+    fer = GenericLiveStrategy(
+        strategy_name="fer",
+        strategies_root=strategies_root,
+        trade_size=trade_size,
+        primary_timeframe=tf_fer,
+        bar_minutes=bar_minutes_fer,
+    )
+
+    logger.info("✅ 三策略配置加载完成 (BPC=%s, ME=%s, FER=%s)", tf_bpc, tf_me, tf_fer)
+
+    # ── 2. 创建 PCM 仲裁层 (注册策略 + timeframe 绑定) ──
+    # 全局配置根目录: strategies_root 的上一层 (live/highcap/config/)
+    config_root = os.path.join(strategies_root, "..")
     pcm = LivePCM(
         archetype_priority=["LV", "FER", "ME", "BPC"],
         regime_config_path=os.getenv(
-            "MLBOT_PCM_REGIME_CONFIG", "config/pcm_regime.yaml"
+            "MLBOT_PCM_REGIME_CONFIG",
+            os.path.join(config_root, "pcm_regime.yaml"),
         ),
         constitution_yaml=os.getenv(
             "MLBOT_CONSTITUTION_YAML",
-            os.path.join(
-                os.getenv("MLBOT_STRATEGIES_ROOT", "live/highcap/config/strategies"),
-                "..",
-                "constitution",
-                "constitution.yaml",
-            ),
+            os.path.join(config_root, "constitution", "constitution.yaml"),
         ),
     )
-    pcm.register("bpc", bpc)
-    pcm.register("me", me)
-    pcm.register("fer", fer)
+    pcm.register("bpc", bpc, timeframe=tf_bpc)
+    pcm.register("me", me, timeframe=tf_me)
+    pcm.register("fer", fer, timeframe=tf_fer)
 
     logger.info(f"✅ PCM 仲裁层初始化: 优先级={pcm.archetype_priority}")
 
     order_manager = init_order_manager_from_env()
 
-    # 为每个 symbol 创建 IncrementalFeatureComputer
-    # 注意：这里需要支持多策略特征计算
-    def _make_feature_computer(symbol: str) -> IncrementalFeatureComputer:
-        # 使用 BPC 的 archetypes_dir 作为默认
-        archetypes_dir = os.path.join(strategies_root, "bpc", "archetypes")
+    # ── 3. 创建特征计算器 (per-symbol, per-timeframe) ──
+    bpc_archetypes = os.path.join(strategies_root, "bpc", "archetypes")
+    fer_archetypes = os.path.join(strategies_root, "fer", "archetypes")
+    me_archetypes = os.path.join(strategies_root, "me", "archetypes")
+
+    # 预提取 FER 特征集 (用于合并到 4H FC)
+    fer_extra_feat_set = set()
+    fer_extra_feat_nodes = []
+    try:
+        fer_extra_feat_set, fer_extra_feat_nodes = extract_features_from_archetypes(
+            fer_archetypes
+        )
+        logger.info(
+            "  FER features: %d columns, %d nodes",
+            len(fer_extra_feat_set),
+            len(fer_extra_feat_nodes),
+        )
+    except Exception as e:
+        logger.warning("  FER feature extraction failed: %s", e)
+
+    def _make_feature_computer_4h(symbol: str) -> IncrementalFeatureComputer:
+        """4H FC: BPC + FER 合并特征集 (timeframe 从 meta.yaml 读取)"""
+        fc = IncrementalFeatureComputer(
+            tick_window_minutes=bar_minutes_bpc,
+            bar_window_size=bar_minutes_bpc * 2,
+            archetypes_dir=bpc_archetypes,
+            primary_timeframe=tf_bpc,
+        )
+        # 合并 FER 特征到 4H FC
+        if fer_extra_feat_set:
+            fc.live_feature_set |= fer_extra_feat_set
+            merged_nodes = sorted(
+                set(fc.live_feature_nodes) | set(fer_extra_feat_nodes)
+            )
+            fc.live_feature_nodes = merged_nodes
+        return fc
+
+    def _make_feature_computer_me(symbol: str) -> IncrementalFeatureComputer:
+        """ME FC: timeframe 从 meta.yaml 读取"""
         return IncrementalFeatureComputer(
-            tick_window_minutes=bar_minutes,
-            bar_window_size=bar_minutes * 2,
-            archetypes_dir=archetypes_dir,
-            primary_timeframe=f"{bar_minutes}T",
+            tick_window_minutes=bar_minutes_me,
+            bar_window_size=bar_minutes_me * 2,
+            archetypes_dir=me_archetypes,
+            primary_timeframe=tf_me,
         )
 
+    # ── 4. MultiSymbolManager (primary FC = 4H) ──
     manager = MultiSymbolManager(
         symbols=symbols,
         storage_manager=storage,
-        feature_computer_factory=_make_feature_computer,
+        feature_computer_factory=_make_feature_computer_4h,
         gap_filler=gap_filler,
         feature_compute_interval_minutes=window_minutes,
         orderflow_window_minutes=window_minutes,
         order_manager=order_manager,
     )
 
-    # 给每个 listener 注入 LivePCM 作为 decision_handler
+    # ── 5. 注入 decision_handler + 额外 FC ──
     for sym in symbols:
         listener = manager.get_listener(sym)
         if listener is None:
@@ -223,11 +309,15 @@ def _setup_three_strategies(
         listener.order_manager = order_manager
         if trade_size > 0:
             listener.trade_size = trade_size
+        # 注入 ME FC (timeframe 从 meta.yaml 读取)
+        listener.extra_feature_computers = {
+            tf_me: _make_feature_computer_me(sym),
+        }
 
     logger.info(
         f"✅ 三策略实盘启动完成: {len(symbols)} symbols, "
-        f"bar_minutes={bar_minutes}, window={window_minutes}min, "
-        f"archetypes={pcm.registered_archetypes}"
+        f"BPC={tf_bpc}, FER={tf_fer}, ME={tf_me}, "
+        f"window={window_minutes}min, archetypes={pcm.registered_archetypes}"
     )
     return manager, pcm
 
@@ -243,23 +333,24 @@ def _compute_initial_quantiles(
     compute_features_dataframe() 得到完整 DataFrame，然后
     合并所有 symbol 的数据计算 quantiles。
 
-    支持 GenericLiveStrategy 和 LivePCM（自动透传给内部策略）。
+    支持多时间框架:
+      - 主 FC 计算 primary_timeframe quantiles (4H) → BPC/FER
+      - 额外 FC 计算 extra_timeframe quantiles (1H) → ME
+      - 按 timeframe 分别设置给对应策略
     """
     if not hasattr(decision_handler, "set_quantiles") and not hasattr(
         decision_handler, "set_quantiles_from_df"
     ):
         return
 
-    # 使用全部可用历史数据（与 warmup 准备的数据一致）
-    # 默认 180 天 = 6 个月，可通过环境变量覆盖
     quantile_lookback_days = int(os.getenv("MLBOT_QUANTILE_LOOKBACK_DAYS", "180"))
 
-    all_dfs: List[pd.DataFrame] = []
+    # 按 timeframe 收集 feature DataFrames
+    tf_dfs: Dict[str, List[pd.DataFrame]] = {}  # timeframe → [df, ...]
     now = pd.Timestamp.now(tz="UTC")
 
     for symbol, listener in manager.listeners.items():
         try:
-            # 加载全部可用 bars（默认 180 天，覆盖 atr_percentile 等长 lookback）
             bar_start = (now - timedelta(days=quantile_lookback_days)).strftime(
                 "%Y-%m-%d"
             )
@@ -269,42 +360,94 @@ def _compute_initial_quantiles(
                 logger.warning("[quantiles] %s: bars 为空，跳过", symbol)
                 continue
 
-            # 加载 ticks（VPIN 需要 7 天，用 8 天保险）
             tick_start = (now - timedelta(days=8)).strftime("%Y-%m-%d")
             ticks_disk = storage.ticks.load_range(symbol, tick_start, bar_end)
 
-            # 计算完整特征 DataFrame
+            # Primary timeframe
             fc = listener.feature_computer
+            primary_tf = fc.primary_timeframe or "240T"
             features_df = fc.compute_features_dataframe(
                 bars_1min=bars_disk,
                 ticks_1min=ticks_disk,
             )
             if features_df is not None and not features_df.empty:
-                all_dfs.append(features_df)
+                tf_dfs.setdefault(primary_tf, []).append(features_df)
                 logger.info(
-                    "[quantiles] %s: %d rows × %d cols",
+                    "[quantiles] %s/%s: %d rows × %d cols",
                     symbol,
+                    primary_tf,
                     len(features_df),
                     len(features_df.columns),
                 )
+
+            # Extra timeframes (e.g., 1H for ME)
+            for tf, extra_fc in getattr(
+                listener, "extra_feature_computers", {}
+            ).items():
+                try:
+                    extra_df = extra_fc.compute_features_dataframe(
+                        bars_1min=bars_disk,
+                        ticks_1min=ticks_disk,
+                        primary_timeframe=tf,
+                    )
+                    if extra_df is not None and not extra_df.empty:
+                        tf_dfs.setdefault(tf, []).append(extra_df)
+                        logger.info(
+                            "[quantiles] %s/%s: %d rows × %d cols",
+                            symbol,
+                            tf,
+                            len(extra_df),
+                            len(extra_df.columns),
+                        )
+                except Exception as e:
+                    logger.warning("[quantiles] %s/%s 失败: %s", symbol, tf, e)
+
         except Exception as e:
             logger.warning("[quantiles] %s 失败: %s", symbol, e)
 
-    if not all_dfs:
+    if not tf_dfs:
         logger.warning("[quantiles] 无可用数据，跳过 quantile 计算")
         return
 
-    combined = pd.concat(all_dfs, ignore_index=True)
-    # LivePCM.set_quantiles() 或 GenericLiveStrategy.set_quantiles_from_df()
-    if hasattr(decision_handler, "set_quantiles_from_df"):
-        decision_handler.set_quantiles_from_df(combined)
-    elif hasattr(decision_handler, "set_quantiles"):
-        decision_handler.set_quantiles(combined)
-    logger.info(
-        "[quantiles] 完成: %d symbols, %d 总行数",
-        len(all_dfs),
-        len(combined),
-    )
+    # 按 timeframe 分别设置 quantiles
+    if hasattr(decision_handler, "_strategy_timeframes") and hasattr(
+        decision_handler, "_strategies"
+    ):
+        # LivePCM: 按策略的 timeframe 分别设置
+        for arch_name, strategy in decision_handler._strategies.items():
+            tf = decision_handler._strategy_timeframes.get(arch_name)
+            dfs = tf_dfs.get(tf, [])
+            if not dfs:
+                # fallback: 使用任意可用数据
+                for v in tf_dfs.values():
+                    if v:
+                        dfs = v
+                        break
+            if dfs and hasattr(strategy, "set_quantiles"):
+                combined = pd.concat(dfs, ignore_index=True)
+                strategy.set_quantiles(combined)
+                logger.info(
+                    "[quantiles] %s (timeframe=%s): %d 行",
+                    arch_name,
+                    tf or "default",
+                    len(combined),
+                )
+    else:
+        # 单策略: 使用所有可用数据
+        all_dfs: List[pd.DataFrame] = []
+        for dfs in tf_dfs.values():
+            all_dfs.extend(dfs)
+        if all_dfs:
+            combined = pd.concat(all_dfs, ignore_index=True)
+            if hasattr(decision_handler, "set_quantiles_from_df"):
+                decision_handler.set_quantiles_from_df(combined)
+            elif hasattr(decision_handler, "set_quantiles"):
+                decision_handler.set_quantiles(combined)
+            logger.info(
+                "[quantiles] 完成: %d symbols, %d 总行数",
+                len(all_dfs),
+                len(combined),
+            )
 
 
 async def main() -> None:
@@ -333,7 +476,12 @@ async def main() -> None:
 
     logger.info(f"🚀 Starting live trading: symbols={symbols}")
 
-    manager, pcm = _setup_bpc(symbols, storage, gap_filler, trade_size)
+    # 选择启动模式: bpc (单策略) 或 three_strategies (三策略多时间框架)
+    live_mode = os.getenv("MLBOT_LIVE_MODE", "bpc")
+    if live_mode == "three_strategies":
+        manager, pcm = _setup_three_strategies(symbols, storage, gap_filler, trade_size)
+    else:
+        manager, pcm = _setup_bpc(symbols, storage, gap_filler, trade_size)
 
     # Warmup 与启动质量闸门
     if warmup_days > 0:

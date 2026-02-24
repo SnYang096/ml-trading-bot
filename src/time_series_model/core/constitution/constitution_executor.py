@@ -94,12 +94,34 @@ def load_constitution_config(path: str | Path) -> ConstitutionConfig:
 
 
 def _infer_base_dir(constitution_yaml: str | Path) -> Path:
+    """Infer the base directory for resolving relative paths in constitution.
+
+    策略: 找到包含 constitution.yaml 的最近的 config/ 的父目录。
+
+    示例:
+      config/constitution/constitution.yaml            → 项目根/
+      live/highcap/config/constitution/constitution.yaml → live/highcap/
+      /opt/mlbot/config/constitution/constitution.yaml   → /opt/mlbot/
+
+    这样 persist_to: 'data/order_management.db' 在两侧分别解析到:
+      研究: <项目根>/data/order_management.db
+      实盘: live/highcap/data/order_management.db
+    """
+    # 1. 环境变量显式指定 (最高优先)
+    env_base = os.getenv("MLBOT_LIVE_BASE_DIR")
+    if env_base:
+        return Path(env_base).resolve()
+
     p = Path(constitution_yaml).resolve()
-    # Try to infer repo root by locating ".../config/..." in the path.
+
+    # 2. 向上找到包含 yaml 的最近 config/ 的父目录
+    #    e.g. .../live/highcap/config/constitution/constitution.yaml
+    #          ↑ config/ 的父目录是 live/highcap/ → 返回
     for parent in p.parents:
-        if (parent / "config").exists() and (parent / "src").exists():
-            return parent
-    # Fallback: config/constitution/constitution.yaml -> go up 2
+        if parent.name == "config" and p.is_relative_to(parent):
+            return parent.parent
+
+    # 3. Fallback: constitution.yaml → constitution/ → config/ → base
     try:
         return p.parents[2]
     except Exception:

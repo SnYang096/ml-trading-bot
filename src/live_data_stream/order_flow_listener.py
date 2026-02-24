@@ -138,6 +138,7 @@ class OrderFlowListener:
         self.order_manager = order_manager
         self.trade_size = trade_size
         self.decision_handler = decision_handler
+        self.extra_feature_computers: Dict[str, "IncrementalFeatureComputer"] = {}
         self._open_positions: Dict[str, Dict[str, Any]] = {}
         
         # 1分钟聚合状态（bar级别）
@@ -489,16 +490,37 @@ class OrderFlowListener:
             len(ticks_merged), len(ticks_disk), len(ticks_buffer),
         )
         
-        # ── 5. 批量计算 ──
+        # ── 5. 批量计算 (primary timeframe) ──
+        primary_tf = self.feature_computer.primary_timeframe or "240T"
         features = self.feature_computer.compute_features_batch(
             bars_1min=bars_merged,
             ticks_1min=ticks_merged,
-            primary_timeframe=self.feature_computer.primary_timeframe or "240T",
+            primary_timeframe=primary_tf,
         )
         
         if not features:
             logger.info("[%s] 特征计算跳过（无可用数据）", self.symbol)
             return
+        
+        # ── 5b. 额外时间框架特征 (多策略多 timeframe) ──
+        features_by_timeframe = {primary_tf: dict(features)}
+        for tf, extra_fc in self.extra_feature_computers.items():
+            try:
+                extra_features = extra_fc.compute_features_batch(
+                    bars_1min=bars_merged,
+                    ticks_1min=ticks_merged,
+                    primary_timeframe=tf,
+                )
+                if extra_features:
+                    features_by_timeframe[tf] = extra_features
+                    logger.info(
+                        "[%s] 额外时间框架 %s: %d 个特征",
+                        self.symbol, tf, len(extra_features),
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[%s] 额外时间框架 %s 特征计算失败: %s", self.symbol, tf, e
+                )
         
         # ── 6. 保存 + 决策 ──
         all_features = dict(features)
@@ -507,12 +529,16 @@ class OrderFlowListener:
         self.storage_manager.save_15min_features(self.symbol, features_df, now)
         
         n_feat = len([k for k in all_features if k != "timestamp"])
+        n_tf = len(features_by_timeframe)
         logger.info(
-            "[%s] 特征计算完成: %d 个特征, bars_disk=%d, ticks_disk=%d",
-            self.symbol, n_feat, len(bars_disk), len(ticks_disk),
+            "[%s] 特征计算完成: %d 个特征, %d 个时间框架, bars_disk=%d, ticks_disk=%d",
+            self.symbol, n_feat, n_tf, len(bars_disk), len(ticks_disk),
         )
         
-        self._handle_features(all_features)
+        self._handle_features(
+            all_features,
+            features_by_timeframe=features_by_timeframe if n_tf > 1 else None,
+        )
     
     def _get_tick_buffer_df(self) -> pd.DataFrame:
         """从incrementalFeatureComputer.tick_buffer提取最近ticks为DataFrame
@@ -636,8 +662,19 @@ class OrderFlowListener:
         features_df = pd.DataFrame([last_features])
         self.storage_manager.save_4h_features(self.symbol, features_df, now)
 
-    def _handle_features(self, all_features: Dict[str, Any]) -> None:
-        """处理计算完的特征 — 路由决策 + 执行 + 持仓管理"""
+    def _handle_features(
+        self,
+        all_features: Dict[str, Any],
+        *,
+        features_by_timeframe: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> None:
+        """处理计算完的特征 — 路由决策 + 执行 + 持仓管理
+
+        Args:
+            all_features: 主时间框架特征 (flat dict)
+            features_by_timeframe: 多时间框架特征 {timeframe: features_dict}
+                用于 LivePCM 多策略路由，可选。
+        """
         if self.on_feature_callback:
             self.on_feature_callback(all_features)
 
@@ -656,11 +693,20 @@ class OrderFlowListener:
 
         # 使用 decision_handler（GenericLiveStrategy / LivePCM 等）
         if self.decision_handler is not None:
-            intents = self.decision_handler.decide(
-                features=all_features,
-                symbol=self.symbol,
-                bars=self.memory_window.get_latest(240) if self.memory_window else [],
-            )
+            try:
+                intents = self.decision_handler.decide(
+                    features=all_features,
+                    symbol=self.symbol,
+                    bars=self.memory_window.get_latest(240) if self.memory_window else [],
+                    features_by_timeframe=features_by_timeframe,
+                )
+            except TypeError:
+                # 后向兼容: handler 不支持 features_by_timeframe (如单策略 GenericLiveStrategy)
+                intents = self.decision_handler.decide(
+                    features=all_features,
+                    symbol=self.symbol,
+                    bars=self.memory_window.get_latest(240) if self.memory_window else [],
+                )
         else:
             return
 

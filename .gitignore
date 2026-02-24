@@ -460,3 +460,8 @@ terraform/.terraform-config.zip
 # Live API keys (binance)
 live/binance_mainnet.env
 live/binance_testnet.env
+
+# Live runtime data (db, storage, logs) — 不得提交到 git
+live/*/data/
+*.db
+!*.dbproj.schemaview

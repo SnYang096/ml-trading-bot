@@ -13,13 +13,13 @@
 | 特征体系 (Phase 0-2) | ✅ 完成 | 7 基础 + 3 交叉 + OI 体系 |
 | LV 配置 (Phase 3) | ✅ 完成 | 15min archetype 全套配置 |
 | PCM 重构 (Phase 4) | ✅ 完成 | v2 严格性排序 |
-| **PCM-宪法统一 (Phase 4.5)** | 🔨 设计完成 | 配置统一 + 回测宪法模拟 + Pipeline 集成 |
+| **PCM-宪法统一 (Phase 4.5)** | 🔨 部分完成 | 配置 ✅ + PCM回测 ✅ + 宪法模拟 📋延后 |
 | 数据 (Phase 5) | ✅ 完成 | highcap symbols 数据齐全 |
 | 语义预筛选 (Phase 5.5) | ✅ 完成 | BPC/ME/FER 均有 prefilter |
 | 训练 (Phase 6) | ✅ BPC/ME/FER | 手动训练完成; LV 暂缓 (15min FS 太慢) |
 | 多时间框架-研究 (Phase 7-R) | ✅ 完成 | ME→1H 配置完成 |
-| **本地研究 pipeline** | 🔨 完善中 | auto_research_pipeline.py + 实验隔离 + PCM 联合回测 |
-| **实盘部署** | 📋 规划中 | 多时间框架实盘 + 监控 + 部署脚本 |
+| **本地研究 pipeline** | ✅ 完成 | auto_research_pipeline.py --all + PCM 联合回测 (Step 9.5) |
+| **实盘部署** | 🔨 进行中 | P0: 多时间框架实盘 → P1: 监控 → 腾讯云部署 |
 
 ---
 
@@ -486,9 +486,9 @@ L1 (15m) ───────────────  LV
 - [x] 实验目录隔离: config 随实验走，不覆盖生产
 - [x] 实验管理 CLI: `--list` / `--adopt` / `--diff` / `--no-adopt`
 - [x] 确定性决策规则: Sharpe 比值驱动 ADOPT/KEEP/ALERT
-- [ ] Pipeline 端到端验证: 跑一次完整 pipeline 确认无报错 → 见 `z实验_005_统一研究/快速启动命令.md` 第一节
+- [x] Pipeline 端到端验证: `--all` 三策略 ADOPT + PCM PASS (2026-02-24)
 - [x] DEPLOY 脚本: `scripts/deploy_config_to_live.py` (diff + deploy + git-commit + rollback)
-- [ ] **Step 9.5 PCM 联合回测** (Phase 4.5 实现后启用)
+- [x] **Step 9.5 PCM 联合回测**: 已实现 (conflict_rate=3.42%, sharpe_daily=28.79)
   - 自动扫描其他策略最新 predictions
   - 调用 `backtest_execution_layer.py --pcm --pcm-stats-json --constitution`
   - PCM 决策统计输出到 `pcm_stats.json`
@@ -721,10 +721,10 @@ L1 (15m) ───────────────  LV
 | Phase 2: OI 体系 | ✅ 完成 | 下载器 + 特征 + 场景语义 + 交叉 |
 | Phase 3: LV 配置 | ✅ 完成 | 15min archetype 全套配置 |
 | Phase 4: PCM 重构 | ✅ 完成 | v2 严格性排序 |
-| **Phase 4.5: PCM-宪法统一** | 🔨 设计完成 | **配置统一 + 回测宪法模拟 + Pipeline 集成** |
+| **Phase 4.5: PCM-宪法统一** | 🔨 部分完成 | 配置统一 ✅ + PCM 联合回测 ✅ + 回测宪法模拟 📋延后 + 降级机制 📋延后 |
 | Phase 5: 数据 | ✅ 完成 | highcap symbols 数据齐全 |
 | Phase 5.5: 预筛选 | ✅ 完成 | BPC/ME/FER 均已配置 |
 | Phase 6: 训练 | ✅ BPC/ME/FER | LV 暂缓 |
 | Phase 7-R: 多TF研究 | ✅ 完成 | ME→1H 配置完成 |
 | **Part A: 研究 pipeline** | 🔨 完善中 | 实验隔离已完成，待 PCM 联合回测集成 |
-| **Part B: 实盘部署** | 📋 规划中 | 等 Part A + Phase 4.5 完成后推进 |
+| **Part B: 实盘部署** | 🔨 进行中 | 详见 `z实验_006_统一实盘/实盘部署TODO.md` |

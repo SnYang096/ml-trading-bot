@@ -114,7 +114,7 @@ kill_switch:
 # 1.1) Safety state persistence (for restart-safe halts)
 # -----------------------------------------------------------------------------
 safety_state:
-  persist_to: "../data/order_management.db"
+  persist_to: "data/db/order_management.db"
 
 # -----------------------------------------------------------------------------
 # 2) Slots (low freedom position structure)
@@ -129,7 +129,7 @@ slots:
 
   # Slot state tracking (for live / restart safety).
   slot_state_tracking:
-    persist_to: "../data/order_management.db"
+    persist_to: "data/db/order_management.db"
 
 # -----------------------------------------------------------------------------
 # 3) Add-position policy (Trend-only) — "adding is allowed only by freed risk budget"
@@ -148,7 +148,7 @@ add_position:
 
   # State tracking to enforce add-position rules (fields are not configurable).
   state_tracking:
-    persist_to: "../data/order_management.db"
+    persist_to: "data/db/order_management.db"
 
 # -----------------------------------------------------------------------------
 # 4) Resource Allocation — 唯一权威源

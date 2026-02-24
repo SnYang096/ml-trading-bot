@@ -373,6 +373,7 @@ class LivePCM:
                 未提供时尝试从 pcm_regime.yaml 的 constitution_ref 自动发现。
         """
         self._strategies: Dict[str, DecisionHandler] = {}
+        self._strategy_timeframes: Dict[str, str] = {}  # archetype → timeframe
         self._get_open_slot_count = get_open_slot_count
 
         # Layer 3: Override 配置
@@ -414,11 +415,29 @@ class LivePCM:
 
     # ── 注册 / 管理 ──
 
-    def register(self, archetype: str, strategy: DecisionHandler) -> None:
-        """注册一个 archetype 策略实例"""
+    def register(
+        self,
+        archetype: str,
+        strategy: DecisionHandler,
+        *,
+        timeframe: Optional[str] = None,
+    ) -> None:
+        """注册一个 archetype 策略实例
+
+        Args:
+            archetype: 策略名称 (如 "bpc", "me", "fer")
+            strategy: 实现 decide() 接口的策略实例
+            timeframe: 该策略使用的主时间框架 (如 "240T", "60T")
+                用于多时间框架模式下路由特征。
+        """
         self._strategies[archetype] = strategy
+        if timeframe is not None:
+            self._strategy_timeframes[archetype] = timeframe
         logger.info(
-            "PCM: 注册策略 archetype=%s (%s)", archetype, type(strategy).__name__
+            "PCM: 注册策略 archetype=%s (%s) timeframe=%s",
+            archetype,
+            type(strategy).__name__,
+            timeframe or "default",
         )
 
     def unregister(self, archetype: str) -> None:
@@ -483,6 +502,7 @@ class LivePCM:
         features: Dict[str, Any],
         symbol: str,
         bars: Optional[List[Dict[str, Any]]] = None,
+        features_by_timeframe: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> List[TradeIntent]:
         """
         多策略仲裁 → 返回最优 TradeIntent (三层控制)
@@ -495,6 +515,14 @@ class LivePCM:
           5. 多候选 → 按当前 regime 优先级 + Evidence 排序
           6. 跨 symbol slot 检查
 
+        Args:
+            features: 主时间框架特征 (默认 4H)
+            symbol: 交易对
+            bars: 近期 bars (用于执行规则)
+            features_by_timeframe: 多时间框架特征 {timeframe: features_dict}
+                用于多策略多 timeframe 路由。各策略绑定的 timeframe
+                通过 register(timeframe=...) 注册。
+
         Returns:
             List[TradeIntent]（0 或 1 个元素）
         """
@@ -502,6 +530,7 @@ class LivePCM:
             return []
 
         # ── 1. Regime 检测 (Layer 2) ──
+        # Regime 使用主时间框架 (4H) 特征检测
         if self._regime_detector is not None:
             self._regime_detector.detect(features)
 
@@ -509,7 +538,15 @@ class LivePCM:
         all_intents: List[TradeIntent] = []
         for arch_name, strategy in self._strategies.items():
             try:
-                intents = strategy.decide(features=features, symbol=symbol, bars=bars)
+                # 多时间框架路由: 使用策略绑定的 timeframe 对应的特征
+                strat_features = features
+                if features_by_timeframe and arch_name in self._strategy_timeframes:
+                    tf = self._strategy_timeframes[arch_name]
+                    if tf in features_by_timeframe:
+                        strat_features = features_by_timeframe[tf]
+                intents = strategy.decide(
+                    features=strat_features, symbol=symbol, bars=bars
+                )
                 all_intents.extend(intents)
             except Exception:
                 logger.exception(

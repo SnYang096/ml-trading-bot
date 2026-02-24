@@ -48,8 +48,10 @@ os.chdir(PROJECT_ROOT)
 # Paths
 # ====================================================================
 
-RESEARCH_STRATEGIES = PROJECT_ROOT / "config" / "strategies"
-LIVE_STRATEGIES = PROJECT_ROOT / "live" / "highcap" / "config" / "strategies"
+RESEARCH_CONFIG = PROJECT_ROOT / "config"
+RESEARCH_STRATEGIES = RESEARCH_CONFIG / "strategies"
+LIVE_CONFIG = PROJECT_ROOT / "live" / "highcap" / "config"
+LIVE_STRATEGIES = LIVE_CONFIG / "strategies"
 LIVE_ROOT = PROJECT_ROOT / "live"
 
 # 部署的策略列表 (不含 LV, 暂缓)
@@ -76,6 +78,13 @@ TOP_LEVEL_CONFIGS = [
     "features.yaml",
     "features_gate.yaml",
     "features_evidence.yaml",
+]
+
+# 全局配置: config/ 下的非策略配置 → live/highcap/config/
+# (相对路径, 相对于 config/ 根目录)
+GLOBAL_CONFIGS = [
+    "constitution/constitution.yaml",
+    "pcm_regime.yaml",
 ]
 
 
@@ -145,7 +154,7 @@ def compare_file(src: Path, dst: Path) -> Tuple[str, List[str]]:
 # ====================================================================
 
 
-def cmd_diff(strategies: List[str]) -> Dict[str, dict]:
+def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, dict]:
     """对比 config/ vs live/ 差异, 返回摘要."""
     summary = {}
 
@@ -222,6 +231,42 @@ def cmd_diff(strategies: List[str]) -> Dict[str, dict]:
 
         summary[strat] = strat_summary
 
+    # ── 全局配置 diff ──
+    if include_global:
+        print(f"\n{'─'*70}")
+        print(f"📋 GLOBAL: config/ vs live/highcap/config/ (宪法/PCM/gate 等)")
+        print(f"{'─'*70}")
+
+        global_summary = {"new": 0, "modified": 0, "identical": 0, "files": {}}
+        for rel_path in GLOBAL_CONFIGS:
+            src_file = RESEARCH_CONFIG / rel_path
+            dst_file = LIVE_CONFIG / rel_path
+            if not src_file.exists():
+                continue
+
+            status, diff_lines = compare_file(src_file, dst_file)
+            global_summary[status] = global_summary.get(status, 0) + 1
+            global_summary["files"][rel_path] = status
+
+            if status == "identical":
+                print(f"  ✅ {rel_path}: 无变化")
+            elif status == "new":
+                print(f"  🆕 {rel_path}: 新文件 (live 中不存在)")
+            elif status == "modified":
+                print(f"  ⚡ {rel_path}: 有差异")
+                for line in diff_lines[:8]:
+                    print(f"    {line}")
+                if len(diff_lines) > 8:
+                    print(f"    ... 还有 {len(diff_lines) - 8} 行差异")
+
+        total_global = global_summary["new"] + global_summary["modified"]
+        if total_global == 0:
+            print(f"\n  ➡️  GLOBAL: 完全同步, 无需部署")
+        else:
+            print(f"\n  ➡️  GLOBAL: {total_global} 个文件需要更新")
+
+        summary["__global__"] = global_summary
+
     return summary
 
 
@@ -260,6 +305,20 @@ def deploy_strategy(strat: str) -> int:
             shutil.copy2(src_file, dst_dir / fname)
             copied += 1
 
+    return copied
+
+
+def deploy_global_configs() -> int:
+    """部署全局配置: config/{path} → live/highcap/config/{path}"""
+    copied = 0
+    for rel_path in GLOBAL_CONFIGS:
+        src_file = RESEARCH_CONFIG / rel_path
+        dst_file = LIVE_CONFIG / rel_path
+        if not src_file.exists():
+            continue
+        dst_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_file, dst_file)
+        copied += 1
     return copied
 
 
@@ -306,6 +365,15 @@ def cmd_deploy(strategies: List[str], auto_yes: bool = False, git_commit: bool =
         n = deploy_strategy(strat)
         total_copied += n
         print(f"  ✅ {strat.upper()}: 已部署 {n} 个文件")
+
+    # 全局配置
+    gs = summary.get("__global__", {})
+    if gs.get("new", 0) + gs.get("modified", 0) > 0:
+        n = deploy_global_configs()
+        total_copied += n
+        print(f"  ✅ GLOBAL: 已部署 {n} 个全局配置 (constitution/pcm_regime/...)")
+    else:
+        print(f"  ⏭️  GLOBAL: 已同步, 跳过")
 
     print(f"\n✅ 部署完成: {total_copied} 个文件已更新")
 
