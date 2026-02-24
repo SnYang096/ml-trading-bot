@@ -1,10 +1,7 @@
-# ME Evidence Archetype v3.0
-# ME = Energy × Acceleration × Participation
-# Evidence 语义: Energy × |Acceleration_5K| × Participation（乘法）
-# Evidence 职责: 在 Gate 通过后，调节执行参数（不做硬 veto）
-#
-# 待训练: 需要运行 optimize_evidence_plateau.py 基于 RR 分层优化
-# 更新: 2026-02-17 - 迁移到 v3.0 三因子模型
+# ME Evidence Archetype (auto-promoted)
+# 来源: results/train_final_20260224_154536_return_tree/me/evidence_candidates.yaml
+# 优化规则: 1/12 条通过 plateau 验证
+# ✅ 方向已由数据自动验证
 
 schema:
   label_semantics:
@@ -13,136 +10,27 @@ schema:
     neutral: 中性 - 标准执行
     favor: 有利 - 提高信心/仓位
     amplify: 强烈有利 - 最大化执行
-
-# ============================================================
-# 🔍 EVIDENCE: 执行质量调节器
-# ============================================================
-# ME v3.0 核心公式: Evidence = Energy × |Acceleration_5K| × Participation
-# 这些特征不做硬 veto，只影响置信度/仓位/TP/SL
-#
-# 候选特征池 (v3.0 三因子):
-#   Energy:        me_atr_pct, me_vol_regime
-#   Acceleration:  me_accel_5k, me_accel_persistence, me_multi_tf_alignment
-#   Participation: me_cvd_alignment, me_cvd_strength, me_volume_surge, me_volume_accel, me_delta_net_flow
-#   Composite:     me_evidence_signal (Energy × |Accel_5K| × Participation)
-#   Failure:       me_false_expansion, me_vol_divergence, me_flow_exhaustion, me_failure_score
-#   Context:       me_regime_suitable
-#   通用:          wpt_exhaustion_score, vpin, rsi, macd_atr, sma_200_position
-#
-# 排序依据: bad_suppression (主 KPI)
-
-# ============================================================
-# 🎯 Evidence 特征 (待训练优化)
-# ============================================================
 evidence:
-  # Rank 1: ME Evidence Signal - 三因子乘积 (待训练验证)
-  - id: evidence_me_signal
-    feature: me_evidence_signal
-    rank: 1
-    sharpness: null  # 待训练
-    direction: positive  # 高值=好，三因子共振
-    usage_hint: ME 三因子乘积信号，影响整体置信度
-    affects:
-      - confidence_boost
-      - position_size
-    quantile_mapping:
-      bins: [0.1, 0.3, 0.5, 0.7]
-      labels: [suppress, downweight, neutral, favor, amplify]
-    optimization:
-      bad_suppression: null  # 待训练
-      status: pending_training
-
-  # Rank 2: ME Acceleration 5K - 速度增强 (待训练验证)
-  - id: evidence_me_accel_5k
-    feature: me_accel_5k
-    rank: 2
-    sharpness: null
-    direction: positive  # |accel| 大=动量正在增强
-    usage_hint: 5K加速度强度，影响 trailing 速度
-    affects:
-      - trailing_speed
-    quantile_mapping:
-      bins: [0.1, 0.3, 0.5, 0.7]
-      labels: [suppress, downweight, neutral, favor, amplify]
-    optimization:
-      bad_suppression: null
-      status: pending_training
-
-  # Rank 3: ME CVD Strength - 订单流强度 (待训练验证)
-  - id: evidence_me_cvd_strength
-    feature: me_cvd_strength
-    rank: 3
-    sharpness: null
-    direction: positive  # 高值=订单流强劲
-    usage_hint: CVD 相对强度，影响仓位调整
-    affects:
-      - position_size
-      - confidence_boost
-    quantile_mapping:
-      bins: [0.15, 0.35, 0.55, 0.75]
-      labels: [suppress, downweight, neutral, favor, amplify]
-    optimization:
-      bad_suppression: null
-      status: pending_training
-
-  # Rank 4: ME Volume Surge - 成交量爆发 (待训练验证)
-  - id: evidence_me_volume_surge
-    feature: me_volume_surge
-    rank: 4
-    sharpness: null
-    direction: positive  # 高值=放量
-    usage_hint: 成交量爆发百分位，影响信心
-    affects:
-      - confidence_boost
-    quantile_mapping:
-      bins: [0.15, 0.35, 0.55, 0.75]
-      labels: [suppress, downweight, neutral, favor, amplify]
-    optimization:
-      bad_suppression: null
-      status: pending_training
-
-  # Rank 5: ME Acceleration Persistence - 加速持续性 (待训练验证)
-  - id: evidence_me_accel_persistence
-    feature: me_accel_persistence
-    rank: 5
-    sharpness: null
-    direction: positive  # 高值=加速方向稳定
-    usage_hint: 加速方向一致性，影响持有时间
-    affects:
-      - hold_time
-      - trailing_speed
-    quantile_mapping:
-      bins: [0.2, 0.4, 0.6, 0.8]
-      labels: [suppress, downweight, neutral, favor, amplify]
-    optimization:
-      bad_suppression: null
-      status: pending_training
-
-  # Rank 6: ME Failure Score - 动能衰竭 (待训练验证)
-  - id: evidence_me_failure_score
-    feature: me_failure_score
-    rank: 6
-    sharpness: null
-    direction: negative  # 高值=坏，标签反转
-    usage_hint: 动能衰竭综合分，高值应降低仓位
-    affects:
-      - position_size
-      - confidence_boost
-    quantile_mapping:
-      bins: [0.15, 0.35, 0.55, 0.75]
-      labels: [amplify, favor, neutral, downweight, suppress]  # 反转
-    optimization:
-      bad_suppression: null
-      status: pending_training
-
-# ============================================================
-# 📊 Evidence 训练说明
-# ============================================================
-# 当前配置: 基于 ME v3.0 三因子语义选择 6 个初始候选特征
-# 下一步: 运行 optimize_evidence_plateau.py 基于 RR 分层(Q20/Q80) 优化
-#   - Good样本: forward_rr > Q80 (高RR交易)
-#   - Bad样本: forward_rr < Q20 (低RR交易)
-#   - 目标KPI: bad_suppression (区分高RR和低RR的能力)
-#
-# 优化后保留有 plateau 的 evidence 特征，移除 knife-edge 特征
-# 参考: z实验_001_bpc/return_tree_kpi_framework.md
+- id: evidence_wpt_price_energy_low_ratio
+  feature: wpt_price_energy_low_ratio
+  rank: 9
+  direction: positive
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+  - tp_range
+  - trailing_speed
+  - scale_in_allowed
+  - position_size
+  quantile_mapping:
+    bins:
+    - 0.1
+    - 0.3
+    - 0.5
+    - 0.7
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 1

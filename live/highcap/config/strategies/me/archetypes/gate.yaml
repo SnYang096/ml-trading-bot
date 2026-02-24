@@ -1,132 +1,38 @@
-# ME Gate Archetype v3.0
-# ME = Energy × Acceleration × Participation
-# Gate 语义: Energy + Flow + Volume（不看 acceleration）
-# Gate 只回答"环境允许吗？"
-#
-# 优化完成: 2026-02-17
-#   rr_extreme: me_atr_pct 稳定 plateau (Lift=18.1%, Th=0.65)
-#   no_oppo: me_volume_surge 弱信号 (Lift=13%, Th=0.80, 不稳定)
-#   Failure 类特征在两个标签下均无区分力
+# ME Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260224_154226/strategies/me/gate_draft.yaml
+# 优化规则: 2/10 条通过优化, 8 条已移除
 
 schema:
   phases:
-    - system_safety
-    - hard_gate
-    - guardrail
-    - preconditions
-    - evidence
-    - decision
-  evaluation_order: system_safety -> hard_gate -> guardrail -> preconditions -> evidence -> decision
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
     failure_budget:
-      max_hard_deny_rate: 0.50
+      max_hard_deny_rate: 0.5
       alert_threshold: 0.45
-
-# ============================================================
-# 🔴 Hard Gates (必要条件 - 不满足则拒绝)
-# ============================================================
-# 优化结果: rr_extreme + no_oppo 双标签扫描
-# Failure 类特征 (failure_score/false_expansion/flow_exhaustion/vol_divergence)
-#   在两个标签下均无区分力，已移除
 hard_gates:
-  # [rr_extreme] 稳定 plateau: Lift=18.1%, PassRate=29.9%
-  - id: me_hg_energy_low
-    tag: ME_ENERGY_LOW
-    phase: hard_gate
-    priority: 10
-    frozen: true  # optimizer 验证，不再自动调整
-    reason: "ME ATR百分位过低（optimizer: Lift=18.1%）"
-    when:
-      me_atr_pct:
-        value_lt: 0.65
-    then:
-      action: deny
-    comment: |
-      rr_extreme 标签下唯一稳定 plateau。
-      deny ATR百分位 < 0.65 → 保留 ~30% 交易，failure rate 降低 18.1%。
-
-# ============================================================
-# 🛡️ Strategy Guardrails (策略前提护栏)
-# ============================================================
-# ME v3.0 策略前提: Energy + Flow + Volume（三因子 Gate 语义）
-# 语义: 不满足策略前提 → 永久否决（环境不允许扩张）
-guardrails:
-  # Guardrail 1: Energy 不足 → 不做
-  - id: me_guardrail_energy_insufficient
-    tag: ME_ENERGY_INSUFFICIENT
-    phase: guardrail
-    priority: 1
-    reason: "ME 策略前提: Energy 不足（ATR 百分位过低）"
-    when:
-      me_atr_pct:
-        value_lt: 0.40
-    then:
-      action: deny
-    comment: |
-      ME 策略语义：动能扩张。如果 me_atr_pct < 0.40，
-      说明市场波动率处于低位，不处于"能动"状态。
-
-  # Guardrail 2: Flow 不一致 → 不做
-  - id: me_guardrail_flow_inconsistent
-    tag: ME_FLOW_INCONSISTENT
-    phase: guardrail
-    priority: 2
-    reason: "ME 策略前提: 订单流方向不一致"
-    when:
-      me_cvd_alignment:
-        value_lt: 0.40
-    then:
-      action: deny
-    comment: |
-      ME 策略语义：真实资金推动。如果 me_cvd_alignment < 0.40，
-      说明 CVD 方向与价格方向不一致，可能是虚假波动。
-
-  # Guardrail 3: Volume 不配合 → 不做
-  - id: me_guardrail_volume_insufficient
-    tag: ME_VOLUME_INSUFFICIENT
-    phase: guardrail
-    priority: 3
-    reason: "ME 策略前提: 成交量不足"
-    when:
-      me_volume_surge:
-        value_lt: 0.30
-    then:
-      action: deny
-    comment: |
-      ME 策略语义：放量扩张。如果 me_volume_surge < 0.30，
-      说明成交量不配合，扩张可能是假突破。
-
-  # Guardrail 4: 通用成交量比率 → 不做
-  # 原 _detect_me_expansion 硬编码 volume_ratio_pct > 0.6，迁移至此
-  - id: me_guardrail_volume_ratio_low
-    tag: ME_VOLUME_RATIO_LOW
-    phase: guardrail
-    priority: 4
-    reason: "ME 策略前提: 成交量比率过低（原 _detect_me_expansion）"
-    when:
-      volume_ratio_pct:
-        value_lt: 0.60
-    then:
-      action: deny
-    comment: |
-      原 _detect_me_expansion 的 volume_ratio_pct > 0.6 前置条件。
-      已迁移为 Gate 规则，确保训练/实盘一致性。
-
-# ============================================================
-# 🔵 System Safety (市场级保护)
-# ============================================================
-system_safety:
-  - id: safety_reflexivity
-    tag: SYSTEM_REFLEXIVITY
-    phase: system_safety
-    priority: 0
-    reason: "[SYSTEM] 反身性拥挤度过高"
-    when:
-      shd_pct:
-        value_gt: 0.8
-      ofci_pct:
-        value_gt: 0.8
-    then:
-      action: deny
-
-post_gate_filters: []
+- id: gate_shd_pct
+  tag: HARD_SHD_PCT
+  phase: hard_gate
+  priority: 10
+  reason: shd_pct 触发树分裂条件 (分裂 2 次)
+  when:
+    shd_pct:
+      value_gt: 0.55
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.5500, lift=0.244'
+- id: gate_evt_scale
+  tag: HARD_EVT_SCALE
+  phase: hard_gate
+  priority: 18
+  reason: evt_scale 触发树分裂条件 (分裂 1 次)
+  when:
+    evt_scale:
+      value_lt: 0.6004
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.6004, lift=0.379'
+guardrails: []

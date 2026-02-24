@@ -1,0 +1,90 @@
+# ================================================================
+# PCM Regime Configuration v3 — 仲裁优先级 + Regime 感知缩放
+# ================================================================
+#
+# 职责边界（v3 严格分工）:
+#   - constitution.yaml: 定义硬约束上限 (slot_count, risk_per_slot, per_strategy_limits)
+#   - 本文件 (pcm_regime.yaml): 定义仲裁策略 (优先级, Regime 检测, 仓位缩放)
+#   - 两者不重复定义同一数值
+#
+# 设计原则:
+#   1. 每个 Regime 有一个确定性优先级列表 + 仓位缩放因子
+#   2. 优先级按"信号条件严格性"排序（越严格越优先）
+#      LV > FER > ME > BPC
+#   3. 仓位缩放 (position_scale) 乘在 TradeIntent.size_multiplier 上
+#      → 影响下单数量，不影响信号方向或 Gate 判断
+#   4. 硬约束 (slot, risk) 全部从 constitution.yaml 读取
+#
+# Archetype 角色:
+#   - BPC = equity 曲线骨架（稳定现金流，高频触发）
+#   - ME  = 收益分布右尾增强器
+#   - FER = 均衡偏离反转
+#   - LV  = 中断型信号（最高优先级，最严格条件）
+#
+# Regime 状态机:
+#   NORMAL       → 常态，全仓
+#   HIGH_VOL     → 高波动扩张期，ME 提升 + 全局缩仓
+#   HIGH_LEVERAGE → 高杠杆脆弱期，LV 首位 + 保守缩仓
+# ================================================================
+
+version: 3
+
+# 宪法配置引用 (所有硬约束的唯一权威源)
+# PCM 启动时从 constitution 读取:
+#   - slots.slot_count → 全局 max_slots
+#   - slots.risk_per_slot → 每 slot 最大风险
+#   - resource_allocation.per_strategy_limits → 每策略 slot/加仓限制
+constitution_ref: "config/constitution/constitution.yaml"
+
+# ── Regime 定义 ──
+# 列表顺序 = 冲突仲裁优先级（索引越小越优先）
+# position_scale: 全局仓位缩放因子 (1.0 = 全仓, 0.5 = 半仓)
+# per_archetype_scale: 可选，覆盖特定 archetype 的缩放因子
+regimes:
+  NORMAL:
+    description: "常态：全仓，按条件严格性排序"
+    priority: ["LV", "FER", "ME", "BPC"]
+    position_scale: 1.0
+
+  HIGH_VOL:
+    description: "高波动扩张：ME 提升，全局缩仓 50%"
+    priority: ["LV", "ME", "FER", "BPC"]
+    position_scale: 0.5
+    per_archetype_scale:
+      ME: 0.8     # ME 擅长高波动，只轻微缩仓
+      LV: 0.5     # LV 保持全局缩仓
+
+  HIGH_LEVERAGE:
+    description: "高杠杆脆弱：保守缩仓 70%"
+    priority: ["LV", "FER", "ME", "BPC"]
+    position_scale: 0.3
+    per_archetype_scale:
+      LV: 0.5     # LV 稍放宽（清算猎手需要在场）
+
+# ── 默认 Regime ──
+default_regime: "NORMAL"
+
+# ── Regime 检测阈值 ──
+# 检测顺序：HIGH_LEVERAGE → HIGH_VOL → NORMAL（优先匹配严格条件）
+detection:
+  HIGH_LEVERAGE:
+    # OI 异常高 + 资金费率极端 → 清算风险
+    conditions:
+      - feature: "oi_zscore"
+        operator: ">"
+        threshold: 1.5
+      - feature: "funding_rate_abs_zscore"
+        operator: ">"
+        threshold: 2.0
+    logic: "AND"
+
+  HIGH_VOL:
+    # ATR 百分位高 → 波动扩张期
+    conditions:
+      - feature: "atr_percentile"
+        operator: ">"
+        threshold: 0.7
+    logic: "AND"
+
+# ── Regime 切换防抖 ──
+min_bars_in_regime: 3

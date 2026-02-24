@@ -1,64 +1,252 @@
-# ME Direction Determination
-# 版本: 1.0
-# 创建时间: 2026-02-16
+# ME 方向特征候选声明
+# 职责: 声明待验证的方向候选特征 (--compare-features 的输入)
+# 对应生产配置: config/strategies/me/archetypes/direction.yaml (选中的规则)
 #
-# 职责: 确定 ME archetype 的交易方向 (long/short)
-# 原则: 方向来自"动能方向"，是 deterministic 的，不让模型学
+# 用法:
+#   # 默认模式: 只对比本文件 candidates 中的特征
+#   python z实验_005_统一研究/direction_strict_validation.py \
+#       --logs results/train_final_xxx/me/features_labeled.parquet \
+#       --strategy me --compare-features
 #
-# Pipeline 位置:
-#   Direction (本文件) → Gate → Entry Filter → Evidence → Execution
+#   # 发现模式: 扫描全部数值特征 (169+), 用于发现新候选
+#   python z实验_005_统一研究/direction_strict_validation.py \
+#       --logs results/train_final_xxx/me/features_labeled.parquet \
+#       --strategy me --compare-features --all-features
 #
-# 语义:
-#   ME = Momentum Expansion
-#   方向 = 动能方向 (钱在加速进来的方向)
-#   "跟钱走"
-#
-# 禁止使用的特征 (会导致语义污染):
-#   - SR 方向 (结构逻辑, 属于 BPC)
-#   - HTF MA 方向
-#   - 结构 break 方向 (属于 BPC)
+#   # 加 --temporal 查看时间稳定性
+#   ... --compare-features --temporal
 
-version: 1
+description: "ME 方向特征候选 — 动能方向 (跟钱走)"
 
-# 方向因果来源
-causal_source: momentum  # 动能
+# ════════════════════════════════════════════════════════════════
+# 候选特征 (输入) — 脚本从这里读取待评估的特征列表
+# ════════════════════════════════════════════════════════════════
+# 每个条目: feature (必须), transform (可选, 自动检测)
+# transform: sign (有正负的特征) | center_sign (百分位数 [0,1])
+#
+# 语义约束:
+#   ME = Momentum Expansion, 方向 = "跟钱走"
+#   禁止: SR 方向、HTF MA、结构 break (属 BPC 语义)
 
-# 方向确定规则 (按优先级从高到低)
-# 命中第一个可用 method 后停止
+candidates:
+  # ── ME 核心三因子 (Participation + Acceleration) ──
+  - feature: me_delta_net_flow       # 资金净流向 [-1,1]
+  - feature: me_cvd_alignment        # CVD 对齐 [0,1]
+  - feature: me_cvd_strength         # CVD 强度 [0,1]
+  - feature: me_volume_accel         # 成交量加速 [0,1]
+  - feature: me_accel_2k             # 2k 加速度 [-3,3]
+  - feature: me_multi_tf_alignment   # 多时间框架对齐 [0,1]
+
+  # ── 动量指标 ──
+  - feature: macd_atr                # MACD/ATR (有正负)
+  - feature: macd_signal_atr         # MACD signal/ATR
+  - feature: roc_20                  # 20 期 ROC
+  - feature: price_velocity_pct      # 价格速度百分位 [0,1]
+    transform: center_sign
+  - feature: price_accel_pct         # 价格加速度百分位 [0,1]
+    transform: center_sign
+  - feature: price_position          # 价格位置 [0,1]
+    transform: center_sign
+  - feature: sma_200_position        # SMA200 相对位置
+
+  # ── 资金流 / 订单流 ──
+  - feature: oi_delta_price_sign     # OI 变化 × 价格方向
+  - feature: vpin_signed_imbalance_max  # VPIN 签名不平衡
+  - feature: fp_volume_skew          # Footprint 成交量偏斜
+
+  # ── 趋势一致性 ──
+  - feature: price_dir_consistency_pct  # 价格方向一致性 [0,1]
+    transform: center_sign
+
+# ════════════════════════════════════════════════════════════════
+# 上次评估结果 (输出) — 由 --compare-features 生成
+# ════════════════════════════════════════════════════════════════
+# 评估时间: 2026-02-21
+# 数据源: features_labeled.parquet, 157,086 行, 2023-01 ~ 2025-12
+# 基线: always-long  Median RR=+0.0593, Bad Rate=44.2%
+
+# ── direction_rules (自动生成 by --promote 2026-02-24) ──
+# 选择标准: med_rr>0 + p<0.05 + short%>=20% + temporal CV<1.5 + 未衰减
+# 级联规则: 规则1覆盖的行不再用规则2, 依此类推
 direction_rules:
-  # 规则 1: WPT 能量方向 — 最符合文档语义
   - method: feature_sign
-    feature: wpt_volume_energy_f
-    description: "sign(wpt_energy): 小波变换能量方向"
-    transform: sign  # direction = sign(feature_value)
-
-  # 规则 2: Delta rolling sum 方向
-  - method: feature_sign
-    feature: delta_rolling_sum
-    description: "sign(delta_rolling_sum): 资金流方向"
+    feature: me_delta_net_flow
     transform: sign
-
-  # 规则 3: 已有 entry_direction 列 (训练产出)
-  - method: feature_column
-    feature: entry_direction
-    description: "训练产出的方向列"
-    transform: raw
-
-  # 规则 4: 价格速度方向 (兜底)
+    description: "规则1: me_delta_net_flow (med_rr=+0.1273, p=0.005, short=43%)"
   - method: feature_sign
-    feature: price_velocity_pct
-    description: "sign(price_velocity): 价格速度方向"
+    feature: me_cvd_alignment
+    transform: center_sign
+    description: "规则2: me_cvd_alignment (med_rr=+0.1273, p=0.005, short=43%)"
+  - method: feature_sign
+    feature: macd_signal_atr
     transform: sign
+    description: "规则3: macd_signal_atr (med_rr=+0.0659, p=0.005, short=49%)"
 
-# 方向验证
-validation:
-  require_nonzero: true
-  allowed_values: [-1, 1]
+last_evaluation:
+  # ── 自动生成 by --compare-features (2026-02-24) ──
+  timestamp: "2026-02-24"
+  data_source: "features_labeled.parquet"
+  n_rows: 157386
+  baseline: random_direction  # 随机方向 (期望 median ≈ 0)
+  always_long_median_rr: +0.0596  # 参考
+  always_long_bad_rate: 0.4418  # 参考
 
-# 适合的特征 (供参考)
-semantic_features:
-  - wpt_energy_slope
-  - directional_cluster_consecutive
-  - imbalance_direction_consecutive
-  - delta_rolling_sum
-  - price_velocity_percentile
+  # ── Med.RR > 0 (优于随机, 15 个) ──
+  positive_lift:
+    - feature: me_delta_net_flow
+      transform: sign
+      median_rr_in_dir: +0.1437
+      p_random: 0.0050
+      lift_vs_long: +0.0841
+      bad_rate_reduction_pct: +0.54
+      short_pct: 43.4
+      temporal_cv: 2.3
+      recent_decay: "0/3"
+    - feature: me_cvd_alignment
+      transform: center_sign
+      median_rr_in_dir: +0.1437
+      p_random: 0.0050
+      lift_vs_long: +0.0841
+      bad_rate_reduction_pct: +0.54
+      short_pct: 43.4
+      temporal_cv: 2.3
+      recent_decay: "0/3"
+    - feature: macd_signal_atr
+      transform: sign
+      median_rr_in_dir: +0.0665
+      p_random: 0.0050
+      lift_vs_long: +0.0069
+      bad_rate_reduction_pct: +0.02
+      short_pct: 48.7
+      temporal_cv: 0.66
+      recent_decay: "0/3"
+    - feature: macd_atr
+      transform: sign
+      median_rr_in_dir: +0.0627
+      p_random: 0.0050
+      lift_vs_long: +0.0031
+      bad_rate_reduction_pct: -0.01
+      short_pct: 48.8
+      temporal_cv: 0.77
+      recent_decay: "0/3"
+    - feature: oi_delta_price_sign
+      transform: sign
+      median_rr_in_dir: +0.0588
+      p_random: 0.0050
+      lift_vs_long: -0.0008
+      bad_rate_reduction_pct: -0.04
+      short_pct: 51.9
+      temporal_cv: 1.15
+      recent_decay: "0/3"
+    - feature: me_multi_tf_alignment
+      transform: center_sign
+      median_rr_in_dir: +0.0560
+      p_random: 0.0050
+      lift_vs_long: -0.0036
+      bad_rate_reduction_pct: -0.10
+      short_pct: 42.4
+      temporal_cv: 0.8
+      recent_decay: "2/3"
+    - feature: price_dir_consistency_pct
+      transform: center_sign
+      median_rr_in_dir: +0.0527
+      p_random: 0.0647
+      lift_vs_long: -0.0070
+      bad_rate_reduction_pct: -0.09
+      short_pct: 25.8
+      temporal_cv: 0.89
+      recent_decay: "0/3"
+    - feature: price_position
+      transform: center_sign
+      median_rr_in_dir: +0.0489
+      p_random: 0.0050
+      lift_vs_long: -0.0107
+      bad_rate_reduction_pct: -0.10
+      short_pct: 48.7
+      temporal_cv: 0.85
+      recent_decay: "0/3"
+    - feature: fp_volume_skew
+      transform: sign
+      median_rr_in_dir: +0.0464
+      p_random: 0.1144
+      lift_vs_long: -0.0132
+      bad_rate_reduction_pct: -0.10
+      short_pct: 25.4
+      temporal_cv: 0.9
+      recent_decay: "1/3"
+    - feature: roc_20
+      transform: sign
+      median_rr_in_dir: +0.0457
+      p_random: 0.0100
+      lift_vs_long: -0.0139
+      bad_rate_reduction_pct: -0.14
+      short_pct: 49.3
+      temporal_cv: 0.82
+      recent_decay: "0/3"
+    - feature: price_accel_pct
+      transform: center_sign
+      median_rr_in_dir: +0.0423
+      p_random: 0.0050
+      lift_vs_long: -0.0174
+      bad_rate_reduction_pct: -0.13
+      short_pct: 50.0
+      temporal_cv: 2.06
+      recent_decay: "1/3"
+    - feature: sma_200_position
+      transform: sign
+      median_rr_in_dir: +0.0398
+      p_random: 0.0149
+      lift_vs_long: -0.0199
+      bad_rate_reduction_pct: -0.15
+      short_pct: 49.4
+      temporal_cv: 1.29
+      recent_decay: "0/3"
+    - feature: vpin_signed_imbalance_max
+      transform: sign
+      median_rr_in_dir: +0.0390
+      p_random: 0.0398
+      lift_vs_long: -0.0207
+      bad_rate_reduction_pct: -0.17
+      short_pct: 44.7
+      temporal_cv: 0.86
+      recent_decay: "0/3"
+    - feature: price_velocity_pct
+      transform: center_sign
+      median_rr_in_dir: +0.0272
+      p_random: 0.0647
+      lift_vs_long: -0.0325
+      bad_rate_reduction_pct: -0.26
+      short_pct: 49.5
+      temporal_cv: 3.48
+      recent_decay: "1/3"
+    - feature: me_volume_accel
+      transform: center_sign
+      median_rr_in_dir: +0.0221
+      p_random: 0.1194
+      lift_vs_long: -0.0375
+      bad_rate_reduction_pct: -0.38
+      short_pct: 49.2
+      temporal_cv: 1.58
+      recent_decay: "3/3"
+
+  # ── Med.RR <= 0 (不优于随机, 前 5) ──
+  fallback:
+    - feature: me_accel_2k
+      transform: sign
+      median_rr_in_dir: -0.0001
+      p_random: 0.5124
+      lift_vs_long: -0.0598
+      bad_rate_reduction_pct: -0.39
+      short_pct: 50.5
+      temporal_cv: 3.51
+      recent_decay: "0/3"
+    - feature: me_cvd_strength
+      transform: center_sign
+      median_rr_in_dir: -0.0017
+      p_random: 0.0448
+      lift_vs_long: -0.0614
+      bad_rate_reduction_pct: -0.49
+      short_pct: 75.7
+      temporal_cv: 3.9
+      recent_decay: "1/3"
+

@@ -1,70 +1,183 @@
-# FER Holding Archetype
-# 职责：持仓管理规则
+# FER Holding 配置
+# 版本: 1.0
+# 创建时间: 2026-02-22
+#
+# ╔═══════════════════════════════════════════════════════════╗
+# ║  Holding is not optimized.                               ║
+# ║  Holding exists to prevent good paths from being ruined, ║
+# ║  not to create alpha.                                    ║
+# ╚═══════════════════════════════════════════════════════════╝
+#
+# ── 职责边界 ──────────────────────────────────────────────
+#
+#   Execution = "那一刻该不该进、怎么进"（单点、静态、条件独立）
+#   Holding   = "进了之后，怎么不把好交易玩坏"（多点、动态、路径依赖）
+#
+#   Alpha 来源: Gate → Evidence → Entry Filter → Execution
+#   Holding 不是 Alpha 源，是 Alpha 保全层。
+#
+# ── 设计原则 ──────────────────────────────────────────────
+#
+#   1. 只用确定性规则（无优化、无学习、无权重）
+#   2. ≤ 3 个核心参数
+#   3. 不依赖 regime、不依赖 volatility
+#   4. Holding 优化是"反因果"的（强路径依赖 + 反事实），
+#      用 Sharpe/PnL 反推 Holding 参数本质是回溯性拟合
+#
+# ── FER 反转策略特点 ─────────────────────────────────────
+#
+#   FER = Failure/Exhaustion Reversal，反转策略：
+#   - 入场后反转窗口有限，持仓时间比 BPC 趋势策略更短
+#   - 反转失败要快跑，不存在"让利润奔跑"的假设
+#   - 已设固定止盈（execution.yaml take_profit.target_r）
+#
+# ── 与其他配置的关系 ─────────────────────────────────────
+#
+#   execution.yaml   → 开仓瞬间参数（SL 距离、tier、size_multiplier）
+#   本文件            → 持仓期间确定性规则（时间止损、保本锁、trail 执行模式）
+#   constitution.yaml → 系统底线（加仓政策、kill switch、slot 约束）
+#
+# ── 参数迁移映射 ─────────────────────────────────────────
+#
+#   本文件参数              ← 迁移前位置
+#   ─────────────────────  ──────────────────────────────────────────
+#   time_stop.default_bars ← execution.yaml > holding > time_stop_bars (当前值: 40)
+#   time_stop.tier_override← execution.yaml > tiers > levels[*] > time_stop_bars
+#   breakeven_lock.trigger_r ← constitution.yaml > lock_profit_breakeven_trigger_r
+#   trailing_stop.mode     ← execution.yaml > stop_loss > type (当前值: trailing)
+#
 
-schema:
-  exit_signals:      # 退出信号
-  stop_management:   # 止损管理
+version: 1
 
-# ==============================================================
-# 🚪 EXIT SIGNALS: 主动退出条件
-# ==============================================================
+# ============================================================
+# 📌 参数 1: 时间止损（路径放弃条件）
+# ============================================================
+#
+# 不是止损，是"路径放弃"。
+# 如果市场既没证明你对、也没证明你错 → 放弃。
+# 不依赖 PnL，不依赖 R，只依赖时间。
+#
+time_stop:
+  default_bars: 40             # 4h × 40根 ≈ 7 天
+                                #
+                                # 选择依据:
+                                #   - FER 是 4H 反转策略
+                                #   - 反转窗口有限，比 BPC(96 bars=4天) 更短
+                                #   - 7 天 = 足够让反转确认或否认
+                                #   - 太短(20) → 砍掉还在酝酿的反转
+                                #   - 太长(96) → 占用资金，反转已失效
+                                #
+                                # 注: 不做 grid search 优化
+                                #   因为 time_stop_bars 不是 alpha 来源
 
-exit_signals:
-  # 反转失败：价格重回impulse方向
-  - id: exit_reversal_failure
-    tag: EXIT_REVERSAL_FAIL
-    priority: 0
-    reason: "[EXIT] 反转失败，价格重回原方向"
-    when:
-      price_momentum:
-        crosses_above: 0  # 动量转正（重回原方向）
-    then:
-      action: exit_full
-  
-  # 时间止损：持仓过长
-  - id: exit_time_stop
-    tag: EXIT_TIME
-    priority: 1
-    reason: "[EXIT] 持仓时间过长"
-    when:
-      bars_in_position:
-        gte: 20
-    then:
-      action: exit_full
-  
-  # 反转动能衰竭
-  - id: exit_momentum_exhausted
-    tag: EXIT_MOMENTUM
-    priority: 2
-    reason: "[EXIT] 反转动能衰竭"
-    when:
-      reversal_strength:
-        lt: 0.3  # 反转强度 < 0.3
-    then:
-      action: exit_partial
-      params:
-        exit_ratio: 0.5  # 减仓50%
+  # Tier 覆盖策略:
+  # 当 --tiers 模式下，execution.yaml 中各 tier 的 time_stop_bars
+  # 将覆盖此默认值。这是设计允许的——tier 选择发生在 Execution 层，
+  # 但 time_stop 执行发生在 Holding 层。
+  #
+  # 当前 tier 覆盖值（参考，实际以 execution.yaml 为准）:
+  #   强证据(≥0.70):    60 bars ≈ 10 天
+  #   中等证据(≥0.50):   40 bars ≈ 7 天
+  #   弱证据(≥0.30):    30 bars ≈ 5 天
+  #   边缘证据(≥0.10):   20 bars ≈ 3 天
+  allow_tier_override: true
 
-# ==============================================================
-# 🛡️ STOP MANAGEMENT: 止损动态管理
-# ==============================================================
 
-stop_management:
-  # Trailing止损规则
-  trailing:
-    enabled: true
-    trigger:
-      profit_multiple: 2.0  # 盈利2R后启动
-    distance:
-      atr_multiple: 1.0     # trailing距离1R
-    step:
-      profit_step: 0.5      # 每盈利0.5R上移一次
-  
-  # 时间衰减止损
-  time_based:
-    enabled: true
-    schedule:
-      - bars: 10
-        stop_tighten: 0.9   # 持仓10 bars后收紧10%
-      - bars: 15
-        stop_tighten: 0.8   # 持仓15 bars后收紧20%
+# ============================================================
+# 📌 参数 2: 保本锁定
+# ============================================================
+#
+# 一旦市场证明你是对的，就不允许你再亏。
+# 人类交易史上最稳定的 holding 规则之一。
+#
+# 触发后:
+#   - SL → entry price（保本）
+#   - 后续只允许正期望
+#
+breakeven_lock:
+  enabled: true
+  trigger_r: 1.0               # 浮盈达到 1R 后，SL 移至入场价
+                                #
+                                # 不做优化:
+                                #   1R 是"刚好覆盖初始风险"的自然边界
+                                #   不存在比这更合理的 breakeven 触发点
+
+
+# ============================================================
+# 📌 参数 3: 移动止损执行模式
+# ============================================================
+#
+# 核心分工:
+#   - Execution 层定义 trail 的"几何形状":
+#       initial_r, activation_r, trail_r（开仓瞬间锁定）
+#   - Holding 层每 bar 执行这个几何规则（只更新，不改变形状）
+#
+# Holding 层不重新定义 trail_r 的数值——
+# 那是 Execution 的职责（且已经 grid search 确认处于平坦高原）。
+#
+trailing_stop:
+  mode: fixed_r                 # fixed_r = 固定 R 倍数
+                                #
+                                # 明确排除的模式:
+                                #   - adaptive: 根据波动率动态调整 → 不做
+                                #   - regime_aware: 根据 regime 切换 → 不做
+                                #   - stepped: 每达到 N×R 收紧一档 → 暂不做
+                                #
+                                # 原因: 一旦 trail 变成 adaptive，
+                                # Holding 就成了第二个 Execution
+
+  # trail_r / activation_r 的值由 execution.yaml 定义
+  # (Grid Search auto-promoted, 具体值以 execution.yaml 为准)
+
+
+# ============================================================
+# 🚫 明确排除（设计决策，非遗漏）
+# ============================================================
+#
+# 以下功能明确不在 Holding 层:
+#
+#   ❌ 加仓/减仓比例优化
+#      → FER 不加仓 (execution_constraints.allow_add_on: false)
+#
+#   ❌ 动态减仓 (partial profit taking)
+#      → FER 已有固定止盈 (take_profit.target_r)，不需要额外减仓
+#
+#   ❌ 波动率自适应退出 (volatility-based exit)
+#      → 波动率判断属于 Gate 层职责
+#
+#   ❌ Regime-aware holding
+#      → Regime 判断属于 Gate 层职责
+#
+#   ❌ 语义退出信号 (exit_reversal_failure, exit_momentum_exhausted)
+#      → 这些是策略语义层面的退出条件，不是 Holding 的职责
+#      → 如果反转失败，trailing stop 或 time stop 会自然处理
+#
+# 原因: 一旦这些进来，Holding 就会变成第二个 Execution，
+#       破坏"每层只负责一段路径"的因果隔离。
+#
+# PCM 的兜底效应:
+#   Slot 限制 (max_slots=2) + Risk per slot (1.5%)
+#   已经在系统层面限制了 Holding 失败的最大代价。
+#   Holding 只需要"防止拖死"，不需要"精细管理"。
+
+
+# ============================================================
+# 📊 Holding 层的 KPI（诊断用，不用于优化）
+# ============================================================
+#
+# 如果未来需要评估 Holding 规则是否合理（纯诊断，不反推参数）:
+#
+#   1. giveback_ratio = (MFE - realized) / MFE
+#      → 衡量"到手的利润还回去多少"
+#      → 好的 Holding: giveback < 40%
+#
+#   2. time_efficiency = realized_r / holding_bars
+#      → 衡量"每根 bar 的 R 效率"
+#      → 反转策略应 > 趋势策略（窗口更短）
+#
+#   3. breakeven_lock_hit_rate
+#      → 触发保本锁后，最终正 R 的比例
+#      → 应该 > 85%（否则 trigger_r 设太低）
+#
+# ⚠️ 这些 KPI 只用于"确认规则没坏"，不用于"让规则更好"。
+#    Holding 参数不允许被 KPI 反推调整。

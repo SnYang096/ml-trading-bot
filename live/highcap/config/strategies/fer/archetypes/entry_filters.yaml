@@ -1,115 +1,55 @@
 # FER Entry Filter Archetype
-# 入场时机过滤器 — 控制"反转信号是否可信？"
+# Auto-promoted by optimize_entry_filter_plateau.py
+# Date: 2026-02-24 15:44
+# Promoted: 4 filters (4 plateau + 0 snotio-only)
+# Baseline snotio: 1.3795, σ=1.764
+# Significance: z-test p<0.05 required for all tiers
 #
-# 职责定位（与其他 archetype 层的关系）:
-#   Gate:         "这笔交易能做吗？"   → 硬二值过滤坏交易
-#   Entry Filter: "现在该入场吗？"     → 硬二值控制入场时机
-#   Evidence:     "入场后下多少注？"   → 软连续值调整执行参数
-#
-# FER 语义: 单边推进失败 → 反转入场
-# Entry Filter 应确认: 推进已到极端 + 有足够波动空间
-#
-# 设计原则:
-#   1. 每个 filter 是一组 AND 条件
-#   2. enabled: true/false 控制是否生效
-#   3. 多个 enabled=true 的 filter 之间是 OR 关系
-#   4. 阈值待 optimize_entry_filter_plateau.py 扫描优化
-#   7. 阈值来源: optimize_entry_filter_plateau.py 扫描结果
-#   基线 (none): 11616 entries (100%)
-#
-# 可用特征 (来自 predictions.parquet):
-#   rsi: 9.6~92.3, mean=50.4
-#   bb_position: 0~1, mean=0.50
-#   bb_width_normalized: 0~15.5, mean=4.47
-#   volume_ratio: 0.09~9.6, mean=1.02
-#   atr_percentile: 0~1, mean=0.50
-#   cvd_change_5_normalized: -0.16~0.12, mean=-0.01
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-
-  # ----------------------------------------------------------------
-  # 1. RSI 超买极端 → 空头反转时机
-  # plateau 扫描: rsi 推荐 46.4 (conf=LOW), bb_position 0.70 (conf=MEDIUM)
-  # ----------------------------------------------------------------
-  - id: rsi_overbought
-    enabled: true
-    description: "RSI 超买极端: 多头推进过度，空头反转机会"
-    semantic: |
-      RSI > 47 表示多头推进已偏高，
-      配合 bb_position >= 0.70 确认价格在布林上轨附近。
-    conditions:
-      - feature: rsi
-        operator: ">="
-        value: 47
-      - feature: bb_position
-        operator: ">="
-        value: 0.70
-    backtest:
-      sharpe: null
-      trades: null
-    notes: "plateau rsi=46.4(LOW) bb_pos=0.70(MEDIUM)"
-
-  # ----------------------------------------------------------------
-  # 2. RSI 超卖极端 → 多头反转时机
-  # plateau 扫描: rsi 推荐 27.4 (conf=LOW), bb_position 0.40 (conf=MEDIUM)
-  # ----------------------------------------------------------------
-  - id: rsi_oversold
-    enabled: true
-    description: "RSI 超卖极端: 空头推进过度，多头反转机会"
-    semantic: |
-      RSI < 27 表示空头推进已到超卖区域，
-      配合 bb_position <= 0.40 确认价格在布林下半区。
-    conditions:
-      - feature: rsi
-        operator: "<="
-        value: 27
-      - feature: bb_position
-        operator: "<="
-        value: 0.40
-    backtest:
-      sharpe: null
-      trades: null
-    notes: "plateau rsi=27.4(LOW) bb_pos=0.40(MEDIUM)"
-
-  # ----------------------------------------------------------------
-  # 3. 放量确认 → 推进力竭有成交量支撑
-  # plateau 扫描: volume_ratio 推荐 0.957 (conf=LOW)
-  # ----------------------------------------------------------------
-  - id: volume_confirm
-    enabled: true
-    description: "放量确认: 反转发生在接近平均成交量环境"
-    semantic: |
-      volume_ratio >= 0.96 表示当前成交量接近或高于均值，
-      避免在缩量环境下反转（缩量反转不可靠）。
-    conditions:
-      - feature: volume_ratio
-        operator: ">="
-        value: 0.96
-    backtest:
-      sharpe: null
-      trades: null
-    notes: "plateau 0.957(LOW), 窄幅高原 [0.943, 1.000]"
-
-  # ----------------------------------------------------------------
-  # 4. 波动扩张 → 有足够空间给反转利润
-  # plateau 扫描: bb_width 1.77 (LOW), atr_pct 0.157 (MEDIUM)
-  # ----------------------------------------------------------------
-  - id: volatility_expansion
-    enabled: true
-    description: "波动率扩张: 有足够空间给反转获利"
-    semantic: |
-      bb_width_normalized >= 1.77 + atr_percentile >= 0.16
-      确保市场有足够波动，避免窄幅震荡中做反转。
-    conditions:
-      - feature: bb_width_normalized
-        operator: ">="
-        value: 1.77
-      - feature: atr_percentile
-        operator: ">="
-        value: 0.16
-    backtest:
-      sharpe: null
-      trades: null
-    notes: "plateau bb_width=1.77(LOW) atr_pct=0.157(MEDIUM)"
-
+- id: rsi_overbought
+  enabled: true
+  description: 'RSI 超买: 多头推进过度，空头反转机会'
+  conditions:
+  - feature: rsi
+    operator: '>='
+    value: 46.714
+  - feature: price_position
+    operator: '>='
+    value: 0.8
+  tier: A_PLATEAU
+  notes: 'plateau: rsi=46.714(conf=MEDIUM), price_position=0.800(conf=MEDIUM), z=3.44 p=0.0003'
+- id: shd_reversal_candle
+  enabled: true
+  description: '低影线实体 K 线: 方向明确的反转动作'
+  conditions:
+  - feature: shd_pct
+    operator: <=
+    value: 0.236
+  tier: A_PLATEAU
+  notes: 'plateau: shd_pct=0.236(conf=MEDIUM), z=2.58 p=0.0049'
+- id: fer_absorption
+  enabled: true
+  description: 'FER 吸收: 激进方被对手方吸收'
+  conditions:
+  - feature: fer_aggressor_absorption
+    operator: '>='
+    value: 0.386
+  tier: A_PLATEAU
+  notes: 'plateau: fer_aggressor_absorption=0.386(conf=MEDIUM), z=1.99 p=0.0230'
+- id: rsi_plus_exhaustion
+  enabled: true
+  description: RSI 超买 + 力竭双重确认
+  conditions:
+  - feature: rsi
+    operator: '>='
+    value: 54.829
+  - feature: wick_exhaustion_score
+    operator: '>='
+    value: 0.05
+  tier: A_PLATEAU
+  notes: 'plateau: rsi=54.829(conf=MEDIUM), wick_exhaustion_score=0.050(conf=MEDIUM), z=2.13 p=0.0168'
 combination_mode: or

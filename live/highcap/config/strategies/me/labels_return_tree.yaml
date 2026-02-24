@@ -1,0 +1,84 @@
+# ME Return Tree 标签配置
+# 🟢 Phase 2: 在 GOOD 样本空间中学习"如何让 RR 更大"
+#
+# 核心变化：
+# - 从 Failure-first（避免失败）切换到 Return-amplification（放大成功）
+# - 只在 GOOD 样本（~failure_any）上训练
+# - 目标是 forward_rr（连续值），不是 failure_label（二值）
+#
+# GOOD 样本定义：
+# - ~failure_rr_extreme: forward_rr >= -0.8R
+# - 动量扩张突破成功
+#
+# 参考 BPC 的 Return Tree 设计
+
+name: me_return_tree
+target_column: forward_rr
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_return_tree_label
+  params:
+    direction: long  # base direction (used when direction_aware=false)
+    horizon: 50
+    filter_good_only: true  # 只返回 GOOD 样本
+    direction_aware: true  # per-bar direction from direction.yaml
+    strategy: me  # load config/strategies/me/archetypes/direction.yaml
+
+# 标签元信息
+label_meta:
+  label_type: regression
+  semantic: |
+    forward_rr = (MFE - MAE) / ATR
+    范围: 约 [-5, 5]
+    正值 = 有盈利空间
+    负值 = 亏损
+  sample_space: |
+    GOOD = ~failure_any
+    GOOD = ~(failure_rr_extreme)
+    动量扩张突破成功的样本
+  horizon: 50 bars
+  description: |
+    ME Return Tree 连续标签：
+    - 目标是 forward_rr
+    - 只在 GOOD 样本上训练
+    - 学习"在什么条件下 RR 更高"
+    - 专注于动量扩张后的盈利放大
+
+filters:
+  - column: forward_rr
+    notna: true
+
+# 模型配置（回归任务）
+model_hints:
+  task_type: regression
+  objective: regression
+  metric: mae
+  max_depth: 5
+  min_data_in_leaf: 100
+  n_estimators: 100
+  num_class: null  # 回归任务不需要这个参数
+
+# Return Tree 专属 KPI 定义
+kpi_definition:
+  ranking_ability:
+    description: "模型是否能区分高 RR 和低 RR 样本"
+    metrics:
+      - name: spearman_corr
+        description: "Spearman 相关系数 (pred vs actual)"
+        target: ">= 0.15"
+        critical: true
+      - name: quantile_monotonicity
+        description: "分位单调性: Q5_RR > Q4_RR > ... > Q1_RR"
+        target: ">= 0.8"
+        critical: true
+
+  semantic_concentration:
+    description: "特征重要性是否集中在少数特征上"
+    metrics:
+      - name: top10_importance_ratio
+        description: "Top10 特征的累计重要性占比"
+        target: "30% - 60%"
+        critical: false
+
+post_label_filters: []
