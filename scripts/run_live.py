@@ -166,15 +166,22 @@ def _setup_three_strategies(
 
     logger.info("✅ 三策略配置加载完成")
 
-    # 创建 PCM 仲裁层 (使用 Regime 动态优先级)
-    # NORMAL: LV > FER > ME > BPC (按条件严格性)
-    # HIGH_VOL: LV > ME > FER > BPC
-    # HIGH_LEVERAGE: LV > FER > ME > BPC
+    # 创建 PCM 仲裁层 (使用 Regime 动态优先级 + 仓位缩放)
+    # 硬约束 (slot_count, risk_per_slot) 从 constitution.yaml 读取
+    # Regime 优先级 + 仓位缩放从 pcm_regime.yaml 读取
     pcm = LivePCM(
         archetype_priority=["LV", "FER", "ME", "BPC"],
-        max_slots=int(os.getenv("MLBOT_MAX_SLOTS", "2")),
         regime_config_path=os.getenv(
             "MLBOT_PCM_REGIME_CONFIG", "config/pcm_regime.yaml"
+        ),
+        constitution_yaml=os.getenv(
+            "MLBOT_CONSTITUTION_YAML",
+            os.path.join(
+                os.getenv("MLBOT_STRATEGIES_ROOT", "live/highcap/config/strategies"),
+                "..",
+                "constitution",
+                "constitution.yaml",
+            ),
         ),
     )
     pcm.register("bpc", bpc)

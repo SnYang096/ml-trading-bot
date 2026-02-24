@@ -8,6 +8,7 @@
 4. quantiles 可以透传
 """
 
+import os
 import pytest
 from unittest.mock import MagicMock, patch
 

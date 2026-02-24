@@ -1082,6 +1082,173 @@ def _patch_report_deploy(report_path: Path, deploy_result: Dict[str, Any]):
         pass  # 非关键路径, 不影响主流程
 
 
+def _patch_report_pcm(report_path: Path, pcm_result: Dict[str, Any]):
+    """将 PCM 联合回测结果追加到已保存的 report.json."""
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["pcm_joint"] = {
+            "pcm_decision": pcm_result.get("pcm_decision"),
+            "sharpe_daily": pcm_result.get("sharpe_daily"),
+            "conflict_rate": pcm_result.get("conflict_rate"),
+            "strategies_count": pcm_result.get("strategies_count"),
+            "strategies": pcm_result.get("strategies", []),
+            "total_trades": pcm_result.get("total_trades"),
+        }
+        report_path.write_text(
+            json.dumps(report, indent=2, default=str, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _parse_pcm_stdout(output: str) -> Dict[str, Any]:
+    """从 PCM 联合回测 stdout 提取指标."""
+    result: Dict[str, Any] = {}
+
+    m = re.search(r"Trades:\s*(\d+)", output)
+    if m:
+        result["total_trades"] = int(m.group(1))
+
+    m = re.search(r"Sharpe \(daily.*?\):\s*([\-\d.]+)", output)
+    if m:
+        result["sharpe_daily"] = float(m.group(1))
+
+    m = re.search(r"Conflict rate:\s*([\d.]+)%", output)
+    if m:
+        result["conflict_rate"] = float(m.group(1)) / 100
+
+    m = re.search(r"Mean R:\s*([\-\d.]+)", output)
+    if m:
+        result["mean_r"] = float(m.group(1))
+
+    m = re.search(r"Win Rate:\s*([\d.]+)%", output)
+    if m:
+        result["win_rate"] = float(m.group(1)) / 100
+
+    return result
+
+
+def _run_pcm_joint_backtest(
+    results_summary: List[Dict[str, Any]],
+    history_dir: Path,
+    timestamp: str,
+    *,
+    dry_run: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Step 9.5: 全策略完成后, 执行 PCM 联合回测.
+
+    Returns dict with pcm_decision, sharpe_daily, conflict_rate, etc.
+    Returns None if <2 strategies have predictions.
+    """
+    # 收集有 predictions 的策略
+    pcm_specs = []
+    for r in results_summary:
+        ev_dir = r.get("evidence_dir")
+        if not ev_dir:
+            continue
+        pred_path = Path(ev_dir) / "predictions.parquet"
+        if pred_path.exists() or dry_run:
+            pcm_specs.append((r["strategy"], str(pred_path)))
+
+    if len(pcm_specs) < 2:
+        if len(results_summary) >= 2:
+            print(f"\n{'='*70}")
+            print("[Step 9.5] PCM 联合回测: ⏭️  SKIP")
+            print(f"   找到 {len(pcm_specs)} 个策略有 predictions (需 ≥2)")
+            print(f"{'='*70}")
+        return None
+
+    # 构建 --pcm 参数
+    pcm_args = [f"{name}:{path}" for name, path in pcm_specs]
+    strategy_names = [name for name, _ in pcm_specs]
+
+    # PCM 交易地图输出路径 (保存到第一个策略的实验目录)
+    first_strat = strategy_names[0]
+    pcm_map_path = str(history_dir / first_strat / timestamp / "pcm_trading_map.html")
+
+    # 日志文件
+    pcm_log = history_dir / first_strat / timestamp / "pcm_joint.log"
+
+    cmd = (
+        [
+            "python",
+            "scripts/backtest_execution_layer.py",
+            "--pcm",
+        ]
+        + pcm_args
+        + [
+            "--output",
+            pcm_map_path,
+        ]
+    )
+
+    rc, pcm_out = run_step(
+        "PCM Joint Backtest (Step 9.5)",
+        cmd,
+        pcm_log,
+        dry_run=dry_run,
+    )
+
+    if dry_run:
+        return {
+            "pcm_decision": "DRY_RUN",
+            "strategies": strategy_names,
+            "strategies_count": len(strategy_names),
+        }
+
+    # 解析输出
+    metrics = _parse_pcm_stdout(pcm_out)
+    sharpe_daily = metrics.get("sharpe_daily", 0)
+    conflict_rate = metrics.get("conflict_rate", 0)
+    total_trades = metrics.get("total_trades", 0)
+
+    # PCM 决策逻辑
+    pcm_decision = "PASS"
+    pcm_reasons = []
+
+    if rc != 0:
+        pcm_decision = "ERROR"
+        pcm_reasons.append(f"backtest exit code={rc}")
+    elif total_trades < 10:
+        pcm_decision = "ERROR"
+        pcm_reasons.append(f"trades={total_trades} < 10")
+    else:
+        if conflict_rate > 0.15:
+            pcm_decision = "ALERT"
+            pcm_reasons.append(f"conflict_rate={conflict_rate:.2%} > 15%")
+        if sharpe_daily < 1.0:
+            if pcm_decision != "ALERT":
+                pcm_decision = "ALERT"
+            pcm_reasons.append(f"sharpe_daily={sharpe_daily:.2f} < 1.0")
+
+    # 打印决策
+    pcm_emoji = {"PASS": "\u2705", "ALERT": "\u26a0\ufe0f", "ERROR": "\u274c"}.get(
+        pcm_decision, "\u2753"
+    )
+    print(f"\n   {pcm_emoji} PCM 决策: {pcm_decision}")
+    for reason in pcm_reasons:
+        print(f"      → {reason}")
+    if pcm_decision == "PASS":
+        print(
+            f"      → sharpe_daily={sharpe_daily:.2f}, conflict_rate={conflict_rate:.2%}"
+        )
+    print(f"   📄 交易地图: {pcm_map_path}")
+
+    return {
+        "pcm_decision": pcm_decision,
+        "pcm_reasons": pcm_reasons,
+        "sharpe_daily": sharpe_daily,
+        "conflict_rate": conflict_rate,
+        "total_trades": total_trades,
+        "mean_r": metrics.get("mean_r"),
+        "win_rate": metrics.get("win_rate"),
+        "strategies": strategy_names,
+        "strategies_count": len(strategy_names),
+        "trading_map": pcm_map_path,
+    }
+
+
 # ====================================================================
 # Main
 # ====================================================================
@@ -1347,7 +1514,18 @@ def main():
                 "decision": decision,
                 "sharpe": bt.get("sharpe_per_trade"),
                 "trades": bt.get("total_trades"),
+                "evidence_dir": pipeline_result.get("evidence_dir"),
             }
+        )
+
+    # ── Step 9.5: PCM 联合回测 (仅 --all 且 ≥2 策略成功时) ──
+    pcm_result = None
+    if args.all and not args.compare_only:
+        pcm_result = _run_pcm_joint_backtest(
+            results_summary,
+            history_dir,
+            timestamp,
+            dry_run=args.dry_run,
         )
 
     # ── 汇总 ──
@@ -1361,6 +1539,21 @@ def main():
         print(
             f"   {emoji} {r['strategy']:>6s}: {r['decision']:<8s} sharpe={r.get('sharpe', 'N/A')} trades={r.get('trades', 'N/A')}"
         )
+    if pcm_result:
+        pcm_emoji = {"PASS": "✅", "ALERT": "⚠️", "ERROR": "❌"}.get(
+            pcm_result.get("pcm_decision", "?"), "❓"
+        )
+        print(
+            f"\n   {pcm_emoji}    PCM: {pcm_result.get('pcm_decision', '?'):<8s} "
+            f"sharpe_daily={pcm_result.get('sharpe_daily', 'N/A')} "
+            f"conflict_rate={pcm_result.get('conflict_rate', 'N/A')} "
+            f"strategies={pcm_result.get('strategies_count', 0)}"
+        )
+        # 保存 pcm_stats.json 到每个策略的实验目录
+        for r in results_summary:
+            strat_run = history_dir / r["strategy"] / timestamp
+            if strat_run.exists():
+                _patch_report_pcm(strat_run / "report.json", pcm_result)
 
 
 # ====================================================================

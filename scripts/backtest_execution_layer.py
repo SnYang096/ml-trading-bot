@@ -1266,8 +1266,7 @@ def _apply_dark_theme(fig, title_size="14px"):
 # Multi-Archetype PCM Mode
 # ================================================================
 
-# 默认优先级（与 live_pcm.py 一致）
-# 默认优先级: 按信号条件严格性排序（与 pcm_regime.yaml v2 NORMAL 一致）
+# 默认优先级（与 live_pcm.py / pcm_regime.yaml v3 NORMAL 一致）
 _PCM_DEFAULT_PRIORITY = ["LV", "FER", "ME", "BPC"]
 
 
@@ -1407,21 +1406,47 @@ def _compute_evidence_for_archetype(
 
 
 def _run_pcm_mode(args) -> int:  # noqa: C901
-    """Multi-archetype PCM arbitration backtest mode.
+    """Multi-archetype PCM arbitration backtest mode (v3: regime-aware).
 
     用法:
         python scripts/backtest_execution_layer.py \\
             --pcm bpc:results/bpc/predictions.parquet \\
                   me:results/me/predictions.parquet \\
             --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01
+
+    v3 新增: Regime 检测 + 仓位缩放，与 live_pcm.py 一致。
     """
     print("=" * 80)
-    print("🎯 PCM Multi-Archetype Backtest")
+    print("🎯 PCM Multi-Archetype Backtest (Regime-Aware v3)")
     print("=" * 80)
 
     strategies_root = args.strategies_root
     priority = _PCM_DEFAULT_PRIORITY
-    max_slots = getattr(args, "max_slots", 2)
+
+    # 加载 Regime 配置 (与 live 一致)
+    from src.time_series_model.portfolio.live_pcm import (
+        RegimeDetector,
+        load_regime_config,
+        _build_regime_detector,
+        _load_constitution_constraints,
+    )
+
+    regime_config_path = getattr(args, "regime_config", "config/pcm_regime.yaml")
+    regime_cfg = load_regime_config(regime_config_path)
+    regime_detector = _build_regime_detector(regime_cfg)
+
+    # 从 constitution 读取 max_slots
+    constitution_yaml = getattr(args, "constitution", None)
+    if not constitution_yaml:
+        constitution_yaml = regime_cfg.get("constitution_ref")
+    const = _load_constitution_constraints(constitution_yaml)
+    max_slots = getattr(args, "max_slots", None) or const["slot_count"]
+
+    print(f"   📄 Regime config: {regime_config_path}")
+    print(f"   📄 Constitution: {constitution_yaml or 'defaults'}")
+    print(
+        f"   🔒 max_slots={max_slots} (from {'args' if getattr(args, 'max_slots', None) else 'constitution'})"
+    )
 
     # ── 1. 解析 --pcm 参数 ──
     arch_specs: Dict[str, str] = {}  # {archetype: logs_path}
@@ -1573,15 +1598,36 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             merged[f"_{arch_name}_dir"] = 0.0
             merged[f"_{arch_name}_ev"] = 0.5
 
-    # ── 4. PCM 仲裁 ──
-    print(f"\n🏗️  PCM arbitration...")
+    # ── 4. PCM 仲裁 (Regime-Aware) ──
+    print(f"\n🏗️  PCM arbitration (Regime-Aware)...")
     dir_cols = [f"_{a}_dir" for a in arch_names]
     has_any_signal = (merged[dir_cols].abs() > 0).any(axis=1)
     signal_indices = merged.index[has_any_signal]
     n_conflicts = 0
     arch_win_counts: Dict[str, int] = {a: 0 for a in arch_names}
 
+    # Regime 统计
+    regime_bar_counts: Dict[str, int] = {}
+    regime_entry_counts: Dict[str, int] = {}
+    regime_scales_applied: List[float] = []
+    merged["_regime"] = ""
+    merged["_position_scale"] = 1.0
+
+    # 对每个信号 bar 进行仲裁
     for idx in signal_indices:
+        # Regime 检测: 使用当前 bar 的特征
+        row_features = {}
+        for col in ["atr_percentile", "oi_zscore", "funding_rate_abs_zscore"]:
+            if col in merged.columns:
+                val = merged.at[idx, col]
+                if pd.notna(val):
+                    row_features[col] = float(val)
+        current_regime = regime_detector.detect(row_features)
+        current_priority = regime_detector.current_priority
+
+        merged.at[idx, "_regime"] = current_regime
+        regime_bar_counts[current_regime] = regime_bar_counts.get(current_regime, 0) + 1
+
         active: List[Tuple[str, float, float]] = []  # (arch, direction, evidence)
         for arch_name in arch_names:
             d = float(merged.at[idx, f"_{arch_name}_dir"])
@@ -1595,27 +1641,55 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         if len(active) == 1:
             winner_arch, winner_dir, winner_ev = active[0]
         else:
-            # 多个 archetype 冲突 → 固定优先级 + Evidence
+            # 多个 archetype 冲突 → Regime 动态优先级 + Evidence
             n_conflicts += 1
 
             def _sort_key(x):
                 arch, d, ev = x
-                rank = _pcm_get_priority_rank(arch, priority)
+                rank = _pcm_get_priority_rank(arch, current_priority)
                 return (rank, -(ev if ev is not None else 0.5))
 
             winner_arch, winner_dir, winner_ev = min(active, key=_sort_key)
 
+        # Regime 仓位缩放
+        scale = regime_detector.get_archetype_scale(winner_arch)
+        regime_scales_applied.append(scale)
+
         merged.at[idx, "entry_direction"] = winner_dir
         merged.at[idx, "evidence_score"] = winner_ev
         merged.at[idx, "_pcm_archetype"] = winner_arch
+        merged.at[idx, "_position_scale"] = scale
         arch_win_counts[winner_arch] = arch_win_counts.get(winner_arch, 0) + 1
+        regime_entry_counts[current_regime] = (
+            regime_entry_counts.get(current_regime, 0) + 1
+        )
 
     n_total_entries = int((merged["entry_direction"] != 0).sum())
     print(f"   Total entries: {n_total_entries}")
     print(f"   Conflicts resolved: {n_conflicts}")
+    conflict_rate = n_conflicts / max(1, n_total_entries)
+    print(f"   Conflict rate: {conflict_rate:.2%}")
     for arch_name in arch_names:
         cnt = arch_win_counts.get(arch_name, 0)
         print(f"   {arch_name}: {cnt} entries")
+
+    # Regime 统计
+    print(f"\n   🌍 Regime Distribution:")
+    print(f"   {'Regime':<18} {'Bars':>7} {'Entries':>9} {'Avg Scale':>10}")
+    print(f"   {'-' * 48}")
+    for regime_name in ["NORMAL", "HIGH_VOL", "HIGH_LEVERAGE"]:
+        bars = regime_bar_counts.get(regime_name, 0)
+        entries = regime_entry_counts.get(regime_name, 0)
+        regime_mask = merged["_regime"] == regime_name
+        scales = merged.loc[
+            regime_mask & (merged["_position_scale"] > 0), "_position_scale"
+        ]
+        avg_scale = scales.mean() if len(scales) > 0 else 1.0
+        print(f"   {regime_name:<18} {bars:>7} {entries:>9} {avg_scale:>9.2f}")
+    print(f"   Regime switches: {regime_detector.switch_count}")
+    if regime_scales_applied:
+        avg_drag = 1.0 - sum(regime_scales_applied) / len(regime_scales_applied)
+        print(f"   Scale drag: {avg_drag:.2%} (avg reduction from regime scaling)")
 
     if n_total_entries == 0:
         print("❌ No entry signals after PCM arbitration")
@@ -1653,6 +1727,17 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         merged.loc[mask, "_tier_trail_r"] = float(trail.get("trail_r", 1.5))
         merged.loc[mask, "_tier_timeout"] = int(holding.get("time_stop_bars", 50) or 50)
         merged.loc[mask, "_tier_name"] = arch_name
+
+    # 应用 Regime 仓位缩放到 _tier_size
+    entry_with_scale = merged["_position_scale"] < 1.0
+    if entry_with_scale.any():
+        merged.loc[entry_with_scale, "_tier_size"] *= merged.loc[
+            entry_with_scale, "_position_scale"
+        ]
+        print(
+            f"   📉 Regime scale applied to {entry_with_scale.sum()} entries "
+            f"(avg size={merged.loc[entry_with_scale, '_tier_size'].mean():.2f})"
+        )
 
     # ── 6. Bar-by-bar 执行模拟 ──
     breakeven_lock_r = args.breakeven if args.breakeven is not None else 0.0

@@ -1,5 +1,5 @@
 # FER Execution 配置
-# 版本: 12
+# 版本: 14
 # 更新时间: 2026-02-24
 #
 # ┌─────────────────────────────────────────────────────────┐
@@ -10,7 +10,7 @@
 # │  Changes: initial_r: 0.8 → 0.8, activation_r: 0.5 → 0.5, trail_r: 0.5 → 0.5│
 # └─────────────────────────────────────────────────────────┘
 #
-version: 12
+version: 14
 execution_constraints:
   allow_add_on: false
   min_order_interval_minutes: 15

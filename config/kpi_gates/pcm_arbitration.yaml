@@ -1,0 +1,92 @@
+layer: "pcm_arbitration"
+
+# ================================================================
+# PCM Arbitration KPI Gate — 多策略仲裁质量门禁
+# ================================================================
+#
+# 评估 PCM 仲裁决策的质量，确保多策略组合的稳健性。
+# 指标来源: backtest_execution_layer.py --pcm 模式的输出统计
+#
+# 指标命名规范: pcm__{metric_name}
+#
+# 三类 KPI:
+#   1. 仲裁质量 — 冲突解决和优先级是否合理
+#   2. Regime 感知 — Regime 切换行为是否健康
+#   3. 系统级表现 — PCM 联合回测的整体表现
+# ================================================================
+
+# ── 硬性门禁 (hard_fail) ──
+# 任意一项 fail → 阻止 ADOPT
+hard_fail:
+  # ── 1. 仲裁质量 ──
+
+  # PCM 联合 Sharpe (per-trade)
+  # 多策略联合必须正 Sharpe，否则组合没有意义
+  pcm__sharpe_per_trade: {min: 0.0, max: 10.0}
+
+  # 冲突率: 多少 bar 有多个 archetype 同时触发
+  # 太高说明 gate 太松（信号重叠严重），太低说明组合无意义
+  pcm__conflict_rate: {min: 0.0, max: 0.30}
+
+  # 胜率门禁: PCM 联合回测的整体胜率
+  pcm__win_rate: {min: 0.35, max: 0.75}
+
+  # 交易密度: 每个 symbol 每年交易数
+  # 太少 = 信号太弱无法评估; 太多 = 过度交易
+  pcm__trades_per_symbol_per_year: {min: 10, max: 500}
+
+  # ── 2. 系统级安全 ──
+
+  # PCM 联合回测的最大回撤
+  # 必须在宪法限制内 (constitution max_dd = 0.20)
+  pcm__max_drawdown: {min: 0.0, max: 0.25}
+
+# ── 软性警告 (warn) ──
+# 超出范围 → 标记 ALERT，不阻止 ADOPT
+warn:
+  # ── 仲裁质量 ──
+
+  # 年化 Sharpe
+  pcm__sharpe_annualized: {min: 0.5, max: 8.0, optional: true}
+
+  # 平均 R 值
+  pcm__mean_r: {min: -0.005, max: 0.020, optional: true}
+
+  # BPC 占比: BPC 作为骨架应该贡献大部分交易
+  # 如果 BPC 占比太低，说明非骨架策略抢了太多信号
+  pcm__bpc_trade_share: {min: 0.40, max: 0.95, optional: true}
+
+  # 单策略 Sharpe 最低值
+  # 所有 archetype 中最差的 Sharpe 不应该太差
+  pcm__worst_archetype_sharpe: {min: -0.5, max: 10.0, optional: true}
+
+  # ── Regime 感知 ──
+
+  # Regime 切换频率 (每 100 bar 切换次数)
+  # 太高 = Regime 不稳定; 太低 = Regime 检测无效
+  pcm__regime_switch_per_100bars: {min: 0.0, max: 10.0, optional: true}
+
+  # HIGH_VOL regime 占比
+  # 如果 HIGH_VOL 占比 > 50% 说明检测阈值太松
+  pcm__high_vol_ratio: {min: 0.0, max: 0.50, optional: true}
+
+  # HIGH_LEVERAGE regime 占比
+  pcm__high_leverage_ratio: {min: 0.0, max: 0.30, optional: true}
+
+  # Regime 缩放导致的仓位衰减率
+  # = sum(1 - actual_scale) / n_trades
+  # 太高说明缩放太激进，利润被压缩太多
+  pcm__regime_scale_drag: {min: 0.0, max: 0.30, optional: true}
+
+  # ── 反事实分析 ──
+
+  # 被 PCM 丢弃信号的 mean R
+  # 如果被丢弃的信号比选中的更好，说明优先级可能有问题
+  pcm__rejected_mean_r: {min: -0.020, max: 0.010, optional: true}
+
+  # 宪法模拟: kill switch 触发次数
+  # 回测中模拟 constitution kill_switch 逻辑
+  pcm__constitution_kill_count: {min: 0, max: 3, optional: true}
+
+  # 宪法模拟: 每策略 slot 超限次数
+  pcm__slot_limit_violations: {min: 0, max: 5, optional: true}

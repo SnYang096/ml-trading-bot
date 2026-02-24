@@ -1,6 +1,6 @@
 # FER Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-02-24 12:54
+# Date: 2026-02-24 15:44
 # Promoted: 4 filters (4 plateau + 0 snotio-only)
 # Baseline snotio: 1.3795, σ=1.764
 # Significance: z-test p<0.05 required for all tiers

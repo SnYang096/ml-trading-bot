@@ -1,8 +1,8 @@
 # ME Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-02-24 12:57
+# Date: 2026-02-24 15:46
 # Promoted: 1 filters (1 plateau + 0 snotio-only)
-# Baseline snotio: 16.9719, σ=28.534
+# Baseline snotio: 17.2337, σ=28.956
 # Significance: z-test p<0.05 required for all tiers
 #
 # 职责: "现在该入场吗?" → 硬二值控制入场时机
@@ -18,5 +18,5 @@ filters:
     operator: '>='
     value: 0.327
   tier: A_PLATEAU
-  notes: 'plateau: spectrum_price_high_freq_ratio=0.327(conf=MEDIUM), z=2.19 p=0.0144'
+  notes: 'plateau: spectrum_price_high_freq_ratio=0.327(conf=MEDIUM), z=2.24 p=0.0126'
 combination_mode: or

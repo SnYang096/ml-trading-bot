@@ -150,3 +150,40 @@ add_position:
   state_tracking:
     persist_to: "data/order_management.db"
 
+# -----------------------------------------------------------------------------
+# 4) Resource Allocation — 唯一权威源
+# -----------------------------------------------------------------------------
+# 所有硬约束数值的唯一定义位置。
+# PCM (pcm_regime.yaml) 在此约束内自由分配优先级和缩放。
+#
+# 权威层级:
+#   Layer 0: slots.slot_count = 全局绝对上限
+#   Layer 0: slots.risk_per_slot = 每 slot 最大风险
+#   Layer 1: per_strategy_limits = 每策略资源上限
+#   Layer 2: pcm_regime.yaml 的仲裁策略在这些限制内运行
+#
+# 约束规则:
+#   per_strategy_limits.*.max_slots ≤ slots.slot_count
+#   per_strategy_limits.*.max_risk_per_trade ≤ slots.risk_per_slot
+resource_allocation:
+  per_strategy_limits:
+    bpc:
+      max_slots: 2              # BPC 作为骨架策略，可占全部 slot
+      max_risk_per_trade: 0.015  # 1.5% 每笔 (= risk_per_slot)
+      allow_add_position: true   # BPC 趋势延续允许加仓
+    me:
+      max_slots: 2
+      max_risk_per_trade: 0.015
+      allow_add_position: true   # ME 动能扩张允许加仓
+    fer:
+      max_slots: 2
+      max_risk_per_trade: 0.015
+      allow_add_position: false  # FER 反转策略不加仓
+    lv:
+      max_slots: 1              # LV 快进快出，最多 1 个
+      max_risk_per_trade: 0.010  # LV 低 budget, 1.0% 每笔
+      allow_add_position: false  # LV 不加仓
+
+  # PCM 仲裁配置引用
+  pcm_config_ref: "config/pcm_regime.yaml"
+

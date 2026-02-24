@@ -1,17 +1,19 @@
-"""LivePCM — Live Portfolio Control Manager (Regime-Aware)
+"""LivePCM — Live Portfolio Control Manager (Regime-Aware, v3)
 
-多 archetype 信号仲裁层，单一优先级制 (v2)。
+多 archetype 信号仲裁层，硬约束从 constitution.yaml 读取。
 
-控制框架:
-  Layer 1: 静态资金结构 — 固定 budget，不随 regime 变化
-  Layer 2: 优先级动态 — Regime 检测驱动优先级切换
-     - NORMAL:        LV > FER > ME > BPC  (按条件严格性)
-     - HIGH_VOL:      LV > ME > FER > BPC  (ME 擅长的环境)
-     - HIGH_LEVERAGE:  LV > FER > ME > BPC  (与 NORMAL 相同)
+控制框架 (v3 职责分工):
+  constitution.yaml:  硬约束上限 (slot_count, risk_per_slot, per_strategy_limits)
+  pcm_regime.yaml:    仲裁策略 (优先级, Regime 检测, 仓位缩放)
+
+  Layer 1: 硬约束 — slot/risk 从 constitution 读取，不可突破
+  Layer 2: Regime 感知 — 动态优先级 + 仓位缩放
+     - NORMAL:        LV > FER > ME > BPC  (全仓)
+     - HIGH_VOL:      LV > ME > FER > BPC  (缩仓 50%)
+     - HIGH_LEVERAGE:  LV > FER > ME > BPC  (缩仓 70%)
 
 优先级依据: 信号条件严格性（越严格越优先）
   LV (liquidation cluster) > FER (均衡偏离反转) > ME (动能扩张) > BPC (趋势延续)
-  BPC 作为骨架靠触发频率 (94% 交易)，不靠冲突优先级
 
 单策略时行为等价于直接挂 GenericLiveStrategy（零额外开销）。
 """
@@ -88,6 +90,7 @@ class RegimeDetector:
 
     检测顺序: HIGH_LEVERAGE → HIGH_VOL → NORMAL (严格条件优先)
     防抖: min_bars_in_regime 根 bar 内不允许切换
+    仓位缩放: 每个 regime 带 position_scale + per_archetype_scale
     """
 
     def __init__(
@@ -95,10 +98,22 @@ class RegimeDetector:
         regime_priorities: Optional[Dict[str, List[str]]] = None,
         detection: Optional[Dict[str, Dict]] = None,
         min_bars_in_regime: int = 3,
+        regime_scales: Optional[Dict[str, float]] = None,
+        regime_archetype_scales: Optional[Dict[str, Dict[str, float]]] = None,
     ):
         self._regime_priorities = regime_priorities or dict(DEFAULT_REGIME_PRIORITIES)
         self._detection = detection or dict(DEFAULT_DETECTION)
         self._min_bars = min_bars_in_regime
+        # Regime 仓位缩放: {regime_name: scale}
+        self._regime_scales: Dict[str, float] = regime_scales or {
+            REGIME_NORMAL: 1.0,
+            REGIME_HIGH_VOL: 0.5,
+            REGIME_HIGH_LEVERAGE: 0.3,
+        }
+        # Per-archetype 覆盖: {regime_name: {archetype: scale}}
+        self._regime_archetype_scales: Dict[str, Dict[str, float]] = (
+            regime_archetype_scales or {}
+        )
 
         # 状态
         self._current_regime: str = REGIME_NORMAL
@@ -201,6 +216,21 @@ class RegimeDetector:
             return all(results)
         return any(results)  # OR
 
+    @property
+    def current_position_scale(self) -> float:
+        """当前 Regime 的全局仓位缩放因子"""
+        return self._regime_scales.get(self._current_regime, 1.0)
+
+    def get_archetype_scale(self, archetype: str) -> float:
+        """获取当前 Regime 下特定 archetype 的仓位缩放因子。
+
+        优先级: per_archetype_scale > regime 全局 scale > 1.0
+        """
+        per_arch = self._regime_archetype_scales.get(self._current_regime, {})
+        if archetype.upper() in per_arch:
+            return per_arch[archetype.upper()]
+        return self.current_position_scale
+
     def reset(self) -> None:
         """重置状态（用于回测分段）"""
         self._current_regime = REGIME_NORMAL
@@ -227,9 +257,18 @@ def _build_regime_detector(cfg: Dict[str, Any]) -> RegimeDetector:
         return RegimeDetector()
 
     priorities = {}
+    regime_scales: Dict[str, float] = {}
+    regime_archetype_scales: Dict[str, Dict[str, float]] = {}
     for regime_name, regime_cfg in cfg.get("regimes", {}).items():
         if "priority" in regime_cfg:
             priorities[regime_name] = regime_cfg["priority"]
+        if "position_scale" in regime_cfg:
+            regime_scales[regime_name] = float(regime_cfg["position_scale"])
+        per_arch = regime_cfg.get("per_archetype_scale")
+        if per_arch and isinstance(per_arch, dict):
+            regime_archetype_scales[regime_name] = {
+                k.upper(): float(v) for k, v in per_arch.items()
+            }
 
     detection = cfg.get("detection", {})
     min_bars = cfg.get("min_bars_in_regime", 3)
@@ -238,6 +277,8 @@ def _build_regime_detector(cfg: Dict[str, Any]) -> RegimeDetector:
         regime_priorities=priorities or None,
         detection=detection or None,
         min_bars_in_regime=min_bars,
+        regime_scales=regime_scales or None,
+        regime_archetype_scales=regime_archetype_scales or None,
     )
 
 
@@ -257,66 +298,114 @@ def create_regime_detector_from_config(
 DEFAULT_ARCHETYPE_PRIORITY = ["LV", "FER", "ME", "BPC"]
 
 
+def _load_constitution_constraints(
+    constitution_yaml: Optional[str],
+) -> Dict[str, Any]:
+    """Load hard constraints from constitution.yaml.
+
+    Returns dict with keys: slot_count, risk_per_slot, per_strategy_limits.
+    Falls back to safe defaults if file not found.
+    """
+    defaults = {
+        "slot_count": 2,
+        "risk_per_slot": 0.015,
+        "per_strategy_limits": {},
+    }
+    if not constitution_yaml:
+        return defaults
+    p = Path(constitution_yaml)
+    if not p.exists():
+        logger.warning("Constitution YAML not found: %s, using defaults", p)
+        return defaults
+    try:
+        obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        logger.warning("Failed to load constitution YAML: %s, using defaults", e)
+        return defaults
+
+    slots = obj.get("slots") or {}
+    ra = obj.get("resource_allocation") or {}
+    return {
+        "slot_count": int(slots.get("slot_count", 2)),
+        "risk_per_slot": float(slots.get("risk_per_slot", 0.015)),
+        "per_strategy_limits": dict(ra.get("per_strategy_limits") or {}),
+    }
+
+
 class LivePCM:
     """
-    Live Portfolio Control Manager (Regime-Aware)
+    Live Portfolio Control Manager (Regime-Aware, v3)
 
     职责:
       1. 注册多个策略（BPC, ME, FER, LV），每个策略实现 decide() 接口
-      2. Regime 检测 → 动态切换优先级
+      2. Regime 检测 → 动态优先级 + 仓位缩放
       3. 同 symbol 不同 archetype 同时触发 → 当前 regime 优先级选最高
       4. 同优先级比 Evidence Score（高的优先）
-      5. 跨 symbol slot 控制（通过 open_slot_count 回调）
+      5. 跨 symbol slot 控制（从 constitution 读 max_slots）
+      6. Regime 仓位缩放 → size_multiplier 调整
 
-    用法:
-        pcm = LivePCM(max_slots=2)  # 使用默认 regime 配置
-        pcm.register('bpc', bpc_strategy)
-        pcm.register('me', me_strategy)
-        pcm.register('fer', fer_strategy)
-        pcm.register('lv', lv_strategy)
-
-        # 替代: listener.decision_handler = bpc_strategy
-        listener.decision_handler = pcm
+    配置来源:
+        constitution.yaml:  slot_count, risk_per_slot, per_strategy_limits
+        pcm_regime.yaml:    regimes (priority + position_scale), detection
     """
 
     def __init__(
         self,
         archetype_priority: Optional[List[str]] = None,
-        max_slots: int = 2,
+        max_slots: Optional[int] = None,
         get_open_slot_count: Optional[callable] = None,
         regime_detector: Optional[RegimeDetector] = None,
         regime_config_path: Optional[str] = None,
         override_config: Optional[Dict[str, Any]] = None,
+        constitution_yaml: Optional[str] = None,
     ):
         """
         Args:
-            archetype_priority: archetype 静态优先级列表（索引越小优先级越高）。
-                如果同时提供 regime_detector，此参数被忽略。
-                默认: ['BPC', 'ME', 'FER', 'LV']
-            max_slots: 最大同时持仓 slot 数
+            archetype_priority: archetype 静态优先级列表。如有 regime_detector 则被忽略。
+            max_slots: 显式指定 max_slots（覆盖 constitution）。
+                未提供时从 constitution_yaml 读取，均未提供时默认 2。
             get_open_slot_count: 可选回调，返回当前已占用 slot 数
-            regime_detector: 可选 RegimeDetector 实例。提供后启用动态优先级。
-            regime_config_path: 可选 YAML 配置路径。提供后自动创建 RegimeDetector + 加载 Override。
-            override_config: Layer 3 Override 配置。显式传入时优先于 YAML。
+            regime_detector: 可选 RegimeDetector 实例。
+            regime_config_path: 可选 pcm_regime.yaml 路径。
+            override_config: Layer 3 Override 配置。显式传入优先于 YAML。
+            constitution_yaml: 可选 constitution.yaml 路径。
+                提供后从中读取 slot_count、risk_per_slot、per_strategy_limits。
+                未提供时尝试从 pcm_regime.yaml 的 constitution_ref 自动发现。
         """
         self._strategies: Dict[str, DecisionHandler] = {}
-        self._max_slots = max_slots
         self._get_open_slot_count = get_open_slot_count
 
         # Layer 3: Override 配置
         self._override_config: Dict[str, Any] = override_config or {}
 
-        # Regime detector + override from config
+        # 加载 regime 配置
+        self._regime_cfg: Dict[str, Any] = {}
         if regime_detector is not None:
             self._regime_detector = regime_detector
         elif regime_config_path is not None:
-            cfg = load_regime_config(regime_config_path)
-            self._regime_detector = _build_regime_detector(cfg)
-            # 同时加载 override 配置（除非显式提供）
+            self._regime_cfg = load_regime_config(regime_config_path)
+            self._regime_detector = _build_regime_detector(self._regime_cfg)
             if not self._override_config:
-                self._override_config = cfg.get("override", {})
+                self._override_config = self._regime_cfg.get("override", {})
         else:
             self._regime_detector = None
+
+        # 从 constitution 加载硬约束
+        _const_yaml = constitution_yaml
+        if not _const_yaml and self._regime_cfg:
+            _const_yaml = self._regime_cfg.get("constitution_ref")
+        self._constitution = _load_constitution_constraints(_const_yaml)
+
+        # max_slots: 显式参数 > constitution > 默认 2
+        if max_slots is not None:
+            self._max_slots = max_slots
+        else:
+            self._max_slots = self._constitution["slot_count"]
+        logger.info(
+            "PCM: max_slots=%d (source=%s)",
+            self._max_slots,
+            "explicit" if max_slots is not None else "constitution",
+        )
 
         # 静态优先级（当无 regime detector 时使用）
         self._archetype_priority = archetype_priority or list(
@@ -356,6 +445,24 @@ class LivePCM:
         if self._regime_detector is not None:
             return self._regime_detector.current_regime
         return REGIME_NORMAL
+
+    @property
+    def constitution(self) -> Dict[str, Any]:
+        """Constitution 硬约束 (只读)"""
+        return dict(self._constitution)
+
+    @property
+    def current_position_scale(self) -> float:
+        """当前 Regime 的全局仓位缩放因子"""
+        if self._regime_detector is not None:
+            return self._regime_detector.current_position_scale
+        return 1.0
+
+    def get_archetype_scale(self, archetype: str) -> float:
+        """获取当前 Regime 下特定 archetype 的仓位缩放因子"""
+        if self._regime_detector is not None:
+            return self._regime_detector.get_archetype_scale(archetype)
+        return 1.0
 
     # ── 核心决策接口 ──
 
@@ -424,7 +531,7 @@ class LivePCM:
                     intent.archetype,
                 )
                 return []
-            return [intent]
+            return [self._apply_regime_scale(intent)]
 
         regime_str = f" [regime={self.current_regime}]" if self._regime_detector else ""
 
@@ -454,7 +561,7 @@ class LivePCM:
                 ev,
                 regime_str,
             )
-            return [override_winner]
+            return [self._apply_regime_scale(override_winner)]
 
         # ── 5. 多候选：动态优先级 + Evidence 排序 (Layer 2) ──
         def _sort_key(intent: TradeIntent):
@@ -493,14 +600,15 @@ class LivePCM:
             return []
 
         logger.info(
-            "PCM: %s 选中 %s (priority=%d, evidence=%.2f)%s",
+            "PCM: %s 选中 %s (priority=%d, evidence=%.2f, scale=%.2f)%s",
             symbol,
             best_intent.archetype,
             rank,
             evidence,
+            self.get_archetype_scale(best_intent.archetype),
             regime_str,
         )
-        return [best_intent]
+        return [self._apply_regime_scale(best_intent)]
 
     # ── Layer 3: Override 极端信号覆盖 ──
 
@@ -587,6 +695,50 @@ class LivePCM:
 
         return None
 
+    # ── Regime 仓位缩放 ──
+
+    def _apply_regime_scale(self, intent: TradeIntent) -> TradeIntent:
+        """Apply regime-aware position scaling to TradeIntent.
+
+        缩放因子乘在 size_multiplier 上，不修改其他字段。
+        """
+        scale = self.get_archetype_scale(intent.archetype)
+        if scale >= 1.0:
+            return intent
+
+        existing_mult = (
+            intent.size_multiplier if intent.size_multiplier is not None else 1.0
+        )
+        new_mult = existing_mult * scale
+
+        logger.debug(
+            "PCM regime scale: %s %s scale=%.2f (%.2f → %.2f)",
+            intent.symbol,
+            intent.archetype,
+            scale,
+            existing_mult,
+            new_mult,
+        )
+        # TradeIntent 是 frozen dataclass，需要重建
+        return TradeIntent(
+            action=intent.action,
+            symbol=intent.symbol,
+            archetype=intent.archetype,
+            execution_strategy=intent.execution_strategy,
+            confidence=intent.confidence,
+            quantity=intent.quantity,
+            size_multiplier=new_mult,
+            position_id=intent.position_id,
+            add_position=intent.add_position,
+            parent_position_id=intent.parent_position_id,
+            current_r=intent.current_r,
+            locked_profit=intent.locked_profit,
+            execution_tags=intent.execution_tags,
+            execution_evidence=intent.execution_evidence,
+            execution_profile=intent.execution_profile,
+            pcm_budget=intent.pcm_budget,
+        )
+
     # ── 内部方法 ──
 
     def _current_slot_count(self) -> int:
@@ -643,34 +795,48 @@ class LivePCM:
             "registered_archetypes": self.registered_archetypes,
             "current_priority": self.archetype_priority,
             "max_slots": self._max_slots,
+            "max_slots_source": (
+                "constitution"
+                if not hasattr(self, "_explicit_max_slots")
+                else "explicit"
+            ),
             "override_enabled": bool(self._override_config),
             "override_rules": (
                 list(self._override_config.keys()) if self._override_config else []
             ),
+            "constitution": {
+                "slot_count": self._constitution.get("slot_count"),
+                "risk_per_slot": self._constitution.get("risk_per_slot"),
+                "per_strategy_limits": self._constitution.get("per_strategy_limits"),
+            },
         }
         if self._regime_detector is not None:
             stats["current_regime"] = self._regime_detector.current_regime
             stats["regime_switch_count"] = self._regime_detector.switch_count
+            stats["current_position_scale"] = (
+                self._regime_detector.current_position_scale
+            )
         return stats
 
 
 def create_live_pcm(
     archetype_priority: Optional[List[str]] = None,
-    max_slots: int = 2,
+    max_slots: Optional[int] = None,
     get_open_slot_count: Optional[callable] = None,
     regime_config_path: Optional[str] = None,
     override_config: Optional[Dict[str, Any]] = None,
+    constitution_yaml: Optional[str] = None,
 ) -> LivePCM:
     """
-    创建 LivePCM 实例
+    创建 LivePCM 实例 (v3)
 
     Args:
-        archetype_priority: 静态优先级列表，默认 ['BPC', 'ME', 'FER', 'LV']。
-            如果同时提供 regime_config_path，静态优先级被忽略。
-        max_slots: 最大 slot 数
+        archetype_priority: 静态优先级列表。
+        max_slots: 显式指定 max_slots。未提供时从 constitution 读取。
         get_open_slot_count: 可选回调
-        regime_config_path: 可选 YAML 配置路径，提供后启用动态 regime + override
-        override_config: Layer 3 Override 配置（显式传入，优先于 YAML）
+        regime_config_path: 可选 pcm_regime.yaml 路径
+        override_config: Layer 3 Override 配置
+        constitution_yaml: 可选 constitution.yaml 路径
 
     Returns:
         初始化好的 LivePCM（尚未注册策略）
@@ -681,4 +847,5 @@ def create_live_pcm(
         get_open_slot_count=get_open_slot_count,
         regime_config_path=regime_config_path,
         override_config=override_config,
+        constitution_yaml=constitution_yaml,
     )
