@@ -79,5 +79,8 @@ causal-conv1d>=1.2.0  # mamba-ssm dependency
 tensorboard==2.15.1
 # flash-attn>=2.0.0  # Optional: requires compilation
 
+# Monitoring
+prometheus_client>=0.20.0
+
 # Testing
 pytest>=7.0.0

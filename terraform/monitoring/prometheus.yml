@@ -1,0 +1,19 @@
+# Prometheus 配置 — 抓取交易机器人 /metrics
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # 交易机器人 (运行在 host 上，不在 Docker 中)
+  - job_name: "quant-engine"
+    static_configs:
+      - targets: ["host.docker.internal:9090"]
+        labels:
+          instance: "local"
+    # WSL 下 host.docker.internal 可能不可用，备选:
+    # - targets: ["172.17.0.1:9090"]
+
+  # Prometheus 自身
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9091"]

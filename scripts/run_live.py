@@ -25,6 +25,7 @@ from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
 from src.time_series_model.live.stats_collector import StatsCollector
+from src.time_series_model.live.metrics_exporter import start_metrics_server
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +497,10 @@ async def main() -> None:
     gap_filler = _build_gap_filler(storage)
 
     logger.info(f"🚀 Starting live trading: symbols={symbols}")
+
+    # ── Prometheus metrics server ──
+    metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
+    start_metrics_server(port=metrics_port)
 
     # 选择启动模式: bpc (单策略) 或 three_strategies (三策略多时间框架)
     live_mode = os.getenv("MLBOT_LIVE_MODE", "bpc")

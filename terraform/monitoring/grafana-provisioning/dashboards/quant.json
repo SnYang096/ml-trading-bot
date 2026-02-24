@@ -1,0 +1,752 @@
+{
+    "annotations": {
+        "list": []
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [],
+    "panels": [
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 0
+            },
+            "id": 100,
+            "title": "📊 Status Overview",
+            "type": "row"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "text": "🟢 RUNNING"
+                                },
+                                "1": {
+                                    "text": "🔴 HALTED"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "red",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 0,
+                "y": 1
+            },
+            "id": 1,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_kill_switch_halted",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "宪法状态",
+            "type": "stat"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.001
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 4,
+                "y": 1
+            },
+            "id": 2,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "area",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_pnl_realized_total",
+                    "legendFormat": "PnL"
+                }
+            ],
+            "title": "累计 PnL",
+            "type": "stat"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 1
+                            },
+                            {
+                                "color": "red",
+                                "value": 2
+                            }
+                        ]
+                    },
+                    "max": 2,
+                    "min": 0
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 8,
+                "y": 1
+            },
+            "id": 3,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_positions_active",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "持仓 / Slot",
+            "type": "stat"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.12
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.16
+                            }
+                        ]
+                    },
+                    "max": 0.2
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 12,
+                "y": 1
+            },
+            "id": 4,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "area",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_drawdown",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "Drawdown",
+            "type": "stat"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 16,
+                "y": 1
+            },
+            "id": 5,
+            "options": {
+                "colorMode": "none",
+                "graphMode": "none",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_uptime_seconds",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "运行时长",
+            "type": "stat"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 20,
+                "y": 1
+            },
+            "id": 6,
+            "options": {
+                "colorMode": "none",
+                "graphMode": "area",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_gate_reject_rate",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "Gate 拦截率",
+            "type": "stat"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 5
+            },
+            "id": 101,
+            "title": "✅ 好消息 — 盈利",
+            "type": "row"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineWidth": 2,
+                        "fillOpacity": 20
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 6
+            },
+            "id": 10,
+            "options": {
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_pnl_realized_total",
+                    "legendFormat": "Cumulative PnL"
+                }
+            ],
+            "title": "累计 PnL 曲线",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {
+                        "drawStyle": "bars",
+                        "fillOpacity": 80,
+                        "barAlignment": 0
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 6
+            },
+            "id": 11,
+            "targets": [
+                {
+                    "expr": "rate(mlbot_orders_total{strategy=\"bpc\"}[1h])*3600",
+                    "legendFormat": "BPC"
+                },
+                {
+                    "expr": "rate(mlbot_orders_total{strategy=\"me\"}[1h])*3600",
+                    "legendFormat": "ME"
+                },
+                {
+                    "expr": "rate(mlbot_orders_total{strategy=\"fer\"}[1h])*3600",
+                    "legendFormat": "FER"
+                }
+            ],
+            "title": "每小时下单数 (按策略)",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 14
+            },
+            "id": 102,
+            "title": "🔴 坏消息 — 需要处理",
+            "type": "row"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.03
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.04
+                            }
+                        ]
+                    },
+                    "max": 0.05
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 8,
+                "x": 0,
+                "y": 15
+            },
+            "id": 20,
+            "options": {
+                "orientation": "horizontal",
+                "showUnfilled": true
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_loss{period=\"daily\"}",
+                    "legendFormat": "日亏损 (限4%)"
+                },
+                {
+                    "expr": "mlbot_loss{period=\"weekly\"}",
+                    "legendFormat": "周亏损 (限8%)"
+                },
+                {
+                    "expr": "mlbot_loss{period=\"monthly\"}",
+                    "legendFormat": "月亏损 (限12%)"
+                }
+            ],
+            "title": "亏损水位 vs 红线",
+            "type": "bargauge"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 180
+                            },
+                            {
+                                "color": "red",
+                                "value": 300
+                            }
+                        ]
+                    },
+                    "max": 600
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 8,
+                "x": 8,
+                "y": 15
+            },
+            "id": 21,
+            "options": {
+                "orientation": "horizontal",
+                "showUnfilled": true
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_last_bar_age_seconds",
+                    "legendFormat": "{{symbol}}"
+                }
+            ],
+            "title": "数据新鲜度 (最后 bar 年龄)",
+            "type": "bargauge"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "text": "❌ 断开",
+                                    "color": "red"
+                                },
+                                "1": {
+                                    "text": "✅ 在线",
+                                    "color": "green"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 8,
+                "x": 16,
+                "y": 15
+            },
+            "id": 22,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_ws_connected",
+                    "legendFormat": "{{symbol}}"
+                }
+            ],
+            "title": "WebSocket 连接状态",
+            "type": "stat"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 21
+            },
+            "id": 103,
+            "title": "📡 信号管线",
+            "type": "row"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {
+                        "drawStyle": "bars",
+                        "fillOpacity": 60,
+                        "stacking": {
+                            "mode": "normal"
+                        }
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 22
+            },
+            "id": 30,
+            "targets": [
+                {
+                    "expr": "rate(mlbot_funnel_total{stage=\"direction\"}[15m])*900",
+                    "legendFormat": "direction"
+                },
+                {
+                    "expr": "rate(mlbot_funnel_total{stage=\"gate\"}[15m])*900",
+                    "legendFormat": "gate"
+                },
+                {
+                    "expr": "rate(mlbot_funnel_total{stage=\"entry_filter\"}[15m])*900",
+                    "legendFormat": "entry_filter"
+                },
+                {
+                    "expr": "rate(mlbot_funnel_total{stage=\"evidence\"}[15m])*900",
+                    "legendFormat": "evidence"
+                },
+                {
+                    "expr": "rate(mlbot_funnel_total{stage=\"pcm\"}[15m])*900",
+                    "legendFormat": "pcm"
+                },
+                {
+                    "expr": "rate(mlbot_funnel_total{stage=\"order\"}[15m])*900",
+                    "legendFormat": "order"
+                }
+            ],
+            "title": "信号漏斗 (15min 窗口)",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineWidth": 2
+                    },
+                    "min": 0,
+                    "max": 1
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 22
+            },
+            "id": 31,
+            "targets": [
+                {
+                    "expr": "mlbot_gate_reject_rate",
+                    "legendFormat": "Gate Reject Rate"
+                }
+            ],
+            "title": "Gate 拦截率趋势",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 30
+            },
+            "id": 104,
+            "title": "🖥️ 系统健康",
+            "type": "row"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percent",
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 10
+                    },
+                    "min": 0,
+                    "max": 100
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 8,
+                "x": 0,
+                "y": 31
+            },
+            "id": 40,
+            "targets": [
+                {
+                    "expr": "mlbot_cpu_percent",
+                    "legendFormat": "CPU"
+                }
+            ],
+            "title": "CPU 使用率",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "decmbytes",
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 10
+                    },
+                    "min": 0
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 8,
+                "x": 8,
+                "y": 31
+            },
+            "id": 41,
+            "targets": [
+                {
+                    "expr": "mlbot_memory_mb",
+                    "legendFormat": "Memory"
+                }
+            ],
+            "title": "内存使用 (MB)",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 8,
+                "x": 16,
+                "y": 31
+            },
+            "id": 42,
+            "options": {
+                "colorMode": "none",
+                "graphMode": "area",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_uptime_seconds",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "进程 Uptime",
+            "type": "stat"
+        }
+    ],
+    "refresh": "15s",
+    "schemaVersion": 39,
+    "tags": [
+        "trading",
+        "quant"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-6h",
+        "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "utc",
+    "title": "Quant Engine Dashboard",
+    "uid": "quant-engine-main",
+    "version": 1
+}

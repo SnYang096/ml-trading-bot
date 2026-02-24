@@ -21,6 +21,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.time_series_model.live.metrics_exporter import METRICS
+
 logger = logging.getLogger(__name__)
 
 # ── SQLite Schema ──────────────────────────────────────────────
@@ -232,6 +234,23 @@ class StatsCollector:
                 for s, d in self._by_strategy.items()
             ),
         )
+
+        # 同步更新 Prometheus 指标
+        try:
+            METRICS.update_from_flush(
+                bars=self._bars_processed,
+                direction=self._direction_assigned,
+                gate=self._gate_passed,
+                entry_filter=self._entry_filter_passed,
+                evidence=self._evidence_passed,
+                pcm_selected=self._pcm_selected,
+                orders=self._orders_placed,
+                by_strategy=dict(self._by_strategy),
+                positions_count=len(positions or {}),
+            )
+            METRICS.update_system_health()
+        except Exception:
+            pass  # Prometheus 更新失败不影响主流程
 
         # 重置计数器
         self._reset()
