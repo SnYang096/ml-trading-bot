@@ -1,94 +1,22 @@
-# ME Entry Filter Archetype v6.0 (60T)
-# ME = Energy × Acceleration × Participation
-# 更新: 2026-02-21 - 全特征 scan + plateau + greedy dedup 重建
+# ME Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py
+# Date: 2026-02-24 12:57
+# Promoted: 1 filters (1 plateau + 0 snotio-only)
+# Baseline snotio: 16.9719, σ=28.534
+# Significance: z-test p<0.05 required for all tiers
 #
-# 职责定位:
-#   Gate:         "这笔交易能做吗？"   → cvd_alignment 硬门槛
-#   Entry Filter: "现在该入场吗？"     → 波动率爆发 (bb_width)
-#   Evidence:     "下多少注？"         → volume_surge 软权重
-#
-# 数据基础:
-#   predictions.parquet: 5120 bars (全量)
-#   Baseline (全部入场): snotio=18.20, Loss=37.7%, Stop=37.7%, Trades=5120
-#   方向: me_delta_net_flow (sign transform), from direction.yaml
-#
-# 验证流程:
-#   1. --scan 全特征 execution 模拟 (224 features × 6 thresholds)
-#   2. --all execution 验证 (18 候选 filter)
-#   3. plateau 高原验证 (snotio 作 KPI, 阈值稳定性)
-#   4. greedy dedup 去冗余 (Jaccard + 贪心前向选择)
-#
-# 评估命令:
-#   EVIDENCE_RESULT_DIR="results/train_final_20260221_215306_return_tree/me"
-#   # execution + scan:
-#   python scripts/optimize_entry_filter_snotio.py --all \
-#     --logs ${EVIDENCE_RESULT_DIR}/predictions.parquet --strategy me
-#   python scripts/optimize_entry_filter_snotio.py --scan \
-#     --logs ${EVIDENCE_RESULT_DIR}/predictions.parquet --strategy me
-#   # plateau + dedup:
-#   python scripts/optimize_entry_filter_plateau.py --research \
-#     --logs ${EVIDENCE_RESULT_DIR}/predictions.parquet --strategy me
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
-# ============================================================
-# 📋 全局设置
-# ============================================================
-combination_mode: or
-
-# ============================================================
-# ✅ 已启用的入场模式
-# ============================================================
 filters:
-
-  # ----------------------------------------------------------------
-  # 布林带宽度极端扩张 (波动率爆发)
-  #   scan #1, greedy dedup 唯一选中
-  # ----------------------------------------------------------------
-  - id: bb_width_high
-    enabled: true
-    description: "布林带宽度百分位 ≥ 0.873 (波动率极端扩张)"
-    semantic: |
-      bb_width 极端宽 = 波动率已在爆发状态。
-      与 ME 动能爆发语义完美匹配：波动率扩张是动能释放的前提。
-    conditions:
-      - feature: bb_width_normalized_pct
-        operator: ">="
-        value: 0.873
-    plateau:
-      bb_width_normalized_pct:
-        scan_original: 0.957      # --scan P90 原始阈值
-        recommended: 0.873        # plateau 推荐 (偏宽容侧)
-        range: [0.842, 0.968]     # plateau 稳定区间
-        width: 0.126
-        confidence: LOW           # 区间较窄,但原始P90在区间内
-    backtest:
-      snotio_scan: 33.81         # scan P90 原始阈值
-      snotio_plateau: 24.37      # plateau 推荐阈值
-      trades_scan: 534
-      trades_plateau: 1220
-    dedup:
-      greedy_rank: 1
-      or_snotio: 24.37           # 单 filter = 最终 OR 组合
-      vs_baseline: "+33.9%"
-      reason: "贪心选择唯一胜出; 任何第二 filter OR 均稀释 snotio"
-
-# ============================================================
-# 📊 Greedy Dedup 去冗余结果
-# ============================================================
-# 18 候选 → 贪心前向选择 → 仅 1 个 filter 入选
-#
-# 主要冗余簇 (Jaccard ≥ 0.9):
-#   VPIN 簇: vpin_high, scan_funding_rate_abs_low, scan_vpin_ma20_high,
-#            scan_vpin_ma10_p80 (Jac=0.98~1.00)
-#   BB 簇:   scan_bb_width_high, scan_bb_width_p80 (Jac=0.90)
-#   OI 簇:   oi_absorption, oi_absorption_loose (Jac=1.00)
-#
-# 单独 snotio (plateau 推荐阈值, 降序):
-#   scan_bb_width_high      24.37  ← 选中
-#   scan_cvd_divergence_low 24.15  (Jac=0.10, 但 OR 后稀释)
-#   scan_bb_width_p80       23.38  (与 bb_width_high 重叠 0.90)
-#   scan_vpin_max20_high    22.62
-#   wick_compression_high   19.14
-#   vpin_rank_high          19.07
-#   其余 ≤ baseline
-#
-# Baseline=18.20 → Final OR=24.37 (+33.9%)
+- id: scan_spectrum_price_hf_high
+  enabled: true
+  description: 价格高频占比 ≥ P90 (微观波动活跃)
+  conditions:
+  - feature: spectrum_price_high_freq_ratio
+    operator: '>='
+    value: 0.327
+  tier: A_PLATEAU
+  notes: 'plateau: spectrum_price_high_freq_ratio=0.327(conf=MEDIUM), z=2.19 p=0.0144'
+combination_mode: or

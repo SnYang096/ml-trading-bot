@@ -1,6 +1,6 @@
 # BPC Evidence Archetype (auto-promoted)
-# 来源: results/train_final_20260224_012227_return_tree/bpc/evidence_candidates.yaml
-# 优化规则: 6/14 条通过 plateau 验证
+# 来源: results/train_final_20260224_125323_return_tree/bpc/evidence_candidates.yaml
+# 优化规则: 1/6 条通过 plateau 验证
 # ✅ 方向已由数据自动验证
 
 schema:
@@ -11,78 +11,9 @@ schema:
     favor: 有利 - 提高信心/仓位
     amplify: 强烈有利 - 最大化执行
 evidence:
-- id: evidence_macd_signal_atr
-  feature: macd_signal_atr
-  rank: 1
-  direction: positive
-  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.1
-    - 0.3
-    - 0.5
-    - 0.7
-    labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
-    - amplify
-  split_count: 2
-- id: evidence_garch_volatility
-  feature: garch_volatility
+- id: evidence_shd_pct
+  feature: shd_pct
   rank: 3
-  direction: negative
-  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.2
-    - 0.4
-    - 0.6
-    - 0.8
-    labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
-    - amplify
-  split_count: 1
-- id: evidence_rsi
-  feature: rsi
-  rank: 5
-  direction: positive
-  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.1
-    - 0.3
-    - 0.5
-    - 0.7
-    labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
-    - amplify
-  split_count: 1
-- id: evidence_cvd_divergence_score
-  feature: cvd_divergence_score
-  rank: 7
   direction: negative
   usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
   affects:
@@ -96,52 +27,6 @@ evidence:
     - 0.5
     - 0.7
     - 0.9
-    labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
-    - amplify
-  split_count: 1
-- id: evidence_evt_tail_shape
-  feature: evt_tail_shape
-  rank: 9
-  direction: positive
-  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.15
-    - 0.35
-    - 0.55
-    - 0.75
-    labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
-    - amplify
-  split_count: 1
-- id: evidence_garch_beta
-  feature: garch_beta
-  rank: 14
-  direction: positive
-  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.2
-    - 0.4
-    - 0.6
-    - 0.8
     labels:
     - suppress
     - downweight

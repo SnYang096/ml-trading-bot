@@ -1,16 +1,16 @@
 # FER Execution 配置
-# 版本: 11
-# 更新时间: 2026-02-23
+# 版本: 12
+# 更新时间: 2026-02-24
 #
 # ┌─────────────────────────────────────────────────────────┐
 # │  Grid Search auto-promoted                              │
-# │  Sharpe (daily): 4.89                                   │
+# │  Sharpe (daily): 1.84                                   │
 # │  Best: initial_r=0.8, activation_r=0.5, trail_r=0.5      │
-# │  Plateau: ✅ stable (CV=0.037)                            │
+# │  Plateau: ✅ stable (CV=0.080)                            │
 # │  Changes: initial_r: 0.8 → 0.8, activation_r: 0.5 → 0.5, trail_r: 0.5 → 0.5│
 # └─────────────────────────────────────────────────────────┘
 #
-version: 11
+version: 12
 execution_constraints:
   allow_add_on: false
   min_order_interval_minutes: 15

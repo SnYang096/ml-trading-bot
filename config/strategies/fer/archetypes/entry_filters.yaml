@@ -1,8 +1,8 @@
 # FER Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-02-23 19:23
-# Promoted: 3 filters (3 plateau + 0 snotio-only)
-# Baseline snotio: 1.3241, σ=1.736
+# Date: 2026-02-24 12:54
+# Promoted: 4 filters (4 plateau + 0 snotio-only)
+# Baseline snotio: 1.3795, σ=1.764
 # Significance: z-test p<0.05 required for all tiers
 #
 # 职责: "现在该入场吗?" → 硬二值控制入场时机
@@ -19,25 +19,37 @@ filters:
     value: 46.714
   - feature: price_position
     operator: '>='
-    value: 0.6
+    value: 0.8
   tier: A_PLATEAU
-  notes: 'plateau: rsi=46.714(conf=MEDIUM), price_position=0.600(conf=MEDIUM), z=2.15 p=0.0157'
-- id: momentum_exhaustion
+  notes: 'plateau: rsi=46.714(conf=MEDIUM), price_position=0.800(conf=MEDIUM), z=3.44 p=0.0003'
+- id: shd_reversal_candle
   enabled: true
-  description: '动量力竭: 价格推进但动量衰减'
+  description: '低影线实体 K 线: 方向明确的反转动作'
   conditions:
-  - feature: momentum_exhaustion_score
-    operator: '>='
-    value: 0.614
+  - feature: shd_pct
+    operator: <=
+    value: 0.236
   tier: A_PLATEAU
-  notes: 'plateau: momentum_exhaustion_score=0.614(conf=MEDIUM), z=2.44 p=0.0074'
+  notes: 'plateau: shd_pct=0.236(conf=MEDIUM), z=2.58 p=0.0049'
 - id: fer_absorption
   enabled: true
   description: 'FER 吸收: 激进方被对手方吸收'
   conditions:
   - feature: fer_aggressor_absorption
     operator: '>='
-    value: 0.271
+    value: 0.386
   tier: A_PLATEAU
-  notes: 'plateau: fer_aggressor_absorption=0.271(conf=MEDIUM), z=1.85 p=0.0324'
+  notes: 'plateau: fer_aggressor_absorption=0.386(conf=MEDIUM), z=1.99 p=0.0230'
+- id: rsi_plus_exhaustion
+  enabled: true
+  description: RSI 超买 + 力竭双重确认
+  conditions:
+  - feature: rsi
+    operator: '>='
+    value: 54.829
+  - feature: wick_exhaustion_score
+    operator: '>='
+    value: 0.05
+  tier: A_PLATEAU
+  notes: 'plateau: rsi=54.829(conf=MEDIUM), wick_exhaustion_score=0.050(conf=MEDIUM), z=2.13 p=0.0168'
 combination_mode: or

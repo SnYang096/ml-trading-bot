@@ -1,6 +1,6 @@
 # FER Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260223_192211/strategies/fer/gate_draft.yaml
-# 优化规则: 1/10 条通过优化, 9 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260224_125251/strategies/fer/gate_draft.yaml
+# 优化规则: 3/10 条通过优化, 7 条已移除
 
 schema:
   phases:
@@ -13,15 +13,37 @@ schema:
       max_hard_deny_rate: 0.5
       alert_threshold: 0.45
 hard_gates:
-- id: gate_vpin_zscore_50
-  tag: HARD_VPIN_ZSCORE_50
+- id: gate_roc_5
+  tag: HARD_ROC_5
   phase: hard_gate
-  priority: 17
-  reason: vpin_zscore_50 触发树分裂条件 (分裂 1 次)
+  priority: 12
+  reason: roc_5 触发树分裂条件 (分裂 1 次)
   when:
-    vpin_zscore_50:
-      value_gt: -0.7094
+    roc_5:
+      value_gt: -0.1343
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=-0.7094, lift=0.199'
+  comment: 'optimizer: stable_plateau_found, threshold=-0.1343, lift=0.120'
+- id: gate_fer_trapped_shorts_score
+  tag: HARD_FER_TRAPPED_SHORTS_SCORE
+  phase: hard_gate
+  priority: 14
+  reason: fer_trapped_shorts_score 触发树分裂条件 (分裂 1 次)
+  when:
+    fer_trapped_shorts_score:
+      value_gt: 0.75
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.7500, lift=0.256'
+- id: gate_fp_max_imbalance_ratio
+  tag: HARD_FP_MAX_IMBALANCE_RATIO
+  phase: hard_gate
+  priority: 16
+  reason: fp_max_imbalance_ratio 触发树分裂条件 (分裂 1 次)
+  when:
+    fp_max_imbalance_ratio:
+      value_gt: 2.399
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=2.3990, lift=0.112'
 guardrails: []

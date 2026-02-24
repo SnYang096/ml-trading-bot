@@ -1,242 +1,246 @@
 # BPC Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
 # 自动生成: 2026-02-24
-# 数据源: features_labeled.parquet, 6630 行
+# 数据源: features_labeled.parquet, 6330 行
 
 rules:
   - feature: bpc_volume_compression_pct
     operator: "<="
-    value: 0.0686
-    rationale: "P10阈值, bad_rate -7.3%, 鲁棒性=1.00, 评分=0.690"
+    value: 0.0649
+    rationale: "P10阈值, bad_rate -6.6%, 鲁棒性=1.00, 评分=0.679"
   - feature: bpc_bb_compression
     operator: ">"
-    value: 0.0983
-    rationale: "P10阈值, bad_rate +7.0%, 鲁棒性=1.00, 评分=0.685"
+    value: 0.0965
+    rationale: "P10阈值, bad_rate +6.6%, 鲁棒性=1.00, 评分=0.679"
+  - feature: bpc_cvd_z
+    operator: ">"
+    value: -2.0018
+    rationale: "P5阈值, bad_rate +4.5%, 鲁棒性=1.00, 评分=0.648"
 
 last_evaluation:
   # ── 自动生成 (2026-02-24) ──
   timestamp: "2026-02-24"
   data_source: "features_labeled.parquet"
-  n_rows: 6630
-  baseline_bad_rate: 0.4332
-  baseline_median_rr: +0.3710
+  n_rows: 6330
+  baseline_bad_rate: 0.4300
+  baseline_median_rr: +0.4145
 
-  # ── 正信号 (27 个) ──
+  # ── 正信号 (45 个) ──
   positive_signals:
     - feature: bpc_volume_compression_pct
       percentile: P10
       direction: low
-      threshold: 0.0686
-      bad_rate_signal: 0.3673
-      bad_rate_rest: 0.4407
-      bad_rate_diff: -0.0734
-    - feature: bpc_vol_breakout_confirm
-      percentile: P5
-      direction: low
-      threshold: 0.2231
-      bad_rate_signal: 0.3825
-      bad_rate_rest: 0.4359
-      bad_rate_diff: -0.0533
-    - feature: bpc_vol_continuation_confirm
-      percentile: P5
-      direction: low
-      threshold: 0.2788
-      bad_rate_signal: 0.3825
-      bad_rate_rest: 0.4359
-      bad_rate_diff: -0.0533
-    - feature: bpc_vol_ratio
-      percentile: P5
-      direction: low
-      threshold: 0.3346
-      bad_rate_signal: 0.3825
-      bad_rate_rest: 0.4359
-      bad_rate_diff: -0.0533
-    - feature: bpc_vpin_breakout_confirm
-      percentile: P80
-      direction: high
-      threshold: 0.5574
-      bad_rate_signal: 0.3959
-      bad_rate_rest: 0.4425
-      bad_rate_diff: -0.0466
+      threshold: 0.0649
+      bad_rate_signal: 0.3709
+      bad_rate_rest: 0.4367
+      bad_rate_diff: -0.0658
     - feature: bpc_dir_consistency_short
       percentile: P95
       direction: high
       threshold: 1.0
-      bad_rate_signal: 0.3902
-      bad_rate_rest: 0.4358
-      bad_rate_diff: -0.0457
-    - feature: bpc_breakout_direction
+      bad_rate_signal: 0.3804
+      bad_rate_rest: 0.4331
+      bad_rate_diff: -0.0526
+    - feature: bpc_vpin_breakout_confirm
+      percentile: P80
+      direction: high
+      threshold: 0.5596
+      bad_rate_signal: 0.3926
+      bad_rate_rest: 0.4394
+      bad_rate_diff: -0.0468
+    - feature: bpc_vol_breakout_confirm
       percentile: P5
       direction: low
-      threshold: -1.0
-      bad_rate_signal: 0.4083
-      bad_rate_rest: 0.4534
-      bad_rate_diff: -0.0451
-    - feature: bpc_breakout_direction
-      percentile: P10
+      threshold: 0.2235
+      bad_rate_signal: 0.3943
+      bad_rate_rest: 0.4319
+      bad_rate_diff: -0.0376
+    - feature: bpc_vol_continuation_confirm
+      percentile: P5
       direction: low
-      threshold: -1.0
-      bad_rate_signal: 0.4083
-      bad_rate_rest: 0.4534
-      bad_rate_diff: -0.0451
-    - feature: bpc_breakout_direction
+      threshold: 0.2794
+      bad_rate_signal: 0.3943
+      bad_rate_rest: 0.4319
+      bad_rate_diff: -0.0376
+    - feature: bpc_vol_ratio
+      percentile: P5
+      direction: low
+      threshold: 0.3353
+      bad_rate_signal: 0.3943
+      bad_rate_rest: 0.4319
+      bad_rate_diff: -0.0376
+    - feature: bpc_vpin_breakout_confirm
+      percentile: P90
+      direction: high
+      threshold: 0.6293
+      bad_rate_signal: 0.3981
+      bad_rate_rest: 0.4336
+      bad_rate_diff: -0.0355
+    - feature: bpc_pullback_depth
+      percentile: P80
+      direction: high
+      threshold: 0.6333
+      bad_rate_signal: 0.4021
+      bad_rate_rest: 0.4370
+      bad_rate_diff: -0.0350
+    - feature: bpc_vol_compression
       percentile: P20
       direction: low
-      threshold: -1.0
-      bad_rate_signal: 0.4083
-      bad_rate_rest: 0.4534
-      bad_rate_diff: -0.0451
-    - feature: bpc_score_continuation
-      percentile: P95
-      direction: high
-      threshold: 0.75
-      bad_rate_signal: 0.3933
-      bad_rate_rest: 0.4354
-      bad_rate_diff: -0.0422
+      threshold: 0.175
+      bad_rate_signal: 0.4024
+      bad_rate_rest: 0.4374
+      bad_rate_diff: -0.0350
+    - feature: bpc_vol_pullback_confirm
+      percentile: P20
+      direction: low
+      threshold: 0.175
+      bad_rate_signal: 0.4024
+      bad_rate_rest: 0.4374
+      bad_rate_diff: -0.0350
 
-  # ── 反信号 (23 个) ──
+  # ── 反信号 (27 个) ──
   anti_signals:
-    - feature: bpc_vol_compression
-      percentile: P95
-      direction: high
-      threshold: 0.95
-      bad_rate_signal: 0.4976
-      bad_rate_rest: 0.4288
-      bad_rate_diff: +0.0688
-    - feature: bpc_vol_pullback_confirm
-      percentile: P95
-      direction: high
-      threshold: 0.95
-      bad_rate_signal: 0.4976
-      bad_rate_rest: 0.4288
-      bad_rate_diff: +0.0688
-    - feature: bpc_bb_compression
-      percentile: P95
-      direction: high
-      threshold: 0.9555
-      bad_rate_signal: 0.4955
-      bad_rate_rest: 0.4299
-      bad_rate_diff: +0.0656
-    - feature: bpc_score_neutral
-      percentile: P95
-      direction: high
-      threshold: 0.8675
-      bad_rate_signal: 0.4910
-      bad_rate_rest: 0.4301
-      bad_rate_diff: +0.0608
-    - feature: bpc_vol_compression
-      percentile: P90
-      direction: high
-      threshold: 0.9
-      bad_rate_signal: 0.4868
-      bad_rate_rest: 0.4262
-      bad_rate_diff: +0.0606
-    - feature: bpc_vol_pullback_confirm
-      percentile: P90
-      direction: high
-      threshold: 0.9
-      bad_rate_signal: 0.4868
-      bad_rate_rest: 0.4262
-      bad_rate_diff: +0.0606
     - feature: bpc_pullback_depth_long
       percentile: P95
       direction: high
-      threshold: 0.9352
-      bad_rate_signal: 0.4880
-      bad_rate_rest: 0.4303
-      bad_rate_diff: +0.0577
+      threshold: 0.9357
+      bad_rate_signal: 0.5047
+      bad_rate_rest: 0.4261
+      bad_rate_diff: +0.0787
     - feature: bpc_pullback_depth_pct
       percentile: P95
       direction: high
-      threshold: 0.9352
-      bad_rate_signal: 0.4880
-      bad_rate_rest: 0.4303
-      bad_rate_diff: +0.0577
+      threshold: 0.9357
+      bad_rate_signal: 0.5047
+      bad_rate_rest: 0.4261
+      bad_rate_diff: +0.0787
+    - feature: bpc_vol_compression
+      percentile: P95
+      direction: high
+      threshold: 0.95
+      bad_rate_signal: 0.5026
+      bad_rate_rest: 0.4252
+      bad_rate_diff: +0.0773
+    - feature: bpc_vol_pullback_confirm
+      percentile: P95
+      direction: high
+      threshold: 0.95
+      bad_rate_signal: 0.5026
+      bad_rate_rest: 0.4252
+      bad_rate_diff: +0.0773
+    - feature: bpc_vol_compression
+      percentile: P90
+      direction: high
+      threshold: 0.9
+      bad_rate_signal: 0.4930
+      bad_rate_rest: 0.4220
+      bad_rate_diff: +0.0711
+    - feature: bpc_vol_pullback_confirm
+      percentile: P90
+      direction: high
+      threshold: 0.9
+      bad_rate_signal: 0.4930
+      bad_rate_rest: 0.4220
+      bad_rate_diff: +0.0711
+    - feature: bpc_bb_compression
+      percentile: P95
+      direction: high
+      threshold: 0.9573
+      bad_rate_signal: 0.4954
+      bad_rate_rest: 0.4265
+      bad_rate_diff: +0.0689
     - feature: bpc_vol_compression
       percentile: P80
       direction: high
       threshold: 0.8
-      bad_rate_signal: 0.4744
-      bad_rate_rest: 0.4217
-      bad_rate_diff: +0.0528
+      bad_rate_signal: 0.4758
+      bad_rate_rest: 0.4174
+      bad_rate_diff: +0.0584
     - feature: bpc_vol_pullback_confirm
       percentile: P80
       direction: high
       threshold: 0.8
-      bad_rate_signal: 0.4744
-      bad_rate_rest: 0.4217
-      bad_rate_diff: +0.0528
+      bad_rate_signal: 0.4758
+      bad_rate_rest: 0.4174
+      bad_rate_diff: +0.0584
+    - feature: bpc_score_neutral
+      percentile: P95
+      direction: high
+      threshold: 0.8666
+      bad_rate_signal: 0.4700
+      bad_rate_rest: 0.4279
+      bad_rate_diff: +0.0421
 
-  # ── 低端信号 (22 个) ──
+  # ── 低端信号 (29 个) ──
   absence_signals:
     - feature: bpc_vpin_breakout_confirm
       percentile: P5
       direction: low
-      threshold: 0.3081
-      bad_rate_signal: 0.5512
-      bad_rate_rest: 0.4270
-      bad_rate_diff: +0.1242
-    - feature: bpc_vpin_breakout_confirm
-      percentile: P10
-      direction: low
-      threshold: 0.3373
-      bad_rate_signal: 0.5128
-      bad_rate_rest: 0.4243
-      bad_rate_diff: +0.0885
+      threshold: 0.3088
+      bad_rate_signal: 0.5489
+      bad_rate_rest: 0.4237
+      bad_rate_diff: +0.1251
     - feature: bpc_vpin_breakout_confirm
       percentile: P20
       direction: low
-      threshold: 0.3721
-      bad_rate_signal: 0.4970
-      bad_rate_rest: 0.4172
-      bad_rate_diff: +0.0798
-    - feature: bpc_bb_compression
-      percentile: P10
-      direction: low
-      threshold: 0.0983
-      bad_rate_signal: 0.4962
-      bad_rate_rest: 0.4262
-      bad_rate_diff: +0.0701
+      threshold: 0.3737
+      bad_rate_signal: 0.4968
+      bad_rate_rest: 0.4133
+      bad_rate_diff: +0.0835
     - feature: bpc_pullback_depth_short
       percentile: P5
       direction: low
-      threshold: 0.0648
-      bad_rate_signal: 0.4880
-      bad_rate_rest: 0.4303
-      bad_rate_diff: +0.0577
-    - feature: bpc_pullback_quality
-      percentile: P5
+      threshold: 0.0643
+      bad_rate_signal: 0.5047
+      bad_rate_rest: 0.4261
+      bad_rate_diff: +0.0787
+    - feature: bpc_vpin_breakout_confirm
+      percentile: P10
       direction: low
-      threshold: 0.0679
-      bad_rate_signal: 0.4880
-      bad_rate_rest: 0.4303
-      bad_rate_diff: +0.0577
+      threshold: 0.3384
+      bad_rate_signal: 0.4992
+      bad_rate_rest: 0.4223
+      bad_rate_diff: +0.0769
+    - feature: bpc_bb_compression
+      percentile: P10
+      direction: low
+      threshold: 0.0965
+      bad_rate_signal: 0.4891
+      bad_rate_rest: 0.4234
+      bad_rate_diff: +0.0657
     - feature: bpc_dir_consistency_mid
       percentile: P10
       direction: low
       threshold: 0.4
-      bad_rate_signal: 0.4802
-      bad_rate_rest: 0.4240
-      bad_rate_diff: +0.0562
+      bad_rate_signal: 0.4790
+      bad_rate_rest: 0.4203
+      bad_rate_diff: +0.0587
+    - feature: bpc_bb_compression
+      percentile: P20
+      direction: low
+      threshold: 0.1948
+      bad_rate_signal: 0.4742
+      bad_rate_rest: 0.4188
+      bad_rate_diff: +0.0554
     - feature: bpc_dir_consistency_long
       percentile: P20
       direction: low
       threshold: 0.46
-      bad_rate_signal: 0.4721
-      bad_rate_rest: 0.4189
-      bad_rate_diff: +0.0532
+      bad_rate_signal: 0.4693
+      bad_rate_rest: 0.4155
+      bad_rate_diff: +0.0539
     - feature: bpc_bb_compression
       percentile: P5
       direction: low
-      threshold: 0.0445
-      bad_rate_signal: 0.4824
-      bad_rate_rest: 0.4305
-      bad_rate_diff: +0.0518
-    - feature: bpc_bb_compression
-      percentile: P20
+      threshold: 0.0427
+      bad_rate_signal: 0.4783
+      bad_rate_rest: 0.4274
+      bad_rate_diff: +0.0508
+    - feature: bpc_cvd_z
+      percentile: P5
       direction: low
-      threshold: 0.1985
-      bad_rate_signal: 0.4734
-      bad_rate_rest: 0.4231
-      bad_rate_diff: +0.0503
+      threshold: -2.0018
+      bad_rate_signal: 0.4732
+      bad_rate_rest: 0.4277
+      bad_rate_diff: +0.0454
 

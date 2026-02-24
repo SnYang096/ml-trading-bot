@@ -1,93 +1,38 @@
-## ME Gate Archetype v4.0 (60T)
-# ME = Energy × Acceleration × Participation
-# Gate 只回答"环境允许吗？"
-#
-# 更新: 2026-02-21  timeframe=60T  prefilter=atr_percentile>=0.922
-# 数据源: train_final_20260221_165955_rr_extreme (8728 samples)
-#
-# 60T + prefilter 结论:
-#   1. me_cvd_alignment=0 是唯一有效 hard gate (bad=50% vs 34%, Lift=1.21)
-#   2. 原 energy/volume/accel gate 在 prefilter 后无区分力（已被隐式覆盖）
-#   3. guardrail 的 atr_pct/volume_surge/volume_ratio 在 prefilter 后全部失效
+# ME Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260224_125251/strategies/me/gate_draft.yaml
+# 优化规则: 2/10 条通过优化, 8 条已移除
 
 schema:
   phases:
-    - system_safety
-    - hard_gate
-    - guardrail
-    - preconditions
-    - evidence
-    - decision
-  evaluation_order: system_safety -> hard_gate -> guardrail -> preconditions -> evidence -> decision
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
     failure_budget:
-      max_hard_deny_rate: 0.50
+      max_hard_deny_rate: 0.5
       alert_threshold: 0.45
-
-# ============================================================
-# 🔴 Hard Gates (必要条件 - 不满足则拒绝)
-# ============================================================
-# 60T 数据扫描结果: 仅 me_cvd_alignment 有稳定区分力
 hard_gates:
-  # [60T rr_extreme] CVD 方向不一致 → deny
-  # 数据: cvd_alignment=0 时 bad=50.0%, cvd_alignment=1 时 bad=34.0%
-  # Lift=1.21, 过滤 45.5% 样本
-  - id: me_hg_flow_misaligned
-    tag: ME_FLOW_MISALIGNED
-    phase: hard_gate
-    priority: 10
-    frozen: false
-    reason: "ME 订单流方向不一致（CVD alignment=0, bad=50% vs 34%）"
-    when:
-      me_cvd_alignment:
-        value_lt: 0.525  # plateau-validated: Lift=0.364, PassRate=0.545
-    then:
-      action: deny
-    comment: |
-      60T 数据唯一稳定 hard gate（optimizer 平坦高原验证通过）。
-      me_cvd_alignment 是 binary 特征（0/1），=0 表示 CVD 方向与价格不一致。
-      deny 后保留 54.5% 交易，bad rate 从 41.3% 降至 34.0%。
-      语义: 动能扩张必须有订单流确认，否则是虚假突破。
-
-  # --- 以下为 v3.0 遗留规则，60T+prefilter 下已失效，保留注释备查 ---
-  # [DISABLED] me_hg_energy_low: me_atr_pct < 0.65
-  #   60T 结果: prefilter(atr_pct>=0.922)后仅剩5.9%样本低于0.65, bad=0.420 vs 0.412, 无区分力
-  # [DISABLED] me_hg_extreme_decel: me_accel_5k < -0.53
-  #   60T 结果: optimizer 无法找到满足 lift/pass_rate 要求的阈值
-  # [DISABLED] me_hg_vol_divergence_high: me_vol_divergence > 0.53
-  #   60T 结果: optimizer 无法找到满足 lift/pass_rate 要求的阈值
-
-# ============================================================
-# 🛡️ Strategy Guardrails (策略前提护栏)
-# ============================================================
-# 60T + prefilter 下: atr_pct/volume_surge/volume_ratio 全部失效
-# 仅保留 flow 一致性（已提升为 hard gate），其余注释备查
+- id: gate_shd_pct
+  tag: HARD_SHD_PCT
+  phase: hard_gate
+  priority: 10
+  reason: shd_pct 触发树分裂条件 (分裂 2 次)
+  when:
+    shd_pct:
+      value_gt: 0.55
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.5500, lift=0.244'
+- id: gate_evt_scale
+  tag: HARD_EVT_SCALE
+  phase: hard_gate
+  priority: 18
+  reason: evt_scale 触发树分裂条件 (分裂 1 次)
+  when:
+    evt_scale:
+      value_lt: 0.6004
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.6004, lift=0.379'
 guardrails: []
-  # --- v3.0 遗留 guardrails，60T+prefilter 下无区分力 ---
-  # [DISABLED] me_guardrail_energy_insufficient: me_atr_pct < 0.40
-  #   prefilter 已保证 atr_percentile >= 0.922，此条永远不触发
-  # [DISABLED] me_guardrail_flow_inconsistent: me_cvd_alignment < 0.40
-  #   已提升为 hard_gate (me_hg_flow_misaligned)
-  # [DISABLED] me_guardrail_volume_insufficient: me_volume_surge < 0.30
-  #   60T: bad_in=0.414 vs bad_out=0.412, 无区分力
-  # [DISABLED] me_guardrail_volume_ratio_low: volume_ratio_pct < 0.60
-  #   60T: bad_in=0.406 vs bad_out=0.421, 无区分力
-
-# ============================================================
-# 🔵 System Safety (市场级保护)
-# ============================================================
-system_safety: []
-  # - id: safety_reflexivity
-  #   tag: SYSTEM_REFLEXIVITY
-  #   phase: system_safety
-  #   priority: 0
-  #   reason: "[SYSTEM] 反身性拥挤度过高"
-  #   when:
-  #     shd_pct:
-  #       value_gt: 0.8
-  #     ofci_pct:
-  #       value_gt: 0.8
-  #   then:
-  #     action: deny
-
-post_gate_filters: []

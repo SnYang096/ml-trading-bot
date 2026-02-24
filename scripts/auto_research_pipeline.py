@@ -1395,6 +1395,8 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
 
 def _cmd_list_experiments(history_dir: Path, strategy: str):
     """列出指定策略的所有历史实验."""
+    import time
+
     strat_dir = history_dir / strategy
     if not strat_dir.exists():
         print(f"\n📋 {strategy.upper()}: 无历史实验")
@@ -1402,14 +1404,21 @@ def _cmd_list_experiments(history_dir: Path, strategy: str):
 
     runs = sorted(strat_dir.iterdir())
     print(f"\n📋 {strategy.upper()} 历史实验 ({len(runs)} 次):")
-    print(f"{'─'*80}")
-    print(f"  {'时间戳':<22s} {'Sharpe':>10s} {'Trades':>8s} {'决策':>8s}  备注")
-    print(f"{'─'*80}")
+    print(f"{'─'*100}")
+    print(
+        f"  {'时间戳':<22s} {'创建时间':<15s} {'Sharpe':>10s} {'Trades':>8s} {'决策':>8s}  备注"
+    )
+    print(f"{'─'*100}")
 
     for run_dir in runs:
+        # 获取目录创建时间
+        created_time = time.strftime(
+            "%Y-%m-%d %H:%M", time.localtime(run_dir.stat().st_ctime)
+        )
+
         report_file = run_dir / "report.json"
         if not report_file.exists():
-            print(f"  {run_dir.name:<22s}  (无 report.json)")
+            print(f"  {run_dir.name:<22s} {created_time:<15s}  (无 report.json)")
             continue
 
         report = json.loads(report_file.read_text(encoding="utf-8"))
@@ -1428,7 +1437,7 @@ def _cmd_list_experiments(history_dir: Path, strategy: str):
             f"{sharpe:.4f}" if isinstance(sharpe, (int, float)) else str(sharpe)
         )
         print(
-            f"  {run_dir.name:<22s} {sharpe_str:>10s} {str(trades):>8s} {emoji}{decision:>6s}  {note}"
+            f"  {run_dir.name:<22s} {created_time:<15s} {sharpe_str:>10s} {str(trades):>8s} {emoji}{decision:>6s}  {note}"
         )
 
 

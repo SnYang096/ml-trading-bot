@@ -65,80 +65,154 @@ candidates:
 # 数据源: features_labeled.parquet, 157,086 行, 2023-01 ~ 2025-12
 # 基线: always-long  Median RR=+0.0593, Bad Rate=44.2%
 
-last_evaluation:
-  # ── 自动生成 by --compare-features (2026-02-21) ──
-  timestamp: "2026-02-21"
-  data_source: "features_labeled.parquet"
-  n_rows: 157086
-  baseline_median_rr: +0.0593
-  baseline_bad_rate: 0.4419
+# ── direction_rules (自动生成 by --promote 2026-02-24) ──
+# 选择标准: med_rr>0 + p<0.05 + short%>=20% + temporal CV<1.5 + 未衰减
+# 级联规则: 规则1覆盖的行不再用规则2, 依此类推
+direction_rules:
+  - method: feature_sign
+    feature: me_delta_net_flow
+    transform: sign
+    description: "规则1: me_delta_net_flow (med_rr=+0.1273, p=0.005, short=43%)"
+  - method: feature_sign
+    feature: me_cvd_alignment
+    transform: center_sign
+    description: "规则2: me_cvd_alignment (med_rr=+0.1273, p=0.005, short=43%)"
+  - method: feature_sign
+    feature: macd_signal_atr
+    transform: sign
+    description: "规则3: macd_signal_atr (med_rr=+0.0659, p=0.005, short=49%)"
 
-  # ── Median Lift > 0 (4 个) ──
+last_evaluation:
+  # ── 自动生成 by --compare-features (2026-02-24) ──
+  timestamp: "2026-02-24"
+  data_source: "features_labeled.parquet"
+  n_rows: 157386
+  baseline: random_direction  # 随机方向 (期望 median ≈ 0)
+  always_long_median_rr: +0.0566  # 参考
+  always_long_bad_rate: 0.4420  # 参考
+
+  # ── Med.RR > 0 (优于随机, 16 个) ──
   positive_lift:
     - feature: me_delta_net_flow
       transform: sign
-      median_lift: +0.0778
-      bad_rate_reduction_pct: +0.50
+      median_rr_in_dir: +0.1273
+      p_random: 0.0050
+      lift_vs_long: +0.0707
+      bad_rate_reduction_pct: +0.43
       short_pct: 43.4
-      temporal_cv: 3.53
-      recent_decay: "0/3"
     - feature: me_cvd_alignment
       transform: center_sign
-      median_lift: +0.0778
-      bad_rate_reduction_pct: +0.50
+      median_rr_in_dir: +0.1273
+      p_random: 0.0050
+      lift_vs_long: +0.0707
+      bad_rate_reduction_pct: +0.43
       short_pct: 43.4
-      temporal_cv: 3.53
-      recent_decay: "0/3"
     - feature: macd_signal_atr
       transform: sign
-      median_lift: +0.0082
+      median_rr_in_dir: +0.0659
+      p_random: 0.0050
+      lift_vs_long: +0.0093
       bad_rate_reduction_pct: +0.03
-      short_pct: 48.7
-      temporal_cv: 12.89
-      recent_decay: "2/3"
+      short_pct: 48.8
     - feature: macd_atr
       transform: sign
-      median_lift: +0.0044
+      median_rr_in_dir: +0.0620
+      p_random: 0.0050
+      lift_vs_long: +0.0054
       bad_rate_reduction_pct: +0.00
-      short_pct: 48.8
-      temporal_cv: 23.31
-      recent_decay: "2/3"
-
-  # ── Lift <= 0 (兜底候选, 前 5) ──
-  fallback:
+      short_pct: 48.9
     - feature: oi_delta_price_sign
       transform: sign
-      median_lift: -0.0043
-      bad_rate_reduction_pct: -0.06
+      median_rr_in_dir: +0.0565
+      p_random: 0.0050
+      lift_vs_long: -0.0001
+      bad_rate_reduction_pct: -0.05
       short_pct: 51.9
-      temporal_cv: 2.29
-      recent_decay: "0/3"
     - feature: me_multi_tf_alignment
       transform: center_sign
-      median_lift: -0.0056
-      bad_rate_reduction_pct: -0.11
-      short_pct: 42.4
-      temporal_cv: 7.45
-      recent_decay: "3/3"
+      median_rr_in_dir: +0.0547
+      p_random: 0.0100
+      lift_vs_long: -0.0019
+      bad_rate_reduction_pct: -0.09
+      short_pct: 42.3
     - feature: price_dir_consistency_pct
       transform: center_sign
-      median_lift: -0.0057
+      median_rr_in_dir: +0.0516
+      p_random: 0.0547
+      lift_vs_long: -0.0050
       bad_rate_reduction_pct: -0.08
       short_pct: 25.9
-      temporal_cv: 2.71
-      recent_decay: "0/3"
+    - feature: price_accel_pct
+      transform: center_sign
+      median_rr_in_dir: +0.0494
+      p_random: 0.0100
+      lift_vs_long: -0.0072
+      bad_rate_reduction_pct: -0.07
+      short_pct: 50.0
     - feature: price_position
       transform: center_sign
-      median_lift: -0.0099
-      bad_rate_reduction_pct: -0.09
-      short_pct: 48.7
-      temporal_cv: 3.77
-      recent_decay: "1/3"
+      median_rr_in_dir: +0.0488
+      p_random: 0.0149
+      lift_vs_long: -0.0079
+      bad_rate_reduction_pct: -0.08
+      short_pct: 48.8
     - feature: roc_20
       transform: sign
-      median_lift: -0.0124
+      median_rr_in_dir: +0.0461
+      p_random: 0.0299
+      lift_vs_long: -0.0105
       bad_rate_reduction_pct: -0.13
+      short_pct: 49.3
+    - feature: fp_volume_skew
+      transform: sign
+      median_rr_in_dir: +0.0461
+      p_random: 0.1045
+      lift_vs_long: -0.0105
+      bad_rate_reduction_pct: -0.09
+      short_pct: 25.4
+    - feature: sma_200_position
+      transform: sign
+      median_rr_in_dir: +0.0403
+      p_random: 0.0149
+      lift_vs_long: -0.0163
+      bad_rate_reduction_pct: -0.14
+      short_pct: 49.5
+    - feature: vpin_signed_imbalance_max
+      transform: sign
+      median_rr_in_dir: +0.0403
+      p_random: 0.0249
+      lift_vs_long: -0.0163
+      bad_rate_reduction_pct: -0.14
+      short_pct: 44.7
+    - feature: price_velocity_pct
+      transform: center_sign
+      median_rr_in_dir: +0.0309
+      p_random: 0.0597
+      lift_vs_long: -0.0257
+      bad_rate_reduction_pct: -0.23
+      short_pct: 49.6
+    - feature: me_volume_accel
+      transform: center_sign
+      median_rr_in_dir: +0.0210
+      p_random: 0.1592
+      lift_vs_long: -0.0356
+      bad_rate_reduction_pct: -0.37
       short_pct: 49.2
-      temporal_cv: 4.77
-      recent_decay: "2/3"
+    - feature: me_accel_2k
+      transform: sign
+      median_rr_in_dir: +0.0045
+      p_random: 0.3980
+      lift_vs_long: -0.0521
+      bad_rate_reduction_pct: -0.34
+      short_pct: 50.5
+
+  # ── Med.RR <= 0 (不优于随机, 前 5) ──
+  fallback:
+    - feature: me_cvd_strength
+      transform: center_sign
+      median_rr_in_dir: -0.0024
+      p_random: 0.0299
+      lift_vs_long: -0.0590
+      bad_rate_reduction_pct: -0.48
+      short_pct: 75.7
 

@@ -9,7 +9,7 @@
 # ── 时间窗口规则 ──────────────────────────────────────────────
 dates:
   start_date: "2023-01-01"     # 最早可用训练数据
-  holdout_months: 14           # Holdout 固定窗口 (月)
+  holdout_months: 6           # Holdout 固定窗口 (月)
   # end_date: auto             # 默认自动检测 data/parquet_data 最新日期
   # holdout_start: auto        # = end_date - holdout_months
 
