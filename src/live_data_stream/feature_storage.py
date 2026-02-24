@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,34 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
+
+_logger = logging.getLogger(__name__)
+
+
+def _cleanup_dated_parquet(root: Path, days: int) -> int:
+    """通用: 清理 root/{symbol}/{YYYY-MM-DD}.parquet 中超过 days 天的文件"""
+    cutoff = datetime.now() - timedelta(days=days)
+    removed = 0
+    if not root.exists():
+        return 0
+    for symbol_dir in root.iterdir():
+        if not symbol_dir.is_dir():
+            continue
+        for f in symbol_dir.glob("*.parquet"):
+            # 文件名格式: YYYY-MM-DD.parquet
+            try:
+                file_date = datetime.strptime(f.stem, "%Y-%m-%d")
+            except ValueError:
+                continue
+            if file_date < cutoff:
+                try:
+                    f.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+    if removed > 0:
+        _logger.info("cleanup: 清理 %s 下 %d 个 > %d 天的旧文件", root.name, removed, days)
+    return removed
 
 
 @dataclass
@@ -106,6 +135,14 @@ class Feature4HStorage:
         combined = combined.drop_duplicates(subset=["timestamp"], keep="last")
         combined = combined.sort_values("timestamp").reset_index(drop=True)
         return combined
+
+    def cleanup_old_files(self, days: int = 30) -> int:
+        """删除超过 days 天的旧 parquet 文件
+
+        Returns:
+            删除的文件数
+        """
+        return _cleanup_dated_parquet(self.root, days)
 
 
 @dataclass
@@ -198,6 +235,14 @@ class Feature15MinStorage:
         if len(df) == 0:
             return None
         return pd.Timestamp(df["timestamp"].max())
+
+    def cleanup_old_files(self, days: int = 30) -> int:
+        """删除超过 days 天的旧 parquet 文件
+
+        Returns:
+            删除的文件数
+        """
+        return _cleanup_dated_parquet(self.root, days)
 
 
 @dataclass

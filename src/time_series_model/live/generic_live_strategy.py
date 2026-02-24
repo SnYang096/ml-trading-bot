@@ -281,6 +281,7 @@ class GenericLiveStrategy:
         # 状态
         self._quantiles: Dict[str, Dict[str, float]] = {}
         self._last_tier_params: Optional[Dict[str, Any]] = None
+        self._last_funnel: Dict[str, bool] = {}  # 上次 decide() 的漏斗结果
 
         # 加载配置
         self.load_configs()
@@ -436,16 +437,23 @@ class GenericLiveStrategy:
           5. Execution: 从 execution.yaml 生成执行参数
         """
         if not features:
+            self._last_funnel = {}
             return []
+
+        # 漏斗跟踪
+        funnel: Dict[str, bool] = {}
 
         # ── 1. 方向判定 ──
         if self.direction_evaluator is None:
             logger.error("❌ Direction evaluator not initialized")
+            self._last_funnel = funnel
             return []
 
         direction, rule_id = self.direction_evaluator.evaluate(features)
+        funnel["direction"] = direction != 0
         if direction == 0:
             logger.debug("❌ No valid direction found")
+            self._last_funnel = funnel
             return []
 
         side_str = "BUY" if direction == 1 else "SELL"
@@ -458,7 +466,10 @@ class GenericLiveStrategy:
             )
             if not gate_passed:
                 logger.debug(f"❌ Gate denied: {gate_reasons}")
+                funnel["gate"] = False
+                self._last_funnel = funnel
                 return []
+            funnel["gate"] = True
             logger.debug(f"✅ Gate passed (weight: {gate_weight:.3f})")
 
         # ── 3. Entry Filter 检查 ──
@@ -466,7 +477,10 @@ class GenericLiveStrategy:
             ef_passed = self.entry_filter_checker.check(features)
             if not ef_passed:
                 logger.debug("❌ Entry filter denied")
+                funnel["entry_filter"] = False
+                self._last_funnel = funnel
                 return []
+            funnel["entry_filter"] = True
             logger.debug("✅ Entry filter passed")
 
         # ── 4. Evidence 评分 ──
@@ -479,6 +493,8 @@ class GenericLiveStrategy:
             # 应用 gate weight
             evidence_score = evidence_score * gate_weight
             logger.debug(f"📊 Evidence score: {evidence_score:.3f}")
+
+        funnel["evidence"] = True  # 走到这里就算通过
 
         # ── 5. 执行参数生成 ──
         exec_params = {}
@@ -518,6 +534,7 @@ class GenericLiveStrategy:
             f"✅ Signal generated: {action} {symbol} "
             f"(evidence={evidence_score:.3f}, tier={exec_params.get('tier_name')})"
         )
+        self._last_funnel = funnel
         return [intent]
 
     # ── 兼容属性: 脚本通过 strat._archetype 访问 archetype ──

@@ -13,9 +13,13 @@
 | 研究 Pipeline | ✅ 完成 | BPC/ME/FER 三策略 ADOPT + PCM PASS |
 | PCM 联合回测 | ✅ 完成 | conflict_rate=3.42%, sharpe_daily=28.79 |
 | 多时间框架研究 | ✅ 完成 | BPC/FER→4H, ME→1H |
-| **多时间框架实盘** | ❌ 阻塞 | run_live.py 只用单一 bar_minutes=240，ME(1H) 会被错误处理 |
+| **多时间框架实盘代码** | ✅ 完成 | live_pcm/order_flow_listener/run_live.py 三文件改造，meta.yaml 动态 timeframe |
+| **多时间框架本地验证** | ⏳ 待验证 | 观察模式 24h+ 运行确认 |
+| 配置路径隔离 | ✅ 完成 | _infer_base_dir 重写，live/ 自包含，persist_to=data/db/ |
+| 配置部署工具 | ✅ 完成 | deploy_config_to_live.py 支持 GLOBAL_CONFIGS (constitution + pcm_regime) |
+| .gitignore 安全 | ✅ 完成 | live/*/data/ + *.db 排除，运行时数据不进 git |
 | Terraform 基础设施 | ✅ 已搭建 | 腾讯云 ap-tokyo, 2vCPU/4GB, Docker + systemd |
-| 配置部署工具 | ✅ 完成 | deploy_config_to_live.py (diff + deploy + git-commit) |
+| CI/CD 流程 | 📋 TODO | 本地→远程自动化部署流程未搭建 |
 | 监控脚本 (本地) | ✅ 完成 | weekly/monthly monitor + feature drift + retrain trigger |
 | 实盘监控 (服务器) | 📋 设计完成 | 见 实盘监控系统设计.md，代码待实现 |
 
@@ -106,26 +110,30 @@ BinanceWS tick → OrderFlowListener
 
 ---
 
-## 🟡 1.2 实盘监控基础设施 (P1)
+## ✅ 1.2 实盘监控基础设施 (P1)
 
 > **依赖**: 1.1 完成后才能产生有意义的监控数据
 > **参考**: `实盘监控系统设计.md` Part B
 
 ### 1.2.1 15min 统计快照 (心理安抚核心)
 
-- [ ] 新增 `src/time_series_model/live/stats_collector.py`
-  - 信号漏斗计数: direction → prefilter → gate → evidence → entry → pcm → order
+- [x] 新增 `src/time_series_model/live/stats_collector.py`
+  - 信号漏斗计数: direction → gate → entry_filter → evidence → pcm → order
   - 按策略分层统计 (bpc/me/fer)
   - 持仓状态快照
-  - 系统健康指标 (CPU/内存/WS 状态)
-- [ ] 写入 SQLite `data/live_monitor.db` 的 `stats_15min` 表
-- [ ] 自动清理 > 30 天数据
+  - 系统健康指标 (CPU/内存 via psutil)
+- [x] 写入 SQLite `live/highcap/data/db/live_monitor.db` 的 `stats_15min` 表
+- [x] 自动清理 > 30 天数据
+- [x] `GenericLiveStrategy.decide()` 添加 `_last_funnel` 漏斗跟踪
+- [x] `LivePCM.decide()` 收集各策略漏斗数据 + `record_pcm_selected()`
+- [x] `OrderFlowListener` 每 15min 触发 flush + 下单记录
+- [x] `run_live.py` 创建 StatsCollector 并注入 PCM + listener
 
 ### 1.2.2 特征快照 retention
 
-- [ ] `Feature15MinStorage` / `Feature4HStorage` 添加 retention 清理
-  - 保留最近 30 天，自动删除旧文件
-  - 实现: 简单的 `cleanup_old_files(days=30)` 方法
+- [x] `Feature15MinStorage` / `Feature4HStorage` 添加 `cleanup_old_files(days=30)`
+  - 保留最近 30 天，自动删除旧 parquet 文件
+  - 每天触发一次 (在 `_flush_stats()` 中检查)
 
 ### 1.2.3 Telegram 告警通道 (可选，上线前非必须)
 
@@ -141,20 +149,22 @@ BinanceWS tick → OrderFlowListener
 
 ---
 
-## 🟡 1.3 配置部署验证 (P1)
+## ✅ 1.3 配置部署验证 (P1) — 已完成
 
 ### 1.3.1 研究配置 → 生产配置
 
-- [ ] 运行 `python scripts/deploy_config_to_live.py --diff` 检查差异
-- [ ] 确认 `live/highcap/config/strategies/` 下三策略配置是最新 ADOPT 版本
-- [ ] 确认 `live/highcap/config/constitution/constitution.yaml` 与研究一致
+- [x] 运行 `python scripts/deploy_config_to_live.py --diff` 检查差异 → 全部同步，零差异
+- [x] 确认 `live/highcap/config/strategies/` 下三策略配置是最新 ADOPT 版本
+- [x] 确认 `live/highcap/config/constitution/constitution.yaml` 与研究一致
+- [x] 确认 `live/highcap/config/pcm_regime.yaml` 与研究一致
 
 ### 1.3.2 启动命令统一
 
-- [ ] 更新 `z实验_006_统一实盘/实盘启动命令.md`:
-  - 从 `run_three_strategies_live.py` 改为 `run_live.py`
-  - 添加 `MLBOT_ME_BAR_MINUTES=60` 环境变量
+- [x] 更新 `z实验_006_统一实盘/实盘启动命令.md`:
+  - 从 `run_three_strategies_live.py` 改为 `bash live/scripts/start_live.sh`
+  - timeframe 从 meta.yaml 动态读取，无需硬编码环境变量
   - 更新 PCM 优先级说明 (LV > FER > ME > BPC)
+- [x] 更新 `三策略实盘就绪检查清单.md` 启动命令对齐
 
 ---
 

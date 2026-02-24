@@ -1166,7 +1166,8 @@ class IncrementalFeatureComputer:
                 f"Warmup 不足: {len(nan_pct_features)} 个百分位特征为 NaN "
                 f"(rolling window 未满足 min_periods). "
                 f"缺失特征: {nan_pct_features}. "
-                f"请增加 warmup 数据量（当前 bars: {len(bars_tf)}）。"
+                f"当前 bars: {len(bars_tf)}. "
+                f"请运行: bash live/scripts/prepare_warmup_ticks.sh highcap 6"
             )
 
         # 缓存结果（用于 get_features() 兼容接口）

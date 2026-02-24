@@ -413,6 +413,9 @@ class LivePCM:
             DEFAULT_ARCHETYPE_PRIORITY
         )
 
+        # 可选: 监控统计收集器
+        self.stats_collector = None  # 通过外部注入 StatsCollector 实例
+
     # ── 注册 / 管理 ──
 
     def register(
@@ -548,6 +551,15 @@ class LivePCM:
                     features=strat_features, symbol=symbol, bars=bars
                 )
                 all_intents.extend(intents)
+
+                # 收集漏斗统计
+                if self.stats_collector is not None:
+                    funnel = getattr(strategy, "_last_funnel", {})
+                    self.stats_collector.record_strategy_eval(
+                        symbol=symbol,
+                        strategy=arch_name,
+                        funnel=funnel,
+                    )
             except Exception:
                 logger.exception(
                     "PCM: 策略 %s 对 %s 调用 decide() 异常", arch_name, symbol
@@ -568,6 +580,8 @@ class LivePCM:
                     intent.archetype,
                 )
                 return []
+            if self.stats_collector is not None:
+                self.stats_collector.record_pcm_selected(symbol, intent.archetype)
             return [self._apply_regime_scale(intent)]
 
         regime_str = f" [regime={self.current_regime}]" if self._regime_detector else ""
@@ -598,6 +612,10 @@ class LivePCM:
                 ev,
                 regime_str,
             )
+            if self.stats_collector is not None:
+                self.stats_collector.record_pcm_selected(
+                    symbol, override_winner.archetype
+                )
             return [self._apply_regime_scale(override_winner)]
 
         # ── 5. 多候选：动态优先级 + Evidence 排序 (Layer 2) ──
@@ -645,6 +663,8 @@ class LivePCM:
             self.get_archetype_scale(best_intent.archetype),
             regime_str,
         )
+        if self.stats_collector is not None:
+            self.stats_collector.record_pcm_selected(symbol, best_intent.archetype)
         return [self._apply_regime_scale(best_intent)]
 
     # ── Layer 3: Override 极端信号覆盖 ──

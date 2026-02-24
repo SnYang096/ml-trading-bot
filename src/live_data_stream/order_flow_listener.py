@@ -138,6 +138,7 @@ class OrderFlowListener:
         self.order_manager = order_manager
         self.trade_size = trade_size
         self.decision_handler = decision_handler
+        self.stats_collector = None  # 可选: StatsCollector 实例，由外部注入
         self.extra_feature_computers: Dict[str, "IncrementalFeatureComputer"] = {}
         self._open_positions: Dict[str, Dict[str, Any]] = {}
         
@@ -163,6 +164,7 @@ class OrderFlowListener:
         # 节流：上次保存未完成bar的时间
         self._last_incomplete_save_time: float = 0.0
         self._incomplete_save_interval: float = 10.0  # 每10秒保存一次
+        self._last_storage_cleanup_date: Optional[str] = None  # 每天最多清理一次
         
         # 运行状态
         self.is_running = False
@@ -407,8 +409,8 @@ class OrderFlowListener:
         now = pd.Timestamp.now(tz="UTC")
         
         # ── 1. 从磁盘读取数据 (历史主体) ──
-        # 1min bars: 100 天（覆盖 atr_percentile window=540 × 4h = 90 天）
-        bar_lookback_days = 100
+        # 1min bars: 150 天（覆盖 atr_percentile window=540 + shift(1) ≈ 541 bars ≈ 90天，留充足余量）
+        bar_lookback_days = 150
         bar_start = (now - timedelta(days=bar_lookback_days)).strftime("%Y-%m-%d")
         bar_end = now.strftime("%Y-%m-%d")
         bars_disk = self.storage_manager.bar_1min.load_range(
@@ -714,12 +716,16 @@ class OrderFlowListener:
             logger.info("[%s] 无交易信号", self.symbol)
             # 即使没有新 intent，仍需管理已有持仓
             self._enforce_open_positions(features=all_features)
+            # 每 15min 决策周期结束后 flush 统计
+            self._flush_stats()
             return
 
         for intent in intents:
             logger.info("[%s] 交易信号: %s", self.symbol, intent)
             self._execute_intent(intent=intent, features=all_features)
         self._enforce_open_positions(features=all_features)
+        # 每 15min 决策周期结束后 flush 统计
+        self._flush_stats()
 
     def _execute_intent(self, intent: TradeIntent, features: Dict[str, Any]) -> None:
         if intent.action == "NO_TRADE":
@@ -832,6 +838,13 @@ class OrderFlowListener:
                 position_id=position_id,
             )
 
+        # 记录下单到统计收集器
+        if self.stats_collector is not None:
+            archetype_name = str(intent.archetype or "unknown").lower()
+            self.stats_collector.record_order_placed(
+                symbol=self.symbol, strategy=archetype_name,
+            )
+
         self._open_positions[position_id] = {
             "side": str(intent.action),
             "qty": float(qty),
@@ -867,6 +880,31 @@ class OrderFlowListener:
                 locked_profit=intent.locked_profit,
             )
             self.constitution_executor.save_runtime_state(self.runtime_state)
+
+    def _flush_stats(self) -> None:
+        """将 stats_collector 当前窗口数据 flush 到 SQLite"""
+        if self.stats_collector is None:
+            return
+        try:
+            positions = {
+                pid: {"side": p["side"], "qty": p["qty"]}
+                for pid, p in self._open_positions.items()
+            }
+            self.stats_collector.flush(positions=positions)
+        except Exception:
+            logger.exception("[%s] stats_collector flush 失败", self.symbol)
+
+        # 每天触发一次 feature 文件清理 (仅当 auto_cleanup=True)
+        if getattr(self.stats_collector, 'auto_cleanup', False):
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if self._last_storage_cleanup_date != today:
+                self._last_storage_cleanup_date = today
+                try:
+                    sm = self.storage_manager
+                    sm.feature_15min.cleanup_old_files(days=30)
+                    sm.feature_4h.cleanup_old_files(days=30)
+                except Exception:
+                    logger.exception("[%s] feature storage cleanup 失败", self.symbol)
 
     def _resolve_entry_price(self, features: Dict[str, Any]) -> Optional[float]:
         for key in ("close", "price", "last_price", "mark_price"):

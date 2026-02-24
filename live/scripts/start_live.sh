@@ -12,7 +12,6 @@ export LIVE_ROOT  # 提前导出，供后续 Python 脚本使用
 echo "============================================================"
 echo "🚀 实盘系统启动"
 echo "============================================================"
-echo "Symbol(s): $SYMBOLS"
 echo "Universe: $UNIVERSE"
 echo "Live Root: $LIVE_ROOT"
 echo ""
@@ -67,6 +66,7 @@ fi
 
 echo ""
 echo "✅ 依赖检查通过"
+echo "Symbol(s): $SYMBOLS"
 echo ""
 
 # 2. 配置环境变量

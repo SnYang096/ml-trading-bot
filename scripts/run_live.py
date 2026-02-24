@@ -24,6 +24,7 @@ from src.live_data_stream.order_manager_factory import init_order_manager_from_e
 from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
+from src.time_series_model.live.stats_collector import StatsCollector
 
 logger = logging.getLogger(__name__)
 
@@ -300,7 +301,25 @@ def _setup_three_strategies(
         order_manager=order_manager,
     )
 
-    # ── 5. 注入 decision_handler + 额外 FC ──
+    # ── 5. 注入 decision_handler + 额外 FC + stats_collector ──
+    # 监控统计收集器 (始终启用，自动清理默认关闭)
+    stats_db_path = os.path.join(
+        os.getenv("MLBOT_LIVE_BASE", "live/highcap"),
+        "data",
+        "db",
+        "live_monitor.db",
+    )
+    auto_cleanup = os.getenv("MLBOT_STATS_AUTO_CLEANUP", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    stats_collector = StatsCollector(db_path=stats_db_path, auto_cleanup=auto_cleanup)
+    pcm.stats_collector = stats_collector
+    logger.info(
+        "✅ StatsCollector 启用: %s (auto_cleanup=%s)", stats_db_path, auto_cleanup
+    )
+
     for sym in symbols:
         listener = manager.get_listener(sym)
         if listener is None:
@@ -309,6 +328,8 @@ def _setup_three_strategies(
         listener.order_manager = order_manager
         if trade_size > 0:
             listener.trade_size = trade_size
+        # 注入监控统计收集器
+        listener.stats_collector = stats_collector
         # 注入 ME FC (timeframe 从 meta.yaml 读取)
         listener.extra_feature_computers = {
             tf_me: _make_feature_computer_me(sym),
