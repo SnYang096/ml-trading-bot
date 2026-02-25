@@ -54,8 +54,20 @@ else
   SYMBOLS="$SYMBOLS_ARG"
 fi
 
-# 1. 依赖自检
-echo "🔍 第1步：依赖自检..."
+# 1. Warmup 数据检查与补全
+echo "📦 第1步：Warmup 数据检查..."
+TICKS_DIR="$LIVE_ROOT/data/ticks"
+if [ -d "$TICKS_DIR" ] && [ "$(ls -A $TICKS_DIR 2>/dev/null)" ]; then
+  echo "   ✅ 已有 warmup 数据，补全缺失的 daily 数据..."
+  bash live/scripts/prepare_warmup_ticks.sh "$UNIVERSE" 6 --fill-gap
+else
+  echo "   ⚠️  未找到 warmup 数据，执行完整下载（6个月）..."
+  bash live/scripts/prepare_warmup_ticks.sh "$UNIVERSE" 6
+fi
+echo ""
+
+# 2. 依赖自检
+echo "🔍 第2步：依赖自检..."
 python "live/scripts/check_dependencies.py" --symbols "$SYMBOLS" --live-root "$LIVE_ROOT"
 
 if [ $? -ne 0 ]; then
@@ -69,8 +81,8 @@ echo "✅ 依赖检查通过"
 echo "Symbol(s): $SYMBOLS"
 echo ""
 
-# 2. 配置环境变量
-echo "⚙️  第2步：配置环境变量..."
+# 3. 配置环境变量
+echo "⚙️  第3步：配置环境变量..."
 
 export MLBOT_LIVE_SYMBOLS="$SYMBOLS"
 export MLBOT_LIVE_STORAGE_BASE="$LIVE_ROOT/data"
@@ -100,8 +112,8 @@ export MLBOT_ORDER_MODE="test"  # test/paper/live
 echo "   ✅ 环境变量已配置"
 echo ""
 
-# 3. 启动实盘系统
-echo "🚀 第3步：启动实盘系统..."
+# 4. 启动实盘系统
+echo "🚀 第4步：启动实盘系统..."
 echo ""
 
 python scripts/run_live.py

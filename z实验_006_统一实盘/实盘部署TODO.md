@@ -190,14 +190,16 @@ BinanceWS tick → OrderFlowListener
 ### 2.1.2 配置 GitHub Secrets
 
 - [ ] 进入仓库 → Settings → Secrets and variables → Actions → New repository secret
-- [ ] 添加以下 4 个 Secrets:
+- [x] 添加以下 6 个 Secrets:
 
 | Secret 名称 | 值 | 获取方式 |
 |---|---|---|
 | `DEPLOY_HOST` | 服务器公网 IP | 腾讯云控制台 → 云服务器 → 实例列表 |
-| `DEPLOY_USER` | `root`（或 `ubuntu`） | 取决于服务器 OS 配置 |
-| `DEPLOY_SSH_KEY` | SSH 私钥完整内容 | 本地执行 `cat ~/.ssh/id_ed25519` |
-| `GHCR_TOKEN` | 上一步生成的 PAT | GitHub PAT 页面 |
+| `DEPLOY_USER` | `ubuntu` | 服务器 OS 默认用户 |
+| `DEPLOY_SSH_KEY` | SSH 私钥完整内容 | 本地 `cat ~/.ssh/id_tencent_cloud_ssh` |
+| `GHCR_TOKEN` | GitHub PAT | 需 `read:packages` + `write:packages` |
+| `BINANCE_API_KEY` | Binance API Key | Binance API Management |
+| `BINANCE_API_SECRET` | Binance API Secret | Binance API Management |
 
 ### 2.1.3 验证 SSH 连通性
 
@@ -216,21 +218,19 @@ BinanceWS tick → OrderFlowListener
 
 ### 2.2.1 运行 Bootstrap 脚本（一次性）
 
-- [ ] 从本地执行（自动安装 Docker + 创建目录 + 配置 systemd）:
+- [x] 从本地执行（自动安装 Docker + 创建目录 + 配置 systemd）:
   ```bash
-  ssh root@<SERVER_IP> 'bash -s' < scripts/server_bootstrap.sh
+  ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 'sudo bash -s' < scripts/server_bootstrap.sh
   ```
-- [ ] 执行后自动完成:
+- [x] 执行后自动完成:
   - Docker 安装并启动
   - `/opt/quant-engine/live/highcap/data/{db,ticks,features_15min,features_4h}/` 目录创建
   - `quant-engine.service` systemd 服务配置并启用
 
-### 2.2.2 上传 Binance API 密钥
+### 2.2.2 Binance API 密钥
 
-- [ ] 本地执行:
-  ```bash
-  scp live/binance_mainnet.env root@<SERVER_IP>:/opt/quant-engine/live/
-  ```
+- [x] 已通过 GitHub Secrets 注入（`BINANCE_API_KEY` + `BINANCE_API_SECRET`）
+- [x] 部署时 CI/CD 自动写入服务器 `/opt/quant-engine/live/binance_mainnet.env`
 - [ ] 确认 API key 权限: 只允许合约交易 + 只允许服务器 IP
 
 ### 2.2.3 安全组检查

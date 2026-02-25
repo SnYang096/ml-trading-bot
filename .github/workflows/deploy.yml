@@ -12,6 +12,8 @@
 #   DEPLOY_USER      — SSH 用户名 (如 root 或 ubuntu)
 #   DEPLOY_SSH_KEY   — SSH 私钥内容
 #   GHCR_TOKEN       — GitHub PAT (需 read:packages + write:packages)
+#   BINANCE_API_KEY  — Binance API Key
+#   BINANCE_API_SECRET — Binance API Secret
 # =============================================================
 
 name: 🚀 Build & Deploy
@@ -111,6 +113,24 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: 🔑 Write API keys to server
+        uses: appleboy/ssh-action@v1
+        env:
+          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+          BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: BINANCE_API_KEY,BINANCE_API_SECRET
+          script: |
+            cat > /opt/quant-engine/live/binance_mainnet.env << EOF
+            BINANCE_API_KEY=${BINANCE_API_KEY}
+            BINANCE_API_SECRET=${BINANCE_API_SECRET}
+            EOF
+            chmod 600 /opt/quant-engine/live/binance_mainnet.env
+            echo "✅ API keys written"
+
       - name: 🚀 Pull image & restart service
         uses: appleboy/ssh-action@v1
         env:
