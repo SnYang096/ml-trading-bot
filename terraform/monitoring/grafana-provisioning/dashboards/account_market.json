@@ -1,0 +1,599 @@
+{
+    "annotations": {
+        "list": []
+    },
+    "editable": true,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [
+        {
+            "title": "📊 Overview",
+            "url": "/d/quant-engine-main",
+            "type": "link",
+            "icon": "apps",
+            "targetBlank": false
+        },
+        {
+            "title": "📡 Signal Pipeline",
+            "url": "/d/quant-signal-pipeline",
+            "type": "link",
+            "icon": "bolt",
+            "targetBlank": false
+        }
+    ],
+    "panels": [
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 0
+            },
+            "id": 300,
+            "title": "💰 账户概览",
+            "type": "row"
+        },
+        {
+            "description": "Binance Futures 总钱包余额 (USDT)",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "currencyUSD",
+                    "decimals": 2,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 100
+                            },
+                            {
+                                "color": "green",
+                                "value": 500
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 0,
+                "y": 1
+            },
+            "id": 301,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_account_balance{type=\"total\"}",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "总余额",
+            "type": "stat"
+        },
+        {
+            "description": "可用保证金 (USDT)",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "currencyUSD",
+                    "decimals": 2,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 50
+                            },
+                            {
+                                "color": "green",
+                                "value": 200
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 6,
+                "y": 1
+            },
+            "id": 302,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_account_balance{type=\"available\"}",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "可用余额",
+            "type": "stat"
+        },
+        {
+            "description": "维持保证金率 (>1 = 爆仓, <0.5 安全)",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "decimals": 4,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.3
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.7
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 12,
+                "y": 1
+            },
+            "id": 303,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "area",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_account_margin_ratio",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "保证金使用率",
+            "type": "stat"
+        },
+        {
+            "description": "所有持仓未实现盈亏总和 (USDT)",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "currencyUSD",
+                    "decimals": 2,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.01
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 18,
+                "y": 1
+            },
+            "id": 304,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_unrealized_pnl_total",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "未实现盈亏",
+            "type": "stat"
+        },
+        {
+            "description": "账户余额历史变化",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "currencyUSD",
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineWidth": 2,
+                        "fillOpacity": 10,
+                        "gradientMode": "scheme"
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Total"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "green"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Available"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "blue"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Margin"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "orange"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 7,
+                "w": 24,
+                "x": 0,
+                "y": 5
+            },
+            "id": 305,
+            "targets": [
+                {
+                    "expr": "mlbot_account_balance{type=\"total\"}",
+                    "legendFormat": "Total"
+                },
+                {
+                    "expr": "mlbot_account_balance{type=\"available\"}",
+                    "legendFormat": "Available"
+                },
+                {
+                    "expr": "mlbot_account_balance{type=\"margin\"}",
+                    "legendFormat": "Margin"
+                }
+            ],
+            "title": "余额历史趋势",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 12
+            },
+            "id": 310,
+            "title": "📈 市场数据",
+            "type": "row"
+        },
+        {
+            "description": "各 symbol 最新资金费率 (8h 一次, 正=多头付费)",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "decimals": 4,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineWidth": 2,
+                        "fillOpacity": 10,
+                        "showPoints": "auto",
+                        "pointSize": 5
+                    },
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 13
+            },
+            "id": 311,
+            "targets": [
+                {
+                    "expr": "mlbot_funding_rate",
+                    "legendFormat": "{{symbol}}"
+                }
+            ],
+            "title": "📊 资金费率 (Funding Rate)",
+            "type": "timeseries"
+        },
+        {
+            "description": "各 symbol 标记价格实时走势",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "currencyUSD",
+                    "decimals": 2,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineWidth": 1,
+                        "fillOpacity": 5,
+                        "gradientMode": "scheme"
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 13
+            },
+            "id": 312,
+            "targets": [
+                {
+                    "expr": "mlbot_mark_price",
+                    "legendFormat": "{{symbol}}"
+                }
+            ],
+            "title": "📊 标记价格 (Mark Price)",
+            "type": "timeseries"
+        },
+        {
+            "description": "各 symbol 合约持仓量 (OI, USD估算)",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "currencyUSD",
+                    "decimals": 0,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineWidth": 2,
+                        "fillOpacity": 15,
+                        "gradientMode": "scheme"
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 13
+            },
+            "id": 313,
+            "targets": [
+                {
+                    "expr": "mlbot_open_interest_usd",
+                    "legendFormat": "{{symbol}}"
+                }
+            ],
+            "title": "📊 持仓量 (Open Interest)",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 21
+            },
+            "id": 320,
+            "title": "🖥️ 系统健康",
+            "type": "row"
+        },
+        {
+            "description": "系统 CPU 使用率",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percent",
+                    "min": 0,
+                    "max": 100,
+                    "color": {
+                        "mode": "continuous-BlYlRd"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 15,
+                        "gradientMode": "scheme"
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 6,
+                "x": 0,
+                "y": 22
+            },
+            "id": 321,
+            "targets": [
+                {
+                    "expr": "mlbot_cpu_percent",
+                    "legendFormat": "CPU"
+                }
+            ],
+            "title": "CPU 使用率",
+            "type": "timeseries"
+        },
+        {
+            "description": "系统总内存占用",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "decmbytes",
+                    "min": 0,
+                    "color": {
+                        "mode": "fixed",
+                        "fixedColor": "blue"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 15,
+                        "gradientMode": "scheme"
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 6,
+                "x": 6,
+                "y": 22
+            },
+            "id": 322,
+            "targets": [
+                {
+                    "expr": "mlbot_memory_mb",
+                    "legendFormat": "System"
+                }
+            ],
+            "title": "系统内存 (MB)",
+            "type": "timeseries"
+        },
+        {
+            "description": "交易机器人进程 RSS (Resident Set Size)",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "decmbytes",
+                    "min": 0,
+                    "color": {
+                        "mode": "fixed",
+                        "fixedColor": "orange"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 15,
+                        "gradientMode": "scheme"
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 6,
+                "x": 12,
+                "y": 22
+            },
+            "id": 323,
+            "targets": [
+                {
+                    "expr": "mlbot_memory_rss_mb",
+                    "legendFormat": "Process RSS"
+                }
+            ],
+            "title": "进程 RSS 内存 (MB)",
+            "type": "timeseries"
+        },
+        {
+            "description": "交易机器人运行时长",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 6,
+                "x": 18,
+                "y": 22
+            },
+            "id": 324,
+            "options": {
+                "colorMode": "none",
+                "graphMode": "area",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_uptime_seconds",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "进程 Uptime",
+            "type": "stat"
+        }
+    ],
+    "refresh": "15s",
+    "schemaVersion": 39,
+    "tags": [
+        "trading",
+        "quant",
+        "account"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-6h",
+        "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "utc",
+    "title": "💰 Account & Market",
+    "uid": "quant-account-market",
+    "version": 1
+}

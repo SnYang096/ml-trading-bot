@@ -25,7 +25,7 @@ from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
 from src.time_series_model.live.stats_collector import StatsCollector
-from src.time_series_model.live.metrics_exporter import start_metrics_server
+from src.time_series_model.live.metrics_exporter import start_metrics_server, METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -559,12 +559,33 @@ async def main() -> None:
         manager.on_trade_tick(tick.symbol, listener_tick)
 
     ws_client.add_callback(_handle_tick)
+
+    # ── 定期获取市场数据 & 账户数据 ──
+    async def _periodic_market_update() -> None:
+        """30s 一次获取 Binance 市场数据 (funding rate / mark price / OI / account)"""
+        interval = int(os.getenv("MLBOT_MARKET_DATA_INTERVAL", "30"))
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                # 在线程池中执行同步 HTTP 请求，避免阻塞事件循环
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, METRICS.update_market_data, symbols)
+                await loop.run_in_executor(None, METRICS.update_account_data)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.debug("市场数据更新异常: %s", exc)
+                await asyncio.sleep(60)  # 出错后等 60s 再重试
+
+    market_task = asyncio.create_task(_periodic_market_update())
+
     stop_event = asyncio.Event()
     try:
         await ws_client.run(stop_event)
     except KeyboardInterrupt:
         stop_event.set()
     finally:
+        market_task.cancel()
         await manager.stop_all()
 
 

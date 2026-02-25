@@ -2,7 +2,7 @@
 
 功能:
   - 信号漏斗计数: direction → gate → entry_filter → evidence → pcm → order
-  - 按策略分层统计 (bpc / me / fer)
+  - 按策略分层统计 (bpc / me / fer)，含 gate 拦截原因
   - 持仓状态快照
   - 系统健康指标 (CPU / 内存)
   - 写入 SQLite `stats_15min` 表
@@ -31,6 +31,7 @@ CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS stats_15min (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp   TEXT    NOT NULL,
+    symbol      TEXT    NOT NULL DEFAULT '',
     window      TEXT    NOT NULL DEFAULT '15min',
     -- 信号漏斗 (全局汇总)
     bars_processed          INTEGER DEFAULT 0,
@@ -91,7 +92,7 @@ class StatsCollector:
         collector.record_order_placed(symbol, strategy)
 
         # 每 15 分钟 flush
-        snapshot = collector.flush(regime="NORMAL", positions={...})
+        snapshot = collector.flush(regime="NORMAL", symbol="BTCUSDT", positions={...})
     """
 
     def __init__(
@@ -113,8 +114,8 @@ class StatsCollector:
         self._pcm_selected: int = 0
         self._orders_placed: int = 0
 
-        # 按策略分层
-        self._by_strategy: Dict[str, Dict[str, int]] = defaultdict(
+        # 按策略分层 (value 可以是 int 或 dict，所以用 Any)
+        self._by_strategy: Dict[str, Dict[str, Any]] = defaultdict(
             lambda: defaultdict(int)
         )
 
@@ -131,7 +132,7 @@ class StatsCollector:
         self,
         symbol: str,
         strategy: str,
-        funnel: Dict[str, bool],
+        funnel: Dict[str, Any],
     ) -> None:
         """记录单个策略的漏斗结果
 
@@ -139,8 +140,8 @@ class StatsCollector:
             symbol: 交易对
             strategy: 策略名 (bpc/me/fer)
             funnel: 漏斗各阶段结果, 如:
-                {"direction": True, "gate": True, "entry_filter": False}
-                只包含评估到的阶段 (前面阶段 fail 后面不会出现)
+                {"direction": True, "direction_value": 1, "gate": False,
+                 "gate_reasons": ["vol_too_low"]}
         """
         strat_stats = self._by_strategy[strategy]
         strat_stats["evals"] += 1
@@ -148,6 +149,13 @@ class StatsCollector:
         if funnel.get("direction"):
             self._direction_assigned += 1
             strat_stats["direction"] += 1
+
+            # 方向分布
+            dv = funnel.get("direction_value", 0)
+            if dv == 1:
+                strat_stats["long"] += 1
+            elif dv == -1:
+                strat_stats["short"] += 1
 
             if funnel.get("gate"):
                 self._gate_passed += 1
@@ -160,6 +168,19 @@ class StatsCollector:
                     if funnel.get("evidence"):
                         self._evidence_passed += 1
                         strat_stats["signals"] += 1
+            else:
+                # gate 拦截: 记录拦截次数 + 原因
+                if "gate" in funnel:
+                    strat_stats["gate_rejected"] += 1
+                    reasons = funnel.get("gate_reasons") or []
+                    reason_counts = strat_stats.setdefault("gate_reject_reasons", {})
+                    for r in reasons:
+                        rk = str(r)[:60]
+                        reason_counts[rk] = (
+                            reason_counts.get(rk, 0) + 1
+                            if isinstance(reason_counts.get(rk), int)
+                            else 1
+                        )
 
     def record_pcm_selected(self, symbol: str, strategy: str) -> None:
         """记录 PCM 选中"""
@@ -178,20 +199,34 @@ class StatsCollector:
         regime: str = "NORMAL",
         positions: Optional[Dict[str, Any]] = None,
         system_health: Optional[Dict[str, Any]] = None,
+        symbol: str = "",
     ) -> Dict[str, Any]:
         """将当前窗口的统计写入 SQLite 并重置计数器
+
+        Args:
+            regime: 当前 regime 状态
+            positions: 持仓快照
+            system_health: 系统健康指标 (外部传入可包含 tick_count 等)
+            symbol: 当前币种 (空字符串表示汇总)
 
         Returns:
             写入的快照 dict (用于日志/调试)
         """
         now = datetime.now(timezone.utc)
 
-        # 系统健康指标
-        if system_health is None:
-            system_health = self._collect_system_health()
+        # 系统健康指标 (合并外部传入 + 自动采集)
+        base_health = self._collect_system_health()
+        if system_health:
+            base_health.update(system_health)
+
+        # 序列化 by_strategy (转为可 JSON 化的 dict)
+        by_strategy_serializable = {}
+        for s, d in self._by_strategy.items():
+            by_strategy_serializable[s] = dict(d)
 
         snapshot = {
             "timestamp": now.isoformat(),
+            "symbol": symbol,
             "window": "15min",
             "bars_processed": self._bars_processed,
             "direction_assigned": self._direction_assigned,
@@ -200,9 +235,9 @@ class StatsCollector:
             "evidence_passed": self._evidence_passed,
             "pcm_selected": self._pcm_selected,
             "orders_placed": self._orders_placed,
-            "by_strategy": dict(self._by_strategy),
+            "by_strategy": by_strategy_serializable,
             "positions": positions or {},
-            "system_health": system_health,
+            "system_health": base_health,
             "regime": regime,
         }
 
@@ -220,19 +255,23 @@ class StatsCollector:
                 logger.exception("stats_collector: 清理旧数据失败")
 
         # 日志摘要
+        strat_summary = " ".join(
+            f"{s}:{d.get('signals', 0)}/{d.get('evals', 0)}"
+            f"(gr={d.get('gate_rejected', 0)})"
+            for s, d in self._by_strategy.items()
+        )
         logger.info(
-            "📊 15min Stats: bars=%d dir=%d gate=%d ef=%d ev=%d pcm=%d order=%d | %s",
-            self._bars_processed,
+            "📊 [%s] 15min Stats: dir=%d gate=%d/%d ef=%d ev=%d pcm=%d order=%d | %s",
+            symbol or "ALL",
             self._direction_assigned,
             self._gate_passed,
+            self._gate_passed
+            + sum(d.get("gate_rejected", 0) for d in self._by_strategy.values()),
             self._entry_filter_passed,
             self._evidence_passed,
             self._pcm_selected,
             self._orders_placed,
-            " ".join(
-                f"{s}:{d.get('signals', 0)}/{d.get('evals', 0)}"
-                for s, d in self._by_strategy.items()
-            ),
+            strat_summary,
         )
 
         # 同步更新 Prometheus 指标
@@ -245,7 +284,7 @@ class StatsCollector:
                 evidence=self._evidence_passed,
                 pcm_selected=self._pcm_selected,
                 orders=self._orders_placed,
-                by_strategy=dict(self._by_strategy),
+                by_strategy=by_strategy_serializable,
                 positions_count=len(positions or {}),
             )
             METRICS.update_system_health()
@@ -277,6 +316,13 @@ class StatsCollector:
             with sqlite3.connect(str(self.db_path)) as conn:
                 conn.execute(CREATE_TABLE_SQL)
                 conn.execute(CREATE_INDEX_SQL)
+                # 兼容旧数据库: 添加 symbol 列
+                try:
+                    conn.execute(
+                        "ALTER TABLE stats_15min ADD COLUMN symbol TEXT DEFAULT ''"
+                    )
+                except sqlite3.OperationalError:
+                    pass  # 列已存在
         except Exception:
             logger.exception("stats_collector: 初始化 SQLite 失败: %s", self.db_path)
 
@@ -286,15 +332,16 @@ class StatsCollector:
             conn.execute(
                 """
                 INSERT INTO stats_15min (
-                    timestamp, window,
+                    timestamp, symbol, window,
                     bars_processed, direction_assigned, gate_passed,
                     entry_filter_passed, evidence_passed,
                     pcm_selected, orders_placed,
                     by_strategy, positions, system_health, regime
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     snapshot["timestamp"],
+                    snapshot.get("symbol", ""),
                     snapshot["window"],
                     snapshot["bars_processed"],
                     snapshot["direction_assigned"],
@@ -330,12 +377,13 @@ class StatsCollector:
         try:
             import psutil
 
+            proc = psutil.Process(os.getpid())
             health["cpu_percent"] = psutil.cpu_percent(interval=0.1)
+            health["memory_rss_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1)
             mem = psutil.virtual_memory()
             health["memory_mb"] = round(mem.used / 1024 / 1024, 1)
             health["memory_percent"] = mem.percent
         except ImportError:
-            # psutil 不可用，跳过
             pass
         except Exception:
             pass

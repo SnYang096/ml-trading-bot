@@ -281,7 +281,9 @@ class GenericLiveStrategy:
         # 状态
         self._quantiles: Dict[str, Dict[str, float]] = {}
         self._last_tier_params: Optional[Dict[str, Any]] = None
-        self._last_funnel: Dict[str, bool] = {}  # 上次 decide() 的漏斗结果
+        self._last_funnel: Dict[str, Any] = (
+            {}
+        )  # 上次 decide() 的漏斗结果 (含丰富元数据)
 
         # 加载配置
         self.load_configs()
@@ -440,8 +442,8 @@ class GenericLiveStrategy:
             self._last_funnel = {}
             return []
 
-        # 漏斗跟踪
-        funnel: Dict[str, bool] = {}
+        # 漏斗跟踪 (bool 标记 + 丰富元数据)
+        funnel: Dict[str, Any] = {}
 
         # ── 1. 方向判定 ──
         if self.direction_evaluator is None:
@@ -451,6 +453,7 @@ class GenericLiveStrategy:
 
         direction, rule_id = self.direction_evaluator.evaluate(features)
         funnel["direction"] = direction != 0
+        funnel["direction_value"] = direction  # 1=long, -1=short, 0=none
         if direction == 0:
             logger.debug("❌ No valid direction found")
             self._last_funnel = funnel
@@ -460,6 +463,7 @@ class GenericLiveStrategy:
         logger.debug(f"🎯 Direction: {side_str} (rule: {rule_id})")
 
         # ── 2. Gate 过滤 ──
+        gate_weight = 0.0
         if self.gate_evaluator is not None:
             gate_passed, gate_reasons, gate_weight = self.gate_evaluator.evaluate(
                 features, self._quantiles
@@ -467,9 +471,11 @@ class GenericLiveStrategy:
             if not gate_passed:
                 logger.debug(f"❌ Gate denied: {gate_reasons}")
                 funnel["gate"] = False
+                funnel["gate_reasons"] = gate_reasons  # 拦截原因列表
                 self._last_funnel = funnel
                 return []
             funnel["gate"] = True
+            funnel["gate_weight"] = round(gate_weight, 4)
             logger.debug(f"✅ Gate passed (weight: {gate_weight:.3f})")
 
         # ── 3. Entry Filter 检查 ──

@@ -680,20 +680,18 @@ class OrderFlowListener:
         if self.on_feature_callback:
             self.on_feature_callback(all_features)
 
-        # 检查下单所需依赖
-        if self.order_manager is None:
-            return
-        
-        # 检查系统模式：如果是DEGRADED或OFFLINE，不执行交易
+        # 是否允许实际下单
+        trading_enabled = self.order_manager is not None
         if self.mode_manager is not None:
             if not self.mode_manager.is_trading_allowed():
                 mode = self.mode_manager.get_current_mode()
                 logger.info("[%s] 当前模式=%s，仅观察", self.symbol, mode.value)
-                return
+                trading_enabled = False
 
         intents = []
 
         # 使用 decision_handler（GenericLiveStrategy / LivePCM 等）
+        # 即使不交易也执行决策，以收集漏斗统计
         if self.decision_handler is not None:
             try:
                 intents = self.decision_handler.decide(
@@ -709,22 +707,22 @@ class OrderFlowListener:
                     symbol=self.symbol,
                     bars=self.memory_window.get_latest(240) if self.memory_window else [],
                 )
-        else:
-            return
 
         if not intents:
             logger.info("[%s] 无交易信号", self.symbol)
-            # 即使没有新 intent，仍需管理已有持仓
-            self._enforce_open_positions(features=all_features)
-            # 每 15min 决策周期结束后 flush 统计
-            self._flush_stats()
-            return
+        elif trading_enabled:
+            for intent in intents:
+                logger.info("[%s] 交易信号: %s", self.symbol, intent)
+                self._execute_intent(intent=intent, features=all_features)
+        else:
+            for intent in intents:
+                logger.info("[%s] 交易信号(观察模式，不下单): %s", self.symbol, intent)
 
-        for intent in intents:
-            logger.info("[%s] 交易信号: %s", self.symbol, intent)
-            self._execute_intent(intent=intent, features=all_features)
-        self._enforce_open_positions(features=all_features)
-        # 每 15min 决策周期结束后 flush 统计
+        # 持仓管理 (仅在交易模式下)
+        if trading_enabled:
+            self._enforce_open_positions(features=all_features)
+
+        # 每 15min 决策周期结束后 flush 统计 (始终执行)
         self._flush_stats()
 
     def _execute_intent(self, intent: TradeIntent, features: Dict[str, Any]) -> None:
@@ -882,7 +880,12 @@ class OrderFlowListener:
             self.constitution_executor.save_runtime_state(self.runtime_state)
 
     def _flush_stats(self) -> None:
-        """将 stats_collector 当前窗口数据 flush 到 SQLite"""
+        """将 stats_collector 当前窗口数据 flush 到 SQLite
+
+        额外传入:
+          - symbol: 当前币种
+          - system_health: 数据健康指标 (tick_count, bar_count, memory_window_size)
+        """
         if self.stats_collector is None:
             return
         try:
@@ -890,7 +893,19 @@ class OrderFlowListener:
                 pid: {"side": p["side"], "qty": p["qty"]}
                 for pid, p in self._open_positions.items()
             }
-            self.stats_collector.flush(positions=positions)
+            # 数据健康指标
+            data_health: Dict[str, Any] = {
+                "tick_count": self._tick_count,
+                "bar_count": self._bar_count,
+                "memory_window_size": (
+                    self.memory_window.size() if self.memory_window else 0
+                ),
+            }
+            self.stats_collector.flush(
+                symbol=self.symbol,
+                positions=positions,
+                system_health=data_health,
+            )
         except Exception:
             logger.exception("[%s] stats_collector flush 失败", self.symbol)
 
