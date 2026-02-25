@@ -427,6 +427,7 @@ ta-lib_0.6.4_amd64.deb
 results/
 /models/
 /docker/
+!/docker/Dockerfile.live
 # Vendored python deps
 vendor/
 vendor/**

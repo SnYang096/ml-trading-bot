@@ -307,8 +307,47 @@ ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
 |---|---|
 | `order_management.db` | volume 挂载在服务器，镜像更新不影响 |
 | `live/highcap/data/` | volume 挂载，持久化在 `/opt/quant-engine/live/highcap/data/` |
-| API 密钥 | 只读挂载 `binance_mainnet.env`，不进镜像 |
+| API 密钥 | GitHub Secrets 注入 → CI/CD 自动写入服务器，不进镜像 |
 | 回滚 | `docker pull ghcr.io/<repo>:sha-<旧commit>` + restart |
+
+---
+
+## 2.5 监控部署（Prometheus + Grafana）
+
+> 前置: 2.3 首次部署完成，quant-engine 正常运行
+
+### 2.5.1 同步监控配置到服务器
+
+- [ ] 本地执行:
+  ```bash
+  rsync -avz -e "ssh -i ~/.ssh/id_tencent_cloud_ssh" \
+    terraform/monitoring/ ubuntu@43.135.44.160:/opt/monitoring/
+  ```
+- [ ] 确认文件同步: prometheus.yml + docker-compose + 3 个 dashboard JSON
+
+### 2.5.2 启动监控容器
+
+- [ ] 本地执行:
+  ```bash
+  ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 \
+    'sudo bash -s' < scripts/monitoring_bootstrap.sh
+  ```
+- [ ] 执行后自动完成:
+  - Prometheus 容器启动（端口 9091）
+  - Grafana 容器启动（端口 3000）
+  - Dashboard 自动加载（quant.json + account_market.json + signal_pipeline.json）
+
+### 2.5.3 安全组放行监控端口
+
+- [ ] 腾讯云控制台 → 安全组:
+  - 9091/tcp (Prometheus) — 限制为你的 IP
+  - 3000/tcp (Grafana) — 限制为你的 IP
+
+### 2.5.4 验证监控
+
+- [ ] 访问 Grafana: `http://43.135.44.160:3000` (admin/admin)
+- [ ] 确认 Prometheus target 状态: `http://43.135.44.160:9091/targets` → quant-engine UP
+- [ ] 内存占用: `docker stats --no-stream` 确认 Prometheus ~150MB + Grafana ~80MB
 
 ---
 
@@ -393,18 +432,21 @@ MLBOT_CONSTITUTION_YAML=live/highcap/config/constitution/constitution.yaml \
 python scripts/run_live.py
 ```
 
+# 快速参考
+
 ## 部署命令速查
 
 ```bash
 # 首次部署
-ssh root@<IP> 'bash -s' < scripts/server_bootstrap.sh       # 1. 初始化服务器
-scp live/binance_mainnet.env root@<IP>:/opt/quant-engine/live/ # 2. 上传密钥
-# 3. GitHub Actions → Run workflow (首次构建镜像)
-ssh root@<IP>                                                 # 4. SSH 到服务器
-docker run --rm \                                             # 5. 下载 warmup 数据
-  -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
-  quant-engine:latest bash live/scripts/prepare_warmup_ticks.sh highcap 6
-sudo systemctl start quant-engine                             # 6. 启动服务
+ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 'sudo bash -s' < scripts/server_bootstrap.sh  # 1. 初始化服务器
+# 2. 配置 GitHub Secrets（6 个）
+# 3. GitHub Actions → Run workflow（首次构建镜像）
+# 4. warmup 数据已集成到启动流程，自动下载
+sudo systemctl start quant-engine                             # 5. 启动服务
+
+# 监控部署
+rsync -avz -e "ssh -i ~/.ssh/id_tencent_cloud_ssh" terraform/monitoring/ ubuntu@43.135.44.160:/opt/monitoring/
+ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 'sudo bash -s' < scripts/monitoring_bootstrap.sh
 
 # 日常迭代
 git push origin main  # 自动触发: build → push → deploy → restart
@@ -419,7 +461,7 @@ git push origin main  # 自动触发: build → push → deploy → restart
 | `.github/workflows/deploy.yml` | CI/CD 流水线 |
 | `scripts/server_bootstrap.sh` | 服务器初始化脚本 |
 | `terraform/systemd/quant-engine.service` | systemd 服务定义 (Docker 模式) |
-| `config/pcm_regime.yaml` | PCM Regime 仲裁配置 |
-| `config/constitution/constitution.yaml` | 宪法硬约束 |
+| `scripts/monitoring_bootstrap.sh` | 监控初始化脚本 (Prometheus + Grafana) |
+| `terraform/monitoring/` | 监控配置 (prometheus.yml + docker-compose + dashboard) |
 | `live/highcap/config/strategies/` | 生产策略配置 (53 个 YAML) |
 | `scripts/deploy_config_to_live.py` | 研究→生产配置部署 |

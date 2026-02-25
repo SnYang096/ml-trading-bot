@@ -1,0 +1,228 @@
+# ============================================================================
+# ML Trading Bot - Live Trading Docker Image (CPU Only)
+# ============================================================================
+# 环境版本:
+#   - Base: Ubuntu 24.04 (与 GPU 版本一致)
+#   - Python: 3.12 (Ubuntu 24.04 默认)
+# 
+# 核心功能:
+#   - WebSocket 实时数据接收（websockets, ccxt）
+#   - HTTP API 调用（requests, aiohttp, httpx）
+#   - 特征计算（numpy, pandas, scipy, scikit-learn, TA-Lib, PyWavelets, statsmodels）
+#   - 数据存储（pyarrow, parquet, polars）
+#   - MLP 模型推理（PyTorch CPU 版本，约 200-300MB）
+#   - 配置管理（pyyaml, python-dotenv）
+#   - 系统监控（psutil）
+# 
+# 不包含:
+#   - GPU/CUDA 支持
+#   - 深度学习框架（mamba-ssm, flash-attn）
+#   - 编译工具（gcc, cmake）
+#   - 训练相关库（optuna, gymnasium, stable-baselines3）
+#   - 回测相关库（vectorbt, alphalens）
+#   - Nautilus Trader（如果不需要）
+#   - LightGBM（如果只用规则）
+# ============================================================================
+
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY=""
+ARG http_proxy=""
+ARG https_proxy=""
+ARG no_proxy=""
+
+FROM ubuntu:24.04 AS runtime
+
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ARG http_proxy
+ARG https_proxy
+ARG no_proxy
+
+ENV HTTP_PROXY=${HTTP_PROXY:-} \
+    HTTPS_PROXY=${HTTPS_PROXY:-} \
+    NO_PROXY=${NO_PROXY:-} \
+    http_proxy=${http_proxy:-$HTTP_PROXY} \
+    https_proxy=${https_proxy:-$HTTPS_PROXY} \
+    no_proxy=${no_proxy:-$NO_PROXY}
+
+# =========================================================================
+# 环境变量配置
+# =========================================================================
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/workspace/src \
+    TZ=Asia/Shanghai
+
+# =========================================================================
+# 安装基础依赖（使用 Ubuntu 24.04 自带的 Python 3.12）
+# =========================================================================
+RUN echo "📦 Installing base dependencies (using Ubuntu 24.04 default Python 3.12)..." && \
+    apt-get update && apt-get install -y \
+    python3 \
+    python3-venv \
+    python3-pip \
+    python-is-python3 \
+    wget \
+    curl \
+    ca-certificates \
+    git \
+    tzdata \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "✅ Base dependencies installed"
+
+RUN echo "=== Python Version ===" && python3 --version | cat
+RUN echo "=== Python Location ===" && which python3 | cat
+
+# =========================================================================
+# 配置 pip 镜像源
+# =========================================================================
+RUN mkdir -p /root/.pip \
+    && echo "[global]" > /root/.pip/pip.conf \
+    && echo "index-url = http://mirrors.aliyun.com/pypi/simple/" >> /root/.pip/pip.conf \
+    && echo "trusted-host = mirrors.aliyun.com" >> /root/.pip/pip.conf
+
+# =========================================================================
+# 升级 pip
+# =========================================================================
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# =========================================================================
+# 安装数据科学核心库（与 GPU 版本保持一致）
+# =========================================================================
+RUN echo "📦 Installing data science core libraries..." && \
+    pip3 install --no-cache-dir --timeout=600 \
+    numpy==1.26.4 \
+    pandas==2.1.4 \
+    scipy==1.11.4 \
+    scikit-learn==1.3.2 \
+    pyarrow==15.0.2 \
+    && python3 -c "import pandas as pd, numpy as np, scipy, sklearn, pyarrow; print('✅ Core libraries:', pd.__version__, np.__version__)"
+
+# =========================================================================
+# 安装 WebSocket 和 HTTP 相关库
+# =========================================================================
+RUN echo "📦 Installing WebSocket and HTTP libraries..." && \
+    pip3 install --no-cache-dir --timeout=600 \
+    websockets>=12.0 \
+    aiohttp>=3.9.0 \
+    requests>=2.31.0 \
+    httpx>=0.25.0 \
+    ccxt>=4.0.0 \
+    && python3 -c "import websockets, aiohttp, requests, httpx, ccxt; print('✅ WebSocket/HTTP libraries installed')"
+
+# =========================================================================
+# 安装特征计算相关库
+# =========================================================================
+RUN echo "📦 Installing feature calculation libraries..." && \
+    pip3 install --no-cache-dir --timeout=600 \
+    PyWavelets==1.4.1 \
+    statsmodels==0.14.1 \
+    arch \
+    && python3 -c "import pywt, statsmodels, arch; print('✅ Feature calculation libraries installed')"
+
+# =========================================================================
+# 安装 TA-Lib 技术分析库
+# 注意：构建上下文是仓库根目录 (.)，而 deb 文件在 docker/ 目录下，
+# 所以这里需要使用 docker/ 前缀。
+# =========================================================================
+RUN echo "📦 Installing TA-Lib (download + install)..." && \
+    set -eux && \
+    wget -q https://github.com/ta-lib/ta-lib/releases/download/v0.6.4/ta-lib_0.6.4_amd64.deb -O /tmp/ta-lib.deb && \
+    dpkg -i /tmp/ta-lib.deb || apt-get install -f -y && \
+    rm /tmp/ta-lib.deb && \
+    pip3 install --no-cache-dir TA-Lib && \
+    python3 -c "import talib; print('✅ TA-Lib Python version:', talib.__version__)"
+
+# =========================================================================
+# 安装 PyTorch CPU 版本（用于 MLP 模型推理）
+# 注意：
+#   - PyTorch CPU 版本大小约 200-300MB，比 GPU 版本小很多
+#   - 版本 2.9.0 与 GPU 版本保持一致，确保模型兼容性
+#   - 只安装 torch，不安装 torchvision/torchaudio（实盘不需要）
+# =========================================================================
+RUN echo "📦 Installing PyTorch CPU (for MLP inference)..." && \
+    pip3 install --no-cache-dir --timeout=1800 \
+    torch==2.9.0 \
+    --index-url https://download.pytorch.org/whl/cpu \
+    && python3 -c "import torch; print('✅ PyTorch CPU:', torch.__version__, '| CUDA available:', torch.cuda.is_available(), '(should be False)')"
+
+# =========================================================================
+# 安装其他项目依赖
+# =========================================================================
+RUN echo "📦 Installing project dependencies..." && \
+    pip3 install --no-cache-dir --timeout=900 \
+    joblib==1.3.2 \
+    python-dotenv==1.0.0 \
+    pyyaml==6.0.2 \
+    tabulate==0.9.0 \
+    tqdm>=4.62.0 \
+    psutil \
+    python-socks \
+    && python3 -c "import joblib, dotenv, yaml, tabulate, tqdm, psutil; print('✅ Project dependencies installed (including python-socks)')"
+
+# =========================================================================
+# 安装数据存储和工具库
+# =========================================================================
+RUN echo "📦 Installing data storage and utility libraries..." && \
+    pip3 install --no-cache-dir --timeout=600 \
+    openpyxl==3.1.2 \
+    polars==0.20.31 \
+    && python3 -c "import openpyxl, polars as pl; print('✅ Data storage libraries installed:', pl.__version__)"
+
+# =========================================================================
+# 可视化库（已移除）
+# 注意：监控使用 Grafana，不需要 Python 可视化库（matplotlib, seaborn, plotly）
+# =========================================================================
+
+# =========================================================================
+# 安装异步和并发库
+# =========================================================================
+RUN echo "📦 Installing async and concurrency libraries..." && \
+    pip3 install --no-cache-dir --timeout=600 \
+    asyncio-throttle>=1.0.0 \
+    aiofiles>=23.0.0 \
+    && python3 -c "import aiofiles; print('✅ Async libraries installed')"
+
+# =========================================================================
+# 安装实盘额外依赖（监控、特征计算、模型序列化）
+# =========================================================================
+RUN echo "📦 Installing additional live trading dependencies..." && \
+    pip3 install --no-cache-dir --timeout=600 \
+    prometheus_client>=0.20.0 \
+    cloudpickle==2.2.1 \
+    click>=8.0.0 \
+    hmmlearn>=0.3.0 \
+    numba>=0.60.0 \
+    llvmlite>=0.43.0 \
+    dtaidistance>=2.3.0 \
+    websocket-client>=1.6.0 \
+    && python3 -c "import prometheus_client, cloudpickle, numba; print('✅ Additional dependencies installed')"
+
+# =========================================================================
+# 应用代码打包（每次 push 重建此层，秒级）
+# =========================================================================
+WORKDIR /app
+
+# 全局配置
+COPY config/ config/
+# 实盘启动脚本 + 策略配置
+COPY live/scripts/ live/scripts/
+COPY live/highcap/config/ live/highcap/config/
+COPY live/highcap/universe.yaml live/highcap/universe.yaml
+# 源代码 + 入口脚本
+COPY src/ src/
+COPY scripts/ scripts/
+COPY setup.py .
+
+# 运行时配置
+ENV PYTHONPATH=/app
+
+# 数据目录（运行时通过 volume 挂载）
+VOLUME ["/app/live/highcap/data"]
+
+# 启动命令
+CMD ["bash", "live/scripts/start_live.sh"]
+
