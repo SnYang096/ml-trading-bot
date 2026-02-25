@@ -77,9 +77,11 @@ RUN echo "=== Python Version ===" && python3 --version | cat
 RUN echo "=== Python Location ===" && which python3 | cat
 
 # =========================================================================
-# 升级 pip（删除 PEP 668 限制，Docker 容器内无需系统包保护）
+# 升级 pip
 # =========================================================================
 RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && \
+    python3 -c "import pip; print('pip already installed:', pip.__version__)" 2>/dev/null || \
+    (curl -sS https://bootstrap.pypa.io/get-pip.py | python3) && \
     python3 -m pip install --upgrade pip setuptools wheel
 
 # =========================================================================
