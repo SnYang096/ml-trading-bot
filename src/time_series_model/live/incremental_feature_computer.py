@@ -194,6 +194,44 @@ class IncrementalFeatureComputer:
     def _want(self, key: str) -> bool:
         return (not self.live_feature_set) or (key in self.live_feature_set)
 
+    def _detect_tick_dependent_nodes(self, feats_cfg: dict) -> set:
+        """从 feature_dependencies 动态检测需要 tick 数据的特征节点。
+
+        通过 inspect.signature 检查 compute_func 是否接受 `ticks` 或
+        `ticks_loader_json` 参数来判断，与 train_strategy_pipeline.py 中
+        的检测逻辑保持一致，避免硬编码节点名。
+        """
+        if hasattr(self, "_tick_dependent_nodes_cache"):
+            return self._tick_dependent_nodes_cache
+
+        import inspect
+
+        tick_nodes: set = set()
+        try:
+            from src.features.registry import get_compute_func
+        except ImportError:
+            self._tick_dependent_nodes_cache = tick_nodes
+            return tick_nodes
+
+        for node_name, node_cfg in feats_cfg.items():
+            if not isinstance(node_cfg, dict):
+                continue
+            compute_func_name = node_cfg.get("compute_func")
+            if not compute_func_name:
+                continue
+            try:
+                cfn = get_compute_func(compute_func_name)
+                if cfn is None:
+                    continue
+                sig = inspect.signature(cfn)
+                if "ticks" in sig.parameters or "ticks_loader_json" in sig.parameters:
+                    tick_nodes.add(node_name)
+            except Exception:
+                continue
+
+        self._tick_dependent_nodes_cache = tick_nodes
+        return tick_nodes
+
     def on_tick(self, tick: Any) -> None:
         """
         处理 tick 数据
@@ -990,12 +1028,8 @@ class IncrementalFeatureComputer:
                 bar_cols = set(bars_tf.columns)
 
                 # 需要 tick 数据的特征节点（已在第2步 extract_order_flow_features 中计算）
-                # 这些节点依赖 ticks_dir 配置，但实盘环境的 tick 目录与研发不同
-                tick_dependent_nodes = {
-                    "trade_cluster_base_aligned_features_f",
-                    "vpin_base_aligned_features_f",
-                    "footprint_base_features_f",
-                }
+                # 动态检测：基于 compute_func 签名判断是否需要 ticks（而不是硬编码）
+                tick_dependent_nodes = self._detect_tick_dependent_nodes(feats_cfg)
 
                 def _has_tick_dependency(node_name: str, visited: set = None) -> bool:
                     """递归检查节点是否依赖 tick_dependent_nodes"""
@@ -1160,6 +1194,19 @@ class IncrementalFeatureComputer:
         for k in self.live_feature_set or []:
             if any(k.endswith(s) or s in k for s in _PERCENTILE_SUFFIXES):
                 if k not in features:
+                    # 诊断: 区分 "列不存在" vs "最后一行 NaN"
+                    in_cols = k in bars_tf.columns
+                    last_val = bars_tf[k].iloc[-1] if in_cols else "N/A"
+                    nonnull = int(bars_tf[k].notna().sum()) if in_cols else 0
+                    _logger.warning(
+                        "  ⚠️ pct_check: %s missing from features "
+                        "(in_cols=%s, last_val=%s, nonnull_rows=%d/%d)",
+                        k,
+                        in_cols,
+                        last_val,
+                        nonnull,
+                        len(bars_tf),
+                    )
                     nan_pct_features.append(k)
         if nan_pct_features:
             raise RuntimeError(
@@ -1319,11 +1366,8 @@ class IncrementalFeatureComputer:
                 req = list(self.live_feature_nodes)
                 feats_cfg = (self._feature_deps or {}).get("features") or {}
                 bar_cols = set(bars_tf.columns)
-                tick_dependent_nodes = {
-                    "trade_cluster_base_aligned_features_f",
-                    "vpin_base_aligned_features_f",
-                    "footprint_base_features_f",
-                }
+                # 动态检测：基于 compute_func 签名判断是否需要 ticks（而不是硬编码）
+                tick_dependent_nodes = self._detect_tick_dependent_nodes(feats_cfg)
 
                 def _has_tick_dependency(node_name, visited=None):
                     if visited is None:
