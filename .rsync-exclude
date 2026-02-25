@@ -1,0 +1,60 @@
+# =============================================================
+# rsync 排除规则 — 保护服务器运行时数据
+# 用于 GitHub Actions 部署，确保以下文件永不被覆盖/删除
+# =============================================================
+
+# ---- 运行时数据 (绝不覆盖) ----
+live/*/data/
+*.db
+
+# ---- API 密钥和敏感配置 ----
+.env
+.env.*
+live/binance_mainnet.env
+live/binance_testnet.env
+live/server.env
+config/local/
+
+# ---- Python 虚拟环境 (服务器自行管理) ----
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# ---- Git / GitHub (不需要在服务器上) ----
+.git/
+.github/
+
+# ---- Terraform 状态 (本地管理) ----
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/.terraform-config.zip
+terraform/*.tfvars
+
+# ---- 实验文档 (不需要在服务器上) ----
+z实验_*/
+docs/
+
+# ---- 本地大文件/数据 ----
+data/
+results/
+models/
+feature_store/
+*.pkl
+*.h5
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.whl
+*.deb
+
+# ---- IDE / OS ----
+.vs/
+.vscode/
+.idea/
+.qoder/
+.DS_Store
+Thumbs.db

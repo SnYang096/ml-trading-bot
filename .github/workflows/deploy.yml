@@ -1,6 +1,163 @@
+# =============================================================
+# 🚀 构建 Docker 镜像 → 推送 ghcr.io → 部署到腾讯云
+# =============================================================
+# 架构:
+#   GitHub Actions build image
+#     → push to ghcr.io (GitHub Container Registry)
+#     → SSH to server: docker pull → tag → restart
+#   服务器无需 GitHub 密钥，无需 Python/pip 环境
+#
+# GitHub Secrets 需要配置:
+#   DEPLOY_HOST      — 服务器公网 IP
+#   DEPLOY_USER      — SSH 用户名 (如 root 或 ubuntu)
+#   DEPLOY_SSH_KEY   — SSH 私钥内容
+#   GHCR_TOKEN       — GitHub PAT (需 read:packages + write:packages)
+# =============================================================
+
+name: 🚀 Build & Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      restart_service:
+        description: '部署后重启 quant-engine 服务'
+        type: boolean
+        default: true
+      skip_build:
+        description: '跳过构建，只重启服务（用于配置变更）'
+        type: boolean
+        default: false
+
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'config/**'
+      - 'live/highcap/config/**'
+      - 'live/scripts/**'
+      - 'docker/Dockerfile.live'
+      - 'requirements.txt'
+
+# 同一时间只允许一个部署
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 env:
-  TF_VAR_secret_id: ${{ secrets.TENCENTCLOUD_SECRET_ID }}
-  TF_VAR_secret_key: ${{ secrets.TENCENTCLOUD_SECRET_KEY }}
-  TF_VAR_cls_secret_id: ${{ secrets.TENCENTCLOUD_SECRET_ID }}
-  TF_VAR_cls_secret_key: ${{ secrets.TENCENTCLOUD_SECRET_KEY }}
-  TF_VAR_cls_topic_id: "bot"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/quant-engine
+
+jobs:
+  # ============================================
+  # Job 1: 构建并推送 Docker 镜像
+  # ============================================
+  build:
+    name: 🐳 Build & Push Image
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.skip_build != 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 30
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏷️ Generate image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🐳 Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.live
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - name: 📊 Build summary
+        run: |
+          echo "### 🐳 Docker Image Built" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tags**: ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # Job 2: 部署到服务器
+  # ============================================
+  deploy:
+    name: 🚀 Deploy to Server
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: always() && (needs.build.result == 'success' || github.event.inputs.skip_build == 'true')
+    timeout-minutes: 10
+
+    steps:
+      - name: 🚀 Pull image & restart service
+        uses: appleboy/ssh-action@v1
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          IMAGE_FULL: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          IMAGE_SHA: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: GHCR_TOKEN,GHCR_USER,IMAGE_FULL,IMAGE_SHA
+          command_timeout: 5m
+          script: |
+            set -e
+
+            echo "=== 🔐 登录 GHCR ==="
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            echo ""
+            echo "=== 📥 拉取新镜像 ==="
+            docker pull "$IMAGE_FULL"
+
+            # 打 local tag（systemd 引用 quant-engine:latest）
+            docker tag "$IMAGE_FULL" quant-engine:latest
+
+            echo ""
+            echo "=== 🔄 重启服务 ==="
+            sudo systemctl restart quant-engine
+            sleep 5
+
+            if sudo systemctl is-active --quiet quant-engine; then
+              echo "✅ quant-engine 运行中"
+              sudo systemctl status quant-engine --no-pager | head -15
+            else
+              echo "❌ quant-engine 启动失败"
+              sudo journalctl -u quant-engine --no-pager -n 30
+              exit 1
+            fi
+
+            echo ""
+            echo "=== 🧹 清理旧镜像 ==="
+            docker image prune -f
+            docker logout ghcr.io
+
+            echo ""
+            echo "=== 📊 部署统计 ==="
+            echo "Image: $IMAGE_FULL"
+            echo "Container: $(docker ps --filter name=quant-engine --format '{{.Status}}')"
+            echo "Disk: $(df -h / | tail -1 | awk '{print $4}') free"

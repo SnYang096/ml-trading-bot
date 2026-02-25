@@ -1,49 +1,46 @@
 [Unit]
-Description=Quant Engine (Order Flow Strategy) - Docker Container
-After=docker.service network.target
+Description=Quant Engine - Three Strategy Live Trading (Docker)
+After=docker.service network-online.target
 Requires=docker.service
+Wants=network-online.target
 
 [Service]
-Type=notify
-# 等待 Docker 服务就绪
-ExecStartPre=/bin/bash -c 'until docker info; do sleep 1; done'
+Type=simple
+TimeoutStartSec=120
 
-# 运行 Docker 容器
-# 注意：代码通过 volume 挂载，镜像只包含依赖
-# 修改下面的命令以匹配你的实际启动脚本
+# 清理残留容器
+ExecStartPre=-/usr/bin/docker rm -f quant-engine
+
+# 运行容器
+# - 镜像由 GitHub Actions 构建并推送，本地 tag 为 quant-engine:latest
+# - /opt/quant-engine/live/highcap/data → 持久化运行时数据 (db, ticks, features)
+# - /opt/quant-engine/live/binance_mainnet.env → API 密钥 (只读挂载)
 ExecStart=/usr/bin/docker run \
-    --rm \
     --name quant-engine \
     --network host \
-    --memory="2.5g" \
-    --cpus="1.8" \
-    --env-file /opt/quant-engine/.env \
-    -v /opt/quant-engine:/workspace \
-    -v /data/trades:/data/trades \
-    -v /data/quant-engine:/data/quant-engine \
-    quant-engine:latest \
-    python3 /workspace/main.py
+    --memory=3g \
+    --cpus=1.8 \
+    -e MLBOT_LIVE_TRADE_SIZE=0.0 \
+    -e MLBOT_ORDER_MODE=test \
+    -e PYTHONUNBUFFERED=1 \
+    -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
+    -v /opt/quant-engine/live/binance_mainnet.env:/app/live/binance_mainnet.env:ro \
+    quant-engine:latest
 
 # 停止容器
-ExecStop=/usr/bin/docker stop quant-engine
-ExecStopPost=/usr/bin/docker rm -f quant-engine
+ExecStop=/usr/bin/docker stop -t 30 quant-engine
+ExecStopPost=-/usr/bin/docker rm -f quant-engine
 
-# 关键：输出日志到 journald（供 Filebeat 采集）
+# 日志输出到 journald（供 Filebeat 采集）
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=quant-engine
 
-# 环境变量
-Environment=PYTHONUNBUFFERED=1
-Environment=LOG_FORMAT=json
-
 # 崩溃自动重启
-Restart=always
+Restart=on-failure
 RestartSec=30
-
-# 资源限制（Docker 容器级别已设置，这里作为额外保护）
-MemoryLimit=2.5G
-CPUQuota=90%
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Install]
 WantedBy=multi-user.target

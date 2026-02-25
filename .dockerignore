@@ -1,56 +1,85 @@
-# Python
+# =============================================================
+# .dockerignore — Docker 构建上下文排除
+# 构建命令: docker build -f docker/Dockerfile.live -t quant-engine .
+# 构建上下文: 仓库根目录
+# =============================================================
+
+# ---- 运行时数据（绝不打包进镜像） ----
+live/*/data/
+*.db
+data/
+results/
+models/
+feature_store/
+
+# ---- API 密钥 ----
+.env
+.env.*
+live/binance_mainnet.env
+live/binance_testnet.env
+live/server.env
+config/local/
+
+# ---- 大文件 / 模型产物 ----
+*.pkl
+*.h5
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.whl
+*.deb
+
+# ---- Git / CI ----
+.git/
+.github/
+.gitignore
+
+# ---- Terraform（基础设施代码，不需要在镜像中） ----
+terraform/
+
+# ---- 实验文档 + 文档 ----
+z实验_*/
+docs/
+reports/
+examples/
+
+# ---- Python 编译缓存 ----
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
 *.egg-info/
 dist/
 build/
 
-# Virtual environments
+# ---- 虚拟环境 ----
 venv/
+.venv/
 env/
 ENV/
 
-# IDE
+# ---- IDE / OS ----
 .vscode/
 .idea/
+.qoder/
 *.swp
 *.swo
-
-# Data and models (挂载，不需要复制)
-data/
-models/
-results/
-reports/
-
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
-
-# Git
-.git/
-.gitignore
-
-# Docker
-docker-compose.yml
-Dockerfile
-.dockerignore
-
-# Logs
-*.log
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Testing
+# ---- 测试 / Jupyter ----
 .pytest_cache/
 .coverage
 htmlcov/
+.ipynb_checkpoints/
+*.ipynb
 
-# Documentation
-docs/
-*.md
+# ---- Docker 文件本身 ----
+docker-compose*.yml
+Dockerfile
+.dockerignore
+
+# ---- 日志 ----
+*.log
 

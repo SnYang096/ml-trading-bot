@@ -19,7 +19,7 @@
 | 配置部署工具 | ✅ 完成 | deploy_config_to_live.py 支持 GLOBAL_CONFIGS (constitution + pcm_regime) |
 | .gitignore 安全 | ✅ 完成 | live/*/data/ + *.db 排除，运行时数据不进 git |
 | Terraform 基础设施 | ✅ 已搭建 | 腾讯云 ap-tokyo, 2vCPU/4GB, Docker + systemd |
-| CI/CD 流程 | 📋 TODO | 本地→远程自动化部署流程未搭建 |
+| CI/CD 流程 | ✅ 已搭建 | GitHub Actions → Docker image → ghcr.io → 服务器 pull |
 | 监控脚本 (本地) | ✅ 完成 | weekly/monthly monitor + feature drift + retrain trigger |
 | 实盘监控 (服务器) | 📋 设计完成 | 见 实盘监控系统设计.md，代码待实现 |
 
@@ -171,145 +171,144 @@ BinanceWS tick → OrderFlowListener
 # Phase 2: 腾讯云部署
 
 > 前置: Phase 1 本地验证全部通过
-> 基础设施: Terraform 已搭建 (ap-tokyo, 2vCPU/4GB, Docker)
+> 方案: GitHub Actions 构建 Docker 镜像 → ghcr.io → 服务器 pull
+> 服务器只需 Docker，无需 Python/pip/venv
 
 ---
 
-## 2.1 Terraform 配置更新
+## 2.1 GitHub 配置
 
-### 当前状态
-- ✅ VPC + Subnet + Security Group
-- ✅ CVM 实例 (Ubuntu 22.04, 2vCPU/4GB, 256GB 数据盘)
-- ✅ Docker + systemd 服务
-- ✅ Prometheus + Grafana + Filebeat 监控栈
-- ⚠️ `quant-engine.service` 入口为 `main.py`，需改为 `run_live.py`
+### 2.1.1 创建 GitHub PAT (Personal Access Token)
 
-### 2.1.1 systemd 服务更新
+- [ ] 进入 GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+- [ ] 点击 "Generate new token (classic)"
+- [ ] 勾选权限:
+  - `write:packages` (推送镜像到 ghcr.io)
+  - `read:packages` (服务器拉取镜像)
+- [ ] 生成后复制 token（只显示一次！）
 
-- [ ] `terraform/systemd/quant-engine.service` 更新:
-  - `ExecStart` 改为正确的启动命令
-  - 添加多 timeframe 环境变量
-  - 添加 constitution/pcm 配置路径
-  ```ini
-  Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT
-  Environment=MLBOT_STRATEGIES_ROOT=/opt/quant-engine/live/highcap/config/strategies
-  Environment=MLBOT_BPC_BAR_MINUTES=240
-  Environment=MLBOT_ME_BAR_MINUTES=60
-  Environment=MLBOT_BPC_WINDOW_MINUTES=15
-  Environment=MLBOT_LIVE_TRADE_SIZE=0.0
-  Environment=MLBOT_LIVE_USE_FUTURES=true
-  Environment=MLBOT_PCM_REGIME_CONFIG=/opt/quant-engine/config/pcm_regime.yaml
-  Environment=MLBOT_CONSTITUTION_YAML=/opt/quant-engine/live/highcap/config/constitution/constitution.yaml
-  ```
+### 2.1.2 配置 GitHub Secrets
 
-### 2.1.2 init.sh 补充
+- [ ] 进入仓库 → Settings → Secrets and variables → Actions → New repository secret
+- [ ] 添加以下 4 个 Secrets:
 
-- [ ] Python 环境安装 (如果不用 Docker):
-  - Python 3.10+ / pip / requirements.txt
-- [ ] 或确认 Dockerfile.live 可正常构建
+| Secret 名称 | 值 | 获取方式 |
+|---|---|---|
+| `DEPLOY_HOST` | 服务器公网 IP | 腾讯云控制台 → 云服务器 → 实例列表 |
+| `DEPLOY_USER` | `root`（或 `ubuntu`） | 取决于服务器 OS 配置 |
+| `DEPLOY_SSH_KEY` | SSH 私钥完整内容 | 本地执行 `cat ~/.ssh/id_ed25519` |
+| `GHCR_TOKEN` | 上一步生成的 PAT | GitHub PAT 页面 |
 
-### 2.1.3 安全组检查
+### 2.1.3 验证 SSH 连通性
 
-- [ ] SSH 端口限制为固定 IP (当前 0.0.0.0/0 不安全)
-- [ ] 确认无其他端口暴露 (Grafana 3000 端口决策: 关闭 or VPN)
+- [ ] 本地测试: `ssh <DEPLOY_USER>@<DEPLOY_HOST> "echo ok"`
+- [ ] 如果是新机器，先手动 SSH 一次接受 host key
+
+### 2.1.4 CI/CD 文件确认
+
+- [x] `.github/workflows/deploy.yml` — 构建 + 推送 + 部署流水线
+- [x] `docker/Dockerfile.live` — 生产镜像定义（代码打包进镜像）
+- [x] `.dockerignore` — 排除 data/密钥/实验文档（7 类规则）
 
 ---
 
-## 2.2 CI/CD 流程（本地→远程）
+## 2.2 远程服务器配置
 
-> ⚠️ 目前尚未搭建，需要优先完成
+### 2.2.1 运行 Bootstrap 脚本（一次性）
 
-### 2.2.1 CI/CD 方案选型
-
-- [ ] 确定 CI/CD 工具: GitHub Actions / GitLab CI / 手动脚本
-- [ ] 确定制品形式: Docker image / git pull + pip install / rsync
-- [ ] 确定触发方式: push to main 自动部署 / 手动触发 / tag 触发
-
-### 2.2.2 构建流程
-
-- [ ] 定义构建步骤:
-  - 安装依赖
-  - 运行测试 (`pytest tests/`)
-  - 构建 Docker image (如果用 Docker)
-- [ ] 确保 `order_management.db` 等运行时数据文件不会被打包/覆盖
-  - `.gitignore` 已排除 `live/*/data/` 和 `*.db` ✅
-  - Docker image / rsync 也需显式排除
-
-### 2.2.3 部署流程
-
-- [ ] 代码/镜像推送到远程服务器
-- [ ] 远程服务器拉取最新代码/镜像
-- [ ] 运行 `deploy_config_to_live.py --deploy` 同步配置（仅 yaml，不含 db）
-- [ ] 重启服务 (`systemctl restart quant-engine`)
-- [ ] 健康检查: 确认进程启动 + WS 连接成功
-
-### 2.2.4 安全约束
-
-- [ ] 远程 `live/highcap/data/` 目录下的运行时数据（db、日志）不得被部署覆盖
-- [ ] API key / secret 通过 `server.env` 管理，不进 git
-- [ ] 部署前自动备份远程 db 文件
-
----
-
-## 2.3 代码部署（CI/CD 就绪后执行）
-
-### 2.3.1 部署方式选择
-
-- [ ] **方式 A (推荐): Git clone + requirements.txt**
+- [ ] 从本地执行（自动安装 Docker + 创建目录 + 配置 systemd）:
   ```bash
-  # 服务器上
-  git clone <repo> /opt/quant-engine
-  cd /opt/quant-engine
-  pip install -r requirements.txt
+  ssh root@<SERVER_IP> 'bash -s' < scripts/server_bootstrap.sh
   ```
-- [ ] **方式 B: Docker image**
-  - 构建 `Dockerfile.live` (只装依赖，代码 volume 挂载)
-  - Push 到腾讯云 TCR 或 DockerHub
+- [ ] 执行后自动完成:
+  - Docker 安装并启动
+  - `/opt/quant-engine/live/highcap/data/{db,ticks,features_15min,features_4h}/` 目录创建
+  - `quant-engine.service` systemd 服务配置并启用
 
-### 2.3.2 配置文件部署
+### 2.2.2 上传 Binance API 密钥
 
-- [ ] `config/` 目录完整上传
-- [ ] `live/highcap/config/` 目录完整上传
-- [ ] `live/server.env` 配置实际服务器信息
-
-### 2.3.3 数据准备
-
-- [ ] warmup 数据上传:
+- [ ] 本地执行:
   ```bash
-  # 本地准备
-  bash live/scripts/prepare_warmup_ticks.sh highcap 6 --from-local
-  # 上传到服务器
-  rsync -avz live/highcap/data/ server:/opt/quant-engine/live/highcap/data/
+  scp live/binance_mainnet.env root@<SERVER_IP>:/opt/quant-engine/live/
   ```
-- [ ] 或服务器直接下载:
-  ```bash
-  bash live/scripts/prepare_warmup_ticks.sh highcap 6
-  ```
-
-### 2.3.4 API 密钥配置
-
-- [ ] `.env` 文件配置 Binance API key/secret
 - [ ] 确认 API key 权限: 只允许合约交易 + 只允许服务器 IP
-- [ ] 测试 API 连通性
+
+### 2.2.3 安全组检查
+
+- [ ] SSH 端口限制为固定 IP（当前 0.0.0.0/0 不安全，腾讯云控制台修改）
+- [ ] 确认无其他端口暴露（Grafana 3000 等后续按需开放）
 
 ---
 
-## 2.4 Terraform 执行
+## 2.3 首次部署
 
+### 2.3.1 触发首次构建
+
+- [ ] 方式 A（推荐）: GitHub 仓库 → Actions 页面 → "Build & Deploy" → Run workflow
+- [ ] 方式 B: push 代码到 main 分支自动触发
+- [ ] 确认 Actions 日志:
+  - Build & Push Image: ✅ 镜像推送到 ghcr.io
+  - Deploy to Server: ✅ 镜像拉取 + 服务重启
+
+### 2.3.2 服务器上运行 Warmup 数据下载
+
+> **不需要从本地上传** — 服务器（东京）直连 Binance 比本地 VPN 更快
+> **不需要 Feature Store** — live 模式所有特征基于 ticks/bars 实时重算
+
+- [ ] SSH 到服务器，通过 Docker 容器执行 warmup:
+  ```bash
+  ssh root@<SERVER_IP>
+  docker run --rm \
+    -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
+    quant-engine:latest \
+    bash live/scripts/prepare_warmup_ticks.sh highcap 6
+  ```
+- [ ] 预期: 下载 6 个月 aggTrades → 转换为 1min ticks + bars
+- [ ] 耗时: ~10-30 分钟（取决于网络和 symbol 数量）
+- [ ] 验证: `ls /opt/quant-engine/live/highcap/data/ticks/BTCUSDT/ | wc -l` 应有 ~180 个文件
+
+### 2.3.3 启动服务
+
+- [ ] 启动:
+  ```bash
+  sudo systemctl start quant-engine
+  ```
+- [ ] 查看实时日志:
+  ```bash
+  sudo journalctl -u quant-engine -f
+  ```
+- [ ] 确认启动成功标志:
+  - WS 连接成功 (`✅ WebSocket connected`)
+  - warmup 阶段完成 (`WARMUP → NORMAL`，约 4h）
+  - 三策略注册成功 (`Registered: bpc, me, fer`)
+
+---
+
+## 2.4 后续部署（日常迭代）
+
+每次修改代码后:
 ```bash
-# 1. 配置凭证
-source config/local/qcloud.env
-
-# 2. Plan
-cd terraform
-terraform plan
-
-# 3. Apply
-terraform apply
-
-# 4. 验证
-ssh ubuntu@<server_ip> "systemctl status quant-engine"
+# 本地 commit + push
+git add . && git commit -m "fix: xxx" && git push origin main
+# GitHub Actions 自动: build image → push ghcr.io → server pull → restart
+# 无需 SSH 到服务器
 ```
+
+手动重启（不重新构建）:
+```bash
+# GitHub Actions → Run workflow → 勾选 "skip_build"
+# 或直接 SSH:
+ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
+```
+
+### 关键安全保障
+
+| 保护项 | 机制 |
+|---|---|
+| `order_management.db` | volume 挂载在服务器，镜像更新不影响 |
+| `live/highcap/data/` | volume 挂载，持久化在 `/opt/quant-engine/live/highcap/data/` |
+| API 密钥 | 只读挂载 `binance_mainnet.env`，不进镜像 |
+| 回滚 | `docker pull ghcr.io/<repo>:sha-<旧commit>` + restart |
 
 ---
 
@@ -394,13 +393,21 @@ MLBOT_CONSTITUTION_YAML=live/highcap/config/constitution/constitution.yaml \
 python scripts/run_live.py
 ```
 
-## Terraform 部署命令
+## 部署命令速查
 
 ```bash
-source config/local/qcloud.env
-cd terraform
-terraform plan
-terraform apply
+# 首次部署
+ssh root@<IP> 'bash -s' < scripts/server_bootstrap.sh       # 1. 初始化服务器
+scp live/binance_mainnet.env root@<IP>:/opt/quant-engine/live/ # 2. 上传密钥
+# 3. GitHub Actions → Run workflow (首次构建镜像)
+ssh root@<IP>                                                 # 4. SSH 到服务器
+docker run --rm \                                             # 5. 下载 warmup 数据
+  -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
+  quant-engine:latest bash live/scripts/prepare_warmup_ticks.sh highcap 6
+sudo systemctl start quant-engine                             # 6. 启动服务
+
+# 日常迭代
+git push origin main  # 自动触发: build → push → deploy → restart
 ```
 
 ## 关键文件
@@ -408,9 +415,11 @@ terraform apply
 | 文件 | 用途 |
 |------|------|
 | `scripts/run_live.py` | 实盘入口 (多策略) |
+| `docker/Dockerfile.live` | 生产 Docker 镜像定义 |
+| `.github/workflows/deploy.yml` | CI/CD 流水线 |
+| `scripts/server_bootstrap.sh` | 服务器初始化脚本 |
+| `terraform/systemd/quant-engine.service` | systemd 服务定义 (Docker 模式) |
 | `config/pcm_regime.yaml` | PCM Regime 仲裁配置 |
 | `config/constitution/constitution.yaml` | 宪法硬约束 |
-| `live/highcap/config/strategies/` | 生产策略配置 |
+| `live/highcap/config/strategies/` | 生产策略配置 (53 个 YAML) |
 | `scripts/deploy_config_to_live.py` | 研究→生产配置部署 |
-| `terraform/main.tf` | 云基础设施定义 |
-| `terraform/systemd/quant-engine.service` | systemd 服务定义 |
