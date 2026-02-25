@@ -445,6 +445,7 @@ class BinanceMultiSymbolDownloader:
         end_year: int = 2025,
         end_month: int = 9,
         symbols: List[str] = None,
+        auto_confirm: bool = False,
     ) -> None:
         """下载所有币种的数据"""
         print("\n" + "=" * 60)
@@ -482,10 +483,18 @@ class BinanceMultiSymbolDownloader:
         print()
 
         # 确认开始
-        response = input("⚠️  这可能需要几小时时间和大量磁盘空间。是否继续? (y/N): ")
-        if response.lower() != "y":
-            print("❌ 已取消")
-            return
+        if auto_confirm:
+            print("✅ 自动确认模式，跳过交互确认")
+        else:
+            try:
+                response = input(
+                    "⚠️  这可能需要几小时时间和大量磁盘空间。是否继续? (y/N): "
+                )
+                if response.lower() != "y":
+                    print("❌ 已取消")
+                    return
+            except EOFError:
+                print("✅ 非交互环境，自动继续")
 
         start_time = time.time()
 

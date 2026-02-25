@@ -276,6 +276,7 @@ def download_monthly(
         end_year=end_year,
         end_month=end_month,
         symbols=symbols,
+        auto_confirm=True,
     )
 
 
