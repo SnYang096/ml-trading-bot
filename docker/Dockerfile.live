@@ -10,13 +10,13 @@
 #   - HTTP API 调用（requests, aiohttp, httpx）
 #   - 特征计算（numpy, pandas, scipy, scikit-learn, TA-Lib, PyWavelets, statsmodels）
 #   - 数据存储（pyarrow, parquet, polars）
-#   - MLP 模型推理（PyTorch CPU 版本，约 200-300MB）
+#   - LightGBM 模型推理（cloudpickle 加载）
 #   - 配置管理（pyyaml, python-dotenv）
 #   - 系统监控（psutil）
 # 
 # 不包含:
 #   - GPU/CUDA 支持
-#   - 深度学习框架（mamba-ssm, flash-attn）
+#   - 深度学习框架（PyTorch, mamba-ssm, flash-attn）
 #   - 编译工具（gcc, cmake）
 #   - 训练相关库（optuna, gymnasium, stable-baselines3）
 #   - 回测相关库（vectorbt, alphalens）
@@ -77,23 +77,15 @@ RUN echo "=== Python Version ===" && python3 --version | cat
 RUN echo "=== Python Location ===" && which python3 | cat
 
 # =========================================================================
-# 配置 pip 镜像源
-# =========================================================================
-RUN mkdir -p /root/.pip \
-    && echo "[global]" > /root/.pip/pip.conf \
-    && echo "index-url = http://mirrors.aliyun.com/pypi/simple/" >> /root/.pip/pip.conf \
-    && echo "trusted-host = mirrors.aliyun.com" >> /root/.pip/pip.conf
-
-# =========================================================================
 # 升级 pip
 # =========================================================================
-RUN python3 -m pip install --upgrade pip setuptools wheel
+RUN python3 -m pip install --upgrade pip setuptools wheel --break-system-packages
 
 # =========================================================================
 # 安装数据科学核心库（与 GPU 版本保持一致）
 # =========================================================================
 RUN echo "📦 Installing data science core libraries..." && \
-    pip3 install --no-cache-dir --timeout=600 \
+    pip3 install --no-cache-dir --break-system-packages --timeout=600 \
     numpy==1.26.4 \
     pandas==2.1.4 \
     scipy==1.11.4 \
@@ -105,7 +97,7 @@ RUN echo "📦 Installing data science core libraries..." && \
 # 安装 WebSocket 和 HTTP 相关库
 # =========================================================================
 RUN echo "📦 Installing WebSocket and HTTP libraries..." && \
-    pip3 install --no-cache-dir --timeout=600 \
+    pip3 install --no-cache-dir --break-system-packages --timeout=600 \
     websockets>=12.0 \
     aiohttp>=3.9.0 \
     requests>=2.31.0 \
@@ -117,7 +109,7 @@ RUN echo "📦 Installing WebSocket and HTTP libraries..." && \
 # 安装特征计算相关库
 # =========================================================================
 RUN echo "📦 Installing feature calculation libraries..." && \
-    pip3 install --no-cache-dir --timeout=600 \
+    pip3 install --no-cache-dir --break-system-packages --timeout=600 \
     PyWavelets==1.4.1 \
     statsmodels==0.14.1 \
     arch \
@@ -133,27 +125,22 @@ RUN echo "📦 Installing TA-Lib (download + install)..." && \
     wget -q https://github.com/ta-lib/ta-lib/releases/download/v0.6.4/ta-lib_0.6.4_amd64.deb -O /tmp/ta-lib.deb && \
     dpkg -i /tmp/ta-lib.deb || apt-get install -f -y && \
     rm /tmp/ta-lib.deb && \
-    pip3 install --no-cache-dir TA-Lib && \
+    pip3 install --no-cache-dir --break-system-packages TA-Lib && \
     python3 -c "import talib; print('✅ TA-Lib Python version:', talib.__version__)"
 
 # =========================================================================
-# 安装 PyTorch CPU 版本（用于 MLP 模型推理）
-# 注意：
-#   - PyTorch CPU 版本大小约 200-300MB，比 GPU 版本小很多
-#   - 版本 2.9.0 与 GPU 版本保持一致，确保模型兼容性
-#   - 只安装 torch，不安装 torchvision/torchaudio（实盘不需要）
+# 安装 LightGBM（实盘策略使用 LightGBM 模型）
 # =========================================================================
-RUN echo "📦 Installing PyTorch CPU (for MLP inference)..." && \
-    pip3 install --no-cache-dir --timeout=1800 \
-    torch==2.9.0 \
-    --index-url https://download.pytorch.org/whl/cpu \
-    && python3 -c "import torch; print('✅ PyTorch CPU:', torch.__version__, '| CUDA available:', torch.cuda.is_available(), '(should be False)')"
+RUN echo "📦 Installing LightGBM..." && \
+    pip3 install --no-cache-dir --break-system-packages --timeout=600 \
+    lightgbm>=4.0.0 \
+    && python3 -c "import lightgbm; print('✅ LightGBM:', lightgbm.__version__)"
 
 # =========================================================================
 # 安装其他项目依赖
 # =========================================================================
 RUN echo "📦 Installing project dependencies..." && \
-    pip3 install --no-cache-dir --timeout=900 \
+    pip3 install --no-cache-dir --break-system-packages --timeout=900 \
     joblib==1.3.2 \
     python-dotenv==1.0.0 \
     pyyaml==6.0.2 \
@@ -167,7 +154,7 @@ RUN echo "📦 Installing project dependencies..." && \
 # 安装数据存储和工具库
 # =========================================================================
 RUN echo "📦 Installing data storage and utility libraries..." && \
-    pip3 install --no-cache-dir --timeout=600 \
+    pip3 install --no-cache-dir --break-system-packages --timeout=600 \
     openpyxl==3.1.2 \
     polars==0.20.31 \
     && python3 -c "import openpyxl, polars as pl; print('✅ Data storage libraries installed:', pl.__version__)"
@@ -181,7 +168,7 @@ RUN echo "📦 Installing data storage and utility libraries..." && \
 # 安装异步和并发库
 # =========================================================================
 RUN echo "📦 Installing async and concurrency libraries..." && \
-    pip3 install --no-cache-dir --timeout=600 \
+    pip3 install --no-cache-dir --break-system-packages --timeout=600 \
     asyncio-throttle>=1.0.0 \
     aiofiles>=23.0.0 \
     && python3 -c "import aiofiles; print('✅ Async libraries installed')"
@@ -190,7 +177,7 @@ RUN echo "📦 Installing async and concurrency libraries..." && \
 # 安装实盘额外依赖（监控、特征计算、模型序列化）
 # =========================================================================
 RUN echo "📦 Installing additional live trading dependencies..." && \
-    pip3 install --no-cache-dir --timeout=600 \
+    pip3 install --no-cache-dir --break-system-packages --timeout=600 \
     prometheus_client>=0.20.0 \
     cloudpickle==2.2.1 \
     click>=8.0.0 \
