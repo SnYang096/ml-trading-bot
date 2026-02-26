@@ -412,20 +412,13 @@ def compare_one_symbol(args, archetypes_dir, live_feature_set, live_feature_node
             info = feature_deps_cfg.get(n)
             if not isinstance(info, dict):
                 continue
-            col_mappings = info.get("column_mappings") or {}
-            mapped_cols = set()
-            for v in col_mappings.values():
-                if isinstance(v, str):
-                    mapped_cols.add(v)
-                elif isinstance(v, list):
-                    mapped_cols.update(v)
+            # 只检查 required_columns（必须列），column_mappings 可能包含可选参数
             req_cols = set(info.get("required_columns") or [])
-            all_inputs = mapped_cols | req_cols
-            missing = all_inputs - bar_cols_updated
-            if all_inputs and not missing:
+            if req_cols.issubset(bar_cols_updated):
                 second_pass.append(n)
             else:
-                print(f"    {n}: ✗ 仍缺少列: {missing}")
+                missing = req_cols - bar_cols_updated
+                print(f"    {n}: ✗ 仍缺少必须列: {missing}")
 
         if second_pass:
             print(f"  第二轮计算节点: {second_pass}")
@@ -440,7 +433,22 @@ def compare_one_symbol(args, archetypes_dir, live_feature_set, live_feature_node
                     cfn = get_compute_func(compute_func_name)
                     if cfn is None:
                         continue
-                    call_args, call_kwargs = _build_call_args(info, research_df, n)
+                    # 过滤 column_mappings: 只保留实际存在的列
+                    info_filtered = dict(info)
+                    raw_mappings = info.get("column_mappings") or {}
+                    if raw_mappings:
+                        avail_mappings = {}
+                        for param, src in raw_mappings.items():
+                            if isinstance(src, str) and src in bar_cols_updated:
+                                avail_mappings[param] = src
+                            elif isinstance(src, list) and all(
+                                s in bar_cols_updated for s in src
+                            ):
+                                avail_mappings[param] = src
+                        info_filtered["column_mappings"] = avail_mappings
+                    call_args, call_kwargs = _build_call_args(
+                        info_filtered, research_df, n
+                    )
                     sig = inspect.signature(cfn)
                     accepts_var_kw = any(
                         p.kind == inspect.Parameter.VAR_KEYWORD

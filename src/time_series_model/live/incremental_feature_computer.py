@@ -1104,17 +1104,11 @@ class IncrementalFeatureComputer:
                         info = feats_cfg.get(n)
                         if not isinstance(info, dict):
                             continue
-                        # Collect all columns this node needs as input
-                        col_mappings = info.get("column_mappings") or {}
-                        mapped_cols: set = set()
-                        for v in col_mappings.values():
-                            if isinstance(v, str):
-                                mapped_cols.add(v)
-                            elif isinstance(v, list):
-                                mapped_cols.update(v)
+                        # 只检查 required_columns（必须列）。
+                        # column_mappings 可能包含可选参数（函数默认 None），
+                        # 不应阻止节点进入 second pass。
                         req_cols = set(info.get("required_columns") or [])
-                        all_inputs = mapped_cols | req_cols
-                        if all_inputs and all_inputs.issubset(bar_cols_updated):
+                        if req_cols.issubset(bar_cols_updated):
                             second_pass.append(n)
 
                     if second_pass:
@@ -1131,8 +1125,26 @@ class IncrementalFeatureComputer:
                                 cfn = get_compute_func(compute_func_name)
                                 if cfn is None:
                                     continue
+                                # 过滤 column_mappings：只保留 bars_tf 中
+                                # 实际存在的列，跳过缺失的可选映射
+                                # （如 ofci_pct 未被 step 2 计算时）
+                                info_filtered = dict(info)
+                                raw_mappings = info.get("column_mappings") or {}
+                                if raw_mappings:
+                                    avail_mappings = {}
+                                    for param, src in raw_mappings.items():
+                                        if (
+                                            isinstance(src, str)
+                                            and src in bar_cols_updated
+                                        ):
+                                            avail_mappings[param] = src
+                                        elif isinstance(src, list) and all(
+                                            s in bar_cols_updated for s in src
+                                        ):
+                                            avail_mappings[param] = src
+                                    info_filtered["column_mappings"] = avail_mappings
                                 call_args, call_kwargs = _build_call_args(
-                                    info, bars_tf, n
+                                    info_filtered, bars_tf, n
                                 )
                                 sig = inspect.signature(cfn)
                                 accepts_var_kw = any(
@@ -1431,16 +1443,10 @@ class IncrementalFeatureComputer:
                         info = feats_cfg.get(n)
                         if not isinstance(info, dict):
                             continue
-                        col_mappings = info.get("column_mappings") or {}
-                        mapped_cols = set()
-                        for v in col_mappings.values():
-                            if isinstance(v, str):
-                                mapped_cols.add(v)
-                            elif isinstance(v, list):
-                                mapped_cols.update(v)
+                        # 只检查 required_columns（必须列）。
+                        # column_mappings 可能包含可选参数，不应阻止进入 second pass。
                         req_cols = set(info.get("required_columns") or [])
-                        all_inputs = mapped_cols | req_cols
-                        if all_inputs and all_inputs.issubset(bar_cols_updated):
+                        if req_cols.issubset(bar_cols_updated):
                             second_pass.append(n)
                     if second_pass:
                         from src.features.registry import get_compute_func
@@ -1456,8 +1462,24 @@ class IncrementalFeatureComputer:
                                 cfn = get_compute_func(compute_func_name)
                                 if cfn is None:
                                     continue
+                                # 过滤 column_mappings: 只保留实际存在的列
+                                info_filtered = dict(info)
+                                raw_mappings = info.get("column_mappings") or {}
+                                if raw_mappings:
+                                    avail_mappings = {}
+                                    for param, src in raw_mappings.items():
+                                        if (
+                                            isinstance(src, str)
+                                            and src in bar_cols_updated
+                                        ):
+                                            avail_mappings[param] = src
+                                        elif isinstance(src, list) and all(
+                                            s in bar_cols_updated for s in src
+                                        ):
+                                            avail_mappings[param] = src
+                                    info_filtered["column_mappings"] = avail_mappings
                                 call_args, call_kwargs = _build_call_args(
-                                    info, bars_tf, n
+                                    info_filtered, bars_tf, n
                                 )
                                 sig = inspect.signature(cfn)
                                 accepts_var_kw = any(
