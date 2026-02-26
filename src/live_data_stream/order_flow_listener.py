@@ -429,6 +429,20 @@ class OrderFlowListener:
             self.symbol, bar_start, bar_end
         )
         
+        # 诊断: bars 数据严重不足时提示 warmup
+        min_bars_for_features = 240 * 10  # 10 个 4h bars = 2400 1min bars
+        if len(bars_disk) < min_bars_for_features:
+            bars_path = self.storage_manager.bar_1min.root / self.symbol
+            n_files = len(list(bars_path.glob("*.parquet"))) if bars_path.exists() else 0
+            logger.error(
+                "[%s] ⚠️ bars 数据严重不足: disk=%d 条 (需要>=%d), "
+                "bars目录=%s 含 %d 个文件。"
+                "请运行: rsync -avz live/highcap/data/bars/ remote:live/highcap/data/bars/ "
+                "或 bash live/scripts/prepare_warmup_ticks.sh highcap 6",
+                self.symbol, len(bars_disk), min_bars_for_features,
+                bars_path, n_files,
+            )
+        
         # 1min ticks: 8 天（覆盖 VPIN 7 天滚动窗口）
         # 如果近期数据有缺口，向前扩展查找（最多100天）
         tick_lookback_days = 8

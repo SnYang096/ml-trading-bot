@@ -57,8 +57,9 @@ fi
 # 1. Warmup 数据检查（仅补充 daily 数据，不做完整下载）
 echo "📦 第1步：Warmup 数据检查..."
 TICKS_DIR="$LIVE_ROOT/data/ticks"
+BARS_DIR="$LIVE_ROOT/data/bars"
 if [ -d "$TICKS_DIR" ] && [ "$(ls -A $TICKS_DIR 2>/dev/null)" ]; then
-  echo "   ✅ 已有 warmup 数据，补充缺失的 daily 数据..."
+  echo "   ✅ 已有 ticks warmup 数据，补充缺失的 daily 数据..."
   bash live/scripts/prepare_warmup_ticks.sh "$UNIVERSE" 6 --fill-gap
 else
   echo "   ⚠️  未找到 warmup 数据！请先执行以下命令之一："
@@ -69,6 +70,23 @@ else
   echo "        docker run --rm -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data quant-engine:latest bash live/scripts/prepare_warmup_ticks.sh highcap 6"
   echo ""
   echo "   ❌ Warmup 数据缺失，启动中止！"
+  exit 1
+fi
+
+# 检查 bars 目录（bars 是特征计算的必要数据）
+if [ -d "$BARS_DIR" ]; then
+  BARS_FILES=$(find "$BARS_DIR" -name "*.parquet" 2>/dev/null | wc -l)
+  echo "   📊 bars 目录: $BARS_FILES 个 parquet 文件"
+  if [ "$BARS_FILES" -lt 100 ]; then
+    echo "   ⚠️  bars 数据不足 ($BARS_FILES 个文件，需要 100+)！"
+    echo "      特征计算需要 150+ 天 1min bars。请上传历史 bars 数据："
+    echo "      rsync -avz live/highcap/data/bars/ remote:$LIVE_ROOT/data/bars/"
+    echo "   ❌ bars warmup 数据不足，启动中止！"
+    exit 1
+  fi
+else
+  echo "   ❌ bars 目录不存在: $BARS_DIR"
+  echo "      请先运行 warmup 或上传 bars 数据"
   exit 1
 fi
 echo ""
