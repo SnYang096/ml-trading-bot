@@ -718,5 +718,207 @@ class TestAtrNodeAlwaysIncluded:
         assert "atr_f" in nodes
 
 
+# ---------------------------------------------------------------------------
+# 6. 元数据驱动 warmup 校验 + 代码路径统一
+# ---------------------------------------------------------------------------
+
+
+class TestMetadataWarmupCheck:
+    """_get_warmup_check_features 基于 feature_dependencies 元数据，
+    而非后缀猜测。"""
+
+    def test_pct_suffix_not_in_warmup_features(self):
+        """_pct 后缀的特征 (fer_signed_efficiency_pct) 不应被纳入 warmup 检查。
+
+        它们用 .rank(pct=True) 小窗口，不是大窗口 rolling percentile。
+        """
+        from src.time_series_model.live.incremental_feature_computer import (
+            IncrementalFeatureComputer,
+        )
+
+        fc = IncrementalFeatureComputer.__new__(IncrementalFeatureComputer)
+        fc.live_feature_set = {
+            "fer_signed_efficiency_pct",
+            "shd_pct",
+            "bpc_volume_compression_pct",
+            "atr_percentile",
+        }
+        fc._feature_deps = {
+            "features": {
+                # _pct 特征：无 percentile_window，compute_func 不含 percentile
+                "fer_signals_f": {
+                    "compute_func": "compute_fer_failure_signals_from_series",
+                    "compute_params": {"efficiency_window": 20},
+                    "output_columns": ["fer_signed_efficiency_pct"],
+                },
+                "shd_f": {
+                    "compute_func": "compute_shd_from_series",
+                    "compute_params": {},
+                    "output_columns": ["shd_pct"],
+                },
+                # 真正的 percentile 特征：有 percentile_window 或 func 名含 percentile
+                "atr_percentile_f": {
+                    "compute_func": "compute_atr_percentile_from_series",
+                    "compute_params": {"window": 540},
+                    "output_columns": ["atr_percentile"],
+                },
+            }
+        }
+        result = fc._get_warmup_check_features()
+        # atr_percentile 应在 (compute_func 含 percentile)
+        assert "atr_percentile" in result
+        # _pct 特征不应在
+        assert "fer_signed_efficiency_pct" not in result
+        assert "shd_pct" not in result
+        assert "bpc_volume_compression_pct" not in result
+
+    def test_percentile_window_feature_in_warmup_check(self):
+        """compute_params 包含 percentile_window >= 100 的节点应被纳入。"""
+        from src.time_series_model.live.incremental_feature_computer import (
+            IncrementalFeatureComputer,
+        )
+
+        fc = IncrementalFeatureComputer.__new__(IncrementalFeatureComputer)
+        fc.live_feature_set = {"jump_risk_pct", "path_length_pct"}
+        fc._feature_deps = {
+            "features": {
+                "jump_risk_pct_f": {
+                    "compute_func": "compute_jump_risk_pct_from_series",
+                    "compute_params": {"percentile_window": 540},
+                    "output_columns": ["jump_risk_pct"],
+                },
+                "path_length_pct_f": {
+                    "compute_func": "compute_path_length_pct_from_series",
+                    "compute_params": {"percentile_window": 540},
+                    "output_columns": ["path_length_pct"],
+                },
+            }
+        }
+        result = fc._get_warmup_check_features()
+        assert "jump_risk_pct" in result
+        assert "path_length_pct" in result
+
+    def test_small_percentile_window_excluded(self):
+        """percentile_window < 100 不纳入 warmup 检查。"""
+        from src.time_series_model.live.incremental_feature_computer import (
+            IncrementalFeatureComputer,
+        )
+
+        fc = IncrementalFeatureComputer.__new__(IncrementalFeatureComputer)
+        fc.live_feature_set = {"some_pct"}
+        fc._feature_deps = {
+            "features": {
+                "some_f": {
+                    "compute_func": "compute_some",
+                    "compute_params": {"percentile_window": 20},
+                    "output_columns": ["some_pct"],
+                },
+            }
+        }
+        result = fc._get_warmup_check_features()
+        assert "some_pct" not in result
+
+    def test_validate_warmup_raises_on_missing(self):
+        """_validate_warmup 应在大窗口百分位特征缺失时报错。"""
+        from src.time_series_model.live.incremental_feature_computer import (
+            IncrementalFeatureComputer,
+        )
+
+        fc = IncrementalFeatureComputer.__new__(IncrementalFeatureComputer)
+        fc.live_feature_set = {"atr_percentile"}
+        fc._feature_deps = {
+            "features": {
+                "atr_percentile_f": {
+                    "compute_func": "compute_atr_percentile_from_series",
+                    "compute_params": {"window": 540},
+                    "output_columns": ["atr_percentile"],
+                },
+            }
+        }
+        # 构造一个没有 atr_percentile 列的 DataFrame
+        bars_tf = pd.DataFrame(
+            {"close": [1.0, 2.0]},
+            index=pd.date_range("2024-01-01", periods=2, freq="4h"),
+        )
+        with pytest.raises(RuntimeError, match="Warmup 不足"):
+            fc._validate_warmup(bars_tf, features={"close": 1.0})
+
+    def test_validate_warmup_passes_when_present(self):
+        """_validate_warmup 不应在特征存在时报错。"""
+        from src.time_series_model.live.incremental_feature_computer import (
+            IncrementalFeatureComputer,
+        )
+
+        fc = IncrementalFeatureComputer.__new__(IncrementalFeatureComputer)
+        fc.live_feature_set = {"atr_percentile"}
+        fc._feature_deps = {
+            "features": {
+                "atr_percentile_f": {
+                    "compute_func": "compute_atr_percentile_from_series",
+                    "compute_params": {"window": 540},
+                    "output_columns": ["atr_percentile"],
+                },
+            }
+        }
+        bars_tf = pd.DataFrame(
+            {"atr_percentile": [0.5]},
+            index=pd.date_range("2024-01-01", periods=1, freq="4h"),
+        )
+        fc._validate_warmup(bars_tf, features={"atr_percentile": 0.5})  # 不应报错
+
+
+class TestCodePathUnification:
+    """compute_features_batch 和 compute_features_dataframe 共享 _compute_features_core。"""
+
+    def test_batch_calls_core(self):
+        """compute_features_batch 内部应调用 _compute_features_core。"""
+        from src.time_series_model.live.incremental_feature_computer import (
+            IncrementalFeatureComputer,
+        )
+        import inspect
+
+        src = inspect.getsource(IncrementalFeatureComputer.compute_features_batch)
+        assert (
+            "_compute_features_core" in src
+        ), "compute_features_batch 应调用 _compute_features_core 而非重复实现"
+
+    def test_dataframe_calls_core(self):
+        """compute_features_dataframe 内部应调用 _compute_features_core。"""
+        from src.time_series_model.live.incremental_feature_computer import (
+            IncrementalFeatureComputer,
+        )
+        import inspect
+
+        src = inspect.getsource(IncrementalFeatureComputer.compute_features_dataframe)
+        assert (
+            "_compute_features_core" in src
+        ), "compute_features_dataframe 应调用 _compute_features_core 而非重复实现"
+
+    def test_dataframe_also_validates_warmup(self):
+        """compute_features_dataframe 应包含 _validate_warmup 调用。"""
+        from src.time_series_model.live.incremental_feature_computer import (
+            IncrementalFeatureComputer,
+        )
+        import inspect
+
+        src = inspect.getsource(IncrementalFeatureComputer.compute_features_dataframe)
+        assert (
+            "_validate_warmup" in src
+        ), "compute_features_dataframe 应包含 warmup 校验，与实盘路径一致"
+
+    def test_no_duplicated_resample_logic(self):
+        """compute_features_batch / compute_features_dataframe 不应包含 resample 逻辑。"""
+        from src.time_series_model.live.incremental_feature_computer import (
+            IncrementalFeatureComputer,
+        )
+        import inspect
+
+        for method_name in ["compute_features_batch", "compute_features_dataframe"]:
+            src = inspect.getsource(getattr(IncrementalFeatureComputer, method_name))
+            assert (
+                "resample" not in src
+            ), f"{method_name} 不应包含 resample 逻辑，应委托给 _compute_features_core"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

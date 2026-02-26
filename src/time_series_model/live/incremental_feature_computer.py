@@ -848,28 +848,20 @@ class IncrementalFeatureComputer:
 
         return features
 
-    def compute_features_batch(
+    # ── 共享核心：步骤 1-3 的单一实现 ──────────────────────────
+    def _compute_features_core(
         self,
         bars_1min: pd.DataFrame,
         ticks_1min: pd.DataFrame,
         primary_timeframe: Optional[str] = None,
-    ) -> Dict[str, float]:
-        """
-        从磁盘数据批量计算特征（和研发流程一致）。
+    ) -> Optional[pd.DataFrame]:
+        """共享的特征计算核心 (steps 1-3).
 
-        每 15 分钟调用一次：
-        1. 1min bars → 重采样为 primary_timeframe (4h) bars
-        2. 1min ticks → 计算 VPIN/TC/FP 订单流特征
-        3. StrategyFeatureLoader 计算 OHLCV 特征
-        4. 返回最后一行的特征字典
-
-        Args:
-            bars_1min: 90+ 天的 1min OHLCV bars（从磁盘读取）
-            ticks_1min: 7 天的 1min 聚合 ticks（从磁盘读取）
-            primary_timeframe: 主时间框架（如 "240T"）
+        compute_features_batch 和 compute_features_dataframe 的唯一入口，
+        消除代码重复，确保逻辑一致。
 
         Returns:
-            特征字典（最后一行）
+            bars_tf DataFrame (所有计算完的列)，或 None（数据不足）。
         """
         import logging
 
@@ -878,8 +870,8 @@ class IncrementalFeatureComputer:
         ptf = primary_timeframe or self.primary_timeframe or "240T"
 
         if bars_1min is None or bars_1min.empty:
-            _logger.warning("compute_features_batch: bars_1min is empty")
-            return {}
+            _logger.warning("_compute_features_core: bars_1min is empty")
+            return None
 
         # ── 1. 重采样 1min bars → primary_timeframe (4h) ──
         bars = bars_1min.copy()
@@ -889,8 +881,8 @@ class IncrementalFeatureComputer:
             if "timestamp" in bars.columns:
                 bars.index = pd.to_datetime(bars["timestamp"], utc=True)
             else:
-                _logger.warning("compute_features_batch: no timestamp column")
-                return {}
+                _logger.warning("_compute_features_core: no timestamp column")
+                return None
 
         # 确保 tz-aware (UTC)
         if bars.index.tz is None:
@@ -945,15 +937,15 @@ class IncrementalFeatureComputer:
             ).fillna(0.5)
 
         _logger.info(
-            "compute_features_batch: %d 1min bars → %d %s bars",
+            "_compute_features_core: %d 1min bars → %d %s bars",
             len(bars_1min),
             len(bars_tf),
             ptf,
         )
 
         if len(bars_tf) < 10:
-            _logger.warning("compute_features_batch: too few bars (%d)", len(bars_tf))
-            return {}
+            _logger.warning("_compute_features_core: too few bars (%d)", len(bars_tf))
+            return None
 
         # ── 2. 计算订单流特征 (VPIN / Trade Clustering / Footprint) ──
         if ticks_1min is not None and not ticks_1min.empty:
@@ -965,7 +957,6 @@ class IncrementalFeatureComputer:
                 if ticks.index.tz is None:
                     ticks.index = ticks.index.tz_localize("UTC")
 
-                # VPIN + Trade Clustering (自适应桶，和研发一致)
                 of_df = extract_order_flow_features(
                     bars_tf,
                     ticks=ticks,
@@ -973,8 +964,6 @@ class IncrementalFeatureComputer:
                     include_trade_clustering=True,
                     compute_vpin_derived=True,
                 )
-                # 注意：extract_order_flow_features返回完整df（包含OHLCV+新特征）
-                # 只提取新增的列，避免重复列报错
                 existing_cols = set(bars_tf.columns)
                 new_cols = [c for c in of_df.columns if c not in existing_cols]
                 if new_cols:
@@ -998,14 +987,12 @@ class IncrementalFeatureComputer:
                 except Exception:
                     pass
 
-                # Footprint
                 try:
                     fp_df = compute_footprint_features(
                         bars_tf.tail(200),
                         ticks=ticks,
                         persist_monthly=False,
                     )
-                    # 只提取新增的列，避免重复列报错
                     fp_new_cols = [c for c in fp_df.columns if c not in bars_tf.columns]
                     if fp_new_cols:
                         bars_tf = bars_tf.join(fp_df[fp_new_cols], how="left")
@@ -1027,12 +1014,9 @@ class IncrementalFeatureComputer:
                 feats_cfg = (self._feature_deps or {}).get("features") or {}
                 bar_cols = set(bars_tf.columns)
 
-                # 需要 tick 数据的特征节点（已在第2步 extract_order_flow_features 中计算）
-                # 动态检测：基于 compute_func 签名判断是否需要 ticks（而不是硬编码）
                 tick_dependent_nodes = self._detect_tick_dependent_nodes(feats_cfg)
 
                 def _has_tick_dependency(node_name: str, visited: set = None) -> bool:
-                    """递归检查节点是否依赖 tick_dependent_nodes"""
                     if visited is None:
                         visited = set()
                     if node_name in visited:
@@ -1051,11 +1035,9 @@ class IncrementalFeatureComputer:
                 filtered = []
                 skipped = []
                 for n in req:
-                    # 跳过需要 tick 的节点及其依赖（已在第2步计算）
                     if _has_tick_dependency(n):
                         skipped.append(str(n))
                         continue
-
                     info = feats_cfg.get(n)
                     if isinstance(info, dict):
                         req_cols = set(info.get("required_columns") or [])
@@ -1065,14 +1047,11 @@ class IncrementalFeatureComputer:
                             continue
                     filtered.append(n)
 
-                # ── 3a-fix. 将 skipped 节点的 非-tick 依赖加入 filtered ──
-                # 例如 bpc_soft_phase_f 被跳过（依赖 vpin_features_f），
-                # 但它还依赖 atr_f, bb_width_normalized_pct_f 等非-tick 节点，
-                # 这些必须在 first pass 计算，second pass 才能运行。
+                # ── 3a-fix. skipped 节点的非-tick 依赖加入 filtered ──
                 filtered_set = set(filtered)
                 for n in skipped:
                     if n in tick_dependent_nodes:
-                        continue  # leaf tick reader，不需要添加依赖
+                        continue
                     info = feats_cfg.get(n)
                     if isinstance(info, dict):
                         for dep in info.get("dependencies") or []:
@@ -1092,21 +1071,16 @@ class IncrementalFeatureComputer:
                     len(bars_tf.columns),
                 )
 
-                # ── 3b. Second pass: compute skipped nodes whose inputs
-                #        are now available (e.g. bpc_soft_phase_f depends on
-                #        vpin/cvd/ofci which were already computed in step 2) ──
+                # ── 3b. Second pass ──
                 if skipped:
                     bar_cols_updated = set(bars_tf.columns)
                     second_pass = []
                     for n in skipped:
                         if n in tick_dependent_nodes:
-                            continue  # leaf tick reader — truly skip
+                            continue
                         info = feats_cfg.get(n)
                         if not isinstance(info, dict):
                             continue
-                        # 只检查 required_columns（必须列）。
-                        # column_mappings 可能包含可选参数（函数默认 None），
-                        # 不应阻止节点进入 second pass。
                         req_cols = set(info.get("required_columns") or [])
                         if req_cols.issubset(bar_cols_updated):
                             second_pass.append(n)
@@ -1125,9 +1099,6 @@ class IncrementalFeatureComputer:
                                 cfn = get_compute_func(compute_func_name)
                                 if cfn is None:
                                     continue
-                                # 过滤 column_mappings：只保留 bars_tf 中
-                                # 实际存在的列，跳过缺失的可选映射
-                                # （如 ofci_pct 未被 step 2 计算时）
                                 info_filtered = dict(info)
                                 raw_mappings = info.get("column_mappings") or {}
                                 if raw_mappings:
@@ -1159,7 +1130,6 @@ class IncrementalFeatureComputer:
                                         if k in allowed
                                     }
                                 result = cfn(*call_args, **call_kwargs)
-                                # Handle tuple return
                                 output_cols = info.get("output_columns", [n])
                                 if isinstance(result, tuple):
                                     if len(result) == len(output_cols):
@@ -1188,48 +1158,138 @@ class IncrementalFeatureComputer:
             except Exception as e:
                 _logger.warning("  Loader failed: %s", e)
 
-        # ── 4. 提取最后一行 ──
-        features: Dict[str, float] = {}
-        if len(bars_tf) > 0:
-            last_row = bars_tf.iloc[-1].to_dict()
-            for k, v in last_row.items():
-                if self._want(str(k)):
-                    try:
-                        if v is not None and np.isscalar(v) and not pd.isna(v):
-                            features[str(k)] = float(v)
-                    except (ValueError, TypeError):
-                        continue
+        return bars_tf
 
-        # ── 5. 校验: 百分位特征不得为 NaN (warmup 不足) ──
-        # 注意: _pct 后缀是百分比归一化（如 fer_signed_efficiency_pct），
-        # 不是滚动百分位排名。只检查真正的 percentile 特征。
-        _PERCENTILE_SUFFIXES = ("_percentile", "percentile_approx")
-        nan_pct_features = []
-        for k in self.live_feature_set or []:
-            if any(k.endswith(s) or s in k for s in _PERCENTILE_SUFFIXES):
-                if k not in features:
-                    # 诊断: 区分 "列不存在" vs "最后一行 NaN"
-                    in_cols = k in bars_tf.columns
-                    last_val = bars_tf[k].iloc[-1] if in_cols else "N/A"
-                    nonnull = int(bars_tf[k].notna().sum()) if in_cols else 0
-                    _logger.warning(
-                        "  ⚠️ pct_check: %s missing from features "
-                        "(in_cols=%s, last_val=%s, nonnull_rows=%d/%d)",
-                        k,
-                        in_cols,
-                        last_val,
-                        nonnull,
-                        len(bars_tf),
-                    )
-                    nan_pct_features.append(k)
-        if nan_pct_features:
+    # ── 元数据驱动的 warmup 特征识别 ─────────────────────────
+    def _get_warmup_check_features(self) -> frozenset:
+        """从 feature_dependencies.yaml 元数据识别需要大窗口 warmup 的特征。
+
+        判定规则 (基于配置元数据，不猜后缀):
+          1. compute_params 包含 percentile_window >= 100
+          2. 或 compute_func 名含 "percentile" (如 compute_atr_percentile_from_series)
+
+        这些特征使用大窗口 rolling + min_periods=window，
+        warmup 数据不足时最后一行必然为 NaN。
+        """
+        if not self._feature_deps or not self.live_feature_set:
+            return frozenset()
+
+        feats_cfg = (self._feature_deps or {}).get("features") or {}
+        check_cols: set = set()
+
+        for node_name, info in feats_cfg.items():
+            if not isinstance(info, dict):
+                continue
+            params = info.get("compute_params") or {}
+            func_name = str(info.get("compute_func", "")).lower()
+
+            # 规则 1: 有 percentile_window >= 100 的节点
+            has_large_pct_window = params.get("percentile_window", 0) >= 100
+            # 规则 2: compute_func 名含 "percentile"
+            is_pct_func = "percentile" in func_name
+
+            if has_large_pct_window or is_pct_func:
+                for col in info.get("output_columns") or []:
+                    check_cols.add(col)
+
+        return frozenset(check_cols & self.live_feature_set)
+
+    def _validate_warmup(
+        self,
+        bars_tf: pd.DataFrame,
+        features: Optional[Dict[str, float]] = None,
+    ) -> None:
+        """校验大窗口百分位特征是否因 warmup 不足而为 NaN。
+
+        在 compute_features_batch (实盘) 和 compute_features_dataframe (事件回测)
+        中共享调用，确保两条路径的校验逻辑一致。
+
+        Args:
+            bars_tf: 计算完成的特征 DataFrame
+            features: 最后一行特征字典 (batch 模式提供);
+                      为 None 时自动从 bars_tf 最后一行提取。
+        """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        warmup_features = self._get_warmup_check_features()
+        if not warmup_features:
+            return
+
+        # 如果没传 features dict，从 DataFrame 最后一行构建
+        if features is None and len(bars_tf) > 0:
+            last_row = bars_tf.iloc[-1]
+            features = {
+                str(k): float(v)
+                for k, v in last_row.items()
+                if v is not None
+                and np.isscalar(v)
+                and not (isinstance(v, float) and np.isnan(v))
+            }
+        elif features is None:
+            features = {}
+
+        nan_features = []
+        for k in warmup_features:
+            if k not in features:
+                in_cols = k in bars_tf.columns
+                last_val = bars_tf[k].iloc[-1] if in_cols else "N/A"
+                nonnull = int(bars_tf[k].notna().sum()) if in_cols else 0
+                _logger.warning(
+                    "  ⚠️ warmup_check: %s missing from features "
+                    "(in_cols=%s, last_val=%s, nonnull_rows=%d/%d)",
+                    k,
+                    in_cols,
+                    last_val,
+                    nonnull,
+                    len(bars_tf),
+                )
+                nan_features.append(k)
+
+        if nan_features:
             raise RuntimeError(
-                f"Warmup 不足: {len(nan_pct_features)} 个百分位特征为 NaN "
+                f"Warmup 不足: {len(nan_features)} 个大窗口百分位特征为 NaN "
                 f"(rolling window 未满足 min_periods). "
-                f"缺失特征: {nan_pct_features}. "
+                f"缺失特征: {nan_features}. "
                 f"当前 bars: {len(bars_tf)}. "
                 f"请运行: bash live/scripts/prepare_warmup_ticks.sh highcap 6"
             )
+
+    # ── 公开接口 ─────────────────────────────────────────────
+    def compute_features_batch(
+        self,
+        bars_1min: pd.DataFrame,
+        ticks_1min: pd.DataFrame,
+        primary_timeframe: Optional[str] = None,
+    ) -> Dict[str, float]:
+        """实盘入口: 返回最后一行特征字典。
+
+        每 15 分钟调用一次 (order_flow_listener)。
+        内部调用 _compute_features_core (共享步骤 1-3)，
+        然后提取最后一行 + warmup 校验。
+        """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        bars_tf = self._compute_features_core(bars_1min, ticks_1min, primary_timeframe)
+        if bars_tf is None or bars_tf.empty:
+            return {}
+
+        # ── 4. 提取最后一行 ──
+        features: Dict[str, float] = {}
+        last_row = bars_tf.iloc[-1].to_dict()
+        for k, v in last_row.items():
+            if self._want(str(k)):
+                try:
+                    if v is not None and np.isscalar(v) and not pd.isna(v):
+                        features[str(k)] = float(v)
+                except (ValueError, TypeError):
+                    continue
+
+        # ── 5. 校验大窗口百分位特征 (基于 feature_dependencies 元数据) ──
+        self._validate_warmup(bars_tf, features)
 
         # 缓存结果（用于 get_features() 兼容接口）
         self._batch_features = features
@@ -1244,289 +1304,26 @@ class IncrementalFeatureComputer:
         ticks_1min: pd.DataFrame,
         primary_timeframe: Optional[str] = None,
     ) -> pd.DataFrame:
-        """与 compute_features_batch 完全一致，但返回完整 DataFrame（所有行）而非仅最后一行。
+        """事件回测入口: 返回完整 DataFrame（所有行）。
 
-        用于回放模拟测试：一次性计算全量特征，然后逐行喂给 BPC.decide()。
+        与 compute_features_batch 共享相同的 _compute_features_core，
+        保证逻辑一致。用于一次性计算全量特征后逐行喂给 decide()。
         """
         import logging
 
         _logger = logging.getLogger(__name__)
 
-        ptf = primary_timeframe or self.primary_timeframe or "240T"
-
-        if bars_1min is None or bars_1min.empty:
+        bars_tf = self._compute_features_core(bars_1min, ticks_1min, primary_timeframe)
+        if bars_tf is None or bars_tf.empty:
             return pd.DataFrame()
-
-        # ── 1. 重采样 ──
-        bars = bars_1min.copy()
-        if not isinstance(bars.index, pd.DatetimeIndex):
-            if "timestamp" in bars.columns:
-                bars.index = pd.to_datetime(bars["timestamp"], utc=True)
-            else:
-                return pd.DataFrame()
-        if bars.index.tz is None:
-            bars.index = bars.index.tz_localize("UTC")
-
-        agg_dict = {
-            "open": "first",
-            "high": "max",
-            "low": "min",
-            "close": "last",
-            "volume": "sum",
-        }
-        for col, agg in [
-            ("buy_volume", "sum"),
-            ("sell_volume", "sum"),
-            ("buy_count", "sum"),
-            ("sell_count", "sum"),
-            ("trade_count", "sum"),
-            ("delta", "sum"),
-        ]:
-            if col in bars.columns:
-                agg_dict[col] = agg
-
-        bars_tf = bars.resample(ptf).agg(agg_dict).dropna(subset=["close"])
-
-        if "buy_volume" in bars_tf.columns and "sell_volume" in bars_tf.columns:
-            bars_tf["buy_qty"] = bars_tf["buy_volume"]
-            bars_tf["sell_qty"] = bars_tf["sell_volume"]
-            delta = bars_tf["buy_volume"] - bars_tf["sell_volume"]
-            total_flow = bars_tf["buy_volume"] + bars_tf["sell_volume"]
-            bars_tf["cvd_change_1"] = delta
-            bars_tf["cvd_change_5"] = delta.rolling(5, min_periods=1).sum()
-            bars_tf["cvd_change_20"] = delta.rolling(20, min_periods=1).sum()
-            bars_tf["cvd_roll20"] = delta.rolling(20, min_periods=1).sum()
-            bars_tf["cvd_roll60"] = delta.rolling(60, min_periods=1).sum()
-            bars_tf["cvd_roll288"] = delta.rolling(288, min_periods=1).sum()
-            bars_tf["cvd"] = delta.cumsum()
-            bars_tf["cvd_normalized"] = (delta / total_flow.replace(0, np.nan)).fillna(
-                0
-            )
-            total_flow_5 = total_flow.rolling(5, min_periods=1).sum()
-            bars_tf["cvd_change_5_normalized"] = (
-                bars_tf["cvd_change_5"] / total_flow_5.replace(0, np.nan)
-            ).fillna(0)
-            bars_tf["taker_buy_ratio"] = (
-                bars_tf["buy_volume"] / total_flow.replace(0, np.nan)
-            ).fillna(0.5)
-
-        _logger.info(
-            "compute_features_dataframe: %d 1min bars → %d %s bars",
-            len(bars_1min),
-            len(bars_tf),
-            ptf,
-        )
-        if len(bars_tf) < 10:
-            return pd.DataFrame()
-
-        # ── 2. 订单流特征 ── (same as compute_features_batch)
-        if ticks_1min is not None and not ticks_1min.empty:
-            try:
-                ticks = ticks_1min.copy()
-                if not isinstance(ticks.index, pd.DatetimeIndex):
-                    if "timestamp" in ticks.columns:
-                        ticks.index = pd.to_datetime(ticks["timestamp"], utc=True)
-                if ticks.index.tz is None:
-                    ticks.index = ticks.index.tz_localize("UTC")
-                of_df = extract_order_flow_features(
-                    bars_tf,
-                    ticks=ticks,
-                    freq=ptf,
-                    include_trade_clustering=True,
-                    compute_vpin_derived=True,
-                )
-                existing_cols = set(bars_tf.columns)
-                new_cols = [c for c in of_df.columns if c not in existing_cols]
-                if new_cols:
-                    bars_tf = bars_tf.join(of_df[new_cols], how="left")
-                try:
-                    vpin_derived = compute_vpin_derived_features_from_base(bars_tf)
-                    for c in vpin_derived.columns:
-                        if c not in bars_tf.columns:
-                            bars_tf[c] = vpin_derived[c]
-                except Exception:
-                    pass
-                try:
-                    tc_derived = compute_trade_cluster_derived_features_from_base(
-                        bars_tf
-                    )
-                    for c in tc_derived.columns:
-                        if c not in bars_tf.columns:
-                            bars_tf[c] = tc_derived[c]
-                except Exception:
-                    pass
-                try:
-                    fp_df = compute_footprint_features(
-                        bars_tf.tail(200),
-                        ticks=ticks,
-                        persist_monthly=False,
-                    )
-                    fp_new_cols = [c for c in fp_df.columns if c not in bars_tf.columns]
-                    if fp_new_cols:
-                        bars_tf = bars_tf.join(fp_df[fp_new_cols], how="left")
-                except Exception:
-                    pass
-                _logger.info(
-                    "  OF features: %d cols from %d ticks",
-                    len(of_df.columns),
-                    len(ticks_1min),
-                )
-            except Exception as e:
-                _logger.warning("  OF features failed: %s", e)
-
-        # ── 3. StrategyFeatureLoader ──
-        if self._feature_loader is not None and self.live_feature_nodes:
-            try:
-                req = list(self.live_feature_nodes)
-                feats_cfg = (self._feature_deps or {}).get("features") or {}
-                bar_cols = set(bars_tf.columns)
-                # 动态检测：基于 compute_func 签名判断是否需要 ticks（而不是硬编码）
-                tick_dependent_nodes = self._detect_tick_dependent_nodes(feats_cfg)
-
-                def _has_tick_dependency(node_name, visited=None):
-                    if visited is None:
-                        visited = set()
-                    if node_name in visited:
-                        return False
-                    visited.add(node_name)
-                    if node_name in tick_dependent_nodes:
-                        return True
-                    info = feats_cfg.get(node_name)
-                    if isinstance(info, dict):
-                        for dep in info.get("dependencies") or []:
-                            if _has_tick_dependency(dep, visited):
-                                return True
-                    return False
-
-                filtered, skipped = [], []
-                for n in req:
-                    if _has_tick_dependency(n):
-                        skipped.append(str(n))
-                        continue
-                    info = feats_cfg.get(n)
-                    if isinstance(info, dict):
-                        req_cols = set(info.get("required_columns") or [])
-                        deps = info.get("dependencies") or []
-                        if req_cols and not req_cols.issubset(bar_cols) and not deps:
-                            skipped.append(str(n))
-                            continue
-                    filtered.append(n)
-
-                # 将 skipped 节点的非-tick 依赖加入 filtered
-                filtered_set = set(filtered)
-                for n in skipped:
-                    if n in tick_dependent_nodes:
-                        continue
-                    info = feats_cfg.get(n)
-                    if isinstance(info, dict):
-                        for dep in info.get("dependencies") or []:
-                            if dep not in filtered_set and not _has_tick_dependency(
-                                dep
-                            ):
-                                filtered.append(dep)
-                                filtered_set.add(dep)
-
-                bars_tf = self._feature_loader.load_features_from_requested(
-                    bars_tf, requested_features=filtered, fit=False
-                )
-                _logger.info(
-                    "  Loader: %d nodes (%d skipped tick-dep) → %d cols",
-                    len(filtered),
-                    len(skipped),
-                    len(bars_tf.columns),
-                )
-                # second pass
-                if skipped:
-                    bar_cols_updated = set(bars_tf.columns)
-                    second_pass = []
-                    for n in skipped:
-                        if n in tick_dependent_nodes:
-                            continue
-                        info = feats_cfg.get(n)
-                        if not isinstance(info, dict):
-                            continue
-                        # 只检查 required_columns（必须列）。
-                        # column_mappings 可能包含可选参数，不应阻止进入 second pass。
-                        req_cols = set(info.get("required_columns") or [])
-                        if req_cols.issubset(bar_cols_updated):
-                            second_pass.append(n)
-                    if second_pass:
-                        from src.features.registry import get_compute_func
-                        from src.features.loader.feature_computer import (
-                            _build_call_args,
-                        )
-                        import inspect
-
-                        for n in second_pass:
-                            try:
-                                info = feats_cfg.get(n)
-                                compute_func_name = info.get("compute_func", n)
-                                cfn = get_compute_func(compute_func_name)
-                                if cfn is None:
-                                    continue
-                                # 过滤 column_mappings: 只保留实际存在的列
-                                info_filtered = dict(info)
-                                raw_mappings = info.get("column_mappings") or {}
-                                if raw_mappings:
-                                    avail_mappings = {}
-                                    for param, src in raw_mappings.items():
-                                        if (
-                                            isinstance(src, str)
-                                            and src in bar_cols_updated
-                                        ):
-                                            avail_mappings[param] = src
-                                        elif isinstance(src, list) and all(
-                                            s in bar_cols_updated for s in src
-                                        ):
-                                            avail_mappings[param] = src
-                                    info_filtered["column_mappings"] = avail_mappings
-                                call_args, call_kwargs = _build_call_args(
-                                    info_filtered, bars_tf, n
-                                )
-                                sig = inspect.signature(cfn)
-                                accepts_var_kw = any(
-                                    p.kind == inspect.Parameter.VAR_KEYWORD
-                                    for p in sig.parameters.values()
-                                )
-                                if not accepts_var_kw and call_kwargs:
-                                    allowed = set(sig.parameters.keys())
-                                    call_kwargs = {
-                                        k: v
-                                        for k, v in call_kwargs.items()
-                                        if k in allowed
-                                    }
-                                result = cfn(*call_args, **call_kwargs)
-                                output_cols = info.get("output_columns", [n])
-                                if isinstance(result, tuple):
-                                    if len(result) == len(output_cols):
-                                        result = pd.DataFrame(
-                                            dict(zip(output_cols, result))
-                                        )
-                                if isinstance(result, pd.DataFrame):
-                                    new_cols = [
-                                        c
-                                        for c in result.columns
-                                        if c not in bars_tf.columns
-                                    ]
-                                    if new_cols:
-                                        aligned = result[new_cols].reindex(
-                                            bars_tf.index
-                                        )
-                                        bars_tf = pd.concat([bars_tf, aligned], axis=1)
-                                elif isinstance(result, pd.Series):
-                                    if result.name not in bars_tf.columns:
-                                        bars_tf[result.name] = result.reindex(
-                                            bars_tf.index
-                                        )
-                            except Exception:
-                                pass
-            except Exception as e:
-                _logger.warning("  Loader failed: %s", e)
 
         # ── 4. 过滤列，只保留 live_feature_set 需要的 ──
         if self.live_feature_set:
             keep = [c for c in bars_tf.columns if self._want(str(c))]
             bars_tf = bars_tf[keep]
+
+        # ── 5. warmup 校验 (与实盘一致) ──
+        self._validate_warmup(bars_tf)
 
         _logger.info(
             "  compute_features_dataframe done: %d rows × %d cols",
