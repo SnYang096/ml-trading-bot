@@ -130,6 +130,21 @@ def _extract_features_from_entry_filters(cfg: Dict[str, Any]) -> Set[str]:
     return features
 
 
+def _extract_features_from_direction(cfg: Dict[str, Any]) -> Set[str]:
+    """Extract feature columns referenced in direction.yaml direction_rules."""
+    features: Set[str] = set()
+    rules = cfg.get("direction_rules")
+    if not isinstance(rules, list):
+        return features
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        feat = rule.get("feature")
+        if feat:
+            features.add(str(feat))
+    return features
+
+
 def extract_features_from_archetypes(
     archetypes_dir: str | Path,
     feature_deps_path: str | Path = "config/feature_dependencies.yaml",
@@ -161,6 +176,11 @@ def extract_features_from_archetypes(
     ef_path = d / "entry_filters.yaml"
     if ef_path.exists():
         feature_columns |= _extract_features_from_entry_filters(_load_yaml(ef_path))
+
+    # 4. Direction (方向特征 — 决定交易方向的核心特征)
+    dir_path = d / "direction.yaml"
+    if dir_path.exists():
+        feature_columns |= _extract_features_from_direction(_load_yaml(dir_path))
 
     if not feature_columns:
         return set(), []

@@ -1,5 +1,5 @@
 # BPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260226_164902_rr_extreme/bpc
+# 来源: results/train_final_20260226_225235_rr_extreme/bpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc
@@ -16,114 +16,114 @@ schema:
       max_hard_deny_rate: 0.5
       alert_threshold: 0.45
 hard_gates:
-- id: gate_price_momentum_div_score
-  tag: HARD_PRICE_MOMENTUM_DIV_SCORE
+- id: gate_bpc_bb_compression
+  tag: HARD_BPC_BB_COMPRESSION
   phase: hard_gate
   priority: 10
-  reason: price_momentum_div_score 触发树分裂条件 (分裂 3 次)
+  reason: bpc_bb_compression 触发树分裂条件 (分裂 1 次)
   when:
-    price_momentum_div_score:
-      value_gt: 0.1439
+    bpc_bb_compression:
+      value_lt: 0.6132
   then:
     action: deny
-  comment: '自动生成: 分裂 3 次 | 阈值 0.1439 | 方向: data_verified (low=0.383, high=-0.698)'
-- id: gate_hilbert_cvd_price_env_ratio
-  tag: HARD_HILBERT_CVD_PRICE_ENV_RATIO
-  phase: hard_gate
-  priority: 11
-  reason: hilbert_cvd_price_env_ratio 触发树分裂条件 (分裂 3 次)
-  when:
-    hilbert_cvd_price_env_ratio:
-      value_lt: 0.3347
-  then:
-    action: deny
-  comment: '自动生成: 分裂 3 次 | 阈值 0.3347 | 方向: data_verified (low=0.048, high=0.260)'
-- id: gate_trade_cluster_directional_entropy_zscore_20
-  tag: HARD_TRADE_CLUSTER_DIRECTIONAL_ENTROPY_ZSCORE_20
-  phase: hard_gate
-  priority: 12
-  reason: trade_cluster_directional_entropy_zscore_20 触发树分裂条件 (分裂 3 次)
-  when:
-    trade_cluster_directional_entropy_zscore_20:
-      value_gt: -1.022
-  then:
-    action: deny
-  comment: '自动生成: 分裂 3 次 | 阈值 -1.022 | 方向: data_verified (low=0.433, high=0.091)'
-- id: gate_evt_tail_shape
-  tag: HARD_EVT_TAIL_SHAPE
-  phase: hard_gate
-  priority: 13
-  reason: evt_tail_shape 触发树分裂条件 (分裂 3 次)
-  when:
-    evt_tail_shape:
-      value_gt: 0.8472
-  then:
-    action: deny
-  comment: '自动生成: 分裂 3 次 | 阈值 0.8472 | 方向: data_verified (low=0.273, high=-0.100)'
-- id: gate_macd_signal_atr
-  tag: HARD_MACD_SIGNAL_ATR
-  phase: hard_gate
-  priority: 14
-  reason: macd_signal_atr 触发树分裂条件 (分裂 2 次)
-  when:
-    macd_signal_atr:
-      value_lt: -0.5852
-  then:
-    action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 -0.5852 | 方向: data_verified (low=-0.659, high=0.295)'
-- id: gate_price_to_vwap_pct
-  tag: HARD_PRICE_TO_VWAP_PCT
-  phase: hard_gate
-  priority: 15
-  reason: price_to_vwap_pct 触发树分裂条件 (分裂 2 次)
-  when:
-    price_to_vwap_pct:
-      value_gt: -0.0336
-  then:
-    action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 -0.03363 | 方向: data_verified (low=0.467, high=0.080)'
-- id: gate_bpc_impulse_return_atr
-  tag: HARD_BPC_IMPULSE_RETURN_ATR
-  phase: hard_gate
-  priority: 16
-  reason: bpc_impulse_return_atr 触发树分裂条件 (分裂 2 次)
-  when:
-    bpc_impulse_return_atr:
-      value_gt: -0.1938
-  then:
-    action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 -0.1938 | 方向: data_verified (low=0.329, high=0.041)'
+  comment: '自动生成: 分裂 1 次 | 阈值 0.6132 | 方向: data_verified (low=-1.271, high=-0.331)'
 - id: gate_garch_leverage_gamma
   tag: HARD_GARCH_LEVERAGE_GAMMA
   phase: hard_gate
-  priority: 17
-  reason: garch_leverage_gamma 触发树分裂条件 (分裂 2 次)
+  priority: 11
+  reason: garch_leverage_gamma 触发树分裂条件 (分裂 1 次)
   when:
     garch_leverage_gamma:
       value_gt: 0.01
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 0.009983 | 方向: data_verified (low=0.802, high=-0.223)'
-- id: gate_spectrum_cvd_entropy
-  tag: HARD_SPECTRUM_CVD_ENTROPY
+  comment: '自动生成: 分裂 1 次 | 阈值 0.01 | 方向: data_verified (low=0.028, high=-1.373)'
+- id: gate_garch_beta
+  tag: HARD_GARCH_BETA
   phase: hard_gate
-  priority: 18
-  reason: spectrum_cvd_entropy 触发树分裂条件 (分裂 2 次)
+  priority: 12
+  reason: garch_beta 触发树分裂条件 (分裂 1 次)
   when:
-    spectrum_cvd_entropy:
-      value_lt: 0.9563
+    garch_beta:
+      value_gt: 0.2743
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 0.9563 | 方向: data_verified (low=-0.242, high=0.974)'
+  comment: '自动生成: 分裂 1 次 | 阈值 0.2743 | 方向: data_verified (low=-0.352, high=-0.959)'
+- id: gate_vpin_trend
+  tag: HARD_VPIN_TREND
+  phase: hard_gate
+  priority: 13
+  reason: vpin_trend 触发树分裂条件 (分裂 1 次)
+  when:
+    vpin_trend:
+      value_lt: 0.3204
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 0.3204 | 方向: data_verified (low=-0.722, high=-0.648)'
+- id: gate_bpc_recovery_strength
+  tag: HARD_BPC_RECOVERY_STRENGTH
+  phase: hard_gate
+  priority: 14
+  reason: bpc_recovery_strength 触发树分裂条件 (分裂 1 次)
+  when:
+    bpc_recovery_strength:
+      value_lt: 0.3299
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 0.3299 | 方向: data_verified (low=-2.394, high=-0.251)'
+- id: gate_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT
+  phase: hard_gate
+  priority: 15
+  reason: evt_var_99_right 触发树分裂条件 (分裂 1 次)
+  when:
+    evt_var_99_right:
+      value_gt: 0.0655
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 0.06548 | 方向: data_verified (low=0.543, high=-1.083)'
+- id: gate_trend_r2_20
+  tag: HARD_TREND_R2_20
+  phase: hard_gate
+  priority: 16
+  reason: trend_r2_20 触发树分裂条件 (分裂 1 次)
+  when:
+    trend_r2_20:
+      value_gt: 0.6511
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 0.6511 | 方向: data_verified (low=-0.240, high=-2.489)'
+- id: gate_sr_strength_max
+  tag: HARD_SR_STRENGTH_MAX
+  phase: hard_gate
+  priority: 17
+  reason: sr_strength_max 触发树分裂条件 (分裂 1 次)
+  when:
+    sr_strength_max:
+      value_gt: 3.599
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 3.599 | 方向: data_verified (low=-0.460, high=-1.269)'
+- id: gate_funding_oi_crowding_score
+  tag: HARD_FUNDING_OI_CROWDING_SCORE
+  phase: hard_gate
+  priority: 18
+  reason: funding_oi_crowding_score 触发树分裂条件 (分裂 1 次)
+  when:
+    funding_oi_crowding_score:
+      value_gt: 0.0913
+  then:
+    action: deny
+  comment: '自动生成: 分裂 1 次 | 阈值 0.09127 | 方向: data_verified (low=0.456, high=-1.912)'
 - id: gate_evt_var_99
   tag: HARD_EVT_VAR_99
   phase: hard_gate
   priority: 19
-  reason: evt_var_99 触发树分裂条件 (分裂 2 次)
+  reason: evt_var_99 触发树分裂条件 (分裂 1 次)
   when:
     evt_var_99:
-      value_lt: 0.3313
+      value_lt: 0.756
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 0.3313 | 方向: data_verified (low=-1.164, high=0.915)'
+  comment: '自动生成: 分裂 1 次 | 阈值 0.756 | 方向: data_verified (low=-1.036, high=0.157)'
 guardrails: []

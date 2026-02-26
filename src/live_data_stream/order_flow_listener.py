@@ -45,6 +45,10 @@ from src.time_series_model.live.execution_profile_apply import (
     compute_rr_prices,
     holding_expired,
 )
+from src.time_series_model.live.position_logic import (
+    build_position_dict,
+    enforce_position,
+)
 from src.time_series_model.portfolio.slot_sizing import (
     compute_slot_size_from_risk,
 )
@@ -879,26 +883,23 @@ class OrderFlowListener:
             pcm_budget=intent.pcm_budget,
         )
 
-        exec_profile = intent.execution_profile or {}
-        rr_constraints = exec_profile.get("rr_constraints") or {}
+        # 使用共享模块构建持仓字典 (与回测完全一致)
         entry_price = self._resolve_entry_price(features)
         atr = pick_atr(features) or 0.0
-        stop_loss_r = float(rr_constraints.get("stop_loss_r", 0.0) or 0.0)
-        take_profit_r = float(rr_constraints.get("take_profit_r", 0.0) or 0.0)
-        allow_trailing = bool(rr_constraints.get("allow_trailing", False))
-        trailing_atr = rr_constraints.get("trailing_atr")
-        max_holding_bars = rr_constraints.get("max_holding_bars")
+        default_bar_minutes = int(self.feature_4h_interval_hours * 60)
 
-        stop_loss_price = None
-        take_profit_price = None
-        if entry_price is not None and atr > 0 and stop_loss_r > 0 and take_profit_r > 0:
-            stop_loss_price, take_profit_price = compute_rr_prices(
-                side=intent.action,
-                entry_price=float(entry_price),
-                atr=float(atr),
-                stop_loss_r=stop_loss_r,
-                take_profit_r=take_profit_r,
-            )
+        pos = build_position_dict(
+            intent=intent,
+            entry_price=float(entry_price) if entry_price else 0.0,
+            atr=atr,
+            bar_minutes=default_bar_minutes,
+            entry_time=datetime.now(timezone.utc),
+        )
+
+        # 从共享字典读取 SL/TP/trailing 配置 (用于下单)
+        stop_loss_price = pos.get("stop_loss_price")
+        take_profit_price = pos.get("take_profit_price")
+        allow_trailing = pos.get("allow_trailing", False)
 
         self.order_manager.place_order(
             symbol=self.symbol,
@@ -940,32 +941,9 @@ class OrderFlowListener:
                 symbol=self.symbol, strategy=archetype_name,
             )
 
-        self._open_positions[position_id] = {
-            "side": str(intent.action),
-            "qty": float(qty),
-            "entry_price": entry_price,
-            "entry_time": datetime.now(timezone.utc),
-            "stop_loss_price": stop_loss_price,
-            "take_profit_price": take_profit_price,
-            "allow_trailing": allow_trailing,
-            "trailing_atr": trailing_atr,
-            "max_holding_bars": max_holding_bars,
-            # BPC 扩展字段（从 execution_profile.bpc_position_config 读取）
-            "atr_at_entry": atr,
-        }
-        # 写入 BPC 持仓管理配置（如果有）
-        bpc_cfg = exec_profile.get("bpc_position_config") or {}
-        if bpc_cfg:
-            pos = self._open_positions[position_id]
-            pos["activation_r"] = bpc_cfg.get("activation_r")
-            pos["trail_r"] = bpc_cfg.get("trail_r")
-            pos["trailing_activated"] = False
-            pos["high_water_mark"] = entry_price if str(intent.action).upper() in {"LONG", "BUY"} else None
-            pos["low_water_mark"] = entry_price if str(intent.action).upper() in {"SHORT", "SELL"} else None
-            pos["breakeven_enabled"] = bpc_cfg.get("breakeven_enabled", False)
-            pos["breakeven_trigger_r"] = bpc_cfg.get("breakeven_trigger_r", 1.0)
-            pos["breakeven_locked"] = False
-            pos["bar_minutes"] = bpc_cfg.get("bar_minutes", 240)
+        # 存储持仓 (共享字典 + qty)
+        pos["qty"] = float(qty)
+        self._open_positions[position_id] = pos
 
         if intent.add_position and intent.parent_position_id:
             self.constitution_executor.record_add_position(
@@ -1039,7 +1017,7 @@ class OrderFlowListener:
         return None
 
     def _enforce_open_positions(self, features: Dict[str, Any]) -> None:
-        """管理已有持仓 — time stop / trailing / breakeven / TP/SL hit"""
+        """管理已有持仓 — 调用共享 enforce_position (与回测同一份代码)"""
         if not self._open_positions:
             return
         now = features.get("timestamp")
@@ -1053,110 +1031,20 @@ class OrderFlowListener:
         current_price = self._resolve_entry_price(features)
         if current_price is None:
             return
-        atr = pick_atr(features) or 0.0
         default_bar_minutes = int(self.feature_4h_interval_hours * 60)
         to_close: List[str] = []
 
         for pid, pos in self._open_positions.items():
-            entry_time = pos.get("entry_time")
-            if isinstance(entry_time, str):
-                try:
-                    entry_time = datetime.fromisoformat(str(entry_time))
-                except Exception:
-                    entry_time = None
-            if not isinstance(entry_time, datetime):
-                entry_time = datetime.now(timezone.utc)
-
-            side_str = str(pos.get("side", "")).upper()
-            is_long = side_str in {"LONG", "BUY"}
-            entry_price = pos.get("entry_price") or current_price
-            pos_atr = pos.get("atr_at_entry") or atr
-            bar_minutes = pos.get("bar_minutes", default_bar_minutes)
-
-            close_reason = None
-
-            # ── 1. Time stop ──
-            if holding_expired(
-                entry_time=entry_time,
+            # 实盘用单一 current_price (high=low=close=current_price)
+            close_reason, _exit_price = enforce_position(
+                pos,
+                price_high=current_price,
+                price_low=current_price,
+                price_close=current_price,
                 now=now,
-                max_holding_bars=pos.get("max_holding_bars"),
-                bar_minutes=bar_minutes,
-            ):
-                close_reason = "max_holding_bars"
+                default_bar_minutes=default_bar_minutes,
+            )
 
-            # ── 2. Breakeven lock (BPC) ──
-            if (
-                close_reason is None
-                and pos.get("breakeven_enabled")
-                and not pos.get("breakeven_locked")
-                and pos_atr > 0
-            ):
-                if is_long:
-                    profit_r = (current_price - entry_price) / pos_atr
-                else:
-                    profit_r = (entry_price - current_price) / pos_atr
-                if profit_r >= pos.get("breakeven_trigger_r", 1.0):
-                    pos["breakeven_locked"] = True
-                    pos["stop_loss_price"] = entry_price
-
-            # ── 3. Update high/low water mark (BPC) ──
-            if is_long and pos.get("high_water_mark") is not None:
-                if current_price > pos["high_water_mark"]:
-                    pos["high_water_mark"] = current_price
-            elif not is_long and pos.get("low_water_mark") is not None:
-                if current_price < pos["low_water_mark"]:
-                    pos["low_water_mark"] = current_price
-
-            # ── 4. Activation-based trailing (BPC) ──
-            if (
-                close_reason is None
-                and pos.get("activation_r") is not None
-                and pos_atr > 0
-            ):
-                if is_long:
-                    profit_r = (current_price - entry_price) / pos_atr
-                else:
-                    profit_r = (entry_price - current_price) / pos_atr
-                activation_r = pos["activation_r"]
-                trail_r = pos.get("trail_r", 1.0)
-                if profit_r >= activation_r:
-                    if not pos.get("trailing_activated"):
-                        pos["trailing_activated"] = True
-                    if is_long:
-                        hwm = pos.get("high_water_mark", current_price)
-                        trail_sl = hwm - trail_r * pos_atr
-                    else:
-                        lwm = pos.get("low_water_mark", current_price)
-                        trail_sl = lwm + trail_r * pos_atr
-                    old_sl = pos.get("stop_loss_price")
-                    if old_sl is not None:
-                        if is_long and trail_sl > old_sl:
-                            pos["stop_loss_price"] = trail_sl
-                        elif not is_long and trail_sl < old_sl:
-                            pos["stop_loss_price"] = trail_sl
-                    else:
-                        pos["stop_loss_price"] = trail_sl
-
-
-            # ── 5. Check SL hit ──
-            if close_reason is None:
-                sl = pos.get("stop_loss_price")
-                if sl is not None:
-                    if is_long and current_price <= float(sl):
-                        close_reason = "stop_loss_hit"
-                    elif not is_long and current_price >= float(sl):
-                        close_reason = "stop_loss_hit"
-
-            # ── 6. Check TP hit ──
-            if close_reason is None:
-                tp = pos.get("take_profit_price")
-                if tp is not None:
-                    if is_long and current_price >= float(tp):
-                        close_reason = "take_profit_hit"
-                    elif not is_long and current_price <= float(tp):
-                        close_reason = "take_profit_hit"
-
-            # ── 7. Execute close ──
             if close_reason:
                 self._close_position(
                     position_id=pid,

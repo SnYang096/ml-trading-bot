@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260226_215206_rr_extreme/me
+# 来源: results/train_final_20260226_220758_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -16,114 +16,114 @@ schema:
       max_hard_deny_rate: 0.5
       alert_threshold: 0.45
 hard_gates:
-- id: gate_oi_zscore
-  tag: HARD_OI_ZSCORE
+- id: gate_vp_width_ratio
+  tag: HARD_VP_WIDTH_RATIO
   phase: hard_gate
   priority: 10
-  reason: oi_zscore 触发树分裂条件 (分裂 1 次)
+  reason: vp_width_ratio 触发树分裂条件 (分裂 5 次)
   when:
-    oi_zscore:
-      value_lt: 0.3197
+    vp_width_ratio:
+      value_lt: 0.5465
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.3197 | 方向: data_verified (low=0.021, high=2.971)'
-- id: gate_shd_pct
-  tag: HARD_SHD_PCT
+  comment: '自动生成: 分裂 5 次 | 阈值 0.5465 | 方向: data_verified (low=-1.747, high=-0.487)'
+- id: gate_evt_tail_shape
+  tag: HARD_EVT_TAIL_SHAPE
   phase: hard_gate
   priority: 11
-  reason: shd_pct 触发树分裂条件 (分裂 1 次)
+  reason: evt_tail_shape 触发树分裂条件 (分裂 4 次)
   when:
-    shd_pct:
-      value_lt: 0.5334
+    evt_tail_shape:
+      value_lt: 0.8472
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.5334 | 方向: data_verified (low=1.025, high=1.589)'
-- id: gate_roc_20
-  tag: HARD_ROC_20
-  phase: hard_gate
-  priority: 12
-  reason: roc_20 触发树分裂条件 (分裂 1 次)
-  when:
-    roc_20:
-      value_lt: 3.0088
-  then:
-    action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 3.009 | 方向: data_verified (low=0.534, high=3.138)'
-- id: gate_fp_lvn
-  tag: HARD_FP_LVN
-  phase: hard_gate
-  priority: 13
-  reason: fp_lvn 触发树分裂条件 (分裂 1 次)
-  when:
-    fp_lvn:
-      value_gt: 23752.6402
-  then:
-    action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 2.375e+04 | 方向: data_verified (low=1.364, high=1.064)'
+  comment: '自动生成: 分裂 4 次 | 阈值 0.8472 | 方向: data_verified (low=-1.362, high=-0.384)'
 - id: gate_funding_rate_zscore_50
   tag: HARD_FUNDING_RATE_ZSCORE_50
   phase: hard_gate
-  priority: 14
-  reason: funding_rate_zscore_50 触发树分裂条件 (分裂 1 次)
+  priority: 12
+  reason: funding_rate_zscore_50 触发树分裂条件 (分裂 4 次)
   when:
     funding_rate_zscore_50:
-      value_lt: 0.7172
+      value_lt: 5.0932
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.7172 | 方向: data_verified (low=0.270, high=0.958)'
+  comment: '自动生成: 分裂 4 次 | 阈值 5.093 | 方向: data_verified (low=-1.038, high=-0.274)'
+- id: gate_funding_oi_crowding_score
+  tag: HARD_FUNDING_OI_CROWDING_SCORE
+  phase: hard_gate
+  priority: 13
+  reason: funding_oi_crowding_score 触发树分裂条件 (分裂 4 次)
+  when:
+    funding_oi_crowding_score:
+      value_lt: 0.1688
+  then:
+    action: deny
+  comment: '自动生成: 分裂 4 次 | 阈值 0.1688 | 方向: data_verified (low=-1.386, high=-0.315)'
+- id: gate_sma_200_position
+  tag: HARD_SMA_200_POSITION
+  phase: hard_gate
+  priority: 14
+  reason: sma_200_position 触发树分裂条件 (分裂 4 次)
+  when:
+    sma_200_position:
+      value_gt: -0.0499
+  then:
+    action: deny
+  comment: '自动生成: 分裂 4 次 | 阈值 -0.04987 | 方向: data_verified (low=-0.025, high=-1.820)'
 - id: gate_spectrum_volume_high_freq_ratio
   tag: HARD_SPECTRUM_VOLUME_HIGH_FREQ_RATIO
   phase: hard_gate
   priority: 15
-  reason: spectrum_volume_high_freq_ratio 触发树分裂条件 (分裂 1 次)
+  reason: spectrum_volume_high_freq_ratio 触发树分裂条件 (分裂 3 次)
   when:
     spectrum_volume_high_freq_ratio:
-      value_gt: 0.6548
+      value_gt: 0.6565
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.6548 | 方向: data_verified (low=1.483, high=0.907)'
-- id: gate_evt_tail_shape
-  tag: HARD_EVT_TAIL_SHAPE
+  comment: '自动生成: 分裂 3 次 | 阈值 0.6565 | 方向: data_verified (low=-1.012, high=-1.296)'
+- id: gate_shd_pct
+  tag: HARD_SHD_PCT
   phase: hard_gate
   priority: 16
-  reason: evt_tail_shape 触发树分裂条件 (分裂 1 次)
+  reason: shd_pct 触发树分裂条件 (分裂 3 次)
   when:
-    evt_tail_shape:
-      value_lt: 0.1607
+    shd_pct:
+      value_gt: 0.6076
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.1607 | 方向: data_verified (low=1.028, high=1.415)'
-- id: gate_oi_zscore
-  tag: HARD_OI_ZSCORE
+  comment: '自动生成: 分裂 3 次 | 阈值 0.6076 | 方向: data_verified (low=-0.414, high=-2.014)'
+- id: gate_garch_beta
+  tag: HARD_GARCH_BETA
   phase: hard_gate
   priority: 17
-  reason: oi_zscore 触发树分裂条件 (分裂 1 次)
+  reason: garch_beta 触发树分裂条件 (分裂 3 次)
   when:
-    oi_zscore:
-      value_lt: -0.0927
+    garch_beta:
+      value_gt: 0.8384
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 -0.09272 | 方向: data_verified (low=-0.218, high=2.742)'
-- id: gate_cvd_change_5_normalized
-  tag: HARD_CVD_CHANGE_5_NORMALIZED
+  comment: '自动生成: 分裂 3 次 | 阈值 0.8384 | 方向: data_verified (low=-0.894, high=-1.663)'
+- id: gate_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT
   phase: hard_gate
   priority: 18
-  reason: cvd_change_5_normalized 触发树分裂条件 (分裂 1 次)
+  reason: evt_var_99_right 触发树分裂条件 (分裂 3 次)
   when:
-    cvd_change_5_normalized:
-      value_lt: 0.0128
+    evt_var_99_right:
+      value_gt: 0.9187
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.01284 | 方向: data_verified (low=1.161, high=1.866)'
-- id: gate_hilbert_cvd_price_env_ratio
-  tag: HARD_HILBERT_CVD_PRICE_ENV_RATIO
+  comment: '自动生成: 分裂 3 次 | 阈值 0.9187 | 方向: data_verified (low=-1.041, high=-1.184)'
+- id: gate_dist_to_nearest_sr
+  tag: HARD_DIST_TO_NEAREST_SR
   phase: hard_gate
   priority: 19
-  reason: hilbert_cvd_price_env_ratio 触发树分裂条件 (分裂 1 次)
+  reason: dist_to_nearest_sr 触发树分裂条件 (分裂 3 次)
   when:
-    hilbert_cvd_price_env_ratio:
-      value_gt: 0.2904
+    dist_to_nearest_sr:
+      value_lt: -0.2441
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.2904 | 方向: data_verified (low=1.482, high=0.618)'
+  comment: '自动生成: 分裂 3 次 | 阈值 -0.2441 | 方向: data_verified (low=-1.559, high=-0.583)'
 guardrails: []
