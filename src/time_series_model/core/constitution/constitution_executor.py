@@ -185,10 +185,48 @@ class ConstitutionExecutor:
             p = (base / p).resolve()
         return p
 
+    def _resolve_add_position(self) -> dict:
+        """Resolve add_position global safety rules.
+
+        New structure: resource_allocation.add_position_rules
+        Backward compat: resource_allocation.add_position > top-level add_position
+        """
+        obj = self._raw_obj or {}
+        ra = obj.get("resource_allocation") or {}
+        addp = (
+            ra.get("add_position_rules")
+            or ra.get("add_position")
+            or obj.get("add_position")
+            or {}
+        )
+        return addp
+
+    def _resolve_per_strategy_limits(self) -> dict:
+        """Return per_strategy_limits dict from resource_allocation."""
+        obj = self._raw_obj or {}
+        ra = obj.get("resource_allocation") or {}
+        return dict(ra.get("per_strategy_limits") or {})
+
+    def resolve_risk_for_strategy(self, archetype: str) -> float:
+        """Return effective risk fraction for a strategy.
+
+        Logic: min(risk_per_slot, strategy.max_risk_per_trade)
+        If strategy has no max_risk_per_trade, returns risk_per_slot.
+        """
+        obj = self._raw_obj or {}
+        slots = obj.get("slots") or {}
+        risk_per_slot = float(slots.get("risk_per_slot", 0.01))
+        limits = self._resolve_per_strategy_limits()
+        strat = limits.get(archetype.lower()) or {}
+        strat_risk = strat.get("max_risk_per_trade")
+        if strat_risk is not None:
+            return min(risk_per_slot, float(strat_risk))
+        return risk_per_slot
+
     def _load_state_paths(self) -> ConstitutionStatePaths:
         obj = self._raw_obj or {}
         slots = obj.get("slots") or {}
-        addp = obj.get("add_position") or {}
+        addp = self._resolve_add_position()
         slots_p = (slots.get("slot_state_tracking") or {}).get("persist_to") or None
         addp_p = (addp.get("state_tracking") or {}).get("persist_to") or None
 
@@ -367,33 +405,26 @@ class ConstitutionExecutor:
         current_r: Optional[float],
         locked_profit: Optional[bool] = None,
     ) -> None:
-        addp = (self._raw_obj or {}).get("add_position") or {}
+        # 1. Check per-strategy allow_add_position
+        arch_key = str(archetype or "").strip().lower()
+        limits = self._resolve_per_strategy_limits()
+        strat_cfg = limits.get(arch_key) or {}
+        allow = strat_cfg.get("allow_add_position")
+        if allow is not None and not bool(allow):
+            raise ConstitutionViolation(
+                code="ADD_POSITION_STRATEGY_FORBIDDEN",
+                message=f"strategy '{arch_key}' does not allow add_position",
+                context={"archetype": arch_key, **self.meta()},
+            )
+
+        # 2. Global add_position safety rules
+        addp = self._resolve_add_position()
+        # Backward compat: old 'enabled' flag
         if not bool(addp.get("enabled", True)):
             raise ConstitutionViolation(
                 code="ADD_POSITION_DISABLED",
                 message="add_position disabled",
                 context=self.meta(),
-            )
-        arch = str(archetype or "").strip().upper()
-        if arch.startswith("MEAN"):
-            if not bool(addp.get("mean_allow_add", False)):
-                raise ConstitutionViolation(
-                    code="ADD_POSITION_MEAN_FORBIDDEN",
-                    message="mean archetype add_position forbidden",
-                    context={"archetype": arch, **self.meta()},
-                )
-        elif arch.startswith("TREND"):
-            if not bool(addp.get("trend_allow_add", True)):
-                raise ConstitutionViolation(
-                    code="ADD_POSITION_TREND_FORBIDDEN",
-                    message="trend archetype add_position forbidden",
-                    context={"archetype": arch, **self.meta()},
-                )
-        else:
-            raise ConstitutionViolation(
-                code="ADD_POSITION_ARCHETYPE_UNKNOWN",
-                message="unknown archetype for add_position",
-                context={"archetype": arch, **self.meta()},
             )
 
         pid = str(position_id).strip()
@@ -440,7 +471,7 @@ class ConstitutionExecutor:
         pid = str(position_id).strip()
         if not pid:
             return
-        addp = (self._raw_obj or {}).get("add_position") or {}
+        addp = self._resolve_add_position()
         trigger_r = float(addp.get("lock_profit_breakeven_trigger_r", 1.0))
         inferred_locked = bool(locked_profit) if locked_profit is not None else False
         if current_r is not None and float(current_r) >= trigger_r:

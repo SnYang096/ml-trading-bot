@@ -341,7 +341,7 @@ class ConstitutionKillSwitch:
 class ConstitutionSlots:
     enabled: bool = True
     slot_count: int = 2
-    risk_per_slot: float = 0.015
+    risk_per_slot: float = 0.01
 
 
 @dataclass(frozen=True)
@@ -482,7 +482,7 @@ def load_constitution(path: str | Path) -> Constitution:
         slots=ConstitutionSlots(
             enabled=bool(slots.get("enabled", True)),
             slot_count=int(slots.get("slot_count", 2)),
-            risk_per_slot=float(slots.get("risk_per_slot", 0.015)),
+            risk_per_slot=float(slots.get("risk_per_slot", 0.01)),
         ),
     )
 

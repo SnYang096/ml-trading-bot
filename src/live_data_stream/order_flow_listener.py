@@ -45,6 +45,9 @@ from src.time_series_model.live.execution_profile_apply import (
     compute_rr_prices,
     holding_expired,
 )
+from src.time_series_model.portfolio.slot_sizing import (
+    compute_slot_size_from_risk,
+)
 
 
 class OrderFlowListener:
@@ -77,6 +80,7 @@ class OrderFlowListener:
         runtime_state: Optional[ConstitutionRuntimeState] = None,
         order_manager: Optional[Any] = None,
         trade_size: Optional[float] = None,
+        risk_per_trade: Optional[float] = None,
         decision_handler: Optional[Any] = None,
         mode_manager: Optional[Any] = None,
     ):
@@ -95,7 +99,8 @@ class OrderFlowListener:
             constitution_executor: 宪法执行器（可选）
             runtime_state: 宪法运行时状态（可选）
             order_manager: 订单管理器（可选）
-            trade_size: 默认下单数量（可选）
+            trade_size: 默认下单数量（可选，已废弃，建议用 risk_per_trade）
+            risk_per_trade: 每笔交易风险金额（美元），基于止损距离反算仓位
             decision_handler: 可插拔决策路由器（可选），需实现
                 decide(*, features, symbol, bars=None) -> List[TradeIntent]
                 如 GenericLiveStrategy 或任何自定义决策引擎。
@@ -137,6 +142,9 @@ class OrderFlowListener:
         self.runtime_state = runtime_state
         self.order_manager = order_manager
         self.trade_size = trade_size
+        self.risk_per_trade = risk_per_trade
+        self.risk_per_slot: float = 0.0   # 从宪法注入 (equity 的比例, 如 0.01 = 1%)
+        self.per_strategy_limits: Dict[str, Any] = {}  # 从宪法注入
         self.decision_handler = decision_handler
         self.stats_collector = None  # 可选: StatsCollector 实例，由外部注入
         self.extra_feature_computers: Dict[str, "IncrementalFeatureComputer"] = {}
@@ -729,11 +737,100 @@ class OrderFlowListener:
         if intent.action == "NO_TRADE":
             return
         side = OrderSide.BUY if intent.action == "LONG" else OrderSide.SELL
-        qty = (
-            float(intent.quantity)
-            if intent.quantity is not None
-            else float(self.trade_size or 0.0)
-        )
+
+        # ── 仓位计算 ──
+        # 优先级: intent.quantity > risk_per_strategy(宪法) × equity 反算
+        #         > risk_per_trade(固定美元) > trade_size(固定数量)
+        qty = 0.0
+        qty_source = "none"
+
+        exec_profile = intent.execution_profile or {}
+        rr_constraints = exec_profile.get("rr_constraints") or {}
+        sl_r = float(rr_constraints.get("stop_loss_r", 0.0) or 0.0)
+        atr = pick_atr(features) or 0.0
+        entry_price = self._resolve_entry_price(features)
+
+        # 解析每策略风险: min(risk_per_slot, strategy.max_risk_per_trade)
+        arch_key = str(intent.archetype or "").strip().lower()
+        effective_risk = self.risk_per_slot
+        if effective_risk > 0 and arch_key and self.per_strategy_limits:
+            strat_cfg = self.per_strategy_limits.get(arch_key) or {}
+            strat_risk = strat_cfg.get("max_risk_per_trade")
+            if strat_risk is not None:
+                effective_risk = min(effective_risk, float(strat_risk))
+
+        if intent.quantity is not None:
+            qty = float(intent.quantity)
+            qty_source = "intent.quantity"
+        elif self.risk_per_slot > 0 and sl_r > 0 and atr > 0 and entry_price and entry_price > 0:
+            # 宪法风险反算: risk_usd = equity × effective_risk (per-strategy capped)
+            equity = float(features.get("equity", 0.0) or 0.0)
+            if equity <= 0:
+                # features 中没有 equity，fallback 到固定 risk_per_trade
+                equity = 0.0
+            if equity > 0:
+                result = compute_slot_size_from_risk(
+                    equity_usd=equity,
+                    risk_frac=effective_risk,
+                    price=entry_price,
+                    atr=atr,
+                    stop_atr=sl_r,
+                    max_leverage=3.0,
+                )
+                qty = result.qty
+                qty_source = "constitution_risk"
+                logger.info(
+                    "[%s] 宪法风险反算: equity=$%.0f, risk_pct=%.2f%% (strategy=%s), "
+                    "risk_usd=$%.1f, SL=%.1fR*ATR=%.2f, entry=%.2f, qty=%.6f",
+                    self.symbol, equity, effective_risk * 100, arch_key,
+                    equity * effective_risk, sl_r, atr,
+                    entry_price, qty,
+                )
+
+        # fallback: 固定美元风险 (MLBOT_RISK_PER_TRADE 环境变量)
+        if qty <= 0 and self.risk_per_trade and self.risk_per_trade > 0:
+            if sl_r > 0 and atr > 0 and entry_price and entry_price > 0:
+                result = compute_slot_size_from_risk(
+                    equity_usd=self.risk_per_trade / 0.01,  # 反推: risk_usd / risk_frac
+                    risk_frac=0.01,
+                    price=entry_price,
+                    atr=atr,
+                    stop_atr=sl_r,
+                    max_leverage=10.0,
+                )
+                qty = result.qty
+                qty_source = "risk_per_trade_usd"
+                logger.info(
+                    "[%s] 固定风险反算: risk=$%.1f, SL=%.1fR*ATR=%.2f, "
+                    "entry=%.2f, qty=%.6f",
+                    self.symbol, self.risk_per_trade, sl_r, atr,
+                    entry_price, qty,
+                )
+            else:
+                logger.warning(
+                    "[%s] 风险反算缺少参数 (sl_r=%.2f, atr=%.2f, price=%s)",
+                    self.symbol, sl_r, atr, entry_price,
+                )
+
+        # fallback: 固定数量 (trade_size)
+        if qty <= 0 and self.trade_size and self.trade_size > 0:
+            qty = float(self.trade_size)
+            qty_source = "trade_size"
+
+        # 最小开仓量检查: 如果风险反算的 qty 太小，fallback 到 trade_size
+        if (
+            qty_source in ("constitution_risk", "risk_per_trade_usd")
+            and self.trade_size
+            and self.trade_size > 0
+            and qty < self.trade_size
+        ):
+            logger.warning(
+                "[%s] 风险反算 qty=%.6f < 最小开仓 trade_size=%.6f, "
+                "fallback 到 trade_size",
+                self.symbol, qty, self.trade_size,
+            )
+            qty = float(self.trade_size)
+            qty_source = "trade_size_min_fallback"
         size_mult = float(intent.size_multiplier or 1.0)
         qty *= max(0.0, size_mult)
         if intent.pcm_budget:

@@ -375,6 +375,79 @@ def load_gate_config(
         return yaml.safe_load(f)
 
 
+def compute_risk_equity_curve(
+    r_returns: pd.Series,
+    initial_cash: float = 1000.0,
+    risk_per_slot: float = 0.01,
+    stop_loss_r: float = 1.0,
+    risk_per_trade_series: Optional[pd.Series] = None,
+) -> Dict[str, Any]:
+    """R-multiples 转换为基于风险的美元权益曲线
+
+    每笔交易:
+      risk_frac = risk_per_trade_series[i] if provided, else risk_per_slot
+      risk_usd = equity × risk_frac
+      dollar_pnl = risk_usd × realized_rr / stop_loss_r
+
+    当 realized_rr = -stop_loss_r 时，dollar_pnl = -risk_usd（正好亏损风险预算）
+
+    Args:
+        r_returns: 每笔交易的 R-multiple (from simulate_rr_execution)
+        initial_cash: 初始资金
+        risk_per_slot: 每笔风险占 equity 的比例 (0.01 = 1%), 作为默认值
+        stop_loss_r: 止损 R 值 (1.0 = 1×ATR)
+        risk_per_trade_series: 可选, 每笔交易的风险比例 (索引对齐 r_returns)
+            用于每策略不同的 risk cap (e.g. LV=0.005, BPC=0.01)
+
+    Returns:
+        dict with equity_curve, max_dd, final_equity, total_return_pct
+    """
+    valid = r_returns.dropna()
+    if len(valid) == 0:
+        return {
+            "equity_curve": [],
+            "max_dd": 0.0,
+            "final_equity": initial_cash,
+            "total_return_pct": 0.0,
+        }
+
+    # Align risk_per_trade_series with valid index
+    risk_arr = None
+    if risk_per_trade_series is not None:
+        aligned = risk_per_trade_series.reindex(valid.index)
+        risk_arr = aligned.values
+
+    equity = initial_cash
+    curve = [equity]
+    peak = equity
+    max_dd = 0.0
+
+    for i, rr in enumerate(valid.values):
+        risk_frac = risk_per_slot
+        if risk_arr is not None and i < len(risk_arr):
+            v = risk_arr[i]
+            if v is not None and not (isinstance(v, float) and v != v):  # not NaN
+                risk_frac = float(v)
+        risk_usd = equity * risk_frac
+        pnl = risk_usd * float(rr) / stop_loss_r
+        equity += pnl
+        equity = max(equity, 0.0)  # 不允许负 equity
+        curve.append(equity)
+
+        if equity > peak:
+            peak = equity
+        dd = (peak - equity) / peak if peak > 0 else 0.0
+        if dd > max_dd:
+            max_dd = dd
+
+    return {
+        "equity_curve": curve,
+        "max_dd": max_dd,
+        "final_equity": equity,
+        "total_return_pct": (equity - initial_cash) / initial_cash * 100,
+    }
+
+
 def simulate_rr_execution(
     df: pd.DataFrame,
     exec_config: Dict[str, Any],
@@ -1785,9 +1858,43 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         f"= {exec_sharpe:.4f} \u00d7 \u221a{trades_per_year:.0f}"
     )
     daily_sharpe_pcm = compute_daily_sharpe(merged, exec_returns)
-    print(
-        f"   Sharpe (daily, \u00d7\u221a252): {daily_sharpe_pcm:.2f}  \u2190 \u4e1a\u754c\u53ef\u6bd4\u6307\u6807"
+    print(f"   Sharpe (daily, ×√252): {daily_sharpe_pcm:.2f}  ← 业界可比指标")
+
+    # ── 风险仓位 Equity Curve (每策略风险 cap) ──
+    pcm_sl_r = float(first_exec.get("stop_loss", {}).get("initial_r", 1.0))
+    risk_per_slot = float(const.get("risk_per_slot", 0.01))
+    strategy_limits = const.get("per_strategy_limits") or {}
+    # Build per-trade risk series based on archetype
+    pcm_arch_col = (
+        merged["_pcm_archetype"]
+        if "_pcm_archetype" in merged.columns
+        else pd.Series("", index=merged.index)
     )
+    risk_series = exec_returns.copy()
+    for idx_val in risk_series.index:
+        arch = (
+            str(pcm_arch_col.iloc[idx_val] if idx_val < len(pcm_arch_col) else "")
+            .strip()
+            .lower()
+        )
+        strat = strategy_limits.get(arch) or {}
+        strat_risk = strat.get("max_risk_per_trade")
+        if strat_risk is not None:
+            risk_series.iloc[idx_val] = min(risk_per_slot, float(strat_risk))
+        else:
+            risk_series.iloc[idx_val] = risk_per_slot
+    risk_eq_pcm = compute_risk_equity_curve(
+        exec_returns,
+        initial_cash=1000.0,
+        risk_per_slot=risk_per_slot,
+        stop_loss_r=pcm_sl_r,
+        risk_per_trade_series=risk_series,
+    )
+    print(f"\n   💰 Risk-Based Equity ($1000, per-strategy risk, SL={pcm_sl_r}R):")
+    print(
+        f"      Final: ${risk_eq_pcm['final_equity']:.0f}  ({risk_eq_pcm['total_return_pct']:+.1f}%)"
+    )
+    print(f"      Max DD: {risk_eq_pcm['max_dd']:.1%}")
 
     # Per-symbol breakdown
     sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
@@ -3341,9 +3448,37 @@ def main() -> int:
         f"   Sharpe (annualized): {exec_sharpe_ann:.2f}  = {exec_sharpe:.4f} \u00d7 \u221a{trades_per_year:.0f}"
     )
     daily_sharpe = compute_daily_sharpe(merged, exec_returns)
-    print(
-        f"   Sharpe (daily, \u00d7\u221a252): {daily_sharpe:.2f}  \u2190 \u4e1a\u754c\u53ef\u6bd4\u6307\u6807"
+    print(f"   Sharpe (daily, ×√252): {daily_sharpe:.2f}  ← 业界可比指标")
+
+    # ── 风险仓位 Equity Curve (每策略风险 cap) ──
+    sl_r = float(exec_config.get("stop_loss", {}).get("initial_r", 1.0))
+    # Resolve per-strategy risk from constitution
+    from src.time_series_model.portfolio.live_pcm import (
+        _load_constitution_constraints as _load_const_fn,
     )
+
+    _const_yaml = getattr(args, "constitution", None)
+    _const_single = _load_const_fn(_const_yaml)
+    _risk_slot = float(_const_single.get("risk_per_slot", 0.01))
+    _strategy_limits = _const_single.get("per_strategy_limits") or {}
+    _strat = _strategy_limits.get(str(args.strategy).lower()) or {}
+    _strat_risk = _strat.get("max_risk_per_trade")
+    effective_risk = (
+        min(_risk_slot, float(_strat_risk)) if _strat_risk is not None else _risk_slot
+    )
+    risk_eq = compute_risk_equity_curve(
+        exec_returns,
+        initial_cash=1000.0,
+        risk_per_slot=effective_risk,
+        stop_loss_r=sl_r,
+    )
+    print(
+        f"\n   💰 Risk-Based Equity ($1000, {effective_risk:.1%}/trade [{args.strategy}], SL={sl_r}R):"
+    )
+    print(
+        f"      Final: ${risk_eq['final_equity']:.0f}  ({risk_eq['total_return_pct']:+.1f}%)"
+    )
+    print(f"      Max DD: {risk_eq['max_dd']:.1%}")
 
     # Per-symbol breakdown
     sym_col = "symbol" if "symbol" in merged.columns else "_symbol"

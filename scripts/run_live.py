@@ -87,6 +87,7 @@ def _setup_bpc(
     storage: StorageManager,
     gap_filler,
     trade_size: float,
+    risk_per_trade: float = 0.0,
 ):
     """BPC 单策略模式（通过 GenericLiveStrategy + LivePCM 包装）"""
     from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
@@ -136,18 +137,25 @@ def _setup_bpc(
     )
 
     # 给每个 listener 注入 LivePCM 作为 decision_handler
+    risk_per_slot = pcm.constitution.get("risk_per_slot", 0.01)
+    per_strategy_limits = pcm.constitution.get("per_strategy_limits", {})
     for sym in symbols:
         listener = manager.get_listener(sym)
         if listener is None:
             continue
         listener.decision_handler = pcm
         listener.order_manager = order_manager
+        listener.risk_per_slot = risk_per_slot
+        listener.per_strategy_limits = per_strategy_limits
         if trade_size > 0:
             listener.trade_size = trade_size
+        if risk_per_trade > 0:
+            listener.risk_per_trade = risk_per_trade
 
     logger.info(
         f"[bpc] Initialized via LivePCM: {len(symbols)} symbols, "
         f"bar_minutes={bar_minutes}, window={window_minutes}min, "
+        f"risk_per_slot={risk_per_slot:.2%}, "
         f"archetypes={pcm.registered_archetypes}"
     )
     return manager, pcm
@@ -158,6 +166,7 @@ def _setup_three_strategies(
     storage: StorageManager,
     gap_filler,
     trade_size: float,
+    risk_per_trade: float = 0.0,
 ):
     """三策略实盘启动 (BPC + ME + FER) — 多时间框架
 
@@ -327,8 +336,15 @@ def _setup_three_strategies(
             continue
         listener.decision_handler = pcm
         listener.order_manager = order_manager
+        # 从宪法注入 risk_per_slot + per_strategy_limits
+        risk_per_slot = pcm.constitution.get("risk_per_slot", 0.01)
+        per_strategy_limits = pcm.constitution.get("per_strategy_limits", {})
+        listener.risk_per_slot = risk_per_slot
+        listener.per_strategy_limits = per_strategy_limits
         if trade_size > 0:
             listener.trade_size = trade_size
+        if risk_per_trade > 0:
+            listener.risk_per_trade = risk_per_trade
         # 注入监控统计收集器
         listener.stats_collector = stats_collector
         # 注入 ME FC (timeframe 从 meta.yaml 读取)
@@ -492,6 +508,13 @@ async def main() -> None:
     # 特征计算通过 compute_features_batch() 从磁盘直接读取 90+ 天数据
     warmup_days = int(os.getenv("MLBOT_LIVE_WARMUP_DAYS", "7"))
     trade_size = float(os.getenv("MLBOT_LIVE_TRADE_SIZE", "0.0"))
+    risk_per_trade = float(os.getenv("MLBOT_RISK_PER_TRADE", "0.0"))
+    if risk_per_trade > 0:
+        logger.info(f"💰 风险仓位模式: 每笔风险=${risk_per_trade}")
+    elif trade_size > 0:
+        logger.info(
+            f"⚠️  固定数量模式: trade_size={trade_size} (建议改用 MLBOT_RISK_PER_TRADE)"
+        )
 
     storage = StorageManager(base_path=storage_base)
     gap_filler = _build_gap_filler(storage)
@@ -505,9 +528,13 @@ async def main() -> None:
     # 选择启动模式: bpc (单策略) 或 three_strategies (三策略多时间框架)
     live_mode = os.getenv("MLBOT_LIVE_MODE", "bpc")
     if live_mode == "three_strategies":
-        manager, pcm = _setup_three_strategies(symbols, storage, gap_filler, trade_size)
+        manager, pcm = _setup_three_strategies(
+            symbols, storage, gap_filler, trade_size, risk_per_trade
+        )
     else:
-        manager, pcm = _setup_bpc(symbols, storage, gap_filler, trade_size)
+        manager, pcm = _setup_bpc(
+            symbols, storage, gap_filler, trade_size, risk_per_trade
+        )
 
     # Warmup 与启动质量闸门
     if warmup_days > 0:

@@ -54,15 +54,22 @@ else
   SYMBOLS="$SYMBOLS_ARG"
 fi
 
-# 1. Warmup 数据检查与补全
+# 1. Warmup 数据检查（仅补充 daily 数据，不做完整下载）
 echo "📦 第1步：Warmup 数据检查..."
 TICKS_DIR="$LIVE_ROOT/data/ticks"
 if [ -d "$TICKS_DIR" ] && [ "$(ls -A $TICKS_DIR 2>/dev/null)" ]; then
-  echo "   ✅ 已有 warmup 数据，补全缺失的 daily 数据..."
+  echo "   ✅ 已有 warmup 数据，补充缺失的 daily 数据..."
   bash live/scripts/prepare_warmup_ticks.sh "$UNIVERSE" 6 --fill-gap
 else
-  echo "   ⚠️  未找到 warmup 数据，执行完整下载（6个月）..."
-  bash live/scripts/prepare_warmup_ticks.sh "$UNIVERSE" 6
+  echo "   ⚠️  未找到 warmup 数据！请先执行以下命令之一："
+  echo "      方式 A: 本地下载后 rsync 上传"
+  echo "        bash live/scripts/prepare_warmup_ticks.sh $UNIVERSE 6"
+  echo "        rsync -avz live/highcap/data/ ubuntu@SERVER:/opt/quant-engine/live/highcap/data/"
+  echo "      方式 B: 服务器上独立执行"
+  echo "        docker run --rm -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data quant-engine:latest bash live/scripts/prepare_warmup_ticks.sh highcap 6"
+  echo ""
+  echo "   ❌ Warmup 数据缺失，启动中止！"
+  exit 1
 fi
 echo ""
 
@@ -87,7 +94,10 @@ echo "⚙️  第3步：配置环境变量..."
 export MLBOT_LIVE_SYMBOLS="$SYMBOLS"
 export MLBOT_LIVE_STORAGE_BASE="$LIVE_ROOT/data"
 export MLBOT_LIVE_WARMUP_DAYS="30"
-export MLBOT_LIVE_TRADE_SIZE="0.0"  # 0表示观察模式
+export MLBOT_LIVE_TRADE_SIZE="0.001"  # 最小开仓量 fallback（风险反算 qty 太小时使用）
+# risk_per_slot 已经在 constitution.yaml 中配置 (slots.risk_per_slot = 0.01 = 1%)
+# MLBOT_RISK_PER_TRADE 作为备用 fallback（无 equity 时用固定美元）
+export MLBOT_RISK_PER_TRADE="${MLBOT_RISK_PER_TRADE:-10.0}"
 export MLBOT_LIVE_USE_FUTURES="true"
 export MLBOT_LIVE_GAP_FILL="true"
 

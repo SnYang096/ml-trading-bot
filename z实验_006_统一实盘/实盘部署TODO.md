@@ -20,6 +20,7 @@
 | .gitignore 安全 | ✅ 完成 | live/*/data/ + *.db 排除，运行时数据不进 git |
 | Terraform 基础设施 | ✅ 已搭建 | 腾讯云 ap-tokyo, 2vCPU/4GB, Docker + systemd |
 | CI/CD 流程 | ✅ 已搭建 | GitHub Actions → Docker image → ghcr.io → 服务器 pull |
+| **首次部署** | ✅ 完成 | 2026-02-25 Build + Deploy 成功，quant-engine active (running) |
 | 监控脚本 (本地) | ✅ 完成 | weekly/monthly monitor + feature drift + retrain trigger |
 | 实盘监控 (服务器) | 📋 设计完成 | 见 实盘监控系统设计.md，代码待实现 |
 
@@ -222,6 +223,10 @@ BinanceWS tick → OrderFlowListener
   ```bash
   ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 'sudo bash -s' < scripts/server_bootstrap.sh
   ```
+
+  ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 \
+  'sudo journalctl -u quant-engine -f'
+
 - [x] 执行后自动完成:
   - Docker 安装并启动
   - `/opt/quant-engine/live/highcap/data/{db,ticks,features_15min,features_4h}/` 目录创建
@@ -240,47 +245,55 @@ BinanceWS tick → OrderFlowListener
 
 ---
 
-## 2.3 首次部署
+## 2.3 首次部署 — ✅ 已完成 (2026-02-25)
 
 ### 2.3.1 触发首次构建
 
-- [ ] 方式 A（推荐）: GitHub 仓库 → Actions 页面 → "Build & Deploy" → Run workflow
-- [ ] 方式 B: push 代码到 main 分支自动触发
-- [ ] 确认 Actions 日志:
-  - Build & Push Image: ✅ 镜像推送到 ghcr.io
-  - Deploy to Server: ✅ 镜像拉取 + 服务重启
+- [x] 方式 A: GitHub Actions → Run workflow
+- [x] Build & Push Image: ✅ 镜像推送到 ghcr.io (~3min)
+- [x] Deploy to Server: ✅ 镜像拉取 + 服务重启
 
-### 2.3.2 服务器上运行 Warmup 数据下载
+### 2.3.2 Warmup 数据
 
-> **不需要从本地上传** — 服务器（东京）直连 Binance 比本地 VPN 更快
-> **不需要 Feature Store** — live 模式所有特征基于 ticks/bars 实时重算
+> ℹ️ **改为本地下载 + rsync 上传**，服务器直接下载太慢（服务器带宽有限）
+> `start_live.sh` 不再自动下载，未找到 warmup 数据则启动中止
 
-- [ ] SSH 到服务器，通过 Docker 容器执行 warmup:
-  ```bash
-  ssh root@<SERVER_IP>
-  docker run --rm \
-    -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
-    quant-engine:latest \
-    bash live/scripts/prepare_warmup_ticks.sh highcap 6
-  ```
-- [ ] 预期: 下载 6 个月 aggTrades → 转换为 1min ticks + bars
-- [ ] 耗时: ~10-30 分钟（取决于网络和 symbol 数量）
+**本地下载 + 上传流程**：
+```bash
+# 1. 本地下载 warmup 数据
+bash live/scripts/prepare_warmup_ticks.sh highcap 6
+
+# 2. 打包 + scp 上传（比 rsync 快很多，parquet 小文件多）
+tar cf /tmp/warmup_ticks.tar -C live/highcap/data/ticks .
+scp -i ~/.ssh/id_tencent_cloud_ssh /tmp/warmup_ticks.tar ubuntu@43.135.44.160:/tmp/
+
+# 3. 远程解压 + 重启服务
+ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 \
+  'tar xf /tmp/warmup_ticks.tar -C /opt/quant-engine/live/highcap/data/ticks/ && rm /tmp/warmup_ticks.tar && sudo systemctl restart quant-engine'
+```
+
+- [ ] 本地下载完成
+- [ ] tar 打包 + scp 上传完成
 - [ ] 验证: `ls /opt/quant-engine/live/highcap/data/ticks/BTCUSDT/ | wc -l` 应有 ~180 个文件
 
-### 2.3.3 启动服务
+### 2.3.3 服务状态
 
-- [ ] 启动:
-  ```bash
-  sudo systemctl start quant-engine
-  ```
-- [ ] 查看实时日志:
-  ```bash
-  sudo journalctl -u quant-engine -f
-  ```
-- [ ] 确认启动成功标志:
-  - WS 连接成功 (`✅ WebSocket connected`)
-  - warmup 阶段完成 (`WARMUP → NORMAL`，约 4h）
-  - 三策略注册成功 (`Registered: bpc, me, fer`)
+- [x] `quant-engine.service` active (running)
+- [ ] 确认 warmup 下载完成 (`WARMUP → NORMAL`)
+- [ ] 确认 WS 连接成功 (`✅ WebSocket connected`)
+- [ ] 确认三策略注册 (`Registered: bpc, me, fer`)
+
+### 部署踩坑记录
+
+| 问题 | 原因 | 修复 |
+|------|------|------|
+| Dockerfile 找不到 | `.gitignore` 排除了 `/docker/` | 加 `!/docker/Dockerfile.live` 例外 |
+| pip 升级失败 | Ubuntu 24.04 PEP 668 + debian pip 无 RECORD | `rm EXTERNALLY-MANAGED` + `--ignore-installed` |
+| PyWavelets 构建失败 | 1.4.1 无 Python 3.12 wheel | 放宽到 `>=1.5.0` |
+| Docker 权限拒绝 | ubuntu 用户不在 docker 组 | `usermod -aG docker ubuntu` |
+| Warmup input() 崩溃 | systemd 无终端，EOFError | `auto_confirm=True` + EOFError 兜底 |
+| LightGBM/sklearn 多余 | 实盘不用，只在训练代码 | 从 Dockerfile.live 移除 |
+| Warmup 服务器下载太慢 | 服务器带宽有限，36 文件 ~25GB | 改为本地下载 + tar 打包 scp 上传 |
 
 ---
 
@@ -357,41 +370,140 @@ ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
 
 ---
 
-## 3.1 观察模式 (trade_size=0)
+## 3.1 观察模式 (trade_size=0, 48h+)
 
-- [ ] 启动: `MLBOT_LIVE_TRADE_SIZE=0.0` (只看不做)
-- [ ] 运行 48h+
-- [ ] 检查:
-  - 信号漏斗数据合理
-  - 三策略都有信号产生
-  - ME 使用 1H 特征，BPC/FER 使用 4H 特征
-  - 内存/CPU 在正常范围 (< 500MB / < 30%)
-  - WS 连接稳定，无频繁重连
-  - 宪法状态始终绿灯
+> 目标：确认系统正确运行，信号合理，无崩溃
 
-## 3.2 微量实盘 (最小单位)
+### 3.1.1 系统健康
 
-- [ ] 切换: `MLBOT_LIVE_TRADE_SIZE=0.001` (最小 BTC 交易量)
-- [ ] 运行 1-2 周
-- [ ] 检查:
-  - 订单执行成功率 > 95%
-  - 滑点在预期范围 (< 5bps)
-  - 止损/止盈正确触发
-  - PnL 与回测方向一致 (不要求绝对值一致)
+- [ ] WS 连接稳定，48h 内无频繁重连 (重连 < 3 次)
+- [ ] 内存 < 500MB, CPU < 30%
+- [ ] 无 Python 异常/crash
+- [ ] 三策略都已注册 (`Registered: bpc, me, fer`)
+- [ ] 宪法三灯号始终绿灯 (Capital / Edge / Activity)
 
-## 3.3 正式运营
+### 3.1.2 特征一致性验证 (核心)
 
-- [ ] 逐步增加 `trade_size` 到目标仓位
-- [ ] 建立每日检查 SOP:
-  - 查看 15min 统计快照
-  - 确认三灯号状态 (Capital / Edge / Activity)
-- [ ] 每周本地检查:
-  ```bash
-  # 下载数据
-  bash live/scripts/download_monitor_data.sh --days 7
-  # 跑周频检查
-  python scripts/local_monitor_weekly.py --data data/live_latest.parquet --strategy me --baseline results/.../training_baseline.json
-  ```
+> **证明实盘特征计算 = 研究特征计算，无实现 bug**
+
+- [ ] 抽取实盘 15min 特征快照 (3-5 个时间戳)
+- [ ] 用研究代码对同时间段原始数据重算特征
+- [ ] 对比偏差:
+  - 数值特征：相对偏差 < 1% (允许浮点精度差异)
+  - 分类特征 (direction/regime)：完全一致
+- [ ] 重点检查 ME(1H) 和 BPC(4H) 的 bar 聚合是否正确
+
+### 3.1.3 信号一致性验证 (核心)
+
+> **证明实盘信号 = 研究信号，决策逻辑无偏差**
+
+- [ ] 收集实盘信号日志 (direction / gate / entry_filter / evidence)
+- [ ] 用研究代码对同特征重跑 `strategy.decide()`
+- [ ] 信号漏斗各阶段结果应完全一致
+  - 如不一致：排查 threshold/config 是否对齐
+- [ ] 确认 PCM 仲裁结果与预期优先级一致
+
+### 3.1.4 无未来函数验证 (核心)
+
+> **证明研究信号不依赖未来数据**
+
+- [ ] 实盘 T 时刻产生的信号，对比研究回测 T 时刻的信号
+  - 若一致 → 研究无未来函数 (因为实盘不可能看到未来)
+  - 若不一致 → 排查是否存在 look-ahead bias
+- [ ] 检查特征计算中是否有 `shift(-1)` 或未来数据引用
+- [ ] 验证方法：选 3-5 个有信号的时间点，逐一比对
+
+### 3.1.5 数据完整性
+
+- [ ] 1min bars 无缺失 (连续 48h 应有 ~2880 条/symbol)
+- [ ] tick 数据正常聚合
+- [ ] 15min 特征快照按时生成 (每 15min 一条)
+
+---
+
+## 3.2 微量实盘 ($50-100 仓位, 20 笔)
+
+> 目标：验证订单执行正确性，积累首批交易样本
+> 资金：$1000 本金，每笔 $50-100 (5-10%)
+
+### 3.2.1 执行质量验证
+
+- [ ] 订单执行成功率 > 95%
+- [ ] 实际成交价 vs 信号价：滑点 < 5bps
+- [ ] 止损/止盈正确触发 (对比预期触发价位)
+- [ ] 持仓时间分布合理 (与回测一致，非秒级进出)
+
+### 3.2.2 首批样本统计 (20 笔)
+
+> **统计学说明**：20 笔样本量较小，置信度有限，重点看方向性
+> 真实胜率 60% 时，20 笔观测到胜率的 95% 置信区间约为 [36%, 81%]
+> 所以 20 笔主要排除"系统性错误"，不能精确验证胜率
+
+- [ ] 收集 20 笔完整交易 (含开仓/平仓/PnL)
+- [ ] 统计：
+  - 胜率 (期望 > 50%，若 < 40% 需停机排查)
+  - 盈亏比 (期望 > 1.0)
+  - 平均持仓时间 (与回测比较)
+  - 最大单笔亏损 (应在止损范围内)
+- [ ] PnL 方向与回测一致 (允许幅度差异)
+
+### 3.2.3 通过标准
+
+| 指标 | 红线 (停机排查) | 黄线 (继续观察) | 绿灯 (可加仓) |
+|------|----------------|----------------|----------------|
+| 胜率 (20笔) | < 35% | 35-50% | > 50% |
+| 盈亏比 | < 0.5 | 0.5-1.0 | > 1.0 |
+| 最大单笔亏损 | > 10% 本金 | 5-10% | < 5% |
+| 订单失败率 | > 10% | 5-10% | < 5% |
+| 信号vs回测方向 | 完全相反 | 部分偏差 | 基本一致 |
+
+---
+
+## 3.3 阶梯加仓计划
+
+> 核心原则：**用时间和样本量换信心，分阶段放大风险敞口**
+> 本金 $1000 → 总亏损上限 $200 (20%) → 触发全局止损
+
+### 阶段设计
+
+| 阶段 | 笔数区间 | 单笔仓位 | 累计最大亏损 | 进入条件 |
+|------|---------|---------|-------------|----------|
+| S1 试水 | 1-20 | $50 (5%) | $100 (10%) | 3.1 观察模式通过 |
+| S2 验证 | 21-50 | $100 (10%) | $150 (15%) | S1 胜率 > 50% + 盈亏比 > 1.0 |
+| S3 正常 | 51+ | $150-200 (15-20%) | $200 (20%) | S2 累计盈利 > 0 |
+
+### 加仓决策规则
+
+- **升级条件** (S1→S2)：
+  - 20 笔完成
+  - 胜率 > 50%
+  - 累计 PnL ≥ 0 (不亏即可)
+  - 无系统性异常
+
+- **降级/停机条件**：
+  - 连续 5 笔亏损 → 暂停 24h，检查市场环境
+  - 累计亏损达到阶段上限 → 回退到上一阶段仓位
+  - 累计亏损达 $200 (20%) → 全局停机，重新评估
+
+- **永远不做的事**：
+  - 亏损后加大仓位 "追回来"
+  - 跳过阶段直接上大仓位
+  - 在没搞清亏损原因时继续交易
+
+### 每周复盘 SOP
+
+```bash
+# 下载数据
+bash live/scripts/download_monitor_data.sh --days 7
+# 跑周频检查
+python scripts/local_monitor_weekly.py --data data/live_latest.parquet --strategy me --baseline results/.../training_baseline.json
+```
+
+复盘内容：
+- 本周胜率 / 盈亏比 / PnL
+- 信号漏斗通过率 (gate reject rate 70-90% 正常)
+- 最大回撤
+- 是否需要调整阶段
 
 ---
 
@@ -441,8 +553,14 @@ python scripts/run_live.py
 ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 'sudo bash -s' < scripts/server_bootstrap.sh  # 1. 初始化服务器
 # 2. 配置 GitHub Secrets（6 个）
 # 3. GitHub Actions → Run workflow（首次构建镜像）
-# 4. warmup 数据已集成到启动流程，自动下载
-sudo systemctl start quant-engine                             # 5. 启动服务
+# 4. 本地下载 warmup + 打包上传
+bash live/scripts/prepare_warmup_ticks.sh highcap 6
+tar cf /tmp/warmup_ticks.tar -C live/highcap/data/ticks .
+scp -i ~/.ssh/id_tencent_cloud_ssh /tmp/warmup_ticks.tar ubuntu@43.135.44.160:/tmp/
+ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 \
+  'tar xf /tmp/warmup_ticks.tar -C /opt/quant-engine/live/highcap/data/ticks/ && rm /tmp/warmup_ticks.tar'
+# 5. 重启服务
+ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 'sudo systemctl restart quant-engine'
 
 # 监控部署
 rsync -avz -e "ssh -i ~/.ssh/id_tencent_cloud_ssh" terraform/monitoring/ ubuntu@43.135.44.160:/opt/monitoring/
@@ -451,6 +569,24 @@ ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 'sudo bash -s' < scripts
 # 日常迭代
 git push origin main  # 自动触发: build → push → deploy → restart
 ```
+
+## 架构决策记录
+
+### ADR-001: 单进程架构（不拆分 WebSocket / 交易 / 监控）
+
+> 决策时间: 2026-02-26
+
+**决策**: 当前阶段不拆分模块，WebSocket 采集 + 特征计算 + 决策 + 下单保持单进程。
+
+**原因**:
+1. **重启影响可忽略**: 特征通过 `compute_features_batch()` 从磁盘批量计算（150天 bars + 8天 ticks），不依赖流式内存状态。重启丢失 1-2 分钟 tick 对 15 分钟决策周期无影响。
+2. **启动恢复完善**: `start_live.sh` 自动执行 `prepare_warmup_ticks.sh --fill-gap` 补缺失数据，`_restore_state()` 从磁盘恢复 memory_window。
+3. **监控已独立**: Prometheus / Grafana 是独立 Docker 容器，不受 quant-engine 重启影响。
+4. **规模不需要**: 2核4G 服务器、十几个 token、15分钟决策周期，拆分增加 IPC 复杂度，收益为零。
+
+**重新评估条件**: 当策略升级到 1 分钟级决策、或需要 tick 级实时信号时，考虑拆分 WebSocket 采集层。
+
+---
 
 ## 关键文件
 

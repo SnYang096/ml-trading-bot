@@ -303,13 +303,15 @@ def _load_constitution_constraints(
 ) -> Dict[str, Any]:
     """Load hard constraints from constitution.yaml.
 
-    Returns dict with keys: slot_count, risk_per_slot, per_strategy_limits.
+    Returns dict with keys: slot_count, risk_per_slot, per_strategy_limits,
+    add_position_rules.
     Falls back to safe defaults if file not found.
     """
     defaults = {
         "slot_count": 2,
-        "risk_per_slot": 0.015,
+        "risk_per_slot": 0.01,
         "per_strategy_limits": {},
+        "add_position_rules": {},
     }
     if not constitution_yaml:
         return defaults
@@ -325,10 +327,17 @@ def _load_constitution_constraints(
 
     slots = obj.get("slots") or {}
     ra = obj.get("resource_allocation") or {}
+    add_rules = (
+        ra.get("add_position_rules")
+        or ra.get("add_position")
+        or obj.get("add_position")
+        or {}
+    )
     return {
         "slot_count": int(slots.get("slot_count", 2)),
-        "risk_per_slot": float(slots.get("risk_per_slot", 0.015)),
+        "risk_per_slot": float(slots.get("risk_per_slot", 0.01)),
         "per_strategy_limits": dict(ra.get("per_strategy_limits") or {}),
+        "add_position_rules": dict(add_rules),
     }
 
 
@@ -472,6 +481,20 @@ class LivePCM:
     def constitution(self) -> Dict[str, Any]:
         """Constitution 硬约束 (只读)"""
         return dict(self._constitution)
+
+    def resolve_risk_for_strategy(self, archetype: str) -> float:
+        """Return effective risk fraction for a strategy.
+
+        Logic: min(risk_per_slot, strategy.max_risk_per_trade)
+        If strategy has no max_risk_per_trade, returns risk_per_slot.
+        """
+        risk_per_slot = float(self._constitution.get("risk_per_slot", 0.01))
+        limits = self._constitution.get("per_strategy_limits") or {}
+        strat = limits.get(archetype.lower()) or {}
+        strat_risk = strat.get("max_risk_per_trade")
+        if strat_risk is not None:
+            return min(risk_per_slot, float(strat_risk))
+        return risk_per_slot
 
     @property
     def current_position_scale(self) -> float:
