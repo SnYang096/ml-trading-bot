@@ -1,5 +1,5 @@
 # BPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260226_144115_rr_extreme/bpc
+# 来源: results/train_final_20260226_164902_rr_extreme/bpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc
@@ -16,114 +16,114 @@ schema:
       max_hard_deny_rate: 0.5
       alert_threshold: 0.45
 hard_gates:
-- id: gate_vpin_max20
-  tag: HARD_VPIN_MAX20
+- id: gate_price_momentum_div_score
+  tag: HARD_PRICE_MOMENTUM_DIV_SCORE
   phase: hard_gate
   priority: 10
-  reason: vpin_max20 触发树分裂条件 (分裂 1 次)
+  reason: price_momentum_div_score 触发树分裂条件 (分裂 3 次)
   when:
-    vpin_max20:
-      value_lt: 0.3758
+    price_momentum_div_score:
+      value_gt: 0.1439
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.3758 | 方向: data_verified (low=-0.567, high=0.120)'
-- id: gate_wpt_vper_mid
-  tag: HARD_WPT_VPER_MID
+  comment: '自动生成: 分裂 3 次 | 阈值 0.1439 | 方向: data_verified (low=0.383, high=-0.698)'
+- id: gate_hilbert_cvd_price_env_ratio
+  tag: HARD_HILBERT_CVD_PRICE_ENV_RATIO
   phase: hard_gate
   priority: 11
-  reason: wpt_vper_mid 触发树分裂条件 (分裂 1 次)
+  reason: hilbert_cvd_price_env_ratio 触发树分裂条件 (分裂 3 次)
   when:
-    wpt_vper_mid:
-      value_lt: 2.0399547184105324e+16
+    hilbert_cvd_price_env_ratio:
+      value_lt: 0.3347
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 2.04e+16 | 方向: data_verified (low=-0.741, high=0.781)'
-- id: gate_spectrum_cvd_centroid
-  tag: HARD_SPECTRUM_CVD_CENTROID
+  comment: '自动生成: 分裂 3 次 | 阈值 0.3347 | 方向: data_verified (low=0.048, high=0.260)'
+- id: gate_trade_cluster_directional_entropy_zscore_20
+  tag: HARD_TRADE_CLUSTER_DIRECTIONAL_ENTROPY_ZSCORE_20
   phase: hard_gate
   priority: 12
-  reason: spectrum_cvd_centroid 触发树分裂条件 (分裂 1 次)
+  reason: trade_cluster_directional_entropy_zscore_20 触发树分裂条件 (分裂 3 次)
   when:
-    spectrum_cvd_centroid:
-      value_gt: 0.7956
+    trade_cluster_directional_entropy_zscore_20:
+      value_gt: -1.022
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.7956 | 方向: data_verified (low=0.871, high=-3.321)'
-- id: gate_spectrum_price_entropy
-  tag: HARD_SPECTRUM_PRICE_ENTROPY
+  comment: '自动生成: 分裂 3 次 | 阈值 -1.022 | 方向: data_verified (low=0.433, high=0.091)'
+- id: gate_evt_tail_shape
+  tag: HARD_EVT_TAIL_SHAPE
   phase: hard_gate
   priority: 13
-  reason: spectrum_price_entropy 触发树分裂条件 (分裂 1 次)
+  reason: evt_tail_shape 触发树分裂条件 (分裂 3 次)
   when:
-    spectrum_price_entropy:
-      value_lt: 0.9175
+    evt_tail_shape:
+      value_gt: 0.8472
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.9175 | 方向: data_verified (low=-0.533, high=-0.028)'
-- id: gate_sr_strength_max
-  tag: HARD_SR_STRENGTH_MAX
+  comment: '自动生成: 分裂 3 次 | 阈值 0.8472 | 方向: data_verified (low=0.273, high=-0.100)'
+- id: gate_macd_signal_atr
+  tag: HARD_MACD_SIGNAL_ATR
   phase: hard_gate
   priority: 14
-  reason: sr_strength_max 触发树分裂条件 (分裂 1 次)
+  reason: macd_signal_atr 触发树分裂条件 (分裂 2 次)
   when:
-    sr_strength_max:
-      value_gt: 3.3977
+    macd_signal_atr:
+      value_lt: -0.5852
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 3.398 | 方向: data_verified (low=2.214, high=-1.095)'
-- id: gate_bpc_cvd_breakout_confirm
-  tag: HARD_BPC_CVD_BREAKOUT_CONFIRM
+  comment: '自动生成: 分裂 2 次 | 阈值 -0.5852 | 方向: data_verified (low=-0.659, high=0.295)'
+- id: gate_price_to_vwap_pct
+  tag: HARD_PRICE_TO_VWAP_PCT
   phase: hard_gate
   priority: 15
-  reason: bpc_cvd_breakout_confirm 触发树分裂条件 (分裂 1 次)
+  reason: price_to_vwap_pct 触发树分裂条件 (分裂 2 次)
   when:
-    bpc_cvd_breakout_confirm:
-      value_lt: 0.18
+    price_to_vwap_pct:
+      value_gt: -0.0336
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.18 | 方向: data_verified (low=-0.946, high=0.754)'
-- id: gate_evt_tail_shape_right
-  tag: HARD_EVT_TAIL_SHAPE_RIGHT
+  comment: '自动生成: 分裂 2 次 | 阈值 -0.03363 | 方向: data_verified (low=0.467, high=0.080)'
+- id: gate_bpc_impulse_return_atr
+  tag: HARD_BPC_IMPULSE_RETURN_ATR
   phase: hard_gate
   priority: 16
-  reason: evt_tail_shape_right 触发树分裂条件 (分裂 1 次)
+  reason: bpc_impulse_return_atr 触发树分裂条件 (分裂 2 次)
   when:
-    evt_tail_shape_right:
-      value_gt: 0.4583
+    bpc_impulse_return_atr:
+      value_gt: -0.1938
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.4583 | 方向: data_verified (low=0.219, high=-0.443)'
-- id: gate_volume_ratio_pct
-  tag: HARD_VOLUME_RATIO_PCT
+  comment: '自动生成: 分裂 2 次 | 阈值 -0.1938 | 方向: data_verified (low=0.329, high=0.041)'
+- id: gate_garch_leverage_gamma
+  tag: HARD_GARCH_LEVERAGE_GAMMA
   phase: hard_gate
   priority: 17
-  reason: volume_ratio_pct 触发树分裂条件 (分裂 1 次)
+  reason: garch_leverage_gamma 触发树分裂条件 (分裂 2 次)
   when:
-    volume_ratio_pct:
-      value_lt: 0.3757
+    garch_leverage_gamma:
+      value_gt: 0.01
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.3757 | 方向: data_verified (low=-1.154, high=0.474)'
-- id: gate_price_dir_consistency_pct
-  tag: HARD_PRICE_DIR_CONSISTENCY_PCT
+  comment: '自动生成: 分裂 2 次 | 阈值 0.009983 | 方向: data_verified (low=0.802, high=-0.223)'
+- id: gate_spectrum_cvd_entropy
+  tag: HARD_SPECTRUM_CVD_ENTROPY
   phase: hard_gate
   priority: 18
-  reason: price_dir_consistency_pct 触发树分裂条件 (分裂 1 次)
+  reason: spectrum_cvd_entropy 触发树分裂条件 (分裂 2 次)
   when:
-    price_dir_consistency_pct:
-      value_gt: 0.628
+    spectrum_cvd_entropy:
+      value_lt: 0.9563
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.628 | 方向: data_verified (low=0.016, high=-0.428)'
-- id: gate_oi_change_pct
-  tag: HARD_OI_CHANGE_PCT
+  comment: '自动生成: 分裂 2 次 | 阈值 0.9563 | 方向: data_verified (low=-0.242, high=0.974)'
+- id: gate_evt_var_99
+  tag: HARD_EVT_VAR_99
   phase: hard_gate
   priority: 19
-  reason: oi_change_pct 触发树分裂条件 (分裂 1 次)
+  reason: evt_var_99 触发树分裂条件 (分裂 2 次)
   when:
-    oi_change_pct:
-      value_gt: -0.0064
+    evt_var_99:
+      value_lt: 0.3313
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 -0.006388 | 方向: data_verified (low=0.232, high=-0.270)'
+  comment: '自动生成: 分裂 2 次 | 阈值 0.3313 | 方向: data_verified (low=-1.164, high=0.915)'
 guardrails: []

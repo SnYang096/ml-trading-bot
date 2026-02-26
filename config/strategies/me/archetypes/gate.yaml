@@ -1,5 +1,5 @@
 # ME Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260226_144103/strategies/me/gate_draft.yaml
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260226_175746/strategies/me/gate_draft.yaml
 # 优化规则: 2/10 条通过优化, 8 条已移除
 
 schema:
@@ -13,6 +13,42 @@ schema:
       max_hard_deny_rate: 0.5
       alert_threshold: 0.45
 hard_gates:
+- id: prefilter_atr_percentile
+  tag: PREFILTER_ATR_PERCENTILE
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: atr_percentile >= 0.9648'
+  when:
+    atr_percentile:
+      value_lt: 0.9648
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: prefilter_me_atr_pct
+  tag: PREFILTER_ME_ATR_PCT
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: me_atr_pct > 0.01'
+  when:
+    me_atr_pct:
+      value_le: 0.01
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: prefilter_me_cvd_alignment
+  tag: PREFILTER_ME_CVD_ALIGNMENT
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: me_cvd_alignment >= 1.0'
+  when:
+    me_cvd_alignment:
+      value_lt: 1.0
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
 - id: gate_shd_pct
   tag: HARD_SHD_PCT
   phase: hard_gate

@@ -107,6 +107,11 @@ def _run_strategy_rolling(
     symbols = cfg["symbols"]
     data_path = cfg["data_path"]
     deploy_cfg = cfg.get("deploy_gate", {})
+    # per-strategy kpi_gates.deploy 覆盖全局默认
+    scfg = cfg.get("strategies", {}).get(strategy, {})
+    deploy_kpi = scfg.get("kpi_gates", {}).get("deploy", {})
+    if deploy_kpi.get("min_trades") is not None:
+        deploy_cfg = {**deploy_cfg, "min_trades": deploy_kpi["min_trades"]}
     comparison_cfg = cfg.get("comparison", {})
 
     test_dir = ROLLING_ROOT / strategy

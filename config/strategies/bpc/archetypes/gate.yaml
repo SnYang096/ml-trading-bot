@@ -1,6 +1,6 @@
 # BPC Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/bpc/20260224_154226/strategies/bpc/gate_draft.yaml
-# 优化规则: 0/4 条通过优化, 4 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/bpc/20260226_175746/strategies/bpc/gate_draft.yaml
+# 优化规则: 5/10 条通过优化, 8 条已移除
 
 schema:
   phases:
@@ -12,5 +12,63 @@ schema:
     failure_budget:
       max_hard_deny_rate: 0.5
       alert_threshold: 0.45
-hard_gates: []
+hard_gates:
+- id: prefilter_bpc_bb_compression
+  tag: PREFILTER_BPC_BB_COMPRESSION
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: bpc_bb_compression > 0.0965'
+  when:
+    bpc_bb_compression:
+      value_le: 0.0965
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: prefilter_bpc_vpin_breakout_confirm
+  tag: PREFILTER_BPC_VPIN_BREAKOUT_CONFIRM
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: bpc_vpin_breakout_confirm >= 0.5596'
+  when:
+    bpc_vpin_breakout_confirm:
+      value_lt: 0.5596
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: prefilter_bpc_recovery_strength
+  tag: PREFILTER_BPC_RECOVERY_STRENGTH
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: bpc_recovery_strength > 0.213'
+  when:
+    bpc_recovery_strength:
+      value_le: 0.213
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: gate_evt_var_99
+  tag: HARD_EVT_VAR_99
+  phase: hard_gate
+  priority: 19
+  reason: evt_var_99 触发树分裂条件 (分裂 2 次)
+  when:
+    evt_var_99:
+      value_lt: 0.8698
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.8698, lift=0.700'
+- id: gate_macd_signal_atr
+  tag: HARD_MACD_SIGNAL_ATR
+  phase: hard_gate
+  priority: 14
+  reason: macd_signal_atr 触发树分裂条件 (分裂 2 次)
+  when:
+    macd_signal_atr:
+      value_lt: 0.1012
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.1012, lift=9.109'
 guardrails: []

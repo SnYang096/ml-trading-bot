@@ -1280,6 +1280,90 @@ _VALID_OPT_STATUSES = {
     "nan_lift_hard_gate",  # NaN-lift exception for hard gates
 }
 
+# Prefilter operator → gate deny operator (negate: allow-if → deny-if-NOT)
+_PREFILTER_OP_NEGATE = {
+    ">=": "value_lt",  # allow >= X → deny < X
+    ">": "value_le",  # allow > X  → deny <= X
+    "<=": "value_gt",  # allow <= X → deny > X
+    "<": "value_ge",  # allow < X  → deny >= X
+}
+
+
+def _load_prefilter_as_frozen_gates(prefilter_path: Path) -> List[Dict]:
+    """
+    将 prefilter 规则转换为 frozen hard_gates (deny 格式)。
+
+    确保 prefilter 条件在推理时作为 gate 的一部分执行一次，
+    保障训练-推理数据分布一致性。
+    frozen=true 的规则不可被优化器移除或修改阈值。
+    """
+    import yaml as _yaml
+
+    if not prefilter_path.exists():
+        return []
+
+    raw = _yaml.safe_load(prefilter_path.read_text(encoding="utf-8")) or {}
+    rules = raw.get("rules", [])
+    if not rules:
+        return []
+
+    gate_rules: List[Dict] = []
+    for rule in rules:
+        if "any_of" in rule:
+            # OR 规则: deny when ALL sub-conditions are NOT met
+            # allow = (A OR B) → deny = (NOT A AND NOT B)
+            all_of_items = []
+            features_desc = []
+            for sub in rule["any_of"]:
+                feat = sub.get("feature", "")
+                op = sub.get("operator", "")
+                val = sub.get("value")
+                gate_op = _PREFILTER_OP_NEGATE.get(op)
+                if gate_op and feat and val is not None:
+                    all_of_items.append({feat: {gate_op: val}})
+                    features_desc.append(f"{feat}{op}{val}")
+
+            if all_of_items:
+                feats_short = "_".join(
+                    "_".join(f.split("_")[:2]) for item in all_of_items for f in item
+                )
+                gate_rules.append(
+                    {
+                        "id": f"prefilter_{feats_short}",
+                        "tag": f"PREFILTER_{feats_short.upper()}",
+                        "phase": "hard_gate",
+                        "priority": 1,
+                        "reason": f"prefilter OR: {' OR '.join(features_desc)}",
+                        "when": {"all_of": all_of_items},
+                        "then": {"action": "deny"},
+                        "frozen": True,
+                        "comment": "prefilter条件 (训练-推理一致性, frozen=true)",
+                    }
+                )
+        else:
+            # 简单 AND 规则 → 每条转为单独的 frozen hard_gate
+            feat = rule.get("feature", "")
+            op = rule.get("operator", "")
+            val = rule.get("value")
+            gate_op = _PREFILTER_OP_NEGATE.get(op)
+
+            if gate_op and feat and val is not None:
+                gate_rules.append(
+                    {
+                        "id": f"prefilter_{feat}",
+                        "tag": f"PREFILTER_{feat.upper()}",
+                        "phase": "hard_gate",
+                        "priority": 1,
+                        "reason": f"prefilter: {feat} {op} {val}",
+                        "when": {feat: {gate_op: val}},
+                        "then": {"action": "deny"},
+                        "frozen": True,
+                        "comment": "prefilter条件 (训练-推理一致性, frozen=true)",
+                    }
+                )
+
+    return gate_rules
+
 
 def _promote_gate_to_archetypes(
     strategy: str,
@@ -1287,6 +1371,8 @@ def _promote_gate_to_archetypes(
     arch: "StrategyArchetype",
     optimization_results: Dict[str, Any],
     source_gate_path: Optional[str] = None,
+    df: Optional[pd.DataFrame] = None,
+    min_combined_pass_rate: float = 0.05,
 ) -> None:
     """
     将优化后的 gate 规则写入 archetypes/gate.yaml。
@@ -1294,8 +1380,9 @@ def _promote_gate_to_archetypes(
     读取源 gate YAML (草稿或现有 gate.yaml)，用优化结果更新阈值，
     写入 archetypes/gate.yaml。
 
-    关键行为: 优化失败的规则 (no_valid_threshold/skip) 会被移除，
-    不会把未验证的噪声阈值写入生产配置。
+    关键行为:
+      - 优化失败的规则 (no_valid_threshold/skip) 会被移除
+      - 累积 AND pass rate 过低时自动裁剪最弱规则 (防止全部 veto)
     """
     import yaml
 
@@ -1363,7 +1450,131 @@ def _promote_gate_to_archetypes(
         )
         kept_rules.append(rule)
 
-    config["hard_gates"] = kept_rules
+    # ── 注入 prefilter 条件为 frozen hard_gates (训练-推理一致性) ──
+    prefilter_path = arch_dir / "prefilter.yaml"
+    prefilter_gates = _load_prefilter_as_frozen_gates(prefilter_path)
+    if prefilter_gates:
+        print(
+            f"\n  \U0001f512 注入 {len(prefilter_gates)} 条 prefilter 为 frozen hard_gates"
+        )
+        for pg in prefilter_gates:
+            print(f"     - {pg['id']}: {pg['reason']}")
+
+    # 合并: prefilter (frozen) + optimized gates
+    all_rules = prefilter_gates + kept_rules
+    config["hard_gates"] = all_rules
+
+    # ── 累积 AND pass rate 模拟: 防止多条规则组合后 pass rate 过低 ──
+    if df is not None and all_rules and min_combined_pass_rate > 0:
+        import operator as op_module
+
+        _GATE_OPS = {
+            "value_lt": op_module.lt,
+            "value_le": op_module.le,
+            "value_gt": op_module.gt,
+            "value_ge": op_module.ge,
+        }
+
+        def _apply_when_to_mask(when, data, allow_mask, gate_ops):
+            """Apply a when clause to allow_mask. Handles simple + all_of."""
+            if "all_of" in when:
+                # all_of: deny when ALL sub-conditions match (AND)
+                compound_deny = pd.Series(True, index=data.index)
+                for sub in when["all_of"]:
+                    if isinstance(sub, dict):
+                        for feat, conds in sub.items():
+                            if isinstance(conds, dict):
+                                for ck, th in conds.items():
+                                    op_func = gate_ops.get(ck)
+                                    if op_func and feat in data.columns:
+                                        compound_deny &= op_func(data[feat], th)
+                allow_mask &= ~compound_deny
+            else:
+                for feature, conditions in when.items():
+                    if isinstance(conditions, dict):
+                        for cond_key, threshold in conditions.items():
+                            op_func = gate_ops.get(cond_key)
+                            if op_func and feature in data.columns:
+                                deny_mask = op_func(data[feature], threshold)
+                                allow_mask &= ~deny_mask
+            return allow_mask
+
+        def _simulate_combined_pass_rate(rules, data):
+            """Simulate cumulative AND pass rate for all rules (incl. prefilter)."""
+            allow_mask = pd.Series(True, index=data.index)
+            for rule in rules:
+                when = rule.get("when", {})
+                allow_mask = _apply_when_to_mask(when, data, allow_mask, _GATE_OPS)
+            n_allow = allow_mask.sum()
+            return n_allow / len(data) if len(data) > 0 else 0.0
+
+        combined_rate = _simulate_combined_pass_rate(all_rules, df)
+        n_allow = int(combined_rate * len(df))
+        n_prefilter = len(prefilter_gates)
+        n_opt = len(kept_rules)
+        print(
+            f"\n  📊 累积 AND pass rate: {combined_rate:.1%} "
+            f"({n_allow}/{len(df)}, {n_prefilter} prefilter + {n_opt} optimized)"
+        )
+
+        if combined_rate < min_combined_pass_rate:
+            print(
+                f"  ⚠️  累积 pass rate {combined_rate:.1%} < "
+                f"下限 {min_combined_pass_rate:.0%}"
+            )
+            print(
+                f"  🔧 自动裁剪: 按 lift 升序移除 optimized gates (frozen 不可移除)..."
+            )
+
+            # 只裁剪 optimized gates, 不裁剪 frozen prefilter gates
+            prunable = []
+            for rule in kept_rules:
+                if rule.get("frozen"):
+                    continue  # frozen 规则不可裁剪
+                rule_id = rule.get("id", "")
+                opt = optimization_results.get(rule_id, {})
+                lift = opt.get("lift_at_mid", opt.get("lift", 0))
+                lv = lift if isinstance(lift, (int, float)) else 0
+                prunable.append((rule, lv))
+            prunable.sort(key=lambda x: abs(x[1]))
+
+            remaining_opt = [r for r, _ in prunable]
+            pruned_ids = []
+
+            while remaining_opt and combined_rate < min_combined_pass_rate:
+                weakest = remaining_opt.pop(0)
+                wid = weakest.get("id", "unknown")
+                wlift = next((lv for r, lv in prunable if r is weakest), 0)
+                pruned_ids.append(wid)
+                test_rules = prefilter_gates + remaining_opt
+                combined_rate = _simulate_combined_pass_rate(test_rules, df)
+                print(
+                    f"    ✂️  移除 {wid} (lift={wlift:.3f}) "
+                    f"→ pass rate={combined_rate:.1%}"
+                )
+
+            kept_rules = remaining_opt
+            all_rules = prefilter_gates + kept_rules
+            config["hard_gates"] = all_rules
+
+            if pruned_ids:
+                removed_rules.extend(
+                    {
+                        "id": rid,
+                        "status": "cumulative_pruned",
+                        "reason": f"AND pass rate < {min_combined_pass_rate:.0%}",
+                    }
+                    for rid in pruned_ids
+                )
+                print(
+                    f"  ✅ 裁剪后: {n_prefilter} prefilter + {len(kept_rules)} optimized, "
+                    f"pass rate={combined_rate:.1%}"
+                )
+        else:
+            print(
+                f"  ✅ 累积 pass rate {combined_rate:.1%} >= "
+                f"下限 {min_combined_pass_rate:.0%}, 无需裁剪"
+            )
 
     # Report removed rules
     if removed_rules:
@@ -1494,6 +1705,15 @@ def main() -> int:
         default=None,
         help="Prefilter YAML path. If provided, filter logs by prefilter rules "
         "before optimization (ensures plateau validation on production distribution)",
+    )
+    parser.add_argument(
+        "--min-combined-pass-rate",
+        type=float,
+        default=0.05,
+        metavar="RATE",
+        help="累积 AND pass rate 下限 (0~1). 多条 gate 规则组合后至少要保留这个比例的 bars. "
+        "如果低于这个阈值, 会按 lift 从弱到强自动裁剪规则. 默认 0.05 (5%%). "
+        "由 research_pipeline.yaml kpi_gates.gate.min_combined_pass_rate 控制.",
     )
     args = parser.parse_args()
 
@@ -1762,6 +1982,8 @@ def main() -> int:
             arch,
             all_results,
             args.gate_path,
+            df=df,
+            min_combined_pass_rate=args.min_combined_pass_rate,
         )
 
     return 0

@@ -37,6 +37,18 @@ strategies:
     labels_evidence: labels_return_tree.yaml
     has_prefilter: true
     has_direction: true
+    # Per-strategy KPI gates: 每个策略独立的优化约束参数
+    # 避免全局硬编码导致“调好一个另一个坏”
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.15          # prefilter 后至少保留 15% bars
+        min_rows: 500                # plateau 检测绝对下限
+      gate:
+        require_positive_effect: true # gate 效果必须为正
+      backtest:
+        min_trades: 30               # holdout 最低 30 笔交易
+      deploy:
+        min_trades: 10               # 4H 高选择性策略, 10 笔/6月 已足够
 
   fer:
     config: config/strategies/fer
@@ -47,6 +59,16 @@ strategies:
     labels_evidence: labels_return_tree.yaml
     has_prefilter: true
     has_direction: true
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.08          # FER 可以稍严格
+        min_rows: 500
+      gate:
+        require_positive_effect: true # 当前 FER gate 效果为负，这会触发警告
+      backtest:
+        min_trades: 10
+      deploy:
+        min_trades: 10               # 4H 策略, 同 BPC
 
   me:
     config: config/strategies/me
@@ -57,6 +79,16 @@ strategies:
     labels_evidence: labels_return_tree.yaml
     has_prefilter: true
     has_direction: true
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.03          # ME 是稀有形态，3% 就够
+        min_rows: 500
+      gate:
+        require_positive_effect: true
+      backtest:
+        min_trades: 50
+      deploy:
+        min_trades: 50               # 1H 策略频率高, 保留 50 笔要求
 
 # ── 对比决策规则 (全确定性, 无人工判断) ────────────────────────
 comparison:
@@ -92,7 +124,7 @@ deploy_gate:
 
   # ── 安全门禁 (AND, 全部满足才允许 deploy) ──
   require_adopt: true              # pipeline 决策必须 = ADOPT (新版不比旧版差)
-  min_trades: 50                   # 新实验交易数 >= 50 (统计显著性)
+  min_trades: 50                   # 全局默认, 可被 kpi_gates.deploy.min_trades 覆盖
   require_human_confirm: true      # 强制人工确认 (deploy --yes 跳过, 仅限 CI)
 
   # 决策矩阵:

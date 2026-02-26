@@ -896,9 +896,7 @@ def main() -> int:
                             print(
                                 "         原因: Gate 规则可能语义方向错误或模型欠训练"
                             )
-                            print(
-                                "         建议: 1) 清空 hard_gates 只保留 prefilter guardrail"
-                            )
+                            print("         建议: 1) 检查 hard_gates 规则数量和阈值")
                             print("                2) 用更大数据集重新训练 Gate 模型")
                             print(
                                 "                3) 检查 gate_draft.yaml 中规则的语义方向 (value_lt vs value_gt)"

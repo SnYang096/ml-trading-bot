@@ -579,6 +579,12 @@ def run_strategy_pipeline(
     strategies_root = str(exp_strategies_root)
     print(f"\n📦 实验配置隔离: {exp_config_dir}")
 
+    # ── 加载 per-strategy KPI gates ──
+    kpi_gates = scfg.get("kpi_gates", {})
+    prefilter_gates = kpi_gates.get("prefilter", {})
+    gate_gates = kpi_gates.get("gate", {})
+    backtest_gates = kpi_gates.get("backtest", {})
+
     common_train_args = [
         "--symbol",
         symbols,
@@ -662,21 +668,33 @@ def run_strategy_pipeline(
 
     # ── Step 3: Prefilter (--promote) ──
     if scfg.get("has_prefilter"):
+        prefilter_cmd = [
+            "python",
+            "scripts/analyze_archetype_feature_stratification.py",
+            "--logs",
+            f"{prepare_dir}/features_labeled.parquet",
+            "--strategy",
+            strategy,
+            "--config",
+            f"{config_dir}/prefilter.yaml",
+            "--select-recent",
+            "6",
+            "--promote",
+        ]
+        # 从 kpi_gates 注入 prefilter 约束
+        if prefilter_gates.get("min_pass_rate"):
+            prefilter_cmd += [
+                "--min-prefilter-pass-rate",
+                str(prefilter_gates["min_pass_rate"]),
+            ]
+        if prefilter_gates.get("min_rows"):
+            prefilter_cmd += [
+                "--min-prefilter-rows",
+                str(prefilter_gates["min_rows"]),
+            ]
         run_step(
             "Prefilter Analyze",
-            [
-                "python",
-                "scripts/analyze_archetype_feature_stratification.py",
-                "--logs",
-                f"{prepare_dir}/features_labeled.parquet",
-                "--strategy",
-                strategy,
-                "--config",
-                f"{config_dir}/prefilter.yaml",
-                "--select-recent",
-                "6",
-                "--promote",
-            ],
+            prefilter_cmd,
             log,
             dry_run=dry_run,
         )
@@ -759,23 +777,30 @@ def run_strategy_pipeline(
     )
 
     # Gate optimize (--promote, 在 gate 应用后的数据上做 plateau 验证)
+    gate_optimize_cmd = [
+        "python",
+        "scripts/optimize_gate_unified.py",
+        "--strategy",
+        strategy,
+        "--strategies-root",
+        strategies_root,
+        "--logs",
+        f"{gate_dir}/logs_gated.parquet",
+        "--output",
+        f"{gate_dir}/gate_optimization.json",
+        "--gate-path",
+        gate_draft,
+        "--promote",
+    ]
+    # 从 kpi_gates 注入 gate 约束
+    if gate_gates.get("min_combined_pass_rate"):
+        gate_optimize_cmd += [
+            "--min-combined-pass-rate",
+            str(gate_gates["min_combined_pass_rate"]),
+        ]
     run_step(
         "Gate Optimize",
-        [
-            "python",
-            "scripts/optimize_gate_unified.py",
-            "--strategy",
-            strategy,
-            "--strategies-root",
-            strategies_root,
-            "--logs",
-            f"{gate_dir}/logs_gated.parquet",
-            "--output",
-            f"{gate_dir}/gate_optimization.json",
-            "--gate-path",
-            gate_draft,
-            "--promote",
-        ],
+        gate_optimize_cmd,
         log,
         dry_run=dry_run,
     )
@@ -923,6 +948,7 @@ def run_strategy_pipeline(
     # ── Step 9: Backtest ──
     # 必须用 logs_gated.parquet：回测输入必须和实盘一致（经过 gate 过滤），
     # 否则报告的 Sharpe/trades 虚高（gate 会 veto 大量信号）
+    # 必须传 --strategies-root: 确保读取本次实验的 entry_filters.yaml 而不是旧的
     experiment_map_path = f"{run_dir}/trading_map_{strategy}.html"
     rc, bt_out = run_step(
         "Backtest",
@@ -933,6 +959,8 @@ def run_strategy_pipeline(
             f"{evidence_dir}/logs_gated.parquet",
             "--strategy",
             strategy,
+            "--strategies-root",
+            strategies_root,
             "--output",
             experiment_map_path,
         ],
@@ -1468,6 +1496,10 @@ def main():
 
         # ── Deploy 门禁检查 ──
         deploy_cfg = cfg.get("deploy_gate", {})
+        # per-strategy kpi_gates.deploy 覆盖全局默认
+        deploy_kpi = cfg["strategies"][strategy].get("kpi_gates", {}).get("deploy", {})
+        if deploy_kpi.get("min_trades") is not None:
+            deploy_cfg = {**deploy_cfg, "min_trades": deploy_kpi["min_trades"]}
         deploy_result = check_deploy_gate(
             decision, comparison, drift_levels, deploy_cfg
         )
@@ -1753,10 +1785,24 @@ def _extract_layer_info(arch_dir: Path) -> Dict[str, Any]:
     for r in hg:
         rid = r.get("id", "")
         w = r.get("when", {})
-        for feat, cond in w.items():
-            for op, val in cond.items():
-                op_s = op.replace("value_", "")
-                hg_descs.append(f"{feat} {op_s} {val}")
+        if "all_of" in w:
+            # compound gate (e.g. OR prefilter negated)
+            parts = []
+            for sub in w["all_of"]:
+                if isinstance(sub, dict):
+                    for sf, sc in sub.items():
+                        if isinstance(sc, dict):
+                            for sop, sv in sc.items():
+                                parts.append(f"{sf} {sop.replace('value_','')} {sv}")
+            hg_descs.append(" AND ".join(parts) if parts else rid)
+        else:
+            for feat, cond in w.items():
+                if isinstance(cond, dict):
+                    for op, val in cond.items():
+                        op_s = op.replace("value_", "")
+                        hg_descs.append(f"{feat} {op_s} {val}")
+                else:
+                    hg_descs.append(f"{feat}: {cond}")
     info["gate"] = {"hard_gates": len(hg), "guardrails": len(gr), "rules": hg_descs}
 
     # Evidence

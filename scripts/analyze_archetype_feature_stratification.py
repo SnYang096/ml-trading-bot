@@ -642,6 +642,8 @@ def _prefilter_recommendation(
     df: Optional[pd.DataFrame] = None,
     label_col: str = "success_no_rr_extreme",
     n_gate_features: Optional[int] = None,
+    min_prefilter_pass_rate: Optional[float] = None,
+    min_prefilter_rows: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """Generate composite-scored recommendation table + rules: YAML.
 
@@ -1366,7 +1368,9 @@ def _prefilter_recommendation(
     #   模型训练已用全量数据, prefilter 只影响 Gate Optimize 的 plateau 检测.
     #   Plateau 需要的是绝对样本量(~500), 不是比例.
     #   P5/P10 级特征虽然只选 5-10% 数据, 但信号更强, 应该允许选用.
-    MIN_PREFILTER_ROWS = 500  # plateau 检测的绝对最低行数
+    MIN_PREFILTER_ROWS = (
+        min_prefilter_rows if min_prefilter_rows is not None else 500
+    )  # plateau 检测的绝对最低行数
     top_rules = []
     _skip_log = []  # 记录跳过原因，最后汇总输出
     if df is not None and n_dataset > 0:
@@ -1398,6 +1402,31 @@ def _prefilter_recommendation(
             # Guard 1: absolute row minimum (plateau 检测需要足够样本)
             _coverage = len(_trial) / n_dataset if n_dataset > 0 else 0
             _is_cumulative = len(_sim_df) < n_dataset  # 前面已有规则通过
+
+            # Guard 1a: min_pass_rate (通过率下限, 防止 prefilter 过严导致交易太少)
+            if (
+                min_prefilter_pass_rate is not None
+                and _coverage < min_prefilter_pass_rate
+            ):
+                _reason = (
+                    f"通过率不足: "
+                    f"{'AND 后' if _is_cumulative else ''}通过率 {_coverage:.1%} < "
+                    f"min_pass_rate {min_prefilter_pass_rate:.0%} (kpi_gates 约束)"
+                )
+                _skip_log.append(
+                    {
+                        "rule": f"{_feat} {_op_str} {_val}",
+                        "percentile": _pct,
+                        "reason": _reason,
+                        "guard": "pass_rate",
+                    }
+                )
+                print(
+                    f"  ⛔ top_rules 跳过 {_feat} {_op_str} {_val} ({_pct}): {_reason}"
+                )
+                continue
+
+            # Guard 1b: absolute row minimum
             if len(_trial) < MIN_PREFILTER_ROWS:
                 if _is_cumulative:
                     _reason = (
@@ -1495,6 +1524,11 @@ def _prefilter_recommendation(
         )
         print(
             f"     护栏: 绝对行数>={MIN_PREFILTER_ROWS}, split前train>={MIN_TRAIN_SAMPLES:,}"
+            + (
+                f", 通过率>={min_prefilter_pass_rate:.0%}"
+                if min_prefilter_pass_rate
+                else ""
+            )
         )
     else:
         print(
@@ -1502,15 +1536,27 @@ def _prefilter_recommendation(
         )
         print(
             f"     护栏: 绝对行数>={MIN_PREFILTER_ROWS} (plateau最低需求), split前train>={MIN_TRAIN_SAMPLES:,}"
+            + (
+                f", 通过率>={min_prefilter_pass_rate:.0%}"
+                if min_prefilter_pass_rate
+                else ""
+            )
         )
         if _skip_log:
             _rows_skip = sum(1 for x in _skip_log if x["guard"] == "rows")
             _train_skip = sum(1 for x in _skip_log if x["guard"] == "train_samples")
+            _rate_skip = sum(1 for x in _skip_log if x["guard"] == "pass_rate")
+            if _rate_skip:
+                print(
+                    f"     → {_rate_skip} 个因通过率<{min_prefilter_pass_rate:.0%} 跳过"
+                )
             if _rows_skip:
                 print(f"     → {_rows_skip} 个因行数<{MIN_PREFILTER_ROWS} 跳过")
             if _train_skip:
                 print(f"     → {_train_skip} 个因训练样本<{MIN_TRAIN_SAMPLES:,} 跳过")
-            print(f"     💡 提示: 可增加扫描范围(当前仅扫描 top-5), 或检查数据总量")
+            print(
+                f"     💡 提示: 可增加扫描范围(当前仅扫描 top-5), 或调整 kpi_gates.prefilter.min_pass_rate"
+            )
 
     _best_or = locals().get("best_or_pair")
 
@@ -2022,6 +2068,22 @@ def main() -> int:
         metavar="N",
         help="Gate 训练特征数 (可选). 提供后会警告 sample:feature 比 < 20:1 的方案",
     )
+    parser.add_argument(
+        "--min-prefilter-pass-rate",
+        type=float,
+        default=None,
+        metavar="RATE",
+        help="Prefilter 最低通过率 (0~1). 如 0.15 表示至少 15%% 的 bars 必须通过 prefilter. "
+        "用于防止 prefilter 过严导致交易太少. 由 research_pipeline.yaml kpi_gates 控制.",
+    )
+    parser.add_argument(
+        "--min-prefilter-rows",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Prefilter 后最低行数 (覆盖 MIN_PREFILTER_ROWS 默认值 500). "
+        "由 research_pipeline.yaml kpi_gates 控制.",
+    )
     args = parser.parse_args()
 
     min_samples = args.min_samples
@@ -2302,6 +2364,8 @@ def main() -> int:
         df=df_for_sim,
         label_col=label_col,
         n_gate_features=args.n_gate_features,
+        min_prefilter_pass_rate=args.min_prefilter_pass_rate,
+        min_prefilter_rows=args.min_prefilter_rows,
     )
 
     # ── 6d. 回写 last_evaluation ──────────────────────────

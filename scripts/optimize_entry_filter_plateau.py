@@ -600,6 +600,33 @@ def main() -> int:
         return 1
 
     merged = df.sort_values(["symbol"]).reset_index(drop=True)
+
+    # Gate 过滤: entry filter 阈值必须在 gate 过滤后的分布上优化,
+    # 否则会和 backtest/execution 产生 distribution mismatch
+    # (backtest 先过 gate_decision 再应用 entry filter)
+    if "gate_decision" in merged.columns:
+        veto_mask = merged["gate_decision"] != "allow"
+        n_allowed = int((~veto_mask).sum())
+        merged.loc[veto_mask, "entry_direction"] = 0.0
+        print(
+            f"   \U0001f6aa Gate filter (auto): {n_allowed} allow / {len(merged)} total"
+        )
+    elif "gate_ok" in merged.columns:
+        veto_mask = merged["gate_ok"] != True  # noqa: E712
+        n_allowed = int((~veto_mask).sum())
+        merged.loc[veto_mask, "entry_direction"] = 0.0
+        print(
+            f"   \U0001f6aa Gate filter (auto): {n_allowed} allow / {len(merged)} total"
+        )
+
+    n_entries = int((merged["entry_direction"] != 0).sum())
+    if n_entries == 0:
+        print("\u274c No entry signals after gate filter")
+        return 1
+    print(
+        f"   Entry signals: {n_entries} / {len(merged)} bars ({n_entries/len(merged)*100:.1f}%)"
+    )
+
     span_years = _estimate_span_years(merged)
 
     # 加载配置

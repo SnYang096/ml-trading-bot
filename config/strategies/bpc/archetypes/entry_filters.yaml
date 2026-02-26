@@ -1,103 +1,10 @@
 # BPC Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-02-24 15:43
-# Promoted: 6 filters (6 plateau + 0 snotio-only)
-# Baseline snotio: 4.9961, σ=11.376
-# Significance: z-test p<0.05 required for all tiers
+# Date: 2026-02-26 17:58
+# Promoted: 0 filters (全部未通过显著性检验)
+# Baseline snotio: 5.6219, σ=11.618
 #
-# 职责: "现在该入场吗?" → 硬二值控制入场时机
-# 多个 filter 之间是 OR 关系
-# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
+# 没有 entry filter 通过准入, 策略将无条件入场
 
-filters:
-- id: deep_pullback
-  enabled: true
-  description: '深回踩底部入场: pullback depth ≥ 0.55 且已确认在回踩中'
-  conditions:
-  - feature: bpc_was_in_pullback
-    operator: ==
-    value: 1
-  - feature: bpc_pullback_depth
-    operator: '>='
-    value: 0.607
-  tier: A_PLATEAU
-  notes: 'plateau: bpc_pullback_depth=0.607(conf=MEDIUM), z=3.68 p=0.0001'
-- id: deep_pullback_cvd
-  enabled: true
-  description: 深回踩 + CVD 订单流吸收确认
-  conditions:
-  - feature: bpc_was_in_pullback
-    operator: ==
-    value: 1
-  - feature: bpc_pullback_depth
-    operator: '>='
-    value: 0.607
-  - feature: bpc_cvd_absorption
-    operator: ==
-    value: 1
-  tier: A_PLATEAU
-  notes: 'plateau: bpc_pullback_depth=0.607(conf=MEDIUM), z=3.67 p=0.0001'
-- id: deep_pullback_full
-  enabled: true
-  description: 深回踩 + 影线吸收 + CVD 吸收 (全维度确认)
-  conditions:
-  - feature: bpc_was_in_pullback
-    operator: ==
-    value: 1
-  - feature: bpc_pullback_depth
-    operator: '>='
-    value: 0.687
-  - feature: wick_absorption_score
-    operator: '>'
-    value: 0.086
-  - feature: bpc_cvd_absorption
-    operator: ==
-    value: 1
-  tier: A_PLATEAU
-  notes: 'plateau: bpc_pullback_depth=0.687(conf=MEDIUM), wick_absorption_score=0.086(conf=MEDIUM), z=1.81 p=0.0354'
-- id: deep_pullback_momentum
-  enabled: true
-  description: 深回踩 + BPC 动量方向确认
-  conditions:
-  - feature: bpc_was_in_pullback
-    operator: ==
-    value: 1
-  - feature: bpc_pullback_depth
-    operator: '>='
-    value: 0.507
-  - feature: bpc_momentum_confirm
-    operator: ==
-    value: 1
-  tier: A_PLATEAU
-  notes: 'plateau: bpc_pullback_depth=0.507(conf=MEDIUM), z=4.76 p=0.0000'
-- id: liquidity_silence
-  enabled: true
-  description: 深回踩 + 成交量处于历史低位 (vol_percentile < 0.2)
-  conditions:
-  - feature: bpc_was_in_pullback
-    operator: ==
-    value: 1
-  - feature: bpc_pullback_depth
-    operator: '>='
-    value: 0.607
-  - feature: ef_liquidity_silence
-    operator: <
-    value: 0.3
-  tier: A_PLATEAU
-  notes: 'plateau: bpc_pullback_depth=0.607(conf=MEDIUM), ef_liquidity_silence=0.300(conf=MEDIUM), z=3.68 p=0.0001'
-- id: deep_pullback_wpt
-  enabled: true
-  description: 深回踩 + 小波变换 (WPT) 吸收确认
-  conditions:
-  - feature: bpc_was_in_pullback
-    operator: ==
-    value: 1
-  - feature: bpc_pullback_depth
-    operator: '>='
-    value: 0.557
-  - feature: wpt_absorption_score
-    operator: '>'
-    value: 0.041
-  tier: A_PLATEAU
-  notes: 'plateau: bpc_pullback_depth=0.557(conf=MEDIUM), wpt_absorption_score=0.041(conf=MEDIUM), z=3.08 p=0.0010'
+filters: []
 combination_mode: or

@@ -633,3 +633,99 @@ disabled_filters:
 # 全量评估命令:
 #   python scripts/optimize_entry_filter_snotio.py --all \
 #     --logs results/.../predictions.parquet --strategy bpc
+
+# ================================================================
+# Shallow Pullback Filters (OR 逻辑, 与上面的 deep_pullback 并列)
+# ================================================================
+# 语义: 强趋势中浅回踩继续, 市场恐慌不足即入场
+# 与 deep_pullback 的差异:
+#   - depth 0.15-0.38 (浅回撤, 动量强劲)
+#   - 不要求 depth 极值, 但要求动量/方向确认
+#   - R/R 较低但胜率应更高
+# ----------------------------------------------------------------
+
+filters:
+  # ---- Shallow: 动量确认型 ----
+  - id: shallow_pullback_momentum
+    enabled: true
+    description: "浅回踩 + 动量恢复确认: 强趋势中价格略回调后动量重新向上"
+    semantic: |
+      趋势中浅回踩 (15-38%) 后动量恢复。
+      与 deep_pullback 的区别: 不要求深回踩, 但要求动量确认。
+      这是典型的 “trend-following” 入场: 回调浅意味着卖压弱, 趋势很强。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.15
+      - feature: bpc_pullback_depth
+        operator: "<"
+        value: 0.40
+      - feature: bpc_momentum_confirm
+        operator: "=="
+        value: 1
+
+  # ---- Shallow: CVD 吸收型 ----
+  - id: shallow_pullback_cvd
+    enabled: true
+    description: "浅回踩 + CVD 订单流吸收: 浅回踩中买方在接盘"
+    semantic: |
+      浅回踩中 CVD 显示卖方力量被吸收。
+      浅回踩 + CVD 吸收 = 买方在低位积极接盘, 不允许价格深回。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.15
+      - feature: bpc_pullback_depth
+        operator: "<"
+        value: 0.40
+      - feature: bpc_cvd_absorption
+        operator: "=="
+        value: 1
+
+  # ---- Shallow: 方向一致型 ----
+  - id: shallow_pullback_dir_consistent
+    enabled: true
+    description: "浅回踩 + 多尺度方向一致: 短/中/长期方向对齐"
+    semantic: |
+      浅回踩且多尺度方向一致 (短期方向一致性高)。
+      当所有时间框架方向对齐时, 浅回踩很可能就是一个短暂的市场嗘息。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.15
+      - feature: bpc_pullback_depth
+        operator: "<"
+        value: 0.40
+      - feature: bpc_dir_consistency_short
+        operator: ">="
+        value: 0.8
+
+  # ---- Shallow: 影线确认型 ----
+  - id: shallow_pullback_wick
+    enabled: true
+    description: "浅回踩 + 影线吸收: 浅回踩底部出现 hammer 形态"
+    semantic: |
+      浅回踩中出现影线吸收 (hammer/pin bar)。
+      即使回踩不深, 影线吸收也表明买方在底部积极参与。
+    conditions:
+      - feature: bpc_was_in_pullback
+        operator: "=="
+        value: 1
+      - feature: bpc_pullback_depth
+        operator: ">="
+        value: 0.15
+      - feature: bpc_pullback_depth
+        operator: "<"
+        value: 0.40
+      - feature: wick_absorption_score
+        operator: ">"
+        value: 0.2

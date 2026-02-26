@@ -1,6 +1,6 @@
 # FER Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260224_154226/strategies/fer/gate_draft.yaml
-# 优化规则: 3/10 条通过优化, 7 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260226_175746/strategies/fer/gate_draft.yaml
+# 优化规则: 6/10 条通过优化, 8 条已移除
 
 schema:
   phases:
@@ -13,37 +13,41 @@ schema:
       max_hard_deny_rate: 0.5
       alert_threshold: 0.45
 hard_gates:
-- id: gate_roc_5
-  tag: HARD_ROC_5
+- id: prefilter_fer_trapped_fer_trapped
+  tag: PREFILTER_FER_TRAPPED_FER_TRAPPED
   phase: hard_gate
-  priority: 12
-  reason: roc_5 触发树分裂条件 (分裂 1 次)
+  priority: 1
+  reason: 'prefilter OR: fer_trapped_longs_score>=3.4965 OR fer_trapped_shorts_score>=3.7941'
   when:
-    roc_5:
-      value_gt: -0.1343
+    all_of:
+    - fer_trapped_longs_score:
+        value_lt: 3.4965
+    - fer_trapped_shorts_score:
+        value_lt: 3.7941
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=-0.1343, lift=0.120'
-- id: gate_fer_trapped_shorts_score
-  tag: HARD_FER_TRAPPED_SHORTS_SCORE
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: gate_cvd_divergence_score
+  tag: HARD_CVD_DIVERGENCE_SCORE
   phase: hard_gate
-  priority: 14
-  reason: fer_trapped_shorts_score 触发树分裂条件 (分裂 1 次)
+  priority: 11
+  reason: cvd_divergence_score 触发树分裂条件 (分裂 3 次)
   when:
-    fer_trapped_shorts_score:
-      value_gt: 0.75
+    cvd_divergence_score:
+      value_lt: -0.0306
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.7500, lift=0.256'
-- id: gate_fp_max_imbalance_ratio
-  tag: HARD_FP_MAX_IMBALANCE_RATIO
+  comment: 'optimizer: stable_plateau_found, threshold=-0.0306, lift=0.279'
+- id: gate_garch_persistence
+  tag: HARD_GARCH_PERSISTENCE
   phase: hard_gate
-  priority: 16
-  reason: fp_max_imbalance_ratio 触发树分裂条件 (分裂 1 次)
+  priority: 10
+  reason: garch_persistence 触发树分裂条件 (分裂 3 次)
   when:
-    fp_max_imbalance_ratio:
-      value_gt: 2.399
+    garch_persistence:
+      value_gt: 0.479
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=2.3990, lift=0.112'
+  comment: 'optimizer: stable_plateau_found, threshold=0.4790, lift=0.513'
 guardrails: []

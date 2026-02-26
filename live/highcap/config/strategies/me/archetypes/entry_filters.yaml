@@ -1,8 +1,8 @@
 # ME Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-02-24 15:46
-# Promoted: 1 filters (1 plateau + 0 snotio-only)
-# Baseline snotio: 17.2337, σ=28.956
+# Date: 2026-02-26 18:01
+# Promoted: 2 filters (1 plateau + 1 snotio-only)
+# Baseline snotio: 9.1365, σ=12.099
 # Significance: z-test p<0.05 required for all tiers
 #
 # 职责: "现在该入场吗?" → 硬二值控制入场时机
@@ -10,13 +10,22 @@
 # Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-- id: scan_spectrum_price_hf_high
+- id: vpin_rank_high
   enabled: true
-  description: 价格高频占比 ≥ P90 (微观波动活跃)
+  description: VPIN 20bar 分位数 ≥ 0.8 (近期极值)
   conditions:
-  - feature: spectrum_price_high_freq_ratio
+  - feature: vpin_quantile_rank_20
     operator: '>='
-    value: 0.327
+    value: 0.614
   tier: A_PLATEAU
-  notes: 'plateau: spectrum_price_high_freq_ratio=0.327(conf=MEDIUM), z=2.24 p=0.0126'
+  notes: 'plateau: vpin_quantile_rank_20=0.614(conf=MEDIUM), z=2.04 p=0.0207'
+- id: vpin_spike
+  enabled: true
+  description: VPIN 20bar 突刺标志 (vpin_spike_flag_20 == 1)
+  conditions:
+  - feature: vpin_spike_flag_20
+    operator: ==
+    value: 1
+  tier: B_SNOTIO
+  notes: snotio=14.8740(>9.1365 bl), trades=17, z=1.96 p=0.0253, 无plateau用原始阈值
 combination_mode: or

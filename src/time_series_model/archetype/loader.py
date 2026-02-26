@@ -39,94 +39,9 @@ class GateRule:
         return self.phase in ("system_safety", "hard_gate", "guardrail")
 
 
-# Prefilter operator → gate deny-condition mapping.
-# Prefilter says "pass if feature >= 0.922"; gate denies the complement.
-_PREFILTER_OP_TO_DENY: Dict[str, str] = {
-    ">=": "value_lt",  # pass >= X  → deny < X
-    ">": "value_lte",  # pass > X   → deny <= X
-    "<=": "value_gt",  # pass <= X  → deny > X
-    "<": "value_gte",  # pass < X   → deny >= X
-}
-
-
-def _load_prefilter_as_guardrails(prefilter_path: Path) -> List[GateRule]:
-    """Load ``prefilter.yaml`` and convert each rule to a guardrail :class:`GateRule`.
-
-    The conversion inverts the prefilter's *pass* condition so the gate
-    **denies** rows that would NOT have passed prefilter during training.
-    This keeps ``prefilter.yaml`` as the single source of truth for the
-    archetype's semantic boundary — no need to duplicate rules in gate.yaml.
-
-    Supports ``any_of`` OR groups via De Morgan's law:
-        pass = (A >= x OR B >= y)  →  deny = (A < x AND B < y)
-    The deny condition naturally maps to a single ``when`` dict with multiple
-    feature keys (which ``_evaluate_when_clause`` evaluates as AND).
-    """
-    if not prefilter_path.exists():
-        return []
-    raw = yaml.safe_load(prefilter_path.read_text(encoding="utf-8")) or {}
-    rules_list = raw.get("rules") or []
-    guardrails: List[GateRule] = []
-    for idx, r in enumerate(rules_list):
-        rationale = str(r.get("rationale", ""))
-
-        # ── any_of OR group ──
-        if "any_of" in r:
-            sub_rules = r["any_of"]
-            when_conditions: Dict[str, Any] = {}
-            desc_parts: List[str] = []
-            for sub in sub_rules:
-                feature = str(sub.get("feature", ""))
-                operator = str(sub.get("operator", "")).strip()
-                value = sub.get("value")
-                deny_op = _PREFILTER_OP_TO_DENY.get(operator)
-                if not deny_op or not feature:
-                    continue
-                when_conditions[feature] = {deny_op: value}
-                desc_parts.append(f"{feature} {operator} {value}")
-            if when_conditions:
-                guardrails.append(
-                    GateRule(
-                        id=f"prefilter_or_{idx}",
-                        tag=f"PREFILTER_OR_{idx}",
-                        phase="guardrail",
-                        priority=100 + idx,
-                        reason=(
-                            f"Prefilter OR guardrail: "
-                            f"{' OR '.join(desc_parts)} ({rationale})"
-                        ),
-                        when=when_conditions,
-                        then={"action": "deny"},
-                        frozen=True,
-                    )
-                )
-            continue
-
-        # ── 普通 AND 规则 (向后兼容) ──
-        feature = str(r.get("feature", ""))
-        operator = str(r.get("operator", "")).strip()
-        value = r.get("value")
-        deny_op = _PREFILTER_OP_TO_DENY.get(operator)
-        if not deny_op or not feature:
-            continue
-        guardrails.append(
-            GateRule(
-                id=f"prefilter_{feature}",
-                tag=f"PREFILTER_{feature.upper()}",
-                phase="guardrail",
-                priority=100 + idx,  # after hard_gates
-                reason=f"Prefilter guardrail: {feature} {operator} {value} ({rationale})",
-                when={feature: {deny_op: value}},
-                then={"action": "deny"},
-                frozen=True,  # prefilter 阈值由 prefilter.yaml 管理
-            )
-        )
-    return guardrails
-
-
 @dataclass
 class GateConfig:
-    """Gate 配置 - 从 gate.yaml + prefilter.yaml 加载"""
+    """Gate 配置 - 从 gate.yaml 加载"""
 
     hard_gates: List[GateRule] = field(default_factory=list)
     system_safety: List[GateRule] = field(default_factory=list)
@@ -152,9 +67,9 @@ class GateConfig:
         cls,
         path: Path,
         *,
-        prefilter_path: Optional[Path] = None,
+        prefilter_path: Optional[Path] = None,  # 保留参数签名向后兼容, 但不再使用
     ) -> "GateConfig":
-        """从 gate.yaml 加载，可选自动注入 prefilter.yaml 作为 guardrails。"""
+        """从 gate.yaml 加载。prefilter 仅在训练时过滤数据, 不再注入为 guardrails。"""
         if not path.exists():
             return cls()
 
@@ -177,18 +92,13 @@ class GateConfig:
                 )
             return result
 
-        # gate.yaml 中的 guardrails（向后兼容）+ prefilter.yaml 自动注入
+        # gate.yaml 中的 guardrails（向后兼容）
         yaml_guardrails = _parse_rules(raw.get("guardrails"), "guardrail")
-        prefilter_guardrails = (
-            _load_prefilter_as_guardrails(prefilter_path)
-            if prefilter_path is not None
-            else []
-        )
 
         return cls(
             hard_gates=_parse_rules(raw.get("hard_gates"), "hard_gate"),
             system_safety=_parse_rules(raw.get("system_safety"), "system_safety"),
-            guardrails=yaml_guardrails + prefilter_guardrails,
+            guardrails=yaml_guardrails,
             governance=dict(
                 raw.get("governance") or raw.get("schema", {}).get("governance") or {}
             ),
@@ -737,8 +647,7 @@ def load_strategy_archetype(
     """
     加载单个策略的 Archetype 配置
 
-    自动检测 ``archetypes/prefilter.yaml``，将其规则作为 guardrails
-    注入 GateConfig，保持 prefilter.yaml 为 single source of truth。
+    Prefilter 仅在训练时过滤数据, 不注入 gate 运行时。
 
     Args:
         strategy: 策略名 (如 "bpc")
@@ -755,17 +664,12 @@ def load_strategy_archetype(
     if not arch_dir.exists():
         raise FileNotFoundError(f"Archetype directory not found: {arch_dir}")
 
-    prefilter_path = arch_dir / "prefilter.yaml"
-
     # gate_path 优先级: 显式指定 > archetypes/gate.yaml
     effective_gate_path = Path(gate_path) if gate_path else arch_dir / "gate.yaml"
 
     return StrategyArchetype(
         name=strategy,
-        gate=GateConfig.from_yaml(
-            effective_gate_path,
-            prefilter_path=prefilter_path if prefilter_path.exists() else None,
-        ),
+        gate=GateConfig.from_yaml(effective_gate_path),
         evidence=EvidenceConfig.from_yaml(arch_dir / "evidence.yaml"),
         execution=ExecutionConfig.from_yaml(arch_dir / "execution.yaml"),
     )
