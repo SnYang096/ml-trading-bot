@@ -1356,6 +1356,58 @@ def _prefilter_recommendation(
     else:
         print(f"\n  ⚠️  无足够强的 prefilter 候选 (composite < 0.5)")
 
+    # ── 阈值放宽工具: 特征有效但百分位过严时, 回退到更宽松的百分位 ──
+    # 例: atr_percentile P95(通过率5%) 超过 min_pass_rate=10% → 回退到 P90(通过率10%)
+    _RELAX_ORDER_HIGH = ["P90", "P80"]  # 高端特征: P95→P90→P80
+    _RELAX_ORDER_LOW = ["P10", "P20"]  # 低端特征: P5→P10→P20
+
+    def _find_relaxed_threshold(
+        feat: str,
+        direction: str,
+        current_pct: str,
+        all_results: List[Dict[str, Any]],
+        sim_df: pd.DataFrame,
+        n_dataset: int,
+        min_pass_rate: float,
+    ) -> Optional[Dict[str, Any]]:
+        """Find a more relaxed percentile for the same feature that satisfies min_pass_rate."""
+        relax_order = _RELAX_ORDER_HIGH if direction == "high" else _RELAX_ORDER_LOW
+        # 只考虑比当前百分位更宽松的
+        try:
+            cur_num = int(current_pct.replace("P", ""))
+        except (ValueError, AttributeError):
+            return None
+        for r in all_results:
+            if r["feature"] != feat or r.get("direction") != direction:
+                continue
+            r_pct = r.get("percentile", "")
+            if r_pct not in relax_order:
+                continue
+            try:
+                r_num = int(r_pct.replace("P", ""))
+            except (ValueError, AttributeError):
+                continue
+            # 对于 high 端: 更宽松 = 数值更小 (P95→P90→P80)
+            # 对于 low 端: 更宽松 = 数值更大 (P5→P10→P20)
+            if direction == "high" and r_num >= cur_num:
+                continue
+            if direction == "low" and r_num <= cur_num:
+                continue
+            # 检查通过率
+            _op = ">=" if direction == "high" else "<="
+            _op_fn = _SIM_OPS.get(_op)
+            if _op_fn is None or feat not in sim_df.columns:
+                continue
+            _trial = sim_df[_op_fn(sim_df[feat], r["threshold"])]
+            _cov = len(_trial) / n_dataset if n_dataset > 0 else 0
+            if _cov >= min_pass_rate:
+                return {
+                    "threshold": r["threshold"],
+                    "percentile": r_pct,
+                    "direction": direction,
+                }
+        return None
+
     # Build top_rules for auto-generation (with rationale)
     # ── CRITICAL: simulate cumulative AND to avoid over-filtering ──
     # Guards:
@@ -1408,23 +1460,58 @@ def _prefilter_recommendation(
                 min_prefilter_pass_rate is not None
                 and _coverage < min_prefilter_pass_rate
             ):
-                _reason = (
-                    f"通过率不足: "
-                    f"{'AND 后' if _is_cumulative else ''}通过率 {_coverage:.1%} < "
-                    f"min_pass_rate {min_prefilter_pass_rate:.0%} (kpi_gates 约束)"
+                # ── 阈值放宽: 特征有效但阈值过严时, 自动回退到更宽松的百分位 ──
+                _relaxed = _find_relaxed_threshold(
+                    _feat,
+                    s.get("direction", ""),
+                    s.get("percentile", ""),
+                    all_results,
+                    _sim_df,
+                    n_dataset,
+                    min_prefilter_pass_rate,
                 )
-                _skip_log.append(
-                    {
-                        "rule": f"{_feat} {_op_str} {_val}",
+                if _relaxed is not None:
+                    _old_pct = _pct
+                    _val = _relaxed["threshold"]
+                    _pct = _relaxed["percentile"]
+                    # 重新计算 operator
+                    if _relaxed["direction"] == "high":
+                        _op_str = ">="
+                    else:
+                        _op_str = "<="
+                    _op_func = _SIM_OPS.get(_op_str)
+                    _trial = _sim_df[_op_func(_sim_df[_feat], _val)]
+                    _coverage = len(_trial) / n_dataset if n_dataset > 0 else 0
+                    # 更新 scored entry
+                    s = {
+                        **s,
+                        "value": round(_val, 4),
+                        "operator": _op_str,
                         "percentile": _pct,
-                        "reason": _reason,
-                        "guard": "pass_rate",
                     }
-                )
-                print(
-                    f"  ⛔ top_rules 跳过 {_feat} {_op_str} {_val} ({_pct}): {_reason}"
-                )
-                continue
+                    print(
+                        f"  🔄 top_rules 放宽 {_feat}: {_old_pct}→{_pct} "
+                        f"(阈值={_val:.4f}, 通过率={_coverage:.1%})"
+                    )
+                else:
+                    _reason = (
+                        f"通过率不足: "
+                        f"{'AND 后' if _is_cumulative else ''}通过率 {_coverage:.1%} < "
+                        f"min_pass_rate {min_prefilter_pass_rate:.0%} (kpi_gates 约束), "
+                        f"且无更宽松百分位可用"
+                    )
+                    _skip_log.append(
+                        {
+                            "rule": f"{_feat} {_op_str} {_val}",
+                            "percentile": _pct,
+                            "reason": _reason,
+                            "guard": "pass_rate",
+                        }
+                    )
+                    print(
+                        f"  ⛔ top_rules 跳过 {_feat} {_op_str} {_val} ({_pct}): {_reason}"
+                    )
+                    continue
 
             # Guard 1b: absolute row minimum
             if len(_trial) < MIN_PREFILTER_ROWS:

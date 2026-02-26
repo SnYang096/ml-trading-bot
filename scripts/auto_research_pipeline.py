@@ -558,6 +558,7 @@ def run_strategy_pipeline(
     symbols: str,
     data_path: str,
     run_dir: Path,
+    seed: int = 42,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
     """执行单个策略的完整训练链."""
@@ -584,6 +585,7 @@ def run_strategy_pipeline(
     prefilter_gates = kpi_gates.get("prefilter", {})
     gate_gates = kpi_gates.get("gate", {})
     backtest_gates = kpi_gates.get("backtest", {})
+    execution_gates = kpi_gates.get("execution", {})
 
     common_train_args = [
         "--symbol",
@@ -601,7 +603,10 @@ def run_strategy_pipeline(
         "--holdout-end-date",
         end_date,
         "--seed",
-        "42",
+        str(seed),
+        # NOTE: --deterministic NOT passed → multi-thread for speed.
+        # Multi-seed search provides controlled exploration;
+        # non-determinism from threads is acceptable "free" variation.
     ]
 
     # ── Step 0: Data Download + Convert (增量) ──
@@ -926,24 +931,51 @@ def run_strategy_pipeline(
     )
 
     # ── Step 8: Execution (--promote) ──
-    run_step(
-        "Execution Optimize",
-        [
-            "python",
-            "scripts/optimize_execution_grid.py",
-            "--logs",
-            f"{evidence_dir}/logs_gated.parquet",
-            "--strategy",
-            strategy,
-            "--strategies-root",
-            strategies_root,
-            "--output",
-            f"{evidence_dir}/execution_grid.json",
-            "--promote",
-        ],
-        log,
-        dry_run=dry_run,
-    )
+    # Execution 小样本保护: gate 筛选后交易数不足时跳过 grid search,
+    # 保留现有 execution.yaml 避免在噪声数据上 "优化" 出极端参数.
+    exec_min_trades = execution_gates.get("min_trades", 0)
+    skip_execution_opt = False
+    if exec_min_trades > 0 and not dry_run:
+        gated_path = Path(f"{evidence_dir}/logs_gated.parquet")
+        if gated_path.exists():
+            try:
+                import pandas as _pd
+
+                _gated = _pd.read_parquet(gated_path)
+                if "gate_decision" in _gated.columns:
+                    _n_allow = int((_gated["gate_decision"] == "allow").sum())
+                elif "gate_passed" in _gated.columns:
+                    _n_allow = int(_gated["gate_passed"].sum())
+                else:
+                    _n_allow = len(_gated)
+                if _n_allow < exec_min_trades:
+                    skip_execution_opt = True
+                    print(
+                        f"\n  ⏭️  Step 8 SKIP: gate allows {_n_allow} trades "
+                        f"< min_trades={exec_min_trades} → 保留现有 execution.yaml"
+                    )
+            except Exception as exc:
+                print(f"\n  ⚠️  Execution min_trades check failed: {exc}")
+
+    if not skip_execution_opt:
+        run_step(
+            "Execution Optimize",
+            [
+                "python",
+                "scripts/optimize_execution_grid.py",
+                "--logs",
+                f"{evidence_dir}/logs_gated.parquet",
+                "--strategy",
+                strategy,
+                "--strategies-root",
+                strategies_root,
+                "--output",
+                f"{evidence_dir}/execution_grid.json",
+                "--promote",
+            ],
+            log,
+            dry_run=dry_run,
+        )
 
     # ── Step 9: Backtest ──
     # 必须用 logs_gated.parquet：回测输入必须和实盘一致（经过 gate 过滤），
@@ -1196,10 +1228,21 @@ def _run_pcm_joint_backtest(
 
     # PCM 交易地图输出路径 (保存到第一个策略的实验目录)
     first_strat = strategy_names[0]
-    pcm_map_path = str(history_dir / first_strat / timestamp / "pcm_trading_map.html")
+    # 多 seed 模式下 run_dir_name 含 _s{seed} 后缀，必须用实际目录名
+    first_run_dir_name = next(
+        (
+            r.get("run_dir_name", timestamp)
+            for r in results_summary
+            if r["strategy"] == first_strat
+        ),
+        timestamp,
+    )
+    pcm_map_path = str(
+        history_dir / first_strat / first_run_dir_name / "pcm_trading_map.html"
+    )
 
     # 日志文件
-    pcm_log = history_dir / first_strat / timestamp / "pcm_joint.log"
+    pcm_log = history_dir / first_strat / first_run_dir_name / "pcm_joint.log"
 
     cmd = (
         [
@@ -1278,6 +1321,101 @@ def _run_pcm_joint_backtest(
         "strategies_count": len(strategy_names),
         "trading_map": pcm_map_path,
     }
+
+
+# ====================================================================
+# Multi-seed search helpers
+# ====================================================================
+
+
+def _extract_gate_rules(run_dir: Path, strategy: str) -> List[str]:
+    """从 seed trial 的 gate.yaml 提取 hard_gate 特征名."""
+    arch_dir = run_dir / "strategies" / strategy / "archetypes"
+    gate_path = arch_dir / "gate.yaml"
+    if not gate_path.exists():
+        return []
+    gt = yaml.safe_load(gate_path.read_text(encoding="utf-8")) or {}
+    rules = []
+    for r in gt.get("hard_gates", []):
+        if r.get("frozen"):
+            continue  # 跳过 frozen (prefilter 注入的)
+        feat = r.get("feature", r.get("id", "?"))
+        rules.append(feat)
+    return rules
+
+
+def _select_best_seed(
+    seed_trials: List[dict],
+    min_trades: int = 0,
+    selection: str = "best_sharpe",
+) -> dict:
+    """从多 seed 结果中选最佳.
+
+    seed_trials: [{seed, run_dir, result, metrics, gate_rules}, ...]
+    Returns the best trial dict.
+    """
+    # 筛选: 有 backtest_metrics 且无 error
+    valid = [
+        t
+        for t in seed_trials
+        if "error" not in t["result"]
+        and t["metrics"].get("total_trades", 0) >= max(min_trades, 1)
+    ]
+    if not valid:
+        # 退而求其次: 任何有 metrics 的都行
+        valid = [t for t in seed_trials if "error" not in t["result"]]
+    if not valid:
+        # 全部失败, 返回第一个
+        return seed_trials[0]
+
+    # 排序: sharpe_per_trade 降序
+    valid.sort(
+        key=lambda t: t["metrics"].get("sharpe_per_trade", -999),
+        reverse=True,
+    )
+    return valid[0]
+
+
+def _print_seed_diagnostics(
+    strategy: str,
+    seed_trials: List[dict],
+    best_trial: dict,
+) -> None:
+    """打印多 seed 搜索诊断表."""
+    print(f"\n{'─'*60}")
+    print(f"🔍 {strategy.upper()} Seed 搜索结果 ({len(seed_trials)} seeds):")
+    print(f"{'─'*60}")
+    print(f"  {'seed':>6s}  {'Sharpe':>8s}  {'trades':>7s}  {'win%':>6s}  gate_rules")
+    print(f"  {'─'*6}  {'─'*8}  {'─'*7}  {'─'*6}  {'─'*20}")
+    for t in seed_trials:
+        m = t["metrics"]
+        sharpe = m.get("sharpe_per_trade", 0)
+        trades = m.get("total_trades", 0)
+        win = m.get("win_rate", 0)
+        rules = t.get("gate_rules", [])
+        marker = " 🏆" if t["seed"] == best_trial["seed"] else ""
+        err = " ❌" if "error" in t["result"] else ""
+        print(
+            f"  {t['seed']:>6d}  {sharpe:>8.4f}  {trades:>7.0f}  "
+            f"{win*100:>5.1f}%  {', '.join(rules) if rules else '(error)'}{marker}{err}"
+        )
+
+    # 稳定性诊断: 统计每个特征被选中的次数
+    from collections import Counter
+
+    feat_counts = Counter()
+    for t in seed_trials:
+        if "error" not in t["result"]:
+            for f in t.get("gate_rules", []):
+                feat_counts[f] += 1
+    n_valid = sum(1 for t in seed_trials if "error" not in t["result"])
+    if feat_counts and n_valid > 1:
+        print(f"\n  📊 Gate 特征稳定性:")
+        for feat, cnt in feat_counts.most_common():
+            pct = cnt / n_valid * 100
+            bar = "█" * int(pct / 10)
+            print(f"     {feat:<30s} {cnt}/{n_valid} ({pct:.0f}%) {bar}")
+    print()
 
 
 # ====================================================================
@@ -1366,6 +1504,11 @@ def main():
     )
     print(f"   Symbols:     {symbols}")
     print(f"   History:     {history_dir}")
+    # ── 多 Seed 配置 ──
+    training_cfg = cfg.get("training", {})
+    seeds = training_cfg.get("seeds", [42])
+    seed_selection = training_cfg.get("seed_selection", "best_sharpe")
+    print(f"   Seeds:       {seeds}")
     if args.dry_run:
         print("   Mode:        DRY RUN")
     print("=" * 70)
@@ -1384,12 +1527,8 @@ def main():
             print(f"\n❌ 未知策略: {strategy}, 跳过")
             continue
 
-        run_dir = history_dir / strategy / timestamp
-        run_dir.mkdir(parents=True, exist_ok=True)
-
         print(f"\n{'#'*70}")
         print(f"# 策略: {strategy.upper()}")
-        print(f"# 输出: {run_dir}")
         print(f"{'#'*70}")
 
         if args.compare_only:
@@ -1404,18 +1543,60 @@ def main():
                 print("\n📊 无历史记录")
             continue
 
-        # ── 执行流水线 ──
-        pipeline_result = run_strategy_pipeline(
-            strategy,
-            cfg,
-            end_date=end_date,
-            holdout_start=holdout_start,
-            start_date=start_date,
-            symbols=symbols,
-            data_path=data_path,
-            run_dir=run_dir,
-            dry_run=args.dry_run,
+        # ── 多 Seed 搜索 ──
+        scfg = cfg["strategies"][strategy]
+        exec_min_trades = (
+            scfg.get("kpi_gates", {}).get("backtest", {}).get("min_trades", 0)
         )
+        multi_seed = len(seeds) > 1
+        seed_trials = []
+
+        for seed_idx, seed in enumerate(seeds):
+            if multi_seed:
+                seed_run_dir = history_dir / strategy / f"{timestamp}_s{seed}"
+                print(f"\n  🌱 Seed {seed} ({seed_idx+1}/{len(seeds)})")
+            else:
+                seed_run_dir = history_dir / strategy / timestamp
+            seed_run_dir.mkdir(parents=True, exist_ok=True)
+
+            result = run_strategy_pipeline(
+                strategy,
+                cfg,
+                end_date=end_date,
+                holdout_start=holdout_start,
+                start_date=start_date,
+                symbols=symbols,
+                data_path=data_path,
+                run_dir=seed_run_dir,
+                seed=seed,
+                dry_run=args.dry_run,
+            )
+
+            metrics = result.get("backtest_metrics", {})
+            gate_rules = (
+                _extract_gate_rules(seed_run_dir, strategy) if not args.dry_run else []
+            )
+            seed_trials.append(
+                {
+                    "seed": seed,
+                    "run_dir": seed_run_dir,
+                    "result": result,
+                    "metrics": metrics,
+                    "gate_rules": gate_rules,
+                }
+            )
+
+        # ── 选优 ──
+        if multi_seed:
+            best = _select_best_seed(
+                seed_trials, min_trades=exec_min_trades, selection=seed_selection
+            )
+            _print_seed_diagnostics(strategy, seed_trials, best)
+        else:
+            best = seed_trials[0]
+
+        run_dir = best["run_dir"]
+        pipeline_result = best["result"]
 
         if "error" in pipeline_result:
             print(f"\n❌ Pipeline failed: {pipeline_result['error']}")
@@ -1468,7 +1649,7 @@ def main():
         if cur_arch:
             print_layer_summary(
                 strategy,
-                timestamp,
+                run_dir.name,
                 cur_arch,
                 bt,
                 prev_arch_dir=prev_arch,
@@ -1487,7 +1668,7 @@ def main():
             drift_levels = _print_drift_report(
                 strategy,
                 prev.get("timestamp", ""),
-                timestamp,
+                run_dir.name,
                 prev_arch,
                 cur_arch,
                 prev_bt,
@@ -1540,7 +1721,7 @@ def main():
         elif decision == "ADOPT" and args.no_adopt:
             print(f"\n   ⏭️  --no-adopt: 跳过自动采纳, 可后续手动:")
             print(
-                f"      python scripts/auto_research_pipeline.py --strategy {strategy} --adopt {timestamp}"
+                f"      python scripts/auto_research_pipeline.py --strategy {strategy} --adopt {run_dir.name}"
             )
 
         results_summary.append(
@@ -1550,6 +1731,8 @@ def main():
                 "sharpe": bt.get("sharpe_per_trade"),
                 "trades": bt.get("total_trades"),
                 "evidence_dir": pipeline_result.get("evidence_dir"),
+                "run_dir_name": run_dir.name,
+                "seed": best["seed"] if multi_seed else seeds[0],
             }
         )
 
@@ -1571,8 +1754,9 @@ def main():
         emoji = {"ADOPT": "✅", "ALERT": "⚠️", "KEEP": "🔄", "ERROR": "❌"}.get(
             r["decision"], "❓"
         )
+        seed_str = f" seed={r['seed']}" if r.get("seed") is not None else ""
         print(
-            f"   {emoji} {r['strategy']:>6s}: {r['decision']:<8s} sharpe={r.get('sharpe', 'N/A')} trades={r.get('trades', 'N/A')}"
+            f"   {emoji} {r['strategy']:>6s}: {r['decision']:<8s} sharpe={r.get('sharpe', 'N/A')} trades={r.get('trades', 'N/A')}{seed_str}"
         )
     if pcm_result:
         pcm_emoji = {"PASS": "✅", "ALERT": "⚠️", "ERROR": "❌"}.get(
@@ -1586,7 +1770,8 @@ def main():
         )
         # 保存 pcm_stats.json 到每个策略的实验目录
         for r in results_summary:
-            strat_run = history_dir / r["strategy"] / timestamp
+            rdn = r.get("run_dir_name", timestamp)
+            strat_run = history_dir / r["strategy"] / rdn
             if strat_run.exists():
                 _patch_report_pcm(strat_run / "report.json", pcm_result)
 

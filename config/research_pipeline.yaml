@@ -13,6 +13,11 @@ dates:
   # end_date: auto             # 默认自动检测 data/parquet_data 最新日期
   # holdout_start: auto        # = end_date - holdout_months
 
+# ── 训练确定性 ─────────────────────────────────────────────
+training:
+  seeds: [42, 1, 2, 3, 4]     # 多 seed 搜索: 每个 seed 跑完整管线, 选最佳
+  seed_selection: best_sharpe   # 选优标准: sharpe_per_trade 最高 (需满足 min_trades)
+
 # ── Token Universe ────────────────────────────────────────────
 symbols: "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT"
 data_path: "data/parquet_data"
@@ -81,7 +86,7 @@ strategies:
     has_direction: true
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.03          # ME 是稀有形态，3% 就够
+        min_pass_rate: 0.10          # P90 为上限, 防止 prefilter 过严导致 gate 训练样本不足
         min_rows: 500
       gate:
         require_positive_effect: true

@@ -1,31 +1,10 @@
 # ME Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-02-26 18:01
-# Promoted: 2 filters (1 plateau + 1 snotio-only)
-# Baseline snotio: 9.1365, σ=12.099
-# Significance: z-test p<0.05 required for all tiers
+# Date: 2026-02-26 21:31
+# Promoted: 0 filters (全部未通过显著性检验)
+# Baseline snotio: 6.8395, σ=10.871
 #
-# 职责: "现在该入场吗?" → 硬二值控制入场时机
-# 多个 filter 之间是 OR 关系
-# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
+# 没有 entry filter 通过准入, 策略将无条件入场
 
-filters:
-- id: vpin_rank_high
-  enabled: true
-  description: VPIN 20bar 分位数 ≥ 0.8 (近期极值)
-  conditions:
-  - feature: vpin_quantile_rank_20
-    operator: '>='
-    value: 0.614
-  tier: A_PLATEAU
-  notes: 'plateau: vpin_quantile_rank_20=0.614(conf=MEDIUM), z=2.04 p=0.0207'
-- id: vpin_spike
-  enabled: true
-  description: VPIN 20bar 突刺标志 (vpin_spike_flag_20 == 1)
-  conditions:
-  - feature: vpin_spike_flag_20
-    operator: ==
-    value: 1
-  tier: B_SNOTIO
-  notes: snotio=14.8740(>9.1365 bl), trades=17, z=1.96 p=0.0253, 无plateau用原始阈值
+filters: []
 combination_mode: or

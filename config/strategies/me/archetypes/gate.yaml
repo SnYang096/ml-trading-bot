@@ -1,6 +1,6 @@
 # ME Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260226_175746/strategies/me/gate_draft.yaml
-# 优化规则: 2/10 条通过优化, 8 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260226_211920_s42/strategies/me/gate_draft.yaml
+# 优化规则: 5/10 条通过优化, 7 条已移除
 
 schema:
   phases:
@@ -17,10 +17,10 @@ hard_gates:
   tag: PREFILTER_ATR_PERCENTILE
   phase: hard_gate
   priority: 1
-  reason: 'prefilter: atr_percentile >= 0.9648'
+  reason: 'prefilter: atr_percentile >= 0.8167'
   when:
     atr_percentile:
-      value_lt: 0.9648
+      value_lt: 0.8167
   then:
     action: deny
   frozen: true
@@ -49,26 +49,37 @@ hard_gates:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: gate_shd_pct
-  tag: HARD_SHD_PCT
-  phase: hard_gate
-  priority: 10
-  reason: shd_pct 触发树分裂条件 (分裂 2 次)
-  when:
-    shd_pct:
-      value_gt: 0.55
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.5500, lift=0.244'
 - id: gate_evt_scale
   tag: HARD_EVT_SCALE
   phase: hard_gate
-  priority: 18
-  reason: evt_scale 触发树分裂条件 (分裂 1 次)
+  priority: 19
+  reason: evt_scale 触发树分裂条件 (分裂 3 次)
   when:
     evt_scale:
-      value_lt: 0.6004
+      value_lt: 0.601
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.6004, lift=0.379'
+  comment: 'optimizer: stable_plateau_found, threshold=0.6010, lift=0.184'
+- id: gate_evt_var_99
+  tag: HARD_EVT_VAR_99
+  phase: hard_gate
+  priority: 16
+  reason: evt_var_99 触发树分裂条件 (分裂 3 次)
+  when:
+    evt_var_99:
+      value_lt: 0.6829
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.6829, lift=0.234'
+- id: gate_vp_width_ratio
+  tag: HARD_VP_WIDTH_RATIO
+  phase: hard_gate
+  priority: 15
+  reason: vp_width_ratio 触发树分裂条件 (分裂 3 次)
+  when:
+    vp_width_ratio:
+      value_lt: 0.5814
+  then:
+    action: deny
+  comment: 'optimizer: no_stable_plateau, threshold=0.5814, lift=0.415'
 guardrails: []

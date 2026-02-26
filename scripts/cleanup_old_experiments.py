@@ -56,14 +56,11 @@ def get_experiment_dirs(strategy):
     experiment_dirs = []
     for item in base_path.iterdir():
         if item.is_dir() and item.name.startswith(("202", "19")) and "_" in item.name:
-            # 验证是否为时间戳格式 YYYYMMDD_HHMMSS
+            # 支持 YYYYMMDD_HHMMSS 和 YYYYMMDD_HHMMSS_sN (多seed) 两种格式
             parts = item.name.split("_")
-            if len(parts) == 2 and len(parts[0]) == 8 and len(parts[1]) == 6:
+            if len(parts) >= 2 and len(parts[0]) == 8 and len(parts[1]) == 6:
                 try:
-                    # 尝试解析时间戳
-                    timestamp = datetime.strptime(
-                        item.name.replace("_", ""), "%Y%m%d%H%M%S"
-                    )
+                    timestamp = datetime.strptime(parts[0] + parts[1], "%Y%m%d%H%M%S")
                     experiment_dirs.append(item)
                 except ValueError:
                     continue
@@ -85,8 +82,8 @@ def get_experiment_status(exp_dir):
             print(f"解析报告文件失败 {report_file}: {e}")
             pass
 
-    # 如果没有report.json，尝试从其他方式推断状态
-    return "unknown"
+    # 没有 report.json → 视为 error (运行中断/崩溃)
+    return "error"
 
 
 def parse_timestamp(timestamp_str):

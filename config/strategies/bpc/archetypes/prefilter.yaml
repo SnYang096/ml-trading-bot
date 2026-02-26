@@ -4,18 +4,18 @@
 # 数据源: features_labeled.parquet, 6330 行
 
 rules:
+  - feature: bpc_volume_compression_pct
+    operator: "<="
+    value: 0.1503
+    rationale: "P20阈值, bad_rate -6.6%, 鲁棒性=1.00, 评分=0.679"
   - feature: bpc_bb_compression
     operator: ">"
     value: 0.0965
     rationale: "P10阈值, bad_rate +6.6%, 鲁棒性=1.00, 评分=0.679"
-  - feature: bpc_vpin_breakout_confirm
-    operator: ">="
-    value: 0.5596
-    rationale: "P80阈值, bad_rate -4.7%, 鲁棒性=1.00, 评分=0.650"
-  - feature: bpc_recovery_strength
+  - feature: bpc_cvd_z
     operator: ">"
-    value: 0.213
-    rationale: "P10阈值, bad_rate +4.2%, 鲁棒性=1.00, 评分=0.643"
+    value: -2.0018
+    rationale: "P5阈值, bad_rate +4.5%, 鲁棒性=1.00, 评分=0.648"
 
 last_evaluation:
   # ── 自动生成 (2026-02-26) ──

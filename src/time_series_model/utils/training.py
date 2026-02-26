@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict
 
 import lightgbm as lgb
@@ -127,6 +128,13 @@ def train_lightgbm_model(
         "bagging_freq": 5,
         "verbose": -1,
         "force_col_wise": True,
+        # Multi-thread by default; MLBOT_DETERMINISTIC=1 forces single-thread.
+        "deterministic": True,
+        "num_threads": 1 if os.getenv("MLBOT_DETERMINISTIC", "0") == "1" else -1,
+        "seed": 42,
+        "feature_fraction_seed": 42,
+        "bagging_seed": 42,
+        "data_random_seed": 42,
         **task_params,  # Add num_class for multiclass
     }
 

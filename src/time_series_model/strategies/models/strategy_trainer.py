@@ -664,7 +664,10 @@ def _train_lightgbm(
         "data_random_seed": 42,
         "deterministic": True,
         "force_col_wise": True,
-        # Threads: when deterministic mode is enabled, force single-thread to avoid nondeterministic reductions.
+        # num_threads: multi-thread by default for speed.
+        # Multi-seed search handles model exploration; non-determinism is acceptable.
+        # Set MLBOT_DETERMINISTIC=1 (or --deterministic CLI) to force single-thread
+        # for debugging / exact reproducibility.
         "num_threads": 1 if os.getenv("MLBOT_DETERMINISTIC", "0") == "1" else -1,
     }
 

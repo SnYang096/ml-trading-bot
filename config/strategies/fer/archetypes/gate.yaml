@@ -1,6 +1,6 @@
 # FER Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260226_175746/strategies/fer/gate_draft.yaml
-# 优化规则: 6/10 条通过优化, 8 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260226_211920_s42/strategies/fer/gate_draft.yaml
+# 优化规则: 7/10 条通过优化, 7 条已移除
 
 schema:
   phases:
@@ -28,26 +28,37 @@ hard_gates:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: gate_roc_20
+  tag: HARD_ROC_20
+  phase: hard_gate
+  priority: 19
+  reason: roc_20 触发树分裂条件 (分裂 1 次)
+  when:
+    roc_20:
+      value_gt: 1.2654
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=1.2654, lift=0.176'
 - id: gate_cvd_divergence_score
   tag: HARD_CVD_DIVERGENCE_SCORE
   phase: hard_gate
   priority: 11
-  reason: cvd_divergence_score 触发树分裂条件 (分裂 3 次)
+  reason: cvd_divergence_score 触发树分裂条件 (分裂 1 次)
   when:
     cvd_divergence_score:
       value_lt: -0.0306
   then:
     action: deny
   comment: 'optimizer: stable_plateau_found, threshold=-0.0306, lift=0.279'
-- id: gate_garch_persistence
-  tag: HARD_GARCH_PERSISTENCE
+- id: gate_spectrum_cvd_high_freq_ratio
+  tag: HARD_SPECTRUM_CVD_HIGH_FREQ_RATIO
   phase: hard_gate
-  priority: 10
-  reason: garch_persistence 触发树分裂条件 (分裂 3 次)
+  priority: 15
+  reason: spectrum_cvd_high_freq_ratio 触发树分裂条件 (分裂 1 次)
   when:
-    garch_persistence:
-      value_gt: 0.479
+    spectrum_cvd_high_freq_ratio:
+      value_gt: 0.381
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.4790, lift=0.513'
+  comment: 'optimizer: stable_plateau_found, threshold=0.3810, lift=0.379'
 guardrails: []

@@ -6,8 +6,8 @@
 rules:
   - feature: atr_percentile
     operator: ">="
-    value: 0.9648
-    rationale: "P95阈值, bad_rate -7.6%, 鲁棒性=1.00, 评分=0.694"
+    value: 0.8167
+    rationale: "P80阈值, bad_rate -7.6%, 鲁棒性=1.00, 评分=0.694"
   - feature: me_atr_pct
     operator: ">"
     value: 0.01
