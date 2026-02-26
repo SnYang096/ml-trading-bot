@@ -64,18 +64,24 @@ _DERIVED_FEATURE_SOURCE_DEPS: Dict[str, List[str]] = {
 # ---------------------------------------------------------------------------
 
 
+# Reserved keys in gate 'when' clauses — NOT feature names.
+_WHEN_RESERVED = frozenset(
+    {"and", "or", "not", "all_of", "any_of", "min_matches", "min_matches_any"}
+)
+
+
 def _extract_features_from_when(when: Any) -> Set[str]:
     """Extract feature column names from a gate-style 'when' clause."""
     out: Set[str] = set()
     if isinstance(when, dict):
         for k, v in when.items():
-            # keys like 'and', 'or', 'not' are logical operators
-            if k in ("and", "or"):
+            if k in _WHEN_RESERVED:
+                # Logical operators — recurse into children
                 if isinstance(v, list):
                     for item in v:
                         out |= _extract_features_from_when(item)
-            elif k == "not":
-                out |= _extract_features_from_when(v)
+                elif isinstance(v, dict):
+                    out |= _extract_features_from_when(v)
             else:
                 # k is a feature name (e.g. bpc_dir_consistency_long)
                 out.add(str(k))
@@ -233,6 +239,15 @@ def extract_features_from_archetypes(
     # atr is needed by pick_atr() for stop loss distance calculation
     # bb_width_normalized_pct is an intermediate for bpc_bb_compression but useful for diagnostics
     live_feature_set |= {"open", "high", "low", "close", "volume", "atr"}
+
+    # Ensure atr_f node is in selected_nodes — atr is always needed for
+    # execution (stop-loss sizing) but load_features_from_requested only
+    # returns output columns of *requested* features.  Without atr_f in
+    # the request list the computed atr column is silently dropped.
+    atr_candidates = col_to_nodes.get("atr")
+    if atr_candidates and not any(n for n, _ in atr_candidates if n in selected_nodes):
+        best = min(atr_candidates, key=lambda x: x[1])
+        selected_nodes.add(best[0])
 
     # Deduplicated ordered list
     ordered = sorted(selected_nodes)
