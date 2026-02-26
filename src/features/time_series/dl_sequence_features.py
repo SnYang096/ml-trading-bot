@@ -45,11 +45,20 @@ try:
 
 except ImportError:
     TORCH_AVAILABLE = False
+    # Provide a dummy 'nn' module so class definitions (nn.Module) don't crash
+    import types
+    nn = types.SimpleNamespace(Module=object, Linear=None, LayerNorm=None,
+                               Parameter=None, Embedding=None,
+                               TransformerEncoderLayer=None,
+                               TransformerEncoder=None, Sequential=None,
+                               GELU=None, Dropout=None)
+    torch = types.SimpleNamespace(randn=None, arange=None, matmul=None,
+                                  softmax=None)
     print("❌ PyTorch not installed")
     print("   Install with: pip install torch")
 
 
-class MambaSequenceEncoder(nn.Module):
+class MambaSequenceEncoder(nn.Module):  # type: ignore[misc]
     """Mamba-based sequence encoder (O(n) complexity, memory efficient)."""
 
     def __init__(self, input_dim=5, d_model=64, d_state=16, d_conv=4, expand=2):
@@ -95,7 +104,7 @@ class MambaSequenceEncoder(nn.Module):
         return features
 
 
-class FlashAttentionEncoder(nn.Module):
+class FlashAttentionEncoder(nn.Module):  # type: ignore[misc]
     """Flash Attention-based Transformer encoder (2-4x speedup)."""
 
     def __init__(self, input_dim=5, d_model=64, nhead=8, num_layers=2, dropout=0.1):
@@ -195,7 +204,7 @@ class FlashAttentionEncoder(nn.Module):
         return features
 
 
-class StandardTransformerEncoder(nn.Module):
+class StandardTransformerEncoder(nn.Module):  # type: ignore[misc]
     """Standard Transformer encoder (fallback)."""
 
     def __init__(self, input_dim=5, d_model=64, nhead=8, num_layers=2, dropout=0.1):
@@ -245,6 +254,7 @@ class StandardTransformerEncoder(nn.Module):
         features = x.mean(dim=1)
 
         return features
+
 
 
 class DeepLearningSequenceExtractor:
