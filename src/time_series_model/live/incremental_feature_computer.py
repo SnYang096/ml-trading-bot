@@ -1201,7 +1201,9 @@ class IncrementalFeatureComputer:
                         continue
 
         # ── 5. 校验: 百分位特征不得为 NaN (warmup 不足) ──
-        _PERCENTILE_SUFFIXES = ("_pct", "_percentile", "percentile_approx")
+        # 注意: _pct 后缀是百分比归一化（如 fer_signed_efficiency_pct），
+        # 不是滚动百分位排名。只检查真正的 percentile 特征。
+        _PERCENTILE_SUFFIXES = ("_percentile", "percentile_approx")
         nan_pct_features = []
         for k in self.live_feature_set or []:
             if any(k.endswith(s) or s in k for s in _PERCENTILE_SUFFIXES):
