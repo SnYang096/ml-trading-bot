@@ -880,13 +880,15 @@ def run_strategy_pipeline(
     )
 
     # ── Step 7: Entry Filter (--promote) ──
+    # 必须用 logs_gated.parquet：Entry Filter 的阈值必须在 gate 过滤后的
+    # 分布上优化，否则会和 gate 产生 distribution mismatch
     run_step(
         "Entry Filter Optimize",
         [
             "python",
             "scripts/optimize_entry_filter_plateau.py",
             "--logs",
-            f"{evidence_dir}/predictions.parquet",
+            f"{evidence_dir}/logs_gated.parquet",
             "--strategy",
             strategy,
             "--strategies-root",
@@ -919,7 +921,8 @@ def run_strategy_pipeline(
     )
 
     # ── Step 9: Backtest ──
-    # 生成交易地图到实验目录
+    # 必须用 logs_gated.parquet：回测输入必须和实盘一致（经过 gate 过滤），
+    # 否则报告的 Sharpe/trades 虚高（gate 会 veto 大量信号）
     experiment_map_path = f"{run_dir}/trading_map_{strategy}.html"
     rc, bt_out = run_step(
         "Backtest",
@@ -927,7 +930,7 @@ def run_strategy_pipeline(
             "python",
             "scripts/backtest_execution_layer.py",
             "--logs",
-            f"{evidence_dir}/predictions.parquet",
+            f"{evidence_dir}/logs_gated.parquet",
             "--strategy",
             strategy,
             "--output",
@@ -1141,21 +1144,21 @@ def _run_pcm_joint_backtest(
     Returns dict with pcm_decision, sharpe_daily, conflict_rate, etc.
     Returns None if <2 strategies have predictions.
     """
-    # 收集有 predictions 的策略
+    # 收集有 gated logs 的策略（必须用 gate 过滤后的数据，和单策略回测一致）
     pcm_specs = []
     for r in results_summary:
         ev_dir = r.get("evidence_dir")
         if not ev_dir:
             continue
-        pred_path = Path(ev_dir) / "predictions.parquet"
-        if pred_path.exists() or dry_run:
-            pcm_specs.append((r["strategy"], str(pred_path)))
+        gated_path = Path(ev_dir) / "logs_gated.parquet"
+        if gated_path.exists() or dry_run:
+            pcm_specs.append((r["strategy"], str(gated_path)))
 
     if len(pcm_specs) < 2:
         if len(results_summary) >= 2:
             print(f"\n{'='*70}")
             print("[Step 9.5] PCM 联合回测: ⏭️  SKIP")
-            print(f"   找到 {len(pcm_specs)} 个策略有 predictions (需 ≥2)")
+            print(f"   找到 {len(pcm_specs)} 个策略有 logs_gated (需 ≥2)")
             print(f"{'='*70}")
         return None
 

@@ -1,6 +1,6 @@
 # ME Execution 配置
-# 版本: 5
-# 更新时间: 2026-02-24
+# 版本: 6
+# 更新时间: 2026-02-26
 #
 # ┌─────────────────────────────────────────────────────────┐
 # │  Grid Search auto-promoted                              │
@@ -10,7 +10,7 @@
 # │  Changes: initial_r: 2.0 → 2.0, activation_r: 3.0 → 3.0, trail_r: 0.5 → 0.5│
 # └─────────────────────────────────────────────────────────┘
 #
-version: 5
+version: 6
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15

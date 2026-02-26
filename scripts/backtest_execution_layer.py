@@ -1234,13 +1234,13 @@ def _generate_trading_map_html(
                 <div style="display: flex; justify-content: space-between; flex-wrap: wrap;">
                     <div style="margin-right: 20px;">
                         <strong style="color: #e0e0e0;">总交易数:</strong> <span style="color: #4fc3f7;">{n_total}</span><br>
-                        <strong style="color: #e0e0e0;">胜率:</strong> <span style="color: #4fc3f7;">{n_w/n_total*100:.1f}%</span><br>
+                        <strong style="color: #e0e0e0;">胜率:</strong> <span style="color: #4fc3f7;">{(n_w/n_total*100 if n_total > 0 else 0):.1f}%</span><br>
                         <strong style="color: #e0e0e0;">平均R回报:</strong> <span style="color: #{'26a69a' if mean_r >= 0 else 'ef5350'};">{mean_r:+.3f}R</span><br>
                     </div>
                     <div>
                         <strong style="color: #e0e0e0;">盈利交易:</strong> <span style="color: #26a69a;">{n_w}</span><br>
                         <strong style="color: #e0e0e0;">亏损交易:</strong> <span style="color: #ef5350;">{n_l}</span><br>
-                        <strong style="color: #e0e0e0;">盈亏比:</strong> <span style="color: #4fc3f7;">{n_w/n_l:.2f} (W/L)</span><br>
+                        <strong style="color: #e0e0e0;">盈亏比:</strong> <span style="color: #4fc3f7;">{(n_w/n_l if n_l > 0 else float('inf')):.2f} (W/L)</span><br>
                     </div>
                 </div>
             </div>
