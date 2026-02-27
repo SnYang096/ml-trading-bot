@@ -9,9 +9,7 @@ scrape_configs:
     static_configs:
       - targets: ["host.docker.internal:9090"]
         labels:
-          instance: "local"
-    # WSL 下 host.docker.internal 可能不可用，备选:
-    # - targets: ["172.17.0.1:9090"]
+          instance: "live"
 
   # Prometheus 自身
   - job_name: "prometheus"
