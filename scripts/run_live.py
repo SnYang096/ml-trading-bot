@@ -63,15 +63,38 @@ def _tick_to_listener_tick(tick: BinanceTick) -> Any:
 
 
 def _build_gap_filler(storage: StorageManager):
-    """尝试创建 GapFiller（需要 ccxt）"""
+    """尝试创建 GapFiller（需要 ccxt）
+
+    代理兼容：与 WebSocket 一致，自动检测 HTTPS_PROXY/HTTP_PROXY 环境变量。
+    TUN 模式下无需设置（透明代理），HTTP 代理模式需设环境变量。
+    """
     if os.getenv("MLBOT_LIVE_GAP_FILL", "true").lower() not in {"1", "true", "yes"}:
         return None
     try:
         import ccxt
 
-        exchange = ccxt.binance(
-            {"enableRateLimit": True, "options": {"defaultType": "future"}}
-        )
+        # 检测代理（与 websocket_client._detect_proxy 一致）
+        proxy_url = None
+        for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            val = os.environ.get(key)
+            if val:
+                proxy_url = val
+                break
+
+        config = {
+            "enableRateLimit": True,
+            "options": {"defaultType": "future"},
+            "timeout": 30000,  # 30s timeout
+        }
+        if proxy_url:
+            # ccxt 使用 proxies 字典或 aiohttp_proxy
+            config["proxies"] = {
+                "http": proxy_url,
+                "https": proxy_url,
+            }
+            logger.info(f"📡 GapFiller using proxy: {proxy_url}")
+
+        exchange = ccxt.binance(config)
         return GapFiller(
             storage_manager=storage,
             exchange=exchange,
@@ -563,16 +586,49 @@ async def main() -> None:
                 "   Trading is DISABLED. Waiting for real-time data accumulation..."
             )
             logger.warning(
-                "   System will auto-upgrade: OFFLINE → DEGRADED (2h) → NORMAL (4h)"
+                "   Auto-upgrade enabled: OFFLINE → DEGRADED (2h) → NORMAL (4h)"
             )
 
         # DEGRADED模式警告
         if decision.mode.value == "DEGRADED":
+            remaining = max(0, 240 - decision.bar_count)
             logger.warning("⚠️  System starting in DEGRADED mode")
             logger.warning("   Trading is DISABLED. Observation only.")
             logger.warning(
-                "   System will auto-upgrade to NORMAL when data is complete."
+                f"   Auto-upgrade enabled: will upgrade to NORMAL after {remaining} realtime 1min bars (~{remaining}min)"
             )
+
+    # ── 后台补数据 task (Vision 重试) ──
+    bg_gap_task = None
+    if gap_filler and gap_filler._pending_vision_gaps:
+        pending_count = len(gap_filler._pending_vision_gaps)
+        logger.info(f"📦 {pending_count} 个 gap 待后台 Vision 补齐，每 15min 重试一次")
+
+        async def _background_vision_retry() -> None:
+            """后台定期重试 Binance Vision 下载，直到所有 gap 补齐"""
+            interval = 15 * 60  # 15min
+            while True:
+                try:
+                    await asyncio.sleep(interval)
+                    remaining = len(gap_filler._pending_vision_gaps)
+                    if remaining == 0:
+                        logger.info("✅ 后台补数据完成: 所有 Vision gap 已填充")
+                        break
+                    logger.info(f"📦 后台 Vision 重试: {remaining} 个 gap 待处理...")
+                    loop = asyncio.get_running_loop()
+                    all_done = await loop.run_in_executor(
+                        None, gap_filler.retry_pending_gaps
+                    )
+                    if all_done:
+                        logger.info("✅ 后台补数据完成: 所有 Vision gap 已填充")
+                        break
+                except asyncio.CancelledError:
+                    break
+                except Exception as exc:
+                    logger.warning("后台 Vision 重试异常: %s", exc)
+                    await asyncio.sleep(60)
+
+        bg_gap_task = asyncio.create_task(_background_vision_retry())
 
     # ── 计算 Evidence 分位数阈值（从历史数据）──
     _compute_initial_quantiles(pcm, manager, storage)
@@ -613,6 +669,8 @@ async def main() -> None:
         stop_event.set()
     finally:
         market_task.cancel()
+        if bg_gap_task:
+            bg_gap_task.cancel()
         await manager.stop_all()
 
 

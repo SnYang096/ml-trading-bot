@@ -66,16 +66,23 @@ class SystemModeManager:
     1. 根据warmup数据质量决定启动模式
     2. 管理模式切换逻辑
     3. 记录模式切换历史
+    4. 实时 bar 累积后自动升级到 NORMAL（策略B）
     """
     
     # 数据完整性阈值
-    MIN_BARS_FOR_NORMAL = 240    # 4小时 = 240条1min bar
-    MIN_BARS_FOR_DEGRADED = 120  # 2小时 = 120条1min bar
+    MIN_BARS_FOR_NORMAL = 240    # 4小时 = 240杨1min bar
+    MIN_BARS_FOR_DEGRADED = 120  # 2小时 = 120杨1min bar
     MAX_GAP_MINUTES = 5          # 最大允许缺口（分钟）
+    ABUNDANT_DATA_THRESHOLD = 2400  # 充足数据阈值 (40h)，超过则容忍尾部 gap
     
     def __init__(self):
         self.current_mode = SystemMode.OFFLINE
         self.mode_history = []
+        
+        # 自动升级：实时 bar 累积计数
+        # 策略B：即使 warmup 有 gap，累积足够实时 1min bar 后自动升级
+        self._realtime_bar_count = 0
+        self._auto_upgrade_logged = False
     
     def decide_mode(
         self,
@@ -128,6 +135,23 @@ class SystemModeManager:
             return ModeDecision(
                 mode=SystemMode.OFFLINE,
                 reason=f"Insufficient data: {bar_count} bars < {self.MIN_BARS_FOR_DEGRADED} (2h minimum)",
+                bar_count=bar_count,
+                data_coverage_hours=coverage_hours,
+                missing_periods=missing_periods,
+            )
+        
+        elif bar_count >= self.ABUNDANT_DATA_THRESHOLD:
+            # 充足历史数据 (≥40h) — 尾部 gap 不影响特征计算，直接 NORMAL
+            # 理由: 200+ 天历史数据已充分初始化特征滚动窗口，
+            #   1-2 天尾部 gap 不影响交易决策，实时数据累积后特征完全刷新
+            gap_summary = ""
+            if has_large_gap:
+                largest_gap = max(missing_periods, key=lambda x: x["minutes"])
+                gap_summary = f", largest_gap={largest_gap['minutes']:.0f}min (tolerated)"
+            return ModeDecision(
+                mode=SystemMode.NORMAL,
+                reason=f"Abundant data: {bar_count} bars (>= {self.ABUNDANT_DATA_THRESHOLD}), "
+                       f"{coverage_hours:.1f}h coverage{gap_summary}",
                 bar_count=bar_count,
                 data_coverage_hours=coverage_hours,
                 missing_periods=missing_periods,
@@ -229,3 +253,59 @@ class SystemModeManager:
     def get_mode_history(self) -> list:
         """获取模式切换历史"""
         return self.mode_history.copy()
+    
+    def on_realtime_bar(self) -> bool:
+        """收到一条实时 1min bar 时调用
+        
+        策略B 自动升级逻辑：
+        - warmup 已把 6 个月历史 ticks 喂入 IncrementalFeatureComputer
+        - 即使 warmup 有几小时 gap，滚动窗口状态已经建好
+        - 累积到 MIN_BARS_FOR_NORMAL 条实时 bar 后，特征完全刷新，可安全交易
+        - BPC/FER (4H): 需要 240 条 1min = 1 个完整 4H bar
+        - ME (1H): 只需 60 条，但为安全统一等 240 条
+        
+        Returns:
+            True: 发生了模式升级
+        """
+        self._realtime_bar_count += 1
+        
+        # 已经是 NORMAL，无需升级
+        if self.current_mode == SystemMode.NORMAL:
+            return False
+        
+        # 每 60 条 bar (1h) 打一次进度日志
+        if self._realtime_bar_count % 60 == 0:
+            remaining = max(0, self.MIN_BARS_FOR_NORMAL - self._realtime_bar_count)
+            logger.info(
+                f"📊 实时 bar 累积: {self._realtime_bar_count}/{self.MIN_BARS_FOR_NORMAL}"
+                f" (剩余 {remaining} 条 ≈ {remaining}min 后可升级 NORMAL)"
+            )
+        
+        # OFFLINE → DEGRADED (120 bars = 2h)
+        if self.current_mode == SystemMode.OFFLINE and self._realtime_bar_count >= self.MIN_BARS_FOR_DEGRADED:
+            decision = ModeDecision(
+                mode=SystemMode.DEGRADED,
+                reason=f"Auto-upgrade: {self._realtime_bar_count} realtime bars accumulated (>= {self.MIN_BARS_FOR_DEGRADED})",
+                bar_count=self._realtime_bar_count,
+                data_coverage_hours=self._realtime_bar_count / 60,
+            )
+            self.set_mode(decision)
+            return True
+        
+        # DEGRADED → NORMAL (240 bars = 4h)
+        if self.current_mode == SystemMode.DEGRADED and self._realtime_bar_count >= self.MIN_BARS_FOR_NORMAL:
+            decision = ModeDecision(
+                mode=SystemMode.NORMAL,
+                reason=f"Auto-upgrade: {self._realtime_bar_count} realtime bars accumulated (>= {self.MIN_BARS_FOR_NORMAL}), trading enabled",
+                bar_count=self._realtime_bar_count,
+                data_coverage_hours=self._realtime_bar_count / 60,
+            )
+            self.set_mode(decision)
+            logger.info("🟢 System auto-upgraded to NORMAL — trading is now ENABLED")
+            return True
+        
+        return False
+    
+    def get_realtime_bar_count(self) -> int:
+        """获取实时 bar 累积数"""
+        return self._realtime_bar_count

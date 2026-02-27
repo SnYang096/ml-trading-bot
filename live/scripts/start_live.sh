@@ -136,6 +136,7 @@ export MLBOT_LIVE_MODE="${MLBOT_LIVE_MODE:-three_strategies}"
 
 # 订单管理器配置
 export MLBOT_ORDER_MODE="test"  # test/paper/live
+export MLBOT_ORDER_MANAGER_ENABLED="true"  # 启用 OrderManager（需要 BINANCE_API_KEY）
 
 echo "   ✅ 环境变量已配置"
 echo ""

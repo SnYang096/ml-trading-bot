@@ -77,6 +77,7 @@ ExecStart=/usr/bin/docker run \
     --cpus=1.8 \
     -e MLBOT_LIVE_TRADE_SIZE=0.0 \
     -e MLBOT_ORDER_MODE=test \
+    -e MLBOT_ORDER_MANAGER_ENABLED=true \
     -e PYTHONUNBUFFERED=1 \
     -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
     -v /opt/quant-engine/live/binance_mainnet.env:/app/live/binance_mainnet.env:ro \

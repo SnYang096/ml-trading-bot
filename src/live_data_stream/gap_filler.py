@@ -69,6 +69,9 @@ class GapFiller:
         else:
             self.data_gap_filler = None
         
+        # 后台补数据：Vision 404 的 gap 稍后重试（不阻塞启动）
+        self._pending_vision_gaps: List[Dict[str, Any]] = []
+        
         # Feature Store配置
         self.feature_store_dir = feature_store_dir
         self.feature_store_layer = feature_store_layer
@@ -318,30 +321,188 @@ class GapFiller:
             else:
                 result[key] = df
         
-        # 3. 检查数据缺失，如果缺失超过一天，从币安API获取
-        if "ticks_1min" in result and len(result["ticks_1min"]) > 0:
-            # 检查最后一条数据的时间
-            last_timestamp = result["ticks_1min"]["timestamp"].max()
-            now = pd.Timestamp.now(tz="UTC")
+        # 3. 补齐所有 gap
+        #    策略:
+        #    - 内部 gap ≤1h: klines API（OHLCV，秒下）
+        #    - 内部 gap >1h / 昨天及以前: Binance Vision（后台重试）
+        #    - 今天的部分: klines API
+        #    注: ticks（buy/sell 拆分）只通过 Vision 下载或本地上传获取
+        if "ticks_1min" in result and len(result["ticks_1min"]) > 0 and self.data_gap_filler:
+            ticks = result["ticks_1min"].copy()
             
-            # 如果缺失超过1天，从币安API获取
-            if (now - last_timestamp).total_seconds() > 86400:
-                print(f"⚠️ 检测到数据缺失超过1天，从币安API补数据...")
-                fill_data = self.fill_from_binance_api(
-                    symbol,
-                    last_timestamp + timedelta(minutes=1),
-                    now,
-                    timeframe="1m",
-                )
+            # 确保时区一致
+            if ticks["timestamp"].dt.tz is None:
+                ticks["timestamp"] = ticks["timestamp"].dt.tz_localize("UTC")
+            ticks = ticks.sort_values("timestamp").reset_index(drop=True)
+            
+            now = pd.Timestamp.now(tz="UTC")
+            ccxt_symbol = self._convert_symbol(symbol)
+            total_filled = 0
+            
+            # 3a. 检测并补充内部 gap (>5min)
+            from src.live_data_stream.system_mode import SystemModeManager
+            temp_mgr = SystemModeManager()
+            internal_gaps = temp_mgr._detect_gaps(ticks)
+            large_internal = [g for g in internal_gaps if g["minutes"] > 5]
+            
+            if large_internal:
+                print(f"🔍 检测到 {len(large_internal)} 个内部 gap (>5min)，开始补充...")
+                for gap_info in large_internal:
+                    gap_start = pd.Timestamp(gap_info["start_time"])
+                    gap_end = pd.Timestamp(gap_info["end_time"])
+                    if gap_start.tzinfo is None:
+                        gap_start = gap_start.tz_localize("UTC")
+                    if gap_end.tzinfo is None:
+                        gap_end = gap_end.tz_localize("UTC")
+                    
+                    gap_hours = gap_info["minutes"] / 60
+                    # ≤1h: klines API（OHLCV，秒下）
+                    # >1h: 推后台 Vision 重试
+                    if gap_hours <= 1:
+                        fill_data = self.fill_from_binance_api(
+                            symbol, gap_start, gap_end, timeframe="1m"
+                        )
+                        if len(fill_data) > 0:
+                            ticks = pd.concat([ticks, fill_data])
+                            total_filled += len(fill_data)
+                    else:
+                        print(f"  📦 内部 gap {gap_hours:.1f}h > 1h → 后台 Vision 重试")
+                        self._pending_vision_gaps.append({
+                            "symbol": ccxt_symbol, "raw_symbol": symbol,
+                            "start": gap_start, "end": gap_end,
+                        })
                 
-                if len(fill_data) > 0:
-                    # 合并数据
-                    combined = pd.concat([result["ticks_1min"], fill_data])
-                    combined = combined.drop_duplicates(subset=["timestamp"], keep="last")
-                    combined = combined.sort_values("timestamp").reset_index(drop=True)
-                    result["ticks_1min"] = combined
+                if total_filled > 0:
+                    ticks = ticks.drop_duplicates(subset=["timestamp"], keep="last")
+                    ticks = ticks.sort_values("timestamp").reset_index(drop=True)
+                    print(f"  ✅ 内部 gap 补充: {total_filled} 条 bars")
+            
+            # 3b. 补充末尾 gap（最后数据到当前时间）
+            #    策略: 昨天及以前 → Vision, 今天 → klines API
+            last_timestamp = ticks["timestamp"].max()
+            tail_gap_seconds = (now - last_timestamp).total_seconds()
+            
+            if tail_gap_seconds > 300:
+                tail_gap_hours = tail_gap_seconds / 3600
+                print(f"📥 末尾 gap {tail_gap_hours:.1f}h，补齐中...")
+                
+                gap_start = last_timestamp + timedelta(minutes=1)
+                today_start = now.normalize()  # 今天 00:00 UTC
+                
+                # 段一: 昨天及以前 — Binance Vision（只下可用天，404 加入后台重试）
+                if gap_start < today_start:
+                    vision_end = today_start - timedelta(minutes=1)
+                    print(f"  📦 昨天及以前: Binance Vision ({gap_start.strftime('%m-%d %H:%M')} ~ {vision_end.strftime('%m-%d %H:%M')})")
+                    fill_vision = self.data_gap_filler.fill_gap_with_binance_vision(
+                        ccxt_symbol, gap_start, vision_end
+                    )
+                    if len(fill_vision) > 0:
+                        ticks = pd.concat([ticks, fill_vision])
+                        total_filled += len(fill_vision)
+                        # Vision 可能只覆盖了部分天（某些天 404）
+                        vision_last = fill_vision["timestamp"].max()
+                        remaining_hours = (today_start - vision_last).total_seconds() / 3600
+                        if remaining_hours > 1:
+                            remaining_start = vision_last + timedelta(minutes=1)
+                            print(f"  📦 Vision 覆盖到 {vision_last.strftime('%m-%d %H:%M')}，"
+                                  f"剩余 {remaining_hours:.1f}h → 后台 Vision 重试")
+                            self._pending_vision_gaps.append({
+                                "symbol": ccxt_symbol, "raw_symbol": symbol,
+                                "start": remaining_start, "end": vision_end,
+                            })
+                        elif remaining_hours > 0.08:  # >5min 用 klines 快速补
+                            remaining_start = vision_last + timedelta(minutes=1)
+                            fill_small = self.fill_from_binance_api(
+                                symbol, remaining_start, vision_end, timeframe="1m"
+                            )
+                            if len(fill_small) > 0:
+                                ticks = pd.concat([ticks, fill_small])
+                                total_filled += len(fill_small)
+                    else:
+                        # Vision 完全失败
+                        gap_hours = (vision_end - gap_start).total_seconds() / 3600
+                        if gap_hours <= 1:
+                            print("  ⚠️ Vision 失败，klines 补齐 (≤1h)...")
+                            fill_kl = self.fill_from_binance_api(
+                                symbol, gap_start, vision_end, timeframe="1m"
+                            )
+                            if len(fill_kl) > 0:
+                                ticks = pd.concat([ticks, fill_kl])
+                                total_filled += len(fill_kl)
+                        else:
+                            print(f"  📦 Vision 失败，{gap_hours:.1f}h → 后台 Vision 重试")
+                            self._pending_vision_gaps.append({
+                                "symbol": ccxt_symbol, "raw_symbol": symbol,
+                                "start": gap_start, "end": vision_end,
+                            })
+                    gap_start = today_start
+                
+                # 段二: 今天 — 用 klines API 快速补最近部分（aggTrades 对 BTC 太慢）
+                if gap_start < now:
+                    today_gap_hours = (now - gap_start).total_seconds() / 3600
+                    fill_start = gap_start if today_gap_hours <= 1 else now - timedelta(hours=1)
+                    print(f"  📥 今天: klines ({fill_start.strftime('%H:%M')} ~ {now.strftime('%H:%M')})")
+                    fill_today = self.fill_from_binance_api(
+                        symbol, fill_start, now, timeframe="1m"
+                    )
+                    if len(fill_today) > 0:
+                        ticks = pd.concat([ticks, fill_today])
+                        total_filled += len(fill_today)
+                
+                ticks = ticks.drop_duplicates(subset=["timestamp"], keep="last")
+                ticks = ticks.sort_values("timestamp").reset_index(drop=True)
+            
+            if total_filled > 0:
+                result["ticks_1min"] = ticks
+                print(f"✅ 补数据总计: {total_filled} 条 bars，数据连续到 {ticks['timestamp'].max()}")
+            elif tail_gap_seconds > 300:
+                print(f"⚠️ 补数据全部失败，将依赖自动升级机制")
         
         return result
+    
+    def retry_pending_gaps(self) -> bool:
+        """后台重试: 下载 Vision 404 的 gap
+        
+        Returns:
+            True: 所有 gap 已填充
+        """
+        if not self._pending_vision_gaps or not self.data_gap_filler:
+            return len(self._pending_vision_gaps) == 0
+        
+        remaining = []
+        for gap in self._pending_vision_gaps:
+            print(f"📦 后台重试 Vision: {gap['raw_symbol']} "
+                  f"{gap['start'].strftime('%m-%d %H:%M')} ~ {gap['end'].strftime('%m-%d %H:%M')}")
+            fill = self.data_gap_filler.fill_gap_with_binance_vision(
+                gap["symbol"], gap["start"], gap["end"]
+            )
+            if len(fill) > 0:
+                # 保存到磁盘（下次启动不用重新下载）
+                self._save_filled_data(gap["raw_symbol"], fill)
+                print(f"  ✅ 后台补数据成功: {len(fill)} 条 bars")
+            else:
+                remaining.append(gap)
+                print(f"  ⚠️ 仍不可用，稍后重试")
+        
+        self._pending_vision_gaps = remaining
+        return len(remaining) == 0
+    
+    def _save_filled_data(self, symbol: str, bars: pd.DataFrame) -> None:
+        """将补充的 bars 按天保存到 storage（ticks + bars 两个目录）"""
+        if self.storage_manager is None or len(bars) == 0:
+            return
+        if "timestamp" not in bars.columns:
+            return
+        
+        bars_copy = bars.copy()
+        bars_copy["_date"] = bars_copy["timestamp"].dt.strftime("%Y-%m-%d")
+        for date_str, day_bars in bars_copy.groupby("_date"):
+            day_data = day_bars.drop(columns=["_date"])
+            try:
+                self.storage_manager.ticks.append(symbol, date_str, day_data)
+                self.storage_manager.bar_1min.append(symbol, date_str, day_data)
+            except Exception as e:
+                print(f"  ⚠️ 保存 {symbol}/{date_str} 失败: {e}")
     
     def fill_gap(
         self,

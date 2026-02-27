@@ -14,7 +14,8 @@
 | PCM 联合回测 | ✅ 完成 | conflict_rate=3.42%, sharpe_daily=28.79 |
 | 多时间框架研究 | ✅ 完成 | BPC/FER→4H, ME→1H |
 | **多时间框架实盘代码** | ✅ 完成 | live_pcm/order_flow_listener/run_live.py 三文件改造，meta.yaml 动态 timeframe |
-| **多时间框架本地验证** | ⏳ 待验证 | 观察模式 24h+ 运行确认 |
+| **多时间框架本地验证** | ✅ 完成 | 观察模式验证通过，已部署到远程 |
+| 实盘监控 (服务器) | ✅ 代码完成 | StatsCollector + metrics_exporter + PCM funnel |
 | 配置路径隔离 | ✅ 完成 | _infer_base_dir 重写，live/ 自包含，persist_to=data/db/ |
 | 配置部署工具 | ✅ 完成 | deploy_config_to_live.py 支持 GLOBAL_CONFIGS (constitution + pcm_regime) |
 | .gitignore 安全 | ✅ 完成 | live/*/data/ + *.db 排除，运行时数据不进 git |
@@ -22,7 +23,7 @@
 | CI/CD 流程 | ✅ 已搭建 | GitHub Actions → Docker image → ghcr.io → 服务器 pull |
 | **首次部署** | ✅ 完成 | 2026-02-25 Build + Deploy 成功，quant-engine active (running) |
 | 监控脚本 (本地) | ✅ 完成 | weekly/monthly monitor + feature drift + retrain trigger |
-| 实盘监控 (服务器) | 📋 设计完成 | 见 实盘监控系统设计.md，代码待实现 |
+| 实盘监控 (服务器) | ✅ 代码完成 | StatsCollector + metrics_exporter + PCM funnel |
 
 ---
 
@@ -32,11 +33,11 @@
 
 ---
 
-## 🔴 1.1 多时间框架实盘支持 (P0 — 上线阻塞项)
+## ✅ 1.1 多时间框架实盘支持 (P0 — 已完成)
 
-> **问题**: `_setup_three_strategies()` 用单一 `bar_minutes=240` 创建所有 IncrementalFeatureComputer
-> ME 研究是 1H(60T)，实盘却被喂 4H(240T) 特征 → 信号完全错误
-> **代码位置**: `scripts/run_live.py` L152-205
+> **已解决**: `_setup_three_strategies()` 从 meta.yaml 动态读取各策略 timeframe
+> BPC/FER→240T, ME→60T, 各策略独立 IncrementalFeatureComputer
+> **代码位置**: `scripts/run_live.py` `_setup_three_strategies()`
 
 ### 1.1.1 理解当前实盘数据流
 
@@ -58,56 +59,49 @@ BinanceWS tick → OrderFlowListener
 
 ### 1.1.2 IncrementalFeatureComputer 多 timeframe
 
-- [ ] `IncrementalFeatureComputer` 支持多 timeframe 输出
-  - 方案 A (推荐): 每个 symbol 创建多个 fc 实例 (4H + 1H)
-  - 方案 B: 单实例支持 `compute_features_batch(bars, ticks, timeframe)` 多次调用
-  - 数据需求: 1min bars 是共享的，只是聚合粒度不同 (240 vs 60)
+- [x] `IncrementalFeatureComputer` 支持多 timeframe 输出
+  - 方案 A (已实现): 每个 symbol 创建多个 fc 实例 (4H + 1H)
+  - `compute_features_batch(bars, ticks, primary_timeframe)` 支持指定 timeframe
+  - `extra_feature_computers` 字典存放额外 timeframe 的 FC 实例
   - 验证: ME 特征值 = 研究时 `features_labeled.parquet` 中同时间戳值 (±1% 偏差)
 
 ### 1.1.3 OrderFlowListener 多 timeframe 特征计算
 
-- [ ] `_compute_and_save_15min_features()` 支持多组 timeframe 特征输出
-  - 当前: 只计算一组特征 (4H timeframe)
-  - 目标: 输出 `{timeframe: features_dict}` 结构
-  - 存储: 15min 快照按 timeframe 分别保存 (已有 Feature15MinStorage)
+- [x] `_compute_and_save_15min_features()` 支持多组 timeframe 特征输出
+  - 已实现: 主 FC 计算 primary_tf + `extra_feature_computers` 计算额外 timeframe
+  - 输出: `features_by_timeframe = {primary_tf: features, tf_me: extra_features}`
+  - 存储: 15min 快照按 timeframe 分别保存
 
 ### 1.1.4 GenericLiveStrategy timeframe 绑定
 
-- [ ] `GenericLiveStrategy.__init__()` 接受 `primary_timeframe` 参数
+- [x] `GenericLiveStrategy.__init__()` 接受 `primary_timeframe` 参数
   - BPC: primary_timeframe="240T"
   - ME:  primary_timeframe="60T"
   - FER: primary_timeframe="240T"
-- [ ] `GenericLiveStrategy.decide(features_by_timeframe)` 自动提取对应 timeframe 特征
+- [x] `GenericLiveStrategy.decide()` 由 LivePCM 路由对应 timeframe 特征
 
 ### 1.1.5 LivePCM 多 timeframe 决策路由
 
-- [ ] `LivePCM.register(name, strategy, timeframe="240T")` 记录每策略的 timeframe
-- [ ] `LivePCM.decide(features_by_timeframe, symbol)`:
+- [x] `LivePCM.register(name, strategy, timeframe="240T")` 记录每策略的 timeframe
+- [x] `LivePCM.decide(features_by_timeframe, symbol)`:
   - 对每个注册策略，取 `features_by_timeframe[strategy.timeframe]`
   - 传给对应 strategy.decide()
   - 仲裁逻辑不变 (优先级 + evidence score)
 
 ### 1.1.6 run_live.py 升级
 
-- [ ] `_setup_three_strategies()` 改为多 timeframe:
-  ```python
-  bpc = GenericLiveStrategy("bpc", strategies_root, primary_timeframe="240T")
-  me  = GenericLiveStrategy("me",  strategies_root, primary_timeframe="60T")
-  fer = GenericLiveStrategy("fer", strategies_root, primary_timeframe="240T")
-  
-  pcm.register("bpc", bpc, timeframe="240T")
-  pcm.register("me",  me,  timeframe="60T")
-  pcm.register("fer", fer, timeframe="240T")
-  ```
-- [ ] 每个 symbol 的 feature_computer_factory 返回支持多 timeframe 的计算器
-- [ ] 环境变量: `MLBOT_ME_BAR_MINUTES=60` (独立于 BPC_BAR_MINUTES)
+- [x] `_setup_three_strategies()` 改为多 timeframe:
+  - 从 meta.yaml 动态读取: `tf_bpc=240T, tf_me=60T, tf_fer=240T`
+  - `pcm.register("bpc", bpc, timeframe=tf_bpc)` 等
+- [x] 每个 symbol 的 feature_computer_factory 返回支持多 timeframe 的计算器
+  - primary FC = 4H, `listener.extra_feature_computers = {tf_me: me_fc}`
+- [x] timeframe 从 meta.yaml 读取，无需硬编码环境变量
 
 ### 1.1.7 本地验证
 
-- [ ] 观察模式 (trade_size=0) 启动三策略
-- [ ] 确认日志中 ME 使用 60T 特征、BPC/FER 使用 240T 特征
-- [ ] 运行 24h+，确认无崩溃、特征计算无异常
-- [ ] 对比: ME 实盘特征 vs ME 研究特征 (同时间戳偏差 < 1%)
+- [x] 观察模式 (trade_size=0) 启动三策略 24h+
+- [x] 确认日志中 ME 使用 60T 特征、BPC/FER 使用 240T 特征
+- [x] 对比: ME 实盘特征 vs ME 研究特征 (同时间戳偏差 < 1%)
 
 ---
 
@@ -136,7 +130,9 @@ BinanceWS tick → OrderFlowListener
   - 保留最近 30 天，自动删除旧 parquet 文件
   - 每天触发一次 (在 `_flush_stats()` 中检查)
 
-### 1.2.3 Telegram 告警通道 (可选，上线前非必须)
+### 1.2.3 Telegram 告警通道 (→ 移至线上部署阶段)
+
+> 移至 Phase 4 延后项，在线上运行稳定后实现
 
 - [ ] 新增 `src/time_series_model/live/alerter.py`
   - CRITICAL: kill_switch 触发、数据源断开 → 即时通知
@@ -145,8 +141,8 @@ BinanceWS tick → OrderFlowListener
 
 ### 1.2.4 本地验证
 
-- [ ] 观察模式运行 → 确认 stats_15min 表每 15min 有新记录
-- [ ] 确认信号漏斗数据合理 (gate reject rate 在 70-90% 范围)
+- [x] 观察模式运行 → 确认 stats_15min 表每 15min 有新记录
+- [x] 确认信号漏斗数据合理 (gate reject rate 在 70-90% 范围)
 
 ---
 
@@ -177,20 +173,20 @@ BinanceWS tick → OrderFlowListener
 
 ---
 
-## 2.1 GitHub 配置
+## ✅ 2.1 GitHub 配置 — 已完成
 
 ### 2.1.1 创建 GitHub PAT (Personal Access Token)
 
-- [ ] 进入 GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
-- [ ] 点击 "Generate new token (classic)"
-- [ ] 勾选权限:
+- [x] 进入 GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+- [x] 点击 "Generate new token (classic)"
+- [x] 勾选权限:
   - `write:packages` (推送镜像到 ghcr.io)
   - `read:packages` (服务器拉取镜像)
-- [ ] 生成后复制 token（只显示一次！）
+- [x] 生成后复制 token（只显示一次！）
 
 ### 2.1.2 配置 GitHub Secrets
 
-- [ ] 进入仓库 → Settings → Secrets and variables → Actions → New repository secret
+- [x] 进入仓库 → Settings → Secrets and variables → Actions → New repository secret
 - [x] 添加以下 6 个 Secrets:
 
 | Secret 名称 | 值 | 获取方式 |
@@ -204,8 +200,8 @@ BinanceWS tick → OrderFlowListener
 
 ### 2.1.3 验证 SSH 连通性
 
-- [ ] 本地测试: `ssh <DEPLOY_USER>@<DEPLOY_HOST> "echo ok"`
-- [ ] 如果是新机器，先手动 SSH 一次接受 host key
+- [x] 本地测试: `ssh <DEPLOY_USER>@<DEPLOY_HOST> "echo ok"`
+- [x] 如果是新机器，先手动 SSH 一次接受 host key
 
 ### 2.1.4 CI/CD 文件确认
 
@@ -236,12 +232,12 @@ BinanceWS tick → OrderFlowListener
 
 - [x] 已通过 GitHub Secrets 注入（`BINANCE_API_KEY` + `BINANCE_API_SECRET`）
 - [x] 部署时 CI/CD 自动写入服务器 `/opt/quant-engine/live/binance_mainnet.env`
-- [ ] 确认 API key 权限: 只允许合约交易 + 只允许服务器 IP
+- [x] 确认 API key 权限: 只允许合约交易 + 只允许服务器 IP
 
 ### 2.2.3 安全组检查
 
-- [ ] SSH 端口限制为固定 IP（当前 0.0.0.0/0 不安全，腾讯云控制台修改）
-- [ ] 确认无其他端口暴露（Grafana 3000 等后续按需开放）
+- [x] SSH 端口限制为固定 IP
+- [x] 确认无其他端口暴露（Grafana 3000 等后续按需开放）
 
 ---
 
@@ -272,16 +268,16 @@ ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 \
   'tar xf /tmp/warmup_ticks.tar -C /opt/quant-engine/live/highcap/data/ticks/ && rm /tmp/warmup_ticks.tar && sudo systemctl restart quant-engine'
 ```
 
-- [ ] 本地下载完成
-- [ ] tar 打包 + scp 上传完成
-- [ ] 验证: `ls /opt/quant-engine/live/highcap/data/ticks/BTCUSDT/ | wc -l` 应有 ~180 个文件
+- [x] 本地下载完成
+- [x] tar 打包 + scp 上传完成
+- [x] 验证: `ls /opt/quant-engine/live/highcap/data/ticks/BTCUSDT/ | wc -l` 应有 ~180 个文件
 
 ### 2.3.3 服务状态
 
 - [x] `quant-engine.service` active (running)
-- [ ] 确认 warmup 下载完成 (`WARMUP → NORMAL`)
-- [ ] 确认 WS 连接成功 (`✅ WebSocket connected`)
-- [ ] 确认三策略注册 (`Registered: bpc, me, fer`)
+- [x] 确认 warmup 下载完成 (`WARMUP → NORMAL`)
+- [x] 确认 WS 连接成功 (`✅ WebSocket connected`)
+- [x] 确认三策略注册 (`Registered: bpc, me, fer`)
 
 ### 部署踩坑记录
 
@@ -325,42 +321,42 @@ ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
 
 ---
 
-## 2.5 监控部署（Prometheus + Grafana）
+## ✅ 2.5 监控部署（Prometheus + Grafana）— 已完成
 
 > 前置: 2.3 首次部署完成，quant-engine 正常运行
 
 ### 2.5.1 同步监控配置到服务器
 
-- [ ] 本地执行:
+- [x] 本地执行:
   ```bash
   rsync -avz -e "ssh -i ~/.ssh/id_tencent_cloud_ssh" \
     terraform/monitoring/ ubuntu@43.135.44.160:/opt/monitoring/
   ```
-- [ ] 确认文件同步: prometheus.yml + docker-compose + 3 个 dashboard JSON
+- [x] 确认文件同步: prometheus.yml + docker-compose + 3 个 dashboard JSON
 
 ### 2.5.2 启动监控容器
 
-- [ ] 本地执行:
+- [x] 本地执行:
   ```bash
   ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 \
     'sudo bash -s' < scripts/monitoring_bootstrap.sh
   ```
-- [ ] 执行后自动完成:
+- [x] 执行后自动完成:
   - Prometheus 容器启动（端口 9091）
   - Grafana 容器启动（端口 3000）
   - Dashboard 自动加载（quant.json + account_market.json + signal_pipeline.json）
 
 ### 2.5.3 安全组放行监控端口
 
-- [ ] 腾讯云控制台 → 安全组:
+- [x] 腾讯云控制台 → 安全组:
   - 9091/tcp (Prometheus) — 限制为你的 IP
   - 3000/tcp (Grafana) — 限制为你的 IP
 
 ### 2.5.4 验证监控
 
-- [ ] 访问 Grafana: `http://43.135.44.160:3000` (admin/admin)
-- [ ] 确认 Prometheus target 状态: `http://43.135.44.160:9091/targets` → quant-engine UP
-- [ ] 内存占用: `docker stats --no-stream` 确认 Prometheus ~150MB + Grafana ~80MB
+- [x] 访问 Grafana: `http://43.135.44.160:3000` (admin/admin)
+- [x] 确认 Prometheus target 状态: `http://43.135.44.160:9091/targets` → quant-engine UP
+- [x] 内存占用: `docker stats --no-stream` 确认 Prometheus ~150MB + Grafana ~80MB
 
 ---
 
@@ -517,6 +513,7 @@ python scripts/local_monitor_weekly.py --data data/live_latest.parquet --strateg
 | P2 | Phase 4.5.4 回测宪法模拟 | PCM 回测加 kill switch 模拟 | 上线后有数据时 |
 | P3 | PCM Plateau 优化 | detection 阈值 + scale 因子，conflict_rate=3.42% 收益极低 | 收集 4 周实盘数据后 |
 | P3 | LV 策略 | 15min timeframe，Feature Store 计算成本高 | 三策略稳定后 |
+| P2 | Telegram 告警通道 | alerter.py + Telegram Bot (从 Phase 1.2.3 移入) | 线上运行稳定后 |
 | P3 | 可视化 Dashboard | Streamlit/Flask 页面 | 有空时 |
 
 ---

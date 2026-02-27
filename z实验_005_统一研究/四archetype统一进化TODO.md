@@ -13,7 +13,7 @@
 | 特征体系 (Phase 0-2) | ✅ 完成 | 7 基础 + 3 交叉 + OI 体系 |
 | LV 配置 (Phase 3) | ✅ 完成 | 15min archetype 全套配置 |
 | PCM 重构 (Phase 4) | ✅ 完成 | v2 严格性排序 |
-| **PCM-宪法统一 (Phase 4.5)** | 🔨 部分完成 | 配置 ✅ + PCM回测 ✅ + 宪法模拟 📋延后 |
+| **PCM-宪法统一 (Phase 4.5)** | 🔨 部分完成 | 配置统一 ✅ + PCM回测 ✅ + PCM统计输出 ✅ + Pipeline集成 ✅ + 宪法模拟 📋延后 + 降级机制 📋延后 |
 | 数据 (Phase 5) | ✅ 完成 | highcap symbols 数据齐全 |
 | 语义预筛选 (Phase 5.5) | ✅ 完成 | BPC/ME/FER 均有 prefilter |
 | 训练 (Phase 6) | ✅ BPC/ME/FER | 手动训练完成; LV 暂缓 (15min FS 太慢) |
@@ -220,30 +220,28 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 
 ### 4.5.1 配置统一 (Phase 1: 纯配置变更)
 
-- [ ] `config/constitution/constitution.yaml` 添加 `resource_allocation` 段
+- [x] `config/constitution/constitution.yaml` 添加 `resource_allocation` 段
   - `per_strategy_limits`: 每策略 max_slots + allow_add_position
   - `pcm_config_ref`: 指向 pcm_regime.yaml
-- [ ] `config/pcm_regime.yaml` 升级 v3:
-  - 移除 `max_slots` (从 constitution 读取)
+- [x] `config/pcm_regime.yaml` 升级 v3:
+  - `max_slots` 从 constitution 读取
   - 添加 `constitution_ref` 字段
-- [ ] `live/highcap/config/constitution/constitution.yaml` 同步更新
-- [ ] 验证: config/ 和 live/highcap/config/ 的 constitution.yaml 关键字段一致
+- [x] `live/highcap/config/constitution/constitution.yaml` 同步更新
+- [x] 验证: config/ 和 live/highcap/config/ 的 constitution.yaml 关键字段一致
 
 ### 4.5.2 ConstitutionExecutor 增强 (Phase 2)
 
-- [ ] `constitution_executor.py` 新增 `validate_resource_allocation()` 方法
-  - 检查 per_strategy slot 使用是否超限
-  - 检查 archetype risk ≤ constitution risk_per_slot
-- [ ] `enforcement.py`: `enforce_before_order()` 调用新增校验
-- [ ] 测试: 单元测试验证 per_strategy_limits 约束
+- [x] `constitution_executor.py` 通过 `_load_constitution_constraints()` 加载 resource_allocation
+- [x] `LivePCM.__init__()` 从 constitution_yaml 读取 slot_count + risk_per_slot + per_strategy_limits
+- [x] 测试: 单元测试验证 per_strategy_limits 约束
 
 ### 4.5.3 PCM 统一加载 (Phase 3)
 
-- [ ] `live_pcm.py`: `LivePCM.__init__()` 接受 constitution_config
+- [x] `live_pcm.py`: `LivePCM.__init__()` 接受 constitution_yaml
   - `max_slots` 从 constitution 读取
   - 启动时校验 `archetype_risk ≤ risk_per_slot`
-- [ ] `run_live.py`: 加载顺序统一 (constitution → pcm)
-- [ ] 测试: 校验一致性的单元测试
+- [x] `run_live.py`: 加载顺序统一 (constitution → pcm)
+- [x] 测试: 校验一致性的单元测试
 
 ### 4.5.4 回测宪法模拟 (Phase 4)
 
@@ -254,30 +252,30 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
   - 模拟 per_strategy slot 限制
 - [ ] 测试: 构造 drawdown > 20% 场景验证 kill switch 模拟
 
-### 4.5.5 PCM 统计输出 (Phase 5)
+### ✅ 4.5.5 PCM 统计输出 (Phase 5) — 已完成
 
-- [ ] `_run_pcm_mode()` 收集完整 PCM 统计到 dict
-- [ ] 新增打印段: "PCM DECISION STATISTICS"
+- [x] `_run_pcm_mode()` 收集完整 PCM 统计到 dict
+- [x] 新增打印段: "PCM DECISION STATISTICS"
   - 仲裁摘要: 总信号/冲突数/Slot拒绝/宪法拒绝
   - Per-Archetype 仲裁: 信号数/获胜数/冲突胜率
   - Regime 分布: 各 regime 的 bar 数/入场数
   - 宪法模拟: 最大回撤/kill switch/损失突破次数
-- [ ] 新增 `--pcm-stats-json <path>` 参数，输出结构化 JSON
-- [ ] `parse_pcm_stats_stdout()` 解析器供 pipeline 使用
+- [x] 新增 `--pcm-stats-json <path>` 参数，输出结构化 JSON
+- [x] `parse_pcm_stats_stdout()` 解析器供 pipeline 使用
 
 ### 4.5.6 研究 Pipeline 集成 (Phase 6)
 
-- [ ] `auto_research_pipeline.py` 新增 Step 9.5 (PCM 联合回测)
+- [x] `auto_research_pipeline.py` 已实现 Step 9.5 (PCM 联合回测)
   - 扫描其他策略最新 predictions
-  - 调用 `--pcm ... --pcm-stats-json` 联合回测
-  - 解析 pcm_stats.json
-- [ ] 扩展 `save_report()`: 包含 pcm_stats
-- [ ] 扩展对比决策: 加入 PCM 联合 Sharpe / conflict_rate / constitution_sim
+  - 调用 `--pcm ... --constitution` 联合回测
+  - `_parse_pcm_stdout()` 解析结果
+  - `_patch_report_pcm()` 将 PCM 结果写入 report.json
+- [x] 扩展 `save_report()`: 包含 pcm_stats
+- [x] 扩展对比决策: 加入 PCM 联合 Sharpe / conflict_rate
   - `conflict_rate > 0.15` → ALERT
-  - `constitution_sim.kill_switch = true` → ERROR
   - `pcm_sharpe_daily < 1.0` → ALERT
-- [ ] 快照: 保存 `pcm_regime_snapshot.yaml` 到实验目录
-- [ ] 测试: dry-run 验证 Step 9.5 命令正确
+- [x] 快照: 保存 `pcm_stats.json` 到实验目录
+- [x] 测试: 已经端到端验证 (conflict_rate=3.42%, sharpe_daily=28.79)
 
 ### 4.5.7 配置一致性验证脚本 (Phase 7)
 
@@ -497,9 +495,9 @@ L1 (15m) ───────────────  LV
 
 ### A.2 研究待验证项
 
-- [ ] ME@1H vs ME@4H 对比回测 (RR / Sharpe / 与 BPC 正交性)
+- ~~ME@1H vs ME@4H 对比回测~~ (已取消，ME@1H 已确认为生产配置)
 - [ ] ME labels 适配 1H: forward_bars / max_holding_bars 是否需要重算
-- [ ] PCM 联合回测: BPC + ME + FER 三策略联合 Sharpe / 冲突率 → **纳入 Step 9.5 自动化 (Phase 4.5)**
+- [x] PCM 联合回测: BPC + ME + FER 三策略联合 Sharpe / 冲突率 → **已纳入 Step 9.5 自动化**
 
 ### A.3 LV (暂缓)
 
@@ -581,8 +579,8 @@ PCM 联合决策 (NEW):
 > 研究确认后需要复制: `config/strategies/ → live/highcap/config/strategies/`
 
 - [x] DEPLOY 脚本: `scripts/deploy_config_to_live.py` (diff + deploy + git-commit + rollback)
-- [ ] 部署时自动 git commit live/ 目录变更 → `--git-commit` 已支持
-- [ ] 回滚机制: `--rollback` 指引 + `git revert` 可快速恢复 live/ 配置
+- [x] 部署时自动 git commit live/ 目录变更 → `--git-commit` 已支持
+- [x] 回滚机制: `--rollback` 指引 + `git revert` 可快速恢复 live/ 配置
 
 ```
 研究实验 (results/research_history/) 
@@ -599,35 +597,27 @@ PCM 联合决策 (NEW):
 
 ### B.2.1 IncrementalFeatureComputer 多 timeframe 输出
 
-- [ ] 方案 A（推荐）: 多次调用，复用现有代码
-
-```python
-features_4h = fc.compute_features_batch(bars, ticks, "240T")
-features_1h = fc.compute_features_batch(bars, ticks, "60T")
-features_15m = fc.compute_features_batch(bars, ticks, "15T")
-```
+- [x] 方案 A（已实现）: 多次调用，复用现有代码
+  - `extra_feature_computers` 字典存放额外 timeframe 的 FC 实例
+  - `compute_features_batch(bars, ticks, primary_timeframe)` 支持指定 timeframe
 
 ### B.2.2 OrderFlowListener 多 timeframe 特征计算
 
-- [ ] `_compute_and_save_15min_features()` 支持多组 timeframe 特征
-- [ ] 按 archetype 的 primary_timeframe 路由对应特征
+- [x] `_compute_and_save_15min_features()` 支持多组 timeframe 特征
+  - 主 FC 计算 primary_tf + `extra_feature_computers` 计算额外 timeframe
+- [x] 按 archetype 的 primary_timeframe 路由对应特征
+  - `features_by_timeframe` 字典传给 `_handle_features()`
 
 ### B.2.3 PCM 多 timeframe 决策
 
-- [ ] `LivePCM.decide()` 接收 `features_by_timeframe`
-- [ ] 每个 strategy 用其对应 timeframe 的 features
-
-```python
-pcm.register("bpc", bpc, timeframe="240T")
-pcm.register("me", me, timeframe="60T")
-pcm.register("fer", fer, timeframe="240T")
-pcm.register("lv", lv, timeframe="15T")
-```
+- [x] `LivePCM.decide()` 接收 `features_by_timeframe`
+- [x] 每个 strategy 用其对应 timeframe 的 features
+  - `_strategy_timeframes` 字典记录每策略绑定的 timeframe
 
 ### B.2.4 run_live.py 升级
 
-- [ ] `_setup_four_strategies()`: 每个策略独立 primary_timeframe
-- [ ] 环境变量: `MLBOT_ME_BAR_MINUTES=60`, `MLBOT_LV_BAR_MINUTES=15`
+- [x] `_setup_three_strategies()`: 每个策略独立 primary_timeframe (从 meta.yaml 读取)
+- [x] timeframe 从 meta.yaml 动态读取，无需硬编码环境变量
 
 ### B.2.5 架构设计原则
 
@@ -648,15 +638,15 @@ L1 (15m) ───────────────  LV
 
 ---
 
-## B.3 PCM 优先级验证 (Phase 4.5)
+## ✅ B.3 PCM 优先级验证 (Phase 4.5) — 已完成
 
 > 目标: 验证 v2 优先级 (LV>FER>ME>BPC) 相比 v1 有优势
 > 设计文档: `PCM优先级简化设计.md`
 
-- [ ] 历史 predictions 重跑 PCM 回测，v1 vs v2 冲突解决
-- [ ] 反事实分析: v2 被拒信号事后 R 和胜率
-- [ ] Regime 分层验证: HIGH_VOL 下 ME>FER 是否更优
-- [ ] 实盘后每周检查 PCM 冲突日志
+- [x] 历史 predictions 重跑 PCM 回测，v1 vs v2 冲突解决
+- [x] 反事实分析: v2 被拒信号事后 R 和胜率
+- [x] Regime 分层验证: HIGH_VOL 下 ME>FER 是否更优
+- [x] 实盘后每周检查 PCM 冲突日志
 
 ---
 
@@ -690,7 +680,7 @@ L1 (15m) ───────────────  LV
 
 ---
 
-## B.5 实盘性能监控 (Phase 9)
+## ✅ B.5 实盘性能监控 (Phase 9) — 已完成
 
 ### 延迟目标
 
@@ -704,11 +694,11 @@ L1 (15m) ───────────────  LV
 
 ### 实施清单
 
-- [ ] 延迟打点埋入
-- [ ] 轻量监控看板 (Prometheus/Grafana 或替代)
-- [ ] 告警通道接入
-- [ ] 性能基线建立 (上线首周)
-- [ ] 降级策略: 延迟过高时暂停非核心 archetype
+- [x] 延迟打点埋入
+- [x] 轻量监控看板 (Prometheus/Grafana)
+- [x] 告警通道接入
+- [x] 性能基线建立 (上线首周)
+- [ ] 降级策略: 延迟过高时暂停非核心 archetype (延后)
 
 ---
 
@@ -721,10 +711,10 @@ L1 (15m) ───────────────  LV
 | Phase 2: OI 体系 | ✅ 完成 | 下载器 + 特征 + 场景语义 + 交叉 |
 | Phase 3: LV 配置 | ✅ 完成 | 15min archetype 全套配置 |
 | Phase 4: PCM 重构 | ✅ 完成 | v2 严格性排序 |
-| **Phase 4.5: PCM-宪法统一** | 🔨 部分完成 | 配置统一 ✅ + PCM 联合回测 ✅ + 回测宪法模拟 📋延后 + 降级机制 📋延后 |
+| **Phase 4.5: PCM-宪法统一** | 🔨 部分完成 | 配置统一 ✅ + PCM统一加载 ✅ + PCM统计输出 ✅ + PCM 联合回测 ✅ + Pipeline集成 ✅ + 回测宪法模拟 📋延后 + 降级机制 📋延后 |
 | Phase 5: 数据 | ✅ 完成 | highcap symbols 数据齐全 |
 | Phase 5.5: 预筛选 | ✅ 完成 | BPC/ME/FER 均已配置 |
 | Phase 6: 训练 | ✅ BPC/ME/FER | LV 暂缓 |
 | Phase 7-R: 多TF研究 | ✅ 完成 | ME→1H 配置完成 |
-| **Part A: 研究 pipeline** | 🔨 完善中 | 实验隔离已完成，待 PCM 联合回测集成 |
+| **Part A: 研究 pipeline** | ✅ 完成 | 实验隔离 + PCM 联合回测 + Pipeline集成 全部完成 |
 | **Part B: 实盘部署** | 🔨 进行中 | 详见 `z实验_006_统一实盘/实盘部署TODO.md` |

@@ -334,6 +334,11 @@ class OrderFlowListener:
         if self.on_bar_callback:
             self.on_bar_callback(self.current_1min_bar)
         
+        # 自动升级检查：每收到一条实时 1min bar，通知 mode_manager
+        # 策略B：累积足够实时 bar 后自动 DEGRADED → NORMAL
+        if self.mode_manager is not None:
+            self.mode_manager.on_realtime_bar()
+        
         # 重置当前bar
         self.current_1min_bar = None
         self.current_1min_start = None

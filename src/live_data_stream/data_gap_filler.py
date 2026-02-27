@@ -1,7 +1,10 @@
-"""
-数据缺失补全器
+"""数据缺失补全器
 
-检测实时流中的数据缺失，并从交易所 API 下载补全。
+检测实时流中的数据缺失，并从交易所 API / Binance Vision 下载补全。
+
+补数据策略（按 gap 大小自动选择）:
+  - gap < 24h:  aggTrades API（实时，有 buy/sell 拆分）
+  - gap >= 24h: Binance Vision 每日 CSV 包（批量更快）→ aggTrades 回退
 """
 
 from __future__ import annotations
@@ -267,6 +270,230 @@ class DataGapFiller:
                     return pd.DataFrame()
         
         return pd.DataFrame()
+
+    def fill_gap_with_aggtrades(
+        self,
+        symbol: str,
+        start_time: pd.Timestamp,
+        end_time: pd.Timestamp,
+        max_retries: int = 3,
+    ) -> pd.DataFrame:
+        """
+        用 aggTrades 补充 gap 并聚合为 1min bars（含 buy/sell 拆分）
+        
+        相比 klines，优势是有 buy_volume/sell_volume/delta 字段，
+        VPIN/订单流特征在 gap 段也能正确计算。
+        
+        Args:
+            symbol: ccxt 格式符号（如 "BTC/USDT:USDT"）
+            start_time: 补充起始时间
+            end_time: 补充结束时间
+            max_retries: 最大重试次数
+        
+        Returns:
+            1min bars DataFrame，列: [timestamp, open, high, low, close, volume,
+                                      buy_volume, sell_volume, delta, trade_count]
+        """
+        gap_hours = (end_time - start_time).total_seconds() / 3600
+        print(f"📥 aggTrades 补数据: {symbol} {start_time} → {end_time} ({gap_hours:.1f}h)")
+        
+        # 分块下载（aggTrades API 限制 24h 窗口）
+        all_trades = []
+        chunk_start = start_time
+        chunk_size = pd.Timedelta(hours=23)  # 留一小时余量
+        
+        while chunk_start < end_time:
+            chunk_end = min(chunk_start + chunk_size, end_time)
+            
+            trades_df = self.fill_missing_trades(
+                symbol, chunk_start, chunk_end, max_retries=max_retries
+            )
+            
+            if len(trades_df) > 0:
+                all_trades.append(trades_df)
+                print(f"   ✔ {chunk_start.strftime('%m-%d %H:%M')} ~ {chunk_end.strftime('%m-%d %H:%M')}: {len(trades_df)} trades")
+            else:
+                print(f"   ⚠ {chunk_start.strftime('%m-%d %H:%M')} ~ {chunk_end.strftime('%m-%d %H:%M')}: 无数据")
+            
+            chunk_start = chunk_end
+        
+        if not all_trades:
+            print("⚠️ aggTrades 补数据返回空")
+            return pd.DataFrame()
+        
+        # 合并所有 trades
+        trades_all = pd.concat(all_trades, ignore_index=True)
+        trades_all = trades_all.drop_duplicates(subset=["timestamp", "price", "volume"])
+        trades_all = trades_all.sort_values("timestamp").reset_index(drop=True)
+        
+        # 聚合为 1min bars
+        bars_1min = self._aggregate_trades_to_1min(trades_all)
+        print(f"✅ aggTrades 补数据完成: {len(bars_1min)} 条 1min bars（含 buy/sell 拆分）")
+        return bars_1min
+    
+    def _aggregate_trades_to_1min(self, trades: pd.DataFrame) -> pd.DataFrame:
+        """将原始 trades 聚合为 1min bars（含订单流字段）
+        
+        Args:
+            trades: 原始 trades DataFrame [timestamp, price, volume, side]
+        
+        Returns:
+            1min bars DataFrame
+        """
+        if len(trades) == 0:
+            return pd.DataFrame()
+        
+        # 计算每笔 trade 属于哪个 1min bar
+        trades = trades.copy()
+        trades["bar_ts"] = trades["timestamp"].dt.floor("1min")
+        trades["buy_vol"] = trades["volume"].where(trades["side"] == 1, 0.0)
+        trades["sell_vol"] = trades["volume"].where(trades["side"] == -1, 0.0)
+        
+        # 按 1min 分组聚合
+        grouped = trades.groupby("bar_ts")
+        
+        bars = pd.DataFrame({
+            "timestamp": grouped["bar_ts"].first(),
+            "open": grouped["price"].first(),
+            "high": grouped["price"].max(),
+            "low": grouped["price"].min(),
+            "close": grouped["price"].last(),
+            "volume": grouped["volume"].sum(),
+            "buy_volume": grouped["buy_vol"].sum(),
+            "sell_volume": grouped["sell_vol"].sum(),
+            "trade_count": grouped["price"].count(),
+        })
+        
+        bars["delta"] = bars["buy_volume"] - bars["sell_volume"]
+        bars["buy_ratio"] = (bars["buy_volume"] / bars["volume"]).fillna(0.5)
+        bars["sell_ratio"] = (bars["sell_volume"] / bars["volume"]).fillna(0.5)
+        
+        bars = bars.sort_values("timestamp").reset_index(drop=True)
+        return bars
+
+    def fill_gap_with_binance_vision(
+        self,
+        symbol: str,
+        start_time: pd.Timestamp,
+        end_time: pd.Timestamp,
+    ) -> pd.DataFrame:
+        """从 Binance Vision 下载每日 aggTrades CSV 并聚合为 1min bars
+        
+        适用场景: gap >= 1 天，使用官方每日 CSV 数据包。
+        URL 格式: https://data.binance.vision/data/futures/um/daily/aggTrades/{SYMBOL}/{SYMBOL}-aggTrades-{YYYY-MM-DD}.zip
+        
+        Args:
+            symbol: ccxt 格式符号（如 "BTC/USDT:USDT"），内部转换为 BTCUSDT
+            start_time: 开始时间
+            end_time: 结束时间
+        
+        Returns:
+            1min bars DataFrame（含 buy/sell 拆分），空 DataFrame 表示失败
+        """
+        import io
+        import zipfile
+        
+        try:
+            import requests
+        except ImportError:
+            print("⚠️ requests 未安装，无法使用 Binance Vision")
+            return pd.DataFrame()
+        
+        # 转换符号: BTC/USDT:USDT → BTCUSDT
+        raw_symbol = symbol.replace("/", "").replace(":USDT", "")
+        
+        # 计算需要下载的日期列表（不含今天，Binance Vision 当天数据不可用）
+        start_date = start_time.normalize()  # 取日期部分
+        end_date = end_time.normalize()
+        today = pd.Timestamp.now(tz="UTC").normalize()
+        
+        # 最多下到昨天
+        if end_date >= today:
+            end_date = today - pd.Timedelta(days=1)
+        
+        if start_date > end_date:
+            print("⚠️ Binance Vision: 时间范围无效（start > end 或全在今天内）")
+            return pd.DataFrame()
+        
+        dates = pd.date_range(start_date, end_date, freq="D")
+        print(f"📦 Binance Vision 下载: {raw_symbol}, {len(dates)} 天 ({start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')})")
+        
+        all_trades = []
+        base_url = "https://data.binance.vision/data/futures/um/daily/aggTrades"
+        
+        session = requests.Session()
+        # 代理兼容：与 WebSocket/_build_gap_filler 一致，检测 HTTP_PROXY 环境变量
+        # TUN 模式下无需设置（透明代理）
+        import os as _os
+        for _key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            _proxy = _os.environ.get(_key)
+            if _proxy:
+                session.proxies = {"http": _proxy, "https": _proxy}
+                break
+        try:
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+            retry = Retry(total=3, backoff_factor=1.0, status_forcelist=(429, 500, 502, 503))
+            session.mount("https://", HTTPAdapter(max_retries=retry))
+        except Exception:
+            pass
+        
+        for dt in dates:
+            date_str = dt.strftime("%Y-%m-%d")
+            filename = f"{raw_symbol}-aggTrades-{date_str}.zip"
+            url = f"{base_url}/{raw_symbol}/{filename}"
+            
+            try:
+                resp = session.get(url, timeout=60)
+                if resp.status_code == 404:
+                    print(f"   ⚠ {date_str}: 数据不存在(404)")
+                    continue
+                resp.raise_for_status()
+                
+                # 解压 CSV
+                with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                    csv_names = [n for n in zf.namelist() if n.endswith(".csv")]
+                    if not csv_names:
+                        print(f"   ⚠ {date_str}: ZIP 无 CSV")
+                        continue
+                    with zf.open(csv_names[0]) as f:
+                        df = pd.read_csv(f, header=0)
+                
+                if df.empty:
+                    continue
+                
+                # 列: agg_trade_id, price, quantity, first_trade_id, last_trade_id,
+                #      transact_time, is_buyer_maker
+                trades_day = pd.DataFrame({
+                    "timestamp": pd.to_datetime(df.iloc[:, 5], unit="ms", utc=True),  # transact_time
+                    "price": df.iloc[:, 1].astype(float),  # price
+                    "volume": df.iloc[:, 2].astype(float),  # quantity
+                    "side": np.where(df.iloc[:, 6] == True, -1, 1),  # is_buyer_maker: True = seller taker
+                })
+                
+                all_trades.append(trades_day)
+                print(f"   ✔ {date_str}: {len(trades_day)} trades")
+                
+            except Exception as e:
+                print(f"   ⚠ {date_str}: {e}")
+                continue
+        
+        if not all_trades:
+            print("⚠️ Binance Vision 下载返回空")
+            return pd.DataFrame()
+        
+        # 合并所有 trades 并聚合为 1min bars
+        trades_all = pd.concat(all_trades, ignore_index=True)
+        trades_all = trades_all.sort_values("timestamp").reset_index(drop=True)
+        
+        # 只保留请求的时间范围
+        trades_all = trades_all[
+            (trades_all["timestamp"] >= start_time) & (trades_all["timestamp"] <= end_time)
+        ].reset_index(drop=True)
+        
+        bars = self._aggregate_trades_to_1min(trades_all)
+        print(f"✅ Binance Vision 完成: {len(bars)} 条 1min bars")
+        return bars
 
     def _convert_timeframe(self, timeframe: str) -> str:
         """
