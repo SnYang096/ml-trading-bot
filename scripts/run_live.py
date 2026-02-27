@@ -570,6 +570,10 @@ async def main() -> None:
         decision = manager.decide_startup_mode(warmup_results)
         manager.mode_manager.set_mode(decision)
 
+        # 更新 Prometheus 系统模式指标
+        _MODE_VALUES = {"OFFLINE": 0, "DEGRADED": 1, "NORMAL": 2}
+        METRICS.system_mode.set(_MODE_VALUES.get(decision.mode.value, 0))
+
         logger.info(f"⚡ Startup mode: {decision.mode.value}")
         logger.info(f"   Reason: {decision.reason}")
         logger.info(
@@ -640,13 +644,16 @@ async def main() -> None:
     def _handle_tick(tick: BinanceTick) -> None:
         listener_tick = _tick_to_listener_tick(tick)
         manager.on_trade_tick(tick.symbol, listener_tick)
+        # 更新 WebSocket 连接状态指标
+        METRICS.ws_connected.labels(symbol=tick.symbol).set(1)
 
     ws_client.add_callback(_handle_tick)
 
-    # ── 定期获取市场数据 & 账户数据 ──
+    # ── 定期获取市场数据 & 账户数据 & 连接状态 ──
     async def _periodic_market_update() -> None:
         """30s 一次获取 Binance 市场数据 (funding rate / mark price / OI / account)"""
         interval = int(os.getenv("MLBOT_MARKET_DATA_INTERVAL", "30"))
+        _mode_map = {"OFFLINE": 0, "DEGRADED": 1, "NORMAL": 2}
         while True:
             try:
                 await asyncio.sleep(interval)
@@ -654,6 +661,14 @@ async def main() -> None:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, METRICS.update_market_data, symbols)
                 await loop.run_in_executor(None, METRICS.update_account_data)
+                # 更新系统模式指标
+                cur_mode = manager.mode_manager.get_current_mode()
+                METRICS.system_mode.set(_mode_map.get(cur_mode.value, 0))
+                # 更新 WebSocket 连接状态
+                ws_health = ws_client.get_health_status()
+                ws_ok = 1 if ws_health.get("status") in ("healthy", "degraded") else 0
+                for sym in symbols:
+                    METRICS.ws_connected.labels(symbol=sym).set(ws_ok)
             except asyncio.CancelledError:
                 break
             except Exception as exc:

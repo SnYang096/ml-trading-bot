@@ -99,6 +99,7 @@ class Metrics:
             self.account_balance = _NOOP
             self.account_margin_ratio = _NOOP
             self.unrealized_pnl_total = _NOOP
+            self.system_mode = _NOOP
             self.bot_info = _NOOP
             return
 
@@ -250,6 +251,13 @@ class Metrics:
             "Total unrealized PnL in USDT",
         )
 
+        # ── System Mode ──
+
+        self.system_mode = Gauge(
+            "mlbot_system_mode",
+            "System operating mode: 0=OFFLINE, 1=DEGRADED, 2=NORMAL",
+        )
+
         # ── Info ──
 
         self.bot_info = Info(
@@ -334,6 +342,9 @@ class Metrics:
             "BINANCE_FUTURES_API_SECRET", ""
         )
         if not api_key or not api_secret:
+            logger.warning(
+                "account data 跳过: BINANCE_API_KEY / BINANCE_API_SECRET 未配置"
+            )
             return
 
         try:
@@ -366,7 +377,7 @@ class Metrics:
                 timeout=10,
             )
             if not resp.ok:
-                logger.debug("account API %d: %s", resp.status_code, resp.text[:200])
+                logger.warning("account API %d: %s", resp.status_code, resp.text[:200])
                 return
 
             data = resp.json()
@@ -387,7 +398,7 @@ class Metrics:
 
             self.unrealized_pnl_total.set(float(data.get("totalUnrealizedProfit", 0)))
         except Exception as exc:
-            logger.debug("account data 获取失败: %s", exc)
+            logger.warning("account data 获取失败: %s", exc)
 
     @staticmethod
     def _get_http_session():

@@ -126,7 +126,7 @@
             },
             "gridPos": {
                 "h": 4,
-                "w": 4,
+                "w": 3,
                 "x": 0,
                 "y": 5
             },
@@ -147,6 +147,72 @@
                 }
             ],
             "title": "宪法状态",
+            "type": "stat"
+        },
+        {
+            "description": "系统运行模式: OFFLINE(0) / DEGRADED(1) / NORMAL(2)",
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "text": "⚠️ OFFLINE",
+                                    "color": "red"
+                                },
+                                "1": {
+                                    "text": "🟡 DEGRADED",
+                                    "color": "yellow"
+                                },
+                                "2": {
+                                    "text": "✅ NORMAL",
+                                    "color": "green"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 1
+                            },
+                            {
+                                "color": "green",
+                                "value": 2
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 3,
+                "x": 3,
+                "y": 5
+            },
+            "id": 8,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_system_mode",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "系统模式",
             "type": "stat"
         },
         {
@@ -174,8 +240,8 @@
             },
             "gridPos": {
                 "h": 4,
-                "w": 4,
-                "x": 4,
+                "w": 3,
+                "x": 6,
                 "y": 5
             },
             "id": 2,
@@ -223,8 +289,8 @@
             },
             "gridPos": {
                 "h": 4,
-                "w": 4,
-                "x": 8,
+                "w": 3,
+                "x": 9,
                 "y": 5
             },
             "id": 3,
@@ -272,7 +338,7 @@
             },
             "gridPos": {
                 "h": 4,
-                "w": 4,
+                "w": 3,
                 "x": 12,
                 "y": 5
             },
@@ -321,8 +387,8 @@
             },
             "gridPos": {
                 "h": 4,
-                "w": 4,
-                "x": 16,
+                "w": 3,
+                "x": 15,
                 "y": 5
             },
             "id": 4,
@@ -361,8 +427,8 @@
             },
             "gridPos": {
                 "h": 4,
-                "w": 4,
-                "x": 20,
+                "w": 3,
+                "x": 18,
                 "y": 5
             },
             "id": 6,
