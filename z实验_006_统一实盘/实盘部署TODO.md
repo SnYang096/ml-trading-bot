@@ -321,9 +321,39 @@ ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
 
 ---
 
-## ✅ 2.5 监控部署（Prometheus + Grafana）— 已完成
+## ✅ 2.6 Funding Rate / OI 数据管线 — 已完成
+
+> 所有策略 (BPC/ME/FER/LV) 的特征都依赖 `funding_rate_features_f` 和 `oi_features_f`。
+> `.dockerignore` 排除 `data/`，Docker 镜像内无此数据，需外部提供。
+
+### 2.6.1 方案A: 历史数据上传 + Volume Mount
+
+- [x] 本地 tar 打包 6 个 live symbols 的 funding_rate + OI parquet (~53MB)
+- [x] scp 上传到服务器 `/opt/quant-engine/data/`
+- [x] `quant-engine.service` 添加 `-v /opt/quant-engine/data:/app/data` volume mount
+- [x] 验证容器内 `/app/data/funding_rate/parquet/` 和 `/app/data/open_interest/parquet/` 有文件
+
+### 2.6.2 方案B: 自动刷新机制
+
+- [x] 新建 `scripts/refresh_funding_oi_data.py`:
+  - Funding Rate: `/fapi/v1/fundingRate` 每8h一条, 最多1000条≈333天
+  - OI: `/futures/data/openInterestHist` 5m粒度, **分段查询** (29天/段, API限制~30天)
+  - 不需要 API key, 使用 Binance 公开端点
+  - 增量合并 + 去重, 与研究 pipeline parquet 格式完全兼容
+- [x] `start_live.sh` 第4步: 启动时自动刷新最近 60 天
+- [x] `run_live.py`: 每 12 小时定时增量刷新 (asyncio task)
+
+### 2.6.3 deploy.yml 修复
+
+- [x] env 文件写入加 `sudo` (解决 root 权限问题)
+- [x] `rm -rf` 防止 Docker mount 创建的目录残留
+- [x] `.github/workflows/deploy.yml` 自身加入触发 paths
+
+---
 
 > 前置: 2.3 首次部署完成，quant-engine 正常运行
+
+## ✅ 2.5 监控部署（Prometheus + Grafana）— 已完成
 
 ### 2.5.1 同步监控配置到服务器
 
@@ -598,3 +628,4 @@ git push origin main  # 自动触发: build → push → deploy → restart
 | `terraform/monitoring/` | 监控配置 (prometheus.yml + docker-compose + dashboard) |
 | `live/highcap/config/strategies/` | 生产策略配置 (53 个 YAML) |
 | `scripts/deploy_config_to_live.py` | 研究→生产配置部署 |
+| `scripts/refresh_funding_oi_data.py` | Funding Rate / OI 增量刷新 (Binance 公开 API) |
