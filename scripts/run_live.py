@@ -684,6 +684,33 @@ async def main() -> None:
 
     market_task = asyncio.create_task(_periodic_market_update())
 
+    # ── 每日刷新 Funding Rate / OI parquet 数据 ──
+    async def _daily_funding_oi_refresh() -> None:
+        """12h 一次增量刷新 funding_rate / OI parquet (Binance 公开 API)"""
+        interval = 12 * 3600  # 12 小时
+        await asyncio.sleep(interval)  # 首次延迟: 启动时 start_live.sh 已刷新
+        while True:
+            try:
+                from scripts.refresh_funding_oi_data import refresh_all
+
+                logger.info("📊 定时刷新 Funding/OI 数据...")
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    None, refresh_all, symbols, "data", 30
+                )
+                logger.info(
+                    "✅ Funding/OI 刷新完成: FR=%d files, OI=%d files",
+                    result["funding_rate_files"],
+                    result["oi_files"],
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("定时 Funding/OI 刷新失败: %s", exc)
+            await asyncio.sleep(interval)
+
+    funding_oi_task = asyncio.create_task(_daily_funding_oi_refresh())
+
     stop_event = asyncio.Event()
     try:
         await ws_client.run(stop_event)
@@ -691,6 +718,7 @@ async def main() -> None:
         stop_event.set()
     finally:
         market_task.cancel()
+        funding_oi_task.cancel()
         if bg_gap_task:
             bg_gap_task.cancel()
         await manager.stop_all()

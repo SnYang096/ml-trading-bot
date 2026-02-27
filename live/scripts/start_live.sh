@@ -141,8 +141,15 @@ export MLBOT_ORDER_MANAGER_ENABLED="true"  # 启用 OrderManager（需要 BINANC
 echo "   ✅ 环境变量已配置"
 echo ""
 
-# 4. 启动实盘系统
-echo "🚀 第4步：启动实盘系统..."
+# 4. 刷新 Funding Rate / OI 数据 (增量, 从 Binance API 下载最近60天)
+echo "📊 第4步：刷新 Funding Rate / OI 数据..."
+python scripts/refresh_funding_oi_data.py --symbols "$SYMBOLS" --lookback-days 60 || {
+  echo "   ⚠️  Funding/OI 刷新失败（非致命，使用已有历史数据继续）"
+}
+echo ""
+
+# 5. 启动实盘系统
+echo "🚀 第5步：启动实盘系统..."
 echo ""
 
 python scripts/run_live.py
