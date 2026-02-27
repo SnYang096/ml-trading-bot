@@ -174,10 +174,23 @@ def _fetch_oi_page(
             timeout=15,
         )
         if not resp.ok:
+            logger.warning(
+                "OI API %d for %s (range %s~%s): %s",
+                resp.status_code,
+                symbol,
+                start_ms,
+                end_ms,
+                resp.text[:200],
+            )
             return []
         return resp.json()
-    except Exception:
+    except Exception as e:
+        logger.warning("OI fetch error for %s: %s", symbol, e)
         return []
+
+
+# Binance /futures/data/openInterestHist 对 5m period 限制查询范围 ~30 天
+_OI_MAX_RANGE_DAYS = 29
 
 
 def refresh_open_interest(
@@ -192,24 +205,32 @@ def refresh_open_interest(
     """
     session = requests.Session()
     now = datetime.now(tz=timezone.utc)
-    start_ms = int((now - timedelta(days=lookback_days)).timestamp() * 1000)
+    global_start = now - timedelta(days=lookback_days)
     end_ms = int(now.timestamp() * 1000)
     files_written = 0
 
     for sym in symbols:
         all_rows: list[dict] = []
-        cursor = start_ms
+        # 分段查询: 每段最多 _OI_MAX_RANGE_DAYS 天
+        seg_start = global_start
+        while seg_start < now:
+            seg_end = min(seg_start + timedelta(days=_OI_MAX_RANGE_DAYS), now)
+            seg_start_ms = int(seg_start.timestamp() * 1000)
+            seg_end_ms = int(seg_end.timestamp() * 1000)
+            cursor = seg_start_ms
 
-        while cursor < end_ms:
-            page = _fetch_oi_page(session, sym, period, cursor, end_ms)
-            if not page:
-                break
-            all_rows.extend(page)
-            last_ts = max(int(r["timestamp"]) for r in page)
-            if last_ts <= cursor:
-                break
-            cursor = last_ts + 1
-            time.sleep(0.3)
+            while cursor < seg_end_ms:
+                page = _fetch_oi_page(session, sym, period, cursor, seg_end_ms)
+                if not page:
+                    break
+                all_rows.extend(page)
+                last_ts = max(int(r["timestamp"]) for r in page)
+                if last_ts <= cursor:
+                    break
+                cursor = last_ts + 1
+                time.sleep(0.3)
+
+            seg_start = seg_end
 
         if not all_rows:
             logger.info("  %s: OI 无新数据", sym)
