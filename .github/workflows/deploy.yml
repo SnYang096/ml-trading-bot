@@ -124,12 +124,14 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           envs: BINANCE_API_KEY,BINANCE_API_SECRET
           script: |
+            # 防止 Docker 将文件路径创建为目录（首次启动时 -v 会自动创建缺失路径为目录）
+            rm -rf /opt/quant-engine/live/binance_mainnet.env
             cat > /opt/quant-engine/live/binance_mainnet.env << EOF
             BINANCE_API_KEY=${BINANCE_API_KEY}
             BINANCE_API_SECRET=${BINANCE_API_SECRET}
             EOF
             chmod 600 /opt/quant-engine/live/binance_mainnet.env
-            echo "✅ API keys written"
+            echo "✅ API keys written ($(wc -l < /opt/quant-engine/live/binance_mainnet.env) lines)"
 
       - name: 🚀 Pull image & restart service
         uses: appleboy/ssh-action@v1

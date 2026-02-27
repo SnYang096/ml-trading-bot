@@ -669,6 +669,13 @@ async def main() -> None:
                 ws_ok = 1 if ws_health.get("status") in ("healthy", "degraded") else 0
                 for sym in symbols:
                     METRICS.ws_connected.labels(symbol=sym).set(ws_ok)
+                # 更新数据新鲜度（距上次特征计算的秒数）
+                now = pd.Timestamp.now(tz="UTC")
+                for sym in symbols:
+                    listener = manager.get_listener(sym)
+                    if listener and listener.last_feature_compute_time:
+                        age = (now - listener.last_feature_compute_time).total_seconds()
+                        METRICS.last_bar_age.labels(symbol=sym).set(age)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
