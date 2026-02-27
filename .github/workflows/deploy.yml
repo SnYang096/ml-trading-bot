@@ -40,6 +40,7 @@ on:
       - 'live/scripts/**'
       - 'docker/Dockerfile.live'
       - 'requirements.txt'
+      - '.github/workflows/deploy.yml'
 
 # 同一时间只允许一个部署
 concurrency:
