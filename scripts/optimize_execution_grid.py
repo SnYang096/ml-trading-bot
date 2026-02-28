@@ -92,7 +92,26 @@ def main() -> int:
         action="store_true",
         help="Auto-promote best params to archetypes/execution.yaml",
     )
+    p.add_argument(
+        "--use-1min",
+        action="store_true",
+        help="Use 1min bar data for precise SL/trailing simulation (matches live trading)",
+    )
+    p.add_argument(
+        "--live-root",
+        default="live/highcap",
+        help="Live data root for 1min bars (fallback when --data-path=none)",
+    )
+    p.add_argument(
+        "--data-path",
+        default="data/parquet_data",
+        help="研究数据目录 (默认 data/parquet_data, 设为 none 使用实盘数据验证)",
+    )
     args = p.parse_args()
+
+    # --data-path none → 显式使用实盘数据
+    if args.data_path and args.data_path.lower() == "none":
+        args.data_path = None
 
     # Auto-detect feature store layer if not specified
     if not args.features_store_layer:
@@ -269,6 +288,22 @@ def main() -> int:
         print("   ℹ️  Entry filter disabled (--no-entry-filter)")
 
     # ================================================================
+    # 加载 1min bar 数据（如果指定 --use-1min）
+    # ================================================================
+    bars_1min_dict = None
+    if args.use_1min:
+        from scripts.backtest_execution_layer import _load_1min_bars
+
+        bars_1min_dict = _load_1min_bars(
+            merged,
+            data_path=getattr(args, "data_path", None),
+            live_root=getattr(args, "live_root", "live/highcap"),
+        )
+        if not bars_1min_dict:
+            print("❌ No 1min bar data found. Cannot use --use-1min mode.")
+            return 1
+
+    # ================================================================
     # Grid Search
     # ================================================================
     param_names, param_values = _parse_optimization_grid(opt_cfg)
@@ -296,20 +331,28 @@ def main() -> int:
         atr_col="atr",
         span_years=span_years,
         n_symbols=n_symbols,
+        bars_1min_dict=bars_1min_dict,
     )
 
-    # 平坦高原分析
-    plateau = _identify_plateau(results)
+    # 平坦高原分析 + 逐参数边际分析
+    plateau = _identify_plateau(
+        results,
+        param_names=param_names,
+        param_values=param_values,
+    )
     best = plateau["best"]
+    recommended = plateau.get("recommended", best)
+    param_analysis = plateau.get("param_analysis", {})
+    use_recommended = recommended != best
 
     # 打印摘要
     print("\n" + "=" * 80)
     print("📊 GRID SEARCH RESULTS")
     print("=" * 80)
+    short_names = [n.split(".")[-1] for n in param_names]
     print(
         f"\n   🏆 Best Sharpe: {best['sharpe']:.4f}  (annualized: {best['sharpe_ann']:.1f})"
     )
-    short_names = [n.split(".")[-1] for n in param_names]
     print(
         f"   Best params: {', '.join(f'{short_names[i]}={best[param_names[i]]:.1f}' for i in range(len(param_names)))}"
     )
@@ -329,7 +372,11 @@ def main() -> int:
 
     with contextlib.redirect_stdout(io.StringIO()):
         best_returns, _ = simulate_rr_execution(
-            merged, best_config, atr_col="atr", silent=True
+            merged,
+            best_config,
+            atr_col="atr",
+            silent=True,
+            bars_1min_dict=bars_1min_dict,
         )
     daily_sh = compute_daily_sharpe(merged, best_returns)
     print(
@@ -342,6 +389,58 @@ def main() -> int:
     print(
         f"   Top-{plateau['top_n']} mean={plateau['mean_sharpe']:.4f}  std={plateau['std_sharpe']:.4f}  CV={plateau['cv']:.3f}"
     )
+
+    # ── 逐参数边际分析结果 ──
+    if param_analysis:
+        print("\n   🔬 逐参数边际分析 (marginal per-param):")
+        for pi, pname in enumerate(param_names):
+            pa = param_analysis.get(pname)
+            if not pa:
+                continue
+            sname = short_names[pi]
+            suff = pa["sufficient_value"]
+            best_v = pa["best_value"]
+            at_bnd = "⚠️卡上限" if pa["at_boundary"] else "✅已收敛"
+            # 显示该参数各值的均值 Sharpe
+            vals_str = "  ".join(
+                f"{v:.1f}:{s:.3f}{'*' if abs(v - suff) < 1e-6 else ''}"
+                for v, s in zip(pa["values"], pa["mean_sharpes"])
+            )
+            print(f"      {sname}: elbow={suff:.1f}  best_val={best_v:.1f}  {at_bnd}")
+            print(f"        [{vals_str}]")
+
+    # ── 推荐参数（基于 elbow 分析） ──
+    promote_params = best  # 默认用绝对最优
+    promote_daily_sh = daily_sh
+    if use_recommended:
+        # 计算 recommended 的日线 Sharpe
+        rec_config = _copy.deepcopy(exec_config)
+        for name in param_names:
+            _set_nested(rec_config, name, recommended[name])
+        with contextlib.redirect_stdout(io.StringIO()):
+            rec_returns, _ = simulate_rr_execution(
+                merged,
+                rec_config,
+                atr_col="atr",
+                silent=True,
+                bars_1min_dict=bars_1min_dict,
+            )
+        rec_daily_sh = compute_daily_sharpe(merged, rec_returns)
+        rec_params_str = ", ".join(
+            f"{short_names[i]}={recommended[param_names[i]]:.1f}"
+            for i in range(len(param_names))
+        )
+        print(
+            f"\n   🛡️  Recommended (elbow): {rec_params_str}"
+            f"  (Sharpe={recommended['sharpe']:.4f}, daily={rec_daily_sh:.2f})"
+        )
+        print(
+            f"      vs Best: Sharpe {recommended['sharpe']/best['sharpe']:.1%} of best"
+        )
+        promote_params = recommended
+        promote_daily_sh = rec_daily_sh
+    else:
+        print("\n   ℹ️  Recommended = Best (边际分析未发现更保守的组合)")
 
     # 输出文件
     if args.output:
@@ -410,9 +509,9 @@ def main() -> int:
             strategy=args.strategy,
             strategies_root=args.strategies_root,
             param_names=param_names,
-            best=best,
+            best=promote_params,
             plateau=plateau,
-            daily_sharpe=daily_sh,
+            daily_sharpe=promote_daily_sh,
         )
         if promoted:
             print(f"\n   ✅ Promoted to: {promoted}")

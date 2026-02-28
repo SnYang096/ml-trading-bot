@@ -194,20 +194,33 @@ class ExecutionParamGenerator:
         self.tiers_cfg = execution_config.get("tiers", {})
 
     def generate_params(self, evidence_score: float) -> Dict[str, Any]:
-        """生成执行参数"""
-        # Tier 选择
-        tier_params = self._select_tier(evidence_score)
+        """生成执行参数 — 统一使用全局参数（grid search 优化的）
 
-        # 基础执行参数
-        base_params = {
-            "initial_r": self.config.get("stop_loss", {}).get("initial_r", 2.0),
-            "take_profit_r": self.config.get("take_profit", {}).get("multiple", 2.5),
-            "max_holding_bars": self.config.get("holding", {}).get(
-                "time_stop_bars", 50
+        方案 A: 移除 tier 分档，evidence 只在 gate 层做开/关决策，
+        不影响执行参数。确保向量回测 = 事件回测 = 实盘。
+        """
+        sl_cfg = self.config.get("stop_loss", {})
+        trail_cfg = sl_cfg.get("trailing", {})
+
+        # take_profit: 必须检查 enabled 标志，读 target_r (与向量回测一致)
+        tp_cfg = self.config.get("take_profit", {})
+        tp_enabled = tp_cfg.get("enabled", False)
+        take_profit_r = float(tp_cfg.get("target_r", 0.0)) if tp_enabled else 0.0
+
+        return {
+            "tier_name": "global",
+            "initial_r": float(sl_cfg.get("initial_r", 2.0)),
+            "activation_r": float(trail_cfg.get("activation_r", 1.0)),
+            "trail_r": float(trail_cfg.get("trail_r", 1.5)),
+            "take_profit_r": take_profit_r,
+            "time_stop_bars": int(
+                self.config.get("holding", {}).get("time_stop_bars", 50) or 50
             ),
+            "max_holding_bars": int(
+                self.config.get("holding", {}).get("time_stop_bars", 50) or 50
+            ),
+            "size_multiplier": 1.0,
         }
-
-        return {**base_params, **tier_params}
 
     def _select_tier(self, evidence_score: float) -> Dict[str, Any]:
         """根据 evidence score 选择 tier"""
@@ -524,6 +537,7 @@ class GenericLiveStrategy:
                     "stop_loss_r": exec_params.get("initial_r", 2.0),
                     "take_profit_r": exec_params.get("take_profit_r", 2.5),
                     "allow_trailing": True,
+                    "activation_r": exec_params.get("activation_r", 1.0),
                     "trailing_atr": exec_params.get("trail_r", 1.5),
                     "max_holding_bars": exec_params.get("time_stop_bars", 50),
                 },

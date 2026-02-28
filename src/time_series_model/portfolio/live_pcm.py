@@ -385,6 +385,10 @@ class LivePCM:
         self._strategy_timeframes: Dict[str, str] = {}  # archetype → timeframe
         self._get_open_slot_count = get_open_slot_count
 
+        # Evidence-based slot 竞争: 追踪每个已入场 slot 的 evidence score
+        # key = "{symbol}:{archetype}", value = evidence_score
+        self._slot_evidence: Dict[str, float] = {}
+
         # Layer 3: Override 配置
         self._override_config: Dict[str, Any] = override_config or {}
 
@@ -594,15 +598,21 @@ class LivePCM:
         # ── 3. 快速路径：单候选直接返回 ──
         if len(all_intents) == 1:
             intent = all_intents[0]
+            ev = intent.confidence if intent.confidence is not None else 0.5
             if not self._slot_available(symbol, intent.archetype):
-                logger.info(
-                    "PCM: %s slot 已满 (%d/%d)，拒绝 %s",
-                    symbol,
-                    self._current_slot_count(),
-                    self._max_slots,
-                    intent.archetype,
-                )
-                return []
+                # slot 满 → 尝试 evidence 竞争
+                evicted = self._try_slot_competition(symbol, intent.archetype, ev)
+                if evicted is None:
+                    logger.info(
+                        "PCM: %s slot 已满 (%d/%d)，拒绝 %s (ev=%.2f, 不足以驱逐)",
+                        symbol,
+                        self._current_slot_count(),
+                        self._max_slots,
+                        intent.archetype,
+                        ev,
+                    )
+                    return []
+            self._record_slot(symbol, intent.archetype, ev)
             if self.stats_collector is not None:
                 self.stats_collector.record_pcm_selected(symbol, intent.archetype)
             return [self._apply_regime_scale(intent)]
@@ -618,16 +628,20 @@ class LivePCM:
                 else 0.5
             )
             if not self._slot_available(symbol, override_winner.archetype):
-                logger.info(
-                    "PCM: %s slot 已满 (%d/%d)，拒绝 Override 优胜 %s (evidence=%.2f)%s",
-                    symbol,
-                    self._current_slot_count(),
-                    self._max_slots,
-                    override_winner.archetype,
-                    ev,
-                    regime_str,
+                evicted = self._try_slot_competition(
+                    symbol, override_winner.archetype, ev
                 )
-                return []
+                if evicted is None:
+                    logger.info(
+                        "PCM: %s slot 已满 (%d/%d)，拒绝 Override 优胜 %s (ev=%.2f, 不足以驱逐)%s",
+                        symbol,
+                        self._current_slot_count(),
+                        self._max_slots,
+                        override_winner.archetype,
+                        ev,
+                        regime_str,
+                    )
+                    return []
             logger.info(
                 "PCM: %s Override 选中 %s (evidence=%.2f)%s",
                 symbol,
@@ -635,6 +649,7 @@ class LivePCM:
                 ev,
                 regime_str,
             )
+            self._record_slot(symbol, override_winner.archetype, ev)
             if self.stats_collector is not None:
                 self.stats_collector.record_pcm_selected(
                     symbol, override_winner.archetype
@@ -664,19 +679,24 @@ class LivePCM:
                 regime_str,
             )
 
-        # ── 6. Slot 检查 ──
+        # ── 6. Slot 检查 (支持 evidence 竞争) ──
         if not self._slot_available(symbol, best_intent.archetype):
-            logger.info(
-                "PCM: %s slot 已满 (%d/%d)，拒绝优先级最高 %s (evidence=%.2f)%s",
-                symbol,
-                self._current_slot_count(),
-                self._max_slots,
-                best_intent.archetype,
-                evidence,
-                regime_str,
+            evicted = self._try_slot_competition(
+                symbol, best_intent.archetype, evidence
             )
-            return []
+            if evicted is None:
+                logger.info(
+                    "PCM: %s slot 已满 (%d/%d)，拒绝优先级最高 %s (ev=%.2f, 不足以驱逐)%s",
+                    symbol,
+                    self._current_slot_count(),
+                    self._max_slots,
+                    best_intent.archetype,
+                    evidence,
+                    regime_str,
+                )
+                return []
 
+        self._record_slot(symbol, best_intent.archetype, evidence)
         logger.info(
             "PCM: %s 选中 %s (priority=%d, evidence=%.2f, scale=%.2f)%s",
             symbol,
@@ -832,6 +852,53 @@ class LivePCM:
         if self._get_open_slot_count is None:
             return True  # 未配置回调，不做跨 symbol 限制
         return self._current_slot_count() < self._max_slots
+
+    def _try_slot_competition(
+        self, symbol: str, archetype: str, new_evidence: float
+    ) -> Optional[str]:
+        """Slot 满时尝试 evidence 竞争
+
+        Returns:
+            被驱逐的 slot key ("{symbol}:{archetype}"), 或 None 表示新信号更弱被拒绝
+        """
+        if not self._slot_evidence:
+            return None
+
+        # 找最弱的 active slot
+        weakest_key = min(self._slot_evidence, key=self._slot_evidence.get)
+        weakest_ev = self._slot_evidence[weakest_key]
+
+        if new_evidence > weakest_ev:
+            logger.info(
+                "PCM: slot 竞争 — %s:%s (ev=%.2f) 驱逐 %s (ev=%.2f)",
+                symbol,
+                archetype,
+                new_evidence,
+                weakest_key,
+                weakest_ev,
+            )
+            del self._slot_evidence[weakest_key]
+            return weakest_key
+        return None
+
+    def _record_slot(self, symbol: str, archetype: str, evidence: float) -> None:
+        """记录已入场 slot 的 evidence score"""
+        key = f"{symbol}:{archetype}"
+        self._slot_evidence[key] = evidence
+
+    def notify_position_closed(self, symbol: str, archetype: str = "") -> None:
+        """外部通知仓位已平仓，清理 slot 追踪
+
+        由 PositionManager/OrderFlowListener 在仓位关闭时调用。
+        """
+        if archetype:
+            key = f"{symbol}:{archetype}"
+            self._slot_evidence.pop(key, None)
+        else:
+            # archetype 未知，清理该 symbol 的所有 slot
+            to_remove = [k for k in self._slot_evidence if k.startswith(f"{symbol}:")]
+            for k in to_remove:
+                del self._slot_evidence[k]
 
     # ── Quantiles 透传 ──
 

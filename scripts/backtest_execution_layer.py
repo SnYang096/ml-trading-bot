@@ -76,6 +76,86 @@ from src.feature_store import FeatureStore, FeatureStoreSpec
 
 
 # ================================================================
+# 1min Bar Loading (研究数据 / 实盘数据 双路径)
+# ================================================================
+
+
+def _load_1min_bars(
+    merged: pd.DataFrame,
+    *,
+    data_path: Optional[str] = None,
+    live_root: str = "live/highcap",
+) -> Optional[Dict[str, pd.DataFrame]]:
+    """加载 1min bar 数据, 支持两种来源:
+
+    1. --data-path (推荐用于向量回测): 从研究数据 data/parquet_data
+       通过 DataHandler.load_ohlcv(timeframe="1T") 加载
+    2. --live-root (用于事件回测/实盘): 从 StorageManager 加载
+    """
+    # 确定时间范围
+    ts_col = "timestamp"
+    if ts_col in merged.columns:
+        ts_min = pd.Timestamp(merged[ts_col].min())
+        ts_max = pd.Timestamp(merged[ts_col].max())
+        start_str = (ts_min - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        end_str = (ts_max + pd.Timedelta(days=30)).strftime("%Y-%m-%d")
+    else:
+        start_str = "2025-01-01"
+        end_str = "2026-12-31"
+
+    sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
+    symbols = merged[sym_col].unique()
+
+    bars_1min_dict: Dict[str, pd.DataFrame] = {}
+
+    if data_path:
+        # ── 研究数据路径: DataHandler → 1min resample ──
+        from src.data_tools.data_handler import DataHandler
+
+        dh = DataHandler(data_path)
+        print(f"   📂 1min 数据来源: {data_path} (研究数据)")
+        for sym in symbols:
+            try:
+                b1m = dh.load_ohlcv(
+                    symbol=sym,
+                    timeframe="1T",
+                    start_date=start_str,
+                    end_date=end_str,
+                )
+                if not b1m.empty:
+                    # 统一列名: 确保有 timestamp 列
+                    if "timestamp" not in b1m.columns:
+                        b1m = b1m.reset_index()  # index → column
+                    elif b1m.index.name == "timestamp":
+                        b1m = b1m.reset_index(drop=True)  # 去掉重复 index
+                    b1m["timestamp"] = pd.to_datetime(b1m["timestamp"], utc=True)
+                    bars_1min_dict[sym] = b1m
+                    print(f"   🔬 {sym}: {len(b1m)} 1min bars loaded")
+            except Exception as e:
+                print(f"   ⚠️  {sym}: DataHandler 加载失败 ({e})")
+    else:
+        # ── 实盘数据路径: StorageManager ──
+        from src.live_data_stream.feature_storage import StorageManager
+
+        storage = StorageManager(f"{live_root}/data")
+        print(f"   📂 1min 数据来源: {live_root}/data (实盘数据)")
+        for sym in symbols:
+            b1m = storage.bar_1min.load_range(sym, start_str, end_str)
+            if not b1m.empty:
+                bars_1min_dict[sym] = b1m
+                print(f"   🔬 {sym}: {len(b1m)} 1min bars loaded")
+
+    if bars_1min_dict:
+        print(
+            f"   ✅ 1min mode: {sum(len(v) for v in bars_1min_dict.values())} total bars"
+        )
+        return bars_1min_dict
+    else:
+        print("   ⚠️  No 1min bars found, falling back to 4H mode")
+        return None
+
+
+# ================================================================
 # Evidence Scoring + Tier Assignment
 # ================================================================
 
@@ -456,6 +536,8 @@ def simulate_rr_execution(
     silent: bool = False,
     use_tier_params: bool = False,
     breakeven_lock_r: float = 0.0,
+    max_slots: int = 0,
+    bars_1min_dict: Optional[Dict[str, pd.DataFrame]] = None,
 ) -> pd.Series:
     """
     逐K线路径模拟 (Bar-by-Bar Execution Simulation)
@@ -555,6 +637,27 @@ def simulate_rr_execution(
     breakeven_lock_count = 0
     exit_stats = {"sl": 0, "trailing_sl": 0, "tp": 0, "timeout": 0, "no_data": 0}
 
+    # 如果提供了 1min bar 数据，预处理为 numpy 数组以加速查找
+    _1min_cache: Dict[str, Dict[str, np.ndarray]] = {}
+    if bars_1min_dict:
+        for _sym, _mdf in bars_1min_dict.items():
+            if _mdf.empty:
+                continue
+            _mdf = _mdf.sort_values("timestamp")
+            _ts = pd.to_datetime(_mdf["timestamp"]).values.astype("int64")
+            _1min_cache[_sym] = {
+                "ts": _ts,
+                "high": _mdf["high"].values.astype(float),
+                "low": _mdf["low"].values.astype(float),
+                "close": _mdf["close"].values.astype(float),
+            }
+        if not silent:
+            print(f"   🔬 1min bar mode: {len(_1min_cache)} symbols loaded")
+
+    # 获取 entry timestamp——1min 模式需要
+    has_ts = "timestamp" in df.columns
+    use_1min = bool(_1min_cache)
+
     for sym, group in df.groupby(sym_col, sort=False):
         group = group.sort_index()
         idx_arr = group.index.values
@@ -564,6 +667,11 @@ def simulate_rr_execution(
         atrs = group[atr_col].values.astype(float)
         directions = group[dir_col].values.astype(float)
         n = len(group)
+
+        # 1min bar 数据查找表
+        sym_1min = _1min_cache.get(sym)
+        if use_1min and has_ts:
+            entry_timestamps = pd.to_datetime(group["timestamp"]).values.astype("int64")
 
         # Per-entry 参数数组（tier 模式）
         if tier_mode:
@@ -610,84 +718,178 @@ def simulate_rr_execution(
             exit_price = None
             exit_reason = None
 
-            # 逐 bar 前向模拟（从 i+1 开始）
-            max_j = min(i + 1 + time_stop_bars, n)
-            for j in range(i + 1, max_j):
-                h = highs[j]
-                l = lows[j]
-                if np.isnan(h) or np.isnan(l):
-                    continue
+            # ====== 1min bar 精细模拟 ======
+            if use_1min and sym_1min is not None and has_ts:
+                entry_ts_ns = entry_timestamps[i]
+                m_ts = sym_1min["ts"]
+                m_h = sym_1min["high"]
+                m_l = sym_1min["low"]
+                m_c = sym_1min["close"]
+                # 找 entry_ts 之后的 1min bar 起始位置
+                start_m = int(np.searchsorted(m_ts, entry_ts_ns, side="right"))
+                # time_stop_bars 是 4H bar 数，换算成 1min: time_stop_bars * bar_minutes
+                bar_minutes = 240  # 默认 4H
+                max_m = min(start_m + time_stop_bars * bar_minutes, len(m_ts))
 
-                # 1. 检查止损
-                if direction == 1 and l <= sl_price:
-                    exit_price = sl_price
-                    exit_reason = "trailing_sl" if trailing_active else "sl"
-                    break
-                elif direction == -1 and h >= sl_price:
-                    exit_price = sl_price
-                    exit_reason = "trailing_sl" if trailing_active else "sl"
-                    break
+                for mi in range(start_m, max_m):
+                    h = m_h[mi]
+                    l = m_l[mi]
+                    if np.isnan(h) or np.isnan(l):
+                        continue
 
-                # 2. 检查止盈
-                if tp_enabled:
-                    if direction == 1 and h >= entry_price + tp_r * entry_atr:
-                        exit_price = entry_price + tp_r * entry_atr
-                        exit_reason = "tp"
+                    # ── 顺序对齐 enforce_position (先更新再检查) ──
+
+                    # 1. 保本锁定
+                    if breakeven_lock_r > 0 and not breakeven_locked:
+                        check_bp = h if direction == 1 else l
+                        mfe_r_be = abs(check_bp - entry_price) / entry_atr
+                        if mfe_r_be >= breakeven_lock_r:
+                            breakeven_locked = True
+                            if direction == 1:
+                                if entry_price > sl_price:
+                                    sl_price = entry_price
+                            else:
+                                if entry_price < sl_price:
+                                    sl_price = entry_price
+
+                    # 2. 更新最优价 (HWM/LWM)
+                    if direction == 1:
+                        if h > best_price:
+                            best_price = h
+                    else:
+                        if l < best_price:
+                            best_price = l
+
+                    # 3. 移动止损 (trailing activation + SL update)
+                    if stop_type == "trailing":
+                        mfe_r = abs(best_price - entry_price) / entry_atr
+                        if not trailing_active and mfe_r >= activation_r:
+                            trailing_active = True
+                        if trailing_active:
+                            if direction == 1:
+                                new_sl = best_price - trail_r * entry_atr
+                                if new_sl > sl_price:
+                                    sl_price = new_sl
+                            else:
+                                new_sl = best_price + trail_r * entry_atr
+                                if new_sl < sl_price:
+                                    sl_price = new_sl
+
+                    # 4. SL 检查 (用刚更新的 sl_price)
+                    if direction == 1 and l <= sl_price:
+                        exit_price = sl_price
+                        exit_reason = "trailing_sl" if trailing_active else "sl"
                         break
-                    elif direction == -1 and l <= entry_price - tp_r * entry_atr:
-                        exit_price = entry_price - tp_r * entry_atr
-                        exit_reason = "tp"
+                    elif direction == -1 and h >= sl_price:
+                        exit_price = sl_price
+                        exit_reason = "trailing_sl" if trailing_active else "sl"
                         break
 
-                # 3. 更新最优价
-                if direction == 1:
-                    if h > best_price:
-                        best_price = h
-                else:
-                    if l < best_price:
-                        best_price = l
+                    # 5. TP 检查
+                    if tp_enabled:
+                        if direction == 1 and h >= entry_price + tp_r * entry_atr:
+                            exit_price = entry_price + tp_r * entry_atr
+                            exit_reason = "tp"
+                            break
+                        elif direction == -1 and l <= entry_price - tp_r * entry_atr:
+                            exit_price = entry_price - tp_r * entry_atr
+                            exit_reason = "tp"
+                            break
 
-                # 4. 保本锁定: MFE >= breakeven_lock_r → SL 移至入场价
-                if breakeven_lock_r > 0 and not breakeven_locked:
-                    mfe_r_be = abs(best_price - entry_price) / entry_atr
-                    if mfe_r_be >= breakeven_lock_r:
-                        breakeven_locked = True
-                        if direction == 1:
-                            if entry_price > sl_price:
-                                sl_price = entry_price
-                        else:
-                            if entry_price < sl_price:
-                                sl_price = entry_price
+                # 超时或数据不足
+                if exit_price is None:
+                    if max_m > start_m:
+                        exit_price = float(m_c[max_m - 1])
+                        exit_reason = "timeout"
+                    else:
+                        exit_stats["no_data"] += 1
+                        continue
 
-                # 5. 移动止损
-                if stop_type == "trailing":
-                    mfe_r = abs(best_price - entry_price) / entry_atr
-                    if not trailing_active and mfe_r >= activation_r:
-                        trailing_active = True
-                    if trailing_active:
-                        if direction == 1:
-                            new_sl = best_price - trail_r * entry_atr
-                            if new_sl > sl_price:
-                                sl_price = new_sl
-                        else:
-                            new_sl = best_price + trail_r * entry_atr
-                            if new_sl < sl_price:
-                                sl_price = new_sl
-
-            # 超时或数据不足
-            if exit_price is None:
-                if max_j > i + 1:
-                    exit_price = closes[max_j - 1]
-                    exit_reason = "timeout"
-                else:
-                    exit_stats["no_data"] += 1
-                    continue
-
-            # 计算 realized R/R
-            if direction == 1:
-                realized_rr = (exit_price - entry_price) / entry_atr
             else:
-                realized_rr = (entry_price - exit_price) / entry_atr
+                # ====== 原始 4H bar 模式 ======
+                max_j = min(i + 1 + time_stop_bars, n)
+                for j in range(i + 1, max_j):
+                    h = highs[j]
+                    l = lows[j]
+                    if np.isnan(h) or np.isnan(l):
+                        continue
+
+                    # ── 顺序对齐 enforce_position (先更新再检查) ──
+
+                    # 1. 保本锁定: MFE >= breakeven_lock_r → SL 移至入场价
+                    if breakeven_lock_r > 0 and not breakeven_locked:
+                        check_bp = h if direction == 1 else l
+                        mfe_r_be = abs(check_bp - entry_price) / entry_atr
+                        if mfe_r_be >= breakeven_lock_r:
+                            breakeven_locked = True
+                            if direction == 1:
+                                if entry_price > sl_price:
+                                    sl_price = entry_price
+                            else:
+                                if entry_price < sl_price:
+                                    sl_price = entry_price
+
+                    # 2. 更新最优价 (HWM/LWM)
+                    if direction == 1:
+                        if h > best_price:
+                            best_price = h
+                    else:
+                        if l < best_price:
+                            best_price = l
+
+                    # 3. 移动止损 (trailing activation + SL update)
+                    if stop_type == "trailing":
+                        mfe_r = abs(best_price - entry_price) / entry_atr
+                        if not trailing_active and mfe_r >= activation_r:
+                            trailing_active = True
+                        if trailing_active:
+                            if direction == 1:
+                                new_sl = best_price - trail_r * entry_atr
+                                if new_sl > sl_price:
+                                    sl_price = new_sl
+                            else:
+                                new_sl = best_price + trail_r * entry_atr
+                                if new_sl < sl_price:
+                                    sl_price = new_sl
+
+                    # 4. SL 检查 (用刚更新的 sl_price)
+                    if direction == 1 and l <= sl_price:
+                        exit_price = sl_price
+                        exit_reason = "trailing_sl" if trailing_active else "sl"
+                        break
+                    elif direction == -1 and h >= sl_price:
+                        exit_price = sl_price
+                        exit_reason = "trailing_sl" if trailing_active else "sl"
+                        break
+
+                    # 5. TP 检查
+                    if tp_enabled:
+                        if direction == 1 and h >= entry_price + tp_r * entry_atr:
+                            exit_price = entry_price + tp_r * entry_atr
+                            exit_reason = "tp"
+                            break
+                        elif direction == -1 and l <= entry_price - tp_r * entry_atr:
+                            exit_price = entry_price - tp_r * entry_atr
+                            exit_reason = "tp"
+                            break
+
+                # 超时或数据不足
+                if exit_price is None:
+                    if max_j > i + 1:
+                        exit_price = closes[max_j - 1]
+                        exit_reason = "timeout"
+                    else:
+                        exit_stats["no_data"] += 1
+                        continue
+
+            # 计算 realized R/R (除以 initial_r × ATR，反映仓位大小)
+            # 1R = initial_r × ATR = 止损距离 = position sizing 基准
+            # 这样 wider stop → 更大的 1R → 同样价格变动产生更小的 R
+            risk_distance = initial_r * entry_atr
+            if direction == 1:
+                realized_rr = (exit_price - entry_price) / risk_distance
+            else:
+                realized_rr = (entry_price - exit_price) / risk_distance
 
             results.iloc[results.index.get_loc(idx_arr[i])] = realized_rr
             total_entries += 1
@@ -696,7 +898,18 @@ def simulate_rr_execution(
                 breakeven_lock_count += 1
 
             # 记录交易详情
-            exit_bar_idx = j if exit_reason != "timeout" else max_j - 1
+            if use_1min and sym_1min is not None and has_ts:
+                # 1min path: 估算退出对应的 4H bar 偏移
+                if exit_reason == "timeout":
+                    exit_bar_idx = min(i + time_stop_bars, n - 1)
+                else:
+                    bars_elapsed = (
+                        max(1, (mi - start_m) // bar_minutes + 1) if mi > start_m else 1
+                    )
+                    exit_bar_idx = min(i + bars_elapsed, n - 1)
+            else:
+                # 4H path
+                exit_bar_idx = j if exit_reason != "timeout" else (max_j - 1)
             trade_details.append(
                 {
                     "symbol": sym,
@@ -707,6 +920,11 @@ def simulate_rr_execution(
                     "direction": direction,
                     "realized_rr": float(realized_rr),
                     "exit_reason": exit_reason,
+                    "evidence_score": float(
+                        df.iloc[i].get("evidence_score", 0.5)
+                        if "evidence_score" in df.columns
+                        else 0.5
+                    ),
                     "archetype": (
                         str(df.iloc[i].get("_pcm_archetype", ""))
                         if "_pcm_archetype" in df.columns
@@ -714,6 +932,51 @@ def simulate_rr_execution(
                     ),
                 }
             )
+
+    # ── slot 限制：按 evidence 竞争排序，slot 满时驱逐最弱 active ──
+    if max_slots and max_slots > 0 and trade_details:
+        trade_details.sort(key=lambda t: t["entry_idx"])
+        accepted = []  # 当前 active trades
+        rejected_indices = set()
+        evicted_indices = set()
+        for trade in trade_details:
+            eidx = trade["entry_idx"]
+            new_ev = trade.get("evidence_score", 0.5)
+            # 移除已平仓的 active trades
+            active = [t for t in accepted if t["exit_idx"] > eidx]
+            if len(active) >= max_slots:
+                # slot 满 → 找最弱的 active
+                weakest = min(active, key=lambda t: t.get("evidence_score", 0.5))
+                weakest_ev = weakest.get("evidence_score", 0.5)
+                if new_ev > weakest_ev:
+                    # 新信号更强 → 驱逐最弱，接纳新信号
+                    evicted_indices.add(weakest["entry_idx"])
+                    active = [
+                        t for t in active if t["entry_idx"] != weakest["entry_idx"]
+                    ]
+                    accepted = active + [trade]
+                else:
+                    # 新信号更弱 → 拒绝
+                    rejected_indices.add(eidx)
+            else:
+                accepted = active + [trade]
+
+        # 清理被驱逐 + 被拒绝的 trades
+        removed_indices = rejected_indices | evicted_indices
+        if removed_indices:
+            for ridx in removed_indices:
+                loc = results.index.get_loc(ridx)
+                results.iloc[loc] = np.nan
+            trade_details = [
+                t for t in trade_details if t["entry_idx"] not in removed_indices
+            ]
+            total_entries -= len(removed_indices)
+            if not silent:
+                print(
+                    f"   🔒 Slot limit (max={max_slots}): "
+                    f"rejected {len(rejected_indices)}, evicted {len(evicted_indices)}, "
+                    f"kept {total_entries}"
+                )
 
     if not silent:
         print(
@@ -1354,6 +1617,20 @@ def load_direction_config(
         return yaml.safe_load(f) or {}
 
 
+def _apply_transform(series: pd.Series, transform: str) -> np.ndarray:
+    """Apply direction transform to a numeric series."""
+    if transform == "raw":
+        return series.values
+    elif transform == "sign":
+        return np.sign(series).values
+    elif transform == "negate_sign":
+        return (-np.sign(series)).values
+    elif transform == "center_sign":
+        return np.sign(series - 0.5).values
+    else:
+        return series.values
+
+
 def apply_direction_rules(
     df: pd.DataFrame,
     archetype: str,
@@ -1361,13 +1638,18 @@ def apply_direction_rules(
 ) -> str:
     """根据 direction.yaml 规则确定方向列。
 
-    按 direction_rules 优先级从高到低尝试，命中第一个可用的 method 即返回。
-    如果所有规则都不匹配，返回 None（调用方应报错终止）。
+    按 direction_rules 优先级从高到低尝试：
+    - 命中第一个可用规则后设置 entry_direction
+    - 对 direction=0 的行，继续用后续规则 fallback 填充
+    - 直到所有行都有方向或规则用尽
 
     Returns:
         使用的方向列名（已写入 df['entry_direction']）或 None
     """
     rules = direction_cfg.get("direction_rules", [])
+
+    first_feature = None
+    applied_rules = []
 
     for rule in rules:
         feature = rule.get("feature", "")
@@ -1377,25 +1659,42 @@ def apply_direction_rules(
             continue
 
         series = pd.to_numeric(df[feature], errors="coerce").fillna(0.0)
+        direction_vals = _apply_transform(series, transform)
 
-        if transform == "raw":
-            df["entry_direction"] = series.values
-        elif transform == "sign":
-            df["entry_direction"] = np.sign(series).values
-        elif transform == "negate_sign":
-            df["entry_direction"] = (-np.sign(series)).values
-        elif transform == "center_sign":
-            df["entry_direction"] = np.sign(series - 0.5).values
+        if first_feature is None:
+            # 第一条规则：初始化 entry_direction
+            df["entry_direction"] = direction_vals
+            first_feature = feature
+            desc = rule.get("description", feature)
+            n_nonzero = int((df["entry_direction"] != 0).sum())
+            n_zero = len(df) - n_nonzero
+            print(f"   Direction: {feature} (transform={transform}) | {desc}")
+            print(f"     → {n_nonzero} have direction, {n_zero} remain undecided")
+            applied_rules.append(feature)
+            if n_zero == 0:
+                return first_feature
         else:
-            df["entry_direction"] = series.values
+            # 后续规则：只填充 direction=0 的行
+            zero_mask = df["entry_direction"] == 0
+            n_before = int(zero_mask.sum())
+            if n_before == 0:
+                break
+            df.loc[zero_mask, "entry_direction"] = direction_vals[zero_mask.values]
+            n_filled = n_before - int((df["entry_direction"] == 0).sum())
+            if n_filled > 0:
+                desc = rule.get("description", feature)
+                print(
+                    f"     fallback: {feature} (transform={transform}) filled {n_filled} rows"
+                )
+                applied_rules.append(feature)
 
-        # replace 0 with 0 (no direction)
-        desc = rule.get("description", feature)
-        print(f"   Direction: {feature} (transform={transform}) | {desc}")
-        return feature
+    if first_feature:
+        n_final = int((df["entry_direction"] != 0).sum())
+        print(
+            f"     → final: {n_final}/{len(df)} have direction ({len(applied_rules)} rules used)"
+        )
 
-    # 所有规则都不匹配
-    return None
+    return first_feature
 
 
 def _pcm_get_priority_rank(archetype: str, priority: List[str]) -> int:
@@ -1814,6 +2113,16 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
 
     # ── 6. Bar-by-bar 执行模拟 ──
     breakeven_lock_r = args.breakeven if args.breakeven is not None else 0.0
+
+    # 加载 1min bar 数据（如果指定 --use-1min）
+    bars_1min_dict = None
+    if getattr(args, "use_1min", False):
+        bars_1min_dict = _load_1min_bars(
+            merged,
+            data_path=getattr(args, "data_path", None),
+            live_root=getattr(args, "live_root", "live/highcap"),
+        )
+
     print(f"\n📈 Simulating bar-by-bar with per-archetype execution params...")
     exec_returns, trade_details = simulate_rr_execution(
         merged,
@@ -1821,6 +2130,8 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         atr_col="atr",
         use_tier_params=True,
         breakeven_lock_r=breakeven_lock_r,
+        max_slots=max_slots,
+        bars_1min_dict=bars_1min_dict,
     )
 
     valid_returns = exec_returns.dropna()
@@ -2091,6 +2402,7 @@ def run_grid_search(
     atr_col: str = "atr",
     span_years: float = 1.0,
     n_symbols: int = 1,
+    bars_1min_dict: Optional[Dict[str, pd.DataFrame]] = None,
 ) -> List[Dict[str, Any]]:
     """
     执行全量网格搜索
@@ -2117,7 +2429,13 @@ def run_grid_search(
 
         # 静默运行模拟（抑制 print 输出）
         with contextlib.redirect_stdout(io.StringIO()):
-            returns, _ = simulate_rr_execution(df, modified, atr_col, silent=True)
+            returns, _ = simulate_rr_execution(
+                df,
+                modified,
+                atr_col,
+                silent=True,
+                bars_1min_dict=bars_1min_dict,
+            )
         valid = returns.dropna()
 
         if len(valid) >= 2 and valid.std() > 1e-8:
@@ -2157,12 +2475,24 @@ def _identify_plateau(
     results: List[Dict[str, Any]],
     top_frac: float = 0.25,
     cv_threshold: float = 0.15,
+    param_names: Optional[List[str]] = None,
+    param_values: Optional[List[List[float]]] = None,
 ) -> Dict[str, Any]:
     """
-    识别参数平坦高原区域
+    识别参数平坦高原区域 + 逐参数边际分析选择保守参数。
+
+    核心思路：对每个参数独立计算其“足够好”的最小值（elbow），
+    然后从实际组合中找最接近这些 elbow 值的好组合。
+
+    这解决了“参数和最小”方法的缺陷：
+    当 initial_r 在所有好组合中都卡上限时，旧方法无法区分；
+    新方法通过边际分析找到 initial_r 的 elbow，就能正确地选择更保守的值。
 
     Returns:
-        plateau 分析结果
+        plateau 分析结果，包含:
+        - best: Sharpe 绝对最优组合
+        - recommended: 逐参数 elbow 分析后的保守选择
+        - param_analysis: 每个参数的边际分析结果
     """
     sorted_results = sorted(results, key=lambda r: r["sharpe"], reverse=True)
     top_n = max(3, int(len(sorted_results) * top_frac))
@@ -2175,6 +2505,67 @@ def _identify_plateau(
 
     is_plateau = cv < cv_threshold
 
+    # ── 逐参数边际分析 (per-parameter marginal analysis) ──
+    recommended = sorted_results[0]  # 默认 = best
+    param_analysis = {}  # 每个参数的分析结果
+    sufficient_values = {}  # 每个参数的 "elbow" 值
+
+    if param_names and param_values:
+        for pi, pname in enumerate(param_names):
+            vals = sorted(set(param_values[pi]))
+            # 计算每个值的平均 Sharpe（边际化其他参数）
+            val_mean_sharpe = {}
+            for v in vals:
+                matching = [
+                    r["sharpe"] for r in results if abs(r.get(pname, -999) - v) < 1e-6
+                ]
+                if matching:
+                    val_mean_sharpe[v] = float(np.mean(matching))
+
+            if not val_mean_sharpe:
+                continue
+
+            sorted_vals = sorted(val_mean_sharpe.keys())
+            max_mean = max(val_mean_sharpe.values())
+            # “足够好”阈值 = 95% 的该参数维度最优均值
+            suff_threshold = max_mean * 0.95
+
+            # 找最小的值使得 mean_sharpe >= 95% max
+            sufficient_val = sorted_vals[-1]  # 默认取最大
+            for v in sorted_vals:
+                if val_mean_sharpe[v] >= suff_threshold:
+                    sufficient_val = v
+                    break
+
+            # 检测是否卡在搜索上限
+            at_boundary = abs(sorted_vals[-1] - sufficient_val) < 1e-6
+
+            param_analysis[pname] = {
+                "values": sorted_vals,
+                "mean_sharpes": [val_mean_sharpe[v] for v in sorted_vals],
+                "max_mean_sharpe": max_mean,
+                "sufficient_value": sufficient_val,
+                "at_boundary": at_boundary,
+                "best_value": max(val_mean_sharpe, key=val_mean_sharpe.get),
+            }
+            sufficient_values[pname] = sufficient_val
+
+        # 从实际组合中找最接近 sufficient_values 的好组合
+        if sufficient_values:
+            best_sharpe = sorted_results[0]["sharpe"]
+            # 候选：Sharpe >= 85% best（稍宽松一点，因为 elbow 可能比 best 低）
+            threshold = best_sharpe * 0.85
+            eligible = [r for r in sorted_results if r["sharpe"] >= threshold]
+            if eligible:
+                # 按各参数与 sufficient_value 的偏差排序，选偏差最小的
+                def _deviation(r):
+                    return sum(
+                        abs(r.get(p, 0) - sufficient_values.get(p, 0))
+                        for p in param_names
+                    )
+
+                recommended = min(eligible, key=_deviation)
+
     return {
         "is_plateau": is_plateau,
         "top_n": top_n,
@@ -2182,6 +2573,8 @@ def _identify_plateau(
         "std_sharpe": float(std_sharpe),
         "cv": float(cv),
         "best": sorted_results[0],
+        "recommended": recommended,
+        "param_analysis": param_analysis,
         "top_results": top,
         "all_sorted": sorted_results,
     }
@@ -2911,8 +3304,8 @@ def main() -> int:
     p.add_argument(
         "--max-slots",
         type=int,
-        default=2,
-        help="Max concurrent slots for PCM mode (default: 2)",
+        default=None,
+        help="Max concurrent slots for PCM mode (default: from constitution.yaml)",
     )
     p.add_argument("--features-store-root", default="feature_store")
     p.add_argument(
@@ -2971,7 +3364,26 @@ def main() -> int:
         default=None,
         help="Output path for results (HTML report).",
     )
+    p.add_argument(
+        "--use-1min",
+        action="store_true",
+        help="Use 1min bar data for precise SL/trailing simulation (matches live trading)",
+    )
+    p.add_argument(
+        "--live-root",
+        default="live/highcap",
+        help="Live data root for 1min bars (fallback when --data-path=none)",
+    )
+    p.add_argument(
+        "--data-path",
+        default="data/parquet_data",
+        help="研究数据目录 (默认 data/parquet_data, 设为 none 使用实盘数据验证)",
+    )
     args = p.parse_args()
+
+    # --data-path none → 显式使用实盘数据
+    if args.data_path and args.data_path.lower() == "none":
+        args.data_path = None
 
     # ── PCM mode: multi-archetype ──
     if args.pcm:
@@ -3407,6 +3819,15 @@ def main() -> int:
     # 单次回测模式
     # ================================================================
 
+    # 加载 1min bar 数据（如果指定 --use-1min）
+    bars_1min_dict = None
+    if getattr(args, "use_1min", False):
+        bars_1min_dict = _load_1min_bars(
+            merged,
+            data_path=getattr(args, "data_path", None),
+            live_root=getattr(args, "live_root", "live/highcap"),
+        )
+
     # 使用 execution.yaml 配置模拟 RR
     print("\n📈 Simulating with execution.yaml config...")
     exec_returns, trade_details = simulate_rr_execution(
@@ -3415,6 +3836,7 @@ def main() -> int:
         atr_col="atr",
         use_tier_params=use_tier_params,
         breakeven_lock_r=breakeven_lock_r,
+        bars_1min_dict=bars_1min_dict,
     )
 
     valid_returns = exec_returns.dropna()

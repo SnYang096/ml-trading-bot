@@ -59,14 +59,19 @@ def build_position_dict(
     max_holding_bars = rr_constraints.get("max_holding_bars", 50)
 
     sl_price, tp_price = None, None
-    if entry_price > 0 and atr > 0 and stop_loss_r > 0 and take_profit_r > 0:
-        sl_price, tp_price = compute_rr_prices(
+    # SL 和 TP 独立计算 —— 不要求两者同时 > 0
+    if entry_price > 0 and atr > 0 and stop_loss_r > 0:
+        # 始终计算 SL价格
+        computed_sl, computed_tp = compute_rr_prices(
             side=side,
             entry_price=entry_price,
             atr=atr,
             stop_loss_r=stop_loss_r,
-            take_profit_r=take_profit_r,
+            take_profit_r=take_profit_r if take_profit_r > 0 else stop_loss_r,  # dummy
         )
+        sl_price = computed_sl
+        # TP 仅在启用时设置
+        tp_price = computed_tp if take_profit_r > 0 else None
 
     if entry_time is None:
         entry_time = datetime.now(timezone.utc)
@@ -84,6 +89,9 @@ def build_position_dict(
         "trailing_atr": rr_constraints.get("trailing_atr"),
         "max_holding_bars": max_holding_bars,
         "atr_at_entry": atr,
+        "initial_risk_distance": (
+            stop_loss_r * atr if stop_loss_r > 0 and atr > 0 else atr
+        ),
         "tier_name": strategy_specific.get("tier_name", "default"),
         "evidence_score": intent.confidence or 0.0,
         "bar_minutes": bar_minutes,
@@ -92,7 +100,11 @@ def build_position_dict(
 
     # BPC 扩展: activation trailing + breakeven
     bpc_cfg = exec_profile.get("bpc_position_config") or {}
-    activation_r = bpc_cfg.get("activation_r") or rr_constraints.get("trailing_atr")
+    activation_r = (
+        bpc_cfg.get("activation_r")
+        or rr_constraints.get("activation_r")
+        or rr_constraints.get("trailing_atr")
+    )
     trail_r = bpc_cfg.get("trail_r") or rr_constraints.get("trailing_atr")
 
     if bpc_cfg and activation_r is not None:

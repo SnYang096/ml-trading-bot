@@ -1,16 +1,16 @@
 # BPC Execution 配置
-# 版本: 30
-# 更新时间: 2026-02-26
+# 版本: 33
+# 更新时间: 2026-02-28
 #
 # ┌─────────────────────────────────────────────────────────┐
 # │  Grid Search auto-promoted                              │
 # │  Sharpe (daily): 3.99                                   │
 # │  Best: initial_r=1.0, activation_r=0.5, trail_r=0.5      │
-# │  Plateau: ✅ stable (CV=0.018)                            │
-# │  Changes: initial_r: 1.0 → 1.0, activation_r: 1.5 → 0.5, trail_r: 1.0 → 0.5│
+# │  Plateau: ✅ stable (CV=0.026)                            │
+# │  Changes: initial_r: 4.0 → 1.0, activation_r: 2.5 → 0.5, trail_r: 0.5 → 0.5│
 # └─────────────────────────────────────────────────────────┘
 #
-version: 30
+version: 33
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
@@ -71,15 +71,15 @@ optimization:
     stop_loss.initial_r:
       range:
       - 1.0
-      - 3.0
+      - 4.0
       step: 0.5
     stop_loss.trailing.activation_r:
       range:
       - 0.5
-      - 3.0
+      - 5.0
       step: 0.5
     stop_loss.trailing.trail_r:
       range:
       - 0.5
-      - 2.5
+      - 3.0
       step: 0.5

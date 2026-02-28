@@ -271,6 +271,9 @@ class MarketDataLoader:
 
         result = pd.concat(frames).sort_index()
         result = result[~result.index.duplicated(keep="last")]
+        # Recompute CVD columns from buy_qty/sell_qty across the full concatenated
+        # range so that cumsum and rolling windows are continuous across months.
+        result = self._recompute_cvd_columns(result)
         return result
 
     def _extend_timeframe_cache(
@@ -304,6 +307,8 @@ class MarketDataLoader:
 
         out = pd.concat(frames).sort_index()
         out = out[~out.index.duplicated(keep="last")]
+        # Recompute CVD across the full extended range for continuity.
+        out = self._recompute_cvd_columns(out)
         return out
 
     def _build_timeframe_cache_for_files(
@@ -322,7 +327,58 @@ class MarketDataLoader:
             raise ValueError(f"No usable data after reading {len(files)} files.")
         result = pd.concat(frames).sort_index()
         result = result[~result.index.duplicated(keep="last")]
+        # Recompute CVD columns across full range (continuous across months).
+        result = self._recompute_cvd_columns(result)
         return result
+
+    @staticmethod
+    def _recompute_cvd_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """Recompute all CVD-derived columns from buy_qty / sell_qty.
+
+        This must run AFTER cross-file concatenation so that cumsum and rolling
+        windows are continuous across month boundaries.  Previous implementation
+        aggregated per-bar cumsum values via 'sum' during resample, which was
+        incorrect and caused shd_pct and bpc_cvd_z mismatches.
+        """
+        if "buy_qty" not in df.columns or "sell_qty" not in df.columns:
+            # No orderflow data — fill CVD columns with 0
+            for col in [
+                "cvd",
+                "cvd_change_1",
+                "cvd_change_5",
+                "cvd_change_20",
+                "cvd_roll20",
+                "cvd_roll60",
+                "cvd_roll288",
+                "cvd_normalized",
+                "cvd_change_5_normalized",
+            ]:
+                df[col] = 0.0
+            return df
+
+        delta = df["buy_qty"].fillna(0) - df["sell_qty"].fillna(0)
+        total_flow = df["buy_qty"].fillna(0) + df["sell_qty"].fillna(0)
+
+        df["cvd_change_1"] = delta
+        df["cvd_change_5"] = delta.rolling(window=5, min_periods=1).sum()
+        df["cvd_change_20"] = delta.rolling(window=20, min_periods=1).sum()
+        df["cvd_roll20"] = delta.rolling(window=20, min_periods=1).sum()
+        df["cvd_roll60"] = delta.rolling(window=60, min_periods=1).sum()
+        df["cvd_roll288"] = delta.rolling(window=288, min_periods=1).sum()
+        df["cvd"] = delta.cumsum()
+        df["cvd_normalized"] = (delta / total_flow.replace(0, np.nan)).fillna(0)
+        total_flow_5 = total_flow.rolling(window=5, min_periods=1).sum()
+        df["cvd_change_5_normalized"] = (
+            df["cvd_change_5"] / total_flow_5.replace(0, np.nan)
+        ).fillna(0)
+
+        # Recompute taker_buy_ratio from aggregated buy/sell if not already correct
+        if "taker_buy_ratio" not in df.columns:
+            df["taker_buy_ratio"] = (
+                df["buy_qty"] / total_flow.replace(0, np.nan)
+            ).fillna(0.5)
+
+        return df
 
     def _resample_from_ohlc(self, df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         df = df.copy()
@@ -347,23 +403,17 @@ class MarketDataLoader:
             "close": "last",
             "volume": "sum",
         }
-        optional_cols = [
-            "buy_qty",
-            "sell_qty",
-            "taker_buy_ratio",
-            "cvd",
-            "cvd_roll20",
-            "cvd_roll60",
-            "cvd_roll288",
-            "cvd_change_1",
-            "cvd_change_5",
-            "cvd_change_20",
-            "cvd_normalized",
-            "cvd_change_5_normalized",
-        ]
-        for col in optional_cols:
+        # Only aggregate additive orderflow columns (buy_qty, sell_qty).
+        # CVD-derived columns (cvd, cvd_change_*, cvd_roll*) must NOT be summed
+        # because they are cumulative or rolling — summing sub-bar values is wrong.
+        # They will be recomputed after cross-month concatenation in
+        # _recompute_cvd_columns().
+        additive_of_cols = ["buy_qty", "sell_qty"]
+        for col in additive_of_cols:
             if col in df.columns:
                 agg_dict[col] = "sum"
+        if "taker_buy_ratio" in df.columns:
+            agg_dict["taker_buy_ratio"] = "mean"
 
         resampled = df.resample(timeframe).agg(agg_dict).dropna()
         resampled["trade_count"] = df["close"].resample(timeframe).size()
@@ -398,38 +448,15 @@ class MarketDataLoader:
             result["taker_buy_ratio"] = (
                 result["buy_qty"] / total_flow.replace(0, np.nan)
             ).fillna(0.5)
-
-            delta = result["buy_qty"].fillna(0) - result["sell_qty"].fillna(0)
-            result["cvd_change_1"] = delta
-            result["cvd_change_5"] = delta.rolling(window=5, min_periods=1).sum()
-            result["cvd_change_20"] = delta.rolling(window=20, min_periods=1).sum()
-            result["cvd_roll20"] = delta.rolling(window=20, min_periods=1).sum()
-            result["cvd_roll60"] = delta.rolling(window=60, min_periods=1).sum()
-            result["cvd_roll288"] = delta.rolling(window=288, min_periods=1).sum()
-            result["cvd"] = delta.cumsum()
-            result["cvd_normalized"] = delta / total_flow.replace(0, np.nan)
-            result["cvd_normalized"] = result["cvd_normalized"].fillna(0)
-            total_flow_5 = total_flow.rolling(window=5, min_periods=1).sum()
-            result["cvd_change_5_normalized"] = result[
-                "cvd_change_5"
-            ] / total_flow_5.replace(0, np.nan)
-            result["cvd_change_5_normalized"] = result[
-                "cvd_change_5_normalized"
-            ].fillna(0)
+            # NOTE: CVD-derived columns (cvd, cvd_change_*, cvd_roll*) are NOT
+            # computed here because per-file cumsum would break at month
+            # boundaries after concatenation.  They are recomputed in
+            # _recompute_cvd_columns() after cross-file concat.
         else:
             for col in [
                 "buy_qty",
                 "sell_qty",
                 "taker_buy_ratio",
-                "cvd",
-                "cvd_roll20",
-                "cvd_roll60",
-                "cvd_roll288",
-                "cvd_change_1",
-                "cvd_change_5",
-                "cvd_change_20",
-                "cvd_normalized",
-                "cvd_change_5_normalized",
             ]:
                 result[col] = 0.0
 

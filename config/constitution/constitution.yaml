@@ -121,7 +121,7 @@ safety_state:
 # -----------------------------------------------------------------------------
 slots:
   enabled: true
-  slot_count: 2
+  slot_count: 3
   # Risk budget per slot (fraction of equity). This is NOT "cash allocation".
   # 每笔交易风险占 equity 的比例 (1% = 0.01)
   # 用于反算仓位: risk_usd = equity × risk_per_slot
@@ -153,15 +153,15 @@ slots:
 resource_allocation:
   per_strategy_limits:
     bpc:
-      max_slots: 2              # BPC 作为骨架策略，可占全部 slot
+      max_slots: 1              # 每策略独占 1 slot, 互不竞争
       # max_risk_per_trade 省略 → 继承 slots.risk_per_slot (0.01)
       allow_add_position: true   # BPC 趋势延续允许加仓
     me:
-      max_slots: 2
+      max_slots: 1
       # max_risk_per_trade 省略 → 继承 slots.risk_per_slot (0.01)
       allow_add_position: true   # ME 动能扩张允许加仓
     fer:
-      max_slots: 2
+      max_slots: 1
       # max_risk_per_trade 省略 → 继承 slots.risk_per_slot (0.01)
       allow_add_position: false  # FER 反转策略不加仓
     lv:

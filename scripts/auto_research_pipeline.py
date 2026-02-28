@@ -560,6 +560,8 @@ def run_strategy_pipeline(
     run_dir: Path,
     seed: int = 42,
     dry_run: bool = False,
+    use_1min: bool = False,
+    live_root: str = "live/highcap",
 ) -> Dict[str, Any]:
     """执行单个策略的完整训练链."""
     scfg = cfg["strategies"][strategy]
@@ -958,21 +960,24 @@ def run_strategy_pipeline(
                 print(f"\n  ⚠️  Execution min_trades check failed: {exc}")
 
     if not skip_execution_opt:
+        exec_cmd = [
+            "python",
+            "scripts/optimize_execution_grid.py",
+            "--logs",
+            f"{evidence_dir}/logs_gated.parquet",
+            "--strategy",
+            strategy,
+            "--strategies-root",
+            strategies_root,
+            "--output",
+            f"{evidence_dir}/execution_grid.json",
+            "--promote",
+        ]
+        if use_1min:
+            exec_cmd.extend(["--use-1min", "--data-path", data_path])
         run_step(
             "Execution Optimize",
-            [
-                "python",
-                "scripts/optimize_execution_grid.py",
-                "--logs",
-                f"{evidence_dir}/logs_gated.parquet",
-                "--strategy",
-                strategy,
-                "--strategies-root",
-                strategies_root,
-                "--output",
-                f"{evidence_dir}/execution_grid.json",
-                "--promote",
-            ],
+            exec_cmd,
             log,
             dry_run=dry_run,
         )
@@ -982,20 +987,23 @@ def run_strategy_pipeline(
     # 否则报告的 Sharpe/trades 虚高（gate 会 veto 大量信号）
     # 必须传 --strategies-root: 确保读取本次实验的 entry_filters.yaml 而不是旧的
     experiment_map_path = f"{run_dir}/trading_map_{strategy}.html"
+    bt_cmd = [
+        "python",
+        "scripts/backtest_execution_layer.py",
+        "--logs",
+        f"{evidence_dir}/logs_gated.parquet",
+        "--strategy",
+        strategy,
+        "--strategies-root",
+        strategies_root,
+        "--output",
+        experiment_map_path,
+    ]
+    if use_1min:
+        bt_cmd.extend(["--use-1min", "--data-path", data_path])
     rc, bt_out = run_step(
         "Backtest",
-        [
-            "python",
-            "scripts/backtest_execution_layer.py",
-            "--logs",
-            f"{evidence_dir}/logs_gated.parquet",
-            "--strategy",
-            strategy,
-            "--strategies-root",
-            strategies_root,
-            "--output",
-            experiment_map_path,
-        ],
+        bt_cmd,
         log,
         dry_run=dry_run,
     )
@@ -1198,6 +1206,9 @@ def _run_pcm_joint_backtest(
     timestamp: str,
     *,
     dry_run: bool = False,
+    use_1min: bool = False,
+    live_root: str = "live/highcap",
+    data_path: str = "data/parquet_data",
 ) -> Optional[Dict[str, Any]]:
     """Step 9.5: 全策略完成后, 执行 PCM 联合回测.
 
@@ -1256,6 +1267,8 @@ def _run_pcm_joint_backtest(
             pcm_map_path,
         ]
     )
+    if use_1min:
+        cmd.extend(["--use-1min", "--data-path", data_path])
 
     rc, pcm_out = run_step(
         "PCM Joint Backtest (Step 9.5)",
@@ -1451,6 +1464,16 @@ def main():
         metavar="TS",
         help="对比两次实验的 archetypes 差异 (如 --diff TS1 TS2)",
     )
+    p.add_argument(
+        "--use-1min",
+        action="store_true",
+        help="使用 1min bar 精细模拟止损/移动止损 (匹配实盘精度)",
+    )
+    p.add_argument(
+        "--live-root",
+        default="live/highcap",
+        help="1min bar 数据根目录 (default: live/highcap)",
+    )
     args = p.parse_args()
 
     cfg = load_pipeline_config(Path(args.config))
@@ -1570,6 +1593,8 @@ def main():
                 run_dir=seed_run_dir,
                 seed=seed,
                 dry_run=args.dry_run,
+                use_1min=args.use_1min,
+                live_root=args.live_root,
             )
 
             metrics = result.get("backtest_metrics", {})
@@ -1744,6 +1769,9 @@ def main():
             history_dir,
             timestamp,
             dry_run=args.dry_run,
+            use_1min=args.use_1min,
+            live_root=args.live_root,
+            data_path=cfg["data_path"],
         )
 
     # ── 汇总 ──
@@ -1807,7 +1835,12 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
 
 
 def _cmd_list_experiments(history_dir: Path, strategy: str):
-    """列出指定策略的所有历史实验."""
+    """列出指定策略的历史实验。
+
+    Multi-seed 实验组（同一 timestamp, 不同 _s{N} 后缀）只显示胜出的 seed，
+    其余 seed 折叠为一行摘要，避免列表污染。
+    """
+    import re
     import time
 
     strat_dir = history_dir / strategy
@@ -1815,43 +1848,125 @@ def _cmd_list_experiments(history_dir: Path, strategy: str):
         print(f"\n📋 {strategy.upper()}: 无历史实验")
         return
 
-    runs = sorted(strat_dir.iterdir())
-    print(f"\n📋 {strategy.upper()} 历史实验 ({len(runs)} 次):")
+    runs = sorted(d for d in strat_dir.iterdir() if d.is_dir())
+
+    # 分组: base_timestamp -> [(run_dir, seed_num)]
+    # e.g. 20260226_211920_s1, _s2, _s42 => base=20260226_211920
+    seed_re = re.compile(r"^(.+?)_s(\d+)$")
+    groups = {}  # base_ts -> [(run_dir, seed_num)]
+    standalone = []  # 无 seed 后缀的单独实验
+    for run_dir in runs:
+        m = seed_re.match(run_dir.name)
+        if m:
+            base_ts, seed_num = m.group(1), int(m.group(2))
+            groups.setdefault(base_ts, []).append((run_dir, seed_num))
+        else:
+            standalone.append(run_dir)
+
+    # 构建显示列表: (sort_key, lines)
+    display_items = []
+
+    for run_dir in standalone:
+        lines = _format_experiment_line(run_dir)
+        display_items.append((run_dir.name, lines))
+
+    for base_ts, members in groups.items():
+        members.sort(key=lambda x: x[1])
+        if len(members) == 1:
+            # 只有一个 seed，当单独实验显示
+            lines = _format_experiment_line(members[0][0])
+            display_items.append((base_ts, lines))
+            continue
+
+        # 多 seed: 找胜出的 (有 report + 最高 sharpe)
+        best_dir, best_seed, best_sharpe = None, None, -999
+        n_total = len(members)
+        n_no_report = 0
+        n_error = 0
+        for run_dir, seed_num in members:
+            report_file = run_dir / "report.json"
+            if not report_file.exists():
+                n_no_report += 1
+                continue
+            try:
+                report = json.loads(report_file.read_text(encoding="utf-8"))
+                bt = report.get("backtest_metrics", {})
+                comp = report.get("comparison", {})
+                decision = comp.get("decision", "?")
+                sharpe = bt.get("sharpe_per_trade", 0) or 0
+                if decision == "ERROR":
+                    n_error += 1
+                if isinstance(sharpe, (int, float)) and sharpe > best_sharpe:
+                    best_sharpe = sharpe
+                    best_dir = run_dir
+                    best_seed = seed_num
+            except Exception:
+                n_no_report += 1
+
+        if best_dir is not None:
+            lines = _format_experiment_line(best_dir)
+            seed_note = f"  └─ multi-seed: winner=s{best_seed}/{n_total} seeds"
+            if n_no_report > 0:
+                seed_note += f", {n_no_report} incomplete"
+            if n_error > 0:
+                seed_note += f", {n_error} error"
+            lines.append(seed_note)
+            display_items.append((base_ts, lines))
+        else:
+            # 所有 seed 都没有有效 report
+            first_dir = members[0][0]
+            created_time = time.strftime(
+                "%Y-%m-%d %H:%M", time.localtime(first_dir.stat().st_ctime)
+            )
+            lines = [
+                f"  {base_ts:<22s} {created_time:<15s}  (无有效 report, {n_total} seeds 全部失败)"
+            ]
+            display_items.append((base_ts, lines))
+
+    display_items.sort(key=lambda x: x[0])
+    n_logical = len(display_items)
+    print(f"\n📋 {strategy.upper()} 历史实验 ({n_logical} 次):")
     print(f"{'─'*100}")
     print(
         f"  {'时间戳':<22s} {'创建时间':<15s} {'Sharpe':>10s} {'Trades':>8s} {'决策':>8s}  备注"
     )
     print(f"{'─'*100}")
+    for _, lines in display_items:
+        for line in lines:
+            print(line)
 
-    for run_dir in runs:
-        # 获取目录创建时间
-        created_time = time.strftime(
-            "%Y-%m-%d %H:%M", time.localtime(run_dir.stat().st_ctime)
-        )
 
-        report_file = run_dir / "report.json"
-        if not report_file.exists():
-            print(f"  {run_dir.name:<22s} {created_time:<15s}  (无 report.json)")
-            continue
+def _format_experiment_line(run_dir: Path) -> list:
+    """格式化单个实验目录为显示行."""
+    import time
 
+    created_time = time.strftime(
+        "%Y-%m-%d %H:%M", time.localtime(run_dir.stat().st_ctime)
+    )
+    report_file = run_dir / "report.json"
+    if not report_file.exists():
+        return [f"  {run_dir.name:<22s} {created_time:<15s}  (无 report.json)"]
+
+    try:
         report = json.loads(report_file.read_text(encoding="utf-8"))
-        bt = report.get("backtest_metrics", {})
-        comp = report.get("comparison", {})
-        decision = comp.get("decision", "?")
-        sharpe = bt.get("sharpe_per_trade", "N/A")
-        trades = bt.get("total_trades", "N/A")
-        dr = report.get("data_range", {})
-        note = f"{dr.get('start_date', '?')}~{dr.get('end_date', '?')}"
+    except Exception:
+        return [f"  {run_dir.name:<22s} {created_time:<15s}  (report.json 损坏)"]
 
-        emoji = {"ADOPT": "✅", "ALERT": "⚠️", "KEEP": "🔄", "ERROR": "❌"}.get(
-            decision, "❓"
-        )
-        sharpe_str = (
-            f"{sharpe:.4f}" if isinstance(sharpe, (int, float)) else str(sharpe)
-        )
-        print(
-            f"  {run_dir.name:<22s} {created_time:<15s} {sharpe_str:>10s} {str(trades):>8s} {emoji}{decision:>6s}  {note}"
-        )
+    bt = report.get("backtest_metrics", {})
+    comp = report.get("comparison", {})
+    decision = comp.get("decision", "?")
+    sharpe = bt.get("sharpe_per_trade", "N/A")
+    trades = bt.get("total_trades", "N/A")
+    dr = report.get("data_range", {})
+    note = f"{dr.get('start_date', '?')}~{dr.get('end_date', '?')}"
+
+    emoji = {"ADOPT": "✅", "ALERT": "⚠️", "KEEP": "🔄", "ERROR": "❌"}.get(
+        decision, "❓"
+    )
+    sharpe_str = f"{sharpe:.4f}" if isinstance(sharpe, (int, float)) else str(sharpe)
+    return [
+        f"  {run_dir.name:<22s} {created_time:<15s} {sharpe_str:>10s} {str(trades):>8s} {emoji}{decision:>6s}  {note}"
+    ]
 
 
 def _cmd_adopt_experiment(history_dir: Path, cfg: dict, strategy: str, timestamp: str):

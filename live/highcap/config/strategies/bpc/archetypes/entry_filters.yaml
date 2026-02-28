@@ -1,8 +1,8 @@
 # BPC Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-02-26 21:20
+# Date: 2026-02-28 15:46
 # Promoted: 0 filters (全部未通过显著性检验)
-# Baseline snotio: 6.2643, σ=12.722
+# Baseline snotio: 1.3916, σ=3.554
 #
 # 没有 entry filter 通过准入, 策略将无条件入场
 

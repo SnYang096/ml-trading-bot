@@ -1,24 +1,24 @@
 # BPC Execution 配置
-# 版本: 30
-# 更新时间: 2026-02-26
+# 版本: 34
+# 更新时间: 2026-03-01
 #
 # ┌─────────────────────────────────────────────────────────┐
-# │  Grid Search auto-promoted                              │
-# │  Sharpe (daily): 3.99                                   │
-# │  Best: initial_r=1.0, activation_r=0.5, trail_r=0.5      │
-# │  Plateau: ✅ stable (CV=0.018)                            │
-# │  Changes: initial_r: 1.0 → 1.0, activation_r: 1.5 → 0.5, trail_r: 1.0 → 0.5│
+# │  Grid Search auto-promoted (1min bar precision)         │
+# │  Sharpe (daily): 2.99                                   │
+# │  Recommended: initial_r=2.0, activation_r=1.0, trail_r=0.5│
+# │  Plateau: ✅ stable (CV=0.139)                            │
+# │  Changes: initial_r: 1.0 → 2.0, activation_r: 0.5 → 1.0 │
 # └─────────────────────────────────────────────────────────┘
 #
-version: 30
+version: 34
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
 stop_loss:
   type: trailing
-  initial_r: 1.0
+  initial_r: 2.0
   trailing:
-    activation_r: 0.5
+    activation_r: 1.0
     trail_r: 0.5
     step_r: 0.5
 take_profit:
@@ -27,7 +27,7 @@ holding:
   max_holding_bars: null
   time_stop_bars: 50
 tiers:
-  enabled: true
+  enabled: false  # 方案A: tier已废弃，统一用全局参数
   levels:
   - name: 强证据
     evidence_min: 0.7
@@ -71,15 +71,15 @@ optimization:
     stop_loss.initial_r:
       range:
       - 1.0
-      - 3.0
+      - 4.0
       step: 0.5
     stop_loss.trailing.activation_r:
       range:
       - 0.5
-      - 3.0
+      - 5.0
       step: 0.5
     stop_loss.trailing.trail_r:
       range:
       - 0.5
-      - 2.5
+      - 3.0
       step: 0.5

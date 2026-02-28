@@ -172,6 +172,48 @@ class TestBuildPositionDict:
         assert isinstance(pos["entry_time"], datetime)
         assert pos["entry_time"].tzinfo is not None
 
+    def test_initial_risk_distance(self):
+        """initial_risk_distance = stop_loss_r * atr (用于 R-multiple 归一化)"""
+        intent = _make_intent(stop_loss_r=2.0, take_profit_r=3.0)
+        pos = build_position_dict(
+            intent, entry_price=50000, atr=500, bar_minutes=240, entry_time=_now()
+        )
+        assert pos["initial_risk_distance"] == pytest.approx(1000)  # 2.0 * 500
+
+    def test_initial_risk_distance_fallback_to_atr(self):
+        """stop_loss_r=0 时 initial_risk_distance 退化为 raw ATR"""
+        intent = _make_intent(stop_loss_r=0, take_profit_r=0)
+        pos = build_position_dict(
+            intent, entry_price=50000, atr=500, bar_minutes=240, entry_time=_now()
+        )
+        assert pos["initial_risk_distance"] == pytest.approx(500)
+
+    def test_activation_r_from_rr_constraints(self):
+        """rr_constraints.activation_r 优先于 trailing_atr 作为 activation_r"""
+        rr = {
+            "stop_loss_r": 2.0,
+            "take_profit_r": 3.0,
+            "max_holding_bars": 50,
+            "allow_trailing": True,
+            "activation_r": 1.5,
+            "trailing_atr": 0.5,
+        }
+        ep = {"rr_constraints": rr}
+        intent = TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype="test",
+            confidence=0.75,
+            execution_profile=ep,
+        )
+        pos = build_position_dict(
+            intent, entry_price=50000, atr=500, bar_minutes=240, entry_time=_now()
+        )
+        # activation_r 应该取 rr_constraints.activation_r (1.5)，不是 trailing_atr (0.5)
+        assert pos["activation_r"] == pytest.approx(1.5)
+        # trail_r 应该取 trailing_atr (0.5)
+        assert pos["trail_r"] == pytest.approx(0.5)
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # enforce_position tests
