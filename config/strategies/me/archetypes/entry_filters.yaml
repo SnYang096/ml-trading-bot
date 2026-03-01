@@ -1,8 +1,8 @@
 # ME Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-02-26 21:31
+# Date: 2026-03-01 22:51
 # Promoted: 0 filters (全部未通过显著性检验)
-# Baseline snotio: 6.8395, σ=10.871
+# Baseline snotio: 1.8863, σ=3.768
 #
 # 没有 entry filter 通过准入, 策略将无条件入场
 

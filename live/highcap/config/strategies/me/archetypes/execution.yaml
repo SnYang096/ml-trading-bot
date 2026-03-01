@@ -1,24 +1,24 @@
 # ME Execution 配置
-# 版本: 19
-# 更新时间: 2026-02-28
+# 版本: 21
+# 更新时间: 2026-03-01
 #
 # ┌─────────────────────────────────────────────────────────┐
 # │  Grid Search auto-promoted                              │
-# │  Sharpe (daily): 6.65                                   │
-# │  Best: initial_r=3.5, activation_r=1.5, trail_r=0.5      │
-# │  Plateau: ⚠️  unstable (CV=0.260)                            │
-# │  Changes: initial_r: 3.8 → 3.5, activation_r: 2.0 → 1.5, trail_r: 0.5 → 0.5│
+# │  Sharpe (daily): 4.43                                   │
+# │  Best: initial_r=1.0, activation_r=0.5, trail_r=0.5      │
+# │  Plateau: ✅ stable (CV=0.023)                            │
+# │  Changes: initial_r: 3.5 → 1.0, activation_r: 0.5 → 0.5, trail_r: 0.5 → 0.5│
 # └─────────────────────────────────────────────────────────┘
 #
-version: 19
+version: 21
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
 stop_loss:
   type: trailing
-  initial_r: 3.5
+  initial_r: 1.0
   trailing:
-    activation_r: 1.5
+    activation_r: 0.5
     trail_r: 0.5
     step_r: 0.5
 take_profit:
@@ -26,45 +26,6 @@ take_profit:
 holding:
   max_holding_bars: null
   time_stop_bars: 50
-tiers:
-  enabled: true
-  levels:
-  - name: 强证据
-    evidence_min: 0.7
-    stop_loss:
-      initial_r: 0.8
-      trailing:
-        activation_r: 0.5
-        trail_r: 0.5
-    size_multiplier: 1.2
-    time_stop_bars: 200
-  - name: 中等证据
-    evidence_min: 0.5
-    stop_loss:
-      initial_r: 1.0
-      trailing:
-        activation_r: 1.0
-        trail_r: 0.8
-    size_multiplier: 1.0
-    time_stop_bars: 150
-  - name: 弱证据
-    evidence_min: 0.3
-    stop_loss:
-      initial_r: 1.2
-      trailing:
-        activation_r: 1.5
-        trail_r: 1.0
-    size_multiplier: 0.8
-    time_stop_bars: 100
-  - name: 边缘证据
-    evidence_min: 0.1
-    stop_loss:
-      initial_r: 1.5
-      trailing:
-        activation_r: 2.0
-        trail_r: 1.5
-    size_multiplier: 0.5
-    time_stop_bars: 80
 optimization:
   enabled: true
   params:

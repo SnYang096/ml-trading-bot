@@ -538,7 +538,6 @@ def _promote_execution_yaml(
       - execution_constraints (不动)
       - take_profit (不动)
       - holding (不动)
-      - tiers (不动)
       - optimization (不动, grid 定义)
     只更新:
       - stop_loss 中被 grid search 优化的参数

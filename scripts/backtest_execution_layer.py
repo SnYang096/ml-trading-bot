@@ -18,7 +18,7 @@ Execution Layer Backtest - 逐K线路径模拟 (Bar-by-Bar Execution Simulation)
     # 启用 Tiers + Noise Penalty
     python scripts/backtest_execution_layer.py \\
         --logs results/train_final_xxx/bpc/predictions.parquet \\
-        --strategy bpc --tiers --noise-penalty \\
+        --strategy bpc --noise-penalty \\
         --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01
 
     # 多 archetype PCM 仲裁回测
@@ -336,79 +336,6 @@ def compute_evidence_scores(
         )
 
     return pd.Series(composite, index=df.index)
-
-
-def assign_tiers(
-    df: pd.DataFrame,
-    tiers_cfg: Dict[str, Any],
-    evidence_scores: pd.Series,
-    exec_config: Dict[str, Any],
-    silent: bool = False,
-) -> None:
-    """
-    根据 evidence_score 分配 tier，在 df 中写入 per-entry 执行参数列：
-      _tier_name, _tier_initial_r, _tier_activation_r, _tier_trail_r, _tier_timeout, _tier_size
-
-    score < 最低 tier 的 evidence_min → 使用全局默认参数
-    """
-    levels = tiers_cfg.get("levels", [])
-    # 按 evidence_min 从高到低排序
-    levels = sorted(levels, key=lambda x: x.get("evidence_min", 0), reverse=True)
-
-    # 全局默认参数（fallback for score below any tier）
-    sl = exec_config.get("stop_loss", {})
-    trail = sl.get("trailing", {})
-    holding = exec_config.get("holding", {})
-    default_initial_r = float(sl.get("initial_r", 2.0))
-    default_activation_r = float(trail.get("activation_r", 1.0))
-    default_trail_r = float(trail.get("trail_r", 1.5))
-    default_timeout = int(holding.get("time_stop_bars", 50) or 50)
-    default_size = 1.0
-
-    # 初始化为默认
-    df["_tier_name"] = "default"
-    df["_tier_initial_r"] = default_initial_r
-    df["_tier_activation_r"] = default_activation_r
-    df["_tier_trail_r"] = default_trail_r
-    df["_tier_timeout"] = default_timeout
-    df["_tier_size"] = default_size
-
-    tier_counts = {}
-    for level in reversed(levels):  # 从低到高赋值，高的覆盖低的
-        emin = float(level.get("evidence_min", 0))
-        mask = evidence_scores >= emin
-        name = level.get("name", f"tier_{emin}")
-
-        lsl = level.get("stop_loss", {})
-        lt = lsl.get("trailing", {})
-
-        df.loc[mask, "_tier_name"] = name
-        df.loc[mask, "_tier_initial_r"] = float(lsl.get("initial_r", default_initial_r))
-        df.loc[mask, "_tier_activation_r"] = float(
-            lt.get("activation_r", default_activation_r)
-        )
-        df.loc[mask, "_tier_trail_r"] = float(lt.get("trail_r", default_trail_r))
-        df.loc[mask, "_tier_timeout"] = int(
-            level.get("time_stop_bars", default_timeout)
-        )
-        df.loc[mask, "_tier_size"] = float(level.get("size_multiplier", default_size))
-
-    # 统计
-    entry_mask = df["entry_direction"] != 0
-    for level in levels:
-        name = level.get("name", "")
-        cnt = int((df.loc[entry_mask, "_tier_name"] == name).sum())
-        tier_counts[name] = cnt
-    cnt_default = int((df.loc[entry_mask, "_tier_name"] == "default").sum())
-    if cnt_default > 0:
-        tier_counts["default"] = cnt_default
-
-    if not silent:
-        total = int(entry_mask.sum())
-        print(f"   🏷️  Tier assignment ({total} entries):")
-        for name, cnt in tier_counts.items():
-            pct = cnt / total * 100 if total > 0 else 0
-            print(f"      {name}: {cnt} ({pct:.1f}%)")
 
 
 # ================================================================
@@ -4085,11 +4012,6 @@ def main() -> int:
     )
     p.add_argument("--timeframe", default="240T")
     p.add_argument(
-        "--tiers",
-        action="store_true",
-        help="Enable tier-based execution: per-entry params from evidence_score + tiers config",
-    )
-    p.add_argument(
         "--noise-penalty",
         action="store_true",
         help="Apply noise penalty adjustments (requires FeatureStore math features)",
@@ -4395,87 +4317,9 @@ def main() -> int:
         print("   ℹ️  Entry filter disabled (--no-entry-filter)")
 
     # ================================================================
-    # Tiers 模式: 计算 evidence_score + 分配 per-entry 参数
-    # ================================================================
-    use_tier_params = False
-    if args.tiers:
-        tiers_cfg = exec_config.get("tiers", {})
-        if not tiers_cfg.get("enabled"):
-            print("⚠️  tiers.enabled=false in execution.yaml, running without tiers")
-        elif not tiers_cfg.get("levels"):
-            print("⚠️  No tiers.levels in execution.yaml")
-        else:
-            print("\n🏷️  Tier Mode: computing evidence scores...")
-            evidence_cfg = load_evidence_config(args.strategy, args.strategies_root)
-
-            # ── 预计算 quantiles（避免 look-ahead，与实盘对齐）──
-            if not args.quantile_train_start or not args.quantile_train_end:
-                print(
-                    "❌ --tiers 模式需要 --quantile-train-start DATE --quantile-train-end DATE"
-                )
-                print(
-                    "   示例: --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01"
-                )
-                return 1
-
-            train_start = pd.Timestamp(args.quantile_train_start)
-            train_end = pd.Timestamp(args.quantile_train_end)
-            if (train_end - train_start).days < 180:
-                print(
-                    f"❌ 校准数据时间范围不足 6 个月: "
-                    f"{train_start.date()} ~ {train_end.date()} "
-                    f"({(train_end - train_start).days} 天)"
-                )
-                return 1
-
-            # 确保 merged 有 timestamp 列
-            ts_col = None
-            if "timestamp" in merged.columns:
-                ts_col = "timestamp"
-            elif isinstance(merged.index, pd.DatetimeIndex):
-                merged["_ts_tmp"] = merged.index
-                ts_col = "_ts_tmp"
-
-            if ts_col is None:
-                print("❌ 数据中没有 timestamp 列，无法按日期切分校准数据")
-                return 1
-
-            merged[ts_col] = pd.to_datetime(merged[ts_col], utc=True)
-            calib_mask = (merged[ts_col] >= train_start.tz_localize("UTC")) & (
-                merged[ts_col] < train_end.tz_localize("UTC")
-            )
-            calib_df = merged[calib_mask]
-
-            if len(calib_df) < 50:
-                print(
-                    f"❌ 校准数据不足: {len(calib_df)} 行 "
-                    f"(需要 {train_start.date()} ~ {train_end.date()} 至少 6 个月数据)"
-                )
-                return 1
-
-            print(
-                f"   📐 Quantile calibration: {len(calib_df)} rows "
-                f"({train_start.date()} ~ {train_end.date()}, no look-ahead)"
-            )
-            precomputed_quantiles = compute_evidence_quantiles(calib_df, evidence_cfg)
-
-            # 清理临时列
-            if "_ts_tmp" in merged.columns:
-                merged.drop(columns=["_ts_tmp"], inplace=True)
-
-            evidence_scores = compute_evidence_scores(
-                merged,
-                evidence_cfg,
-                precomputed_quantiles=precomputed_quantiles,
-            )
-            merged["evidence_score"] = evidence_scores.values
-
-            assign_tiers(merged, tiers_cfg, evidence_scores, exec_config)
-            use_tier_params = True
-
-    # ================================================================
     # Noise Penalty: 调整 per-entry 参数
     # ================================================================
+    use_tier_params = False
     if args.noise_penalty:
         print("\n🔇 Noise Penalty: loading math features...")
         noise_features = [
@@ -4583,39 +4427,25 @@ def main() -> int:
             )
 
             # 应用噪声惩罚调整 per-entry 参数
-            if use_tier_params:
-                # Tier 模式: 调整 tier 参数
-                np_arr = merged["noise_penalty"].values
-                merged["_tier_initial_r"] = merged["_tier_initial_r"] * (
-                    1 + 0.5 * np_arr
-                )
-                merged["_tier_trail_r"] = merged["_tier_trail_r"] * (1 + 0.3 * np_arr)
-                merged["_tier_size"] = (merged["_tier_size"] * (1 - 0.7 * np_arr)).clip(
-                    lower=0.1
-                )
-                print("   ✅ Noise penalty applied to tier params")
-            else:
-                # 非 Tier 模式: 先创建 per-entry 参数列，再调整
-                sl = exec_config.get("stop_loss", {})
-                trail = sl.get("trailing", {})
-                holding = exec_config.get("holding", {})
-                merged["_tier_initial_r"] = float(sl.get("initial_r", 2.0))
-                merged["_tier_activation_r"] = float(trail.get("activation_r", 1.0))
-                merged["_tier_trail_r"] = float(trail.get("trail_r", 1.5))
-                merged["_tier_timeout"] = int(holding.get("time_stop_bars", 50) or 50)
-                merged["_tier_size"] = 1.0
-                merged["_tier_name"] = "default"
+            # 先创建 per-entry 参数列，再调整
+            sl = exec_config.get("stop_loss", {})
+            trail = sl.get("trailing", {})
+            holding = exec_config.get("holding", {})
+            merged["_tier_initial_r"] = float(sl.get("initial_r", 2.0))
+            merged["_tier_activation_r"] = float(trail.get("activation_r", 1.0))
+            merged["_tier_trail_r"] = float(trail.get("trail_r", 1.5))
+            merged["_tier_timeout"] = int(holding.get("time_stop_bars", 50) or 50)
+            merged["_tier_size"] = 1.0
+            merged["_tier_name"] = "default"
 
-                np_arr = merged["noise_penalty"].values
-                merged["_tier_initial_r"] = merged["_tier_initial_r"] * (
-                    1 + 0.5 * np_arr
-                )
-                merged["_tier_trail_r"] = merged["_tier_trail_r"] * (1 + 0.3 * np_arr)
-                merged["_tier_size"] = (merged["_tier_size"] * (1 - 0.7 * np_arr)).clip(
-                    lower=0.1
-                )
-                use_tier_params = True  # 启用 per-entry 参数
-                print("   ✅ Noise penalty applied to global params (per-entry)")
+            np_arr = merged["noise_penalty"].values
+            merged["_tier_initial_r"] = merged["_tier_initial_r"] * (1 + 0.5 * np_arr)
+            merged["_tier_trail_r"] = merged["_tier_trail_r"] * (1 + 0.3 * np_arr)
+            merged["_tier_size"] = (merged["_tier_size"] * (1 - 0.7 * np_arr)).clip(
+                lower=0.1
+            )
+            use_tier_params = True  # 启用 per-entry 参数
+            print("   ✅ Noise penalty applied to global params (per-entry)")
 
     # ================================================================
     # Breakeven Lock: 保本锁定

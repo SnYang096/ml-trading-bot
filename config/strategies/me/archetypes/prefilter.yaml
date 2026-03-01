@@ -1,6 +1,6 @@
 # ME Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-02-26
+# 自动生成: 2026-03-01
 # 数据源: features_labeled.parquet, 26202 行
 
 rules:
@@ -18,8 +18,8 @@ rules:
     rationale: "P80阈值, bad_rate -2.5%, 鲁棒性=1.00, 评分=0.618"
 
 last_evaluation:
-  # ── 自动生成 (2026-02-26) ──
-  timestamp: "2026-02-26"
+  # ── 自动生成 (2026-03-01) ──
+  timestamp: "2026-03-01"
   data_source: "features_labeled.parquet"
   n_rows: 26202
   baseline_bad_rate: 0.4487

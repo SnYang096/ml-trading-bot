@@ -75,8 +75,8 @@ direction_rules:
     description: "MACD/ATR 动量方向 (兜底, 覆盖 breakout_direction=0 的样本)"
 
 last_evaluation:
-  # ── 自动生成 by --compare-features (2026-02-28) ──
-  timestamp: "2026-02-28"
+  # ── 自动生成 by --compare-features (2026-03-01) ──
+  timestamp: "2026-03-01"
   data_source: "features_labeled.parquet"
   n_rows: 39126
   baseline: random_direction  # 随机方向 (期望 median ≈ 0)

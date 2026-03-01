@@ -191,7 +191,6 @@ class ExecutionParamGenerator:
 
     def __init__(self, execution_config: Dict[str, Any]):
         self.config = execution_config
-        self.tiers_cfg = execution_config.get("tiers", {})
 
     def generate_params(self, evidence_score: float) -> Dict[str, Any]:
         """生成执行参数 — 统一使用全局参数（grid search 优化的）
@@ -219,37 +218,6 @@ class ExecutionParamGenerator:
             "max_holding_bars": int(
                 self.config.get("holding", {}).get("time_stop_bars", 50) or 50
             ),
-            "size_multiplier": 1.0,
-        }
-
-    def _select_tier(self, evidence_score: float) -> Dict[str, Any]:
-        """根据 evidence score 选择 tier"""
-        levels = self.tiers_cfg.get("levels", [])
-        # 按 evidence_min 从高到低排序
-        levels = sorted(levels, key=lambda x: x.get("evidence_min", 0), reverse=True)
-
-        for level in levels:
-            if evidence_score >= level.get("evidence_min", 0):
-                sl_cfg = level.get("stop_loss", {})
-                trail_cfg = sl_cfg.get("trailing", {})
-                return {
-                    "tier_name": level.get("name", "unknown"),
-                    "initial_r": sl_cfg.get("initial_r", 2.0),
-                    "activation_r": trail_cfg.get("activation_r", 1.0),
-                    "trail_r": trail_cfg.get("trail_r", 1.5),
-                    "time_stop_bars": level.get("time_stop_bars", 50),
-                    "size_multiplier": level.get("size_multiplier", 1.0),
-                }
-
-        # 默认参数
-        global_sl = self.config.get("stop_loss", {})
-        global_trail = global_sl.get("trailing", {})
-        return {
-            "tier_name": "default",
-            "initial_r": global_sl.get("initial_r", 2.0),
-            "activation_r": global_trail.get("activation_r", 1.0),
-            "trail_r": global_trail.get("trail_r", 1.5),
-            "time_stop_bars": self.config.get("holding", {}).get("time_stop_bars", 50),
             "size_multiplier": 1.0,
         }
 
