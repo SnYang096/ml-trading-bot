@@ -562,6 +562,8 @@ def run_strategy_pipeline(
     dry_run: bool = False,
     use_1min: bool = False,
     live_root: str = "live/highcap",
+    skip_shap: bool = False,
+    config_path: str = "",
 ) -> Dict[str, Any]:
     """执行单个策略的完整训练链."""
     scfg = cfg["strategies"][strategy]
@@ -672,6 +674,34 @@ def run_strategy_pipeline(
     if not prepare_dir and not dry_run:
         return {"error": "prepare_dir_not_found"}
     prepare_dir = prepare_dir or f"results/train_final_DRYRUN/{strategy}"
+
+    # ── Step 2.5: SHAP Feature Selection (可选, 默认开启) ──
+    shap_cfg = cfg.get("shap_feature_selection", {})
+    _skip_shap = skip_shap or not shap_cfg.get("enabled", True)
+    if not _skip_shap:
+        shap_cmd = [
+            "python",
+            "scripts/shap_feature_selection.py",
+            "--logs",
+            f"{prepare_dir}/features_labeled.parquet",
+            "--strategy",
+            strategy,
+            "--strategies-root",
+            strategies_root,
+            "--pipeline-config",
+            config_path or str(DEFAULT_CONFIG),
+            "--output",
+            f"{prepare_dir}/shap",
+            "--promote",
+        ]
+        run_step(
+            "SHAP Feature Selection",
+            shap_cmd,
+            log,
+            dry_run=dry_run,
+        )
+    else:
+        _log(log, "⏭️  SHAP Feature Selection: skipped")
 
     # ── Step 3: Prefilter (--promote) ──
     if scfg.get("has_prefilter"):
@@ -1465,6 +1495,11 @@ def main():
         help="对比两次实验的 archetypes 差异 (如 --diff TS1 TS2)",
     )
     p.add_argument(
+        "--skip-shap",
+        action="store_true",
+        help="跳过 SHAP 特征筛选 (快速迭代用)",
+    )
+    p.add_argument(
         "--use-1min",
         action="store_true",
         help="使用 1min bar 精细模拟止损/移动止损 (匹配实盘精度)",
@@ -1595,6 +1630,8 @@ def main():
                 dry_run=args.dry_run,
                 use_1min=args.use_1min,
                 live_root=args.live_root,
+                skip_shap=args.skip_shap,
+                config_path=args.config,
             )
 
             metrics = result.get("backtest_metrics", {})
