@@ -95,21 +95,6 @@ strategies:
       deploy:
         min_trades: 50               # 1H 策略频率高, 保留 50 笔要求
 
-# ── SHAP 特征筛选 (Step 2.5) ───────────────────────────────────
-# Walk-Forward SHAP 稳定性筛选: 自动裁剪不稳定特征, 减少过拟合
-# --skip-shap 可跳过此步骤 (快速迭代用)
-shap_feature_selection:
-  enabled: true
-  n_folds: 4                         # 时间窗口数
-  top_k: 20                          # 每个 fold 取 Top-K
-  stability_threshold: 0.75          # 特征在 >= 75% fold 出现才算稳定
-  min_stable_features: 1             # 稳定特征不足则跳过裁剪
-  protected_nodes:                   # 永远保留的节点
-    - atr_f
-  apply_to:                          # 裁剪哪些 features YAML
-    - features_gate.yaml
-    - features_evidence.yaml
-
 # ── 对比决策规则 (全确定性, 无人工判断) ────────────────────────
 comparison:
   min_trades: 10               # < 此值 → ERROR, 数据或配置有问题

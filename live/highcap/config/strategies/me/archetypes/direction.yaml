@@ -83,8 +83,8 @@ direction_rules:
     description: "规则3: macd_signal_atr (med_rr=+0.0659, p=0.005, short=49%)"
 
 last_evaluation:
-  # ── 自动生成 by --compare-features (2026-03-02) ──
-  timestamp: "2026-03-02"
+  # ── 自动生成 by --compare-features (2026-03-01) ──
+  timestamp: "2026-03-01"
   data_source: "features_labeled.parquet"
   n_rows: 157386
   baseline: random_direction  # 随机方向 (期望 median ≈ 0)

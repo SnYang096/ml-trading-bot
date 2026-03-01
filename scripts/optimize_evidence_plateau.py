@@ -214,13 +214,6 @@ def _promote_evidence_yaml(
             round(b, 4) for b in result.get("recommended_bins", ef.quantile_bins)
         ]
 
-        # direction:negative → 低值有利 → labels 翻转为 [amplify...suppress]
-        # 运行时/回测直接读 YAML labels 不做方向翻转，所以 YAML 必须体现方向
-        if direction_yaml == "negative":
-            labels_order = ["amplify", "favor", "neutral", "downweight", "suppress"]
-        else:
-            labels_order = ["suppress", "downweight", "neutral", "favor", "amplify"]
-
         entry = {
             "id": ef.id,
             "feature": ef.feature,
@@ -231,7 +224,7 @@ def _promote_evidence_yaml(
             "affects": ef.affects if ef.affects else ["tp_range", "position_size"],
             "quantile_mapping": {
                 "bins": rec_bins,
-                "labels": labels_order,
+                "labels": ["suppress", "downweight", "neutral", "favor", "amplify"],
             },
             "split_count": ef.split_count,
         }
