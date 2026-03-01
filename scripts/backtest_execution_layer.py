@@ -461,6 +461,7 @@ def compute_risk_equity_curve(
     risk_per_slot: float = 0.01,
     stop_loss_r: float = 1.0,
     risk_per_trade_series: Optional[pd.Series] = None,
+    kill_switch: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     """R-multiples 转换为基于风险的美元权益曲线
 
@@ -478,18 +479,33 @@ def compute_risk_equity_curve(
         stop_loss_r: 止损 R 值 (1.0 = 1×ATR)
         risk_per_trade_series: 可选, 每笔交易的风险比例 (索引对齐 r_returns)
             用于每策略不同的 risk cap (e.g. LV=0.005, BPC=0.01)
+        kill_switch: 可选, 宪法 kill switch 模拟参数:
+            - max_dd: 最大回撤限制 (0.20 = 20%)
+            - daily_loss_limit: 日亏损限制 (0.04 = 4%)
+            - weekly_loss_limit: 周亏损限制 (0.08 = 8%)
+            - monthly_loss_limit: 月亏损限制 (0.12 = 12%)
+            - cooldown_bars: kill switch 触发后冷却 bar 数 (默认 60 = ~10天4H)
+            当任一限制被突破时，后续新入场被跳过直到冷却期结束
 
     Returns:
-        dict with equity_curve, max_dd, final_equity, total_return_pct
+        dict with equity_curve, max_dd, final_equity, total_return_pct,
+        以及 kill_switch 模拟统计 (如果启用)
     """
     valid = r_returns.dropna()
     if len(valid) == 0:
-        return {
+        base = {
             "equity_curve": [],
             "max_dd": 0.0,
             "final_equity": initial_cash,
             "total_return_pct": 0.0,
         }
+        if kill_switch:
+            base["kill_switch_stats"] = {
+                "trades_skipped": 0,
+                "trades_executed": 0,
+                "triggers": [],
+            }
+        return base
 
     # Align risk_per_trade_series with valid index
     risk_arr = None
@@ -497,12 +513,67 @@ def compute_risk_equity_curve(
         aligned = risk_per_trade_series.reindex(valid.index)
         risk_arr = aligned.values
 
+    # Kill switch 配置
+    ks_enabled = kill_switch is not None and len(kill_switch) > 0
+    ks_max_dd = float(kill_switch.get("max_dd", 1.0)) if ks_enabled else 1.0
+    ks_daily = float(kill_switch.get("daily_loss_limit", 1.0)) if ks_enabled else 1.0
+    ks_weekly = float(kill_switch.get("weekly_loss_limit", 1.0)) if ks_enabled else 1.0
+    ks_monthly = (
+        float(kill_switch.get("monthly_loss_limit", 1.0)) if ks_enabled else 1.0
+    )
+    ks_cooldown = int(kill_switch.get("cooldown_bars", 60)) if ks_enabled else 0
+
+    # Kill switch 状态跟踪
+    ks_halted_until = -1  # bar index until which we're halted
+    ks_triggers: list = []
+    ks_skipped = 0
+    ks_executed = 0
+
+    # Period loss 跟踪 (基于 index 的日期)
+    has_datetime_idx = hasattr(valid.index, "date") or hasattr(
+        valid.index, "to_pydatetime"
+    )
+    period_equity_start_daily = initial_cash
+    period_equity_start_weekly = initial_cash
+    period_equity_start_monthly = initial_cash
+    prev_day = None
+    prev_week = None
+    prev_month = None
+
     equity = initial_cash
     curve = [equity]
     peak = equity
     max_dd = 0.0
 
     for i, rr in enumerate(valid.values):
+        # ── Kill switch 检查 ──
+        if ks_enabled and i <= ks_halted_until:
+            # 在冷却期内，跳过入场
+            ks_skipped += 1
+            curve.append(equity)  # equity 不变
+            continue
+
+        if ks_enabled and has_datetime_idx:
+            try:
+                ts = valid.index[i]
+                ts_date = ts.date() if hasattr(ts, "date") else None
+                ts_week = ts.isocalendar()[1] if hasattr(ts, "isocalendar") else None
+                ts_month = ts.month if hasattr(ts, "month") else None
+
+                # 日/周/月 边界重置
+                if ts_date and ts_date != prev_day:
+                    period_equity_start_daily = equity
+                    prev_day = ts_date
+                if ts_week and ts_week != prev_week:
+                    period_equity_start_weekly = equity
+                    prev_week = ts_week
+                if ts_month and ts_month != prev_month:
+                    period_equity_start_monthly = equity
+                    prev_month = ts_month
+            except Exception:
+                pass
+
+        # ── 执行交易 ──
         risk_frac = risk_per_slot
         if risk_arr is not None and i < len(risk_arr):
             v = risk_arr[i]
@@ -513,6 +584,7 @@ def compute_risk_equity_curve(
         equity += pnl
         equity = max(equity, 0.0)  # 不允许负 equity
         curve.append(equity)
+        ks_executed += 1
 
         if equity > peak:
             peak = equity
@@ -520,12 +592,68 @@ def compute_risk_equity_curve(
         if dd > max_dd:
             max_dd = dd
 
-    return {
+        # ── Kill switch 触发检查 (交易执行后) ──
+        if ks_enabled:
+            trigger_reasons = []
+            if dd >= ks_max_dd:
+                trigger_reasons.append(f"max_dd={dd:.2%}>{ks_max_dd:.0%}")
+            if has_datetime_idx and period_equity_start_daily > 0:
+                daily_loss = (
+                    period_equity_start_daily - equity
+                ) / period_equity_start_daily
+                if daily_loss >= ks_daily:
+                    trigger_reasons.append(
+                        f"daily_loss={daily_loss:.2%}>{ks_daily:.0%}"
+                    )
+            if has_datetime_idx and period_equity_start_weekly > 0:
+                weekly_loss = (
+                    period_equity_start_weekly - equity
+                ) / period_equity_start_weekly
+                if weekly_loss >= ks_weekly:
+                    trigger_reasons.append(
+                        f"weekly_loss={weekly_loss:.2%}>{ks_weekly:.0%}"
+                    )
+            if has_datetime_idx and period_equity_start_monthly > 0:
+                monthly_loss = (
+                    period_equity_start_monthly - equity
+                ) / period_equity_start_monthly
+                if monthly_loss >= ks_monthly:
+                    trigger_reasons.append(
+                        f"monthly_loss={monthly_loss:.2%}>{ks_monthly:.0%}"
+                    )
+
+            if trigger_reasons:
+                ks_halted_until = i + ks_cooldown
+                ts_str = ""
+                try:
+                    ts_str = str(valid.index[i])
+                except Exception:
+                    ts_str = f"bar_{i}"
+                ks_triggers.append(
+                    {
+                        "bar_idx": i,
+                        "timestamp": ts_str,
+                        "reasons": trigger_reasons,
+                        "equity": equity,
+                        "dd": dd,
+                        "halted_until_bar": ks_halted_until,
+                    }
+                )
+
+    result = {
         "equity_curve": curve,
         "max_dd": max_dd,
         "final_equity": equity,
         "total_return_pct": (equity - initial_cash) / initial_cash * 100,
     }
+    if ks_enabled:
+        result["kill_switch_stats"] = {
+            "trades_skipped": ks_skipped,
+            "trades_executed": ks_executed,
+            "triggers": ks_triggers,
+            "trigger_count": len(ks_triggers),
+        }
+    return result
 
 
 def simulate_rr_execution(
@@ -538,6 +666,8 @@ def simulate_rr_execution(
     breakeven_lock_r: float = 0.0,
     max_slots: int = 0,
     bars_1min_dict: Optional[Dict[str, pd.DataFrame]] = None,
+    add_position_cfg: Optional[Dict[str, Any]] = None,
+    per_strategy_limits: Optional[Dict[str, Any]] = None,
 ) -> pd.Series:
     """
     逐K线路径模拟 (Bar-by-Bar Execution Simulation)
@@ -657,6 +787,8 @@ def simulate_rr_execution(
     # 获取 entry timestamp——1min 模式需要
     has_ts = "timestamp" in df.columns
     use_1min = bool(_1min_cache)
+    # slot 判定用时间戳 (nanoseconds int64) 代替 bar index，与事件侧 1min 精度对齐
+    _slot_use_ts = use_1min and has_ts
 
     for sym, group in df.groupby(sym_col, sort=False):
         group = group.sort_index()
@@ -727,9 +859,14 @@ def simulate_rr_execution(
                 m_c = sym_1min["close"]
                 # 找 entry_ts 之后的 1min bar 起始位置
                 start_m = int(np.searchsorted(m_ts, entry_ts_ns, side="right"))
-                # time_stop_bars 是 4H bar 数，换算成 1min: time_stop_bars * bar_minutes
-                bar_minutes = 240  # 默认 4H
+                # time_stop_bars 按 archetype bar 数，换算成 1min
+                bar_minutes = (
+                    int(group.iloc[i].get("_bar_minutes", 240))
+                    if "_bar_minutes" in group.columns
+                    else 240
+                )
                 max_m = min(start_m + time_stop_bars * bar_minutes, len(m_ts))
+                _1min_exit_mi = None  # 精确退出的 1min bar index
 
                 for mi in range(start_m, max_m):
                     h = m_h[mi]
@@ -779,10 +916,12 @@ def simulate_rr_execution(
                     if direction == 1 and l <= sl_price:
                         exit_price = sl_price
                         exit_reason = "trailing_sl" if trailing_active else "sl"
+                        _1min_exit_mi = mi
                         break
                     elif direction == -1 and h >= sl_price:
                         exit_price = sl_price
                         exit_reason = "trailing_sl" if trailing_active else "sl"
+                        _1min_exit_mi = mi
                         break
 
                     # 5. TP 检查
@@ -790,10 +929,12 @@ def simulate_rr_execution(
                         if direction == 1 and h >= entry_price + tp_r * entry_atr:
                             exit_price = entry_price + tp_r * entry_atr
                             exit_reason = "tp"
+                            _1min_exit_mi = mi
                             break
                         elif direction == -1 and l <= entry_price - tp_r * entry_atr:
                             exit_price = entry_price - tp_r * entry_atr
                             exit_reason = "tp"
+                            _1min_exit_mi = mi
                             break
 
                 # 超时或数据不足
@@ -801,6 +942,7 @@ def simulate_rr_execution(
                     if max_m > start_m:
                         exit_price = float(m_c[max_m - 1])
                         exit_reason = "timeout"
+                        _1min_exit_mi = max_m - 1
                     else:
                         exit_stats["no_data"] += 1
                         continue
@@ -910,53 +1052,182 @@ def simulate_rr_execution(
             else:
                 # 4H path
                 exit_bar_idx = j if exit_reason != "timeout" else (max_j - 1)
+            # 精确退出时间戳 (1min 模式用实际 1min bar ts; 4H 模式用 bar timestamp)
+            _exit_ts_ns = 0
+            _entry_ts_ns = 0
+            if _slot_use_ts and sym_1min is not None and _1min_exit_mi is not None:
+                _exit_ts_ns = int(m_ts[_1min_exit_mi])
+                _entry_ts_ns = int(entry_ts_ns)
+            elif has_ts:
+                try:
+                    _entry_ts_ns = int(entry_timestamps[i])
+                    _exit_ts_ns = int(
+                        pd.to_datetime(
+                            group.iloc[min(exit_bar_idx, n - 1)]["timestamp"]
+                        ).value
+                    )
+                except Exception:
+                    pass
             trade_details.append(
                 {
                     "symbol": sym,
                     "entry_idx": int(idx_arr[i]),
                     "exit_idx": int(idx_arr[min(exit_bar_idx, n - 1)]),
+                    "entry_ts_ns": _entry_ts_ns,
+                    "exit_ts_ns": _exit_ts_ns,
                     "entry_price": float(entry_price),
                     "exit_price": float(exit_price),
                     "direction": direction,
                     "realized_rr": float(realized_rr),
                     "exit_reason": exit_reason,
                     "evidence_score": float(
-                        df.iloc[i].get("evidence_score", 0.5)
-                        if "evidence_score" in df.columns
+                        group.iloc[i].get("evidence_score", 0.5)
+                        if "evidence_score" in group.columns
                         else 0.5
                     ),
                     "archetype": (
-                        str(df.iloc[i].get("_pcm_archetype", ""))
-                        if "_pcm_archetype" in df.columns
+                        str(group.iloc[i].get("_pcm_archetype", ""))
+                        if "_pcm_archetype" in group.columns
                         else ""
                     ),
+                    "_bar_minutes": (
+                        int(group.iloc[i].get("_bar_minutes", 240))
+                        if "_bar_minutes" in group.columns
+                        else 240
+                    ),
+                    "breakeven_locked": breakeven_locked,
+                    "is_add_position": False,
                 }
             )
 
-    # ── slot 限制：按 evidence 竞争排序，slot 满时驱逐最弱 active ──
+    # ── slot 限制：per-strategy 独立 slot + 同 archetype 内 evidence 竞争 ──
+    _add_pos_count = 0
     if max_slots and max_slots > 0 and trade_details:
-        trade_details.sort(key=lambda t: t["entry_idx"])
+        # 加仓配置
+        _ap_enabled = add_position_cfg is not None
+        _ap_rules = (
+            add_position_cfg.get("add_position_rules", {}) if _ap_enabled else {}
+        )
+        _ap_per_strat = (
+            add_position_cfg.get("per_strategy_limits", {}) if _ap_enabled else {}
+        )
+        _ap_max_add = int(_ap_rules.get("max_add_times", 1))
+
+        # per-strategy slot 限制 — 始终从 constitution per_strategy_limits 读取
+        # (不依赖 add_position_cfg 是否存在, 与事件侧 LivePCM._max_slots_for_strategy 对齐)
+        _per_strat_max = {}  # archetype → max_slots
+        # 优先从 per_strategy_limits 参数读取 (直接传入, 独立于 add_position)
+        if per_strategy_limits:
+            for arch_key, cfg in per_strategy_limits.items():
+                if isinstance(cfg, dict) and "max_slots" in cfg:
+                    _per_strat_max[arch_key.lower()] = int(cfg["max_slots"])
+        elif _ap_per_strat:
+            # 兼容旧调用: 从 add_position_cfg 回退读取
+            for arch_key, cfg in _ap_per_strat.items():
+                if isinstance(cfg, dict) and "max_slots" in cfg:
+                    _per_strat_max[arch_key.lower()] = int(cfg["max_slots"])
+
+        # 排序: 用时间戳 (跨 symbol 正确) 而非 dataframe index
+        # merged 按 (symbol, timestamp) 排序 → 每 symbol 独占一段 index → exit_idx vs eidx 跨 symbol 永远 False
+        # 必须用 entry_ts_ns 排序 + exit_ts_ns 对比, 才能正确实现跨 symbol slot 阻塞
+        _arch_priority_map = {
+            "lv": 0,
+            "fer": 1,
+            "me": 2,
+            "bpc": 3,
+        }  # 同时间戳: 高优先级先处理
+        if _slot_use_ts:
+            trade_details.sort(
+                key=lambda t: (
+                    t.get("entry_ts_ns", 0),
+                    _arch_priority_map.get(t.get("archetype", "").lower().strip(), 99),
+                )
+            )
+        else:
+            trade_details.sort(key=lambda t: t["entry_idx"])
         accepted = []  # 当前 active trades
         rejected_indices = set()
         evicted_indices = set()
         for trade in trade_details:
             eidx = trade["entry_idx"]
             new_ev = trade.get("evidence_score", 0.5)
+            trade_arch = trade.get("archetype", "").lower().strip()
             # 移除已平仓的 active trades
-            active = [t for t in accepted if t["exit_idx"] > eidx]
-            if len(active) >= max_slots:
-                # slot 满 → 找最弱的 active
-                weakest = min(active, key=lambda t: t.get("evidence_score", 0.5))
-                weakest_ev = weakest.get("evidence_score", 0.5)
-                if new_ev > weakest_ev:
-                    # 新信号更强 → 驱逐最弱，接纳新信号
-                    evicted_indices.add(weakest["entry_idx"])
-                    active = [
-                        t for t in active if t["entry_idx"] != weakest["entry_idx"]
-                    ]
+            if _slot_use_ts and trade.get("entry_ts_ns", 0) > 0:
+                # 用 bar-close 时间戳对比，与事件侧一致:
+                # 事件回测中 enforce_position 先跑 (处理退出)，然后 decide() (生成新信号)
+                # 所以同一 bar 内的退出在新入场前已完成 → slot 释放
+                _bm = trade.get("_bar_minutes", 240)
+                _bar_close_ns = trade["entry_ts_ns"] + int(_bm) * 60 * 1_000_000_000
+                active = [t for t in accepted if t.get("exit_ts_ns", 0) > _bar_close_ns]
+            else:
+                active = [t for t in accepted if t["exit_idx"] > eidx]
+
+            # 检查 per-strategy slot 限制
+            arch_max = _per_strat_max.get(trade_arch, max_slots)  # 缺省回退全局
+            arch_active = [
+                t
+                for t in active
+                if t.get("archetype", "").lower().strip() == trade_arch
+            ]
+            per_strat_full = len(arch_active) >= arch_max
+            global_full = len(active) >= max_slots
+
+            if per_strat_full or global_full:
+                # slot 满 — 先检查是否可以加仓
+                can_add = False
+                if _ap_enabled:
+                    strat_cfg = _ap_per_strat.get(trade_arch, {})
+                    if strat_cfg.get("allow_add_position", False):
+                        for at in active:
+                            if (
+                                at["symbol"] == trade["symbol"]
+                                and at["direction"] == trade["direction"]
+                                and at.get("breakeven_locked", False)
+                                and at.get("_add_count", 0) < _ap_max_add
+                            ):
+                                can_add = True
+                                at["_add_count"] = at.get("_add_count", 0) + 1
+                                trade["is_add_position"] = True
+                                _add_pos_count += 1
+                                break
+
+                if can_add:
                     accepted = active + [trade]
+                elif per_strat_full and arch_active:
+                    # 同 archetype 内 evidence 竞争
+                    weakest = min(
+                        arch_active, key=lambda t: t.get("evidence_score", 0.5)
+                    )
+                    weakest_ev = weakest.get("evidence_score", 0.5)
+                    if new_ev > weakest_ev:
+                        evicted_indices.add(weakest["entry_idx"])
+                        active = [
+                            t for t in active if t["entry_idx"] != weakest["entry_idx"]
+                        ]
+                        accepted = active + [trade]
+                    else:
+                        rejected_indices.add(eidx)
+                elif global_full:
+                    # 全局 slot 满，同 archetype 内竞争
+                    if arch_active:
+                        weakest = min(
+                            arch_active, key=lambda t: t.get("evidence_score", 0.5)
+                        )
+                        weakest_ev = weakest.get("evidence_score", 0.5)
+                        if new_ev > weakest_ev:
+                            evicted_indices.add(weakest["entry_idx"])
+                            active = [
+                                t
+                                for t in active
+                                if t["entry_idx"] != weakest["entry_idx"]
+                            ]
+                            accepted = active + [trade]
+                        else:
+                            rejected_indices.add(eidx)
+                    else:
+                        rejected_indices.add(eidx)
                 else:
-                    # 新信号更弱 → 拒绝
                     rejected_indices.add(eidx)
             else:
                 accepted = active + [trade]
@@ -992,6 +1263,59 @@ def simulate_rr_execution(
             )
 
     return results, trade_details
+
+
+def _export_trade_details_csv(
+    trade_details: List[Dict[str, Any]],
+    output_path: str,
+    df: pd.DataFrame,
+) -> None:
+    """导出 trade_details 为 CSV，与事件回测 export_trades_csv 格式对齐。
+
+    列: symbol, side, entry_price, exit_price, entry_time, exit_time,
+         pnl_r, exit_reason, archetype, evidence, bars_held
+    """
+    has_ts = "timestamp" in df.columns
+    rows = []
+    for t in trade_details:
+        entry_idx = t.get("entry_idx", 0)
+        exit_idx = t.get("exit_idx", 0)
+        direction = t.get("direction", 0)
+        side = "LONG" if direction > 0 else ("SHORT" if direction < 0 else "UNKNOWN")
+        # 尝试从 DataFrame 取 timestamp
+        entry_time = ""
+        exit_time = ""
+        if has_ts:
+            try:
+                entry_time = str(df.iloc[entry_idx]["timestamp"])
+                exit_time = str(df.iloc[exit_idx]["timestamp"])
+            except (IndexError, KeyError):
+                pass
+        elif isinstance(df.index, pd.DatetimeIndex):
+            try:
+                entry_time = str(df.index[entry_idx])
+                exit_time = str(df.index[exit_idx])
+            except (IndexError, KeyError):
+                pass
+        rows.append(
+            {
+                "symbol": t.get("symbol", ""),
+                "side": side,
+                "entry_price": round(float(t.get("entry_price", 0)), 6),
+                "exit_price": round(float(t.get("exit_price", 0)), 6),
+                "entry_time": entry_time,
+                "exit_time": exit_time,
+                "pnl_r": round(float(t.get("realized_rr", 0)), 4),
+                "exit_reason": t.get("exit_reason", ""),
+                "archetype": t.get("archetype", ""),
+                "evidence": round(float(t.get("evidence_score", 0.5)), 4),
+                "bars_held": int(exit_idx - entry_idx),
+            }
+        )
+    out = pd.DataFrame(rows)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(output_path, index=False)
+    print(f"\n   📤 Trades exported: {len(out)} rows → {output_path}")
 
 
 def compute_sharpe(
@@ -1101,7 +1425,283 @@ def load_meta_timeframe(
         return None
     with open(meta_path, "r", encoding="utf-8") as f:
         meta = yaml.safe_load(f) or {}
-    return meta.get("timeframe")
+    tf = meta.get("timeframe")
+    if not tf:
+        # 尝试 strategy.timeframe
+        s = meta.get("strategy") or {}
+        tf = s.get("timeframe")
+    return tf
+
+
+def _eval_when_vectorized(
+    when: Dict[str, Any],
+    df: pd.DataFrame,
+) -> pd.Series:
+    """向量化评估一个 when 子句, 返回 bool Series (True=条件命中)。
+
+    与事件侧 _evaluate_when_clause (loader.py) 完全对齐:
+    - all_of: AND (所有子条件均命中)
+    - any_of: OR  (任一子条件命中)
+    - 单 feature: AND (多个 feature 全部命中)
+    """
+    if not when:
+        return pd.Series(False, index=df.index)
+
+    # all_of: 递归 AND
+    if "all_of" in when:
+        conditions = when["all_of"]
+        min_matches = int(when.get("min_matches", len(conditions)))
+        if not conditions:
+            return pd.Series(False, index=df.index)
+        match_count = pd.Series(0, index=df.index, dtype=int)
+        for sub in conditions:
+            match_count += _eval_when_vectorized(sub, df).astype(int)
+        return match_count >= min_matches
+
+    # any_of: 递归 OR
+    if "any_of" in when:
+        conditions = when["any_of"]
+        min_matches = int(when.get("min_matches", 1))
+        if not conditions:
+            return pd.Series(False, index=df.index)
+        match_count = pd.Series(0, index=df.index, dtype=int)
+        for sub in conditions:
+            match_count += _eval_when_vectorized(sub, df).astype(int)
+        return match_count >= min_matches
+
+    # 单条件 / 多 feature: AND 逻辑 (与事件侧一致)
+    result = pd.Series(True, index=df.index)
+    has_any_feature = False
+    for feature, conditions in when.items():
+        if feature in ("all_of", "any_of", "min_matches"):
+            continue
+        if feature not in df.columns:
+            # 特征缺失 → 不匹配 (与事件侧 on_missing=false 一致)
+            return pd.Series(False, index=df.index)
+        if not isinstance(conditions, dict):
+            continue
+        has_any_feature = True
+        col = pd.to_numeric(df[feature], errors="coerce")
+        for op, threshold in conditions.items():
+            if op == "on_missing":
+                continue
+            try:
+                threshold = float(threshold)
+            except (TypeError, ValueError):
+                continue
+            if op == "value_gt":
+                result &= col > threshold
+            elif op in ("value_gte", "value_ge"):
+                result &= col >= threshold
+            elif op == "value_lt":
+                result &= col < threshold
+            elif op in ("value_lte", "value_le"):
+                result &= col <= threshold
+    if not has_any_feature:
+        return pd.Series(False, index=df.index)
+    return result
+
+
+def _apply_gate_from_yaml_vectorized(
+    df: pd.DataFrame,
+    arch_name: str,
+    strategies_root: str,
+) -> int:
+    """从 gate.yaml 重新评估 gate (向量化), 写入 gate_decision 列。
+
+    支持 hard_gates 中的 value_gt/value_lt/value_le/value_ge 条件,
+    以及 all_of/any_of 复合条件 (与事件侧 _evaluate_when_clause 完全对齐)。
+    每条规则: when 条件命中 + action=deny → 该 bar 被否决。
+    所有规则取 OR (任一 deny → 最终 deny)。
+
+    Returns:
+        allow 的行数
+    """
+    gate_cfg = load_gate_config(arch_name, strategies_root)
+    hard_gates = gate_cfg.get("hard_gates", [])
+
+    deny_mask = pd.Series(False, index=df.index)
+    deny_detail: Dict[str, int] = {}  # rule_id → deny count
+
+    for rule in hard_gates:
+        when = rule.get("when", {})
+        action = rule.get("then", {}).get("action", "deny")
+        if action != "deny":
+            continue
+
+        rule_id = rule.get("id", "unknown")
+        rule_deny = _eval_when_vectorized(when, df)
+
+        n_deny = int(rule_deny.sum())
+        if n_deny > 0:
+            deny_detail[rule_id] = n_deny
+        deny_mask |= rule_deny
+
+    df["gate_decision"] = deny_mask.map({True: "deny", False: "allow"})
+    n_allow = int((~deny_mask).sum())
+    print(f"   🚪 Gate (from yaml): {n_allow} allow / {len(df)} total")
+    for rid, cnt in deny_detail.items():
+        print(f"      {rid}: {cnt} deny")
+    return n_allow
+
+
+def _load_raw_features_for_archetype(
+    arch_name: str,
+    strategies_root: str,
+    symbols: List[str],
+    data_path: str,
+    test_start: str,
+    test_end: str,
+    warmup_days: int = 150,
+) -> pd.DataFrame:
+    """从原始 1min 数据计算全量特征, 返回测试期 DataFrame。
+
+    流程:
+      1. 从 meta.yaml 读取 timeframe
+      2. 初始化 IncrementalFeatureComputer (同事件回测)
+      3. 对每个 symbol: 加载 1min bars → 计算特征 → 截取测试期
+      4. 合并返回
+
+    返回的 DataFrame 包含 OHLC + 所有策略特征, 不含 gate_decision/pred 列。
+    """
+    from src.time_series_model.live.incremental_feature_computer import (
+        IncrementalFeatureComputer,
+    )
+    from src.time_series_model.live.live_feature_plan import (
+        extract_features_from_archetypes,
+    )
+    from src.data_tools.data_handler import DataHandler
+
+    # 1. Timeframe
+    tf = load_meta_timeframe(arch_name, strategies_root)
+    if not tf:
+        raise ValueError(f"{arch_name}: meta.yaml 中无 timeframe")
+    print(f"\n📂 {arch_name}: from-raw mode, tf={tf}, {len(symbols)} symbols")
+
+    # 2. FeatureComputer
+    archetypes_dir = str(Path(strategies_root) / arch_name / "archetypes")
+    fc = IncrementalFeatureComputer(
+        primary_timeframe=tf,
+        archetypes_dir=archetypes_dir,
+    )
+    # 禁用 live_feature_set 过滤 — 保留所有计算出的特征 (同事件回测)
+    fc.live_feature_set = None
+
+    # 3. 加载并计算
+    test_start_ts = pd.Timestamp(test_start, tz="UTC")
+    test_end_ts = pd.Timestamp(test_end, tz="UTC")
+    warmup_start = (test_start_ts - pd.Timedelta(days=warmup_days)).strftime("%Y-%m-%d")
+    end_str = test_end_ts.strftime("%Y-%m-%d")
+
+    dh = DataHandler(data_path)
+    parts: List[pd.DataFrame] = []
+
+    import time as _time
+
+    for sym in symbols:
+        t0 = _time.time()
+        try:
+            bars_1min = dh.load_ohlcv(
+                symbol=sym, timeframe="1T", start_date=warmup_start, end_date=end_str
+            )
+        except Exception as e:
+            # 缓存文件可能损坏, 删除后重试一次
+            cache_file = Path("cache/timeframes") / f"{sym}_1T.parquet"
+            if cache_file.exists():
+                print(
+                    f"   ⚠️  {sym}: 缓存读取失败, 清除缓存重试 ({e.__class__.__name__})"
+                )
+                cache_file.unlink()
+                try:
+                    bars_1min = dh.load_ohlcv(
+                        symbol=sym,
+                        timeframe="1T",
+                        start_date=warmup_start,
+                        end_date=end_str,
+                    )
+                except Exception as e2:
+                    print(f"   ⚠️  {sym}: 重试仍失败, 跳过 ({e2})")
+                    continue
+            else:
+                print(f"   ⚠️  {sym}: 数据加载失败, 跳过 ({e})")
+                continue
+
+        if bars_1min is None or len(bars_1min) < 100:
+            print(
+                f"   ⚠️  {sym}: bars 不足 ({len(bars_1min) if bars_1min is not None else 0}), 跳过"
+            )
+            continue
+
+        bars_1min.index = pd.to_datetime(bars_1min.index, utc=True)
+        col_rename = {"buy_qty": "buy_volume", "sell_qty": "sell_volume"}
+        bars_1min = bars_1min.rename(
+            columns={k: v for k, v in col_rename.items() if k in bars_1min.columns}
+        )
+        if "timestamp" not in bars_1min.columns:
+            bars_1min["timestamp"] = bars_1min.index
+
+        # 加载 ticks (同事件回测)
+        tick_frames = []
+        data_root = Path(data_path)
+        for fp in sorted(data_root.glob(f"{sym}_*.parquet")):
+            try:
+                df_tick = pd.read_parquet(fp)
+                if "price" in df_tick.columns and "volume" in df_tick.columns:
+                    tick_frames.append(df_tick)
+            except Exception:
+                pass
+        if tick_frames:
+            ticks_1min = pd.concat(tick_frames, ignore_index=True)
+            ticks_1min["timestamp"] = pd.to_datetime(ticks_1min["timestamp"], utc=True)
+            _ws = pd.Timestamp(warmup_start, tz="UTC")
+            ticks_1min = ticks_1min[
+                (ticks_1min["timestamp"] >= _ws)
+                & (ticks_1min["timestamp"] <= test_end_ts)
+            ]
+        else:
+            ticks_1min = pd.DataFrame()
+
+        # 重新初始化 FC 状态 (每个 symbol 独立计算)
+        fc.reset()
+
+        try:
+            features_df = fc.compute_features_dataframe(
+                bars_1min=bars_1min,
+                ticks_1min=ticks_1min,
+                primary_timeframe=tf,
+            )
+        except Exception as e:
+            print(f"   ⚠️  {sym}: 特征计算异常, 跳过 ({e})")
+            continue
+
+        if features_df.empty:
+            print(f"   ⚠️  {sym}: 特征计算为空, 跳过")
+            continue
+
+        features_df.index = pd.to_datetime(features_df.index, utc=True)
+        test_df = features_df[
+            (features_df.index >= test_start_ts) & (features_df.index <= test_end_ts)
+        ]
+        if test_df.empty:
+            print(f"   ⚠️  {sym}: 测试期无数据, 跳过")
+            continue
+
+        test_df = test_df.copy()
+        test_df["symbol"] = sym
+        test_df["timestamp"] = test_df.index
+        elapsed = _time.time() - t0
+        print(
+            f"   {sym}: {len(bars_1min)} 1min bars → {len(test_df)} {tf} bars "
+            f"({elapsed:.1f}s)"
+        )
+        parts.append(test_df)
+
+    if not parts:
+        raise ValueError(f"{arch_name}: 所有 symbol 均无有效数据")
+
+    df = pd.concat(parts, ignore_index=True)
+    print(f"   📊 {arch_name}: {len(df)} total bars ({len(parts)} symbols)")
+    return df
 
 
 def _load_full_ohlc_for_map(
@@ -1263,9 +1863,20 @@ def _generate_trading_map_html(
                         _min_ts = min(_trade_ts)
                         _max_ts = max(_trade_ts)
                         _buf = max((_max_ts - _min_ts) * 0.03, pd.Timedelta(hours=96))
+                        # 统一 tz: 确保 timestamp 列和比较值都是 tz-aware
+                        _ts_col = pd.to_datetime(_sym_ohlc["timestamp"], utc=True)
+                        _min_ts = (
+                            pd.Timestamp(_min_ts, tz="UTC")
+                            if _min_ts.tzinfo is None
+                            else _min_ts
+                        )
+                        _max_ts = (
+                            pd.Timestamp(_max_ts, tz="UTC")
+                            if _max_ts.tzinfo is None
+                            else _max_ts
+                        )
                         _sym_ohlc = _sym_ohlc[
-                            (_sym_ohlc["timestamp"] >= _min_ts - _buf)
-                            & (_sym_ohlc["timestamp"] <= _max_ts + _buf)
+                            (_ts_col >= _min_ts - _buf) & (_ts_col <= _max_ts + _buf)
                         ]
                     sym_df = (
                         _sym_ohlc.rename(columns={"timestamp": ts_col})
@@ -1822,13 +2433,20 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
 
     # ── 1. 解析 --pcm 参数 ──
     arch_specs: Dict[str, str] = {}  # {archetype: logs_path}
+    from_raw_mode = getattr(args, "from_raw", False)
     for spec in args.pcm:
-        parts = spec.split(":", 1)
-        if len(parts) != 2:
-            print(f"❌ Invalid --pcm format: {spec}. Expected archetype:path")
+        if ":" in spec:
+            parts = spec.split(":", 1)
+            arch_name, logs_path = parts
+            arch_specs[arch_name] = logs_path
+        elif from_raw_mode:
+            # --from-raw 模式: 纯名称即可, 无需路径
+            arch_specs[spec] = ""
+        else:
+            print(
+                f"❌ Invalid --pcm format: {spec}. Expected archetype:path (or use --from-raw for name-only)"
+            )
             return 1
-        arch_name, logs_path = parts
-        arch_specs[arch_name] = logs_path
 
     arch_names = list(arch_specs.keys())
     print(f"\n📋 Archetypes: {arch_names}")
@@ -1840,11 +2458,32 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     arch_processed: Dict[str, pd.DataFrame] = {}  # direction + evidence
     base_df = None
 
-    for arch_name, logs_path in arch_specs.items():
-        path = Path(logs_path)
-        if not path.exists():
-            print(f"❌ {arch_name}: file not found: {path}")
+    # --from-raw 模式: 从原始数据计算特征
+    from_raw = getattr(args, "from_raw", False)
+    recompute_gate = getattr(args, "recompute_gate", False) or from_raw
+    raw_symbols = getattr(args, "symbols", None)
+    if raw_symbols and isinstance(raw_symbols, str):
+        raw_symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()]
+    elif not raw_symbols:
+        raw_symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT"]
+
+    raw_test_start = getattr(args, "test_start", None)
+    raw_test_end = getattr(args, "test_end", None)
+    raw_data_path = (
+        getattr(args, "data_path", "data/parquet_data") or "data/parquet_data"
+    )
+
+    if from_raw:
+        if not raw_test_start or not raw_test_end:
+            print("❌ --from-raw 需要 --test-start 和 --test-end")
             return 1
+        print(f"\n🔧 FROM-RAW 模式: 从原始数据计算全量特征")
+        print(f"   test_start={raw_test_start}, test_end={raw_test_end}")
+        print(f"   symbols={raw_symbols}")
+        print(f"   data_path={raw_data_path}")
+
+    for arch_name in list(arch_specs.keys()):
+        logs_path = arch_specs[arch_name]
 
         # 加载配置
         try:
@@ -1854,11 +2493,34 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             print(f"❌ {arch_name}: {e}")
             return 1
 
-        # 加载数据
-        df = pd.read_parquet(path)
-        if "_symbol" in df.columns and "symbol" not in df.columns:
-            df["symbol"] = df["_symbol"]
-        print(f"\n📂 {arch_name}: {len(df)} rows from {path}")
+        # ── 数据加载: from-raw vs 传统 ──
+        if from_raw:
+            # 从原始 1min 数据计算全量特征
+            try:
+                df = _load_raw_features_for_archetype(
+                    arch_name=arch_name,
+                    strategies_root=strategies_root,
+                    symbols=raw_symbols,
+                    data_path=raw_data_path,
+                    test_start=raw_test_start,
+                    test_end=raw_test_end,
+                )
+            except Exception as e:
+                print(f"❌ {arch_name}: from-raw 加载失败: {e}")
+                import traceback
+
+                traceback.print_exc()
+                return 1
+        else:
+            # 传统模式: 从 parquet 加载
+            path = Path(logs_path)
+            if not path.exists():
+                print(f"❌ {arch_name}: file not found: {path}")
+                return 1
+            df = pd.read_parquet(path)
+            if "_symbol" in df.columns and "symbol" not in df.columns:
+                df["symbol"] = df["_symbol"]
+            print(f"\n📂 {arch_name}: {len(df)} rows from {path}")
 
         # 检测方向列 —— 严格使用 direction.yaml
         dir_cfg = load_direction_config(arch_name, strategies_root)
@@ -1879,7 +2541,12 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             return 1
 
         # Gate 过滤
-        if "gate_decision" in df.columns:
+        if recompute_gate:
+            # 从 gate.yaml 重新评估 gate (不依赖 gate_decision 列)
+            _apply_gate_from_yaml_vectorized(df, arch_name, strategies_root)
+            veto_mask = df["gate_decision"] != "allow"
+            df.loc[veto_mask, "entry_direction"] = 0.0
+        elif "gate_decision" in df.columns:
             veto_mask = df["gate_decision"] != "allow"
             df.loc[veto_mask, "entry_direction"] = 0.0
             n_allowed = int((~veto_mask).sum())
@@ -2081,6 +2748,15 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     merged["_tier_size"] = 1.0
     merged["_tier_name"] = "default"
 
+    # 每行的 bar_minutes (用于 1min 模拟的 timeout 换算 + slot 时间戳比较)
+    merged["_bar_minutes"] = 240  # 默认 4H
+    for arch_name in arch_names:
+        tf = load_meta_timeframe(arch_name, strategies_root)
+        if tf:
+            bm = int(tf.replace("T", ""))
+            mask = merged["_pcm_archetype"] == arch_name
+            merged.loc[mask, "_bar_minutes"] = bm
+
     # 按 winning archetype 覆盖执行参数
     for arch_name in arch_names:
         if arch_name not in arch_exec_configs:
@@ -2123,6 +2799,41 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             live_root=getattr(args, "live_root", "live/highcap"),
         )
 
+    # ── 加仓配置 + per_strategy_limits (从 constitution.yaml 加载) ──
+    _add_position_cfg = None
+    _per_strategy_limits = None  # 独立于 add_position, 始终传入 slot 过滤
+    if constitution_yaml:
+        try:
+            import yaml as _yaml_ap
+
+            _c_ap = (
+                _yaml_ap.safe_load(Path(constitution_yaml).read_text(encoding="utf-8"))
+                or {}
+            )
+            _ra_ap = _c_ap.get("resource_allocation") or {}
+            _ap_rules = _ra_ap.get("add_position_rules") or {}
+            _ap_per_strat = _ra_ap.get("per_strategy_limits") or {}
+            # per_strategy_limits 始终读取 (与事件侧 LivePCM._max_slots_for_strategy 对齐)
+            if _ap_per_strat:
+                _per_strategy_limits = _ap_per_strat
+            if any(
+                v.get("allow_add_position", False)
+                for v in _ap_per_strat.values()
+                if isinstance(v, dict)
+            ):
+                _add_position_cfg = {
+                    "add_position_rules": _ap_rules,
+                    "per_strategy_limits": _ap_per_strat,
+                }
+                _ap_strats = [
+                    k
+                    for k, v in _ap_per_strat.items()
+                    if isinstance(v, dict) and v.get("allow_add_position", False)
+                ]
+                print(f"   📈 Add-position enabled for: {_ap_strats}")
+        except Exception:
+            pass
+
     print(f"\n📈 Simulating bar-by-bar with per-archetype execution params...")
     exec_returns, trade_details = simulate_rr_execution(
         merged,
@@ -2132,6 +2843,8 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         breakeven_lock_r=breakeven_lock_r,
         max_slots=max_slots,
         bars_1min_dict=bars_1min_dict,
+        add_position_cfg=_add_position_cfg,
+        per_strategy_limits=_per_strategy_limits,
     )
 
     valid_returns = exec_returns.dropna()
@@ -2194,18 +2907,68 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             risk_series.iloc[idx_val] = min(risk_per_slot, float(strat_risk))
         else:
             risk_series.iloc[idx_val] = risk_per_slot
+    # Kill switch 模拟参数 (从 constitution.yaml 加载)
+    _ks_cfg = None
+    if constitution_yaml:
+        try:
+            import yaml as _yaml
+
+            _c_raw = (
+                _yaml.safe_load(Path(constitution_yaml).read_text(encoding="utf-8"))
+                or {}
+            )
+            _ks_raw = _c_raw.get("kill_switch") or {}
+            if _ks_raw.get("enabled", False):
+                _ks_cfg = {
+                    "max_dd": float(_ks_raw.get("max_dd", 0.20)),
+                    "daily_loss_limit": float(_ks_raw.get("daily_loss_limit", 0.04)),
+                    "weekly_loss_limit": float(_ks_raw.get("weekly_loss_limit", 0.08)),
+                    "monthly_loss_limit": float(
+                        _ks_raw.get("monthly_loss_limit", 0.12)
+                    ),
+                    "cooldown_bars": int(_ks_raw.get("cooldown_minutes", 240))
+                    // 240,  # 4H bars
+                }
+        except Exception:
+            pass
+
     risk_eq_pcm = compute_risk_equity_curve(
         exec_returns,
         initial_cash=1000.0,
         risk_per_slot=risk_per_slot,
         stop_loss_r=pcm_sl_r,
         risk_per_trade_series=risk_series,
+        kill_switch=_ks_cfg,
     )
     print(f"\n   💰 Risk-Based Equity ($1000, per-strategy risk, SL={pcm_sl_r}R):")
     print(
         f"      Final: ${risk_eq_pcm['final_equity']:.0f}  ({risk_eq_pcm['total_return_pct']:+.1f}%)"
     )
     print(f"      Max DD: {risk_eq_pcm['max_dd']:.1%}")
+
+    # Kill switch 模拟统计
+    if _ks_cfg and "kill_switch_stats" in risk_eq_pcm:
+        ks_stats = risk_eq_pcm["kill_switch_stats"]
+        print(f"\n   🚨 Kill Switch 模拟 (constitution.yaml):")
+        print(f"      触发次数: {ks_stats['trigger_count']}")
+        print(f"      跳过交易: {ks_stats['trades_skipped']}")
+        print(f"      实际执行: {ks_stats['trades_executed']}")
+        for trig in ks_stats["triggers"][:5]:  # 最多显示前5次
+            print(
+                f"      │ {trig['timestamp']}: {', '.join(trig['reasons'])} (eq=${trig['equity']:.0f}, dd={trig['dd']:.1%})"
+            )
+        if ks_stats["trigger_count"] > 5:
+            print(f"      │ ... 另有 {ks_stats['trigger_count']-5} 次触发")
+
+    # 加仓统计
+    if _add_position_cfg and trade_details:
+        ap_trades = [t for t in trade_details if t.get("is_add_position", False)]
+        print(f"\n   📈 Add-Position 统计:")
+        print(f"      加仓交易: {len(ap_trades)}")
+        if ap_trades:
+            ap_pnl = [t["realized_rr"] for t in ap_trades]
+            print(f"      加仓平均R: {np.mean(ap_pnl):.4f}")
+            print(f"      加仓胜率: {np.mean([p > 0 for p in ap_pnl]):.2%}")
 
     # Per-symbol breakdown
     sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
@@ -2322,16 +3085,19 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
                     start=_start,
                     end=_end,
                 )
-        map_html = _generate_trading_map_html(
-            merged,
-            trade_details,
-            title=f"PCM {'_'.join(arch_names)} Trading Map",
-            arch_timeframes=arch_tfs if arch_tfs else None,
-            timeframe=getattr(args, "timeframe", None),
-            full_ohlc=_pcm_map_ohlc,
-        )
-        map_path.write_text(map_html, encoding="utf-8")
-        print(f"   🗺️  Trading Map: {map_path}")
+        try:
+            map_html = _generate_trading_map_html(
+                merged,
+                trade_details,
+                title=f"PCM {'_'.join(arch_names)} Trading Map",
+                arch_timeframes=arch_tfs if arch_tfs else None,
+                timeframe=getattr(args, "timeframe", None),
+                full_ohlc=_pcm_map_ohlc,
+            )
+            map_path.write_text(map_html, encoding="utf-8")
+            print(f"   🗺️  Trading Map: {map_path}")
+        except Exception as e:
+            print(f"   ⚠️  Trading Map 生成失败: {e}")
 
     if args.export_signals:
         export_path = Path(args.export_signals)
@@ -2348,6 +3114,10 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         export_df = pd.DataFrame(export_data)
         export_df.to_csv(export_path, index=False)
         print(f"\n   📤 Signals exported: {len(export_df)} rows → {export_path}")
+
+    # ── Export trades CSV (一致性对比用) ──
+    if getattr(args, "export_trades", None) and trade_details:
+        _export_trade_details_csv(trade_details, args.export_trades, merged)
 
     print("\n" + "=" * 80)
     return 0
@@ -3351,6 +4121,13 @@ def main() -> int:
         help="导出逐 bar 信号决策 CSV，用于与 simulate_bpc_e2e.py 对比验证信号对齐。",
     )
     p.add_argument(
+        "--export-trades",
+        type=str,
+        default=None,
+        help="导出交易明细 CSV (symbol/side/entry_time/exit_time/pnl_r/exit_reason/archetype)，"
+        "用于 compare_vector_event_consistency.py 与事件回测对比。",
+    )
+    p.add_argument(
         "--breakeven",
         nargs="?",
         const=1.0,
@@ -3378,6 +4155,39 @@ def main() -> int:
         "--data-path",
         default="data/parquet_data",
         help="研究数据目录 (默认 data/parquet_data, 设为 none 使用实盘数据验证)",
+    )
+    p.add_argument(
+        "--from-raw",
+        action="store_true",
+        dest="from_raw",
+        help="从原始 1min 数据计算全量特征 (不依赖 logs_gated.parquet)。"
+        "此模式需要 --test-start 和 --test-end。--pcm 可用纯名称: --pcm bpc fer me",
+    )
+    p.add_argument(
+        "--test-start",
+        type=str,
+        default=None,
+        dest="test_start",
+        help="回测开始日期 (YYYY-MM-DD)，--from-raw 模式必填",
+    )
+    p.add_argument(
+        "--test-end",
+        type=str,
+        default=None,
+        dest="test_end",
+        help="回测结束日期 (YYYY-MM-DD)，--from-raw 模式必填",
+    )
+    p.add_argument(
+        "--symbols",
+        type=str,
+        default=None,
+        help="交易标的 (逗号分隔, 默认: BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT)",
+    )
+    p.add_argument(
+        "--recompute-gate",
+        action="store_true",
+        dest="recompute_gate",
+        help="从 gate.yaml 重新评估 gate (不使用 logs_gated 中的 gate_decision 列)",
     )
     args = p.parse_args()
 
@@ -3828,6 +4638,40 @@ def main() -> int:
             live_root=getattr(args, "live_root", "live/highcap"),
         )
 
+    # ── 加仓配置 (从 constitution.yaml 加载) ──
+    _add_pos_cfg_single = None
+    _const_path_single = getattr(args, "constitution", None)
+    if _const_path_single:
+        try:
+            import yaml as _yaml_ap2
+
+            _c_ap2 = (
+                _yaml_ap2.safe_load(
+                    Path(_const_path_single).read_text(encoding="utf-8")
+                )
+                or {}
+            )
+            _ra_ap2 = _c_ap2.get("resource_allocation") or {}
+            _ap_rules2 = _ra_ap2.get("add_position_rules") or {}
+            _ap_per_strat2 = _ra_ap2.get("per_strategy_limits") or {}
+            if any(
+                v.get("allow_add_position", False)
+                for v in _ap_per_strat2.values()
+                if isinstance(v, dict)
+            ):
+                _add_pos_cfg_single = {
+                    "add_position_rules": _ap_rules2,
+                    "per_strategy_limits": _ap_per_strat2,
+                }
+                _ap_s = [
+                    k
+                    for k, v in _ap_per_strat2.items()
+                    if isinstance(v, dict) and v.get("allow_add_position", False)
+                ]
+                print(f"   📈 Add-position enabled for: {_ap_s}")
+        except Exception:
+            pass
+
     # 使用 execution.yaml 配置模拟 RR
     print("\n📈 Simulating with execution.yaml config...")
     exec_returns, trade_details = simulate_rr_execution(
@@ -3837,6 +4681,7 @@ def main() -> int:
         use_tier_params=use_tier_params,
         breakeven_lock_r=breakeven_lock_r,
         bars_1min_dict=bars_1min_dict,
+        add_position_cfg=_add_pos_cfg_single,
     )
 
     valid_returns = exec_returns.dropna()
@@ -3888,11 +4733,30 @@ def main() -> int:
     effective_risk = (
         min(_risk_slot, float(_strat_risk)) if _strat_risk is not None else _risk_slot
     )
+    # Kill switch 模拟 (单策略模式)
+    _ks_single = None
+    if _const_yaml:
+        try:
+            import yaml as _y
+
+            _c_r = _y.safe_load(Path(_const_yaml).read_text(encoding="utf-8")) or {}
+            _ks_r = _c_r.get("kill_switch") or {}
+            if _ks_r.get("enabled", False):
+                _ks_single = {
+                    "max_dd": float(_ks_r.get("max_dd", 0.20)),
+                    "daily_loss_limit": float(_ks_r.get("daily_loss_limit", 0.04)),
+                    "weekly_loss_limit": float(_ks_r.get("weekly_loss_limit", 0.08)),
+                    "monthly_loss_limit": float(_ks_r.get("monthly_loss_limit", 0.12)),
+                    "cooldown_bars": int(_ks_r.get("cooldown_minutes", 240)) // 240,
+                }
+        except Exception:
+            pass
     risk_eq = compute_risk_equity_curve(
         exec_returns,
         initial_cash=1000.0,
         risk_per_slot=effective_risk,
         stop_loss_r=sl_r,
+        kill_switch=_ks_single,
     )
     print(
         f"\n   💰 Risk-Based Equity ($1000, {effective_risk:.1%}/trade [{args.strategy}], SL={sl_r}R):"
@@ -3901,6 +4765,23 @@ def main() -> int:
         f"      Final: ${risk_eq['final_equity']:.0f}  ({risk_eq['total_return_pct']:+.1f}%)"
     )
     print(f"      Max DD: {risk_eq['max_dd']:.1%}")
+    if _ks_single and "kill_switch_stats" in risk_eq:
+        ks = risk_eq["kill_switch_stats"]
+        print(
+            f"\n   🚨 Kill Switch: {ks['trigger_count']} triggers, {ks['trades_skipped']} skipped, {ks['trades_executed']} executed"
+        )
+        for trig in ks["triggers"][:3]:
+            print(f"      │ {trig['timestamp']}: {', '.join(trig['reasons'])}")
+
+    # 加仓统计 (单策略模式)
+    if _add_pos_cfg_single and trade_details:
+        ap_trades = [t for t in trade_details if t.get("is_add_position", False)]
+        print(f"\n   📈 Add-Position 统计:")
+        print(f"      加仓交易: {len(ap_trades)}")
+        if ap_trades:
+            ap_pnl = [t["realized_rr"] for t in ap_trades]
+            print(f"      加仓平均R: {np.mean(ap_pnl):.4f}")
+            print(f"      加仓胜率: {np.mean([p > 0 for p in ap_pnl]):.2%}")
 
     # Per-symbol breakdown
     sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
@@ -4036,6 +4917,10 @@ def main() -> int:
         export_df = pd.DataFrame(export_data)
         export_df.to_csv(export_path, index=False)
         print(f"\n   📤 Signals exported: {len(export_df)} rows → {export_path}")
+
+    # ── Export trades CSV (一致性对比用) ──
+    if getattr(args, "export_trades", None) and trade_details:
+        _export_trade_details_csv(trade_details, args.export_trades, merged)
 
     print("\n" + "=" * 80)
 

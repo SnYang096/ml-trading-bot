@@ -58,6 +58,17 @@ from src.time_series_model.live.position_logic import (
     enforce_position,
 )
 from src.time_series_model.portfolio.live_pcm import LivePCM
+from src.time_series_model.core.constitution.constitution_executor import (
+    ConstitutionExecutor,
+)
+from src.time_series_model.core.constitution.runtime_state import (
+    ConstitutionRuntimeState,
+)
+from src.time_series_model.core.constitution.safety_runtime import (
+    SafetyRuntimeState,
+    evaluate_safety_state,
+)
+from src.time_series_model.core.constitution.violation import ConstitutionViolation
 
 # order_management integration (optional — only when --db is provided)
 try:
@@ -110,9 +121,11 @@ class ClosedTrade:
     pnl_r: float  # PnL in R-multiples
     pnl_usd: float  # notional PnL (per-unit)
     exit_reason: str
+    archetype: str = ""
     tier_name: str = ""
     evidence_score: float = 0.0
     bars_held: int = 0
+    is_add_position: bool = False  # 加仓标记
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -183,6 +196,7 @@ class PositionSimulator:
             bar_minutes=bar_minutes or self.default_bar_minutes,
             entry_time=entry_time,
         )
+        pos["archetype"] = getattr(intent, "archetype", "") or ""
         self._positions[pid] = pos
 
         # 写入 order_management DB
@@ -251,6 +265,17 @@ class PositionSimulator:
                 )
                 pnl_r = pnl_usd / risk if risk > 0 else 0.0
 
+                # 归一化 exit_reason: 与向量回测对齐命名
+                normalized_reason = close_reason
+                if close_reason == "stop_loss":
+                    normalized_reason = (
+                        "trailing_sl" if pos.get("trailing_activated") else "sl"
+                    )
+                elif close_reason == "take_profit":
+                    normalized_reason = "tp"
+                elif close_reason == "time_stop":
+                    normalized_reason = "timeout"
+
                 trade = ClosedTrade(
                     symbol=pos.get("symbol", ""),
                     side=pos["side"],
@@ -261,10 +286,12 @@ class PositionSimulator:
                     atr_at_entry=pos.get("atr_at_entry", 0),
                     pnl_r=pnl_r,
                     pnl_usd=pnl_usd,
-                    exit_reason=close_reason,
+                    exit_reason=normalized_reason,
+                    archetype=pos.get("archetype", ""),
                     tier_name=pos.get("tier_name", ""),
                     evidence_score=pos.get("evidence_score", 0),
                     bars_held=pos.get("bars_counted", 0),
+                    is_add_position=pos.get("_is_add_position", False),
                 )
                 closed.append(trade)
                 self.closed_trades.append(trade)
@@ -309,9 +336,11 @@ class PositionSimulator:
                 pnl_r=pnl_r,
                 pnl_usd=pnl_usd,
                 exit_reason="end_of_backtest",
+                archetype=pos.get("archetype", ""),
                 tier_name=pos.get("tier_name", ""),
                 evidence_score=pos.get("evidence_score", 0),
                 bars_held=pos.get("bars_counted", 0),
+                is_add_position=pos.get("_is_add_position", False),
             )
             closed.append(trade)
             self.closed_trades.append(trade)
@@ -327,6 +356,105 @@ class PositionSimulator:
                 )
         self._positions.clear()
         return closed
+
+    def try_add_position(
+        self,
+        intent: Any,
+        entry_bar: Dict[str, Any],
+        features: Dict[str, Any],
+        executor: ConstitutionExecutor,
+        runtime_state: ConstitutionRuntimeState,
+        bar_minutes: Optional[int] = None,
+    ) -> Optional[str]:
+        """加仓模拟: 复用实盘 validate_add_position / record_add_position。
+
+        与实盘 constitution_executor.py 100% 同一份代码:
+          1. executor.validate_add_position() — 策略/次数/利润锁定检查
+          2. executor.record_add_position() — 更新 ConstitutionRuntimeState
+
+        Returns:
+            position_id if added, None if rejected
+        """
+        archetype = getattr(intent, "archetype", "").lower().strip()
+        new_side = (
+            "LONG"
+            if str(getattr(intent, "action", "")).upper() in ("LONG", "BUY")
+            else "SHORT"
+        )
+
+        # 1. 查找同 symbol 同 side 同 archetype 的已有持仓
+        parent_pid = None
+        parent_pos = None
+        for pid, pos in self._positions.items():
+            if (
+                pos.get("symbol", "") == intent.symbol
+                and pos["side"] == new_side
+                and pos.get("tier_name", "").lower() == archetype
+            ):
+                parent_pid = pid
+                parent_pos = pos
+                break
+
+        if parent_pos is None:
+            return None  # 没有已有持仓，不是加仓场景
+
+        # 2. 计算 current_r (用于 validate_add_position)
+        entry_price = parent_pos["entry_price"]
+        risk = (
+            parent_pos.get("initial_risk_distance")
+            or parent_pos.get("atr_at_entry", 0)
+            or 1
+        )
+        is_long = parent_pos["side"] in {"LONG", "BUY"}
+        current_price = float(entry_bar.get("close", 0))
+        current_r = (
+            (
+                (current_price - entry_price)
+                if is_long
+                else (entry_price - current_price)
+            )
+            / risk
+            if risk > 0
+            else 0.0
+        )
+
+        # 3. 复用实盘 validate_add_position (raises ConstitutionViolation on failure)
+        try:
+            executor.validate_add_position(
+                st=runtime_state,
+                position_id=parent_pid,
+                archetype=archetype,
+                current_r=current_r,
+                locked_profit=parent_pos.get("breakeven_locked", False),
+            )
+        except ConstitutionViolation:
+            return None
+
+        # 4. 记录加仓 (更新 ConstitutionRuntimeState — 同实盘 record_add_position)
+        executor.record_add_position(
+            st=runtime_state,
+            position_id=parent_pid,
+            current_r=current_r,
+            locked_profit=parent_pos.get("breakeven_locked", False),
+        )
+
+        # 5. 开加仓仓位
+        pid = str(uuid.uuid4())[:12]
+        pos = build_position_dict(
+            intent=intent,
+            entry_price=float(entry_bar.get("close", 0)),
+            atr=float(entry_bar.get("atr", 0)) or float(features.get("atr", 0)) or 0.0,
+            bar_minutes=bar_minutes or self.default_bar_minutes,
+            entry_time=(
+                pd.Timestamp(entry_bar.get("timestamp")).to_pydatetime()
+                if entry_bar.get("timestamp") is not None
+                else datetime.now(timezone.utc)
+            ),
+        )
+        pos["_is_add_position"] = True
+        pos["_parent_pid"] = parent_pid
+        self._positions[pid] = pos
+        return pid
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -440,6 +568,12 @@ class BacktestResult:
     per_symbol: Dict[str, List[ClosedTrade]] = field(default_factory=dict)
     # 1min bar data per symbol (for trading map)
     bars_1min: Dict[str, pd.DataFrame] = field(default_factory=dict)
+    # Kill switch 模拟统计
+    kill_switch_stats: Optional[Dict[str, Any]] = None
+    # 风险 equity curve
+    equity_curve: Optional[List[float]] = None
+    # 加仓模拟统计
+    add_position_stats: Optional[Dict[str, Any]] = None
 
     @property
     def n_trades(self) -> int:
@@ -531,6 +665,47 @@ class BacktestResult:
             for k, v in self.funnel.items():
                 print(f"    {k:30s}: {v}")
 
+        # Kill switch 模拟统计
+        if self.kill_switch_stats:
+            ks = self.kill_switch_stats
+            print(f"\n  🚨 Kill Switch 模拟:")
+            print(f"    触发次数: {ks.get('trigger_count', 0)}")
+            print(f"    跳过入场: {ks.get('trades_skipped', 0)}")
+            print(f"    实际执行: {ks.get('trades_executed', 0)}")
+            for trig in ks.get("triggers", [])[:5]:
+                print(
+                    f"    │ {trig['timestamp']}: {', '.join(trig['reasons'])} (eq=${trig['equity']:.0f})"
+                )
+
+        # 风险 Equity Curve 摘要
+        if self.equity_curve and len(self.equity_curve) > 1:
+            final_eq = self.equity_curve[-1]
+            peak_eq = max(self.equity_curve)
+            ret_pct = (final_eq - self.equity_curve[0]) / self.equity_curve[0] * 100
+            max_dd_eq = 0.0
+            peak = self.equity_curve[0]
+            for eq in self.equity_curve:
+                if eq > peak:
+                    peak = eq
+                dd = (peak - eq) / peak if peak > 0 else 0.0
+                if dd > max_dd_eq:
+                    max_dd_eq = dd
+            print(f"\n  💰 Risk-Based Equity ($1000):")
+            print(f"    Final: ${final_eq:.0f} ({ret_pct:+.1f}%)")
+            print(f"    Peak: ${peak_eq:.0f}")
+            print(f"    Max DD: {max_dd_eq:.1%}")
+
+        # 加仓统计
+        if self.add_position_stats:
+            ap = self.add_position_stats
+            print(f"\n  📈 加仓模拟 (constitution add_position_rules):")
+            print(f"    加仓成功: {ap.get('add_count', 0)} 次")
+            print(f"    加仓拒绝: {ap.get('rejected_count', 0)} 次")
+            print(f"    加仓交易: {ap.get('add_trades', 0)} 笔")
+            if ap.get("add_trades", 0) > 0:
+                print(f"    加仓 Mean R: {ap.get('add_mean_r', 0):.4f}")
+                print(f"    加仓 Win%: {ap.get('add_win_rate', 0):.1%}")
+
         print("=" * 72)
 
     def export_trades_csv(self, path: str):
@@ -549,9 +724,11 @@ class BacktestResult:
                     "pnl_r": round(t.pnl_r, 4),
                     "pnl_usd": round(t.pnl_usd, 4),
                     "exit_reason": t.exit_reason,
+                    "archetype": t.archetype,
                     "tier": t.tier_name,
                     "evidence": round(t.evidence_score, 4),
                     "bars_held": t.bars_held,
+                    "is_add_position": t.is_add_position,
                 }
             )
         df = pd.DataFrame(rows)
@@ -753,19 +930,32 @@ class EventBacktester:
         symbols: List[str],
         days: int = 180,
         warmup_days: int = 100,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> BacktestResult:
         """
         运行事件驱动回测 — 多策略 + 多 timeframe + 跨 symbol 时间线交叉处理
+
+        时间范围:
+          - 默认: end_date=now(), test_start=end_date - days
+          - 指定 --start-date / --end-date: 精确控制, 用于与向量回测对齐
         """
         result = BacktestResult(strategy="+".join(self.strategy_names))
         funnel = defaultdict(int)
 
-        end_date = datetime.now().strftime("%Y-%m-%d")
-        warmup_start = (datetime.now() - timedelta(days=days + warmup_days)).strftime(
-            "%Y-%m-%d"
-        )
-        test_start = datetime.now() - timedelta(days=days)
-        test_start_ts = pd.Timestamp(test_start, tz="UTC")
+        if end_date:
+            _end = pd.Timestamp(end_date, tz="UTC")
+        else:
+            _end = pd.Timestamp(datetime.now(), tz="UTC")
+        if start_date:
+            _start = pd.Timestamp(start_date, tz="UTC")
+        else:
+            _start = _end - timedelta(days=days)
+
+        end_date_str = _end.strftime("%Y-%m-%d")
+        warmup_start = (_start - timedelta(days=warmup_days)).strftime("%Y-%m-%d")
+        test_start_ts = _start
+        logger.info(f"Time range: test={_start} → {_end}, warmup_start={warmup_start}")
 
         # 数据源: --data-path (研究数据) 或 StorageManager (实盘数据)
         use_research = self.data_path is not None
@@ -785,12 +975,12 @@ class EventBacktester:
             if use_research:
                 # ── 研究数据路径: DataHandler → 1min bars + ticks ──
                 bars_1min, ticks_1min = self._load_research_data(
-                    sym, warmup_start, end_date
+                    sym, warmup_start, end_date_str
                 )
             else:
                 # ── 实盘数据路径: StorageManager ──
-                bars_1min = storage.bar_1min.load_range(sym, warmup_start, end_date)
-                ticks_1min = storage.ticks.load_range(sym, warmup_start, end_date)
+                bars_1min = storage.bar_1min.load_range(sym, warmup_start, end_date_str)
+                ticks_1min = storage.ticks.load_range(sym, warmup_start, end_date_str)
 
             logger.info(
                 f"  Data: {len(bars_1min)} 1min bars, {len(ticks_1min)} ticks "
@@ -818,7 +1008,9 @@ class EventBacktester:
                 features_df.index = pd.to_datetime(features_df.index, utc=True)
                 quantile_dfs_by_tf[tf].append(features_df)
 
-                test_df = features_df[features_df.index >= test_start_ts]
+                test_df = features_df[
+                    (features_df.index >= test_start_ts) & (features_df.index <= _end)
+                ]
                 if not test_df.empty:
                     tf_features[tf] = test_df
 
@@ -834,7 +1026,9 @@ class EventBacktester:
                     )
             if bars_1min_idx.index.tz is None:
                 bars_1min_idx.index = bars_1min_idx.index.tz_localize("UTC")
-            bars_1min_test = bars_1min_idx[bars_1min_idx.index >= test_start_ts]
+            bars_1min_test = bars_1min_idx[
+                (bars_1min_idx.index >= test_start_ts) & (bars_1min_idx.index <= _end)
+            ]
 
             sym_data[sym] = {
                 "tf_features": tf_features,
@@ -877,7 +1071,10 @@ class EventBacktester:
 
         # 初始化 per-symbol simulators
         for sym in sym_data:
-            sim = PositionSimulator(default_bar_minutes=self._primary_bar_minutes)
+            sim = PositionSimulator(
+                default_bar_minutes=self._primary_bar_minutes,
+                max_positions=len(self.strategy_names),  # 每策略独占 1 slot
+            )
             if self._om_bridge:
                 sim._om_bridge = self._om_bridge
             self._simulators[sym] = sim
@@ -891,6 +1088,62 @@ class EventBacktester:
 
         # ── Phase 3: 遍历统一时间线 ──
         prev_ts: Dict[str, pd.Timestamp] = {}
+
+        # ── Constitution Executor (复用实盘同一份代码) ──
+        _executor: Optional[ConstitutionExecutor] = None
+        _runtime_state = ConstitutionRuntimeState()
+        _safety_state = SafetyRuntimeState()
+        constitution_path = str(Path("config") / "constitution" / "constitution.yaml")
+        try:
+            _executor = ConstitutionExecutor(constitution_yaml=constitution_path)
+            if _executor.cfg.kill_enabled:
+                logger.info(
+                    f"Kill Switch (共享 evaluate_safety_state): "
+                    f"max_dd={_executor.cfg.max_dd:.0%}, "
+                    f"daily={_executor.cfg.daily_loss_limit:.0%}, "
+                    f"cooldown={_executor.cfg.cooldown_minutes}min"
+                )
+        except Exception as e:
+            logger.warning(f"Constitution 加载失败, kill switch/加仓禁用: {e}")
+
+        # 加仓启用检查 (从 executor 读取, 与实盘同一份 resolve 逻辑)
+        _add_pos_enabled = False
+        _add_pos_count = 0
+        _add_pos_rejected = 0
+        if _executor:
+            try:
+                _psl = _executor._resolve_per_strategy_limits()
+                _add_pos_enabled = any(
+                    isinstance(v, dict) and v.get("allow_add_position", False)
+                    for v in _psl.values()
+                )
+                if _add_pos_enabled:
+                    _ap_rules = _executor._resolve_add_position()
+                    logger.info(
+                        f"加仓模拟 (共享 validate_add_position): "
+                        f"max_add={_ap_rules.get('max_add_times', 1)}, "
+                        f"trigger_r={_ap_rules.get('lock_profit_breakeven_trigger_r', 1.0)}"
+                    )
+            except Exception:
+                pass
+        _risk_per_slot = float(
+            self.pcm._constitution.get("risk_per_slot", 0.01)
+            if hasattr(self.pcm, "_constitution") and self.pcm._constitution
+            else 0.01
+        )
+        _initial_cash = 1000.0
+        _equity = _initial_cash
+        _equity_curve = [_equity]
+        _equity_peak = _equity
+        _ks_triggers: list = []
+        _ks_skipped = 0
+        _ks_executed = 0
+        _period_equity_daily = _equity
+        _period_equity_weekly = _equity
+        _period_equity_monthly = _equity
+        _prev_day = None
+        _prev_week = None
+        _prev_month = None
 
         for ts, sym, tf_rows in timeline_events:
             simulator = self._simulators[sym]
@@ -910,7 +1163,94 @@ class EventBacktester:
                         "low": float(bar_row.get("low", 0)),
                         "close": float(bar_row.get("close", 0)),
                     }
-                    simulator.update(bar_dict)
+                    closed = simulator.update(bar_dict)
+                    # 通知 PCM 释放 slot evidence
+                    for ct in closed:
+                        self.pcm.notify_position_closed(sym, ct.archetype)
+                    # 更新 equity (每笔平仓后)
+                    for ct in closed:
+                        sl_r_val = 1.0  # 默认 1R SL
+                        pnl_usd = _equity * _risk_per_slot * ct.pnl_r / sl_r_val
+                        _equity += pnl_usd
+                        _equity = max(_equity, 0.0)
+                        _equity_curve.append(_equity)
+                        if _equity > _equity_peak:
+                            _equity_peak = _equity
+
+            # ── Kill switch 检查 (复用实盘 evaluate_safety_state) ──
+            _ks_blocked = False
+            if _executor and _executor.cfg.kill_enabled:
+                # 日/周/月 边界重置
+                ts_date = ts.date() if hasattr(ts, "date") else None
+                ts_week = ts.isocalendar()[1] if hasattr(ts, "isocalendar") else None
+                ts_month = ts.month if hasattr(ts, "month") else None
+                if ts_date and ts_date != _prev_day:
+                    _period_equity_daily = _equity
+                    _prev_day = ts_date
+                if ts_week and ts_week != _prev_week:
+                    _period_equity_weekly = _equity
+                    _prev_week = ts_week
+                if ts_month and ts_month != _prev_month:
+                    _period_equity_monthly = _equity
+                    _prev_month = ts_month
+
+                dd = (
+                    (_equity_peak - _equity) / _equity_peak if _equity_peak > 0 else 0.0
+                )
+                d_loss = (
+                    max(0.0, (_period_equity_daily - _equity) / _period_equity_daily)
+                    if _period_equity_daily > 0
+                    else 0.0
+                )
+                w_loss = (
+                    max(0.0, (_period_equity_weekly - _equity) / _period_equity_weekly)
+                    if _period_equity_weekly > 0
+                    else 0.0
+                )
+                m_loss = (
+                    max(
+                        0.0, (_period_equity_monthly - _equity) / _period_equity_monthly
+                    )
+                    if _period_equity_monthly > 0
+                    else 0.0
+                )
+
+                # 调用实盘同一份 evaluate_safety_state (来自 safety_runtime.py)
+                now_dt = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
+                if hasattr(now_dt, "tzinfo") and now_dt.tzinfo is None:
+                    now_dt = now_dt.replace(tzinfo=timezone.utc)
+                _safety_decision = evaluate_safety_state(
+                    state=_safety_state,
+                    now=now_dt,
+                    cooldown_minutes=int(_executor.cfg.cooldown_minutes),
+                    daily_reset_tz=_executor.cfg.daily_reset_timezone,
+                    daily_loss=d_loss,
+                    weekly_loss=w_loss,
+                    monthly_loss=m_loss,
+                    drawdown=dd,
+                    hard_violation=False,
+                    data_bad=False,
+                    daily_cost_mean=None,
+                    daily_turnover_mean=None,
+                    limits={
+                        "max_dd": float(_executor.cfg.max_dd),
+                        "daily_loss_limit": float(_executor.cfg.daily_loss_limit),
+                        "weekly_loss_limit": float(_executor.cfg.weekly_loss_limit),
+                        "monthly_loss_limit": float(_executor.cfg.monthly_loss_limit),
+                        "max_turnover_mean": float(_executor.cfg.max_turnover_mean),
+                        "max_cost_mean": float(_executor.cfg.max_cost_mean),
+                    },
+                )
+                if not _safety_decision.ok:
+                    _ks_blocked = True
+                    _ks_triggers.append(
+                        {
+                            "timestamp": str(ts),
+                            "reasons": list(_safety_decision.reasons),
+                            "equity": _equity,
+                            "dd": dd,
+                        }
+                    )
 
             # 构建 features_by_timeframe 供 PCM 路由
             features_by_tf: Dict[str, Dict[str, float]] = {}
@@ -928,38 +1268,87 @@ class EventBacktester:
             )
 
             if intents:
-                funnel["signals_generated"] += 1
-                intent = intents[0]
-                # 用获胜 archetype 对应 timeframe 的特征构建入场 bar
-                winning_arch = getattr(intent, "archetype", "")
-                winning_tf = self._tf_map.get(winning_arch, "")
-                entry_feats = features_by_tf.get(winning_tf, primary_features)
-                entry_bar = {
-                    "close": entry_feats.get("close", 0),
-                    "high": entry_feats.get("high", 0),
-                    "low": entry_feats.get("low", 0),
-                    "open": entry_feats.get("open", 0),
-                    "timestamp": ts,
-                    "atr": entry_feats.get("atr", 0),
-                }
-                winning_bm = self._bm_map.get(winning_arch, self._primary_bar_minutes)
-                opened = simulator.open_position(
-                    intent, entry_bar, entry_feats, bar_minutes=winning_bm
-                )
-                if opened is None:
-                    funnel["reject_max_positions"] += 1
+                funnel["signals_generated"] += len(intents)
+
+                for intent in intents:
+                    # Kill switch 模拟: 被暂停时拒绝新入场
+                    if _ks_blocked:
+                        _ks_skipped += 1
+                        funnel.setdefault("reject_kill_switch", 0)
+                        funnel["reject_kill_switch"] += 1
+                        continue
+                    _ks_executed += 1
+                    # 用获胜 archetype 对应 timeframe 的特征构建入场 bar
+                    winning_arch = getattr(intent, "archetype", "")
+                    winning_tf = self._tf_map.get(winning_arch, "")
+                    entry_feats = features_by_tf.get(winning_tf, primary_features)
+                    entry_bar = {
+                        "close": entry_feats.get("close", 0),
+                        "high": entry_feats.get("high", 0),
+                        "low": entry_feats.get("low", 0),
+                        "open": entry_feats.get("open", 0),
+                        "timestamp": ts,
+                        "atr": entry_feats.get("atr", 0),
+                    }
+                    winning_bm = self._bm_map.get(
+                        winning_arch, self._primary_bar_minutes
+                    )
+                    opened = simulator.open_position(
+                        intent, entry_bar, entry_feats, bar_minutes=winning_bm
+                    )
+                    if opened is None:
+                        # 已有持仓，尝试加仓
+                        if _add_pos_enabled and _executor:
+                            added = simulator.try_add_position(
+                                intent,
+                                entry_bar,
+                                entry_feats,
+                                executor=_executor,
+                                runtime_state=_runtime_state,
+                                bar_minutes=winning_bm,
+                            )
+                            if added:
+                                _add_pos_count += 1
+                                funnel.setdefault("add_position_ok", 0)
+                                funnel["add_position_ok"] += 1
+                            else:
+                                _add_pos_rejected += 1
+                                funnel.setdefault("add_position_rejected", 0)
+                                funnel["add_position_rejected"] += 1
+                                funnel["reject_max_positions"] += 1
+                        else:
+                            funnel["reject_max_positions"] += 1
             else:
-                # 诊断拒绝原因 (检查每个策略的漏斗)
-                all_gate_deny = True
-                for s_obj in self._strats.values():
+                # 诊断拒绝原因: 逐策略检查 _last_funnel 确定最深到达阶段
+                _had_signal = False
+                _deepest = "no_direction"  # 最浅
+                for s_name, s_obj in self._strats.items():
                     lf = getattr(s_obj, "_last_funnel", {})
-                    if lf.get("gate", True):
-                        all_gate_deny = False
-                        break
-                if all_gate_deny:
-                    funnel["reject_gate_deny"] += 1
-                else:
+                    if not lf:
+                        continue  # 未评估 (timeframe 不匹配 / 空特征)
+                    if not lf.get("direction", False):
+                        continue  # direction=0, 无信号
+                    # direction != 0
+                    if lf.get("gate") is False:
+                        if _deepest == "no_direction":
+                            _deepest = "gate_deny"
+                        continue
+                    # gate passed (or no gate)
+                    if lf.get("entry_filter") is False:
+                        if _deepest in ("no_direction", "gate_deny"):
+                            _deepest = "entry_filter_deny"
+                        continue
+                    # 全部通过 → 策略产生了信号, 被 slot 拦截
+                    _had_signal = True
+                    break
+                if _had_signal:
                     funnel["reject_pcm_slot_full"] += 1
+                elif _deepest == "gate_deny":
+                    funnel["reject_gate_deny"] += 1
+                elif _deepest == "entry_filter_deny":
+                    funnel["reject_entry_filter_deny"] += 1
+                else:
+                    funnel["reject_no_direction"] += 1
 
             prev_ts[sym] = ts
 
@@ -980,7 +1369,15 @@ class EventBacktester:
                         "low": float(bar_row.get("low", 0)),
                         "close": float(bar_row.get("close", 0)),
                     }
-                    simulator.update(bar_dict)
+                    closed = simulator.update(bar_dict)
+                    for ct in closed:
+                        self.pcm.notify_position_closed(sym, ct.archetype)
+                        pnl_usd = _equity * _risk_per_slot * ct.pnl_r
+                        _equity += pnl_usd
+                        _equity = max(_equity, 0.0)
+                        _equity_curve.append(_equity)
+                        if _equity > _equity_peak:
+                            _equity_peak = _equity
 
             # 关闭残留持仓
             if simulator.has_positions:
@@ -1006,6 +1403,32 @@ class EventBacktester:
 
         result.trades.sort(key=lambda t: t.entry_time)
         result.funnel = dict(funnel)
+
+        # 保存 equity curve 和 kill switch 统计
+        result.equity_curve = _equity_curve
+        if _executor and _executor.cfg.kill_enabled:
+            result.kill_switch_stats = {
+                "trigger_count": len(_ks_triggers),
+                "trades_skipped": _ks_skipped,
+                "trades_executed": _ks_executed,
+                "triggers": _ks_triggers,
+            }
+
+        # 保存加仓统计
+        if _add_pos_enabled:
+            add_trades = [t for t in result.trades if t.is_add_position]
+            add_pnl = [t.pnl_r for t in add_trades]
+            result.add_position_stats = {
+                "enabled": True,
+                "add_count": _add_pos_count,
+                "rejected_count": _add_pos_rejected,
+                "add_trades": len(add_trades),
+                "add_mean_r": float(np.mean(add_pnl)) if add_pnl else 0.0,
+                "add_win_rate": (
+                    float(np.mean([p > 0 for p in add_pnl])) if add_pnl else 0.0
+                ),
+            }
+
         return result
 
 
@@ -1224,7 +1647,17 @@ def main():
         "--days",
         type=int,
         default=180,
-        help="回测天数 (默认 180)",
+        help="回测天数 (默认 180, 被 --start-date/--end-date 覆盖)",
+    )
+    parser.add_argument(
+        "--start-date",
+        default=None,
+        help="回测开始日期 (YYYY-MM-DD), 覆盖 --days",
+    )
+    parser.add_argument(
+        "--end-date",
+        default=None,
+        help="回测结束日期 (YYYY-MM-DD), 默认 now()",
     )
     parser.add_argument(
         "--live-root",
@@ -1294,7 +1727,12 @@ def main():
         data_path=args.data_path,
     )
 
-    result = bt.run(symbols=symbols, days=args.days)
+    result = bt.run(
+        symbols=symbols,
+        days=args.days,
+        start_date=args.start_date,
+        end_date=args.end_date,
+    )
 
     result.print_report()
 

@@ -179,16 +179,22 @@ def _eval_when_clause(
     if len(when) == 1:
         key = next(iter(when.keys()))
         cond = when.get(key) or {}
-        if isinstance(cond, dict) and len(cond) == 1:
-            op = next(iter(cond.keys()))
-            val = cond.get(op)
-            return _eval_leaf_condition(
-                key=str(key),
-                op=str(op),
-                value=val,
-                features=features,
-                quantiles=quantiles,
-            )
+        if isinstance(cond, dict):
+            for op, val in cond.items():
+                # Handle aliases for comparison operators
+                actual_op = op
+                if op == "value_le":  # alias for value_lte
+                    actual_op = "value_lte"
+                elif op == "value_ge":  # alias for value_gte
+                    actual_op = "value_gte"
+
+                return _eval_leaf_condition(
+                    key=str(key),
+                    op=str(actual_op),
+                    value=val,
+                    features=features,
+                    quantiles=quantiles,
+                )
     return False
 
 

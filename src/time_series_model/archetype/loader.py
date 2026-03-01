@@ -544,18 +544,24 @@ def _evaluate_when_clause(
         except (TypeError, ValueError):
             return False
 
-        # 直接阈值比较
+        # 直接阈值比较 (value_le/value_ge 是 value_lte/value_gte 的别名)
         if "value_lt" in cond:
             if not (value < float(cond["value_lt"])):
                 return False
         if "value_lte" in cond:
             if not (value <= float(cond["value_lte"])):
                 return False
+        if "value_le" in cond:
+            if not (value <= float(cond["value_le"])):
+                return False
         if "value_gt" in cond:
             if not (value > float(cond["value_gt"])):
                 return False
         if "value_gte" in cond:
             if not (value >= float(cond["value_gte"])):
+                return False
+        if "value_ge" in cond:
+            if not (value >= float(cond["value_ge"])):
                 return False
 
         # 分位数比较

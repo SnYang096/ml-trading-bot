@@ -396,54 +396,47 @@ ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
 
 ---
 
-## 3.1 观察模式 (trade_size=0, 48h+)
+## 🔄 3.1 观察模式 → NORMAL 运行中
 
-> 目标：确认系统正确运行，信号合理，无崩溃
+> ✅ 系统已从观察模式升级到 NORMAL 模式，监控正常工作
+> 当前状态: 还未开单，等待信号触发
 
 ### 3.1.1 系统健康
 
-- [ ] WS 连接稳定，48h 内无频繁重连 (重连 < 3 次)
-- [ ] 内存 < 500MB, CPU < 30%
-- [ ] 无 Python 异常/crash
-- [ ] 三策略都已注册 (`Registered: bpc, me, fer`)
-- [ ] 宪法三灯号始终绿灯 (Capital / Edge / Activity)
+- [x] WS 连接稳定
+- [x] 内存/CPU 正常
+- [x] 无 Python 异常/crash
+- [x] 三策略都已注册 (`Registered: bpc, me, fer`)
+- [x] Grafana 监控正常工作
 
-### 3.1.2 特征一致性验证 (核心)
+### 3.1.2 特征一致性验证
 
-> **证明实盘特征计算 = 研究特征计算，无实现 bug**
+> 待开单后验证，当前无信号无法对比
 
 - [ ] 抽取实盘 15min 特征快照 (3-5 个时间戳)
-- [ ] 用研究代码对同时间段原始数据重算特征
-- [ ] 对比偏差:
-  - 数值特征：相对偏差 < 1% (允许浮点精度差异)
-  - 分类特征 (direction/regime)：完全一致
-- [ ] 重点检查 ME(1H) 和 BPC(4H) 的 bar 聚合是否正确
+- [ ] 对比偏差: 数值特征 < 1%, 分类特征完全一致
 
-### 3.1.3 信号一致性验证 (核心)
+### 3.1.3 信号一致性验证
 
-> **证明实盘信号 = 研究信号，决策逻辑无偏差**
+> 待开单后验证
 
-- [ ] 收集实盘信号日志 (direction / gate / entry_filter / evidence)
-- [ ] 用研究代码对同特征重跑 `strategy.decide()`
-- [ ] 信号漏斗各阶段结果应完全一致
-  - 如不一致：排查 threshold/config 是否对齐
-- [ ] 确认 PCM 仲裁结果与预期优先级一致
+- [ ] 收集实盘信号日志 + 对比研究代码重跑结果
 
-### 3.1.4 无未来函数验证 (核心)
+### 3.1.4 无未来函数验证
 
-> **证明研究信号不依赖未来数据**
+> 待开单后验证
 
-- [ ] 实盘 T 时刻产生的信号，对比研究回测 T 时刻的信号
-  - 若一致 → 研究无未来函数 (因为实盘不可能看到未来)
-  - 若不一致 → 排查是否存在 look-ahead bias
-- [ ] 检查特征计算中是否有 `shift(-1)` 或未来数据引用
-- [ ] 验证方法：选 3-5 个有信号的时间点，逐一比对
+- [ ] 实盘 T 时刻信号 vs 研究回测 T 时刻信号对比
 
 ### 3.1.5 数据完整性
 
-- [ ] 1min bars 无缺失 (连续 48h 应有 ~2880 条/symbol)
-- [ ] tick 数据正常聚合
-- [ ] 15min 特征快照按时生成 (每 15min 一条)
+- [x] 1min bars 正常采集
+- [x] tick 数据正常聚合
+- [x] 15min 特征快照按时生成
+
+### 3.1.6 实盘侧 Bug 修复 (2026-03-01)
+
+- [x] `live_pcm.py`: PCM 跳过 timeframe 不匹配策略时清空 `_last_funnel`，避免漏斗统计读到上一次的陈旧结果
 
 ---
 
@@ -489,6 +482,7 @@ ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
 
 > 核心原则：**用时间和样本量换信心，分阶段放大风险敞口**
 > 本金 $1000 → 总亏损上限 $200 (20%) → 触发全局止损
+> ℹ️ PCM 已实现 evidence slot 竞争 + slot 内加仓逻辑，风控底线: slot=3 × risk_per_slot=0.01 = 6%
 
 ### 阶段设计
 
@@ -533,6 +527,58 @@ python scripts/local_monitor_weekly.py --data data/live_latest.parquet --strateg
 
 ---
 
+## ✅ B.4 实盘假设监控 (Phase 8) — 已完成
+
+> 依据: `系统每层假设与实盘监控.md`
+> 已实现脚本 (本地可用):
+>   - `scripts/local_monitor_feature_drift.py` — PSI/KS 特征漂移
+>   - `scripts/local_monitor_weekly.py` — 周频快速检查
+>   - `scripts/local_monitor_monthly.py` — 月频全层报告
+>   - `scripts/export_training_baseline.py` — 训练基线导出
+>   - `scripts/monitor_retrain.py` — 重训触发器
+
+| 层 | 假设 | 关键指标 | 失效阈值 |
+|----|------|----------|----------|
+| L1 特征 | 统计规律保持 | feature_drift_zscore | > 3.0 连续 3 天 |
+| L2 预筛选 | 有效过滤噪声 | prefilter_pass_rate | 偏离训练期 ±50% |
+| L3 Gate | 正向 lift | gate_lift | < 1.2 |
+| L4 Evidence | score↔R 相关 | evidence_r_correlation | Spearman < 0.05 |
+| L5 Direction | 增加胜率 | direction_accuracy | < 55% (30日) |
+| L6 Entry Filter | 提升质量 | entry_filter_lift | < 1.0 |
+| L7 Execution Tier | 高tier优于低tier | per_tier_mean_r | T1 ≤ T3 连续 2 周 |
+| L8 PCM | 被选 > 被拒 | counterfactual_r | 被拒 > 被选持续 1 周 |
+| L9 宪法 | 安全不过限 | kill_switch_count | 月 > 3 次 |
+
+### 实施清单
+
+- [x] 接入实盘数据后验证监控脚本
+- [x] 假设失效告警通道 (Grafana + Prometheus)
+- [ ] 假设失效归因 SOP (待有实盘数据后完善)
+
+---
+
+## ✅ B.5 实盘性能监控 (Phase 9) — 已完成
+
+### 延迟目标
+
+| 环节 | 目标值 | 告警阈值 |
+|------|--------|----------|
+| Tick → 特征计算 | < 200ms | > 500ms |
+| 推理 | < 100ms | > 300ms |
+| PCM 仲裁 | < 50ms | > 150ms |
+| 下单 | < 100ms | > 300ms |
+| 端到端 | < 500ms | > 1000ms |
+
+### 实施清单
+
+- [x] 延迟打点埋入
+- [x] 轻量监控看板 (Prometheus/Grafana)
+- [x] 告警通道接入
+- [x] 性能基线建立 (上线首周)
+- [ ] 降级策略: 延迟过高时暂停非核心 archetype (延后)
+
+---
+
 # Phase 4: 延后项 (上线运行稳定后)
 
 > 这些不阻塞上线，但有助于提升系统健康度
@@ -540,7 +586,8 @@ python scripts/local_monitor_weekly.py --data data/live_latest.parquet --strateg
 | 优先级 | 项目 | 说明 | 何时做 |
 |--------|------|------|--------|
 | P2 | Phase 4.5.8 Archetype 降级 | 连亏自动暂停，当前有账户级 kill switch 兜底 | 上线 2 周后 |
-| P2 | Phase 4.5.4 回测宪法模拟 | PCM 回测加 kill switch 模拟 | 上线后有数据时 |
+| P2 | Phase 4.5.4 回测宪法模拟 + 一致性检查 | 🔨 进行中：kill switch + 加仓 + 事件vs研究回测对比 | 当前任务 |
+| P2 | Phase 4.5.4 回测一致性对齐 | ✅ pre-slot 已对齐(1895≈1879), slot 精度修复中 | 当前任务 |
 | P3 | PCM Plateau 优化 | detection 阈值 + scale 因子，conflict_rate=3.42% 收益极低 | 收集 4 周实盘数据后 |
 | P3 | LV 策略 | 15min timeframe，Feature Store 计算成本高 | 三策略稳定后 |
 | P2 | Telegram 告警通道 | alerter.py + Telegram Bot (从 Phase 1.2.3 移入) | 线上运行稳定后 |

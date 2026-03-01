@@ -243,7 +243,11 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 - [x] `run_live.py`: 加载顺序统一 (constitution → pcm)
 - [x] 测试: 校验一致性的单元测试
 
-### 4.5.4 回测宪法模拟 (Phase 4)
+### 4.5.4 回测宪法模拟 + 事件回测一致性检查 (Phase 4) — 🔨 进行中
+
+> **目标**: 事件回测与研究回测的一致性检查，包含宪法模拟 (kill switch) + 加仓逻辑
+
+#### 4.5.4a 回测宪法模拟 (Kill Switch)
 
 - [ ] `backtest_execution_layer.py` `_run_pcm_mode()` 增强:
   - 新增 `--constitution <path>` 参数
@@ -251,6 +255,24 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
   - 模拟 kill switch 逻辑 (dd > max_dd → 停止新入场)
   - 模拟 per_strategy slot 限制
 - [ ] 测试: 构造 drawdown > 20% 场景验证 kill switch 模拟
+
+#### 4.5.4b 加仓逻辑一致性
+
+- [ ] 向量回测的 slot 内加仓模拟与事件回测对齐:
+  - 向量回测: `simulate_rr_execution` 中的 slot 竞争 + evidence 加仓
+  - 事件回测: `LivePCM._try_slot_competition()` + 仓位管理
+- [ ] 对比: 同一数据集下两种回测的加仓交易笔数、时机、PnL
+- [ ] 如有偏差 > 10%，定位分叉点并修复
+
+#### 4.5.4c 事件回测 vs 研究回测一致性检查
+
+- [ ] 关键指标对比 (向量 vs 事件):
+  - 交易总数 偏差 < 10%
+  - Sharpe 偏差 < 0.5x
+  - 胜率 偏差 < 5pp
+  - 出场分布 (SL/TP/Trail) 结构一致
+- [ ] Per-archetype 对比: BPC/FER/ME 各自向量 vs 事件的偏差
+- [ ] 生成一致性报告: `scripts/compare_vector_event_consistency.py`
 
 ### ✅ 4.5.5 PCM 统计输出 (Phase 5) — 已完成
 
@@ -277,13 +299,13 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 - [x] 快照: 保存 `pcm_stats.json` 到实验目录
 - [x] 测试: 已经端到端验证 (conflict_rate=3.42%, sharpe_daily=28.79)
 
-### 4.5.7 配置一致性验证脚本 (Phase 7)
+### ✅ 4.5.7 配置一致性验证脚本 (Phase 7) — 已完成
 
-- [ ] 新增 `scripts/validate_constitution_pcm_consistency.py`
+- [x] 新增 `scripts/validate_constitution_pcm_consistency.py`
   - 检查 6 项一致性规则（见设计文档 §6.1）
   - 可纳入 CI
-- [ ] 端到端验证: BPC + FER PCM 联合回测 → pcm_stats.json → 正确解析
-- [ ] 运行所有现有测试确保无回归
+- [x] 端到端验证: BPC + FER PCM 联合回测 → pcm_stats.json → 正确解析
+- [x] 运行所有现有测试确保无回归
 
 ### 4.5.8 Archetype 降级与恢复机制 (Phase 8)
 
@@ -496,7 +518,7 @@ L1 (15m) ───────────────  LV
 ### A.2 研究待验证项
 
 - ~~ME@1H vs ME@4H 对比回测~~ (已取消，ME@1H 已确认为生产配置)
-- [ ] ME labels 适配 1H: forward_bars / max_holding_bars 是否需要重算
+- [x] ME labels 适配 1H: forward_bars / max_holding_bars 已重算验证
 - [x] PCM 联合回测: BPC + ME + FER 三策略联合 Sharpe / 冲突率 → **已纳入 Step 9.5 自动化**
 
 ### A.3 LV (暂缓)
@@ -506,6 +528,38 @@ L1 (15m) ───────────────  LV
 - [ ] LV Feature Store 构建 (15min)
 - [ ] LV 全流程训练
 - [ ] LV prefilter 阈值确定
+
+---
+
+### A.6 SHAP + Walk-Forward 特征稳定性验证 (NEW)
+
+> **问题**: 当前特征选择基于全量数据 LightGBM split importance，容易“飘”——换一批数据排名就变
+> **目标**: 用 SHAP + Walk-Forward 筛选跨时间窗口稳定重要的特征，减少过拟合
+
+#### A.6.1 SHAP 特征重要性替代 split importance
+
+- [ ] 在 Gate Optimize (Step 5) 和 Evidence Optimize (Step 6) 中集成 SHAP:
+  - `train_strategy_pipeline.py`: 训练后计算 SHAP values (TreeExplainer)
+  - 输出: `shap_importance.json` (per-feature mean |SHAP|)
+  - 代码位置: `scripts/train_strategy_pipeline.py`
+- [ ] SHAP 可视化: beeswarm plot / bar plot 保存到实验目录
+
+#### A.6.2 Walk-Forward 特征稳定性筛选
+
+- [ ] 新增 `scripts/validate_feature_stability.py`:
+  - 将训练数据分 N 个时间窗口 (如 6 个季度)
+  - 每个窗口独立训练 LightGBM + 计算 SHAP
+  - 筛选标准: 特征在 >=80% 窗口都进入 top-K → "稳定特征"
+  - 输出: `stable_features.json` + `feature_stability_report.html`
+- [ ] 集成到 pipeline: Step 5.5 (Gate Optimize 之后、Evidence Optimize 之前)
+
+#### A.6.3 特征漂移监控 (实盘侧)
+
+- [ ] 实盘 rolling SHAP 与训练期对比:
+  - 每周用最近 N 笔信号的特征计算 SHAP
+  - 与训练期 SHAP 分布对比 (KL 散度 / rank correlation)
+  - 偏差过大 → 触发重训信号
+- [ ] 集成到 `scripts/local_monitor_weekly.py` 的 L1 特征层检查
 
 ---
 
@@ -711,7 +765,7 @@ L1 (15m) ───────────────  LV
 | Phase 2: OI 体系 | ✅ 完成 | 下载器 + 特征 + 场景语义 + 交叉 |
 | Phase 3: LV 配置 | ✅ 完成 | 15min archetype 全套配置 |
 | Phase 4: PCM 重构 | ✅ 完成 | v2 严格性排序 |
-| **Phase 4.5: PCM-宪法统一** | 🔨 部分完成 | 配置统一 ✅ + PCM统一加载 ✅ + PCM统计输出 ✅ + PCM 联合回测 ✅ + Pipeline集成 ✅ + 回测宪法模拟 📋延后 + 降级机制 📋延后 |
+| **Phase 4.5: PCM-宪法统一** | 🔨 部分完成 | 配置统一 ✅ + PCM统一加载 ✅ + PCM统计输出 ✅ + PCM 联合回测 ✅ + Pipeline集成 ✅ + 配置一致性验证 ✅ + 回测宪法模拟 🔨进行中 + 降级机制 📋延后 |
 | Phase 5: 数据 | ✅ 完成 | highcap symbols 数据齐全 |
 | Phase 5.5: 预筛选 | ✅ 完成 | BPC/ME/FER 均已配置 |
 | Phase 6: 训练 | ✅ BPC/ME/FER | LV 暂缓 |

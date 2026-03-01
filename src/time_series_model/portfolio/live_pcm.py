@@ -535,15 +535,13 @@ class LivePCM:
         features_by_timeframe: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> List[TradeIntent]:
         """
-        多策略仲裁 → 返回最优 TradeIntent (三层控制)
+        多策略独立 slot 仲裁 → 返回所有通过 per-strategy slot 检查的 TradeIntent
 
         算法:
-          1. Regime 检测 (Layer 2) → 动态切换优先级
+          1. Regime 检测 (Layer 2) → 动态缩放
           2. 遍历所有注册策略，收集候选 TradeIntent
-          3. 单候选 → 快速路径
-          4. Override 检查 (Layer 3) → 极端信号覆盖
-          5. 多候选 → 按当前 regime 优先级 + Evidence 排序
-          6. 跨 symbol slot 检查
+          3. 每策略独立检查 per-strategy slot (无跨策略竞争)
+          4. slot 满时同 archetype 内 evidence 竞争
 
         Args:
             features: 主时间框架特征 (默认 4H)
@@ -554,7 +552,7 @@ class LivePCM:
                 通过 register(timeframe=...) 注册。
 
         Returns:
-            List[TradeIntent]（0 或 1 个元素）
+            List[TradeIntent]（每策略最多 1 个，可返回多个）
         """
         if not self._strategies:
             return []
@@ -574,6 +572,18 @@ class LivePCM:
                     tf = self._strategy_timeframes[arch_name]
                     if tf in features_by_timeframe:
                         strat_features = features_by_timeframe[tf]
+                    else:
+                        # 该策略的 timeframe 当前不可用 → 跳过
+                        # (例: 60T bar 上不评估 240T 策略，与实盘行为一致)
+                        logger.debug(
+                            "PCM: 跳过 %s — timeframe %s 不在当前可用 %s",
+                            arch_name,
+                            tf,
+                            list(features_by_timeframe.keys()),
+                        )
+                        # 清空 _last_funnel 避免诊断代码读到上一次的结果
+                        strategy._last_funnel = {}
+                        continue
                 intents = strategy.decide(
                     features=strat_features, symbol=symbol, bars=bars
                 )
@@ -595,120 +605,36 @@ class LivePCM:
         if not all_intents:
             return []
 
-        # ── 3. 快速路径：单候选直接返回 ──
-        if len(all_intents) == 1:
-            intent = all_intents[0]
+        # ── 3. 每策略独立 slot 检查 (无跨策略竞争) ──
+        # 设计: per_strategy_limits 各策略独占 slot，evidence 仅同 archetype 内替换
+        accepted: List[TradeIntent] = []
+        for intent in all_intents:
             ev = intent.confidence if intent.confidence is not None else 0.5
             if not self._slot_available(symbol, intent.archetype):
-                # slot 满 → 尝试 evidence 竞争
+                # 该策略 slot 满 → 尝试同 archetype 内 evidence 竞争
                 evicted = self._try_slot_competition(symbol, intent.archetype, ev)
                 if evicted is None:
                     logger.info(
-                        "PCM: %s slot 已满 (%d/%d)，拒绝 %s (ev=%.2f, 不足以驱逐)",
+                        "PCM: %s %s slot 已满 (%d/%d)，拒绝 (ev=%.2f)",
                         symbol,
-                        self._current_slot_count(),
-                        self._max_slots,
                         intent.archetype,
+                        self._count_archetype_slots(intent.archetype),
+                        self._max_slots_for_strategy(intent.archetype),
                         ev,
                     )
-                    return []
+                    continue
             self._record_slot(symbol, intent.archetype, ev)
             if self.stats_collector is not None:
                 self.stats_collector.record_pcm_selected(symbol, intent.archetype)
-            return [self._apply_regime_scale(intent)]
-
-        regime_str = f" [regime={self.current_regime}]" if self._regime_detector else ""
-
-        # ── 4. Layer 3: Override 检查（极端信号覆盖）──
-        override_winner = self._check_override(all_intents, features)
-        if override_winner is not None:
-            ev = (
-                override_winner.confidence
-                if override_winner.confidence is not None
-                else 0.5
-            )
-            if not self._slot_available(symbol, override_winner.archetype):
-                evicted = self._try_slot_competition(
-                    symbol, override_winner.archetype, ev
-                )
-                if evicted is None:
-                    logger.info(
-                        "PCM: %s slot 已满 (%d/%d)，拒绝 Override 优胜 %s (ev=%.2f, 不足以驱逐)%s",
-                        symbol,
-                        self._current_slot_count(),
-                        self._max_slots,
-                        override_winner.archetype,
-                        ev,
-                        regime_str,
-                    )
-                    return []
+            accepted.append(self._apply_regime_scale(intent))
             logger.info(
-                "PCM: %s Override 选中 %s (evidence=%.2f)%s",
-                symbol,
-                override_winner.archetype,
-                ev,
-                regime_str,
-            )
-            self._record_slot(symbol, override_winner.archetype, ev)
-            if self.stats_collector is not None:
-                self.stats_collector.record_pcm_selected(
-                    symbol, override_winner.archetype
-                )
-            return [self._apply_regime_scale(override_winner)]
-
-        # ── 5. 多候选：动态优先级 + Evidence 排序 (Layer 2) ──
-        def _sort_key(intent: TradeIntent):
-            rank = self._get_priority_rank(intent.archetype)
-            evidence = intent.confidence if intent.confidence is not None else 0.5
-            return (rank, -evidence)
-
-        best_intent = min(all_intents, key=_sort_key)
-
-        evidence = best_intent.confidence if best_intent.confidence is not None else 0.5
-        rank = self._get_priority_rank(best_intent.archetype)
-
-        for intent in all_intents:
-            ev = intent.confidence if intent.confidence is not None else 0.5
-            r = self._get_priority_rank(intent.archetype)
-            logger.debug(
-                "PCM: %s/%s priority=%d evidence=%.2f%s",
+                "PCM: %s 选中 %s (evidence=%.2f, scale=%.2f)",
                 symbol,
                 intent.archetype,
-                r,
                 ev,
-                regime_str,
+                self.get_archetype_scale(intent.archetype),
             )
-
-        # ── 6. Slot 检查 (支持 evidence 竞争) ──
-        if not self._slot_available(symbol, best_intent.archetype):
-            evicted = self._try_slot_competition(
-                symbol, best_intent.archetype, evidence
-            )
-            if evicted is None:
-                logger.info(
-                    "PCM: %s slot 已满 (%d/%d)，拒绝优先级最高 %s (ev=%.2f, 不足以驱逐)%s",
-                    symbol,
-                    self._current_slot_count(),
-                    self._max_slots,
-                    best_intent.archetype,
-                    evidence,
-                    regime_str,
-                )
-                return []
-
-        self._record_slot(symbol, best_intent.archetype, evidence)
-        logger.info(
-            "PCM: %s 选中 %s (priority=%d, evidence=%.2f, scale=%.2f)%s",
-            symbol,
-            best_intent.archetype,
-            rank,
-            evidence,
-            self.get_archetype_scale(best_intent.archetype),
-            regime_str,
-        )
-        if self.stats_collector is not None:
-            self.stats_collector.record_pcm_selected(symbol, best_intent.archetype)
-        return [self._apply_regime_scale(best_intent)]
+        return accepted
 
     # ── Layer 3: Override 极端信号覆盖 ──
 
@@ -847,30 +773,48 @@ class LivePCM:
             return self._get_open_slot_count()
         return 0
 
+    def _max_slots_for_strategy(self, archetype: str) -> int:
+        """获取策略的 max_slots (从 per_strategy_limits 读取，缺省回退全局)"""
+        limits = self._constitution.get("per_strategy_limits") or {}
+        strat = limits.get(archetype.lower()) or {}
+        return int(strat.get("max_slots", self._max_slots))
+
+    def _count_archetype_slots(self, archetype: str) -> int:
+        """统计某 archetype 当前占用的 slot 数 (基于 _slot_evidence 追踪)"""
+        suffix = f":{archetype}"
+        return sum(1 for k in self._slot_evidence if k.endswith(suffix))
+
     def _slot_available(self, symbol: str, archetype: str) -> bool:
-        """检查是否有可用 slot"""
+        """检查策略是否有可用 slot (per-strategy 独立 + 全局上限)"""
         if self._get_open_slot_count is None:
-            return True  # 未配置回调，不做跨 symbol 限制
+            return True  # 未配置回调，不做限制
+        # Per-strategy slot 上限
+        max_strat = self._max_slots_for_strategy(archetype)
+        if self._count_archetype_slots(archetype) >= max_strat:
+            return False
+        # 全局 slot 上限
         return self._current_slot_count() < self._max_slots
 
     def _try_slot_competition(
         self, symbol: str, archetype: str, new_evidence: float
     ) -> Optional[str]:
-        """Slot 满时尝试 evidence 竞争
+        """同 archetype 内 evidence 竞争 — 只驱逐同策略的最弱仓位
 
         Returns:
             被驱逐的 slot key ("{symbol}:{archetype}"), 或 None 表示新信号更弱被拒绝
         """
-        if not self._slot_evidence:
+        # 只在同 archetype 内竞争
+        suffix = f":{archetype}"
+        same_arch = {k: v for k, v in self._slot_evidence.items() if k.endswith(suffix)}
+        if not same_arch:
             return None
 
-        # 找最弱的 active slot
-        weakest_key = min(self._slot_evidence, key=self._slot_evidence.get)
-        weakest_ev = self._slot_evidence[weakest_key]
+        weakest_key = min(same_arch, key=same_arch.get)
+        weakest_ev = same_arch[weakest_key]
 
         if new_evidence > weakest_ev:
             logger.info(
-                "PCM: slot 竞争 — %s:%s (ev=%.2f) 驱逐 %s (ev=%.2f)",
+                "PCM: 同策略竞争 — %s:%s (ev=%.2f) 驱逐 %s (ev=%.2f)",
                 symbol,
                 archetype,
                 new_evidence,
