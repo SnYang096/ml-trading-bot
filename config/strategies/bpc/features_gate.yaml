@@ -1,105 +1,148 @@
+# BPC Gate 特征配置
+# 职责：只用于 failure_* / gate 模型的"做不做"硬否决
+# 设计理念：Regime × Direction × Structure × Extreme Risk
+# 
+# Gate 只回答："这是一个明显不该碰的市场状态吗？"
+# 不判断强弱、不判断好不好赚、不判断执行细节
 name: bpc
-description: 'BPC Gate 特征配置：专门用于 failure_rr_extreme / failure_no_opportunity 的 veto
-  学习。
-
-
+description: |
+  BPC Gate 特征配置：专门用于 failure_rr_extreme / failure_no_opportunity 的 veto 学习。
+  
   Gate 宪法级职责：
-
   - Regime: 确保不逆大趋势
-
   - Direction: 确保方向成型、不在 chop
-
   - Structure: 确保是合法的 BPC 模式
-
   - Extreme Risk: 防止黑天鹅/事故场景
-
-
+  
   不包含的（全部下放给 Evidence/Execution）：
-
   - 订单流细节 (VPIN/Cluster/CVD细节)
-
   - 末端/衰竭信号 (Exhaustion/Terminal Risk)
 
-  '
 feature_pipeline:
   exclude_columns:
-  - atr
+    - atr
+  
   requested_features:
-  - atr_f
-  - macd_atr_f
-  - atr_percentile_f
-  - sr_strength_max_f
-  - vpin_features_f
-  - shd_pct_f
-  - cvd_change_features_f
-  - trade_cluster_entropy_zscore_features_f
-  - trade_cluster_imbalance_zscore_features_f
-  - trade_cluster_net_runs_zscore_features_f
-  - trade_cluster_max_buy_run_zscore_features_f
-  - trade_cluster_max_sell_run_zscore_features_f
-  - sma_200_f
-  - oi_features_f
-  - spectrum_features_f
-  - hilbert_phase_f
-  - wpt_price_fluctuation_f
-  - evt_features_f
-  - wpt_price_reconstructed_f
+    # ========== 必需的 scale 列（用于 label 计算，不参与模型训练）==========
+    - atr_f                       # ATR（label 计算必需，通过 exclude_columns 排除模型输入）
+    
+    # ========== BPC 核心：软阶段分数 ==========
+    - bpc_soft_phase_f  # 输出: bpc_score_breakout/pullback/continuation/neutral
+    
+    # ========== BPC 结构特征 ==========
+    - bpc_pullback_depth_pct_f    # 回踩深度 (side-aware)
+    - bpc_pullback_duration_f     # 回踩持续时间
+    - bpc_pullback_speed_f        # 回踩速度 = depth/(duration+1)
+    - bpc_impulse_return_atr_f    # impulse 收益/ATR (带方向)
+    
+    # ========== BPC 方向一致性 ==========
+    - bpc_dir_consistency_multi_f # 多尺度方向一致性 (short/mid/long)
+    - bpc_dir_flip_count_f        # 方向翻转次数
+    
+    # ========== BPC 量能/订单流 ==========
+    - bpc_volume_compression_pct_f    # 成交量压缩百分位
+    - bpc_pullback_delta_absorption_f # 回踩期间 delta 吸收
+
+    - roc_5_f
+    - roc_10_f
+    - roc_20_f
+    - cvd_divergence_v2_f           # CVD 背离
+    - price_momentum_divergence_f  # 价格-动量背离（与 CVD 背离正交）
+    - terminal_risk_score_f        # 末端风险评分（Execution 层追单风险）
+    - volume_participation_score_f # 市场参与度评分（Execution 层活跃度）
+    
+    # ========== 趋势强度 ==========
+    - trend_r2_20_f
+    - path_efficiency_pct_f
+    - path_length_pct_f
+    - price_dir_consistency_pct_f
+    
+    # ========== 动量 ==========
+    - macd_atr_f
+    - rsi_f
+    
+    # ========== 波动 ==========
+    - atr_percentile_f
+    - bb_width_normalized_pct_f  # 自包含：内部计算 BB width/ATR 再转百分位
+    
+    # ========== Volatility Regime ==========
+    # 识别"踩大坑"的波动率状态
+    - vol_regime_features_f       # vol_zscore, vol_percentile_approx
+    - vol_trend_features_f        # vol_slope, vol_accel (波动率趋势)
+    - vol_mom_features_f          # vol_mom_5/10/20 (波动率动量)
+    
+    # ========== Trend Exhaustion ==========
+    # 识别趋势衰竭/反转信号
+    - wick_scene_semantic_scores_f   # wick_exhaustion_score (影线衰竭)
+    - wpt_scene_semantic_scores_f    # wpt_exhaustion_score (小波变换衰竭)
+    - volume_profile_scene_semantic_scores_f  # vp_exhaustion_score (成交量分布衰竭)
+    - liquidity_void_scene_semantic_scores_f  # 流动性真空场景语义 (V2 连续化)
+    
+    # ========== SR 相关 ==========
+    - sr_strength_max_f  # 输出包含 sr_strength_max 和 dist_to_nearest_sr
+    
+    # ========== 订单流 ==========
+    - vpin_features_f
+    - volume_ratio_pct_f      # 自包含：内部计算 volume/rolling_mean 再转百分位
+    - ofci_pct_f              # 自包含：内部加载tick数据计算OFCI再转百分位
+    - shd_pct_f               # 自包含：内部计算rolling_corr(ΔCVD, returns)再转百分位
+    - cvd_change_features_f  # CVD 变化的归一化版本
+    
+    # ========== Trade Cluster 归一化版本 (zscore) ==========
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f
+    
+    # ========== 基础 ==========
+    - sma_200_f
+    - jump_risk_pct_f         # 跳空风险分位
+
+    # ========== Volume Profile ==========
+    - volume_profile_volatility_features_f
+    - liquidity_void_f
+
+    # ========== Footprint ==========
+    - footprint_basic_f
+
+    # ========== 资金费率 (期货独有情绪/拥挤度) ==========
+    - funding_rate_features_f              # funding_rate, funding_rate_zscore_50 等
+    - funding_scene_semantic_scores_f      # 资金费率场景语义 (compression/ignition/absorption/exhaustion)
+
+    # ========== OI (期货持仓量) ==========
+    - oi_features_f                        # oi_usd, oi_change_pct, oi_zscore, oi_delta_price_sign
+    - oi_scene_semantic_scores_f           # OI 场景语义 (compression/ignition/absorption/exhaustion)
+
+    # ========== GARCH 波动率建模 ==========
+    - garch_features_f                     # garch_volatility, garch_persistence, garch_leverage_gamma
+
+    # ========== 场景语义 (补充) ==========
+    - fp_imbalance_scene_semantic_scores_f # Footprint 不平衡场景语义
+    - vpin_scene_semantic_scores_f         # VPIN 场景语义
+
+    # ========== VWAP ==========
+    - vwap_position_f                      # 价格相对 VWAP 位置 (日内锚点)
+
+    # ========== 交叉特征 ==========
+    - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空
+    - dual_compression_f                   # 资金+VPIN双源压缩 (BPC核心)
+    - dual_ignition_f                      # 资金+FP双源点火 (ME核心)
+    - dual_exhaustion_f                    # 资金+VPIN双源力竭 (FER核心)
+    - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
+
+    
+    # ========== 数学特征（实验性，观察是否被选中） ==========
+    - hurst_price_f           # Hurst 指数（时序记忆性）
+    - spectrum_features_f     # 频谱特征
+    - hilbert_phase_f         # Hilbert 变换（包络+相位）
+    - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
+    - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
+    - wpt_price_reconstructed_f
+    - wpt_volume_energy_f
+    - wpt_cvd_fluctuation_f
+    - hurst_cvd_f
+
   ensure_signal_column:
     name: signal
     default_value: 0
-_shap_pruned:
-  timestamp: '2026-03-02 01:17:47'
-  removed_nodes:
-  - bb_width_normalized_pct_f
-  - bpc_dir_consistency_multi_f
-  - bpc_dir_flip_count_f
-  - bpc_impulse_return_atr_f
-  - bpc_pullback_delta_absorption_f
-  - bpc_pullback_depth_pct_f
-  - bpc_pullback_duration_f
-  - bpc_pullback_speed_f
-  - bpc_soft_phase_f
-  - bpc_volume_compression_pct_f
-  - cvd_divergence_v2_f
-  - dual_compression_f
-  - dual_exhaustion_f
-  - dual_ignition_f
-  - exhaustion_at_liquidity_void_f
-  - footprint_basic_f
-  - fp_imbalance_scene_semantic_scores_f
-  - funding_oi_crowding_f
-  - funding_rate_features_f
-  - funding_scene_semantic_scores_f
-  - garch_features_f
-  - hurst_cvd_f
-  - hurst_price_f
-  - jump_risk_pct_f
-  - liquidity_void_f
-  - liquidity_void_scene_semantic_scores_f
-  - ofci_pct_f
-  - oi_scene_semantic_scores_f
-  - path_efficiency_pct_f
-  - path_length_pct_f
-  - price_dir_consistency_pct_f
-  - price_momentum_divergence_f
-  - roc_10_f
-  - roc_20_f
-  - roc_5_f
-  - rsi_f
-  - terminal_risk_score_f
-  - trend_r2_20_f
-  - vol_mom_features_f
-  - vol_regime_features_f
-  - vol_trend_features_f
-  - volume_participation_score_f
-  - volume_profile_scene_semantic_scores_f
-  - volume_profile_volatility_features_f
-  - volume_ratio_pct_f
-  - vpin_scene_semantic_scores_f
-  - vwap_position_f
-  - wick_scene_semantic_scores_f
-  - wpt_cvd_fluctuation_f
-  - wpt_scene_semantic_scores_f
-  - wpt_volume_energy_f
-  original_count: 70
-  new_count: 19
