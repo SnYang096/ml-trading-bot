@@ -1867,6 +1867,26 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
     if exp_draft.exists():
         shutil.copy2(exp_draft, PROJECT_ROOT / prod_config_dir / "gate_draft.yaml")
 
+    # 复制 SHAP 裁剪后的 features YAML (如果有 _shap_pruned 标记)
+    for feat_yaml in ["features_gate.yaml", "features_evidence.yaml"]:
+        exp_feat = exp_config_dir / feat_yaml
+        if not exp_feat.exists():
+            continue
+        try:
+            import yaml as _yaml
+            data = _yaml.safe_load(exp_feat.read_text(encoding="utf-8")) or {}
+            if "_shap_pruned" in data:
+                prod_feat = PROJECT_ROOT / prod_config_dir / feat_yaml
+                shutil.copy2(exp_feat, prod_feat)
+                pruned_info = data["_shap_pruned"]
+                print(
+                    f"   ✏️  Adopted {feat_yaml}: "
+                    f"{pruned_info.get('original_count', '?')} → {pruned_info.get('new_count', '?')} nodes (SHAP pruned)"
+                )
+                copied += 1
+        except Exception:
+            pass  # non-critical
+
     print(f"   ✅ Adopted: {copied} files → {prod_arch}")
     return True
 
