@@ -28,11 +28,11 @@ evidence:
     - 0.7
     - 0.9
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
   split_count: 1
 - id: evidence_atr_percentile
   feature: atr_percentile
@@ -51,11 +51,11 @@ evidence:
     - 0.65
     - 0.85
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
   split_count: 1
 - id: evidence_vpin_ma10
   feature: vpin_ma10
@@ -97,11 +97,11 @@ evidence:
     - 0.6
     - 0.8
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
   split_count: 1
 - id: evidence_evt_scale_left
   feature: evt_scale_left
@@ -120,11 +120,11 @@ evidence:
     - 0.7
     - 0.9
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
   split_count: 1
 - id: evidence_evt_tail_shape_right
   feature: evt_tail_shape_right
@@ -143,9 +143,9 @@ evidence:
     - 0.65
     - 0.85
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
   split_count: 1
