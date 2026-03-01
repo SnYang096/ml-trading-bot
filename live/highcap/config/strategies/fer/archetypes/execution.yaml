@@ -1,24 +1,25 @@
 # FER Execution 配置
-# 版本: 34
-# 更新时间: 2026-03-02
+# 版本: 32
+# 更新时间: 2026-03-01
 #
 # ┌─────────────────────────────────────────────────────────┐
-# │  Grid Search auto-promoted                              │
-# │  Sharpe (daily): 2.61                                   │
-# │  Best: initial_r=1.0, activation_r=2.0, trail_r=0.5      │
-# │  Plateau: ✅ stable (CV=0.040)                            │
-# │  Changes: initial_r: 1.0 → 1.0, activation_r: 2.0 → 2.0, trail_r: 0.5 → 0.5│
+# │  Grid Search auto-promoted (1min bar precision)         │
+# │  Sharpe (daily): 3.56                                   │
+# │  Best: initial_r=4.0, activation_r=0.5, trail_r=0.5      │
+# │  Plateau: ✅ stable (CV=0.136)                            │
+# │  Changes: initial_r: 3.5 → 4.0, activation_r: 1.5 → 0.5 │
+# │  ⚠️ initial_r 卡上限 4.0，边际增益已趨平                   │
 # └─────────────────────────────────────────────────────────┘
 #
-version: 34
+version: 32
 execution_constraints:
   allow_add_on: false
   min_order_interval_minutes: 15
 stop_loss:
   type: trailing
-  initial_r: 1.0
+  initial_r: 4.0
   trailing:
-    activation_r: 2.0
+    activation_r: 0.5
     trail_r: 0.5
     step_r: 0.5
 take_profit:
@@ -27,6 +28,45 @@ take_profit:
 holding:
   max_holding_bars: null
   time_stop_bars: 40
+tiers:
+  enabled: false  # 方案A: tier已废弃，统一用全局参数
+  levels:
+  - name: 强证据
+    evidence_min: 0.7
+    stop_loss:
+      initial_r: 1.0
+      trailing:
+        activation_r: 1.0
+        trail_r: 0.8
+    size_multiplier: 1.3
+    time_stop_bars: 60
+  - name: 中等证据
+    evidence_min: 0.5
+    stop_loss:
+      initial_r: 1.5
+      trailing:
+        activation_r: 1.5
+        trail_r: 1.0
+    size_multiplier: 1.0
+    time_stop_bars: 40
+  - name: 弱证据
+    evidence_min: 0.3
+    stop_loss:
+      initial_r: 2.0
+      trailing:
+        activation_r: 2.0
+        trail_r: 1.5
+    size_multiplier: 0.7
+    time_stop_bars: 30
+  - name: 边缘证据
+    evidence_min: 0.1
+    stop_loss:
+      initial_r: 2.5
+      trailing:
+        activation_r: 2.5
+        trail_r: 2.0
+    size_multiplier: 0.5
+    time_stop_bars: 20
 optimization:
   enabled: true
   params:

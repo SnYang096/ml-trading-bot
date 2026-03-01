@@ -103,7 +103,7 @@ shap_feature_selection:
   n_folds: 4                         # 时间窗口数
   top_k: 20                          # 每个 fold 取 Top-K
   stability_threshold: 0.75          # 特征在 >= 75% fold 出现才算稳定
-  min_stable_features: 8             # 稳定特征不足则跳过裁剪
+  min_stable_features: 1             # 稳定特征不足则跳过裁剪
   protected_nodes:                   # 永远保留的节点
     - atr_f
   apply_to:                          # 裁剪哪些 features YAML

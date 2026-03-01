@@ -1874,6 +1874,7 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
             continue
         try:
             import yaml as _yaml
+
             data = _yaml.safe_load(exp_feat.read_text(encoding="utf-8")) or {}
             if "_shap_pruned" in data:
                 prod_feat = PROJECT_ROOT / prod_config_dir / feat_yaml
