@@ -1081,12 +1081,13 @@ def simulate_rr_execution(
             trade_arch = trade.get("archetype", "").lower().strip()
             # 移除已平仓的 active trades
             if _slot_use_ts and trade.get("entry_ts_ns", 0) > 0:
-                # 用 bar-close 时间戳对比，与事件侧一致:
-                # 事件回测中 enforce_position 先跑 (处理退出)，然后 decide() (生成新信号)
-                # 所以同一 bar 内的退出在新入场前已完成 → slot 释放
-                _bm = trade.get("_bar_minutes", 240)
-                _bar_close_ns = trade["entry_ts_ns"] + int(_bm) * 60 * 1_000_000_000
-                active = [t for t in accepted if t.get("exit_ts_ns", 0) > _bar_close_ns]
+                # 用 entry 时间戳对比，与事件侧一致:
+                # 事件回测中 enforce_position 处理 1min bars 直到当前 entry bar (含),
+                # 然后调用 decide() 生成新信号。
+                # 所以只有 exit_ts <= entry_ts 的仓位已释放,
+                # exit_ts > entry_ts 的仓位仍占用 slot。
+                _entry_ns = trade["entry_ts_ns"]
+                active = [t for t in accepted if t.get("exit_ts_ns", 0) > _entry_ns]
             else:
                 active = [t for t in accepted if t["exit_idx"] > eidx]
 
@@ -1280,7 +1281,13 @@ def compute_sharpe(
 
 
 def _estimate_span_years(df: pd.DataFrame, bars_per_year: float = 2190.0) -> float:
-    """从 DataFrame 估算数据跨度(年)。按每个 symbol 的 bar 数推算。"""
+    """从 DataFrame 估算数据跨度(年)。优先使用 timestamp 列精确计算。"""
+    # 优先用 timestamp 直接计算 (多 timeframe merged 时 bar 数会膨胀)
+    if "timestamp" in df.columns:
+        ts = pd.to_datetime(df["timestamp"], utc=True)
+        span_days = (ts.max() - ts.min()).total_seconds() / 86400
+        return max(span_days / 365.25, 0.01)
+    # fallback: 按 bar 数估算 (仅适用于单 timeframe)
     sym_col = "symbol" if "symbol" in df.columns else "_symbol"
     if sym_col not in df.columns:
         return 0.0
