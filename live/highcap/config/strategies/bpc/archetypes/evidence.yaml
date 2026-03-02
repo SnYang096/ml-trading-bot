@@ -28,9 +28,9 @@ evidence:
     - 0.7
     - 0.9
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
   split_count: 1

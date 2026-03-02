@@ -2456,6 +2456,26 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
                 df["symbol"] = df["_symbol"]
             print(f"\n📂 {arch_name}: {len(df)} rows from {path}")
 
+            # ── Holdout 时间过滤 (--logs 模式, 避免 in-sample 过拟合) ──
+            if raw_test_start or raw_test_end:
+                ts_col = None
+                if "timestamp" in df.columns:
+                    ts_col = "timestamp"
+                elif df.index.name == "timestamp" or hasattr(df.index, "tz"):
+                    df = df.reset_index()
+                    ts_col = "timestamp" if "timestamp" in df.columns else None
+                if ts_col:
+                    df[ts_col] = pd.to_datetime(df[ts_col], utc=True)
+                    n_before = len(df)
+                    if raw_test_start:
+                        df = df[df[ts_col] >= pd.Timestamp(raw_test_start, tz="UTC")]
+                    if raw_test_end:
+                        df = df[df[ts_col] <= pd.Timestamp(raw_test_end, tz="UTC")]
+                    print(
+                        f"   🕐 Holdout filter: {n_before} → {len(df)} rows"
+                        f" ({raw_test_start} ~ {raw_test_end})"
+                    )
+
         # 检测方向列 —— 严格使用 direction.yaml
         dir_cfg = load_direction_config(arch_name, strategies_root)
         if not dir_cfg:
@@ -4177,9 +4197,38 @@ def main() -> int:
     df = pd.read_parquet(logs_path)
     print(f"\n📂 Loaded logs: {len(df)} rows")
 
+    # ── Holdout 时间过滤 (--test-start / --test-end, 与 PCM 模式一致) ──
+    _ts_start = getattr(args, "test_start", None)
+    _ts_end = getattr(args, "test_end", None)
+    if _ts_start or _ts_end:
+        _ts_col = None
+        if "timestamp" in df.columns:
+            _ts_col = "timestamp"
+        elif df.index.name == "timestamp" or isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            _ts_col = "timestamp" if "timestamp" in df.columns else None
+        if _ts_col:
+            df[_ts_col] = pd.to_datetime(df[_ts_col], utc=True)
+            _n_before = len(df)
+            if _ts_start:
+                df = df[df[_ts_col] >= pd.Timestamp(_ts_start, tz="UTC")]
+            if _ts_end:
+                df = df[df[_ts_col] <= pd.Timestamp(_ts_end, tz="UTC")]
+            print(
+                f"   🕐 Time filter: {_n_before} → {len(df)} rows  "
+                f"(start={_ts_start}, end={_ts_end})"
+            )
+        else:
+            print(f"   ⚠️  --test-start/--test-end 指定但无 timestamp 列, 跳过过滤")
+
     # 处理列名兼容
     if "_symbol" in df.columns and "symbol" not in df.columns:
         df["symbol"] = df["_symbol"]
+
+    # ── 设置 _pcm_archetype 列 (单策略模式, 使 slot per-strategy 匹配正确) ──
+    if "_pcm_archetype" not in df.columns:
+        df["_pcm_archetype"] = args.strategy.lower()
+        print(f"   🏷️  Set _pcm_archetype='{args.strategy.lower()}' for slot matching")
 
     # 创建 entry_direction 列：标记入场信号
     # 默认：每个有方向的 bar 都是入场信号
@@ -4475,37 +4524,52 @@ def main() -> int:
             live_root=getattr(args, "live_root", "live/highcap"),
         )
 
-    # ── 加仓配置 (从 constitution.yaml 加载) ──
-    _add_pos_cfg_single = None
-    _const_path_single = getattr(args, "constitution", None)
-    if _const_path_single:
-        try:
-            import yaml as _yaml_ap2
+    # ── 从 constitution.yaml 读取 per_strategy max_slots ──
+    from src.time_series_model.portfolio.live_pcm import (
+        _load_constitution_constraints as _load_const_pre,
+    )
 
-            _c_ap2 = (
-                _yaml_ap2.safe_load(
-                    Path(_const_path_single).read_text(encoding="utf-8")
+    _const_yaml_single = getattr(args, "constitution", None)
+    if not _const_yaml_single:
+        # 自动发现 constitution.yaml（与 PCM 模式一致）
+        _const_yaml_single = "config/constitution/constitution.yaml"
+        if not Path(_const_yaml_single).exists():
+            _const_yaml_single = None
+    _const_pre = _load_const_pre(_const_yaml_single)
+    _per_strat_limits = _const_pre.get("per_strategy_limits") or {}
+    _strat_cfg = _per_strat_limits.get(str(args.strategy).lower()) or {}
+    _max_slots_single = int(_strat_cfg.get("max_slots", 1))
+    print(
+        f"   🔒 Single-strategy max_slots={_max_slots_single} (from constitution: {_const_yaml_single or 'defaults'})"
+    )
+
+    # ── 加仓配置 (从 constitution.yaml 加载, 与事件回测一致) ──
+    _add_pos_cfg_single = None
+    _per_strategy_limits_single = None
+    if _const_yaml_single:
+        try:
+            import yaml as _yaml_const
+
+            _c_const = (
+                _yaml_const.safe_load(
+                    Path(_const_yaml_single).read_text(encoding="utf-8")
                 )
                 or {}
             )
-            _ra_ap2 = _c_ap2.get("resource_allocation") or {}
-            _ap_rules2 = _ra_ap2.get("add_position_rules") or {}
-            _ap_per_strat2 = _ra_ap2.get("per_strategy_limits") or {}
+            _ra_const = _c_const.get("resource_allocation") or {}
+            _ap_rules_const = _ra_const.get("add_position_rules") or {}
+            _ap_per_strat_const = _ra_const.get("per_strategy_limits") or {}
+            # per_strategy_limits 始终传入 (slot 过滤需要)
+            _per_strategy_limits_single = _ap_per_strat_const
             if any(
                 v.get("allow_add_position", False)
-                for v in _ap_per_strat2.values()
+                for v in _ap_per_strat_const.values()
                 if isinstance(v, dict)
             ):
                 _add_pos_cfg_single = {
-                    "add_position_rules": _ap_rules2,
-                    "per_strategy_limits": _ap_per_strat2,
+                    "add_position_rules": _ap_rules_const,
+                    "per_strategy_limits": _ap_per_strat_const,
                 }
-                _ap_s = [
-                    k
-                    for k, v in _ap_per_strat2.items()
-                    if isinstance(v, dict) and v.get("allow_add_position", False)
-                ]
-                print(f"   📈 Add-position enabled for: {_ap_s}")
         except Exception:
             pass
 
@@ -4517,8 +4581,10 @@ def main() -> int:
         atr_col="atr",
         use_tier_params=use_tier_params,
         breakeven_lock_r=breakeven_lock_r,
+        max_slots=_max_slots_single,
         bars_1min_dict=bars_1min_dict,
         add_position_cfg=_add_pos_cfg_single,
+        per_strategy_limits=_per_strategy_limits_single,
     )
 
     valid_returns = exec_returns.dropna()

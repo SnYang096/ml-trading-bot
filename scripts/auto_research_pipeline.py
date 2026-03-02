@@ -972,6 +972,10 @@ def run_strategy_pipeline(
             "--output",
             f"{evidence_dir}/execution_grid.json",
             "--promote",
+            "--test-start",
+            holdout_start,
+            "--test-end",
+            end_date,
         ]
         if use_1min:
             exec_cmd.extend(["--use-1min", "--data-path", data_path])
@@ -985,6 +989,7 @@ def run_strategy_pipeline(
     # ── Step 9: Backtest ──
     # 必须用 logs_gated.parquet：回测输入必须和实盘一致（经过 gate 过滤），
     # 否则报告的 Sharpe/trades 虚高（gate 会 veto 大量信号）
+    # 必须传 --test-start/--test-end: 限制到 holdout 期，避免 in-sample 过拟合
     # 必须传 --strategies-root: 确保读取本次实验的 entry_filters.yaml 而不是旧的
     experiment_map_path = f"{run_dir}/trading_map_{strategy}.html"
     bt_cmd = [
@@ -998,6 +1003,10 @@ def run_strategy_pipeline(
         strategies_root,
         "--output",
         experiment_map_path,
+        "--test-start",
+        holdout_start,
+        "--test-end",
+        end_date,
     ]
     if use_1min:
         bt_cmd.extend(["--use-1min", "--data-path", data_path])
@@ -1209,6 +1218,8 @@ def _run_pcm_joint_backtest(
     use_1min: bool = False,
     live_root: str = "live/highcap",
     data_path: str = "data/parquet_data",
+    holdout_start: str = "",
+    end_date: str = "",
 ) -> Optional[Dict[str, Any]]:
     """Step 9.5: 全策略完成后, 执行 PCM 联合回测.
 
@@ -1265,6 +1276,10 @@ def _run_pcm_joint_backtest(
         + [
             "--output",
             pcm_map_path,
+            "--test-start",
+            holdout_start,
+            "--test-end",
+            end_date,
         ]
     )
     if use_1min:
@@ -1772,6 +1787,8 @@ def main():
             use_1min=args.use_1min,
             live_root=args.live_root,
             data_path=cfg["data_path"],
+            holdout_start=cfg["holdout_start"],
+            end_date=cfg["end_date"],
         )
 
     # ── 汇总 ──

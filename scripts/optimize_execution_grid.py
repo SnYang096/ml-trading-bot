@@ -107,6 +107,20 @@ def main() -> int:
         default="data/parquet_data",
         help="研究数据目录 (默认 data/parquet_data, 设为 none 使用实盘数据验证)",
     )
+    p.add_argument(
+        "--test-start",
+        type=str,
+        default=None,
+        dest="test_start",
+        help="限制回测开始日期 (YYYY-MM-DD), 过滤 holdout 期避免 in-sample 过拟合",
+    )
+    p.add_argument(
+        "--test-end",
+        type=str,
+        default=None,
+        dest="test_end",
+        help="限制回测结束日期 (YYYY-MM-DD)",
+    )
     args = p.parse_args()
 
     # --data-path none → 显式使用实盘数据
@@ -155,6 +169,28 @@ def main() -> int:
     # 列名兼容
     if "_symbol" in df.columns and "symbol" not in df.columns:
         df["symbol"] = df["_symbol"]
+
+    # ── Holdout 时间过滤 ──
+    if args.test_start or args.test_end:
+        ts_col = None
+        if "timestamp" in df.columns:
+            ts_col = "timestamp"
+        elif df.index.name == "timestamp" or hasattr(df.index, "tz"):
+            df = df.reset_index()
+            ts_col = "timestamp" if "timestamp" in df.columns else None
+        if ts_col:
+            df[ts_col] = pd.to_datetime(df[ts_col], utc=True)
+            n_before = len(df)
+            if args.test_start:
+                df = df[df[ts_col] >= pd.Timestamp(args.test_start, tz="UTC")]
+            if args.test_end:
+                df = df[df[ts_col] <= pd.Timestamp(args.test_end, tz="UTC")]
+            print(
+                f"   🕐 Holdout filter: {n_before} → {len(df)} rows"
+                f" ({args.test_start} ~ {args.test_end})"
+            )
+        else:
+            print("   ⚠️  --test-start/--test-end 指定但无 timestamp 列, 跳过过滤")
 
     # 创建 entry_direction 列
     # 按优先级检测方向列：entry_direction > archetype_breakout_direction > bpc_breakout_direction

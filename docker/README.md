@@ -26,6 +26,7 @@ NO_PROXY=localhost,127.0.0.1 \
 HTTP_PROXY=http://127.0.0.1:7897 \
 HTTPS_PROXY=http://127.0.0.1:7897 \
 NO_PROXY=localhost,127.0.0.1 \
+docker pull postgres:13
 ./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.9 --no-ssh
 
 # Clash TUN 模式用户注意：
