@@ -26,6 +26,9 @@ from src.time_series_model.live.incremental_feature_computer import (
 )
 from src.time_series_model.live.stats_collector import StatsCollector
 from src.time_series_model.live.metrics_exporter import start_metrics_server, METRICS
+from src.time_series_model.core.constitution.constitution_executor import (
+    ConstitutionExecutor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -353,12 +356,23 @@ def _setup_three_strategies(
         "✅ StatsCollector 启用: %s (auto_cleanup=%s)", stats_db_path, auto_cleanup
     )
 
+    # 创建 ConstitutionExecutor + RuntimeState
+    constitution_yaml_path = os.getenv(
+        "MLBOT_CONSTITUTION_YAML",
+        os.path.join(config_root, "constitution", "constitution.yaml"),
+    )
+    constitution_exec = ConstitutionExecutor(constitution_yaml=constitution_yaml_path)
+    runtime_st = constitution_exec.load_runtime_state()
+    logger.info("✅ ConstitutionExecutor 初始化: %s", constitution_yaml_path)
+
     for sym in symbols:
         listener = manager.get_listener(sym)
         if listener is None:
             continue
         listener.decision_handler = pcm
         listener.order_manager = order_manager
+        listener.constitution_executor = constitution_exec
+        listener.runtime_state = runtime_st
         # 从宪法注入 risk_per_slot + per_strategy_limits
         risk_per_slot = pcm.constitution.get("risk_per_slot", 0.01)
         per_strategy_limits = pcm.constitution.get("per_strategy_limits", {})

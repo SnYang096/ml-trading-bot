@@ -4,19 +4,37 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 
+import re
+
+# ATR key pattern: exact 'atr' or timeframe prefix like '15T_atr', '60T_atr', '240T_atr'
+_ATR_PATTERN = re.compile(r"^(?:\d+[TtHhDd]_)?atr$")
+
+
 def pick_atr(feats: Dict[str, Any]) -> Optional[float]:
-    # Prefer timeframe ATR keys like "15T_atr" or "4H_atr".
-    for k in feats or {}:
-        if str(k).endswith("_atr"):
+    """Pick the ATR value from features.
+
+    Only matches exact 'atr' or timeframe-prefixed keys like '15T_atr', '60T_atr'.
+    Excludes false positives like 'macd_atr', 'rsi_atr', etc.
+    """
+    if not feats:
+        return None
+    # Prefer timeframe-prefixed ATR (e.g. '240T_atr')
+    for k in feats:
+        if k != "atr" and _ATR_PATTERN.match(k):
             try:
-                return float(feats[k])
+                v = float(feats[k])
+                if v > 0:
+                    return v
             except Exception:
                 continue
-    if "atr" in (feats or {}):
+    # Fallback to plain 'atr'
+    if "atr" in feats:
         try:
-            return float(feats["atr"])
+            v = float(feats["atr"])
+            if v > 0:
+                return v
         except Exception:
-            return None
+            pass
     return None
 
 
