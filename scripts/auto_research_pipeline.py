@@ -1787,8 +1787,8 @@ def main():
             use_1min=args.use_1min,
             live_root=args.live_root,
             data_path=cfg["data_path"],
-            holdout_start=cfg["holdout_start"],
-            end_date=cfg["end_date"],
+            holdout_start=holdout_start,
+            end_date=end_date,
         )
 
     # ── 汇总 ──

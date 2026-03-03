@@ -35,6 +35,7 @@ from src.time_series_model.live.enforcement import enforce_before_order
 from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
 )
+from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.time_series_model.core.constitution.runtime_state import (
     ConstitutionRuntimeState,
 )
@@ -759,6 +760,16 @@ class OrderFlowListener:
     def _execute_intent(self, intent: TradeIntent, features: Dict[str, Any]) -> None:
         if intent.action == "NO_TRADE":
             return
+
+        try:
+            self._execute_intent_inner(intent, features)
+        except ConstitutionViolation as cv:
+            logger.warning(
+                "[%s] 宪法拒绝: %s (%s)", self.symbol, cv.code, cv.message
+            )
+            return
+
+    def _execute_intent_inner(self, intent: TradeIntent, features: Dict[str, Any]) -> None:
         side = OrderSide.BUY if intent.action == "LONG" else OrderSide.SELL
 
         # ── 仓位计算 ──
