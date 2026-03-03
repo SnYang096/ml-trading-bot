@@ -314,6 +314,18 @@ class IncrementalFeatureComputer:
             bar_data["cvd_change_5_normalized"] = cvd_change_5 / total_flow_5
         else:
             bar_data["cvd_change_5_normalized"] = 0.0
+        # cvd_change_20: sum of last 20 bars' delta (maxlen=20)
+        if len(self._cvd_change_hist) > 0:
+            bar_data["cvd_change_20"] = float(np.sum(list(self._cvd_change_hist)))
+        else:
+            bar_data["cvd_change_20"] = 0.0
+        # cvd_normalized: per-bar delta / total_flow
+        if self._cvd_bar_total_flow > 0:
+            bar_data["cvd_normalized"] = float(self._cvd_bar_delta) / float(
+                self._cvd_bar_total_flow
+            )
+        else:
+            bar_data["cvd_normalized"] = 0.0
         # reset accumulators for next bar
         self._cvd_bar_delta = 0.0
         self._cvd_bar_total_flow = 0.0
@@ -648,8 +660,15 @@ class IncrementalFeatureComputer:
         except Exception:
             pass
 
-        # CVD change (5 bars) + normalized, if underlying flow columns exist
-        if self._want("cvd_change_5") or self._want("cvd_change_5_normalized"):
+        # CVD change columns + normalized, if underlying flow columns exist
+        _need_cvd = (
+            self._want("cvd_change_5")
+            or self._want("cvd_change_5_normalized")
+            or self._want("cvd_change_1")
+            or self._want("cvd_change_20")
+            or self._want("cvd_normalized")
+        )
+        if _need_cvd:
             net_buy = None
             total_flow = None
             if "buy_qty" in bars_df.columns and "sell_qty" in bars_df.columns:
@@ -674,6 +693,10 @@ class IncrementalFeatureComputer:
                 total_flow = total_flow.replace(0, np.nan)
 
             if net_buy is not None:
+                # cvd_change_1 (per-bar delta)
+                if "cvd_change_1" not in bars_df_indexed.columns:
+                    bars_df_indexed["cvd_change_1"] = net_buy.values
+                # cvd_change_5
                 cvd_change_5 = net_buy.rolling(window=5, min_periods=1).sum()
                 if self._want("cvd_change_5"):
                     self.timeframe_features[timeframe]["cvd_change_5"] = float(
@@ -697,6 +720,28 @@ class IncrementalFeatureComputer:
                     )
                     if hasattr(cvd_norm, "iloc"):
                         bars_df_indexed["cvd_change_5_normalized"] = cvd_norm
+                # cvd_change_20
+                cvd_change_20 = net_buy.rolling(window=20, min_periods=1).sum()
+                if self._want("cvd_change_20"):
+                    self.timeframe_features[timeframe]["cvd_change_20"] = float(
+                        cvd_change_20.iloc[-1]
+                    )
+                bars_df_indexed["cvd_change_20"] = cvd_change_20
+                # cvd_normalized (per-bar delta / total_flow)
+                if (
+                    total_flow is not None
+                    and "cvd_normalized" not in bars_df_indexed.columns
+                ):
+                    cvd_normalized = (
+                        (net_buy / total_flow)
+                        .replace([np.inf, -np.inf], np.nan)
+                        .fillna(0.0)
+                    )
+                    bars_df_indexed["cvd_normalized"] = cvd_normalized
+                    if self._want("cvd_normalized"):
+                        self.timeframe_features[timeframe]["cvd_normalized"] = float(
+                            cvd_normalized.iloc[-1]
+                        )
 
         # Extra live features from base training plan
         try:
