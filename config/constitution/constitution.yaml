@@ -130,6 +130,11 @@ slots:
   # If not enough margin/slots, replacement policy decides what to close/replace.
   allow_replacement: true
 
+  # Evidence 入场门槛: evidence < min_score 拒绝开仓 (0.0 = 不过滤)
+  evidence_min_score: 0.3
+  # Evidence 仓位缩放: scale = 0.5 + 0.5 * evidence (true = 启用)
+  evidence_position_scale: true
+
   # Slot state tracking (for live / restart safety).
   slot_state_tracking:
     persist_to: "data/db/order_management.db"

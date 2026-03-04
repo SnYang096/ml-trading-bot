@@ -1,5 +1,5 @@
 # BPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260304_225235_rr_extreme/bpc
+# 来源: results/train_final_20260304_234650_rr_extreme/bpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc
@@ -16,114 +16,164 @@ schema:
       max_hard_deny_rate: 0.5
       alert_threshold: 0.45
 hard_gates:
-- id: gate_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT
+- id: gate_sma_200_position_macd_atr_shd_pct_evt_var_99
+  tag: HARD_SMA_200_POSITION_MACD_ATR_SHD_PCT_EVT_VAR_99
   phase: hard_gate
   priority: 10
-  reason: evt_es_99_right 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=1.069)
   when:
-    evt_es_99_right:
-      value_gt: 0.7202
+    all_of:
+    - sma_200_position:
+        value_gt: -0.2634
+    - macd_atr:
+        value_gt: -1.1863
+    - shd_pct:
+        value_gt: 0.0343
+    - evt_var_99:
+        value_le: 0.9186
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.7202 | 方向: data_verified (low=-0.375, high=-0.997)'
-- id: gate_shd_pct
-  tag: HARD_SHD_PCT
+  comment: 'imodels_distill(seed=42): sma_200_position > -0.2634 & macd_atr > -1.186 & shd_pct > 0.03432 & evt_var_99 <= 0.9186
+    | coef=1.0689'
+- id: gate_sma_200_position_spectrum_volume_high_freq_ratio
+  tag: HARD_SMA_200_POSITION_SPECTRUM_VOLUME_HIGH_FREQ_RATIO
   phase: hard_gate
   priority: 11
-  reason: shd_pct 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=0.538)
   when:
-    shd_pct:
-      value_lt: 0.4443
+    all_of:
+    - sma_200_position:
+        value_gt: -0.185
+    - spectrum_volume_high_freq_ratio:
+        value_le: 0.755
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.4443 | 方向: data_verified (low=-1.055, high=-0.214)'
-- id: gate_evt_scale_right
-  tag: HARD_EVT_SCALE_RIGHT
+  comment: 'imodels_distill(seed=42): sma_200_position > -0.185 & spectrum_volume_high_freq_ratio <= 0.755 | coef=0.5378'
+- id: gate_sma_200_position_macd_signal_atr_evt_var_99
+  tag: HARD_SMA_200_POSITION_MACD_SIGNAL_ATR_EVT_VAR_99
   phase: hard_gate
   priority: 12
-  reason: evt_scale_right 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=0.491)
   when:
-    evt_scale_right:
-      value_gt: 0.2401
+    all_of:
+    - sma_200_position:
+        value_gt: -0.2141
+    - macd_signal_atr:
+        value_gt: -0.7594
+    - evt_var_99:
+        value_le: 0.9246
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.2401 | 方向: data_verified (low=0.097, high=-0.854)'
-- id: gate_macd_atr
-  tag: HARD_MACD_ATR
+  comment: 'imodels_distill(seed=42): sma_200_position > -0.2141 & macd_signal_atr > -0.7594 & evt_var_99 <= 0.9246 | coef=0.4905'
+- id: gate_sma_200_position_spectrum_volume_low_freq_ratio_spectrum_volume_entropy
+  tag: HARD_SMA_200_POSITION_SPECTRUM_VOLUME_LOW_FREQ_RATIO_SPECTRUM_VOLUME_ENTROPY
   phase: hard_gate
   priority: 13
-  reason: macd_atr 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=0.393)
   when:
-    macd_atr:
-      value_lt: -0.9835
+    all_of:
+    - sma_200_position:
+        value_gt: -0.2308
+    - spectrum_volume_low_freq_ratio:
+        value_gt: 0.0452
+    - spectrum_volume_entropy:
+        value_gt: 0.7506
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.9835 | 方向: data_verified (low=-1.039, high=-0.548)'
-- id: gate_spectrum_volume_low_freq_ratio
-  tag: HARD_SPECTRUM_VOLUME_LOW_FREQ_RATIO
+  comment: 'imodels_distill(seed=42): sma_200_position > -0.2308 & spectrum_volume_low_freq_ratio > 0.04524 & spectrum_volume_entropy
+    > 0.7506 | coef=0.3929'
+- id: gate_macd_atr_evt_scale_right_spectrum_volume_high_freq_ratio
+  tag: HARD_MACD_ATR_EVT_SCALE_RIGHT_SPECTRUM_VOLUME_HIGH_FREQ_RATIO
   phase: hard_gate
   priority: 14
-  reason: spectrum_volume_low_freq_ratio 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=0.375)
   when:
-    spectrum_volume_low_freq_ratio:
-      value_gt: 0.0686
+    all_of:
+    - macd_atr:
+        value_gt: -1.1472
+    - evt_scale_right:
+        value_gt: 0.5079
+    - spectrum_volume_high_freq_ratio:
+        value_le: 0.8034
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.06861 | 方向: data_verified (low=-0.013, high=-1.415)'
-- id: gate_evt_var_99
-  tag: HARD_EVT_VAR_99
+  comment: 'imodels_distill(seed=42): macd_atr > -1.147 & evt_scale_right > 0.5079 & spectrum_volume_high_freq_ratio <= 0.8034
+    | coef=0.3754'
+- id: gate_sma_200_position_atr_percentile_evt_var_99
+  tag: HARD_SMA_200_POSITION_ATR_PERCENTILE_EVT_VAR_99
   phase: hard_gate
   priority: 15
-  reason: evt_var_99 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=0.334)
   when:
-    evt_var_99:
-      value_lt: 0.7599
+    all_of:
+    - sma_200_position:
+        value_gt: -0.1809
+    - atr_percentile:
+        value_gt: 0.2009
+    - evt_var_99:
+        value_gt: 0.9464
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.7599 | 方向: data_verified (low=-1.052, high=0.478)'
-- id: gate_evt_tail_shape
-  tag: HARD_EVT_TAIL_SHAPE
+  comment: 'imodels_distill(seed=42): sma_200_position > -0.1809 & atr_percentile > 0.2009 & evt_var_99 > 0.9464 | coef=0.3336'
+- id: gate_sma_200_position_macd_signal_atr_spectrum_volume_high_freq_ratio
+  tag: HARD_SMA_200_POSITION_MACD_SIGNAL_ATR_SPECTRUM_VOLUME_HIGH_FREQ_RATIO
   phase: hard_gate
   priority: 16
-  reason: evt_tail_shape 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=0.303)
   when:
-    evt_tail_shape:
-      value_gt: 0.3948
+    all_of:
+    - sma_200_position:
+        value_gt: -0.2039
+    - macd_signal_atr:
+        value_gt: -0.823
+    - spectrum_volume_high_freq_ratio:
+        value_le: 0.8019
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.3948 | 方向: data_verified (low=-0.233, high=-0.820)'
-- id: gate_evt_scale
-  tag: HARD_EVT_SCALE
+  comment: 'imodels_distill(seed=42): sma_200_position > -0.2039 & macd_signal_atr > -0.823 & spectrum_volume_high_freq_ratio
+    <= 0.8019 | coef=0.3027'
+- id: gate_sma_200_position_spectrum_volume_flatness
+  tag: HARD_SMA_200_POSITION_SPECTRUM_VOLUME_FLATNESS
   phase: hard_gate
   priority: 17
-  reason: evt_scale 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=0.254)
   when:
-    evt_scale:
-      value_gt: 0.9345
+    all_of:
+    - sma_200_position:
+        value_gt: -0.1424
+    - spectrum_volume_flatness:
+        value_gt: 0.3748
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.9345 | 方向: data_verified (low=-0.466, high=-1.381)'
-- id: gate_evt_scale
-  tag: HARD_EVT_SCALE
+  comment: 'imodels_distill(seed=42): sma_200_position > -0.1424 & spectrum_volume_flatness > 0.3748 | coef=0.2538'
+- id: gate_sma_200_position_spectrum_volume_high_freq_ratio
+  tag: HARD_SMA_200_POSITION_SPECTRUM_VOLUME_HIGH_FREQ_RATIO
   phase: hard_gate
   priority: 18
-  reason: evt_scale 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=0.201)
   when:
-    evt_scale:
-      value_lt: 0.4464
+    all_of:
+    - sma_200_position:
+        value_gt: -0.1777
+    - spectrum_volume_high_freq_ratio:
+        value_le: 0.7896
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.4464 | 方向: data_verified (low=-1.393, high=0.009)'
-- id: gate_vpin_momentum
-  tag: HARD_VPIN_MOMENTUM
+  comment: 'imodels_distill(seed=42): sma_200_position > -0.1777 & spectrum_volume_high_freq_ratio <= 0.7896 | coef=0.2013'
+- id: gate_sma_200_position_vpin_max_macd_signal_atr
+  tag: HARD_SMA_200_POSITION_VPIN_MAX_MACD_SIGNAL_ATR
   phase: hard_gate
   priority: 19
-  reason: vpin_momentum 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=0.183)
   when:
-    vpin_momentum:
-      value_gt: -0.0206
+    all_of:
+    - sma_200_position:
+        value_gt: -0.1691
+    - vpin_max:
+        value_le: 0.3052
+    - macd_signal_atr:
+        value_le: -0.6924
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.02057 | 方向: data_verified (low=-0.119, high=-0.779)'
+  comment: 'imodels_distill(seed=42): sma_200_position > -0.1691 & vpin_max <= 0.3052 & macd_signal_atr <= -0.6924 | coef=0.1830'
 guardrails: []

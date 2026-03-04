@@ -1,5 +1,5 @@
 # FER Gate Draft (auto-generated)
-# 来源: results/train_final_20260304_210059_rr_extreme/fer
+# 来源: results/train_final_20260305_000831_rr_extreme/fer
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fer
@@ -16,114 +16,155 @@ schema:
       max_hard_deny_rate: 0.5
       alert_threshold: 0.45
 hard_gates:
-- id: gate_fer_signed_efficiency
-  tag: HARD_FER_SIGNED_EFFICIENCY
+- id: gate_cvd_change_5_normalized_vpin_zscore_20_evt_scale
+  tag: HARD_CVD_CHANGE_5_NORMALIZED_VPIN_ZSCORE_20_EVT_SCALE
   phase: hard_gate
   priority: 10
-  reason: fer_signed_efficiency 触发树分裂条件 (分裂 2 次)
+  reason: imodels 蒸馏规则 (coef=1.748)
   when:
-    fer_signed_efficiency:
-      value_lt: -0.0
+    all_of:
+    - cvd_change_5_normalized:
+        value_le: 0.0684
+    - vpin_zscore_20:
+        value_gt: -1.7621
+    - evt_scale:
+        value_gt: 0.006
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0 | 方向: data_verified (low=0.139, high=0.622)'
-- id: gate_roc_5
-  tag: HARD_ROC_5
+  comment: 'imodels_distill(seed=42): cvd_change_5_normalized <= 0.06836 & vpin_zscore_20 > -1.762 & evt_scale > 0.00595 |
+    coef=1.7482'
+- id: gate_fer_signed_efficiency_pct_vpin_momentum_trade_cluster_directional_entropy_zscore_20
+  tag: HARD_FER_SIGNED_EFFICIENCY_PCT_VPIN_MOMENTUM_TRADE_CLUSTER_DIRECTIONAL_ENTROPY_ZSCORE_20
   phase: hard_gate
   priority: 11
-  reason: roc_5 触发树分裂条件 (分裂 1 次)
+  reason: imodels 蒸馏规则 (coef=1.319)
   when:
-    roc_5:
-      value_gt: -1.2039
+    all_of:
+    - fer_signed_efficiency_pct:
+        value_gt: 0.0125
+    - vpin_momentum:
+        value_gt: -0.0924
+    - trade_cluster_directional_entropy_zscore_20:
+        value_le: 1.2651
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 -1.204 | 方向: data_verified (low=0.762, high=0.328)'
-- id: gate_sma_200_position
-  tag: HARD_SMA_200_POSITION
+  comment: 'imodels_distill(seed=42): fer_signed_efficiency_pct > 0.0125 & vpin_momentum > -0.09239 & trade_cluster_directional_entropy_zscore_20
+    <= 1.265 | coef=1.3189'
+- id: gate_cvd_change_5_normalized_trade_cluster_imbalance_zscore_20_trade_cluster_max_buy_run_zscore_20
+  tag: HARD_CVD_CHANGE_5_NORMALIZED_TRADE_CLUSTER_IMBALANCE_ZSCORE_20_TRADE_CLUSTER_MAX_BUY_RUN_ZSCORE_20
   phase: hard_gate
   priority: 12
-  reason: sma_200_position 触发树分裂条件 (分裂 1 次)
+  reason: imodels 蒸馏规则 (coef=1.050)
   when:
-    sma_200_position:
-      value_gt: 0.0127
+    all_of:
+    - cvd_change_5_normalized:
+        value_le: 0.0714
+    - trade_cluster_imbalance_zscore_20:
+        value_gt: -2.1641
+    - trade_cluster_max_buy_run_zscore_20:
+        value_gt: -1.3168
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.01272 | 方向: data_verified (low=0.468, high=0.241)'
-- id: gate_fer_trapped_shorts_score
-  tag: HARD_FER_TRAPPED_SHORTS_SCORE
+  comment: 'imodels_distill(seed=42): cvd_change_5_normalized <= 0.07136 & trade_cluster_imbalance_zscore_20 > -2.164 & trade_cluster_max_buy_run_zscore_20
+    > -1.317 | coef=1.0496'
+- id: gate_roc_5_vpin_signed_imbalance_last_trade_cluster_net_runs_zscore_20
+  tag: HARD_ROC_5_VPIN_SIGNED_IMBALANCE_LAST_TRADE_CLUSTER_NET_RUNS_ZSCORE_20
   phase: hard_gate
   priority: 13
-  reason: fer_trapped_shorts_score 触发树分裂条件 (分裂 1 次)
+  reason: imodels 蒸馏规则 (coef=0.816)
   when:
-    fer_trapped_shorts_score:
-      value_gt: 0.4644
+    all_of:
+    - roc_5:
+        value_le: 0.8989
+    - vpin_signed_imbalance_last:
+        value_gt: -0.1383
+    - trade_cluster_net_runs_zscore_20:
+        value_gt: -2.067
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.4644 | 方向: data_verified (low=1.052, high=0.040)'
-- id: gate_evt_scale_right
-  tag: HARD_EVT_SCALE_RIGHT
+  comment: 'imodels_distill(seed=42): roc_5 <= 0.8989 & vpin_signed_imbalance_last > -0.1383 & trade_cluster_net_runs_zscore_20
+    > -2.067 | coef=0.8163'
+- id: gate_vpin_min_trade_cluster_net_runs_zscore_20_fer_absorption_streak
+  tag: HARD_VPIN_MIN_TRADE_CLUSTER_NET_RUNS_ZSCORE_20_FER_ABSORPTION_STREAK
   phase: hard_gate
   priority: 14
-  reason: evt_scale_right 触发树分裂条件 (分裂 1 次)
+  reason: imodels 蒸馏规则 (coef=0.801)
   when:
-    evt_scale_right:
-      value_lt: 0.4306
+    all_of:
+    - vpin_min:
+        value_le: 0.3333
+    - trade_cluster_net_runs_zscore_20:
+        value_gt: -1.6888
+    - fer_absorption_streak:
+        value_le: 16.5
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.4306 | 方向: data_verified (low=-0.127, high=0.773)'
-- id: gate_sma_200_position
-  tag: HARD_SMA_200_POSITION
+  comment: 'imodels_distill(seed=42): vpin_min <= 0.3333 & trade_cluster_net_runs_zscore_20 > -1.689 & fer_absorption_streak
+    <= 16.5 | coef=0.8006'
+- id: gate_cvd_change_5_normalized_roc_5_sma_200_position
+  tag: HARD_CVD_CHANGE_5_NORMALIZED_ROC_5_SMA_200_POSITION
   phase: hard_gate
   priority: 15
-  reason: sma_200_position 触发树分裂条件 (分裂 1 次)
+  reason: imodels 蒸馏规则 (coef=0.337)
   when:
-    sma_200_position:
-      value_gt: -0.0312
+    all_of:
+    - cvd_change_5_normalized:
+        value_le: 0.0707
+    - roc_5:
+        value_le: 2.6407
+    - sma_200_position:
+        value_gt: -0.3384
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 -0.03124 | 方向: data_verified (low=0.874, high=-0.116)'
-- id: gate_roc_5
-  tag: HARD_ROC_5
+  comment: 'imodels_distill(seed=42): cvd_change_5_normalized <= 0.07072 & roc_5 <= 2.641 & sma_200_position > -0.3384 | coef=0.3371'
+- id: gate_roc_5_sma_200_position_fer_signed_efficiency_pct_fer_absorption_streak
+  tag: HARD_ROC_5_SMA_200_POSITION_FER_SIGNED_EFFICIENCY_PCT_FER_ABSORPTION_STREAK
   phase: hard_gate
   priority: 16
-  reason: roc_5 触发树分裂条件 (分裂 1 次)
+  reason: imodels 蒸馏规则 (coef=0.262)
   when:
-    roc_5:
-      value_gt: -1.3366
+    all_of:
+    - roc_5:
+        value_gt: -2.5121
+    - sma_200_position:
+        value_le: 0.1752
+    - fer_signed_efficiency_pct:
+        value_gt: 0.0125
+    - fer_absorption_streak:
+        value_le: 16.5
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 -1.337 | 方向: data_verified (low=0.708, high=0.348)'
-- id: gate_evt_scale
-  tag: HARD_EVT_SCALE
+  comment: 'imodels_distill(seed=42): roc_5 > -2.512 & sma_200_position <= 0.1752 & fer_signed_efficiency_pct > 0.0125 & fer_absorption_streak
+    <= 16.5 | coef=0.2622'
+- id: gate_vpin_last_vpin_zscore_50_trade_cluster_imbalance_zscore_20
+  tag: HARD_VPIN_LAST_VPIN_ZSCORE_50_TRADE_CLUSTER_IMBALANCE_ZSCORE_20
   phase: hard_gate
   priority: 17
-  reason: evt_scale 触发树分裂条件 (分裂 1 次)
+  reason: imodels 蒸馏规则 (coef=0.248)
   when:
-    evt_scale:
-      value_gt: 0.2917
+    all_of:
+    - vpin_last:
+        value_gt: 0.1641
+    - vpin_zscore_50:
+        value_gt: -1.6818
+    - trade_cluster_imbalance_zscore_20:
+        value_gt: -1.8232
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.2917 | 方向: data_verified (low=1.467, high=0.012)'
-- id: gate_fer_impulse_failure_score
-  tag: HARD_FER_IMPULSE_FAILURE_SCORE
+  comment: 'imodels_distill(seed=42): vpin_last > 0.1641 & vpin_zscore_50 > -1.682 & trade_cluster_imbalance_zscore_20 > -1.823
+    | coef=0.2480'
+- id: gate_roc_5_fer_signed_efficiency_pct
+  tag: HARD_ROC_5_FER_SIGNED_EFFICIENCY_PCT
   phase: hard_gate
   priority: 18
-  reason: fer_impulse_failure_score 触发树分裂条件 (分裂 1 次)
+  reason: imodels 蒸馏规则 (coef=0.031)
   when:
-    fer_impulse_failure_score:
-      value_gt: 0.9281
+    all_of:
+    - roc_5:
+        value_gt: -2.5047
+    - fer_signed_efficiency_pct:
+        value_gt: 0.0125
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.9281 | 方向: data_verified (low=0.424, high=0.083)'
-- id: gate_fer_signed_efficiency_pct
-  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
-  phase: hard_gate
-  priority: 19
-  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
-  when:
-    fer_signed_efficiency_pct:
-      value_lt: 0.2466
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.2466 | 方向: data_verified (low=-0.324, high=0.647)'
+  comment: 'imodels_distill(seed=42): roc_5 > -2.505 & fer_signed_efficiency_pct > 0.0125 | coef=0.0314'
 guardrails: []

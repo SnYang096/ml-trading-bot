@@ -364,11 +364,7 @@ class PositionSimulator:
     def close_by_archetype(
         self, archetype: str, close_price: float, close_time: datetime
     ) -> List[ClosedTrade]:
-        """PCM evidence 竞争驱逐: 关闭指定 archetype 的所有仓位
-
-        当 LivePCM._try_slot_competition 驱逐旧仓位时调用，
-        确保实际仓位与 _slot_evidence 记录保持一致。
-        """
+        """关闭指定 archetype 的所有仓位 (遗留接口, 竞争驱逐已移除)"""
         closed = []
         to_remove = []
         for pid, pos in self._positions.items():
@@ -1352,11 +1348,11 @@ class EventBacktester:
                 features_by_timeframe=features_by_tf,
             )
 
-            # ── 处理 PCM evidence 竞争驱逐: 关闭被替换的旧仓位 ──
+            # NOTE: Evidence slot 竞争已移除 (改为入场门槛 + 仓位缩放)
+            # _last_evictions 始终为空, 此块保留为 no-op 以保持兼容
             for evicted_sym, evicted_arch in getattr(self.pcm, "_last_evictions", []):
                 ev_sim = self._simulators.get(evicted_sym)
                 if ev_sim and ev_sim.has_positions:
-                    # 用被驱逐 symbol 的当前价格作为平仓价
                     ev_bars = sym_data[evicted_sym]["bars_1min_test"]
                     ev_close_price = 0.0
                     _ev_mask = ev_bars.index <= ts
@@ -1374,8 +1370,6 @@ class EventBacktester:
                         evicted_arch, ev_close_price, ev_close_time
                     )
                     for ct in ev_closed:
-                        # 被驱逐的 slot 已在 _try_slot_competition 中移除，
-                        # notify 是 no-op 但保持完整性
                         self.pcm.notify_position_closed(evicted_sym, ct.archetype)
                         pnl_usd = _equity * _risk_per_slot * ct.pnl_r
                         _equity += pnl_usd

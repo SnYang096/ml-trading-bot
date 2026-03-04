@@ -595,6 +595,7 @@ def simulate_rr_execution(
     bars_1min_dict: Optional[Dict[str, pd.DataFrame]] = None,
     add_position_cfg: Optional[Dict[str, Any]] = None,
     per_strategy_limits: Optional[Dict[str, Any]] = None,
+    evidence_min_score: float = 0.0,
 ) -> pd.Series:
     """
     逐K线路径模拟 (Bar-by-Bar Execution Simulation)
@@ -1047,9 +1048,12 @@ def simulate_rr_execution(
                 }
             )
 
-    # ── slot 限制：per-strategy 独立 slot + 同 archetype 内 evidence 竞争 ──
+    # ── slot 限制：per-strategy 独立 slot, evidence 入场门槛 ──
     _add_pos_count = 0
     removed_indices: set = set()  # 初始化以避免 slot 过滤未执行时 NameError
+    # Evidence 入场门槛 (从 constitution 读取)
+    _ev_min_score = evidence_min_score
+    _ev_position_scale = False
     if max_slots and max_slots > 0 and trade_details:
         # 加仓配置
         _ap_enabled = add_position_cfg is not None
@@ -1096,18 +1100,20 @@ def simulate_rr_execution(
         accepted = []  # 当前 active trades
         rejected_indices = set()
         evicted_indices = set()
-        _slot_diag = {"per_strat": 0, "global": 0, "both": 0}  # 拒绝原因诊断
+        _slot_diag = {"per_strat": 0, "global": 0, "both": 0, "evidence_min": 0}
         for trade in trade_details:
             eidx = trade["entry_idx"]
             new_ev = trade.get("evidence_score", 0.5)
             trade_arch = trade.get("archetype", "").lower().strip()
+
+            # Evidence 入场门槛: score < min → 拒绝
+            if new_ev < _ev_min_score:
+                rejected_indices.add(eidx)
+                _slot_diag["evidence_min"] += 1
+                continue
+
             # 移除已平仓的 active trades
             if _slot_use_ts and trade.get("entry_ts_ns", 0) > 0:
-                # 用 entry 时间戳对比，与事件侧一致:
-                # 事件回测中 enforce_position 处理 1min bars 直到当前 entry bar (含),
-                # 然后调用 decide() 生成新信号。
-                # 所以只有 exit_ts <= entry_ts 的仓位已释放,
-                # exit_ts > entry_ts 的仓位仍占用 slot。
                 _entry_ns = trade["entry_ts_ns"]
                 active = [t for t in accepted if t.get("exit_ts_ns", 0) > _entry_ns]
             else:
@@ -1144,50 +1150,15 @@ def simulate_rr_execution(
 
                 if can_add:
                     accepted = active + [trade]
-                elif per_strat_full and arch_active:
-                    # 同 archetype 内 evidence 竞争
-                    weakest = min(
-                        arch_active, key=lambda t: t.get("evidence_score", 0.5)
-                    )
-                    weakest_ev = weakest.get("evidence_score", 0.5)
-                    if new_ev > weakest_ev:
-                        evicted_indices.add(weakest["entry_idx"])
-                        active = [
-                            t for t in active if t["entry_idx"] != weakest["entry_idx"]
-                        ]
-                        accepted = active + [trade]
-                    else:
-                        rejected_indices.add(eidx)
-                        if per_strat_full and global_full:
-                            _slot_diag["both"] += 1
-                        elif per_strat_full:
-                            _slot_diag["per_strat"] += 1
-                        else:
-                            _slot_diag["global"] += 1
-                elif global_full:
-                    # 全局 slot 满，同 archetype 内竞争
-                    if arch_active:
-                        weakest = min(
-                            arch_active, key=lambda t: t.get("evidence_score", 0.5)
-                        )
-                        weakest_ev = weakest.get("evidence_score", 0.5)
-                        if new_ev > weakest_ev:
-                            evicted_indices.add(weakest["entry_idx"])
-                            active = [
-                                t
-                                for t in active
-                                if t["entry_idx"] != weakest["entry_idx"]
-                            ]
-                            accepted = active + [trade]
-                        else:
-                            rejected_indices.add(eidx)
-                            _slot_diag["global"] += 1
-                    else:
-                        rejected_indices.add(eidx)
-                        _slot_diag["global"] += 1
                 else:
+                    # Slot 满 → 直接拒绝 (不再做 evidence 竞争驱逐)
                     rejected_indices.add(eidx)
-                    _slot_diag["per_strat"] += 1
+                    if per_strat_full and global_full:
+                        _slot_diag["both"] += 1
+                    elif per_strat_full:
+                        _slot_diag["per_strat"] += 1
+                    else:
+                        _slot_diag["global"] += 1
             else:
                 accepted = active + [trade]
 
@@ -1204,11 +1175,13 @@ def simulate_rr_execution(
             if not silent:
                 print(
                     f"   🔒 Slot limit (max={max_slots}): "
-                    f"rejected {len(rejected_indices)}, evicted {len(evicted_indices)}, "
+                    f"rejected {len(rejected_indices)}, "
                     f"kept {total_entries}"
                 )
+                _ev_min_rejected = _slot_diag.get("evidence_min", 0)
                 print(
-                    f"   🔍 Slot reject reasons: "
+                    f"   🔍 Reject reasons: "
+                    f"evidence_min={_ev_min_rejected}, "
                     f"per_strat={_slot_diag['per_strat']}, "
                     f"global={_slot_diag['global']}, "
                     f"both={_slot_diag['both']}"
@@ -2450,11 +2423,16 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         constitution_yaml = regime_cfg.get("constitution_ref")
     const = _load_constitution_constraints(constitution_yaml)
     max_slots = getattr(args, "max_slots", None) or const["slot_count"]
+    _ev_min_score_const = const.get("evidence_min_score", 0.0)
+    _ev_pos_scale_const = const.get("evidence_position_scale", False)
 
     print(f"   📄 Regime config: {regime_config_path}")
     print(f"   📄 Constitution: {constitution_yaml or 'defaults'}")
     print(
         f"   🔒 max_slots={max_slots} (from {'args' if getattr(args, 'max_slots', None) else 'constitution'})"
+    )
+    print(
+        f"   🔒 evidence_min_score={_ev_min_score_const}, evidence_position_scale={_ev_pos_scale_const}"
     )
 
     # ── 1. 解析 --pcm 参数 ──
@@ -2795,7 +2773,12 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         merged.at[idx, "entry_direction"] = first_dir
         merged.at[idx, "evidence_score"] = first_ev
         merged.at[idx, "_pcm_archetype"] = first_arch
-        merged.at[idx, "_position_scale"] = scale
+        # Position scale = regime_scale × evidence_scale
+        final_scale = scale
+        if _ev_pos_scale_const:
+            ev_clamped = max(0.0, min(1.0, first_ev if first_ev == first_ev else 0.5))
+            final_scale *= 0.5 + 0.5 * ev_clamped
+        merged.at[idx, "_position_scale"] = final_scale
         arch_win_counts[first_arch] = arch_win_counts.get(first_arch, 0) + 1
         regime_entry_counts[current_regime] = (
             regime_entry_counts.get(current_regime, 0) + 1
@@ -2805,6 +2788,10 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         for arch_name, d, ev in active[1:]:
             row_copy = merged.loc[idx].copy()
             sc = regime_detector.get_archetype_scale(arch_name)
+            # Position scale = regime_scale × evidence_scale
+            if _ev_pos_scale_const:
+                ev_c = max(0.0, min(1.0, ev if ev == ev else 0.5))
+                sc *= 0.5 + 0.5 * ev_c
             row_copy["entry_direction"] = d
             row_copy["evidence_score"] = ev
             row_copy["_pcm_archetype"] = arch_name
@@ -2996,6 +2983,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         bars_1min_dict=bars_1min_dict,
         add_position_cfg=_add_position_cfg,
         per_strategy_limits=_per_strategy_limits,
+        evidence_min_score=_ev_min_score_const,
     )
 
     valid_returns = exec_returns.dropna()
@@ -4741,6 +4729,7 @@ def main() -> int:
     _per_strat_limits = _const_pre.get("per_strategy_limits") or {}
     _strat_cfg = _per_strat_limits.get(str(args.strategy).lower()) or {}
     _max_slots_single = int(_strat_cfg.get("max_slots", 1))
+    _ev_min_score_single = _const_pre.get("evidence_min_score", 0.0)
     print(
         f"   🔒 Single-strategy max_slots={_max_slots_single} (from constitution: {_const_yaml_single or 'defaults'})"
     )
@@ -4787,6 +4776,7 @@ def main() -> int:
         bars_1min_dict=bars_1min_dict,
         add_position_cfg=_add_pos_cfg_single,
         per_strategy_limits=_per_strategy_limits_single,
+        evidence_min_score=_ev_min_score_single,
     )
 
     valid_returns = exec_returns.dropna()
