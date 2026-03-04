@@ -202,27 +202,16 @@ def _generate_gate_rules_imodels(
 
         X = pred_df[avail].fillna(0).values.astype(float)
 
-        # ── A.7.2: 蒸馏标签 — 优先用 teacher predict_proba ──
+        # ── A.7.2: 蒸馏标签 — 用 predictions.parquet 的 pred 列 ──
+        # pred 列是 teacher (LightGBM ensemble CV) 的概率输出，无需重新 predict
         y_teacher = None
-        if lgbm_model is not None:
+        if "pred" in pred_df.columns:
             try:
-                X_for_model = pred_df[avail].fillna(0)
-                # model.pkl 可能是 CV fold 列表，取第一个
-                _model = lgbm_model
-                if isinstance(_model, list) and len(_model) > 0:
-                    _model = _model[0]
-                if hasattr(_model, "predict_proba"):
-                    y_proba = _model.predict_proba(X_for_model)[:, 1]
-                elif hasattr(_model, "predict"):
-                    # Raw LightGBM Booster: predict → sigmoid
-                    raw = _model.predict(X_for_model)
-                    y_proba = 1.0 / (1.0 + np.exp(-np.array(raw, dtype=float)))
-                else:
-                    raise ValueError(f"模型类型 {type(_model)} 无 predict 方法")
+                y_proba = pred_df["pred"].fillna(0.5).values.astype(float)
                 y_teacher = (y_proba > 0.5).astype(int)
                 print(f"   🎓 蒸馏模式: teacher deny_rate={y_teacher.mean():.1%}")
             except Exception as e:
-                print(f"   ⚠️  teacher predict 失败: {e}，回退到原始标签")
+                print(f"   ⚠️  pred 列解析失败: {e}，回退到原始标签")
                 y_teacher = None
 
         # Fallback: 从原始标签构建（旧逻辑）
