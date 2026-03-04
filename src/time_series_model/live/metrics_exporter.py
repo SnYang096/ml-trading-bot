@@ -258,6 +258,44 @@ class Metrics:
             "System operating mode: 0=OFFLINE, 1=DEGRADED, 2=NORMAL",
         )
 
+        # ── Feature Health ──
+
+        self.feature_total = Gauge(
+            "mlbot_feature_total",
+            "Total features computed (non-NaN) per symbol/timeframe",
+            ["symbol", "timeframe"],
+        )
+
+        self.feature_expected = Gauge(
+            "mlbot_feature_expected",
+            "Expected features (from live_feature_set) per symbol/timeframe",
+            ["symbol", "timeframe"],
+        )
+
+        self.feature_nan_count = Gauge(
+            "mlbot_feature_nan_count",
+            "Features in live_feature_set that are NaN or missing per symbol/timeframe",
+            ["symbol", "timeframe"],
+        )
+
+        self.feature_nan_ratio = Gauge(
+            "mlbot_feature_nan_ratio",
+            "Fraction of expected features that are NaN/missing (0-1)",
+            ["symbol", "timeframe"],
+        )
+
+        self.feature_critical_nan = Gauge(
+            "mlbot_feature_critical_nan",
+            "1 if critical features (atr, oi_*) are NaN, 0 otherwise",
+            ["symbol", "timeframe"],
+        )
+
+        self.feature_loader_errors = Counter(
+            "mlbot_feature_loader_errors_total",
+            "Feature loader/compute errors that were silently caught",
+            ["symbol", "timeframe", "node"],
+        )
+
         # ── Info ──
 
         self.bot_info = Info(

@@ -1,6 +1,6 @@
 # BPC Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-03-01
+# 自动生成: 2026-03-04
 # 数据源: features_labeled.parquet, 6330 行
 
 rules:
@@ -18,8 +18,8 @@ rules:
     rationale: "P5阈值, bad_rate +4.5%, 鲁棒性=1.00, 评分=0.648"
 
 last_evaluation:
-  # ── 自动生成 (2026-03-01) ──
-  timestamp: "2026-03-01"
+  # ── 自动生成 (2026-03-04) ──
+  timestamp: "2026-03-04"
   data_source: "features_labeled.parquet"
   n_rows: 6330
   baseline_bad_rate: 0.4300

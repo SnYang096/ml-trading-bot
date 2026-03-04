@@ -1,6 +1,6 @@
 # ME Evidence Archetype (auto-promoted)
-# 来源: results/train_final_20260301_225033_return_tree/me/evidence_candidates.yaml
-# 优化规则: 1/12 条通过 plateau 验证
+# 来源: results/train_final_20260304_130916_return_tree/me/evidence_candidates.yaml
+# 优化规则: 2/12 条通过 plateau 验证
 # ✅ 方向已由数据自动验证
 
 schema:
@@ -13,7 +13,30 @@ schema:
 evidence:
 - id: evidence_wpt_price_energy_low_ratio
   feature: wpt_price_energy_low_ratio
-  rank: 9
+  rank: 10
+  direction: positive
+  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  affects:
+  - tp_range
+  - trailing_speed
+  - scale_in_allowed
+  - position_size
+  quantile_mapping:
+    bins:
+    - 0.1
+    - 0.3
+    - 0.5
+    - 0.7
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 1
+- id: evidence_sma_200_position
+  feature: sma_200_position
+  rank: 12
   direction: positive
   usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
   affects:

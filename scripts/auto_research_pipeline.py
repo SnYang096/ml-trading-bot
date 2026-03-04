@@ -194,10 +194,11 @@ def find_output_dir(output: str, strategy: str) -> Optional[str]:
 
 
 def parse_backtest_stdout(output: str) -> Dict[str, Any]:
-    """从 backtest_execution_layer.py stdout 提取指标."""
+    """从 event_backtest.py stdout 提取指标."""
     metrics: Dict[str, Any] = {}
 
-    m = re.search(r"Trades:\s*(\d+)", output)
+    # 事件回测输出格式: 交易数: N
+    m = re.search(r"交易数:\s*(\d+)", output)
     if m:
         metrics["total_trades"] = int(m.group(1))
 
@@ -205,21 +206,35 @@ def parse_backtest_stdout(output: str) -> Dict[str, Any]:
     if m:
         metrics["mean_r"] = float(m.group(1))
 
-    m = re.search(r"Win Rate:\s*([\d.]+)%", output)
+    # 事件回测输出格式: 胜率: 58.0%
+    m = re.search(r"胜率:\s*([\d.]+)%", output)
     if m:
         metrics["win_rate"] = float(m.group(1)) / 100
 
-    m = re.search(r"Sharpe \(per-trade\):\s*([\-\d.]+)", output)
+    # 事件回测输出格式: Sharpe (R): 0.0641
+    m = re.search(r"Sharpe \(R\):\s*([\-\d.]+)", output)
     if m:
         metrics["sharpe_per_trade"] = float(m.group(1))
 
-    m = re.search(r"Sharpe \(annualized\):\s*([\-\d.]+)", output)
+    # Total R
+    m = re.search(r"Total R:\s*([\-\d.]+)", output)
     if m:
-        metrics["sharpe_annualized"] = float(m.group(1))
+        metrics["total_r"] = float(m.group(1))
 
-    m = re.search(r"Sharpe \(daily.*?\):\s*([\-\d.]+)", output)
+    # Max DD (R)
+    m = re.search(r"Max DD \(R\):\s*([\-\d.]+)", output)
     if m:
-        metrics["sharpe_daily"] = float(m.group(1))
+        metrics["max_drawdown_r"] = float(m.group(1))
+
+    # Equity return: Final: $1155 (+15.5%)
+    m = re.search(r"Final:\s*\$[\d.]+\s*\(([\+\-\d.]+)%\)", output)
+    if m:
+        metrics["equity_return_pct"] = float(m.group(1))
+
+    # Equity max DD: Max DD: 7.1%
+    m = re.search(r"Max DD:\s*([\d.]+)%", output)
+    if m:
+        metrics["max_drawdown_pct"] = float(m.group(1)) / 100
 
     return metrics
 
@@ -676,8 +691,11 @@ def run_strategy_pipeline(
     prepare_dir = prepare_dir or f"results/train_final_DRYRUN/{strategy}"
 
     # ── Step 2.5: SHAP Feature Selection (可选, 默认开启) ──
+    # SHAP --promote 输出 features_gate_shap.yaml / features_evidence_shap.yaml
+    # 原始 features_gate.yaml / features_evidence.yaml 永远不动（保留完整候选池）
     shap_cfg = cfg.get("shap_feature_selection", {})
     _skip_shap = skip_shap or not shap_cfg.get("enabled", True)
+    shap_active = False  # 标记 SHAP 是否成功生成了 _shap.yaml
     if not _skip_shap:
         shap_cmd = [
             "python",
@@ -694,14 +712,40 @@ def run_strategy_pipeline(
             f"{prepare_dir}/shap",
             "--promote",
         ]
-        run_step(
+        rc_shap, _ = run_step(
             "SHAP Feature Selection",
             shap_cmd,
             log,
             dry_run=dry_run,
         )
+        # 检查 _shap.yaml 是否生成
+        gate_shap = Path(config_dir) / scfg["features_gate"].replace(
+            ".yaml", "_shap.yaml"
+        )
+        ev_shap = Path(config_dir) / scfg["features_evidence"].replace(
+            ".yaml", "_shap.yaml"
+        )
+        if dry_run or (gate_shap.exists() and ev_shap.exists()):
+            shap_active = True
+            print(f"\u2705 SHAP: \u4f7f\u7528 {gate_shap.name} + {ev_shap.name}")
+        else:
+            print(
+                "\u26a0\ufe0f  SHAP: _shap.yaml \u672a\u751f\u6210, \u56de\u9000\u5230\u539f\u59cb\u7279\u5f81\u6587\u4ef6"
+            )
     else:
-        _log(log, "⏭️  SHAP Feature Selection: skipped")
+        print("\u23ed\ufe0f  SHAP Feature Selection: skipped")
+
+    # 决定 Gate/Evidence 用哪个特征文件
+    features_gate_file = (
+        scfg["features_gate"].replace(".yaml", "_shap.yaml")
+        if shap_active
+        else scfg["features_gate"]
+    )
+    features_evidence_file = (
+        scfg["features_evidence"].replace(".yaml", "_shap.yaml")
+        if shap_active
+        else scfg["features_evidence"]
+    )
 
     # ── Step 3: Prefilter (--promote) ──
     if scfg.get("has_prefilter"):
@@ -769,7 +813,7 @@ def run_strategy_pipeline(
         "--config",
         config_dir,
         "--features",
-        f"{config_dir}/{scfg['features_gate']}",
+        f"{config_dir}/{features_gate_file}",
         "--labels",
         f"{config_dir}/{scfg['labels_gate']}",
         "--archetype-prefilter",
@@ -873,7 +917,7 @@ def run_strategy_pipeline(
         "--config",
         config_dir,
         "--features",
-        f"{config_dir}/{scfg['features_evidence']}",
+        f"{config_dir}/{features_evidence_file}",
         "--labels",
         f"{config_dir}/{scfg['labels_evidence']}",
         *common_train_args,
@@ -1016,32 +1060,32 @@ def run_strategy_pipeline(
             dry_run=dry_run,
         )
 
-    # ── Step 9: Backtest ──
-    # 必须用 logs_gated.parquet：回测输入必须和实盘一致（经过 gate 过滤），
-    # 否则报告的 Sharpe/trades 虚高（gate 会 veto 大量信号）
-    # 必须传 --test-start/--test-end: 限制到 holdout 期，避免 in-sample 过拟合
-    # 必须传 --strategies-root: 确保读取本次实验的 entry_filters.yaml 而不是旧的
-    experiment_map_path = f"{run_dir}/trading_map_{strategy}.html"
+    # ── Step 9: 事件回测 ──
+    # 使用 event_backtest.py (更接近实盘的流式 slot 竞争 + evidence eviction)
+    # 必须传 --start-date/--end-date: 限制到 holdout 期
+    # 必须传 --strategies-root: 确保读取本次实验的配置
+    bt_json_path = f"{run_dir}/event_backtest_{strategy}.json"
+    bt_export_path = f"{run_dir}/event_backtest_{strategy}_trades.csv"
     bt_cmd = [
         "python",
-        "scripts/backtest_execution_layer.py",
-        "--logs",
-        f"{evidence_dir}/logs_gated.parquet",
+        "scripts/event_backtest.py",
         "--strategy",
         strategy,
+        "--start-date",
+        holdout_start,
+        "--end-date",
+        end_date,
+        "--data-path",
+        data_path,
         "--strategies-root",
         strategies_root,
         "--output",
-        experiment_map_path,
-        "--test-start",
-        holdout_start,
-        "--test-end",
-        end_date,
+        bt_json_path,
+        "--export",
+        bt_export_path,
     ]
-    if use_1min:
-        bt_cmd.extend(["--use-1min", "--data-path", data_path])
     rc, bt_out = run_step(
-        "Backtest",
+        "Event Backtest",
         bt_cmd,
         log,
         dry_run=dry_run,
@@ -1056,8 +1100,6 @@ def run_strategy_pipeline(
             "mean_r": 0,
             "win_rate": 0,
             "sharpe_per_trade": 0,
-            "sharpe_annualized": 0,
-            "sharpe_daily": 0,
         }
     )
 
@@ -1213,30 +1255,22 @@ def _patch_report_pcm(report_path: Path, pcm_result: Dict[str, Any]):
 
 
 def _parse_pcm_stdout(output: str) -> Dict[str, Any]:
-    """从 PCM 联合回测 stdout 提取指标."""
-    result: Dict[str, Any] = {}
-
-    m = re.search(r"Trades:\s*(\d+)", output)
-    if m:
-        result["total_trades"] = int(m.group(1))
-
-    m = re.search(r"Sharpe \(daily.*?\):\s*([\-\d.]+)", output)
-    if m:
-        result["sharpe_daily"] = float(m.group(1))
-
-    m = re.search(r"Conflict rate:\s*([\d.]+)%", output)
-    if m:
-        result["conflict_rate"] = float(m.group(1)) / 100
-
-    m = re.search(r"Mean R:\s*([\-\d.]+)", output)
-    if m:
-        result["mean_r"] = float(m.group(1))
-
-    m = re.search(r"Win Rate:\s*([\d.]+)%", output)
-    if m:
-        result["win_rate"] = float(m.group(1)) / 100
-
-    return result
+    """从事件回测 (PCM 多策略联合) stdout 提取指标."""
+    # 复用 parse_backtest_stdout (事件回测输出格式)
+    result = parse_backtest_stdout(output)
+    # 映射字段名以匹配 PCM 决策逻辑
+    mapped: Dict[str, Any] = {}
+    mapped["total_trades"] = result.get("total_trades", 0)
+    mapped["mean_r"] = result.get("mean_r")
+    mapped["win_rate"] = result.get("win_rate")
+    # 事件回测无 conflict_rate (per-strategy 独占 slot, 无跨策略冲突)
+    mapped["conflict_rate"] = 0.0
+    # sharpe_daily: 从 sharpe_per_trade 近似 (trades/holdout_days * 252)
+    sharpe_r = result.get("sharpe_per_trade", 0)
+    mapped["sharpe_per_trade"] = sharpe_r
+    # 保守估计: 不做年化转换, 直接用 per-trade sharpe 作为参考
+    mapped["sharpe_daily"] = sharpe_r
+    return mapped
 
 
 def _run_pcm_joint_backtest(
@@ -1251,34 +1285,23 @@ def _run_pcm_joint_backtest(
     holdout_start: str = "",
     end_date: str = "",
 ) -> Optional[Dict[str, Any]]:
-    """Step 9.5: 全策略完成后, 执行 PCM 联合回测.
+    """Step 9.5: 全策略完成后, 执行 PCM 联合事件回测.
 
     Returns dict with pcm_decision, sharpe_daily, conflict_rate, etc.
-    Returns None if <2 strategies have predictions.
+    Returns None if <2 strategies completed.
     """
-    # 收集有 gated logs 的策略（必须用 gate 过滤后的数据，和单策略回测一致）
-    pcm_specs = []
-    for r in results_summary:
-        ev_dir = r.get("evidence_dir")
-        if not ev_dir:
-            continue
-        gated_path = Path(ev_dir) / "logs_gated.parquet"
-        if gated_path.exists() or dry_run:
-            pcm_specs.append((r["strategy"], str(gated_path)))
+    # 收集已完成的策略
+    strategy_names = [r["strategy"] for r in results_summary if r.get("evidence_dir")]
 
-    if len(pcm_specs) < 2:
+    if len(strategy_names) < 2:
         if len(results_summary) >= 2:
             print(f"\n{'='*70}")
-            print("[Step 9.5] PCM 联合回测: ⏭️  SKIP")
-            print(f"   找到 {len(pcm_specs)} 个策略有 logs_gated (需 ≥2)")
+            print("[Step 9.5] PCM 联合事件回测: ⏭️  SKIP")
+            print(f"   找到 {len(strategy_names)} 个策略 (需 ≥2)")
             print(f"{'='*70}")
         return None
 
-    # 构建 --pcm 参数
-    pcm_args = [f"{name}:{path}" for name, path in pcm_specs]
-    strategy_names = [name for name, _ in pcm_specs]
-
-    # PCM 交易地图输出路径 (保存到第一个策略的实验目录)
+    # PCM 输出路径 (保存到第一个策略的实验目录)
     first_strat = strategy_names[0]
     # 多 seed 模式下 run_dir_name 含 _s{seed} 后缀，必须用实际目录名
     first_run_dir_name = next(
@@ -1289,34 +1312,52 @@ def _run_pcm_joint_backtest(
         ),
         timestamp,
     )
-    pcm_map_path = str(
-        history_dir / first_strat / first_run_dir_name / "pcm_trading_map.html"
+    pcm_json_path = str(
+        history_dir / first_strat / first_run_dir_name / "pcm_event_backtest.json"
+    )
+    pcm_export_path = str(
+        history_dir / first_strat / first_run_dir_name / "pcm_event_backtest_trades.csv"
     )
 
     # 日志文件
     pcm_log = history_dir / first_strat / first_run_dir_name / "pcm_joint.log"
 
-    cmd = (
-        [
-            "python",
-            "scripts/backtest_execution_layer.py",
-            "--pcm",
-        ]
-        + pcm_args
-        + [
-            "--output",
-            pcm_map_path,
-            "--test-start",
-            holdout_start,
-            "--test-end",
-            end_date,
-        ]
+    # 事件回测: --strategy bpc,fer,me 多策略 PCM 仲裁
+    strategies_str = ",".join(strategy_names)
+    # 使用第一个策略的实验 strategies_root
+    strategies_root = next(
+        (
+            r.get("exp_config_dir", "")
+            for r in results_summary
+            if r["strategy"] == first_strat
+        ),
+        "",
     )
-    if use_1min:
-        cmd.extend(["--use-1min", "--data-path", data_path])
+    # exp_config_dir 是单策略的, 对于多策略联合回测需用父目录
+    if strategies_root and Path(strategies_root).name in strategy_names:
+        strategies_root = str(Path(strategies_root).parent)
+
+    cmd = [
+        "python",
+        "scripts/event_backtest.py",
+        "--strategy",
+        strategies_str,
+        "--start-date",
+        holdout_start,
+        "--end-date",
+        end_date,
+        "--data-path",
+        data_path,
+        "--output",
+        pcm_json_path,
+        "--export",
+        pcm_export_path,
+    ]
+    if strategies_root:
+        cmd.extend(["--strategies-root", strategies_root])
 
     rc, pcm_out = run_step(
-        "PCM Joint Backtest (Step 9.5)",
+        "PCM Joint Event Backtest (Step 9.5)",
         cmd,
         pcm_log,
         dry_run=dry_run,
@@ -1365,7 +1406,7 @@ def _run_pcm_joint_backtest(
         print(
             f"      → sharpe_daily={sharpe_daily:.2f}, conflict_rate={conflict_rate:.2%}"
         )
-    print(f"   📄 交易地图: {pcm_map_path}")
+    print(f"   📄 回测结果: {pcm_json_path}")
 
     return {
         "pcm_decision": pcm_decision,
@@ -1377,7 +1418,7 @@ def _run_pcm_joint_backtest(
         "win_rate": metrics.get("win_rate"),
         "strategies": strategy_names,
         "strategies_count": len(strategy_names),
-        "trading_map": pcm_map_path,
+        "trading_map": pcm_json_path,
     }
 
 
@@ -1824,8 +1865,8 @@ def main():
             use_1min=args.use_1min,
             live_root=args.live_root,
             data_path=cfg["data_path"],
-            holdout_start=cfg["holdout_start"],
-            end_date=cfg["end_date"],
+            holdout_start=holdout_start,
+            end_date=end_date,
         )
 
     # ── 汇总 ──

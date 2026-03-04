@@ -170,6 +170,86 @@ def _write_standalone_rules(
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _generate_gate_rules_imodels(
+    pred_df,
+    feature_names: list,
+    rr_col_name: str,
+    max_rules: int = 5,
+) -> "list | None":
+    """
+    用 imodels.RuleFitClassifier 从 predictions.parquet 直接学习稳定规则。
+
+    random_state=42 保证相同数据 → 相同规则（不受外层 LightGBM seed 影响）。
+    返回: [(feat, op, thr, coef), ...] 或 None（失败时 fallback 到树分裂法）
+    """
+    try:
+        from imodels import RuleFitClassifier  # type: ignore
+    except ImportError:
+        print("   ⚠️  imodels 未安装，使用树分裂 fallback。pip install imodels")
+        return None
+
+    try:
+        import re
+        import numpy as np
+
+        avail = [f for f in feature_names if f in pred_df.columns]
+        if len(avail) < 2:
+            print(f"   ⚠️  可用特征不足 ({len(avail)})，跳过 imodels")
+            return None
+
+        X = pred_df[avail].fillna(0).values.astype(float)
+
+        # 构建二分类标签：1 = 坏交易（需要 deny）
+        if rr_col_name == "success_no_rr_extreme":
+            y = (pred_df[rr_col_name] < 0.5).astype(int).values
+        else:
+            q30 = pred_df[rr_col_name].quantile(0.3)
+            y = (pred_df[rr_col_name] < q30).astype(int).values
+
+        if y.sum() < 10 or (len(y) - y.sum()) < 10:
+            print("   ⚠️  样本不平衡，跳过 imodels")
+            return None
+
+        clf = RuleFitClassifier(
+            max_rules=max_rules * 3,
+            random_state=42,
+            include_linear=False,
+        )
+        clf.fit(X, y, feature_names=avail)
+        rules_df = clf.get_rules()
+
+        # 只保留单特征规则（不含 &）且系数为正（坏交易方向）
+        rules_df = rules_df[
+            (rules_df["type"] == "rule")
+            & (rules_df["coef"] > 0.01)
+            & (~rules_df["rule"].astype(str).str.contains("&", na=False))
+        ]
+        rules_df = rules_df.sort_values("coef", ascending=False)
+
+        parsed = []
+        for _, row in rules_df.iterrows():
+            rule_str = str(row["rule"]).strip()
+            # 支持: feat <= thr, feat > thr, feat < thr, feat >= thr
+            m = re.match(r"^(\w+)\s*(<=|>=|<|>)\s*([\d.eE+\-]+)$", rule_str)
+            if m:
+                feat, op, thr = m.group(1), m.group(2), float(m.group(3))
+                if feat in avail:
+                    parsed.append((feat, op, thr, float(row["coef"])))
+                    if len(parsed) >= max_rules:
+                        break
+
+        if not parsed:
+            print("   ⚠️  imodels 未提取到有效规则，使用树分裂 fallback")
+            return None
+
+        print(f"   ✅ imodels 提取到 {len(parsed)} 条稳定规则（random_state=42）")
+        return parsed
+
+    except Exception as e:
+        print(f"   ⚠️  imodels 失败: {e}，使用树分裂 fallback")
+        return None
+
+
 def _generate_risk_gate_yaml(
     output_path: Path,
     rules: list,
@@ -177,6 +257,7 @@ def _generate_risk_gate_yaml(
     model_source: str,
     top_n: int = 10,
     predictions_path: "Path | str | None" = None,
+    feature_names: "list | None" = None,
 ):
     """
     从树模型分裂规则生成 risk_gate_draft.yaml 草稿。
@@ -187,7 +268,7 @@ def _generate_risk_gate_yaml(
     """
     import yaml
 
-    # 加载 predictions 数据用于自动判定方向
+    # 加载 predictions 数据
     pred_df = None
     rr_col_name = None
     if predictions_path is not None:
@@ -204,50 +285,83 @@ def _generate_risk_gate_yaml(
         except Exception:
             pred_df = None
 
+    # ── 优先用 imodels 生成稳定规则（random_state=42，不受 LightGBM seed 影响）──
+    imodels_rules = None
+    if pred_df is not None and rr_col_name and feature_names:
+        imodels_rules = _generate_gate_rules_imodels(
+            pred_df,
+            feature_names,
+            rr_col_name,
+            max_rules=top_n,
+        )
+
     # 生成 archetype 兼容的 hard_gates
     hard_gates = []
-    for i, (name, thr, op, count) in enumerate(rules[:top_n]):
-        direction_source = "tree_split"  # 方向来源标记
 
-        if pred_df is not None and name in pred_df.columns and rr_col_name:
-            # 数据驱动: 比较阈值两侧的平均收益，deny 差的那边
-            feat_vals = pred_df[name].dropna()
-            rr_vals = pred_df.loc[feat_vals.index, rr_col_name]
-            low_mask = feat_vals < thr
-            high_mask = feat_vals >= thr
-            mean_low = float(rr_vals[low_mask].mean()) if low_mask.any() else 0.0
-            mean_high = float(rr_vals[high_mask].mean()) if high_mask.any() else 0.0
-
-            if mean_low < mean_high:
-                # 低值收益更差 → deny 低值
-                condition_key = "value_lt"
-            else:
-                # 高值收益更差 → deny 高值
-                condition_key = "value_gt"
-            direction_source = (
-                f"data_verified (low={mean_low:.3f}, high={mean_high:.3f})"
-            )
-        else:
-            # 无数据: 树分裂操作符无法判断方向，跳过该规则
-            print(f"   ⚠️  {name}: 无 predictions 数据无法确定方向，跳过")
-            continue
-
-        rule_id = f"gate_{name.replace('.', '_').lower()}"
-        tag = f"HARD_{name.upper().replace('.', '_')}"
-
-        rule = {
-            "id": rule_id,
-            "tag": tag,
-            "phase": "hard_gate",
-            "priority": 10 + i,
-            "reason": f"{name} 触发树分裂条件 (分裂 {count} 次)",
-            "when": {
-                name: {condition_key: round(thr, 4)},
-            },
-            "then": {"action": "deny"},
-            "comment": f"自动生成: 分裂 {count} 次 | 阈值 {thr:.4g} | 方向: {direction_source}",
+    if imodels_rules is not None:
+        # ── imodels 路径：每条规则包含 (feat, op, thr, coef) ──
+        # 操作符映射到 gate yaml 键
+        _op_to_key = {
+            "<=": "value_le",
+            "<": "value_lt",
+            ">": "value_gt",
+            ">=": "value_ge",
         }
-        hard_gates.append(rule)
+        for i, (feat, op, thr, coef) in enumerate(imodels_rules):
+            condition_key = _op_to_key.get(op, "value_lt")
+            rule_id = f"gate_{feat.replace('.', '_').lower()}"
+            tag = f"HARD_{feat.upper().replace('.', '_')}"
+            rule = {
+                "id": rule_id,
+                "tag": tag,
+                "phase": "hard_gate",
+                "priority": 10 + i,
+                "reason": f"{feat} imodels 学习到的坏交易规则",
+                "when": {
+                    feat: {condition_key: round(thr, 4)},
+                },
+                "then": {"action": "deny"},
+                "comment": f"imodels(random_state=42): {feat} {op} {thr:.4g} | coef={coef:.4f}",
+            }
+            hard_gates.append(rule)
+    else:
+        # ── Fallback：树分裂法（旧逻辑，依赖 predictions 判断方向）──
+        for i, (name, thr, op, count) in enumerate(rules[:top_n]):
+            if pred_df is not None and name in pred_df.columns and rr_col_name:
+                # 数据驱动: 比较阈值两侧的平均收益，deny 差的那边
+                feat_vals = pred_df[name].dropna()
+                rr_vals = pred_df.loc[feat_vals.index, rr_col_name]
+                low_mask = feat_vals < thr
+                high_mask = feat_vals >= thr
+                mean_low = float(rr_vals[low_mask].mean()) if low_mask.any() else 0.0
+                mean_high = float(rr_vals[high_mask].mean()) if high_mask.any() else 0.0
+
+                if mean_low < mean_high:
+                    condition_key = "value_lt"
+                else:
+                    condition_key = "value_gt"
+                direction_source = (
+                    f"data_verified (low={mean_low:.3f}, high={mean_high:.3f})"
+                )
+            else:
+                print(f"   ⚠️  {name}: 无 predictions 数据无法确定方向，跳过")
+                continue
+
+            rule_id = f"gate_{name.replace('.', '_').lower()}"
+            tag = f"HARD_{name.upper().replace('.', '_')}"
+            rule = {
+                "id": rule_id,
+                "tag": tag,
+                "phase": "hard_gate",
+                "priority": 10 + i,
+                "reason": f"{name} 触发树分裂条件 (分裂 {count} 次)",
+                "when": {
+                    name: {condition_key: round(thr, 4)},
+                },
+                "then": {"action": "deny"},
+                "comment": f"自动生成(tree_split fallback): 分裂 {count} 次 | 阈值 {thr:.4g} | 方向: {direction_source}",
+            }
+            hard_gates.append(rule)
 
     # 构建完整 archetype gate 配置
     config = {

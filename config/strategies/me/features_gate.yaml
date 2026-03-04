@@ -34,6 +34,9 @@ feature_pipeline:
     - path_length_pct_f
     - price_dir_consistency_pct_f
     
+    # ========== 趋势位置 ==========
+    - sma_200_position_f          # 价格相对 SMA200 位置 (SHAP 稳定)
+
     # ========== 动量 ==========
     - macd_atr_f
     - rsi_f
@@ -41,6 +44,9 @@ feature_pipeline:
     # ========== 波动 ==========
     - atr_percentile_f
     - bb_width_normalized_pct_f  # 自包含：内部计算 BB width/ATR 再转百分位
+
+    # ========== 频谱 ==========
+    - spectrum_volume_features_f  # 成交量频谱特征 (SHAP 稳定)
     
     # ========== ⭐ Volatility Regime (新增) ==========
     # 识别"踩大坑"的波动率状态

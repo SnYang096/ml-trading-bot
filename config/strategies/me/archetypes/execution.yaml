@@ -1,16 +1,16 @@
 # ME Execution 配置
-# 版本: 21
-# 更新时间: 2026-03-01
+# 版本: 24
+# 更新时间: 2026-03-04
 #
 # ┌─────────────────────────────────────────────────────────┐
 # │  Grid Search auto-promoted                              │
-# │  Sharpe (daily): 4.43                                   │
+# │  Sharpe (daily): 3.86                                   │
 # │  Best: initial_r=1.0, activation_r=0.5, trail_r=0.5      │
-# │  Plateau: ✅ stable (CV=0.023)                            │
-# │  Changes: initial_r: 3.5 → 1.0, activation_r: 0.5 → 0.5, trail_r: 0.5 → 0.5│
+# │  Plateau: ✅ stable (CV=0.029)                            │
+# │  Changes: initial_r: 3.5 → 1.0, activation_r: 1.5 → 0.5, trail_r: 0.5 → 0.5│
 # └─────────────────────────────────────────────────────────┘
 #
-version: 21
+version: 24
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15

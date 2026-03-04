@@ -4127,6 +4127,7 @@ def train_strategy(
                                 if _predictions_path.exists()
                                 else None
                             ),
+                            feature_names=feature_names if feature_names else None,
                         )
                         print(
                             f"   \U0001f4dc Risk gate draft exported to {risk_gate_path}"

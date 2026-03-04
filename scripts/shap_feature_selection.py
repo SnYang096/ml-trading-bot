@@ -595,36 +595,34 @@ def promote_features(
     col2node: Dict[str, str],
     node2cols: Dict[str, List[str]],
     apply_to: Optional[List[str]] = None,
+    protected_nodes: Optional[List[str]] = None,
 ) -> None:
-    """Write back pruned features to features_gate.yaml / features_evidence.yaml.
+    """Generate SHAP-pruned feature files (features_gate_shap.yaml / features_evidence_shap.yaml).
 
-    Only removes nodes whose ALL output columns are pruned.
+    IMPORTANT: Never modifies the original features_gate.yaml / features_evidence.yaml.
+    The originals serve as the full candidate pool for future SHAP runs.
+
+    Aggressive pruning: only keep nodes that have at least one SHAP-stable column,
+    plus any protected nodes (e.g. atr_f). All other nodes are removed.
     """
     if apply_to is None:
         apply_to = ["features_gate.yaml", "features_evidence.yaml"]
+    if protected_nodes is None:
+        protected_nodes = []
+    protected_set = set(protected_nodes)
 
+    # Collect nodes that have at least one stable column
     stable_nodes = set()
     for col in stable_columns:
         node = col2node.get(col)
         if node:
             stable_nodes.add(node)
 
-    # A node is prunable only if ALL its output columns are pruned
-    pruned_cols_set = set(pruned_columns)
-    prunable_nodes = set()
-    for col in pruned_columns:
-        node = col2node.get(col)
-        if not node:
-            continue
-        node_cols = set(node2cols.get(node, []))
-        if node_cols and node_cols.issubset(pruned_cols_set):
-            prunable_nodes.add(node)
+    # Keep = stable_nodes + protected_nodes
+    keep_nodes = stable_nodes | protected_set
 
-    # Don't prune if also in stable (some columns stable, some not)
-    prunable_nodes -= stable_nodes
-
-    if not prunable_nodes:
-        print(f"\n   ℹ️  No nodes to prune (all stable or partial overlap)")
+    if not keep_nodes:
+        print(f"\n   \u26a0\ufe0f  No stable or protected nodes, skipping pruning")
         return
 
     config_dir = Path(strategies_root) / strategy
@@ -645,32 +643,39 @@ def promote_features(
             continue
 
         original_count = len(requested)
-        new_requested = [n for n in requested if n not in prunable_nodes]
-        removed = [n for n in requested if n in prunable_nodes]
+        new_requested = [n for n in requested if n in keep_nodes]
+        removed = [n for n in requested if n not in keep_nodes]
 
         if not removed:
-            print(f"   ℹ️  {yaml_name}: no nodes to remove")
+            print(f"   \u2139\ufe0f  {yaml_name}: no nodes to remove")
             continue
 
         fp["requested_features"] = new_requested
 
-        # Add pruned info as comment in the YAML
-        if "_shap_pruned" not in data:
-            data["_shap_pruned"] = {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "removed_nodes": sorted(removed),
-                "original_count": original_count,
-                "new_count": len(new_requested),
-            }
+        # Add SHAP metadata
+        data["_shap_pruned"] = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "source_file": yaml_name,
+            "removed_nodes": sorted(removed),
+            "kept_nodes": sorted(keep_nodes & set(requested)),
+            "stable_nodes": sorted(stable_nodes),
+            "protected_nodes": sorted(protected_set & set(requested)),
+            "original_count": original_count,
+            "new_count": len(new_requested),
+        }
 
-        yaml_path.write_text(
+        # Write to _shap.yaml (never touch original)
+        stem = yaml_name.replace(".yaml", "")
+        shap_yaml_name = f"{stem}_shap.yaml"
+        shap_yaml_path = config_dir / shap_yaml_name
+        shap_yaml_path.write_text(
             yaml.dump(
                 data, default_flow_style=False, allow_unicode=True, sort_keys=False
             ),
             encoding="utf-8",
         )
         print(
-            f"   ✏️  {yaml_name}: {original_count} → {len(new_requested)} nodes "
+            f"   \u270f\ufe0f  {shap_yaml_name}: {original_count} \u2192 {len(new_requested)} nodes "
             f"(removed {len(removed)}: {', '.join(sorted(removed)[:5])}{'...' if len(removed) > 5 else ''})"
         )
 
@@ -788,6 +793,7 @@ def run_shap_selection(
             col2node,
             node2cols,
             apply_to=apply_to,
+            protected_nodes=protected_nodes,
         )
 
     # ── Summary ──

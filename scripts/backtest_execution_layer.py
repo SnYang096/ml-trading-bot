@@ -784,14 +784,18 @@ def simulate_rr_execution(
                 m_h = sym_1min["high"]
                 m_l = sym_1min["low"]
                 m_c = sym_1min["close"]
-                # 找 entry_ts 之后的 1min bar 起始位置
-                start_m = int(np.searchsorted(m_ts, entry_ts_ns, side="right"))
                 # time_stop_bars 按 archetype bar 数，换算成 1min
                 bar_minutes = (
                     int(group.iloc[i].get("_bar_minutes", 240))
                     if "_bar_minutes" in group.columns
                     else 240
                 )
+                # 找 entry bar CLOSE 之后的 1min bar 起始位置
+                # entry_ts_ns 是 bar OPEN 时间，但入场价 = bar CLOSE 价格，
+                # 事件回测的 enforce_position 从 bar CLOSE 后的第一根 1min bar 开始。
+                # 如果用 bar OPEN，会多模拟 bar_minutes 的 1min bars（交易还没开仓！）
+                _entry_close_ns = int(entry_ts_ns) + int(bar_minutes) * 60 * 10**9
+                start_m = int(np.searchsorted(m_ts, _entry_close_ns, side="right"))
                 max_m = min(start_m + time_stop_bars * bar_minutes, len(m_ts))
                 _1min_exit_mi = None  # 精确退出的 1min bar index
 
@@ -980,14 +984,30 @@ def simulate_rr_execution(
                 # 4H path
                 exit_bar_idx = j if exit_reason != "timeout" else (max_j - 1)
             # 精确退出时间戳 (1min 模式用实际 1min bar ts; 4H 模式用 bar timestamp)
+            # entry_ts_ns 用 bar CLOSE 时间 (= open + bar_minutes)，与事件回测 decide() 调用时机对齐:
+            #   事件回测: bar 收盘 → enforce_position 处理完 → decide() 检查 slot
+            #   向量回测: slot 判定应在 bar 收盘时刻，已退出的仓位不再占用 slot
             _exit_ts_ns = 0
             _entry_ts_ns = 0
+            _bm_for_ts = (
+                int(group.iloc[i].get("_bar_minutes", 240))
+                if "_bar_minutes" in group.columns
+                else 240
+            )
+            _bar_close_offset_ns = int(_bm_for_ts) * 60 * 10**9
             if _slot_use_ts and sym_1min is not None and _1min_exit_mi is not None:
                 _exit_ts_ns = int(m_ts[_1min_exit_mi])
-                _entry_ts_ns = int(entry_ts_ns)
+                _entry_ts_ns = int(entry_ts_ns) + _bar_close_offset_ns
+            elif _slot_use_ts and sym_1min is not None and exit_reason == "timeout":
+                # timeout: _1min_exit_mi is None (没触发 SL/trailing)
+                # 直接用时间计算，不用 mixed group index (混合了 1H+4H bars 会算错)
+                _entry_ts_ns = int(entry_ts_ns) + _bar_close_offset_ns
+                _exit_ts_ns = (
+                    _entry_ts_ns + int(time_stop_bars) * int(bar_minutes) * 60 * 10**9
+                )
             elif has_ts:
                 try:
-                    _entry_ts_ns = int(entry_timestamps[i])
+                    _entry_ts_ns = int(entry_timestamps[i]) + _bar_close_offset_ns
                     _exit_ts_ns = int(
                         pd.to_datetime(
                             group.iloc[min(exit_bar_idx, n - 1)]["timestamp"]
@@ -1029,6 +1049,7 @@ def simulate_rr_execution(
 
     # ── slot 限制：per-strategy 独立 slot + 同 archetype 内 evidence 竞争 ──
     _add_pos_count = 0
+    removed_indices: set = set()  # 初始化以避免 slot 过滤未执行时 NameError
     if max_slots and max_slots > 0 and trade_details:
         # 加仓配置
         _ap_enabled = add_position_cfg is not None
@@ -1075,6 +1096,7 @@ def simulate_rr_execution(
         accepted = []  # 当前 active trades
         rejected_indices = set()
         evicted_indices = set()
+        _slot_diag = {"per_strat": 0, "global": 0, "both": 0}  # 拒绝原因诊断
         for trade in trade_details:
             eidx = trade["entry_idx"]
             new_ev = trade.get("evidence_score", 0.5)
@@ -1136,6 +1158,12 @@ def simulate_rr_execution(
                         accepted = active + [trade]
                     else:
                         rejected_indices.add(eidx)
+                        if per_strat_full and global_full:
+                            _slot_diag["both"] += 1
+                        elif per_strat_full:
+                            _slot_diag["per_strat"] += 1
+                        else:
+                            _slot_diag["global"] += 1
                 elif global_full:
                     # 全局 slot 满，同 archetype 内竞争
                     if arch_active:
@@ -1153,10 +1181,13 @@ def simulate_rr_execution(
                             accepted = active + [trade]
                         else:
                             rejected_indices.add(eidx)
+                            _slot_diag["global"] += 1
                     else:
                         rejected_indices.add(eidx)
+                        _slot_diag["global"] += 1
                 else:
                     rejected_indices.add(eidx)
+                    _slot_diag["per_strat"] += 1
             else:
                 accepted = active + [trade]
 
@@ -1176,13 +1207,33 @@ def simulate_rr_execution(
                     f"rejected {len(rejected_indices)}, evicted {len(evicted_indices)}, "
                     f"kept {total_entries}"
                 )
+                print(
+                    f"   🔍 Slot reject reasons: "
+                    f"per_strat={_slot_diag['per_strat']}, "
+                    f"global={_slot_diag['global']}, "
+                    f"both={_slot_diag['both']}"
+                )
 
     if not silent:
+        # exit_stats 是 slot 过滤前的全量统计; 有 slot 过滤时重算保留交易的统计
+        _display_stats = exit_stats
+        if max_slots and max_slots > 0 and removed_indices:
+            _display_stats = {
+                "sl": 0,
+                "trailing_sl": 0,
+                "tp": 0,
+                "timeout": 0,
+                "no_data": 0,
+            }
+            for t in trade_details:
+                er = t.get("exit_reason", "")
+                if er in _display_stats:
+                    _display_stats[er] += 1
         print(
             f"   📊 Simulated {total_entries} trades: "
-            f"SL={exit_stats['sl']}, TrailSL={exit_stats['trailing_sl']}, "
-            f"TP={exit_stats['tp']}, Timeout={exit_stats['timeout']}, "
-            f"NoData={exit_stats['no_data']}"
+            f"SL={_display_stats['sl']}, TrailSL={_display_stats['trailing_sl']}, "
+            f"TP={_display_stats['tp']}, Timeout={_display_stats['timeout']}, "
+            f"NoData={_display_stats['no_data']}"
         )
         if breakeven_lock_r > 0:
             pct = breakeven_lock_count / total_entries * 100 if total_entries > 0 else 0
@@ -1210,10 +1261,15 @@ def _export_trade_details_csv(
         exit_idx = t.get("exit_idx", 0)
         direction = t.get("direction", 0)
         side = "LONG" if direction > 0 else ("SHORT" if direction < 0 else "UNKNOWN")
-        # 尝试从 DataFrame 取 timestamp
+        # 优先用精确时间戳 (entry_ts_ns / exit_ts_ns)，避免 mixed-timeframe group index 错误
         entry_time = ""
         exit_time = ""
-        if has_ts:
+        _ets = t.get("entry_ts_ns", 0)
+        _xts = t.get("exit_ts_ns", 0)
+        if _ets > 0 and _xts > 0:
+            entry_time = str(pd.Timestamp(_ets, tz="UTC"))
+            exit_time = str(pd.Timestamp(_xts, tz="UTC"))
+        elif has_ts:
             try:
                 entry_time = str(df.iloc[entry_idx]["timestamp"])
                 exit_time = str(df.iloc[exit_idx]["timestamp"])
@@ -1225,6 +1281,12 @@ def _export_trade_details_csv(
                 exit_time = str(df.index[exit_idx])
             except (IndexError, KeyError):
                 pass
+        # bars_held: 用精确时间戳算 archetype bars，避免 mixed-frame index 差值
+        if _ets > 0 and _xts > 0:
+            _bm = max(1, t.get("_bar_minutes", 240))
+            bars_held = max(1, int((_xts - _ets) / (_bm * 60 * 10**9)))
+        else:
+            bars_held = max(1, int(exit_idx - entry_idx))
         rows.append(
             {
                 "symbol": t.get("symbol", ""),
@@ -1237,7 +1299,7 @@ def _export_trade_details_csv(
                 "exit_reason": t.get("exit_reason", ""),
                 "archetype": t.get("archetype", ""),
                 "evidence": round(float(t.get("evidence_score", 0.5)), 4),
-                "bars_held": int(exit_idx - entry_idx),
+                "bars_held": bars_held,
             }
         )
     out = pd.DataFrame(rows)
@@ -1487,16 +1549,18 @@ def _load_raw_features_for_archetype(
     test_start: str,
     test_end: str,
     warmup_days: int = 150,
-) -> pd.DataFrame:
-    """从原始 1min 数据计算全量特征, 返回测试期 DataFrame。
+) -> Tuple[pd.DataFrame, Dict[str, List[float]]]:
+    """从原始 1min 数据计算全量特征, 返回测试期 DataFrame + evidence quantiles。
 
     流程:
       1. 从 meta.yaml 读取 timeframe
       2. 初始化 IncrementalFeatureComputer (同事件回测)
       3. 对每个 symbol: 加载 1min bars → 计算特征 → 截取测试期
-      4. 合并返回
+      4. 从 warmup 期 (test_start 之前) 计算 evidence quantiles
+      5. 合并返回 (test_df, precomputed_quantiles)
 
     返回的 DataFrame 包含 OHLC + 所有策略特征, 不含 gate_decision/pred 列。
+    precomputed_quantiles: {feature_name: [threshold, ...]} 用于 evidence 评分。
     """
     from src.time_series_model.live.incremental_feature_computer import (
         IncrementalFeatureComputer,
@@ -1529,6 +1593,7 @@ def _load_raw_features_for_archetype(
 
     dh = DataHandler(data_path)
     parts: List[pd.DataFrame] = []
+    calib_parts: List[pd.DataFrame] = []  # warmup 特征用于 evidence quantile 校准
 
     import time as _time
 
@@ -1598,6 +1663,9 @@ def _load_raw_features_for_archetype(
         # 重新初始化 FC 状态 (每个 symbol 独立计算)
         fc.reset()
 
+        # 注入 _symbol 列 — OI join 等特征需要识别 symbol
+        bars_1min["_symbol"] = sym
+
         try:
             features_df = fc.compute_features_dataframe(
                 bars_1min=bars_1min,
@@ -1613,6 +1681,12 @@ def _load_raw_features_for_archetype(
             continue
 
         features_df.index = pd.to_datetime(features_df.index, utc=True)
+
+        # 收集 warmup 特征 (test_start 之前) 用于 evidence quantile 校准
+        warmup_df = features_df[features_df.index < test_start_ts]
+        if not warmup_df.empty:
+            calib_parts.append(warmup_df)
+
         test_df = features_df[
             (features_df.index >= test_start_ts) & (features_df.index <= test_end_ts)
         ]
@@ -1635,7 +1709,23 @@ def _load_raw_features_for_archetype(
 
     df = pd.concat(parts, ignore_index=True)
     print(f"   📊 {arch_name}: {len(df)} total bars ({len(parts)} symbols)")
-    return df
+
+    # 从 warmup 数据计算 evidence quantiles (与事件回测 pre-test calibration 对齐)
+    precomputed_quantiles: Dict[str, List[float]] = {}
+    evidence_cfg = load_evidence_config(arch_name, strategies_root)
+    if evidence_cfg and evidence_cfg.get("evidence") and calib_parts:
+        calib_combined = pd.concat(calib_parts, ignore_index=True)
+        precomputed_quantiles = compute_evidence_quantiles(
+            calib_combined, evidence_cfg, silent=False
+        )
+        print(
+            f"   📊 Evidence quantiles from warmup: {len(calib_combined)} rows "
+            f"({len(precomputed_quantiles)} features calibrated)"
+        )
+    elif evidence_cfg and evidence_cfg.get("evidence"):
+        print(f"   ⚠️  {arch_name}: 无 warmup 数据, evidence 默认 0.5")
+
+    return df, precomputed_quantiles
 
 
 def _load_full_ohlc_for_map(
@@ -1846,6 +1936,8 @@ def _generate_trading_map_html(
                 ts_col_local = ts_col
 
             sym_df = sym_df.reset_index(drop=True)
+            if len(sym_df) == 0:
+                continue  # 该 (archetype, symbol) 组合无 K 线数据，跳过
             if "open" not in sym_df.columns:
                 sym_df["open"] = sym_df["close"].shift(1).fillna(sym_df["close"])
 
@@ -2390,6 +2482,9 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     # ── 2. 加载各 archetype 配置 + 处理信号 ──
     arch_exec_configs: Dict[str, Dict] = {}
     arch_processed: Dict[str, pd.DataFrame] = {}  # direction + evidence
+    arch_precomputed_quantiles: Dict[str, Dict[str, List[float]]] = (
+        {}
+    )  # from-raw warmup
     base_df = None
 
     # --from-raw 模式: 从原始数据计算特征
@@ -2416,6 +2511,15 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         print(f"   symbols={raw_symbols}")
         print(f"   data_path={raw_data_path}")
 
+    # ── 漏斗统计初始化 (与 event_backtest.py 对齐) ──
+    _funnel = {
+        "total_signals_checked": 0,  # 所有 archetype × bar 的评估次数
+        "reject_no_direction": 0,  # 无方向
+        "reject_gate_deny": 0,  # gate 拒绝
+        "reject_entry_filter_deny": 0,  # entry_filter 拒绝
+        "signals_generated": 0,  # 有方向 + gate通过 + ef通过
+    }
+
     for arch_name in list(arch_specs.keys()):
         logs_path = arch_specs[arch_name]
 
@@ -2431,7 +2535,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         if from_raw:
             # 从原始 1min 数据计算全量特征
             try:
-                df = _load_raw_features_for_archetype(
+                df, _raw_quantiles = _load_raw_features_for_archetype(
                     arch_name=arch_name,
                     strategies_root=strategies_root,
                     symbols=raw_symbols,
@@ -2439,6 +2543,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
                     test_start=raw_test_start,
                     test_end=raw_test_end,
                 )
+                arch_precomputed_quantiles[arch_name] = _raw_quantiles
             except Exception as e:
                 print(f"❌ {arch_name}: from-raw 加载失败: {e}")
                 import traceback
@@ -2495,6 +2600,14 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             return 1
 
         # Gate 过滤
+        # 收集 gate 前的统计
+        _n_bars = len(df)
+        _n_has_dir_before_gate = int((df["entry_direction"] != 0).sum())
+        _funnel[
+            "total_signals_checked"
+        ] += _n_bars  # 每个 bar 对每个 archetype 评估一次
+        _funnel["reject_no_direction"] += _n_bars - _n_has_dir_before_gate
+
         if recompute_gate:
             # 从 gate.yaml 重新评估 gate (不依赖 gate_decision 列)
             _apply_gate_from_yaml_vectorized(df, arch_name, strategies_root)
@@ -2511,7 +2624,12 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             n_allowed = int((~veto_mask).sum())
             print(f"   🚪 Gate: {n_allowed} allow / {len(df)} total")
 
+        # 收集 gate 后的统计
+        _n_has_dir_after_gate = int((df["entry_direction"] != 0).sum())
+        _funnel["reject_gate_deny"] += _n_has_dir_before_gate - _n_has_dir_after_gate
+
         # Entry Filter
+        _n_before_ef = _n_has_dir_after_gate
         if not args.no_entry_filter:
             ef_cfg = load_entry_filters_config(arch_name, strategies_root)
             if ef_cfg:
@@ -2522,14 +2640,32 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         else:
             print(f"   ℹ️  Entry filter disabled")
 
+        # 收集 entry_filter 后的统计
+        _n_after_ef = int((df["entry_direction"] != 0).sum())
+        _funnel["reject_entry_filter_deny"] += _n_before_ef - _n_after_ef
+        _funnel["signals_generated"] += _n_after_ef
+
         # Evidence 计算
-        evidence_scores = _compute_evidence_for_archetype(
-            df,
-            arch_name,
-            strategies_root,
-            args.quantile_train_start,
-            args.quantile_train_end,
-        )
+        if (
+            from_raw
+            and arch_name in arch_precomputed_quantiles
+            and arch_precomputed_quantiles[arch_name]
+        ):
+            # --from-raw: 用 warmup 数据预计算的 quantiles (无 look-ahead)
+            _ev_cfg = load_evidence_config(arch_name, strategies_root)
+            evidence_scores = compute_evidence_scores(
+                df,
+                _ev_cfg,
+                precomputed_quantiles=arch_precomputed_quantiles[arch_name],
+            )
+        else:
+            evidence_scores = _compute_evidence_for_archetype(
+                df,
+                arch_name,
+                strategies_root,
+                args.quantile_train_start,
+                args.quantile_train_end,
+            )
         df["evidence_score"] = evidence_scores.values
 
         n_entries = int((df["entry_direction"] != 0).sum())
@@ -2543,6 +2679,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     sample_df = next(iter(arch_processed.values()))
     if "timestamp" in sample_df.columns:
         ohlc_cols.insert(1, "timestamp")
+
     missing_ohlc = [c for c in ohlc_cols if c not in sample_df.columns]
     if missing_ohlc:
         print(f"❌ Data missing OHLC columns: {missing_ohlc}")
@@ -2591,8 +2728,11 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             merged[f"_{arch_name}_dir"] = 0.0
             merged[f"_{arch_name}_ev"] = 0.5
 
-    # ── 4. PCM 仲裁 (Regime-Aware) ──
-    print(f"\n🏗️  PCM arbitration (Regime-Aware)...")
+    # ── 4. PCM 仲裁 (Regime-Aware, per-strategy 独立式 — 与事件回测 LivePCM 对齐) ──
+    # 事件回测 LivePCM.decide() 对每个策略独立检查 slot，同 bar 可产生多个 intent。
+    # 向量回测也保留所有 archetype 的信号（不再只选一个赢家），slot 竞争
+    # 交给 simulate_rr_execution 后处理，与事件侧 per-strategy 独占 slot 一致。
+    print(f"\n🏗️  PCM arbitration (Regime-Aware, per-strategy independent)...")
     dir_cols = [f"_{a}_dir" for a in arch_names]
     has_any_signal = (merged[dir_cols].abs() > 0).any(axis=1)
     signal_indices = merged.index[has_any_signal]
@@ -2605,6 +2745,11 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     regime_scales_applied: List[float] = []
     merged["_regime"] = ""
     merged["_position_scale"] = 1.0
+
+    # 收集需要扩展的行 (同 bar 多 archetype 信号)
+    _expansion_rows: List[Dict[str, Any]] = (
+        []
+    )  # 额外行 (第一个 archetype 直接写入 merged)
 
     # 对每个信号 bar 进行仲裁
     for idx in signal_indices:
@@ -2631,40 +2776,77 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         if not active:
             continue
 
-        if len(active) == 1:
-            winner_arch, winner_dir, winner_ev = active[0]
-        else:
-            # 多个 archetype 冲突 → Regime 动态优先级 + Evidence
+        if len(active) > 1:
             n_conflicts += 1
 
-            def _sort_key(x):
-                arch, d, ev = x
-                rank = _pcm_get_priority_rank(arch, current_priority)
-                return (rank, -(ev if ev is not None else 0.5))
+        # 按优先级排序 (高优先级先处理, 与事件侧 PCM 注册顺序一致)
+        def _sort_key(x):
+            arch, d, ev = x
+            rank = _pcm_get_priority_rank(arch, current_priority)
+            return (rank, -(ev if ev is not None else 0.5))
 
-            winner_arch, winner_dir, winner_ev = min(active, key=_sort_key)
+        active.sort(key=_sort_key)
 
-        # Regime 仓位缩放
-        scale = regime_detector.get_archetype_scale(winner_arch)
+        # 第一个 archetype: 直接写入 merged 现有行
+        first_arch, first_dir, first_ev = active[0]
+        scale = regime_detector.get_archetype_scale(first_arch)
         regime_scales_applied.append(scale)
 
-        merged.at[idx, "entry_direction"] = winner_dir
-        merged.at[idx, "evidence_score"] = winner_ev
-        merged.at[idx, "_pcm_archetype"] = winner_arch
+        merged.at[idx, "entry_direction"] = first_dir
+        merged.at[idx, "evidence_score"] = first_ev
+        merged.at[idx, "_pcm_archetype"] = first_arch
         merged.at[idx, "_position_scale"] = scale
-        arch_win_counts[winner_arch] = arch_win_counts.get(winner_arch, 0) + 1
+        arch_win_counts[first_arch] = arch_win_counts.get(first_arch, 0) + 1
         regime_entry_counts[current_regime] = (
             regime_entry_counts.get(current_regime, 0) + 1
         )
 
+        # 后续 archetype: 复制行作为新 entry
+        for arch_name, d, ev in active[1:]:
+            row_copy = merged.loc[idx].copy()
+            sc = regime_detector.get_archetype_scale(arch_name)
+            row_copy["entry_direction"] = d
+            row_copy["evidence_score"] = ev
+            row_copy["_pcm_archetype"] = arch_name
+            row_copy["_position_scale"] = sc
+            regime_scales_applied.append(sc)
+            _expansion_rows.append(row_copy)
+            arch_win_counts[arch_name] = arch_win_counts.get(arch_name, 0) + 1
+            regime_entry_counts[current_regime] = (
+                regime_entry_counts.get(current_regime, 0) + 1
+            )
+
+    # 扩展 merged DataFrame: 添加冲突 bar 的额外 archetype 行
+    if _expansion_rows:
+        extra_df = pd.DataFrame(_expansion_rows)
+        merged = pd.concat([merged, extra_df], ignore_index=True)
+        # 重新按 (symbol, timestamp) 排序确保时间线连续
+        sort_key = (
+            ["symbol", "timestamp"] if "timestamp" in merged.columns else ["symbol"]
+        )
+        merged = merged.sort_values(sort_key).reset_index(drop=True)
+        print(f"   📐 Expanded: +{len(_expansion_rows)} rows for multi-archetype bars")
+
     n_total_entries = int((merged["entry_direction"] != 0).sum())
     print(f"   Total entries: {n_total_entries}")
-    print(f"   Conflicts resolved: {n_conflicts}")
+    print(f"   Multi-archetype bars: {n_conflicts}")
     conflict_rate = n_conflicts / max(1, n_total_entries)
-    print(f"   Conflict rate: {conflict_rate:.2%}")
+    print(f"   Multi-archetype rate: {conflict_rate:.2%}")
     for arch_name in arch_names:
         cnt = arch_win_counts.get(arch_name, 0)
         print(f"   {arch_name}: {cnt} entries")
+
+    # ── 统一漏斗统计格式 (与 event_backtest.py 对齐) ──
+    print(f"\n  信号漏斗:")
+    print(f"    {'total_signals_checked':<30s}: {_funnel['total_signals_checked']}")
+    print(f"    {'reject_no_direction':<30s}: {_funnel['reject_no_direction']}")
+    print(f"    {'reject_gate_deny':<30s}: {_funnel['reject_gate_deny']}")
+    print(
+        f"    {'reject_entry_filter_deny':<30s}: {_funnel['reject_entry_filter_deny']}"
+    )
+    print(f"    {'signals_generated':<30s}: {_funnel['signals_generated']}")
+    # Slot 过滤在执行层后处理, 这里先占位, 后面更新
+    _funnel_pcm_before_slot = n_total_entries
 
     # Regime 统计
     print(f"\n   🌍 Regime Distribution:")
@@ -2744,6 +2926,21 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     # ── 6. Bar-by-bar 执行模拟 ──
     breakeven_lock_r = args.breakeven if args.breakeven is not None else 0.0
 
+    # 🔍 诊断: 检查 _bar_minutes per archetype
+    if "_bar_minutes" in merged.columns and "_pcm_archetype" in merged.columns:
+        _diag_entries = merged[merged["entry_direction"] != 0]
+        for _da in sorted(_diag_entries["_pcm_archetype"].unique()):
+            _sub = _diag_entries[_diag_entries["_pcm_archetype"] == _da]
+            _bm_vals = _sub["_bar_minutes"].unique()
+            _to_vals = (
+                _sub["_tier_timeout"].unique()
+                if "_tier_timeout" in _sub.columns
+                else []
+            )
+            print(
+                f"   🔍 DIAG {_da}: _bar_minutes={list(_bm_vals)}, _tier_timeout={list(_to_vals)}, entries={len(_sub)}"
+            )
+
     # 加载 1min bar 数据（如果指定 --use-1min）
     bars_1min_dict = None
     if getattr(args, "use_1min", False):
@@ -2805,6 +3002,11 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     if len(valid_returns) == 0:
         print("❌ No valid returns computed")
         return 1
+
+    # ── 更新漏斗统计: slot 过滤后的数据 ──
+    _n_slot_rejected = _funnel_pcm_before_slot - len(valid_returns)
+    print(f"    {'reject_pcm_slot_full':<30s}: {_n_slot_rejected}")
+    print(f"    {'trades_executed':<30s}: {len(valid_returns)}")
 
     # ── 7. 结果报告 ──
     span_years = _estimate_span_years(merged)

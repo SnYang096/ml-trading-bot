@@ -106,6 +106,7 @@ shap_feature_selection:
   min_stable_features: 1             # 稳定特征不足则跳过裁剪
   protected_nodes:                   # 永远保留的节点
     - atr_f
+    - fer_failure_signals_f          # FER prefilter 依赖此节点 (fer_trapped_longs/shorts_score)
   apply_to:                          # 裁剪哪些 features YAML
     - features_gate.yaml
     - features_evidence.yaml

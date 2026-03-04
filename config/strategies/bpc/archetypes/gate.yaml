@@ -1,6 +1,6 @@
 # BPC Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/bpc/20260301_223817_s42/strategies/bpc/gate_draft.yaml
-# 优化规则: 0/10 条通过优化, 10 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/bpc/20260304_153218_s3/strategies/bpc/gate_draft.yaml
+# 优化规则: 2/10 条通过优化, 8 条已移除
 
 schema:
   phases:
@@ -49,4 +49,26 @@ hard_gates:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: gate_evt_var_99_left
+  tag: HARD_EVT_VAR_99_LEFT
+  phase: hard_gate
+  priority: 14
+  reason: evt_var_99_left 触发树分裂条件 (分裂 2 次)
+  when:
+    evt_var_99_left:
+      value_lt: 0.7159
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.7159, lift=0.176'
+- id: gate_evt_var_99_left
+  tag: HARD_EVT_VAR_99_LEFT
+  phase: hard_gate
+  priority: 18
+  reason: evt_var_99_left 触发树分裂条件 (分裂 2 次)
+  when:
+    evt_var_99_left:
+      value_lt: 0.7159
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.7159, lift=0.176'
 guardrails: []

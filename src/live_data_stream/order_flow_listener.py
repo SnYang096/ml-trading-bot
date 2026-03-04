@@ -35,6 +35,7 @@ from src.time_series_model.live.enforcement import enforce_before_order
 from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
 )
+from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.time_series_model.core.constitution.runtime_state import (
     ConstitutionRuntimeState,
 )
@@ -515,6 +516,10 @@ class OrderFlowListener:
         # ── 4. 合并 + 去重 ──
         bars_merged = self._merge_bars(bars_disk, bars_buffer)
         ticks_merged = self._merge_ticks(ticks_disk, ticks_buffer)
+
+        # 注入 _symbol 列 — OI join 等特征需要识别 symbol
+        if "_symbol" not in bars_merged.columns:
+            bars_merged["_symbol"] = self.symbol
         
         logger.info(
             "[%s] 批量计算: bars=%d (disk=%d + buffer=%d), ticks=%d (disk=%d + buffer=%d)",
@@ -525,6 +530,7 @@ class OrderFlowListener:
         
         # ── 5. 批量计算 (primary timeframe) ──
         primary_tf = self.feature_computer.primary_timeframe or "240T"
+        self.feature_computer._current_symbol = self.symbol  # for health report
         features = self.feature_computer.compute_features_batch(
             bars_1min=bars_merged,
             ticks_1min=ticks_merged,
@@ -539,6 +545,7 @@ class OrderFlowListener:
         features_by_timeframe = {primary_tf: dict(features)}
         for tf, extra_fc in self.extra_feature_computers.items():
             try:
+                extra_fc._current_symbol = self.symbol  # for health report
                 extra_features = extra_fc.compute_features_batch(
                     bars_1min=bars_merged,
                     ticks_1min=ticks_merged,
@@ -759,6 +766,16 @@ class OrderFlowListener:
     def _execute_intent(self, intent: TradeIntent, features: Dict[str, Any]) -> None:
         if intent.action == "NO_TRADE":
             return
+
+        try:
+            self._execute_intent_inner(intent, features)
+        except ConstitutionViolation as cv:
+            logger.warning(
+                "[%s] 宪法拒绝: %s (%s)", self.symbol, cv.code, cv.message
+            )
+            return
+
+    def _execute_intent_inner(self, intent: TradeIntent, features: Dict[str, Any]) -> None:
         side = OrderSide.BUY if intent.action == "LONG" else OrderSide.SELL
 
         # ── 仓位计算 ──

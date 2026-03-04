@@ -586,8 +586,13 @@ python scripts/local_monitor_weekly.py --data data/live_latest.parquet --strateg
 | 优先级 | 项目 | 说明 | 何时做 |
 |--------|------|------|--------|
 | P2 | Phase 4.5.8 Archetype 降级 | 连亏自动暂停，当前有账户级 kill switch 兜底 | 上线 2 周后 |
+| **P0** | **SHAP 配置部署到实盘** | SHAP 激进裁剪已验证：5/5 seed gate 100%一致。管线跑完后 deploy_config_to_live.py 同步新配置 | 管线完成后 |
+| **P0** | **排查实盘无开仓** | 最近几天零开仓，需排查：(1) gate 是否全部 deny (2) 信号漏斗各层通过率 (3) Grafana funnel 面板 (4) 日志中 direction/gate/EF 拒绝分布 | 立即 |
+| **P1** | **交易所止损单兜底** | 每次 trailing SL 移动时 cancel 旧 STOP_MARKET + 挂新单，防止程序崩溃时裸仓。事件回测也需模拟平台挂单行为。当前 BPC/ME 纯软件管理 SL，FER 有 STOP_MARKET backup | 开仓正常后 |
+| **P1** | **杠杆配置确定** | 当前未显式设置杠杆倍数，需确认 Binance 账户默认杠杆 + 代码中是否有 change_leverage 调用 + 确定目标杠杆(建议 3-5x) + 在 constitution.yaml 或 env 中配置 | 开仓正常后 |
 | P2 | Phase 4.5.4 回测宪法模拟 + 一致性检查 | 🔨 进行中：kill switch + 加仓 + 事件vs研究回测对比 | 当前任务 |
 | P2 | Phase 4.5.4 回测一致性对齐 | ✅ pre-slot 已对齐(1895≈1879), slot 精度修复中 | 当前任务 |
+| P2 | 事件回测 vs 实盘一致性验证 | 只能靠实盘积累交易后逐笔对比，无捷径。需：(1) 实盘开仓后抽取信号+特征快照 (2) 用相同时间戳跑事件回测 (3) 逐笔对比 entry/exit/PnL | 首笔交易后 |
 | P3 | PCM Plateau 优化 | detection 阈值 + scale 因子，conflict_rate=3.42% 收益极低 | 收集 4 周实盘数据后 |
 | P3 | LV 策略 | 15min timeframe，Feature Store 计算成本高 | 三策略稳定后 |
 | P2 | Telegram 告警通道 | alerter.py + Telegram Bot (从 Phase 1.2.3 移入) | 线上运行稳定后 |

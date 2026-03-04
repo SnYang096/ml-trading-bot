@@ -557,6 +557,11 @@ class LivePCM:
         if not self._strategies:
             return []
 
+        # 每次 decide() 重置驱逐列表 — 供调用方 (事件回测/实盘) 关闭被替换仓位
+        self._last_evictions: List[Tuple[str, str]] = (
+            []
+        )  # [(evicted_symbol, archetype), ...]
+
         # ── 1. Regime 检测 (Layer 2) ──
         # Regime 使用主时间框架 (4H) 特征检测
         if self._regime_detector is not None:
@@ -613,6 +618,11 @@ class LivePCM:
             if not self._slot_available(symbol, intent.archetype):
                 # 该策略 slot 满 → 尝试同 archetype 内 evidence 竞争
                 evicted = self._try_slot_competition(symbol, intent.archetype, ev)
+                if evicted is not None:
+                    # 解析被驱逐的 slot key → (symbol, archetype)
+                    _parts = evicted.rsplit(":", 1)
+                    if len(_parts) == 2:
+                        self._last_evictions.append((_parts[0], _parts[1]))
                 if evicted is None:
                     logger.info(
                         "PCM: %s %s slot 已满 (%d/%d)，拒绝 (ev=%.2f)",

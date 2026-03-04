@@ -314,6 +314,18 @@ class IncrementalFeatureComputer:
             bar_data["cvd_change_5_normalized"] = cvd_change_5 / total_flow_5
         else:
             bar_data["cvd_change_5_normalized"] = 0.0
+        # cvd_change_20: sum of last 20 bars' delta (maxlen=20)
+        if len(self._cvd_change_hist) > 0:
+            bar_data["cvd_change_20"] = float(np.sum(list(self._cvd_change_hist)))
+        else:
+            bar_data["cvd_change_20"] = 0.0
+        # cvd_normalized: per-bar delta / total_flow
+        if self._cvd_bar_total_flow > 0:
+            bar_data["cvd_normalized"] = float(self._cvd_bar_delta) / float(
+                self._cvd_bar_total_flow
+            )
+        else:
+            bar_data["cvd_normalized"] = 0.0
         # reset accumulators for next bar
         self._cvd_bar_delta = 0.0
         self._cvd_bar_total_flow = 0.0
@@ -648,8 +660,15 @@ class IncrementalFeatureComputer:
         except Exception:
             pass
 
-        # CVD change (5 bars) + normalized, if underlying flow columns exist
-        if self._want("cvd_change_5") or self._want("cvd_change_5_normalized"):
+        # CVD change columns + normalized, if underlying flow columns exist
+        _need_cvd = (
+            self._want("cvd_change_5")
+            or self._want("cvd_change_5_normalized")
+            or self._want("cvd_change_1")
+            or self._want("cvd_change_20")
+            or self._want("cvd_normalized")
+        )
+        if _need_cvd:
             net_buy = None
             total_flow = None
             if "buy_qty" in bars_df.columns and "sell_qty" in bars_df.columns:
@@ -674,12 +693,39 @@ class IncrementalFeatureComputer:
                 total_flow = total_flow.replace(0, np.nan)
 
             if net_buy is not None:
+                # cvd_change_1 (per-bar delta)
+                if "cvd_change_1" not in bars_df_indexed.columns:
+                    bars_df_indexed["cvd_change_1"] = net_buy.values
+                # cvd_change_5
                 cvd_change_5 = net_buy.rolling(window=5, min_periods=1).sum()
                 if self._want("cvd_change_5"):
                     self.timeframe_features[timeframe]["cvd_change_5"] = float(
                         cvd_change_5.iloc[-1]
                     )
                 bars_df_indexed["cvd_change_5"] = cvd_change_5
+                # cvd_change_20
+                cvd_change_20 = net_buy.rolling(window=20, min_periods=1).sum()
+                if self._want("cvd_change_20"):
+                    self.timeframe_features[timeframe]["cvd_change_20"] = float(
+                        cvd_change_20.iloc[-1]
+                    )
+                bars_df_indexed["cvd_change_20"] = cvd_change_20
+                # cvd_normalized (per-bar delta / total_flow)
+                if (
+                    total_flow is not None
+                    and "cvd_normalized" not in bars_df_indexed.columns
+                ):
+                    cvd_normalized = (
+                        (net_buy / total_flow)
+                        .replace([np.inf, -np.inf], np.nan)
+                        .fillna(0.0)
+                    )
+                    bars_df_indexed["cvd_normalized"] = cvd_normalized
+                    if self._want("cvd_normalized"):
+                        self.timeframe_features[timeframe]["cvd_normalized"] = float(
+                            cvd_normalized.iloc[-1]
+                        )
+                # cvd_change_5_normalized
                 if self._want("cvd_change_5_normalized"):
                     if total_flow is None:
                         cvd_norm = 0.0
@@ -854,6 +900,7 @@ class IncrementalFeatureComputer:
         bars_1min: pd.DataFrame,
         ticks_1min: pd.DataFrame,
         primary_timeframe: Optional[str] = None,
+        fp_max_bars: Optional[int] = 200,
     ) -> Optional[pd.DataFrame]:
         """共享的特征计算核心 (steps 1-3).
 
@@ -908,6 +955,10 @@ class IncrementalFeatureComputer:
                 agg_dict[col] = agg
 
         bars_tf = bars.resample(ptf).agg(agg_dict).dropna(subset=["close"])
+
+        # 保留 _symbol 列 (OI join 等特征需要)
+        if "_symbol" in bars.columns:
+            bars_tf["_symbol"] = bars["_symbol"].iloc[0]
 
         # 添加 buy_qty / sell_qty（研发格式，用于 CVD 等特征节点）
         if "buy_volume" in bars_tf.columns and "sell_volume" in bars_tf.columns:
@@ -988,16 +1039,32 @@ class IncrementalFeatureComputer:
                     pass
 
                 try:
+                    # 诊断: 检查 bars_tf 和 ticks 的时间范围是否匹配
+                    _bars_tz = bars_tf.index.tz
+                    _ticks_tz = ticks.index.tz
+                    if _bars_tz != _ticks_tz:
+                        _logger.warning(
+                            "FP timezone mismatch: bars_tf.tz=%s, ticks.tz=%s",
+                            _bars_tz,
+                            _ticks_tz,
+                        )
+                        # 统一 timezone
+                        if _bars_tz is None and _ticks_tz is not None:
+                            bars_tf.index = bars_tf.index.tz_localize(_ticks_tz)
+                        elif _ticks_tz is None and _bars_tz is not None:
+                            ticks.index = ticks.index.tz_localize(_bars_tz)
+
+                    _fp_input = bars_tf.tail(fp_max_bars) if fp_max_bars else bars_tf
                     fp_df = compute_footprint_features(
-                        bars_tf.tail(200),
+                        _fp_input,
                         ticks=ticks,
                         persist_monthly=False,
                     )
                     fp_new_cols = [c for c in fp_df.columns if c not in bars_tf.columns]
                     if fp_new_cols:
                         bars_tf = bars_tf.join(fp_df[fp_new_cols], how="left")
-                except Exception:
-                    pass
+                except Exception as _fp_exc:
+                    _logger.warning("Footprint 计算失败: %s", _fp_exc)
 
                 _logger.info(
                     "  OF features: %d cols from %d ticks",
@@ -1155,8 +1222,12 @@ class IncrementalFeatureComputer:
                                 _logger.info("  Second pass: %s → OK", n)
                             except Exception as e:
                                 _logger.warning("  Second pass failed for %s: %s", n, e)
+                                self._record_loader_error(n, ptf, e)
             except Exception as e:
-                _logger.warning("  Loader failed: %s", e)
+                _logger.warning("⚠️ Loader failed: %s", e)
+                import traceback
+
+                _logger.warning("  Loader traceback: %s", traceback.format_exc())
 
         return bars_tf
 
@@ -1273,7 +1344,12 @@ class IncrementalFeatureComputer:
 
         _logger = logging.getLogger(__name__)
 
-        bars_tf = self._compute_features_core(bars_1min, ticks_1min, primary_timeframe)
+        bars_tf = self._compute_features_core(
+            bars_1min,
+            ticks_1min,
+            primary_timeframe,
+            fp_max_bars=200,
+        )
         if bars_tf is None or bars_tf.empty:
             return {}
 
@@ -1294,8 +1370,19 @@ class IncrementalFeatureComputer:
         # 缓存结果（用于 get_features() 兼容接口）
         self._batch_features = features
 
+        ptf = primary_timeframe or self.primary_timeframe or "240T"
         _logger.info("  Final: %d features", len(features))
         self._log_missing_features(features)
+
+        # ── 6. 特征健康报告 (实盘 + Prometheus) ──
+        sym = getattr(self, "_current_symbol", "")
+        self.report_feature_health(
+            features,
+            symbol=sym,
+            timeframe=ptf,
+            update_prometheus=True,
+        )
+
         return features
 
     def compute_features_dataframe(
@@ -1313,7 +1400,12 @@ class IncrementalFeatureComputer:
 
         _logger = logging.getLogger(__name__)
 
-        bars_tf = self._compute_features_core(bars_1min, ticks_1min, primary_timeframe)
+        bars_tf = self._compute_features_core(
+            bars_1min,
+            ticks_1min,
+            primary_timeframe,
+            fp_max_bars=None,
+        )
         if bars_tf is None or bars_tf.empty:
             return pd.DataFrame()
 
@@ -1347,6 +1439,215 @@ class IncrementalFeatureComputer:
                     f"⚠️ live_feature_nodes_skipped ({len(self._last_skipped_nodes)}): {preview}"
                 )
             self._last_missing_log_ts = now
+
+    # ── 特征健康报告 ───────────────────────────────
+
+    def _record_loader_error(self, node: str, timeframe: str, exc: Exception) -> None:
+        """Record a feature loader error for Prometheus tracking."""
+        try:
+            from src.time_series_model.live.metrics_exporter import METRICS
+
+            sym = getattr(self, "_current_symbol", "unknown")
+            METRICS.feature_loader_errors.labels(
+                symbol=sym, timeframe=timeframe, node=node
+            ).inc()
+        except Exception:
+            pass
+
+    # 关键特征前缀 — 这些特征缺失通常意味着上游数据链路断裂
+    _CRITICAL_PREFIXES = ("atr", "oi_", "funding_oi_")
+
+    @staticmethod
+    def _is_critical(name: str) -> bool:
+        """Is this a critical feature that should never be NaN."""
+        for p in IncrementalFeatureComputer._CRITICAL_PREFIXES:
+            if name == p or name.startswith(p):
+                return True
+        return False
+
+    def report_feature_health(
+        self,
+        features: Dict[str, float],
+        symbol: str = "",
+        timeframe: str = "",
+        *,
+        update_prometheus: bool = False,
+    ) -> Dict[str, Any]:
+        """Compute and log a feature health report.
+
+        Returns a dict with:
+          total, expected, missing_count, nan_ratio,
+          critical_nan (list of critical features missing),
+          missing_names (first 20).
+
+        If update_prometheus=True, also updates Prometheus gauges.
+        """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        expected = len(self.live_feature_set) if self.live_feature_set else 0
+        total = len(features)
+        missing = (
+            sorted(k for k in self.live_feature_set if k not in features)
+            if self.live_feature_set
+            else []
+        )
+        missing_count = len(missing)
+        nan_ratio = missing_count / expected if expected > 0 else 0.0
+
+        # Critical features check
+        critical_nan = [m for m in missing if self._is_critical(m)]
+
+        report = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "total": total,
+            "expected": expected,
+            "missing_count": missing_count,
+            "nan_ratio": round(nan_ratio, 4),
+            "critical_nan": critical_nan,
+            "missing_names": missing[:20],
+        }
+
+        # ── 日志输出 ──
+        if critical_nan:
+            _logger.error(
+                "🚨 [%s][%s] CRITICAL features NaN! %d critical missing: %s  "
+                "(total=%d, expected=%d, nan_ratio=%.1f%%)",
+                symbol,
+                timeframe,
+                len(critical_nan),
+                critical_nan,
+                total,
+                expected,
+                nan_ratio * 100,
+            )
+        elif nan_ratio > 0.2:
+            _logger.warning(
+                "⚠️ [%s][%s] Feature health WARNING: %d/%d missing (%.1f%%). "
+                "First 10: %s",
+                symbol,
+                timeframe,
+                missing_count,
+                expected,
+                nan_ratio * 100,
+                missing[:10],
+            )
+        elif nan_ratio > 0.05:
+            _logger.info(
+                "🟡 [%s][%s] Feature health: %d/%d missing (%.1f%%)",
+                symbol,
+                timeframe,
+                missing_count,
+                expected,
+                nan_ratio * 100,
+            )
+        else:
+            _logger.info(
+                "✅ [%s][%s] Feature health OK: %d/%d computed (%.1f%% coverage)",
+                symbol,
+                timeframe,
+                total,
+                expected,
+                (1 - nan_ratio) * 100,
+            )
+
+        # ── Prometheus ──
+        if update_prometheus:
+            try:
+                from src.time_series_model.live.metrics_exporter import METRICS
+
+                sym = symbol or "unknown"
+                tf = timeframe or "unknown"
+                METRICS.feature_total.labels(symbol=sym, timeframe=tf).set(total)
+                METRICS.feature_expected.labels(symbol=sym, timeframe=tf).set(expected)
+                METRICS.feature_nan_count.labels(symbol=sym, timeframe=tf).set(
+                    missing_count
+                )
+                METRICS.feature_nan_ratio.labels(symbol=sym, timeframe=tf).set(
+                    nan_ratio
+                )
+                METRICS.feature_critical_nan.labels(symbol=sym, timeframe=tf).set(
+                    1 if critical_nan else 0
+                )
+            except Exception:
+                pass  # Prometheus optional
+
+        return report
+
+    def report_feature_health_df(
+        self,
+        features_df: pd.DataFrame,
+        symbol: str = "",
+        timeframe: str = "",
+    ) -> Dict[str, Any]:
+        """Health report for DataFrame output (event backtest / dataframe mode).
+
+        Checks the LAST row's NaN columns against live_feature_set.
+        Also reports columns with >50% NaN across all rows.
+        """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        if features_df is None or features_df.empty:
+            _logger.warning("🚨 [%s][%s] features_df is EMPTY", symbol, timeframe)
+            return {"symbol": symbol, "timeframe": timeframe, "empty": True}
+
+        # Last row check
+        last_row = features_df.iloc[-1]
+        nan_cols = sorted(last_row.index[last_row.isna()].tolist())
+        total_cols = len(features_df.columns)
+
+        # High NaN-rate columns (>50% NaN across all rows)
+        nan_rates = features_df.isna().mean()
+        high_nan_cols = sorted(nan_rates[nan_rates > 0.5].index.tolist())
+
+        # Critical features missing in last row
+        critical_nan = [c for c in nan_cols if self._is_critical(c)]
+
+        report = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "total_cols": total_cols,
+            "last_row_nan_count": len(nan_cols),
+            "last_row_nan_ratio": (
+                round(len(nan_cols) / total_cols, 4) if total_cols else 0
+            ),
+            "high_nan_cols": high_nan_cols[:20],
+            "critical_nan": critical_nan,
+        }
+
+        if critical_nan:
+            _logger.error(
+                "🚨 [%s][%s] CRITICAL features NaN in last row! %s  "
+                "(total_cols=%d, nan_in_last=%d, high_nan_cols=%d)",
+                symbol,
+                timeframe,
+                critical_nan,
+                total_cols,
+                len(nan_cols),
+                len(high_nan_cols),
+            )
+        elif high_nan_cols:
+            _logger.warning(
+                "⚠️ [%s][%s] %d columns >50%% NaN: %s",
+                symbol,
+                timeframe,
+                len(high_nan_cols),
+                high_nan_cols[:10],
+            )
+        else:
+            _logger.info(
+                "✅ [%s][%s] DataFrame health OK: %d cols, %d NaN in last row",
+                symbol,
+                timeframe,
+                total_cols,
+                len(nan_cols),
+            )
+
+        return report
 
     def get_orderflow_features(self, window_minutes: int = 15) -> Dict[str, float]:
         """
