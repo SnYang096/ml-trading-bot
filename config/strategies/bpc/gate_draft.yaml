@@ -1,5 +1,5 @@
 # BPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260304_203302_rr_extreme/bpc
+# 来源: results/train_final_20260304_222546_rr_extreme/bpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc
@@ -20,110 +20,110 @@ hard_gates:
   tag: HARD_EVT_ES_99_RIGHT
   phase: hard_gate
   priority: 10
-  reason: evt_es_99_right 触发树分裂条件 (分裂 3 次)
+  reason: evt_es_99_right 触发树分裂条件 (分裂 2 次)
   when:
     evt_es_99_right:
       value_gt: 0.7202
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 3 次 | 阈值 0.7202 | 方向: data_verified (low=-0.375, high=-0.997)'
-- id: gate_macd_atr
-  tag: HARD_MACD_ATR
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.7202 | 方向: data_verified (low=-0.375, high=-0.997)'
+- id: gate_shd_pct
+  tag: HARD_SHD_PCT
   phase: hard_gate
   priority: 11
-  reason: macd_atr 触发树分裂条件 (分裂 3 次)
+  reason: shd_pct 触发树分裂条件 (分裂 2 次)
   when:
-    macd_atr:
-      value_gt: 0.004
+    shd_pct:
+      value_lt: 0.4443
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 3 次 | 阈值 0.004044 | 方向: data_verified (low=0.195, high=-1.703)'
-- id: gate_vpin_volatility_20
-  tag: HARD_VPIN_VOLATILITY_20
-  phase: hard_gate
-  priority: 12
-  reason: vpin_volatility_20 触发树分裂条件 (分裂 2 次)
-  when:
-    vpin_volatility_20:
-      value_lt: 0.0665
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.06653 | 方向: data_verified (low=-0.991, high=0.183)'
-- id: gate_macd_signal_atr
-  tag: HARD_MACD_SIGNAL_ATR
-  phase: hard_gate
-  priority: 13
-  reason: macd_signal_atr 触发树分裂条件 (分裂 2 次)
-  when:
-    macd_signal_atr:
-      value_lt: -0.7953
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.7953 | 方向: data_verified (low=-0.860, high=-0.554)'
-- id: gate_evt_var_99_left
-  tag: HARD_EVT_VAR_99_LEFT
-  phase: hard_gate
-  priority: 14
-  reason: evt_var_99_left 触发树分裂条件 (分裂 2 次)
-  when:
-    evt_var_99_left:
-      value_lt: 0.4385
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.4385 | 方向: data_verified (low=-1.466, high=0.268)'
-- id: gate_sma_200_position
-  tag: HARD_SMA_200_POSITION
-  phase: hard_gate
-  priority: 15
-  reason: sma_200_position 触发树分裂条件 (分裂 2 次)
-  when:
-    sma_200_position:
-      value_gt: -0.0874
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.08745 | 方向: data_verified (low=0.007, high=-0.830)'
-- id: gate_macd_signal_atr
-  tag: HARD_MACD_SIGNAL_ATR
-  phase: hard_gate
-  priority: 16
-  reason: macd_signal_atr 触发树分裂条件 (分裂 2 次)
-  when:
-    macd_signal_atr:
-      value_gt: -0.3051
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.3051 | 方向: data_verified (low=0.170, high=-1.141)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.4443 | 方向: data_verified (low=-1.055, high=-0.214)'
 - id: gate_evt_scale_right
   tag: HARD_EVT_SCALE_RIGHT
   phase: hard_gate
-  priority: 17
+  priority: 12
   reason: evt_scale_right 触发树分裂条件 (分裂 2 次)
   when:
     evt_scale_right:
-      value_gt: 0.7163
+      value_gt: 0.2401
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.7163 | 方向: data_verified (low=-0.590, high=-0.625)'
-- id: gate_evt_var_99_left
-  tag: HARD_EVT_VAR_99_LEFT
-  phase: hard_gate
-  priority: 18
-  reason: evt_var_99_left 触发树分裂条件 (分裂 2 次)
-  when:
-    evt_var_99_left:
-      value_lt: 0.5813
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.5813 | 方向: data_verified (low=-1.192, high=0.354)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.2401 | 方向: data_verified (low=0.097, high=-0.854)'
 - id: gate_macd_atr
   tag: HARD_MACD_ATR
   phase: hard_gate
-  priority: 19
+  priority: 13
   reason: macd_atr 触发树分裂条件 (分裂 2 次)
   when:
     macd_atr:
-      value_gt: -0.0053
+      value_lt: -0.9835
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.005322 | 方向: data_verified (low=0.214, high=-1.702)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.9835 | 方向: data_verified (low=-1.039, high=-0.548)'
+- id: gate_spectrum_volume_low_freq_ratio
+  tag: HARD_SPECTRUM_VOLUME_LOW_FREQ_RATIO
+  phase: hard_gate
+  priority: 14
+  reason: spectrum_volume_low_freq_ratio 触发树分裂条件 (分裂 2 次)
+  when:
+    spectrum_volume_low_freq_ratio:
+      value_gt: 0.0686
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.06861 | 方向: data_verified (low=-0.013, high=-1.415)'
+- id: gate_evt_var_99
+  tag: HARD_EVT_VAR_99
+  phase: hard_gate
+  priority: 15
+  reason: evt_var_99 触发树分裂条件 (分裂 2 次)
+  when:
+    evt_var_99:
+      value_lt: 0.7599
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.7599 | 方向: data_verified (low=-1.052, high=0.478)'
+- id: gate_evt_tail_shape
+  tag: HARD_EVT_TAIL_SHAPE
+  phase: hard_gate
+  priority: 16
+  reason: evt_tail_shape 触发树分裂条件 (分裂 2 次)
+  when:
+    evt_tail_shape:
+      value_gt: 0.3948
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.3948 | 方向: data_verified (low=-0.233, high=-0.820)'
+- id: gate_evt_scale
+  tag: HARD_EVT_SCALE
+  phase: hard_gate
+  priority: 17
+  reason: evt_scale 触发树分裂条件 (分裂 2 次)
+  when:
+    evt_scale:
+      value_gt: 0.9345
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.9345 | 方向: data_verified (low=-0.466, high=-1.381)'
+- id: gate_evt_scale
+  tag: HARD_EVT_SCALE
+  phase: hard_gate
+  priority: 18
+  reason: evt_scale 触发树分裂条件 (分裂 2 次)
+  when:
+    evt_scale:
+      value_lt: 0.4464
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.4464 | 方向: data_verified (low=-1.393, high=0.009)'
+- id: gate_vpin_momentum
+  tag: HARD_VPIN_MOMENTUM
+  phase: hard_gate
+  priority: 19
+  reason: vpin_momentum 触发树分裂条件 (分裂 2 次)
+  when:
+    vpin_momentum:
+      value_gt: -0.0206
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.02057 | 方向: data_verified (low=-0.119, high=-0.779)'
 guardrails: []

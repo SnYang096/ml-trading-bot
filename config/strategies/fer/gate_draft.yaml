@@ -1,5 +1,5 @@
 # FER Gate Draft (auto-generated)
-# 来源: results/train_final_20260304_211243_rr_extreme/fer
+# 来源: results/train_final_20260304_210059_rr_extreme/fer
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fer
@@ -20,110 +20,110 @@ hard_gates:
   tag: HARD_FER_SIGNED_EFFICIENCY
   phase: hard_gate
   priority: 10
-  reason: fer_signed_efficiency 触发树分裂条件 (分裂 4 次)
+  reason: fer_signed_efficiency 触发树分裂条件 (分裂 2 次)
   when:
     fer_signed_efficiency:
-      value_lt: 0.0
+      value_lt: -0.0
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 4 次 | 阈值 0 | 方向: data_verified (low=0.139, high=0.622)'
-- id: gate_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT
-  phase: hard_gate
-  priority: 11
-  reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_es_99_right:
-      value_gt: 0.3353
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.3353 | 方向: data_verified (low=0.823, high=0.178)'
-- id: gate_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT
-  phase: hard_gate
-  priority: 12
-  reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_es_99_right:
-      value_gt: 0.1647
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.1647 | 方向: data_verified (low=0.774, high=0.278)'
-- id: gate_fer_signed_efficiency_pct
-  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
-  phase: hard_gate
-  priority: 13
-  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
-  when:
-    fer_signed_efficiency_pct:
-      value_lt: 0.155
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.155 | 方向: data_verified (low=-0.704, high=0.623)'
-- id: gate_trade_cluster_net_runs_zscore_20
-  tag: HARD_TRADE_CLUSTER_NET_RUNS_ZSCORE_20
-  phase: hard_gate
-  priority: 14
-  reason: trade_cluster_net_runs_zscore_20 触发树分裂条件 (分裂 1 次)
-  when:
-    trade_cluster_net_runs_zscore_20:
-      value_gt: -0.2069
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 -0.2069 | 方向: data_verified (low=0.410, high=0.384)'
-- id: gate_trade_cluster_net_runs_zscore_20
-  tag: HARD_TRADE_CLUSTER_NET_RUNS_ZSCORE_20
-  phase: hard_gate
-  priority: 15
-  reason: trade_cluster_net_runs_zscore_20 触发树分裂条件 (分裂 1 次)
-  when:
-    trade_cluster_net_runs_zscore_20:
-      value_lt: 0.0
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0 | 方向: data_verified (low=0.387, high=0.397)'
-- id: gate_trade_cluster_imbalance_zscore_50
-  tag: HARD_TRADE_CLUSTER_IMBALANCE_ZSCORE_50
-  phase: hard_gate
-  priority: 16
-  reason: trade_cluster_imbalance_zscore_50 触发树分裂条件 (分裂 1 次)
-  when:
-    trade_cluster_imbalance_zscore_50:
-      value_lt: 0.9351
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.9351 | 方向: data_verified (low=0.309, high=0.668)'
-- id: gate_vpin_skewness
-  tag: HARD_VPIN_SKEWNESS
-  phase: hard_gate
-  priority: 17
-  reason: vpin_skewness 触发树分裂条件 (分裂 1 次)
-  when:
-    vpin_skewness:
-      value_lt: 0.2961
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.2961 | 方向: data_verified (low=0.234, high=0.753)'
-- id: gate_fer_volume_price_divergence
-  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE
-  phase: hard_gate
-  priority: 18
-  reason: fer_volume_price_divergence 触发树分裂条件 (分裂 1 次)
-  when:
-    fer_volume_price_divergence:
-      value_gt: 0.3312
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.3312 | 方向: data_verified (low=0.464, high=0.348)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0 | 方向: data_verified (low=0.139, high=0.622)'
 - id: gate_roc_5
   tag: HARD_ROC_5
   phase: hard_gate
-  priority: 19
+  priority: 11
   reason: roc_5 触发树分裂条件 (分裂 1 次)
   when:
     roc_5:
-      value_gt: 0.4333
+      value_gt: -1.2039
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.4333 | 方向: data_verified (low=0.591, high=-0.037)'
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 -1.204 | 方向: data_verified (low=0.762, high=0.328)'
+- id: gate_sma_200_position
+  tag: HARD_SMA_200_POSITION
+  phase: hard_gate
+  priority: 12
+  reason: sma_200_position 触发树分裂条件 (分裂 1 次)
+  when:
+    sma_200_position:
+      value_gt: 0.0127
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.01272 | 方向: data_verified (low=0.468, high=0.241)'
+- id: gate_fer_trapped_shorts_score
+  tag: HARD_FER_TRAPPED_SHORTS_SCORE
+  phase: hard_gate
+  priority: 13
+  reason: fer_trapped_shorts_score 触发树分裂条件 (分裂 1 次)
+  when:
+    fer_trapped_shorts_score:
+      value_gt: 0.4644
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.4644 | 方向: data_verified (low=1.052, high=0.040)'
+- id: gate_evt_scale_right
+  tag: HARD_EVT_SCALE_RIGHT
+  phase: hard_gate
+  priority: 14
+  reason: evt_scale_right 触发树分裂条件 (分裂 1 次)
+  when:
+    evt_scale_right:
+      value_lt: 0.4306
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.4306 | 方向: data_verified (low=-0.127, high=0.773)'
+- id: gate_sma_200_position
+  tag: HARD_SMA_200_POSITION
+  phase: hard_gate
+  priority: 15
+  reason: sma_200_position 触发树分裂条件 (分裂 1 次)
+  when:
+    sma_200_position:
+      value_gt: -0.0312
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 -0.03124 | 方向: data_verified (low=0.874, high=-0.116)'
+- id: gate_roc_5
+  tag: HARD_ROC_5
+  phase: hard_gate
+  priority: 16
+  reason: roc_5 触发树分裂条件 (分裂 1 次)
+  when:
+    roc_5:
+      value_gt: -1.3366
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 -1.337 | 方向: data_verified (low=0.708, high=0.348)'
+- id: gate_evt_scale
+  tag: HARD_EVT_SCALE
+  phase: hard_gate
+  priority: 17
+  reason: evt_scale 触发树分裂条件 (分裂 1 次)
+  when:
+    evt_scale:
+      value_gt: 0.2917
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.2917 | 方向: data_verified (low=1.467, high=0.012)'
+- id: gate_fer_impulse_failure_score
+  tag: HARD_FER_IMPULSE_FAILURE_SCORE
+  phase: hard_gate
+  priority: 18
+  reason: fer_impulse_failure_score 触发树分裂条件 (分裂 1 次)
+  when:
+    fer_impulse_failure_score:
+      value_gt: 0.9281
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.9281 | 方向: data_verified (low=0.424, high=0.083)'
+- id: gate_fer_signed_efficiency_pct
+  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
+  phase: hard_gate
+  priority: 19
+  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
+  when:
+    fer_signed_efficiency_pct:
+      value_lt: 0.2466
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.2466 | 方向: data_verified (low=-0.324, high=0.647)'
 guardrails: []

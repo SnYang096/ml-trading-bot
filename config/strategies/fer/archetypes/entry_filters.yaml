@@ -1,8 +1,8 @@
 # FER Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-03-04 12:40
+# Date: 2026-03-04 21:06
 # Promoted: 0 filters (全部未通过显著性检验)
-# Baseline snotio: 2.0244, σ=4.190
+# Baseline snotio: 6.9665, σ=15.185
 #
 # 没有 entry filter 通过准入, 策略将无条件入场
 

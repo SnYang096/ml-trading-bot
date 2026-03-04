@@ -207,16 +207,22 @@ def _generate_gate_rules_imodels(
         if lgbm_model is not None:
             try:
                 X_for_model = pred_df[avail].fillna(0)
-                if hasattr(lgbm_model, "predict_proba"):
-                    y_proba = lgbm_model.predict_proba(X_for_model)[:, 1]
-                else:
-                    # Raw booster: predict → sigmoid
-                    raw = lgbm_model.predict(X_for_model)
+                # model.pkl 可能是 CV fold 列表，取第一个
+                _model = lgbm_model
+                if isinstance(_model, list) and len(_model) > 0:
+                    _model = _model[0]
+                if hasattr(_model, "predict_proba"):
+                    y_proba = _model.predict_proba(X_for_model)[:, 1]
+                elif hasattr(_model, "predict"):
+                    # Raw LightGBM Booster: predict → sigmoid
+                    raw = _model.predict(X_for_model)
                     y_proba = 1.0 / (1.0 + np.exp(-np.array(raw, dtype=float)))
+                else:
+                    raise ValueError(f"模型类型 {type(_model)} 无 predict 方法")
                 y_teacher = (y_proba > 0.5).astype(int)
                 print(f"   🎓 蒸馏模式: teacher deny_rate={y_teacher.mean():.1%}")
             except Exception as e:
-                print(f"   ⚠️  teacher predict_proba 失败: {e}，回退到原始标签")
+                print(f"   ⚠️  teacher predict 失败: {e}，回退到原始标签")
                 y_teacher = None
 
         # Fallback: 从原始标签构建（旧逻辑）
@@ -241,7 +247,7 @@ def _generate_gate_rules_imodels(
             include_linear=False,
         )
         clf.fit(X, y_teacher, feature_names=avail)
-        rules_df = clf.get_rules()
+        rules_df = clf._get_rules()
 
         # 保留有效规则（coef > 0.01，坏交易方向），包含复合规则
         rules_df = rules_df[(rules_df["type"] == "rule") & (rules_df["coef"] > 0.01)]
