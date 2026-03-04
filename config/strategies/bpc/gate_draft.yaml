@@ -1,5 +1,5 @@
 # BPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260304_154648_rr_extreme/bpc
+# 来源: results/train_final_20260304_203302_rr_extreme/bpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc
@@ -26,7 +26,7 @@ hard_gates:
       value_gt: 0.7202
   then:
     action: deny
-  comment: '自动生成: 分裂 3 次 | 阈值 0.7202 | 方向: data_verified (low=-0.375, high=-0.997)'
+  comment: '自动生成(tree_split fallback): 分裂 3 次 | 阈值 0.7202 | 方向: data_verified (low=-0.375, high=-0.997)'
 - id: gate_macd_atr
   tag: HARD_MACD_ATR
   phase: hard_gate
@@ -37,7 +37,7 @@ hard_gates:
       value_gt: 0.004
   then:
     action: deny
-  comment: '自动生成: 分裂 3 次 | 阈值 0.004044 | 方向: data_verified (low=0.195, high=-1.703)'
+  comment: '自动生成(tree_split fallback): 分裂 3 次 | 阈值 0.004044 | 方向: data_verified (low=0.195, high=-1.703)'
 - id: gate_vpin_volatility_20
   tag: HARD_VPIN_VOLATILITY_20
   phase: hard_gate
@@ -48,7 +48,7 @@ hard_gates:
       value_lt: 0.0665
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 0.06653 | 方向: data_verified (low=-0.991, high=0.183)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.06653 | 方向: data_verified (low=-0.991, high=0.183)'
 - id: gate_macd_signal_atr
   tag: HARD_MACD_SIGNAL_ATR
   phase: hard_gate
@@ -59,7 +59,7 @@ hard_gates:
       value_lt: -0.7953
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 -0.7953 | 方向: data_verified (low=-0.860, high=-0.554)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.7953 | 方向: data_verified (low=-0.860, high=-0.554)'
 - id: gate_evt_var_99_left
   tag: HARD_EVT_VAR_99_LEFT
   phase: hard_gate
@@ -70,7 +70,7 @@ hard_gates:
       value_lt: 0.4385
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 0.4385 | 方向: data_verified (low=-1.466, high=0.268)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.4385 | 方向: data_verified (low=-1.466, high=0.268)'
 - id: gate_sma_200_position
   tag: HARD_SMA_200_POSITION
   phase: hard_gate
@@ -81,7 +81,7 @@ hard_gates:
       value_gt: -0.0874
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 -0.08745 | 方向: data_verified (low=0.007, high=-0.830)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.08745 | 方向: data_verified (low=0.007, high=-0.830)'
 - id: gate_macd_signal_atr
   tag: HARD_MACD_SIGNAL_ATR
   phase: hard_gate
@@ -92,7 +92,7 @@ hard_gates:
       value_gt: -0.3051
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 -0.3051 | 方向: data_verified (low=0.170, high=-1.141)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.3051 | 方向: data_verified (low=0.170, high=-1.141)'
 - id: gate_evt_scale_right
   tag: HARD_EVT_SCALE_RIGHT
   phase: hard_gate
@@ -103,7 +103,7 @@ hard_gates:
       value_gt: 0.7163
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 0.7163 | 方向: data_verified (low=-0.590, high=-0.625)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.7163 | 方向: data_verified (low=-0.590, high=-0.625)'
 - id: gate_evt_var_99_left
   tag: HARD_EVT_VAR_99_LEFT
   phase: hard_gate
@@ -114,7 +114,7 @@ hard_gates:
       value_lt: 0.5813
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 0.5813 | 方向: data_verified (low=-1.192, high=0.354)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.5813 | 方向: data_verified (low=-1.192, high=0.354)'
 - id: gate_macd_atr
   tag: HARD_MACD_ATR
   phase: hard_gate
@@ -125,5 +125,5 @@ hard_gates:
       value_gt: -0.0053
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 -0.005322 | 方向: data_verified (low=0.214, high=-1.702)'
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.005322 | 方向: data_verified (low=0.214, high=-1.702)'
 guardrails: []

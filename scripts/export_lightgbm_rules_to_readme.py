@@ -173,14 +173,17 @@ def _write_standalone_rules(
 def _generate_gate_rules_imodels(
     pred_df,
     feature_names: list,
-    rr_col_name: str,
+    lgbm_model=None,
+    rr_col_name: str = "",
     max_rules: int = 5,
 ) -> "list | None":
     """
-    用 imodels.RuleFitClassifier 从 predictions.parquet 直接学习稳定规则。
+    用 imodels.RuleFitClassifier 蒸馏 LightGBM teacher 的判别边界。
 
-    random_state=42 保证相同数据 → 相同规则（不受外层 LightGBM seed 影响）。
-    返回: [(feat, op, thr, coef), ...] 或 None（失败时 fallback 到树分裂法）
+    A.7.2: 从 teacher predict_proba 蒸馏（不是原始标签），保留 ensemble 知识。
+    A.7.3: 自动验证蒸馏质量（teacher vs student 一致率）。
+    random_state=42 保证相同数据 → 相同规则。
+    返回: [{"conditions": [(feat, op, thr), ...], "coef": float}, ...] 或 None
     """
     try:
         from imodels import RuleFitClassifier  # type: ignore
@@ -199,14 +202,36 @@ def _generate_gate_rules_imodels(
 
         X = pred_df[avail].fillna(0).values.astype(float)
 
-        # 构建二分类标签：1 = 坏交易（需要 deny）
-        if rr_col_name == "success_no_rr_extreme":
-            y = (pred_df[rr_col_name] < 0.5).astype(int).values
-        else:
-            q30 = pred_df[rr_col_name].quantile(0.3)
-            y = (pred_df[rr_col_name] < q30).astype(int).values
+        # ── A.7.2: 蒸馏标签 — 优先用 teacher predict_proba ──
+        y_teacher = None
+        if lgbm_model is not None:
+            try:
+                X_for_model = pred_df[avail].fillna(0)
+                if hasattr(lgbm_model, "predict_proba"):
+                    y_proba = lgbm_model.predict_proba(X_for_model)[:, 1]
+                else:
+                    # Raw booster: predict → sigmoid
+                    raw = lgbm_model.predict(X_for_model)
+                    y_proba = 1.0 / (1.0 + np.exp(-np.array(raw, dtype=float)))
+                y_teacher = (y_proba > 0.5).astype(int)
+                print(f"   🎓 蒸馏模式: teacher deny_rate={y_teacher.mean():.1%}")
+            except Exception as e:
+                print(f"   ⚠️  teacher predict_proba 失败: {e}，回退到原始标签")
+                y_teacher = None
 
-        if y.sum() < 10 or (len(y) - y.sum()) < 10:
+        # Fallback: 从原始标签构建（旧逻辑）
+        if y_teacher is None:
+            if not rr_col_name or rr_col_name not in pred_df.columns:
+                print("   ⚠️  无 teacher 模型且无 rr 列，跳过 imodels")
+                return None
+            if rr_col_name == "success_no_rr_extreme":
+                y_teacher = (pred_df[rr_col_name] < 0.5).astype(int).values
+            else:
+                q30 = pred_df[rr_col_name].quantile(0.3)
+                y_teacher = (pred_df[rr_col_name] < q30).astype(int).values
+            print("   ⚠️  无 teacher 模型，使用原始标签（非蒸馏）")
+
+        if y_teacher.sum() < 10 or (len(y_teacher) - y_teacher.sum()) < 10:
             print("   ⚠️  样本不平衡，跳过 imodels")
             return None
 
@@ -215,34 +240,86 @@ def _generate_gate_rules_imodels(
             random_state=42,
             include_linear=False,
         )
-        clf.fit(X, y, feature_names=avail)
+        clf.fit(X, y_teacher, feature_names=avail)
         rules_df = clf.get_rules()
 
-        # 只保留单特征规则（不含 &）且系数为正（坏交易方向）
-        rules_df = rules_df[
-            (rules_df["type"] == "rule")
-            & (rules_df["coef"] > 0.01)
-            & (~rules_df["rule"].astype(str).str.contains("&", na=False))
-        ]
+        # 保留有效规则（coef > 0.01，坏交易方向），包含复合规则
+        rules_df = rules_df[(rules_df["type"] == "rule") & (rules_df["coef"] > 0.01)]
         rules_df = rules_df.sort_values("coef", ascending=False)
 
         parsed = []
         for _, row in rules_df.iterrows():
             rule_str = str(row["rule"]).strip()
-            # 支持: feat <= thr, feat > thr, feat < thr, feat >= thr
-            m = re.match(r"^(\w+)\s*(<=|>=|<|>)\s*([\d.eE+\-]+)$", rule_str)
-            if m:
-                feat, op, thr = m.group(1), m.group(2), float(m.group(3))
-                if feat in avail:
-                    parsed.append((feat, op, thr, float(row["coef"])))
-                    if len(parsed) >= max_rules:
+            coef = float(row["coef"])
+
+            # 复合规则: "feat_a > 0.35 & feat_b > 0.75"
+            if "&" in rule_str:
+                parts = rule_str.split("&")
+                conditions = []
+                valid = True
+                for part in parts:
+                    m = re.match(
+                        r"^\s*(\w+)\s*(<=|>=|<|>)\s*([\d.eE+\-]+)\s*$",
+                        part.strip(),
+                    )
+                    if m and m.group(1) in avail:
+                        conditions.append((m.group(1), m.group(2), float(m.group(3))))
+                    else:
+                        valid = False
                         break
+                if valid and len(conditions) >= 2:
+                    parsed.append({"conditions": conditions, "coef": coef})
+            else:
+                # 单条件规则: "feat > 0.35"
+                m = re.match(r"^(\w+)\s*(<=|>=|<|>)\s*([\d.eE+\-]+)$", rule_str)
+                if m and m.group(1) in avail:
+                    feat, op, thr = m.group(1), m.group(2), float(m.group(3))
+                    parsed.append({"conditions": [(feat, op, thr)], "coef": coef})
+
+            if len(parsed) >= max_rules:
+                break
 
         if not parsed:
             print("   ⚠️  imodels 未提取到有效规则，使用树分裂 fallback")
             return None
 
-        print(f"   ✅ imodels 提取到 {len(parsed)} 条稳定规则（random_state=42）")
+        # ── A.7.3: 蒸馏质量验证 ──
+        # 计算 student 的 deny 预测: 任一规则触发 → deny
+        student_deny = np.zeros(len(X), dtype=bool)
+        for rule in parsed:
+            rule_match = np.ones(len(X), dtype=bool)
+            for feat, op, thr in rule["conditions"]:
+                idx = avail.index(feat)
+                col = X[:, idx]
+                if op == ">":
+                    rule_match &= col > thr
+                elif op == ">=":
+                    rule_match &= col >= thr
+                elif op == "<":
+                    rule_match &= col < thr
+                elif op == "<=":
+                    rule_match &= col <= thr
+            student_deny |= rule_match
+
+        teacher_deny = y_teacher.astype(bool)
+        agreement = np.mean(student_deny == teacher_deny)
+        student_deny_rate = student_deny.mean()
+        teacher_acc = np.mean(y_teacher == y_teacher)  # trivially 1.0 for teacher
+        # Accuracy gap: how often student disagrees with teacher
+        gap = 1.0 - agreement
+
+        n_single = sum(1 for r in parsed if len(r["conditions"]) == 1)
+        n_compound = sum(1 for r in parsed if len(r["conditions"]) > 1)
+        print(
+            f"   ✅ imodels 蒸馏: {n_single} 单条件 + {n_compound} 复合规则"
+            f" | teacher-student一致率={agreement:.1%}"
+            f" | student_deny_rate={student_deny_rate:.1%}"
+        )
+        if gap > 0.05:
+            print(f"   ⚠️  蒸馏差距 {gap:.1%} > 5%，规则可能过于简化")
+        elif gap > 0.03:
+            print(f"   ⚠️  蒸馏差距 {gap:.1%} (3-5%)，gate 可接受")
+
         return parsed
 
     except Exception as e:
@@ -258,6 +335,7 @@ def _generate_risk_gate_yaml(
     top_n: int = 10,
     predictions_path: "Path | str | None" = None,
     feature_names: "list | None" = None,
+    lgbm_model=None,
 ):
     """
     从树模型分裂规则生成 risk_gate_draft.yaml 草稿。
@@ -285,13 +363,14 @@ def _generate_risk_gate_yaml(
         except Exception:
             pred_df = None
 
-    # ── 优先用 imodels 生成稳定规则（random_state=42，不受 LightGBM seed 影响）──
+    # ── 优先用 imodels 蒸馏 teacher 生成稳定规则（A.7.2）──
     imodels_rules = None
-    if pred_df is not None and rr_col_name and feature_names:
+    if pred_df is not None and feature_names:
         imodels_rules = _generate_gate_rules_imodels(
             pred_df,
             feature_names,
-            rr_col_name,
+            lgbm_model=lgbm_model,
+            rr_col_name=rr_col_name or "",
             max_rules=top_n,
         )
 
@@ -299,29 +378,55 @@ def _generate_risk_gate_yaml(
     hard_gates = []
 
     if imodels_rules is not None:
-        # ── imodels 路径：每条规则包含 (feat, op, thr, coef) ──
-        # 操作符映射到 gate yaml 键
+        # ── imodels 路径：规则为 {"conditions": [...], "coef": float} ──
         _op_to_key = {
             "<=": "value_le",
             "<": "value_lt",
             ">": "value_gt",
             ">=": "value_ge",
         }
-        for i, (feat, op, thr, coef) in enumerate(imodels_rules):
-            condition_key = _op_to_key.get(op, "value_lt")
-            rule_id = f"gate_{feat.replace('.', '_').lower()}"
-            tag = f"HARD_{feat.upper().replace('.', '_')}"
+        for i, rule_dict in enumerate(imodels_rules):
+            conditions = rule_dict["conditions"]
+            coef = rule_dict["coef"]
+
+            if len(conditions) == 1:
+                # 单条件规则
+                feat, op, thr = conditions[0]
+                condition_key = _op_to_key.get(op, "value_lt")
+                rule_id = f"gate_{feat.replace('.', '_').lower()}"
+                tag = f"HARD_{feat.upper().replace('.', '_')}"
+                when_clause = {feat: {condition_key: round(thr, 4)}}
+                comment_str = (
+                    f"imodels_distill(seed=42): {feat} {op} {thr:.4g} | coef={coef:.4f}"
+                )
+            else:
+                # 复合规则 → all_of
+                all_of_items = []
+                feat_names = []
+                rule_parts = []
+                for feat, op, thr in conditions:
+                    condition_key = _op_to_key.get(op, "value_lt")
+                    all_of_items.append({feat: {condition_key: round(thr, 4)}})
+                    feat_names.append(feat)
+                    rule_parts.append(f"{feat} {op} {thr:.4g}")
+                rule_id = (
+                    f"gate_{'_'.join(f.replace('.', '_').lower() for f in feat_names)}"
+                )
+                tag = (
+                    f"HARD_{'_'.join(f.upper().replace('.', '_') for f in feat_names)}"
+                )
+                when_clause = {"all_of": all_of_items}
+                comment_str = f"imodels_distill(seed=42): {' & '.join(rule_parts)} | coef={coef:.4f}"
+
             rule = {
                 "id": rule_id,
                 "tag": tag,
                 "phase": "hard_gate",
                 "priority": 10 + i,
-                "reason": f"{feat} imodels 学习到的坏交易规则",
-                "when": {
-                    feat: {condition_key: round(thr, 4)},
-                },
+                "reason": f"imodels 蒸馏规则 (coef={coef:.3f})",
+                "when": when_clause,
                 "then": {"action": "deny"},
-                "comment": f"imodels(random_state=42): {feat} {op} {thr:.4g} | coef={coef:.4f}",
+                "comment": comment_str,
             }
             hard_gates.append(rule)
     else:

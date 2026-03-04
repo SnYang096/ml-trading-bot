@@ -819,6 +819,8 @@ def run_strategy_pipeline(
         "--archetype-prefilter",
         f"{config_dir}/archetypes/prefilter.yaml",
         *common_train_args,
+        "--seed",
+        "42",  # A.7.1: gate 规则确定性，固定 seed 不受外层 seed 影响
     ]
 
     rc, out = run_step("Gate Train", gate_train_args, log, dry_run=dry_run)
@@ -921,6 +923,8 @@ def run_strategy_pipeline(
         "--labels",
         f"{config_dir}/{scfg['labels_evidence']}",
         *common_train_args,
+        "--seed",
+        "42",  # A.7.1: evidence 规则确定性，固定 seed 不受外层 seed 影响
     ]
 
     rc, out = run_step("Evidence Train", evidence_train_args, log, dry_run=dry_run)

@@ -4128,6 +4128,7 @@ def train_strategy(
                                 else None
                             ),
                             feature_names=feature_names if feature_names else None,
+                            lgbm_model=loaded_model,  # A.7.2: teacher for distillation
                         )
                         print(
                             f"   \U0001f4dc Risk gate draft exported to {risk_gate_path}"

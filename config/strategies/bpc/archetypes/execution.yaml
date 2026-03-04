@@ -1,5 +1,5 @@
 # BPC Execution 配置
-# 版本: 39
+# 版本: 40
 # 更新时间: 2026-03-04
 #
 # ┌─────────────────────────────────────────────────────────┐
@@ -7,10 +7,10 @@
 # │  Sharpe (daily): 5.39                                   │
 # │  Best: initial_r=4.0, activation_r=3.0, trail_r=0.5      │
 # │  Plateau: ✅ stable (CV=0.071)                            │
-# │  Changes: initial_r: 1.0 → 4.0, activation_r: 0.5 → 3.0, trail_r: 0.5 → 0.5│
+# │  Changes: initial_r: 4.0 → 4.0, activation_r: 3.0 → 3.0, trail_r: 0.5 → 0.5│
 # └─────────────────────────────────────────────────────────┘
 #
-version: 39
+version: 40
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15

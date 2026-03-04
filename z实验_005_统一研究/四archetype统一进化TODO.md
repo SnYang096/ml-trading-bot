@@ -538,7 +538,7 @@ L1 (15m) ───────────────  LV
 
 #### A.6.1 SHAP 特征重要性替代 split importance
 
-- [ ] 在 Gate Optimize (Step 5) 和 Evidence Optimize (Step 6) 中集成 SHAP:
+- [x] 在 Gate Optimize (Step 5) 和 Evidence Optimize (Step 6) 中集成 SHAP:
   - `train_strategy_pipeline.py`: 训练后计算 SHAP values (TreeExplainer)
   - 输出: `shap_importance.json` (per-feature mean |SHAP|)
   - 代码位置: `scripts/train_strategy_pipeline.py`
@@ -546,12 +546,14 @@ L1 (15m) ───────────────  LV
 
 #### A.6.2 Walk-Forward 特征稳定性筛选
 
-- [ ] 新增 `scripts/validate_feature_stability.py`:
-  - 将训练数据分 N 个时间窗口 (如 6 个季度)
+- [x] 新增 `scripts/shap_feature_selection.py`:
+  - 将训练数据分 4 个时间窗口 (temporal cross-validation)
   - 每个窗口独立训练 LightGBM + 计算 SHAP
-  - 筛选标准: 特征在 >=80% 窗口都进入 top-K → "稳定特征"
-  - 输出: `stable_features.json` + `feature_stability_report.html`
-- [ ] 集成到 pipeline: Step 5.5 (Gate Optimize 之后、Evidence Optimize 之前)
+  - 筛选标准: 特征在 >=3/4 窗口都进入 top-K → "稳定特征"
+  - 输出: `features_gate_shap.yaml` / `features_evidence_shap.yaml`
+- [x] 集成到 pipeline: Step 2.5 (Prepare 之后, Prefilter 之前)
+- [x] `config/research_pipeline.yaml` 中 `shap_active: true` 默认开启
+- [x] `protected_nodes` 保护关键依赖节点 (atr_f, fer_failure_signals_f)
 
 #### A.6.3 特征漂移监控 (实盘侧)
 
@@ -560,6 +562,64 @@ L1 (15m) ───────────────  LV
   - 与训练期 SHAP 分布对比 (KL 散度 / rank correlation)
   - 偏差过大 → 触发重训信号
 - [ ] 集成到 `scripts/local_monitor_weekly.py` 的 L1 特征层检查
+
+---
+
+### A.7 Gate/Evidence 规则蒸馏：LightGBM → SHAP → imodels 组合拳 (NEW)
+
+> **问题**: `_collect_splits` 从 LightGBM ensemble 提取分裂点不科学，不同 seed → 不同规则 → gate 5/5 seed 一致性 0%
+> **方案**: LightGBM(固定seed) → SHAP(筛稳定特征) → imodels(蒸馏 teacher 的 predict_proba) → 规则 → 现有 YAML 格式
+> **设计文档**: `z实验_005_统一研究/gate_imodels蒸馏组合拳方案.md`
+> **YAML 格式**: 不变。RuleFit 单条件/复合规则直接兼容 `when/then/action` + `all_of`
+> **通用性**: gate 和 evidence 共用同一管线，仅标签不同
+
+#### A.7.1 Gate Train LightGBM seed 固定
+
+- [ ] `train_strategy_pipeline.py`: Gate Train (Step 5) 的 LightGBM seed 固定为 42
+  - 不受外层 `--seed` 参数影响（外层 seed 测策略鲁棒性，gate 要确定性）
+  - LightGBM 单次训练内部已含 `colsample_bytree` + `bagging` 的大规模特征搜索，无需多 seed
+- [ ] Evidence Train (Step 6) 同理，seed 固定为 42
+
+#### A.7.2 imodels 蒸馏（替代从头训练）
+
+- [ ] `_generate_gate_rules_imodels()` 改为蒸馏模式:
+  - 旧: `y = (forward_rr < q30).astype(int)` → 从原始标签学（忽略 teacher）
+  - 新: `y = (lgbm_model.predict_proba(X)[:, 1] > 0.5).astype(int)` → 从 teacher 蒸馏
+- [ ] 函数签名新增 `lgbm_model` 参数，去掉 `rr_col_name` 依赖
+- [ ] 特征输入限定为 SHAP 筛选后的稳定特征（`features_gate_shap.yaml`）
+- [ ] `RuleFitClassifier(max_rules=15, random_state=42, include_linear=False)`
+- [ ] 保留复合规则（含 `&`），解析为 `all_of` YAML 格式；单条件规则直接映射
+- [ ] 按 coef 降序取 top 5
+
+#### A.7.3 蒸馏质量验证
+
+- [ ] 蒸馏后自动对比:
+  - teacher (LightGBM) accuracy vs student (imodels 规则) accuracy
+  - 差距 < 3%: ✅ 直接使用蒸馏规则
+  - 差距 3-5%: ⚠️ 警告，仍使用（gate 不需高精度）
+  - 差距 > 5%: ❌ 放宽 max_rules 或增加特征，重试一次
+- [ ] 验证结果写入 `gate_draft.yaml` 注释 + `report.json`
+
+#### A.7.4 清理旧逻辑
+
+- [ ] 回滚当前 `_generate_gate_rules_imodels()` 从头训练实现
+- [ ] `_collect_splits` 保留但降级为 fallback（imodels 未安装时）
+- [ ] 移除 `_generate_risk_gate_yaml()` 中的旧树分裂方向判断逻辑
+
+#### A.7.5 Evidence 复用同一管线
+
+- [ ] `_generate_evidence_candidates_yaml()` 同样接入 imodels 蒸馏
+  - teacher: Return Tree LightGBM(seed=42) → `predict(X)` 回归输出
+  - student: `imodels.RuleFitRegressor(max_rules=15, random_state=42)`
+  - 导出: evidence_candidates.yaml（现有格式兼容）
+- [ ] Evidence 蒸馏质量验证: R² 对比
+
+#### A.7.6 验证清单
+
+- [ ] BPC/ME/FER 各跑 5 seed pipeline → gate_draft.yaml 5/5 一致
+- [ ] 蒸馏 accuracy 差距 < 5%
+- [ ] gate veto rate 合理（20-40%，而非 99%）
+- [ ] 单策略回测 Sharpe 无回归
 
 ---
 
