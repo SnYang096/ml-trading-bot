@@ -238,6 +238,19 @@ def _generate_gate_rules_imodels(
         clf.fit(X, y_teacher, feature_names=avail)
         rules_df = clf._get_rules()
 
+        # 诊断: 打印 RuleFit 原始输出
+        rule_rows = rules_df[rules_df["type"] == "rule"]
+        print(
+            f"   📊 RuleFit 原始: {len(rules_df)} 行, 其中 rule 类型 {len(rule_rows)} 行"
+        )
+        if len(rule_rows) > 0:
+            print(
+                f"   📊 coef 范围: [{rule_rows['coef'].min():.4f}, {rule_rows['coef'].max():.4f}]"
+            )
+            top3 = rule_rows.nlargest(3, "coef")
+            for _, r in top3.iterrows():
+                print(f"      rule={r['rule']!r}  coef={r['coef']:.4f}")
+
         # 保留有效规则（coef > 0.01，坏交易方向），包含复合规则
         rules_df = rules_df[(rules_df["type"] == "rule") & (rules_df["coef"] > 0.01)]
         rules_df = rules_df.sort_values("coef", ascending=False)
@@ -247,9 +260,13 @@ def _generate_gate_rules_imodels(
             rule_str = str(row["rule"]).strip()
             coef = float(row["coef"])
 
-            # 复合规则: "feat_a > 0.35 & feat_b > 0.75"
-            if "&" in rule_str:
-                parts = rule_str.split("&")
+            # 复合规则: "feat_a > 0.35 & feat_b > 0.75" 或 "feat_a > 0.35 and feat_b > 0.75"
+            if " and " in rule_str or "&" in rule_str:
+                parts = (
+                    rule_str.split(" and ")
+                    if " and " in rule_str
+                    else rule_str.split("&")
+                )
                 conditions = []
                 valid = True
                 for part in parts:
