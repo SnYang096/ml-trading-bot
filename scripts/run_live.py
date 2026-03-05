@@ -511,6 +511,10 @@ def _compute_initial_quantiles(
                 logger.warning("[quantiles] %s: bars 为空，跳过", symbol)
                 continue
 
+            # 注入 _symbol 列 — funding_rate / OI join 等特征需要
+            if "_symbol" not in bars_disk.columns:
+                bars_disk["_symbol"] = symbol
+
             tick_start = (now - timedelta(days=8)).strftime("%Y-%m-%d")
             ticks_disk = storage.ticks.load_range(symbol, tick_start, bar_end)
 
