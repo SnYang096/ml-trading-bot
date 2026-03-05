@@ -152,11 +152,25 @@ target 可以是任何东西:
 
 ### Step 5: 规则/候选输出
 
-每个模块将验证通过的候选写入对应 YAML 文件:
-- Gate → `archetypes/gate.yaml` (deny rules)
-- Evidence → `archetypes/evidence_candidates.yaml` → `archetypes/evidence.yaml`
-- Prefilter → `archetypes/prefilter.yaml` (前置 AND 条件)
-- Entry Filter → `archetypes/entry_filters.yaml` (入场 OR 条件)
+每个模块的文件流: **候选/草稿 → 优化 → --promote → archetypes/**
+
+| Step         | 候选/草稿位置                                     | --promote 产出                     | 脚本                                          |
+| ------------ | ------------------------------------------------- | ---------------------------------- | --------------------------------------------- |
+| Prefilter    | `{strategy}/features_prefilter.yaml` (特征池)     | `archetypes/prefilter.yaml`        | `analyze_archetype_feature_stratification.py` |
+| Direction    | `{strategy}/direction.yaml` (规则定义)            | `archetypes/direction.yaml` (copy) | `direction_strict_validation.py`              |
+| Gate         | `{strategy}/gate_draft.yaml` (训练产出)           | `archetypes/gate.yaml`             | `optimize_gate_unified.py`                    |
+| Evidence     | `results/.../evidence_candidates.yaml` (训练产出) | `archetypes/evidence.yaml`         | `optimize_evidence_plateau.py`                |
+| Entry Filter | 无候选 (SHAP∩Gain 内联发现)                       | `archetypes/entry_filters.yaml`    | `optimize_entry_filter_plateau.py`            |
+| Execution    | 无候选 (Grid Search 内联)                         | `archetypes/execution.yaml`        | `optimize_execution_grid.py`                  |
+
+**目录约定**:
+- `config/strategies/{strategy}/` — 候选特征、标签、模型配置 (训练输入)
+- `config/strategies/{strategy}/archetypes/` — 生产配置 (实盘读取)
+- `results/.../{strategy}/` — 训练产物 (predictions/logs_gated/candidates)
+
+**数据流规范** (见 `research_pipeline.yaml` `data_flow` 段):
+- Gate 之前: 读 `predictions.parquet`
+- Gate 之后 (Evidence/Entry Filter/Execution/Backtest): 读 `logs_gated.parquet`
 
 ---
 
@@ -164,17 +178,17 @@ target 可以是任何东西:
 
 ### 总览
 
-| 维度         | Prefilter                     | Gate                                                | Evidence                   | Entry Filter                       |
-| ------------ | ----------------------------- | --------------------------------------------------- | -------------------------- | ---------------------------------- |
-| **问的问题** | archetype 是否成立?           | 尾部风险高不高?                                     | 这笔交易有多好?            | 现在入场时机好不好?                |
-| **标签**     | `success_no_rr_extreme < 0.5` | `success_no_rr_extreme < 0.5` 或 `forward_rr < Q30` | `forward_rr` (连续)        | exec R-multiple (二值化 or snotio) |
-| **数据范围** | ALL `features_labeled`        | prefiltered data                                    | gate-passed data           | gate-passed + direction            |
-| **top_n**    | 8                             | 8                                                   | 10~15                      | 8                                  |
-| **选择标准** | bad_rate_diff + holdout       | Gate Score (Youden's J > 0)                         | bad_suppression            | snotio 显著性 (z-test p<0.05)      |
-| **输出格式** | AND deny rules                | AND deny rules                                      | 候选特征 + bins            | OR timing conditions               |
-| **输出文件** | `prefilter.yaml`              | `gate.yaml`                                         | `evidence_candidates.yaml` | `entry_filters.yaml`               |
-| **实现状态** | ✅ 已完成                       | ✅ 已完成                                              | ✅ 已完成                      | ✅ 已完成                              |
-| **KPI 配置** | `kpi_gates/prefilter_layer.yaml` | `kpi_gates/gate_layer.yaml`                        | `kpi_gates/evidence_layer.yaml`      | `kpi_gates/entry_filter_layer.yaml`        |
+| 维度         | Prefilter                        | Gate                                                | Evidence                        | Entry Filter                        |
+| ------------ | -------------------------------- | --------------------------------------------------- | ------------------------------- | ----------------------------------- |
+| **问的问题** | archetype 是否成立?              | 尾部风险高不高?                                     | 这笔交易有多好?                 | 现在入场时机好不好?                 |
+| **标签**     | `success_no_rr_extreme < 0.5`    | `success_no_rr_extreme < 0.5` 或 `forward_rr < Q30` | `forward_rr` (连续)             | exec R-multiple (二值化 or snotio)  |
+| **数据范围** | ALL `features_labeled`           | prefiltered data                                    | gate-passed data                | gate-passed + direction             |
+| **top_n**    | 8                                | 8                                                   | 10~15                           | 8                                   |
+| **选择标准** | bad_rate_diff + holdout          | Gate Score (Youden's J > 0)                         | bad_suppression                 | snotio 显著性 (z-test p<0.05)       |
+| **输出格式** | AND deny rules                   | AND deny rules                                      | 候选特征 + bins                 | OR timing conditions                |
+| **输出文件** | `prefilter.yaml`                 | `gate.yaml`                                         | `evidence_candidates.yaml`      | `entry_filters.yaml`                |
+| **实现状态** | ✅ 已完成                         | ✅ 已完成                                            | ✅ 已完成                        | ✅ 已完成                            |
+| **KPI 配置** | `kpi_gates/prefilter_layer.yaml` | `kpi_gates/gate_layer.yaml`                         | `kpi_gates/evidence_layer.yaml` | `kpi_gates/entry_filter_layer.yaml` |
 
 ### Prefilter
 
