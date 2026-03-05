@@ -488,7 +488,11 @@ class GapFiller:
         return len(remaining) == 0
     
     def _save_filled_data(self, symbol: str, bars: pd.DataFrame) -> None:
-        """将补充的 bars 按天保存到 storage（ticks + bars 两个目录）"""
+        """将补充的 bars 按天保存到 storage（bar_1min 目录）
+
+        注意: Vision 返回的是聚合后的 1min bars，不含原始 tick 列
+        (price/side)，因此只写 bar_1min，不写 ticks。
+        """
         if self.storage_manager is None or len(bars) == 0:
             return
         if "timestamp" not in bars.columns:
@@ -499,7 +503,6 @@ class GapFiller:
         for date_str, day_bars in bars_copy.groupby("_date"):
             day_data = day_bars.drop(columns=["_date"])
             try:
-                self.storage_manager.ticks.append(symbol, date_str, day_data)
                 self.storage_manager.bar_1min.append(symbol, date_str, day_data)
             except Exception as e:
                 print(f"  ⚠️ 保存 {symbol}/{date_str} 失败: {e}")
