@@ -615,14 +615,14 @@ feature_pipeline:
 ```
 
 实施清单:
-- [ ] 创建 `config/strategies/{bpc,me,fer}/features_prefilter.yaml` (每策略独立)
-- [ ] 改造 `analyze_archetype_feature_stratification.py` 或新建脚本:
+- [x] 创建 `config/strategies/{bpc,me,fer}/features_prefilter.yaml` (每策略独立)
+- [x] 改造 `analyze_archetype_feature_stratification.py` 或新建脚本:
   - 读取 `features_prefilter.yaml` 获取 archetype 专属特征列表
   - 在 ALL features_labeled 上训 LightGBM (label=success_no_rr_extreme)
   - 调用 `_compute_shap_gain_features()` 发现 top 特征
   - 统计验证 + train/holdout split
   - 输出 prefilter.yaml (AND deny rules)
-- [ ] `auto_research_pipeline.py` Step 3 调用新 prefilter 脚本
+- [x] `auto_research_pipeline.py` Step 3 调用新 prefilter 脚本
 - [ ] 验证: BPC/ME/FER 各跑一次，prefilter 规则在 holdout 上有效
 
 #### A.8.2 Entry Filter 改造 — SHAP∩Gain 扩大搜索空间 (P2)

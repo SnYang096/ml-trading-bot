@@ -1,0 +1,58 @@
+layer: "prefilter"
+
+# ================================================================
+# Prefilter 层 KPI Gate — Meta-Algorithm 统计验证门槛
+# ================================================================
+#
+# Prefilter 职责: 定义 archetype 语义边界 (非尾部风险).
+# 信号天然比 Gate 弱, 所以门槛更宽松.
+#
+# 脚本读取路径:
+#   analyze_archetype_feature_stratification.py --meta-algorithm
+# ================================================================
+
+# ── 统计验证门槛 ──
+thresholds:
+  # Lift: bad concentration in denied region / baseline
+  # Prefilter 信号弱, 1.05x 已有意义
+  min_lift: 1.05
+
+  # Effect size: mean_rr(allow) - mean_rr(deny)
+  min_effect: 0.02
+
+  # Robustness: time-fold 一致性 (0=全不一致, 1=全一致)
+  min_robustness: 0.3
+
+  # 相关性剪枝: deny_mask 相关性超过此值 → 去重
+  correlation_threshold: 0.80
+
+  # 最终规则数上限
+  max_rules: 3
+
+  # Deny rate 合法范围 (太小无意义, 太大误杀严重)
+  deny_rate_min: 0.03
+  deny_rate_max: 0.70
+
+  # 通过率保底: 最少保留行数
+  min_rows: 500
+
+# ── LightGBM 训练参数 ──
+lgb_params:
+  num_leaves: 31
+  learning_rate: 0.05
+  min_child_samples: 50
+  feature_fraction: 0.8
+  bagging_fraction: 0.8
+  bagging_freq: 5
+  n_estimators: 200
+
+# ── Holdout 验证参数 ──
+holdout:
+  ratio: 0.2
+  n_folds: 3
+  quantiles: [0.05, 0.10, 0.15, 0.20, 0.80, 0.85, 0.90, 0.95]
+
+# ── SHAP∩Gain 参数 ──
+shap_gain:
+  top_n: 8
+  compute_interactions: true

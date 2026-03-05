@@ -1,0 +1,38 @@
+# FER Prefilter 特征配置 (Meta-Algorithm)
+# 职责: 定义 FER archetype 语义边界的特征候选池
+# 仅含 FER 专属 + 交叉 + 场景语义特征 — 排除通用特征 (RSI/MACD/ATR/SMA)
+#
+# 设计理念:
+#   Prefilter 回答: "这个 bar 是不是 FER (Failure-Exhaustion-Reversal)?"
+#   如果用通用特征, 所有 archetype 会选到相同特征, 失去区分度
+#
+# 用法 (Meta-Algorithm 模式):
+#   python scripts/analyze_archetype_feature_stratification.py \
+#       --logs results/.../fer/features_labeled.parquet \
+#       --strategy fer \
+#       --config config/strategies/fer/prefilter.yaml \
+#       --features-prefilter config/strategies/fer/features_prefilter.yaml \
+#       --meta-algorithm --promote
+
+name: fer_prefilter
+description: |
+  FER Prefilter 特征: 单边博弈失败/反转信号的因果前提特征。
+  SHAP∩Gain 在这些特征上训练 LightGBM, 发现 archetype 边界。
+
+feature_pipeline:
+  requested_features:
+    # ========== FER 专属: 因果失败信号 ==========
+    # → fer_signed_efficiency, fer_efficiency_flip, fer_aggressor_absorption,
+    #   fer_trapped_longs_score, fer_trapped_shorts_score, fer_impulse_failure_score,
+    #   fer_momentum_efficiency_decay, fer_volume_price_divergence, ...
+    - fer_failure_signals_f
+
+    # ========== FER 交叉特征 ==========
+    # 资金+VPIN 双源力竭 (FER 核心交叉)
+    - dual_exhaustion_f
+
+    # ========== 场景语义 (FER 相关) ==========
+    # OI 场景语义 (exhaustion 与 FER 的力竭反转语义对应)
+    - oi_scene_semantic_scores_f
+    # Wick 力竭场景语义
+    - wick_scene_semantic_scores_f

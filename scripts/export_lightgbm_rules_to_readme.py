@@ -356,6 +356,27 @@ def _generate_gate_rules_statistical(
     返回: [{"conditions": [(feat, op, thr), ...], "coef": lift}, ...] 或 None
     """
     import numpy as np
+    import yaml as _yaml
+    from pathlib import Path as _Path
+
+    # ── 加载 kpi_gates/gate_layer.yaml ──
+    _gate_kpi_path = _Path("config/kpi_gates/gate_layer.yaml")
+    if _gate_kpi_path.exists():
+        with open(_gate_kpi_path, "r", encoding="utf-8") as _gf:
+            _gkpi = _yaml.safe_load(_gf) or {}
+    else:
+        _gkpi = {}
+    _gt = _gkpi.get("thresholds", {})
+    _gc = _gkpi.get("compound", {})
+    _gv = _gkpi.get("validation", {})
+    _gsg = _gkpi.get("shap_gain", {})
+
+    GATE_MIN_LIFT = _gt.get("min_lift", 1.05)
+    GATE_MIN_EFFECT = _gt.get("min_effect", 0.10)
+    GATE_MIN_ROBUSTNESS = _gt.get("min_robustness", 0.4)
+    GATE_CORR_THRESHOLD = _gt.get("correlation_threshold", 0.80)
+    GATE_DENY_RATE_MIN = _gt.get("deny_rate_min", 0.05)
+    GATE_DENY_RATE_MAX = _gt.get("deny_rate_max", 0.70)
 
     avail = [f for f in feature_names if f in pred_df.columns]
     if len(avail) < 2 or not rr_col_name or rr_col_name not in pred_df.columns:
@@ -363,12 +384,13 @@ def _generate_gate_rules_statistical(
         return None
 
     # ── Step 1: SHAP ∩ Gain 特征选择 (Gate/Evidence 共用) ──
+    _gate_top_n = _gsg.get("top_n", 8)
     top_features, shap_importance_map, _interaction_pairs = _compute_shap_gain_features(
         pred_df,
         feature_names,
         lgbm_model,
-        top_n=8,
-        compute_interactions=True,
+        top_n=_gate_top_n,
+        compute_interactions=_gsg.get("compute_interactions", True),
     )
 
     # ── Step 2: 构建坏交易标签 ──
@@ -391,8 +413,8 @@ def _generate_gate_rules_statistical(
     )
 
     # ── Step 3: Threshold sweep ──
-    quantiles = [0.15, 0.25, 0.35, 0.50, 0.65, 0.75, 0.85]
-    n_folds = 5
+    quantiles = _gv.get("quantiles", [0.15, 0.25, 0.35, 0.50, 0.65, 0.75, 0.85])
+    n_folds = _gv.get("n_folds", 5)
     fold_size = n_total // n_folds
     candidates = []
 
@@ -409,20 +431,20 @@ def _generate_gate_rules_statistical(
                 deny_mask = deny_mask & valid
                 deny_rate = float(deny_mask.mean())
 
-                if deny_rate < 0.05 or deny_rate > 0.70:
+                if deny_rate < GATE_DENY_RATE_MIN or deny_rate > GATE_DENY_RATE_MAX:
                     continue
 
                 # Lift
                 bad_in_deny = float(bad[deny_mask].mean()) if deny_mask.any() else 0
                 lift = bad_in_deny / overall_bad_rate if overall_bad_rate > 0 else 0
-                if lift <= 1.05:
+                if lift <= GATE_MIN_LIFT:
                     continue
 
                 # Effect size
                 mean_allow = float(np.nanmean(rr_vals[~deny_mask]))
                 mean_deny = float(np.nanmean(rr_vals[deny_mask]))
                 effect = mean_allow - mean_deny
-                if effect < 0.10:
+                if effect < GATE_MIN_EFFECT:
                     continue
 
                 # Robustness (time-ordered folds + cross-sample stability)
@@ -448,7 +470,7 @@ def _generate_gate_rules_statistical(
                     robustness = rob_time * 0.6 + rob_cross * 0.4
                 else:
                     robustness = rob_time
-                if robustness < 0.4:
+                if robustness < GATE_MIN_ROBUSTNESS:
                     continue
 
                 op = ">" if direction == "gt" else "<"
@@ -486,7 +508,7 @@ def _generate_gate_rules_statistical(
             if m1.std() == 0 or m2.std() == 0:
                 continue
             corr = float(np.corrcoef(m1, m2)[0, 1])
-            if abs(corr) > 0.80:
+            if abs(corr) > GATE_CORR_THRESHOLD:
                 correlated = True
                 break
         if not correlated:
@@ -504,8 +526,8 @@ def _generate_gate_rules_statistical(
     # 比粗略 threshold sweep 更好: 能发现 non-linear alpha region
     if _interaction_pairs:
         # 10 个分位数 bin 边界 → 大约 10×10 = 100 cells per pair
-        surface_quantiles = np.linspace(0.10, 0.90, 9)  # 9 个切点 → 10 bins
-        min_cell_samples = max(20, n_total // 50)  # 每个 cell 最少样本数
+        surface_quantiles = np.linspace(0.10, 0.90, _gc.get("surface_bins", 9))
+        min_cell_samples = max(20, n_total // _gc.get("min_cell_ratio", 50))
 
         for feat_a, feat_b, interact_score in _interaction_pairs[:5]:
             if feat_a not in pred_df.columns or feat_b not in pred_df.columns:
@@ -554,8 +576,8 @@ def _generate_gate_rules_statistical(
                 continue
 
             # ── 找高 lift 区域并合并相邻 cells ──
-            # 筛选 lift > 1.3 的 cells
-            hot_cells = [c for c in cell_grid if c[2] > 1.3]
+            HOT_CELL_LIFT = _gc.get("hot_cell_lift", 1.3)
+            hot_cells = [c for c in cell_grid if c[2] > HOT_CELL_LIFT]
             if not hot_cells:
                 continue
 
@@ -600,17 +622,23 @@ def _generate_gate_rules_statistical(
                     & valid_ab
                 )
                 jdr = float(region_mask.mean())
-                if jdr < 0.02 or jdr > 0.50 or not region_mask.any():
+                JOINT_DENY_MIN = _gc.get("joint_deny_rate_min", 0.02)
+                JOINT_DENY_MAX = _gc.get("joint_deny_rate_max", 0.50)
+                if (
+                    jdr < JOINT_DENY_MIN
+                    or jdr > JOINT_DENY_MAX
+                    or not region_mask.any()
+                ):
                     continue
 
                 jbr = float(bad[region_mask].mean())
                 jl = jbr / overall_bad_rate if overall_bad_rate > 0 else 0
-                if jl < 1.3:
+                if jl < HOT_CELL_LIFT:
                     continue
                 je = float(np.nanmean(rr_vals[~region_mask])) - float(
                     np.nanmean(rr_vals[region_mask])
                 )
-                if je < 0.15:
+                if je < _gc.get("min_joint_effect", 0.15):
                     continue
 
                 # Robustness: time-fold + cross-sample stability
@@ -633,7 +661,7 @@ def _generate_gate_rules_statistical(
                     rob = rob_time * 0.6 + rob_cross * 0.4  # 综合 robustness
                 else:
                     rob = rob_time
-                if rob < 0.35:
+                if rob < _gc.get("min_joint_robustness", 0.35):
                     continue
 
                 # 生成规则条件: 转换区域边界为简洁的 threshold 规则
@@ -680,7 +708,7 @@ def _generate_gate_rules_statistical(
             s1, s2 = selected[i], selected[j]
             joint = s1["_deny_mask"] & s2["_deny_mask"]
             jdr = float(joint.mean())
-            if jdr < 0.02 or jdr > 0.50:
+            if jdr < JOINT_DENY_MIN or jdr > JOINT_DENY_MAX:
                 continue
             if not joint.any():
                 continue
@@ -977,7 +1005,10 @@ def _generate_risk_gate_yaml(
 
                 # 最小效果量过滤: 两侧差距 < 0.15 的规则不可靠，跳过
                 effect_size = abs(mean_low - mean_high)
-                if effect_size < 0.15:
+                _ts_min_effect = _gkpi.get("tree_split", {}).get(
+                    "min_effect_size", 0.15
+                )
+                if effect_size < _ts_min_effect:
                     print(
                         f"   ⚠️  {name}: 效果量不足 ({effect_size:.3f}<0.15)，"
                         f"low={mean_low:.3f} vs high={mean_high:.3f}，跳过"

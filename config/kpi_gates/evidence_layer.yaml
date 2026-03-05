@@ -1,0 +1,28 @@
+layer: "evidence"
+
+# ================================================================
+# Evidence 层 KPI Gate — 候选发现参数
+# ================================================================
+#
+# Evidence 职责: 连续仓位调节 (suppress → amplify 五档).
+# 用 SHAP∩Gain + bad_suppression + 2D 交互发现候选.
+#
+# 脚本读取路径:
+#   export_lightgbm_rules_to_readme.py → _generate_evidence_candidates_yaml()
+# ================================================================
+
+# ── 候选发现参数 ──
+thresholds:
+  # 候选数量上限
+  top_n: 15
+
+  # 分位数 bins (五档映射)
+  quantile_bins: [0.2, 0.4, 0.6, 0.8]
+
+  # 五档标签
+  labels: [suppress, downweight, neutral, favor, amplify]
+
+# ── SHAP∩Gain 参数 ──
+shap_gain:
+  top_n: 8
+  compute_interactions: true

@@ -749,36 +749,40 @@ def run_strategy_pipeline(
 
     # ── Step 3: Prefilter (--promote) ──
     if scfg.get("has_prefilter"):
-        prefilter_cmd = [
-            "python",
-            "scripts/analyze_archetype_feature_stratification.py",
-            "--logs",
-            f"{prepare_dir}/features_labeled.parquet",
-            "--strategy",
-            strategy,
-            "--config",
-            f"{config_dir}/prefilter.yaml",
-            "--select-recent",
-            "6",
-            "--promote",
-        ]
-        # 从 kpi_gates 注入 prefilter 约束
-        if prefilter_gates.get("min_pass_rate"):
-            prefilter_cmd += [
-                "--min-prefilter-pass-rate",
-                str(prefilter_gates["min_pass_rate"]),
+        _features_prefilter_path = Path(config_dir) / "features_prefilter.yaml"
+        if not _features_prefilter_path.exists():
+            print(f"  ❌ Prefilter: {_features_prefilter_path} 不存在, 跳过")
+        else:
+            prefilter_cmd = [
+                "python",
+                "scripts/analyze_archetype_feature_stratification.py",
+                "--logs",
+                f"{prepare_dir}/features_labeled.parquet",
+                "--strategy",
+                strategy,
+                "--meta-algorithm",
+                "--features-prefilter",
+                str(_features_prefilter_path),
+                "--promote",
             ]
-        if prefilter_gates.get("min_rows"):
-            prefilter_cmd += [
-                "--min-prefilter-rows",
-                str(prefilter_gates["min_rows"]),
-            ]
-        run_step(
-            "Prefilter Analyze",
-            prefilter_cmd,
-            log,
-            dry_run=dry_run,
-        )
+
+            # 从 kpi_gates 注入 prefilter 约束
+            if prefilter_gates.get("min_pass_rate"):
+                prefilter_cmd += [
+                    "--min-prefilter-pass-rate",
+                    str(prefilter_gates["min_pass_rate"]),
+                ]
+            if prefilter_gates.get("min_rows"):
+                prefilter_cmd += [
+                    "--min-prefilter-rows",
+                    str(prefilter_gates["min_rows"]),
+                ]
+            run_step(
+                "Prefilter Analyze",
+                prefilter_cmd,
+                log,
+                dry_run=dry_run,
+            )
 
     # ── Step 4: Direction (--promote) ──
     if scfg.get("has_direction"):
