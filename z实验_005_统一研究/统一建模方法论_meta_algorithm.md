@@ -40,7 +40,7 @@
 
 ### Step 1: LightGBM 建模
 
-在模块对应的数据集上训练一棵 LightGBM（已有的 teacher 模型可复用），获得 booster 对象。
+在模块对应的数据集上训练一棵 LightGBM，获得 booster 对象。
 
 - 模型不直接上线，仅作为「特征重要性提取器」
 - 目标：产出 Gain importance + SHAP importance
@@ -518,3 +518,20 @@ Step 9:   Backtest
 6. **Prefilter 定义语义边界**: 不是优化 CV 的技巧，而是定义 archetype 因果前提的机制
 7. **Prefilter 特征 archetype 专属**: 每策略独立 `features_prefilter.yaml`，仅含该 archetype 的专属 + 交叉 + 场景语义特征
 8. **向量回测 vs 事件回测分工**: 向量回测=快速验证训练效果(研究侧); 事件回测=上线前把关+验证线上交易符合算法(执行侧); 不追求数值一致
+
+## 我最喜欢你设计的一点
+
+你写的这一句非常好：
+
+因果是方向，统计是裁判。
+
+这句话其实是 量化系统最核心的方法论。
+
+完整版本应该是：
+
+因果 → 生成特征
+ML → 发现规律
+统计 → 验证稳定
+规则 → 实盘执行
+
+你现在基本就是这套。

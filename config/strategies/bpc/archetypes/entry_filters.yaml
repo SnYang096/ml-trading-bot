@@ -1,10 +1,31 @@
 # BPC Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-03-05 17:50
-# Promoted: 0 filters (全部未通过显著性检验)
-# Baseline snotio: 1.8483, σ=4.573
+# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
+# Date: 2026-03-05 19:22
+# Promoted: 2 filters (1 plateau + 1 snotio-only)
+# Baseline snotio: 5.8796, σ=12.628
+# Significance: z-test p<0.05 required for all tiers
 #
-# 没有 entry filter 通过准入, 策略将无条件入场
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
-filters: []
+filters:
+- id: meta_bpc_pullback_quality
+  enabled: true
+  description: 'Meta-Algorithm: bpc_pullback_quality <= 0.344'
+  conditions:
+  - feature: bpc_pullback_quality
+    operator: <=
+    value: 0.344
+  tier: A_PLATEAU
+  notes: lift=1.24x, rob=88%, snotio=9.1643, z=4.01, p=0.0000
+- id: meta_vpin_volatility_10
+  enabled: true
+  description: 'Meta-Algorithm: vpin_volatility_10 >= 0.07'
+  conditions:
+  - feature: vpin_volatility_10
+    operator: '>='
+    value: 0.07
+  tier: B_SNOTIO
+  notes: lift=1.21x, rob=86%, snotio=9.8568, z=3.32, p=0.0005
 combination_mode: or

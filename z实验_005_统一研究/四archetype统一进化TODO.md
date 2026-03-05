@@ -631,14 +631,29 @@ feature_pipeline:
 > **目标**: SHAP 在 50+ 特征上自动发现 entry timing 特征
 
 实施清单:
-- [ ] 设计 entry quality 标签 (exec R-multiple > 0 = good entry 或 entry drawdown < X)
-- [ ] 改造 `optimize_entry_filter_plateau.py` 或新建脚本:
+- [x] 设计 entry quality 标签 (exec R-multiple > 0 = good entry)
+- [x] 改造 `optimize_entry_filter_plateau.py` --meta-algorithm 模式:
   - 在 gate-passed + direction 数据上训 LightGBM (label=entry_quality)
   - 调用 `_compute_shap_gain_features()` 发现 entry timing 特征
   - 对候选特征做 plateau scanning + snotio z-test 验证
   - 输出 entry_filters.yaml (OR timing conditions)
-- [ ] `auto_research_pipeline.py` Step 7 调用新 entry filter 脚本
-- [ ] 验证: 至少 1 个 filter 通过 Tier A/B 准入
+- [x] `auto_research_pipeline.py` Step 7 调用 --meta-algorithm
+- [x] kpi_gates/entry_filter_layer.yaml 创建完成
+- [x] **改进 A**: Label 改为 `exec_r > median(exec_r)` 自适应中位数阈值
+  - kpi_gates 增加 `label.method: median` 配置
+  - good_rate 从 ~60% 改善为 ~50% (完美平衡)
+  - 语义: "比中位数更好的入场" 而非 "不亏"
+- [x] **改进 B**: 删除三个 archetype 手工研究文件 (bpc/me/fer entry_filters.yaml → meta-algorithm 已完全替代)
+- [x] **改进 C**: 原始特征排除改用 feature_dependencies.yaml raw_scale_columns
+  - 单一数据源: 不再硬编码前缀, 从 YAML 读取 35 列原始特征定义
+  - 新增 raw_orderflow/raw_indicator/raw_oi/model_output 分类
+  - 值域护栏仅报警不排除 (rsi/zscore 等有界特征 >1 是正常的)
+- [x] 验证 (最终): 2 条核心规则通过 (1 Tier-A + 1 Tier-B)
+  - bpc_pullback_quality <= 0.344: lift=1.24x, rob=88%, snotio=9.16, z=4.01 (Tier A)
+  - vpin_volatility_10 >= 0.07: lift=1.21x, rob=86%, snotio=9.86, z=3.32 (Tier B)
+- [x] 端到端 BPC 回测 (logs_gated.parquet, Gate+EntryFilter+Evidence):
+  - Gate: 535/2960 (18.1%) → Entry Filter: 285/535 (53.3%) → 161 trades
+  - Sharpe=0.3114, Win=78.9%, MeanR=0.3000, MaxDD=3.5%
 
 #### A.8.3 管线 Meta-Algorithm 模式验证 (P1)
 

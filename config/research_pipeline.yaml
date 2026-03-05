@@ -153,6 +153,26 @@ deploy_gate:
   # │ HIGH            │ ✅ DEPLOY    │ ✅ DEPLOY    │ ❌ SKIP     │  漂移大但性能没变→不动
   # │ < HIGH          │ ✅ DEPLOY    │ ❌ SKIP      │ ❌ SKIP     │  小漂移只有大提升才动
 
+# ── 管线数据流 (Step 间 I/O 约束) ───────────────────────
+# Gate 输出 logs_gated.parquet 后, 所有下游步骤必须读取此文件.
+# 原因: Entry Filter / Evidence / Execution 的阈值必须在 gate 过滤后的
+# 分布上优化, 否则会产生 distribution mismatch.
+# 典型错误: 回测时用 predictions.parquet (无 gate_decision) → entry filter 100% pass.
+data_flow:
+  # 文件名 (Step 输出产物, 相对于 run_dir/{strategy}/)
+  model_predictions: "predictions.parquet"   # Step 1 输出: 模型预测
+  gated_logs: "logs_gated.parquet"           # Step 5 输出: 含 gate_decision 列
+
+  # 各步骤输入源
+  step_inputs:
+    prefilter: "predictions.parquet"           # 全量预测上做 prefilter
+    gate_train: "predictions.parquet"          # 全量预测上训练 gate
+    gate_apply: "predictions.parquet"          # Gate apply → 产出 logs_gated.parquet
+    evidence_optimize: "logs_gated.parquet"    # gate 后人群上优化
+    entry_filter: "logs_gated.parquet"         # gate 后人群上发现 timing
+    execution: "logs_gated.parquet"            # gate 后人群上优化止损
+    backtest: "logs_gated.parquet"             # gate 后人群上回测
+
 # ── 输出 ──────────────────────────────────────────────────────
 output:
   history_dir: "results/research_history"

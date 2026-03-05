@@ -993,7 +993,7 @@ def run_strategy_pipeline(
         dry_run=dry_run,
     )
 
-    # ── Step 7: Entry Filter (--promote) ──
+    # ── Step 7: Entry Filter (--meta-algorithm --promote) ──
     # 必须用 logs_gated.parquet：Entry Filter 的阈值必须在 gate 过滤后的
     # 分布上优化，否则会和 gate 产生 distribution mismatch
     run_step(
@@ -1007,7 +1007,7 @@ def run_strategy_pipeline(
             strategy,
             "--strategies-root",
             strategies_root,
-            "--research",
+            "--meta-algorithm",
             "--promote",
         ],
         log,

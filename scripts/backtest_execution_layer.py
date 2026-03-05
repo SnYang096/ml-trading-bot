@@ -4470,6 +4470,12 @@ def main() -> int:
         print(
             f"   🚪 Gate filter (auto): {n_allowed} allow entries / {len(df)} total bars"
         )
+    else:
+        # 无 gate 列 → 可能用了错误的输入文件 (predictions.parquet 而非 logs_gated.parquet)
+        print(
+            "   ⚠️  无 gate_decision/gate_ok 列 — Gate 未生效!"
+            " 应使用 logs_gated.parquet (见 research_pipeline.yaml data_flow)"
+        )
 
     n_entries = int((df["entry_direction"] != 0).sum())
     if n_entries == 0:
