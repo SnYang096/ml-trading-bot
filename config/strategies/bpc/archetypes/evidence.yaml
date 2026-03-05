@@ -1,6 +1,6 @@
 # BPC Evidence Archetype (auto-promoted)
-# 来源: results/train_final_20260305_002834_return_tree/bpc/evidence_candidates.yaml
-# 优化规则: 3/9 条通过 plateau 验证
+# 来源: results/train_final_20260305_175038_return_tree/bpc/evidence_candidates.yaml
+# 优化规则: 2/9 条通过 plateau 验证
 # ✅ 方向已由数据自动验证
 
 schema:
@@ -11,34 +11,11 @@ schema:
     favor: 有利 - 提高信心/仓位
     amplify: 强烈有利 - 最大化执行
 evidence:
-- id: evidence_atr_percentile
-  feature: atr_percentile
-  rank: 1
-  direction: negative
-  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.25
-    - 0.45
-    - 0.65
-    - 0.85
-    labels:
-    - amplify
-    - favor
-    - neutral
-    - downweight
-    - suppress
-  split_count: 2
 - id: evidence_shd_pct
   feature: shd_pct
-  rank: 3
+  rank: 2
   direction: negative
-  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  usage_hint: 'TODO: 填写用途'
   affects:
   - tp_range
   - trailing_speed
@@ -46,22 +23,22 @@ evidence:
   - position_size
   quantile_mapping:
     bins:
-    - 0.15
-    - 0.35
-    - 0.55
-    - 0.75
+    - 0.3
+    - 0.5
+    - 0.7
+    - 0.9
     labels:
     - amplify
     - favor
     - neutral
     - downweight
     - suppress
-  split_count: 1
+  split_count: 6
 - id: evidence_macd_signal_atr
   feature: macd_signal_atr
-  rank: 6
+  rank: 3
   direction: positive
-  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+  usage_hint: 'TODO: 填写用途'
   affects:
   - tp_range
   - trailing_speed
@@ -79,4 +56,5 @@ evidence:
     - neutral
     - favor
     - amplify
-  split_count: 1
+  split_count: 5
+min_score: 0.1

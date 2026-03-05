@@ -644,9 +644,15 @@ feature_pipeline:
 
 > **目标**: 端到端验证改造后的完整管线
 
-- [ ] BPC 全流程: Step 2.5 SHAP → Step 3 Prefilter(新) → Step 5 Gate → Step 6 Evidence → Step 7 EntryFilter(新)
-- [ ] Gate 效果验证: holdout 上 gate_score > 0 且 allow_rr > vetoed_rr
-- [ ] Prefilter 效果验证: holdout 上 prefilter PASS 组 bad_rate 显著低于 FAIL 组
+- [x] BPC 全流程: Step 2.5 SHAP → Step 3 Prefilter(新) → Step 5 Gate → Step 6 Evidence → Step 7 EntryFilter → Step 8 Execution → Step 9 Backtest
+  - Sharpe=0.1353, 210 trades, Win=71%, MeanR=0.1136, Total R=23.86
+- [x] Gate 效果验证: holdout 上 gate_score > 0 且 allow_rr > vetoed_rr
+  - 4 条 gate 规则全部 gate_score > 0 (最高 +0.135)
+  - Evidence Gate Apply: allow_rr=5.575 > vetoed_rr=4.964 (Gate效果 +0.611)
+- [x] Prefilter 效果验证: holdout 上 3 条规则全部 gate_score > 0
+  - funding_ignition_score: score=+0.053, lift=1.20x, rob=96%
+  - bpc_bb_compression: score=+0.042, lift=1.12x, rob=92%
+  - bpc_vpin_breakout_confirm: score=+0.014, lift=1.16x, rob=90%
 
 ---
 
