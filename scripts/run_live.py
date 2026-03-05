@@ -397,6 +397,82 @@ def _setup_three_strategies(
     return manager, pcm
 
 
+def _set_quantiles_per_symbol(
+    strategy,
+    per_symbol_dfs: List[pd.DataFrame],
+    arch_name: str,
+    tf: str | None,
+) -> None:
+    """Per-symbol quantile 计算 + 中位数融合。
+
+    对每个 symbol 的 DataFrame 独立计算 quantile 阈值，
+    然后取所有 symbol 的中位数作为最终阈值。
+    避免跨 symbol 分布污染（BTC VPIN >> ADA 等）。
+    """
+    import numpy as np
+
+    if not per_symbol_dfs or not hasattr(strategy, "set_quantiles"):
+        return
+
+    # 1. 先用第一个 DataFrame 计算一次（保证 _quantiles 返回结构一致）
+    strategy.set_quantiles(per_symbol_dfs[0])
+
+    if len(per_symbol_dfs) <= 1:
+        logger.info(
+            "[quantiles] %s (timeframe=%s): 1 symbol, %d 行",
+            arch_name,
+            tf or "default",
+            len(per_symbol_dfs[0]),
+        )
+        return
+
+    # 2. 为每个 symbol 独立计算 quantile 阈值
+    all_quantiles: List[Dict[str, Dict[str, float]]] = []
+    for df in per_symbol_dfs:
+        strategy.set_quantiles(df)
+        if hasattr(strategy, "_quantiles") and strategy._quantiles:
+            # deep copy
+            all_quantiles.append({k: dict(v) for k, v in strategy._quantiles.items()})
+
+    if not all_quantiles:
+        logger.warning("[quantiles] %s: 无有效 quantiles", arch_name)
+        return
+
+    # 3. 取中位数融合
+    merged: Dict[str, Dict[str, float]] = {}
+    # 收集所有出现过的 feature keys
+    all_feat_keys: set = set()
+    for q in all_quantiles:
+        all_feat_keys |= q.keys()
+
+    for feat_key in all_feat_keys:
+        merged[feat_key] = {}
+        # 收集该特征所有分位点 keys
+        q_keys: set = set()
+        for q in all_quantiles:
+            if feat_key in q:
+                q_keys |= q[feat_key].keys()
+        for q_key in q_keys:
+            vals = []
+            for q in all_quantiles:
+                if feat_key in q and q_key in q[feat_key]:
+                    vals.append(q[feat_key][q_key])
+            if vals:
+                merged[feat_key][q_key] = float(np.median(vals))
+
+    strategy._quantiles = merged
+    n_feats = len(merged)
+    total_rows = sum(len(df) for df in per_symbol_dfs)
+    logger.info(
+        "[quantiles] %s (timeframe=%s): %d symbols, %d features, %d 总行数 (按 symbol 中位数融合)",
+        arch_name,
+        tf or "default",
+        len(per_symbol_dfs),
+        n_feats,
+        total_rows,
+    )
+
+
 def _compute_initial_quantiles(
     decision_handler,
     manager: MultiSymbolManager,
@@ -485,6 +561,9 @@ def _compute_initial_quantiles(
         return
 
     # 按 timeframe 分别设置 quantiles
+    # 🐛 Fix: 按 symbol 分别计算 quantile 阈值再取中位数
+    #   之前 concat 所有 symbol 导致跨 symbol 分布污染（BTC 的 VPIN >> ADA）
+    #   某些 symbol 的 evidence 特征值始终落在极端分位数，evidence 永远 1.0
     if hasattr(decision_handler, "_strategy_timeframes") and hasattr(
         decision_handler, "_strategies"
     ):
@@ -499,29 +578,21 @@ def _compute_initial_quantiles(
                         dfs = v
                         break
             if dfs and hasattr(strategy, "set_quantiles"):
-                combined = pd.concat(dfs, ignore_index=True)
-                strategy.set_quantiles(combined)
-                logger.info(
-                    "[quantiles] %s (timeframe=%s): %d 行",
-                    arch_name,
-                    tf or "default",
-                    len(combined),
-                )
+                _set_quantiles_per_symbol(strategy, dfs, arch_name, tf)
     else:
         # 单策略: 使用所有可用数据
         all_dfs: List[pd.DataFrame] = []
         for dfs in tf_dfs.values():
             all_dfs.extend(dfs)
         if all_dfs:
-            combined = pd.concat(all_dfs, ignore_index=True)
-            if hasattr(decision_handler, "set_quantiles_from_df"):
-                decision_handler.set_quantiles_from_df(combined)
-            elif hasattr(decision_handler, "set_quantiles"):
-                decision_handler.set_quantiles(combined)
+            handler = decision_handler
+            if hasattr(handler, "set_quantiles_from_df"):
+                _set_quantiles_per_symbol(handler, all_dfs, "single", None)
+            elif hasattr(handler, "set_quantiles"):
+                _set_quantiles_per_symbol(handler, all_dfs, "single", None)
             logger.info(
-                "[quantiles] 完成: %d symbols, %d 总行数",
+                "[quantiles] 完成: %d symbols",
                 len(all_dfs),
-                len(combined),
             )
 
 

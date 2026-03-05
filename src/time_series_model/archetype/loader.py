@@ -220,6 +220,9 @@ class EvidenceConfig:
 
     features: List[EvidenceFeature] = field(default_factory=list)
     label_semantics: Dict[str, str] = field(default_factory=dict)
+    min_score: float = (
+        0.0  # 策略级 evidence 入场门槛 (由 optimize_evidence_plateau 自动计算)
+    )
 
     def compute_composite_score(
         self,
@@ -290,6 +293,7 @@ class EvidenceConfig:
         return cls(
             features=features,
             label_semantics=dict(schema.get("label_semantics") or {}),
+            min_score=float(raw.get("min_score", 0.0)),
         )
 
 

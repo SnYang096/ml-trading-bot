@@ -1,10 +1,22 @@
 # BPC Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-03-01 22:39
-# Promoted: 0 filters (全部未通过显著性检验)
-# Baseline snotio: 2.9560, σ=6.556
+# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
+# Date: 2026-03-06 00:04
+# Promoted: 1 filters (1 plateau + 0 snotio-only)
+# Baseline snotio: 5.9176, σ=12.577
+# Significance: z-test p<0.05 required for all tiers
 #
-# 没有 entry filter 通过准入, 策略将无条件入场
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
-filters: []
+filters:
+- id: meta_spectrum_price_centroid
+  enabled: true
+  description: 'Meta-Algorithm: spectrum_price_centroid >= 0.852'
+  conditions:
+  - feature: spectrum_price_centroid
+    operator: '>='
+    value: 0.852
+  tier: A_PLATEAU
+  notes: lift=1.18x, rob=88%, snotio=11.0518, z=5.57, p=0.0000
 combination_mode: or

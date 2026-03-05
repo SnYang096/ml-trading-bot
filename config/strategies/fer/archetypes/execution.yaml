@@ -1,25 +1,25 @@
 # FER Execution 配置
-# 版本: 42
-# 更新时间: 2026-03-02
+# 版本: 49
+# 更新时间: 2026-03-06
 #
 # ┌─────────────────────────────────────────────────────────┐
 # │  Grid Search auto-promoted                              │
-# │  Sharpe (daily): 2.90                                   │
-# │  Best: initial_r=3.5, activation_r=2.0, trail_r=0.5      │
-# │  Plateau: ✅ stable (CV=0.126)                            │
-# │  Changes: initial_r: 3.5 → 3.5, activation_r: 2.0 → 2.0, trail_r: 0.5 → 0.5│
+# │  Sharpe (daily): 0.91                                   │
+# │  Best: initial_r=1.5, activation_r=0.5, trail_r=1.5      │
+# │  Plateau: ⚠️  unstable (CV=2.584)                            │
+# │  Changes: initial_r: 1.0 → 1.5, activation_r: 0.5 → 0.5, trail_r: 0.5 → 1.5│
 # └─────────────────────────────────────────────────────────┘
 #
-version: 42
+version: 49
 execution_constraints:
   allow_add_on: false
   min_order_interval_minutes: 15
 stop_loss:
   type: trailing
-  initial_r: 3.5
+  initial_r: 1.5
   trailing:
-    activation_r: 2.0
-    trail_r: 0.5
+    activation_r: 0.5
+    trail_r: 1.5
     step_r: 0.5
 take_profit:
   enabled: true

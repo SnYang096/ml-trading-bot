@@ -1,0 +1,62 @@
+layer: "evidence"
+
+# ================================================================
+# Evidence 层 KPI Gate — 候选发现 + 统计验证门槛
+# ================================================================
+#
+# Evidence 职责: 连续仓位调节 (suppress → amplify 五档).
+# 用 SHAP∩Gain + bad_suppression + 2D 交互发现候选.
+#
+# 层专属指标:
+#   bad_suppression = P(low_score|bad) - P(low_score|good)
+#   good_amplification = P(high_score|good) - P(high_score|bad)
+#
+# 脚本读取路径:
+#   optimize_evidence_plateau.py
+#   export_lightgbm_rules_to_readme.py → _generate_evidence_candidates_yaml()
+# ================================================================
+
+# ── 候选发现参数 ──
+thresholds:
+  # 候选数量上限
+  top_n: 15
+
+  # 分位数 bins (五档映射)
+  quantile_bins: [0.2, 0.4, 0.6, 0.8]
+
+  # 五档标签
+  labels: [suppress, downweight, neutral, favor, amplify]
+
+# ── 统计验证门槛 (层专属) ──
+validation:
+  # bad_suppression: P(score<suppress_thr|bad) - P(score<suppress_thr|good)
+  # 正值越大越好: bad 被选择性压制
+  min_bad_suppression: 0.05
+
+  # good_amplification: P(score>favor_thr|good) - P(score>favor_thr|bad)
+  min_good_amplification: 0.05
+
+  # 最低 sharpness: mean(good_score) - mean(bad_score)
+  # -0.02 = 只防"反向 evidence"，不防"弱但稳定的 risk-control evidence"
+  min_sharpness: -0.02
+
+  # 压制/放大的 score 阈值
+  suppress_threshold: 0.3   # score < 0.3 算被压制
+  favor_threshold: 0.7      # score > 0.7 算被放大
+
+  # 最小样本数
+  min_samples_good: 50
+  min_samples_bad: 50
+
+# ── Plateau 验证参数 ──
+plateau:
+  # bins 空间最大距离
+  max_bins_distance: 0.15
+
+  # 语义漂移: p_favor_good/p_suppress_bad 在邻域内的最大波动
+  max_semantic_drift: 0.10
+
+# ── SHAP∩Gain 参数 ──
+shap_gain:
+  top_n: 8
+  compute_interactions: true

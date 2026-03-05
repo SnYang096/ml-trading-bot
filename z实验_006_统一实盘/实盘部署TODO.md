@@ -8,22 +8,22 @@
 
 ## 📌 当前状态
 
-| 领域 | 状态 | 说明 |
-|------|------|------|
-| 研究 Pipeline | ✅ 完成 | BPC/ME/FER 三策略 ADOPT + PCM PASS |
-| PCM 联合回测 | ✅ 完成 | conflict_rate=3.42%, sharpe_daily=28.79 |
-| 多时间框架研究 | ✅ 完成 | BPC/FER→4H, ME→1H |
-| **多时间框架实盘代码** | ✅ 完成 | live_pcm/order_flow_listener/run_live.py 三文件改造，meta.yaml 动态 timeframe |
-| **多时间框架本地验证** | ✅ 完成 | 观察模式验证通过，已部署到远程 |
-| 实盘监控 (服务器) | ✅ 代码完成 | StatsCollector + metrics_exporter + PCM funnel |
-| 配置路径隔离 | ✅ 完成 | _infer_base_dir 重写，live/ 自包含，persist_to=data/db/ |
-| 配置部署工具 | ✅ 完成 | deploy_config_to_live.py 支持 GLOBAL_CONFIGS (constitution + pcm_regime) |
-| .gitignore 安全 | ✅ 完成 | live/*/data/ + *.db 排除，运行时数据不进 git |
-| Terraform 基础设施 | ✅ 已搭建 | 腾讯云 ap-tokyo, 2vCPU/4GB, Docker + systemd |
-| CI/CD 流程 | ✅ 已搭建 | GitHub Actions → Docker image → ghcr.io → 服务器 pull |
-| **首次部署** | ✅ 完成 | 2026-02-25 Build + Deploy 成功，quant-engine active (running) |
-| 监控脚本 (本地) | ✅ 完成 | weekly/monthly monitor + feature drift + retrain trigger |
-| 实盘监控 (服务器) | ✅ 代码完成 | StatsCollector + metrics_exporter + PCM funnel |
+| 领域                   | 状态       | 说明                                                                          |
+| ---------------------- | ---------- | ----------------------------------------------------------------------------- |
+| 研究 Pipeline          | ✅ 完成     | BPC/ME/FER 三策略 ADOPT + PCM PASS                                            |
+| PCM 联合回测           | ✅ 完成     | conflict_rate=3.42%, sharpe_daily=28.79                                       |
+| 多时间框架研究         | ✅ 完成     | BPC/FER→4H, ME→1H                                                             |
+| **多时间框架实盘代码** | ✅ 完成     | live_pcm/order_flow_listener/run_live.py 三文件改造，meta.yaml 动态 timeframe |
+| **多时间框架本地验证** | ✅ 完成     | 观察模式验证通过，已部署到远程                                                |
+| 实盘监控 (服务器)      | ✅ 代码完成 | StatsCollector + metrics_exporter + PCM funnel                                |
+| 配置路径隔离           | ✅ 完成     | _infer_base_dir 重写，live/ 自包含，persist_to=data/db/                       |
+| 配置部署工具           | ✅ 完成     | deploy_config_to_live.py 支持 GLOBAL_CONFIGS (constitution + pcm_regime)      |
+| .gitignore 安全        | ✅ 完成     | live/*/data/ + *.db 排除，运行时数据不进 git                                  |
+| Terraform 基础设施     | ✅ 已搭建   | 腾讯云 ap-tokyo, 2vCPU/4GB, Docker + systemd                                  |
+| CI/CD 流程             | ✅ 已搭建   | GitHub Actions → Docker image → ghcr.io → 服务器 pull                         |
+| **首次部署**           | ✅ 完成     | 2026-02-25 Build + Deploy 成功，quant-engine active (running)                 |
+| 监控脚本 (本地)        | ✅ 完成     | weekly/monthly monitor + feature drift + retrain trigger                      |
+| 实盘监控 (服务器)      | ✅ 代码完成 | StatsCollector + metrics_exporter + PCM funnel                                |
 
 ---
 
@@ -189,14 +189,14 @@ BinanceWS tick → OrderFlowListener
 - [x] 进入仓库 → Settings → Secrets and variables → Actions → New repository secret
 - [x] 添加以下 6 个 Secrets:
 
-| Secret 名称 | 值 | 获取方式 |
-|---|---|---|
-| `DEPLOY_HOST` | 服务器公网 IP | 腾讯云控制台 → 云服务器 → 实例列表 |
-| `DEPLOY_USER` | `ubuntu` | 服务器 OS 默认用户 |
-| `DEPLOY_SSH_KEY` | SSH 私钥完整内容 | 本地 `cat ~/.ssh/id_tencent_cloud_ssh` |
-| `GHCR_TOKEN` | GitHub PAT | 需 `read:packages` + `write:packages` |
-| `BINANCE_API_KEY` | Binance API Key | Binance API Management |
-| `BINANCE_API_SECRET` | Binance API Secret | Binance API Management |
+| Secret 名称          | 值                 | 获取方式                               |
+| -------------------- | ------------------ | -------------------------------------- |
+| `DEPLOY_HOST`        | 服务器公网 IP      | 腾讯云控制台 → 云服务器 → 实例列表     |
+| `DEPLOY_USER`        | `ubuntu`           | 服务器 OS 默认用户                     |
+| `DEPLOY_SSH_KEY`     | SSH 私钥完整内容   | 本地 `cat ~/.ssh/id_tencent_cloud_ssh` |
+| `GHCR_TOKEN`         | GitHub PAT         | 需 `read:packages` + `write:packages`  |
+| `BINANCE_API_KEY`    | Binance API Key    | Binance API Management                 |
+| `BINANCE_API_SECRET` | Binance API Secret | Binance API Management                 |
 
 ### 2.1.3 验证 SSH 连通性
 
@@ -281,15 +281,15 @@ ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 \
 
 ### 部署踩坑记录
 
-| 问题 | 原因 | 修复 |
-|------|------|------|
-| Dockerfile 找不到 | `.gitignore` 排除了 `/docker/` | 加 `!/docker/Dockerfile.live` 例外 |
-| pip 升级失败 | Ubuntu 24.04 PEP 668 + debian pip 无 RECORD | `rm EXTERNALLY-MANAGED` + `--ignore-installed` |
-| PyWavelets 构建失败 | 1.4.1 无 Python 3.12 wheel | 放宽到 `>=1.5.0` |
-| Docker 权限拒绝 | ubuntu 用户不在 docker 组 | `usermod -aG docker ubuntu` |
-| Warmup input() 崩溃 | systemd 无终端，EOFError | `auto_confirm=True` + EOFError 兜底 |
-| LightGBM/sklearn 多余 | 实盘不用，只在训练代码 | 从 Dockerfile.live 移除 |
-| Warmup 服务器下载太慢 | 服务器带宽有限，36 文件 ~25GB | 改为本地下载 + tar 打包 scp 上传 |
+| 问题                  | 原因                                        | 修复                                           |
+| --------------------- | ------------------------------------------- | ---------------------------------------------- |
+| Dockerfile 找不到     | `.gitignore` 排除了 `/docker/`              | 加 `!/docker/Dockerfile.live` 例外             |
+| pip 升级失败          | Ubuntu 24.04 PEP 668 + debian pip 无 RECORD | `rm EXTERNALLY-MANAGED` + `--ignore-installed` |
+| PyWavelets 构建失败   | 1.4.1 无 Python 3.12 wheel                  | 放宽到 `>=1.5.0`                               |
+| Docker 权限拒绝       | ubuntu 用户不在 docker 组                   | `usermod -aG docker ubuntu`                    |
+| Warmup input() 崩溃   | systemd 无终端，EOFError                    | `auto_confirm=True` + EOFError 兜底            |
+| LightGBM/sklearn 多余 | 实盘不用，只在训练代码                      | 从 Dockerfile.live 移除                        |
+| Warmup 服务器下载太慢 | 服务器带宽有限，36 文件 ~25GB               | 改为本地下载 + tar 打包 scp 上传               |
 
 ---
 
@@ -312,12 +312,12 @@ ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
 
 ### 关键安全保障
 
-| 保护项 | 机制 |
-|---|---|
-| `order_management.db` | volume 挂载在服务器，镜像更新不影响 |
-| `live/highcap/data/` | volume 挂载，持久化在 `/opt/quant-engine/live/highcap/data/` |
-| API 密钥 | GitHub Secrets 注入 → CI/CD 自动写入服务器，不进镜像 |
-| 回滚 | `docker pull ghcr.io/<repo>:sha-<旧commit>` + restart |
+| 保护项                | 机制                                                         |
+| --------------------- | ------------------------------------------------------------ |
+| `order_management.db` | volume 挂载在服务器，镜像更新不影响                          |
+| `live/highcap/data/`  | volume 挂载，持久化在 `/opt/quant-engine/live/highcap/data/` |
+| API 密钥              | GitHub Secrets 注入 → CI/CD 自动写入服务器，不进镜像         |
+| 回滚                  | `docker pull ghcr.io/<repo>:sha-<旧commit>` + restart        |
 
 ---
 
@@ -468,13 +468,13 @@ ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
 
 ### 3.2.3 通过标准
 
-| 指标 | 红线 (停机排查) | 黄线 (继续观察) | 绿灯 (可加仓) |
-|------|----------------|----------------|----------------|
-| 胜率 (20笔) | < 35% | 35-50% | > 50% |
-| 盈亏比 | < 0.5 | 0.5-1.0 | > 1.0 |
-| 最大单笔亏损 | > 10% 本金 | 5-10% | < 5% |
-| 订单失败率 | > 10% | 5-10% | < 5% |
-| 信号vs回测方向 | 完全相反 | 部分偏差 | 基本一致 |
+| 指标           | 红线 (停机排查) | 黄线 (继续观察) | 绿灯 (可加仓) |
+| -------------- | --------------- | --------------- | ------------- |
+| 胜率 (20笔)    | < 35%           | 35-50%          | > 50%         |
+| 盈亏比         | < 0.5           | 0.5-1.0         | > 1.0         |
+| 最大单笔亏损   | > 10% 本金      | 5-10%           | < 5%          |
+| 订单失败率     | > 10%           | 5-10%           | < 5%          |
+| 信号vs回测方向 | 完全相反        | 部分偏差        | 基本一致      |
 
 ---
 
@@ -486,11 +486,11 @@ ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
 
 ### 阶段设计
 
-| 阶段 | 笔数区间 | 单笔仓位 | 累计最大亏损 | 进入条件 |
-|------|---------|---------|-------------|----------|
-| S1 试水 | 1-20 | $50 (5%) | $100 (10%) | 3.1 观察模式通过 |
-| S2 验证 | 21-50 | $100 (10%) | $150 (15%) | S1 胜率 > 50% + 盈亏比 > 1.0 |
-| S3 正常 | 51+ | $150-200 (15-20%) | $200 (20%) | S2 累计盈利 > 0 |
+| 阶段    | 笔数区间 | 单笔仓位          | 累计最大亏损 | 进入条件                     |
+| ------- | -------- | ----------------- | ------------ | ---------------------------- |
+| S1 试水 | 1-20     | $50 (5%)          | $100 (10%)   | 3.1 观察模式通过             |
+| S2 验证 | 21-50    | $100 (10%)        | $150 (15%)   | S1 胜率 > 50% + 盈亏比 > 1.0 |
+| S3 正常 | 51+      | $150-200 (15-20%) | $200 (20%)   | S2 累计盈利 > 0              |
 
 ### 加仓决策规则
 
@@ -537,17 +537,17 @@ python scripts/local_monitor_weekly.py --data data/live_latest.parquet --strateg
 >   - `scripts/export_training_baseline.py` — 训练基线导出
 >   - `scripts/monitor_retrain.py` — 重训触发器
 
-| 层 | 假设 | 关键指标 | 失效阈值 |
-|----|------|----------|----------|
-| L1 特征 | 统计规律保持 | feature_drift_zscore | > 3.0 连续 3 天 |
-| L2 预筛选 | 有效过滤噪声 | prefilter_pass_rate | 偏离训练期 ±50% |
-| L3 Gate | 正向 lift | gate_lift | < 1.2 |
-| L4 Evidence | score↔R 相关 | evidence_r_correlation | Spearman < 0.05 |
-| L5 Direction | 增加胜率 | direction_accuracy | < 55% (30日) |
-| L6 Entry Filter | 提升质量 | entry_filter_lift | < 1.0 |
-| L7 Execution Tier | 高tier优于低tier | per_tier_mean_r | T1 ≤ T3 连续 2 周 |
-| L8 PCM | 被选 > 被拒 | counterfactual_r | 被拒 > 被选持续 1 周 |
-| L9 宪法 | 安全不过限 | kill_switch_count | 月 > 3 次 |
+| 层                | 假设             | 关键指标               | 失效阈值             |
+| ----------------- | ---------------- | ---------------------- | -------------------- |
+| L1 特征           | 统计规律保持     | feature_drift_zscore   | > 3.0 连续 3 天      |
+| L2 预筛选         | 有效过滤噪声     | prefilter_pass_rate    | 偏离训练期 ±50%      |
+| L3 Gate           | 正向 lift        | gate_lift              | < 1.2                |
+| L4 Evidence       | score↔R 相关     | evidence_r_correlation | Spearman < 0.05      |
+| L5 Direction      | 增加胜率         | direction_accuracy     | < 55% (30日)         |
+| L6 Entry Filter   | 提升质量         | entry_filter_lift      | < 1.0                |
+| L7 Execution Tier | 高tier优于低tier | per_tier_mean_r        | T1 ≤ T3 连续 2 周    |
+| L8 PCM            | 被选 > 被拒      | counterfactual_r       | 被拒 > 被选持续 1 周 |
+| L9 宪法           | 安全不过限       | kill_switch_count      | 月 > 3 次            |
 
 ### 实施清单
 
@@ -561,13 +561,13 @@ python scripts/local_monitor_weekly.py --data data/live_latest.parquet --strateg
 
 ### 延迟目标
 
-| 环节 | 目标值 | 告警阈值 |
-|------|--------|----------|
-| Tick → 特征计算 | < 200ms | > 500ms |
-| 推理 | < 100ms | > 300ms |
-| PCM 仲裁 | < 50ms | > 150ms |
-| 下单 | < 100ms | > 300ms |
-| 端到端 | < 500ms | > 1000ms |
+| 环节            | 目标值  | 告警阈值 |
+| --------------- | ------- | -------- |
+| Tick → 特征计算 | < 200ms | > 500ms  |
+| 推理            | < 100ms | > 300ms  |
+| PCM 仲裁        | < 50ms  | > 150ms  |
+| 下单            | < 100ms | > 300ms  |
+| 端到端          | < 500ms | > 1000ms |
 
 ### 实施清单
 
@@ -583,15 +583,20 @@ python scripts/local_monitor_weekly.py --data data/live_latest.parquet --strateg
 
 > 这些不阻塞上线，但有助于提升系统健康度
 
-| 优先级 | 项目 | 说明 | 何时做 |
-|--------|------|------|--------|
-| P2 | Phase 4.5.8 Archetype 降级 | 连亏自动暂停，当前有账户级 kill switch 兜底 | 上线 2 周后 |
-| P2 | Phase 4.5.4 回测宪法模拟 + 一致性检查 | 🔨 进行中：kill switch + 加仓 + 事件vs研究回测对比 | 当前任务 |
-| P2 | Phase 4.5.4 回测一致性对齐 | ✅ pre-slot 已对齐(1895≈1879), slot 精度修复中 | 当前任务 |
-| P3 | PCM Plateau 优化 | detection 阈值 + scale 因子，conflict_rate=3.42% 收益极低 | 收集 4 周实盘数据后 |
-| P3 | LV 策略 | 15min timeframe，Feature Store 计算成本高 | 三策略稳定后 |
-| P2 | Telegram 告警通道 | alerter.py + Telegram Bot (从 Phase 1.2.3 移入) | 线上运行稳定后 |
-| P3 | 可视化 Dashboard | Streamlit/Flask 页面 | 有空时 |
+| 优先级 | 项目                                  | 说明                                                                                                                                                           | 何时做              |
+| ------ | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| P2     | Phase 4.5.8 Archetype 降级            | 连亏自动暂停，当前有账户级 kill switch 兜底                                                                                                                    | 上线 2 周后         |
+| **P0** | **SHAP 配置部署到实盘**               | SHAP 激进裁剪已验证：5/5 seed gate 100%一致。管线跑完后 deploy_config_to_live.py 同步新配置                                                                    | 管线完成后          |
+| **P0** | **排查实盘无开仓**                    | 最近几天零开仓，需排查：(1) gate 是否全部 deny (2) 信号漏斗各层通过率 (3) Grafana funnel 面板 (4) 日志中 direction/gate/EF 拒绝分布                            | 立即                |
+| **P1** | **交易所止损单兜底**                  | 每次 trailing SL 移动时 cancel 旧 STOP_MARKET + 挂新单，防止程序崩溃时裸仓。事件回测也需模拟平台挂单行为。当前 BPC/ME 纯软件管理 SL，FER 有 STOP_MARKET backup | 开仓正常后          |
+| **P1** | **杠杆配置确定**                      | 当前未显式设置杠杆倍数，需确认 Binance 账户默认杠杆 + 代码中是否有 change_leverage 调用 + 确定目标杠杆(建议 3-5x) + 在 constitution.yaml 或 env 中配置         | 开仓正常后          |
+| P2     | Phase 4.5.4 回测宪法模拟 + 一致性检查 | 🔨 进行中：kill switch + 加仓 + 事件vs研究回测对比                                                                                                              | 当前任务            |
+| P2     | Phase 4.5.4 回测一致性对齐            | ✅ pre-slot 已对齐(1895≈1879), slot 精度修复中                                                                                                                  | 当前任务            |
+| P2     | 事件回测 vs 实盘一致性验证            | 只能靠实盘积累交易后逐笔对比，无捷径。需：(1) 实盘开仓后抽取信号+特征快照 (2) 用相同时间戳跑事件回测 (3) 逐笔对比 entry/exit/PnL                               | 首笔交易后          |
+| P3     | PCM Plateau 优化                      | detection 阈值 + scale 因子，conflict_rate=3.42% 收益极低                                                                                                      | 收集 4 周实盘数据后 |
+| P3     | LV 策略                               | 15min timeframe，Feature Store 计算成本高                                                                                                                      | 三策略稳定后        |
+| P2     | Telegram 告警通道                     | alerter.py + Telegram Bot (从 Phase 1.2.3 移入)                                                                                                                | 线上运行稳定后      |
+| P3     | 可视化 Dashboard                      | Streamlit/Flask 页面                                                                                                                                           | 有空时              |
 
 ---
 
@@ -664,15 +669,15 @@ git push origin main  # 自动触发: build → push → deploy → restart
 
 ## 关键文件
 
-| 文件 | 用途 |
-|------|------|
-| `scripts/run_live.py` | 实盘入口 (多策略) |
-| `docker/Dockerfile.live` | 生产 Docker 镜像定义 |
-| `.github/workflows/deploy.yml` | CI/CD 流水线 |
-| `scripts/server_bootstrap.sh` | 服务器初始化脚本 |
-| `terraform/systemd/quant-engine.service` | systemd 服务定义 (Docker 模式) |
-| `scripts/monitoring_bootstrap.sh` | 监控初始化脚本 (Prometheus + Grafana) |
-| `terraform/monitoring/` | 监控配置 (prometheus.yml + docker-compose + dashboard) |
-| `live/highcap/config/strategies/` | 生产策略配置 (53 个 YAML) |
-| `scripts/deploy_config_to_live.py` | 研究→生产配置部署 |
-| `scripts/refresh_funding_oi_data.py` | Funding Rate / OI 增量刷新 (Binance 公开 API) |
+| 文件                                     | 用途                                                   |
+| ---------------------------------------- | ------------------------------------------------------ |
+| `scripts/run_live.py`                    | 实盘入口 (多策略)                                      |
+| `docker/Dockerfile.live`                 | 生产 Docker 镜像定义                                   |
+| `.github/workflows/deploy.yml`           | CI/CD 流水线                                           |
+| `scripts/server_bootstrap.sh`            | 服务器初始化脚本                                       |
+| `terraform/systemd/quant-engine.service` | systemd 服务定义 (Docker 模式)                         |
+| `scripts/monitoring_bootstrap.sh`        | 监控初始化脚本 (Prometheus + Grafana)                  |
+| `terraform/monitoring/`                  | 监控配置 (prometheus.yml + docker-compose + dashboard) |
+| `live/highcap/config/strategies/`        | 生产策略配置 (53 个 YAML)                              |
+| `scripts/deploy_config_to_live.py`       | 研究→生产配置部署                                      |
+| `scripts/refresh_funding_oi_data.py`     | Funding Rate / OI 增量刷新 (Binance 公开 API)          |

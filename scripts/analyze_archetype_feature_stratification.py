@@ -2065,6 +2065,596 @@ def _generate_promoted_prefilter(
     )
 
 
+# ====================================================================
+# Meta-Algorithm 模式: SHAP∩Gain + holdout 统计验证
+# ====================================================================
+
+
+def _resolve_features_from_prefilter_yaml(
+    prefilter_yaml_path: str,
+    deps_path: str,
+    available_columns: List[str],
+) -> List[str]:
+    """从 features_prefilter.yaml + feature_dependencies.yaml 解析列名.
+
+    features_prefilter.yaml 格式:
+        feature_pipeline:
+          requested_features:
+            - bpc_soft_phase_f
+            - dual_compression_f
+    """
+    with open(prefilter_yaml_path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    fp = cfg.get("feature_pipeline", {})
+    requested = fp.get("requested_features", [])
+    if not requested:
+        print(
+            f"❌ features_prefilter.yaml 中没有 requested_features: {prefilter_yaml_path}"
+        )
+        return []
+
+    with open(deps_path, "r", encoding="utf-8") as f:
+        deps_cfg = yaml.safe_load(f)
+
+    all_features_def = deps_cfg.get("features", {})
+    available_set = set(available_columns)
+    resolved_columns: List[str] = []
+
+    for feat_f in requested:
+        if feat_f not in all_features_def:
+            print(f"⚠️  _f '{feat_f}' 在 feature_dependencies.yaml 中未找到, 跳过")
+            continue
+        output_cols = all_features_def[feat_f].get("output_columns", [])
+        matched = [c for c in output_cols if c in available_set]
+        if matched:
+            resolved_columns.extend(matched)
+        else:
+            print(f"⚠️  _f '{feat_f}' 的 output_columns 在 parquet 中均不存在, 跳过")
+
+    resolved_columns = list(dict.fromkeys(resolved_columns))  # 去重保序
+    return resolved_columns
+
+
+def _meta_algorithm_prefilter(
+    args,
+    df: pd.DataFrame,
+    config_path: Path,
+) -> int:
+    """Meta-Algorithm 模式: LightGBM → SHAP∩Gain → holdout 统计验证 → 规则输出.
+
+    替代分位数 bad_rate_diff 方法, 消除过拟合。
+
+    Args:
+        config_path: 策略配置目录, e.g. config/strategies/bpc/
+                     输出写入 config_path / archetypes / prefilter.yaml
+
+    Pipeline:
+      1. 读 features_prefilter.yaml → 解析 archetype 专属特征列
+      2. Train/Holdout 时间分割
+      3. LightGBM 训练 (label=success_no_rr_extreme)
+      4. SHAP∩Gain 特征发现 (复用 _compute_shap_gain_features)
+      5. Holdout 统计验证: lift + effect_size + robustness
+      6. 规则生成 + promote
+    """
+    import operator as op_module
+
+    # ── 导入共用函数 (方法论约束 #5: 不可分叉) ──
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from export_lightgbm_rules_to_readme import _compute_shap_gain_features
+
+    label_col = args.label_col
+    rr_col = args.rr_col
+    holdout_ratio = args.holdout_ratio
+    strategy = args.strategy
+
+    # ── 0. 加载 kpi_gates/prefilter_layer.yaml ──
+    _kpi_gate_path = Path("config/kpi_gates/prefilter_layer.yaml")
+    if _kpi_gate_path.exists():
+        with open(_kpi_gate_path, "r", encoding="utf-8") as _kf:
+            _kpi = yaml.safe_load(_kf) or {}
+    else:
+        _kpi = {}
+    _thr = _kpi.get("thresholds", {})
+    _lgb_cfg = _kpi.get("lgb_params", {})
+    _ho_cfg = _kpi.get("holdout", {})
+    _sg_cfg = _kpi.get("shap_gain", {})
+
+    print(f"\n{'='*110}")
+    print(f"🔬 Meta-Algorithm Prefilter ({strategy.upper()})")
+    print(f"{'='*110}")
+
+    # ── 1. 特征解析 ──
+    if not args.features_prefilter:
+        print("❌ --meta-algorithm 模式需要 --features-prefilter 参数")
+        return 1
+
+    prefilter_yaml = Path(args.features_prefilter)
+    if not prefilter_yaml.exists():
+        print(f"❌ features_prefilter.yaml 不存在: {prefilter_yaml}")
+        return 1
+
+    deps_path = Path(args.deps)
+    features = _resolve_features_from_prefilter_yaml(
+        str(prefilter_yaml), str(deps_path), list(df.columns)
+    )
+    if not features:
+        print("❌ 未解析到任何特征列")
+        return 1
+
+    print(f"\n📊 Archetype 专属特征: {len(features)} 列 (from {prefilter_yaml.name})")
+    for f in features:
+        n_valid_f = df[f].notna().sum()
+        print(f"   {f}: {n_valid_f} valid")
+
+    # ── 1b. 标签检查 ──
+    if label_col not in df.columns and rr_col in df.columns:
+        df[label_col] = (df[rr_col] >= -0.8).astype(int)
+        print(f"ℹ️  自动生成 '{label_col}' from '{rr_col}' (threshold: -0.8R)")
+    if label_col not in df.columns:
+        print(f"❌ 标签列 '{label_col}' 不存在")
+        return 1
+
+    n_total = len(df)
+    overall_bad_rate = float((df[label_col] == 0).mean())
+    med_rr = float(df[rr_col].median()) if rr_col in df.columns else float("nan")
+    print(
+        f"   数据: {n_total} 行, bad_rate={overall_bad_rate:.1%}, medRR={med_rr:+.2f}"
+    )
+
+    # ── 2. Train/Holdout 时间分割 ──
+    time_col = _find_time_column(df)
+    if time_col is not None:
+        times = _get_times(df, time_col)
+        sort_order = times.values.argsort()
+        df_sorted = df.iloc[sort_order].reset_index(drop=True)
+    else:
+        print("⚠️  无时间列, 按行顺序分割")
+        df_sorted = df.reset_index(drop=True)
+
+    n_holdout = int(n_total * holdout_ratio)
+    n_train = n_total - n_holdout
+    df_train = df_sorted.iloc[:n_train].copy()
+    df_holdout = df_sorted.iloc[n_train:].copy()
+
+    train_bad = float((df_train[label_col] == 0).mean())
+    holdout_bad = float((df_holdout[label_col] == 0).mean())
+    print(f"\n📐 Train/Holdout 分割: {n_train} / {n_holdout} (ratio={holdout_ratio})")
+    print(f"   Train  bad_rate: {train_bad:.1%}")
+    print(f"   Holdout bad_rate: {holdout_bad:.1%}")
+
+    # ── 3. LightGBM 训练 ──
+    try:
+        import lightgbm as lgb
+    except ImportError:
+        print("❌ lightgbm 未安装")
+        return 1
+
+    # 准备训练数据
+    avail_features = [f for f in features if f in df_train.columns]
+    if len(avail_features) < 2:
+        print(f"❌ 可用特征不足 ({len(avail_features)} < 2)")
+        return 1
+
+    X_train = df_train[avail_features].fillna(0).values.astype(float)
+    y_train = df_train[label_col].values.astype(int)
+
+    lgb_params = {
+        "objective": "binary",
+        "metric": "binary_logloss",
+        "num_leaves": _lgb_cfg.get("num_leaves", 31),
+        "learning_rate": _lgb_cfg.get("learning_rate", 0.05),
+        "min_child_samples": _lgb_cfg.get("min_child_samples", 50),
+        "feature_fraction": _lgb_cfg.get("feature_fraction", 0.8),
+        "bagging_fraction": _lgb_cfg.get("bagging_fraction", 0.8),
+        "bagging_freq": _lgb_cfg.get("bagging_freq", 5),
+        "verbose": -1,
+        "seed": 42,
+        "n_jobs": -1,
+    }
+    n_estimators = _lgb_cfg.get("n_estimators", 200)
+
+    print(
+        f"\n🌲 LightGBM 训练: {len(avail_features)} 特征, {n_train} 样本, {n_estimators} 轮"
+    )
+    train_data = lgb.Dataset(X_train, label=y_train, feature_name=avail_features)
+    model = lgb.train(
+        lgb_params,
+        train_data,
+        num_boost_round=n_estimators,
+    )
+    print(f"   ✅ 训练完成")
+
+    # ── 4. SHAP∩Gain 特征发现 ──
+    _shap_top_n = _sg_cfg.get("top_n", 8)
+    _shap_interactions = _sg_cfg.get("compute_interactions", True)
+    print(
+        f"\n🔍 SHAP∩Gain 特征发现 (top_n={_shap_top_n}, interactions={_shap_interactions})"
+    )
+    top_features, shap_importance_map, interaction_pairs = _compute_shap_gain_features(
+        df_train,
+        avail_features,
+        model,
+        top_n=_shap_top_n,
+        compute_interactions=_shap_interactions,
+    )
+    print(f"   Top features: {top_features}")
+    if shap_importance_map:
+        print(f"\n   SHAP 重要性排名:")
+        sorted_shap = sorted(shap_importance_map.items(), key=lambda x: -x[1])
+        for rank, (feat, imp) in enumerate(sorted_shap[:10], 1):
+            marker = " ★" if feat in top_features else ""
+            print(f"   {rank:>3d}. {feat:<40s} SHAP={imp:.4f}{marker}")
+
+    # ── 5. Holdout 统计验证 ──
+    print(f"\n{'='*110}")
+    print(f"📊 Holdout 统计验证 ({n_holdout} 样本)")
+    print(f"{'='*110}")
+
+    _SIM_OPS = {
+        ">=": op_module.ge,
+        "<=": op_module.le,
+        ">": op_module.gt,
+        "<": op_module.lt,
+    }
+
+    holdout_rr = (
+        df_holdout[rr_col].values.astype(float)
+        if rr_col in df_holdout.columns
+        else None
+    )
+    holdout_bad = (df_holdout[label_col] == 0).values
+    holdout_good = ~holdout_bad
+    holdout_bad_rate = float(holdout_bad.mean())
+    total_bad_holdout = int(holdout_bad.sum())
+    total_good_holdout = int(holdout_good.sum())
+
+    quantiles = _ho_cfg.get(
+        "quantiles", [0.05, 0.10, 0.15, 0.20, 0.80, 0.85, 0.90, 0.95]
+    )
+    n_folds_holdout = _ho_cfg.get("n_folds", 3)
+    fold_size_ho = n_holdout // n_folds_holdout
+    candidates = []
+
+    # Prefilter 门槛从 kpi_gates/prefilter_layer.yaml 读取
+    PREFILTER_MIN_LIFT = _thr.get("min_lift", 1.05)
+    PREFILTER_MIN_EFFECT = _thr.get("min_effect", 0.02)
+    PREFILTER_MIN_ROBUSTNESS = _thr.get("min_robustness", 0.3)
+    PREFILTER_CORR_THRESHOLD = _thr.get("correlation_threshold", 0.80)
+    PREFILTER_MAX_RULES = _thr.get("max_rules", 3)
+    PREFILTER_DENY_RATE_MIN = _thr.get("deny_rate_min", 0.03)
+    PREFILTER_DENY_RATE_MAX = _thr.get("deny_rate_max", 0.70)
+
+    for feat in top_features:
+        if feat not in df_holdout.columns:
+            continue
+        col = df_holdout[feat].values.astype(float)
+        valid = ~np.isnan(col)
+        if valid.sum() < 50:
+            continue
+
+        thresholds = np.unique(np.quantile(col[valid], quantiles))
+        for thr in thresholds:
+            for direction in ["gt", "lt"]:
+                # deny_mask: bars that FAIL the prefilter (should be denied)
+                deny_mask = (col > thr) if direction == "gt" else (col < thr)
+                deny_mask = deny_mask & valid
+                deny_rate = float(deny_mask.mean())
+
+                if (
+                    deny_rate < PREFILTER_DENY_RATE_MIN
+                    or deny_rate > PREFILTER_DENY_RATE_MAX
+                ):
+                    continue
+
+                # Lift: bad concentration in denied region
+                bad_in_deny = (
+                    float(holdout_bad[deny_mask].mean()) if deny_mask.any() else 0
+                )
+                lift = bad_in_deny / holdout_bad_rate if holdout_bad_rate > 0 else 0
+                if lift <= PREFILTER_MIN_LIFT:
+                    continue
+
+                # Effect size
+                if holdout_rr is not None:
+                    mean_allow = float(np.nanmean(holdout_rr[~deny_mask]))
+                    mean_deny = float(np.nanmean(holdout_rr[deny_mask]))
+                    effect = mean_allow - mean_deny
+                else:
+                    effect = 0.0
+                if effect < PREFILTER_MIN_EFFECT:
+                    continue
+
+                # Robustness: time-fold on holdout
+                fold_lifts = []
+                for fi in range(n_folds_holdout):
+                    s = fi * fold_size_ho
+                    e = (
+                        (fi + 1) * fold_size_ho
+                        if fi < n_folds_holdout - 1
+                        else n_holdout
+                    )
+                    fb = holdout_bad[s:e]
+                    fd = deny_mask[s:e]
+                    fbr = float(fb.mean())
+                    if fbr > 0 and fd.any():
+                        fl = float(fb[fd].mean()) / fbr
+                        fold_lifts.append(fl)
+
+                rob_time = sum(1 for fl in fold_lifts if fl > 1.0) / max(
+                    len(fold_lifts), 1
+                )
+                if len(fold_lifts) >= 2:
+                    rob_cross = (
+                        min(fold_lifts) / max(fold_lifts) if max(fold_lifts) > 0 else 0
+                    )
+                    robustness = rob_time * 0.6 + rob_cross * 0.4
+                else:
+                    robustness = rob_time
+                if robustness < PREFILTER_MIN_ROBUSTNESS:
+                    continue
+
+                # Gate score: tail_capture - good_deny_rate (Youden's J)
+                bad_in_deny_n = (
+                    int(holdout_bad[deny_mask].sum()) if deny_mask.any() else 0
+                )
+                good_in_deny_n = (
+                    int(holdout_good[deny_mask].sum()) if deny_mask.any() else 0
+                )
+                tail_capture = bad_in_deny_n / max(total_bad_holdout, 1)
+                good_deny_rate = good_in_deny_n / max(total_good_holdout, 1)
+                gate_score = tail_capture - good_deny_rate
+
+                op_str = ">" if direction == "gt" else "<"
+                score = lift * 0.4 + robustness * 0.4 + (1 - deny_rate) * 0.2
+
+                candidates.append(
+                    {
+                        "feature": feat,
+                        "op": op_str,
+                        "threshold": float(thr),
+                        "lift": lift,
+                        "effect_size": effect,
+                        "robustness": robustness,
+                        "deny_rate": deny_rate,
+                        "score": score,
+                        "gate_score": gate_score,
+                        "tail_capture": tail_capture,
+                        "good_deny_rate": good_deny_rate,
+                        "_deny_mask": deny_mask,
+                    }
+                )
+
+    if not candidates:
+        print("   ⚠️  Holdout 统计验证: 无候选规则通过 lift+robustness 筛选")
+        print("   可能原因: archetype 特征在 holdout 上区分力不足, 或数据量太小")
+        # Fallback: 仍然生成空模板
+        if args.promote:
+            arch_prefilter = config_path / "archetypes" / "prefilter.yaml"
+            arch_prefilter.parent.mkdir(parents=True, exist_ok=True)
+            _generate_promoted_prefilter(
+                arch_prefilter,
+                recommendation_report=None,
+                strategy=strategy,
+                positive=[],
+                anti=[],
+                absence=[],
+                data_source=str(Path(args.logs).name),
+                n_rows=n_total,
+                baseline_bad_rate=overall_bad_rate,
+                baseline_median_rr=med_rr,
+            )
+            print(f"\n📦 Promoted (空模板) → {arch_prefilter}")
+        return 0
+
+    # ── 5b. 去重 + 相关性剪枝 ──
+    candidates.sort(key=lambda x: -x["score"])
+    print(f"   {len(candidates)} 候选规则通过 holdout 验证")
+
+    selected = []
+    selected_features = set()  # 每个特征只保留最佳的一条
+    for cand in candidates:
+        if len(selected) >= 6:
+            break
+        # 同特征去重: 只保留 score 最高的
+        if cand["feature"] in selected_features:
+            continue
+        correlated = False
+        for sel in selected:
+            m1 = cand["_deny_mask"].astype(float)
+            m2 = sel["_deny_mask"].astype(float)
+            if m1.std() == 0 or m2.std() == 0:
+                continue
+            corr = float(np.corrcoef(m1, m2)[0, 1])
+            if abs(corr) > PREFILTER_CORR_THRESHOLD:
+                correlated = True
+                break
+        if not correlated:
+            selected.append(cand)
+            selected_features.add(cand["feature"])
+
+    # ── 5c. 选择最终规则 (gate_score > 0) ──
+    selected.sort(key=lambda x: -x.get("gate_score", 0))
+
+    final_rules = []
+    for cand in selected:
+        if cand["gate_score"] > 0 and len(final_rules) < PREFILTER_MAX_RULES:
+            final_rules.append(cand)
+
+    # ── 5d. 通过率保底检查 ──
+    _kpi_min_rows = _thr.get("min_rows", 500)
+    MIN_PREFILTER_ROWS = (
+        args.min_prefilter_rows
+        if args.min_prefilter_rows is not None
+        else _kpi_min_rows
+    )
+    min_pass_rate = args.min_prefilter_pass_rate
+
+    if final_rules:
+        # 模拟 AND 组合在全量数据上的通过率 (用原始 df, 不是 df_sorted)
+        pass_mask = np.ones(n_total, dtype=bool)
+        df_full_vals = df.reset_index(drop=True)
+        for rule in final_rules:
+            feat = rule["feature"]
+            op_str = rule["op"]
+            thr = rule["threshold"]
+            if feat not in df_full_vals.columns:
+                continue
+            col_vals = df_full_vals[feat].values.astype(float)
+            if op_str == ">":
+                rule_deny = col_vals > thr
+            else:
+                rule_deny = col_vals < thr
+            pass_mask = pass_mask & ~rule_deny  # 不被 deny 的 = pass
+
+        n_pass = int(pass_mask.sum())
+        pass_rate = n_pass / n_total if n_total > 0 else 0
+        pass_bad_rate = (
+            float((df_full_vals[label_col].values[pass_mask] == 0).mean())
+            if n_pass > 0
+            else 0
+        )
+
+        print(f"\n📊 AND 组合全量验证 ({len(final_rules)} 条规则):")
+        print(f"   通过: {n_pass:,} / {n_total:,} ({pass_rate:.1%})")
+        print(
+            f"   通过后 bad_rate: {pass_bad_rate:.1%} (基线 {overall_bad_rate:.1%}, "
+            f"差异 {pass_bad_rate - overall_bad_rate:+.1%})"
+        )
+
+        if n_pass < MIN_PREFILTER_ROWS:
+            print(f"   ⚠️  通过样本量 {n_pass} < {MIN_PREFILTER_ROWS}, 需放宽规则")
+        if min_pass_rate is not None and pass_rate < min_pass_rate:
+            print(f"   ⚠️  通过率 {pass_rate:.1%} < min_pass_rate {min_pass_rate:.0%}")
+
+    # ── 6. 诊断输出 ──
+    print(f"\n{'='*110}")
+    print(f"📋 Meta-Algorithm Prefilter 结果 ({strategy.upper()})")
+    print(f"{'='*110}")
+
+    if final_rules:
+        print(f"\n   ✅ {len(final_rules)} 条规则通过 holdout 验证 (gate_score > 0)")
+        print(
+            f"   {'#':>3s} {'feature':<35s} {'cond':<15s} {'lift':>6s} {'robust':>7s} "
+            f"{'deny%':>6s} {'gate_sc':>7s} {'tail_cap':>8s} {'good_dn':>7s}"
+        )
+        print(f"   {'-'*100}")
+        for i, r in enumerate(final_rules):
+            cond = f"{r['op']} {r['threshold']:.4g}"
+            print(
+                f"   {i+1:>3d} {r['feature']:<35s} {cond:<15s} "
+                f"{r['lift']:>5.2f}x {r['robustness']:>6.0%} "
+                f"{r['deny_rate']:>5.1%} {r['gate_score']:>+6.3f} "
+                f"{r['tail_capture']:>7.0%} {r['good_deny_rate']:>6.0%}"
+            )
+    else:
+        print(f"\n   ⚠️  无规则通过 holdout 验证 (所有候选 gate_score ≤ 0)")
+
+    # ── 7. Promote ──
+    if args.promote:
+        arch_prefilter = config_path / "archetypes" / "prefilter.yaml"
+        arch_prefilter.parent.mkdir(parents=True, exist_ok=True)
+
+        # 构建 top_rules 格式 (与 _generate_promoted_prefilter 兼容)
+        top_rules_for_promote = []
+        for r in final_rules:
+            # 转换 operator: ">" → ">", "<" → "<"
+            rationale_parts = [
+                f"meta-algorithm",
+                f"lift={r['lift']:.2f}",
+                f"robustness={r['robustness']:.0%}",
+                f"gate_score={r['gate_score']:.3f}",
+                f"holdout验证通过",
+            ]
+            top_rules_for_promote.append(
+                {
+                    "feature": r["feature"],
+                    "operator": r["op"],
+                    "value": round(r["threshold"], 4),
+                    "composite": r["score"],
+                    "rationale": ", ".join(rationale_parts),
+                }
+            )
+
+        recommendation_report = (
+            {"top_rules": top_rules_for_promote} if top_rules_for_promote else None
+        )
+
+        _generate_promoted_prefilter(
+            arch_prefilter,
+            recommendation_report=recommendation_report,
+            strategy=strategy,
+            positive=[],
+            anti=[],
+            absence=[],
+            data_source=str(Path(args.logs).name),
+            n_rows=n_total,
+            baseline_bad_rate=overall_bad_rate,
+            baseline_median_rr=med_rr,
+        )
+        print(f"\n📦 Promoted prefilter.yaml → {arch_prefilter}")
+        if top_rules_for_promote:
+            print(f"   ({len(top_rules_for_promote)} 条 meta-algorithm 规则)")
+        else:
+            print(f"   (空模板, 无规则通过 holdout)")
+
+    # ── 8. JSON 输出 (可选) ──
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        report = {
+            "strategy": strategy,
+            "mode": "meta-algorithm",
+            "features_prefilter": str(prefilter_yaml),
+            "data": {
+                "n_total": n_total,
+                "n_train": n_train,
+                "n_holdout": n_holdout,
+                "holdout_ratio": holdout_ratio,
+                "overall_bad_rate": round(overall_bad_rate, 4),
+                "train_bad_rate": round(train_bad, 4),
+                "holdout_bad_rate": round(
+                    float((df_holdout[label_col] == 0).mean()), 4
+                ),
+            },
+            "shap_gain": {
+                "top_features": top_features,
+                "shap_importance": {
+                    k: round(v, 4) for k, v in shap_importance_map.items()
+                },
+                "interaction_pairs": [
+                    {"a": a, "b": b, "score": round(s, 4)}
+                    for a, b, s in interaction_pairs
+                ],
+            },
+            "holdout_candidates": len(candidates),
+            "final_rules": [
+                {
+                    "feature": r["feature"],
+                    "operator": r["op"],
+                    "threshold": round(r["threshold"], 4),
+                    "lift": round(r["lift"], 3),
+                    "robustness": round(r["robustness"], 3),
+                    "gate_score": round(r["gate_score"], 4),
+                    "deny_rate": round(r["deny_rate"], 4),
+                    "effect_size": round(r["effect_size"], 4),
+                }
+                for r in final_rules
+            ],
+        }
+
+        import json as _json
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            _json.dump(report, f, indent=2, ensure_ascii=False)
+        print(f"\n✅ JSON 报告 → {output_path}")
+
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="分位数分层分析：验证 archetype 语义特征的预测力"
@@ -2171,6 +2761,27 @@ def main() -> int:
         help="Prefilter 后最低行数 (覆盖 MIN_PREFILTER_ROWS 默认值 500). "
         "由 research_pipeline.yaml kpi_gates 控制.",
     )
+    # ── Meta-Algorithm 模式 ──
+    parser.add_argument(
+        "--meta-algorithm",
+        action="store_true",
+        help="启用 SHAP∩Gain Meta-Algorithm 模式: LightGBM → SHAP∩Gain → holdout 统计验证 → 规则输出. "
+        "替代默认的分位数 bad_rate_diff 方法.",
+    )
+    parser.add_argument(
+        "--features-prefilter",
+        default=None,
+        metavar="PATH",
+        help="features_prefilter.yaml 路径 (meta-algorithm 模式必需). "
+        "格式与 features_gate.yaml 一致: feature_pipeline.requested_features",
+    )
+    parser.add_argument(
+        "--holdout-ratio",
+        type=float,
+        default=0.2,
+        metavar="RATIO",
+        help="Meta-algorithm 模式: holdout 比例 (默认: 0.2, 即后 20%% 时间段作 holdout)",
+    )
     args = parser.parse_args()
 
     min_samples = args.min_samples
@@ -2213,6 +2824,11 @@ def main() -> int:
                 f"❌ 过滤后样本量 {len(df)} < {TEMPORAL_MIN_SAMPLES_PER_WINDOW}, 统计不可信"
             )
             return 1
+
+    # ── Meta-Algorithm 路由: 加载数据后直接走新流程 ──
+    if args.meta_algorithm:
+        config_path = Path(f"config/strategies/{args.strategy}")
+        return _meta_algorithm_prefilter(args, df, config_path)
 
     # ── 1c. select-recent: 分离 df_full 和 df_recent ─────
     df_full = df  # 全周期数据 (temporal rolling 用)

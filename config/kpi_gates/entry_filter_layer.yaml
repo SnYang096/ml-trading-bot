@@ -1,0 +1,77 @@
+layer: "entry_filter"
+
+# ================================================================
+# Entry Filter 层 KPI Gate — Meta-Algorithm 统计验证门槛
+# ================================================================
+#
+# Entry Filter 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 信号比 Gate 弱 (timing 而非 risk), 门槛宽松.
+# 多个 filter OR 组合 (任一满足即入场).
+# 只走 1D 规则, 禁止 2D interaction surface (数据量小+信号弱→过拟合).
+#
+# 脚本读取路径:
+#   optimize_entry_filter_plateau.py --meta-algorithm
+# ================================================================
+
+# ── 标签定义 ──
+label:
+  # 自适应中位数阈值: entry_quality = exec_r > median(exec_r)
+  # 语义: "比中位数更好的入场" = good timing
+  # 优势: 类别平衡 (~50/50) → LightGBM 训练更稳定
+  #        策略自适应 → 不同策略/时期自动调整
+  method: "median"   # "median" | "fixed"
+  fixed_threshold: 0  # method=fixed 时使用
+
+# ── 统计验证门槛 ──
+thresholds:
+  # Lift: entry_quality 在 pass region / baseline
+  # Entry timing 信号弱, 1.05x 已有意义
+  min_lift: 1.05
+
+  # Effect size: snotio(pass) - snotio(fail)
+  min_effect: 0.02
+
+  # Robustness: time-fold 一致性 (0=全不一致, 1=全一致)
+  min_robustness: 0.3
+
+  # 相关性剪枝: pass_mask 相关性超过此值 → 去重
+  correlation_threshold: 0.80
+
+  # 最终规则数上限 (OR 组合)
+  max_rules: 5
+
+  # Pass rate 合法范围 (太小无意义, 太大等于没有 filter)
+  pass_rate_min: 0.10
+  pass_rate_max: 0.90
+
+# ── Plateau 验证参数 (层专属: snotio 稳定性) ──
+plateau:
+  # snotio CV 上限: 滑动窗口内收益稳定性
+  snotio_cv_max: 0.3
+
+  # trades CV 上限: 执行节奏稳定性 (Entry Filter 特有)
+  trades_cv_max: 0.4
+
+  # 滑动窗口大小
+  window: 5
+
+# ── Holdout 验证参数 ──
+holdout:
+  ratio: 0.2
+  n_folds: 3
+  quantiles: [0.10, 0.20, 0.30, 0.40, 0.60, 0.70, 0.80, 0.90]
+
+# ── LightGBM 训练参数 ──
+lgb_params:
+  num_leaves: 31
+  learning_rate: 0.05
+  n_estimators: 200
+  min_child_samples: 50
+  feature_fraction: 0.8
+  bagging_fraction: 0.8
+  bagging_freq: 5
+
+# ── SHAP∩Gain 参数 ──
+shap_gain:
+  top_n: 10
+  compute_interactions: false

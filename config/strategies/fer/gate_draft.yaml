@@ -1,5 +1,5 @@
 # FER Gate Draft (auto-generated)
-# 来源: results/train_final_20260302_200352_rr_extreme/fer
+# 来源: results/train_final_20260306_011712_rr_extreme/fer
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fer
@@ -12,118 +12,58 @@ schema:
   - guardrail
   evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
-    failure_budget:
-      max_hard_deny_rate: 0.5
-      alert_threshold: 0.45
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
 hard_gates:
-- id: gate_fer_signed_efficiency
-  tag: HARD_FER_SIGNED_EFFICIENCY
+- id: gate_fer_aggressor_absorption
+  tag: HARD_FER_AGGRESSOR_ABSORPTION
   phase: hard_gate
   priority: 10
-  reason: fer_signed_efficiency 触发树分裂条件 (分裂 2 次)
+  reason: 统计验证规则 (lift=1.24)
   when:
-    fer_signed_efficiency:
-      value_lt: 0.0
+    fer_aggressor_absorption:
+      value_gt: 0.0004
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 0 | 方向: data_verified (low=0.139, high=0.622)'
+  comment: 'statistical(lift=1.24): fer_aggressor_absorption > 0.0004021'
 - id: gate_cvd_change_5_normalized
   tag: HARD_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
   priority: 11
-  reason: cvd_change_5_normalized 触发树分裂条件 (分裂 2 次)
+  reason: 统计验证规则 (lift=1.11)
   when:
     cvd_change_5_normalized:
-      value_lt: -0.0025
+      value_gt: 0.0082
   then:
     action: deny
-  comment: '自动生成: 分裂 2 次 | 阈值 -0.00253 | 方向: data_verified (low=0.314, high=0.633)'
-- id: gate_cvd_divergence_score
-  tag: HARD_CVD_DIVERGENCE_SCORE
+  comment: 'statistical(lift=1.11): cvd_change_5_normalized > 0.008218'
+- id: gate_fer_signed_efficiency_fer_volume_price_divergence
+  tag: HARD_FER_SIGNED_EFFICIENCY_FER_VOLUME_PRICE_DIVERGENCE
   phase: hard_gate
   priority: 12
-  reason: cvd_divergence_score 触发树分裂条件 (分裂 1 次)
+  reason: 统计验证规则 (lift=1.59)
   when:
-    cvd_divergence_score:
-      value_lt: 0.602
+    all_of:
+    - fer_signed_efficiency:
+        value_lt: -0.0
+    - fer_volume_price_divergence:
+        value_gt: 0.85
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.602 | 方向: data_verified (low=0.251, high=1.198)'
-- id: gate_rsi
-  tag: HARD_RSI
+  comment: 'statistical(lift=1.59): fer_signed_efficiency < -1.497e-09 & fer_volume_price_divergence > 0.85'
+- id: gate_fer_volume_price_divergence_fer_signed_efficiency_pct
+  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE_FER_SIGNED_EFFICIENCY_PCT
   phase: hard_gate
   priority: 13
-  reason: rsi 触发树分裂条件 (分裂 1 次)
+  reason: 统计验证规则 (lift=1.52)
   when:
-    rsi:
-      value_gt: 29.7719
+    all_of:
+    - fer_volume_price_divergence:
+        value_gt: 0.85
+    - fer_signed_efficiency_pct:
+        value_lt: 0.275
   then:
     action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 29.77 | 方向: data_verified (low=3.111, high=0.156)'
-- id: gate_fer_signed_efficiency_pct
-  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
-  phase: hard_gate
-  priority: 14
-  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
-  when:
-    fer_signed_efficiency_pct:
-      value_lt: 0.0923
-  then:
-    action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.09233 | 方向: data_verified (low=-1.171, high=0.579)'
-- id: gate_spectrum_volume_high_freq_ratio
-  tag: HARD_SPECTRUM_VOLUME_HIGH_FREQ_RATIO
-  phase: hard_gate
-  priority: 15
-  reason: spectrum_volume_high_freq_ratio 触发树分裂条件 (分裂 1 次)
-  when:
-    spectrum_volume_high_freq_ratio:
-      value_gt: 0.6583
-  then:
-    action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.6583 | 方向: data_verified (low=0.532, high=0.305)'
-- id: gate_spectrum_cvd_centroid
-  tag: HARD_SPECTRUM_CVD_CENTROID
-  phase: hard_gate
-  priority: 16
-  reason: spectrum_cvd_centroid 触发树分裂条件 (分裂 1 次)
-  when:
-    spectrum_cvd_centroid:
-      value_gt: 0.502
-  then:
-    action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.502 | 方向: data_verified (low=0.903, high=-0.177)'
-- id: gate_spectrum_volume_low_freq_ratio
-  tag: HARD_SPECTRUM_VOLUME_LOW_FREQ_RATIO
-  phase: hard_gate
-  priority: 17
-  reason: spectrum_volume_low_freq_ratio 触发树分裂条件 (分裂 1 次)
-  when:
-    spectrum_volume_low_freq_ratio:
-      value_gt: 0.0416
-  then:
-    action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.0416 | 方向: data_verified (low=1.055, high=0.268)'
-- id: gate_wpt_absorption_score
-  tag: HARD_WPT_ABSORPTION_SCORE
-  phase: hard_gate
-  priority: 18
-  reason: wpt_absorption_score 触发树分裂条件 (分裂 1 次)
-  when:
-    wpt_absorption_score:
-      value_lt: 0.0977
-  then:
-    action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 0.09773 | 方向: data_verified (low=-0.291, high=0.739)'
-- id: gate_cvd_divergence_score
-  tag: HARD_CVD_DIVERGENCE_SCORE
-  phase: hard_gate
-  priority: 19
-  reason: cvd_divergence_score 触发树分裂条件 (分裂 1 次)
-  when:
-    cvd_divergence_score:
-      value_lt: -0.3776
-  then:
-    action: deny
-  comment: '自动生成: 分裂 1 次 | 阈值 -0.3776 | 方向: data_verified (low=0.333, high=0.418)'
+  comment: 'statistical(lift=1.52): fer_volume_price_divergence > 0.85 & fer_signed_efficiency_pct < 0.275'
 guardrails: []

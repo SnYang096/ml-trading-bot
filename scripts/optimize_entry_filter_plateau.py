@@ -206,12 +206,14 @@ def _find_plateau(
     results: List[Dict[str, Any]],
     window: int = 5,
     operator: str = ">=",
+    snotio_cv_max: float = 0.3,
+    trades_cv_max: float = 0.4,
 ) -> Dict[str, Any]:
     """分析扫描结果，找到平坦高原区间。
 
     使用滑动窗口双 CV 判定：
-      - snotio CV < 0.3（收益稳定性）
-      - Trades CV < 0.4（执行节奏稳定性 — Entry Filter 特有）
+      - snotio CV < snotio_cv_max（收益稳定性）
+      - Trades CV < trades_cv_max（执行节奏稳定性 — Entry Filter 特有）
 
     recommended 不取中点，取 plateau 偏宽容侧：
       - >= / > 条件：低阈值 = 更宽松 → start + bias * width
@@ -248,7 +250,7 @@ def _find_plateau(
         std_tr = np.std(trades_list)
         cv_trades = std_tr / mean_tr if mean_tr > 1e-8 else 999
 
-        if cv_snotio < 0.3 and cv_trades < 0.4 and mean_sn > 0:
+        if cv_snotio < snotio_cv_max and cv_trades < trades_cv_max and mean_sn > 0:
             start_t = w[0]["threshold"]
             end_t = w[-1]["threshold"]
             plateau_width = abs(end_t - start_t)
@@ -284,7 +286,7 @@ def _find_plateau(
             snotios = [r["snotio"] for r in w]
             mean_sn = np.mean(snotios)
             cv_snotio = np.std(snotios) / mean_sn if mean_sn > 1e-8 else 999
-            if cv_snotio < 0.3 and mean_sn > 0:
+            if cv_snotio < snotio_cv_max and mean_sn > 0:
                 start_t = w[0]["threshold"]
                 end_t = w[-1]["threshold"]
                 pw = abs(end_t - start_t)
@@ -552,6 +554,20 @@ def main() -> int:
         action="store_true",
         help="自动写入 archetypes/entry_filters.yaml (Tier A: plateau验证 + Tier B: snotio>baseline放过)",
     )
+    # ── Meta-Algorithm 模式 ──
+    p.add_argument(
+        "--meta-algorithm",
+        action="store_true",
+        help="启用 SHAP∩Gain Meta-Algorithm 模式: LightGBM → SHAP∩Gain → holdout 统计验证 → plateau → 规则输出. "
+        "替代默认的手工 filter 扫描.",
+    )
+    p.add_argument(
+        "--holdout-ratio",
+        type=float,
+        default=0.2,
+        metavar="RATIO",
+        help="Meta-algorithm 模式: holdout 比例 (默认: 0.2)",
+    )
     args = p.parse_args()
 
     # 加载数据
@@ -618,6 +634,12 @@ def main() -> int:
         print(
             f"   \U0001f6aa Gate filter (auto): {n_allowed} allow / {len(merged)} total"
         )
+    else:
+        print(
+            "   \u26a0\ufe0f  无 gate_decision/gate_ok 列 \u2014 Gate 未生效!"
+            " 应使用 logs_gated.parquet (见 research_pipeline.yaml data_flow)"
+        )
+        return 1
 
     n_entries = int((merged["entry_direction"] != 0).sum())
     if n_entries == 0:
@@ -628,6 +650,11 @@ def main() -> int:
     )
 
     span_years = _estimate_span_years(merged)
+
+    # ── Meta-Algorithm 路由: 加载数据后直接走新流程 ──
+    if args.meta_algorithm:
+        exec_config = load_execution_config(args.strategy, args.strategies_root)
+        return _meta_algorithm_entry_filter(args, merged, exec_config)
 
     # 加载配置
     exec_config = load_execution_config(args.strategy, args.strategies_root)
@@ -842,6 +869,718 @@ def main() -> int:
             merged=merged,
             exec_config=exec_config,
         )
+
+    return 0
+
+
+def _meta_algorithm_entry_filter(
+    args,
+    merged: pd.DataFrame,
+    exec_config: Dict[str, Any],
+) -> int:
+    """Meta-Algorithm Entry Filter: LightGBM → SHAP∩Gain → holdout 统计验证 → plateau → OR 规则.
+
+    Entry quality 标签: exec_r > median(exec_r) (自适应中位数, ~50/50 平衡).
+    与 Prefilter 的 DENY 逻辑相反, Entry Filter 是 ALLOW 逻辑:
+      pass_mask = 满足条件 → entry_quality 更高.
+    只走 1D 规则, 禁止 2D interaction surface.
+    """
+    import yaml
+    from scipy.stats import norm as _norm_dist
+
+    # 导入共用函数 (方法论约束 #5: 不可分叉)
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from export_lightgbm_rules_to_readme import _compute_shap_gain_features
+
+    strategy = args.strategy
+    holdout_ratio = args.holdout_ratio
+
+    # ── 0. 加载 kpi_gates/entry_filter_layer.yaml ──
+    _kpi_gate_path = Path("config/kpi_gates/entry_filter_layer.yaml")
+    if _kpi_gate_path.exists():
+        with open(_kpi_gate_path, "r", encoding="utf-8") as _kf:
+            _kpi = yaml.safe_load(_kf) or {}
+    else:
+        _kpi = {}
+    _thr = _kpi.get("thresholds", {})
+    _lgb_cfg = _kpi.get("lgb_params", {})
+    _ho_cfg = _kpi.get("holdout", {})
+    _sg_cfg = _kpi.get("shap_gain", {})
+    _label_cfg = _kpi.get("label", {})
+    _plateau_cfg = _kpi.get("plateau", {})
+
+    print(f"\n{'='*110}")
+    print(f"🔬 Meta-Algorithm Entry Filter ({strategy.upper()})")
+    print(f"{'='*110}")
+
+    # ── 1. 构建 entry_quality 标签 ──
+    # 标签方法从 kpi_gates 读取: "median" (默认) 或 "fixed"
+    label_method = _label_cfg.get("method", "median")
+    label_fixed_thr = _label_cfg.get("fixed_threshold", 0)
+
+    original_dir = merged["entry_direction"].copy()
+    exec_returns, _ = simulate_rr_execution(
+        merged, exec_config, atr_col="atr", use_tier_params=False
+    )
+    merged["entry_direction"] = original_dir  # 恢复
+
+    # entry_quality: 根据 label_method 确定阈值
+    valid_exec = exec_returns.notna()
+    trade_mask = (merged["entry_direction"] != 0) & valid_exec
+    exec_r_values = exec_returns[trade_mask]
+
+    if label_method == "median":
+        quality_threshold = float(exec_r_values.median())
+    else:
+        quality_threshold = float(label_fixed_thr)
+
+    merged["_entry_quality"] = 0
+    merged.loc[valid_exec & (exec_returns > quality_threshold), "_entry_quality"] = 1
+    # 只用有实际交易的 bar (有方向 + 有 exec_returns)
+    df_trades = merged.loc[trade_mask].copy().reset_index(drop=True)
+
+    n_trades = len(df_trades)
+    good_rate = float((df_trades["_entry_quality"] == 1).mean())
+    print(
+        f"\n🎯 Entry quality 标签: {n_trades} trades, "
+        f"method={label_method}, threshold={quality_threshold:.4f}, "
+        f"good_rate={good_rate:.1%}"
+    )
+    if n_trades < 100:
+        print(f"❌ 交易数不足 ({n_trades} < 100)")
+        return 1
+
+    # ── 2. 收集可用数值特征 ──
+    _META_EXCLUDE = {
+        "symbol",
+        "_symbol",
+        "timestamp",
+        "date",
+        "datetime",
+        "time",
+        "ts",
+        "entry_direction",
+        "bpc_breakout_direction",
+        "gate_decision",
+        "gate_ok",
+        "gate_label",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "atr",
+        "_entry_quality",
+        "exec_r",
+        "target",
+        "label",
+        "success_no_rr_extreme",
+        "rr_extreme",
+        # 🐛 Fix: forward-looking labels 禁止作为 entry filter 特征
+        #   forward_rr 是未来收益率，在实盘/事件回测时不存在。
+        #   ME 20260306 run 泄漏导致 entry_filter=forward_rr>=2.65，
+        #   OOS 回测 0 trades。
+        "forward_rr",
+        "forward_return",
+        "forward_r",
+        "path_extreme",
+        "path_extreme_r",
+    }
+    # 原始 (非归一化) 特征 — 从 feature_dependencies.yaml raw_scale_columns 读取
+    _raw_scale_set: set = set()
+    _fd_path = Path("config/feature_dependencies.yaml")
+    if _fd_path.exists():
+        import yaml as _fd_yaml
+
+        with open(_fd_path, "r", encoding="utf-8") as _fdf:
+            _fd = _fd_yaml.safe_load(_fdf) or {}
+        _rsc = _fd.get("raw_scale_columns", {})
+        for _cat_vals in _rsc.values():
+            if isinstance(_cat_vals, list):
+                _raw_scale_set.update(_cat_vals)
+        print(
+            f"   raw_scale_columns: {len(_raw_scale_set)} 列 (从 feature_dependencies.yaml)"
+        )
+
+    # 排除以 gate_ 开头的列 (门控元数据) 和 OHLCV
+    features = []
+    n_raw_dropped = 0
+    for c in df_trades.columns:
+        if c in _META_EXCLUDE:
+            continue
+        if c.startswith("gate_") or c.startswith("__"):
+            continue
+        # 排除所有前瞻标签 (forward_*)
+        if c.startswith("forward_"):
+            continue
+        if not pd.api.types.is_numeric_dtype(df_trades[c]):
+            continue
+        # 跳过全常数列
+        if df_trades[c].nunique() < 2:
+            continue
+        # 排除 raw_scale_columns 登记的原始特征
+        if c in _raw_scale_set:
+            n_raw_dropped += 1
+            continue
+        features.append(c)
+
+    print(f"   可用数值特征: {len(features)} 列 (排除 {n_raw_dropped} 原始特征)")
+
+    # ── 归一化护栏: 报警疑似未归一化特征 (|value| > 1 的比例超过 50%) ──
+    # 仅报警不排除 — rsi(0-100)、fp_ratio 等有界特征 >1 是正常的
+    _suspect_raw: list = []
+    for feat in features:
+        vals = df_trades[feat].dropna()
+        if len(vals) == 0:
+            continue
+        frac_gt1 = float((vals.abs() > 1).mean())
+        if frac_gt1 > 0.5:
+            _suspect_raw.append((feat, frac_gt1, float(vals.min()), float(vals.max())))
+    if _suspect_raw:
+        print(
+            f"\n   ⚠️  疑似大值域特征 ({len(_suspect_raw)} 列, "
+            f"|value|>1 超过 50% 样本, 仅报警):"
+        )
+        for _sname, _sfrac, _smin, _smax in sorted(_suspect_raw, key=lambda x: -x[1])[
+            :10
+        ]:
+            print(
+                f"      {_sname:45s}  |>1|={_sfrac:5.1%}  "
+                f"range=[{_smin:.4g}, {_smax:.4g}]"
+            )
+        if len(_suspect_raw) > 10:
+            print(f"      ... 及其他 {len(_suspect_raw) - 10} 列")
+
+    if len(features) < 5:
+        print(f"\u274c 可用特征不足 ({len(features)} < 5)")
+        return 1
+
+    # ── 3. Train/Holdout 时间分割 ──
+    # 尝试用时间列排序
+    time_col = None
+    for tc in ["timestamp", "date", "datetime", "time", "ts"]:
+        if tc in df_trades.columns:
+            time_col = tc
+            break
+    if time_col is not None:
+        try:
+            times = pd.to_datetime(df_trades[time_col], errors="coerce")
+            sort_order = times.values.argsort()
+            df_trades = df_trades.iloc[sort_order].reset_index(drop=True)
+        except Exception:
+            pass  # 如果解析失败, 按行顺序
+
+    n_holdout = int(n_trades * holdout_ratio)
+    n_train = n_trades - n_holdout
+    df_train = df_trades.iloc[:n_train].copy()
+    df_holdout = df_trades.iloc[n_train:].copy()
+
+    train_good = float((df_train["_entry_quality"] == 1).mean())
+    holdout_good = float((df_holdout["_entry_quality"] == 1).mean())
+    print(f"\n📐 Train/Holdout 分割: {n_train} / {n_holdout} (ratio={holdout_ratio})")
+    print(f"   Train  good_rate: {train_good:.1%}")
+    print(f"   Holdout good_rate: {holdout_good:.1%}")
+
+    # ── 4. LightGBM 训练 ──
+    try:
+        import lightgbm as lgb
+    except ImportError:
+        print("❌ lightgbm 未安装")
+        return 1
+
+    avail_features = [f for f in features if f in df_train.columns]
+    if len(avail_features) < 2:
+        print(f"❌ 可用特征不足 ({len(avail_features)} < 2)")
+        return 1
+
+    X_train = df_train[avail_features].fillna(0).values.astype(float)
+    y_train = df_train["_entry_quality"].values.astype(int)
+
+    lgb_params = {
+        "objective": "binary",
+        "metric": "binary_logloss",
+        "num_leaves": _lgb_cfg.get("num_leaves", 31),
+        "learning_rate": _lgb_cfg.get("learning_rate", 0.05),
+        "min_child_samples": _lgb_cfg.get("min_child_samples", 50),
+        "feature_fraction": _lgb_cfg.get("feature_fraction", 0.8),
+        "bagging_fraction": _lgb_cfg.get("bagging_fraction", 0.8),
+        "bagging_freq": _lgb_cfg.get("bagging_freq", 5),
+        "verbose": -1,
+        "seed": 42,
+        "n_jobs": -1,
+    }
+    n_estimators = _lgb_cfg.get("n_estimators", 200)
+
+    print(
+        f"\n🌲 LightGBM 训练: {len(avail_features)} 特征, {n_train} 样本, {n_estimators} 轮"
+    )
+    train_data = lgb.Dataset(X_train, label=y_train, feature_name=avail_features)
+    model = lgb.train(
+        lgb_params,
+        train_data,
+        num_boost_round=n_estimators,
+    )
+    print(f"   ✅ 训练完成")
+
+    # ── 5. SHAP∩Gain 特征发现 ──
+    _shap_top_n = _sg_cfg.get("top_n", 10)
+    _shap_interactions = _sg_cfg.get("compute_interactions", False)
+    print(
+        f"\n🔍 SHAP∩Gain 特征发现 (top_n={_shap_top_n}, interactions={_shap_interactions})"
+    )
+    top_features, shap_importance_map, interaction_pairs = _compute_shap_gain_features(
+        df_train,
+        avail_features,
+        model,
+        top_n=_shap_top_n,
+        compute_interactions=_shap_interactions,
+    )
+    print(f"   Top features: {top_features}")
+    if shap_importance_map:
+        print(f"\n   SHAP 重要性排名:")
+        sorted_shap = sorted(shap_importance_map.items(), key=lambda x: -x[1])
+        for rank, (feat, imp) in enumerate(sorted_shap[:10], 1):
+            marker = " ★" if feat in top_features else ""
+            print(f"   {rank:>3d}. {feat:<40s} SHAP={imp:.4f}{marker}")
+
+    # ── 6. Holdout 统计验证 ──
+    print(f"\n{'='*110}")
+    print(f"📊 Holdout 统计验证 ({n_holdout} 样本)")
+    print(f"{'='*110}")
+
+    holdout_quality = df_holdout["_entry_quality"].values.astype(int)
+    holdout_good_mask = holdout_quality == 1
+    baseline_good_rate = float(holdout_good_mask.mean())
+
+    quantiles = _ho_cfg.get(
+        "quantiles", [0.10, 0.20, 0.30, 0.40, 0.60, 0.70, 0.80, 0.90]
+    )
+    n_folds_holdout = _ho_cfg.get("n_folds", 3)
+    fold_size_ho = n_holdout // n_folds_holdout
+
+    # Entry Filter 门槛从 kpi_gates 读取
+    EF_MIN_LIFT = _thr.get("min_lift", 1.05)
+    EF_MIN_EFFECT = _thr.get("min_effect", 0.02)
+    EF_MIN_ROBUSTNESS = _thr.get("min_robustness", 0.3)
+    EF_CORR_THRESHOLD = _thr.get("correlation_threshold", 0.80)
+    EF_MAX_RULES = _thr.get("max_rules", 5)
+    EF_PASS_RATE_MIN = _thr.get("pass_rate_min", 0.10)
+    EF_PASS_RATE_MAX = _thr.get("pass_rate_max", 0.90)
+
+    candidates = []
+
+    for feat in top_features:
+        if feat not in df_holdout.columns:
+            continue
+        col = df_holdout[feat].values.astype(float)
+        valid = ~np.isnan(col)
+        if valid.sum() < 50:
+            continue
+
+        thresholds = np.unique(np.quantile(col[valid], quantiles))
+        for thr_val in thresholds:
+            for direction in ["ge", "le"]:
+                # ALLOW 逻辑: pass_mask = 满足条件的 bars
+                if direction == "ge":
+                    pass_mask = (col >= thr_val) & valid
+                else:
+                    pass_mask = (col <= thr_val) & valid
+
+                pass_rate = float(pass_mask.mean())
+                if pass_rate < EF_PASS_RATE_MIN or pass_rate > EF_PASS_RATE_MAX:
+                    continue
+
+                # Lift: good concentration in pass region / baseline
+                good_in_pass = (
+                    float(holdout_good_mask[pass_mask].mean()) if pass_mask.any() else 0
+                )
+                lift = (
+                    good_in_pass / baseline_good_rate if baseline_good_rate > 0 else 0
+                )
+                if lift <= EF_MIN_LIFT:
+                    continue
+
+                # Effect size: good_rate(pass) - good_rate(fail)
+                fail_mask = ~pass_mask & valid
+                good_rate_pass = good_in_pass
+                good_rate_fail = (
+                    float(holdout_good_mask[fail_mask].mean()) if fail_mask.any() else 0
+                )
+                effect = good_rate_pass - good_rate_fail
+                if effect < EF_MIN_EFFECT:
+                    continue
+
+                # Robustness: time-fold on holdout
+                fold_lifts = []
+                for fi in range(n_folds_holdout):
+                    s = fi * fold_size_ho
+                    e = (
+                        (fi + 1) * fold_size_ho
+                        if fi < n_folds_holdout - 1
+                        else n_holdout
+                    )
+                    fg = holdout_good_mask[s:e]
+                    fp = pass_mask[s:e]
+                    fgr = float(fg.mean())
+                    if fgr > 0 and fp.any():
+                        fl = float(fg[fp].mean()) / fgr
+                        fold_lifts.append(fl)
+
+                rob_time = sum(1 for fl in fold_lifts if fl > 1.0) / max(
+                    len(fold_lifts), 1
+                )
+                if len(fold_lifts) >= 2:
+                    rob_cross = (
+                        min(fold_lifts) / max(fold_lifts) if max(fold_lifts) > 0 else 0
+                    )
+                    robustness = rob_time * 0.6 + rob_cross * 0.4
+                else:
+                    robustness = rob_time
+                if robustness < EF_MIN_ROBUSTNESS:
+                    continue
+
+                op_str = ">=" if direction == "ge" else "<="
+                score = lift * 0.4 + robustness * 0.4 + pass_rate * 0.2
+
+                candidates.append(
+                    {
+                        "feature": feat,
+                        "op": op_str,
+                        "threshold": float(thr_val),
+                        "lift": lift,
+                        "effect_size": effect,
+                        "robustness": robustness,
+                        "pass_rate": pass_rate,
+                        "score": score,
+                        "_pass_mask": pass_mask,
+                    }
+                )
+
+    # ── 6b. 去重 + 相关性剪枝 ──
+    if not candidates:
+        print("   ⚠️  Holdout 统计验证: 无候选规则通过 lift+robustness 筛选")
+    else:
+        candidates.sort(key=lambda x: -x["score"])
+        print(f"   {len(candidates)} 候选规则通过 holdout 验证")
+
+    selected = []
+    selected_features = set()
+    for cand in candidates:
+        if len(selected) >= EF_MAX_RULES * 2:  # 多保留一些给 plateau 筛
+            break
+        if cand["feature"] in selected_features:
+            continue
+        correlated = False
+        for sel in selected:
+            m1 = cand["_pass_mask"].astype(float)
+            m2 = sel["_pass_mask"].astype(float)
+            if m1.std() == 0 or m2.std() == 0:
+                continue
+            corr = float(np.corrcoef(m1, m2)[0, 1])
+            if abs(corr) > EF_CORR_THRESHOLD:
+                correlated = True
+                break
+        if not correlated:
+            selected.append(cand)
+            selected_features.add(cand["feature"])
+
+    # ── 7. Plateau scanning + z-test ──
+    print(f"\n{'='*110}")
+    print(f"📈 Plateau Scanning + z-test ({len(selected)} 候选)")
+    print(f"{'='*110}")
+
+    # 用全量数据 (merged) 做 plateau scanning, 而非只用 holdout
+    # 因为 _scan_single_threshold 需要 simulate_rr_execution
+    # 但我们仅用 holdout 结果做决策
+
+    # z-test 准备: baseline snotio (全体 entry)
+    merged_original_dir = merged["entry_direction"].copy()
+    bl_exec_ret, _ = simulate_rr_execution(
+        merged, exec_config, atr_col="atr", use_tier_params=False
+    )
+    merged["entry_direction"] = merged_original_dir
+    bl_valid = bl_exec_ret.dropna()
+    bl_snotio = float(bl_valid.mean()) if len(bl_valid) >= 10 else 0.0
+    bl_std = float(bl_valid.std()) if len(bl_valid) >= 10 else 1.5
+    print(
+        f"   📏 Baseline snotio={bl_snotio:.4f} (trades={len(bl_valid)}, σ={bl_std:.3f})"
+    )
+
+    def _is_significant_ef(
+        sn: float, n: int, sigma: float = 1.5
+    ) -> Tuple[bool, float, float]:
+        """z-test: H0 为 filter snotio = baseline snotio."""
+        if n < 5 or sigma <= 0:
+            return False, 0.0, 1.0
+        se = sigma / np.sqrt(n)
+        z = (sn - bl_snotio) / se
+        p = 1 - _norm_dist.cdf(z)
+        return p < 0.05, z, p
+
+    sigma_for_test = bl_std if bl_std > 0 else 1.5
+
+    final_rules = []
+
+    for cand in selected:
+        feat = cand["feature"]
+        op_str = cand["op"]
+        thr_val = cand["threshold"]
+
+        # 构建临时 filter def 供 plateau scan
+        # op_str 是 ">="/"<=", 需要构建单条件 filter
+        tmp_filter_def = {
+            "id": f"meta_{feat}",
+            "conditions": [{"feature": feat, "operator": op_str, "value": thr_val}],
+        }
+        scan_values = _generate_scan_range(thr_val, op_str, n_steps=15)
+        print(
+            f"\n   🔍 {feat} {op_str} {thr_val:.4f}  →  扫描 [{scan_values[0]:.3f}, {scan_values[-1]:.3f}]"
+        )
+
+        scan_data = _scan_single_threshold(
+            merged,
+            exec_config,
+            tmp_filter_def,
+            0,  # cond_index
+            scan_values,
+            {},  # entry_filters_cfg unused inside
+            _estimate_span_years(merged),
+        )
+        plateau = _find_plateau(
+            scan_data,
+            operator=op_str,
+            window=_plateau_cfg.get("window", 5),
+            snotio_cv_max=_plateau_cfg.get("snotio_cv_max", 0.3),
+            trades_cv_max=_plateau_cfg.get("trades_cv_max", 0.4),
+        )
+
+        if plateau.get("is_plateau"):
+            rec_threshold = plateau["recommended"]
+            # 用推荐阈值评估 snotio
+            merged["entry_direction"] = merged_original_dir.copy()
+            col_full = (
+                merged[feat].values.astype(float) if feat in merged.columns else None
+            )
+            if col_full is not None:
+                if op_str == ">=":
+                    filt_mask = col_full >= rec_threshold
+                else:
+                    filt_mask = col_full <= rec_threshold
+                merged.loc[~filt_mask, "entry_direction"] = 0.0
+                n_ent = int((merged["entry_direction"] != 0).sum())
+                if n_ent >= 20:
+                    exec_ret, _ = simulate_rr_execution(
+                        merged, exec_config, atr_col="atr", use_tier_params=False
+                    )
+                    filt_valid = exec_ret.dropna()
+                    filt_snotio = (
+                        float(filt_valid.mean()) if len(filt_valid) >= 10 else 0.0
+                    )
+                    sig, z_val, p_val = _is_significant_ef(
+                        filt_snotio, len(filt_valid), sigma_for_test
+                    )
+                else:
+                    filt_snotio, sig, z_val, p_val = 0.0, False, 0.0, 1.0
+            else:
+                filt_snotio, sig, z_val, p_val = 0.0, False, 0.0, 1.0
+            merged["entry_direction"] = merged_original_dir
+
+            warn = " ⚠️ Trades CV>0.4" if plateau.get("cv_trades_warning") else ""
+            sig_label = "✅ sig" if sig else "❌ not_sig"
+            print(
+                f"      ✅ 高原: [{plateau['start_threshold']:.3f}, {plateau['end_threshold']:.3f}] "
+                f"width={plateau['plateau_width']:.3f} conf={plateau['confidence']} "
+                f"rec={rec_threshold:.4f} snotio={filt_snotio:.4f} "
+                f"z={z_val:.2f} p={p_val:.4f} {sig_label}{warn}"
+            )
+
+            if sig:
+                final_rules.append(
+                    {
+                        "feature": feat,
+                        "operator": op_str,
+                        "value": round(rec_threshold, 4),
+                        "lift": cand["lift"],
+                        "effect_size": cand["effect_size"],
+                        "robustness": cand["robustness"],
+                        "pass_rate": cand["pass_rate"],
+                        "plateau": plateau,
+                        "snotio": filt_snotio,
+                        "z_score": z_val,
+                        "p_value": p_val,
+                        "tier": "A_PLATEAU",
+                    }
+                )
+        else:
+            # Tier B: 无 plateau 但 snotio > baseline + 显著性
+            merged["entry_direction"] = merged_original_dir.copy()
+            col_full = (
+                merged[feat].values.astype(float) if feat in merged.columns else None
+            )
+            if col_full is not None:
+                if op_str == ">=":
+                    filt_mask = col_full >= thr_val
+                else:
+                    filt_mask = col_full <= thr_val
+                merged.loc[~filt_mask, "entry_direction"] = 0.0
+                n_ent = int((merged["entry_direction"] != 0).sum())
+                if n_ent >= 20:
+                    exec_ret, _ = simulate_rr_execution(
+                        merged, exec_config, atr_col="atr", use_tier_params=False
+                    )
+                    filt_valid = exec_ret.dropna()
+                    filt_snotio = (
+                        float(filt_valid.mean()) if len(filt_valid) >= 10 else 0.0
+                    )
+                    sig, z_val, p_val = _is_significant_ef(
+                        filt_snotio, len(filt_valid), sigma_for_test
+                    )
+                else:
+                    filt_snotio, sig, z_val, p_val = 0.0, False, 0.0, 1.0
+            else:
+                filt_snotio, sig, z_val, p_val = 0.0, False, 0.0, 1.0
+            merged["entry_direction"] = merged_original_dir
+
+            reason = plateau.get("reason", "")
+            sig_label = "✅ sig" if sig else "❌ not_sig"
+            print(
+                f"      ❌ 无高原 ({reason}) snotio={filt_snotio:.4f} "
+                f"z={z_val:.2f} p={p_val:.4f} {sig_label}"
+            )
+
+            if sig and filt_snotio > bl_snotio:
+                final_rules.append(
+                    {
+                        "feature": feat,
+                        "operator": op_str,
+                        "value": round(thr_val, 4),
+                        "lift": cand["lift"],
+                        "effect_size": cand["effect_size"],
+                        "robustness": cand["robustness"],
+                        "pass_rate": cand["pass_rate"],
+                        "plateau": None,
+                        "snotio": filt_snotio,
+                        "z_score": z_val,
+                        "p_value": p_val,
+                        "tier": "B_SNOTIO",
+                    }
+                )
+
+    # 截取到 max_rules
+    final_rules = final_rules[:EF_MAX_RULES]
+
+    # ── 8. 诊断输出 ──
+    print(f"\n{'='*110}")
+    print(f"📋 Meta-Algorithm Entry Filter 结果 ({strategy.upper()})")
+    print(f"{'='*110}")
+
+    if final_rules:
+        tier_a = sum(1 for r in final_rules if r["tier"] == "A_PLATEAU")
+        tier_b = sum(1 for r in final_rules if r["tier"] == "B_SNOTIO")
+        print(
+            f"\n   ✅ {len(final_rules)} 条规则通过 holdout 验证 ({tier_a} Tier-A, {tier_b} Tier-B)"
+        )
+        print(
+            f"   {'#':>3s} {'feature':<35s} {'cond':<15s} {'lift':>6s} {'robust':>7s} "
+            f"{'pass%':>6s} {'snotio':>7s} {'z':>6s} {'p':>7s} {'tier':<10s}"
+        )
+        print(f"   {'-'*110}")
+        for i, r in enumerate(final_rules):
+            cond = f"{r['operator']} {r['value']:.4g}"
+            print(
+                f"   {i+1:>3d} {r['feature']:<35s} {cond:<15s} "
+                f"{r['lift']:>5.2f}x {r['robustness']:>6.0%} "
+                f"{r['pass_rate']:>5.1%} {r['snotio']:>+6.4f} "
+                f"{r['z_score']:>+5.2f} {r['p_value']:>6.4f} {r['tier']:<10s}"
+            )
+    else:
+        print(f"\n   ⚠️  无规则通过 holdout 验证, 策略将无条件入场")
+
+    # ── 9. Promote ──
+    if args.promote:
+        strategies_root = args.strategies_root
+        arch_dir = Path(strategies_root) / strategy / "archetypes"
+        arch_dir.mkdir(parents=True, exist_ok=True)
+        output_path = arch_dir / "entry_filters.yaml"
+
+        if not final_rules:
+            empty_header = (
+                f"# {strategy.upper()} Entry Filter Archetype\n"
+                f"# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm\n"
+                f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                f"# Promoted: 0 filters (Meta-Algorithm: 无规则通过 holdout+plateau+z-test)\n"
+                f"# Baseline snotio: {bl_snotio:.4f}, \u03c3={sigma_for_test:.3f}\n"
+                f"#\n"
+                f"# 没有 entry filter 通过准入, 策略将无条件入场\n"
+                f"\n"
+            )
+            empty_cfg = {"filters": [], "combination_mode": "or"}
+            yaml_content = yaml.dump(
+                empty_cfg, allow_unicode=True, default_flow_style=False, sort_keys=False
+            )
+            output_path.write_text(empty_header + yaml_content, encoding="utf-8")
+            print(f"\n   ⚠️  --promote: 没有 filter 通过准入, 已清空 {output_path}")
+        else:
+            promoted_filters = []
+            for r in final_rules:
+                pf = {
+                    "id": f"meta_{r['feature']}",
+                    "enabled": True,
+                    "description": f"Meta-Algorithm: {r['feature']} {r['operator']} {r['value']}",
+                    "conditions": [
+                        {
+                            "feature": r["feature"],
+                            "operator": r["operator"],
+                            "value": r["value"],
+                        }
+                    ],
+                    "tier": r["tier"],
+                    "notes": (
+                        f"lift={r['lift']:.2f}x, rob={r['robustness']:.0%}, "
+                        f"snotio={r['snotio']:.4f}, z={r['z_score']:.2f}, p={r['p_value']:.4f}"
+                    ),
+                }
+                promoted_filters.append(pf)
+
+            tier_a = sum(1 for r in final_rules if r["tier"] == "A_PLATEAU")
+            tier_b = sum(1 for r in final_rules if r["tier"] == "B_SNOTIO")
+
+            header = (
+                f"# {strategy.upper()} Entry Filter Archetype\n"
+                f"# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm\n"
+                f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                f"# Promoted: {len(promoted_filters)} filters ({tier_a} plateau + {tier_b} snotio-only)\n"
+                f"# Baseline snotio: {bl_snotio:.4f}, \u03c3={sigma_for_test:.3f}\n"
+                f"# Significance: z-test p<0.05 required for all tiers\n"
+                f"#\n"
+                f'# 职责: "现在该入场吗?" \u2192 硬二值控制入场时机\n'
+                f"# 多个 filter 之间是 OR 关系\n"
+                f"# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)\n"
+                f"\n"
+            )
+
+            out_cfg = {
+                "filters": promoted_filters,
+                "combination_mode": "or",
+            }
+
+            yaml_content = yaml.dump(
+                out_cfg,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+                width=120,
+            )
+
+            output_path.write_text(header + yaml_content, encoding="utf-8")
+            print(f"\n   ✅ --promote: 写入 {output_path}")
+            print(f"      Tier A (PLATEAU):  {tier_a} filters")
+            print(f"      Tier B (SNOTIO):   {tier_b} filters")
+            for pf in promoted_filters:
+                tier_label = "🅰" if pf.get("tier") == "A_PLATEAU" else "🅱"
+                print(f"      {tier_label} {pf['id']}: {pf['notes']}")
 
     return 0
 

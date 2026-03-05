@@ -175,6 +175,10 @@ class PositionSimulator:
         # 直接取 "atr" 键 — 不用 pick_atr() 因为它会误匹配 macd_atr 等特征
         atr = float(entry_bar.get("atr", 0)) or float(features.get("atr", 0)) or 0.0
 
+        # ATR=0 时拒绝开仓 — 无法计算止损/R-multiple
+        if atr <= 0:
+            return None
+
         # 解析 entry_time
         bar_ts = entry_bar.get("timestamp")
         if isinstance(bar_ts, str):
@@ -322,7 +326,7 @@ class PositionSimulator:
         for pid, pos in list(self._positions.items()):
             is_long = pos["side"] in {"LONG", "BUY"}
             entry_price = pos["entry_price"]
-            risk = pos.get("initial_risk_distance") or pos.get("atr_at_entry", 0) or 1
+            risk = pos.get("initial_risk_distance") or pos.get("atr_at_entry", 0) or 0
             pnl_usd = (price - entry_price) if is_long else (entry_price - price)
             pnl_r = pnl_usd / risk if risk > 0 else 0.0
             trade = ClosedTrade(
@@ -355,6 +359,46 @@ class PositionSimulator:
                     pnl_r=pnl_r,
                 )
         self._positions.clear()
+        return closed
+
+    def close_by_archetype(
+        self, archetype: str, close_price: float, close_time: datetime
+    ) -> List[ClosedTrade]:
+        """关闭指定 archetype 的所有仓位 (遗留接口, 竞争驱逐已移除)"""
+        closed = []
+        to_remove = []
+        for pid, pos in self._positions.items():
+            if pos.get("archetype", "").lower() != archetype.lower():
+                continue
+            is_long = pos["side"] in {"LONG", "BUY"}
+            entry_price = pos["entry_price"]
+            risk = pos.get("initial_risk_distance") or pos.get("atr_at_entry", 0) or 0
+            pnl_usd = (
+                (close_price - entry_price) if is_long else (entry_price - close_price)
+            )
+            pnl_r = pnl_usd / risk if risk > 0 else 0.0
+            trade = ClosedTrade(
+                symbol=pos.get("symbol", ""),
+                side=pos["side"],
+                entry_price=entry_price,
+                exit_price=close_price,
+                entry_time=pos["entry_time"],
+                exit_time=close_time,
+                atr_at_entry=pos.get("atr_at_entry", 0),
+                pnl_r=pnl_r,
+                pnl_usd=pnl_usd,
+                exit_reason="evicted",
+                archetype=pos.get("archetype", ""),
+                tier_name=pos.get("tier_name", ""),
+                evidence_score=pos.get("evidence_score", 0),
+                bars_held=pos.get("bars_counted", 0),
+                is_add_position=pos.get("_is_add_position", False),
+            )
+            closed.append(trade)
+            self.closed_trades.append(trade)
+            to_remove.append(pid)
+        for pid in to_remove:
+            self._positions.pop(pid, None)
         return closed
 
     def try_add_position(
@@ -916,6 +960,8 @@ class EventBacktester:
                 (ticks_1min["timestamp"] >= start_ts)
                 & (ticks_1min["timestamp"] <= end_ts)
             ]
+            # 设置 DatetimeIndex — footprint 计算需要
+            ticks_1min = ticks_1min.set_index("timestamp", drop=False).sort_index()
         else:
             ticks_1min = pd.DataFrame()
 
@@ -990,9 +1036,14 @@ class EventBacktester:
                 logger.warning(f"  {sym}: bars 不足, 跳过")
                 continue
 
+            # 注入 _symbol 列 — OI join 等特征需要识别 symbol
+            if "_symbol" not in bars_1min.columns:
+                bars_1min["_symbol"] = sym
+
             tf_features: Dict[str, pd.DataFrame] = {}
             for tf, fc in self._feature_computers.items():
                 t0 = time.time()
+                fc._current_symbol = sym  # for health report
                 features_df = fc.compute_features_dataframe(
                     bars_1min=bars_1min,
                     ticks_1min=ticks_1min,
@@ -1004,6 +1055,9 @@ class EventBacktester:
                 )
                 if features_df.empty:
                     continue
+
+                # 特征健康报告
+                fc.report_feature_health_df(features_df, symbol=sym, timeframe=tf)
 
                 features_df.index = pd.to_datetime(features_df.index, utc=True)
                 quantile_dfs_by_tf[tf].append(features_df)
@@ -1045,12 +1099,28 @@ class EventBacktester:
             return result
 
         # 设置 per-strategy Evidence 分位数 (从对应 timeframe 特征)
+        # 注意: 只用 pre-test 数据校准 quantiles，避免 look-ahead bias
         for s_name, s_obj in self._strats.items():
             tf = self._tf_map[s_name]
             if tf in quantile_dfs_by_tf and quantile_dfs_by_tf[tf]:
                 combined = pd.concat(quantile_dfs_by_tf[tf], axis=0)
-                s_obj.set_quantiles_from_df(combined)
-                logger.info(f"  Quantiles: {s_name} from {tf} ({len(combined)} rows)")
+                # 只用 test_start 之前的数据校准 (与向量回测 warmup calibration 对齐)
+                calib_only = combined[combined.index < test_start_ts]
+                if len(calib_only) >= 50:
+                    s_obj.set_quantiles_from_df(calib_only)
+                    logger.info(
+                        f"  Quantiles: {s_name} from {tf} "
+                        f"({len(calib_only)} pre-test rows, "
+                        f"excluded {len(combined) - len(calib_only)} test rows)"
+                    )
+                else:
+                    # 校准数据不足，用全量数据 (回退到旧行为)
+                    s_obj.set_quantiles_from_df(combined)
+                    logger.warning(
+                        f"  Quantiles: {s_name} from {tf} "
+                        f"({len(combined)} rows, pre-test only {len(calib_only)} < 50, "
+                        f"using all data as fallback)"
+                    )
 
         # ── Phase 2: 构建统一时间线 (多 timeframe union) ──
         timeline_events: List[Tuple[pd.Timestamp, str, Dict[str, pd.Series]]] = []
@@ -1145,17 +1215,29 @@ class EventBacktester:
         _prev_week = None
         _prev_month = None
 
+        # _pos_last_ts: 独立跟踪每个 symbol 持仓上次被处理到的时间点
+        # 与 prev_ts (信号时间) 分离, 确保跨 symbol slot 释放不延迟
+        _pos_last_ts: Dict[str, pd.Timestamp] = {}
+
         for ts, sym, tf_rows in timeline_events:
             simulator = self._simulators[sym]
             bars_1min_test = sym_data[sym]["bars_1min_test"]
             funnel["total_signals_checked"] += 1
 
-            # 先用 1min bars 更新该 symbol 的持仓 (上次信号 → 当前信号)
-            if sym in prev_ts and simulator.has_positions:
-                mask = (bars_1min_test.index > prev_ts[sym]) & (
-                    bars_1min_test.index <= ts
-                )
-                for bar_ts, bar_row in bars_1min_test[mask].iterrows():
+            # ── 更新所有 symbol 的持仓到当前 ts (模拟实盘实时 bar 处理) ──
+            # 实盘中 order_flow_listener 对所有 symbol 的 1min bars 实时调用 enforce_position,
+            # 仓位关闭后立即 notify_position_closed 释放 slot。
+            # 如果只更新当前 signal symbol, 其他 symbol 的已关闭仓位会"幽灵占用" slot,
+            # 导致 slot 拒绝率虚高, 与向量回测和实盘不一致。
+            for upd_sym, upd_sim in self._simulators.items():
+                if not upd_sim.has_positions:
+                    continue
+                upd_prev = _pos_last_ts.get(upd_sym)
+                if upd_prev is None or upd_prev >= ts:
+                    continue
+                upd_bars = sym_data[upd_sym]["bars_1min_test"]
+                upd_mask = (upd_bars.index > upd_prev) & (upd_bars.index <= ts)
+                for bar_ts, bar_row in upd_bars[upd_mask].iterrows():
                     bar_dict = {
                         "timestamp": bar_ts,
                         "open": float(bar_row.get("open", 0)),
@@ -1163,19 +1245,18 @@ class EventBacktester:
                         "low": float(bar_row.get("low", 0)),
                         "close": float(bar_row.get("close", 0)),
                     }
-                    closed = simulator.update(bar_dict)
-                    # 通知 PCM 释放 slot evidence
+                    closed = upd_sim.update(bar_dict)
                     for ct in closed:
-                        self.pcm.notify_position_closed(sym, ct.archetype)
-                    # 更新 equity (每笔平仓后)
+                        self.pcm.notify_position_closed(upd_sym, ct.archetype)
                     for ct in closed:
-                        sl_r_val = 1.0  # 默认 1R SL
+                        sl_r_val = 1.0
                         pnl_usd = _equity * _risk_per_slot * ct.pnl_r / sl_r_val
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
                         if _equity > _equity_peak:
                             _equity_peak = _equity
+                _pos_last_ts[upd_sym] = ts
 
             # ── Kill switch 检查 (复用实盘 evaluate_safety_state) ──
             _ks_blocked = False
@@ -1267,6 +1348,38 @@ class EventBacktester:
                 features_by_timeframe=features_by_tf,
             )
 
+            # NOTE: Evidence slot 竞争已移除 (改为入场门槛 + 仓位缩放)
+            # _last_evictions 始终为空, 此块保留为 no-op 以保持兼容
+            for evicted_sym, evicted_arch in getattr(self.pcm, "_last_evictions", []):
+                ev_sim = self._simulators.get(evicted_sym)
+                if ev_sim and ev_sim.has_positions:
+                    ev_bars = sym_data[evicted_sym]["bars_1min_test"]
+                    ev_close_price = 0.0
+                    _ev_mask = ev_bars.index <= ts
+                    if _ev_mask.any():
+                        ev_close_price = float(ev_bars.loc[_ev_mask, "close"].iloc[-1])
+                    ev_close_time = (
+                        ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
+                    )
+                    if (
+                        hasattr(ev_close_time, "tzinfo")
+                        and ev_close_time.tzinfo is None
+                    ):
+                        ev_close_time = ev_close_time.replace(tzinfo=timezone.utc)
+                    ev_closed = ev_sim.close_by_archetype(
+                        evicted_arch, ev_close_price, ev_close_time
+                    )
+                    for ct in ev_closed:
+                        self.pcm.notify_position_closed(evicted_sym, ct.archetype)
+                        pnl_usd = _equity * _risk_per_slot * ct.pnl_r
+                        _equity += pnl_usd
+                        _equity = max(_equity, 0.0)
+                        _equity_curve.append(_equity)
+                        if _equity > _equity_peak:
+                            _equity_peak = _equity
+                    funnel.setdefault("evicted_by_evidence", 0)
+                    funnel["evicted_by_evidence"] += len(ev_closed)
+
             if intents:
                 funnel["signals_generated"] += len(intents)
 
@@ -1350,6 +1463,9 @@ class EventBacktester:
                 else:
                     funnel["reject_no_direction"] += 1
 
+            # 更新 _pos_last_ts 确保当前 symbol 也被跟踪
+            if sym not in _pos_last_ts or ts > _pos_last_ts[sym]:
+                _pos_last_ts[sym] = ts
             prev_ts[sym] = ts
 
         # ── Phase 4: 处理最后一个信号后的 1min bars + 关闭残留持仓 ──
@@ -1357,10 +1473,10 @@ class EventBacktester:
             data = sym_data[sym]
             bars_1min_test = data["bars_1min_test"]
 
-            # 最后一个信号后的 1min bars
-            if sym in prev_ts and simulator.has_positions:
-                last_sig = prev_ts[sym]
-                remaining = bars_1min_test[bars_1min_test.index > last_sig]
+            # 最后一个信号后的 1min bars (用 _pos_last_ts 避免重复处理)
+            last_update = _pos_last_ts.get(sym)
+            if last_update is not None and simulator.has_positions:
+                remaining = bars_1min_test[bars_1min_test.index > last_update]
                 for bar_ts, bar_row in remaining.iterrows():
                     bar_dict = {
                         "timestamp": bar_ts,

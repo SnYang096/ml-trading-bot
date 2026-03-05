@@ -1185,7 +1185,7 @@ def _generate_html_report(
 <div class="container">
     <h1>🎯 Gate 层效果评估报告</h1>
     <p style="text-align:center;color:#7f8c8d;margin-bottom:30px;">Execution-Robust v2</p>
-    
+
     <h2>📊 核心 KPI</h2>
     <div class="card">
         <div class="kpi-grid">
@@ -1211,7 +1211,7 @@ def _generate_html_report(
             </div>
         </div>
     </div>
-    
+
     <h2>🔧 Gate 规则优化结果</h2>
     <div class="card">
         <table>
@@ -1229,7 +1229,7 @@ def _generate_html_report(
             </tbody>
         </table>
     </div>
-    
+
     <h2>📈 样本分布</h2>
     <div class="card">
         <table>
@@ -1256,14 +1256,14 @@ def _generate_html_report(
             </tr>
         </table>
     </div>
-    
+
     <div class="secondary">
         <h3 style="margin-bottom:10px;">📎 额外参考 (Sharpe Ratio)</h3>
         <p>基准 Sharpe (无 Gate): <strong>{sharpe_all:.4f}</strong></p>
         <p>Allow Sharpe: <strong>{sharpe_allowed:.4f}</strong></p>
         <p style="color:#95a5a6;font-size:12px;margin-top:10px;">注：Sharpe Ratio 仅作为参考指标，Gate 优化以 Lift 为核心目标</p>
     </div>
-    
+
     <p class="timestamp">生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
 </div>
 </body>
@@ -1461,6 +1461,19 @@ def _promote_gate_to_archetypes(
             print(f"     - {pg['id']}: {pg['reason']}")
 
     # 合并: prefilter (frozen) + optimized gates
+    # 去重: 同 id 只保留第一条 (防止 gate_draft 中同一特征多次分裂导致重复)
+    _seen_ids: set = set()
+    deduped_rules: list = []
+    for rule in kept_rules:
+        rid = rule.get("id", "")
+        if rid in _seen_ids:
+            removed_rules.append(
+                {"id": rid, "status": "duplicate", "reason": f"duplicate of {rid}"}
+            )
+            continue
+        _seen_ids.add(rid)
+        deduped_rules.append(rule)
+    kept_rules = deduped_rules
     all_rules = prefilter_gates + kept_rules
     config["hard_gates"] = all_rules
 

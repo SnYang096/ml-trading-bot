@@ -1,242 +1,39 @@
 # FER Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-03-02
-# 数据源: features_labeled.parquet, 6330 行
+# 自动生成: 2026-03-06
+# 数据源: features_labeled.parquet, 39126 行
 
 rules:
-  - any_of:
-      - feature: fer_trapped_longs_score
-        operator: ">="
-        value: 3.4965
-      - feature: fer_trapped_shorts_score
-        operator: ">="
-        value: 3.7941
-    rationale: "semantic OR: fer_trapped_longs_score OR fer_trapped_shorts_score"
+  - feature: oi_trend_divergence_score
+    operator: "<"
+    value: 0.0004
+    rationale: "meta-algorithm, lift=1.19, robustness=98%, gate_score=0.018, holdout验证通过"
+  - feature: oi_absorption_score
+    operator: "<"
+    value: 0.002
+    rationale: "meta-algorithm, lift=1.09, robustness=72%, gate_score=0.009, holdout验证通过"
+  - feature: oi_exhaustion_score
+    operator: "<"
+    value: 0.0023
+    rationale: "meta-algorithm, lift=1.07, robustness=71%, gate_score=0.006, holdout验证通过"
 
 last_evaluation:
-  # ── 自动生成 (2026-03-02) ──
-  timestamp: "2026-03-02"
+  # ── 自动生成 (2026-03-06) ──
+  timestamp: "2026-03-06"
   data_source: "features_labeled.parquet"
-  n_rows: 6330
-  baseline_bad_rate: 0.4664
-  baseline_median_rr: -0.2913
+  n_rows: 39126
+  baseline_bad_rate: 0.4515
+  baseline_median_rr: -0.0748
 
-  # ── 正信号 (215 个) ──
+  # ── 正信号 (0 个) ──
   positive_signals:
-    - feature: oi_compression_score
-      percentile: P5
-      direction: low
-      threshold: 0.0199
-      bad_rate_signal: 0.2776
-      bad_rate_rest: 0.4763
-      bad_rate_diff: -0.1987
-    - feature: rsi
-      percentile: P5
-      direction: low
-      threshold: 30.1585
-      bad_rate_signal: 0.2934
-      bad_rate_rest: 0.4755
-      bad_rate_diff: -0.1821
-    - feature: vol_slope_10
-      percentile: P95
-      direction: high
-      threshold: 0.0007
-      bad_rate_signal: 0.3060
-      bad_rate_rest: 0.4748
-      bad_rate_diff: -0.1688
-    - feature: spectrum_volume_entropy
-      percentile: P5
-      direction: low
-      threshold: 0.8094
-      bad_rate_signal: 0.3218
-      bad_rate_rest: 0.4740
-      bad_rate_diff: -0.1522
-    - feature: roc_20
-      percentile: P5
-      direction: low
-      threshold: -9.8293
-      bad_rate_signal: 0.3249
-      bad_rate_rest: 0.4738
-      bad_rate_diff: -0.1489
-    - feature: fer_trapped_longs_score
-      percentile: P90
-      direction: high
-      threshold: 4.8779
-      bad_rate_signal: 0.3427
-      bad_rate_rest: 0.4848
-      bad_rate_diff: -0.1422
-    - feature: fer_trapped_longs_score
-      percentile: P95
-      direction: high
-      threshold: 5.0
-      bad_rate_signal: 0.3450
-      bad_rate_rest: 0.4838
-      bad_rate_diff: -0.1389
-    - feature: macd_atr
-      percentile: P5
-      direction: low
-      threshold: -1.1465
-      bad_rate_signal: 0.3375
-      bad_rate_rest: 0.4731
-      bad_rate_diff: -0.1356
-    - feature: rsi
-      percentile: P10
-      direction: low
-      threshold: 34.6181
-      bad_rate_signal: 0.3491
-      bad_rate_rest: 0.4794
-      bad_rate_diff: -0.1302
-    - feature: spectrum_volume_entropy
-      percentile: P10
-      direction: low
-      threshold: 0.8277
-      bad_rate_signal: 0.3491
-      bad_rate_rest: 0.4794
-      bad_rate_diff: -0.1302
+    []
 
-  # ── 反信号 (98 个) ──
+  # ── 反信号 (0 个) ──
   anti_signals:
-    - feature: hilbert_cvd_price_env_ratio
-      percentile: P95
-      direction: high
-      threshold: 2.491
-      bad_rate_signal: 0.6309
-      bad_rate_rest: 0.4577
-      bad_rate_diff: +0.1732
-    - feature: vpin_ma10
-      percentile: P95
-      direction: high
-      threshold: 0.357
-      bad_rate_signal: 0.6088
-      bad_rate_rest: 0.4588
-      bad_rate_diff: +0.1500
-    - feature: cvd_change_5_normalized
-      percentile: P95
-      direction: high
-      threshold: 0.03
-      bad_rate_signal: 0.6025
-      bad_rate_rest: 0.4592
-      bad_rate_diff: +0.1434
-    - feature: hilbert_cvd_price_env_ratio
-      percentile: P90
-      direction: high
-      threshold: 1.6717
-      bad_rate_signal: 0.5829
-      bad_rate_rest: 0.4534
-      bad_rate_diff: +0.1295
-    - feature: vpin_quantile_rank_50
-      percentile: P95
-      direction: high
-      threshold: 0.95
-      bad_rate_signal: 0.5853
-      bad_rate_rest: 0.4576
-      bad_rate_diff: +0.1277
-    - feature: cvd_change_5_normalized
-      percentile: P90
-      direction: high
-      threshold: 0.019
-      bad_rate_signal: 0.5766
-      bad_rate_rest: 0.4541
-      bad_rate_diff: +0.1225
-    - feature: spectrum_volume_centroid
-      percentile: P95
-      direction: high
-      threshold: 0.9643
-      bad_rate_signal: 0.5812
-      bad_rate_rest: 0.4602
-      bad_rate_diff: +0.1210
-    - feature: vpin
-      percentile: P95
-      direction: high
-      threshold: 0.4175
-      bad_rate_signal: 0.5804
-      bad_rate_rest: 0.4603
-      bad_rate_diff: +0.1201
-    - feature: vpin_ma20
-      percentile: P90
-      direction: high
-      threshold: 0.3344
-      bad_rate_signal: 0.5687
-      bad_rate_rest: 0.4550
-      bad_rate_diff: +0.1137
-    - feature: vpin_ma5
-      percentile: P95
-      direction: high
-      threshold: 0.3698
-      bad_rate_signal: 0.5584
-      bad_rate_rest: 0.4615
-      bad_rate_diff: +0.0969
+    []
 
-  # ── 低端信号 (74 个) ──
+  # ── 低端信号 (0 个) ──
   absence_signals:
-    - feature: oi_trend_divergence_score
-      percentile: P5
-      direction: low
-      threshold: 0.0004
-      bad_rate_signal: 0.5931
-      bad_rate_rest: 0.4597
-      bad_rate_diff: +0.1334
-    - feature: cvd_change_5_normalized
-      percentile: P5
-      direction: low
-      threshold: -0.0656
-      bad_rate_signal: 0.5710
-      bad_rate_rest: 0.4608
-      bad_rate_diff: +0.1101
-    - feature: oi_exhaustion_score
-      percentile: P5
-      direction: low
-      threshold: 0.0023
-      bad_rate_signal: 0.5647
-      bad_rate_rest: 0.4612
-      bad_rate_diff: +0.1035
-    - feature: vpin_max5
-      percentile: P5
-      direction: low
-      threshold: 0.2343
-      bad_rate_signal: 0.5584
-      bad_rate_rest: 0.4615
-      bad_rate_diff: +0.0969
-    - feature: evt_tail_shape
-      percentile: P5
-      direction: low
-      threshold: 0.004
-      bad_rate_signal: 0.5327
-      bad_rate_rest: 0.4579
-      bad_rate_diff: +0.0748
-    - feature: evt_tail_shape
-      percentile: P10
-      direction: low
-      threshold: 0.004
-      bad_rate_signal: 0.5327
-      bad_rate_rest: 0.4579
-      bad_rate_diff: +0.0748
-    - feature: evt_tail_shape_left
-      percentile: P5
-      direction: low
-      threshold: 0.004
-      bad_rate_signal: 0.5327
-      bad_rate_rest: 0.4579
-      bad_rate_diff: +0.0748
-    - feature: evt_tail_shape_left
-      percentile: P10
-      direction: low
-      threshold: 0.004
-      bad_rate_signal: 0.5327
-      bad_rate_rest: 0.4579
-      bad_rate_diff: +0.0748
-    - feature: vpin_signed_imbalance_last
-      percentile: P5
-      direction: low
-      threshold: -0.0888
-      bad_rate_signal: 0.5363
-      bad_rate_rest: 0.4627
-      bad_rate_diff: +0.0736
-    - feature: oi_exhaustion_score
-      percentile: P10
-      direction: low
-      threshold: 0.0039
-      bad_rate_signal: 0.5292
-      bad_rate_rest: 0.4594
-      bad_rate_diff: +0.0699
+    []
 

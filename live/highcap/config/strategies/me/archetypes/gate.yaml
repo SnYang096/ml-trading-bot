@@ -1,6 +1,6 @@
 # ME Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260301_223817_s42/strategies/me/gate_draft.yaml
-# 优化规则: 2/10 条通过优化, 8 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260305_151254/strategies/me/gate_draft.yaml
+# 优化规则: 8/10 条通过优化, 7 条已移除
 
 schema:
   phases:
@@ -49,26 +49,37 @@ hard_gates:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: gate_evt_tail_shape_left
-  tag: HARD_EVT_TAIL_SHAPE_LEFT
-  phase: hard_gate
-  priority: 12
-  reason: evt_tail_shape_left 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_tail_shape_left:
-      value_lt: 0.704
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.7040, lift=0.153'
 - id: gate_evt_es_99_right
   tag: HARD_EVT_ES_99_RIGHT
   phase: hard_gate
-  priority: 16
+  priority: 12
   reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
   when:
     evt_es_99_right:
-      value_lt: 0.6665
+      value_lt: 0.7198
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.6665, lift=0.184'
+  comment: 'optimizer: stable_plateau_found, threshold=0.7198, lift=0.254'
+- id: gate_evt_es_99_right
+  tag: HARD_EVT_ES_99_RIGHT
+  phase: hard_gate
+  priority: 17
+  reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
+  when:
+    evt_es_99_right:
+      value_lt: 0.7198
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.7198, lift=0.254'
+- id: gate_evt_es_99_right
+  tag: HARD_EVT_ES_99_RIGHT
+  phase: hard_gate
+  priority: 19
+  reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
+  when:
+    evt_es_99_right:
+      value_lt: 0.7198
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.7198, lift=0.254'
 guardrails: []

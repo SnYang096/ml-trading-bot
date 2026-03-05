@@ -1,0 +1,72 @@
+layer: "gate"
+
+# ================================================================
+# Gate 层 KPI Gate — 统计验证门槛
+# ================================================================
+#
+# Gate 职责: 尾部风险拦截 (Hard Gate ≤2 + Compound ≤3).
+# Gate Score = tail_capture - good_deny_rate (Youden's J)
+#
+# 脚本读取路径:
+#   export_lightgbm_rules_to_readme.py → _generate_gate_rules_statistical()
+# ================================================================
+
+# ── 单特征规则门槛 ──
+thresholds:
+  # Lift: bad concentration in denied region / baseline
+  min_lift: 1.05
+
+  # Effect size: mean_rr(allow) - mean_rr(deny)
+  min_effect: 0.10
+
+  # Robustness: time-fold 一致性
+  min_robustness: 0.4
+
+  # Gate Score (Youden's J): tail_capture - good_deny_rate
+  # 层专属指标: 净信息量, >=0 才有正向过滤价值
+  min_gate_score: 0.0
+
+  # 相关性剪枝
+  correlation_threshold: 0.80
+
+  # 最终规则数上限
+  max_rules: 5
+
+  # Deny rate 合法范围
+  deny_rate_min: 0.05
+  deny_rate_max: 0.70
+
+# ── Compound 规则门槛 (Lift Surface / 2D 交互) ──
+compound:
+  # Lift Surface 分位网格: 9 个切点 → 10 bins
+  surface_bins: 9
+
+  # 每个 cell 最少样本数 = n_total // min_cell_ratio
+  min_cell_ratio: 50
+
+  # Hot cell lift 门槛
+  hot_cell_lift: 1.3
+
+  # Joint deny rate 范围
+  joint_deny_rate_min: 0.02
+  joint_deny_rate_max: 0.50
+
+  # Joint effect size
+  min_joint_effect: 0.15
+
+  # Joint robustness
+  min_joint_robustness: 0.35
+
+# ── 验证参数 ──
+validation:
+  n_folds: 5
+  quantiles: [0.15, 0.25, 0.35, 0.50, 0.65, 0.75, 0.85]
+
+# ── SHAP∩Gain 参数 ──
+shap_gain:
+  top_n: 8
+  compute_interactions: true
+
+# ── Fallback: tree_split 门槛 ──
+tree_split:
+  min_effect_size: 0.15

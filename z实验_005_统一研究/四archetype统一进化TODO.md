@@ -8,18 +8,18 @@
 
 ## 📌 当前状态总览
 
-| 领域 | 状态 | 说明 |
-|------|------|------|
-| 特征体系 (Phase 0-2) | ✅ 完成 | 7 基础 + 3 交叉 + OI 体系 |
-| LV 配置 (Phase 3) | ✅ 完成 | 15min archetype 全套配置 |
-| PCM 重构 (Phase 4) | ✅ 完成 | v2 严格性排序 |
-| **PCM-宪法统一 (Phase 4.5)** | 🔨 部分完成 | 配置统一 ✅ + PCM回测 ✅ + PCM统计输出 ✅ + Pipeline集成 ✅ + 宪法模拟 📋延后 + 降级机制 📋延后 |
-| 数据 (Phase 5) | ✅ 完成 | highcap symbols 数据齐全 |
-| 语义预筛选 (Phase 5.5) | ✅ 完成 | BPC/ME/FER 均有 prefilter |
-| 训练 (Phase 6) | ✅ BPC/ME/FER | 手动训练完成; LV 暂缓 (15min FS 太慢) |
-| 多时间框架-研究 (Phase 7-R) | ✅ 完成 | ME→1H 配置完成 |
-| **本地研究 pipeline** | ✅ 完成 | auto_research_pipeline.py --all + PCM 联合回测 (Step 9.5) |
-| **实盘部署** | 🔨 进行中 | P0: 多时间框架实盘 → P1: 监控 → 腾讯云部署 |
+| 领域                         | 状态         | 说明                                                                                      |
+| ---------------------------- | ------------ | ----------------------------------------------------------------------------------------- |
+| 特征体系 (Phase 0-2)         | ✅ 完成       | 7 基础 + 3 交叉 + OI 体系                                                                 |
+| LV 配置 (Phase 3)            | ✅ 完成       | 15min archetype 全套配置                                                                  |
+| PCM 重构 (Phase 4)           | ✅ 完成       | v2 严格性排序                                                                             |
+| **PCM-宪法统一 (Phase 4.5)** | 🔨 部分完成   | 配置统一 ✅ + PCM回测 ✅ + PCM统计输出 ✅ + Pipeline集成 ✅ + 宪法模拟 📋延后 + 降级机制 📋延后 |
+| 数据 (Phase 5)               | ✅ 完成       | highcap symbols 数据齐全                                                                  |
+| 语义预筛选 (Phase 5.5)       | ✅ 完成       | BPC/ME/FER 均有 prefilter                                                                 |
+| 训练 (Phase 6)               | ✅ BPC/ME/FER | 手动训练完成; LV 暂缓 (15min FS 太慢)                                                     |
+| 多时间框架-研究 (Phase 7-R)  | ✅ 完成       | ME→1H 配置完成                                                                            |
+| **本地研究 pipeline**        | ✅ 完成       | auto_research_pipeline.py --all + PCM 联合回测 (Step 9.5)                                 |
+| **实盘部署**                 | 🔨 进行中     | P0: 多时间框架实盘 → P1: 监控 → 腾讯云部署                                                |
 
 ---
 
@@ -34,15 +34,15 @@
 
 ### 0.1 已加入的 7 个高价值特征 (全策略)
 
-| 特征节点 | 输出列 | BPC 语义 | ME 语义 | FER 语义 |
-|----------|--------|----------|---------|----------|
-| `funding_rate_features_f` | funding_rate, funding_rate_zscore_50 等 | 拥挤度/假突破风险 | 方向确认 | 单边过度=反转机会 |
-| `funding_scene_semantic_scores_f` | funding_{compression,ignition,absorption,exhaustion}_score | compression→压缩确认 | ignition→点火确认 | exhaustion→力竭确认 |
-| `garch_features_f` | garch_volatility, persistence, leverage_gamma, alpha, beta | persistence→压缩延续 | volatility→扩张环境 | leverage_gamma→不对称波动 |
-| `fp_imbalance_scene_semantic_scores_f` | fp_imbalance_{compression,ignition,absorption,exhaustion}_score | compression→结构确认 | ignition→订单流确认 | exhaustion→力竭确认 |
-| `vpin_scene_semantic_scores_f` | vpin_{compression,ignition,absorption,exhaustion}_score | compression→VPIN压缩 | ignition→知情交易确认 | exhaustion→信息力竭 |
-| `vwap_position_f` | price_to_vwap_pct, price_to_vwap_ratio | 回踩锚点 | 远离VWAP=动能强 | 远离=均值回归压力 |
-| `exhaustion_at_liquidity_void_f` | exhaustion_at_liquidity_void | guardrail(反向) | ⚠️ 反向指标但tree自学 | ✅✅ 完美匹配 |
+| 特征节点                               | 输出列                                                          | BPC 语义             | ME 语义               | FER 语义                  |
+| -------------------------------------- | --------------------------------------------------------------- | -------------------- | --------------------- | ------------------------- |
+| `funding_rate_features_f`              | funding_rate, funding_rate_zscore_50 等                         | 拥挤度/假突破风险    | 方向确认              | 单边过度=反转机会         |
+| `funding_scene_semantic_scores_f`      | funding_{compression,ignition,absorption,exhaustion}_score      | compression→压缩确认 | ignition→点火确认     | exhaustion→力竭确认       |
+| `garch_features_f`                     | garch_volatility, persistence, leverage_gamma, alpha, beta      | persistence→压缩延续 | volatility→扩张环境   | leverage_gamma→不对称波动 |
+| `fp_imbalance_scene_semantic_scores_f` | fp_imbalance_{compression,ignition,absorption,exhaustion}_score | compression→结构确认 | ignition→订单流确认   | exhaustion→力竭确认       |
+| `vpin_scene_semantic_scores_f`         | vpin_{compression,ignition,absorption,exhaustion}_score         | compression→VPIN压缩 | ignition→知情交易确认 | exhaustion→信息力竭       |
+| `vwap_position_f`                      | price_to_vwap_pct, price_to_vwap_ratio                          | 回踩锚点             | 远离VWAP=动能强       | 远离=均值回归压力         |
+| `exhaustion_at_liquidity_void_f`       | exhaustion_at_liquidity_void                                    | guardrail(反向)      | ⚠️ 反向指标但tree自学  | ✅✅ 完美匹配               |
 
 **审查结论**: 所有 7 个特征对 3 个 archetype 都合理。`exhaustion_at_liquidity_void_f` 对 ME 是反向信号，但 tree model 会自动学到"高值→deny"。无需修改。
 
@@ -56,11 +56,11 @@
 
 ### 1.2 已实现交叉特征
 
-| 交叉特征 | 公式 | 语义 | 主要 Archetype |
-|----------|------|------|---------------|
-| `dual_compression_f` | `funding_compression_score × vpin_compression_score` | 资金+VPIN双源压缩确认 | BPC |
-| `dual_ignition_f` | `funding_ignition_score × fp_imbalance_ignition_score` | 资金+Footprint双源点火确认 | ME |
-| `dual_exhaustion_f` | `funding_exhaustion_scene_score × vpin_exhaustion_scene_score` | 资金+VPIN双源力竭确认 | FER |
+| 交叉特征             | 公式                                                           | 语义                       | 主要 Archetype |
+| -------------------- | -------------------------------------------------------------- | -------------------------- | -------------- |
+| `dual_compression_f` | `funding_compression_score × vpin_compression_score`           | 资金+VPIN双源压缩确认      | BPC            |
+| `dual_ignition_f`    | `funding_ignition_score × fp_imbalance_ignition_score`         | 资金+Footprint双源点火确认 | ME             |
+| `dual_exhaustion_f`  | `funding_exhaustion_scene_score × vpin_exhaustion_scene_score` | 资金+VPIN双源力竭确认      | FER            |
 
 ### 1.3 实现清单
 
@@ -153,14 +153,14 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 
 ### 3.3 LV 独特设计
 
-| 维度 | BPC/ME/FER (4H) | LV (15min) |
-|------|-----------------|------------|
-| 时间粒度 | 240T (4小时) | 15T (15分钟) |
-| 核心因果轴 | 结构/能量/均衡偏离 | 杠杆脆弱性 |
-| 信号频率 | 低-中 | 可能较高 |
-| 持仓时间 | 数小时-数天 | 数分钟-数小时 |
-| 风险特征 | 可预测 | 非线性/尾部 |
-| PCM 角色 | 常规 slot | override 型 (清算事件可覆盖其他) |
+| 维度       | BPC/ME/FER (4H)    | LV (15min)                       |
+| ---------- | ------------------ | -------------------------------- |
+| 时间粒度   | 240T (4小时)       | 15T (15分钟)                     |
+| 核心因果轴 | 结构/能量/均衡偏离 | 杠杆脆弱性                       |
+| 信号频率   | 低-中              | 可能较高                         |
+| 持仓时间   | 数小时-数天        | 数分钟-数小时                    |
+| 风险特征   | 可预测             | 非线性/尾部                      |
+| PCM 角色   | 常规 slot          | override 型 (清算事件可覆盖其他) |
 
 ---
 
@@ -243,9 +243,9 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 - [x] `run_live.py`: 加载顺序统一 (constitution → pcm)
 - [x] 测试: 校验一致性的单元测试
 
-### 4.5.4 回测宪法模拟 + 事件回测一致性检查 (Phase 4) — 🔨 进行中
+### 4.5.4 回测宪法模拟 (Phase 4)
 
-> **目标**: 事件回测与研究回测的一致性检查，包含宪法模拟 (kill switch) + 加仓逻辑
+> **目标**: 事件回测中模拟宪法 kill switch
 
 #### 4.5.4a 回测宪法模拟 (Kill Switch)
 
@@ -256,23 +256,16 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
   - 模拟 per_strategy slot 限制
 - [ ] 测试: 构造 drawdown > 20% 场景验证 kill switch 模拟
 
-#### 4.5.4b 加仓逻辑一致性
+#### ~~4.5.4b 加仓逻辑一致性~~ — 已取消
 
-- [ ] 向量回测的 slot 内加仓模拟与事件回测对齐:
-  - 向量回测: `simulate_rr_execution` 中的 slot 竞争 + evidence 加仓
-  - 事件回测: `LivePCM._try_slot_competition()` + 仓位管理
-- [ ] 对比: 同一数据集下两种回测的加仓交易笔数、时机、PnL
-- [ ] 如有偏差 > 10%，定位分叉点并修复
+> slot 竞争已删除，加仓逻辑简化为 `size = evidence_score`，不再需要对齐。
 
-#### 4.5.4c 事件回测 vs 研究回测一致性检查
+#### ~~4.5.4c 向量 vs 事件回测一致性~~ — 已取消
 
-- [ ] 关键指标对比 (向量 vs 事件):
-  - 交易总数 偏差 < 10%
-  - Sharpe 偏差 < 0.5x
-  - 胜率 偏差 < 5pp
-  - 出场分布 (SL/TP/Trail) 结构一致
-- [ ] Per-archetype 对比: BPC/FER/ME 各自向量 vs 事件的偏差
-- [ ] 生成一致性报告: `scripts/compare_vector_event_consistency.py`
+> **决策**: 向量回测和事件回测定位不同，不追求数值一致:
+> - **向量回测**: 快速验证训练效果 (研究侧，速度优先)
+> - **事件回测**: 上线前把关 + 验证线上交易符合算法 (执行侧，精确优先)
+> 两者在执行层细节上天然有差异 (滑点模型、持仓管理)，强行对齐 ROI 极低。
 
 ### ✅ 4.5.5 PCM 统计输出 (Phase 5) — 已完成
 
@@ -406,13 +399,13 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 
 ### 4.5 实施计划
 
-| 周 | Phase | 内容 | 验证 |
-|----|-------|------|------|
-| W1 | 1-2 | 配置统一 + ConstitutionExecutor 增强 | 运行现有测试无回归 |
-| W2 | 3-4 | PCM 统一加载 + 回测宪法模拟 | BPC+FER 联合回测验证 |
-| W3 | 5-6 | 统计输出 + Pipeline 集成 | 端到端 dry-run + 实际运行 |
-| W4 | 7 | 验证 + 文档 | 全量测试通过 |
-| W5 | 8 | Archetype 降级 + 恢复 CLI | 连亏暂停 + CLI 恢复测试 |
+| 周  | Phase | 内容                                 | 验证                      |
+| --- | ----- | ------------------------------------ | ------------------------- |
+| W1  | 1-2   | 配置统一 + ConstitutionExecutor 增强 | 运行现有测试无回归        |
+| W2  | 3-4   | PCM 统一加载 + 回测宪法模拟          | BPC+FER 联合回测验证      |
+| W3  | 5-6   | 统计输出 + Pipeline 集成             | 端到端 dry-run + 实际运行 |
+| W4  | 7     | 验证 + 文档                          | 全量测试通过              |
+| W5  | 8     | Archetype 降级 + 恢复 CLI            | 连亏暂停 + CLI 恢复测试   |
 
 ---
 
@@ -426,10 +419,10 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 
 ---
 
-## ✅ Phase 5.5: 语义预筛选 (Semantic Pre-filter) — 完成
+## ✅ Phase 5.5: 语义预筛选 (Semantic Pre-filter) — 完成 → 待 Meta-Algorithm 改造
 
-> 设计文档: `gate_v3_semantic_prefilter_TODO.md`
-> 实验报告: `docs/architecture/gate_semantic_prefilter_design.md`
+> 方法论文档: `z实验_005_统一研究/统一建模方法论_meta_algorithm.md`
+> **当前方法**: 分位数 bad_rate_diff (无 holdout) → **待改造为 SHAP∩Gain (见 A.8.1)**
 
 ### 核心思想
 
@@ -439,12 +432,12 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 
 ### 已实现的预筛选规则
 
-| 策略 | 规则文件 | 实现状态 |
-|------|----------|----------|
-| BPC | `archetypes/gate.yaml` guardrails: `bpc_volume_compression_pct ≥ 0.3 AND price_position ≤ 0.9` | ✅ |
-| ME | `archetypes/prefilter.yaml`: `atr_percentile ≥ 0.922` (P90, CV=0.70) | ✅ |
-| FER | `archetypes/prefilter.yaml`: `trapped_longs ≥ 4.48 OR trapped_shorts ≥ 3.77` (any_of) | ✅ |
-| LV | 待训练后确定 | ⛏️ 暂缓 |
+| 策略 | 规则文件                                                                                       | 实现状态 |
+| ---- | ---------------------------------------------------------------------------------------------- | -------- |
+| BPC  | `archetypes/gate.yaml` guardrails: `bpc_volume_compression_pct ≥ 0.3 AND price_position ≤ 0.9` | ✅        |
+| ME   | `archetypes/prefilter.yaml`: `atr_percentile ≥ 0.922` (P90, CV=0.70)                           | ✅        |
+| FER  | `archetypes/prefilter.yaml`: `trapped_longs ≥ 4.48 OR trapped_shorts ≥ 3.77` (any_of)          | ✅        |
+| LV   | 待训练后确定                                                                                   | ⛏️ 暂缓   |
 
 ### 关键实现
 
@@ -538,7 +531,7 @@ L1 (15m) ───────────────  LV
 
 #### A.6.1 SHAP 特征重要性替代 split importance
 
-- [ ] 在 Gate Optimize (Step 5) 和 Evidence Optimize (Step 6) 中集成 SHAP:
+- [x] 在 Gate Optimize (Step 5) 和 Evidence Optimize (Step 6) 中集成 SHAP:
   - `train_strategy_pipeline.py`: 训练后计算 SHAP values (TreeExplainer)
   - 输出: `shap_importance.json` (per-feature mean |SHAP|)
   - 代码位置: `scripts/train_strategy_pipeline.py`
@@ -546,12 +539,14 @@ L1 (15m) ───────────────  LV
 
 #### A.6.2 Walk-Forward 特征稳定性筛选
 
-- [ ] 新增 `scripts/validate_feature_stability.py`:
-  - 将训练数据分 N 个时间窗口 (如 6 个季度)
+- [x] 新增 `scripts/shap_feature_selection.py`:
+  - 将训练数据分 4 个时间窗口 (temporal cross-validation)
   - 每个窗口独立训练 LightGBM + 计算 SHAP
-  - 筛选标准: 特征在 >=80% 窗口都进入 top-K → "稳定特征"
-  - 输出: `stable_features.json` + `feature_stability_report.html`
-- [ ] 集成到 pipeline: Step 5.5 (Gate Optimize 之后、Evidence Optimize 之前)
+  - 筛选标准: 特征在 >=3/4 窗口都进入 top-K → "稳定特征"
+  - 输出: `features_gate_shap.yaml` / `features_evidence_shap.yaml`
+- [x] 集成到 pipeline: Step 2.5 (Prepare 之后, Prefilter 之前)
+- [x] `config/research_pipeline.yaml` 中 `shap_active: true` 默认开启
+- [x] `protected_nodes` 保护关键依赖节点 (atr_f, fer_failure_signals_f)
 
 #### A.6.3 特征漂移监控 (实盘侧)
 
@@ -560,6 +555,119 @@ L1 (15m) ───────────────  LV
   - 与训练期 SHAP 分布对比 (KL 散度 / rank correlation)
   - 偏差过大 → 触发重训信号
 - [ ] 集成到 `scripts/local_monitor_weekly.py` 的 L1 特征层检查
+
+---
+
+### ✅ A.7 Gate/Evidence 规则生成 — 已完成 (v4 统计验证法)
+
+> **imodels 蒸馏方案失败原因**: teacher (LightGBM) pred 集中在 0.52-0.59 区间，区分度不足，蒸馏弱老师得到更弱学生。
+> v1 (tree_split) 破坏 AND 逻辑; v2 (多seed交集) 淘汰有效特征; v3 (RuleFit蒸馏) teacher 无区分力。
+> **最终方案**: v4 统计验证法 — SHAP∩Gain + Lift Surface + Gate Score (Youden's J)。
+> **设计文档**: `z实验_005_统一研究/统一建模方法论_meta_algorithm.md`
+> **代码**: `_generate_gate_rules_statistical()` + `_generate_evidence_candidates_yaml()` (已实现)
+
+---
+
+### A.8 Meta-Algorithm 管线改造 (NEW)
+
+> **设计文档**: `z实验_005_统一研究/统一建模方法论_meta_algorithm.md`
+> **目标**: 将 Prefilter / Entry Filter 改造为统一的 SHAP∩Gain 方法，替代当前手工方法
+
+#### A.8.1 Prefilter 改造 — SHAP∩Gain 替代分位数 bad_rate_diff (P1)
+
+> **当前问题**: `analyze_archetype_feature_stratification.py` 用分位数 bad_rate_diff，无 ML、无 SHAP、无 holdout → 过拟合
+> **目标**: 在 ALL features_labeled 上用 meta-algorithm 发现 archetype 边界特征
+
+**关键约束: Prefilter 特征必须是 archetype 专属特征**
+
+Prefilter 的职责是定义 archetype 语义边界 ("这个 bar 是不是 BPC/ME/FER")。
+如果用全量通用特征 (如 RSI, MACD)，所有 archetype 的 prefilter 会选到相同特征，失去区分度。
+
+每个 archetype 需要独立的 prefilter 特征配置:
+
+```yaml
+# config/strategies/bpc/features_prefilter.yaml (NEW)
+feature_pipeline:
+  requested_features:
+    - bpc_volume_compression_pct_f    # BPC 专属
+    - bpc_bb_compression_f            # BPC 专属
+    - bpc_cvd_z_f                     # BPC 专属
+    - dual_compression_f              # BPC 交叉
+    - funding_compression_score_f     # 场景语义
+
+# config/strategies/me/features_prefilter.yaml (NEW)
+feature_pipeline:
+  requested_features:
+    - me_atr_pct_f                    # ME 专属
+    - me_energy_f                     # ME 专属
+    - me_cvd_alignment_f             # ME 专属
+    - dual_ignition_f                 # ME 交叉
+    - oi_ignition_score_f             # 场景语义
+
+# config/strategies/fer/features_prefilter.yaml (NEW)
+feature_pipeline:
+  requested_features:
+    - fer_trapped_longs_f             # FER 专属
+    - fer_trapped_shorts_f            # FER 专属
+    - fer_failure_signals_f           # FER 专属
+    - dual_exhaustion_f               # FER 交叉
+    - oi_exhaustion_score_f           # 场景语义
+```
+
+实施清单:
+- [x] 创建 `config/strategies/{bpc,me,fer}/features_prefilter.yaml` (每策略独立)
+- [x] 改造 `analyze_archetype_feature_stratification.py` 或新建脚本:
+  - 读取 `features_prefilter.yaml` 获取 archetype 专属特征列表
+  - 在 ALL features_labeled 上训 LightGBM (label=success_no_rr_extreme)
+  - 调用 `_compute_shap_gain_features()` 发现 top 特征
+  - 统计验证 + train/holdout split
+  - 输出 prefilter.yaml (AND deny rules)
+- [x] `auto_research_pipeline.py` Step 3 调用新 prefilter 脚本
+- [x] 验证: BPC/ME/FER 各跑一次，prefilter 规则在 holdout 上有效
+
+#### A.8.2 Entry Filter 改造 — SHAP∩Gain 扩大搜索空间 (P2)
+
+> **当前问题**: `optimize_entry_filter_plateau.py` 仅扫描 4 个手工 `shallow_pullback_*` 条件 → 全部不显著
+> **目标**: SHAP 在 50+ 特征上自动发现 entry timing 特征
+
+实施清单:
+- [x] 设计 entry quality 标签 (exec R-multiple > 0 = good entry)
+- [x] 改造 `optimize_entry_filter_plateau.py` --meta-algorithm 模式:
+  - 在 gate-passed + direction 数据上训 LightGBM (label=entry_quality)
+  - 调用 `_compute_shap_gain_features()` 发现 entry timing 特征
+  - 对候选特征做 plateau scanning + snotio z-test 验证
+  - 输出 entry_filters.yaml (OR timing conditions)
+- [x] `auto_research_pipeline.py` Step 7 调用 --meta-algorithm
+- [x] kpi_gates/entry_filter_layer.yaml 创建完成
+- [x] **改进 A**: Label 改为 `exec_r > median(exec_r)` 自适应中位数阈值
+  - kpi_gates 增加 `label.method: median` 配置
+  - good_rate 从 ~60% 改善为 ~50% (完美平衡)
+  - 语义: "比中位数更好的入场" 而非 "不亏"
+- [x] **改进 B**: 删除三个 archetype 手工研究文件 (bpc/me/fer entry_filters.yaml → meta-algorithm 已完全替代)
+- [x] **改进 C**: 原始特征排除改用 feature_dependencies.yaml raw_scale_columns
+  - 单一数据源: 不再硬编码前缀, 从 YAML 读取 35 列原始特征定义
+  - 新增 raw_orderflow/raw_indicator/raw_oi/model_output 分类
+  - 值域护栏仅报警不排除 (rsi/zscore 等有界特征 >1 是正常的)
+- [x] 验证 (最终): 2 条核心规则通过 (1 Tier-A + 1 Tier-B)
+  - bpc_pullback_quality <= 0.344: lift=1.24x, rob=88%, snotio=9.16, z=4.01 (Tier A)
+  - vpin_volatility_10 >= 0.07: lift=1.21x, rob=86%, snotio=9.86, z=3.32 (Tier B)
+- [x] 端到端 BPC 回测 (logs_gated.parquet, Gate+EntryFilter+Evidence):
+  - Gate: 535/2960 (18.1%) → Entry Filter: 285/535 (53.3%) → 161 trades
+  - Sharpe=0.3114, Win=78.9%, MeanR=0.3000, MaxDD=3.5%
+
+#### A.8.3 管线 Meta-Algorithm 模式验证 (P1)
+
+> **目标**: 端到端验证改造后的完整管线
+
+- [x] BPC 全流程: Step 2.5 SHAP → Step 3 Prefilter(新) → Step 5 Gate → Step 6 Evidence → Step 7 EntryFilter → Step 8 Execution → Step 9 Backtest
+  - Sharpe=0.1353, 210 trades, Win=71%, MeanR=0.1136, Total R=23.86
+- [x] Gate 效果验证: holdout 上 gate_score > 0 且 allow_rr > vetoed_rr
+  - 4 条 gate 规则全部 gate_score > 0 (最高 +0.135)
+  - Evidence Gate Apply: allow_rr=5.575 > vetoed_rr=4.964 (Gate效果 +0.611)
+- [x] Prefilter 效果验证: holdout 上 3 条规则全部 gate_score > 0
+  - funding_ignition_score: score=+0.053, lift=1.20x, rob=96%
+  - bpc_bb_compression: score=+0.042, lift=1.12x, rob=92%
+  - bpc_vpin_breakout_confirm: score=+0.014, lift=1.16x, rob=90%
 
 ---
 
@@ -714,17 +822,17 @@ L1 (15m) ───────────────  LV
 >   - `scripts/export_training_baseline.py` — 训练基线导出
 >   - `scripts/monitor_retrain.py` — 重训触发器
 
-| 层 | 假设 | 关键指标 | 失效阈值 |
-|----|------|----------|----------|
-| L1 特征 | 统计规律保持 | feature_drift_zscore | > 3.0 连续 3 天 |
-| L2 预筛选 | 有效过滤噪声 | prefilter_pass_rate | 偏离训练期 ±50% |
-| L3 Gate | 正向 lift | gate_lift | < 1.2 |
-| L4 Evidence | score↔R 相关 | evidence_r_correlation | Spearman < 0.05 |
-| L5 Direction | 增加胜率 | direction_accuracy | < 55% (30日) |
-| L6 Entry Filter | 提升质量 | entry_filter_lift | < 1.0 |
-| L7 Execution Tier | 高tier优于低tier | per_tier_mean_r | T1 ≤ T3 连续 2 周 |
-| L8 PCM | 被选 > 被拒 | counterfactual_r | 被拒 > 被选持续 1 周 |
-| L9 宪法 | 安全不过限 | kill_switch_count | 月 > 3 次 |
+| 层                | 假设             | 关键指标               | 失效阈值             |
+| ----------------- | ---------------- | ---------------------- | -------------------- |
+| L1 特征           | 统计规律保持     | feature_drift_zscore   | > 3.0 连续 3 天      |
+| L2 预筛选         | 有效过滤噪声     | prefilter_pass_rate    | 偏离训练期 ±50%      |
+| L3 Gate           | 正向 lift        | gate_lift              | < 1.2                |
+| L4 Evidence       | score↔R 相关     | evidence_r_correlation | Spearman < 0.05      |
+| L5 Direction      | 增加胜率         | direction_accuracy     | < 55% (30日)         |
+| L6 Entry Filter   | 提升质量         | entry_filter_lift      | < 1.0                |
+| L7 Execution Tier | 高tier优于低tier | per_tier_mean_r        | T1 ≤ T3 连续 2 周    |
+| L8 PCM            | 被选 > 被拒      | counterfactual_r       | 被拒 > 被选持续 1 周 |
+| L9 宪法           | 安全不过限       | kill_switch_count      | 月 > 3 次            |
 
 ### 实施清单
 
@@ -738,13 +846,13 @@ L1 (15m) ───────────────  LV
 
 ### 延迟目标
 
-| 环节 | 目标值 | 告警阈值 |
-|------|--------|----------|
-| Tick → 特征计算 | < 200ms | > 500ms |
-| 推理 | < 100ms | > 300ms |
-| PCM 仲裁 | < 50ms | > 150ms |
-| 下单 | < 100ms | > 300ms |
-| 端到端 | < 500ms | > 1000ms |
+| 环节            | 目标值  | 告警阈值 |
+| --------------- | ------- | -------- |
+| Tick → 特征计算 | < 200ms | > 500ms  |
+| 推理            | < 100ms | > 300ms  |
+| PCM 仲裁        | < 50ms  | > 150ms  |
+| 下单            | < 100ms | > 300ms  |
+| 端到端          | < 500ms | > 1000ms |
 
 ### 实施清单
 
@@ -758,17 +866,17 @@ L1 (15m) ───────────────  LV
 
 ## 📊 进度追踪
 
-| Phase | 状态 | 备注 |
-|-------|------|------|
-| Phase 0: 审查 | ✅ 完成 | 7 特征全部合理 |
-| Phase 1: 组合特征 | ✅ 完成 | 3 个乘法交叉特征 |
-| Phase 2: OI 体系 | ✅ 完成 | 下载器 + 特征 + 场景语义 + 交叉 |
-| Phase 3: LV 配置 | ✅ 完成 | 15min archetype 全套配置 |
-| Phase 4: PCM 重构 | ✅ 完成 | v2 严格性排序 |
-| **Phase 4.5: PCM-宪法统一** | 🔨 部分完成 | 配置统一 ✅ + PCM统一加载 ✅ + PCM统计输出 ✅ + PCM 联合回测 ✅ + Pipeline集成 ✅ + 配置一致性验证 ✅ + 回测宪法模拟 🔨进行中 + 降级机制 📋延后 |
-| Phase 5: 数据 | ✅ 完成 | highcap symbols 数据齐全 |
-| Phase 5.5: 预筛选 | ✅ 完成 | BPC/ME/FER 均已配置 |
-| Phase 6: 训练 | ✅ BPC/ME/FER | LV 暂缓 |
-| Phase 7-R: 多TF研究 | ✅ 完成 | ME→1H 配置完成 |
-| **Part A: 研究 pipeline** | ✅ 完成 | 实验隔离 + PCM 联合回测 + Pipeline集成 全部完成 |
-| **Part B: 实盘部署** | 🔨 进行中 | 详见 `z实验_006_统一实盘/实盘部署TODO.md` |
+| Phase                       | 状态         | 备注                                                                                                                              |
+| --------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0: 审查               | ✅ 完成       | 7 特征全部合理                                                                                                                    |
+| Phase 1: 组合特征           | ✅ 完成       | 3 个乘法交叉特征                                                                                                                  |
+| Phase 2: OI 体系            | ✅ 完成       | 下载器 + 特征 + 场景语义 + 交叉                                                                                                   |
+| Phase 3: LV 配置            | ✅ 完成       | 15min archetype 全套配置                                                                                                          |
+| Phase 4: PCM 重构           | ✅ 完成       | v2 严格性排序                                                                                                                     |
+| **Phase 4.5: PCM-宪法统一** | 🔨 部分完成   | 配置统一 ✅ + PCM统一加载 ✅ + PCM统计输出 ✅ + PCM 联合回测 ✅ + Pipeline集成 ✅ + 配置一致性验证 ✅ + 回测宪法模拟 🔨 + 降级机制 📋延后 |
+| Phase 5: 数据               | ✅ 完成       | highcap symbols 数据齐全                                                                                                          |
+| Phase 5.5: 预筛选           | ✅ 完成       | BPC/ME/FER 均已配置                                                                                                               |
+| Phase 6: 训练               | ✅ BPC/ME/FER | LV 暂缓                                                                                                                           |
+| Phase 7-R: 多TF研究         | ✅ 完成       | ME→1H 配置完成                                                                                                                    |
+| **Part A: 研究 pipeline**   | 🔨 进行中     | Gate/Evidence ✅ + Meta-Algorithm 管线改造 🔨 (Prefilter P1 + EntryFilter P2)                                                       |
+| **Part B: 实盘部署**        | 🔨 进行中     | 详见 `z实验_006_统一实盘/实盘部署TODO.md`                                                                                         |

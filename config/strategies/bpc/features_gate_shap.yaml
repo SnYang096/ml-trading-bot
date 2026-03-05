@@ -1,0 +1,127 @@
+name: bpc
+description: 'BPC Gate 特征配置：专门用于 failure_rr_extreme / failure_no_opportunity 的 veto
+  学习。
+
+
+  Gate 宪法级职责：
+
+  - Regime: 确保不逆大趋势
+
+  - Direction: 确保方向成型、不在 chop
+
+  - Structure: 确保是合法的 BPC 模式
+
+  - Extreme Risk: 防止黑天鹅/事故场景
+
+
+  不包含的（全部下放给 Evidence/Execution）：
+
+  - 订单流细节 (VPIN/Cluster/CVD细节)
+
+  - 末端/衰竭信号 (Exhaustion/Terminal Risk)
+
+  '
+feature_pipeline:
+  exclude_columns:
+  - atr
+  requested_features:
+  - atr_f
+  - sma_200_position_f
+  - macd_atr_f
+  - atr_percentile_f
+  - spectrum_volume_features_f
+  - vpin_features_f
+  - shd_pct_f
+  - evt_features_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+_shap_pruned:
+  timestamp: '2026-03-04 14:38:14'
+  source_file: features_gate.yaml
+  removed_nodes:
+  - bb_width_normalized_pct_f
+  - bpc_dir_consistency_multi_f
+  - bpc_dir_flip_count_f
+  - bpc_impulse_return_atr_f
+  - bpc_pullback_delta_absorption_f
+  - bpc_pullback_depth_pct_f
+  - bpc_pullback_duration_f
+  - bpc_pullback_speed_f
+  - bpc_soft_phase_f
+  - bpc_volume_compression_pct_f
+  - cvd_change_features_f
+  - cvd_divergence_v2_f
+  - dual_compression_f
+  - dual_exhaustion_f
+  - dual_ignition_f
+  - exhaustion_at_liquidity_void_f
+  - footprint_basic_f
+  - fp_imbalance_scene_semantic_scores_f
+  - funding_oi_crowding_f
+  - funding_rate_features_f
+  - funding_scene_semantic_scores_f
+  - garch_features_f
+  - hilbert_phase_f
+  - hurst_cvd_f
+  - hurst_price_f
+  - jump_risk_pct_f
+  - liquidity_void_f
+  - liquidity_void_scene_semantic_scores_f
+  - ofci_pct_f
+  - oi_features_f
+  - oi_scene_semantic_scores_f
+  - path_efficiency_pct_f
+  - path_length_pct_f
+  - price_dir_consistency_pct_f
+  - price_momentum_divergence_f
+  - roc_10_f
+  - roc_20_f
+  - roc_5_f
+  - rsi_f
+  - sma_200_f
+  - spectrum_features_f
+  - sr_strength_max_f
+  - terminal_risk_score_f
+  - trade_cluster_entropy_zscore_features_f
+  - trade_cluster_imbalance_zscore_features_f
+  - trade_cluster_max_buy_run_zscore_features_f
+  - trade_cluster_max_sell_run_zscore_features_f
+  - trade_cluster_net_runs_zscore_features_f
+  - trend_r2_20_f
+  - vol_mom_features_f
+  - vol_regime_features_f
+  - vol_trend_features_f
+  - volume_participation_score_f
+  - volume_profile_scene_semantic_scores_f
+  - volume_profile_volatility_features_f
+  - volume_ratio_pct_f
+  - vpin_scene_semantic_scores_f
+  - vwap_position_f
+  - wick_scene_semantic_scores_f
+  - wpt_cvd_fluctuation_f
+  - wpt_price_fluctuation_f
+  - wpt_price_reconstructed_f
+  - wpt_scene_semantic_scores_f
+  - wpt_volume_energy_f
+  kept_nodes:
+  - atr_f
+  - atr_percentile_f
+  - evt_features_f
+  - macd_atr_f
+  - shd_pct_f
+  - sma_200_position_f
+  - spectrum_volume_features_f
+  - vpin_features_f
+  stable_nodes:
+  - atr_percentile_f
+  - evt_features_f
+  - macd_atr_f
+  - shd_pct_f
+  - sma_200_position_f
+  - spectrum_volume_features_f
+  - vpin_features_f
+  protected_nodes:
+  - atr_f
+  original_count: 72
+  new_count: 8

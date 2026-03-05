@@ -23,6 +23,7 @@ SLOT_RELEASE_REASONS = {
     "position_closed",
     "stop_loss_hit",
     "take_profit_hit",
+    "order_failed",  # 🐛 Fix: 下单失败时释放预留 slot
 }
 
 

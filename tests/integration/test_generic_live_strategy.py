@@ -322,6 +322,7 @@ class TestExecutionParamGenerator:
         )
 
     def test_high_evidence_selects_top_tier(self):
+        """Tier 系统已移除，generate_params 统一返回 global。"""
         gen = self._make(
             [
                 {
@@ -341,10 +342,10 @@ class TestExecutionParamGenerator:
             ]
         )
         params = gen.generate_params(0.85)
-        assert params["tier_name"] == "high"
-        assert params["size_multiplier"] == 1.5
+        assert params["tier_name"] == "global"
 
     def test_mid_evidence_selects_mid_tier(self):
+        """Tier 系统已移除，任何 evidence 都返回 global。"""
         gen = self._make(
             [
                 {"name": "high", "evidence_min": 0.7, "size_multiplier": 1.5},
@@ -352,18 +353,18 @@ class TestExecutionParamGenerator:
             ]
         )
         params = gen.generate_params(0.5)
-        assert params["tier_name"] == "low"
-        assert params["size_multiplier"] == 0.6
+        assert params["tier_name"] == "global"
 
     def test_below_all_tiers_falls_to_default(self):
+        """Tier 系统已移除，任何 evidence 都返回 global。"""
         gen = self._make(
             [{"name": "only", "evidence_min": 0.8, "size_multiplier": 2.0}]
         )
         params = gen.generate_params(0.1)
-        assert params["tier_name"] == "default"
-        assert params["size_multiplier"] == 1.0
+        assert params["tier_name"] == "global"
 
     def test_no_tiers_uses_base_params(self):
+        """Tier 系统已移除，统一返回 global + 全局参数。"""
         gen = ExecutionParamGenerator(
             {
                 "stop_loss": {
@@ -375,9 +376,8 @@ class TestExecutionParamGenerator:
             }
         )
         params = gen.generate_params(0.9)
-        assert params["tier_name"] == "default"
+        assert params["tier_name"] == "global"
         assert params["initial_r"] == 3.0
-        assert params["take_profit_r"] == 4.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -526,7 +526,7 @@ class TestDecidePipeline:
         assert "strategy_specific" in profile
         rr = profile["rr_constraints"]
         assert rr["stop_loss_r"] > 0
-        assert rr["take_profit_r"] > 0
+        assert "take_profit_r" in rr  # TP 可能为 0 (trailing 替代)
         assert rr["max_holding_bars"] > 0
 
     def test_confidence_between_0_and_1(self, full_config):

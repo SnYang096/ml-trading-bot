@@ -1,6 +1,6 @@
 # ME Evidence Archetype (auto-promoted)
-# 来源: results/train_final_20260301_225033_return_tree/me/evidence_candidates.yaml
-# 优化规则: 1/12 条通过 plateau 验证
+# 来源: results/train_final_20260305_222334_return_tree/me/evidence_candidates.yaml
+# 优化规则: 3/9 条通过 plateau 验证
 # ✅ 方向已由数据自动验证
 
 schema:
@@ -11,11 +11,11 @@ schema:
     favor: 有利 - 提高信心/仓位
     amplify: 强烈有利 - 最大化执行
 evidence:
-- id: evidence_wpt_price_energy_low_ratio
-  feature: wpt_price_energy_low_ratio
-  rank: 9
-  direction: positive
-  usage_hint: 'TODO: 填写用途，如''决定 TP 拉伸与 trail 速度'''
+- id: evidence_vpin_volatility_20
+  feature: vpin_volatility_20
+  rank: 1
+  direction: negative
+  usage_hint: 'TODO: 填写用途'
   affects:
   - tp_range
   - trailing_speed
@@ -23,14 +23,61 @@ evidence:
   - position_size
   quantile_mapping:
     bins:
-    - 0.1
-    - 0.3
-    - 0.5
-    - 0.7
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
+  split_count: 4
+- id: evidence_vpin_ma20
+  feature: vpin_ma20
+  rank: 2
+  direction: negative
+  usage_hint: 'TODO: 填写用途'
+  affects:
+  - tp_range
+  - trailing_speed
+  - scale_in_allowed
+  - position_size
+  quantile_mapping:
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
   split_count: 1
+- id: evidence_evt_scale_right
+  feature: evt_scale_right
+  rank: 5
+  direction: negative
+  usage_hint: 'TODO: 填写用途'
+  affects:
+  - tp_range
+  - trailing_speed
+  - scale_in_allowed
+  - position_size
+  quantile_mapping:
+    bins:
+    - 0.15
+    - 0.35
+    - 0.55
+    - 0.75
+    labels:
+    - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
+  split_count: 4
+min_score: 0.0294

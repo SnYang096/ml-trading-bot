@@ -1,0 +1,44 @@
+# ME Prefilter 特征配置 (Meta-Algorithm)
+# 职责: 定义 ME archetype 语义边界的特征候选池
+# 仅含 ME 专属 + 交叉 + 场景语义特征 — 排除通用特征 (RSI/MACD/ATR/SMA)
+#
+# 设计理念:
+#   Prefilter 回答: "这个 bar 是不是 ME (Momentum Expansion)?"
+#   如果用通用特征, 所有 archetype 会选到相同特征, 失去区分度
+#
+# 用法 (Meta-Algorithm 模式):
+#   python scripts/analyze_archetype_feature_stratification.py \
+#       --logs results/.../me/features_labeled.parquet \
+#       --strategy me \
+#       --config config/strategies/me/prefilter.yaml \
+#       --features-prefilter config/strategies/me/features_prefilter.yaml \
+#       --meta-algorithm --promote
+
+name: me_prefilter
+description: |
+  ME Prefilter 特征: Energy × Acceleration × Participation 三因子的因果前提特征。
+  SHAP∩Gain 在这些特征上训练 LightGBM, 发现 archetype 边界。
+
+feature_pipeline:
+  requested_features:
+    # ========== ME 专属: 软阶段分数 ==========
+    # → me_atr_pct, me_vol_regime, me_accel_2k, me_accel_5k,
+    #   me_accel_persistence, me_multi_tf_alignment, me_cvd_alignment,
+    #   me_cvd_strength, me_volume_surge, me_volume_accel, me_delta_net_flow
+    - me_soft_phase_f
+
+    # ========== ME 专属: 失败信号 ==========
+    # → me_false_expansion, me_vol_divergence, me_flow_exhaustion
+    - me_failure_f
+
+    # ========== ME 专属: 上下文 ==========
+    # → me_jump_risk_suitable, me_reflex_risk, me_regime_suitable
+    - me_context_f
+
+    # ========== ME 交叉特征 ==========
+    # 资金+FP 双源点火 (ME 核心交叉)
+    - dual_ignition_f
+
+    # ========== 场景语义 (ME 相关) ==========
+    # OI 场景语义 (ignition 与 ME 的能量扩张语义对应)
+    - oi_scene_semantic_scores_f
