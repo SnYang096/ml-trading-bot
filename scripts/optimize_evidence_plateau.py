@@ -365,40 +365,69 @@ def _load_missing_features_from_store(
 
 @dataclass
 class EvidenceOptimizationConfig:
-    """Evidence optimization configuration"""
+    """Evidence optimization configuration
 
-    # ❗ 问题 4 修复: 降低 min_sharpness，只防反向 evidence
-    # 在 relative-rank + imbalance 下，sharpness 容易接近 0，但不代表 evidence 无用
-    min_sharpness: float = (
-        -0.02
-    )  # 只防"反向 evidence"，不防"弱但稳定的 risk-control evidence"
-    min_samples_good: int = 50  # good 样本最少数量
-    min_samples_bad: int = 50  # bad 样本最少数量
-    # 注: plateau 判断改用 top 20% + neighbor >= 3 + CV + semantic drift，不再用固定 bins 宽度
+    优先从 config/kpi_gates/evidence_layer.yaml 读取,
+    缺失时使用默认值.
+    """
 
-    # ❗ 隐患 1 修复: Evidence 必须同时满足双重约束
-    # 否则会"奖励无用 evidence"（只压 bad，但不拉开 good 结构差异）
-    min_bad_suppression: float = 0.05  # bad 被选择性压制的最低要求
-    min_good_amplification: float = 0.05  # good 被选择性放大的最低要求
+    min_sharpness: float = -0.02
+    min_samples_good: int = 50
+    min_samples_bad: int = 50
+    min_bad_suppression: float = 0.05
+    min_good_amplification: float = 0.05
+    plateau_max_bins_distance: float = 0.15
+    plateau_max_semantic_drift: float = 0.10
 
-    # ❗ 隐患 2 修复: Plateau 需要空间连续性约束
-    plateau_max_bins_distance: float = 0.15  # bins 空间最大距离
-
-    # ❗ 问题 2 修复: plateau 邻域需要语义稳定性约束
-    # 不只是 bins 近，而是"行为结果近"
-    # 注: quantile-threshold 模式下 bins 移动引起的 drift 比 rank 模式大
-    # 0.10 = 允许 p_favor_good/p_suppress_bad 在邻域内波动 ±10%
-    plateau_max_semantic_drift: float = 0.10  # p_favor_good / p_suppress_bad 最大漂移
-
-    # ❗ 隐患 3 修复: Evidence score 应该是相对排名，而不是绝对分数
-    use_relative_rank: bool = True  # 是否使用相对排名模式
+    # Evidence score 相对排名
+    use_relative_rank: bool = True
     relative_rank_bins: List[float] = field(
         default_factory=lambda: [0.2, 0.4, 0.6, 0.8]
     )
 
-    # ❗ 问题 1 修复: 优化期使用近似 gate-conditioned rank
-    # 默认使用 good 样本作为 gate 近似，确保优化期和实盘期语义一致
+    # 压制/放大的 score 阈值
+    suppress_threshold: float = 0.3
+    favor_threshold: float = 0.7
+
     use_gate_proxy_in_optimization: bool = True
+
+    @classmethod
+    def from_kpi_gates(cls) -> "EvidenceOptimizationConfig":
+        """从 config/kpi_gates/evidence_layer.yaml 加载, 缺失时用默认值"""
+        from pathlib import Path as _P
+
+        import yaml as _yaml
+
+        cfg = cls()
+        _path = _P("config/kpi_gates/evidence_layer.yaml")
+        if not _path.exists():
+            return cfg
+        with open(_path, "r", encoding="utf-8") as f:
+            data = _yaml.safe_load(f) or {}
+
+        _v = data.get("validation", {})
+        cfg.min_bad_suppression = _v.get("min_bad_suppression", cfg.min_bad_suppression)
+        cfg.min_good_amplification = _v.get(
+            "min_good_amplification", cfg.min_good_amplification
+        )
+        cfg.min_sharpness = _v.get("min_sharpness", cfg.min_sharpness)
+        cfg.suppress_threshold = _v.get("suppress_threshold", cfg.suppress_threshold)
+        cfg.favor_threshold = _v.get("favor_threshold", cfg.favor_threshold)
+        cfg.min_samples_good = _v.get("min_samples_good", cfg.min_samples_good)
+        cfg.min_samples_bad = _v.get("min_samples_bad", cfg.min_samples_bad)
+
+        _p = data.get("plateau", {})
+        cfg.plateau_max_bins_distance = _p.get(
+            "max_bins_distance", cfg.plateau_max_bins_distance
+        )
+        cfg.plateau_max_semantic_drift = _p.get(
+            "max_semantic_drift", cfg.plateau_max_semantic_drift
+        )
+
+        _t = data.get("thresholds", {})
+        cfg.relative_rank_bins = _t.get("quantile_bins", cfg.relative_rank_bins)
+
+        return cfg
 
 
 # 语义标签到分数的映射
@@ -576,7 +605,9 @@ def compute_sharpness(
     label_col: str = "is_good",
     use_relative_rank: bool = True,
     direction: str = "higher_is_better",
-    gate_mask: pd.Series = None,  # ❗ 问题 1 修复: gate-conditioned rank
+    gate_mask: pd.Series = None,
+    suppress_threshold: float = 0.3,
+    favor_threshold: float = 0.7,
 ) -> Dict[str, float]:
     """
     计算给定分位数划分的 sharpness
@@ -635,12 +666,9 @@ def compute_sharpness(
 
     sharpness = mean_good - mean_bad
 
-    # ❗ Bug 3 修复: 主 KPI 改为 bad_suppression
+    # 主 KPI: bad_suppression
     # 在极端 class imbalance (Good=92%) 下，mean difference 会失真
     # 正确的衡量是: "bad 样本被压制了多少"
-    suppress_threshold = 0.3  # score < 0.3 算被压制
-    favor_threshold = 0.7  # score > 0.7 算被放大
-
     p_suppress_bad = (
         (scores[is_bad] < suppress_threshold).mean() if is_bad.any() else 0.0
     )
@@ -737,7 +765,7 @@ def optimize_evidence_feature(
         优化结果
     """
     if config is None:
-        config = EvidenceOptimizationConfig()
+        config = EvidenceOptimizationConfig.from_kpi_gates()
 
     if feature_col not in df.columns:
         return {
@@ -780,7 +808,9 @@ def optimize_evidence_feature(
             label_col,
             use_relative_rank=config.use_relative_rank,
             direction=direction,
-            gate_mask=gate_proxy,  # ❗ 问题 1: 使用 gate proxy
+            gate_mask=gate_proxy,
+            suppress_threshold=config.suppress_threshold,
+            favor_threshold=config.favor_threshold,
         )
         metrics["quantile_bins"] = bins
         results.append(metrics)

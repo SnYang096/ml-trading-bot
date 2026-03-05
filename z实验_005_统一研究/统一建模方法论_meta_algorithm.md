@@ -138,14 +138,17 @@ target 可以是任何东西:
 
 对 Step 2 (单特征) + Step 3 (交互对) 产出的候选做统计验证:
 
-| 指标            | 计算方式                                       | 用途                            |
-| --------------- | ---------------------------------------------- | ------------------------------- |
-| lift            | deny组 bad_rate / 整体 bad_rate                | 区分力 (>1.0 单, >1.3 复合)     |
-| effect_size     | mean_rr(allow) - mean_rr(deny)                 | 经济意义 (>0.10 单, >0.15 复合) |
-| robustness      | time-fold stability × 0.6 + cross-sample × 0.4 | 泛化能力 (>0.4 单, >0.35 复合)  |
-| gate_score      | tail_capture - good_deny_rate (Youden's J)     | Gate 专用: 净信息量             |
-| bad_suppression | P(low_score\|bad) - P(low_score\|good)         | Evidence 专用: 坏交易压制力     |
-| snotio          | mean(R-multiples) + plateau CV + z-test        | Entry Filter 专用: 执行质量     |
+| 指标            | 计算方式                                       | 用途                            | 配置文件                                                           |
+| --------------- | ---------------------------------------------- | ------------------------------- | ------------------------------------------------------------------ |
+| lift            | deny组 bad_rate / 整体 bad_rate                | 区分力 (>1.0 单, >1.3 复合)     | `kpi_gates/{prefilter,gate,entry_filter}_layer.yaml`               |
+| effect_size     | mean_rr(allow) - mean_rr(deny)                 | 经济意义 (>0.10 单, >0.15 复合) | `kpi_gates/{prefilter,gate,entry_filter}_layer.yaml`               |
+| robustness      | time-fold stability × 0.6 + cross-sample × 0.4 | 泛化能力 (>0.4 单, >0.35 复合)  | `kpi_gates/{prefilter,gate,entry_filter}_layer.yaml`               |
+| gate_score      | tail_capture - good_deny_rate (Youden's J)     | Gate 专用: 净信息量             | `kpi_gates/gate_layer.yaml` → `thresholds.min_gate_score`          |
+| bad_suppression | P(low_score\|bad) - P(low_score\|good)         | Evidence 专用: 坏交易压制力     | `kpi_gates/evidence_layer.yaml` → `validation.min_bad_suppression` |
+| snotio          | mean(R-multiples) + plateau CV + z-test        | Entry Filter 专用: 执行质量     | `kpi_gates/entry_filter_layer.yaml` → `plateau.snotio_cv_max`      |
+
+> **配置路径总览**: 所有统计门槛集中在 `config/kpi_gates/` 下, 脚本运行时自动读取。
+> 修改门槛无需改代码, 只需编辑对应 YAML。
 
 ### Step 5: 规则/候选输出
 
@@ -170,7 +173,8 @@ target 可以是任何东西:
 | **选择标准** | bad_rate_diff + holdout       | Gate Score (Youden's J > 0)                         | bad_suppression            | snotio 显著性 (z-test p<0.05)      |
 | **输出格式** | AND deny rules                | AND deny rules                                      | 候选特征 + bins            | OR timing conditions               |
 | **输出文件** | `prefilter.yaml`              | `gate.yaml`                                         | `evidence_candidates.yaml` | `entry_filters.yaml`               |
-| **实现状态** | **待改造** (P1)               | 已完成                                              | 已完成                     | **待改造** (P2)                    |
+| **实现状态** | ✅ 已完成                       | ✅ 已完成                                              | ✅ 已完成                      | ✅ 已完成                              |
+| **KPI 配置** | `kpi_gates/prefilter_layer.yaml` | `kpi_gates/gate_layer.yaml`                        | `kpi_gates/evidence_layer.yaml`      | `kpi_gates/entry_filter_layer.yaml`        |
 
 ### Prefilter
 

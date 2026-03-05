@@ -1,10 +1,22 @@
 # FER Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-03-05 15:30
-# Promoted: 0 filters (全部未通过显著性检验)
-# Baseline snotio: 1.4512, σ=3.400
+# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
+# Date: 2026-03-05 19:38
+# Promoted: 1 filters (1 plateau + 0 snotio-only)
+# Baseline snotio: 0.9178, σ=3.077
+# Significance: z-test p<0.05 required for all tiers
 #
-# 没有 entry filter 通过准入, 策略将无条件入场
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
-filters: []
+filters:
+- id: meta_evt_es_99
+  enabled: true
+  description: 'Meta-Algorithm: evt_es_99 <= 0.424'
+  conditions:
+  - feature: evt_es_99
+    operator: <=
+    value: 0.424
+  tier: A_PLATEAU
+  notes: lift=1.34x, rob=84%, snotio=1.4379, z=2.61, p=0.0045
 combination_mode: or

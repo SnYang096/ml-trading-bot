@@ -1,6 +1,6 @@
 # FER Evidence Archetype (auto-promoted)
-# 来源: results/train_final_20260305_153003_return_tree/fer/evidence_candidates.yaml
-# 优化规则: 3/10 条通过 plateau 验证
+# 来源: results/train_final_20260305_193808_return_tree/fer/evidence_candidates.yaml
+# 优化规则: 6/10 条通过 plateau 验证
 # ✅ 方向已由数据自动验证
 
 schema:
@@ -11,32 +11,9 @@ schema:
     favor: 有利 - 提高信心/仓位
     amplify: 强烈有利 - 最大化执行
 evidence:
-- id: evidence_fer_trapped_longs_score
-  feature: fer_trapped_longs_score
-  rank: 4
-  direction: negative
-  usage_hint: 'TODO: 填写用途'
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.3
-    - 0.5
-    - 0.7
-    - 0.9
-    labels:
-    - amplify
-    - favor
-    - neutral
-    - downweight
-    - suppress
-  split_count: 19
-- id: evidence_fer_trapped_shorts_score
-  feature: fer_trapped_shorts_score
-  rank: 5
+- id: evidence_roc_5
+  feature: roc_5
+  rank: 1
   direction: positive
   usage_hint: 'TODO: 填写用途'
   affects:
@@ -46,20 +23,43 @@ evidence:
   - position_size
   quantile_mapping:
     bins:
-    - 0.15
-    - 0.35
-    - 0.55
-    - 0.75
+    - 0.1
+    - 0.3
+    - 0.5
+    - 0.7
     labels:
     - suppress
     - downweight
     - neutral
     - favor
     - amplify
-  split_count: 6
-- id: evidence_fer_signed_efficiency_pct
-  feature: fer_signed_efficiency_pct
-  rank: 6
+  split_count: 11
+- id: evidence_cvd_change_5_normalized
+  feature: cvd_change_5_normalized
+  rank: 2
+  direction: positive
+  usage_hint: 'TODO: 填写用途'
+  affects:
+  - tp_range
+  - trailing_speed
+  - scale_in_allowed
+  - position_size
+  quantile_mapping:
+    bins:
+    - 0.1
+    - 0.3
+    - 0.5
+    - 0.7
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 21
+- id: evidence_fer_signed_efficiency
+  feature: fer_signed_efficiency
+  rank: 3
   direction: negative
   usage_hint: 'TODO: 填写用途'
   affects:
@@ -79,5 +79,74 @@ evidence:
     - neutral
     - downweight
     - suppress
+  split_count: 28
+- id: evidence_fer_impulse_failure_direction
+  feature: fer_impulse_failure_direction
+  rank: 6
+  direction: positive
+  usage_hint: 'TODO: 填写用途'
+  affects:
+  - tp_range
+  - trailing_speed
+  - scale_in_allowed
+  - position_size
+  quantile_mapping:
+    bins:
+    - 0.1
+    - 0.3
+    - 0.5
+    - 0.7
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
   split_count: 4
-min_score: 0.0676
+- id: evidence_fer_momentum_efficiency_decay
+  feature: fer_momentum_efficiency_decay
+  rank: 7
+  direction: positive
+  usage_hint: 'TODO: 填写用途'
+  affects:
+  - tp_range
+  - trailing_speed
+  - scale_in_allowed
+  - position_size
+  quantile_mapping:
+    bins:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 2
+- id: evidence_fer_signed_efficiency_pct
+  feature: fer_signed_efficiency_pct
+  rank: 10
+  direction: negative
+  usage_hint: 'TODO: 填写用途'
+  affects:
+  - tp_range
+  - trailing_speed
+  - scale_in_allowed
+  - position_size
+  quantile_mapping:
+    bins:
+    - 0.15
+    - 0.35
+    - 0.55
+    - 0.75
+    labels:
+    - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
+  split_count: 0
+min_score: 0.0111

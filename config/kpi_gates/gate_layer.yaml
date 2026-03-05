@@ -22,6 +22,10 @@ thresholds:
   # Robustness: time-fold 一致性
   min_robustness: 0.4
 
+  # Gate Score (Youden's J): tail_capture - good_deny_rate
+  # 层专属指标: 净信息量, >=0 才有正向过滤价值
+  min_gate_score: 0.0
+
   # 相关性剪枝
   correlation_threshold: 0.80
 

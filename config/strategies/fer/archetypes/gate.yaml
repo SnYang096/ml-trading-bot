@@ -1,6 +1,6 @@
 # FER Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260305_151254/strategies/fer/gate_draft.yaml
-# 优化规则: 3/10 条通过优化, 7 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260305_193623/strategies/fer/gate_draft.yaml
+# 优化规则: 2/10 条通过优化, 8 条已移除
 
 schema:
   phases:
@@ -28,37 +28,26 @@ hard_gates:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: gate_fer_signed_efficiency_pct
-  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
+- id: gate_fer_volume_price_divergence
+  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE
   phase: hard_gate
-  priority: 14
-  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
+  priority: 11
+  reason: fer_volume_price_divergence 触发树分裂条件 (分裂 3 次)
   when:
-    fer_signed_efficiency_pct:
-      value_lt: 0.5
+    fer_volume_price_divergence:
+      value_lt: 0.65
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.5000, lift=0.125'
-- id: gate_fer_signed_efficiency_pct
-  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
+  comment: 'optimizer: stable_plateau_found, threshold=0.6500, lift=0.192'
+- id: gate_fer_volume_price_divergence
+  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE
   phase: hard_gate
-  priority: 15
-  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
+  priority: 16
+  reason: fer_volume_price_divergence 触发树分裂条件 (分裂 1 次)
   when:
-    fer_signed_efficiency_pct:
-      value_lt: 0.5
+    fer_volume_price_divergence:
+      value_lt: 0.65
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.5000, lift=0.125'
-- id: gate_fer_signed_efficiency_pct
-  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
-  phase: hard_gate
-  priority: 17
-  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
-  when:
-    fer_signed_efficiency_pct:
-      value_lt: 0.5
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.5000, lift=0.125'
+  comment: 'optimizer: stable_plateau_found, threshold=0.6500, lift=0.192'
 guardrails: []

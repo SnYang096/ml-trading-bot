@@ -374,6 +374,7 @@ def _generate_gate_rules_statistical(
     GATE_MIN_LIFT = _gt.get("min_lift", 1.05)
     GATE_MIN_EFFECT = _gt.get("min_effect", 0.10)
     GATE_MIN_ROBUSTNESS = _gt.get("min_robustness", 0.4)
+    GATE_MIN_GATE_SCORE = _gt.get("min_gate_score", 0.0)
     GATE_CORR_THRESHOLD = _gt.get("correlation_threshold", 0.80)
     GATE_DENY_RATE_MIN = _gt.get("deny_rate_min", 0.05)
     GATE_DENY_RATE_MAX = _gt.get("deny_rate_max", 0.70)
@@ -1050,7 +1051,7 @@ def _generate_risk_gate_yaml(
             "evaluation_order": "system_safety -> hard_gate -> guardrail",
             "governance": {
                 "selection_method": "gate_score (Youden's J = tail_capture - good_deny_rate)",
-                "min_gate_score": 0.0,
+                "min_gate_score": GATE_MIN_GATE_SCORE,
                 "alert_threshold": 0.25,
             },
         },

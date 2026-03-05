@@ -206,12 +206,14 @@ def _find_plateau(
     results: List[Dict[str, Any]],
     window: int = 5,
     operator: str = ">=",
+    snotio_cv_max: float = 0.3,
+    trades_cv_max: float = 0.4,
 ) -> Dict[str, Any]:
     """分析扫描结果，找到平坦高原区间。
 
     使用滑动窗口双 CV 判定：
-      - snotio CV < 0.3（收益稳定性）
-      - Trades CV < 0.4（执行节奏稳定性 — Entry Filter 特有）
+      - snotio CV < snotio_cv_max（收益稳定性）
+      - Trades CV < trades_cv_max（执行节奏稳定性 — Entry Filter 特有）
 
     recommended 不取中点，取 plateau 偏宽容侧：
       - >= / > 条件：低阈值 = 更宽松 → start + bias * width
@@ -248,7 +250,7 @@ def _find_plateau(
         std_tr = np.std(trades_list)
         cv_trades = std_tr / mean_tr if mean_tr > 1e-8 else 999
 
-        if cv_snotio < 0.3 and cv_trades < 0.4 and mean_sn > 0:
+        if cv_snotio < snotio_cv_max and cv_trades < trades_cv_max and mean_sn > 0:
             start_t = w[0]["threshold"]
             end_t = w[-1]["threshold"]
             plateau_width = abs(end_t - start_t)
@@ -284,7 +286,7 @@ def _find_plateau(
             snotios = [r["snotio"] for r in w]
             mean_sn = np.mean(snotios)
             cv_snotio = np.std(snotios) / mean_sn if mean_sn > 1e-8 else 999
-            if cv_snotio < 0.3 and mean_sn > 0:
+            if cv_snotio < snotio_cv_max and mean_sn > 0:
                 start_t = w[0]["threshold"]
                 end_t = w[-1]["threshold"]
                 pw = abs(end_t - start_t)
@@ -907,6 +909,7 @@ def _meta_algorithm_entry_filter(
     _ho_cfg = _kpi.get("holdout", {})
     _sg_cfg = _kpi.get("shap_gain", {})
     _label_cfg = _kpi.get("label", {})
+    _plateau_cfg = _kpi.get("plateau", {})
 
     print(f"\n{'='*110}")
     print(f"🔬 Meta-Algorithm Entry Filter ({strategy.upper()})")
@@ -1333,7 +1336,13 @@ def _meta_algorithm_entry_filter(
             {},  # entry_filters_cfg unused inside
             _estimate_span_years(merged),
         )
-        plateau = _find_plateau(scan_data, operator=op_str)
+        plateau = _find_plateau(
+            scan_data,
+            operator=op_str,
+            window=_plateau_cfg.get("window", 5),
+            snotio_cv_max=_plateau_cfg.get("snotio_cv_max", 0.3),
+            trades_cv_max=_plateau_cfg.get("trades_cv_max", 0.4),
+        )
 
         if plateau.get("is_plateau"):
             rec_threshold = plateau["recommended"]
