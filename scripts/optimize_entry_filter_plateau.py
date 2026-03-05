@@ -978,6 +978,15 @@ def _meta_algorithm_entry_filter(
         "label",
         "success_no_rr_extreme",
         "rr_extreme",
+        # 🐛 Fix: forward-looking labels 禁止作为 entry filter 特征
+        #   forward_rr 是未来收益率，在实盘/事件回测时不存在。
+        #   ME 20260306 run 泄漏导致 entry_filter=forward_rr>=2.65，
+        #   OOS 回测 0 trades。
+        "forward_rr",
+        "forward_return",
+        "forward_r",
+        "path_extreme",
+        "path_extreme_r",
     }
     # 原始 (非归一化) 特征 — 从 feature_dependencies.yaml raw_scale_columns 读取
     _raw_scale_set: set = set()
@@ -1002,6 +1011,9 @@ def _meta_algorithm_entry_filter(
         if c in _META_EXCLUDE:
             continue
         if c.startswith("gate_") or c.startswith("__"):
+            continue
+        # 排除所有前瞻标签 (forward_*)
+        if c.startswith("forward_"):
             continue
         if not pd.api.types.is_numeric_dtype(df_trades[c]):
             continue

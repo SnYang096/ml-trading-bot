@@ -1,6 +1,6 @@
 # FER Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260305_193623/strategies/fer/gate_draft.yaml
-# 优化规则: 2/10 条通过优化, 8 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260306_000255/strategies/fer/gate_draft.yaml
+# 优化规则: 2/10 条通过优化, 9 条已移除
 
 schema:
   phases:
@@ -33,17 +33,6 @@ hard_gates:
   phase: hard_gate
   priority: 11
   reason: fer_volume_price_divergence 触发树分裂条件 (分裂 3 次)
-  when:
-    fer_volume_price_divergence:
-      value_lt: 0.65
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.6500, lift=0.192'
-- id: gate_fer_volume_price_divergence
-  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE
-  phase: hard_gate
-  priority: 16
-  reason: fer_volume_price_divergence 触发树分裂条件 (分裂 1 次)
   when:
     fer_volume_price_divergence:
       value_lt: 0.65

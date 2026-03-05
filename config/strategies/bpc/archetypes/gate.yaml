@@ -1,6 +1,6 @@
 # BPC Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/bpc/20260305_174932/strategies/bpc/gate_draft.yaml
-# 优化规则: 0/4 条通过优化, 3 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/bpc/20260306_000255/strategies/bpc/gate_draft.yaml
+# 优化规则: 0/4 条通过优化, 4 条已移除
 
 schema:
   phases:
@@ -49,18 +49,4 @@ hard_gates:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: gate_evt_scale_sma_200_position
-  tag: HARD_EVT_SCALE_SMA_200_POSITION
-  phase: hard_gate
-  priority: 10
-  reason: 统计验证规则 (lift=2.02)
-  when:
-    all_of:
-    - evt_scale:
-        value_lt: 0.348
-    - sma_200_position:
-        value_gt: 0.0214
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.4988, lift=0.139'
 guardrails: []

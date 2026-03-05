@@ -194,6 +194,92 @@ class IncrementalFeatureComputer:
     def _want(self, key: str) -> bool:
         return (not self.live_feature_set) or (key in self.live_feature_set)
 
+    def _compute_cvd_from_ticks(
+        self,
+        bars_tf: pd.DataFrame,
+        ticks_1min: pd.DataFrame,
+        ptf: str,
+        _logger,
+    ) -> bool:
+        """Tick 数据补算 CVD。
+
+        当磁盘 1min bars 没有 buy_volume/sell_volume 时，
+        从 tick 数据中按 primary timeframe 重采样计算 buy/sell volume，
+        然后计算 CVD。确保 fer_failure_signals_f 等节点有 CVD 输入。
+
+        Returns:
+            True if CVD columns were successfully added.
+        """
+        ticks = ticks_1min.copy()
+
+        # 统一 timestamp
+        if not isinstance(ticks.index, pd.DatetimeIndex):
+            if "timestamp" in ticks.columns:
+                ticks.index = pd.to_datetime(ticks["timestamp"], utc=True)
+            else:
+                _logger.debug("CVD补算: ticks 没有 timestamp 列")
+                return False
+        if ticks.index.tz is None:
+            ticks.index = ticks.index.tz_localize("UTC")
+
+        # 需要 side 列 (1=buy, -1=sell 或 0=buy, 1=sell)
+        if "side" not in ticks.columns:
+            _logger.debug("CVD补算: ticks 没有 side 列")
+            return False
+
+        # 使用 volume 或 size 列
+        vol_col = "volume" if "volume" in ticks.columns else "size"
+        if vol_col not in ticks.columns:
+            _logger.debug("CVD补算: ticks 没有 volume/size 列")
+            return False
+
+        # 判断 side 编码: 1=buy/-1=sell 还是 0=buy/1=sell
+        side = ticks["side"]
+        if set(side.dropna().unique()).issubset({0, 1}):
+            is_buy = side == 0  # Binance: 0=buy, 1=sell
+        else:
+            is_buy = side == 1  # 通用: 1=buy, -1=sell
+
+        ticks["_buy_vol"] = ticks[vol_col].where(is_buy, 0.0)
+        ticks["_sell_vol"] = ticks[vol_col].where(~is_buy, 0.0)
+
+        # 按 primary timeframe 重采样
+        agg = ticks.resample(ptf).agg({"_buy_vol": "sum", "_sell_vol": "sum"})
+        agg = agg.reindex(bars_tf.index, fill_value=0.0)
+
+        buy_vol = agg["_buy_vol"].fillna(0.0)
+        sell_vol = agg["_sell_vol"].fillna(0.0)
+        delta = buy_vol - sell_vol
+        total_flow = buy_vol + sell_vol
+
+        bars_tf["buy_volume"] = buy_vol
+        bars_tf["sell_volume"] = sell_vol
+        bars_tf["buy_qty"] = buy_vol
+        bars_tf["sell_qty"] = sell_vol
+        bars_tf["cvd_change_1"] = delta
+        bars_tf["cvd_change_5"] = delta.rolling(window=5, min_periods=1).sum()
+        bars_tf["cvd_change_20"] = delta.rolling(window=20, min_periods=1).sum()
+        bars_tf["cvd_roll20"] = delta.rolling(window=20, min_periods=1).sum()
+        bars_tf["cvd_roll60"] = delta.rolling(window=60, min_periods=1).sum()
+        bars_tf["cvd_roll288"] = delta.rolling(window=288, min_periods=1).sum()
+        bars_tf["cvd"] = delta.cumsum()
+        bars_tf["cvd_normalized"] = (delta / total_flow.replace(0, np.nan)).fillna(0)
+        total_flow_5 = total_flow.rolling(window=5, min_periods=1).sum()
+        bars_tf["cvd_change_5_normalized"] = (
+            bars_tf["cvd_change_5"] / total_flow_5.replace(0, np.nan)
+        ).fillna(0)
+        bars_tf["taker_buy_ratio"] = (buy_vol / total_flow.replace(0, np.nan)).fillna(
+            0.5
+        )
+
+        _n_nonzero = int((delta != 0).sum())
+        _logger.info(
+            "  CVD 从 tick 补算: %d/%d bars 有有效 CVD",
+            _n_nonzero,
+            len(bars_tf),
+        )
+        return _n_nonzero > 0
+
     def _detect_tick_dependent_nodes(self, feats_cfg: dict) -> set:
         """从 feature_dependencies 动态检测需要 tick 数据的特征节点。
 
@@ -986,6 +1072,18 @@ class IncrementalFeatureComputer:
             bars_tf["taker_buy_ratio"] = (
                 bars_tf["buy_volume"] / total_flow.replace(0, np.nan)
             ).fillna(0.5)
+        elif ticks_1min is not None and not ticks_1min.empty:
+            # 🐛 Fix: 磁盘 1min bars 没有 buy_volume/sell_volume 时，
+            #   从 tick 数据中计算 CVD，确保 fer_failure_signals_f 有输入。
+            #   磁盘 bars 可能来自 warmup 下载，不含买卖量分列。
+            try:
+                _cvd_computed = self._compute_cvd_from_ticks(
+                    bars_tf, ticks_1min, ptf, _logger
+                )
+                if _cvd_computed:
+                    _logger.info("  CVD 从 tick 数据补算成功")
+            except Exception as _cvd_e:
+                _logger.warning("  CVD 从 tick 补算失败: %s", _cvd_e)
 
         _logger.info(
             "_compute_features_core: %d 1min bars → %d %s bars",

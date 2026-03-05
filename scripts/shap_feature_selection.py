@@ -897,7 +897,20 @@ Examples:
 
     args = p.parse_args()
 
-    # ── Load pipeline config overrides ──
+    # 记录 CLI 显式传入的参数 (与 argparse default 不同 → 显式传入)
+    _cli_explicit = set()
+    _param_defaults = {
+        "n_folds": 4,
+        "top_k": 20,
+        "stability_threshold": 0.75,
+        "min_stable": 8,
+        "sample_size": 2000,
+    }
+    for key, default_val in _param_defaults.items():
+        if getattr(args, key) != default_val:
+            _cli_explicit.add(key)
+
+    # ── Load pipeline config overrides (CLI 显式传入的不被覆盖) ──
     protected_nodes = list(DEFAULT_PROTECTED_NODES)
     apply_to = None
 
@@ -908,13 +921,19 @@ Examples:
             shap_cfg = cfg.get("shap_feature_selection", {})
             if shap_cfg:
                 print(f"   📋 Loading SHAP config from {cfg_path}")
-                if "n_folds" in shap_cfg:
+                if "n_folds" in shap_cfg and "n_folds" not in _cli_explicit:
                     args.n_folds = shap_cfg["n_folds"]
-                if "top_k" in shap_cfg:
+                if "top_k" in shap_cfg and "top_k" not in _cli_explicit:
                     args.top_k = shap_cfg["top_k"]
-                if "stability_threshold" in shap_cfg:
+                if (
+                    "stability_threshold" in shap_cfg
+                    and "stability_threshold" not in _cli_explicit
+                ):
                     args.stability_threshold = shap_cfg["stability_threshold"]
-                if "min_stable_features" in shap_cfg:
+                if (
+                    "min_stable_features" in shap_cfg
+                    and "min_stable" not in _cli_explicit
+                ):
                     args.min_stable = shap_cfg["min_stable_features"]
                 if "protected_nodes" in shap_cfg:
                     protected_nodes = shap_cfg["protected_nodes"]

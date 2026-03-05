@@ -712,6 +712,19 @@ def run_strategy_pipeline(
             f"{prepare_dir}/shap",
             "--promote",
         ]
+        # Per-strategy SHAP override (e.g. ME 需要更宽松的 stability_threshold)
+        _shap_ov = scfg.get("shap_override", {})
+        if _shap_ov:
+            if "stability_threshold" in _shap_ov:
+                shap_cmd += [
+                    "--stability-threshold",
+                    str(_shap_ov["stability_threshold"]),
+                ]
+            if "top_k" in _shap_ov:
+                shap_cmd += ["--top-k", str(_shap_ov["top_k"])]
+            if "n_folds" in _shap_ov:
+                shap_cmd += ["--n-folds", str(_shap_ov["n_folds"])]
+            print(f"   📋 SHAP override for {strategy}: {_shap_ov}")
         rc_shap, _ = run_step(
             "SHAP Feature Selection",
             shap_cmd,
@@ -891,6 +904,37 @@ def run_strategy_pipeline(
         log,
         dry_run=dry_run,
     )
+
+    # ── Gate Subset Selection (可选, 诊断报告: 显示哪些规则组合最优) ──
+    _gate_sel_method = gate_gates.get("selection_method", "all")
+    if _gate_sel_method != "all":
+        gate_sel_cmd = [
+            sys.executable,
+            "scripts/select_gate_subset.py",
+            "--strategy",
+            strategy,
+            "--strategies-root",
+            str(exp_strategies_root),
+            "--method",
+            _gate_sel_method,
+            "--start-date",
+            holdout_start,
+            "--end-date",
+            end_date,
+            "--data-path",
+            data_path,
+            "--min-trades",
+            str(kpi_gates.get("backtest", {}).get("min_trades", 30)),
+            # 不加 --promote: 仅诊断报告, 不自动写入 gate.yaml (避免单 holdout 过拟合)
+            "--output",
+            f"{run_dir}/gate_subset_selection.json",
+        ]
+        run_step(
+            "Gate Subset Selection",
+            gate_sel_cmd,
+            log,
+            dry_run=dry_run,
+        )
 
     # Re-apply with optimized gate
     run_step(

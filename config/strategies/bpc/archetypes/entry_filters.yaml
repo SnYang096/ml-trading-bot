@@ -1,8 +1,8 @@
 # BPC Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
-# Date: 2026-03-05 19:22
-# Promoted: 2 filters (1 plateau + 1 snotio-only)
-# Baseline snotio: 5.8796, σ=12.628
+# Date: 2026-03-06 00:04
+# Promoted: 1 filters (1 plateau + 0 snotio-only)
+# Baseline snotio: 5.9176, σ=12.577
 # Significance: z-test p<0.05 required for all tiers
 #
 # 职责: "现在该入场吗?" → 硬二值控制入场时机
@@ -10,22 +10,13 @@
 # Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-- id: meta_bpc_pullback_quality
+- id: meta_spectrum_price_centroid
   enabled: true
-  description: 'Meta-Algorithm: bpc_pullback_quality <= 0.344'
+  description: 'Meta-Algorithm: spectrum_price_centroid >= 0.852'
   conditions:
-  - feature: bpc_pullback_quality
-    operator: <=
-    value: 0.344
-  tier: A_PLATEAU
-  notes: lift=1.24x, rob=88%, snotio=9.1643, z=4.01, p=0.0000
-- id: meta_vpin_volatility_10
-  enabled: true
-  description: 'Meta-Algorithm: vpin_volatility_10 >= 0.07'
-  conditions:
-  - feature: vpin_volatility_10
+  - feature: spectrum_price_centroid
     operator: '>='
-    value: 0.07
-  tier: B_SNOTIO
-  notes: lift=1.21x, rob=86%, snotio=9.8568, z=3.32, p=0.0005
+    value: 0.852
+  tier: A_PLATEAU
+  notes: lift=1.18x, rob=88%, snotio=11.0518, z=5.57, p=0.0000
 combination_mode: or

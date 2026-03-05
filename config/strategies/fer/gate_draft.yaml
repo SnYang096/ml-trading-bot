@@ -1,5 +1,5 @@
 # FER Gate Draft (auto-generated)
-# 来源: results/train_final_20260305_024928_rr_extreme/fer
+# 来源: results/train_final_20260306_011712_rr_extreme/fer
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fer
@@ -12,118 +12,58 @@ schema:
   - guardrail
   evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
-    failure_budget:
-      max_hard_deny_rate: 0.5
-      alert_threshold: 0.45
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
 hard_gates:
-- id: gate_fer_signed_efficiency
-  tag: HARD_FER_SIGNED_EFFICIENCY
-  phase: hard_gate
-  priority: 10
-  reason: fer_signed_efficiency 触发树分裂条件 (分裂 9 次)
-  when:
-    fer_signed_efficiency:
-      value_lt: -0.0
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 9 次 | 阈值 -0 | 方向: data_verified (low=0.139, high=0.622)'
-- id: gate_fer_volume_price_divergence
-  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE
-  phase: hard_gate
-  priority: 11
-  reason: fer_volume_price_divergence 触发树分裂条件 (分裂 3 次)
-  when:
-    fer_volume_price_divergence:
-      value_lt: 0.3937
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 3 次 | 阈值 0.3937 | 方向: data_verified (low=0.208, high=0.560)'
-- id: gate_fer_impulse_failure_direction
-  tag: HARD_FER_IMPULSE_FAILURE_DIRECTION
-  phase: hard_gate
-  priority: 12
-  reason: fer_impulse_failure_direction 触发树分裂条件 (分裂 2 次)
-  when:
-    fer_impulse_failure_direction:
-      value_gt: 0.0
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0 | 方向: data_verified (low=1.852, high=0.310)'
-- id: gate_cvd_change_5_normalized
-  tag: HARD_CVD_CHANGE_5_NORMALIZED
-  phase: hard_gate
-  priority: 13
-  reason: cvd_change_5_normalized 触发树分裂条件 (分裂 1 次)
-  when:
-    cvd_change_5_normalized:
-      value_gt: 0.0112
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.01116 | 方向: data_verified (low=0.466, high=-0.117)'
-- id: gate_fer_signed_efficiency_pct
-  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
-  phase: hard_gate
-  priority: 14
-  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
-  when:
-    fer_signed_efficiency_pct:
-      value_lt: 0.0923
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.09233 | 方向: data_verified (low=-1.171, high=0.579)'
-- id: gate_fer_signed_efficiency_pct
-  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
-  phase: hard_gate
-  priority: 15
-  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
-  when:
-    fer_signed_efficiency_pct:
-      value_lt: 0.058
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.05798 | 方向: data_verified (low=-0.541, high=0.461)'
-- id: gate_fer_volume_price_divergence
-  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE
-  phase: hard_gate
-  priority: 16
-  reason: fer_volume_price_divergence 触发树分裂条件 (分裂 1 次)
-  when:
-    fer_volume_price_divergence:
-      value_lt: 0.6625
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.6625 | 方向: data_verified (low=0.294, high=0.576)'
-- id: gate_fer_signed_efficiency_pct
-  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
-  phase: hard_gate
-  priority: 17
-  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
-  when:
-    fer_signed_efficiency_pct:
-      value_lt: 0.0506
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.05064 | 方向: data_verified (low=-1.338, high=0.492)'
 - id: gate_fer_aggressor_absorption
   tag: HARD_FER_AGGRESSOR_ABSORPTION
   phase: hard_gate
-  priority: 18
-  reason: fer_aggressor_absorption 触发树分裂条件 (分裂 1 次)
+  priority: 10
+  reason: 统计验证规则 (lift=1.24)
   when:
     fer_aggressor_absorption:
-      value_gt: 0.0006
+      value_gt: 0.0004
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.000603 | 方向: data_verified (low=0.496, high=-0.268)'
-- id: gate_fer_absorption_streak
-  tag: HARD_FER_ABSORPTION_STREAK
+  comment: 'statistical(lift=1.24): fer_aggressor_absorption > 0.0004021'
+- id: gate_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
-  priority: 19
-  reason: fer_absorption_streak 触发树分裂条件 (分裂 1 次)
+  priority: 11
+  reason: 统计验证规则 (lift=1.11)
   when:
-    fer_absorption_streak:
-      value_gt: 9.5
+    cvd_change_5_normalized:
+      value_gt: 0.0082
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 9.5 | 方向: data_verified (low=0.576, high=-2.627)'
+  comment: 'statistical(lift=1.11): cvd_change_5_normalized > 0.008218'
+- id: gate_fer_signed_efficiency_fer_volume_price_divergence
+  tag: HARD_FER_SIGNED_EFFICIENCY_FER_VOLUME_PRICE_DIVERGENCE
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.59)
+  when:
+    all_of:
+    - fer_signed_efficiency:
+        value_lt: -0.0
+    - fer_volume_price_divergence:
+        value_gt: 0.85
+  then:
+    action: deny
+  comment: 'statistical(lift=1.59): fer_signed_efficiency < -1.497e-09 & fer_volume_price_divergence > 0.85'
+- id: gate_fer_volume_price_divergence_fer_signed_efficiency_pct
+  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE_FER_SIGNED_EFFICIENCY_PCT
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.52)
+  when:
+    all_of:
+    - fer_volume_price_divergence:
+        value_gt: 0.85
+    - fer_signed_efficiency_pct:
+        value_lt: 0.275
+  then:
+    action: deny
+  comment: 'statistical(lift=1.52): fer_volume_price_divergence > 0.85 & fer_signed_efficiency_pct < 0.275'
 guardrails: []

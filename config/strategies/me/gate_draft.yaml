@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260305_032602_rr_extreme/me
+# 来源: results/train_final_20260306_002510_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -12,118 +12,44 @@ schema:
   - guardrail
   evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
-    failure_budget:
-      max_hard_deny_rate: 0.5
-      alert_threshold: 0.45
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_es_99
-  tag: HARD_EVT_ES_99
+- id: gate_sma_200_position
+  tag: HARD_SMA_200_POSITION
   phase: hard_gate
   priority: 10
-  reason: evt_es_99 触发树分裂条件 (分裂 2 次)
+  reason: 统计验证规则 (lift=1.30)
   when:
-    evt_es_99:
-      value_gt: 0.871
+    sma_200_position:
+      value_gt: -0.0325
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 0.871 | 方向: data_verified (low=-0.727, high=-0.864)'
-- id: gate_evt_tail_shape
-  tag: HARD_EVT_TAIL_SHAPE
+  comment: 'statistical(lift=1.30): sma_200_position > -0.03246'
+- id: gate_evt_var_99_right_evt_es_99_right
+  tag: HARD_EVT_VAR_99_RIGHT_EVT_ES_99_RIGHT
   phase: hard_gate
   priority: 11
-  reason: evt_tail_shape 触发树分裂条件 (分裂 1 次)
+  reason: 统计验证规则 (lift=1.90)
   when:
-    evt_tail_shape:
-      value_lt: 0.998
+    all_of:
+    - evt_var_99_right:
+        value_gt: 0.2183
+    - evt_es_99_right:
+        value_lt: 0.2659
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.998 | 方向: data_verified (low=-1.056, high=0.602)'
-- id: gate_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT
+  comment: 'statistical(lift=1.90): evt_var_99_right > 0.2183 & evt_es_99_right < 0.2659'
+- id: gate_garch_alpha
+  tag: HARD_GARCH_ALPHA
   phase: hard_gate
   priority: 12
-  reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
+  reason: 统计验证规则 (lift=1.16)
   when:
-    evt_es_99_right:
-      value_lt: 0.8631
+    garch_alpha:
+      value_lt: 0.01
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.8631 | 方向: data_verified (low=-1.148, high=0.764)'
-- id: gate_evt_es_99
-  tag: HARD_EVT_ES_99
-  phase: hard_gate
-  priority: 13
-  reason: evt_es_99 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_es_99:
-      value_gt: 0.9028
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.9028 | 方向: data_verified (low=-0.738, high=-0.823)'
-- id: gate_evt_tail_shape_right
-  tag: HARD_EVT_TAIL_SHAPE_RIGHT
-  phase: hard_gate
-  priority: 14
-  reason: evt_tail_shape_right 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_tail_shape_right:
-      value_gt: 0.006
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.005952 | 方向: data_verified (low=-0.718, high=-0.755)'
-- id: gate_evt_var_99_right
-  tag: HARD_EVT_VAR_99_RIGHT
-  phase: hard_gate
-  priority: 15
-  reason: evt_var_99_right 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_var_99_right:
-      value_gt: 0.2361
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.2361 | 方向: data_verified (low=-0.613, high=-0.811)'
-- id: gate_evt_scale_right
-  tag: HARD_EVT_SCALE_RIGHT
-  phase: hard_gate
-  priority: 16
-  reason: evt_scale_right 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_scale_right:
-      value_lt: 0.5496
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.5496 | 方向: data_verified (low=-1.139, high=-0.236)'
-- id: gate_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT
-  phase: hard_gate
-  priority: 17
-  reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_es_99_right:
-      value_lt: 0.4544
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.4544 | 方向: data_verified (low=-1.312, high=-0.172)'
-- id: gate_evt_var_99_right
-  tag: HARD_EVT_VAR_99_RIGHT
-  phase: hard_gate
-  priority: 18
-  reason: evt_var_99_right 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_var_99_right:
-      value_lt: 0.7321
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.7321 | 方向: data_verified (low=-0.822, high=-0.588)'
-- id: gate_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT
-  phase: hard_gate
-  priority: 19
-  reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_es_99_right:
-      value_lt: 0.129
-  then:
-    action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.129 | 方向: data_verified (low=-1.463, high=-0.558)'
+  comment: 'statistical(lift=1.16): garch_alpha < 0.01'
 guardrails: []

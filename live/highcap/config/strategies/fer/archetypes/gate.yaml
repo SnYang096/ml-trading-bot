@@ -1,6 +1,6 @@
 # FER Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260302_203926_s42/strategies/fer/gate_draft.yaml
-# 优化规则: 7/10 条通过优化, 5 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260306_000255/strategies/fer/gate_draft.yaml
+# 优化规则: 2/10 条通过优化, 9 条已移除
 
 schema:
   phases:
@@ -28,59 +28,15 @@ hard_gates:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: gate_spectrum_cvd_centroid
-  tag: HARD_SPECTRUM_CVD_CENTROID
+- id: gate_fer_volume_price_divergence
+  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE
   phase: hard_gate
-  priority: 16
-  reason: spectrum_cvd_centroid 触发树分裂条件 (分裂 1 次)
+  priority: 11
+  reason: fer_volume_price_divergence 触发树分裂条件 (分裂 3 次)
   when:
-    spectrum_cvd_centroid:
-      value_gt: 0.6067
+    fer_volume_price_divergence:
+      value_lt: 0.65
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.6067, lift=0.150'
-- id: gate_spectrum_volume_high_freq_ratio
-  tag: HARD_SPECTRUM_VOLUME_HIGH_FREQ_RATIO
-  phase: hard_gate
-  priority: 15
-  reason: spectrum_volume_high_freq_ratio 触发树分裂条件 (分裂 1 次)
-  when:
-    spectrum_volume_high_freq_ratio:
-      value_gt: 0.6251
-  then:
-    action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=0.6251, lift=0.265'
-- id: gate_cvd_divergence_score
-  tag: HARD_CVD_DIVERGENCE_SCORE
-  phase: hard_gate
-  priority: 12
-  reason: cvd_divergence_score 触发树分裂条件 (分裂 1 次)
-  when:
-    cvd_divergence_score:
-      value_lt: -0.0306
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=-0.0306, lift=0.276'
-- id: gate_cvd_divergence_score
-  tag: HARD_CVD_DIVERGENCE_SCORE
-  phase: hard_gate
-  priority: 19
-  reason: cvd_divergence_score 触发树分裂条件 (分裂 1 次)
-  when:
-    cvd_divergence_score:
-      value_lt: -0.0306
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=-0.0306, lift=0.276'
-- id: gate_rsi
-  tag: HARD_RSI
-  phase: hard_gate
-  priority: 13
-  reason: rsi 触发树分裂条件 (分裂 1 次)
-  when:
-    rsi:
-      value_gt: 45.714
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=45.7140, lift=0.285'
+  comment: 'optimizer: stable_plateau_found, threshold=0.6500, lift=0.192'
 guardrails: []

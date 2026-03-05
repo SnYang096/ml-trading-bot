@@ -832,6 +832,30 @@ class OrderFlowListener:
         except ConstitutionViolation as cv:
             logger.warning("[%s] 宪法拒绝: %s (%s)", self.symbol, cv.code, cv.message)
             return
+        except Exception as exc:
+            # 🐛 Fix: 下单失败时释放已预留的 slot，防止 slot 被永久占满。
+            #   enforce_before_order() 在 place_order() 之前预留 slot，
+            #   如果 place_order() 失败（API key/余额/权限），slot 泄漏。
+            logger.error("[%s] 下单异常: %s", self.symbol, exc)
+            # 尝试释放刚预留的 slot
+            if (
+                self.constitution_executor is not None
+                and self.runtime_state is not None
+            ):
+                _pid = intent.position_id or f"{self.symbol}:"
+                try:
+                    self.constitution_executor.release_slot(
+                        st=self.runtime_state,
+                        position_id=_pid,
+                        reason="order_failed",
+                    )
+                    self.constitution_executor.save_runtime_state(self.runtime_state)
+                    logger.warning(
+                        "[%s] 已释放因下单失败而泄漏的 slot: %s", self.symbol, _pid
+                    )
+                except Exception:
+                    pass
+            return
 
     def _execute_intent_inner(
         self, intent: TradeIntent, features: Dict[str, Any]
@@ -999,6 +1023,15 @@ class OrderFlowListener:
             evt_risk_flag=features.get("evt_risk_flag"),
             pcm_budget=intent.pcm_budget,
         )
+        # 🐛 Fix: 记录 position_id，供 _execute_intent 的 except 分支释放 slot
+        intent.position_id = position_id
+
+        # 检查 order_manager 是否可用
+        if self.order_manager is None:
+            raise RuntimeError(
+                "order_manager is None — 检查 MLBOT_ORDER_MANAGER_ENABLED "
+                "和 BINANCE_API_KEY/BINANCE_API_SECRET 环境变量"
+            )
 
         # 使用共享模块构建持仓字典 (与回测完全一致)
         entry_price = self._resolve_entry_price(features)

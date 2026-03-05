@@ -89,6 +89,10 @@ def _read_feature_store_range(
         if getattr(df.index, "name", None) == "timestamp":
             df = df.copy()
             df["timestamp"] = pd.to_datetime(df.index, utc=False, errors="coerce")
+        elif isinstance(df.index, pd.DatetimeIndex):
+            # FeatureStore parquet 可能 index 是 DatetimeIndex 但 name=None
+            df = df.copy()
+            df["timestamp"] = df.index
         else:
             raise KeyError(
                 "Expected FeatureStore data to have a 'timestamp' column or index named 'timestamp'"

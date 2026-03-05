@@ -1,8 +1,8 @@
 # FER Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
-# Date: 2026-03-05 19:38
-# Promoted: 1 filters (1 plateau + 0 snotio-only)
-# Baseline snotio: 0.9178, σ=3.077
+# Date: 2026-03-06 00:13
+# Promoted: 2 filters (2 plateau + 0 snotio-only)
+# Baseline snotio: 3.8289, σ=9.533
 # Significance: z-test p<0.05 required for all tiers
 #
 # 职责: "现在该入场吗?" → 硬二值控制入场时机
@@ -12,11 +12,20 @@
 filters:
 - id: meta_evt_es_99
   enabled: true
-  description: 'Meta-Algorithm: evt_es_99 <= 0.424'
+  description: 'Meta-Algorithm: evt_es_99 <= 0.434'
   conditions:
   - feature: evt_es_99
     operator: <=
-    value: 0.424
+    value: 0.434
   tier: A_PLATEAU
-  notes: lift=1.34x, rob=84%, snotio=1.4379, z=2.61, p=0.0045
+  notes: lift=1.27x, rob=85%, snotio=5.2409, z=2.30, p=0.0106
+- id: meta_evt_tail_shape
+  enabled: true
+  description: 'Meta-Algorithm: evt_tail_shape >= 0.575'
+  conditions:
+  - feature: evt_tail_shape
+    operator: '>='
+    value: 0.575
+  tier: A_PLATEAU
+  notes: lift=1.09x, rob=94%, snotio=5.0013, z=1.93, p=0.0269
 combination_mode: or

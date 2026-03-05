@@ -896,6 +896,14 @@ def _generate_risk_gate_yaml(
     """
     import yaml
 
+    # 加载 gate_layer kpi_gates 配置 (用于 governance 元数据 + tree_split fallback)
+    _gkpi = {}
+    _gate_kpi_path = Path("config/kpi_gates/gate_layer.yaml")
+    if _gate_kpi_path.exists():
+        import yaml as _yaml_kpi
+
+        _gkpi = _yaml_kpi.safe_load(_gate_kpi_path.read_text(encoding="utf-8")) or {}
+
     # 加载 predictions 数据
     pred_df = None
     rr_col_name = None
@@ -1051,7 +1059,9 @@ def _generate_risk_gate_yaml(
             "evaluation_order": "system_safety -> hard_gate -> guardrail",
             "governance": {
                 "selection_method": "gate_score (Youden's J = tail_capture - good_deny_rate)",
-                "min_gate_score": GATE_MIN_GATE_SCORE,
+                "min_gate_score": _gkpi.get("thresholds", {}).get(
+                    "min_gate_score", 0.0
+                ),
                 "alert_threshold": 0.25,
             },
         },

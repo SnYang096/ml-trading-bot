@@ -50,10 +50,12 @@ strategies:
         min_rows: 500                # plateau 检测绝对下限
       gate:
         require_positive_effect: true # gate 效果必须为正
+        min_combined_pass_rate: 0.30  # gate AND 累积 pass rate 下限
       backtest:
         min_trades: 30               # holdout 最低 30 笔交易
       deploy:
         min_trades: 10               # 4H 高选择性策略, 10 笔/6月 已足够
+
 
   fer:
     config: config/strategies/fer
@@ -70,10 +72,12 @@ strategies:
         min_rows: 500
       gate:
         require_positive_effect: true # 当前 FER gate 效果为负，这会触发警告
+        min_combined_pass_rate: 0.30  # gate AND 累积 pass rate 下限
       backtest:
         min_trades: 10
       deploy:
         min_trades: 10               # 4H 策略, 同 BPC
+
 
   me:
     config: config/strategies/me
@@ -90,10 +94,17 @@ strategies:
         min_rows: 500
       gate:
         require_positive_effect: true
+        min_combined_pass_rate: 0.30  # gate AND 累积 pass rate 下限, 需 > min_trades/候选数 确保下游优化有效
       backtest:
         min_trades: 50
       deploy:
         min_trades: 50               # 1H 策略频率高, 保留 50 笔要求
+    # ME 专属 SHAP 宽松参数:
+    # 订单流特征 (vpin/shd) 在某些时段强、某些时段弱，0.75 会被裁掉
+    # 降到 0.50 保留更多 gate 候选 → 恢复 gate 多样性
+    shap_override:
+      stability_threshold: 0.50      # 全局 0.75 → ME 0.50
+      top_k: 25                      # 全局 20 → ME 25
 
 # ── SHAP 特征筛选 (Step 2.5) ───────────────────────────────────
 # Walk-Forward SHAP 稳定性筛选: 自动裁剪不稳定特征, 减少过拟合
