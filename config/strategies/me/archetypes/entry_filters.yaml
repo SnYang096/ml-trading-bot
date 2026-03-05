@@ -1,10 +1,22 @@
 # ME Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
-# Date: 2026-03-05 22:24
-# Promoted: 0 filters (Meta-Algorithm: 无规则通过 holdout+plateau+z-test)
-# Baseline snotio: 2.9055, σ=5.059
+# Date: 2026-03-06 01:41
+# Promoted: 1 filters (1 plateau + 0 snotio-only)
+# Baseline snotio: 8.6927, σ=14.307
+# Significance: z-test p<0.05 required for all tiers
 #
-# 没有 entry filter 通过准入, 策略将无条件入场
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
-filters: []
+filters:
+- id: meta_funding_rate_zscore_50
+  enabled: true
+  description: 'Meta-Algorithm: funding_rate_zscore_50 >= 0.873'
+  conditions:
+  - feature: funding_rate_zscore_50
+    operator: '>='
+    value: 0.873
+  tier: A_PLATEAU
+  notes: lift=1.07x, rob=75%, snotio=14.5397, z=3.72, p=0.0001
 combination_mode: or

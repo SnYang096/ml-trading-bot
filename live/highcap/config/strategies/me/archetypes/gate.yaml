@@ -1,6 +1,6 @@
 # ME Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260305_151254/strategies/me/gate_draft.yaml
-# 优化规则: 8/10 条通过优化, 7 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260305_222203/strategies/me/gate_draft.yaml
+# 优化规则: 1/3 条通过优化, 1 条已移除
 
 schema:
   phases:
@@ -9,9 +9,9 @@ schema:
   - guardrail
   evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
-    failure_budget:
-      max_hard_deny_rate: 0.5
-      alert_threshold: 0.45
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
 hard_gates:
 - id: prefilter_atr_percentile
   tag: PREFILTER_ATR_PERCENTILE
@@ -49,37 +49,29 @@ hard_gates:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: gate_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT
+- id: gate_sma_200_position
+  tag: HARD_SMA_200_POSITION
   phase: hard_gate
-  priority: 12
-  reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
+  priority: 10
+  reason: 统计验证规则 (lift=1.30)
   when:
-    evt_es_99_right:
-      value_lt: 0.7198
+    sma_200_position:
+      value_gt: 0.0275
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.7198, lift=0.254'
-- id: gate_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT
+  comment: 'optimizer: no_stable_plateau, threshold=0.0275, lift=0.136'
+- id: gate_evt_var_99_right_evt_es_99_right
+  tag: HARD_EVT_VAR_99_RIGHT_EVT_ES_99_RIGHT
   phase: hard_gate
-  priority: 17
-  reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
+  priority: 11
+  reason: 统计验证规则 (lift=1.90)
   when:
-    evt_es_99_right:
-      value_lt: 0.7198
+    all_of:
+    - evt_var_99_right:
+        value_gt: 0.2183
+    - evt_es_99_right:
+        value_lt: 0.2659
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.7198, lift=0.254'
-- id: gate_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT
-  phase: hard_gate
-  priority: 19
-  reason: evt_es_99_right 触发树分裂条件 (分裂 1 次)
-  when:
-    evt_es_99_right:
-      value_lt: 0.7198
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.7198, lift=0.254'
+  comment: 'optimizer: stable_plateau_found, threshold=0.6375, lift=0.116'
 guardrails: []
