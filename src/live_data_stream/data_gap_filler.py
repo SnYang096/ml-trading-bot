@@ -376,28 +376,29 @@ class DataGapFiller:
         symbol: str,
         start_time: pd.Timestamp,
         end_time: pd.Timestamp,
-    ) -> pd.DataFrame:
+    ) -> "tuple[pd.DataFrame, pd.DataFrame]":
         """从 Binance Vision 下载每日 aggTrades CSV 并聚合为 1min bars
-        
+
         适用场景: gap >= 1 天，使用官方每日 CSV 数据包。
         URL 格式: https://data.binance.vision/data/futures/um/daily/aggTrades/{SYMBOL}/{SYMBOL}-aggTrades-{YYYY-MM-DD}.zip
-        
+
         Args:
             symbol: ccxt 格式符号（如 "BTC/USDT:USDT"），内部转换为 BTCUSDT
             start_time: 开始时间
             end_time: 结束时间
-        
+
         Returns:
-            1min bars DataFrame（含 buy/sell 拆分），空 DataFrame 表示失败
+            (bars, raw_ticks): 1min bars + 原始 tick 数据 [timestamp, price, volume, side]
         """
         import io
         import zipfile
         
+        _empty = (pd.DataFrame(), pd.DataFrame())
         try:
             import requests
         except ImportError:
             print("⚠️ requests 未安装，无法使用 Binance Vision")
-            return pd.DataFrame()
+            return _empty
         
         # 转换符号: BTC/USDT:USDT → BTCUSDT
         raw_symbol = symbol.replace("/", "").replace(":USDT", "")
@@ -413,7 +414,7 @@ class DataGapFiller:
         
         if start_date > end_date:
             print("⚠️ Binance Vision: 时间范围无效（start > end 或全在今天内）")
-            return pd.DataFrame()
+            return _empty
         
         dates = pd.date_range(start_date, end_date, freq="D")
         print(f"📦 Binance Vision 下载: {raw_symbol}, {len(dates)} 天 ({start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')})")
@@ -480,20 +481,21 @@ class DataGapFiller:
         
         if not all_trades:
             print("⚠️ Binance Vision 下载返回空")
-            return pd.DataFrame()
-        
+            return _empty
+
         # 合并所有 trades 并聚合为 1min bars
         trades_all = pd.concat(all_trades, ignore_index=True)
         trades_all = trades_all.sort_values("timestamp").reset_index(drop=True)
-        
+
         # 只保留请求的时间范围
         trades_all = trades_all[
-            (trades_all["timestamp"] >= start_time) & (trades_all["timestamp"] <= end_time)
+            (trades_all["timestamp"] >= start_time)
+            & (trades_all["timestamp"] <= end_time)
         ].reset_index(drop=True)
-        
+
         bars = self._aggregate_trades_to_1min(trades_all)
-        print(f"✅ Binance Vision 完成: {len(bars)} 条 1min bars")
-        return bars
+        print(f"✅ Binance Vision 完成: {len(bars)} 条 1min bars, {len(trades_all)} 条 raw ticks")
+        return bars, trades_all
 
     def _convert_timeframe(self, timeframe: str) -> str:
         """

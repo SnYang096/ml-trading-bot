@@ -393,12 +393,15 @@ class GapFiller:
                 if gap_start < today_start:
                     vision_end = today_start - timedelta(minutes=1)
                     print(f"  📦 昨天及以前: Binance Vision ({gap_start.strftime('%m-%d %H:%M')} ~ {vision_end.strftime('%m-%d %H:%M')})")
-                    fill_vision = self.data_gap_filler.fill_gap_with_binance_vision(
+                    fill_vision, raw_ticks = self.data_gap_filler.fill_gap_with_binance_vision(
                         ccxt_symbol, gap_start, vision_end
                     )
                     if len(fill_vision) > 0:
                         ticks = pd.concat([ticks, fill_vision])
                         total_filled += len(fill_vision)
+                        # 保存原始 ticks 到磁盘
+                        if len(raw_ticks) > 0:
+                            self._save_raw_ticks(symbol, raw_ticks)
                         # Vision 可能只覆盖了部分天（某些天 404）
                         vision_last = fill_vision["timestamp"].max()
                         remaining_hours = (today_start - vision_last).total_seconds() / 3600
@@ -473,12 +476,12 @@ class GapFiller:
         for gap in self._pending_vision_gaps:
             print(f"📦 后台重试 Vision: {gap['raw_symbol']} "
                   f"{gap['start'].strftime('%m-%d %H:%M')} ~ {gap['end'].strftime('%m-%d %H:%M')}")
-            fill = self.data_gap_filler.fill_gap_with_binance_vision(
+            fill, raw_ticks = self.data_gap_filler.fill_gap_with_binance_vision(
                 gap["symbol"], gap["start"], gap["end"]
             )
             if len(fill) > 0:
                 # 保存到磁盘（下次启动不用重新下载）
-                self._save_filled_data(gap["raw_symbol"], fill)
+                self._save_filled_data(gap["raw_symbol"], fill, raw_ticks)
                 print(f"  ✅ 后台补数据成功: {len(fill)} 条 bars")
             else:
                 remaining.append(gap)
@@ -487,17 +490,15 @@ class GapFiller:
         self._pending_vision_gaps = remaining
         return len(remaining) == 0
     
-    def _save_filled_data(self, symbol: str, bars: pd.DataFrame) -> None:
-        """将补充的 bars 按天保存到 storage（bar_1min 目录）
-
-        注意: Vision 返回的是聚合后的 1min bars，不含原始 tick 列
-        (price/side)，因此只写 bar_1min，不写 ticks。
-        """
+    def _save_filled_data(
+        self, symbol: str, bars: pd.DataFrame, raw_ticks: pd.DataFrame | None = None
+    ) -> None:
+        """将补充的 bars 和原始 ticks 按天保存到 storage"""
         if self.storage_manager is None or len(bars) == 0:
             return
         if "timestamp" not in bars.columns:
             return
-        
+
         bars_copy = bars.copy()
         bars_copy["_date"] = bars_copy["timestamp"].dt.strftime("%Y-%m-%d")
         for date_str, day_bars in bars_copy.groupby("_date"):
@@ -505,7 +506,24 @@ class GapFiller:
             try:
                 self.storage_manager.bar_1min.append(symbol, date_str, day_data)
             except Exception as e:
-                print(f"  ⚠️ 保存 {symbol}/{date_str} 失败: {e}")
+                print(f"  ⚠️ 保存 bars {symbol}/{date_str} 失败: {e}")
+
+        # 原始 ticks 单独存
+        if raw_ticks is not None and len(raw_ticks) > 0:
+            self._save_raw_ticks(symbol, raw_ticks)
+
+    def _save_raw_ticks(self, symbol: str, raw_ticks: pd.DataFrame) -> None:
+        """将原始 tick 数据 [timestamp, price, volume, side] 按天保存"""
+        if self.storage_manager is None or len(raw_ticks) == 0:
+            return
+        ticks_copy = raw_ticks.copy()
+        ticks_copy["_date"] = ticks_copy["timestamp"].dt.strftime("%Y-%m-%d")
+        for date_str, day_ticks in ticks_copy.groupby("_date"):
+            day_data = day_ticks.drop(columns=["_date"])
+            try:
+                self.storage_manager.ticks.append(symbol, date_str, day_data)
+            except Exception as e:
+                print(f"  ⚠️ 保存 ticks {symbol}/{date_str} 失败: {e}")
     
     def fill_gap(
         self,
