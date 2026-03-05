@@ -596,6 +596,7 @@ def simulate_rr_execution(
     add_position_cfg: Optional[Dict[str, Any]] = None,
     per_strategy_limits: Optional[Dict[str, Any]] = None,
     evidence_min_score: float = 0.0,
+    per_strategy_ev_min: Optional[Dict[str, float]] = None,
 ) -> pd.Series:
     """
     逐K线路径模拟 (Bar-by-Bar Execution Simulation)
@@ -1051,8 +1052,9 @@ def simulate_rr_execution(
     # ── slot 限制：per-strategy 独立 slot, evidence 入场门槛 ──
     _add_pos_count = 0
     removed_indices: set = set()  # 初始化以避免 slot 过滤未执行时 NameError
-    # Evidence 入场门槛 (从 constitution 读取)
+    # Evidence 入场门槛: 优先用策略级 min_score, 兜底用全局 constitution
     _ev_min_score = evidence_min_score
+    _per_strat_ev_min = per_strategy_ev_min or {}
     _ev_position_scale = False
     if max_slots and max_slots > 0 and trade_details:
         # 加仓配置
@@ -1106,8 +1108,9 @@ def simulate_rr_execution(
             new_ev = trade.get("evidence_score", 0.5)
             trade_arch = trade.get("archetype", "").lower().strip()
 
-            # Evidence 入场门槛: score < min → 拒绝
-            if new_ev < _ev_min_score:
+            # Evidence 入场门槛: 策略级 > 全局 constitution
+            _eff_ev_min = _per_strat_ev_min.get(trade_arch, _ev_min_score)
+            if new_ev < _eff_ev_min:
                 rejected_indices.add(eidx)
                 _slot_diag["evidence_min"] += 1
                 continue
@@ -2973,6 +2976,15 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             pass
 
     print(f"\n📈 Simulating bar-by-bar with per-archetype execution params...")
+    # 收集策略级 evidence min_score (从各策略 evidence.yaml 读取)
+    _per_strat_ev_min: Dict[str, float] = {}
+    for arch_name in arch_specs:
+        _ev_cfg = load_evidence_config(arch_name, strategies_root)
+        _arch_ev_min = float((_ev_cfg or {}).get("min_score", 0.0))
+        if _arch_ev_min > 0:
+            _per_strat_ev_min[arch_name.lower().strip()] = _arch_ev_min
+    if _per_strat_ev_min:
+        print(f"   🔒 per-strategy evidence_min_score: {_per_strat_ev_min}")
     exec_returns, trade_details = simulate_rr_execution(
         merged,
         first_exec,  # 全局 fallback config
@@ -2984,6 +2996,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         add_position_cfg=_add_position_cfg,
         per_strategy_limits=_per_strategy_limits,
         evidence_min_score=_ev_min_score_const,
+        per_strategy_ev_min=_per_strat_ev_min,
     )
 
     valid_returns = exec_returns.dropna()
@@ -3775,7 +3788,7 @@ def _generate_grid_search_html(
             </div>
         </div>
         <div class="secondary">
-            <strong>搜索空间:</strong> {len(results)} 组参数 | 
+            <strong>搜索空间:</strong> {len(results)} 组参数 |
             <strong>样本:</strong> {n_trades_total} trades |
             <strong>Win Rate (best):</strong> {best['win_rate']:.1%} |
             <strong>Mean R (best):</strong> {best['mean_r']:.4f}
@@ -4766,6 +4779,13 @@ def main() -> int:
 
     # 使用 execution.yaml 配置模拟 RR
     print("\n📈 Simulating with execution.yaml config...")
+    # 策略级 evidence min_score
+    _single_strat_ev_min: Dict[str, float] = {}
+    _ev_cfg_single = load_evidence_config(str(args.strategy), args.strategies_root)
+    _arch_ev_min_single = float((_ev_cfg_single or {}).get("min_score", 0.0))
+    if _arch_ev_min_single > 0:
+        _single_strat_ev_min[str(args.strategy).lower().strip()] = _arch_ev_min_single
+        print(f"   🔒 evidence_min_score (from evidence.yaml): {_arch_ev_min_single}")
     exec_returns, trade_details = simulate_rr_execution(
         merged,
         exec_config,
@@ -4777,6 +4797,7 @@ def main() -> int:
         add_position_cfg=_add_pos_cfg_single,
         per_strategy_limits=_per_strategy_limits_single,
         evidence_min_score=_ev_min_score_single,
+        per_strategy_ev_min=_single_strat_ev_min,
     )
 
     valid_returns = exec_returns.dropna()

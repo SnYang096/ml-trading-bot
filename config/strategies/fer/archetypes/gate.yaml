@@ -1,6 +1,6 @@
 # FER Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260304_201913_s2/strategies/fer/gate_draft.yaml
-# 优化规则: 8/10 条通过优化, 4 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260305_151254/strategies/fer/gate_draft.yaml
+# 优化规则: 3/10 条通过优化, 7 条已移除
 
 schema:
   phases:
@@ -28,32 +28,10 @@ hard_gates:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: gate_roc_5
-  tag: HARD_ROC_5
-  phase: hard_gate
-  priority: 11
-  reason: roc_5 触发树分裂条件 (分裂 1 次)
-  when:
-    roc_5:
-      value_gt: 0.4447
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.4447, lift=0.124'
-- id: gate_roc_5
-  tag: HARD_ROC_5
-  phase: hard_gate
-  priority: 16
-  reason: roc_5 触发树分裂条件 (分裂 1 次)
-  when:
-    roc_5:
-      value_gt: 0.4447
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.4447, lift=0.124'
 - id: gate_fer_signed_efficiency_pct
   tag: HARD_FER_SIGNED_EFFICIENCY_PCT
   phase: hard_gate
-  priority: 19
+  priority: 14
   reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
   when:
     fer_signed_efficiency_pct:
@@ -61,37 +39,26 @@ hard_gates:
   then:
     action: deny
   comment: 'optimizer: stable_plateau_found, threshold=0.5000, lift=0.125'
-- id: gate_fer_trapped_shorts_score
-  tag: HARD_FER_TRAPPED_SHORTS_SCORE
-  phase: hard_gate
-  priority: 13
-  reason: fer_trapped_shorts_score 触发树分裂条件 (分裂 1 次)
-  when:
-    fer_trapped_shorts_score:
-      value_gt: 0.75
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.7500, lift=0.250'
-- id: gate_sma_200_position
-  tag: HARD_SMA_200_POSITION
-  phase: hard_gate
-  priority: 12
-  reason: sma_200_position 触发树分裂条件 (分裂 1 次)
-  when:
-    sma_200_position:
-      value_gt: -0.0903
-  then:
-    action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=-0.0903, lift=0.294'
-- id: gate_sma_200_position
-  tag: HARD_SMA_200_POSITION
+- id: gate_fer_signed_efficiency_pct
+  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
   phase: hard_gate
   priority: 15
-  reason: sma_200_position 触发树分裂条件 (分裂 1 次)
+  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
   when:
-    sma_200_position:
-      value_gt: -0.0903
+    fer_signed_efficiency_pct:
+      value_lt: 0.5
   then:
     action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=-0.0903, lift=0.294'
+  comment: 'optimizer: stable_plateau_found, threshold=0.5000, lift=0.125'
+- id: gate_fer_signed_efficiency_pct
+  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
+  phase: hard_gate
+  priority: 17
+  reason: fer_signed_efficiency_pct 触发树分裂条件 (分裂 1 次)
+  when:
+    fer_signed_efficiency_pct:
+      value_lt: 0.5
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.5000, lift=0.125'
 guardrails: []

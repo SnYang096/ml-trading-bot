@@ -237,6 +237,20 @@ def _promote_evidence_yaml(
         }
         evidence_list.append(entry)
 
+    # ── 自动计算 min_score ──
+    # 原则: 只拒绝所有 evidence axis 都给出 "suppress" (0.0) 的信号
+    # min_score = 最轻权重 axis 给 "downweight" (0.25) 时的加权平均
+    weights = [1.0 / max(1, ef.rank) for ef, _ in optimized]
+    total_weight = sum(weights)
+    if total_weight > 0 and weights:
+        min_weight = min(weights)
+        auto_min_score = round(min_weight * 0.25 / total_weight, 4)
+    else:
+        auto_min_score = 0.0
+    print(
+        f"   🔒 auto min_score={auto_min_score} (axes={len(optimized)}, weights={[round(w,3) for w in weights]})"
+    )
+
     config = {
         "schema": {
             "label_semantics": {
@@ -248,6 +262,7 @@ def _promote_evidence_yaml(
             }
         },
         "evidence": evidence_list,
+        "min_score": auto_min_score,
     }
 
     # 写入 archetypes/evidence.yaml

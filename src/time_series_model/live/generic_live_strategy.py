@@ -481,6 +481,21 @@ class GenericLiveStrategy:
             evidence_score = evidence_score * gate_weight
             logger.debug(f"📊 Evidence score: {evidence_score:.3f}")
 
+        # Evidence 入场门槛 (策略级, 由 optimize_evidence_plateau 自动计算)
+        _ev_min = 0.0
+        if self.archetype is not None:
+            _ev_min = self.archetype.evidence.min_score
+        if evidence_score < _ev_min:
+            logger.info(
+                "❌ Evidence score %.3f < min_score %.3f, 拒绝",
+                evidence_score,
+                _ev_min,
+            )
+            funnel["evidence"] = False
+            funnel["evidence_min_rejected"] = True
+            self._last_funnel = funnel
+            return []
+
         funnel["evidence"] = True  # 走到这里就算通过
 
         # ── 5. 执行参数生成 ──

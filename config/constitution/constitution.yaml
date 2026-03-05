@@ -55,7 +55,7 @@ kill_switch:
   #            cost = 0.0002 * 0.3 + 0.0001 * 0.8 = 0.00006 + 0.00008 = 0.00014 (1.4 bps)
   # - Why check: High mean cost = strategy is eating into profits with excessive trading
   # - Recommendation: Should add runtime check to prevent cost accumulation
-  # 
+  #
   # Binance BTCUSDT Perpetual Contract Cost Calculation:
   # 1. Trading Fee (per turnover):
   #    - Maker: 0.02% (2 bps) - if you provide liquidity (limit orders)
@@ -63,26 +63,26 @@ kill_switch:
   #    - With BNB discount (25%): Maker 0.015%, Taker 0.03%
   #    - cost_per_turnover = 0.0002 (2 bps) assumes mostly maker orders
   #    - For taker-heavy: cost_per_turnover = 0.0004 (4 bps)
-  # 
+  #
   # 2. Funding Rate (per 8 hours, applied to exposure):
   #    - Typically: -0.01% to 0.01% per 8h (-10 bps to +10 bps)
   #    - For 4H timeframe (2 funding periods per step): ~0.0002 to 0.0002 (2-2 bps)
   #    - If long: pay funding (cost); if short: receive funding (negative cost)
   #    - slippage_bps can include funding: slippage_bps = 0.0001 (1 bps) for funding
-  # 
+  #
   # 3. Slippage (per exposure, depends on order size):
   #    - Small orders (< 1 BTC): < 0.01% (1 bps) on BTCUSDT
   #    - Medium orders (1-10 BTC): 0.01-0.05% (1-5 bps)
   #    - Large orders (> 10 BTC): 0.05-0.2% (5-20 bps) or more
   #    - slippage_bps = 0.0001 (1 bps) assumes small-medium orders
-  # 
+  #
   # Example for Binance BTCUSDT:
   # - Scenario: Change from 0% to 50% long position (turnover = 0.5)
   # - Trading fee (maker): 0.0002 * 0.5 = 0.0001 (1 bps)
   # - Funding (long, 4H): 0.0001 * 0.5 = 0.00005 (0.5 bps)
   # - Slippage (small order): 0.0001 * 0.5 = 0.00005 (0.5 bps)
   # - Total cost: 0.0001 + 0.00005 + 0.00005 = 0.0002 (2 bps)
-  # 
+  #
   # - If using market orders (taker): 0.0004 * 0.5 = 0.0002 (2 bps) just for trading fee
   # - Total cost (taker): 0.0002 + 0.00005 + 0.00005 = 0.0003 (3 bps)
   max_cost_p95: 0.010
@@ -92,7 +92,7 @@ kill_switch:
   # - Definition: 95% of all steps have cost <= 0.01 (100 bps)
   # - Example: If 95% of steps have cost <= 0.01, but 5% exceed it, this is a violation
   # - Why check: Prevents extreme cost spikes that indicate execution problems or excessive trading
-  # 
+  #
   # Binance BTCUSDT: When would cost exceed 1.0% (100 bps)?
   # - Extreme turnover: 100% position flip with taker orders = 0.0004 * 1.0 = 0.0004 (4 bps)
   # - High slippage: Large order (10+ BTC) with poor timing = 0.002 (20 bps) or more
@@ -101,7 +101,7 @@ kill_switch:
   # - This threshold catches execution problems, not normal trading
 
   # Kill-switch policy: If true, ANY hard violation => global_pause (force NO_TRADE for new entries)
-  # - When enabled: Any violation (max_dd, daily_loss_limit, weekly_loss_limit, monthly_loss_limit, 
+  # - When enabled: Any violation (max_dd, daily_loss_limit, weekly_loss_limit, monthly_loss_limit,
   #   data_bad, hard_violation) will trigger ConstitutionViolation exception
   # - Effect: System enters global pause state, all new trades forced to NO_TRADE
   # - Implementation: src/time_series_model/core/constitution/constitution_executor.py:586-591
@@ -131,7 +131,8 @@ slots:
   allow_replacement: true
 
   # Evidence 入场门槛: evidence < min_score 拒绝开仓 (0.0 = 不过滤)
-  evidence_min_score: 0.3
+  # 实际阈值由各策略 evidence.yaml 中 min_score 自动计算, 此处为全局兜底
+  evidence_min_score: 0.0
   # Evidence 仓位缩放: scale = 0.5 + 0.5 * evidence (true = 启用)
   evidence_position_scale: true
 

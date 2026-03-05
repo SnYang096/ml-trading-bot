@@ -243,9 +243,9 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 - [x] `run_live.py`: 加载顺序统一 (constitution → pcm)
 - [x] 测试: 校验一致性的单元测试
 
-### 4.5.4 回测宪法模拟 + 事件回测一致性检查 (Phase 4) — 🔨 进行中
+### 4.5.4 回测宪法模拟 (Phase 4)
 
-> **目标**: 事件回测与研究回测的一致性检查，包含宪法模拟 (kill switch) + 加仓逻辑
+> **目标**: 事件回测中模拟宪法 kill switch
 
 #### 4.5.4a 回测宪法模拟 (Kill Switch)
 
@@ -256,23 +256,16 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
   - 模拟 per_strategy slot 限制
 - [ ] 测试: 构造 drawdown > 20% 场景验证 kill switch 模拟
 
-#### 4.5.4b 加仓逻辑一致性
+#### ~~4.5.4b 加仓逻辑一致性~~ — 已取消
 
-- [ ] 向量回测的 slot 内加仓模拟与事件回测对齐:
-  - 向量回测: `simulate_rr_execution` 中的 slot 竞争 + evidence 加仓
-  - 事件回测: `LivePCM._try_slot_competition()` + 仓位管理
-- [ ] 对比: 同一数据集下两种回测的加仓交易笔数、时机、PnL
-- [ ] 如有偏差 > 10%，定位分叉点并修复
+> slot 竞争已删除，加仓逻辑简化为 `size = evidence_score`，不再需要对齐。
 
-#### 4.5.4c 事件回测 vs 研究回测一致性检查
+#### ~~4.5.4c 向量 vs 事件回测一致性~~ — 已取消
 
-- [ ] 关键指标对比 (向量 vs 事件):
-  - 交易总数 偏差 < 10%
-  - Sharpe 偏差 < 0.5x
-  - 胜率 偏差 < 5pp
-  - 出场分布 (SL/TP/Trail) 结构一致
-- [ ] Per-archetype 对比: BPC/FER/ME 各自向量 vs 事件的偏差
-- [ ] 生成一致性报告: `scripts/compare_vector_event_consistency.py`
+> **决策**: 向量回测和事件回测定位不同，不追求数值一致:
+> - **向量回测**: 快速验证训练效果 (研究侧，速度优先)
+> - **事件回测**: 上线前把关 + 验证线上交易符合算法 (执行侧，精确优先)
+> 两者在执行层细节上天然有差异 (滑点模型、持仓管理)，强行对齐 ROI 极低。
 
 ### ✅ 4.5.5 PCM 统计输出 (Phase 5) — 已完成
 
@@ -426,10 +419,10 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 
 ---
 
-## ✅ Phase 5.5: 语义预筛选 (Semantic Pre-filter) — 完成
+## ✅ Phase 5.5: 语义预筛选 (Semantic Pre-filter) — 完成 → 待 Meta-Algorithm 改造
 
-> 设计文档: `gate_v3_semantic_prefilter_TODO.md`
-> 实验报告: `docs/architecture/gate_semantic_prefilter_design.md`
+> 方法论文档: `z实验_005_统一研究/统一建模方法论_meta_algorithm.md`
+> **当前方法**: 分位数 bad_rate_diff (无 holdout) → **待改造为 SHAP∩Gain (见 A.8.1)**
 
 ### 核心思想
 
@@ -565,61 +558,95 @@ L1 (15m) ───────────────  LV
 
 ---
 
-### A.7 Gate/Evidence 规则蒸馏：LightGBM → SHAP → imodels 组合拳 (NEW)
+### ✅ A.7 Gate/Evidence 规则生成 — 已完成 (v4 统计验证法)
 
-> **问题**: `_collect_splits` 从 LightGBM ensemble 提取分裂点不科学，不同 seed → 不同规则 → gate 5/5 seed 一致性 0%
-> **方案**: LightGBM(固定seed) → SHAP(筛稳定特征) → imodels(蒸馏 teacher 的 predict_proba) → 规则 → 现有 YAML 格式
-> **设计文档**: `z实验_005_统一研究/gate_imodels蒸馏组合拳方案.md`
-> **YAML 格式**: 不变。RuleFit 单条件/复合规则直接兼容 `when/then/action` + `all_of`
-> **通用性**: gate 和 evidence 共用同一管线，仅标签不同
+> **imodels 蒸馏方案失败原因**: teacher (LightGBM) pred 集中在 0.52-0.59 区间，区分度不足，蒸馏弱老师得到更弱学生。
+> v1 (tree_split) 破坏 AND 逻辑; v2 (多seed交集) 淘汰有效特征; v3 (RuleFit蒸馏) teacher 无区分力。
+> **最终方案**: v4 统计验证法 — SHAP∩Gain + Lift Surface + Gate Score (Youden's J)。
+> **设计文档**: `z实验_005_统一研究/统一建模方法论_meta_algorithm.md`
+> **代码**: `_generate_gate_rules_statistical()` + `_generate_evidence_candidates_yaml()` (已实现)
 
-#### A.7.1 Gate Train LightGBM seed 固定
+---
 
-- [ ] `train_strategy_pipeline.py`: Gate Train (Step 5) 的 LightGBM seed 固定为 42
-  - 不受外层 `--seed` 参数影响（外层 seed 测策略鲁棒性，gate 要确定性）
-  - LightGBM 单次训练内部已含 `colsample_bytree` + `bagging` 的大规模特征搜索，无需多 seed
-- [ ] Evidence Train (Step 6) 同理，seed 固定为 42
+### A.8 Meta-Algorithm 管线改造 (NEW)
 
-#### A.7.2 imodels 蒸馏（替代从头训练）
+> **设计文档**: `z实验_005_统一研究/统一建模方法论_meta_algorithm.md`
+> **目标**: 将 Prefilter / Entry Filter 改造为统一的 SHAP∩Gain 方法，替代当前手工方法
 
-- [ ] `_generate_gate_rules_imodels()` 改为蒸馏模式:
-  - 旧: `y = (forward_rr < q30).astype(int)` → 从原始标签学（忽略 teacher）
-  - 新: `y = (lgbm_model.predict_proba(X)[:, 1] > 0.5).astype(int)` → 从 teacher 蒸馏
-- [ ] 函数签名新增 `lgbm_model` 参数，去掉 `rr_col_name` 依赖
-- [ ] 特征输入限定为 SHAP 筛选后的稳定特征（`features_gate_shap.yaml`）
-- [ ] `RuleFitClassifier(max_rules=15, random_state=42, include_linear=False)`
-- [ ] 保留复合规则（含 `&`），解析为 `all_of` YAML 格式；单条件规则直接映射
-- [ ] 按 coef 降序取 top 5
+#### A.8.1 Prefilter 改造 — SHAP∩Gain 替代分位数 bad_rate_diff (P1)
 
-#### A.7.3 蒸馏质量验证
+> **当前问题**: `analyze_archetype_feature_stratification.py` 用分位数 bad_rate_diff，无 ML、无 SHAP、无 holdout → 过拟合
+> **目标**: 在 ALL features_labeled 上用 meta-algorithm 发现 archetype 边界特征
 
-- [ ] 蒸馏后自动对比:
-  - teacher (LightGBM) accuracy vs student (imodels 规则) accuracy
-  - 差距 < 3%: ✅ 直接使用蒸馏规则
-  - 差距 3-5%: ⚠️ 警告，仍使用（gate 不需高精度）
-  - 差距 > 5%: ❌ 放宽 max_rules 或增加特征，重试一次
-- [ ] 验证结果写入 `gate_draft.yaml` 注释 + `report.json`
+**关键约束: Prefilter 特征必须是 archetype 专属特征**
 
-#### A.7.4 清理旧逻辑
+Prefilter 的职责是定义 archetype 语义边界 ("这个 bar 是不是 BPC/ME/FER")。
+如果用全量通用特征 (如 RSI, MACD)，所有 archetype 的 prefilter 会选到相同特征，失去区分度。
 
-- [ ] 回滚当前 `_generate_gate_rules_imodels()` 从头训练实现
-- [ ] `_collect_splits` 保留但降级为 fallback（imodels 未安装时）
-- [ ] 移除 `_generate_risk_gate_yaml()` 中的旧树分裂方向判断逻辑
+每个 archetype 需要独立的 prefilter 特征配置:
 
-#### A.7.5 Evidence 复用同一管线
+```yaml
+# config/strategies/bpc/features_prefilter.yaml (NEW)
+feature_pipeline:
+  requested_features:
+    - bpc_volume_compression_pct_f    # BPC 专属
+    - bpc_bb_compression_f            # BPC 专属
+    - bpc_cvd_z_f                     # BPC 专属
+    - dual_compression_f              # BPC 交叉
+    - funding_compression_score_f     # 场景语义
 
-- [ ] `_generate_evidence_candidates_yaml()` 同样接入 imodels 蒸馏
-  - teacher: Return Tree LightGBM(seed=42) → `predict(X)` 回归输出
-  - student: `imodels.RuleFitRegressor(max_rules=15, random_state=42)`
-  - 导出: evidence_candidates.yaml（现有格式兼容）
-- [ ] Evidence 蒸馏质量验证: R² 对比
+# config/strategies/me/features_prefilter.yaml (NEW)
+feature_pipeline:
+  requested_features:
+    - me_atr_pct_f                    # ME 专属
+    - me_energy_f                     # ME 专属
+    - me_cvd_alignment_f             # ME 专属
+    - dual_ignition_f                 # ME 交叉
+    - oi_ignition_score_f             # 场景语义
 
-#### A.7.6 验证清单
+# config/strategies/fer/features_prefilter.yaml (NEW)
+feature_pipeline:
+  requested_features:
+    - fer_trapped_longs_f             # FER 专属
+    - fer_trapped_shorts_f            # FER 专属
+    - fer_failure_signals_f           # FER 专属
+    - dual_exhaustion_f               # FER 交叉
+    - oi_exhaustion_score_f           # 场景语义
+```
 
-- [ ] BPC/ME/FER 各跑 5 seed pipeline → gate_draft.yaml 5/5 一致
-- [ ] 蒸馏 accuracy 差距 < 5%
-- [ ] gate veto rate 合理（20-40%，而非 99%）
-- [ ] 单策略回测 Sharpe 无回归
+实施清单:
+- [ ] 创建 `config/strategies/{bpc,me,fer}/features_prefilter.yaml` (每策略独立)
+- [ ] 改造 `analyze_archetype_feature_stratification.py` 或新建脚本:
+  - 读取 `features_prefilter.yaml` 获取 archetype 专属特征列表
+  - 在 ALL features_labeled 上训 LightGBM (label=success_no_rr_extreme)
+  - 调用 `_compute_shap_gain_features()` 发现 top 特征
+  - 统计验证 + train/holdout split
+  - 输出 prefilter.yaml (AND deny rules)
+- [ ] `auto_research_pipeline.py` Step 3 调用新 prefilter 脚本
+- [ ] 验证: BPC/ME/FER 各跑一次，prefilter 规则在 holdout 上有效
+
+#### A.8.2 Entry Filter 改造 — SHAP∩Gain 扩大搜索空间 (P2)
+
+> **当前问题**: `optimize_entry_filter_plateau.py` 仅扫描 4 个手工 `shallow_pullback_*` 条件 → 全部不显著
+> **目标**: SHAP 在 50+ 特征上自动发现 entry timing 特征
+
+实施清单:
+- [ ] 设计 entry quality 标签 (exec R-multiple > 0 = good entry 或 entry drawdown < X)
+- [ ] 改造 `optimize_entry_filter_plateau.py` 或新建脚本:
+  - 在 gate-passed + direction 数据上训 LightGBM (label=entry_quality)
+  - 调用 `_compute_shap_gain_features()` 发现 entry timing 特征
+  - 对候选特征做 plateau scanning + snotio z-test 验证
+  - 输出 entry_filters.yaml (OR timing conditions)
+- [ ] `auto_research_pipeline.py` Step 7 调用新 entry filter 脚本
+- [ ] 验证: 至少 1 个 filter 通过 Tier A/B 准入
+
+#### A.8.3 管线 Meta-Algorithm 模式验证 (P1)
+
+> **目标**: 端到端验证改造后的完整管线
+
+- [ ] BPC 全流程: Step 2.5 SHAP → Step 3 Prefilter(新) → Step 5 Gate → Step 6 Evidence → Step 7 EntryFilter(新)
+- [ ] Gate 效果验证: holdout 上 gate_score > 0 且 allow_rr > vetoed_rr
+- [ ] Prefilter 效果验证: holdout 上 prefilter PASS 组 bad_rate 显著低于 FAIL 组
 
 ---
 
@@ -818,17 +845,17 @@ L1 (15m) ───────────────  LV
 
 ## 📊 进度追踪
 
-| Phase                       | 状态         | 备注                                                                                                                                    |
-| --------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase 0: 审查               | ✅ 完成       | 7 特征全部合理                                                                                                                          |
-| Phase 1: 组合特征           | ✅ 完成       | 3 个乘法交叉特征                                                                                                                        |
-| Phase 2: OI 体系            | ✅ 完成       | 下载器 + 特征 + 场景语义 + 交叉                                                                                                         |
-| Phase 3: LV 配置            | ✅ 完成       | 15min archetype 全套配置                                                                                                                |
-| Phase 4: PCM 重构           | ✅ 完成       | v2 严格性排序                                                                                                                           |
-| **Phase 4.5: PCM-宪法统一** | 🔨 部分完成   | 配置统一 ✅ + PCM统一加载 ✅ + PCM统计输出 ✅ + PCM 联合回测 ✅ + Pipeline集成 ✅ + 配置一致性验证 ✅ + 回测宪法模拟 🔨进行中 + 降级机制 📋延后 |
-| Phase 5: 数据               | ✅ 完成       | highcap symbols 数据齐全                                                                                                                |
-| Phase 5.5: 预筛选           | ✅ 完成       | BPC/ME/FER 均已配置                                                                                                                     |
-| Phase 6: 训练               | ✅ BPC/ME/FER | LV 暂缓                                                                                                                                 |
-| Phase 7-R: 多TF研究         | ✅ 完成       | ME→1H 配置完成                                                                                                                          |
-| **Part A: 研究 pipeline**   | ✅ 完成       | 实验隔离 + PCM 联合回测 + Pipeline集成 全部完成                                                                                         |
-| **Part B: 实盘部署**        | 🔨 进行中     | 详见 `z实验_006_统一实盘/实盘部署TODO.md`                                                                                               |
+| Phase                       | 状态         | 备注                                                                                                                              |
+| --------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0: 审查               | ✅ 完成       | 7 特征全部合理                                                                                                                    |
+| Phase 1: 组合特征           | ✅ 完成       | 3 个乘法交叉特征                                                                                                                  |
+| Phase 2: OI 体系            | ✅ 完成       | 下载器 + 特征 + 场景语义 + 交叉                                                                                                   |
+| Phase 3: LV 配置            | ✅ 完成       | 15min archetype 全套配置                                                                                                          |
+| Phase 4: PCM 重构           | ✅ 完成       | v2 严格性排序                                                                                                                     |
+| **Phase 4.5: PCM-宪法统一** | 🔨 部分完成   | 配置统一 ✅ + PCM统一加载 ✅ + PCM统计输出 ✅ + PCM 联合回测 ✅ + Pipeline集成 ✅ + 配置一致性验证 ✅ + 回测宪法模拟 🔨 + 降级机制 📋延后 |
+| Phase 5: 数据               | ✅ 完成       | highcap symbols 数据齐全                                                                                                          |
+| Phase 5.5: 预筛选           | ✅ 完成       | BPC/ME/FER 均已配置                                                                                                               |
+| Phase 6: 训练               | ✅ BPC/ME/FER | LV 暂缓                                                                                                                           |
+| Phase 7-R: 多TF研究         | ✅ 完成       | ME→1H 配置完成                                                                                                                    |
+| **Part A: 研究 pipeline**   | 🔨 进行中     | Gate/Evidence ✅ + Meta-Algorithm 管线改造 🔨 (Prefilter P1 + EntryFilter P2)                                                       |
+| **Part B: 实盘部署**        | 🔨 进行中     | 详见 `z实验_006_统一实盘/实盘部署TODO.md`                                                                                         |

@@ -46,42 +46,11 @@ BreakoutPullbackContinuation archetype：趋势中回踩后延续原方向。
 
 ---
 
+---
+
 ## 📜 树模型规则导出（固定训练 LightGBM）
 
-以下为从固定训练产出的 LightGBM 模型中提取的**高频分裂条件**（按出现次数排序），用于可归因性与规则维护。
+当前未导出规则。
 
-| 特征 | 条件 | 出现次数 |
-|------|------|----------|
-| `_symbol` | `_symbol <= 5` | 67 |
-| `bpc_dir_flip_count` | `bpc_dir_flip_count <= 0.525` | 39 |
-| `cvd_change_1` | `cvd_change_1 <= -3.488e+05` | 28 |
-| `cvd_change_1` | `cvd_change_1 <= 7.948e+04` | 26 |
-| `cvd_change_1` | `cvd_change_1 <= -4.009e+04` | 26 |
-| `trade_cluster_directional_entropy_ma20` | `trade_cluster_directional_entropy_ma20 <= 1` | 26 |
-| `trade_cluster_total_run_length` | `trade_cluster_total_run_length <= 0.009964` | 24 |
-| `trade_cluster_net_runs_ma5` | `trade_cluster_net_runs_ma5 <= 0` | 23 |
-| `cvd_change_5` | `cvd_change_5 <= 1.292e+05` | 23 |
-| `bpc_breakout_direction` | `bpc_breakout_direction <= 0` | 20 |
-| `trade_cluster_directional_entropy_ma10` | `trade_cluster_directional_entropy_ma10 <= 1` | 20 |
-| `_symbol` | `_symbol <= 0` | 20 |
-| `trade_cluster_net_runs_ma10` | `trade_cluster_net_runs_ma10 <= -0` | 19 |
-| `trade_cluster_directional_entropy_ma20` | `trade_cluster_directional_entropy_ma20 <= 1` | 19 |
-| `cvd_change_1` | `cvd_change_1 <= 9.178e+04` | 19 |
-| `trade_cluster_net_runs_ma20` | `trade_cluster_net_runs_ma20 <= -0` | 18 |
-| `cvd_change_1` | `cvd_change_1 <= -2.827e+05` | 18 |
-| `trade_cluster_directional_entropy_ma5` | `trade_cluster_directional_entropy_ma5 <= 1` | 17 |
-| `bpc_pullback_duration` | `bpc_pullback_duration <= 0` | 15 |
-| `vpin_volatility_20` | `vpin_volatility_20 <= 0.0538` | 15 |
-| `macd` | `macd <= 0.08917` | 14 |
-| `trade_cluster_imbalance_ratio_ma20` | `trade_cluster_imbalance_ratio_ma20 <= -1e-06` | 14 |
-| `cvd_change_1` | `cvd_change_1 <= 1.093e+05` | 14 |
-| `cvd_change_1` | `cvd_change_1 <= -3.533e+04` | 14 |
-| `bpc_dir_flip_count` | `bpc_dir_flip_count <= 0.575` | 13 |
-| `hilbert_cvd_price_env_ratio` | `hilbert_cvd_price_env_ratio <= 0` | 13 |
-| `cvd_change_20` | `cvd_change_20 <= -5.3e+05` | 13 |
-| `cvd_change_20` | `cvd_change_20 <= -4.181e+07` | 13 |
-| `trade_cluster_net_runs_ma5` | `trade_cluster_net_runs_ma5 <= -1.7e-05` | 13 |
-| `bpc_vol_pullback_confirm` | `bpc_vol_pullback_confirm <= 0.03036` | 13 |
-
-**模型来源**：`/home/yin/trading/ml_trading_bot/models/bpc`
+**说明**：未找到 model.pkl。请先运行固定训练（如 mlbot train fixed）并确保 ModelArtifact 保存成功。
 

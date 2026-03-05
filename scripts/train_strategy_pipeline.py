@@ -4108,8 +4108,35 @@ def train_strategy(
                     # - binary (Failure Tree): risk_gate_draft.yaml
                     if task_type == "regression":
                         evidence_path = output_dir / "evidence_candidates.yaml"
+                        _predictions_path = output_dir / "predictions.parquet"
+                        # v2: SHAP∩Gain + bad_suppression + 2D interaction
+                        _ev_pred_df = None
+                        _ev_rr_col = None
+                        if _predictions_path.exists():
+                            try:
+                                _ev_pred_df = pd.read_parquet(_predictions_path)
+                                for _rc in [
+                                    "forward_rr",
+                                    "success_no_rr_extreme",
+                                    "ret_mean",
+                                    "bpc_impulse_return_atr",
+                                    "rr",
+                                    "return_atr",
+                                ]:
+                                    if _rc in _ev_pred_df.columns:
+                                        _ev_rr_col = _rc
+                                        break
+                            except Exception:
+                                pass
                         _generate_evidence_candidates_yaml(
-                            evidence_path, rules, strategy_config.name, str(output_dir)
+                            evidence_path,
+                            rules,
+                            strategy_config.name,
+                            str(output_dir),
+                            pred_df=_ev_pred_df,
+                            feature_names=feature_names if feature_names else None,
+                            lgbm_model=loaded_model,
+                            rr_col_name=_ev_rr_col,
                         )
                         print(
                             f"   \U0001f4dc Evidence candidates exported to {evidence_path}"
