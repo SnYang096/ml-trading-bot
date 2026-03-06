@@ -323,8 +323,48 @@ def deploy_global_configs() -> int:
     return copied
 
 
+def _sync_training_baselines(strategies: List[str]) -> int:
+    """Auto-copy latest training_baseline.json from results/ to config/strategies/.
+
+    Scans results/train_final_*/{strategy}/training_baseline.json,
+    picks the most recent per strategy, and copies to
+    config/strategies/{strategy}/training_baseline.json.
+    This ensures the deploy step always has the latest OOD baseline.
+    """
+    import glob
+
+    synced = 0
+    for strat in strategies:
+        pattern = str(
+            PROJECT_ROOT
+            / "results"
+            / "train_final_*"
+            / strat
+            / "training_baseline.json"
+        )
+        candidates = sorted(glob.glob(pattern), reverse=True)
+        if not candidates:
+            continue
+        latest = Path(candidates[0])
+        dst = RESEARCH_STRATEGIES / strat / "training_baseline.json"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(latest, dst)
+        print(
+            f"  \U0001f504 {strat.upper()}: training_baseline.json \u2190 {latest.relative_to(PROJECT_ROOT)}"
+        )
+        synced += 1
+    return synced
+
+
 def cmd_deploy(strategies: List[str], auto_yes: bool = False, git_commit: bool = False):
     """执行部署."""
+    # Step 0: sync latest training baselines from results/ → config/strategies/
+    print(f"\n{'\u2500'*70}")
+    print("\U0001f504 Sync training baselines (results/ \u2192 config/strategies/)")
+    n_synced = _sync_training_baselines(strategies)
+    if n_synced == 0:
+        print("  \u26a0\ufe0f  \u65e0 training_baseline.json \u53ef\u540c\u6b65")
+
     # 先显示 diff
     summary = cmd_diff(strategies)
 

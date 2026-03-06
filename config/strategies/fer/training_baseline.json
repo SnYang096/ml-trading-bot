@@ -1,0 +1,222 @@
+{
+  "version": "2026-03-06",
+  "strategy": "fer",
+  "export_timestamp": "2026-03-06",
+  "training_period": {
+    "start": "2023-01-01",
+    "end": "2025-08-01"
+  },
+  "holdout_period": {
+    "start": "2025-08-01",
+    "end": "2026-02-01"
+  },
+  "layer_kpis": {
+    "L4_gate": {
+      "lift": 0.020997,
+      "pass_rate": 0.3634,
+      "bad_rejection_rate": 0.7029,
+      "good_retention_rate": 0.3711,
+      "n_trades": 1695
+    },
+    "L5_evidence": {
+      "n_optimized": 6,
+      "avg_bad_suppression": 0.4182,
+      "avg_sharpness": 0.2685,
+      "features": [
+        {
+          "feature": "roc_5",
+          "bad_suppression": 0.3527454242928452,
+          "sharpness": 0.29201331114808654,
+          "plateau_cv": 0.015738465717983482
+        },
+        {
+          "feature": "cvd_change_5_normalized",
+          "bad_suppression": 0.38768718801996677,
+          "sharpness": 0.3132279534109817,
+          "plateau_cv": 8.26681383774336e-17
+        },
+        {
+          "feature": "fer_signed_efficiency",
+          "bad_suppression": 0.6655574043261232,
+          "sharpness": 0.2978369384359401,
+          "plateau_cv": 0.030743773095067338
+        },
+        {
+          "feature": "fer_impulse_failure_direction",
+          "bad_suppression": 0.38435940099833615,
+          "sharpness": 0.2454242928452579,
+          "plateau_cv": 0.0
+        },
+        {
+          "feature": "fer_momentum_efficiency_decay",
+          "bad_suppression": 0.12479201331114809,
+          "sharpness": 0.12229617304492513,
+          "plateau_cv": 0.0
+        },
+        {
+          "feature": "fer_signed_efficiency_pct",
+          "bad_suppression": 0.5940099833610649,
+          "sharpness": 0.3402662229617304,
+          "plateau_cv": 0.0
+        }
+      ]
+    },
+    "L7_execution": {
+      "total_trades": 189,
+      "sharpe_per_trade": 0.0125,
+      "sharpe_annualized": 0,
+      "sharpe_daily": 0,
+      "mean_r": 0.0137,
+      "win_rate": 0.49200000000000005
+    }
+  },
+  "feature_distributions": {
+    "close": {
+      "mean": 17526.872208,
+      "std": 38264.162774,
+      "p5": 0.449283,
+      "p95": 112597.298181,
+      "nan_rate": 0.0
+    },
+    "high": {
+      "mean": 17626.902054,
+      "std": 38469.622685,
+      "p5": 0.452422,
+      "p95": 113299.40537,
+      "nan_rate": 0.0
+    },
+    "low": {
+      "mean": 17418.308497,
+      "std": 38039.942386,
+      "p5": 0.438491,
+      "p95": 111901.175568,
+      "nan_rate": 0.0
+    },
+    "open": {
+      "mean": 17524.552407,
+      "std": 38256.70976,
+      "p5": 0.44676,
+      "p95": 112640.444114,
+      "nan_rate": 0.0
+    },
+    "volume": {
+      "mean": 41901686.606834,
+      "std": 88628059.439097,
+      "p5": 13607.91725,
+      "p95": 190134672.425,
+      "nan_rate": 0.0
+    },
+    "atr": {
+      "mean": 206.668379,
+      "std": 447.358006,
+      "p5": 0.011484,
+      "p95": 1278.409704,
+      "nan_rate": 0.0
+    },
+    "forward_rr": {
+      "mean": 4.958235,
+      "std": 5.620904,
+      "p5": -0.405092,
+      "p95": 14.099507,
+      "nan_rate": 0.0
+    },
+    "cvd_change_5_normalized": {
+      "mean": -0.017264,
+      "std": 0.026918,
+      "p5": -0.062637,
+      "p95": 0.025705,
+      "nan_rate": 0.0
+    },
+    "fer_signed_efficiency": {
+      "mean": 0.020411,
+      "std": 0.472786,
+      "p5": -0.007819,
+      "p95": 0.376955,
+      "nan_rate": 0.1101
+    },
+    "fer_signed_efficiency_pct": {
+      "mean": 0.542626,
+      "std": 0.320869,
+      "p5": 0.038462,
+      "p95": 1.0,
+      "nan_rate": 0.1148
+    },
+    "fer_efficiency_flip": {
+      "mean": -0.00486,
+      "std": 0.227944,
+      "p5": 0.0,
+      "p95": 0.0,
+      "nan_rate": 0.1101
+    },
+    "fer_efficiency_flip_strength": {
+      "mean": 0.04052,
+      "std": 0.179513,
+      "p5": 0.0,
+      "p95": 0.345,
+      "nan_rate": 0.1101
+    },
+    "fer_aggressor_absorption": {
+      "mean": 0.100911,
+      "std": 2.395491,
+      "p5": 0.0,
+      "p95": 0.022774,
+      "nan_rate": 0.1101
+    },
+    "fer_absorption_streak": {
+      "mean": 1.316636,
+      "std": 2.853753,
+      "p5": 0.0,
+      "p95": 7.0,
+      "nan_rate": 0.1101
+    },
+    "fer_trapped_longs_score": {
+      "mean": 2.034422,
+      "std": 1.577116,
+      "p5": 0.0,
+      "p95": 5.0,
+      "nan_rate": 0.1101
+    },
+    "fer_trapped_shorts_score": {
+      "mean": 1.872177,
+      "std": 1.598329,
+      "p5": 0.0,
+      "p95": 5.0,
+      "nan_rate": 0.1101
+    },
+    "fer_impulse_failure_score": {
+      "mean": 0.208776,
+      "std": 0.329509,
+      "p5": 0.0,
+      "p95": 1.0,
+      "nan_rate": 0.1101
+    },
+    "fer_impulse_failure_direction": {
+      "mean": 0.269159,
+      "std": 0.538775,
+      "p5": 0.0,
+      "p95": 1.0,
+      "nan_rate": 0.1101
+    },
+    "fer_momentum_efficiency_decay": {
+      "mean": 0.17581,
+      "std": 0.29665,
+      "p5": 0.0,
+      "p95": 0.867768,
+      "nan_rate": 0.0
+    },
+    "fer_volume_price_divergence": {
+      "mean": 0.504454,
+      "std": 0.268341,
+      "p5": 0.2,
+      "p95": 0.975,
+      "nan_rate": 0.0
+    },
+    "roc_5": {
+      "mean": 0.050405,
+      "std": 1.063371,
+      "p5": -1.749431,
+      "p95": 1.788071,
+      "nan_rate": 0.0
+    }
+  }
+}

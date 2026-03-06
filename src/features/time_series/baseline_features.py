@@ -4974,8 +4974,9 @@ def compute_ood_score_from_df(
         return pd.DataFrame({"ood_score": np.full(n, 0.0)}, index=df.index)
 
     # Vectorised: iterate features, accumulate OOD count per row
+    # Use per-row denomination: NaN features are excluded from that row's denominator
     ood_counts = np.zeros(n, dtype=np.float64)
-    n_checked = 0
+    n_valid_per_row = np.zeros(n, dtype=np.float64)
     for feat, stats in baseline.items():
         if feat not in df.columns:
             continue
@@ -4984,13 +4985,14 @@ def compute_ood_score_from_df(
         if q05 is None or q95 is None:
             continue
         vals = df[feat].values.astype(np.float64)
+        nan_mask = np.isnan(vals)
         ood_mask = (vals < float(q05)) | (vals > float(q95))
-        # NaN → not counted as OOD
-        ood_mask[np.isnan(vals)] = False
+        # NaN → not counted as OOD, and excluded from denominator
+        ood_mask[nan_mask] = False
         ood_counts += ood_mask.astype(np.float64)
-        n_checked += 1
+        n_valid_per_row += (~nan_mask).astype(np.float64)
 
-    ood_score = ood_counts / max(n_checked, 1)
+    ood_score = ood_counts / np.maximum(n_valid_per_row, 1.0)
     return pd.DataFrame({"ood_score": ood_score.clip(0.0, 1.0)}, index=df.index)
 
 

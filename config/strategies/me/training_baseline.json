@@ -1,0 +1,624 @@
+{
+  "version": "2026-03-06",
+  "strategy": "me",
+  "export_timestamp": "2026-03-06",
+  "training_period": {
+    "start": "2023-01-01",
+    "end": "2025-08-01"
+  },
+  "holdout_period": {
+    "start": "2025-08-01",
+    "end": "2026-02-01"
+  },
+  "layer_kpis": {
+    "L5_evidence": {
+      "n_optimized": 3,
+      "avg_bad_suppression": 0.1435,
+      "avg_sharpness": 0.1159,
+      "features": [
+        {
+          "feature": "vpin_volatility_20",
+          "bad_suppression": 0.20679651885619565,
+          "sharpness": 0.17675093244923334,
+          "plateau_cv": 0.024433544615983117
+        },
+        {
+          "feature": "vpin_ma20",
+          "bad_suppression": 0.16079569001243266,
+          "sharpness": 0.11593452134272692,
+          "plateau_cv": 0.0024382992454709783
+        },
+        {
+          "feature": "evt_scale_right",
+          "bad_suppression": 0.06299212598425197,
+          "sharpness": 0.05511811023622043,
+          "plateau_cv": 0.0
+        }
+      ]
+    },
+    "L7_execution": {
+      "total_trades": 43,
+      "sharpe_per_trade": 0.2582,
+      "sharpe_annualized": 0,
+      "sharpe_daily": 0,
+      "mean_r": 0.1155,
+      "win_rate": 0.8370000000000001
+    }
+  },
+  "feature_distributions": {
+    "close": {
+      "mean": 18375.53745,
+      "std": 39245.412942,
+      "p5": 0.521771,
+      "p95": 113418.750601,
+      "nan_rate": 0.0
+    },
+    "high": {
+      "mean": 18421.514522,
+      "std": 39337.695984,
+      "p5": 0.52539,
+      "p95": 113604.039497,
+      "nan_rate": 0.0
+    },
+    "low": {
+      "mean": 18325.621323,
+      "std": 39144.350449,
+      "p5": 0.513834,
+      "p95": 113209.11858,
+      "nan_rate": 0.0
+    },
+    "open": {
+      "mean": 18374.339929,
+      "std": 39242.064048,
+      "p5": 0.521662,
+      "p95": 113484.26793,
+      "nan_rate": 0.0
+    },
+    "volume": {
+      "mean": 9893423.993769,
+      "std": 23367476.753346,
+      "p5": 2725.5272,
+      "p95": 45425782.24,
+      "nan_rate": 0.0
+    },
+    "atr": {
+      "mean": 98.478953,
+      "std": 218.434171,
+      "p5": 0.005556,
+      "p95": 628.487447,
+      "nan_rate": 0.0
+    },
+    "forward_rr": {
+      "mean": 5.178896,
+      "std": 6.327472,
+      "p5": -0.383265,
+      "p95": 14.745768,
+      "nan_rate": 0.0
+    },
+    "cvd_change_5_normalized": {
+      "mean": -0.01752,
+      "std": 0.05004,
+      "p5": -0.099137,
+      "p95": 0.063492,
+      "nan_rate": 0.0
+    },
+    "me_atr_pct": {
+      "mean": 0.491324,
+      "std": 0.32367,
+      "p5": 0.01,
+      "p95": 0.98,
+      "nan_rate": 0.0
+    },
+    "me_vol_regime": {
+      "mean": 0.503706,
+      "std": 0.290513,
+      "p5": 0.04,
+      "p95": 0.95,
+      "nan_rate": 0.0
+    },
+    "me_accel_2k": {
+      "mean": 0.016857,
+      "std": 0.99247,
+      "p5": -1.567732,
+      "p95": 1.650272,
+      "nan_rate": 0.0
+    },
+    "me_accel_5k": {
+      "mean": -0.000148,
+      "std": 0.327723,
+      "p5": -0.537478,
+      "p95": 0.536255,
+      "nan_rate": 0.0
+    },
+    "me_accel_persistence": {
+      "mean": 0.495582,
+      "std": 0.152285,
+      "p5": 0.2,
+      "p95": 0.8,
+      "nan_rate": 0.0
+    },
+    "me_multi_tf_alignment": {
+      "mean": 0.71869,
+      "std": 0.329262,
+      "p5": 0.333333,
+      "p95": 1.0,
+      "nan_rate": 0.0
+    },
+    "me_cvd_alignment": {
+      "mean": 0.56063,
+      "std": 0.496331,
+      "p5": 0.0,
+      "p95": 1.0,
+      "nan_rate": 0.0
+    },
+    "me_cvd_strength": {
+      "mean": 0.328655,
+      "std": 0.271494,
+      "p5": 0.021849,
+      "p95": 0.916317,
+      "nan_rate": 0.0
+    },
+    "me_volume_surge": {
+      "mean": 0.499643,
+      "std": 0.288664,
+      "p5": 0.05,
+      "p95": 0.95,
+      "nan_rate": 0.0
+    },
+    "me_volume_accel": {
+      "mean": 0.503538,
+      "std": 0.287278,
+      "p5": 0.05,
+      "p95": 0.95,
+      "nan_rate": 0.0
+    },
+    "me_delta_net_flow": {
+      "mean": 0.063393,
+      "std": 0.421561,
+      "p5": -0.655799,
+      "p95": 0.831385,
+      "nan_rate": 0.0
+    },
+    "me_false_expansion": {
+      "mean": 0.197596,
+      "std": 0.398202,
+      "p5": 0.0,
+      "p95": 1.0,
+      "nan_rate": 0.0
+    },
+    "me_vol_divergence": {
+      "mean": 0.12995,
+      "std": 0.193193,
+      "p5": 0.0,
+      "p95": 0.541879,
+      "nan_rate": 0.0
+    },
+    "me_flow_exhaustion": {
+      "mean": 0.060705,
+      "std": 0.144015,
+      "p5": 0.0,
+      "p95": 0.390555,
+      "nan_rate": 0.0
+    },
+    "me_failure_score": {
+      "mean": 0.132853,
+      "std": 0.166148,
+      "p5": 0.0,
+      "p95": 0.461684,
+      "nan_rate": 0.0
+    },
+    "atr_percentile": {
+      "mean": 0.448422,
+      "std": 0.307089,
+      "p5": 0.012963,
+      "p95": 0.959259,
+      "nan_rate": 0.0
+    },
+    "vpin": {
+      "mean": 0.276352,
+      "std": 0.076021,
+      "p5": 0.1792,
+      "p95": 0.411429,
+      "nan_rate": 0.0
+    },
+    "vpin_signed_imbalance": {
+      "mean": -0.015725,
+      "std": 0.042471,
+      "p5": -0.086802,
+      "p95": 0.053095,
+      "nan_rate": 0.0
+    },
+    "vpin_last": {
+      "mean": 0.274979,
+      "std": 0.077074,
+      "p5": 0.17818,
+      "p95": 0.413,
+      "nan_rate": 0.0
+    },
+    "vpin_max": {
+      "mean": 0.298082,
+      "std": 0.094004,
+      "p5": 0.186741,
+      "p95": 0.46226,
+      "nan_rate": 0.0
+    },
+    "vpin_min": {
+      "mean": 0.253448,
+      "std": 0.060574,
+      "p5": 0.16874,
+      "p95": 0.362182,
+      "nan_rate": 0.0
+    },
+    "vpin_std": {
+      "mean": 0.014327,
+      "std": 0.017603,
+      "p5": 0.002578,
+      "p95": 0.04528,
+      "nan_rate": 0.0
+    },
+    "vpin_count": {
+      "mean": 0.077609,
+      "std": 0.838461,
+      "p5": -1.153217,
+      "p95": 1.584369,
+      "nan_rate": 0.0
+    },
+    "vpin_skewness": {
+      "mean": -0.026363,
+      "std": 0.476298,
+      "p5": -0.788803,
+      "p95": 0.750402,
+      "nan_rate": 0.0
+    },
+    "vpin_trend": {
+      "mean": 0.102737,
+      "std": 1.861923,
+      "p5": -1.956631,
+      "p95": 2.480169,
+      "nan_rate": 0.0
+    },
+    "vpin_signed_imbalance_last": {
+      "mean": -0.01621,
+      "std": 0.044378,
+      "p5": -0.090125,
+      "p95": 0.055886,
+      "nan_rate": 0.0
+    },
+    "vpin_signed_imbalance_max": {
+      "mean": 0.005512,
+      "std": 0.044245,
+      "p5": -0.067029,
+      "p95": 0.078632,
+      "nan_rate": 0.0
+    },
+    "vpin_ma5": {
+      "mean": 0.276563,
+      "std": 0.062903,
+      "p5": 0.185029,
+      "p95": 0.387358,
+      "nan_rate": 0.0
+    },
+    "vpin_ma10": {
+      "mean": 0.276536,
+      "std": 0.054171,
+      "p5": 0.192838,
+      "p95": 0.369673,
+      "nan_rate": 0.0
+    },
+    "vpin_ma20": {
+      "mean": 0.276314,
+      "std": 0.04562,
+      "p5": 0.202554,
+      "p95": 0.354646,
+      "nan_rate": 0.0
+    },
+    "vpin_max5": {
+      "mean": 0.3251,
+      "std": 0.099565,
+      "p5": 0.202464,
+      "p95": 0.514073,
+      "nan_rate": 0.0
+    },
+    "vpin_max10": {
+      "mean": 0.363476,
+      "std": 0.110009,
+      "p5": 0.224541,
+      "p95": 0.57104,
+      "nan_rate": 0.0
+    },
+    "vpin_max20": {
+      "mean": 0.413905,
+      "std": 0.119078,
+      "p5": 0.255181,
+      "p95": 0.638823,
+      "nan_rate": 0.0
+    },
+    "vpin_change": {
+      "mean": -0.000418,
+      "std": 0.049873,
+      "p5": -0.065507,
+      "p95": 0.075301,
+      "nan_rate": 0.0
+    },
+    "vpin_change_pct": {
+      "mean": 0.009862,
+      "std": 0.156826,
+      "p5": -0.190856,
+      "p95": 0.282083,
+      "nan_rate": 0.0
+    },
+    "vpin_zscore_20": {
+      "mean": 0.034538,
+      "std": 1.121039,
+      "p5": -1.427188,
+      "p95": 2.222718,
+      "nan_rate": 0.0
+    },
+    "vpin_zscore_50": {
+      "mean": 0.035287,
+      "std": 1.063834,
+      "p5": -1.278888,
+      "p95": 2.071729,
+      "nan_rate": 0.0
+    },
+    "vpin_quantile_rank_20": {
+      "mean": 0.495899,
+      "std": 0.307419,
+      "p5": 0.025,
+      "p95": 0.975,
+      "nan_rate": 0.0
+    },
+    "vpin_quantile_rank_50": {
+      "mean": 0.503356,
+      "std": 0.300131,
+      "p5": 0.03,
+      "p95": 0.95,
+      "nan_rate": 0.0
+    },
+    "vpin_volatility_10": {
+      "mean": 0.048244,
+      "std": 0.031961,
+      "p5": 0.012177,
+      "p95": 0.111855,
+      "nan_rate": 0.0
+    },
+    "vpin_volatility_20": {
+      "mean": 0.057509,
+      "std": 0.028117,
+      "p5": 0.021261,
+      "p95": 0.108338,
+      "nan_rate": 0.0
+    },
+    "vpin_spike_flag_20": {
+      "mean": 0.187236,
+      "std": 0.390117,
+      "p5": 0.0,
+      "p95": 1.0,
+      "nan_rate": 0.0
+    },
+    "vpin_spike_flag_50": {
+      "mean": 0.175135,
+      "std": 0.380098,
+      "p5": 0.0,
+      "p95": 1.0,
+      "nan_rate": 0.0
+    },
+    "vpin_momentum": {
+      "mean": 0.000249,
+      "std": 0.046194,
+      "p5": -0.067938,
+      "p95": 0.08131,
+      "nan_rate": 0.0
+    },
+    "vpin_signed_imbalance_zscore_20": {
+      "mean": 0.014191,
+      "std": 1.087691,
+      "p5": -1.77836,
+      "p95": 1.793638,
+      "nan_rate": 0.0
+    },
+    "vpin_signed_imbalance_zscore_50": {
+      "mean": 0.007111,
+      "std": 1.050874,
+      "p5": -1.721156,
+      "p95": 1.742001,
+      "nan_rate": 0.0
+    },
+    "trade_cluster_directional_entropy_zscore_20": {
+      "mean": -0.012805,
+      "std": 0.982803,
+      "p5": -1.575077,
+      "p95": 1.151004,
+      "nan_rate": 0.0
+    },
+    "trade_cluster_directional_entropy_zscore_50": {
+      "mean": -0.009318,
+      "std": 0.992634,
+      "p5": -1.561706,
+      "p95": 1.084641,
+      "nan_rate": 0.0
+    },
+    "trade_cluster_imbalance_zscore_20": {
+      "mean": -0.011791,
+      "std": 0.982914,
+      "p5": -1.559654,
+      "p95": 1.579368,
+      "nan_rate": 0.0
+    },
+    "trade_cluster_imbalance_zscore_50": {
+      "mean": -0.011938,
+      "std": 0.995591,
+      "p5": -1.556523,
+      "p95": 1.580647,
+      "nan_rate": 0.0
+    },
+    "trade_cluster_net_runs_zscore_20": {
+      "mean": -0.012071,
+      "std": 0.981727,
+      "p5": -1.531639,
+      "p95": 1.543293,
+      "nan_rate": 0.0
+    },
+    "trade_cluster_net_runs_zscore_50": {
+      "mean": -0.011737,
+      "std": 0.995531,
+      "p5": -1.492405,
+      "p95": 1.554931,
+      "nan_rate": 0.0
+    },
+    "trade_cluster_max_buy_run_zscore_20": {
+      "mean": 0.01361,
+      "std": 1.016456,
+      "p5": -1.34802,
+      "p95": 1.994951,
+      "nan_rate": 0.0
+    },
+    "trade_cluster_max_buy_run_zscore_50": {
+      "mean": 0.003467,
+      "std": 1.011766,
+      "p5": -1.309213,
+      "p95": 1.947791,
+      "nan_rate": 0.0
+    },
+    "trade_cluster_max_sell_run_zscore_20": {
+      "mean": 0.019055,
+      "std": 1.019787,
+      "p5": -1.345865,
+      "p95": 2.001529,
+      "nan_rate": 0.0
+    },
+    "trade_cluster_max_sell_run_zscore_50": {
+      "mean": 0.016601,
+      "std": 1.020468,
+      "p5": -1.309776,
+      "p95": 1.980238,
+      "nan_rate": 0.0
+    },
+    "shd_pct": {
+      "mean": 0.498723,
+      "std": 0.299076,
+      "p5": 0.024119,
+      "p95": 0.970315,
+      "nan_rate": 0.0
+    },
+    "garch_volatility": {
+      "mean": 0.011927,
+      "std": 0.10881,
+      "p5": 0.002781,
+      "p95": 0.012419,
+      "nan_rate": 0.0
+    },
+    "garch_persistence": {
+      "mean": 0.712812,
+      "std": 0.238696,
+      "p5": 0.251458,
+      "p95": 0.98,
+      "nan_rate": 0.0
+    },
+    "garch_leverage_gamma": {
+      "mean": 0.106036,
+      "std": 0.132105,
+      "p5": 0.0,
+      "p95": 0.225754,
+      "nan_rate": 0.0
+    },
+    "garch_alpha": {
+      "mean": 0.144404,
+      "std": 0.130346,
+      "p5": 0.009999,
+      "p95": 0.281211,
+      "nan_rate": 0.0
+    },
+    "garch_beta": {
+      "mean": 0.568409,
+      "std": 0.288256,
+      "p5": 0.0,
+      "p95": 0.969999,
+      "nan_rate": 0.0
+    },
+    "evt_tail_shape": {
+      "mean": 0.528554,
+      "std": 0.354617,
+      "p5": 0.003968,
+      "p95": 1.0,
+      "nan_rate": 0.0
+    },
+    "evt_tail_shape_left": {
+      "mean": 0.528554,
+      "std": 0.354617,
+      "p5": 0.003968,
+      "p95": 1.0,
+      "nan_rate": 0.0
+    },
+    "evt_tail_shape_right": {
+      "mean": 0.536474,
+      "std": 0.357219,
+      "p5": 0.003968,
+      "p95": 1.0,
+      "nan_rate": 0.0
+    },
+    "evt_scale": {
+      "mean": 0.500641,
+      "std": 0.324511,
+      "p5": 0.027778,
+      "p95": 0.996032,
+      "nan_rate": 0.0
+    },
+    "evt_var_99": {
+      "mean": 0.513411,
+      "std": 0.323324,
+      "p5": 0.019841,
+      "p95": 0.992063,
+      "nan_rate": 0.0
+    },
+    "evt_es_99": {
+      "mean": 0.512983,
+      "std": 0.322582,
+      "p5": 0.02381,
+      "p95": 0.992063,
+      "nan_rate": 0.0
+    },
+    "evt_scale_left": {
+      "mean": 0.500641,
+      "std": 0.324511,
+      "p5": 0.027778,
+      "p95": 0.996032,
+      "nan_rate": 0.0
+    },
+    "evt_var_99_left": {
+      "mean": 0.513411,
+      "std": 0.323324,
+      "p5": 0.019841,
+      "p95": 0.992063,
+      "nan_rate": 0.0
+    },
+    "evt_es_99_left": {
+      "mean": 0.512983,
+      "std": 0.322582,
+      "p5": 0.02381,
+      "p95": 0.992063,
+      "nan_rate": 0.0
+    },
+    "evt_scale_right": {
+      "mean": 0.498506,
+      "std": 0.317094,
+      "p5": 0.031746,
+      "p95": 0.996032,
+      "nan_rate": 0.0
+    },
+    "evt_var_99_right": {
+      "mean": 0.488646,
+      "std": 0.337101,
+      "p5": 0.019841,
+      "p95": 1.0,
+      "nan_rate": 0.0
+    },
+    "evt_es_99_right": {
+      "mean": 0.485657,
+      "std": 0.335712,
+      "p5": 0.019841,
+      "p95": 1.0,
+      "nan_rate": 0.0
+    }
+  }
+}

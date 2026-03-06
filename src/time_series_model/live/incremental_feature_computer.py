@@ -187,12 +187,43 @@ class IncrementalFeatureComputer:
                     verbose=False,  # 实盘模式：只打印摘要+异常
                 )
                 self._feature_deps = self._feature_loader.feature_deps or {}
+
+                # P5: inject baseline_path for ood_score_f from strategy config dir
+                self._inject_ood_baseline_path(archetypes_dir)
             except Exception:
                 self._feature_loader = None
                 self._feature_deps = None
 
     def _want(self, key: str) -> bool:
         return (not self.live_feature_set) or (key in self.live_feature_set)
+
+    def _inject_ood_baseline_path(self, archetypes_dir: Optional[str]) -> None:
+        """Inject training_baseline.json path into ood_score_f compute_params.
+
+        Derives strategy config dir from archetypes_dir:
+          archetypes_dir = "config/strategies/bpc/archetypes"
+          → strategy_dir = "config/strategies/bpc/"
+          → baseline = "config/strategies/bpc/training_baseline.json"
+
+        If file doesn't exist, ood_score safely returns 0.
+        """
+        if not self._feature_deps or not archetypes_dir:
+            return
+        feats = self._feature_deps.get("features") or {}
+        ood_node = feats.get("ood_score_f")
+        if not isinstance(ood_node, dict):
+            return
+        cp = ood_node.get("compute_params")
+        if not isinstance(cp, dict):
+            cp = {}
+            ood_node["compute_params"] = cp
+        if "baseline_path" in cp:
+            return  # already set
+        from pathlib import Path
+
+        strategy_dir = Path(archetypes_dir).parent
+        bl_path = strategy_dir / "training_baseline.json"
+        cp["baseline_path"] = str(bl_path)
 
     def _compute_cvd_from_ticks(
         self,
