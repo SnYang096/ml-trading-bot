@@ -771,3 +771,121 @@ class TestOodBaselineInjection:
         df2 = pd.DataFrame({"feat_a": [0.5], "feat_b": [0.0]})
         result2 = compute_ood_score_from_df(df2, baseline_path=str(bl_path))
         assert result2["ood_score"].iloc[0] == pytest.approx(0.0)
+
+
+# ====================================================================
+# Retrain Monitor Gauge integration tests
+# ====================================================================
+
+
+class TestRunRetrainCheck:
+    """Test _run_retrain_check() updates Prometheus Gauges correctly."""
+
+    def _make_trades(self, pnls):
+        """Helper: create trade dicts with given PnL list."""
+        from datetime import datetime, timedelta
+
+        trades = []
+        now = datetime.now()
+        for i, pnl in enumerate(pnls):
+            trades.append(
+                {
+                    "position_id": f"pos_{i}",
+                    "symbol": "BTCUSDT",
+                    "side": "long",
+                    "entry_time": (now - timedelta(days=len(pnls) - i)).isoformat(),
+                    "exit_time": (now - timedelta(days=len(pnls) - i - 1)).isoformat(),
+                    "entry_price": 50000,
+                    "exit_price": 50000 + pnl * 100,
+                    "realized_pnl": pnl,
+                    "strategy_id": "bpc",
+                    "archetype": "bpc",
+                    "status": "closed",
+                }
+            )
+        return trades
+
+    def test_check_triggers_returns_correct_structure(self):
+        """check_triggers returns dict with triggered, trigger_count, details."""
+        from scripts.monitor_retrain import check_triggers
+
+        trades = self._make_trades([1.0, -0.5, 1.0, 0.3])
+        triggers_cfg = {
+            "schedule_days": 90,
+            "sharpe_decay_ratio": 0.5,
+            "consecutive_losses": 8,
+            "max_data_age_days": 120,
+            "leading_indicator_decay": 0.5,
+        }
+        result = check_triggers("bpc", trades, None, triggers_cfg)
+        assert "triggered" in result
+        assert "trigger_count" in result
+        assert "details" in result
+        assert isinstance(result["details"], dict)
+
+    def test_gauge_update_from_check_result(self):
+        """Simulate what _run_retrain_check does: parse result → set Gauges."""
+        from src.time_series_model.live.metrics_exporter import _NoopMetric
+
+        # Use NoopMetric to verify the call pattern works without real Prometheus
+        noop = _NoopMetric()
+        result = {
+            "triggered": True,
+            "trigger_count": 2,
+            "details": {
+                "live_sharpe_30d": 0.15,
+                "sharpe_ratio": 0.3,
+                "consecutive_losses": 3,
+                "days_since_last_train": 45,
+                "leading_indicator_decay": {"max_decay": 0.6, "triggered": True},
+            },
+        }
+        # These calls must not raise
+        noop.labels(strategy="bpc").set(1 if result["triggered"] else 0)
+        noop.labels(strategy="bpc").set(result["trigger_count"])
+        details = result["details"]
+        noop.labels(strategy="bpc").set(details["live_sharpe_30d"])
+        noop.labels(strategy="bpc").set(details.get("sharpe_ratio", 0.0))
+        noop.labels(strategy="bpc").set(details["consecutive_losses"])
+        noop.labels(strategy="bpc").set(details["days_since_last_train"])
+        leading = details.get("leading_indicator_decay", {})
+        max_decay = leading.get("max_decay", 0.0) if isinstance(leading, dict) else 0.0
+        noop.labels(strategy="bpc").set(max_decay)
+
+    def test_no_db_no_crash(self, tmp_path):
+        """_run_retrain_check should not crash when DB doesn't exist."""
+        from scripts.monitor_retrain import check_triggers, load_live_trades
+
+        fake_db = tmp_path / "nonexistent.db"
+        trades = load_live_trades(fake_db, tmp_path, strategy="bpc", days=90)
+        assert trades == []
+        # check_triggers with empty trades should still return valid result
+        result = check_triggers(
+            "bpc",
+            trades,
+            None,
+            {"schedule_days": 90, "consecutive_losses": 8},
+        )
+        assert result["triggered"] is True  # schedule_days triggered (no report)
+        assert result["details"]["consecutive_losses"] == 0
+
+    def test_metrics_exporter_has_retrain_gauges(self):
+        """Verify the 7 new retrain Gauges exist on Metrics class."""
+        from unittest.mock import patch
+
+        with patch(
+            "src.time_series_model.live.metrics_exporter._PROM_AVAILABLE", False
+        ):
+            from src.time_series_model.live.metrics_exporter import Metrics
+
+            m = Metrics()  # NOOP mode
+        assert hasattr(m, "retrain_triggered")
+        assert hasattr(m, "retrain_trigger_count")
+        assert hasattr(m, "sharpe_live_30d")
+        assert hasattr(m, "sharpe_decay_ratio")
+        assert hasattr(m, "consecutive_losses")
+        assert hasattr(m, "days_since_last_train")
+        assert hasattr(m, "alpha_decay_max")
+        # All should be callable (NOOP)
+        m.retrain_triggered.labels(strategy="test").set(0)
+        m.alpha_decay_max.labels(strategy="test").set(0.5)

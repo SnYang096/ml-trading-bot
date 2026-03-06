@@ -103,6 +103,14 @@ class Metrics:
             self.bot_info = _NOOP
             self.regime_state = _NOOP
             self.ood_score = _NOOP
+            # Retrain Monitor
+            self.retrain_triggered = _NOOP
+            self.retrain_trigger_count = _NOOP
+            self.sharpe_live_30d = _NOOP
+            self.sharpe_decay_ratio = _NOOP
+            self.consecutive_losses = _NOOP
+            self.days_since_last_train = _NOOP
+            self.alpha_decay_max = _NOOP
             return
 
         # ── Counters (累计值，只增不减) ──
@@ -310,6 +318,50 @@ class Metrics:
             "mlbot_ood_score",
             "Out-of-distribution score: fraction of features outside training [q05, q95] (0-1)",
             ["symbol", "timeframe"],
+        )
+
+        # ── Retrain Monitor ──
+
+        self.retrain_triggered = Gauge(
+            "mlbot_retrain_triggered",
+            "Whether retrain is triggered: 0=no, 1=yes",
+            ["strategy"],
+        )
+
+        self.retrain_trigger_count = Gauge(
+            "mlbot_retrain_trigger_count",
+            "Number of retrain trigger conditions met (0-5)",
+            ["strategy"],
+        )
+
+        self.sharpe_live_30d = Gauge(
+            "mlbot_sharpe_live_30d",
+            "Live rolling 30-day Sharpe ratio",
+            ["strategy"],
+        )
+
+        self.sharpe_decay_ratio = Gauge(
+            "mlbot_sharpe_decay_ratio",
+            "Live Sharpe / baseline Sharpe ratio (< 0.5 = decay)",
+            ["strategy"],
+        )
+
+        self.consecutive_losses = Gauge(
+            "mlbot_consecutive_losses",
+            "Current consecutive loss streak",
+            ["strategy"],
+        )
+
+        self.days_since_last_train = Gauge(
+            "mlbot_days_since_last_train",
+            "Days elapsed since last research/training run",
+            ["strategy"],
+        )
+
+        self.alpha_decay_max = Gauge(
+            "mlbot_alpha_decay_max",
+            "Max alpha decay from L4 gate rule / L5 evidence IC (0-1)",
+            ["strategy"],
         )
 
         # ── Info ──

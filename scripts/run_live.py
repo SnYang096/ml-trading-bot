@@ -26,6 +26,7 @@ from src.time_series_model.live.incremental_feature_computer import (
 )
 from src.time_series_model.live.stats_collector import StatsCollector
 from src.time_series_model.live.metrics_exporter import start_metrics_server, METRICS
+from pathlib import Path as _Path
 from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
 )
@@ -600,6 +601,109 @@ def _compute_initial_quantiles(
             )
 
 
+# ====================================================================
+# Retrain trigger check (runs every 6h inside live process)
+# ====================================================================
+
+
+def _run_retrain_check() -> None:
+    """Synchronous function executed in thread pool by _periodic_retrain_check.
+
+    Reuses monitor_retrain.check_triggers() to evaluate 5 retrain conditions,
+    then updates Prometheus Gauges so Grafana can display retrain signals.
+    """
+    import yaml as _yaml
+
+    from scripts.monitor_retrain import (
+        check_triggers,
+        compute_consecutive_losses,
+        compute_live_sharpe,
+        days_since_last_train,
+        get_baseline_sharpe,
+        get_last_research,
+        load_live_trades,
+    )
+
+    project_root = _Path(__file__).resolve().parents[1]
+    config_path = project_root / "config" / "research_pipeline.yaml"
+    if not config_path.exists():
+        logger.warning("[retrain-check] config not found: %s", config_path)
+        return
+
+    cfg = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    triggers_cfg = cfg.get("retrain_triggers", {})
+    history_dir = project_root / cfg.get("output", {}).get("history_dir", "results")
+
+    # DB path: live deployment or dev
+    db_path = project_root / "data" / "order_management.db"
+    if not db_path.exists():
+        alt = project_root / "live" / "highcap" / "data" / "order_management.db"
+        if alt.exists():
+            db_path = alt
+    log_dir = project_root / "data"
+
+    strategy_names = list(cfg.get("strategies", {}).keys())
+    if not strategy_names:
+        strategy_names = ["bpc", "fer", "me"]
+
+    for strat in strategy_names:
+        try:
+            report = get_last_research(history_dir, strat)
+            trades = load_live_trades(db_path, log_dir, strategy=strat, days=90)
+            result = check_triggers(strat, trades, report, triggers_cfg)
+
+            # Update Prometheus Gauges
+            triggered = 1 if result.get("triggered") else 0
+            METRICS.retrain_triggered.labels(strategy=strat).set(triggered)
+            METRICS.retrain_trigger_count.labels(strategy=strat).set(
+                result.get("trigger_count", 0)
+            )
+
+            details = result.get("details", {})
+            live_sharpe = details.get("live_sharpe_30d", 0.0)
+            METRICS.sharpe_live_30d.labels(strategy=strat).set(
+                live_sharpe if live_sharpe is not None else 0.0
+            )
+
+            sharpe_ratio = details.get("sharpe_ratio")
+            METRICS.sharpe_decay_ratio.labels(strategy=strat).set(
+                sharpe_ratio if sharpe_ratio is not None else 0.0
+            )
+
+            consec = details.get("consecutive_losses", 0)
+            METRICS.consecutive_losses.labels(strategy=strat).set(
+                consec if consec is not None else 0
+            )
+
+            days_train = details.get("days_since_last_train", 9999)
+            METRICS.days_since_last_train.labels(strategy=strat).set(
+                days_train if days_train is not None else 9999
+            )
+
+            # Alpha decay: from leading_indicator_decay sub-result
+            leading = details.get("leading_indicator_decay", {})
+            max_decay = (
+                leading.get("max_decay", 0.0) if isinstance(leading, dict) else 0.0
+            )
+            METRICS.alpha_decay_max.labels(strategy=strat).set(
+                max_decay if max_decay is not None else 0.0
+            )
+
+            status = "TRIGGERED" if triggered else "OK"
+            logger.info(
+                "[retrain-check] %s: %s (triggers=%d, sharpe_30d=%.3f, consec=%d, days=%d, decay=%.2f)",
+                strat,
+                status,
+                result.get("trigger_count", 0),
+                live_sharpe or 0.0,
+                consec or 0,
+                days_train or 0,
+                max_decay or 0.0,
+            )
+        except Exception as exc:
+            logger.warning("[retrain-check] %s failed: %s", strat, exc)
+
+
 async def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -800,6 +904,22 @@ async def main() -> None:
 
     funding_oi_task = asyncio.create_task(_daily_funding_oi_refresh())
 
+    # ── 定期重训触发检测 (6h) ──
+    async def _periodic_retrain_check() -> None:
+        """6h 一次检查重训触发条件, 更新 Prometheus"""
+        await asyncio.sleep(300)  # 首次延迟 5min 等系统稳定
+        while True:
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, _run_retrain_check)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("重训检测异常: %s", exc)
+            await asyncio.sleep(6 * 3600)
+
+    retrain_task = asyncio.create_task(_periodic_retrain_check())
+
     stop_event = asyncio.Event()
     try:
         await ws_client.run(stop_event)
@@ -808,6 +928,7 @@ async def main() -> None:
     finally:
         market_task.cancel()
         funding_oi_task.cancel()
+        retrain_task.cancel()
         if bg_gap_task:
             bg_gap_task.cancel()
         await manager.stop_all()
