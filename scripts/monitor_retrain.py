@@ -347,6 +347,68 @@ def compute_data_age_days(report: Optional[Dict[str, Any]]) -> int:
 
 
 # ====================================================================
+# P5: Leading indicator check
+# ====================================================================
+
+
+def check_leading_indicators(
+    strategy: str,
+    report: Optional[Dict[str, Any]],
+    *,
+    threshold: float = 0.5,
+) -> Dict[str, Any]:
+    """Check if gate rule hit_rates or evidence feature ICs have decayed.
+
+    Reads the latest weekly health report to check for Alpha Decay signals.
+    If max_decay > threshold, returns triggered=True.
+    """
+    # Try to find the latest weekly health report
+    reports_dir = PROJECT_ROOT / "reports"
+    if not reports_dir.exists():
+        return {"triggered": False, "reason": "no reports directory"}
+
+    # Find most recent weekly_health_check*.json
+    health_reports = sorted(reports_dir.glob("weekly_health_check*.json"), reverse=True)
+    if not health_reports:
+        return {"triggered": False, "reason": "no weekly health reports found"}
+
+    import json
+
+    try:
+        latest = json.loads(health_reports[0].read_text(encoding="utf-8"))
+    except Exception:
+        return {"triggered": False, "reason": "cannot parse health report"}
+
+    checks = latest.get("checks", [])
+    max_decay = 0.0
+    decay_sources = []
+
+    for c in checks:
+        layer = c.get("layer", "")
+        if layer in ("L4_gate_rule_decay", "L5_evidence_ic_decay"):
+            d = c.get("max_decay", 0.0)
+            if d > max_decay:
+                max_decay = d
+            if d > threshold:
+                n_decayed = c.get("rules_decayed", c.get("features_decayed", 0))
+                decay_sources.append(f"{layer}: {n_decayed} decayed (max={d:.2f})")
+
+    triggered = max_decay > threshold
+    reason = (
+        "; ".join(decay_sources)
+        if decay_sources
+        else f"max_decay={max_decay:.2f} <= {threshold}"
+    )
+
+    return {
+        "triggered": triggered,
+        "max_decay": round(max_decay, 4),
+        "threshold": threshold,
+        "reason": reason,
+    }
+
+
+# ====================================================================
 # Trigger evaluation
 # ====================================================================
 
@@ -409,6 +471,15 @@ def check_triggers(
     details["data_age_threshold"] = max_age
     if data_age >= max_age:
         reasons.append(f"数据过期: 训练数据距今 {data_age} 天 >= {max_age} 天")
+
+    # ── 5. 先行指标衰减 (P5 Alpha Decay) ──
+    leading_decay_threshold = triggers_cfg.get("leading_indicator_decay", 0.5)
+    leading_result = check_leading_indicators(
+        strategy, report, threshold=leading_decay_threshold
+    )
+    details["leading_indicator_decay"] = leading_result
+    if leading_result.get("triggered"):
+        reasons.append(f"先行指标衰减: {leading_result.get('reason', 'N/A')}")
 
     triggered = len(reasons) > 0
     return {

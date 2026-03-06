@@ -101,6 +101,8 @@ class Metrics:
             self.unrealized_pnl_total = _NOOP
             self.system_mode = _NOOP
             self.bot_info = _NOOP
+            self.regime_state = _NOOP
+            self.ood_score = _NOOP
             return
 
         # ── Counters (累计值，只增不减) ──
@@ -294,6 +296,20 @@ class Metrics:
             "mlbot_feature_loader_errors_total",
             "Feature loader/compute errors that were silently caught",
             ["symbol", "timeframe", "node"],
+        )
+
+        # ── P5 Non-Stationarity ──
+
+        self.regime_state = Gauge(
+            "mlbot_regime_state",
+            "Regime state: 0=NORMAL, 1=HIGH_VOL, 2=HIGH_LEVERAGE",
+            ["symbol", "timeframe"],
+        )
+
+        self.ood_score = Gauge(
+            "mlbot_ood_score",
+            "Out-of-distribution score: fraction of features outside training [q05, q95] (0-1)",
+            ["symbol", "timeframe"],
         )
 
         # ── Info ──

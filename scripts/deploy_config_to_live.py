@@ -78,6 +78,7 @@ TOP_LEVEL_CONFIGS = [
     "features.yaml",
     "features_gate.yaml",
     "features_evidence.yaml",
+    "training_baseline.json",  # P5: OOD baseline (feature distributions q05/q95)
 ]
 
 # 全局配置: config/ 下的非策略配置 → live/highcap/config/

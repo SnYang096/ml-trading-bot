@@ -35,24 +35,25 @@ from src.features.registry import register_feature
 # 📌 常量定义
 # =============================================================================
 
-DEFAULT_EFFICIENCY_WINDOW = 20     # 推进效率滚动窗口
-DEFAULT_ABSORPTION_WINDOW = 10     # 吸收检测窗口
-DEFAULT_TRAPPED_LOOKBACK = 20      # Trapped 检测回溯
-DEFAULT_FAILURE_WINDOW = 10        # Impulse 失败检测窗口
-DEFAULT_DECAY_WINDOW = 20          # 衰减计算窗口
-DEFAULT_DIVERGENCE_WINDOW = 10     # 背离检测窗口
+DEFAULT_EFFICIENCY_WINDOW = 20  # 推进效率滚动窗口
+DEFAULT_ABSORPTION_WINDOW = 10  # 吸收检测窗口
+DEFAULT_TRAPPED_LOOKBACK = 20  # Trapped 检测回溯
+DEFAULT_FAILURE_WINDOW = 10  # Impulse 失败检测窗口
+DEFAULT_DECAY_WINDOW = 20  # 衰减计算窗口
+DEFAULT_DIVERGENCE_WINDOW = 10  # 背离检测窗口
 
 EPS = 1e-9
 FEATURE_VERSION = "2.1"
 
 # CVD 活跃度检测参数
-CVD_ACTIVITY_QUANTILE = 0.05   # 低于历史 5th percentile 视为"无流动性"
-CVD_ACTIVITY_WINDOW = 80       # 活跃度评估的滚动窗口
+CVD_ACTIVITY_QUANTILE = 0.05  # 低于历史 5th percentile 视为"无流动性"
+CVD_ACTIVITY_WINDOW = 80  # 活跃度评估的滚动窗口
 
 
 # =============================================================================
 # 🔧 内部辅助函数
 # =============================================================================
+
 
 def _rolling_abs_diff(series: pd.Series, window: int) -> pd.Series:
     """滚动绝对差 |s[i] - s[i-window]|"""
@@ -74,6 +75,7 @@ def _safe_divide(numerator, denominator, fill: float = 0.0):
 # =============================================================================
 # 🎯 主函数：FER 失败反转信号
 # =============================================================================
+
 
 @register_feature(
     "compute_fer_failure_signals_from_series",
@@ -144,8 +146,9 @@ def compute_fer_failure_signals_from_series(
     idx = close.index
 
     # CVD 处理 + 活跃度掩码
-    # 核心原则: |ΔCVD| 过小时输出 NaN，让 evidence 层决定如何处理
-    #           避免"数据缺失"被误判为"效率死亡"
+    # 核心原则: |ΔCVD| 过小时输出 0.0 (中性值)，而非 NaN
+    #   - NaN 在实盘 pd.isna() 过滤中被丢弃 → 模型收不到特征
+    #   - 0.0 = 语义中性 (无效率/无翻转/无吸收) → 模型正常接收"无信号"
     has_cvd = cvd is not None
     if has_cvd:
         cvd_s = pd.to_numeric(cvd, errors="coerce").fillna(0.0)
@@ -160,12 +163,16 @@ def compute_fer_failure_signals_from_series(
     # CVD 活跃度掩码: 当 |ΔCVD| 低于历史 5th percentile → 标记为不活跃
     if has_cvd:
         cvd_abs_change = _rolling_diff(cvd_s, efficiency_window).abs()
-        cvd_threshold = cvd_abs_change.rolling(
-            CVD_ACTIVITY_WINDOW, min_periods=efficiency_window
-        ).quantile(CVD_ACTIVITY_QUANTILE).fillna(0.0)
+        cvd_threshold = (
+            cvd_abs_change.rolling(CVD_ACTIVITY_WINDOW, min_periods=efficiency_window)
+            .quantile(CVD_ACTIVITY_QUANTILE)
+            .fillna(0.0)
+        )
         cvd_active = cvd_abs_change > cvd_threshold
         # 额外: CVD 全零段也标记为不活跃
-        cvd_rolling_std = cvd_s.rolling(efficiency_window, min_periods=1).std().fillna(0.0)
+        cvd_rolling_std = (
+            cvd_s.rolling(efficiency_window, min_periods=1).std().fillna(0.0)
+        )
         cvd_active = cvd_active & (cvd_rolling_std > EPS)
     else:
         # 完全没有 CVD 数据 → 全部不活跃
@@ -183,12 +190,16 @@ def compute_fer_failure_signals_from_series(
         _safe_divide(price_change.values, cvd_change.values, fill=np.nan),
         index=idx,
     )
-    # CVD 不活跃时 → NaN（不是 0，避免"无数据"伪装成"效率死亡"）
-    fer_signed_efficiency = fer_signed_efficiency.where(cvd_active, np.nan)
+    # CVD 不活跃时 → 0.0（中性值，不是 NaN，避免实盘特征被丢弃）
+    fer_signed_efficiency = fer_signed_efficiency.where(cvd_active, 0.0)
     # 百分位：当前 signed_eff 在近期窗口的排名
-    fer_signed_efficiency_pct = fer_signed_efficiency.rolling(
-        efficiency_window * 2, min_periods=efficiency_window
-    ).rank(pct=True)  # NaN 保留，避免"无流动性"伪装成"中性效率"
+    fer_signed_efficiency_pct = (
+        fer_signed_efficiency.rolling(
+            efficiency_window * 2, min_periods=efficiency_window
+        )
+        .rank(pct=True)
+        .fillna(0.5)
+    )  # 无数据 → 0.5 (中性百分位)
 
     # ================================================================
     # 2️⃣ 效率翻转点 (升级2)
@@ -206,16 +217,17 @@ def compute_fer_failure_signals_from_series(
     flip_to_positive = (eff_smooth_prev < 0) & (eff_smooth >= 0)  # 空头失败
 
     fer_efficiency_flip = pd.Series(
-        np.where(flip_to_negative, -1.0,
-                 np.where(flip_to_positive, 1.0, 0.0)),
+        np.where(flip_to_negative, -1.0, np.where(flip_to_positive, 1.0, 0.0)),
         index=idx,
     )
     # 翻转强度 = |前值 - 后值| 的大小，衡量翻转的剧烈程度
     flip_magnitude = (eff_smooth_prev - eff_smooth).abs()
     # 归一化为百分位
-    fer_efficiency_flip_strength = flip_magnitude.rolling(
-        efficiency_window * 4, min_periods=efficiency_window
-    ).rank(pct=True).fillna(0.0)
+    fer_efficiency_flip_strength = (
+        flip_magnitude.rolling(efficiency_window * 4, min_periods=efficiency_window)
+        .rank(pct=True)
+        .fillna(0.0)
+    )
     # 只在 flip 发生时保留强度
     fer_efficiency_flip_strength = fer_efficiency_flip_strength.where(
         fer_efficiency_flip != 0, 0.0
@@ -238,7 +250,9 @@ def compute_fer_failure_signals_from_series(
     # 空头吸收: CVD↓ 但 price↑
     short_absorb = np.where(
         (cvd_change_w.values < -EPS) & (price_change_w.values > EPS),
-        _safe_divide(np.abs(price_change_w.values), np.abs(cvd_change_w.values), fill=0.0),
+        _safe_divide(
+            np.abs(price_change_w.values), np.abs(cvd_change_w.values), fill=0.0
+        ),
         0.0,
     )
     fer_aggressor_absorption = pd.Series(
@@ -264,7 +278,8 @@ def compute_fer_failure_signals_from_series(
     drawdown_from_high = pd.Series(
         _safe_divide(
             (rolling_high - close).clip(lower=0).values,
-            atr_s.values, fill=0.0,
+            atr_s.values,
+            fill=0.0,
         ),
         index=idx,
     )
@@ -272,7 +287,8 @@ def compute_fer_failure_signals_from_series(
     bounce_from_low = pd.Series(
         _safe_divide(
             (close - rolling_low).clip(lower=0).values,
-            atr_s.values, fill=0.0,
+            atr_s.values,
+            fill=0.0,
         ),
         index=idx,
     )
@@ -280,9 +296,11 @@ def compute_fer_failure_signals_from_series(
     # 高位区间 CVD 强度: lookback 窗口内 CVD 变化的百分位
     # 强正 = 多头在冲; 强负 = 空头在冲
     cvd_lookback_change = _rolling_diff(cvd_s, trapped_lookback)
-    cvd_lookback_pct = cvd_lookback_change.rolling(
-        trapped_lookback * 4, min_periods=trapped_lookback
-    ).rank(pct=True).fillna(0.5)  # trapped 已被 cvd_active 掩码保护，此处 0.5 不会泄漏
+    cvd_lookback_pct = (
+        cvd_lookback_change.rolling(trapped_lookback * 4, min_periods=trapped_lookback)
+        .rank(pct=True)
+        .fillna(0.5)
+    )  # trapped 已被 cvd_active 掩码保护，此处 0.5 不会泄漏
 
     # 多头 trapped:
     #   drawdown > 0 (价格从高位回撤)
@@ -291,7 +309,8 @@ def compute_fer_failure_signals_from_series(
     fer_trapped_longs_score = pd.Series(
         np.clip(
             drawdown_from_high.values * cvd_lookback_pct.values * 2,
-            0, 5,
+            0,
+            5,
         ),
         index=idx,
     )
@@ -303,7 +322,8 @@ def compute_fer_failure_signals_from_series(
     fer_trapped_shorts_score = pd.Series(
         np.clip(
             bounce_from_low.values * (1 - cvd_lookback_pct.values) * 2,
-            0, 5,
+            0,
+            5,
         ),
         index=idx,
     )
@@ -314,17 +334,19 @@ def compute_fer_failure_signals_from_series(
     #       × 推进效率塌陷 (signed_eff 从正→低/负)
     # ================================================================
     cvd5_abs = cvd5.abs()
-    cvd5_pct = cvd5_abs.rolling(
-        failure_window * 4, min_periods=failure_window
-    ).rank(pct=True).fillna(0.5)  # impulse 已被 cvd_active 掩码保护
+    cvd5_pct = (
+        cvd5_abs.rolling(failure_window * 4, min_periods=failure_window)
+        .rank(pct=True)
+        .fillna(0.5)
+    )  # impulse 已被 cvd_active 掩码保护
 
     # 效率塌陷 = signed_eff 的下降: 过去窗口均值 vs 当前窗口均值
-    eff_current = fer_signed_efficiency.rolling(
-        failure_window, min_periods=1
-    ).mean()
-    eff_past = fer_signed_efficiency.shift(failure_window).rolling(
-        failure_window, min_periods=1
-    ).mean()
+    eff_current = fer_signed_efficiency.rolling(failure_window, min_periods=1).mean()
+    eff_past = (
+        fer_signed_efficiency.shift(failure_window)
+        .rolling(failure_window, min_periods=1)
+        .mean()
+    )
 
     # 使用绝对值下降 (signed_eff 方向翻转也算塌陷)
     eff_decline = pd.Series(
@@ -346,9 +368,11 @@ def compute_fer_failure_signals_from_series(
     price_chg_5 = _rolling_diff(close, 5).values
     fer_impulse_failure_direction = pd.Series(
         np.where(
-            (cvd5_val > EPS) & (price_chg_5 < -EPS), -1.0,  # 多头失败→做空
+            (cvd5_val > EPS) & (price_chg_5 < -EPS),
+            -1.0,  # 多头失败→做空
             np.where(
-                (cvd5_val < -EPS) & (price_chg_5 > EPS), 1.0,  # 空头失败→做多
+                (cvd5_val < -EPS) & (price_chg_5 > EPS),
+                1.0,  # 空头失败→做多
                 0.0,
             ),
         ),
@@ -369,7 +393,8 @@ def compute_fer_failure_signals_from_series(
     fer_momentum_efficiency_decay = pd.Series(
         np.clip(
             _safe_divide((eff_ago - eff_now), np.maximum(eff_ago, EPS), fill=0.0),
-            0, 1,
+            0,
+            1,
         ),
         index=idx,
     )
@@ -393,9 +418,11 @@ def compute_fer_failure_signals_from_series(
         ),
         index=idx,
     )
-    fer_volume_price_divergence = divergence_raw.rolling(
-        divergence_window * 4, min_periods=divergence_window
-    ).rank(pct=True).fillna(0.0)
+    fer_volume_price_divergence = (
+        divergence_raw.rolling(divergence_window * 4, min_periods=divergence_window)
+        .rank(pct=True)
+        .fillna(0.0)
+    )
 
     # ========== 组装输出 (无 composite, 每个信号独立) ==========
     result = pd.DataFrame(
@@ -423,16 +450,24 @@ def compute_fer_failure_signals_from_series(
         index=idx,
     )
 
-    # ========== CVD 活跃度掩码：CVD 不活跃时，所有 CVD 相关特征 → NaN ==========
-    # 不受影响的: momentum_efficiency_decay, volume_price_divergence（纯价量）
+    # ========== CVD 活跃度掩码：CVD 不活跃时，CVD 相关特征 → 0.0 (中性值) ==========
+    # 0.0 = "无信号"，比 NaN 更安全:
+    #   - NaN 在实盘特征提取中被 pd.isna() 丢弃 → 模型收不到特征 (bug)
+    #   - 0.0 = 语义中性值 (无效率/无翻转/无吸收/无trapped) → 模型正常收到"无信号"
+    # 不受影响的: momentum_efficiency_decay, volume_price_divergence (纯价量)
     cvd_dependent_cols = [
-        "fer_signed_efficiency", "fer_signed_efficiency_pct",
-        "fer_efficiency_flip", "fer_efficiency_flip_strength",
-        "fer_aggressor_absorption", "fer_absorption_streak",
-        "fer_trapped_longs_score", "fer_trapped_shorts_score",
-        "fer_impulse_failure_score", "fer_impulse_failure_direction",
+        "fer_signed_efficiency",
+        "fer_signed_efficiency_pct",
+        "fer_efficiency_flip",
+        "fer_efficiency_flip_strength",
+        "fer_aggressor_absorption",
+        "fer_absorption_streak",
+        "fer_trapped_longs_score",
+        "fer_trapped_shorts_score",
+        "fer_impulse_failure_score",
+        "fer_impulse_failure_direction",
     ]
     for col in cvd_dependent_cols:
-        result[col] = result[col].where(cvd_active, np.nan)
+        result[col] = result[col].where(cvd_active, 0.0).fillna(0.0)
 
     return result

@@ -45,7 +45,7 @@ def create_ohlcv_with_cvd(n=500, seed=42):
     )
 
 
-# CVD 依赖列（无流动性时应为 NaN）
+# CVD 依赖列（无流动性时应为 0.0 中性值）
 CVD_DEPENDENT_COLS = [
     "fer_signed_efficiency",
     "fer_signed_efficiency_pct",
@@ -268,10 +268,10 @@ class TestFERFunctionalCorrectness:
 
 
 class TestFERCVDActivityMask:
-    """CVD 不活跃 / 缺失时的 NaN 行为"""
+    """CVD 不活跃 / 缺失时的 0.0 中性值行为 (不是 NaN)"""
 
-    def test_no_cvd_all_dependent_nan(self):
-        """无 CVD 输入 → 10 个 CVD 相关列全 NaN"""
+    def test_no_cvd_all_dependent_zero(self):
+        """无 CVD 输入 → 10 个 CVD 相关列全 0.0 (中性值，不是 NaN)"""
         data = create_ohlcv_with_cvd(n=300, seed=99)
         del data["cvd"]
         del data["cvd_change_5"]
@@ -279,16 +279,17 @@ class TestFERCVDActivityMask:
         result = compute_fer_failure_signals_from_series(**data)
 
         for col in CVD_DEPENDENT_COLS:
-            assert (
-                result[col].isna().all()
-            ), f"无 CVD 时 {col} 应全 NaN, 实际 valid={result[col].notna().sum()}"
+            assert (result[col] == 0.0).all(), (
+                f"无 CVD 时 {col} 应全 0.0, "
+                f"实际 non-zero={( result[col] != 0.0).sum()}"
+            )
 
         # 纯价量列不应受影响
         for col in PRICE_ONLY_COLS:
             assert result[col].notna().sum() > 0, f"无 CVD 时 {col} 不应全 NaN"
 
-    def test_zero_cvd_all_dependent_nan(self):
-        """CVD 全零 → CVD 相关列全 NaN（不是假的效率=0）"""
+    def test_zero_cvd_all_dependent_zero(self):
+        """CVD 全零 → CVD 相关列全 0.0 (不是假的效率=0)"""
         data = create_ohlcv_with_cvd(n=300, seed=88)
         data["cvd"] = pd.Series(0.0, index=data["close"].index)
         data["cvd_change_5"] = pd.Series(0.0, index=data["close"].index)
@@ -296,8 +297,9 @@ class TestFERCVDActivityMask:
         result = compute_fer_failure_signals_from_series(**data)
 
         for col in CVD_DEPENDENT_COLS:
-            assert result[col].isna().all(), (
-                f"CVD 全零时 {col} 应全 NaN, " f"实际 valid={result[col].notna().sum()}"
+            assert (result[col] == 0.0).all(), (
+                f"CVD 全零时 {col} 应全 0.0, "
+                f"实际 non-zero={( result[col] != 0.0).sum()}"
             )
 
     def test_cvd_active_has_valid_values(self):
@@ -310,7 +312,7 @@ class TestFERCVDActivityMask:
             assert valid_count > 100, f"{col} 有效值太少: {valid_count}/500"
 
     def test_partial_cvd_dropout(self):
-        """CVD 中间段归零 → 该段 CVD 相关列为 NaN"""
+        """CVD 中间段归零 → 该段 CVD 相关列为 0.0"""
         data = create_ohlcv_with_cvd(n=500, seed=55)
         # 将 200-300 段 CVD 设为常数（模拟丢数据）
         data["cvd"].iloc[200:300] = data["cvd"].iloc[199]
@@ -318,11 +320,106 @@ class TestFERCVDActivityMask:
 
         result = compute_fer_failure_signals_from_series(**data)
 
-        # 该段应有较多 NaN
-        nan_in_dropout = result["fer_signed_efficiency"].iloc[220:300].isna().sum()
+        # 该段 signed_efficiency 应为 0.0 (被 activity mask 置为中性值)
+        zero_in_dropout = (result["fer_signed_efficiency"].iloc[220:300] == 0.0).sum()
         assert (
-            nan_in_dropout > 30
-        ), f"CVD 静止段应产生较多 NaN, 实际 NaN={nan_in_dropout}/80"
+            zero_in_dropout > 30
+        ), f"CVD 静止段应产生较多 0.0, 实际 zero={zero_in_dropout}/80"
+
+
+# =============================================================================
+# 4b️⃣ CVD 中性值实盘安全性测试 (bug fix 回归测试)
+# =============================================================================
+
+
+class TestFERCVDNeutralValueLiveSafety:
+    """CVD 不活跃时输出 0.0，不被实盘 pd.isna() 丢弃"""
+
+    def test_inactive_cvd_no_nan_in_output(self):
+        """CVD 不活跃 → 12 列全部无 NaN (保证实盘不丢特征)"""
+        data = create_ohlcv_with_cvd(n=300, seed=99)
+        del data["cvd"]
+        del data["cvd_change_5"]
+
+        result = compute_fer_failure_signals_from_series(**data)
+
+        for col in ALL_COLS:
+            nan_count = result[col].isna().sum()
+            assert nan_count == 0, (
+                f"{col} 存在 {nan_count} 个 NaN，" f"实盘 pd.isna() 会丢弃这些特征"
+            )
+
+    def test_live_feature_extraction_preserves_all_fer(self):
+        """模拟实盘特征提取流程：即使 CVD 不活跃，12 列全部进入 features dict"""
+        data = create_ohlcv_with_cvd(n=300, seed=99)
+        del data["cvd"]
+        del data["cvd_change_5"]
+
+        result = compute_fer_failure_signals_from_series(**data)
+
+        # 模拟 incremental_feature_computer.py L1478-1485 的提取逻辑
+        last_row = result.iloc[-1].to_dict()
+        features = {}
+        for k, v in last_row.items():
+            if v is not None and np.isscalar(v) and not pd.isna(v):
+                features[k] = float(v)
+
+        for col in ALL_COLS:
+            assert col in features, (
+                f"{col} 未进入 features dict，" f"模型将收不到该特征"
+            )
+
+    def test_zero_cvd_live_extraction(self):
+        """CVD 全零 → 实盘提取保留所有 12 列"""
+        data = create_ohlcv_with_cvd(n=300, seed=88)
+        data["cvd"] = pd.Series(0.0, index=data["close"].index)
+        data["cvd_change_5"] = pd.Series(0.0, index=data["close"].index)
+
+        result = compute_fer_failure_signals_from_series(**data)
+
+        last_row = result.iloc[-1].to_dict()
+        features = {}
+        for k, v in last_row.items():
+            if v is not None and np.isscalar(v) and not pd.isna(v):
+                features[k] = float(v)
+
+        for col in ALL_COLS:
+            assert col in features, f"CVD 全零时 {col} 未进入 features dict"
+
+    def test_active_cvd_values_unchanged(self):
+        """CVD 活跃时，特征值不应被替换为 0.0"""
+        data = create_ohlcv_with_cvd(n=500, seed=42)
+        result = compute_fer_failure_signals_from_series(**data)
+
+        # warmup 之后的活跃区间应有非零值
+        # 离散稀疏信号 (flip/direction) 阈值较低
+        sparse_cols = {
+            "fer_efficiency_flip",
+            "fer_efficiency_flip_strength",
+            "fer_impulse_failure_direction",
+        }
+        for col in CVD_DEPENDENT_COLS:
+            valid = result[col].iloc[100:]
+            nonzero = (valid != 0.0).sum()
+            threshold = 10 if col in sparse_cols else 50
+            assert nonzero > threshold, (
+                f"CVD 活跃时 {col} 非零值太少: {nonzero}/400，"
+                f"可能误将有效值替换为 0.0"
+            )
+
+    def test_cvd_dependent_neutral_value_is_zero(self):
+        """CVD 不活跃时的中性值应为 0.0"""
+        data = create_ohlcv_with_cvd(n=300, seed=77)
+        del data["cvd"]
+        del data["cvd_change_5"]
+
+        result = compute_fer_failure_signals_from_series(**data)
+
+        for col in CVD_DEPENDENT_COLS:
+            unique_vals = result[col].unique()
+            assert len(unique_vals) == 1 and unique_vals[0] == 0.0, (
+                f"无 CVD 时 {col} 应只有 0.0，" f"实际: {sorted(unique_vals)[:5]}"
+            )
 
 
 # =============================================================================

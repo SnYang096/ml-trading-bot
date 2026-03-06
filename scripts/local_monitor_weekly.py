@@ -49,6 +49,10 @@ THRESHOLDS = {
     "direction_coverage_alert": 0.10,  # 绝对值偏离 10% → 🔴
     "drift_features_warn": 0.15,  # 15% 特征漂移 → 🟡
     "drift_features_alert": 0.30,  # 30% 特征漂移 → 🔴
+    "gate_rule_decay_warn": 0.30,  # 规则 hit_rate 衰减 30% → 🟡
+    "gate_rule_decay_alert": 0.50,  # 规则 hit_rate 衰减 50% → 🔴
+    "evidence_ic_decay_warn": 0.30,  # 特征 IC 衰减 30% → 🟡
+    "evidence_ic_decay_alert": 0.50,  # 特征 IC 衰减 50% → 🔴
 }
 
 
@@ -368,6 +372,209 @@ def check_feature_drift_quick(
 
 
 # ====================================================================
+# P5 Alpha Decay: Gate Rule Hit Rate 衰减检查
+# ====================================================================
+
+
+def check_l4_gate_rule_decay(
+    df,  # pd.DataFrame
+    strategy: str,
+    baseline_gate_hit_rates: Dict[str, Any],
+    config_root: str = "config/strategies",
+) -> Dict[str, Any]:
+    """检查 gate 规则 hit_rate 是否衰减.
+
+    对每条规则计算当前 deny_rate，对比 baseline deny_rate。
+    衰减 >50% → 该规则可能失效。
+    """
+    if not baseline_gate_hit_rates:
+        return {
+            "layer": "L4_gate_rule_decay",
+            "status": "⚪ SKIP",
+            "reason": "no baseline",
+        }
+
+    gate_path = PROJECT_ROOT / config_root / strategy / "archetypes" / "gate.yaml"
+    if not gate_path.exists():
+        return {
+            "layer": "L4_gate_rule_decay",
+            "status": "⚪ SKIP",
+            "reason": "no gate.yaml",
+        }
+
+    try:
+        gate_data = yaml.safe_load(gate_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {
+            "layer": "L4_gate_rule_decay",
+            "status": "⚪ SKIP",
+            "reason": "parse error",
+        }
+
+    hard_gates = gate_data.get("hard_gates", [])
+    if not hard_gates:
+        return {
+            "layer": "L4_gate_rule_decay",
+            "status": "⚪ SKIP",
+            "reason": "no rules",
+        }
+
+    decayed_rules = []
+    n_checked = 0
+
+    for gate in hard_gates:
+        gate_id = gate.get("id", "unknown")
+        when_clause = gate.get("when", {})
+        for feat, condition in when_clause.items():
+            if not isinstance(condition, dict) or feat not in df.columns:
+                continue
+            for op_key, threshold in condition.items():
+                rule_key = f"{gate_id}__{feat}__{op_key}"
+                bl = baseline_gate_hit_rates.get(rule_key)
+                if not bl:
+                    continue
+
+                col = df[feat]
+                if op_key == "value_lt":
+                    deny_mask = col < threshold
+                elif op_key == "value_gt":
+                    deny_mask = col > threshold
+                elif op_key == "value_le":
+                    deny_mask = col <= threshold
+                elif op_key == "value_ge":
+                    deny_mask = col >= threshold
+                else:
+                    continue
+
+                current_deny_rate = float(deny_mask.mean())
+                baseline_deny_rate = bl.get("deny_rate", 0)
+                n_checked += 1
+
+                if baseline_deny_rate > 0.001:
+                    decay = 1.0 - (current_deny_rate / baseline_deny_rate)
+                    if decay > THRESHOLDS["gate_rule_decay_warn"]:
+                        decayed_rules.append(
+                            {
+                                "rule": rule_key,
+                                "baseline_deny_rate": round(baseline_deny_rate, 4),
+                                "current_deny_rate": round(current_deny_rate, 4),
+                                "decay": round(decay, 4),
+                            }
+                        )
+
+    max_decay = max((r["decay"] for r in decayed_rules), default=0.0)
+    status = _status(
+        max_decay,
+        THRESHOLDS["gate_rule_decay_warn"],
+        THRESHOLDS["gate_rule_decay_alert"],
+    )
+
+    return {
+        "layer": "L4_gate_rule_decay",
+        "status": status,
+        "rules_checked": n_checked,
+        "rules_decayed": len(decayed_rules),
+        "max_decay": round(max_decay, 4),
+        "decayed_details": decayed_rules,
+    }
+
+
+# ====================================================================
+# P5 Alpha Decay: Evidence Feature IC 衰减检查
+# ====================================================================
+
+
+def check_l5_evidence_ic_decay(
+    df,  # pd.DataFrame
+    baseline_ics: Dict[str, float],
+    target_col: str = "forward_rr",
+) -> Dict[str, Any]:
+    """检查 Evidence 特征的 Spearman IC 是否衰减.
+
+    计算每个特征与实际收益的滚动 IC，对比训练期 baseline。
+    IC 跌破 50% → 特征预测力衰减。
+    """
+    if not baseline_ics:
+        return {
+            "layer": "L5_evidence_ic_decay",
+            "status": "⚪ SKIP",
+            "reason": "no baseline ICs",
+        }
+
+    # Find target column
+    if target_col not in df.columns:
+        for alt in ["rr", "return_atr", "bpc_impulse_return_atr"]:
+            if alt in df.columns:
+                target_col = alt
+                break
+        else:
+            return {
+                "layer": "L5_evidence_ic_decay",
+                "status": "⚪ SKIP",
+                "reason": "no target column",
+            }
+
+    from scipy.stats import spearmanr
+
+    target = df[target_col].values
+    valid_mask = ~np.isnan(target.astype(np.float64))
+
+    decayed_features = []
+    n_checked = 0
+
+    for feat, baseline_ic in baseline_ics.items():
+        if feat not in df.columns:
+            continue
+        if abs(baseline_ic) < 0.01:  # Skip near-zero IC features
+            continue
+
+        vals = df[feat].values.astype(np.float64)
+        both_valid = valid_mask & ~np.isnan(vals)
+        if both_valid.sum() < 30:
+            continue
+
+        try:
+            rho, _ = spearmanr(vals[both_valid], target[both_valid])
+            if not np.isfinite(rho):
+                continue
+        except Exception:
+            continue
+
+        n_checked += 1
+        # Decay: how much IC has decreased relative to baseline
+        # IC can be positive or negative; compare absolute values
+        if abs(baseline_ic) > 0.01:
+            decay = 1.0 - (abs(rho) / abs(baseline_ic))
+            if decay > THRESHOLDS["evidence_ic_decay_warn"]:
+                decayed_features.append(
+                    {
+                        "feature": feat,
+                        "baseline_ic": round(baseline_ic, 4),
+                        "current_ic": round(float(rho), 4),
+                        "decay": round(decay, 4),
+                    }
+                )
+
+    max_decay = max((f["decay"] for f in decayed_features), default=0.0)
+    status = _status(
+        max_decay,
+        THRESHOLDS["evidence_ic_decay_warn"],
+        THRESHOLDS["evidence_ic_decay_alert"],
+    )
+
+    return {
+        "layer": "L5_evidence_ic_decay",
+        "status": status,
+        "features_checked": n_checked,
+        "features_decayed": len(decayed_features),
+        "max_decay": round(max_decay, 4),
+        "decayed_details": sorted(
+            decayed_features, key=lambda x: x["decay"], reverse=True
+        )[:10],
+    }
+
+
+# ====================================================================
 # Main
 # ====================================================================
 
@@ -421,6 +628,18 @@ def run_weekly_check(
     l4_kpi = layer_kpis.get("L4_gate", {})
     gate = check_l4_gate(df, strategy, l4_kpi, config_root)
     checks.append(gate)
+
+    # L4b: Gate Rule Hit Rate Decay (P5 Alpha Decay)
+    gate_rule_hit_rates = baseline.get("gate_rule_hit_rates", {})
+    gate_rule_decay = check_l4_gate_rule_decay(
+        df, strategy, gate_rule_hit_rates, config_root
+    )
+    checks.append(gate_rule_decay)
+
+    # L5: Evidence IC Decay (P5 Alpha Decay)
+    evidence_ics = baseline.get("evidence_feature_ics", {})
+    evidence_ic_decay = check_l5_evidence_ic_decay(df, evidence_ics)
+    checks.append(evidence_ic_decay)
 
     # ── 汇总 ──
     statuses = [c.get("status", "⚪ SKIP") for c in checks]

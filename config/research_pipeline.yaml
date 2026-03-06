@@ -142,6 +142,7 @@ retrain_triggers:
   sharpe_decay_ratio: 0.5      # 实盘滚动Sharpe / 回测Sharpe < 50% → 触发
   consecutive_losses: 8        # 连续亏损次数 >= 8 → 触发
   max_data_age_days: 120       # 上次训练距今 > 120 天 → 触发
+  leading_indicator_decay: 0.5 # P5: Gate hit_rate 或 Evidence IC 衰减超 50% → 触发
 
 # ── Deploy 门禁 (config/ → live/ 的前置条件) ────────────────────
 # 触发场景: 不是每次研究变了就 deploy, 而是:

@@ -7623,6 +7623,46 @@ features:
       shd_pct: shd_pct
       ofci_pct: ofci_pct
 
+  # ================================================================
+  # P5 非平稳性: Regime State / OOD Score
+  # ================================================================
+
+  regime_state_f:
+    module: baseline_features
+    compute_func: compute_regime_state_from_df
+    dependencies:
+    - atr_percentile_f
+    - oi_features_f
+    - funding_rate_features_f
+    required_columns:
+    - atr_percentile
+    - oi_zscore
+    - funding_rate_abs_zscore_50
+    output_columns:
+    - regime_state
+    category: regime
+    description: "Regime state (0=NORMAL, 1=HIGH_VOL, 2=HIGH_LEVERAGE). Replicates RegimeDetector logic as a feature for Gate/Evidence tree models."
+    pass_full_df: true
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        regime_state: categorical_int
+
+  ood_score_f:
+    module: baseline_features
+    compute_func: compute_ood_score_from_df
+    dependencies: []
+    required_columns: []
+    output_columns:
+    - ood_score
+    category: regime
+    description: "Out-of-distribution score: fraction of features outside training [q05, q95]. Higher = more OOD. Injected into Evidence so tree auto-downgrades OOD samples."
+    pass_full_df: true
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        ood_score: bounded_0_1
+
 # ================================================================
 # 未归一化 / 尺度依赖的输出列 (cross-asset scan 时必须排除)
 # ================================================================

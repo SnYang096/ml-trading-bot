@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from typing import Optional, Tuple, List, Dict
 from sklearn.linear_model import LinearRegression
 
@@ -99,7 +100,7 @@ def compute_macd_from_series(
     atr_period: int = 14,
 ) -> pd.DataFrame:
     """Narrow-IO MACD, normalized by ATR.
-    
+
     Returns:
         DataFrame with macd, macd_signal, macd_histogram, all normalized by ATR.
         This makes MACD cross-asset comparable.
@@ -107,20 +108,24 @@ def compute_macd_from_series(
     """
     macd_line, signal_line, histogram = compute_macd(series, fast, slow, signal)
     atr = compute_atr(high, low, close, atr_period)
-    
+
     # Normalize by ATR
     eps = 1e-8
     atr_safe = atr.replace(0, np.nan).fillna(eps)
-    
+
     macd_norm = (macd_line / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    signal_norm = (signal_line / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    signal_norm = (
+        (signal_line / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    )
     hist_norm = (histogram / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    
-    return pd.DataFrame({
-        "macd_atr": macd_norm,
-        "macd_signal_atr": signal_norm,
-        "macd_histogram_atr": hist_norm,
-    })
+
+    return pd.DataFrame(
+        {
+            "macd_atr": macd_norm,
+            "macd_signal_atr": signal_norm,
+            "macd_histogram_atr": hist_norm,
+        }
+    )
 
 
 @register_feature("compute_bollinger_bands", category="baseline")
@@ -1426,8 +1431,7 @@ def _add_breakout_quality_features(
                     dist1 = abs(nearest_sr - current_price)
                     dist2 = abs(data[col] - current_price)
                     nearest_sr = pd.Series(
-                        np.where(dist2 < dist1, data[col], nearest_sr),
-                        index=data.index
+                        np.where(dist2 < dist1, data[col], nearest_sr), index=data.index
                     )
 
         for i in range(3, len(data)):
@@ -2116,10 +2120,7 @@ def compute_atr_percentile(
         current = arr[-1]
         return float(np.mean(arr <= current))
 
-    pct = (
-        series.rolling(window=window, min_periods=window)
-        .apply(_percentile, raw=True)
-    )
+    pct = series.rolling(window=window, min_periods=window).apply(_percentile, raw=True)
     if shift:
         pct = pct.shift(shift)
     df["atr_percentile"] = pct.clip(0.0, 1.0)
@@ -3424,36 +3425,47 @@ def compute_bb_width_features_from_series(
 ) -> pd.DataFrame:
     """
     Narrow-input / narrow-output BB width computation for the feature pipeline.
-    
+
     Returns only normalized features (no raw price levels):
     - bb_width_normalized: BB width / ATR (cross-asset comparable, ~[0, 5])
     - bb_position: (close - bb_lower) / (bb_upper - bb_lower) (bounded [0, 1])
-    
+
     Used with YAML `pass_full_df: false` + `column_mappings` to avoid passing/mutating
     a wide DataFrame.
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     high = pd.to_numeric(high, errors="coerce").astype(float)
     low = pd.to_numeric(low, errors="coerce").astype(float)
-    
+
     # Compute Bollinger Bands
-    upper, middle, lower = compute_bollinger_bands(close, period=period, std_dev=std_dev)
-    
+    upper, middle, lower = compute_bollinger_bands(
+        close, period=period, std_dev=std_dev
+    )
+
     # Compute ATR for normalization
     atr = compute_atr(high, low, close, period=atr_window)
-    
+
     # BB width normalized by ATR
     width = (upper - lower).abs()
-    bb_width_norm = (width / atr.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    
+    bb_width_norm = (
+        (width / atr.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    )
+
     # BB position: where is close within the band? 0=lower, 1=upper
     bb_range = (upper - lower).replace(0, np.nan)
-    bb_position = ((close - lower) / bb_range).replace([np.inf, -np.inf], np.nan).fillna(0.5).clip(0.0, 1.0)
-    
-    return pd.DataFrame({
-        "bb_width_normalized": bb_width_norm,
-        "bb_position": bb_position,
-    })
+    bb_position = (
+        ((close - lower) / bb_range)
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.5)
+        .clip(0.0, 1.0)
+    )
+
+    return pd.DataFrame(
+        {
+            "bb_width_normalized": bb_width_norm,
+            "bb_position": bb_position,
+        }
+    )
 
 
 @register_feature("compute_roc_5_from_series", category="baseline")
@@ -3741,10 +3753,7 @@ def compute_atr_percentile_from_series(
         current = arr[-1]
         return float(np.mean(arr <= current))
 
-    pct = (
-        atr.rolling(window=window, min_periods=window)
-        .apply(_percentile, raw=True)
-    )
+    pct = atr.rolling(window=window, min_periods=window).apply(_percentile, raw=True)
     if shift:
         pct = pct.shift(shift)
     out = pct.clip(0.0, 1.0).rename("atr_percentile")
@@ -3761,14 +3770,14 @@ def compute_percentile_rank_from_series(
 ) -> pd.DataFrame:
     """
     Compute percentile rank of a series using rolling window.
-    
+
     This is a generic function for computing percentile ranks of any feature.
     Used for features like cvd_change_5_pct, volume_ratio_pct, etc.
 
     warmup 不足（前 window-1 行）保持 NaN，禁止静默降级为 0.5。
     """
     series = pd.to_numeric(series, errors="coerce").astype(float)
-    
+
     def _percentile(arr: np.ndarray) -> float:
         if len(arr) == 0:
             return np.nan
@@ -3777,11 +3786,8 @@ def compute_percentile_rank_from_series(
         if len(history) == 0:
             return np.nan
         return float(np.mean(history <= current))
-    
-    pct = (
-        series.rolling(window=window, min_periods=window)
-        .apply(_percentile, raw=True)
-    )
+
+    pct = series.rolling(window=window, min_periods=window).apply(_percentile, raw=True)
     if shift:
         pct = pct.shift(shift)
     out = pct.clip(0.0, 1.0).rename(output_name)
@@ -3814,18 +3820,18 @@ def compute_volume_ratio_pct_from_series(
 ) -> pd.DataFrame:
     """
     自包含版本：内部计算 volume_ratio 再转百分位
-    
+
     1. volume_ratio = volume / rolling_mean(volume)
     2. volume_ratio_pct = percentile_rank(volume_ratio)
     """
     vol = pd.to_numeric(volume, errors="coerce").astype(float)
-    
+
     # Step 1: 计算 volume_ratio
     rolling_mean = vol.rolling(window=ratio_window, min_periods=1).mean()
     rolling_mean_safe = rolling_mean.replace(0, np.nan)
     ratio = vol / rolling_mean_safe
     ratio = ratio.replace([np.inf, -np.inf], np.nan).clip(0.0, 10.0).fillna(1.0)
-    
+
     # Step 2: 转百分位
     return compute_percentile_rank_from_series(
         series=ratio,
@@ -3849,24 +3855,28 @@ def compute_bb_width_normalized_pct_from_series(
 ) -> pd.DataFrame:
     """
     自包含版本：内部计算 bb_width_normalized 再转百分位
-    
+
     1. bb_width_normalized = BB_width / ATR (跨资产可比)
     2. bb_width_normalized_pct = percentile_rank(bb_width_normalized)
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     high = pd.to_numeric(high, errors="coerce").astype(float)
     low = pd.to_numeric(low, errors="coerce").astype(float)
-    
+
     # Step 1: 计算 BB bands
-    upper, middle, lower = compute_bollinger_bands(close, period=bb_period, std_dev=bb_std_dev)
-    
+    upper, middle, lower = compute_bollinger_bands(
+        close, period=bb_period, std_dev=bb_std_dev
+    )
+
     # Step 2: 计算 ATR
     atr = compute_atr(high, low, close, period=atr_window)
-    
+
     # Step 3: BB width normalized by ATR
     width = (upper - lower).abs()
-    bb_width_norm = (width / atr.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    
+    bb_width_norm = (
+        (width / atr.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    )
+
     # Step 4: 转百分位
     return compute_percentile_rank_from_series(
         series=bb_width_norm,
@@ -3876,7 +3886,9 @@ def compute_bb_width_normalized_pct_from_series(
     )
 
 
-@register_feature("compute_cvd_change_5_normalized_pct_from_series", category="baseline")
+@register_feature(
+    "compute_cvd_change_5_normalized_pct_from_series", category="baseline"
+)
 def compute_cvd_change_5_normalized_pct_from_series(
     *,
     cvd_change_5_normalized: pd.Series,
@@ -3903,13 +3915,13 @@ def _compute_jump_risk_from_series(
     """Compute jump risk (max abs return / std of returns)."""
     close = pd.to_numeric(close, errors="coerce").astype(float)
     atr = pd.to_numeric(atr, errors="coerce").astype(float)
-    
+
     if len(close) < window:
         return pd.Series(np.nan, index=close.index)
-    
+
     returns = close.pct_change().fillna(0.0)
     jump_risk = pd.Series(np.nan, index=close.index)
-    
+
     for i in range(window, len(close)):
         window_returns = returns.iloc[i - window : i]
         if not window_returns.isna().all():
@@ -3917,7 +3929,7 @@ def _compute_jump_risk_from_series(
             std_ret = window_returns.std()
             if std_ret > 1e-9:
                 jump_risk.iloc[i] = max_abs_ret / std_ret
-    
+
     return jump_risk
 
 
@@ -3961,15 +3973,15 @@ def _compute_path_length_from_series(
     """Rolling path length in ATR units (sum of abs returns / ATR)."""
     close = pd.to_numeric(close, errors="coerce").astype(float)
     atr = pd.to_numeric(atr, errors="coerce").astype(float)
-    
+
     if len(close) < window:
         return pd.Series(np.nan, index=close.index)
-    
+
     diffs = close.diff().abs().fillna(0.0)
     atr_safe = atr + 1e-9
     path = diffs / atr_safe
     path_length = path.rolling(window=window, min_periods=window).sum()
-    
+
     return path_length
 
 
@@ -4002,29 +4014,29 @@ def _compute_path_efficiency_from_series(
     """Compute path efficiency: net_displacement / total_path_length."""
     close = pd.to_numeric(close, errors="coerce").astype(float)
     atr = pd.to_numeric(atr, errors="coerce").astype(float)
-    
+
     if len(close) < window:
         return pd.Series(np.nan, index=close.index)
-    
+
     # Net displacement: absolute change in price over window
     net_displacement = close.rolling(window=window).apply(
         lambda x: abs(x.iloc[-1] - x.iloc[0]) if len(x) == window else np.nan,
         raw=False,
     )
-    
+
     # Total path length: sum of absolute returns over window
     diffs = close.diff().abs().fillna(0.0)
     atr_safe = atr + 1e-9
     path = diffs / atr_safe
     total_path_length = path.rolling(window=window, min_periods=window).sum()
-    
+
     # Normalize net_displacement by ATR
     net_displacement_atr = net_displacement / atr_safe
-    
+
     # Path efficiency: net_displacement / total_path_length
     path_efficiency = net_displacement_atr / total_path_length.replace(0, np.nan)
     path_efficiency = path_efficiency.clip(0.0, 1.0).fillna(np.nan)
-    
+
     return path_efficiency
 
 
@@ -4038,7 +4050,9 @@ def compute_path_efficiency_pct_from_series(
     shift: int = 1,
 ) -> pd.DataFrame:
     """Compute path_efficiency and its percentile rank."""
-    path_efficiency = _compute_path_efficiency_from_series(close=close, atr=atr, window=window)
+    path_efficiency = _compute_path_efficiency_from_series(
+        close=close, atr=atr, window=window
+    )
     path_efficiency_pct = compute_percentile_rank_from_series(
         series=path_efficiency,
         window=percentile_window,
@@ -4055,15 +4069,15 @@ def _compute_price_direction_consistency_from_series(
 ) -> pd.Series:
     """Compute rolling consistency of actual price direction (sign of returns)."""
     close = pd.to_numeric(close, errors="coerce").astype(float)
-    
+
     if len(close) < window:
         return pd.Series(np.nan, index=close.index)
-    
+
     returns = close.diff().fillna(0.0)
     signs = np.sign(returns)
     # abs(mean(sign)) = 1 if stable direction, ~0 if flipping
     consistency = signs.rolling(window=window, min_periods=window).mean().abs()
-    
+
     return consistency
 
 
@@ -4076,7 +4090,9 @@ def compute_price_dir_consistency_pct_from_series(
     shift: int = 1,
 ) -> pd.DataFrame:
     """Compute price_dir_consistency and its percentile rank."""
-    price_dir_consistency = _compute_price_direction_consistency_from_series(close=close, window=window)
+    price_dir_consistency = _compute_price_direction_consistency_from_series(
+        close=close, window=window
+    )
     price_dir_consistency_pct = compute_percentile_rank_from_series(
         series=price_dir_consistency,
         window=percentile_window,
@@ -4160,7 +4176,9 @@ def compute_compression_duration_from_series(
 
     # Normalize to a unitless ratio for cross-asset/timeframe comparability.
     denom = float(percentile_window) if float(percentile_window) > 0 else 1.0
-    out = (pd.Series(run, index=close.index, name="compression_duration") / denom).clip(0.0, 1.0)
+    out = (pd.Series(run, index=close.index, name="compression_duration") / denom).clip(
+        0.0, 1.0
+    )
     return out
 
 
@@ -4239,35 +4257,35 @@ def compute_sma_position_from_series(
 ) -> pd.DataFrame:
     """
     计算价格相对于 SMA 200 的归一化位置
-    
+
     归一化方式: (close - sma_200) / close
     - 正值：价格在 SMA 上方（多头趋势）
     - 负值：价格在 SMA 下方（空头趋势）
     - 范围通常在 [-0.3, 0.3] 之间
-    
+
     这个归一化方式使得不同价格水平的资产可以直接比较：
     - BTC: close=50000, sma_200=48000 → position = (50000-48000)/50000 = 0.04
     - ETH: close=3000, sma_200=2880 → position = (3000-2880)/3000 = 0.04
-    
+
     两者都表示"价格比 SMA 高 4%"，可以直接比较。
-    
+
     Returns:
         DataFrame with column: sma_200_position
     """
     close_clean = pd.to_numeric(close, errors="coerce").astype(float)
     sma_clean = pd.to_numeric(sma_200, errors="coerce").astype(float)
-    
+
     # 避免除以零
     close_safe = close_clean.replace(0, np.nan)
-    
+
     # (close - sma_200) / close
     position = (close_clean - sma_clean) / close_safe
-    
+
     # 清理极端值
     position = position.replace([np.inf, -np.inf], np.nan)
     position = position.clip(-1.0, 1.0)  # 限制在 [-1, 1] 范围内
     position = position.fillna(0.0)
-    
+
     return pd.DataFrame({"sma_200_position": position}, index=close.index)
 
 
@@ -4291,7 +4309,9 @@ def compute_vwap_position_from_series(
     vol_clean = pd.to_numeric(volume, errors="coerce").astype(float)
 
     vol_roll = vol_clean.rolling(window=window, min_periods=1).sum()
-    vwap = (close_clean * vol_clean).rolling(window=window, min_periods=1).sum() / vol_roll
+    vwap = (close_clean * vol_clean).rolling(
+        window=window, min_periods=1
+    ).sum() / vol_roll
 
     close_safe = close_clean.replace(0, np.nan)
     vwap_safe = vwap.replace(0, np.nan)
@@ -4303,7 +4323,9 @@ def compute_vwap_position_from_series(
         price_to_vwap_pct.replace([np.inf, -np.inf], np.nan).clip(-1.0, 1.0).fillna(0.0)
     )
     price_to_vwap_ratio = (
-        price_to_vwap_ratio.replace([np.inf, -np.inf], np.nan).clip(0.2, 5.0).fillna(1.0)
+        price_to_vwap_ratio.replace([np.inf, -np.inf], np.nan)
+        .clip(0.2, 5.0)
+        .fillna(1.0)
     )
 
     return pd.DataFrame(
@@ -4323,33 +4345,33 @@ def compute_volume_ratio_from_series(
 ) -> pd.DataFrame:
     """
     计算成交量相对于均值的归一化比率
-    
+
     归一化方式: volume / rolling_mean_volume
     - 值 = 1.0：成交量等于均值
     - 值 > 1.0：成交量高于均值（放量）
     - 值 < 1.0：成交量低于均值（缩量）
-    
+
     这个归一化方式使得不同资产的成交量可以直接比较。
-    
+
     Returns:
         DataFrame with column: volume_ratio
     """
     vol = pd.to_numeric(volume, errors="coerce").astype(float)
-    
+
     # 滚动均值（因果性：只使用历史数据）
     rolling_mean = vol.rolling(window=window, min_periods=1).mean()
-    
+
     # 避免除以零
     rolling_mean_safe = rolling_mean.replace(0, np.nan)
-    
+
     # volume / rolling_mean
     ratio = vol / rolling_mean_safe
-    
+
     # 清理极端值
     ratio = ratio.replace([np.inf, -np.inf], np.nan)
     ratio = ratio.clip(0.0, 10.0)  # 限制在 [0, 10] 范围内
     ratio = ratio.fillna(1.0)  # 默认为 1.0（等于均值）
-    
+
     return pd.DataFrame({"volume_ratio": ratio}, index=volume.index)
 
 
@@ -4429,7 +4451,12 @@ def compute_compression_to_breakout_prob_from_series(
     - compression_duration: already normalized to [0,1]
     - roc_5: rolling z-score signal -> squash with sigmoid to [0,1]
     """
-    cd = pd.to_numeric(compression_duration, errors="coerce").astype(float).fillna(0.0).clip(0.0, 1.0)
+    cd = (
+        pd.to_numeric(compression_duration, errors="coerce")
+        .astype(float)
+        .fillna(0.0)
+        .clip(0.0, 1.0)
+    )
     r = pd.to_numeric(roc_5, errors="coerce").astype(float).fillna(0.0)
     mom = (1.0 / (1.0 + np.exp(-r))).clip(0.0, 1.0)
     out = (cd * mom).rename("compression_to_breakout_prob")
@@ -4536,13 +4563,13 @@ def compute_poc_hal_features_from_series(
 ) -> pd.DataFrame:
     """
     Narrow-IO POC/HAL computation with normalized outputs.
-    
+
     Returns normalized features (distance from close / ATR):
     - poc: (poc_raw - close) / ATR, typical range [-3, 3]
     - hal_high: (hal_high_raw - close) / ATR
     - hal_low: (hal_low_raw - close) / ATR
     - hal_mid: (hal_mid_raw - close) / ATR
-    
+
     These normalized values represent "how many ATRs away" the SR level is,
     making them cross-asset comparable.
     """
@@ -4550,14 +4577,16 @@ def compute_poc_hal_features_from_series(
     low_s = pd.to_numeric(low, errors="coerce").astype(float)
     close_s = pd.to_numeric(close, errors="coerce").astype(float)
     volume_s = pd.to_numeric(volume, errors="coerce").astype(float)
-    
-    df = pd.DataFrame({
-        "high": high_s,
-        "low": low_s,
-        "close": close_s,
-        "volume": volume_s,
-    })
-    
+
+    df = pd.DataFrame(
+        {
+            "high": high_s,
+            "low": low_s,
+            "close": close_s,
+            "volume": volume_s,
+        }
+    )
+
     if price_col and price_col not in df.columns:
         if (
             price_col == "wpt_price_reconstructed"
@@ -4576,24 +4605,42 @@ def compute_poc_hal_features_from_series(
         poc_window=poc_window,
         price_col=price_col,
     )
-    
+
     # Compute ATR for normalization
     atr = compute_atr(high_s, low_s, close_s, period=atr_period)
     atr_safe = atr.replace(0, np.nan).fillna(1e-8)
-    
+
     # Normalize: (level - close) / ATR
     eps = 1e-8
-    poc_norm = ((out["poc"] - close_s) / (atr_safe + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    hal_high_norm = ((out["hal_high"] - close_s) / (atr_safe + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    hal_low_norm = ((out["hal_low"] - close_s) / (atr_safe + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    hal_mid_norm = ((out["hal_mid"] - close_s) / (atr_safe + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    
-    return pd.DataFrame({
-        "poc": poc_norm,
-        "hal_high": hal_high_norm,
-        "hal_low": hal_low_norm,
-        "hal_mid": hal_mid_norm,
-    }).reindex(index=df.index)
+    poc_norm = (
+        ((out["poc"] - close_s) / (atr_safe + eps))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+    hal_high_norm = (
+        ((out["hal_high"] - close_s) / (atr_safe + eps))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+    hal_low_norm = (
+        ((out["hal_low"] - close_s) / (atr_safe + eps))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+    hal_mid_norm = (
+        ((out["hal_mid"] - close_s) / (atr_safe + eps))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+
+    return pd.DataFrame(
+        {
+            "poc": poc_norm,
+            "hal_high": hal_high_norm,
+            "hal_low": hal_low_norm,
+            "hal_mid": hal_mid_norm,
+        }
+    ).reindex(index=df.index)
 
 
 @register_feature("compute_sqs_from_sr_price_series", category="baseline")
@@ -4740,12 +4787,12 @@ def compute_sr_strength_max_from_series(
 ) -> pd.DataFrame:
     """
     Narrow-IO SR strength computation (returns only declared outputs).
-    
+
     Returns normalized features:
     - sr_strength_max: already [0, 1] bounded (SQS strength)
     - dist_to_nearest_sr: normalized by ATR (how many ATRs away), typical [-3, 3]
     - direction_to_nearest_sr: -1 (below) or +1 (above), already normalized
-    
+
     Note: poc, hal_high, hal_low inputs are expected to be normalized (from close / ATR).
     We need to "un-normalize" them to compute distances, then normalize the output.
     """
@@ -4753,14 +4800,18 @@ def compute_sr_strength_max_from_series(
     low_s = pd.to_numeric(low, errors="coerce").astype(float)
     close_s = pd.to_numeric(close, errors="coerce").astype(float)
     atr_s = pd.to_numeric(atr, errors="coerce").astype(float)
-    
+
     # Note: poc, hal_high, hal_low are now normalized inputs (distance / ATR)
     # We need to convert them back to price levels for internal computation
     # normalized = (price - close) / atr => price = normalized * atr + close
     poc_raw = pd.to_numeric(poc, errors="coerce").astype(float) * atr_s + close_s
-    hal_high_raw = pd.to_numeric(hal_high, errors="coerce").astype(float) * atr_s + close_s
-    hal_low_raw = pd.to_numeric(hal_low, errors="coerce").astype(float) * atr_s + close_s
-    
+    hal_high_raw = (
+        pd.to_numeric(hal_high, errors="coerce").astype(float) * atr_s + close_s
+    )
+    hal_low_raw = (
+        pd.to_numeric(hal_low, errors="coerce").astype(float) * atr_s + close_s
+    )
+
     data = pd.DataFrame(
         {
             "high": high_s,
@@ -4809,16 +4860,22 @@ def compute_sr_strength_max_from_series(
         data["open"] = data["close"]  # 使用 close 作为默认值
     if "volume" not in data.columns:
         data["volume"] = pd.Series(0.0, index=data.index)  # 使用默认值
-    
+
     data = _add_price_action_features(data, boundaries, compression_series=None)
 
     # Normalize dist_to_nearest_sr by ATR
     # dist_to_nearest_sr is a percentage (dist / close), convert to ATR multiples
-    dist_raw = pd.to_numeric(data["dist_to_nearest_sr"], errors="coerce").fillna(0.0).astype(float)
+    dist_raw = (
+        pd.to_numeric(data["dist_to_nearest_sr"], errors="coerce")
+        .fillna(0.0)
+        .astype(float)
+    )
     # dist_raw is (sr_price - close) / close = pct distance
     # We want: (sr_price - close) / atr = dist_raw * close / atr
     atr_safe = atr_s.replace(0, np.nan).fillna(1e-8)
-    dist_norm = (dist_raw * close_s / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    dist_norm = (
+        (dist_raw * close_s / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    )
 
     out = pd.DataFrame(index=data.index)
     out["sr_strength_max"] = pd.Series(sr_max, index=data.index).astype(float)
@@ -4829,6 +4886,112 @@ def compute_sr_strength_max_from_series(
         .astype(float)
     )
     return out
+
+
+# ============================================================================
+# P5 非平稳性: Regime State / OOD Score
+# ============================================================================
+
+
+@register_feature("compute_regime_state_from_df", category="baseline")
+def compute_regime_state_from_df(
+    df: pd.DataFrame,
+    **kwargs,
+) -> pd.DataFrame:
+    """Regime state as a feature — replicates RegimeDetector logic from live_pcm.py.
+
+    Detection order (strict → loose):
+      2 = HIGH_LEVERAGE : oi_zscore > 1.5  AND  funding_rate_abs_zscore > 2.0
+      1 = HIGH_VOL      : atr_percentile > 0.7
+      0 = NORMAL         : default
+
+    If required columns are missing, defaults to 0 (NORMAL).
+
+    Returns:
+        DataFrame with column 'regime_state' (int: 0/1/2).
+    """
+    n = len(df)
+    regime = np.zeros(n, dtype=np.int8)
+
+    has_atr_pct = "atr_percentile" in df.columns
+    has_oi_z = "oi_zscore" in df.columns
+    has_fr_z = "funding_rate_abs_zscore_50" in df.columns
+
+    if has_atr_pct:
+        high_vol_mask = df["atr_percentile"].values > 0.7
+        regime[high_vol_mask] = 1
+
+    if has_oi_z and has_fr_z:
+        high_lev_mask = (df["oi_zscore"].values > 1.5) & (
+            df["funding_rate_abs_zscore_50"].values > 2.0
+        )
+        # HIGH_LEVERAGE overrides HIGH_VOL (stricter condition)
+        regime[high_lev_mask] = 2
+
+    return pd.DataFrame({"regime_state": regime}, index=df.index)
+
+
+@register_feature("compute_ood_score_from_df", category="baseline")
+def compute_ood_score_from_df(
+    df: pd.DataFrame,
+    *,
+    baseline: Optional[Dict[str, Dict[str, float]]] = None,
+    baseline_path: Optional[str] = None,
+    **kwargs,
+) -> pd.DataFrame:
+    """Out-of-distribution score — fraction of features outside training [q05, q95].
+
+    For each row, count how many features fall outside their training-period
+    5th / 95th percentile range, then normalise by total checked features.
+    Result is in [0, 1]; higher = more OOD.
+
+    Args:
+        df: full feature DataFrame
+        baseline: {feat_name: {"q05": float, "q95": float, ...}}
+                  If None, tries to load from *baseline_path*.
+        baseline_path: path to feature_baseline.json (training_baseline.json)
+
+    Returns:
+        DataFrame with column 'ood_score' in [0.0, 1.0].
+    """
+    import json as _json
+
+    # Resolve baseline dict
+    if baseline is None and baseline_path:
+        try:
+            _p = (
+                Path(baseline_path)
+                if not isinstance(baseline_path, Path)
+                else baseline_path
+            )
+            _raw = _json.loads(_p.read_text(encoding="utf-8"))
+            baseline = _raw.get("feature_distributions", _raw)
+        except Exception:
+            baseline = None
+
+    n = len(df)
+    if not baseline:
+        return pd.DataFrame({"ood_score": np.full(n, 0.0)}, index=df.index)
+
+    # Vectorised: iterate features, accumulate OOD count per row
+    ood_counts = np.zeros(n, dtype=np.float64)
+    n_checked = 0
+    for feat, stats in baseline.items():
+        if feat not in df.columns:
+            continue
+        q05 = stats.get("q05") if stats.get("q05") is not None else stats.get("p5")
+        q95 = stats.get("q95") if stats.get("q95") is not None else stats.get("p95")
+        if q05 is None or q95 is None:
+            continue
+        vals = df[feat].values.astype(np.float64)
+        ood_mask = (vals < float(q05)) | (vals > float(q95))
+        # NaN → not counted as OOD
+        ood_mask[np.isnan(vals)] = False
+        ood_counts += ood_mask.astype(np.float64)
+        n_checked += 1
+
+    ood_score = ood_counts / max(n_checked, 1)
+    return pd.DataFrame({"ood_score": ood_score.clip(0.0, 1.0)}, index=df.index)
 
 
 # ============================================================================
@@ -4854,4 +5017,6 @@ __all__ = [
     "add_ols_channel_features",
     "add_price_volume_relative_features",
     "add_common_derived_features",
+    "compute_regime_state_from_df",
+    "compute_ood_score_from_df",
 ]

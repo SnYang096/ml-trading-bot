@@ -133,6 +133,10 @@ feature_pipeline:
     - wpt_cvd_fluctuation_f               # CVD波动分解
     - wpt_price_reconstructed_f
     - hilbert_phase_f         # Hilbert 变换（包络+相位）
+
+    # ========== P5 非平稳性: Regime 特征 ==========
+    - regime_state_f           # Regime 状态 (0=NORMAL, 1=HIGH_VOL, 2=HIGH_LEVERAGE)
+
   ensure_signal_column:
     name: signal
     default_value: 0

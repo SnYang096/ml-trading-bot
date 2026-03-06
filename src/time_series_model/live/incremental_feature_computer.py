@@ -1691,6 +1691,15 @@ class IncrementalFeatureComputer:
                 METRICS.feature_critical_nan.labels(symbol=sym, timeframe=tf).set(
                     1 if critical_nan else 0
                 )
+                # P5: regime_state / ood_score
+                if "regime_state" in features:
+                    METRICS.regime_state.labels(symbol=sym, timeframe=tf).set(
+                        features["regime_state"]
+                    )
+                if "ood_score" in features:
+                    METRICS.ood_score.labels(symbol=sym, timeframe=tf).set(
+                        features["ood_score"]
+                    )
             except Exception:
                 pass  # Prometheus optional
 

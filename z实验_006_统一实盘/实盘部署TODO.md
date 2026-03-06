@@ -597,6 +597,9 @@ python scripts/local_monitor_weekly.py --data data/live_latest.parquet --strateg
 | P3     | LV 策略                               | 15min timeframe，Feature Store 计算成本高                                                                                                                      | 三策略稳定后        |
 | P2     | Telegram 告警通道                     | alerter.py + Telegram Bot (从 Phase 1.2.3 移入)                                                                                                                | 线上运行稳定后      |
 | P3     | 可视化 Dashboard                      | Streamlit/Flask 页面                                                                                                                                           | 有空时              |
+| **P1** | **Regime→Gate/Evidence 联动**         | `regime_state` 特征注入 Gate/Evidence，树模型自动学 regime-conditional 规则。复用 `RegimeDetector` 逻辑                                                        | 管线下次重训        |
+| **P2** | **OOD 检测器**                        | `ood_score` 特征注入 Evidence，基于训练期特征分布 (q05/q95) 计算偏离比例。高 OOD → Evidence 自动降分                                                           | 管线下次重训        |
+| **P1** | **Alpha Decay 先行指标**              | Gate hit_rate + Evidence IC 滚动监控，衰减 >50% 提前触发 retrain，替代滞后的连亏 8 次                                                                          | 线上运行稳定后      |
 
 ---
 

@@ -62,7 +62,7 @@ def extract_l2_prefilter(
     positive = ev.get("positive_signals", [])
     top_diff = 0.0
     temporal_cvs: List[float] = []
-    for sig in (positive if isinstance(positive, list) else []):
+    for sig in positive if isinstance(positive, list) else []:
         diff = abs(sig.get("bad_rate_diff", 0))
         if diff > top_diff:
             top_diff = diff
@@ -320,6 +320,146 @@ def extract_l7_execution(backtest_metrics: Dict[str, Any]) -> Dict[str, Any]:
 # ====================================================================
 
 
+def extract_l4_gate_rule_hit_rates(
+    gate_dir: Path,
+    strategy: str,
+    config_root: str = "config/strategies",
+    label_col: str = "is_good",
+) -> Dict[str, Any]:
+    """Extract per-rule deny_rate (hit_rate) from logs_gated.parquet.
+
+    Used as Alpha Decay baseline: if a rule's hit_rate decays >50%,
+    the rule may have lost effectiveness.
+    """
+    import pandas as pd
+
+    gate_yaml = PROJECT_ROOT / config_root / strategy / "archetypes" / "gate.yaml"
+    gated_path = gate_dir / "logs_gated.parquet"
+    if not gate_yaml.exists() or not gated_path.exists():
+        return {}
+
+    try:
+        gate_data = yaml.safe_load(gate_yaml.read_text(encoding="utf-8")) or {}
+        df = pd.read_parquet(gated_path)
+    except Exception:
+        return {}
+
+    hard_gates = gate_data.get("hard_gates", [])
+    if not hard_gates:
+        return {}
+
+    # Auto-generate label if missing
+    if label_col not in df.columns:
+        for rr_col in ["bpc_impulse_return_atr", "forward_rr", "rr", "return_atr"]:
+            if rr_col in df.columns:
+                df[label_col] = (df[rr_col] >= -0.8).astype(int)
+                break
+        else:
+            return {}
+
+    rule_hit_rates: Dict[str, Any] = {}
+    for gate in hard_gates:
+        gate_id = gate.get("id", "unknown")
+        when_clause = gate.get("when", {})
+        for feat, condition in when_clause.items():
+            if not isinstance(condition, dict) or feat not in df.columns:
+                continue
+            for op_key, threshold in condition.items():
+                col = df[feat]
+                if op_key == "value_lt":
+                    deny_mask = col < threshold
+                elif op_key == "value_gt":
+                    deny_mask = col > threshold
+                elif op_key == "value_le":
+                    deny_mask = col <= threshold
+                elif op_key == "value_ge":
+                    deny_mask = col >= threshold
+                else:
+                    continue
+                deny_rate = float(deny_mask.mean())
+                # Precision of denial: among denied, what % were actually bad?
+                denied = df[deny_mask]
+                precision = 0.0
+                if len(denied) > 0 and label_col in denied.columns:
+                    precision = float((denied[label_col] == 0).mean())
+                rule_hit_rates[f"{gate_id}__{feat}__{op_key}"] = {
+                    "deny_rate": round(deny_rate, 6),
+                    "precision": round(precision, 4),
+                }
+
+    return rule_hit_rates
+
+
+def extract_l5_evidence_feature_ic(
+    parquet_path: Path,
+    target_col: str = "forward_rr",
+    max_features: int = 100,
+) -> Dict[str, float]:
+    """Compute Spearman IC of each numeric feature vs forward_rr.
+
+    Used as Alpha Decay baseline: if rolling IC decays >50%,
+    the feature may have lost predictive power.
+    """
+    import pandas as pd
+    from scipy.stats import spearmanr
+
+    if not parquet_path.exists():
+        return {}
+
+    try:
+        df = pd.read_parquet(parquet_path)
+    except Exception:
+        return {}
+
+    if target_col not in df.columns:
+        # Fallback names
+        for alt in ["rr", "return_atr", "bpc_impulse_return_atr"]:
+            if alt in df.columns:
+                target_col = alt
+                break
+        else:
+            return {}
+
+    exclude_prefixes = (
+        "timestamp",
+        "datetime",
+        "symbol",
+        "split",
+        "pred",
+        "gate_",
+        "is_good",
+        "is_bad",
+        "entry_direction",
+        "Unnamed",
+        "forward_",
+    )
+    numeric_cols = [
+        c
+        for c in df.select_dtypes(include=[np.number]).columns
+        if not any(c.startswith(p) for p in exclude_prefixes) and c != target_col
+    ]
+    if len(numeric_cols) > max_features:
+        numeric_cols = numeric_cols[:max_features]
+
+    target = df[target_col].values
+    valid_mask = ~np.isnan(target)
+
+    ics: Dict[str, float] = {}
+    for col in numeric_cols:
+        vals = df[col].values.astype(np.float64)
+        both_valid = valid_mask & ~np.isnan(vals)
+        if both_valid.sum() < 30:
+            continue
+        try:
+            rho, _ = spearmanr(vals[both_valid], target[both_valid])
+            if np.isfinite(rho):
+                ics[col] = round(float(rho), 6)
+        except Exception:
+            continue
+
+    return ics
+
+
 def compute_feature_distributions(
     parquet_path: Path,
     max_features: int = 200,
@@ -479,6 +619,15 @@ def export_training_baseline(
     n_feat = len(feature_distributions)
     print(f"\n   特征分布: {n_feat} features from {dist_path.name}")
 
+    # ── P5 Alpha Decay 先行指标基线 ──
+    gate_rule_hit_rates = extract_l4_gate_rule_hit_rates(g_dir, strategy, config_root)
+    if gate_rule_hit_rates:
+        print(f"   Gate rule hit_rates: {len(gate_rule_hit_rates)} rules")
+
+    evidence_feature_ics = extract_l5_evidence_feature_ic(dist_path)
+    if evidence_feature_ics:
+        print(f"   Evidence feature ICs: {len(evidence_feature_ics)} features")
+
     # ── 组装基线 ──
     baseline: Dict[str, Any] = {
         "version": str(date.today()),
@@ -492,6 +641,10 @@ def export_training_baseline(
 
     baseline["layer_kpis"] = layer_kpis
     baseline["feature_distributions"] = feature_distributions
+    if gate_rule_hit_rates:
+        baseline["gate_rule_hit_rates"] = gate_rule_hit_rates
+    if evidence_feature_ics:
+        baseline["evidence_feature_ics"] = evidence_feature_ics
 
     # ── 保存 ──
     output_path = result_dir / "training_baseline.json"

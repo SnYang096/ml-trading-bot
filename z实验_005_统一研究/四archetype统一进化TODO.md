@@ -880,3 +880,38 @@ L1 (15m) ───────────────  LV
 | Phase 7-R: 多TF研究         | ✅ 完成       | ME→1H 配置完成                                                                                                                    |
 | **Part A: 研究 pipeline**   | 🔨 进行中     | Gate/Evidence ✅ + Meta-Algorithm 管线改造 🔨 (Prefilter P1 + EntryFilter P2)                                                       |
 | **Part B: 实盘部署**        | 🔨 进行中     | 详见 `z实验_006_统一实盘/实盘部署TODO.md`                                                                                         |
+
+---
+
+## Phase 10: P5 非平稳性防护 (Regime / OOD / Alpha Decay)
+
+> 核心原则：不新增层，扩展现有层的输入 + 监控
+
+### 10.1 Regime 特征注入 Gate/Evidence
+- [ ] `regime_state_f` 特征节点 (`feature_dependencies.yaml`)
+- [ ] `compute_regime_state_from_df()` 实现 (`baseline_features.py`)
+- [ ] 各策略 `features_gate.yaml` / `features_evidence.yaml` 添加 `regime_state_f`
+- [ ] 单元测试
+
+### 10.2 OOD 检测器 → Evidence
+- [ ] 训练后保存 `feature_baseline.json` (q05/q95/mean/std)
+- [ ] `compute_ood_score_from_df()` 实现
+- [ ] `ood_score_f` 特征节点 + `features_evidence.yaml` 添加
+- [ ] `deploy_config_to_live.py` 同步 baseline 文件
+- [ ] 单元测试
+
+### 10.3 Alpha Decay 先行指标
+- [ ] `export_training_baseline.py` 导出 gate hit_rate + evidence IC baseline
+- [ ] `local_monitor_weekly.py` 新增 `check_l4_gate_rule_decay()` + `check_l5_evidence_ic_decay()`
+- [ ] `monitor_retrain.py` 新增 `check_leading_indicators()` trigger
+- [ ] `research_pipeline.yaml` retrain_triggers 新增 `leading_indicator_decay`
+
+### 假设验证框架
+
+| 层           | 假设                  | 验证方式                       | 失效时动作                   |
+| ------------ | --------------------- | ------------------------------ | ---------------------------- |
+| Gate         | deny 规则能拦截坏交易 | Gate hit_rate 滚动 vs baseline | hit_rate 衰减 >50% → retrain |
+| Evidence     | 特征→收益映射关系在   | Spearman IC 滚动 vs baseline   | IC 衰减 >50% → retrain       |
+| Entry Filter | 入场时机特征有预测力  | EF lift 滚动 vs baseline       | lift < 1.0 → 禁用 EF         |
+| 全局         | 市场在训练分布内      | ood_score 实时计算             | OOD 高 → Evidence 自动降分   |
+| 全局         | Regime 未剧烈变迁     | RegimeDetector 实时            | Regime 变化 → 树模型自动适配 |
