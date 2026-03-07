@@ -1,49 +1,13 @@
 # BPC Evidence Archetype (auto-promoted)
 # 来源: results/train_final_20260306_000403_return_tree/bpc/evidence_candidates.yaml
-# 优化规则: 2/9 条通过 plateau 验证
+# 优化规则: 1/2 条通过 plateau 验证
 # ✅ 方向已由数据自动验证
 
-schema:
-  label_semantics:
-    suppress: 强烈不利 - 极度限制仓位/信心
-    downweight: 不利 - 降低信心/仓位
-    neutral: 中性 - 标准执行
-    favor: 有利 - 提高信心/仓位
-    amplify: 强烈有利 - 最大化执行
 evidence:
-- id: evidence_shd_pct
-  feature: shd_pct
-  rank: 2
-  direction: negative
-  usage_hint: 'TODO: 填写用途'
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.3
-    - 0.5
-    - 0.7
-    - 0.9
-    labels:
-    - amplify
-    - favor
-    - neutral
-    - downweight
-    - suppress
-  split_count: 6
 - id: evidence_macd_signal_atr
   feature: macd_signal_atr
   rank: 3
   direction: positive
-  usage_hint: 'TODO: 填写用途'
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
   quantile_mapping:
     bins:
     - 0.1
@@ -57,4 +21,4 @@ evidence:
     - favor
     - amplify
   split_count: 5
-min_score: 0.1
+min_score: 0.25

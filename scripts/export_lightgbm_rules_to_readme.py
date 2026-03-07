@@ -426,69 +426,86 @@ def _generate_gate_rules_statistical(
             continue
 
         thresholds = np.unique(np.quantile(col[valid], quantiles))
+
+        # ── 收集候选 deny_mask: 单阈值 + 区间 ──
+        _rule_specs = []  # [(deny_mask, op_str, thr_val, thr_low, thr_high)]
+
+        # (A) 单阈值规则
         for thr in thresholds:
             for direction in ["gt", "lt"]:
-                deny_mask = (col > thr) if direction == "gt" else (col < thr)
-                deny_mask = deny_mask & valid
-                deny_rate = float(deny_mask.mean())
+                dm = (col > thr) if direction == "gt" else (col < thr)
+                dm = dm & valid
+                op_s = ">" if direction == "gt" else "<"
+                _rule_specs.append((dm, op_s, float(thr), None, None))
 
-                if deny_rate < GATE_DENY_RATE_MIN or deny_rate > GATE_DENY_RATE_MAX:
-                    continue
-
-                # Lift
-                bad_in_deny = float(bad[deny_mask].mean()) if deny_mask.any() else 0
-                lift = bad_in_deny / overall_bad_rate if overall_bad_rate > 0 else 0
-                if lift <= GATE_MIN_LIFT:
-                    continue
-
-                # Effect size
-                mean_allow = float(np.nanmean(rr_vals[~deny_mask]))
-                mean_deny = float(np.nanmean(rr_vals[deny_mask]))
-                effect = mean_allow - mean_deny
-                if effect < GATE_MIN_EFFECT:
-                    continue
-
-                # Robustness (time-ordered folds + cross-sample stability)
-                fold_lifts = []
-                for fi in range(n_folds):
-                    s = fi * fold_size
-                    e = (fi + 1) * fold_size if fi < n_folds - 1 else n_total
-                    fb = bad[s:e]
-                    fd = deny_mask[s:e]
-                    fbr = float(fb.mean())
-                    if fbr > 0 and fd.any():
-                        fl = float(fb[fd].mean()) / fbr
-                        fold_lifts.append(fl)
-
-                rob_time = sum(1 for fl in fold_lifts if fl > 1.0) / max(
-                    len(fold_lifts), 1
+        # (B) 区间规则: deny = 区间内 (区间 = bad zone)
+        for i_lo, thr_lo in enumerate(thresholds):
+            for thr_hi in thresholds[i_lo + 1 :]:
+                dm = ((col >= thr_lo) & (col <= thr_hi)) & valid
+                _rule_specs.append(
+                    (dm, "range_deny", None, float(thr_lo), float(thr_hi))
                 )
-                # Cross-sample stability: min/max lift ratio across folds
-                if len(fold_lifts) >= 2:
-                    rob_cross = (
-                        min(fold_lifts) / max(fold_lifts) if max(fold_lifts) > 0 else 0
-                    )
-                    robustness = rob_time * 0.6 + rob_cross * 0.4
-                else:
-                    robustness = rob_time
-                if robustness < GATE_MIN_ROBUSTNESS:
-                    continue
 
-                op = ">" if direction == "gt" else "<"
-                score = lift * 0.4 + robustness * 0.4 + (1 - deny_rate) * 0.2
-                candidates.append(
-                    {
-                        "feature": feat,
-                        "op": op,
-                        "threshold": float(thr),
-                        "lift": lift,
-                        "robustness": robustness,
-                        "deny_rate": deny_rate,
-                        "effect_size": effect,
-                        "score": score,
-                        "_deny_mask": deny_mask,
-                    }
+        for deny_mask, _op_str, _thr_val, _thr_low, _thr_high in _rule_specs:
+            deny_rate = float(deny_mask.mean())
+
+            if deny_rate < GATE_DENY_RATE_MIN or deny_rate > GATE_DENY_RATE_MAX:
+                continue
+
+            # Lift
+            bad_in_deny = float(bad[deny_mask].mean()) if deny_mask.any() else 0
+            lift = bad_in_deny / overall_bad_rate if overall_bad_rate > 0 else 0
+            if lift <= GATE_MIN_LIFT:
+                continue
+
+            # Effect size
+            mean_allow = float(np.nanmean(rr_vals[~deny_mask]))
+            mean_deny = float(np.nanmean(rr_vals[deny_mask]))
+            effect = mean_allow - mean_deny
+            if effect < GATE_MIN_EFFECT:
+                continue
+
+            # Robustness (time-ordered folds + cross-sample stability)
+            fold_lifts = []
+            for fi in range(n_folds):
+                s = fi * fold_size
+                e = (fi + 1) * fold_size if fi < n_folds - 1 else n_total
+                fb = bad[s:e]
+                fd = deny_mask[s:e]
+                fbr = float(fb.mean())
+                if fbr > 0 and fd.any():
+                    fl = float(fb[fd].mean()) / fbr
+                    fold_lifts.append(fl)
+
+            rob_time = sum(1 for fl in fold_lifts if fl > 1.0) / max(len(fold_lifts), 1)
+            # Cross-sample stability: min/max lift ratio across folds
+            if len(fold_lifts) >= 2:
+                rob_cross = (
+                    min(fold_lifts) / max(fold_lifts) if max(fold_lifts) > 0 else 0
                 )
+                robustness = rob_time * 0.6 + rob_cross * 0.4
+            else:
+                robustness = rob_time
+            if robustness < GATE_MIN_ROBUSTNESS:
+                continue
+
+            op = _op_str
+            score = lift * 0.4 + robustness * 0.4 + (1 - deny_rate) * 0.2
+
+            _cand_dict = {
+                "feature": feat,
+                "op": op,
+                "threshold": _thr_val,
+                "threshold_low": _thr_low,
+                "threshold_high": _thr_high,
+                "lift": lift,
+                "robustness": robustness,
+                "deny_rate": deny_rate,
+                "effect_size": effect,
+                "score": score,
+                "_deny_mask": deny_mask,
+            }
+            candidates.append(_cand_dict)
 
     if not candidates:
         print("   ⚠️  统计验证: 无候选规则通过 lift+robustness 筛选")
@@ -771,16 +788,32 @@ def _generate_gate_rules_statistical(
     for sel in selected:
         if sel["feature"] in used_features:
             continue
-        all_candidates.append(
-            {
-                "conditions": [(sel["feature"], sel["op"], sel["threshold"])],
-                "lift": sel["lift"],
-                "deny_rate": sel["deny_rate"],
-                "robustness": sel["robustness"],
-                "effect_size": sel["effect_size"],
-                "source": "single",
-            }
-        )
+        if sel.get("op") == "range_deny":
+            # 区间规则: deny = [low, high]
+            all_candidates.append(
+                {
+                    "conditions": [
+                        (sel["feature"], ">", sel["threshold_low"]),
+                        (sel["feature"], "<", sel["threshold_high"]),
+                    ],
+                    "lift": sel["lift"],
+                    "deny_rate": sel["deny_rate"],
+                    "robustness": sel["robustness"],
+                    "effect_size": sel["effect_size"],
+                    "source": "single_range",
+                }
+            )
+        else:
+            all_candidates.append(
+                {
+                    "conditions": [(sel["feature"], sel["op"], sel["threshold"])],
+                    "lift": sel["lift"],
+                    "deny_rate": sel["deny_rate"],
+                    "robustness": sel["robustness"],
+                    "effect_size": sel["effect_size"],
+                    "source": "single",
+                }
+            )
         used_features.add(sel["feature"])
 
     # 计算每个候选的 gate_score
@@ -1114,6 +1147,7 @@ def _generate_evidence_candidates_yaml(
     feature_names: "list | None" = None,
     lgbm_model=None,
     rr_col_name: "str | None" = None,
+    exclude_features: "set | None" = None,
 ):
     """
     生成 evidence_candidates.yaml (v2: SHAP∩Gain + bad_suppression + 2D interaction).
@@ -1124,6 +1158,9 @@ def _generate_evidence_candidates_yaml(
       - SHAP interaction 发现交互特征对
     否则 fallback 到 tree split count。
     输出格式与 optimize_evidence_plateau.py 兼容。
+
+    Args:
+        exclude_features: gate 特征名集合，从候选中排除。
     """
     import yaml
     import numpy as np
@@ -1131,11 +1168,22 @@ def _generate_evidence_candidates_yaml(
 
     # ── SHAP∩Gain 特征发现 (复用 Gate 同款方法) ──
     shap_features, shap_importance_map, interaction_pairs = [], {}, []
-    if lgbm_model is not None and feature_names and pred_df is not None:
+    # 排除 gate 特征后再发现
+    _feature_names_filtered = feature_names
+    if exclude_features and feature_names:
+        _feature_names_filtered = [
+            f for f in feature_names if f not in exclude_features
+        ]
+        _n_excluded = len(feature_names) - len(_feature_names_filtered)
+        if _n_excluded > 0:
+            print(
+                f"   🚪 排除 {_n_excluded} 个 gate 特征后候选: {len(_feature_names_filtered)}"
+            )
+    if lgbm_model is not None and _feature_names_filtered and pred_df is not None:
         shap_features, shap_importance_map, interaction_pairs = (
             _compute_shap_gain_features(
                 pred_df,
-                feature_names,
+                _feature_names_filtered,
                 lgbm_model,
                 top_n=top_n,
                 compute_interactions=True,

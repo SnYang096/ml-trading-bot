@@ -130,16 +130,17 @@ class EvidenceFeature:
     feature: str
     rank: int
     split_count: int
-    usage_hint: str
-    affects: List[str]
     quantile_bins: List[float]
     quantile_labels: List[str]
-    threshold_examples: List[float]
-    distribution_hint: str
     # ❗ Bug 1 修复: 特征方向
     # "higher_is_better": 值越大越好 (如 strength, momentum)
     # "lower_is_better": 值越小越好 (如 volatility, risk, drawdown)
     direction: str = "higher_is_better"
+    # 以下字段保留兼容旧 YAML，运行时不消费
+    usage_hint: str = ""
+    affects: List[str] = field(default_factory=list)
+    threshold_examples: List[float] = field(default_factory=list)
+    distribution_hint: str = ""
 
     def compute_label(self, value: float, quantiles: Dict[str, float]) -> str:
         """
@@ -219,10 +220,11 @@ class EvidenceConfig:
     """Evidence 配置 - 从 evidence.yaml 加载"""
 
     features: List[EvidenceFeature] = field(default_factory=list)
-    label_semantics: Dict[str, str] = field(default_factory=dict)
     min_score: float = (
         0.0  # 策略级 evidence 入场门槛 (由 optimize_evidence_plateau 自动计算)
     )
+    # 保留兼容旧 YAML，运行时不消费
+    label_semantics: Dict[str, str] = field(default_factory=dict)
 
     def compute_composite_score(
         self,
@@ -289,11 +291,12 @@ class EvidenceConfig:
                 )
             )
 
-        schema = raw.get("schema") or {}
         return cls(
             features=features,
-            label_semantics=dict(schema.get("label_semantics") or {}),
             min_score=float(raw.get("min_score", 0.0)),
+            label_semantics=dict(
+                (raw.get("schema") or {}).get("label_semantics") or {}
+            ),
         )
 
 

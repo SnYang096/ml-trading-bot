@@ -1,211 +1,35 @@
 # ME Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-03-05
-# 数据源: features_labeled.parquet, 26202 行
+# 自动生成: 2026-03-07
+# 数据源: features_labeled.parquet, 156642 行
 
 rules:
-  - feature: atr_percentile
-    operator: ">="
-    value: 0.8167
-    rationale: "P80阈值, bad_rate -7.6%, 鲁棒性=1.00, 评分=0.694"
   - feature: me_atr_pct
-    operator: ">"
-    value: 0.01
-    rationale: "P5阈值, bad_rate +3.5%, 鲁棒性=1.00, 评分=0.632"
-  - feature: me_cvd_alignment
-    operator: ">="
-    value: 1.0
-    rationale: "P80阈值, bad_rate -2.5%, 鲁棒性=1.00, 评分=0.618"
+    operator: "<"
+    value: 0.06
+    rationale: "meta-algorithm, KS=0.0977, return_uplift=+0.0042, robustness=100%, holdout验证通过"
+  - feature: oi_trend_divergence_score
+    operator: "<"
+    value: 0.0011
+    rationale: "meta-algorithm, KS=0.0842, return_uplift=+0.0311, robustness=100%, holdout验证通过"
 
 last_evaluation:
-  # ── 自动生成 (2026-03-05) ──
-  timestamp: "2026-03-05"
+  # ── 自动生成 (2026-03-07) ──
+  timestamp: "2026-03-07"
   data_source: "features_labeled.parquet"
-  n_rows: 26202
-  baseline_bad_rate: 0.4487
-  baseline_median_rr: -0.0085
+  n_rows: 156642
+  baseline_bad_rate: 0.0000
+  baseline_median_rr: +0.0561
 
-  # ── 正信号 (10 个) ──
+  # ── 正信号 (0 个) ──
   positive_signals:
-    - feature: atr_percentile
-      percentile: P95
-      direction: high
-      threshold: 0.9648
-      bad_rate_signal: 0.3764
-      bad_rate_rest: 0.4526
-      bad_rate_diff: -0.0762
-    - feature: atr_percentile
-      percentile: P90
-      direction: high
-      threshold: 0.9241
-      bad_rate_signal: 0.3986
-      bad_rate_rest: 0.4543
-      bad_rate_diff: -0.0557
-    - feature: atr_percentile
-      percentile: P80
-      direction: high
-      threshold: 0.8167
-      bad_rate_signal: 0.4238
-      bad_rate_rest: 0.4550
-      bad_rate_diff: -0.0312
-    - feature: me_cvd_alignment
-      percentile: P80
-      direction: high
-      threshold: 1.0
-      bad_rate_signal: 0.4380
-      bad_rate_rest: 0.4631
-      bad_rate_diff: -0.0251
-    - feature: me_cvd_alignment
-      percentile: P90
-      direction: high
-      threshold: 1.0
-      bad_rate_signal: 0.4380
-      bad_rate_rest: 0.4631
-      bad_rate_diff: -0.0251
-    - feature: me_cvd_alignment
-      percentile: P95
-      direction: high
-      threshold: 1.0
-      bad_rate_signal: 0.4380
-      bad_rate_rest: 0.4631
-      bad_rate_diff: -0.0251
-    - feature: me_accel_persistence
-      percentile: P5
-      direction: low
-      threshold: 0.2
-      bad_rate_signal: 0.4269
-      bad_rate_rest: 0.4508
-      bad_rate_diff: -0.0239
-    - feature: me_flow_exhaustion
-      percentile: P5
-      direction: low
-      threshold: 0.0
-      bad_rate_signal: 0.4432
-      bad_rate_rest: 0.4660
-      bad_rate_diff: -0.0228
-    - feature: me_flow_exhaustion
-      percentile: P10
-      direction: low
-      threshold: 0.0
-      bad_rate_signal: 0.4432
-      bad_rate_rest: 0.4660
-      bad_rate_diff: -0.0228
-    - feature: me_flow_exhaustion
-      percentile: P20
-      direction: low
-      threshold: 0.0
-      bad_rate_signal: 0.4432
-      bad_rate_rest: 0.4660
-      bad_rate_diff: -0.0228
+    []
 
-  # ── 反信号 (5 个) ──
+  # ── 反信号 (0 个) ──
   anti_signals:
-    - feature: me_vol_regime
-      percentile: P95
-      direction: high
-      threshold: 0.96
-      bad_rate_signal: 0.4837
-      bad_rate_rest: 0.4469
-      bad_rate_diff: +0.0368
-    - feature: me_volume_surge
-      percentile: P90
-      direction: high
-      threshold: 0.9
-      bad_rate_signal: 0.4721
-      bad_rate_rest: 0.4459
-      bad_rate_diff: +0.0262
-    - feature: me_vol_regime
-      percentile: P90
-      direction: high
-      threshold: 0.9
-      bad_rate_signal: 0.4714
-      bad_rate_rest: 0.4460
-      bad_rate_diff: +0.0254
-    - feature: vol_percentile_approx
-      percentile: P95
-      direction: high
-      threshold: 0.9055
-      bad_rate_signal: 0.4699
-      bad_rate_rest: 0.4476
-      bad_rate_diff: +0.0222
-    - feature: vol_zscore
-      percentile: P95
-      direction: high
-      threshold: 2.1233
-      bad_rate_signal: 0.4699
-      bad_rate_rest: 0.4476
-      bad_rate_diff: +0.0222
+    []
 
-  # ── 低端信号 (10 个) ──
+  # ── 低端信号 (0 个) ──
   absence_signals:
-    - feature: me_atr_pct
-      percentile: P5
-      direction: low
-      threshold: 0.01
-      bad_rate_signal: 0.4805
-      bad_rate_rest: 0.4459
-      bad_rate_diff: +0.0347
-    - feature: me_accel_2k
-      percentile: P5
-      direction: low
-      threshold: -1.6044
-      bad_rate_signal: 0.4805
-      bad_rate_rest: 0.4471
-      bad_rate_diff: +0.0335
-    - feature: atr_percentile
-      percentile: P5
-      direction: low
-      threshold: 0.0167
-      bad_rate_signal: 0.4746
-      bad_rate_rest: 0.4474
-      bad_rate_diff: +0.0272
-    - feature: me_atr_pct
-      percentile: P10
-      direction: low
-      threshold: 0.02
-      bad_rate_signal: 0.4726
-      bad_rate_rest: 0.4459
-      bad_rate_diff: +0.0267
-    - feature: me_accel_2k
-      percentile: P10
-      direction: low
-      threshold: -1.2124
-      bad_rate_signal: 0.4723
-      bad_rate_rest: 0.4461
-      bad_rate_diff: +0.0262
-    - feature: me_cvd_alignment
-      percentile: P5
-      direction: low
-      threshold: 0.0
-      bad_rate_signal: 0.4631
-      bad_rate_rest: 0.4380
-      bad_rate_diff: +0.0251
-    - feature: me_cvd_alignment
-      percentile: P10
-      direction: low
-      threshold: 0.0
-      bad_rate_signal: 0.4631
-      bad_rate_rest: 0.4380
-      bad_rate_diff: +0.0251
-    - feature: me_cvd_alignment
-      percentile: P20
-      direction: low
-      threshold: 0.0
-      bad_rate_signal: 0.4631
-      bad_rate_rest: 0.4380
-      bad_rate_diff: +0.0251
-    - feature: me_cvd_strength
-      percentile: P5
-      direction: low
-      threshold: 0.0211
-      bad_rate_signal: 0.4722
-      bad_rate_rest: 0.4475
-      bad_rate_diff: +0.0246
-    - feature: atr_percentile
-      percentile: P10
-      direction: low
-      threshold: 0.0593
-      bad_rate_signal: 0.4683
-      bad_rate_rest: 0.4465
-      bad_rate_diff: +0.0217
+    []
 

@@ -47,6 +47,10 @@ feature_pipeline:
     - bpc_volume_compression_pct_f    # 成交量压缩百分位
     - bpc_pullback_delta_absorption_f # 回踩期间 delta 吸收
 
+    # ========== BPC 阶段转换 + 压缩蓄势 ==========
+    - bpc_phase_transition_f          # 主导阶段/置信度/转换概率/结构健康
+    - bpc_compression_state_f         # 预突破综合分
+
     - roc_5_f
     - roc_10_f
     - roc_20_f
@@ -87,6 +91,7 @@ feature_pipeline:
 
     # ========== 基础 ==========
     - sma_200_f
+    - ema_200_value_f          # EMA200 raw price — BPC trend_hold structural exit
 
 
     # ========== 订单流 ==========

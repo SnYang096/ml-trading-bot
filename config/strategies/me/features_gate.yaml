@@ -19,6 +19,7 @@ feature_pipeline:
     - me_soft_phase_f
     - me_failure_f
     - me_context_f
+    - me_gate_f                       # ME Gate: energy + flow + volume 综合判定
 
     - roc_5_f
     - roc_10_f

@@ -206,19 +206,21 @@ class ExecutionParamGenerator:
         tp_enabled = tp_cfg.get("enabled", False)
         take_profit_r = float(tp_cfg.get("target_r", 0.0)) if tp_enabled else 0.0
 
+        # time_stop_bars: 0 表示禁用时间止损 (fat tail 模式)
+        # 注意: 不能用 `or 50`，因为 Python 中 0 or 50 = 50
+        _raw_tsb = self.config.get("holding", {}).get("time_stop_bars")
+        _tsb = int(_raw_tsb) if _raw_tsb is not None and int(_raw_tsb) > 0 else 0
+
         return {
             "tier_name": "global",
             "initial_r": float(sl_cfg.get("initial_r", 2.0)),
             "activation_r": float(trail_cfg.get("activation_r", 1.0)),
             "trail_r": float(trail_cfg.get("trail_r", 1.5)),
             "take_profit_r": take_profit_r,
-            "time_stop_bars": int(
-                self.config.get("holding", {}).get("time_stop_bars", 50) or 50
-            ),
-            "max_holding_bars": int(
-                self.config.get("holding", {}).get("time_stop_bars", 50) or 50
-            ),
+            "time_stop_bars": _tsb,
+            "max_holding_bars": _tsb,
             "size_multiplier": 1.0,
+            "structural_exit": sl_cfg.get("structural_exit"),  # "ema200" / None
         }
 
 
@@ -523,6 +525,7 @@ class GenericLiveStrategy:
                     "activation_r": exec_params.get("activation_r", 1.0),
                     "trailing_atr": exec_params.get("trail_r", 1.5),
                     "max_holding_bars": exec_params.get("time_stop_bars", 50),
+                    "structural_exit": exec_params.get("structural_exit"),
                 },
                 "strategy_specific": {
                     "direction_rule": rule_id,

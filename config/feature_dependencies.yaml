@@ -5873,6 +5873,27 @@ features:
       normalized: true
       output_normalization_map:
         sma_200_position: bounded_-1_1
+  ema_200_value_f:
+    module: talib
+    compute_func: compute_talib_indicator_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - ema_200
+    category: trend
+    normalized: false
+    description: 'EMA(200) in *price units* (raw EMA value). Used by BPC trend_hold
+      as structural exit: price crossing EMA200 = trend structure broken.'
+    pass_full_df: false
+    compute_params:
+      indicator_name: EMA
+      timeperiod: 200
+      output_column: ema_200
+      output_normalization_map:
+        ema_200: price_unit
+    column_mappings:
+      real: close
   vwap_position_f:
     module: baseline
     compute_func: compute_vwap_position_from_series
@@ -7431,6 +7452,80 @@ features:
       cvd_change_5: cvd_change_5
       atr: atr
 
+  # --- BPC 阶段转换特征 ---
+  bpc_phase_transition_f:
+    module: bpc
+    compute_func: compute_bpc_phase_transition_from_series
+    dependencies:
+    - bpc_soft_phase_f
+    - shd_pct_f
+    required_columns:
+    - bpc_score_breakout
+    - bpc_score_pullback
+    - bpc_score_continuation
+    - bpc_score_neutral
+    output_columns:
+    - bpc_phase_dominant
+    - bpc_phase_confidence
+    - bpc_transition_b_to_p
+    - bpc_transition_p_to_c
+    - bpc_transition_speed
+    - bpc_structure_health
+    category: bpc
+    description: BPC phase transition - transition probability, speed, and structure health.
+    pass_full_df: false
+    compute_params:
+      lookback: 5
+      normalized: true
+      output_normalization_map:
+        bpc_phase_dominant: categorical_int
+        bpc_phase_confidence: bounded_0_1
+        bpc_transition_b_to_p: bounded_0_1
+        bpc_transition_p_to_c: bounded_0_1
+        bpc_transition_speed: bounded_0_1
+        bpc_structure_health: bounded_0_1
+    column_mappings:
+      bpc_score_breakout: bpc_score_breakout
+      bpc_score_pullback: bpc_score_pullback
+      bpc_score_continuation: bpc_score_continuation
+      bpc_score_neutral: bpc_score_neutral
+      shd_pct: shd_pct
+
+  # --- BPC 压缩蓄势状态 ---
+  bpc_compression_state_f:
+    module: bpc
+    compute_func: compute_bpc_compression_state_from_series
+    dependencies:
+    - bb_width_normalized_pct_f
+    - garch_features_f
+    required_columns:
+    - close
+    - volume
+    output_columns:
+    - bpc_vol_compression_state
+    - bpc_bb_compression_state
+    - bpc_garch_compression
+    - bpc_wpt_energy_low
+    - bpc_pre_breakout_score
+    category: bpc
+    description: BPC compression state - volatility, volume, and energy compression for pre-breakout detection.
+    pass_full_df: false
+    compute_params:
+      vol_window: 20
+      pct_window: 100
+      normalized: true
+      output_normalization_map:
+        bpc_vol_compression_state: bounded_0_1
+        bpc_bb_compression_state: bounded_0_1
+        bpc_garch_compression: bounded_0_1
+        bpc_wpt_energy_low: bounded_0_1
+        bpc_pre_breakout_score: bounded_0_1
+    column_mappings:
+      close: close
+      volume: volume
+      bb_width_normalized: bb_width_normalized_pct
+      garch_volatility: garch_volatility
+
   # =========================================================================
   # FER (FailureExhaustionReversal) 专属特征
   # =========================================================================
@@ -7622,6 +7717,39 @@ features:
       jump_risk_pct: jump_risk_pct
       shd_pct: shd_pct
       ofci_pct: ofci_pct
+
+  # --- ME Gate 层 ---
+  me_gate_f:
+    module: momentum_expansion
+    compute_func: compute_me_gate_from_series
+    dependencies:
+    - me_soft_phase_f
+    required_columns:
+    - me_atr_pct
+    - me_cvd_alignment
+    - me_volume_surge
+    output_columns:
+    - me_gate_expansion_ok
+    - me_gate_flow_ok
+    - me_gate_volume_ok
+    - me_gate_pass
+    category: momentum_expansion
+    description: ME Gate layer - energy + flow consistency + volume surge (no acceleration).
+    pass_full_df: false
+    compute_params:
+      expansion_threshold: 0.6
+      flow_threshold: 0.6
+      volume_threshold: 0.5
+      normalized: true
+      output_normalization_map:
+        me_gate_expansion_ok: bounded_0_1
+        me_gate_flow_ok: bounded_0_1
+        me_gate_volume_ok: bounded_0_1
+        me_gate_pass: bounded_0_1
+    column_mappings:
+      me_atr_pct: me_atr_pct
+      me_cvd_alignment: me_cvd_alignment
+      me_volume_surge: me_volume_surge
 
   # ================================================================
   # P5 非平稳性: Regime State / OOD Score

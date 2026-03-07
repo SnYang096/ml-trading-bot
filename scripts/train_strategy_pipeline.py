@@ -4128,6 +4128,28 @@ def train_strategy(
                                         break
                             except Exception:
                                 pass
+                        # 加载 gate.yaml 提取 gate 特征，从 evidence 候选中排除
+                        _gate_exclude: "set | None" = None
+                        _gate_yaml_path = (
+                            Path(strategies_root)
+                            / strategy_config.name
+                            / "archetypes"
+                            / "gate.yaml"
+                        )
+                        if _gate_yaml_path.exists():
+                            try:
+                                from scripts.optimize_evidence_plateau import (
+                                    _extract_gate_features,
+                                )
+
+                                _gate_exclude = _extract_gate_features(_gate_yaml_path)
+                                if _gate_exclude:
+                                    print(
+                                        f"   \U0001f6aa Evidence 候选排除 {len(_gate_exclude)} 个 gate 特征: "
+                                        f"{sorted(_gate_exclude)}"
+                                    )
+                            except Exception:
+                                pass
                         _generate_evidence_candidates_yaml(
                             evidence_path,
                             rules,
@@ -4137,6 +4159,7 @@ def train_strategy(
                             feature_names=feature_names if feature_names else None,
                             lgbm_model=loaded_model,
                             rr_col_name=_ev_rr_col,
+                            exclude_features=_gate_exclude,
                         )
                         print(
                             f"   \U0001f4dc Evidence candidates exported to {evidence_path}"

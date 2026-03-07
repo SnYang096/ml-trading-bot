@@ -736,3 +736,346 @@ class TestEnforcePositionMutatesPos:
             now=_now() + timedelta(hours=1),
         )
         assert pos["low_water_mark"] == 2900
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Structural Exit (EMA200) — Multi-Alpha Holding
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestBuildPositionDictStructuralExit:
+    """build_position_dict 应正确存储 structural_exit 字段"""
+
+    def test_structural_exit_stored(self):
+        """rr_constraints 含 structural_exit → pos 中出现该字段"""
+        rr = {
+            "stop_loss_r": 4.0,
+            "take_profit_r": 0,
+            "max_holding_bars": 0,
+            "allow_trailing": True,
+            "activation_r": 2.5,
+            "trailing_atr": 7.0,
+            "structural_exit": "ema200",
+        }
+        ep = {"rr_constraints": rr}
+        intent = TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype="bpc",
+            confidence=0.8,
+            execution_profile=ep,
+        )
+        pos = build_position_dict(intent, entry_price=50000, atr=500, entry_time=_now())
+        assert pos["structural_exit"] == "ema200"
+
+    def test_structural_exit_absent_when_not_set(self):
+        """rr_constraints 无 structural_exit → pos 中不出现该字段"""
+        intent = _make_intent(stop_loss_r=2.0, take_profit_r=3.0)
+        pos = build_position_dict(intent, entry_price=50000, atr=500, entry_time=_now())
+        assert "structural_exit" not in pos
+
+    def test_structural_exit_absent_when_none(self):
+        """structural_exit=None → 不存储"""
+        rr = {
+            "stop_loss_r": 4.0,
+            "max_holding_bars": 0,
+            "structural_exit": None,
+        }
+        ep = {"rr_constraints": rr}
+        intent = TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype="bpc",
+            confidence=0.8,
+            execution_profile=ep,
+        )
+        pos = build_position_dict(intent, entry_price=50000, atr=500, entry_time=_now())
+        assert "structural_exit" not in pos
+
+
+def _bpc_trend_hold_pos(
+    side="LONG",
+    entry_price=50000,
+    atr=500,
+    breakeven_locked=True,
+    structural_exit="ema200",
+):
+    """构造 BPC trend_hold 持仓: breakeven + structural_exit + 宽 trailing"""
+    is_long = side == "LONG"
+    return {
+        "side": side,
+        "entry_price": entry_price,
+        "entry_time": _now(),
+        "atr_at_entry": atr,
+        "max_holding_bars": 0,  # fat tail: 无时间止损
+        "bar_minutes": 240,
+        "stop_loss_price": (
+            entry_price - 4.0 * atr if is_long else entry_price + 4.0 * atr
+        ),
+        "take_profit_price": None,  # 无 TP
+        "activation_r": 2.5,
+        "trail_r": 7.0,  # 灾难保护
+        "trailing_activated": False,
+        "high_water_mark": entry_price if is_long else None,
+        "low_water_mark": entry_price if not is_long else None,
+        "breakeven_enabled": True,
+        "breakeven_trigger_r": 1.0,
+        "breakeven_locked": breakeven_locked,
+        "structural_exit": structural_exit,
+    }
+
+
+class TestStructuralExitLong:
+    """LONG + structural_exit=ema200: close < EMA200 触发退出"""
+
+    def test_long_close_below_ema200_exits(self):
+        """breakeven locked + close < EMA200 → structural_exit_ema200"""
+        pos = _bpc_trend_hold_pos(side="LONG", entry_price=50000)
+        reason, exit_price = enforce_position(
+            pos,
+            price_high=49500,
+            price_low=49000,
+            price_close=49200,  # < EMA200 (49800)
+            now=_now() + timedelta(hours=4),
+            structural_price=49800,
+        )
+        assert reason == "structural_exit_ema200"
+        assert exit_price == 49200
+
+    def test_long_close_above_ema200_holds(self):
+        """close > EMA200 → 不退出"""
+        pos = _bpc_trend_hold_pos(side="LONG", entry_price=50000)
+        reason, _ = enforce_position(
+            pos,
+            price_high=51000,
+            price_low=50500,
+            price_close=50800,  # > EMA200 (49000)
+            now=_now() + timedelta(hours=4),
+            structural_price=49000,
+        )
+        assert reason is None
+
+    def test_long_close_equals_ema200_holds(self):
+        """close == EMA200 → 不退出 (需严格穿越)"""
+        pos = _bpc_trend_hold_pos(side="LONG", entry_price=50000)
+        reason, _ = enforce_position(
+            pos,
+            price_high=50500,
+            price_low=49800,
+            price_close=49800,  # == EMA200
+            now=_now() + timedelta(hours=4),
+            structural_price=49800,
+        )
+        assert reason is None
+
+
+class TestStructuralExitShort:
+    """SHORT + structural_exit=ema200: close > EMA200 触发退出"""
+
+    def test_short_close_above_ema200_exits(self):
+        pos = _bpc_trend_hold_pos(side="SHORT", entry_price=3000, atr=100)
+        reason, exit_price = enforce_position(
+            pos,
+            price_high=3150,
+            price_low=3050,
+            price_close=3120,  # > EMA200 (3100)
+            now=_now() + timedelta(hours=4),
+            structural_price=3100,
+        )
+        assert reason == "structural_exit_ema200"
+        assert exit_price == 3120
+
+    def test_short_close_below_ema200_holds(self):
+        pos = _bpc_trend_hold_pos(side="SHORT", entry_price=3000, atr=100)
+        reason, _ = enforce_position(
+            pos,
+            price_high=2950,
+            price_low=2850,
+            price_close=2900,  # < EMA200 (3100)
+            now=_now() + timedelta(hours=4),
+            structural_price=3100,
+        )
+        assert reason is None
+
+
+class TestStructuralExitPreconditions:
+    """structural_exit 前置条件: breakeven_locked + 有效 structural_price"""
+
+    def test_no_exit_before_breakeven_locked(self):
+        """breakeven 未锁定 → structural exit 不生效 (避免入场即退出)"""
+        pos = _bpc_trend_hold_pos(
+            side="LONG", entry_price=50000, breakeven_locked=False
+        )
+        reason, _ = enforce_position(
+            pos,
+            price_high=49500,
+            price_low=49000,
+            price_close=49200,  # < EMA200
+            now=_now() + timedelta(hours=4),
+            structural_price=49800,
+        )
+        # breakeven 未锁 → 不触发 structural exit
+        # 但 SL 可能触发 (49000 <= SL=48000? 不会)
+        assert reason is None
+
+    def test_no_exit_when_structural_price_none(self):
+        """structural_price=None → 不触发"""
+        pos = _bpc_trend_hold_pos(side="LONG", entry_price=50000)
+        reason, _ = enforce_position(
+            pos,
+            price_high=49500,
+            price_low=49000,
+            price_close=49200,
+            now=_now() + timedelta(hours=4),
+            structural_price=None,
+        )
+        assert reason is None
+
+    def test_no_exit_when_structural_price_zero(self):
+        """structural_price=0 → 不触发"""
+        pos = _bpc_trend_hold_pos(side="LONG", entry_price=50000)
+        reason, _ = enforce_position(
+            pos,
+            price_high=49500,
+            price_low=49000,
+            price_close=49200,
+            now=_now() + timedelta(hours=4),
+            structural_price=0.0,
+        )
+        assert reason is None
+
+    def test_no_exit_without_structural_exit_field(self):
+        """pos 无 structural_exit 字段 → 即使传 structural_price 也不触发"""
+        pos = _bpc_trend_hold_pos(side="LONG", entry_price=50000, structural_exit=None)
+        del pos["structural_exit"]  # 模拟 ME 仓位 (无 structural_exit)
+        reason, _ = enforce_position(
+            pos,
+            price_high=49500,
+            price_low=49000,
+            price_close=49200,
+            now=_now() + timedelta(hours=4),
+            structural_price=49800,
+        )
+        assert reason is None
+
+    def test_no_exit_when_structural_exit_not_ema200(self):
+        """structural_exit 值不是 'ema200' → 不触发"""
+        pos = _bpc_trend_hold_pos(
+            side="LONG", entry_price=50000, structural_exit="sma200"
+        )
+        reason, _ = enforce_position(
+            pos,
+            price_high=49500,
+            price_low=49000,
+            price_close=49200,
+            now=_now() + timedelta(hours=4),
+            structural_price=49800,
+        )
+        assert reason is None
+
+
+class TestStructuralExitIntegration:
+    """Structural exit 与其他退出机制的交互"""
+
+    def test_breakeven_then_structural_exit_sequence(self):
+        """完整流程: bar1 触发 breakeven → bar2 EMA200 穿越 → structural exit"""
+        pos = _bpc_trend_hold_pos(
+            side="LONG",
+            entry_price=50000,
+            breakeven_locked=False,
+        )
+        # bar1: 价格涨到 50600, profit_r = (50600-50000)/500 = 1.2 >= 1.0 → breakeven lock
+        reason1, _ = enforce_position(
+            pos,
+            price_high=50600,
+            price_low=50200,
+            price_close=50400,
+            now=_now() + timedelta(hours=4),
+            structural_price=49000,  # 远低于价格, 不触发
+        )
+        assert reason1 is None
+        assert pos["breakeven_locked"] is True
+        assert pos["stop_loss_price"] == 50000  # SL 锁到入场价
+
+        # bar2: 价格跌穿 EMA200 (49000)
+        reason2, exit_price2 = enforce_position(
+            pos,
+            price_high=49200,
+            price_low=48800,
+            price_close=48900,  # < EMA200 (49000)
+            now=_now() + timedelta(hours=8),
+            structural_price=49000,
+        )
+        assert reason2 == "structural_exit_ema200"
+        assert exit_price2 == 48900
+
+    def test_structural_exit_before_trailing_sl(self):
+        """structural exit 优先于 trailing SL (Step 3b 在 Step 4 之前)"""
+        pos = _bpc_trend_hold_pos(side="LONG", entry_price=50000)
+        pos["trailing_activated"] = True
+        pos["high_water_mark"] = 55000
+        # trail_sl = 55000 - 7.0 * 500 = 51500 (宽 trailing)
+        pos["stop_loss_price"] = 51500
+
+        # close < EMA200 → structural exit 优先触发
+        reason, exit_price = enforce_position(
+            pos,
+            price_high=51800,
+            price_low=51300,
+            price_close=51400,  # < EMA200 (51600)
+            now=_now() + timedelta(hours=4),
+            structural_price=51600,
+        )
+        assert reason == "structural_exit_ema200"
+        assert exit_price == 51400
+
+    def test_sl_still_works_without_structural_price(self):
+        """BPC 仓位不传 structural_price 时, 仍然有 trailing SL 保底"""
+        pos = _bpc_trend_hold_pos(side="LONG", entry_price=50000)
+        pos["trailing_activated"] = True
+        pos["high_water_mark"] = 55000
+        pos["stop_loss_price"] = 51500  # trail_sl
+
+        # 不传 structural_price, low 触发 SL
+        reason, exit_price = enforce_position(
+            pos,
+            price_high=51400,
+            price_low=51400,  # <= SL (51500)
+            price_close=51400,
+            now=_now() + timedelta(hours=4),
+            structural_price=None,
+        )
+        assert reason == "stop_loss"
+        assert exit_price == pytest.approx(51500)
+
+    def test_me_momentum_hold_unaffected(self):
+        """ME 仓位 (无 structural_exit): 只受 trailing stop 管控"""
+        pos = {
+            "side": "LONG",
+            "entry_price": 50000,
+            "entry_time": _now(),
+            "atr_at_entry": 500,
+            "max_holding_bars": 0,
+            "bar_minutes": 60,
+            "stop_loss_price": 48000,
+            "take_profit_price": None,
+            "activation_r": 1.0,
+            "trail_r": 0.5,  # 紧 trailing
+            "trailing_activated": False,
+            "high_water_mark": 50000,
+            "low_water_mark": None,
+            "breakeven_enabled": True,
+            "breakeven_trigger_r": 1.0,
+            "breakeven_locked": True,
+            # 无 structural_exit 字段
+        }
+        # 即使传了 structural_price, ME 不受影响
+        reason, _ = enforce_position(
+            pos,
+            price_high=49800,
+            price_low=49200,
+            price_close=49500,  # < EMA200
+            now=_now() + timedelta(hours=1),
+            structural_price=49800,
+        )
+        assert reason is None  # ME 不触发 structural exit

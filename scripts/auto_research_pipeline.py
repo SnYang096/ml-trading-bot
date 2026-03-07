@@ -1014,6 +1014,8 @@ def run_strategy_pipeline(
     )
 
     # Evidence optimize (--promote)
+    # --gate-yaml: 在 gate 放行子集上优化 + 排除 gate 相关特征 + Spearman 预筛
+    _gate_yaml_for_evidence = f"{config_dir}/archetypes/gate.yaml"
     run_step(
         "Evidence Optimize",
         [
@@ -1031,6 +1033,8 @@ def run_strategy_pipeline(
             f"{evidence_dir}/logs_gated.parquet",
             "--output",
             f"{evidence_dir}/evidence_optimization.json",
+            "--gate-yaml",
+            _gate_yaml_for_evidence,
             "--promote",
         ],
         log,

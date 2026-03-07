@@ -4,8 +4,9 @@ layer: "prefilter"
 # Prefilter 层 KPI Gate — Meta-Algorithm 统计验证门槛
 # ================================================================
 #
-# Prefilter 职责: 定义 archetype 语义边界 (非尾部风险).
-# 信号天然比 Gate 弱, 所以门槛更宽松.
+# Prefilter 职责: 定义 archetype 语义边界 (数据空间可分性).
+# 核心 KPI: KS 分布分离度 — pass/deny 两群体收益分布是否显著不同.
+# 软约束: return_uplift >= -0.10 (不能主动伤害收益).
 #
 # 脚本读取路径:
 #   analyze_archetype_feature_stratification.py --meta-algorithm
@@ -13,21 +14,24 @@ layer: "prefilter"
 
 # ── 统计验证门槛 ──
 thresholds:
-  # Lift: bad concentration in denied region / baseline
-  # Prefilter 信号弱, 1.05x 已有意义
-  min_lift: 1.05
+  # KS Distribution Separation (primary KPI)
+  min_ks_statistic: 0.05
+  max_ks_pvalue: 0.01
 
-  # Effect size: mean_rr(allow) - mean_rr(deny)
-  min_effect: 0.02
+  # Return uplift soft constraint (don't actively harm)
+  min_return_uplift_soft: -0.10
 
-  # Robustness: time-fold 一致性 (0=全不一致, 1=全一致)
+  # Hit rate uplift (disabled, kept for reference)
+  min_hit_rate_uplift: -1.0
+
+  # Robustness: time-fold KS 一致性 (0=全不一致, 1=全一致)
   min_robustness: 0.3
 
   # 相关性剪枝: deny_mask 相关性超过此值 → 去重
   correlation_threshold: 0.80
 
-  # 最终规则数上限
-  max_rules: 3
+  # 最终规则数上限 (Prefilter ≤ 4 条规则)
+  max_rules: 4
 
   # Deny rate 合法范围 (太小无意义, 太大误杀严重)
   deny_rate_min: 0.03
@@ -54,5 +58,5 @@ holdout:
 
 # ── SHAP∩Gain 参数 ──
 shap_gain:
-  top_n: 8
+  top_n: 5
   compute_interactions: true

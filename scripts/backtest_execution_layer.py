@@ -583,6 +583,100 @@ def compute_risk_equity_curve(
     return result
 
 
+def _report_evidence_monotonicity(
+    trade_details: List[Dict[str, Any]],
+    silent: bool = False,
+) -> Dict[str, Any]:
+    """按 evidence_score 分箱分析交易质量，验证单调性。
+
+    Returns:
+        {"monotonic": bool, "spearman_r": float, "bins": [...]}
+    """
+    if not trade_details:
+        if not silent:
+            print("   ⚠️  No trade details for evidence monotonicity check")
+        return {"monotonic": False, "spearman_r": 0.0, "bins": []}
+
+    scores = [t.get("evidence_score", 0.5) for t in trade_details]
+    rrs = [t.get("realized_rr", 0.0) for t in trade_details]
+    if len(scores) < 10:
+        if not silent:
+            print(f"   ⚠️  Too few trades ({len(scores)}) for evidence monotonicity")
+        return {"monotonic": False, "spearman_r": 0.0, "bins": []}
+
+    arr_ev = np.array(scores, dtype=float)
+    arr_rr = np.array(rrs, dtype=float)
+
+    # 5 等宽分箱 (clamp 到 [0,1])
+    edges = [0.0, 0.2, 0.4, 0.6, 0.8, 1.01]
+    bin_results = []
+    bin_means = []
+    for b in range(5):
+        lo, hi = edges[b], edges[b + 1]
+        mask = (arr_ev >= lo) & (arr_ev < hi)
+        n = int(mask.sum())
+        if n == 0:
+            bin_results.append(
+                {
+                    "range": f"[{lo:.1f},{hi:.1f})",
+                    "n": 0,
+                    "mean_rr": float("nan"),
+                    "win_rate": float("nan"),
+                }
+            )
+            bin_means.append(float("nan"))
+            continue
+        mean_rr = float(arr_rr[mask].mean())
+        win_rate = float((arr_rr[mask] > 0).mean())
+        bin_results.append(
+            {
+                "range": f"[{lo:.1f},{hi:.1f})",
+                "n": n,
+                "mean_rr": mean_rr,
+                "win_rate": win_rate,
+            }
+        )
+        bin_means.append(mean_rr)
+
+    # Spearman 相关 (score vs rr)
+    from scipy.stats import spearmanr
+
+    valid = ~(np.isnan(arr_ev) | np.isnan(arr_rr))
+    if valid.sum() >= 5:
+        sp_r, sp_p = spearmanr(arr_ev[valid], arr_rr[valid])
+    else:
+        sp_r, sp_p = 0.0, 1.0
+
+    # 单调性判定: 非 NaN 的 bin means 递增
+    valid_means = [m for m in bin_means if not np.isnan(m)]
+    is_monotonic = (
+        all(valid_means[i] <= valid_means[i + 1] for i in range(len(valid_means) - 1))
+        if len(valid_means) >= 2
+        else False
+    )
+
+    if not silent:
+        print(f"\n   📊 Evidence Monotonicity Analysis ({len(scores)} trades):")
+        print(f"   {'Bin':<14} {'Count':>6} {'Mean R':>9} {'Win%':>7}")
+        print(f"   {'-' * 38}")
+        for br in bin_results:
+            if br["n"] > 0:
+                print(
+                    f"   {br['range']:<14} {br['n']:>6} {br['mean_rr']:>9.4f} {br['win_rate']*100:>6.1f}%"
+                )
+            else:
+                print(f"   {br['range']:<14} {br['n']:>6} {'---':>9} {'---':>7}")
+        verdict = "✅ 单调递增" if is_monotonic else "⚠️  非单调"
+        print(f"   Spearman r={sp_r:.4f} (p={sp_p:.4f})  {verdict}")
+
+    return {
+        "monotonic": is_monotonic,
+        "spearman_r": float(sp_r),
+        "spearman_p": float(sp_p),
+        "bins": bin_results,
+    }
+
+
 def simulate_rr_execution(
     df: pd.DataFrame,
     exec_config: Dict[str, Any],
@@ -634,9 +728,11 @@ def simulate_rr_execution(
 
     tp_enabled = take_profit_cfg.get("enabled", False)
     tp_r = float(take_profit_cfg.get("target_r", 2.0)) if tp_enabled else float("inf")
-    g_time_stop_bars = int(
-        holding_cfg.get("time_stop_bars") or holding_cfg.get("max_holding_bars") or 50
-    )
+    # time_stop_bars: 0 或 None 表示禁用时间止损 (fat tail 模式)
+    _raw_tsb = holding_cfg.get("time_stop_bars")
+    if _raw_tsb is None:
+        _raw_tsb = holding_cfg.get("max_holding_bars")
+    g_time_stop_bars = int(_raw_tsb) if _raw_tsb and int(_raw_tsb) > 0 else 0
 
     # 检测方向列
     dir_col = None
@@ -694,7 +790,14 @@ def simulate_rr_execution(
 
     total_entries = 0
     breakeven_lock_count = 0
-    exit_stats = {"sl": 0, "trailing_sl": 0, "tp": 0, "timeout": 0, "no_data": 0}
+    exit_stats = {
+        "sl": 0,
+        "trailing_sl": 0,
+        "tp": 0,
+        "timeout": 0,
+        "no_data": 0,
+        "structural_exit_ema200": 0,
+    }
 
     # 如果提供了 1min bar 数据，预处理为 numpy 数组以加速查找
     _1min_cache: Dict[str, Dict[str, np.ndarray]] = {}
@@ -741,6 +844,14 @@ def simulate_rr_execution(
             t_trail_r = group["_tier_trail_r"].values.astype(float)
             t_timeout = group["_tier_timeout"].values.astype(int)
 
+        # structural exit 数组 (BPC trend_hold: ema200)
+        _has_structural = "_structural_exit" in group.columns
+        _has_ema200 = "ema_200" in group.columns
+        if _has_structural:
+            t_structural_exit = group["_structural_exit"].values
+        if _has_ema200:
+            t_ema200 = group["ema_200"].values.astype(float)
+
         for i in range(n):
             d = directions[i]
             a = atrs[i]
@@ -779,6 +890,14 @@ def simulate_rr_execution(
             exit_price = None
             exit_reason = None
 
+            # structural exit 参数 (BPC trend_hold: ema200)
+            structural_exit_type = ""
+            structural_ema200 = 0.0
+            if _has_structural:
+                structural_exit_type = str(t_structural_exit[i] or "")
+            if structural_exit_type == "ema200" and _has_ema200:
+                structural_ema200 = t_ema200[i] if not np.isnan(t_ema200[i]) else 0.0
+
             # ====== 1min bar 精细模拟 ======
             if use_1min and sym_1min is not None and has_ts:
                 entry_ts_ns = entry_timestamps[i]
@@ -798,7 +917,11 @@ def simulate_rr_execution(
                 # 如果用 bar OPEN，会多模拟 bar_minutes 的 1min bars（交易还没开仓！）
                 _entry_close_ns = int(entry_ts_ns) + int(bar_minutes) * 60 * 10**9
                 start_m = int(np.searchsorted(m_ts, _entry_close_ns, side="right"))
-                max_m = min(start_m + time_stop_bars * bar_minutes, len(m_ts))
+                # time_stop_bars=0 → 使用全部可用 1min bars (fat tail: 无限持仓)
+                if time_stop_bars > 0:
+                    max_m = min(start_m + time_stop_bars * bar_minutes, len(m_ts))
+                else:
+                    max_m = len(m_ts)
                 _1min_exit_mi = None  # 精确退出的 1min bar index
 
                 for mi in range(start_m, max_m):
@@ -829,6 +952,26 @@ def simulate_rr_execution(
                     else:
                         if l < best_price:
                             best_price = l
+
+                    # 2b. Structural exit (EMA200) — BPC trend_hold
+                    # 仅在 breakeven locked 后才检查 (避免入场即退出)
+                    if (
+                        structural_exit_type == "ema200"
+                        and breakeven_locked
+                        and structural_ema200 > 0
+                    ):
+                        _mc = m_c[mi]  # 1min close
+                        if not np.isnan(_mc):
+                            if direction == 1 and _mc < structural_ema200:
+                                exit_price = _mc
+                                exit_reason = "structural_exit_ema200"
+                                _1min_exit_mi = mi
+                                break
+                            elif direction == -1 and _mc > structural_ema200:
+                                exit_price = _mc
+                                exit_reason = "structural_exit_ema200"
+                                _1min_exit_mi = mi
+                                break
 
                     # 3. 移动止损 (trailing activation + SL update)
                     if stop_type == "trailing":
@@ -882,7 +1025,11 @@ def simulate_rr_execution(
 
             else:
                 # ====== 原始 4H bar 模式 ======
-                max_j = min(i + 1 + time_stop_bars, n)
+                # time_stop_bars=0 → 使用全部可用 4H bars (fat tail: 无限持仓)
+                if time_stop_bars > 0:
+                    max_j = min(i + 1 + time_stop_bars, n)
+                else:
+                    max_j = n
                 for j in range(i + 1, max_j):
                     h = highs[j]
                     l = lows[j]
@@ -911,6 +1058,24 @@ def simulate_rr_execution(
                     else:
                         if l < best_price:
                             best_price = l
+
+                    # 2b. Structural exit (EMA200) — BPC trend_hold
+                    # 4H bar 模式: 用当前 bar 的 ema_200 (动态更新)
+                    if (
+                        structural_exit_type == "ema200"
+                        and breakeven_locked
+                        and _has_ema200
+                    ):
+                        _ema_j = t_ema200[j] if j < len(t_ema200) else 0.0
+                        if _ema_j > 0 and not np.isnan(_ema_j):
+                            if direction == 1 and closes[j] < _ema_j:
+                                exit_price = closes[j]
+                                exit_reason = "structural_exit_ema200"
+                                break
+                            elif direction == -1 and closes[j] > _ema_j:
+                                exit_price = closes[j]
+                                exit_reason = "structural_exit_ema200"
+                                break
 
                     # 3. 移动止损 (trailing activation + SL update)
                     if stop_type == "trailing":
@@ -1138,18 +1303,26 @@ def simulate_rr_execution(
                 if _ap_enabled:
                     strat_cfg = _ap_per_strat.get(trade_arch, {})
                     if strat_cfg.get("allow_add_position", False):
-                        for at in active:
-                            if (
-                                at["symbol"] == trade["symbol"]
-                                and at["direction"] == trade["direction"]
-                                and at.get("breakeven_locked", False)
-                                and at.get("_add_count", 0) < _ap_max_add
-                            ):
-                                can_add = True
-                                at["_add_count"] = at.get("_add_count", 0) + 1
-                                trade["is_add_position"] = True
-                                _add_pos_count += 1
-                                break
+                        # 找出同 symbol + 同 direction 的所有活跃仓位
+                        _same_sym_dir = [
+                            t
+                            for t in active
+                            if t["symbol"] == trade["symbol"]
+                            and t["direction"] == trade["direction"]
+                        ]
+                        # 无风险加仓: 所有现有仓位都必须 breakeven locked
+                        _all_locked = _same_sym_dir and all(
+                            t.get("breakeven_locked", False) for t in _same_sym_dir
+                        )
+                        if _all_locked:
+                            # 找父单 (跟踪 add_count 的那个)
+                            for at in _same_sym_dir:
+                                if at.get("_add_count", 0) < _ap_max_add:
+                                    can_add = True
+                                    at["_add_count"] = at.get("_add_count", 0) + 1
+                                    trade["is_add_position"] = True
+                                    _add_pos_count += 1
+                                    break
 
                 if can_add:
                     accepted = active + [trade]
@@ -1200,6 +1373,7 @@ def simulate_rr_execution(
                 "tp": 0,
                 "timeout": 0,
                 "no_data": 0,
+                "structural_exit_ema200": 0,
             }
             for t in trade_details:
                 er = t.get("exit_reason", "")
@@ -1209,7 +1383,7 @@ def simulate_rr_execution(
             f"   📊 Simulated {total_entries} trades: "
             f"SL={_display_stats['sl']}, TrailSL={_display_stats['trailing_sl']}, "
             f"TP={_display_stats['tp']}, Timeout={_display_stats['timeout']}, "
-            f"NoData={_display_stats['no_data']}"
+            f"NoData={_display_stats['no_data']}, EMA200Exit={_display_stats['structural_exit_ema200']}"
         )
         if breakeven_lock_r > 0:
             pct = breakeven_lock_count / total_entries * 100 if total_entries > 0 else 0
@@ -2873,6 +3047,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     merged["_tier_timeout"] = int(first_holding.get("time_stop_bars", 50) or 50)
     merged["_tier_size"] = 1.0
     merged["_tier_name"] = "default"
+    merged["_structural_exit"] = ""  # 空 = 无结构性退出, "ema200" = BPC trend_hold
 
     # 每行的 bar_minutes (用于 1min 模拟的 timeout 换算 + slot 时间戳比较)
     merged["_bar_minutes"] = 240  # 默认 4H
@@ -2901,6 +3076,10 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         merged.loc[mask, "_tier_trail_r"] = float(trail.get("trail_r", 1.5))
         merged.loc[mask, "_tier_timeout"] = int(holding.get("time_stop_bars", 50) or 50)
         merged.loc[mask, "_tier_name"] = arch_name
+        # structural_exit: BPC trend_hold 用 ema200 结构性退出
+        _se = sl.get("structural_exit", "")
+        if _se:
+            merged.loc[mask, "_structural_exit"] = str(_se)
 
     # 应用 Regime 仓位缩放到 _tier_size
     entry_with_scale = merged["_position_scale"] < 1.0
@@ -3003,6 +3182,20 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     if len(valid_returns) == 0:
         print("❌ No valid returns computed")
         return 1
+
+    # ── Evidence 单调性验证 (用原始 R, 缩放前) ──
+    _mono_result = _report_evidence_monotonicity(trade_details)
+
+    # ── 应用 position_scale 仓位缩放 (regime × evidence) 到 R-multiples ──
+    # _position_scale 在 PCM 仲裁时计算: regime_scale × (0.5 + 0.5 × evidence)
+    # 与事件回测/实盘 LivePCM._apply_regime_scale() 公式一致
+    if "_position_scale" in merged.columns:
+        _has_scale = (merged["_position_scale"] < 1.0 - 1e-9).any()
+        if _has_scale:
+            exec_returns = exec_returns * merged["_position_scale"]
+            valid_returns = exec_returns.dropna()
+            _avg_scale = merged.loc[valid_returns.index, "_position_scale"].mean()
+            print(f"   📐 Position scale applied to returns (avg={_avg_scale:.3f})")
 
     # ── 更新漏斗统计: slot 过滤后的数据 ──
     _n_slot_rejected = _funnel_pcm_before_slot - len(valid_returns)

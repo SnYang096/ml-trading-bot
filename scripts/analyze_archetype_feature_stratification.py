@@ -2123,7 +2123,8 @@ def _meta_algorithm_prefilter(
 ) -> int:
     """Meta-Algorithm 模式: LightGBM → SHAP∩Gain → holdout 统计验证 → 规则输出.
 
-    替代分位数 bad_rate_diff 方法, 消除过拟合。
+    训练目标: mean return uplift (不优化 tail risk).
+    KPI: E[return|pass] - E[return|all] >= min_return_uplift
 
     Args:
         config_path: 策略配置目录, e.g. config/strategies/bpc/
@@ -2132,9 +2133,9 @@ def _meta_algorithm_prefilter(
     Pipeline:
       1. 读 features_prefilter.yaml → 解析 archetype 专属特征列
       2. Train/Holdout 时间分割
-      3. LightGBM 训练 (label=success_no_rr_extreme)
+      3. LightGBM regression 训练 (label=forward_rr)
       4. SHAP∩Gain 特征发现 (复用 _compute_shap_gain_features)
-      5. Holdout 统计验证: lift + effect_size + robustness
+      5. Holdout 统计验证: return_uplift + hit_rate_uplift + robustness
       6. 规则生成 + promote
     """
     import operator as op_module
@@ -2189,19 +2190,18 @@ def _meta_algorithm_prefilter(
         n_valid_f = df[f].notna().sum()
         print(f"   {f}: {n_valid_f} valid")
 
-    # ── 1b. 标签检查 ──
-    if label_col not in df.columns and rr_col in df.columns:
-        df[label_col] = (df[rr_col] >= -0.8).astype(int)
-        print(f"ℹ️  自动生成 '{label_col}' from '{rr_col}' (threshold: -0.8R)")
-    if label_col not in df.columns:
-        print(f"❌ 标签列 '{label_col}' 不存在")
+    # ── 1b. 回报列检查 (regression 目标: forward_rr) ──
+    if rr_col not in df.columns:
+        print(f"❌ 回报列 '{rr_col}' 不存在")
         return 1
 
     n_total = len(df)
-    overall_bad_rate = float((df[label_col] == 0).mean())
-    med_rr = float(df[rr_col].median()) if rr_col in df.columns else float("nan")
+    overall_mean_rr = float(df[rr_col].mean())
+    overall_hit_rate = float((df[rr_col] > 0).mean())
+    med_rr = float(df[rr_col].median())
     print(
-        f"   数据: {n_total} 行, bad_rate={overall_bad_rate:.1%}, medRR={med_rr:+.2f}"
+        f"   数据: {n_total} 行, mean_rr={overall_mean_rr:+.4f}, "
+        f"hit_rate={overall_hit_rate:.1%}, medRR={med_rr:+.2f}"
     )
 
     # ── 2. Train/Holdout 时间分割 ──
@@ -2219,11 +2219,11 @@ def _meta_algorithm_prefilter(
     df_train = df_sorted.iloc[:n_train].copy()
     df_holdout = df_sorted.iloc[n_train:].copy()
 
-    train_bad = float((df_train[label_col] == 0).mean())
-    holdout_bad = float((df_holdout[label_col] == 0).mean())
+    train_mean_rr = float(df_train[rr_col].mean())
+    holdout_mean_rr = float(df_holdout[rr_col].mean())
     print(f"\n📐 Train/Holdout 分割: {n_train} / {n_holdout} (ratio={holdout_ratio})")
-    print(f"   Train  bad_rate: {train_bad:.1%}")
-    print(f"   Holdout bad_rate: {holdout_bad:.1%}")
+    print(f"   Train  mean_rr: {train_mean_rr:+.4f}")
+    print(f"   Holdout mean_rr: {holdout_mean_rr:+.4f}")
 
     # ── 3. LightGBM 训练 ──
     try:
@@ -2239,11 +2239,11 @@ def _meta_algorithm_prefilter(
         return 1
 
     X_train = df_train[avail_features].fillna(0).values.astype(float)
-    y_train = df_train[label_col].values.astype(int)
+    y_train = df_train[rr_col].clip(-2, 2).fillna(0).values.astype(float)
 
     lgb_params = {
-        "objective": "binary",
-        "metric": "binary_logloss",
+        "objective": "regression",
+        "metric": "mse",
         "num_leaves": _lgb_cfg.get("num_leaves", 31),
         "learning_rate": _lgb_cfg.get("learning_rate", 0.05),
         "min_child_samples": _lgb_cfg.get("min_child_samples", 50),
@@ -2288,9 +2288,12 @@ def _meta_algorithm_prefilter(
             marker = " ★" if feat in top_features else ""
             print(f"   {rank:>3d}. {feat:<40s} SHAP={imp:.4f}{marker}")
 
-    # ── 5. Holdout 统计验证 ──
+    # ── 5. Holdout 统计验证 (KS 分布分离度) ──
+    from scipy.stats import ks_2samp as _ks_2samp
+    from scipy.stats import skew as _sp_skew
+
     print(f"\n{'='*110}")
-    print(f"📊 Holdout 统计验证 ({n_holdout} 样本)")
+    print(f"📊 Holdout 统计验证 — KS 分布分离度 ({n_holdout} 样本)")
     print(f"{'='*110}")
 
     _SIM_OPS = {
@@ -2305,11 +2308,11 @@ def _meta_algorithm_prefilter(
         if rr_col in df_holdout.columns
         else None
     )
-    holdout_bad = (df_holdout[label_col] == 0).values
-    holdout_good = ~holdout_bad
-    holdout_bad_rate = float(holdout_bad.mean())
-    total_bad_holdout = int(holdout_bad.sum())
-    total_good_holdout = int(holdout_good.sum())
+    if holdout_rr is None:
+        print("❌ holdout 中无 rr_col, 无法计算 return uplift")
+        return 1
+    holdout_mean_rr_all = float(np.nanmean(holdout_rr))
+    holdout_hit_rate_all = float((holdout_rr > 0).mean())
 
     quantiles = _ho_cfg.get(
         "quantiles", [0.05, 0.10, 0.15, 0.20, 0.80, 0.85, 0.90, 0.95]
@@ -2319,11 +2322,13 @@ def _meta_algorithm_prefilter(
     candidates = []
 
     # Prefilter 门槛从 kpi_gates/prefilter_layer.yaml 读取
-    PREFILTER_MIN_LIFT = _thr.get("min_lift", 1.05)
-    PREFILTER_MIN_EFFECT = _thr.get("min_effect", 0.02)
+    PREFILTER_MIN_KS = _thr.get("min_ks_statistic", 0.05)
+    PREFILTER_MAX_KS_PVALUE = _thr.get("max_ks_pvalue", 0.01)
+    PREFILTER_MIN_RETURN_UPLIFT_SOFT = _thr.get("min_return_uplift_soft", -0.10)
+    PREFILTER_MIN_HIT_RATE_UPLIFT = _thr.get("min_hit_rate_uplift", -1.0)
     PREFILTER_MIN_ROBUSTNESS = _thr.get("min_robustness", 0.3)
     PREFILTER_CORR_THRESHOLD = _thr.get("correlation_threshold", 0.80)
-    PREFILTER_MAX_RULES = _thr.get("max_rules", 3)
+    PREFILTER_MAX_RULES = _thr.get("max_rules", 4)
     PREFILTER_DENY_RATE_MIN = _thr.get("deny_rate_min", 0.03)
     PREFILTER_DENY_RATE_MAX = _thr.get("deny_rate_max", 0.70)
 
@@ -2336,100 +2341,116 @@ def _meta_algorithm_prefilter(
             continue
 
         thresholds = np.unique(np.quantile(col[valid], quantiles))
+
+        # ── 收集候选 deny_mask 列表: 单阈值 + 区间 ──
+        _rule_specs = []  # [(deny_mask, op_str, thr_val, thr_low, thr_high)]
+
+        # (A) 单阈值规则
         for thr in thresholds:
             for direction in ["gt", "lt"]:
-                # deny_mask: bars that FAIL the prefilter (should be denied)
-                deny_mask = (col > thr) if direction == "gt" else (col < thr)
-                deny_mask = deny_mask & valid
-                deny_rate = float(deny_mask.mean())
+                dm = (col > thr) if direction == "gt" else (col < thr)
+                dm = dm & valid
+                op_s = ">" if direction == "gt" else "<"
+                _rule_specs.append((dm, op_s, float(thr), None, None))
 
-                if (
-                    deny_rate < PREFILTER_DENY_RATE_MIN
-                    or deny_rate > PREFILTER_DENY_RATE_MAX
-                ):
-                    continue
+        # (B) 区间规则: pass = [low, high], deny = 两侧
+        for i_lo, thr_lo in enumerate(thresholds):
+            for thr_hi in thresholds[i_lo + 1 :]:
+                dm = ((col < thr_lo) | (col > thr_hi)) & valid
+                _rule_specs.append((dm, "range", None, float(thr_lo), float(thr_hi)))
 
-                # Lift: bad concentration in denied region
-                bad_in_deny = (
-                    float(holdout_bad[deny_mask].mean()) if deny_mask.any() else 0
-                )
-                lift = bad_in_deny / holdout_bad_rate if holdout_bad_rate > 0 else 0
-                if lift <= PREFILTER_MIN_LIFT:
-                    continue
+        for deny_mask, _op_str, _thr_val, _thr_low, _thr_high in _rule_specs:
+            deny_rate = float(deny_mask.mean())
 
-                # Effect size
-                if holdout_rr is not None:
-                    mean_allow = float(np.nanmean(holdout_rr[~deny_mask]))
-                    mean_deny = float(np.nanmean(holdout_rr[deny_mask]))
-                    effect = mean_allow - mean_deny
-                else:
-                    effect = 0.0
-                if effect < PREFILTER_MIN_EFFECT:
-                    continue
+            if (
+                deny_rate < PREFILTER_DENY_RATE_MIN
+                or deny_rate > PREFILTER_DENY_RATE_MAX
+            ):
+                continue
 
-                # Robustness: time-fold on holdout
-                fold_lifts = []
-                for fi in range(n_folds_holdout):
-                    s = fi * fold_size_ho
-                    e = (
-                        (fi + 1) * fold_size_ho
-                        if fi < n_folds_holdout - 1
-                        else n_holdout
-                    )
-                    fb = holdout_bad[s:e]
-                    fd = deny_mask[s:e]
-                    fbr = float(fb.mean())
-                    if fbr > 0 and fd.any():
-                        fl = float(fb[fd].mean()) / fbr
-                        fold_lifts.append(fl)
+            # KS 分布分离度 + Return uplift 软约束
+            pass_mask = ~deny_mask & valid
+            n_pass_ho = int(pass_mask.sum())
+            if n_pass_ho < 30:
+                continue
+            rr_pass_ho = holdout_rr[pass_mask]
+            rr_deny_ho = holdout_rr[deny_mask]
+            n_deny_ho = int(deny_mask.sum())
+            if n_deny_ho < 30:
+                continue
 
-                rob_time = sum(1 for fl in fold_lifts if fl > 1.0) / max(
-                    len(fold_lifts), 1
-                )
-                if len(fold_lifts) >= 2:
-                    rob_cross = (
-                        min(fold_lifts) / max(fold_lifts) if max(fold_lifts) > 0 else 0
-                    )
-                    robustness = rob_time * 0.6 + rob_cross * 0.4
-                else:
-                    robustness = rob_time
-                if robustness < PREFILTER_MIN_ROBUSTNESS:
-                    continue
+            ks_stat, ks_pval = _ks_2samp(rr_pass_ho, rr_deny_ho)
+            if ks_stat < PREFILTER_MIN_KS or ks_pval > PREFILTER_MAX_KS_PVALUE:
+                continue
 
-                # Gate score: tail_capture - good_deny_rate (Youden's J)
-                bad_in_deny_n = (
-                    int(holdout_bad[deny_mask].sum()) if deny_mask.any() else 0
-                )
-                good_in_deny_n = (
-                    int(holdout_good[deny_mask].sum()) if deny_mask.any() else 0
-                )
-                tail_capture = bad_in_deny_n / max(total_bad_holdout, 1)
-                good_deny_rate = good_in_deny_n / max(total_good_holdout, 1)
-                gate_score = tail_capture - good_deny_rate
+            mean_return_pass = float(np.nanmean(rr_pass_ho))
+            return_uplift = mean_return_pass - holdout_mean_rr_all
+            if return_uplift < PREFILTER_MIN_RETURN_UPLIFT_SOFT:
+                continue
 
-                op_str = ">" if direction == "gt" else "<"
-                score = lift * 0.4 + robustness * 0.4 + (1 - deny_rate) * 0.2
+            # Hit rate uplift
+            hit_rate_pass = float((rr_pass_ho > 0).mean())
+            hit_rate_uplift = hit_rate_pass - holdout_hit_rate_all
+            if hit_rate_uplift < PREFILTER_MIN_HIT_RATE_UPLIFT:
+                continue
 
-                candidates.append(
-                    {
-                        "feature": feat,
-                        "op": op_str,
-                        "threshold": float(thr),
-                        "lift": lift,
-                        "effect_size": effect,
-                        "robustness": robustness,
-                        "deny_rate": deny_rate,
-                        "score": score,
-                        "gate_score": gate_score,
-                        "tail_capture": tail_capture,
-                        "good_deny_rate": good_deny_rate,
-                        "_deny_mask": deny_mask,
-                    }
-                )
+            # Robustness: time-fold KS consistency
+            fold_ks_stats = []
+            for fi in range(n_folds_holdout):
+                s = fi * fold_size_ho
+                e = (fi + 1) * fold_size_ho if fi < n_folds_holdout - 1 else n_holdout
+                f_rr = holdout_rr[s:e]
+                f_deny = deny_mask[s:e]
+                f_valid = valid[s:e]
+                f_pass = ~f_deny & f_valid
+                if f_pass.sum() >= 10 and f_deny[s:e].sum() >= 10:
+                    f_ks, _ = _ks_2samp(f_rr[f_pass], f_rr[f_deny & f_valid])
+                    fold_ks_stats.append(f_ks)
+
+            rob_time = sum(
+                1 for fk in fold_ks_stats if fk >= PREFILTER_MIN_KS * 0.5
+            ) / max(len(fold_ks_stats), 1)
+            if len(fold_ks_stats) >= 2:
+                rob_cross = min(fold_ks_stats) / max(fold_ks_stats)
+                robustness = rob_time * 0.6 + rob_cross * 0.4
+            else:
+                robustness = rob_time
+            if robustness < PREFILTER_MIN_ROBUSTNESS:
+                continue
+
+            candidates.append(
+                {
+                    "feature": feat,
+                    "op": _op_str,
+                    "threshold": _thr_val,
+                    "threshold_low": _thr_low,
+                    "threshold_high": _thr_high,
+                    "ks_statistic": ks_stat,
+                    "ks_pvalue": ks_pval,
+                    "return_uplift": return_uplift,
+                    "hit_rate_uplift": hit_rate_uplift,
+                    "mean_return_pass": mean_return_pass,
+                    "hit_rate_pass": hit_rate_pass,
+                    "robustness": robustness,
+                    "deny_rate": deny_rate,
+                    "score": 0.0,  # 待 rank 归一化后赋值
+                    "_deny_mask": deny_mask,
+                }
+            )
+
+    # ── 5a-post. rank-based score 归一化 (KS-dominant) ──
+    if candidates:
+        _n_cand = len(candidates)
+        _ks_arr = np.array([c["ks_statistic"] for c in candidates])
+        _rob_arr = np.array([c["robustness"] for c in candidates])
+        _ks_rank = _ks_arr.argsort().argsort().astype(float) / max(_n_cand - 1, 1)
+        _rob_rank = _rob_arr.argsort().argsort().astype(float) / max(_n_cand - 1, 1)
+        for _i, _c in enumerate(candidates):
+            _c["score"] = _ks_rank[_i] * 0.6 + _rob_rank[_i] * 0.4
 
     if not candidates:
-        print("   ⚠️  Holdout 统计验证: 无候选规则通过 lift+robustness 筛选")
-        print("   可能原因: archetype 特征在 holdout 上区分力不足, 或数据量太小")
+        print("   ⚠️  Holdout 统计验证: 无候选规则通过 KS+软约束 筛选")
+        print("   原因: archetype 特征无法创建显著不同的 pass/deny 分布, 或数据量太小")
         # Fallback: 仍然生成空模板
         if args.promote:
             arch_prefilter = config_path / "archetypes" / "prefilter.yaml"
@@ -2443,7 +2464,7 @@ def _meta_algorithm_prefilter(
                 absence=[],
                 data_source=str(Path(args.logs).name),
                 n_rows=n_total,
-                baseline_bad_rate=overall_bad_rate,
+                baseline_bad_rate=0.0,
                 baseline_median_rr=med_rr,
             )
             print(f"\n📦 Promoted (空模板) → {arch_prefilter}")
@@ -2475,12 +2496,15 @@ def _meta_algorithm_prefilter(
             selected.append(cand)
             selected_features.add(cand["feature"])
 
-    # ── 5c. 选择最终规则 (gate_score > 0) ──
-    selected.sort(key=lambda x: -x.get("gate_score", 0))
+    # ── 5c. 选择最终规则 (ks_statistic 排序) ──
+    selected.sort(key=lambda x: -x.get("ks_statistic", 0))
 
     final_rules = []
     for cand in selected:
-        if cand["gate_score"] > 0 and len(final_rules) < PREFILTER_MAX_RULES:
+        if (
+            cand["ks_statistic"] >= PREFILTER_MIN_KS
+            and len(final_rules) < PREFILTER_MAX_RULES
+        ):
             final_rules.append(cand)
 
     # ── 5d. 通过率保底检查 ──
@@ -2503,7 +2527,11 @@ def _meta_algorithm_prefilter(
             if feat not in df_full_vals.columns:
                 continue
             col_vals = df_full_vals[feat].values.astype(float)
-            if op_str == ">":
+            if op_str == "range":
+                rule_deny = (col_vals < rule["threshold_low"]) | (
+                    col_vals > rule["threshold_high"]
+                )
+            elif op_str == ">":
                 rule_deny = col_vals > thr
             else:
                 rule_deny = col_vals < thr
@@ -2511,17 +2539,19 @@ def _meta_algorithm_prefilter(
 
         n_pass = int(pass_mask.sum())
         pass_rate = n_pass / n_total if n_total > 0 else 0
-        pass_bad_rate = (
-            float((df_full_vals[label_col].values[pass_mask] == 0).mean())
-            if n_pass > 0
-            else 0
-        )
+        full_rr = df_full_vals[rr_col].values.astype(float)
+        pass_mean_rr = float(np.nanmean(full_rr[pass_mask])) if n_pass > 0 else 0
+        pass_hit_rate = float((full_rr[pass_mask] > 0).mean()) if n_pass > 0 else 0
 
         print(f"\n📊 AND 组合全量验证 ({len(final_rules)} 条规则):")
         print(f"   通过: {n_pass:,} / {n_total:,} ({pass_rate:.1%})")
         print(
-            f"   通过后 bad_rate: {pass_bad_rate:.1%} (基线 {overall_bad_rate:.1%}, "
-            f"差异 {pass_bad_rate - overall_bad_rate:+.1%})"
+            f"   通过后 mean_rr: {pass_mean_rr:+.4f} "
+            f"(基线 {overall_mean_rr:+.4f}, uplift: {pass_mean_rr - overall_mean_rr:+.4f}R)"
+        )
+        print(
+            f"   通过后 hit_rate: {pass_hit_rate:.1%} "
+            f"(基线 {overall_hit_rate:.1%}, uplift: {pass_hit_rate - overall_hit_rate:+.1%})"
         )
 
         if n_pass < MIN_PREFILTER_ROWS:
@@ -2529,28 +2559,101 @@ def _meta_algorithm_prefilter(
         if min_pass_rate is not None and pass_rate < min_pass_rate:
             print(f"   ⚠️  通过率 {pass_rate:.1%} < min_pass_rate {min_pass_rate:.0%}")
 
+        # Opportunity Density
+        opp_density_pass = pass_mean_rr * pass_rate
+        opp_density_base = overall_mean_rr * 1.0
+        if opp_density_base != 0:
+            print(
+                f"   Opportunity density: {opp_density_pass:.6f} "
+                f"(baseline: {opp_density_base:.6f}, "
+                f"ratio: {opp_density_pass / opp_density_base:.2f}x)"
+            )
+        else:
+            print(f"   Opportunity density: {opp_density_pass:.6f} (baseline=0)")
+        if opp_density_base > 0 and opp_density_pass < opp_density_base:
+            print("   ⚠️  WARNING: prefilter 过窄, opportunity density 低于基线")
+
+        # ── 分布诊断: pass vs deny ──
+        deny_mask_all = ~pass_mask
+        rr_pass_arr = full_rr[pass_mask]
+        rr_deny_arr = full_rr[deny_mask_all]
+        n_deny_total = int(deny_mask_all.sum())
+
+        if n_pass > 0 and n_deny_total > 0:
+            ks_stat_full, ks_pval_full = _ks_2samp(rr_pass_arr, rr_deny_arr)
+
+            _diag_metrics = [
+                (
+                    "mean",
+                    float(np.nanmean(rr_pass_arr)),
+                    float(np.nanmean(rr_deny_arr)),
+                ),
+                (
+                    "variance",
+                    float(np.nanvar(rr_pass_arr)),
+                    float(np.nanvar(rr_deny_arr)),
+                ),
+                ("skew", float(_sp_skew(rr_pass_arr)), float(_sp_skew(rr_deny_arr))),
+                (
+                    "P5 (tail-)",
+                    float(np.nanpercentile(rr_pass_arr, 5)),
+                    float(np.nanpercentile(rr_deny_arr, 5)),
+                ),
+                (
+                    "P95 (tail+)",
+                    float(np.nanpercentile(rr_pass_arr, 95)),
+                    float(np.nanpercentile(rr_deny_arr, 95)),
+                ),
+                (
+                    "hit_rate",
+                    float((rr_pass_arr > 0).mean()),
+                    float((rr_deny_arr > 0).mean()),
+                ),
+            ]
+
+            print(f"\n   📊 分布诊断 (pass {n_pass:,} vs deny {n_deny_total:,}):")
+            print(f"   {'指标':<12s}  {'Pass':>10s}  {'Deny':>10s}  {'Delta':>10s}")
+            print(f"   {'─'*46}")
+            for mname, pval, dval in _diag_metrics:
+                print(
+                    f"   {mname:<12s}  {pval:>+10.4f}  {dval:>+10.4f}  {pval - dval:>+10.4f}"
+                )
+            print(f"   {'─'*46}")
+            print(f"   KS statistic: {ks_stat_full:.4f} (p={ks_pval_full:.2e})")
+            if ks_stat_full >= 0.10:
+                print(f"   ✅ 强分离: pass/deny 是显著不同的市场结构")
+            elif ks_stat_full >= 0.05:
+                print(f"   ✅ 中等分离: pass/deny 分布有差异")
+            else:
+                print(f"   ⚠️  弱分离: pass/deny 分布接近")
+
     # ── 6. 诊断输出 ──
     print(f"\n{'='*110}")
     print(f"📋 Meta-Algorithm Prefilter 结果 ({strategy.upper()})")
     print(f"{'='*110}")
 
     if final_rules:
-        print(f"\n   ✅ {len(final_rules)} 条规则通过 holdout 验证 (gate_score > 0)")
         print(
-            f"   {'#':>3s} {'feature':<35s} {'cond':<15s} {'lift':>6s} {'robust':>7s} "
-            f"{'deny%':>6s} {'gate_sc':>7s} {'tail_cap':>8s} {'good_dn':>7s}"
+            f"\n   ✅ {len(final_rules)} 条规则通过 holdout 验证 (KS >= {PREFILTER_MIN_KS})"
         )
-        print(f"   {'-'*100}")
+        print(
+            f"   {'#':>3s} {'feature':<35s} {'cond':<15s} {'KS':>7s} {'uplift':>8s} "
+            f"{'robust':>7s} {'deny%':>6s} {'score':>7s}"
+        )
+        print(f"   {'-'*90}")
         for i, r in enumerate(final_rules):
-            cond = f"{r['op']} {r['threshold']:.4g}"
+            if r["op"] == "range":
+                cond = f"[{r['threshold_low']:.4g}, {r['threshold_high']:.4g}]"
+            else:
+                cond = f"{r['op']} {r['threshold']:.4g}"
             print(
                 f"   {i+1:>3d} {r['feature']:<35s} {cond:<15s} "
-                f"{r['lift']:>5.2f}x {r['robustness']:>6.0%} "
-                f"{r['deny_rate']:>5.1%} {r['gate_score']:>+6.3f} "
-                f"{r['tail_capture']:>7.0%} {r['good_deny_rate']:>6.0%}"
+                f"{r['ks_statistic']:>6.4f} {r['return_uplift']:>+7.4f} "
+                f"{r['robustness']:>6.0%} {r['deny_rate']:>5.1%} "
+                f"{r['score']:>6.4f}"
             )
     else:
-        print(f"\n   ⚠️  无规则通过 holdout 验证 (所有候选 gate_score ≤ 0)")
+        print(f"\n   ⚠️  无规则通过 holdout 验证 (无候选 KS >= {PREFILTER_MIN_KS})")
 
     # ── 7. Promote ──
     if args.promote:
@@ -2560,23 +2663,44 @@ def _meta_algorithm_prefilter(
         # 构建 top_rules 格式 (与 _generate_promoted_prefilter 兼容)
         top_rules_for_promote = []
         for r in final_rules:
-            # 转换 operator: ">" → ">", "<" → "<"
             rationale_parts = [
                 f"meta-algorithm",
-                f"lift={r['lift']:.2f}",
+                f"KS={r['ks_statistic']:.4f}",
+                f"return_uplift={r['return_uplift']:+.4f}",
                 f"robustness={r['robustness']:.0%}",
-                f"gate_score={r['gate_score']:.3f}",
                 f"holdout验证通过",
             ]
-            top_rules_for_promote.append(
-                {
-                    "feature": r["feature"],
-                    "operator": r["op"],
-                    "value": round(r["threshold"], 4),
-                    "composite": r["score"],
-                    "rationale": ", ".join(rationale_parts),
-                }
-            )
+            if r["op"] == "range":
+                # 区间规则 → 两条 conditions (>=low AND <=high)
+                _rationale = ", ".join(rationale_parts)
+                top_rules_for_promote.append(
+                    {
+                        "feature": r["feature"],
+                        "operator": ">=",
+                        "value": round(r["threshold_low"], 4),
+                        "composite": r["score"],
+                        "rationale": f"range lower, {_rationale}",
+                    }
+                )
+                top_rules_for_promote.append(
+                    {
+                        "feature": r["feature"],
+                        "operator": "<=",
+                        "value": round(r["threshold_high"], 4),
+                        "composite": r["score"],
+                        "rationale": f"range upper, {_rationale}",
+                    }
+                )
+            else:
+                top_rules_for_promote.append(
+                    {
+                        "feature": r["feature"],
+                        "operator": r["op"],
+                        "value": round(r["threshold"], 4),
+                        "composite": r["score"],
+                        "rationale": ", ".join(rationale_parts),
+                    }
+                )
 
         recommendation_report = (
             {"top_rules": top_rules_for_promote} if top_rules_for_promote else None
@@ -2591,7 +2715,7 @@ def _meta_algorithm_prefilter(
             absence=[],
             data_source=str(Path(args.logs).name),
             n_rows=n_total,
-            baseline_bad_rate=overall_bad_rate,
+            baseline_bad_rate=0.0,
             baseline_median_rr=med_rr,
         )
         print(f"\n📦 Promoted prefilter.yaml → {arch_prefilter}")
@@ -2608,17 +2732,17 @@ def _meta_algorithm_prefilter(
         report = {
             "strategy": strategy,
             "mode": "meta-algorithm",
+            "kpi": "ks_separability",
             "features_prefilter": str(prefilter_yaml),
             "data": {
                 "n_total": n_total,
                 "n_train": n_train,
                 "n_holdout": n_holdout,
                 "holdout_ratio": holdout_ratio,
-                "overall_bad_rate": round(overall_bad_rate, 4),
-                "train_bad_rate": round(train_bad, 4),
-                "holdout_bad_rate": round(
-                    float((df_holdout[label_col] == 0).mean()), 4
-                ),
+                "overall_mean_rr": round(overall_mean_rr, 4),
+                "overall_hit_rate": round(overall_hit_rate, 4),
+                "train_mean_rr": round(train_mean_rr, 4),
+                "holdout_mean_rr": round(float(df_holdout[rr_col].mean()), 4),
             },
             "shap_gain": {
                 "top_features": top_features,
@@ -2636,11 +2760,13 @@ def _meta_algorithm_prefilter(
                     "feature": r["feature"],
                     "operator": r["op"],
                     "threshold": round(r["threshold"], 4),
-                    "lift": round(r["lift"], 3),
+                    "ks_statistic": round(r["ks_statistic"], 4),
+                    "ks_pvalue": float(f"{r['ks_pvalue']:.2e}"),
+                    "return_uplift": round(r["return_uplift"], 4),
+                    "hit_rate_uplift": round(r["hit_rate_uplift"], 4),
                     "robustness": round(r["robustness"], 3),
-                    "gate_score": round(r["gate_score"], 4),
                     "deny_rate": round(r["deny_rate"], 4),
-                    "effect_size": round(r["effect_size"], 4),
+                    "score": round(r["score"], 4),
                 }
                 for r in final_rules
             ],

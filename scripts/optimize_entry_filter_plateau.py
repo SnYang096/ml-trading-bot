@@ -1180,83 +1180,89 @@ def _meta_algorithm_entry_filter(
             continue
 
         thresholds = np.unique(np.quantile(col[valid], quantiles))
+
+        # ── 收集候选 pass_mask: 单阈值 + 区间 ──
+        _rule_specs = []  # [(pass_mask, op_str, thr_val, thr_low, thr_high)]
+
+        # (A) 单阈值规则
         for thr_val in thresholds:
             for direction in ["ge", "le"]:
-                # ALLOW 逻辑: pass_mask = 满足条件的 bars
                 if direction == "ge":
-                    pass_mask = (col >= thr_val) & valid
+                    pm = (col >= thr_val) & valid
                 else:
-                    pass_mask = (col <= thr_val) & valid
+                    pm = (col <= thr_val) & valid
+                op_s = ">=" if direction == "ge" else "<="
+                _rule_specs.append((pm, op_s, float(thr_val), None, None))
 
-                pass_rate = float(pass_mask.mean())
-                if pass_rate < EF_PASS_RATE_MIN or pass_rate > EF_PASS_RATE_MAX:
-                    continue
+        # (B) 区间规则: pass = [low, high]
+        for i_lo, thr_lo in enumerate(thresholds):
+            for thr_hi in thresholds[i_lo + 1 :]:
+                pm = ((col >= thr_lo) & (col <= thr_hi)) & valid
+                _rule_specs.append((pm, "range", None, float(thr_lo), float(thr_hi)))
 
-                # Lift: good concentration in pass region / baseline
-                good_in_pass = (
-                    float(holdout_good_mask[pass_mask].mean()) if pass_mask.any() else 0
+        for pass_mask, _op_str, _thr_val, _thr_low, _thr_high in _rule_specs:
+            pass_rate = float(pass_mask.mean())
+            if pass_rate < EF_PASS_RATE_MIN or pass_rate > EF_PASS_RATE_MAX:
+                continue
+
+            # Lift: good concentration in pass region / baseline
+            good_in_pass = (
+                float(holdout_good_mask[pass_mask].mean()) if pass_mask.any() else 0
+            )
+            lift = good_in_pass / baseline_good_rate if baseline_good_rate > 0 else 0
+            if lift <= EF_MIN_LIFT:
+                continue
+
+            # Effect size: good_rate(pass) - good_rate(fail)
+            fail_mask = ~pass_mask & valid
+            good_rate_pass = good_in_pass
+            good_rate_fail = (
+                float(holdout_good_mask[fail_mask].mean()) if fail_mask.any() else 0
+            )
+            effect = good_rate_pass - good_rate_fail
+            if effect < EF_MIN_EFFECT:
+                continue
+
+            # Robustness: time-fold on holdout
+            fold_lifts = []
+            for fi in range(n_folds_holdout):
+                s = fi * fold_size_ho
+                e = (fi + 1) * fold_size_ho if fi < n_folds_holdout - 1 else n_holdout
+                fg = holdout_good_mask[s:e]
+                fp = pass_mask[s:e]
+                fgr = float(fg.mean())
+                if fgr > 0 and fp.any():
+                    fl = float(fg[fp].mean()) / fgr
+                    fold_lifts.append(fl)
+
+            rob_time = sum(1 for fl in fold_lifts if fl > 1.0) / max(len(fold_lifts), 1)
+            if len(fold_lifts) >= 2:
+                rob_cross = (
+                    min(fold_lifts) / max(fold_lifts) if max(fold_lifts) > 0 else 0
                 )
-                lift = (
-                    good_in_pass / baseline_good_rate if baseline_good_rate > 0 else 0
-                )
-                if lift <= EF_MIN_LIFT:
-                    continue
+                robustness = rob_time * 0.6 + rob_cross * 0.4
+            else:
+                robustness = rob_time
+            if robustness < EF_MIN_ROBUSTNESS:
+                continue
 
-                # Effect size: good_rate(pass) - good_rate(fail)
-                fail_mask = ~pass_mask & valid
-                good_rate_pass = good_in_pass
-                good_rate_fail = (
-                    float(holdout_good_mask[fail_mask].mean()) if fail_mask.any() else 0
-                )
-                effect = good_rate_pass - good_rate_fail
-                if effect < EF_MIN_EFFECT:
-                    continue
+            score = lift * 0.4 + robustness * 0.4 + pass_rate * 0.2
 
-                # Robustness: time-fold on holdout
-                fold_lifts = []
-                for fi in range(n_folds_holdout):
-                    s = fi * fold_size_ho
-                    e = (
-                        (fi + 1) * fold_size_ho
-                        if fi < n_folds_holdout - 1
-                        else n_holdout
-                    )
-                    fg = holdout_good_mask[s:e]
-                    fp = pass_mask[s:e]
-                    fgr = float(fg.mean())
-                    if fgr > 0 and fp.any():
-                        fl = float(fg[fp].mean()) / fgr
-                        fold_lifts.append(fl)
-
-                rob_time = sum(1 for fl in fold_lifts if fl > 1.0) / max(
-                    len(fold_lifts), 1
-                )
-                if len(fold_lifts) >= 2:
-                    rob_cross = (
-                        min(fold_lifts) / max(fold_lifts) if max(fold_lifts) > 0 else 0
-                    )
-                    robustness = rob_time * 0.6 + rob_cross * 0.4
-                else:
-                    robustness = rob_time
-                if robustness < EF_MIN_ROBUSTNESS:
-                    continue
-
-                op_str = ">=" if direction == "ge" else "<="
-                score = lift * 0.4 + robustness * 0.4 + pass_rate * 0.2
-
-                candidates.append(
-                    {
-                        "feature": feat,
-                        "op": op_str,
-                        "threshold": float(thr_val),
-                        "lift": lift,
-                        "effect_size": effect,
-                        "robustness": robustness,
-                        "pass_rate": pass_rate,
-                        "score": score,
-                        "_pass_mask": pass_mask,
-                    }
-                )
+            candidates.append(
+                {
+                    "feature": feat,
+                    "op": _op_str,
+                    "threshold": _thr_val,
+                    "threshold_low": _thr_low,
+                    "threshold_high": _thr_high,
+                    "lift": lift,
+                    "effect_size": effect,
+                    "robustness": robustness,
+                    "pass_rate": pass_rate,
+                    "score": score,
+                    "_pass_mask": pass_mask,
+                }
+            )
 
     # ── 6b. 去重 + 相关性剪枝 ──
     if not candidates:
@@ -1328,6 +1334,63 @@ def _meta_algorithm_entry_filter(
         op_str = cand["op"]
         thr_val = cand["threshold"]
 
+        # 区间规则: 跳过 plateau 扫描, 直接走 Tier B (z-test)
+        if op_str == "range":
+            thr_lo = cand["threshold_low"]
+            thr_hi = cand["threshold_high"]
+            merged["entry_direction"] = merged_original_dir.copy()
+            col_full = (
+                merged[feat].values.astype(float) if feat in merged.columns else None
+            )
+            if col_full is not None:
+                filt_mask = (col_full >= thr_lo) & (col_full <= thr_hi)
+                merged.loc[~filt_mask, "entry_direction"] = 0.0
+                n_ent = int((merged["entry_direction"] != 0).sum())
+                if n_ent >= 20:
+                    exec_ret, _ = simulate_rr_execution(
+                        merged, exec_config, atr_col="atr", use_tier_params=False
+                    )
+                    filt_valid = exec_ret.dropna()
+                    filt_snotio = (
+                        float(filt_valid.mean()) if len(filt_valid) >= 10 else 0.0
+                    )
+                    sig, z_val, p_val = _is_significant_ef(
+                        filt_snotio, len(filt_valid), sigma_for_test
+                    )
+                else:
+                    filt_snotio, sig, z_val, p_val = 0.0, False, 0.0, 1.0
+            else:
+                filt_snotio, sig, z_val, p_val = 0.0, False, 0.0, 1.0
+            merged["entry_direction"] = merged_original_dir
+
+            sig_label = "✅ sig" if sig else "❌ not_sig"
+            print(
+                f"\n   🔍 {feat} [{thr_lo:.4f}, {thr_hi:.4f}]  →  "
+                f"snotio={filt_snotio:.4f} z={z_val:.2f} p={p_val:.4f} {sig_label}"
+            )
+
+            if sig and filt_snotio > bl_snotio:
+                final_rules.append(
+                    {
+                        "feature": feat,
+                        "operator": "range",
+                        "value": None,
+                        "threshold_low": thr_lo,
+                        "threshold_high": thr_hi,
+                        "lift": cand["lift"],
+                        "effect_size": cand["effect_size"],
+                        "robustness": cand["robustness"],
+                        "pass_rate": cand["pass_rate"],
+                        "plateau": None,
+                        "snotio": filt_snotio,
+                        "z_score": z_val,
+                        "p_value": p_val,
+                        "tier": "B_SNOTIO",
+                    }
+                )
+            continue
+
+        # 单阈值规则: 正常 plateau 扫描
         # 构建临时 filter def 供 plateau scan
         # op_str 是 ">="/"<=", 需要构建单条件 filter
         tmp_filter_def = {
@@ -1488,7 +1551,10 @@ def _meta_algorithm_entry_filter(
         )
         print(f"   {'-'*110}")
         for i, r in enumerate(final_rules):
-            cond = f"{r['operator']} {r['value']:.4g}"
+            if r["operator"] == "range":
+                cond = f"[{r['threshold_low']:.4g}, {r['threshold_high']:.4g}]"
+            else:
+                cond = f"{r['operator']} {r['value']:.4g}"
             print(
                 f"   {i+1:>3d} {r['feature']:<35s} {cond:<15s} "
                 f"{r['lift']:>5.2f}x {r['robustness']:>6.0%} "
@@ -1525,23 +1591,48 @@ def _meta_algorithm_entry_filter(
         else:
             promoted_filters = []
             for r in final_rules:
-                pf = {
-                    "id": f"meta_{r['feature']}",
-                    "enabled": True,
-                    "description": f"Meta-Algorithm: {r['feature']} {r['operator']} {r['value']}",
-                    "conditions": [
-                        {
-                            "feature": r["feature"],
-                            "operator": r["operator"],
-                            "value": r["value"],
-                        }
-                    ],
-                    "tier": r["tier"],
-                    "notes": (
-                        f"lift={r['lift']:.2f}x, rob={r['robustness']:.0%}, "
-                        f"snotio={r['snotio']:.4f}, z={r['z_score']:.2f}, p={r['p_value']:.4f}"
-                    ),
-                }
+                if r["operator"] == "range":
+                    # 区间规则 → 两个 conditions
+                    pf = {
+                        "id": f"meta_{r['feature']}_range",
+                        "enabled": True,
+                        "description": f"Meta-Algorithm: {r['feature']} in [{r['threshold_low']}, {r['threshold_high']}]",
+                        "conditions": [
+                            {
+                                "feature": r["feature"],
+                                "operator": ">=",
+                                "value": r["threshold_low"],
+                            },
+                            {
+                                "feature": r["feature"],
+                                "operator": "<=",
+                                "value": r["threshold_high"],
+                            },
+                        ],
+                        "tier": r["tier"],
+                        "notes": (
+                            f"lift={r['lift']:.2f}x, rob={r['robustness']:.0%}, "
+                            f"snotio={r['snotio']:.4f}, z={r['z_score']:.2f}, p={r['p_value']:.4f}"
+                        ),
+                    }
+                else:
+                    pf = {
+                        "id": f"meta_{r['feature']}",
+                        "enabled": True,
+                        "description": f"Meta-Algorithm: {r['feature']} {r['operator']} {r['value']}",
+                        "conditions": [
+                            {
+                                "feature": r["feature"],
+                                "operator": r["operator"],
+                                "value": r["value"],
+                            }
+                        ],
+                        "tier": r["tier"],
+                        "notes": (
+                            f"lift={r['lift']:.2f}x, rob={r['robustness']:.0%}, "
+                            f"snotio={r['snotio']:.4f}, z={r['z_score']:.2f}, p={r['p_value']:.4f}"
+                        ),
+                    }
                 promoted_filters.append(pf)
 
             tier_a = sum(1 for r in final_rules if r["tier"] == "A_PLATEAU")

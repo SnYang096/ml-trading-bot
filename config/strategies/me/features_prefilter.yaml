@@ -35,6 +35,10 @@ feature_pipeline:
     # → me_jump_risk_suitable, me_reflex_risk, me_regime_suitable
     - me_context_f
 
+    # ========== ME 专属: Gate 层综合判定 ==========
+    # → me_gate_expansion_ok, me_gate_flow_ok, me_gate_volume_ok, me_gate_pass
+    - me_gate_f
+
     # ========== ME 交叉特征 ==========
     # 资金+FP 双源点火 (ME 核心交叉)
     - dual_ignition_f

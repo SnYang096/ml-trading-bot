@@ -49,6 +49,98 @@ from src.time_series_model.archetype import (
 
 
 # ================================================================
+# Gate 特征提取与排除
+# ================================================================
+
+
+def _extract_gate_features(gate_yaml_path: Path) -> set:
+    """从 gate.yaml 提取所有 gate 规则使用的特征名。
+
+    遍历 hard_gates 列表，解析 when 条件中的特征名。
+    支持 value_gt/value_lt/value_le/value_ge 和 all_of 嵌套。
+    """
+    if not gate_yaml_path.exists():
+        return set()
+    raw = yaml.safe_load(gate_yaml_path.read_text(encoding="utf-8")) or {}
+    features = set()
+    for gate in raw.get("hard_gates", []):
+        when = gate.get("when", {})
+        _collect_when_features(when, features)
+    return features
+
+
+def _collect_when_features(when: dict, out: set):
+    """递归解析 when 条件，提取所有特征名。"""
+    if not isinstance(when, dict):
+        return
+    for key, val in when.items():
+        if key == "all_of":
+            for item in val if isinstance(val, list) else []:
+                _collect_when_features(item, out)
+        elif key == "any_of":
+            for item in val if isinstance(val, list) else []:
+                _collect_when_features(item, out)
+        elif isinstance(val, dict) and any(k.startswith("value_") for k in val):
+            out.add(key)
+
+
+def _spearman_prescreen(
+    df: pd.DataFrame,
+    feature_cols: list,
+    rr_col: str,
+    p_threshold: float = 0.1,
+) -> list:
+    """在放行子集上用 Spearman 预筛 evidence 候选。
+
+    只保留 spearman_r > 0 且 p < p_threshold 的特征。
+    """
+    from scipy.stats import spearmanr
+
+    passed = []
+    for feat in feature_cols:
+        if feat not in df.columns:
+            continue
+        valid = df[[feat, rr_col]].dropna()
+        if len(valid) < 30:
+            print(f"      {feat}: skip (n={len(valid)} < 30)")
+            continue
+        r, p = spearmanr(valid[feat], valid[rr_col])
+        verdict = "✅" if r > 0 and p < p_threshold else "❌"
+        print(f"      {feat}: spearman_r={r:.4f}, p={p:.4f} {verdict}")
+        if r > 0 and p < p_threshold:
+            passed.append(feat)
+    return passed
+
+
+def _find_gate_correlated(
+    df: pd.DataFrame,
+    gate_features: set,
+    candidate_features: list,
+    threshold: float = 0.7,
+) -> set:
+    """找出与 gate 特征 Pearson |r| > threshold 的候选特征。"""
+    excluded = set()
+    gate_cols = [f for f in gate_features if f in df.columns]
+    if not gate_cols:
+        return excluded
+    for feat in candidate_features:
+        if feat not in df.columns or feat in gate_features:
+            if feat in gate_features:
+                excluded.add(feat)
+            continue
+        for gf in gate_cols:
+            valid = df[[feat, gf]].dropna()
+            if len(valid) < 30:
+                continue
+            corr = valid[feat].corr(valid[gf])
+            if abs(corr) > threshold:
+                excluded.add(feat)
+                print(f"      排除 {feat}: |corr| = {abs(corr):.3f} 与 gate 特征 {gf}")
+                break
+    return excluded
+
+
+# ================================================================
 # Candidates → EvidenceFeature 转换 (从训练导出到优化器)
 # ================================================================
 
@@ -226,9 +318,6 @@ def _promote_evidence_yaml(
             "feature": ef.feature,
             "rank": ef.rank,
             "direction": direction_yaml,
-            "usage_hint": ef.usage_hint
-            or f"auto-optimized (bad_supp={result.get('bad_suppression', 0):.3f})",
-            "affects": ef.affects if ef.affects else ["tp_range", "position_size"],
             "quantile_mapping": {
                 "bins": rec_bins,
                 "labels": labels_order,
@@ -252,15 +341,6 @@ def _promote_evidence_yaml(
     )
 
     config = {
-        "schema": {
-            "label_semantics": {
-                "suppress": "强烈不利 - 极度限制仓位/信心",
-                "downweight": "不利 - 降低信心/仓位",
-                "neutral": "中性 - 标准执行",
-                "favor": "有利 - 提高信心/仓位",
-                "amplify": "强烈有利 - 最大化执行",
-            }
-        },
         "evidence": evidence_list,
         "min_score": auto_min_score,
     }
@@ -1285,6 +1365,13 @@ def main() -> int:
         default="240T",
         help="Timeframe (default: 240T)",
     )
+    parser.add_argument(
+        "--gate-yaml",
+        default=None,
+        help="Path to archetypes/gate.yaml. "
+        "若提供: (1) 过滤 gate_decision=allow 行 (2) 排除 gate 特征及高相关特征 "
+        "(3) Spearman 预筛候选。若不提供则保持原有行为。",
+    )
     args = parser.parse_args()
 
     # ================================================================
@@ -1338,6 +1425,26 @@ def main() -> int:
     df = pd.read_parquet(logs_path)
     print(f"✅ Loaded {len(df)} rows from {logs_path}")
 
+    # ── Gate 放行子集过滤 ──
+    gate_features: set = set()
+    if args.gate_yaml:
+        gate_yaml_path = Path(args.gate_yaml)
+        gate_features = _extract_gate_features(gate_yaml_path)
+        if gate_features:
+            print(f"   🚪 Gate 特征 ({len(gate_features)}): {sorted(gate_features)}")
+
+        # 过滤 gate_decision=allow
+        if "gate_decision" in df.columns:
+            n_before = len(df)
+            df = df[df["gate_decision"] == "allow"].copy()
+            print(
+                f"   🚪 Gate 过滤: {n_before} → {len(df)} 行 "
+                f"({len(df)/n_before*100:.1f}% 放行)"
+            )
+        else:
+            print("   ⚠️  gate_decision 列不存在，跳过 gate 过滤")
+            print("   💡  用 gate apply 先生成 gate_decision 列")
+
     # 自动生成 is_good 列 (如果不存在)
     rr_col = None
     for candidate in ["bpc_impulse_return_atr", "forward_rr", "rr", "return_atr"]:
@@ -1348,7 +1455,7 @@ def main() -> int:
     if args.label_col not in df.columns:
         if rr_col is not None:
             # ❗ Evidence优化基于RR分层: Good = Q4-Q5 (高RR), Bad = Q1-Q2 (低RR)
-            # 参考: return_tree_kpi_framework.md 预测值分位数一致性
+            # 当 --gate-yaml 启用时，Q80/Q20 基于放行子集计算（改进措施 2）
             q20 = df[rr_col].quantile(0.2)
             q80 = df[rr_col].quantile(0.8)
             # Good: RR > Q80, Bad: RR < Q20, Middle: 排除
@@ -1357,7 +1464,10 @@ def main() -> int:
             df_good[args.label_col] = 1
             df_bad[args.label_col] = 0
             df = pd.concat([df_good, df_bad], ignore_index=True)
-            print(f"ℹ️ Auto-generated '{args.label_col}' based on RR stratification")
+            _subset_note = "(放行子集内)" if args.gate_yaml else "(全量)"
+            print(
+                f"ℹ️ Auto-generated '{args.label_col}' based on RR stratification {_subset_note}"
+            )
             print(f"   Q20={q20:.2f}, Q80={q80:.2f}")
             print(f"   Good (RR > Q80): {len(df_good)}, Bad (RR < Q20): {len(df_bad)}")
         else:
@@ -1407,6 +1517,54 @@ def main() -> int:
             print(
                 "   💡 提示: 使用 --features-store-layer 指定 FeatureStore layer 以补全"
             )
+
+    # ── Gate 特征排除 + Spearman 预筛（当 --gate-yaml 启用时）──
+    _excluded_features: set = set()
+    if args.gate_yaml and gate_features:
+        print(f"\n🔍 Gate 特征排除 + 相关性检查:")
+        candidate_cols = [ef.feature for ef in evidence_features]
+        _excluded_features = _find_gate_correlated(
+            df, gate_features, candidate_cols, threshold=0.7
+        )
+        if _excluded_features:
+            print(
+                f"   排除 {len(_excluded_features)} 个特征: {sorted(_excluded_features)}"
+            )
+        else:
+            print("   ✅ 无高相关特征需排除")
+
+        # Spearman 预筛: 在放行子集上验证候选特征与 RR 的单调关系
+        if rr_col:
+            remaining = [
+                ef.feature
+                for ef in evidence_features
+                if ef.feature not in _excluded_features
+            ]
+            print(f"\n🔬 Spearman 预筛 ({len(remaining)} 候选, 放行子集):")
+            passed_feats = _spearman_prescreen(df, remaining, rr_col, p_threshold=0.1)
+            if passed_feats:
+                print(f"   ✅ {len(passed_feats)} 特征通过 Spearman 预筛")
+            else:
+                print("   ⚠️  无特征通过 Spearman 预筛 (继续使用全部候选)")
+                passed_feats = remaining  # fallback: 不过滤
+            _spearman_excluded = set(remaining) - set(passed_feats)
+            _excluded_features |= _spearman_excluded
+            if _spearman_excluded:
+                print(f"   Spearman 排除: {sorted(_spearman_excluded)}")
+
+    # 过滤 evidence_features
+    if _excluded_features:
+        before_n = len(evidence_features)
+        evidence_features = [
+            ef for ef in evidence_features if ef.feature not in _excluded_features
+        ]
+        print(
+            f"\n📊 Evidence 候选: {before_n} → {len(evidence_features)} "
+            f"(排除 {before_n - len(evidence_features)} 个)"
+        )
+        if not evidence_features:
+            print("❌ 所有 evidence 候选被排除，无法优化")
+            return 1
 
     # Create config
     config = EvidenceOptimizationConfig(

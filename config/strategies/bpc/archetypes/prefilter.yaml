@@ -1,29 +1,29 @@
 # BPC Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-03-06
-# 数据源: features_labeled.parquet, 39126 行
+# 自动生成: 2026-03-07
+# 数据源: features_labeled.parquet, 39147 行
 
 rules:
-  - feature: funding_ignition_score
+  - feature: bpc_structure_health
     operator: ">"
-    value: 0.0236
-    rationale: "meta-algorithm, lift=1.20, robustness=96%, gate_score=0.053, holdout验证通过"
+    value: 0.9406
+    rationale: "meta-algorithm, KS=0.1656, return_uplift=-0.0189, robustness=100%, holdout验证通过"
+  - feature: bpc_volume_compression_pct
+    operator: ">"
+    value: 0.9255
+    rationale: "meta-algorithm, KS=0.1425, return_uplift=+0.0398, robustness=100%, holdout验证通过"
   - feature: bpc_bb_compression
-    operator: "<"
-    value: 0.1837
-    rationale: "meta-algorithm, lift=1.12, robustness=92%, gate_score=0.042, holdout验证通过"
-  - feature: bpc_vpin_breakout_confirm
-    operator: "<"
-    value: 0.3135
-    rationale: "meta-algorithm, lift=1.16, robustness=90%, gate_score=0.014, holdout验证通过"
+    operator: ">"
+    value: 0.9388
+    rationale: "meta-algorithm, KS=0.1383, return_uplift=+0.0255, robustness=100%, holdout验证通过"
 
 last_evaluation:
-  # ── 自动生成 (2026-03-06) ──
-  timestamp: "2026-03-06"
+  # ── 自动生成 (2026-03-07) ──
+  timestamp: "2026-03-07"
   data_source: "features_labeled.parquet"
-  n_rows: 39126
-  baseline_bad_rate: 0.4515
-  baseline_median_rr: -0.0756
+  n_rows: 39147
+  baseline_bad_rate: 0.0000
+  baseline_median_rr: -0.1499
 
   # ── 正信号 (0 个) ──
   positive_signals:

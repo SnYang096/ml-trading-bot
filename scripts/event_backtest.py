@@ -126,6 +126,7 @@ class ClosedTrade:
     evidence_score: float = 0.0
     bars_held: int = 0
     is_add_position: bool = False  # 加仓标记
+    size_multiplier: float = 1.0  # regime × evidence position scale
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -147,6 +148,8 @@ class PositionSimulator:
         self.default_bar_minutes = default_bar_minutes
         self.max_positions = max_positions
         self.closed_trades: List[ClosedTrade] = []
+        # structural exit: 最新 EMA200 价格 (由主循环在每根 4H bar 到达时更新)
+        self._structural_price: Optional[float] = None
         # order_management 集成 (由 EventBacktester 注入)
         self._om_bridge: Optional["OMBridge"] = None
 
@@ -201,6 +204,8 @@ class PositionSimulator:
             entry_time=entry_time,
         )
         pos["archetype"] = getattr(intent, "archetype", "") or ""
+        # 存储 size_multiplier (LivePCM regime×evidence 缩放) — 与向量回测 _position_scale 对齐
+        pos["_size_multiplier"] = float(getattr(intent, "size_multiplier", 1.0) or 1.0)
         self._positions[pid] = pos
 
         # 写入 order_management DB
@@ -244,7 +249,7 @@ class PositionSimulator:
         to_remove = []
 
         for pid, pos in self._positions.items():
-            # 调用共享 7 步持仓管理
+            # 调用共享 7 步持仓管理 (structural_price: EMA200)
             close_reason, exit_price = enforce_position(
                 pos,
                 price_high=bar_high,
@@ -252,6 +257,7 @@ class PositionSimulator:
                 price_close=bar_close,
                 now=now,
                 default_bar_minutes=self.default_bar_minutes,
+                structural_price=self._structural_price,
             )
 
             if close_reason:
@@ -267,7 +273,9 @@ class PositionSimulator:
                     if is_long
                     else (entry_price - exit_price)
                 )
-                pnl_r = pnl_usd / risk if risk > 0 else 0.0
+                _raw_r = pnl_usd / risk if risk > 0 else 0.0
+                # 应用 position scale (regime × evidence) — 与向量回测 exec_returns *= _position_scale 对齐
+                pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
 
                 # 归一化 exit_reason: 与向量回测对齐命名
                 normalized_reason = close_reason
@@ -296,6 +304,7 @@ class PositionSimulator:
                     evidence_score=pos.get("evidence_score", 0),
                     bars_held=pos.get("bars_counted", 0),
                     is_add_position=pos.get("_is_add_position", False),
+                    size_multiplier=pos.get("_size_multiplier", 1.0),
                 )
                 closed.append(trade)
                 self.closed_trades.append(trade)
@@ -328,7 +337,8 @@ class PositionSimulator:
             entry_price = pos["entry_price"]
             risk = pos.get("initial_risk_distance") or pos.get("atr_at_entry", 0) or 0
             pnl_usd = (price - entry_price) if is_long else (entry_price - price)
-            pnl_r = pnl_usd / risk if risk > 0 else 0.0
+            _raw_r = pnl_usd / risk if risk > 0 else 0.0
+            pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
             trade = ClosedTrade(
                 symbol=pos.get("symbol", ""),
                 side=pos["side"],
@@ -345,6 +355,7 @@ class PositionSimulator:
                 evidence_score=pos.get("evidence_score", 0),
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
+                size_multiplier=pos.get("_size_multiplier", 1.0),
             )
             closed.append(trade)
             self.closed_trades.append(trade)
@@ -376,7 +387,8 @@ class PositionSimulator:
             pnl_usd = (
                 (close_price - entry_price) if is_long else (entry_price - close_price)
             )
-            pnl_r = pnl_usd / risk if risk > 0 else 0.0
+            _raw_r = pnl_usd / risk if risk > 0 else 0.0
+            pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
             trade = ClosedTrade(
                 symbol=pos.get("symbol", ""),
                 side=pos["side"],
@@ -393,6 +405,7 @@ class PositionSimulator:
                 evidence_score=pos.get("evidence_score", 0),
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
+                size_multiplier=pos.get("_size_multiplier", 1.0),
             )
             closed.append(trade)
             self.closed_trades.append(trade)
@@ -462,6 +475,19 @@ class PositionSimulator:
             else 0.0
         )
 
+        # 2b. 无风险加仓: 所有同 symbol + 同 direction 的活跃仓位必须 breakeven locked
+        #     确保任意时刻最大风险 = 最新一仓的 1R
+        same_sym_dir = [
+            p
+            for p in self._positions.values()
+            if p.get("symbol", "") == intent.symbol and p["side"] == new_side
+        ]
+        all_locked = same_sym_dir and all(
+            p.get("breakeven_locked", False) for p in same_sym_dir
+        )
+        if not all_locked:
+            return None
+
         # 3. 复用实盘 validate_add_position (raises ConstitutionViolation on failure)
         try:
             executor.validate_add_position(
@@ -469,7 +495,7 @@ class PositionSimulator:
                 position_id=parent_pid,
                 archetype=archetype,
                 current_r=current_r,
-                locked_profit=parent_pos.get("breakeven_locked", False),
+                locked_profit=True,  # 已通过上方 all_locked 检查
             )
         except ConstitutionViolation:
             return None
@@ -497,6 +523,9 @@ class PositionSimulator:
         )
         pos["_is_add_position"] = True
         pos["_parent_pid"] = parent_pid
+        # 加仓继承父仓的 size_multiplier
+        parent_mult = parent_pos.get("_size_multiplier", 1.0)
+        pos["_size_multiplier"] = parent_mult
         self._positions[pid] = pos
         return pid
 
@@ -773,6 +802,7 @@ class BacktestResult:
                     "evidence": round(t.evidence_score, 4),
                     "bars_held": t.bars_held,
                     "is_add_position": t.is_add_position,
+                    "size_multiplier": round(t.size_multiplier, 4),
                 }
             )
         df = pd.DataFrame(rows)
@@ -1340,6 +1370,14 @@ class EventBacktester:
 
             # 主特征 = 第一个可用 timeframe 的特征 (PCM 回退用)
             primary_features = next(iter(features_by_tf.values()))
+
+            # 更新 structural_price (EMA200) 用于 BPC trend_hold 结构性退出
+            _ema_200_val = primary_features.get("ema_200")
+            if _ema_200_val is not None:
+                try:
+                    simulator._structural_price = float(_ema_200_val)
+                except (TypeError, ValueError):
+                    pass
 
             # LivePCM.decide() — 多策略仲裁 + 全局 slot 控制
             intents = self.pcm.decide(

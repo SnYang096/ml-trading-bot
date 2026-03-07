@@ -56,7 +56,11 @@ def build_position_dict(
 
     stop_loss_r = float(rr_constraints.get("stop_loss_r", 0.0) or 0.0)
     take_profit_r = float(rr_constraints.get("take_profit_r", 0.0) or 0.0)
-    max_holding_bars = rr_constraints.get("max_holding_bars", 50)
+    # max_holding_bars: 0 表示禁用时间止损 (fat tail 模式)
+    _raw_mhb = rr_constraints.get("max_holding_bars")
+    max_holding_bars = (
+        int(_raw_mhb) if _raw_mhb is not None and int(_raw_mhb) > 0 else 0
+    )
 
     sl_price, tp_price = None, None
     # SL 和 TP 独立计算 —— 不要求两者同时 > 0
@@ -138,6 +142,11 @@ def build_position_dict(
         pos["breakeven_enabled"] = False
         pos["breakeven_locked"] = False
 
+    # structural exit (EMA200 trend exit for BPC trend_hold)
+    _structural_exit = rr_constraints.get("structural_exit")
+    if _structural_exit:
+        pos["structural_exit"] = str(_structural_exit)  # "ema200"
+
     return pos
 
 
@@ -149,6 +158,7 @@ def enforce_position(
     price_close: float,
     now: datetime,
     default_bar_minutes: int = 240,
+    structural_price: Optional[float] = None,
 ) -> Tuple[Optional[str], float]:
     """7步持仓管理 — 实盘/回测公用
 
@@ -156,6 +166,7 @@ def enforce_position(
       1. Time stop
       2. Breakeven lock
       3. Update HWM/LWM
+      3b. Structural exit (EMA200)
       4. Activation trailing
       5. SL hit (保守: SL 优先于 TP)
       6. TP hit
@@ -175,6 +186,7 @@ def enforce_position(
         price_close: 当前收盘价/最新价
         now: 当前时间
         default_bar_minutes: 默认 bar 分钟数 (兜底)
+        structural_price: EMA200 当前值 (仅 structural_exit="ema200" 时使用)
 
     Returns:
         (close_reason, exit_price):
@@ -227,6 +239,23 @@ def enforce_position(
     elif not is_long and pos.get("low_water_mark") is not None:
         if price_low < pos["low_water_mark"]:
             pos["low_water_mark"] = price_low
+
+    # ── 3b. Structural exit (EMA200) ──
+    # BPC trend_hold: 价格穿越 EMA200 = 趋势结构破坏
+    # 仅在 breakeven locked 后才生效 (避免入场即退出)
+    if (
+        close_reason is None
+        and pos.get("structural_exit") == "ema200"
+        and pos.get("breakeven_locked")
+        and structural_price is not None
+        and structural_price > 0
+    ):
+        if is_long and price_close < structural_price:
+            close_reason = "structural_exit_ema200"
+            exit_price = price_close
+        elif not is_long and price_close > structural_price:
+            close_reason = "structural_exit_ema200"
+            exit_price = price_close
 
     # ── 4. Activation trailing ──
     if close_reason is None and pos.get("activation_r") is not None and pos_atr > 0:

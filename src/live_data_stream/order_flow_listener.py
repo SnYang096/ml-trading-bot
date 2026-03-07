@@ -994,12 +994,26 @@ class OrderFlowListener:
             position_id = f"{self.symbol}:{int(pd.Timestamp.now(tz='UTC').value)}"
 
         if intent.add_position and intent.parent_position_id:
+            # 无风险加仓: 所有同 direction 的活跃仓位必须 breakeven locked
+            #   确保任意时刻最大风险 = 最新一仓的 1R
+            _new_side = (
+                "LONG" if str(intent.action).upper() in ("LONG", "BUY") else "SHORT"
+            )
+            _same_dir = [
+                p for p in self._open_positions.values() if p.get("side") == _new_side
+            ]
+            _all_locked = _same_dir and all(
+                p.get("breakeven_locked", False) for p in _same_dir
+            )
+            if not _all_locked:
+                logger.info("[add_position] 拒绝: 存在未 breakeven locked 的同向仓位")
+                return
             self.constitution_executor.validate_add_position(
                 st=self.runtime_state,
                 position_id=intent.parent_position_id,
                 archetype=intent.archetype,
                 current_r=intent.current_r,
-                locked_profit=intent.locked_profit,
+                locked_profit=True,  # 已通过上方 _all_locked 检查
             )
 
         enforce_before_order(
@@ -1195,6 +1209,16 @@ class OrderFlowListener:
         to_close: List[str] = []
 
         for pid, pos in self._open_positions.items():
+            # structural exit: 从 features 获取 EMA200 当前值
+            _structural_price = None
+            if pos.get("structural_exit") == "ema200":
+                _structural_price = features.get("ema_200")
+                if _structural_price is not None:
+                    try:
+                        _structural_price = float(_structural_price)
+                    except (TypeError, ValueError):
+                        _structural_price = None
+
             # 实盘用单一 current_price (high=low=close=current_price)
             close_reason, _exit_price = enforce_position(
                 pos,
@@ -1203,6 +1227,7 @@ class OrderFlowListener:
                 price_close=current_price,
                 now=now,
                 default_bar_minutes=default_bar_minutes,
+                structural_price=_structural_price,
             )
 
             # ── 交易所 SL 同步: trailing 更新了 SL 价格时 cancel+replace ──
