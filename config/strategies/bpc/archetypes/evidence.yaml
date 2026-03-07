@@ -1,24 +1,4 @@
-# BPC Evidence Archetype (auto-promoted)
-# 来源: results/train_final_20260306_000403_return_tree/bpc/evidence_candidates.yaml
-# 优化规则: 1/2 条通过 plateau 验证
-# ✅ 方向已由数据自动验证
-
-evidence:
-- id: evidence_macd_signal_atr
-  feature: macd_signal_atr
-  rank: 3
-  direction: positive
-  quantile_mapping:
-    bins:
-    - 0.1
-    - 0.3
-    - 0.5
-    - 0.7
-    labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
-    - amplify
-  split_count: 5
-min_score: 0.25
+# [DEPRECATED] Evidence 已删除 (Spearman r=-0.068, p=0.478, 无效)
+# 详见 z实验_005_统一研究/evidence单调性验证.md
+evidence: []
+min_score: 0.0

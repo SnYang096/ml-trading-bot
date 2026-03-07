@@ -123,10 +123,10 @@ class ClosedTrade:
     exit_reason: str
     archetype: str = ""
     tier_name: str = ""
-    evidence_score: float = 0.0
+    evidence_score: float = 0.5  # [DEPRECATED] 始终为 0.5 (evidence 已删除)
     bars_held: int = 0
     is_add_position: bool = False  # 加仓标记
-    size_multiplier: float = 1.0  # regime × evidence position scale
+    size_multiplier: float = 1.0  # regime position scale
 
 
 # ═════════════════════════════════════════════════════════════════════════════

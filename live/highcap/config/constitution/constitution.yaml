@@ -130,11 +130,9 @@ slots:
   # If not enough margin/slots, replacement policy decides what to close/replace.
   allow_replacement: true
 
-  # Evidence 入场门槛: evidence < min_score 拒绝开仓 (0.0 = 不过滤)
-  # 实际阈值由各策略 evidence.yaml 中 min_score 自动计算, 此处为全局兜底
+  # [DEPRECATED] Evidence 已删除 (Spearman r=-0.068, 无效)
   evidence_min_score: 0.0
-  # Evidence 仓位缩放: scale = 0.5 + 0.5 * evidence (true = 启用)
-  evidence_position_scale: true
+  evidence_position_scale: false
 
   # Slot state tracking (for live / restart safety).
   slot_state_tracking:

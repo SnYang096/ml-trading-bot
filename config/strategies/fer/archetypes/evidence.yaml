@@ -1,41 +1,4 @@
-# FER Evidence Archetype (auto-promoted)
-# 来源: results/train_final_20260306_001323_return_tree/fer/evidence_candidates.yaml
-# 优化规则: 2/3 条通过 plateau 验证
-# ✅ 方向已由数据自动验证
-
-evidence:
-- id: evidence_roc_5
-  feature: roc_5
-  rank: 1
-  direction: positive
-  quantile_mapping:
-    bins:
-    - 0.1
-    - 0.3
-    - 0.5
-    - 0.7
-    labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
-    - amplify
-  split_count: 11
-- id: evidence_fer_momentum_efficiency_decay
-  feature: fer_momentum_efficiency_decay
-  rank: 7
-  direction: positive
-  quantile_mapping:
-    bins:
-    - 0.2
-    - 0.4
-    - 0.6
-    - 0.8
-    labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
-    - amplify
-  split_count: 2
-min_score: 0.0312
+# [DEPRECATED] Evidence 已删除 (Spearman r=-0.068, p=0.478, 无效)
+# 详见 z实验_005_统一研究/evidence单调性验证.md
+evidence: []
+min_score: 0.0

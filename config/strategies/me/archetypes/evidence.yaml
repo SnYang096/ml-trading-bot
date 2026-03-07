@@ -1,7 +1,4 @@
-# ME Evidence Archetype (gate-aware re-optimization)
-# Gate 放行子集 (788/12065 行, 6.5%) 上无特征通过 Spearman + plateau 双重验证
-# 原 3 个特征 (vpin_volatility_20, vpin_ma20, evt_scale_right) 在放行子集上 Spearman < 0，已清除
-# ⚠️ ME evidence 暂时无效，不影响交易执行（evidence=[] → score 默认 0.5）
-
+# [DEPRECATED] Evidence 已删除 (Spearman r=-0.068, p=0.478, 无效)
+# 详见 z实验_005_统一研究/evidence单调性验证.md
 evidence: []
 min_score: 0.0

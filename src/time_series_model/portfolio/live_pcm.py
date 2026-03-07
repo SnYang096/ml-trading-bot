@@ -338,8 +338,8 @@ def _load_constitution_constraints(
         "risk_per_slot": float(slots.get("risk_per_slot", 0.01)),
         "per_strategy_limits": dict(ra.get("per_strategy_limits") or {}),
         "add_position_rules": dict(add_rules),
-        "evidence_min_score": float(slots.get("evidence_min_score", 0.0)),
-        "evidence_position_scale": bool(slots.get("evidence_position_scale", False)),
+        "evidence_min_score": 0.0,  # [DEPRECATED] evidence 已删除
+        "evidence_position_scale": False,  # [DEPRECATED] evidence 已删除
     }
 
 
@@ -388,8 +388,7 @@ class LivePCM:
         self._strategy_timeframes: Dict[str, str] = {}  # archetype → timeframe
         self._get_open_slot_count = get_open_slot_count
 
-        # Evidence-based slot tracking: 追踪每个已入场 slot 的 evidence score (用于日志审计)
-        # key = "{symbol}:{archetype}", value = evidence_score
+        # Slot 追踪: key = "{symbol}:{archetype}", value = True
         self._slot_evidence: Dict[str, float] = {}
 
         # Layer 3: Override 配置
@@ -614,44 +613,27 @@ class LivePCM:
             return []
 
         # ── 3. 每策略独立 slot 检查 (无跨策略竞争) ──
-        # 设计: per_strategy_limits 各策略独占 slot
-        # Evidence: 入场门槛 (min_score 过滤) + 仓位缩放 (乘入 size_multiplier)
-        _ev_min = self._constitution.get("evidence_min_score", 0.0)
         accepted: List[TradeIntent] = []
         for intent in all_intents:
-            ev = intent.confidence if intent.confidence is not None else 0.5
-
-            # Evidence 入场门槛: score < min → 拒绝
-            if ev < _ev_min:
-                logger.info(
-                    "PCM: %s %s evidence=%.2f < min %.2f, 拒绝",
-                    symbol,
-                    intent.archetype,
-                    ev,
-                    _ev_min,
-                )
-                continue
-
             if not self._slot_available(symbol, intent.archetype):
-                # 该策略 slot 满 → 直接拒绝 (不再做 evidence 竞争驱逐)
+                # 该策略 slot 满 → 直接拒绝
                 logger.info(
-                    "PCM: %s %s slot 已满 (%d/%d)，拒绝 (ev=%.2f)",
+                    "PCM: %s %s slot 已满 (%d/%d)，拒绝",
                     symbol,
                     intent.archetype,
                     self._count_archetype_slots(intent.archetype),
                     self._max_slots_for_strategy(intent.archetype),
-                    ev,
                 )
                 continue
+            ev = intent.confidence if intent.confidence is not None else 0.5
             self._record_slot(symbol, intent.archetype, ev)
             if self.stats_collector is not None:
                 self.stats_collector.record_pcm_selected(symbol, intent.archetype)
             accepted.append(self._apply_regime_scale(intent))
             logger.info(
-                "PCM: %s 选中 %s (evidence=%.2f, scale=%.2f)",
+                "PCM: %s 选中 %s (scale=%.2f)",
                 symbol,
                 intent.archetype,
-                ev,
                 self.get_archetype_scale(intent.archetype),
             )
         return accepted
@@ -744,10 +726,10 @@ class LivePCM:
     # ── Regime 仓位缩放 ──
 
     def _apply_regime_scale(self, intent: TradeIntent) -> TradeIntent:
-        """Apply regime-aware position scaling + evidence-based scaling to TradeIntent.
+        """Apply regime-aware position scaling to TradeIntent.
 
         缩放因子乘在 size_multiplier 上，不修改其他字段。
-        最终 size_multiplier = original × regime_scale × evidence_scale
+        最终 size_multiplier = original × regime_scale
         """
         existing_mult = (
             intent.size_multiplier if intent.size_multiplier is not None else 1.0
@@ -757,29 +739,16 @@ class LivePCM:
         regime_scale = self.get_archetype_scale(intent.archetype)
         new_mult = existing_mult * regime_scale
 
-        # Evidence 仓位缩放: scale = 0.5 + 0.5 * evidence ∈ [0.5, 1.0]
-        if self._constitution.get("evidence_position_scale", False):
-            ev = intent.confidence if intent.confidence is not None else 0.5
-            ev_clamped = max(0.0, min(1.0, ev))
-            ev_scale = 0.5 + 0.5 * ev_clamped
-            new_mult *= ev_scale
-            logger.debug(
-                "PCM evidence scale: %s %s ev=%.2f → ev_scale=%.2f",
-                intent.symbol,
-                intent.archetype,
-                ev,
-                ev_scale,
-            )
+        # [REMOVED] Evidence 仓位缩放已删除
 
         if new_mult >= 1.0 and regime_scale >= 1.0:
             return intent
 
         logger.debug(
-            "PCM scale: %s %s regime=%.2f evidence=%.2f total=%.2f → %.2f",
+            "PCM scale: %s %s regime=%.2f total=%.2f → %.2f",
             intent.symbol,
             intent.archetype,
             regime_scale,
-            intent.confidence if intent.confidence is not None else 0.5,
             existing_mult,
             new_mult,
         )
@@ -818,7 +787,7 @@ class LivePCM:
         return int(strat.get("max_slots", self._max_slots))
 
     def _count_archetype_slots(self, archetype: str) -> int:
-        """统计某 archetype 当前占用的 slot 数 (基于 _slot_evidence 追踪)"""
+        """统计某 archetype 当前占用的 slot 数"""
         suffix = f":{archetype}"
         return sum(1 for k in self._slot_evidence if k.endswith(suffix))
 
@@ -834,7 +803,7 @@ class LivePCM:
         return self._current_slot_count() < self._max_slots
 
     def _record_slot(self, symbol: str, archetype: str, evidence: float) -> None:
-        """记录已入场 slot 的 evidence score"""
+        """记录已入场 slot"""
         key = f"{symbol}:{archetype}"
         self._slot_evidence[key] = evidence
 
@@ -857,7 +826,7 @@ class LivePCM:
     def set_quantiles(self, features_df) -> None:
         """
         将 quantiles 设置给所有注册的策略（如果策略支持）。
-        用于 warmup 后的 evidence quantiles 计算。
+        用于 warmup 后的 Gate quantile 规则计算。
         """
         for arch_name, strategy in self._strategies.items():
             if hasattr(strategy, "set_quantiles"):

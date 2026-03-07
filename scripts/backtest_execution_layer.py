@@ -156,186 +156,10 @@ def _load_1min_bars(
 
 
 # ================================================================
-# Evidence Scoring + Tier Assignment
+# [REMOVED] Evidence Scoring — 已删除
+# Evidence 模块经验证无效 (Spearman r=-0.068, p=0.478)
+# 所有 evidence_score 固定为 0.5 (中性)
 # ================================================================
-
-
-def load_evidence_config(
-    strategy: str, strategies_root: str = "config/strategies"
-) -> Dict[str, Any]:
-    """加载 archetypes/evidence.yaml 配置"""
-    path = Path(strategies_root) / strategy / "archetypes" / "evidence.yaml"
-    if not path.exists():
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def compute_evidence_quantiles(
-    df: pd.DataFrame,
-    evidence_cfg: Dict[str, Any],
-    silent: bool = False,
-) -> Dict[str, List[float]]:
-    """从 DataFrame 计算 evidence 分位数阈值。
-
-    与实盘 GenericLiveStrategy.set_quantiles_from_df() 完全一致的逻辑。
-    返回 {feature_name: [threshold_at_bin0, threshold_at_bin1, ...]}。
-
-    用于在 backtest 中从训练/校准数据预计算阈值，
-    避免用整个 OOS 数据计算导致 look-ahead bias。
-    """
-    evidence_list = evidence_cfg.get("evidence", [])
-    quantiles: Dict[str, List[float]] = {}
-    n_computed = 0
-
-    for ev in evidence_list:
-        feat = ev.get("feature", "")
-        if feat not in df.columns:
-            continue
-
-        qmap = ev.get("quantile_mapping", {})
-        bins = qmap.get("bins", [])
-        if not bins:
-            continue
-
-        values = pd.to_numeric(df[feat], errors="coerce").dropna()
-        if len(values) < 10:
-            continue
-
-        thresholds = [float(values.quantile(b)) for b in bins]
-        quantiles[feat] = thresholds
-        n_computed += 1
-
-    if not silent:
-        print(
-            f"   📊 Evidence quantiles 已计算: {n_computed}/{len(evidence_list)} features, "
-            f"基于 {len(df)} 行校准数据"
-        )
-        for feat, thresholds in quantiles.items():
-            bins = []
-            for ev in evidence_list:
-                if ev.get("feature") == feat:
-                    bins = ev.get("quantile_mapping", {}).get("bins", [])
-                    break
-            pairs = [f"{b:.2f}→{t:.4f}" for b, t in zip(bins, thresholds)]
-            print(f"      {feat}: [{', '.join(pairs)}]")
-
-    return quantiles
-
-
-def compute_evidence_scores(
-    df: pd.DataFrame,
-    evidence_cfg: Dict[str, Any],
-    silent: bool = False,
-    precomputed_quantiles: Optional[Dict[str, List[float]]] = None,
-) -> pd.Series:
-    """
-    计算 Evidence 综合评分（向量化版本）
-
-    evidence.yaml 每条特征有:
-      - feature: 特征列名
-      - rank: 越低越重要（weight = 1/rank）
-      - direction: positive/negative
-      - quantile_mapping: { bins, labels }
-
-    对每个 bar，按加权平均计算 composite evidence_score ∈ [0,1]。
-
-    Args:
-        precomputed_quantiles: 预计算的分位数阈值（必须）。
-            格式: {feature_name: [threshold_at_bin0, ...]}。
-            由 compute_evidence_quantiles() 从校准数据预先计算。
-            与实盘 GenericLiveStrategy.set_quantiles_from_df() 对齐。
-
-    Raises:
-        ValueError: 如果 precomputed_quantiles 为 None（禁止 look-ahead）。
-    """
-    if precomputed_quantiles is None:
-        raise ValueError(
-            "precomputed_quantiles 不能为 None。"
-            "必须先用 compute_evidence_quantiles() 从校准数据预计算分位数阈值，"
-            "避免 look-ahead bias。参见 --quantile-train-start / --quantile-train-end 参数。"
-        )
-
-    evidence_list = evidence_cfg.get("evidence", [])
-    if not evidence_list:
-        return pd.Series(0.5, index=df.index)  # 无 evidence → 中性
-
-    label_score_map = {
-        "suppress": 0.0,
-        "downweight": 0.25,
-        "neutral": 0.5,
-        "favor": 0.75,
-        "amplify": 1.0,
-    }
-
-    weighted_sum = np.zeros(len(df))
-    total_weight = 0.0
-    used_features = []
-
-    for ev in evidence_list:
-        feat = ev.get("feature", "")
-        if feat not in df.columns:
-            continue
-
-        rank = int(ev.get("rank", 1))
-        weight = 1.0 / max(1, rank)
-        direction = ev.get("direction", "positive").lower()
-
-        qmap = ev.get("quantile_mapping", {})
-        bins = qmap.get("bins", [])
-        labels = qmap.get("labels", [])
-
-        if not bins or not labels:
-            continue
-
-        # 使用预计算的分位数阈值（与实盘一致，无 look-ahead）
-        values = df[feat].astype(float)
-        if feat in precomputed_quantiles:
-            thresholds = precomputed_quantiles[feat]
-        else:
-            # 该特征不在校准数据中（可能校准数据缺列），跳过
-            continue
-
-        # 向量化分箱
-        scores_arr = np.full(len(df), 0.5)  # 默认中性
-        for i in range(len(df)):
-            v = values.iloc[i]
-            if np.isnan(v):
-                continue
-            assigned = False
-            for ti, thresh in enumerate(thresholds):
-                if v <= thresh:
-                    lbl = labels[ti] if ti < len(labels) else "neutral"
-                    scores_arr[i] = label_score_map.get(lbl, 0.5)
-                    assigned = True
-                    break
-            if not assigned:
-                lbl = labels[-1] if labels else "neutral"
-                scores_arr[i] = label_score_map.get(lbl, 0.5)
-
-        weighted_sum += scores_arr * weight
-        total_weight += weight
-        used_features.append(feat)
-
-    if total_weight > 0:
-        composite = weighted_sum / total_weight
-    else:
-        composite = np.full(len(df), 0.5)
-
-    composite = np.clip(composite, 0.0, 1.0)
-
-    if not silent:
-        print(
-            f"   📊 Evidence score: {len(used_features)}/{len(evidence_list)} features"
-        )
-        cs = pd.Series(composite)
-        print(
-            f"      mean={cs.mean():.3f}  std={cs.std():.3f}  "
-            f"min={cs.min():.3f}  p25={cs.quantile(0.25):.3f}  "
-            f"p50={cs.quantile(0.5):.3f}  p75={cs.quantile(0.75):.3f}  max={cs.max():.3f}"
-        )
-
-    return pd.Series(composite, index=df.index)
 
 
 # ================================================================
@@ -583,98 +407,7 @@ def compute_risk_equity_curve(
     return result
 
 
-def _report_evidence_monotonicity(
-    trade_details: List[Dict[str, Any]],
-    silent: bool = False,
-) -> Dict[str, Any]:
-    """按 evidence_score 分箱分析交易质量，验证单调性。
-
-    Returns:
-        {"monotonic": bool, "spearman_r": float, "bins": [...]}
-    """
-    if not trade_details:
-        if not silent:
-            print("   ⚠️  No trade details for evidence monotonicity check")
-        return {"monotonic": False, "spearman_r": 0.0, "bins": []}
-
-    scores = [t.get("evidence_score", 0.5) for t in trade_details]
-    rrs = [t.get("realized_rr", 0.0) for t in trade_details]
-    if len(scores) < 10:
-        if not silent:
-            print(f"   ⚠️  Too few trades ({len(scores)}) for evidence monotonicity")
-        return {"monotonic": False, "spearman_r": 0.0, "bins": []}
-
-    arr_ev = np.array(scores, dtype=float)
-    arr_rr = np.array(rrs, dtype=float)
-
-    # 5 等宽分箱 (clamp 到 [0,1])
-    edges = [0.0, 0.2, 0.4, 0.6, 0.8, 1.01]
-    bin_results = []
-    bin_means = []
-    for b in range(5):
-        lo, hi = edges[b], edges[b + 1]
-        mask = (arr_ev >= lo) & (arr_ev < hi)
-        n = int(mask.sum())
-        if n == 0:
-            bin_results.append(
-                {
-                    "range": f"[{lo:.1f},{hi:.1f})",
-                    "n": 0,
-                    "mean_rr": float("nan"),
-                    "win_rate": float("nan"),
-                }
-            )
-            bin_means.append(float("nan"))
-            continue
-        mean_rr = float(arr_rr[mask].mean())
-        win_rate = float((arr_rr[mask] > 0).mean())
-        bin_results.append(
-            {
-                "range": f"[{lo:.1f},{hi:.1f})",
-                "n": n,
-                "mean_rr": mean_rr,
-                "win_rate": win_rate,
-            }
-        )
-        bin_means.append(mean_rr)
-
-    # Spearman 相关 (score vs rr)
-    from scipy.stats import spearmanr
-
-    valid = ~(np.isnan(arr_ev) | np.isnan(arr_rr))
-    if valid.sum() >= 5:
-        sp_r, sp_p = spearmanr(arr_ev[valid], arr_rr[valid])
-    else:
-        sp_r, sp_p = 0.0, 1.0
-
-    # 单调性判定: 非 NaN 的 bin means 递增
-    valid_means = [m for m in bin_means if not np.isnan(m)]
-    is_monotonic = (
-        all(valid_means[i] <= valid_means[i + 1] for i in range(len(valid_means) - 1))
-        if len(valid_means) >= 2
-        else False
-    )
-
-    if not silent:
-        print(f"\n   📊 Evidence Monotonicity Analysis ({len(scores)} trades):")
-        print(f"   {'Bin':<14} {'Count':>6} {'Mean R':>9} {'Win%':>7}")
-        print(f"   {'-' * 38}")
-        for br in bin_results:
-            if br["n"] > 0:
-                print(
-                    f"   {br['range']:<14} {br['n']:>6} {br['mean_rr']:>9.4f} {br['win_rate']*100:>6.1f}%"
-                )
-            else:
-                print(f"   {br['range']:<14} {br['n']:>6} {'---':>9} {'---':>7}")
-        verdict = "✅ 单调递增" if is_monotonic else "⚠️  非单调"
-        print(f"   Spearman r={sp_r:.4f} (p={sp_p:.4f})  {verdict}")
-
-    return {
-        "monotonic": is_monotonic,
-        "spearman_r": float(sp_r),
-        "spearman_p": float(sp_p),
-        "bins": bin_results,
-    }
+# [REMOVED] _report_evidence_monotonicity — 已删除 (evidence 无效)
 
 
 def simulate_rr_execution(
@@ -689,8 +422,8 @@ def simulate_rr_execution(
     bars_1min_dict: Optional[Dict[str, pd.DataFrame]] = None,
     add_position_cfg: Optional[Dict[str, Any]] = None,
     per_strategy_limits: Optional[Dict[str, Any]] = None,
-    evidence_min_score: float = 0.0,
-    per_strategy_ev_min: Optional[Dict[str, float]] = None,
+    evidence_min_score: float = 0.0,  # [DEPRECATED] 不再使用, 保留参数避免调用方报错
+    per_strategy_ev_min: Optional[Dict[str, float]] = None,  # [DEPRECATED]
 ) -> pd.Series:
     """
     逐K线路径模拟 (Bar-by-Bar Execution Simulation)
@@ -1214,13 +947,9 @@ def simulate_rr_execution(
                 }
             )
 
-    # ── slot 限制：per-strategy 独立 slot, evidence 入场门槛 ──
+    # ── slot 限制：per-strategy 独立 slot ──
     _add_pos_count = 0
     removed_indices: set = set()  # 初始化以避免 slot 过滤未执行时 NameError
-    # Evidence 入场门槛: 优先用策略级 min_score, 兜底用全局 constitution
-    _ev_min_score = evidence_min_score
-    _per_strat_ev_min = per_strategy_ev_min or {}
-    _ev_position_scale = False
     if max_slots and max_slots > 0 and trade_details:
         # 加仓配置
         _ap_enabled = add_position_cfg is not None
@@ -1267,18 +996,10 @@ def simulate_rr_execution(
         accepted = []  # 当前 active trades
         rejected_indices = set()
         evicted_indices = set()
-        _slot_diag = {"per_strat": 0, "global": 0, "both": 0, "evidence_min": 0}
+        _slot_diag = {"per_strat": 0, "global": 0, "both": 0}
         for trade in trade_details:
             eidx = trade["entry_idx"]
-            new_ev = trade.get("evidence_score", 0.5)
             trade_arch = trade.get("archetype", "").lower().strip()
-
-            # Evidence 入场门槛: 策略级 > 全局 constitution
-            _eff_ev_min = _per_strat_ev_min.get(trade_arch, _ev_min_score)
-            if new_ev < _eff_ev_min:
-                rejected_indices.add(eidx)
-                _slot_diag["evidence_min"] += 1
-                continue
 
             # 移除已平仓的 active trades
             if _slot_use_ts and trade.get("entry_ts_ns", 0) > 0:
@@ -1327,7 +1048,7 @@ def simulate_rr_execution(
                 if can_add:
                     accepted = active + [trade]
                 else:
-                    # Slot 满 → 直接拒绝 (不再做 evidence 竞争驱逐)
+                    # Slot 满 → 直接拒绝
                     rejected_indices.add(eidx)
                     if per_strat_full and global_full:
                         _slot_diag["both"] += 1
@@ -1354,10 +1075,8 @@ def simulate_rr_execution(
                     f"rejected {len(rejected_indices)}, "
                     f"kept {total_entries}"
                 )
-                _ev_min_rejected = _slot_diag.get("evidence_min", 0)
                 print(
                     f"   🔍 Reject reasons: "
-                    f"evidence_min={_ev_min_rejected}, "
                     f"per_strat={_slot_diag['per_strat']}, "
                     f"global={_slot_diag['global']}, "
                     f"both={_slot_diag['both']}"
@@ -1700,17 +1419,16 @@ def _load_raw_features_for_archetype(
     test_end: str,
     warmup_days: int = 150,
 ) -> Tuple[pd.DataFrame, Dict[str, List[float]]]:
-    """从原始 1min 数据计算全量特征, 返回测试期 DataFrame + evidence quantiles。
+    """从原始 1min 数据计算全量特征, 返回测试期 DataFrame。
 
     流程:
       1. 从 meta.yaml 读取 timeframe
       2. 初始化 IncrementalFeatureComputer (同事件回测)
       3. 对每个 symbol: 加载 1min bars → 计算特征 → 截取测试期
-      4. 从 warmup 期 (test_start 之前) 计算 evidence quantiles
-      5. 合并返回 (test_df, precomputed_quantiles)
+      4. 合并返回 (test_df, {})
 
     返回的 DataFrame 包含 OHLC + 所有策略特征, 不含 gate_decision/pred 列。
-    precomputed_quantiles: {feature_name: [threshold, ...]} 用于 evidence 评分。
+    precomputed_quantiles: 始终返回空 dict (evidence 已删除)。
     """
     from src.time_series_model.live.incremental_feature_computer import (
         IncrementalFeatureComputer,
@@ -1743,7 +1461,7 @@ def _load_raw_features_for_archetype(
 
     dh = DataHandler(data_path)
     parts: List[pd.DataFrame] = []
-    calib_parts: List[pd.DataFrame] = []  # warmup 特征用于 evidence quantile 校准
+    calib_parts: List[pd.DataFrame] = []  # warmup 特征 (保留以备将来使用)
 
     import time as _time
 
@@ -1832,7 +1550,7 @@ def _load_raw_features_for_archetype(
 
         features_df.index = pd.to_datetime(features_df.index, utc=True)
 
-        # 收集 warmup 特征 (test_start 之前) 用于 evidence quantile 校准
+        # 收集 warmup 特征 (test_start 之前) — 保留以备将来使用
         warmup_df = features_df[features_df.index < test_start_ts]
         if not warmup_df.empty:
             calib_parts.append(warmup_df)
@@ -1860,20 +1578,8 @@ def _load_raw_features_for_archetype(
     df = pd.concat(parts, ignore_index=True)
     print(f"   📊 {arch_name}: {len(df)} total bars ({len(parts)} symbols)")
 
-    # 从 warmup 数据计算 evidence quantiles (与事件回测 pre-test calibration 对齐)
+    # [REMOVED] Evidence quantiles 计算已删除
     precomputed_quantiles: Dict[str, List[float]] = {}
-    evidence_cfg = load_evidence_config(arch_name, strategies_root)
-    if evidence_cfg and evidence_cfg.get("evidence") and calib_parts:
-        calib_combined = pd.concat(calib_parts, ignore_index=True)
-        precomputed_quantiles = compute_evidence_quantiles(
-            calib_combined, evidence_cfg, silent=False
-        )
-        print(
-            f"   📊 Evidence quantiles from warmup: {len(calib_combined)} rows "
-            f"({len(precomputed_quantiles)} features calibrated)"
-        )
-    elif evidence_cfg and evidence_cfg.get("evidence"):
-        print(f"   ⚠️  {arch_name}: 无 warmup 数据, evidence 默认 0.5")
 
     return df, precomputed_quantiles
 
@@ -2493,75 +2199,7 @@ def _pcm_get_priority_rank(archetype: str, priority: List[str]) -> int:
     return len(priority)  # 未知 archetype 排最后
 
 
-def _compute_evidence_for_archetype(
-    df: pd.DataFrame,
-    arch_name: str,
-    strategies_root: str,
-    quantile_train_start: Optional[str],
-    quantile_train_end: Optional[str],
-) -> pd.Series:
-    """为单个 archetype 计算 evidence scores。
-
-    如果提供了 quantile-train-start/end，从校准数据预计算 quantiles。
-    否则返回 0.5（中性）。
-    """
-    evidence_cfg = load_evidence_config(arch_name, strategies_root)
-    if not evidence_cfg or not evidence_cfg.get("evidence"):
-        return pd.Series(0.5, index=df.index)
-
-    if not quantile_train_start or not quantile_train_end:
-        return pd.Series(0.5, index=df.index)
-
-    # 找 timestamp 列
-    ts_col = None
-    if "timestamp" in df.columns:
-        ts_col = "timestamp"
-    elif isinstance(df.index, pd.DatetimeIndex):
-        df["_ts_tmp"] = df.index
-        ts_col = "_ts_tmp"
-
-    if ts_col is None:
-        print(f"   ⚠️  {arch_name}: 无 timestamp 列，evidence 默认 0.5")
-        return pd.Series(0.5, index=df.index)
-
-    train_start = pd.Timestamp(quantile_train_start)
-    train_end = pd.Timestamp(quantile_train_end)
-    if (train_end - train_start).days < 180:
-        print(
-            f"❌ 校准数据时间范围不足 6 个月: "
-            f"{train_start.date()} ~ {train_end.date()}"
-        )
-        if "_ts_tmp" in df.columns:
-            df.drop(columns=["_ts_tmp"], inplace=True)
-        return pd.Series(0.5, index=df.index)
-
-    df[ts_col] = pd.to_datetime(df[ts_col], utc=True)
-    calib_mask = (df[ts_col] >= train_start.tz_localize("UTC")) & (
-        df[ts_col] < train_end.tz_localize("UTC")
-    )
-    calib_df = df[calib_mask]
-
-    if len(calib_df) < 50:
-        print(
-            f"   ⚠️  {arch_name}: 校准数据不足 ({len(calib_df)} 行), evidence 默认 0.5"
-        )
-        if "_ts_tmp" in df.columns:
-            df.drop(columns=["_ts_tmp"], inplace=True)
-        return pd.Series(0.5, index=df.index)
-
-    precomputed_quantiles = compute_evidence_quantiles(
-        calib_df, evidence_cfg, silent=True
-    )
-    scores = compute_evidence_scores(
-        df, evidence_cfg, precomputed_quantiles=precomputed_quantiles, silent=True
-    )
-    print(
-        f"   📊 {arch_name} evidence: mean={scores.mean():.3f}, "
-        f"calibration={len(calib_df)} rows ({train_start.date()}~{train_end.date()})"
-    )
-    if "_ts_tmp" in df.columns:
-        df.drop(columns=["_ts_tmp"], inplace=True)
-    return scores
+# [REMOVED] _compute_evidence_for_archetype — 已删除 (evidence 无效)
 
 
 def _run_pcm_mode(args) -> int:  # noqa: C901
@@ -2600,16 +2238,12 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         constitution_yaml = regime_cfg.get("constitution_ref")
     const = _load_constitution_constraints(constitution_yaml)
     max_slots = getattr(args, "max_slots", None) or const["slot_count"]
-    _ev_min_score_const = const.get("evidence_min_score", 0.0)
-    _ev_pos_scale_const = const.get("evidence_position_scale", False)
+    # [REMOVED] evidence_min_score 和 evidence_position_scale 不再使用
 
     print(f"   📄 Regime config: {regime_config_path}")
     print(f"   📄 Constitution: {constitution_yaml or 'defaults'}")
     print(
         f"   🔒 max_slots={max_slots} (from {'args' if getattr(args, 'max_slots', None) else 'constitution'})"
-    )
-    print(
-        f"   🔒 evidence_min_score={_ev_min_score_const}, evidence_position_scale={_ev_pos_scale_const}"
     )
 
     # ── 1. 解析 --pcm 参数 ──
@@ -2800,28 +2434,8 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         _funnel["reject_entry_filter_deny"] += _n_before_ef - _n_after_ef
         _funnel["signals_generated"] += _n_after_ef
 
-        # Evidence 计算
-        if (
-            from_raw
-            and arch_name in arch_precomputed_quantiles
-            and arch_precomputed_quantiles[arch_name]
-        ):
-            # --from-raw: 用 warmup 数据预计算的 quantiles (无 look-ahead)
-            _ev_cfg = load_evidence_config(arch_name, strategies_root)
-            evidence_scores = compute_evidence_scores(
-                df,
-                _ev_cfg,
-                precomputed_quantiles=arch_precomputed_quantiles[arch_name],
-            )
-        else:
-            evidence_scores = _compute_evidence_for_archetype(
-                df,
-                arch_name,
-                strategies_root,
-                args.quantile_train_start,
-                args.quantile_train_end,
-            )
-        df["evidence_score"] = evidence_scores.values
+        # [REMOVED] Evidence 计算已删除 — 固定 0.5
+        df["evidence_score"] = 0.5
 
         n_entries = int((df["entry_direction"] != 0).sum())
         print(f"   📊 Active entries: {n_entries}")
@@ -2948,14 +2562,10 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         regime_scales_applied.append(scale)
 
         merged.at[idx, "entry_direction"] = first_dir
-        merged.at[idx, "evidence_score"] = first_ev
+        merged.at[idx, "evidence_score"] = 0.5
         merged.at[idx, "_pcm_archetype"] = first_arch
-        # Position scale = regime_scale × evidence_scale
-        final_scale = scale
-        if _ev_pos_scale_const:
-            ev_clamped = max(0.0, min(1.0, first_ev if first_ev == first_ev else 0.5))
-            final_scale *= 0.5 + 0.5 * ev_clamped
-        merged.at[idx, "_position_scale"] = final_scale
+        # Position scale = regime_scale only (evidence 已删除)
+        merged.at[idx, "_position_scale"] = scale
         arch_win_counts[first_arch] = arch_win_counts.get(first_arch, 0) + 1
         regime_entry_counts[current_regime] = (
             regime_entry_counts.get(current_regime, 0) + 1
@@ -2965,12 +2575,9 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         for arch_name, d, ev in active[1:]:
             row_copy = merged.loc[idx].copy()
             sc = regime_detector.get_archetype_scale(arch_name)
-            # Position scale = regime_scale × evidence_scale
-            if _ev_pos_scale_const:
-                ev_c = max(0.0, min(1.0, ev if ev == ev else 0.5))
-                sc *= 0.5 + 0.5 * ev_c
+            # Position scale = regime_scale only (evidence 已删除)
             row_copy["entry_direction"] = d
-            row_copy["evidence_score"] = ev
+            row_copy["evidence_score"] = 0.5
             row_copy["_pcm_archetype"] = arch_name
             row_copy["_position_scale"] = sc
             regime_scales_applied.append(sc)
@@ -3155,15 +2762,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             pass
 
     print(f"\n📈 Simulating bar-by-bar with per-archetype execution params...")
-    # 收集策略级 evidence min_score (从各策略 evidence.yaml 读取)
-    _per_strat_ev_min: Dict[str, float] = {}
-    for arch_name in arch_specs:
-        _ev_cfg = load_evidence_config(arch_name, strategies_root)
-        _arch_ev_min = float((_ev_cfg or {}).get("min_score", 0.0))
-        if _arch_ev_min > 0:
-            _per_strat_ev_min[arch_name.lower().strip()] = _arch_ev_min
-    if _per_strat_ev_min:
-        print(f"   🔒 per-strategy evidence_min_score: {_per_strat_ev_min}")
+    # [REMOVED] evidence min_score 不再收集
     exec_returns, trade_details = simulate_rr_execution(
         merged,
         first_exec,  # 全局 fallback config
@@ -3174,8 +2773,6 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         bars_1min_dict=bars_1min_dict,
         add_position_cfg=_add_position_cfg,
         per_strategy_limits=_per_strategy_limits,
-        evidence_min_score=_ev_min_score_const,
-        per_strategy_ev_min=_per_strat_ev_min,
     )
 
     valid_returns = exec_returns.dropna()
@@ -3183,12 +2780,11 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         print("❌ No valid returns computed")
         return 1
 
-    # ── Evidence 单调性验证 (用原始 R, 缩放前) ──
-    _mono_result = _report_evidence_monotonicity(trade_details)
+    # [REMOVED] Evidence 单调性验证已删除
 
-    # ── 应用 position_scale 仓位缩放 (regime × evidence) 到 R-multiples ──
-    # _position_scale 在 PCM 仲裁时计算: regime_scale × (0.5 + 0.5 × evidence)
-    # 与事件回测/实盘 LivePCM._apply_regime_scale() 公式一致
+    # ── 应用 position_scale 仓位缩放 (regime only) 到 R-multiples ──
+    # _position_scale 在 PCM 仲裁时计算: regime_scale only
+    # 与事件回测/实盘 LivePCM._apply_regime_scale() 一致
     if "_position_scale" in merged.columns:
         _has_scale = (merged["_position_scale"] < 1.0 - 1e-9).any()
         if _has_scale:
@@ -4941,7 +4537,7 @@ def main() -> int:
     _per_strat_limits = _const_pre.get("per_strategy_limits") or {}
     _strat_cfg = _per_strat_limits.get(str(args.strategy).lower()) or {}
     _max_slots_single = int(_strat_cfg.get("max_slots", 1))
-    _ev_min_score_single = _const_pre.get("evidence_min_score", 0.0)
+    # [REMOVED] evidence_min_score 不再使用
     print(
         f"   🔒 Single-strategy max_slots={_max_slots_single} (from constitution: {_const_yaml_single or 'defaults'})"
     )
@@ -4978,13 +4574,7 @@ def main() -> int:
 
     # 使用 execution.yaml 配置模拟 RR
     print("\n📈 Simulating with execution.yaml config...")
-    # 策略级 evidence min_score
-    _single_strat_ev_min: Dict[str, float] = {}
-    _ev_cfg_single = load_evidence_config(str(args.strategy), args.strategies_root)
-    _arch_ev_min_single = float((_ev_cfg_single or {}).get("min_score", 0.0))
-    if _arch_ev_min_single > 0:
-        _single_strat_ev_min[str(args.strategy).lower().strip()] = _arch_ev_min_single
-        print(f"   🔒 evidence_min_score (from evidence.yaml): {_arch_ev_min_single}")
+    # [REMOVED] evidence min_score 不再收集
     exec_returns, trade_details = simulate_rr_execution(
         merged,
         exec_config,
@@ -4995,8 +4585,6 @@ def main() -> int:
         bars_1min_dict=bars_1min_dict,
         add_position_cfg=_add_pos_cfg_single,
         per_strategy_limits=_per_strategy_limits_single,
-        evidence_min_score=_ev_min_score_single,
-        per_strategy_ev_min=_single_strat_ev_min,
     )
 
     valid_returns = exec_returns.dropna()

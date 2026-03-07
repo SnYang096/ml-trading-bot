@@ -754,11 +754,8 @@ def run_strategy_pipeline(
         if shap_active
         else scfg["features_gate"]
     )
-    features_evidence_file = (
-        scfg["features_evidence"].replace(".yaml", "_shap.yaml")
-        if shap_active
-        else scfg["features_evidence"]
-    )
+    # [REMOVED] Evidence 模块已删除 (Spearman r=-0.068, p=0.478, 无效)
+    # features_evidence_file 不再使用
 
     # ── Step 3: Prefilter (--promote) ──
     if scfg.get("has_prefilter"):
@@ -954,92 +951,10 @@ def run_strategy_pipeline(
         dry_run=dry_run,
     )
 
-    # ── Step 6: Evidence 训练 ──
-    # ⚠️ Evidence Train 不使用 prefilter (见 BPC pipeline 文档):
-    #   - 全量训练 → 更多候选 → 更好的概率校准
-    #   - Evidence Optimize 在 logs_gated.parquet（已过 gate）上做 plateau 验证
-    #   - 因此不影响生产一致性：只在 gated 人群有效的候选才能 promote
-    evidence_train_args = [
-        "mlbot",
-        "train",
-        "final",
-        "--no-docker",
-        "--config",
-        config_dir,
-        "--features",
-        f"{config_dir}/{features_evidence_file}",
-        "--labels",
-        f"{config_dir}/{scfg['labels_evidence']}",
-        *common_train_args,
-        "--seed",
-        "42",  # A.7.1: evidence 规则确定性，固定 seed 不受外层 seed 影响
-    ]
-
-    rc, out = run_step("Evidence Train", evidence_train_args, log, dry_run=dry_run)
-    evidence_dir = find_output_dir(out, strategy) or gate_dir
-
-    # ── Early termination: if Evidence Train failed ──
-    ev_pred = Path(f"{evidence_dir}/predictions.parquet")
-    if rc != 0 or (not dry_run and not ev_pred.exists()):
-        print(
-            f"\n\u274c Evidence Train 失败或未产出 predictions.parquet"
-            f" (rc={rc}, exists={ev_pred.exists() if not dry_run else 'N/A'})"
-        )
-        print("   可能原因: prefilter 过滤过严, 或 Gate 配置问题. " "请检查上方日志.")
-        if not dry_run:
-            return {
-                "error": "evidence_train_failed",
-                "gate_dir": gate_dir,
-                "evidence_dir": evidence_dir,
-            }
-
-    # Evidence gate apply
-    run_step(
-        "Evidence Gate Apply",
-        [
-            "mlbot",
-            "gate",
-            "apply-archetype",
-            "--logs",
-            f"{evidence_dir}/predictions.parquet",
-            "--out",
-            f"{evidence_dir}/logs_gated.parquet",
-            "--gate-path",
-            f"{config_dir}/archetypes/gate.yaml",
-            "--strategy",
-            strategy,
-        ],
-        log,
-        dry_run=dry_run,
-    )
-
-    # Evidence optimize (--promote)
-    # --gate-yaml: 在 gate 放行子集上优化 + 排除 gate 相关特征 + Spearman 预筛
-    _gate_yaml_for_evidence = f"{config_dir}/archetypes/gate.yaml"
-    run_step(
-        "Evidence Optimize",
-        [
-            "python",
-            "scripts/optimize_evidence_plateau.py",
-            "--strategy",
-            strategy,
-            "--strategies-root",
-            strategies_root,
-            "--candidates",
-            f"{evidence_dir}/evidence_candidates.yaml",
-            "--predictions",
-            f"{evidence_dir}/predictions.parquet",
-            "--logs",
-            f"{evidence_dir}/logs_gated.parquet",
-            "--output",
-            f"{evidence_dir}/evidence_optimization.json",
-            "--gate-yaml",
-            _gate_yaml_for_evidence,
-            "--promote",
-        ],
-        log,
-        dry_run=dry_run,
-    )
+    # [REMOVED] Step 6: Evidence 训练/优化 — 已删除
+    # 验证结论: Prefilter+Gate 后 evidence 无区分力 (Spearman r=-0.068, p=0.478)
+    # 详见 z实验_005_统一研究/evidence单调性验证.md
+    evidence_dir = gate_dir  # 后续步骤沿用 gate_dir
 
     # ── Step 7: Entry Filter (--meta-algorithm --promote) ──
     # 必须用 logs_gated.parquet：Entry Filter 的阈值必须在 gate 过滤后的

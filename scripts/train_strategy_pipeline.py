@@ -4059,7 +4059,6 @@ def train_strategy(
                 _get_booster,
                 _write_standalone_rules,
                 _generate_risk_gate_yaml,
-                _generate_evidence_candidates_yaml,
             )
 
             model_path = output_dir / "model.pkl"
@@ -4107,63 +4106,9 @@ def train_strategy(
                     # - regression (Return Tree): evidence_candidates.yaml
                     # - binary (Failure Tree): risk_gate_draft.yaml
                     if task_type == "regression":
-                        evidence_path = output_dir / "evidence_candidates.yaml"
-                        _predictions_path = output_dir / "predictions.parquet"
-                        # v2: SHAP∩Gain + bad_suppression + 2D interaction
-                        _ev_pred_df = None
-                        _ev_rr_col = None
-                        if _predictions_path.exists():
-                            try:
-                                _ev_pred_df = pd.read_parquet(_predictions_path)
-                                for _rc in [
-                                    "forward_rr",
-                                    "success_no_rr_extreme",
-                                    "ret_mean",
-                                    "bpc_impulse_return_atr",
-                                    "rr",
-                                    "return_atr",
-                                ]:
-                                    if _rc in _ev_pred_df.columns:
-                                        _ev_rr_col = _rc
-                                        break
-                            except Exception:
-                                pass
-                        # 加载 gate.yaml 提取 gate 特征，从 evidence 候选中排除
-                        _gate_exclude: "set | None" = None
-                        _gate_yaml_path = (
-                            Path(strategies_root)
-                            / strategy_config.name
-                            / "archetypes"
-                            / "gate.yaml"
-                        )
-                        if _gate_yaml_path.exists():
-                            try:
-                                from scripts.optimize_evidence_plateau import (
-                                    _extract_gate_features,
-                                )
-
-                                _gate_exclude = _extract_gate_features(_gate_yaml_path)
-                                if _gate_exclude:
-                                    print(
-                                        f"   \U0001f6aa Evidence 候选排除 {len(_gate_exclude)} 个 gate 特征: "
-                                        f"{sorted(_gate_exclude)}"
-                                    )
-                            except Exception:
-                                pass
-                        _generate_evidence_candidates_yaml(
-                            evidence_path,
-                            rules,
-                            strategy_config.name,
-                            str(output_dir),
-                            pred_df=_ev_pred_df,
-                            feature_names=feature_names if feature_names else None,
-                            lgbm_model=loaded_model,
-                            rr_col_name=_ev_rr_col,
-                            exclude_features=_gate_exclude,
-                        )
-                        print(
-                            f"   \U0001f4dc Evidence candidates exported to {evidence_path}"
-                        )
+                        # [REMOVED] Evidence 候选生成已删除 (evidence 无效)
+                        # 仅保留 tree rules 导出
+                        pass
                     else:
                         risk_gate_path = output_dir / "risk_gate_draft.yaml"
                         _predictions_path = output_dir / "predictions.parquet"

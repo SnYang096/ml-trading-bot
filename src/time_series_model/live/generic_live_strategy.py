@@ -156,29 +156,8 @@ class EntryFilterChecker:
 
 
 # =============================================================================
-# 4. Evidence 评分计算
+# 4. [REMOVED] Evidence 评分计算 — 已删除 (evidence 无效)
 # =============================================================================
-
-
-class EvidenceScorer:
-    """计算 evidence.yaml 评分"""
-
-    def __init__(self, archetype: StrategyArchetype):
-        self.archetype = archetype
-
-    def score(
-        self, features: Dict[str, Any], quantiles: Optional[Dict[str, Any]] = None
-    ) -> Tuple[float, Dict[str, float]]:
-        """
-        计算 Evidence 评分
-
-        Returns:
-            (score: float, breakdown: Dict[feature_name, contribution])
-        """
-        if self.archetype is None:
-            return 0.5, {}
-
-        return self.archetype.compute_evidence_score(features, quantiles)
 
 
 # =============================================================================
@@ -258,7 +237,6 @@ class GenericLiveStrategy:
         self.direction_evaluator: Optional[DirectionEvaluator] = None
         self.gate_evaluator: Optional[GateEvaluator] = None
         self.entry_filter_checker: Optional[EntryFilterChecker] = None
-        self.evidence_scorer: Optional[EvidenceScorer] = None
         self.execution_generator: Optional[ExecutionParamGenerator] = None
 
         # 状态
@@ -279,8 +257,7 @@ class GenericLiveStrategy:
                 self.strategy_name, self.strategies_root
             )
             logger.info(
-                f"✅ Archetype loaded: {len(self.archetype.gate.all_rules)} gate rules, "
-                f"{len(self.archetype.evidence.features)} evidence features"
+                f"✅ Archetype loaded: {len(self.archetype.gate.all_rules)} gate rules"
             )
 
             # 2. 加载 Direction 配置
@@ -310,7 +287,6 @@ class GenericLiveStrategy:
 
             # 4. 初始化其他评估器
             self.gate_evaluator = GateEvaluator(self.archetype)
-            self.evidence_scorer = EvidenceScorer(self.archetype)
             self.execution_generator = ExecutionParamGenerator(
                 self.archetype.execution.raw or {}
             )
@@ -320,35 +296,14 @@ class GenericLiveStrategy:
             raise
 
     def set_quantiles(self, features_df) -> None:
-        """设置分位数阈值（用于 evidence 评分）"""
+        """设置分位数阈值（用于 Gate quantile 规则）"""
         if self.archetype is None:
             return
 
         quantiles = {}
         n_computed = 0
 
-        # 1. 为每个 evidence 特征计算分位数
-        for feat_spec in self.archetype.evidence.features:
-            feat_name = feat_spec.feature
-            if feat_name in features_df.columns:
-                values = pd.to_numeric(features_df[feat_name], errors="coerce").dropna()
-                if len(values) < 10:
-                    continue
-
-                # 使用 evidence 特征自身的 quantile_bins（如果有）
-                bins = getattr(feat_spec, "quantile_bins", None)
-                if not bins:
-                    bins = [0.2, 0.5, 0.8, 0.9, 0.95]
-
-                feat_q = {}
-                for b in bins:
-                    q_val = float(values.quantile(b))
-                    q_key = f"{b:.2f}".rstrip("0").rstrip(".")
-                    feat_q[q_key] = q_val
-                quantiles[feat_name] = feat_q
-                n_computed += 1
-
-        # 2. Gate quantile 规则 — 扫描 gate 中引用 quantile_* 的特征
+        # Gate quantile 规则 — 扫描 gate 中引用 quantile_* 的特征
         n_gate_quantiles = 0
         for rule in self.archetype.gate.all_rules:
             for feat_name, cond in rule.when.items():
@@ -394,9 +349,7 @@ class GenericLiveStrategy:
 
         self._quantiles = quantiles
         logger.info(
-            "Quantiles 已计算: evidence=%d/%d, gate=%d, 基于 %d 行数据",
-            n_computed,
-            len(self.archetype.evidence.features),
+            "Quantiles 已计算: gate=%d, 基于 %d 行数据",
             n_gate_quantiles,
             len(features_df),
         )
@@ -472,33 +425,10 @@ class GenericLiveStrategy:
             funnel["entry_filter"] = True
             logger.debug("✅ Entry filter passed")
 
-        # ── 4. Evidence 评分 ──
+        # ── 4. Evidence 评分 (已删除, 固定 0.5) ──
         evidence_score = 0.5
-        evidence_breakdown = {}
-        if self.evidence_scorer is not None:
-            evidence_score, evidence_breakdown = self.evidence_scorer.score(
-                features, self._quantiles
-            )
-            # 应用 gate weight
-            evidence_score = evidence_score * gate_weight
-            logger.debug(f"📊 Evidence score: {evidence_score:.3f}")
 
-        # Evidence 入场门槛 (策略级, 由 optimize_evidence_plateau 自动计算)
-        _ev_min = 0.0
-        if self.archetype is not None:
-            _ev_min = self.archetype.evidence.min_score
-        if evidence_score < _ev_min:
-            logger.info(
-                "❌ Evidence score %.3f < min_score %.3f, 拒绝",
-                evidence_score,
-                _ev_min,
-            )
-            funnel["evidence"] = False
-            funnel["evidence_min_rejected"] = True
-            self._last_funnel = funnel
-            return []
-
-        funnel["evidence"] = True  # 走到这里就算通过
+        funnel["evidence"] = True  # 始终通过
 
         # ── 5. 执行参数生成 ──
         exec_params = {}
@@ -515,7 +445,7 @@ class GenericLiveStrategy:
             archetype=self.strategy_name,
             execution_strategy=self.strategy_name,
             confidence=evidence_score,
-            size_multiplier=exec_params.get("size_multiplier", 1.0),
+            size_multiplier=1.0,
             execution_tags=[self.strategy_name, side_str],
             execution_profile={
                 "rr_constraints": {
@@ -597,15 +527,9 @@ class GenericLiveStrategy:
             if not ef_passed:
                 return False, {"reject_reason": "entry_filter_deny"}
 
-        # ── 4. Evidence Score + Tier 选择 ──
+        # ── 4. Evidence Score (已删除, 固定 0.5) ──
         evidence_score = 0.5
-        evidence_breakdown = {}
-        if self.evidence_scorer is not None:
-            evidence_score, evidence_breakdown = self.evidence_scorer.score(
-                features, self._quantiles
-            )
-
-        adjusted_score = evidence_score * gate_weight
+        adjusted_score = 0.5
 
         # Tier 选择
         exec_params = {}
@@ -619,12 +543,10 @@ class GenericLiveStrategy:
             "direction": direction,
             "reason": (
                 f"{self.strategy_name.upper()}_{side_str} "
-                f"(evidence={adjusted_score:.2f}, "
-                f"tier={exec_params.get('tier_name', 'default')}, "
-                f"gate_w={gate_weight:.2f})"
+                f"(gate_w={gate_weight:.2f})"
             ),
             "evidence_score": adjusted_score,
-            "evidence_breakdown": evidence_breakdown,
+            "evidence_breakdown": {},
             "gate_weight": gate_weight,
             "tier": exec_params,
             "atr": features.get("atr", 0.0),
