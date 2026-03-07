@@ -17,51 +17,54 @@ universe_sets:
         - BNB
         - XRP
         - ADA
-      alt:
-        - AVAX
-        - LINK
-        - DOT
-        - LTC
-        - BCH
         - TRX
-        - TON
-        - ATOM
-        - ETC
-        - FIL
-        - XLM
-        - XTZ
-        - HYPE
-        - NEAR
-        - APT
-        - SUI
-        - SEI
-        - INJ
-        - ARB
-        - OP
-        - UNI
-        - AAVE
-        - MKR
-        - COMP
-        - FTM
-        - MANA
-        - SAND
-        - RUNE
-        - STX
-        - ICP
-        - DYDX
-        - GMX
-        - LDO
-        - CRV
-        - SNX
-        - IMX
-        - GALA
-        - ENA
-        - TIA
-        - JUP
-        - JTO
-        - PYTH
-        - ZK
-        - STRK
+        - BCH
+        - LINK
+
+      # alt:
+      #   - XMR
+      #   - AVAX
+      #   - DOT
+      #   - LTC
+      #   - TON
+      #   - ATOM
+      #   - ETC
+      #   - FIL
+      #   - XLM
+      #   - XTZ
+      #   - HYPE
+      #   - NEAR
+      #   - APT
+      #   - SUI
+      #   - SEI
+      #   - INJ
+      #   - ARB
+      #   - OP
+      #   - UNI
+      #   - AAVE
+      #   - MKR
+      #   - COMP
+      #   - FTM
+      #   - MANA
+      #   - SAND
+      #   - RUNE
+      #   - STX
+      #   - ICP
+      #   - DYDX
+      #   - GMX
+      #   - LDO
+      #   - CRV
+      #   - SNX
+      #   - IMX
+      #   - GALA
+      #   - ENA
+      #   - TIA
+      #   - JUP
+      #   - JTO
+      #   - PYTH
+      #   - ZK
+      #   - STRK
+
       meme:
         - DOGE
         - WIF

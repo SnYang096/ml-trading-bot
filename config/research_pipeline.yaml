@@ -36,10 +36,8 @@ strategies:
   bpc:
     config: config/strategies/bpc
     timeframe: "240T"
-    features_gate: features_gate.yaml
-    features_evidence: features_evidence.yaml
+    features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
-    labels_evidence: labels_return_tree.yaml
     has_prefilter: true
     has_direction: true
     # Per-strategy KPI gates: 每个策略独立的优化约束参数
@@ -60,10 +58,8 @@ strategies:
   fer:
     config: config/strategies/fer
     timeframe: "240T"
-    features_gate: features_gate.yaml
-    features_evidence: features_evidence.yaml
+    features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
-    labels_evidence: labels_return_tree.yaml
     has_prefilter: true
     has_direction: true
     kpi_gates:
@@ -82,10 +78,8 @@ strategies:
   me:
     config: config/strategies/me
     timeframe: "60T"
-    features_gate: features_gate.yaml
-    features_evidence: features_evidence.yaml
+    features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
-    labels_evidence: labels_return_tree.yaml
     has_prefilter: true
     has_direction: true
     kpi_gates:
@@ -106,6 +100,25 @@ strategies:
       stability_threshold: 0.50      # 全局 0.75 → ME 0.50
       top_k: 25                      # 全局 20 → ME 25
 
+  lv:
+    config: config/strategies/lv
+    timeframe: "15T"
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.10
+        min_rows: 500
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
+      backtest:
+        min_trades: 50
+      deploy:
+        min_trades: 50               # 15min 频率高, 保留 50 笔要求
+
 # ── SHAP 特征筛选 (Step 2.5) ───────────────────────────────────
 # Walk-Forward SHAP 稳定性筛选: 自动裁剪不稳定特征, 减少过拟合
 # --skip-shap 可跳过此步骤 (快速迭代用)
@@ -119,8 +132,7 @@ shap_feature_selection:
     - atr_f
     - fer_failure_signals_f          # FER prefilter 依赖此节点 (fer_trapped_longs/shorts_score)
   apply_to:                          # 裁剪哪些 features YAML
-    - features_gate.yaml
-    - features_evidence.yaml
+    - features.yaml
 
 # ── 对比决策规则 (全确定性, 无人工判断) ────────────────────────
 comparison:

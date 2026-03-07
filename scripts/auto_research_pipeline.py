@@ -194,44 +194,58 @@ def find_output_dir(output: str, strategy: str) -> Optional[str]:
 
 
 def parse_backtest_stdout(output: str) -> Dict[str, Any]:
-    """从 event_backtest.py stdout 提取指标."""
+    """从回测 stdout 提取指标 (兼容向量回测 + 事件回测两种格式)."""
     metrics: Dict[str, Any] = {}
 
-    # 事件回测输出格式: 交易数: N
-    m = re.search(r"交易数:\s*(\d+)", output)
+    # --- 交易数 ---
+    # 向量: "Trades: 106  (53/year, span=1.00yr)"
+    # 事件: "交易数: 106"
+    m = re.search(r"Trades:\s*(\d+)", output) or re.search(r"交易数:\s*(\d+)", output)
     if m:
         metrics["total_trades"] = int(m.group(1))
 
+    # --- Mean R ---
     m = re.search(r"Mean R:\s*([\-\d.]+)", output)
     if m:
         metrics["mean_r"] = float(m.group(1))
 
-    # 事件回测输出格式: 胜率: 58.0%
-    m = re.search(r"胜率:\s*([\d.]+)%", output)
+    # --- Win Rate ---
+    # 向量: "Win Rate: 60.38%"
+    # 事件: "胜率: 60.4%"
+    m = re.search(r"Win Rate:\s*([\d.]+)%", output) or re.search(
+        r"胜率:\s*([\d.]+)%", output
+    )
     if m:
         metrics["win_rate"] = float(m.group(1)) / 100
 
-    # 事件回测输出格式: Sharpe (R): 0.0641
-    m = re.search(r"Sharpe \(R\):\s*([\-\d.]+)", output)
+    # --- Sharpe ---
+    # 向量: "Sharpe (per-trade): 0.0940"
+    # 事件: "Sharpe (R): 0.0641"
+    m = re.search(r"Sharpe \(per-trade\):\s*([\-\d.]+)", output) or re.search(
+        r"Sharpe \(R\):\s*([\-\d.]+)", output
+    )
     if m:
         metrics["sharpe_per_trade"] = float(m.group(1))
 
-    # Total R
+    # --- Total R ---
     m = re.search(r"Total R:\s*([\-\d.]+)", output)
     if m:
         metrics["total_r"] = float(m.group(1))
 
-    # Max DD (R)
+    # --- Max DD ---
+    # 事件: "Max DD (R): 10.55"
     m = re.search(r"Max DD \(R\):\s*([\-\d.]+)", output)
     if m:
         metrics["max_drawdown_r"] = float(m.group(1))
 
-    # Equity return: Final: $1155 (+15.5%)
+    # --- Equity ---
+    # 向量: "Final: $1155  (+15.5%)"
+    # 事件: "Final: $1155 (+15.5%)"
     m = re.search(r"Final:\s*\$[\d.]+\s*\(([\+\-\d.]+)%\)", output)
     if m:
         metrics["equity_return_pct"] = float(m.group(1))
 
-    # Equity max DD: Max DD: 7.1%
+    # 向量: "Max DD: 7.1%"
     m = re.search(r"Max DD:\s*([\d.]+)%", output)
     if m:
         metrics["max_drawdown_pct"] = float(m.group(1)) / 100
@@ -623,9 +637,7 @@ def run_strategy_pipeline(
         end_date,
         "--seed",
         str(seed),
-        # NOTE: --deterministic NOT passed → multi-thread for speed.
-        # Multi-seed search provides controlled exploration;
-        # non-determinism from threads is acceptable "free" variation.
+        "--non-deterministic",  # multi-thread for speed (CLI default=True would force single-thread)
     ]
 
     # ── Step 0: Data Download + Convert (增量) ──
@@ -691,8 +703,8 @@ def run_strategy_pipeline(
     prepare_dir = prepare_dir or f"results/train_final_DRYRUN/{strategy}"
 
     # ── Step 2.5: SHAP Feature Selection (可选, 默认开启) ──
-    # SHAP --promote 输出 features_gate_shap.yaml / features_evidence_shap.yaml
-    # 原始 features_gate.yaml / features_evidence.yaml 永远不动（保留完整候选池）
+    # SHAP --promote 输出 features_gate_shap.yaml (基于 features_gate 配置生成)
+    # 原始 features.yaml 永远不动（保留完整候选池）
     shap_cfg = cfg.get("shap_feature_selection", {})
     _skip_shap = skip_shap or not shap_cfg.get("enabled", True)
     shap_active = False  # 标记 SHAP 是否成功生成了 _shap.yaml
@@ -735,16 +747,11 @@ def run_strategy_pipeline(
         gate_shap = Path(config_dir) / scfg["features_gate"].replace(
             ".yaml", "_shap.yaml"
         )
-        ev_shap = Path(config_dir) / scfg["features_evidence"].replace(
-            ".yaml", "_shap.yaml"
-        )
-        if dry_run or (gate_shap.exists() and ev_shap.exists()):
+        if dry_run or gate_shap.exists():
             shap_active = True
-            print(f"\u2705 SHAP: \u4f7f\u7528 {gate_shap.name} + {ev_shap.name}")
+            print(f"\u2705 SHAP: 使用 {gate_shap.name}")
         else:
-            print(
-                "\u26a0\ufe0f  SHAP: _shap.yaml \u672a\u751f\u6210, \u56de\u9000\u5230\u539f\u59cb\u7279\u5f81\u6587\u4ef6"
-            )
+            print("\u26a0\ufe0f  SHAP: _shap.yaml 未生成, 回退到原始特征文件")
     else:
         print("\u23ed\ufe0f  SHAP Feature Selection: skipped")
 
@@ -977,86 +984,30 @@ def run_strategy_pipeline(
         dry_run=dry_run,
     )
 
-    # ── Step 8: Execution (--promote) ──
-    # Execution 小样本保护: gate 筛选后交易数不足时跳过 grid search,
-    # 保留现有 execution.yaml 避免在噪声数据上 "优化" 出极端参数.
-    exec_min_trades = execution_gates.get("min_trades", 0)
-    skip_execution_opt = False
-    if exec_min_trades > 0 and not dry_run:
-        gated_path = Path(f"{evidence_dir}/logs_gated.parquet")
-        if gated_path.exists():
-            try:
-                import pandas as _pd
+    # ── Step 8: Execution Optimize (跳过) ──
+    # 默认使用 execution.yaml 中的 2ATR 止损, 快速出结果.
+    # Execution 参数精调后续用事件回测 + --use-1min 手动优化.
+    print("\n  ⏭️  Step 8 SKIP: Execution Optimize 跳过 (默认 2ATR, 后续事件回测精调)")
 
-                _gated = _pd.read_parquet(gated_path)
-                if "gate_decision" in _gated.columns:
-                    _n_allow = int((_gated["gate_decision"] == "allow").sum())
-                elif "gate_passed" in _gated.columns:
-                    _n_allow = int(_gated["gate_passed"].sum())
-                else:
-                    _n_allow = len(_gated)
-                if _n_allow < exec_min_trades:
-                    skip_execution_opt = True
-                    print(
-                        f"\n  ⏭️  Step 8 SKIP: gate allows {_n_allow} trades "
-                        f"< min_trades={exec_min_trades} → 保留现有 execution.yaml"
-                    )
-            except Exception as exc:
-                print(f"\n  ⚠️  Execution min_trades check failed: {exc}")
-
-    if not skip_execution_opt:
-        exec_cmd = [
-            "python",
-            "scripts/optimize_execution_grid.py",
-            "--logs",
-            f"{evidence_dir}/logs_gated.parquet",
-            "--strategy",
-            strategy,
-            "--strategies-root",
-            strategies_root,
-            "--output",
-            f"{evidence_dir}/execution_grid.json",
-            "--promote",
-            "--test-start",
-            holdout_start,
-            "--test-end",
-            end_date,
-        ]
-        if use_1min:
-            exec_cmd.extend(["--use-1min", "--data-path", data_path])
-        run_step(
-            "Execution Optimize",
-            exec_cmd,
-            log,
-            dry_run=dry_run,
-        )
-
-    # ── Step 9: 事件回测 ──
-    # 使用 event_backtest.py (更接近实盘的流式 slot 竞争 + evidence eviction)
-    # 必须传 --start-date/--end-date: 限制到 holdout 期
-    # 必须传 --strategies-root: 确保读取本次实验的配置
-    bt_json_path = f"{run_dir}/event_backtest_{strategy}.json"
-    bt_export_path = f"{run_dir}/event_backtest_{strategy}_trades.csv"
+    # ── Step 9: 向量回测 (快速) ──
+    # 使用 backtest_execution_layer.py (向量化, 不需 1min 数据, 快速出结果)
+    # Execution 参数优化需要事件回测精度, 但管线最终验证用向量回测足够
     bt_cmd = [
         "python",
-        "scripts/event_backtest.py",
+        "scripts/backtest_execution_layer.py",
+        "--logs",
+        f"{evidence_dir}/logs_gated.parquet",
         "--strategy",
         strategy,
-        "--start-date",
-        holdout_start,
-        "--end-date",
-        end_date,
-        "--data-path",
-        data_path,
         "--strategies-root",
         strategies_root,
-        "--output",
-        bt_json_path,
-        "--export",
-        bt_export_path,
+        "--test-start",
+        holdout_start,
+        "--test-end",
+        end_date,
     ]
     rc, bt_out = run_step(
-        "Event Backtest",
+        "Vector Backtest",
         bt_cmd,
         log,
         dry_run=dry_run,

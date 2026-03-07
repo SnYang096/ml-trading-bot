@@ -140,9 +140,11 @@ def load_tick_data(
 
     ticks = pd.concat(frames, ignore_index=True)
     # Normalize to tz-naive timestamps (UTC) for robust comparisons.
-    # Upstream callers may pass tz-aware timestamps (e.g., from UTC-indexed feature frames),
-    # while tick parquet timestamps are tz-naive. Mixing them causes
-    # "Cannot compare tz-naive and tz-aware timestamps".
+    # concat of mixed tz-aware / tz-naive parquet files may produce object dtype,
+    # so always round-trip through utc=True then strip tz.
+    ticks["timestamp"] = pd.to_datetime(ticks["timestamp"], utc=True).dt.tz_convert(
+        None
+    )
     start = pd.to_datetime(start_ts, utc=True).tz_convert(None) - pd.Timedelta(
         minutes=lookback_minutes
     )

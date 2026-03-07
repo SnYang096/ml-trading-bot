@@ -17,7 +17,7 @@ feature_pipeline:
     - me_soft_phase_f
     - me_failure_f
     - me_context_f
-    
+
     - roc_5_f
     - roc_10_f
     - roc_20_f
@@ -25,51 +25,51 @@ feature_pipeline:
     - price_momentum_divergence_f  # 价格-动量背离（与 CVD 背离正交）
     - terminal_risk_score_f        # 末端风险评分（Execution 层追单风险）
     - volume_participation_score_f # 市场参与度评分（Execution 层活跃度）
-    
+
     # ========== 趋势强度 ==========
     - trend_r2_20_f
     - path_efficiency_pct_f
     - path_length_pct_f
     - price_dir_consistency_pct_f
-    
+
     # ========== 动量 ==========
     - macd_atr_f
     - rsi_f
-    
+
     # ========== 波动 ==========
     - atr_percentile_f
     - bb_width_normalized_pct_f  # 自包含：内部计算 BB width/ATR 再转百分位
-    
+
     # ========== ⭐ Volatility Regime (新增) ==========
     # 识别"踩大坑"的波动率状态
     - vol_regime_features_f       # vol_zscore, vol_percentile_approx
     - vol_trend_features_f        # vol_slope, vol_accel (波动率趋势)
     - vol_mom_features_f          # vol_mom_5/10/20 (波动率动量)
-    
+
     # ========== ⭐ Trend Exhaustion (新增) ==========
     # 识别趋势衰竭/反转信号
     - wick_scene_semantic_scores_f   # wick_exhaustion_score (影线衰竭)
     - wpt_scene_semantic_scores_f    # wpt_exhaustion_score (小波变换衰竭)
     - volume_profile_scene_semantic_scores_f  # vp_exhaustion_score (成交量分布衰竭)
     - liquidity_void_scene_semantic_scores_f  # 流动性真空场景语义 (V2 连续化)
-    
+
     # ========== SR 相关 ==========
     - sr_strength_max_f  # 输出包含 sr_strength_max 和 dist_to_nearest_sr
-    
+
     # ========== 订单流 ==========
     - vpin_features_f
     - volume_ratio_pct_f      # 自包含：内部计算 volume/rolling_mean 再转百分位
     - ofci_pct_f              # 自包含：内部加载tick数据计算OFCI再转百分位
     - shd_pct_f               # 自包含：内部计算rolling_corr(ΔCVD, returns)再转百分位
     - cvd_change_features_f  # CVD 变化的归一化版本
-    
+
     # ========== Trade Cluster 归一化版本 (zscore) ==========
     - trade_cluster_entropy_zscore_features_f
     - trade_cluster_imbalance_zscore_features_f
     - trade_cluster_net_runs_zscore_features_f
     - trade_cluster_max_buy_run_zscore_features_f
     - trade_cluster_max_sell_run_zscore_features_f
-    
+
     # ========== 基础 ==========
     - sma_200_f
     - jump_risk_pct_f         # 跳空风险分位
@@ -80,7 +80,7 @@ feature_pipeline:
 
     # ========== Footprint ==========
     - footprint_basic_f
-    
+
     # ========== 资金费率 (期货独有情绪/拥挤度) ==========
     - funding_rate_features_f              # funding_rate, funding_rate_zscore_50 等
     - funding_scene_semantic_scores_f      # 资金费率场景语义 (compression/ignition/absorption/exhaustion)
@@ -105,7 +105,7 @@ feature_pipeline:
     - dual_ignition_f                      # 资金+FP双源点火 (ME核心)
     - dual_exhaustion_f                    # 资金+VPIN双源力竭 (FER核心)
     - funding_oi_crowding_f                # Funding×OI拥挤度 (真拥挤=高费率+高持仓)
-    - liquidity_void_x_wpt_risk_rank_f    
+    - liquidity_void_x_wpt_risk_rank_f
     - vpin_zscore_x_trade_cluster_max_buy_run_rank_f
     - vpin_x_trade_cluster_entropy_rank_f
 
@@ -120,6 +120,22 @@ feature_pipeline:
     - wpt_volume_energy_f
     - wpt_cvd_fluctuation_f
     - hurst_cvd_f
+
+    # ========== 跨 archetype 全量候选 (SHAP 自动裁剪) ==========
+    - bpc_soft_phase_f             # BPC 专属
+    - bpc_pullback_depth_pct_f
+    - bpc_pullback_duration_f
+    - bpc_pullback_speed_f
+    - bpc_impulse_return_atr_f
+    - bpc_dir_consistency_multi_f
+    - bpc_dir_flip_count_f
+    - bpc_volume_compression_pct_f
+    - bpc_pullback_delta_absorption_f
+    - fer_failure_signals_f        # FER 专属
+
+    # ========== Session & Microstructure ==========
+    - session_features_f           # session_id, hour_sin/cos, is_session_overlap
+    - bars_since_extreme_f         # bars_since_local_high/low (避免追单)
 
   ensure_signal_column:
     name: signal

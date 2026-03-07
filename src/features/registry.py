@@ -123,13 +123,13 @@ class FeatureRegistry:
 
     def import_module(self, module_path: str) -> None:
         """Import a module to trigger its @register_feature decorators.
-        
+
         Handles both 'src.features.*' and 'features.*' paths for compatibility
         with different PYTHONPATH configurations (Docker vs local).
         """
         if module_path in self._imported_modules:
             return
-        
+
         # Try original path first
         try:
             importlib.import_module(module_path)
@@ -138,7 +138,7 @@ class FeatureRegistry:
             return
         except ImportError:
             pass
-        
+
         # If original path starts with 'src.', try without it
         # (for Docker where PYTHONPATH=/workspace/src)
         if module_path.startswith("src."):
@@ -150,7 +150,7 @@ class FeatureRegistry:
                 return
             except ImportError:
                 pass
-        
+
         # If path doesn't start with 'src.', try with it
         # (for local development)
         else:
@@ -162,8 +162,10 @@ class FeatureRegistry:
                 return
             except ImportError:
                 pass
-        
-        logger.warning(f"Failed to import feature module {module_path}: No module named '{module_path}'")
+
+        logger.warning(
+            f"Failed to import feature module {module_path}: No module named '{module_path}'"
+        )
 
     def clear(self) -> None:
         """Clear all registrations (mainly for testing)."""
@@ -243,7 +245,7 @@ def get_feature_func(name: str) -> Callable:
     """
     # Auto-register features if not done yet
     ensure_features_registered()
-    
+
     func = _registry.get(name)
     if func is not None:
         return func
@@ -326,6 +328,8 @@ FEATURE_MODULES = [
     "src.features.time_series.momentum_expansion_features",
     # FER (FailureExhaustionReversal) features
     "src.features.time_series.fer_features",
+    # Session & Microstructure features
+    "src.features.time_series.session_features",
 ]
 
 _features_registered = False
@@ -358,7 +362,7 @@ def ensure_features_registered() -> None:
 def _ensure_features_registered(force: bool = False) -> None:
     """
     Alias for ensure_features_registered with force option.
-    
+
     Args:
         force: If True, re-import all modules even if already registered
     """
@@ -366,9 +370,10 @@ def _ensure_features_registered(force: bool = False) -> None:
     if force:
         _features_registered = False
         _registry.clear()  # This also clears _imported_modules
-        
+
         # Force re-import by reloading modules
         import importlib
+
         for module_path in FEATURE_MODULES:
             try:
                 mod = importlib.import_module(module_path)
@@ -378,4 +383,3 @@ def _ensure_features_registered(force: bool = False) -> None:
         _features_registered = True
     else:
         ensure_features_registered()
-

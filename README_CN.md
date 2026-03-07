@@ -73,7 +73,7 @@ mlbot data pipeline \
 mlbot data pipeline-universe \
   --universe-config config/download/crypto_4h_token_universe_groups.yaml \
   --universe-set starter_a \
-  --start-year 2023 \
+  --start-year 2022 \
   --start-month 1 \
   --no-docker
 ```
@@ -100,7 +100,7 @@ mlbot data update-market-cap \
 ```bash
 mlbot data download-funding-rate \
   --symbols BTCUSDT,ETHUSDT \
-  --start-year 2024 \
+  --start-year 2022 \
   --start-month 1 \
   --progress-every 10 \
   --no-docker

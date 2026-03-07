@@ -7791,6 +7791,58 @@ features:
       output_normalization_map:
         ood_score: bounded_0_1
 
+  # ═══════════════════════════════════════════════════════════════
+  # Session & Microstructure Features
+  # ═══════════════════════════════════════════════════════════════
+
+  session_features_f:
+    module: session_features
+    compute_func: compute_session_features_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - session_id
+    - hour_sin
+    - hour_cos
+    - is_session_overlap
+    category: session
+    normalized: true
+    description: "Session liquidity map: session_id (Asia=0/EU=1/US=2/Late=3), hour cyclic encoding (sin/cos), EU-US overlap indicator. Token alpha decays fast; session timing matters for entry."
+    pass_full_df: false
+    column_mappings:
+      close: close
+    compute_params:
+      output_normalization_map:
+        session_id: categorical_int
+        hour_sin: bounded_neg1_1
+        hour_cos: bounded_neg1_1
+        is_session_overlap: boolean_01
+
+  bars_since_extreme_f:
+    module: session_features
+    compute_func: compute_bars_since_extreme_from_series
+    dependencies: []
+    required_columns:
+    - high
+    - low
+    output_columns:
+    - bars_since_local_high
+    - bars_since_local_low
+    category: session
+    normalized: true
+    description: "Bars since local high/low within lookback window, normalized. Low value = near extreme (chasing risk), high = in pullback. Entry filter: avoid chasing tops/bottoms."
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+    compute_params:
+      lookback: 20
+      normalize_window: 50
+      output_normalization_map:
+        bars_since_local_high: bounded_0_1
+        bars_since_local_low: bounded_0_1
+
 # ================================================================
 # 未归一化 / 尺度依赖的输出列 (cross-asset scan 时必须排除)
 # ================================================================

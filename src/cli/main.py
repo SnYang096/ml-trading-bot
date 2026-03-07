@@ -98,28 +98,33 @@ def run_python_module(module: str, args: List[str], docker: bool = False, **kwar
             if v is None:
                 continue
             extra_env_flags.extend(["-e", f"{k}={v}"])
-        cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "-it",
-            "--gpus",
-            "all",
-            "-e",
-            "PYTHONPATH=/workspace/src",
-            "-e",
-            "PYTHONUNBUFFERED=1",
-        ] + extra_env_flags + [
-            "-v",
-            f"{PROJECT_ROOT}:/workspace",
-            "-w",
-            "/workspace",
-            "--shm-size=8gb",
-            docker_image,
-            "python3",
-            "-m",
-            module,
-        ] + args
+        cmd = (
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-it",
+                "--gpus",
+                "all",
+                "-e",
+                "PYTHONPATH=/workspace/src",
+                "-e",
+                "PYTHONUNBUFFERED=1",
+            ]
+            + extra_env_flags
+            + [
+                "-v",
+                f"{PROJECT_ROOT}:/workspace",
+                "-w",
+                "/workspace",
+                "--shm-size=8gb",
+                docker_image,
+                "python3",
+                "-m",
+                module,
+            ]
+            + args
+        )
     else:
         cmd = [sys.executable, "-m", module] + args
 
@@ -154,27 +159,32 @@ def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs
             if v is None:
                 continue
             extra_env_flags.extend(["-e", f"{k}={v}"])
-        cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "-it",
-            "--gpus",
-            "all",
-            "-e",
-            "PYTHONPATH=/workspace:/workspace/src",
-            "-e",
-            "PYTHONUNBUFFERED=1",
-        ] + extra_env_flags + [
-            "-v",
-            f"{PROJECT_ROOT}:/workspace",
-            "-w",
-            "/workspace",
-            "--shm-size=8gb",
-            docker_image,
-            "python3",
-            f"/workspace/{script_path}",
-        ] + args
+        cmd = (
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-it",
+                "--gpus",
+                "all",
+                "-e",
+                "PYTHONPATH=/workspace:/workspace/src",
+                "-e",
+                "PYTHONUNBUFFERED=1",
+            ]
+            + extra_env_flags
+            + [
+                "-v",
+                f"{PROJECT_ROOT}:/workspace",
+                "-w",
+                "/workspace",
+                "--shm-size=8gb",
+                docker_image,
+                "python3",
+                f"/workspace/{script_path}",
+            ]
+            + args
+        )
     else:
         cmd = [sys.executable, str(PROJECT_ROOT / script_path)] + args
 
@@ -253,7 +263,9 @@ def materialize_nnmh_config_from_task_spec(
     tiers_enabled = fp.get("tiers_enabled") or []
     tier_feature_files = fp.get("tier_feature_files") or {}
     if not (isinstance(tiers_enabled, list) and isinstance(tier_feature_files, dict)):
-        raise click.ClickException("TaskSpec missing feature_plan.tiers_enabled or tier_feature_files")
+        raise click.ClickException(
+            "TaskSpec missing feature_plan.tiers_enabled or tier_feature_files"
+        )
 
     base_dir = Path(base_config_dir)
     if not base_dir.is_absolute():
@@ -277,18 +289,19 @@ def materialize_nnmh_config_from_task_spec(
             map_features_to_tier_nodes,
             ensure_tier_features,
         )
+
         deps_path = (PROJECT_ROOT / "config/feature_dependencies.yaml").resolve()
         deps = yaml.safe_load(deps_path.read_text(encoding="utf-8")) or {}
-        
+
         # 提取gate规则需要的特征
         required_features = extract_required_features_from_execution_archetypes(
             PROJECT_ROOT / "config/nnmultihead/execution_archetypes.yaml"
         )
-        
+
         if required_features:
             # 映射到feature nodes
             required_nodes = map_features_to_tier_nodes(required_features, deps)
-            
+
             if required_nodes:
                 # 对每个启用的tier，检查并添加缺失的nodes
                 for tier_name in tiers_enabled:
@@ -302,11 +315,13 @@ def materialize_nnmh_config_from_task_spec(
                         # 如果是绝对路径，需要转换为out_config_dir中的路径
                         # 假设tier文件在base_config_dir的某个子目录中
                         tier_file_path = outp / tier_file_rel
-                    
+
                     if tier_file_path.exists():
-                        added = ensure_tier_features(required_nodes, tier_file_path, deps)
+                        added = ensure_tier_features(
+                            required_nodes, tier_file_path, deps
+                        )
                         added_tier_nodes.extend(added)
-                
+
                 if added_tier_nodes:
                     click.echo(
                         f"🔍 Auto-added tier features: {sorted(set(added_tier_nodes))} "
@@ -336,14 +351,18 @@ def materialize_nnmh_config_from_task_spec(
             if not p.is_absolute():
                 p = (PROJECT_ROOT / p).resolve()
         if not p.exists():
-            raise click.ClickException(f"TaskSpec tier_feature_files[{k}] not found: {p}")
+            raise click.ClickException(
+                f"TaskSpec tier_feature_files[{k}] not found: {p}"
+            )
         obj = yaml.safe_load(p.read_text(encoding="utf-8"))
         if not isinstance(obj, list):
             raise click.ClickException(f"Tier file must be a YAML list: {p}")
         tier_nodes.extend([str(x).strip() for x in obj if str(x).strip()])
     tier_nodes = sorted(set(tier_nodes))
     if not tier_nodes:
-        raise click.ClickException("No tier feature nodes collected (tiers_enabled/tier_feature_files mismatch).")
+        raise click.ClickException(
+            "No tier feature nodes collected (tiers_enabled/tier_feature_files mismatch)."
+        )
 
     base_dir = Path(base_config_dir)
     if not base_dir.is_absolute():
@@ -365,7 +384,9 @@ def materialize_nnmh_config_from_task_spec(
     exc = fp.get("exclude_columns", None)
     if exc is not None:
         if not isinstance(exc, list):
-            raise click.ClickException("TaskSpec feature_plan.exclude_columns must be a list when provided")
+            raise click.ClickException(
+                "TaskSpec feature_plan.exclude_columns must be a list when provided"
+            )
         fp2["exclude_columns"] = [str(x).strip() for x in exc if str(x).strip()]
     req = fp2.get("requested_features") or {}
     if not isinstance(req, dict):
@@ -378,18 +399,26 @@ def materialize_nnmh_config_from_task_spec(
     # Block definitions (library) also live ONLY in FeaturePlan to avoid duplicated definitions.
     ob_library = fp.get("optional_blocks_library", {}) or {}
     if not isinstance(ob_library, dict):
-        raise click.ClickException("TaskSpec feature_plan.optional_blocks_library must be a dict when provided")
+        raise click.ClickException(
+            "TaskSpec feature_plan.optional_blocks_library must be a dict when provided"
+        )
     ob_enabled = fp.get("optional_blocks_enabled", [])
     if not isinstance(ob_enabled, list):
-        raise click.ClickException("TaskSpec feature_plan.optional_blocks_enabled must be a list")
+        raise click.ClickException(
+            "TaskSpec feature_plan.optional_blocks_enabled must be a list"
+        )
     enabled_keys = {str(x).strip() for x in ob_enabled if str(x).strip()}
-    
+
     # AUTO-DETECT: 自动推导gate/regime需要的blocks（方案3：自动推导计算需求）
     try:
-        from src.cli.auto_detect_compute_requirements import auto_detect_compute_requirements
+        from src.cli.auto_detect_compute_requirements import (
+            auto_detect_compute_requirements,
+        )
+
         auto_detected_blocks = auto_detect_compute_requirements(
             task_spec_path=ts_path,
-            execution_archetypes_path=PROJECT_ROOT / "config/nnmultihead/execution_archetypes.yaml",
+            execution_archetypes_path=PROJECT_ROOT
+            / "config/nnmultihead/execution_archetypes.yaml",
             feature_dependencies_path=PROJECT_ROOT / "config/feature_dependencies.yaml",
         )
         if auto_detected_blocks:
@@ -447,7 +476,9 @@ def materialize_nnmh_config_from_task_spec(
     fc_new: Dict[str, Any] = {}
     if fc0:
         # Keep semantics from FeaturePlan.feature_contract (missingness policy only).
-        if "missingness_policy" in fc0 and isinstance(fc0.get("missingness_policy"), dict):
+        if "missingness_policy" in fc0 and isinstance(
+            fc0.get("missingness_policy"), dict
+        ):
             fc_new["missingness_policy"] = fc0.get("missingness_policy")
 
     # Build feature_contract.optional_blocks from enabled optional blocks (node-level -> output columns).
@@ -1099,7 +1130,9 @@ def data_download_open_interest(
 
 
 @data.command("update-market-cap")
-@click.option("--config", default="config/market_cap/market_cap.yaml", show_default=True)
+@click.option(
+    "--config", default="config/market_cap/market_cap.yaml", show_default=True
+)
 @click.option(
     "--symbols",
     default="",
@@ -1210,7 +1243,9 @@ def data_convert(
     default=None,
     help="Optional: convert only specific symbol (e.g., BTCUSDT)",
 )
-@click.option("--force/--no-force", default=False, help="Force re-convert even if output exists")
+@click.option(
+    "--force/--no-force", default=False, help="Force re-convert even if output exists"
+)
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def data_convert_1min(input_dir, output_dir, pattern, symbol, force, docker):
     """Convert tick/1s parquet data to 1-minute aggregated orderflow parquet."""
@@ -1225,7 +1260,9 @@ def data_convert_1min(input_dir, output_dir, pattern, symbol, force, docker):
         args.extend(["--symbol", symbol])
     if force:
         args.append("--force")
-    code = run_python_module("src.data_tools.convert_to_1min_orderflow", args, docker=docker)
+    code = run_python_module(
+        "src.data_tools.convert_to_1min_orderflow", args, docker=docker
+    )
     sys.exit(code)
 
 
@@ -1254,6 +1291,7 @@ def data_pipeline(ctx, symbols, docker):
         sys.exit(code)
     code = _data_convert_impl(
         pattern=None,
+        symbols=symbols,
         input_dir=None,
         output_dir=None,
         force=False,
@@ -1306,8 +1344,25 @@ def data_pipeline_universe(
     )
     if code != 0:
         sys.exit(code)
+    # 解析 universe symbols 传给 convert
+    if universe_config:
+        from src.data_tools.universe_config import load_universe_config
+
+        cfg = load_universe_config(universe_config)
+        groups = (
+            [g.strip() for g in str(universe_groups).split(",") if g.strip()]
+            if universe_groups
+            else None
+        )
+        resolved = cfg.resolve_symbols_usdt(
+            universe_set=str(universe_set), groups=groups
+        )
+        convert_symbols = ",".join(resolved)
+    else:
+        convert_symbols = None
     code = _data_convert_impl(
         pattern=None,
+        symbols=convert_symbols,
         input_dir=data_dir,
         output_dir=parquet_dir,
         force=False,
@@ -1414,9 +1469,15 @@ def train():
 @click.option("--end-date", default=None, help="End date (YYYY-MM-DD)")
 @click.option("--test-size", type=float, default=0.3, help="Test set size")
 @click.option("--max-rules", type=int, default=20, help="Maximum rules to export")
-@click.option("--min-support", type=float, default=0.01, help="Minimum support threshold")
-@click.option("--max-conditions", type=int, default=3, help="Maximum conditions per rule")
-@click.option("--max-rule-len", type=int, default=120, help="Maximum rule string length")
+@click.option(
+    "--min-support", type=float, default=0.01, help="Minimum support threshold"
+)
+@click.option(
+    "--max-conditions", type=int, default=3, help="Maximum conditions per rule"
+)
+@click.option(
+    "--max-rule-len", type=int, default=120, help="Maximum rule string length"
+)
 @click.option("--random-state", type=int, default=42, help="Random state")
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def train_export_rules_to_readme(
@@ -1454,11 +1515,17 @@ def train_export_rules_to_readme(
         if not features_yaml:
             raise click.BadParameter("--features-yaml required when --generate-rules")
         if not start_date or not end_date:
-            raise click.BadParameter("--start-date and --end-date required when --generate-rules")
+            raise click.BadParameter(
+                "--start-date and --end-date required when --generate-rules"
+            )
         args.extend(
             [
                 "--features-yaml",
-                f"/workspace/{features_yaml}" if use_workspace_prefix else features_yaml,
+                (
+                    f"/workspace/{features_yaml}"
+                    if use_workspace_prefix
+                    else features_yaml
+                ),
                 "--symbol",
                 symbol,
                 "--timeframe",
@@ -1535,10 +1602,16 @@ def train_export_rules(
     if generate_risk_gate:
         args.append("--generate-risk-gate")
     if risk_gate_output:
-        args.extend([
-            "--risk-gate-output",
-            f"/workspace/{risk_gate_output}" if use_workspace_prefix else risk_gate_output,
-        ])
+        args.extend(
+            [
+                "--risk-gate-output",
+                (
+                    f"/workspace/{risk_gate_output}"
+                    if use_workspace_prefix
+                    else risk_gate_output
+                ),
+            ]
+        )
     sys.exit(
         run_script("scripts/export_lightgbm_rules_to_readme.py", args, docker=docker)
     )
@@ -2380,9 +2453,11 @@ def rule_plot_router_modes_kline(
         "--mode",
         f"/workspace/{mode_path}" if use_workspace_prefix else mode_path,
         "--feature-store-root",
-        f"/workspace/{feature_store_root}"
-        if use_workspace_prefix
-        else feature_store_root,
+        (
+            f"/workspace/{feature_store_root}"
+            if use_workspace_prefix
+            else feature_store_root
+        ),
         "--feature-store-layer",
         str(feature_store_layer),
         "--out",
@@ -2413,7 +2488,9 @@ def rule_plot_router_modes_kline(
     help="Optional FeatureStore root (if preds lack required features).",
 )
 @click.option("--layer", default="tier0", show_default=True, help="FeatureStore layer.")
-@click.option("--timeframe", default="240T", show_default=True, help="Timeframe (e.g., 240T).")
+@click.option(
+    "--timeframe", default="240T", show_default=True, help="Timeframe (e.g., 240T)."
+)
 @click.option("--output", "output_path", required=True, help="Output parquet/csv path.")
 @click.option(
     "--stats-output",
@@ -2449,7 +2526,7 @@ def rule_physics_regime(
     docker,
 ):
     """[DEPRECATED] Classify Physics/Regimes and (optionally) scan physics_score_min_pct.
-    
+
     ⚠️ DEPRECATED: Regime classification has been migrated to gate rules in execution_archetypes.yaml.
     Physical features are now computed in FeatureStore and checked directly by gate rules.
     This command is kept for backward compatibility and diagnostics only.
@@ -2465,7 +2542,11 @@ def rule_physics_regime(
         args.extend(
             [
                 "--feature-store-root",
-                f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+                (
+                    f"/workspace/{feature_store_root}"
+                    if use_workspace_prefix
+                    else feature_store_root
+                ),
             ]
         )
     if layer:
@@ -2492,7 +2573,11 @@ def rule_physics_regime(
         args.extend(
             [
                 "--scan-md-output",
-                f"/workspace/{scan_md_output}" if use_workspace_prefix else scan_md_output,
+                (
+                    f"/workspace/{scan_md_output}"
+                    if use_workspace_prefix
+                    else scan_md_output
+                ),
             ]
         )
     sys.exit(run_script("scripts/physics_regime_classifier.py", args, docker=docker))
@@ -2529,8 +2614,12 @@ def rule_diagnose_tc_regime_execution(
 @rule.command("diagnose-fr-et-filtering")
 @click.option("--preds", required=True, help="Predictions parquet directory or file")
 @click.option("--output-md", default=None, help="Output Markdown report path")
-@click.option("--relax-router", is_flag=True, help="Relax router thresholds for testing")
-@click.option("--relax-regime", is_flag=True, help="Relax regime classification for testing")
+@click.option(
+    "--relax-router", is_flag=True, help="Relax router thresholds for testing"
+)
+@click.option(
+    "--relax-regime", is_flag=True, help="Relax regime classification for testing"
+)
 def rule_diagnose_fr_et_filtering(
     preds,
     output_md,
@@ -2560,8 +2649,15 @@ def rule_diagnose_fr_et_filtering(
 
 @rule.command("diagnose-e2e-kpi")
 @click.option("--logs", "logs_path", required=True, help="logs_3action.parquet")
-@click.option("--regime", "regime_path", default=None, help="physics_regime parquet (optional)")
-@click.option("--gate", "gate_path", default=None, help="gate output parquet with archetype info (optional)")
+@click.option(
+    "--regime", "regime_path", default=None, help="physics_regime parquet (optional)"
+)
+@click.option(
+    "--gate",
+    "gate_path",
+    default=None,
+    help="gate output parquet with archetype info (optional)",
+)
 @click.option(
     "--output-json",
     default=None,
@@ -2572,7 +2668,11 @@ def rule_diagnose_fr_et_filtering(
     default=None,
     help="Output Markdown path (default: results/e2e_kpi/e2e_kpi_report.md)",
 )
-@click.option("--no-regime-filter", is_flag=True, help="Generate comparison report without regime filtering")
+@click.option(
+    "--no-regime-filter",
+    is_flag=True,
+    help="Generate comparison report without regime filtering",
+)
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_diagnose_e2e_kpi(
     logs_path,
@@ -2623,7 +2723,12 @@ def rule_diagnose_e2e_kpi(
 
 
 @rule.command("diagnose-gate-label-loosen")
-@click.option("--labels", "labels_path", required=True, help="labeled parquet from generate_fbf_labels.py")
+@click.option(
+    "--labels",
+    "labels_path",
+    required=True,
+    help="labeled parquet from generate_fbf_labels.py",
+)
 @click.option(
     "--config",
     "config_path",
@@ -2636,11 +2741,28 @@ def rule_diagnose_e2e_kpi(
 @click.option("--feature-store-root", default=None, help="FeatureStore root")
 @click.option("--feature-store-layer", default=None, help="FeatureStore layer")
 @click.option("--timeframe", default=None, help="timeframe for FeatureStore")
-@click.option("--label-col", default="fbf_label", show_default=True, help="label column")
+@click.option(
+    "--label-col", default="fbf_label", show_default=True, help="label column"
+)
 @click.option("--label-value", default="FBF", show_default=True, help="label value")
-@click.option("--target-fbf-pass", default=0.6, show_default=True, help="target pass rate on labels")
-@click.option("--target-fbf-veto", default=0.1, show_default=True, help="target veto rate on labels")
-@click.option("--min-samples", default=200, show_default=True, help="min samples to suggest thresholds")
+@click.option(
+    "--target-fbf-pass",
+    default=0.6,
+    show_default=True,
+    help="target pass rate on labels",
+)
+@click.option(
+    "--target-fbf-veto",
+    default=0.1,
+    show_default=True,
+    help="target veto rate on labels",
+)
+@click.option(
+    "--min-samples",
+    default=200,
+    show_default=True,
+    help="min samples to suggest thresholds",
+)
 @click.option("--out", "out_path", required=True, help="output json path")
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def rule_diagnose_gate_label_loosen(
@@ -2746,9 +2868,11 @@ def rule_diagnose_gate_application(
         args.extend(
             [
                 "--evidence-quantiles",
-                f"/workspace/{evidence_quantiles}"
-                if use_workspace_prefix
-                else evidence_quantiles,
+                (
+                    f"/workspace/{evidence_quantiles}"
+                    if use_workspace_prefix
+                    else evidence_quantiles
+                ),
             ]
         )
     if start_date:
@@ -2907,7 +3031,11 @@ def rule_apply_tree_gate(
         "--db-path",
         f"/workspace/{db_path}" if use_workspace_prefix else db_path,
         "--features-store-root",
-        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        (
+            f"/workspace/{features_store_root}"
+            if use_workspace_prefix
+            else features_store_root
+        ),
         "--features-store-layer",
         str(features_store_layer),
         "--timeframe",
@@ -2921,14 +3049,22 @@ def rule_apply_tree_gate(
         args.extend(
             [
                 "--physics-regime",
-                f"/workspace/{physics_regime_path}" if use_workspace_prefix else physics_regime_path,
+                (
+                    f"/workspace/{physics_regime_path}"
+                    if use_workspace_prefix
+                    else physics_regime_path
+                ),
             ]
         )
     if semantic_score_floors:
         args.extend(
             [
                 "--semantic-score-floors",
-                f"/workspace/{semantic_score_floors}" if use_workspace_prefix else semantic_score_floors,
+                (
+                    f"/workspace/{semantic_score_floors}"
+                    if use_workspace_prefix
+                    else semantic_score_floors
+                ),
             ]
         )
     sys.exit(run_script("scripts/apply_archetype_gate.py", args, docker=docker))
@@ -2992,7 +3128,11 @@ def rule_diagnose_e2e_symbol_regime_archetype(
         "--output-md",
         f"/workspace/{output_md}" if use_workspace_prefix else output_md,
     ]
-    sys.exit(run_script("scripts/diagnose_e2e_symbol_regime_archetype.py", args, docker=docker))
+    sys.exit(
+        run_script(
+            "scripts/diagnose_e2e_symbol_regime_archetype.py", args, docker=docker
+        )
+    )
 
 
 @rule.command("optimize-gate-plateau")
@@ -3058,10 +3198,10 @@ def rule_optimize_gate_plateau(
 ):
     """
     Optimize Gate rule thresholds using plateau search (backup tool).
-    
+
     Note: Gate parameters typically come from tree model splits.
     This tool is for manual threshold tuning if needed.
-    
+
     Example:
       mlbot rule optimize-gate-plateau \
         --gated-logs results/logs_gated.parquet \
@@ -3069,12 +3209,16 @@ def rule_optimize_gate_plateau(
     """
     use_workspace_prefix = docker and not _is_in_docker()
     script = "scripts/optimize_gate_plateau.py"
-    
+
     args = [
         "--gated-logs",
         f"/workspace/{gated_logs}" if use_workspace_prefix else gated_logs,
         "--execution-archetypes",
-        f"/workspace/{execution_archetypes}" if use_workspace_prefix else execution_archetypes,
+        (
+            f"/workspace/{execution_archetypes}"
+            if use_workspace_prefix
+            else execution_archetypes
+        ),
         "--output",
         f"/workspace/{output}" if use_workspace_prefix else output,
         "--min-trade-rate",
@@ -3084,16 +3228,18 @@ def rule_optimize_gate_plateau(
         "--threshold-step",
         str(threshold_step),
     ]
-    
+
     if raw_logs:
-        args.extend([
-            "--raw-logs",
-            f"/workspace/{raw_logs}" if use_workspace_prefix else raw_logs,
-        ])
-    
+        args.extend(
+            [
+                "--raw-logs",
+                f"/workspace/{raw_logs}" if use_workspace_prefix else raw_logs,
+            ]
+        )
+
     if archetype_filter:
         args.extend(["--archetype-filter", archetype_filter])
-    
+
     sys.exit(run_script(script, args, docker=docker))
 
 
@@ -3201,6 +3347,8 @@ def experiment_regime_gate(
     if semantic_score_floors:
         args.extend(["--semantic-score-floors", semantic_score_floors])
     sys.exit(run_script("scripts/experiment_regime_gate.py", args, docker=docker))
+
+
 @click.option("--logs", "logs_path", required=True, help="logs_3action.parquet")
 @click.option("--regime", "regime_path", required=True, help="physics_regime parquet")
 @click.option("--output-json", required=True, help="Output JSON path")
@@ -3225,9 +3373,7 @@ def rule_diagnose_e2e_symbol_regime_archetype(
         "--output-md",
         f"/workspace/{output_md}" if use_workspace_prefix else output_md,
     ]
-    sys.exit(
-        run_script("scripts/diagnose_e2e_kpi.py", args, docker=docker)
-    )
+    sys.exit(run_script("scripts/diagnose_e2e_kpi.py", args, docker=docker))
 
 
 @rl.command("shadow-eval-3action")
@@ -3352,7 +3498,9 @@ def rl_counterfactual_eval_3action(
     if router_eff_min is not None:
         args.extend(["--router-eff-min", str(float(router_eff_min))])
     if router_dir_conf_trend_min is not None:
-        args.extend(["--router-dir-conf-trend-min", str(float(router_dir_conf_trend_min))])
+        args.extend(
+            ["--router-dir-conf-trend-min", str(float(router_dir_conf_trend_min))]
+        )
     sys.exit(
         run_script("scripts/rl_counterfactual_eval_3action.py", args, docker=docker)
     )
@@ -3787,7 +3935,9 @@ def nnmultihead_train(
             feature_store_root = v
 
     if emit_evidence_quantiles is None:
-        emit_evidence_quantiles = bool(training_cfg.get("emit_evidence_quantiles", False))
+        emit_evidence_quantiles = bool(
+            training_cfg.get("emit_evidence_quantiles", False)
+        )
     if evidence_quantiles_out is None:
         evidence_quantiles_out = training_cfg.get("evidence_quantiles_out")
     if evidence_quantiles_keys is None:
@@ -3795,7 +3945,9 @@ def nnmultihead_train(
             "evidence_quantiles_keys", "vpin,cvd_change_5"
         )
     if evidence_quantiles_prefixes is None:
-        evidence_quantiles_prefixes = training_cfg.get("evidence_quantiles_prefixes", "")
+        evidence_quantiles_prefixes = training_cfg.get(
+            "evidence_quantiles_prefixes", ""
+        )
     if evidence_quantiles is None:
         evidence_quantiles = training_cfg.get("evidence_quantiles", "0.1,0.5,0.9")
     if evidence_quantiles_global is None:
@@ -4046,7 +4198,12 @@ def nnmultihead_predict(
     show_default=True,
     help="Execution assumption used to build ret_mean/ret_trend (e.g., rr_execution, momentum_proxy).",
 )
-@click.option("--out", "out_dir", required=True, help="Output directory root for this pipeline run.")
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    help="Output directory root for this pipeline run.",
+)
 @click.option(
     "--task-spec",
     required=True,
@@ -4183,7 +4340,11 @@ def nnmultihead_pipeline_3action_e2e(
         def _pick(name: str, cur):
             if cur is not None:
                 return float(cur)
-            if isinstance(loaded, dict) and name in loaded and loaded.get(name) is not None:
+            if (
+                isinstance(loaded, dict)
+                and name in loaded
+                and loaded.get(name) is not None
+            ):
                 return float(loaded.get(name))
             return float(getattr(cfg0, name))
 
@@ -4282,7 +4443,11 @@ def nnmultihead_pipeline_3action_e2e(
         "--output",
         preds_dir,
         "--features-store-root",
-        f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+        (
+            f"/workspace/{feature_store_root}"
+            if use_workspace_prefix
+            else feature_store_root
+        ),
     ]
     if feature_store_layer is not None:
         args_pred.extend(["--features-store-layer", str(feature_store_layer)])
@@ -4310,7 +4475,11 @@ def nnmultihead_pipeline_3action_e2e(
         args_regime.extend(
             [
                 "--feature-store-root",
-                f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+                (
+                    f"/workspace/{feature_store_root}"
+                    if use_workspace_prefix
+                    else feature_store_root
+                ),
             ]
         )
     if feature_store_layer:
@@ -4339,9 +4508,11 @@ def nnmultihead_pipeline_3action_e2e(
             "--out",
             gate_logs_path,
             "--features-store-root",
-            f"/workspace/{feature_store_root}"
-            if use_workspace_prefix
-            else feature_store_root,
+            (
+                f"/workspace/{feature_store_root}"
+                if use_workspace_prefix
+                else feature_store_root
+            ),
             "--features-store-layer",
             str(feature_store_layer),
             "--symbols",
@@ -4362,10 +4533,13 @@ def nnmultihead_pipeline_3action_e2e(
                 "--execution-archetypes",
                 f"/workspace/{gate_exec}" if use_workspace_prefix else gate_exec,
                 "--db-path",
-                f"/workspace/{env_overrides.get('MLBOT_ORDER_MANAGEMENT_DB_PATH')}"
-                if use_workspace_prefix and env_overrides.get("MLBOT_ORDER_MANAGEMENT_DB_PATH")
-                else env_overrides.get(
-                    "MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"
+                (
+                    f"/workspace/{env_overrides.get('MLBOT_ORDER_MANAGEMENT_DB_PATH')}"
+                    if use_workspace_prefix
+                    and env_overrides.get("MLBOT_ORDER_MANAGEMENT_DB_PATH")
+                    else env_overrides.get(
+                        "MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"
+                    )
                 ),
             ]
         )
@@ -4395,7 +4569,11 @@ def nnmultihead_pipeline_3action_e2e(
             "--logs",
             f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
             "--feature-store-root",
-            f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+            (
+                f"/workspace/{feature_store_root}"
+                if use_workspace_prefix
+                else feature_store_root
+            ),
             "--feature-store-layer",
             str(feature_store_layer),
             "--all-symbols",
@@ -4470,7 +4648,9 @@ def nnmultihead_pipeline_3action_e2e(
         if rc != 0:
             sys.exit(rc)
         if emit_exec_log_canonical:
-            canonical_path = exec_log_canonical_path or f"{out_root}/execution_log.jsonl"
+            canonical_path = (
+                exec_log_canonical_path or f"{out_root}/execution_log.jsonl"
+            )
             rc = run_script(
                 "scripts/aggregate_execution_log_stages.py",
                 ["--stage-dir", stage_dir, "--out", canonical_path],
@@ -5003,7 +5183,9 @@ def nnmultihead_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
     help="Output directory for the derived nnmultihead config (will be overwritten).",
 )
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
-def nnmultihead_materialize_config_from_task_spec(task_spec, base_config, out_config, docker):
+def nnmultihead_materialize_config_from_task_spec(
+    task_spec, base_config, out_config, docker
+):
     """
     Generate a concrete config directory so tiers are *real* (not just metadata).
 
@@ -5584,7 +5766,9 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
         out_config_dir=tmp_cfg,
     )
 
-    feat_yaml = yaml.safe_load((tmp_cfg / "features.yaml").read_text(encoding="utf-8")) or {}
+    feat_yaml = (
+        yaml.safe_load((tmp_cfg / "features.yaml").read_text(encoding="utf-8")) or {}
+    )
     req_nodes = (
         (feat_yaml.get("feature_pipeline") or {})
         .get("requested_features", {})
@@ -5599,7 +5783,11 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
     if isinstance(obj, list):
         poolb = obj
     else:
-        poolb = (obj.get("feature_pipeline") or {}).get("requested_features") or obj.get("requested_features") or []
+        poolb = (
+            (obj.get("feature_pipeline") or {}).get("requested_features")
+            or obj.get("requested_features")
+            or []
+        )
     if not isinstance(poolb, list):
         poolb = []
     poolb_raw = [str(x).strip() for x in poolb if str(x).strip()]
@@ -5635,7 +5823,9 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
     # We do NOT assume tier2 is enabled; we just show where each node is declared.
     ts_obj = yaml.safe_load(Path(task_spec).read_text(encoding="utf-8")) or {}
     fp_ref = ts_obj.get("feature_plan_ref") if isinstance(ts_obj, dict) else None
-    fp_overrides = ts_obj.get("feature_plan_overrides") if isinstance(ts_obj, dict) else None
+    fp_overrides = (
+        ts_obj.get("feature_plan_overrides") if isinstance(ts_obj, dict) else None
+    )
     fp_overrides = fp_overrides if isinstance(fp_overrides, dict) else {}
     fp_obj = yaml.safe_load(Path(fp_ref).read_text(encoding="utf-8")) if fp_ref else {}
     fp = (fp_obj.get("feature_plan") if isinstance(fp_obj, dict) else None) or {}
@@ -5646,14 +5836,21 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
         fp["tier_feature_files"] = fp_overrides.get("tier_feature_files")
 
     tiers_enabled = fp.get("tiers_enabled") if isinstance(fp, dict) else None
-    tiers_enabled = [str(x) for x in tiers_enabled] if isinstance(tiers_enabled, list) else []
+    tiers_enabled = (
+        [str(x) for x in tiers_enabled] if isinstance(tiers_enabled, list) else []
+    )
     tier_files = fp.get("tier_feature_files") if isinstance(fp, dict) else None
     tier_files = tier_files if isinstance(tier_files, dict) else {}
 
     tier_membership: Dict[str, str] = {}
     for tier_name, rel_path in tier_files.items():
         try:
-            items = yaml.safe_load((PROJECT_ROOT / str(rel_path)).read_text(encoding="utf-8")) or []
+            items = (
+                yaml.safe_load(
+                    (PROJECT_ROOT / str(rel_path)).read_text(encoding="utf-8")
+                )
+                or []
+            )
             if isinstance(items, list):
                 for node in items:
                     node = str(node).strip()
@@ -5686,9 +5883,11 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
             {
                 "node": n,
                 "declared_in_tier": tier_membership.get(n),
-                "tier_enabled": bool(tier_membership.get(n) in tiers_enabled)
-                if tier_membership.get(n)
-                else False,
+                "tier_enabled": (
+                    bool(tier_membership.get(n) in tiers_enabled)
+                    if tier_membership.get(n)
+                    else False
+                ),
             }
             for n in only_poolb
         ],
@@ -5721,7 +5920,9 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
     for x in only_poolb[:200]:
         tname = tier_membership.get(x)
         if tname:
-            md.append(f"- `{x}`  (declared_in={tname}, enabled={str(tname in tiers_enabled).lower()})\n")
+            md.append(
+                f"- `{x}`  (declared_in={tname}, enabled={str(tname in tiers_enabled).lower()})\n"
+            )
         else:
             md.append(f"- `{x}`\n")
     if len(only_poolb) > 200:
@@ -5768,7 +5969,9 @@ def nnmultihead_compare_runs(runs, out):
     if len(run_dirs) < 2:
         raise click.ClickException("--runs must contain at least 2 run dirs")
 
-    out_dir = _as_abs(out or f"results/compare/nnmh_runs/{_time.strftime('%Y%m%d_%H%M%S')}")
+    out_dir = _as_abs(
+        out or f"results/compare/nnmh_runs/{_time.strftime('%Y%m%d_%H%M%S')}"
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     def _safe_read_json(p: _Path) -> dict:
@@ -5842,10 +6045,20 @@ def nnmultihead_compare_runs(runs, out):
             {
                 "run_dir": str(rdir),
                 "model_pt": str(model_pt),
-                "feature_cols_n": int(len(feature_cols)) if isinstance(feature_cols, list) else None,
+                "feature_cols_n": (
+                    int(len(feature_cols)) if isinstance(feature_cols, list) else None
+                ),
                 "train_cfg": {
                     k: train_cfg.get(k)
-                    for k in ["hidden", "depth", "dropout", "batch_size", "lr", "epochs", "seed"]
+                    for k in [
+                        "hidden",
+                        "depth",
+                        "dropout",
+                        "batch_size",
+                        "lr",
+                        "epochs",
+                        "seed",
+                    ]
                 },
                 "task_id": meta.get("task_id"),
                 "n_samples": meta.get("n_samples"),
@@ -5883,7 +6096,9 @@ def nnmultihead_compare_runs(runs, out):
     md.append(f"- n_runs: **{len(entries)}**\n\n")
 
     md.append("## Summary table (counterfactual)\n\n")
-    md.append("| run | rule_sharpe_mean | pred_sharpe_mean | rule_avg_max_dd | pred_avg_max_dd | rule_avg_total_return | pred_avg_total_return | router_trade_n | router_trade_rate |\n")
+    md.append(
+        "| run | rule_sharpe_mean | pred_sharpe_mean | rule_avg_max_dd | pred_avg_max_dd | rule_avg_total_return | pred_avg_total_return | router_trade_n | router_trade_rate |\n"
+    )
     md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
     for e in entries:
         cf = e.get("counterfactual") or {}
@@ -5909,7 +6124,9 @@ def nnmultihead_compare_runs(runs, out):
     md.append("\n")
 
     md.append("## Model params / feature size\n\n")
-    md.append("| run | feature_cols_n | hidden | depth | dropout | batch_size | lr | epochs | seed |\n")
+    md.append(
+        "| run | feature_cols_n | hidden | depth | dropout | batch_size | lr | epochs | seed |\n"
+    )
     md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
     for e in entries:
         tc = e.get("train_cfg") or {}
@@ -5941,8 +6158,12 @@ def nnmultihead_compare_runs(runs, out):
         th = e.get("thresholds") or {}
         ps = th.get("plateau_summary") or {}
         if ps:
-            md.append(f"- plateau_frac_ge_95pct: **{_fmt(ps.get('plateau_frac_ge_95pct'))}**\n")
-            md.append(f"- best.robust_score: {_fmt((ps.get('best') or {}).get('robust_score'))}\n")
+            md.append(
+                f"- plateau_frac_ge_95pct: **{_fmt(ps.get('plateau_frac_ge_95pct'))}**\n"
+            )
+            md.append(
+                f"- best.robust_score: {_fmt((ps.get('best') or {}).get('robust_score'))}\n"
+            )
             if th.get("plateau_report_html"):
                 md.append(f"- plateau report: `{th.get('plateau_report_html')}`\n")
         else:
@@ -6107,7 +6328,9 @@ def nnmultihead_feature_group_search(
         tier0_path = (
             tier_files.get("TIER0_OHLCV_LIGHT")
             or tier_files.get("Tier0")
-            or next((v for k, v in tier_files.items() if "TIER0" in str(k).upper()), None)
+            or next(
+                (v for k, v in tier_files.items() if "TIER0" in str(k).upper()), None
+            )
         )
         if not tier0_path:
             raise click.ClickException(
@@ -6162,7 +6385,11 @@ def nnmultihead_feature_group_search(
         args.extend(
             [
                 "--base-features-yaml",
-                f"/workspace/{base_features_yaml}" if use_workspace_prefix else base_features_yaml,
+                (
+                    f"/workspace/{base_features_yaml}"
+                    if use_workspace_prefix
+                    else base_features_yaml
+                ),
             ]
         )
     # CLI override only (preferred default lives in base-config/features.yaml)
@@ -6418,7 +6645,7 @@ def train_final(
     """Train a final model and save ModelArtifact. With --holdout-*: train/test split by date (no overlap); without: train on full window (--train-all)."""
     from datetime import datetime
     from pathlib import Path
-    
+
     # 自动生成带时间戳和 label 名称的输出目录
     if output_root is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -6432,7 +6659,7 @@ def train_final(
                 label_suffix = f"_{label_name}"
         output_root = f"results/train_final_{timestamp}{label_suffix}"
         click.echo(f"📂 Output directory: {output_root}")
-    
+
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--config",
@@ -6478,13 +6705,29 @@ def train_final(
     if deterministic:
         args.append("--deterministic")
     if labels:
-        args.extend(["--labels", f"/workspace/{labels}" if use_workspace_prefix else labels])
+        args.extend(
+            ["--labels", f"/workspace/{labels}" if use_workspace_prefix else labels]
+        )
     if features:
-        args.extend(["--features", f"/workspace/{features}" if use_workspace_prefix else features])
+        args.extend(
+            [
+                "--features",
+                f"/workspace/{features}" if use_workspace_prefix else features,
+            ]
+        )
     if prepare_only:
         args.append("--prepare-only")
     if archetype_prefilter:
-        args.extend(["--archetype-prefilter", f"/workspace/{archetype_prefilter}" if use_workspace_prefix else archetype_prefilter])
+        args.extend(
+            [
+                "--archetype-prefilter",
+                (
+                    f"/workspace/{archetype_prefilter}"
+                    if use_workspace_prefix
+                    else archetype_prefilter
+                ),
+            ]
+        )
     sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 
@@ -6979,7 +7222,9 @@ def analyze_archetype_performance(logs, output, docker):
         "--output",
         f"/workspace/{output}" if docker and not _is_in_docker() else output,
     ]
-    sys.exit(run_script("scripts/analyze_archetype_performance.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/analyze_archetype_performance.py", args, docker=docker)
+    )
 
 
 @analyze.command("timeframe-comparison")
@@ -7057,14 +7302,12 @@ def analyze_timeframe_comparison(output_dir, results_1h, results_4h, docker):
     default=None,
     help="输出详细 CSV 路径（可选）",
 )
-def analyze_gate_residual(
-    model_dir, threshold, split, direction, horizon, output
-):
+def analyze_gate_residual(model_dir, threshold, split, direction, horizon, output):
     """
     Gate 剩余失败归因分析。
-    
+
     分析 Gate 模型通过后剩余失败的特征分布，判断是否来自 Evidence/Execution 层。
-    
+
     示例：
         mlbot analyze gate-residual \\
             --model-dir results/train_final_20260205_011545_rr_extreme/bpc \\
@@ -7083,11 +7326,13 @@ def analyze_gate_residual(
         "--horizon",
         str(horizon),
     ]
-    
+
     if output:
         args.extend(["--output", output])
-    
-    sys.exit(run_script("scripts/analyze_gate_residual_failures.py", args, docker=False))
+
+    sys.exit(
+        run_script("scripts/analyze_gate_residual_failures.py", args, docker=False)
+    )
 
 
 # =============================================================================
@@ -7177,7 +7422,12 @@ def diagnose_kpi_gate(metrics_json, gate_yaml, out_json, docker):
         f"/workspace/{gate_yaml}" if use_workspace_prefix else gate_yaml,
     ]
     if out_json:
-        args.extend(["--out-json", f"/workspace/{out_json}" if use_workspace_prefix else out_json])
+        args.extend(
+            [
+                "--out-json",
+                f"/workspace/{out_json}" if use_workspace_prefix else out_json,
+            ]
+        )
     sys.exit(
         run_python_module(
             "src.time_series_model.diagnostics.kpi_gate_cli",
@@ -7188,7 +7438,9 @@ def diagnose_kpi_gate(metrics_json, gate_yaml, out_json, docker):
 
 
 @diagnose.command("kpi-journal")
-@click.option("--run-dir", required=True, help="nnmultihead run dir (results/runs/<RUN_ID>).")
+@click.option(
+    "--run-dir", required=True, help="nnmultihead run dir (results/runs/<RUN_ID>)."
+)
 @click.option(
     "--stage",
     default="all",
@@ -7373,7 +7625,11 @@ def diagnose_evidence_quantiles_plateau(
         args.append("--require-gate")
     if global_pool:
         args.append("--global")
-    sys.exit(run_script("scripts/diagnose_evidence_quantiles_plateau.py", args, docker=docker))
+    sys.exit(
+        run_script(
+            "scripts/diagnose_evidence_quantiles_plateau.py", args, docker=docker
+        )
+    )
 
 
 @diagnose.command("execution-gate-plateau")
@@ -7472,7 +7728,9 @@ def diagnose_execution_gate_plateau(
         args.extend(["--evidence-quantiles", evidence_quantiles])
     if require_gate:
         args.append("--require-gate")
-    sys.exit(run_script("scripts/diagnose_execution_gate_plateau.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/diagnose_execution_gate_plateau.py", args, docker=docker)
+    )
 
 
 @diagnose.command("execution-constraints-plateau")
@@ -7516,7 +7774,9 @@ def diagnose_execution_constraints_plateau(
     if require_gate:
         args.append("--require-gate")
     sys.exit(
-        run_script("scripts/diagnose_execution_constraints_plateau.py", args, docker=docker)
+        run_script(
+            "scripts/diagnose_execution_constraints_plateau.py", args, docker=docker
+        )
     )
 
 
@@ -7556,7 +7816,9 @@ def diagnose_archetype_trade_counts(
         "--gate-decision-col",
         gate_decision_col,
     ]
-    sys.exit(run_script("scripts/diagnose_archetype_trade_counts.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/diagnose_archetype_trade_counts.py", args, docker=docker)
+    )
 
 
 @diagnose.command("execution-log-stages")
@@ -7605,7 +7867,9 @@ def diagnose_execution_log_aggregate(stage_dir, out, docker):
         "--out",
         f"/workspace/{out}" if use_workspace_prefix else out,
     ]
-    sys.exit(run_script("scripts/aggregate_execution_log_stages.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/aggregate_execution_log_stages.py", args, docker=docker)
+    )
 
 
 @diagnose.command("backtest-time-windows")
@@ -7679,9 +7943,11 @@ def diagnose_backtest_time_windows(
         args.extend(
             [
                 "--timeline-parquet",
-                f"/workspace/{timeline_parquet}"
-                if use_workspace_prefix
-                else timeline_parquet,
+                (
+                    f"/workspace/{timeline_parquet}"
+                    if use_workspace_prefix
+                    else timeline_parquet
+                ),
             ]
         )
     if timeline_ts_col:
@@ -7718,15 +7984,15 @@ def diagnose_export_vectorbt_trades(
         args.extend(
             [
                 "--artifacts-dir",
-                f"/workspace/{artifacts_dir}"
-                if use_workspace_prefix
-                else artifacts_dir,
+                (
+                    f"/workspace/{artifacts_dir}"
+                    if use_workspace_prefix
+                    else artifacts_dir
+                ),
             ]
         )
     if meta:
-        args.extend(
-            ["--meta", f"/workspace/{meta}" if use_workspace_prefix else meta]
-        )
+        args.extend(["--meta", f"/workspace/{meta}" if use_workspace_prefix else meta])
     if df:
         args.extend(["--df", f"/workspace/{df}" if use_workspace_prefix else df])
     if preds:
@@ -7924,7 +8190,9 @@ def diagnose_threshold_plateau(
         args.append("--heuristic-bounds")
     if disable_dist_rate_constraints:
         args.append("--disable-dist-rate-constraints")
-    sys.exit(run_script("scripts/plateau_tune_rule_router_3action.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/plateau_tune_rule_router_3action.py", args, docker=docker)
+    )
 
 
 @diagnose.command("extinction-replay-3action")
@@ -7933,14 +8201,26 @@ def diagnose_threshold_plateau(
     required=True,
     help="logs_3action.parquet (must contain symbol,timestamp,mode,ret_mean,ret_trend).",
 )
-@click.option("--out", required=True, help="Output directory (report.json/sim.parquet/labels.parquet).")
+@click.option(
+    "--out",
+    required=True,
+    help="Output directory (report.json/sim.parquet/labels.parquet).",
+)
 @click.option(
     "--ood-config",
     default=None,  # OOD removed; safety handled by constitution only
     help="[DEPRECATED] OOD config YAML (optional, research only). Safety is handled by constitution/slots.",
 )
-@click.option("--ood-score-col", default=None, help="Optional column name for ood_score (if present in logs).")
-@click.option("--survival-prob-col", default=None, help="Optional column name for survival_prob (if present in logs).")
+@click.option(
+    "--ood-score-col",
+    default=None,
+    help="Optional column name for ood_score (if present in logs).",
+)
+@click.option(
+    "--survival-prob-col",
+    default=None,
+    help="Optional column name for survival_prob (if present in logs).",
+)
 @click.option("--survival-horizon-bars", default=50, type=int, show_default=True)
 @click.option("--equity-floor-frac", default=0.5, type=float, show_default=True)
 @click.option("--dd-floor", default=0.5, type=float, show_default=True)
@@ -7979,7 +8259,12 @@ def diagnose_extinction_replay_3action(
         str(float(dd_floor)),
     ]
     if ood_config:
-        args.extend(["--ood-config", f"/workspace/{ood_config}" if use_workspace_prefix else ood_config])
+        args.extend(
+            [
+                "--ood-config",
+                f"/workspace/{ood_config}" if use_workspace_prefix else ood_config,
+            ]
+        )
     if ood_score_col:
         args.extend(["--ood-score-col", str(ood_score_col)])
     if survival_prob_col:
@@ -7998,7 +8283,11 @@ def diagnose_extinction_replay_3action(
     required=True,
     help="labels.parquet (from diagnose extinction-replay-3action).",
 )
-@click.option("--out", required=True, help="Output directory (model.pt/survival_preds.parquet/report.html).")
+@click.option(
+    "--out",
+    required=True,
+    help="Output directory (model.pt/survival_preds.parquet/report.html).",
+)
 @click.option(
     "--config",
     "config_yaml",
@@ -8023,15 +8312,29 @@ def diagnose_survival_head_train(logs, labels, out, config_yaml, docker):
         "--out",
         f"/workspace/{out}" if use_workspace_prefix else out,
         "--config",
-        f"/workspace/{config_yaml}" if use_workspace_prefix and config_yaml else (config_yaml or ""),
+        (
+            f"/workspace/{config_yaml}"
+            if use_workspace_prefix and config_yaml
+            else (config_yaml or "")
+        ),
     ]
     sys.exit(run_script("scripts/train_survival_head_mlp.py", args, docker=docker))
 
 
 @diagnose.command("ood-to-archetype-weights")  # [DEPRECATED - Research only]
-@click.option("--logs", required=True, help="logs_3action.parquet (must contain ood_score + active_archetype).")
-@click.option("--labels", required=True, help="labels.parquet (y_surv) from extinction-replay-3action.")
-@click.option("--out", required=True, help="Output directory (survival_table.csv/weights.yaml).")
+@click.option(
+    "--logs",
+    required=True,
+    help="logs_3action.parquet (must contain ood_score + active_archetype).",
+)
+@click.option(
+    "--labels",
+    required=True,
+    help="labels.parquet (y_surv) from extinction-replay-3action.",
+)
+@click.option(
+    "--out", required=True, help="Output directory (survival_table.csv/weights.yaml)."
+)
 @click.option(
     "--config",
     "config_yaml",
@@ -8055,8 +8358,17 @@ def diagnose_ood_to_archetype_weights(logs, labels, out, config_yaml, docker):
         f"/workspace/{out}" if use_workspace_prefix else out,
     ]
     if config_yaml:
-        args.extend(["--config", f"/workspace/{config_yaml}" if use_workspace_prefix else config_yaml])
-    sys.exit(run_script("scripts/learn_ood_to_archetype_weights_table.py", args, docker=docker))
+        args.extend(
+            [
+                "--config",
+                f"/workspace/{config_yaml}" if use_workspace_prefix else config_yaml,
+            ]
+        )
+    sys.exit(
+        run_script(
+            "scripts/learn_ood_to_archetype_weights_table.py", args, docker=docker
+        )
+    )
 
 
 @diagnose.command("model-comparison")
@@ -8587,7 +8899,9 @@ def diagnose_poolb_semantic_search(
 @click.option("--output-md", default=None, help="Output Markdown report path")
 @click.option("--output-json", default=None, help="Output JSON report path")
 @click.option("--ret-mean-col", default="ret_mean", help="Column name for mean returns")
-@click.option("--ret-trend-col", default="ret_trend", help="Column name for trend returns")
+@click.option(
+    "--ret-trend-col", default="ret_trend", help="Column name for trend returns"
+)
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_e2e_kpi(logs, output_md, output_json, ret_mean_col, ret_trend_col, docker):
     """Generate E2E KPI diagnostics report."""
@@ -8600,15 +8914,35 @@ def diagnose_e2e_kpi(logs, output_md, output_json, ret_mean_col, ret_trend_col, 
         ret_trend_col,
     ]
     if output_md:
-        args.extend(["--output-md", f"/workspace/{output_md}" if docker and not _is_in_docker() else output_md])
+        args.extend(
+            [
+                "--output-md",
+                (
+                    f"/workspace/{output_md}"
+                    if docker and not _is_in_docker()
+                    else output_md
+                ),
+            ]
+        )
     if output_json:
-        args.extend(["--output-json", f"/workspace/{output_json}" if docker and not _is_in_docker() else output_json])
+        args.extend(
+            [
+                "--output-json",
+                (
+                    f"/workspace/{output_json}"
+                    if docker and not _is_in_docker()
+                    else output_json
+                ),
+            ]
+        )
     sys.exit(run_script("scripts/diagnose_e2e_kpi.py", args, docker=docker))
 
 
 @diagnose.command("pcm-performance")
 @click.option("--logs", required=True, help="Input logs file (parquet)")
-@click.option("--baseline", default=None, help="Baseline logs file for comparison (optional)")
+@click.option(
+    "--baseline", default=None, help="Baseline logs file for comparison (optional)"
+)
 @click.option("--output", required=True, help="Output report path (markdown)")
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_pcm_performance(logs, baseline, output, docker):
@@ -8620,7 +8954,16 @@ def diagnose_pcm_performance(logs, baseline, output, docker):
         f"/workspace/{output}" if docker and not _is_in_docker() else output,
     ]
     if baseline:
-        args.extend(["--baseline", f"/workspace/{baseline}" if docker and not _is_in_docker() else baseline])
+        args.extend(
+            [
+                "--baseline",
+                (
+                    f"/workspace/{baseline}"
+                    if docker and not _is_in_docker()
+                    else baseline
+                ),
+            ]
+        )
     sys.exit(run_script("scripts/diagnose_pcm_performance.py", args, docker=docker))
 
 
@@ -8634,24 +8977,38 @@ def diagnose_pcm_performance(logs, baseline, output, docker):
     help="JSON string with alert thresholds",
 )
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
-def diagnose_production_attribution(production_logs, baseline_logs, output_dir, alert_thresholds, docker):
+def diagnose_production_attribution(
+    production_logs, baseline_logs, output_dir, alert_thresholds, docker
+):
     """Comprehensive production attribution analysis across all layers."""
     args = [
         "--production-logs",
-        f"/workspace/{production_logs}" if docker and not _is_in_docker() else production_logs,
+        (
+            f"/workspace/{production_logs}"
+            if docker and not _is_in_docker()
+            else production_logs
+        ),
         "--baseline-logs",
-        f"/workspace/{baseline_logs}" if docker and not _is_in_docker() else baseline_logs,
+        (
+            f"/workspace/{baseline_logs}"
+            if docker and not _is_in_docker()
+            else baseline_logs
+        ),
         "--output-dir",
         f"/workspace/{output_dir}" if docker and not _is_in_docker() else output_dir,
         "--alert-thresholds",
         alert_thresholds,
     ]
-    sys.exit(run_script("scripts/diagnose_production_attribution.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/diagnose_production_attribution.py", args, docker=docker)
+    )
 
 
 @diagnose.command("outcome-attribution")
 @click.option("--logs", required=True, help="Input logs file (parquet)")
-@click.option("--baseline", default=None, help="Baseline logs file for comparison (optional)")
+@click.option(
+    "--baseline", default=None, help="Baseline logs file for comparison (optional)"
+)
 @click.option("--output", required=True, help="Output report path (markdown)")
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def diagnose_outcome_attribution(logs, baseline, output, docker):
@@ -8663,7 +9020,16 @@ def diagnose_outcome_attribution(logs, baseline, output, docker):
         f"/workspace/{output}" if docker and not _is_in_docker() else output,
     ]
     if baseline:
-        args.extend(["--baseline", f"/workspace/{baseline}" if docker and not _is_in_docker() else baseline])
+        args.extend(
+            [
+                "--baseline",
+                (
+                    f"/workspace/{baseline}"
+                    if docker and not _is_in_docker()
+                    else baseline
+                ),
+            ]
+        )
     sys.exit(run_script("scripts/diagnose_outcome_attribution.py", args, docker=docker))
 
 
@@ -8850,9 +9216,19 @@ def gate():
 
 @gate.command("apply-archetype")
 @click.option("--logs", required=True, help="Input logs file (parquet)")
-@click.option("--out", default=None, help="Output gated logs file (auto: latest train dir if not specified)")
-@click.option("--features-store-layer", default=None, help="FeatureStore layer name (auto-detect latest if not specified)")
-@click.option("--features-store-root", default="feature_store", help="FeatureStore root directory")
+@click.option(
+    "--out",
+    default=None,
+    help="Output gated logs file (auto: latest train dir if not specified)",
+)
+@click.option(
+    "--features-store-layer",
+    default=None,
+    help="FeatureStore layer name (auto-detect latest if not specified)",
+)
+@click.option(
+    "--features-store-root", default="feature_store", help="FeatureStore root directory"
+)
 @click.option(
     "--strategy",
     default=None,
@@ -8868,16 +9244,31 @@ def gate():
     default=None,
     help="Custom gate YAML path (e.g., config/strategies/fer/gate_draft.yaml)",
 )
-@click.option("--docker/--no-docker", default=False, help="Run in Docker (default: no-docker)")
-def gate_apply_archetype(logs, out, features_store_layer, features_store_root, strategy, strategies_root, gate_path, docker):
+@click.option(
+    "--docker/--no-docker", default=False, help="Run in Docker (default: no-docker)"
+)
+def gate_apply_archetype(
+    logs,
+    out,
+    features_store_layer,
+    features_store_root,
+    strategy,
+    strategies_root,
+    gate_path,
+    docker,
+):
     """Apply archetype gate rules to logs."""
-    from src.feature_store.layer_naming import detect_layer_for_strategy, detect_layer_timeframe
+    from src.feature_store.layer_naming import (
+        detect_layer_for_strategy,
+        detect_layer_timeframe,
+    )
 
     # --- 尝试从 predictions 旁边的 metadata 获取 timeframe ---
     _inferred_timeframe: str | None = None
     try:
         from pathlib import Path as _P
         import json as _json
+
         _meta_path = _P(logs).parent / "model_artifact_metadata.json"
         if _meta_path.exists():
             with open(_meta_path) as _f:
@@ -8893,9 +9284,13 @@ def gate_apply_archetype(logs, out, features_store_layer, features_store_root, s
             timeframe=_inferred_timeframe,
         )
         if features_store_layer:
-            click.echo(f"ℹ️ Auto-detected feature store layer for {strategy or 'all'}: {features_store_layer}")
+            click.echo(
+                f"ℹ️ Auto-detected feature store layer for {strategy or 'all'}: {features_store_layer}"
+            )
         else:
-            click.echo(f"❌ No feature store layers found in {features_store_root}", err=True)
+            click.echo(
+                f"❌ No feature store layers found in {features_store_root}", err=True
+            )
             sys.exit(1)
 
     # 从 FS meta 读取 timeframe（优先用 metadata 推断结果）
@@ -8903,10 +9298,11 @@ def gate_apply_archetype(logs, out, features_store_layer, features_store_root, s
     timeframe = _inferred_timeframe or _layer_tf or "240T"
     if _layer_tf:
         click.echo(f"ℹ️ Timeframe from FS layer meta: {_layer_tf}")
-    
+
     # 自动检测输出目录：放到最新的训练结果目录下
     if out is None:
         from pathlib import Path
+
         results_dir = Path("results")
         if results_dir.exists():
             # 查找匹配 strategy 的最新训练目录
@@ -8918,7 +9314,7 @@ def gate_apply_archetype(logs, out, features_store_layer, features_store_root, s
                         train_dirs.append(strategy_dir)
                     elif not strategy:
                         train_dirs.append(d)
-            
+
             if train_dirs:
                 latest_train = max(train_dirs, key=lambda p: p.stat().st_mtime)
                 out = str(latest_train / "logs_gated.parquet")
@@ -8929,7 +9325,7 @@ def gate_apply_archetype(logs, out, features_store_layer, features_store_root, s
         else:
             out = "results/logs_gated.parquet"
             click.echo(f"⚠️ Results dir not found, output to: {out}")
-    
+
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--logs",
@@ -8939,7 +9335,11 @@ def gate_apply_archetype(logs, out, features_store_layer, features_store_root, s
         "--features-store-layer",
         features_store_layer,
         "--features-store-root",
-        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        (
+            f"/workspace/{features_store_root}"
+            if use_workspace_prefix
+            else features_store_root
+        ),
         "--strategies-root",
         f"/workspace/{strategies_root}" if use_workspace_prefix else strategies_root,
         "--timeframe",
@@ -8948,7 +9348,12 @@ def gate_apply_archetype(logs, out, features_store_layer, features_store_root, s
     if strategy:
         args.extend(["--strategy", strategy])
     if gate_path:
-        args.extend(["--gate-path", f"/workspace/{gate_path}" if use_workspace_prefix else gate_path])
+        args.extend(
+            [
+                "--gate-path",
+                f"/workspace/{gate_path}" if use_workspace_prefix else gate_path,
+            ]
+        )
     sys.exit(run_script("scripts/apply_archetype_gate.py", args, docker=docker))
 
 
@@ -8959,16 +9364,38 @@ def optimize():
 
 
 @optimize.command("gate-plateau")
-@click.option("--archetype", required=True, help="Archetype name (e.g., TrendContinuationTC)")
+@click.option(
+    "--archetype", required=True, help="Archetype name (e.g., TrendContinuationTC)"
+)
 @click.option("--rule-name", required=True, help="Gate rule name to optimize")
 @click.option("--gated-logs", required=True, help="Gated logs file (parquet)")
 @click.option("--raw-logs", default=None, help="Raw logs file (parquet, optional)")
-@click.option("--output", required=True, help="Output JSON path for optimization results")
-@click.option("--min-trade-rate", type=float, default=0.005, help="Minimum trade rate threshold")
-@click.option("--min-trades-per-bucket", type=int, default=10, help="Minimum trades per bucket")
-@click.option("--min-sharpe-threshold", type=float, default=0.5, help="Minimum Sharpe threshold for plateau")
-@click.option("--threshold-step", type=float, default=0.05, help="Threshold step size for scanning")
-@click.option("--execution-archetypes", default="config/nnmultihead/execution_archetypes.yaml", help="Path to execution_archetypes.yaml")
+@click.option(
+    "--output", required=True, help="Output JSON path for optimization results"
+)
+@click.option(
+    "--min-trade-rate", type=float, default=0.005, help="Minimum trade rate threshold"
+)
+@click.option(
+    "--min-trades-per-bucket", type=int, default=10, help="Minimum trades per bucket"
+)
+@click.option(
+    "--min-sharpe-threshold",
+    type=float,
+    default=0.5,
+    help="Minimum Sharpe threshold for plateau",
+)
+@click.option(
+    "--threshold-step",
+    type=float,
+    default=0.05,
+    help="Threshold step size for scanning",
+)
+@click.option(
+    "--execution-archetypes",
+    default="config/nnmultihead/execution_archetypes.yaml",
+    help="Path to execution_archetypes.yaml",
+)
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_gate_plateau(
     archetype,
@@ -9002,20 +9429,43 @@ def optimize_gate_plateau(
         "--threshold-step",
         str(threshold_step),
         "--execution-archetypes",
-        f"/workspace/{execution_archetypes}" if docker and not _is_in_docker() else execution_archetypes,
+        (
+            f"/workspace/{execution_archetypes}"
+            if docker and not _is_in_docker()
+            else execution_archetypes
+        ),
     ]
     if raw_logs:
-        args.extend(["--raw-logs", f"/workspace/{raw_logs}" if docker and not _is_in_docker() else raw_logs])
+        args.extend(
+            [
+                "--raw-logs",
+                (
+                    f"/workspace/{raw_logs}"
+                    if docker and not _is_in_docker()
+                    else raw_logs
+                ),
+            ]
+        )
     sys.exit(run_script("scripts/optimize_gate_plateau.py", args, docker=docker))
 
 
 @optimize.command("gate-plateau-all")
 @click.option("--gated-logs", required=True, help="Gated logs file (parquet)")
 @click.option("--raw-logs", default=None, help="Raw logs file (parquet, optional)")
-@click.option("--output-dir", required=True, help="Output directory for optimization results")
-@click.option("--min-trade-rate", type=float, default=0.005, help="Minimum trade rate threshold")
-@click.option("--min-trades-per-bucket", type=int, default=10, help="Minimum trades per bucket")
-@click.option("--execution-archetypes", default="config/nnmultihead/execution_archetypes.yaml", help="Path to execution_archetypes.yaml")
+@click.option(
+    "--output-dir", required=True, help="Output directory for optimization results"
+)
+@click.option(
+    "--min-trade-rate", type=float, default=0.005, help="Minimum trade rate threshold"
+)
+@click.option(
+    "--min-trades-per-bucket", type=int, default=10, help="Minimum trades per bucket"
+)
+@click.option(
+    "--execution-archetypes",
+    default="config/nnmultihead/execution_archetypes.yaml",
+    help="Path to execution_archetypes.yaml",
+)
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_gate_plateau_all(
     gated_logs,
@@ -9037,24 +9487,50 @@ def optimize_gate_plateau_all(
         "--min-trades-per-bucket",
         str(min_trades_per_bucket),
         "--execution-archetypes",
-        f"/workspace/{execution_archetypes}" if docker and not _is_in_docker() else execution_archetypes,
+        (
+            f"/workspace/{execution_archetypes}"
+            if docker and not _is_in_docker()
+            else execution_archetypes
+        ),
     ]
     if raw_logs:
-        args.extend(["--raw-logs", f"/workspace/{raw_logs}" if docker and not _is_in_docker() else raw_logs])
-    sys.exit(run_script("scripts/optimize_all_archetypes_plateau.py", args, docker=docker))
+        args.extend(
+            [
+                "--raw-logs",
+                (
+                    f"/workspace/{raw_logs}"
+                    if docker and not _is_in_docker()
+                    else raw_logs
+                ),
+            ]
+        )
+    sys.exit(
+        run_script("scripts/optimize_all_archetypes_plateau.py", args, docker=docker)
+    )
 
 
 @optimize.command("gate-experiments")
 @click.option("--gated-logs", required=True, help="Gated logs file (parquet)")
 @click.option("--raw-logs", required=True, help="Raw logs file (parquet)")
-@click.option("--execution-archetypes", default="config/nnmultihead/execution_archetypes.yaml", help="execution_archetypes.yaml path")
+@click.option(
+    "--execution-archetypes",
+    default="config/nnmultihead/execution_archetypes.yaml",
+    help="execution_archetypes.yaml path",
+)
 @click.option("--output-dir", required=True, help="Output directory")
-@click.option("--feature-store-root", default="feature_store", help="FeatureStore root directory")
+@click.option(
+    "--feature-store-root", default="feature_store", help="FeatureStore root directory"
+)
 @click.option("--feature-store-layer", default=None, help="FeatureStore layer name")
 @click.option("--timeframe", default="240T", help="Timeframe (e.g., 240T)")
 @click.option("--start-date", default=None, help="Start date (optional)")
 @click.option("--end-date", default=None, help="End date (optional)")
-@click.option("--experiments", multiple=True, default=["all"], help="Experiments to run (baseline, progressive, hard_gate, all)")
+@click.option(
+    "--experiments",
+    multiple=True,
+    default=["all"],
+    help="Experiments to run (baseline, progressive, hard_gate, all)",
+)
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def optimize_gate_experiments(
     gated_logs,
@@ -9076,23 +9552,34 @@ def optimize_gate_experiments(
         "--raw-logs",
         f"/workspace/{raw_logs}" if docker and not _is_in_docker() else raw_logs,
         "--execution-archetypes",
-        f"/workspace/{execution_archetypes}" if docker and not _is_in_docker() else execution_archetypes,
+        (
+            f"/workspace/{execution_archetypes}"
+            if docker and not _is_in_docker()
+            else execution_archetypes
+        ),
         "--output-dir",
         f"/workspace/{output_dir}" if docker and not _is_in_docker() else output_dir,
     ]
     if feature_store_layer:
-        args.extend([
-            "--feature-store-root", feature_store_root,
-            "--feature-store-layer", feature_store_layer,
-            "--timeframe", timeframe,
-        ])
+        args.extend(
+            [
+                "--feature-store-root",
+                feature_store_root,
+                "--feature-store-layer",
+                feature_store_layer,
+                "--timeframe",
+                timeframe,
+            ]
+        )
         if start_date:
             args.extend(["--start-date", start_date])
         if end_date:
             args.extend(["--end-date", end_date])
     if experiments:
         args.extend(["--experiments"] + list(experiments))
-    sys.exit(run_script("scripts/run_gate_optimization_experiments.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/run_gate_optimization_experiments.py", args, docker=docker)
+    )
 
 
 @optimize.command("gate-compare")
@@ -9107,11 +9594,19 @@ def optimize_gate_compare(
     """Compare gate optimization experiment results and generate report."""
     args = [
         "--results-file",
-        f"/workspace/{results_file}" if docker and not _is_in_docker() else results_file,
+        (
+            f"/workspace/{results_file}"
+            if docker and not _is_in_docker()
+            else results_file
+        ),
         "--output-dir",
         f"/workspace/{output_dir}" if docker and not _is_in_docker() else output_dir,
     ]
-    sys.exit(run_script("scripts/compare_gate_optimization_experiments.py", args, docker=docker))
+    sys.exit(
+        run_script(
+            "scripts/compare_gate_optimization_experiments.py", args, docker=docker
+        )
+    )
 
 
 @optimize.command("ml-plateau-charts")
@@ -9227,7 +9722,11 @@ def backtest_strategy(
     use_workspace_prefix = False  # CLI typically run with --no-docker
     args = [
         "--config",
-        f"/workspace/config/strategies/{strategy}" if use_workspace_prefix else f"config/strategies/{strategy}",
+        (
+            f"/workspace/config/strategies/{strategy}"
+            if use_workspace_prefix
+            else f"config/strategies/{strategy}"
+        ),
         "--symbol",
         symbol,
         "--data-path",

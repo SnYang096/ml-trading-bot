@@ -269,6 +269,10 @@ class MarketDataLoader:
         if not frames:
             raise ValueError(f"No usable data after reading {len(files)} files.")
 
+        # Normalize tz: strip timezone info to avoid tz-naive vs tz-aware errors
+        for i, f in enumerate(frames):
+            if f.index.tz is not None:
+                frames[i] = f.tz_localize(None)
         result = pd.concat(frames).sort_index()
         result = result[~result.index.duplicated(keep="last")]
         # Recompute CVD columns from buy_qty/sell_qty across the full concatenated
@@ -305,6 +309,10 @@ class MarketDataLoader:
             if files:
                 frames.append(self._build_timeframe_cache_for_files(files, timeframe))
 
+        # Normalize tz: strip timezone info to avoid tz-naive vs tz-aware errors
+        for i, f in enumerate(frames):
+            if f.index.tz is not None:
+                frames[i] = f.tz_localize(None)
         out = pd.concat(frames).sort_index()
         out = out[~out.index.duplicated(keep="last")]
         # Recompute CVD across the full extended range for continuity.

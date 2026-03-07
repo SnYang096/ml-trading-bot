@@ -1,36 +1,43 @@
-# LV Entry Filters
-# 微观入场确认：清算瀑布已开始的信号
+# LV Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
+# Date: 2026-03-07 22:17
+# Promoted: 3 filters (2 plateau + 1 snotio-only)
+# Baseline snotio: 30.1075, σ=62.754
+# Significance: z-test p<0.05 required for all tiers
+#
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
-version: 1
-
-entry_filters:
-  # 条件 1: OI 开始快速下降 (清算已触发)
-  - name: oi_dropping
-    description: "OI % change 为负 — 持仓正在被强平"
-    feature: oi_change_pct
-    operator: lt
-    threshold: -0.01    # OI 下降超过 1%
-    weight: 0.4
-    required: false
-
-  # 条件 2: VPIN 跳升 (知情/强制交易增加)
-  - name: vpin_spike
-    description: "VPIN 高 — 大单/强制平仓活动"
-    feature: vpin
-    operator: gt
-    threshold: 0.6
-    weight: 0.3
-    required: false
-
-  # 条件 3: 波动率正在扩张
-  - name: vol_expanding
-    description: "ATR 百分位高 — 波动正在放大"
-    feature: atr_percentile
-    operator: gt
-    threshold: 0.7
-    weight: 0.3
-    required: false
-
-# 入场逻辑: 加权分数 > min_score 时允许入场
-min_score: 0.4
-logic: weighted_sum
+filters:
+- id: meta_funding_rate_zscore_50
+  enabled: true
+  description: 'Meta-Algorithm: funding_rate_zscore_50 <= 0.132'
+  conditions:
+  - feature: funding_rate_zscore_50
+    operator: <=
+    value: 0.132
+  tier: A_PLATEAU
+  notes: lift=1.99x, rob=83%, snotio=59.1359, z=33.62, p=0.0000
+- id: meta_liquidity_void_x_wpt_risk_rank_range
+  enabled: true
+  description: 'Meta-Algorithm: liquidity_void_x_wpt_risk_rank in [0.37896709501557635, 0.7833528037383178]'
+  conditions:
+  - feature: liquidity_void_x_wpt_risk_rank
+    operator: '>='
+    value: 0.37896709501557635
+  - feature: liquidity_void_x_wpt_risk_rank
+    operator: <=
+    value: 0.7833528037383178
+  tier: B_SNOTIO
+  notes: lift=1.62x, rob=90%, snotio=35.4098, z=11.13, p=0.0000
+- id: meta_funding_rate_abs_zscore_50
+  enabled: true
+  description: 'Meta-Algorithm: funding_rate_abs_zscore_50 >= 1.346'
+  conditions:
+  - feature: funding_rate_abs_zscore_50
+    operator: '>='
+    value: 1.346
+  tier: A_PLATEAU
+  notes: lift=1.30x, rob=79%, snotio=39.5550, z=9.73, p=0.0000
+combination_mode: or
