@@ -219,6 +219,28 @@ def _setup_three_strategies(
     )
     window_minutes = int(os.getenv("MLBOT_BPC_WINDOW_MINUTES", "15"))
 
+    # ── 0. 从 pcm_regime.yaml 读取 enabled_archetypes ──
+    import yaml as _yaml
+
+    config_root = os.path.join(strategies_root, "..")
+    pcm_regime_path = os.getenv(
+        "MLBOT_PCM_REGIME_CONFIG",
+        os.path.join(config_root, "pcm_regime.yaml"),
+    )
+    _ALL_ARCHETYPES = ["bpc", "me", "fer", "lv"]
+    try:
+        with open(pcm_regime_path, "r", encoding="utf-8") as _f:
+            _pcm_cfg = _yaml.safe_load(_f)
+        enabled_archetypes = [
+            a.lower() for a in (_pcm_cfg.get("enabled_archetypes") or _ALL_ARCHETYPES)
+        ]
+    except Exception as _e:
+        logger.warning(
+            "读取 pcm_regime.yaml enabled_archetypes 失败: %s, 默认全部启用", _e
+        )
+        enabled_archetypes = _ALL_ARCHETYPES
+    logger.info("📋 enabled_archetypes (来自 pcm_regime.yaml): %s", enabled_archetypes)
+
     # ── 1. 从 meta.yaml 读取各策略 timeframe (不再硬编码) ──
     tf_bpc = _load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
     tf_me = _load_strategy_timeframe(strategies_root, "me")  # 默认 60T
@@ -234,65 +256,65 @@ def _setup_three_strategies(
     bar_minutes_fer = _tf_to_bar_minutes(tf_fer)
     bar_minutes_lv = _tf_to_bar_minutes(tf_lv)
 
-    logger.info("🚀 初始化四策略 (timeframe 从 meta.yaml 读取)...")
-    logger.info("  BPC=%s, ME=%s, FER=%s, LV=%s", tf_bpc, tf_me, tf_fer, tf_lv)
+    # ── 初始化已启用的策略对象 ──
+    _strategy_map = {}
+    _tf_map = {}
+    if "bpc" in enabled_archetypes:
+        _strategy_map["bpc"] = GenericLiveStrategy(
+            strategy_name="bpc",
+            strategies_root=strategies_root,
+            trade_size=trade_size,
+            primary_timeframe=tf_bpc,
+            bar_minutes=bar_minutes_bpc,
+        )
+        _tf_map["bpc"] = tf_bpc
+    if "me" in enabled_archetypes:
+        _strategy_map["me"] = GenericLiveStrategy(
+            strategy_name="me",
+            strategies_root=strategies_root,
+            trade_size=trade_size,
+            primary_timeframe=tf_me,
+            bar_minutes=bar_minutes_me,
+        )
+        _tf_map["me"] = tf_me
+    if "fer" in enabled_archetypes:
+        _strategy_map["fer"] = GenericLiveStrategy(
+            strategy_name="fer",
+            strategies_root=strategies_root,
+            trade_size=trade_size,
+            primary_timeframe=tf_fer,
+            bar_minutes=bar_minutes_fer,
+        )
+        _tf_map["fer"] = tf_fer
+    if "lv" in enabled_archetypes:
+        _strategy_map["lv"] = GenericLiveStrategy(
+            strategy_name="lv",
+            strategies_root=strategies_root,
+            trade_size=trade_size,
+            primary_timeframe=tf_lv,
+            bar_minutes=bar_minutes_lv,
+        )
+        _tf_map["lv"] = tf_lv
 
-    bpc = GenericLiveStrategy(
-        strategy_name="bpc",
-        strategies_root=strategies_root,
-        trade_size=trade_size,
-        primary_timeframe=tf_bpc,
-        bar_minutes=bar_minutes_bpc,
-    )
-    me = GenericLiveStrategy(
-        strategy_name="me",
-        strategies_root=strategies_root,
-        trade_size=trade_size,
-        primary_timeframe=tf_me,
-        bar_minutes=bar_minutes_me,
-    )
-    fer = GenericLiveStrategy(
-        strategy_name="fer",
-        strategies_root=strategies_root,
-        trade_size=trade_size,
-        primary_timeframe=tf_fer,
-        bar_minutes=bar_minutes_fer,
-    )
-    lv = GenericLiveStrategy(
-        strategy_name="lv",
-        strategies_root=strategies_root,
-        trade_size=trade_size,
-        primary_timeframe=tf_lv,
-        bar_minutes=bar_minutes_lv,
-    )
+    # 将1个变量方便后续使用
+    bpc = _strategy_map.get("bpc")
+    me = _strategy_map.get("me")
+    fer = _strategy_map.get("fer")
+    lv = _strategy_map.get("lv")
 
-    logger.info(
-        "✅ 四策略配置加载完成 (BPC=%s, ME=%s, FER=%s, LV=%s)",
-        tf_bpc,
-        tf_me,
-        tf_fer,
-        tf_lv,
-    )
+    logger.info("✅ 策略初始化完成: %s", list(_strategy_map.keys()))
 
     # ── 2. 创建 PCM 仲裁层 (注册策略 + timeframe 绑定) ──
-    # 全局配置根目录: strategies_root 的上一层 (live/highcap/config/)
-    config_root = os.path.join(strategies_root, "..")
     pcm = LivePCM(
         archetype_priority=["LV", "FER", "ME", "BPC"],
-        regime_config_path=os.getenv(
-            "MLBOT_PCM_REGIME_CONFIG",
-            os.path.join(config_root, "pcm_regime.yaml"),
-        ),
+        regime_config_path=pcm_regime_path,
         constitution_yaml=os.getenv(
             "MLBOT_CONSTITUTION_YAML",
             os.path.join(config_root, "constitution", "constitution.yaml"),
         ),
     )
-    pcm.register("bpc", bpc, timeframe=tf_bpc)
-    pcm.register("me", me, timeframe=tf_me)
-    pcm.register("fer", fer, timeframe=tf_fer)
-    # LV 暂未上线，注释掉以避免误触发
-    # pcm.register("lv", lv, timeframe=tf_lv)
+    for _name, _strat in _strategy_map.items():
+        pcm.register(_name, _strat, timeframe=_tf_map[_name])
 
     logger.info(f"✅ PCM 仲裁层初始化: 优先级={pcm.archetype_priority}")
 
@@ -413,11 +435,12 @@ def _setup_three_strategies(
         # 注入监控统计收集器
         listener.stats_collector = stats_collector
         # 注入 ME FC + LV FC (各自独立 timeframe)
-        listener.extra_feature_computers = {
-            tf_me: _make_feature_computer_me(sym),
-            # LV FC 暂未上线
-            # tf_lv: _make_feature_computer_lv(sym),
-        }
+        _extra_fcs = {}
+        if me is not None:
+            _extra_fcs[tf_me] = _make_feature_computer_me(sym)
+        if lv is not None:
+            _extra_fcs[tf_lv] = _make_feature_computer_lv(sym)
+        listener.extra_feature_computers = _extra_fcs
 
     logger.info(
         f"✅ 三策略实盘启动完成: {len(symbols)} symbols, "
