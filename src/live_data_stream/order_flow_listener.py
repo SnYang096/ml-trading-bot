@@ -1347,6 +1347,10 @@ class OrderFlowListener:
 
     async def _periodic_tasks(self) -> None:
         """定期任务（特征计算和保存）"""
+        _TIME_SYNC_INTERVAL = 30 * 60  # 30 分钟同步一次 Binance 时间
+        _last_time_sync = 0.0
+        import time as _time_mod
+
         while not self._stop_event.is_set():
             now = pd.Timestamp.now(tz="UTC")
 
@@ -1362,6 +1366,61 @@ class OrderFlowListener:
                 bars_in_window,
                 price_str,
             )
+
+            # ── Binance 时间同步 + Slot 持仓同步 (每 30 分钟) ──
+            _now_mono = _time_mod.monotonic()
+            if _now_mono - _last_time_sync >= _TIME_SYNC_INTERVAL:
+                try:
+                    api = getattr(
+                        getattr(self, "order_manager", None), "binance_api", None
+                    )
+                    if api is not None and hasattr(api, "_check_time_sync"):
+                        api._check_time_sync()
+                except Exception as _e:
+                    logger.warning("[%s] Binance 定期时间同步失败: %s", self.symbol, _e)
+                # Slot 同步: 释放服务端无持仓的 stale slot
+                try:
+                    _ce = getattr(self, "constitution_executor", None)
+                    _rs = getattr(self, "runtime_state", None)
+                    _om = getattr(self, "order_manager", None)
+                    if _ce is not None and _rs is not None and _om is not None:
+                        _api = getattr(_om, "binance_api", None)
+                        if _api is not None:
+                            _active = dict(_rs.slots.active)
+                            if _active:
+                                # get_positions() 已只返回 contracts!=0 的持仓
+                                # ccxt symbol 格式 BTC/USDT:USDT → 转换为 BTCUSDT
+                                _positions = _api.get_positions()
+                                _live_syms = set()
+                                for _p in _positions:
+                                    _raw = (
+                                        _p.get("symbol", "")
+                                        .replace("/", "")
+                                        .split(":")[0]
+                                    )
+                                    if _raw:
+                                        _live_syms.add(_raw)
+                                _freed = 0
+                                for _pid, _rec in _active.items():
+                                    _ssym = getattr(_rec, "symbol", None) or ""
+                                    if _ssym and _ssym not in _live_syms:
+                                        _ce.release_slot(
+                                            st=_rs,
+                                            position_id=_pid,
+                                            reason="stale_sync",
+                                        )
+                                        _freed += 1
+                                        logger.warning(
+                                            "[%s] 🗑️ 定期同步释放 stale slot: %s (%s)",
+                                            self.symbol,
+                                            _pid,
+                                            _ssym,
+                                        )
+                                if _freed > 0:
+                                    _ce.save_runtime_state(_rs)
+                except Exception as _e:
+                    logger.warning("[%s] 定期 slot 同步失败: %s", self.symbol, _e)
+                _last_time_sync = _now_mono
 
             # 检查是否需要计算15分钟特征
             if (

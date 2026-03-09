@@ -1774,57 +1774,62 @@ def generate_trading_map_html(
             fill_alpha=0.8,
         )
 
-        # 交易标记 — 批量绘制 (避免逐笔 scatter 导致 ~3N 个图形对象)
+        # 交易标记 — 按 side(多/空) × win/loss × 初始/加仓 分组
+        # 多=向上三角, 空=向下三角, 加仓多=diamond, 加仓空=inverted_triangle
+        # 颜色: win=绿, loss=红
         if trades:
-            # 分 win/loss 两批，再分初始开仓 vs 加仓
-            win_trades = [t for t in trades if t.pnl_r > 0]
-            loss_trades = [t for t in trades if t.pnl_r <= 0]
+            # 按 (side, win/loss, is_add) 分 6 组
+            groups: dict = {}  # key=(side, wl, is_add) -> list[ClosedTrade]
+            for t in trades:
+                side = t.side.upper()  # LONG / SHORT
+                wl = "win" if t.pnl_r > 0 else "loss"
+                is_add = t.is_add_position
+                groups.setdefault((side, wl, is_add), []).append(t)
 
-            for batch, color, label_suffix in [
-                (win_trades, COLOR_WIN, "win"),
-                (loss_trades, COLOR_LOSS, "loss"),
-            ]:
+            # 标记映射: (side, is_add) -> marker
+            _marker_map = {
+                ("LONG", False): "triangle",  # △ 向上
+                ("SHORT", False): "inverted_triangle",  # ▽ 向下
+                ("LONG", True): "diamond",  # ◇ 加仓多
+                ("SHORT", True): "diamond_cross",  # ◈ 加仓空
+            }
+            _color_map = {"win": COLOR_WIN, "loss": COLOR_LOSS}
+            _label_map = {
+                ("LONG", False): "long",
+                ("SHORT", False): "short",
+                ("LONG", True): "add_long",
+                ("SHORT", True): "add_short",
+            }
+
+            for (side, wl, is_add), batch in groups.items():
                 if not batch:
                     continue
-                # 区分初始开仓 vs 加仓
-                init_batch = [t for t in batch if not t.is_add_position]
-                add_batch = [t for t in batch if t.is_add_position]
+                marker = _marker_map.get((side, is_add), "circle")
+                color = _color_map[wl]
+                label = f"{_label_map.get((side, is_add), side)}_{wl}"
+                sz = 12 if is_add else 10
 
-                # 初始入场 — triangle
-                if init_batch:
-                    p.scatter(
-                        x=[t.entry_time for t in init_batch],
-                        y=[t.entry_price for t in init_batch],
-                        marker="triangle",
-                        size=10,
-                        color=color,
-                        alpha=0.8,
-                        legend_label=f"entry_{label_suffix}",
-                    )
-                # 加仓入场 — circle_dot + 橙色边框
-                if add_batch:
-                    p.scatter(
-                        x=[t.entry_time for t in add_batch],
-                        y=[t.entry_price for t in add_batch],
-                        marker="circle_dot",
-                        size=12,
-                        color="orange",
-                        alpha=0.9,
-                        legend_label=f"add_pos_{label_suffix}",
-                    )
-                # 出场
-                exit_x = [t.exit_time for t in batch]
-                exit_y = [t.exit_price for t in batch]
+                # 入场标记
                 p.scatter(
-                    x=exit_x,
-                    y=exit_y,
+                    x=[t.entry_time for t in batch],
+                    y=[t.entry_price for t in batch],
+                    marker=marker,
+                    size=sz,
+                    color=color,
+                    alpha=0.8,
+                    legend_label=label,
+                )
+                # 出场标记 — square 统一
+                p.scatter(
+                    x=[t.exit_time for t in batch],
+                    y=[t.exit_price for t in batch],
                     marker="square",
                     size=8,
                     color=color,
-                    alpha=0.8,
-                    legend_label=f"exit_{label_suffix}",
+                    alpha=0.6,
+                    legend_label=f"exit_{wl}",
                 )
-                # 连接线 — 用 multi_line 批量画
+                # 连接线
                 xs = [[t.entry_time, t.exit_time] for t in batch]
                 ys = [[t.entry_price, t.exit_price] for t in batch]
                 p.multi_line(
@@ -1832,7 +1837,7 @@ def generate_trading_map_html(
                     ys=ys,
                     line_color=color,
                     line_dash="dashed",
-                    line_alpha=0.4,
+                    line_alpha=0.3,
                 )
 
         # HoverTool
@@ -2012,8 +2017,34 @@ def main():
     return 0
 
 
+def _trade_to_dict(t: ClosedTrade) -> dict:
+    """ClosedTrade → JSON-safe dict"""
+    return {
+        "symbol": t.symbol,
+        "side": t.side,
+        "archetype": t.archetype,
+        "entry_price": round(t.entry_price, 6),
+        "exit_price": round(t.exit_price, 6),
+        "entry_time": t.entry_time.isoformat(),
+        "exit_time": t.exit_time.isoformat(),
+        "pnl_r": round(t.pnl_r, 4),
+        "exit_reason": t.exit_reason,
+        "bars_held": t.bars_held,
+        "evidence_score": round(t.evidence_score, 4),
+        "size_multiplier": round(t.size_multiplier, 4),
+        "is_add_position": t.is_add_position,
+    }
+
+
 def _save_json(result: BacktestResult, path: str):
-    """保存 JSON 结果"""
+    """保存 JSON 结果 (含完整交易列表)"""
+    wins = [t for t in result.trades if t.pnl_r > 0]
+    per_arch: dict = {}
+    for t in result.trades:
+        a = t.archetype or "unknown"
+        per_arch.setdefault(a, [])
+        per_arch[a].append(t)
+
     out = {
         "strategy": result.strategy,
         "n_trades": result.n_trades,
@@ -2023,13 +2054,39 @@ def _save_json(result: BacktestResult, path: str):
         "total_r": round(result.total_r, 4),
         "max_drawdown_r": round(result.max_drawdown_r, 4),
         "funnel": result.funnel,
+        "per_archetype": {
+            arch: {
+                "n_trades": len(ts),
+                "win_rate": (
+                    round(sum(1 for t in ts if t.pnl_r > 0) / len(ts), 4) if ts else 0
+                ),
+                "mean_r": round(sum(t.pnl_r for t in ts) / len(ts), 4) if ts else 0,
+                "total_r": round(sum(t.pnl_r for t in ts), 4),
+            }
+            for arch, ts in per_arch.items()
+        },
         "per_symbol": {
             sym: {
-                "trades": len(trades),
+                "n_trades": len(trades),
+                "win_rate": (
+                    round(sum(1 for t in trades if t.pnl_r > 0) / len(trades), 4)
+                    if trades
+                    else 0
+                ),
+                "mean_r": (
+                    round(sum(t.pnl_r for t in trades) / len(trades), 4)
+                    if trades
+                    else 0
+                ),
                 "total_r": round(sum(t.pnl_r for t in trades), 4),
+                "per_archetype": {
+                    arch: sum(1 for t in trades if t.archetype == arch)
+                    for arch in sorted(set(t.archetype for t in trades))
+                },
             }
             for sym, trades in result.per_symbol.items()
         },
+        "trades": [_trade_to_dict(t) for t in result.trades],
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:

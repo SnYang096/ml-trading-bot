@@ -24,6 +24,7 @@ SLOT_RELEASE_REASONS = {
     "stop_loss_hit",
     "take_profit_hit",
     "order_failed",  # 🐛 Fix: 下单失败时释放预留 slot
+    "stale_sync",  # 启动/定期同步: 服务端无对应持仓时释放
 }
 
 

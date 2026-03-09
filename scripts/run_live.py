@@ -188,6 +188,70 @@ def _setup_bpc(
     return manager, pcm
 
 
+def _ccxt_symbol_to_raw(sym: str) -> str:
+    """ccxt symbol → 原始 Binance symbol:  'BTC/USDT:USDT' → 'BTCUSDT'"""
+    return sym.replace("/", "").split(":")[0]
+
+
+def _sync_slots_with_exchange(
+    order_manager,
+    constitution_exec,
+    runtime_st,
+    symbols,
+) -> None:
+    """Slot 与交易所持仓同步: 释放服务端无对应持仓的 stale slot。"""
+    if order_manager is None:
+        return
+    api = getattr(order_manager, "binance_api", None)
+    if api is None:
+        return
+
+    active_slots = dict(runtime_st.slots.active)  # copy
+    if not active_slots:
+        return
+
+    try:
+        exchange_positions = api.get_positions()
+    except Exception as e:
+        logger.warning("Slot 同步: 查询 Binance 持仓失败: %s", e)
+        return
+
+    # get_positions() 已经只返回 contracts!=0 的持仓
+    # symbol 是 ccxt 格式 (BTC/USDT:USDT)，需转换为原始格式 (BTCUSDT)
+    live_symbols = set()
+    for p in exchange_positions:
+        raw_sym = _ccxt_symbol_to_raw(p.get("symbol", ""))
+        if raw_sym:
+            live_symbols.add(raw_sym)
+
+    logger.info(
+        "Slot 同步: 服务端持仓 symbols=%s, 本地 active slots=%d",
+        live_symbols or "{}",
+        len(active_slots),
+    )
+
+    # 服务端无持仓的 slot → 释放
+    stale_count = 0
+    for pid, rec in active_slots.items():
+        slot_symbol = getattr(rec, "symbol", None) or ""
+        if slot_symbol and slot_symbol not in live_symbols:
+            constitution_exec.release_slot(
+                st=runtime_st, position_id=pid, reason="stale_sync"
+            )
+            stale_count += 1
+            logger.warning(
+                "🗑️ 释放 stale slot: %s (%s) — 服务端无持仓", pid, slot_symbol
+            )
+
+    if stale_count > 0:
+        constitution_exec.save_runtime_state(runtime_st)
+        logger.info("✅ Slot 同步: 释放 %d 个 stale slot", stale_count)
+    else:
+        logger.info(
+            "✅ Slot 同步: 无 stale (%d 个 slot 均有服务端持仓)", len(active_slots)
+        )
+
+
 def _setup_three_strategies(
     symbols: List[str],
     storage: StorageManager,
@@ -414,6 +478,9 @@ def _setup_three_strategies(
     constitution_exec = ConstitutionExecutor(constitution_yaml=constitution_yaml_path)
     runtime_st = constitution_exec.load_runtime_state()
     logger.info("✅ ConstitutionExecutor 初始化: %s", constitution_yaml_path)
+
+    # ── 启动时 slot 同步: 从 Binance 查真实持仓，清理残留 stale slot ──
+    _sync_slots_with_exchange(order_manager, constitution_exec, runtime_st, symbols)
 
     for sym in symbols:
         listener = manager.get_listener(sym)
