@@ -291,7 +291,8 @@ def _setup_three_strategies(
     pcm.register("bpc", bpc, timeframe=tf_bpc)
     pcm.register("me", me, timeframe=tf_me)
     pcm.register("fer", fer, timeframe=tf_fer)
-    pcm.register("lv", lv, timeframe=tf_lv)
+    # LV 暂未上线，注释掉以避免误触发
+    # pcm.register("lv", lv, timeframe=tf_lv)
 
     logger.info(f"✅ PCM 仲裁层初始化: 优先级={pcm.archetype_priority}")
 
@@ -414,7 +415,8 @@ def _setup_three_strategies(
         # 注入 ME FC + LV FC (各自独立 timeframe)
         listener.extra_feature_computers = {
             tf_me: _make_feature_computer_me(sym),
-            tf_lv: _make_feature_computer_lv(sym),
+            # LV FC 暂未上线
+            # tf_lv: _make_feature_computer_lv(sym),
         }
 
     logger.info(
