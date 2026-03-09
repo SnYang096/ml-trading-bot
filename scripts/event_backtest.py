@@ -1776,7 +1776,7 @@ def generate_trading_map_html(
 
         # 交易标记 — 批量绘制 (避免逐笔 scatter 导致 ~3N 个图形对象)
         if trades:
-            # 分 win/loss 两批
+            # 分 win/loss 两批，再分初始开仓 vs 加仓
             win_trades = [t for t in trades if t.pnl_r > 0]
             loss_trades = [t for t in trades if t.pnl_r <= 0]
 
@@ -1786,18 +1786,32 @@ def generate_trading_map_html(
             ]:
                 if not batch:
                     continue
-                # 入场
-                entry_x = [t.entry_time for t in batch]
-                entry_y = [t.entry_price for t in batch]
-                p.scatter(
-                    x=entry_x,
-                    y=entry_y,
-                    marker="triangle",
-                    size=10,
-                    color=color,
-                    alpha=0.8,
-                    legend_label=f"entry_{label_suffix}",
-                )
+                # 区分初始开仓 vs 加仓
+                init_batch = [t for t in batch if not t.is_add_position]
+                add_batch = [t for t in batch if t.is_add_position]
+
+                # 初始入场 — triangle
+                if init_batch:
+                    p.scatter(
+                        x=[t.entry_time for t in init_batch],
+                        y=[t.entry_price for t in init_batch],
+                        marker="triangle",
+                        size=10,
+                        color=color,
+                        alpha=0.8,
+                        legend_label=f"entry_{label_suffix}",
+                    )
+                # 加仓入场 — circle_dot + 橙色边框
+                if add_batch:
+                    p.scatter(
+                        x=[t.entry_time for t in add_batch],
+                        y=[t.entry_price for t in add_batch],
+                        marker="circle_dot",
+                        size=12,
+                        color="orange",
+                        alpha=0.9,
+                        legend_label=f"add_pos_{label_suffix}",
+                    )
                 # 出场
                 exit_x = [t.exit_time for t in batch]
                 exit_y = [t.exit_price for t in batch]

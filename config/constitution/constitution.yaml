@@ -176,7 +176,7 @@ resource_allocation:
   # 加仓全局安全规则 (适用于所有 allow_add_position=true 的策略)
   # "adding is allowed only by freed risk budget"
   add_position_rules:
-    max_add_times: 2          # fat tail: 5 次加仓充分放大趋势 (每次需 breakeven locked)
+    max_add_times: 1          # fat tail: 最多 1 次加仓 (每次需 breakeven locked)
     # 加仓前必须已锁定利润 (breakeven stop 已触发)
     # 确保加仓只用 "已释放" 的风险预算，不增加净风险敞口
     require_locked_profit: true
