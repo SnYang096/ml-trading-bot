@@ -18,8 +18,9 @@ thresholds:
   min_ks_statistic: 0.05
   max_ks_pvalue: 0.01
 
-  # Return uplift soft constraint (don't actively harm)
-  min_return_uplift_soft: -0.10
+  # Return uplift: pass 组 forward_rr 必须 >= deny 组 (prefilter 职责是过滤差的)
+  # 之前 -0.10 允许负 uplift 规则通过, 导致 FER 选了反向规则 (留差拒好)
+  min_return_uplift_soft: 0.0
 
   # Hit rate uplift (disabled, kept for reference)
   min_hit_rate_uplift: -1.0

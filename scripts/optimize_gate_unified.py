@@ -1280,12 +1280,14 @@ _VALID_OPT_STATUSES = {
     "nan_lift_hard_gate",  # NaN-lift exception for hard gates
 }
 
-# Prefilter operator → gate deny operator (negate: allow-if → deny-if-NOT)
-_PREFILTER_OP_NEGATE = {
-    ">=": "value_lt",  # allow >= X → deny < X
-    ">": "value_le",  # allow > X  → deny <= X
-    "<=": "value_gt",  # allow <= X → deny > X
-    "<": "value_ge",  # allow < X  → deny >= X
+# Prefilter operator → gate deny operator (直接映射, operator 本身已是 deny 方向)
+# 分析脚本中 operator="<" 表示 deny when col < threshold,
+# 因此 gate deny 条件应保持相同方向: value_lt → deny when col < threshold
+_PREFILTER_OP_MAP = {
+    ">=": "value_ge",  # deny when col >= X
+    ">": "value_gt",  # deny when col > X
+    "<=": "value_le",  # deny when col <= X
+    "<": "value_lt",  # deny when col < X
 }
 
 
@@ -1318,7 +1320,7 @@ def _load_prefilter_as_frozen_gates(prefilter_path: Path) -> List[Dict]:
                 feat = sub.get("feature", "")
                 op = sub.get("operator", "")
                 val = sub.get("value")
-                gate_op = _PREFILTER_OP_NEGATE.get(op)
+                gate_op = _PREFILTER_OP_MAP.get(op)
                 if gate_op and feat and val is not None:
                     all_of_items.append({feat: {gate_op: val}})
                     features_desc.append(f"{feat}{op}{val}")
@@ -1345,7 +1347,7 @@ def _load_prefilter_as_frozen_gates(prefilter_path: Path) -> List[Dict]:
             feat = rule.get("feature", "")
             op = rule.get("operator", "")
             val = rule.get("value")
-            gate_op = _PREFILTER_OP_NEGATE.get(op)
+            gate_op = _PREFILTER_OP_MAP.get(op)
 
             if gate_op and feat and val is not None:
                 gate_rules.append(
@@ -1530,26 +1532,331 @@ def _promote_gate_to_archetypes(
             f"({n_allow}/{len(df)}, {n_prefilter} prefilter + {n_opt} optimized)"
         )
 
-        if combined_rate < min_combined_pass_rate:
+        # ── Interaction Screening + Bell Partition ──
+        n_rules = len(all_rules)
+        rr_col_gate = None
+        for cand in ["bpc_impulse_return_atr", "forward_rr", "rr", "return_atr"]:
+            if cand in df.columns:
+                rr_col_gate = cand
+                break
+
+        def _get_rule_deny_mask(rule, data, gate_ops):
+            """Get deny mask for a single gate rule."""
+            allow = pd.Series(True, index=data.index)
+            when = rule.get("when", {})
+            allow = _apply_when_to_mask(when, data, allow, gate_ops)
+            return ~allow
+
+        interaction_map = {}
+        bell_applied = False
+
+        if n_rules >= 2 and rr_col_gate is not None:
+            rr_arr = df[rr_col_gate].values.astype(float)
+
+            # Compute individual deny masks
+            deny_masks = []
+            for rule in all_rules:
+                dm = _get_rule_deny_mask(rule, df, _GATE_OPS)
+                deny_masks.append(dm.values)
+
+            # ── Interaction Screening (2×2 Uplift Interaction Test) ──
+            print(f"\n  📊 Gate Interaction Screening ({n_rules} rules)")
+            print(
+                f"   {'Pair':<55s} {'r00':>7s} {'r10':>7s} "
+                f"{'r01':>7s} {'r11':>7s} {'type':>14s}"
+            )
+            print(f"   {'-'*105}")
+
+            for i in range(n_rules):
+                for j in range(i + 1, n_rules):
+                    dA = deny_masks[i]
+                    dB = deny_masks[j]
+                    g00 = ~dA & ~dB
+                    g10 = dA & ~dB
+                    g01 = ~dA & dB
+                    g11 = dA & dB
+
+                    r00 = float(np.nanmean(rr_arr[g00])) if g00.sum() > 10 else 0
+                    r10 = float(np.nanmean(rr_arr[g10])) if g10.sum() > 10 else 0
+                    r01 = float(np.nanmean(rr_arr[g01])) if g01.sum() > 10 else 0
+                    r11 = float(np.nanmean(rr_arr[g11])) if g11.sum() > 10 else 0
+
+                    additive = r10 + r01 - r00
+                    delta = r11 - additive
+
+                    fA = all_rules[i].get("id", f"rule_{i}")
+                    fB = all_rules[j].get("id", f"rule_{j}")
+
+                    if g11.sum() < 10:
+                        itype = "insufficient"
+                    elif abs(delta) < 0.05 * max(abs(r10 - r00), abs(r01 - r00), 0.01):
+                        itype = "independent"
+                    elif r11 > max(r10, r01) and delta > 0:
+                        itype = "synergistic"
+                    elif abs(r11 - max(r10, r01)) < 0.05 * max(
+                        abs(r10), abs(r01), 0.01
+                    ):
+                        itype = "substitutive"
+                    elif r11 < min(r10, r01):
+                        itype = "antagonistic"
+                    else:
+                        itype = "substitutive"
+
+                    interaction_map[(i, j)] = {
+                        "type": itype,
+                        "delta": delta,
+                        "r00": r00,
+                        "r10": r10,
+                        "r01": r01,
+                        "r11": r11,
+                    }
+                    pair_name = f"{fA} × {fB}"
+                    print(
+                        f"   {pair_name:<55s} {r00:>+6.3f} {r10:>+6.3f} "
+                        f"{r01:>+6.3f} {r11:>+6.3f} {itype:>14s}"
+                    )
+
+            # ── Bell Partition: search optimal AND/OR structure ──
+            def _bell_partitions_gate(items):
+                """Generate all Bell partitions. N=2→2, N=3→5, N=4→15."""
+                if len(items) <= 1:
+                    yield [items]
+                    return
+                first = items[0]
+                rest = items[1:]
+                for partition in _bell_partitions_gate(rest):
+                    yield [[first]] + partition
+                    for bi in range(len(partition)):
+                        new_part = [g[:] for g in partition]
+                        new_part[bi] = [first] + new_part[bi]
+                        yield new_part
+
+            def _interaction_penalty_gate(partition, imap):
+                """Penalty for partition violating interaction structure."""
+                penalty = 0.0
+                for group in partition:
+                    for a in range(len(group)):
+                        for b in range(a + 1, len(group)):
+                            key = (
+                                min(group[a], group[b]),
+                                max(group[a], group[b]),
+                            )
+                            info = imap.get(key, {})
+                            if info.get("type") == "synergistic":
+                                penalty += 0.15
+                            elif info.get("type") == "antagonistic":
+                                penalty += 0.30
+                all_groups = partition
+                for gi in range(len(all_groups)):
+                    for gj in range(gi + 1, len(all_groups)):
+                        for a in all_groups[gi]:
+                            for b in all_groups[gj]:
+                                key = (min(a, b), max(a, b))
+                                info = imap.get(key, {})
+                                if info.get("type") == "substitutive":
+                                    penalty += 0.10
+                                elif info.get("type") == "independent":
+                                    penalty += 0.05
+                return penalty
+
+            def _eval_gate_partition(partition, dmasks, rr, imap, min_pr):
+                """Evaluate Bell Partition for gate rules.
+                Within group: AND deny (both must deny) = OR pass.
+                Between groups: OR deny (any group denies) = AND pass."""
+                combined_deny = np.zeros(len(rr), dtype=bool)
+                for group in partition:
+                    group_deny = np.ones(len(rr), dtype=bool)
+                    for idx in group:
+                        group_deny = group_deny & dmasks[idx]
+                    combined_deny = combined_deny | group_deny
+
+                pass_mask = ~combined_deny
+                n_p = int(pass_mask.sum())
+                n_d = int(combined_deny.sum())
+                if n_p < 30 or n_d < 10:
+                    return None
+                pr = n_p / len(rr)
+                if pr < min_pr:
+                    return None
+
+                rr_p = rr[pass_mask]
+                rr_d = rr[combined_deny]
+                effect = float(np.nanmean(rr_p)) - float(np.nanmean(rr_d))
+                baseline_rr = float(np.nanmean(rr))
+                deny_rr = float(np.nanmean(rr_d))
+                tail_cap = max(baseline_rr - deny_rr, 0)
+
+                _log_pr = float(np.log(max(pr, 0.01)))
+                i_pen = _interaction_penalty_gate(partition, imap)
+                _base = max(abs(baseline_rr), 0.01)
+                score = (
+                    0.35 * min(tail_cap / _base, 1.0)
+                    + 0.30 * max(effect, 0) / _base
+                    + 0.20 * (_log_pr + 3) / 3
+                    - i_pen
+                )
+                return {
+                    "pass_rate": pr,
+                    "effect": effect,
+                    "tail_capture": tail_cap,
+                    "score": score,
+                    "deny_mask": combined_deny,
+                    "partition": partition,
+                    "penalty": i_pen,
+                }
+
+            indices = list(range(n_rules))
+            all_partitions = list(_bell_partitions_gate(indices))
+
+            # Gate 约束:
+            # 1. partition 必须 ≥2 组 (单组 = 全 OR-pass = 无 gate)
+            # 2. pass_rate ≤ 85% (gate 必须有实际筛选效果)
+            GATE_MAX_PASS_RATE = 0.85
+            part_results = []
+            for part in all_partitions:
+                if len(part) < 2:
+                    continue  # 单组 = 取消 gate, 不允许
+                res = _eval_gate_partition(
+                    part,
+                    deny_masks,
+                    rr_arr,
+                    interaction_map,
+                    min_combined_pass_rate,
+                )
+                if res is not None and res["pass_rate"] <= GATE_MAX_PASS_RATE:
+                    part_results.append(res)
+
+            if part_results:
+                part_results.sort(key=lambda x: -x["score"])
+                best = part_results[0]
+
+                def _fmt_gate_partition(part, rules):
+                    groups = []
+                    for g in part:
+                        names = [rules[i].get("id", f"r{i}") for i in g]
+                        if len(names) == 1:
+                            groups.append(names[0])
+                        else:
+                            groups.append("(" + " ∨ ".join(names) + ")")
+                    return " ∧ ".join(groups)
+
+                print(
+                    f"\n  📊 Gate Bell Partition "
+                    f"({len(all_partitions)} structures, "
+                    f"{len(part_results)} pass min_pr≥{min_combined_pass_rate:.0%})"
+                )
+                print(
+                    f"   score = 0.35×tail_cap + 0.30×effect "
+                    f"+ 0.20×log(pr) - penalty"
+                )
+                for pi, r in enumerate(part_results[:5]):
+                    marker = " ← BEST" if pi == 0 else ""
+                    pen_str = f" pen={r['penalty']:.2f}" if r["penalty"] > 0 else ""
+                    print(
+                        f"   {pi+1}. "
+                        f"{_fmt_gate_partition(r['partition'], all_rules)}"
+                        f"  effect={r['effect']:+.4f} "
+                        f"tail={r['tail_capture']:.4f} "
+                        f"pass={r['pass_rate']:.1%} "
+                        f"score={r['score']:.4f}{pen_str}{marker}"
+                    )
+
+                best_part = best["partition"]
+                is_pure_and = all(len(g) == 1 for g in best_part)
+
+                if not is_pure_and and best["pass_rate"] >= min_combined_pass_rate:
+                    # Restructure: merge OR-pass groups into compound gates
+                    print(
+                        f"\n  ✅ 最优结构非 pure-AND, "
+                        f"重构 gate 规则 (OR-pass groups)..."
+                    )
+                    new_rules = []
+                    for gid, group in enumerate(best_part):
+                        if len(group) == 1:
+                            new_rules.append(all_rules[group[0]])
+                        else:
+                            # Merge into single compound gate (AND-deny)
+                            merged_when = {"all_of": []}
+                            merged_ids = []
+                            for idx in group:
+                                r = all_rules[idx]
+                                when = r.get("when", {})
+                                if "all_of" in when:
+                                    merged_when["all_of"].extend(when["all_of"])
+                                else:
+                                    for feat, conds in when.items():
+                                        merged_when["all_of"].append({feat: conds})
+                                merged_ids.append(r.get("id", f"r{idx}"))
+
+                            grp_rules = [all_rules[i] for i in group]
+                            merged_rule = {
+                                "id": "bell_or_pass_" + "_".join(merged_ids),
+                                "tag": f"BELL_OR_PASS_{gid}",
+                                "phase": "hard_gate",
+                                "priority": min(
+                                    r.get("priority", 10) for r in grp_rules
+                                ),
+                                "reason": (
+                                    "Bell Partition OR-pass: " + " ∨ ".join(merged_ids)
+                                ),
+                                "when": merged_when,
+                                "then": {"action": "deny"},
+                                "comment": (
+                                    "OR-pass: deny only when ALL of "
+                                    f"[{', '.join(merged_ids)}] "
+                                    "deny simultaneously"
+                                ),
+                            }
+                            if any(all_rules[i].get("frozen") for i in group):
+                                merged_rule["frozen"] = True
+                            new_rules.append(merged_rule)
+                            print(
+                                f"     🔗 合并 {merged_ids} "
+                                f"→ OR-pass group (AND-deny)"
+                            )
+
+                    all_rules = new_rules
+                    config["hard_gates"] = all_rules
+                    combined_rate = best["pass_rate"]
+                    bell_applied = True
+                    print(
+                        f"  ✅ Bell Partition 重构: "
+                        f"{len(new_rules)} gates, "
+                        f"pass rate={combined_rate:.1%}"
+                    )
+                elif is_pure_and:
+                    print(f"\n  ✅ 最优结构 = pure-AND, 保持原样")
+
+        # ── Fallback: interaction-aware 裁剪 ──
+        if not bell_applied and combined_rate < min_combined_pass_rate:
             print(
                 f"  ⚠️  累积 pass rate {combined_rate:.1%} < "
                 f"下限 {min_combined_pass_rate:.0%}"
             )
-            print(
-                f"  🔧 自动裁剪: 按 lift 升序移除 optimized gates (frozen 不可移除)..."
-            )
 
-            # 只裁剪 optimized gates, 不裁剪 frozen prefilter gates
+            # Build interaction-aware priority for each rule
+            # Substitutive rules are cheaper to remove (redundant)
+            print(f"  🔧 Interaction-aware 裁剪...")
             prunable = []
             for rule in kept_rules:
                 if rule.get("frozen"):
-                    continue  # frozen 规则不可裁剪
+                    continue
                 rule_id = rule.get("id", "")
                 opt = optimization_results.get(rule_id, {})
                 lift = opt.get("lift_at_mid", opt.get("lift", 0))
                 lv = lift if isinstance(lift, (int, float)) else 0
-                prunable.append((rule, lv))
-            prunable.sort(key=lambda x: abs(x[1]))
+
+                # Count substitutive relationships for this rule
+                ri_all = len(prefilter_gates) + kept_rules.index(rule)
+                sub_count = 0
+                for (a, b), info in interaction_map.items():
+                    if ri_all in (a, b):
+                        if info.get("type") == "substitutive":
+                            sub_count += 1
+                # Lower = remove first (substitutive + low lift)
+                prune_priority = abs(lv) - sub_count * 0.05
+                prunable.append((rule, prune_priority))
+            prunable.sort(key=lambda x: x[1])
 
             remaining_opt = [r for r, _ in prunable]
             pruned_ids = []
@@ -1557,16 +1864,40 @@ def _promote_gate_to_archetypes(
             while remaining_opt and combined_rate < min_combined_pass_rate:
                 weakest = remaining_opt.pop(0)
                 wid = weakest.get("id", "unknown")
-                wlift = next((lv for r, lv in prunable if r is weakest), 0)
+                wpri = next((pv for r, pv in prunable if r is weakest), 0)
                 pruned_ids.append(wid)
                 test_rules = prefilter_gates + remaining_opt
                 combined_rate = _simulate_combined_pass_rate(test_rules, df)
                 print(
-                    f"    ✂️  移除 {wid} (lift={wlift:.3f}) "
+                    f"    ✂️  移除 {wid} (priority={wpri:.3f}) "
                     f"→ pass rate={combined_rate:.1%}"
                 )
 
             kept_rules = remaining_opt
+
+            # ── Phase 2: frozen prefilter gates ──
+            if combined_rate < min_combined_pass_rate and len(prefilter_gates) > 1:
+                print(
+                    f"  🔧 Phase 2: optimized 裁完仍 "
+                    f"{combined_rate:.1%}, "
+                    f"裁剪 frozen prefilter gates "
+                    f"(保留最强 1 条)..."
+                )
+                pf_prunable = list(reversed(prefilter_gates[1:]))
+                for pf_rule in pf_prunable:
+                    if combined_rate >= min_combined_pass_rate:
+                        break
+                    pfid = pf_rule.get("id", "unknown")
+                    prefilter_gates = [g for g in prefilter_gates if g is not pf_rule]
+                    pruned_ids.append(pfid)
+                    test_rules = prefilter_gates + kept_rules
+                    combined_rate = _simulate_combined_pass_rate(test_rules, df)
+                    print(
+                        f"    ✂️  移除 frozen {pfid} "
+                        f"→ pass rate={combined_rate:.1%} "
+                        f"(剩余 {len(prefilter_gates)} prefilter)"
+                    )
+
             all_rules = prefilter_gates + kept_rules
             config["hard_gates"] = all_rules
 
@@ -1575,15 +1906,16 @@ def _promote_gate_to_archetypes(
                     {
                         "id": rid,
                         "status": "cumulative_pruned",
-                        "reason": f"AND pass rate < {min_combined_pass_rate:.0%}",
+                        "reason": (f"AND pass rate " f"< {min_combined_pass_rate:.0%}"),
                     }
                     for rid in pruned_ids
                 )
                 print(
-                    f"  ✅ 裁剪后: {n_prefilter} prefilter + {len(kept_rules)} optimized, "
+                    f"  ✅ 裁剪后: {len(prefilter_gates)} prefilter"
+                    f" + {len(kept_rules)} optimized, "
                     f"pass rate={combined_rate:.1%}"
                 )
-        else:
+        elif not bell_applied:
             print(
                 f"  ✅ 累积 pass rate {combined_rate:.1%} >= "
                 f"下限 {min_combined_pass_rate:.0%}, 无需裁剪"
@@ -1728,6 +2060,12 @@ def main() -> int:
         "如果低于这个阈值, 会按 lift 从弱到强自动裁剪规则. 默认 0.05 (5%%). "
         "由 research_pipeline.yaml kpi_gates.gate.min_combined_pass_rate 控制.",
     )
+    parser.add_argument(
+        "--cutoff-date",
+        type=str,
+        default=None,
+        help="Only use data before this date for optimization (IS cutoff, avoid OOS lookahead)",
+    )
     args = parser.parse_args()
 
     # Load logs
@@ -1738,6 +2076,18 @@ def main() -> int:
 
     df = pd.read_parquet(logs_path)
     print(f"✅ Loaded {len(df)} rows from {logs_path}")
+
+    # Apply cutoff date (IS only — avoid OOS lookahead)
+    if args.cutoff_date:
+        _ts = "timestamp" if "timestamp" in df.columns else None
+        if _ts is None and df.index.name == "timestamp":
+            df = df.reset_index()
+            _ts = "timestamp"
+        if _ts:
+            df[_ts] = pd.to_datetime(df[_ts])
+            _n0 = len(df)
+            df = df[df[_ts] < args.cutoff_date]
+            print(f"   IS cutoff {args.cutoff_date}: {_n0} → {len(df)} rows")
 
     # ── Prefilter: 在生产分布上验证 plateau ──
     if args.prefilter:

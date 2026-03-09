@@ -156,7 +156,8 @@ class EntryFilterChecker:
 
 
 # =============================================================================
-# 4. [REMOVED] Evidence 评分计算 — 已删除 (evidence 无效)
+# 4. Evidence 评分 — 由 archetype.evidence_config.compute_composite_score() 计算
+#    在 GenericLiveStrategy.decide() 和 check_signal() 中内联调用
 # =============================================================================
 
 
@@ -425,10 +426,32 @@ class GenericLiveStrategy:
             funnel["entry_filter"] = True
             logger.debug("✅ Entry filter passed")
 
-        # ── 4. Evidence 评分 (已删除, 固定 0.5) ──
+        # ── 4. Evidence 评分 ──
         evidence_score = 0.5
+        evidence_breakdown = {}
+        if (
+            self.archetype
+            and self.archetype.evidence
+            and self.archetype.evidence.features
+        ):
+            feature_values = {
+                feat.feature: features.get(feat.feature)
+                for feat in self.archetype.evidence.features
+                if features.get(feat.feature) is not None
+            }
+            if feature_values:
+                evidence_score, evidence_breakdown = (
+                    self.archetype.evidence.compute_composite_score(
+                        feature_values, self._quantiles
+                    )
+                )
+                logger.debug(
+                    f"📊 Evidence: score={evidence_score:.3f}, "
+                    f"breakdown={evidence_breakdown}"
+                )
 
-        funnel["evidence"] = True  # 始终通过
+        funnel["evidence"] = True
+        funnel["evidence_score"] = round(evidence_score, 4)
 
         # ── 5. 执行参数生成 ──
         exec_params = {}
@@ -439,13 +462,15 @@ class GenericLiveStrategy:
 
         # ── 6. 构建 TradeIntent ──
         action = "LONG" if direction == 1 else "SHORT"
+        # evidence 缩放: score 0→0.5x, 0.5→0.75x, 1→1.0x
+        ev_size_multiplier = 0.5 + evidence_score
         intent = TradeIntent(
             action=action,
             symbol=symbol,
             archetype=self.strategy_name,
             execution_strategy=self.strategy_name,
             confidence=evidence_score,
-            size_multiplier=1.0,
+            size_multiplier=ev_size_multiplier,
             execution_tags=[self.strategy_name, side_str],
             execution_profile={
                 "rr_constraints": {
@@ -527,9 +552,27 @@ class GenericLiveStrategy:
             if not ef_passed:
                 return False, {"reject_reason": "entry_filter_deny"}
 
-        # ── 4. Evidence Score (已删除, 固定 0.5) ──
+        # ── 4. Evidence Score ──
         evidence_score = 0.5
         adjusted_score = 0.5
+        evidence_breakdown = {}
+        if (
+            self.archetype
+            and self.archetype.evidence
+            and self.archetype.evidence.features
+        ):
+            feature_values = {
+                feat.feature: features.get(feat.feature)
+                for feat in self.archetype.evidence.features
+                if features.get(feat.feature) is not None
+            }
+            if feature_values:
+                adjusted_score, evidence_breakdown = (
+                    self.archetype.evidence.compute_composite_score(
+                        feature_values, self._quantiles
+                    )
+                )
+                evidence_score = adjusted_score
 
         # Tier 选择
         exec_params = {}
@@ -546,7 +589,7 @@ class GenericLiveStrategy:
                 f"(gate_w={gate_weight:.2f})"
             ),
             "evidence_score": adjusted_score,
-            "evidence_breakdown": {},
+            "evidence_breakdown": evidence_breakdown,
             "gate_weight": gate_weight,
             "tier": exec_params,
             "atr": features.get("atr", 0.0),

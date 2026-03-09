@@ -16,6 +16,11 @@ def init_order_manager_from_env() -> Optional[Any]:
         "true",
         "yes",
     }
+    shadow = os.getenv("MLBOT_ORDER_SHADOW_MODE", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     if testnet:
         api_key = os.getenv("BINANCE_FUTURES_TESTNET_API_KEY", "")
         api_secret = os.getenv("BINANCE_FUTURES_TESTNET_API_SECRET", "")
@@ -27,6 +32,16 @@ def init_order_manager_from_env() -> Optional[Any]:
             "BINANCE_FUTURES_API_SECRET", ""
         )
     if not api_key or not api_secret:
+        if shadow:
+            # Shadow 模式不需要真实 API key, 创建不连接交易所的实例
+            try:
+                from src.order_management.storage import Storage
+                from src.order_management.order_manager import OrderManager
+
+                storage = Storage(str(db_path))
+                return OrderManager(storage, binance_api=None, shadow=True)
+            except Exception:
+                return None
         return None
     db_path = os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db")
     try:
@@ -41,6 +56,6 @@ def init_order_manager_from_env() -> Optional[Any]:
             testnet=bool(testnet),
             use_proxy=None,
         )
-        return OrderManager(storage, binance_api)
+        return OrderManager(storage, binance_api, shadow=shadow)
     except Exception:
         return None

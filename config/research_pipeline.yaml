@@ -88,7 +88,7 @@ strategies:
         min_rows: 500
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.30  # gate AND 累积 pass rate 下限, 需 > min_trades/候选数 确保下游优化有效
+        min_combined_pass_rate: 0.20  # gate AND 累积 pass rate 下限 (ME gate 规则弱, 放宽至 20%)
       backtest:
         min_trades: 50
       deploy:

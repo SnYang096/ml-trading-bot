@@ -540,7 +540,6 @@ def run_data_download(
             data_dir,
             "--parquet-dir",
             parquet_dir,
-            "--yes",
         ],
         log,
         dry_run=dry_run,
@@ -761,8 +760,6 @@ def run_strategy_pipeline(
         if shap_active
         else scfg["features_gate"]
     )
-    # [REMOVED] Evidence 模块已删除 (Spearman r=-0.068, p=0.478, 无效)
-    # features_evidence_file 不再使用
 
     # ── Step 3: Prefilter (--promote) ──
     if scfg.get("has_prefilter"):
@@ -847,6 +844,15 @@ def run_strategy_pipeline(
     rc, out = run_step("Gate Train", gate_train_args, log, dry_run=dry_run)
     gate_dir = find_output_dir(out, strategy) or prepare_dir
 
+    # ── Sync gate_draft: Gate Train 写到 config/ 生产目录, 需同步回实验目录 ──
+    if not dry_run:
+        prod_gate_draft = PROJECT_ROOT / f"config/strategies/{strategy}/gate_draft.yaml"
+        exp_gate_draft = Path(f"{config_dir}/gate_draft.yaml")
+        if prod_gate_draft.exists():
+            import shutil as _shutil_gd
+
+            _shutil_gd.copy2(prod_gate_draft, exp_gate_draft)
+
     # ── Early termination: if Gate Train failed, downstream steps are useless ──
     gate_pred = Path(f"{gate_dir}/predictions.parquet")
     if rc != 0 or (not dry_run and not gate_pred.exists()):
@@ -881,6 +887,8 @@ def run_strategy_pipeline(
     )
 
     # Gate optimize (--promote, 在 gate 应用后的数据上做 plateau 验证)
+    # 注: logs_gated.parquet 只含 holdout 数据 (predictions.parquet 只输出 OOS)
+    #     不需要 --cutoff-date, 数据已经是 OOS-only
     gate_optimize_cmd = [
         "python",
         "scripts/optimize_gate_unified.py",
@@ -958,14 +966,39 @@ def run_strategy_pipeline(
         dry_run=dry_run,
     )
 
-    # [REMOVED] Step 6: Evidence 训练/优化 — 已删除
-    # 验证结论: Prefilter+Gate 后 evidence 无区分力 (Spearman r=-0.068, p=0.478)
-    # 详见 z实验_005_统一研究/evidence单调性验证.md
+    # ── IS/OOS 说明 ──
+    # logs_gated.parquet 只含 holdout 数据 (predictions.parquet 只输出 OOS 预测)
+    # 因此 Evidence/Entry Filter 不需要 --cutoff-date, 数据已经是 OOS-only
+    # 未来如果 predictions.parquet 包含 IS+OOS, 需要恢复 cutoff 过滤
+
+    # ── Step 6: Evidence Discovery (Spearman + Quintile Monotonicity) ──
+    # 替代旧 LightGBM regression → SHAP∩Gain 方法
+    # 在 gate 放行子集上直接验证 volatility/liquidity/leverage 特征的分层作用
+    evidence_discover_cmd = [
+        "python",
+        "scripts/discover_evidence_candidates.py",
+        "--logs",
+        f"{gate_dir}/logs_gated.parquet",
+        "--strategy",
+        strategy,
+        "--strategies-root",
+        strategies_root,
+        "--output",
+        f"{gate_dir}/evidence_discovery.json",
+        "--promote",
+    ]
+    run_step(
+        "Evidence Discover",
+        evidence_discover_cmd,
+        log,
+        dry_run=dry_run,
+    )
     evidence_dir = gate_dir  # 后续步骤沿用 gate_dir
 
     # ── Step 7: Entry Filter (--meta-algorithm --promote) ──
     # 必须用 logs_gated.parquet：Entry Filter 的阈值必须在 gate 过滤后的
     # 分布上优化，否则会和 gate 产生 distribution mismatch
+    # 评估方法: forward_rr t-test (与 Evidence 同一套 Spearman 方法论, 不走 execution simulation)
     run_step(
         "Entry Filter Optimize",
         [
@@ -989,9 +1022,10 @@ def run_strategy_pipeline(
     # Execution 参数精调后续用事件回测 + --use-1min 手动优化.
     print("\n  ⏭️  Step 8 SKIP: Execution Optimize 跳过 (默认 2ATR, 后续事件回测精调)")
 
-    # ── Step 9: 向量回测 (快速) ──
-    # 使用 backtest_execution_layer.py (向量化, 不需 1min 数据, 快速出结果)
-    # Execution 参数优化需要事件回测精度, 但管线最终验证用向量回测足够
+    # ── Step 9: 向量回测 (快速, 简单执行模式) ──
+    # 使用 --simple-execution: 固定 SL=1.5R, TP=3R, 50bar timeout
+    # 目的: 中性评估 Gate/Evidence/Entry Filter 信号质量
+    # Execution 参数精调 (trailing/structural) 放到事件回测阶段
     bt_cmd = [
         "python",
         "scripts/backtest_execution_layer.py",
@@ -1005,6 +1039,7 @@ def run_strategy_pipeline(
         holdout_start,
         "--test-end",
         end_date,
+        "--simple-execution",
     ]
     rc, bt_out = run_step(
         "Vector Backtest",

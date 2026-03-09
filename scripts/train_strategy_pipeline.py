@@ -2753,32 +2753,34 @@ def train_strategy(
                 return op_func(df[feat], val), True
 
             for rule in pf_rules:
-                # ── any_of OR 组: 满足任一子条件即通过 ──
+                # ── any_of OR 组: 任一子规则的 deny 条件不成立即通过 ──
+                # 语义: prefilter.yaml operator = DENY 方向 (分析脚本的 deny_mask)
+                #        any_of = "至少一条不 deny" = OR of (NOT deny_i)
                 if "any_of" in rule:
                     sub_rules = rule["any_of"]
                     rationale = rule.get("rationale", "")
                     n_before_train = len(df_train_filtered)
                     n_before_test = len(df_test_filtered)
 
-                    or_mask_train = pd.Series(False, index=df_train_filtered.index)
-                    or_mask_test = pd.Series(False, index=df_test_filtered.index)
+                    or_pass_train = pd.Series(False, index=df_train_filtered.index)
+                    or_pass_test = pd.Series(False, index=df_test_filtered.index)
                     sub_descs = []
                     for sub in sub_rules:
                         sf, sop, sv = sub["feature"], sub["operator"], sub["value"]
-                        m_tr, ok_tr = _apply_single_rule(
+                        deny_tr, ok_tr = _apply_single_rule(
                             df_train_filtered, sf, sop, sv, _OPS
                         )
-                        m_te, ok_te = _apply_single_rule(
+                        deny_te, ok_te = _apply_single_rule(
                             df_test_filtered, sf, sop, sv, _OPS
                         )
-                        if ok_tr and m_tr is not None:
-                            or_mask_train |= m_tr
-                        if ok_te and m_te is not None:
-                            or_mask_test |= m_te
+                        if ok_tr and deny_tr is not None:
+                            or_pass_train |= ~deny_tr  # NOT deny = pass
+                        if ok_te and deny_te is not None:
+                            or_pass_test |= ~deny_te
                         sub_descs.append(f"{sf}{sop}{sv}")
 
-                    df_train_filtered = df_train_filtered[or_mask_train].copy()
-                    df_test_filtered = df_test_filtered[or_mask_test].copy()
+                    df_train_filtered = df_train_filtered[or_pass_train].copy()
+                    df_test_filtered = df_test_filtered[or_pass_test].copy()
                     desc = " OR ".join(sub_descs)
                     print(
                         f"   ✅ any_of({desc}): "
@@ -2790,7 +2792,9 @@ def train_strategy(
                     )
                     continue
 
-                # ── 普通 AND 规则 (向后兼容) ──
+                # ── 普通 AND 规则: deny 条件不成立才保留 ──
+                # 语义: prefilter.yaml operator = DENY 方向
+                #        keep = NOT op_func(feat, val)
                 feat = rule["feature"]
                 op_str = rule["operator"]
                 val = rule["value"]
@@ -2805,10 +2809,10 @@ def train_strategy(
                 n_before_train = len(df_train_filtered)
                 n_before_test = len(df_test_filtered)
                 df_train_filtered = df_train_filtered[
-                    op_func(df_train_filtered[feat], val)
+                    ~op_func(df_train_filtered[feat], val)
                 ].copy()
                 df_test_filtered = df_test_filtered[
-                    op_func(df_test_filtered[feat], val)
+                    ~op_func(df_test_filtered[feat], val)
                 ].copy()
                 rationale = rule.get("rationale", "")
                 print(
@@ -4106,9 +4110,13 @@ def train_strategy(
                     # - regression (Return Tree): evidence_candidates.yaml
                     # - binary (Failure Tree): risk_gate_draft.yaml
                     if task_type == "regression":
-                        # [REMOVED] Evidence 候选生成已删除 (evidence 无效)
-                        # 仅保留 tree rules 导出
-                        pass
+                        # Evidence 候选发现不再依赖 LightGBM tree rules
+                        # 改用 discover_evidence_candidates.py (Spearman + Quintile)
+                        # 在 auto_research_pipeline Step 6 中自动调用
+                        print(
+                            f"   ℹ️  Evidence discovery deferred to "
+                            f"discover_evidence_candidates.py"
+                        )
                     else:
                         risk_gate_path = output_dir / "risk_gate_draft.yaml"
                         _predictions_path = output_dir / "predictions.parquet"

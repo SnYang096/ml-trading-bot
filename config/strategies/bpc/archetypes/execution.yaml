@@ -1,31 +1,9 @@
-# BPC Execution 配置 (trend_hold profile)
-# 版本: 44
-# 更新时间: 2026-03-05
-#
-# ┌─────────────────────────────────────────────────────────┐
-# │  BPC trend_hold: EMA200 = regime filter + structural exit │
-# │  主退出: EMA200 cross (趋势结构破坏)                  │
-# │  灾难保护: trail_r=7.0 (仅防黑天鹅闪崩)              │
-# │  Grid Search Best: initial_r=4.0, activation_r=2.5       │
-# └─────────────────────────────────────────────────────────┘
-#
-version: 44
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
-stop_loss:
-  type: trailing
-  initial_r: 4.0
-  trailing:
-    activation_r: 2.5
-    trail_r: 7.0             # 灯灾保护: 仅防黑天鹅闪崩, EMA200 是主退出
-    step_r: 0.5
-  structural_exit: ema200    # 主退出: 价格穿越 EMA200 = 趋势结构破坏
-take_profit:
-  enabled: false
 holding:
   max_holding_bars: null
-  time_stop_bars: 0        # fat tail: 禁用时间止损，trailing stop 是唯一退出机制
+  time_stop_bars: 0
 optimization:
   enabled: true
   params:
@@ -44,3 +22,13 @@ optimization:
       - 0.5
       - 3.0
       step: 0.5
+stop_loss:
+  initial_r: 3.0
+  trailing:
+    activation_r: 0.5
+    step_r: 0.5
+    trail_r: 0.5
+  type: trailing
+take_profit:
+  enabled: false
+version: 46

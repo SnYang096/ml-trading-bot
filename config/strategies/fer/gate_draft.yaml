@@ -1,5 +1,5 @@
 # FER Gate Draft (auto-generated)
-# 来源: results/train_final_20260306_011712_rr_extreme/fer
+# 来源: results/train_final_20260308_205007_rr_extreme/fer
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fer
@@ -16,54 +16,40 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_fer_aggressor_absorption
-  tag: HARD_FER_AGGRESSOR_ABSORPTION
-  phase: hard_gate
-  priority: 10
-  reason: 统计验证规则 (lift=1.24)
-  when:
-    fer_aggressor_absorption:
-      value_gt: 0.0004
-  then:
-    action: deny
-  comment: 'statistical(lift=1.24): fer_aggressor_absorption > 0.0004021'
 - id: gate_cvd_change_5_normalized
   tag: HARD_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.11)
+  priority: 10
+  reason: 统计验证规则 (lift=1.55)
   when:
     cvd_change_5_normalized:
-      value_gt: 0.0082
+      value_lt: -0.0455
   then:
     action: deny
-  comment: 'statistical(lift=1.11): cvd_change_5_normalized > 0.008218'
-- id: gate_fer_signed_efficiency_fer_volume_price_divergence
-  tag: HARD_FER_SIGNED_EFFICIENCY_FER_VOLUME_PRICE_DIVERGENCE
+  comment: 'statistical(lift=1.55): cvd_change_5_normalized < -0.04546'
+- id: gate_fer_signed_efficiency
+  tag: HARD_FER_SIGNED_EFFICIENCY
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.10)
+  when:
+    fer_signed_efficiency:
+      value_gt: 0.0012
+  then:
+    action: deny
+  comment: 'statistical(lift=1.10): fer_signed_efficiency > 0.001208'
+- id: gate_fer_volume_price_divergence_fer_volume_price_divergence
+  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE_FER_VOLUME_PRICE_DIVERGENCE
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.59)
-  when:
-    all_of:
-    - fer_signed_efficiency:
-        value_lt: -0.0
-    - fer_volume_price_divergence:
-        value_gt: 0.85
-  then:
-    action: deny
-  comment: 'statistical(lift=1.59): fer_signed_efficiency < -1.497e-09 & fer_volume_price_divergence > 0.85'
-- id: gate_fer_volume_price_divergence_fer_signed_efficiency_pct
-  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE_FER_SIGNED_EFFICIENCY_PCT
-  phase: hard_gate
-  priority: 13
-  reason: 统计验证规则 (lift=1.52)
+  reason: 统计验证规则 (lift=1.06)
   when:
     all_of:
     - fer_volume_price_divergence:
-        value_gt: 0.85
-    - fer_signed_efficiency_pct:
-        value_lt: 0.275
+        value_gt: 0.425
+    - fer_volume_price_divergence:
+        value_lt: 0.675
   then:
     action: deny
-  comment: 'statistical(lift=1.52): fer_volume_price_divergence > 0.85 & fer_signed_efficiency_pct < 0.275'
+  comment: 'statistical(lift=1.06): fer_volume_price_divergence > 0.425 & fer_volume_price_divergence < 0.675'
 guardrails: []

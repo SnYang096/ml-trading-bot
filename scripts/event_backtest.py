@@ -123,7 +123,7 @@ class ClosedTrade:
     exit_reason: str
     archetype: str = ""
     tier_name: str = ""
-    evidence_score: float = 0.5  # [DEPRECATED] 始终为 0.5 (evidence 已删除)
+    evidence_score: float = 0.5  # evidence composite score (0-1)
     bars_held: int = 0
     is_add_position: bool = False  # 加仓标记
     size_multiplier: float = 1.0  # regime position scale
@@ -143,10 +143,16 @@ class PositionSimulator:
       SHORT: if high >= SL → 止损; elif low <= TP → 止盈
     """
 
-    def __init__(self, default_bar_minutes: int = 240, max_positions: int = 1):
+    def __init__(
+        self,
+        default_bar_minutes: int = 240,
+        max_positions: int = 1,
+        fee_rate: float = 0.0,
+    ):
         self._positions: Dict[str, Dict[str, Any]] = {}
         self.default_bar_minutes = default_bar_minutes
         self.max_positions = max_positions
+        self.fee_rate = fee_rate  # 单边手续费率 (如 0.0004 = 0.04% taker)
         self.closed_trades: List[ClosedTrade] = []
         # structural exit: 最新 EMA200 价格 (由主循环在每根 4H bar 到达时更新)
         self._structural_price: Optional[float] = None
@@ -274,6 +280,11 @@ class PositionSimulator:
                     else (entry_price - exit_price)
                 )
                 _raw_r = pnl_usd / risk if risk > 0 else 0.0
+                # 扣除双边手续费 (开仓+平仓)
+                # fee_r = (entry_price + exit_price) × fee_rate / risk
+                if self.fee_rate > 0 and risk > 0:
+                    fee_r = (entry_price + exit_price) * self.fee_rate / risk
+                    _raw_r -= fee_r
                 # 应用 position scale (regime × evidence) — 与向量回测 exec_returns *= _position_scale 对齐
                 pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
 
@@ -338,6 +349,9 @@ class PositionSimulator:
             risk = pos.get("initial_risk_distance") or pos.get("atr_at_entry", 0) or 0
             pnl_usd = (price - entry_price) if is_long else (entry_price - price)
             _raw_r = pnl_usd / risk if risk > 0 else 0.0
+            if self.fee_rate > 0 and risk > 0:
+                fee_r = (entry_price + price) * self.fee_rate / risk
+                _raw_r -= fee_r
             pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
             trade = ClosedTrade(
                 symbol=pos.get("symbol", ""),
@@ -388,6 +402,9 @@ class PositionSimulator:
                 (close_price - entry_price) if is_long else (entry_price - close_price)
             )
             _raw_r = pnl_usd / risk if risk > 0 else 0.0
+            if self.fee_rate > 0 and risk > 0:
+                fee_r = (entry_price + close_price) * self.fee_rate / risk
+                _raw_r -= fee_r
             pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
             trade = ClosedTrade(
                 symbol=pos.get("symbol", ""),
@@ -827,14 +844,55 @@ def row_to_features(row: pd.Series) -> Dict[str, float]:
     return features
 
 
+def _load_strategy_timeframes() -> Dict[str, str]:
+    """从 research_pipeline.yaml 动态加载策略 timeframe 映射"""
+    import yaml
+
+    _cache_key = "_strategy_timeframes"
+    if hasattr(_load_strategy_timeframes, _cache_key):
+        return getattr(_load_strategy_timeframes, _cache_key)
+
+    fallback = {"me": "60T", "fer": "240T", "bpc": "240T", "lv": "15T"}
+    try:
+        cfg_path = Path("config") / "research_pipeline.yaml"
+        if cfg_path.exists():
+            with open(cfg_path) as f:
+                cfg = yaml.safe_load(f)
+            strats = cfg.get("strategies", {})
+            mapping = {}
+            for s_name, s_cfg in strats.items():
+                tf = s_cfg.get("timeframe", "240T")
+                mapping[s_name.lower()] = tf
+            if mapping:
+                setattr(_load_strategy_timeframes, _cache_key, mapping)
+                return mapping
+    except Exception:
+        pass
+    setattr(_load_strategy_timeframes, _cache_key, fallback)
+    return fallback
+
+
+def _tf_to_minutes(tf: str) -> int:
+    """'15T' → 15, '60T' → 60, '240T' → 240"""
+    tf = tf.strip().upper()
+    if tf.endswith("T"):
+        return int(tf[:-1])
+    if tf.endswith("MIN"):
+        return int(tf[:-3])
+    return int(tf)
+
+
 def _get_bar_minutes(strategy: str) -> int:
     """策略 → 信号时钟分钟数"""
-    return {"me": 60, "fer": 240, "bpc": 240}.get(strategy.lower(), 240)
+    mapping = _load_strategy_timeframes()
+    tf = mapping.get(strategy.lower(), "240T")
+    return _tf_to_minutes(tf)
 
 
 def _get_timeframe(strategy: str) -> str:
     """策略 → timeframe string"""
-    return {"me": "60T", "fer": "240T", "bpc": "240T"}.get(strategy.lower(), "240T")
+    mapping = _load_strategy_timeframes()
+    return mapping.get(strategy.lower(), "240T")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -866,11 +924,13 @@ class EventBacktester:
         strategies_root: Optional[str] = None,
         db_path: Optional[str] = None,
         data_path: Optional[str] = None,
+        fee_rate: float = 0.0,
     ):
         self.strategy_names = [s.lower().strip() for s in strategies]
         self.live_root = live_root
         self.data_path = data_path  # 研究数据目录 (e.g. data/parquet_data)
         self.strategies_root = strategies_root or "config/strategies"
+        self.fee_rate = fee_rate  # 单边手续费率
 
         # Per-strategy timeframe 映射
         self._tf_map: Dict[str, str] = {}  # {strategy: "240T"}
@@ -1174,6 +1234,7 @@ class EventBacktester:
             sim = PositionSimulator(
                 default_bar_minutes=self._primary_bar_minutes,
                 max_positions=len(self.strategy_names),  # 每策略独占 1 slot
+                fee_rate=self.fee_rate,
             )
             if self._om_bridge:
                 sim._om_bridge = self._om_bridge
@@ -1280,7 +1341,7 @@ class EventBacktester:
                         self.pcm.notify_position_closed(upd_sym, ct.archetype)
                     for ct in closed:
                         sl_r_val = 1.0
-                        pnl_usd = _equity * _risk_per_slot * ct.pnl_r / sl_r_val
+                        pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r / sl_r_val
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
@@ -1409,7 +1470,7 @@ class EventBacktester:
                     )
                     for ct in ev_closed:
                         self.pcm.notify_position_closed(evicted_sym, ct.archetype)
-                        pnl_usd = _equity * _risk_per_slot * ct.pnl_r
+                        pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
@@ -1526,7 +1587,7 @@ class EventBacktester:
                     closed = simulator.update(bar_dict)
                     for ct in closed:
                         self.pcm.notify_position_closed(sym, ct.archetype)
-                        pnl_usd = _equity * _risk_per_slot * ct.pnl_r
+                        pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
@@ -1591,26 +1652,28 @@ class EventBacktester:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def _resample_to_4h(bars_1min: pd.DataFrame) -> pd.DataFrame:
-    """1min bars → 4H OHLCV"""
+def _resample_bars(bars_1min: pd.DataFrame, freq: str = "4h") -> pd.DataFrame:
+    """1min bars → 指定 timeframe OHLCV"""
     ohlc = (
-        bars_1min.resample("4h")
+        bars_1min.resample(freq)
         .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
         .dropna()
     )
     if "volume" in bars_1min.columns:
-        ohlc["volume"] = bars_1min["volume"].resample("4h").sum()
+        ohlc["volume"] = bars_1min["volume"].resample(freq).sum()
     return ohlc
 
 
 def generate_trading_map_html(
     result: BacktestResult,
     output_path: str,
+    bar_freq: str = "4h",
 ) -> str:
-    """生成 4H K线 + 交易标记 HTML 交易地图。
+    """生成 K线 + 交易标记 HTML 交易地图。
 
     每个 symbol 一个独立的 K线图, 上面标记入场/出场点。
     使用 Bokeh 生成可交互 HTML。
+    bar_freq: K 线频率, 如 "4h", "1h", "15min"。
     """
     if not BOKEH_AVAILABLE:
         logger.warning("❌ Bokeh 未安装, 无法生成交易地图. pip install bokeh")
@@ -1647,8 +1710,8 @@ def generate_trading_map_html(
         if bars_1min is None or bars_1min.empty:
             continue
 
-        # resample to 4H
-        df_4h = _resample_to_4h(bars_1min)
+        # resample to target frequency
+        df_4h = _resample_bars(bars_1min, freq=bar_freq)
         if df_4h.empty:
             continue
 
@@ -1669,8 +1732,13 @@ def generate_trading_map_html(
         )
         p.grid.grid_line_alpha = 0.3
 
-        # K线实体
-        w = 4 * 60 * 60 * 1000 * 0.6  # 4h bar width in ms
+        # K线实体 — 根据 bar_freq 动态计算宽度
+        _freq_ms = {
+            "15min": 15 * 60 * 1000,
+            "1h": 60 * 60 * 1000,
+            "4h": 4 * 60 * 60 * 1000,
+        }
+        w = _freq_ms.get(bar_freq, 4 * 60 * 60 * 1000) * 0.6
         p.segment(
             df_4h.index[inc],
             df_4h.high[inc],
@@ -1706,44 +1774,52 @@ def generate_trading_map_html(
             fill_alpha=0.8,
         )
 
-        # 交易标记
-        for t in trades:
-            is_win = t.pnl_r > 0
-            color = COLOR_WIN if is_win else COLOR_LOSS
+        # 交易标记 — 批量绘制 (避免逐笔 scatter 导致 ~3N 个图形对象)
+        if trades:
+            # 分 win/loss 两批
+            win_trades = [t for t in trades if t.pnl_r > 0]
+            loss_trades = [t for t in trades if t.pnl_r <= 0]
 
-            # 入场三角
-            entry_marker = (
-                "triangle" if t.side in ("LONG", "BUY") else "inverted_triangle"
-            )
-            p.scatter(
-                x=[t.entry_time],
-                y=[t.entry_price],
-                marker=entry_marker,
-                size=12,
-                color=color,
-                alpha=0.9,
-                legend_label="entry",
-            )
-
-            # 出场方块
-            p.scatter(
-                x=[t.exit_time],
-                y=[t.exit_price],
-                marker="square",
-                size=10,
-                color=color,
-                alpha=0.9,
-                legend_label="exit",
-            )
-
-            # 连接线
-            p.line(
-                x=[t.entry_time, t.exit_time],
-                y=[t.entry_price, t.exit_price],
-                line_color=color,
-                line_dash="dashed",
-                line_alpha=0.5,
-            )
+            for batch, color, label_suffix in [
+                (win_trades, COLOR_WIN, "win"),
+                (loss_trades, COLOR_LOSS, "loss"),
+            ]:
+                if not batch:
+                    continue
+                # 入场
+                entry_x = [t.entry_time for t in batch]
+                entry_y = [t.entry_price for t in batch]
+                p.scatter(
+                    x=entry_x,
+                    y=entry_y,
+                    marker="triangle",
+                    size=10,
+                    color=color,
+                    alpha=0.8,
+                    legend_label=f"entry_{label_suffix}",
+                )
+                # 出场
+                exit_x = [t.exit_time for t in batch]
+                exit_y = [t.exit_price for t in batch]
+                p.scatter(
+                    x=exit_x,
+                    y=exit_y,
+                    marker="square",
+                    size=8,
+                    color=color,
+                    alpha=0.8,
+                    legend_label=f"exit_{label_suffix}",
+                )
+                # 连接线 — 用 multi_line 批量画
+                xs = [[t.entry_time, t.exit_time] for t in batch]
+                ys = [[t.entry_price, t.exit_price] for t in batch]
+                p.multi_line(
+                    xs=xs,
+                    ys=ys,
+                    line_color=color,
+                    line_dash="dashed",
+                    line_alpha=0.4,
+                )
 
         # HoverTool
         p.add_tools(
@@ -1848,6 +1924,12 @@ def main():
         default=None,
         help="交易地图 HTML 输出路径 (4H K线 + 交易标记)",
     )
+    parser.add_argument(
+        "--fee-rate",
+        type=float,
+        default=0.0004,
+        help="单边手续费率 (默认 0.0004 = 0.04%% Binance taker, 设 0 关闭)",
+    )
     args = parser.parse_args()
 
     strategies = [s.strip() for s in args.strategy.split(",")]
@@ -1859,6 +1941,12 @@ def main():
     print(f"  策略:    {', '.join(strategies)}")
     print(f"  Symbols: {symbols}")
     print(f"  天数:    {args.days}")
+    fee_pct = args.fee_rate * 100
+    print(
+        f"  手续费:  {fee_pct:.2f}% 单边 ({fee_pct*2:.2f}% 双边)"
+        if args.fee_rate > 0
+        else "  手续费:  关闭"
+    )
     # --data-path none → 显式使用实盘数据做验证
     if args.data_path and args.data_path.lower() == "none":
         args.data_path = None
@@ -1879,6 +1967,7 @@ def main():
         strategies_root=args.strategies_root,
         db_path=args.db,
         data_path=args.data_path,
+        fee_rate=args.fee_rate,
     )
 
     result = bt.run(
@@ -1897,7 +1986,11 @@ def main():
         _save_json(result, args.output)
 
     if args.trading_map:
-        generate_trading_map_html(result, args.trading_map)
+        # 根据策略 timeframe 选择 K 线频率
+        tf_to_freq = {"15T": "15min", "60T": "1h", "240T": "4h"}
+        primary_tf = _get_timeframe(strategies[0])
+        map_freq = tf_to_freq.get(primary_tf, "4h")
+        generate_trading_map_html(result, args.trading_map, bar_freq=map_freq)
 
     if args.db:
         print(f"\n  💾 订单数据已保存 → {args.db}")

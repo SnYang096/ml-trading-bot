@@ -223,6 +223,7 @@ def _setup_three_strategies(
     tf_bpc = _load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
     tf_me = _load_strategy_timeframe(strategies_root, "me")  # 默认 60T
     tf_fer = _load_strategy_timeframe(strategies_root, "fer")  # 默认 240T
+    tf_lv = _load_strategy_timeframe(strategies_root, "lv")  # 默认 15T
 
     def _tf_to_bar_minutes(tf: str) -> int:
         """'240T' → 240, '60T' → 60"""
@@ -231,9 +232,10 @@ def _setup_three_strategies(
     bar_minutes_bpc = _tf_to_bar_minutes(tf_bpc)
     bar_minutes_me = _tf_to_bar_minutes(tf_me)
     bar_minutes_fer = _tf_to_bar_minutes(tf_fer)
+    bar_minutes_lv = _tf_to_bar_minutes(tf_lv)
 
-    logger.info("🚀 初始化三策略 (timeframe 从 meta.yaml 读取)...")
-    logger.info("  BPC=%s, ME=%s, FER=%s", tf_bpc, tf_me, tf_fer)
+    logger.info("🚀 初始化四策略 (timeframe 从 meta.yaml 读取)...")
+    logger.info("  BPC=%s, ME=%s, FER=%s, LV=%s", tf_bpc, tf_me, tf_fer, tf_lv)
 
     bpc = GenericLiveStrategy(
         strategy_name="bpc",
@@ -256,8 +258,21 @@ def _setup_three_strategies(
         primary_timeframe=tf_fer,
         bar_minutes=bar_minutes_fer,
     )
+    lv = GenericLiveStrategy(
+        strategy_name="lv",
+        strategies_root=strategies_root,
+        trade_size=trade_size,
+        primary_timeframe=tf_lv,
+        bar_minutes=bar_minutes_lv,
+    )
 
-    logger.info("✅ 三策略配置加载完成 (BPC=%s, ME=%s, FER=%s)", tf_bpc, tf_me, tf_fer)
+    logger.info(
+        "✅ 四策略配置加载完成 (BPC=%s, ME=%s, FER=%s, LV=%s)",
+        tf_bpc,
+        tf_me,
+        tf_fer,
+        tf_lv,
+    )
 
     # ── 2. 创建 PCM 仲裁层 (注册策略 + timeframe 绑定) ──
     # 全局配置根目录: strategies_root 的上一层 (live/highcap/config/)
@@ -276,6 +291,7 @@ def _setup_three_strategies(
     pcm.register("bpc", bpc, timeframe=tf_bpc)
     pcm.register("me", me, timeframe=tf_me)
     pcm.register("fer", fer, timeframe=tf_fer)
+    pcm.register("lv", lv, timeframe=tf_lv)
 
     logger.info(f"✅ PCM 仲裁层初始化: 优先级={pcm.archetype_priority}")
 
@@ -285,6 +301,7 @@ def _setup_three_strategies(
     bpc_archetypes = os.path.join(strategies_root, "bpc", "archetypes")
     fer_archetypes = os.path.join(strategies_root, "fer", "archetypes")
     me_archetypes = os.path.join(strategies_root, "me", "archetypes")
+    lv_archetypes = os.path.join(strategies_root, "lv", "archetypes")
 
     # 预提取 FER 特征集 (用于合并到 4H FC)
     fer_extra_feat_set = set()
@@ -325,6 +342,15 @@ def _setup_three_strategies(
             bar_window_size=bar_minutes_me * 2,
             archetypes_dir=me_archetypes,
             primary_timeframe=tf_me,
+        )
+
+    def _make_feature_computer_lv(symbol: str) -> IncrementalFeatureComputer:
+        """LV FC: 15T timeframe 从 meta.yaml 读取"""
+        return IncrementalFeatureComputer(
+            tick_window_minutes=bar_minutes_lv,
+            bar_window_size=bar_minutes_lv * 2,
+            archetypes_dir=lv_archetypes,
+            primary_timeframe=tf_lv,
         )
 
     # ── 4. MultiSymbolManager (primary FC = 4H) ──
@@ -385,9 +411,10 @@ def _setup_three_strategies(
             listener.risk_per_trade = risk_per_trade
         # 注入监控统计收集器
         listener.stats_collector = stats_collector
-        # 注入 ME FC (timeframe 从 meta.yaml 读取)
+        # 注入 ME FC + LV FC (各自独立 timeframe)
         listener.extra_feature_computers = {
             tf_me: _make_feature_computer_me(sym),
+            tf_lv: _make_feature_computer_lv(sym),
         }
 
     logger.info(

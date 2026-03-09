@@ -514,11 +514,15 @@ def _generate_gate_rules_statistical(
     candidates.sort(key=lambda x: -x["score"])
     print(f"   📊 统计验证: {len(candidates)} 候选规则通过筛选")
 
-    # ── Step 4: 相关性剪枝 ──
+    # ── Step 4: 同特征去重 + 相关性剪枝 ──
     selected = []
+    selected_features = set()
     for cand in candidates:
         if len(selected) >= max_rules * 2:
             break
+        # 同特征只保留 score 最高的一条
+        if cand["feature"] in selected_features:
+            continue
         correlated = False
         for sel in selected:
             m1 = cand["_deny_mask"].astype(float)
@@ -531,232 +535,236 @@ def _generate_gate_rules_statistical(
                 break
         if not correlated:
             selected.append(cand)
+            selected_features.add(cand["feature"])
 
     if not selected:
         print("   ⚠️  统计验证: 剪枝后无规则剩余")
         return None
 
-    # ── Step 5: 复合规则发现 (Lift Surface + 单规则组合) ──
+    # ── Step 5: 规则组合优化 (Interaction Screening + Bell Partition) ──
+    # 与 Prefilter Meta-Algorithm 方法论对齐:
+    #   IS: 判断规则对间交互类型 (synergistic/substitutive/independent)
+    #   BP: 搜索最优 AND/OR 组合结构 (Bell Partition)
     compound_rules = []
+    JOINT_DENY_MIN = _gc.get("joint_deny_rate_min", 0.02)
+    JOINT_DENY_MAX = _gc.get("joint_deny_rate_max", 0.50)
 
-    # 5a: Lift Surface — SHAP interaction 引导的 2D 精细网格扫描
-    # 核心思想: 把两个特征的组合空间画成 2D 平面, 找 bad trade lift 最高的矩形区域
-    # 比粗略 threshold sweep 更好: 能发现 non-linear alpha region
-    if _interaction_pairs:
-        # 10 个分位数 bin 边界 → 大约 10×10 = 100 cells per pair
-        surface_quantiles = np.linspace(0.10, 0.90, _gc.get("surface_bins", 9))
-        min_cell_samples = max(20, n_total // _gc.get("min_cell_ratio", 50))
+    if len(selected) >= 2:
+        # ── 5a: Interaction Screening ──
+        _is_map = {}
+        _n_sel = min(len(selected), 6)
+        print(f"\n   📊 Interaction Screening ({_n_sel} 规则)")
+        print(
+            f"   {'Pair':<55s} {'r00':>7s} {'r10':>7s} "
+            f"{'r01':>7s} {'r11':>7s} {'type':>14s}"
+        )
+        print(f"   {'-'*98}")
 
-        for feat_a, feat_b, interact_score in _interaction_pairs[:5]:
-            if feat_a not in pred_df.columns or feat_b not in pred_df.columns:
-                continue
-            col_a = pred_df[feat_a].values.astype(float)
-            col_b = pred_df[feat_b].values.astype(float)
-            valid_ab = ~(np.isnan(col_a) | np.isnan(col_b))
-            if valid_ab.sum() < 100:
-                continue
+        for i in range(_n_sel):
+            for j in range(i + 1, _n_sel):
+                dA = selected[i]["_deny_mask"]
+                dB = selected[j]["_deny_mask"]
+                g00 = ~dA & ~dB
+                g10 = dA & ~dB
+                g01 = ~dA & dB
+                g11 = dA & dB
 
-            # 构建分位数 bin 边界
-            edges_a = np.unique(np.nanquantile(col_a[valid_ab], surface_quantiles))
-            edges_b = np.unique(np.nanquantile(col_b[valid_ab], surface_quantiles))
-            if len(edges_a) < 3 or len(edges_b) < 3:
-                continue
+                r00 = float(np.nanmean(rr_vals[g00])) if g00.sum() > 10 else 0
+                r10 = float(np.nanmean(rr_vals[g10])) if g10.sum() > 10 else 0
+                r01 = float(np.nanmean(rr_vals[g01])) if g01.sum() > 10 else 0
+                r11 = float(np.nanmean(rr_vals[g11])) if g11.sum() > 10 else 0
 
-            # ── 构建 Lift Surface: 每个 cell 计算 lift ──
-            cell_grid = []  # [(ia, ib, lift, bad_rate, count, mask)]
-            for ia in range(len(edges_a) + 1):
-                for ib in range(len(edges_b) + 1):
-                    # 确定 cell 边界
-                    lo_a = edges_a[ia - 1] if ia > 0 else -np.inf
-                    hi_a = edges_a[ia] if ia < len(edges_a) else np.inf
-                    lo_b = edges_b[ib - 1] if ib > 0 else -np.inf
-                    hi_b = edges_b[ib] if ib < len(edges_b) else np.inf
+                additive = r10 + r01 - r00
+                delta = r11 - additive
 
-                    cell_mask = (
-                        (col_a >= lo_a)
-                        & (col_a < hi_a)
-                        & (col_b >= lo_b)
-                        & (col_b < hi_b)
-                        & valid_ab
-                    )
-                    cnt = int(cell_mask.sum())
-                    if cnt < min_cell_samples:
-                        continue
-                    cell_br = float(bad[cell_mask].mean())
-                    cell_lift = (
-                        cell_br / overall_bad_rate if overall_bad_rate > 0 else 0
-                    )
-                    cell_grid.append(
-                        (ia, ib, cell_lift, cell_br, cnt, lo_a, hi_a, lo_b, hi_b)
-                    )
-
-            if not cell_grid:
-                continue
-
-            # ── 找高 lift 区域并合并相邻 cells ──
-            HOT_CELL_LIFT = _gc.get("hot_cell_lift", 1.3)
-            hot_cells = [c for c in cell_grid if c[2] > HOT_CELL_LIFT]
-            if not hot_cells:
-                continue
-
-            # 贪心合并: 从最高 lift cell 开始，尝试扩展到相邻 cells
-            hot_cells.sort(key=lambda x: -x[2])
-            used_cells = set()
-
-            for seed_cell in hot_cells:
-                seed_key = (seed_cell[0], seed_cell[1])
-                if seed_key in used_cells:
-                    continue
-
-                # 收集 seed + 相邻高 lift cells 形成矩形区域
-                region_cells = [seed_cell]
-                used_cells.add(seed_key)
-
-                # 尝试扩展: 查找同行/同列的高 lift cells
-                for other in hot_cells:
-                    ok = (other[0], other[1])
-                    if ok in used_cells:
-                        continue
-                    # 相邻: 行差 ≤ 1 或列差 ≤ 1
-                    if (
-                        abs(other[0] - seed_cell[0]) <= 1
-                        and abs(other[1] - seed_cell[1]) <= 1
-                    ):
-                        region_cells.append(other)
-                        used_cells.add(ok)
-
-                # 计算合并区域的边界
-                region_lo_a = min(c[5] for c in region_cells)
-                region_hi_a = max(c[6] for c in region_cells)
-                region_lo_b = min(c[7] for c in region_cells)
-                region_hi_b = max(c[8] for c in region_cells)
-
-                # 构建合并 mask
-                region_mask = (
-                    (col_a >= region_lo_a)
-                    & (col_a < region_hi_a)
-                    & (col_b >= region_lo_b)
-                    & (col_b < region_hi_b)
-                    & valid_ab
-                )
-                jdr = float(region_mask.mean())
-                JOINT_DENY_MIN = _gc.get("joint_deny_rate_min", 0.02)
-                JOINT_DENY_MAX = _gc.get("joint_deny_rate_max", 0.50)
-                if (
-                    jdr < JOINT_DENY_MIN
-                    or jdr > JOINT_DENY_MAX
-                    or not region_mask.any()
-                ):
-                    continue
-
-                jbr = float(bad[region_mask].mean())
-                jl = jbr / overall_bad_rate if overall_bad_rate > 0 else 0
-                if jl < HOT_CELL_LIFT:
-                    continue
-                je = float(np.nanmean(rr_vals[~region_mask])) - float(
-                    np.nanmean(rr_vals[region_mask])
-                )
-                if je < _gc.get("min_joint_effect", 0.15):
-                    continue
-
-                # Robustness: time-fold + cross-sample stability
-                fold_lifts = []
-                for fi in range(n_folds):
-                    s = fi * fold_size
-                    e = (fi + 1) * fold_size if fi < n_folds - 1 else n_total
-                    fb, fd = bad[s:e], region_mask[s:e]
-                    fbr = float(fb.mean())
-                    if fbr > 0 and fd.any():
-                        fold_lifts.append(float(fb[fd].mean()) / fbr)
-                rob_time = sum(1 for fl in fold_lifts if fl > 1.0) / max(
-                    len(fold_lifts), 1
-                )
-                # Cross-sample stability: min/max lift ratio across folds
-                if len(fold_lifts) >= 2:
-                    rob_cross = (
-                        min(fold_lifts) / max(fold_lifts) if max(fold_lifts) > 0 else 0
-                    )
-                    rob = rob_time * 0.6 + rob_cross * 0.4  # 综合 robustness
+                if g11.sum() < 10:
+                    itype = "insufficient"
+                elif abs(delta) < 0.05 * max(abs(r10 - r00), abs(r01 - r00), 0.01):
+                    itype = "independent"
+                elif r11 > max(r10, r01) and delta > 0:
+                    itype = "synergistic"
+                elif abs(r11 - max(r10, r01)) < 0.05 * max(abs(r10), abs(r01), 0.01):
+                    itype = "substitutive"
+                elif r11 < min(r10, r01):
+                    itype = "antagonistic"
                 else:
-                    rob = rob_time
-                if rob < _gc.get("min_joint_robustness", 0.35):
-                    continue
+                    itype = "substitutive"
 
-                # 生成规则条件: 转换区域边界为简洁的 threshold 规则
-                conditions = []
-                if region_lo_a > -np.inf:
-                    conditions.append((feat_a, ">", float(region_lo_a)))
-                if region_hi_a < np.inf:
-                    conditions.append((feat_a, "<", float(region_hi_a)))
-                if region_lo_b > -np.inf:
-                    conditions.append((feat_b, ">", float(region_lo_b)))
-                if region_hi_b < np.inf:
-                    conditions.append((feat_b, "<", float(region_hi_b)))
-
-                # Gate 规则最多 2 个条件 (经验: 1=不够强, 2=最优, 3+=过拟合)
-                # 如果区域是 band (lo < x < hi)，算 1 个"逻辑条件"
-                # 如果 > 2 个逻辑条件，选 lift 贡献最大的 2 个
-                if len(conditions) > 2:
-                    # 简化: 保留每个特征最有区分力的一侧
-                    conds_a = [c for c in conditions if c[0] == feat_a]
-                    conds_b = [c for c in conditions if c[0] == feat_b]
-                    # 每个特征保留 1 个条件
-                    best_a = conds_a[0] if conds_a else None
-                    best_b = conds_b[0] if conds_b else None
-                    conditions = [c for c in [best_a, best_b] if c is not None]
-
-                if not conditions:
-                    continue
-
-                compound_rules.append(
-                    {
-                        "conditions": conditions,
-                        "lift": jl,
-                        "effect_size": je,
-                        "deny_rate": jdr,
-                        "robustness": rob,
-                        "source": "lift_surface",
-                        "_n_cells": len(region_cells),
-                    }
+                _is_map[(i, j)] = {"type": itype, "delta": delta}
+                fA = selected[i]["feature"]
+                fB = selected[j]["feature"]
+                pair_name = f"{fA} × {fB}"
+                print(
+                    f"   {pair_name:<55s} {r00:>+.3f} {r10:>+.3f} "
+                    f"{r01:>+.3f} {r11:>+.3f} {itype:>14s}"
                 )
 
-    # 5b: 单规则组合 (fallback: 从已筛选的 top 单规则中两两组合)
-    for i in range(min(len(selected), 5)):
-        for j in range(i + 1, min(len(selected), 5)):
-            s1, s2 = selected[i], selected[j]
-            joint = s1["_deny_mask"] & s2["_deny_mask"]
-            jdr = float(joint.mean())
-            if jdr < JOINT_DENY_MIN or jdr > JOINT_DENY_MAX:
-                continue
-            if not joint.any():
-                continue
-            joint_bad_rate = float(bad[joint].mean())
-            joint_lift = joint_bad_rate / overall_bad_rate
-            if joint_lift > max(s1["lift"], s2["lift"]) * 1.2:
-                joint_effect = float(np.nanmean(rr_vals[~joint])) - float(
-                    np.nanmean(rr_vals[joint])
-                )
-                compound_rules.append(
-                    {
-                        "conditions": [
-                            (s1["feature"], s1["op"], s1["threshold"]),
-                            (s2["feature"], s2["op"], s2["threshold"]),
-                        ],
-                        "lift": joint_lift,
-                        "effect_size": joint_effect,
-                        "deny_rate": jdr,
-                        "robustness": min(s1["robustness"], s2["robustness"]),
-                        "source": "single_combo",
-                    }
-                )
+        # ── 5b: Bell Partition (搜索最优 AND/OR 组合结构) ──
+        def _bell_partitions_gate(items):
+            """生成所有 Bell 分区 (pass 语义: 组内 OR, 组间 AND)。"""
+            if len(items) <= 1:
+                yield [items]
+                return
+            first = items[0]
+            rest = items[1:]
+            for partition in _bell_partitions_gate(rest):
+                yield [[first]] + partition
+                for k in range(len(partition)):
+                    new_part = [g[:] for g in partition]
+                    new_part[k] = [first] + new_part[k]
+                    yield new_part
 
-    # 去重: 同特征对只保留 lift 最高的
-    seen_pairs = {}
-    for cr in compound_rules:
-        pair_key = frozenset(c[0] for c in cr["conditions"])
-        if pair_key not in seen_pairs or cr["lift"] > seen_pairs[pair_key]["lift"]:
-            seen_pairs[pair_key] = cr
-    compound_rules = sorted(seen_pairs.values(), key=lambda x: -x["lift"])
+        def _interaction_penalty_gate(partition, imap):
+            """根据 IS 结果对分区结构惩罚。
+            - 同组 (deny AND) 包含 synergistic pair → 惩罚 (应 OR)
+            - 异组 (deny OR) 包含 substitutive pair → 惩罚 (应 AND)"""
+            penalty = 0.0
+            for group in partition:
+                for a in range(len(group)):
+                    for b in range(a + 1, len(group)):
+                        key = (min(group[a], group[b]), max(group[a], group[b]))
+                        info = imap.get(key, {})
+                        if info.get("type") == "synergistic":
+                            penalty += 0.15
+                        elif info.get("type") == "antagonistic":
+                            penalty += 0.30
+            for gi in range(len(partition)):
+                for gj in range(gi + 1, len(partition)):
+                    for a in partition[gi]:
+                        for b in partition[gj]:
+                            key = (min(a, b), max(a, b))
+                            info = imap.get(key, {})
+                            if info.get("type") == "substitutive":
+                                penalty += 0.10
+                            elif info.get("type") == "independent":
+                                penalty += 0.05
+            return penalty
+
+        def _eval_partition_gate(partition, rules_list, bad_arr, rr_arr, obr, imap):
+            """Gate 专用 partition 评分: Youden's J."""
+            combined_deny = np.zeros(len(rr_arr), dtype=bool)
+            for group in partition:
+                group_deny = np.ones(len(rr_arr), dtype=bool)
+                for idx in group:
+                    group_deny &= rules_list[idx]["_deny_mask"]
+                combined_deny |= group_deny
+
+            n_d = int(combined_deny.sum())
+            _n = len(rr_arr)
+            deny_rate = n_d / _n
+            if deny_rate < JOINT_DENY_MIN or deny_rate > JOINT_DENY_MAX:
+                return None
+
+            total_bad = int(bad_arr.sum())
+            total_good = _n - total_bad
+            good_arr = ~bad_arr.astype(bool)
+            bad_in_deny = int(bad_arr[combined_deny].sum())
+            good_in_deny = int(good_arr[combined_deny].sum())
+            tc = bad_in_deny / max(total_bad, 1)
+            gdr = good_in_deny / max(total_good, 1)
+            gs = tc - gdr
+
+            if gs <= GATE_MIN_GATE_SCORE:
+                return None
+
+            brd = float(bad_arr[combined_deny].mean()) if n_d > 0 else 0
+            lift = brd / obr if obr > 0 else 0
+
+            i_pen = _interaction_penalty_gate(partition, imap)
+            score = gs - i_pen * 0.1
+
+            return {
+                "deny_rate": deny_rate,
+                "lift": lift,
+                "gate_score": gs,
+                "tail_capture": tc,
+                "good_deny_rate": gdr,
+                "score": score,
+                "partition": partition,
+                "penalty": i_pen,
+                "deny_mask": combined_deny,
+            }
+
+        # Bell Partition 搜索 (限制 N≤5, 最多 52 种分区)
+        max_bp = min(_n_sel, 5)
+        bp_indices = list(range(max_bp))
+        all_parts = list(_bell_partitions_gate(bp_indices))
+
+        part_results = []
+        for p in all_parts:
+            res = _eval_partition_gate(
+                p, selected, bad, rr_vals, overall_bad_rate, _is_map
+            )
+            if res is not None:
+                part_results.append(res)
+
+        if part_results:
+            part_results.sort(key=lambda x: -x["score"])
+            best = part_results[0]
+
+            def _fmt_part(part, rules):
+                groups = []
+                for g in part:
+                    names = [rules[i]["feature"] for i in g]
+                    if len(names) == 1:
+                        groups.append(names[0])
+                    else:
+                        groups.append("(" + " ∧ ".join(names) + ")")
+                return " ∨ ".join(groups)
+
+            print(
+                f"\n   📊 Bell Partition: {len(all_parts)} 结构, "
+                f"{len(part_results)} 有效"
+            )
+            print(f"   最优: {_fmt_part(best['partition'], selected)}")
+            print(
+                f"   gate_score={best['gate_score']:.4f}, "
+                f"lift={best['lift']:.2f}, deny={best['deny_rate']:.1%}, "
+                f"penalty={best['penalty']:.3f}"
+            )
+
+            # 将最优 partition 的多规则 group 转为 compound rules
+            for group in best["partition"]:
+                if len(group) >= 2:
+                    conditions = []
+                    for idx in group:
+                        r = selected[idx]
+                        if r.get("op") == "range_deny":
+                            conditions.append((r["feature"], ">", r["threshold_low"]))
+                            conditions.append((r["feature"], "<", r["threshold_high"]))
+                        else:
+                            conditions.append((r["feature"], r["op"], r["threshold"]))
+                    # 计算该 compound group 的独立 metrics
+                    grp_deny = np.ones(n_total, dtype=bool)
+                    for idx in group:
+                        grp_deny &= selected[idx]["_deny_mask"]
+                    grp_dr = float(grp_deny.mean())
+                    grp_br = float(bad[grp_deny].mean()) if grp_deny.any() else 0
+                    grp_lift = grp_br / overall_bad_rate if overall_bad_rate > 0 else 0
+                    grp_effect = (
+                        (
+                            float(np.nanmean(rr_vals[~grp_deny]))
+                            - float(np.nanmean(rr_vals[grp_deny]))
+                        )
+                        if grp_deny.any()
+                        else 0
+                    )
+                    grp_rob = min(selected[idx]["robustness"] for idx in group)
+                    compound_rules.append(
+                        {
+                            "conditions": conditions,
+                            "lift": grp_lift,
+                            "effect_size": grp_effect,
+                            "deny_rate": grp_dr,
+                            "robustness": grp_rob,
+                            "source": "bell_partition",
+                        }
+                    )
+        else:
+            print(
+                f"\n   ⚠️  Bell Partition: 无有效分区 "
+                f"(gate_score ≤ {GATE_MIN_GATE_SCORE})"
+            )
 
     # ── Step 6: 组装最终 Hard Gate 规则 (Gate Score 选择) ──
     # Gate 只输出 Hard Gate (deny)
@@ -1036,6 +1044,8 @@ def _generate_risk_gate_yaml(
 
         rule_idx = 0
         for name, thr, op, count in deduped_rules[:top_n]:
+            if thr is None:
+                continue
             if pred_df is not None and name in pred_df.columns and rr_col_name:
                 # 数据驱动: 比较阈值两侧的平均收益，deny 差的那边
                 feat_vals = pred_df[name].dropna()

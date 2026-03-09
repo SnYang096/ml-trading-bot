@@ -1,6 +1,6 @@
 # ME Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260305_222203/strategies/me/gate_draft.yaml
-# 优化规则: 1/3 条通过优化, 1 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260308_203356/strategies/me/gate_draft.yaml
+# 优化规则: 0/2 条通过优化, 1 条已移除
 
 schema:
   phases:
@@ -13,65 +13,54 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: prefilter_atr_percentile
-  tag: PREFILTER_ATR_PERCENTILE
-  phase: hard_gate
-  priority: 1
-  reason: 'prefilter: atr_percentile >= 0.8167'
-  when:
-    atr_percentile:
-      value_lt: 0.8167
-  then:
-    action: deny
-  frozen: true
-  comment: prefilter条件 (训练-推理一致性, frozen=true)
 - id: prefilter_me_atr_pct
   tag: PREFILTER_ME_ATR_PCT
   phase: hard_gate
   priority: 1
-  reason: 'prefilter: me_atr_pct > 0.01'
+  reason: 'prefilter: me_atr_pct < 0.02'
   when:
     me_atr_pct:
-      value_le: 0.01
+      value_lt: 0.02
   then:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: prefilter_me_cvd_alignment
-  tag: PREFILTER_ME_CVD_ALIGNMENT
+- id: prefilter_oi_trend_divergence_score
+  tag: PREFILTER_OI_TREND_DIVERGENCE_SCORE
   phase: hard_gate
   priority: 1
-  reason: 'prefilter: me_cvd_alignment >= 1.0'
+  reason: 'prefilter: oi_trend_divergence_score < 0.0015'
   when:
-    me_cvd_alignment:
-      value_lt: 1.0
+    oi_trend_divergence_score:
+      value_lt: 0.0015
   then:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: gate_sma_200_position
-  tag: HARD_SMA_200_POSITION
+- id: prefilter_me_delta_net_flow
+  tag: PREFILTER_ME_DELTA_NET_FLOW
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: me_delta_net_flow > 0.8449'
+  when:
+    me_delta_net_flow:
+      value_gt: 0.8449
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: gate_atr_percentile_atr_percentile
+  tag: HARD_ATR_PERCENTILE_ATR_PERCENTILE
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.30)
-  when:
-    sma_200_position:
-      value_gt: 0.0275
-  then:
-    action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=0.0275, lift=0.136'
-- id: gate_evt_var_99_right_evt_es_99_right
-  tag: HARD_EVT_VAR_99_RIGHT_EVT_ES_99_RIGHT
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.90)
+  reason: 统计验证规则 (lift=1.10)
   when:
     all_of:
-    - evt_var_99_right:
-        value_gt: 0.2183
-    - evt_es_99_right:
-        value_lt: 0.2659
+    - atr_percentile:
+        value_gt: 0.213
+    - atr_percentile:
+        value_lt: 0.3
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.6375, lift=0.116'
+  comment: 'optimizer: stable_plateau_found, threshold=0.5833, lift=0.334'
 guardrails: []

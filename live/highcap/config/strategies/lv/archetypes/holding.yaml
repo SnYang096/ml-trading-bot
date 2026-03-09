@@ -1,0 +1,29 @@
+# LV Holding 配置
+# 清算型策略：快进快出
+
+version: 1
+
+# 持仓管理
+holding_policy:
+  max_bars: 20          # 15min × 20 = 5小时
+  time_exit:
+    enabled: true
+    bars: 20
+  
+  # 动态持仓调整
+  dynamic_exit:
+    # 如果 OI 反转（清算结束），提前退出
+    oi_recovery_exit:
+      enabled: true
+      description: "OI 开始恢复 = 清算结束，提前退出"
+      feature: oi_change_pct
+      operator: gt
+      threshold: 0.02  # OI 恢复 2%
+      
+    # 如果 Funding 回到中性，清算压力减轻
+    funding_normalize_exit:
+      enabled: true
+      description: "Funding 回到中性 = 偏向消失"
+      feature: funding_rate_abs_zscore_50
+      operator: lt
+      threshold: 0.5

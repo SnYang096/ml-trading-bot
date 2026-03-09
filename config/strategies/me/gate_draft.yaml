@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260306_002510_rr_extreme/me
+# 来源: results/train_final_20260308_203537_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -16,40 +16,32 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_sma_200_position
-  tag: HARD_SMA_200_POSITION
+- id: gate_atr_percentile_atr_percentile
+  tag: HARD_ATR_PERCENTILE_ATR_PERCENTILE
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.30)
-  when:
-    sma_200_position:
-      value_gt: -0.0325
-  then:
-    action: deny
-  comment: 'statistical(lift=1.30): sma_200_position > -0.03246'
-- id: gate_evt_var_99_right_evt_es_99_right
-  tag: HARD_EVT_VAR_99_RIGHT_EVT_ES_99_RIGHT
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.90)
+  reason: 统计验证规则 (lift=1.10)
   when:
     all_of:
-    - evt_var_99_right:
-        value_gt: 0.2183
-    - evt_es_99_right:
-        value_lt: 0.2659
+    - atr_percentile:
+        value_gt: 0.213
+    - atr_percentile:
+        value_lt: 0.3
   then:
     action: deny
-  comment: 'statistical(lift=1.90): evt_var_99_right > 0.2183 & evt_es_99_right < 0.2659'
-- id: gate_garch_alpha
-  tag: HARD_GARCH_ALPHA
+  comment: 'statistical(lift=1.10): atr_percentile > 0.213 & atr_percentile < 0.3'
+- id: gate_garch_volatility_garch_volatility
+  tag: HARD_GARCH_VOLATILITY_GARCH_VOLATILITY
   phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.16)
+  priority: 11
+  reason: 统计验证规则 (lift=1.08)
   when:
-    garch_alpha:
-      value_lt: 0.01
+    all_of:
+    - garch_volatility:
+        value_gt: 0.0038
+    - garch_volatility:
+        value_lt: 0.0046
   then:
     action: deny
-  comment: 'statistical(lift=1.16): garch_alpha < 0.01'
+  comment: 'statistical(lift=1.08): garch_volatility > 0.003794 & garch_volatility < 0.004564'
 guardrails: []

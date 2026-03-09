@@ -1,63 +1,42 @@
-# LV Gate Archetype
-# 初始配置：待 optimize_gate_unified.py 训练后更新
+# LV Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/lv/20260309_224445/strategies/lv/gate_draft.yaml
+# 优化规则: 0/1 条通过优化
 
 schema:
   phases:
-    - system_safety
-    - hard_gate
-    - guardrail
-    - preconditions
-    - evidence
-    - decision
-  evaluation_order: system_safety -> hard_gate -> guardrail -> preconditions -> evidence -> decision
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
-    failure_budget:
-      max_hard_deny_rate: 0.50
-      alert_threshold: 0.45
-
-# ============================================================
-# 🔴 Hard Gates (必要条件 - 初始设定，待训练后精化)
-# ============================================================
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
 hard_gates:
-  # OI 异常低时不做 (没有清算燃料)
-  - id: gate_oi_too_low
-    tag: HARD_OI_TOO_LOW
-    phase: hard_gate
-    priority: 0
-    reason: "[HARD] OI z-score 过低 — 无清算燃料"
-    when:
-      oi_zscore:
-        value_lt: -1.0
-    then:
-      action: deny
-
-  # Funding 太平淡时不做 (无偏向)
-  - id: gate_funding_neutral
-    tag: HARD_FUNDING_NEUTRAL
-    phase: hard_gate
-    priority: 1
-    reason: "[HARD] Funding Rate 绝对值太低 — 无杠杆偏向"
-    when:
-      funding_rate_abs_zscore_50:
-        value_lt: 0.0
-    then:
-      action: deny
-
-# ============================================================
-# 🟡 Guardrails (护栏 - 不参与优化)
-# ============================================================
+- id: prefilter_oi_exhaustion_score
+  tag: PREFILTER_OI_EXHAUSTION_SCORE
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: oi_exhaustion_score < 0.0007'
+  when:
+    oi_exhaustion_score:
+      value_lt: 0.0007
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: gate_fer_volume_price_divergence_fer_volume_price_divergence
+  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE_FER_VOLUME_PRICE_DIVERGENCE
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.05)
+  when:
+    all_of:
+    - fer_volume_price_divergence:
+        value_gt: 0.775
+    - fer_volume_price_divergence:
+        value_lt: 0.875
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.4375, lift=0.181'
 guardrails: []
-
-# ============================================================
-# 候选 Hard Gates (待训练发现)
-# ============================================================
-candidate_hard_gates:
-  - oi_features_f
-  - oi_scene_semantic_scores_f
-  - funding_rate_features_f
-  - funding_scene_semantic_scores_f
-  - liquidity_void_scene_semantic_scores_f
-  - vpin_features_f
-  - vol_regime_features_f
-  - garch_features_f
-  - evt_features_f

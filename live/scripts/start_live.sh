@@ -21,13 +21,21 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # 加载 Binance API 密钥（从 live/binance_mainnet.env）
 if [ -f "live/binance_mainnet.env" ]; then
-  echo "📝 加载 Binance API 密钥..."  
+  echo "📝 加载 Binance API 密钥..."
   set -a  # 自动导出所有变量
   source live/binance_mainnet.env
   set +a
   echo "   ✅ API 密钥已加载"
+  # 打印 Key（不打印 Secret）便于确认 CICD 注入是否正确
+  echo "   🔑 BINANCE_API_KEY=${BINANCE_API_KEY:0:8}...${BINANCE_API_KEY: -4} (len=${#BINANCE_API_KEY})"
 else
   echo "   ⚠️  未找到 live/binance_mainnet.env，将使用系统环境变量中的 API 密钥"
+fi
+# 最终确认 Key 来源（环境变量可能来自 env 文件或 CICD 注入）
+if [ -n "$BINANCE_API_KEY" ]; then
+  echo "   🔑 最终 API_KEY=${BINANCE_API_KEY:0:8}...${BINANCE_API_KEY: -4} (len=${#BINANCE_API_KEY})"
+else
+  echo "   ❌ BINANCE_API_KEY 未设置！实盘下单将失败"
 fi
 echo ""
 

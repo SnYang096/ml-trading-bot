@@ -421,3 +421,249 @@ Evidence 仓位缩放对系统收益的贡献 **≈ 0**。
 - Evidence 特征池**完全独立于 Gate 特征池**（不同特征家族）
 - 或引入 Gate 无法触及的外部信号源（如链上数据、情绪指标、跨市场因子）
 - 训练数据必须是 Gate 放行子集，而非全量
+
+---
+
+## 附录：Evidence Backtest → Live Sharpe 衰减的结构性分析
+
+> 这是量化系统中非常常见且隐蔽的问题。大量 crypto desk 在 early research 阶段都会遇到：
+> backtest Sharpe ≈ 2，live Sharpe ≈ 0.7–1。Evidence 模块往往是衰减最严重的部分。
+
+原因不是单一的，而是 **7 类结构性问题**（按从最常见到最隐蔽排列）。
+
+---
+
+### 问题 1：条件样本偏差（Conditional Sample Bias）
+
+Evidence 本质是 signal 条件下的再筛选。例如 BPC breakout + compression duration > X。
+
+Backtest 会观察到 "compression long → expectancy ↑"，但代价是样本数量急剧下降：
+
+| 条件        | 样本数 | Sharpe |
+| ----------- | ------ | ------ |
+| signal only | 2000   | 0.6    |
+| + evidence  | 120    | 2.0    |
+
+120 个样本的 variance 非常大，live trading 时 Sharpe 必然回归。
+
+---
+
+### 问题 2：Evidence 在学"环境"，不是学"结构"
+
+很多 evidence 特征实际在学习某一阶段的市场环境（regime dependent），而非持久的市场结构。
+
+例如 `funding extreme`：某些年份 funding extreme → squeeze，另一些时期 funding extreme → trend continuation。
+Backtest 看起来稳定，实则 regime change → edge 消失。
+
+---
+
+### 问题 3：特征共线性（Feature Collinearity）
+
+很多 evidence 特征是同一信息的不同表达，例如：
+
+- compression duration
+- ATR contraction
+- range tightness
+
+本质都是 volatility compression。多个共线特征叠加后 backtest confidence ↑，但实际只是重复同一信息。Live trading 时信号没有增加，噪声增加。
+
+---
+
+### 问题 4：隐性 Lookahead Bias
+
+Evidence 很容易不小心使用未来信息。典型案例：
+
+- 用 breakout candle volume 做 evidence
+- 但 entry 发生在 breakout candle close
+
+此时 volume 在 entry 时 candle 尚未结束，已构成 lookahead。Backtest 中 volume spike → good trades，live 中 volume 未知，Sharpe 下降。
+
+---
+
+### 问题 5：优化 Trade Ranking 而非 Trade Edge
+
+这是最常见但最难发现的问题。很多 evidence 实际做的是 trade ranking（例如每天 20 个 signal，只做 top 5 evidence），而非提升单笔 trade 的 edge。
+
+Backtest 时排名结构固定，Sharpe ↑；live 时信号数量和 regime 变化，排名结构改变，Sharpe 回落。
+
+---
+
+### 问题 6：单调性幻觉（Distribution Shift）
+
+常见误区是期望 evidence score ↑ → winrate ↑。但现实中常见：
+
+| evidence | winrate | avg R |
+| -------- | ------- | ----- |
+| low      | 60%     | 1R    |
+| mid      | 50%     | 2R    |
+| high     | 35%     | 6R    |
+
+只看 winrate 会误以为 evidence 无效；只看 tail 会误以为 evidence 非常强。
+真实情况是 **distribution shift**：evidence 改变的是收益分布形状，不是简单胜率。
+
+---
+
+### 问题 7：Crypto 特有 — 流动性与执行拖累
+
+Token 市场的额外问题：backtest 假设 price = mid，live 存在 slippage / spread / impact。
+很多 evidence 偏好的 setup（volume spike、liquidation、fast move）恰好是最难成交的场景。
+Execution drag 会系统性吃掉 Sharpe。
+
+---
+
+### 三条缓解策略
+
+#### 策略 1：Evidence 不做 Hard Filter，改用 Position Scaling
+
+不做 `if score > threshold` 的二元决策，而是：
+
+```text
+size = base_size × evidence_scale
+```
+
+这样 edge 不会被 binary decision 放大或完全丢弃。
+
+#### 策略 2：Evidence 特征数量保持极少
+
+经验值：**3–5 个特征**通常最稳定。更多特征 → 共线性 + 过拟合。
+
+#### 策略 3：评估看 Distribution，不看 Winrate
+
+评估 evidence 有效性时应关注：
+
+- **Expectancy**（期望收益）
+- **Tail**（尾部收益分布）
+- **Drawdown**（最大回撤）
+
+而不是 winrate。
+
+---
+
+### 核心结论
+
+> 很多 evidence 在 backtest 看起来很好，其实只是在历史样本中成功地"排序了运气"，
+> 而不是捕捉了稳定结构。
+
+Crypto quant 的经验表明：大多数 token 策略的 Evidence 最终都会收敛到 3 类特征（而非几十个），
+这背后是市场 microstructure 的根本限制 — 可被稳定捕捉的独立信息维度极为有限。
+
+---
+
+## 附录：为什么 Evidence 最终收敛到 3 类特征
+
+> 这是量化系统的典型演化规律。很多 crypto desk 一开始有 20–50 个 evidence 特征，
+> 但 live trading 1–2 年后通常收敛到 3–5 类核心 evidence。
+> 不是因为研究不够，而是因为市场结构只提供极少的独立信息源。
+
+---
+
+### 原因 1：市场真正的"独立信息源"非常少
+
+Token 市场的 microstructure 本质只有三类驱动：
+
+1. **流动性（Liquidity）**
+2. **波动率（Volatility）**
+3. **杠杆 / 清算（Leverage）**
+
+几乎所有 evidence 特征都可归入这三类：
+
+| 特征                    | 本质       |
+| ----------------------- | ---------- |
+| compression length      | volatility |
+| ATR contraction         | volatility |
+| range tightness         | volatility |
+| volume spike            | liquidity  |
+| price impact efficiency | liquidity  |
+| OI change               | leverage   |
+| funding                 | leverage   |
+
+看起来特征很多，但只是同一信息的不同表达。几十个特征最终收敛为 volatility / liquidity / leverage 三类。
+
+---
+
+### 原因 2：特征之间高度共线
+
+Crypto 数据中 feature correlation 很高。例如 compression duration、ATR contraction、range width 的相关性经常达到 0.6–0.8。
+加入大量类似特征后 edge 不会增加，只是噪声增加，live trading Sharpe 下降。
+
+---
+
+### 原因 3：交易信号的"可解释维度"很少
+
+Token 市场的交易结构本质上只有三种模式：breakout / trend / liquidation。
+
+Evidence 也只是在回答三个问题：
+
+1. Breakout 是否可能成功？
+2. Trend 是否健康？
+3. Squeeze 是否可能发生？
+
+特征过多只是在重复回答同一个问题。
+
+---
+
+### 原因 4：样本量限制
+
+Token 策略特别严重的问题。假设 5 年数据、1000 个交易，如果 evidence 有 20 个特征，模型自由度过高 → overfit。
+所以 desk 通常强制限制 3–5 个核心 evidence。
+
+---
+
+### 收敛后的 Evidence 三大类
+
+大多数成熟 crypto desk 最终收敛到的 evidence 结构：
+
+#### 类别 1：波动率状态（Volatility State）
+
+代表市场是否在积累能量。
+
+- 常见特征：compression duration、ATR contraction、range percentile
+- 作用：判断 breakout tail potential
+
+#### 类别 2：流动性 / 参与度（Liquidity / Participation）
+
+代表是否有真实资金参与。
+
+- 常见特征：volume expansion、price impact efficiency、orderflow imbalance
+- 作用：判断 move 是否真实
+
+#### 类别 3：杠杆 / 挤压（Leverage / Positioning）
+
+Crypto 特有维度。
+
+- 常见特征：funding rate、OI change、liquidation clusters
+- 作用：判断 squeeze / cascade 可能性
+
+---
+
+### 成熟系统的 Evidence 两通道结构
+
+很多 desk 最终采用的结构：
+
+```text
+confidence     = f(volatility_state) + f(liquidity)       → position sizing
+tail_potential = f(volatility_state) + f(leverage)         → TP scaling
+```
+
+实际只需 4–5 个特征（如 compression + volume expansion + funding extreme + OI change）即可覆盖 volatility / liquidity / leverage 三大类信息。
+
+---
+
+### Evidence 过多的危害
+
+| 问题       | 表现                         |
+| ---------- | ---------------------------- |
+| 过拟合     | backtest 好、live 崩         |
+| 信号不稳定 | 同一 setup 得分波动大        |
+| 权重漂移   | 特征重要性随 regime 大幅变化 |
+| live 衰减  | Sharpe 从 2 → 0.7            |
+
+经验法则：**Evidence ≤ 5**。超过必须证明它带来新的独立信息。
+
+---
+
+### 设计原则
+
+在设计 evidence 时问自己：**这个特征是否属于新的信息类别？**
+
+如果只是同一信息的不同表达（例如 compression duration / range tightness / ATR contraction 都是 volatility compression），则只需保留一个代表性指标。

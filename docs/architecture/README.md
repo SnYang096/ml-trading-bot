@@ -64,6 +64,7 @@
 
 ### 设计哲学
 
+- **[为什么用统计规则而非端到端模型](WHY_STATISTICAL_RULES_OVER_E2E_MODEL_CN.md)** - 统计规则管线 vs LightGBM/MLP 端到端方案的取舍
 - **[谁对sharp负责](谁对sharp负责.md)** - Sharpe责任归属
 - **[职责坍缩](职责坍缩.md)** - 职责边界设计
 - **[仓位管理办法](仓位管理办法.md)** - 仓位管理策略

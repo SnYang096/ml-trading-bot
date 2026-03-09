@@ -338,8 +338,8 @@ def _load_constitution_constraints(
         "risk_per_slot": float(slots.get("risk_per_slot", 0.01)),
         "per_strategy_limits": dict(ra.get("per_strategy_limits") or {}),
         "add_position_rules": dict(add_rules),
-        "evidence_min_score": 0.0,  # [DEPRECATED] evidence 已删除
-        "evidence_position_scale": False,  # [DEPRECATED] evidence 已删除
+        "evidence_min_score": float(ra.get("evidence_min_score", 0.0)),
+        "evidence_position_scale": bool(ra.get("evidence_position_scale", True)),
     }
 
 
@@ -739,7 +739,7 @@ class LivePCM:
         regime_scale = self.get_archetype_scale(intent.archetype)
         new_mult = existing_mult * regime_scale
 
-        # [REMOVED] Evidence 仓位缩放已删除
+        # Evidence 缩放已包含在 intent.size_multiplier 中 (GenericLiveStrategy.decide)
 
         if new_mult >= 1.0 and regime_scale >= 1.0:
             return intent

@@ -1,4 +1,77 @@
-# [DEPRECATED] Evidence 已删除 (Spearman r=-0.068, p=0.478, 无效)
-# 详见 z实验_005_统一研究/evidence单调性验证.md
-evidence: []
+# BPC Evidence (auto-discovered)
+# 来源: results/train_final_20260308_204819_rr_extreme/bpc/logs_gated.parquet
+# 方法: Spearman + Quintile Monotonicity (p < 0.01)
+# 候选: 3/289 通过筛选
+
+schema:
+  label_semantics:
+    suppress: 强烈不利 - 极度限制仓位/信心
+    downweight: 不利 - 降低信心/仓位
+    neutral: 中性 - 标准执行
+    favor: 有利 - 提高信心/仓位
+    amplify: 强烈有利 - 最大化执行
+evidence:
+- id: evidence_cvd_roll288
+  feature: cvd_roll288
+  rank: 1
+  direction: positive
+  usage_hint: sp_r=+0.311 WR:17.7%→43.0%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - -591065209.0
+    - -15156399.052000001
+    - -2133903.3944
+    - -565697.5660000001
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 5
+- id: evidence_trade_cluster_max_buy_run_ma20
+  feature: trade_cluster_max_buy_run_ma20
+  rank: 2
+  direction: negative
+  usage_hint: sp_r=-0.214 WR:63.1%→26.4%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - 0.05499999999999999
+    - 0.063
+    - 0.0665
+    - 0.07050000000000001
+    labels:
+    - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
+  split_count: 5
+- id: evidence_macd_signal_atr
+  feature: macd_signal_atr
+  rank: 3
+  direction: negative
+  usage_hint: sp_r=-0.213 WR:57.8%→36.0%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - -0.6404539493675476
+    - -0.273825237410541
+    - 0.05838775673188155
+    - 0.5193833822186666
+    labels:
+    - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
+  split_count: 5
 min_score: 0.0

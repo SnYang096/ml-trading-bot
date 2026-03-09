@@ -1,6 +1,7 @@
 """
 数据模型定义
 """
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -9,12 +10,14 @@ from enum import Enum
 
 class PositionSide(str, Enum):
     """仓位方向"""
+
     LONG = "long"
     SHORT = "short"
 
 
 class PositionStatus(str, Enum):
     """仓位状态"""
+
     OPEN = "open"
     CLOSED = "closed"
     PARTIAL = "partial"
@@ -22,12 +25,14 @@ class PositionStatus(str, Enum):
 
 class OrderSide(str, Enum):
     """订单方向"""
+
     BUY = "buy"
     SELL = "sell"
 
 
 class OrderType(str, Enum):
     """订单类型"""
+
     MARKET = "market"
     LIMIT = "limit"
     STOP = "stop"
@@ -38,16 +43,19 @@ class OrderType(str, Enum):
 
 class OrderStatus(str, Enum):
     """订单状态"""
+
     PENDING = "pending"
     PARTIALLY_FILLED = "partially_filled"
     FILLED = "filled"
     CANCELED = "canceled"
     REJECTED = "rejected"
     EXPIRED = "expired"
+    SHADOW = "shadow"  # Shadow 模式: 只记录不下单
 
 
 class OperationType(str, Enum):
     """仓位操作类型"""
+
     ADD = "add"
     REDUCE = "reduce"
     STOP_LOSS_MOVE = "stop_loss_move"
@@ -58,14 +66,15 @@ class OperationType(str, Enum):
 class Position:
     """
     仓位模型
-    
+
     archetype: 策略原型（如 'trend', 'mean_reversion'）
     - 相同 archetype 的订单视为加仓
     - 不同 archetype 的订单是独立仓位
-    
+
     add_count: 加仓次数（用于 slot 控制）
     parent_position_id: 父仓位 ID（如果是加仓）
     """
+
     position_id: str
     symbol: str
     side: PositionSide
@@ -109,6 +118,7 @@ class Position:
 @dataclass
 class Order:
     """订单模型"""
+
     order_id: str
     binance_order_id: Optional[str] = None
     client_order_id: Optional[str] = None
@@ -146,6 +156,7 @@ class Order:
 @dataclass
 class PositionOperation:
     """仓位操作记录模型"""
+
     operation_id: str
     position_id: str
     operation_type: OperationType
@@ -177,6 +188,7 @@ class PositionOperation:
 @dataclass
 class StopLossTrailing:
     """止损上移记录模型"""
+
     record_id: str
     position_id: str
     old_stop_loss: float
@@ -201,6 +213,7 @@ class StopLossTrailing:
 @dataclass
 class PerformanceMetrics:
     """性能指标模型"""
+
     metric_id: str
     date: datetime
     symbol: Optional[str] = None

@@ -31,6 +31,20 @@ feature_pipeline:
     # 资金+VPIN 双源力竭 (FER 核心交叉)
     - dual_exhaustion_f
 
+    # ========== 触发位置: 失败发生在 SR 边界更有意义 ==========
+    # → sr_strength_max (距最近 SR 的 ATR 倍数, 值小=失败发生在关键位)
+    - sr_strength_max_f
+    # → poc, hal_high, hal_low (成交量分布边界, 值小=失败发生在 VA 边缘)
+    - poc_hal_features_close_f
+    # → vp_poc_deviation, vp_lv_ratio (流动性真空结构)
+    - volume_profile_volatility_features_f
+
+    # ========== 触发信号: 影线拒绝 + 极值距离 ==========
+    # → wick_upper_ratio, wick_lower_ratio (影线拒绝 = 止损猎杀/失败信号)
+    - wick_ratios_f
+    # → bars_since_local_high/low (swing 距离, 值小=刚在极值处失败)
+    - bars_since_extreme_f
+
     # ========== 场景语义 (FER 相关) ==========
     # OI 场景语义 (exhaustion 与 FER 的力竭反转语义对应)
     - oi_scene_semantic_scores_f

@@ -1,0 +1,35 @@
+# LV Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)
+# Date: 2026-03-08 22:13
+# Promoted: 3 filters (evidence Spearman bins)
+# Significance: forward_rr t-test p<0.05 required
+#
+# 职责: "现在该入场吗?" → 硬二值控制
+# 多个 filter 之间是 OR 关系
+
+filters:
+- id: ev_macd_histogram_atr
+  enabled: true
+  description: 'Evidence bin: macd_histogram_atr >= -0.214059'
+  conditions:
+  - feature: macd_histogram_atr
+    operator: '>='
+    value: -0.214059
+  notes: Δrr=+0.4662, t=9.65, p=0.0000, pass=80.0%
+- id: ev_vpin_min
+  enabled: true
+  description: 'Evidence bin: vpin_min >= 0.164319'
+  conditions:
+  - feature: vpin_min
+    operator: '>='
+    value: 0.164319
+  notes: Δrr=+0.1906, t=4.26, p=0.0000, pass=80.0%
+- id: ev_garch_volatility
+  enabled: true
+  description: 'Evidence bin: garch_volatility <= 0.004776'
+  conditions:
+  - feature: garch_volatility
+    operator: <=
+    value: 0.004776
+  notes: Δrr=+0.2284, t=5.27, p=0.0000, pass=80.0%
+combination_mode: or

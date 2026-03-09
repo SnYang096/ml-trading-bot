@@ -1,0 +1,58 @@
+# LV Prefilter 特征配置 (Meta-Algorithm)
+# 职责: 定义 LV archetype 语义边界的特征候选池
+# 仅含 LV 专属 + 交叉 + 场景语义特征 — 排除通用特征 (RSI/MACD/ATR/SMA)
+#
+# 设计理念:
+#   Prefilter 回答: "这个 bar 是不是 LV (Leverage Vulnerability)?"
+#   如果用通用特征, 所有 archetype 会选到相同特征, 失去区分度
+#
+# 用法 (Meta-Algorithm 模式):
+#   python scripts/analyze_archetype_feature_stratification.py \
+#       --logs results/.../lv/features_labeled.parquet \
+#       --strategy lv \
+#       --features-prefilter config/strategies/lv/features_prefilter.yaml \
+#       --meta-algorithm --promote
+
+name: lv_prefilter
+description: |
+  LV Prefilter 特征: 杠杆脆弱性 (OI + Funding + 流动性) 的因果前提特征。
+  SHAP∩Gain 在这些特征上训练 LightGBM, 发现 archetype 边界。
+
+feature_pipeline:
+  requested_features:
+    # ========== LV 核心: OI 持仓量 (清算燃料) ==========
+    - oi_features_f
+
+    # ========== LV 核心: 资金费率 (单边拥挤) ==========
+    - funding_rate_features_f
+
+    # ========== LV 核心: OI 场景语义 (exhaustion/ignition) ==========
+    - oi_scene_semantic_scores_f
+
+    # ========== 触发位置: SR/流动性聚集区 ==========
+    # → sr_strength_max (距最近 SR 的 ATR 倍数, 值小=价格贴近止损堆积区)
+    - sr_strength_max_f
+    # → poc, hal_high, hal_low (成交量分布边界, 值小=价格接近 POC/VA 边缘)
+    - poc_hal_features_close_f
+    # → vp_poc_deviation, vp_lv_ratio, vp_hv_ratio (流动性真空结构)
+    - volume_profile_volatility_features_f
+
+    # ========== 触发信号: 影线拒绝 + 极值距离 ==========
+    # → wick_upper_ratio, wick_lower_ratio (影线拒绝 = 止损猎杀信号)
+    - wick_ratios_f
+    # → bars_since_local_high/low (swing high/low 距离, 值小=刚触及极值)
+    - bars_since_extreme_f
+
+    # ========== FER 交叉: 失败信号 (LV 本质是 15min FER + 杠杆放大器) ==========
+    - fer_failure_signals_f
+
+    # ========== FER 交叉特征 (from FER prefilter) ==========
+    # 资金+VPIN 双源力竭 (FER 核心交叉)
+    - dual_exhaustion_f
+
+    # ========== 场景语义 (from FER prefilter) ==========
+    # Wick 力竭场景语义
+    - wick_scene_semantic_scores_f
+
+    # ========== 波动率场景 ==========
+    - vol_regime_features_f

@@ -13,7 +13,7 @@
 #   # 加 --temporal 查看时间稳定性
 #   ... --compare-features --temporal
 
-description: "LV 方向特征候选 — 杠杆偏向的反方向 (清算方向)"
+description: "LV 方向特征候选 — 清算方向 (结构反转 + 杠杆偏向)"
 
 # ════════════════════════════════════════════════════════════════
 # 候选特征 (输入) — 脚本从这里读取待评估的特征列表
@@ -22,39 +22,37 @@ description: "LV 方向特征候选 — 杠杆偏向的反方向 (清算方向)"
 # transform: sign | center_sign | negate_sign | raw
 #
 # 语义约束:
-#   LV = Leverage Vulnerability, 方向 = "杠杆偏向的反方向"
-#   如果空头杠杆过度 → 做多 (逼空)
-#   如果多头杠杆过度 → 做空 (清算瀑布)
-#   禁止: SR 方向 (属 BPC)
-#   禁止: 瞬时动能方向 (属 ME)
+#   LV = Leverage Vulnerability, 方向 = "清算瀑布方向"
+#   清算方向由结构决定: 价格在阻力被拒→做空, 在支撑被拒→做多
+#   LV 本质是 15min 级别的 FER + 杠杆放大器
+#   funding_rate 等杠杆指标属于 prefilter/gate (有没有脆弱性),
+#   不属于 direction (往哪个方向清算)
 
 candidates:
-  # ── LV 核心: 杠杆偏向 ──
-  - feature: funding_rate              # Funding rate (正=多头付费)
-    transform: negate_sign             # 反向: 多头拥挤→做空
-  - feature: oi_delta_price_sign       # OI 变化 × 价格方向
+  # ── 结构反转方向 (核心: 清算往哪个方向走) ──
+  - feature: fer_impulse_failure_direction  # 失败脉冲方向 → 取反
+    transform: negate_sign
+  - feature: oi_delta_price_sign            # OI × 价格同向 → 取反 (追仓反转)
+    transform: negate_sign
+  - feature: roc_20                         # 动量方向 → 取反 (动能耗尽)
+    transform: negate_sign
+  - feature: macd_atr                       # MACD/ATR → 取反
     transform: negate_sign
 
-  # ── 杠杆结构 ──
-  - feature: oi_compression_score      # OI 压缩得分 [0,1]
-    transform: center_sign
-  - feature: oi_exhaustion_score       # OI 枯竭得分 [0,1]
-    transform: center_sign
-  - feature: oi_trend_divergence_score # OI 趋势背离 [0,1]
-    transform: center_sign
-
-  # ── 通用动量 (兜底) ──
-  - feature: roc_20                    # 20 期 ROC
-    transform: negate_sign             # 反向: 动能耗尽方向
-  - feature: macd_atr                  # MACD/ATR
+  # ── 杠杆偏向反方向 (辅助: 谁更拥挤) ──
+  - feature: funding_rate                   # 正=多头付费 → 做空
     transform: negate_sign
-  - feature: price_velocity_pct        # 价格速度百分位 [0,1]
-    transform: center_sign
-
-  # ── 流动性 ──
-  - feature: vpin_signed_imbalance_max # VPIN 签名不平衡
+  - feature: vpin_signed_imbalance_max      # VPIN 签名不平衡 → 取反
     transform: negate_sign
-  - feature: fp_volume_skew            # Footprint 成交量偏斜
+  - feature: fp_volume_skew                 # Footprint 成交量偏斜 → 取反
+    transform: negate_sign
+
+  # ── 结构位置 (价格在 SR 的哪一侧) ──
+  - feature: price_position                 # 价格位置 [0,1] → 高位做空低位做多
+    transform: center_sign
+  - feature: sma_200_position               # SMA200 相对位置
+    transform: negate_sign
+  - feature: cvd_change_5_normalized        # CVD 短周期 → 取反 (失败推进)
     transform: negate_sign
 
 # ════════════════════════════════════════════════════════════════

@@ -1,43 +1,35 @@
 # LV Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
-# Date: 2026-03-07 22:17
-# Promoted: 3 filters (2 plateau + 1 snotio-only)
-# Baseline snotio: 30.1075, σ=62.754
-# Significance: z-test p<0.05 required for all tiers
+# Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)
+# Date: 2026-03-09 22:49
+# Promoted: 3 filters (evidence Spearman bins)
+# Significance: forward_rr t-test p<0.05 required
 #
-# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 职责: "现在该入场吗?" → 硬二值控制
 # 多个 filter 之间是 OR 关系
-# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-- id: meta_funding_rate_zscore_50
+- id: ev_vpin_min
   enabled: true
-  description: 'Meta-Algorithm: funding_rate_zscore_50 <= 0.132'
+  description: 'Evidence bin: vpin_min >= 0.159231'
   conditions:
-  - feature: funding_rate_zscore_50
-    operator: <=
-    value: 0.132
-  tier: A_PLATEAU
-  notes: lift=1.99x, rob=83%, snotio=59.1359, z=33.62, p=0.0000
-- id: meta_liquidity_void_x_wpt_risk_rank_range
-  enabled: true
-  description: 'Meta-Algorithm: liquidity_void_x_wpt_risk_rank in [0.37896709501557635, 0.7833528037383178]'
-  conditions:
-  - feature: liquidity_void_x_wpt_risk_rank
+  - feature: vpin_min
     operator: '>='
-    value: 0.37896709501557635
-  - feature: liquidity_void_x_wpt_risk_rank
-    operator: <=
-    value: 0.7833528037383178
-  tier: B_SNOTIO
-  notes: lift=1.62x, rob=90%, snotio=35.4098, z=11.13, p=0.0000
-- id: meta_funding_rate_abs_zscore_50
+    value: 0.159231
+  notes: Δrr=+0.2368, t=5.23, p=0.0000, pass=80.0%
+- id: ev_fer_trapped_shorts_score
   enabled: true
-  description: 'Meta-Algorithm: funding_rate_abs_zscore_50 >= 1.346'
+  description: 'Evidence bin: fer_trapped_shorts_score >= 0.217867'
   conditions:
-  - feature: funding_rate_abs_zscore_50
+  - feature: fer_trapped_shorts_score
     operator: '>='
-    value: 1.346
-  tier: A_PLATEAU
-  notes: lift=1.30x, rob=79%, snotio=39.5550, z=9.73, p=0.0000
+    value: 0.217867
+  notes: Δrr=+0.3578, t=7.18, p=0.0000, pass=80.0%
+- id: ev_vp_entropy
+  enabled: true
+  description: 'Evidence bin: vp_entropy <= 0.958539'
+  conditions:
+  - feature: vp_entropy
+    operator: <=
+    value: 0.958539
+  notes: Δrr=+0.3380, t=6.87, p=0.0000, pass=80.0%
 combination_mode: or

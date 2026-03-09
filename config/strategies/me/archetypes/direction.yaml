@@ -83,170 +83,171 @@ direction_rules:
     description: "规则3: macd_signal_atr (med_rr=+0.0659, p=0.005, short=49%)"
 
 last_evaluation:
-  # ── 自动生成 by --compare-features (2026-03-06) ──
-  timestamp: "2026-03-06"
+  # ── 自动生成 by --compare-features (2026-03-08) ──
+  timestamp: "2026-03-08"
   data_source: "features_labeled.parquet"
-  n_rows: 156642
+  n_rows: 163978
   baseline: random_direction  # 随机方向 (期望 median ≈ 0)
-  always_long_median_rr: +0.0561  # 参考
-  always_long_bad_rate: 0.4421  # 参考
+  always_long_median_rr: +0.0440  # 参考
+  always_long_bad_rate: 0.4432  # 参考
 
-  # ── Med.RR > 0 (优于随机, 16 个) ──
+  # ── Med.RR > 0 (优于随机, 17 个) ──
   positive_lift:
     - feature: me_delta_net_flow
       transform: sign
-      median_rr_in_dir: +0.1252
+      median_rr_in_dir: +0.0756
       p_random: 0.0050
-      lift_vs_long: +0.0690
-      bad_rate_reduction_pct: +0.44
+      lift_vs_long: +0.0316
+      bad_rate_reduction_pct: +0.17
       short_pct: 43.4
-      temporal_cv: 2.36
-      recent_decay: "0/3"
+      temporal_cv: 2.55
+      recent_decay: "1/3"
     - feature: me_cvd_alignment
       transform: center_sign
-      median_rr_in_dir: +0.1252
+      median_rr_in_dir: +0.0756
       p_random: 0.0050
-      lift_vs_long: +0.0690
-      bad_rate_reduction_pct: +0.44
+      lift_vs_long: +0.0316
+      bad_rate_reduction_pct: +0.17
       short_pct: 43.4
-      temporal_cv: 2.36
-      recent_decay: "0/3"
-    - feature: macd_signal_atr
-      transform: sign
-      median_rr_in_dir: +0.0650
+      temporal_cv: 2.55
+      recent_decay: "1/3"
+    - feature: price_accel_pct
+      transform: center_sign
+      median_rr_in_dir: +0.0635
       p_random: 0.0050
-      lift_vs_long: +0.0089
-      bad_rate_reduction_pct: +0.03
-      short_pct: 48.8
-      temporal_cv: 0.66
+      lift_vs_long: +0.0196
+      bad_rate_reduction_pct: +0.10
+      short_pct: 50.0
+      temporal_cv: 1.66
       recent_decay: "0/3"
     - feature: macd_atr
       transform: sign
-      median_rr_in_dir: +0.0602
+      median_rr_in_dir: +0.0612
       p_random: 0.0050
-      lift_vs_long: +0.0041
-      bad_rate_reduction_pct: -0.00
-      short_pct: 48.9
+      lift_vs_long: +0.0173
+      bad_rate_reduction_pct: +0.07
+      short_pct: 49.1
       temporal_cv: 0.77
+      recent_decay: "0/3"
+    - feature: macd_signal_atr
+      transform: sign
+      median_rr_in_dir: +0.0611
+      p_random: 0.0050
+      lift_vs_long: +0.0172
+      bad_rate_reduction_pct: +0.08
+      short_pct: 49.0
+      temporal_cv: 0.67
       recent_decay: "0/3"
     - feature: oi_delta_price_sign
       transform: sign
-      median_rr_in_dir: +0.0568
+      median_rr_in_dir: +0.0591
       p_random: 0.0050
-      lift_vs_long: +0.0006
-      bad_rate_reduction_pct: -0.03
-      short_pct: 51.9
-      temporal_cv: 1.16
+      lift_vs_long: +0.0152
+      bad_rate_reduction_pct: +0.06
+      short_pct: 51.8
+      temporal_cv: 1.15
       recent_decay: "0/3"
     - feature: me_multi_tf_alignment
       transform: center_sign
-      median_rr_in_dir: +0.0526
-      p_random: 0.0050
-      lift_vs_long: -0.0035
-      bad_rate_reduction_pct: -0.10
-      short_pct: 42.4
-      temporal_cv: 0.8
-      recent_decay: "2/3"
-    - feature: price_dir_consistency_pct
-      transform: center_sign
-      median_rr_in_dir: +0.0515
-      p_random: 0.0647
-      lift_vs_long: -0.0047
-      bad_rate_reduction_pct: -0.08
-      short_pct: 25.8
-      temporal_cv: 0.9
-      recent_decay: "0/3"
+      median_rr_in_dir: +0.0494
+      p_random: 0.0100
+      lift_vs_long: +0.0054
+      bad_rate_reduction_pct: -0.05
+      short_pct: 42.3
+      temporal_cv: 1.02
+      recent_decay: "3/3"
     - feature: price_position
       transform: center_sign
-      median_rr_in_dir: +0.0474
+      median_rr_in_dir: +0.0460
       p_random: 0.0050
-      lift_vs_long: -0.0088
-      bad_rate_reduction_pct: -0.08
-      short_pct: 48.8
-      temporal_cv: 0.85
+      lift_vs_long: +0.0021
+      bad_rate_reduction_pct: -0.03
+      short_pct: 49.0
+      temporal_cv: 0.83
       recent_decay: "0/3"
-    - feature: fp_volume_skew
-      transform: sign
-      median_rr_in_dir: +0.0456
-      p_random: 0.0995
-      lift_vs_long: -0.0106
-      bad_rate_reduction_pct: -0.09
-      short_pct: 25.4
-      temporal_cv: 0.89
-      recent_decay: "1/3"
     - feature: roc_20
       transform: sign
-      median_rr_in_dir: +0.0447
-      p_random: 0.0149
-      lift_vs_long: -0.0114
-      bad_rate_reduction_pct: -0.13
-      short_pct: 49.3
-      temporal_cv: 0.82
-      recent_decay: "0/3"
-    - feature: price_accel_pct
-      transform: center_sign
-      median_rr_in_dir: +0.0437
-      p_random: 0.0149
-      lift_vs_long: -0.0124
-      bad_rate_reduction_pct: -0.10
-      short_pct: 50.0
-      temporal_cv: 2.04
-      recent_decay: "1/3"
-    - feature: vpin_signed_imbalance_max
-      transform: sign
-      median_rr_in_dir: +0.0388
-      p_random: 0.0547
-      lift_vs_long: -0.0174
-      bad_rate_reduction_pct: -0.15
-      short_pct: 44.8
-      temporal_cv: 0.86
-      recent_decay: "0/3"
-    - feature: sma_200_position
-      transform: sign
-      median_rr_in_dir: +0.0369
-      p_random: 0.0249
-      lift_vs_long: -0.0193
-      bad_rate_reduction_pct: -0.15
-      short_pct: 49.6
-      temporal_cv: 1.32
+      median_rr_in_dir: +0.0454
+      p_random: 0.0100
+      lift_vs_long: +0.0014
+      bad_rate_reduction_pct: -0.05
+      short_pct: 49.4
+      temporal_cv: 0.8
       recent_decay: "0/3"
     - feature: price_velocity_pct
       transform: center_sign
-      median_rr_in_dir: +0.0270
-      p_random: 0.0697
-      lift_vs_long: -0.0292
-      bad_rate_reduction_pct: -0.25
-      short_pct: 49.6
-      temporal_cv: 3.5
+      median_rr_in_dir: +0.0446
+      p_random: 0.0100
+      lift_vs_long: +0.0007
+      bad_rate_reduction_pct: -0.03
+      short_pct: 49.7
+      temporal_cv: 2.39
+      recent_decay: "0/3"
+    - feature: vpin_signed_imbalance_max
+      transform: sign
+      median_rr_in_dir: +0.0407
+      p_random: 0.0547
+      lift_vs_long: -0.0033
+      bad_rate_reduction_pct: -0.05
+      short_pct: 44.6
+      temporal_cv: 0.89
       recent_decay: "1/3"
+    - feature: fp_volume_skew
+      transform: sign
+      median_rr_in_dir: +0.0348
+      p_random: 0.1741
+      lift_vs_long: -0.0091
+      bad_rate_reduction_pct: -0.10
+      short_pct: 25.8
+      temporal_cv: 1.37
+      recent_decay: "2/3"
+    - feature: price_dir_consistency_pct
+      transform: center_sign
+      median_rr_in_dir: +0.0336
+      p_random: 0.2139
+      lift_vs_long: -0.0104
+      bad_rate_reduction_pct: -0.13
+      short_pct: 27.9
+      temporal_cv: 0.92
+      recent_decay: "0/3"
+    - feature: sma_200_position
+      transform: sign
+      median_rr_in_dir: +0.0312
+      p_random: 0.0498
+      lift_vs_long: -0.0128
+      bad_rate_reduction_pct: -0.09
+      short_pct: 50.0
+      temporal_cv: 1.28
+      recent_decay: "0/3"
     - feature: me_volume_accel
       transform: center_sign
-      median_rr_in_dir: +0.0229
-      p_random: 0.1244
-      lift_vs_long: -0.0332
-      bad_rate_reduction_pct: -0.35
+      median_rr_in_dir: +0.0191
+      p_random: 0.1493
+      lift_vs_long: -0.0248
+      bad_rate_reduction_pct: -0.28
       short_pct: 49.2
-      temporal_cv: 1.57
+      temporal_cv: 1.83
       recent_decay: "3/3"
     - feature: me_accel_2k
       transform: sign
-      median_rr_in_dir: +0.0017
-      p_random: 0.4328
-      lift_vs_long: -0.0544
-      bad_rate_reduction_pct: -0.36
+      median_rr_in_dir: +0.0116
+      p_random: 0.2687
+      lift_vs_long: -0.0323
+      bad_rate_reduction_pct: -0.22
       short_pct: 50.5
-      temporal_cv: 3.63
+      temporal_cv: 6.48
+      recent_decay: "0/3"
+    - feature: me_cvd_strength
+      transform: center_sign
+      median_rr_in_dir: +0.0012
+      p_random: 0.1194
+      lift_vs_long: -0.0427
+      bad_rate_reduction_pct: -0.38
+      short_pct: 75.7
+      temporal_cv: 4.71
       recent_decay: "0/3"
 
   # ── Med.RR <= 0 (不优于随机, 前 5) ──
   fallback:
-    - feature: me_cvd_strength
-      transform: center_sign
-      median_rr_in_dir: -0.0006
-      p_random: 0.0498
-      lift_vs_long: -0.0567
-      bad_rate_reduction_pct: -0.46
-      short_pct: 75.7
-      temporal_cv: 3.96
-      recent_decay: "1/3"
+    []
 

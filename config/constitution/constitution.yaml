@@ -121,7 +121,7 @@ safety_state:
 # -----------------------------------------------------------------------------
 slots:
   enabled: true
-  slot_count: 3
+  slot_count: 4
   # Risk budget per slot (fraction of equity). This is NOT "cash allocation".
   # 每笔交易风险占 equity 的比例 (1% = 0.01)
   # 用于反算仓位: risk_usd = equity × risk_per_slot
@@ -130,9 +130,9 @@ slots:
   # If not enough margin/slots, replacement policy decides what to close/replace.
   allow_replacement: true
 
-  # [DEPRECATED] Evidence 已删除 (Spearman r=-0.068, 无效)
+  # Evidence 仓位缩放 (由 discover_evidence_candidates.py 自动生成 evidence.yaml)
   evidence_min_score: 0.0
-  evidence_position_scale: false
+  evidence_position_scale: true
 
   # Slot state tracking (for live / restart safety).
   slot_state_tracking:
@@ -176,7 +176,7 @@ resource_allocation:
   # 加仓全局安全规则 (适用于所有 allow_add_position=true 的策略)
   # "adding is allowed only by freed risk budget"
   add_position_rules:
-    max_add_times: 5          # fat tail: 5 次加仓充分放大趋势 (每次需 breakeven locked)
+    max_add_times: 2          # fat tail: 5 次加仓充分放大趋势 (每次需 breakeven locked)
     # 加仓前必须已锁定利润 (breakeven stop 已触发)
     # 确保加仓只用 "已释放" 的风险预算，不增加净风险敞口
     require_locked_profit: true

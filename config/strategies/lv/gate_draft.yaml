@@ -1,0 +1,33 @@
+# LV Gate Draft (auto-generated)
+# 来源: results/train_final_20260309_224731_rr_extreme/lv
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy lv
+#   python scripts/optimize_gate_unified.py --strategy lv --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_fer_volume_price_divergence_fer_volume_price_divergence
+  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE_FER_VOLUME_PRICE_DIVERGENCE
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.05)
+  when:
+    all_of:
+    - fer_volume_price_divergence:
+        value_gt: 0.775
+    - fer_volume_price_divergence:
+        value_lt: 0.875
+  then:
+    action: deny
+  comment: 'statistical(lift=1.05): fer_volume_price_divergence > 0.775 & fer_volume_price_divergence < 0.875'
+guardrails: []

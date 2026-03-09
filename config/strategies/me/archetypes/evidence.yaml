@@ -1,4 +1,77 @@
-# [DEPRECATED] Evidence 已删除 (Spearman r=-0.068, p=0.478, 无效)
-# 详见 z实验_005_统一研究/evidence单调性验证.md
-evidence: []
+# ME Evidence (auto-discovered)
+# 来源: results/train_final_20260308_203537_rr_extreme/me/logs_gated.parquet
+# 方法: Spearman + Quintile Monotonicity (p < 0.01)
+# 候选: 3/278 通过筛选
+
+schema:
+  label_semantics:
+    suppress: 强烈不利 - 极度限制仓位/信心
+    downweight: 不利 - 降低信心/仓位
+    neutral: 中性 - 标准执行
+    favor: 有利 - 提高信心/仓位
+    amplify: 强烈有利 - 最大化执行
+evidence:
+- id: evidence_pred
+  feature: pred
+  rank: 1
+  direction: positive
+  usage_hint: sp_r=+0.087 WR:47.0%→55.4%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - 0.5277266842987255
+    - 0.552672511165327
+    - 0.565302713975876
+    - 0.5764018224962377
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 5
+- id: evidence_price_accel_pct
+  feature: price_accel_pct
+  rank: 2
+  direction: positive
+  usage_hint: sp_r=+0.051 WR:46.9%→52.3%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - 0.20222634508348794
+    - 0.4025974025974026
+    - 0.6178107606679035
+    - 0.8163265306122449
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 5
+- id: evidence_bpc_dir_consistency_long
+  feature: bpc_dir_consistency_long
+  rank: 3
+  direction: negative
+  usage_hint: sp_r=-0.044 WR:52.1%→48.3%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - 0.46
+    - 0.48
+    - 0.52
+    - 0.56
+    labels:
+    - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
+  split_count: 5
 min_score: 0.0

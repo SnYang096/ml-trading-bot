@@ -19,17 +19,21 @@ logger = logging.getLogger(__name__)
 class OrderManager:
     """订单管理器"""
 
-    def __init__(self, storage: Storage, binance_api: BinanceAPI):
+    def __init__(self, storage: Storage, binance_api: BinanceAPI, shadow: bool = False):
         """
         初始化订单管理器
 
         Args:
             storage: 存储层实例
             binance_api: Binance API实例
+            shadow: Shadow 模式 - 只记录订单到数据库, 不实际下单
         """
         self.storage = storage
         self.binance_api = binance_api
+        self.shadow = shadow
         self._lock = Lock()
+        if shadow:
+            logger.info("🔇 OrderManager: Shadow 模式启用 — 订单只记录不执行")
 
     def place_order(
         self,
@@ -63,6 +67,28 @@ class OrderManager:
         with self._lock:
             order_id = f"order_{uuid.uuid4().hex}"
             client_order_id = f"cid_{uuid.uuid4().hex}"
+
+            # Shadow 模式: 记录订单但不实际执行
+            if self.shadow:
+                order = Order(
+                    order_id=order_id,
+                    client_order_id=client_order_id,
+                    position_id=position_id,
+                    symbol=symbol,
+                    side=side,
+                    order_type=order_type,
+                    quantity=quantity,
+                    price=price,
+                    stop_price=stop_price,
+                    status=OrderStatus.SHADOW,
+                    created_at=datetime.now(),
+                )
+                self.storage.create_order(order)
+                logger.info(
+                    f"🔇 Shadow 订单: {order_id}, {symbol}, {side.value}, "
+                    f"{order_type.value}, qty={quantity}, price={price}"
+                )
+                return order
 
             # 调用Binance API下单
             try:
@@ -155,6 +181,14 @@ class OrderManager:
             order = self.storage.get_order(order_id)
             if not order:
                 raise ValueError(f"订单不存在: {order_id}")
+
+            # Shadow 订单直接标记取消
+            if order.status == OrderStatus.SHADOW or self.shadow:
+                order.status = OrderStatus.CANCELED
+                order.canceled_at = datetime.now()
+                self.storage.update_order(order)
+                logger.info(f"🔇 Shadow 撤单: {order_id}")
+                return True
 
             if order.status != OrderStatus.PENDING:
                 logger.warning(f"订单状态不允许撤单: {order.status}")
@@ -296,7 +330,9 @@ class OrderManager:
             local_open = self.storage.get_open_orders(symbol)
             exchange_open = self.binance_api.get_open_orders(symbol)
 
-            exchange_by_id = {str(o.get("order_id")): o for o in exchange_open if o.get("order_id")}
+            exchange_by_id = {
+                str(o.get("order_id")): o for o in exchange_open if o.get("order_id")
+            }
             exchange_by_client = {
                 str(o.get("client_order_id")): o
                 for o in exchange_open
@@ -310,14 +346,22 @@ class OrderManager:
                 found = False
                 if order.binance_order_id and order.binance_order_id in exchange_by_id:
                     found = True
-                if not found and order.client_order_id and order.client_order_id in exchange_by_client:
+                if (
+                    not found
+                    and order.client_order_id
+                    and order.client_order_id in exchange_by_client
+                ):
                     found = True
 
                 if not found and order.binance_order_id:
                     # 获取交易所最终状态
-                    binance_order = self.binance_api.get_order(order.binance_order_id, order.symbol)
+                    binance_order = self.binance_api.get_order(
+                        order.binance_order_id, order.symbol
+                    )
                     if binance_order:
-                        order.status = self._convert_order_status(binance_order.get("status"))
+                        order.status = self._convert_order_status(
+                            binance_order.get("status")
+                        )
                         order.filled_quantity = binance_order.get("filled", 0)
                         order.average_price = binance_order.get("average_price")
                         order.updated_at = datetime.now()
@@ -448,7 +492,11 @@ class OrderManager:
                 ts = report.get("trade_time") or report.get("event_time")
                 if ts:
                     order.filled_at = datetime.fromtimestamp(int(ts))
-            elif order.status in (OrderStatus.CANCELED, OrderStatus.REJECTED, OrderStatus.EXPIRED):
+            elif order.status in (
+                OrderStatus.CANCELED,
+                OrderStatus.REJECTED,
+                OrderStatus.EXPIRED,
+            ):
                 order.canceled_at = datetime.now()
 
             order.updated_at = datetime.now()
