@@ -72,8 +72,26 @@ def load_pipeline_config(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-# ====================================================================
-# Date helpers
+def resolve_symbols_from_config(cfg: dict) -> str:
+    """
+    解析 research_pipeline.yaml 中的 symbols。
+    优先级：universe_group > symbols。
+    返回逗号分隔的 USDT 合约列表，如 "BTCUSDT,ETHUSDT".
+    """
+    if "universe_group" in cfg:
+        ug = cfg["universe_group"]
+        ug_file = PROJECT_ROOT / ug["file"]
+        ug_data = yaml.safe_load(ug_file.read_text(encoding="utf-8"))
+        universe_set = ug["universe_set"]
+        group = ug["group"]
+        tokens = ug_data["universe_sets"][universe_set]["groups"][group]
+        quote = ug_data.get("quote", "USDT")
+        return ",".join(f"{t}{quote}" for t in tokens)
+    if "symbols" in cfg:
+        return cfg["symbols"]
+    raise KeyError("research_pipeline.yaml 必须包含 universe_group 或 symbols 配置")
+
+
 # ====================================================================
 
 
@@ -1554,7 +1572,7 @@ def main():
         p.error("必须指定 --strategy 或 --all")
 
     dates = cfg["dates"]
-    symbols = cfg["symbols"]
+    symbols = resolve_symbols_from_config(cfg)
     data_path = cfg["data_path"]
     start_date = dates["start_date"]
 

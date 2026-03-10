@@ -1988,12 +1988,42 @@ def main():
         "--fee-rate",
         type=float,
         default=0.0004,
-        help="单边手续费率 (默认 0.0004 = 0.04%% Binance taker, 设 0 关闭)",
+        help="单边手续费率 (默认 0.0004 = 0.04%%%% Binance taker, 设 0 关闭)",
+    )
+    parser.add_argument(
+        "--universe-group",
+        default=None,
+        help=(
+            "从 universe_groups yaml 读取 symbols，格式: universe_set/group，"
+            "例: starter_a/highcap，默认文件: config/download/crypto_4h_token_universe_groups.yaml"
+        ),
     )
     args = parser.parse_args()
 
     strategies = [s.strip() for s in args.strategy.split(",")]
-    symbols = [s.strip() for s in args.symbols.split(",")]
+
+    # 解析 symbols：--universe-group 优先，其次 --symbols
+    if args.universe_group:
+        import yaml as _yaml
+
+        _ug_file = (
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "download"
+            / "crypto_4h_token_universe_groups.yaml"
+        )
+        _ug_data = _yaml.safe_load(_ug_file.read_text(encoding="utf-8"))
+        _parts = args.universe_group.split("/")
+        if len(_parts) != 2:
+            parser.error(
+                "--universe-group 格式应为 universe_set/group，例: starter_a/highcap"
+            )
+        _universe_set, _group = _parts
+        _tokens = _ug_data["universe_sets"][_universe_set]["groups"][_group]
+        _quote = _ug_data.get("quote", "USDT")
+        symbols = [f"{t}{_quote}" for t in _tokens]
+    else:
+        symbols = [s.strip() for s in args.symbols.split(",")]
 
     print("=" * 72)
     print("  🔬 事件驱动回测 (多策略 PCM 仲裁)")

@@ -19,7 +19,12 @@ training:
   seed_selection: best_sharpe   # 选优标准: sharpe_per_trade 最高 (需满足 min_trades)
 
 # ── Token Universe ────────────────────────────────────────────
-symbols: "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT"
+# 通过 universe_group 指定，自动展开为 USDT 合约列表，不需再在命令行传 --symbols
+universe_group:
+  file: "config/download/crypto_4h_token_universe_groups.yaml"
+  universe_set: starter_a
+  group: highcap
+# symbols: "BTCUSDT,..."  # 已由 universe_group 替代
 data_path: "data/parquet_data"
 
 # ── 数据下载 (Step 0) ─────────────────────────────────────────

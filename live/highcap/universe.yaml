@@ -7,4 +7,4 @@ symbols:
   BNBUSDT: "平台币，深度好、点差小"
   SOLUSDT: "高波动高流动，适合趋势策略"
   XRPUSDT: "成交量恢复后的传统大盘币"
-  ADAUSDT: "高市值+中等波动"
+  # ADAUSDT: "已移除 - 回测 MeanR=-0.103R，唯一亏损品种"
