@@ -19,6 +19,27 @@
             "type": "link",
             "icon": "cloud",
             "targetBlank": false
+        },
+        {
+            "title": "🔵 BPC Strategy",
+            "url": "/d/quant-strategy-bpc",
+            "type": "link",
+            "icon": "dashboard",
+            "targetBlank": false
+        },
+        {
+            "title": "🟣 FER Strategy",
+            "url": "/d/quant-strategy-fer",
+            "type": "link",
+            "icon": "dashboard",
+            "targetBlank": false
+        },
+        {
+            "title": "🟠 ME Strategy",
+            "url": "/d/quant-strategy-me",
+            "type": "link",
+            "icon": "dashboard",
+            "targetBlank": false
         }
     ],
     "panels": [
@@ -37,7 +58,7 @@
         {
             "gridPos": {
                 "h": 3,
-                "w": 8,
+                "w": 6,
                 "x": 0,
                 "y": 1
             },
@@ -52,8 +73,8 @@
         {
             "gridPos": {
                 "h": 3,
-                "w": 8,
-                "x": 8,
+                "w": 6,
+                "x": 6,
                 "y": 1
             },
             "id": 52,
@@ -67,14 +88,44 @@
         {
             "gridPos": {
                 "h": 3,
-                "w": 8,
+                "w": 4,
+                "x": 12,
+                "y": 1
+            },
+            "id": 54,
+            "options": {
+                "mode": "html",
+                "content": "<div style='text-align:center; padding:12px 0'><a href='/d/quant-strategy-bpc' style='font-size:20px; text-decoration:none; color:#3274D9'>🔵 BPC</a><br/><span style='color:#aaa; font-size:12px'>Slot · 信号 · 盈亏</span></div>"
+            },
+            "type": "text",
+            "transparent": false
+        },
+        {
+            "gridPos": {
+                "h": 3,
+                "w": 4,
                 "x": 16,
                 "y": 1
             },
-            "id": 53,
+            "id": 55,
             "options": {
                 "mode": "html",
-                "content": "<div style='text-align:center; padding:12px 0'><a href='/d/quant-account-market' style='font-size:22px; text-decoration:none; color:#FADE2A'>💰 Account & Market</a><br/><span style='color:#aaa; font-size:13px'>余额 · 保证金 · 资金费率 · OI</span></div>"
+                "content": "<div style='text-align:center; padding:12px 0'><a href='/d/quant-strategy-fer' style='font-size:20px; text-decoration:none; color:#B877D9'>🟣 FER</a><br/><span style='color:#aaa; font-size:12px'>Slot · 信号 · 盈亏</span></div>"
+            },
+            "type": "text",
+            "transparent": false
+        },
+        {
+            "gridPos": {
+                "h": 3,
+                "w": 4,
+                "x": 20,
+                "y": 1
+            },
+            "id": 56,
+            "options": {
+                "mode": "html",
+                "content": "<div style='text-align:center; padding:12px 0'><a href='/d/quant-strategy-me' style='font-size:20px; text-decoration:none; color:#FF9830'>🟠 ME</a><br/><span style='color:#aaa; font-size:12px'>Slot · 信号 · 盈亏</span></div>"
             },
             "type": "text",
             "transparent": false

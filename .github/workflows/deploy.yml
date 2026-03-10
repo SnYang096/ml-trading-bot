@@ -41,6 +41,7 @@ on:
       - 'docker/Dockerfile.live'
       - 'requirements.txt'
       - '.github/workflows/deploy.yml'
+      - 'terraform/monitoring/grafana-provisioning/**'
 
 # 同一时间只允许一个部署
 concurrency:
@@ -114,6 +115,9 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
       - name: 🔑 Write API keys to server
         uses: appleboy/ssh-action@v1
         env:
@@ -183,3 +187,36 @@ jobs:
             echo "Image: $IMAGE_FULL"
             echo "Container: $(docker ps --filter name=quant-engine --format '{{.Status}}')"
             echo "Disk: $(df -h / | tail -1 | awk '{print $4}') free"
+
+      - name: 📊 Sync Grafana dashboards & restart
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: "terraform/monitoring/grafana-provisioning/dashboards/*.json,terraform/monitoring/grafana-provisioning/dashboards/*.yml"
+          target: "/tmp/grafana-sync"
+          strip_components: 4
+
+      - name: 🔄 Apply dashboards & restart Grafana
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            DASH_DIR=/opt/quant-engine/monitoring/grafana-provisioning/dashboards
+            if [ -d "$DASH_DIR" ]; then
+              cp /tmp/grafana-sync/dashboards/*.json "$DASH_DIR/"
+              cp /tmp/grafana-sync/dashboards/*.yml  "$DASH_DIR/" 2>/dev/null || true
+              rm -rf /tmp/grafana-sync
+              if docker ps --format '{{.Names}}' | grep -q mlbot-grafana; then
+                docker restart mlbot-grafana
+                echo "✅ Grafana 已重启，面板已同步"
+              else
+                echo "⚠️ mlbot-grafana 容器未运行，跳过重启"
+              fi
+            else
+              echo "⚠️ $DASH_DIR 不存在，跳过面板同步"
+              rm -rf /tmp/grafana-sync
+            fi

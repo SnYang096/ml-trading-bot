@@ -988,6 +988,14 @@ async def main() -> None:
                     if listener and listener.last_feature_compute_time:
                         age = (now - listener.last_feature_compute_time).total_seconds()
                         METRICS.last_bar_age.labels(symbol=sym).set(age)
+                # 更新 per-strategy slot 指标
+                _first_listener = manager.get_listener(symbols[0]) if symbols else None
+                if _first_listener:
+                    _rs = getattr(_first_listener, "runtime_state", None)
+                    _psl = getattr(_first_listener, "per_strategy_limits", {}) or {}
+                    _slots_cfg = (pcm.constitution or {}).get("slots", {})
+                    _global_max = int(_slots_cfg.get("slot_count", 2))
+                    METRICS.update_slot_metrics(_rs, _psl, _global_max)
             except asyncio.CancelledError:
                 break
             except Exception as exc:

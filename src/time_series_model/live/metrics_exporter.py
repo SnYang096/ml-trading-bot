@@ -111,6 +111,9 @@ class Metrics:
             self.consecutive_losses = _NOOP
             self.days_since_last_train = _NOOP
             self.alpha_decay_max = _NOOP
+            # Per-strategy slot metrics
+            self.strategy_slots_active = _NOOP
+            self.strategy_slots_max = _NOOP
             return
 
         # ── Counters (累计值，只增不减) ──
@@ -364,6 +367,20 @@ class Metrics:
             ["strategy"],
         )
 
+        # ── Per-strategy Slot Metrics ──
+
+        self.strategy_slots_active = Gauge(
+            "mlbot_strategy_slots_active",
+            "Currently active slot count per strategy",
+            ["strategy"],
+        )
+
+        self.strategy_slots_max = Gauge(
+            "mlbot_strategy_slots_max",
+            "Max slot limit per strategy",
+            ["strategy"],
+        )
+
         # ── Info ──
 
         self.bot_info = Info(
@@ -585,6 +602,41 @@ class Metrics:
             if stats.get("orders", 0):
                 self.funnel_stage.labels(stage="order", strategy=s).inc(stats["orders"])
                 self.orders_total.labels(strategy=s).inc(stats["orders"])
+
+    def update_slot_metrics(
+        self,
+        runtime_state,
+        per_strategy_limits: dict,
+        global_max_slots: int = 2,
+    ) -> None:
+        """从 ConstitutionRuntimeState 更新 per-strategy slot Gauges
+
+        Args:
+            runtime_state: ConstitutionRuntimeState (包含 slots.active)
+            per_strategy_limits: constitution.per_strategy_limits dict
+            global_max_slots: 全局 slot 上限 (fallback)
+        """
+        if runtime_state is None:
+            return
+        # 统计每个 archetype 的 active slot 数
+        archetype_counts: dict = {}
+        try:
+            for _pid, rec in (runtime_state.slots.active or {}).items():
+                arch = getattr(rec, "archetype", None) or "unknown"
+                arch = str(arch).lower()
+                archetype_counts[arch] = archetype_counts.get(arch, 0) + 1
+        except Exception:
+            return
+
+        all_strategies = {"bpc", "fer", "me"}
+        for s in all_strategies:
+            self.strategy_slots_active.labels(strategy=s).set(
+                archetype_counts.get(s, 0)
+            )
+            # max slots: per_strategy_limits > global
+            limits = (per_strategy_limits or {}).get(s) or {}
+            max_s = int(limits.get("max_slots", global_max_slots))
+            self.strategy_slots_max.labels(strategy=s).set(max_s)
 
 
 # ── 全局单例 ──────────────────────────────────────────────────
