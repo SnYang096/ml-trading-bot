@@ -1087,17 +1087,10 @@ class TestBPCContextFeatures:
         """测试 compression_state 基本功能"""
         df, orderflow = sample_data
 
-        garch_volatility = pd.Series(
-            np.random.uniform(0.01, 0.03, len(df)), index=df.index
-        )
-        wpt_vper_low = pd.Series(np.random.uniform(0.0, 1.0, len(df)), index=df.index)
-
         result = compute_bpc_compression_state_from_series(
             close=df["close"],
             volume=df["volume"],
             bb_width_normalized=orderflow["bb_width_normalized"],
-            garch_volatility=garch_volatility,
-            wpt_vper_low=wpt_vper_low,
         )
 
         expected_cols = [
@@ -1208,3 +1201,208 @@ class TestBPCContextFeatures:
                 assert diff < 1e-6, f"{col} 存在未来数据泄露，差异: {diff}"
 
         print("✅ 上下文特征无未来数据泄露测试通过")
+
+
+# =============================================================================
+# 📊 BB 二阶压缩 vs GARCH 压缩等效性测试
+# =============================================================================
+
+
+class TestBpcCompressionVsGarchEquivalence:
+    """
+    验证 bpc_garch_compression（已改为 BB 二阶压缩）与原始 GARCH 压缩的语义等效性。
+
+    BB 二阶压缩定义：当前 BB 宽度在过去 pct_window 周期内的历史百分位（低 = 压缩）。
+    GARCH 压缩定义：当前 GARCH 波动率在过去 pct_window 周期内的历史百分位（低 = 压缩）。
+
+    两者都是衡量「当前波动率相对历史的压缩程度」，预期 Spearman 相关性 ≥ 0.70。
+    """
+
+    @staticmethod
+    def _compute_garch_compression_reference(
+        close: pd.Series, pct_window: int = 100
+    ) -> pd.Series:
+        """
+        参考 GARCH 压缩实现（使用 arch 库）。
+        若 arch 不可用则回退到 GARCH 近似：指数加权标准差的历史百分位。
+        """
+        try:
+            from arch import arch_model  # type: ignore
+
+            returns = close.pct_change().dropna() * 100
+            am = arch_model(returns, vol="Garch", p=1, q=1, rescale=False)
+            res = am.fit(disp="off", show_warning=False)
+            garch_vol = res.conditional_volatility
+            garch_vol = garch_vol.reindex(close.index).fillna(method="ffill").fillna(0)
+        except Exception:
+            # 回退：EWMA 近似 GARCH
+            returns = close.pct_change().fillna(0)
+            garch_vol = returns.ewm(span=20).std()
+
+        garch_pct = (
+            garch_vol.rolling(pct_window, min_periods=20).rank(pct=True).fillna(0.5)
+        )
+        return (1 - garch_pct).rename("garch_compression_ref")
+
+    @staticmethod
+    def _compute_ewma_compression(close: pd.Series, pct_window: int = 100) -> pd.Series:
+        """EWMA 波动率压缩：与 compute_bpc_compression_state_from_series 内部实现完全一致。"""
+        rets = close.pct_change().fillna(0)
+        ewma_vol = rets.ewm(span=20, min_periods=5).std().fillna(0)
+        ewma_pct = (
+            ewma_vol.rolling(pct_window, min_periods=20).rank(pct=True).fillna(0.5)
+        )
+        return (1 - ewma_pct).rename("ewma_compression")
+
+    @staticmethod
+    def _make_bb_width_normalized(close: pd.Series, window: int = 20) -> pd.Series:
+        """计算布林带宽度归一化值（与 bb_width_normalized_pct_f 输出一致）。"""
+        ma = close.rolling(window, min_periods=1).mean()
+        std = close.rolling(window, min_periods=1).std().fillna(0)
+        bb_upper = ma + 2 * std
+        bb_lower = ma - 2 * std
+        bb_width = (bb_upper - bb_lower) / ma.clip(lower=1e-8)
+        # 百分位归一化
+        bb_pct = bb_width.rolling(100, min_periods=20).rank(pct=True).fillna(0.5)
+        return bb_pct.rename("bb_width_normalized")
+
+    def test_spearman_correlation_on_synthetic_data(self):
+        """
+        合成数据上验证 EWMA 波动率压缩与 GARCH 压缩的 Spearman 相关性 ≥ 0.85。
+
+        EWMA 是 GARCH(1,1) 的标准近似，两者相关性在 GARCH 过程生成的数据上预期 ≥ 0.85。
+        """
+        np.random.seed(42)
+        n = 2000
+
+        # 生成 GARCH(1,1) 过程
+        omega, alpha, beta = 0.00001, 0.1, 0.85
+        sigma2 = np.zeros(n)
+        eps = np.zeros(n)
+        sigma2[0] = omega / (1 - alpha - beta)
+        for t in range(1, n):
+            sigma2[t] = omega + alpha * eps[t - 1] ** 2 + beta * sigma2[t - 1]
+            eps[t] = np.random.randn() * np.sqrt(sigma2[t])
+
+        idx = pd.date_range("2022-01-01", periods=n, freq="4h")
+        close = pd.Series(50000 * np.exp(np.cumsum(eps)), index=idx)
+        # 真实 GARCH 压缩（用 sigma2 直接计算）
+        garch_vol = pd.Series(np.sqrt(sigma2), index=idx)
+        garch_pct = garch_vol.rolling(100, min_periods=20).rank(pct=True).fillna(0.5)
+        garch_compression = (1 - garch_pct).rename("garch_compression")
+
+        ewma_compression = self._compute_ewma_compression(close)
+
+        # 对齐并计算相关性（跳过前 120 个 warmup 周期）
+        common = close.index[120:]
+        g = garch_compression.loc[common].dropna()
+        e = ewma_compression.loc[common].reindex(g.index).dropna()
+        common_idx = g.index.intersection(e.index)
+
+        from scipy.stats import spearmanr
+
+        corr, pvalue = spearmanr(g.loc[common_idx], e.loc[common_idx])
+
+        print(f"\nEWMA压缩 vs GARCH压缩 Spearman 相关性: {corr:.4f} (p={pvalue:.2e})")
+        assert (
+            corr >= 0.85
+        ), f"EWMA 压缩与 GARCH 压缩 Spearman 相关性 {corr:.4f} < 0.85，语义等效性不足"
+        assert pvalue < 0.01, f"相关性不显著 (p={pvalue:.2e})"
+        print("✅ EWMA压缩与GARCH压缩语义等效性验证通过")
+
+    def test_bpc_garch_compression_output_equals_ewma(self):
+        """
+        验证 compute_bpc_compression_state_from_series 的 bpc_garch_compression
+        输出列确实等于 EWMA 波动率压缩（而不是 GARCH）。
+        """
+        np.random.seed(123)
+        n = 500
+        idx = pd.date_range("2023-01-01", periods=n, freq="4h")
+        close = pd.Series(
+            np.exp(np.cumsum(np.random.randn(n) * 0.01)) * 50000, index=idx
+        )
+        volume = pd.Series(np.random.uniform(100, 1000, n), index=idx)
+
+        bb_width_norm = self._make_bb_width_normalized(close)
+
+        result = compute_bpc_compression_state_from_series(
+            close=close,
+            volume=volume,
+            bb_width_normalized=bb_width_norm,
+        )
+
+        # bpc_garch_compression 应等于 ewma_compression
+        expected = self._compute_ewma_compression(close)
+        actual = result["bpc_garch_compression"]
+
+        common_idx = actual.dropna().index.intersection(expected.dropna().index)
+        assert len(common_idx) > 100, "有效样本不足"
+
+        diff = (actual.loc[common_idx] - expected.loc[common_idx]).abs().max()
+        assert diff < 1e-10, f"bpc_garch_compression 不等于 EWMA 压缩，最大差异: {diff}"
+        print("✅ bpc_garch_compression 输出等于 EWMA 波动率压缩")
+
+    def test_output_columns_unchanged(self):
+        """
+        验证输出列名集合未发生变化（向后兼容性）。
+        """
+        df = create_ohlcv_data(n_samples=300)
+        close = df["close"]
+        volume = df["volume"]
+        bb_width_norm = self._make_bb_width_normalized(close)
+
+        result = compute_bpc_compression_state_from_series(
+            close=close,
+            volume=volume,
+            bb_width_normalized=bb_width_norm,
+        )
+
+        expected_cols = {
+            "bpc_vol_compression_state",
+            "bpc_bb_compression_state",
+            "bpc_garch_compression",
+            "bpc_wpt_energy_low",
+            "bpc_pre_breakout_score",
+        }
+        assert (
+            set(result.columns) == expected_cols
+        ), f"输出列名变化: 期望 {expected_cols}，实际 {set(result.columns)}"
+        print("✅ 输出列名向后兼容性验证通过")
+
+    def test_no_garch_dependency_in_feature_nodes(self):
+        """
+        验证 FER/BPC/ME 的 feature nodes 中不再包含 garch_features_f（依赖链已清除）。
+        """
+        from src.time_series_model.live.live_feature_plan import (
+            extract_features_from_archetypes,
+        )
+
+        for strategy in ["bpc", "me", "fer"]:
+            archetypes_dir = f"config/strategies/{strategy}/archetypes"
+            _, nodes = extract_features_from_archetypes(archetypes_dir)
+            assert (
+                "garch_features_f" not in nodes
+            ), f"{strategy} 的 feature nodes 中仍包含 garch_features_f: {nodes}"
+        print("✅ 所有策略的 feature nodes 中不含 garch_features_f")
+
+    def test_bounded_output_range(self):
+        """
+        验证 bpc_garch_compression（BB二阶压缩）输出值域 [0, 1]。
+        """
+        df = create_ohlcv_data(n_samples=500)
+        close = df["close"]
+        volume = df["volume"]
+        bb_width_norm = self._make_bb_width_normalized(close)
+
+        result = compute_bpc_compression_state_from_series(
+            close=close,
+            volume=volume,
+            bb_width_normalized=bb_width_norm,
+        )
+
+        col = result["bpc_garch_compression"].dropna()
+        assert col.min() >= 0.0, f"bpc_garch_compression 最小值 {col.min()} < 0"
+        assert col.max() <= 1.0, f"bpc_garch_compression 最大值 {col.max()} > 1"
+        print(
+            f"✅ bpc_garch_compression 值域 [{col.min():.4f}, {col.max():.4f}] ⊆ [0, 1]"
+        )

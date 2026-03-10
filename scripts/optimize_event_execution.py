@@ -63,6 +63,71 @@ def _parse_range_str(s: str) -> List[float]:
     return vals
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Execution 参数合理性约束
+# ═══════════════════════════════════════════════════════════════════════════
+# 问题: initial_r/activation_r 比率过高时, 随机入场的理论 WR 也很高:
+#   P(random_win) = initial_r / (activation_r + initial_r)
+# 例如 initial_r=3, activation_r=0.5 → P(random)=85.7%, 任何信号看起来都"有效"
+# 约束:
+#   1. initial_r / activation_r <= MAX_SL_ACT_RATIO  (防止 WR 膨胀)
+#   2. activation_r - trail_r >= MIN_WIN_R            (保证最小盈利)
+#   3. trail_r <= activation_r                        (trailing stop 不能比激活距离更宽)
+
+MAX_SL_ACT_RATIO = 3.0  # initial_r / activation_r <= 3 → 随机 WR <= 75%
+MIN_WIN_R = 0.0  # activation_r - trail_r >= 0 → 最小盈利 >= 0R (不亏)
+
+
+def _filter_degenerate_combos(
+    param_names: List[str],
+    combos: List[Tuple],
+    max_ratio: float = MAX_SL_ACT_RATIO,
+    min_win_r: float = MIN_WIN_R,
+) -> Tuple[List[Tuple], int]:
+    """过滤退化参数组合 (高 WR 但无 edge).
+
+    Returns:
+        (valid_combos, n_filtered)
+    """
+    # 定位参数在 combo 中的 index
+    ir_idx = act_idx = trail_idx = None
+    for i, name in enumerate(param_names):
+        if name == "stop_loss.initial_r":
+            ir_idx = i
+        elif name == "stop_loss.trailing.activation_r":
+            act_idx = i
+        elif name == "stop_loss.trailing.trail_r":
+            trail_idx = i
+
+    if ir_idx is None and act_idx is None:
+        return combos, 0  # 没有 SL/activation 参数, 不过滤
+
+    valid = []
+    for combo in combos:
+        ir = combo[ir_idx] if ir_idx is not None else None
+        act = combo[act_idx] if act_idx is not None else None
+        trail = combo[trail_idx] if trail_idx is not None else None
+
+        # 约束1: initial_r / activation_r <= max_ratio
+        if ir is not None and act is not None:
+            if act > 0 and ir / act > max_ratio:
+                continue
+
+        # 约束2: activation_r - trail_r >= min_win_r
+        if act is not None and trail is not None:
+            if act - trail < min_win_r - 1e-9:
+                continue
+
+        # 约束3: trail_r <= activation_r
+        if act is not None and trail is not None:
+            if trail > act + 1e-9:
+                continue
+
+        valid.append(combo)
+
+    return valid, len(combos) - len(valid)
+
+
 def _parse_optimization_grid(
     opt_cfg: Dict[str, Any],
 ) -> Tuple[List[str], List[List[float]]]:
@@ -641,10 +706,27 @@ def main():
         ]
 
     all_combos = list(itertools.product(*param_values))
-    total = len(all_combos)
-    print(
-        f"  Grid:    {' × '.join(str(len(v)) for v in param_values)} = {total} combos"
+    raw_total = len(all_combos)
+
+    # ── 过滤退化参数组合 (防止 WR 膨胀) ──
+    # 优先从 execution.yaml constraints 读取, 否则用全局默认值
+    _constraints = opt_cfg.get("constraints", {})
+    _max_ratio = _constraints.get("max_sl_activation_ratio", MAX_SL_ACT_RATIO)
+    _min_win = _constraints.get("min_win_r", MIN_WIN_R)
+    all_combos, n_filtered = _filter_degenerate_combos(
+        param_names, all_combos, max_ratio=_max_ratio, min_win_r=_min_win
     )
+    total = len(all_combos)
+
+    print(
+        f"  Grid:    {' × '.join(str(len(v)) for v in param_values)} = {raw_total} combos"
+    )
+    if n_filtered > 0:
+        print(
+            f"  ⚠️  过滤退化组合: {n_filtered} 个 "
+            f"(initial_r/activation_r > {MAX_SL_ACT_RATIO} 或 trail_r > activation_r)"
+        )
+        print(f"  有效组合: {total}")
     print(f"  Params:  {param_names}")
     print("=" * 72)
 

@@ -6,6 +6,10 @@ holding:
   time_stop_bars: 40
 optimization:
   enabled: true
+  # ── 参数合理性约束 (防止退化高 WR) ──
+  constraints:
+    max_sl_activation_ratio: 3.0
+    min_win_r: 0.0
   params:
     stop_loss.initial_r:
       range:

@@ -23,12 +23,12 @@ optimization:
       - 3.0
       step: 0.5
 stop_loss:
-  initial_r: 3.0
+  initial_r: 2.0
   trailing:
-    activation_r: 0.5
+    activation_r: 1.0
     step_r: 0.5
     trail_r: 0.5
   type: trailing
 take_profit:
   enabled: false
-version: 46
+version: 47

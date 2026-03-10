@@ -24,12 +24,13 @@ filters:
     operator: '>='
     value: 0.164319
   notes: Δrr=+0.1906, t=4.26, p=0.0000, pass=80.0%
-- id: ev_garch_volatility
-  enabled: true
-  description: 'Evidence bin: garch_volatility <= 0.004776'
-  conditions:
-  - feature: garch_volatility
-    operator: <=
-    value: 0.004776
-  notes: Δrr=+0.2284, t=5.27, p=0.0000, pass=80.0%
+# DISABLED: garch_features_f removed for live performance (370s/cycle)
+# - id: ev_garch_volatility
+#   enabled: true
+#   description: 'Evidence bin: garch_volatility <= 0.004776'
+#   conditions:
+#   - feature: garch_volatility
+#     operator: <=
+#     value: 0.004776
+#   notes: Δrr=+0.2284, t=5.27, p=0.0000, pass=80.0%
 combination_mode: or

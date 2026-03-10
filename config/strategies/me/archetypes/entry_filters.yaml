@@ -1,23 +1,35 @@
 # ME Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
-# Date: 2026-03-06 01:41
-# Promoted: 1 filters (1 plateau + 0 snotio-only)
-# Baseline snotio: 8.6927, σ=14.307
-# Significance: z-test p<0.05 required for all tiers
-# ⚠️ 2026-03-10 手动恢复: 3/8 pipeline 用 evidence bins OR 替换导致 pass rate ~95%
+# Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)
+# Date: 2026-03-10 11:40
+# Promoted: 3 filters (evidence Spearman bins)
+# Significance: forward_rr t-test p<0.05 required
 #
-# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 职责: "现在该入场吗?" → 硬二值控制
 # 多个 filter 之间是 OR 关系
-# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-- id: meta_funding_rate_zscore_50
+- id: ev_evt_scale
   enabled: true
-  description: 'Meta-Algorithm: funding_rate_zscore_50 >= 0.873'
+  description: 'Evidence bin: evt_scale >= 0.138889'
   conditions:
-  - feature: funding_rate_zscore_50
+  - feature: evt_scale
     operator: '>='
-    value: 0.873
-  tier: A_PLATEAU
-  notes: lift=1.07x, rob=75%, snotio=14.5397, z=3.72, p=0.0001
+    value: 0.138889
+  notes: Δrr=+1.9658, t=6.83, p=0.0000, pass=80.2%
+- id: ev_evt_var_99_right
+  enabled: true
+  description: 'Evidence bin: evt_var_99_right >= 0.09127'
+  conditions:
+  - feature: evt_var_99_right
+    operator: '>='
+    value: 0.09127
+  notes: Δrr=+1.2829, t=3.86, p=0.0001, pass=80.2%
+- id: ev_spectrum_price_centroid
+  enabled: true
+  description: 'Evidence bin: spectrum_price_centroid >= 0.214286'
+  conditions:
+  - feature: spectrum_price_centroid
+    operator: '>='
+    value: 0.214286
+  notes: Δrr=+2.1132, t=7.30, p=0.0000, pass=80.4%
 combination_mode: or

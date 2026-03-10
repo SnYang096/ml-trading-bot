@@ -6,6 +6,12 @@ holding:
   time_stop_bars: 0
 optimization:
   enabled: true
+  # ── 参数合理性约束 (防止退化高 WR) ──
+  # P(random_win) = initial_r / (activation_r + initial_r)
+  # 约束: initial_r/activation_r <= 3 → 随机 WR <= 75%
+  constraints:
+    max_sl_activation_ratio: 3.0   # initial_r / activation_r 上限
+    min_win_r: 0.0                 # activation_r - trail_r 下限
   params:
     stop_loss.initial_r:
       range:
@@ -22,13 +28,15 @@ optimization:
       - 0.5
       - 3.0
       step: 0.5
+# ── 当前最优参数 (待重跑 grid search 后更新) ──
+# 注意: 旧值 initial_r=3.0/activation_r=0.5 是退化组合 (ratio=6, random WR=86%)
 stop_loss:
-  initial_r: 3.0
+  initial_r: 2.0
   trailing:
-    activation_r: 0.5
+    activation_r: 1.0
     step_r: 0.5
     trail_r: 0.5
   type: trailing
 take_profit:
   enabled: false
-version: 28
+version: 29

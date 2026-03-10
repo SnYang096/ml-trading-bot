@@ -7,7 +7,8 @@ GARCH 和 EVT 特征工程测试
 3. 因果性验证（无未来信息泄露）
 4. 市场状态识别（高波动 vs 低波动）
 5. 极端事件检测（黑天鹅预警）
-6. 边界情况处理（NaN、异常值）
+6. 边界情况处理（NaN、异常値）
+7. volatility_regime_f 无模型 GARCH 近似等效性验证
 """
 
 import unittest
@@ -22,6 +23,9 @@ warnings.filterwarnings("ignore")
 
 from src.features.time_series.utils_garch_features import (
     extract_garch_features_from_series,
+    compute_volatility_regime_from_series,
+    compute_ewma_vol,
+    compute_ewma_vol_percentile,
 )
 from src.features.time_series.utils_evt_features import (
     extract_evt_features_from_series,
@@ -1032,6 +1036,384 @@ class TestEVTQuantileNormalization(unittest.TestCase):
                     )
 
                     print("  ✅ EVT 分位数归一化流式一致性验证通过")
+
+
+class TestEwmaVolSharedUtils:
+    """
+    共享工具函数 compute_ewma_vol / compute_ewma_vol_percentile 的单元测试。
+    覆盖：功能正确性、无未来函数、値域、短数据鲁棒性。
+    """
+
+    @staticmethod
+    def _flat_close(n: int = 200) -> pd.Series:
+        return pd.Series([100.0] * n, name="close")
+
+    @staticmethod
+    def _random_close(n: int = 500, seed: int = 42) -> pd.Series:
+        rng = np.random.default_rng(seed)
+        return pd.Series(100 * np.exp(np.cumsum(rng.normal(0, 0.01, n))), name="close")
+
+    # --- compute_ewma_vol ---
+
+    def test_ewma_vol_output_length_equals_input(self):
+        close = self._random_close()
+        result = compute_ewma_vol(close)
+        assert len(result) == len(close)
+
+    def test_ewma_vol_no_nan(self):
+        close = self._random_close()
+        result = compute_ewma_vol(close)
+        assert not result.isna().any(), f"包含 NaN: {result.isna().sum()}"
+
+    def test_ewma_vol_non_negative(self):
+        close = self._random_close()
+        result = compute_ewma_vol(close)
+        assert (result >= 0).all(), f"包含负値: {result.min()}"
+
+    def test_ewma_vol_zero_on_flat_series(self):
+        """\u5e38数价格序列收益为 0，EWMA 波动率应 ≈ 0。"""
+        flat = self._flat_close(100)
+        result = compute_ewma_vol(flat)
+        assert (
+            result.iloc[-1] < 1e-10
+        ), f"常数价格 EWMA vol 应为 0，实际：{result.iloc[-1]}"
+
+    def test_ewma_vol_no_lookahead(self):
+        """无未来函数：修改序列尾部不影响已有部分的结果。"""
+        close = self._random_close(300)
+        vol_full = compute_ewma_vol(close)
+        vol_trunc = compute_ewma_vol(close.iloc[:200])
+
+        diff = (vol_full.iloc[:200] - vol_trunc).abs()
+        assert diff.max() < 1e-10, f"未来函数！最大差异: {diff.max():.2e}"
+
+    # --- compute_ewma_vol_percentile ---
+
+    def test_ewma_vol_pct_bounded_0_1(self):
+        close = self._random_close(500)
+        result = compute_ewma_vol_percentile(close)
+        assert result.min() >= -1e-9, f"小于 0: {result.min()}"
+        assert result.max() <= 1 + 1e-9, f"大于 1: {result.max()}"
+
+    def test_ewma_vol_pct_no_lookahead(self):
+        close = self._random_close(400)
+        pct_full = compute_ewma_vol_percentile(close)
+        pct_trunc = compute_ewma_vol_percentile(close.iloc[:250])
+
+        common = pct_trunc.dropna().index
+        diff = (pct_full.loc[common] - pct_trunc.loc[common]).abs()
+        assert diff.max() < 1e-10, f"未来函数！最大差异: {diff.max():.2e}"
+
+    def test_ewma_vol_pct_consistent_with_ewma_vol(self):
+        """百分位与 raw EWMA vol 的单调性：高波动率对应高百分位。
+        rolling rank 相对于局部窗口内分布，Spearman 阈値定为 0.70。
+        """
+        close = self._random_close(500)
+        vol = compute_ewma_vol(close)
+        pct = compute_ewma_vol_percentile(close)
+
+        # 清除 warmup NaN
+        mask = pct.notna() & (pct != 0.5)
+        from scipy.stats import spearmanr
+
+        corr, _ = spearmanr(vol[mask], pct[mask])
+        assert corr >= 0.70, f"EWMA vol vs pct Spearman {corr:.3f} < 0.70"
+
+    def test_ewma_vol_pct_reused_in_bpc(self):
+        """
+        验证 bpc_features.py 中的 ewma_compression 与
+        直接调用 compute_ewma_vol_percentile 得到相同结果。
+        """
+        from src.features.time_series.bpc_features import (
+            compute_bpc_compression_state_from_series,
+        )
+
+        close = self._random_close(500)
+        volume = pd.Series(
+            np.random.default_rng(0).lognormal(10, 0.5, 500), name="volume"
+        )
+
+        bpc_result = compute_bpc_compression_state_from_series(
+            close=close, volume=volume
+        )
+        ewma_compression_bpc = bpc_result["bpc_garch_compression"]
+
+        # 尺度应和 1 - compute_ewma_vol_percentile 完全相同
+        ewma_pct = compute_ewma_vol_percentile(close, ewma_span=20, pct_window=100)
+        ewma_compression_ref = 1 - ewma_pct
+
+        diff = (ewma_compression_bpc - ewma_compression_ref).abs()
+        assert (
+            diff.max() < 1e-10
+        ), f"bpc 与工具函数实现不一致！最大差异: {diff.max():.2e}"
+
+
+class TestVolatilityRegimeFunctionality:
+    """
+    compute_volatility_regime_from_series 功能正确性测试。
+    覆盖：无未来函数、流式分块一致性、高低波动率制度区分、升降序列渠动率。
+    """
+
+    @staticmethod
+    def _make_garch_close(n: int = 2000, seed: int = 42) -> pd.Series:
+        rng = np.random.default_rng(seed)
+        alpha0, alpha1, beta1 = 1e-6, 0.08, 0.90
+        rets = np.zeros(n)
+        h = np.full(n, alpha0 / (1 - alpha1 - beta1))
+        for t in range(1, n):
+            h[t] = alpha0 + alpha1 * rets[t - 1] ** 2 + beta1 * h[t - 1]
+            rets[t] = rng.normal(0, np.sqrt(h[t]))
+        price = 100 * np.exp(np.cumsum(rets))
+        return pd.Series(price, name="close")
+
+    def test_no_lookahead_all_columns(self):
+        """无未来函数：截断序列尾部不影响已有点的近端结果。"""
+        close = self._make_garch_close(600)
+        full = compute_volatility_regime_from_series(close=close)
+        trunc = compute_volatility_regime_from_series(close=close.iloc[:400])
+
+        for col in (
+            "vol_persistence",
+            "vol_leverage_asymmetry",
+            "vol_clustering_strength",
+        ):
+            common_idx = trunc[col].dropna().index[-50:]
+            diff = (full[col].loc[common_idx] - trunc[col].loc[common_idx]).abs()
+            assert diff.max() < 1e-10, f"{col} 未来函数！差异: {diff.max():.2e}"
+
+    def test_streaming_chunked_vs_batch_consistency(self):
+        """
+        流式分块一致性：将序列分两部分分别计算，第二个块的值应和全量计算一致。
+        验证：滚动窗口算法无状态，分块调用加长尾缀等价于全量。
+        """
+        close = self._make_garch_close(600)
+        split = 300
+        warmup = 200  # 需要足够 warmup 让滚动窗口稳定
+
+        full = compute_volatility_regime_from_series(close=close)
+
+        # 第二块：从 warmup 开始的尾缀
+        chunk2 = compute_volatility_regime_from_series(
+            close=close.iloc[split - warmup :]
+        )
+        # 对齐到原始索引
+        chunk2_reindexed = chunk2.set_index(close.iloc[split - warmup :].index)
+
+        for col in (
+            "vol_persistence",
+            "vol_leverage_asymmetry",
+            "vol_clustering_strength",
+        ):
+            # 第二块的后半段（warmup 稳定后）应与全量一致
+            check_start = split + 50  # 跨过 warmup 稳定期
+            check_idx = close.iloc[check_start:].index
+            full_vals = full[col].loc[check_idx]
+            chunk_vals = chunk2_reindexed[col].loc[check_idx]
+            diff = (full_vals - chunk_vals).abs()
+            assert diff.max() < 1e-10, f"{col} 流式分块不一致！差异: {diff.max():.2e}"
+
+    def test_high_vol_regime_has_high_persistence(self):
+        """
+        高 GARCH 持久性（α+β=0.98）的序列，
+        vol_persistence 均値应高于低持久性（α+β=0.70）的序列。
+        """
+
+        def _make_close_with_ab(ab: float, n: int = 2000, seed: int = 42):
+            rng = np.random.default_rng(seed)
+            alpha0 = 1e-6
+            alpha1 = min(ab * 0.1, 0.15)
+            beta1 = ab - alpha1
+            rets = np.zeros(n)
+            h = np.full(n, max(alpha0 / (1 - ab + 1e-9), 1e-8))
+            for t in range(1, n):
+                h[t] = alpha0 + alpha1 * rets[t - 1] ** 2 + beta1 * h[t - 1]
+                rets[t] = rng.normal(0, np.sqrt(max(h[t], 1e-10)))
+            return pd.Series(100 * np.exp(np.cumsum(rets)), name="close")
+
+        high_ab = _make_close_with_ab(0.98)
+        low_ab = _make_close_with_ab(0.70)
+
+        res_high = compute_volatility_regime_from_series(close=high_ab)
+        res_low = compute_volatility_regime_from_series(close=low_ab)
+
+        mean_high = res_high["vol_persistence"].dropna().mean()
+        mean_low = res_low["vol_persistence"].dropna().mean()
+        print(f"vol_persistence: high-ab={mean_high:.3f}, low-ab={mean_low:.3f}")
+        assert (
+            mean_high > mean_low
+        ), f"高持久性 GARCH 应有更高 vol_persistence：high={mean_high:.3f} low={mean_low:.3f}"
+
+    def test_constant_price_gives_zero_all_features(self):
+        """常数价格：所有波动率相关特征应接近 0。"""
+        flat = pd.Series([100.0] * 500, name="close")
+        result = compute_volatility_regime_from_series(close=flat)
+        for col in (
+            "vol_persistence",
+            "vol_leverage_asymmetry",
+            "vol_clustering_strength",
+        ):
+            vals = result[col].dropna()
+            assert vals.max() < 1e-6, f"常数价格下 {col} 应为 0，实际：{vals.max():.6f}"
+
+    def test_no_inf_in_output(self):
+        """\u8f93出不得包含 Inf。"""
+        close = self._make_garch_close(500)
+        result = compute_volatility_regime_from_series(close=close)
+        for col in (
+            "vol_persistence",
+            "vol_leverage_asymmetry",
+            "vol_clustering_strength",
+        ):
+            assert not np.isinf(result[col]).any(), f"{col} 包含 Inf"
+
+
+class TestVolatilityRegimeVsGarchEquivalence:
+
+    @staticmethod
+    def _make_garch_close(n: int = 2000, seed: int = 42) -> pd.Series:
+        """GARCH(1,1) 过程生成价格序列，用于相关性测试。"""
+        rng = np.random.default_rng(seed)
+        alpha0, alpha1, beta1 = 1e-6, 0.08, 0.90
+        rets = np.zeros(n)
+        h = np.full(n, alpha0 / (1 - alpha1 - beta1))
+        for t in range(1, n):
+            h[t] = alpha0 + alpha1 * rets[t - 1] ** 2 + beta1 * h[t - 1]
+            rets[t] = rng.normal(0, np.sqrt(h[t]))
+        price = 100 * np.exp(np.cumsum(rets))
+        return pd.Series(price, name="close")
+
+    @staticmethod
+    def _make_gjr_close(n: int = 2000, seed: int = 42) -> pd.Series:
+        """带杠杆效应的 GJR-GARCH 过程生成价格序列。"""
+        rng = np.random.default_rng(seed)
+        alpha0, alpha1, beta1, gamma = 1e-6, 0.05, 0.85, 0.10
+        rets = np.zeros(n)
+        h = np.full(n, alpha0 / (1 - alpha1 - beta1 - gamma * 0.5))
+        for t in range(1, n):
+            indicator = float(rets[t - 1] < 0)
+            h[t] = (
+                alpha0
+                + alpha1 * rets[t - 1] ** 2
+                + gamma * indicator * rets[t - 1] ** 2
+                + beta1 * h[t - 1]
+            )
+            rets[t] = rng.normal(0, np.sqrt(max(h[t], 1e-10)))
+        price = 100 * np.exp(np.cumsum(rets))
+        return pd.Series(price, name="close")
+
+    def test_vol_persistence_spearman_vs_acf_threshold(self):
+        """
+        vol_persistence 在 GARCH 过程上与原始 ACF(1)|r_t| 的 Spearman 相关性 ≥ 0.80。
+        """
+        from scipy.stats import spearmanr
+
+        close = self._make_garch_close()
+        result = compute_volatility_regime_from_series(close=close)
+        vp = result["vol_persistence"].dropna()
+
+        # 参考实现：直接用回滚 ACF(1) 作为基准
+        rets = close.pct_change().fillna(0.0).abs()
+        abs_lag1 = rets.shift(1)
+        acf1_ref = (
+            rets.rolling(100, min_periods=30).corr(abs_lag1).fillna(0.0).clip(0.0, 1.0)
+        )
+
+        common = vp.index.intersection(acf1_ref.dropna().index)
+        corr, pval = spearmanr(vp.loc[common], acf1_ref.loc[common])
+        print(f"vol_persistence vs ACF(1) Spearman: {corr:.3f} (p={pval:.4f})")
+        assert corr >= 0.80, f"vol_persistence Spearman {corr:.3f} < 0.80"
+
+    def test_vol_leverage_asymmetry_higher_in_gjr_regime(self):
+        """
+        GJR 过程（杠杆效应强）的 vol_leverage_asymmetry 均値
+        高于对称 GARCH 过程（无杠杆效应）。
+        用多个 seed 平均消除随机波动。
+        """
+        seeds = [42, 7, 13, 99, 123]
+        mean_sym_vals, mean_gjr_vals = [], []
+        for s in seeds:
+            close_sym = self._make_garch_close(n=2000, seed=s)
+            close_gjr = self._make_gjr_close(n=2000, seed=s)
+            res_sym = compute_volatility_regime_from_series(close=close_sym)
+            res_gjr = compute_volatility_regime_from_series(close=close_gjr)
+            mean_sym_vals.append(res_sym["vol_leverage_asymmetry"].dropna().mean())
+            mean_gjr_vals.append(res_gjr["vol_leverage_asymmetry"].dropna().mean())
+
+        avg_sym = np.mean(mean_sym_vals)
+        avg_gjr = np.mean(mean_gjr_vals)
+        print(
+            f"vol_leverage_asymmetry (avg over {len(seeds)} seeds): symmetric={avg_sym:.3f}, GJR={avg_gjr:.3f}"
+        )
+        assert (
+            avg_gjr > avg_sym
+        ), f"GJR 过程杠杆均値 {avg_gjr:.3f} 应高于对称 {avg_sym:.3f}"
+
+    def test_output_columns_complete(self):
+        """\u9a8c证必须包含三列输出。"""
+        close = self._make_garch_close(n=300)
+        result = compute_volatility_regime_from_series(close=close)
+        for col in (
+            "vol_persistence",
+            "vol_leverage_asymmetry",
+            "vol_clustering_strength",
+        ):
+            assert col in result.columns, f"缺少列: {col}"
+        assert len(result) == len(close)
+
+    def test_all_outputs_bounded_0_1(self):
+        """\u6240有输出列必须在 [0, 1] 内。"""
+        close = self._make_garch_close(n=500)
+        result = compute_volatility_regime_from_series(close=close)
+        for col in (
+            "vol_persistence",
+            "vol_leverage_asymmetry",
+            "vol_clustering_strength",
+        ):
+            vals = result[col].dropna()
+            assert vals.min() >= -1e-9, f"{col} 包含负値: {vals.min():.6f}"
+            assert vals.max() <= 1 + 1e-9, f"{col} 超出 1: {vals.max():.6f}"
+
+    def test_no_lookahead_bias(self):
+        """
+        无未来函数检测：截断序列尾部应不影响已有点的子集结果。
+        """
+        close = self._make_garch_close(n=600)
+        full_result = compute_volatility_regime_from_series(close=close)
+        trunc_result = compute_volatility_regime_from_series(close=close.iloc[:400])
+
+        for col in (
+            "vol_persistence",
+            "vol_leverage_asymmetry",
+            "vol_clustering_strength",
+        ):
+            overlap_idx = trunc_result[col].dropna().index
+            if len(overlap_idx) == 0:
+                continue
+            # 尾部 50 个点偏差应在数小范围内（不能完全一致，滚动窗口已知影响边界点）
+            check_idx = overlap_idx[-50:]
+            diff = (
+                full_result[col].loc[check_idx] - trunc_result[col].loc[check_idx]
+            ).abs()
+            max_diff = diff.max()
+            print(f"  {col} 无未来偏差（尾50点）： {max_diff:.8f}")
+            assert (
+                max_diff < 1e-9
+            ), f"{col} 存在未来函数！截断 vs 全量尾部差异 {max_diff:.8f}"
+
+    def test_short_series_robustness(self):
+        """\u77ed数据鲁棒性：数据不足时输出应是 0 而不是报错。"""
+        import pytest
+
+        short = pd.Series([100.0, 101.0, 100.5, 99.8, 100.2], name="close")
+        result = compute_volatility_regime_from_series(close=short)
+        assert len(result) == len(short)
+        # 所有 NaN 或 0 都是合法的
+        for col in (
+            "vol_persistence",
+            "vol_leverage_asymmetry",
+            "vol_clustering_strength",
+        ):
+            assert col in result.columns
 
 
 if __name__ == "__main__":

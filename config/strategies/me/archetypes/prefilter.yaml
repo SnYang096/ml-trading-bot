@@ -3,8 +3,29 @@
 # 自动生成: 2026-03-07
 # 数据源: features_labeled.parquet, 156642 行
 # ⚠️ 2026-03-10 手动恢复: 3/8 pipeline 重跑改变了阈值和规则
+#
+# 规则字段说明:
+#   locked: true           → 管线 --promote 不可删除此规则, 只能调整阈值
+#   threshold_range: [l,h] → 优化器调整 value 的合法范围 (超出则警告)
+#   lock_reason            → 锁定原因 (人工审核填写)
 
 rules:
+  # ── 语义核心规则 (locked=true, 不可删除) ──────────────────────
+  - feature: atr_percentile
+    operator: ">="
+    value: 0.8167
+    locked: true
+    threshold_range: [0.75, 0.93]
+    lock_reason: "ME核心语义: 只在ATR百分位高位(波动扩展区)入场, 移除导致noise涌入"
+    rationale: "semantic_lock — manually restored 2026-03-10"
+  - feature: me_cvd_alignment
+    operator: ">="
+    value: 1.0
+    locked: true
+    threshold_range: [0.5, 1.0]
+    lock_reason: "ME核心语义: CVD方向与价格方向对齐, 量价一致才能入场"
+    rationale: "semantic_lock — manually restored 2026-03-10"
+  # ── 自动生成规则 (locked=false, 可被管线增删) ───────────────────
   - feature: me_atr_pct
     operator: "<"
     value: 0.06

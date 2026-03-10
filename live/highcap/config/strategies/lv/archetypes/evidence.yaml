@@ -53,25 +53,10 @@ evidence:
     - favor
     - amplify
   split_count: 5
-- id: evidence_garch_volatility
-  feature: garch_volatility
-  rank: 3
-  direction: negative
-  usage_hint: sp_r=-0.027 WR:50.7%→48.1%
-  affects:
-  - position_size
-  - tp_range
-  quantile_mapping:
-    bins:
-    - 0.0020590819279742807
-    - 0.0027559964315334354
-    - 0.0034924147408157843
-    - 0.004775901704214678
-    labels:
-    - amplify
-    - favor
-    - neutral
-    - downweight
-    - suppress
-  split_count: 5
+# DISABLED: garch_features_f removed for live performance (370s/cycle)
+# - id: evidence_garch_volatility
+#   feature: garch_volatility
+#   rank: 3
+#   direction: negative
+#   usage_hint: sp_r=-0.027 WR:50.7%→48.1%
 min_score: 0.0

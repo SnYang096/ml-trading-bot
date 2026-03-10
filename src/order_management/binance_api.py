@@ -53,7 +53,9 @@ class BinanceAPI:
             use_proxy = os.environ.get("USE_SOCKS5_PROXY", "false").lower() == "true"
             # 或检查是否有 HTTP_PROXY/HTTPS_PROXY 环境变量（主网通常需要）
             if not use_proxy and not testnet:
-                has_http_proxy = bool(os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY"))
+                has_http_proxy = bool(
+                    os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
+                )
                 if has_http_proxy:
                     use_proxy = True
                     proxy_type = "http"  # 环境变量中的代理通常是 HTTP 代理
@@ -132,18 +134,18 @@ class BinanceAPI:
         self.exchange = ccxt.binance(
             {"apiKey": api_key, "secret": api_secret, **exchange_options}
         )
-        
+
         # Monkey patch nonce 方法以自动修正时间偏移
         original_nonce = self.exchange.nonce
-        
+
         def patched_nonce():
             """Binance 的 nonce 就是 timestamp，自动应用偏移修正"""
             timestamp = original_nonce()
             # 如果有时间偏移，自动修正
-            if hasattr(self, 'time_offset'):
+            if hasattr(self, "time_offset"):
                 timestamp += self.time_offset
             return int(timestamp)
-        
+
         self.exchange.nonce = patched_nonce
 
         # 如果是测试网，确保URLs正确设置（在创建后手动设置）
@@ -236,9 +238,12 @@ class BinanceAPI:
             logger.info("✅ Markets信息已加载")
         except Exception as e:
             logger.warning(f"⚠️ 预加载markets失败，将在下单时自动加载: {e}")
-        
+
         # 检测服务器时间偏移
         self._check_time_sync()
+
+        # 检测账户是否开启 Hedge Mode（双向持仓）
+        self.hedge_mode = self._detect_hedge_mode()
 
         # 如果是测试网，确保URLs正确设置（在创建后手动设置）
         if self.testnet:
@@ -252,6 +257,48 @@ class BinanceAPI:
                     "public": "https://testnet.binancefuture.com",
                     "private": "https://testnet.binancefuture.com",
                 }
+
+    def _detect_hedge_mode(self) -> bool:
+        """
+        检测 Binance 账户是否开启了 Hedge Mode（双向持仓模式）
+
+        Returns:
+            True 表示 Hedge Mode，False 表示 One-way Mode
+        """
+        try:
+            url = f"{self._get_futures_base_url()}/fapi/v1/positionSide/dual"
+            headers = {"X-MBX-APIKEY": self.api_key}
+            # 需要签名
+            import time
+            import hmac
+            import hashlib
+
+            ts = int(time.time() * 1000) + getattr(self, "time_offset", 0)
+            query = f"timestamp={ts}"
+            sig = hmac.new(
+                self.api_secret.encode(), query.encode(), hashlib.sha256
+            ).hexdigest()
+            query += f"&signature={sig}"
+            resp = requests.get(
+                f"{url}?{query}",
+                headers=headers,
+                timeout=10,
+                proxies=self._get_requests_proxies(),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # dualSidePosition=true 表示开启了 Hedge Mode
+            is_hedge = data.get("dualSidePosition", False)
+            if is_hedge:
+                logger.info(
+                    "✅ 检测到账户开启了 Hedge Mode（双向持仓），将自动注入 positionSide 参数"
+                )
+            else:
+                logger.info("✅ 账户为 One-way Mode（单向持仓）")
+            return bool(is_hedge)
+        except Exception as e:
+            logger.warning(f"⚠️ 无法检测持仓模式，默认为 One-way Mode: {e}")
+            return False
 
     def _get_futures_base_url(self) -> str:
         """获取期货REST基础URL"""
@@ -271,32 +318,26 @@ class BinanceAPI:
             return None
         proxy_url = f"{self.proxy_type}://{self.proxy_host}:{self.proxy_port}"
         return {"http": proxy_url, "https": proxy_url}
-        
+
     def _check_time_sync(self) -> None:
         """
         检查本地时间与 Binance 服务器时间的偏移
-            
+
         Binance 要求时间误差 < 1000ms，否则订单会被拒绝
         """
         try:
             url = f"{self._get_futures_base_url()}/fapi/v1/time"
-            resp = requests.get(
-                url,
-                timeout=5,
-                proxies=self._get_requests_proxies()
-            )
+            resp = requests.get(url, timeout=5, proxies=self._get_requests_proxies())
             resp.raise_for_status()
             server_time = resp.json()["serverTime"]
             local_time = int(datetime.now().timestamp() * 1000)
             time_diff = server_time - local_time  # 服务器时间 - 本地时间
-                
+
             # 保存时间偏移，用于后续签名时自动修正
             self.time_offset = time_diff
-                
+
             if abs(time_diff) > 1000:
-                logger.warning(
-                    f"⚠️ 时间偏移过大: {abs(time_diff)}ms > 1000ms"
-                )
+                logger.warning(f"⚠️ 时间偏移过大: {abs(time_diff)}ms > 1000ms")
                 logger.warning(f"⚠️ 将自动修正时间偏移: {time_diff}ms")
             else:
                 logger.info(f"✅ 时间同步正常: 偏移 {time_diff}ms")
@@ -320,7 +361,11 @@ class BinanceAPI:
         headers = {"X-MBX-APIKEY": self.api_key}
         params = {"listenKey": listen_key}
         resp = requests.put(
-            url, headers=headers, params=params, timeout=10, proxies=self._get_requests_proxies()
+            url,
+            headers=headers,
+            params=params,
+            timeout=10,
+            proxies=self._get_requests_proxies(),
         )
         resp.raise_for_status()
 
@@ -330,7 +375,11 @@ class BinanceAPI:
         headers = {"X-MBX-APIKEY": self.api_key}
         params = {"listenKey": listen_key}
         resp = requests.delete(
-            url, headers=headers, params=params, timeout=10, proxies=self._get_requests_proxies()
+            url,
+            headers=headers,
+            params=params,
+            timeout=10,
+            proxies=self._get_requests_proxies(),
         )
         resp.raise_for_status()
 
@@ -495,10 +544,24 @@ class BinanceAPI:
             ccxt_type = self._convert_order_type(order_type)
 
             params: Dict[str, Any] = {}
-            if reduce_only:
-                params["reduceOnly"] = True
-            if close_position:
-                params["closePosition"] = True
+            if self.hedge_mode:
+                # Hedge Mode 下必须指定 positionSide，且不能使用 reduceOnly
+                # 开仓: BUY→LONG, SELL→SHORT
+                # 平仓(reduce_only): BUY→SHORT, SELL→LONG
+                if reduce_only or close_position:
+                    # 平仓：方向与仓位相反
+                    params["positionSide"] = "SHORT" if ccxt_side == "buy" else "LONG"
+                else:
+                    # 开仓：方向与 side 一致
+                    params["positionSide"] = "LONG" if ccxt_side == "buy" else "SHORT"
+                # Hedge Mode 下 closePosition 仍然有效，reduceOnly 无效（已用 positionSide 代替）
+                if close_position:
+                    params["closePosition"] = True
+            else:
+                if reduce_only:
+                    params["reduceOnly"] = True
+                if close_position:
+                    params["closePosition"] = True
             if client_order_id:
                 # Binance Futures支持newClientOrderId
                 params["newClientOrderId"] = client_order_id

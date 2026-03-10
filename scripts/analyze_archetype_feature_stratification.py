@@ -3573,6 +3573,84 @@ def main() -> int:
             baseline_bad_rate=float(bad_rate),
             baseline_median_rr=float(med_rr),
         )
+
+        # ── 语义锁定: 从 prefilter.yaml 自身读取 locked 规则并强制保留 ──
+        # 设计原则: locked 信息和规则定义同源, 无需 meta.yaml 中维护平行列表
+        import yaml as _yaml_sc
+
+        _cur_pf_raw = (
+            _yaml_sc.safe_load(arch_prefilter.read_text(encoding="utf-8")) or {}
+        )
+        _cur_rules = _cur_pf_raw.get("rules", [])
+        _locked_rules = [r for r in _cur_rules if r.get("locked")]
+
+        if _locked_rules:
+
+            def _collect_pf_features(rules):
+                feats = set()
+                for r in rules:
+                    if "feature" in r:
+                        feats.add(r["feature"])
+                    for sub in r.get("any_of", []):
+                        if "feature" in sub:
+                            feats.add(sub["feature"])
+                return feats
+
+            _new_features = _collect_pf_features(_cur_rules)
+            _missing_locked = []
+            for _lr in _locked_rules:
+                if "feature" in _lr:
+                    if _lr["feature"] not in _new_features:
+                        _missing_locked.append(_lr)
+                elif "any_of" in _lr:
+                    _sub_feats = {s["feature"] for s in _lr["any_of"] if "feature" in s}
+                    if not _sub_feats & _new_features:
+                        _missing_locked.append(_lr)
+
+            if _missing_locked:
+                print(
+                    f"\n  ⚠️  语义锁定: {len(_missing_locked)} 条 locked 规则缺失, 自动注入:"
+                )
+                for _lr in _missing_locked:
+                    _desc = _lr.get("feature") or [
+                        s.get("feature") for s in _lr.get("any_of", [])
+                    ]
+                    print(f"     🔒 {_desc}  ({_lr.get('lock_reason', '?')})")
+                # 把 locked 规则插回头部 (locked 排在前面)
+                _non_locked = [r for r in _cur_rules if not r.get("locked")]
+                _cur_pf_raw["rules"] = _locked_rules + _non_locked
+                arch_prefilter.write_text(
+                    _yaml_sc.dump(
+                        _cur_pf_raw,
+                        allow_unicode=True,
+                        sort_keys=False,
+                        default_flow_style=False,
+                    ),
+                    encoding="utf-8",
+                )
+                print(f"     ✅ 已将 locked 规则自动注入回 prefilter.yaml")
+            else:
+                # 检查 threshold_range 合规
+                _range_warnings = []
+                for _lr in _locked_rules:
+                    _rng = _lr.get("threshold_range")
+                    if not _rng or len(_rng) < 2 or "feature" not in _lr:
+                        continue
+                    _feat = _lr["feature"]
+                    for _nr in _cur_rules:
+                        if _nr.get("feature") == _feat:
+                            _v = _nr.get("value")
+                            if _v is not None and not (_rng[0] <= _v <= _rng[1]):
+                                _range_warnings.append(
+                                    f"{_feat}: value={_v} 超出 threshold_range={_rng}"
+                                )
+                if _range_warnings:
+                    print(f"\n  ⚠️  阈值范围警告 (locked 规则阈值超出语义安全范围):")
+                    for w in _range_warnings:
+                        print(f"     ⚠️  {w}")
+                else:
+                    print(f"\n  🔒 语义锁定: 所有 locked 规则均已保留且阈值合规 ✅")
+
         print(f"\n📦 Promoted prefilter.yaml → {arch_prefilter}")
         print(f"   (从本次推荐结果生成最新 rules)")
 

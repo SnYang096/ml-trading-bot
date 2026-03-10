@@ -15,7 +15,7 @@ evidence:
   feature: bpc_garch_compression
   rank: 1
   direction: negative
-  usage_hint: sp_r=-0.135 WR:59.8%→41.7%
+  usage_hint: sp_r=-0.135 WR:59.8%→41.7% | bpc_garch_compression现为BB二阶压缩，语义与GARCH相同
   affects:
   - position_size
   - tp_range

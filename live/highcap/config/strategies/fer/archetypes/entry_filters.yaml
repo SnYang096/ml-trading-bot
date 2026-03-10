@@ -8,14 +8,15 @@
 # 多个 filter 之间是 OR 关系
 
 filters:
-- id: ev_bpc_garch_compression
-  enabled: true
-  description: 'Evidence bin: bpc_garch_compression <= 0.91'
-  conditions:
-  - feature: bpc_garch_compression
-    operator: <=
-    value: 0.91
-  notes: Δrr=+1.9489, t=6.48, p=0.0000, pass=70.3%
+# DISABLED: bpc_garch_compression depends on garch_features_f (370s/cycle)
+# - id: ev_bpc_garch_compression
+#   enabled: true
+#   description: 'Evidence bin: bpc_garch_compression <= 0.91'
+#   conditions:
+#   - feature: bpc_garch_compression
+#     operator: <=
+#     value: 0.91
+#   notes: Δrr=+1.9489, t=6.48, p=0.0000, pass=70.3%
 - id: ev_fer_trapped_shorts_score
   enabled: true
   description: 'Evidence bin: fer_trapped_shorts_score >= 0.065147'

@@ -2,8 +2,21 @@
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
 # 自动生成: 2026-03-07
 # 数据源: features_labeled.parquet, 39147 行
+#
+# 规则字段说明:
+#   locked: true           → 管线 --promote 不可删除此规则, 只能调整阈值
+#   threshold_range: [l,h] → 优化器调整 value 的合法范围 (超出则警告)
 
 rules:
+  # ── 语义核心规则 (locked=true, 不可删除) ──────────────────────
+  - feature: bpc_cvd_z
+    operator: ">"
+    value: -2.0018
+    locked: true
+    threshold_range: [-3.0, -0.5]
+    lock_reason: "BPC核心语义: CVD z-score过低(强烁报单)时不入场"
+    rationale: "semantic_lock — gate.yaml prefilter_bpc_cvd_z"
+  # ── 自动生成规则 (locked=false, 可被管线增删) ───────────────────
   - feature: bpc_structure_health
     operator: ">"
     value: 0.9406

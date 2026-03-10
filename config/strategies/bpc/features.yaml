@@ -111,7 +111,8 @@ feature_pipeline:
     - oi_scene_semantic_scores_f           # OI 场景语义 (compression/ignition/absorption/exhaustion)
 
     # ========== GARCH 波动率建模 ==========
-    - garch_features_f                     # garch_volatility, garch_persistence, garch_leverage_gamma
+    # - garch_features_f                     # garch_volatility, garch_persistence, garch_leverage_gamma
+    - volatility_regime_f                    # vol_persistence(≈α+β), vol_leverage_asymmetry(≈γ), vol_clustering_strength
 
     # ========== 场景语义 (补充) ==========
     - fp_imbalance_scene_semantic_scores_f # Footprint 不平衡场景语义

@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260308_203537_rr_extreme/me
+# 来源: results/train_final_20260310_113923_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -16,32 +16,69 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_atr_percentile_atr_percentile
-  tag: HARD_ATR_PERCENTILE_ATR_PERCENTILE
+- id: gate_evt_tail_shape
+  tag: HARD_EVT_TAIL_SHAPE
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.10)
+  reason: 统计验证规则 (lift=1.35)
   when:
-    all_of:
-    - atr_percentile:
-        value_gt: 0.213
-    - atr_percentile:
-        value_lt: 0.3
+    evt_tail_shape:
+      value_gt: 0.9167
   then:
     action: deny
-  comment: 'statistical(lift=1.10): atr_percentile > 0.213 & atr_percentile < 0.3'
-- id: gate_garch_volatility_garch_volatility
-  tag: HARD_GARCH_VOLATILITY_GARCH_VOLATILITY
+  comment: 'statistical(lift=1.35): evt_tail_shape > 0.9167'
+- id: gate_evt_scale
+  tag: HARD_EVT_SCALE
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.08)
+  reason: 统计验证规则 (lift=1.41)
   when:
-    all_of:
-    - garch_volatility:
-        value_gt: 0.0038
-    - garch_volatility:
-        value_lt: 0.0046
+    evt_scale:
+      value_lt: 0.0794
   then:
     action: deny
-  comment: 'statistical(lift=1.08): garch_volatility > 0.003794 & garch_volatility < 0.004564'
+  comment: 'statistical(lift=1.41): evt_scale < 0.07937'
+- id: gate_fp_max_imbalance_price_fp_max_imbalance_price
+  tag: HARD_FP_MAX_IMBALANCE_PRICE_FP_MAX_IMBALANCE_PRICE
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.19)
+  when:
+    all_of:
+    - fp_max_imbalance_price:
+        value_gt: 601.7363
+    - fp_max_imbalance_price:
+        value_lt: 91468.0624
+  then:
+    action: deny
+  comment: 'statistical(lift=1.19): fp_max_imbalance_price > 601.7 & fp_max_imbalance_price < 9.147e+04'
+- id: gate_fp_poc
+  tag: HARD_FP_POC
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.28)
+  when:
+    fp_poc:
+      value_gt: 110957.1667
+  then:
+    action: deny
+  comment: 'statistical(lift=1.28): fp_poc > 1.11e+05'
+- id: gate_atr_percentile_atr_percentile_fp_val_fp_val
+  tag: HARD_ATR_PERCENTILE_ATR_PERCENTILE_FP_VAL_FP_VAL
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.56)
+  when:
+    all_of:
+    - atr_percentile:
+        value_gt: 0.2019
+    - atr_percentile:
+        value_lt: 0.2704
+    - fp_val:
+        value_gt: 603.2735
+    - fp_val:
+        value_lt: 87986.1673
+  then:
+    action: deny
+  comment: 'statistical(lift=1.56): atr_percentile > 0.2019 & atr_percentile < 0.2704 & fp_val > 603.3 & fp_val < 8.799e+04'
 guardrails: []

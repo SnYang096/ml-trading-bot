@@ -26,6 +26,10 @@ import pandas as pd
 from typing import Optional, Dict, Any
 
 from src.features.registry import register_feature
+from src.features.time_series.utils_garch_features import (
+    compute_ewma_vol,
+    compute_ewma_vol_percentile,
+)
 
 
 # =============================================================================
@@ -33,24 +37,24 @@ from src.features.registry import register_feature
 # =============================================================================
 
 # --- P1: 行业标准参数（固定值） ---
-DEFAULT_LOOKBACK_BREAKOUT = 20    # ATR 标准周期
-DEFAULT_VOL_MA_WINDOW = 20        # 成交量均线窗口
-DEFAULT_BREAKOUT_ATR_MULT = 1.0   # Donchian 标准
+DEFAULT_LOOKBACK_BREAKOUT = 20  # ATR 标准周期
+DEFAULT_VOL_MA_WINDOW = 20  # 成交量均线窗口
+DEFAULT_BREAKOUT_ATR_MULT = 1.0  # Donchian 标准
 
 # --- P2: 关键动态参数（可自适应） ---
-DEFAULT_PULLBACK_DECAY = 0.3      # 回踩质量衰减系数
-PULLBACK_DECAY_MIN = 0.2          # 高波动时的快速衰减
-PULLBACK_DECAY_MAX = 0.5          # 低波动时的慢速衰减
-VOL_ADAPTIVE_WINDOW = 40          # 自适应波动率计算窗口
+DEFAULT_PULLBACK_DECAY = 0.3  # 回踩质量衰减系数
+PULLBACK_DECAY_MIN = 0.2  # 高波动时的快速衰减
+PULLBACK_DECAY_MAX = 0.5  # 低波动时的慢速衰减
+VOL_ADAPTIVE_WINDOW = 40  # 自适应波动率计算窗口
 
 # --- P3: 业务阈值（可配置） ---
-VOL_BREAKOUT_THRESHOLD = 1.5      # 突破放量阈值（均量倍数）
+VOL_BREAKOUT_THRESHOLD = 1.5  # 突破放量阈值（均量倍数）
 VOL_CONTINUATION_THRESHOLD = 1.2  # 续行放量阈值
-VPIN_ACTIVE_THRESHOLD = 0.6       # VPIN 活跃阈值
-CVD_ABSORPTION_THRESHOLD = 0.5    # CVD 吸收阈值（标准差）
+VPIN_ACTIVE_THRESHOLD = 0.6  # VPIN 活跃阈值
+CVD_ABSORPTION_THRESHOLD = 0.5  # CVD 吸收阈值（标准差）
 BREAKOUT_TRIGGER_THRESHOLD = 0.3  # 突破触发阈值
-PULLBACK_END_RATIO = 0.6          # Pullback 结束比例（峰值 * 0.6）
-WEAK_BREAKOUT_THRESHOLD = 0.1     # 弱突破阈值
+PULLBACK_END_RATIO = 0.6  # Pullback 结束比例（峰值 * 0.6）
+WEAK_BREAKOUT_THRESHOLD = 0.1  # 弱突破阈值
 
 # --- 特征版本（用于元数据追溯） ---
 FEATURE_VERSION = "2.1"
@@ -60,16 +64,17 @@ FEATURE_VERSION = "2.1"
 # 🎩 自适应参数函数
 # =============================================================================
 
+
 def _compute_adaptive_pullback_decay(volatility_pct: np.ndarray) -> np.ndarray:
     """
     根据波动率百分位计算自适应的 pullback_decay
-    
+
     高波动 → 快速衰减（0.2）：市场敏感，回踩需要快速恢复
     低波动 → 慢速衰减（0.5）：市场稳定，允许慢回踩
-    
+
     Args:
         volatility_pct: 波动率百分位数组 [0, 1]
-    
+
     Returns:
         自适应的 pullback_decay 数组
     """
@@ -83,6 +88,7 @@ def _compute_adaptive_pullback_decay(volatility_pct: np.ndarray) -> np.ndarray:
 # =============================================================================
 # 🎯 主函数：BPC 软阶段分数（完整版）
 # =============================================================================
+
 
 @register_feature(
     "compute_bpc_soft_phase_from_series",
@@ -143,7 +149,7 @@ def compute_bpc_soft_phase_from_series(
 ) -> pd.DataFrame:
     """
     BPC 软阶段分数：输出连续概率而非离散标签
-    
+
     Args:
         close: 收盘价序列
         high: 最高价序列
@@ -158,15 +164,15 @@ def compute_bpc_soft_phase_from_series(
         breakout_atr_mult: Breakout ATR 倍数阈值
         pullback_decay: Pullback 质量衰减系数
         vol_ma_window: 成交量均线窗口
-    
+
     Returns:
         DataFrame with soft phase scores and auxiliary features
-    
+
     设计理念：
         - 软阶段概率代替硬阶段标签（连续、可微、无跳变）
         - 每个阶段 = 价格信号 × 成交量确认 × 订单流验证
         - Price tells you WHAT, Volume tells you IF, Order flow tells you WHO
-    
+
     ⚠️ 使用注意：
         - 必须按 instrument 单独调用，不要拼接多个 instrument 的数据
         - 所有状态在函数内部初始化，不会跨调用残留
@@ -177,20 +183,22 @@ def compute_bpc_soft_phase_from_series(
     low = pd.to_numeric(low, errors="coerce").astype(float)
     atr_s = pd.to_numeric(atr, errors="coerce").astype(float).clip(lower=1e-8)
     volume = pd.to_numeric(volume, errors="coerce").astype(float).clip(lower=1)
-    
+
     n = len(close)
     eps = 1e-8
-    
+
     # ========== 预计算基础指标 ==========
     rolling_high = high.rolling(lookback_breakout, min_periods=1).max().shift(1)
     rolling_low = low.rolling(lookback_breakout, min_periods=1).min().shift(1)
     rolling_range = (rolling_high - rolling_low).clip(lower=eps)
-    
+
     # 成交量基准
     vol_ma = volume.rolling(vol_ma_window, min_periods=1).mean()
     vol_ratio = (volume / vol_ma.clip(lower=eps)).fillna(1.0)
-    vol_pct = volume.rolling(vol_ma_window * 2, min_periods=20).rank(pct=True).fillna(0.5)
-    
+    vol_pct = (
+        volume.rolling(vol_ma_window * 2, min_periods=20).rank(pct=True).fillna(0.5)
+    )
+
     # 订单流处理（如果提供）
     if cvd_change_5 is not None:
         cvd = pd.to_numeric(cvd_change_5, errors="coerce").fillna(0.0)
@@ -199,69 +207,68 @@ def compute_bpc_soft_phase_from_series(
         cvd_z = ((cvd - cvd_ma) / cvd_std).fillna(0.0).clip(-3, 3)
     else:
         cvd_z = pd.Series(0.0, index=close.index)
-    
+
     if vpin is not None:
         vpin_s = pd.to_numeric(vpin, errors="coerce").fillna(0.5).clip(0, 1)
     else:
         vpin_s = pd.Series(0.5, index=close.index)
-    
+
     if ofci_pct is not None:
         ofci = pd.to_numeric(ofci_pct, errors="coerce").fillna(0.5)
     else:
         ofci = pd.Series(0.5, index=close.index)
-    
+
     # ========== 1️⃣ Breakout 分数：价格突破 × 放量 × CVD确认 ==========
     # 价格强度：距离前高的 ATR 倍数（带符号，正=多头突破，负=空头突破）
     breakout_long_raw = (close - rolling_high) / (atr_s * breakout_atr_mult + eps)
     breakout_short_raw = (rolling_low - close) / (atr_s * breakout_atr_mult + eps)
-    
+
     # 取较强的方向
     breakout_strength = np.maximum(
-        breakout_long_raw.fillna(0).values, 
-        breakout_short_raw.fillna(0).values
+        breakout_long_raw.fillna(0).values, breakout_short_raw.fillna(0).values
     )
     breakout_strength = np.clip(breakout_strength, 0, 1)
     breakout_direction = np.where(
-        breakout_long_raw.fillna(0).values > breakout_short_raw.fillna(0).values, 
-        1, 
-        -1
+        breakout_long_raw.fillna(0).values > breakout_short_raw.fillna(0).values, 1, -1
     )
-    
+
     # 成交量确认：放量 > VOL_BREAKOUT_THRESHOLD 倍均量
     vol_breakout_confirm = (vol_ratio / VOL_BREAKOUT_THRESHOLD).clip(0, 1).values
-    
+
     # 订单流确认：CVD 同向 + VPIN 活跃
-    cvd_z_values = cvd_z.values if hasattr(cvd_z, 'values') else np.full(n, 0.0)
-    vpin_values = vpin_s.values if hasattr(vpin_s, 'values') else np.full(n, 0.5)
-    
+    cvd_z_values = cvd_z.values if hasattr(cvd_z, "values") else np.full(n, 0.0)
+    vpin_values = vpin_s.values if hasattr(vpin_s, "values") else np.full(n, 0.5)
+
     cvd_breakout_confirm = np.where(
         breakout_direction > 0,
         (cvd_z_values > 0).astype(float) * (np.abs(cvd_z_values) / 2).clip(0, 1),
-        (cvd_z_values < 0).astype(float) * (np.abs(cvd_z_values) / 2).clip(0, 1)
+        (cvd_z_values < 0).astype(float) * (np.abs(cvd_z_values) / 2).clip(0, 1),
     )
     vpin_breakout_confirm = (vpin_values / VPIN_ACTIVE_THRESHOLD).clip(0, 1)
-    
+
     # 综合 Breakout 分数
     bpc_score_breakout = (
-        breakout_strength * 0.4 +
-        breakout_strength * vol_breakout_confirm * 0.3 +
-        breakout_strength * cvd_breakout_confirm * 0.2 +
-        breakout_strength * vpin_breakout_confirm * 0.1
+        breakout_strength * 0.4
+        + breakout_strength * vol_breakout_confirm * 0.3
+        + breakout_strength * cvd_breakout_confirm * 0.2
+        + breakout_strength * vpin_breakout_confirm * 0.1
     )
     bpc_score_breakout = np.clip(bpc_score_breakout, 0, 1)
-    
+
     # ========== 2️⃣ Pullback 分数：回踩深度 × 缩量 × 订单流吸收 ==========
     # 是否近期有 breakout（滑动窗口）
     bpc_score_breakout_series = pd.Series(bpc_score_breakout, index=close.index)
     recent_breakout_strength = bpc_score_breakout_series.rolling(
         lookback_breakout, min_periods=1
     ).max()
-    is_after_breakout = (recent_breakout_strength > BREAKOUT_TRIGGER_THRESHOLD).astype(float).values
-    
+    is_after_breakout = (
+        (recent_breakout_strength > BREAKOUT_TRIGGER_THRESHOLD).astype(float).values
+    )
+
     # 回踩深度（多头：从高点下来；空头：从低点上来）
     pullback_depth_long = ((rolling_high - close) / rolling_range).clip(0, 1).values
     pullback_depth_short = ((close - rolling_low) / rolling_range).clip(0, 1).values
-    
+
     # 使用 breakout 方向决定用哪个 depth
     # 向前填充最近的方向（使用 ffill 替代 Python 循环，性能优化）
     recent_direction = breakout_direction.copy()
@@ -270,23 +277,26 @@ def compute_bpc_soft_phase_from_series(
     weak_mask = breakout_strength < WEAK_BREAKOUT_THRESHOLD
     recent_direction_series[weak_mask] = np.nan
     recent_direction = recent_direction_series.ffill().fillna(0).values.astype(int)
-    
+
     pullback_depth = np.where(
-        recent_direction > 0,
-        pullback_depth_long,
-        pullback_depth_short
+        recent_direction > 0, pullback_depth_long, pullback_depth_short
     )
-    
+
     # 回踩质量：深度越浅越好（指数衰减）
     # 使用自适应 pullback_decay（逐 bar 计算）
-    vol_pct_adaptive = atr_s.rolling(VOL_ADAPTIVE_WINDOW, min_periods=20).rank(pct=True).fillna(0.5).values
+    vol_pct_adaptive = (
+        atr_s.rolling(VOL_ADAPTIVE_WINDOW, min_periods=20)
+        .rank(pct=True)
+        .fillna(0.5)
+        .values
+    )
     pullback_decay_adaptive = _compute_adaptive_pullback_decay(vol_pct_adaptive)
     pullback_quality = np.exp(-pullback_depth / pullback_decay_adaptive)
-    
+
     # 成交量确认：缩量 < 0.8倍均量
-    vol_pct_values = vol_pct.values if hasattr(vol_pct, 'values') else np.full(n, 0.5)
+    vol_pct_values = vol_pct.values if hasattr(vol_pct, "values") else np.full(n, 0.5)
     vol_pullback_confirm = (1 - vol_pct_values).clip(0, 1)
-    
+
     # 订单流确认：CVD 从谷底/顶部回升 = 吸收（使用相对变化替代硬编码阈值）
     cvd_z_series = pd.Series(cvd_z_values, index=close.index)
     cvd_rolling_min = cvd_z_series.rolling(10, min_periods=1).min().values
@@ -296,141 +306,160 @@ def compute_bpc_soft_phase_from_series(
     cvd_absorption = np.where(
         recent_direction > 0,
         ((cvd_z_values - cvd_rolling_min) > CVD_ABSORPTION_THRESHOLD).astype(float),
-        ((cvd_rolling_max - cvd_z_values) > CVD_ABSORPTION_THRESHOLD).astype(float)
+        ((cvd_rolling_max - cvd_z_values) > CVD_ABSORPTION_THRESHOLD).astype(float),
     )
-    
+
     # 综合 Pullback 分数
     bpc_score_pullback = (
-        is_after_breakout * pullback_quality * 0.3 +
-        is_after_breakout * pullback_quality * vol_pullback_confirm * 0.3 +
-        is_after_breakout * pullback_quality * cvd_absorption * 0.4
+        is_after_breakout * pullback_quality * 0.3
+        + is_after_breakout * pullback_quality * vol_pullback_confirm * 0.3
+        + is_after_breakout * pullback_quality * cvd_absorption * 0.4
     )
     bpc_score_pullback = np.clip(bpc_score_pullback, 0, 1)
-    
+
     # ========== 3️⃣ Continuation 分数：价格恢复 × 动量 × 再次放量 + CVD ==========
     # 计算 pullback 期间的极值（滑动窗口近似）
-    pullback_low_series = low.rolling(lookback_breakout // 2, min_periods=1).min().values
-    pullback_high_series = high.rolling(lookback_breakout // 2, min_periods=1).max().values
-    
+    pullback_low_series = (
+        low.rolling(lookback_breakout // 2, min_periods=1).min().values
+    )
+    pullback_high_series = (
+        high.rolling(lookback_breakout // 2, min_periods=1).max().values
+    )
+
     # 价格恢复强度
     atr_values = atr_s.values
     close_values = close.values
     recovery_long = ((close_values - pullback_low_series) / atr_values).clip(0, 2) / 2
     recovery_short = ((pullback_high_series - close_values) / atr_values).clip(0, 2) / 2
     recovery_strength = np.where(recent_direction > 0, recovery_long, recovery_short)
-    
+
     # 动量确认：短期方向与 breakout 方向一致
     momentum_dir = np.sign(close.diff(3).values)
     momentum_confirm = (momentum_dir == recent_direction).astype(float)
-    
+
     # 成交量确认：再次放量
     vol_ratio_values = vol_ratio.values
-    vol_continuation_confirm = (vol_ratio_values / VOL_CONTINUATION_THRESHOLD).clip(0, 1)
-    
+    vol_continuation_confirm = (vol_ratio_values / VOL_CONTINUATION_THRESHOLD).clip(
+        0, 1
+    )
+
     # 订单流确认：CVD 恢复 + VPIN 上升（修复因果性：使用 shift 替代 np.roll）
     cvd_z_shifted = pd.Series(cvd_z_values, index=close.index).shift(3).fillna(0).values
     cvd_momentum = np.where(
         recent_direction > 0,
         (cvd_z_values > cvd_z_shifted).astype(float),
-        (cvd_z_values < cvd_z_shifted).astype(float)
+        (cvd_z_values < cvd_z_shifted).astype(float),
     )
     vpin_shifted = pd.Series(vpin_values, index=close.index).shift(3).fillna(0.5).values
     vpin_rising = (vpin_values > vpin_shifted).astype(float)
-    
+
     # 需要先经过 pullback 阶段（改进：检查 pullback 已结束而非仅发生过）
     bpc_score_pullback_series = pd.Series(bpc_score_pullback, index=close.index)
-    pullback_recent_high = bpc_score_pullback_series.rolling(10, min_periods=1).max().values
+    pullback_recent_high = (
+        bpc_score_pullback_series.rolling(10, min_periods=1).max().values
+    )
     pullback_current = bpc_score_pullback
     # 条件：最近有 pullback（>BREAKOUT_TRIGGER_THRESHOLD）且当前已从峰值衰减（<峰值的 PULLBACK_END_RATIO）
-    was_in_pullback = (pullback_recent_high > BREAKOUT_TRIGGER_THRESHOLD) & (pullback_current < pullback_recent_high * PULLBACK_END_RATIO)
-    
+    was_in_pullback = (pullback_recent_high > BREAKOUT_TRIGGER_THRESHOLD) & (
+        pullback_current < pullback_recent_high * PULLBACK_END_RATIO
+    )
+
     # 综合 Continuation 分数
     bpc_score_continuation = (
-        was_in_pullback * recovery_strength * momentum_confirm * 0.3 +
-        was_in_pullback * recovery_strength * vol_continuation_confirm * 0.3 +
-        was_in_pullback * recovery_strength * cvd_momentum * 0.25 +
-        was_in_pullback * recovery_strength * vpin_rising * 0.15
+        was_in_pullback * recovery_strength * momentum_confirm * 0.3
+        + was_in_pullback * recovery_strength * vol_continuation_confirm * 0.3
+        + was_in_pullback * recovery_strength * cvd_momentum * 0.25
+        + was_in_pullback * recovery_strength * vpin_rising * 0.15
     )
     bpc_score_continuation = np.clip(bpc_score_continuation, 0, 1)
-    
+
     # ========== 4️⃣ Neutral 分数：波动率压缩 × 成交量压缩 ==========
     if bb_width_normalized is not None:
-        bb_compression = 1 - pd.to_numeric(
-            bb_width_normalized, errors="coerce"
-        ).fillna(0.5).clip(0, 1).values
+        bb_compression = (
+            1
+            - pd.to_numeric(bb_width_normalized, errors="coerce")
+            .fillna(0.5)
+            .clip(0, 1)
+            .values
+        )
     else:
         # 用 ATR percentile 近似
-        atr_pct = atr_s.rolling(vol_ma_window * 2, min_periods=20).rank(pct=True).fillna(0.5)
+        atr_pct = (
+            atr_s.rolling(vol_ma_window * 2, min_periods=20).rank(pct=True).fillna(0.5)
+        )
         bb_compression = (1 - atr_pct).values
-    
+
     vol_compression = 1 - vol_pct_values
-    
+
     # ========== 计算方向置信度（修复：使用方向分离度替代 sign 差） ==========
     # 方向置信度 = 最强突破强度 × 方向分离度
     long_strength = breakout_long_raw.fillna(0).clip(0, 1).values
     short_strength = breakout_short_raw.fillna(0).clip(0, 1).values
     direction_separation = np.abs(long_strength - short_strength)
-    direction_confidence = np.maximum(long_strength, short_strength) * direction_separation
+    direction_confidence = (
+        np.maximum(long_strength, short_strength) * direction_separation
+    )
     direction_confidence = np.clip(direction_confidence, 0, 1)
-    
+
     # Neutral = 低波动 + 低成交量 + 方向模糊（不依赖其他阶段，避免循环依赖）
     bpc_score_neutral = (
-        bb_compression * 0.4 +
-        vol_compression * 0.4 +
-        (1 - direction_confidence) * 0.2
+        bb_compression * 0.4 + vol_compression * 0.4 + (1 - direction_confidence) * 0.2
     )
     bpc_score_neutral = np.clip(bpc_score_neutral, 0, 1)
-    
+
     # ========== 输出（三层分类） ==========
-    result = pd.DataFrame({
-        # === ATOMIC: Breakout 原子信号（供树模型自由组合） ===
-        "bpc_price_breakout_strength": breakout_strength,
-        "bpc_vol_breakout_confirm": vol_breakout_confirm,
-        "bpc_cvd_breakout_confirm": cvd_breakout_confirm,
-        "bpc_vpin_breakout_confirm": vpin_breakout_confirm,
-        # === ATOMIC: Pullback 原子信号 ===
-        "bpc_pullback_depth": pullback_depth,
-        "bpc_pullback_quality": pullback_quality,
-        "bpc_vol_pullback_confirm": vol_pullback_confirm,
-        "bpc_cvd_absorption": cvd_absorption,
-        # === ATOMIC: Continuation 原子信号 ===
-        "bpc_recovery_strength": recovery_strength,
-        "bpc_momentum_confirm": momentum_confirm,
-        "bpc_vol_continuation_confirm": vol_continuation_confirm,
-        "bpc_cvd_momentum": cvd_momentum,
-        "bpc_vpin_rising": vpin_rising,
-        # === ATOMIC: Neutral 原子信号 ===
-        "bpc_bb_compression": bb_compression,
-        "bpc_vol_compression": vol_compression,
-        # === COMPOSITE: 组合分数（领域知识加权，作为强先验） ===
-        "bpc_score_breakout": bpc_score_breakout,
-        "bpc_score_pullback": bpc_score_pullback,
-        "bpc_score_continuation": bpc_score_continuation,
-        "bpc_score_neutral": bpc_score_neutral,
-        # === CONTEXTUAL: 状态信号（提供上下文） ===
-        "bpc_breakout_direction": recent_direction,
-        "bpc_direction_confidence": direction_confidence,
-        "bpc_is_after_breakout": is_after_breakout,
-        "bpc_was_in_pullback": was_in_pullback.astype(float),
-        "bpc_vol_ratio": vol_ratio_values,
-        "bpc_cvd_z": cvd_z_values,
-    }, index=close.index)
-    
+    result = pd.DataFrame(
+        {
+            # === ATOMIC: Breakout 原子信号（供树模型自由组合） ===
+            "bpc_price_breakout_strength": breakout_strength,
+            "bpc_vol_breakout_confirm": vol_breakout_confirm,
+            "bpc_cvd_breakout_confirm": cvd_breakout_confirm,
+            "bpc_vpin_breakout_confirm": vpin_breakout_confirm,
+            # === ATOMIC: Pullback 原子信号 ===
+            "bpc_pullback_depth": pullback_depth,
+            "bpc_pullback_quality": pullback_quality,
+            "bpc_vol_pullback_confirm": vol_pullback_confirm,
+            "bpc_cvd_absorption": cvd_absorption,
+            # === ATOMIC: Continuation 原子信号 ===
+            "bpc_recovery_strength": recovery_strength,
+            "bpc_momentum_confirm": momentum_confirm,
+            "bpc_vol_continuation_confirm": vol_continuation_confirm,
+            "bpc_cvd_momentum": cvd_momentum,
+            "bpc_vpin_rising": vpin_rising,
+            # === ATOMIC: Neutral 原子信号 ===
+            "bpc_bb_compression": bb_compression,
+            "bpc_vol_compression": vol_compression,
+            # === COMPOSITE: 组合分数（领域知识加权，作为强先验） ===
+            "bpc_score_breakout": bpc_score_breakout,
+            "bpc_score_pullback": bpc_score_pullback,
+            "bpc_score_continuation": bpc_score_continuation,
+            "bpc_score_neutral": bpc_score_neutral,
+            # === CONTEXTUAL: 状态信号（提供上下文） ===
+            "bpc_breakout_direction": recent_direction,
+            "bpc_direction_confidence": direction_confidence,
+            "bpc_is_after_breakout": is_after_breakout,
+            "bpc_was_in_pullback": was_in_pullback.astype(float),
+            "bpc_vol_ratio": vol_ratio_values,
+            "bpc_cvd_z": cvd_z_values,
+        },
+        index=close.index,
+    )
+
     # ========== 添加元数据（用于 Outcome-Based Audit 追溯） ==========
-    result.attrs['feature_version'] = FEATURE_VERSION
-    result.attrs['param_lookback_breakout'] = lookback_breakout
-    result.attrs['param_breakout_atr_mult'] = breakout_atr_mult
-    result.attrs['param_vol_ma_window'] = vol_ma_window
-    result.attrs['param_pullback_decay'] = 'adaptive'  # 标记为自适应
-    result.attrs['thresholds'] = {
-        'vol_breakout': VOL_BREAKOUT_THRESHOLD,
-        'vol_continuation': VOL_CONTINUATION_THRESHOLD,
-        'vpin_active': VPIN_ACTIVE_THRESHOLD,
-        'cvd_absorption': CVD_ABSORPTION_THRESHOLD,
-        'breakout_trigger': BREAKOUT_TRIGGER_THRESHOLD,
-        'pullback_end_ratio': PULLBACK_END_RATIO,
+    result.attrs["feature_version"] = FEATURE_VERSION
+    result.attrs["param_lookback_breakout"] = lookback_breakout
+    result.attrs["param_breakout_atr_mult"] = breakout_atr_mult
+    result.attrs["param_vol_ma_window"] = vol_ma_window
+    result.attrs["param_pullback_decay"] = "adaptive"  # 标记为自适应
+    result.attrs["thresholds"] = {
+        "vol_breakout": VOL_BREAKOUT_THRESHOLD,
+        "vol_continuation": VOL_CONTINUATION_THRESHOLD,
+        "vpin_active": VPIN_ACTIVE_THRESHOLD,
+        "cvd_absorption": CVD_ABSORPTION_THRESHOLD,
+        "breakout_trigger": BREAKOUT_TRIGGER_THRESHOLD,
+        "pullback_end_ratio": PULLBACK_END_RATIO,
     }
-    
+
     return result
 
 
@@ -438,11 +467,16 @@ def compute_bpc_soft_phase_from_series(
 # 🧩 辅助特征函数
 # =============================================================================
 
+
 @register_feature(
     "compute_bpc_pullback_depth_pct_from_series",
     category="bpc",
     description="BPC pullback depth as percentage of range, side-aware",
-    outputs=["bpc_pullback_depth_long", "bpc_pullback_depth_short", "bpc_pullback_depth_pct"],
+    outputs=[
+        "bpc_pullback_depth_long",
+        "bpc_pullback_depth_short",
+        "bpc_pullback_depth_pct",
+    ],
 )
 def compute_bpc_pullback_depth_pct_from_series(
     *,
@@ -454,12 +488,12 @@ def compute_bpc_pullback_depth_pct_from_series(
 ) -> pd.DataFrame:
     """
     回踩深度百分比：当前价格相对近期高点/低点的回撤程度
-    
+
     支持 side-aware：
     - 多头回踩深度：(rolling_high - close) / range
     - 空头回踩深度：(close - rolling_low) / range
     - 自适应深度：根据 trend_sign 自动选择
-    
+
     语义：
     - 0.0 = 在高点/低点附近（没有回踩）
     - 0.3-0.5 = 健康回踩区间
@@ -468,29 +502,33 @@ def compute_bpc_pullback_depth_pct_from_series(
     close = pd.to_numeric(close, errors="coerce").astype(float)
     high = pd.to_numeric(high, errors="coerce").astype(float)
     low = pd.to_numeric(low, errors="coerce").astype(float)
-    
+
     rolling_high = high.rolling(window=lookback, min_periods=1).max()
     rolling_low = low.rolling(window=lookback, min_periods=1).min()
     range_size = (rolling_high - rolling_low).replace(0, np.nan)
-    
+
     # 多头回踩深度
     long_depth = ((rolling_high - close) / range_size).fillna(0.0).clip(0.0, 1.0)
     # 空头回踩深度
     short_depth = ((close - rolling_low) / range_size).fillna(0.0).clip(0.0, 1.0)
-    
+
     # 自适应深度
     if trend_sign is not None:
         trend = pd.to_numeric(trend_sign, errors="coerce").fillna(0)
-        adaptive_depth = np.where(trend > 0, long_depth, np.where(trend < 0, short_depth, 0.5))
+        adaptive_depth = np.where(
+            trend > 0, long_depth, np.where(trend < 0, short_depth, 0.5)
+        )
         adaptive_depth = pd.Series(adaptive_depth, index=close.index)
     else:
         adaptive_depth = long_depth  # 默认多头
-    
-    return pd.DataFrame({
-        "bpc_pullback_depth_long": long_depth,
-        "bpc_pullback_depth_short": short_depth,
-        "bpc_pullback_depth_pct": adaptive_depth,
-    })
+
+    return pd.DataFrame(
+        {
+            "bpc_pullback_depth_long": long_depth,
+            "bpc_pullback_depth_short": short_depth,
+            "bpc_pullback_depth_pct": adaptive_depth,
+        }
+    )
 
 
 @register_feature(
@@ -508,7 +546,7 @@ def compute_bpc_pullback_duration_from_series(
 ) -> pd.DataFrame:
     """
     回踩持续时间：连续低于近期高点阈值的 bars 数
-    
+
     语义：
     - 1-5 bars: 短暂回踩（健康）
     - 6-15 bars: 中等回踩（需要确认）
@@ -516,12 +554,12 @@ def compute_bpc_pullback_duration_from_series(
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     high = pd.to_numeric(high, errors="coerce").astype(float)
-    
+
     rolling_high = high.rolling(window=lookback, min_periods=1).max()
     threshold = rolling_high * (1 - threshold_pct)
-    
+
     is_pullback = close < threshold
-    
+
     # 计算连续回踩 bars 数（run-length encoding）
     duration = np.zeros(len(close), dtype=int)
     cnt = 0
@@ -531,12 +569,12 @@ def compute_bpc_pullback_duration_from_series(
         else:
             cnt = 0
         duration[i] = cnt
-    
+
     # 归一化到 [0, 1]
     max_duration = float(lookback * 2)
     out = pd.Series(duration, index=close.index) / max_duration
     out = out.clip(0.0, 1.0)
-    
+
     return out.rename("bpc_pullback_duration").to_frame()
 
 
@@ -553,9 +591,9 @@ def compute_bpc_pullback_speed_from_series(
 ) -> pd.DataFrame:
     """
     回踩速度：depth / (duration + 1)
-    
+
     使用 (duration + 1) 防止除零问题
-    
+
     语义：
     - 高速回踩（>0.5）: 可能是恐慌性抛售，结构不稳
     - 中速回踩（0.2-0.5）: 正常获利了结
@@ -563,10 +601,10 @@ def compute_bpc_pullback_speed_from_series(
     """
     depth = pd.to_numeric(bpc_pullback_depth_pct, errors="coerce").fillna(0.0)
     duration = pd.to_numeric(bpc_pullback_duration, errors="coerce").fillna(0.0)
-    
+
     # 使用 (duration + 1) 防止除零
     speed = (depth / (duration + 1)).clip(0.0, 1.0)
-    
+
     return speed.rename("bpc_pullback_speed").to_frame()
 
 
@@ -584,7 +622,7 @@ def compute_bpc_impulse_return_atr_from_series(
 ) -> pd.DataFrame:
     """
     Impulse 收益 / ATR：标准化的趋势收益，保留方向信息
-    
+
     语义：
     - 正值：上涨 impulse
     - 负值：下跌 impulse
@@ -594,27 +632,33 @@ def compute_bpc_impulse_return_atr_from_series(
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     atr_s = pd.to_numeric(atr, errors="coerce").astype(float).clip(lower=1e-8)
-    
+
     returns = close - close.shift(lookback)
     # 保留符号
     ratio_signed = (returns / atr_s).fillna(0.0).clip(-5.0, 5.0)
-    
+
     # 方向匹配特征（与近期趋势方向是否一致）
     trend_dir = np.sign(close.rolling(lookback * 2).mean().diff())
     impulse_dir = np.sign(returns)
     direction_match = (trend_dir == impulse_dir).astype(float)
-    
-    return pd.DataFrame({
-        "bpc_impulse_return_atr": ratio_signed / 5.0,  # 归一化到 [-1, 1]
-        "bpc_impulse_direction_match": direction_match,
-    })
+
+    return pd.DataFrame(
+        {
+            "bpc_impulse_return_atr": ratio_signed / 5.0,  # 归一化到 [-1, 1]
+            "bpc_impulse_direction_match": direction_match,
+        }
+    )
 
 
 @register_feature(
     "compute_bpc_dir_consistency_multi_from_series",
     category="bpc",
     description="BPC multi-scale direction consistency",
-    outputs=["bpc_dir_consistency_short", "bpc_dir_consistency_mid", "bpc_dir_consistency_long"],
+    outputs=[
+        "bpc_dir_consistency_short",
+        "bpc_dir_consistency_mid",
+        "bpc_dir_consistency_long",
+    ],
 )
 def compute_bpc_dir_consistency_multi_from_series(
     *,
@@ -625,28 +669,29 @@ def compute_bpc_dir_consistency_multi_from_series(
 ) -> pd.DataFrame:
     """
     多尺度方向一致性：短/中/长期的方向一致性
-    
+
     语义：
     - 三者都高：强趋势
     - 短高、长低：趋势刚开始
     - 短低、长高：趋势可能结束
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
-    
+
     def _dir_consistency(window: int) -> pd.Series:
         direction = np.sign(close.diff())
         # 计算窗口内方向与最后一根方向一致的比例
         consistency = direction.rolling(window=window, min_periods=1).apply(
-            lambda x: (x == x.iloc[-1]).mean() if len(x) > 0 else 0.5,
-            raw=False
+            lambda x: (x == x.iloc[-1]).mean() if len(x) > 0 else 0.5, raw=False
         )
         return consistency.fillna(0.5)
-    
-    return pd.DataFrame({
-        "bpc_dir_consistency_short": _dir_consistency(window_short),
-        "bpc_dir_consistency_mid": _dir_consistency(window_mid),
-        "bpc_dir_consistency_long": _dir_consistency(window_long),
-    })
+
+    return pd.DataFrame(
+        {
+            "bpc_dir_consistency_short": _dir_consistency(window_short),
+            "bpc_dir_consistency_mid": _dir_consistency(window_mid),
+            "bpc_dir_consistency_long": _dir_consistency(window_long),
+        }
+    )
 
 
 @register_feature(
@@ -662,21 +707,21 @@ def compute_bpc_dir_flip_count_from_series(
 ) -> pd.DataFrame:
     """
     方向翻转次数：最近 N bars 内价格方向的翻转次数
-    
+
     语义：
     - 低翻转（< 5）: 趋势稳定
     - 高翻转（> 10）: 震荡市场，BPC 结构不稳
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     direction = np.sign(close.diff())
-    
+
     # 检测方向变化
     flips = (direction != direction.shift(1)).astype(int)
     flip_count = flips.rolling(window=lookback, min_periods=1).sum()
-    
+
     # 归一化
     out = (flip_count / float(lookback)).clip(0.0, 1.0)
-    
+
     return out.rename("bpc_dir_flip_count").to_frame()
 
 
@@ -694,25 +739,27 @@ def compute_bpc_volume_compression_pct_from_series(
 ) -> pd.DataFrame:
     """
     成交量压缩百分位：当前成交量相对历史的百分位
-    
+
     语义：
     - 低（< 0.3）: 成交量压缩，蓄势中
     - 高（> 0.7）: 放量，可能是突破或反转
     """
     volume = pd.to_numeric(volume, errors="coerce").astype(float)
     vol_ma = volume.rolling(window=window, min_periods=1).mean()
-    
+
     def _percentile(arr: np.ndarray) -> float:
         if len(arr) <= 1:
             return 0.5
         current = arr[-1]
         return float(np.mean(arr[:-1] <= current))
-    
+
     pct = vol_ma.rolling(window=percentile_window, min_periods=50).apply(
         _percentile, raw=True
     )
-    
-    return pct.fillna(0.5).clip(0.0, 1.0).rename("bpc_volume_compression_pct").to_frame()
+
+    return (
+        pct.fillna(0.5).clip(0.0, 1.0).rename("bpc_volume_compression_pct").to_frame()
+    )
 
 
 @register_feature(
@@ -730,9 +777,9 @@ def compute_bpc_pullback_delta_absorption_from_series(
 ) -> pd.DataFrame:
     """
     回踩期间的 Delta 吸收（使用 z-score 标准化）
-    
+
     吸收定义：CVD 与 price 方向相反，且 CVD 绝对值大
-    
+
     语义：
     - 高吸收（> 0.7）: 大量反向订单流但价格不动 → 有人在吸筹
     - 低吸收（< 0.3）: 订单流与价格同向 → 正常回踩
@@ -740,30 +787,31 @@ def compute_bpc_pullback_delta_absorption_from_series(
     close = pd.to_numeric(close, errors="coerce").astype(float)
     cvd = pd.to_numeric(cvd_change_5, errors="coerce").fillna(0.0)
     atr_s = pd.to_numeric(atr, errors="coerce").astype(float).clip(lower=1e-8)
-    
+
     price_change = close.diff(5)
-    
+
     # 使用滚动 z-score 标准化 CVD
     cvd_mean = cvd.rolling(lookback, min_periods=10).mean()
     cvd_std = cvd.rolling(lookback, min_periods=10).std().replace(0, np.nan)
     cvd_z = ((cvd - cvd_mean) / cvd_std).fillna(0.0).clip(-3, 3)
-    
+
     # 吸收定义：CVD 与 price 方向相反，且 CVD 绝对值大
     price_dir = np.sign(price_change)
     cvd_dir = np.sign(cvd)
     is_counter = (price_dir != cvd_dir) & (price_dir != 0)
-    
+
     # 吸收强度 = 反向 CVD z-score 的绝对值（仅在反向时计算）
     absorption = np.where(is_counter, cvd_z.abs() / 3.0, 0.0)
-    
+
     out = pd.Series(absorption, index=close.index).fillna(0.0).clip(0.0, 1.0)
-    
+
     return out.rename("bpc_pullback_delta_absorption").to_frame()
 
 
 # =============================================================================
 # 🎯 上下文特征：Volume Profile + Liquidity + Reflexivity
 # =============================================================================
+
 
 @register_feature(
     "compute_bpc_breakout_context_from_series",
@@ -790,16 +838,18 @@ def compute_bpc_breakout_context_from_series(
 ) -> pd.DataFrame:
     """
     突破上下文特征：VP位置 + 流动性真空 + 反身性确认
-    
+
     用途：树模型发现“在什么情况下突破语义不成立”
     - POC 上方突破更有力
     - 流动性真空区域突破阻力小
     - 高反身性 = 风险（过度拥挤）
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
-    direction = pd.to_numeric(bpc_breakout_direction, errors="coerce").fillna(0).astype(int)
+    direction = (
+        pd.to_numeric(bpc_breakout_direction, errors="coerce").fillna(0).astype(int)
+    )
     n = len(close)
-    
+
     # 1. 突破是否在 POC 上方（多头）或下方（空头）
     if vp_poc is not None:
         poc = pd.to_numeric(vp_poc, errors="coerce").fillna(close)
@@ -808,7 +858,7 @@ def compute_bpc_breakout_context_from_series(
         breakout_above_poc = above_poc_long + below_poc_short
     else:
         breakout_above_poc = pd.Series(0.5, index=close.index)
-    
+
     # 2. 突破是否超越 HAL 边界
     if vp_hal_high is not None and vp_hal_low is not None:
         hal_h = pd.to_numeric(vp_hal_high, errors="coerce").fillna(close)
@@ -818,19 +868,23 @@ def compute_bpc_breakout_context_from_series(
         breakout_above_hal = above_hal_long + below_hal_short
     else:
         breakout_above_hal = pd.Series(0.5, index=close.index)
-    
+
     # 3. 突破方向是否有流动性真空（阻力小）
     if liquidity_void_detected is not None:
-        lv = pd.to_numeric(liquidity_void_detected, errors="coerce").fillna(0).clip(0, 1)
+        lv = (
+            pd.to_numeric(liquidity_void_detected, errors="coerce").fillna(0).clip(0, 1)
+        )
     else:
         lv = pd.Series(0.0, index=close.index)
-    
+
     # 4. 假突破风险
     if wpt_false_breakout_risk is not None:
-        fb_risk = pd.to_numeric(wpt_false_breakout_risk, errors="coerce").fillna(0).clip(0, 1)
+        fb_risk = (
+            pd.to_numeric(wpt_false_breakout_risk, errors="coerce").fillna(0).clip(0, 1)
+        )
     else:
         fb_risk = pd.Series(0.0, index=close.index)
-    
+
     # 5. 反身性确认（OFCI 适中 = 突破确认，OFCI 极端 = 风险）
     if ofci_pct is not None:
         ofci = pd.to_numeric(ofci_pct, errors="coerce").fillna(0.5).clip(0, 1)
@@ -838,14 +892,17 @@ def compute_bpc_breakout_context_from_series(
         reflex_confirm = 1 - 2 * np.abs(ofci - 0.5)
     else:
         reflex_confirm = pd.Series(0.5, index=close.index)
-    
-    return pd.DataFrame({
-        "bpc_breakout_above_poc": breakout_above_poc,
-        "bpc_breakout_above_hal": breakout_above_hal,
-        "bpc_liquidity_void_ahead": lv,
-        "bpc_false_breakout_risk": fb_risk,
-        "bpc_reflex_confirm": reflex_confirm,
-    }, index=close.index)
+
+    return pd.DataFrame(
+        {
+            "bpc_breakout_above_poc": breakout_above_poc,
+            "bpc_breakout_above_hal": breakout_above_hal,
+            "bpc_liquidity_void_ahead": lv,
+            "bpc_false_breakout_risk": fb_risk,
+            "bpc_reflex_confirm": reflex_confirm,
+        },
+        index=close.index,
+    )
 
 
 @register_feature(
@@ -875,7 +932,7 @@ def compute_bpc_pullback_structure_from_series(
 ) -> pd.DataFrame:
     """
     回踩结构特征：Fib水平 + VP支撑 + 成交密度
-    
+
     用途：树模型发现“什么情况下回踩语义不成立”
     - 回踩到 0.382 = 健康
     - 回踩到 0.618 = 深度回踩，结构可能被破坏
@@ -885,37 +942,37 @@ def compute_bpc_pullback_structure_from_series(
     close = pd.to_numeric(close, errors="coerce").astype(float)
     high = pd.to_numeric(high, errors="coerce").astype(float)
     low = pd.to_numeric(low, errors="coerce").astype(float)
-    
+
     # 计算近期高低点
     rolling_high = high.rolling(lookback, min_periods=1).max()
     rolling_low = low.rolling(lookback, min_periods=1).min()
     swing_range = (rolling_high - rolling_low).clip(lower=1e-8)
-    
+
     # 方向处理
     if bpc_breakout_direction is not None:
-        direction = pd.to_numeric(bpc_breakout_direction, errors="coerce").fillna(0).astype(int)
+        direction = (
+            pd.to_numeric(bpc_breakout_direction, errors="coerce").fillna(0).astype(int)
+        )
     else:
         direction = np.sign(close.diff(5).fillna(0)).astype(int)
-    
+
     # 计算 Fib 回踩水平（多头：从高点回踩；空头：从低点反弹）
     # 多头回踩水平 = (high - close) / range
     pullback_long = (rolling_high - close) / swing_range
     # 空头反弹水平 = (close - low) / range
     pullback_short = (close - rolling_low) / swing_range
-    
+
     # 根据方向选择
     pullback_ratio = np.where(
-        direction >= 0,
-        pullback_long.values,
-        pullback_short.values
+        direction >= 0, pullback_long.values, pullback_short.values
     )
     pullback_ratio = pd.Series(pullback_ratio, index=close.index).clip(0, 1)
-    
+
     # Fib 水平特征（接近该水平时为 1）
     fib_382 = (1 - np.abs(pullback_ratio - 0.382) / 0.15).clip(0, 1)
     fib_500 = (1 - np.abs(pullback_ratio - 0.500) / 0.15).clip(0, 1)
     fib_618 = (1 - np.abs(pullback_ratio - 0.618) / 0.15).clip(0, 1)
-    
+
     # 回踩是否到达 POC
     if vp_poc is not None:
         poc = pd.to_numeric(vp_poc, errors="coerce").fillna(close)
@@ -924,7 +981,7 @@ def compute_bpc_pullback_structure_from_series(
         pullback_to_poc = (1 - dist_to_poc / 2).clip(0, 1)  # 2 ATR 内为接近
     else:
         pullback_to_poc = pd.Series(0.5, index=close.index)
-    
+
     # 回踩是否在 HAL 区间内
     if vp_hal_high is not None and vp_hal_low is not None:
         hal_h = pd.to_numeric(vp_hal_high, errors="coerce").fillna(close)
@@ -932,21 +989,26 @@ def compute_bpc_pullback_structure_from_series(
         in_hal = ((close >= hal_l) & (close <= hal_h)).astype(float)
     else:
         in_hal = pd.Series(0.5, index=close.index)
-    
+
     # 回踩位置的成交密度（高密度 = 强支撑）
     if vpvr_volume_density is not None:
-        vol_density = pd.to_numeric(vpvr_volume_density, errors="coerce").fillna(0.5).clip(0, 1)
+        vol_density = (
+            pd.to_numeric(vpvr_volume_density, errors="coerce").fillna(0.5).clip(0, 1)
+        )
     else:
         vol_density = pd.Series(0.5, index=close.index)
-    
-    return pd.DataFrame({
-        "bpc_pullback_fib_382": fib_382,
-        "bpc_pullback_fib_500": fib_500,
-        "bpc_pullback_fib_618": fib_618,
-        "bpc_pullback_to_poc": pullback_to_poc,
-        "bpc_pullback_in_hal": in_hal,
-        "bpc_pullback_volume_support": vol_density,
-    }, index=close.index)
+
+    return pd.DataFrame(
+        {
+            "bpc_pullback_fib_382": fib_382,
+            "bpc_pullback_fib_500": fib_500,
+            "bpc_pullback_fib_618": fib_618,
+            "bpc_pullback_to_poc": pullback_to_poc,
+            "bpc_pullback_in_hal": in_hal,
+            "bpc_pullback_volume_support": vol_density,
+        },
+        index=close.index,
+    )
 
 
 @register_feature(
@@ -973,7 +1035,7 @@ def compute_bpc_continuation_target_from_series(
 ) -> pd.DataFrame:
     """
     延续目标特征：LVN距离 + 动量背离 + 反身性动量
-    
+
     用途：树模型发现“什么情况下延续语义不成立”
     - LVN 距离近 = 延续目标清晰
     - 动量背离 = 趋势衰竭预警
@@ -981,38 +1043,40 @@ def compute_bpc_continuation_target_from_series(
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     atr_s = pd.to_numeric(atr, errors="coerce").astype(float).clip(lower=1e-8)
-    
+
     # LVN 距离（归一化）
     if vpvr_lvn_distance is not None:
-        lvn_dist = pd.to_numeric(vpvr_lvn_distance, errors="coerce").fillna(0.5).clip(0, 1)
+        lvn_dist = (
+            pd.to_numeric(vpvr_lvn_distance, errors="coerce").fillna(0.5).clip(0, 1)
+        )
     else:
         lvn_dist = pd.Series(0.5, index=close.index)
-    
+
     # LVN 数量（归一化到 0-1）
     if vpvr_lvn_count is not None:
         lvn_cnt = pd.to_numeric(vpvr_lvn_count, errors="coerce").fillna(0)
         lvn_cnt_norm = (lvn_cnt / 5).clip(0, 1)  # 假设最多 5 个 LVN
     else:
         lvn_cnt_norm = pd.Series(0.5, index=close.index)
-    
+
     # 动量背离检测（价格创新高/低但 CVD 没有）
     if cvd_change_5 is not None:
         cvd = pd.to_numeric(cvd_change_5, errors="coerce").fillna(0)
         price_change = close.diff(lookback)
-        
+
         # 价格创新高但 CVD 没有 = 看空背离
         # 价格创新低但 CVD 没有 = 看多背离
         price_high = close >= close.rolling(lookback, min_periods=1).max()
         price_low = close <= close.rolling(lookback, min_periods=1).min()
         cvd_high = cvd >= cvd.rolling(lookback, min_periods=1).max()
         cvd_low = cvd <= cvd.rolling(lookback, min_periods=1).min()
-        
+
         bearish_div = (price_high & ~cvd_high).astype(float)
         bullish_div = (price_low & ~cvd_low).astype(float)
         momentum_div = bearish_div + bullish_div
     else:
         momentum_div = pd.Series(0.0, index=close.index)
-    
+
     # 反身性动量（SHD 健康度）
     if shd_pct is not None:
         shd = pd.to_numeric(shd_pct, errors="coerce").fillna(0.5).clip(0, 1)
@@ -1020,13 +1084,16 @@ def compute_bpc_continuation_target_from_series(
         reflex_momentum = 1 - shd
     else:
         reflex_momentum = pd.Series(0.5, index=close.index)
-    
-    return pd.DataFrame({
-        "bpc_target_lvn_distance": lvn_dist,
-        "bpc_target_lvn_count": lvn_cnt_norm,
-        "bpc_momentum_divergence": momentum_div,
-        "bpc_reflex_momentum": reflex_momentum,
-    }, index=close.index)
+
+    return pd.DataFrame(
+        {
+            "bpc_target_lvn_distance": lvn_dist,
+            "bpc_target_lvn_count": lvn_cnt_norm,
+            "bpc_momentum_divergence": momentum_div,
+            "bpc_reflex_momentum": reflex_momentum,
+        },
+        index=close.index,
+    )
 
 
 @register_feature(
@@ -1046,63 +1113,61 @@ def compute_bpc_compression_state_from_series(
     close: pd.Series,
     volume: pd.Series,
     bb_width_normalized: pd.Series = None,
-    garch_volatility: pd.Series = None,
-    wpt_vper_low: pd.Series = None,
     vol_window: int = 20,
     pct_window: int = 100,
 ) -> pd.DataFrame:
     """
     蓄势状态特征：波动率 + 成交量 + 能量压缩
-    
+
     用途：树模型发现“什么情况下蓄势语义不成立”
     - 成交量压缩 = 待爆发
     - 波动率压缩 = 突破前兆
     - WPT 能量低 = 待释放
+
+    注意: bpc_garch_compression 已改为 BB 二阶压缩（BB 宽度的滚动百分位压缩），
+    语义相同（波动率收窄的历史分位数），去掉了 GARCH 依赖（370s/周期）。
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     volume = pd.to_numeric(volume, errors="coerce").astype(float).clip(lower=1)
-    
+
     # 成交量压缩（百分位低 = 压缩）
     vol_ma = volume.rolling(vol_window, min_periods=1).mean()
     vol_pct = vol_ma.rolling(pct_window, min_periods=20).rank(pct=True).fillna(0.5)
     vol_compression = 1 - vol_pct
-    
-    # 布林带压缩
+
+    # 布林带压缩（一阶）
     if bb_width_normalized is not None:
-        bb_width = pd.to_numeric(bb_width_normalized, errors="coerce").fillna(0.5).clip(0, 1)
+        bb_width = (
+            pd.to_numeric(bb_width_normalized, errors="coerce").fillna(0.5).clip(0, 1)
+        )
         bb_compression = 1 - bb_width
     else:
         bb_compression = pd.Series(0.5, index=close.index)
-    
-    # GARCH 波动率压缩
-    if garch_volatility is not None:
-        garch_vol = pd.to_numeric(garch_volatility, errors="coerce").fillna(0)
-        garch_pct = garch_vol.rolling(pct_window, min_periods=20).rank(pct=True).fillna(0.5)
-        garch_compression = 1 - garch_pct
-    else:
-        garch_compression = pd.Series(0.5, index=close.index)
-    
-    # WPT 能量低频分量（低 = 能量聘集在低频，稳定）
-    if wpt_vper_low is not None:
-        wpt_low = pd.to_numeric(wpt_vper_low, errors="coerce").fillna(0.5).clip(0, 1)
-    else:
-        wpt_low = pd.Series(0.5, index=close.index)
-    
+
+    # EWMA 波动率压缩：替代 GARCH（高相关 GARCH 近似，无需 arch 库）
+    # 语义：当前指数加权波动率在历史分布中处于偏低分位 = 波动率压缩
+    # 复用 utils_garch_features 中的工具函数，避免重复实现
+    ewma_pct = compute_ewma_vol_percentile(close, ewma_span=20, pct_window=pct_window)
+    ewma_compression = 1 - ewma_pct
+
+    # WPT 能量低频分量（低 = 能量聊集在低频，稳定）
+    wpt_low = pd.Series(0.5, index=close.index)
+
     # 预突破综合分（压缩程度加权平均）
     pre_breakout_score = (
-        vol_compression * 0.3 +
-        bb_compression * 0.3 +
-        garch_compression * 0.2 +
-        wpt_low * 0.2
+        vol_compression * 0.3 + bb_compression * 0.5 + ewma_compression * 0.2
     ).clip(0, 1)
-    
-    return pd.DataFrame({
-        "bpc_vol_compression_state": vol_compression,
-        "bpc_bb_compression_state": bb_compression,
-        "bpc_garch_compression": garch_compression,
-        "bpc_wpt_energy_low": wpt_low,
-        "bpc_pre_breakout_score": pre_breakout_score,
-    }, index=close.index)
+
+    return pd.DataFrame(
+        {
+            "bpc_vol_compression_state": vol_compression,
+            "bpc_bb_compression_state": bb_compression,
+            "bpc_garch_compression": ewma_compression,  # EWMA波动率压缩，替代 GARCH，列名保持兼容
+            "bpc_wpt_energy_low": wpt_low,
+            "bpc_pre_breakout_score": pre_breakout_score,
+        },
+        index=close.index,
+    )
 
 
 @register_feature(
@@ -1129,7 +1194,7 @@ def compute_bpc_phase_transition_from_series(
 ) -> pd.DataFrame:
     """
     阶段转换特征：转换概率 + 转换速度 + 结构健康度
-    
+
     用途：树模型发现“什么情况下 BPC 循环不成立”
     - B→P 转换概率 = 突破后回踩的可能性
     - P→C 转换概率 = 回踩后延续的可能性
@@ -1139,31 +1204,30 @@ def compute_bpc_phase_transition_from_series(
     p = pd.to_numeric(bpc_score_pullback, errors="coerce").fillna(0).clip(0, 1)
     c = pd.to_numeric(bpc_score_continuation, errors="coerce").fillna(0).clip(0, 1)
     n = pd.to_numeric(bpc_score_neutral, errors="coerce").fillna(0).clip(0, 1)
-    
+
     # 主导阶段（0=neutral, 1=breakout, 2=pullback, 3=continuation）
     scores = pd.DataFrame({"n": n, "b": b, "p": p, "c": c})
-    phase_dominant = scores.idxmax(axis=1).map({"n": 0, "b": 1, "p": 2, "c": 3}).fillna(0)
+    phase_dominant = (
+        scores.idxmax(axis=1).map({"n": 0, "b": 1, "p": 2, "c": 3}).fillna(0)
+    )
     phase_confidence = scores.max(axis=1)
-    
+
     # B→P 转换概率：breakout 分数下降且 pullback 上升
     b_falling = (b < b.shift(1)).astype(float)
     p_rising = (p > p.shift(1)).astype(float)
     trans_b_to_p = (b_falling * p_rising * b.shift(1)).fillna(0).clip(0, 1)
-    
+
     # P→C 转换概率：pullback 分数下降且 continuation 上升
     p_falling = (p < p.shift(1)).astype(float)
     c_rising = (c > c.shift(1)).astype(float)
     trans_p_to_c = (p_falling * c_rising * p.shift(1)).fillna(0).clip(0, 1)
-    
+
     # 转换速度：阶段分数变化的绝对值和
     score_changes = (
-        b.diff().abs() + 
-        p.diff().abs() + 
-        c.diff().abs() + 
-        n.diff().abs()
+        b.diff().abs() + p.diff().abs() + c.diff().abs() + n.diff().abs()
     ).fillna(0)
     trans_speed = score_changes.rolling(lookback, min_periods=1).mean().clip(0, 1)
-    
+
     # 结构健康度（基于 SHD 或简化估计）
     if shd_pct is not None:
         shd = pd.to_numeric(shd_pct, errors="coerce").fillna(0.5).clip(0, 1)
@@ -1171,12 +1235,15 @@ def compute_bpc_phase_transition_from_series(
     else:
         # 简化估计：主导阶段置信度高 = 结构清晰
         structure_health = phase_confidence
-    
-    return pd.DataFrame({
-        "bpc_phase_dominant": phase_dominant,
-        "bpc_phase_confidence": phase_confidence,
-        "bpc_transition_b_to_p": trans_b_to_p,
-        "bpc_transition_p_to_c": trans_p_to_c,
-        "bpc_transition_speed": trans_speed,
-        "bpc_structure_health": structure_health,
-    }, index=b.index)
+
+    return pd.DataFrame(
+        {
+            "bpc_phase_dominant": phase_dominant,
+            "bpc_phase_confidence": phase_confidence,
+            "bpc_transition_b_to_p": trans_b_to_p,
+            "bpc_transition_p_to_c": trans_p_to_c,
+            "bpc_transition_speed": trans_speed,
+            "bpc_structure_health": structure_health,
+        },
+        index=b.index,
+    )

@@ -3783,8 +3783,35 @@ features:
     pass_full_df: false
     column_mappings:
       close: close
+  volatility_regime_f:
+    module: garch
+    compute_func: compute_volatility_regime_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - vol_persistence
+    - vol_leverage_asymmetry
+    - vol_clustering_strength
+    category: volatility
+    description: |
+      GARCH 参数的无模型近似，线上级。
+      vol_persistence ≈ α+β，Spearman≥0.80 vs GARCH。
+      vol_leverage_asymmetry ≈ γ，Spearman≥0.75 vs GJR-GARCH。
+      vol_clustering_strength 衡量波动率聚集强度。
+      无需 arch 库，<1s/周期，替代 garch_features_f。0。
+    pass_full_df: false
+    compute_params:
+      ewma_span: 20
+      persistence_window: 100
+      leverage_window: 60
+      clustering_window: 60
+      normalized: true
+    output_normalization_map:
+      vol_persistence: bounded_0_1
+      vol_leverage_asymmetry: bounded_0_1
+      vol_clustering_strength: bounded_0_1
   dtw_features_f:
-    module: enhanced
     compute_func: extract_dtw_features_from_series
     dependencies:
     - sr_strength_max_close_f
@@ -7497,18 +7524,18 @@ features:
     compute_func: compute_bpc_compression_state_from_series
     dependencies:
     - bb_width_normalized_pct_f
-    - garch_features_f
+    # - garch_features_f  # REMOVED: 370s/cycle, replaced by BB 二阶压缩
     required_columns:
     - close
     - volume
     output_columns:
     - bpc_vol_compression_state
     - bpc_bb_compression_state
-    - bpc_garch_compression
+    - bpc_garch_compression  # 已改为 BB 二阶压缩（BB 宽度滚动百分位），列名保持兼容
     - bpc_wpt_energy_low
     - bpc_pre_breakout_score
     category: bpc
-    description: BPC compression state - volatility, volume, and energy compression for pre-breakout detection.
+    description: BPC compression state - volatility, volume, and BB compression for pre-breakout detection. bpc_garch_compression now uses BB 2nd-order compression (BB width rolling percentile) instead of GARCH (removed 370s/cycle dependency).
     pass_full_df: false
     compute_params:
       vol_window: 20

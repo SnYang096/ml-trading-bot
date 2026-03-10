@@ -1862,13 +1862,81 @@ def main():
 
 
 def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool:
-    """将实验 archetypes 复制回生产 config."""
+    """将实验 archetypes 复制回生产 config.
+
+    语义锁定: 采纳前校验生产 prefilter.yaml 中的 locked 规则是否在实验 prefilter 中存在.
+    locked 信息直接存储在 prefilter.yaml 规则上 (locked: true), 无需 meta.yaml.
+    """
+    import yaml as _yaml_adopt
+
     exp_arch = exp_config_dir / "archetypes"
     prod_arch = PROJECT_ROOT / prod_config_dir / "archetypes"
 
     if not exp_arch.exists():
         print(f"   ❌ 实验 archetypes 不存在: {exp_arch}")
         return False
+
+    # ── 语义锁定: 读取生产 prefilter.yaml 中的 locked 规则, 检查实验版本是否保留 ──
+    prod_prefilter = prod_arch / "prefilter.yaml"
+    if prod_prefilter.exists():
+        prod_pf_raw = (
+            _yaml_adopt.safe_load(prod_prefilter.read_text(encoding="utf-8")) or {}
+        )
+        locked_rules = [r for r in prod_pf_raw.get("rules", []) if r.get("locked")]
+
+        if locked_rules:
+            # 从实验 prefilter.yaml (或 gate.yaml) 中收集特征名
+            exp_prefilter = exp_arch / "prefilter.yaml"
+            exp_gate = exp_arch / "gate.yaml"
+            exp_features = set()
+
+            if exp_prefilter.exists():
+                exp_pf_raw = (
+                    _yaml_adopt.safe_load(exp_prefilter.read_text(encoding="utf-8"))
+                    or {}
+                )
+                for r in exp_pf_raw.get("rules", []):
+                    if "feature" in r:
+                        exp_features.add(r["feature"])
+                    for s in r.get("any_of", []):
+                        if "feature" in s:
+                            exp_features.add(s["feature"])
+
+            if exp_gate.exists():
+                exp_gate_raw = (
+                    _yaml_adopt.safe_load(exp_gate.read_text(encoding="utf-8")) or {}
+                )
+                for r in exp_gate_raw.get("hard_gates", []):
+                    for feat in r.get("when", {}).keys():
+                        exp_features.add(feat)
+
+            missing_locked = []
+            for lr in locked_rules:
+                if "feature" in lr:
+                    if lr["feature"] not in exp_features:
+                        missing_locked.append(lr)
+                elif "any_of" in lr:
+                    sub_feats = {s["feature"] for s in lr["any_of"] if "feature" in s}
+                    if not sub_feats & exp_features:
+                        missing_locked.append(lr)
+
+            if missing_locked:
+                print(
+                    f"   ⛔ 语义锁定拒绝采纳: {len(missing_locked)} 条 locked 规则在实验中缺失:"
+                )
+                for lr in missing_locked:
+                    desc = lr.get("feature") or [
+                        s.get("feature") for s in lr.get("any_of", [])
+                    ]
+                    print(f"      🔒 {desc}  ({lr.get('lock_reason', '?')})")
+                print(
+                    f"   → 使用 --force-unlock 强制采纳, 或检查 pipeline 是否保留了语义核心特征"
+                )
+                return False
+            else:
+                print(
+                    f"   🔒 语义锁定校验通过: {len(locked_rules)} 条 locked 规则均存在"
+                )
 
     prod_arch.mkdir(parents=True, exist_ok=True)
     copied = 0

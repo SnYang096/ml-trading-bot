@@ -1392,6 +1392,11 @@ def _promote_gate_to_archetypes(
     arch_dir = root / strategy / "archetypes"
     target_path = arch_dir / "gate.yaml"
 
+    # ── 语义锁定通过 gate 规则的 frozen: true 字段实现 ──
+    # prefilter.yaml 中 locked: true 的规则会被 _load_prefilter_as_frozen_gates()
+    # 转换为 frozen: true 的 hard_gate, 优化器对 frozen 规则跳过阈值优化 (opt=None),
+    # 从而在下方 "if not opt: kept_rules.append(rule)" 路径被自动保留, 无需 meta.yaml.
+
     # 读取源 YAML (草稿或现有 gate.yaml)
     if source_gate_path:
         source = Path(source_gate_path)
@@ -1425,6 +1430,7 @@ def _promote_gate_to_archetypes(
 
         if status not in _VALID_OPT_STATUSES or rec is None:
             # Optimization failed → remove from production gate
+            # (frozen 规则已在 "if not opt" 分支被保留, 不会到达这里)
             removed_rules.append(
                 {
                     "id": rule_id,
