@@ -1,11 +1,13 @@
-# BPC Holding 配置
-# 版本: 1.0
-# 创建时间: 2026-02-10
+# BPC Holding 配置 (trend_hold profile)
+# 版本: 2.0
+# 更新时间: 2026-03-05
 #
 # ╔═══════════════════════════════════════════════════════════╗
-# ║  Holding is not optimized.                               ║
-# ║  Holding exists to prevent good paths from being ruined, ║
-# ║  not to create alpha.                                    ║
+# ║  BPC = 结构趋势策略 → trend_hold profile                 ║
+# ║  主退出: EMA200 structural exit (趋势结构破坏)            ║
+# ║  灾难保护: 极宽 trailing (7ATR, 仅防黑天鹅闪崩)          ║
+# ║  Holding is not optimized. It exists to prevent good      ║
+# ║  paths from being ruined, not to create alpha.            ║
 # ╚═══════════════════════════════════════════════════════════╝
 #
 # ── 职责边界 ──────────────────────────────────────────────
@@ -16,62 +18,40 @@
 #   Alpha 来源: Gate → Evidence → Entry Filter → Execution
 #   Holding 不是 Alpha 源，是 Alpha 保全层。
 #
-# ── 设计原则 ──────────────────────────────────────────────
+# ── Multi-Alpha Holding ──────────────────────────────────
 #
-#   1. 只用确定性规则（无优化、无学习、无权重）
-#   2. ≤ 3 个核心参数
-#   3. 不依赖 regime、不依赖 volatility
-#   4. Holding 优化是"反因果"的（强路径依赖 + 反事实），
-#      用 Sharpe/PnL 反推 Holding 参数本质是回溯性拟合
+#   BPC (本文件) → trend_hold   → EMA200 exit + 极宽灾难 trailing
+#   ME           → momentum_hold → 紧 trailing (快进快出)
+#
+#   两种 fat-tail 范式互补:
+#     趋势型: 缓涨 2-6 个月, 单笔 15-50R, 穿越盘整
+#     动量型: 急涨 2-5 天, 单笔 3-8R, 盘整即退
 #
 # ── 与其他配置的关系 ─────────────────────────────────────
 #
-#   execution.yaml   → 开仓瞬间参数（SL 距离、tier、size_multiplier）
-#   本文件            → 持仓期间确定性规则（时间止损、保本锁、trail 执行模式）
+#   execution.yaml   → 开仓瞬间参数（SL 距离、trail_r=7.0、structural_exit=ema200）
+#   本文件            → 持仓期间确定性规则（时间止损、保本锁、退出模式）
 #   constitution.yaml → 系统底线（加仓政策、kill switch、slot 约束）
 #
-# ── 参数迁移映射 ─────────────────────────────────────────
-#
-#   本文件参数              ← 迁移前位置
-#   ─────────────────────  ──────────────────────────────────────────
-#   time_stop.default_bars ← execution.yaml > holding > time_stop_bars (当前值: 50)
-#   time_stop.tier_override← execution.yaml > tiers > levels[*] > time_stop_bars
-#   breakeven_lock.trigger_r ← constitution.yaml > add_position > lock_profit_breakeven_trigger_r (当前值: 1.0)
-#   trailing_stop.mode     ← execution.yaml > stop_loss > type (当前值: trailing)
-#
 
-version: 1
+version: 2
 
 # ============================================================
 # 📌 参数 1: 时间止损（路径放弃条件）
 # ============================================================
 #
-# 不是止损，是"路径放弃"。
-# 如果市场既没证明你对、也没证明你错 → 放弃。
-# 不依赖 PnL，不依赖 R，只依赖时间。
+# fat tail 模式: 禁用时间止损
+# EMA200 structural exit 是唯一的趋势退出机制
 #
 time_stop:
-  default_bars: 96          # 4h × 24根 = 4 天
+  default_bars: 0            # fat tail: 禁用时间止损
                              #
-                             # 选择依据:
-                             #   - BPC 是 4H 趋势策略
-                             #   - 4 天 = 足够让趋势确认或否认
-                             #   - 太短(50) → 砍掉还在酝酿的好交易
-                             #   - 太长(200) → 占用资金和认知
+                             # 设计决策:
+                             #   - EMA200 是主退出 (趋势结构破坏)
+                             #   - 极宽 trailing (7ATR) 仅防黑天鹅闪崩
+                             #   - 时间止损截断 fat tail，与"让利润奔跑"矛盾
                              #
                              # 注: 不做 grid search 优化
-                             #   因为 time_stop_bars 不是 alpha 来源
-
-  # Tier 覆盖策略:
-  # 当 --tiers 模式下，execution.yaml 中各 tier 的 time_stop_bars
-  # 将覆盖此默认值。这是设计允许的——tier 选择发生在 Execution 层，
-  # 但 time_stop 执行发生在 Holding 层。
-  #
-  # 当前 tier 覆盖值（参考，实际以 execution.yaml 为准）:
-  #   强证据(≥0.70):   200 bars ≈ 33 天
-  #   中等证据(≥0.50):  150 bars ≈ 25 天
-  #   弱证据(≥0.30):   100 bars ≈ 17 天
-  #   边缘证据(≥0.10):   80 bars ≈ 13 天
   allow_tier_override: true
 
 
@@ -80,54 +60,53 @@ time_stop:
 # ============================================================
 #
 # 一旦市场证明你是对的，就不允许你再亏。
-# 人类交易史上最稳定的 holding 规则之一。
-#
-# 触发后:
-#   - SL → entry price（保本）
-#   - 后续只允许正期望
-#   - 同时解锁 constitution.yaml 中的加仓资格
+# 同时解锁 structural_exit 检查 (breakeven_locked 后才检查 EMA200)
 #
 breakeven_lock:
   enabled: true
   trigger_r: 1.0             # 浮盈达到 1R 后，SL 移至入场价
                               #
-                              # 与 constitution.yaml 的关系:
-                              #   constitution.add_position.lock_profit_breakeven_trigger_r
-                              #   引用同一个语义: "R > 1.0 时认为风险已释放"
-                              #   本文件定义 SL 行为，constitution 定义加仓资格
-                              #
-                              # 不做优化:
-                              #   1R 是"刚好覆盖初始风险"的自然边界
-                              #   不存在比这更合理的 breakeven 触发点
+                              # 双重作用:
+                              #   1. SL → entry price (保本)
+                              #   2. 解锁 EMA200 structural exit 检查
+                              #      (避免入场即被 EMA200 退出)
+                              #   3. 解锁 constitution 加仓资格
 
 
 # ============================================================
 # 📌 参数 3: 移动止损执行模式
 # ============================================================
 #
-# 核心分工:
-#   - Execution 层定义 trail 的"几何形状":
-#       initial_r, activation_r, trail_r（开仓瞬间锁定）
-#   - Holding 层每 bar 执行这个几何规则（只更新，不改变形状）
-#
-# Holding 层不重新定义 trail_r 的数值——
-# 那是 Execution 的职责（且已经 grid search 确认处于平坦高原）。
+# trend_hold: 极宽 trailing (仅灾难保护)
+# 主退出由 execution.yaml 的 structural_exit: ema200 处理
 #
 trailing_stop:
   mode: fixed_r              # fixed_r = 固定 R 倍数
                               #
-                              # 明确排除的模式:
-                              #   - adaptive: 根据波动率动态调整 → 不做
-                              #   - regime_aware: 根据 regime 切换 → 不做
-                              #   - stepped: 每达到 N×R 收紧一档 → 暂不做
+                              # trail_r=7.0 (execution.yaml):
+                              #   极宽灾难保护, 仅在黑天鹅闪崩时触发
+                              #   正常行情由 EMA200 退出
                               #
-                              # 原因: 一旦 trail 变成 adaptive，
-                              # Holding 就成了第二个 Execution
+                              # vs ME (momentum_hold):
+                              #   trail_r=0.5, 紧 trailing 快进快出
 
-  # trail_r / activation_r 的值由 execution.yaml 定义:
-  #   全局: activation_r=1.0, trail_r=1.5
-  #   Grid Search Best: activation_r=2.0, trail_r=0.5
-  #   (高原极平坦, CV=0.6%, 任何合理值均可)
+
+# ============================================================
+# 📌 参数 4: 结构性退出 (EMA200)
+# ============================================================
+#
+# BPC 独有: 价格穿越 EMA200 = 趋势结构破坏
+# 配置在 execution.yaml 的 structural_exit: ema200
+#
+# 执行逻辑 (position_logic.py enforce_position Step 3b):
+#   1. 仅在 breakeven_locked 后才检查
+#   2. Long: close < EMA200 → 退出
+#   3. Short: close > EMA200 → 退出
+#   4. 优先级: breakeven → structural_exit → trailing → SL hit
+#
+structural_exit:
+  type: ema200
+  description: "价格穿越 EMA200 = 趋势结构破坏, 是 BPC 唯一的主动退出信号"
 
 
 # ============================================================
@@ -137,45 +116,31 @@ trailing_stop:
 # 以下功能明确不在 Holding 层:
 #
 #   ❌ 加仓/减仓比例优化
-#      → 加仓政策由 constitution.yaml 管理 (max_add_times=1, require_locked_profit)
-#      → PCM (pcm.py) 决定是否执行加仓
+#      → 加仓政策由 constitution.yaml 管理 (max_add_times=5, require_locked_profit)
 #
 #   ❌ 动态减仓 (partial profit taking)
-#      → 趋势策略的收益来自"让利润奔跑"，主动减仓破坏这个假设
+#      → 已分析: Partial TP 对 fat tail 系统是负面的
 #
-#   ❌ 波动率自适应退出 (volatility-based exit)
-#      → 波动率判断属于 Gate 层职责（已在 gate.yaml 中覆盖）
+#   ❌ 紧 trailing stop (trail_r < 2.0)
+#      → 紧 trailing 截断趋势型 fat tail
+#      → 已移至 ME 的 momentum_hold profile
 #
-#   ❌ Regime-aware holding
-#      → Regime 判断属于 Gate 层职责
-#      → 如果 regime 变坏，Gate 会阻止新入场，不需要 Holding 层重复判断
-#
-# 原因: 一旦这些进来，Holding 就会变成第二个 Execution，
-#       破坏"每层只负责一段路径"的因果隔离。
-#
-# PCM 的兜底效应:
-#   Slot 限制 (max_slots=2) + Risk per slot (1.5%)
-#   已经在系统层面限制了 Holding 失败的最大代价。
-#   Holding 只需要"防止拖死"，不需要"精细管理"。
+#   ❌ 波动率自适应退出 / Regime-aware holding
+#      → 波动率/Regime 判断属于 Gate 层职责
 
 
 # ============================================================
 # 📊 Holding 层的 KPI（诊断用，不用于优化）
 # ============================================================
 #
-# 如果未来需要评估 Holding 规则是否合理（纯诊断，不反推参数）:
-#
 #   1. giveback_ratio = (MFE - realized) / MFE
-#      → 衡量"到手的利润还回去多少"
-#      → 好的 Holding: giveback < 40%
+#      → 好的 trend_hold: giveback < 50% (比 momentum_hold 宽容)
 #
-#   2. time_efficiency = realized_r / holding_bars
-#      → 衡量"每根 bar 的 R 效率"
-#      → 避免长时间占用资金却没收益
+#   2. structural_exit_hit_rate
+#      → EMA200 退出占总退出的比例 (应该是主要退出方式)
 #
-#   3. breakeven_lock_hit_rate
-#      → 触发保本锁后，最终正 R 的比例
-#      → 应该 > 85%（否则 trigger_r 设太低）
+#   3. catastrophic_sl_hit_rate
+#      → 7ATR trailing 触发比例 (应该很低, <5%)
 #
-# ⚠️ 这些 KPI 只用于"确认规则没坏"，不用于"让规则更好"。
-#    Holding 参数不允许被 KPI 反推调整。
+#   4. breakeven_lock_hit_rate
+#      → 触发保本锁后，最终正 R 的比例 (应该 > 85%)

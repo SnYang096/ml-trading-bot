@@ -88,7 +88,15 @@ except ImportError:
 
 try:
     from bokeh.plotting import figure as bk_figure
-    from bokeh.models import ColumnDataSource, HoverTool, Span, Range1d, Div
+    from bokeh.models import (
+        ColumnDataSource,
+        HoverTool,
+        Span,
+        Range1d,
+        Div,
+        Tabs,
+        TabPanel,
+    )
     from bokeh.layouts import column as bk_column
     from bokeh.resources import INLINE as BK_RESOURCES
     from bokeh.embed import file_html as bk_file_html
@@ -1669,11 +1677,15 @@ def generate_trading_map_html(
     output_path: str,
     bar_freq: str = "4h",
 ) -> str:
-    """生成 K线 + 交易标记 HTML 交易地图。
+    """生成 K线 + 交易标记 HTML 交易地图 (多策略分 Tab)。
 
-    每个 symbol 一个独立的 K线图, 上面标记入场/出场点。
-    使用 Bokeh 生成可交互 HTML。
-    bar_freq: K 线频率, 如 "4h", "1h", "15min"。
+    可视化规则:
+      入场标记颜色 = 策略 (BPC=蓝 / FER=紫 / ME=橙)
+      标记形状     = 方向+加仓 (△=多头, ▽=空头, ◇=加仓多, ◈=加仓空)
+      连接线颜色   = 盈亏 (绿=盈利, 红=亏损)
+      出场标记颜色 = 盈亏 (绿=盈利, 红=亏损)
+    面板布局:
+      Tabs: All | BPC | FER | ME (每个 Tab 内按 symbol 纵向堆叠)
     """
     if not BOKEH_AVAILABLE:
         logger.warning("❌ Bokeh 未安装, 无法生成交易地图. pip install bokeh")
@@ -1684,45 +1696,57 @@ def generate_trading_map_html(
         logger.warning("❌ 没有交易数据, 无法生成交易地图")
         return ""
 
-    figures = []
+    # ── 颜色方案 ──
+    _STRAT_COLORS: dict = {
+        "bpc": "#3274D9",  # 蓝
+        "fer": "#B877D9",  # 紫
+        "me": "#FF9830",  # 橙
+        "lv": "#73BF69",  # 绿
+    }
+    _STRAT_COLOR_DEFAULT = "#aaaaaa"
+    _COLOR_WIN = "#26a69a"  # 盈利 绿
+    _COLOR_LOSS = "#ef5350"  # 亏损 红
+    _COLOR_UP = "#26a69a"  # K线 阳
+    _COLOR_DOWN = "#ef5350"  # K线 阴
 
-    # title div
-    total_r = sum(t.pnl_r for t in result.trades)
-    n_trades = len(result.trades)
-    win_rate = (
-        sum(1 for t in result.trades if t.pnl_r > 0) / n_trades if n_trades else 0
-    )
-    title_html = (
-        f"<h2>🗺️ 交易地图: {result.strategy.upper()} | "
-        f"{n_trades} trades | WR={win_rate:.1%} | Total={total_r:.2f}R</h2>"
-    )
-    figures.append(Div(text=title_html))
+    # ── 标记映射 ──
+    _MARKER_MAP = {
+        ("LONG", False): "triangle",  # △ 多头入场
+        ("SHORT", False): "inverted_triangle",  # ▽ 空头入场
+        ("LONG", True): "diamond",  # ◇ 加仓多
+        ("SHORT", True): "diamond_cross",  # ◈ 加仓空
+    }
+    _LABEL_MAP = {
+        ("LONG", False): "△ Long",
+        ("SHORT", False): "▽ Short",
+        ("LONG", True): "◇ Add Long",
+        ("SHORT", True): "◈ Add Short",
+    }
 
-    # 颜色方案: 盈利=绿, 亏损=红
-    COLOR_WIN = "#26a69a"  # 绿
-    COLOR_LOSS = "#ef5350"  # 红
-    COLOR_UP = "#26a69a"
-    COLOR_DOWN = "#ef5350"
+    _FREQ_MS = {
+        "15min": 15 * 60 * 1000,
+        "1h": 60 * 60 * 1000,
+        "4h": 4 * 60 * 60 * 1000,
+    }
+    bar_w = _FREQ_MS.get(bar_freq, 4 * 60 * 60 * 1000) * 0.6
 
-    for sym in symbols:
-        trades = result.per_symbol.get(sym, [])
+    def _strat_color(archetype: str) -> str:
+        return _STRAT_COLORS.get(str(archetype).lower(), _STRAT_COLOR_DEFAULT)
+
+    # ── 所有出现的 archetype ──
+    all_archetypes = sorted(set(t.archetype for t in result.trades if t.archetype))
+
+    # ── 构建单个 symbol K线图 ──
+    def _build_symbol_figure(sym: str, trades: list) -> object:
         bars_1min = result.bars_1min.get(sym)
         if bars_1min is None or bars_1min.empty:
-            continue
+            return None
+        df = _resample_bars(bars_1min, freq=bar_freq)
+        if df.empty:
+            return None
 
-        # resample to target frequency
-        df_4h = _resample_bars(bars_1min, freq=bar_freq)
-        if df_4h.empty:
-            continue
-
-        # K线数据
-        inc = df_4h.close >= df_4h.open
-        dec = ~inc
-
-        # 交易统计
         sym_r = sum(t.pnl_r for t in trades)
         sym_wr = sum(1 for t in trades if t.pnl_r > 0) / len(trades) if trades else 0
-
         p = bk_figure(
             title=f"{sym}  |  {len(trades)} trades  |  WR={sym_wr:.1%}  |  Total={sym_r:.2f}R",
             x_axis_type="datetime",
@@ -1732,133 +1756,150 @@ def generate_trading_map_html(
         )
         p.grid.grid_line_alpha = 0.3
 
-        # K线实体 — 根据 bar_freq 动态计算宽度
-        _freq_ms = {
-            "15min": 15 * 60 * 1000,
-            "1h": 60 * 60 * 1000,
-            "4h": 4 * 60 * 60 * 1000,
-        }
-        w = _freq_ms.get(bar_freq, 4 * 60 * 60 * 1000) * 0.6
+        # K 线实体
+        inc = df.close >= df.open
+        dec = ~inc
         p.segment(
-            df_4h.index[inc],
-            df_4h.high[inc],
-            df_4h.index[inc],
-            df_4h.low[inc],
-            color=COLOR_UP,
+            df.index[inc],
+            df.high[inc],
+            df.index[inc],
+            df.low[inc],
+            color=_COLOR_UP,
             line_width=1,
         )
         p.segment(
-            df_4h.index[dec],
-            df_4h.high[dec],
-            df_4h.index[dec],
-            df_4h.low[dec],
-            color=COLOR_DOWN,
+            df.index[dec],
+            df.high[dec],
+            df.index[dec],
+            df.low[dec],
+            color=_COLOR_DOWN,
             line_width=1,
         )
         p.vbar(
-            df_4h.index[inc],
-            w,
-            df_4h.open[inc],
-            df_4h.close[inc],
-            fill_color=COLOR_UP,
-            line_color=COLOR_UP,
+            df.index[inc],
+            bar_w,
+            df.open[inc],
+            df.close[inc],
+            fill_color=_COLOR_UP,
+            line_color=_COLOR_UP,
             fill_alpha=0.8,
         )
         p.vbar(
-            df_4h.index[dec],
-            w,
-            df_4h.open[dec],
-            df_4h.close[dec],
-            fill_color=COLOR_DOWN,
-            line_color=COLOR_DOWN,
+            df.index[dec],
+            bar_w,
+            df.open[dec],
+            df.close[dec],
+            fill_color=_COLOR_DOWN,
+            line_color=_COLOR_DOWN,
             fill_alpha=0.8,
         )
 
-        # 交易标记 — 按 side(多/空) × win/loss × 初始/加仓 分组
-        # 多=向上三角, 空=向下三角, 加仓多=diamond, 加仓空=inverted_triangle
-        # 颜色: win=绿, loss=红
         if trades:
-            # 按 (side, win/loss, is_add) 分 6 组
-            groups: dict = {}  # key=(side, wl, is_add) -> list[ClosedTrade]
+            # ── 连接线: 颜色 = win/loss ──
+            for wl, lc, emoji in [
+                ("win", _COLOR_WIN, "📈"),
+                ("loss", _COLOR_LOSS, "📉"),
+            ]:
+                batch = [t for t in trades if ("win" if t.pnl_r > 0 else "loss") == wl]
+                if batch:
+                    p.multi_line(
+                        xs=[[t.entry_time, t.exit_time] for t in batch],
+                        ys=[[t.entry_price, t.exit_price] for t in batch],
+                        line_color=lc,
+                        line_dash="dashed",
+                        line_alpha=0.4,
+                        line_width=1.5,
+                        legend_label=f"{emoji} {wl}",
+                    )
+
+            # ── 入场标记: 颜色 = 策略, 形状 = side+is_add ──
+            # group by (archetype, side, is_add)
+            entry_groups: dict = {}
             for t in trades:
-                side = t.side.upper()  # LONG / SHORT
-                wl = "win" if t.pnl_r > 0 else "loss"
-                is_add = t.is_add_position
-                groups.setdefault((side, wl, is_add), []).append(t)
+                key = (str(t.archetype).lower(), t.side.upper(), t.is_add_position)
+                entry_groups.setdefault(key, []).append(t)
 
-            # 标记映射: (side, is_add) -> marker
-            _marker_map = {
-                ("LONG", False): "triangle",  # △ 向上
-                ("SHORT", False): "inverted_triangle",  # ▽ 向下
-                ("LONG", True): "diamond",  # ◇ 加仓多
-                ("SHORT", True): "diamond_cross",  # ◈ 加仓空
-            }
-            _color_map = {"win": COLOR_WIN, "loss": COLOR_LOSS}
-            _label_map = {
-                ("LONG", False): "long",
-                ("SHORT", False): "short",
-                ("LONG", True): "add_long",
-                ("SHORT", True): "add_short",
-            }
-
-            for (side, wl, is_add), batch in groups.items():
-                if not batch:
-                    continue
-                marker = _marker_map.get((side, is_add), "circle")
-                color = _color_map[wl]
-                label = f"{_label_map.get((side, is_add), side)}_{wl}"
-                sz = 12 if is_add else 10
-
-                # 入场标记
+            for (arch, side, is_add), batch in sorted(entry_groups.items()):
+                strat_c = _strat_color(arch)
+                marker = _MARKER_MAP.get((side, is_add), "circle")
+                sz = 13 if is_add else 11
+                shape_label = _LABEL_MAP.get((side, is_add), side)
+                legend_lbl = f"{arch.upper()} {shape_label}"
                 p.scatter(
                     x=[t.entry_time for t in batch],
                     y=[t.entry_price for t in batch],
                     marker=marker,
                     size=sz,
-                    color=color,
-                    alpha=0.8,
-                    legend_label=label,
-                )
-                # 出场标记 — square 统一
-                p.scatter(
-                    x=[t.exit_time for t in batch],
-                    y=[t.exit_price for t in batch],
-                    marker="square",
-                    size=8,
-                    color=color,
-                    alpha=0.6,
-                    legend_label=f"exit_{wl}",
-                )
-                # 连接线
-                xs = [[t.entry_time, t.exit_time] for t in batch]
-                ys = [[t.entry_price, t.exit_price] for t in batch]
-                p.multi_line(
-                    xs=xs,
-                    ys=ys,
-                    line_color=color,
-                    line_dash="dashed",
-                    line_alpha=0.3,
+                    color=strat_c,
+                    alpha=0.85,
+                    legend_label=legend_lbl,
                 )
 
-        # HoverTool
+            # ── 出场标记: 颜色 = win/loss ──
+            for wl, ec in [("win", _COLOR_WIN), ("loss", _COLOR_LOSS)]:
+                batch = [t for t in trades if ("win" if t.pnl_r > 0 else "loss") == wl]
+                if batch:
+                    p.scatter(
+                        x=[t.exit_time for t in batch],
+                        y=[t.exit_price for t in batch],
+                        marker="square",
+                        size=8,
+                        color=ec,
+                        alpha=0.6,
+                        legend_label=f"□ exit_{wl}",
+                    )
+
         p.add_tools(
             HoverTool(
-                tooltips=[
-                    ("Time", "@x{%F %H:%M}"),
-                    ("Price", "@y{0.2f}"),
-                ],
+                tooltips=[("Time", "@x{%F %H:%M}"), ("Price", "@y{0.2f}")],
                 formatters={"@x": "datetime"},
                 mode="mouse",
             )
         )
-
         p.legend.click_policy = "hide"
         p.legend.location = "top_left"
         p.legend.label_text_font_size = "9pt"
-        figures.append(p)
+        return p
 
-    # 生成 HTML
-    layout = bk_column(*figures, sizing_mode="stretch_width")
+    # ── 构建单个 Tab ──
+    def _build_tab(tab_label: str, strat_filter: "str | None") -> object:
+        tab_trades = [
+            t
+            for t in result.trades
+            if strat_filter is None or str(t.archetype).lower() == strat_filter
+        ]
+        n = len(tab_trades)
+        wr = sum(1 for t in tab_trades if t.pnl_r > 0) / n if n else 0
+        total = sum(t.pnl_r for t in tab_trades)
+        strat_c = _strat_color(strat_filter) if strat_filter else "#888888"
+
+        title_html = (
+            f"<h2 style='color:{strat_c}'>🗺️ {tab_label} "
+            f"| {n} trades | WR={wr:.1%} | Total={total:.2f}R</h2>"
+        )
+        figs: list = [Div(text=title_html)]
+
+        for sym in symbols:
+            sym_trades = result.per_symbol.get(sym, [])
+            if strat_filter is not None:
+                sym_trades = [
+                    t for t in sym_trades if str(t.archetype).lower() == strat_filter
+                ]
+            if not sym_trades:
+                continue
+            fig = _build_symbol_figure(sym, sym_trades)
+            if fig is not None:
+                figs.append(fig)
+
+        child = bk_column(*figs, sizing_mode="stretch_width")
+        return TabPanel(child=child, title=tab_label)
+
+    # ── 组装 Tabs (All + 各策略) ──
+    tabs_list = [_build_tab("All", None)]
+    for arch in all_archetypes:
+        tabs_list.append(_build_tab(arch.upper(), arch))
+
+    layout = Tabs(tabs=tabs_list)
     html = bk_file_html(
         layout, resources=BK_RESOURCES, title=f"Trading Map: {result.strategy}"
     )

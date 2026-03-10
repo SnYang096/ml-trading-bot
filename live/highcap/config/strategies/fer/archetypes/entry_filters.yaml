@@ -1,31 +1,35 @@
 # FER Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
-# Date: 2026-03-06 00:13
-# Promoted: 2 filters (2 plateau + 0 snotio-only)
-# Baseline snotio: 3.8289, σ=9.533
-# Significance: z-test p<0.05 required for all tiers
+# Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)
+# Date: 2026-03-08 20:50
+# Promoted: 3 filters (evidence Spearman bins)
+# Significance: forward_rr t-test p<0.05 required
 #
-# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 职责: "现在该入场吗?" → 硬二值控制
 # 多个 filter 之间是 OR 关系
-# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-- id: meta_evt_es_99
+- id: ev_bpc_garch_compression
   enabled: true
-  description: 'Meta-Algorithm: evt_es_99 <= 0.434'
+  description: 'Evidence bin: bpc_garch_compression <= 0.91'
   conditions:
-  - feature: evt_es_99
+  - feature: bpc_garch_compression
     operator: <=
-    value: 0.434
-  tier: A_PLATEAU
-  notes: lift=1.27x, rob=85%, snotio=5.2409, z=2.30, p=0.0106
-- id: meta_evt_tail_shape
+    value: 0.91
+  notes: Δrr=+1.9489, t=6.48, p=0.0000, pass=70.3%
+- id: ev_fer_trapped_shorts_score
   enabled: true
-  description: 'Meta-Algorithm: evt_tail_shape >= 0.575'
+  description: 'Evidence bin: fer_trapped_shorts_score >= 0.065147'
   conditions:
-  - feature: evt_tail_shape
+  - feature: fer_trapped_shorts_score
     operator: '>='
-    value: 0.575
-  tier: A_PLATEAU
-  notes: lift=1.09x, rob=94%, snotio=5.0013, z=1.93, p=0.0269
+    value: 0.065147
+  notes: Δrr=+1.7982, t=4.92, p=0.0000, pass=80.0%
+- id: ev_vol_mom_10
+  enabled: true
+  description: 'Evidence bin: vol_mom_10 >= -0.176468'
+  conditions:
+  - feature: vol_mom_10
+    operator: '>='
+    value: -0.176468
+  notes: Δrr=+1.7265, t=5.08, p=0.0000, pass=80.0%
 combination_mode: or

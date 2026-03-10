@@ -64,14 +64,6 @@ regimes:
 # ── 默认 Regime ──
 default_regime: "NORMAL"
 
-# ── 已启用的 Archetype（控制哪些策略参与实盘，注释或删除即暂停）──
-# 修改此列表后重新部署生效，无需改代码
-enabled_archetypes:
-  - bpc
-  - me
-  - fer
-  # - lv   # LV 暂未上线
-
 # ── Regime 检测阈值 ──
 # 检测顺序：HIGH_LEVERAGE → HIGH_VOL → NORMAL（优先匹配严格条件）
 detection:

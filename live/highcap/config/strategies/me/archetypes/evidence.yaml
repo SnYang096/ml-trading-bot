@@ -1,7 +1,7 @@
-# ME Evidence Archetype (auto-promoted)
-# 来源: results/train_final_20260306_014049_return_tree/me/evidence_candidates.yaml
-# 优化规则: 3/9 条通过 plateau 验证
-# ✅ 方向已由数据自动验证
+# ME Evidence (auto-discovered)
+# 来源: results/train_final_20260308_203537_rr_extreme/me/logs_gated.parquet
+# 方法: Spearman + Quintile Monotonicity (p < 0.01)
+# 候选: 3/278 通过筛选
 
 schema:
   label_semantics:
@@ -11,73 +11,67 @@ schema:
     favor: 有利 - 提高信心/仓位
     amplify: 强烈有利 - 最大化执行
 evidence:
-- id: evidence_vpin_volatility_20
-  feature: vpin_volatility_20
+- id: evidence_pred
+  feature: pred
   rank: 1
-  direction: negative
-  usage_hint: 'TODO: 填写用途'
+  direction: positive
+  usage_hint: sp_r=+0.087 WR:47.0%→55.4%
   affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
   - position_size
+  - tp_range
   quantile_mapping:
     bins:
-    - 0.2
-    - 0.4
-    - 0.6
-    - 0.8
+    - 0.5277266842987255
+    - 0.552672511165327
+    - 0.565302713975876
+    - 0.5764018224962377
     labels:
-    - amplify
-    - favor
-    - neutral
-    - downweight
     - suppress
-  split_count: 4
-- id: evidence_vpin_ma20
-  feature: vpin_ma20
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 5
+- id: evidence_price_accel_pct
+  feature: price_accel_pct
   rank: 2
-  direction: negative
-  usage_hint: 'TODO: 填写用途'
+  direction: positive
+  usage_hint: sp_r=+0.051 WR:46.9%→52.3%
   affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
   - position_size
+  - tp_range
   quantile_mapping:
     bins:
-    - 0.2
-    - 0.4
-    - 0.6
-    - 0.8
+    - 0.20222634508348794
+    - 0.4025974025974026
+    - 0.6178107606679035
+    - 0.8163265306122449
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 5
+- id: evidence_bpc_dir_consistency_long
+  feature: bpc_dir_consistency_long
+  rank: 3
+  direction: negative
+  usage_hint: sp_r=-0.044 WR:52.1%→48.3%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - 0.46
+    - 0.48
+    - 0.52
+    - 0.56
     labels:
     - amplify
     - favor
     - neutral
     - downweight
     - suppress
-  split_count: 1
-- id: evidence_evt_scale_right
-  feature: evt_scale_right
-  rank: 5
-  direction: negative
-  usage_hint: 'TODO: 填写用途'
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.15
-    - 0.35
-    - 0.55
-    - 0.75
-    labels:
-    - amplify
-    - favor
-    - neutral
-    - downweight
-    - suppress
-  split_count: 4
-min_score: 0.0294
+  split_count: 5
+min_score: 0.0

@@ -1,7 +1,7 @@
-# FER Evidence Archetype (auto-promoted)
-# 来源: results/train_final_20260306_001323_return_tree/fer/evidence_candidates.yaml
-# 优化规则: 6/10 条通过 plateau 验证
-# ✅ 方向已由数据自动验证
+# FER Evidence (auto-discovered)
+# 来源: results/train_final_20260308_205007_rr_extreme/fer/logs_gated.parquet
+# 方法: Spearman + Quintile Monotonicity (p < 0.01)
+# 候选: 3/288 通过筛选
 
 schema:
   label_semantics:
@@ -11,142 +11,67 @@ schema:
     favor: 有利 - 提高信心/仓位
     amplify: 强烈有利 - 最大化执行
 evidence:
-- id: evidence_roc_5
-  feature: roc_5
+- id: evidence_bpc_garch_compression
+  feature: bpc_garch_compression
   rank: 1
-  direction: positive
-  usage_hint: 'TODO: 填写用途'
+  direction: negative
+  usage_hint: sp_r=-0.135 WR:59.8%→41.7%
   affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
   - position_size
+  - tp_range
   quantile_mapping:
     bins:
-    - 0.1
-    - 0.3
-    - 0.5
-    - 0.7
+    - 0.22999999999999998
+    - 0.48
+    - 0.72
+    - 0.91
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
-  split_count: 11
-- id: evidence_cvd_change_5_normalized
-  feature: cvd_change_5_normalized
+    - favor
+    - neutral
+    - downweight
+    - suppress
+  split_count: 5
+- id: evidence_fer_trapped_shorts_score
+  feature: fer_trapped_shorts_score
   rank: 2
   direction: positive
-  usage_hint: 'TODO: 填写用途'
+  usage_hint: sp_r=+0.134 WR:46.6%→63.2%
   affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
   - position_size
+  - tp_range
   quantile_mapping:
     bins:
-    - 0.1
-    - 0.3
-    - 0.5
-    - 0.7
+    - 0.06514717909881348
+    - 0.7325017752710444
+    - 1.6805380786778337
+    - 3.064612896444677
     labels:
     - suppress
     - downweight
     - neutral
     - favor
     - amplify
-  split_count: 21
-- id: evidence_fer_signed_efficiency
-  feature: fer_signed_efficiency
+  split_count: 5
+- id: evidence_vol_mom_10
+  feature: vol_mom_10
   rank: 3
-  direction: negative
-  usage_hint: 'TODO: 填写用途'
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.2
-    - 0.4
-    - 0.6
-    - 0.8
-    labels:
-    - amplify
-    - favor
-    - neutral
-    - downweight
-    - suppress
-  split_count: 28
-- id: evidence_fer_impulse_failure_direction
-  feature: fer_impulse_failure_direction
-  rank: 6
   direction: positive
-  usage_hint: 'TODO: 填写用途'
+  usage_hint: sp_r=+0.126 WR:48.7%→63.5%
   affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
   - position_size
+  - tp_range
   quantile_mapping:
     bins:
-    - 0.1
-    - 0.3
-    - 0.5
-    - 0.7
+    - -0.17646770218316127
+    - -0.043125547739033515
+    - 0.06667568804238604
+    - 0.25608258368129844
     labels:
     - suppress
     - downweight
     - neutral
     - favor
     - amplify
-  split_count: 4
-- id: evidence_fer_momentum_efficiency_decay
-  feature: fer_momentum_efficiency_decay
-  rank: 7
-  direction: positive
-  usage_hint: 'TODO: 填写用途'
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.2
-    - 0.4
-    - 0.6
-    - 0.8
-    labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
-    - amplify
-  split_count: 2
-- id: evidence_fer_signed_efficiency_pct
-  feature: fer_signed_efficiency_pct
-  rank: 10
-  direction: negative
-  usage_hint: 'TODO: 填写用途'
-  affects:
-  - tp_range
-  - trailing_speed
-  - scale_in_allowed
-  - position_size
-  quantile_mapping:
-    bins:
-    - 0.15
-    - 0.35
-    - 0.55
-    - 0.75
-    labels:
-    - amplify
-    - favor
-    - neutral
-    - downweight
-    - suppress
-  split_count: 0
-min_score: 0.0111
+  split_count: 5
+min_score: 0.0
