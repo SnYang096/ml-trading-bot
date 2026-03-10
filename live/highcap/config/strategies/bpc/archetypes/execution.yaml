@@ -22,13 +22,14 @@ optimization:
       - 0.5
       - 3.0
       step: 0.5
+# ── 旧值 initial_r=3.0/activation_r=0.5 是退化组合 (ratio=6, random WR=86%) ──
 stop_loss:
-  initial_r: 2.0
-  trailing:
-    activation_r: 1.0
-    step_r: 0.5
-    trail_r: 0.5
   type: trailing
+  initial_r: 4.0
+  trailing:
+    activation_r: 2.5
+    trail_r: 7.0             # 灾难保护: 仅防黑天鹅闪崩, EMA200 是主退出
+  structural_exit: ema200    # 主退出: 价格穿越 EMA200 = 趋势结构破坏
 take_profit:
   enabled: false
-version: 47
+version: 48

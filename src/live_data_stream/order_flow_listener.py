@@ -13,13 +13,10 @@
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import logging
 import os
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Callable
-from collections import deque
 import pandas as pd
 import numpy as np
 
@@ -34,28 +31,15 @@ from .gap_filler import GapFiller
 from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
-from src.time_series_model.live.enforcement import enforce_before_order
 from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
 )
-from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.time_series_model.core.constitution.runtime_state import (
     ConstitutionRuntimeState,
 )
 from src.time_series_model.core.trade_intent import TradeIntent
-from src.order_management.models import OrderSide, OrderType
-from src.time_series_model.live.execution_profile_apply import (
-    pick_atr,
-    compute_rr_prices,
-    holding_expired,
-)
-from src.time_series_model.live.position_logic import (
-    build_position_dict,
-    enforce_position,
-)
-from src.time_series_model.portfolio.slot_sizing import (
-    compute_slot_size_from_risk,
-)
+from src.order_management.position_tracker import PositionTracker
+from src.order_management.trade_executor import TradeExecutor
 
 
 class OrderFlowListener:
@@ -156,7 +140,14 @@ class OrderFlowListener:
         self.decision_handler = decision_handler
         self.stats_collector = None  # 可选: StatsCollector 实例，由外部注入
         self.extra_feature_computers: Dict[str, "IncrementalFeatureComputer"] = {}
-        self._open_positions: Dict[str, Dict[str, Any]] = {}
+        
+        # 持仓管理层（由 PositionTracker + TradeExecutor 接管）
+        self._position_tracker = PositionTracker(
+            order_manager=order_manager,
+            symbol=symbol,
+            default_bar_minutes=feature_4h_interval_hours * 60,
+        )
+        self._trade_executor: TradeExecutor | None = None  # 延迟建立，等 risk_per_slot 注入完成
 
         # 1分钟聚合状态（bar级别）
         self.current_1min_bar: Optional[Dict[str, Any]] = None
@@ -810,345 +801,45 @@ class OrderFlowListener:
         if not intents:
             logger.info("[%s] 无交易信号", self.symbol)
         elif trading_enabled:
+            executor = self._get_trade_executor()
             for intent in intents:
                 logger.info("[%s] 交易信号: %s", self.symbol, intent)
-                self._execute_intent(intent=intent, features=all_features)
+                executor.execute(intent=intent, features=all_features)
         else:
             for intent in intents:
                 logger.info("[%s] 交易信号(观察模式，不下单): %s", self.symbol, intent)
 
         # 持仓管理 (仅在交易模式下)
         if trading_enabled:
-            self._enforce_open_positions(features=all_features)
+            closed = self._position_tracker.enforce_all(features=all_features)
+            if closed:
+                logger.info("[%s] 本周期关闭仓位: %s", self.symbol, closed)
 
         # 每 15min 决策周期结束后 flush 统计 (始终执行)
         self._flush_stats()
 
-    def _execute_intent(self, intent: TradeIntent, features: Dict[str, Any]) -> None:
-        if intent.action == "NO_TRADE":
-            return
-
-        # Pre-compute position_id before try block so the except branch
-        # can release the exact slot reserved by enforce_before_order.
-        # TradeIntent is frozen=True so we must use dataclasses.replace.
-        if not intent.position_id:
-            intent = dataclasses.replace(
-                intent,
-                position_id=f"{self.symbol}:{int(pd.Timestamp.now(tz='UTC').value)}",
-            )
-
-        try:
-            self._execute_intent_inner(intent, features)
-        except ConstitutionViolation as cv:
-            logger.warning("[%s] 宪法拒绝: %s (%s)", self.symbol, cv.code, cv.message)
-            # 🐛 Fix: ConstitutionViolation 也可能在 enforce_before_order() 预留
-            #   slot 之后抛出（如后续校验失败），必须释放已预留的 slot。
-            self._release_leaked_slot(intent)
-            return
-        except Exception as exc:
-            # 🐛 Fix: 下单失败时释放已预留的 slot，防止 slot 被永久占满。
-            #   enforce_before_order() 在 place_order() 之前预留 slot，
-            #   如果 place_order() 失败（API key/余额/权限），slot 泄漏。
-            logger.error("[%s] 下单异常: %s", self.symbol, exc)
-            self._release_leaked_slot(intent)
-            return
-
-    def _release_leaked_slot(self, intent: TradeIntent) -> None:
-        """释放 enforce_before_order() 预留但未成功下单的 slot。
-
-        仅当 position_id 确实存在于 active slots 时才释放。
-        SLOT_FULL 场景下 slot 从未被预留，此时直接跳过，避免误导日志。
-        """
-        if self.constitution_executor is None or self.runtime_state is None:
-            return
-        _pid = intent.position_id or f"{self.symbol}:"
-        # slot 从未被预留（如 SLOT_FULL）→ 无需释放
-        if _pid not in self.runtime_state.slots.active:
-            return
-        try:
-            self.constitution_executor.release_slot(
-                st=self.runtime_state,
-                position_id=_pid,
-                reason="order_failed",
-            )
-            self.constitution_executor.save_runtime_state(self.runtime_state)
-            logger.warning(
-                "[%s] 已释放因下单失败而泄漏的 slot: %s", self.symbol, _pid
-            )
-        except Exception:
-            pass
-
-    def _execute_intent_inner(
-        self, intent: TradeIntent, features: Dict[str, Any]
-    ) -> None:
-        side = OrderSide.BUY if intent.action == "LONG" else OrderSide.SELL
-
-        # ── 仓位计算 ──
-        # 优先级: intent.quantity > risk_per_strategy(宪法) × equity 反算
-        #         > risk_per_trade(固定美元) > trade_size(固定数量)
-        qty = 0.0
-        qty_source = "none"
-
-        exec_profile = intent.execution_profile or {}
-        rr_constraints = exec_profile.get("rr_constraints") or {}
-        sl_r = float(rr_constraints.get("stop_loss_r", 0.0) or 0.0)
-        atr = pick_atr(features) or 0.0
-        entry_price = self._resolve_entry_price(features)
-
-        # 解析每策略风险: min(risk_per_slot, strategy.max_risk_per_trade)
-        arch_key = str(intent.archetype or "").strip().lower()
-        effective_risk = self.risk_per_slot
-        if effective_risk > 0 and arch_key and self.per_strategy_limits:
-            strat_cfg = self.per_strategy_limits.get(arch_key) or {}
-            strat_risk = strat_cfg.get("max_risk_per_trade")
-            if strat_risk is not None:
-                effective_risk = min(effective_risk, float(strat_risk))
-
-        if intent.quantity is not None:
-            qty = float(intent.quantity)
-            qty_source = "intent.quantity"
-        elif (
-            self.risk_per_slot > 0
-            and sl_r > 0
-            and atr > 0
-            and entry_price
-            and entry_price > 0
-        ):
-            # 宪法风险反算: risk_usd = equity × effective_risk (per-strategy capped)
-            equity = float(features.get("equity", 0.0) or 0.0)
-            if equity <= 0:
-                # features 中没有 equity，fallback 到固定 risk_per_trade
-                equity = 0.0
-            if equity > 0:
-                result = compute_slot_size_from_risk(
-                    equity_usd=equity,
-                    risk_frac=effective_risk,
-                    price=entry_price,
-                    atr=atr,
-                    stop_atr=sl_r,
-                    max_leverage=3.0,
-                )
-                qty = result.qty
-                qty_source = "constitution_risk"
-                logger.info(
-                    "[%s] 宪法风险反算: equity=$%.0f, risk_pct=%.2f%% (strategy=%s), "
-                    "risk_usd=$%.1f, SL=%.1fR*ATR=%.2f, entry=%.2f, qty=%.6f",
-                    self.symbol,
-                    equity,
-                    effective_risk * 100,
-                    arch_key,
-                    equity * effective_risk,
-                    sl_r,
-                    atr,
-                    entry_price,
-                    qty,
-                )
-
-        # fallback: 固定美元风险 (MLBOT_RISK_PER_TRADE 环境变量)
-        if qty <= 0 and self.risk_per_trade and self.risk_per_trade > 0:
-            if sl_r > 0 and atr > 0 and entry_price and entry_price > 0:
-                result = compute_slot_size_from_risk(
-                    equity_usd=self.risk_per_trade / 0.01,  # 反推: risk_usd / risk_frac
-                    risk_frac=0.01,
-                    price=entry_price,
-                    atr=atr,
-                    stop_atr=sl_r,
-                    max_leverage=10.0,
-                )
-                qty = result.qty
-                qty_source = "risk_per_trade_usd"
-                logger.info(
-                    "[%s] 固定风险反算: risk=$%.1f, SL=%.1fR*ATR=%.2f, "
-                    "entry=%.2f, qty=%.6f",
-                    self.symbol,
-                    self.risk_per_trade,
-                    sl_r,
-                    atr,
-                    entry_price,
-                    qty,
-                )
-            else:
-                logger.warning(
-                    "[%s] 风险反算缺少参数 (sl_r=%.2f, atr=%.2f, price=%s)",
-                    self.symbol,
-                    sl_r,
-                    atr,
-                    entry_price,
-                )
-
-        # fallback: 固定数量 (trade_size)
-        if qty <= 0 and self.trade_size and self.trade_size > 0:
-            qty = float(self.trade_size)
-            qty_source = "trade_size"
-
-        # 最小开仓量检查: 如果风险反算的 qty 太小，fallback 到 trade_size
-        if (
-            qty_source in ("constitution_risk", "risk_per_trade_usd")
-            and self.trade_size
-            and self.trade_size > 0
-            and qty < self.trade_size
-        ):
-            logger.warning(
-                "[%s] 风险反算 qty=%.6f < 最小开仓 trade_size=%.6f, "
-                "fallback 到 trade_size",
-                self.symbol,
-                qty,
-                self.trade_size,
-            )
-            qty = float(self.trade_size)
-            qty_source = "trade_size_min_fallback"
-        size_mult = float(intent.size_multiplier or 1.0)
-        qty *= max(0.0, size_mult)
-        if intent.pcm_budget:
-            per_symbol = (intent.pcm_budget.get("per_symbol_budget") or {}).get(
-                self.symbol
-            )
-            if per_symbol is not None:
-                try:
-                    qty *= max(0.0, float(per_symbol))
-                except Exception:
-                    pass
-        if qty <= 0:
-            return
-        # position_id is now guaranteed set on intent (computed above in _execute_intent)
-        position_id = intent.position_id
-        if not position_id:
-            position_id = f"{self.symbol}:{int(pd.Timestamp.now(tz='UTC').value)}"
-
-        if intent.add_position and intent.parent_position_id:
-            # 无风险加仓: 所有同 direction 的活跃仓位必须 breakeven locked
-            #   确保任意时刻最大风险 = 最新一仓的 1R
-            _new_side = (
-                "LONG" if str(intent.action).upper() in ("LONG", "BUY") else "SHORT"
-            )
-            _same_dir = [
-                p for p in self._open_positions.values() if p.get("side") == _new_side
-            ]
-            _all_locked = _same_dir and all(
-                p.get("breakeven_locked", False) for p in _same_dir
-            )
-            if not _all_locked:
-                logger.info("[add_position] 拒绝: 存在未 breakeven locked 的同向仓位")
-                return
-            self.constitution_executor.validate_add_position(
-                st=self.runtime_state,
-                position_id=intent.parent_position_id,
-                archetype=intent.archetype,
-                current_r=intent.current_r,
-                locked_profit=True,  # 已通过上方 _all_locked 检查
-            )
-
-        enforce_before_order(
-            executor=self.constitution_executor,
-            runtime_state=self.runtime_state,
-            position_id=position_id,
-            symbol=self.symbol,
-            archetype=str(intent.archetype),
-            execution_strategy=str(intent.execution_strategy or intent.archetype),
-            execution_tags=intent.execution_tags,
-            execution_evidence=intent.execution_evidence,
-            equity=features.get("equity"),
-            drawdown=features.get("drawdown"),
-            daily_loss=float(features.get("daily_loss", 0.0)),
-            weekly_loss=float(features.get("weekly_loss", 0.0)),
-            monthly_loss=float(features.get("monthly_loss", 0.0)),
-            daily_cost_mean=features.get("daily_cost_mean"),
-            daily_turnover_mean=features.get("daily_turnover_mean"),
-            hard_violation=bool(features.get("hard_violation", False)),
-            data_bad=bool(features.get("data_bad", False)),
-            evt_risk_flag=features.get("evt_risk_flag"),
-            pcm_budget=intent.pcm_budget,
-        )
-        # position_id is already set on intent — no write-back needed
-        # (TradeIntent is frozen=True, direct assignment is forbidden)
-
-        # 检查 order_manager 是否可用
-        if self.order_manager is None:
-            raise RuntimeError(
-                "order_manager is None — 检查 MLBOT_ORDER_MANAGER_ENABLED "
-                "和 BINANCE_API_KEY/BINANCE_API_SECRET 环境变量"
-            )
-
-        # 使用共享模块构建持仓字典 (与回测完全一致)
-        entry_price = self._resolve_entry_price(features)
-        atr = pick_atr(features) or 0.0
-        default_bar_minutes = int(self.feature_4h_interval_hours * 60)
-
-        pos = build_position_dict(
-            intent=intent,
-            entry_price=float(entry_price) if entry_price else 0.0,
-            atr=atr,
-            bar_minutes=default_bar_minutes,
-            entry_time=datetime.now(timezone.utc),
-        )
-
-        # 从共享字典读取 SL/TP/trailing 配置 (用于下单)
-        stop_loss_price = pos.get("stop_loss_price")
-        take_profit_price = pos.get("take_profit_price")
-        allow_trailing = pos.get("allow_trailing", False)
-
-        self.order_manager.place_order(
-            symbol=self.symbol,
-            side=side,
-            order_type=OrderType.MARKET,
-            quantity=qty,
-            position_id=position_id,
-        )
-
-        # Place protective orders — 始终下 STOP_MARKET 兜底 (含 trailing 策略)
-        close_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
-        if take_profit_price is not None:
-            try:
-                tp_order = self.order_manager.place_order(
-                    symbol=self.symbol,
-                    side=close_side,
-                    order_type=OrderType.TAKE_PROFIT_MARKET,
-                    quantity=qty,
-                    stop_price=take_profit_price,
-                    reduce_only=True,
-                    close_position=True,
-                    position_id=position_id,
-                )
-                pos["_exchange_tp_order_id"] = tp_order.order_id
-            except Exception:
-                logger.warning("[%s] 下 TP 挂单失败, 软件 TP 仍生效", self.symbol)
-        if stop_loss_price is not None:
-            try:
-                sl_order = self.order_manager.place_order(
-                    symbol=self.symbol,
-                    side=close_side,
-                    order_type=OrderType.STOP_MARKET,
-                    quantity=qty,
-                    stop_price=stop_loss_price,
-                    reduce_only=True,
-                    close_position=True,
-                    position_id=position_id,
-                )
-                pos["_exchange_sl_order_id"] = sl_order.order_id
-                pos["_exchange_sl_price"] = stop_loss_price
-            except Exception:
-                logger.warning("[%s] 下 SL 挂单失败, 软件 SL 仍生效", self.symbol)
-
-        # 记录下单到统计收集器
-        if self.stats_collector is not None:
-            archetype_name = str(intent.archetype or "unknown").lower()
-            self.stats_collector.record_order_placed(
+    def _get_trade_executor(self) -> TradeExecutor:
+        """获取或创建 TradeExecutor（单例，配置变化时自动重建）"""
+        if self._trade_executor is None:
+            self._trade_executor = TradeExecutor(
+                order_manager=self.order_manager,
+                constitution_executor=self.constitution_executor,
+                runtime_state=self.runtime_state,
+                position_tracker=self._position_tracker,
                 symbol=self.symbol,
-                strategy=archetype_name,
+                bar_minutes=int(self.feature_4h_interval_hours * 60),
+                risk_per_slot=self.risk_per_slot,
+                risk_per_trade=self.risk_per_trade,
+                trade_size=self.trade_size,
+                per_strategy_limits=self.per_strategy_limits,
+                stats_collector=self.stats_collector,
             )
-
-        # 存储持仓 (共享字典 + qty)
-        pos["qty"] = float(qty)
-        self._open_positions[position_id] = pos
-
-        if intent.add_position and intent.parent_position_id:
-            self.constitution_executor.record_add_position(
-                st=self.runtime_state,
-                position_id=intent.parent_position_id,
-                current_r=intent.current_r,
-                locked_profit=intent.locked_profit,
-            )
-            self.constitution_executor.save_runtime_state(self.runtime_state)
+        else:
+            # 动态更新可变配置（risk_per_slot 由宪法注入后可能改变）
+            self._trade_executor.risk_per_slot = self.risk_per_slot
+            self._trade_executor.per_strategy_limits = self.per_strategy_limits
+            self._trade_executor.stats_collector = self.stats_collector
+        return self._trade_executor
 
     def _flush_stats(self) -> None:
         """将 stats_collector 当前窗口数据 flush 到 SQLite
@@ -1162,7 +853,7 @@ class OrderFlowListener:
         try:
             positions = {
                 pid: {"side": p["side"], "qty": p["qty"]}
-                for pid, p in self._open_positions.items()
+                for pid, p in self._position_tracker.all_positions().items()
             }
             # 数据健康指标
             data_health: Dict[str, Any] = {
@@ -1212,161 +903,6 @@ class OrderFlowListener:
                 return None
         return None
 
-    def _enforce_open_positions(self, features: Dict[str, Any]) -> None:
-        """管理已有持仓 — 调用共享 enforce_position (与回测同一份代码)"""
-        if not self._open_positions:
-            return
-        now = features.get("timestamp")
-        if isinstance(now, str):
-            try:
-                now = datetime.fromisoformat(str(now))
-            except Exception:
-                now = None
-        if not isinstance(now, datetime):
-            now = datetime.now(timezone.utc)
-        current_price = self._resolve_entry_price(features)
-        if current_price is None:
-            return
-        default_bar_minutes = int(self.feature_4h_interval_hours * 60)
-        to_close: List[str] = []
-
-        for pid, pos in self._open_positions.items():
-            # structural exit: 从 features 获取 EMA200 当前值
-            _structural_price = None
-            if pos.get("structural_exit") == "ema200":
-                _structural_price = features.get("ema_200")
-                if _structural_price is not None:
-                    try:
-                        _structural_price = float(_structural_price)
-                    except (TypeError, ValueError):
-                        _structural_price = None
-
-            # 实盘用单一 current_price (high=low=close=current_price)
-            close_reason, _exit_price = enforce_position(
-                pos,
-                price_high=current_price,
-                price_low=current_price,
-                price_close=current_price,
-                now=now,
-                default_bar_minutes=default_bar_minutes,
-                structural_price=_structural_price,
-            )
-
-            # ── 交易所 SL 同步: trailing 更新了 SL 价格时 cancel+replace ──
-            if close_reason is None:
-                new_sl = pos.get("stop_loss_price")
-                old_exchange_sl = pos.get("_exchange_sl_price")
-                if (
-                    new_sl is not None
-                    and old_exchange_sl is not None
-                    and abs(new_sl - old_exchange_sl) > 1e-8
-                ):
-                    self._sync_exchange_sl(pid, pos)
-
-            if close_reason:
-                self._close_position(
-                    position_id=pid,
-                    side=str(pos.get("side")),
-                    qty=float(pos.get("qty") or 0.0),
-                    reason=close_reason,
-                )
-                to_close.append(pid)
-
-        for pid in to_close:
-            self._open_positions.pop(pid, None)
-
-    def _sync_exchange_sl(self, position_id: str, pos: Dict[str, Any]) -> None:
-        """将软件侧更新的 SL 价格同步到交易所 STOP_MARKET 挂单 (cancel+replace)"""
-        if self.order_manager is None:
-            return
-
-        new_sl = pos.get("stop_loss_price")
-        if new_sl is None:
-            return
-
-        # 1. Cancel 旧 SL 挂单
-        old_order_id = pos.get("_exchange_sl_order_id")
-        if old_order_id:
-            try:
-                self.order_manager.cancel_order(old_order_id)
-            except Exception:
-                logger.warning(
-                    "[%s] cancel 旧 SL 挂单失败 (可能已触发): %s",
-                    self.symbol,
-                    old_order_id,
-                )
-
-        # 2. Place 新 SL 挂单
-        side_str = str(pos.get("side", "")).upper()
-        close_side = OrderSide.SELL if side_str in {"LONG", "BUY"} else OrderSide.BUY
-        qty = float(pos.get("qty") or 0.0)
-        if qty <= 0:
-            return
-
-        try:
-            new_order = self.order_manager.place_order(
-                symbol=self.symbol,
-                side=close_side,
-                order_type=OrderType.STOP_MARKET,
-                quantity=qty,
-                stop_price=new_sl,
-                reduce_only=True,
-                close_position=True,
-                position_id=position_id,
-            )
-            old_sl_price = pos.get("_exchange_sl_price", 0)
-            pos["_exchange_sl_order_id"] = new_order.order_id
-            pos["_exchange_sl_price"] = new_sl
-            logger.info(
-                "[%s] 交易所 SL 同步: %.4f → %.4f, order=%s",
-                self.symbol,
-                old_sl_price,
-                new_sl,
-                new_order.order_id,
-            )
-        except Exception:
-            logger.error(
-                "[%s] place 新 SL 挂单失败 (%.4f), 软件 SL 仍生效",
-                self.symbol,
-                new_sl,
-            )
-
-    def _close_position(
-        self, *, position_id: str, side: str, qty: float, reason: str
-    ) -> None:
-        if qty <= 0 or self.order_manager is None:
-            return
-
-        # ── 清理交易所 SL/TP 挂单 (平仓前 cancel, 避免重复触发) ──
-        pos = self._open_positions.get(position_id, {})
-        for key in ("_exchange_sl_order_id", "_exchange_tp_order_id"):
-            oid = pos.get(key)
-            if oid:
-                try:
-                    self.order_manager.cancel_order(oid)
-                except Exception:
-                    pass  # 可能已触发 / 不存在, 忽略
-
-        close_side = (
-            OrderSide.SELL if str(side).upper() in {"LONG", "BUY"} else OrderSide.BUY
-        )
-        try:
-            self.order_manager.place_order(
-                symbol=self.symbol,
-                side=close_side,
-                order_type=OrderType.MARKET,
-                quantity=float(qty),
-                reduce_only=True,
-                close_position=True,
-                position_id=position_id,
-            )
-        except Exception:
-            logger.warning(
-                "[%s] 软件平仓失败 (reason=%s), 交易所挂单可能已触发平仓",
-                self.symbol,
-                reason,
-            )
-
     async def _periodic_tasks(self) -> None:
         """定期任务（特征计算和保存）"""
         _TIME_SYNC_INTERVAL = 30 * 60  # 30 分钟同步一次 Binance 时间
@@ -1407,10 +943,25 @@ class OrderFlowListener:
                     _om = getattr(self, "order_manager", None)
                     if _ce is not None and _rs is not None and _om is not None:
                         _api = getattr(_om, "binance_api", None)
-                        if _api is not None:
-                            _active = dict(_rs.slots.active)
-                            if _active:
-                                # get_positions() 已只返回 contracts!=0 的持仓
+                        _active = dict(_rs.slots.active)
+                        if _active:
+                            if _api is None:
+                                # api 不可用时强制清空所有 stale slot
+                                # （与 run_live._sync_slots_with_exchange 行为一致）
+                                for _pid in list(_active.keys()):
+                                    _ce.release_slot(
+                                        st=_rs,
+                                        position_id=_pid,
+                                        reason="stale_sync_no_api",
+                                    )
+                                    logger.warning(
+                                        "[%s] 🗑️ api=None 强制释放 stale slot: %s",
+                                        self.symbol,
+                                        _pid,
+                                    )
+                                _ce.save_runtime_state(_rs)
+                            else:
+                                # api 可用: 查询交易所实际持仓，释放无实仓的 slot
                                 # ccxt symbol 格式 BTC/USDT:USDT → 转换为 BTCUSDT
                                 _positions = _api.get_positions()
                                 _live_syms = set()
