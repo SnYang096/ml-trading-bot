@@ -1,29 +1,29 @@
 # FER Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-03-08
-# 数据源: features_labeled.parquet, 40672 行
+# 自动生成: 2026-03-07
+# 数据源: features_labeled.parquet, 39147 行
 
 rules:
-  - feature: vp_poc_deviation
-    operator: ">"
-    value: 0.6718
-    rationale: "meta-algorithm, KS=0.1112, return_uplift=+0.0350, robustness=100%, holdout验证通过"
-  - feature: dist_to_nearest_sr
-    operator: "<"
-    value: -3.4118
-    rationale: "meta-algorithm, KS=0.1105, return_uplift=+0.0709, robustness=100%, holdout验证通过"
   - feature: oi_exhaustion_score
+    operator: ">"
+    value: 0.057
+    rationale: "meta-algorithm, KS=0.1473, return_uplift=-0.0074, robustness=100%, holdout验证通过"
+  - feature: oi_trend_divergence_score
     operator: "<"
-    value: 0.002
-    rationale: "meta-algorithm, KS=0.1064, return_uplift=+0.0365, robustness=100%, holdout验证通过"
+    value: 0.0004
+    rationale: "meta-algorithm, KS=0.1405, return_uplift=+0.0769, robustness=100%, holdout验证通过"
+  - feature: fer_signed_efficiency
+    operator: "<"
+    value: -0.0024
+    rationale: "meta-algorithm, KS=0.1144, return_uplift=-0.0648, robustness=100%, holdout验证通过"
 
 last_evaluation:
-  # ── 自动生成 (2026-03-08) ──
-  timestamp: "2026-03-08"
+  # ── 自动生成 (2026-03-07) ──
+  timestamp: "2026-03-07"
   data_source: "features_labeled.parquet"
-  n_rows: 40672
+  n_rows: 39147
   baseline_bad_rate: 0.0000
-  baseline_median_rr: -0.1131
+  baseline_median_rr: -0.0696
 
   # ── 正信号 (0 个) ──
   positive_signals:

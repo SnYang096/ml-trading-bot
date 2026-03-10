@@ -1,27 +1,22 @@
 # BPC Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)
-# Date: 2026-03-08 20:48
-# Promoted: 2 filters (evidence Spearman bins)
-# Significance: forward_rr t-test p<0.05 required
+# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
+# Date: 2026-03-06 00:04
+# Promoted: 1 filters (1 plateau + 0 snotio-only)
+# Baseline snotio: 5.9176, σ=12.577
+# Significance: z-test p<0.05 required for all tiers
 #
-# 职责: "现在该入场吗?" → 硬二值控制
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
 # 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-- id: ev_trade_cluster_max_buy_run_ma20
+- id: meta_spectrum_price_centroid
   enabled: true
-  description: 'Evidence bin: trade_cluster_max_buy_run_ma20 <= 0.0705'
+  description: 'Meta-Algorithm: spectrum_price_centroid >= 0.852'
   conditions:
-  - feature: trade_cluster_max_buy_run_ma20
-    operator: <=
-    value: 0.0705
-  notes: Δrr=+4.5489, t=14.63, p=0.0000, pass=80.1%
-- id: ev_macd_signal_atr
-  enabled: true
-  description: 'Evidence bin: macd_signal_atr <= 0.519383'
-  conditions:
-  - feature: macd_signal_atr
-    operator: <=
-    value: 0.519383
-  notes: Δrr=+4.7331, t=12.75, p=0.0000, pass=80.0%
+  - feature: spectrum_price_centroid
+    operator: '>='
+    value: 0.852
+  tier: A_PLATEAU
+  notes: lift=1.18x, rob=88%, snotio=11.0518, z=5.57, p=0.0000
 combination_mode: or

@@ -1,6 +1,6 @@
 # FER Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260308_204733/strategies/fer/gate_draft.yaml
-# 优化规则: 1/3 条通过优化, 1 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260306_000255/strategies/fer/gate_draft.yaml
+# 优化规则: 2/10 条通过优化, 9 条已移除
 
 schema:
   phases:
@@ -9,51 +9,34 @@ schema:
   - guardrail
   evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
-    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
-    min_gate_score: 0.0
-    alert_threshold: 0.25
+    failure_budget:
+      max_hard_deny_rate: 0.5
+      alert_threshold: 0.45
 hard_gates:
-- id: prefilter_dist_to_nearest_sr
-  tag: PREFILTER_DIST_TO_NEAREST_SR
+- id: prefilter_fer_trapped_fer_trapped
+  tag: PREFILTER_FER_TRAPPED_FER_TRAPPED
   phase: hard_gate
   priority: 1
-  reason: 'prefilter: dist_to_nearest_sr < -3.4118'
+  reason: 'prefilter OR: fer_trapped_longs_score>=3.4965 OR fer_trapped_shorts_score>=3.7941'
   when:
-    dist_to_nearest_sr:
-      value_lt: -3.4118
+    all_of:
+    - fer_trapped_longs_score:
+        value_lt: 3.4965
+    - fer_trapped_shorts_score:
+        value_lt: 3.7941
   then:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: gate_cvd_change_5_normalized
-  tag: HARD_CVD_CHANGE_5_NORMALIZED
+- id: gate_fer_volume_price_divergence
+  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE
   phase: hard_gate
-  priority: 10
-  reason: 统计验证规则 (lift=1.55)
+  priority: 11
+  reason: fer_volume_price_divergence 触发树分裂条件 (分裂 3 次)
   when:
-    cvd_change_5_normalized:
-      value_lt: -0.0176
+    fer_volume_price_divergence:
+      value_lt: 0.65
   then:
     action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=-0.0176, lift=0.784'
-- id: bell_or_pass_prefilter_vp_poc_deviation_prefilter_oi_exhaustion_score_gate_fer_volume_price_divergence_fer_volume_price_divergence
-  tag: BELL_OR_PASS_2
-  phase: hard_gate
-  priority: 1
-  reason: 'Bell Partition OR-pass: prefilter_vp_poc_deviation ∨ prefilter_oi_exhaustion_score ∨ gate_fer_volume_price_divergence_fer_volume_price_divergence'
-  when:
-    all_of:
-    - vp_poc_deviation:
-        value_gt: 0.6718
-    - oi_exhaustion_score:
-        value_lt: 0.002
-    - fer_volume_price_divergence:
-        value_gt: 0.425
-    - fer_volume_price_divergence:
-        value_lt: 0.675
-  then:
-    action: deny
-  comment: 'OR-pass: deny only when ALL of [prefilter_vp_poc_deviation, prefilter_oi_exhaustion_score, gate_fer_volume_price_divergence_fer_volume_price_divergence]
-    deny simultaneously'
-  frozen: true
+  comment: 'optimizer: stable_plateau_found, threshold=0.6500, lift=0.192'
 guardrails: []
