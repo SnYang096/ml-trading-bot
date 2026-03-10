@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import os
 import time
@@ -827,6 +828,15 @@ class OrderFlowListener:
         if intent.action == "NO_TRADE":
             return
 
+        # Pre-compute position_id before try block so the except branch
+        # can release the exact slot reserved by enforce_before_order.
+        # TradeIntent is frozen=True so we must use dataclasses.replace.
+        if not intent.position_id:
+            intent = dataclasses.replace(
+                intent,
+                position_id=f"{self.symbol}:{int(pd.Timestamp.now(tz='UTC').value)}",
+            )
+
         try:
             self._execute_intent_inner(intent, features)
         except ConstitutionViolation as cv:
@@ -989,6 +999,7 @@ class OrderFlowListener:
                     pass
         if qty <= 0:
             return
+        # position_id is now guaranteed set on intent (computed above in _execute_intent)
         position_id = intent.position_id
         if not position_id:
             position_id = f"{self.symbol}:{int(pd.Timestamp.now(tz='UTC').value)}"
@@ -1037,8 +1048,8 @@ class OrderFlowListener:
             evt_risk_flag=features.get("evt_risk_flag"),
             pcm_budget=intent.pcm_budget,
         )
-        # 🐛 Fix: 记录 position_id，供 _execute_intent 的 except 分支释放 slot
-        intent.position_id = position_id
+        # position_id is already set on intent — no write-back needed
+        # (TradeIntent is frozen=True, direct assignment is forbidden)
 
         # 检查 order_manager 是否可用
         if self.order_manager is None:
