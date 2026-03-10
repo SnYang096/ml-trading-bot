@@ -7551,7 +7551,6 @@ features:
       close: close
       volume: volume
       bb_width_normalized: bb_width_normalized_pct
-      garch_volatility: garch_volatility
 
   # =========================================================================
   # FER (FailureExhaustionReversal) 专属特征
