@@ -841,31 +841,35 @@ class OrderFlowListener:
             self._execute_intent_inner(intent, features)
         except ConstitutionViolation as cv:
             logger.warning("[%s] 宪法拒绝: %s (%s)", self.symbol, cv.code, cv.message)
+            # 🐛 Fix: ConstitutionViolation 也可能在 enforce_before_order() 预留
+            #   slot 之后抛出（如后续校验失败），必须释放已预留的 slot。
+            self._release_leaked_slot(intent)
             return
         except Exception as exc:
             # 🐛 Fix: 下单失败时释放已预留的 slot，防止 slot 被永久占满。
             #   enforce_before_order() 在 place_order() 之前预留 slot，
             #   如果 place_order() 失败（API key/余额/权限），slot 泄漏。
             logger.error("[%s] 下单异常: %s", self.symbol, exc)
-            # 尝试释放刚预留的 slot
-            if (
-                self.constitution_executor is not None
-                and self.runtime_state is not None
-            ):
-                _pid = intent.position_id or f"{self.symbol}:"
-                try:
-                    self.constitution_executor.release_slot(
-                        st=self.runtime_state,
-                        position_id=_pid,
-                        reason="order_failed",
-                    )
-                    self.constitution_executor.save_runtime_state(self.runtime_state)
-                    logger.warning(
-                        "[%s] 已释放因下单失败而泄漏的 slot: %s", self.symbol, _pid
-                    )
-                except Exception:
-                    pass
+            self._release_leaked_slot(intent)
             return
+
+    def _release_leaked_slot(self, intent: TradeIntent) -> None:
+        """释放 enforce_before_order() 预留但未成功下单的 slot。"""
+        if self.constitution_executor is None or self.runtime_state is None:
+            return
+        _pid = intent.position_id or f"{self.symbol}:"
+        try:
+            self.constitution_executor.release_slot(
+                st=self.runtime_state,
+                position_id=_pid,
+                reason="order_failed",
+            )
+            self.constitution_executor.save_runtime_state(self.runtime_state)
+            logger.warning(
+                "[%s] 已释放因下单失败而泄漏的 slot: %s", self.symbol, _pid
+            )
+        except Exception:
+            pass
 
     def _execute_intent_inner(
         self, intent: TradeIntent, features: Dict[str, Any]

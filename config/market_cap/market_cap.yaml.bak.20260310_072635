@@ -3,6 +3,8 @@ vs_currency: usd
 data_dir: data/market_cap
 cache_version: v1
 mode: static
+# Environment variable name that stores your CoinGecko API key.
+# Do NOT put the key itself here.
 api_key_env: COINGECKO_API_KEY
 universe_yaml: config/download/crypto_4h_token_universe_groups.yaml
 universe_set: starter_a
@@ -85,7 +87,3 @@ symbols:
     coingecko_id: tezos
   ZKUSDT:
     coingecko_id: zksync
-  LTCUSDT:
-    coingecko_id: litecoin
-  NEARUSDT:
-    coingecko_id: near
