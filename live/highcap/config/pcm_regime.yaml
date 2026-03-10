@@ -29,6 +29,9 @@
 
 version: 3
 
+# ── 启用策略列表 (不在此列的 archetype 不会被初始化) ──
+enabled_archetypes: ["bpc", "me", "fer"]
+
 # 宪法配置引用 (所有硬约束的唯一权威源)
 # PCM 启动时从 constitution 读取:
 #   - slots.slot_count → 全局 max_slots

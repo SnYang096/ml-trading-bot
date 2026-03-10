@@ -854,10 +854,17 @@ class OrderFlowListener:
             return
 
     def _release_leaked_slot(self, intent: TradeIntent) -> None:
-        """释放 enforce_before_order() 预留但未成功下单的 slot。"""
+        """释放 enforce_before_order() 预留但未成功下单的 slot。
+
+        仅当 position_id 确实存在于 active slots 时才释放。
+        SLOT_FULL 场景下 slot 从未被预留，此时直接跳过，避免误导日志。
+        """
         if self.constitution_executor is None or self.runtime_state is None:
             return
         _pid = intent.position_id or f"{self.symbol}:"
+        # slot 从未被预留（如 SLOT_FULL）→ 无需释放
+        if _pid not in self.runtime_state.slots.active:
+            return
         try:
             self.constitution_executor.release_slot(
                 st=self.runtime_state,

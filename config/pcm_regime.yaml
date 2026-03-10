@@ -88,3 +88,7 @@ detection:
 
 # ── Regime 切换防抖 ──
 min_bars_in_regime: 3
+
+
+# ── 启用策略列表 (不在此列的 archetype 不会被初始化) ──
+enabled_archetypes: ["bpc", "me", "fer"]

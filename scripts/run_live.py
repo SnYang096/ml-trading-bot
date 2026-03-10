@@ -200,13 +200,38 @@ def _sync_slots_with_exchange(
     symbols,
 ) -> None:
     """Slot 与交易所持仓同步: 释放服务端无对应持仓的 stale slot。"""
+    active_slots = dict(runtime_st.slots.active)  # copy
+
+    # order_manager 为 None 时无法查询交易所，强制清空所有 slot
+    # （没有 order_manager 也无法下单，slot 残留毫无意义只会阻塞信号）
     if order_manager is None:
-        return
-    api = getattr(order_manager, "binance_api", None)
-    if api is None:
+        if active_slots:
+            logger.warning(
+                "⚠️ Slot 同步: order_manager=None, 强制清空 %d 个残留 slot: %s",
+                len(active_slots),
+                list(active_slots.keys()),
+            )
+            for pid in list(runtime_st.slots.active.keys()):
+                constitution_exec.release_slot(
+                    st=runtime_st, position_id=pid, reason="stale_sync"
+                )
+            constitution_exec.save_runtime_state(runtime_st)
         return
 
-    active_slots = dict(runtime_st.slots.active)  # copy
+    api = getattr(order_manager, "binance_api", None)
+    if api is None:
+        if active_slots:
+            logger.warning(
+                "⚠️ Slot 同步: binance_api=None, 强制清空 %d 个残留 slot",
+                len(active_slots),
+            )
+            for pid in list(runtime_st.slots.active.keys()):
+                constitution_exec.release_slot(
+                    st=runtime_st, position_id=pid, reason="stale_sync"
+                )
+            constitution_exec.save_runtime_state(runtime_st)
+        return
+
     if not active_slots:
         return
 
