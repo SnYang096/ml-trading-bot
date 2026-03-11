@@ -779,7 +779,28 @@ def run_strategy_pipeline(
         else scfg["features_gate"]
     )
 
-    # ── Step 3: Prefilter (--promote) ──
+    # ── Step 3: Direction (--promote) ── (前置于 Prefilter, 使 meta-algorithm 能在方向已知的子集上学习)
+    if scfg.get("has_direction"):
+        run_step(
+            "Direction Validate",
+            [
+                "python",
+                "z实验_005_统一研究/direction_strict_validation.py",
+                "--logs",
+                f"{prepare_dir}/features_labeled.parquet",
+                "--strategy",
+                strategy,
+                "--strategies-root",
+                strategies_root,
+                "--compare-features",
+                "--temporal",
+                "--promote",
+            ],
+            log,
+            dry_run=dry_run,
+        )
+
+    # ── Step 4: Prefilter (--promote) ── (方向已确定后, meta-algorithm 按方向分裂学习)
     if scfg.get("has_prefilter"):
         _features_prefilter_path = Path(config_dir) / "features_prefilter.yaml"
         if not _features_prefilter_path.exists():
@@ -815,27 +836,6 @@ def run_strategy_pipeline(
                 log,
                 dry_run=dry_run,
             )
-
-    # ── Step 4: Direction (--promote) ──
-    if scfg.get("has_direction"):
-        run_step(
-            "Direction Validate",
-            [
-                "python",
-                "z实验_005_统一研究/direction_strict_validation.py",
-                "--logs",
-                f"{prepare_dir}/features_labeled.parquet",
-                "--strategy",
-                strategy,
-                "--strategies-root",
-                strategies_root,
-                "--compare-features",
-                "--temporal",
-                "--promote",
-            ],
-            log,
-            dry_run=dry_run,
-        )
 
     # ── Step 5: Gate 训练 ──
     # ⚠️ Gate Train 现在使用 prefilter (见 BPC pipeline 文档):

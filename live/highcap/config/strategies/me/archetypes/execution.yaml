@@ -25,10 +25,9 @@ optimization:
 stop_loss:
   initial_r: 2.0
   trailing:
-    activation_r: 1.0
-    step_r: 0.5
-    trail_r: 0.5
+    activation_r: 2.0
+    trail_r: 2.0
   type: trailing
 take_profit:
   enabled: false
-version: 29
+version: 30

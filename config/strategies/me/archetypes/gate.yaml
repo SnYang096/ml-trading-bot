@@ -1,6 +1,6 @@
 # ME Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260310_113808/strategies/me/gate_draft.yaml
-# 优化规则: 1/5 条通过优化, 3 条已移除
+# 来源: config/strategies/me/archetypes/gate.yaml
+# 优化规则: 1/4 条通过优化, 3 条已移除
 
 schema:
   phases:
@@ -13,33 +13,21 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: prefilter_me_atr_pct
-  tag: PREFILTER_ME_ATR_PCT
+- id: prefilter_oi_trend_bpc_bb
+  tag: PREFILTER_OI_TREND_BPC_BB
   phase: hard_gate
   priority: 1
-  reason: 'prefilter: me_atr_pct < 0.06'
+  reason: 'prefilter OR: oi_trend_divergence_score<0.2534 OR bpc_bb_compression_state>0.1299'
   when:
-    me_atr_pct:
-      value_lt: 0.06
+    all_of:
+    - oi_trend_divergence_score:
+        value_lt: 0.2534
+    - bpc_bb_compression_state:
+        value_gt: 0.1299
   then:
     action: deny
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: bell_or_pass_prefilter_me_cvd_alignment_prefilter_oi_trend_divergence_score
-  tag: BELL_OR_PASS_1
-  phase: hard_gate
-  priority: 1
-  reason: 'Bell Partition OR-pass: prefilter_me_cvd_alignment ∨ prefilter_oi_trend_divergence_score'
-  when:
-    all_of:
-    - me_cvd_alignment:
-        value_ge: 1.0
-    - oi_trend_divergence_score:
-        value_lt: 0.0011
-  then:
-    action: deny
-  comment: 'OR-pass: deny only when ALL of [prefilter_me_cvd_alignment, prefilter_oi_trend_divergence_score] deny simultaneously'
-  frozen: true
 - id: gate_evt_tail_shape
   tag: HARD_EVT_TAIL_SHAPE
   phase: hard_gate
@@ -47,30 +35,8 @@ hard_gates:
   reason: 统计验证规则 (lift=1.35)
   when:
     evt_tail_shape:
-      value_gt: 0.854
+      value_gt: 0.304
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.8540, lift=0.110'
-- id: bell_or_pass_prefilter_atr_percentile_gate_atr_percentile_atr_percentile_fp_val_fp_val
-  tag: BELL_OR_PASS_3
-  phase: hard_gate
-  priority: 1
-  reason: 'Bell Partition OR-pass: prefilter_atr_percentile ∨ gate_atr_percentile_atr_percentile_fp_val_fp_val'
-  when:
-    all_of:
-    - atr_percentile:
-        value_ge: 0.8167
-    - atr_percentile:
-        value_gt: 0.2019
-    - atr_percentile:
-        value_lt: 0.2704
-    - fp_val:
-        value_gt: 603.2735
-    - fp_val:
-        value_lt: 87986.1673
-  then:
-    action: deny
-  comment: 'OR-pass: deny only when ALL of [prefilter_atr_percentile, gate_atr_percentile_atr_percentile_fp_val_fp_val] deny
-    simultaneously'
-  frozen: true
+  comment: 'optimizer: no_stable_plateau, threshold=0.3040, lift=0.115'
 guardrails: []

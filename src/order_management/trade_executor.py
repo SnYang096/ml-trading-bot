@@ -102,9 +102,7 @@ class TradeExecutor:
             placed = self._execute_inner(intent, features)
             return placed
         except ConstitutionViolation as cv:
-            logger.warning(
-                "[%s] 宪法拒绝: %s (%s)", self.symbol, cv.code, cv.message
-            )
+            logger.warning("[%s] 宪法拒绝: %s (%s)", self.symbol, cv.code, cv.message)
             self._release_leaked_slot(intent)
             return False
         except Exception as exc:
@@ -116,9 +114,7 @@ class TradeExecutor:
     # 内部实现
     # ------------------------------------------------------------------
 
-    def _execute_inner(
-        self, intent: TradeIntent, features: Dict[str, Any]
-    ) -> bool:
+    def _execute_inner(self, intent: TradeIntent, features: Dict[str, Any]) -> bool:
         """返回 True = 成功下单，False = qty<=0 跳过"""
         side = OrderSide.BUY if intent.action == "LONG" else OrderSide.SELL
 
@@ -222,9 +218,7 @@ class TradeExecutor:
         # ── 7. 统计 ──
         if self.stats_collector is not None:
             arch = str(intent.archetype or "unknown").lower()
-            self.stats_collector.record_order_placed(
-                symbol=self.symbol, strategy=arch
-            )
+            self.stats_collector.record_order_placed(symbol=self.symbol, strategy=arch)
 
         # ── 8. 交给 PositionTracker ──
         pos["qty"] = float(qty)
@@ -259,7 +253,14 @@ class TradeExecutor:
             qty_source = "intent.quantity"
 
         # --- 2. constitution_risk ---
-        if qty <= 0 and self.risk_per_slot > 0 and sl_r > 0 and atr > 0 and entry_price and entry_price > 0:
+        if (
+            qty <= 0
+            and self.risk_per_slot > 0
+            and sl_r > 0
+            and atr > 0
+            and entry_price
+            and entry_price > 0
+        ):
             arch_key = str(intent.archetype or "").strip().lower()
             effective_risk = self.risk_per_slot
             if arch_key and self.per_strategy_limits:
@@ -319,7 +320,10 @@ class TradeExecutor:
             else:
                 logger.warning(
                     "[%s] 风险反算缺少参数 (sl_r=%.2f atr=%.2f price=%s)",
-                    self.symbol, sl_r, atr, entry_price,
+                    self.symbol,
+                    sl_r,
+                    atr,
+                    entry_price,
                 )
 
         # --- 4. trade_size fallback ---
@@ -336,7 +340,9 @@ class TradeExecutor:
         ):
             logger.warning(
                 "[%s] 风险反算 qty=%.6f < 最小开仓 trade_size=%.6f，fallback",
-                self.symbol, qty, self.trade_size,
+                self.symbol,
+                qty,
+                self.trade_size,
             )
             qty = float(self.trade_size)
             qty_source = "trade_size_min_fallback"
@@ -377,9 +383,7 @@ class TradeExecutor:
                 reason="order_failed",
             )
             self.constitution_executor.save_runtime_state(self.runtime_state)
-            logger.warning(
-                "[%s] 已释放因下单失败而泄漏的 slot: %s", self.symbol, pid
-            )
+            logger.warning("[%s] 已释放因下单失败而泄漏的 slot: %s", self.symbol, pid)
         except Exception:
             pass
 

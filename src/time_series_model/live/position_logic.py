@@ -268,8 +268,11 @@ def enforce_position(
         activation_r = pos["activation_r"]
         trail_r = pos.get("trail_r", 1.0)
         if profit_r >= activation_r:
-            if not pos.get("trailing_activated"):
+            _was_activated = pos.get("trailing_activated", False)
+            if not _was_activated:
+                # 首次激活: 标记本 bar 不触发 SL，避免同 bar 激活+触发
                 pos["trailing_activated"] = True
+                pos["trailing_activation_bar"] = True
             if is_long:
                 hwm = pos.get("high_water_mark", check_price)
                 trail_sl = hwm - trail_r * pos_atr
@@ -286,16 +289,18 @@ def enforce_position(
                 pos["stop_loss_price"] = trail_sl
 
     # ── 5. SL hit (保守: SL 优先于 TP) ──
-    if close_reason is None:
-        sl = pos.get("stop_loss_price")
-        if sl is not None:
-            sl = float(sl)
-            if is_long and price_low <= sl:
-                close_reason = "stop_loss"
-                exit_price = sl
-            elif not is_long and price_high >= sl:
-                close_reason = "stop_loss"
-                exit_price = sl
+    # 首次 trailing 激活的 bar 不触发 SL（避免激活即出场）
+    if not pos.pop("trailing_activation_bar", False):
+        if close_reason is None:
+            sl = pos.get("stop_loss_price")
+            if sl is not None:
+                sl = float(sl)
+                if is_long and price_low <= sl:
+                    close_reason = "stop_loss"
+                    exit_price = sl
+                elif not is_long and price_high >= sl:
+                    close_reason = "stop_loss"
+                    exit_price = sl
 
     # ── 6. TP hit ──
     if close_reason is None:

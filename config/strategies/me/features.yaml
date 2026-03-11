@@ -124,6 +124,8 @@ feature_pipeline:
 
     # ========== 跨 archetype 全量候选 (SHAP 自动裁剪) ==========
     - bpc_soft_phase_f             # BPC 专属
+    - bpc_compression_state_f      # ME 语义核心: 前期压缩历史 (vol/BB/EWMA 压缩程度)
+    - compression_duration_f         # ME 语义核心: 压缩持续时长 (ATR pct 连续低位 bars 数)
     - bpc_pullback_depth_pct_f
     - bpc_pullback_duration_f
     - bpc_pullback_speed_f

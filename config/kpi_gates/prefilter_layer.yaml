@@ -6,7 +6,7 @@ layer: "prefilter"
 #
 # Prefilter 职责: 定义 archetype 语义边界 (数据空间可分性).
 # 核心 KPI: KS 分布分离度 — pass/deny 两群体收益分布是否显著不同.
-# 软约束: return_uplift >= -0.10 (不能主动伤害收益).
+# 返回约束: pass 组自身期望收益 > 0 (pass组不必胜过全量均密, 只要正向即可).
 #
 # 脚本读取路径:
 #   analyze_archetype_feature_stratification.py --meta-algorithm
@@ -18,9 +18,9 @@ thresholds:
   min_ks_statistic: 0.05
   max_ks_pvalue: 0.01
 
-  # Return uplift: pass 组 forward_rr 必须 >= deny 组 (prefilter 职责是过滤差的)
-  # 之前 -0.10 允许负 uplift 规则通过, 导致 FER 选了反向规则 (留差拒好)
-  min_return_uplift_soft: 0.0
+  # Return uplift: pass 组自身期望收益 > 0 (不与全量均密比较, 避免趋势市场导致門槛失效)
+  # 实现: 代码内直接判断 mean_return_pass > 0, 本字段仅保留供参考
+  min_return_uplift_soft: 0.0  # deprecated: 不再使用, 代码已改为 pass组>0判断
 
   # Hit rate uplift (disabled, kept for reference)
   min_hit_rate_uplift: -1.0
@@ -31,12 +31,12 @@ thresholds:
   # 相关性剪枝: deny_mask 相关性超过此值 → 去重
   correlation_threshold: 0.80
 
-  # 最终规则数上限 (Prefilter ≤ 4 条规则)
+  # 最终规则数上限 (含语义规则在内的总数, 自动规则数 = max_rules - 语义规则数)
   max_rules: 4
 
-  # Deny rate 合法范围 (太小无意义, 太大误杀严重)
+  # Deny rate 合法范围 (在语义子集内算比例: 太小无意义, 太大误杀严重)
   deny_rate_min: 0.03
-  deny_rate_max: 0.70
+  deny_rate_max: 0.90  # 单条规则最多拒绝 90%; 语义强过滤下少交易是预期行为, 通过多 symbol 扩大收益
 
   # 通过率保底: 最少保留行数
   min_rows: 500

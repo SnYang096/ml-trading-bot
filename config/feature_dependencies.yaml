@@ -7492,8 +7492,6 @@ features:
     - bpc_score_continuation
     - bpc_score_neutral
     output_columns:
-    - bpc_phase_dominant
-    - bpc_phase_confidence
     - bpc_transition_b_to_p
     - bpc_transition_p_to_c
     - bpc_transition_speed
@@ -7505,8 +7503,6 @@ features:
       lookback: 5
       normalized: true
       output_normalization_map:
-        bpc_phase_dominant: categorical_int
-        bpc_phase_confidence: bounded_0_1
         bpc_transition_b_to_p: bounded_0_1
         bpc_transition_p_to_c: bounded_0_1
         bpc_transition_speed: bounded_0_1

@@ -629,6 +629,16 @@ def main():
         help="trail_r grid: start:step:end",
     )
     parser.add_argument(
+        "--sym-r",
+        default=None,
+        help="对称模式: initial_r=activation_r=trail_r 三者联动, start:step:end (e.g. 1.0:0.5:4.0)",
+    )
+    parser.add_argument(
+        "--trailing",
+        action="store_true",
+        help="开启 trailing stop (--sym-r 时默认已开启，也可单独用于当前 yaml 参数的开关验证)",
+    )
+    parser.add_argument(
         "--tp-r",
         default=None,
         help="take_profit target_r grid: start:step:end (仅 TP enabled 策略)",
@@ -674,19 +684,25 @@ def main():
     exec_cfg = strat_obj.execution_generator.config
     opt_cfg = exec_cfg.get("optimization", {})
 
-    if args.initial_r or args.activation_r or args.trail_r or args.tp_r:
+    if args.initial_r or args.activation_r or args.trail_r or args.tp_r or args.sym_r:
         # CLI 自定义 grid
         param_names = []
         param_values = []
-        if args.initial_r:
-            param_names.append("stop_loss.initial_r")
-            param_values.append(_parse_range_str(args.initial_r))
-        if args.activation_r:
-            param_names.append("stop_loss.trailing.activation_r")
-            param_values.append(_parse_range_str(args.activation_r))
-        if args.trail_r:
-            param_names.append("stop_loss.trailing.trail_r")
-            param_values.append(_parse_range_str(args.trail_r))
+        if args.sym_r:
+            # 对称模式: 三者联动扫描，用自定义对象封装
+            _vals = _parse_range_str(args.sym_r)
+            param_names.append("__sym_r__")
+            param_values.append(_vals)
+        else:
+            if args.initial_r:
+                param_names.append("stop_loss.initial_r")
+                param_values.append(_parse_range_str(args.initial_r))
+            if args.activation_r:
+                param_names.append("stop_loss.trailing.activation_r")
+                param_values.append(_parse_range_str(args.activation_r))
+            if args.trail_r:
+                param_names.append("stop_loss.trailing.trail_r")
+                param_values.append(_parse_range_str(args.trail_r))
         if args.tp_r:
             param_names.append("take_profit.target_r")
             param_values.append(_parse_range_str(args.tp_r))
@@ -713,10 +729,19 @@ def main():
     _constraints = opt_cfg.get("constraints", {})
     _max_ratio = _constraints.get("max_sl_activation_ratio", MAX_SL_ACT_RATIO)
     _min_win = _constraints.get("min_win_r", MIN_WIN_R)
-    all_combos, n_filtered = _filter_degenerate_combos(
-        param_names, all_combos, max_ratio=_max_ratio, min_win_r=_min_win
-    )
+    # 对称模式三者相等，必然满足约束，跳过过滤
+    if "__sym_r__" not in param_names:
+        all_combos, n_filtered = _filter_degenerate_combos(
+            param_names, all_combos, max_ratio=_max_ratio, min_win_r=_min_win
+        )
+    else:
+        n_filtered = 0
     total = len(all_combos)
+
+    _display_names = [
+        "sym_r (initial=activation=trail)" if n == "__sym_r__" else n
+        for n in param_names
+    ]
 
     print(
         f"  Grid:    {' × '.join(str(len(v)) for v in param_values)} = {raw_total} combos"
@@ -727,7 +752,7 @@ def main():
             f"(initial_r/activation_r > {MAX_SL_ACT_RATIO} 或 trail_r > activation_r)"
         )
         print(f"  有效组合: {total}")
-    print(f"  Params:  {param_names}")
+    print(f"  Params:  {_display_names}")
     print("=" * 72)
 
     # Phase 1+2: 加载数据 (只做一次)
@@ -753,7 +778,16 @@ def main():
         # 修改策略 execution config
         modified = copy.deepcopy(original_config)
         for name, val in zip(param_names, combo):
-            _set_nested(modified, name, val)
+            if name == "__sym_r__":
+                # 对称模式: 三者同时设置
+                _set_nested(modified, "stop_loss.initial_r", val)
+                _set_nested(modified, "stop_loss.trailing.activation_r", val)
+                _set_nested(modified, "stop_loss.trailing.trail_r", val)
+            else:
+                _set_nested(modified, name, val)
+        # --trailing 开关: 强制启用 trailing
+        if getattr(args, "trailing", False) or getattr(args, "sym_r", None):
+            _set_nested(modified, "stop_loss.type", "trailing")
         # 确保优化 tp 时 take_profit.enabled=true
         if "take_profit.target_r" in param_names:
             _set_nested(modified, "take_profit.enabled", True)
@@ -788,7 +822,13 @@ def main():
                 2,
             )
         for name, val in zip(param_names, combo):
-            r[name] = val
+            if name == "__sym_r__":
+                r["stop_loss.initial_r"] = val
+                r["stop_loss.trailing.activation_r"] = val
+                r["stop_loss.trailing.trail_r"] = val
+                r["sym_r"] = val  # 方便读表
+            else:
+                r[name] = val
         results.append(r)
 
         # 进度
@@ -816,6 +856,10 @@ def main():
     best = plateau["best"]
     rec = plateau["recommended"]
 
+    # __sym_r__ 在结果字典里存为 sym_r，打印/保存时用展示名
+    def _result_key(pn: str) -> str:
+        return "sym_r" if pn == "__sym_r__" else pn
+
     print(f"\n{'='*72}")
     print(f"  📊 Grid Search 结果: {strategy.upper()}")
     print(f"{'='*72}")
@@ -826,14 +870,14 @@ def main():
     print()
     print(f"  🏆 Best:")
     for pn in param_names:
-        print(f"     {pn}: {best[pn]}")
+        print(f"     {_display_names[param_names.index(pn)]}: {best[_result_key(pn)]}")
     print(
         f"     Sharpe={best['sharpe']:.4f}  Trades={best['trades']}  WinRate={best['win_rate']:.1%}  MeanR={best['mean_r']:.4f}"
     )
     print()
     print(f"  🎯 Recommended (conservative elbow):")
     for pn in param_names:
-        print(f"     {pn}: {rec[pn]}")
+        print(f"     {_display_names[param_names.index(pn)]}: {rec[_result_key(pn)]}")
     print(
         f"     Sharpe={rec['sharpe']:.4f}  Trades={rec['trades']}  WinRate={rec['win_rate']:.1%}  MeanR={rec['mean_r']:.4f}"
     )
@@ -856,12 +900,14 @@ def main():
 
     # Top 10
     print(f"\n  📋 Top 10:")
-    header = "  Rank  " + "  ".join(f"{pn.split('.')[-1]:>10s}" for pn in param_names)
+    header = "  Rank  " + "  ".join(
+        f"{_display_names[i].split('.')[-1]:>10s}" for i, pn in enumerate(param_names)
+    )
     header += "  Sharpe  Trades  WinRate  MeanR  Equity"
     print(header)
     for i, r in enumerate(plateau["all_sorted"][:10], 1):
         row = f"  {i:4d}  "
-        row += "  ".join(f"{r[pn]:10.1f}" for pn in param_names)
+        row += "  ".join(f"{r[_result_key(pn)]:10.1f}" for pn in param_names)
         eq_str = f"${r.get('equity_final', 0):.0f}" if "equity_final" in r else "-"
         row += f"  {r['sharpe']:.4f}  {r['trades']:6d}  {r['win_rate']:6.1%}  {r['mean_r']:.4f}  {eq_str}"
         print(row)
@@ -881,10 +927,10 @@ def main():
             "cv": plateau["cv"],
             "mean_sharpe": plateau["mean_sharpe"],
         },
-        "best": {pn: best[pn] for pn in param_names},
+        "best": {_result_key(pn): best[_result_key(pn)] for pn in param_names},
         "best_sharpe": best["sharpe"],
         "best_trades": best["trades"],
-        "recommended": {pn: rec[pn] for pn in param_names},
+        "recommended": {_result_key(pn): rec[_result_key(pn)] for pn in param_names},
         "recommended_sharpe": rec["sharpe"],
         "recommended_trades": rec["trades"],
         "param_analysis": plateau["param_analysis"],
@@ -910,7 +956,13 @@ def main():
                 exec_doc = yaml.safe_load(f)
             # 更新参数
             for pn in param_names:
-                _set_nested(exec_doc, pn, rec[pn])
+                if pn == "__sym_r__":
+                    val = rec["sym_r"]
+                    _set_nested(exec_doc, "stop_loss.initial_r", val)
+                    _set_nested(exec_doc, "stop_loss.trailing.activation_r", val)
+                    _set_nested(exec_doc, "stop_loss.trailing.trail_r", val)
+                else:
+                    _set_nested(exec_doc, pn, rec[_result_key(pn)])
             # 更新版本号
             ver = exec_doc.get("version", 0)
             exec_doc["version"] = ver + 1

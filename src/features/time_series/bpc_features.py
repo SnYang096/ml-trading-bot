@@ -1150,12 +1150,25 @@ def compute_bpc_compression_state_from_series(
     ewma_pct = compute_ewma_vol_percentile(close, ewma_span=20, pct_window=pct_window)
     ewma_compression = 1 - ewma_pct
 
-    # WPT 能量低频分量（低 = 能量聊集在低频，稳定）
-    wpt_low = pd.Series(0.5, index=close.index)
+    # WPT 能量低频分量：用 BB 宿度序列商位数实现
+    # 语义： BB 压缩状态局5K屈1 = BB 持续收缩，能量聚集尚未释放
+    if bb_width_normalized is not None:
+        bb_w = (
+            pd.to_numeric(bb_width_normalized, errors="coerce").fillna(0.5).clip(0, 1)
+        )
+        # 5块K线内 bb_width 持续低于中位数的比例（越高=持续压缩越久）
+        bb_median = bb_w.rolling(pct_window, min_periods=20).median().fillna(0.5)
+        bb_below_median = (bb_w < bb_median).astype(float)
+        wpt_low = bb_below_median.rolling(5, min_periods=1).mean().clip(0, 1)
+    else:
+        wpt_low = pd.Series(0.5, index=close.index)
 
     # 预突破综合分（压缩程度加权平均）
     pre_breakout_score = (
-        vol_compression * 0.3 + bb_compression * 0.5 + ewma_compression * 0.2
+        vol_compression * 0.25
+        + bb_compression * 0.45
+        + ewma_compression * 0.15
+        + wpt_low * 0.15
     ).clip(0, 1)
 
     return pd.DataFrame(
@@ -1175,8 +1188,6 @@ def compute_bpc_compression_state_from_series(
     category="bpc",
     description="BPC phase transition: transition probability + speed + direction",
     outputs=[
-        "bpc_phase_dominant",
-        "bpc_phase_confidence",
         "bpc_transition_b_to_p",
         "bpc_transition_p_to_c",
         "bpc_transition_speed",
@@ -1238,8 +1249,6 @@ def compute_bpc_phase_transition_from_series(
 
     return pd.DataFrame(
         {
-            "bpc_phase_dominant": phase_dominant,
-            "bpc_phase_confidence": phase_confidence,
             "bpc_transition_b_to_p": trans_b_to_p,
             "bpc_transition_p_to_c": trans_p_to_c,
             "bpc_transition_speed": trans_speed,

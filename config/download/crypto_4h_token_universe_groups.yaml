@@ -16,7 +16,7 @@ universe_sets:
         - SOL
         - BNB
         - XRP
-        # - ADA  # REMOVED: 回测 MeanR=-0.103R，唯一亏损品种
+        - ADA
         - TRX
         - BCH
         - LINK
@@ -24,9 +24,10 @@ universe_sets:
         - DOT
         - LTC
         - TON
-        - NEAR
-        - APT
         - SUI
+        - ATOM
+        - UNI
+
 
       # alt:
       #   - XMR

@@ -772,10 +772,12 @@ def simulate_rr_execution(
                                 break
 
                     # 3. 移动止损 (trailing activation + SL update)
+                    _just_activated = False
                     if stop_type == "trailing":
                         mfe_r = abs(best_price - entry_price) / entry_atr
                         if not trailing_active and mfe_r >= activation_r:
                             trailing_active = True
+                            _just_activated = True  # 首次激活，本 bar 不检查 SL
                         if trailing_active:
                             if direction == 1:
                                 new_sl = best_price - trail_r * entry_atr
@@ -787,7 +789,10 @@ def simulate_rr_execution(
                                     sl_price = new_sl
 
                     # 4. SL 检查 (用刚更新的 sl_price)
-                    if direction == 1 and l <= sl_price:
+                    # 首次 trailing 激活的 bar 跳过 SL 检查，避免同 bar 激活+触发
+                    if _just_activated:
+                        pass
+                    elif direction == 1 and l <= sl_price:
                         exit_price = sl_price
                         exit_reason = "trailing_sl" if trailing_active else "sl"
                         _1min_exit_mi = mi
@@ -3174,6 +3179,205 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
 # ================================================================
 
 
+def _parse_range_str_vec(s: str) -> List[float]:
+    """Parse 'start:step:end' → [start, start+step, ..., end] (for vector backtest CLI)"""
+    parts = s.split(":")
+    if len(parts) != 3:
+        raise ValueError(f"格式必须是 start:step:end, 得到 '{s}'")
+    lo, step, hi = float(parts[0]), float(parts[1]), float(parts[2])
+    vals = []
+    v = lo
+    while v <= hi + 1e-9:
+        vals.append(round(v, 4))
+        v += step
+    return vals
+
+
+# KPI 验收门槛 (对称调优模式)
+SYM_R_KPI = {
+    "mean_r_min": 0.18,  # 覆盖实盐排耗：手续皅0.08R+滑点0.05R+延迟0.05R
+    "sharpe_min": 0.05,  # 最低信号强度 (per-trade Sharpe)
+    "trades_min": 100,  # 样本量门槛
+}
+
+
+def _print_sym_r_kpi_gate(
+    plateau: Dict[str, Any],
+    strategy: str,
+) -> bool:
+    """
+    打印 KPI 验收结果，返回是否通过。
+
+    Returns:
+        True = 通过所有 KPI 门槛
+        False = 未通过（不应更新配置）
+    """
+    rec = plateau.get("recommended", plateau.get("best", {}))
+    best = plateau.get("best", {})
+    param_analysis = plateau.get("param_analysis", {})
+
+    mean_r = rec.get("mean_r", 0.0)
+    sharpe = rec.get("sharpe", 0.0)
+    trades = rec.get("trades", 0)
+    sym_r_val = rec.get("sym_r", best.get("sym_r", None))
+
+    # at_boundary 检查：任一参数卡在边界
+    at_boundary = any(v.get("at_boundary", False) for v in param_analysis.values())
+
+    print("\n" + "=" * 70)
+    print(f"  KPI 验收门槛 [{strategy}] (向量回测 Sym-R Grid Search)")
+    print("=" * 70)
+    print(f"  {'KPI':<22} {'Value':>10}  {'Gate':>10}  {'Pass?':>6}")
+    print(f"  {'-'*52}")
+
+    all_pass = True
+    checks = [
+        ("mean_r", mean_r, SYM_R_KPI["mean_r_min"], ">=", "覆盖实盐排耗"),
+        ("sharpe", sharpe, SYM_R_KPI["sharpe_min"], ">=", "per-trade"),
+        ("n_trades", trades, SYM_R_KPI["trades_min"], ">=", "样本量"),
+    ]
+    for name, val, gate, op, note in checks:
+        if op == ">=":
+            ok = val >= gate
+        else:
+            ok = val <= gate
+        status = "✅ PASS" if ok else "❌ FAIL"
+        print(f"  {name:<22} {val:>10.4f}  {gate:>10.4f}  {status}  ({note})")
+        if not ok:
+            all_pass = False
+
+    # 边界检查
+    bd_status = "❌ FAIL (at boundary)" if at_boundary else "✅ PASS"
+    print(f"  {'not_at_boundary':<22} {'---':>10}  {'---':>10}  {bd_status}")
+    if at_boundary:
+        all_pass = False
+
+    print(f"\n  推荐参数: sym_r = {sym_r_val}")
+    print(
+        f"  is_plateau: {plateau.get('is_plateau', False)},  cv: {plateau.get('cv', 0):.4f}"
+    )
+
+    if all_pass:
+        print("\n  ✅ 全部 KPI 通过 —— 可更新 execution.yaml 并进入事件回测验证。")
+    else:
+        print("\n  ❌ KPI 未全部通过 —— 信号质量不足，不建议更新配置。")
+    print("=" * 70)
+    return all_pass
+
+
+def _run_sym_r_grid_search(
+    args: Any,
+    merged: pd.DataFrame,
+    exec_config: Dict[str, Any],
+    sym_r_str: str,
+    span_years: float,
+    n_symbols: int,
+    bars_1min_dict: Optional[Dict[str, pd.DataFrame]],
+) -> int:
+    """
+    对称 SL Grid Search 主流程:
+      1. 解析 sym_r_str 为参数列表
+      2. 将 stop_loss.type 设为 trailing
+      3. 调用 run_grid_search，注入 __sym_r__ 三联动
+      4. 打印 plateau 分析 + KPI 验收结果
+      5. (可选) 导出 HTML 报告
+    """
+    print("\n" + "=" * 70)
+    print("  对称 SL Grid Search (--sym-r 模式)")
+    print("  设计: initial_r = activation_r = trail_r (三者相等)")
+    print("=" * 70)
+
+    # 解析参数范围
+    try:
+        sym_r_vals = _parse_range_str_vec(sym_r_str)
+    except ValueError as e:
+        print(f"❌ --sym-r 解析失败: {e}")
+        return 1
+
+    print(f"  参数范围: {sym_r_vals}")
+    print(f"  组合数: {len(sym_r_vals)} combos")
+    print(f"  (每组操作: initial_r=activation_r=trail_r=<value>)")
+    print()
+
+    # 导入 exec_config 并覆盖 trailing 模式
+    import copy as _copy
+
+    base_cfg = _copy.deepcopy(exec_config)
+    _set_nested(base_cfg, "stop_loss.type", "trailing")
+
+    # 构造参数网格: __sym_r__ 是内部标识，在 run_grid_search 中识别为三联动
+    param_names = ["__sym_r__"]
+    param_values = [sym_r_vals]
+
+    # 运行 Grid Search
+    t0 = time.time()
+    grid_results = run_grid_search(
+        df=merged,
+        exec_config=base_cfg,
+        param_names=param_names,
+        param_values=param_values,
+        atr_col="atr",
+        span_years=span_years,
+        n_symbols=n_symbols,
+        bars_1min_dict=bars_1min_dict,
+        sym_r_mode=True,
+    )
+    elapsed = time.time() - t0
+    print(f"  完成 {len(grid_results)} combos, 耗时 {elapsed:.1f}s")
+
+    if not grid_results:
+        print("❌ Grid Search 无结果")
+        return 1
+
+    # Plateau 分析
+    plateau = _identify_plateau(
+        grid_results,
+        param_names=["sym_r"],
+        param_values=[sym_r_vals],
+    )
+
+    # 打印结果表
+    print(
+        f"\n  {'Rank':>5} {'sym_r':>8} {'Sharpe':>9} {'MeanR':>8} {'WinRate':>9} {'Trades':>8}"
+    )
+    print(f"  {'-'*52}")
+    for i, r in enumerate(plateau["all_sorted"][:10], 1):
+        sr = r.get("sym_r", "?")
+        marker = " <-- best" if i == 1 else ""
+        rec_val = plateau["recommended"].get("sym_r", None)
+        if rec_val is not None and abs(float(sr) - float(rec_val)) < 1e-6 and i != 1:
+            marker = " <-- recommended"
+        print(
+            f"  {i:>5} {sr:>8} {r['sharpe']:>9.4f} {r['mean_r']:>8.4f} "
+            f"{r['win_rate']:>8.1%} {r['trades']:>8}"
+            f"{marker}"
+        )
+
+    # KPI 验收
+    passed = _print_sym_r_kpi_gate(
+        plateau, strategy=str(getattr(args, "strategy", "?"))
+    )
+
+    # 导出 HTML
+    html_out = getattr(args, "export_grid_html", None)
+    if html_out:
+        _param_names_display = ["sym_r"]
+        _param_values_display = [sym_r_vals]
+        html = _generate_grid_search_html(
+            results=grid_results,
+            param_names=_param_names_display,
+            param_values=_param_values_display,
+            plateau=plateau,
+            exec_config=base_cfg,
+            strategy=str(getattr(args, "strategy", "backtest")),
+        )
+        Path(html_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(html_out).write_text(html, encoding="utf-8")
+        print(f"\n  📊 Grid Search HTML: {html_out}")
+
+    return 0 if passed else 2
+
+
 def _parse_optimization_grid(
     optimization_cfg: Dict[str, Any],
 ) -> Tuple[List[str], List[List[float]]]:
@@ -3219,6 +3423,7 @@ def run_grid_search(
     span_years: float = 1.0,
     n_symbols: int = 1,
     bars_1min_dict: Optional[Dict[str, pd.DataFrame]] = None,
+    sym_r_mode: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     执行全量网格搜索
@@ -3226,6 +3431,8 @@ def run_grid_search(
     Args:
         n_symbols: symbol 数量，年化时用 per-symbol 交易频率
                    trades_per_year = trades / n_symbols / span_years
+        sym_r_mode: 对称模式，__sym_r__ 参数名会同时设置
+                    initial_r / activation_r / trail_r 三者，结果字典中存为 'sym_r'
 
     Returns:
         每组参数的回测结果列表
@@ -3241,7 +3448,13 @@ def run_grid_search(
         # 构造修改后的配置
         modified = copy.deepcopy(exec_config)
         for name, val in zip(param_names, combo):
-            _set_nested(modified, name, val)
+            if name == "__sym_r__":
+                # 对称模式: 三者同时设置
+                _set_nested(modified, "stop_loss.initial_r", val)
+                _set_nested(modified, "stop_loss.trailing.activation_r", val)
+                _set_nested(modified, "stop_loss.trailing.trail_r", val)
+            else:
+                _set_nested(modified, name, val)
 
         # 静默运行模拟（抑制 print 输出）
         with contextlib.redirect_stdout(io.StringIO()):
@@ -3276,7 +3489,9 @@ def run_grid_search(
             "trades": len(valid),
         }
         for name, val in zip(param_names, combo):
-            result[name] = val
+            # __sym_r__ 内部标识 → 结果字典中存为 'sym_r'
+            result_key = "sym_r" if name == "__sym_r__" else name
+            result[result_key] = val
 
         results.append(result)
 
@@ -4237,6 +4452,20 @@ def main() -> int:
         help="使用中性简单执行模式 (SL=1.5R, TP=3R, 50bar timeout, 无 trailing/structural)。"
         "用于研究管线评估信号质量，不受 execution 参数影响。",
     )
+    p.add_argument(
+        "--sym-r",
+        default=None,
+        dest="sym_r",
+        help="对称 SL Grid Search: initial_r=activation_r=trail_r 三者联动。"
+        "格式: start:step:end (e.g. 1.0:0.5:4.0)。"
+        "自动启用 trailing 模式，跑完后打印 plateau 分析与 KPI 验收结果。",
+    )
+    p.add_argument(
+        "--export-grid-html",
+        default=None,
+        dest="export_grid_html",
+        help="Grid Search 结果导出为 HTML 报告路径 (e.g. /tmp/grid_me.html)。",
+    )
     args = p.parse_args()
 
     # --data-path none → 显式使用实盘数据
@@ -4699,6 +4928,21 @@ def main() -> int:
                 }
         except Exception:
             pass
+
+    # ================================================================
+    # --sym-r Grid Search 模式：对称 SL 参数优化
+    # ================================================================
+    _sym_r_str = getattr(args, "sym_r", None)
+    if _sym_r_str:
+        return _run_sym_r_grid_search(
+            args=args,
+            merged=merged,
+            exec_config=exec_config,
+            sym_r_str=_sym_r_str,
+            span_years=_estimate_span_years(merged),
+            n_symbols=merged["symbol"].nunique() if "symbol" in merged.columns else 1,
+            bars_1min_dict=bars_1min_dict,
+        )
 
     # 使用 execution.yaml 配置模拟 RR
     print("\n📈 Simulating with execution.yaml config...")

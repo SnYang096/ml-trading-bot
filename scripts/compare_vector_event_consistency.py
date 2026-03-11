@@ -127,8 +127,9 @@ def _check_consistency(
     """对比两侧统计，返回逐项检查结果"""
     t = thresholds or {}
     max_trade_diff = t.get("max_trade_diff_pct", 0.10)  # 10%
-    max_sharpe_diff = t.get("max_sharpe_diff", 0.5)  # absolute
+    max_sharpe_diff = t.get("max_sharpe_diff", 0.30)  # 收紧: 0.5 → 0.3
     max_winrate_diff = t.get("max_winrate_diff_pp", 0.05)  # 5pp
+    max_mean_r_diff = t.get("max_mean_r_diff", 0.05)  # 新增: mean_r 偏差 < 0.05R
 
     checks: Dict[str, Dict[str, Any]] = {}
 
@@ -166,12 +167,15 @@ def _check_consistency(
         "pass": wd <= max_winrate_diff,
     }
 
-    # 4. Mean R
+    # 4. Mean R (带阈值检查)
     vm, em = v_stats["mean_r"], e_stats["mean_r"]
+    mean_r_diff = abs(vm - em)
     checks["mean_r"] = {
         "vector": round(vm, 4),
         "event": round(em, 4),
-        "diff": round(abs(vm - em), 4),
+        "diff": round(mean_r_diff, 4),
+        "threshold": max_mean_r_diff,
+        "pass": mean_r_diff <= max_mean_r_diff,
     }
 
     # 5. 出场原因分布
@@ -262,8 +266,9 @@ def _print_report(checks: Dict[str, Dict[str, Any]]) -> int:
                 f"  {icon} 胜率:    向量 {c['vector']}  |  事件 {c['event']}  (偏差 {c['diff_pp']}, 阈值 {c['threshold']})"
             )
         elif key == "mean_r":
+            threshold_str = f", 阈值 {c['threshold']}R" if "threshold" in c else ""
             print(
-                f"  ℹ️  Mean R:  向量 {c['vector']}  |  事件 {c['event']}  (偏差 {c['diff']})"
+                f"  {icon} Mean R:  向量 {c['vector']}  |  事件 {c['event']}  (偏差 {c['diff']}{threshold_str})"
             )
     print("└──────────────────────────────────────────────────────────┘")
 
@@ -312,7 +317,7 @@ def _print_report(checks: Dict[str, Dict[str, Any]]) -> int:
 
     # 5. 总结
     total_checks = 0
-    for key in ["trade_count", "sharpe", "win_rate"]:
+    for key in ["trade_count", "sharpe", "win_rate", "mean_r"]:
         if "pass" in checks.get(key, {}):
             total_checks += 1
     if "pass" in exit_c:

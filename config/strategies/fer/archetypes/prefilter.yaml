@@ -2,26 +2,16 @@
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
 # 自动生成: 2026-03-07
 # 数据源: features_labeled.parquet, 39147 行
-#
-# 规则字段说明:
-#   locked: true           → 管线 --promote 不可删除, 只能调整阈值
-#   threshold_range: [l,h] → 优化器调整合法范围 (超出则警告)
 
 rules:
-  # ── 语义核心规则 (locked=true, 不可删除) ──────────────────────
   - any_of:
       - feature: fer_trapped_longs_score
         operator: ">="
         value: 3.4965
-        threshold_range: [2.0, 5.0]
       - feature: fer_trapped_shorts_score
         operator: ">="
         value: 3.7941
-        threshold_range: [2.0, 5.0]
-    locked: true
-    lock_reason: "FER核心语义: 多空至少一方进入被套状态才这列入场"
-    rationale: "semantic_lock — gate.yaml prefilter_fer_trapped_fer_trapped"
-  # ── 自动生成规则 (locked=false, 可被管线增删) ───────────────────
+    rationale: "semantic — FER核心语义: 多空至少一方进入被套状态才列入场"
   - feature: oi_exhaustion_score
     operator: ">"
     value: 0.057
@@ -36,22 +26,11 @@ rules:
     rationale: "meta-algorithm, KS=0.1144, return_uplift=-0.0648, robustness=100%, holdout验证通过"
 
 last_evaluation:
-  # ── 自动生成 (2026-03-07) ──
   timestamp: "2026-03-07"
   data_source: "features_labeled.parquet"
   n_rows: 39147
   baseline_bad_rate: 0.0000
   baseline_median_rr: -0.0696
-
-  # ── 正信号 (0 个) ──
-  positive_signals:
-    []
-
-  # ── 反信号 (0 个) ──
-  anti_signals:
-    []
-
-  # ── 低端信号 (0 个) ──
-  absence_signals:
-    []
-
+  positive_signals: []
+  anti_signals: []
+  absence_signals: []

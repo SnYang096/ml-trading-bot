@@ -140,14 +140,16 @@ class OrderFlowListener:
         self.decision_handler = decision_handler
         self.stats_collector = None  # 可选: StatsCollector 实例，由外部注入
         self.extra_feature_computers: Dict[str, "IncrementalFeatureComputer"] = {}
-        
+
         # 持仓管理层（由 PositionTracker + TradeExecutor 接管）
         self._position_tracker = PositionTracker(
             order_manager=order_manager,
             symbol=symbol,
             default_bar_minutes=feature_4h_interval_hours * 60,
         )
-        self._trade_executor: TradeExecutor | None = None  # 延迟建立，等 risk_per_slot 注入完成
+        self._trade_executor: TradeExecutor | None = (
+            None  # 延迟建立，等 risk_per_slot 注入完成
+        )
 
         # 1分钟聚合状态（bar级别）
         self.current_1min_bar: Optional[Dict[str, Any]] = None

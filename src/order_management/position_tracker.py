@@ -143,9 +143,7 @@ class PositionTracker:
 
         # 2. Market 平仓
         side_str = str(pos.get("side", "")).upper()
-        close_side = (
-            OrderSide.SELL if side_str in {"LONG", "BUY"} else OrderSide.BUY
-        )
+        close_side = OrderSide.SELL if side_str in {"LONG", "BUY"} else OrderSide.BUY
         try:
             self.order_manager.place_order(
                 symbol=self.symbol,
@@ -207,9 +205,7 @@ class PositionTracker:
 
         # place 新挂单
         side_str = str(pos.get("side", "")).upper()
-        close_side = (
-            OrderSide.SELL if side_str in {"LONG", "BUY"} else OrderSide.BUY
-        )
+        close_side = OrderSide.SELL if side_str in {"LONG", "BUY"} else OrderSide.BUY
         qty = float(pos.get("qty") or 0.0)
         if qty <= 0:
             return
