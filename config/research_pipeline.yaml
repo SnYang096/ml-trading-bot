@@ -92,9 +92,8 @@ strategies:
       prefilter:
         min_pass_rate: 0.20
         min_rows: 200
-        scoring_method: bad_rate_lift
-        min_ks_statistic: 0.02
-        max_ks_pvalue: 0.10
+        scoring_method: positive_rr   # 新分支: LightGBM 二分类 rr>0.8R, pass区大赢集中度
+        min_positive_lift: 1.20       # pass 区 rr>0.8R 比例 >= 全量基线 × 1.2
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
@@ -117,9 +116,8 @@ strategies:
       prefilter:
         min_pass_rate: 0.20
         min_rows: 200
-        scoring_method: bad_rate_lift
-        min_ks_statistic: 0.02
-        max_ks_pvalue: 0.10
+        scoring_method: positive_rr   # 新分支: LightGBM 二分类 rr>0.8R
+        min_positive_lift: 1.20
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.20

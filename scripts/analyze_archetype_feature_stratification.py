@@ -2364,6 +2364,9 @@ def _meta_algorithm_prefilter(
             f"\n🧭 方向分裂: direction.yaml 无 direction_rules 或特征不在数据中, 跳过"
         )
 
+    # ── 2d. 提前读取 scoring_method（影响 LightGBM 训练目标） ──
+    _scoring_method = getattr(args, "prefilter_scoring_method", None) or "ks"
+
     # ── 3. LightGBM 训练 ──
     try:
         import lightgbm as lgb
@@ -2378,11 +2381,25 @@ def _meta_algorithm_prefilter(
         return 1
 
     X_train = df_train_sub[avail_features].fillna(0).values.astype(float)
-    y_train = df_train_sub[rr_col].clip(-2, 2).fillna(0).values.astype(float)
+    # ── positive_rr 分支: 二分类目标 rr > +0.8R（学正向信号） ──
+    if _scoring_method == "positive_rr":
+        _pos_threshold = getattr(args, "prefilter_positive_threshold", None) or 0.8
+        y_train = (
+            (df_train_sub[rr_col] > _pos_threshold).fillna(False).astype(float).values
+        )
+        _lgb_objective = "binary"
+        _lgb_metric = "binary_logloss"
+        print(
+            f"   🎯 positive_rr 训练目标: rr > {_pos_threshold}R (二分类), 正样本率={y_train.mean():.1%}"
+        )
+    else:
+        y_train = df_train_sub[rr_col].clip(-2, 2).fillna(0).values.astype(float)
+        _lgb_objective = "regression"
+        _lgb_metric = "mse"
 
     lgb_params = {
-        "objective": "regression",
-        "metric": "mse",
+        "objective": _lgb_objective,
+        "metric": _lgb_metric,
         "num_leaves": _lgb_cfg.get("num_leaves", 31),
         "learning_rate": _lgb_cfg.get("learning_rate", 0.05),
         "min_child_samples": _lgb_cfg.get("min_child_samples", 50),
@@ -2489,7 +2506,7 @@ def _meta_algorithm_prefilter(
 
     # ── Per-strategy KPI 覆盖 (来自 research_pipeline.yaml kpi_gates.prefilter) ──
     # 命令行参数优先级高于 prefilter_layer.yaml 全局默认
-    _scoring_method = getattr(args, "prefilter_scoring_method", None) or "ks"
+    # _scoring_method 已在步骤 2d 提前检测，此处不重复赋值
     if getattr(args, "prefilter_min_ks", None) is not None:
         PREFILTER_MIN_KS = args.prefilter_min_ks
         print(f"   ℹ️  KPI 覆盖: min_ks={PREFILTER_MIN_KS} (per-strategy)")
@@ -2500,6 +2517,14 @@ def _meta_algorithm_prefilter(
     # bad_rate_lift 专属参数
     PREFILTER_MIN_BAD_RATE_LIFT = _thr.get("min_bad_rate_lift", 1.05)
     PREFILTER_MIN_EFFECT = _thr.get("min_effect", 0.02)  # allow - deny mean_rr 差
+    # positive_rr 专属参数: pass 区正收益域比例 >= 全量基线 × min_positive_lift
+    PREFILTER_MIN_POSITIVE_LIFT = _thr.get("min_positive_lift", 1.20)
+    if getattr(args, "prefilter_positive_lift", None) is not None:
+        PREFILTER_MIN_POSITIVE_LIFT = args.prefilter_positive_lift
+        print(
+            f"   ℹ️  KPI 覆盖: min_positive_lift={PREFILTER_MIN_POSITIVE_LIFT} (per-strategy)"
+        )
+    _pos_threshold = getattr(args, "prefilter_positive_threshold", None) or 0.8
     if _scoring_method == "bad_rate_lift":
         print(
             f"   ℹ️  主 KPI: bad_rate_lift (min_bad_rate_lift={PREFILTER_MIN_BAD_RATE_LIFT}), "
@@ -2512,6 +2537,11 @@ def _meta_algorithm_prefilter(
     elif _scoring_method == "combined":
         print(
             f"   ℹ️  主 KPI: combined (lift+KS 加权), min_lift={PREFILTER_MIN_LIFT}, min_ks={PREFILTER_MIN_KS}"
+        )
+    elif _scoring_method == "positive_rr":
+        print(
+            f"   ℹ️  主 KPI: positive_rr (pass 区 rr>{_pos_threshold}R 比例倍数, min_lift={PREFILTER_MIN_POSITIVE_LIFT}), "
+            f"LightGBM 训练二分类目标"
         )
     else:
         print(f"   ℹ️  主 KPI: ks (min_ks={PREFILTER_MIN_KS})")
@@ -2634,6 +2664,23 @@ def _meta_algorithm_prefilter(
                 _effect = mean_return_pass - mean_return_deny
                 if _effect < PREFILTER_MIN_EFFECT:
                     continue
+            elif _scoring_method == "positive_rr":
+                # positive_rr: pass 区 rr > +threshold 的比例 > 全量基线 × min_positive_lift
+                # 意义: pass 区中大赢交易明显偏多（正向选择）
+                _pr_pass = (
+                    float((rr_pass_ho > _pos_threshold).mean())
+                    if len(rr_pass_ho) > 0
+                    else 0.0
+                )
+                _pr_all = float((holdout_rr > _pos_threshold).mean())
+                _pr_lift = _pr_pass / _pr_all if _pr_all > 0 else 1.0
+                if _pr_lift < PREFILTER_MIN_POSITIVE_LIFT:
+                    continue
+                # pass 区期望收益必须 > 0
+                if mean_return_pass <= 0:
+                    continue
+                _bad_rate_lift = 1.0  # 占位符，不用 bad_rate_lift 算法
+                _effect = mean_return_pass - mean_return_deny
             elif _scoring_method == "lift":
                 # lift 为主: 只需 lift >= min_lift，放宽 KS 要求
                 if _lift < PREFILTER_MIN_LIFT:
@@ -2664,14 +2711,17 @@ def _meta_algorithm_prefilter(
 
             # Robustness: time-fold 一致性
             # bad_rate_lift 模式: 按 fold 内 bad_rate_lift 是否 > 1.0
+            # positive_rr 模式: 按 fold 内 pass 区 pr_lift 是否 > 1.0
             # 其他模式: 按 fold KS
             fold_ks_stats = []
             fold_brl_stats = []  # bad_rate_lift per fold
+            fold_pr_stats = []  # positive_rate_lift per fold (主用于 positive_rr)
             holdout_label_arr = (
                 (df_holdout_sub[label_col] == 0).values
                 if _scoring_method == "bad_rate_lift"
                 else None
             )
+            _pr_all_ho = float((holdout_rr > _pos_threshold).mean())  # holdout 全量基线
             for fi in range(n_folds_holdout):
                 s = fi * fold_size_ho
                 e = (
@@ -2698,6 +2748,21 @@ def _meta_algorithm_prefilter(
                         fold_brl_stats.append(
                             f_br_deny / f_br_all if f_br_all > 0 else 1.0
                         )
+                    elif _scoring_method == "positive_rr":
+                        # positive_rr fold: pass 区 rr > threshold 比例 / fold 全量比例
+                        f_pr_pass = (
+                            float((f_rr[f_pass] > _pos_threshold).mean())
+                            if f_pass.sum() > 0
+                            else 0.0
+                        )
+                        f_pr_all = (
+                            float((f_rr > _pos_threshold).mean())
+                            if len(f_rr) > 0
+                            else 0.0
+                        )
+                        fold_pr_stats.append(
+                            f_pr_pass / f_pr_all if f_pr_all > 0 else 1.0
+                        )
                     else:
                         f_ks, _ = _ks_2samp(f_rr[f_pass], f_rr[f_deny & f_valid])
                         fold_ks_stats.append(f_ks)
@@ -2706,6 +2771,12 @@ def _meta_algorithm_prefilter(
                 # robustness = fold 中 bad_rate_lift > 1.0 的比例
                 rob_time = sum(1 for brl in fold_brl_stats if brl > 1.0) / max(
                     len(fold_brl_stats), 1
+                )
+                robustness = rob_time
+            elif _scoring_method == "positive_rr":
+                # robustness = fold 中 pr_lift > 1.0 的比例
+                rob_time = sum(1 for pr in fold_pr_stats if pr > 1.0) / max(
+                    len(fold_pr_stats), 1
                 )
                 robustness = rob_time
             else:
@@ -2720,15 +2791,18 @@ def _meta_algorithm_prefilter(
             if robustness < PREFILTER_MIN_ROBUSTNESS:
                 continue
 
-            # 记录 bad_rate_lift 和 effect_size 供 rank-based 排序使用
+            # 记录 bad_rate_lift / effect_size / pr_lift 供 rank-based 排序使用
             _cand_bad_rate_lift = (
-                _bad_rate_lift if _scoring_method == "bad_rate_lift" else 1.0
+                _bad_rate_lift
+                if _scoring_method in ("bad_rate_lift", "positive_rr")
+                else 1.0
             )
             _cand_effect_size = (
                 _effect
-                if _scoring_method == "bad_rate_lift"
+                if _scoring_method in ("bad_rate_lift", "positive_rr")
                 else (mean_return_pass - mean_return_deny)
             )
+            _cand_pr_lift = _pr_lift if _scoring_method == "positive_rr" else 1.0
 
             candidates.append(
                 {
@@ -2742,6 +2816,7 @@ def _meta_algorithm_prefilter(
                     "lift": _lift,
                     "bad_rate_lift": _cand_bad_rate_lift,
                     "effect_size": _cand_effect_size,
+                    "pr_lift": _cand_pr_lift,
                     "return_uplift": return_uplift,
                     "hit_rate_uplift": hit_rate_uplift,
                     "mean_return_pass": mean_return_pass,
@@ -2770,11 +2845,22 @@ def _meta_algorithm_prefilter(
         _effect_rank = _effect_arr.argsort().argsort().astype(float) / max(
             _n_cand - 1, 1
         )
+        _pr_lift_arr = np.array([c.get("pr_lift", 1.0) for c in candidates])
+        _pr_lift_rank = _pr_lift_arr.argsort().argsort().astype(float) / max(
+            _n_cand - 1, 1
+        )
         for _i, _c in enumerate(candidates):
             if _scoring_method == "bad_rate_lift":
                 # 主: bad_rate_lift（坏样本集中度）+ effect（rr差异）+ robustness
                 _c["score"] = (
                     _bad_rate_lift_rank[_i] * 0.5
+                    + _effect_rank[_i] * 0.3
+                    + _rob_rank[_i] * 0.2
+                )
+            elif _scoring_method == "positive_rr":
+                # 主: pr_lift（大赢比例倍数）+ effect（rr差）+ robustness
+                _c["score"] = (
+                    _pr_lift_rank[_i] * 0.5
                     + _effect_rank[_i] * 0.3
                     + _rob_rank[_i] * 0.2
                 )
@@ -3677,8 +3763,9 @@ def main() -> int:
         "--prefilter-scoring-method",
         type=str,
         default=None,
-        choices=["ks", "lift", "combined", "bad_rate_lift"],
-        help="Prefilter 主 KPI 评分方法. ks=KS统计量(默认), lift=pass/deny收益倍数, combined=两者加权, bad_rate_lift=坏样本集中度(早期有效模式). "
+        choices=["ks", "lift", "combined", "bad_rate_lift", "positive_rr"],
+        help="Prefilter 主 KPI 评分方法. ks=KS统计量(默认), lift=pass/deny收益倍数, combined=两者加权, "
+        "bad_rate_lift=坏样本集中度(早期有效模式), positive_rr=LightGBM二分类 rr>0.8R 正向选择. "
         "由 research_pipeline.yaml kpi_gates.prefilter.scoring_method 控制.",
     )
     parser.add_argument(
@@ -3704,6 +3791,15 @@ def main() -> int:
         metavar="LIFT",
         help="Prefilter lift 门槛 (scoring_method=lift 时使用). "
         "由 research_pipeline.yaml kpi_gates.prefilter.min_lift 控制.",
+    )
+    parser.add_argument(
+        "--prefilter-positive-lift",
+        dest="prefilter_positive_lift",
+        type=float,
+        default=None,
+        metavar="LIFT",
+        help="Prefilter positive_rr 模式下 pass 区 rr>0.8R 比例倍数门槛 (scoring_method=positive_rr 时使用). "
+        "由 research_pipeline.yaml kpi_gates.prefilter.min_positive_lift 控制.",
     )
     # ── Meta-Algorithm 模式 ──
     parser.add_argument(

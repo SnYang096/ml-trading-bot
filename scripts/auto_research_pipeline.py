@@ -853,6 +853,11 @@ def run_strategy_pipeline(
                     "--prefilter-min-lift",
                     str(prefilter_gates["min_lift"]),
                 ]
+            if prefilter_gates.get("min_positive_lift") is not None:
+                prefilter_cmd += [
+                    "--prefilter-positive-lift",
+                    str(prefilter_gates["min_positive_lift"]),
+                ]
             run_step(
                 "Prefilter Analyze",
                 prefilter_cmd,

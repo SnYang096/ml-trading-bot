@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260312_000352_rr_extreme/me
+# 来源: results/train_final_20260312_005722_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -16,26 +16,71 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_var_99_right
-  tag: HARD_EVT_VAR_99_RIGHT
+- id: gate_vpin_max20_vpin_max20
+  tag: HARD_VPIN_MAX20_VPIN_MAX20
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.17)
+  reason: 统计验证规则 (lift=1.28)
   when:
-    evt_var_99_right:
-      value_lt: 0.0595
+    all_of:
+    - vpin_max20:
+        value_gt: 0.3306
+    - vpin_max20:
+        value_lt: 0.3779
   then:
     action: deny
-  comment: 'statistical(lift=1.17): evt_var_99_right < 0.05952'
+  comment: 'statistical(lift=1.28): vpin_max20 > 0.3306 & vpin_max20 < 0.3779'
+- id: gate_vpin_ma20_vpin_ma20
+  tag: HARD_VPIN_MA20_VPIN_MA20
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.21)
+  when:
+    all_of:
+    - vpin_ma20:
+        value_gt: 0.2458
+    - vpin_ma20:
+        value_lt: 0.2674
+  then:
+    action: deny
+  comment: 'statistical(lift=1.21): vpin_ma20 > 0.2458 & vpin_ma20 < 0.2674'
 - id: gate_recent_compression_decay
   tag: HARD_RECENT_COMPRESSION_DECAY
   phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.18)
+  priority: 12
+  reason: 统计验证规则 (lift=1.21)
   when:
     recent_compression_decay:
-      value_gt: 0.7232
+      value_lt: 0.0019
   then:
     action: deny
-  comment: 'statistical(lift=1.18): recent_compression_decay > 0.7232'
+  comment: 'statistical(lift=1.21): recent_compression_decay < 0.001872'
+- id: gate_fer_signed_efficiency_fer_signed_efficiency
+  tag: HARD_FER_SIGNED_EFFICIENCY_FER_SIGNED_EFFICIENCY
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.09)
+  when:
+    all_of:
+    - fer_signed_efficiency:
+        value_gt: -0.0
+    - fer_signed_efficiency:
+        value_lt: 0.0
+  then:
+    action: deny
+  comment: 'statistical(lift=1.09): fer_signed_efficiency > -1.667e-05 & fer_signed_efficiency < 2.478e-10'
+- id: gate_evt_var_99_right_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.09)
+  when:
+    all_of:
+    - evt_var_99_right:
+        value_gt: 0.6746
+    - evt_var_99_right:
+        value_lt: 0.8254
+  then:
+    action: deny
+  comment: 'statistical(lift=1.09): evt_var_99_right > 0.6746 & evt_var_99_right < 0.8254'
 guardrails: []
