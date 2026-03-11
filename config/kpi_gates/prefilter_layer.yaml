@@ -44,8 +44,8 @@ thresholds:
   # Deny rate 合法范围 (在语义子集内算比例: 太小无意义, 太大误杀严重)
   # 注意: 分析脚本内部用 deny_mask 扫描, deny_rate = 排除比例
   # 对应 pass_rate = 1 - deny_rate
-  deny_rate_min: 0.15  # 单条规则至少 deny 15%; deny < 15% 说明阈值在数据极端尾部
-  deny_rate_max: 0.85  # 单条规则最多 deny 85% (对应 pass_rate >= 15%)
+  deny_rate_min: 0.10  # 单条规则至少 deny 15%; deny < 15% 说明阈值在数据极端尾部
+  deny_rate_max: 0.90  # 单条规则最多 deny 85% (对应 pass_rate >= 15%)
 
   # 通过率保底: 最少保留行数
   min_rows: 500

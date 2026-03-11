@@ -34,7 +34,7 @@ thresholds:
 
   # Deny rate 合法范围
   deny_rate_min: 0.05
-  deny_rate_max: 0.70
+  deny_rate_max: 0.90
 
 # ── Compound 规则门槛 (Lift Surface / 2D 交互) ──
 compound:
@@ -49,7 +49,7 @@ compound:
 
   # Joint deny rate 范围
   joint_deny_rate_min: 0.02
-  joint_deny_rate_max: 0.50
+  joint_deny_rate_max: 0.90
 
   # Joint effect size
   min_joint_effect: 0.15

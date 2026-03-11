@@ -3400,15 +3400,17 @@ def _meta_algorithm_prefilter(
                         "feature": r["feature"],
                         "operator": _DENY_TO_PASS_OP.get(r["op"], r["op"]),
                         "value": (
-                            round(r["threshold"], 4) if r["op"] != "range" else None
+                            float(f"{r['threshold']:.4g}")
+                            if r["op"] != "range"
+                            else None
                         ),
                         "rationale": ", ".join(rationale_parts),
                         "_type": "range" if r["op"] == "range" else "simple",
                     }
                     if r["op"] == "range":
                         # range 规则: pass = [low, high], 写为 >= low AND <= high (已是 PASS 方向)
-                        entry["value"] = round(r["threshold_low"], 4)
-                        entry["value_high"] = round(r["threshold_high"], 4)
+                        entry["value"] = float(f"{r['threshold_low']:.4g}")
+                        entry["value_high"] = float(f"{r['threshold_high']:.4g}")
                     top_rules_for_promote.append(entry)
                 else:
                     # 多条规则 → any_of (OR 组)
@@ -3433,7 +3435,7 @@ def _meta_algorithm_prefilter(
                                 {
                                     "feature": r["feature"],
                                     "operator": _DENY_TO_PASS_OP.get(r["op"], r["op"]),
-                                    "value": round(r["threshold"], 4),
+                                    "value": float(f"{r['threshold']:.4g}"),
                                 }
                             )
                     feats = " ∨ ".join(r["feature"] for r in grp if r["op"] != "range")
@@ -3450,8 +3452,8 @@ def _meta_algorithm_prefilter(
                             {
                                 "feature": r["feature"],
                                 "operator": ">=",
-                                "value": round(r["threshold_low"], 4),
-                                "value_high": round(r["threshold_high"], 4),
+                                "value": float(f"{r['threshold_low']:.4g}"),
+                                "value_high": float(f"{r['threshold_high']:.4g}"),
                                 "rationale": f"meta-algorithm range [{r['threshold_low']:.4g}, {r['threshold_high']:.4g}]",
                                 "_type": "range",
                             }
@@ -3549,7 +3551,7 @@ def _meta_algorithm_prefilter(
                         {
                             "feature": r["feature"],
                             "operator": ">=",
-                            "value": round(r["threshold_low"], 4),
+                            "value": float(f"{r['threshold_low']:.4g}"),
                             "composite": r["score"],
                             "rationale": f"range lower, {_rationale}",
                         }
@@ -3558,7 +3560,7 @@ def _meta_algorithm_prefilter(
                         {
                             "feature": r["feature"],
                             "operator": "<=",
-                            "value": round(r["threshold_high"], 4),
+                            "value": float(f"{r['threshold_high']:.4g}"),
                             "composite": r["score"],
                             "rationale": f"range upper, {_rationale}",
                         }
@@ -3568,7 +3570,7 @@ def _meta_algorithm_prefilter(
                         {
                             "feature": r["feature"],
                             "operator": _DENY_TO_PASS_OP.get(r["op"], r["op"]),
-                            "value": round(r["threshold"], 4),
+                            "value": float(f"{r['threshold']:.4g}"),
                             "composite": r["score"],
                             "rationale": ", ".join(rationale_parts),
                         }
@@ -3631,7 +3633,7 @@ def _meta_algorithm_prefilter(
                 {
                     "feature": r["feature"],
                     "operator": r["op"],
-                    "threshold": round(r["threshold"], 4),
+                    "threshold": float(f"{r['threshold']:.4g}"),
                     "ks_statistic": round(r["ks_statistic"], 4),
                     "ks_pvalue": float(f"{r['ks_pvalue']:.2e}"),
                     "return_uplift": round(r["return_uplift"], 4),
