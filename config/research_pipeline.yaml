@@ -87,24 +87,49 @@ strategies:
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: true
+    has_direction: false   # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.10          # P90 为上限, 防止 prefilter 过严导致 gate 训练样本不足
-        min_rows: 500
+        min_pass_rate: 0.20
+        min_rows: 200
+        scoring_method: bad_rate_lift
+        min_ks_statistic: 0.02
+        max_ks_pvalue: 0.10
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.20  # gate AND 累积 pass rate 下限 (ME gate 规则弱, 放宽至 20%)
+        min_combined_pass_rate: 0.20
       backtest:
         min_trades: 50
       deploy:
-        min_trades: 50               # 1H 策略频率高, 保留 50 笔要求
-    # ME 专属 SHAP 宽松参数:
-    # 订单流特征 (vpin/shd) 在某些时段强、某些时段弱，0.75 会被裁掉
-    # 降到 0.50 保留更多 gate 候选 → 恢复 gate 多样性
+        min_trades: 50
     shap_override:
-      stability_threshold: 0.50      # 全局 0.75 → ME 0.50
-      top_k: 25                      # 全局 20 → ME 25
+      stability_threshold: 0.50
+      top_k: 25
+
+  me-short:
+    config: config/strategies/me-short
+    timeframe: "60T"
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: false   # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.20
+        min_rows: 200
+        scoring_method: bad_rate_lift
+        min_ks_statistic: 0.02
+        max_ks_pvalue: 0.10
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.20
+      backtest:
+        min_trades: 50
+      deploy:
+        min_trades: 50
+    shap_override:
+      stability_threshold: 0.50
+      top_k: 25
 
   lv:
     config: config/strategies/lv

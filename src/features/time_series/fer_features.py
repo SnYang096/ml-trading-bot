@@ -220,6 +220,13 @@ def compute_fer_failure_signals_from_series(
         np.where(flip_to_negative, -1.0, np.where(flip_to_positive, 1.0, 0.0)),
         index=idx,
     )
+    # efficiency flip 转化为连续衰减信号 [0,1]：
+    # 发生 flip 事件时=1，此后指数衰减 (EWM span=smooth_w)
+    # 语义: 最近是否发生过效率翻转 (direction-agnostic, prefilter 准确语义)
+    _flip_event = pd.Series(np.abs(fer_efficiency_flip.values), index=idx).astype(float)
+    fer_efficiency_flip = (
+        _flip_event.ewm(span=smooth_w * 3, adjust=False).mean().clip(0.0, 1.0)
+    )
     # 翻转强度 = |前值 - 后值| 的大小，衡量翻转的剧烈程度
     flip_magnitude = (eff_smooth_prev - eff_smooth).abs()
     # 归一化为百分位
@@ -255,15 +262,31 @@ def compute_fer_failure_signals_from_series(
         ),
         0.0,
     )
-    fer_aggressor_absorption = pd.Series(
+    fer_aggressor_absorption_raw = pd.Series(
         np.maximum(long_absorb, short_absorb), index=idx
     )
 
-    # 连续吸收 bar 数
-    is_absorbing = (fer_aggressor_absorption > 0).astype(float)
-    not_absorbing = ~(fer_aggressor_absorption > 0)
+    # 连续吸收 bar 数：必须从原始市价中判断（归一化后几乎所有值>0，会导致streak永不重置）
+    is_absorbing = (fer_aggressor_absorption_raw > 0).astype(float)
+    not_absorbing = ~(fer_aggressor_absorption_raw > 0)
     groups = not_absorbing.cumsum()
     fer_absorption_streak = is_absorbing.groupby(groups).cumsum()
+    # 归一化到 [0,1]：rolling percentile，避免原始 count 跨 symbol 不可比
+    fer_absorption_streak = (
+        fer_absorption_streak.rolling(
+            absorption_window * 10, min_periods=absorption_window
+        )
+        .rank(pct=True)
+        .fillna(0.0)
+    )
+    # fer_aggressor_absorption 归一化到 [0,1]：rolling percentile，跨 symbol 可比
+    fer_aggressor_absorption = (
+        fer_aggressor_absorption_raw.rolling(
+            absorption_window * 10, min_periods=absorption_window
+        )
+        .rank(pct=True)
+        .fillna(0.0)
+    )
 
     # ================================================================
     # 4️⃣ Trapped (带 CVD 方向 — 升级核心)
@@ -314,6 +337,8 @@ def compute_fer_failure_signals_from_series(
         ),
         index=idx,
     )
+    # 归一化到 [0,1]：原始 clip [0,5]，除以 5 得到 bounded 连续值
+    fer_trapped_longs_score = (fer_trapped_longs_score / 5.0).clip(0.0, 1.0)
 
     # 空头 trapped:
     #   bounce > 0 (价格从低位反弹)
@@ -327,6 +352,8 @@ def compute_fer_failure_signals_from_series(
         ),
         index=idx,
     )
+    # 归一化到 [0,1]：原始 clip [0,5]，除以 5 得到 bounded 连续值
+    fer_trapped_shorts_score = (fer_trapped_shorts_score / 5.0).clip(0.0, 1.0)
 
     # ================================================================
     # 5️⃣ Impulse 失败得分
@@ -377,6 +404,17 @@ def compute_fer_failure_signals_from_series(
             ),
         ),
         index=idx,
+    )
+    # impulse 失败方向转化为连续衰减信号 [0,1]：
+    # 发生失败事件时=1，此后指数衰减 (EWM span=failure_window)
+    # 语义: 最近是否发生过 impulse 失败 (与方向无关，预滤 direction-agnostic)
+    _impulse_failure_event = pd.Series(
+        np.abs(fer_impulse_failure_direction.values), index=idx
+    ).astype(float)
+    fer_impulse_failure_direction = (
+        _impulse_failure_event.ewm(span=failure_window, adjust=False)
+        .mean()
+        .clip(0.0, 1.0)
     )
 
     # ================================================================

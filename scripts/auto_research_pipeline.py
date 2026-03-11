@@ -816,6 +816,8 @@ def run_strategy_pipeline(
                 "--meta-algorithm",
                 "--features-prefilter",
                 str(_features_prefilter_path),
+                "--config",
+                str(config_dir),
                 "--promote",
             ]
 
@@ -829,6 +831,27 @@ def run_strategy_pipeline(
                 prefilter_cmd += [
                     "--min-prefilter-rows",
                     str(prefilter_gates["min_rows"]),
+                ]
+            # Per-strategy KPI 覆盖: scoring_method / min_ks / max_ks_pvalue / min_lift
+            if prefilter_gates.get("scoring_method"):
+                prefilter_cmd += [
+                    "--prefilter-scoring-method",
+                    str(prefilter_gates["scoring_method"]),
+                ]
+            if prefilter_gates.get("min_ks_statistic") is not None:
+                prefilter_cmd += [
+                    "--prefilter-min-ks",
+                    str(prefilter_gates["min_ks_statistic"]),
+                ]
+            if prefilter_gates.get("max_ks_pvalue") is not None:
+                prefilter_cmd += [
+                    "--prefilter-max-ks-pvalue",
+                    str(prefilter_gates["max_ks_pvalue"]),
+                ]
+            if prefilter_gates.get("min_lift") is not None:
+                prefilter_cmd += [
+                    "--prefilter-min-lift",
+                    str(prefilter_gates["min_lift"]),
                 ]
             run_step(
                 "Prefilter Analyze",

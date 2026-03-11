@@ -1,0 +1,9 @@
+# ME-Short Archetype Prefilter (待训练)
+# 职责: archetype 成立的前置条件 — 向下 ME 的背景条件
+# 使用全量数据训练，目标: rr_short > +0.8R（做空正向信号）
+
+# ⚠️  待 Meta-Algorithm 训练后填入
+# rules:
+#   - feature: xxx
+#     operator: ">="
+#     value: 0.0

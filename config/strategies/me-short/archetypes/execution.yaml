@@ -1,0 +1,36 @@
+execution_constraints:
+  allow_add_on: true
+  min_order_interval_minutes: 15
+holding:
+  max_holding_bars: null
+  time_stop_bars: 0
+optimization:
+  enabled: true
+  constraints:
+    max_sl_activation_ratio: 3.0   # initial_r / activation_r 上限
+    min_win_r: 0.0                 # activation_r - trail_r 下限
+  params:
+    stop_loss.initial_r:
+      range:
+      - 1.0
+      - 4.0
+      step: 0.5
+    stop_loss.trailing.activation_r:
+      range:
+      - 0.5
+      - 5.0
+      step: 0.5
+    stop_loss.trailing.trail_r:
+      range:
+      - 0.5
+      - 3.0
+      step: 0.5
+stop_loss:
+  initial_r: 2.0
+  trailing:
+    activation_r: 2.0
+    trail_r: 2.0
+  type: trailing
+take_profit:
+  enabled: false
+version: 1

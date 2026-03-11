@@ -2753,9 +2753,9 @@ def train_strategy(
                 return op_func(df[feat], val), True
 
             for rule in pf_rules:
-                # ── any_of OR 组: 任一子规则的 deny 条件不成立即通过 ──
-                # 语义: prefilter.yaml operator = DENY 方向 (分析脚本的 deny_mask)
-                #        any_of = "至少一条不 deny" = OR of (NOT deny_i)
+                # ── any_of OR 组: 任一子规则的 PASS 条件成立即通过 ──
+                # 语义: prefilter.yaml operator = PASS 方向 (正向选择数据)
+                #        any_of = "至少一条 pass" = OR of pass_i
                 if "any_of" in rule:
                     sub_rules = rule["any_of"]
                     rationale = rule.get("rationale", "")
@@ -2767,16 +2767,16 @@ def train_strategy(
                     sub_descs = []
                     for sub in sub_rules:
                         sf, sop, sv = sub["feature"], sub["operator"], sub["value"]
-                        deny_tr, ok_tr = _apply_single_rule(
+                        pass_tr, ok_tr = _apply_single_rule(
                             df_train_filtered, sf, sop, sv, _OPS
                         )
-                        deny_te, ok_te = _apply_single_rule(
+                        pass_te, ok_te = _apply_single_rule(
                             df_test_filtered, sf, sop, sv, _OPS
                         )
-                        if ok_tr and deny_tr is not None:
-                            or_pass_train |= ~deny_tr  # NOT deny = pass
-                        if ok_te and deny_te is not None:
-                            or_pass_test |= ~deny_te
+                        if ok_tr and pass_tr is not None:
+                            or_pass_train |= pass_tr  # PASS 条件直接 OR
+                        if ok_te and pass_te is not None:
+                            or_pass_test |= pass_te
                         sub_descs.append(f"{sf}{sop}{sv}")
 
                     df_train_filtered = df_train_filtered[or_pass_train].copy()
@@ -2792,9 +2792,9 @@ def train_strategy(
                     )
                     continue
 
-                # ── 普通 AND 规则: deny 条件不成立才保留 ──
-                # 语义: prefilter.yaml operator = DENY 方向
-                #        keep = NOT op_func(feat, val)
+                # ── 普通 AND 规则: PASS 条件成立才保留 ──
+                # 语义: prefilter.yaml operator = PASS 方向 (正向选择数据)
+                #        keep = op_func(feat, val)
                 feat = rule["feature"]
                 op_str = rule["operator"]
                 val = rule["value"]
@@ -2809,10 +2809,10 @@ def train_strategy(
                 n_before_train = len(df_train_filtered)
                 n_before_test = len(df_test_filtered)
                 df_train_filtered = df_train_filtered[
-                    ~op_func(df_train_filtered[feat], val)
+                    op_func(df_train_filtered[feat], val)
                 ].copy()
                 df_test_filtered = df_test_filtered[
-                    ~op_func(df_test_filtered[feat], val)
+                    op_func(df_test_filtered[feat], val)
                 ].copy()
                 rationale = rule.get("rationale", "")
                 print(

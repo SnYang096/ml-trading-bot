@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260311_141702_rr_extreme/me
+# 来源: results/train_final_20260312_000352_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -16,57 +16,26 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_atr_percentile
-  tag: HARD_ATR_PERCENTILE
+- id: gate_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.05)
+  reason: 统计验证规则 (lift=1.17)
   when:
-    atr_percentile:
-      value_lt: 0.3222
+    evt_var_99_right:
+      value_lt: 0.0595
   then:
     action: deny
-  comment: 'statistical(lift=1.05): atr_percentile < 0.3222'
-- id: gate_funding_rate_abs_zscore_50_funding_rate_abs_zscore_50
-  tag: HARD_FUNDING_RATE_ABS_ZSCORE_50_FUNDING_RATE_ABS_ZSCORE_50
+  comment: 'statistical(lift=1.17): evt_var_99_right < 0.05952'
+- id: gate_recent_compression_decay
+  tag: HARD_RECENT_COMPRESSION_DECAY
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.12)
+  reason: 统计验证规则 (lift=1.18)
   when:
-    all_of:
-    - funding_rate_abs_zscore_50:
-        value_gt: -0.6745
-    - funding_rate_abs_zscore_50:
-        value_lt: -0.3007
+    recent_compression_decay:
+      value_gt: 0.7232
   then:
     action: deny
-  comment: 'statistical(lift=1.12): funding_rate_abs_zscore_50 > -0.6745 & funding_rate_abs_zscore_50 < -0.3007'
-- id: gate_shd_pct_shd_pct
-  tag: HARD_SHD_PCT_SHD_PCT
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.06)
-  when:
-    all_of:
-    - shd_pct:
-        value_gt: 0.7106
-    - shd_pct:
-        value_lt: 0.8015
-  then:
-    action: deny
-  comment: 'statistical(lift=1.06): shd_pct > 0.7106 & shd_pct < 0.8015'
-- id: gate_vp_entropy_me_cvd_alignment
-  tag: HARD_VP_ENTROPY_ME_CVD_ALIGNMENT
-  phase: hard_gate
-  priority: 13
-  reason: 统计验证规则 (lift=1.09)
-  when:
-    all_of:
-    - vp_entropy:
-        value_gt: 0.9557
-    - me_cvd_alignment:
-        value_lt: 1.0
-  then:
-    action: deny
-  comment: 'statistical(lift=1.09): vp_entropy > 0.9557 & me_cvd_alignment < 1'
+  comment: 'statistical(lift=1.18): recent_compression_decay > 0.7232'
 guardrails: []

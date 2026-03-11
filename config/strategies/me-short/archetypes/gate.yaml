@@ -1,6 +1,6 @@
-# ME Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me/20260312_000252/strategies/me/gate_draft.yaml
-# 优化规则: 0/2 条通过优化, 2 条已移除
+# ME-Short Gate (待训练)
+# 训练目标: failure_rr_extreme（做空踩大坑）= forward_rr_short < -0.8R
+# 使用全量数据训练，不依赖 prefilter 子集
 
 schema:
   phases:

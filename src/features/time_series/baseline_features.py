@@ -4182,6 +4182,72 @@ def compute_compression_duration_from_series(
     return out
 
 
+@register_feature("compute_recent_compression_decay_from_series", category="baseline")
+def compute_recent_compression_decay_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    percentile_window: int = 540,
+    compression_threshold_pct: float = 0.2,
+    decay_rate: float = 0.97,
+) -> pd.Series:
+    """
+    压缩衰减记忆特征 (ME Prefilter 核心)
+
+    语义: "最近是否经历过压缩？"  ——  ME 需要先蓄势(压缩)再扩张。
+
+    - 压缩期间(ATR percentile <= threshold): 记录压缩强度(越深越高)
+    - 压缩结束后(ATR 扩张): 按 decay_rate 指数衰减
+    - 输出 [0, 1]: 越高 = 最近越有过深度压缩
+
+    与 atr_percentile 配合使用:
+      atr_percentile > 0.7  AND  recent_compression_decay > 0.3
+      = "当前正在扩张 + 最近刚从压缩出来"
+
+    默认 decay_rate=0.97, 半衰期 ~23 bars (60T 约1天)。
+    """
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+
+    # 复用 compression_duration 的 ATR percentile 计算
+    atr = compute_atr(high, low, close, period=14)
+
+    def _rolling_percentile(series: pd.Series, window: int) -> pd.Series:
+        def _rank(x: np.ndarray) -> float:
+            if len(x) <= 1 or not np.isfinite(x[-1]):
+                return np.nan
+            last = x[-1]
+            arr = x[np.isfinite(x)]
+            if len(arr) == 0:
+                return np.nan
+            return (arr <= last).sum() / float(len(arr))
+
+        return series.rolling(window=window, min_periods=1).apply(_rank, raw=True)
+
+    atr_pct = _rolling_percentile(atr, window=percentile_window).fillna(0.5).values
+    threshold = float(compression_threshold_pct)
+    _decay = float(decay_rate)
+    n = len(atr_pct)
+
+    # 压缩强度: threshold 以下越深, 强度越高 [0, 1]
+    compression_signal = np.maximum(0.0, (threshold - atr_pct) / threshold)
+
+    # 指数衰减记忆: 压缩期间跟踪峰值, 扩张后衰减
+    memory = np.zeros(n, dtype=float)
+    for i in range(n):
+        prev = memory[i - 1] * _decay if i > 0 else 0.0
+        memory[i] = max(compression_signal[i], prev)
+
+    out = pd.Series(
+        np.clip(memory, 0.0, 1.0),
+        index=close.index,
+        name="recent_compression_decay",
+    )
+    return out
+
+
 @register_feature("compute_compression_energy_from_series", category="baseline")
 def compute_compression_energy_from_series(
     *, wpt_energy_cascade: pd.Series, bb_width_ratio: pd.Series

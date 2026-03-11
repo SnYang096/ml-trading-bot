@@ -30,15 +30,22 @@ description: |
 
 feature_pipeline:
   requested_features:
-    # ========== ME 前期压缩历史 (Prefilter 核心) ==========
-    # Prefilter 回答: 这个 bar 进场前是否经历了压缩蛞炴?
-    # 语义: 压缩期 ATR/BB/成交量是否收缩过
-    - bpc_compression_state_f    # 输出: bpc_pre_breakout_score, bpc_vol_compression_state,
-                                 #          bpc_bb_compression_state, bpc_garch_compression
+    # ========== ATR 波动率百分位 (Prefilter 核心) ==========
+    # 语义: 当前 ATR 处于历史百分位, 判断扩张/压缩 regime
+    # atr_percentile: 0=极度压缩, 1=极度扩张
+    - atr_percentile_f
 
-    # ========== ME 压缩持续时长 (Prefilter 核心) ==========
+    # ========== ME 压缩衰减记忆 (Prefilter 核心) ==========
+    # 语义: 最近是否经历过压缩? 压缩结束后指数衰减
+    # ME 需要先蓄势(压缩)再扩张, 此特征捕捉"刚从压缩出来"的状态
+    # 与 atr_percentile 配合: atr_pct > 0.7 AND recent_compression_decay > 0.3
+    #   = "当前正在扩张 + 最近刚从压缩出来"
+    # decay_rate=0.97, 半衰期 ~23 bars (60T 约1天)
+    - recent_compression_decay_f # 输出: recent_compression_decay [0,1]
+
+    # ========== ME 压缩持续时长 ==========
     # 语义: 入场前 ATR percentile 连续低于阈值的 bars 数 (归一化 [0,1])
-    # compression_duration 越高 = 压缩持续越久 = ME 蓄势越充分
+    # compression_duration 越高 = 当前正在压缩中 (与 recent_compression_decay 互补)
     - compression_duration_f     # 输出: compression_duration (ATR pct < 20% 的连续bars数/540)
 
     # ========== ME 当前能量状态 (Energy) ==========

@@ -535,6 +535,30 @@ features:
       high: high
       low: low
       close: close
+  recent_compression_decay_f:
+    module: baseline
+    compute_func: compute_recent_compression_decay_from_series
+    dependencies: []
+    required_columns:
+    - high
+    - low
+    - close
+    output_columns:
+    - recent_compression_decay
+    category: compression
+    description: "\u538B\u7F29\u8870\u51CF\u8BB0\u5FC6: \u6700\u8FD1\u662F\u5426\u7ECF\u5386\u8FC7\u538B\u7F29(\u6307\u6570\u8870\u51CF), ME prefilter \u6838\u5FC3\u7279\u5F81"
+    pass_full_df: false
+    compute_params:
+      percentile_window: 540
+      compression_threshold_pct: 0.2
+      decay_rate: 0.97
+      normalized: true
+      output_normalization_map:
+        recent_compression_decay: bounded_0_1
+    column_mappings:
+      high: high
+      low: low
+      close: close
   compression_energy_f:
     module: enhanced
     compute_func: compute_compression_energy_from_series
@@ -4366,24 +4390,7 @@ features:
     pass_full_df: false
     column_mappings:
       close: close
-    notes: "EVT 用于尾部风险预警和风险管理（聚焦左尾暴跌风险）：\n\n核心特征（左尾 - 暴跌风险）：\n- evt_tail_shape / evt_tail_shape_left\
-      \ (ξ): 左尾形状参数，反映极端事件概率分布\n  * ξ > 0: 重尾分布（金融数据通常如此）\n  * ξ > 0.3: 极高尾部风险（黑天鹅风险高）\n\
-      \  * 0.1 < ξ ≤ 0.3: 典型金融重尾（常见范围，金融收益率通常在此区间）\n  * ξ ≤ 0.1: 相对较轻尾部\n  * ξ > 0.5:\
-      \ 方差无限（极端罕见，理论极限）\n- evt_scale / evt_scale_left (σ): 左尾尺度参数\n- evt_var_99 /\
-      \ evt_var_99_left: 99% VaR估计（负值，表示预期最大损失）\n- evt_es_99 / evt_es_99_left: 99%\
-      \ Expected Shortfall估计（负值，表示超过VaR的平均损失）\n\n可选特征（右尾 - 泡沫风险，仅当separate_tails=true时）：\n\
-      - evt_tail_shape_right: 右尾形状参数\n- evt_scale_right: 右尾尺度参数\n- evt_var_99_right:\
-      \ 右尾99% VaR（正值，表示预期最大涨幅）
-- evt_es_99_right: 右尾99% ES（正值）
 
-改进说明：
-- 聚焦左尾风险：VaR/ES基于左尾GPD拟合，正确反映暴跌风险
-\
-      - 修正公式：使用标准EVT公式计算VaR/ES，正确处理ξ的不同情况\n- 阈值调整：threshold_quantile=0.1（10%分位数）用于左尾，更准确捕捉极端事件\n\
-      \n应用场景：\n- 控制离场：当 ξ_left > 0.3 或突增时，提前离场避免黑天鹅\n- 不加仓：当尾部风险高时（ξ_left > 0.3 或\
-      \ evt_var_99_left 更负），避免加仓\n- 风险管理：使用 evt_var_99_left 和 evt_es_99_left 进行仓位控制\n\
-      - 不用于波动率预测：EVT特征描述极端事件概率，而非波动率水平\n\n注意：金融收益率 ξ 通常在 0.1~0.3 之间，ξ > 0.3 表示极高尾部风险\n\
-      \n需要 scipy 包（通常已安装）\n"
   liquidity_void_x_wpt_risk_f:
     module: enhanced
     compute_func: compute_liquidity_void_x_wpt_risk_from_series
@@ -7598,14 +7605,14 @@ features:
       output_normalization_map:
         fer_signed_efficiency: signed_ratio
         fer_signed_efficiency_pct: bounded_0_1
-        fer_efficiency_flip: discrete
+        fer_efficiency_flip: bounded_0_1           # EWM decay of flip event [0,1]
         fer_efficiency_flip_strength: bounded_0_1
-        fer_aggressor_absorption: ratio
-        fer_absorption_streak: count
-        fer_trapped_longs_score: ratio
-        fer_trapped_shorts_score: ratio
+        fer_aggressor_absorption: bounded_0_1      # rolling percentile rank
+        fer_absorption_streak: bounded_0_1         # rolling percentile rank
+        fer_trapped_longs_score: bounded_0_1       # /5.0 normalized
+        fer_trapped_shorts_score: bounded_0_1      # /5.0 normalized
         fer_impulse_failure_score: bounded_0_1
-        fer_impulse_failure_direction: discrete
+        fer_impulse_failure_direction: bounded_0_1 # EWM decay of failure event [0,1]
         fer_momentum_efficiency_decay: bounded_0_1
         fer_volume_price_divergence: bounded_0_1
     column_mappings:

@@ -1458,17 +1458,10 @@ def _promote_gate_to_archetypes(
         )
         kept_rules.append(rule)
 
-    # ── 注入 prefilter 条件为 frozen hard_gates (训练-推理一致性) ──
-    prefilter_path = arch_dir / "prefilter.yaml"
-    prefilter_gates = _load_prefilter_as_frozen_gates(prefilter_path)
-    if prefilter_gates:
-        print(
-            f"\n  \U0001f512 注入 {len(prefilter_gates)} 条 prefilter 为 frozen hard_gates"
-        )
-        for pg in prefilter_gates:
-            print(f"     - {pg['id']}: {pg['reason']}")
+    # ── prefilter 不再注入 gate (prefilter 和 gate 职责分离) ──
+    # prefilter 只在训练时正向过滤数据, 不 promote 到 gate.yaml
+    prefilter_gates = []  # 空列表, 不注入
 
-    # 合并: prefilter (frozen) + optimized gates
     # 去重: 同 id 只保留第一条 (防止 gate_draft 中同一特征多次分裂导致重复)
     _seen_ids: set = set()
     deduped_rules: list = []

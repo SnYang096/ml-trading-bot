@@ -217,7 +217,14 @@ class TestFERFunctionalCorrectness:
         result = compute_fer_failure_signals_from_series(**data)
         bounded_cols = [
             "fer_signed_efficiency_pct",
+            "fer_efficiency_flip",  # v2.1+ EWM decay [0,1]
+            "fer_efficiency_flip_strength",
+            "fer_aggressor_absorption",  # v2.1+ rolling percentile [0,1]
+            "fer_absorption_streak",  # v2.1+ rolling percentile [0,1]
+            "fer_trapped_longs_score",  # v2.1+ /5.0 [0,1]
+            "fer_trapped_shorts_score",  # v2.1+ /5.0 [0,1]
             "fer_impulse_failure_score",
+            "fer_impulse_failure_direction",  # v2.1+ EWM decay [0,1]
             "fer_momentum_efficiency_decay",
             "fer_volume_price_divergence",
         ]
@@ -228,22 +235,26 @@ class TestFERFunctionalCorrectness:
             assert valid.min() >= -1e-9, f"{col} 下界越界: {valid.min()}"
             assert valid.max() <= 1.0 + 1e-9, f"{col} 上界越界: {valid.max()}"
 
-    def test_efficiency_flip_discrete(self, data):
-        """efficiency_flip 只有 -1, 0, 1"""
+    def test_efficiency_flip_continuous(self, data):
+        """efficiency_flip v2.1+: EWM衰减信号 [0,1]，不再是 {-1,0,1}"""
         result = compute_fer_failure_signals_from_series(**data)
         valid = result["fer_efficiency_flip"].dropna()
-        assert set(valid.unique()).issubset(
-            {-1.0, 0.0, 1.0}
-        ), f"fer_efficiency_flip 应为 {{-1,0,1}}, 实际: {sorted(valid.unique())}"
+        assert valid.min() >= -1e-9, f"下界: {valid.min()}"
+        assert valid.max() <= 1.0 + 1e-9, f"上界: {valid.max()}"
+        # 应为连续值（不是只有 3 个离散点）
+        assert (
+            valid.nunique() > 3
+        ), f"fer_efficiency_flip 应为连续衰减信号, unique={valid.nunique()}"
 
-    def test_impulse_failure_direction_discrete(self, data):
-        """impulse_failure_direction 只有 -1, 0, 1"""
+    def test_impulse_failure_direction_continuous(self, data):
+        """impulse_failure_direction v2.1+: EWM衰减信号 [0,1]，不再是 {-1,0,1}"""
         result = compute_fer_failure_signals_from_series(**data)
         valid = result["fer_impulse_failure_direction"].dropna()
-        assert set(valid.unique()).issubset({-1.0, 0.0, 1.0}), (
-            f"fer_impulse_failure_direction 应为 {{-1,0,1}}, "
-            f"实际: {sorted(valid.unique())}"
-        )
+        assert valid.min() >= -1e-9, f"下界: {valid.min()}"
+        assert valid.max() <= 1.0 + 1e-9, f"上界: {valid.max()}"
+        assert (
+            valid.nunique() > 3
+        ), f"fer_impulse_failure_direction 应为连续衰减信号, unique={valid.nunique()}"
 
     def test_trapped_scores_non_negative(self, data):
         """trapped scores ≥ 0"""
@@ -432,8 +443,8 @@ class TestFERDirectionSemantics:
 
     def test_impulse_failure_direction_semantics(self):
         """
-        CVD↑ + price↓ → direction=-1 (多头失败→做空)
-        CVD↓ + price↑ → direction=+1 (空头失败→做多)
+        CVD↑ + price↓ 场景应让 impulse_failure_direction > 0
+        (v2.1+: 诅发后连续衰减到 0, 不再是立即返回 -1)
         """
         n = 200
         dates = pd.date_range("2024-01-01", periods=n, freq="4h")
@@ -462,10 +473,13 @@ class TestFERDirectionSemantics:
             cvd_change_5=cvd_change_5,
         )
 
-        # 应有 direction=-1 (多头失败) 出现
+        # v2.1+: 不再是判断 direction==-1，而是判断设计的失败活动后信号应>0
         dir_vals = result["fer_impulse_failure_direction"].dropna()
-        neg_count = (dir_vals == -1).sum()
-        assert neg_count > 0, "CVD↑ + price↓ 场景应检测到多头失败 (direction=-1)"
+        # 应有显著高于 0 的资押衰减事件
+        positive_count = (dir_vals > 0.01).sum()
+        assert (
+            positive_count > 0
+        ), "CVD↑ + price↓ 场景应产生 impulse_failure_direction > 0"
 
     def test_efficiency_flip_semantics(self):
         """构造效率翻转场景并检查 flip 触发"""
@@ -501,6 +515,320 @@ class TestFERDirectionSemantics:
         flips = result["fer_efficiency_flip"].dropna()
         flip_events = flips[flips != 0]
         assert len(flip_events) > 0, "效率翻转场景应检测到 flip 事件"
+
+
+# =============================================================================
+# 6️⃣ 归一化修复专项测试 (v2.1+ normalization fix)
+# =============================================================================
+
+
+class TestFERNormalizationFix:
+    """
+    针对 v2.1 得修复的标准化验证：
+    - 4 个 ratio/count 列 → rolling percentile [0,1]
+    - 2 个 discrete 方向列 → EWM 衰减 [0,1]
+    - 跨 symbol 可比性：价格量级不影响归一化结果
+    """
+
+    # 本次修复的 6 个目标列
+    FIXED_COLS = [
+        "fer_aggressor_absorption",
+        "fer_absorption_streak",
+        "fer_trapped_longs_score",
+        "fer_trapped_shorts_score",
+        "fer_efficiency_flip",
+        "fer_impulse_failure_direction",
+    ]
+
+    def _compute(self, seed=42, n=500, price_scale=1.0):
+        """Helper: 生成测试数据并计算特征"""
+        rng = np.random.RandomState(seed)
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+        close = pd.Series(
+            price_scale * (50000 + np.cumsum(rng.randn(n) * 100)), index=dates
+        )
+        high = close + price_scale * rng.uniform(50, 200, n)
+        low = close - price_scale * rng.uniform(50, 200, n)
+        volume = pd.Series(rng.uniform(100, 5000, n), index=dates)
+        atr = pd.Series(price_scale * rng.uniform(100, 500, n), index=dates)
+        cvd = pd.Series(np.cumsum(rng.randn(n) * 500), index=dates)
+        cvd_change_5 = cvd.diff(5)
+        return compute_fer_failure_signals_from_series(
+            close=close,
+            high=high,
+            low=low,
+            volume=volume,
+            atr=atr,
+            cvd=cvd,
+            cvd_change_5=cvd_change_5,
+        )
+
+    # ------------------------------------------------------------------
+    # 一、归一化范围测试
+    # ------------------------------------------------------------------
+
+    def test_all_fixed_cols_bounded_0_1(self):
+        """修复的 6 列均在 [0,1] 范围内"""
+        result = self._compute(seed=10)
+        for col in self.FIXED_COLS:
+            s = result[col].fillna(0.0)
+            assert s.min() >= -1e-9, f"{col} min={s.min():.6f} < 0"
+            assert s.max() <= 1.0 + 1e-9, f"{col} max={s.max():.6f} > 1"
+
+    def test_all_fixed_cols_continuous(self):
+        """修复的 6 列应为连续分布（不是只有 2-3 个离散点）"""
+        result = self._compute(seed=20)
+        for col in self.FIXED_COLS:
+            n_unique = result[col].fillna(0.0).nunique()
+            assert n_unique > 3, f"{col} unique数={n_unique}，期望连续分布"
+
+    # ------------------------------------------------------------------
+    # 二、跨 symbol 可比性：价格量级差异应不影响归一化值域
+    # ------------------------------------------------------------------
+
+    def test_cross_symbol_btc_price_scale(self):
+        """BTC 级别价格 (60000+)：修复列仍在 [0,1]"""
+        result = self._compute(seed=30, price_scale=1.2)  # ~60000
+        for col in self.FIXED_COLS:
+            s = result[col].fillna(0.0)
+            assert (
+                s.min() >= -1e-9 and s.max() <= 1.0 + 1e-9
+            ), f"BTC scale: {col} out of [0,1]: [{s.min():.4f}, {s.max():.4f}]"
+
+    def test_cross_symbol_small_cap_price_scale(self):
+        """小市値币级别 (0.0001+)：修复列仍在 [0,1]"""
+        result = self._compute(seed=40, price_scale=0.000002)  # ~0.0001
+        for col in self.FIXED_COLS:
+            s = result[col].fillna(0.0)
+            assert (
+                s.min() >= -1e-9 and s.max() <= 1.0 + 1e-9
+            ), f"SmallCap scale: {col} out of [0,1]: [{s.min():.4f}, {s.max():.4f}]"
+
+    # ------------------------------------------------------------------
+    # 三、语义功能正确性：吸收信号近似正相关
+    # ------------------------------------------------------------------
+
+    def test_aggressor_absorption_high_during_absorption(self):
+        """持续吸收期间 absorption_streak 应高于随机期 (同一数据集内比较).
+
+        fer_aggressor_absorption 使用 rolling percentile rank，在全局排名中
+        对单调 CVD 场景未必产生高值（因强度恒定）。
+        fer_absorption_streak 对"持续吸收"更敏感：连续满足条件的 bars 累积后
+        percentile 更高，因此用它验证语义。
+        """
+        rng = np.random.RandomState(99)
+        n = 600
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+
+        # 前 300 bars: 正常随机走势 (CVD 和 price 正相关)
+        # 后 300 bars: CVD↑ + price↓ (持续吸收期)
+        close_arr = np.concatenate(
+            [
+                50000 + np.cumsum(rng.randn(300) * 100),  # 随机
+                np.linspace(52000, 48000, 300),  # 下跌
+            ]
+        )
+        cvd_arr = np.concatenate(
+            [
+                np.cumsum(rng.randn(300) * 300),  # 随机
+                np.linspace(5000, 20000, 300),  # 持续上升 (CVD↑ + price↓ = 吸收)
+            ]
+        )
+        close = pd.Series(close_arr, index=dates)
+        cvd = pd.Series(cvd_arr, index=dates)
+        high = close + 100
+        low = close - 100
+        vol = pd.Series(rng.uniform(100, 5000, n), index=dates)
+        atr = pd.Series(200.0, index=dates)
+
+        result = compute_fer_failure_signals_from_series(
+            close=close,
+            high=high,
+            low=low,
+            volume=vol,
+            atr=atr,
+            cvd=cvd,
+            cvd_change_5=cvd.diff(5),
+        )
+
+        # fer_absorption_streak 在持续吸收期间应高于随机期
+        # (随机期 CVD 方向随机，吸收 bars 不连续 → streak 低)
+        normal_streak = result["fer_absorption_streak"].iloc[50:300].mean()
+        absorb_streak = result["fer_absorption_streak"].iloc[350:600].mean()
+        assert (
+            absorb_streak > normal_streak
+        ), f"持续吸收期 streak 应更高: absorb={absorb_streak:.3f} vs normal={normal_streak:.3f}"
+
+        # absorption 本身在吸收期间应有非零值（持续检测到吸收）
+        absorb_nonzero = (result["fer_aggressor_absorption"].iloc[350:600] > 0).mean()
+        assert (
+            absorb_nonzero > 0.5
+        ), f"吸收期应有超过 50% 的 bars 有非零 absorption，实际: {absorb_nonzero:.2f}"
+
+    def test_trapped_longs_during_drawdown(self):
+        """价格高位回撤 + CVD高 → trapped_longs > 0"""
+        rng = np.random.RandomState(55)
+        n = 400
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+
+        # 先涨后跌
+        close = pd.Series(
+            np.concatenate(
+                [np.linspace(50000, 55000, 200), np.linspace(55000, 50000, 200)]
+            ),
+            index=dates,
+        )
+        # CVD 在高点期间强正
+        cvd = pd.Series(
+            np.concatenate(
+                [np.linspace(0, 10000, 200), np.linspace(10000, 12000, 200)]
+            ),
+            index=dates,
+        )
+        high = close + 100
+        low = close - 100
+        vol = pd.Series(rng.uniform(100, 5000, n), index=dates)
+        atr = pd.Series(200.0, index=dates)
+
+        result = compute_fer_failure_signals_from_series(
+            close=close,
+            high=high,
+            low=low,
+            volume=vol,
+            atr=atr,
+            cvd=cvd,
+            cvd_change_5=cvd.diff(5),
+        )
+
+        # 回撤期间 (bar 250+) trapped_longs 应显著高于 0
+        late_trapped = result["fer_trapped_longs_score"].iloc[250:].fillna(0.0)
+        assert (
+            late_trapped.max() > 0.01
+        ), f"高位回撤场景 trapped_longs 应 > 0, max={late_trapped.max():.4f}"
+
+    def test_flip_recency_decay_monotone(self):
+        """翻转事件发生后 efficiency_flip 应单调衰减"""
+        rng = np.random.RandomState(77)
+        n = 500
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+
+        # 前半段: price↑ + CVD↑ (正效率)
+        # 后半段: price↓ + CVD↑ (负效率，触发 flip)
+        close = pd.Series(
+            np.concatenate(
+                [
+                    np.linspace(50000, 55000, 250) + rng.randn(250) * 50,
+                    np.linspace(55000, 48000, 250) + rng.randn(250) * 50,
+                ]
+            ),
+            index=dates,
+        )
+        cvd = pd.Series(np.linspace(0, 20000, n), index=dates)
+        high = close + 100
+        low = close - 100
+        vol = pd.Series(1000.0, index=dates)
+        atr = pd.Series(200.0, index=dates)
+
+        result = compute_fer_failure_signals_from_series(
+            close=close,
+            high=high,
+            low=low,
+            volume=vol,
+            atr=atr,
+            cvd=cvd,
+            cvd_change_5=cvd.diff(5),
+        )
+
+        flip = result["fer_efficiency_flip"].fillna(0.0)
+        # flip 应在 [0,1] 范围内
+        assert flip.min() >= -1e-9 and flip.max() <= 1.0 + 1e-9
+        # 应不全为 0
+        assert flip.max() > 0.001, "efficiency_flip 应在翻转后有非零衰减值"
+
+    # ------------------------------------------------------------------
+    # 四、未来函数检测：修复后仍无未来泄露
+    # ------------------------------------------------------------------
+
+    def test_no_future_leak_fixed_cols(self):
+        """修复的 6 列应无未来函数"""
+        rng = np.random.RandomState(88)
+        n = 500
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+        close = pd.Series(50000 + np.cumsum(rng.randn(n) * 100), index=dates)
+        high = close + rng.uniform(50, 200, n)
+        low = close - rng.uniform(50, 200, n)
+        vol = pd.Series(rng.uniform(100, 5000, n), index=dates)
+        atr = pd.Series(rng.uniform(100, 500, n), index=dates)
+        cvd = pd.Series(np.cumsum(rng.randn(n) * 500), index=dates)
+        cvd5 = cvd.diff(5)
+        data = dict(
+            close=close,
+            high=high,
+            low=low,
+            volume=vol,
+            atr=atr,
+            cvd=cvd,
+            cvd_change_5=cvd5,
+        )
+
+        result1 = compute_fer_failure_signals_from_series(**data)
+
+        # 篹改未来数据
+        data2 = {k: v.copy() for k, v in data.items()}
+        data2["close"].iloc[350:] *= 2.0
+        data2["cvd"].iloc[350:] = 999999.0
+        result2 = compute_fer_failure_signals_from_series(**data2)
+
+        for col in self.FIXED_COLS:
+            v1 = result1[col].iloc[:250].fillna(0.0)
+            v2 = result2[col].iloc[:250].fillna(0.0)
+            diff = (v1 - v2).abs().max()
+            assert diff < 1e-8, f"修复列未来函数检测失败 [{col}]: diff={diff:.2e}"
+
+    # ------------------------------------------------------------------
+    # 五、流式一致性：修复后仍支持流式计算
+    # ------------------------------------------------------------------
+
+    def test_streaming_consistency_fixed_cols(self):
+        """流式计算与全量一致（修复列）
+        正确姿势：全量生成 n=500 数据，截断前 300 行当流式输入。
+        不能用不同 n 调用 _compute （随机数列跟 n 有关，会不一致）
+        """
+        # 生成全量数据
+        rng = np.random.RandomState(60)
+        n = 500
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+        close = pd.Series(50000 + np.cumsum(rng.randn(n) * 100), index=dates)
+        high = close + rng.uniform(50, 200, n)
+        low = close - rng.uniform(50, 200, n)
+        vol = pd.Series(rng.uniform(100, 5000, n), index=dates)
+        atr = pd.Series(rng.uniform(100, 500, n), index=dates)
+        cvd = pd.Series(np.cumsum(rng.randn(n) * 500), index=dates)
+        cvd5 = cvd.diff(5)
+        data_full = dict(
+            close=close,
+            high=high,
+            low=low,
+            volume=vol,
+            atr=atr,
+            cvd=cvd,
+            cvd_change_5=cvd5,
+        )
+        # 截断前 300 行（相同数据，相同随机序列）
+        n_part = 300
+        data_part = {k: v.iloc[:n_part].copy() for k, v in data_full.items()}
+
+        result_full = compute_fer_failure_signals_from_series(**data_full)
+        result_part = compute_fer_failure_signals_from_series(**data_part)
+
+        # rolling percentile 类列有 warmup 期，从 bar 100 开始对比
+        # fer_absorption_streak 对 rolling percentile 的 min_periods 较敏感，从 bar 80 开始
+        for col in self.FIXED_COLS:
+            check_start = 80 if "streak" in col else 50
+            v_full = result_full[col].iloc[check_start:n_part].fillna(0.0)
+            v_part = result_part[col].iloc[check_start:n_part].fillna(0.0)
+            diff = np.abs(v_full.values - v_part.values).max()
+            assert diff < 1e-6, f"流式不一致 [{col}]: max_diff={diff:.2e}"
 
 
 # =============================================================================

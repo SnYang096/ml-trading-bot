@@ -1,10 +1,11 @@
-# ME (MomentumExpansion) 策略特征配置
-# 语义：压缩后波动/区间扩张，放量突破
+# ME-Short (MomentumExpansion Short) 策略特征配置
+# 语义：压缩后波动/区间向下扩张，放量向下突破
 
-name: me
+name: me-short
 description: |
-  MomentumExpansion archetype: 流动性加速 + 波动扩张驱动。
+  MomentumExpansion Short archetype: 向下流动性加速 + 波动扩张驱动。
   核心特征：流动性加速 + 波动扩张 (atr/range/volume)。
+  与 me-long 共用相同特征集，做空视角下负相关特征会被 LightGBM 自动识别。
 
 feature_pipeline:
   exclude_columns:
@@ -40,14 +41,12 @@ feature_pipeline:
     - atr_percentile_f
     - bb_width_normalized_pct_f  # 自包含：内部计算 BB width/ATR 再转百分位
 
-    # ========== ⭐ Volatility Regime (新增) ==========
-    # 识别"踩大坑"的波动率状态
+    # ========== ⭐ Volatility Regime ==========
     - vol_regime_features_f       # vol_zscore, vol_percentile_approx
     - vol_trend_features_f        # vol_slope, vol_accel (波动率趋势)
     - vol_mom_features_f          # vol_mom_5/10/20 (波动率动量)
 
-    # ========== ⭐ Trend Exhaustion (新增) ==========
-    # 识别趋势衰竭/反转信号
+    # ========== ⭐ Trend Exhaustion ==========
     - wick_scene_semantic_scores_f   # wick_exhaustion_score (影线衰竭)
     - wpt_scene_semantic_scores_f    # wpt_exhaustion_score (小波变换衰竭)
     - volume_profile_scene_semantic_scores_f  # vp_exhaustion_score (成交量分布衰竭)
@@ -82,23 +81,22 @@ feature_pipeline:
     - footprint_basic_f
 
     # ========== 资金费率 (期货独有情绪/拥挤度) ==========
-    - funding_rate_features_f              # funding_rate, funding_rate_zscore_50 等
-    - funding_scene_semantic_scores_f      # 资金费率场景语义 (compression/ignition/absorption/exhaustion)
+    - funding_rate_features_f
+    - funding_scene_semantic_scores_f
 
     # ========== OI (期货持仓量) ==========
-    - oi_features_f                        # oi_usd, oi_change_pct, oi_zscore, oi_delta_price_sign
-    - oi_scene_semantic_scores_f           # OI 场景语义 (compression/ignition/absorption/exhaustion)
+    - oi_features_f
+    - oi_scene_semantic_scores_f
 
     # ========== GARCH 波动率建模 ==========
-    # - garch_features_f                     # garch_volatility, garch_persistence, garch_leverage_gamma
-    - volatility_regime_f                    # vol_persistence(≈α+β), vol_leverage_asymmetry(≈γ), vol_clustering_strength
+    - volatility_regime_f
 
     # ========== 场景语义 (补充) ==========
     - fp_imbalance_scene_semantic_scores_f # Footprint 不平衡场景语义
     - vpin_scene_semantic_scores_f         # VPIN 场景语义
 
     # ========== VWAP ==========
-    - vwap_position_f                      # 价格相对 VWAP 位置 (日内锚点)
+    - vwap_position_f
 
     # ========== 交叉特征 ==========
     - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空
@@ -110,23 +108,22 @@ feature_pipeline:
     - vpin_zscore_x_trade_cluster_max_buy_run_rank_f
     - vpin_x_trade_cluster_entropy_rank_f
 
-    # ========== 数学特征（实验性，观察是否被选中） ==========
-    # 只做execution_noise_penalty
-    - hurst_price_f           # Hurst 指数（时序记忆性）
-    - spectrum_features_f     # 频谱特征
-    - hilbert_phase_f         # Hilbert 变换（包络+相位）
-    - wpt_price_fluctuation_f # 小波包变换（多尺度分解）
-    - evt_features_f          # EVT 极值理论（尾部风险/黑天鹅检测）
+    # ========== 数学特征 ==========
+    - hurst_price_f
+    - spectrum_features_f
+    - hilbert_phase_f
+    - wpt_price_fluctuation_f
+    - evt_features_f
     - wpt_price_reconstructed_f
     - wpt_volume_energy_f
     - wpt_cvd_fluctuation_f
     - hurst_cvd_f
 
     # ========== 跨 archetype 全量候选 (SHAP 自动裁剪) ==========
-    - bpc_soft_phase_f             # BPC 专属
-    - bpc_compression_state_f      # ME 语义核心: 前期压缩历史 (vol/BB/EWMA 压缩程度)
-    - compression_duration_f         # ME 语义核心: 压缩持续时长 (ATR pct 连续低位 bars 数)
-    - recent_compression_decay_f       # ME 语义核心: 压缩衰减记忆 (指数衰减, 刚从压缩出来)
+    - bpc_soft_phase_f
+    - bpc_compression_state_f      # ME 语义核心: 前期压缩历史
+    - compression_duration_f         # ME 语义核心: 压缩持续时长
+    - recent_compression_decay_f       # ME 语义核心: 压缩衰减记忆
     - bpc_pullback_depth_pct_f
     - bpc_pullback_duration_f
     - bpc_pullback_speed_f
@@ -135,11 +132,11 @@ feature_pipeline:
     - bpc_dir_flip_count_f
     - bpc_volume_compression_pct_f
     - bpc_pullback_delta_absorption_f
-    - fer_failure_signals_f        # FER 专属
+    - fer_failure_signals_f
 
     # ========== Session & Microstructure ==========
-    - session_features_f           # session_id, hour_sin/cos, is_session_overlap
-    - bars_since_extreme_f         # bars_since_local_high/low (避免追单)
+    - session_features_f
+    - bars_since_extreme_f
 
   ensure_signal_column:
     name: signal

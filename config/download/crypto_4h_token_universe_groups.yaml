@@ -17,16 +17,16 @@ universe_sets:
         - BNB
         - XRP
         - ADA
-        - TRX
-        - BCH
-        - LINK
-        - AVAX
-        - DOT
-        - LTC
-        - TON
-        - SUI
-        - ATOM
-        - UNI
+        # - TRX
+        # - BCH
+        # - LINK
+        # - AVAX
+        # - DOT
+        # - LTC
+        # - TON
+        # - SUI
+        # - ATOM
+        # - UNI
 
 
       # alt:

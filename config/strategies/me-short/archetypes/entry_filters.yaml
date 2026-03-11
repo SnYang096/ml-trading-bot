@@ -1,0 +1,6 @@
+# ME-Short Entry Filters (待训练)
+# 职责: "现在该入场做空吗?" → 硬二值控制
+# 多个 filter 之间是 OR 关系
+
+filters: []
+combination_mode: or

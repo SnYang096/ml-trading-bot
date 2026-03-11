@@ -1,7 +1,7 @@
 # ME Evidence (auto-discovered)
-# 来源: results/train_final_20260310_113923_rr_extreme/me/logs_gated.parquet
+# 来源: results/train_final_20260312_000352_rr_extreme/me/logs_gated.parquet
 # 方法: Spearman + Quintile Monotonicity (p < 0.01)
-# 候选: 3/279 通过筛选
+# 候选: 3/292 通过筛选
 
 schema:
   label_semantics:
@@ -11,41 +11,41 @@ schema:
     favor: 有利 - 提高信心/仓位
     amplify: 强烈有利 - 最大化执行
 evidence:
-- id: evidence_evt_scale
-  feature: evt_scale
+- id: evidence_momentum_exhaustion_score
+  feature: momentum_exhaustion_score
   rank: 1
-  direction: positive
-  usage_hint: sp_r=+0.123 WR:52.1%→61.9%
+  direction: negative
+  usage_hint: sp_r=-0.042 WR:50.1%→46.1%
   affects:
   - position_size
   - tp_range
   quantile_mapping:
     bins:
-    - 0.1388888888888889
-    - 0.32936507936507936
-    - 0.5634920634920635
-    - 0.8293650793650794
+    - 0.050805277415401986
+    - 0.1483197428068883
+    - 0.2894283029453981
+    - 0.5203823475755626
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
   split_count: 5
-- id: evidence_evt_var_99_right
-  feature: evt_var_99_right
+- id: evidence_price_accel_pct
+  feature: price_accel_pct
   rank: 2
   direction: positive
-  usage_hint: sp_r=+0.120 WR:49.6%→58.6%
+  usage_hint: sp_r=+0.041 WR:47.1%→51.0%
   affects:
   - position_size
   - tp_range
   quantile_mapping:
     bins:
-    - 0.09126984126984126
-    - 0.2857142857142857
-    - 0.5119047619047619
-    - 0.7857142857142857
+    - 0.21335807050092764
+    - 0.40816326530612246
+    - 0.5936920222634509
+    - 0.7866419294990723
     labels:
     - suppress
     - downweight
@@ -53,25 +53,25 @@ evidence:
     - favor
     - amplify
   split_count: 5
-- id: evidence_spectrum_price_centroid
-  feature: spectrum_price_centroid
+- id: evidence_bpc_dir_consistency_long
+  feature: bpc_dir_consistency_long
   rank: 3
-  direction: positive
-  usage_hint: sp_r=+0.114 WR:51.4%→65.3%
+  direction: negative
+  usage_hint: sp_r=-0.041 WR:51.3%→48.5%
   affects:
   - position_size
   - tp_range
   quantile_mapping:
     bins:
-    - 0.21428571428571427
-    - 0.42857142857142855
-    - 0.6349206349206349
-    - 0.8293650793650794
+    - 0.46
+    - 0.5
+    - 0.52
+    - 0.56
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
   split_count: 5
 min_score: 0.0
