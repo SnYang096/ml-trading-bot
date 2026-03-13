@@ -1058,6 +1058,32 @@ def run_strategy_pipeline(
         dry_run=dry_run,
     )
 
+    # ── Step 9b: 交易地图 (Full Execution, trailing stop 真实行为) ──
+    # 使用 execution.yaml 真实配置生成交易地图 (trailing/structural 可见)
+    # 注意: 此步骤仅生成地图, 不影响 ADOPT 决策指标 (仍用 Step 9 simple-execution 结果)
+    map_cmd = [
+        "python",
+        "scripts/backtest_execution_layer.py",
+        "--logs",
+        f"{evidence_dir}/logs_gated.parquet",
+        "--strategy",
+        strategy,
+        "--strategies-root",
+        strategies_root,
+        "--test-start",
+        holdout_start,
+        "--test-end",
+        end_date,
+        "--output",
+        f"{evidence_dir}/trading_map_{strategy}_exec.html",
+    ]
+    run_step(
+        "Trading Map (Full Exec)",
+        map_cmd,
+        log,
+        dry_run=dry_run,
+    )
+
     # ── 收集指标 ──
     backtest_metrics = (
         parse_backtest_stdout(bt_out)
