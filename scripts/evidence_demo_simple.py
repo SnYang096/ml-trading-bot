@@ -157,7 +157,7 @@ def main():
         p("=" * 100)
 
         all_results = {}
-        for strat in ["bpc", "me", "fer"]:
+        for strat in ["bpc", "me-long", "fer"]:
             path = find_logs(strat)
             if not path:
                 p(f"\n⚠️  {strat}: No logs_gated.parquet")

@@ -1,0 +1,44 @@
+# FER-LONG Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer-long/20260313_185141/strategies/fer-long/gate_draft.yaml
+# 优化规则: 0/5 条通过优化, 3 条已移除
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_evt_var_99_left_evt_var_99_left
+  tag: HARD_EVT_VAR_99_LEFT_EVT_VAR_99_LEFT
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.54)
+  when:
+    all_of:
+    - evt_var_99_left:
+        value_gt: 0.6706
+    - evt_var_99_left:
+        value_lt: 0.7976
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.4698, lift=0.230'
+- id: gate_evt_tail_shape_right_evt_tail_shape_right
+  tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.33)
+  when:
+    all_of:
+    - evt_tail_shape_right:
+        value_gt: 0.3373
+    - evt_tail_shape_right:
+        value_lt: 0.5317
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.2290, lift=0.582'
+guardrails: []

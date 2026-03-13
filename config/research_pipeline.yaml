@@ -2,9 +2,9 @@
 # 自动研究流水线 + 实盘监控重训 统一配置
 # ============================================================
 # 用法:
-#   python scripts/auto_research_pipeline.py --strategy bpc
-#   python scripts/auto_research_pipeline.py --all
-#   python scripts/monitor_retrain.py  (cron 定时 / 手动触发)
+#   mlbot pipeline run --strategy bpc-long
+#   mlbot pipeline run --all
+#   python scripts/auto_research_pipeline.py --strategy bpc-long  # 兼容旧命令
 
 # ── 时间窗口规则 ──────────────────────────────────────────────
 dates:
@@ -39,50 +39,86 @@ download:
 
 # ── 策略定义 ──────────────────────────────────────────────────
 strategies:
-  bpc:
-    config: config/strategies/bpc
+  bpc-long:
+    config: config/strategies/bpc-long
     timeframe: "240T"
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: true
-    # Per-strategy KPI gates: 每个策略独立的优化约束参数
-    # 避免全局硬编码导致“调好一个另一个坏”
+    has_direction: false   # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.15          # prefilter 后至少保留 15% bars
-        min_rows: 500                # plateau 检测绝对下限
-      gate:
-        require_positive_effect: true # gate 效果必须为正
-        min_combined_pass_rate: 0.30  # gate AND 累积 pass rate 下限
-      backtest:
-        min_trades: 30               # holdout 最低 30 笔交易
-      deploy:
-        min_trades: 10               # 4H 高选择性策略, 10 笔/6月 已足够
-
-
-  fer:
-    config: config/strategies/fer
-    timeframe: "240T"
-    features_gate: features.yaml
-    labels_gate: labels_rr_extreme.yaml
-    has_prefilter: true
-    has_direction: true
-    kpi_gates:
-      prefilter:
-        min_pass_rate: 0.08          # FER 可以稍严格
+        min_pass_rate: 0.15
         min_rows: 500
       gate:
-        require_positive_effect: true # 当前 FER gate 效果为负，这会触发警告
-        min_combined_pass_rate: 0.30  # gate AND 累积 pass rate 下限
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
+      backtest:
+        min_trades: 30
+      deploy:
+        min_trades: 10
+
+  bpc-short:
+    config: config/strategies/bpc-short
+    timeframe: "240T"
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: false   # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.15
+        min_rows: 500
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
+      backtest:
+        min_trades: 30
+      deploy:
+        min_trades: 10
+
+
+  fer-long:
+    config: config/strategies/fer-long
+    timeframe: "240T"
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: false   # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.08
+        min_rows: 500
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
       backtest:
         min_trades: 10
       deploy:
-        min_trades: 10               # 4H 策略, 同 BPC
+        min_trades: 10
+
+  fer-short:
+    config: config/strategies/fer-short
+    timeframe: "240T"
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: false   # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.08
+        min_rows: 500
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
+      backtest:
+        min_trades: 10
+      deploy:
+        min_trades: 10
 
 
-  me:
-    config: config/strategies/me
+  me-long:
+    config: config/strategies/me-long
     timeframe: "60T"
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
@@ -208,21 +244,18 @@ deploy_gate:
 
 # ── 管线数据流 (Step 间 I/O 约束) ───────────────────────
 # Gate 输出 logs_gated.parquet 后, 所有下游步骤必须读取此文件.
-# 原因: Entry Filter / Evidence / Execution 的阈值必须在 gate 过滤后的
+# 原因: Execution / Backtest 的阈值必须在 gate 过滤后的
 # 分布上优化, 否则会产生 distribution mismatch.
-# 典型错误: 回测时用 predictions.parquet (无 gate_decision) → entry filter 100% pass.
 data_flow:
   # 文件名 (Step 输出产物, 相对于 run_dir/{strategy}/)
-  model_predictions: "predictions.parquet"   # Step 1 输出: 模型预测
+  model_predictions: "predictions.parquet"   # Step 2 输出: 模型预测
   gated_logs: "logs_gated.parquet"           # Step 5 输出: 含 gate_decision 列
 
-  # 各步骤输入源
+  # 各步骤输入源 (简化后: Prefilter → Gate → Execution → Backtest)
   step_inputs:
     prefilter: "predictions.parquet"           # 全量预测上做 prefilter
     gate_train: "predictions.parquet"          # 全量预测上训练 gate
     gate_apply: "predictions.parquet"          # Gate apply → 产出 logs_gated.parquet
-    evidence_optimize: "logs_gated.parquet"    # gate 后人群上优化
-    entry_filter: "logs_gated.parquet"         # gate 后人群上发现 timing
     execution: "logs_gated.parquet"            # gate 后人群上优化止损
     backtest: "logs_gated.parquet"             # gate 后人群上回测
 

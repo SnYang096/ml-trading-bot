@@ -24,7 +24,7 @@ def test_edge_cases():
     """测试边缘案例"""
     print("=== 测试边缘案例 ===")
 
-    strategies = ["bpc", "fer", "me"]
+    strategies = ["bpc", "fer", "me-long"]
 
     # 边缘案例1: 特征值正好等于阈值
     edge_case_features = {

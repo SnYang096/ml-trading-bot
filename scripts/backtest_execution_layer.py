@@ -61,7 +61,7 @@ except ImportError:
 # Archetype 颜色方案 (用于交易地图)
 _ARCH_PALETTE = {
     "bpc": "#2196F3",  # Blue
-    "me": "#FF9800",  # Orange
+    "me-long": "#FF9800",  # Orange
     "fer": "#AB47BC",  # Purple
     "lv": "#66BB6A",  # Green
     "reversal": "#EC407A",  # Pink
@@ -1051,7 +1051,7 @@ def simulate_rr_execution(
         _arch_priority_map = {
             "lv": 0,
             "fer": 1,
-            "me": 2,
+            "me-long": 2,
             "bpc": 3,
         }  # 同时间戳: 高优先级先处理
         if _slot_use_ts:
@@ -1840,7 +1840,7 @@ def _generate_trading_map_html(
         trade_details: simulate_rr_execution 返回的交易详情列表
         title: 页面标题
         timeframe: K线聚合周期 (如 '240T'), None 则不聚合
-        arch_timeframes: per-archetype 时间粒度 (如 {'bpc':'240T','me':'60T'})
+        arch_timeframes: per-archetype 时间粒度 (如 {'bpc':'240T','me-long':'60T'})
                          提供时每个 archetype 独立分区显示
 
     Returns:
@@ -2275,7 +2275,7 @@ def _apply_dark_theme(fig, title_size="14px"):
 # ================================================================
 
 # 默认优先级（与 live_pcm.py / pcm_regime.yaml v3 NORMAL 一致）
-_PCM_DEFAULT_PRIORITY = ["LV", "FER", "ME", "BPC"]
+_PCM_DEFAULT_PRIORITY = ["LV", "FER", "ME-LONG", "BPC"]
 
 
 def load_direction_config(

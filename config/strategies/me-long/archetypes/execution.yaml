@@ -1,0 +1,49 @@
+execution_constraints:
+  allow_add_on: true
+  min_order_interval_minutes: 15
+holding:
+  max_holding_bars: null
+  time_stop_bars: 0
+optimization:
+  enabled: true
+  # ── ME "动能锁定" 模式 ──
+  # 设计理念 (fattail-holding-pyramiding.md):
+  #   ME 价格路径: 0 → +3R → +6R → +8R → +8R → +6R (exhaustion)
+  #   特点: move 快, 主要收益在最初几根K线, exhaustion 很快
+  #   目标: 快速 trailing 锁住 momentum spike, 防止利润回吐
+  #   策略: 对称 SL (initial=activation=trail 三者联动)
+  # Grid 设计:
+  #   - sym_r [1.0-4.0]: 对称模式扫描, 越小越紧 (锁利润快但被假信号止损多)
+  #   推荐用法: --sym-r 1.0:0.5:4.0
+  # 注意: 虽然 optimization.params 仍列出三个独立参数 (兼容标准 grid),
+  #   但推荐使用 --sym-r 对称模式运行, 大幅减少 combo 数量
+  constraints:
+    max_sl_activation_ratio: 3.0   # initial_r / activation_r 上限
+    min_win_r: 0.0                 # activation_r - trail_r 下限
+  params:
+    stop_loss.initial_r:
+      range:
+      - 1.0
+      - 4.0
+      step: 0.5
+    stop_loss.trailing.activation_r:
+      range:
+      - 1.0
+      - 4.0
+      step: 0.5
+    stop_loss.trailing.trail_r:
+      range:
+      - 1.0
+      - 4.0
+      step: 0.5
+# ── 当前最优参数 (待重跑 grid search 后更新) ──
+# 注意: 旧值 initial_r=3.0/activation_r=0.5 是退化组合 (ratio=6, random WR=86%)
+stop_loss:
+  initial_r: 2.0
+  trailing:
+    activation_r: 2.0
+    trail_r: 2.0
+  type: trailing
+take_profit:
+  enabled: false
+version: 31

@@ -428,6 +428,22 @@ class LivePCM:
             DEFAULT_ARCHETYPE_PRIORITY
         )
 
+        # ── EMA 方向过滤器 (price > ema_200 → bull; price ≤ ema_200 → bear) ──
+        _ema_cfg = self._regime_cfg.get("ema_direction_filter", {})
+        self._ema_filter_enabled: bool = bool(_ema_cfg.get("enabled", False))
+        self._ema_close_feature: str = _ema_cfg.get("close_feature", "close")
+        self._ema_feature: str = _ema_cfg.get("ema_feature", "ema_200")
+        self._ema_bull_allowed: set = set(_ema_cfg.get("bull_allowed", []))
+        self._ema_bear_allowed: set = set(_ema_cfg.get("bear_allowed", []))
+        self._ema_fallback: str = _ema_cfg.get("fallback", "allow_all")
+        if self._ema_filter_enabled:
+            logger.info(
+                "PCM: EMA方向过滤器已启用 — bull允许=%s | bear允许=%s | fallback=%s",
+                sorted(self._ema_bull_allowed),
+                sorted(self._ema_bear_allowed),
+                self._ema_fallback,
+            )
+
         # 可选: 监控统计收集器
         self.stats_collector = None  # 通过外部注入 StatsCollector 实例
 
@@ -591,6 +607,38 @@ class LivePCM:
                         # 清空 _last_funnel 避免诊断代码读到上一次的结果
                         strategy._last_funnel = {}
                         continue
+
+                # ── EMA 方向过滤 (price > ema_200 → bull; price ≤ ema_200 → bear) ──
+                if self._ema_filter_enabled:
+                    _close = strat_features.get(self._ema_close_feature)
+                    _ema = strat_features.get(self._ema_feature)
+                    if _close is not None and _ema is not None:
+                        _is_bull = float(_close) > float(_ema)
+                        _allowed = (
+                            self._ema_bull_allowed
+                            if _is_bull
+                            else self._ema_bear_allowed
+                        )
+                        if arch_name not in _allowed:
+                            strategy._last_funnel = {}  # 清空避免误诊
+                            logger.debug(
+                                "PCM: EMA过滤跳过 %s — %s regime (close=%.4f, ema=%.4f)",
+                                arch_name,
+                                "BULL" if _is_bull else "BEAR",
+                                float(_close),
+                                float(_ema),
+                            )
+                            continue
+                    elif self._ema_fallback != "allow_all":
+                        _allowed_fb = (
+                            self._ema_bull_allowed
+                            if self._ema_fallback == "bull"
+                            else self._ema_bear_allowed
+                        )
+                        if arch_name not in _allowed_fb:
+                            strategy._last_funnel = {}
+                            continue
+
                 intents = strategy.decide(
                     features=strat_features, symbol=symbol, bars=bars
                 )

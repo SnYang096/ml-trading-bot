@@ -1,0 +1,6 @@
+# FER-LONG direction config
+# FER 方向拆分后: fer-long 固定做多 (direction_aware=false)
+
+causal_source: "fixed_long"
+fixed_direction: long  # fer-long: 固定 LONG, 训练时 direction_aware=false
+direction_rules: []

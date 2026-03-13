@@ -1,0 +1,66 @@
+# ME Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-long/20260308_203356/strategies/me-long/gate_draft.yaml
+# 优化规则: 0/2 条通过优化, 1 条已移除
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: prefilter_me_atr_pct
+  tag: PREFILTER_ME_ATR_PCT
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: me_atr_pct < 0.02'
+  when:
+    me_atr_pct:
+      value_lt: 0.02
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: prefilter_oi_trend_divergence_score
+  tag: PREFILTER_OI_TREND_DIVERGENCE_SCORE
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: oi_trend_divergence_score < 0.0015'
+  when:
+    oi_trend_divergence_score:
+      value_lt: 0.0015
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: prefilter_me_delta_net_flow
+  tag: PREFILTER_ME_DELTA_NET_FLOW
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: me_delta_net_flow > 0.8449'
+  when:
+    me_delta_net_flow:
+      value_gt: 0.8449
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: gate_atr_percentile_atr_percentile
+  tag: HARD_ATR_PERCENTILE_ATR_PERCENTILE
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.10)
+  when:
+    all_of:
+    - atr_percentile:
+        value_gt: 0.213
+    - atr_percentile:
+        value_lt: 0.3
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.5833, lift=0.334'
+guardrails: []

@@ -438,10 +438,15 @@ class PrefilterConfig:
 
         fv = features.get(feat)
         if fv is None:
-            raise ValueError(
-                f"Prefilter feature '{feat}' is missing from features dict. "
-                f"Available keys ({len(features)}): {sorted(features.keys())[:20]}..."
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "Prefilter feature '%s' is missing from features dict "
+                "(available: %d keys). Rule treated as FAIL (no trade).",
+                feat,
+                len(features),
             )
+            return False  # 特征缺失 → prefilter 不通过 (保守: 不交易)
         return bool(op_func(float(fv), float(val)))
 
 

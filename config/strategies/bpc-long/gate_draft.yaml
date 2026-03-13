@@ -1,0 +1,86 @@
+# BPC-LONG Gate Draft (auto-generated)
+# 来源: results/train_final_20260313_185239_rr_extreme/bpc-long
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy bpc-long
+#   python scripts/optimize_gate_unified.py --strategy bpc-long --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_evt_var_99_evt_var_99
+  tag: HARD_EVT_VAR_99_EVT_VAR_99
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.54)
+  when:
+    all_of:
+    - evt_var_99:
+        value_gt: 0.6706
+    - evt_var_99:
+        value_lt: 0.7976
+  then:
+    action: deny
+  comment: 'statistical(lift=1.54): evt_var_99 > 0.6706 & evt_var_99 < 0.7976'
+- id: gate_vol_persistence
+  tag: HARD_VOL_PERSISTENCE
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.20)
+  when:
+    vol_persistence:
+      value_lt: 0.066
+  then:
+    action: deny
+  comment: 'statistical(lift=1.20): vol_persistence < 0.066'
+- id: gate_evt_tail_shape_right_evt_tail_shape_right
+  tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.33)
+  when:
+    all_of:
+    - evt_tail_shape_right:
+        value_gt: 0.3373
+    - evt_tail_shape_right:
+        value_lt: 0.5317
+  then:
+    action: deny
+  comment: 'statistical(lift=1.33): evt_tail_shape_right > 0.3373 & evt_tail_shape_right < 0.5317'
+- id: gate_evt_scale_left_evt_scale_left
+  tag: HARD_EVT_SCALE_LEFT_EVT_SCALE_LEFT
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.29)
+  when:
+    all_of:
+    - evt_scale_left:
+        value_gt: 0.25
+    - evt_scale_left:
+        value_lt: 0.4603
+  then:
+    action: deny
+  comment: 'statistical(lift=1.29): evt_scale_left > 0.25 & evt_scale_left < 0.4603'
+- id: gate_evt_es_99_left_evt_es_99_left
+  tag: HARD_EVT_ES_99_LEFT_EVT_ES_99_LEFT
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.10)
+  when:
+    all_of:
+    - evt_es_99_left:
+        value_gt: 0.3254
+    - evt_es_99_left:
+        value_lt: 0.7857
+  then:
+    action: deny
+  comment: 'statistical(lift=1.10): evt_es_99_left > 0.3254 & evt_es_99_left < 0.7857'
+guardrails: []

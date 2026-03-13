@@ -1,0 +1,54 @@
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 15
+holding:
+  max_holding_bars: null
+  time_stop_bars: 40
+optimization:
+  enabled: true
+  # ── FER "反弹兑现" 模式 ──
+  # 设计理念 (fattail-holding-pyramiding.md):
+  #   FER 价格路径: +1R → +2R → +3R → +3.5R → +2R → +1R (均值回归)
+  #   特点: move 短, 很快结束, 反向趋势恢复
+  #   目标: 快速兑现反弹利润, TP 固定目标 + time_stop 防持仓过久
+  #   策略: TP 启用 (紧目标), time_stop 短 (40 bars), 中等 trailing
+  # Grid 设计:
+  #   - initial_r [1.5-4.0]: 中等 SL
+  #   - activation_r [1.0-3.0]: 较低激活点, 快速启动 trailing
+  #   - trail_r [0.5-2.0]: 中等 trailing, 比 BPC 紧但比 ME 松
+  #   - take_profit.target_r [2.0-5.0]: TP 目标 (FER 核心参数)
+  constraints:
+    max_sl_activation_ratio: 3.0
+    min_win_r: 0.0
+  params:
+    stop_loss.initial_r:
+      range:
+      - 1.5
+      - 4.0
+      step: 0.5
+    stop_loss.trailing.activation_r:
+      range:
+      - 1.0
+      - 3.0
+      step: 0.5
+    stop_loss.trailing.trail_r:
+      range:
+      - 0.5
+      - 2.0
+      step: 0.5
+    take_profit.target_r:
+      range:
+      - 2.0
+      - 5.0
+      step: 0.5
+stop_loss:
+  initial_r: 4.0
+  trailing:
+    activation_r: 2.5
+    step_r: 0.5
+    trail_r: 1.0
+  type: trailing
+take_profit:
+  enabled: true
+  target_r: 4.0
+version: 51

@@ -419,9 +419,14 @@ def _generate_gate_rules_statistical(
         print("   ⚠️  统计验证: 可用特征或收益列不足，跳过")
         return None
 
-    # ── Step 1: SHAP ∩ Gain 特征选择 (Gate/Evidence 共用) ──
+    # ── Step 1: SHAP ∩ Gain 特征选择 (via meta_algorithm_unified) ──
+    import sys as _sys_gate
+
+    _sys_gate.path.insert(0, str(_Path(__file__).resolve().parent))
+    from meta_algorithm_unified import discover_features as _discover_feats_gate
+
     _gate_top_n = _gsg.get("top_n", 8)
-    top_features, shap_importance_map, _interaction_pairs = _compute_shap_gain_features(
+    top_features, shap_importance_map, _interaction_pairs = _discover_feats_gate(
         pred_df,
         avail,
         lgbm_model,

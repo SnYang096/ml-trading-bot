@@ -39,7 +39,7 @@ class MockTradingBot:
         self.positions = 0
         self.pnl = 0.0
         self.drawdown = 0.0
-        self.orders_by_strategy = {"bpc": 0, "me": 0, "fer": 0}
+        self.orders_by_strategy = {"bpc": 0, "me-long": 0, "fer": 0}
 
     def simulate_trading_activity(self):
         """模拟交易活动，更新指标"""
@@ -51,7 +51,7 @@ class MockTradingBot:
                 self.bars_processed += bars_this_cycle
 
                 # 模拟信号通过漏斗
-                for strategy in ["bpc", "me", "fer"]:
+                for strategy in ["bpc", "me-long", "fer"]:
                     if random.random() > 0.3:  # 70% 概率有信号
                         # 信号通过各阶段
                         METRICS.funnel_stage.labels(

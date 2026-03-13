@@ -156,23 +156,34 @@ slots:
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
   per_strategy_limits:
-    bpc:
-      max_slots: 1              # 每策略独占 1 slot, 互不竞争
-      # max_risk_per_trade 省略 → 继承 slots.risk_per_slot (0.01)
+    # ── BPC 方向拆分 (方案A: 共享全局slot互斥竞争) ──
+    # bpc-long 和 bpc-short 各独立占 1 slot，全局 4 slots 防止同时过多开仓
+    bpc-long:
+      max_slots: 1              # BPC 方向拆分: long 侧最多 1 slot
       allow_add_position: true   # BPC 趋势延续允许加仓
-    me:
+    bpc-short:
+      max_slots: 1              # BPC 方向拆分: short 侧最多 1 slot
+      allow_add_position: true
+    # ── ME 方向拆分 ──
+    me-long:
       max_slots: 1
-      # max_risk_per_trade 省略 → 继承 slots.risk_per_slot (0.01)
       allow_add_position: true   # ME 动能扩张允许加仓
-    fer:
+    me-short:
+      max_slots: 1              # ME-SHORT: 最多 1 slot (防止过度做空)
+      allow_add_position: false  # ME-SHORT 不加仓 (momentum decay 快)
+    # ── FER 方向拆分 ──
+    fer-long:
       max_slots: 1
-      # max_risk_per_trade 省略 → 继承 slots.risk_per_slot (0.01)
       allow_add_position: false  # FER 反转策略不加仓
+    fer-short:
+      max_slots: 1
+      allow_add_position: false
+    # ── LV (方向中性, 不拆分) ──
     lv:
       max_slots: 1              # LV 快进快出，最多 1 个
       max_risk_per_trade: 0.005  # LV 低 budget, 0.5% 每笔 (< risk_per_slot)
       allow_add_position: false  # LV 不加仓
-
+ 
   # 加仓全局安全规则 (适用于所有 allow_add_position=true 的策略)
   # "adding is allowed only by freed risk budget"
   add_position_rules:

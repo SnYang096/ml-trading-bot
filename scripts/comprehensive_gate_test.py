@@ -129,7 +129,7 @@ def real_world_gate_test():
     """真实世界的gate规则测试"""
     print("\n=== 真实世界Gate规则测试 ===")
 
-    strategies = ["bpc", "fer", "me"]
+    strategies = ["bpc", "fer", "me-long"]
     all_passed = True
 
     # 创建测试特征数据，覆盖各种边界情况

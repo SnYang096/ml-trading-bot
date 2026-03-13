@@ -1,6 +1,6 @@
-# ME-Short Gate (待训练)
-# 训练目标: failure_rr_extreme（做空踩大坑）= forward_rr_short < -0.8R
-# 使用全量数据训练，不依赖 prefilter 子集
+# ME-SHORT Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-short/20260313_185141/strategies/me-short/gate_draft.yaml
+# 优化规则: 1/5 条通过优化, 3 条已移除
 
 schema:
   phases:
@@ -12,5 +12,30 @@ schema:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
-hard_gates: []
+hard_gates:
+- id: gate_vpin_max20_vpin_max20
+  tag: HARD_VPIN_MAX20_VPIN_MAX20
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.46)
+  when:
+    all_of:
+    - vpin_max20:
+        value_gt: 0.2037
+    - vpin_max20:
+        value_lt: 0.2952
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.3250, lift=0.678'
+- id: gate_vpin_ma20
+  tag: HARD_VPIN_MA20
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.15)
+  when:
+    vpin_ma20:
+      value_gt: 0.3
+  then:
+    action: deny
+  comment: 'optimizer: no_stable_plateau, threshold=0.3000, lift=0.206'
 guardrails: []

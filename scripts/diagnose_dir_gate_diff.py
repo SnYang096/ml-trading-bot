@@ -38,7 +38,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--strategy", default="me", help="策略名")
+    parser.add_argument("--strategy", default="me-long", help="策略名")
     parser.add_argument("--rows", type=int, default=200, help="检查行数")
     parser.add_argument("--data-path", default="data/parquet_data")
     parser.add_argument("--test-start", default="2025-08-01")

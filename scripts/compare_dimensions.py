@@ -19,7 +19,7 @@ from collections import defaultdict
 LOGS_GATED = {
     "bpc": "results/train_final_20260228_155016_return_tree/bpc/logs_gated.parquet",
     "fer": "results/train_final_20260228_155642_return_tree/fer/logs_gated.parquet",
-    "me": "results/train_final_20260228_160556_return_tree/me/logs_gated.parquet",
+    "me-long": "results/train_final_20260228_160556_return_tree/me/logs_gated.parquet",
 }
 VECTOR_CSV = "/tmp/trades_vector.csv"
 EVENT_CSV = "/tmp/trades_event.csv"
@@ -206,10 +206,10 @@ def replay_event_funnel():
     from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
 
     strats = {}
-    tf_map = {"bpc": "240T", "fer": "240T", "me": "60T"}
-    bm_map = {"bpc": 240, "fer": 240, "me": 60}
+    tf_map = {"bpc": "240T", "fer": "240T", "me-long": "60T"}
+    bm_map = {"bpc": 240, "fer": 240, "me-long": 60}
 
-    for s in ["bpc", "fer", "me"]:
+    for s in ["bpc", "fer", "me-long"]:
         strats[s] = GenericLiveStrategy(
             s,
             strategies_root=STRATEGIES_ROOT,
@@ -231,7 +231,7 @@ def replay_event_funnel():
     sym_features = {}
 
     for tf in sorted(set(tf_map.values())):
-        tf_strats = [s for s in ["bpc", "fer", "me"] if tf_map[s] == tf]
+        tf_strats = [s for s in ["bpc", "fer", "me-long"] if tf_map[s] == tf]
         first = tf_strats[0]
         archetypes_dir = str(Path(STRATEGIES_ROOT) / first / "archetypes")
         fc = IncrementalFeatureComputer(
@@ -365,7 +365,7 @@ def print_section(title):
 def main():
     print_section("维度 1: 向量侧 Pipeline 重放 (logs_gated)")
     vec_pipeline = {}
-    for arch in ["bpc", "fer", "me"]:
+    for arch in ["bpc", "fer", "me-long"]:
         print(f"\n--- {arch.upper()} ---")
         df = load_logs_gated(arch)
         stats = replay_vector_pipeline(arch, df)
@@ -390,7 +390,7 @@ def main():
     print_section("维度 2: 事件侧 Pipeline 重放 (decide per bar)")
     print("  重放 decide() 调用...")
     evt_pipeline = replay_event_funnel()
-    for arch in ["bpc", "fer", "me"]:
+    for arch in ["bpc", "fer", "me-long"]:
         s = evt_pipeline[arch]
         ev_arr = s["evidence_scores"]
         print(f"\n--- {arch.upper()} ---")
@@ -411,7 +411,7 @@ def main():
     vec_trades = analyze_trade_csv(VECTOR_CSV)
     evt_trades = analyze_trade_csv(EVENT_CSV)
 
-    for arch in ["bpc", "fer", "me"]:
+    for arch in ["bpc", "fer", "me-long"]:
         v = vec_trades["per_archetype"].get(arch, {})
         e = evt_trades["per_archetype"].get(arch, {})
         print(f"\n--- {arch.upper()} ---")
@@ -467,7 +467,7 @@ def main():
     print(
         f"\n  {'Archetype':8s} {'向量信号':>10s} {'事件信号':>10s} {'向量Trades':>12s} {'事件Trades':>12s} {'信号差':>8s} {'Trade差':>8s}"
     )
-    for arch in ["bpc", "fer", "me"]:
+    for arch in ["bpc", "fer", "me-long"]:
         v_sig = vec_pipeline[arch]["after_entry_filter"]
         e_sig = evt_pipeline[arch]["entry_filter_pass"]
         vt2 = vec_trades["per_archetype"].get(arch, {}).get("trades", 0)
@@ -478,18 +478,18 @@ def main():
 
     # 汇总
     v_total_sig = sum(
-        vec_pipeline[a]["after_entry_filter"] for a in ["bpc", "fer", "me"]
+        vec_pipeline[a]["after_entry_filter"] for a in ["bpc", "fer", "me-long"]
     )
     e_total_sig = sum(
-        evt_pipeline[a]["entry_filter_pass"] for a in ["bpc", "fer", "me"]
+        evt_pipeline[a]["entry_filter_pass"] for a in ["bpc", "fer", "me-long"]
     )
     v_total_t = sum(
         vec_trades["per_archetype"].get(a, {}).get("trades", 0)
-        for a in ["bpc", "fer", "me"]
+        for a in ["bpc", "fer", "me-long"]
     )
     e_total_t = sum(
         evt_trades["per_archetype"].get(a, {}).get("trades", 0)
-        for a in ["bpc", "fer", "me"]
+        for a in ["bpc", "fer", "me-long"]
     )
     print(
         f"  {'TOTAL':8s} {v_total_sig:>10d} {e_total_sig:>10d} {v_total_t:>12d} {e_total_t:>12d} {v_total_sig-e_total_sig:>+8d} {v_total_t-e_total_t:>+8d}"

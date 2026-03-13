@@ -28,7 +28,7 @@ from src.time_series_model.live.tree_gate import (
 def load_gate_configs():
     """加载所有策略的gate配置"""
     configs = {}
-    strategies = ["bpc", "fer", "me"]
+    strategies = ["bpc", "fer", "me-long"]
 
     for strategy in strategies:
         # 加载事件回测使用的hard_gates格式配置
@@ -78,7 +78,7 @@ def test_archetype_gate_evaluation():
     """测试StrategyArchetype的gate评估"""
     print("=== 测试 StrategyArchetype gate评估 ===")
 
-    strategies = ["bpc", "fer", "me"]
+    strategies = ["bpc", "fer", "me-long"]
     sample_features = create_sample_features()
 
     for strategy in strategies:
@@ -114,7 +114,7 @@ def test_tree_gate_evaluation():
     """测试tree_gate系统的gate评估"""
     print("\n=== 测试 tree_gate gate评估 ===")
 
-    strategies = ["bpc", "fer", "me"]
+    strategies = ["bpc", "fer", "me-long"]
     sample_features = create_sample_features()
 
     for strategy in strategies:
@@ -217,7 +217,7 @@ def analyze_gate_yaml_contents():
     """分析gate.yaml文件内容"""
     print("\n=== 分析Gate YAML配置内容 ===")
 
-    strategies = ["bpc", "fer", "me"]
+    strategies = ["bpc", "fer", "me-long"]
 
     for strategy in strategies:
         print(f"\n--- {strategy.upper()} 配置 ---")
@@ -246,7 +246,7 @@ def direct_comparison_test():
     """直接比较两个系统的评估结果"""
     print("\n=== 直接比较测试 ===")
 
-    strategies = ["bpc", "fer", "me"]
+    strategies = ["bpc", "fer", "me-long"]
     sample_features = create_sample_features()
 
     print(f"使用特征样例: {dict(list(sample_features.items())[:5])}...")

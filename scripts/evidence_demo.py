@@ -428,7 +428,7 @@ def main():
     print("=" * 80)
 
     all_results = {}
-    for strategy in ["bpc", "me", "fer"]:
+    for strategy in ["bpc", "me-long", "fer"]:
         res = run_strategy(strategy)
         if res:
             all_results[strategy] = res

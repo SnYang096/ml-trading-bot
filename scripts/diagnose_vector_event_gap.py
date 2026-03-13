@@ -27,7 +27,7 @@ import pandas as pd
 LOGS_GATED = {
     "bpc": "results/train_final_20260228_155016_return_tree/bpc/logs_gated.parquet",
     "fer": "results/train_final_20260228_155642_return_tree/fer/logs_gated.parquet",
-    "me": "results/train_final_20260228_160556_return_tree/me/logs_gated.parquet",
+    "me-long": "results/train_final_20260228_160556_return_tree/me/logs_gated.parquet",
 }
 
 STRATEGIES_ROOT = "config/strategies"
@@ -90,8 +90,10 @@ def layer1_gate_rate():
             strat = GenericLiveStrategy(
                 strategy_name=arch,
                 strategies_root=STRATEGIES_ROOT,
-                primary_timeframe={"bpc": "240T", "fer": "240T", "me": "60T"}[arch],
-                bar_minutes={"bpc": 240, "fer": 240, "me": 60}[arch],
+                primary_timeframe={"bpc": "240T", "fer": "240T", "me-long": "60T"}[
+                    arch
+                ],
+                bar_minutes={"bpc": 240, "fer": 240, "me-long": 60}[arch],
             )
             # 需要 quantiles
             strat.set_quantiles_from_df(df)
@@ -283,7 +285,7 @@ def layer5_recommendations():
   1. 时间范围不对齐 (最大根因)
      - 向量: 2025-08-01 ~ 2026-01-01 (153 天)
      - 事件: now()-180 ~ now()
-     - 修复: 事件回测增加 --start-date / --end-date 参数, 
+     - 修复: 事件回测增加 --start-date / --end-date 参数,
              或者用 logs_gated 的时间范围来驱动事件回测
 
   2. Gate 评估系统不同
@@ -291,7 +293,7 @@ def layer5_recommendations():
      - 事件: GenericLiveStrategy.gate_evaluator.evaluate() (实时评估)
      - 修复: 确认两侧用同一份 gate.yaml + 同一套 quantiles
 
-  3. Entry Filter 应用方式不同  
+  3. Entry Filter 应用方式不同
      - 向量: backtest_execution_layer.py 读 entry_filters.yaml 过滤
      - 事件: GenericLiveStrategy.decide() 内置 entry filter 评估
      - 修复: 确认两侧读同一份 entry_filters.yaml

@@ -20,13 +20,13 @@
 
 用法:
     # 多策略联合回测 (推荐 — 与 PCM 向量回测对齐)
-    python scripts/event_backtest.py --strategy bpc,fer,me --days 180
+    python scripts/event_backtest.py --strategy bpc,fer,me-long --days 180
 
     # 单策略回测
     python scripts/event_backtest.py --strategy fer --days 180
 
     # 指定 symbol + 导出
-    python scripts/event_backtest.py --strategy bpc,fer,me --symbols BTCUSDT,ETHUSDT --days 90 --export trades.csv
+    python scripts/event_backtest.py --strategy bpc,fer,me-long --symbols BTCUSDT,ETHUSDT --days 90 --export trades.csv
 """
 from __future__ import annotations
 
@@ -862,7 +862,7 @@ def _load_strategy_timeframes() -> Dict[str, str]:
     if hasattr(_load_strategy_timeframes, _cache_key):
         return getattr(_load_strategy_timeframes, _cache_key)
 
-    fallback = {"me": "60T", "fer": "240T", "bpc": "240T", "lv": "15T"}
+    fallback = {"me-long": "60T", "fer": "240T", "bpc": "240T", "lv": "15T"}
     try:
         cfg_path = Path("config") / "research_pipeline.yaml"
         if cfg_path.exists():
@@ -922,7 +922,7 @@ class EventBacktester:
       5. 跨 symbol 时间线交叉处理 (同实盘顺序)
 
     用法:
-        bt = EventBacktester(strategies=["bpc","fer","me"], live_root="live/highcap")
+        bt = EventBacktester(strategies=["bpc","fer","me-long"], live_root="live/highcap")
         result = bt.run(symbols=["BTCUSDT", ...], days=180)
         result.print_report()
     """
@@ -1177,7 +1177,15 @@ class EventBacktester:
 
                 # ── FeatureStore 补充: 合并 IFC 缺失的特征列 ──
                 if _fs and _fs_layers:
-                    _layer = next(iter(_fs_layers.values()))  # 使用第一个可用 layer
+                    # 按 timeframe 匹配对应的 layer (e.g., 60T → features_me-long_60T_xxx)
+                    _layer = None
+                    for _s, _ln in _fs_layers.items():
+                        _ln_parts = _ln.split("_")
+                        if tf in _ln_parts:
+                            _layer = _ln
+                            break
+                    if _layer is None:
+                        _layer = next(iter(_fs_layers.values()))  # fallback
                     try:
                         _spec = FeatureStoreSpec(layer=_layer, symbol=sym, timeframe=tf)
                         _fs_start = features_df.index.min()
@@ -1197,8 +1205,24 @@ class EventBacktester:
                                 features_df = features_df.join(
                                     _fs_df[_missing], how="left"
                                 )
+                                # ffill 填充 join 时间戳未对齐产生的 NaN
+                                features_df[_missing] = features_df[_missing].ffill()
                                 logger.info(
                                     f"  FeatureStore merged {len(_missing)} cols for {sym}/{tf}"
+                                )
+                            # 用 FeatureStore 填充已有列中的 NaN (e.g., IFC 无 funding_rate 数据)
+                            _nan_fill = [
+                                c
+                                for c in _fs_df.columns
+                                if c in features_df.columns
+                                and features_df[c].isna().any()
+                            ]
+                            if _nan_fill:
+                                _fs_aligned = _fs_df[_nan_fill].reindex(
+                                    features_df.index, method="ffill"
+                                )
+                                features_df[_nan_fill] = features_df[_nan_fill].fillna(
+                                    _fs_aligned
                                 )
                     except Exception as e:
                         logger.warning(
@@ -1792,7 +1816,7 @@ def generate_trading_map_html(
     _STRAT_COLORS: dict = {
         "bpc": "#3274D9",  # 蓝
         "fer": "#B877D9",  # 紫
-        "me": "#FF9830",  # 橙
+        "me-long": "#FF9830",  # 橙
         "lv": "#73BF69",  # 绿
     }
     _STRAT_COLOR_DEFAULT = "#aaaaaa"
@@ -2053,7 +2077,7 @@ def main():
         "--strategy",
         "-s",
         required=True,
-        help="策略名, 逗号分隔 (例: bpc / fer / bpc,fer,me)",
+        help="策略名, 逗号分隔 (例: bpc / fer / bpc,fer,me-long)",
     )
     parser.add_argument(
         "--symbols",

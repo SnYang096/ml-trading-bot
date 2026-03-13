@@ -118,7 +118,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--strategy", default="me", help="策略名")
+    parser.add_argument("--strategy", default="me-long", help="策略名")
     parser.add_argument("--logs", required=True, help="logs_gated.parquet 路径")
     parser.add_argument("--rows", type=int, default=200, help="检查行数")
     args = parser.parse_args()

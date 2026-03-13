@@ -6,6 +6,10 @@ holding:
   time_stop_bars: 0
 optimization:
   enabled: true
+  # ── ME-Short "动能锁定" 模式 (做空版) ──
+  # 设计理念同 ME-Long: 对称 SL, 快速 trailing 锁住 momentum spike
+  # Grid 与 me-long 完全一致 (方向由 direction.yaml 固定)
+  # 推荐用法: --sym-r 1.0:0.5:4.0
   constraints:
     max_sl_activation_ratio: 3.0   # initial_r / activation_r 上限
     min_win_r: 0.0                 # activation_r - trail_r 下限
@@ -17,13 +21,13 @@ optimization:
       step: 0.5
     stop_loss.trailing.activation_r:
       range:
-      - 0.5
-      - 5.0
+      - 1.0
+      - 4.0
       step: 0.5
     stop_loss.trailing.trail_r:
       range:
-      - 0.5
-      - 3.0
+      - 1.0
+      - 4.0
       step: 0.5
 stop_loss:
   initial_r: 2.0
@@ -33,4 +37,4 @@ stop_loss:
   type: trailing
 take_profit:
   enabled: false
-version: 1
+version: 2

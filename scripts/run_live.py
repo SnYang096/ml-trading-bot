@@ -316,7 +316,7 @@ def _setup_three_strategies(
         "MLBOT_PCM_REGIME_CONFIG",
         os.path.join(config_root, "pcm_regime.yaml"),
     )
-    _ALL_ARCHETYPES = ["bpc", "me", "fer", "lv"]
+    _ALL_ARCHETYPES = ["bpc", "me-long", "fer", "lv"]
     try:
         with open(pcm_regime_path, "r", encoding="utf-8") as _f:
             _pcm_cfg = _yaml.safe_load(_f)
@@ -332,7 +332,7 @@ def _setup_three_strategies(
 
     # ── 1. 从 meta.yaml 读取各策略 timeframe (不再硬编码) ──
     tf_bpc = _load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
-    tf_me = _load_strategy_timeframe(strategies_root, "me")  # 默认 60T
+    tf_me = _load_strategy_timeframe(strategies_root, "me-long")  # 默认 60T
     tf_fer = _load_strategy_timeframe(strategies_root, "fer")  # 默认 240T
     tf_lv = _load_strategy_timeframe(strategies_root, "lv")  # 默认 15T
 
@@ -357,15 +357,15 @@ def _setup_three_strategies(
             bar_minutes=bar_minutes_bpc,
         )
         _tf_map["bpc"] = tf_bpc
-    if "me" in enabled_archetypes:
-        _strategy_map["me"] = GenericLiveStrategy(
-            strategy_name="me",
+    if "me-long" in enabled_archetypes:
+        _strategy_map["me-long"] = GenericLiveStrategy(
+            strategy_name="me-long",
             strategies_root=strategies_root,
             trade_size=trade_size,
             primary_timeframe=tf_me,
             bar_minutes=bar_minutes_me,
         )
-        _tf_map["me"] = tf_me
+        _tf_map["me-long"] = tf_me
     if "fer" in enabled_archetypes:
         _strategy_map["fer"] = GenericLiveStrategy(
             strategy_name="fer",
@@ -387,7 +387,7 @@ def _setup_three_strategies(
 
     # 将1个变量方便后续使用
     bpc = _strategy_map.get("bpc")
-    me = _strategy_map.get("me")
+    me = _strategy_map.get("me-long")
     fer = _strategy_map.get("fer")
     lv = _strategy_map.get("lv")
 
@@ -395,7 +395,7 @@ def _setup_three_strategies(
 
     # ── 2. 创建 PCM 仲裁层 (注册策略 + timeframe 绑定) ──
     pcm = LivePCM(
-        archetype_priority=["LV", "FER", "ME", "BPC"],
+        archetype_priority=["LV", "FER", "ME-LONG", "BPC"],
         regime_config_path=pcm_regime_path,
         constitution_yaml=os.getenv(
             "MLBOT_CONSTITUTION_YAML",
@@ -412,7 +412,7 @@ def _setup_three_strategies(
     # ── 3. 创建特征计算器 (per-symbol, per-timeframe) ──
     bpc_archetypes = os.path.join(strategies_root, "bpc", "archetypes")
     fer_archetypes = os.path.join(strategies_root, "fer", "archetypes")
-    me_archetypes = os.path.join(strategies_root, "me", "archetypes")
+    me_archetypes = os.path.join(strategies_root, "me-long", "archetypes")
     lv_archetypes = os.path.join(strategies_root, "lv", "archetypes")
 
     # 预提取 FER 特征集 (用于合并到 4H FC)
@@ -788,7 +788,7 @@ def _run_retrain_check() -> None:
 
     strategy_names = list(cfg.get("strategies", {}).keys())
     if not strategy_names:
-        strategy_names = ["bpc", "fer", "me"]
+        strategy_names = ["bpc", "fer", "me-long"]
 
     for strat in strategy_names:
         try:

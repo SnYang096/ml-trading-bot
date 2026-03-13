@@ -60,7 +60,7 @@ def check_strategy_configs():
     print("=== 策略配置文件检查 ===\n")
 
     strategies_root = os.environ["MLBOT_STRATEGIES_ROOT"]
-    strategies = ["bpc", "me", "fer"]
+    strategies = ["bpc", "me-long", "fer"]
 
     all_configs_present = True
 
@@ -124,11 +124,11 @@ def create_strategies():
     print("\n2. 初始化 ME 策略...")
     try:
         me_strategy = GenericLiveStrategy(
-            strategy_name="me",
+            strategy_name="me-long",
             strategies_root=os.environ["MLBOT_STRATEGIES_ROOT"],
         )
         me_strategy.load_configs()
-        strategies["me"] = me_strategy
+        strategies["me-long"] = me_strategy
         print("   ✅ ME 策略初始化成功")
     except Exception as e:
         print(f"   ❌ ME 策略初始化失败: {e}")
@@ -164,7 +164,7 @@ def setup_pcm(strategies):
     # 创建 LivePCM 实例
     # Regime-Aware: NORMAL(LV>FER>ME>BPC), HIGH_VOL(LV>ME>FER>BPC)
     pcm = LivePCM(
-        archetype_priority=["LV", "FER", "ME", "BPC"],
+        archetype_priority=["LV", "FER", "ME-LONG", "BPC"],
         max_slots=int(os.environ.get("MLBOT_MAX_SLOTS", "2")),
         regime_config_path=os.environ.get(
             "MLBOT_PCM_REGIME_CONFIG", "config/pcm_regime.yaml"

@@ -12,7 +12,7 @@ from scripts.backtest_execution_layer import _load_raw_features_for_archetype
 
 
 def main():
-    strategy = "me"
+    strategy = "me-long"
     symbol = "BTCUSDT"
     strategies_root = "config/strategies"
 

@@ -1,0 +1,80 @@
+# BPC-SHORT Gate Draft (auto-generated)
+# 来源: results/train_final_20260313_185351_rr_extreme/bpc-short
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy bpc-short
+#   python scripts/optimize_gate_unified.py --strategy bpc-short --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_evt_tail_shape_right
+  tag: HARD_EVT_TAIL_SHAPE_RIGHT
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.70)
+  when:
+    evt_tail_shape_right:
+      value_lt: 0.0992
+  then:
+    action: deny
+  comment: 'statistical(lift=1.70): evt_tail_shape_right < 0.09921'
+- id: gate_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.50)
+  when:
+    evt_var_99_right:
+      value_lt: 0.0595
+  then:
+    action: deny
+  comment: 'statistical(lift=1.50): evt_var_99_right < 0.05952'
+- id: gate_vol_persistence
+  tag: HARD_VOL_PERSISTENCE
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.08)
+  when:
+    vol_persistence:
+      value_gt: 0.0833
+  then:
+    action: deny
+  comment: 'statistical(lift=1.08): vol_persistence > 0.08334'
+- id: gate_evt_var_99_evt_var_99
+  tag: HARD_EVT_VAR_99_EVT_VAR_99
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.23)
+  when:
+    all_of:
+    - evt_var_99:
+        value_gt: 0.7976
+    - evt_var_99:
+        value_lt: 0.8968
+  then:
+    action: deny
+  comment: 'statistical(lift=1.23): evt_var_99 > 0.7976 & evt_var_99 < 0.8968'
+- id: gate_evt_scale_left_evt_scale_left
+  tag: HARD_EVT_SCALE_LEFT_EVT_SCALE_LEFT
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.13)
+  when:
+    all_of:
+    - evt_scale_left:
+        value_gt: 0.6776
+    - evt_scale_left:
+        value_lt: 0.9206
+  then:
+    action: deny
+  comment: 'statistical(lift=1.13): evt_scale_left > 0.6776 & evt_scale_left < 0.9206'
+guardrails: []

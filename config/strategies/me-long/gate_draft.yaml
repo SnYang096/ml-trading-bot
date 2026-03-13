@@ -1,0 +1,72 @@
+# ME-LONG Gate Draft (auto-generated)
+# 来源: results/train_final_20260313_185741_rr_extreme/me-long
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy me-long
+#   python scripts/optimize_gate_unified.py --strategy me-long --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_fer_aggressor_absorption
+  tag: HARD_FER_AGGRESSOR_ABSORPTION
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.13)
+  when:
+    fer_aggressor_absorption:
+      value_gt: 0.405
+  then:
+    action: deny
+  comment: 'statistical(lift=1.13): fer_aggressor_absorption > 0.405'
+- id: gate_vpin_max20_vpin_max20
+  tag: HARD_VPIN_MAX20_VPIN_MAX20
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.17)
+  when:
+    all_of:
+    - vpin_max20:
+        value_gt: 0.2952
+    - vpin_max20:
+        value_lt: 0.3332
+  then:
+    action: deny
+  comment: 'statistical(lift=1.17): vpin_max20 > 0.2952 & vpin_max20 < 0.3332'
+- id: gate_evt_scale_left_evt_scale_left
+  tag: HARD_EVT_SCALE_LEFT_EVT_SCALE_LEFT
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.13)
+  when:
+    all_of:
+    - evt_scale_left:
+        value_gt: 0.6667
+    - evt_scale_left:
+        value_lt: 0.7897
+  then:
+    action: deny
+  comment: 'statistical(lift=1.13): evt_scale_left > 0.6667 & evt_scale_left < 0.7897'
+- id: gate_evt_es_99_evt_es_99
+  tag: HARD_EVT_ES_99_EVT_ES_99
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.09)
+  when:
+    all_of:
+    - evt_es_99:
+        value_gt: 0.3492
+    - evt_es_99:
+        value_lt: 0.5397
+  then:
+    action: deny
+  comment: 'statistical(lift=1.09): evt_es_99 > 0.3492 & evt_es_99 < 0.5397'
+guardrails: []

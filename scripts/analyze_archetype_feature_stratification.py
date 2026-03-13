@@ -2383,14 +2383,14 @@ def _meta_algorithm_prefilter(
     # ── 2d. 提前读取 scoring_method（影响 LightGBM 训练目标） ──
     _scoring_method = getattr(args, "prefilter_scoring_method", None) or "ks"
 
-    # ── 3. LightGBM 训练 ──
-    try:
-        import lightgbm as lgb
-    except ImportError:
-        print("❌ lightgbm 未安装")
-        return 1
+    # ── 3. LightGBM 训练 (via meta_algorithm_unified) ──
+    from meta_algorithm_unified import (
+        MetaAlgorithmConfig as _MACfg,
+        train_lightgbm as _train_lgb,
+        discover_features as _discover_feats,
+        find_plateau as _find_plateau,
+    )
 
-    # 准备训练数据 (语义子集)
     avail_features = [f for f in features if f in df_train_sub.columns]
     if len(avail_features) < 2:
         print(f"❌ 可用特征不足 ({len(avail_features)} < 2)")
@@ -2413,44 +2413,39 @@ def _meta_algorithm_prefilter(
         _lgb_objective = "regression"
         _lgb_metric = "mse"
 
-    lgb_params = {
-        "objective": _lgb_objective,
-        "metric": _lgb_metric,
-        "num_leaves": _lgb_cfg.get("num_leaves", 31),
-        "learning_rate": _lgb_cfg.get("learning_rate", 0.05),
-        "min_child_samples": _lgb_cfg.get("min_child_samples", 50),
-        "feature_fraction": _lgb_cfg.get("feature_fraction", 0.8),
-        "bagging_fraction": _lgb_cfg.get("bagging_fraction", 0.8),
-        "bagging_freq": _lgb_cfg.get("bagging_freq", 5),
-        "verbose": -1,
-        "seed": 42,
-        "n_jobs": -1,
-    }
-    n_estimators = _lgb_cfg.get("n_estimators", 200)
+    _ma_cfg = _MACfg(
+        layer="prefilter",
+        objective=_lgb_objective,
+        metric=_lgb_metric,
+        num_leaves=_lgb_cfg.get("num_leaves", 31),
+        learning_rate=_lgb_cfg.get("learning_rate", 0.05),
+        min_child_samples=_lgb_cfg.get("min_child_samples", 50),
+        feature_fraction=_lgb_cfg.get("feature_fraction", 0.8),
+        bagging_fraction=_lgb_cfg.get("bagging_fraction", 0.8),
+        bagging_freq=_lgb_cfg.get("bagging_freq", 5),
+        n_estimators=_lgb_cfg.get("n_estimators", 200),
+        seed=42,
+        shap_top_n=_sg_cfg.get("top_n", 8),
+        compute_interactions=_sg_cfg.get("compute_interactions", True),
+        strategy=strategy,
+    )
 
     print(
-        f"\n🌲 LightGBM 训练: {len(avail_features)} 特征, {n_train_sub} 样本, {n_estimators} 轮"
+        f"\n🌲 LightGBM 训练: {len(avail_features)} 特征, {n_train_sub} 样本, {_ma_cfg.n_estimators} 轮"
     )
-    train_data = lgb.Dataset(X_train, label=y_train, feature_name=avail_features)
-    model = lgb.train(
-        lgb_params,
-        train_data,
-        num_boost_round=n_estimators,
-    )
+    model = _train_lgb(X_train, y_train, avail_features, _ma_cfg)
     print(f"   ✅ 训练完成")
 
-    # ── 4. SHAP∩Gain 特征发现 ──
-    _shap_top_n = _sg_cfg.get("top_n", 8)
-    _shap_interactions = _sg_cfg.get("compute_interactions", True)
+    # ── 4. SHAP∩Gain 特征发现 (via meta_algorithm_unified) ──
     print(
-        f"\n🔍 SHAP∩Gain 特征发现 (top_n={_shap_top_n}, interactions={_shap_interactions})"
+        f"\n🔍 SHAP∩Gain 特征发现 (top_n={_ma_cfg.shap_top_n}, interactions={_ma_cfg.compute_interactions})"
     )
-    top_features, shap_importance_map, interaction_pairs = _compute_shap_gain_features(
+    top_features, shap_importance_map, interaction_pairs = _discover_feats(
         df_train_sub,
         avail_features,
         model,
-        top_n=_shap_top_n,
-        compute_interactions=_shap_interactions,
+        top_n=_ma_cfg.shap_top_n,
+        compute_interactions=_ma_cfg.compute_interactions,
     )
     print(f"   Top features: {top_features}")
     if shap_importance_map:
@@ -2938,6 +2933,33 @@ def _meta_algorithm_prefilter(
             else:
                 _c["score"] = _ks_rank[_i] * 0.6 + _rob_rank[_i] * 0.4
 
+    # ── 5a-post-1. Plateau 验证 (via meta_algorithm_unified) ──
+    if candidates:
+        print(f"\n📈 Plateau 稳定性验证:")
+        for feat in top_features:
+            _plt = _find_plateau(
+                candidates,
+                feat,
+                min_width=_thr.get("min_plateau_width", 0.05),
+                max_lift_std_ratio=_thr.get("max_lift_std_ratio", 0.3),
+            )
+            if _plt is not None:
+                print(
+                    f"   ✅ {feat}: plateau [{_plt['plateau_start']:.4f}, "
+                    f"{_plt['plateau_end']:.4f}] lift_mean={_plt['lift_mean']:.3f} "
+                    f"({_plt['num_points']} points)"
+                )
+                # Boost score of candidates within the plateau
+                for cand in candidates:
+                    if (
+                        cand["feature"] == feat
+                        and cand.get("threshold") is not None
+                        and _plt["plateau_start"]
+                        <= cand["threshold"]
+                        <= _plt["plateau_end"]
+                    ):
+                        cand["score"] *= 1.15  # 15% plateau bonus
+
     if not candidates:
         print("   ⚠️  Holdout 统计验证: 无候选规则通过 KS+软约束 筛选")
         print("   原因: archetype 特征无法创建显著不同的 pass/deny 分布, 或数据量太小")
@@ -3355,7 +3377,17 @@ def main() -> int:
     parser.add_argument(
         "--strategy",
         required=True,
-        choices=["bpc", "me", "fer", "lv"],
+        choices=[
+            "bpc",
+            "bpc-long",
+            "bpc-short",
+            "me-long",
+            "me-short",
+            "fer",
+            "fer-long",
+            "fer-short",
+            "lv",
+        ],
         help="策略名称",
     )
     parser.add_argument(

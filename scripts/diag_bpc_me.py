@@ -44,7 +44,7 @@ from src.time_series_model.live.live_feature_plan import (
 )
 
 strategies_root = "config/strategies"
-tf_strats = {"240T": ["bpc", "fer"], "60T": ["me"]}
+tf_strats = {"240T": ["bpc", "fer"], "60T": ["me-long"]}
 features_by_tf = {}
 
 for tf, strat_list in tf_strats.items():
@@ -100,7 +100,10 @@ for f in me_feats:
         print(f"  ME 60T {f}: *** MISSING ***")
 
 # Test each strategy
-for strat_name, feat_df, tf in [("bpc", feat_240t, "240T"), ("me", feat_60t, "60T")]:
+for strat_name, feat_df, tf in [
+    ("bpc", feat_240t, "240T"),
+    ("me-long", feat_60t, "60T"),
+]:
     strat = GenericLiveStrategy(
         strat_name,
         strategies_root="config/strategies",

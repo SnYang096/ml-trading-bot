@@ -88,7 +88,7 @@ def test_original_problem():
     print(f"测试特征: {test_features}")
 
     # 测试所有策略
-    strategies = ["bpc", "fer", "me"]
+    strategies = ["bpc", "fer", "me-long"]
 
     for strategy in strategies:
         archetype = load_strategy_archetype(strategy)

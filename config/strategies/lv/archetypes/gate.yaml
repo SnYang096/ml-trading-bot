@@ -1,6 +1,6 @@
 # LV Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/lv/20260309_224445/strategies/lv/gate_draft.yaml
-# 优化规则: 0/1 条通过优化
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/lv/20260313_185141/strategies/lv/gate_draft.yaml
+# 优化规则: 0/3 条通过优化, 1 条已移除
 
 schema:
   phases:
@@ -13,22 +13,24 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: prefilter_oi_exhaustion_score
-  tag: PREFILTER_OI_EXHAUSTION_SCORE
+- id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
+  tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
   phase: hard_gate
-  priority: 1
-  reason: 'prefilter: oi_exhaustion_score < 0.0007'
+  priority: 11
+  reason: 统计验证规则 (lift=1.06)
   when:
-    oi_exhaustion_score:
-      value_lt: 0.0007
+    all_of:
+    - vol_leverage_asymmetry:
+        value_gt: 0.2106
+    - vol_leverage_asymmetry:
+        value_lt: 0.2603
   then:
     action: deny
-  frozen: true
-  comment: prefilter条件 (训练-推理一致性, frozen=true)
+  comment: 'optimizer: no_stable_plateau, threshold=0.2610, lift=0.165'
 - id: gate_fer_volume_price_divergence_fer_volume_price_divergence
   tag: HARD_FER_VOLUME_PRICE_DIVERGENCE_FER_VOLUME_PRICE_DIVERGENCE
   phase: hard_gate
-  priority: 10
+  priority: 12
   reason: 统计验证规则 (lift=1.05)
   when:
     all_of:

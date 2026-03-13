@@ -22,7 +22,7 @@ STRATEGIES = [
         "uid": "quant-strategy-fer",
     },
     {
-        "name": "me",
+        "name": "me-long",
         "label": "ME",
         "emoji": "🟠",
         "color": "#FF9830",

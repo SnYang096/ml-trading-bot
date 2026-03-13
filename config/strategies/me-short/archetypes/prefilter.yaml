@@ -1,9 +1,31 @@
-# ME-Short Archetype Prefilter (待训练)
-# 职责: archetype 成立的前置条件 — 向下 ME 的背景条件
-# 使用全量数据训练，目标: rr_short > +0.8R（做空正向信号）
+# ME-SHORT Archetype Prefilter (auto-generated)
+# 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
+# 自动生成: 2026-03-13
+# 数据源: features_labeled.parquet, 112361 行
 
-# ⚠️  待 Meta-Algorithm 训练后填入
+# ⚠️  无法自动生成 rules, 请手动配置
 # rules:
 #   - feature: xxx
 #     operator: ">="
 #     value: 0.0
+
+last_evaluation:
+  # ── 自动生成 (2026-03-13) ──
+  timestamp: "2026-03-13"
+  data_source: "features_labeled.parquet"
+  n_rows: 112361
+  baseline_bad_rate: 0.0000
+  baseline_median_rr: +0.0276
+
+  # ── 正信号 (0 个) ──
+  positive_signals:
+    []
+
+  # ── 反信号 (0 个) ──
+  anti_signals:
+    []
+
+  # ── 低端信号 (0 个) ──
+  absence_signals:
+    []
+

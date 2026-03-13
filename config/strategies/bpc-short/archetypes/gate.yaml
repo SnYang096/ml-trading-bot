@@ -1,0 +1,52 @@
+# BPC Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/bpc/20260306_000255/strategies/bpc/gate_draft.yaml
+# 优化规则: 0/4 条通过优化, 4 条已移除
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: prefilter_bpc_volume_compression_pct
+  tag: PREFILTER_BPC_VOLUME_COMPRESSION_PCT
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: bpc_volume_compression_pct <= 0.1503'
+  when:
+    bpc_volume_compression_pct:
+      value_gt: 0.1503
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: prefilter_bpc_bb_compression
+  tag: PREFILTER_BPC_BB_COMPRESSION
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: bpc_bb_compression > 0.0965'
+  when:
+    bpc_bb_compression:
+      value_le: 0.0965
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+- id: prefilter_bpc_cvd_z
+  tag: PREFILTER_BPC_CVD_Z
+  phase: hard_gate
+  priority: 1
+  reason: 'prefilter: bpc_cvd_z > -2.0018'
+  when:
+    bpc_cvd_z:
+      value_le: -2.0018
+  then:
+    action: deny
+  frozen: true
+  comment: prefilter条件 (训练-推理一致性, frozen=true)
+guardrails: []

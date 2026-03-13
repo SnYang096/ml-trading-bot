@@ -3249,6 +3249,195 @@ def experiment():
     pass
 
 
+# =============================================================================
+# Pipeline commands (mlbot pipeline run/list/adopt/delete/diff)
+# =============================================================================
+
+
+@cli.group()
+def pipeline():
+    """研究管线: 训练、管理、对比实验."""
+    pass
+
+
+@pipeline.command()
+@click.option("--strategy", help="策略名 (如 bpc-long, fer-short, me)")
+@click.option("--all", "run_all", is_flag=True, help="执行所有策略")
+@click.option("--end-date", help="数据截止日期 (默认自动检测)")
+@click.option("--dry-run", is_flag=True, help="打印命令但不执行")
+@click.option("--no-adopt", is_flag=True, help="禁止自动采纳, 仅保存实验结果")
+@click.option("--skip-shap", is_flag=True, help="跳过 SHAP 特征筛选 (快速迭代用)")
+@click.option("--compare-only", is_flag=True, help="只对比, 不重训")
+@click.option("--use-1min", is_flag=True, help="使用 1min bar 精细模拟")
+@click.option("--live-root", default="live/highcap", help="1min bar 数据根目录")
+@click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
+def run(
+    strategy,
+    run_all,
+    end_date,
+    dry_run,
+    no_adopt,
+    skip_shap,
+    compare_only,
+    use_1min,
+    live_root,
+    config_path,
+):
+    """执行研究管线."""
+    args = []
+    if strategy:
+        args.extend(["--strategy", strategy])
+    if run_all:
+        args.append("--all")
+    if end_date:
+        args.extend(["--end-date", end_date])
+    if dry_run:
+        args.append("--dry-run")
+    if no_adopt:
+        args.append("--no-adopt")
+    if skip_shap:
+        args.append("--skip-shap")
+    if compare_only:
+        args.append("--compare-only")
+    if use_1min:
+        args.append("--use-1min")
+    if live_root != "live/highcap":
+        args.extend(["--live-root", live_root])
+    if config_path:
+        args.extend(["--config", config_path])
+
+    sys.exit(run_script("scripts/auto_research_pipeline.py", args))
+
+
+@pipeline.command("list")
+@click.option("--strategy", help="策略名")
+@click.option("--all", "list_all", is_flag=True, help="列出所有策略")
+@click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
+def pipeline_list(strategy, list_all, config_path):
+    """列出历史实验及其 metrics."""
+    args = ["--list"]
+    if strategy:
+        args.extend(["--strategy", strategy])
+    if list_all:
+        args.append("--all")
+    if config_path:
+        args.extend(["--config", config_path])
+
+    sys.exit(run_script("scripts/auto_research_pipeline.py", args))
+
+
+@pipeline.command()
+@click.option("--strategy", required=True, help="策略名")
+@click.argument("timestamp")
+@click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
+def adopt(strategy, timestamp, config_path):
+    """手动采纳指定时间戳的实验."""
+    args = ["--strategy", strategy, "--adopt", timestamp]
+    if config_path:
+        args.extend(["--config", config_path])
+
+    sys.exit(run_script("scripts/auto_research_pipeline.py", args))
+
+
+@pipeline.command()
+@click.option("--strategy", required=True, help="策略名")
+@click.argument("ts1")
+@click.argument("ts2")
+@click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
+def diff(strategy, ts1, ts2, config_path):
+    """对比两次实验的 archetypes 差异."""
+    args = ["--strategy", strategy, "--diff", ts1, ts2]
+    if config_path:
+        args.extend(["--config", config_path])
+
+    sys.exit(run_script("scripts/auto_research_pipeline.py", args))
+
+
+@pipeline.command()
+@click.option("--strategy", required=True, help="策略名")
+@click.option("--timestamp", multiple=True, help="指定时间戳 (可多次)")
+@click.option("--status", help="按状态筛选 (error/keep/adopt/alert)")
+@click.option("--all", "delete_all", is_flag=True, help="删除全部历史实验")
+@click.option("--dry-run", is_flag=True, help="预览要删除的实验")
+@click.option("--date-range", nargs=2, help="日期范围 (YYYY-MM-DD YYYY-MM-DD)")
+def delete(strategy, timestamp, status, delete_all, dry_run, date_range):
+    """删除实验 (集成 cleanup_old_experiments 功能)."""
+    # Import core functions from cleanup script
+    _scripts_dir = str(PROJECT_ROOT / "scripts")
+    if _scripts_dir not in sys.path:
+        sys.path.insert(0, _scripts_dir)
+
+    try:
+        from cleanup_old_experiments import (
+            get_experiment_dirs,
+            get_experiment_status,
+            should_delete_based_on_date,
+        )
+    except ImportError:
+        click.echo("❌ 无法导入 cleanup_old_experiments 模块")
+        sys.exit(1)
+
+    import shutil
+
+    experiment_dirs = get_experiment_dirs(strategy)
+    if not experiment_dirs:
+        click.echo(f"没有找到 {strategy} 策略的实验目录")
+        return
+
+    dirs_to_delete = []
+
+    if delete_all:
+        dirs_to_delete = experiment_dirs
+    elif timestamp:
+        for ts in timestamp:
+            for exp_dir in experiment_dirs:
+                if exp_dir.name == ts:
+                    dirs_to_delete.append(exp_dir)
+                    break
+            else:
+                click.echo(f"警告: 找不到时间戳为 {ts} 的实验")
+    elif status:
+        for exp_dir in experiment_dirs:
+            exp_status = get_experiment_status(exp_dir)
+            if exp_status == status.lower():
+                dirs_to_delete.append(exp_dir)
+    elif date_range:
+        for exp_dir in experiment_dirs:
+            if should_delete_based_on_date(exp_dir, date_range[0], date_range[1]):
+                dirs_to_delete.append(exp_dir)
+    else:
+        click.echo("请指定: --timestamp, --all, --status, 或 --date-range")
+        return
+
+    if not dirs_to_delete:
+        click.echo("没有找到匹配条件的实验")
+        return
+
+    click.echo(f"将要删除 {len(dirs_to_delete)} 个实验:")
+    for exp_dir in dirs_to_delete:
+        exp_status = get_experiment_status(exp_dir)
+        click.echo(f"  - {exp_dir.name} (状态: {exp_status})")
+
+    if dry_run:
+        click.echo("\n这是 dry-run 模式，实际文件不会被删除")
+        return
+
+    if not click.confirm(f"\n确认删除这 {len(dirs_to_delete)} 个实验?"):
+        click.echo("取消操作")
+        return
+
+    deleted_count = 0
+    for exp_dir in dirs_to_delete:
+        try:
+            shutil.rmtree(exp_dir)
+            click.echo(f"已删除: {exp_dir}")
+            deleted_count += 1
+        except Exception as e:
+            click.echo(f"删除失败 {exp_dir}: {e}")
+
+    click.echo(f"\n完成: 成功删除 {deleted_count} 个实验目录")
+
+
 @experiment.command("regime-gate")
 @click.option(
     "--logs",

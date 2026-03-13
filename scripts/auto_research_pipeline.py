@@ -6,8 +6,7 @@
   1. 自动检测最新数据日期, 计算 holdout 窗口 (end - 14 个月)
   2. 下载 + 转换最新月度 aggTrades 数据 (增量, 已有跳过)
   3. 按策略执行完整训练链: DataDownload → FeatureStore → Prepare
-     → Prefilter → Direction → Gate → Evidence → EntryFilter
-     → Execution → Backtest
+     → Prefilter → Direction → Gate → Execution → Backtest
   4. 所有阈值优化步骤带 --promote, 写入实验目录 (不覆盖生产 config)
   5. 保存结构化 report.json 到 results/research_history/{strategy}/{timestamp}/
   6. 与上次研究结果对比, 输出确定性决策: ADOPT / KEEP / ALERT
@@ -1019,54 +1018,14 @@ def run_strategy_pipeline(
 
     # ── IS/OOS 说明 ──
     # logs_gated.parquet 只含 holdout 数据 (predictions.parquet 只输出 OOS 预测)
-    # 因此 Evidence/Entry Filter 不需要 --cutoff-date, 数据已经是 OOS-only
+    # 因此下游步骤不需要 --cutoff-date, 数据已经是 OOS-only
     # 未来如果 predictions.parquet 包含 IS+OOS, 需要恢复 cutoff 过滤
 
-    # ── Step 6: Evidence Discovery (Spearman + Quintile Monotonicity) ──
-    # 替代旧 LightGBM regression → SHAP∩Gain 方法
-    # 在 gate 放行子集上直接验证 volatility/liquidity/leverage 特征的分层作用
-    evidence_discover_cmd = [
-        "python",
-        "scripts/discover_evidence_candidates.py",
-        "--logs",
-        f"{gate_dir}/logs_gated.parquet",
-        "--strategy",
-        strategy,
-        "--strategies-root",
-        strategies_root,
-        "--output",
-        f"{gate_dir}/evidence_discovery.json",
-        "--promote",
-    ]
-    run_step(
-        "Evidence Discover",
-        evidence_discover_cmd,
-        log,
-        dry_run=dry_run,
-    )
-    evidence_dir = gate_dir  # 后续步骤沿用 gate_dir
-
-    # ── Step 7: Entry Filter (--meta-algorithm --promote) ──
-    # 必须用 logs_gated.parquet：Entry Filter 的阈值必须在 gate 过滤后的
-    # 分布上优化，否则会和 gate 产生 distribution mismatch
-    # 评估方法: forward_rr t-test (与 Evidence 同一套 Spearman 方法论, 不走 execution simulation)
-    run_step(
-        "Entry Filter Optimize",
-        [
-            "python",
-            "scripts/optimize_entry_filter_plateau.py",
-            "--logs",
-            f"{evidence_dir}/logs_gated.parquet",
-            "--strategy",
-            strategy,
-            "--strategies-root",
-            strategies_root,
-            "--meta-algorithm",
-            "--promote",
-        ],
-        log,
-        dry_run=dry_run,
-    )
+    # ── Step 6 (Evidence) + Step 7 (Entry Filter): 已删除 ──
+    # Prefilter + Gate 已覆盖主要过滤逻辑, Evidence/Entry Filter 不再由 pipeline 自动调用.
+    # 独立脚本 discover_evidence_candidates.py 和 optimize_entry_filter_plateau.py 保留,
+    # 用户可手动运行做探索分析.
+    evidence_dir = gate_dir  # 后续步骤直接使用 gate_dir
 
     # ── Step 8: Execution Optimize (跳过) ──
     # 默认使用 execution.yaml 中的 2ATR 止损, 快速出结果.
@@ -1330,7 +1289,7 @@ def _run_pcm_joint_backtest(
     # 日志文件
     pcm_log = history_dir / first_strat / first_run_dir_name / "pcm_joint.log"
 
-    # 事件回测: --strategy bpc,fer,me 多策略 PCM 仲裁
+    # 事件回测: --strategy bpc,fer,me-long 多策略 PCM 仲裁
     strategies_str = ",".join(strategy_names)
     # 使用第一个策略的实验 strategies_root
     strategies_root = next(
@@ -1532,7 +1491,7 @@ def _print_seed_diagnostics(
 
 def main():
     p = argparse.ArgumentParser(description="自动研究流水线 (实验隔离版)")
-    p.add_argument("--strategy", help="策略名 (bpc/fer/me)")
+    p.add_argument("--strategy", help="策略名 (bpc/fer/me-long)")
     p.add_argument("--all", action="store_true", help="执行所有策略")
     p.add_argument("--end-date", help="数据截止日期 (默认自动检测)")
     p.add_argument("--config", default=str(DEFAULT_CONFIG), help="pipeline 配置文件")

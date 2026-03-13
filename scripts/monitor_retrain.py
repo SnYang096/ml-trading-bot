@@ -153,7 +153,7 @@ def load_live_trades_from_db(
         params: list = [cutoff]
 
         if strategy:
-            # strategy_id 可能存储为 "bpc" / "fer" / "me" / "lv"
+            # strategy_id 可能存储为 "bpc" / "fer" / "me-long" / "lv"
             # 也可能是 archetype 名称, 需要模糊匹配
             query += " AND (LOWER(strategy_id) = ? OR LOWER(archetype) LIKE ?)"
             params.extend([strategy.lower(), f"%{strategy.lower()}%"])

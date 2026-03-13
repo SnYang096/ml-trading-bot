@@ -95,9 +95,11 @@ def create_three_strategies():
     # ME 策略
     print("2. 初始化 ME 策略...")
     try:
-        me = GenericLiveStrategy(strategy_name="me", strategies_root=strategies_root)
+        me = GenericLiveStrategy(
+            strategy_name="me-long", strategies_root=strategies_root
+        )
         me.load_configs()
-        strategies["me"] = me
+        strategies["me-long"] = me
         print("   ✅ ME 策略初始化成功")
     except Exception as e:
         print(f"   ❌ ME 策略初始化失败: {e}")
@@ -123,7 +125,7 @@ def setup_pcm(strategies):
     print("\n=== 设置 PCM 仲裁层 ===")
 
     pcm = LivePCM(
-        archetype_priority=["fer", "me", "bpc"],  # FER 最高优先级
+        archetype_priority=["fer", "me-long", "bpc"],  # FER 最高优先级
         max_slots=int(os.environ.get("MLBOT_MAX_SLOTS", "2")),
     )
 
@@ -220,7 +222,7 @@ class SignalLogger:
 
     def __init__(self):
         self.signal_count = 0
-        self.archetype_stats = {"bpc": 0, "me": 0, "fer": 0}
+        self.archetype_stats = {"bpc": 0, "me-long": 0, "fer": 0}
         self.start_time = datetime.now()
 
     def log_signal(self, intent, symbol):
