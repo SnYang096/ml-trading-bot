@@ -1980,13 +1980,22 @@ def _generate_trading_map_html(
             sym_df["_seq"] = range(len(sym_df))
             x_labels = sym_df[ts_col_local].dt.strftime("%Y-%m-%d %H:%M").tolist()
             seq_to_label = {i: lbl for i, lbl in enumerate(x_labels)}
-            # timestamp(str) → seq 快查
-            ts_str_to_seq = dict(
-                zip(
-                    sym_df[ts_col_local].astype(str).values,
-                    sym_df["_seq"].values,
-                )
-            )
+
+            # timestamp(str) → seq 快查 (tz 归一化: 去除 +00:00 避免匹配失败)
+            def _norm_ts_str(ts_val) -> str:
+                """统一为 tz-naive 字符串，消除 '+00:00' 与无 tz 的格式差异。"""
+                try:
+                    t = pd.Timestamp(ts_val)
+                    if t.tzinfo is not None:
+                        t = t.tz_localize(None)
+                    return str(t)
+                except Exception:
+                    return str(ts_val)
+
+            ts_str_to_seq = {
+                _norm_ts_str(ts): seq
+                for ts, seq in zip(sym_df[ts_col_local].values, sym_df["_seq"].values)
+            }
 
             inc = sym_df["close"] >= sym_df["open"]
             dec = ~inc
@@ -2054,12 +2063,19 @@ def _generate_trading_map_html(
 
             for t in sym_trades:
                 try:
-                    entry_ts_str = str(df.loc[t["entry_idx"], ts_col])
-                    exit_ts_str = str(df.loc[t["exit_idx"], ts_col])
+                    entry_ts_str = _norm_ts_str(df.loc[t["entry_idx"], ts_col])
+                    exit_ts_str = _norm_ts_str(df.loc[t["exit_idx"], ts_col])
                 except KeyError:
                     continue
                 entry_seq = ts_str_to_seq.get(entry_ts_str)
                 exit_seq = ts_str_to_seq.get(exit_ts_str)
+                # fallback: 用 ts_ns 做最近匹配 (应对极少数格式仍不匹配的情况)
+                if entry_seq is None and t.get("entry_ts_ns"):
+                    _eq = pd.Timestamp(t["entry_ts_ns"], unit="ns").tz_localize(None)
+                    entry_seq = ts_str_to_seq.get(str(_eq))
+                if exit_seq is None and t.get("exit_ts_ns"):
+                    _xq = pd.Timestamp(t["exit_ts_ns"], unit="ns").tz_localize(None)
+                    exit_seq = ts_str_to_seq.get(str(_xq))
                 if entry_seq is None or exit_seq is None:
                     continue
 
@@ -5062,9 +5078,14 @@ def main() -> int:
     _per_strat_limits = _const_pre.get("per_strategy_limits") or {}
     _strat_cfg = _per_strat_limits.get(str(args.strategy).lower()) or {}
     _max_slots_single = int(_strat_cfg.get("max_slots", 1))
-    print(
-        f"   🔒 Single-strategy max_slots={_max_slots_single} (from constitution: {_const_yaml_single or 'defaults'})"
-    )
+    # --simple-execution: 无槽位限制 — 研究管线评估纯信号质量，不做容量管理
+    if getattr(args, "simple_execution", False):
+        _max_slots_single = 0
+        print("   ℹ️  --simple-execution: max_slots=0 (unlimited, 评估纯信号质量)")
+    else:
+        print(
+            f"   🔒 Single-strategy max_slots={_max_slots_single} (from constitution: {_const_yaml_single or 'defaults'})"
+        )
 
     # ── 加仓配置 (从 constitution.yaml 加载, 与事件回测一致) ──
     _add_pos_cfg_single = None
