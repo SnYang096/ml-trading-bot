@@ -3503,7 +3503,11 @@ def pipeline_event_backtest(
             sys.exit(1)
     else:
         runs = sorted(
-            [d for d in strat_dir.iterdir() if d.is_dir() and (d / "report.json").exists()],
+            [
+                d
+                for d in strat_dir.iterdir()
+                if d.is_dir() and (d / "report.json").exists()
+            ],
             reverse=True,
         )
         if not runs:
@@ -3531,13 +3535,20 @@ def pipeline_event_backtest(
         opt_args = [
             sys.executable,
             str(PROJECT_ROOT / "scripts/optimize_event_execution.py"),
-            "--strategy", strategy,
-            "--start-date", holdout_start,
-            "--end-date", end_date,
-            "--sym-r", sym_r,
-            "--strategies-root", strategies_root,
-            "--data-path", data_path,
-            "--output", str(results_dir / "event_exec_opt.json"),
+            "--strategy",
+            strategy,
+            "--start-date",
+            holdout_start,
+            "--end-date",
+            end_date,
+            "--sym-r",
+            sym_r,
+            "--strategies-root",
+            strategies_root,
+            "--data-path",
+            data_path,
+            "--output",
+            str(results_dir / "event_exec_opt.json"),
         ]
         if promote:
             opt_args.append("--promote")
@@ -3552,13 +3563,20 @@ def pipeline_event_backtest(
     ev_args = [
         sys.executable,
         str(PROJECT_ROOT / "scripts/event_backtest.py"),
-        "--strategy", strategy,
-        "--start-date", holdout_start,
-        "--end-date", end_date,
-        "--strategies-root", strategies_root,
-        "--data-path", data_path,
-        "--trading-map", map_path,
-        "--export", export_path,
+        "--strategy",
+        strategy,
+        "--start-date",
+        holdout_start,
+        "--end-date",
+        end_date,
+        "--strategies-root",
+        strategies_root,
+        "--data-path",
+        data_path,
+        "--trading-map",
+        map_path,
+        "--export",
+        export_path,
     ]
     if fast:
         ev_args.append("--fast")

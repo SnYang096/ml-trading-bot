@@ -252,6 +252,7 @@ def _prepare_data(
     """
     Phase 1+2 of EventBacktester.run() — 加载数据 + 计算特征 + 构建时间线.
     返回缓存 dict, 供多次 _run_simulation() 复用.
+    对齐 EventBacktester.run(): 包含 FeatureStore 补充步骤 (atr_percentile 等 IFC 缺失特征).
     """
     import logging
 
@@ -269,6 +270,28 @@ def _prepare_data(
         from src.live_data_stream.feature_storage import StorageManager
 
         storage = StorageManager(f"{bt.live_root}/data")
+
+    # ── FeatureStore 补充: 检测可用 layer, 用于补充 IFC 缺失的特征 (如 atr_percentile) ──
+    # 必须与 EventBacktester.run() 对齐, 否则依赖 FeatureStore 特征的 prefilter 全部失败
+    _fs_layers: Dict[str, str] = {}
+    _fs = None
+    try:
+        from src.feature_store import FeatureStore, FeatureStoreSpec
+        from src.feature_store.layer_naming import detect_layer_for_strategy
+
+        for s in bt.strategy_names:
+            _det = detect_layer_for_strategy(
+                strategy=s,
+                features_store_root="feature_store",
+                timeframe=bt._tf_map.get(s),
+            )
+            if _det:
+                _fs_layers[s] = _det
+        if _fs_layers:
+            _fs = FeatureStore("feature_store")
+            logger.info(f"FeatureStore layers detected: {_fs_layers}")
+    except Exception as _fs_e:
+        logger.warning(f"FeatureStore 初始化失败, 跳过补充: {_fs_e}")
 
     sym_data: Dict[str, Dict[str, Any]] = {}
     quantile_dfs_by_tf: Dict[str, List[pd.DataFrame]] = defaultdict(list)
@@ -313,6 +336,54 @@ def _prepare_data(
             if features_df.empty:
                 continue
             fc.report_feature_health_df(features_df, symbol=sym, timeframe=tf)
+
+            # ── FeatureStore 补充: 合并 IFC 缺失的特征列 (同 EventBacktester.run()) ──
+            if _fs and _fs_layers:
+                _layer = None
+                for _s, _ln in _fs_layers.items():
+                    if tf in _ln.split("_"):
+                        _layer = _ln
+                        break
+                if _layer is None:
+                    _layer = next(iter(_fs_layers.values()))
+                try:
+                    _spec = FeatureStoreSpec(layer=_layer, symbol=sym, timeframe=tf)
+                    _fs_start = features_df.index.min()
+                    _fs_end = features_df.index.max()
+                    if hasattr(_fs_start, "tz") and _fs_start.tz is not None:
+                        _fs_start = _fs_start.tz_convert(None)
+                        _fs_end = _fs_end.tz_convert(None)
+                    _fs_df = _fs.read_range(_spec, start=_fs_start, end=_fs_end)
+                    if not _fs_df.empty:
+                        _fs_df.index = pd.to_datetime(_fs_df.index, utc=True)
+                        _missing = [
+                            c for c in _fs_df.columns if c not in features_df.columns
+                        ]
+                        if _missing:
+                            features_df.index = pd.to_datetime(
+                                features_df.index, utc=True
+                            )
+                            features_df = features_df.join(_fs_df[_missing], how="left")
+                            features_df[_missing] = features_df[_missing].ffill()
+                            logger.info(
+                                f"  FeatureStore merged {len(_missing)} cols for {sym}/{tf}"
+                            )
+                        # 填充已有列中的 NaN
+                        _nan_fill = [
+                            c
+                            for c in _fs_df.columns
+                            if c in features_df.columns and features_df[c].isna().any()
+                        ]
+                        if _nan_fill:
+                            _fs_aligned = _fs_df[_nan_fill].reindex(
+                                features_df.index, method="ffill"
+                            )
+                            features_df[_nan_fill] = features_df[_nan_fill].fillna(
+                                _fs_aligned
+                            )
+                except Exception as _e:
+                    logger.warning(f"  FeatureStore merge failed for {sym}/{tf}: {_e}")
+
             features_df.index = pd.to_datetime(features_df.index, utc=True)
             quantile_dfs_by_tf[tf].append(features_df)
 

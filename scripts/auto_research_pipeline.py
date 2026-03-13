@@ -1033,9 +1033,11 @@ def run_strategy_pipeline(
     print("\n  ⏭️  Step 8 SKIP: Execution Optimize 跳过 (默认 2ATR, 后续事件回测精调)")
 
     # ── Step 9: 向量回测 (快速, 简单执行模式) ──
-    # 使用 --simple-execution: 固定 SL=1.5R, TP=3R, 50bar timeout
+    # 使用 --simple-execution: 固定 SL/TP/timeout, 可在 research_pipeline.yaml simple_execution 块按策略定制
+    # 默认: SL=1.5R, TP=3R, 50bar timeout
     # 目的: 中性评估 Gate/Evidence/Entry Filter 信号质量
     # Execution 参数精调 (trailing/structural) 放到事件回测阶段
+    _simple_exec_cfg = scfg.get("simple_execution", {})
     bt_cmd = [
         "python",
         "scripts/backtest_execution_layer.py",
@@ -1051,6 +1053,12 @@ def run_strategy_pipeline(
         end_date,
         "--simple-execution",
     ]
+    if _simple_exec_cfg.get("sl_r") is not None:
+        bt_cmd += ["--simple-sl", str(_simple_exec_cfg["sl_r"])]
+    if _simple_exec_cfg.get("tp_r") is not None:
+        bt_cmd += ["--simple-tp", str(_simple_exec_cfg["tp_r"])]
+    if _simple_exec_cfg.get("timeout_bars") is not None:
+        bt_cmd += ["--simple-timeout", str(_simple_exec_cfg["timeout_bars"])]
     rc, bt_out = run_step(
         "Vector Backtest",
         bt_cmd,

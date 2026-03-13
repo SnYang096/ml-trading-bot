@@ -1,6 +1,6 @@
-# BPC Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/bpc/20260306_000255/strategies/bpc/gate_draft.yaml
-# 优化规则: 0/4 条通过优化, 4 条已移除
+# BPC-SHORT Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/bpc-short/20260314_014521/strategies/bpc-short/gate_draft.yaml
+# 优化规则: 3/5 条通过优化, 4 条已移除
 
 schema:
   phases:
@@ -13,40 +13,18 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: prefilter_bpc_volume_compression_pct
-  tag: PREFILTER_BPC_VOLUME_COMPRESSION_PCT
+- id: gate_evt_var_99_evt_var_99
+  tag: HARD_EVT_VAR_99_EVT_VAR_99
   phase: hard_gate
-  priority: 1
-  reason: 'prefilter: bpc_volume_compression_pct <= 0.1503'
+  priority: 13
+  reason: 统计验证规则 (lift=1.23)
   when:
-    bpc_volume_compression_pct:
-      value_gt: 0.1503
+    all_of:
+    - evt_var_99:
+        value_gt: 0.7976
+    - evt_var_99:
+        value_lt: 0.8968
   then:
     action: deny
-  frozen: true
-  comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: prefilter_bpc_bb_compression
-  tag: PREFILTER_BPC_BB_COMPRESSION
-  phase: hard_gate
-  priority: 1
-  reason: 'prefilter: bpc_bb_compression > 0.0965'
-  when:
-    bpc_bb_compression:
-      value_le: 0.0965
-  then:
-    action: deny
-  frozen: true
-  comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: prefilter_bpc_cvd_z
-  tag: PREFILTER_BPC_CVD_Z
-  phase: hard_gate
-  priority: 1
-  reason: 'prefilter: bpc_cvd_z > -2.0018'
-  when:
-    bpc_cvd_z:
-      value_le: -2.0018
-  then:
-    action: deny
-  frozen: true
-  comment: prefilter条件 (训练-推理一致性, frozen=true)
+  comment: 'optimizer: stable_plateau_found, threshold=0.4698, lift=0.230'
 guardrails: []

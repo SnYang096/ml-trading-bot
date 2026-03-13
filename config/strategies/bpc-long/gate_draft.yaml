@@ -1,5 +1,5 @@
 # BPC-LONG Gate Draft (auto-generated)
-# 来源: results/train_final_20260313_185239_rr_extreme/bpc-long
+# 来源: results/train_final_20260314_015213_rr_extreme/bpc-long
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc-long

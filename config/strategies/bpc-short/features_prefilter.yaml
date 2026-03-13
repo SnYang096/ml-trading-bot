@@ -45,5 +45,8 @@ feature_pipeline:
     - bpc_phase_transition_f        # 主导阶段/置信度/转换概率/结构健康
     - bpc_compression_state_f       # 预突破综合分
 
+    # ========== 方向性/场景特征 (前置方向信息) ==========
+    - shd_pct_f                     # ΔCVD-returns 滚动相关百分位 (方向疲竭/反转前兆)
+
     # ========== BPC 交叉特征 ==========
     - dual_compression_f            # 资金+VPIN 双源压缩 (BPC 核心交叉)

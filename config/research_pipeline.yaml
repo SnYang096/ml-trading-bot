@@ -48,8 +48,9 @@ strategies:
     has_direction: false   # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.15
-        min_rows: 500
+        min_pass_rate: 0.05
+        min_rows: 10
+        scoring_method: lift # (默认) — BPC/FER 用 KS 分布差异检验, positive_rr 为 ME 专用
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
@@ -57,6 +58,10 @@ strategies:
         min_trades: 30
       deploy:
         min_trades: 10
+    simple_execution:         # --simple-execution 中性评估参数 (BPC 趋势骑乘: 需宽止损容迓动确认前回调)
+      sl_r: 3.0               # BPC 实际 initial_r=4.0, 3.0R 给信号足够呼吸空间
+      tp_r: 6.0               # 1:2 风险收益比
+      timeout_bars: 120       # 240T*120=20 天, 趋势完成周期较长
 
   bpc-short:
     config: config/strategies/bpc-short
@@ -67,8 +72,9 @@ strategies:
     has_direction: false   # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.15
-        min_rows: 500
+        min_pass_rate: 0.05
+        min_rows: 10
+        scoring_method: ks # (默认) — BPC/FER 用 KS 分布差异检验, positive_rr 为 ME 专用
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
@@ -76,6 +82,10 @@ strategies:
         min_trades: 30
       deploy:
         min_trades: 10
+    simple_execution:         # BPC-Short 趋势骨乘 (做空版): 同 BPC-Long
+      sl_r: 4.0               # 匹配实际 initial_r=4.0 避免趋势确认前回调止损
+      tp_r: 8.0               # 1:2 风险收益比
+      timeout_bars: 160       # 240T*160=26.7 天
 
 
   fer-long:
@@ -89,6 +99,7 @@ strategies:
       prefilter:
         min_pass_rate: 0.08
         min_rows: 500
+        # scoring_method: ks (默认) — BPC/FER 用 KS 分布差异检验, positive_rr 为 ME 专用
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
@@ -96,6 +107,10 @@ strategies:
         min_trades: 10
       deploy:
         min_trades: 10
+    simple_execution:         # FER 流动效率反转: 中途道, 比 BPC 短但比 ME 宽
+      sl_r: 2.0
+      tp_r: 4.0
+      timeout_bars: 60
 
   fer-short:
     config: config/strategies/fer-short
@@ -108,6 +123,7 @@ strategies:
       prefilter:
         min_pass_rate: 0.08
         min_rows: 500
+        # scoring_method: ks (默认) — BPC/FER 用 KS 分布差异检验, positive_rr 为 ME 专用
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
@@ -115,6 +131,10 @@ strategies:
         min_trades: 10
       deploy:
         min_trades: 10
+    simple_execution:         # FER-Short: 同 FER-Long
+      sl_r: 2.0
+      tp_r: 4.0
+      timeout_bars: 60
 
 
   me-long:

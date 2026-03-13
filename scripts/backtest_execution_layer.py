@@ -4639,6 +4639,27 @@ def main() -> int:
         "用于研究管线评估信号质量，不受 execution 参数影响。",
     )
     p.add_argument(
+        "--simple-sl",
+        type=float,
+        default=None,
+        dest="simple_sl",
+        help="--simple-execution 的止损 R 倍数 (默认 1.5)。可在 research_pipeline.yaml simple_execution.sl_r 配置。",
+    )
+    p.add_argument(
+        "--simple-tp",
+        type=float,
+        default=None,
+        dest="simple_tp",
+        help="--simple-execution 的止盈 R 倍数 (默认 3.0)。",
+    )
+    p.add_argument(
+        "--simple-timeout",
+        type=int,
+        default=None,
+        dest="simple_timeout",
+        help="--simple-execution 的超时 bar 数 (默认 50)。",
+    )
+    p.add_argument(
         "--sym-r",
         default=None,
         dest="sym_r",
@@ -4698,22 +4719,27 @@ def main() -> int:
     # 目的: 研究管线评估 Gate/Evidence/Entry Filter 信号质量
     #       不受 execution 参数 (trailing/structural/fat-tail) 影响
     if getattr(args, "simple_execution", False):
+        _sl_r = getattr(args, "simple_sl", None) or 1.5
+        _tp_r = getattr(args, "simple_tp", None) or 3.0
+        _timeout = getattr(args, "simple_timeout", None) or 50
         exec_config = {
             "stop_loss": {
                 "type": "fixed",
-                "initial_r": 1.5,
+                "initial_r": _sl_r,
             },
             "take_profit": {
                 "enabled": True,
-                "target_r": 3.0,
+                "target_r": _tp_r,
             },
             "holding": {
-                "max_holding_bars": 50,
-                "time_stop_bars": 50,
+                "max_holding_bars": _timeout,
+                "time_stop_bars": _timeout,
             },
         }
         print("\n📋 Simple execution mode (signal quality evaluation):")
-        print("   Stop Loss: fixed 1.5R | Take Profit: 3.0R | Timeout: 50 bars")
+        print(
+            f"   Stop Loss: fixed {_sl_r}R | Take Profit: {_tp_r}R | Timeout: {_timeout} bars"
+        )
     else:
         print(f"\n📋 Loaded execution.yaml for '{args.strategy}':")
         stop_loss = exec_config.get("stop_loss", {})
