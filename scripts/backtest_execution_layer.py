@@ -2047,17 +2047,23 @@ def _generate_trading_map_html(
                 )
 
             # ---- 交易标记 ----
-            # 箭头方向 = 交易方向 (long=▲, short=▼)
+            # 入场: 箭头方向 = 交易方向 (long=▲, short=▼)
+            # 出场: ⭕ 空心圆
             # 颜色 = 盈亏 (绿=盈利, 红=亏损)
             _WIN_COLOR = "#26a69a"  # 绿 (盈利)
             _LOSS_COLOR = "#ef5350"  # 红 (亏损)
 
-            # 按 (direction, win/loss) 分 4 组
+            # 按 (direction, win/loss) 分 4 组 (入场)
             groups: Dict[str, Dict[str, list]] = {
                 "long_win": {"x": [], "y": [], "info": []},
                 "long_loss": {"x": [], "y": [], "info": []},
                 "short_win": {"x": [], "y": [], "info": []},
                 "short_loss": {"x": [], "y": [], "info": []},
+            }
+            # 出场分 2 组 (按盈亏着色)
+            exit_groups: Dict[str, Dict[str, list]] = {
+                "win": {"x": [], "y": [], "info": []},
+                "loss": {"x": [], "y": [], "info": []},
             }
             all_rr = []
 
@@ -2102,6 +2108,12 @@ def _generate_trading_map_html(
                 groups[key]["x"].append(entry_seq)
                 groups[key]["y"].append(t["entry_price"])
                 groups[key]["info"].append(hover_text)
+
+                # 出场圆 (exit_seq, exit_price)
+                exit_key = "win" if is_win else "loss"
+                exit_groups[exit_key]["x"].append(exit_seq)
+                exit_groups[exit_key]["y"].append(t["exit_price"])
+                exit_groups[exit_key]["info"].append(hover_text)
 
             n_total = sum(len(g["x"]) for g in groups.values())
             n_w = len(groups["long_win"]["x"]) + len(groups["short_win"]["x"])
@@ -2165,6 +2177,34 @@ def _generate_trading_map_html(
                     line_width=0.5,
                     alpha=0.7,
                     legend_label=f"Short Loss ({len(groups['short_loss']['x'])})",
+                )
+
+            # 出场圆: ⭕ 空心圆 (盈利=绿, 亏损=红)
+            if exit_groups["win"]["x"]:
+                src_ew = ColumnDataSource(exit_groups["win"])
+                p.scatter(
+                    "x",
+                    "y",
+                    source=src_ew,
+                    marker="circle",
+                    size=8,
+                    fill_color=None,
+                    line_color=_WIN_COLOR,
+                    line_width=2,
+                    legend_label=f"⭕ Exit Win ({len(exit_groups['win']['x'])})",
+                )
+            if exit_groups["loss"]["x"]:
+                src_el = ColumnDataSource(exit_groups["loss"])
+                p.scatter(
+                    "x",
+                    "y",
+                    source=src_el,
+                    marker="circle",
+                    size=8,
+                    fill_color=None,
+                    line_color=_LOSS_COLOR,
+                    line_width=2,
+                    legend_label=f"⭕ Exit Loss ({len(exit_groups['loss']['x'])})",
                 )
 
             # 总计 legend
