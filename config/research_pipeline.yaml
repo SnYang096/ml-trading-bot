@@ -128,7 +128,7 @@ strategies:
       prefilter:
         min_pass_rate: 0.05           # ME 高选择性 archetype, 允许低通过率 (50 trades 高 Sharpe 是目标)
         min_rows: 200
-        scoring_method: bad_rate_lift  # bad_rate_lift 在 ME 上 uplift=+3.22 vs positive_rr 的 +0.53
+        scoring_method: positive_rr  # bad_rate_lift 在 ME 上 uplift=+3.22 vs positive_rr 的 +0.53
         deny_rate_max: 0.97           # ME 窄 range 模式 deny_rate~93-97%, 需放宽全局默认 0.90
       gate:
         require_positive_effect: true
@@ -152,7 +152,7 @@ strategies:
       prefilter:
         min_pass_rate: 0.05           # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
-        scoring_method: bad_rate_lift  # 与 ME 保持一致
+        scoring_method: positive_rr  # 与 ME 保持一致
         deny_rate_max: 0.97           # 与 ME 保持一致
       gate:
         require_positive_effect: true

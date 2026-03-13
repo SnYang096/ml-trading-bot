@@ -183,7 +183,7 @@ resource_allocation:
       max_slots: 1              # LV 快进快出，最多 1 个
       max_risk_per_trade: 0.005  # LV 低 budget, 0.5% 每笔 (< risk_per_slot)
       allow_add_position: false  # LV 不加仓
- 
+
   # 加仓全局安全规则 (适用于所有 allow_add_position=true 的策略)
   # "adding is allowed only by freed risk budget"
   add_position_rules:

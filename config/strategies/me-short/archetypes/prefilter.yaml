@@ -3,11 +3,15 @@
 # 自动生成: 2026-03-13
 # 数据源: features_labeled.parquet, 112361 行
 
-# ⚠️  无法自动生成 rules, 请手动配置
-# rules:
-#   - feature: xxx
-#     operator: ">="
-#     value: 0.0
+rules:
+  - feature: atr_percentile
+    operator: ">="
+    value: 0.8685
+    rationale: "range lower, meta-algorithm, KS=0.1373, return_uplift=+1.6448, robustness=100%, holdout验证通过"
+  - feature: atr_percentile
+    operator: "<="
+    value: 0.9259
+    rationale: "range upper, meta-algorithm, KS=0.1373, return_uplift=+1.6448, robustness=100%, holdout验证通过"
 
 last_evaluation:
   # ── 自动生成 (2026-03-13) ──

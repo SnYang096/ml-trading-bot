@@ -2094,9 +2094,21 @@ def _format_experiment_line(run_dir: Path) -> list:
         decision, "❓"
     )
     sharpe_str = f"{sharpe:.4f}" if isinstance(sharpe, (int, float)) else str(sharpe)
-    return [
+    lines = [
         f"  {run_dir.name:<22s} {created_time:<15s} {sharpe_str:>10s} {str(trades):>8s} {emoji}{decision:>6s}  {note}"
     ]
+    # 尝试找到交易地图 HTML 路径 (gate_dir / trading_map_{strategy}.html)
+    _artifacts = report.get("artifacts", {})
+    gate_dir_str = _artifacts.get("gate_dir") or _artifacts.get("evidence_dir")
+    if gate_dir_str:
+        # strategy 名从 gate_dir 路径的最后一段推断
+        _gpath = Path(gate_dir_str)
+        _strategy_name = _gpath.name
+        _map_candidates = list(_gpath.glob(f"trading_map_{_strategy_name}*.html"))
+        if _map_candidates:
+            _map_path = _map_candidates[0]
+            lines.append(f"    └─ 🗺️  {_map_path}")
+    return lines
 
 
 def _cmd_adopt_experiment(history_dir: Path, cfg: dict, strategy: str, timestamp: str):
