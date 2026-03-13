@@ -1,6 +1,6 @@
 # ME Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)
-# Date: 2026-03-12 00:04
+# Date: 2026-03-13 13:19
 # Promoted: 3 filters (evidence Spearman bins)
 # Significance: forward_rr t-test p<0.05 required
 #
@@ -8,28 +8,28 @@
 # 多个 filter 之间是 OR 关系
 
 filters:
-- id: ev_momentum_exhaustion_score
+- id: ev_evt_var_99_right
   enabled: true
-  description: 'Evidence bin: momentum_exhaustion_score <= 0.520382'
+  description: 'Evidence bin: evt_var_99_right <= 0.904762'
   conditions:
-  - feature: momentum_exhaustion_score
+  - feature: evt_var_99_right
     operator: <=
-    value: 0.520382
-  notes: Δrr=+0.7822, t=5.92, p=0.0000, pass=70.2%
-- id: ev_price_accel_pct
+    value: 0.904762
+  notes: Δrr=+2.2654, t=16.48, p=0.0000, pass=80.1%
+- id: ev_evt_scale
   enabled: true
-  description: 'Evidence bin: price_accel_pct >= 0.213358'
+  description: 'Evidence bin: evt_scale <= 0.880952'
   conditions:
-  - feature: price_accel_pct
-    operator: '>='
-    value: 0.213358
-  notes: Δrr=+0.5615, t=4.31, p=0.0000, pass=70.3%
-- id: ev_bpc_dir_consistency_long
-  enabled: true
-  description: 'Evidence bin: bpc_dir_consistency_long <= 0.56'
-  conditions:
-  - feature: bpc_dir_consistency_long
+  - feature: evt_scale
     operator: <=
-    value: 0.56
-  notes: Δrr=+0.3731, t=2.73, p=0.0032, pass=73.2%
+    value: 0.880952
+  notes: Δrr=+2.6364, t=15.10, p=0.0000, pass=80.5%
+- id: ev_spectrum_price_centroid
+  enabled: true
+  description: 'Evidence bin: spectrum_price_centroid <= 0.813492'
+  conditions:
+  - feature: spectrum_price_centroid
+    operator: <=
+    value: 0.813492
+  notes: Δrr=+1.7729, t=11.23, p=0.0000, pass=80.1%
 combination_mode: or

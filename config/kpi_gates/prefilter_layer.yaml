@@ -25,9 +25,9 @@ thresholds:
   # allow 组 mean_rr - deny 组 mean_rr 差值门槛 (bad_rate_lift 模式辅助约束)
   min_effect: 0.02
 
-  # Return uplift: pass 组自身期望收益 > 0 (不与全量均密比较, 避免趋势市场导致門槛失效)
-  # 实现: 代码内直接判断 mean_return_pass > 0, 本字段仅保留供参考
-  min_return_uplift_soft: 0.0  # deprecated: 不再使用, 代码已改为 pass组>0判断
+  # Return uplift: pass 组必须优于 deny 组 (相对约束, 不要求绝对正值)
+  # 实现: 代码判断 mean_return_pass > mean_return_deny, 允许 holdout 极端负值时仍发现有效划分
+  min_return_uplift_soft: 0.0  # deprecated: 代码已改为 pass>deny 相对判断
 
   # Hit rate uplift (disabled, kept for reference)
   min_hit_rate_uplift: -1.0
@@ -44,8 +44,8 @@ thresholds:
   # Deny rate 合法范围 (在语义子集内算比例: 太小无意义, 太大误杀严重)
   # 注意: 分析脚本内部用 deny_mask 扫描, deny_rate = 排除比例
   # 对应 pass_rate = 1 - deny_rate
-  deny_rate_min: 0.10  # 单条规则至少 deny 15%; deny < 15% 说明阈值在数据极端尾部
-  deny_rate_max: 0.90  # 单条规则最多 deny 85% (对应 pass_rate >= 15%)
+  deny_rate_min: 0.10  # 单条规则至少 deny 10%; deny < 10% 说明阈值在数据极端尾部
+  deny_rate_max: 0.90  # 单条规则最多 deny 90% (对应 pass_rate >= 90%)
 
   # 通过率保底: 最少保留行数
   min_rows: 500

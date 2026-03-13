@@ -21,6 +21,29 @@ STRATEGIES = [
 ]
 
 
+def _load_raw_scale_columns_for_gate(
+    config_path: str = "config/feature_dependencies.yaml",
+) -> set:
+    """Load raw_scale_columns that must be excluded from gate rule generation.
+
+    These are unnormalized price/flow/energy columns whose absolute values
+    differ across symbols, making them invalid for cross-asset gate rules.
+    """
+    import yaml as _yaml_rs
+
+    p = Path(config_path)
+    if not p.exists():
+        return set()
+    with open(p, "r", encoding="utf-8") as f:
+        cfg = _yaml_rs.safe_load(f) or {}
+    raw = cfg.get("raw_scale_columns", {})
+    cols: set = set()
+    for category_list in raw.values():
+        if isinstance(category_list, list):
+            cols.update(str(c) for c in category_list)
+    return cols
+
+
 def _get_booster(model):
     """从 pipeline 保存的 model（可能为 list of Boosters）取第一个 Booster。"""
     if isinstance(model, list) and len(model) > 0:
@@ -380,6 +403,18 @@ def _generate_gate_rules_statistical(
     GATE_DENY_RATE_MAX = _gt.get("deny_rate_max", 0.70)
 
     avail = [f for f in feature_names if f in pred_df.columns]
+
+    # ── 排除 raw_scale_columns (未归一化的价格/流量/能量特征) ──
+    _raw_scale = _load_raw_scale_columns_for_gate()
+    if _raw_scale:
+        _n_before = len(avail)
+        avail = [f for f in avail if f not in _raw_scale]
+        if _n_before != len(avail):
+            print(
+                f"   \U0001f6e1\ufe0f  Excluded {_n_before - len(avail)} raw_scale_columns "
+                f"from gate candidates"
+            )
+
     if len(avail) < 2 or not rr_col_name or rr_col_name not in pred_df.columns:
         print("   ⚠️  统计验证: 可用特征或收益列不足，跳过")
         return None
@@ -388,7 +423,7 @@ def _generate_gate_rules_statistical(
     _gate_top_n = _gsg.get("top_n", 8)
     top_features, shap_importance_map, _interaction_pairs = _compute_shap_gain_features(
         pred_df,
-        feature_names,
+        avail,
         lgbm_model,
         top_n=_gate_top_n,
         compute_interactions=_gsg.get("compute_interactions", True),
@@ -541,231 +576,6 @@ def _generate_gate_rules_statistical(
         print("   ⚠️  统计验证: 剪枝后无规则剩余")
         return None
 
-    # ── Step 5: 规则组合优化 (Interaction Screening + Bell Partition) ──
-    # 与 Prefilter Meta-Algorithm 方法论对齐:
-    #   IS: 判断规则对间交互类型 (synergistic/substitutive/independent)
-    #   BP: 搜索最优 AND/OR 组合结构 (Bell Partition)
-    compound_rules = []
-    JOINT_DENY_MIN = _gc.get("joint_deny_rate_min", 0.02)
-    JOINT_DENY_MAX = _gc.get("joint_deny_rate_max", 0.50)
-
-    if len(selected) >= 2:
-        # ── 5a: Interaction Screening ──
-        _is_map = {}
-        _n_sel = min(len(selected), 6)
-        print(f"\n   📊 Interaction Screening ({_n_sel} 规则)")
-        print(
-            f"   {'Pair':<55s} {'r00':>7s} {'r10':>7s} "
-            f"{'r01':>7s} {'r11':>7s} {'type':>14s}"
-        )
-        print(f"   {'-'*98}")
-
-        for i in range(_n_sel):
-            for j in range(i + 1, _n_sel):
-                dA = selected[i]["_deny_mask"]
-                dB = selected[j]["_deny_mask"]
-                g00 = ~dA & ~dB
-                g10 = dA & ~dB
-                g01 = ~dA & dB
-                g11 = dA & dB
-
-                r00 = float(np.nanmean(rr_vals[g00])) if g00.sum() > 10 else 0
-                r10 = float(np.nanmean(rr_vals[g10])) if g10.sum() > 10 else 0
-                r01 = float(np.nanmean(rr_vals[g01])) if g01.sum() > 10 else 0
-                r11 = float(np.nanmean(rr_vals[g11])) if g11.sum() > 10 else 0
-
-                additive = r10 + r01 - r00
-                delta = r11 - additive
-
-                if g11.sum() < 10:
-                    itype = "insufficient"
-                elif abs(delta) < 0.05 * max(abs(r10 - r00), abs(r01 - r00), 0.01):
-                    itype = "independent"
-                elif r11 > max(r10, r01) and delta > 0:
-                    itype = "synergistic"
-                elif abs(r11 - max(r10, r01)) < 0.05 * max(abs(r10), abs(r01), 0.01):
-                    itype = "substitutive"
-                elif r11 < min(r10, r01):
-                    itype = "antagonistic"
-                else:
-                    itype = "substitutive"
-
-                _is_map[(i, j)] = {"type": itype, "delta": delta}
-                fA = selected[i]["feature"]
-                fB = selected[j]["feature"]
-                pair_name = f"{fA} × {fB}"
-                print(
-                    f"   {pair_name:<55s} {r00:>+.3f} {r10:>+.3f} "
-                    f"{r01:>+.3f} {r11:>+.3f} {itype:>14s}"
-                )
-
-        # ── 5b: Bell Partition (搜索最优 AND/OR 组合结构) ──
-        def _bell_partitions_gate(items):
-            """生成所有 Bell 分区 (pass 语义: 组内 OR, 组间 AND)。"""
-            if len(items) <= 1:
-                yield [items]
-                return
-            first = items[0]
-            rest = items[1:]
-            for partition in _bell_partitions_gate(rest):
-                yield [[first]] + partition
-                for k in range(len(partition)):
-                    new_part = [g[:] for g in partition]
-                    new_part[k] = [first] + new_part[k]
-                    yield new_part
-
-        def _interaction_penalty_gate(partition, imap):
-            """根据 IS 结果对分区结构惩罚。
-            - 同组 (deny AND) 包含 synergistic pair → 惩罚 (应 OR)
-            - 异组 (deny OR) 包含 substitutive pair → 惩罚 (应 AND)"""
-            penalty = 0.0
-            for group in partition:
-                for a in range(len(group)):
-                    for b in range(a + 1, len(group)):
-                        key = (min(group[a], group[b]), max(group[a], group[b]))
-                        info = imap.get(key, {})
-                        if info.get("type") == "synergistic":
-                            penalty += 0.15
-                        elif info.get("type") == "antagonistic":
-                            penalty += 0.30
-            for gi in range(len(partition)):
-                for gj in range(gi + 1, len(partition)):
-                    for a in partition[gi]:
-                        for b in partition[gj]:
-                            key = (min(a, b), max(a, b))
-                            info = imap.get(key, {})
-                            if info.get("type") == "substitutive":
-                                penalty += 0.10
-                            elif info.get("type") == "independent":
-                                penalty += 0.05
-            return penalty
-
-        def _eval_partition_gate(partition, rules_list, bad_arr, rr_arr, obr, imap):
-            """Gate 专用 partition 评分: Youden's J."""
-            combined_deny = np.zeros(len(rr_arr), dtype=bool)
-            for group in partition:
-                group_deny = np.ones(len(rr_arr), dtype=bool)
-                for idx in group:
-                    group_deny &= rules_list[idx]["_deny_mask"]
-                combined_deny |= group_deny
-
-            n_d = int(combined_deny.sum())
-            _n = len(rr_arr)
-            deny_rate = n_d / _n
-            if deny_rate < JOINT_DENY_MIN or deny_rate > JOINT_DENY_MAX:
-                return None
-
-            total_bad = int(bad_arr.sum())
-            total_good = _n - total_bad
-            good_arr = ~bad_arr.astype(bool)
-            bad_in_deny = int(bad_arr[combined_deny].sum())
-            good_in_deny = int(good_arr[combined_deny].sum())
-            tc = bad_in_deny / max(total_bad, 1)
-            gdr = good_in_deny / max(total_good, 1)
-            gs = tc - gdr
-
-            if gs <= GATE_MIN_GATE_SCORE:
-                return None
-
-            brd = float(bad_arr[combined_deny].mean()) if n_d > 0 else 0
-            lift = brd / obr if obr > 0 else 0
-
-            i_pen = _interaction_penalty_gate(partition, imap)
-            score = gs - i_pen * 0.1
-
-            return {
-                "deny_rate": deny_rate,
-                "lift": lift,
-                "gate_score": gs,
-                "tail_capture": tc,
-                "good_deny_rate": gdr,
-                "score": score,
-                "partition": partition,
-                "penalty": i_pen,
-                "deny_mask": combined_deny,
-            }
-
-        # Bell Partition 搜索 (限制 N≤5, 最多 52 种分区)
-        max_bp = min(_n_sel, 5)
-        bp_indices = list(range(max_bp))
-        all_parts = list(_bell_partitions_gate(bp_indices))
-
-        part_results = []
-        for p in all_parts:
-            res = _eval_partition_gate(
-                p, selected, bad, rr_vals, overall_bad_rate, _is_map
-            )
-            if res is not None:
-                part_results.append(res)
-
-        if part_results:
-            part_results.sort(key=lambda x: -x["score"])
-            best = part_results[0]
-
-            def _fmt_part(part, rules):
-                groups = []
-                for g in part:
-                    names = [rules[i]["feature"] for i in g]
-                    if len(names) == 1:
-                        groups.append(names[0])
-                    else:
-                        groups.append("(" + " ∧ ".join(names) + ")")
-                return " ∨ ".join(groups)
-
-            print(
-                f"\n   📊 Bell Partition: {len(all_parts)} 结构, "
-                f"{len(part_results)} 有效"
-            )
-            print(f"   最优: {_fmt_part(best['partition'], selected)}")
-            print(
-                f"   gate_score={best['gate_score']:.4f}, "
-                f"lift={best['lift']:.2f}, deny={best['deny_rate']:.1%}, "
-                f"penalty={best['penalty']:.3f}"
-            )
-
-            # 将最优 partition 的多规则 group 转为 compound rules
-            for group in best["partition"]:
-                if len(group) >= 2:
-                    conditions = []
-                    for idx in group:
-                        r = selected[idx]
-                        if r.get("op") == "range_deny":
-                            conditions.append((r["feature"], ">", r["threshold_low"]))
-                            conditions.append((r["feature"], "<", r["threshold_high"]))
-                        else:
-                            conditions.append((r["feature"], r["op"], r["threshold"]))
-                    # 计算该 compound group 的独立 metrics
-                    grp_deny = np.ones(n_total, dtype=bool)
-                    for idx in group:
-                        grp_deny &= selected[idx]["_deny_mask"]
-                    grp_dr = float(grp_deny.mean())
-                    grp_br = float(bad[grp_deny].mean()) if grp_deny.any() else 0
-                    grp_lift = grp_br / overall_bad_rate if overall_bad_rate > 0 else 0
-                    grp_effect = (
-                        (
-                            float(np.nanmean(rr_vals[~grp_deny]))
-                            - float(np.nanmean(rr_vals[grp_deny]))
-                        )
-                        if grp_deny.any()
-                        else 0
-                    )
-                    grp_rob = min(selected[idx]["robustness"] for idx in group)
-                    compound_rules.append(
-                        {
-                            "conditions": conditions,
-                            "lift": grp_lift,
-                            "effect_size": grp_effect,
-                            "deny_rate": grp_dr,
-                            "robustness": grp_rob,
-                            "source": "bell_partition",
-                        }
-                    )
-        else:
-            print(
-                f"\n   ⚠️  Bell Partition: 无有效分区 "
-                f"(gate_score ≤ {GATE_MIN_GATE_SCORE})"
-            )
-
     # ── Step 6: 组装最终 Hard Gate 规则 (Gate Score 选择) ──
     # Gate 只输出 Hard Gate (deny)
     # Soft 信息由 Evidence 处理，不单独设 Soft Filter (避免 double counting)
@@ -775,6 +585,8 @@ def _generate_gate_rules_statistical(
     #   good_deny_rate = P(deny|good) = 规则误杀了多少比例的好交易
     #   Score > 0 → 有区分力; Score ≤ 0 → 淘汰
     # 条数不写死，由 gate_score > 0 + max_rules 上限决定
+
+    compound_rules = []  # Bell Partition 已移除, 无复合规则
 
     # 收集所有候选 (复合 + 单规则)
     all_candidates = []
@@ -1032,12 +844,15 @@ def _generate_risk_gate_yaml(
     else:
         # ── Fallback：树分裂法（改进版：去重 + 最小效果量过滤）──
         # 每个特征只保留分裂次数最高的那个阈值，避免同特征多阈值产生矛盾区间
+        _raw_scale_fb = _load_raw_scale_columns_for_gate()
         seen_features = {}  # feat_name → (thr, op, count)
         for name, thr, op, count in rules[: top_n * 2]:
             if name not in seen_features or count > seen_features[name][2]:
                 seen_features[name] = (thr, op, count)
         deduped_rules = [
-            (name, thr, op, count) for name, (thr, op, count) in seen_features.items()
+            (name, thr, op, count)
+            for name, (thr, op, count) in seen_features.items()
+            if name not in _raw_scale_fb
         ]
         # 按分裂次数降序排列
         deduped_rules.sort(key=lambda x: -x[3])

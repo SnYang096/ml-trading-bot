@@ -1437,6 +1437,96 @@ def _eval_when_vectorized(
     return result
 
 
+def _apply_prefilter_vectorized(
+    df: pd.DataFrame,
+    arch_name: str,
+    strategies_root: str,
+) -> int:
+    """从 prefilter.yaml 评估 prefilter (向量化), 将不满足的 bar 的 entry_direction 设为 0。
+
+    语义: archetype 成立的前置环境条件, 不满足时不应产生信号。
+    在 Direction 之后、Gate 之前执行。
+
+    Returns:
+        通过 prefilter 的行数
+    """
+    import operator as _op
+
+    _PF_OPS = {
+        ">=": _op.ge,
+        ">": _op.gt,
+        "<=": _op.le,
+        "<": _op.lt,
+        "==": _op.eq,
+        "!=": _op.ne,
+    }
+
+    pf_path = Path(strategies_root) / arch_name / "archetypes" / "prefilter.yaml"
+    if not pf_path.exists():
+        return len(df)
+
+    raw = yaml.safe_load(pf_path.read_text(encoding="utf-8")) or {}
+    rules = raw.get("rules", [])
+    if not rules:
+        return len(df)
+
+    reject_mask = pd.Series(False, index=df.index)
+    reject_detail: Dict[str, int] = {}
+
+    for rule in rules:
+        if "any_of" in rule:
+            # any_of OR 组: 全部子规则都不满足才 reject
+            sub_rules = rule["any_of"]
+            all_fail = pd.Series(True, index=df.index)
+            descs = []
+            for sub in sub_rules:
+                sf, sop, sv = sub.get("feature"), sub.get("operator"), sub.get("value")
+                if sf not in df.columns:
+                    print(
+                        f"   ⚠️  Prefilter: feature '{sf}' not in columns, treated as fail"
+                    )
+                    descs.append(f"{sf}{sop}{sv}[MISSING]")
+                    continue
+                op_func = _PF_OPS.get(sop)
+                if op_func is None:
+                    continue
+                sub_pass = op_func(df[sf], sv)
+                all_fail &= ~sub_pass
+                descs.append(f"{sf}{sop}{sv}")
+            n_rej = int(all_fail.sum())
+            if n_rej > 0:
+                reject_mask |= all_fail
+                reject_detail[f"any_of({','.join(descs)})"] = n_rej
+        else:
+            feat = rule.get("feature")
+            op_str = rule.get("operator")
+            val = rule.get("value")
+            if not feat or not op_str:
+                continue
+            if feat not in df.columns:
+                print(
+                    f"   ⚠️  Prefilter: feature '{feat}' not in columns — ALL bars rejected!"
+                )
+                reject_mask[:] = True
+                reject_detail[f"{feat}(MISSING)"] = len(df)
+                continue
+            op_func = _PF_OPS.get(op_str)
+            if op_func is None:
+                continue
+            fail_mask = ~op_func(df[feat], val)
+            n_rej = int(fail_mask.sum())
+            if n_rej > 0:
+                reject_mask |= fail_mask
+                reject_detail[f"{feat}{op_str}{val}"] = n_rej
+
+    df.loc[reject_mask, "entry_direction"] = 0.0
+    n_pass = int((~reject_mask).sum())
+    print(f"   🛡️  Prefilter: {n_pass} pass / {len(df)} total")
+    for desc, cnt in reject_detail.items():
+        print(f"      {desc}: {cnt} reject")
+    return n_pass
+
+
 def _apply_gate_from_yaml_vectorized(
     df: pd.DataFrame,
     arch_name: str,
@@ -2225,9 +2315,24 @@ def apply_direction_rules(
     - 对 direction=0 的行，继续用后续规则 fallback 填充
     - 直到所有行都有方向或规则用尽
 
+    特殊字段:
+    - fixed_direction: long/short → 忽略 direction_rules，全部 bar 固定方向
+    - direction_filter: long/short → 方向模型正常运行，但只保留指定方向
+
     Returns:
         使用的方向列名（已写入 df['entry_direction']）或 None
     """
+    # ── fixed_direction: 跳过 direction_rules，所有 bar 固定方向 ──
+    _fd = direction_cfg.get("fixed_direction", None)
+    if _fd == "long":
+        df["entry_direction"] = 1.0
+        print(f"   Direction: fixed_direction=long → ALL {len(df)} bars = LONG")
+        return "fixed_direction"
+    elif _fd == "short":
+        df["entry_direction"] = -1.0
+        print(f"   Direction: fixed_direction=short → ALL {len(df)} bars = SHORT")
+        return "fixed_direction"
+
     rules = direction_cfg.get("direction_rules", [])
 
     first_feature = None
@@ -2274,6 +2379,23 @@ def apply_direction_rules(
         n_final = int((df["entry_direction"] != 0).sum())
         print(
             f"     → final: {n_final}/{len(df)} have direction ({len(applied_rules)} rules used)"
+        )
+
+    # ── direction_filter: 方向模型结果只保留指定方向，不匹配的置 0 ──
+    _df = direction_cfg.get("direction_filter", None)
+    if _df == "long":
+        n_before = int((df["entry_direction"] != 0).sum())
+        df.loc[df["entry_direction"] < 0, "entry_direction"] = 0.0
+        n_after = int((df["entry_direction"] != 0).sum())
+        print(
+            f"     direction_filter=long: {n_before} → {n_after} (过滤掉 {n_before - n_after} SHORT)"
+        )
+    elif _df == "short":
+        n_before = int((df["entry_direction"] != 0).sum())
+        df.loc[df["entry_direction"] > 0, "entry_direction"] = 0.0
+        n_after = int((df["entry_direction"] != 0).sum())
+        print(
+            f"     direction_filter=short: {n_before} → {n_after} (过滤掉 {n_before - n_after} LONG)"
         )
 
     return first_feature
@@ -2474,6 +2596,14 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
                 f"可用方向相关列: {available_cols}"
             )
             return 1
+
+        # Prefilter 过滤 (在 gate 之前)
+        _n_before_pf = int((df["entry_direction"] != 0).sum())
+        _apply_prefilter_vectorized(df, arch_name, strategies_root)
+        _n_after_pf = int((df["entry_direction"] != 0).sum())
+        _funnel["reject_prefilter"] = (
+            _funnel.get("reject_prefilter", 0) + _n_before_pf - _n_after_pf
+        )
 
         # Gate 过滤
         # 收集 gate 前的统计
@@ -4581,9 +4711,36 @@ def main() -> int:
         print(f"   🏷️  Set _pcm_archetype='{args.strategy.lower()}' for slot matching")
 
     # 创建 entry_direction 列：标记入场信号
-    # 默认：每个有方向的 bar 都是入场信号
-    if "entry_direction" in df.columns:
+    # fixed_direction 优先：无论是否已有 entry_direction 列，都强制覆盖
+    dir_cfg = load_direction_config(args.strategy, args.strategies_root)
+    _fd = dir_cfg.get("fixed_direction", None) if dir_cfg else None
+    if _fd in ("long", "short"):
+        _dir_val = 1.0 if _fd == "long" else -1.0
+        df["entry_direction"] = _dir_val
+        print(
+            f"   📍 Direction: fixed_direction={_fd} → ALL {len(df)} bars = {_fd.upper()}"
+        )
+    elif "entry_direction" in df.columns:
         print(f"   📍 Using existing entry_direction column")
+        # 仍然检查 direction_filter
+        if dir_cfg:
+            _df_filter = dir_cfg.get("direction_filter", None)
+            if _df_filter == "long":
+                n_before = int((df["entry_direction"] != 0).sum())
+                df.loc[df["entry_direction"] < 0, "entry_direction"] = 0.0
+                n_after = int((df["entry_direction"] != 0).sum())
+                print(
+                    f"     direction_filter=long: {n_before} → {n_after} "
+                    f"(过滤掉 {n_before - n_after} SHORT)"
+                )
+            elif _df_filter == "short":
+                n_before = int((df["entry_direction"] != 0).sum())
+                df.loc[df["entry_direction"] > 0, "entry_direction"] = 0.0
+                n_after = int((df["entry_direction"] != 0).sum())
+                print(
+                    f"     direction_filter=short: {n_before} → {n_after} "
+                    f"(过滤掉 {n_before - n_after} LONG)"
+                )
     elif "bpc_breakout_direction" in df.columns:
         df["entry_direction"] = df["bpc_breakout_direction"].astype(float).copy()
     else:
@@ -4601,6 +4758,16 @@ def main() -> int:
 
     # 保存原始方向（gate/entry_filter 前），用于 --export-signals
     df["_orig_direction"] = df["entry_direction"].copy()
+
+    # Prefilter 过滤 (在 gate 之前)
+    _n_before_pf = int((df["entry_direction"] != 0).sum())
+    _apply_prefilter_vectorized(df, args.strategy, args.strategies_root)
+    _n_after_pf = int((df["entry_direction"] != 0).sum())
+    if _n_before_pf > _n_after_pf:
+        print(
+            f"   🛡️  Prefilter: {_n_before_pf} → {_n_after_pf} "
+            f"(rejected {_n_before_pf - _n_after_pf})"
+        )
 
     # Gate 过滤（自动检测）：不删除行（保持 OHLC 连续性），而是将非 allow 行的方向设为 0
     if "gate_decision" in df.columns:

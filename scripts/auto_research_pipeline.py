@@ -858,6 +858,11 @@ def run_strategy_pipeline(
                     "--prefilter-positive-lift",
                     str(prefilter_gates["min_positive_lift"]),
                 ]
+            if prefilter_gates.get("deny_rate_max") is not None:
+                prefilter_cmd += [
+                    "--prefilter-deny-rate-max",
+                    str(prefilter_gates["deny_rate_max"]),
+                ]
             run_step(
                 "Prefilter Analyze",
                 prefilter_cmd,

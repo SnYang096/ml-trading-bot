@@ -48,6 +48,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.live_data_stream.feature_storage import StorageManager
+from src.feature_store import FeatureStore, FeatureStoreSpec
+from src.feature_store.layer_naming import detect_layer_for_strategy
 from src.data_tools.data_handler import DataHandler
 from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
 from src.time_series_model.live.incremental_feature_computer import (
@@ -1076,6 +1078,7 @@ class EventBacktester:
         warmup_days: int = 100,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        fast_mode: bool = False,
     ) -> BacktestResult:
         """
         运行事件驱动回测 — 多策略 + 多 timeframe + 跨 symbol 时间线交叉处理
@@ -1086,6 +1089,21 @@ class EventBacktester:
         """
         result = BacktestResult(strategy="+".join(self.strategy_names))
         funnel = defaultdict(int)
+
+        # ── FeatureStore 补充: 检测可用的 FeatureStore layer 用于补充 IFC 缺失的特征 ──
+        _fs_layers: Dict[str, str] = {}  # {strategy: layer_name}
+        _fs = None
+        for s in self.strategy_names:
+            _det = detect_layer_for_strategy(
+                strategy=s,
+                features_store_root="feature_store",
+                timeframe=self._tf_map.get(s),
+            )
+            if _det:
+                _fs_layers[s] = _det
+        if _fs_layers:
+            _fs = FeatureStore("feature_store")
+            logger.info(f"FeatureStore layers detected: {_fs_layers}")
 
         if end_date:
             _end = pd.Timestamp(end_date, tz="UTC")
@@ -1156,6 +1174,36 @@ class EventBacktester:
 
                 # 特征健康报告
                 fc.report_feature_health_df(features_df, symbol=sym, timeframe=tf)
+
+                # ── FeatureStore 补充: 合并 IFC 缺失的特征列 ──
+                if _fs and _fs_layers:
+                    _layer = next(iter(_fs_layers.values()))  # 使用第一个可用 layer
+                    try:
+                        _spec = FeatureStoreSpec(layer=_layer, symbol=sym, timeframe=tf)
+                        _fs_start = features_df.index.min()
+                        _fs_end = features_df.index.max()
+                        if hasattr(_fs_start, "tz") and _fs_start.tz is not None:
+                            _fs_start = _fs_start.tz_convert(None)
+                            _fs_end = _fs_end.tz_convert(None)
+                        _fs_df = _fs.read_range(_spec, start=_fs_start, end=_fs_end)
+                        if not _fs_df.empty:
+                            _fs_df.index = pd.to_datetime(_fs_df.index, utc=True)
+                            _missing = [
+                                c
+                                for c in _fs_df.columns
+                                if c not in features_df.columns
+                            ]
+                            if _missing:
+                                features_df = features_df.join(
+                                    _fs_df[_missing], how="left"
+                                )
+                                logger.info(
+                                    f"  FeatureStore merged {len(_missing)} cols for {sym}/{tf}"
+                                )
+                    except Exception as e:
+                        logger.warning(
+                            f"  FeatureStore merge failed for {sym}/{tf}: {e}"
+                        )
 
                 features_df.index = pd.to_datetime(features_df.index, utc=True)
                 quantile_dfs_by_tf[tf].append(features_df)
@@ -1324,16 +1372,48 @@ class EventBacktester:
             funnel["total_signals_checked"] += 1
 
             # ── 更新所有 symbol 的持仓到当前 ts (模拟实盘实时 bar 处理) ──
-            # 实盘中 order_flow_listener 对所有 symbol 的 1min bars 实时调用 enforce_position,
-            # 仓位关闭后立即 notify_position_closed 释放 slot。
-            # 如果只更新当前 signal symbol, 其他 symbol 的已关闭仓位会"幽灵占用" slot,
-            # 导致 slot 拒绝率虚高, 与向量回测和实盘不一致。
+            # fast_mode=True: 用当前 timeframe bar 的 OHLC 直接更新持仓 (60x faster)
+            # fast_mode=False: 用 1min bars 逐分钟更新 (精确但慢)
             for upd_sym, upd_sim in self._simulators.items():
                 if not upd_sim.has_positions:
                     continue
                 upd_prev = _pos_last_ts.get(upd_sym)
                 if upd_prev is None or upd_prev >= ts:
                     continue
+
+                if fast_mode:
+                    # Fast: 用当前 60T 特征里的 OHLC 直接调用一次 update
+                    upd_tf = next(iter(sym_data[upd_sym]["tf_features"].keys()), None)
+                    upd_feats = (
+                        sym_data[upd_sym]["tf_features"].get(upd_tf, {})
+                        if upd_tf
+                        else {}
+                    )
+                    if hasattr(upd_feats, "loc") and ts in upd_feats.index:
+                        _row = upd_feats.loc[ts]
+                        _bar_dict = {
+                            "timestamp": ts,
+                            "open": float(_row.get("open", 0)),
+                            "high": float(_row.get("high", 0)),
+                            "low": float(_row.get("low", 0)),
+                            "close": float(_row.get("close", 0)),
+                        }
+                        closed = upd_sim.update(_bar_dict)
+                        for ct in closed:
+                            self.pcm.notify_position_closed(upd_sym, ct.archetype)
+                        for ct in closed:
+                            sl_r_val = 1.0
+                            pnl_usd = (
+                                _initial_cash * _risk_per_slot * ct.pnl_r / sl_r_val
+                            )
+                            _equity += pnl_usd
+                            _equity = max(_equity, 0.0)
+                            _equity_curve.append(_equity)
+                            if _equity > _equity_peak:
+                                _equity_peak = _equity
+                    _pos_last_ts[upd_sym] = ts
+                    continue
+
                 upd_bars = sym_data[upd_sym]["bars_1min_test"]
                 upd_mask = (upd_bars.index > upd_prev) & (upd_bars.index <= ts)
                 for bar_ts, bar_row in upd_bars[upd_mask].iterrows():
@@ -1580,10 +1660,21 @@ class EventBacktester:
             data = sym_data[sym]
             bars_1min_test = data["bars_1min_test"]
 
-            # 最后一个信号后的 1min bars (用 _pos_last_ts 避免重复处理)
+            # 最后一个信号后的 bars (用 _pos_last_ts 避免重复处理)
             last_update = _pos_last_ts.get(sym)
             if last_update is not None and simulator.has_positions:
-                remaining = bars_1min_test[bars_1min_test.index > last_update]
+                if fast_mode:
+                    remaining_src = sym_data[sym]["tf_features"].get(
+                        next(iter(sym_data[sym]["tf_features"].keys()), ""),
+                        pd.DataFrame(),
+                    )
+                    remaining = (
+                        remaining_src[remaining_src.index > last_update]
+                        if len(remaining_src)
+                        else pd.DataFrame()
+                    )
+                else:
+                    remaining = bars_1min_test[bars_1min_test.index > last_update]
                 for bar_ts, bar_row in remaining.iterrows():
                     bar_dict = {
                         "timestamp": bar_ts,
@@ -1676,6 +1767,7 @@ def generate_trading_map_html(
     result: BacktestResult,
     output_path: str,
     bar_freq: str = "4h",
+    compare_trades_csv: Optional[str] = None,
 ) -> str:
     """生成 K线 + 交易标记 HTML 交易地图 (多策略分 Tab)。
 
@@ -1737,7 +1829,23 @@ def generate_trading_map_html(
     all_archetypes = sorted(set(t.archetype for t in result.trades if t.archetype))
 
     # ── 构建单个 symbol K线图 ──
-    def _build_symbol_figure(sym: str, trades: list) -> object:
+    # ── 加载对比交易（向量回测等）──
+    _cmp_by_sym: dict = {}
+    if compare_trades_csv and Path(compare_trades_csv).exists():
+        try:
+            _cdf = pd.read_csv(compare_trades_csv)
+            for col in ["entry_time", "exit_time"]:
+                if col in _cdf.columns:
+                    _cdf[col] = pd.to_datetime(_cdf[col], utc=True)
+            for _sym, _grp in _cdf.groupby("symbol"):
+                _cmp_by_sym[_sym] = _grp.to_dict("records")
+            logger.info(
+                f"  🔵 对比交易已加载: {len(_cdf)} 笔 from {compare_trades_csv}"
+            )
+        except Exception as _e:
+            logger.warning(f"  ⚠️  对比交易加载失败: {_e}")
+
+    def _build_symbol_figure(sym: str, trades: list, cmp_trades: list = None) -> object:
         bars_1min = result.bars_1min.get(sym)
         if bars_1min is None or bars_1min.empty:
             return None
@@ -1745,6 +1853,7 @@ def generate_trading_map_html(
         if df.empty:
             return None
 
+        cmp_trades = cmp_trades or []
         sym_r = sum(t.pnl_r for t in trades)
         sym_wr = sum(1 for t in trades if t.pnl_r > 0) / len(trades) if trades else 0
         p = bk_figure(
@@ -1849,6 +1958,22 @@ def generate_trading_map_html(
                         legend_label=f"□ exit_{wl}",
                     )
 
+        # ── 对比交易标记（向量回测）── 蓝色圆圈
+        if cmp_trades:
+            _cmp_xs = [r["entry_time"] for r in cmp_trades]
+            _cmp_ys = [r["entry_price"] for r in cmp_trades]
+            p.scatter(
+                x=_cmp_xs,
+                y=_cmp_ys,
+                marker="circle",
+                size=10,
+                color="#00b4d8",
+                alpha=0.7,
+                line_color="#0077b6",
+                line_width=1.5,
+                legend_label="◉ Vector BT entry",
+            )
+
         p.add_tools(
             HoverTool(
                 tooltips=[("Time", "@x{%F %H:%M}"), ("Price", "@y{0.2f}")],
@@ -1873,9 +1998,11 @@ def generate_trading_map_html(
         total = sum(t.pnl_r for t in tab_trades)
         strat_c = _strat_color(strat_filter) if strat_filter else "#888888"
 
+        cmp_n = sum(len(v) for v in _cmp_by_sym.values())
+        cmp_label = f" | 🔵 Vector={cmp_n}" if cmp_n else ""
         title_html = (
             f"<h2 style='color:{strat_c}'>🗺️ {tab_label} "
-            f"| {n} trades | WR={wr:.1%} | Total={total:.2f}R</h2>"
+            f"| {n} trades | WR={wr:.1%} | Total={total:.2f}R{cmp_label}</h2>"
         )
         figs: list = [Div(text=title_html)]
 
@@ -1885,9 +2012,9 @@ def generate_trading_map_html(
                 sym_trades = [
                     t for t in sym_trades if str(t.archetype).lower() == strat_filter
                 ]
-            if not sym_trades:
+            if not sym_trades and not _cmp_by_sym.get(sym):
                 continue
-            fig = _build_symbol_figure(sym, sym_trades)
+            fig = _build_symbol_figure(sym, sym_trades, cmp_trades=_cmp_by_sym.get(sym))
             if fig is not None:
                 figs.append(fig)
 
@@ -1985,6 +2112,11 @@ def main():
         help="交易地图 HTML 输出路径 (4H K线 + 交易标记)",
     )
     parser.add_argument(
+        "--compare-trades",
+        default=None,
+        help="对比交易 CSV 路径 (向量回测导出的 trades.csv), 将以蓝圆标记叠加显示",
+    )
+    parser.add_argument(
         "--fee-rate",
         type=float,
         default=0.0004,
@@ -1997,6 +2129,12 @@ def main():
             "从 universe_groups yaml 读取 symbols，格式: universe_set/group，"
             "例: starter_a/highcap，默认文件: config/download/crypto_4h_token_universe_groups.yaml"
         ),
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        default=False,
+        help="快速模式: 用 60T bar OHLC 代替 1min bar 更新持仓 (快 ~60x, 止损精度略低)",
     )
     args = parser.parse_args()
 
@@ -2065,6 +2203,7 @@ def main():
         days=args.days,
         start_date=args.start_date,
         end_date=args.end_date,
+        fast_mode=args.fast,
     )
 
     result.print_report()
@@ -2080,7 +2219,12 @@ def main():
         tf_to_freq = {"15T": "15min", "60T": "1h", "240T": "4h"}
         primary_tf = _get_timeframe(strategies[0])
         map_freq = tf_to_freq.get(primary_tf, "4h")
-        generate_trading_map_html(result, args.trading_map, bar_freq=map_freq)
+        generate_trading_map_html(
+            result,
+            args.trading_map,
+            bar_freq=map_freq,
+            compare_trades_csv=getattr(args, "compare_trades", None),
+        )
 
     if args.db:
         print(f"\n  💾 订单数据已保存 → {args.db}")

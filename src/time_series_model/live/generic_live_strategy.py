@@ -47,6 +47,23 @@ class DirectionEvaluator:
         self.config = direction_config
         self.rules = direction_config.get("direction_rules", [])
         self.causal_source = direction_config.get("causal_source", "unknown")
+        # fixed_direction: long/short → 忽略 direction_rules，强制固定方向
+        _fd = direction_config.get("fixed_direction", None)
+        if _fd == "long":
+            self._fixed = 1
+        elif _fd == "short":
+            self._fixed = -1
+        else:
+            self._fixed = None
+        # direction_filter: long/short → 方向模型正常运行，但只接受指定方向
+        # 方向模型说 SHORT 时返回 0（跳过），不强制反向
+        _df = direction_config.get("direction_filter", None)
+        if _df == "long":
+            self._filter = 1
+        elif _df == "short":
+            self._filter = -1
+        else:
+            self._filter = None
 
     def evaluate(self, features: Dict[str, Any]) -> Tuple[int, Optional[str]]:
         """
@@ -56,6 +73,10 @@ class DirectionEvaluator:
             (direction: int, matched_rule_id: Optional[str])
             direction: +1(多) / -1(空) / 0(无方向)
         """
+        # fixed_direction 优先 — 跳过所有规则直接返回固定方向
+        if self._fixed is not None:
+            return self._fixed, "fixed_direction"
+
         if not self.rules:
             return 0, None
 
@@ -83,6 +104,9 @@ class DirectionEvaluator:
                     f"方向匹配: rule={rule_id}, feature={feature_name}, "
                     f"value={value:.4f}, transform={transform} → direction={direction}"
                 )
+                # direction_filter: 方向模型返回与过滤方向不匹配时，跳过（返回 0）
+                if self._filter is not None and direction != self._filter:
+                    return 0, None
                 return direction, rule_id
 
         return 0, None
@@ -258,7 +282,9 @@ class GenericLiveStrategy:
                 self.strategy_name, self.strategies_root
             )
             logger.info(
-                f"✅ Archetype loaded: {len(self.archetype.gate.all_rules)} gate rules"
+                f"\u2705 Archetype loaded: "
+                f"{len(self.archetype.prefilter.rules)} prefilter rules, "
+                f"{len(self.archetype.gate.all_rules)} gate rules"
             )
 
             # 2. 加载 Direction 配置
@@ -369,6 +395,7 @@ class GenericLiveStrategy:
         核心决策接口 - 通用策略解析引擎
 
         决策管线:
+          0. Prefilter: 从 prefilter.yaml 检查前置环境条件
           1. Direction: 从 direction.yaml 确定方向
           2. Gate: 从 gate.yaml 进行结构性过滤
           3. Entry Filter: 从 entry_filters.yaml 检查入场时机
@@ -381,6 +408,17 @@ class GenericLiveStrategy:
 
         # 漏斗跟踪 (bool 标记 + 丰富元数据)
         funnel: Dict[str, Any] = {}
+
+        # ── 0. Prefilter 前置条件检查 ──
+        if self.archetype and self.archetype.prefilter.rules:
+            pf_passed, pf_reason = self.archetype.prefilter.evaluate(features)
+            funnel["prefilter"] = pf_passed
+            if not pf_passed:
+                logger.debug(f"❌ Prefilter denied: {pf_reason}")
+                funnel["prefilter_reason"] = pf_reason
+                self._last_funnel = funnel
+                return []
+            logger.debug("✅ Prefilter passed")
 
         # ── 1. 方向判定 ──
         if self.direction_evaluator is None:

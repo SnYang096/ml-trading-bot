@@ -1,7 +1,7 @@
 # ME Evidence (auto-discovered)
-# 来源: results/train_final_20260312_000352_rr_extreme/me/logs_gated.parquet
+# 来源: results/train_final_20260313_131849_rr_extreme/me/logs_gated.parquet
 # 方法: Spearman + Quintile Monotonicity (p < 0.01)
-# 候选: 3/292 通过筛选
+# 候选: 3/291 通过筛选
 
 schema:
   label_semantics:
@@ -11,20 +11,20 @@ schema:
     favor: 有利 - 提高信心/仓位
     amplify: 强烈有利 - 最大化执行
 evidence:
-- id: evidence_momentum_exhaustion_score
-  feature: momentum_exhaustion_score
+- id: evidence_evt_var_99_right
+  feature: evt_var_99_right
   rank: 1
   direction: negative
-  usage_hint: sp_r=-0.042 WR:50.1%→46.1%
+  usage_hint: sp_r=-0.146 WR:54.2%→38.0%
   affects:
   - position_size
   - tp_range
   quantile_mapping:
     bins:
-    - 0.050805277415401986
-    - 0.1483197428068883
-    - 0.2894283029453981
-    - 0.5203823475755626
+    - 0.09523809523809523
+    - 0.32936507936507936
+    - 0.5833333333333334
+    - 0.9047619047619048
     labels:
     - amplify
     - favor
@@ -32,41 +32,41 @@ evidence:
     - downweight
     - suppress
   split_count: 5
-- id: evidence_price_accel_pct
-  feature: price_accel_pct
+- id: evidence_evt_scale
+  feature: evt_scale
   rank: 2
-  direction: positive
-  usage_hint: sp_r=+0.041 WR:47.1%→51.0%
+  direction: negative
+  usage_hint: sp_r=-0.113 WR:53.5%→40.0%
   affects:
   - position_size
   - tp_range
   quantile_mapping:
     bins:
-    - 0.21335807050092764
-    - 0.40816326530612246
-    - 0.5936920222634509
-    - 0.7866419294990723
+    - 0.14682539682539683
+    - 0.32142857142857145
+    - 0.5198412698412699
+    - 0.8809523809523809
     labels:
-    - suppress
-    - downweight
-    - neutral
-    - favor
     - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
   split_count: 5
-- id: evidence_bpc_dir_consistency_long
-  feature: bpc_dir_consistency_long
+- id: evidence_spectrum_price_centroid
+  feature: spectrum_price_centroid
   rank: 3
   direction: negative
-  usage_hint: sp_r=-0.041 WR:51.3%→48.5%
+  usage_hint: sp_r=-0.108 WR:51.4%→43.1%
   affects:
   - position_size
   - tp_range
   quantile_mapping:
     bins:
-    - 0.46
-    - 0.5
-    - 0.52
-    - 0.56
+    - 0.17857142857142858
+    - 0.376984126984127
+    - 0.5952380952380952
+    - 0.8134920634920635
     labels:
     - amplify
     - favor

@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260312_005722_rr_extreme/me
+# 来源: results/train_final_20260313_131849_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -16,71 +16,57 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
+- id: gate_fer_trapped_longs_score
+  tag: HARD_FER_TRAPPED_LONGS_SCORE
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.07)
+  when:
+    fer_trapped_longs_score:
+      value_gt: 1.7042
+  then:
+    action: deny
+  comment: 'statistical(lift=1.07): fer_trapped_longs_score > 1.704'
 - id: gate_vpin_max20_vpin_max20
   tag: HARD_VPIN_MAX20_VPIN_MAX20
   phase: hard_gate
-  priority: 10
-  reason: 统计验证规则 (lift=1.28)
-  when:
-    all_of:
-    - vpin_max20:
-        value_gt: 0.3306
-    - vpin_max20:
-        value_lt: 0.3779
-  then:
-    action: deny
-  comment: 'statistical(lift=1.28): vpin_max20 > 0.3306 & vpin_max20 < 0.3779'
-- id: gate_vpin_ma20_vpin_ma20
-  tag: HARD_VPIN_MA20_VPIN_MA20
-  phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.21)
+  reason: 统计验证规则 (lift=1.17)
   when:
     all_of:
-    - vpin_ma20:
-        value_gt: 0.2458
-    - vpin_ma20:
-        value_lt: 0.2674
+    - vpin_max20:
+        value_gt: 0.2952
+    - vpin_max20:
+        value_lt: 0.3332
   then:
     action: deny
-  comment: 'statistical(lift=1.21): vpin_ma20 > 0.2458 & vpin_ma20 < 0.2674'
-- id: gate_recent_compression_decay
-  tag: HARD_RECENT_COMPRESSION_DECAY
+  comment: 'statistical(lift=1.17): vpin_max20 > 0.2952 & vpin_max20 < 0.3332'
+- id: gate_evt_scale_left_evt_scale_left
+  tag: HARD_EVT_SCALE_LEFT_EVT_SCALE_LEFT
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.21)
+  reason: 统计验证规则 (lift=1.13)
   when:
-    recent_compression_decay:
-      value_lt: 0.0019
+    all_of:
+    - evt_scale_left:
+        value_gt: 0.6667
+    - evt_scale_left:
+        value_lt: 0.7897
   then:
     action: deny
-  comment: 'statistical(lift=1.21): recent_compression_decay < 0.001872'
-- id: gate_fer_signed_efficiency_fer_signed_efficiency
-  tag: HARD_FER_SIGNED_EFFICIENCY_FER_SIGNED_EFFICIENCY
+  comment: 'statistical(lift=1.13): evt_scale_left > 0.6667 & evt_scale_left < 0.7897'
+- id: gate_evt_es_99_evt_es_99
+  tag: HARD_EVT_ES_99_EVT_ES_99
   phase: hard_gate
   priority: 13
   reason: 统计验证规则 (lift=1.09)
   when:
     all_of:
-    - fer_signed_efficiency:
-        value_gt: -0.0
-    - fer_signed_efficiency:
-        value_lt: 0.0
+    - evt_es_99:
+        value_gt: 0.3492
+    - evt_es_99:
+        value_lt: 0.5397
   then:
     action: deny
-  comment: 'statistical(lift=1.09): fer_signed_efficiency > -1.667e-05 & fer_signed_efficiency < 2.478e-10'
-- id: gate_evt_var_99_right_evt_var_99_right
-  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
-  phase: hard_gate
-  priority: 14
-  reason: 统计验证规则 (lift=1.09)
-  when:
-    all_of:
-    - evt_var_99_right:
-        value_gt: 0.6746
-    - evt_var_99_right:
-        value_lt: 0.8254
-  then:
-    action: deny
-  comment: 'statistical(lift=1.09): evt_var_99_right > 0.6746 & evt_var_99_right < 0.8254'
+  comment: 'statistical(lift=1.09): evt_es_99 > 0.3492 & evt_es_99 < 0.5397'
 guardrails: []

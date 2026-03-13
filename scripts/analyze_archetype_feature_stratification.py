@@ -1430,13 +1430,16 @@ def _prefilter_recommendation(
         _train_ratio = locals().get("_TRAIN_RATIO", 0.44)
         # Resolve time column + split for actual train count
         _time_col_tr = _find_time_column(df)
-        _split_ts = pd.Timestamp("2024-05-01")
         if _time_col_tr:
             _ts_all = _get_times(df, _time_col_tr)
-            if hasattr(_ts_all, "tz") and _ts_all.dt.tz is not None:
-                _split_ts = _split_ts.tz_localize(_ts_all.dt.tz)
+            # 动态计算 split 点: 使用数据时间范围的 80th 分位数 (与 holdout_ratio=0.2 对应)
+            _split_ts = _ts_all.quantile(0.80)
+            if hasattr(_split_ts, "tz") and _split_ts.tz is None:
+                if hasattr(_ts_all, "tz") and _ts_all.dt.tz is not None:
+                    _split_ts = _split_ts.tz_localize(_ts_all.dt.tz)
         else:
             _ts_all = None
+            _split_ts = None
         _n_scanned = 0
         for s in recommended[:5]:  # scan up to 5 candidates
             if len(top_rules) >= 3:
@@ -2153,6 +2156,13 @@ def _meta_algorithm_prefilter(
     holdout_ratio = args.holdout_ratio
     strategy = args.strategy
 
+    # 自动生成标签列 (与 main 路径一致)
+    if label_col not in df.columns and rr_col in df.columns:
+        df[label_col] = (df[rr_col] >= -0.8).astype(int)
+        print(f"ℹ️  自动生成 '{label_col}' from '{rr_col}' (threshold: -0.8R)")
+    elif label_col not in df.columns:
+        print(f"❌ 标签列 '{label_col}' 不存在, bad_rate_lift 评分不可用")
+
     # ── 0. 加载 kpi_gates/prefilter_layer.yaml ──
     _kpi_gate_path = Path("config/kpi_gates/prefilter_layer.yaml")
     if _kpi_gate_path.exists():
@@ -2278,6 +2288,9 @@ def _meta_algorithm_prefilter(
     n_train_sub = len(df_train_sub)
     n_holdout_sub = len(df_holdout_sub)
 
+    # ── 语义子集最低 holdout 样本量 (防止自增强循环) ──
+    _MIN_HOLDOUT_SUBSET = _ho_cfg.get("min_holdout_subset", 2000)
+
     if _n_semantic_rules > 0:
         print(f"\n🔍 语义子集过滤: {_n_semantic_rules} 条规则")
         print(
@@ -2292,8 +2305,11 @@ def _meta_algorithm_prefilter(
             df_holdout_sub = df_holdout
             n_train_sub = n_train
             n_holdout_sub = n_holdout
-        elif n_holdout_sub < 50:
-            print(f"   ⚠️  Holdout 子集样本量不足 ({n_holdout_sub}), 回退到全量数据")
+        elif n_holdout_sub < _MIN_HOLDOUT_SUBSET:
+            print(
+                f"   ⚠️  Holdout 子集 ({n_holdout_sub}) < {_MIN_HOLDOUT_SUBSET}, "
+                f"语义子集过窄 (可能是自增强循环), 回退到全量数据"
+            )
             df_train_sub = df_train
             df_holdout_sub = df_holdout
             n_train_sub = n_train
@@ -2491,6 +2507,11 @@ def _meta_algorithm_prefilter(
     PREFILTER_DENY_RATE_MIN = _thr.get("deny_rate_min", 0.03)
     PREFILTER_DENY_RATE_MAX = _thr.get("deny_rate_max", 0.40)
 
+    # Per-strategy deny_rate_max 覆盖 (ME 等高选择性策略需要 0.97)
+    if getattr(args, "prefilter_deny_rate_max", None) is not None:
+        PREFILTER_DENY_RATE_MAX = args.prefilter_deny_rate_max
+        print(f"   ℹ️  KPI 覆盖: deny_rate_max={PREFILTER_DENY_RATE_MAX} (per-strategy)")
+
     # ── Deny → Pass 方向 operator 翻转映射 ──
     # prefilter.yaml 使用 PASS 语义 (正向选择), 但内部候选扫描用 deny_mask.
     # 简单规则 op (">" = deny when >) 需要翻转为 PASS op ("<=" = pass when <=).
@@ -2547,6 +2568,22 @@ def _meta_algorithm_prefilter(
         print(f"   ℹ️  主 KPI: ks (min_ks={PREFILTER_MIN_KS})")
 
     # ── 5a-pre. 方向前置规则: 直接从 _direction_sign 生成方向条件, 绕过 deny_rate 限制 ──
+
+    # ── 5a-pre-0. Holdout 极端检测 ──
+    # 当 holdout mean_rr 极端负值时, bad_rate_lift 指标不稳定 (基线接近饱和,
+    # fold 间方差大), 自动降级为 effect-only 评分 (仅比较 pass/deny mean_rr 差异)
+    _EXTREME_HOLDOUT_THR = -0.5  # mean_rr 低于此值视为极端
+    _bad_rate_saturated = False
+    if _scoring_method == "bad_rate_lift":
+        _ho_mean_rr = float(np.nanmean(holdout_rr)) if holdout_rr is not None else 0.0
+        if _ho_mean_rr < _EXTREME_HOLDOUT_THR:
+            _bad_rate_saturated = True
+            print(
+                f"\n   ⚠️  Holdout mean_rr={_ho_mean_rr:.4f} < {_EXTREME_HOLDOUT_THR}, "
+                f"bad_rate_lift 指标不稳定, 降级为 effect-only 评分"
+            )
+
+    # ── 5a-pre-1. 方向前置规则 ──
     # _direction_sign = +1 表示多头方向明确; = -1 表示空头方向明确; = 0 无方向
     # 语义: deny_rate 约 40-60%, 普通 KS 验证会被过滤. 这里单独处理, 输出为一条 any_of OR 组内的方向处理语义规则.
     _direction_rule_candidate = None
@@ -2658,12 +2695,19 @@ def _meta_algorithm_prefilter(
                 )
                 _br_all = float(holdout_label.mean())
                 _bad_rate_lift = _br_deny / _br_all if _br_all > 0 else 1.0
-                if _bad_rate_lift < PREFILTER_MIN_BAD_RATE_LIFT:
-                    continue
-                # effect: allow 组 mean_rr - deny 组 mean_rr > min_effect
-                _effect = mean_return_pass - mean_return_deny
-                if _effect < PREFILTER_MIN_EFFECT:
-                    continue
+
+                if _bad_rate_saturated:
+                    # 饱和模式: 跳过 bad_rate_lift 门槛, 仅用 effect 评分
+                    _effect = mean_return_pass - mean_return_deny
+                    if _effect < PREFILTER_MIN_EFFECT:
+                        continue
+                else:
+                    if _bad_rate_lift < PREFILTER_MIN_BAD_RATE_LIFT:
+                        continue
+                    # effect: allow 组 mean_rr - deny 组 mean_rr > min_effect
+                    _effect = mean_return_pass - mean_return_deny
+                    if _effect < PREFILTER_MIN_EFFECT:
+                        continue
             elif _scoring_method == "positive_rr":
                 # positive_rr: pass 区 rr > +threshold 的比例 > 全量基线 × min_positive_lift
                 # 意义: pass 区中大赢交易明显偏多（正向选择）
@@ -2698,9 +2742,11 @@ def _meta_algorithm_prefilter(
                 if ks_stat < PREFILTER_MIN_KS or ks_pval > PREFILTER_MAX_KS_PVALUE:
                     continue
 
-            # return_uplift: pass 组期望收益必须 > 0（所有 scoring_method 均强制）
-            return_uplift = mean_return_pass  # 用于记录展示
-            if mean_return_pass <= 0:
+            # return_uplift: pass 组期望收益必须优于 deny 组（相对约束）
+            # 设计: prefilter 职责是"划分数据空间", pass 区好于 deny 区即可,
+            # 不要求绝对正值 (holdout 极端负值时 -0.5R > -2.0R 仍是有效划分)
+            return_uplift = mean_return_pass - mean_return_deny
+            if mean_return_pass <= mean_return_deny:
                 continue
 
             # Hit rate uplift
@@ -2715,6 +2761,7 @@ def _meta_algorithm_prefilter(
             # 其他模式: 按 fold KS
             fold_ks_stats = []
             fold_brl_stats = []  # bad_rate_lift per fold
+            fold_effect_stats = []  # effect per fold (用于饱和模式)
             fold_pr_stats = []  # positive_rate_lift per fold (主用于 positive_rr)
             holdout_label_arr = (
                 (df_holdout_sub[label_col] == 0).values
@@ -2748,6 +2795,16 @@ def _meta_algorithm_prefilter(
                         fold_brl_stats.append(
                             f_br_deny / f_br_all if f_br_all > 0 else 1.0
                         )
+                        # effect per fold (用于饱和模式)
+                        f_mean_pass = (
+                            float(np.nanmean(f_rr[f_pass])) if f_pass.sum() > 0 else 0.0
+                        )
+                        f_mean_deny = (
+                            float(np.nanmean(f_rr[f_deny & f_valid]))
+                            if (f_deny & f_valid).sum() > 0
+                            else 0.0
+                        )
+                        fold_effect_stats.append(f_mean_pass - f_mean_deny)
                     elif _scoring_method == "positive_rr":
                         # positive_rr fold: pass 区 rr > threshold 比例 / fold 全量比例
                         f_pr_pass = (
@@ -2768,10 +2825,16 @@ def _meta_algorithm_prefilter(
                         fold_ks_stats.append(f_ks)
 
             if _scoring_method == "bad_rate_lift":
-                # robustness = fold 中 bad_rate_lift > 1.0 的比例
-                rob_time = sum(1 for brl in fold_brl_stats if brl > 1.0) / max(
-                    len(fold_brl_stats), 1
-                )
+                if _bad_rate_saturated:
+                    # 饱和模式: 用 effect-based fold 验证 (pass_mean > deny_mean 即通过)
+                    rob_time = sum(1 for ef in fold_effect_stats if ef > 0) / max(
+                        len(fold_effect_stats), 1
+                    )
+                else:
+                    # 正常模式: fold 中 bad_rate_lift > 1.0 的比例
+                    rob_time = sum(1 for brl in fold_brl_stats if brl > 1.0) / max(
+                        len(fold_brl_stats), 1
+                    )
                 robustness = rob_time
             elif _scoring_method == "positive_rr":
                 # robustness = fold 中 pr_lift > 1.0 的比例
@@ -2923,282 +2986,33 @@ def _meta_algorithm_prefilter(
             selected.append(cand)
             selected_features.add(cand["feature"])
 
-    # ── 5c. 选择最终规则 (ks_statistic 排序) ──
-    selected.sort(key=lambda x: -x.get("ks_statistic", 0))
-
-    final_rules = []
-    for cand in selected:
-        if (
-            cand["ks_statistic"] >= PREFILTER_MIN_KS
-            and len(final_rules) < PREFILTER_MAX_RULES
-        ):
-            final_rules.append(cand)
+    # ── 5c. 选择最终规则 (scoring_method 感知排序 + KPI 门槛) ──
+    # positive_rr / bad_rate_lift: 主 KPI 已在步骤 5 通过验证, 不再需要 KS 硬门槛
+    # ks / lift / combined: 保留 KS 硬门槛
+    if _scoring_method in ("positive_rr", "bad_rate_lift"):
+        # 按主 KPI score 排序 (pr_lift / bad_rate_lift 驱动)
+        selected.sort(key=lambda x: -x.get("score", 0))
+        final_rules = []
+        for cand in selected:
+            if len(final_rules) < PREFILTER_MAX_RULES:
+                final_rules.append(cand)
+    else:
+        # 默认：按 KS 排序 + KS 硬门槛
+        selected.sort(key=lambda x: -x.get("ks_statistic", 0))
+        final_rules = []
+        for cand in selected:
+            if (
+                cand["ks_statistic"] >= PREFILTER_MIN_KS
+                and len(final_rules) < PREFILTER_MAX_RULES
+            ):
+                final_rules.append(cand)
 
     # ── 5c-dir. 方向前置规则 (已禁用: 方向由 direction.yaml 层处理, prefilter 不重复注入) ──
     # if _direction_rule_candidate is not None:
     #     final_rules = [_direction_rule_candidate] + final_rules
 
-    # ── 5c1. Interaction Screening (Uplift Interaction Test) ──
-    # 在 Bell Partition 前先判断特征间是协同(AND)还是替代(OR)还是独立
-    interaction_map = (
-        {}
-    )  # (i,j) → {"type": "synergistic"|"substitutive"|"independent", ...}
-    # 过滤掉方向规则 (没有 _deny_mask), 只对普通规则做交互分析
+    # 过滤掉无 _deny_mask 的规则 (方向规则等)
     _screened_rules = [r for r in final_rules if "_deny_mask" in r]
-    if len(_screened_rules) >= 2:
-        print(f"\n{'='*80}")
-        print(f"📊 Interaction Screening (Uplift Interaction Test)")
-        print(f"{'='*80}")
-        print(
-            f"   {'Pair':<50s} {'r00':>8s} {'r10':>8s} {'r01':>8s} {'r11':>8s} {'type':>14s}"
-        )
-        print(f"   {'-'*98}")
-
-        rr_ho = holdout_rr
-        for i in range(len(_screened_rules)):
-            for j in range(i + 1, len(_screened_rules)):
-                dA = _screened_rules[i]["_deny_mask"]
-                dB = _screened_rules[j]["_deny_mask"]
-                # 4 groups: pass_both, deny_A_only, deny_B_only, deny_both
-                g00 = ~dA & ~dB  # pass A, pass B
-                g10 = dA & ~dB  # deny A, pass B
-                g01 = ~dA & dB  # pass A, deny B
-                g11 = dA & dB  # deny both
-
-                r00 = float(np.nanmean(rr_ho[g00])) if g00.sum() > 10 else 0
-                r10 = float(np.nanmean(rr_ho[g10])) if g10.sum() > 10 else 0
-                r01 = float(np.nanmean(rr_ho[g01])) if g01.sum() > 10 else 0
-                r11 = float(np.nanmean(rr_ho[g11])) if g11.sum() > 10 else 0
-
-                # Additive expectation (no interaction)
-                additive = r10 + r01 - r00
-                # Interaction strength
-                delta = r11 - additive
-
-                # Classification
-                fA = _screened_rules[i]["feature"]
-                fB = _screened_rules[j]["feature"]
-                if g11.sum() < 10:
-                    itype = "insufficient"
-                elif abs(delta) < 0.05 * max(abs(r10 - r00), abs(r01 - r00), 0.01):
-                    itype = "independent"
-                elif r11 > max(r10, r01) and delta > 0:
-                    itype = "synergistic"  # AND 有协同
-                elif abs(r11 - max(r10, r01)) < 0.05 * max(abs(r10), abs(r01), 0.01):
-                    itype = "substitutive"  # OR 更合理
-                elif r11 < min(r10, r01):
-                    itype = "antagonistic"  # 组合是伪信号
-                else:
-                    itype = "substitutive"  # 默认: OR 更安全
-
-                interaction_map[(i, j)] = {
-                    "type": itype,
-                    "delta": delta,
-                    "r00": r00,
-                    "r10": r10,
-                    "r01": r01,
-                    "r11": r11,
-                }
-
-                pair_name = f"{fA} × {fB}"
-                print(
-                    f"   {pair_name:<50s} {r00:>+7.3f} {r10:>+7.3f} "
-                    f"{r01:>+7.3f} {r11:>+7.3f} {itype:>14s}"
-                )
-
-    # ── 5c2. Bell Partition: 自动搜索最优 AND/OR 组合结构 ──
-    BELL_MIN_PASS_RATE = max(
-        (
-            args.min_prefilter_pass_rate
-            if args.min_prefilter_pass_rate is not None
-            else 0.05
-        ),
-        0.02,  # 绝对下限 2%
-    )
-    if len(_screened_rules) >= 2:
-
-        def _bell_partitions(items):
-            """生成所有 Bell 分区 (组内 OR, 组间 AND)。
-            N=2→2, N=3→5, N=4→15 种分区。"""
-            if len(items) <= 1:
-                yield [items]
-                return
-            first = items[0]
-            rest = items[1:]
-            for partition in _bell_partitions(rest):
-                # first 单独成组
-                yield [[first]] + partition
-                # first 加入已有的每一组
-                for i in range(len(partition)):
-                    new_part = [g[:] for g in partition]
-                    new_part[i] = [first] + new_part[i]
-                    yield new_part
-
-        def _interaction_penalty(partition, imap):
-            """根据 interaction screening 对分区结构打分。
-            - 同组 OR 但实际是 synergistic → 惩罚 (应该 AND)
-            - 不同组 AND 但实际是 substitutive → 惩罚 (应该 OR)
-            返回 penalty (越小越好)。"""
-            penalty = 0.0
-            for group in partition:
-                # 同组 = OR 关系
-                for a in range(len(group)):
-                    for b in range(a + 1, len(group)):
-                        key = (min(group[a], group[b]), max(group[a], group[b]))
-                        info = imap.get(key, {})
-                        if info.get("type") == "synergistic":
-                            penalty += 0.15  # OR 了 synergistic pair
-                        elif info.get("type") == "antagonistic":
-                            penalty += 0.30  # 组合是伪信号
-            # 不同组 = AND 关系
-            all_groups = partition
-            for gi in range(len(all_groups)):
-                for gj in range(gi + 1, len(all_groups)):
-                    for a in all_groups[gi]:
-                        for b in all_groups[gj]:
-                            key = (min(a, b), max(a, b))
-                            info = imap.get(key, {})
-                            if info.get("type") == "substitutive":
-                                penalty += 0.10  # AND 了 substitutive pair
-                            elif info.get("type") == "independent":
-                                penalty += 0.05  # AND 了 independent pair
-            return penalty
-
-        # prefilter pass_rate 上限: 超过此比例则过滤形同虚设
-        BELL_MAX_PASS_RATE = 0.95
-
-        def _has_tautological_or_group(group, rules_list):
-            """检测 OR 组内是否存在同一特征的双向规则 (如 >= X 和 <= Y, Y>=X),
-            这会导致 OR 覆盖全集, 过滤完全无效。"""
-            by_feat = {}
-            for idx in group:
-                r = rules_list[idx]
-                feat = r.get("feature", "")
-                op = r.get("op", "")
-                thr = r.get("threshold", 0.0)
-                by_feat.setdefault(feat, []).append((op, thr))
-            for feat, ops in by_feat.items():
-                if len(ops) < 2:
-                    continue
-                ge_vals = [t for o, t in ops if o in (">=", ">")]
-                le_vals = [t for o, t in ops if o in ("<=", "<")]
-                if ge_vals and le_vals:
-                    # >= X OR <= Y: 若 Y >= X 则几乎覆盖全集
-                    if max(le_vals) >= min(ge_vals):
-                        return True
-            return False
-
-        def _eval_partition(partition, rules_list, rr_arr, imap):
-            """评估一种 partition: 组内 OR deny, 组间 AND deny。
-            评分: w1*KS + w2*uplift - w3*pass_rate_excess - interaction_penalty。
-            约束: BELL_MIN_PASS_RATE <= pass_rate <= BELL_MAX_PASS_RATE。"""
-            # ── 拒绝恒真 OR 组 (同特征双向规则覆盖全集) ──
-            for group in partition:
-                if len(group) >= 2 and _has_tautological_or_group(group, rules_list):
-                    return None
-            combined_deny = np.zeros(len(rr_arr), dtype=bool)
-            for group in partition:
-                group_deny = np.ones(len(rr_arr), dtype=bool)
-                for idx in group:
-                    group_deny = group_deny & rules_list[idx]["_deny_mask"]
-                combined_deny = combined_deny | group_deny
-            pass_mask = ~combined_deny
-            n_p = int(pass_mask.sum())
-            n_d = int(combined_deny.sum())
-            if n_p < 30 or n_d < 10:
-                return None
-            pr = n_p / len(rr_arr)
-            if pr < BELL_MIN_PASS_RATE:
-                return None  # pass_rate 下限: 过滤太激进
-            if pr > BELL_MAX_PASS_RATE:
-                return None  # pass_rate 上限: 过滤形同虚设
-            rr_p = rr_arr[pass_mask]
-            rr_d = rr_arr[combined_deny]
-            up = float(np.nanmean(rr_p)) - float(np.nanmean(rr_arr))
-            ks, _ = _ks_2samp(rr_p, rr_d)
-            # score = w1*KS + w2*uplift - w3*pass_rate_excess - penalty
-            # pass_rate_excess: 超过 50% 的部分作为惩罚, 鼓励适度过滤
-            _pr_excess = max(pr - 0.50, 0.0)  # 超过 50% 的部分
-            i_penalty = _interaction_penalty(partition, imap)
-            score = 0.40 * ks + 0.30 * max(up, 0) - 0.20 * _pr_excess - i_penalty
-            return {
-                "pass_rate": pr,
-                "uplift": up,
-                "ks": ks,
-                "score": score,
-                "deny_mask": combined_deny,
-                "partition": partition,
-                "penalty": i_penalty,
-            }
-
-        indices = list(range(len(_screened_rules)))
-        all_partitions = list(_bell_partitions(indices))
-
-        rr_holdout = holdout_rr
-        part_results = []
-        for part in all_partitions:
-            res = _eval_partition(part, _screened_rules, rr_holdout, interaction_map)
-            if res is not None:
-                part_results.append(res)
-
-        if part_results:
-            part_results.sort(key=lambda x: -x["score"])
-            best = part_results[0]
-
-            def _fmt_partition(part, rules):
-                groups = []
-                for g in part:
-                    names = [rules[i]["feature"] for i in g]
-                    if len(names) == 1:
-                        groups.append(names[0])
-                    else:
-                        groups.append("(" + " ∨ ".join(names) + ")")
-                return " ∧ ".join(groups)
-
-            print(f"\n{'='*80}")
-            print(
-                f"📊 规则组合优化 (Bell Partition, {len(all_partitions)} 结构, "
-                f"{len(part_results)} 通过 pass_rate≥{BELL_MIN_PASS_RATE:.0%})"
-            )
-            print(
-                f"   score = 0.40×KS + 0.30×uplift + 0.15×log(pass_rate) - interaction_penalty"
-            )
-            print(f"{'='*80}")
-            for i, r in enumerate(part_results[:5]):
-                marker = " ← BEST" if i == 0 else ""
-                pen_str = f" pen={r['penalty']:.2f}" if r["penalty"] > 0 else ""
-                print(
-                    f"   {i+1}. {_fmt_partition(r['partition'], _screened_rules)}"
-                    f"  KS={r['ks']:.4f} uplift={r['uplift']:+.4f} "
-                    f"pass={r['pass_rate']:.1%} score={r['score']:.4f}{pen_str}{marker}"
-                )
-
-            best_part = best["partition"]
-            is_pure_and = all(len(g) == 1 for g in best_part)
-
-            if not is_pure_and:
-                print(f"\n   ✅ 最优结构非 pure-AND, 自动转换为 any_of 格式")
-                for rule in _screened_rules:
-                    rule["_group_id"] = None
-                for gid, group in enumerate(best_part):
-                    for idx in group:
-                        _screened_rules[idx]["_group_id"] = gid
-            else:
-                print(f"\n   ✅ 最优结构 = pure-AND (所有规则独立)")
-                # 每条规则分配唯一 _group_id, 保证走 Bell Partition 输出路径
-                for gid, rule in enumerate(_screened_rules):
-                    rule["_group_id"] = gid
-
-        else:
-            # Bell Partition 无有效分区 (pass_rate 全部超限等)
-            # Fallback: 每条规则独立 AND, 分配唯一 _group_id
-            print(f"   ⚠️  Bell Partition 无有效分区, 退化为 pure-AND (每条规则独立)")
-            for gid, rule in enumerate(_screened_rules):
-                rule["_group_id"] = gid
-
-    elif len(_screened_rules) == 1:
-        # 单条规则直接分配 _group_id=0
-        _screened_rules[0]["_group_id"] = 0
 
     # ── 5d. 通过率保底检查 ──
     _kpi_min_rows = _thr.get("min_rows", 500)
@@ -3208,6 +3022,7 @@ def _meta_algorithm_prefilter(
         else _kpi_min_rows
     )
     min_pass_rate = args.min_prefilter_pass_rate
+    _pass_rate_rejected = False
 
     if final_rules:
         # 模拟 AND 组合在全量数据上的通过率 (用原始 df, 不是 df_sorted)
@@ -3250,10 +3065,17 @@ def _meta_algorithm_prefilter(
             f"(基线 {overall_hit_rate:.1%}, uplift: {pass_hit_rate - overall_hit_rate:+.1%})"
         )
 
+        _pass_rate_rejected = False
         if n_pass < MIN_PREFILTER_ROWS:
-            print(f"   ⚠️  通过样本量 {n_pass} < {MIN_PREFILTER_ROWS}, 需放宽规则")
+            print(
+                f"   ❌ 通过样本量 {n_pass} < {MIN_PREFILTER_ROWS}, 规则组合过窄, 拒绝 promote"
+            )
+            _pass_rate_rejected = True
         if min_pass_rate is not None and pass_rate < min_pass_rate:
-            print(f"   ⚠️  通过率 {pass_rate:.1%} < min_pass_rate {min_pass_rate:.0%}")
+            print(
+                f"   ❌ 通过率 {pass_rate:.1%} < min_pass_rate {min_pass_rate:.0%}, 拒绝 promote"
+            )
+            _pass_rate_rejected = True
 
         # Opportunity Density
         opp_density_pass = pass_mean_rr * pass_rate
@@ -3361,242 +3183,108 @@ def _meta_algorithm_prefilter(
         print(f"\n   ⚠️  无规则通过 holdout 验证 (无候选 KS >= {PREFILTER_MIN_KS})")
 
     # ── 7. Promote ──
+    if args.promote and _pass_rate_rejected:
+        print(
+            f"\n🚫 Promote 已阻止: 全量通过率不满足 min_pass_rate={min_pass_rate} "
+            f"或 min_rows={MIN_PREFILTER_ROWS}, 输出空 prefilter"
+        )
+        # 写入空规则模板, 防止旧的过窄规则残留
+        arch_prefilter = config_path / "archetypes" / "prefilter.yaml"
+        arch_prefilter.parent.mkdir(parents=True, exist_ok=True)
+        _generate_promoted_prefilter(
+            arch_prefilter,
+            recommendation_report=None,
+            strategy=strategy,
+            positive=[],
+            anti=[],
+            absence=[],
+            data_source=str(Path(args.logs).name),
+            n_rows=n_total,
+            baseline_bad_rate=0.0,
+            baseline_median_rr=med_rr,
+        )
+        print(f"   📦 空 prefilter.yaml → {arch_prefilter}")
+        return 0
+
     if args.promote:
         arch_prefilter = config_path / "archetypes" / "prefilter.yaml"
         arch_prefilter.parent.mkdir(parents=True, exist_ok=True)
 
-        # 检查是否有 Bell Partition 分组信息
-        has_groups = any(r.get("_group_id") is not None for r in _screened_rules)
-
-        if has_groups and _screened_rules:
-            # ── Bell Partition 输出: 按 _group_id 分组 ──
-            from collections import defaultdict as _defaultdict
-
-            groups = _defaultdict(list)
-            for r in _screened_rules:
-                gid = r.get("_group_id", -1)
-                groups[gid].append(r)
-
-            # 构建 recommendation_report with mixed AND/OR
-            top_rules_for_promote = []
-            or_groups = []
-
-            # ── 方向前置规则已禁用 (方向由 direction.yaml 层处理) ──
-            _dir_promote_rules = []  # 不再注入方向规则
-
-            for gid in sorted(groups.keys()):
-                grp = groups[gid]
-                if len(grp) == 1:
-                    # 单条规则 → 普通 AND
-                    r = grp[0]
-                    rationale_parts = [
-                        f"meta-algorithm",
-                        f"KS={r['ks_statistic']:.4f}",
-                        f"return_uplift={r['return_uplift']:+.4f}",
-                        f"robustness={r['robustness']:.0%}",
-                        f"holdout验证通过",
-                    ]
-                    entry = {
-                        "feature": r["feature"],
-                        "operator": _DENY_TO_PASS_OP.get(r["op"], r["op"]),
-                        "value": (
-                            float(f"{r['threshold']:.4g}")
-                            if r["op"] != "range"
-                            else None
-                        ),
-                        "rationale": ", ".join(rationale_parts),
-                        "_type": "range" if r["op"] == "range" else "simple",
-                    }
-                    if r["op"] == "range":
-                        # range 规则: pass = [low, high], 写为 >= low AND <= high (已是 PASS 方向)
-                        entry["value"] = float(f"{r['threshold_low']:.4g}")
-                        entry["value_high"] = float(f"{r['threshold_high']:.4g}")
-                    top_rules_for_promote.append(entry)
-                else:
-                    # 多条规则 → any_of (OR 组)
-                    # 注意: range 规则的语义是 [low, high] 区间 (AND), 展开为
-                    # 独立的 OR 子规则会反转语义 (违算 >= OR <=).
-                    # 解决: range 规则使用 any_of 内嵌的 all_of 结构:
-                    #   any_of:
-                    #     - all_of: [{feat >= low}, {feat <= high}]  <- range 语义
-                    #     - {feat2 op val}
-                    # 但目前的 prefilter.yaml 解析器不支持 all_of 嵌套,
-                    # 因此暂时把 range 规则作为单一简单规则 (>= low OR <= high -> 改为 >= low AND <= high)
-                    # 方案: range 规则单独移出 OR 组, 作为普通 AND 规则写入。
-                    sub_rules = []
-                    range_rules_to_hoist = []  # range 规则移到 AND 层单独输出
-                    for r in grp:
-                        if r["op"] == "range":
-                            # range 规则不能放进 OR 组 (OR 展开语义错误)
-                            # 暂时所属组只有它一个, 则不组 OR, 直接提到 AND
-                            range_rules_to_hoist.append(r)
-                        else:
-                            sub_rules.append(
-                                {
-                                    "feature": r["feature"],
-                                    "operator": _DENY_TO_PASS_OP.get(r["op"], r["op"]),
-                                    "value": float(f"{r['threshold']:.4g}"),
-                                }
-                            )
-                    feats = " ∨ ".join(r["feature"] for r in grp if r["op"] != "range")
-                    if sub_rules:
-                        or_entry = {
-                            "sub_rules": sub_rules,
-                            "rationale": f"Bell Partition OR: {feats}",
-                            "_type": "any_of",
-                        }
-                        top_rules_for_promote.append(or_entry)
-                    # range 规则作为普通 AND 规则单独输出
-                    for r in range_rules_to_hoist:
-                        top_rules_for_promote.append(
-                            {
-                                "feature": r["feature"],
-                                "operator": ">=",
-                                "value": float(f"{r['threshold_low']:.4g}"),
-                                "value_high": float(f"{r['threshold_high']:.4g}"),
-                                "rationale": f"meta-algorithm range [{r['threshold_low']:.4g}, {r['threshold_high']:.4g}]",
-                                "_type": "range",
-                            }
-                        )
-
-            # 直接写 YAML (不走 _generate_promoted_prefilter, 支持混合结构)
-            from datetime import date as _date_bp
-
-            lines = []
-            lines.append(
-                f"# {strategy.upper()} Archetype Prefilter (auto-generated, Bell Partition)"
+        top_rules_for_promote = []
+        # 先加入方向前置规则
+        _dir_promote_rules_else = []  # 方向前置规则已禁用
+        for _dr in _dir_promote_rules_else:
+            _dir_feat = _dr["_direction_feature"]
+            top_rules_for_promote.append(
+                {
+                    "sub_rules": [
+                        {"feature": _dir_feat, "operator": ">", "value": 0.0},
+                        {"feature": _dir_feat, "operator": "<", "value": 0.0},
+                    ],
+                    "rationale": f"方向前置 OR: {_dir_feat}>0(多头) ∨ {_dir_feat}<0(空头)",
+                    "_type": "any_of",
+                }
             )
-            lines.append(
-                f"# 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练"
-            )
-            lines.append(f"# 自动生成: {_date_bp.today()}")
-            lines.append(f"# 数据源: {Path(args.logs).name}, {n_total} 行")
-            lines.append(f"# 组合结构: Bell Partition (组内 OR, 组间 AND)")
-            lines.append("")
-            lines.append("rules:")
-            for entry in top_rules_for_promote:
-                if entry["_type"] == "any_of":
-                    lines.append("  - any_of:")
-                    for sub in entry["sub_rules"]:
-                        lines.append(f'      - feature: {sub["feature"]}')
-                        lines.append(f'        operator: "{sub["operator"]}"')
-                        lines.append(f'        value: {sub["value"]}')
-                    lines.append(f'    rationale: "{entry["rationale"]}"')
-                elif entry["_type"] == "range":
-                    # range 规则: [low, high] 区间, 写为两条连续的 AND 规则 (>= low 和 <= high)
-                    lines.append(f'  - feature: {entry["feature"]}')
-                    lines.append(f'    operator: ">="')
-                    lines.append(f'    value: {entry["value"]}')
-                    lines.append(f'    rationale: "{entry["rationale"]} (lower bound)"')
-                    lines.append(f'  - feature: {entry["feature"]}')
-                    lines.append(f'    operator: "<="')
-                    lines.append(f'    value: {entry["value_high"]}')
-                    lines.append(f'    rationale: "{entry["rationale"]} (upper bound)"')
-                else:
-                    lines.append(f'  - feature: {entry["feature"]}')
-                    lines.append(f'    operator: "{entry["operator"]}"')
-                    if entry.get("value") is not None:
-                        lines.append(f'    value: {entry["value"]}')
-                    elif entry.get("threshold_low") is not None:
-                        lines.append(f'    value_low: {entry["threshold_low"]}')
-                        lines.append(f'    value_high: {entry["threshold_high"]}')
-                    lines.append(f'    rationale: "{entry["rationale"]}"')
-            lines.append("")
-            arch_prefilter.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-            # Append last_evaluation
-            _write_prefilter_evaluation(
-                config_path=str(arch_prefilter),
-                positive=[],
-                anti=[],
-                absence=[],
-                data_source=str(Path(args.logs).name),
-                n_rows=n_total,
-                baseline_bad_rate=0.0,
-                baseline_median_rr=med_rr,
-            )
-
-            n_simple = sum(1 for e in top_rules_for_promote if e["_type"] == "simple")
-            n_or = sum(1 for e in top_rules_for_promote if e["_type"] == "any_of")
-            print(f"\n📦 Promoted prefilter.yaml → {arch_prefilter}")
-            print(f"   ({n_simple} AND + {n_or} OR 组, Bell Partition 自动优化)")
-        else:
-            # ── 原有逻辑: 全部 AND ──
-            top_rules_for_promote = []
-            # 先加入方向前置规则
-            _dir_promote_rules_else = []  # 方向前置规则已禁用
-            for _dr in _dir_promote_rules_else:
-                _dir_feat = _dr["_direction_feature"]
+        for r in _screened_rules:
+            rationale_parts = [
+                f"meta-algorithm",
+                f"KS={r['ks_statistic']:.4f}",
+                f"return_uplift={r['return_uplift']:+.4f}",
+                f"robustness={r['robustness']:.0%}",
+                f"holdout验证通过",
+            ]
+            if r["op"] == "range":
+                _rationale = ", ".join(rationale_parts)
                 top_rules_for_promote.append(
                     {
-                        "sub_rules": [
-                            {"feature": _dir_feat, "operator": ">", "value": 0.0},
-                            {"feature": _dir_feat, "operator": "<", "value": 0.0},
-                        ],
-                        "rationale": f"方向前置 OR: {_dir_feat}>0(多头) ∨ {_dir_feat}<0(空头)",
-                        "_type": "any_of",
+                        "feature": r["feature"],
+                        "operator": ">=",
+                        "value": float(f"{r['threshold_low']:.4g}"),
+                        "composite": r["score"],
+                        "rationale": f"range lower, {_rationale}",
                     }
                 )
-            for r in _screened_rules:
-                rationale_parts = [
-                    f"meta-algorithm",
-                    f"KS={r['ks_statistic']:.4f}",
-                    f"return_uplift={r['return_uplift']:+.4f}",
-                    f"robustness={r['robustness']:.0%}",
-                    f"holdout验证通过",
-                ]
-                if r["op"] == "range":
-                    _rationale = ", ".join(rationale_parts)
-                    top_rules_for_promote.append(
-                        {
-                            "feature": r["feature"],
-                            "operator": ">=",
-                            "value": float(f"{r['threshold_low']:.4g}"),
-                            "composite": r["score"],
-                            "rationale": f"range lower, {_rationale}",
-                        }
-                    )
-                    top_rules_for_promote.append(
-                        {
-                            "feature": r["feature"],
-                            "operator": "<=",
-                            "value": float(f"{r['threshold_high']:.4g}"),
-                            "composite": r["score"],
-                            "rationale": f"range upper, {_rationale}",
-                        }
-                    )
-                else:
-                    top_rules_for_promote.append(
-                        {
-                            "feature": r["feature"],
-                            "operator": _DENY_TO_PASS_OP.get(r["op"], r["op"]),
-                            "value": float(f"{r['threshold']:.4g}"),
-                            "composite": r["score"],
-                            "rationale": ", ".join(rationale_parts),
-                        }
-                    )
-
-            recommendation_report = (
-                {"top_rules": top_rules_for_promote} if top_rules_for_promote else None
-            )
-
-            _generate_promoted_prefilter(
-                arch_prefilter,
-                recommendation_report=recommendation_report,
-                strategy=strategy,
-                positive=[],
-                anti=[],
-                absence=[],
-                data_source=str(Path(args.logs).name),
-                n_rows=n_total,
-                baseline_bad_rate=0.0,
-                baseline_median_rr=med_rr,
-            )
-            print(f"\n📦 Promoted prefilter.yaml → {arch_prefilter}")
-            if top_rules_for_promote:
-                print(f"   ({len(top_rules_for_promote)} 条 meta-algorithm 规则)")
+                top_rules_for_promote.append(
+                    {
+                        "feature": r["feature"],
+                        "operator": "<=",
+                        "value": float(f"{r['threshold_high']:.4g}"),
+                        "composite": r["score"],
+                        "rationale": f"range upper, {_rationale}",
+                    }
+                )
             else:
-                print(f"   (空模板, 无规则通过 holdout)")
+                top_rules_for_promote.append(
+                    {
+                        "feature": r["feature"],
+                        "operator": _DENY_TO_PASS_OP.get(r["op"], r["op"]),
+                        "value": float(f"{r['threshold']:.4g}"),
+                        "composite": r["score"],
+                        "rationale": ", ".join(rationale_parts),
+                    }
+                )
+
+        recommendation_report = (
+            {"top_rules": top_rules_for_promote} if top_rules_for_promote else None
+        )
+
+        _generate_promoted_prefilter(
+            arch_prefilter,
+            recommendation_report=recommendation_report,
+            strategy=strategy,
+            positive=[],
+            anti=[],
+            absence=[],
+            data_source=str(Path(args.logs).name),
+            n_rows=n_total,
+            baseline_bad_rate=0.0,
+            baseline_median_rr=med_rr,
+        )
+        print(f"\n📦 Promoted prefilter.yaml → {arch_prefilter}")
+        if top_rules_for_promote:
+            print(f"   ({len(top_rules_for_promote)} 条 meta-algorithm 规则)")
+        else:
+            print(f"   (空模板, 无规则通过 holdout)")
 
     # ── 8. JSON 输出 (可选) ──
     if args.output:
@@ -3802,6 +3490,16 @@ def main() -> int:
         metavar="LIFT",
         help="Prefilter positive_rr 模式下 pass 区 rr>0.8R 比例倍数门槛 (scoring_method=positive_rr 时使用). "
         "由 research_pipeline.yaml kpi_gates.prefilter.min_positive_lift 控制.",
+    )
+    parser.add_argument(
+        "--prefilter-deny-rate-max",
+        dest="prefilter_deny_rate_max",
+        type=float,
+        default=None,
+        metavar="RATE",
+        help="单条规则最大 deny rate 覆盖 (覆盖 prefilter_layer.yaml 的 deny_rate_max). "
+        "ME 等高选择性策略可设为 0.97. "
+        "由 research_pipeline.yaml kpi_gates.prefilter.deny_rate_max 控制.",
     )
     # ── Meta-Algorithm 模式 ──
     parser.add_argument(

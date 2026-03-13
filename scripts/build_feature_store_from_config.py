@@ -451,7 +451,8 @@ def main() -> None:
 
             # Find donor layers for new months (cross-layer reuse)
             donor_map: dict = {}
-            if new_months and not args.no_reuse:
+            if new_months and not args.no_reuse and not args.force_rebuild:
+                # --force-rebuild: 跳过 donor 复用，全部从头计算，避免从旧损坏层搬运数据
                 donor_map = _find_donor_months(store, spec, new_months, root)
 
             if complete_months:
@@ -526,31 +527,49 @@ def main() -> None:
                     donor_spec = donor_map[month_str]
                     try:
                         donor_df = store.read_month(donor_spec, month_str)
-                        store.write_month(
-                            spec,
-                            month_str,
-                            donor_df,
-                            base_columns=list(donor_df.columns),
-                            feature_columns=[],
-                            overwrite=True,
-                        )
-                        existing_cols = set(donor_df.columns)
-                        missing_feats = _find_missing_features(
-                            features_cfg, requested, existing_cols
-                        )
-                        if not missing_feats:
-                            stats["months_reused"] += 1
-                            print(
-                                f"  \U0001f4cb Reused {sym} {month_str} "
-                                f"from layer {donor_spec.layer}"
+
+                        # ── Donor OHLC 完整性校验: 拒绝坏数据传播 ──
+                        _donor_ok = True
+                        _donor_rows = len(donor_df)
+                        for _dc in ["close", "high", "low"]:
+                            if _dc in donor_df.columns:
+                                _dn = int(donor_df[_dc].isna().sum())
+                                if _donor_rows > 0 and _dn / _donor_rows > 0.5:
+                                    print(
+                                        f"  ⚠️  Donor {donor_spec.layer}/{month_str} "
+                                        f"has corrupted {_dc} (NaN={_dn}/{_donor_rows}), "
+                                        f"skipping donor → build from scratch"
+                                    )
+                                    _donor_ok = False
+                                    break
+                        if not _donor_ok:
+                            print(f"\n  📅 Building {sym} {month_str}...")
+                        else:
+                            store.write_month(
+                                spec,
+                                month_str,
+                                donor_df,
+                                base_columns=list(donor_df.columns),
+                                feature_columns=[],
+                                overwrite=True,
                             )
-                            continue
-                        features_to_compute = missing_feats
-                        merge_mode = True
-                        print(
-                            f"\n  \U0001f4cb Reused {sym} {month_str} from {donor_spec.layer}, "
-                            f"+{len(missing_feats)} features to compute"
-                        )
+                            existing_cols = set(donor_df.columns)
+                            missing_feats = _find_missing_features(
+                                features_cfg, requested, existing_cols
+                            )
+                            if not missing_feats:
+                                stats["months_reused"] += 1
+                                print(
+                                    f"  \U0001f4cb Reused {sym} {month_str} "
+                                    f"from layer {donor_spec.layer}"
+                                )
+                                continue
+                            features_to_compute = missing_feats
+                            merge_mode = True
+                            print(
+                                f"\n  \U0001f4cb Reused {sym} {month_str} from {donor_spec.layer}, "
+                                f"+{len(missing_feats)} features to compute"
+                            )
                     except Exception as e:
                         print(
                             f"  \u26a0\ufe0f  Donor reuse failed for {month_str}: {e}, "
@@ -610,6 +629,24 @@ def main() -> None:
                         feature_cols = [
                             c for c in df_feats_month.columns if c not in base_cols
                         ]
+
+                    # ── OHLC 完整性校验: 及早暴露 cache 污染 ──
+                    _ohlc_cols = [
+                        c
+                        for c in ["close", "high", "low"]
+                        if c in df_feats_month.columns
+                    ]
+                    if _ohlc_cols:
+                        _total_rows = len(df_feats_month)
+                        for _oc in _ohlc_cols:
+                            _nan_ct = int(df_feats_month[_oc].isna().sum())
+                            _nan_ratio = _nan_ct / _total_rows if _total_rows > 0 else 0
+                            if _nan_ratio > 0.5:
+                                raise ValueError(
+                                    f"OHLC 完整性校验失败: {sym}/{month_str} "
+                                    f"{_oc} NaN={_nan_ct}/{_total_rows} ({_nan_ratio:.0%}). "
+                                    f"可能是 timeframe cache 污染, 请删除 cache/timeframes/{sym}_*.parquet 后重试"
+                                )
 
                     store.write_month(
                         spec,

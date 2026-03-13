@@ -1,21 +1,29 @@
 # ME Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-03-12
-# 数据源: features_labeled.parquet, 111618 行
+# 自动生成: 2026-03-13
+# 数据源: features_labeled.parquet, 112361 行
 
-# ⚠️  无法自动生成 rules, 请手动配置
-# rules:
-#   - feature: xxx
-#     operator: ">="
-#     value: 0.0
+rules:
+  - feature: atr_percentile
+    operator: ">="
+    value: 0.003704
+    rationale: "range lower, meta-algorithm, KS=0.2480, return_uplift=+3.9824, robustness=100%, holdout验证通过"
+  - feature: atr_percentile
+    operator: "<="
+    value: 0.587
+    rationale: "range upper, meta-algorithm, KS=0.2480, return_uplift=+3.9824, robustness=100%, holdout验证通过"
+  - feature: oi_compression_score
+    operator: ">="
+    value: 0.4058
+    rationale: "meta-algorithm, KS=0.1790, return_uplift=+3.7757, robustness=100%, holdout验证通过"
 
 last_evaluation:
-  # ── 自动生成 (2026-03-12) ──
-  timestamp: "2026-03-12"
+  # ── 自动生成 (2026-03-13) ──
+  timestamp: "2026-03-13"
   data_source: "features_labeled.parquet"
-  n_rows: 111618
+  n_rows: 112361
   baseline_bad_rate: 0.0000
-  baseline_median_rr: +0.0217
+  baseline_median_rr: -0.0276
 
   # ── 正信号 (0 个) ──
   positive_signals:

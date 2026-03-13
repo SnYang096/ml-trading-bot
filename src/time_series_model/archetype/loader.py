@@ -350,18 +350,115 @@ class ExecutionConfig:
 
 
 # =============================================================================
+# Prefilter Config
+# =============================================================================
+
+import operator as _op
+
+_PF_OPS = {
+    ">=": _op.ge,
+    ">": _op.gt,
+    "<=": _op.le,
+    "<": _op.lt,
+    "==": _op.eq,
+    "!=": _op.ne,
+}
+
+
+@dataclass
+class PrefilterConfig:
+    """
+    Prefilter 配置 - 运行时前置条件过滤。
+
+    语义: archetype 成立的前提环境条件。
+    不满足 prefilter 的 bar 不应产生信号 (训练时过滤数据, 运行时跳过决策)。
+    独立于 Gate, 在 decide() 管线最前端执行。
+    """
+
+    rules: List[Dict[str, Any]] = field(default_factory=list)
+
+    @classmethod
+    def from_yaml(cls, path: Path) -> "PrefilterConfig":
+        if not path.exists():
+            return cls()
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return cls(rules=raw.get("rules", []))
+
+    def evaluate(self, features: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+        """
+        评估 prefilter 规则。
+
+        Returns:
+            (passed, reject_reason)
+            passed=True 表示满足前置条件, 可继续;
+            passed=False + reject_reason 说明哪条规则不满足。
+        """
+        if not self.rules:
+            return True, None
+
+        for rule in self.rules:
+            # ── any_of OR 组: 任一子规则满足即通过 ──
+            if "any_of" in rule:
+                sub_rules = rule["any_of"]
+                any_pass = False
+                for sub in sub_rules:
+                    if self._check_single(sub, features):
+                        any_pass = True
+                        break
+                if not any_pass:
+                    descs = [
+                        f"{s['feature']}{s['operator']}{s['value']}" for s in sub_rules
+                    ]
+                    return False, f"prefilter_any_of_fail: {' OR '.join(descs)}"
+                continue
+
+            # ── 普通 AND 规则 ──
+            if not self._check_single(rule, features):
+                feat = rule.get("feature", "?")
+                op_str = rule.get("operator", "?")
+                val = rule.get("value", "?")
+                return False, f"prefilter_fail: {feat} {op_str} {val}"
+
+        return True, None
+
+    @staticmethod
+    def _check_single(rule: Dict[str, Any], features: Dict[str, Any]) -> bool:
+        """检查单条 prefilter 规则"""
+        feat = rule.get("feature")
+        op_str = rule.get("operator")
+        val = rule.get("value")
+        if not feat or not op_str:
+            return True  # 格式不完整, 跳过
+
+        op_func = _PF_OPS.get(op_str)
+        if op_func is None:
+            raise ValueError(
+                f"Prefilter: unknown operator '{op_str}' for feature '{feat}'"
+            )
+
+        fv = features.get(feat)
+        if fv is None:
+            raise ValueError(
+                f"Prefilter feature '{feat}' is missing from features dict. "
+                f"Available keys ({len(features)}): {sorted(features.keys())[:20]}..."
+            )
+        return bool(op_func(float(fv), float(val)))
+
+
+# =============================================================================
 # Strategy Archetype
 # =============================================================================
 
 
 @dataclass
 class StrategyArchetype:
-    """策略 Archetype - 组合 Gate / Evidence / Execution 三层配置"""
+    """策略 Archetype - 组合 Prefilter / Gate / Evidence / Execution 四层配置"""
 
     name: str
     gate: GateConfig
     evidence: EvidenceConfig
     execution: ExecutionConfig
+    prefilter: PrefilterConfig = field(default_factory=PrefilterConfig)
 
     # ==========================================================================
     # 向后兼容属性 (兼容旧的 ExecutionArchetype 接口)
@@ -538,13 +635,17 @@ def _evaluate_when_clause(
 
         value = features.get(key)
         if value is None:
-            # on_missing 处理
-            on_missing = cond.get("on_missing", "false")
+            # on_missing 处理: 默认 error，特征缺失必须立刻暴露
+            on_missing = cond.get("on_missing", "error")
             if on_missing == "true":
                 return True
-            elif on_missing == "error":
-                raise ValueError(f"Feature {key} is missing")
-            return False
+            elif on_missing == "false":
+                return False
+            else:  # "error" 或其他
+                raise ValueError(
+                    f"Gate/prefilter feature '{key}' is missing from features dict. "
+                    f"Available keys ({len(features)}): {sorted(features.keys())[:20]}..."
+                )
 
         try:
             value = float(value)
@@ -660,7 +761,7 @@ def load_strategy_archetype(
     """
     加载单个策略的 Archetype 配置
 
-    Prefilter 仅在训练时过滤数据, 不注入 gate 运行时。
+    加载策略的完整 Archetype 配置 (含 Prefilter)。
 
     Args:
         strategy: 策略名 (如 "bpc")
@@ -685,6 +786,7 @@ def load_strategy_archetype(
         gate=GateConfig.from_yaml(effective_gate_path),
         evidence=EvidenceConfig.from_yaml(arch_dir / "evidence.yaml"),
         execution=ExecutionConfig.from_yaml(arch_dir / "execution.yaml"),
+        prefilter=PrefilterConfig.from_yaml(arch_dir / "prefilter.yaml"),
     )
 
 

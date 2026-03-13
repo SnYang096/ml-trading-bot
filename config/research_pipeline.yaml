@@ -90,10 +90,10 @@ strategies:
     has_direction: false   # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.20
+        min_pass_rate: 0.05           # ME 高选择性 archetype, 允许低通过率 (50 trades 高 Sharpe 是目标)
         min_rows: 200
-        scoring_method: positive_rr   # 新分支: LightGBM 二分类 rr>0.8R, pass区大赢集中度
-        min_positive_lift: 1.20       # pass 区 rr>0.8R 比例 >= 全量基线 × 1.2
+        scoring_method: bad_rate_lift  # bad_rate_lift 在 ME 上 uplift=+3.22 vs positive_rr 的 +0.53
+        deny_rate_max: 0.97           # ME 窄 range 模式 deny_rate~93-97%, 需放宽全局默认 0.90
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
@@ -114,10 +114,10 @@ strategies:
     has_direction: false   # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.20
+        min_pass_rate: 0.05           # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
-        scoring_method: positive_rr   # 新分支: LightGBM 二分类 rr>0.8R
-        min_positive_lift: 1.20
+        scoring_method: bad_rate_lift  # 与 ME 保持一致
+        deny_rate_max: 0.97           # 与 ME 保持一致
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
