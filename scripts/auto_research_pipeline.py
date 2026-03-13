@@ -1253,6 +1253,126 @@ def _patch_report_deploy(report_path: Path, deploy_result: Dict[str, Any]):
         pass  # 非关键路径, 不影响主流程
 
 
+def _patch_report_event(report_path: Path, event_result: Dict[str, Any]):
+    """将事件回测结果追加到已保存的 report.json."""
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["event_backtest"] = event_result
+        report_path.write_text(
+            json.dumps(report, indent=2, default=str, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _parse_event_stdout(output: str) -> Dict[str, Any]:
+    """从事件回测 stdout 提取指标."""
+    m = re.search(r"交易数:\s*(\d+)", output)
+    n_trades = int(m.group(1)) if m else None
+    m = re.search(r"胜率:\s*([\d.]+)%", output)
+    win_rate = float(m.group(1)) / 100 if m else None
+    m = re.search(r"Sharpe \(R\):\s*([\-\d.]+)", output)
+    sharpe = float(m.group(1)) if m else None
+    m = re.search(r"Mean R:\s*([\-\d.]+)", output)
+    mean_r = float(m.group(1)) if m else None
+    m = re.search(r"Total R:\s*([\-\d.]+)", output)
+    total_r = float(m.group(1)) if m else None
+    m = re.search(r"Max DD \(R\):\s*([\-\d.]+)", output)
+    max_dd = float(m.group(1)) if m else None
+    return {
+        k: v
+        for k, v in {
+            "n_trades": n_trades,
+            "win_rate": win_rate,
+            "sharpe_r": sharpe,
+            "mean_r": mean_r,
+            "total_r": total_r,
+            "max_drawdown_r": max_dd,
+        }.items()
+        if v is not None
+    }
+
+
+def _run_event_backtest_step(
+    strategy: str,
+    evidence_dir: str,
+    run_dir: Path,
+    *,
+    holdout_start: str,
+    end_date: str,
+    strategies_root: str,
+    data_path: str,
+    dry_run: bool = False,
+    sym_r: str = "1.0:0.5:4.0",
+    promote: bool = True,
+) -> Dict[str, Any]:
+    """Step E1: 事件回测 execution 参数优化 + 交易地图生成."""
+    log = run_dir / "pipeline.log"
+    results_dir = Path(evidence_dir)
+
+    print(f"\n{'='*70}")
+    print(f"🎯 Event Backtest Execution Opt: {strategy}")
+    print(f"{'='*70}")
+
+    # Step E1a: Execution 参数优化 (sym-r grid search)
+    opt_output = str(run_dir / "event_exec_opt.json")
+    opt_cmd = [
+        "python",
+        "scripts/optimize_event_execution.py",
+        "--strategy",
+        strategy,
+        "--start-date",
+        holdout_start,
+        "--end-date",
+        end_date,
+        "--sym-r",
+        sym_r,
+        "--strategies-root",
+        strategies_root,
+        "--data-path",
+        data_path,
+        "--output",
+        opt_output,
+    ]
+    if promote:
+        opt_cmd.append("--promote")
+    rc_opt, opt_out = run_step(
+        "Event Execution Optimize", opt_cmd, log, dry_run=dry_run
+    )
+    if rc_opt != 0:
+        print("   ⚠️  Execution 优化有异常, 继续使用当前 execution.yaml")
+
+    # Step E1b: 事件回测 + 交易地图
+    map_path = str(results_dir / f"trading_map_{strategy}_event.html")
+    export_path = str(results_dir / f"event_trades_{strategy}.csv")
+    ev_cmd = [
+        "python",
+        "scripts/event_backtest.py",
+        "--strategy",
+        strategy,
+        "--start-date",
+        holdout_start,
+        "--end-date",
+        end_date,
+        "--strategies-root",
+        strategies_root,
+        "--data-path",
+        data_path,
+        "--trading-map",
+        map_path,
+        "--export",
+        export_path,
+        "--fast",
+    ]
+    rc_ev, ev_out = run_step("Event Backtest", ev_cmd, log, dry_run=dry_run)
+
+    event_metrics = _parse_event_stdout(ev_out) if not dry_run else {}
+    event_metrics["trading_map"] = map_path
+    event_metrics["exec_opt_rc"] = rc_opt
+    return {"rc": rc_ev, "metrics": event_metrics, "map_path": map_path}
+
+
 def _patch_report_pcm(report_path: Path, pcm_result: Dict[str, Any]):
     """将 PCM 联合回测结果追加到已保存的 report.json."""
     try:
@@ -1583,6 +1703,16 @@ def main():
         "--live-root",
         default="live/highcap",
         help="1min bar 数据根目录 (default: live/highcap)",
+    )
+    p.add_argument(
+        "--event-backtest",
+        action="store_true",
+        help="训练后蒹加事件回测 execution 优化步骤 (sym-r 1.0:0.5:4.0 + 交易地图)",
+    )
+    p.add_argument(
+        "--event-sym-r",
+        default="1.0:0.5:4.0",
+        help="事件回测 execution 优化的 sym-r 范围 (default: 1.0:0.5:4.0)",
     )
     args = p.parse_args()
 
@@ -1916,6 +2046,44 @@ def main():
             strat_run = history_dir / r["strategy"] / rdn
             if strat_run.exists():
                 _patch_report_pcm(strat_run / "report.json", pcm_result)
+
+    # ── Event Backtest Execution 优化 (可选, --event-backtest) ──
+    if getattr(args, "event_backtest", False) and not args.compare_only:
+        print(f"\n\n{'='*70}")
+        print("🎓 Event Backtest Execution 优化 (--event-backtest)")
+        print(f"{'='*70}")
+        for r in results_summary:
+            if r.get("decision") == "ERROR" or not r.get("evidence_dir"):
+                continue
+            strat = r["strategy"]
+            rdn = r.get("run_dir_name", timestamp)
+            strat_run_dir = history_dir / strat / rdn
+            # 事件回测的 strategies_root = 实验子目录中的 strategies/
+            ev_strategies_root = str(strat_run_dir / "strategies")
+            ev_result = _run_event_backtest_step(
+                strat,
+                r["evidence_dir"],
+                strat_run_dir,
+                holdout_start=holdout_start,
+                end_date=end_date,
+                strategies_root=ev_strategies_root,
+                data_path=data_path,
+                dry_run=args.dry_run,
+                sym_r=args.event_sym_r,
+                promote=True,
+            )
+            ev_m = ev_result.get("metrics", {})
+            print(
+                f"\n   ✅ {strat}: 事件回测完成"
+                f" sharpe_r={ev_m.get('sharpe_r', 'N/A')}"
+                f" trades={ev_m.get('n_trades', 'N/A')}"
+                f" win_rate={ev_m.get('win_rate', 'N/A')}"
+            )
+            print(f"   🗺️  交易地图: {ev_result.get('map_path', 'N/A')}")
+            # 将事件回测结果写入 report.json
+            rp = strat_run_dir / "report.json"
+            if rp.exists():
+                _patch_report_event(rp, ev_m)
 
 
 # ====================================================================

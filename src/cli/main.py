@@ -3271,6 +3271,16 @@ def pipeline():
 @click.option("--use-1min", is_flag=True, help="使用 1min bar 精细模拟")
 @click.option("--live-root", default="live/highcap", help="1min bar 数据根目录")
 @click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
+@click.option(
+    "--event-backtest",
+    is_flag=True,
+    help="训练后运行事件回测 execution 优化 (sym-r grid search + 交易地图)",
+)
+@click.option(
+    "--event-sym-r",
+    default="1.0:0.5:4.0",
+    help="事件回测 execution 优化 sym-r 范围 (default: 1.0:0.5:4.0)",
+)
 def run(
     strategy,
     run_all,
@@ -3282,6 +3292,8 @@ def run(
     use_1min,
     live_root,
     config_path,
+    event_backtest,
+    event_sym_r,
 ):
     """执行研究管线."""
     args = []
@@ -3305,6 +3317,10 @@ def run(
         args.extend(["--live-root", live_root])
     if config_path:
         args.extend(["--config", config_path])
+    if event_backtest:
+        args.append("--event-backtest")
+    if event_sym_r != "1.0:0.5:4.0":
+        args.extend(["--event-sym-r", event_sym_r])
 
     sys.exit(run_script("scripts/auto_research_pipeline.py", args))
 
@@ -3436,6 +3452,120 @@ def delete(strategy, timestamp, status, delete_all, dry_run, date_range):
             click.echo(f"删除失败 {exp_dir}: {e}")
 
     click.echo(f"\n完成: 成功删除 {deleted_count} 个实验目录")
+
+
+@pipeline.command("event-backtest")
+@click.option("--strategy", required=True, help="策略名 (如 me-long, bpc-short)")
+@click.option(
+    "--hash",
+    "exp_hash",
+    default=None,
+    help="实验时闳戳 hash (如 20260313_234448), 默认使用最新实验",
+)
+@click.option(
+    "--sym-r",
+    "sym_r",
+    default=None,
+    help="开启 Execution 优化, 指定 sym-r 范围 (如 1.0:0.5:4.0)",
+)
+@click.option("--promote", is_flag=True, help="将优化结果写入实验 execution.yaml")
+@click.option("--fast", is_flag=True, default=True, help="快速模式 (60T bar, 默认开启)")
+@click.option("--no-fast", "fast", flag_value=False, help="使用 1min bar 精细模式")
+@click.option("--data-path", default="data/parquet_data", help="研究数据目录")
+@click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
+def pipeline_event_backtest(
+    strategy, exp_hash, sym_r, promote, fast, data_path, config_path
+):
+    """对指定实验运行事件回测 + 可选 execution 优化, 输出交易地图到 research_history."""
+    import json
+    import subprocess
+
+    # 加载 pipeline 配置读取 history_dir
+    _cfg_path = config_path or "config/research_pipeline.yaml"
+    try:
+        import yaml as _yaml
+
+        _cfg = _yaml.safe_load(Path(_cfg_path).read_text(encoding="utf-8"))
+        history_dir = PROJECT_ROOT / _cfg["output"]["history_dir"]
+    except Exception:
+        history_dir = PROJECT_ROOT / "results/research_history"
+
+    strat_dir = history_dir / strategy
+    if not strat_dir.exists():
+        click.echo(f"❌ 找不到 {strategy} 策略的 research_history: {strat_dir}")
+        sys.exit(1)
+
+    # 确定实验目录
+    if exp_hash:
+        exp_dir = strat_dir / exp_hash
+        if not exp_dir.exists():
+            click.echo(f"❌ 找不到实验 {exp_hash}")
+            sys.exit(1)
+    else:
+        runs = sorted(
+            [d for d in strat_dir.iterdir() if d.is_dir() and (d / "report.json").exists()],
+            reverse=True,
+        )
+        if not runs:
+            click.echo(f"❌ {strategy} 没有可用实验")
+            sys.exit(1)
+        exp_dir = runs[0]
+        click.echo(f"📂 使用最新实验: {exp_dir.name}")
+
+    # 读取 report.json 获取日期范围
+    report = json.loads((exp_dir / "report.json").read_text(encoding="utf-8"))
+    holdout_start = report["data_range"]["holdout_start"]
+    end_date = report["data_range"]["end_date"]
+    strategies_root = str(exp_dir / "strategies")
+    results_dir = exp_dir / "results"
+    results_dir.mkdir(exist_ok=True)
+
+    click.echo(f"📅 回测区间: {holdout_start} ~ {end_date}")
+    click.echo(f"📁 实验目录: {exp_dir}")
+
+    rc = 0
+
+    # Step 1 (可选): Execution 参数优化
+    if sym_r:
+        click.echo(f"\n🔧 Step 1: Execution 优化 (sym-r={sym_r})")
+        opt_args = [
+            sys.executable,
+            str(PROJECT_ROOT / "scripts/optimize_event_execution.py"),
+            "--strategy", strategy,
+            "--start-date", holdout_start,
+            "--end-date", end_date,
+            "--sym-r", sym_r,
+            "--strategies-root", strategies_root,
+            "--data-path", data_path,
+            "--output", str(results_dir / "event_exec_opt.json"),
+        ]
+        if promote:
+            opt_args.append("--promote")
+        rc_opt = subprocess.run(opt_args, cwd=str(PROJECT_ROOT)).returncode
+        if rc_opt != 0:
+            click.echo("⚠️  Execution 优化有异常, 继续使用当前配置")
+
+    # Step 2: 事件回测 + 交易地图
+    click.echo(f"\n🎯 Step 2: 事件回测 + 交易地图")
+    map_path = str(results_dir / f"trading_map_{strategy}_event.html")
+    export_path = str(results_dir / f"event_trades_{strategy}.csv")
+    ev_args = [
+        sys.executable,
+        str(PROJECT_ROOT / "scripts/event_backtest.py"),
+        "--strategy", strategy,
+        "--start-date", holdout_start,
+        "--end-date", end_date,
+        "--strategies-root", strategies_root,
+        "--data-path", data_path,
+        "--trading-map", map_path,
+        "--export", export_path,
+    ]
+    if fast:
+        ev_args.append("--fast")
+    rc = subprocess.run(ev_args, cwd=str(PROJECT_ROOT)).returncode
+    click.echo(f"\n🗺️  交易地图: {map_path}")
+    click.echo(f"📄 交易明细: {export_path}")
+    sys.exit(rc)
 
 
 @experiment.command("regime-gate")
