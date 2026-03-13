@@ -1178,6 +1178,32 @@ def save_report(
         encoding="utf-8",
     )
 
+    # 整合: 将 train_final_* 产物目录移动到 run_dir/results/ 下统一管理
+    _gate_dir_str = pipeline_result.get("gate_dir")
+    if _gate_dir_str:
+        _src = PROJECT_ROOT / _gate_dir_str
+        _dst = run_dir / "results"
+        if _src.exists() and not _dst.exists():
+            import shutil as _shutil
+
+            try:
+                _shutil.move(str(_src), str(_dst))
+                # 更新 report.json 中的 artifact 路径
+                _new_rel = str(_dst.relative_to(PROJECT_ROOT))
+                report["artifacts"]["gate_dir"] = _new_rel
+                report["artifacts"]["evidence_dir"] = _new_rel
+                report_path.write_text(
+                    json.dumps(report, indent=2, default=str, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                # 清理空的 train_final_* 父目录
+                _parent = _src.parent
+                if _parent.exists() and not any(_parent.iterdir()):
+                    _parent.rmdir()
+                print(f"   📂 产物整合: {_gate_dir_str} → {_new_rel}")
+            except Exception as _e:
+                print(f"   ⚠️  产物整合失败 (non-critical): {_e}")
+
     return report_path
 
 

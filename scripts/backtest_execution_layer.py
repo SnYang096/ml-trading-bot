@@ -5328,7 +5328,8 @@ def main() -> int:
             if args.strategy
             else None
         )
-        map_tf = getattr(args, "timeframe", None) or auto_tf
+        # 优先用 meta.yaml 的 timeframe (auto_tf), 避免 CLI 默认 "240T" 覆盖 me/lv 等 60T/15T 策略
+        map_tf = auto_tf or getattr(args, "timeframe", None) or "240T"
         # 尝试加载全量连续 OHLC (消除 prefilter 导致的 K 线跳空)
         _map_ohlc = None
         if getattr(args, "features_store_layer", None):
