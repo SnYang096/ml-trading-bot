@@ -3,11 +3,11 @@
 # 自动生成: 2026-03-14
 # 数据源: features_labeled.parquet, 27840 行
 
-rules:
-  - feature: oi_trend_divergence_score
-    operator: "<="
-    value: 0.001208
-    rationale: "meta-algorithm, KS=0.1881, return_uplift=+2.9380, robustness=100%, holdout验证通过"
+# ⚠️  无法自动生成 rules, 请手动配置
+# rules:
+#   - feature: xxx
+#     operator: ">="
+#     value: 0.0
 
 last_evaluation:
   # ── 自动生成 (2026-03-14) ──

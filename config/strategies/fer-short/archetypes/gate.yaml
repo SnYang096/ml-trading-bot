@@ -1,6 +1,6 @@
-# FER Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260306_000255/strategies/fer/gate_draft.yaml
-# 优化规则: 2/10 条通过优化, 9 条已移除
+# FER-SHORT Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer-short/20260314_213450/strategies/fer-short/gate_draft.yaml
+# 优化规则: 2/5 条通过优化, 2 条已移除
 
 schema:
   phases:
@@ -9,34 +9,47 @@ schema:
   - guardrail
   evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
-    failure_budget:
-      max_hard_deny_rate: 0.5
-      alert_threshold: 0.45
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
 hard_gates:
-- id: prefilter_fer_trapped_fer_trapped
-  tag: PREFILTER_FER_TRAPPED_FER_TRAPPED
+- id: gate_evt_tail_shape_right
+  tag: HARD_EVT_TAIL_SHAPE_RIGHT
   phase: hard_gate
-  priority: 1
-  reason: 'prefilter OR: fer_trapped_longs_score>=3.4965 OR fer_trapped_shorts_score>=3.7941'
+  priority: 10
+  reason: 统计验证规则 (lift=1.70)
+  when:
+    evt_tail_shape_right:
+      value_lt: 0.604
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.6040, lift=0.198'
+- id: gate_evt_var_99_evt_var_99
+  tag: HARD_EVT_VAR_99_EVT_VAR_99
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.23)
   when:
     all_of:
-    - fer_trapped_longs_score:
-        value_lt: 3.4965
-    - fer_trapped_shorts_score:
-        value_lt: 3.7941
+    - evt_var_99:
+        value_gt: 0.7976
+    - evt_var_99:
+        value_lt: 0.8968
   then:
     action: deny
-  frozen: true
-  comment: prefilter条件 (训练-推理一致性, frozen=true)
-- id: gate_fer_volume_price_divergence
-  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE
+  comment: 'optimizer: stable_plateau_found, threshold=0.4698, lift=0.230'
+- id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
+  tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
   phase: hard_gate
-  priority: 11
-  reason: fer_volume_price_divergence 触发树分裂条件 (分裂 3 次)
+  priority: 12
+  reason: 统计验证规则 (lift=1.25)
   when:
-    fer_volume_price_divergence:
-      value_lt: 0.65
+    all_of:
+    - vol_leverage_asymmetry:
+        value_gt: 0.1537
+    - vol_leverage_asymmetry:
+        value_lt: 0.2018
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.6500, lift=0.192'
+  comment: 'optimizer: stable_plateau_found, threshold=0.2606, lift=0.345'
 guardrails: []

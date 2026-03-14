@@ -39,7 +39,11 @@ feature_pipeline:
     # → vp_poc_deviation, vp_lv_ratio (流动性真空结构)
     - volume_profile_volatility_features_f
 
-    # ========== 触发信号: 影线拒绝 + 极值距离 ==========
+    # ========== 压缩状态 (FER 在压缩后反转效果更好) ==========
+    - recent_compression_decay_f    # 压缩衰减记忆: 最近是否经历过压缩 (baseline 模块)
+    - compression_duration_f        # 压缩持续时间 (ATR 百分位连续 bar 数)
+
+    # ========== 触发信号: 影线拒绝 + 极値距离 ==========
     # → wick_upper_ratio, wick_lower_ratio (影线拒绝 = 止损猎杀/失败信号)
     - wick_ratios_f
     # → bars_since_local_high/low (swing 距离, 值小=刚在极值处失败)

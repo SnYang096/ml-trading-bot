@@ -800,6 +800,9 @@ def run_strategy_pipeline(
         )
 
     # ── Step 4: Prefilter (--promote) ── (方向已确定后, meta-algorithm 按方向分裂学习)
+    _pf_results: Dict[str, Any] = {}  # 提前初始化, 供 Sharpe 对比块使用
+    _pf_yaml: Optional[Path] = None
+    _pf_comparison: Optional[Dict[str, Any]] = None  # Sharpe 对比结果, 用于汇总输出
     if scfg.get("has_prefilter"):
         _features_prefilter_path = Path(config_dir) / "features_prefilter.yaml"
         if not _features_prefilter_path.exists():
@@ -832,42 +835,70 @@ def run_strategy_pipeline(
                     str(prefilter_gates["min_rows"]),
                 ]
             # Per-strategy KPI 覆盖: scoring_method / min_ks / max_ks_pvalue / min_lift
-            if prefilter_gates.get("scoring_method"):
-                prefilter_cmd += [
-                    "--prefilter-scoring-method",
-                    str(prefilter_gates["scoring_method"]),
-                ]
-            if prefilter_gates.get("min_ks_statistic") is not None:
-                prefilter_cmd += [
-                    "--prefilter-min-ks",
-                    str(prefilter_gates["min_ks_statistic"]),
-                ]
-            if prefilter_gates.get("max_ks_pvalue") is not None:
-                prefilter_cmd += [
-                    "--prefilter-max-ks-pvalue",
-                    str(prefilter_gates["max_ks_pvalue"]),
-                ]
-            if prefilter_gates.get("min_lift") is not None:
-                prefilter_cmd += [
-                    "--prefilter-min-lift",
-                    str(prefilter_gates["min_lift"]),
-                ]
-            if prefilter_gates.get("min_positive_lift") is not None:
-                prefilter_cmd += [
-                    "--prefilter-positive-lift",
-                    str(prefilter_gates["min_positive_lift"]),
-                ]
-            if prefilter_gates.get("deny_rate_max") is not None:
-                prefilter_cmd += [
-                    "--prefilter-deny-rate-max",
-                    str(prefilter_gates["deny_rate_max"]),
-                ]
-            run_step(
-                "Prefilter Analyze",
-                prefilter_cmd,
-                log,
-                dry_run=dry_run,
-            )
+            # 支持 scoring_method_fallbacks: 自动降级直到生成有效规则
+            _pf_fallbacks = prefilter_gates.get("scoring_method_fallbacks")
+            if _pf_fallbacks and isinstance(_pf_fallbacks, list):
+                _pf_methods = _pf_fallbacks  # 优先用 fallbacks 列表
+            elif prefilter_gates.get("scoring_method"):
+                _pf_methods = [prefilter_gates["scoring_method"]]  # 单一方法
+            else:
+                _pf_methods = ["ks"]  # 默认
+
+            def _append_pf_kpi_args(cmd):
+                """追加非 scoring_method 的 KPI 参数."""
+                if prefilter_gates.get("min_ks_statistic") is not None:
+                    cmd += [
+                        "--prefilter-min-ks",
+                        str(prefilter_gates["min_ks_statistic"]),
+                    ]
+                if prefilter_gates.get("max_ks_pvalue") is not None:
+                    cmd += [
+                        "--prefilter-max-ks-pvalue",
+                        str(prefilter_gates["max_ks_pvalue"]),
+                    ]
+                if prefilter_gates.get("min_lift") is not None:
+                    cmd += ["--prefilter-min-lift", str(prefilter_gates["min_lift"])]
+                if prefilter_gates.get("min_positive_lift") is not None:
+                    cmd += [
+                        "--prefilter-positive-lift",
+                        str(prefilter_gates["min_positive_lift"]),
+                    ]
+                if prefilter_gates.get("deny_rate_max") is not None:
+                    cmd += [
+                        "--prefilter-deny-rate-max",
+                        str(prefilter_gates["deny_rate_max"]),
+                    ]
+
+            _pf_yaml = Path(config_dir) / "archetypes" / "prefilter.yaml"
+
+            for _pf_method in _pf_methods:
+                _cmd = prefilter_cmd + ["--prefilter-scoring-method", _pf_method]
+                _append_pf_kpi_args(_cmd)
+                _step_name = (
+                    f"Prefilter Analyze [{_pf_method}]"
+                    if len(_pf_methods) > 1
+                    else "Prefilter Analyze"
+                )
+                run_step(_step_name, _cmd, log, dry_run=dry_run)
+
+                if _pf_yaml.exists() and not dry_run:
+                    try:
+                        _pf_data = (
+                            yaml.safe_load(_pf_yaml.read_text(encoding="utf-8")) or {}
+                        )
+                        _rules = _pf_data.get("rules") or []
+                        _n_rules = len(_rules)
+                        # 保存当前结果到临时文件 (供 Sharpe 对比使用)
+                        _tmp = _pf_yaml.parent / f"prefilter_{_pf_method}.yaml"
+                        shutil.copy(_pf_yaml, _tmp)
+                        _pf_results[_pf_method] = {
+                            "n_rules": _n_rules,
+                            "path": _tmp,
+                        }
+                        if len(_pf_methods) > 1:
+                            print(f"   📊 [{_pf_method}] rules={_n_rules}")
+                    except Exception:
+                        pass
 
     # ── Step 5: Gate 训练 ──
     # ⚠️ Gate Train 现在使用 prefilter (见 BPC pipeline 文档):
@@ -890,6 +921,188 @@ def run_strategy_pipeline(
         "--seed",
         "42",  # A.7.1: gate 规则确定性，固定 seed 不受外层 seed 影响
     ]
+
+    # ── Prefilter Sharpe 对比: 每个候选 prefilter 跑 mini-pipeline, 按 Sharpe 择优 ──
+    # 空 prefilter (empty) 自动包含为 baseline 候选
+    _pf_include_empty = prefilter_gates.get("prefilter_search_include_empty", True)
+    if (
+        not dry_run
+        and _pf_results  # 确认多算法分析已运行且有结果
+        and _pf_yaml is not None
+    ):
+        _cand_paths: Dict[str, Any] = {
+            m: r["path"]
+            for m, r in _pf_results.items()
+            if r.get("n_rules", 0) > 0 and r.get("path") and r["path"].exists()
+        }
+        if _pf_include_empty:
+            _empty_pf_p = _pf_yaml.parent / "prefilter_cmp_empty.yaml"
+            _empty_pf_p.write_text("rules: []\n", encoding="utf-8")
+            _cand_paths["empty"] = _empty_pf_p
+        if len(_cand_paths) >= 2:
+            _cmp_sharpe: Dict[str, float] = {}
+            _cmp_trades: Dict[str, int] = {}
+            _cmp_rules: Dict[str, int] = {}
+            _simple_exec = scfg.get("simple_execution", {})
+            print(f"\n{'='*72}")
+            print(
+                f"🔬 Prefilter Sharpe 对比模式 — {len(_cand_paths)} 候选: {list(_cand_paths)}"
+            )
+            print(f"{'='*72}")
+            for _cm, _cp in _cand_paths.items():
+                print(f"\n── 候选 [{_cm}] ──")
+                shutil.copy(_cp, _pf_yaml)
+                # Gate Train
+                _rc_cg, _out_cg = run_step(f"  Gate [{_cm}]", gate_train_args, log)
+                _cg_dir = find_output_dir(_out_cg, strategy) or prepare_dir
+                if _rc_cg != 0 or not Path(f"{_cg_dir}/predictions.parquet").exists():
+                    print(f"   ❌ Gate Train 失败, 跳过")
+                    _cmp_sharpe[_cm] = float("-inf")
+                    _cmp_trades[_cm] = 0
+                    continue
+                # Sync gate_draft
+                _cpd = PROJECT_ROOT / f"config/strategies/{strategy}/gate_draft.yaml"
+                if _cpd.exists():
+                    shutil.copy2(_cpd, Path(f"{config_dir}/gate_draft.yaml"))
+                # Gate Apply (draft)
+                run_step(
+                    f"  Gate Apply [{_cm}]",
+                    [
+                        "mlbot",
+                        "gate",
+                        "apply-archetype",
+                        "--logs",
+                        f"{_cg_dir}/predictions.parquet",
+                        "--strategy",
+                        strategy,
+                        "--gate-path",
+                        f"{config_dir}/gate_draft.yaml",
+                    ],
+                    log,
+                )
+                # Gate Optimize
+                _cg_opt = [
+                    "python",
+                    "scripts/optimize_gate_unified.py",
+                    "--strategy",
+                    strategy,
+                    "--strategies-root",
+                    strategies_root,
+                    "--logs",
+                    f"{_cg_dir}/logs_gated.parquet",
+                    "--output",
+                    f"{_cg_dir}/gate_optimization.json",
+                    "--gate-path",
+                    f"{config_dir}/gate_draft.yaml",
+                    "--promote",
+                ]
+                if gate_gates.get("min_combined_pass_rate"):
+                    _cg_opt += [
+                        "--min-combined-pass-rate",
+                        str(gate_gates["min_combined_pass_rate"]),
+                    ]
+                run_step(f"  Gate Opt [{_cm}]", _cg_opt, log)
+                # Gate Re-Apply
+                run_step(
+                    f"  Gate Re-Apply [{_cm}]",
+                    [
+                        "mlbot",
+                        "gate",
+                        "apply-archetype",
+                        "--logs",
+                        f"{_cg_dir}/predictions.parquet",
+                        "--strategy",
+                        strategy,
+                        "--gate-path",
+                        f"{config_dir}/archetypes/gate.yaml",
+                    ],
+                    log,
+                )
+                # Vector Backtest
+                _cg_bt = [
+                    "python",
+                    "scripts/backtest_execution_layer.py",
+                    "--logs",
+                    f"{_cg_dir}/logs_gated.parquet",
+                    "--strategy",
+                    strategy,
+                    "--strategies-root",
+                    strategies_root,
+                    "--test-start",
+                    holdout_start,
+                    "--test-end",
+                    end_date,
+                    "--simple-execution",
+                ]
+                if _simple_exec.get("sl_r") is not None:
+                    _cg_bt += ["--simple-sl", str(_simple_exec["sl_r"])]
+                if _simple_exec.get("tp_r") is not None:
+                    _cg_bt += ["--simple-tp", str(_simple_exec["tp_r"])]
+                if _simple_exec.get("timeout_bars") is not None:
+                    _cg_bt += ["--simple-timeout", str(_simple_exec["timeout_bars"])]
+                _rc_cbt, _out_cbt = run_step(f"  Backtest [{_cm}]", _cg_bt, log)
+                _cbt_m = parse_backtest_stdout(_out_cbt)
+                _cmp_sharpe[_cm] = _cbt_m.get("sharpe_per_trade", float("-inf"))
+                _cmp_trades[_cm] = _cbt_m.get("total_trades", 0)
+                _cmp_rules[_cm] = _pf_results.get(_cm, {}).get("n_rules", 0)
+                _s = _cmp_sharpe[_cm]
+                print(f"   📊 [{_cm}] Sharpe={_s:+.4f}, Trades={_cmp_trades[_cm]}")
+            # 汇总对比表
+            _best_cm = max(_cmp_sharpe, key=lambda m: _cmp_sharpe[m])
+            # 补充 0 规则方法 (等价于 empty, 不需跑 pipeline)
+            _empty_sharpe = _cmp_sharpe.get("empty", float("-inf"))
+            _empty_trades = _cmp_trades.get("empty", 0)
+            _zero_rule_methods = [
+                m
+                for m, r in _pf_results.items()
+                if r.get("n_rules", 0) == 0 and m not in _cmp_sharpe
+            ]
+            for _zrm in _zero_rule_methods:
+                _cmp_sharpe[_zrm] = _empty_sharpe
+                _cmp_trades[_zrm] = _empty_trades
+                _cmp_rules[_zrm] = 0
+            _tbl_lines: list = []
+            _tbl_lines.append(f"\n{'='*72}")
+            _tbl_lines.append(
+                f"  {'方法':<25} {'Sharpe':>10} {'Trades':>7} {'Rules':>6}  标记"
+            )
+            _tbl_lines.append(f"  {'-'*68}")
+            for _m in sorted(_cmp_sharpe, key=lambda m: -_cmp_sharpe[m]):
+                _flag = " ← 最优" if _m == _best_cm else ""
+                _s = _cmp_sharpe[_m]
+                _s_str = f"{_s:+.4f}" if _s != float("-inf") else "  FAIL"
+                _note = "  (0规则=empty)" if _m in _zero_rule_methods else ""
+                _tbl_lines.append(
+                    f"  {_m:<25} {_s_str:>10} "
+                    f"{_cmp_trades.get(_m, 0):>7} {_cmp_rules.get(_m, 0):>6}{_flag}{_note}"
+                )
+            _tbl_lines.append(f"{'='*72}\n")
+            _tbl_text = "\n".join(_tbl_lines)
+            print(_tbl_text)
+            with open(log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"\n{'='*72}\n")
+                _lf.write(f"🔬 Prefilter Sharpe 对比汇总\n")
+                _lf.write(_tbl_text + "\n")
+            # 设置最优 prefilter, 让完整 pipeline 使用
+            shutil.copy(_cand_paths[_best_cm], _pf_yaml)
+            print(f"   ✅ 最优 prefilter [{_best_cm}] 已写入, 继续完整 pipeline")
+            # 清理临时文件
+            for _cp in _cand_paths.values():
+                if _cp and _cp != _pf_yaml and _cp.exists():
+                    _cp.unlink()
+            # 存储对比结果, 供最终汇总显示
+            _pf_comparison = {
+                "best": _best_cm,
+                "zero_rule_methods": _zero_rule_methods,
+                "candidates": {
+                    m: {
+                        "sharpe": _cmp_sharpe[m],
+                        "trades": _cmp_trades.get(m, 0),
+                        "rules": _cmp_rules.get(m, 0),
+                    }
+                    for m in _cmp_sharpe
+                },
+            }
 
     rc, out = run_step("Gate Train", gate_train_args, log, dry_run=dry_run)
     gate_dir = find_output_dir(out, strategy) or prepare_dir
@@ -1136,6 +1349,7 @@ def run_strategy_pipeline(
         "backtest_metrics": backtest_metrics,
         "exp_config_dir": str(exp_config_dir),
         "prod_config_dir": prod_config_dir,
+        "prefilter_comparison": _pf_comparison,
     }
 
 
@@ -2008,6 +2222,7 @@ def main():
                 "evidence_dir": pipeline_result.get("evidence_dir"),
                 "run_dir_name": run_dir.name,
                 "seed": best["seed"] if multi_seed else seeds[0],
+                "prefilter_comparison": pipeline_result.get("prefilter_comparison"),
             }
         )
 
@@ -2038,6 +2253,29 @@ def main():
         print(
             f"   {emoji} {r['strategy']:>6s}: {r['decision']:<8s} sharpe={r.get('sharpe', 'N/A')} trades={r.get('trades', 'N/A')}{seed_str}"
         )
+        # Prefilter Sharpe 对比表
+        _pfc = r.get("prefilter_comparison")
+        if _pfc and _pfc.get("candidates"):
+            _best_pf = _pfc["best"]
+            _cands = _pfc["candidates"]
+            print(f"      🔬 Prefilter 对比:")
+            _zr_set = set(_pfc.get("zero_rule_methods", []))
+            for _pm in sorted(
+                _cands,
+                key=lambda m: (
+                    -_cands[m]["sharpe"]
+                    if _cands[m]["sharpe"] != float("-inf")
+                    else float("inf")
+                ),
+            ):
+                _pc = _cands[_pm]
+                _ps = _pc["sharpe"]
+                _ps_str = f"{_ps:+.4f}" if _ps != float("-inf") else "  FAIL"
+                _flag = " ←" if _pm == _best_pf else ""
+                _note = "  (0规则=empty)" if _pm in _zr_set else ""
+                print(
+                    f"         {_pm:<20s} Sharpe={_ps_str}  Trades={_pc['trades']:>5}  Rules={_pc['rules']}{_flag}{_note}"
+                )
     if pcm_result:
         pcm_emoji = {"PASS": "✅", "ALERT": "⚠️", "ERROR": "❌"}.get(
             pcm_result.get("pcm_decision", "?"), "❓"

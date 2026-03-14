@@ -3036,6 +3036,64 @@ def _meta_algorithm_prefilter(
     # 过滤掉无 _deny_mask 的规则 (方向规则等)
     _screened_rules = [r for r in final_rules if "_deny_mask" in r]
 
+    # ── 5c-extra. Near-trivial 阈值校验 + 归一化 ──
+    # 问题: 分位数扫描可能产生浮点噪声型阈值, 如 fer_signed_efficiency >= -5.939e-10
+    # 这类阈值在语义上等价于 >= 0, 但显示混乱且可能掩盖退化规则
+    # 规则: |threshold| < feature_scale × 1e-3 AND |threshold| < 1e-6 → 尝试 snap to 0.0
+    #   - snap 后 deny_rate 仍在有效区间 → 保留规则 (threshold 归一化为 0.0)
+    #   - snap 后 deny_rate 越界 (规则退化) → 拦截并打印警告
+    _normalized_rules: list = []
+    for _r in _screened_rules:
+        _thr_v = _r.get("threshold")
+        if _thr_v is None or _r.get("op") == "range":
+            # 区间规则 / 方向规则: 不做归一化
+            _normalized_rules.append(_r)
+            continue
+        if abs(_thr_v) >= 1e-6:
+            # 阈值足够大, 无需检查
+            _normalized_rules.append(_r)
+            continue
+        # |threshold| < 1e-6: 检查是否是浮点噪声
+        _feat = _r["feature"]
+        if _feat not in df.columns:
+            _normalized_rules.append(_r)
+            continue
+        _feat_col = df[_feat].dropna()
+        if len(_feat_col) == 0:
+            _normalized_rules.append(_r)
+            continue
+        _feat_iqr = float(_feat_col.quantile(0.75) - _feat_col.quantile(0.25))
+        _feat_scale = max(_feat_iqr, float(_feat_col.std()), 1e-8)
+        if abs(_thr_v) < _feat_scale * 1e-3:
+            # 浮点噪声: snap to 0.0, 重新验证 deny_rate
+            _snap_col = df[_feat].values.astype(float)
+            _snap_valid = ~np.isnan(_snap_col)
+            if _r["op"] == "<":
+                _snap_deny = (_snap_col < 0.0) & _snap_valid
+            else:  # ">"
+                _snap_deny = (_snap_col > 0.0) & _snap_valid
+            _snap_deny_rate = (
+                float(_snap_deny.sum()) / float(_snap_valid.sum())
+                if _snap_valid.sum() > 0
+                else 0.0
+            )
+            if PREFILTER_DENY_RATE_MIN <= _snap_deny_rate <= PREFILTER_DENY_RATE_MAX:
+                print(
+                    f"   ℹ️  [{_feat}] 阈值 {_thr_v:.3g} ≈ 0 → 归一化为 0.0 "
+                    f"(snap_deny_rate={_snap_deny_rate:.1%}, 规则保留)"
+                )
+                _r = dict(_r)  # shallow copy, 不修改原候选
+                _r["threshold"] = 0.0
+                _normalized_rules.append(_r)
+            else:
+                print(
+                    f"   ⚠️  [{_feat}] 阈值 {_thr_v:.3g} ≈ 0 → snap_deny_rate={_snap_deny_rate:.1%} "
+                    f"超出 [{PREFILTER_DENY_RATE_MIN:.0%}, {PREFILTER_DENY_RATE_MAX:.0%}] → 拦截规则"
+                )
+        else:
+            _normalized_rules.append(_r)
+    _screened_rules = _normalized_rules
+
     # ── 5d. 通过率保底检查 ──
     _kpi_min_rows = _thr.get("min_rows", 500)
     MIN_PREFILTER_ROWS = (

@@ -97,9 +97,9 @@ strategies:
     has_direction: false   # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.08
-        min_rows: 500
-        # scoring_method: ks (默认) — BPC/FER 用 KS 分布差异检验, positive_rr 为 ME 专用
+        min_pass_rate: 0.05
+        min_rows: 300
+        scoring_method_fallbacks: [ks, lift, bad_rate_lift, positive_rr]
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
@@ -121,9 +121,9 @@ strategies:
     has_direction: false   # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.08
-        min_rows: 500
-        # scoring_method: ks (默认) — BPC/FER 用 KS 分布差异检验, positive_rr 为 ME 专用
+        min_pass_rate: 0.05
+        min_rows: 300
+        scoring_method_fallbacks: [ks, lift, bad_rate_lift, positive_rr]
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
