@@ -3,19 +3,11 @@
 # 自动生成: 2026-03-14
 # 数据源: features_labeled.parquet, 27840 行
 
-rules:
-  - feature: oi_trend_divergence_score
-    operator: ">="
-    value: 0.001061
-    rationale: "meta-algorithm, KS=0.2086, return_uplift=+3.2585, robustness=100%, holdout验证通过"
-  - feature: vp_width_ratio
-    operator: ">="
-    value: 0.4607
-    rationale: "meta-algorithm, KS=0.2027, return_uplift=+4.2187, robustness=100%, holdout验证通过"
-  - feature: sr_strength_max
-    operator: "<="
-    value: 2.98
-    rationale: "meta-algorithm, KS=0.1826, return_uplift=+2.0727, robustness=100%, holdout验证通过"
+# ⚠️  无法自动生成 rules, 请手动配置
+# rules:
+#   - feature: xxx
+#     operator: ">="
+#     value: 0.0
 
 last_evaluation:
   # ── 自动生成 (2026-03-14) ──

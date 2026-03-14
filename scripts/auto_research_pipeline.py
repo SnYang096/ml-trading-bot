@@ -636,6 +636,18 @@ def run_strategy_pipeline(
     backtest_gates = kpi_gates.get("backtest", {})
     execution_gates = kpi_gates.get("execution", {})
 
+    # ── Validation / Test 三段分离 ──
+    # holdout_months = 总 OOS 窗口, validation_months = 前 N 个月用于 Gate 调阈值
+    # Train [start, holdout_start) → Val [holdout_start, test_start) → Test [test_start, end]
+    # predictions.parquet 覆盖完整 holdout [holdout_start, end], 训练集不变
+    holdout_months = cfg["dates"]["holdout_months"]
+    validation_months = cfg["dates"].get("validation_months", 0)
+    if validation_months > 0 and validation_months < holdout_months:
+        # test_start = holdout 内部切分点 = end_date - (holdout_months - validation_months)
+        test_start = compute_holdout_start(end_date, holdout_months - validation_months)
+    else:
+        test_start = holdout_start  # 不分离, 兼容旧行为
+
     common_train_args = [
         "--symbol",
         symbols,
@@ -648,7 +660,7 @@ def run_strategy_pipeline(
         "--end-date",
         end_date,
         "--holdout-start-date",
-        holdout_start,
+        holdout_start,  # predictions 覆盖完整 holdout, 训练集不受影响
         "--holdout-end-date",
         end_date,
         "--seed",
@@ -1001,6 +1013,8 @@ def run_strategy_pipeline(
                         "--min-combined-pass-rate",
                         str(gate_gates["min_combined_pass_rate"]),
                     ]
+                # Val/Test 分离: mini-pipeline Gate Opt 在完整 Val 上调阈值 (不需要 cutoff)
+                # 预筛选选择也在 Val 上评估, Test 保留给最终 Backtest
                 run_step(f"  Gate Opt [{_cm}]", _cg_opt, log)
                 # Gate Re-Apply
                 run_step(
@@ -1029,9 +1043,9 @@ def run_strategy_pipeline(
                     "--strategies-root",
                     strategies_root,
                     "--test-start",
-                    holdout_start,
+                    holdout_start,  # Val/Test 分离: prefilter 选择在 Val 段评估
                     "--test-end",
-                    end_date,
+                    test_start if test_start != holdout_start else end_date,
                     "--simple-execution",
                 ]
                 if _simple_exec.get("sl_r") is not None:
@@ -1150,8 +1164,8 @@ def run_strategy_pipeline(
     )
 
     # Gate optimize (--promote, 在 gate 应用后的数据上做 plateau 验证)
-    # 注: logs_gated.parquet 只含 holdout 数据 (predictions.parquet 只输出 OOS)
-    #     不需要 --cutoff-date, 数据已经是 OOS-only
+    # 注: logs_gated.parquet 含完整 holdout (Val+Test)
+    #     通过 --cutoff-date 只用 Val 段 [holdout_start, test_start) 调阈值
     gate_optimize_cmd = [
         "python",
         "scripts/optimize_gate_unified.py",
@@ -1173,6 +1187,9 @@ def run_strategy_pipeline(
             "--min-combined-pass-rate",
             str(gate_gates["min_combined_pass_rate"]),
         ]
+    # Val/Test 分离: Gate Optimize 只用 Val 段 [holdout_start, test_start)
+    if test_start != holdout_start:
+        gate_optimize_cmd += ["--cutoff-date", test_start]
     run_step(
         "Gate Optimize",
         gate_optimize_cmd,
@@ -1229,10 +1246,11 @@ def run_strategy_pipeline(
         dry_run=dry_run,
     )
 
-    # ── IS/OOS 说明 ──
-    # logs_gated.parquet 只含 holdout 数据 (predictions.parquet 只输出 OOS 预测)
-    # 因此下游步骤不需要 --cutoff-date, 数据已经是 OOS-only
-    # 未来如果 predictions.parquet 包含 IS+OOS, 需要恢复 cutoff 过滤
+    # ── Val/Test 说明 ──
+    # logs_gated.parquet 含完整 holdout [holdout_start, end_date]
+    # 当 validation_months > 0 时:
+    #   Gate Optimize 已通过 --cutoff-date 只用 Val 段 [holdout_start, test_start)
+    #   Backtest 使用 Test 段 [test_start, end_date] (纯 OOS)
 
     # ── Step 6 (Evidence) + Step 7 (Entry Filter): 已删除 ──
     # Prefilter + Gate 已覆盖主要过滤逻辑, Evidence/Entry Filter 不再由 pipeline 自动调用.
@@ -1261,7 +1279,7 @@ def run_strategy_pipeline(
         "--strategies-root",
         strategies_root,
         "--test-start",
-        holdout_start,
+        test_start,  # Val/Test 分离: Backtest 只用 Test 段
         "--test-end",
         end_date,
         "--simple-execution",
@@ -1292,7 +1310,7 @@ def run_strategy_pipeline(
         "--strategies-root",
         strategies_root,
         "--test-start",
-        holdout_start,
+        test_start,  # Val/Test 分离: 交易地图也只用 Test 段
         "--test-end",
         end_date,
         "--output",
@@ -1350,6 +1368,7 @@ def run_strategy_pipeline(
         "exp_config_dir": str(exp_config_dir),
         "prod_config_dir": prod_config_dir,
         "prefilter_comparison": _pf_comparison,
+        "validation_end": test_start,
     }
 
 
@@ -1368,6 +1387,7 @@ def save_report(
     start_date: str,
     end_date: str,
     holdout_start: str,
+    validation_end: str = "",  # test_start (原 holdout_start)
 ) -> Path:
     """保存结构化 report.json + archetypes 快照."""
     scfg = cfg["strategies"][strategy]
@@ -1399,6 +1419,8 @@ def save_report(
             "end_date": end_date,
             "holdout_start": holdout_start,
             "holdout_months": cfg["dates"]["holdout_months"],
+            "validation_end": validation_end or holdout_start,
+            "validation_months": cfg["dates"].get("validation_months", 0),
         },
         "backtest_metrics": pipeline_result.get("backtest_metrics", {}),
         "thresholds": thresholds,
@@ -1978,15 +2000,32 @@ def main():
     else:
         end_date = detect_latest_data_date(data_path, symbols)
     holdout_start = compute_holdout_start(end_date, dates["holdout_months"])
+    # Validation / Test 分离
+    _val_months = dates.get("validation_months", 0)
+    _holdout_months = dates["holdout_months"]
+    if _val_months > 0 and _val_months < _holdout_months:
+        _test_start_display = compute_holdout_start(
+            end_date, _holdout_months - _val_months
+        )
+    else:
+        _test_start_display = holdout_start
 
     print("=" * 70)
     print("🚀 自动研究流水线")
     print("=" * 70)
     print(f"   数据范围:    {start_date} ~ {end_date}")
     print(f"   Train:       {start_date} ~ {holdout_start}")
-    print(
-        f"   Holdout:     {holdout_start} ~ {end_date} ({dates['holdout_months']} 个月)"
-    )
+    if _test_start_display != holdout_start:
+        print(
+            f"   Val:         {holdout_start} ~ {_test_start_display} ({_val_months} 个月, Gate 调阈值)"
+        )
+        print(
+            f"   Test:        {_test_start_display} ~ {end_date} ({_holdout_months - _val_months} 个月, 纯 OOS)"
+        )
+    else:
+        print(
+            f"   Holdout:     {holdout_start} ~ {end_date} ({dates['holdout_months']} 个月)"
+        )
     print(f"   Symbols:     {symbols}")
     print(f"   History:     {history_dir}")
     # ── 多 Seed 配置 ──
@@ -2116,6 +2155,7 @@ def main():
             start_date=start_date,
             end_date=end_date,
             holdout_start=holdout_start,
+            validation_end=pipeline_result.get("validation_end", holdout_start),
         )
 
         # ── 打印决策 ──

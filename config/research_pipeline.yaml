@@ -10,9 +10,11 @@
 dates:
   start_date: "2024-01-01"     # Regime窗口起点: 覆盖2024牛市+震荡+2025熊市转换, 贴近当前市场
   # start_date: "2023-01-01"   # 全量历史模式 (备用)
-  holdout_months: 6           # Holdout 固定窗口 (月)
+  holdout_months: 9           # OOS 总窗口 (Val + Test)
+  validation_months: 4         # OOS 前 N 个月用于 Gate 调阈值; 剩余 = 纯 Test (0=不分离)
   # end_date: auto             # 默认自动检测 data/parquet_data 最新日期
   # holdout_start: auto        # = end_date - holdout_months
+  # validation_end: auto       # = end_date - (holdout_months - validation_months)
 
 # ── 训练确定性 ─────────────────────────────────────────────
 training:
