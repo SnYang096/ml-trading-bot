@@ -1,38 +1,86 @@
 layer: "entry_filter"
 
 # ================================================================
-# Entry Filter 层 KPI Gate — Meta-Algorithm 统计验证门槛
+# Entry Filter 层 KPI Gate — 统计方法验证门槛
 # ================================================================
 #
-# Entry Filter 职责: "现在该入场吗?" → 硬二值控制入场时机
+# Entry Filter 职责: "现在该入场吗?" → 硬二値控制入场时机
 # 信号比 Gate 弱 (timing 而非 risk), 门槛宽松.
 # 多个 filter OR 组合 (任一满足即入场).
 # 只走 1D 规则, 禁止 2D interaction surface (数据量小+信号弱→过拟合).
+#
+# 数据源: features_entry_filter.yaml (候选白名单)
+# 算法: 多方法统计扫描 → Sharpe 择优
 #
 # 脚本读取路径:
 #   optimize_entry_filter_plateau.py --meta-algorithm
 # ================================================================
 
-# ── 标签定义 ──
-label:
-  # 自适应中位数阈值: entry_quality = exec_r > median(exec_r)
-  # 语义: "比中位数更好的入场" = good timing
-  # 优势: 类别平衡 (~50/50) → LightGBM 训练更稳定
-  #        策略自适应 → 不同策略/时期自动调整
-  method: "median"   # "median" | "fixed"
-  fixed_threshold: 0  # method=fixed 时使用
+# ================================================================
+# 评分方法说明 (scoring_method_fallbacks 可选列表)
+# ================================================================
+#
+# 目前已实现的方法 (optimize_entry_filter_plateau.py):
+#   distribution_ks
+#   mean_effect
+#   welch_ttest
+#   tail_bad_rate_ratio
+#   upside_positive_rate_ratio
+#
+#   effect (uplift/lift 别名统一到 effect)
+#     公式: effect = mean_rr_pass - mean_rr_reject
+#     概念: ATE (平均处置效应), 衡量 pass 组 vs reject 组的平均收益差
+#     适用: 强调弹性收益上限
+#     注意: 与 bad_rate_lift 不同
+#       - effect = 连续收益差 (mean_rr 建立在连续值空间)
+#       - bad_rate_lift = 坏样本率倍数 (建立在二分类)
+#
+#   ks
+#     公式: KS 统计量 = max|F_pass(x) - F_reject(x)|
+#     概念: Kolmogorov-Smirnov 检验, 衡量 pass/reject 两组 rr 分布的分离度
+#     适用: 分布形状差异大时有效, 不依赖正态假设
+#
+#   t_test
+#     公式: 单尾 Welch t-test: H0: mean_rr_pass ≤ mean_rr_reject, p < alpha 则拒绝
+#     概念: 检验 pass 组均值显著高于 reject 组 (不要求方差相等)
+#     适用: pass/reject 样本量不均衡时稳健, 显著性训练最严格
+#
+#   bad_rate_lift
+#     公式: bad_rate_reject / bad_rate_pass
+#     概念: pass 组坏样本率显著低于 reject 组时更优
+#
+#   positive_rr
+#     公式: positive_rate_pass / positive_rate_reject
+#     概念: pass 组大于阈值收益 (默认 >0.8R) 的比例显著更高
+#
+# ================================================================
+
+# ── 评分方法 (多方法 Sharpe 择优) ──
+# 每种方法独立跑完整流程, 按 Val 段 Sharpe 择优
+scoring_method_fallbacks: [distribution_ks, mean_effect, tail_bad_rate_ratio, upside_positive_rate_ratio]
 
 # ── 统计验证门槛 ──
 thresholds:
-  # Lift: entry_quality 在 pass region / baseline
-  # Entry timing 信号弱, 1.05x 已有意义
-  min_lift: 1.05
-
-  # Effect size: snotio(pass) - snotio(fail)
+  # effect: mean_rr_pass - mean_rr_reject
   min_effect: 0.02
 
+  # KS: 分布分离度
+  min_ks_statistic: 0.05
+  max_ks_pvalue: 0.05
+
+  # t_test: 显著性水平
+  t_test_alpha: 0.05
+
+  # bad_rate_lift: reject 坏样本率 / pass 坏样本率
+  min_bad_rate_lift: 1.05
+  bad_rr_threshold: 0.0
+
+  # positive_rr: pass 正收益域比例 / reject 正收益域比例
+  min_positive_lift: 1.20
+  positive_rr_threshold: 0.8
+
   # Robustness: time-fold 一致性 (0=全不一致, 1=全一致)
-  min_robustness: 0.3
+  min_robustness: 0.5
 
   # 相关性剪枝: pass_mask 相关性超过此值 → 去重
   correlation_threshold: 0.80
@@ -41,37 +89,34 @@ thresholds:
   max_rules: 5
 
   # Pass rate 合法范围 (太小无意义, 太大等于没有 filter)
+  # 注意: OR 组合下每条规则应是「选入最好」而非「排除最差」,
+  # 个体 pass_rate 应在 0.10–0.50, OR 组合后综合 pass_rate 才合理
   pass_rate_min: 0.10
-  pass_rate_max: 0.90
+  pass_rate_max: 0.50
 
-# ── Plateau 验证参数 (层专属: snotio 稳定性) ──
-plateau:
-  # snotio CV 上限: 滑动窗口内收益稳定性
-  snotio_cv_max: 0.3
+  # OR 组合后综合 pass_rate 上限 (超过则剪枝到只保留最严格的单条规则)
+  combined_or_pass_rate_max: 0.85
 
-  # trades CV 上限: 执行节奏稳定性 (Entry Filter 特有)
-  trades_cv_max: 0.4
+# ── 扫描参数 ──
+scan:
+  # 分位点阈值 (全量特征扫描)
+  # 语义: q <= 0.5 → pass = feat <= quantile(q) (选入低值 top-q%)
+  #        q >  0.5 → pass = feat >= quantile(q) (选入高值 top-(1-q)%)
+  # 对应 pass_rate ≈ q 或 (1-q), 控制在 0.15–0.35 附近
+  quantiles: [0.15, 0.20, 0.25, 0.30, 0.70, 0.75, 0.80, 0.85]
 
-  # 滑动窗口大小
-  window: 5
+  # 各评分方法最小样本要求
+  min_samples:
+    uplift:  {pass: 30, reject: 30}
+    ks:      {pass: 20, reject: 20}
+    t_test:  {pass: 15, reject: 5}
 
-# ── Holdout 验证参数 ──
-holdout:
-  ratio: 0.2
+# ── Robustness 验证参数 ──
+robustness:
   n_folds: 3
-  quantiles: [0.10, 0.20, 0.30, 0.40, 0.60, 0.70, 0.80, 0.90]
 
-# ── LightGBM 训练参数 ──
-lgb_params:
-  num_leaves: 31
-  learning_rate: 0.05
-  n_estimators: 200
-  min_child_samples: 50
-  feature_fraction: 0.8
-  bagging_fraction: 0.8
-  bagging_freq: 5
-
-# ── SHAP∩Gain 参数 ──
-shap_gain:
-  top_n: 10
-  compute_interactions: false
+# ── Plateau 验证参数 (层专属: snotio 稳定性, 用于手动扫描模式) ──
+plateau:
+  snotio_cv_max: 0.3
+  trades_cv_max: 0.4
+  window: 5

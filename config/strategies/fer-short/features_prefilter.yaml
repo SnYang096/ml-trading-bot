@@ -27,10 +27,6 @@ feature_pipeline:
     #   fer_momentum_efficiency_decay, fer_volume_price_divergence, ...
     - fer_failure_signals_f
 
-    # ========== FER 交叉特征 ==========
-    # 资金+VPIN 双源力竭 (FER 核心交叉)
-    - dual_exhaustion_f
-
     # ========== 触发位置: 失败发生在 SR 边界更有意义 ==========
     # → sr_strength_max (距最近 SR 的 ATR 倍数, 值小=失败发生在关键位)
     - sr_strength_max_f
@@ -45,8 +41,8 @@ feature_pipeline:
     # → bars_since_local_high/low (swing 距离, 值小=刚在极值处失败)
     - bars_since_extreme_f
 
-    # ========== 场景语义 (FER 相关) ==========
-    # OI 场景语义 (exhaustion 与 FER 的力竭反转语义对应)
-    - oi_scene_semantic_scores_f
-    # Wick 力竭场景语义
+    # ========== 场景语义 (FER 相关, 非订单流) ==========
+    # Wick 力竭场景语义（价格行为）
     - wick_scene_semantic_scores_f
+    # WPT 力竭场景语义（多尺度价格结构）
+    - wpt_scene_semantic_scores_f

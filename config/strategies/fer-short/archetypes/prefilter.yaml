@@ -1,29 +1,25 @@
 # FER-SHORT Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-03-14
+# 自动生成: 2026-03-15
 # 数据源: features_labeled.parquet, 27840 行
 
 rules:
-  - feature: oi_trend_divergence_score
+  - feature: fer_signed_efficiency
     operator: ">="
-    value: 0.001061
-    rationale: "meta-algorithm, KS=0.2086, return_uplift=+3.2585, robustness=100%, holdout验证通过"
-  - feature: vp_width_ratio
-    operator: ">="
-    value: 0.4607
-    rationale: "meta-algorithm, KS=0.2027, return_uplift=+4.2187, robustness=100%, holdout验证通过"
-  - feature: sr_strength_max
+    value: -0.0001802
+    rationale: "range lower, meta-algorithm, KS=0.1679, return_uplift=+1.7561, robustness=100%, holdout验证通过"
+  - feature: fer_signed_efficiency
     operator: "<="
-    value: 2.98
-    rationale: "meta-algorithm, KS=0.1826, return_uplift=+2.0727, robustness=100%, holdout验证通过"
+    value: -5.939e-10
+    rationale: "range upper, meta-algorithm, KS=0.1679, return_uplift=+1.7561, robustness=100%, holdout验证通过"
 
 last_evaluation:
-  # ── 自动生成 (2026-03-14) ──
-  timestamp: "2026-03-14"
+  # ── 自动生成 (2026-03-15) ──
+  timestamp: "2026-03-15"
   data_source: "features_labeled.parquet"
   n_rows: 27840
   baseline_bad_rate: 0.0000
-  baseline_median_rr: +0.1304
+  baseline_median_rr: +0.1630
 
   # ── 正信号 (0 个) ──
   positive_signals:

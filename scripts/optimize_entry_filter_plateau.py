@@ -52,6 +52,11 @@ from scripts.backtest_execution_layer import (
     simulate_rr_execution,
     _estimate_span_years,
 )
+from scripts.stat_method_registry import (
+    canonicalize_method_name,
+    evaluate_rr_split_method,
+    get_canonical_methods,
+)
 
 # ================================================================
 # 阈值扫描核心逻辑
@@ -581,6 +586,18 @@ def main() -> int:
         help="使用中性简单执行模式 (SL=1.5R, TP=3R, 50bar timeout)。"
         "用于研究管线评估信号质量，不受 execution.yaml 参数影响。",
     )
+    p.add_argument(
+        "--features-entry-filter",
+        default=None,
+        help="features_entry_filter.yaml 路径 (候选特征白名单). "
+        "未指定时自动查找 config/strategies/{strategy}/features_entry_filter.yaml",
+    )
+    p.add_argument(
+        "--scoring-method",
+        default=None,
+        choices=get_canonical_methods(),
+        help="评分方法 (canonical names only). 未指定时从 entry_filter_layer.yaml 读取",
+    )
     args = p.parse_args()
 
     # 加载数据
@@ -913,42 +930,89 @@ def _meta_algorithm_entry_filter(
     merged: pd.DataFrame,
     exec_config: Dict[str, Any],
 ) -> int:
-    """Entry Filter: Evidence Spearman bins + OR.
+    """Entry Filter: 统计方法扫描 + 多方法 Sharpe 择优.
 
-    从 archetypes/evidence.yaml 读取 evidence 特征和 quantile bins，
-    为每个特征测试 bin 边界作为入场阈值。
-    验证: forward_rr t-test (pass组 mean > reject组 mean, p<0.05)。
-    与 Evidence Discovery 同一套 Spearman 方法论, 不走 execution simulation。
-    OR 组合: 任一 filter pass → 允许入场。
+    从 features_entry_filter.yaml 读取候选特征白名单,
+    对所有特征×分位点阈值做统计扫描,
+    每种评分方法独立跑完整流程后按 Sharpe 择优.
+
+    评分方法:
+    - uplift: effect = mean_rr_pass - mean_rr_reject (ATE)
+    - ks: KS 分布分离度
+    - t_test: 单尾 Welch t-test p<alpha
+
+    OR 组合: 任一 filter pass → 允许入场.
     """
     import yaml
-    from scipy import stats as _stats
 
     strategy = args.strategy
     strategies_root = args.strategies_root
 
     print(f"\n{'='*80}")
-    print(f"🔬 Entry Filter: Evidence bins + OR ({strategy.upper()})")
+    print(f"🔬 Entry Filter: 统计方法扫描 + Sharpe 择优 ({strategy.upper()})")
     print(f"{'='*80}")
 
-    # ── 1. 加载 evidence.yaml ──
-    evidence_path = Path(strategies_root) / strategy / "archetypes" / "evidence.yaml"
-    if not evidence_path.exists():
-        print(f"⚠️  {evidence_path} 不存在, 无 evidence 特征可用")
+    # ── 0. 加载 KPI Gate 配置 ──
+    _kpi_path = Path("config/kpi_gates/entry_filter_layer.yaml")
+    if _kpi_path.exists():
+        with open(_kpi_path, "r", encoding="utf-8") as _kf:
+            _kpi = yaml.safe_load(_kf) or {}
+    else:
+        _kpi = {}
+    _thr = _kpi.get("thresholds", {})
+    _scan_cfg = _kpi.get("scan", {})
+    _rob_cfg = _kpi.get("robustness", {})
+
+    min_robustness = _thr.get("min_robustness", 0.5)
+    corr_threshold = _thr.get("correlation_threshold", 0.80)
+    max_rules = _thr.get("max_rules", 5)
+    pr_min = _thr.get("pass_rate_min", 0.10)
+    pr_max = _thr.get("pass_rate_max", 0.95)
+    combined_or_pr_max = _thr.get("combined_or_pass_rate_max", 0.85)
+    quantiles = _scan_cfg.get(
+        "quantiles", [0.05, 0.10, 0.15, 0.20, 0.80, 0.85, 0.90, 0.95]
+    )
+    min_samples_cfg = _scan_cfg.get("min_samples", {})
+    n_folds = _rob_cfg.get("n_folds", 3)
+
+    # 评分方法: 命令行 > kpi_gates yaml
+    scoring_method = canonicalize_method_name(getattr(args, "scoring_method", None))
+    if not scoring_method:
+        methods_list = _kpi.get(
+            "scoring_method_fallbacks",
+            [
+                "distribution_ks",
+                "mean_effect",
+                "tail_bad_rate_ratio",
+                "upside_positive_rate_ratio",
+            ],
+        )
+        methods_list = [canonicalize_method_name(m) for m in methods_list]
+        scoring_method = methods_list[0] if len(methods_list) == 1 else None
+    # scoring_method=None 表示外部会多次调用每种 method
+
+    # ── 1. 加载候选特征 ──
+    ef_yaml = getattr(args, "features_entry_filter", None)
+    if not ef_yaml:
+        ef_yaml = str(Path(strategies_root) / strategy / "features_entry_filter.yaml")
+    if not Path(ef_yaml).exists():
+        print(f"⚠️  {ef_yaml} 不存在, 无候选特征")
         _write_empty_entry_filters(args, strategy, strategies_root)
         return 0
 
-    with open(evidence_path, "r", encoding="utf-8") as f:
-        evidence_cfg = yaml.safe_load(f) or {}
-    evidence_features = evidence_cfg.get("evidence", [])
-    if not evidence_features:
-        print("⚠️  evidence.yaml 中无 evidence 特征")
+    deps_path = str(Path("config/feature_dependencies.yaml"))
+    if not Path(deps_path).exists():
+        print(f"❌ config/feature_dependencies.yaml 不存在")
+        return 1
+
+    candidate_cols = _resolve_features_for_entry_filter(
+        ef_yaml, deps_path, list(merged.columns)
+    )
+    if not candidate_cols:
+        print("⚠️  无候选特征列匹配")
         _write_empty_entry_filters(args, strategy, strategies_root)
         return 0
-
-    print(f"   Evidence 特征: {len(evidence_features)} 个")
-    for ev in evidence_features:
-        print(f"     - {ev['feature']} ({ev['direction']}) {ev.get('usage_hint', '')}")
+    print(f"   候选特征: {len(candidate_cols)} 列")
 
     # ── 2. 检测 outcome 列 ──
     outcome_col = None
@@ -965,110 +1029,232 @@ def _meta_algorithm_entry_filter(
     df_trades = merged[trade_mask].copy()
     bl_rr = df_trades[outcome_col].dropna()
     bl_mean = float(bl_rr.mean())
-    bl_n = len(bl_rr)
-    print(f"\n   📏 Baseline: mean({outcome_col})={bl_mean:.4f}, trades={bl_n}")
+    print(f"\n   📏 Baseline: mean({outcome_col})={bl_mean:.4f}, trades={len(bl_rr)}")
 
-    # ── 3. 对每个 evidence 特征: 只测试 suppress 边界 (最差一档) ──
-    # 架构: Entry Filter 只切 suppress 档 (~worst 20%), Evidence 管剩余 4 档的 sizing
-    # 不遍历所有 bin, 避免和 Evidence quantile sizing 重叠
+    if len(df_trades) < 30:
+        print("⚠️  样本不足 (<30), 跳过")
+        _write_empty_entry_filters(args, strategy, strategies_root)
+        return 0
+
+    # ── 3. 统计扫描: 所有候选特征 × 所有分位点 ──
+    method = canonicalize_method_name(scoring_method or "mean_effect")
+    _min_s = min_samples_cfg.get(method, {})
+    if not _min_s and method == "mean_effect":
+        _min_s = min_samples_cfg.get("uplift", {})
+    min_pass = _min_s.get("pass", 30) if isinstance(_min_s, dict) else 30
+    min_reject = _min_s.get("reject", 30) if isinstance(_min_s, dict) else 30
+
     print(f"\n{'='*80}")
-    print(f"📊 Evidence suppress 档 t-test (只切最差一档)")
+    print(
+        f"📊 统计扫描: method={method}, quantiles={len(quantiles)}, features={len(candidate_cols)}"
+    )
     print(f"{'='*80}")
 
-    final_rules = []
+    candidates = []  # List of dicts with rule + score info
 
-    for ev in evidence_features:
-        feat = ev["feature"]
-        direction = ev["direction"]
-        bins = ev.get("quantile_mapping", {}).get("bins", [])
-        labels = ev.get("quantile_mapping", {}).get("labels", [])
-
+    for feat in candidate_cols:
         if feat not in df_trades.columns:
-            print(f"\n   ⚠️  {feat}: 不在数据中, 跳过")
             continue
-        if len(bins) < 2:
-            print(f"\n   ⚠️  {feat}: bins 不足, 跳过")
-            continue
-
-        # suppress 边界: negative direction → 最后一个 bin (高值差)
-        #                 positive direction → 第一个 bin (低值差)
-        if direction == "negative":
-            thr = bins[-1]  # suppress = 最高 ~20%
-            op = "<="  # pass if <= threshold (排除最差)
-        else:
-            thr = bins[0]  # suppress = 最低 ~20%
-            op = ">="  # pass if >= threshold (排除最差)
-
-        pass_mask = df_trades[feat] >= thr if op == ">=" else df_trades[feat] <= thr
-        n_pass = int(pass_mask.sum())
-        n_reject = int((~pass_mask).sum())
-        pass_rate = n_pass / len(df_trades) if len(df_trades) > 0 else 0
-
-        print(f"\n   🔍 {feat} (direction={direction}, suppress边界={thr:.4f})")
-
-        if n_pass < 15 or n_reject < 5:
-            print(f"      ⚠️  样本不足 (pass={n_pass}, reject={n_reject}), 跳过")
+        vals = df_trades[feat].dropna()
+        if len(vals) < min_pass + min_reject:
             continue
 
-        # t-test: pass组 (非suppress) vs reject组 (suppress)
-        rr_pass = df_trades.loc[pass_mask, outcome_col].dropna()
-        rr_reject = df_trades.loc[~pass_mask, outcome_col].dropna()
-        if len(rr_pass) < 10 or len(rr_reject) < 5:
-            print(f"      ⚠️  有效样本不足, 跳过")
-            continue
+        for q in quantiles:
+            thr = float(vals.quantile(q))
+            # 「选入最好」逻辑 (selective inclusion), 个体 pass_rate ≈ q 或 (1-q):
+            # q <= 0.5: pass = feat <= quantile(q)  → 保留最低 q% (低值好特征)
+            # q >  0.5: pass = feat >= quantile(q)  → 保留最高 (1-q)% (高值好特征)
+            # 个体 pass_rate 在 0.15~0.35, OR 组合后综合 pass_rate 才合理
+            if q <= 0.5:
+                pass_mask = df_trades[feat] <= thr
+                op_str = "<="
+            else:
+                pass_mask = df_trades[feat] >= thr
+                op_str = ">="
 
-        mean_pass = float(rr_pass.mean())
-        mean_reject = float(rr_reject.mean())
-        t_stat, t_p_two = _stats.ttest_ind(rr_pass, rr_reject, equal_var=False)
-        # 单尾: pass (非suppress) > reject (suppress)
-        t_p = t_p_two / 2 if t_stat > 0 else 1.0 - t_p_two / 2
-        sig = t_p < 0.05 and mean_pass > mean_reject
+            n_pass = int(pass_mask.sum())
+            n_reject = int((~pass_mask).sum())
+            if n_pass < min_pass or n_reject < min_reject:
+                continue
 
-        sig_label = "✅" if sig else "❌"
-        print(
-            f"      suppress {op} {thr:.4f}: "
-            f"pass={n_pass}({mean_pass:+.3f}) suppress={n_reject}({mean_reject:+.3f}) "
-            f"Δ={mean_pass - mean_reject:+.3f} t={t_stat:+.2f} p={t_p:.4f} {sig_label}"
-        )
+            pass_rate = n_pass / len(df_trades)
+            if pass_rate < pr_min or pass_rate > pr_max:
+                continue
 
-        if sig:
-            final_rules.append(
+            rr_pass = df_trades.loc[pass_mask, outcome_col].dropna()
+            rr_reject = df_trades.loc[~pass_mask, outcome_col].dropna()
+            if len(rr_pass) < min_pass or len(rr_reject) < min_reject:
+                continue
+
+            mean_pass = float(rr_pass.mean())
+            mean_reject = float(rr_reject.mean())
+            effect = mean_pass - mean_reject
+
+            # ── 评分（共享方法注册表） ──
+            passed, score, extra = evaluate_rr_split_method(
+                method=method,
+                rr_pass=rr_pass.values,
+                rr_reject=rr_reject.values,
+                thresholds=_thr,
+            )
+
+            if not passed:
+                continue
+
+            candidates.append(
                 {
                     "feature": feat,
-                    "operator": op,
+                    "operator": op_str,
                     "value": round(float(thr), 6),
-                    "direction": direction,
+                    "quantile": q,
                     "pass_rate": round(pass_rate, 4),
                     "mean_rr_pass": round(mean_pass, 4),
                     "mean_rr_reject": round(mean_reject, 4),
-                    "delta_rr": round(mean_pass - mean_reject, 4),
-                    "t_stat": round(float(t_stat), 2),
-                    "p_value": round(float(t_p), 4),
+                    "effect": round(effect, 4),
+                    "score": round(score, 4),
                     "n_pass": n_pass,
                     "n_reject": n_reject,
+                    "method": method,
+                    **extra,
                 }
             )
-            print(f"      → ✅ suppress 档显著差, 加入 entry filter")
-        else:
-            print(f"      → suppress 档无显著差异, 不需要 entry filter")
 
-    # ── 4. 结果汇总 ──
+    print(f"   ✅ 扫描通过: {len(candidates)} 条候选")
+    if not candidates:
+        print(f"   ⚠️  无候选通过 {method} 检验")
+        _write_empty_entry_filters(args, strategy, strategies_root)
+        return 0
+
+    # ── 4. Robustness 验证 (3 折时间交叉) ──
+    print(f"\n🛡️  Robustness 验证 ({n_folds} folds)...")
+    ts_col = "timestamp" if "timestamp" in df_trades.columns else None
+    if ts_col is None and df_trades.index.name == "timestamp":
+        df_trades = df_trades.reset_index()
+        ts_col = "timestamp"
+
+    robust_candidates = []
+    if ts_col:
+        df_trades[ts_col] = pd.to_datetime(df_trades[ts_col])
+        sorted_ts = df_trades[ts_col].sort_values().reset_index(drop=True)
+        _n_ts = len(sorted_ts)
+        fold_edges = [
+            sorted_ts.iloc[min(int(_n_ts * i / n_folds), _n_ts - 1)]
+            for i in range(n_folds)
+        ]
+        fold_edges.append(sorted_ts.iloc[-1] + pd.Timedelta("1s"))  # upper bound
+
+        for c in candidates:
+            feat, op_str, thr = c["feature"], c["operator"], c["value"]
+            n_agree = 0
+            for fi in range(n_folds):
+                fold_start = fold_edges[fi]
+                fold_end = (
+                    fold_edges[fi + 1]
+                    if fi + 1 < len(fold_edges)
+                    else sorted_ts.max() + pd.Timedelta("1s")
+                )
+                fold_df = df_trades[
+                    (df_trades[ts_col] >= fold_start) & (df_trades[ts_col] < fold_end)
+                ]
+                if len(fold_df) < 10:
+                    continue
+                if op_str == ">=":
+                    fm = fold_df[feat] >= thr
+                else:
+                    fm = fold_df[feat] <= thr
+                rr_p = fold_df.loc[fm, outcome_col].dropna()
+                rr_r = fold_df.loc[~fm, outcome_col].dropna()
+                if len(rr_p) >= 5 and len(rr_r) >= 5:
+                    if float(rr_p.mean()) > float(rr_r.mean()):
+                        n_agree += 1
+            rob_score = n_agree / n_folds if n_folds > 0 else 0
+            c["robustness"] = round(rob_score, 2)
+            if rob_score >= min_robustness:
+                robust_candidates.append(c)
+    else:
+        # 无时间列, 跳过 robustness
+        for c in candidates:
+            c["robustness"] = 1.0
+            robust_candidates.append(c)
+
+    print(f"   Robustness 通过: {len(robust_candidates)} / {len(candidates)}")
+    if not robust_candidates:
+        print(f"   ⚠️  无规则通过 robustness 验证")
+        _write_empty_entry_filters(args, strategy, strategies_root)
+        return 0
+
+    # ── 5. 相关性剪枝: 按 score 降序, Pearson > corr_threshold 去重 ──
+    robust_candidates.sort(key=lambda x: -x["score"])
+    final_rules = []
+    used_masks = []  # List of boolean Series
+
+    for c in robust_candidates:
+        feat, op_str, thr = c["feature"], c["operator"], c["value"]
+        if op_str == ">=":
+            mask = (df_trades[feat] >= thr).astype(float)
+        else:
+            mask = (df_trades[feat] <= thr).astype(float)
+
+        # 检查与已选规则的相关性
+        is_redundant = False
+        for um in used_masks:
+            corr = mask.corr(um)
+            if abs(corr) > corr_threshold:
+                is_redundant = True
+                break
+        if is_redundant:
+            continue
+
+        final_rules.append(c)
+        used_masks.append(mask)
+        if len(final_rules) >= max_rules:
+            break
+
+    # ── 6. Combined OR pass_rate 守卫: 确保组合后不会 pass 几乎所有 bar ──
+    if final_rules and len(df_trades) > 0:
+        _or_mask = pd.Series(False, index=df_trades.index)
+        for _r in final_rules:
+            _f, _op, _v = _r["feature"], _r["operator"], _r["value"]
+            if _op == ">=":
+                _or_mask = _or_mask | (df_trades[_f] >= _v)
+            else:
+                _or_mask = _or_mask | (df_trades[_f] <= _v)
+        _combined_pr = float(_or_mask.mean())
+        print(
+            f"\n   📊 OR组合实际 pass_rate={_combined_pr:.1%} (限制={combined_or_pr_max:.0%})"
+        )
+        if _combined_pr > combined_or_pr_max:
+            # 保留 pass_rate 最低的单条规则 (OR 组合中最严格的那条)
+            _min_pr_rule = min(final_rules, key=lambda x: x["pass_rate"])
+            print(
+                f"   ⚠️  OR 组合 pass_rate={_combined_pr:.1%} > {combined_or_pr_max:.0%}, "
+                f"剪枝为最严格单条规则: {_min_pr_rule['feature']} {_min_pr_rule['operator']} {_min_pr_rule['value']:.4f} "
+                f"(pass={_min_pr_rule['pass_rate']:.1%})"
+            )
+            final_rules = [_min_pr_rule]
+
+    # ── 7. 结果汇总 ──
     print(f"\n{'='*80}")
-    print(f"📋 Entry Filter 结果 ({strategy.upper()})")
+    print(f"📋 Entry Filter 结果: {strategy.upper()} (method={method})")
     print(f"{'='*80}")
 
     if final_rules:
         print(f"\n   ✅ {len(final_rules)} 条规则 (OR 组合)")
         for i, r in enumerate(final_rules, 1):
+            _extra_str = ""
+            if "ks_stat" in r:
+                _extra_str = f"  ks={r['ks_stat']:.3f}"
+            elif "t_stat" in r:
+                _extra_str = f"  t={r['t_stat']:+.2f} p={r['p_value']:.4f}"
             print(
                 f"   {i}. {r['feature']} {r['operator']} {r['value']:.4f}  "
-                f"pass={r['pass_rate']:.1%}  Δrr={r['delta_rr']:+.4f}  "
-                f"t={r['t_stat']:+.2f}  p={r['p_value']:.4f}"
+                f"pass={r['pass_rate']:.1%}  effect={r['effect']:+.4f}  "
+                f"rob={r['robustness']:.2f}{_extra_str}"
             )
     else:
-        print(f"\n   ⚠️  无规则通过 t-test, 策略将无条件入场")
+        print(f"\n   ⚠️  无规则通过, 策略将无条件入场")
 
-    # ── 5. Promote ──
+    # ── 7. Promote ──
     if args.promote:
         _write_entry_filters(args, strategy, strategies_root, final_rules)
 
@@ -1090,11 +1276,11 @@ def _write_empty_entry_filters(
     output_path = arch_dir / "entry_filters.yaml"
     header = (
         f"# {strategy.upper()} Entry Filter Archetype\n"
-        f"# Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)\n"
+        f"# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)\n"
         f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
         f"# Promoted: 0 filters\n"
         f"#\n"
-        f"# 没有 entry filter 通过 t-test, 策略将无条件入场\n"
+        f"# 没有 entry filter 通过统计验证, 策略将无条件入场\n"
         f"\n"
     )
     out_cfg = {"filters": [], "combination_mode": "or"}
@@ -1105,13 +1291,59 @@ def _write_empty_entry_filters(
     print(f"\n   ⚠️  --promote: 写入空 entry_filters → {output_path}")
 
 
+def _resolve_features_for_entry_filter(
+    ef_yaml_path: str,
+    deps_path: str,
+    available_columns: List[str],
+) -> List[str]:
+    """从 features_entry_filter.yaml + feature_dependencies.yaml 解析列名.
+
+    features_entry_filter.yaml 格式:
+        feature_pipeline:
+          requested_features:
+            - fer_failure_signals_f
+            - cvd_divergence_v2_f
+    """
+    import yaml
+
+    with open(ef_yaml_path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    fp = cfg.get("feature_pipeline", {})
+    requested = fp.get("requested_features", [])
+    exclude = set(fp.get("exclude_columns", []))
+    if not requested:
+        print(
+            f"❌ features_entry_filter.yaml 中没有 requested_features: {ef_yaml_path}"
+        )
+        return []
+
+    with open(deps_path, "r", encoding="utf-8") as f:
+        deps_cfg = yaml.safe_load(f)
+
+    all_features_def = deps_cfg.get("features", {})
+    available_set = set(available_columns)
+    resolved_columns: List[str] = []
+
+    for feat_f in requested:
+        if feat_f not in all_features_def:
+            continue
+        output_cols = all_features_def[feat_f].get("output_columns", [])
+        matched = [c for c in output_cols if c in available_set and c not in exclude]
+        if matched:
+            resolved_columns.extend(matched)
+
+    resolved_columns = list(dict.fromkeys(resolved_columns))  # 去重保序
+    return resolved_columns
+
+
 def _write_entry_filters(
     args,
     strategy: str,
     strategies_root: str,
     rules: List[Dict[str, Any]],
 ):
-    """写入 entry_filters.yaml (evidence bins + OR)."""
+    """写入 entry_filters.yaml (统计方法 + OR)."""
     if not args.promote:
         return
     import yaml
@@ -1126,13 +1358,25 @@ def _write_entry_filters(
 
     promoted = []
     for r in rules:
+        method = r.get("method", "t_test")
+        # 构建 notes 字符串
+        _notes_parts = [
+            f"method={method}",
+            f"effect={r.get('effect', r.get('delta_rr', 0)):+.4f}",
+        ]
+        if "ks_stat" in r:
+            _notes_parts.append(f"ks={r['ks_stat']:.3f}")
+        if "t_stat" in r:
+            _notes_parts.append(f"t={r['t_stat']:.2f}, p={r.get('p_value', 0):.4f}")
+        if "robustness" in r:
+            _notes_parts.append(f"rob={r['robustness']:.2f}")
+        _notes_parts.append(f"pass={r['pass_rate']:.1%}")
+
         promoted.append(
             {
-                "id": f"ev_{r['feature']}",
+                "id": f"ef_{r['feature']}_{r.get('quantile', 'na')}",
                 "enabled": True,
-                "description": (
-                    f"Evidence bin: {r['feature']} {r['operator']} {r['value']}"
-                ),
+                "description": (f"auto: {r['feature']} {r['operator']} {r['value']}"),
                 "conditions": [
                     {
                         "feature": r["feature"],
@@ -1140,21 +1384,18 @@ def _write_entry_filters(
                         "value": r["value"],
                     }
                 ],
-                "notes": (
-                    f"Δrr={r['delta_rr']:+.4f}, t={r['t_stat']:.2f}, "
-                    f"p={r['p_value']:.4f}, pass={r['pass_rate']:.1%}"
-                ),
+                "notes": ", ".join(_notes_parts),
             }
         )
 
     header = (
         f"# {strategy.upper()} Entry Filter Archetype\n"
-        f"# Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)\n"
+        f"# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)\n"
         f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-        f"# Promoted: {len(promoted)} filters (evidence Spearman bins)\n"
-        f"# Significance: forward_rr t-test p<0.05 required\n"
+        f"# Promoted: {len(promoted)} filters ({promoted[0].get('notes', '').split(',')[0] if promoted else 'N/A'})\n"
+        f"# Significance: 统计验证 + robustness \u2265 0.5\n"
         f"#\n"
-        f'# 职责: "现在该入场吗?" → 硬二值控制\n'
+        f'# 职责: "现在该入场吗?" \u2192 硬二值控制\n'
         f"# 多个 filter 之间是 OR 关系\n"
         f"\n"
     )

@@ -8,18 +8,19 @@
 
 # ── 时间窗口规则 ──────────────────────────────────────────────
 dates:
-  start_date: "2024-01-01"     # Regime窗口起点: 覆盖2024牛市+震荡+2025熊市转换, 贴近当前市场
+  start_date: "2024-01-01" # Regime窗口起点: 覆盖2024牛市+震荡+2025熊市转换, 贴近当前市场
   # start_date: "2023-01-01"   # 全量历史模式 (备用)
-  holdout_months: 9           # OOS 总窗口 (Val + Test)
-  validation_months: 4         # OOS 前 N 个月用于 Gate 调阈值; 剩余 = 纯 Test (0=不分离)
+  holdout_months: 6 # OOS 总窗口 (Val + Test)
+  validation_months: 3 # OOS 前 N 个月用于 Gate 调阈值; 剩余 = 纯 Test (0=不分离)
   # end_date: auto             # 默认自动检测 data/parquet_data 最新日期
   # holdout_start: auto        # = end_date - holdout_months
   # validation_end: auto       # = end_date - (holdout_months - validation_months)
-
+  # 上线前 用 holdout_months 6 validation_months 0，研究时候 12,6
+  # validation_months = 0 不是不调阈值，是用holdout_months调阈值，研究时候 6个月
 # ── 训练确定性 ─────────────────────────────────────────────
 training:
-  seeds: [42]                  # gate/evidence seed=42 固定 + imodels蒸馏确定性 → 多seed无意义
-  seed_selection: best_sharpe   # 选优标准: sharpe_per_trade 最高 (需满足 min_trades)
+  seeds: [42] # gate/evidence seed=42 固定 + imodels蒸馏确定性 → 多seed无意义
+  seed_selection: best_sharpe # 选优标准: sharpe_per_trade 最高 (需满足 min_trades)
 
 # ── Token Universe ────────────────────────────────────────────
 # 通过 universe_group 指定，自动展开为 USDT 合约列表，不需再在命令行传 --symbols
@@ -33,8 +34,8 @@ data_path: "data/parquet_data"
 # ── 数据下载 (Step 0) ─────────────────────────────────────────
 # 训练链开头自动下载 + 转换最新月度数据 (增量, 已有月份自动跳过)
 download:
-  enabled: true                  # false 则跳过下载, 直接用本地数据
-  data_dir: "data/agg_data"      # Binance aggTrades ZIP 存放目录
+  enabled: true # false 则跳过下载, 直接用本地数据
+  data_dir: "data/agg_data" # Binance aggTrades ZIP 存放目录
   parquet_dir: "data/parquet_data" # 转换后的 parquet 输出目录
   # start_year/month 使用 dates.start_date 自动推算
   # end_year/month 使用 end_date 自动推算
@@ -47,7 +48,7 @@ strategies:
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: false   # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
+    has_direction: false # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
         min_pass_rate: 0.05
@@ -60,10 +61,10 @@ strategies:
         min_trades: 30
       deploy:
         min_trades: 10
-    simple_execution:         # --simple-execution 中性评估参数 (BPC 趋势骑乘: 需宽止损容迓动确认前回调)
-      sl_r: 3.0               # BPC 实际 initial_r=4.0, 3.0R 给信号足够呼吸空间
-      tp_r: 6.0               # 1:2 风险收益比
-      timeout_bars: 120       # 240T*120=20 天, 趋势完成周期较长
+    simple_execution: # --simple-execution 中性评估参数 (BPC 趋势骑乘: 需宽止损容迓动确认前回调)
+      sl_r: 3.0 # BPC 实际 initial_r=4.0, 3.0R 给信号足够呼吸空间
+      tp_r: 6.0 # 1:2 风险收益比
+      timeout_bars: 120 # 240T*120=20 天, 趋势完成周期较长
 
   bpc-short:
     config: config/strategies/bpc-short
@@ -71,7 +72,7 @@ strategies:
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: false   # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
         min_pass_rate: 0.05
@@ -84,11 +85,10 @@ strategies:
         min_trades: 30
       deploy:
         min_trades: 10
-    simple_execution:         # BPC-Short 趋势骨乘 (做空版): 同 BPC-Long
-      sl_r: 4.0               # 匹配实际 initial_r=4.0 避免趋势确认前回调止损
-      tp_r: 8.0               # 1:2 风险收益比
-      timeout_bars: 160       # 240T*160=26.7 天
-
+    simple_execution: # BPC-Short 趋势骨乘 (做空版): 同 BPC-Long
+      sl_r: 4.0 # 匹配实际 initial_r=4.0 避免趋势确认前回调止损
+      tp_r: 8.0 # 1:2 风险收益比
+      timeout_bars: 160 # 240T*160=26.7 天
 
   fer-long:
     config: config/strategies/fer-long
@@ -96,20 +96,22 @@ strategies:
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: false   # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
+    has_direction: false # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 300
-        scoring_method_fallbacks: [ks, lift, bad_rate_lift, positive_rr]
+        scoring_method_fallbacks: ks
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
+      entry_filter:
+        scoring_method_fallbacks: [uplift, ks, t_test]
       backtest:
         min_trades: 10
       deploy:
         min_trades: 10
-    simple_execution:         # FER 流动效率反转: 中途道, 比 BPC 短但比 ME 宽
+    simple_execution: # FER 流动效率反转: 中途道, 比 BPC 短但比 ME 宽
       sl_r: 2.0
       tp_r: 4.0
       timeout_bars: 60
@@ -120,24 +122,40 @@ strategies:
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: false   # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 300
-        scoring_method_fallbacks: [ks, lift, bad_rate_lift, positive_rr]
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
+        stat_fallback_on_empty: true
+        stat_fallback_max_rules: 3
+        stat_fallback_min_source_features: 2
+      entry_filter:
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
       backtest:
         min_trades: 10
       deploy:
         min_trades: 10
-    simple_execution:         # FER-Short: 同 FER-Long
+    simple_execution: # FER-Short: 同 FER-Long
       sl_r: 2.0
       tp_r: 4.0
       timeout_bars: 60
-
 
   me-long:
     config: config/strategies/me-long
@@ -145,13 +163,13 @@ strategies:
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: false   # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
+    has_direction: false # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.05           # ME 高选择性 archetype, 允许低通过率 (50 trades 高 Sharpe 是目标)
+        min_pass_rate: 0.05 # ME 高选择性 archetype, 允许低通过率 (50 trades 高 Sharpe 是目标)
         min_rows: 200
-        scoring_method: positive_rr  # bad_rate_lift 在 ME 上 uplift=+3.22 vs positive_rr 的 +0.53
-        deny_rate_max: 0.97           # ME 窄 range 模式 deny_rate~93-97%, 需放宽全局默认 0.90
+        scoring_method: positive_rr # bad_rate_lift 在 ME 上 uplift=+3.22 vs positive_rr 的 +0.53
+        deny_rate_max: 0.97 # ME 窄 range 模式 deny_rate~93-97%, 需放宽全局默认 0.90
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
@@ -169,13 +187,13 @@ strategies:
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: false   # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.05           # ME-Short 同 ME, 高选择性 archetype
+        min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
-        scoring_method: positive_rr  # 与 ME 保持一致
-        deny_rate_max: 0.97           # 与 ME 保持一致
+        scoring_method: positive_rr # 与 ME 保持一致
+        deny_rate_max: 0.97 # 与 ME 保持一致
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
@@ -204,29 +222,29 @@ strategies:
       backtest:
         min_trades: 50
       deploy:
-        min_trades: 50               # 15min 频率高, 保留 50 笔要求
+        min_trades: 50 # 15min 频率高, 保留 50 笔要求
 
 # ── SHAP 特征筛选 (Step 2.5) ───────────────────────────────────
 # Walk-Forward SHAP 稳定性筛选: 自动裁剪不稳定特征, 减少过拟合
 # --skip-shap 可跳过此步骤 (快速迭代用)
 shap_feature_selection:
   enabled: true
-  n_folds: 8                         # 时间窗口数
-  top_k: 20                          # 每个 fold 取 Top-K
-  stability_threshold: 0.75          # 特征在 >= 75% fold 出现才算稳定
-  min_stable_features: 1             # 稳定特征不足则跳过裁剪
-  protected_nodes:                   # 永远保留的节点
+  n_folds: 8 # 时间窗口数
+  top_k: 20 # 每个 fold 取 Top-K
+  stability_threshold: 0.75 # 特征在 >= 75% fold 出现才算稳定
+  min_stable_features: 1 # 稳定特征不足则跳过裁剪
+  protected_nodes: # 永远保留的节点
     - atr_f
-    - fer_failure_signals_f          # FER prefilter 依赖此节点 (fer_trapped_longs/shorts_score)
-  apply_to:                          # 裁剪哪些 features YAML
+    - fer_failure_signals_f # FER prefilter 依赖此节点 (fer_trapped_longs/shorts_score)
+  apply_to: # 裁剪哪些 features YAML
     - features.yaml
 
 # ── 对比决策规则 (全确定性, 无人工判断) ────────────────────────
 comparison:
-  min_trades: 10               # < 此值 → ERROR, 数据或配置有问题
-  sharpe_adopt_ratio: 0.7      # new / prev >= 0.7 → ADOPT (正常漂移)
-  sharpe_reject_floor: 0.0     # new_sharpe <= 0 → KEEP + ALERT (策略失效)
-  threshold_drift_warn: 1.0    # 单个阈值变化 > 100% → WARNING (仍可 adopt)
+  min_trades: 10 # < 此值 → ERROR, 数据或配置有问题
+  sharpe_adopt_ratio: 0.7 # new / prev >= 0.7 → ADOPT (正常漂移)
+  sharpe_reject_floor: 0.0 # new_sharpe <= 0 → KEEP + ALERT (策略失效)
+  threshold_drift_warn: 1.0 # 单个阈值变化 > 100% → WARNING (仍可 adopt)
 
   # 决策优先级 (从高到低):
   # 1. new_trades < min_trades        → ERROR
@@ -237,10 +255,10 @@ comparison:
 
 # ── 重训触发条件 (monitor_retrain.py 使用) ────────────────────
 retrain_triggers:
-  schedule_days: 90            # 定期重训间隔 (天)
-  sharpe_decay_ratio: 0.5      # 实盘滚动Sharpe / 回测Sharpe < 50% → 触发
-  consecutive_losses: 8        # 连续亏损次数 >= 8 → 触发
-  max_data_age_days: 120       # 上次训练距今 > 120 天 → 触发
+  schedule_days: 90 # 定期重训间隔 (天)
+  sharpe_decay_ratio: 0.5 # 实盘滚动Sharpe / 回测Sharpe < 50% → 触发
+  consecutive_losses: 8 # 连续亏损次数 >= 8 → 触发
+  max_data_age_days: 120 # 上次训练距今 > 120 天 → 触发
   leading_indicator_decay: 0.5 # P5: Gate hit_rate 或 Evidence IC 衰减超 50% → 触发
 
 # ── Deploy 门禁 (config/ → live/ 的前置条件) ────────────────────
@@ -250,14 +268,14 @@ retrain_triggers:
 # 即: "旧的不行了, 新的更好" 才 deploy
 deploy_gate:
   # ── 触发条件 (OR, 至少一个满足才值得 deploy) ──
-  trigger_sharpe_improve: 0.05    # new/old - 1 >= 5% → 有实质性改善
-  trigger_drift_level: "HIGH"     # 漂移 >= HIGH → 参数大幅变动
-  min_sharpe_change: 0.03         # 漂移触发的前提: |Sharpe变化| > 3% (防止自然漂移误触发)
+  trigger_sharpe_improve: 0.05 # new/old - 1 >= 5% → 有实质性改善
+  trigger_drift_level: "HIGH" # 漂移 >= HIGH → 参数大幅变动
+  min_sharpe_change: 0.03 # 漂移触发的前提: |Sharpe变化| > 3% (防止自然漂移误触发)
 
   # ── 安全门禁 (AND, 全部满足才允许 deploy) ──
-  require_adopt: true              # pipeline 决策必须 = ADOPT (新版不比旧版差)
-  min_trades: 50                   # 全局默认, 可被 kpi_gates.deploy.min_trades 覆盖
-  require_human_confirm: true      # 强制人工确认 (deploy --yes 跳过, 仅限 CI)
+  require_adopt: true # pipeline 决策必须 = ADOPT (新版不比旧版差)
+  min_trades: 50 # 全局默认, 可被 kpi_gates.deploy.min_trades 覆盖
+  require_human_confirm: true # 强制人工确认 (deploy --yes 跳过, 仅限 CI)
 
   # 决策矩阵:
   # │ 漂移\Sharpe变化 │ 提升>=5%    │ |变化|>3%   │ |变化|<=3%  │
@@ -270,16 +288,16 @@ deploy_gate:
 # 分布上优化, 否则会产生 distribution mismatch.
 data_flow:
   # 文件名 (Step 输出产物, 相对于 run_dir/{strategy}/)
-  model_predictions: "predictions.parquet"   # Step 2 输出: 模型预测
-  gated_logs: "logs_gated.parquet"           # Step 5 输出: 含 gate_decision 列
+  model_predictions: "predictions.parquet" # Step 2 输出: 模型预测
+  gated_logs: "logs_gated.parquet" # Step 5 输出: 含 gate_decision 列
 
   # 各步骤输入源 (简化后: Prefilter → Gate → Execution → Backtest)
   step_inputs:
-    prefilter: "predictions.parquet"           # 全量预测上做 prefilter
-    gate_train: "predictions.parquet"          # 全量预测上训练 gate
-    gate_apply: "predictions.parquet"          # Gate apply → 产出 logs_gated.parquet
-    execution: "logs_gated.parquet"            # gate 后人群上优化止损
-    backtest: "logs_gated.parquet"             # gate 后人群上回测
+    prefilter: "predictions.parquet" # 全量预测上做 prefilter
+    gate_train: "predictions.parquet" # 全量预测上训练 gate
+    gate_apply: "predictions.parquet" # Gate apply → 产出 logs_gated.parquet
+    execution: "logs_gated.parquet" # gate 后人群上优化止损
+    backtest: "logs_gated.parquet" # gate 后人群上回测
 
 # ── 输出 ──────────────────────────────────────────────────────
 output:

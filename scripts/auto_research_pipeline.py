@@ -59,6 +59,10 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.stat_method_registry import standardize_method_list
 
 # ====================================================================
 # Config
@@ -535,7 +539,46 @@ def run_data_download(
     sd = datetime.strptime(start_date, "%Y-%m-%d")
     ed = datetime.strptime(end_date, "%Y-%m-%d")
 
-    # Step 0a: Download
+    # 优先走 universe 下载链路（与 A快速启动命令一致）
+    ug = cfg.get("universe_group")
+    if isinstance(ug, dict) and ug.get("file") and ug.get("group"):
+        ug_file = str(ug.get("file"))
+        ug_set = str(ug.get("universe_set", "starter_a"))
+        ug_group = str(ug.get("group"))
+        rc, _ = run_step(
+            "Data Download",
+            [
+                "mlbot",
+                "data",
+                "pipeline-universe",
+                "--no-docker",
+                "--universe-config",
+                ug_file,
+                "--universe-set",
+                ug_set,
+                "--universe-groups",
+                ug_group,
+                "--start-year",
+                str(sd.year),
+                "--start-month",
+                str(sd.month),
+                "--end-year",
+                str(ed.year),
+                "--end-month",
+                str(ed.month),
+                "--data-dir",
+                data_dir,
+                "--parquet-dir",
+                parquet_dir,
+            ],
+            log,
+            dry_run=dry_run,
+        )
+        if rc != 0 and not dry_run:
+            print("  ⚠️  universe 下载链路失败, 尝试继续使用本地数据...")
+        return 0
+
+    # fallback: 无 universe_group 时，使用 symbols 下载 + convert
     rc, _ = run_step(
         "Data Download",
         [
@@ -544,7 +587,7 @@ def run_data_download(
             "download",
             "--no-docker",
             "--symbols",
-            *[s.strip() for s in symbols.split(",")],
+            symbols,
             "--start-year",
             str(sd.year),
             "--start-month",
@@ -565,7 +608,6 @@ def run_data_download(
     if rc != 0 and not dry_run:
         print("  ⚠️  下载步骤失败, 尝试继续使用本地数据...")
 
-    # Step 0b: Convert (ZIP → Parquet, 增量)
     rc, _ = run_step(
         "Data Convert",
         [
@@ -586,6 +628,22 @@ def run_data_download(
         print("  ⚠️  转换步骤失败, 尝试继续使用已有数据...")
 
     return 0  # 不中断流水线, 即使下载失败也尝试用本地数据
+
+
+def _cleanup_prefilter_method_files(arch_dir: Path) -> int:
+    """默认清理 prefilter 方法快照，仅保留 prefilter.yaml."""
+    if not arch_dir.exists():
+        return 0
+    removed = 0
+    for f in arch_dir.glob("prefilter_*.yaml"):
+        if f.name == "prefilter.yaml":
+            continue
+        try:
+            f.unlink()
+            removed += 1
+        except Exception:
+            pass
+    return removed
 
 
 # ====================================================================
@@ -815,6 +873,9 @@ def run_strategy_pipeline(
     _pf_results: Dict[str, Any] = {}  # 提前初始化, 供 Sharpe 对比块使用
     _pf_yaml: Optional[Path] = None
     _pf_comparison: Optional[Dict[str, Any]] = None  # Sharpe 对比结果, 用于汇总输出
+    _ef_comparison: Optional[Dict[str, Any]] = (
+        None  # Entry Filter 对比结果, 用于汇总输出
+    )
     if scfg.get("has_prefilter"):
         _features_prefilter_path = Path(config_dir) / "features_prefilter.yaml"
         if not _features_prefilter_path.exists():
@@ -850,11 +911,15 @@ def run_strategy_pipeline(
             # 支持 scoring_method_fallbacks: 自动降级直到生成有效规则
             _pf_fallbacks = prefilter_gates.get("scoring_method_fallbacks")
             if _pf_fallbacks and isinstance(_pf_fallbacks, list):
-                _pf_methods = _pf_fallbacks  # 优先用 fallbacks 列表
+                _pf_methods = standardize_method_list(
+                    _pf_fallbacks, default=["distribution_ks"]
+                )
             elif prefilter_gates.get("scoring_method"):
-                _pf_methods = [prefilter_gates["scoring_method"]]  # 单一方法
+                _pf_methods = standardize_method_list(
+                    [prefilter_gates["scoring_method"]], default=["distribution_ks"]
+                )
             else:
-                _pf_methods = ["ks"]  # 默认
+                _pf_methods = ["distribution_ks"]  # 默认
 
             def _append_pf_kpi_args(cmd):
                 """追加非 scoring_method 的 KPI 参数."""
@@ -883,7 +948,12 @@ def run_strategy_pipeline(
 
             _pf_yaml = Path(config_dir) / "archetypes" / "prefilter.yaml"
 
+            # 每次从空 prefilter 出发: 每个 method 在全量数据上独立搜索
+            # 不依赖已有 prefilter.yaml 内容, 保证多次运行结果一致
             for _pf_method in _pf_methods:
+                # 清空 prefilter.yaml (空规则 = 全量数据), 每个 method 独立从全量出发
+                if _pf_yaml.exists():
+                    _pf_yaml.unlink()
                 _cmd = prefilter_cmd + ["--prefilter-scoring-method", _pf_method]
                 _append_pf_kpi_args(_cmd)
                 _step_name = (
@@ -1013,6 +1083,18 @@ def run_strategy_pipeline(
                         "--min-combined-pass-rate",
                         str(gate_gates["min_combined_pass_rate"]),
                     ]
+                if gate_gates.get("stat_fallback_on_empty") is False:
+                    _cg_opt += ["--no-stat-fallback-on-empty"]
+                if gate_gates.get("stat_fallback_max_rules") is not None:
+                    _cg_opt += [
+                        "--stat-fallback-max-rules",
+                        str(gate_gates["stat_fallback_max_rules"]),
+                    ]
+                if gate_gates.get("stat_fallback_min_source_features") is not None:
+                    _cg_opt += [
+                        "--stat-fallback-min-source-features",
+                        str(gate_gates["stat_fallback_min_source_features"]),
+                    ]
                 # Val/Test 分离: mini-pipeline Gate Opt 在完整 Val 上调阈值 (不需要 cutoff)
                 # 预筛选选择也在 Val 上评估, Test 保留给最终 Backtest
                 run_step(f"  Gate Opt [{_cm}]", _cg_opt, log)
@@ -1118,6 +1200,13 @@ def run_strategy_pipeline(
                 },
             }
 
+    # 默认行为: 清理 prefilter 方法快照文件 (prefilter_*.yaml)
+    if not dry_run:
+        _arch_dir = Path(config_dir) / "archetypes"
+        _n_rm_pf = _cleanup_prefilter_method_files(_arch_dir)
+        if _n_rm_pf > 0:
+            print(f"   🧹 Prefilter 快照清理: {_n_rm_pf} files removed")
+
     rc, out = run_step("Gate Train", gate_train_args, log, dry_run=dry_run)
     gate_dir = find_output_dir(out, strategy) or prepare_dir
 
@@ -1187,6 +1276,18 @@ def run_strategy_pipeline(
             "--min-combined-pass-rate",
             str(gate_gates["min_combined_pass_rate"]),
         ]
+    if gate_gates.get("stat_fallback_on_empty") is False:
+        gate_optimize_cmd += ["--no-stat-fallback-on-empty"]
+    if gate_gates.get("stat_fallback_max_rules") is not None:
+        gate_optimize_cmd += [
+            "--stat-fallback-max-rules",
+            str(gate_gates["stat_fallback_max_rules"]),
+        ]
+    if gate_gates.get("stat_fallback_min_source_features") is not None:
+        gate_optimize_cmd += [
+            "--stat-fallback-min-source-features",
+            str(gate_gates["stat_fallback_min_source_features"]),
+        ]
     # Val/Test 分离: Gate Optimize 只用 Val 段 [holdout_start, test_start)
     if test_start != holdout_start:
         gate_optimize_cmd += ["--cutoff-date", test_start]
@@ -1252,11 +1353,245 @@ def run_strategy_pipeline(
     #   Gate Optimize 已通过 --cutoff-date 只用 Val 段 [holdout_start, test_start)
     #   Backtest 使用 Test 段 [test_start, end_date] (纯 OOS)
 
-    # ── Step 6 (Evidence) + Step 7 (Entry Filter): 已删除 ──
-    # Prefilter + Gate 已覆盖主要过滤逻辑, Evidence/Entry Filter 不再由 pipeline 自动调用.
-    # 独立脚本 discover_evidence_candidates.py 和 optimize_entry_filter_plateau.py 保留,
-    # 用户可手动运行做探索分析.
+    # ── Step 6 (Evidence) + Step 7 (Entry Filter): 统计方法重构 ──
+    # Evidence 层已删除. Entry Filter 从 features_entry_filter.yaml 读候选,
+    # 多方法统计扫描 + Sharpe 择优.
     evidence_dir = gate_dir  # 后续步骤直接使用 gate_dir
+
+    _ef_yaml_path = Path(config_dir) / "features_entry_filter.yaml"
+    _ef_gates = kpi_gates.get("entry_filter", {})
+    _ef_methods = standardize_method_list(
+        _ef_gates.get("scoring_method_fallbacks"),
+        default=[
+            "distribution_ks",
+            "mean_effect",
+            "tail_bad_rate_ratio",
+            "upside_positive_rate_ratio",
+        ],
+    )
+    if _ef_yaml_path.exists() and not dry_run:
+        print(f"\n{'='*72}")
+        print(
+            f"🔬 Entry Filter 多方法 Sharpe 择优 — {len(_ef_methods)} methods: {_ef_methods}"
+        )
+        print(f"{'='*72}")
+
+        _ef_sharpe: Dict[str, float] = {}
+        _ef_trades: Dict[str, int] = {}
+        _ef_n_rules: Dict[str, int] = {}
+        _ef_arch_dir = Path(config_dir) / "archetypes"
+        _ef_orig_path = _ef_arch_dir / "entry_filters.yaml"
+        _simple_exec = scfg.get("simple_execution", {})
+
+        for _em in _ef_methods:
+            print(f"\n── Entry Filter method: [{_em}] ──")
+            ef_cmd = [
+                sys.executable,
+                "scripts/optimize_entry_filter_plateau.py",
+                "--logs",
+                f"{gate_dir}/logs_gated.parquet",
+                "--strategy",
+                strategy,
+                "--strategies-root",
+                strategies_root,
+                "--meta-algorithm",
+                "--features-entry-filter",
+                str(_ef_yaml_path),
+                "--scoring-method",
+                _em,
+                "--promote",
+                "--simple-execution",
+            ]
+            # Val/Test 分离: entry filter 也只用 Val 段
+            if test_start != holdout_start:
+                ef_cmd += ["--cutoff-date", test_start]
+            _rc_ef, _out_ef = run_step(f"  EF Scan [{_em}]", ef_cmd, log)
+            if _rc_ef != 0:
+                print(f"   ❌ EF [{_em}] 失败")
+                _ef_sharpe[_em] = float("-inf")
+                _ef_trades[_em] = 0
+                _ef_n_rules[_em] = 0
+                continue
+
+            # 读取产出的 entry_filters.yaml 规则数
+            import yaml as _ef_yaml_mod
+
+            if _ef_orig_path.exists():
+                with open(_ef_orig_path, "r", encoding="utf-8") as _efr:
+                    _ef_cfg = _ef_yaml_mod.safe_load(_efr) or {}
+                _n_ef_rules = len(
+                    [f for f in _ef_cfg.get("filters", []) if f.get("enabled", True)]
+                )
+            else:
+                _n_ef_rules = 0
+            _ef_n_rules[_em] = _n_ef_rules
+
+            if _n_ef_rules == 0:
+                # 没有规则 = 无条件入场, 后续用 empty 的 Sharpe
+                _ef_sharpe[_em] = float("-inf")
+                _ef_trades[_em] = 0
+                continue
+
+            # 保存临时规则文件
+            _ef_tmp = _ef_arch_dir / f"entry_filters_cmp_{_em}.yaml"
+            shutil.copy(_ef_orig_path, _ef_tmp)
+
+            # mini-backtest on Val 段
+            _ef_bt = [
+                "python",
+                "scripts/backtest_execution_layer.py",
+                "--logs",
+                f"{gate_dir}/logs_gated.parquet",
+                "--strategy",
+                strategy,
+                "--strategies-root",
+                strategies_root,
+                "--test-start",
+                holdout_start,
+                "--test-end",
+                test_start if test_start != holdout_start else end_date,
+                "--simple-execution",
+            ]
+            if _simple_exec.get("sl_r") is not None:
+                _ef_bt += ["--simple-sl", str(_simple_exec["sl_r"])]
+            if _simple_exec.get("tp_r") is not None:
+                _ef_bt += ["--simple-tp", str(_simple_exec["tp_r"])]
+            if _simple_exec.get("timeout_bars") is not None:
+                _ef_bt += ["--simple-timeout", str(_simple_exec["timeout_bars"])]
+            _rc_ebt, _out_ebt = run_step(f"  EF Backtest [{_em}]", _ef_bt, log)
+            _ebt_m = parse_backtest_stdout(_out_ebt)
+            _ef_sharpe[_em] = _ebt_m.get("sharpe_per_trade", float("-inf"))
+            _ef_trades[_em] = _ebt_m.get("total_trades", 0)
+            print(
+                f"   📊 EF [{_em}] Sharpe={_ef_sharpe[_em]:+.4f}, "
+                f"Trades={_ef_trades[_em]}, Rules={_n_ef_rules}"
+            )
+
+        # ── 对比表: 添加 empty baseline ──
+        # empty = 无条件入场 (无 entry filter)
+        _ef_empty = _ef_arch_dir / "entry_filters_cmp_empty.yaml"
+        _ef_empty.write_text("filters: []\ncombination_mode: or\n", encoding="utf-8")
+        shutil.copy(_ef_empty, _ef_orig_path)
+        _ef_bt_empty = [
+            "python",
+            "scripts/backtest_execution_layer.py",
+            "--logs",
+            f"{gate_dir}/logs_gated.parquet",
+            "--strategy",
+            strategy,
+            "--strategies-root",
+            strategies_root,
+            "--test-start",
+            holdout_start,
+            "--test-end",
+            test_start if test_start != holdout_start else end_date,
+            "--simple-execution",
+        ]
+        if _simple_exec.get("sl_r") is not None:
+            _ef_bt_empty += ["--simple-sl", str(_simple_exec["sl_r"])]
+        if _simple_exec.get("tp_r") is not None:
+            _ef_bt_empty += ["--simple-tp", str(_simple_exec["tp_r"])]
+        if _simple_exec.get("timeout_bars") is not None:
+            _ef_bt_empty += ["--simple-timeout", str(_simple_exec["timeout_bars"])]
+        _rc_ebt_empty, _out_ebt_empty = run_step(
+            "  EF Backtest [empty]", _ef_bt_empty, log
+        )
+        _ebt_m_empty = parse_backtest_stdout(_out_ebt_empty)
+        _ef_sharpe["empty"] = _ebt_m_empty.get("sharpe_per_trade", float("-inf"))
+        _ef_trades["empty"] = _ebt_m_empty.get("total_trades", 0)
+        _ef_n_rules["empty"] = 0
+
+        # 0 规则的方法 = empty
+        for _em in _ef_methods:
+            if _ef_n_rules.get(_em, 0) == 0 and _em not in ["empty"]:
+                _ef_sharpe[_em] = _ef_sharpe["empty"]
+                _ef_trades[_em] = _ef_trades["empty"]
+
+        # 汇总对比表
+        _best_ef = max(_ef_sharpe, key=lambda m: _ef_sharpe[m])
+        _ef_tbl = []
+        _ef_tbl.append(f"\n{'='*72}")
+        _ef_tbl.append(
+            f"  {'方法':<25} {'Sharpe':>10} {'Trades':>7} {'Rules':>6}  标记"
+        )
+        _ef_tbl.append(f"  {'-'*68}")
+        for _m in sorted(_ef_sharpe, key=lambda m: -_ef_sharpe[m]):
+            _flag = " ← 最优" if _m == _best_ef else ""
+            _s = _ef_sharpe[_m]
+            _s_str = f"{_s:+.4f}" if _s != float("-inf") else "  FAIL"
+            _ef_tbl.append(
+                f"  {_m:<25} {_s_str:>10} "
+                f"{_ef_trades.get(_m, 0):>7} {_ef_n_rules.get(_m, 0):>6}{_flag}"
+            )
+        _ef_tbl.append(f"{'='*72}\n")
+        _ef_tbl_text = "\n".join(_ef_tbl)
+        print(_ef_tbl_text)
+        with open(log, "a", encoding="utf-8") as _lf:
+            _lf.write(f"\n{'='*72}\n")
+            _lf.write(f"🔬 Entry Filter Sharpe 对比汇总\n")
+            _lf.write(_ef_tbl_text + "\n")
+
+        _ef_comparison = {
+            "best": _best_ef,
+            "improvement_vs_empty": _ef_sharpe.get(_best_ef, float("-inf"))
+            - _ef_sharpe.get("empty", float("-inf")),
+            "candidates": {
+                m: {
+                    "sharpe": _ef_sharpe[m],
+                    "trades": _ef_trades.get(m, 0),
+                    "rules": _ef_n_rules.get(m, 0),
+                }
+                for m in _ef_sharpe
+            },
+        }
+
+        # 设置最优 entry filter
+        # 只有当新规则对比 empty 有足够提升时才覆盖已有 entry_filters.yaml
+        # 防止 Val 段负志时「最不差」方法覆盖原有的合理规则
+        _MIN_EF_IMPROVEMENT = 0.02  # 最小提升幅度 (Sharpe 差 > 0.02 才 promote)
+        _ef_improvement = _ef_sharpe.get(_best_ef, float("-inf")) - _ef_sharpe.get(
+            "empty", float("-inf")
+        )
+        if (
+            _best_ef != "empty"
+            and _ef_n_rules.get(_best_ef, 0) > 0
+            and _ef_improvement >= _MIN_EF_IMPROVEMENT
+        ):
+            _best_ef_path = _ef_arch_dir / f"entry_filters_cmp_{_best_ef}.yaml"
+            if _best_ef_path.exists():
+                shutil.copy(_best_ef_path, _ef_orig_path)
+                print(
+                    f"   ✅ 最优 Entry Filter [{_best_ef}] 已写入, "
+                    f"Rules={_ef_n_rules[_best_ef]}, Sharpe={_ef_sharpe[_best_ef]:+.4f} "
+                    f"(vs empty {_ef_sharpe.get('empty', 0):+.4f}, 提升={_ef_improvement:+.4f})"
+                )
+            else:
+                # fallback: 写空
+                _ef_empty.rename(_ef_orig_path) if not _ef_orig_path.exists() else None
+                print(f"   ⚠️  最优方法临时文件丢失, 使用空 entry filter")
+        elif _best_ef == "empty" or _ef_improvement < _MIN_EF_IMPROVEMENT:
+            # 提升不足 → 保留已有 entry_filters.yaml 不变
+            _old_exists = _ef_orig_path.exists()
+            if _old_exists:
+                print(
+                    f"   ℹ️  Entry Filter 提升不足 (best={_best_ef} 提升={_ef_improvement:+.4f} < {_MIN_EF_IMPROVEMENT}), "
+                    f"保留原有 entry_filters.yaml 不变"
+                )
+            else:
+                # 无历史文件 → 写空
+                shutil.copy(_ef_empty, _ef_orig_path)
+                print(
+                    f"   ℹ️  empty 最优 且无历史 entry_filters.yaml, 写入空规则 "
+                    f"(Sharpe={_ef_sharpe.get('empty', 0):+.4f})"
+                )
+
+        # 清理临时文件
+        for _em in list(_ef_methods) + ["empty"]:
+            _tmp = _ef_arch_dir / f"entry_filters_cmp_{_em}.yaml"
+            if _tmp.exists() and _tmp != _ef_orig_path:
+                _tmp.unlink()
+    elif not _ef_yaml_path.exists():
+        print(f"\n  ℹ️  Entry Filter: features_entry_filter.yaml 不存在, 跳过")
 
     # ── Step 8: Execution Optimize (跳过) ──
     # 默认使用 execution.yaml 中的 2ATR 止损, 快速出结果.
@@ -1368,6 +1703,7 @@ def run_strategy_pipeline(
         "exp_config_dir": str(exp_config_dir),
         "prod_config_dir": prod_config_dir,
         "prefilter_comparison": _pf_comparison,
+        "entry_filter_comparison": _ef_comparison,
         "validation_end": test_start,
     }
 
@@ -1425,6 +1761,8 @@ def save_report(
         "backtest_metrics": pipeline_result.get("backtest_metrics", {}),
         "thresholds": thresholds,
         "comparison": comparison,
+        "prefilter_comparison": pipeline_result.get("prefilter_comparison"),
+        "entry_filter_comparison": pipeline_result.get("entry_filter_comparison"),
         "artifacts": {
             "gate_dir": pipeline_result.get("gate_dir"),
             "evidence_dir": pipeline_result.get("evidence_dir"),
@@ -1811,14 +2149,17 @@ def _run_pcm_joint_backtest(
 
 
 def _extract_gate_rules(run_dir: Path, strategy: str) -> List[str]:
-    """从 seed trial 的 gate.yaml 提取 hard_gate 特征名."""
+    """从 seed trial 的 gate.yaml 提取 gate 特征名（含 system_safety + hard_gates）."""
     arch_dir = run_dir / "strategies" / strategy / "archetypes"
     gate_path = arch_dir / "gate.yaml"
     if not gate_path.exists():
         return []
     gt = yaml.safe_load(gate_path.read_text(encoding="utf-8")) or {}
     rules = []
-    for r in gt.get("hard_gates", []):
+    _all = list(gt.get("system_safety", []) or []) + list(
+        gt.get("hard_gates", []) or []
+    )
+    for r in _all:
         if r.get("frozen"):
             continue  # 跳过 frozen (prefilter 注入的)
         feat = r.get("feature", r.get("id", "?"))
@@ -2263,6 +2604,9 @@ def main():
                 "run_dir_name": run_dir.name,
                 "seed": best["seed"] if multi_seed else seeds[0],
                 "prefilter_comparison": pipeline_result.get("prefilter_comparison"),
+                "entry_filter_comparison": pipeline_result.get(
+                    "entry_filter_comparison"
+                ),
             }
         )
 
@@ -2315,6 +2659,26 @@ def main():
                 _note = "  (0规则=empty)" if _pm in _zr_set else ""
                 print(
                     f"         {_pm:<20s} Sharpe={_ps_str}  Trades={_pc['trades']:>5}  Rules={_pc['rules']}{_flag}{_note}"
+                )
+        _efc = r.get("entry_filter_comparison")
+        if _efc and _efc.get("candidates"):
+            _best_ef = _efc.get("best", "")
+            _ecands = _efc.get("candidates", {})
+            print(f"      🔬 EntryFilter 对比:")
+            for _em in sorted(
+                _ecands,
+                key=lambda m: (
+                    -_ecands[m]["sharpe"]
+                    if _ecands[m]["sharpe"] != float("-inf")
+                    else float("inf")
+                ),
+            ):
+                _ec = _ecands[_em]
+                _es = _ec["sharpe"]
+                _es_str = f"{_es:+.4f}" if _es != float("-inf") else "  FAIL"
+                _eflag = " ←" if _em == _best_ef else ""
+                print(
+                    f"         {_em:<20s} Sharpe={_es_str}  Trades={_ec['trades']:>5}  Rules={_ec['rules']}{_eflag}"
                 )
     if pcm_result:
         pcm_emoji = {"PASS": "✅", "ALERT": "⚠️", "ERROR": "❌"}.get(
@@ -2422,7 +2786,10 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
                 exp_gate_raw = (
                     _yaml_adopt.safe_load(exp_gate.read_text(encoding="utf-8")) or {}
                 )
-                for r in exp_gate_raw.get("hard_gates", []):
+                _exp_gate_rules = list(
+                    exp_gate_raw.get("system_safety", []) or []
+                ) + list(exp_gate_raw.get("hard_gates", []) or [])
+                for r in _exp_gate_rules:
                     for feat in r.get("when", {}).keys():
                         exp_features.add(feat)
 
@@ -2455,6 +2822,14 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
                 )
 
     prod_arch.mkdir(parents=True, exist_ok=True)
+    # 默认清理历史 prefilter 方法快照，避免污染生产 archetypes 目录
+    for stale in prod_arch.glob("prefilter_*.yaml"):
+        if stale.name == "prefilter.yaml":
+            continue
+        try:
+            stale.unlink()
+        except Exception:
+            pass
     copied = 0
     for f in exp_arch.iterdir():
         if f.is_file():
@@ -2727,10 +3102,11 @@ def _extract_layer_info(arch_dir: Path) -> Dict[str, Any]:
 
     # Gate
     gt = _read_yaml_safe(arch_dir / "gate.yaml")
+    sg = gt.get("system_safety", [])
     hg = gt.get("hard_gates", [])
     gr = gt.get("guardrails", [])
     hg_descs = []
-    for r in hg:
+    for r in list(sg) + list(hg):
         rid = r.get("id", "")
         w = r.get("when", {})
         if "all_of" in w:
@@ -2751,7 +3127,12 @@ def _extract_layer_info(arch_dir: Path) -> Dict[str, Any]:
                         hg_descs.append(f"{feat} {op_s} {val}")
                 else:
                     hg_descs.append(f"{feat}: {cond}")
-    info["gate"] = {"hard_gates": len(hg), "guardrails": len(gr), "rules": hg_descs}
+    info["gate"] = {
+        "system_safety": len(sg),
+        "hard_gates": len(hg),
+        "guardrails": len(gr),
+        "rules": hg_descs,
+    }
 
     # Evidence
     ev = _read_yaml_safe(arch_dir / "evidence.yaml")
@@ -2868,10 +3249,16 @@ def print_layer_summary(
 
     # ── Gate ──
     gt = cur["gate"]
-    line = f"  L4 Gate          {gt['hard_gates']} hard_gate(s), {gt['guardrails']} guardrail(s)"
+    line = (
+        f"  L4 Gate          {gt['system_safety']} safety_gate(s), "
+        f"{gt['hard_gates']} hard_gate(s), {gt['guardrails']} guardrail(s)"
+    )
     if prev:
         pg = prev["gate"]
-        line += f"  ← prev {pg['hard_gates']}+{pg['guardrails']}  {_delta_str(gt['hard_gates'], pg['hard_gates'])}"
+        line += (
+            f"  ← prev {pg['system_safety']}+{pg['hard_gates']}+{pg['guardrails']}  "
+            f"{_delta_str(gt['system_safety'] + gt['hard_gates'], pg['system_safety'] + pg['hard_gates'])}"
+        )
     print(line)
     if gt["rules"]:
         print(f"                   {_fmt_rules(gt['rules'])}")
@@ -3015,8 +3402,8 @@ def _analyze_gate(y1: dict, y2: dict) -> Tuple[List[str], str]:
     lines: List[str] = []
     drifts: List[str] = []
 
-    hg1 = y1.get("hard_gates", [])
-    hg2 = y2.get("hard_gates", [])
+    hg1 = list(y1.get("system_safety", []) or []) + list(y1.get("hard_gates", []) or [])
+    hg2 = list(y2.get("system_safety", []) or []) + list(y2.get("hard_gates", []) or [])
     ids1 = {r.get("id", f"rule_{i}"): r for i, r in enumerate(hg1)}
     ids2 = {r.get("id", f"rule_{i}"): r for i, r in enumerate(hg2)}
     set1, set2 = set(ids1.keys()), set(ids2.keys())

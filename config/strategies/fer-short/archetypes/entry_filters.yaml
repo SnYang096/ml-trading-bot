@@ -1,31 +1,51 @@
-# FER Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
-# Date: 2026-03-06 00:13
-# Promoted: 2 filters (2 plateau + 0 snotio-only)
-# Baseline snotio: 3.8289, σ=9.533
-# Significance: z-test p<0.05 required for all tiers
+# FER-SHORT Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
+# Date: 2026-03-15 17:21
+# Promoted: 5 filters (method=distribution_ks)
+# Significance: 统计验证 + robustness ≥ 0.5
 #
-# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 职责: "现在该入场吗?" → 硬二值控制
 # 多个 filter 之间是 OR 关系
-# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-- id: meta_evt_es_99
+- id: ef_cvd_0.3
   enabled: true
-  description: 'Meta-Algorithm: evt_es_99 <= 0.434'
+  description: 'auto: cvd <= -15263265627.4'
   conditions:
-  - feature: evt_es_99
+  - feature: cvd
     operator: <=
-    value: 0.434
-  tier: A_PLATEAU
-  notes: lift=1.27x, rob=85%, snotio=5.2409, z=2.30, p=0.0106
-- id: meta_evt_tail_shape
+    value: -15263265627.4
+  notes: method=distribution_ks, effect=+11.0994, ks=0.602, rob=0.67, pass=30.1%
+- id: ef_cvd_0.2
   enabled: true
-  description: 'Meta-Algorithm: evt_tail_shape >= 0.575'
+  description: 'auto: cvd <= -16085994909.8'
   conditions:
-  - feature: evt_tail_shape
+  - feature: cvd
+    operator: <=
+    value: -16085994909.8
+  notes: method=distribution_ks, effect=+12.0374, ks=0.554, rob=0.67, pass=20.2%
+- id: ef_shd_pct_0.2
+  enabled: true
+  description: 'auto: shd_pct <= 0.076809'
+  conditions:
+  - feature: shd_pct
+    operator: <=
+    value: 0.076809
+  notes: method=distribution_ks, effect=+5.6829, ks=0.424, rob=0.67, pass=20.2%
+- id: ef_funding_oi_crowding_score_0.75
+  enabled: true
+  description: 'auto: funding_oi_crowding_score >= 0.2573'
+  conditions:
+  - feature: funding_oi_crowding_score
     operator: '>='
-    value: 0.575
-  tier: A_PLATEAU
-  notes: lift=1.09x, rob=94%, snotio=5.0013, z=1.93, p=0.0269
+    value: 0.2573
+  notes: method=distribution_ks, effect=+7.3946, ks=0.403, rob=0.67, pass=25.1%
+- id: ef_funding_absorption_score_0.7
+  enabled: true
+  description: 'auto: funding_absorption_score >= 0.178185'
+  conditions:
+  - feature: funding_absorption_score
+    operator: '>='
+    value: 0.178185
+  notes: method=distribution_ks, effect=+2.9876, ks=0.369, rob=0.67, pass=30.1%
 combination_mode: or

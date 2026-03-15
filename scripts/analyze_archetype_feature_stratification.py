@@ -48,6 +48,12 @@ import yaml
 import numpy as np
 import pandas as pd
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.stat_method_registry import canonicalize_method_name, get_canonical_methods
+
 # ── 默认百分位 ────────────────────────────────────────────────
 DEFAULT_PERCENTILES = [5, 10, 20, 80, 90, 95]
 
@@ -2240,6 +2246,9 @@ def _meta_algorithm_prefilter(
     # ── 2b. 读取 archetypes/prefilter.yaml 中已有语义规则，应用到子集 ──
     # 设计原则: LightGBM 应在 archetype 语义子集上学习, 而不是全量数据
     # LV 等语义规则为空的策略自动回退为全量搜索
+    #
+    # 多方法独立性保证: pipeline 层在每个 method 前清空 prefilter.yaml,
+    # 所有 method 都在全量数据上独立搜索, 与起始 prefilter.yaml 内容无关。
     _arch_prefilter_path = Path(config_path) / "archetypes" / "prefilter.yaml"
     _semantic_rules = []
     _n_semantic_rules = 0
@@ -2305,6 +2314,7 @@ def _meta_algorithm_prefilter(
             df_holdout_sub = df_holdout
             n_train_sub = n_train
             n_holdout_sub = n_holdout
+            _n_semantic_rules = 0  # 回退到全量时重置配额
         elif n_holdout_sub < _MIN_HOLDOUT_SUBSET:
             print(
                 f"   ⚠️  Holdout 子集 ({n_holdout_sub}) < {_MIN_HOLDOUT_SUBSET}, "
@@ -2314,6 +2324,11 @@ def _meta_algorithm_prefilter(
             df_holdout_sub = df_holdout
             n_train_sub = n_train
             n_holdout_sub = n_holdout
+            # 回退到全量数据时重置语义规则计数:
+            # PREFILTER_MAX_RULES = max(1, max_rules - _n_semantic_rules)
+            # 若不重置, max_rules=4 且旧规则有 3 条时 MAX_RULES=1, 导致只能 promote 1 条新规则
+            # 而实际 promote 操作会完全替换旧规则, 应按 max_rules 全量配额计算
+            _n_semantic_rules = 0
 
     # ── 2c. 方向分裂: 读取 archetypes/direction.yaml 主特征, 按方向拆分训练集 ──
     # 设计原则: forward_rr 已按方向翻转, 但 LightGBM 无法知道 me_delta_net_flow 正/负
@@ -2381,7 +2396,20 @@ def _meta_algorithm_prefilter(
         )
 
     # ── 2d. 提前读取 scoring_method（影响 LightGBM 训练目标） ──
-    _scoring_method = getattr(args, "prefilter_scoring_method", None) or "ks"
+    _raw_method = getattr(args, "prefilter_scoring_method", None) or "distribution_ks"
+    _scoring_method = canonicalize_method_name(_raw_method)
+    # Prefilter 里将 mean_effect/welch_ttest 统一并复用到既有 lift 分支，避免重复实现。
+    if _scoring_method in ("mean_effect", "welch_ttest"):
+        print(
+            f"   ℹ️  scoring_method={_raw_method} 标准化到 mean_effect，并复用 prefilter 主分支"
+        )
+        _scoring_method = "lift"
+    elif _scoring_method == "distribution_ks":
+        _scoring_method = "ks"
+    elif _scoring_method == "tail_bad_rate_ratio":
+        _scoring_method = "bad_rate_lift"
+    elif _scoring_method == "upside_positive_rate_ratio":
+        _scoring_method = "positive_rr"
 
     # ── 3. LightGBM 训练 (via meta_algorithm_unified) ──
     from meta_algorithm_unified import (
@@ -3543,9 +3571,8 @@ def main() -> int:
         "--prefilter-scoring-method",
         type=str,
         default=None,
-        choices=["ks", "lift", "combined", "bad_rate_lift", "positive_rr"],
-        help="Prefilter 主 KPI 评分方法. ks=KS统计量(默认), lift=pass/deny收益倍数, combined=两者加权, "
-        "bad_rate_lift=坏样本集中度(早期有效模式), positive_rr=LightGBM二分类 rr>0.8R 正向选择. "
+        choices=get_canonical_methods(),
+        help="Prefilter 主 KPI 评分方法 (canonical names only). "
         "由 research_pipeline.yaml kpi_gates.prefilter.scoring_method 控制.",
     )
     parser.add_argument(

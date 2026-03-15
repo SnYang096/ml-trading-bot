@@ -2068,20 +2068,32 @@ def _generate_trading_map_html(
             all_rr = []
 
             for t in sym_trades:
-                try:
-                    entry_ts_str = _norm_ts_str(df.loc[t["entry_idx"], ts_col])
-                    exit_ts_str = _norm_ts_str(df.loc[t["exit_idx"], ts_col])
-                except KeyError:
-                    continue
-                entry_seq = ts_str_to_seq.get(entry_ts_str)
-                exit_seq = ts_str_to_seq.get(exit_ts_str)
-                # fallback: 用 ts_ns 做最近匹配 (应对极少数格式仍不匹配的情况)
-                if entry_seq is None and t.get("entry_ts_ns"):
+                # 优先使用精确 ts_ns（回测执行层产出的真实入/出场时刻）
+                entry_seq = None
+                exit_seq = None
+                if t.get("entry_ts_ns"):
                     _eq = pd.Timestamp(t["entry_ts_ns"], unit="ns").tz_localize(None)
                     entry_seq = ts_str_to_seq.get(str(_eq))
-                if exit_seq is None and t.get("exit_ts_ns"):
+                if t.get("exit_ts_ns"):
                     _xq = pd.Timestamp(t["exit_ts_ns"], unit="ns").tz_localize(None)
                     exit_seq = ts_str_to_seq.get(str(_xq))
+                # fallback: 用 entry_idx/exit_idx 回查时间（兼容旧 trade_details）
+                if entry_seq is None or exit_seq is None:
+                    try:
+                        entry_ts_str = _norm_ts_str(df.loc[t["entry_idx"], ts_col])
+                        exit_ts_str = _norm_ts_str(df.loc[t["exit_idx"], ts_col])
+                    except KeyError:
+                        continue
+                    entry_seq = (
+                        entry_seq
+                        if entry_seq is not None
+                        else ts_str_to_seq.get(entry_ts_str)
+                    )
+                    exit_seq = (
+                        exit_seq
+                        if exit_seq is not None
+                        else ts_str_to_seq.get(exit_ts_str)
+                    )
                 if entry_seq is None or exit_seq is None:
                     continue
 
@@ -2275,11 +2287,16 @@ def _generate_trading_map_html(
             )
 
             for t in sym_trades:
-                try:
-                    t_ts_str = str(df.loc[t["entry_idx"], ts_col])
-                    t_seq = ts_str_to_seq.get(t_ts_str)
-                except KeyError:
-                    continue
+                t_seq = None
+                if t.get("entry_ts_ns"):
+                    _eq = pd.Timestamp(t["entry_ts_ns"], unit="ns").tz_localize(None)
+                    t_seq = ts_str_to_seq.get(str(_eq))
+                if t_seq is None:
+                    try:
+                        t_ts_str = _norm_ts_str(df.loc[t["entry_idx"], ts_col])
+                        t_seq = ts_str_to_seq.get(t_ts_str)
+                    except KeyError:
+                        continue
                 if t_seq is None:
                     continue
                 rr = t["realized_rr"]

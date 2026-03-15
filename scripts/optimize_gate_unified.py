@@ -1291,6 +1291,180 @@ _PREFILTER_OP_MAP = {
 }
 
 
+_SYSTEM_SAFETY_KEYWORDS = (
+    "evt_",
+    "vol_",
+    "volatility",
+    "leverage",
+    "garch",
+    "jump_risk",
+    "funding_",
+    "oi_",
+    "liq_",
+    "liquidity",
+    "tail_",
+    "risk",
+)
+
+
+def _iter_features_in_when(when: Dict[str, Any]) -> List[str]:
+    """Extract feature names recursively from gate when clauses."""
+    feats: List[str] = []
+    if not isinstance(when, dict):
+        return feats
+    if "all_of" in when and isinstance(when["all_of"], list):
+        for sub in when["all_of"]:
+            feats.extend(_iter_features_in_when(sub))
+        return feats
+    if "any_of" in when and isinstance(when["any_of"], list):
+        for sub in when["any_of"]:
+            feats.extend(_iter_features_in_when(sub))
+        return feats
+    for k, v in when.items():
+        if k in ("all_of", "any_of"):
+            continue
+        if isinstance(v, dict):
+            feats.append(str(k))
+    return feats
+
+
+def _is_system_safety_rule(rule: Dict[str, Any]) -> bool:
+    """Heuristic phase classifier: risk/tail/volatility-like features => safety."""
+    rid = str(rule.get("id", "")).lower()
+    if any(kw in rid for kw in _SYSTEM_SAFETY_KEYWORDS):
+        return True
+    for feat in _iter_features_in_when(rule.get("when", {})):
+        f = feat.lower()
+        if any(kw in f for kw in _SYSTEM_SAFETY_KEYWORDS):
+            return True
+    return False
+
+
+def _collect_features_from_when(when: Dict[str, Any]) -> List[str]:
+    """Collect feature names from nested when/all_of/any_of clauses."""
+    if not isinstance(when, dict):
+        return []
+    feats: List[str] = []
+    if "all_of" in when and isinstance(when["all_of"], list):
+        for sub in when["all_of"]:
+            feats.extend(_collect_features_from_when(sub))
+    if "any_of" in when and isinstance(when["any_of"], list):
+        for sub in when["any_of"]:
+            feats.extend(_collect_features_from_when(sub))
+    for key, cond in when.items():
+        if key in ("all_of", "any_of", "min_matches"):
+            continue
+        if isinstance(cond, dict):
+            feats.append(str(key))
+    # keep order and de-duplicate
+    uniq: List[str] = []
+    seen = set()
+    for f in feats:
+        if f in seen:
+            continue
+        seen.add(f)
+        uniq.append(f)
+    return uniq
+
+
+def _build_stat_fallback_rules(
+    df: pd.DataFrame,
+    source_hard_gates: List[Dict[str, Any]],
+    max_rules: int = 3,
+    min_source_features: int = 2,
+) -> List[Dict[str, Any]]:
+    """Generate statistical hard-gate fallback rules from source gate features."""
+    rr_candidates = [
+        "forward_rr",
+        "bpc_impulse_return_atr",
+        "rr",
+        "return_atr",
+        "success_no_rr_extreme",
+        "ret_mean",
+    ]
+    rr_col = next((c for c in rr_candidates if c in df.columns), None)
+    if rr_col is None:
+        print("  ⚠️  统计兜底跳过: 未找到 RR 列")
+        return []
+
+    feature_names: List[str] = []
+    for rule in source_hard_gates:
+        feature_names.extend(_collect_features_from_when(rule.get("when", {})))
+    feature_names = [f for f in feature_names if f in df.columns]
+    if not feature_names:
+        print("  ⚠️  统计兜底跳过: 无可用 gate 候选特征")
+        return []
+
+    # De-duplicate while preserving source order
+    seen = set()
+    feature_names = [f for f in feature_names if not (f in seen or seen.add(f))]
+    if len(feature_names) < min_source_features:
+        print(
+            f"  ⚠️  统计兜底跳过: source feature 数量不足 "
+            f"({len(feature_names)} < {min_source_features})"
+        )
+        return []
+
+    try:
+        from scripts.export_lightgbm_rules_to_readme import (
+            _generate_gate_rules_statistical,
+        )
+
+        stat_rules = _generate_gate_rules_statistical(
+            df,
+            feature_names=feature_names,
+            rr_col_name=rr_col,
+            lgbm_model=None,
+            max_rules=max_rules,
+        )
+    except Exception as e:
+        print(f"  ⚠️  统计兜底失败: {e}")
+        return []
+
+    if not stat_rules:
+        return []
+
+    op_to_key = {"<=": "value_le", "<": "value_lt", ">": "value_gt", ">=": "value_ge"}
+    converted: List[Dict[str, Any]] = []
+    for idx, rule_dict in enumerate(stat_rules):
+        conds = rule_dict.get("conditions", [])
+        if not conds:
+            continue
+
+        if len(conds) == 1:
+            feat, op, thr = conds[0]
+            when_clause = {feat: {op_to_key.get(op, "value_lt"): round(float(thr), 4)}}
+            rid = f"gate_stat_{str(feat).replace('.', '_').lower()}"
+        else:
+            all_of = []
+            feat_names = []
+            for feat, op, thr in conds:
+                all_of.append(
+                    {feat: {op_to_key.get(op, "value_lt"): round(float(thr), 4)}}
+                )
+                feat_names.append(str(feat).replace(".", "_").lower())
+            when_clause = {"all_of": all_of}
+            rid = f"gate_stat_{'_'.join(feat_names)}"
+
+        converted.append(
+            {
+                "id": rid,
+                "tag": f"HARD_STAT_{idx+1}",
+                "phase": "hard_gate",
+                "priority": 20 + idx,
+                "reason": "统计法兜底规则（tree gate 为空）",
+                "when": when_clause,
+                "then": {"action": "deny"},
+                "comment": (
+                    f"stat_fallback gate_score={float(rule_dict.get('gate_score', 0.0)):.3f}, "
+                    f"tail_capture={float(rule_dict.get('tail_capture', 0.0)):.3f}, "
+                    f"good_deny={float(rule_dict.get('good_deny_rate', 0.0)):.3f}"
+                ),
+            }
+        )
+    return converted
+
+
 def _load_prefilter_as_frozen_gates(prefilter_path: Path) -> List[Dict]:
     """
     将 prefilter 规则转换为 frozen hard_gates (deny 格式)。
@@ -1375,6 +1549,9 @@ def _promote_gate_to_archetypes(
     source_gate_path: Optional[str] = None,
     df: Optional[pd.DataFrame] = None,
     min_combined_pass_rate: float = 0.05,
+    stat_fallback_on_empty: bool = True,
+    stat_fallback_max_rules: int = 3,
+    stat_fallback_min_source_features: int = 2,
 ) -> None:
     """
     将优化后的 gate 规则写入 archetypes/gate.yaml。
@@ -1476,7 +1653,6 @@ def _promote_gate_to_archetypes(
         deduped_rules.append(rule)
     kept_rules = deduped_rules
     all_rules = prefilter_gates + kept_rules
-    config["hard_gates"] = all_rules
 
     # ── 累积 AND pass rate 模拟: 防止多条规则组合后 pass rate 过低 ──
     if df is not None and all_rules and min_combined_pass_rate > 0:
@@ -1595,7 +1771,6 @@ def _promote_gate_to_archetypes(
                     )
 
             all_rules = prefilter_gates + kept_rules
-            config["hard_gates"] = all_rules
 
             if pruned_ids:
                 removed_rules.extend(
@@ -1626,10 +1801,44 @@ def _promote_gate_to_archetypes(
             print(f"     - {rm['id']}: {rm['status']} ({rm['reason']})")
 
     if not kept_rules:
-        print(
-            f"\n  \u274c  所有规则优化失败, gate.yaml 将只含 guardrails (无 hard_gates)"
-        )
-        print(f"     建议: 检查训练数据量是否充足, 或放宽优化参数")
+        if not stat_fallback_on_empty:
+            print("\n  ℹ️  hard_gates 为空且已禁用统计兜底，跳过 fallback")
+        else:
+            print(f"\n  ⚠️  所有树规则优化失败，尝试统计法兜底生成 gate ...")
+            if df is not None:
+                stat_fallback_rules = _build_stat_fallback_rules(
+                    df=df,
+                    source_hard_gates=hard_gates,
+                    max_rules=stat_fallback_max_rules,
+                    min_source_features=stat_fallback_min_source_features,
+                )
+                if stat_fallback_rules:
+                    kept_rules = stat_fallback_rules
+                    print(
+                        f"  ✅ 统计兜底成功: 生成 {len(stat_fallback_rules)} 条 hard_gate"
+                    )
+                else:
+                    print(
+                        f"  ❌ 统计兜底未生成规则, gate.yaml 将只含 guardrails/system_safety"
+                    )
+            else:
+                print(
+                    f"  ❌ 无 DataFrame，无法执行统计兜底, gate.yaml 将只含 guardrails/system_safety"
+                )
+
+    # ── 单文件 phase 化: system_safety vs hard_gate ──
+    safety_rules: List[Dict[str, Any]] = []
+    archetype_rules: List[Dict[str, Any]] = []
+    for rule in kept_rules:
+        rule_phase = "system_safety" if _is_system_safety_rule(rule) else "hard_gate"
+        rule["phase"] = rule_phase
+        if rule_phase == "system_safety":
+            safety_rules.append(rule)
+        else:
+            archetype_rules.append(rule)
+
+    config["system_safety"] = safety_rules
+    config["hard_gates"] = archetype_rules
 
     # 写入 archetypes/gate.yaml
     n_total = len(hard_gates)
@@ -1637,7 +1846,8 @@ def _promote_gate_to_archetypes(
         f"# {strategy.upper()} Gate (optimized, auto-promoted)\n"
         f"# 来源: {source}\n"
         f"# 优化规则: {updated_count}/{n_total} 条通过优化"
-        f"{f', {len(removed_rules)} 条已移除' if removed_rules else ''}\n\n"
+        f"{f', {len(removed_rules)} 条已移除' if removed_rules else ''}\n"
+        f"# Phase split: system_safety={len(safety_rules)}, hard_gate={len(archetype_rules)}\n\n"
     )
     yaml_content = yaml.dump(
         config,
@@ -1649,7 +1859,8 @@ def _promote_gate_to_archetypes(
     target_path.write_text(header + yaml_content, encoding="utf-8")
     print(
         f"\n\U0001f4e6 Promoted to {target_path} ({updated_count} thresholds updated, "
-        f"{len(kept_rules)} rules kept, {len(removed_rules)} removed)"
+        f"{len(kept_rules)} rules kept, {len(removed_rules)} removed, "
+        f"safety={len(safety_rules)}, archetype={len(archetype_rules)})"
     )
 
 
@@ -1761,6 +1972,31 @@ def main() -> int:
         type=str,
         default=None,
         help="Only use data before this date for optimization (IS cutoff, avoid OOS lookahead)",
+    )
+    parser.add_argument(
+        "--stat-fallback-on-empty",
+        dest="stat_fallback_on_empty",
+        action="store_true",
+        help="当 hard_gates 为空时启用统计法 fallback（默认开启）",
+    )
+    parser.add_argument(
+        "--no-stat-fallback-on-empty",
+        dest="stat_fallback_on_empty",
+        action="store_false",
+        help="禁用 hard_gates 为空时的统计法 fallback",
+    )
+    parser.set_defaults(stat_fallback_on_empty=True)
+    parser.add_argument(
+        "--stat-fallback-max-rules",
+        type=int,
+        default=3,
+        help="统计法 fallback 最多生成的 hard_gate 数",
+    )
+    parser.add_argument(
+        "--stat-fallback-min-source-features",
+        type=int,
+        default=2,
+        help="统计法 fallback 的最小 source gate 特征数",
     )
     args = parser.parse_args()
 
@@ -2043,6 +2279,9 @@ def main() -> int:
             args.gate_path,
             df=df,
             min_combined_pass_rate=args.min_combined_pass_rate,
+            stat_fallback_on_empty=args.stat_fallback_on_empty,
+            stat_fallback_max_rules=args.stat_fallback_max_rules,
+            stat_fallback_min_source_features=args.stat_fallback_min_source_features,
         )
 
     return 0
