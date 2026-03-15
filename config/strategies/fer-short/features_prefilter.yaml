@@ -35,12 +35,6 @@ feature_pipeline:
     # → vp_poc_deviation, vp_lv_ratio (流动性真空结构)
     - volume_profile_volatility_features_f
 
-    # ========== 触发信号: 影线拒绝 + 极值距离 ==========
-    # → wick_upper_ratio, wick_lower_ratio (影线拒绝 = 止损猎杀/失败信号)
-    - wick_ratios_f
-    # → bars_since_local_high/low (swing 距离, 值小=刚在极值处失败)
-    - bars_since_extreme_f
-
     # ========== 场景语义 (FER 相关, 非订单流) ==========
     # Wick 力竭场景语义（价格行为）
     - wick_scene_semantic_scores_f

@@ -1,7 +1,7 @@
 # FER-SHORT Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer-short/20260315_171829/strategies/fer-short/gate_draft.yaml
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer-short/20260315_203309/strategies/fer-short/gate_draft.yaml
 # 优化规则: 0/5 条通过优化, 5 条已移除
-# Phase split: system_safety=3, hard_gate=0
+# Phase split: system_safety=1, hard_gate=2
 
 schema:
   phases:
@@ -13,42 +13,42 @@ schema:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
-hard_gates: []
-guardrails: []
-system_safety:
-- id: gate_stat_evt_var_99
+hard_gates:
+- id: gate_stat_wpt_breakout_confidence_wpt_breakout_confidence
   tag: HARD_STAT_1
-  phase: system_safety
+  phase: hard_gate
   priority: 20
   reason: 统计法兜底规则（tree gate 为空）
   when:
-    evt_var_99:
-      value_gt: 0.9087
+    all_of:
+    - wpt_breakout_confidence:
+        value_gt: 0.4877
+    - wpt_breakout_confidence:
+        value_lt: 0.5514
   then:
     action: deny
-  comment: stat_fallback gate_score=0.299, tail_capture=0.348, good_deny=0.049
-- id: gate_stat_evt_scale_right_evt_scale_right
+  comment: stat_fallback gate_score=0.143, tail_capture=0.348, good_deny=0.206
+- id: gate_stat_hilbert_cvd_price_env_ratio
   tag: HARD_STAT_2
-  phase: system_safety
+  phase: hard_gate
   priority: 21
   reason: 统计法兜底规则（tree gate 为空）
   when:
-    all_of:
-    - evt_scale_right:
-        value_gt: 0.2895
-    - evt_scale_right:
-        value_lt: 0.6429
+    hilbert_cvd_price_env_ratio:
+      value_gt: -0.3882
   then:
     action: deny
-  comment: stat_fallback gate_score=0.212, tail_capture=0.447, good_deny=0.235
-- id: gate_stat_vol_leverage_asymmetry
+  comment: stat_fallback gate_score=0.075, tail_capture=0.902, good_deny=0.827
+guardrails: []
+system_safety:
+- id: gate_stat_evt_tail_shape_right
   tag: HARD_STAT_3
   phase: system_safety
   priority: 22
   reason: 统计法兜底规则（tree gate 为空）
   when:
-    vol_leverage_asymmetry:
-      value_gt: 0.1154
+    evt_tail_shape_right:
+      value_gt: 0.2681
   then:
     action: deny
-  comment: stat_fallback gate_score=0.130, tail_capture=0.591, good_deny=0.461
+  comment: stat_fallback gate_score=0.075, tail_capture=0.902, good_deny=0.827

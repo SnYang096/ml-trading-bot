@@ -47,4 +47,8 @@ feature_pipeline:
     - vpin_zscore_x_trade_cluster_max_buy_run_rank_f
     - vpin_x_trade_cluster_entropy_rank_f
 
-
+    # ========== 触发信号: 影线拒绝 + 极值距离 ==========
+    # → wick_upper_ratio, wick_lower_ratio (影线拒绝 = 止损猎杀/失败信号)
+    - wick_ratios_f
+    # → bars_since_local_high/low (swing 距离, 值小=刚在极值处失败)
+    - bars_since_extreme_f

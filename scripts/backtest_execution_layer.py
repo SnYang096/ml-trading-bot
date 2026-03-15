@@ -1996,6 +1996,48 @@ def _generate_trading_map_html(
                 _norm_ts_str(ts): seq
                 for ts, seq in zip(sym_df[ts_col_local].values, sym_df["_seq"].values)
             }
+            # 对非对齐时间戳（如 1min 退出时刻）做 floor 映射，避免点位跑到K线范围外
+            _bar_ts_ns = (
+                pd.to_datetime(sym_df[ts_col_local], utc=True)
+                .astype("int64")
+                .to_numpy()
+            )
+
+            def _seq_from_ts_floor(ts_val) -> Optional[int]:
+                try:
+                    t = pd.Timestamp(ts_val)
+                    if t.tzinfo is None:
+                        t = t.tz_localize("UTC")
+                    else:
+                        t = t.tz_convert("UTC")
+                    t_ns = int(t.value)
+                except Exception:
+                    return None
+                if len(_bar_ts_ns) == 0:
+                    return None
+                pos = int(np.searchsorted(_bar_ts_ns, t_ns, side="right") - 1)
+                if pos < 0:
+                    pos = 0
+                if pos >= len(_bar_ts_ns):
+                    pos = len(_bar_ts_ns) - 1
+                return pos
+
+            def _clamp_price_to_bar(
+                seq_idx: int, price_val: float
+            ) -> Tuple[float, bool]:
+                """Clamp price to the bar [low, high] range for visual consistency."""
+                try:
+                    row = sym_df.iloc[int(seq_idx)]
+                    low_v = float(row["low"])
+                    high_v = float(row["high"])
+                    p = float(price_val)
+                    if p < low_v:
+                        return low_v, True
+                    if p > high_v:
+                        return high_v, True
+                    return p, False
+                except Exception:
+                    return float(price_val), False
 
             inc = sym_df["close"] >= sym_df["open"]
             dec = ~inc
@@ -2074,9 +2116,13 @@ def _generate_trading_map_html(
                 if t.get("entry_ts_ns"):
                     _eq = pd.Timestamp(t["entry_ts_ns"], unit="ns").tz_localize(None)
                     entry_seq = ts_str_to_seq.get(str(_eq))
+                    if entry_seq is None:
+                        entry_seq = _seq_from_ts_floor(_eq)
                 if t.get("exit_ts_ns"):
                     _xq = pd.Timestamp(t["exit_ts_ns"], unit="ns").tz_localize(None)
                     exit_seq = ts_str_to_seq.get(str(_xq))
+                    if exit_seq is None:
+                        exit_seq = _seq_from_ts_floor(_xq)
                 # fallback: 用 entry_idx/exit_idx 回查时间（兼容旧 trade_details）
                 if entry_seq is None or exit_seq is None:
                     try:
@@ -2094,6 +2140,10 @@ def _generate_trading_map_html(
                         if exit_seq is not None
                         else ts_str_to_seq.get(exit_ts_str)
                     )
+                    if entry_seq is None:
+                        entry_seq = _seq_from_ts_floor(df.loc[t["entry_idx"], ts_col])
+                    if exit_seq is None:
+                        exit_seq = _seq_from_ts_floor(df.loc[t["exit_idx"], ts_col])
                 if entry_seq is None or exit_seq is None:
                     continue
 
@@ -2104,12 +2154,28 @@ def _generate_trading_map_html(
                 d_str = "L" if is_long else "S"
                 arch = t.get("archetype", "")
                 arch_tag = f" [{arch.upper()}]" if arch else ""
-                hover_text = f"{d_str} R={rr:+.2f} ({t['exit_reason']}){arch_tag}"
+                entry_price_plot, entry_clamped = _clamp_price_to_bar(
+                    entry_seq, t["entry_price"]
+                )
+                exit_price_plot, exit_clamped = _clamp_price_to_bar(
+                    exit_seq, t["exit_price"]
+                )
+                clamp_tag = ""
+                if entry_clamped or exit_clamped:
+                    parts = []
+                    if entry_clamped:
+                        parts.append("entry")
+                    if exit_clamped:
+                        parts.append("exit")
+                    clamp_tag = f" [clamped:{'/'.join(parts)}]"
+                hover_text = (
+                    f"{d_str} R={rr:+.2f} ({t['exit_reason']}){arch_tag}{clamp_tag}"
+                )
 
                 line_color = _WIN_COLOR if is_win else _LOSS_COLOR
                 p.line(
                     [entry_seq, exit_seq],
-                    [t["entry_price"], t["exit_price"]],
+                    [entry_price_plot, exit_price_plot],
                     line_dash="dotted",
                     line_color=line_color,
                     line_width=1,
@@ -2118,13 +2184,13 @@ def _generate_trading_map_html(
 
                 key = f"{'long' if is_long else 'short'}_{'win' if is_win else 'loss'}"
                 groups[key]["x"].append(entry_seq)
-                groups[key]["y"].append(t["entry_price"])
+                groups[key]["y"].append(entry_price_plot)
                 groups[key]["info"].append(hover_text)
 
                 # 出场圆 (exit_seq, exit_price)
                 exit_key = "win" if is_win else "loss"
                 exit_groups[exit_key]["x"].append(exit_seq)
-                exit_groups[exit_key]["y"].append(t["exit_price"])
+                exit_groups[exit_key]["y"].append(exit_price_plot)
                 exit_groups[exit_key]["info"].append(hover_text)
 
             n_total = sum(len(g["x"]) for g in groups.values())
@@ -2291,12 +2357,16 @@ def _generate_trading_map_html(
                 if t.get("entry_ts_ns"):
                     _eq = pd.Timestamp(t["entry_ts_ns"], unit="ns").tz_localize(None)
                     t_seq = ts_str_to_seq.get(str(_eq))
+                    if t_seq is None:
+                        t_seq = _seq_from_ts_floor(_eq)
                 if t_seq is None:
                     try:
                         t_ts_str = _norm_ts_str(df.loc[t["entry_idx"], ts_col])
                         t_seq = ts_str_to_seq.get(t_ts_str)
                     except KeyError:
                         continue
+                if t_seq is None:
+                    t_seq = _seq_from_ts_floor(df.loc[t["entry_idx"], ts_col])
                 if t_seq is None:
                     continue
                 rr = t["realized_rr"]
