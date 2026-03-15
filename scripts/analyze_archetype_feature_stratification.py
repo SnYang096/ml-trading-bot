@@ -3463,17 +3463,6 @@ def main() -> int:
     parser.add_argument(
         "--strategy",
         required=True,
-        choices=[
-            "bpc",
-            "bpc-long",
-            "bpc-short",
-            "me-long",
-            "me-short",
-            "fer",
-            "fer-long",
-            "fer-short",
-            "lv",
-        ],
         help="策略名称",
     )
     parser.add_argument(

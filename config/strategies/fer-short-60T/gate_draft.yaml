@@ -1,0 +1,83 @@
+# FER-SHORT-60T Gate Draft (auto-generated)
+# 来源: results/train_final_20260316_005017_rr_extreme/fer-short-60T
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy fer-short-60T
+#   python scripts/optimize_gate_unified.py --strategy fer-short-60T --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_evt_tail_shape
+  tag: HARD_EVT_TAIL_SHAPE
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.21)
+  when:
+    evt_tail_shape:
+      value_gt: 0.8929
+  then:
+    action: deny
+  comment: 'statistical(lift=1.21): evt_tail_shape > 0.8929'
+- id: gate_evt_es_99_right_evt_es_99_right
+  tag: HARD_EVT_ES_99_RIGHT_EVT_ES_99_RIGHT
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.36)
+  when:
+    all_of:
+    - evt_es_99_right:
+        value_gt: 0.0754
+    - evt_es_99_right:
+        value_lt: 0.1746
+  then:
+    action: deny
+  comment: 'statistical(lift=1.36): evt_es_99_right > 0.0754 & evt_es_99_right < 0.1746'
+- id: gate_evt_var_99_right_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.30)
+  when:
+    all_of:
+    - evt_var_99_right:
+        value_gt: 0.0635
+    - evt_var_99_right:
+        value_lt: 0.1587
+  then:
+    action: deny
+  comment: 'statistical(lift=1.30): evt_var_99_right > 0.06349 & evt_var_99_right < 0.1587'
+- id: gate_vpin_ma20
+  tag: HARD_VPIN_MA20
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.14)
+  when:
+    vpin_ma20:
+      value_gt: 0.3209
+  then:
+    action: deny
+  comment: 'statistical(lift=1.14): vpin_ma20 > 0.3209'
+- id: gate_fer_signed_efficiency_fer_signed_efficiency
+  tag: HARD_FER_SIGNED_EFFICIENCY_FER_SIGNED_EFFICIENCY
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.05)
+  when:
+    all_of:
+    - fer_signed_efficiency:
+        value_gt: 0.0
+    - fer_signed_efficiency:
+        value_lt: 0.0008
+  then:
+    action: deny
+  comment: 'statistical(lift=1.05): fer_signed_efficiency > 2.394e-06 & fer_signed_efficiency < 0.0007727'
+guardrails: []

@@ -1,4 +1,4 @@
-﻿# 快速启动命令 — 研究 Pipeline 工作流
+# 快速启动命令 — 研究 Pipeline 工作流
 
 > 更新时间: 2026-03-10  
 > 策略: bpc-long, bpc-short, fer-long, fer-short, me-long, me-short, lv（共 7 策略）  
@@ -65,6 +65,14 @@ mlbot feature-store build --no-docker \
   --universe-config config/download/crypto_4h_token_universe_groups.yaml \
   --universe-groups highcap \
   --timeframe 240T \
+  --start-date 2023-01-01 --end-date 2026-03-01 \
+  --warmup-months 6
+
+mlbot feature-store build --no-docker \
+  --config config/strategies/fer-short \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-groups highcap \
+  --timeframe 60T \
   --start-date 2023-01-01 --end-date 2026-03-01 \
   --warmup-months 6
 
@@ -138,7 +146,7 @@ mlbot pipeline run --strategy fer-long --skip-shap
 # 快速验证 prefilter 多算法效果	✅ 跳过，节省时间
 
 
-mlbot pipeline run --strategy fer-short 
+mlbot pipeline run --strategy fer-short-60T 
 
 # 精细模式（1min bar 执行层）
 mlbot pipeline run --strategy bpc-long --use-1min
@@ -453,3 +461,211 @@ results/research_history/
             ├── trading_map_{strategy}.html
             └── trading_map_{strategy}_exec.html
 ```
+
+# 滚动测试 先用 6,3 做滚动多窗口验证 要怎么做
+
+可以按下面这个最小流程做，不改代码、只用现有命令。
+
+1) 固定配置不动
+先确认 config/research_pipeline.yaml 里就是：
+
+holdout_months: 6
+validation_months: 3
+并且暂时不要再改其他策略参数（保证实验可比）。
+
+2) 选一组滚动 end-date
+建议先跑 6 个窗口（每月一个）：
+
+2025-10-01
+2025-11-01
+2025-12-01
+2026-01-01
+2026-02-01
+2026-03-01
+3) 批量运行（关键：加 --no-adopt）
+这样每次只产实验结果，不覆盖生产配置。
+```bash
+for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
+  mlbot pipeline run --strategy fer-short --end-date "$d" --no-adopt
+done
+```
+4) 看每个窗口结果
+先快速看列表：
+
+python scripts/auto_research_pipeline.py --strategy fer-short --list
+再做一次聚合（看中位数/稳定性）：
+
+```bash
+python - <<'PY'
+import json, pathlib, statistics
+root = pathlib.Path("results/research_history/fer-short")
+rows = []
+for d in sorted([p for p in root.iterdir() if p.is_dir()])[-20:]:
+    rp = d / "report.json"
+    if not rp.exists(): 
+        continue
+    r = json.loads(rp.read_text())
+    bt = r.get("backtest_metrics", {})
+    rows.append((d.name, bt.get("sharpe_per_trade"), bt.get("total_trades")))
+rows = [x for x in rows if x[1] is not None and x[2] is not None]
+print("\n".join(f"{t}  sharpe={s:.4f}  trades={n}" for t,s,n in rows))
+if rows:
+    ss = [x[1] for x in rows]
+    nn = [x[2] for x in rows]
+    print(f"\nmedian_sharpe={statistics.median(ss):.4f}")
+    print(f"positive_ratio={sum(s>0 for s in ss)/len(ss):.1%}")
+    print(f"median_trades={statistics.median(nn):.1f}")
+PY
+```
+5) 决策标准（建议）
+median_sharpe > 0
+positive_ratio >= 70%
+median_trades >= 80（你可按 FER 调成 60/100）
+如果这三条达标，再考虑进入 deploy；不达标再讨论 1H 分支实验。
+
+## 稳定性实验
+配置
+dates:
+  start_date: "2024-01-01" # Regime窗口起点: 覆盖2024牛市+震荡+2025熊市转换, 贴近当前市场
+  # start_date: "2023-01-01"   # 全量历史模式 (备用)
+  holdout_months: 6 # OOS 总窗口 (Val + Test)
+  validation_months: 3 # OOS 前 N 个月用于 Gate 调阈值; 剩余 = 纯 Test (0=不分离)
+
+20260315_161028  sharpe=0.0000  trades=0
+20260315_162206  sharpe=0.0000  trades=0
+20260315_162746  sharpe=0.9421  trades=164
+20260315_165506  sharpe=0.1246  trades=954
+20260315_165921  sharpe=0.0000  trades=0
+20260315_170111  sharpe=0.0486  trades=559
+20260315_171545  sharpe=0.0000  trades=0
+20260315_171829  sharpe=0.3623  trades=88
+20260315_191412  sharpe=0.3224  trades=21
+20260315_192607  sharpe=0.0000  trades=0
+20260315_192721  sharpe=0.3224  trades=21
+20260315_203309  sharpe=0.3224  trades=21
+20260315_204634  sharpe=0.4062  trades=62
+20260315_210402  sharpe=0.0486  trades=559
+20260315_211633  sharpe=0.6021  trades=27
+20260315_211913  sharpe=-0.0323  trades=456
+20260315_212211  sharpe=0.3410  trades=744
+20260315_212512  sharpe=0.3801  trades=1431
+20260315_212957  sharpe=0.3370  trades=182
+20260315_213324  sharpe=0.4062  trades=62
+
+median_sharpe=0.3224
+positive_ratio=70.0%
+median_trades=62.0
+
+就你贴出来这组结果看，6,3 + 4H 是“可用但不够稳”的状态。
+
+按你文档里的判定线：
+
+median_sharpe=0.3224 ✅（>0）
+positive_ratio=70.0% ✅（刚好踩线）
+median_trades=62.0
+按通用门槛 >=80 ❌
+按你给 FER 放宽门槛 >=60 ✅
+所以结论分两层：
+
+研究阶段：合理，可以继续作为主配置。
+直接 deploy 决策：偏勉强，建议先再加一层稳定性约束（比如“0 trades 窗口占比”）。
+你这批里 0 trades 的窗口不少（我数到约 5/20），说明仍有“有时能跑得很好、有时直接塌掉”的不稳定性。
+建议你把上线门槛改成 FER 专用版：
+
+median_sharpe > 0
+positive_ratio >= 70%
+median_trades >= 60
+nonzero_trade_ratio >= 80%（新增）
+这样 6,3 + 4H 就更客观了。
+
+## 我后面做12,6的滚动测试，还是加上sr约束做，还是切到1h做？什么顺序才能把头绪理清楚
+
+推荐顺序（先做什么）
+先在 4H + 6,3 上加 SR 约束（你现在主线）
+再做 4H + 12,6（同一套 SR 约束）
+最后才开 1H 分支实验（只做 FER，不要三策略一起改）
+为什么这个顺序最清晰
+你现在最大问题是“语义锚不稳”（有时追波动爆发），不是先天 timeframe 不够。
+先加 SR 约束能验证：不换频率，仅靠语义锚能不能稳住。
+如果 4H 两种窗口都稳了，就没必要急着 1H。
+如果 4H 仍不稳，再上 1H，才能明确是“频率问题”不是“语义问题”。
+具体实验矩阵（建议）
+A 组：4H + 6,3 + SR约束（滚动）
+B 组：4H + 12,6 + SR约束（滚动）
+C 组：1H + 6,3 + 同样SR约束（小规模滚动）
+每组只改一个变量，不要混着改。
+
+你该先做的下一步
+先跑 A 组。
+A 组达标后再跑 B；只有 A/B 都不理想才上 C。
+
+一句话：先“锁语义”，再“拉窗口”，最后“改频率”。
+
+## Locked 阈值调优工具（新）
+
+目标：保持 locked 语义特征不变，只调阈值；每个窗口独立跑 `Val/Test`。
+
+1) 单窗口快速扫描（先小网格）：
+
+```bash
+python scripts/tune_locked_prefilter_thresholds.py \
+  --strategy fer-short \
+  --end-dates 2026-03-01 \
+  --fer-lower-values 0.0,0.05 \
+  --fer-upper-values 0.30,0.35,0.40 \
+  --sr-min-values 0.45,0.55,0.65 \
+  --dist-max-values 0.8,1.2,1.6 \
+  --max-cases 12 \
+  --skip-shap
+```
+
+2) 多窗口滚动评分（推荐）：
+
+```bash
+python scripts/tune_locked_prefilter_thresholds.py \
+  --strategy fer-short \
+  --end-dates 2025-10-01,2025-11-01,2025-12-01,2026-01-01,2026-02-01,2026-03-01 \
+  --fer-lower-values 0.0,0.05 \
+  --fer-upper-values 0.25,0.35,0.45 \
+  --sr-min-values 0.45,0.55,0.65 \
+  --dist-max-values 0.8,1.2,1.6 \
+  --min-trades-target 60 \
+  --trade-penalty 0.002
+```
+
+输出目录：`results/locked_tuning/fer-short/<timestamp>/`
+- `summary.csv`: 每组参数的聚合分数
+- `summary.json`: 每个窗口明细（含 run_id/report 路径）
+
+3) 主管线内置自动调优（已启用，且带缓存）：
+
+- 当 `prefilter.yaml` 存在 `locked: true` 规则时，`mlbot pipeline run` 会自动触发阈值调优。
+- 同一窗口已调优过则命中缓存并跳过调优（cache：`results/locked_tuning/cache/`）。
+- 如需临时禁用自动调优：在命令里加 `--disable-auto-locked-tuning`。
+
+
+## 先在 4H + 6,3 上加 SR 约束（你现在主线）
+20260315_210402  sharpe=0.0486  trades=559
+20260315_211633  sharpe=0.6021  trades=27
+20260315_211913  sharpe=-0.0323  trades=456
+20260315_212211  sharpe=0.3410  trades=744
+20260315_212512  sharpe=0.3801  trades=1431
+20260315_212957  sharpe=0.3370  trades=182
+20260315_213324  sharpe=0.4062  trades=62
+20260315_215416  sharpe=0.6021  trades=27
+20260315_215652  sharpe=-0.0323  trades=456
+20260315_215949  sharpe=0.3410  trades=744
+20260315_220259  sharpe=0.3801  trades=1431
+20260315_220748  sharpe=0.3370  trades=182
+20260315_221126  sharpe=0.4062  trades=62
+20260315_223236  sharpe=0.1200  trades=21
+20260315_224013  sharpe=-0.6062  trades=164
+20260315_224340  sharpe=-0.2978  trades=311
+20260315_224716  sharpe=-0.1731  trades=99
+20260315_225049  sharpe=0.4662  trades=43
+20260315_225450  sharpe=0.0199  trades=182
+20260315_225900  sharpe=0.1200  trades=21
+
+median_sharpe=0.3370
+positive_ratio=75.0%
+median_trades=182.0
