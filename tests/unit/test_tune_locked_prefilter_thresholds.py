@@ -75,3 +75,91 @@ def test_aggregate_case_with_trade_penalty():
     assert agg["median_trades"] == 50.0
     # score = 0.2 - 0.01 * (60 - 50)
     assert round(agg["score"], 6) == 0.1
+
+
+def test_apply_locked_thresholds_updates_me_rules():
+    raw = {
+        "rules": [
+            {
+                "feature": "atr_percentile",
+                "operator": ">=",
+                "value": 0.2,
+                "locked": True,
+            },
+            {
+                "feature": "atr_percentile",
+                "operator": "<=",
+                "value": 0.88,
+                "locked": True,
+            },
+            {
+                "feature": "compression_duration",
+                "operator": ">=",
+                "value": 0.03,
+                "locked": True,
+            },
+            {
+                "feature": "recent_compression_decay",
+                "operator": "<=",
+                "value": 0.35,
+                "locked": True,
+            },
+            {
+                "feature": "oi_compression_score",
+                "operator": ">=",
+                "value": 0.35,
+                "locked": True,
+            },
+        ]
+    }
+    out = apply_locked_thresholds(
+        raw,
+        atr_lower=0.25,
+        atr_upper=0.9,
+        compression_min=0.05,
+        decay_upper=0.2,
+        oi_min=0.4,
+        template="me",
+    )
+    rules = out["rules"]
+    assert rules[0]["value"] == 0.25
+    assert rules[1]["value"] == 0.9
+    assert rules[2]["value"] == 0.05
+    assert rules[3]["value"] == 0.2
+    assert rules[4]["value"] == 0.4
+
+
+def test_apply_locked_thresholds_updates_bpc_rules():
+    raw = {
+        "rules": [
+            {
+                "feature": "bpc_score_pullback",
+                "operator": ">=",
+                "value": 0.45,
+                "locked": True,
+            },
+            {
+                "feature": "bpc_pullback_depth",
+                "operator": "<=",
+                "value": 0.7,
+                "locked": True,
+            },
+            {
+                "feature": "bpc_recovery_strength",
+                "operator": ">=",
+                "value": 0.55,
+                "locked": True,
+            },
+        ]
+    }
+    out = apply_locked_thresholds(
+        raw,
+        bpc_pullback_score_min=0.5,
+        bpc_pullback_depth_max=0.6,
+        bpc_recovery_min=0.6,
+        template="bpc",
+    )
+    rules = out["rules"]
+    assert rules[0]["value"] == 0.5
+    assert rules[1]["value"] == 0.6
+    assert rules[2]["value"] == 0.6

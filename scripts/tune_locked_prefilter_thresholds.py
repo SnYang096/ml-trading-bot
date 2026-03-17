@@ -33,12 +33,33 @@ from scripts.locked_prefilter_utils import (
 
 @dataclass
 class CaseParams:
-    fer_lower: float
-    fer_upper: float
-    sr_min: float
-    dist_max: float
+    mode: str = "fer"
+    fer_lower: float = 0.0
+    fer_upper: float = 0.0
+    sr_min: float = 0.0
+    dist_max: float = 0.0
+    atr_lower: float = 0.0
+    atr_upper: float = 0.0
+    compression_min: float = 0.0
+    decay_upper: float = 0.0
+    oi_min: float = 0.0
+    bpc_pullback_score_min: float = 0.0
+    bpc_pullback_depth_max: float = 0.0
+    bpc_recovery_min: float = 0.0
 
     def key(self) -> str:
+        if self.mode == "me":
+            return (
+                f"atr[{self.atr_lower:.4g},{self.atr_upper:.4g}]_"
+                f"comp>={self.compression_min:.4g}_"
+                f"decay<={self.decay_upper:.4g}_oi>={self.oi_min:.4g}"
+            )
+        if self.mode == "bpc":
+            return (
+                f"pullback>={self.bpc_pullback_score_min:.4g}_"
+                f"depth<={self.bpc_pullback_depth_max:.4g}_"
+                f"recovery>={self.bpc_recovery_min:.4g}"
+            )
         return (
             f"fer[{self.fer_lower:.4g},{self.fer_upper:.4g}]_"
             f"sr>={self.sr_min:.4g}_dist<=±{self.dist_max:.4g}"
@@ -74,15 +95,32 @@ def list_strategy_runs(history_dir: Path, strategy: str) -> List[str]:
 def build_override_prefilter(
     prod_prefilter_path: Path, params: CaseParams, output_path: Path
 ) -> Path:
-    return build_override_prefilter_base(
-        prod_prefilter_path,
-        output_path,
-        {
+    if params.mode == "me":
+        payload = {
+            "atr_lower": params.atr_lower,
+            "atr_upper": params.atr_upper,
+            "compression_min": params.compression_min,
+            "decay_upper": params.decay_upper,
+            "oi_min": params.oi_min,
+        }
+    elif params.mode == "bpc":
+        payload = {
+            "bpc_pullback_score_min": params.bpc_pullback_score_min,
+            "bpc_pullback_depth_max": params.bpc_pullback_depth_max,
+            "bpc_recovery_min": params.bpc_recovery_min,
+        }
+    else:
+        payload = {
             "fer_lower": params.fer_lower,
             "fer_upper": params.fer_upper,
             "sr_min": params.sr_min,
             "dist_max": params.dist_max,
-        },
+        }
+    return build_override_prefilter_base(
+        prod_prefilter_path,
+        output_path,
+        payload,
+        template=params.mode,
     )
 
 
@@ -192,6 +230,12 @@ def aggregate_case(
 def main() -> int:
     p = argparse.ArgumentParser(description="Tune locked prefilter thresholds")
     p.add_argument("--strategy", default="fer-short")
+    p.add_argument(
+        "--template",
+        choices=["auto", "fer", "me", "bpc"],
+        default="auto",
+        help="locked 调优模板: auto(按 strategy 推断) / fer / me / bpc",
+    )
     p.add_argument("--config", default="config/research_pipeline.yaml")
     p.add_argument(
         "--end-dates",
@@ -202,6 +246,14 @@ def main() -> int:
     p.add_argument("--fer-upper-values", default="0.25,0.35,0.45")
     p.add_argument("--sr-min-values", default="0.45,0.55,0.65")
     p.add_argument("--dist-max-values", default="0.8,1.2,1.6")
+    p.add_argument("--atr-lower-values", default="0.15,0.25,0.35")
+    p.add_argument("--atr-upper-values", default="0.70,0.82,0.90")
+    p.add_argument("--compression-min-values", default="0.02,0.05,0.08")
+    p.add_argument("--decay-upper-values", default="0.15,0.25,0.35")
+    p.add_argument("--oi-min-values", default="0.25,0.35,0.45")
+    p.add_argument("--bpc-pullback-score-min-values", default="0.40,0.50")
+    p.add_argument("--bpc-pullback-depth-max-values", default="0.60,0.75")
+    p.add_argument("--bpc-recovery-min-values", default="0.50,0.60")
     p.add_argument("--max-cases", type=int, default=0, help="0 means all")
     p.add_argument("--min-trades-target", type=int, default=60)
     p.add_argument("--trade-penalty", type=float, default=0.002)
@@ -219,6 +271,9 @@ def main() -> int:
     scfg = (cfg.get("strategies", {}) or {}).get(args.strategy, {})
     if not scfg:
         raise SystemExit(f"unknown strategy: {args.strategy}")
+    tcfg = ((scfg.get("kpi_gates", {}) or {}).get("prefilter", {}) or {}).get(
+        "locked_threshold_tuning", {}
+    ) or {}
 
     prod_cfg_dir = PROJECT_ROOT / scfg["config"]
     prod_prefilter = prod_cfg_dir / "archetypes" / "prefilter.yaml"
@@ -239,21 +294,109 @@ def main() -> int:
         # Empty means let pipeline auto-detect latest end date once.
         end_dates = [""]
 
-    fer_lows = parse_float_list(args.fer_lower_values)
-    fer_ups = parse_float_list(args.fer_upper_values)
-    sr_mins = parse_float_list(args.sr_min_values)
-    dist_maxs = parse_float_list(args.dist_max_values)
+    template = args.template
+    if template == "auto":
+        if args.strategy.startswith("me-"):
+            template = "me"
+        elif args.strategy.startswith("bpc-"):
+            template = "bpc"
+        else:
+            template = "fer"
 
     cases: List[CaseParams] = []
-    for lo, hi, sr, dist in itertools.product(fer_lows, fer_ups, sr_mins, dist_maxs):
-        if lo > hi:
-            continue
-        cases.append(CaseParams(fer_lower=lo, fer_upper=hi, sr_min=sr, dist_max=dist))
+    if template == "me":
+        atr_lows = parse_float_list(
+            str(tcfg.get("atr_lower_values", args.atr_lower_values))
+        )
+        atr_ups = parse_float_list(
+            str(tcfg.get("atr_upper_values", args.atr_upper_values))
+        )
+        comp_mins = parse_float_list(
+            str(tcfg.get("compression_min_values", args.compression_min_values))
+        )
+        decay_ups = parse_float_list(
+            str(tcfg.get("decay_upper_values", args.decay_upper_values))
+        )
+        oi_mins = parse_float_list(str(tcfg.get("oi_min_values", args.oi_min_values)))
+        for lo, hi, comp, dec, oi in itertools.product(
+            atr_lows, atr_ups, comp_mins, decay_ups, oi_mins
+        ):
+            if lo > hi:
+                continue
+            cases.append(
+                CaseParams(
+                    mode="me",
+                    atr_lower=lo,
+                    atr_upper=hi,
+                    compression_min=comp,
+                    decay_upper=dec,
+                    oi_min=oi,
+                )
+            )
+    elif template == "bpc":
+        pullback_mins = parse_float_list(
+            str(
+                tcfg.get(
+                    "bpc_pullback_score_min_values", args.bpc_pullback_score_min_values
+                )
+            )
+        )
+        depth_maxs = parse_float_list(
+            str(
+                tcfg.get(
+                    "bpc_pullback_depth_max_values", args.bpc_pullback_depth_max_values
+                )
+            )
+        )
+        recovery_mins = parse_float_list(
+            str(tcfg.get("bpc_recovery_min_values", args.bpc_recovery_min_values))
+        )
+        for pb, dep, rec in itertools.product(pullback_mins, depth_maxs, recovery_mins):
+            cases.append(
+                CaseParams(
+                    mode="bpc",
+                    bpc_pullback_score_min=pb,
+                    bpc_pullback_depth_max=dep,
+                    bpc_recovery_min=rec,
+                )
+            )
+    else:
+        fer_lows = parse_float_list(
+            str(tcfg.get("fer_lower_values", args.fer_lower_values))
+        )
+        fer_ups = parse_float_list(
+            str(tcfg.get("fer_upper_values", args.fer_upper_values))
+        )
+        sr_mins = parse_float_list(str(tcfg.get("sr_min_values", args.sr_min_values)))
+        dist_maxs = parse_float_list(
+            str(tcfg.get("dist_max_values", args.dist_max_values))
+        )
+        for lo, hi, sr, dist in itertools.product(
+            fer_lows, fer_ups, sr_mins, dist_maxs
+        ):
+            if lo > hi:
+                continue
+            cases.append(
+                CaseParams(
+                    mode="fer",
+                    fer_lower=lo,
+                    fer_upper=hi,
+                    sr_min=sr,
+                    dist_max=dist,
+                )
+            )
     if args.max_cases > 0:
         cases = cases[: args.max_cases]
+    elif int(tcfg.get("max_cases", 0) or 0) > 0:
+        cases = cases[: int(tcfg.get("max_cases", 0))]
+
+    min_trades_target = int(tcfg.get("min_trades_target", args.min_trades_target))
+    trade_penalty = float(tcfg.get("trade_penalty", args.trade_penalty))
 
     print("=" * 90)
-    print(f"🔬 Locked Prefilter Threshold Tuning: {args.strategy}")
+    print(
+        f"🔬 Locked Prefilter Threshold Tuning: {args.strategy} (template={template})"
+    )
     print(f"Cases={len(cases)}, Windows={len(end_dates)}, dry_run={args.dry_run}")
     print("=" * 90)
 
@@ -293,15 +436,24 @@ def main() -> int:
 
         agg = aggregate_case(
             per_window,
-            min_trades_target=args.min_trades_target,
-            trade_penalty=args.trade_penalty,
+            min_trades_target=min_trades_target,
+            trade_penalty=trade_penalty,
         )
         row = {
             "case_id": idx,
+            "mode": case.mode,
             "fer_lower": case.fer_lower,
             "fer_upper": case.fer_upper,
             "sr_min": case.sr_min,
             "dist_max": case.dist_max,
+            "atr_lower": case.atr_lower,
+            "atr_upper": case.atr_upper,
+            "compression_min": case.compression_min,
+            "decay_upper": case.decay_upper,
+            "oi_min": case.oi_min,
+            "bpc_pullback_score_min": case.bpc_pullback_score_min,
+            "bpc_pullback_depth_max": case.bpc_pullback_depth_max,
+            "bpc_recovery_min": case.bpc_recovery_min,
             **agg,
             "windows": per_window,
         }
@@ -320,9 +472,10 @@ def main() -> int:
                 "strategy": args.strategy,
                 "config": str(cfg_path),
                 "end_dates": end_dates,
-                "min_trades_target": args.min_trades_target,
-                "trade_penalty": args.trade_penalty,
+                "min_trades_target": min_trades_target,
+                "trade_penalty": trade_penalty,
                 "rows": summary_rows,
+                "template": template,
             },
             ensure_ascii=False,
             indent=2,
@@ -336,10 +489,19 @@ def main() -> int:
         w.writerow(
             [
                 "case_id",
+                "mode",
                 "fer_lower",
                 "fer_upper",
                 "sr_min",
                 "dist_max",
+                "atr_lower",
+                "atr_upper",
+                "compression_min",
+                "decay_upper",
+                "oi_min",
+                "bpc_pullback_score_min",
+                "bpc_pullback_depth_max",
+                "bpc_recovery_min",
                 "score",
                 "median_sharpe",
                 "positive_ratio",
@@ -351,10 +513,19 @@ def main() -> int:
             w.writerow(
                 [
                     r["case_id"],
+                    r["mode"],
                     r["fer_lower"],
                     r["fer_upper"],
                     r["sr_min"],
                     r["dist_max"],
+                    r["atr_lower"],
+                    r["atr_upper"],
+                    r["compression_min"],
+                    r["decay_upper"],
+                    r["oi_min"],
+                    r["bpc_pullback_score_min"],
+                    r["bpc_pullback_depth_max"],
+                    r["bpc_recovery_min"],
                     r["score"],
                     r["median_sharpe"],
                     r["positive_ratio"],
@@ -365,10 +536,27 @@ def main() -> int:
 
     print("\nTop 5 cases:")
     for i, r in enumerate(summary_rows[:5], 1):
+        if r["mode"] == "me":
+            param_desc = (
+                f"atr=[{r['atr_lower']:.3g},{r['atr_upper']:.3g}] "
+                f"comp>={r['compression_min']:.3g} "
+                f"decay<={r['decay_upper']:.3g} oi>={r['oi_min']:.3g}"
+            )
+        elif r["mode"] == "bpc":
+            param_desc = (
+                f"pullback>={r['bpc_pullback_score_min']:.3g} "
+                f"depth<={r['bpc_pullback_depth_max']:.3g} "
+                f"recovery>={r['bpc_recovery_min']:.3g}"
+            )
+        else:
+            param_desc = (
+                f"fer=[{r['fer_lower']:.3g},{r['fer_upper']:.3g}] "
+                f"sr>={r['sr_min']:.3g} dist<=±{r['dist_max']:.3g}"
+            )
         print(
             f"  {i}. case={r['case_id']:03d} score={r['score']:+.4f} "
             f"sharpe={r['median_sharpe']:+.4f} trades={r['median_trades']:.1f} "
-            f"fer=[{r['fer_lower']:.3g},{r['fer_upper']:.3g}] sr>={r['sr_min']:.3g} dist<=±{r['dist_max']:.3g}"
+            f"{param_desc}"
         )
 
     print(f"\n✅ Saved: {summary_json}")

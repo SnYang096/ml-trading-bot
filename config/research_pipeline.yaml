@@ -53,7 +53,33 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 10
-        scoring_method: lift # (默认) — BPC/FER 用 KS 分布差异检验, positive_rr 为 ME 专用
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: true
+          mode: auto_if_locked
+          skip_if_cached: true
+          max_cases: 20
+          min_trades_target: 50
+          trade_penalty: 0.002
+          bpc_pullback_score_min_values: "0.40,0.50"
+          bpc_pullback_depth_max_values: "0.60,0.75"
+          bpc_recovery_min_values: "0.50,0.60"
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+      entry_filter:
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
@@ -77,7 +103,33 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 10
-        scoring_method: ks # (默认) — BPC/FER 用 KS 分布差异检验, positive_rr 为 ME 专用
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: true
+          mode: auto_if_locked
+          skip_if_cached: true
+          max_cases: 20
+          min_trades_target: 50
+          trade_penalty: 0.002
+          bpc_pullback_score_min_values: "0.40,0.50"
+          bpc_pullback_depth_max_values: "0.60,0.75"
+          bpc_recovery_min_values: "0.50,0.60"
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+      entry_filter:
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
@@ -101,12 +153,37 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 300
-        scoring_method_fallbacks: ks
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: true
+          mode: auto_if_locked
+          skip_if_cached: true
+          max_cases: 20
+          min_trades_target: 60
+          trade_penalty: 0.002
+          fer_lower_values: "0.0,0.05"
+          fer_upper_values: "0.25,0.35,0.45"
+          sr_min_values: "0.45,0.55,0.65"
+          dist_max_values: "0.8,1.2,1.6"
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
       entry_filter:
-        scoring_method_fallbacks: [uplift, ks, t_test]
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
       backtest:
         min_trades: 10
       deploy:
@@ -224,6 +301,60 @@ strategies:
       tp_r: 4.0
       timeout_bars: 60
 
+  fer-short-120T:
+    config: config/strategies/fer-short-120T
+    timeframe: "120T"
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.05
+        min_rows: 300
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: true
+          mode: auto_if_locked
+          skip_if_cached: true
+          max_cases: 20
+          min_trades_target: 60
+          trade_penalty: 0.002
+          fer_lower_values: "0.0,0.05"
+          fer_upper_values: "0.25,0.35,0.45"
+          sr_min_values: "0.45,0.55,0.65"
+          dist_max_values: "0.8,1.2,1.6"
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
+        stat_fallback_on_empty: true
+        stat_fallback_max_rules: 3
+        stat_fallback_min_source_features: 2
+      entry_filter:
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+      backtest:
+        min_trades: 10
+      deploy:
+        min_trades: 10
+    simple_execution:
+      sl_r: 2.0
+      tp_r: 4.0
+      timeout_bars: 120
+
   me-long:
     config: config/strategies/me-long
     timeframe: "60T"
@@ -235,11 +366,39 @@ strategies:
       prefilter:
         min_pass_rate: 0.05 # ME 高选择性 archetype, 允许低通过率 (50 trades 高 Sharpe 是目标)
         min_rows: 200
-        scoring_method: positive_rr # bad_rate_lift 在 ME 上 uplift=+3.22 vs positive_rr 的 +0.53
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: true
+          mode: auto_if_locked
+          skip_if_cached: true
+          max_cases: 20
+          min_trades_target: 50
+          trade_penalty: 0.002
+          atr_lower_values: "0.45,0.55,0.65"
+          atr_upper_values: "0.82,0.90,0.95"
+          compression_min_values: "0.05,0.08,0.12"
+          decay_upper_values: "0.10,0.18,0.28"
+          oi_min_values: "0.30,0.40,0.50"
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
         deny_rate_max: 0.97 # ME 窄 range 模式 deny_rate~93-97%, 需放宽全局默认 0.90
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
+      entry_filter:
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
       backtest:
         min_trades: 50
       deploy:
@@ -259,11 +418,39 @@ strategies:
       prefilter:
         min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
-        scoring_method: positive_rr # 与 ME 保持一致
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: true
+          mode: auto_if_locked
+          skip_if_cached: true
+          max_cases: 20
+          min_trades_target: 50
+          trade_penalty: 0.002
+          atr_lower_values: "0.70,0.78,0.85"
+          atr_upper_values: "0.88,0.92"
+          compression_min_values: "0.05,0.08,0.12"
+          decay_upper_values: "0.08,0.15,0.22"
+          oi_min_values: "0.35,0.45,0.55"
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
         deny_rate_max: 0.97 # 与 ME 保持一致
       gate:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
+      entry_filter:
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
       backtest:
         min_trades: 50
       deploy:

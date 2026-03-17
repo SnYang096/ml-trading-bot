@@ -44,6 +44,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -64,13 +65,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.stat_method_registry import standardize_method_list
 from scripts.locked_prefilter_utils import (
-    build_override_prefilter,
     load_locked_prefilter_rules,
     merge_locked_prefilter_rules,
-)
-from scripts.pipeline_steps.filter_stages import (
-    run_entry_filter_stage,
-    run_prefilter_scan_stage,
 )
 
 # ====================================================================
@@ -548,46 +544,7 @@ def run_data_download(
     sd = datetime.strptime(start_date, "%Y-%m-%d")
     ed = datetime.strptime(end_date, "%Y-%m-%d")
 
-    # 优先走 universe 下载链路（与 A快速启动命令一致）
-    ug = cfg.get("universe_group")
-    if isinstance(ug, dict) and ug.get("file") and ug.get("group"):
-        ug_file = str(ug.get("file"))
-        ug_set = str(ug.get("universe_set", "starter_a"))
-        ug_group = str(ug.get("group"))
-        rc, _ = run_step(
-            "Data Download",
-            [
-                "mlbot",
-                "data",
-                "pipeline-universe",
-                "--no-docker",
-                "--universe-config",
-                ug_file,
-                "--universe-set",
-                ug_set,
-                "--universe-groups",
-                ug_group,
-                "--start-year",
-                str(sd.year),
-                "--start-month",
-                str(sd.month),
-                "--end-year",
-                str(ed.year),
-                "--end-month",
-                str(ed.month),
-                "--data-dir",
-                data_dir,
-                "--parquet-dir",
-                parquet_dir,
-            ],
-            log,
-            dry_run=dry_run,
-        )
-        if rc != 0 and not dry_run:
-            print("  ⚠️  universe 下载链路失败, 尝试继续使用本地数据...")
-        return 0
-
-    # fallback: 无 universe_group 时，使用 symbols 下载 + convert
+    # Step 0a: Download
     rc, _ = run_step(
         "Data Download",
         [
@@ -596,7 +553,7 @@ def run_data_download(
             "download",
             "--no-docker",
             "--symbols",
-            symbols,
+            *[s.strip() for s in symbols.split(",")],
             "--start-year",
             str(sd.year),
             "--start-month",
@@ -617,6 +574,7 @@ def run_data_download(
     if rc != 0 and not dry_run:
         print("  ⚠️  下载步骤失败, 尝试继续使用本地数据...")
 
+    # Step 0b: Convert (ZIP → Parquet, 增量)
     rc, _ = run_step(
         "Data Convert",
         [
@@ -639,163 +597,137 @@ def run_data_download(
     return 0  # 不中断流水线, 即使下载失败也尝试用本地数据
 
 
-def _cleanup_prefilter_method_files(arch_dir: Path) -> int:
-    """默认清理 prefilter 方法快照，仅保留 prefilter.yaml."""
-    if not arch_dir.exists():
-        return 0
-    removed = 0
-    for f in arch_dir.glob("prefilter_*.yaml"):
-        if f.name == "prefilter.yaml":
-            continue
-        try:
-            f.unlink()
-            removed += 1
-        except Exception:
-            pass
-    return removed
-
-
-def _window_cache_key(
-    strategy: str, timeframe: str, end_date: str, holdout_start: str
-) -> str:
-    tf = str(timeframe).replace("/", "_")
-    return f"{strategy}_{tf}_end-{end_date}_holdout-{holdout_start}"
-
-
 def _maybe_auto_tune_locked_prefilter(
     *,
     strategy: str,
-    cfg: dict,
-    scfg: dict,
-    prefilter_gates: dict,
-    run_dir: Path,
-    end_date: str,
-    holdout_start: str,
+    scfg: Dict[str, Any],
     config_path: str,
-    skip_shap: bool,
+    end_date: str,
     disable_auto_locked_tuning: bool,
 ) -> str:
-    """自动调优 locked 阈值（有缓存则跳过），返回 override prefilter 路径."""
+    """可选自动调优 locked prefilter 阈值，返回 override prefilter 路径（空串表示不启用）."""
     if disable_auto_locked_tuning:
+        print("  ⏭️  locked tuning: disabled by flag")
         return ""
 
+    prefilter_gates = (scfg.get("kpi_gates", {}) or {}).get("prefilter", {}) or {}
     tcfg = prefilter_gates.get("locked_threshold_tuning", {}) or {}
     if not tcfg.get("enabled", False):
         return ""
-    if tcfg.get("mode", "auto_if_locked") not in ["auto_if_locked", "always"]:
+    if tcfg.get("mode", "auto_if_locked") not in {"auto_if_locked", "always"}:
         return ""
 
-    prod_prefilter = PROJECT_ROOT / scfg["config"] / "archetypes" / "prefilter.yaml"
+    prod_prefilter = (
+        PROJECT_ROOT / scfg["config"] / "archetypes" / "prefilter.yaml"
+    ).resolve()
     locked_rules = load_locked_prefilter_rules(prod_prefilter)
     if not locked_rules:
-        print("  ℹ️ Locked threshold tuning: 无 locked 规则, 跳过")
+        print("  ℹ️  locked tuning: no locked rules, skip")
         return ""
 
-    cache_dir = PROJECT_ROOT / tcfg.get("cache_dir", "results/locked_tuning/cache")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_key = _window_cache_key(
-        strategy, scfg.get("timeframe", ""), end_date, holdout_start
-    )
-    cache_file = cache_dir / f"{cache_key}.json"
-    override_path = run_dir / "locked_prefilter_override.yaml"
+    if strategy.startswith("me-"):
+        template = "me"
+    elif strategy.startswith("bpc-"):
+        template = "bpc"
+    else:
+        template = "fer"
+    key_payload = {
+        "strategy": strategy,
+        "end_date": end_date,
+        "template": template,
+        "locked_rules": locked_rules,
+        "tcfg": tcfg,
+    }
+    cache_key = hashlib.sha1(
+        json.dumps(key_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    cache_root = PROJECT_ROOT / "results" / "locked_tuning" / "cache" / strategy
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_prefilter = cache_root / f"{cache_key}.yaml"
+    cache_meta = cache_root / f"{cache_key}.json"
 
-    if tcfg.get("skip_if_cached", True) and cache_file.exists():
-        try:
-            cache_data = json.loads(cache_file.read_text(encoding="utf-8"))
-            params = cache_data.get("best_params", {})
-            if all(
-                k in params for k in ["fer_lower", "fer_upper", "sr_min", "dist_max"]
-            ):
-                build_override_prefilter(prod_prefilter, override_path, params)
-                print(f"  ♻️ Locked tuning cache hit: {cache_file.name}")
-                return str(override_path)
-        except Exception:
-            pass
+    if tcfg.get("skip_if_cached", True) and cache_prefilter.exists():
+        print(f"  ✅ locked tuning cache hit: {cache_prefilter}")
+        return str(cache_prefilter)
 
-    tuning_output_root = run_dir / "locked_tuning_auto"
-    tune_cmd = [
+    print(f"  🔧 [locked-tune:auto] strategy={strategy} template={template}")
+    out_root = PROJECT_ROOT / "results" / "locked_tuning" / strategy
+    before = {p.name for p in out_root.iterdir()} if out_root.exists() else set()
+    cmd = [
         sys.executable,
-        "-u",
         "scripts/tune_locked_prefilter_thresholds.py",
         "--strategy",
         strategy,
         "--config",
         config_path or str(DEFAULT_CONFIG),
+        "--template",
+        template,
         "--end-dates",
         end_date,
-        "--output-dir",
-        str(tuning_output_root),
         "--max-cases",
-        str(tcfg.get("max_cases", 20)),
+        str(int(tcfg.get("max_cases", 0) or 0)),
         "--min-trades-target",
-        str(tcfg.get("min_trades_target", 60)),
+        str(int(tcfg.get("min_trades_target", 60) or 60)),
         "--trade-penalty",
-        str(tcfg.get("trade_penalty", 0.002)),
-        "--fer-lower-values",
-        str(tcfg.get("fer_lower_values", "0.0,0.05")),
-        "--fer-upper-values",
-        str(tcfg.get("fer_upper_values", "0.25,0.35,0.45")),
-        "--sr-min-values",
-        str(tcfg.get("sr_min_values", "0.45,0.55,0.65")),
-        "--dist-max-values",
-        str(tcfg.get("dist_max_values", "0.8,1.2,1.6")),
+        str(float(tcfg.get("trade_penalty", 0.002) or 0.002)),
     ]
-    if skip_shap:
-        tune_cmd.append("--skip-shap")
-
-    print("  🔧 Locked threshold tuning: 开始自动调优...")
-    proc = subprocess.Popen(
-        tune_cmd,
+    proc = subprocess.run(
+        cmd,
         cwd=PROJECT_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        capture_output=True,
         text=True,
-        bufsize=1,
     )
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        _line = line.rstrip()
-        if _line:
-            print(f"  🔧 [locked-tune] {_line}")
-    proc.wait()
     if proc.returncode != 0:
-        print("  ⚠️ Locked threshold tuning 失败, 跳过自动调优")
+        tail = (proc.stderr or proc.stdout or "")[-800:]
+        print(f"  ⚠️  locked tuning failed, fallback to production locked rules\n{tail}")
         return ""
 
-    summary_files = sorted(tuning_output_root.glob(f"{strategy}/*/summary.json"))
-    if not summary_files:
-        print("  ⚠️ Locked threshold tuning 无 summary, 跳过自动调优")
+    after = {p.name for p in out_root.iterdir()} if out_root.exists() else set()
+    new_dirs = sorted(after - before)
+    run_dir = out_root / new_dirs[-1] if new_dirs else None
+    if run_dir is None or not run_dir.exists():
+        print("  ⚠️  locked tuning output not found, skip override")
         return ""
-    summary = json.loads(summary_files[-1].read_text(encoding="utf-8"))
-    rows = summary.get("rows", [])
+    summary_json = run_dir / "summary.json"
+    if not summary_json.exists():
+        print("  ⚠️  locked tuning summary missing, skip override")
+        return ""
+    summary = json.loads(summary_json.read_text(encoding="utf-8"))
+    rows = summary.get("rows") or []
     if not rows:
+        print("  ⚠️  locked tuning rows empty, skip override")
         return ""
     best = rows[0]
-    best_params = {
-        "fer_lower": best["fer_lower"],
-        "fer_upper": best["fer_upper"],
-        "sr_min": best["sr_min"],
-        "dist_max": best["dist_max"],
-    }
-    build_override_prefilter(prod_prefilter, override_path, best_params)
-    cache_file.write_text(
+    case_id = int(best.get("case_id", 0))
+    best_override = run_dir / f"case_{case_id:03d}" / "prefilter_locked_override.yaml"
+    if not best_override.exists():
+        print("  ⚠️  best override file missing, skip override")
+        return ""
+
+    shutil.copy(best_override, cache_prefilter)
+    cache_meta.write_text(
         json.dumps(
             {
                 "cache_key": cache_key,
                 "strategy": strategy,
                 "end_date": end_date,
-                "holdout_start": holdout_start,
-                "best_params": best_params,
-                "summary_file": str(summary_files[-1]),
-                "updated_at": datetime.now().isoformat(),
+                "template": template,
+                "source_run": str(run_dir),
+                "best_case_id": case_id,
+                "best_score": best.get("score"),
             },
             ensure_ascii=False,
             indent=2,
         ),
         encoding="utf-8",
     )
-    print(f"  ✅ Locked threshold tuning 完成: {best_params}")
-    return str(override_path)
+    _best_score = best.get("score", float("-inf"))
+    try:
+        _best_score = float(_best_score)
+    except Exception:
+        _best_score = float("-inf")
+    print(f"  ✅ locked tuning selected case={case_id:03d}, score={_best_score:+.4f}")
+    return str(cache_prefilter)
 
 
 # ====================================================================
@@ -847,6 +779,7 @@ def run_strategy_pipeline(
     gate_gates = kpi_gates.get("gate", {})
     backtest_gates = kpi_gates.get("backtest", {})
     execution_gates = kpi_gates.get("execution", {})
+    auto_locked_override = ""
 
     # ── Validation / Test 三段分离 ──
     # holdout_months = 总 OOS 窗口, validation_months = 前 N 个月用于 Gate 调阈值
@@ -859,22 +792,6 @@ def run_strategy_pipeline(
         test_start = compute_holdout_start(end_date, holdout_months - validation_months)
     else:
         test_start = holdout_start  # 不分离, 兼容旧行为
-
-    # ── 可选: 自动调优 locked prefilter 阈值（有缓存则跳过） ──
-    auto_locked_override = ""
-    if scfg.get("has_prefilter") and not dry_run and not locked_prefilter_override:
-        auto_locked_override = _maybe_auto_tune_locked_prefilter(
-            strategy=strategy,
-            cfg=cfg,
-            scfg=scfg,
-            prefilter_gates=prefilter_gates,
-            run_dir=run_dir,
-            end_date=end_date,
-            holdout_start=holdout_start,
-            config_path=config_path,
-            skip_shap=skip_shap,
-            disable_auto_locked_tuning=disable_auto_locked_tuning,
-        )
 
     common_train_args = [
         "--symbol",
@@ -1018,6 +935,16 @@ def run_strategy_pipeline(
         else scfg["features_gate"]
     )
 
+    # ── Auto locked tuning (optional) ──
+    if not dry_run:
+        auto_locked_override = _maybe_auto_tune_locked_prefilter(
+            strategy=strategy,
+            scfg=scfg,
+            config_path=config_path or str(DEFAULT_CONFIG),
+            end_date=end_date,
+            disable_auto_locked_tuning=disable_auto_locked_tuning,
+        )
+
     # ── Step 3: Direction (--promote) ── (前置于 Prefilter, 使 meta-algorithm 能在方向已知的子集上学习)
     if scfg.get("has_direction"):
         run_step(
@@ -1040,44 +967,180 @@ def run_strategy_pipeline(
         )
 
     # ── Step 4: Prefilter (--promote) ── (方向已确定后, meta-algorithm 按方向分裂学习)
-    _pf_results: Dict[str, Any] = {}
+    _pf_results: Dict[str, Any] = {}  # 提前初始化, 供 Sharpe 对比块使用
     _pf_yaml: Optional[Path] = None
-    _enforce_pf_locked = False
-    _locked_prefilter_rules: List[Dict[str, Any]] = []
     _pf_comparison: Optional[Dict[str, Any]] = None  # Sharpe 对比结果, 用于汇总输出
-    _ef_comparison: Optional[Dict[str, Any]] = (
-        None  # Entry Filter 对比结果, 用于汇总输出
+    _enforce_pf_locked = bool(
+        prefilter_gates.get("enforce_locked_rules_in_experiment", True)
     )
-    _pf_scan = run_prefilter_scan_stage(
-        strategy=strategy,
-        scfg=scfg,
-        prefilter_gates=prefilter_gates,
-        config_dir=config_dir,
-        prepare_dir=prepare_dir,
-        log=log,
-        dry_run=dry_run,
-        locked_prefilter_override=locked_prefilter_override,
-        auto_locked_override=auto_locked_override,
-        project_root=PROJECT_ROOT,
-        prod_config_dir=prod_config_dir,
-        run_step=run_step,
-        standardize_method_list_fn=standardize_method_list,
-        load_locked_rules_fn=load_locked_prefilter_rules,
-        merge_locked_rules_fn=merge_locked_prefilter_rules,
+    _locked_prefilter_rules: List[Dict[str, Any]] = []
+    _locked_prefilter_source = (
+        locked_prefilter_override
+        or auto_locked_override
+        or str(PROJECT_ROOT / prod_config_dir / "archetypes" / "prefilter.yaml")
     )
-    _pf_results = _pf_scan["pf_results"]
-    _pf_yaml = _pf_scan["pf_yaml"]
-    _enforce_pf_locked = _pf_scan["enforce_pf_locked"]
-    _locked_prefilter_rules = _pf_scan["locked_prefilter_rules"]
+    if _enforce_pf_locked and not dry_run:
+        _locked_prefilter_rules = load_locked_prefilter_rules(
+            Path(_locked_prefilter_source)
+        )
+        if _locked_prefilter_rules:
+            print(
+                f"  🔒 Prefilter locked 规则已启用: {len(_locked_prefilter_rules)} 条 "
+                f"(source={_locked_prefilter_source})"
+            )
+    if scfg.get("has_prefilter"):
+        _features_prefilter_path = Path(config_dir) / "features_prefilter.yaml"
+        if not _features_prefilter_path.exists():
+            print(f"  ❌ Prefilter: {_features_prefilter_path} 不存在, 跳过")
+        else:
+            prefilter_cmd = [
+                "python",
+                "scripts/analyze_archetype_feature_stratification.py",
+                "--logs",
+                f"{prepare_dir}/features_labeled.parquet",
+                "--strategy",
+                strategy,
+                "--meta-algorithm",
+                "--features-prefilter",
+                str(_features_prefilter_path),
+                "--config",
+                str(config_dir),
+                "--promote",
+            ]
 
-    # 兜底: Gate Train 始终依赖 archetypes/prefilter.yaml，确保文件存在
-    _pf_required = Path(config_dir) / "archetypes" / "prefilter.yaml"
-    if not dry_run and not _pf_required.exists():
-        _pf_required.parent.mkdir(parents=True, exist_ok=True)
-        _pf_required.write_text("rules: []\n", encoding="utf-8")
-        print(f"  ⚠️ 缺失 prefilter.yaml，自动回退为空规则: {_pf_required}")
+            # 从 kpi_gates 注入 prefilter 约束
+            if prefilter_gates.get("min_pass_rate"):
+                prefilter_cmd += [
+                    "--min-prefilter-pass-rate",
+                    str(prefilter_gates["min_pass_rate"]),
+                ]
+            if prefilter_gates.get("min_rows"):
+                prefilter_cmd += [
+                    "--min-prefilter-rows",
+                    str(prefilter_gates["min_rows"]),
+                ]
+            # Per-strategy KPI 覆盖: scoring_method / min_ks / max_ks_pvalue / min_lift
+            # 支持 scoring_method_fallbacks: 自动降级直到生成有效规则
+            _pf_fallbacks = prefilter_gates.get("scoring_method_fallbacks")
+            if _pf_fallbacks and isinstance(_pf_fallbacks, list):
+                _pf_methods = standardize_method_list(
+                    _pf_fallbacks, default=["distribution_ks"]
+                )
+            elif prefilter_gates.get("scoring_method"):
+                _pf_methods = standardize_method_list(
+                    [prefilter_gates["scoring_method"]], default=["distribution_ks"]
+                )
+            else:
+                _pf_methods = ["distribution_ks"]  # 默认
+
+            def _append_pf_kpi_args(cmd):
+                """追加非 scoring_method 的 KPI 参数."""
+                if prefilter_gates.get("min_ks_statistic") is not None:
+                    cmd += [
+                        "--prefilter-min-ks",
+                        str(prefilter_gates["min_ks_statistic"]),
+                    ]
+                if prefilter_gates.get("max_ks_pvalue") is not None:
+                    cmd += [
+                        "--prefilter-max-ks-pvalue",
+                        str(prefilter_gates["max_ks_pvalue"]),
+                    ]
+                if prefilter_gates.get("min_lift") is not None:
+                    cmd += ["--prefilter-min-lift", str(prefilter_gates["min_lift"])]
+                if prefilter_gates.get("min_positive_lift") is not None:
+                    cmd += [
+                        "--prefilter-positive-lift",
+                        str(prefilter_gates["min_positive_lift"]),
+                    ]
+                if prefilter_gates.get("deny_rate_max") is not None:
+                    cmd += [
+                        "--prefilter-deny-rate-max",
+                        str(prefilter_gates["deny_rate_max"]),
+                    ]
+
+            _pf_yaml = Path(config_dir) / "archetypes" / "prefilter.yaml"
+
+            # 每次从空 prefilter 出发: 每个 method 在全量数据上独立搜索
+            # 不依赖已有 prefilter.yaml 内容, 保证多次运行结果一致
+            for _pf_method in _pf_methods:
+                # 清空 prefilter.yaml (空规则 = 全量数据), 每个 method 独立从全量出发
+                if _pf_yaml.exists():
+                    _pf_yaml.unlink()
+                if _enforce_pf_locked and _locked_prefilter_rules and not dry_run:
+                    _m0 = merge_locked_prefilter_rules(
+                        _pf_yaml, _locked_prefilter_rules
+                    )
+                    print(
+                        f"   🔒 [{_pf_method}] 初始注入 locked: +{_m0['added']} (total={_m0['total']})"
+                    )
+                _cmd = prefilter_cmd + ["--prefilter-scoring-method", _pf_method]
+                _append_pf_kpi_args(_cmd)
+                _step_name = (
+                    f"Prefilter Analyze [{_pf_method}]"
+                    if len(_pf_methods) > 1
+                    else "Prefilter Analyze"
+                )
+                run_step(_step_name, _cmd, log, dry_run=dry_run)
+
+                if _pf_yaml.exists() and not dry_run:
+                    try:
+                        if _enforce_pf_locked and _locked_prefilter_rules:
+                            _m1 = merge_locked_prefilter_rules(
+                                _pf_yaml, _locked_prefilter_rules
+                            )
+                            if _m1["added"] > 0:
+                                print(
+                                    f"   🔒 [{_pf_method}] 回补 locked: +{_m1['added']} (total={_m1['total']})"
+                                )
+                        _pf_data = (
+                            yaml.safe_load(_pf_yaml.read_text(encoding="utf-8")) or {}
+                        )
+                        _rules = _pf_data.get("rules") or []
+                        _n_rules = len(_rules)
+                        # 保存当前结果到临时文件 (供 Sharpe 对比使用)
+                        _tmp = _pf_yaml.parent / f"prefilter_{_pf_method}.yaml"
+                        shutil.copy(_pf_yaml, _tmp)
+                        _pf_results[_pf_method] = {
+                            "n_rules": _n_rules,
+                            "path": _tmp,
+                        }
+                        if len(_pf_methods) > 1:
+                            print(f"   📊 [{_pf_method}] rules={_n_rules}")
+                    except Exception:
+                        pass
 
     # ── Step 5: Gate 训练 ──
+    # Prefilter 兜底: 即使上一步没产出规则文件, 也写入空规则继续后续流程.
+    _gate_prefilter_path = Path(config_dir) / "archetypes" / "prefilter.yaml"
+    if not dry_run:
+        _need_empty_pf = False
+        if not _gate_prefilter_path.exists():
+            _need_empty_pf = True
+        else:
+            try:
+                _pf_raw = yaml.safe_load(
+                    _gate_prefilter_path.read_text(encoding="utf-8")
+                )
+                if not isinstance(_pf_raw, dict) or _pf_raw.get("rules") is None:
+                    _need_empty_pf = True
+            except Exception:
+                _need_empty_pf = True
+        if _need_empty_pf:
+            _gate_prefilter_path.parent.mkdir(parents=True, exist_ok=True)
+            _gate_prefilter_path.write_text("rules: []\n", encoding="utf-8")
+            if _enforce_pf_locked and _locked_prefilter_rules:
+                _mfb = merge_locked_prefilter_rules(
+                    _gate_prefilter_path, _locked_prefilter_rules
+                )
+                print(
+                    "  ⚠️  Prefilter Analyze 未产出有效 prefilter.yaml, "
+                    f"已回退并注入 locked 规则 (total={_mfb['total']})"
+                )
+            else:
+                print(
+                    "  ⚠️  Prefilter Analyze 未产出有效 prefilter.yaml, 已自动回退为空规则"
+                )
+
     # ⚠️ Gate Train 现在使用 prefilter (见 BPC pipeline 文档):
     #   - 只在 archetype 适用样本上学习 → 专注策略特有特征
     #   - 避免学习 "archetype vs 非 archetype" 而不是 "好 archetype vs 坏 archetype"
@@ -1093,7 +1156,7 @@ def run_strategy_pipeline(
         "--labels",
         f"{config_dir}/{scfg['labels_gate']}",
         "--archetype-prefilter",
-        f"{config_dir}/archetypes/prefilter.yaml",
+        str(_gate_prefilter_path),
         *common_train_args,
         "--seed",
         "42",  # A.7.1: gate 规则确定性，固定 seed 不受外层 seed 影响
@@ -1177,18 +1240,6 @@ def run_strategy_pipeline(
                     _cg_opt += [
                         "--min-combined-pass-rate",
                         str(gate_gates["min_combined_pass_rate"]),
-                    ]
-                if gate_gates.get("stat_fallback_on_empty") is False:
-                    _cg_opt += ["--no-stat-fallback-on-empty"]
-                if gate_gates.get("stat_fallback_max_rules") is not None:
-                    _cg_opt += [
-                        "--stat-fallback-max-rules",
-                        str(gate_gates["stat_fallback_max_rules"]),
-                    ]
-                if gate_gates.get("stat_fallback_min_source_features") is not None:
-                    _cg_opt += [
-                        "--stat-fallback-min-source-features",
-                        str(gate_gates["stat_fallback_min_source_features"]),
                     ]
                 # Val/Test 分离: mini-pipeline Gate Opt 在完整 Val 上调阈值 (不需要 cutoff)
                 # 预筛选选择也在 Val 上评估, Test 保留给最终 Backtest
@@ -1276,12 +1327,6 @@ def run_strategy_pipeline(
                 _lf.write(_tbl_text + "\n")
             # 设置最优 prefilter, 让完整 pipeline 使用
             shutil.copy(_cand_paths[_best_cm], _pf_yaml)
-            if _enforce_pf_locked and _locked_prefilter_rules:
-                _m3 = merge_locked_prefilter_rules(_pf_yaml, _locked_prefilter_rules)
-                if _m3["added"] > 0:
-                    print(
-                        f"   🔒 最优 prefilter 回补 locked: +{_m3['added']} (total={_m3['total']})"
-                    )
             print(f"   ✅ 最优 prefilter [{_best_cm}] 已写入, 继续完整 pipeline")
             # 清理临时文件
             for _cp in _cand_paths.values():
@@ -1300,21 +1345,6 @@ def run_strategy_pipeline(
                     for m in _cmp_sharpe
                 },
             }
-
-        # 兜底: 不论是否进入候选比较，最终都确保实验 prefilter 包含 locked 规则
-        if _enforce_pf_locked and _locked_prefilter_rules and _pf_yaml is not None:
-            _m4 = merge_locked_prefilter_rules(_pf_yaml, _locked_prefilter_rules)
-            if _m4["added"] > 0:
-                print(
-                    f"   🔒 Final prefilter 兜底回补 locked: +{_m4['added']} (total={_m4['total']})"
-                )
-
-    # 默认行为: 清理 prefilter 方法快照文件 (prefilter_*.yaml)
-    if not dry_run:
-        _arch_dir = Path(config_dir) / "archetypes"
-        _n_rm_pf = _cleanup_prefilter_method_files(_arch_dir)
-        if _n_rm_pf > 0:
-            print(f"   🧹 Prefilter 快照清理: {_n_rm_pf} files removed")
 
     rc, out = run_step("Gate Train", gate_train_args, log, dry_run=dry_run)
     gate_dir = find_output_dir(out, strategy) or prepare_dir
@@ -1385,18 +1415,6 @@ def run_strategy_pipeline(
             "--min-combined-pass-rate",
             str(gate_gates["min_combined_pass_rate"]),
         ]
-    if gate_gates.get("stat_fallback_on_empty") is False:
-        gate_optimize_cmd += ["--no-stat-fallback-on-empty"]
-    if gate_gates.get("stat_fallback_max_rules") is not None:
-        gate_optimize_cmd += [
-            "--stat-fallback-max-rules",
-            str(gate_gates["stat_fallback_max_rules"]),
-        ]
-    if gate_gates.get("stat_fallback_min_source_features") is not None:
-        gate_optimize_cmd += [
-            "--stat-fallback-min-source-features",
-            str(gate_gates["stat_fallback_min_source_features"]),
-        ]
     # Val/Test 分离: Gate Optimize 只用 Val 段 [holdout_start, test_start)
     if test_start != holdout_start:
         gate_optimize_cmd += ["--cutoff-date", test_start]
@@ -1466,22 +1484,227 @@ def run_strategy_pipeline(
     # Evidence 层已删除. Entry Filter 从 features_entry_filter.yaml 读候选,
     # 多方法统计扫描 + Sharpe 择优.
     evidence_dir = gate_dir  # 后续步骤直接使用 gate_dir
-    _ef_comparison = run_entry_filter_stage(
-        strategy=strategy,
-        scfg=scfg,
-        kpi_gates=kpi_gates,
-        config_dir=config_dir,
-        gate_dir=gate_dir,
-        strategies_root=strategies_root,
-        holdout_start=holdout_start,
-        test_start=test_start,
-        end_date=end_date,
-        log=log,
-        dry_run=dry_run,
-        run_step=run_step,
-        parse_backtest_stdout_fn=parse_backtest_stdout,
-        standardize_method_list_fn=standardize_method_list,
+
+    _ef_yaml_path = Path(config_dir) / "features_entry_filter.yaml"
+    _ef_gates = kpi_gates.get("entry_filter", {})
+    _ef_methods = standardize_method_list(
+        _ef_gates.get("scoring_method_fallbacks"),
+        default=[
+            "distribution_ks",
+            "mean_effect",
+            "tail_bad_rate_ratio",
+            "upside_positive_rate_ratio",
+        ],
     )
+    if _ef_yaml_path.exists() and not dry_run:
+        print(f"\n{'='*72}")
+        print(
+            f"🔬 Entry Filter 多方法 Sharpe 择优 — {len(_ef_methods)} methods: {_ef_methods}"
+        )
+        print(f"{'='*72}")
+
+        _ef_sharpe: Dict[str, float] = {}
+        _ef_trades: Dict[str, int] = {}
+        _ef_n_rules: Dict[str, int] = {}
+        _ef_arch_dir = Path(config_dir) / "archetypes"
+        _ef_orig_path = _ef_arch_dir / "entry_filters.yaml"
+        _simple_exec = scfg.get("simple_execution", {})
+
+        for _em in _ef_methods:
+            print(f"\n── Entry Filter method: [{_em}] ──")
+            ef_cmd = [
+                sys.executable,
+                "scripts/optimize_entry_filter_plateau.py",
+                "--logs",
+                f"{gate_dir}/logs_gated.parquet",
+                "--strategy",
+                strategy,
+                "--strategies-root",
+                strategies_root,
+                "--meta-algorithm",
+                "--features-entry-filter",
+                str(_ef_yaml_path),
+                "--scoring-method",
+                _em,
+                "--promote",
+                "--simple-execution",
+            ]
+            # Val/Test 分离: entry filter 也只用 Val 段
+            if test_start != holdout_start:
+                ef_cmd += ["--cutoff-date", test_start]
+            _rc_ef, _out_ef = run_step(f"  EF Scan [{_em}]", ef_cmd, log)
+            if _rc_ef != 0:
+                print(f"   ❌ EF [{_em}] 失败")
+                _ef_sharpe[_em] = float("-inf")
+                _ef_trades[_em] = 0
+                _ef_n_rules[_em] = 0
+                continue
+
+            # 读取产出的 entry_filters.yaml 规则数
+            import yaml as _ef_yaml_mod
+
+            if _ef_orig_path.exists():
+                with open(_ef_orig_path, "r", encoding="utf-8") as _efr:
+                    _ef_cfg = _ef_yaml_mod.safe_load(_efr) or {}
+                _n_ef_rules = len(
+                    [f for f in _ef_cfg.get("filters", []) if f.get("enabled", True)]
+                )
+            else:
+                _n_ef_rules = 0
+            _ef_n_rules[_em] = _n_ef_rules
+
+            if _n_ef_rules == 0:
+                # 没有规则 = 无条件入场, 后续用 empty 的 Sharpe
+                _ef_sharpe[_em] = float("-inf")
+                _ef_trades[_em] = 0
+                continue
+
+            # 保存临时规则文件
+            _ef_tmp = _ef_arch_dir / f"entry_filters_cmp_{_em}.yaml"
+            shutil.copy(_ef_orig_path, _ef_tmp)
+
+            # mini-backtest on Val 段
+            _ef_bt = [
+                "python",
+                "scripts/backtest_execution_layer.py",
+                "--logs",
+                f"{gate_dir}/logs_gated.parquet",
+                "--strategy",
+                strategy,
+                "--strategies-root",
+                strategies_root,
+                "--test-start",
+                holdout_start,
+                "--test-end",
+                test_start if test_start != holdout_start else end_date,
+                "--simple-execution",
+            ]
+            if _simple_exec.get("sl_r") is not None:
+                _ef_bt += ["--simple-sl", str(_simple_exec["sl_r"])]
+            if _simple_exec.get("tp_r") is not None:
+                _ef_bt += ["--simple-tp", str(_simple_exec["tp_r"])]
+            if _simple_exec.get("timeout_bars") is not None:
+                _ef_bt += ["--simple-timeout", str(_simple_exec["timeout_bars"])]
+            _rc_ebt, _out_ebt = run_step(f"  EF Backtest [{_em}]", _ef_bt, log)
+            _ebt_m = parse_backtest_stdout(_out_ebt)
+            _ef_sharpe[_em] = _ebt_m.get("sharpe_per_trade", float("-inf"))
+            _ef_trades[_em] = _ebt_m.get("total_trades", 0)
+            print(
+                f"   📊 EF [{_em}] Sharpe={_ef_sharpe[_em]:+.4f}, "
+                f"Trades={_ef_trades[_em]}, Rules={_n_ef_rules}"
+            )
+
+        # ── 对比表: 添加 empty baseline ──
+        # empty = 无条件入场 (无 entry filter)
+        _ef_empty = _ef_arch_dir / "entry_filters_cmp_empty.yaml"
+        _ef_empty.write_text("filters: []\ncombination_mode: or\n", encoding="utf-8")
+        shutil.copy(_ef_empty, _ef_orig_path)
+        _ef_bt_empty = [
+            "python",
+            "scripts/backtest_execution_layer.py",
+            "--logs",
+            f"{gate_dir}/logs_gated.parquet",
+            "--strategy",
+            strategy,
+            "--strategies-root",
+            strategies_root,
+            "--test-start",
+            holdout_start,
+            "--test-end",
+            test_start if test_start != holdout_start else end_date,
+            "--simple-execution",
+        ]
+        if _simple_exec.get("sl_r") is not None:
+            _ef_bt_empty += ["--simple-sl", str(_simple_exec["sl_r"])]
+        if _simple_exec.get("tp_r") is not None:
+            _ef_bt_empty += ["--simple-tp", str(_simple_exec["tp_r"])]
+        if _simple_exec.get("timeout_bars") is not None:
+            _ef_bt_empty += ["--simple-timeout", str(_simple_exec["timeout_bars"])]
+        _rc_ebt_empty, _out_ebt_empty = run_step(
+            "  EF Backtest [empty]", _ef_bt_empty, log
+        )
+        _ebt_m_empty = parse_backtest_stdout(_out_ebt_empty)
+        _ef_sharpe["empty"] = _ebt_m_empty.get("sharpe_per_trade", float("-inf"))
+        _ef_trades["empty"] = _ebt_m_empty.get("total_trades", 0)
+        _ef_n_rules["empty"] = 0
+
+        # 0 规则的方法 = empty
+        for _em in _ef_methods:
+            if _ef_n_rules.get(_em, 0) == 0 and _em not in ["empty"]:
+                _ef_sharpe[_em] = _ef_sharpe["empty"]
+                _ef_trades[_em] = _ef_trades["empty"]
+
+        # 汇总对比表
+        _best_ef = max(_ef_sharpe, key=lambda m: _ef_sharpe[m])
+        _ef_tbl = []
+        _ef_tbl.append(f"\n{'='*72}")
+        _ef_tbl.append(
+            f"  {'方法':<25} {'Sharpe':>10} {'Trades':>7} {'Rules':>6}  标记"
+        )
+        _ef_tbl.append(f"  {'-'*68}")
+        for _m in sorted(_ef_sharpe, key=lambda m: -_ef_sharpe[m]):
+            _flag = " ← 最优" if _m == _best_ef else ""
+            _s = _ef_sharpe[_m]
+            _s_str = f"{_s:+.4f}" if _s != float("-inf") else "  FAIL"
+            _ef_tbl.append(
+                f"  {_m:<25} {_s_str:>10} "
+                f"{_ef_trades.get(_m, 0):>7} {_ef_n_rules.get(_m, 0):>6}{_flag}"
+            )
+        _ef_tbl.append(f"{'='*72}\n")
+        _ef_tbl_text = "\n".join(_ef_tbl)
+        print(_ef_tbl_text)
+        with open(log, "a", encoding="utf-8") as _lf:
+            _lf.write(f"\n{'='*72}\n")
+            _lf.write(f"🔬 Entry Filter Sharpe 对比汇总\n")
+            _lf.write(_ef_tbl_text + "\n")
+
+        # 设置最优 entry filter
+        # 只有当新规则对比 empty 有足够提升时才覆盖已有 entry_filters.yaml
+        # 防止 Val 段负志时「最不差」方法覆盖原有的合理规则
+        _MIN_EF_IMPROVEMENT = 0.02  # 最小提升幅度 (Sharpe 差 > 0.02 才 promote)
+        _ef_improvement = _ef_sharpe.get(_best_ef, float("-inf")) - _ef_sharpe.get(
+            "empty", float("-inf")
+        )
+        if (
+            _best_ef != "empty"
+            and _ef_n_rules.get(_best_ef, 0) > 0
+            and _ef_improvement >= _MIN_EF_IMPROVEMENT
+        ):
+            _best_ef_path = _ef_arch_dir / f"entry_filters_cmp_{_best_ef}.yaml"
+            if _best_ef_path.exists():
+                shutil.copy(_best_ef_path, _ef_orig_path)
+                print(
+                    f"   ✅ 最优 Entry Filter [{_best_ef}] 已写入, "
+                    f"Rules={_ef_n_rules[_best_ef]}, Sharpe={_ef_sharpe[_best_ef]:+.4f} "
+                    f"(vs empty {_ef_sharpe.get('empty', 0):+.4f}, 提升={_ef_improvement:+.4f})"
+                )
+            else:
+                # fallback: 写空
+                _ef_empty.rename(_ef_orig_path) if not _ef_orig_path.exists() else None
+                print(f"   ⚠️  最优方法临时文件丢失, 使用空 entry filter")
+        elif _best_ef == "empty" or _ef_improvement < _MIN_EF_IMPROVEMENT:
+            # 提升不足 → 保留已有 entry_filters.yaml 不变
+            _old_exists = _ef_orig_path.exists()
+            if _old_exists:
+                print(
+                    f"   ℹ️  Entry Filter 提升不足 (best={_best_ef} 提升={_ef_improvement:+.4f} < {_MIN_EF_IMPROVEMENT}), "
+                    f"保留原有 entry_filters.yaml 不变"
+                )
+            else:
+                # 无历史文件 → 写空
+                shutil.copy(_ef_empty, _ef_orig_path)
+                print(
+                    f"   ℹ️  empty 最优 且无历史 entry_filters.yaml, 写入空规则 "
+                    f"(Sharpe={_ef_sharpe.get('empty', 0):+.4f})"
+                )
+
+        # 清理临时文件
+        for _em in list(_ef_methods) + ["empty"]:
+            _tmp = _ef_arch_dir / f"entry_filters_cmp_{_em}.yaml"
+            if _tmp.exists() and _tmp != _ef_orig_path:
+                _tmp.unlink()
+    elif not _ef_yaml_path.exists():
+        print(f"\n  ℹ️  Entry Filter: features_entry_filter.yaml 不存在, 跳过")
 
     # ── Step 8: Execution Optimize (跳过) ──
     # 默认使用 execution.yaml 中的 2ATR 止损, 快速出结果.
@@ -1593,7 +1816,6 @@ def run_strategy_pipeline(
         "exp_config_dir": str(exp_config_dir),
         "prod_config_dir": prod_config_dir,
         "prefilter_comparison": _pf_comparison,
-        "entry_filter_comparison": _ef_comparison,
         "validation_end": test_start,
     }
 
@@ -1651,8 +1873,6 @@ def save_report(
         "backtest_metrics": pipeline_result.get("backtest_metrics", {}),
         "thresholds": thresholds,
         "comparison": comparison,
-        "prefilter_comparison": pipeline_result.get("prefilter_comparison"),
-        "entry_filter_comparison": pipeline_result.get("entry_filter_comparison"),
         "artifacts": {
             "gate_dir": pipeline_result.get("gate_dir"),
             "evidence_dir": pipeline_result.get("evidence_dir"),
@@ -2197,7 +2417,7 @@ def main():
     p.add_argument(
         "--disable-auto-locked-tuning",
         action="store_true",
-        help="内部参数: 禁用自动 locked 阈值调优（避免递归调用）",
+        help="禁用自动 locked 阈值调优",
     )
     args = p.parse_args()
 
@@ -2506,9 +2726,6 @@ def main():
                 "run_dir_name": run_dir.name,
                 "seed": best["seed"] if multi_seed else seeds[0],
                 "prefilter_comparison": pipeline_result.get("prefilter_comparison"),
-                "entry_filter_comparison": pipeline_result.get(
-                    "entry_filter_comparison"
-                ),
             }
         )
 
@@ -2561,26 +2778,6 @@ def main():
                 _note = "  (0规则=empty)" if _pm in _zr_set else ""
                 print(
                     f"         {_pm:<20s} Sharpe={_ps_str}  Trades={_pc['trades']:>5}  Rules={_pc['rules']}{_flag}{_note}"
-                )
-        _efc = r.get("entry_filter_comparison")
-        if _efc and _efc.get("candidates"):
-            _best_ef = _efc.get("best", "")
-            _ecands = _efc.get("candidates", {})
-            print(f"      🔬 EntryFilter 对比:")
-            for _em in sorted(
-                _ecands,
-                key=lambda m: (
-                    -_ecands[m]["sharpe"]
-                    if _ecands[m]["sharpe"] != float("-inf")
-                    else float("inf")
-                ),
-            ):
-                _ec = _ecands[_em]
-                _es = _ec["sharpe"]
-                _es_str = f"{_es:+.4f}" if _es != float("-inf") else "  FAIL"
-                _eflag = " ←" if _em == _best_ef else ""
-                print(
-                    f"         {_em:<20s} Sharpe={_es_str}  Trades={_ec['trades']:>5}  Rules={_ec['rules']}{_eflag}"
                 )
     if pcm_result:
         pcm_emoji = {"PASS": "✅", "ALERT": "⚠️", "ERROR": "❌"}.get(
@@ -2724,14 +2921,6 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
                 )
 
     prod_arch.mkdir(parents=True, exist_ok=True)
-    # 默认清理历史 prefilter 方法快照，避免污染生产 archetypes 目录
-    for stale in prod_arch.glob("prefilter_*.yaml"):
-        if stale.name == "prefilter.yaml":
-            continue
-        try:
-            stale.unlink()
-        except Exception:
-            pass
     copied = 0
     for f in exp_arch.iterdir():
         if f.is_file():

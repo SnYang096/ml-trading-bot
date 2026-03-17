@@ -486,8 +486,18 @@ validation_months: 3
 这样每次只产实验结果，不覆盖生产配置。
 ```bash
 for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
-  mlbot pipeline run --strategy fer-short --end-date "$d" --no-adopt
+  mlbot pipeline run --strategy fer-short-120T --end-date "$d" --no-adopt
 done
+
+for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
+  mlbot pipeline run --strategy me-short --end-date "$d" --no-adopt
+done
+
+for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
+  mlbot pipeline run --strategy bpc-short --end-date "$d" --no-adopt
+done
+
+  mlbot pipeline run --strategy bpc-short
 ```
 4) 看每个窗口结果
 先快速看列表：
@@ -498,7 +508,7 @@ python scripts/auto_research_pipeline.py --strategy fer-short --list
 ```bash
 python - <<'PY'
 import json, pathlib, statistics
-root = pathlib.Path("results/research_history/fer-short")
+root = pathlib.Path("results/research_history/bpc-short")
 rows = []
 for d in sorted([p for p in root.iterdir() if p.is_dir()])[-20:]:
     rp = d / "report.json"
@@ -669,3 +679,72 @@ python scripts/tune_locked_prefilter_thresholds.py \
 median_sharpe=0.3370
 positive_ratio=75.0%
 median_trades=182.0
+
+## fer-short 锁定
+20260316_055122  sharpe=1.1048  trades=24
+20260316_055435  sharpe=0.4216  trades=9
+20260316_055750  sharpe=0.3863  trades=46
+20260316_060126  sharpe=0.4596  trades=98
+20260316_060442  sharpe=0.4216  trades=9
+20260316_061118  sharpe=0.6504  trades=50
+20260316_061432  sharpe=0.4216  trades=9
+20260316_062106  sharpe=0.3386  trades=33
+20260316_062414  sharpe=0.3662  trades=88
+20260316_062745  sharpe=0.1915  trades=98
+20260316_063123  sharpe=0.3386  trades=33
+20260316_063430  sharpe=0.3662  trades=88
+20260316_064119  sharpe=0.3386  trades=33
+20260316_064427  sharpe=0.3662  trades=88
+20260316_064758  sharpe=0.1915  trades=98
+20260316_065134  sharpe=1.1048  trades=24
+20260316_065445  sharpe=0.6209  trades=22
+
+median_sharpe=0.3863
+positive_ratio=100.0%
+median_trades=33.0
+
+
+## fer-short-60T 没锁定
+
+20260316_003721  sharpe=0.0000  trades=0
+20260316_004211  sharpe=0.0000  trades=0
+20260316_004702  sharpe=0.1231  trades=3285
+20260316_012328  sharpe=0.1231  trades=3285
+20260316_025134  sharpe=-0.1004  trades=3543
+20260316_025938  sharpe=-0.0157  trades=367
+20260316_030455  sharpe=0.2184  trades=1621
+20260316_031301  sharpe=0.1530  trades=423
+20260316_032010  sharpe=0.2018  trades=1873
+20260316_032702  sharpe=0.1231  trades=3285
+
+median_sharpe=0.1231
+positive_ratio=60.0%
+median_trades=1747.0
+
+## fer-short-60T 锁定
+20260316_173848  sharpe=0.5971  trades=16
+20260316_174810  sharpe=0.3585  trades=488
+20260316_175347  sharpe=0.3212  trades=983
+20260316_180008  sharpe=0.3291  trades=1169
+20260316_180640  sharpe=0.3639  trades=550
+20260316_181239  sharpe=0.3212  trades=983
+20260316_181916  sharpe=0.3748  trades=393
+20260316_182541  sharpe=0.3639  trades=550
+20260316_183158  sharpe=0.3212  trades=983
+20260316_183838  sharpe=0.3748  trades=393
+20260316_184512  sharpe=0.3507  trades=368
+20260316_185322  sharpe=0.2877  trades=578
+20260316_190124  sharpe=0.1853  trades=818
+20260316_190934  sharpe=0.3507  trades=368
+20260316_191650  sharpe=0.2877  trades=578
+20260316_192432  sharpe=0.1437  trades=816
+20260316_193316  sharpe=0.3507  trades=368
+20260316_194029  sharpe=0.2877  trades=578
+20260316_194817  sharpe=0.1437  trades=816
+20260316_195645  sharpe=0.3284  trades=901
+
+median_sharpe=0.3287
+positive_ratio=100.0%
+median_trades=578.0
+
+## fer-short-120T 锁定

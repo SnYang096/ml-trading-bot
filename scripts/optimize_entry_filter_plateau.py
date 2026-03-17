@@ -1291,19 +1291,6 @@ def _write_empty_entry_filters(
     print(f"\n   ⚠️  --promote: 写入空 entry_filters → {output_path}")
 
 
-def _collect_raw_scale_columns(deps_cfg: Dict[str, Any]) -> set[str]:
-    """从 feature_dependencies 配置聚合 raw_scale_columns 黑名单列。"""
-    raw_scale_cfg = deps_cfg.get("raw_scale_columns", {})
-    if not isinstance(raw_scale_cfg, dict):
-        return set()
-
-    excluded: set[str] = set()
-    for cols in raw_scale_cfg.values():
-        if isinstance(cols, list):
-            excluded.update(str(c) for c in cols if isinstance(c, str))
-    return excluded
-
-
 def _resolve_features_for_entry_filter(
     ef_yaml_path: str,
     deps_path: str,
@@ -1335,7 +1322,6 @@ def _resolve_features_for_entry_filter(
         deps_cfg = yaml.safe_load(f)
 
     all_features_def = deps_cfg.get("features", {})
-    raw_scale_excluded = _collect_raw_scale_columns(deps_cfg)
     available_set = set(available_columns)
     resolved_columns: List[str] = []
 
@@ -1343,20 +1329,11 @@ def _resolve_features_for_entry_filter(
         if feat_f not in all_features_def:
             continue
         output_cols = all_features_def[feat_f].get("output_columns", [])
-        matched = [
-            c
-            for c in output_cols
-            if c in available_set and c not in exclude and c not in raw_scale_excluded
-        ]
+        matched = [c for c in output_cols if c in available_set and c not in exclude]
         if matched:
             resolved_columns.extend(matched)
 
     resolved_columns = list(dict.fromkeys(resolved_columns))  # 去重保序
-    if raw_scale_excluded:
-        print(
-            "   EntryFilter 候选已剔除 raw_scale_columns: "
-            f"{len(raw_scale_excluded)} 列黑名单生效"
-        )
     return resolved_columns
 
 

@@ -1,0 +1,35 @@
+# ME-Short Entry Filter 特征配置
+# 目标: 只在"扩张初段"寻找入场触发, 避免中后段追空。
+
+name: me-short
+description: |
+  ME-Short entry filter: first-expansion timing only.
+  聚焦扩张状态、压缩释放记忆与订单流确认，过滤掉中后段噪声触发。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    # 必需 scale 列
+    - atr_f
+
+    # 扩张状态 + 压缩释放记忆
+    - atr_percentile_f
+    - recent_compression_decay_f
+    - compression_duration_f
+    - me_soft_phase_f
+    - me_failure_f
+
+    # 微观波动与极值形态
+    - evt_features_f
+    - bars_since_extreme_f
+    - wick_scene_semantic_scores_f
+
+    # 订单流与成交流确认
+    - vpin_features_f
+    - cvd_change_features_f
+    - trade_cluster_net_runs_zscore_features_f
+
+    # 期货拥挤与持仓结构
+    - oi_scene_semantic_scores_f
+    - funding_oi_crowding_f

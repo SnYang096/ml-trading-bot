@@ -134,9 +134,16 @@ def compute_lift_for_threshold(
     if feature_col not in df.columns:
         return {
             "lift": 0.0,
+            "lift_valid": True,
             "pass_rate_good": 0.0,
             "pass_rate_bad": 0.0,
             "pass_rate_all": 0.0,
+            "n_good": 0,
+            "n_bad": 0,
+            "n_passed": 0,
+            "n_valid": 0,
+            "valid_good": 0,
+            "valid_bad": 0,
         }
 
     # 计算 PASS 条件 (deny 条件的反面)
@@ -173,9 +180,16 @@ def compute_lift_for_threshold(
     if n_good == 0 or n_bad == 0 or n_all == 0:
         return {
             "lift": 0.0,
+            "lift_valid": True,
             "pass_rate_good": 0.0,
             "pass_rate_bad": 0.0,
             "pass_rate_all": 0.0,
+            "n_good": int(n_good),
+            "n_bad": int(n_bad),
+            "n_passed": 0,
+            "n_valid": int(n_valid),
+            "valid_good": 0,
+            "valid_bad": 0,
         }
 
     # =========================================================================

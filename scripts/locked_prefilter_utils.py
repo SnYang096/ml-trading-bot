@@ -83,65 +83,239 @@ def merge_locked_prefilter_rules(
     return {"added": added, "total": len(merged_rules)}
 
 
+def detect_locked_template(prefilter_raw: Dict[str, Any]) -> str:
+    rules = prefilter_raw.get("rules") or []
+    if not isinstance(rules, list):
+        return "unknown"
+    feats = {r.get("feature") for r in rules if isinstance(r, dict) and r.get("locked")}
+    if {
+        "fer_signed_efficiency_pct",
+        "sr_strength_max",
+        "dist_to_nearest_sr",
+    }.issubset(feats):
+        return "fer"
+    if {
+        "atr_percentile",
+        "recent_compression_decay",
+        "compression_duration",
+        "oi_compression_score",
+    }.issubset(feats):
+        return "me"
+    if {
+        "bpc_score_pullback",
+        "bpc_pullback_depth",
+        "bpc_recovery_strength",
+    }.issubset(feats):
+        return "bpc"
+    return "unknown"
+
+
 def apply_locked_thresholds(
     prefilter_raw: Dict[str, Any],
     *,
-    fer_lower: float,
-    fer_upper: float,
-    sr_min: float,
-    dist_max: float,
+    fer_lower: float | None = None,
+    fer_upper: float | None = None,
+    sr_min: float | None = None,
+    dist_max: float | None = None,
+    atr_lower: float | None = None,
+    atr_upper: float | None = None,
+    compression_min: float | None = None,
+    decay_upper: float | None = None,
+    oi_min: float | None = None,
+    bpc_pullback_score_min: float | None = None,
+    bpc_pullback_depth_max: float | None = None,
+    bpc_recovery_min: float | None = None,
+    template: str | None = None,
 ) -> Dict[str, Any]:
     out = json.loads(json.dumps(prefilter_raw))
     rules = out.get("rules", [])
     if not isinstance(rules, list):
         raise ValueError("prefilter.yaml rules 必须为 list")
 
-    seen = {
-        "fer_lower": False,
-        "fer_upper": False,
-        "sr_min": False,
-        "dist_lower": False,
-        "dist_upper": False,
-    }
+    tpl = (template or detect_locked_template(out)).lower()
+    if tpl == "unknown":
+        raise ValueError("无法识别 locked 规则模板，请显式传入 template")
 
-    for r in rules:
-        if not isinstance(r, dict) or not r.get("locked"):
-            continue
-        feat = r.get("feature")
-        op = r.get("operator")
-        if feat == "fer_signed_efficiency_pct" and op == ">=":
-            r["value"] = float(fer_lower)
-            seen["fer_lower"] = True
-        elif feat == "fer_signed_efficiency_pct" and op == "<=":
-            r["value"] = float(fer_upper)
-            seen["fer_upper"] = True
-        elif feat == "sr_strength_max" and op == ">=":
-            r["value"] = float(sr_min)
-            seen["sr_min"] = True
-        elif feat == "dist_to_nearest_sr" and op == ">=":
-            r["value"] = float(-dist_max)
-            seen["dist_lower"] = True
-        elif feat == "dist_to_nearest_sr" and op == "<=":
-            r["value"] = float(dist_max)
-            seen["dist_upper"] = True
+    if tpl == "fer":
+        required = {
+            "fer_lower": fer_lower,
+            "fer_upper": fer_upper,
+            "sr_min": sr_min,
+            "dist_max": dist_max,
+        }
+        missing_params = [k for k, v in required.items() if v is None]
+        if missing_params:
+            raise ValueError(f"FER tuned 参数缺失: {missing_params}")
 
-    missing = [k for k, v in seen.items() if not v]
-    if missing:
-        raise ValueError(f"prefilter.yaml 缺少必要 locked 规则: {missing}")
-    return out
+        seen = {
+            "fer_lower": False,
+            "fer_upper": False,
+            "sr_min": False,
+            "dist_lower": False,
+            "dist_upper": False,
+        }
+        for r in rules:
+            if not isinstance(r, dict) or not r.get("locked"):
+                continue
+            feat = r.get("feature")
+            op = r.get("operator")
+            if feat == "fer_signed_efficiency_pct" and op == ">=":
+                r["value"] = float(fer_lower)
+                seen["fer_lower"] = True
+            elif feat == "fer_signed_efficiency_pct" and op == "<=":
+                r["value"] = float(fer_upper)
+                seen["fer_upper"] = True
+            elif feat == "sr_strength_max" and op == ">=":
+                r["value"] = float(sr_min)
+                seen["sr_min"] = True
+            elif feat == "dist_to_nearest_sr" and op == ">=":
+                r["value"] = float(-float(dist_max))
+                seen["dist_lower"] = True
+            elif feat == "dist_to_nearest_sr" and op == "<=":
+                r["value"] = float(dist_max)
+                seen["dist_upper"] = True
+        missing = [k for k, v in seen.items() if not v]
+        if missing:
+            raise ValueError(f"prefilter.yaml 缺少必要 FER locked 规则: {missing}")
+        return out
+
+    if tpl == "me":
+        required = {
+            "atr_lower": atr_lower,
+            "atr_upper": atr_upper,
+            "compression_min": compression_min,
+            "decay_upper": decay_upper,
+            "oi_min": oi_min,
+        }
+        missing_params = [k for k, v in required.items() if v is None]
+        if missing_params:
+            raise ValueError(f"ME tuned 参数缺失: {missing_params}")
+
+        seen = {
+            "atr_lower": False,
+            "atr_upper": False,
+            "compression_min": False,
+            "decay_upper": False,
+            "oi_min": False,
+        }
+        for r in rules:
+            if not isinstance(r, dict) or not r.get("locked"):
+                continue
+            feat = r.get("feature")
+            op = r.get("operator")
+            if feat == "atr_percentile" and op == ">=":
+                r["value"] = float(atr_lower)
+                seen["atr_lower"] = True
+            elif feat == "atr_percentile" and op == "<=":
+                r["value"] = float(atr_upper)
+                seen["atr_upper"] = True
+            elif feat == "compression_duration" and op == ">=":
+                r["value"] = float(compression_min)
+                seen["compression_min"] = True
+            elif feat == "recent_compression_decay" and op == "<=":
+                r["value"] = float(decay_upper)
+                seen["decay_upper"] = True
+            elif feat == "oi_compression_score" and op == ">=":
+                r["value"] = float(oi_min)
+                seen["oi_min"] = True
+        missing = [k for k, v in seen.items() if not v]
+        if missing:
+            raise ValueError(f"prefilter.yaml 缺少必要 ME locked 规则: {missing}")
+        return out
+
+    if tpl == "bpc":
+        required = {
+            "bpc_pullback_score_min": bpc_pullback_score_min,
+            "bpc_pullback_depth_max": bpc_pullback_depth_max,
+            "bpc_recovery_min": bpc_recovery_min,
+        }
+        missing_params = [k for k, v in required.items() if v is None]
+        if missing_params:
+            raise ValueError(f"BPC tuned 参数缺失: {missing_params}")
+
+        seen = {
+            "pullback_score_min": False,
+            "pullback_depth_max": False,
+            "recovery_min": False,
+        }
+        for r in rules:
+            if not isinstance(r, dict) or not r.get("locked"):
+                continue
+            feat = r.get("feature")
+            op = r.get("operator")
+            if feat == "bpc_score_pullback" and op == ">=":
+                r["value"] = float(bpc_pullback_score_min)
+                seen["pullback_score_min"] = True
+            elif feat == "bpc_pullback_depth" and op == "<=":
+                r["value"] = float(bpc_pullback_depth_max)
+                seen["pullback_depth_max"] = True
+            elif feat == "bpc_recovery_strength" and op == ">=":
+                r["value"] = float(bpc_recovery_min)
+                seen["recovery_min"] = True
+        missing = [k for k, v in seen.items() if not v]
+        if missing:
+            raise ValueError(f"prefilter.yaml 缺少必要 BPC locked 规则: {missing}")
+        return out
+
+    raise ValueError(f"不支持的 template: {tpl}")
+
+
+def _infer_template_from_params(params: Dict[str, float]) -> str:
+    if {"fer_lower", "fer_upper", "sr_min", "dist_max"}.issubset(params.keys()):
+        return "fer"
+    if {"atr_lower", "atr_upper", "compression_min", "decay_upper", "oi_min"}.issubset(
+        params.keys()
+    ):
+        return "me"
+    if {
+        "bpc_pullback_score_min",
+        "bpc_pullback_depth_max",
+        "bpc_recovery_min",
+    }.issubset(params.keys()):
+        return "bpc"
+    return "unknown"
+
+
+def _normalize_params_for_template(
+    params: Dict[str, float], template: str
+) -> Dict[str, float]:
+    if template == "fer":
+        return {
+            "fer_lower": float(params["fer_lower"]),
+            "fer_upper": float(params["fer_upper"]),
+            "sr_min": float(params["sr_min"]),
+            "dist_max": float(params["dist_max"]),
+        }
+    if template == "me":
+        return {
+            "atr_lower": float(params["atr_lower"]),
+            "atr_upper": float(params["atr_upper"]),
+            "compression_min": float(params["compression_min"]),
+            "decay_upper": float(params["decay_upper"]),
+            "oi_min": float(params["oi_min"]),
+        }
+    if template == "bpc":
+        return {
+            "bpc_pullback_score_min": float(params["bpc_pullback_score_min"]),
+            "bpc_pullback_depth_max": float(params["bpc_pullback_depth_max"]),
+            "bpc_recovery_min": float(params["bpc_recovery_min"]),
+        }
+    raise ValueError(f"不支持的 template: {template}")
 
 
 def build_override_prefilter(
-    prod_prefilter_path: Path, output_path: Path, params: Dict[str, float]
+    prod_prefilter_path: Path,
+    output_path: Path,
+    params: Dict[str, float],
+    *,
+    template: str | None = None,
 ) -> Path:
     base = yaml.safe_load(prod_prefilter_path.read_text(encoding="utf-8")) or {}
-    tuned = apply_locked_thresholds(
-        base,
-        fer_lower=float(params["fer_lower"]),
-        fer_upper=float(params["fer_upper"]),
-        sr_min=float(params["sr_min"]),
-        dist_max=float(params["dist_max"]),
-    )
+    tpl = (template or _infer_template_from_params(params)).lower()
+    if tpl == "unknown":
+        tpl = detect_locked_template(base)
+    norm = _normalize_params_for_template(params, tpl)
+    tuned = apply_locked_thresholds(base, template=tpl, **norm)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         yaml.safe_dump(tuned, allow_unicode=True, sort_keys=False),

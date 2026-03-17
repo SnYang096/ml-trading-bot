@@ -6,16 +6,39 @@
 rules:
   - feature: atr_percentile
     operator: ">="
-    value: 0.003704
-    rationale: "range lower, meta-algorithm, KS=0.2480, return_uplift=+3.9824, robustness=100%, holdout验证通过"
+    value: 0.20
+    locked: true
+    lock_reason: "ME语义：波动已抬升，避免纯低波阶段"
+
   - feature: atr_percentile
     operator: "<="
-    value: 0.587
-    rationale: "range upper, meta-algorithm, KS=0.2480, return_uplift=+3.9824, robustness=100%, holdout验证通过"
+    value: 0.88
+    locked: true
+    lock_reason: "ME语义：避免波动极端尾段追单"
+
+  - feature: recent_compression_decay
+    operator: ">="
+    value: 0.01
+    locked: true
+    lock_reason: "ME语义：需要近期压缩释放记忆"
+
+  - feature: recent_compression_decay
+    operator: "<="
+    value: 0.35
+    locked: true
+    lock_reason: "ME语义：释放信号不能太久，避免后段"
+
+  - feature: compression_duration
+    operator: ">="
+    value: 0.03
+    locked: true
+    lock_reason: "ME语义：需要一定压缩蓄势基础"
+
   - feature: oi_compression_score
     operator: ">="
-    value: 0.4058
-    rationale: "meta-algorithm, KS=0.1790, return_uplift=+3.7757, robustness=100%, holdout验证通过"
+    value: 0.35
+    locked: true
+    lock_reason: "ME语义：OI压缩/拥挤背景确认"
 
 last_evaluation:
   # ── 自动生成 (2026-03-13) ──
@@ -26,14 +49,10 @@ last_evaluation:
   baseline_median_rr: -0.0276
 
   # ── 正信号 (0 个) ──
-  positive_signals:
-    []
+  positive_signals: []
 
   # ── 反信号 (0 个) ──
-  anti_signals:
-    []
+  anti_signals: []
 
   # ── 低端信号 (0 个) ──
-  absence_signals:
-    []
-
+  absence_signals: []

@@ -3,11 +3,25 @@
 # 自动生成: 2026-03-14
 # 数据源: features_labeled.parquet, 27840 行
 
-# ⚠️  无法自动生成 rules, 请手动配置
-# rules:
-#   - feature: xxx
-#     operator: ">="
-#     value: 0.0
+rules:
+  - feature: bpc_score_pullback
+    operator: ">="
+    value: 0.45
+    rationale: "语义锁定：必须出现可识别的回踩阶段，而非纯 breakout 追涨"
+    locked: true
+    lock_reason: "BPC 语义锚点：回踩阶段成立"
+  - feature: bpc_pullback_depth
+    operator: "<="
+    value: 0.70
+    rationale: "语义锁定：回撤不能过深，过深更接近结构失败或反转语义"
+    locked: true
+    lock_reason: "BPC 语义锚点：回踩深度受控"
+  - feature: bpc_recovery_strength
+    operator: ">="
+    value: 0.55
+    rationale: "语义锁定：回踩后必须有恢复力度，确认 continuation 的可执行性"
+    locked: true
+    lock_reason: "BPC 语义锚点：恢复强度确认"
 
 last_evaluation:
   # ── 自动生成 (2026-03-14) ──
@@ -18,14 +32,10 @@ last_evaluation:
   baseline_median_rr: -0.1630
 
   # ── 正信号 (0 个) ──
-  positive_signals:
-    []
+  positive_signals: []
 
   # ── 反信号 (0 个) ──
-  anti_signals:
-    []
+  anti_signals: []
 
   # ── 低端信号 (0 个) ──
-  absence_signals:
-    []
-
+  absence_signals: []
