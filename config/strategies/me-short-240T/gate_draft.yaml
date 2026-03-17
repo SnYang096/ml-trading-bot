@@ -1,0 +1,77 @@
+# ME-SHORT-240T Gate Draft (auto-generated)
+# 来源: results/train_final_20260318_021409_rr_extreme/me-short-240T
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy me-short-240T
+#   python scripts/optimize_gate_unified.py --strategy me-short-240T --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_me_atr_pct
+  tag: HARD_ME_ATR_PCT
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.32)
+  when:
+    me_atr_pct:
+      value_lt: 0.4
+  then:
+    action: deny
+  comment: 'statistical(lift=1.32): me_atr_pct < 0.4'
+- id: gate_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.33)
+  when:
+    evt_var_99_right:
+      value_gt: 0.9563
+  then:
+    action: deny
+  comment: 'statistical(lift=1.33): evt_var_99_right > 0.9563'
+- id: gate_me_vol_regime
+  tag: HARD_ME_VOL_REGIME
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.46)
+  when:
+    me_vol_regime:
+      value_gt: 0.74
+  then:
+    action: deny
+  comment: 'statistical(lift=1.46): me_vol_regime > 0.74'
+- id: gate_evt_scale_left
+  tag: HARD_EVT_SCALE_LEFT
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.08)
+  when:
+    evt_scale_left:
+      value_gt: 0.377
+  then:
+    action: deny
+  comment: 'statistical(lift=1.08): evt_scale_left > 0.377'
+- id: gate_cvd_change_5_normalized_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED_CVD_CHANGE_5_NORMALIZED
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.46)
+  when:
+    all_of:
+    - cvd_change_5_normalized:
+        value_gt: 0.0015
+    - cvd_change_5_normalized:
+        value_lt: 0.0131
+  then:
+    action: deny
+  comment: 'statistical(lift=1.46): cvd_change_5_normalized > 0.001472 & cvd_change_5_normalized < 0.01309'
+guardrails: []

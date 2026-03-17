@@ -365,3 +365,20 @@ class TestClose:
         tracker.close("pid1", qty=0.0, reason="test")
 
         om.place_order.assert_not_called()
+
+
+class TestExchangeCloseSync:
+
+    def test_close_from_exchange_removes_position_without_market_order(self):
+        om = _make_om()
+        tracker = _make_tracker(om)
+        pos = _make_pos()
+        tracker.add("pid1", pos)
+
+        ok = tracker.close_from_exchange(
+            "pid1", reason="stop_loss_hit", exit_price=49000.0
+        )
+
+        assert ok is True
+        assert tracker.get("pid1") is None
+        om.place_order.assert_not_called()

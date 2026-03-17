@@ -294,3 +294,45 @@ class TestPositionTrackerIntegration:
             assert pos["_exchange_sl_price"] is not None
         # 必须有持仓被记录
         assert len(positions) == 1
+
+
+class TestStopGuardrailConsistency:
+
+    def test_resolve_effective_stop_r_clips_and_returns_guardrail_source(self):
+        ex, _, _, _ = _make_executor()
+        sl_r, atr_pct, eff_pct, source = ex._resolve_effective_stop_r(
+            sl_r=3.5,
+            atr=100.0,
+            entry_price=10000.0,
+            rr_constraints={"max_stop_pct": 0.02},
+        )
+        assert atr_pct == pytest.approx(0.035)
+        assert eff_pct == pytest.approx(0.02)
+        assert source == "guardrail_clip"
+        # 0.02*10000/100 = 2.0
+        assert sl_r == pytest.approx(2.0)
+
+    def test_execute_persists_stop_diagnostics_into_position(self):
+        ex, om, _, pt = _make_executor(trade_size=0.001)
+        ep = {
+            "rr_constraints": {
+                "stop_loss_r": 3.5,
+                "take_profit_r": None,
+                "max_stop_pct": 0.02,
+            }
+        }
+        intent = TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype="bpc",
+            execution_profile=ep,
+        )
+        with patch("src.order_management.trade_executor.enforce_before_order"):
+            result = ex.execute(
+                intent=intent, features=_make_features(close=10000, atr=100)
+            )
+        assert result is True
+        pos = list(pt.all_positions().values())[0]
+        assert pos["atr_stop_pct"] == pytest.approx(0.035)
+        assert pos["effective_stop_pct"] == pytest.approx(0.02)
+        assert pos["sizing_stop_source"] == "guardrail_clip"

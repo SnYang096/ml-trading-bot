@@ -1,0 +1,5 @@
+# BPC Evidence 额外排除 (已在 position sizing 使用, 防 double counting)
+exclude:
+  - vol_percentile_approx
+  - vol_zscore
+  - atr_percentile

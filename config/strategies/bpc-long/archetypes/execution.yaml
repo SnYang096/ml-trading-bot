@@ -39,10 +39,25 @@ optimization:
 stop_loss:
   type: trailing
   initial_r: 4.0
+  guardrails:
+    min_stop_pct: 0.008
+    max_stop_pct: 0.020
   trailing:
     activation_r: 2.5
     trail_r: 7.0             # 灾难保护: 仅防黑天鹅闪崩, EMA200 是主退出
   structural_exit: ema200    # 主退出: 价格穿越 EMA200 = 趋势结构破坏
 take_profit:
   enabled: false
-version: 49
+add_position:
+  max_add_times: 5
+  sizing_mode: fixed_multiplier
+  add_size_multipliers: [0.5, 0.35, 0.25, 0.20, 0.15]
+  target_leverage_by_add: [2.6, 3.4, 4.1, 4.7, 5.0]
+  max_total_leverage: 5.0
+  max_add_notional_frac: 0.35
+  min_add_notional_usd: 50.0
+  max_add_leverage_step: [1.0, 0.9, 0.8, 0.7, 0.6]
+  min_current_r_by_add: [1.0, 1.75, 2.5, 3.5, 4.5]
+  trigger:
+    type: bpc_follow_signal
+version: 50

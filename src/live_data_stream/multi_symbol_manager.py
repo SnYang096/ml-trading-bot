@@ -18,6 +18,7 @@ from .feature_storage import StorageManager
 from .gap_filler import GapFiller
 from .order_manager_factory import init_order_manager_from_env
 from .system_mode import SystemMode, SystemModeManager, ModeDecision
+from src.order_management.binance_user_stream import BinanceUserStream
 from src.time_series_model.live.incremental_feature_computer import IncrementalFeatureComputer
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ class MultiSymbolManager:
         self.orderflow_window_minutes = orderflow_window_minutes
         self.feature_4h_interval_hours = feature_4h_interval_hours
         self.order_manager = order_manager or init_order_manager_from_env()
+        self.user_stream: Optional[BinanceUserStream] = None
         
         # 系统模式管理器
         self.mode_manager = SystemModeManager()
@@ -100,6 +102,24 @@ class MultiSymbolManager:
             )
             
             self.listeners[symbol] = listener
+
+        # 账户级 User Data Stream（一个账户只需一个，按 symbol 分发）
+        try:
+            api = getattr(self.order_manager, "binance_api", None)
+            if api is not None:
+                self.user_stream = BinanceUserStream(
+                    binance_api=api,
+                    on_execution_report=self._on_execution_report,
+                    keepalive_interval=30 * 60,
+                )
+        except Exception as e:
+            logger.warning("User Data Stream 初始化失败，降级为定时同步: %s", e)
+
+    def _on_execution_report(self, report: Dict[str, Any]) -> None:
+        symbol = str(report.get("symbol") or "").upper().strip()
+        listener = self.listeners.get(symbol)
+        if listener is not None:
+            listener.on_execution_report(report)
     
     def get_listener(self, symbol: str) -> Optional[OrderFlowListener]:
         """
@@ -236,13 +256,19 @@ class MultiSymbolManager:
     def is_trading_allowed(self) -> bool:
         """是否允许交易"""
         return self.mode_manager.is_trading_allowed()
+
+    def manual_reset_to_normal(self, reason: str = "CI/CD restart manual reset") -> None:
+        """人工复位系统模式到 NORMAL（用于修复后放行）"""
+        self.mode_manager.reset_to_normal(reason=reason)
     
     async def start_all(self) -> None:
         """启动所有listener"""
         tasks = []
         for symbol, listener in self.listeners.items():
             tasks.append(listener.start())
-        
+        if self.user_stream is not None:
+            tasks.append(self.user_stream.start())
+
         await asyncio.gather(*tasks)
     
     async def stop_all(self) -> None:
@@ -250,7 +276,9 @@ class MultiSymbolManager:
         tasks = []
         for symbol, listener in self.listeners.items():
             tasks.append(listener.stop())
-        
+        if self.user_stream is not None:
+            tasks.append(self.user_stream.stop())
+
         await asyncio.gather(*tasks)
     
     def get_all_recovery_states(self) -> Dict[str, Dict[str, Any]]:

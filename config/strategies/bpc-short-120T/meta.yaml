@@ -1,0 +1,21 @@
+# BPC-Short (BreakoutPullbackContinuation Short) 策略元信息
+
+strategy:
+  name: bpc-short-120T
+  description: |
+    BreakoutPullbackContinuation Short archetype: 趋势中回踩后延续（做空方向）。
+    在已确认的下降趋势中，识别健康的回踩并在回踩位置做空入场。
+  tags:
+    - pullback
+    - continuation
+    - trend
+    - breakout
+    - short
+  owner: quant_team
+  archetype: BreakoutPullbackContinuationShort
+
+  # 默认时间粒度（研发 + 实盘统一）
+  timeframe: "120T" # 1小时
+
+  # 方向声明
+  direction: short

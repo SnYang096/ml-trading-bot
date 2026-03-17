@@ -155,28 +155,32 @@ slots:
 #   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
+  enabled_archetypes: [bpc, me-long, fer]
+
   per_strategy_limits:
     bpc:
       max_slots: 1              # 每策略独占 1 slot, 互不竞争
-      # max_risk_per_trade 省略 → 继承 slots.risk_per_slot (0.01)
+      max_risk_per_trade: 0.02  # 肥尾主仓: 首枪改为 2.00% 风险
       allow_add_position: true   # BPC 趋势延续允许加仓
+      max_add_times: 5          # 宪法只保留上限；细节放 execution.yaml
     me:
       max_slots: 1
-      # max_risk_per_trade 省略 → 继承 slots.risk_per_slot (0.01)
+      max_risk_per_trade: 0.0035  # 动量扩散只吃加速段, 预算比 BPC 更轻
       allow_add_position: true   # ME 动能扩张允许加仓
+      max_add_times: 2
     fer:
       max_slots: 1
-      # max_risk_per_trade 省略 → 继承 slots.risk_per_slot (0.01)
+      max_risk_per_trade: 0.0035  # 反转单不承担尾部主仓职责
       allow_add_position: false  # FER 反转策略不加仓
     lv:
       max_slots: 1              # LV 快进快出，最多 1 个
-      max_risk_per_trade: 0.005  # LV 低 budget, 0.5% 每笔 (< risk_per_slot)
+      max_risk_per_trade: 0.0025  # LV 极端波动反噬快, 预算进一步下调
       allow_add_position: false  # LV 不加仓
 
   # 加仓全局安全规则 (适用于所有 allow_add_position=true 的策略)
   # "adding is allowed only by freed risk budget"
   add_position_rules:
-    max_add_times: 1          # fat tail: 最多 1 次加仓 (每次需 breakeven locked)
+    max_add_times: 1          # 全局 fallback；实际层数优先读各策略 add_position
     # 加仓前必须已锁定利润 (breakeven stop 已触发)
     # 确保加仓只用 "已释放" 的风险预算，不增加净风险敞口
     require_locked_profit: true
@@ -186,6 +190,21 @@ resource_allocation:
     state_tracking:
       persist_to: "data/db/order_management.db"
 
-  # PCM 仲裁配置引用
-  pcm_config_ref: "config/pcm_regime.yaml"
+  dynamic_slot_policy:
+    total_risk_cap: 0.10
+    bpc:
+      enabled: true
+      base_slots: 1
+      max_slots: 3
+      step2:
+        max_drawdown: 0.08
+        max_daily_loss: 0.03
+        min_active_bpc_slots: 1
+      step3:
+        max_drawdown: 0.05
+        max_daily_loss: 0.02
+        min_active_bpc_slots: 2
+
+  intent_selection_policy:
+    archetype_priority: [bpc, me, fer]
 

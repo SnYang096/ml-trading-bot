@@ -1,15 +1,17 @@
 """系统运行模式管理
 
-支持三种运行模式：
+支持四种运行模式：
 - NORMAL: 正常交易模式
 - DEGRADED: 降级模式（只观察不交易）
 - OFFLINE: 离线模式（拒绝启动）
+- ABNORMAL: 异常模式（必须人工复位）
 """
 
 from enum import Enum
 from typing import Optional, Dict, Any
 from datetime import datetime
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,7 @@ class SystemMode(Enum):
     NORMAL = "NORMAL"       # 正常交易
     DEGRADED = "DEGRADED"   # 降级模式（只观察）
     OFFLINE = "OFFLINE"     # 离线模式（拒绝启动）
+    ABNORMAL = "ABNORMAL"   # 异常模式（立即停新单，需人工介入）
 
 
 class ModeDecision:
@@ -76,13 +79,17 @@ class SystemModeManager:
     ABUNDANT_DATA_THRESHOLD = 2400  # 充足数据阈值 (40h)，超过则容忍尾部 gap
     
     def __init__(self):
-        self.current_mode = SystemMode.OFFLINE
+        boot_mode_raw = str(os.getenv("MLBOT_MODE_ON_BOOT", "NORMAL")).strip().upper()
+        self.current_mode = (
+            SystemMode[boot_mode_raw] if boot_mode_raw in SystemMode.__members__ else SystemMode.NORMAL
+        )
         self.mode_history = []
         
         # 自动升级：实时 bar 累积计数
         # 策略B：即使 warmup 有 gap，累积足够实时 1min bar 后自动升级
         self._realtime_bar_count = 0
         self._auto_upgrade_logged = False
+        self._abnormal_since: Optional[datetime] = None
     
     def decide_mode(
         self,
@@ -268,7 +275,11 @@ class SystemModeManager:
             True: 发生了模式升级
         """
         self._realtime_bar_count += 1
-        
+
+        # ABNORMAL 仅支持人工复位，不自动恢复
+        if self.current_mode == SystemMode.ABNORMAL:
+            return False
+
         # 已经是 NORMAL，无需升级
         if self.current_mode == SystemMode.NORMAL:
             return False
@@ -309,3 +320,25 @@ class SystemModeManager:
     def get_realtime_bar_count(self) -> int:
         """获取实时 bar 累积数"""
         return self._realtime_bar_count
+
+    def trigger_abnormal(self, reason: str) -> None:
+        """触发异常模式（必须人工复位）"""
+        decision = ModeDecision(
+            mode=SystemMode.ABNORMAL,
+            reason=reason,
+            bar_count=self._realtime_bar_count,
+            data_coverage_hours=self._realtime_bar_count / 60 if self._realtime_bar_count else 0.0,
+        )
+        self.set_mode(decision)
+        self._abnormal_since = datetime.utcnow()
+
+    def reset_to_normal(self, reason: str = "Manual reset after ABNORMAL fix") -> None:
+        """人工复位：ABNORMAL -> NORMAL"""
+        decision = ModeDecision(
+            mode=SystemMode.NORMAL,
+            reason=reason,
+            bar_count=self._realtime_bar_count,
+            data_coverage_hours=self._realtime_bar_count / 60 if self._realtime_bar_count else 0.0,
+        )
+        self.set_mode(decision)
+        self._abnormal_since = None

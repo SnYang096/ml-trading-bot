@@ -142,6 +142,104 @@ strategies:
       tp_r: 8.0 # 1:2 风险收益比
       timeout_bars: 160 # 240T*160=26.7 天
 
+  bpc-short-60T:
+    config: config/strategies/bpc-short-60T
+    timeframe: "60T"
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.05
+        min_rows: 10
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: true
+          mode: auto_if_locked
+          skip_if_cached: true
+          max_cases: 20
+          min_trades_target: 50
+          trade_penalty: 0.002
+          bpc_pullback_score_min_values: "0.40,0.50"
+          bpc_pullback_depth_max_values: "0.60,0.75"
+          bpc_recovery_min_values: "0.50,0.60"
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+      entry_filter:
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
+      backtest:
+        min_trades: 30
+      deploy:
+        min_trades: 10
+    simple_execution: # BPC-Short 趋势骨乘 (做空版): 同 BPC-Long
+      sl_r: 4.0 # 匹配实际 initial_r=4.0 避免趋势确认前回调止损
+      tp_r: 8.0 # 1:2 风险收益比
+      timeout_bars: 500 # 240T*160=26.7 天
+  bpc-short-120T:
+    config: config/strategies/bpc-short-120T
+    timeframe: "120T"
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.05
+        min_rows: 10
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: true
+          mode: auto_if_locked
+          skip_if_cached: true
+          max_cases: 20
+          min_trades_target: 50
+          trade_penalty: 0.002
+          bpc_pullback_score_min_values: "0.40,0.50"
+          bpc_pullback_depth_max_values: "0.60,0.75"
+          bpc_recovery_min_values: "0.50,0.60"
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+      entry_filter:
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
+      backtest:
+        min_trades: 30
+      deploy:
+        min_trades: 10
+    simple_execution: # BPC-Short 趋势骨乘 (做空版): 同 BPC-Long
+      sl_r: 4.0 # 匹配实际 initial_r=4.0 避免趋势确认前回调止损
+      tp_r: 8.0 # 1:2 风险收益比
+      timeout_bars: 500 # 240T*160=26.7 天
   fer-long:
     config: config/strategies/fer-long
     timeframe: "240T"
@@ -153,6 +251,7 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 300
+        prefilter_search_include_empty: false
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -459,6 +558,109 @@ strategies:
       stability_threshold: 0.50
       top_k: 25
 
+  me-short-120T:
+    config: config/strategies/me-short-120T
+    timeframe: "120T"
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
+        min_rows: 200
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: true
+          mode: auto_if_locked
+          skip_if_cached: true
+          max_cases: 20
+          min_trades_target: 50
+          trade_penalty: 0.002
+          atr_lower_values: "0.70,0.78,0.85"
+          atr_upper_values: "0.88,0.92"
+          compression_min_values: "0.05,0.08,0.12"
+          decay_upper_values: "0.08,0.15,0.22"
+          oi_min_values: "0.35,0.45,0.55"
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+        deny_rate_max: 0.97 # 与 ME 保持一致
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.20
+      entry_filter:
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+      backtest:
+        min_trades: 50
+      deploy:
+        min_trades: 50
+    shap_override:
+      stability_threshold: 0.50
+      top_k: 25
+
+  me-short-240T:
+    config: config/strategies/me-short-240T
+    timeframe: "240T"
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
+        min_rows: 200
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: true
+          mode: auto_if_locked
+          skip_if_cached: true
+          max_cases: 20
+          min_trades_target: 50
+          trade_penalty: 0.002
+          atr_lower_values: "0.70,0.78,0.85"
+          atr_upper_values: "0.88,0.92"
+          compression_min_values: "0.05,0.08,0.12"
+          decay_upper_values: "0.08,0.15,0.22"
+          oi_min_values: "0.35,0.45,0.55"
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+        deny_rate_max: 0.97 # 与 ME 保持一致
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.20
+      entry_filter:
+        scoring_method_fallbacks:
+          [
+            distribution_ks,
+            mean_effect,
+            tail_bad_rate_ratio,
+            upside_positive_rate_ratio,
+          ]
+      backtest:
+        min_trades: 50
+      deploy:
+        min_trades: 50
+    shap_override:
+      stability_threshold: 0.50
+      top_k: 25
   lv:
     config: config/strategies/lv
     timeframe: "15T"

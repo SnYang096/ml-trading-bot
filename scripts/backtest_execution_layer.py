@@ -46,6 +46,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import yaml
+from src.time_series_model.core.constitution.add_position_rules import (
+    resolve_add_position_max_times as _shared_resolve_add_position_max_times,
+    resolve_add_position_size_multiplier as _shared_resolve_add_position_size_multiplier,
+    resolve_strategy_add_position_config as _shared_resolve_strategy_add_position_config,
+    validate_add_position_trigger as _shared_validate_add_position_trigger,
+)
 
 try:
     from bokeh.plotting import figure as bk_figure
@@ -475,6 +481,154 @@ def compute_risk_equity_curve(
     return result
 
 
+def _resolve_add_position_size_multiplier(
+    add_position_rules: Optional[Dict[str, Any]],
+    add_number: int,
+    signal: Optional[Dict[str, Any]] = None,
+) -> float:
+    return _shared_resolve_add_position_size_multiplier(
+        add_position_rules, add_number, signal
+    )
+
+
+def _resolve_strategy_add_position_config(
+    archetype: str,
+    add_position_rules: Optional[Dict[str, Any]],
+    per_strategy_limits: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return _shared_resolve_strategy_add_position_config(
+        archetype=archetype,
+        add_position_rules=add_position_rules,
+        per_strategy_limits=per_strategy_limits,
+    )
+
+
+def _validate_add_position_trigger(
+    *,
+    archetype: str,
+    direction: int,
+    signal: Dict[str, Any],
+    add_position_cfg: Optional[Dict[str, Any]],
+    current_r: float,
+) -> bool:
+    return _shared_validate_add_position_trigger(
+        archetype=archetype,
+        direction=direction,
+        signal=signal,
+        add_position_cfg=add_position_cfg,
+        current_r=current_r,
+    )
+
+
+def _merge_add_position_cfg(
+    base_cfg: Optional[Dict[str, Any]],
+    overlay_cfg: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    out = dict(base_cfg or {})
+    ov = dict(overlay_cfg or {})
+    trig = dict(out.get("trigger", {}) or {})
+    trig.update(dict(ov.get("trigger", {}) or {}))
+    out.update({k: v for k, v in ov.items() if k != "trigger"})
+    if trig:
+        out["trigger"] = trig
+    return out
+
+
+def _compute_fat_tail_metrics(trade_details: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """计算抓肥尾相关 KPI。"""
+    if not trade_details:
+        return {
+            "trade_count": 0,
+            "tail_contribution_rate": 0.0,
+            "tail_trade_count": 0,
+            "winner_count": 0,
+            "mfe_capture_mean": 0.0,
+            "mfe_capture_median": 0.0,
+            "mfe_capture_count": 0,
+            "add_expectancy": 0.0,
+            "add_trade_count": 0,
+            "base_expectancy": 0.0,
+            "base_trade_count": 0,
+        }
+
+    realized = [
+        float(t.get("realized_rr", 0.0) or 0.0)
+        for t in trade_details
+        if t.get("realized_rr") is not None
+    ]
+    winners = sorted((r for r in realized if r > 0), reverse=True)
+    top_n = int(np.ceil(len(winners) * 0.1)) if winners else 0
+    top_n = max(1, top_n) if winners else 0
+    win_sum = float(np.sum(winners)) if winners else 0.0
+    top_sum = float(np.sum(winners[:top_n])) if top_n > 0 else 0.0
+
+    capture_vals = []
+    for t in trade_details:
+        raw_rr = t.get("raw_realized_rr")
+        max_fav = t.get("max_favorable_rr")
+        if raw_rr is None or max_fav is None:
+            continue
+        try:
+            raw_rr = float(raw_rr)
+            max_fav = float(max_fav)
+        except Exception:
+            continue
+        if max_fav > 1e-9:
+            capture_vals.append(raw_rr / max_fav)
+
+    add_vals = [
+        float(t.get("realized_rr", 0.0) or 0.0)
+        for t in trade_details
+        if t.get("is_add_position", False)
+    ]
+    base_vals = [
+        float(t.get("realized_rr", 0.0) or 0.0)
+        for t in trade_details
+        if not t.get("is_add_position", False)
+    ]
+
+    return {
+        "trade_count": len(trade_details),
+        "tail_contribution_rate": (top_sum / win_sum) if win_sum > 1e-9 else 0.0,
+        "tail_trade_count": top_n,
+        "winner_count": len(winners),
+        "mfe_capture_mean": float(np.mean(capture_vals)) if capture_vals else 0.0,
+        "mfe_capture_median": float(np.median(capture_vals)) if capture_vals else 0.0,
+        "mfe_capture_count": len(capture_vals),
+        "add_expectancy": float(np.mean(add_vals)) if add_vals else 0.0,
+        "add_trade_count": len(add_vals),
+        "base_expectancy": float(np.mean(base_vals)) if base_vals else 0.0,
+        "base_trade_count": len(base_vals),
+    }
+
+
+def _report_fat_tail_metrics(
+    trade_details: List[Dict[str, Any]],
+    label: str = "",
+) -> None:
+    """打印抓肥尾相关 KPI 摘要。"""
+    metrics = _compute_fat_tail_metrics(trade_details)
+    if metrics["trade_count"] <= 0:
+        return
+    tag = f" [{label}]" if label else ""
+    print(
+        f"   🐋 Fat-tail KPIs{tag}: "
+        f"tail_contrib={metrics['tail_contribution_rate']:.1%} "
+        f"(top {metrics['tail_trade_count']}/{metrics['winner_count']} winners), "
+        f"MFE capture mean={metrics['mfe_capture_mean']:.2f} "
+        f"median={metrics['mfe_capture_median']:.2f} "
+        f"(n={metrics['mfe_capture_count']})"
+    )
+    if metrics["add_trade_count"] > 0:
+        print(
+            f"   📈 Add-on expectancy{tag}: "
+            f"add={metrics['add_expectancy']:.4f}R "
+            f"(n={metrics['add_trade_count']}), "
+            f"base={metrics['base_expectancy']:.4f}R "
+            f"(n={metrics['base_trade_count']})"
+        )
+
+
 def simulate_rr_execution(
     df: pd.DataFrame,
     exec_config: Dict[str, Any],
@@ -487,6 +641,7 @@ def simulate_rr_execution(
     bars_1min_dict: Optional[Dict[str, pd.DataFrame]] = None,
     add_position_cfg: Optional[Dict[str, Any]] = None,
     per_strategy_limits: Optional[Dict[str, Any]] = None,
+    add_position_profiles: Optional[Dict[str, Any]] = None,
     evidence_min_score: float = 0.0,  # [DEPRECATED] 不再使用, 保留参数避免调用方报错
     per_strategy_ev_min: Optional[Dict[str, float]] = None,  # [DEPRECATED]
 ) -> pd.Series:
@@ -519,6 +674,9 @@ def simulate_rr_execution(
     # 解析全局参数（tier 模式下作为 fallback）
     stop_type = stop_loss_cfg.get("type", "fixed")
     g_initial_r = float(stop_loss_cfg.get("initial_r", 2.0))
+    _guardrails = stop_loss_cfg.get("guardrails", {}) or {}
+    g_min_stop_pct = _guardrails.get("min_stop_pct")
+    g_max_stop_pct = _guardrails.get("max_stop_pct")
 
     trailing_cfg = stop_loss_cfg.get("trailing", {})
     g_activation_r = float(trailing_cfg.get("activation_r", 1.0))
@@ -641,6 +799,16 @@ def simulate_rr_execution(
             t_activation_r = group["_tier_activation_r"].values.astype(float)
             t_trail_r = group["_tier_trail_r"].values.astype(float)
             t_timeout = group["_tier_timeout"].values.astype(int)
+            t_min_stop_pct = (
+                group["_tier_min_stop_pct"].values.astype(float)
+                if "_tier_min_stop_pct" in group.columns
+                else None
+            )
+            t_max_stop_pct = (
+                group["_tier_max_stop_pct"].values.astype(float)
+                if "_tier_max_stop_pct" in group.columns
+                else None
+            )
 
         # structural exit 数组 (BPC trend_hold: ema200)
         _has_structural = "_structural_exit" in group.columns
@@ -666,21 +834,50 @@ def simulate_rr_execution(
                 activation_r = t_activation_r[i]
                 trail_r = t_trail_r[i]
                 time_stop_bars = t_timeout[i]
+                min_stop_pct = (
+                    float(t_min_stop_pct[i]) if t_min_stop_pct is not None else None
+                )
+                max_stop_pct = (
+                    float(t_max_stop_pct[i]) if t_max_stop_pct is not None else None
+                )
+                if min_stop_pct is not None and not np.isfinite(min_stop_pct):
+                    min_stop_pct = None
+                if max_stop_pct is not None and not np.isfinite(max_stop_pct):
+                    max_stop_pct = None
             else:
                 initial_r = g_initial_r
                 activation_r = g_activation_r
                 trail_r = g_trail_r
                 time_stop_bars = g_time_stop_bars
+                min_stop_pct = (
+                    float(g_min_stop_pct) if g_min_stop_pct is not None else None
+                )
+                max_stop_pct = (
+                    float(g_max_stop_pct) if g_max_stop_pct is not None else None
+                )
 
             direction = int(d)
             entry_price = closes[i]
             entry_atr = a
+            atr_stop_pct = max(0.0, initial_r * entry_atr / entry_price)
+            effective_stop_pct = atr_stop_pct
+            if min_stop_pct is not None:
+                effective_stop_pct = max(effective_stop_pct, float(min_stop_pct))
+            if max_stop_pct is not None:
+                effective_stop_pct = min(effective_stop_pct, float(max_stop_pct))
+            effective_stop_pct = max(1e-6, float(effective_stop_pct))
+            effective_initial_r = effective_stop_pct * entry_price / entry_atr
+            sizing_stop_source = (
+                "atr"
+                if abs(effective_stop_pct - atr_stop_pct) <= 1e-9
+                else "guardrail_clip"
+            )
 
             # 初始止损价
             if direction == 1:
-                sl_price = entry_price - initial_r * entry_atr
+                sl_price = entry_price - effective_initial_r * entry_atr
             else:
-                sl_price = entry_price + initial_r * entry_atr
+                sl_price = entry_price + effective_initial_r * entry_atr
 
             trailing_active = False
             breakeven_locked = False
@@ -928,11 +1125,12 @@ def simulate_rr_execution(
             # 计算 realized R/R (除以 initial_r × ATR，反映仓位大小)
             # 1R = initial_r × ATR = 止损距离 = position sizing 基准
             # 这样 wider stop → 更大的 1R → 同样价格变动产生更小的 R
-            risk_distance = initial_r * entry_atr
+            risk_distance = effective_initial_r * entry_atr
             if direction == 1:
                 realized_rr = (exit_price - entry_price) / risk_distance
             else:
                 realized_rr = (entry_price - exit_price) / risk_distance
+            max_favorable_rr = abs(best_price - entry_price) / risk_distance
 
             results.iloc[results.index.get_loc(idx_arr[i])] = realized_rr
             total_entries += 1
@@ -996,6 +1194,13 @@ def simulate_rr_execution(
                     "exit_price": float(exit_price),
                     "direction": direction,
                     "realized_rr": float(realized_rr),
+                    "raw_realized_rr": float(realized_rr),
+                    "max_favorable_rr": float(max_favorable_rr),
+                    "initial_r": float(effective_initial_r),
+                    "atr_stop_pct": float(atr_stop_pct),
+                    "effective_stop_pct": float(effective_stop_pct),
+                    "sizing_stop_source": sizing_stop_source,
+                    "entry_atr": float(entry_atr),
                     "exit_reason": exit_reason,
                     "evidence_score": float(
                         group.iloc[i].get("evidence_score", 0.5)
@@ -1014,6 +1219,19 @@ def simulate_rr_execution(
                     ),
                     "breakeven_locked": breakeven_locked,
                     "is_add_position": False,
+                    "add_position_seq": 0,
+                    "size_multiplier": 1.0,
+                    "position_scale": 1.0,
+                    "drawdown": float(
+                        group.iloc[i].get("drawdown", 0.0)
+                        if "drawdown" in group.columns
+                        else 0.0
+                    ),
+                    "daily_loss": float(
+                        group.iloc[i].get("daily_loss", 0.0)
+                        if "daily_loss" in group.columns
+                        else 0.0
+                    ),
                 }
             )
 
@@ -1029,7 +1247,9 @@ def simulate_rr_execution(
         _ap_per_strat = (
             add_position_cfg.get("per_strategy_limits", {}) if _ap_enabled else {}
         )
-        _ap_max_add = int(_ap_rules.get("max_add_times", 1))
+        _dyn_slot_policy = (
+            add_position_cfg.get("dynamic_slot_policy", {}) if _ap_enabled else {}
+        )
 
         # per-strategy slot 限制 — 始终从 constitution per_strategy_limits 读取
         # (不依赖 add_position_cfg 是否存在, 与事件侧 LivePCM._max_slots_for_strategy 对齐)
@@ -1070,6 +1290,9 @@ def simulate_rr_execution(
         for trade in trade_details:
             eidx = trade["entry_idx"]
             trade_arch = trade.get("archetype", "").lower().strip()
+            _row = df.loc[eidx]
+            if isinstance(_row, pd.DataFrame):
+                _row = _row.iloc[-1]
 
             # 移除已平仓的 active trades
             if _slot_use_ts and trade.get("entry_ts_ns", 0) > 0:
@@ -1080,19 +1303,93 @@ def simulate_rr_execution(
 
             # 检查 per-strategy slot 限制
             arch_max = _per_strat_max.get(trade_arch, max_slots)  # 缺省回退全局
+            if trade_arch.startswith("bpc"):
+                _bpc_dyn = dict((_dyn_slot_policy or {}).get("bpc") or {})
+                if _bpc_dyn.get("enabled", False):
+                    _bpc_slots = max(
+                        1,
+                        min(
+                            int(_bpc_dyn.get("base_slots", 1)),
+                            int(_bpc_dyn.get("max_slots", arch_max)),
+                        ),
+                    )
+                    _dd = float(trade.get("drawdown", _row.get("drawdown", 0.0)) or 0.0)
+                    _dl = float(
+                        trade.get("daily_loss", _row.get("daily_loss", 0.0)) or 0.0
+                    )
+                    _step2 = dict(_bpc_dyn.get("step2") or {})
+                    _step3 = dict(_bpc_dyn.get("step3") or {})
+                    _bpc_active = len(
+                        [
+                            t
+                            for t in active
+                            if str(t.get("archetype", "")).lower().startswith("bpc")
+                        ]
+                    )
+                    _risk_cap = float(
+                        (_dyn_slot_policy or {}).get("total_risk_cap", 0.10)
+                    )
+                    _risk_used = float(len(active)) * float(risk_per_slot)
+                    _risk_left = max(0.0, _risk_cap - _risk_used)
+                    _strat_risk = float(
+                        (_ap_per_strat.get(trade_arch, {}) or {}).get(
+                            "max_risk_per_trade", risk_per_slot
+                        )
+                        or risk_per_slot
+                    )
+                    if (
+                        _dd <= float(_step2.get("max_drawdown", 0.08))
+                        and _dl <= float(_step2.get("max_daily_loss", 0.03))
+                        and _bpc_active >= int(_step2.get("min_active_bpc_slots", 1))
+                        and _risk_left >= _strat_risk
+                    ):
+                        _bpc_slots = max(_bpc_slots, 2)
+                    if (
+                        _dd <= float(_step3.get("max_drawdown", 0.05))
+                        and _dl <= float(_step3.get("max_daily_loss", 0.02))
+                        and _bpc_active >= int(_step3.get("min_active_bpc_slots", 2))
+                        and _risk_left >= _strat_risk
+                    ):
+                        _bpc_slots = max(_bpc_slots, 3)
+                    arch_max = min(
+                        arch_max, int(_bpc_dyn.get("max_slots", arch_max)), _bpc_slots
+                    )
             arch_active = [
                 t
                 for t in active
                 if t.get("archetype", "").lower().strip() == trade_arch
             ]
+            same_sym_arch_active = [
+                t
+                for t in active
+                if t.get("symbol") == trade.get("symbol")
+                and t.get("archetype", "").lower().strip() == trade_arch
+            ]
             per_strat_full = len(arch_active) >= arch_max
             global_full = len(active) >= max_slots
 
-            if per_strat_full or global_full:
+            if per_strat_full or global_full or bool(same_sym_arch_active):
                 # slot 满 — 先检查是否可以加仓
                 can_add = False
+                add_size_mult = 1.0
                 if _ap_enabled:
                     strat_cfg = _ap_per_strat.get(trade_arch, {})
+                    strategy_add_cfg = _resolve_strategy_add_position_config(
+                        trade_arch, _ap_rules, _ap_per_strat
+                    )
+                    _exec_ap = {}
+                    if add_position_profiles:
+                        _exec_ap = (
+                            add_position_profiles.get(trade_arch)
+                            or add_position_profiles.get(trade_arch.split("-")[0])
+                            or {}
+                        )
+                    strategy_add_cfg = _merge_add_position_cfg(
+                        strategy_add_cfg, _exec_ap
+                    )
+                    _ap_max_add = _shared_resolve_add_position_max_times(
+                        strategy_add_cfg
+                    )
                     if strat_cfg.get("allow_add_position", False):
                         # 找出同 symbol + 同 direction 的所有活跃仓位
                         _same_sym_dir = [
@@ -1108,12 +1405,118 @@ def simulate_rr_execution(
                         if _all_locked:
                             # 找父单 (跟踪 add_count 的那个)
                             for at in _same_sym_dir:
-                                if at.get("_add_count", 0) < _ap_max_add:
-                                    can_add = True
-                                    at["_add_count"] = at.get("_add_count", 0) + 1
-                                    trade["is_add_position"] = True
-                                    _add_pos_count += 1
-                                    break
+                                _next_add_no = int(at.get("_add_count", 0)) + 1
+                                if _next_add_no > _ap_max_add:
+                                    continue
+                                _risk_dist = float(
+                                    at.get("initial_r", 0.0) or 0.0
+                                ) * float(at.get("entry_atr", 0.0) or 0.0)
+                                if _risk_dist <= 0:
+                                    continue
+                                current_r = (
+                                    abs(
+                                        float(trade.get("entry_price", 0.0))
+                                        - float(at.get("entry_price", 0.0))
+                                    )
+                                    / _risk_dist
+                                )
+                                _signal = dict(_row)
+                                _signal["add_position_seq"] = _next_add_no
+                                _signal["parent_initial_r"] = float(
+                                    at.get("initial_r", 0.0) or 0.0
+                                )
+                                _base_risk_frac = float(
+                                    strat_cfg.get("max_risk_per_trade", risk_per_slot)
+                                )
+                                _parent_stop_pct = float(
+                                    at.get(
+                                        "effective_stop_pct",
+                                        (
+                                            float(at.get("initial_r", 0.0) or 0.0)
+                                            * float(at.get("entry_atr", 0.0) or 0.0)
+                                            / max(
+                                                float(
+                                                    at.get("entry_price", 1.0) or 1.0
+                                                ),
+                                                1e-9,
+                                            )
+                                        ),
+                                    )
+                                    or 0.0
+                                )
+                                _base_lev_unit = (
+                                    _base_risk_frac / _parent_stop_pct
+                                    if _parent_stop_pct > 1e-9
+                                    else 0.0
+                                )
+                                _current_lev = 0.0
+                                _current_notional_frac = 0.0
+                                for _pos in _same_sym_dir:
+                                    _pos_stop = float(
+                                        _pos.get(
+                                            "effective_stop_pct",
+                                            (
+                                                float(_pos.get("initial_r", 0.0) or 0.0)
+                                                * float(
+                                                    _pos.get("entry_atr", 0.0) or 0.0
+                                                )
+                                                / max(
+                                                    float(
+                                                        _pos.get("entry_price", 1.0)
+                                                        or 1.0
+                                                    ),
+                                                    1e-9,
+                                                )
+                                            ),
+                                        )
+                                        or 0.0
+                                    )
+                                    if _pos_stop <= 1e-9:
+                                        continue
+                                    _current_lev += (
+                                        _base_risk_frac
+                                        * float(_pos.get("size_multiplier", 1.0) or 1.0)
+                                        / _pos_stop
+                                    )
+                                    _current_notional_frac += _base_risk_frac * float(
+                                        _pos.get("size_multiplier", 1.0) or 1.0
+                                    )
+                                _signal["base_leverage_unit"] = float(_base_lev_unit)
+                                _signal["current_leverage"] = float(_current_lev)
+                                _signal["base_notional_frac"] = float(_base_risk_frac)
+                                _signal["current_notional_frac"] = float(
+                                    _current_notional_frac
+                                )
+                                if not _validate_add_position_trigger(
+                                    archetype=trade_arch,
+                                    direction=int(trade.get("direction", 0)),
+                                    signal=_signal,
+                                    add_position_cfg=strategy_add_cfg,
+                                    current_r=current_r,
+                                ):
+                                    continue
+                                add_size_mult = _resolve_add_position_size_multiplier(
+                                    strategy_add_cfg, _next_add_no, _signal
+                                )
+                                can_add = True
+                                for _parent in _same_sym_dir:
+                                    _parent["_add_count"] = _next_add_no
+                                trade["is_add_position"] = True
+                                trade["add_position_seq"] = _next_add_no
+                                trade["size_multiplier"] = add_size_mult
+                                trade["realized_rr"] = (
+                                    float(
+                                        trade.get(
+                                            "raw_realized_rr", trade["realized_rr"]
+                                        )
+                                    )
+                                    * add_size_mult
+                                )
+                                results.iloc[results.index.get_loc(eidx)] = trade[
+                                    "realized_rr"
+                                ]
+                                _add_pos_count += 1
+                                break
 
                 if can_add:
                     accepted = active + [trade]
@@ -1235,10 +1638,32 @@ def _export_trade_details_csv(
                 "entry_time": entry_time,
                 "exit_time": exit_time,
                 "pnl_r": round(float(t.get("realized_rr", 0)), 4),
+                "raw_pnl_r": round(float(t.get("raw_realized_rr", 0)), 4),
                 "exit_reason": t.get("exit_reason", ""),
                 "archetype": t.get("archetype", ""),
                 "evidence": round(float(t.get("evidence_score", 0.5)), 4),
                 "bars_held": bars_held,
+                "is_add_position": bool(t.get("is_add_position", False)),
+                "add_position_seq": int(t.get("add_position_seq", 0) or 0),
+                "size_multiplier": round(
+                    float(t.get("size_multiplier", 1.0) or 1.0), 4
+                ),
+                "position_scale": round(float(t.get("position_scale", 1.0) or 1.0), 4),
+                "atr_stop_pct": round(float(t.get("atr_stop_pct", np.nan)), 6),
+                "effective_stop_pct": round(
+                    float(t.get("effective_stop_pct", np.nan)), 6
+                ),
+                "sizing_stop_source": str(t.get("sizing_stop_source", "")),
+                "max_favorable_rr": round(float(t.get("max_favorable_rr", 0) or 0), 4),
+                "mfe_capture_ratio": (
+                    round(
+                        float(t.get("raw_realized_rr", 0) or 0)
+                        / float(t.get("max_favorable_rr", 0) or 1.0),
+                        4,
+                    )
+                    if float(t.get("max_favorable_rr", 0) or 0) > 1e-9
+                    else np.nan
+                ),
             }
         )
     out = pd.DataFrame(rows)
@@ -3022,7 +3447,13 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     # ── 5. Per-entry 执行参数（来自 winning archetype 的 execution.yaml）──
     # 初始化 per-entry 参数列
     first_exec = list(arch_exec_configs.values())[0]
+    _add_pos_profiles_pcm: Dict[str, Any] = {}
+    for _arch_k, _ec in arch_exec_configs.items():
+        _ap = (_ec or {}).get("add_position") or {}
+        if _ap:
+            _add_pos_profiles_pcm[_arch_k.lower()] = dict(_ap)
     first_sl = first_exec.get("stop_loss", {})
+    first_guard = first_sl.get("guardrails", {}) or {}
     first_trail = first_sl.get("trailing", {})
     first_holding = first_exec.get("holding", {})
 
@@ -3030,6 +3461,16 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     merged["_tier_activation_r"] = float(first_trail.get("activation_r", 1.0))
     merged["_tier_trail_r"] = float(first_trail.get("trail_r", 1.5))
     merged["_tier_timeout"] = int(first_holding.get("time_stop_bars", 50) or 50)
+    merged["_tier_min_stop_pct"] = (
+        float(first_guard.get("min_stop_pct"))
+        if first_guard.get("min_stop_pct") is not None
+        else np.nan
+    )
+    merged["_tier_max_stop_pct"] = (
+        float(first_guard.get("max_stop_pct"))
+        if first_guard.get("max_stop_pct") is not None
+        else np.nan
+    )
     merged["_tier_size"] = 1.0
     merged["_tier_name"] = "default"
     merged["_structural_exit"] = ""  # 空 = 无结构性退出, "ema200" = BPC trend_hold
@@ -3049,6 +3490,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             continue
         ec = arch_exec_configs[arch_name]
         sl = ec.get("stop_loss", {})
+        guard = sl.get("guardrails", {}) or {}
         trail = sl.get("trailing", {})
         holding = ec.get("holding", {})
 
@@ -3060,6 +3502,16 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         merged.loc[mask, "_tier_activation_r"] = float(trail.get("activation_r", 1.0))
         merged.loc[mask, "_tier_trail_r"] = float(trail.get("trail_r", 1.5))
         merged.loc[mask, "_tier_timeout"] = int(holding.get("time_stop_bars", 50) or 50)
+        merged.loc[mask, "_tier_min_stop_pct"] = (
+            float(guard.get("min_stop_pct"))
+            if guard.get("min_stop_pct") is not None
+            else np.nan
+        )
+        merged.loc[mask, "_tier_max_stop_pct"] = (
+            float(guard.get("max_stop_pct"))
+            if guard.get("max_stop_pct") is not None
+            else np.nan
+        )
         merged.loc[mask, "_tier_name"] = arch_name
         # structural_exit: BPC trend_hold 用 ema200 结构性退出
         _se = sl.get("structural_exit", "")
@@ -3118,6 +3570,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             _ra_ap = _c_ap.get("resource_allocation") or {}
             _ap_rules = _ra_ap.get("add_position_rules") or {}
             _ap_per_strat = _ra_ap.get("per_strategy_limits") or {}
+            _dyn_slot_policy = _ra_ap.get("dynamic_slot_policy") or {}
             # per_strategy_limits 始终读取 (与事件侧 LivePCM._max_slots_for_strategy 对齐)
             if _ap_per_strat:
                 _per_strategy_limits = _ap_per_strat
@@ -3129,6 +3582,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
                 _add_position_cfg = {
                     "add_position_rules": _ap_rules,
                     "per_strategy_limits": _ap_per_strat,
+                    "dynamic_slot_policy": _dyn_slot_policy,
                 }
                 _ap_strats = [
                     k
@@ -3150,6 +3604,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         bars_1min_dict=bars_1min_dict,
         add_position_cfg=_add_position_cfg,
         per_strategy_limits=_per_strategy_limits,
+        add_position_profiles=_add_pos_profiles_pcm,
     )
 
     valid_returns = exec_returns.dropna()
@@ -3167,9 +3622,17 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         _has_scale = (merged["_position_scale"] < 1.0 - 1e-9).any()
         if _has_scale:
             exec_returns = exec_returns * merged["_position_scale"]
+            for t in trade_details:
+                _eidx = t.get("entry_idx")
+                if _eidx in merged.index:
+                    _ps = float(merged.loc[_eidx, "_position_scale"])
+                    t["position_scale"] = _ps
+                    t["realized_rr"] = float(t.get("realized_rr", 0.0) or 0.0) * _ps
             valid_returns = exec_returns.dropna()
             _avg_scale = merged.loc[valid_returns.index, "_position_scale"].mean()
             print(f"   📐 Position scale applied to returns (avg={_avg_scale:.3f})")
+
+    _report_fat_tail_metrics(trade_details, label="PCM")
 
     # ── 更新漏斗统计: slot 过滤后的数据 ──
     _n_slot_rejected = _funnel_pcm_before_slot - len(valid_returns)
@@ -3291,8 +3754,10 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         print(f"      加仓交易: {len(ap_trades)}")
         if ap_trades:
             ap_pnl = [t["realized_rr"] for t in ap_trades]
+            ap_mult = [float(t.get("size_multiplier", 1.0) or 1.0) for t in ap_trades]
             print(f"      加仓平均R: {np.mean(ap_pnl):.4f}")
             print(f"      加仓胜率: {np.mean([p > 0 for p in ap_pnl]):.2%}")
+            print(f"      加仓平均倍率: {np.mean(ap_mult):.2f}x")
 
     # Per-symbol breakdown
     sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
@@ -4977,6 +5442,17 @@ def main() -> int:
     print(f"\n📊 Symbols: {', '.join(symbols)}")
 
     has_ohlc = all(c in df.columns for c in ["high", "low", "close", "atr"])
+    # 优先使用策略 meta.yaml 的 timeframe（避免默认 240T 污染 120T/60T）
+    auto_tf_single = (
+        load_meta_timeframe(args.strategy, args.strategies_root)
+        if args.strategy
+        else None
+    )
+    effective_tf = auto_tf_single or getattr(args, "timeframe", None) or "240T"
+    try:
+        effective_bar_minutes = int(str(effective_tf).replace("T", ""))
+    except Exception:
+        effective_bar_minutes = 240
 
     if has_ohlc:
         # 日志已包含连续 OHLC → 直接使用（常见路径: predictions.parquet）
@@ -5001,7 +5477,7 @@ def main() -> int:
         parts = []
         for sym in symbols:
             spec = FeatureStoreSpec(
-                layer=args.features_store_layer, symbol=sym, timeframe=args.timeframe
+                layer=args.features_store_layer, symbol=sym, timeframe=effective_tf
             )
             try:
                 df_sym = store.read_range(
@@ -5045,6 +5521,12 @@ def main() -> int:
         print(
             f"   Loaded FeatureStore: {len(merged)} continuous bars, {n_entries} entries"
         )
+
+    # 单策略路径: 明确每行 bar_minutes，避免默认 240T 误用于 120T/60T
+    merged["_bar_minutes"] = effective_bar_minutes
+    print(
+        f"   🕐 Effective timeframe={effective_tf}, _bar_minutes={effective_bar_minutes}"
+    )
 
     # ================================================================
     # Entry Filter: 入场时机过滤 (自动读取 entry_filters.yaml, OR 组合)
@@ -5177,12 +5659,23 @@ def main() -> int:
             # 应用噪声惩罚调整 per-entry 参数
             # 先创建 per-entry 参数列，再调整
             sl = exec_config.get("stop_loss", {})
+            guard = sl.get("guardrails", {}) or {}
             trail = sl.get("trailing", {})
             holding = exec_config.get("holding", {})
             merged["_tier_initial_r"] = float(sl.get("initial_r", 2.0))
             merged["_tier_activation_r"] = float(trail.get("activation_r", 1.0))
             merged["_tier_trail_r"] = float(trail.get("trail_r", 1.5))
             merged["_tier_timeout"] = int(holding.get("time_stop_bars", 50) or 50)
+            merged["_tier_min_stop_pct"] = (
+                float(guard.get("min_stop_pct"))
+                if guard.get("min_stop_pct") is not None
+                else np.nan
+            )
+            merged["_tier_max_stop_pct"] = (
+                float(guard.get("max_stop_pct"))
+                if guard.get("max_stop_pct") is not None
+                else np.nan
+            )
             merged["_tier_size"] = 1.0
             merged["_tier_name"] = "default"
 
@@ -5256,6 +5749,7 @@ def main() -> int:
             _ra_const = _c_const.get("resource_allocation") or {}
             _ap_rules_const = _ra_const.get("add_position_rules") or {}
             _ap_per_strat_const = _ra_const.get("per_strategy_limits") or {}
+            _dyn_slot_policy_const = _ra_const.get("dynamic_slot_policy") or {}
             # per_strategy_limits 始终传入 (slot 过滤需要)
             _per_strategy_limits_single = _ap_per_strat_const
             if any(
@@ -5266,6 +5760,7 @@ def main() -> int:
                 _add_pos_cfg_single = {
                     "add_position_rules": _ap_rules_const,
                     "per_strategy_limits": _ap_per_strat_const,
+                    "dynamic_slot_policy": _dyn_slot_policy_const,
                 }
         except Exception:
             pass
@@ -5287,6 +5782,10 @@ def main() -> int:
 
     # 使用 execution.yaml 配置模拟 RR
     print("\n📈 Simulating with execution.yaml config...")
+    _add_pos_profiles_single: Dict[str, Any] = {}
+    _ap_single = (exec_config or {}).get("add_position") or {}
+    if _ap_single:
+        _add_pos_profiles_single[str(args.strategy).lower()] = dict(_ap_single)
     exec_returns, trade_details = simulate_rr_execution(
         merged,
         exec_config,
@@ -5297,12 +5796,14 @@ def main() -> int:
         bars_1min_dict=bars_1min_dict,
         add_position_cfg=_add_pos_cfg_single,
         per_strategy_limits=_per_strategy_limits_single,
+        add_position_profiles=_add_pos_profiles_single,
     )
 
     valid_returns = exec_returns.dropna()
     if len(valid_returns) == 0:
         print("❌ No valid returns computed")
         return 1
+    _report_fat_tail_metrics(trade_details, label=str(args.strategy))
 
     # 计算 Sharpe
     span_years = _estimate_span_years(merged)
@@ -5395,8 +5896,10 @@ def main() -> int:
         print(f"      加仓交易: {len(ap_trades)}")
         if ap_trades:
             ap_pnl = [t["realized_rr"] for t in ap_trades]
+            ap_mult = [float(t.get("size_multiplier", 1.0) or 1.0) for t in ap_trades]
             print(f"      加仓平均R: {np.mean(ap_pnl):.4f}")
             print(f"      加仓胜率: {np.mean([p > 0 for p in ap_pnl]):.2%}")
+            print(f"      加仓平均倍率: {np.mean(ap_mult):.2f}x")
 
     # Per-symbol breakdown
     sym_col = "symbol" if "symbol" in merged.columns else "_symbol"
@@ -5487,8 +5990,17 @@ def main() -> int:
         _map_ohlc = None
         if getattr(args, "features_store_layer", None):
             _ts_col = "timestamp" if "timestamp" in merged.columns else None
-            _start = pd.Timestamp(merged[_ts_col].min()) if _ts_col else None
-            _end = pd.Timestamp(merged[_ts_col].max()) if _ts_col else None
+            # 优先使用回测窗口作为地图范围，避免信号稀疏时只加载到极窄时间片
+            _start = (
+                pd.Timestamp(args.test_start)
+                if getattr(args, "test_start", None)
+                else (pd.Timestamp(merged[_ts_col].min()) if _ts_col else None)
+            )
+            _end = (
+                pd.Timestamp(args.test_end)
+                if getattr(args, "test_end", None)
+                else (pd.Timestamp(merged[_ts_col].max()) if _ts_col else None)
+            )
             _syms = (
                 merged["symbol"].unique().tolist() if "symbol" in merged.columns else []
             )

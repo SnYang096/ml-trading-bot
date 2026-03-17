@@ -214,6 +214,53 @@ class TestBuildPositionDict:
         # trail_r 应该取 trailing_atr (0.5)
         assert pos["trail_r"] == pytest.approx(0.5)
 
+    def test_stop_guardrail_clips_with_max_stop_pct(self):
+        rr = {
+            "stop_loss_r": 3.5,  # atr_stop_pct=3.5%
+            "take_profit_r": 0.0,
+            "max_holding_bars": 50,
+            "max_stop_pct": 0.02,
+        }
+        ep = {"rr_constraints": rr}
+        intent = TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype="bpc",
+            confidence=0.8,
+            execution_profile=ep,
+        )
+        pos = build_position_dict(
+            intent, entry_price=10000, atr=100, bar_minutes=240, entry_time=_now()
+        )
+        assert pos["atr_stop_pct"] == pytest.approx(0.035)
+        assert pos["effective_stop_pct"] == pytest.approx(0.02)
+        assert pos["sizing_stop_source"] == "guardrail_clip"
+        # effective_stop_r = 0.02*10000/100 = 2.0 -> risk_distance=200
+        assert pos["initial_risk_distance"] == pytest.approx(200)
+
+    def test_stop_guardrail_uses_atr_when_not_clipped(self):
+        rr = {
+            "stop_loss_r": 2.0,
+            "take_profit_r": 0.0,
+            "max_holding_bars": 50,
+            "min_stop_pct": 0.005,
+            "max_stop_pct": 0.03,
+        }
+        ep = {"rr_constraints": rr}
+        intent = TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype="me",
+            confidence=0.8,
+            execution_profile=ep,
+        )
+        pos = build_position_dict(
+            intent, entry_price=10000, atr=100, bar_minutes=240, entry_time=_now()
+        )
+        assert pos["atr_stop_pct"] == pytest.approx(0.02)
+        assert pos["effective_stop_pct"] == pytest.approx(0.02)
+        assert pos["sizing_stop_source"] == "atr"
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # enforce_position tests

@@ -204,6 +204,7 @@ class ExecutionParamGenerator:
         """
         sl_cfg = self.config.get("stop_loss", {})
         trail_cfg = sl_cfg.get("trailing", {})
+        guardrails = sl_cfg.get("guardrails", {}) or {}
 
         # take_profit: 必须检查 enabled 标志，读 target_r (与向量回测一致)
         tp_cfg = self.config.get("take_profit", {})
@@ -225,6 +226,8 @@ class ExecutionParamGenerator:
             "max_holding_bars": _tsb,
             "size_multiplier": 1.0,
             "structural_exit": sl_cfg.get("structural_exit"),  # "ema200" / None
+            "min_stop_pct": guardrails.get("min_stop_pct"),
+            "max_stop_pct": guardrails.get("max_stop_pct"),
         }
 
 
@@ -519,6 +522,8 @@ class GenericLiveStrategy:
                     "trailing_atr": exec_params.get("trail_r", 1.5),
                     "max_holding_bars": exec_params.get("time_stop_bars", 50),
                     "structural_exit": exec_params.get("structural_exit"),
+                    "min_stop_pct": exec_params.get("min_stop_pct"),
+                    "max_stop_pct": exec_params.get("max_stop_pct"),
                 },
                 "strategy_specific": {
                     "direction_rule": rule_id,
@@ -526,6 +531,9 @@ class GenericLiveStrategy:
                     "gate_weight": gate_weight,
                     "tier_name": exec_params.get("tier_name", "default"),
                 },
+                "add_position": (
+                    (self.archetype.execution.raw or {}).get("add_position") or {}
+                ),
             },
         )
 

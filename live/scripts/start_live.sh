@@ -131,8 +131,7 @@ export MLBOT_LIVE_GAP_FILL="true"
 export MLBOT_STRATEGIES_ROOT="$LIVE_ROOT/config/strategies"
 export MLBOT_BPC_WINDOW_MINUTES="15"  # 15分钟
 
-# PCM / Constitution 配置（全局配置在 live/highcap/config/ 下）
-export MLBOT_PCM_REGIME_CONFIG="$LIVE_ROOT/config/pcm_regime.yaml"
+# Constitution 配置（全局配置在 live/highcap/config/ 下）
 export MLBOT_CONSTITUTION_YAML="$LIVE_ROOT/config/constitution/constitution.yaml"
 
 # 启动模式: bpc (单策略) 或 three_strategies (三策略多时间框架)

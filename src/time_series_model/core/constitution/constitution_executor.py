@@ -17,6 +17,10 @@ from .runtime_state import (
 )
 from .state_store import ConstitutionStatePaths, read_json, write_json
 from .violation import ConstitutionViolation
+from .add_position_rules import (
+    resolve_add_position_max_times,
+    resolve_strategy_add_position_config,
+)
 from src.order_management.storage import Storage
 
 SLOT_RELEASE_REASONS = {
@@ -208,6 +212,13 @@ class ConstitutionExecutor:
         obj = self._raw_obj or {}
         ra = obj.get("resource_allocation") or {}
         return dict(ra.get("per_strategy_limits") or {})
+
+    def resolve_add_position_for_strategy(self, archetype: str) -> dict:
+        return resolve_strategy_add_position_config(
+            archetype=archetype,
+            add_position_rules=self._resolve_add_position(),
+            per_strategy_limits=self._resolve_per_strategy_limits(),
+        )
 
     def resolve_risk_for_strategy(self, archetype: str) -> float:
         """Return effective risk fraction for a strategy.
@@ -420,7 +431,7 @@ class ConstitutionExecutor:
             )
 
         # 2. Global add_position safety rules
-        addp = self._resolve_add_position()
+        addp = self.resolve_add_position_for_strategy(arch_key)
         # Backward compat: old 'enabled' flag
         if not bool(addp.get("enabled", True)):
             raise ConstitutionViolation(
@@ -438,7 +449,7 @@ class ConstitutionExecutor:
             )
         rec = st.add_position.positions.get(pid)
         add_count = int(rec.add_count) if rec is not None else 0
-        max_add_times = int(addp.get("max_add_times", 1))
+        max_add_times = resolve_add_position_max_times(addp)
         if add_count >= max_add_times:
             raise ConstitutionViolation(
                 code="ADD_POSITION_MAX_TIMES",

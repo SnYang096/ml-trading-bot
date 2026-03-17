@@ -85,7 +85,6 @@ TOP_LEVEL_CONFIGS = [
 # (相对路径, 相对于 config/ 根目录)
 GLOBAL_CONFIGS = [
     "constitution/constitution.yaml",
-    "pcm_regime.yaml",
 ]
 
 

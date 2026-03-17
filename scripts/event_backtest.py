@@ -63,6 +63,11 @@ from src.time_series_model.portfolio.live_pcm import LivePCM
 from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
 )
+from src.time_series_model.core.constitution.add_position_rules import (
+    resolve_add_position_max_times as _shared_resolve_add_position_max_times,
+    resolve_add_position_size_multiplier as _shared_resolve_add_position_size_multiplier,
+    validate_add_position_trigger as _shared_validate_add_position_trigger,
+)
 from src.time_series_model.core.constitution.runtime_state import (
     ConstitutionRuntimeState,
 )
@@ -137,6 +142,28 @@ class ClosedTrade:
     bars_held: int = 0
     is_add_position: bool = False  # 加仓标记
     size_multiplier: float = 1.0  # regime position scale
+    atr_stop_pct: float = 0.0
+    effective_stop_pct: float = 0.0
+    sizing_stop_source: str = ""
+
+
+def _resolve_add_position_size_multiplier(
+    add_rules: Dict[str, Any],
+    add_number: int,
+    signal: Optional[Dict[str, Any]] = None,
+) -> float:
+    return _shared_resolve_add_position_size_multiplier(add_rules, add_number, signal)
+
+
+def _tail_contribution_rate(trades: List[ClosedTrade]) -> tuple[float, int, int]:
+    """返回 top10% winners profit share 及计数。"""
+    winners = sorted((float(t.pnl_r) for t in trades if t.pnl_r > 0), reverse=True)
+    if not winners:
+        return 0.0, 0, 0
+    top_n = max(1, int(np.ceil(len(winners) * 0.1)))
+    win_sum = float(np.sum(winners))
+    top_sum = float(np.sum(winners[:top_n]))
+    return (top_sum / win_sum) if win_sum > 1e-9 else 0.0, top_n, len(winners)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -185,6 +212,14 @@ class PositionSimulator:
         bar_minutes: Optional[int] = None,
     ) -> Optional[str]:
         """从 TradeIntent + 当前 bar 创建虚拟持仓 (调用共享 build_position_dict)"""
+        _arch = str(getattr(intent, "archetype", "") or "").lower().strip()
+        for pos in self._positions.values():
+            if (
+                pos.get("symbol", "") == getattr(intent, "symbol", "")
+                and str(pos.get("archetype", "") or "").lower().strip() == _arch
+            ):
+                # 同 symbol + 同 archetype 不允许开新 slot；必须走 try_add_position。
+                return None
         if len(self._positions) >= self.max_positions:
             return None
 
@@ -326,6 +361,9 @@ class PositionSimulator:
                     bars_held=pos.get("bars_counted", 0),
                     is_add_position=pos.get("_is_add_position", False),
                     size_multiplier=pos.get("_size_multiplier", 1.0),
+                    atr_stop_pct=pos.get("atr_stop_pct", 0.0),
+                    effective_stop_pct=pos.get("effective_stop_pct", 0.0),
+                    sizing_stop_source=pos.get("sizing_stop_source", ""),
                 )
                 closed.append(trade)
                 self.closed_trades.append(trade)
@@ -380,6 +418,9 @@ class PositionSimulator:
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
                 size_multiplier=pos.get("_size_multiplier", 1.0),
+                atr_stop_pct=pos.get("atr_stop_pct", 0.0),
+                effective_stop_pct=pos.get("effective_stop_pct", 0.0),
+                sizing_stop_source=pos.get("sizing_stop_source", ""),
             )
             closed.append(trade)
             self.closed_trades.append(trade)
@@ -433,6 +474,9 @@ class PositionSimulator:
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
                 size_multiplier=pos.get("_size_multiplier", 1.0),
+                atr_stop_pct=pos.get("atr_stop_pct", 0.0),
+                effective_stop_pct=pos.get("effective_stop_pct", 0.0),
+                sizing_stop_source=pos.get("sizing_stop_source", ""),
             )
             closed.append(trade)
             self.closed_trades.append(trade)
@@ -527,6 +571,60 @@ class PositionSimulator:
         except ConstitutionViolation:
             return None
 
+        add_rules = dict(executor.resolve_add_position_for_strategy(archetype))
+        _intent_add = (getattr(intent, "execution_profile", {}) or {}).get(
+            "add_position"
+        ) or {}
+        if _intent_add:
+            _trig = dict(add_rules.get("trigger", {}) or {})
+            _trig.update(dict(_intent_add.get("trigger", {}) or {}))
+            add_rules.update(
+                {k: v for k, v in dict(_intent_add).items() if k != "trigger"}
+            )
+            if _trig:
+                add_rules["trigger"] = _trig
+        rec = runtime_state.add_position.positions.get(parent_pid)
+        next_add_no = int(rec.add_count) + 1 if rec is not None else 1
+        if next_add_no > _shared_resolve_add_position_max_times(add_rules):
+            return None
+        signal = dict(features or {})
+        signal["add_position_seq"] = next_add_no
+        signal.setdefault("close", current_price)
+        _atr_parent = float(parent_pos.get("atr_at_entry", 0) or 0)
+        _risk_parent = float(parent_pos.get("initial_risk_distance", 0) or 0)
+        if _atr_parent > 0 and _risk_parent > 0:
+            signal["parent_initial_r"] = _risk_parent / _atr_parent
+        _risk_frac = float(executor.resolve_risk_for_strategy(archetype))
+        _current_lev = 0.0
+        _current_notional_frac = 0.0
+        for _pos in same_sym_dir:
+            _stop_dist = float(_pos.get("initial_risk_distance", 0.0) or 0.0)
+            _ep = float(_pos.get("entry_price", 0.0) or 0.0)
+            _stop_pct = _stop_dist / _ep if _ep > 0 else 0.0
+            if _stop_pct <= 1e-9:
+                continue
+            _mult = float(_pos.get("_size_multiplier", 1.0) or 1.0)
+            _current_lev += _risk_frac * _mult / _stop_pct
+            _current_notional_frac += _risk_frac * _mult
+        _parent_ep = float(parent_pos.get("entry_price", 0.0) or 0.0)
+        _parent_stop_pct = (_risk_parent / _parent_ep) if _parent_ep > 0 else 0.0
+        signal["base_leverage_unit"] = (
+            _risk_frac / _parent_stop_pct if _parent_stop_pct > 1e-9 else 1.0
+        )
+        signal["current_leverage"] = float(_current_lev)
+        signal["base_notional_frac"] = float(_risk_frac)
+        signal["current_notional_frac"] = float(_current_notional_frac)
+        signal["equity_usd"] = float(features.get("equity", 0.0) or 0.0)
+        if not _shared_validate_add_position_trigger(
+            archetype=archetype,
+            direction=1 if new_side == "LONG" else -1,
+            signal=signal,
+            add_position_cfg=add_rules,
+            current_r=current_r,
+        ):
+            return None
+        add_mult = _resolve_add_position_size_multiplier(add_rules, next_add_no, signal)
+
         # 4. 记录加仓 (更新 ConstitutionRuntimeState — 同实盘 record_add_position)
         executor.record_add_position(
             st=runtime_state,
@@ -550,9 +648,10 @@ class PositionSimulator:
         )
         pos["_is_add_position"] = True
         pos["_parent_pid"] = parent_pid
-        # 加仓继承父仓的 size_multiplier
+        pos["_add_position_seq"] = next_add_no
+        # 加仓继承父仓的 regime scale，但风险预算按 add_size_multipliers 缩小
         parent_mult = parent_pos.get("_size_multiplier", 1.0)
-        pos["_size_multiplier"] = parent_mult
+        pos["_size_multiplier"] = parent_mult * add_mult
         self._positions[pid] = pos
         return pid
 
@@ -734,6 +833,9 @@ class BacktestResult:
         if len(arr) > 0:
             print(f"  Best trade:   {arr.max():.2f}R")
             print(f"  Worst trade:  {arr.min():.2f}R")
+        tail_rate, tail_n, winner_n = _tail_contribution_rate(self.trades)
+        if winner_n > 0:
+            print(f"  Tail contrib: {tail_rate:.1%}  (top {tail_n}/{winner_n} winners)")
 
         # 出场原因分布
         reasons = defaultdict(int)
@@ -805,6 +907,7 @@ class BacktestResult:
             if ap.get("add_trades", 0) > 0:
                 print(f"    加仓 Mean R: {ap.get('add_mean_r', 0):.4f}")
                 print(f"    加仓 Win%: {ap.get('add_win_rate', 0):.1%}")
+                print(f"    加仓平均倍率: {ap.get('add_mean_size', 0):.2f}x")
 
         print("=" * 72)
 
@@ -830,6 +933,9 @@ class BacktestResult:
                     "bars_held": t.bars_held,
                     "is_add_position": t.is_add_position,
                     "size_multiplier": round(t.size_multiplier, 4),
+                    "atr_stop_pct": round(t.atr_stop_pct, 6),
+                    "effective_stop_pct": round(t.effective_stop_pct, 6),
+                    "sizing_stop_source": t.sizing_stop_source,
                 }
             )
         df = pd.DataFrame(rows)
@@ -1756,12 +1862,14 @@ class EventBacktester:
         if _add_pos_enabled:
             add_trades = [t for t in result.trades if t.is_add_position]
             add_pnl = [t.pnl_r for t in add_trades]
+            add_mult = [t.size_multiplier for t in add_trades]
             result.add_position_stats = {
                 "enabled": True,
                 "add_count": _add_pos_count,
                 "rejected_count": _add_pos_rejected,
                 "add_trades": len(add_trades),
                 "add_mean_r": float(np.mean(add_pnl)) if add_pnl else 0.0,
+                "add_mean_size": float(np.mean(add_mult)) if add_mult else 0.0,
                 "add_win_rate": (
                     float(np.mean([p > 0 for p in add_pnl])) if add_pnl else 0.0
                 ),
@@ -2272,12 +2380,16 @@ def _trade_to_dict(t: ClosedTrade) -> dict:
         "evidence_score": round(t.evidence_score, 4),
         "size_multiplier": round(t.size_multiplier, 4),
         "is_add_position": t.is_add_position,
+        "atr_stop_pct": round(t.atr_stop_pct, 6),
+        "effective_stop_pct": round(t.effective_stop_pct, 6),
+        "sizing_stop_source": t.sizing_stop_source,
     }
 
 
 def _save_json(result: BacktestResult, path: str):
     """保存 JSON 结果 (含完整交易列表)"""
     wins = [t for t in result.trades if t.pnl_r > 0]
+    tail_rate, tail_n, winner_n = _tail_contribution_rate(result.trades)
     per_arch: dict = {}
     for t in result.trades:
         a = t.archetype or "unknown"
@@ -2292,6 +2404,9 @@ def _save_json(result: BacktestResult, path: str):
         "mean_r": round(result.mean_r, 4),
         "total_r": round(result.total_r, 4),
         "max_drawdown_r": round(result.max_drawdown_r, 4),
+        "tail_contribution_rate": round(tail_rate, 4),
+        "tail_trade_count": tail_n,
+        "winner_count": winner_n,
         "funnel": result.funnel,
         "per_archetype": {
             arch: {

@@ -40,6 +40,8 @@ from src.time_series_model.core.constitution.runtime_state import (
 from src.time_series_model.core.trade_intent import TradeIntent
 from src.order_management.position_tracker import PositionTracker
 from src.order_management.trade_executor import TradeExecutor
+from src.order_management.models import OrderStatus, OrderType
+from src.live_data_stream.system_mode import SystemMode
 
 
 class OrderFlowListener:
@@ -140,6 +142,13 @@ class OrderFlowListener:
         self.decision_handler = decision_handler
         self.stats_collector = None  # 可选: StatsCollector 实例，由外部注入
         self.extra_feature_computers: Dict[str, "IncrementalFeatureComputer"] = {}
+        self.abnormal_quick_stop_seconds: int = int(
+            os.getenv("MLBOT_ABNORMAL_QUICK_STOP_SECONDS", "10")
+        )
+        self.abnormal_enabled: bool = (
+            str(os.getenv("MLBOT_ABNORMAL_ENABLED", "1")).strip().lower()
+            not in {"0", "false", "no"}
+        )
 
         # 持仓管理层（由 PositionTracker + TradeExecutor 接管）
         self._position_tracker = PositionTracker(
@@ -178,6 +187,134 @@ class OrderFlowListener:
         # 运行状态
         self.is_running = False
         self._stop_event: Optional[asyncio.Event] = None
+
+    def on_execution_report(self, report: Dict[str, Any]) -> None:
+        """处理交易所执行回报: 订单同步 + 持仓/slot 同步释放"""
+        if self.order_manager is None:
+            return
+        order = self.order_manager.handle_execution_report(report)
+        if order is None:
+            return
+        if order.status != OrderStatus.FILLED:
+            return
+        pid = str(order.position_id or "").strip()
+        if not pid:
+            # 没有关联 position_id 时，若交易所该 symbol 已无持仓，强制清理本地残留
+            self._reconcile_local_positions_on_exchange_flat()
+            return
+        pos = self._position_tracker.get(pid)
+        if pos is None:
+            self._release_runtime_for_position(pid, reason="position_closed")
+            return
+
+        otype = str(order.order_type.value if hasattr(order.order_type, "value") else order.order_type).lower()
+        if otype == OrderType.STOP_MARKET.value:
+            reason = "stop_loss_hit"
+        elif otype == OrderType.TAKE_PROFIT_MARKET.value:
+            reason = "take_profit_hit"
+        else:
+            reason = "position_closed"
+        exit_px = report.get("avg_price") or report.get("last_filled_price") or report.get("price")
+        try:
+            exit_price = float(exit_px) if exit_px is not None else None
+        except Exception:
+            exit_price = None
+        closed = self._position_tracker.close_from_exchange(
+            pid,
+            reason=reason,
+            exit_price=exit_price,
+        )
+        if closed:
+            self._release_runtime_for_position(pid, reason=reason)
+            if reason == "stop_loss_hit":
+                self._maybe_trigger_abnormal_on_quick_stop(pid, pos, report)
+
+    def _release_runtime_for_position(self, position_id: str, *, reason: str) -> None:
+        if self.constitution_executor is None or self.runtime_state is None:
+            return
+        try:
+            self.constitution_executor.release_slot(
+                st=self.runtime_state,
+                position_id=position_id,
+                reason=reason,
+            )
+            self.runtime_state.add_position.positions.pop(position_id, None)
+            self.constitution_executor.save_runtime_state(self.runtime_state)
+        except Exception:
+            logger.exception("[%s] 释放 runtime 状态失败: %s", self.symbol, position_id)
+
+    def _reconcile_local_positions_on_exchange_flat(self) -> None:
+        _api = getattr(self.order_manager, "binance_api", None)
+        if _api is None:
+            return
+        try:
+            p = _api.get_position(self.symbol) or {}
+        except Exception:
+            return
+        size = 0.0
+        for k in ("size", "positionAmt", "contracts", "amount"):
+            try:
+                v = p.get(k) if isinstance(p, dict) else None
+                if v is not None:
+                    size = float(v)
+                    break
+            except Exception:
+                continue
+        if abs(size) > 1e-9:
+            return
+        for pid in list(self._position_tracker.all_positions().keys()):
+            self._position_tracker.close_from_exchange(
+                pid,
+                reason="position_closed",
+                exit_price=None,
+            )
+            self._release_runtime_for_position(pid, reason="position_closed")
+
+    def _maybe_trigger_abnormal_on_quick_stop(
+        self,
+        position_id: str,
+        pos: Dict[str, Any],
+        report: Dict[str, Any],
+    ) -> None:
+        if not self.abnormal_enabled or self.mode_manager is None:
+            return
+        entry_time = pos.get("entry_time")
+        if not isinstance(entry_time, datetime):
+            return
+        ts = report.get("trade_time") or report.get("event_time")
+        if ts is None:
+            now = datetime.now(timezone.utc)
+        else:
+            try:
+                now = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+            except Exception:
+                now = datetime.now(timezone.utc)
+        if entry_time.tzinfo is None:
+            entry_time = entry_time.replace(tzinfo=timezone.utc)
+        hold_s = (now - entry_time).total_seconds()
+        if hold_s > float(self.abnormal_quick_stop_seconds):
+            return
+        if hasattr(self.mode_manager, "trigger_abnormal"):
+            self.mode_manager.trigger_abnormal(
+                reason=(
+                    f"Quick stop detected: {self.symbol} pid={position_id} "
+                    f"hold={hold_s:.1f}s <= {self.abnormal_quick_stop_seconds}s"
+                )
+            )
+        elif hasattr(self.mode_manager, "set_mode"):
+            from src.live_data_stream.system_mode import ModeDecision
+
+            self.mode_manager.set_mode(
+                ModeDecision(
+                    mode=SystemMode.DEGRADED,
+                    reason=(
+                        f"Quick stop detected: {self.symbol} pid={position_id} "
+                        f"hold={hold_s:.1f}s <= {self.abnormal_quick_stop_seconds}s"
+                    ),
+                    bar_count=0,
+                    data_coverage_hours=0.0,
+                )
+            )
 
     def on_trade_tick(self, tick: Any) -> None:
         """

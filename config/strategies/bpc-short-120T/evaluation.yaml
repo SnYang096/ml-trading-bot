@@ -1,0 +1,14 @@
+# BPC (BreakoutPullbackContinuation) 评估配置
+
+evaluation:
+  metrics:
+    - name: test_mse
+      type: mse
+      params:
+        target_col: rr_label
+    - name: test_mae
+      type: mae
+      params:
+        target_col: rr_label
+  save_details: true
+  results_file: evaluation.json

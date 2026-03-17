@@ -448,6 +448,8 @@ dates:
 | me-long / me-short   | 60T (1H)  | 独立          |
 | lv                   | 15T       | 独立          |
 
+
+
 ### 实验目录结构
 
 ```
@@ -494,7 +496,19 @@ for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
 done
 
 for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
-  mlbot pipeline run --strategy bpc-short --end-date "$d" --no-adopt
+  mlbot pipeline run --strategy bpc-short-60T --end-date "$d" --no-adopt
+done
+
+for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
+  mlbot pipeline run --strategy bpc-short-120T --end-date "$d" --no-adopt
+done
+
+for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
+  mlbot pipeline run --strategy me-short-120T --end-date "$d" --no-adopt
+done
+
+for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
+  mlbot pipeline run --strategy me-short-240T --end-date "$d" --no-adopt
 done
 
   mlbot pipeline run --strategy bpc-short
@@ -654,7 +668,13 @@ python scripts/tune_locked_prefilter_thresholds.py \
 - 如需临时禁用自动调优：在命令里加 `--disable-auto-locked-tuning`。
 
 
-## 先在 4H + 6,3 上加 SR 约束（你现在主线）
+# 实验
+TODO：
+bpc需要拉窗口12，6
+fer需要看频率2h是否能取得交易数量和sharp的更好平衡，现在1h多，4h交易频率少，窗口6，3
+me需要看看各个频率的表现，窗口6，3
+
+## fer-short 先在 4H + 6,3 上加 SR 约束（你现在主线）
 20260315_210402  sharpe=0.0486  trades=559
 20260315_211633  sharpe=0.6021  trades=27
 20260315_211913  sharpe=-0.0323  trades=456
@@ -748,3 +768,49 @@ positive_ratio=100.0%
 median_trades=578.0
 
 ## fer-short-120T 锁定
+
+
+## bpc-short-60T
+
+20260317_173507  sharpe=0.0000  trades=13
+20260317_174319  sharpe=0.0000  trades=13
+20260317_180124  sharpe=1.0975  trades=55
+20260317_180322  sharpe=1.0975  trades=55
+20260317_181042  sharpe=1.0975  trades=55
+20260317_181848  sharpe=1.0975  trades=55
+20260317_182614  sharpe=1.0975  trades=55
+20260317_183551  sharpe=1.1039  trades=46
+20260317_184615  sharpe=1.1039  trades=46
+20260317_185614  sharpe=1.1039  trades=46
+20260317_190859  sharpe=1.1039  trades=46
+20260317_192744  sharpe=0.2516  trades=50
+20260317_192921  sharpe=0.2516  trades=50
+20260317_193933  sharpe=0.1138  trades=1276
+20260317_194836  sharpe=0.2516  trades=50
+20260317_200101  sharpe=0.1138  trades=1276
+20260317_201451  sharpe=0.1138  trades=1276
+20260317_202541  sharpe=-0.0726  trades=200
+20260317_203641  sharpe=0.1138  trades=1276
+20260317_205124  sharpe=-0.0726  trades=200
+
+median_sharpe=0.2516
+positive_ratio=80.0%
+median_trades=55.0
+
+## bpc-short-240T
+
+20260317_031320  sharpe=3.3852  trades=9
+20260317_031703  sharpe=3.3852  trades=9
+20260317_032336  sharpe=1.1663  trades=31
+20260317_032412  sharpe=1.1033  trades=38
+20260317_032735  sharpe=1.0507  trades=36
+20260317_033126  sharpe=1.1033  trades=38
+20260317_033511  sharpe=1.0507  trades=36
+20260317_033852  sharpe=1.1663  trades=31
+20260317_034222  sharpe=1.1663  trades=31
+20260317_034613  sharpe=1.1663  trades=31
+20260317_034942  sharpe=1.1663  trades=31
+
+median_sharpe=1.1663
+positive_ratio=100.0%
+median_trades=31.0

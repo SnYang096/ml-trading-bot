@@ -3,7 +3,7 @@ execution_constraints:
   min_order_interval_minutes: 15
 holding:
   max_holding_bars: null
-  time_stop_bars: 0
+  time_stop_bars: 72  # ME 负责吃扩散加速段, 默认 3 天内兑现, 不与 BPC 抢长尾主仓
 optimization:
   enabled: true
   # ── ME "动能锁定" 模式 ──
@@ -40,10 +40,28 @@ optimization:
 # 注意: 旧值 initial_r=3.0/activation_r=0.5 是退化组合 (ratio=6, random WR=86%)
 stop_loss:
   initial_r: 2.0
+  guardrails:
+    min_stop_pct: 0.006
+    max_stop_pct: 0.020
   trailing:
-    activation_r: 2.0
-    trail_r: 2.0
+    activation_r: 1.5
+    trail_r: 1.5
   type: trailing
 take_profit:
   enabled: false
-version: 31
+add_position:
+  max_add_times: 2
+  sizing_mode: fixed_multiplier
+  add_size_multipliers: [0.4, 0.25]
+  target_leverage_by_add: [3.8, 5.0]
+  max_total_leverage: 5.0
+  max_add_notional_frac: 0.30
+  min_add_notional_usd: 50.0
+  max_add_leverage_step: [0.9, 0.7]
+  min_current_r_by_add: [1.0, 2.0]
+  trigger:
+    type: me_atr_step_add
+    atr_step: 0.5
+    require_momentum_sign: true
+    breakout_recent_extreme_max: 0.10
+version: 33

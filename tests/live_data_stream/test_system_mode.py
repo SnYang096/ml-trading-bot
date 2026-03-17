@@ -196,7 +196,7 @@ class TestSystemModeManager:
         # 检查历史
         history = manager.get_mode_history()
         assert len(history) == 3
-        assert history[0]["old_mode"] == "OFFLINE"
+        assert history[0]["old_mode"] == "NORMAL"
         assert history[0]["new_mode"] == "OFFLINE"
         assert history[1]["old_mode"] == "OFFLINE"
         assert history[1]["new_mode"] == "DEGRADED"
@@ -236,6 +236,38 @@ class TestSystemModeManager:
         )
         manager.set_mode(decision3)
         assert manager.is_trading_allowed()
+
+    def test_abnormal_requires_manual_reset(self):
+        """ABNORMAL 不自动恢复，必须手动 reset_to_normal"""
+        manager = SystemModeManager()
+        manager.set_mode(
+            ModeDecision(
+                mode=SystemMode.NORMAL,
+                reason="ready",
+                bar_count=300,
+                data_coverage_hours=5.0,
+            )
+        )
+        manager.trigger_abnormal("quick stop")
+        assert manager.get_current_mode() == SystemMode.ABNORMAL
+        assert not manager.is_trading_allowed()
+
+        for _ in range(10):
+            assert manager.on_realtime_bar() is False
+            assert manager.get_current_mode() == SystemMode.ABNORMAL
+
+        manager.reset_to_normal("manual fixed by cicd")
+        assert manager.get_current_mode() == SystemMode.NORMAL
+        assert manager.is_trading_allowed()
+
+    def test_default_mode_on_boot_is_normal(self):
+        manager = SystemModeManager()
+        assert manager.get_current_mode() == SystemMode.NORMAL
+
+    def test_mode_on_boot_can_be_overridden(self, monkeypatch):
+        monkeypatch.setenv("MLBOT_MODE_ON_BOOT", "OFFLINE")
+        manager = SystemModeManager()
+        assert manager.get_current_mode() == SystemMode.OFFLINE
 
 
 class TestModeDecision:

@@ -168,6 +168,30 @@ class PositionTracker:
                 reason,
             )
 
+    def close_from_exchange(
+        self,
+        position_id: str,
+        *,
+        reason: str,
+        exit_price: Optional[float] = None,
+    ) -> bool:
+        """交易所已成交关闭后，同步移除本地持仓（不再重复下市价平仓单）"""
+        pos = self._positions.pop(position_id, None)
+        if pos is None:
+            return False
+        # 交易所已触发时，挂单通常已终态；尝试清理本地引用即可。
+        pos["_exchange_close_reason"] = reason
+        if exit_price is not None:
+            pos["_exchange_exit_price"] = float(exit_price)
+        logger.info(
+            "[%s] 交易所关闭同步: %s reason=%s exit=%.6f",
+            self.symbol,
+            position_id,
+            reason,
+            float(exit_price or 0.0),
+        )
+        return True
+
     def sync_exchange_sl(self, position_id: str) -> None:
         """手动触发指定持仓的交易所 SL 同步（cancel+replace）"""
         pos = self._positions.get(position_id)

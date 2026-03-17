@@ -308,27 +308,34 @@ def _setup_three_strategies(
     )
     window_minutes = int(os.getenv("MLBOT_BPC_WINDOW_MINUTES", "15"))
 
-    # ── 0. 从 pcm_regime.yaml 读取 enabled_archetypes ──
+    # ── 0. 从 constitution 读取 enabled_archetypes ──
     import yaml as _yaml
 
     config_root = os.path.join(strategies_root, "..")
-    pcm_regime_path = os.getenv(
-        "MLBOT_PCM_REGIME_CONFIG",
-        os.path.join(config_root, "pcm_regime.yaml"),
+    constitution_yaml_path = os.getenv(
+        "MLBOT_CONSTITUTION_YAML",
+        os.path.join(config_root, "constitution", "constitution.yaml"),
     )
     _ALL_ARCHETYPES = ["bpc", "me-long", "fer", "lv"]
+    _const_cfg = {}
     try:
-        with open(pcm_regime_path, "r", encoding="utf-8") as _f:
-            _pcm_cfg = _yaml.safe_load(_f)
-        enabled_archetypes = [
-            a.lower() for a in (_pcm_cfg.get("enabled_archetypes") or _ALL_ARCHETYPES)
-        ]
+        with open(constitution_yaml_path, "r", encoding="utf-8") as _f:
+            _const_cfg = _yaml.safe_load(_f) or {}
     except Exception as _e:
-        logger.warning(
-            "读取 pcm_regime.yaml enabled_archetypes 失败: %s, 默认全部启用", _e
-        )
-        enabled_archetypes = _ALL_ARCHETYPES
-    logger.info("📋 enabled_archetypes (来自 pcm_regime.yaml): %s", enabled_archetypes)
+        logger.warning("读取 constitution.yaml 失败: %s", _e)
+
+    _from_const = (
+        ((_const_cfg.get("resource_allocation") or {}).get("enabled_archetypes"))
+        or _const_cfg.get("enabled_archetypes")
+        or []
+    )
+    _enabled_raw = _from_const or _ALL_ARCHETYPES
+    enabled_archetypes = [str(a).lower() for a in _enabled_raw]
+    logger.info(
+        "📋 enabled_archetypes=%s (source=%s)",
+        enabled_archetypes,
+        "constitution" if _from_const else "default_all",
+    )
 
     # ── 1. 从 meta.yaml 读取各策略 timeframe (不再硬编码) ──
     tf_bpc = _load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
@@ -396,11 +403,7 @@ def _setup_three_strategies(
     # ── 2. 创建 PCM 仲裁层 (注册策略 + timeframe 绑定) ──
     pcm = LivePCM(
         archetype_priority=["LV", "FER", "ME-LONG", "BPC"],
-        regime_config_path=pcm_regime_path,
-        constitution_yaml=os.getenv(
-            "MLBOT_CONSTITUTION_YAML",
-            os.path.join(config_root, "constitution", "constitution.yaml"),
-        ),
+        constitution_yaml=constitution_yaml_path,
     )
     for _name, _strat in _strategy_map.items():
         pcm.register(_name, _strat, timeframe=_tf_map[_name])

@@ -1,5 +1,5 @@
 # ME-SHORT Gate Draft (auto-generated)
-# 来源: results/train_final_20260317_024008_rr_extreme/me-short
+# 来源: results/train_final_20260318_021440_rr_extreme/me-short
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me-short
@@ -16,65 +16,68 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_recent_compression_decay
-  tag: HARD_RECENT_COMPRESSION_DECAY
+- id: gate_vpin_max20
+  tag: HARD_VPIN_MAX20
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.27)
+  reason: 统计验证规则 (lift=1.42)
   when:
-    recent_compression_decay:
-      value_gt: 0.3394
+    vpin_max20:
+      value_lt: 0.3342
   then:
     action: deny
-  comment: 'statistical(lift=1.27): recent_compression_decay > 0.3394'
-- id: gate_vpin_max20_vpin_max20
-  tag: HARD_VPIN_MAX20_VPIN_MAX20
+  comment: 'statistical(lift=1.42): vpin_max20 < 0.3342'
+- id: gate_evt_tail_shape_right_evt_tail_shape_right
+  tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.46)
+  reason: 统计验证规则 (lift=1.07)
   when:
     all_of:
-    - vpin_max20:
-        value_gt: 0.2037
-    - vpin_max20:
-        value_lt: 0.2952
+    - evt_tail_shape_right:
+        value_gt: 0.0073
+    - evt_tail_shape_right:
+        value_lt: 0.7619
   then:
     action: deny
-  comment: 'statistical(lift=1.46): vpin_max20 > 0.2037 & vpin_max20 < 0.2952'
-- id: gate_vpin_ma20
-  tag: HARD_VPIN_MA20
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.15)
-  when:
-    vpin_ma20:
-      value_gt: 0.3224
-  then:
-    action: deny
-  comment: 'statistical(lift=1.15): vpin_ma20 > 0.3224'
-- id: gate_evt_es_99
-  tag: HARD_EVT_ES_99
-  phase: hard_gate
-  priority: 13
-  reason: 统计验证规则 (lift=1.09)
-  when:
-    evt_es_99:
-      value_gt: 0.8056
-  then:
-    action: deny
-  comment: 'statistical(lift=1.09): evt_es_99 > 0.8056'
+  comment: 'statistical(lift=1.07): evt_tail_shape_right > 0.007278 & evt_tail_shape_right < 0.7619'
 - id: gate_evt_es_99_left_evt_es_99_left
   tag: HARD_EVT_ES_99_LEFT_EVT_ES_99_LEFT
   phase: hard_gate
-  priority: 14
-  reason: 统计验证规则 (lift=1.14)
+  priority: 12
+  reason: 统计验证规则 (lift=1.47)
   when:
     all_of:
     - evt_es_99_left:
-        value_gt: 0.8056
+        value_gt: 0.8373
     - evt_es_99_left:
-        value_lt: 0.9087
+        value_lt: 0.9365
   then:
     action: deny
-  comment: 'statistical(lift=1.14): evt_es_99_left > 0.8056 & evt_es_99_left < 0.9087'
+  comment: 'statistical(lift=1.47): evt_es_99_left > 0.8373 & evt_es_99_left < 0.9365'
+- id: gate_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.15)
+  when:
+    evt_var_99_right:
+      value_gt: 0.9643
+  then:
+    action: deny
+  comment: 'statistical(lift=1.15): evt_var_99_right > 0.9643'
+- id: gate_fer_impulse_failure_score_fer_impulse_failure_score
+  tag: HARD_FER_IMPULSE_FAILURE_SCORE_FER_IMPULSE_FAILURE_SCORE
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.07)
+  when:
+    all_of:
+    - fer_impulse_failure_score:
+        value_gt: 0.315
+    - fer_impulse_failure_score:
+        value_lt: 0.6277
+  then:
+    action: deny
+  comment: 'statistical(lift=1.07): fer_impulse_failure_score > 0.315 & fer_impulse_failure_score < 0.6277'
 guardrails: []

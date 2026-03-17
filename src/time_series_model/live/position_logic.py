@@ -56,6 +56,8 @@ def build_position_dict(
 
     stop_loss_r = float(rr_constraints.get("stop_loss_r", 0.0) or 0.0)
     take_profit_r = float(rr_constraints.get("take_profit_r", 0.0) or 0.0)
+    min_stop_pct = rr_constraints.get("min_stop_pct")
+    max_stop_pct = rr_constraints.get("max_stop_pct")
     # max_holding_bars: 0 表示禁用时间止损 (fat tail 模式)
     _raw_mhb = rr_constraints.get("max_holding_bars")
     max_holding_bars = (
@@ -63,8 +65,30 @@ def build_position_dict(
     )
 
     sl_price, tp_price = None, None
+    atr_stop_pct = 0.0
+    effective_stop_pct = 0.0
+    sizing_stop_source = "none"
     # SL 和 TP 独立计算 —— 不要求两者同时 > 0
     if entry_price > 0 and atr > 0 and stop_loss_r > 0:
+        atr_stop_pct = max(0.0, (stop_loss_r * atr) / entry_price)
+        effective_stop_pct = atr_stop_pct
+        if min_stop_pct is not None:
+            try:
+                effective_stop_pct = max(effective_stop_pct, float(min_stop_pct))
+            except Exception:
+                pass
+        if max_stop_pct is not None:
+            try:
+                effective_stop_pct = min(effective_stop_pct, float(max_stop_pct))
+            except Exception:
+                pass
+        effective_stop_pct = max(1e-6, effective_stop_pct)
+        stop_loss_r = effective_stop_pct * entry_price / atr
+        sizing_stop_source = (
+            "atr"
+            if abs(effective_stop_pct - atr_stop_pct) <= 1e-9
+            else "guardrail_clip"
+        )
         # 始终计算 SL价格
         computed_sl, computed_tp = compute_rr_prices(
             side=side,
@@ -96,6 +120,9 @@ def build_position_dict(
         "initial_risk_distance": (
             stop_loss_r * atr if stop_loss_r > 0 and atr > 0 else atr
         ),
+        "atr_stop_pct": atr_stop_pct,
+        "effective_stop_pct": effective_stop_pct,
+        "sizing_stop_source": sizing_stop_source,
         "tier_name": strategy_specific.get("tier_name", "default"),
         "evidence_score": intent.confidence or 0.0,
         "bar_minutes": bar_minutes,

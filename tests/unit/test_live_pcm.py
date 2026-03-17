@@ -160,7 +160,7 @@ class TestLivePCMPriority:
         assert len(result) == 4
 
     def test_same_archetype_evidence_competition(self):
-        """同 archetype 两个注册名 → 只保留 evidence 更高的"""
+        """同 symbol+archetype 仅保留一条（deterministic 排序后的第一条）"""
         bpc_high = _make_intent("BPC", confidence=0.9)
         bpc_low = _make_intent("BPC", confidence=0.3)
 
@@ -172,9 +172,9 @@ class TestLivePCMPriority:
 
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
 
-        # 两个策略名不同但 archetype 都是 BPC
-        # per_strategy_limits 默认回退 max_slots，所以 2 个都通过
-        assert len(result) == 2
+        assert len(result) == 1
+        # 两条同 archetype/timeframe/stop 时，FIFO: 先注册先保留
+        assert result[0].confidence == pytest.approx(0.3)
 
     def test_one_strategy_fires_one_silent(self):
         """只有一个策略出信号 → 直接返回那个"""
@@ -260,6 +260,113 @@ class TestLivePCMSlotControl:
         pcm.register("bpc", FakeStrategy(intents=[_make_intent("BPC", confidence=0.9)]))
         pcm.register("me", FakeStrategy(intents=[_make_intent("ME", confidence=0.7)]))
         assert pcm.decide(features=FEATURES, symbol="BTCUSDT") == []
+
+    def test_same_symbol_same_archetype_rejects_new_slot(self):
+        pcm = LivePCM(max_slots=2)
+        pcm.register("bpc", FakeStrategy(intents=[_make_intent("BPC", confidence=0.8)]))
+        first = pcm.decide(features=FEATURES, symbol="BTCUSDT")
+        second = pcm.decide(features=FEATURES, symbol="BTCUSDT")
+        assert len(first) == 1
+        assert second == []
+
+    def test_same_symbol_same_archetype_allows_when_marked_add_position(self):
+        pcm = LivePCM(max_slots=2)
+        add_intent = _make_intent("BPC", confidence=0.8)
+        add_intent = TradeIntent(
+            action=add_intent.action,
+            symbol=add_intent.symbol,
+            archetype=add_intent.archetype,
+            execution_strategy=add_intent.execution_strategy,
+            confidence=add_intent.confidence,
+            add_position=True,
+        )
+        pcm.register("bpc", FakeStrategy(intents=[_make_intent("BPC", confidence=0.8)]))
+        assert len(pcm.decide(features=FEATURES, symbol="BTCUSDT")) == 1
+        pcm.unregister("bpc")
+        pcm.register("bpc", FakeStrategy(intents=[add_intent]))
+        out = pcm.decide(features=FEATURES, symbol="BTCUSDT")
+        assert len(out) == 1
+
+
+class TestLivePCMDynamicSlots:
+
+    def test_dynamic_slot_step2_and_step3_for_bpc(self):
+        pcm = LivePCM(max_slots=3)
+        pcm._constitution["risk_per_slot"] = 0.01
+        pcm._constitution["per_strategy_limits"] = {"bpc": {"max_slots": 3}}
+        pcm._constitution["dynamic_slot_policy"] = {
+            "total_risk_cap": 0.10,
+            "bpc": {
+                "enabled": True,
+                "base_slots": 1,
+                "max_slots": 3,
+                "step2": {
+                    "max_drawdown": 0.08,
+                    "max_daily_loss": 0.03,
+                    "min_active_bpc_slots": 1,
+                },
+                "step3": {
+                    "max_drawdown": 0.05,
+                    "max_daily_loss": 0.02,
+                    "min_active_bpc_slots": 2,
+                },
+            },
+        }
+        pcm._latest_features = {"drawdown": 0.07, "daily_loss": 0.02}
+        pcm._slot_evidence = {"BTCUSDT:bpc": 0.9}
+        assert pcm._max_slots_for_strategy("bpc") == 2
+        pcm._latest_features = {"drawdown": 0.04, "daily_loss": 0.01}
+        pcm._slot_evidence = {"BTCUSDT:bpc": 0.9, "ETHUSDT:bpc": 0.8}
+        assert pcm._max_slots_for_strategy("bpc") == 3
+
+
+class TestLivePCMDeterministicSelection:
+
+    def test_larger_timeframe_wins_same_symbol_archetype(self):
+        i1 = _make_intent("BPC", confidence=0.2)
+        i2 = _make_intent("BPC", confidence=0.9)
+        pcm = LivePCM(max_slots=2)
+        pcm.register("bpc60", FakeStrategy(intents=[i1]), timeframe="60T")
+        pcm.register("bpc240", FakeStrategy(intents=[i2]), timeframe="240T")
+        out = pcm.decide(
+            features=FEATURES,
+            symbol="BTCUSDT",
+            features_by_timeframe={"60T": FEATURES, "240T": FEATURES},
+        )
+        assert len(out) == 1
+        assert out[0].confidence == pytest.approx(0.9)
+
+    def test_smaller_effective_stop_pct_wins_when_timeframe_archetype_same(self):
+        i1 = TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype="BPC",
+            confidence=0.1,
+            execution_profile={
+                "rr_constraints": {"stop_loss_r": 3.0, "max_stop_pct": 0.03}
+            },
+        )
+        i2 = TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype="BPC",
+            confidence=0.9,
+            execution_profile={
+                "rr_constraints": {"stop_loss_r": 1.0, "max_stop_pct": 0.03}
+            },
+        )
+        f = {"close": 10000.0, "atr": 100.0}
+        pcm = LivePCM(max_slots=2)
+        pcm.register("bpcA", FakeStrategy(intents=[i1]), timeframe="240T")
+        pcm.register("bpcB", FakeStrategy(intents=[i2]), timeframe="240T")
+        out = pcm.decide(
+            features=f,
+            symbol="BTCUSDT",
+            features_by_timeframe={"240T": f},
+        )
+        assert len(out) == 1
+        # i2 stop_pct=1%, i1=3%
+        assert out[0].confidence == pytest.approx(0.9)
 
 
 class TestLivePCMErrorHandling:
@@ -480,6 +587,10 @@ class TestLivePCMWithRegime:
         # NORMAL: 两策略独立通过
         r1 = pcm.decide(features={**FEATURES, "atr_percentile": 0.3}, symbol="BTCUSDT")
         assert len(r1) == 2
+
+        # 模拟上一轮仓位已关闭
+        pcm.notify_position_closed("BTCUSDT", "FER")
+        pcm.notify_position_closed("BTCUSDT", "ME")
 
         # HIGH_VOL: 两策略独立通过
         r2 = pcm.decide(features={**FEATURES, "atr_percentile": 0.9}, symbol="BTCUSDT")

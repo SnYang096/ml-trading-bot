@@ -119,11 +119,28 @@ class TradeExecutor:
         side = OrderSide.BUY if intent.action == "LONG" else OrderSide.SELL
 
         # ── 1. qty 计算 ──
-        exec_profile = intent.execution_profile or {}
-        rr_constraints = exec_profile.get("rr_constraints") or {}
-        sl_r = float(rr_constraints.get("stop_loss_r", 0.0) or 0.0)
+        exec_profile = dict(intent.execution_profile or {})
+        rr_constraints = dict(exec_profile.get("rr_constraints") or {})
+        sl_r_raw = float(rr_constraints.get("stop_loss_r", 0.0) or 0.0)
         atr = pick_atr(features) or 0.0
         entry_price = self._resolve_entry_price(features)
+        sl_r, atr_stop_pct, effective_stop_pct, stop_source = self._resolve_effective_stop_r(
+            sl_r=sl_r_raw,
+            atr=atr,
+            entry_price=entry_price,
+            rr_constraints=rr_constraints,
+        )
+        if abs(sl_r - sl_r_raw) > 1e-9:
+            rr_constraints["stop_loss_r"] = float(sl_r)
+            exec_profile["rr_constraints"] = rr_constraints
+            intent = dataclasses.replace(intent, execution_profile=exec_profile)
+        logger.info(
+            "[%s] stop guardrail: atr_stop_pct=%.4f effective_stop_pct=%.4f source=%s",
+            self.symbol,
+            atr_stop_pct,
+            effective_stop_pct,
+            stop_source,
+        )
 
         qty = self._calc_qty(intent, features, sl_r, atr, entry_price)
         if qty <= 0:
@@ -222,8 +239,43 @@ class TradeExecutor:
 
         # ── 8. 交给 PositionTracker ──
         pos["qty"] = float(qty)
+        pos["atr_stop_pct"] = float(atr_stop_pct)
+        pos["effective_stop_pct"] = float(effective_stop_pct)
+        pos["sizing_stop_source"] = stop_source
         self.position_tracker.add(position_id, pos)
         return True
+
+    def _resolve_effective_stop_r(
+        self,
+        *,
+        sl_r: float,
+        atr: float,
+        entry_price: Optional[float],
+        rr_constraints: Dict[str, Any],
+    ) -> tuple[float, float, float, str]:
+        sl_r = max(0.0, float(sl_r or 0.0))
+        if sl_r <= 0 or atr <= 0 or not entry_price or entry_price <= 0:
+            return sl_r, 0.0, 0.0, "invalid_inputs"
+        atr_stop_pct = max(0.0, (sl_r * atr) / float(entry_price))
+        min_stop_pct = rr_constraints.get("min_stop_pct")
+        max_stop_pct = rr_constraints.get("max_stop_pct")
+        eff = atr_stop_pct
+        if min_stop_pct is not None:
+            try:
+                eff = max(eff, float(min_stop_pct))
+            except Exception:
+                pass
+        if max_stop_pct is not None:
+            try:
+                eff = min(eff, float(max_stop_pct))
+            except Exception:
+                pass
+        effective_stop_pct = max(0.0, eff)
+        if effective_stop_pct <= 0:
+            return sl_r, atr_stop_pct, atr_stop_pct, "atr"
+        effective_stop_r = effective_stop_pct * float(entry_price) / float(atr)
+        source = "atr" if abs(effective_stop_pct - atr_stop_pct) <= 1e-9 else "guardrail_clip"
+        return max(1e-6, effective_stop_r), atr_stop_pct, effective_stop_pct, source
 
     def _calc_qty(
         self,

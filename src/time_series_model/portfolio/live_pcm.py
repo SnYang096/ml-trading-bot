@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
@@ -312,6 +313,8 @@ def _load_constitution_constraints(
         "risk_per_slot": 0.01,
         "per_strategy_limits": {},
         "add_position_rules": {},
+        "dynamic_slot_policy": {},
+        "intent_selection_policy": {},
     }
     if not constitution_yaml:
         return defaults
@@ -338,6 +341,8 @@ def _load_constitution_constraints(
         "risk_per_slot": float(slots.get("risk_per_slot", 0.01)),
         "per_strategy_limits": dict(ra.get("per_strategy_limits") or {}),
         "add_position_rules": dict(add_rules),
+        "dynamic_slot_policy": dict(ra.get("dynamic_slot_policy") or {}),
+        "intent_selection_policy": dict(ra.get("intent_selection_policy") or {}),
         "evidence_min_score": float(ra.get("evidence_min_score", 0.0)),
         "evidence_position_scale": bool(ra.get("evidence_position_scale", True)),
     }
@@ -390,6 +395,7 @@ class LivePCM:
 
         # Slot 追踪: key = "{symbol}:{archetype}", value = True
         self._slot_evidence: Dict[str, float] = {}
+        self._latest_features: Dict[str, Any] = {}
 
         # Layer 3: Override 配置
         self._override_config: Dict[str, Any] = override_config or {}
@@ -400,7 +406,20 @@ class LivePCM:
             self._regime_detector = regime_detector
         elif regime_config_path is not None:
             self._regime_cfg = load_regime_config(regime_config_path)
-            self._regime_detector = _build_regime_detector(self._regime_cfg)
+            # 若未显式配置 regimes/detection，则视为关闭 regime 缩放与切换
+            # （避免误用默认阈值和默认缩放）
+            _has_regime_logic = bool(
+                dict(self._regime_cfg.get("regimes") or {})
+                or dict(self._regime_cfg.get("detection") or {})
+            )
+            if _has_regime_logic:
+                self._regime_detector = _build_regime_detector(self._regime_cfg)
+            else:
+                self._regime_detector = None
+                logger.info(
+                    "PCM: regime detector disabled (no regimes/detection in %s)",
+                    regime_config_path,
+                )
             if not self._override_config:
                 self._override_config = self._regime_cfg.get("override", {})
         else:
@@ -544,6 +563,69 @@ class LivePCM:
                 return i
         return len(priority)  # 未知 archetype 排最后
 
+    def _parse_timeframe_minutes(self, arch_name: str) -> int:
+        tf = str(self._strategy_timeframes.get(arch_name, "") or "").upper().strip()
+        if tf.endswith("T"):
+            try:
+                return int(tf[:-1])
+            except Exception:
+                return 0
+        return 0
+
+    def _to_ts_ns(self, val: Any) -> int:
+        if val is None:
+            return 2**63 - 1
+        if isinstance(val, (int, float)):
+            # 保持数量级，不做单位猜测；仅用于稳定排序
+            return int(val)
+        if isinstance(val, datetime):
+            return int(val.timestamp() * 1e9)
+        try:
+            if hasattr(val, "value"):  # pandas.Timestamp
+                return int(val.value)
+        except Exception:
+            pass
+        try:
+            if hasattr(val, "timestamp"):
+                return int(float(val.timestamp()) * 1e9)
+        except Exception:
+            pass
+        return 2**63 - 1
+
+    def _effective_stop_pct_from_intent(
+        self,
+        intent: TradeIntent,
+        feat: Dict[str, Any],
+    ) -> float:
+        ep = dict(intent.execution_profile or {})
+        rr = dict(ep.get("rr_constraints") or {})
+        try:
+            sl_r = float(rr.get("stop_loss_r", 0.0) or 0.0)
+        except Exception:
+            sl_r = 0.0
+        close = feat.get("close")
+        atr = feat.get("atr")
+        try:
+            close_f = float(close or 0.0)
+            atr_f = float(atr or 0.0)
+        except Exception:
+            return float("inf")
+        if sl_r <= 0 or close_f <= 0 or atr_f <= 0:
+            return float("inf")
+        atr_stop = max(0.0, sl_r * atr_f / close_f)
+        eff = atr_stop
+        if rr.get("min_stop_pct") is not None:
+            try:
+                eff = max(eff, float(rr.get("min_stop_pct")))
+            except Exception:
+                pass
+        if rr.get("max_stop_pct") is not None:
+            try:
+                eff = min(eff, float(rr.get("max_stop_pct")))
+            except Exception:
+                pass
+        return max(0.0, float(eff))
+
     def decide(
         self,
         *,
@@ -579,6 +661,7 @@ class LivePCM:
         self._last_evictions: List[Tuple[str, str]] = (
             []
         )  # [(evicted_symbol, archetype), ...]
+        self._latest_features = dict(features or {})
 
         # ── 1. Regime 检测 (Layer 2) ──
         # Regime 使用主时间框架 (4H) 特征检测
@@ -587,6 +670,8 @@ class LivePCM:
 
         # ── 2. 收集所有策略的候选信号 ──
         all_intents: List[TradeIntent] = []
+        _intent_meta: Dict[int, Dict[str, Any]] = {}
+        _collect_seq = 0
         for arch_name, strategy in self._strategies.items():
             try:
                 # 多时间框架路由: 使用策略绑定的 timeframe 对应的特征
@@ -643,6 +728,18 @@ class LivePCM:
                     features=strat_features, symbol=symbol, bars=bars
                 )
                 all_intents.extend(intents)
+                for it in intents:
+                    _intent_meta[id(it)] = {
+                        "strategy_name": arch_name,
+                        "timeframe_minutes": self._parse_timeframe_minutes(arch_name),
+                        "archetype": str(getattr(it, "archetype", "")).lower().strip(),
+                        "effective_stop_pct": self._effective_stop_pct_from_intent(
+                            it, strat_features
+                        ),
+                        "signal_ts_ns": self._to_ts_ns(strat_features.get("timestamp")),
+                        "collect_seq": _collect_seq,
+                    }
+                    _collect_seq += 1
 
                 # 收集漏斗统计
                 if self.stats_collector is not None:
@@ -660,9 +757,52 @@ class LivePCM:
         if not all_intents:
             return []
 
+        # deterministic v1:
+        # timeframe(大优先) -> archetype(BPC>ME>FER) -> effective_stop_pct(小优先) -> FIFO
+        _sel = dict(self._constitution.get("intent_selection_policy") or {})
+        _arch_pri = [
+            str(x).lower().strip()
+            for x in (_sel.get("archetype_priority") or ["bpc", "me", "fer"])
+        ]
+        _arch_rank = {a: i for i, a in enumerate(_arch_pri)}
+
+        def _intent_sort_key(intent: TradeIntent) -> tuple:
+            md = _intent_meta.get(id(intent), {})
+            return (
+                -int(md.get("timeframe_minutes", 0) or 0),
+                int(_arch_rank.get(str(md.get("archetype", "")), 99)),
+                float(md.get("effective_stop_pct", float("inf"))),
+                int(md.get("signal_ts_ns", 2**63 - 1)),
+                int(md.get("collect_seq", 10**9)),
+            )
+
+        all_intents = sorted(all_intents, key=_intent_sort_key)
+
+        # 同 symbol + 同 archetype 的“新开仓”候选，只保留 deterministic 排序后的第一条。
+        _dedup: Dict[tuple[str, str], TradeIntent] = {}
+        _dedup_out: List[TradeIntent] = []
+        for intent in all_intents:
+            if bool(intent.add_position):
+                _dedup_out.append(intent)
+                continue
+            _k = (str(intent.symbol), str(intent.archetype).lower())
+            if _k not in _dedup:
+                _dedup[_k] = intent
+        all_intents = list(_dedup.values()) + _dedup_out
+
         # ── 3. 每策略独立 slot 检查 (无跨策略竞争) ──
         accepted: List[TradeIntent] = []
         for intent in all_intents:
+            _slot_key = f"{intent.symbol}:{intent.archetype}"
+            if _slot_key in self._slot_evidence and not bool(intent.add_position):
+                # 同 symbol + 同 archetype 已有仓位时，禁止再开新 slot；
+                # 必须由下游 add_position 流程处理。
+                logger.info(
+                    "PCM: %s %s 已有持仓，拒绝新slot（仅允许 add_position）",
+                    intent.symbol,
+                    intent.archetype,
+                )
+                continue
             if not self._slot_available(symbol, intent.archetype):
                 # 该策略 slot 满 → 直接拒绝
                 logger.info(
@@ -832,7 +972,64 @@ class LivePCM:
         """获取策略的 max_slots (从 per_strategy_limits 读取，缺省回退全局)"""
         limits = self._constitution.get("per_strategy_limits") or {}
         strat = limits.get(archetype.lower()) or {}
-        return int(strat.get("max_slots", self._max_slots))
+        hard_cap = int(strat.get("max_slots", self._max_slots))
+        dynamic_cap = self._resolve_dynamic_slots(archetype, hard_cap)
+        return max(0, min(hard_cap, dynamic_cap))
+
+    def _resolve_dynamic_slots(self, archetype: str, hard_cap: int) -> int:
+        policy = dict(self._constitution.get("dynamic_slot_policy") or {})
+        bpc_cfg = dict(policy.get("bpc") or {})
+        if not bpc_cfg or not bool(bpc_cfg.get("enabled", False)):
+            return hard_cap
+        arch_key = str(archetype or "").strip().lower()
+        if arch_key not in {"bpc", "bpc-long", "bpc-short"}:
+            return hard_cap
+
+        base_slots = int(bpc_cfg.get("base_slots", 1))
+        max_slots = int(bpc_cfg.get("max_slots", hard_cap))
+        slots = max(1, min(hard_cap, max_slots, base_slots))
+        dd = float(self._latest_features.get("drawdown", 0.0) or 0.0)
+        daily_loss = float(self._latest_features.get("daily_loss", 0.0) or 0.0)
+        step2 = dict(bpc_cfg.get("step2") or {})
+        step3 = dict(bpc_cfg.get("step3") or {})
+        total_risk_cap = float(policy.get("total_risk_cap", 0.10))
+        risk_per_slot = float(self._constitution.get("risk_per_slot", 0.01))
+        strat_risk = self._risk_for_strategy(archetype)
+        used_risk = float(self._current_slot_count()) * risk_per_slot
+        remaining_risk = max(0.0, total_risk_cap - used_risk)
+        bpc_in_use = self._count_archetype_slots("bpc")
+        if bpc_in_use == 0:
+            bpc_in_use = self._count_archetype_slots(
+                "bpc-long"
+            ) + self._count_archetype_slots("bpc-short")
+        if (
+            max_slots >= 2
+            and dd <= float(step2.get("max_drawdown", 0.08))
+            and daily_loss <= float(step2.get("max_daily_loss", 0.03))
+            and bpc_in_use >= int(step2.get("min_active_bpc_slots", 1))
+            and remaining_risk >= strat_risk
+        ):
+            slots = max(slots, 2)
+        if (
+            max_slots >= 3
+            and dd <= float(step3.get("max_drawdown", 0.05))
+            and daily_loss <= float(step3.get("max_daily_loss", 0.02))
+            and bpc_in_use >= int(step3.get("min_active_bpc_slots", 2))
+            and remaining_risk >= strat_risk
+        ):
+            slots = max(slots, 3)
+        return max(1, min(hard_cap, max_slots, slots))
+
+    def _risk_for_strategy(self, archetype: str) -> float:
+        limits = self._constitution.get("per_strategy_limits") or {}
+        strat = limits.get(str(archetype or "").lower(), {}) or {}
+        risk_per_slot = float(self._constitution.get("risk_per_slot", 0.01))
+        if "max_risk_per_trade" not in strat:
+            return risk_per_slot
+        try:
+            return min(risk_per_slot, float(strat.get("max_risk_per_trade")))
+        except Exception:
+            return risk_per_slot
 
     def _count_archetype_slots(self, archetype: str) -> int:
         """统计某 archetype 当前占用的 slot 数"""
