@@ -69,12 +69,12 @@ mlbot feature-store build --no-docker \
   --warmup-months 6
 
 mlbot feature-store build --no-docker \
-  --config config/strategies/fer-short \
+  --config config/strategies/fer-short-120T \
+  --timeframe 120T \
   --universe-config config/download/crypto_4h_token_universe_groups.yaml \
   --universe-groups highcap \
-  --timeframe 60T \
   --start-date 2023-01-01 --end-date 2026-03-01 \
-  --warmup-months 6
+  --warmup-months 6 --force-rebuild
 
 # ME 策略（60T）
 mlbot feature-store build --no-docker \
@@ -522,7 +522,7 @@ python scripts/auto_research_pipeline.py --strategy fer-short --list
 ```bash
 python - <<'PY'
 import json, pathlib, statistics
-root = pathlib.Path("results/research_history/bpc-short")
+root = pathlib.Path("results/research_history/bpc-short-120T")
 rows = []
 for d in sorted([p for p in root.iterdir() if p.is_dir()])[-20:]:
     rp = d / "report.json"
@@ -769,6 +769,24 @@ median_trades=578.0
 
 ## fer-short-120T 锁定
 
+TODO：数据有问题：
+20260317_084228  sharpe=0.0000  trades=1
+20260317_085234  sharpe=0.0000  trades=1
+20260317_090240  sharpe=0.0000  trades=1
+20260317_090618  sharpe=0.0000  trades=1
+20260317_091013  sharpe=0.0000  trades=1
+20260317_094050  sharpe=0.0000  trades=1
+20260317_100005  sharpe=0.0000  trades=1
+20260317_235736  sharpe=0.6872  trades=18
+20260318_004046  sharpe=-0.1005  trades=2338
+20260318_024023  sharpe=0.2104  trades=126
+20260318_032647  sharpe=-0.0000  trades=9
+20260318_043745  sharpe=0.0874  trades=111
+20260318_053453  sharpe=0.2284  trades=232
+
+median_sharpe=0.0000
+positive_ratio=30.8%
+median_trades=1.0
 
 ## bpc-short-60T
 
@@ -814,3 +832,31 @@ median_trades=55.0
 median_sharpe=1.1663
 positive_ratio=100.0%
 median_trades=31.0
+
+## bpc-short-120T
+
+20260318_174558  sharpe=0.2378  trades=22
+20260318_175142  sharpe=0.2378  trades=22
+20260318_180133  sharpe=0.4865  trades=40
+20260318_180732  sharpe=0.3150  trades=55
+20260318_181304  sharpe=0.4865  trades=40
+20260318_181855  sharpe=0.3150  trades=55
+20260318_182419  sharpe=0.4865  trades=40
+20260318_182939  sharpe=0.3545  trades=583
+20260318_183603  sharpe=0.3545  trades=583
+20260318_184213  sharpe=0.3545  trades=583
+20260318_184806  sharpe=0.3545  trades=583
+20260318_185804  sharpe=0.1801  trades=73
+20260318_185945  sharpe=0.1801  trades=73
+20260318_190529  sharpe=0.0341  trades=20
+20260318_191124  sharpe=0.1801  trades=73
+20260318_191711  sharpe=0.0341  trades=20
+20260318_192236  sharpe=0.0890  trades=53
+20260318_192703  sharpe=0.0890  trades=53
+20260318_193221  sharpe=0.0890  trades=53
+20260318_193715  sharpe=0.0890  trades=53
+
+median_sharpe=0.2378
+positive_ratio=100.0%
+median_trades=53.0
+

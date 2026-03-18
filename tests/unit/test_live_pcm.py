@@ -745,3 +745,133 @@ class TestLivePCMOverride:
         stats = pcm.get_stats()
         assert stats["override_enabled"] is False
         assert stats["override_rules"] == []
+
+
+class TestLivePCMDirectionPolicy:
+    def _write_constitution(self, tmp_path):
+        p = tmp_path / "constitution.yaml"
+        p.write_text(
+            """
+version: 1
+name: "C_TEST"
+slots:
+  enabled: true
+  slot_count: 4
+  risk_per_slot: 0.01
+resource_allocation:
+  per_strategy_limits: {}
+  direction_policy:
+    enabled: true
+    mode: ema200_single_direction
+    close_feature: close
+    ema_feature: ema_200
+    debounce_bars: 1
+    default_side: short
+    fer_reverse_allowed: true
+    reverse_exempt_families: [fer]
+""",
+            encoding="utf-8",
+        )
+        return str(p)
+
+    def test_ema200_blocks_opposite_for_non_fer(self, tmp_path):
+        cy = self._write_constitution(tmp_path)
+        pcm = LivePCM(constitution_yaml=cy)
+        pcm.register(
+            "bpc-long", FakeStrategy(intents=[_make_intent("bpc-long", "LONG")])
+        )
+        pcm.register(
+            "bpc-short", FakeStrategy(intents=[_make_intent("bpc-short", "SHORT")])
+        )
+
+        out = pcm.decide(
+            features={"close": 51000.0, "ema_200": 50000.0},
+            symbol="BTCUSDT",
+        )
+
+        assert len(out) == 1
+        assert out[0].archetype.lower() == "bpc-long"
+
+    def test_ema200_allows_fer_reverse_exception(self, tmp_path):
+        cy = self._write_constitution(tmp_path)
+        pcm = LivePCM(constitution_yaml=cy)
+        pcm.register(
+            "fer-short", FakeStrategy(intents=[_make_intent("fer-short", "SHORT")])
+        )
+        pcm.register(
+            "bpc-short", FakeStrategy(intents=[_make_intent("bpc-short", "SHORT")])
+        )
+
+        out = pcm.decide(
+            features={"close": 51000.0, "ema_200": 50000.0},
+            symbol="BTCUSDT",
+        )
+
+        assert len(out) == 1
+        assert out[0].archetype.lower() == "fer-short"
+
+    def test_direction_debounce_blocks_until_confirmed(self, tmp_path):
+        p = tmp_path / "constitution.yaml"
+        p.write_text(
+            """
+version: 1
+name: "C_TEST"
+slots:
+  enabled: true
+  slot_count: 4
+  risk_per_slot: 0.01
+resource_allocation:
+  per_strategy_limits: {}
+  direction_policy:
+    enabled: true
+    mode: ema200_single_direction
+    close_feature: close
+    ema_feature: ema_200
+    debounce_bars: 3
+    default_side: short
+    fer_reverse_allowed: false
+    reverse_exempt_families: [fer]
+""",
+            encoding="utf-8",
+        )
+        pcm = LivePCM(constitution_yaml=str(p))
+        pcm.register(
+            "bpc-long", FakeStrategy(intents=[_make_intent("bpc-long", "LONG")])
+        )
+
+        # 先用3根空头确认空方向（long 应被拒绝）
+        out0 = pcm.decide(
+            features={"close": 49000.0, "ema_200": 50000.0},
+            symbol="BTCUSDT",
+        )
+        out0b = pcm.decide(
+            features={"close": 48900.0, "ema_200": 50000.0},
+            symbol="BTCUSDT",
+        )
+        out0c = pcm.decide(
+            features={"close": 48800.0, "ema_200": 50000.0},
+            symbol="BTCUSDT",
+        )
+        assert out0 == []
+        assert out0b == []
+        assert out0c == []
+
+        # 刚切到多头，防抖期间不放行
+        out1 = pcm.decide(
+            features={"close": 51000.0, "ema_200": 50000.0},
+            symbol="BTCUSDT",
+        )
+        out2 = pcm.decide(
+            features={"close": 51100.0, "ema_200": 50000.0},
+            symbol="BTCUSDT",
+        )
+        assert out1 == []
+        assert out2 == []
+
+        # 第3根确认后放行
+        out3 = pcm.decide(
+            features={"close": 51200.0, "ema_200": 50000.0},
+            symbol="BTCUSDT",
+        )
+        assert len(out3) == 1
+        assert out3[0].archetype.lower() == "bpc-long"

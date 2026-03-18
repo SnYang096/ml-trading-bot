@@ -315,6 +315,7 @@ def _load_constitution_constraints(
         "add_position_rules": {},
         "dynamic_slot_policy": {},
         "intent_selection_policy": {},
+        "direction_policy": {},
     }
     if not constitution_yaml:
         return defaults
@@ -343,6 +344,7 @@ def _load_constitution_constraints(
         "add_position_rules": dict(add_rules),
         "dynamic_slot_policy": dict(ra.get("dynamic_slot_policy") or {}),
         "intent_selection_policy": dict(ra.get("intent_selection_policy") or {}),
+        "direction_policy": dict(ra.get("direction_policy") or {}),
         "evidence_min_score": float(ra.get("evidence_min_score", 0.0)),
         "evidence_position_scale": bool(ra.get("evidence_position_scale", True)),
     }
@@ -396,6 +398,7 @@ class LivePCM:
         # Slot 追踪: key = "{symbol}:{archetype}", value = True
         self._slot_evidence: Dict[str, float] = {}
         self._latest_features: Dict[str, Any] = {}
+        self._dir_state: Dict[str, Dict[str, Any]] = {}
 
         # Layer 3: Override 配置
         self._override_config: Dict[str, Any] = override_config or {}
@@ -465,6 +468,130 @@ class LivePCM:
 
         # 可选: 监控统计收集器
         self.stats_collector = None  # 通过外部注入 StatsCollector 实例
+
+    def _parse_family_and_side(
+        self,
+        archetype: str,
+        action: Optional[str] = None,
+    ) -> tuple[str, str]:
+        a = str(archetype or "").lower().strip()
+        if a.endswith("-long"):
+            return a[: -len("-long")], "long"
+        if a.endswith("-short"):
+            return a[: -len("-short")], "short"
+        act = str(action or "").upper().strip()
+        if act == "LONG":
+            return a, "long"
+        if act == "SHORT":
+            return a, "short"
+        return a, "unknown"
+
+    def _observed_market_side(
+        self,
+        *,
+        features: Dict[str, Any],
+        policy: Dict[str, Any],
+    ) -> str:
+        close_key = str(policy.get("close_feature", "close"))
+        ema_key = str(policy.get("ema_feature", "ema_200"))
+        close_v = features.get(close_key)
+        ema_v = features.get(ema_key)
+        if close_v is None or ema_v is None:
+            return "unknown"
+        try:
+            close_f = float(close_v)
+            ema_f = float(ema_v)
+        except Exception:
+            return "unknown"
+        return "long" if close_f > ema_f else "short"
+
+    def _effective_market_side(
+        self,
+        *,
+        symbol: str,
+        features: Dict[str, Any],
+        policy: Dict[str, Any],
+    ) -> str:
+        """返回防抖后的有效主方向: long/short/unknown"""
+        observed = self._observed_market_side(features=features, policy=policy)
+        debounce_bars = int(policy.get("debounce_bars", 1) or 1)
+        if debounce_bars <= 1:
+            return observed
+        st = self._dir_state.get(symbol) or {
+            "confirmed_side": "unknown",
+            "pending_side": None,
+            "pending_count": 0,
+        }
+        confirmed = str(st.get("confirmed_side", "unknown"))
+        pending = st.get("pending_side")
+        pending_count = int(st.get("pending_count", 0))
+        if observed in {"long", "short"}:
+            if confirmed == "unknown":
+                if pending == observed:
+                    pending_count += 1
+                else:
+                    pending = observed
+                    pending_count = 1
+                if pending_count >= debounce_bars:
+                    confirmed = observed
+                    pending = None
+                    pending_count = 0
+            elif observed != confirmed:
+                if pending == observed:
+                    pending_count += 1
+                else:
+                    pending = observed
+                    pending_count = 1
+                if pending_count >= debounce_bars:
+                    confirmed = observed
+                    pending = None
+                    pending_count = 0
+            else:
+                pending = None
+                pending_count = 0
+        self._dir_state[symbol] = {
+            "confirmed_side": confirmed,
+            "pending_side": pending,
+            "pending_count": pending_count,
+        }
+        return confirmed
+
+    def _is_direction_allowed(
+        self,
+        intent: TradeIntent,
+        *,
+        market_side: str,
+        policy: Dict[str, Any],
+    ) -> bool:
+        if not bool(policy.get("enabled", False)):
+            return True
+        mode = str(policy.get("mode", "ema200_single_direction")).lower().strip()
+        if mode != "ema200_single_direction":
+            return True
+
+        if market_side == "unknown":
+            default_side = str(policy.get("default_side", "both")).lower().strip()
+            if default_side == "both":
+                return True
+            _, s = self._parse_family_and_side(intent.archetype, intent.action)
+            return s == default_side
+
+        family, intent_side = self._parse_family_and_side(
+            intent.archetype, intent.action
+        )
+        if intent_side == "unknown":
+            return True
+        if intent_side == market_side:
+            return True
+
+        reverse_allowed = bool(policy.get("fer_reverse_allowed", True))
+        reverse_families = [
+            str(x).lower().strip()
+            for x in (policy.get("reverse_exempt_families") or ["fer"])
+        ]
+        if reverse_allowed and family in set(reverse_families):
+            return True
+        return False
 
     # ── 注册 / 管理 ──
 
@@ -791,8 +918,27 @@ class LivePCM:
         all_intents = list(_dedup.values()) + _dedup_out
 
         # ── 3. 每策略独立 slot 检查 (无跨策略竞争) ──
+        _dir_pol = dict(self._constitution.get("direction_policy") or {})
+        _market_side = self._effective_market_side(
+            symbol=str(symbol),
+            features=features,
+            policy=_dir_pol,
+        )
         accepted: List[TradeIntent] = []
         for intent in all_intents:
+            if not self._is_direction_allowed(
+                intent,
+                market_side=_market_side,
+                policy=_dir_pol,
+            ):
+                logger.info(
+                    "PCM: 方向过滤拒绝 %s %s action=%s (market_side=%s)",
+                    intent.symbol,
+                    intent.archetype,
+                    intent.action,
+                    _market_side,
+                )
+                continue
             _slot_key = f"{intent.symbol}:{intent.archetype}"
             if _slot_key in self._slot_evidence and not bool(intent.add_position):
                 # 同 symbol + 同 archetype 已有仓位时，禁止再开新 slot；

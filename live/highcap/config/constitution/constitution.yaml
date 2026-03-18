@@ -208,3 +208,15 @@ resource_allocation:
   intent_selection_policy:
     archetype_priority: [bpc, me, fer]
 
+  # 同 symbol 同策略家族默认只允许主方向（由 BTC close vs ema_200 决定）
+  # FER 可作为反向例外（短促反转仓位）
+  direction_policy:
+    enabled: true
+    mode: ema200_single_direction
+    close_feature: close
+    ema_feature: ema_200
+    debounce_bars: 3
+    default_side: both
+    fer_reverse_allowed: true
+    reverse_exempt_families: [fer]
+
