@@ -29,6 +29,3 @@ strategy:
   
   # 默认时间粒度: 15分钟 (快进快出，与 BPC/ME/FER 的 4H 不同)
   timeframe: "15T"
-  
-  # PCM仲裁优先级 (最高 = 0)
-  pcm_priority: 1  # 高优先级 (仅次于 FER)

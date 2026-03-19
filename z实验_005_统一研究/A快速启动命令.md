@@ -511,7 +511,17 @@ for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
   mlbot pipeline run --strategy me-short-240T --end-date "$d" --no-adopt
 done
 
-  mlbot pipeline run --strategy bpc-short
+mlbot pipeline run --strategy bpc-short-60T
+mlbot pipeline run --strategy bpc-short-120T
+mlbot pipeline run --strategy bpc-short-240T
+
+mlbot pipeline run --strategy me-short-60T
+mlbot pipeline run --strategy me-short-120T
+mlbot pipeline run --strategy me-short-240T
+
+mlbot pipeline run --strategy fer-short-60T
+mlbot pipeline run --strategy fer-short-120T
+mlbot pipeline run --strategy fer-short-240T
 ```
 4) 看每个窗口结果
 先快速看列表：
@@ -522,7 +532,7 @@ python scripts/auto_research_pipeline.py --strategy fer-short --list
 ```bash
 python - <<'PY'
 import json, pathlib, statistics
-root = pathlib.Path("results/research_history/bpc-short-120T")
+root = pathlib.Path("results/research_history/me-short")
 rows = []
 for d in sorted([p for p in root.iterdir() if p.is_dir()])[-20:]:
     rp = d / "report.json"
@@ -769,24 +779,30 @@ median_trades=578.0
 
 ## fer-short-120T 锁定
 
-TODO：数据有问题：
-20260317_084228  sharpe=0.0000  trades=1
-20260317_085234  sharpe=0.0000  trades=1
-20260317_090240  sharpe=0.0000  trades=1
-20260317_090618  sharpe=0.0000  trades=1
-20260317_091013  sharpe=0.0000  trades=1
-20260317_094050  sharpe=0.0000  trades=1
-20260317_100005  sharpe=0.0000  trades=1
-20260317_235736  sharpe=0.6872  trades=18
-20260318_004046  sharpe=-0.1005  trades=2338
-20260318_024023  sharpe=0.2104  trades=126
-20260318_032647  sharpe=-0.0000  trades=9
-20260318_043745  sharpe=0.0874  trades=111
-20260318_053453  sharpe=0.2284  trades=232
+20260318_174558  sharpe=0.2378  trades=22
+20260318_175142  sharpe=0.2378  trades=22
+20260318_180133  sharpe=0.4865  trades=40
+20260318_180732  sharpe=0.3150  trades=55
+20260318_181304  sharpe=0.4865  trades=40
+20260318_181855  sharpe=0.3150  trades=55
+20260318_182419  sharpe=0.4865  trades=40
+20260318_182939  sharpe=0.3545  trades=583
+20260318_183603  sharpe=0.3545  trades=583
+20260318_184213  sharpe=0.3545  trades=583
+20260318_184806  sharpe=0.3545  trades=583
+20260318_185804  sharpe=0.1801  trades=73
+20260318_185945  sharpe=0.1801  trades=73
+20260318_190529  sharpe=0.0341  trades=20
+20260318_191124  sharpe=0.1801  trades=73
+20260318_191711  sharpe=0.0341  trades=20
+20260318_192236  sharpe=0.0890  trades=53
+20260318_192703  sharpe=0.0890  trades=53
+20260318_193221  sharpe=0.0890  trades=53
+20260318_193715  sharpe=0.0890  trades=53
 
-median_sharpe=0.0000
-positive_ratio=30.8%
-median_trades=1.0
+median_sharpe=0.2378
+positive_ratio=100.0%
+median_trades=53.0
 
 ## bpc-short-60T
 
@@ -860,3 +876,37 @@ median_sharpe=0.2378
 positive_ratio=100.0%
 median_trades=53.0
 
+## 结论
+
+fer-short：
+
+直接按你这组数据横向对比（都是锁定版本）：
+
+指标	240T (4H)	120T (2H)	60T (1H)
+median_sharpe	0.3863	0.2378	0.3287
+positive_ratio	100%	100%	100%
+median_trades	33	53	578
+结论：240T 质量最高，60T 数量最多，120T 两头不靠。
+
+240T：Sharpe 最高，交易数偏少但可接受（33）
+60T：Sharpe 略低于 240T，但交易数是 240T 的 17 倍，统计稳定性远好于 240T
+120T：Sharpe 最低，交易数也只是 240T 的 1.6 倍，性价比不高
+建议：
+
+如果追求"质量优先、少而精"：选 240T
+如果追求"稳定性 + 可调优空间"：选 60T（交易数多，后续加 sqs 等约束还有收紧余地）
+120T 可以放弃，它既没有 240T 的 Sharpe 优势，也没有 60T 的数量优势
+
+bpc-short
+指标	240T (4H)	120T (2H)	60T (1H)
+median_sharpe	1.1663	0.2378	0.2516
+positive_ratio	100%	100%	80%
+median_trades	31	53	55
+BPC 更明确：240T 碾压。
+
+Sharpe 是 120T/60T 的 4-5 倍
+正率 100% vs 60T 的 80%
+交易数虽少（31），但 120T/60T 也只多了 20 笔，不值得用 Sharpe 换
+而且 60T 还有个问题：出现了 trades=1276 这种爆炸窗口，说明 1H 的 BPC 信号噪声大、不稳定。
+
+BPC 建议直接用 240T，不用犹豫。

@@ -5,17 +5,9 @@ strategy:
   description: |
     BreakoutPullbackContinuation Short archetype: 趋势中回踩后延续（做空方向）。
     在已确认的下降趋势中，识别健康的回踩并在回踩位置做空入场。
-  tags:
-    - pullback
-    - continuation
-    - trend
-    - breakout
-    - short
+
   owner: quant_team
   archetype: BreakoutPullbackContinuationShort
 
   # 默认时间粒度（研发 + 实盘统一）
   timeframe: "60T" # 1小时
-
-  # 方向声明
-  direction: short

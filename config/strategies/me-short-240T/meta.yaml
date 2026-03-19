@@ -4,18 +4,9 @@ strategy:
   name: me-short-240T
   description: |
     MomentumExpansion Short archetype: 流动性加速 + 波动扩张驱动（做空方向）。
-    识别向下动量加速和波动扩张的机会（breakout_down），与 me-long 方向相反。
-  tags:
-    - momentum
-    - expansion
-    - breakout
-    - short
 
   owner: quant_team
   archetype: MomentumExpansionShort
 
   # 默认时间粒度（研发 + 实盘统一）
   timeframe: "240T" # 1小时，ME 动量扩张适合更快的时间粒度
-
-  # 方向声明
-  direction: short

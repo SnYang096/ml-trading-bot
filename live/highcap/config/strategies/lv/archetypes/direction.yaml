@@ -16,9 +16,6 @@
 
 version: 1
 
-# 方向因果来源
-causal_source: structural_reversal  # 结构反转 (清算瀑布方向)
-
 # 方向确定规则 (按优先级从高到低)
 # 临时方案: 用 FER 的失败脉冲方向作为主规则, macd 兜底
 # 管线 Step 4 (--promote) 会自动用 permutation test 选最优

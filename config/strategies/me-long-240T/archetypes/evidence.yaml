@@ -1,0 +1,13 @@
+# ME-Short Evidence (待训练)
+# 来源: 待 Spearman + Quintile Monotonicity 训练后填入
+# 方法: Spearman + Quintile Monotonicity (p < 0.01)
+
+schema:
+  label_semantics:
+    suppress: 强烈不利 - 极度限制仓位/信心
+    downweight: 不利 - 降低信心/仓位
+    neutral: 中性 - 标准执行
+    favor: 有利 - 提高信心/仓位
+    amplify: 强烈有利 - 最大化执行
+evidence: []
+min_score: 0.0

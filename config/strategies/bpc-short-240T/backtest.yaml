@@ -1,0 +1,41 @@
+# BPC (BreakoutPullbackContinuation) 回测配置
+# Failure-first 模型（invert=true）：预测 success_prob（不会失败的概率）
+# 入场逻辑：success_prob 高于阈值时入场（高置信度的好机会）
+#
+# ⚠️  重要：不同 failure 类型需要不同的 threshold！
+# - labels_rr_extreme.yaml: failure 占 16.7% → threshold=0.8 合适
+# - labels_no_opportunity.yaml: failure 只占 4.4% → 需要 threshold=0.95！
+#
+# 使用方法：
+# 1. 训练 labels_rr_extreme 时：使用 long_entry_threshold: 0.8
+# 2. 训练 labels_no_opportunity 时：手动改为 long_entry_threshold: 0.95
+
+backtest:
+  enabled: true
+  params:
+    price_col: close
+    freq: 4H
+    use_signal_direction: false
+    
+    # ⚠️  根据使用的 label 类型调整此值：
+    # - labels_rr_extreme: 0.8 (原始配置，但模型预测范围 0.53-0.64)
+    # - labels_rr_extreme: 0.60 (调整后，匹配实际预测范围 Q75)
+    # - labels_no_opportunity: 0.95 (模型预测均值 95.6%，最小值 85.4%)
+    long_entry_threshold: 0.60
+    exit_mode: none
+    entry_mode: level
+    strategy_direction: long_only
+    max_holding_bars: 50
+    use_rr_exit: true
+    rr:
+      atr_window: 14
+      max_holding_bars: 50
+      stop_loss_r: 1.0
+      take_profit_r: 2.0
+      entry_offset: 1
+      use_time_exit: true
+      use_trailing_stop: true
+      trailing_atr_mult: 1.5
+    initial_cash: 10000
+    fee: 0.0004
+    slippage: 0.0001

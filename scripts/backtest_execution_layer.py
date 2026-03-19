@@ -3864,7 +3864,9 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             _first_tf = arch_tfs[_first_arch]
             from src.feature_store.layer_naming import detect_layer_for_strategy
 
-            _fs_layer = detect_layer_for_strategy(_first_arch, _fs_root)
+            _fs_layer = detect_layer_for_strategy(
+                _first_arch, _fs_root, timeframe=_first_tf
+            )
             if _fs_layer:
                 _pcm_map_ohlc = _load_full_ohlc_for_map(
                     features_store_root=_fs_root,
@@ -5245,9 +5247,15 @@ def main() -> int:
     if not args.features_store_layer:
         from src.feature_store.layer_naming import detect_layer_for_strategy
 
+        _detect_tf = (
+            load_meta_timeframe(args.strategy, args.strategies_root)
+            if args.strategy
+            else None
+        )
         detected = detect_layer_for_strategy(
             strategy=args.strategy,
             features_store_root=args.features_store_root,
+            timeframe=_detect_tf,
         )
         if detected:
             args.features_store_layer = detected
@@ -5571,7 +5579,9 @@ def main() -> int:
                     from src.feature_store.layer_naming import detect_layer_for_strategy
 
                     fs_layer = detect_layer_for_strategy(
-                        args.strategy, args.features_store_root
+                        args.strategy,
+                        args.features_store_root,
+                        timeframe=effective_tf,
                     )
 
                 if fs_layer:

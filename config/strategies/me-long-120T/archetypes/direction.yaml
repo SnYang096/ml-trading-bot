@@ -1,0 +1,5 @@
+# ME-LONG direction config
+# ME 方向拆分后: me-long 固定做多 (direction_aware=false)
+
+fixed_direction: long  # me-long: 固定 LONG, 训练时 direction_aware=false
+direction_rules: []

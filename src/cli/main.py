@@ -9613,6 +9613,25 @@ def gate_apply_archetype(
     except Exception:
         pass
 
+    # --- Fallback: 从策略 meta.yaml 读取 timeframe ---
+    if not _inferred_timeframe and strategy:
+        try:
+            import re as _re
+            from pathlib import Path as _P2
+
+            for _root in (strategies_root or "config/strategies",):
+                _meta_yaml = _P2(_root) / strategy / "meta.yaml"
+                if _meta_yaml.exists():
+                    _tf_match = _re.search(
+                        r'timeframe:\s*["\']?([\w]+)["\']?',
+                        _meta_yaml.read_text(),
+                    )
+                    if _tf_match:
+                        _inferred_timeframe = _tf_match.group(1)
+                        break
+        except Exception:
+            pass
+
     # 自动检测匹配 strategy (+timeframe) 的最新 feature store layer
     if features_store_layer is None:
         features_store_layer = detect_layer_for_strategy(

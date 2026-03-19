@@ -1,0 +1,54 @@
+# FER-SHORT Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer-short/20260315_204634/strategies/fer-short/gate_draft.yaml
+# 优化规则: 0/5 条通过优化, 5 条已移除
+# Phase split: system_safety=3, hard_gate=0
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates: []
+guardrails: []
+system_safety:
+- id: gate_stat_evt_var_99
+  tag: HARD_STAT_1
+  phase: system_safety
+  priority: 20
+  reason: 统计法兜底规则（tree gate 为空）
+  when:
+    evt_var_99:
+      value_gt: 0.9087
+  then:
+    action: deny
+  comment: stat_fallback gate_score=0.299, tail_capture=0.348, good_deny=0.049
+- id: gate_stat_evt_scale_right_evt_scale_right
+  tag: HARD_STAT_2
+  phase: system_safety
+  priority: 21
+  reason: 统计法兜底规则（tree gate 为空）
+  when:
+    all_of:
+    - evt_scale_right:
+        value_gt: 0.2895
+    - evt_scale_right:
+        value_lt: 0.6429
+  then:
+    action: deny
+  comment: stat_fallback gate_score=0.212, tail_capture=0.447, good_deny=0.235
+- id: gate_stat_vol_leverage_asymmetry
+  tag: HARD_STAT_3
+  phase: system_safety
+  priority: 22
+  reason: 统计法兜底规则（tree gate 为空）
+  when:
+    vol_leverage_asymmetry:
+      value_gt: 0.1154
+  then:
+    action: deny
+  comment: stat_fallback gate_score=0.130, tail_capture=0.591, good_deny=0.461

@@ -46,7 +46,6 @@ class DirectionEvaluator:
     def __init__(self, direction_config: Dict[str, Any]):
         self.config = direction_config
         self.rules = direction_config.get("direction_rules", [])
-        self.causal_source = direction_config.get("causal_source", "unknown")
         # fixed_direction: long/short → 忽略 direction_rules，强制固定方向
         _fd = direction_config.get("fixed_direction", None)
         if _fd == "long":
@@ -301,10 +300,11 @@ class GenericLiveStrategy:
                 with open(dir_path, "r", encoding="utf-8") as f:
                     direction_cfg = yaml.safe_load(f) or {}
                 self.direction_evaluator = DirectionEvaluator(direction_cfg)
+                _fd = direction_cfg.get("fixed_direction")
+                _n_rules = len(direction_cfg.get("direction_rules", []))
                 logger.info(
                     f"✅ Direction config loaded: "
-                    f"{len(direction_cfg.get('direction_rules', []))} rules, "
-                    f"source={direction_cfg.get('causal_source', 'unknown')}"
+                    f"fixed_direction={_fd or 'none'}, {_n_rules} rules"
                 )
             else:
                 logger.warning(f"⚠️  Direction config not found: {dir_path}")

@@ -1,0 +1,58 @@
+# ME-SHORT-60T Gate Draft (auto-generated)
+# 来源: results/train_final_20260319_171220_rr_extreme/me-short-60T
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy me-short-60T
+#   python scripts/optimize_gate_unified.py --strategy me-short-60T --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_vpin_max20
+  tag: HARD_VPIN_MAX20
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.21)
+  when:
+    vpin_max20:
+      value_lt: 0.3455
+  then:
+    action: deny
+  comment: 'statistical(lift=1.21): vpin_max20 < 0.3455'
+- id: gate_evt_es_99_evt_es_99
+  tag: HARD_EVT_ES_99_EVT_ES_99
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.21)
+  when:
+    all_of:
+    - evt_es_99:
+        value_gt: 0.1111
+    - evt_es_99:
+        value_lt: 0.2341
+  then:
+    action: deny
+  comment: 'statistical(lift=1.21): evt_es_99 > 0.1111 & evt_es_99 < 0.2341'
+- id: gate_evt_es_99_left_evt_es_99_left
+  tag: HARD_EVT_ES_99_LEFT_EVT_ES_99_LEFT
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.10)
+  when:
+    all_of:
+    - evt_es_99_left:
+        value_gt: 0.2341
+    - evt_es_99_left:
+        value_lt: 0.373
+  then:
+    action: deny
+  comment: 'statistical(lift=1.10): evt_es_99_left > 0.2341 & evt_es_99_left < 0.373'
+guardrails: []

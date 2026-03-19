@@ -1,6 +1,0 @@
-# FER-SHORT direction config
-# FER 方向拆分后: fer-short 固定做空 (direction_aware=false)
-
-causal_source: "fixed_short"
-fixed_direction: short  # fer-short: 固定 SHORT, 训练时 direction_aware=false
-direction_rules: []
