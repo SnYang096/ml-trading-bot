@@ -22,6 +22,12 @@ rules:
     rationale: "heuristic: 要求触发位具备足够SR强度，避免弱结构噪声反转"
     locked: true
     lock_reason: "A组基线：SR强度约束"
+  - feature: sqs_hal_low_pct
+    operator: ">="
+    value: 0.55
+    rationale: "heuristic: long 仅在高质量支撑位触发（百分位语义），过滤弱结构噪声"
+    locked: true
+    lock_reason: "A组基线：支撑位质量百分位约束"
   - feature: dist_to_nearest_sr
     operator: ">="
     value: -1.2

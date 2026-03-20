@@ -235,6 +235,32 @@ def compute_momentum_expansion_soft_phase_from_series(
     return result
 
 
+@register_feature(
+    "compute_me_accel_5k_split_from_series",
+    category="momentum_expansion",
+    description="Split signed me_accel_5k into long/short one-sided strengths",
+    outputs=["me_accel_5k_long", "me_accel_5k_short"],
+)
+def compute_me_accel_5k_split_from_series(
+    *, me_accel_5k: pd.Series
+) -> pd.DataFrame:
+    """
+    Split signed acceleration into two one-sided features:
+    - me_accel_5k_long: max(me_accel_5k, 0)
+    - me_accel_5k_short: max(-me_accel_5k, 0)
+    """
+    accel = pd.to_numeric(me_accel_5k, errors="coerce").fillna(0.0).astype(float)
+    long_side = accel.clip(lower=0.0)
+    short_side = (-accel).clip(lower=0.0)
+    return pd.DataFrame(
+        {
+            "me_accel_5k_long": long_side,
+            "me_accel_5k_short": short_side,
+        },
+        index=accel.index,
+    )
+
+
 # =============================================================================
 # 🚀 ME 分层逻辑：Gate / Evidence / Entry
 # =============================================================================

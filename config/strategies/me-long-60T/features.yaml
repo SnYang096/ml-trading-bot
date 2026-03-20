@@ -15,6 +15,7 @@ feature_pipeline:
 
     # ----- ME v3.0 三因子核心特征 -----
     - me_soft_phase_f
+    - me_accel_5k_split_f
     - me_failure_f
     - me_context_f
 

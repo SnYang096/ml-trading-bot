@@ -383,10 +383,11 @@ strategies:
           max_cases: 20
           min_trades_target: 60
           trade_penalty: 0.002
-          fer_lower_values: "0.0,0.05"
-          fer_upper_values: "0.25,0.35,0.45"
-          sr_min_values: "0.45,0.55,0.65"
-          dist_max_values: "0.8,1.2,1.6"
+          fer_eff_pct_lower_values: "0.0,0.05"
+          fer_eff_pct_upper_values: "0.25,0.35,0.45"
+          sr_strength_min_values: "0.45,0.55,0.65"
+          dist_to_sr_atr_max_values: "0.8,1.2,1.6"
+          sqs_quality_min_values: "0.45,0.55,0.65"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -440,10 +441,11 @@ strategies:
           max_cases: 20
           min_trades_target: 60
           trade_penalty: 0.002
-          fer_lower_values: "0.0,0.05"
-          fer_upper_values: "0.25,0.35,0.45"
-          sr_min_values: "0.45,0.55,0.65"
-          dist_max_values: "0.8,1.2,1.6"
+          fer_eff_pct_lower_values: "0.0,0.05"
+          fer_eff_pct_upper_values: "0.25,0.35,0.45"
+          sr_strength_min_values: "0.45,0.55,0.65"
+          dist_to_sr_atr_max_values: "0.8,1.2,1.6"
+          sqs_quality_min_values: "0.45,0.55,0.65"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -498,10 +500,11 @@ strategies:
           max_cases: 20
           min_trades_target: 60
           trade_penalty: 0.002
-          fer_lower_values: "0.0,0.05"
-          fer_upper_values: "0.25,0.35,0.45"
-          sr_min_values: "0.45,0.55,0.65"
-          dist_max_values: "0.8,1.2,1.6"
+          fer_eff_pct_lower_values: "0.0,0.05"
+          fer_eff_pct_upper_values: "0.25,0.35,0.45"
+          sr_strength_min_values: "0.45,0.55,0.65"
+          dist_to_sr_atr_max_values: "0.8,1.2,1.6"
+          sqs_quality_min_values: "0.45,0.55,0.65"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -552,10 +555,11 @@ strategies:
           max_cases: 20
           min_trades_target: 60
           trade_penalty: 0.002
-          fer_lower_values: "0.0,0.05"
-          fer_upper_values: "0.25,0.35,0.45"
-          sr_min_values: "0.45,0.55,0.65"
-          dist_max_values: "0.8,1.2,1.6"
+          fer_eff_pct_lower_values: "0.0,0.05"
+          fer_eff_pct_upper_values: "0.25,0.35,0.45"
+          sr_strength_min_values: "0.45,0.55,0.65"
+          dist_to_sr_atr_max_values: "0.8,1.2,1.6"
+          sqs_quality_min_values: "0.45,0.55,0.65"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -609,10 +613,11 @@ strategies:
           max_cases: 20
           min_trades_target: 60
           trade_penalty: 0.002
-          fer_lower_values: "0.0,0.05"
-          fer_upper_values: "0.25,0.35,0.45"
-          sr_min_values: "0.45,0.55,0.65"
-          dist_max_values: "0.8,1.2,1.6"
+          fer_eff_pct_lower_values: "0.0,0.05"
+          fer_eff_pct_upper_values: "0.25,0.35,0.45"
+          sr_strength_min_values: "0.45,0.55,0.65"
+          dist_to_sr_atr_max_values: "0.8,1.2,1.6"
+          sqs_quality_min_values: "0.45,0.55,0.65"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -666,10 +671,11 @@ strategies:
           max_cases: 20
           min_trades_target: 60
           trade_penalty: 0.002
-          fer_lower_values: "0.0,0.05"
-          fer_upper_values: "0.25,0.35,0.45"
-          sr_min_values: "0.45,0.55,0.65"
-          dist_max_values: "0.8,1.2,1.6"
+          fer_eff_pct_lower_values: "0.0,0.05"
+          fer_eff_pct_upper_values: "0.25,0.35,0.45"
+          sr_strength_min_values: "0.45,0.55,0.65"
+          dist_to_sr_atr_max_values: "0.8,1.2,1.6"
+          sqs_quality_min_values: "0.45,0.55,0.65"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -725,6 +731,8 @@ strategies:
           trade_penalty: 0.002
           atr_lower_values: "0.45,0.55,0.65"
           atr_upper_values: "0.88,0.92,0.96"
+          me_accel_abs_min_values: "0.08,0.12,0.16"
+          me_cvd_min_values: "0.50,0.60,0.70"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -777,6 +785,8 @@ strategies:
           trade_penalty: 0.002
           atr_lower_values: "0.45,0.55,0.65"
           atr_upper_values: "0.88,0.92,0.96"
+          me_accel_abs_min_values: "0.08,0.12,0.16"
+          me_cvd_min_values: "0.50,0.60,0.70"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -829,6 +839,8 @@ strategies:
           trade_penalty: 0.002
           atr_lower_values: "0.45,0.55,0.65"
           atr_upper_values: "0.88,0.92,0.96"
+          me_accel_abs_min_values: "0.08,0.12,0.16"
+          me_cvd_min_values: "0.50,0.60,0.70"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -881,6 +893,8 @@ strategies:
           trade_penalty: 0.002
           atr_lower_values: "0.45,0.55,0.65"
           atr_upper_values: "0.88,0.92,0.96"
+          me_accel_abs_min_values: "0.08,0.12,0.16"
+          me_cvd_min_values: "0.50,0.60,0.70"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -933,6 +947,8 @@ strategies:
           trade_penalty: 0.002
           atr_lower_values: "0.45,0.55,0.65"
           atr_upper_values: "0.88,0.92,0.96"
+          me_accel_abs_min_values: "0.08,0.12,0.16"
+          me_cvd_min_values: "0.50,0.60,0.70"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -985,6 +1001,8 @@ strategies:
           trade_penalty: 0.002
           atr_lower_values: "0.45,0.55,0.65"
           atr_upper_values: "0.88,0.92,0.96"
+          me_accel_abs_min_values: "0.08,0.12,0.16"
+          me_cvd_min_values: "0.50,0.60,0.70"
         scoring_method_fallbacks:
           [
             distribution_ks,

@@ -38,8 +38,11 @@ class CaseParams:
     fer_upper: float = 0.0
     sr_min: float = 0.0
     dist_max: float = 0.0
+    fer_sqs_min: float = 0.0
     atr_lower: float = 0.0
     atr_upper: float = 0.0
+    me_accel_abs_min: float = 0.0
+    me_cvd_min: float = 0.0
     compression_min: float = 0.0
     decay_upper: float = 0.0
     oi_min: float = 0.0
@@ -51,8 +54,8 @@ class CaseParams:
         if self.mode == "me":
             return (
                 f"atr[{self.atr_lower:.4g},{self.atr_upper:.4g}]_"
-                f"comp>={self.compression_min:.4g}_"
-                f"decay<={self.decay_upper:.4g}_oi>={self.oi_min:.4g}"
+                f"accel_abs>={self.me_accel_abs_min:.4g}_"
+                f"cvd>={self.me_cvd_min:.4g}"
             )
         if self.mode == "bpc":
             return (
@@ -62,7 +65,7 @@ class CaseParams:
             )
         return (
             f"fer[{self.fer_lower:.4g},{self.fer_upper:.4g}]_"
-            f"sr>={self.sr_min:.4g}_dist<=±{self.dist_max:.4g}"
+            f"sr>={self.sr_min:.4g}_dist<=±{self.dist_max:.4g}_sqs>={self.fer_sqs_min:.4g}"
         )
 
 
@@ -99,9 +102,8 @@ def build_override_prefilter(
         payload = {
             "atr_lower": params.atr_lower,
             "atr_upper": params.atr_upper,
-            "compression_min": params.compression_min,
-            "decay_upper": params.decay_upper,
-            "oi_min": params.oi_min,
+            "me_accel_abs_min": params.me_accel_abs_min,
+            "me_cvd_min": params.me_cvd_min,
         }
     elif params.mode == "bpc":
         payload = {
@@ -115,6 +117,7 @@ def build_override_prefilter(
             "fer_upper": params.fer_upper,
             "sr_min": params.sr_min,
             "dist_max": params.dist_max,
+            "fer_sqs_min": params.fer_sqs_min,
         }
     return build_override_prefilter_base(
         prod_prefilter_path,
@@ -246,8 +249,11 @@ def main() -> int:
     p.add_argument("--fer-upper-values", default="0.25,0.35,0.45")
     p.add_argument("--sr-min-values", default="0.45,0.55,0.65")
     p.add_argument("--dist-max-values", default="0.8,1.2,1.6")
+    p.add_argument("--sqs-min-values", default="0.45,0.55,0.65")
     p.add_argument("--atr-lower-values", default="0.15,0.25,0.35")
     p.add_argument("--atr-upper-values", default="0.70,0.82,0.90")
+    p.add_argument("--me-accel-abs-min-values", default="0.08,0.12,0.16")
+    p.add_argument("--me-cvd-min-values", default="0.50,0.60,0.70")
     p.add_argument("--compression-min-values", default="0.02,0.05,0.08")
     p.add_argument("--decay-upper-values", default="0.15,0.25,0.35")
     p.add_argument("--oi-min-values", default="0.25,0.35,0.45")
@@ -311,15 +317,14 @@ def main() -> int:
         atr_ups = parse_float_list(
             str(tcfg.get("atr_upper_values", args.atr_upper_values))
         )
-        comp_mins = parse_float_list(
-            str(tcfg.get("compression_min_values", args.compression_min_values))
+        accel_abs_mins = parse_float_list(
+            str(tcfg.get("me_accel_abs_min_values", args.me_accel_abs_min_values))
         )
-        decay_ups = parse_float_list(
-            str(tcfg.get("decay_upper_values", args.decay_upper_values))
+        cvd_mins = parse_float_list(
+            str(tcfg.get("me_cvd_min_values", args.me_cvd_min_values))
         )
-        oi_mins = parse_float_list(str(tcfg.get("oi_min_values", args.oi_min_values)))
-        for lo, hi, comp, dec, oi in itertools.product(
-            atr_lows, atr_ups, comp_mins, decay_ups, oi_mins
+        for lo, hi, accel_abs, cvd_min in itertools.product(
+            atr_lows, atr_ups, accel_abs_mins, cvd_mins
         ):
             if lo > hi:
                 continue
@@ -328,9 +333,8 @@ def main() -> int:
                     mode="me",
                     atr_lower=lo,
                     atr_upper=hi,
-                    compression_min=comp,
-                    decay_upper=dec,
-                    oi_min=oi,
+                    me_accel_abs_min=accel_abs,
+                    me_cvd_min=cvd_min,
                 )
             )
     elif template == "bpc":
@@ -361,18 +365,49 @@ def main() -> int:
                 )
             )
     else:
+        # New semantic FER keys are preferred; old keys are kept for backward compatibility.
         fer_lows = parse_float_list(
-            str(tcfg.get("fer_lower_values", args.fer_lower_values))
+            str(
+                tcfg.get(
+                    "fer_eff_pct_lower_values",
+                    tcfg.get("fer_lower_values", args.fer_lower_values),
+                )
+            )
         )
         fer_ups = parse_float_list(
-            str(tcfg.get("fer_upper_values", args.fer_upper_values))
+            str(
+                tcfg.get(
+                    "fer_eff_pct_upper_values",
+                    tcfg.get("fer_upper_values", args.fer_upper_values),
+                )
+            )
         )
-        sr_mins = parse_float_list(str(tcfg.get("sr_min_values", args.sr_min_values)))
+        sr_mins = parse_float_list(
+            str(
+                tcfg.get(
+                    "sr_strength_min_values",
+                    tcfg.get("sr_min_values", args.sr_min_values),
+                )
+            )
+        )
         dist_maxs = parse_float_list(
-            str(tcfg.get("dist_max_values", args.dist_max_values))
+            str(
+                tcfg.get(
+                    "dist_to_sr_atr_max_values",
+                    tcfg.get("dist_max_values", args.dist_max_values),
+                )
+            )
         )
-        for lo, hi, sr, dist in itertools.product(
-            fer_lows, fer_ups, sr_mins, dist_maxs
+        sqs_mins = parse_float_list(
+            str(
+                tcfg.get(
+                    "sqs_quality_min_values",
+                    tcfg.get("sqs_min_values", args.sqs_min_values),
+                )
+            )
+        )
+        for lo, hi, sr, dist, sqs in itertools.product(
+            fer_lows, fer_ups, sr_mins, dist_maxs, sqs_mins
         ):
             if lo > hi:
                 continue
@@ -383,6 +418,7 @@ def main() -> int:
                     fer_upper=hi,
                     sr_min=sr,
                     dist_max=dist,
+                    fer_sqs_min=sqs,
                 )
             )
     if args.max_cases > 0:
@@ -446,8 +482,11 @@ def main() -> int:
             "fer_upper": case.fer_upper,
             "sr_min": case.sr_min,
             "dist_max": case.dist_max,
+            "fer_sqs_min": case.fer_sqs_min,
             "atr_lower": case.atr_lower,
             "atr_upper": case.atr_upper,
+            "me_accel_abs_min": case.me_accel_abs_min,
+            "me_cvd_min": case.me_cvd_min,
             "compression_min": case.compression_min,
             "decay_upper": case.decay_upper,
             "oi_min": case.oi_min,
@@ -494,8 +533,11 @@ def main() -> int:
                 "fer_upper",
                 "sr_min",
                 "dist_max",
+                "fer_sqs_min",
                 "atr_lower",
                 "atr_upper",
+                "me_accel_abs_min",
+                "me_cvd_min",
                 "compression_min",
                 "decay_upper",
                 "oi_min",
@@ -518,8 +560,11 @@ def main() -> int:
                     r["fer_upper"],
                     r["sr_min"],
                     r["dist_max"],
+                    r["fer_sqs_min"],
                     r["atr_lower"],
                     r["atr_upper"],
+                    r["me_accel_abs_min"],
+                    r["me_cvd_min"],
                     r["compression_min"],
                     r["decay_upper"],
                     r["oi_min"],
@@ -539,8 +584,8 @@ def main() -> int:
         if r["mode"] == "me":
             param_desc = (
                 f"atr=[{r['atr_lower']:.3g},{r['atr_upper']:.3g}] "
-                f"comp>={r['compression_min']:.3g} "
-                f"decay<={r['decay_upper']:.3g} oi>={r['oi_min']:.3g}"
+                f"accel_abs>={r['me_accel_abs_min']:.3g} "
+                f"cvd>={r['me_cvd_min']:.3g}"
             )
         elif r["mode"] == "bpc":
             param_desc = (
@@ -551,7 +596,7 @@ def main() -> int:
         else:
             param_desc = (
                 f"fer=[{r['fer_lower']:.3g},{r['fer_upper']:.3g}] "
-                f"sr>={r['sr_min']:.3g} dist<=±{r['dist_max']:.3g}"
+                f"sr>={r['sr_min']:.3g} dist<=±{r['dist_max']:.3g} sqs>={r['fer_sqs_min']:.3g}"
             )
         print(
             f"  {i}. case={r['case_id']:03d} score={r['score']:+.4f} "

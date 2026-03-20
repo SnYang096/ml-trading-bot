@@ -4,17 +4,27 @@
 # 数据源: features_labeled.parquet, 112361 行
 
 rules:
-  - feature: atr_percentile
+  - feature: me_atr_pct
     operator: ">="
     value: 0.65
     locked: true
     lock_reason: "ME语义：仅在中高波扩张区参与，避免低波噪声"
 
-  - feature: atr_percentile
+  - feature: me_atr_pct
     operator: "<="
     value: 0.92
     locked: true
     lock_reason: "ME语义：避免极端尾段过热后追单"
+  - feature: me_accel_5k_long
+    operator: ">="
+    value: 0.10
+    locked: true
+    lock_reason: "ME-Long语义：要求中短周期加速度为正，确认上行动能推进"
+  - feature: me_cvd_alignment
+    operator: ">="
+    value: 0.55
+    locked: true
+    lock_reason: "ME-Long语义：价格与资金流方向一致，避免无量上涨噪声"
 
 last_evaluation:
   # ── 自动生成 (2026-03-13) ──

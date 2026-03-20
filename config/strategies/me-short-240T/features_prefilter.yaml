@@ -31,6 +31,7 @@ feature_pipeline:
 
     # ========== ME 当前能量状态 ==========
     - me_soft_phase_f
+    - me_accel_5k_split_f
 
     # ========== ME 上下文 ==========
     - me_context_f

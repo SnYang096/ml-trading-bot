@@ -95,6 +95,15 @@ def detect_locked_template(prefilter_raw: Dict[str, Any]) -> str:
     }.issubset(feats):
         return "fer"
     if {
+        "me_atr_pct",
+        "me_cvd_alignment",
+    }.issubset(feats) and (
+        "me_accel_5k_long" in feats
+        or "me_accel_5k_short" in feats
+        or "me_accel_5k" in feats
+    ):
+        return "me"
+    if {
         "atr_percentile",
         "recent_compression_decay",
         "compression_duration",
@@ -117,8 +126,11 @@ def apply_locked_thresholds(
     fer_upper: float | None = None,
     sr_min: float | None = None,
     dist_max: float | None = None,
+    fer_sqs_min: float | None = None,
     atr_lower: float | None = None,
     atr_upper: float | None = None,
+    me_accel_abs_min: float | None = None,
+    me_cvd_min: float | None = None,
     compression_min: float | None = None,
     decay_upper: float | None = None,
     oi_min: float | None = None,
@@ -142,6 +154,7 @@ def apply_locked_thresholds(
             "fer_upper": fer_upper,
             "sr_min": sr_min,
             "dist_max": dist_max,
+            "fer_sqs_min": fer_sqs_min,
         }
         missing_params = [k for k, v in required.items() if v is None]
         if missing_params:
@@ -153,6 +166,7 @@ def apply_locked_thresholds(
             "sr_min": False,
             "dist_lower": False,
             "dist_upper": False,
+            "sqs_min": False,
         }
         for r in rules:
             if not isinstance(r, dict) or not r.get("locked"):
@@ -174,6 +188,18 @@ def apply_locked_thresholds(
             elif feat == "dist_to_nearest_sr" and op == "<=":
                 r["value"] = float(dist_max)
                 seen["dist_upper"] = True
+            elif (
+                feat
+                in (
+                    "sqs_hal_high",
+                    "sqs_hal_low",
+                    "sqs_hal_high_pct",
+                    "sqs_hal_low_pct",
+                )
+                and op == ">="
+            ):
+                r["value"] = float(fer_sqs_min)
+                seen["sqs_min"] = True
         missing = [k for k, v in seen.items() if not v]
         if missing:
             raise ValueError(f"prefilter.yaml 缺少必要 FER locked 规则: {missing}")
@@ -183,9 +209,8 @@ def apply_locked_thresholds(
         required = {
             "atr_lower": atr_lower,
             "atr_upper": atr_upper,
-            "compression_min": compression_min,
-            "decay_upper": decay_upper,
-            "oi_min": oi_min,
+            "me_accel_abs_min": me_accel_abs_min,
+            "me_cvd_min": me_cvd_min,
         }
         missing_params = [k for k, v in required.items() if v is None]
         if missing_params:
@@ -194,30 +219,37 @@ def apply_locked_thresholds(
         seen = {
             "atr_lower": False,
             "atr_upper": False,
-            "compression_min": False,
-            "decay_upper": False,
-            "oi_min": False,
+            "accel": False,
+            "cvd": False,
         }
         for r in rules:
             if not isinstance(r, dict) or not r.get("locked"):
                 continue
             feat = r.get("feature")
             op = r.get("operator")
-            if feat == "atr_percentile" and op == ">=":
+            if feat in ("atr_percentile", "me_atr_pct") and op == ">=":
                 r["value"] = float(atr_lower)
                 seen["atr_lower"] = True
-            elif feat == "atr_percentile" and op == "<=":
+            elif feat in ("atr_percentile", "me_atr_pct") and op == "<=":
                 r["value"] = float(atr_upper)
                 seen["atr_upper"] = True
-            elif feat == "compression_duration" and op == ">=":
-                r["value"] = float(compression_min)
-                seen["compression_min"] = True
-            elif feat == "recent_compression_decay" and op == "<=":
-                r["value"] = float(decay_upper)
-                seen["decay_upper"] = True
-            elif feat == "oi_compression_score" and op == ">=":
-                r["value"] = float(oi_min)
-                seen["oi_min"] = True
+            elif feat == "me_accel_5k_long" and op == ">=":
+                r["value"] = float(abs(float(me_accel_abs_min)))
+                seen["accel"] = True
+            elif feat == "me_accel_5k_short" and op == ">=":
+                r["value"] = float(abs(float(me_accel_abs_min)))
+                seen["accel"] = True
+            elif feat == "me_accel_5k" and op == ">=":
+                # Backward compatibility for old long-side configs.
+                r["value"] = float(abs(float(me_accel_abs_min)))
+                seen["accel"] = True
+            elif feat == "me_accel_5k" and op == "<=":
+                # Backward compatibility for old short-side configs.
+                r["value"] = float(-abs(float(me_accel_abs_min)))
+                seen["accel"] = True
+            elif feat == "me_cvd_alignment" and op == ">=":
+                r["value"] = float(me_cvd_min)
+                seen["cvd"] = True
         missing = [k for k, v in seen.items() if not v]
         if missing:
             raise ValueError(f"prefilter.yaml 缺少必要 ME locked 规则: {missing}")
@@ -261,9 +293,23 @@ def apply_locked_thresholds(
 
 
 def _infer_template_from_params(params: Dict[str, float]) -> str:
-    if {"fer_lower", "fer_upper", "sr_min", "dist_max"}.issubset(params.keys()):
+    if {
+        "fer_lower",
+        "fer_upper",
+        "sr_min",
+        "dist_max",
+        "fer_sqs_min",
+    }.issubset(params.keys()):
         return "fer"
-    if {"atr_lower", "atr_upper", "compression_min", "decay_upper", "oi_min"}.issubset(
+    if {"atr_lower", "atr_upper", "me_accel_abs_min", "me_cvd_min"}.issubset(
+        params.keys()
+    ) or {
+        "atr_lower",
+        "atr_upper",
+        "compression_min",
+        "decay_upper",
+        "oi_min",
+    }.issubset(
         params.keys()
     ):
         return "me"
@@ -285,14 +331,22 @@ def _normalize_params_for_template(
             "fer_upper": float(params["fer_upper"]),
             "sr_min": float(params["sr_min"]),
             "dist_max": float(params["dist_max"]),
+            "fer_sqs_min": float(params["fer_sqs_min"]),
         }
     if template == "me":
+        if {"me_accel_abs_min", "me_cvd_min"}.issubset(params.keys()):
+            return {
+                "atr_lower": float(params["atr_lower"]),
+                "atr_upper": float(params["atr_upper"]),
+                "me_accel_abs_min": float(params["me_accel_abs_min"]),
+                "me_cvd_min": float(params["me_cvd_min"]),
+            }
+        # Backward compatibility: old ME knobs map to loose defaults.
         return {
             "atr_lower": float(params["atr_lower"]),
             "atr_upper": float(params["atr_upper"]),
-            "compression_min": float(params["compression_min"]),
-            "decay_upper": float(params["decay_upper"]),
-            "oi_min": float(params["oi_min"]),
+            "me_accel_abs_min": 0.0,
+            "me_cvd_min": 0.0,
         }
     if template == "bpc":
         return {

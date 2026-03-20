@@ -30,8 +30,8 @@ feature_pipeline:
     # ========== 触发位置: 失败发生在 SR 边界更有意义 ==========
     # → sr_strength_max (距最近 SR 的 ATR 倍数, 值小=失败发生在关键位)
     - sr_strength_max_f
-    # → sqs_hal_high (阻力位质量评分, short 场景用于过滤弱阻力噪声触发)
-    - sqs_hal_high_f
+    # → sqs_hal_low_pct (支撑位质量百分位, long 场景用于过滤弱支撑噪声触发)
+    - sqs_hal_low_pct_f
     # → poc, hal_high, hal_low (成交量分布边界, 值小=失败发生在 VA 边缘)
     - poc_hal_features_close_f
     # → vp_poc_deviation, vp_lv_ratio (流动性真空结构)

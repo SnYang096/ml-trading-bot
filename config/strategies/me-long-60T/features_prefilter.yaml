@@ -53,6 +53,7 @@ feature_pipeline:
     # me_atr_pct, me_vol_regime, me_accel_2k/5k, me_multi_tf_alignment,
     # me_cvd_alignment, me_cvd_strength, me_volume_surge, me_volume_accel, me_delta_net_flow
     - me_soft_phase_f
+    - me_accel_5k_split_f
 
     # ========== ME 上下文 ==========
     # 语义: 跳空风险适合度、反身性风险

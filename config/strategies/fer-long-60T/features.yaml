@@ -54,7 +54,7 @@ feature_pipeline:
 
     # ========== SR 相关 ==========
     - sr_strength_max_f  # 输出包含 sr_strength_max 和 dist_to_nearest_sr
-    - sqs_hal_high_f     # 阻力位质量评分（short 更相关）
+    - sqs_hal_low_pct_f  # 支撑位质量百分位（long 更相关）
 
     # ========== 订单流 ==========
     - vpin_features_f

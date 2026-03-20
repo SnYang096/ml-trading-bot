@@ -807,6 +807,46 @@ features:
       atr: atr
       hal_low: hal_low
     notes: 基于 WPT 重构价格计算，实现多尺度对齐
+  sqs_hal_high_pct_f:
+    module: baseline
+    compute_func: compute_sqs_hal_high_pct_from_series
+    dependencies:
+    - sqs_hal_high_f
+    required_columns:
+    - sqs_hal_high
+    output_columns:
+    - sqs_hal_high_pct
+    category: sr_structure
+    description: Percentile rank of sqs_hal_high (rolling), bounded [0,1]
+    compute_params:
+      window: 540
+      shift: 1
+      normalized: true
+      output_normalization_map:
+        sqs_hal_high_pct: bounded_0_1
+    pass_full_df: false
+    column_mappings:
+      sqs_hal_high: sqs_hal_high
+  sqs_hal_low_pct_f:
+    module: baseline
+    compute_func: compute_sqs_hal_low_pct_from_series
+    dependencies:
+    - sqs_hal_low_f
+    required_columns:
+    - sqs_hal_low
+    output_columns:
+    - sqs_hal_low_pct
+    category: sr_structure
+    description: Percentile rank of sqs_hal_low (rolling), bounded [0,1]
+    compute_params:
+      window: 540
+      shift: 1
+      normalized: true
+      output_normalization_map:
+        sqs_hal_low_pct: bounded_0_1
+    pass_full_df: false
+    column_mappings:
+      sqs_hal_low: sqs_hal_low
   sr_strength_max_f:
     module: baseline
     compute_func: compute_sr_strength_max_from_series
@@ -7683,6 +7723,27 @@ features:
       atr: atr
       volume: volume
       cvd_change_5: cvd_change_5
+
+  me_accel_5k_split_f:
+    module: momentum_expansion
+    compute_func: compute_me_accel_5k_split_from_series
+    dependencies:
+    - me_soft_phase_f
+    required_columns:
+    - me_accel_5k
+    output_columns:
+    - me_accel_5k_long
+    - me_accel_5k_short
+    category: momentum_expansion
+    description: One-sided ME acceleration strengths split by direction.
+    pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        me_accel_5k_long: bounded_0_3
+        me_accel_5k_short: bounded_0_3
+    column_mappings:
+      me_accel_5k: me_accel_5k
 
   me_failure_f:
     module: momentum_expansion

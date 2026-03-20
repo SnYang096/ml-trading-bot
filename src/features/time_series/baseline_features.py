@@ -3810,6 +3810,38 @@ def compute_cvd_change_5_pct_from_series(
     )
 
 
+@register_feature("compute_sqs_hal_high_pct_from_series", category="baseline")
+def compute_sqs_hal_high_pct_from_series(
+    *,
+    sqs_hal_high: pd.Series,
+    window: int = 540,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Compute percentile rank of sqs_hal_high for cross-symbol comparability."""
+    return compute_percentile_rank_from_series(
+        series=sqs_hal_high,
+        window=window,
+        shift=shift,
+        output_name="sqs_hal_high_pct",
+    )
+
+
+@register_feature("compute_sqs_hal_low_pct_from_series", category="baseline")
+def compute_sqs_hal_low_pct_from_series(
+    *,
+    sqs_hal_low: pd.Series,
+    window: int = 540,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Compute percentile rank of sqs_hal_low for cross-symbol comparability."""
+    return compute_percentile_rank_from_series(
+        series=sqs_hal_low,
+        window=window,
+        shift=shift,
+        output_name="sqs_hal_low_pct",
+    )
+
+
 @register_feature("compute_volume_ratio_pct_from_series", category="baseline")
 def compute_volume_ratio_pct_from_series(
     *,
