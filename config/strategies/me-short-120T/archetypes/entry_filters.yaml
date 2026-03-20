@@ -8,44 +8,44 @@
 # 多个 filter 之间是 OR 关系
 
 filters:
-- id: ef_evt_tail_shape_right_0.85
+- id: ef_me_cvd_strength_high
   enabled: true
-  description: 'auto: evt_tail_shape_right >= 0.968254'
-  conditions:
-  - feature: evt_tail_shape_right
-    operator: '>='
-    value: 0.968254
-  notes: method=tail_bad_rate_ratio, effect=+8.5881, rob=1.00, pass=15.4%
-- id: ef_trade_cluster_max_buy_run_ma20_0.15
-  enabled: true
-  description: 'auto: trade_cluster_max_buy_run_ma20 <= 0.0605'
-  conditions:
-  - feature: trade_cluster_max_buy_run_ma20
-    operator: <=
-    value: 0.0605
-  notes: method=tail_bad_rate_ratio, effect=+3.8269, rob=1.00, pass=15.2%
-- id: ef_me_cvd_strength_0.85
-  enabled: true
-  description: 'auto: me_cvd_strength >= 0.721555'
+  description: 'normalized: me_cvd_strength >= 0.65'
   conditions:
   - feature: me_cvd_strength
     operator: '>='
-    value: 0.721555
-  notes: method=tail_bad_rate_ratio, effect=+2.4997, rob=1.00, pass=15.0%
-- id: ef_evt_tail_shape_right_0.7
+    value: 0.65
+  notes: orderflow core strength (normalized [0,1])
+- id: ef_shd_pct_crowded
   enabled: true
-  description: 'auto: evt_tail_shape_right >= 0.75'
+  description: 'pct: shd_pct <= 0.20'
   conditions:
-  - feature: evt_tail_shape_right
-    operator: '>='
-    value: 0.75
-  notes: method=tail_bad_rate_ratio, effect=+5.2402, rob=0.67, pass=30.1%
-- id: ef_cvd_0.15
-  enabled: true
-  description: 'auto: cvd <= -23408701410.410107'
-  conditions:
-  - feature: cvd
+  - feature: shd_pct
     operator: <=
-    value: -23408701410.410107
-  notes: method=tail_bad_rate_ratio, effect=+5.8082, rob=0.67, pass=15.0%
+    value: 0.20
+  notes: strategy homogeneity stress percentile (bounded [0,1])
+- id: ef_ofci_pct_high
+  enabled: true
+  description: 'pct: ofci_pct >= 0.70'
+  conditions:
+  - feature: ofci_pct
+    operator: '>='
+    value: 0.70
+  notes: order flow consensus percentile (bounded [0,1])
+- id: ef_vpin_zscore_20_high
+  enabled: true
+  description: 'normalized: vpin_zscore_20 >= 0.60'
+  conditions:
+  - feature: vpin_zscore_20
+    operator: '>='
+    value: 0.60
+  notes: VPIN stress zscore
+- id: ef_trade_cluster_net_runs_z20
+  enabled: true
+  description: 'normalized: trade_cluster_net_runs_zscore_20 >= 0.30'
+  conditions:
+  - feature: trade_cluster_net_runs_zscore_20
+    operator: '>='
+    value: 0.30
+  notes: trade clustering directional persistence zscore
 combination_mode: or

@@ -1,9 +1,5 @@
-name: me-short
-description: 'ME-Short entry filter: first-expansion timing only.
-
-  聚焦扩张状态、压缩释放记忆与订单流确认，过滤掉中后段噪声触发。
-
-  '
+name: me-long
+description: ''
 feature_pipeline:
   exclude_columns:
   - atr

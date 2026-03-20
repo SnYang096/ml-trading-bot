@@ -1,0 +1,48 @@
+# BPC Entry Filter candidate features
+# Purpose: provide microstructure/order-flow candidates for Step 7 scanning.
+
+name: bpc-long
+description: |
+  BreakoutPullbackContinuation entry filter candidate pool.
+  Focus on order flow and microstructure timing, with light BPC context.
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    # scale column required by downstream components (excluded from model input)
+    - atr_f
+
+    # light archetype context
+    - bpc_soft_phase_f
+    - bpc_pullback_delta_absorption_f
+    - dual_compression_f
+
+    # order-flow core (prefer normalized/pct style)
+    - cvd_divergence_v2_f
+    - cvd_change_features_f
+    - vpin_features_f
+    - vpin_scene_semantic_scores_f
+    - ofci_pct_f
+    - shd_pct_f
+    - volume_ratio_pct_f
+    - footprint_basic_f
+    - fp_imbalance_scene_semantic_scores_f
+
+    # trade-cluster microstructure (zscore variants)
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f
+
+    # derivatives flow context
+    - funding_rate_features_f
+    - funding_scene_semantic_scores_f
+    - oi_features_f
+    - oi_scene_semantic_scores_f
+    - funding_oi_crowding_f
+
+    # entry timing helpers
+    - bars_since_extreme_f
+    - wick_ratios_f

@@ -10,13 +10,36 @@
 # Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-- id: meta_spectrum_price_centroid
+- id: ef_shd_pct_crowded
   enabled: true
-  description: 'Meta-Algorithm: spectrum_price_centroid >= 0.852'
+  description: 'pct: shd_pct <= 0.20'
   conditions:
-  - feature: spectrum_price_centroid
+  - feature: shd_pct
+    operator: <=
+    value: 0.20
+  notes: strategy homogeneity stress percentile (bounded [0,1])
+- id: ef_ofci_pct_high
+  enabled: true
+  description: 'pct: ofci_pct >= 0.70'
+  conditions:
+  - feature: ofci_pct
     operator: '>='
-    value: 0.852
-  tier: A_PLATEAU
-  notes: lift=1.18x, rob=88%, snotio=11.0518, z=5.57, p=0.0000
+    value: 0.70
+  notes: order flow consensus percentile (bounded [0,1])
+- id: ef_volume_ratio_pct_high
+  enabled: true
+  description: 'pct: volume_ratio_pct >= 0.70'
+  conditions:
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.70
+  notes: relative volume percentile (bounded [0,1])
+- id: ef_vpin_zscore_20_high
+  enabled: true
+  description: 'normalized: vpin_zscore_20 >= 0.60'
+  conditions:
+  - feature: vpin_zscore_20
+    operator: '>='
+    value: 0.60
+  notes: VPIN stress zscore
 combination_mode: or

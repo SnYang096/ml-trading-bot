@@ -1,46 +1,14 @@
-# ME-Short Prefilter 特征配置 (Meta-Algorithm)
-# 职责: 定义 ME-Short archetype 语义边界的特征候选池
-# 仅含 ME 专属 + 交叉 + 场景语义特征 — 排除通用特征 (RSI/MACD/ATR/SMA)
-#
-# 设计理念:
-#   Prefilter 回答: "这个 bar 是不是 ME-Short (Momentum Expansion Down)?"
-#   向下 ME 需要：先有拥挤/向上压缩蓄势，再向下扩张突破
-#
-# 用法 (Meta-Algorithm 模式):
-#   python scripts/analyze_archetype_feature_stratification.py \
-#       --logs results/.../me-short/features_labeled.parquet \
-#       --strategy me-short \
-#       --features-prefilter config/strategies/me-short/features_prefilter.yaml \
-#       --meta-algorithm --promote
-
 name: me_short_prefilter
-description: |
-  ME-Short Prefilter 特征: 向下 ME 的背景条件特征。
+description: 'ME-Short Prefilter 特征: 向下 ME 的背景条件特征。
+
   与 me-long 相同特征集，但 prefilter 规则会从做空角度自动发现。
 
+  '
 feature_pipeline:
   requested_features:
-    # ========== ATR 波动率百分位 (Prefilter 核心) ==========
-    - atr_percentile_f
-
-    # ========== ME 压缩衰减记忆 (Prefilter 核心) ==========
-    - recent_compression_decay_f
-
-    # ========== ME 压缩持续时长 ==========
-    - compression_duration_f
-
-    # ========== ME 当前能量状态 ==========
-    - me_soft_phase_f
-    - me_accel_5k_split_f
-
-    # ========== ME 上下文 ==========
-    - me_context_f
-
-    # ========== ME 失败信号 ==========
-    - me_failure_f
-
-    # ========== ME 交叉特征 ==========
-    - dual_ignition_f
-
-    # ========== 场景语义 (ME 相关) ==========
-    - oi_scene_semantic_scores_f
+  - me_soft_phase_f
+  - me_accel_5k_split_f
+  - me_context_f
+  - me_failure_f
+  - dual_ignition_f
+  - oi_scene_semantic_scores_f

@@ -1,51 +1,51 @@
 # ME-SHORT-240T Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
-# Date: 2026-03-20 03:03
-# Promoted: 5 filters (method=mean_effect)
+# Date: 2026-03-20 22:32
+# Promoted: 5 filters (method=distribution_ks)
 # Significance: 统计验证 + robustness ≥ 0.5
 #
 # 职责: "现在该入场吗?" → 硬二值控制
 # 多个 filter 之间是 OR 关系
 
 filters:
-- id: ef_funding_oi_crowding_score_0.8
+- id: ef_evt_tail_shape_right_0.75
   enabled: true
-  description: 'auto: funding_oi_crowding_score >= 0.212271'
-  conditions:
-  - feature: funding_oi_crowding_score
-    operator: '>='
-    value: 0.212271
-  notes: method=mean_effect, effect=+6.4396, rob=1.00, pass=20.0%
-- id: ef_oi_compression_score_0.85
-  enabled: true
-  description: 'auto: oi_compression_score >= 0.339339'
-  conditions:
-  - feature: oi_compression_score
-    operator: '>='
-    value: 0.339339
-  notes: method=mean_effect, effect=+5.6638, rob=0.67, pass=15.0%
-- id: ef_funding_oi_crowding_score_0.7
-  enabled: true
-  description: 'auto: funding_oi_crowding_score >= 0.155941'
-  conditions:
-  - feature: funding_oi_crowding_score
-    operator: '>='
-    value: 0.155941
-  notes: method=mean_effect, effect=+5.3980, rob=0.67, pass=30.0%
-- id: ef_oi_compression_score_0.75
-  enabled: true
-  description: 'auto: oi_compression_score >= 0.248639'
-  conditions:
-  - feature: oi_compression_score
-    operator: '>='
-    value: 0.248639
-  notes: method=mean_effect, effect=+4.8327, rob=1.00, pass=25.0%
-- id: ef_evt_tail_shape_right_0.25
-  enabled: true
-  description: 'auto: evt_tail_shape_right <= 0.253968'
+  description: 'auto: evt_tail_shape_right >= 0.717262'
   conditions:
   - feature: evt_tail_shape_right
+    operator: '>='
+    value: 0.717262
+  notes: method=distribution_ks, effect=+4.8911, ks=0.621, rob=1.00, pass=25.3%
+- id: ef_cvd_change_20_0.3
+  enabled: true
+  description: 'auto: cvd_change_20 <= -41477047.4'
+  conditions:
+  - feature: cvd_change_20
     operator: <=
-    value: 0.253968
-  notes: method=mean_effect, effect=+3.7907, rob=0.67, pass=25.0%
+    value: -41477047.4
+  notes: method=distribution_ks, effect=+3.2011, ks=0.478, rob=1.00, pass=30.2%
+- id: ef_vpin_momentum_0.2
+  enabled: true
+  description: 'auto: vpin_momentum <= -0.036877'
+  conditions:
+  - feature: vpin_momentum
+    operator: <=
+    value: -0.036877
+  notes: method=distribution_ks, effect=+3.2266, ks=0.470, rob=1.00, pass=20.3%
+- id: ef_evt_scale_right_0.2
+  enabled: true
+  description: 'auto: evt_scale_right <= 0.179365'
+  conditions:
+  - feature: evt_scale_right
+    operator: <=
+    value: 0.179365
+  notes: method=distribution_ks, effect=+5.2632, ks=0.465, rob=0.67, pass=20.3%
+- id: ef_cvd_change_1_0.25
+  enabled: true
+  description: 'auto: cvd_change_1 <= -3709690.25'
+  conditions:
+  - feature: cvd_change_1
+    operator: <=
+    value: -3709690.25
+  notes: method=distribution_ks, effect=+2.9580, ks=0.415, rob=1.00, pass=25.3%
 combination_mode: or

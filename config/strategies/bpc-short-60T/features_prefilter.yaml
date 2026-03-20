@@ -1,52 +1,20 @@
-# BPC Prefilter 特征配置 (Meta-Algorithm)
-# 职责: 定义 BPC archetype 语义边界的特征候选池
-# 仅含 BPC 专属 + 交叉 + 场景语义特征 — 排除通用特征 (RSI/MACD/ATR/SMA)
-#
-# 设计理念:
-#   Prefilter 回答: "这个 bar 是不是 BPC (突破-回踩-延续)?"
-#   如果用通用特征, 所有 archetype 会选到相同特征, 失去区分度
-#
-# 用法 (Meta-Algorithm 模式):
-#   python scripts/analyze_archetype_feature_stratification.py \
-#       --logs results/.../bpc/features_labeled.parquet \
-#       --strategy bpc \
-#       --config config/strategies/bpc/prefilter.yaml \
-#       --features-prefilter config/strategies/bpc/features_prefilter.yaml \
-#       --meta-algorithm --promote
-
 name: bpc_prefilter
-description: |
-  BPC Prefilter 特征: Breakout-Pullback-Continuation 结构的因果前提特征。
+description: 'BPC Prefilter 特征: Breakout-Pullback-Continuation 结构的因果前提特征。
+
   SHAP∩Gain 在这些特征上训练 LightGBM, 发现 archetype 边界。
 
+  '
 feature_pipeline:
   requested_features:
-    # ========== BPC 专属: 软阶段分数 ==========
-    # → bpc_score_breakout, bpc_score_pullback, bpc_score_continuation,
-    #   bpc_score_neutral, bpc_pullback_depth, bpc_pullback_quality,
-    #   bpc_recovery_strength, bpc_momentum_confirm, ...
-    - bpc_soft_phase_f
-
-    # ========== BPC 专属: 回踩结构 ==========
-    - bpc_pullback_depth_pct_f      # 回踩深度 (side-aware)
-    - bpc_pullback_duration_f       # 回踩持续时间
-    - bpc_pullback_speed_f          # 回踩速度 = depth/(duration+1)
-
-    # ========== BPC 专属: 方向/动量 ==========
-    - bpc_dir_consistency_multi_f   # 多尺度方向一致性
-    - bpc_dir_flip_count_f          # 方向翻转次数
-    - bpc_impulse_return_atr_f      # impulse 收益/ATR (带方向)
-
-    # ========== BPC 专属: 量能/订单流 ==========
-    - bpc_volume_compression_pct_f  # 成交量压缩百分位
-    - bpc_pullback_delta_absorption_f  # 回踩期间 delta 吸收
-
-    # ========== BPC 专属: 阶段转换 + 压缩蓄势 ==========
-    - bpc_phase_transition_f        # 主导阶段/置信度/转换概率/结构健康
-    - bpc_compression_state_f       # 预突破综合分
-
-    # ========== 方向性/场景特征 (前置方向信息) ==========
-    - shd_pct_f                     # ΔCVD-returns 滚动相关百分位 (方向疲竭/反转前兆)
-
-    # ========== BPC 交叉特征 ==========
-    - dual_compression_f            # 资金+VPIN 双源压缩 (BPC 核心交叉)
+  - bpc_soft_phase_f
+  - bpc_pullback_depth_pct_f
+  - bpc_pullback_duration_f
+  - bpc_pullback_speed_f
+  - bpc_dir_consistency_multi_f
+  - bpc_dir_flip_count_f
+  - bpc_impulse_return_atr_f
+  - bpc_volume_compression_pct_f
+  - bpc_pullback_delta_absorption_f
+  - bpc_phase_transition_f
+  - bpc_compression_state_f
+  - dual_compression_f
