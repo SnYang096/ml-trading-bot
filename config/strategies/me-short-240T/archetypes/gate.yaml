@@ -1,6 +1,7 @@
-# ME-SHORT Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-short/20260313_234144/strategies/me-short/gate_draft.yaml
+# ME-SHORT-240T Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-short-240T/20260320_003205/strategies/me-short-240T/gate_draft.yaml
 # 优化规则: 1/5 条通过优化, 3 条已移除
+# Phase split: system_safety=2, hard_gate=0
 
 schema:
   phases:
@@ -12,30 +13,31 @@ schema:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
-hard_gates:
-- id: gate_vpin_max20_vpin_max20
-  tag: HARD_VPIN_MAX20_VPIN_MAX20
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.46)
+hard_gates: []
+guardrails: []
+system_safety:
+- id: gate_evt_es_99_left
+  tag: HARD_EVT_ES_99_LEFT
+  phase: system_safety
+  priority: 12
+  reason: 统计验证规则 (lift=1.14)
+  when:
+    evt_es_99_left:
+      value_gt: 0.7909
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.7909, lift=0.102'
+- id: gate_evt_es_99_evt_es_99
+  tag: HARD_EVT_ES_99_EVT_ES_99
+  phase: system_safety
+  priority: 14
+  reason: 统计验证规则 (lift=1.09)
   when:
     all_of:
-    - vpin_max20:
-        value_gt: 0.2037
-    - vpin_max20:
-        value_lt: 0.2952
+    - evt_es_99:
+        value_gt: 0.7857
+    - evt_es_99:
+        value_lt: 0.8889
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.3250, lift=0.678'
-- id: gate_vpin_ma20
-  tag: HARD_VPIN_MA20
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.15)
-  when:
-    vpin_ma20:
-      value_gt: 0.3
-  then:
-    action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=0.3000, lift=0.206'
-guardrails: []
+  comment: 'optimizer: stable_plateau_found, threshold=0.7909, lift=0.102'

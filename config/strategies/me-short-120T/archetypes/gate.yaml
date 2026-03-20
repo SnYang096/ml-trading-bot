@@ -1,6 +1,7 @@
-# ME-SHORT Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-short/20260313_234144/strategies/me-short/gate_draft.yaml
-# 优化规则: 1/5 条通过优化, 3 条已移除
+# ME-SHORT-120T Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-short-120T/20260320_003158/strategies/me-short-120T/gate_draft.yaml
+# 优化规则: 1/5 条通过优化, 2 条已移除
+# Phase split: system_safety=2, hard_gate=1
 
 schema:
   phases:
@@ -13,29 +14,44 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_vpin_max20_vpin_max20
-  tag: HARD_VPIN_MAX20_VPIN_MAX20
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.46)
-  when:
-    all_of:
-    - vpin_max20:
-        value_gt: 0.2037
-    - vpin_max20:
-        value_lt: 0.2952
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.3250, lift=0.678'
 - id: gate_vpin_ma20
   tag: HARD_VPIN_MA20
   phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.15)
+  priority: 11
+  reason: 统计验证规则 (lift=1.32)
   when:
     vpin_ma20:
-      value_gt: 0.3
+      value_gt: 0.3034
   then:
     action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=0.3000, lift=0.206'
+  comment: 'optimizer: no_stable_plateau, threshold=0.3034, lift=0.230'
 guardrails: []
+system_safety:
+- id: gate_evt_es_99_left_evt_es_99_left
+  tag: HARD_EVT_ES_99_LEFT_EVT_ES_99_LEFT
+  phase: system_safety
+  priority: 12
+  reason: 统计验证规则 (lift=1.46)
+  when:
+    all_of:
+    - evt_es_99_left:
+        value_gt: 0.2103
+    - evt_es_99_left:
+        value_lt: 0.3214
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.3698, lift=0.106'
+- id: gate_evt_scale_left_evt_scale_left
+  tag: HARD_EVT_SCALE_LEFT_EVT_SCALE_LEFT
+  phase: system_safety
+  priority: 14
+  reason: 统计验证规则 (lift=1.07)
+  when:
+    all_of:
+    - evt_scale_left:
+        value_gt: 0.3254
+    - evt_scale_left:
+        value_lt: 0.8452
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.2028, lift=1.662'

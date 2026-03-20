@@ -1,30 +1,51 @@
-# ME-Short Entry Filters (seeded)
-# 职责: "现在该入场做空吗?" → 硬二值控制
-# 这是一组偏保守的初始规则，目标是限制在扩张早段。
+# ME-SHORT-240T Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
+# Date: 2026-03-20 03:03
+# Promoted: 5 filters (method=mean_effect)
+# Significance: 统计验证 + robustness ≥ 0.5
+#
+# 职责: "现在该入场吗?" → 硬二值控制
+# 多个 filter 之间是 OR 关系
 
 filters:
-  - id: me_short_first_expansion_seed
-    enabled: true
-    description: "扩张初段种子过滤器（保守）"
-    conditions:
-      - feature: atr_percentile
-        operator: ">="
-        value: 0.72
-      - feature: atr_percentile
-        operator: "<="
-        value: 0.92
-      - feature: recent_compression_decay
-        operator: "<="
-        value: 0.20
-      - feature: compression_duration
-        operator: ">="
-        value: 0.05
-      - feature: evt_var_99_right
-        operator: "<="
-        value: 0.90
-      - feature: vpin_max20
-        operator: "<="
-        value: 0.35
-    notes: "只在中高波扩张早段且微观结构未失真时允许开仓"
-
+- id: ef_funding_oi_crowding_score_0.8
+  enabled: true
+  description: 'auto: funding_oi_crowding_score >= 0.212271'
+  conditions:
+  - feature: funding_oi_crowding_score
+    operator: '>='
+    value: 0.212271
+  notes: method=mean_effect, effect=+6.4396, rob=1.00, pass=20.0%
+- id: ef_oi_compression_score_0.85
+  enabled: true
+  description: 'auto: oi_compression_score >= 0.339339'
+  conditions:
+  - feature: oi_compression_score
+    operator: '>='
+    value: 0.339339
+  notes: method=mean_effect, effect=+5.6638, rob=0.67, pass=15.0%
+- id: ef_funding_oi_crowding_score_0.7
+  enabled: true
+  description: 'auto: funding_oi_crowding_score >= 0.155941'
+  conditions:
+  - feature: funding_oi_crowding_score
+    operator: '>='
+    value: 0.155941
+  notes: method=mean_effect, effect=+5.3980, rob=0.67, pass=30.0%
+- id: ef_oi_compression_score_0.75
+  enabled: true
+  description: 'auto: oi_compression_score >= 0.248639'
+  conditions:
+  - feature: oi_compression_score
+    operator: '>='
+    value: 0.248639
+  notes: method=mean_effect, effect=+4.8327, rob=1.00, pass=25.0%
+- id: ef_evt_tail_shape_right_0.25
+  enabled: true
+  description: 'auto: evt_tail_shape_right <= 0.253968'
+  conditions:
+  - feature: evt_tail_shape_right
+    operator: <=
+    value: 0.253968
+  notes: method=mean_effect, effect=+3.7907, rob=0.67, pass=25.0%
 combination_mode: or

@@ -910,3 +910,47 @@ Sharpe 是 120T/60T 的 4-5 倍
 而且 60T 还有个问题：出现了 trades=1276 这种爆炸窗口，说明 1H 的 BPC 信号噪声大、不稳定。
 
 BPC 建议直接用 240T，不用犹豫。
+
+
+## 再次实验最近月份的不同timeframe
+
+### bpc-short-240
+
+### bpc-short-120
+
+======================================================================
+📋 汇总
+======================================================================
+   ❌ bpc-short-120T: ERROR    sharpe=0.5774 trades=3 seed=42
+      🔬 Prefilter 对比:
+         upside_positive_rate_ratio Sharpe=+1.1585  Trades=    7  Rules=5 ←
+         distribution_ks      Sharpe=+0.5573  Trades=   26  Rules=4
+         mean_effect          Sharpe=+0.3523  Trades=   75  Rules=5
+         tail_bad_rate_ratio  Sharpe=+0.2387  Trades=   84  Rules=5
+         empty                Sharpe=+0.1208  Trades=  503  Rules=0
+
+### bpc-short-60
+
+======================================================================
+📋 汇总
+======================================================================
+   ✅ bpc-short-60T: ADOPT    sharpe=0.2516 trades=50 seed=42
+      🔬 Prefilter 对比:
+         upside_positive_rate_ratio Sharpe=+0.6024  Trades=  115  Rules=4 ←
+         tail_bad_rate_ratio  Sharpe=+0.3269  Trades=  495  Rules=5
+         empty                Sharpe=+0.3235  Trades= 1884  Rules=0
+         mean_effect          Sharpe=+0.2692  Trades=   64  Rules=4
+         distribution_ks      Sharpe=+0.2205  Trades=  106  Rules=4
+
+### fer-short-120
+======================================================================
+📋 汇总
+======================================================================
+   ✅ fer-short-120T: ADOPT    sharpe=0.2154 trades=1561 seed=42
+      🔬 Prefilter 对比:
+         empty                Sharpe=+0.1391  Trades= 2701  Rules=0 ←
+         distribution_ks      Sharpe=+0.1342  Trades=  282  Rules=5
+         mean_effect          Sharpe=+0.1342  Trades=  282  Rules=5
+         upside_positive_rate_ratio Sharpe=+0.1342  Trades=  282  Rules=5
+         tail_bad_rate_ratio  Sharpe=+0.0450  Trades=  174  Rules=8
+

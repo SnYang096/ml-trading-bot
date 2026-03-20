@@ -155,6 +155,14 @@ slots:
 #   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
+  enabled_archetypes:
+    - bpc-long-240T
+    - bpc-short-240T
+    - me-long-60T
+    - me-short-60T
+    - fer-long-240T
+    - fer-short-240T
+
   per_strategy_limits:
     # ── BPC 方向拆分 (方案A: 共享全局slot互斥竞争) ──
     # bpc-long 和 bpc-short 各独立占 1 slot，全局 4 slots 防止同时过多开仓
@@ -190,7 +198,7 @@ resource_allocation:
       allow_add_position: false
     # ── LV (方向中性, 不拆分) ──
     lv:
-      max_slots: 1 # LV 快进快出，最多 1 个
+      max_slots: 0 # LV 快进快出，最多 1 个
       max_risk_per_trade: 0.0025 # LV 极端波动反噬快, 预算进一步下调到 0.25%
       allow_add_position: false # LV 不加仓
 
@@ -237,3 +245,16 @@ resource_allocation:
     fer_reverse_allowed: true
     reverse_exempt_families: [fer]
 
+  # 名义敞口风控: soft/hard 分层 + winner priority
+  notional_policy:
+    enabled: true
+    soft_max_total_notional_pct: 4.5
+    hard_max_total_notional_pct: 6.0
+    max_symbol_notional_pct: 2.5
+    max_family_notional_pct: 3.5
+    winner_priority:
+      enabled: true
+      allow_families: [bpc]
+      require_breakeven_locked: true
+      require_min_current_r: 1.0
+      block_new_slots_when_soft_cap_hit: true

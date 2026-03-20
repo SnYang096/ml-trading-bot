@@ -1,6 +1,7 @@
-# ME-SHORT Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-short/20260313_234144/strategies/me-short/gate_draft.yaml
+# ME-SHORT-60T Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-short-60T/20260320_003151/strategies/me-short-60T/gate_draft.yaml
 # 优化规则: 1/5 条通过优化, 3 条已移除
+# Phase split: system_safety=0, hard_gate=2
 
 schema:
   phases:
@@ -26,7 +27,7 @@ hard_gates:
         value_lt: 0.2952
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.3250, lift=0.678'
+  comment: 'optimizer: no_stable_plateau, threshold=0.4444, lift=0.643'
 - id: gate_vpin_ma20
   tag: HARD_VPIN_MA20
   phase: hard_gate
@@ -34,8 +35,9 @@ hard_gates:
   reason: 统计验证规则 (lift=1.15)
   when:
     vpin_ma20:
-      value_gt: 0.3
+      value_gt: 0.2959
   then:
     action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=0.3000, lift=0.206'
+  comment: 'optimizer: no_stable_plateau, threshold=0.2959, lift=0.287'
 guardrails: []
+system_safety: []

@@ -807,6 +807,134 @@
             ],
             "title": "WebSocket 连接状态",
             "type": "stat"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 25
+            },
+            "id": 120,
+            "title": "🛡️ PCM Notional Risk",
+            "type": "row"
+        },
+        {
+            "description": "总名义占用与软/硬上限",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 4.5
+                            },
+                            {
+                                "color": "red",
+                                "value": 6.0
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 26
+            },
+            "id": 121,
+            "targets": [
+                {
+                    "expr": "mlbot_pcm_notional_total_frac",
+                    "legendFormat": "Total"
+                },
+                {
+                    "expr": "mlbot_pcm_notional_soft_cap_frac",
+                    "legendFormat": "Soft Cap"
+                },
+                {
+                    "expr": "mlbot_pcm_notional_hard_cap_frac",
+                    "legendFormat": "Hard Cap"
+                }
+            ],
+            "title": "Total Notional vs Caps",
+            "type": "timeseries"
+        },
+        {
+            "description": "按 symbol 的名义占用",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 26
+            },
+            "id": 122,
+            "targets": [
+                {
+                    "expr": "mlbot_pcm_notional_symbol_frac",
+                    "legendFormat": "{{symbol}}"
+                }
+            ],
+            "title": "Notional by Symbol",
+            "type": "timeseries"
+        },
+        {
+            "description": "按策略家族 (bpc/me/fer/lv) 的名义占用",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short"
+                }
+            },
+            "gridPos": {
+                "h": 7,
+                "w": 12,
+                "x": 0,
+                "y": 34
+            },
+            "id": 123,
+            "options": {
+                "orientation": "horizontal",
+                "showUnfilled": true,
+                "displayMode": "gradient"
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_pcm_notional_family_frac",
+                    "legendFormat": "{{family}}"
+                }
+            ],
+            "title": "Notional by Family",
+            "type": "bargauge"
+        },
+        {
+            "description": "名义风控拒绝累计次数（按拒绝原因）",
+            "gridPos": {
+                "h": 7,
+                "w": 12,
+                "x": 12,
+                "y": 34
+            },
+            "id": 124,
+            "targets": [
+                {
+                    "expr": "mlbot_pcm_notional_reject_count",
+                    "legendFormat": "{{reason}}"
+                }
+            ],
+            "title": "Notional Reject Count by Reason",
+            "type": "timeseries"
         }
     ],
     "refresh": "15s",

@@ -16,30 +16,6 @@ rules:
     locked: true
     lock_reason: "ME语义：避免波动极端尾段追单"
 
-  - feature: recent_compression_decay
-    operator: ">="
-    value: 0.01
-    locked: true
-    lock_reason: "ME语义：需要近期压缩释放记忆"
-
-  - feature: recent_compression_decay
-    operator: "<="
-    value: 0.35
-    locked: true
-    lock_reason: "ME语义：释放信号不能太久，避免后段"
-
-  - feature: compression_duration
-    operator: ">="
-    value: 0.03
-    locked: true
-    lock_reason: "ME语义：需要一定压缩蓄势基础"
-
-  - feature: oi_compression_score
-    operator: ">="
-    value: 0.35
-    locked: true
-    lock_reason: "ME语义：OI压缩/拥挤背景确认"
-
 last_evaluation:
   # ── 自动生成 (2026-03-13) ──
   timestamp: "2026-03-13"

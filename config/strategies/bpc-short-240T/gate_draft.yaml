@@ -1,9 +1,9 @@
-# BPC-SHORT Gate Draft (auto-generated)
-# 来源: results/train_final_20260317_042943_rr_extreme/bpc-short
+# BPC-SHORT-240T Gate Draft (auto-generated)
+# 来源: results/train_final_20260320_033442_rr_extreme/bpc-short-240T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
-#   mlbot gate apply-archetype --strategy bpc-short
-#   python scripts/optimize_gate_unified.py --strategy bpc-short --promote
+#   mlbot gate apply-archetype --strategy bpc-short-240T
+#   python scripts/optimize_gate_unified.py --strategy bpc-short-240T --promote
 
 schema:
   phases:

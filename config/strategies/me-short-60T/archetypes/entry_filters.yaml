@@ -1,30 +1,51 @@
-# ME-Short Entry Filters (seeded)
-# 职责: "现在该入场做空吗?" → 硬二值控制
-# 这是一组偏保守的初始规则，目标是限制在扩张早段。
+# ME-SHORT-60T Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
+# Date: 2026-03-20 03:13
+# Promoted: 5 filters (method=mean_effect)
+# Significance: 统计验证 + robustness ≥ 0.5
+#
+# 职责: "现在该入场吗?" → 硬二值控制
+# 多个 filter 之间是 OR 关系
 
 filters:
-  - id: me_short_first_expansion_seed
-    enabled: true
-    description: "扩张初段种子过滤器（保守）"
-    conditions:
-      - feature: atr_percentile
-        operator: ">="
-        value: 0.72
-      - feature: atr_percentile
-        operator: "<="
-        value: 0.92
-      - feature: recent_compression_decay
-        operator: "<="
-        value: 0.20
-      - feature: compression_duration
-        operator: ">="
-        value: 0.05
-      - feature: evt_var_99_right
-        operator: "<="
-        value: 0.90
-      - feature: vpin_max20
-        operator: "<="
-        value: 0.35
-    notes: "只在中高波扩张早段且微观结构未失真时允许开仓"
-
+- id: ef_cvd_change_20_0.15
+  enabled: true
+  description: 'auto: cvd_change_20 <= -12892104.82'
+  conditions:
+  - feature: cvd_change_20
+    operator: <=
+    value: -12892104.82
+  notes: method=mean_effect, effect=+4.8901, rob=1.00, pass=15.0%
+- id: ef_trade_cluster_net_runs_ma20_0.3
+  enabled: true
+  description: 'auto: trade_cluster_net_runs_ma20 <= -0.0005'
+  conditions:
+  - feature: trade_cluster_net_runs_ma20
+    operator: <=
+    value: -0.0005
+  notes: method=mean_effect, effect=+3.8103, rob=1.00, pass=38.0%
+- id: ef_evt_scale_0.75
+  enabled: true
+  description: 'auto: evt_scale >= 0.829365'
+  conditions:
+  - feature: evt_scale
+    operator: '>='
+    value: 0.829365
+  notes: method=mean_effect, effect=+3.6191, rob=0.67, pass=25.6%
+- id: ef_trade_cluster_net_runs_ma20_0.15
+  enabled: true
+  description: 'auto: trade_cluster_net_runs_ma20 <= -0.0015'
+  conditions:
+  - feature: trade_cluster_net_runs_ma20
+    operator: <=
+    value: -0.0015
+  notes: method=mean_effect, effect=+3.5258, rob=1.00, pass=15.0%
+- id: ef_evt_es_99_right_0.25
+  enabled: true
+  description: 'auto: evt_es_99_right <= 0.190476'
+  conditions:
+  - feature: evt_es_99_right
+    operator: <=
+    value: 0.190476
+  notes: method=mean_effect, effect=+3.1978, rob=1.00, pass=25.2%
 combination_mode: or

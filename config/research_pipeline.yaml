@@ -45,6 +45,9 @@ strategies:
   bpc-long-60T:
     config: config/strategies/bpc-long-60T
     timeframe: "60T"
+    dates:
+      holdout_months: 6
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -95,6 +98,9 @@ strategies:
   bpc-long-120T:
     config: config/strategies/bpc-long-120T
     timeframe: "120T"
+    dates:
+      holdout_months: 9
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -145,6 +151,9 @@ strategies:
   bpc-long-240T:
     config: config/strategies/bpc-long-240T
     timeframe: "240T"
+    dates:
+      holdout_months: 12
+      validation_months: 4
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -195,6 +204,9 @@ strategies:
   bpc-short-60T:
     config: config/strategies/bpc-short-60T
     timeframe: "60T"
+    dates:
+      holdout_months: 6
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -245,6 +257,9 @@ strategies:
   bpc-short-120T:
     config: config/strategies/bpc-short-120T
     timeframe: "120T"
+    dates:
+      holdout_months: 9
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -295,6 +310,9 @@ strategies:
   bpc-short-240T:
     config: config/strategies/bpc-short-240T
     timeframe: "240T"
+    dates:
+      holdout_months: 12
+      validation_months: 4
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -345,6 +363,9 @@ strategies:
   fer-long-60T:
     config: config/strategies/fer-long-60T
     timeframe: "60T"
+    dates:
+      holdout_months: 6
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -399,6 +420,9 @@ strategies:
   fer-long-120T:
     config: config/strategies/fer-long-120T
     timeframe: "120T"
+    dates:
+      holdout_months: 9
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -453,6 +477,9 @@ strategies:
   fer-long-240T:
     config: config/strategies/fer-long-240T
     timeframe: "240T"
+    dates:
+      holdout_months: 12
+      validation_months: 4
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -505,6 +532,9 @@ strategies:
   fer-short-60T:
     config: config/strategies/fer-short-60T
     timeframe: "60T"
+    dates:
+      holdout_months: 6
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -559,6 +589,9 @@ strategies:
   fer-short-120T:
     config: config/strategies/fer-short-120T
     timeframe: "120T"
+    dates:
+      holdout_months: 9
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -613,6 +646,9 @@ strategies:
   fer-short-240T:
     config: config/strategies/fer-short-240T
     timeframe: "240T"
+    dates:
+      holdout_months: 12
+      validation_months: 4
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -667,6 +703,9 @@ strategies:
   me-long-60T:
     config: config/strategies/me-long-60T
     timeframe: "60T"
+    dates:
+      holdout_months: 6
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -685,10 +724,7 @@ strategies:
           min_trades_target: 50
           trade_penalty: 0.002
           atr_lower_values: "0.45,0.55,0.65"
-          atr_upper_values: "0.82,0.90,0.95"
-          compression_min_values: "0.05,0.08,0.12"
-          decay_upper_values: "0.10,0.18,0.28"
-          oi_min_values: "0.30,0.40,0.50"
+          atr_upper_values: "0.88,0.92,0.96"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -719,6 +755,9 @@ strategies:
   me-long-120T:
     config: config/strategies/me-long-120T
     timeframe: "120T"
+    dates:
+      holdout_months: 9
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -736,11 +775,8 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          atr_lower_values: "0.60,0.70"
-          atr_upper_values: "0.92,0.96"
-          compression_min_values: "0.02,0.05"
-          decay_upper_values: "0.12,0.22,0.35"
-          oi_min_values: "0.25,0.35"
+          atr_lower_values: "0.45,0.55,0.65"
+          atr_upper_values: "0.88,0.92,0.96"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -771,6 +807,9 @@ strategies:
   me-long-240T:
     config: config/strategies/me-long-240T
     timeframe: "240T"
+    dates:
+      holdout_months: 12
+      validation_months: 4
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -788,11 +827,8 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          atr_lower_values: "0.60,0.70"
-          atr_upper_values: "0.92,0.96"
-          compression_min_values: "0.02,0.05"
-          decay_upper_values: "0.12,0.22,0.35"
-          oi_min_values: "0.25,0.35"
+          atr_lower_values: "0.45,0.55,0.65"
+          atr_upper_values: "0.88,0.92,0.96"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -823,6 +859,9 @@ strategies:
   me-short-60T:
     config: config/strategies/me-short-60T
     timeframe: "60T"
+    dates:
+      holdout_months: 6
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -840,11 +879,8 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          atr_lower_values: "0.60,0.70"
-          atr_upper_values: "0.92,0.96"
-          compression_min_values: "0.02,0.05"
-          decay_upper_values: "0.12,0.22,0.35"
-          oi_min_values: "0.25,0.35"
+          atr_lower_values: "0.45,0.55,0.65"
+          atr_upper_values: "0.88,0.92,0.96"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -875,6 +911,9 @@ strategies:
   me-short-120T:
     config: config/strategies/me-short-120T
     timeframe: "120T"
+    dates:
+      holdout_months: 9
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -892,11 +931,8 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          atr_lower_values: "0.60,0.70"
-          atr_upper_values: "0.92,0.96"
-          compression_min_values: "0.02,0.05"
-          decay_upper_values: "0.12,0.22,0.35"
-          oi_min_values: "0.25,0.35"
+          atr_lower_values: "0.45,0.55,0.65"
+          atr_upper_values: "0.88,0.92,0.96"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -927,6 +963,9 @@ strategies:
   me-short-240T:
     config: config/strategies/me-short-240T
     timeframe: "240T"
+    dates:
+      holdout_months: 12
+      validation_months: 4
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -944,11 +983,8 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          atr_lower_values: "0.60,0.70"
-          atr_upper_values: "0.92,0.96"
-          compression_min_values: "0.02,0.05"
-          decay_upper_values: "0.12,0.22,0.35"
-          oi_min_values: "0.25,0.35"
+          atr_lower_values: "0.45,0.55,0.65"
+          atr_upper_values: "0.88,0.92,0.96"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -979,6 +1015,9 @@ strategies:
   lv:
     config: config/strategies/lv
     timeframe: "15T"
+    dates:
+      holdout_months: 3
+      validation_months: 1
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true

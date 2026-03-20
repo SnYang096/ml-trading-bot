@@ -778,10 +778,12 @@ resource_allocation:
         cy = self._write_constitution(tmp_path)
         pcm = LivePCM(constitution_yaml=cy)
         pcm.register(
-            "bpc-long", FakeStrategy(intents=[_make_intent("bpc-long", "LONG")])
+            "bpc-long-240T",
+            FakeStrategy(intents=[_make_intent("bpc-long-240T", "LONG")]),
         )
         pcm.register(
-            "bpc-short", FakeStrategy(intents=[_make_intent("bpc-short", "SHORT")])
+            "bpc-short-240T",
+            FakeStrategy(intents=[_make_intent("bpc-short-240T", "SHORT")]),
         )
 
         out = pcm.decide(
@@ -790,16 +792,18 @@ resource_allocation:
         )
 
         assert len(out) == 1
-        assert out[0].archetype.lower() == "bpc-long"
+        assert out[0].archetype.lower() == "bpc-long-240t"
 
     def test_ema200_allows_fer_reverse_exception(self, tmp_path):
         cy = self._write_constitution(tmp_path)
         pcm = LivePCM(constitution_yaml=cy)
         pcm.register(
-            "fer-short", FakeStrategy(intents=[_make_intent("fer-short", "SHORT")])
+            "fer-short-240T",
+            FakeStrategy(intents=[_make_intent("fer-short-240T", "SHORT")]),
         )
         pcm.register(
-            "bpc-short", FakeStrategy(intents=[_make_intent("bpc-short", "SHORT")])
+            "bpc-short-240T",
+            FakeStrategy(intents=[_make_intent("bpc-short-240T", "SHORT")]),
         )
 
         out = pcm.decide(
@@ -808,7 +812,7 @@ resource_allocation:
         )
 
         assert len(out) == 1
-        assert out[0].archetype.lower() == "fer-short"
+        assert out[0].archetype.lower() == "fer-short-240t"
 
     def test_direction_debounce_blocks_until_confirmed(self, tmp_path):
         p = tmp_path / "constitution.yaml"
@@ -836,7 +840,8 @@ resource_allocation:
         )
         pcm = LivePCM(constitution_yaml=str(p))
         pcm.register(
-            "bpc-long", FakeStrategy(intents=[_make_intent("bpc-long", "LONG")])
+            "bpc-long-240T",
+            FakeStrategy(intents=[_make_intent("bpc-long-240T", "LONG")]),
         )
 
         # 先用3根空头确认空方向（long 应被拒绝）
@@ -874,4 +879,172 @@ resource_allocation:
             symbol="BTCUSDT",
         )
         assert len(out3) == 1
-        assert out3[0].archetype.lower() == "bpc-long"
+        assert out3[0].archetype.lower() == "bpc-long-240t"
+
+
+class TestLivePCMNotionalPolicy:
+    def _write_constitution(self, tmp_path):
+        p = tmp_path / "constitution.yaml"
+        p.write_text(
+            """
+version: 1
+name: "C_TEST"
+slots:
+  enabled: true
+  slot_count: 8
+  risk_per_slot: 0.01
+resource_allocation:
+  per_strategy_limits:
+    bpc-long:
+      max_slots: 3
+      max_risk_per_trade: 0.02
+    me-long:
+      max_slots: 3
+      max_risk_per_trade: 0.02
+  notional_policy:
+    enabled: true
+    soft_max_total_notional_pct: 10.0
+    hard_max_total_notional_pct: 12.0
+    winner_priority:
+      enabled: true
+      allow_families: [bpc]
+      require_breakeven_locked: true
+      require_min_current_r: 1.0
+      block_new_slots_when_soft_cap_hit: true
+""",
+            encoding="utf-8",
+        )
+        return str(p)
+
+    def _intent(
+        self,
+        archetype: str,
+        *,
+        add: bool = False,
+        locked: bool = False,
+        cur_r: float = 0.0
+    ):
+        return TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype=archetype,
+            execution_strategy=archetype,
+            confidence=0.8,
+            add_position=add,
+            locked_profit=locked,
+            current_r=cur_r,
+            size_multiplier=1.0,
+            execution_profile={"rr_constraints": {"stop_loss_r": 2.0}},
+        )
+
+    def test_soft_cap_blocks_new_slot_but_allows_winner_add(self, tmp_path):
+        cy = self._write_constitution(tmp_path)
+        pcm = LivePCM(constitution_yaml=cy)
+        f = {"close": 50000.0, "atr": 500.0}  # effective_stop_pct ~= 2%
+
+        pcm.register(
+            "bpc-long-240T",
+            FakeStrategy(intents=[self._intent("bpc-long-240T")]),
+        )
+        out1 = pcm.decide(features=f, symbol="BTCUSDT")
+        assert len(out1) == 1
+        first_frac = pcm._current_total_notional_frac()
+        assert first_frac > 0
+
+        me_probe = self._intent("me-long-240T")
+        me_delta = pcm._estimate_intent_notional_frac(
+            me_probe,
+            {"effective_stop_pct": pcm._effective_stop_pct_from_intent(me_probe, f)},
+        )
+        assert me_delta > 0
+        pcm._constitution["notional_policy"]["soft_max_total_notional_pct"] = (
+            first_frac + me_delta * 0.1
+        )
+        pcm._constitution["notional_policy"]["hard_max_total_notional_pct"] = (
+            first_frac + me_delta * 2.0
+        )
+
+        pcm.unregister("bpc-long-240T")
+        pcm.register(
+            "me-long-240T",
+            FakeStrategy(intents=[self._intent("me-long-240T")]),
+        )
+        out2 = pcm.decide(features=f, symbol="BTCUSDT")
+        assert out2 == []  # soft cap 区间禁止新 slot
+        s2 = pcm.get_stats()
+        assert s2["notional_runtime"]["reject_counts"]["soft_cap_new_slot"] >= 1
+
+        pcm.unregister("me-long-240T")
+        add_probe = self._intent("bpc-long-240T", add=True, locked=True, cur_r=1.2)
+        add_delta = pcm._estimate_intent_notional_frac(
+            add_probe,
+            {"effective_stop_pct": pcm._effective_stop_pct_from_intent(add_probe, f)},
+        )
+        assert add_delta > 0
+        pcm._constitution["notional_policy"]["hard_max_total_notional_pct"] = (
+            first_frac + add_delta * 1.2
+        )
+        pcm.register(
+            "bpc-long-240T",
+            FakeStrategy(
+                intents=[
+                    self._intent(
+                        "bpc-long-240T",
+                        add=True,
+                        locked=True,
+                        cur_r=1.2,
+                    )
+                ]
+            ),
+        )
+        out3 = pcm.decide(features=f, symbol="BTCUSDT")
+        assert len(out3) == 1  # winner priority 放行
+        s3 = pcm.get_stats()
+        assert s3["notional_runtime"]["total_notional_frac"] > first_frac
+        assert s3["notional_runtime"]["last_snapshot"]["family"] == "bpc"
+
+    def test_hard_cap_blocks_even_winner_add(self, tmp_path):
+        cy = self._write_constitution(tmp_path)
+        pcm = LivePCM(constitution_yaml=cy)
+        f = {"close": 50000.0, "atr": 500.0}
+
+        pcm.register(
+            "bpc-long-240T",
+            FakeStrategy(intents=[self._intent("bpc-long-240T")]),
+        )
+        assert len(pcm.decide(features=f, symbol="BTCUSDT")) == 1
+
+        pcm.unregister("bpc-long-240T")
+        add_probe = self._intent("bpc-long-240T", add=True, locked=True, cur_r=1.2)
+        add_delta = pcm._estimate_intent_notional_frac(
+            add_probe,
+            {"effective_stop_pct": pcm._effective_stop_pct_from_intent(add_probe, f)},
+        )
+        assert add_delta > 0
+        pcm.register(
+            "bpc-long-240T",
+            FakeStrategy(
+                intents=[
+                    self._intent("bpc-long-240T", add=True, locked=True, cur_r=1.2)
+                ]
+            ),
+        )
+        assert len(pcm.decide(features=f, symbol="BTCUSDT")) == 1
+        total2 = pcm._current_total_notional_frac()
+        pcm._constitution["notional_policy"]["hard_max_total_notional_pct"] = (
+            total2 + add_delta * 0.5
+        )
+
+        pcm.unregister("bpc-long-240T")
+        pcm.register(
+            "bpc-long-240T",
+            FakeStrategy(
+                intents=[
+                    self._intent("bpc-long-240T", add=True, locked=True, cur_r=1.2)
+                ]
+            ),
+        )
+        out = pcm.decide(features=f, symbol="BTCUSDT")
+        assert out == []  # 第3次会触发 hard cap 拒绝
+        s = pcm.get_stats()
+        assert s["notional_runtime"]["reject_counts"]["hard_cap"] >= 1

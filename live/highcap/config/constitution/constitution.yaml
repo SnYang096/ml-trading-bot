@@ -12,8 +12,8 @@ created_at: "2026-01-12"
 kill_switch:
   enabled: true
   # Account-level loss limits (fraction of equity).
-  daily_loss_limit: 0.04   # -4% => stop new risk for the day
-  weekly_loss_limit: 0.08  # -8% => stop new risk for the week
+  daily_loss_limit: 0.04 # -4% => stop new risk for the day
+  weekly_loss_limit: 0.08 # -8% => stop new risk for the week
   monthly_loss_limit: 0.12 # -12% => stop new risk for the month
   # Cooldown after a hard stop (minutes). Recovery requires cooldown + metrics OK.
   cooldown_minutes: 240
@@ -155,32 +155,52 @@ slots:
 #   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
-  enabled_archetypes: [bpc, me-long, fer]
+  enabled_archetypes:
+    - bpc-long-240T
+    - bpc-short-240T
+    - me-long-60T
+    - me-short-60T
+    - fer-long-240T
+    - fer-short-240T
 
   per_strategy_limits:
-    bpc:
-      max_slots: 1              # 每策略独占 1 slot, 互不竞争
-      max_risk_per_trade: 0.02  # 肥尾主仓: 首枪改为 2.00% 风险
-      allow_add_position: true   # BPC 趋势延续允许加仓
-      max_add_times: 5          # 宪法只保留上限；细节放 execution.yaml
-    me:
+    bpc-long:
       max_slots: 1
-      max_risk_per_trade: 0.0035  # 动量扩散只吃加速段, 预算比 BPC 更轻
-      allow_add_position: true   # ME 动能扩张允许加仓
+      max_risk_per_trade: 0.02
+      allow_add_position: true
+      max_add_times: 5
+    bpc-short:
+      max_slots: 1
+      max_risk_per_trade: 0.02
+      allow_add_position: true
+      max_add_times: 5
+    me-long:
+      max_slots: 1
+      max_risk_per_trade: 0.02
+      allow_add_position: true
       max_add_times: 2
-    fer:
+    me-short:
       max_slots: 1
-      max_risk_per_trade: 0.0035  # 反转单不承担尾部主仓职责
-      allow_add_position: false  # FER 反转策略不加仓
+      max_risk_per_trade: 0.02
+      allow_add_position: true
+      max_add_times: 2
+    fer-long:
+      max_slots: 1
+      max_risk_per_trade: 0.02
+      allow_add_position: false
+    fer-short:
+      max_slots: 1
+      max_risk_per_trade: 0.02
+      allow_add_position: false
     lv:
-      max_slots: 1              # LV 快进快出，最多 1 个
-      max_risk_per_trade: 0.0025  # LV 极端波动反噬快, 预算进一步下调
-      allow_add_position: false  # LV 不加仓
+      max_slots: 0
+      max_risk_per_trade: 0.0025
+      allow_add_position: false
 
   # 加仓全局安全规则 (适用于所有 allow_add_position=true 的策略)
   # "adding is allowed only by freed risk budget"
   add_position_rules:
-    max_add_times: 1          # 全局 fallback；实际层数优先读各策略 add_position
+    max_add_times: 1 # 全局 fallback；实际层数优先读各策略 add_position
     # 加仓前必须已锁定利润 (breakeven stop 已触发)
     # 确保加仓只用 "已释放" 的风险预算，不增加净风险敞口
     require_locked_profit: true
@@ -220,3 +240,16 @@ resource_allocation:
     fer_reverse_allowed: true
     reverse_exempt_families: [fer]
 
+  # 名义敞口风控: soft/hard 分层 + winner priority
+  notional_policy:
+    enabled: true
+    soft_max_total_notional_pct: 4.5
+    hard_max_total_notional_pct: 6.0
+    max_symbol_notional_pct: 2.5
+    max_family_notional_pct: 3.5
+    winner_priority:
+      enabled: true
+      allow_families: [bpc]
+      require_breakeven_locked: true
+      require_min_current_r: 1.0
+      block_new_slots_when_soft_cap_hit: true

@@ -7,10 +7,34 @@ def _strategy_keys(archetype: str) -> list[str]:
     key = str(archetype or "").strip().lower()
     if not key:
         return []
-    parts = key.split("-")
-    keys = [key]
-    if len(parts) > 1:
-        keys.append(parts[0])
+    parts = [p for p in key.split("-") if p]
+    keys: list[str] = []
+    seen: set[str] = set()
+
+    def _push(k: str) -> None:
+        kk = str(k or "").strip().lower()
+        if not kk or kk in seen:
+            return
+        seen.add(kk)
+        keys.append(kk)
+
+    _push(key)
+
+    # strip timeframe suffix: "*-60t" / "*-240t"
+    if parts and parts[-1].endswith("t") and parts[-1][:-1].isdigit():
+        parts_no_tf = parts[:-1]
+        _push("-".join(parts_no_tf))
+    else:
+        parts_no_tf = parts
+
+    # family-direction key: "<family>-<long|short>"
+    if len(parts_no_tf) >= 2 and parts_no_tf[1] in {"long", "short"}:
+        _push("-".join(parts_no_tf[:2]))
+
+    # family only
+    if parts_no_tf:
+        _push(parts_no_tf[0])
+
     return keys
 
 

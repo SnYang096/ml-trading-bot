@@ -1,5 +1,5 @@
 # FER-SHORT-120T Gate Draft (auto-generated)
-# 来源: results/train_final_20260319_041138_rr_extreme/fer-short-120T
+# 来源: results/train_final_20260319_222805_rr_extreme/fer-short-120T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fer-short-120T

@@ -146,6 +146,51 @@ def compute_holdout_start(end_date: str, holdout_months: int) -> str:
     return datetime(y, m, 1).strftime("%Y-%m-%d")
 
 
+def resolve_strategy_dates(
+    cfg: dict,
+    strategy: str,
+    *,
+    default_end_date: str,
+    forced_end_date: str = "",
+) -> Dict[str, Any]:
+    """Resolve per-strategy date settings with global defaults.
+
+    Priority:
+      1) CLI --end-date (forced_end_date)
+      2) strategies.<name>.dates.<field>
+      3) global dates.<field>
+    """
+    global_dates = cfg.get("dates", {})
+    scfg = cfg["strategies"][strategy]
+    strat_dates = (
+        scfg.get("dates", {}) if isinstance(scfg.get("dates", {}), dict) else {}
+    )
+
+    end_date = forced_end_date or str(strat_dates.get("end_date", default_end_date))
+    start_date = str(strat_dates.get("start_date", global_dates["start_date"]))
+    holdout_months = int(
+        strat_dates.get("holdout_months", global_dates["holdout_months"])
+    )
+    validation_months = int(
+        strat_dates.get("validation_months", global_dates.get("validation_months", 0))
+    )
+
+    holdout_start = compute_holdout_start(end_date, holdout_months)
+    if validation_months > 0 and validation_months < holdout_months:
+        test_start = compute_holdout_start(end_date, holdout_months - validation_months)
+    else:
+        test_start = holdout_start
+
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "holdout_months": holdout_months,
+        "validation_months": validation_months,
+        "holdout_start": holdout_start,
+        "test_start": test_start,
+    }
+
+
 # ====================================================================
 # Step runner
 # ====================================================================
@@ -522,6 +567,7 @@ def compare_runs(
 def run_data_download(
     cfg: dict,
     *,
+    start_date: str,
     end_date: str,
     symbols: str,
     log: Path,
@@ -536,7 +582,6 @@ def run_data_download(
         print("\n⏭️  数据下载已禁用 (download.enabled=false), 跳过")
         return 0
 
-    start_date = cfg["dates"]["start_date"]
     data_dir = dl_cfg.get("data_dir", "data/agg_data")
     parquet_dir = dl_cfg.get("parquet_dir", "data/parquet_data")
 
@@ -741,6 +786,8 @@ def run_strategy_pipeline(
     *,
     end_date: str,
     holdout_start: str,
+    holdout_months: int,
+    validation_months: int,
     start_date: str,
     symbols: str,
     data_path: str,
@@ -785,8 +832,6 @@ def run_strategy_pipeline(
     # holdout_months = 总 OOS 窗口, validation_months = 前 N 个月用于 Gate 调阈值
     # Train [start, holdout_start) → Val [holdout_start, test_start) → Test [test_start, end]
     # predictions.parquet 覆盖完整 holdout [holdout_start, end], 训练集不变
-    holdout_months = cfg["dates"]["holdout_months"]
-    validation_months = cfg["dates"].get("validation_months", 0)
     if validation_months > 0 and validation_months < holdout_months:
         # test_start = holdout 内部切分点 = end_date - (holdout_months - validation_months)
         test_start = compute_holdout_start(end_date, holdout_months - validation_months)
@@ -816,6 +861,7 @@ def run_strategy_pipeline(
     # ── Step 0: Data Download + Convert (增量) ──
     run_data_download(
         cfg,
+        start_date=start_date,
         end_date=end_date,
         symbols=symbols,
         log=log,
@@ -1835,6 +1881,8 @@ def save_report(
     start_date: str,
     end_date: str,
     holdout_start: str,
+    holdout_months: int,
+    validation_months: int,
     validation_end: str = "",  # test_start (原 holdout_start)
 ) -> Path:
     """保存结构化 report.json + archetypes 快照."""
@@ -1866,9 +1914,9 @@ def save_report(
             "start_date": start_date,
             "end_date": end_date,
             "holdout_start": holdout_start,
-            "holdout_months": cfg["dates"]["holdout_months"],
+            "holdout_months": holdout_months,
             "validation_end": validation_end or holdout_start,
-            "validation_months": cfg["dates"].get("validation_months", 0),
+            "validation_months": validation_months,
         },
         "backtest_metrics": pipeline_result.get("backtest_metrics", {}),
         "thresholds": thresholds,
@@ -2453,39 +2501,43 @@ def main():
     dates = cfg["dates"]
     symbols = resolve_symbols_from_config(cfg)
     data_path = cfg["data_path"]
-    start_date = dates["start_date"]
 
     # ── 自动检测日期 ──
     if args.end_date:
-        end_date = args.end_date
+        default_end_date = args.end_date
     else:
-        end_date = detect_latest_data_date(data_path, symbols)
-    holdout_start = compute_holdout_start(end_date, dates["holdout_months"])
-    # Validation / Test 分离
-    _val_months = dates.get("validation_months", 0)
-    _holdout_months = dates["holdout_months"]
-    if _val_months > 0 and _val_months < _holdout_months:
+        default_end_date = detect_latest_data_date(data_path, symbols)
+
+    # Display baseline uses global dates (actual run may be overridden per strategy)
+    _display_start = dates["start_date"]
+    _display_end = default_end_date
+    _display_holdout_months = int(dates["holdout_months"])
+    _display_validation_months = int(dates.get("validation_months", 0))
+    _display_holdout_start = compute_holdout_start(
+        _display_end, _display_holdout_months
+    )
+    if 0 < _display_validation_months < _display_holdout_months:
         _test_start_display = compute_holdout_start(
-            end_date, _holdout_months - _val_months
+            _display_end, _display_holdout_months - _display_validation_months
         )
     else:
-        _test_start_display = holdout_start
+        _test_start_display = _display_holdout_start
 
     print("=" * 70)
     print("🚀 自动研究流水线")
     print("=" * 70)
-    print(f"   数据范围:    {start_date} ~ {end_date}")
-    print(f"   Train:       {start_date} ~ {holdout_start}")
-    if _test_start_display != holdout_start:
+    print(f"   数据范围:    {_display_start} ~ {_display_end}")
+    print(f"   Train:       {_display_start} ~ {_display_holdout_start}")
+    if _test_start_display != _display_holdout_start:
         print(
-            f"   Val:         {holdout_start} ~ {_test_start_display} ({_val_months} 个月, Gate 调阈值)"
+            f"   Val:         {_display_holdout_start} ~ {_test_start_display} ({_display_validation_months} 个月, Gate 调阈值)"
         )
         print(
-            f"   Test:        {_test_start_display} ~ {end_date} ({_holdout_months - _val_months} 个月, 纯 OOS)"
+            f"   Test:        {_test_start_display} ~ {_display_end} ({_display_holdout_months - _display_validation_months} 个月, 纯 OOS)"
         )
     else:
         print(
-            f"   Holdout:     {holdout_start} ~ {end_date} ({dates['holdout_months']} 个月)"
+            f"   Holdout:     {_display_holdout_start} ~ {_display_end} ({dates['holdout_months']} 个月)"
         )
     print(f"   Symbols:     {symbols}")
     print(f"   History:     {history_dir}")
@@ -2515,6 +2567,17 @@ def main():
         print(f"\n{'#'*70}")
         print(f"# 策略: {strategy.upper()}")
         print(f"{'#'*70}")
+        strategy_dates = resolve_strategy_dates(
+            cfg,
+            strategy=strategy,
+            default_end_date=default_end_date,
+            forced_end_date=args.end_date or "",
+        )
+        print(
+            f"   日期覆盖: start={strategy_dates['start_date']}, "
+            f"holdout={strategy_dates['holdout_months']}m, "
+            f"val={strategy_dates['validation_months']}m"
+        )
 
         if args.compare_only:
             # 只对比
@@ -2547,9 +2610,11 @@ def main():
             result = run_strategy_pipeline(
                 strategy,
                 cfg,
-                end_date=end_date,
-                holdout_start=holdout_start,
-                start_date=start_date,
+                end_date=strategy_dates["end_date"],
+                holdout_start=strategy_dates["holdout_start"],
+                holdout_months=strategy_dates["holdout_months"],
+                validation_months=strategy_dates["validation_months"],
+                start_date=strategy_dates["start_date"],
                 symbols=symbols,
                 data_path=data_path,
                 run_dir=seed_run_dir,
@@ -2615,10 +2680,14 @@ def main():
             run_dir,
             pipeline_result,
             comparison,
-            start_date=start_date,
-            end_date=end_date,
-            holdout_start=holdout_start,
-            validation_end=pipeline_result.get("validation_end", holdout_start),
+            start_date=strategy_dates["start_date"],
+            end_date=strategy_dates["end_date"],
+            holdout_start=strategy_dates["holdout_start"],
+            holdout_months=strategy_dates["holdout_months"],
+            validation_months=strategy_dates["validation_months"],
+            validation_end=pipeline_result.get(
+                "validation_end", strategy_dates["holdout_start"]
+            ),
         )
 
         # ── 打印决策 ──
@@ -2740,8 +2809,8 @@ def main():
             use_1min=args.use_1min,
             live_root=args.live_root,
             data_path=cfg["data_path"],
-            holdout_start=holdout_start,
-            end_date=end_date,
+            holdout_start=_display_holdout_start,
+            end_date=_display_end,
         )
 
     # ── 汇总 ──

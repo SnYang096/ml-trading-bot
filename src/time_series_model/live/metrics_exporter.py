@@ -114,6 +114,13 @@ class Metrics:
             # Per-strategy slot metrics
             self.strategy_slots_active = _NOOP
             self.strategy_slots_max = _NOOP
+            # PCM notional runtime metrics
+            self.pcm_notional_total = _NOOP
+            self.pcm_notional_by_symbol = _NOOP
+            self.pcm_notional_by_family = _NOOP
+            self.pcm_notional_reject_count = _NOOP
+            self.pcm_notional_soft_cap = _NOOP
+            self.pcm_notional_hard_cap = _NOOP
             return
 
         # ── Counters (累计值，只增不减) ──
@@ -381,6 +388,35 @@ class Metrics:
             ["strategy"],
         )
 
+        # ── PCM Notional Risk Runtime ──
+        self.pcm_notional_total = Gauge(
+            "mlbot_pcm_notional_total_frac",
+            "Current PCM estimated total notional fraction to equity",
+        )
+        self.pcm_notional_by_symbol = Gauge(
+            "mlbot_pcm_notional_symbol_frac",
+            "Current PCM estimated notional fraction by symbol",
+            ["symbol"],
+        )
+        self.pcm_notional_by_family = Gauge(
+            "mlbot_pcm_notional_family_frac",
+            "Current PCM estimated notional fraction by strategy family",
+            ["family"],
+        )
+        self.pcm_notional_reject_count = Gauge(
+            "mlbot_pcm_notional_reject_count",
+            "Cumulative reject count by PCM notional guard reason",
+            ["reason"],
+        )
+        self.pcm_notional_soft_cap = Gauge(
+            "mlbot_pcm_notional_soft_cap_frac",
+            "Configured soft max total notional fraction",
+        )
+        self.pcm_notional_hard_cap = Gauge(
+            "mlbot_pcm_notional_hard_cap_frac",
+            "Configured hard max total notional fraction",
+        )
+
         # ── Info ──
 
         self.bot_info = Info(
@@ -637,6 +673,38 @@ class Metrics:
             limits = (per_strategy_limits or {}).get(s) or {}
             max_s = int(limits.get("max_slots", global_max_slots))
             self.strategy_slots_max.labels(strategy=s).set(max_s)
+
+    def update_pcm_notional_metrics(
+        self,
+        *,
+        runtime: Optional[dict],
+        policy: Optional[dict] = None,
+    ) -> None:
+        """Update PCM notional runtime gauges from LivePCM.get_stats().
+
+        Args:
+            runtime: stats["notional_runtime"]
+            policy: stats["constitution"]["notional_policy"]
+        """
+        rt = dict(runtime or {})
+        pol = dict(policy or {})
+        self.pcm_notional_total.set(float(rt.get("total_notional_frac", 0.0) or 0.0))
+
+        for sym, val in dict(rt.get("symbol_notional_frac") or {}).items():
+            self.pcm_notional_by_symbol.labels(symbol=str(sym)).set(float(val or 0.0))
+        for fam, val in dict(rt.get("family_notional_frac") or {}).items():
+            self.pcm_notional_by_family.labels(family=str(fam)).set(float(val or 0.0))
+        for reason, val in dict(rt.get("reject_counts") or {}).items():
+            self.pcm_notional_reject_count.labels(reason=str(reason)).set(
+                float(val or 0.0)
+            )
+
+        self.pcm_notional_soft_cap.set(
+            float(pol.get("soft_max_total_notional_pct", 0.0) or 0.0)
+        )
+        self.pcm_notional_hard_cap.set(
+            float(pol.get("hard_max_total_notional_pct", 0.0) or 0.0)
+        )
 
 
 # ── 全局单例 ──────────────────────────────────────────────────

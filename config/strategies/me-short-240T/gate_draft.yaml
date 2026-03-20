@@ -1,5 +1,5 @@
 # ME-SHORT-240T Gate Draft (auto-generated)
-# 来源: results/train_final_20260319_154113_rr_extreme/me-short-240T
+# 来源: results/train_final_20260320_023410_rr_extreme/me-short-240T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me-short-240T
@@ -16,65 +16,65 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_fer_trapped_longs_score
-  tag: HARD_FER_TRAPPED_LONGS_SCORE
+- id: gate_shd_pct
+  tag: HARD_SHD_PCT
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=2.39)
+  reason: 统计验证规则 (lift=1.31)
   when:
-    fer_trapped_longs_score:
-      value_gt: 0.7598
+    shd_pct:
+      value_lt: 0.2115
   then:
     action: deny
-  comment: 'statistical(lift=2.39): fer_trapped_longs_score > 0.7598'
-- id: gate_fer_momentum_efficiency_decay
-  tag: HARD_FER_MOMENTUM_EFFICIENCY_DECAY
+  comment: 'statistical(lift=1.31): shd_pct < 0.2115'
+- id: gate_fer_trapped_shorts_score
+  tag: HARD_FER_TRAPPED_SHORTS_SCORE
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.38)
-  when:
-    fer_momentum_efficiency_decay:
-      value_lt: 0.0092
-  then:
-    action: deny
-  comment: 'statistical(lift=1.38): fer_momentum_efficiency_decay < 0.00917'
-- id: gate_fer_absorption_streak
-  tag: HARD_FER_ABSORPTION_STREAK
-  phase: hard_gate
-  priority: 12
   reason: 统计验证规则 (lift=1.29)
   when:
-    fer_absorption_streak:
-      value_lt: 0.395
+    fer_trapped_shorts_score:
+      value_lt: 0.0571
   then:
     action: deny
-  comment: 'statistical(lift=1.29): fer_absorption_streak < 0.395'
+  comment: 'statistical(lift=1.29): fer_trapped_shorts_score < 0.05707'
+- id: gate_evt_es_99_left
+  tag: HARD_EVT_ES_99_LEFT
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.14)
+  when:
+    evt_es_99_left:
+      value_gt: 0.7857
+  then:
+    action: deny
+  comment: 'statistical(lift=1.14): evt_es_99_left > 0.7857'
 - id: gate_vp_poc_deviation_vp_poc_deviation
   tag: HARD_VP_POC_DEVIATION_VP_POC_DEVIATION
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.74)
+  reason: 统计验证规则 (lift=1.12)
   when:
     all_of:
     - vp_poc_deviation:
-        value_gt: -0.5224
+        value_gt: -0.2047
     - vp_poc_deviation:
-        value_lt: -0.3668
+        value_lt: -0.0602
   then:
     action: deny
-  comment: 'statistical(lift=1.74): vp_poc_deviation > -0.5224 & vp_poc_deviation < -0.3668'
-- id: gate_evt_es_99_left_evt_es_99_left
-  tag: HARD_EVT_ES_99_LEFT_EVT_ES_99_LEFT
+  comment: 'statistical(lift=1.12): vp_poc_deviation > -0.2047 & vp_poc_deviation < -0.06023'
+- id: gate_evt_es_99_evt_es_99
+  tag: HARD_EVT_ES_99_EVT_ES_99
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.74)
+  reason: 统计验证规则 (lift=1.09)
   when:
     all_of:
-    - evt_es_99_left:
-        value_gt: 0.6587
-    - evt_es_99_left:
-        value_lt: 0.754
+    - evt_es_99:
+        value_gt: 0.7857
+    - evt_es_99:
+        value_lt: 0.8889
   then:
     action: deny
-  comment: 'statistical(lift=1.74): evt_es_99_left > 0.6587 & evt_es_99_left < 0.754'
+  comment: 'statistical(lift=1.09): evt_es_99 > 0.7857 & evt_es_99 < 0.8889'
 guardrails: []

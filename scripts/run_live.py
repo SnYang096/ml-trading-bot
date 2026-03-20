@@ -1024,6 +1024,19 @@ async def main() -> None:
                     _slots_cfg = (pcm.constitution or {}).get("slots", {})
                     _global_max = int(_slots_cfg.get("slot_count", 2))
                     METRICS.update_slot_metrics(_rs, _psl, _global_max)
+                # 更新 PCM 名义敞口风控运行时指标
+                try:
+                    _pcm_stats = pcm.get_stats() if pcm is not None else {}
+                    _notional_rt = _pcm_stats.get("notional_runtime") or {}
+                    _notional_pol = (
+                        (_pcm_stats.get("constitution") or {}).get("notional_policy")
+                    ) or {}
+                    METRICS.update_pcm_notional_metrics(
+                        runtime=_notional_rt,
+                        policy=_notional_pol,
+                    )
+                except Exception:
+                    logger.debug("PCM notional metrics 更新异常", exc_info=True)
             except asyncio.CancelledError:
                 break
             except Exception as exc:

@@ -1,4 +1,4 @@
-# ME-SHORT Archetype Prefilter (auto-generated)
+# ME-LONG Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
 # 自动生成: 2026-03-13
 # 数据源: features_labeled.parquet, 112361 行
@@ -8,37 +8,13 @@ rules:
     operator: ">="
     value: 0.65
     locked: true
-    lock_reason: "ME-Short语义：仅在中高波扩张区做空，避免低波噪声"
+    lock_reason: "ME语义：仅在中高波扩张区参与，避免低波噪声"
 
   - feature: atr_percentile
     operator: "<="
     value: 0.92
     locked: true
-    lock_reason: "ME-Short语义：避免极端尾段过热后追空"
-
-  - feature: recent_compression_decay
-    operator: ">="
-    value: 0.02
-    locked: true
-    lock_reason: "ME-Short语义：要求近期确实经历压缩释放"
-
-  - feature: recent_compression_decay
-    operator: "<="
-    value: 0.20
-    locked: true
-    lock_reason: "ME-Short语义：限制在释放早段，避免中后段衰竭"
-
-  - feature: compression_duration
-    operator: ">="
-    value: 0.05
-    locked: true
-    lock_reason: "ME-Short语义：要求更充分压缩蓄势再扩张"
-
-  - feature: oi_compression_score
-    operator: ">="
-    value: 0.45
-    locked: true
-    lock_reason: "ME-Short语义：提升OI压缩/拥挤门槛，降低无效触发"
+    lock_reason: "ME语义：避免极端尾段过热后追单"
 
 last_evaluation:
   # ── 自动生成 (2026-03-13) ──

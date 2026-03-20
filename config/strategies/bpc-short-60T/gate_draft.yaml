@@ -1,5 +1,5 @@
 # BPC-SHORT-60T Gate Draft (auto-generated)
-# 来源: results/train_final_20260317_210914_rr_extreme/bpc-short-60T
+# 来源: results/train_final_20260319_230738_rr_extreme/bpc-short-60T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc-short-60T

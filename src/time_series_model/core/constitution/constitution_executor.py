@@ -20,6 +20,7 @@ from .violation import ConstitutionViolation
 from .add_position_rules import (
     resolve_add_position_max_times,
     resolve_strategy_add_position_config,
+    _strategy_keys,
 )
 from src.order_management.storage import Storage
 
@@ -230,7 +231,12 @@ class ConstitutionExecutor:
         slots = obj.get("slots") or {}
         risk_per_slot = float(slots.get("risk_per_slot", 0.01))
         limits = self._resolve_per_strategy_limits()
-        strat = limits.get(archetype.lower()) or {}
+        strat = {}
+        for k in _strategy_keys(archetype):
+            cand = limits.get(k) or {}
+            if isinstance(cand, dict) and cand:
+                strat = cand
+                break
         strat_risk = strat.get("max_risk_per_trade")
         if strat_risk is not None:
             return min(risk_per_slot, float(strat_risk))
@@ -421,7 +427,12 @@ class ConstitutionExecutor:
         # 1. Check per-strategy allow_add_position
         arch_key = str(archetype or "").strip().lower()
         limits = self._resolve_per_strategy_limits()
-        strat_cfg = limits.get(arch_key) or {}
+        strat_cfg = {}
+        for k in _strategy_keys(arch_key):
+            cand = limits.get(k) or {}
+            if isinstance(cand, dict) and cand:
+                strat_cfg = cand
+                break
         allow = strat_cfg.get("allow_add_position")
         if allow is not None and not bool(allow):
             raise ConstitutionViolation(
