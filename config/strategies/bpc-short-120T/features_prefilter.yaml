@@ -6,15 +6,16 @@ description: 'BPC Prefilter 特征: Breakout-Pullback-Continuation 结构的因�
   '
 feature_pipeline:
   requested_features:
-  - bpc_soft_phase_f
-  - bpc_pullback_depth_pct_f
-  - bpc_pullback_duration_f
-  - bpc_pullback_speed_f
-  - bpc_dir_consistency_multi_f
-  - bpc_dir_flip_count_f
-  - bpc_impulse_return_atr_f
-  - bpc_volume_compression_pct_f
-  - bpc_pullback_delta_absorption_f
-  - bpc_phase_transition_f
-  - bpc_compression_state_f
-  - dual_compression_f
+    - market_cap_normalized_orderflow_f
+    - bpc_soft_phase_f
+    - bpc_pullback_depth_pct_f
+    - bpc_pullback_duration_f
+    - bpc_pullback_speed_f
+    - bpc_dir_consistency_multi_f
+    - bpc_dir_flip_count_f
+    - bpc_impulse_return_atr_f
+    - bpc_volume_compression_pct_f
+    - bpc_pullback_delta_absorption_f
+    - bpc_phase_transition_f
+    - bpc_compression_state_f
+    - dual_compression_f

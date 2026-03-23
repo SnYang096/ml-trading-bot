@@ -1,7 +1,7 @@
 # ME-SHORT-240T Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-short-240T/20260320_211020/strategies/me-short-240T/gate_draft.yaml
-# 优化规则: 1/5 条通过优化, 3 条已移除
-# Phase split: system_safety=1, hard_gate=1
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-short-240T/20260320_234232/strategies/me-short-240T/gate_draft.yaml
+# 优化规则: 3/5 条通过优化, 4 条已移除
+# Phase split: system_safety=0, hard_gate=1
 
 schema:
   phases:
@@ -18,26 +18,12 @@ hard_gates:
   tag: HARD_FER_IMPULSE_FAILURE_SCORE
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.07)
+  reason: 统计验证规则 (lift=1.05)
   when:
     fer_impulse_failure_score:
-      value_lt: 0.4
+      value_lt: 0.55
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.4000, lift=0.465'
+  comment: 'optimizer: stable_plateau_found, threshold=0.5500, lift=0.435'
 guardrails: []
-system_safety:
-- id: gate_evt_tail_shape_right_evt_tail_shape_right
-  tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
-  phase: system_safety
-  priority: 13
-  reason: 统计验证规则 (lift=1.32)
-  when:
-    all_of:
-    - evt_tail_shape_right:
-        value_gt: 0.8294
-    - evt_tail_shape_right:
-        value_lt: 0.996
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.3040, lift=0.561'
+system_safety: []

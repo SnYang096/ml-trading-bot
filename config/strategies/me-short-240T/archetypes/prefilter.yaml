@@ -1,41 +1,5 @@
-rules:
-- feature: atr_percentile
-  operator: '>='
-  value: 0.0537
-  rationale: range lower, meta-algorithm, KS=0.1921, return_uplift=+4.1074, robustness=100%,
-    holdout验证通过
-- feature: atr_percentile
-  operator: <=
-  value: 0.7315
-  rationale: range upper, meta-algorithm, KS=0.1921, return_uplift=+4.1074, robustness=100%,
-    holdout验证通过
-- feature: recent_compression_decay
-  operator: '>='
-  value: 0.01105
-  rationale: range lower, meta-algorithm, KS=0.1533, return_uplift=+3.6053, robustness=100%,
-    holdout验证通过
-- feature: me_atr_pct
-  operator: '>='
-  value: 0.45
-  locked: true
-  lock_reason: ME-Short语义：仅在中高波扩张区做空，避免低波噪声
-- feature: me_atr_pct
-  operator: <=
-  value: 0.92
-  locked: true
-  lock_reason: ME-Short语义：避免极端尾段过热后追空
-- feature: me_accel_5k_short
-  operator: '>='
-  value: 0.16
-  locked: true
-  lock_reason: ME-Short语义：要求中短周期加速度为负，确认下行动能推进
-- feature: me_cvd_alignment
-  operator: '>='
-  value: 0.5
-  locked: true
-  lock_reason: ME-Short语义：价格与资金流方向一致，避免无量下跌噪声
 last_evaluation:
-  timestamp: '2026-03-20'
+  timestamp: '2026-03-21'
   data_source: features_labeled.parquet
   n_rows: 27840
   baseline_bad_rate: 0.0
@@ -43,3 +7,24 @@ last_evaluation:
   positive_signals: []
   anti_signals: []
   absence_signals: []
+rules:
+- feature: me_atr_pct
+  operator: '>='
+  value: 0.45
+  locked: true
+  lock_reason: ME-Short语义：仅在中高波扩张区做空，避免低波噪声
+- feature: me_atr_pct
+  operator: <=
+  value: 0.96
+  locked: true
+  lock_reason: ME-Short语义：避免极端尾段过热后追空
+- feature: me_accel_5k_short
+  operator: '>='
+  value: 0.08
+  locked: true
+  lock_reason: ME-Short语义：要求中短周期加速度为负，确认下行动能推进
+- feature: me_cvd_alignment
+  operator: '>='
+  value: 0.5
+  locked: true
+  lock_reason: ME-Short语义：价格与资金流方向一致，避免无量下跌噪声

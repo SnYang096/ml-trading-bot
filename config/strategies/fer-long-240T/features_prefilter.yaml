@@ -56,3 +56,4 @@ feature_pipeline:
     - oi_scene_semantic_scores_f
     # Wick 力竭场景语义
     - wick_scene_semantic_scores_f
+    - market_cap_normalized_orderflow_f

@@ -22,6 +22,10 @@ training:
   seeds: [42] # gate/evidence seed=42 固定 + imodels蒸馏确定性 → 多seed无意义
   seed_selection: best_sharpe # 选优标准: sharpe_per_trade 最高 (需满足 min_trades)
 
+# ── 全局开关 ────────────────────────────────────────────────
+global_toggles:
+  locked_threshold_tuning_enabled: false # false = 全策略跳过 locked_threshold_tuning
+
 # ── Token Universe ────────────────────────────────────────────
 # 通过 universe_group 指定，自动展开为 USDT 合约列表，不需再在命令行传 --symbols
 universe_group:
@@ -56,6 +60,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 10
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 40
+        target_trades_max: 350
+        trade_penalty_low: 0.0015
+        trade_penalty_high: 0.0008
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -76,6 +86,12 @@ strategies:
             upside_positive_rate_ratio,
           ]
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 40
+        target_trades_max: 350
+        trade_penalty_low: 0.0015
+        trade_penalty_high: 0.0008
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -109,6 +125,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 10
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 35
+        target_trades_max: 250
+        trade_penalty_low: 0.0018
+        trade_penalty_high: 0.001
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -129,6 +151,12 @@ strategies:
             upside_positive_rate_ratio,
           ]
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 35
+        target_trades_max: 250
+        trade_penalty_low: 0.0018
+        trade_penalty_high: 0.001
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -162,6 +190,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 10
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 25
+        target_trades_max: 160
+        trade_penalty_low: 0.0022
+        trade_penalty_high: 0.0012
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -182,6 +216,12 @@ strategies:
             upside_positive_rate_ratio,
           ]
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 25
+        target_trades_max: 160
+        trade_penalty_low: 0.0022
+        trade_penalty_high: 0.0012
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -215,6 +255,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 10
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 40
+        target_trades_max: 350
+        trade_penalty_low: 0.0015
+        trade_penalty_high: 0.0008
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -235,6 +281,12 @@ strategies:
             upside_positive_rate_ratio,
           ]
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 40
+        target_trades_max: 350
+        trade_penalty_low: 0.0015
+        trade_penalty_high: 0.0008
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -268,6 +320,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 10
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 35
+        target_trades_max: 250
+        trade_penalty_low: 0.0018
+        trade_penalty_high: 0.001
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -288,6 +346,12 @@ strategies:
             upside_positive_rate_ratio,
           ]
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 35
+        target_trades_max: 250
+        trade_penalty_low: 0.0018
+        trade_penalty_high: 0.001
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -321,6 +385,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 10
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 25
+        target_trades_max: 160
+        trade_penalty_low: 0.0022
+        trade_penalty_high: 0.0012
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -341,6 +411,12 @@ strategies:
             upside_positive_rate_ratio,
           ]
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 25
+        target_trades_max: 160
+        trade_penalty_low: 0.0022
+        trade_penalty_high: 0.0012
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -374,6 +450,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 300
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 50
+        target_trades_max: 320
+        trade_penalty_low: 0.0016
+        trade_penalty_high: 0.0009
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -402,6 +484,12 @@ strategies:
         stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 50
+        target_trades_max: 320
+        trade_penalty_low: 0.0016
+        trade_penalty_high: 0.0009
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -432,6 +520,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 300
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 40
+        target_trades_max: 220
+        trade_penalty_low: 0.0019
+        trade_penalty_high: 0.0011
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -460,6 +554,12 @@ strategies:
         stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 40
+        target_trades_max: 220
+        trade_penalty_low: 0.0019
+        trade_penalty_high: 0.0011
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -490,6 +590,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 300
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 30
+        target_trades_max: 140
+        trade_penalty_low: 0.0023
+        trade_penalty_high: 0.0013
+        stability_penalty: 0.0
         prefilter_search_include_empty: false
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
@@ -516,6 +622,12 @@ strategies:
         require_positive_effect: true
         min_combined_pass_rate: 0.30
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 30
+        target_trades_max: 140
+        trade_penalty_low: 0.0023
+        trade_penalty_high: 0.0013
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -546,6 +658,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 300
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 50
+        target_trades_max: 320
+        trade_penalty_low: 0.0016
+        trade_penalty_high: 0.0009
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -574,6 +692,12 @@ strategies:
         stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 50
+        target_trades_max: 320
+        trade_penalty_low: 0.0016
+        trade_penalty_high: 0.0009
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -604,6 +728,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 300
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 40
+        target_trades_max: 220
+        trade_penalty_low: 0.0019
+        trade_penalty_high: 0.0011
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -632,6 +762,12 @@ strategies:
         stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 40
+        target_trades_max: 220
+        trade_penalty_low: 0.0019
+        trade_penalty_high: 0.0011
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -662,6 +798,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05
         min_rows: 300
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 30
+        target_trades_max: 140
+        trade_penalty_low: 0.0023
+        trade_penalty_high: 0.0013
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -690,6 +832,12 @@ strategies:
         stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 30
+        target_trades_max: 140
+        trade_penalty_low: 0.0023
+        trade_penalty_high: 0.0013
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -720,6 +868,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05 # ME 高选择性 archetype, 允许低通过率 (50 trades 高 Sharpe 是目标)
         min_rows: 200
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 45
+        target_trades_max: 260
+        trade_penalty_low: 0.0017
+        trade_penalty_high: 0.001
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -745,6 +899,12 @@ strategies:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 45
+        target_trades_max: 260
+        trade_penalty_low: 0.0017
+        trade_penalty_high: 0.001
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -774,6 +934,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 35
+        target_trades_max: 180
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0012
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -799,6 +965,12 @@ strategies:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 35
+        target_trades_max: 180
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0012
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -828,6 +1000,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 25
+        target_trades_max: 120
+        trade_penalty_low: 0.0024
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -853,6 +1031,12 @@ strategies:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 25
+        target_trades_max: 120
+        trade_penalty_low: 0.0024
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -882,6 +1066,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 45
+        target_trades_max: 260
+        trade_penalty_low: 0.0017
+        trade_penalty_high: 0.001
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -907,6 +1097,12 @@ strategies:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 45
+        target_trades_max: 260
+        trade_penalty_low: 0.0017
+        trade_penalty_high: 0.001
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -936,6 +1132,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 35
+        target_trades_max: 180
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0012
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -961,6 +1163,12 @@ strategies:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 35
+        target_trades_max: 180
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0012
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -990,6 +1198,12 @@ strategies:
       prefilter:
         min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
+        # Soft target band for stable prefilter selection (not hard reject)
+        target_trades_min: 25
+        target_trades_max: 120
+        trade_penalty_low: 0.0024
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
@@ -1015,6 +1229,12 @@ strategies:
         require_positive_effect: true
         min_combined_pass_rate: 0.20
       entry_filter:
+        # Soft target band for entry-filter selection (not hard reject)
+        target_trades_min: 25
+        target_trades_max: 120
+        trade_penalty_low: 0.0024
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
         scoring_method_fallbacks:
           [
             distribution_ks,

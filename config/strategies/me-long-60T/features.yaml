@@ -142,6 +142,7 @@ feature_pipeline:
     - session_features_f           # session_id, hour_sin/cos, is_session_overlap
     - bars_since_extreme_f         # bars_since_local_high/low (避免追单)
 
+    - market_cap_normalized_orderflow_f
   ensure_signal_column:
     name: signal
     default_value: 0

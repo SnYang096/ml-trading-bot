@@ -324,6 +324,70 @@ def parse_backtest_stdout(output: str) -> Dict[str, Any]:
     return metrics
 
 
+def _resolve_trade_objective(
+    layer_cfg: Dict[str, Any],
+    *,
+    default_min: int,
+    default_max: int,
+    default_penalty_low: float,
+    default_penalty_high: float,
+    default_stability: float = 0.0,
+) -> Dict[str, float]:
+    """Resolve soft trade-range objective with backward compatibility."""
+    target_min = int(
+        layer_cfg.get(
+            "target_trades_min",
+            layer_cfg.get("min_trades_target", default_min),
+        )
+    )
+    target_max = int(
+        layer_cfg.get("target_trades_max", max(default_max, target_min * 4))
+    )
+    penalty_low = float(
+        layer_cfg.get(
+            "trade_penalty_low",
+            layer_cfg.get("trade_penalty", default_penalty_low),
+        )
+    )
+    penalty_high = float(layer_cfg.get("trade_penalty_high", default_penalty_high))
+    stability_penalty = float(layer_cfg.get("stability_penalty", default_stability))
+    return {
+        "target_min": float(target_min),
+        "target_max": float(max(target_max, target_min)),
+        "penalty_low": penalty_low,
+        "penalty_high": penalty_high,
+        "stability_penalty": stability_penalty,
+    }
+
+
+def _score_with_trade_objective(
+    *,
+    sharpe: float,
+    trades: int,
+    objective: Dict[str, float],
+) -> Dict[str, float]:
+    if sharpe == float("-inf"):
+        return {
+            "score": float("-inf"),
+            "low_gap": 0.0,
+            "high_gap": 0.0,
+            "low_penalty": 0.0,
+            "high_penalty": 0.0,
+        }
+    t = float(max(0, int(trades or 0)))
+    low_gap = max(0.0, objective["target_min"] - t)
+    high_gap = max(0.0, t - objective["target_max"])
+    low_penalty = objective["penalty_low"] * low_gap
+    high_penalty = objective["penalty_high"] * high_gap
+    return {
+        "score": float(sharpe) - low_penalty - high_penalty,
+        "low_gap": low_gap,
+        "high_gap": high_gap,
+        "low_penalty": low_penalty,
+        "high_penalty": high_penalty,
+    }
+
+
 # ====================================================================
 # Snapshot & Compare
 # ====================================================================
@@ -645,6 +709,7 @@ def run_data_download(
 def _maybe_auto_tune_locked_prefilter(
     *,
     strategy: str,
+    cfg: Dict[str, Any],
     scfg: Dict[str, Any],
     config_path: str,
     end_date: str,
@@ -653,6 +718,11 @@ def _maybe_auto_tune_locked_prefilter(
     """可选自动调优 locked prefilter 阈值，返回 override prefilter 路径（空串表示不启用）."""
     if disable_auto_locked_tuning:
         print("  ⏭️  locked tuning: disabled by flag")
+        return ""
+
+    global_toggles = cfg.get("global_toggles", {}) or {}
+    if not bool(global_toggles.get("locked_threshold_tuning_enabled", True)):
+        print("  ⏭️  locked tuning: globally disabled by config")
         return ""
 
     prefilter_gates = (scfg.get("kpi_gates", {}) or {}).get("prefilter", {}) or {}
@@ -712,9 +782,25 @@ def _maybe_auto_tune_locked_prefilter(
         "--max-cases",
         str(int(tcfg.get("max_cases", 0) or 0)),
         "--min-trades-target",
-        str(int(tcfg.get("min_trades_target", 60) or 60)),
-        "--trade-penalty",
-        str(float(tcfg.get("trade_penalty", 0.002) or 0.002)),
+        str(
+            int(tcfg.get("target_trades_min", tcfg.get("min_trades_target", 60)) or 60)
+        ),
+        "--max-trades-target",
+        str(int(tcfg.get("target_trades_max", 0) or 0)),
+        "--trade-penalty-low",
+        str(
+            float(
+                tcfg.get(
+                    "trade_penalty_low",
+                    tcfg.get("trade_penalty", 0.002),
+                )
+                or 0.002
+            )
+        ),
+        "--trade-penalty-high",
+        str(float(tcfg.get("trade_penalty_high", 0.001) or 0.001)),
+        "--stability-penalty",
+        str(float(tcfg.get("stability_penalty", 0.0) or 0.0)),
     ]
     proc = subprocess.run(
         cmd,
@@ -985,6 +1071,7 @@ def run_strategy_pipeline(
     if not dry_run:
         auto_locked_override = _maybe_auto_tune_locked_prefilter(
             strategy=strategy,
+            cfg=cfg,
             scfg=scfg,
             config_path=config_path or str(DEFAULT_CONFIG),
             end_date=end_date,
@@ -1208,9 +1295,12 @@ def run_strategy_pipeline(
         "42",  # A.7.1: gate 规则确定性，固定 seed 不受外层 seed 影响
     ]
 
-    # ── Prefilter Sharpe 对比: 每个候选 prefilter 跑 mini-pipeline, 按 Sharpe 择优 ──
-    # 空 prefilter (empty) 自动包含为 baseline 候选
-    _pf_include_empty = prefilter_gates.get("prefilter_search_include_empty", True)
+    # ── Prefilter Score 对比: 每个候选 prefilter 跑 mini-pipeline, 按 Score 择优 ──
+    # 空 prefilter (empty) 仅在显式允许时参与候选。
+    # 关键保护：如果开启了 locked 规则强制注入，默认不允许 empty 覆盖。
+    _pf_include_empty = prefilter_gates.get(
+        "prefilter_search_include_empty", (not _enforce_pf_locked)
+    )
     if (
         not dry_run
         and _pf_results  # 确认多算法分析已运行且有结果
@@ -1226,13 +1316,30 @@ def run_strategy_pipeline(
             _empty_pf_p.write_text("rules: []\n", encoding="utf-8")
             _cand_paths["empty"] = _empty_pf_p
         if len(_cand_paths) >= 2:
+            _pf_obj = _resolve_trade_objective(
+                prefilter_gates,
+                default_min=30,
+                default_max=200,
+                default_penalty_low=0.002,
+                default_penalty_high=0.001,
+            )
             _cmp_sharpe: Dict[str, float] = {}
             _cmp_trades: Dict[str, int] = {}
             _cmp_rules: Dict[str, int] = {}
+            _cmp_score: Dict[str, float] = {}
+            _cmp_low_gap: Dict[str, float] = {}
+            _cmp_high_gap: Dict[str, float] = {}
+            _cmp_low_penalty: Dict[str, float] = {}
+            _cmp_high_penalty: Dict[str, float] = {}
             _simple_exec = scfg.get("simple_execution", {})
             print(f"\n{'='*72}")
             print(
                 f"🔬 Prefilter Sharpe 对比模式 — {len(_cand_paths)} 候选: {list(_cand_paths)}"
+            )
+            print(
+                "   "
+                f"trade_target=[{int(_pf_obj['target_min'])},{int(_pf_obj['target_max'])}], "
+                f"penalty_low={_pf_obj['penalty_low']}, penalty_high={_pf_obj['penalty_high']}"
             )
             print(f"{'='*72}")
             for _cm, _cp in _cand_paths.items():
@@ -1245,6 +1352,11 @@ def run_strategy_pipeline(
                     print(f"   ❌ Gate Train 失败, 跳过")
                     _cmp_sharpe[_cm] = float("-inf")
                     _cmp_trades[_cm] = 0
+                    _cmp_score[_cm] = float("-inf")
+                    _cmp_low_gap[_cm] = 0.0
+                    _cmp_high_gap[_cm] = 0.0
+                    _cmp_low_penalty[_cm] = 0.0
+                    _cmp_high_penalty[_cm] = 0.0
                     continue
                 # Sync gate_draft
                 _cpd = PROJECT_ROOT / f"config/strategies/{strategy}/gate_draft.yaml"
@@ -1333,13 +1445,31 @@ def run_strategy_pipeline(
                 _cmp_sharpe[_cm] = _cbt_m.get("sharpe_per_trade", float("-inf"))
                 _cmp_trades[_cm] = _cbt_m.get("total_trades", 0)
                 _cmp_rules[_cm] = _pf_results.get(_cm, {}).get("n_rules", 0)
+                _sc = _score_with_trade_objective(
+                    sharpe=_cmp_sharpe[_cm],
+                    trades=_cmp_trades[_cm],
+                    objective=_pf_obj,
+                )
+                _cmp_score[_cm] = _sc["score"]
+                _cmp_low_gap[_cm] = _sc["low_gap"]
+                _cmp_high_gap[_cm] = _sc["high_gap"]
+                _cmp_low_penalty[_cm] = _sc["low_penalty"]
+                _cmp_high_penalty[_cm] = _sc["high_penalty"]
                 _s = _cmp_sharpe[_cm]
-                print(f"   📊 [{_cm}] Sharpe={_s:+.4f}, Trades={_cmp_trades[_cm]}")
+                print(
+                    f"   📊 [{_cm}] Sharpe={_s:+.4f}, Trades={_cmp_trades[_cm]}, "
+                    f"Score={_cmp_score[_cm]:+.4f}"
+                )
             # 汇总对比表
-            _best_cm = max(_cmp_sharpe, key=lambda m: _cmp_sharpe[m])
+            _best_cm = max(_cmp_score, key=lambda m: _cmp_score[m])
             # 补充 0 规则方法 (等价于 empty, 不需跑 pipeline)
             _empty_sharpe = _cmp_sharpe.get("empty", float("-inf"))
             _empty_trades = _cmp_trades.get("empty", 0)
+            _empty_score = _cmp_score.get("empty", float("-inf"))
+            _empty_low_gap = _cmp_low_gap.get("empty", 0.0)
+            _empty_high_gap = _cmp_high_gap.get("empty", 0.0)
+            _empty_low_penalty = _cmp_low_penalty.get("empty", 0.0)
+            _empty_high_penalty = _cmp_high_penalty.get("empty", 0.0)
             _zero_rule_methods = [
                 m
                 for m, r in _pf_results.items()
@@ -1349,19 +1479,26 @@ def run_strategy_pipeline(
                 _cmp_sharpe[_zrm] = _empty_sharpe
                 _cmp_trades[_zrm] = _empty_trades
                 _cmp_rules[_zrm] = 0
+                _cmp_score[_zrm] = _empty_score
+                _cmp_low_gap[_zrm] = _empty_low_gap
+                _cmp_high_gap[_zrm] = _empty_high_gap
+                _cmp_low_penalty[_zrm] = _empty_low_penalty
+                _cmp_high_penalty[_zrm] = _empty_high_penalty
             _tbl_lines: list = []
             _tbl_lines.append(f"\n{'='*72}")
             _tbl_lines.append(
-                f"  {'方法':<25} {'Sharpe':>10} {'Trades':>7} {'Rules':>6}  标记"
+                f"  {'方法':<25} {'Score':>10} {'Sharpe':>10} {'Trades':>7} {'Rules':>6}  标记"
             )
             _tbl_lines.append(f"  {'-'*68}")
-            for _m in sorted(_cmp_sharpe, key=lambda m: -_cmp_sharpe[m]):
+            for _m in sorted(_cmp_score, key=lambda m: -_cmp_score[m]):
                 _flag = " ← 最优" if _m == _best_cm else ""
+                _score = _cmp_score[_m]
+                _score_str = f"{_score:+.4f}" if _score != float("-inf") else "  FAIL"
                 _s = _cmp_sharpe[_m]
                 _s_str = f"{_s:+.4f}" if _s != float("-inf") else "  FAIL"
                 _note = "  (0规则=empty)" if _m in _zero_rule_methods else ""
                 _tbl_lines.append(
-                    f"  {_m:<25} {_s_str:>10} "
+                    f"  {_m:<25} {_score_str:>10} {_s_str:>10} "
                     f"{_cmp_trades.get(_m, 0):>7} {_cmp_rules.get(_m, 0):>6}{_flag}{_note}"
                 )
             _tbl_lines.append(f"{'='*72}\n")
@@ -1369,7 +1506,7 @@ def run_strategy_pipeline(
             print(_tbl_text)
             with open(log, "a", encoding="utf-8") as _lf:
                 _lf.write(f"\n{'='*72}\n")
-                _lf.write(f"🔬 Prefilter Sharpe 对比汇总\n")
+                _lf.write(f"🔬 Prefilter Score 对比汇总\n")
                 _lf.write(_tbl_text + "\n")
             # 设置最优 prefilter, 让完整 pipeline 使用
             shutil.copy(_cand_paths[_best_cm], _pf_yaml)
@@ -1382,13 +1519,19 @@ def run_strategy_pipeline(
             _pf_comparison = {
                 "best": _best_cm,
                 "zero_rule_methods": _zero_rule_methods,
+                "objective": _pf_obj,
                 "candidates": {
                     m: {
+                        "score": _cmp_score[m],
                         "sharpe": _cmp_sharpe[m],
                         "trades": _cmp_trades.get(m, 0),
                         "rules": _cmp_rules.get(m, 0),
+                        "low_gap": _cmp_low_gap.get(m, 0.0),
+                        "high_gap": _cmp_high_gap.get(m, 0.0),
+                        "low_penalty": _cmp_low_penalty.get(m, 0.0),
+                        "high_penalty": _cmp_high_penalty.get(m, 0.0),
                     }
-                    for m in _cmp_sharpe
+                    for m in _cmp_score
                 },
             }
 
@@ -1552,9 +1695,26 @@ def run_strategy_pipeline(
         _ef_sharpe: Dict[str, float] = {}
         _ef_trades: Dict[str, int] = {}
         _ef_n_rules: Dict[str, int] = {}
+        _ef_score: Dict[str, float] = {}
+        _ef_low_gap: Dict[str, float] = {}
+        _ef_high_gap: Dict[str, float] = {}
+        _ef_low_penalty: Dict[str, float] = {}
+        _ef_high_penalty: Dict[str, float] = {}
+        _ef_obj = _resolve_trade_objective(
+            _ef_gates,
+            default_min=30,
+            default_max=200,
+            default_penalty_low=0.0015,
+            default_penalty_high=0.001,
+        )
         _ef_arch_dir = Path(config_dir) / "archetypes"
         _ef_orig_path = _ef_arch_dir / "entry_filters.yaml"
         _simple_exec = scfg.get("simple_execution", {})
+        print(
+            "   "
+            f"entry trade_target=[{int(_ef_obj['target_min'])},{int(_ef_obj['target_max'])}], "
+            f"penalty_low={_ef_obj['penalty_low']}, penalty_high={_ef_obj['penalty_high']}"
+        )
 
         for _em in _ef_methods:
             print(f"\n── Entry Filter method: [{_em}] ──")
@@ -1584,6 +1744,11 @@ def run_strategy_pipeline(
                 _ef_sharpe[_em] = float("-inf")
                 _ef_trades[_em] = 0
                 _ef_n_rules[_em] = 0
+                _ef_score[_em] = float("-inf")
+                _ef_low_gap[_em] = 0.0
+                _ef_high_gap[_em] = 0.0
+                _ef_low_penalty[_em] = 0.0
+                _ef_high_penalty[_em] = 0.0
                 continue
 
             # 读取产出的 entry_filters.yaml 规则数
@@ -1603,6 +1768,11 @@ def run_strategy_pipeline(
                 # 没有规则 = 无条件入场, 后续用 empty 的 Sharpe
                 _ef_sharpe[_em] = float("-inf")
                 _ef_trades[_em] = 0
+                _ef_score[_em] = float("-inf")
+                _ef_low_gap[_em] = 0.0
+                _ef_high_gap[_em] = 0.0
+                _ef_low_penalty[_em] = 0.0
+                _ef_high_penalty[_em] = 0.0
                 continue
 
             # 保存临时规则文件
@@ -1635,9 +1805,17 @@ def run_strategy_pipeline(
             _ebt_m = parse_backtest_stdout(_out_ebt)
             _ef_sharpe[_em] = _ebt_m.get("sharpe_per_trade", float("-inf"))
             _ef_trades[_em] = _ebt_m.get("total_trades", 0)
+            _sc = _score_with_trade_objective(
+                sharpe=_ef_sharpe[_em], trades=_ef_trades[_em], objective=_ef_obj
+            )
+            _ef_score[_em] = _sc["score"]
+            _ef_low_gap[_em] = _sc["low_gap"]
+            _ef_high_gap[_em] = _sc["high_gap"]
+            _ef_low_penalty[_em] = _sc["low_penalty"]
+            _ef_high_penalty[_em] = _sc["high_penalty"]
             print(
                 f"   📊 EF [{_em}] Sharpe={_ef_sharpe[_em]:+.4f}, "
-                f"Trades={_ef_trades[_em]}, Rules={_n_ef_rules}"
+                f"Trades={_ef_trades[_em]}, Rules={_n_ef_rules}, Score={_ef_score[_em]:+.4f}"
             )
 
         # ── 对比表: 添加 empty baseline ──
@@ -1673,27 +1851,42 @@ def run_strategy_pipeline(
         _ef_sharpe["empty"] = _ebt_m_empty.get("sharpe_per_trade", float("-inf"))
         _ef_trades["empty"] = _ebt_m_empty.get("total_trades", 0)
         _ef_n_rules["empty"] = 0
+        _sc_empty = _score_with_trade_objective(
+            sharpe=_ef_sharpe["empty"], trades=_ef_trades["empty"], objective=_ef_obj
+        )
+        _ef_score["empty"] = _sc_empty["score"]
+        _ef_low_gap["empty"] = _sc_empty["low_gap"]
+        _ef_high_gap["empty"] = _sc_empty["high_gap"]
+        _ef_low_penalty["empty"] = _sc_empty["low_penalty"]
+        _ef_high_penalty["empty"] = _sc_empty["high_penalty"]
 
         # 0 规则的方法 = empty
         for _em in _ef_methods:
             if _ef_n_rules.get(_em, 0) == 0 and _em not in ["empty"]:
                 _ef_sharpe[_em] = _ef_sharpe["empty"]
                 _ef_trades[_em] = _ef_trades["empty"]
+                _ef_score[_em] = _ef_score["empty"]
+                _ef_low_gap[_em] = _ef_low_gap["empty"]
+                _ef_high_gap[_em] = _ef_high_gap["empty"]
+                _ef_low_penalty[_em] = _ef_low_penalty["empty"]
+                _ef_high_penalty[_em] = _ef_high_penalty["empty"]
 
         # 汇总对比表
-        _best_ef = max(_ef_sharpe, key=lambda m: _ef_sharpe[m])
+        _best_ef = max(_ef_score, key=lambda m: _ef_score[m])
         _ef_tbl = []
         _ef_tbl.append(f"\n{'='*72}")
         _ef_tbl.append(
-            f"  {'方法':<25} {'Sharpe':>10} {'Trades':>7} {'Rules':>6}  标记"
+            f"  {'方法':<25} {'Score':>10} {'Sharpe':>10} {'Trades':>7} {'Rules':>6}  标记"
         )
         _ef_tbl.append(f"  {'-'*68}")
-        for _m in sorted(_ef_sharpe, key=lambda m: -_ef_sharpe[m]):
+        for _m in sorted(_ef_score, key=lambda m: -_ef_score[m]):
             _flag = " ← 最优" if _m == _best_ef else ""
+            _score = _ef_score[_m]
+            _score_str = f"{_score:+.4f}" if _score != float("-inf") else "  FAIL"
             _s = _ef_sharpe[_m]
             _s_str = f"{_s:+.4f}" if _s != float("-inf") else "  FAIL"
             _ef_tbl.append(
-                f"  {_m:<25} {_s_str:>10} "
+                f"  {_m:<25} {_score_str:>10} {_s_str:>10} "
                 f"{_ef_trades.get(_m, 0):>7} {_ef_n_rules.get(_m, 0):>6}{_flag}"
             )
         _ef_tbl.append(f"{'='*72}\n")
@@ -1701,14 +1894,16 @@ def run_strategy_pipeline(
         print(_ef_tbl_text)
         with open(log, "a", encoding="utf-8") as _lf:
             _lf.write(f"\n{'='*72}\n")
-            _lf.write(f"🔬 Entry Filter Sharpe 对比汇总\n")
+            _lf.write(f"🔬 Entry Filter Score 对比汇总\n")
             _lf.write(_ef_tbl_text + "\n")
 
         # 设置最优 entry filter
         # 只有当新规则对比 empty 有足够提升时才覆盖已有 entry_filters.yaml
         # 防止 Val 段负志时「最不差」方法覆盖原有的合理规则
-        _MIN_EF_IMPROVEMENT = 0.02  # 最小提升幅度 (Sharpe 差 > 0.02 才 promote)
-        _ef_improvement = _ef_sharpe.get(_best_ef, float("-inf")) - _ef_sharpe.get(
+        _MIN_EF_IMPROVEMENT = float(
+            _ef_gates.get("min_score_improvement", 0.005)
+        )  # 最小提升幅度 (Score 差值)
+        _ef_improvement = _ef_score.get(_best_ef, float("-inf")) - _ef_score.get(
             "empty", float("-inf")
         )
         if (
@@ -1721,8 +1916,9 @@ def run_strategy_pipeline(
                 shutil.copy(_best_ef_path, _ef_orig_path)
                 print(
                     f"   ✅ 最优 Entry Filter [{_best_ef}] 已写入, "
-                    f"Rules={_ef_n_rules[_best_ef]}, Sharpe={_ef_sharpe[_best_ef]:+.4f} "
-                    f"(vs empty {_ef_sharpe.get('empty', 0):+.4f}, 提升={_ef_improvement:+.4f})"
+                    f"Rules={_ef_n_rules[_best_ef]}, Score={_ef_score[_best_ef]:+.4f}, "
+                    f"Sharpe={_ef_sharpe[_best_ef]:+.4f} "
+                    f"(vs empty score {_ef_score.get('empty', 0):+.4f}, 提升={_ef_improvement:+.4f})"
                 )
             else:
                 # fallback: 写空
@@ -1741,7 +1937,7 @@ def run_strategy_pipeline(
                 shutil.copy(_ef_empty, _ef_orig_path)
                 print(
                     f"   ℹ️  empty 最优 且无历史 entry_filters.yaml, 写入空规则 "
-                    f"(Sharpe={_ef_sharpe.get('empty', 0):+.4f})"
+                    f"(Score={_ef_score.get('empty', 0):+.4f}, Sharpe={_ef_sharpe.get('empty', 0):+.4f})"
                 )
 
         # 清理临时文件
@@ -2825,28 +3021,31 @@ def main():
         print(
             f"   {emoji} {r['strategy']:>6s}: {r['decision']:<8s} sharpe={r.get('sharpe', 'N/A')} trades={r.get('trades', 'N/A')}{seed_str}"
         )
-        # Prefilter Sharpe 对比表
+        # Prefilter Score 对比表
         _pfc = r.get("prefilter_comparison")
         if _pfc and _pfc.get("candidates"):
             _best_pf = _pfc["best"]
             _cands = _pfc["candidates"]
-            print(f"      🔬 Prefilter 对比:")
+            print(f"      🔬 Prefilter 对比 (Score=Sharpe-TradePenalty):")
             _zr_set = set(_pfc.get("zero_rule_methods", []))
             for _pm in sorted(
                 _cands,
                 key=lambda m: (
-                    -_cands[m]["sharpe"]
-                    if _cands[m]["sharpe"] != float("-inf")
+                    -_cands[m].get("score", float("-inf"))
+                    if _cands[m].get("score", float("-inf")) != float("-inf")
                     else float("inf")
                 ),
             ):
                 _pc = _cands[_pm]
+                _score = _pc.get("score", float("-inf"))
+                _score_str = f"{_score:+.4f}" if _score != float("-inf") else "  FAIL"
                 _ps = _pc["sharpe"]
                 _ps_str = f"{_ps:+.4f}" if _ps != float("-inf") else "  FAIL"
                 _flag = " ←" if _pm == _best_pf else ""
                 _note = "  (0规则=empty)" if _pm in _zr_set else ""
                 print(
-                    f"         {_pm:<20s} Sharpe={_ps_str}  Trades={_pc['trades']:>5}  Rules={_pc['rules']}{_flag}{_note}"
+                    f"         {_pm:<20s} Score={_score_str}  Sharpe={_ps_str}  "
+                    f"Trades={_pc['trades']:>5}  Rules={_pc['rules']}{_flag}{_note}"
                 )
     if pcm_result:
         pcm_emoji = {"PASS": "✅", "ALERT": "⚠️", "ERROR": "❌"}.get(

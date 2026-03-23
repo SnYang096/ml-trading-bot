@@ -1,5 +1,5 @@
 # ME-SHORT-60T Gate Draft (auto-generated)
-# 来源: results/train_final_20260321_015030_rr_extreme/me-short-60T
+# 来源: results/train_final_20260323_140024_rr_extreme/me-short-60T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me-short-60T
@@ -16,60 +16,71 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_scale_left_evt_scale_left
-  tag: HARD_EVT_SCALE_LEFT_EVT_SCALE_LEFT
+- id: gate_fer_trapped_longs_score
+  tag: HARD_FER_TRAPPED_LONGS_SCORE
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.06)
+  reason: 统计验证规则 (lift=1.51)
   when:
-    all_of:
-    - evt_scale_left:
-        value_gt: 0.5516
-    - evt_scale_left:
-        value_lt: 0.9444
+    fer_trapped_longs_score:
+      value_gt: 1.0
   then:
     action: deny
-  comment: 'statistical(lift=1.06): evt_scale_left > 0.5516 & evt_scale_left < 0.9444'
+  comment: 'statistical(lift=1.51): fer_trapped_longs_score > 1'
+- id: gate_evt_es_99_right_evt_es_99_right
+  tag: HARD_EVT_ES_99_RIGHT_EVT_ES_99_RIGHT
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.38)
+  when:
+    all_of:
+    - evt_es_99_right:
+        value_gt: 0.0873
+    - evt_es_99_right:
+        value_lt: 0.1984
+  then:
+    action: deny
+  comment: 'statistical(lift=1.38): evt_es_99_right > 0.0873 & evt_es_99_right < 0.1984'
+- id: gate_vpin_max20_vpin_max20
+  tag: HARD_VPIN_MAX20_VPIN_MAX20
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.25)
+  when:
+    all_of:
+    - vpin_max20:
+        value_gt: 0.4209
+    - vpin_max20:
+        value_lt: 0.4585
+  then:
+    action: deny
+  comment: 'statistical(lift=1.25): vpin_max20 > 0.4209 & vpin_max20 < 0.4585'
+- id: gate_evt_es_99_left_evt_es_99_left
+  tag: HARD_EVT_ES_99_LEFT_EVT_ES_99_LEFT
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.24)
+  when:
+    all_of:
+    - evt_es_99_left:
+        value_gt: 0.0992
+    - evt_es_99_left:
+        value_lt: 0.2222
+  then:
+    action: deny
+  comment: 'statistical(lift=1.24): evt_es_99_left > 0.09921 & evt_es_99_left < 0.2222'
 - id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
   tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
   phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.20)
+  priority: 14
+  reason: 统计验证规则 (lift=1.18)
   when:
     all_of:
     - vol_leverage_asymmetry:
-        value_gt: 0.0317
+        value_gt: 0.2709
     - vol_leverage_asymmetry:
-        value_lt: 0.0639
+        value_lt: 0.3414
   then:
     action: deny
-  comment: 'statistical(lift=1.20): vol_leverage_asymmetry > 0.03165 & vol_leverage_asymmetry < 0.06392'
-- id: gate_evt_es_99_evt_es_99
-  tag: HARD_EVT_ES_99_EVT_ES_99
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.20)
-  when:
-    all_of:
-    - evt_es_99:
-        value_gt: 0.8214
-    - evt_es_99:
-        value_lt: 0.9246
-  then:
-    action: deny
-  comment: 'statistical(lift=1.20): evt_es_99 > 0.8214 & evt_es_99 < 0.9246'
-- id: gate_recent_compression_decay_recent_compression_decay
-  tag: HARD_RECENT_COMPRESSION_DECAY_RECENT_COMPRESSION_DECAY
-  phase: hard_gate
-  priority: 13
-  reason: 统计验证规则 (lift=1.10)
-  when:
-    all_of:
-    - recent_compression_decay:
-        value_gt: 0.25
-    - recent_compression_decay:
-        value_lt: 0.4101
-  then:
-    action: deny
-  comment: 'statistical(lift=1.10): recent_compression_decay > 0.25 & recent_compression_decay < 0.4101'
+  comment: 'statistical(lift=1.18): vol_leverage_asymmetry > 0.2709 & vol_leverage_asymmetry < 0.3414'
 guardrails: []

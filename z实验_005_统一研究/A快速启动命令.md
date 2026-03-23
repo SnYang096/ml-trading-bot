@@ -487,14 +487,20 @@ validation_months: 3
 3) 批量运行（关键：加 --no-adopt）
 这样每次只产实验结果，不覆盖生产配置。
 ```bash
+
+for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
+  mlbot pipeline run --strategy fer-short-60T --end-date "$d" --no-adopt
+done
+
 for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
   mlbot pipeline run --strategy fer-short-120T --end-date "$d" --no-adopt
 done
 
 for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
-  mlbot pipeline run --strategy me-short --end-date "$d" --no-adopt
+  mlbot pipeline run --strategy fer-short-240T --end-date "$d" --no-adopt
 done
 
+# -------------------------------------------
 for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
   mlbot pipeline run --strategy bpc-short-60T --end-date "$d" --no-adopt
 done
@@ -504,12 +510,22 @@ for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
 done
 
 for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
+  mlbot pipeline run --strategy bpc-short-240T --end-date "$d" --no-adopt
+done
+# -------------------------------------------
+
+for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
+  mlbot pipeline run --strategy me-short-60T --end-date "$d" --no-adopt
+done
+
+for d in 2026-01-01 2026-02-01 2026-03-01; do
   mlbot pipeline run --strategy me-short-120T --end-date "$d" --no-adopt
 done
 
-for d in 2025-10-01 2025-11-01 2025-12-01 2026-01-01 2026-02-01 2026-03-01; do
+for d in 2026-01-01 2026-02-01 2026-03-01; do
   mlbot pipeline run --strategy me-short-240T --end-date "$d" --no-adopt
 done
+
 
 mlbot pipeline run --strategy bpc-short-60T
 mlbot pipeline run --strategy bpc-short-120T
@@ -532,7 +548,7 @@ python scripts/auto_research_pipeline.py --strategy fer-short --list
 ```bash
 python - <<'PY'
 import json, pathlib, statistics
-root = pathlib.Path("results/research_history/me-short")
+root = pathlib.Path("results/research_history/me-short-60T")
 rows = []
 for d in sorted([p for p in root.iterdir() if p.is_dir()])[-20:]:
     rp = d / "report.json"
@@ -556,6 +572,23 @@ median_sharpe > 0
 positive_ratio >= 70%
 median_trades >= 80（你可按 FER 调成 60/100）
 如果这三条达标，再考虑进入 deploy；不达标再讨论 1H 分支实验。
+
+6) 稳定性目标（推荐，避免“Sharpe 提升但交易数失控”）
+在 `config/research_pipeline.yaml` 的每个策略里，给 `kpi_gates.prefilter` 和
+`kpi_gates.entry_filter` 配置软目标区间：
+
+```yaml
+target_trades_min: 35
+target_trades_max: 220
+trade_penalty_low: 0.002
+trade_penalty_high: 0.001
+stability_penalty: 0.0
+```
+
+说明：
+- 不是硬拦截；仍然自动化搜索，但会优先选择“Sharpe + 合理交易密度”的方案
+- `trade_penalty_low` 惩罚交易过少，`trade_penalty_high` 惩罚交易过多
+- 日志里会显示 `Score`（`Sharpe - trade penalties`）并按 `Score` 选优
 
 ## 稳定性实验
 配置
@@ -954,3 +987,198 @@ BPC 建议直接用 240T，不用犹豫。
          upside_positive_rate_ratio Sharpe=+0.1342  Trades=  282  Rules=5
          tail_bad_rate_ratio  Sharpe=+0.0450  Trades=  174  Rules=8
 
+## me-short-240T
+
+20260320_234326  sharpe=0.3685  trades=111
+20260320_235323  sharpe=0.3685  trades=111
+20260320_235839  sharpe=0.3685  trades=111
+20260321_000457  sharpe=0.3934  trades=99
+20260321_001217  sharpe=0.3934  trades=99
+20260321_001933  sharpe=0.3934  trades=99
+20260321_002443  sharpe=0.4076  trades=94
+20260321_003611  sharpe=0.4076  trades=94
+20260321_004135  sharpe=0.4076  trades=94
+20260321_004856  sharpe=0.2744  trades=148
+20260321_005637  sharpe=0.2744  trades=148
+20260321_010244  sharpe=0.2744  trades=148
+20260321_011010  sharpe=0.3473  trades=83
+20260321_011634  sharpe=0.3473  trades=83
+20260321_012347  sharpe=0.3473  trades=83
+20260321_013103  sharpe=0.3634  trades=72
+20260321_013849  sharpe=0.3634  trades=72
+20260321_014558  sharpe=0.3634  trades=72
+20260321_015221  sharpe=0.4353  trades=58
+20260321_015759  sharpe=0.4353  trades=58
+
+median_sharpe=0.3685
+positive_ratio=100.0%
+median_trades=94.0
+
+<!-- 没网格 -->
+20260321_011634  sharpe=0.3473  trades=83
+20260321_012347  sharpe=0.3473  trades=83
+20260321_013103  sharpe=0.3634  trades=72
+20260321_013849  sharpe=0.3634  trades=72
+20260321_014558  sharpe=0.3634  trades=72
+20260321_015221  sharpe=0.4353  trades=58
+20260321_015759  sharpe=0.4353  trades=58
+20260322_124755  sharpe=0.2590  trades=95
+20260322_173127  sharpe=0.2590  trades=95
+20260322_193922  sharpe=0.2590  trades=95
+20260323_004818  sharpe=0.2440  trades=101
+20260323_053612  sharpe=0.2965  trades=85
+20260323_091943  sharpe=0.2965  trades=85
+20260323_132014  sharpe=0.2015  trades=113
+20260323_132545  sharpe=0.4176  trades=70
+20260323_133201  sharpe=0.1755  trades=88
+
+median_sharpe=0.3219
+positive_ratio=100.0%
+median_trades=84.0
+
+## me-short-120T
+
+20260320_003158  sharpe=1.1048  trades=24
+20260320_234557  sharpe=0.1710  trades=406
+20260320_235739  sharpe=0.1710  trades=406
+20260321_000739  sharpe=0.1710  trades=406
+20260321_001821  sharpe=0.1654  trades=375
+20260321_002959  sharpe=0.1654  trades=375
+20260321_004026  sharpe=0.1654  trades=375
+20260321_005039  sharpe=0.1751  trades=338
+20260321_010043  sharpe=0.1751  trades=338
+20260321_011143  sharpe=0.1751  trades=338
+20260321_012007  sharpe=0.1794  trades=438
+20260321_013138  sharpe=0.1794  trades=438
+20260321_014203  sharpe=0.1794  trades=438
+20260321_015206  sharpe=0.1753  trades=401
+20260321_020137  sharpe=0.1753  trades=401
+20260321_093626  sharpe=0.1753  trades=401
+20260321_180449  sharpe=0.1869  trades=361
+20260322_020301  sharpe=0.1869  trades=361
+
+median_sharpe=0.1752
+positive_ratio=100.0%
+median_trades=388.0
+
+<!-- 没网格 -->
+20260321_011143  sharpe=0.1751  trades=338
+20260321_012007  sharpe=0.1794  trades=438
+20260321_013138  sharpe=0.1794  trades=438
+20260321_014203  sharpe=0.1794  trades=438
+20260321_015206  sharpe=0.1753  trades=401
+20260321_020137  sharpe=0.1753  trades=401
+20260321_093626  sharpe=0.1753  trades=401
+20260321_180449  sharpe=0.1869  trades=361
+20260322_020301  sharpe=0.1869  trades=361
+20260322_173123  sharpe=0.1421  trades=201
+20260322_223313  sharpe=0.1421  trades=201
+20260323_043326  sharpe=0.1390  trades=200
+20260323_132001  sharpe=-0.0837  trades=101
+20260323_132704  sharpe=0.1427  trades=182
+20260323_133711  sharpe=0.1473  trades=64
+
+median_sharpe=0.1753
+positive_ratio=93.3%
+median_trades=361.0
+
+## me-short-60T
+
+20260320_003151  sharpe=0.2991  trades=149
+20260320_234922  sharpe=-0.0252  trades=6419
+20260321_000654  sharpe=-0.0252  trades=6419
+20260321_002406  sharpe=-0.0252  trades=6419
+20260321_004410  sharpe=-0.0252  trades=6419
+20260321_010344  sharpe=-0.0252  trades=6419
+20260321_012029  sharpe=-0.0252  trades=6419
+20260321_014109  sharpe=-0.0252  trades=6419
+20260321_015735  sharpe=-0.0252  trades=6419
+20260321_055718  sharpe=-0.0252  trades=6419
+20260321_141424  sharpe=-0.0252  trades=6419
+20260321_220735  sharpe=-0.0252  trades=6419
+
+median_sharpe=-0.0252
+positive_ratio=8.3%
+median_trades=6419.0
+
+<!-- 没网格 -->
+20260321_055718  sharpe=-0.0252  trades=6419
+20260321_141424  sharpe=-0.0252  trades=6419
+20260321_220735  sharpe=-0.0252  trades=6419
+20260322_122020  sharpe=0.1098  trades=251
+20260322_173220  sharpe=0.1243  trades=250
+20260322_231956  sharpe=0.1243  trades=250
+20260323_131955  sharpe=-0.0257  trades=377
+20260323_132853  sharpe=-0.0852  trades=110
+20260323_134007  sharpe=0.4869  trades=5
+20260323_134552  sharpe=0.0680  trades=30
+20260323_135125  sharpe=0.2228  trades=158
+20260323_135628  sharpe=0.1955  trades=118
+
+median_sharpe=0.0889
+positive_ratio=58.3%
+median_trades=250.0
+
+## bpc-short-60T
+20260317_183551  sharpe=1.1039  trades=46
+20260317_184615  sharpe=1.1039  trades=46
+20260317_185614  sharpe=1.1039  trades=46
+20260317_190859  sharpe=1.1039  trades=46
+20260317_192744  sharpe=0.2516  trades=50
+20260317_192921  sharpe=0.2516  trades=50
+20260317_193933  sharpe=0.1138  trades=1276
+20260317_194836  sharpe=0.2516  trades=50
+20260317_200101  sharpe=0.1138  trades=1276
+20260317_201451  sharpe=0.1138  trades=1276
+20260317_202541  sharpe=-0.0726  trades=200
+20260317_203641  sharpe=0.1138  trades=1276
+20260317_205124  sharpe=-0.0726  trades=200
+20260319_171428  sharpe=0.2516  trades=50
+20260321_035904  sharpe=-0.0226  trades=379
+20260321_114530  sharpe=-0.0234  trades=373
+20260321_192843  sharpe=-0.0226  trades=379
+20260322_024318  sharpe=-0.0234  trades=373
+
+median_sharpe=0.1138
+positive_ratio=66.7%
+median_trades=200.0
+
+## bpc-short-120T
+20260318_182419  sharpe=0.4865  trades=40
+20260318_182939  sharpe=0.3545  trades=583
+20260318_183603  sharpe=0.3545  trades=583
+20260318_184213  sharpe=0.3545  trades=583
+20260318_184806  sharpe=0.3545  trades=583
+20260318_185804  sharpe=0.1801  trades=73
+20260318_185945  sharpe=0.1801  trades=73
+20260318_190529  sharpe=0.0341  trades=20
+20260318_191124  sharpe=0.1801  trades=73
+20260318_191711  sharpe=0.0341  trades=20
+20260318_192236  sharpe=0.0890  trades=53
+20260318_192703  sharpe=0.0890  trades=53
+20260318_193221  sharpe=0.0890  trades=53
+20260318_193715  sharpe=0.0890  trades=53
+20260319_171448  sharpe=0.5774  trades=3
+20260321_020433  sharpe=-0.1198  trades=3687
+20260321_085047  sharpe=0.0248  trades=112
+20260321_154623  sharpe=0.4128  trades=32
+20260321_234421  sharpe=0.0895  trades=101
+
+20260322_221026  sharpe=0.1694  trades=54
+20260323_042645  sharpe=0.6780  trades=111
+
+median_sharpe=0.1801
+positive_ratio=94.7%
+median_trades=73.0
+
+## bpc-short-240
+
+20260321_022058  sharpe=0.1320  trades=1205
+20260321_082720  sharpe=0.1320  trades=1205
+20260321_144241  sharpe=0.1320  trades=1205
+20260321_202414  sharpe=0.1320  trades=1205
+20260322_020854  sharpe=0.1320  trades=1205
+
+median_sharpe=0.1320
+positive_ratio=100.0%
+median_trades=1205.0

@@ -188,8 +188,11 @@ def run_one_window(
 
 def aggregate_case(
     case_results: List[Dict[str, Any]],
-    min_trades_target: int,
-    trade_penalty: float,
+    target_trades_min: int,
+    target_trades_max: int,
+    trade_penalty_low: float,
+    trade_penalty_high: float,
+    stability_penalty: float,
 ) -> Dict[str, Any]:
     sharpes: List[float] = []
     trades: List[int] = []
@@ -212,20 +215,33 @@ def aggregate_case(
             "median_sharpe": float("-inf"),
             "positive_ratio": 0.0,
             "median_trades": 0.0,
+            "low_gap": 0.0,
+            "high_gap": 0.0,
+            "sharpe_std": 0.0,
             "score": float("-inf"),
         }
 
     median_sharpe = statistics.median(sharpes)
     positive_ratio = sum(1 for s in sharpes if s > 0) / len(sharpes)
     median_trades = float(statistics.median(trades))
-    trade_gap = max(0.0, float(min_trades_target) - median_trades)
-    score = median_sharpe - trade_penalty * trade_gap
+    low_gap = max(0.0, float(target_trades_min) - median_trades)
+    high_gap = max(0.0, median_trades - float(target_trades_max))
+    sharpe_std = statistics.pstdev(sharpes) if len(sharpes) > 1 else 0.0
+    score = (
+        median_sharpe
+        - trade_penalty_low * low_gap
+        - trade_penalty_high * high_gap
+        - stability_penalty * sharpe_std
+    )
 
     return {
         "ok_windows": ok_windows,
         "median_sharpe": median_sharpe,
         "positive_ratio": positive_ratio,
         "median_trades": median_trades,
+        "low_gap": low_gap,
+        "high_gap": high_gap,
+        "sharpe_std": sharpe_std,
         "score": score,
     }
 
@@ -262,7 +278,21 @@ def main() -> int:
     p.add_argument("--bpc-recovery-min-values", default="0.50,0.60")
     p.add_argument("--max-cases", type=int, default=0, help="0 means all")
     p.add_argument("--min-trades-target", type=int, default=60)
-    p.add_argument("--trade-penalty", type=float, default=0.002)
+    p.add_argument(
+        "--max-trades-target",
+        type=int,
+        default=0,
+        help="0 means auto derive from min-trades-target",
+    )
+    p.add_argument(
+        "--trade-penalty",
+        type=float,
+        default=0.002,
+        help="legacy alias for trade-penalty-low",
+    )
+    p.add_argument("--trade-penalty-low", type=float, default=None)
+    p.add_argument("--trade-penalty-high", type=float, default=0.001)
+    p.add_argument("--stability-penalty", type=float, default=0.0)
     p.add_argument("--skip-shap", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument(
@@ -426,8 +456,28 @@ def main() -> int:
     elif int(tcfg.get("max_cases", 0) or 0) > 0:
         cases = cases[: int(tcfg.get("max_cases", 0))]
 
-    min_trades_target = int(tcfg.get("min_trades_target", args.min_trades_target))
-    trade_penalty = float(tcfg.get("trade_penalty", args.trade_penalty))
+    target_trades_min = int(
+        tcfg.get(
+            "target_trades_min",
+            tcfg.get("min_trades_target", args.min_trades_target),
+        )
+    )
+    _default_max = (
+        int(args.max_trades_target)
+        if int(args.max_trades_target or 0) > 0
+        else int(target_trades_min * 4)
+    )
+    target_trades_max = int(tcfg.get("target_trades_max", _default_max))
+    _legacy_low = (
+        args.trade_penalty_low
+        if args.trade_penalty_low is not None
+        else args.trade_penalty
+    )
+    trade_penalty_low = float(
+        tcfg.get("trade_penalty_low", tcfg.get("trade_penalty", _legacy_low))
+    )
+    trade_penalty_high = float(tcfg.get("trade_penalty_high", args.trade_penalty_high))
+    stability_penalty = float(tcfg.get("stability_penalty", args.stability_penalty))
 
     print("=" * 90)
     print(
@@ -472,8 +522,11 @@ def main() -> int:
 
         agg = aggregate_case(
             per_window,
-            min_trades_target=min_trades_target,
-            trade_penalty=trade_penalty,
+            target_trades_min=target_trades_min,
+            target_trades_max=target_trades_max,
+            trade_penalty_low=trade_penalty_low,
+            trade_penalty_high=trade_penalty_high,
+            stability_penalty=stability_penalty,
         )
         row = {
             "case_id": idx,
@@ -499,7 +552,8 @@ def main() -> int:
         summary_rows.append(row)
         print(
             f"  => score={row['score']:+.4f}, median_sharpe={row['median_sharpe']:+.4f}, "
-            f"positive_ratio={row['positive_ratio']:.1%}, median_trades={row['median_trades']:.1f}"
+            f"positive_ratio={row['positive_ratio']:.1%}, median_trades={row['median_trades']:.1f}, "
+            f"low_gap={row['low_gap']:.1f}, high_gap={row['high_gap']:.1f}, sharpe_std={row['sharpe_std']:.4f}"
         )
 
     summary_rows.sort(key=lambda x: x["score"], reverse=True)
@@ -511,8 +565,11 @@ def main() -> int:
                 "strategy": args.strategy,
                 "config": str(cfg_path),
                 "end_dates": end_dates,
-                "min_trades_target": min_trades_target,
-                "trade_penalty": trade_penalty,
+                "target_trades_min": target_trades_min,
+                "target_trades_max": target_trades_max,
+                "trade_penalty_low": trade_penalty_low,
+                "trade_penalty_high": trade_penalty_high,
+                "stability_penalty": stability_penalty,
                 "rows": summary_rows,
                 "template": template,
             },
@@ -548,6 +605,9 @@ def main() -> int:
                 "median_sharpe",
                 "positive_ratio",
                 "median_trades",
+                "low_gap",
+                "high_gap",
+                "sharpe_std",
                 "ok_windows",
             ]
         )
@@ -575,6 +635,9 @@ def main() -> int:
                     r["median_sharpe"],
                     r["positive_ratio"],
                     r["median_trades"],
+                    r["low_gap"],
+                    r["high_gap"],
+                    r["sharpe_std"],
                     r["ok_windows"],
                 ]
             )

@@ -6,28 +6,29 @@ description: 'ME-Short entry filter: first-expansion timing only.
   '
 feature_pipeline:
   exclude_columns:
-  - atr
+    - atr
   requested_features:
-  - atr_f
-  - me_context_f
-  - cvd_divergence_v2_f
-  - cvd_change_features_f
-  - vpin_features_f
-  - vpin_scene_semantic_scores_f
-  - ofci_pct_f
-  - shd_pct_f
-  - volume_ratio_pct_f
-  - footprint_basic_f
-  - fp_imbalance_scene_semantic_scores_f
-  - trade_cluster_entropy_zscore_features_f
-  - trade_cluster_imbalance_zscore_features_f
-  - trade_cluster_net_runs_zscore_features_f
-  - trade_cluster_max_buy_run_zscore_features_f
-  - trade_cluster_max_sell_run_zscore_features_f
-  - funding_rate_features_f
-  - funding_scene_semantic_scores_f
-  - oi_features_f
-  - oi_scene_semantic_scores_f
-  - funding_oi_crowding_f
-  - bars_since_extreme_f
-  - wick_ratios_f
+    - market_cap_normalized_orderflow_f
+    - atr_f
+    - me_context_f
+    - cvd_divergence_v2_f
+    - cvd_change_features_f
+    - vpin_features_f
+    - vpin_scene_semantic_scores_f
+    - ofci_pct_f
+    - shd_pct_f
+    - volume_ratio_pct_f
+    - footprint_basic_f
+    - fp_imbalance_scene_semantic_scores_f
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f
+    - funding_rate_features_f
+    - funding_scene_semantic_scores_f
+    - oi_features_f
+    - oi_scene_semantic_scores_f
+    - funding_oi_crowding_f
+    - bars_since_extreme_f
+    - wick_ratios_f

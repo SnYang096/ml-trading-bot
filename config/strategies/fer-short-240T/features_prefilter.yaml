@@ -42,3 +42,4 @@ feature_pipeline:
     - wick_scene_semantic_scores_f
     # WPT 力竭场景语义（多尺度价格结构）
     - wpt_scene_semantic_scores_f
+    - market_cap_normalized_orderflow_f

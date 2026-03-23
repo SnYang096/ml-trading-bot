@@ -52,3 +52,4 @@ feature_pipeline:
     - wick_ratios_f
     # → bars_since_local_high/low (swing 距离, 值小=刚在极值处失败)
     - bars_since_extreme_f
+    - market_cap_normalized_orderflow_f

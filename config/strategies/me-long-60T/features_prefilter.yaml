@@ -6,9 +6,10 @@ description: 'ME Prefilter 特征: Energy × Acceleration × Participation 三�
   '
 feature_pipeline:
   requested_features:
-  - me_soft_phase_f
-  - me_accel_5k_split_f
-  - me_context_f
-  - me_failure_f
-  - dual_ignition_f
-  - oi_scene_semantic_scores_f
+    - market_cap_normalized_orderflow_f
+    - me_soft_phase_f
+    - me_accel_5k_split_f
+    - me_context_f
+    - me_failure_f
+    - dual_ignition_f
+    - oi_scene_semantic_scores_f

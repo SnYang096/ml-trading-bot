@@ -139,6 +139,7 @@ feature_pipeline:
     - session_features_f
     - bars_since_extreme_f
 
+    - market_cap_normalized_orderflow_f
   ensure_signal_column:
     name: signal
     default_value: 0
