@@ -1042,7 +1042,9 @@ class EventBacktester:
         data_path: Optional[str] = None,
         fee_rate: float = 0.0,
     ):
-        self.strategy_names = [s.lower().strip() for s in strategies]
+        # Keep original strategy casing (e.g. "bpc-short-120T"), because
+        # config paths are case-sensitive on Linux.
+        self.strategy_names = [s.strip() for s in strategies]
         self.live_root = live_root
         self.data_path = data_path  # 研究数据目录 (e.g. data/parquet_data)
         self.strategies_root = strategies_root or "config/strategies"

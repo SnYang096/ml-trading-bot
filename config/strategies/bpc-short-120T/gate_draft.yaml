@@ -1,5 +1,5 @@
 # BPC-SHORT-120T Gate Draft (auto-generated)
-# 来源: results/train_final_20260323_145344_rr_extreme/bpc-short-120T
+# 来源: results/train_final_20260324_221601_rr_extreme/bpc-short-120T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc-short-120T
@@ -16,71 +16,74 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_tail_shape
-  tag: HARD_EVT_TAIL_SHAPE
-  phase: hard_gate
-  priority: 10
-  reason: 统计验证规则 (lift=1.34)
-  when:
-    evt_tail_shape:
-      value_lt: 0.0556
-  then:
-    action: deny
-  comment: 'statistical(lift=1.34): evt_tail_shape < 0.05556'
-- id: gate_evt_es_99_evt_es_99
-  tag: HARD_EVT_ES_99_EVT_ES_99
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.26)
-  when:
-    all_of:
-    - evt_es_99:
-        value_gt: 0.7063
-    - evt_es_99:
-        value_lt: 0.7976
-  then:
-    action: deny
-  comment: 'statistical(lift=1.26): evt_es_99 > 0.7063 & evt_es_99 < 0.7976'
-- id: gate_vol_persistence_vol_persistence
-  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.22)
-  when:
-    all_of:
-    - vol_persistence:
-        value_gt: 0.0287
-    - vol_persistence:
-        value_lt: 0.0591
-  then:
-    action: deny
-  comment: 'statistical(lift=1.22): vol_persistence > 0.02869 & vol_persistence < 0.05907'
-- id: gate_evt_tail_shape_right_evt_tail_shape_right
-  tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
-  phase: hard_gate
-  priority: 13
-  reason: 统计验证规则 (lift=1.21)
-  when:
-    all_of:
-    - evt_tail_shape_right:
-        value_gt: 0.1746
-    - evt_tail_shape_right:
-        value_lt: 0.3214
-  then:
-    action: deny
-  comment: 'statistical(lift=1.21): evt_tail_shape_right > 0.1746 & evt_tail_shape_right < 0.3214'
 - id: gate_evt_var_99_right_evt_var_99_right
   tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
   phase: hard_gate
-  priority: 14
-  reason: 统计验证规则 (lift=1.09)
+  priority: 10
+  reason: 统计验证规则 (lift=1.22)
   when:
     all_of:
     - evt_var_99_right:
-        value_gt: 0.1389
+        value_gt: 0.0714
     - evt_var_99_right:
-        value_lt: 0.4127
+        value_lt: 0.2738
   then:
     action: deny
-  comment: 'statistical(lift=1.09): evt_var_99_right > 0.1389 & evt_var_99_right < 0.4127'
+  comment: 'statistical(lift=1.22): evt_var_99_right > 0.07143 & evt_var_99_right < 0.2738'
+- id: gate_vol_persistence_vol_persistence
+  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.24)
+  when:
+    all_of:
+    - vol_persistence:
+        value_gt: 0.0029
+    - vol_persistence:
+        value_lt: 0.0298
+  then:
+    action: deny
+  comment: 'statistical(lift=1.24): vol_persistence > 0.002915 & vol_persistence < 0.02979'
+- id: gate_evt_es_99_left_evt_es_99_left
+  tag: HARD_EVT_ES_99_LEFT_EVT_ES_99_LEFT
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.13)
+  when:
+    all_of:
+    - evt_es_99_left:
+        value_gt: 0.3492
+    - evt_es_99_left:
+        value_lt: 0.5079
+  then:
+    action: deny
+  comment: 'statistical(lift=1.13): evt_es_99_left > 0.3492 & evt_es_99_left < 0.5079'
+- id: gate_evt_es_99_right_evt_es_99_right
+  tag: HARD_EVT_ES_99_RIGHT_EVT_ES_99_RIGHT
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.20)
+  when:
+    all_of:
+    - evt_es_99_right:
+        value_gt: 0.0635
+    - evt_es_99_right:
+        value_lt: 0.1667
+  then:
+    action: deny
+  comment: 'statistical(lift=1.20): evt_es_99_right > 0.06349 & evt_es_99_right < 0.1667'
+- id: gate_fer_signed_efficiency_fer_signed_efficiency
+  tag: HARD_FER_SIGNED_EFFICIENCY_FER_SIGNED_EFFICIENCY
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.07)
+  when:
+    all_of:
+    - fer_signed_efficiency:
+        value_gt: 0.0
+    - fer_signed_efficiency:
+        value_lt: 0.0004
+  then:
+    action: deny
+  comment: 'statistical(lift=1.07): fer_signed_efficiency > 1.916e-09 & fer_signed_efficiency < 0.0004378'
 guardrails: []

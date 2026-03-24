@@ -1,51 +1,51 @@
 # ME-SHORT-120T Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
-# Date: 2026-03-20 03:12
-# Promoted: 5 filters (method=tail_bad_rate_ratio)
+# Date: 2026-03-24 21:21
+# Promoted: 5 filters (method=distribution_ks)
 # Significance: 统计验证 + robustness ≥ 0.5
 #
 # 职责: "现在该入场吗?" → 硬二值控制
 # 多个 filter 之间是 OR 关系
 
 filters:
-- id: ef_me_cvd_strength_high
+- id: ef_market_cap_usd_0.15
   enabled: true
-  description: 'normalized: me_cvd_strength >= 0.65'
+  description: 'auto: market_cap_usd <= 9396179120.0'
   conditions:
-  - feature: me_cvd_strength
-    operator: '>='
-    value: 0.65
-  notes: orderflow core strength (normalized [0,1])
-- id: ef_shd_pct_crowded
+  - feature: market_cap_usd
+    operator: <=
+    value: 9396179120.0
+  notes: method=distribution_ks, effect=+1.8164, ks=0.196, rob=1.00, pass=15.7%
+- id: ef_fp_poc_0.85
   enabled: true
-  description: 'pct: shd_pct <= 0.20'
+  description: 'auto: fp_poc >= 104610.023205'
+  conditions:
+  - feature: fp_poc
+    operator: '>='
+    value: 104610.023205
+  notes: method=distribution_ks, effect=+1.4830, ks=0.182, rob=1.00, pass=15.0%
+- id: ef_shd_pct_0.15
+  enabled: true
+  description: 'auto: shd_pct <= 0.105751'
   conditions:
   - feature: shd_pct
     operator: <=
-    value: 0.20
-  notes: strategy homogeneity stress percentile (bounded [0,1])
-- id: ef_ofci_pct_high
+    value: 0.105751
+  notes: method=distribution_ks, effect=+1.7903, ks=0.149, rob=1.00, pass=15.1%
+- id: ef_oi_usd_0.85
   enabled: true
-  description: 'pct: ofci_pct >= 0.70'
+  description: 'auto: oi_usd >= 8582401859.445239'
   conditions:
-  - feature: ofci_pct
+  - feature: oi_usd
     operator: '>='
-    value: 0.70
-  notes: order flow consensus percentile (bounded [0,1])
-- id: ef_vpin_zscore_20_high
+    value: 8582401859.445239
+  notes: method=distribution_ks, effect=+1.4357, ks=0.138, rob=1.00, pass=15.0%
+- id: ef_vpin_volatility_20_0.85
   enabled: true
-  description: 'normalized: vpin_zscore_20 >= 0.60'
+  description: 'auto: vpin_volatility_20 >= 0.076571'
   conditions:
-  - feature: vpin_zscore_20
+  - feature: vpin_volatility_20
     operator: '>='
-    value: 0.60
-  notes: VPIN stress zscore
-- id: ef_trade_cluster_net_runs_z20
-  enabled: true
-  description: 'normalized: trade_cluster_net_runs_zscore_20 >= 0.30'
-  conditions:
-  - feature: trade_cluster_net_runs_zscore_20
-    operator: '>='
-    value: 0.30
-  notes: trade clustering directional persistence zscore
+    value: 0.076571
+  notes: method=distribution_ks, effect=+1.0353, ks=0.130, rob=0.67, pass=15.0%
 combination_mode: or

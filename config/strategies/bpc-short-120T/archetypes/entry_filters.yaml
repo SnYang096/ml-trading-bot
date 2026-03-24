@@ -1,45 +1,51 @@
-# BPC Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
-# Date: 2026-03-06 00:04
-# Promoted: 1 filters (1 plateau + 0 snotio-only)
-# Baseline snotio: 5.9176, σ=12.577
-# Significance: z-test p<0.05 required for all tiers
+# BPC-SHORT-120T Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
+# Date: 2026-03-24 21:09
+# Promoted: 5 filters (method=mean_effect)
+# Significance: 统计验证 + robustness ≥ 0.5
 #
-# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 职责: "现在该入场吗?" → 硬二值控制
 # 多个 filter 之间是 OR 关系
-# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-- id: ef_shd_pct_crowded
+- id: ef_vpin_max20_0.2
   enabled: true
-  description: 'pct: shd_pct <= 0.20'
+  description: 'auto: vpin_max20 <= 0.345783'
+  conditions:
+  - feature: vpin_max20
+    operator: <=
+    value: 0.345783
+  notes: method=mean_effect, effect=+1.8681, rob=0.67, pass=20.1%
+- id: ef_shd_pct_0.15
+  enabled: true
+  description: 'auto: shd_pct <= 0.096475'
   conditions:
   - feature: shd_pct
     operator: <=
-    value: 0.20
-  notes: strategy homogeneity stress percentile (bounded [0,1])
-- id: ef_ofci_pct_high
+    value: 0.096475
+  notes: method=mean_effect, effect=+1.6798, rob=1.00, pass=15.2%
+- id: ef_vpin_ma20_0.15
   enabled: true
-  description: 'pct: ofci_pct >= 0.70'
+  description: 'auto: vpin_ma20 <= 0.243094'
   conditions:
-  - feature: ofci_pct
-    operator: '>='
-    value: 0.70
-  notes: order flow consensus percentile (bounded [0,1])
-- id: ef_volume_ratio_pct_high
+  - feature: vpin_ma20
+    operator: <=
+    value: 0.243094
+  notes: method=mean_effect, effect=+1.5808, rob=0.67, pass=15.0%
+- id: ef_oi_zscore_0.8
   enabled: true
-  description: 'pct: volume_ratio_pct >= 0.70'
+  description: 'auto: oi_zscore >= 1.345088'
   conditions:
-  - feature: volume_ratio_pct
+  - feature: oi_zscore
     operator: '>='
-    value: 0.70
-  notes: relative volume percentile (bounded [0,1])
-- id: ef_vpin_zscore_20_high
+    value: 1.345088
+  notes: method=mean_effect, effect=+1.5058, rob=1.00, pass=20.0%
+- id: ef_vpin_ma5_0.15
   enabled: true
-  description: 'normalized: vpin_zscore_20 >= 0.60'
+  description: 'auto: vpin_ma5 <= 0.227762'
   conditions:
-  - feature: vpin_zscore_20
-    operator: '>='
-    value: 0.60
-  notes: VPIN stress zscore
+  - feature: vpin_ma5
+    operator: <=
+    value: 0.227762
+  notes: method=mean_effect, effect=+1.4397, rob=0.67, pass=15.0%
 combination_mode: or

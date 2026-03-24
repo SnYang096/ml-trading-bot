@@ -1,51 +1,51 @@
-# FER-SHORT Entry Filter Archetype
+# FER-SHORT-120T Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
-# Date: 2026-03-15 20:49
-# Promoted: 5 filters (method=distribution_ks)
+# Date: 2026-03-24 21:15
+# Promoted: 5 filters (method=mean_effect)
 # Significance: 统计验证 + robustness ≥ 0.5
 #
 # 职责: "现在该入场吗?" → 硬二值控制
 # 多个 filter 之间是 OR 关系
 
 filters:
-- id: ef_shd_pct_0.2
+- id: ef_cvd_0.8
   enabled: true
-  description: 'auto: shd_pct <= 0.076809'
+  description: 'auto: cvd >= -13649775.37'
+  conditions:
+  - feature: cvd
+    operator: '>='
+    value: -13649775.37
+  notes: method=mean_effect, effect=+2.3284, rob=1.00, pass=20.0%
+- id: ef_cvd_divergence_score_pct_0.85
+  enabled: true
+  description: 'auto: cvd_divergence_score_pct >= 0.866419'
+  conditions:
+  - feature: cvd_divergence_score_pct
+    operator: '>='
+    value: 0.866419
+  notes: method=mean_effect, effect=+2.1192, rob=0.67, pass=15.3%
+- id: ef_shd_pct_0.15
+  enabled: true
+  description: 'auto: shd_pct <= 0.100186'
   conditions:
   - feature: shd_pct
     operator: <=
-    value: 0.076809
-  notes: method=distribution_ks, effect=+5.6829, ks=0.424, rob=0.67, pass=20.2%
-- id: ef_funding_oi_crowding_score_0.75
+    value: 0.100186
+  notes: method=mean_effect, effect=+2.0742, rob=1.00, pass=15.3%
+- id: ef_fp_max_imbalance_price_0.8
   enabled: true
-  description: 'auto: funding_oi_crowding_score >= 0.2573'
+  description: 'auto: fp_max_imbalance_price >= 4335.122433'
   conditions:
-  - feature: funding_oi_crowding_score
+  - feature: fp_max_imbalance_price
     operator: '>='
-    value: 0.2573
-  notes: method=distribution_ks, effect=+7.3946, ks=0.403, rob=0.67, pass=25.1%
-- id: ef_funding_absorption_score_0.7
+    value: 4335.122433
+  notes: method=mean_effect, effect=+1.9864, rob=0.67, pass=20.0%
+- id: ef_trade_cluster_imbalance_ratio_ma5_0.85
   enabled: true
-  description: 'auto: funding_absorption_score >= 0.178185'
+  description: 'auto: trade_cluster_imbalance_ratio_ma5 >= 0.008652'
   conditions:
-  - feature: funding_absorption_score
+  - feature: trade_cluster_imbalance_ratio_ma5
     operator: '>='
-    value: 0.178185
-  notes: method=distribution_ks, effect=+2.9876, ks=0.369, rob=0.67, pass=30.1%
-- id: ef_trade_cluster_net_runs_ma5_0.8
-  enabled: true
-  description: 'auto: trade_cluster_net_runs_ma5 >= 0.004'
-  conditions:
-  - feature: trade_cluster_net_runs_ma5
-    operator: '>='
-    value: 0.004
-  notes: method=distribution_ks, effect=+6.0782, ks=0.359, rob=1.00, pass=20.2%
-- id: ef_fp_delta_skew_0.8
-  enabled: true
-  description: 'auto: fp_delta_skew >= 0.393916'
-  conditions:
-  - feature: fp_delta_skew
-    operator: '>='
-    value: 0.393916
-  notes: method=distribution_ks, effect=+4.3870, ks=0.333, rob=0.67, pass=20.2%
+    value: 0.008652
+  notes: method=mean_effect, effect=+1.7077, rob=1.00, pass=15.2%
 combination_mode: or

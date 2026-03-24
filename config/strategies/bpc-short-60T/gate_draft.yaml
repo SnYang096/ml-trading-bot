@@ -1,5 +1,5 @@
 # BPC-SHORT-60T Gate Draft (auto-generated)
-# 来源: results/train_final_20260323_145318_rr_extreme/bpc-short-60T
+# 来源: results/train_final_20260324_004742_rr_extreme/bpc-short-60T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc-short-60T
@@ -16,65 +16,62 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_tail_shape
-  tag: HARD_EVT_TAIL_SHAPE
+- id: gate_fer_aggressor_absorption
+  tag: HARD_FER_AGGRESSOR_ABSORPTION
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.11)
+  reason: 统计验证规则 (lift=1.36)
   when:
-    evt_tail_shape:
-      value_gt: 0.8532
+    fer_aggressor_absorption:
+      value_lt: 0.255
   then:
     action: deny
-  comment: 'statistical(lift=1.11): evt_tail_shape > 0.8532'
+  comment: 'statistical(lift=1.36): fer_aggressor_absorption < 0.255'
+- id: gate_evt_tail_shape_left
+  tag: HARD_EVT_TAIL_SHAPE_LEFT
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.32)
+  when:
+    evt_tail_shape_left:
+      value_gt: 0.9087
+  then:
+    action: deny
+  comment: 'statistical(lift=1.32): evt_tail_shape_left > 0.9087'
 - id: gate_evt_es_99_right
   tag: HARD_EVT_ES_99_RIGHT
   phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.14)
+  priority: 12
+  reason: 统计验证规则 (lift=1.38)
   when:
     evt_es_99_right:
-      value_lt: 0.0635
+      value_lt: 0.0754
   then:
     action: deny
-  comment: 'statistical(lift=1.14): evt_es_99_right < 0.06349'
-- id: gate_evt_var_99_evt_var_99
-  tag: HARD_EVT_VAR_99_EVT_VAR_99
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.18)
-  when:
-    all_of:
-    - evt_var_99:
-        value_gt: 0.7421
-    - evt_var_99:
-        value_lt: 0.8333
-  then:
-    action: deny
-  comment: 'statistical(lift=1.18): evt_var_99 > 0.7421 & evt_var_99 < 0.8333'
-- id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
-  tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
+  comment: 'statistical(lift=1.38): evt_es_99_right < 0.0754'
+- id: gate_evt_var_99_right_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.20)
+  reason: 统计验证规则 (lift=1.26)
   when:
     all_of:
-    - vol_leverage_asymmetry:
-        value_gt: 0.0317
-    - vol_leverage_asymmetry:
-        value_lt: 0.0639
+    - evt_var_99_right:
+        value_gt: 0.131
+    - evt_var_99_right:
+        value_lt: 0.25
   then:
     action: deny
-  comment: 'statistical(lift=1.20): vol_leverage_asymmetry > 0.03165 & vol_leverage_asymmetry < 0.06392'
-- id: gate_evt_tail_shape_right
-  tag: HARD_EVT_TAIL_SHAPE_RIGHT
+  comment: 'statistical(lift=1.26): evt_var_99_right > 0.131 & evt_var_99_right < 0.25'
+- id: gate_fer_signed_efficiency
+  tag: HARD_FER_SIGNED_EFFICIENCY
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.11)
+  reason: 统计验证规则 (lift=1.09)
   when:
-    evt_tail_shape_right:
-      value_lt: 0.0437
+    fer_signed_efficiency:
+      value_lt: -0.0
   then:
     action: deny
-  comment: 'statistical(lift=1.11): evt_tail_shape_right < 0.04365'
+  comment: 'statistical(lift=1.09): fer_signed_efficiency < -1.134e-10'
 guardrails: []

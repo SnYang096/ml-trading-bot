@@ -136,6 +136,21 @@ def _extract_features_from_entry_filters(cfg: Dict[str, Any]) -> Set[str]:
     return features
 
 
+def _extract_features_from_prefilter(cfg: Dict[str, Any]) -> Set[str]:
+    """Extract feature columns referenced in prefilter.yaml rules."""
+    features: Set[str] = set()
+    rules = cfg.get("rules")
+    if not isinstance(rules, list):
+        return features
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        feat = rule.get("feature")
+        if feat:
+            features.add(str(feat))
+    return features
+
+
 def _extract_features_from_direction(cfg: Dict[str, Any]) -> Set[str]:
     """Extract feature columns referenced in direction.yaml direction_rules."""
     features: Set[str] = set()
@@ -158,7 +173,7 @@ def extract_features_from_archetypes(
     """
     从 archetypes 目录自动提取实盘所需的全部特征。
 
-    扫描 gate.yaml / evidence.yaml / entry_filters.yaml，
+    扫描 prefilter.yaml / gate.yaml / evidence.yaml / entry_filters.yaml，
     收集引用的特征列，映射为 feature nodes。
     FeatureComputer 自己会解析依赖，此处不做递归展开。
 
@@ -168,22 +183,27 @@ def extract_features_from_archetypes(
     d = Path(archetypes_dir)
     feature_columns: Set[str] = set()
 
-    # 1. Gate
+    # 1. Prefilter
+    prefilter_path = d / "prefilter.yaml"
+    if prefilter_path.exists():
+        feature_columns |= _extract_features_from_prefilter(_load_yaml(prefilter_path))
+
+    # 2. Gate
     gate_path = d / "gate.yaml"
     if gate_path.exists():
         feature_columns |= _extract_features_from_gate(_load_yaml(gate_path))
 
-    # 2. Evidence
+    # 3. Evidence
     evidence_path = d / "evidence.yaml"
     if evidence_path.exists():
         feature_columns |= _extract_features_from_evidence(_load_yaml(evidence_path))
 
-    # 3. Entry Filters (enabled only)
+    # 4. Entry Filters (enabled only)
     ef_path = d / "entry_filters.yaml"
     if ef_path.exists():
         feature_columns |= _extract_features_from_entry_filters(_load_yaml(ef_path))
 
-    # 4. Direction (方向特征 — 决定交易方向的核心特征)
+    # 5. Direction (方向特征 — 决定交易方向的核心特征)
     dir_path = d / "direction.yaml"
     if dir_path.exists():
         feature_columns |= _extract_features_from_direction(_load_yaml(dir_path))

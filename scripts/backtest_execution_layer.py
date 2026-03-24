@@ -46,6 +46,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import yaml
+
+# Ensure project root is importable before any `from src...` imports.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.time_series_model.core.constitution.add_position_rules import (
     resolve_add_position_max_times as _shared_resolve_add_position_max_times,
     resolve_add_position_size_multiplier as _shared_resolve_add_position_size_multiplier,
@@ -73,10 +79,6 @@ _ARCH_PALETTE = {
     "reversal": "#EC407A",  # Pink
 }
 _DEFAULT_ARCH_COLOR = "#00d4aa"  # Teal
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.feature_store import FeatureStore, FeatureStoreSpec
 from src.time_series_model.archetype import load_strategy_archetype

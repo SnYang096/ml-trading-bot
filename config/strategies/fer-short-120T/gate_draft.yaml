@@ -1,5 +1,5 @@
 # FER-SHORT-120T Gate Draft (auto-generated)
-# 来源: results/train_final_20260323_145232_rr_extreme/fer-short-120T
+# 来源: results/train_final_20260324_211439_rr_extreme/fer-short-120T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fer-short-120T
@@ -16,65 +16,68 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_atr_percentile
-  tag: HARD_ATR_PERCENTILE
+- id: gate_evt_es_99_right
+  tag: HARD_EVT_ES_99_RIGHT
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.42)
+  reason: 统计验证规则 (lift=1.10)
   when:
-    atr_percentile:
-      value_lt: 0.1759
+    evt_es_99_right:
+      value_lt: 0.7341
   then:
     action: deny
-  comment: 'statistical(lift=1.42): atr_percentile < 0.1759'
-- id: gate_evt_es_99
-  tag: HARD_EVT_ES_99
+  comment: 'statistical(lift=1.10): evt_es_99_right < 0.7341'
+- id: gate_evt_var_99_right_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.20)
+  reason: 统计验证规则 (lift=1.26)
   when:
-    evt_es_99:
-      value_gt: 0.7976
+    all_of:
+    - evt_var_99_right:
+        value_gt: 0.0714
+    - evt_var_99_right:
+        value_lt: 0.275
   then:
     action: deny
-  comment: 'statistical(lift=1.20): evt_es_99 > 0.7976'
+  comment: 'statistical(lift=1.26): evt_var_99_right > 0.07143 & evt_var_99_right < 0.275'
 - id: gate_evt_tail_shape
   tag: HARD_EVT_TAIL_SHAPE
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.28)
+  reason: 统计验证规则 (lift=1.13)
   when:
     evt_tail_shape:
-      value_lt: 0.0397
+      value_lt: 0.1786
   then:
     action: deny
-  comment: 'statistical(lift=1.28): evt_tail_shape < 0.03968'
-- id: gate_evt_scale_right_evt_scale_right
-  tag: HARD_EVT_SCALE_RIGHT_EVT_SCALE_RIGHT
+  comment: 'statistical(lift=1.13): evt_tail_shape < 0.1786'
+- id: gate_evt_var_99_evt_var_99
+  tag: HARD_EVT_VAR_99_EVT_VAR_99
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.12)
+  reason: 统计验证规则 (lift=1.08)
   when:
     all_of:
-    - evt_scale_right:
-        value_gt: 0.0913
-    - evt_scale_right:
-        value_lt: 0.2778
+    - evt_var_99:
+        value_gt: 0.1111
+    - evt_var_99:
+        value_lt: 0.5198
   then:
     action: deny
-  comment: 'statistical(lift=1.12): evt_scale_right > 0.09127 & evt_scale_right < 0.2778'
-- id: gate_fer_signed_efficiency_fer_signed_efficiency
-  tag: HARD_FER_SIGNED_EFFICIENCY_FER_SIGNED_EFFICIENCY
+  comment: 'statistical(lift=1.08): evt_var_99 > 0.1111 & evt_var_99 < 0.5198'
+- id: gate_vpin_volatility_20_vpin_volatility_20
+  tag: HARD_VPIN_VOLATILITY_20_VPIN_VOLATILITY_20
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.12)
+  reason: 统计验证规则 (lift=1.27)
   when:
     all_of:
-    - fer_signed_efficiency:
-        value_gt: 0.0
-    - fer_signed_efficiency:
-        value_lt: 0.0
+    - vpin_volatility_20:
+        value_gt: 0.0315
+    - vpin_volatility_20:
+        value_lt: 0.0379
   then:
     action: deny
-  comment: 'statistical(lift=1.12): fer_signed_efficiency > 0 & fer_signed_efficiency < 3.255e-06'
+  comment: 'statistical(lift=1.27): vpin_volatility_20 > 0.03146 & vpin_volatility_20 < 0.03793'
 guardrails: []

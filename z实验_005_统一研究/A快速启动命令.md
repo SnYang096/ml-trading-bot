@@ -206,6 +206,20 @@ mlbot pipeline delete --strategy me-long --status error --dry-run
 # 按状态批量删除
 mlbot pipeline delete --strategy me-long --status error
 
+# 预览：批量删除所有策略的 ERROR 实验
+for s in bpc fer me-long me-short; do
+  mlbot pipeline delete --strategy "$s" --status error --dry-run
+done
+
+# 执行：批量删除所有策略的 ERROR 实验
+for s in bpc fer me-long me-short; do
+  mlbot pipeline delete --strategy "$s" --status error
+done
+
+for s in $(ls results/research_history | rg '^(bpc|fer|me)-(long|short)-[0-9]+T$'); do
+  yes y | mlbot pipeline delete --strategy "$s" --status error
+done
+
 # 删除指定时间戳
 mlbot pipeline delete --strategy me-long --timestamp 20260310_120000
 
@@ -1142,6 +1156,24 @@ median_trades=250.0
 median_sharpe=0.1138
 positive_ratio=66.7%
 median_trades=200.0
+<!-- 没网格优化 -->
+20260319_171428  sharpe=0.2516  trades=50
+20260321_035904  sharpe=-0.0226  trades=379
+20260321_114530  sharpe=-0.0234  trades=373
+20260321_192843  sharpe=-0.0226  trades=379
+20260322_024318  sharpe=-0.0234  trades=373
+20260322_173249  sharpe=-0.4030  trades=83
+20260322_230744  sharpe=-0.3829  trades=75
+20260323_143221  sharpe=-0.1297  trades=512
+20260323_152546  sharpe=-0.1448  trades=301
+20260323_183146  sharpe=0.8657  trades=285
+20260323_214804  sharpe=0.2391  trades=293
+20260324_003217  sharpe=0.1592  trades=59
+20260324_004400  sharpe=-0.0306  trades=128
+
+median_sharpe=-0.0234
+positive_ratio=30.8%
+median_trades=293.0
 
 ## bpc-short-120T
 20260318_182419  sharpe=0.4865  trades=40
@@ -1171,6 +1203,30 @@ median_sharpe=0.1801
 positive_ratio=94.7%
 median_trades=73.0
 
+20260318_193221  sharpe=0.0890  trades=53
+20260318_193715  sharpe=0.0890  trades=53
+20260319_171448  sharpe=0.5774  trades=3
+20260321_020433  sharpe=-0.1198  trades=3687
+20260321_085047  sharpe=0.0248  trades=112
+20260321_154623  sharpe=0.4128  trades=32
+20260321_234421  sharpe=0.0895  trades=101
+20260322_120957  sharpe=0.0895  trades=101
+20260322_121536  sharpe=0.1694  trades=54
+20260322_122446  sharpe=0.2499  trades=1057
+20260322_172254  sharpe=0.0895  trades=101
+20260322_221026  sharpe=0.1694  trades=54
+20260323_042645  sharpe=0.6780  trades=111
+20260323_143232  sharpe=0.0184  trades=114
+20260323_145954  sharpe=0.0298  trades=157
+20260323_172817  sharpe=0.2941  trades=156
+20260323_204959  sharpe=0.2609  trades=94
+20260323_234000  sharpe=-0.2073  trades=29
+20260324_003828  sharpe=0.3122  trades=102
+
+median_sharpe=0.0895
+positive_ratio=89.5%
+median_trades=101.0
+
 ## bpc-short-240
 
 20260321_022058  sharpe=0.1320  trades=1205
@@ -1182,3 +1238,38 @@ median_trades=73.0
 median_sharpe=0.1320
 positive_ratio=100.0%
 median_trades=1205.0
+
+20260321_202414  sharpe=0.1320  trades=1205
+20260322_020854  sharpe=0.1320  trades=1205
+20260322_121013  sharpe=0.3066  trades=62
+20260322_121525  sharpe=0.1319  trades=47
+20260322_122400  sharpe=0.3066  trades=62
+20260322_123129  sharpe=0.1319  trades=47
+20260322_173111  sharpe=0.3066  trades=62
+20260322_212424  sharpe=0.1319  trades=47
+20260323_031818  sharpe=0.0854  trades=35
+20260323_143240  sharpe=0.1146  trades=490
+20260323_145438  sharpe=-0.0019  trades=74
+20260323_160424  sharpe=-0.0101  trades=478
+20260323_182810  sharpe=0.1631  trades=30
+20260323_204818  sharpe=0.0985  trades=254
+20260323_225332  sharpe=0.4085  trades=82
+
+median_sharpe=0.1319
+positive_ratio=86.7%
+median_trades=62.0
+
+## 跑生产配置
+
+```bash
+python scripts/auto_research_pipeline.py \
+  --config config/prod_train_pipeline_2h.yaml \
+  --all \
+  --end-date 2026-03-01 \
+  --disable-auto-locked-tuning
+
+python scripts/run_prod_repeats_and_gate.py \
+  --end-date 2026-03-01 \
+  --runs 3 \
+  --output-file results/prod_train_history/go_nogo_2h_2026-03-01.md
+```

@@ -1,5 +1,5 @@
 # FER-SHORT-240T Gate Draft (auto-generated)
-# 来源: results/train_final_20260323_145206_rr_extreme/fer-short-240T
+# 来源: results/train_final_20260323_233958_rr_extreme/fer-short-240T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fer-short-240T
@@ -16,62 +16,71 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_vol_leverage_asymmetry
-  tag: HARD_VOL_LEVERAGE_ASYMMETRY
+- id: gate_evt_scale_right_evt_scale_right
+  tag: HARD_EVT_SCALE_RIGHT_EVT_SCALE_RIGHT
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.32)
-  when:
-    vol_leverage_asymmetry:
-      value_lt: 0.0345
-  then:
-    action: deny
-  comment: 'statistical(lift=1.32): vol_leverage_asymmetry < 0.03446'
-- id: gate_fer_trapped_shorts_score
-  tag: HARD_FER_TRAPPED_SHORTS_SCORE
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.30)
-  when:
-    fer_trapped_shorts_score:
-      value_gt: 0.9373
-  then:
-    action: deny
-  comment: 'statistical(lift=1.30): fer_trapped_shorts_score > 0.9373'
-- id: gate_vol_clustering_strength
-  tag: HARD_VOL_CLUSTERING_STRENGTH
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.16)
-  when:
-    vol_clustering_strength:
-      value_gt: 0.216
-  then:
-    action: deny
-  comment: 'statistical(lift=1.16): vol_clustering_strength > 0.216'
-- id: gate_vol_persistence_vol_persistence
-  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
-  phase: hard_gate
-  priority: 13
-  reason: 统计验证规则 (lift=1.18)
+  reason: 统计验证规则 (lift=1.31)
   when:
     all_of:
-    - vol_persistence:
-        value_gt: 0.0269
-    - vol_persistence:
-        value_lt: 0.0648
+    - evt_scale_right:
+        value_gt: 0.5
+    - evt_scale_right:
+        value_lt: 0.6508
   then:
     action: deny
-  comment: 'statistical(lift=1.18): vol_persistence > 0.02692 & vol_persistence < 0.06478'
-- id: gate_cvd_change_5_normalized
-  tag: HARD_CVD_CHANGE_5_NORMALIZED
+  comment: 'statistical(lift=1.31): evt_scale_right > 0.5 & evt_scale_right < 0.6508'
+- id: gate_fer_signed_efficiency_pct
+  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.16)
+  when:
+    fer_signed_efficiency_pct:
+      value_lt: 0.025
+  then:
+    action: deny
+  comment: 'statistical(lift=1.16): fer_signed_efficiency_pct < 0.025'
+- id: gate_evt_scale_left_evt_scale_left
+  tag: HARD_EVT_SCALE_LEFT_EVT_SCALE_LEFT
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.22)
+  when:
+    all_of:
+    - evt_scale_left:
+        value_gt: 0.5119
+    - evt_scale_left:
+        value_lt: 0.7063
+  then:
+    action: deny
+  comment: 'statistical(lift=1.22): evt_scale_left > 0.5119 & evt_scale_left < 0.7063'
+- id: gate_evt_es_99_right_evt_es_99_right
+  tag: HARD_EVT_ES_99_RIGHT_EVT_ES_99_RIGHT
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.35)
+  when:
+    all_of:
+    - evt_es_99_right:
+        value_gt: 0.131
+    - evt_es_99_right:
+        value_lt: 0.2331
+  then:
+    action: deny
+  comment: 'statistical(lift=1.35): evt_es_99_right > 0.131 & evt_es_99_right < 0.2331'
+- id: gate_vp_lv_ratio_vp_lv_ratio
+  tag: HARD_VP_LV_RATIO_VP_LV_RATIO
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.11)
+  reason: 统计验证规则 (lift=1.30)
   when:
-    cvd_change_5_normalized:
-      value_lt: -0.0349
+    all_of:
+    - vp_lv_ratio:
+        value_gt: 0.1429
+    - vp_lv_ratio:
+        value_lt: 0.2
   then:
     action: deny
-  comment: 'statistical(lift=1.11): cvd_change_5_normalized < -0.03493'
+  comment: 'statistical(lift=1.30): vp_lv_ratio > 0.1429 & vp_lv_ratio < 0.2'
 guardrails: []

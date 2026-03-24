@@ -1,9 +1,9 @@
 last_evaluation:
-  timestamp: '2026-03-20'
+  timestamp: '2026-03-24'
   data_source: features_labeled.parquet
-  n_rows: 54228
+  n_rows: 53486
   baseline_bad_rate: 0.0
-  baseline_median_rr: -0.0202
+  baseline_median_rr: -0.0486
   positive_signals: []
   anti_signals: []
   absence_signals: []
@@ -20,7 +20,7 @@ rules:
   lock_reason: ME-Short语义：避免极端尾段过热后追空
 - feature: me_accel_5k_short
   operator: '>='
-  value: 0.10
+  value: 0.1
   locked: true
   lock_reason: ME-Short语义：要求中短周期加速度为负，确认下行动能推进
 - feature: me_cvd_alignment

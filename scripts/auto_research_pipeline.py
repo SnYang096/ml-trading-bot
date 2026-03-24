@@ -2348,6 +2348,27 @@ def _parse_pcm_stdout(output: str) -> Dict[str, Any]:
     return mapped
 
 
+def _load_pcm_enabled_strategies_from_constitution(
+    constitution_path: Path = PROJECT_ROOT / "config/constitution/constitution.yaml",
+) -> List[str]:
+    """Load PCM-enabled strategy allowlist from constitution.
+
+    Source of truth:
+      resource_allocation.enabled_archetypes
+    """
+    try:
+        if not constitution_path.exists():
+            return []
+        obj = yaml.safe_load(constitution_path.read_text(encoding="utf-8")) or {}
+        ra = obj.get("resource_allocation") or {}
+        enabled = ra.get("enabled_archetypes") or []
+        if not isinstance(enabled, list):
+            return []
+        return [str(x).strip() for x in enabled if str(x).strip()]
+    except Exception:
+        return []
+
+
 def _run_pcm_joint_backtest(
     results_summary: List[Dict[str, Any]],
     history_dir: Path,
@@ -2367,6 +2388,22 @@ def _run_pcm_joint_backtest(
     """
     # 收集已完成的策略
     strategy_names = [r["strategy"] for r in results_summary if r.get("evidence_dir")]
+
+    # Constitution-driven allowlist filter (single source of truth).
+    enabled_by_constitution = _load_pcm_enabled_strategies_from_constitution()
+    if enabled_by_constitution:
+        _enabled_set = set(enabled_by_constitution)
+        _before = list(strategy_names)
+        strategy_names = [s for s in strategy_names if s in _enabled_set]
+        _removed = [s for s in _before if s not in _enabled_set]
+        if _removed:
+            print(f"\n{'='*70}")
+            print("[Step 9.5] PCM 策略过滤 (Constitution enabled_archetypes)")
+            print(
+                f"   ✅ 保留: {', '.join(strategy_names) if strategy_names else '(none)'}"
+            )
+            print(f"   ⛔ 跳过: {', '.join(_removed)}")
+            print(f"{'='*70}")
 
     if len(strategy_names) < 2:
         if len(results_summary) >= 2:

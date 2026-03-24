@@ -156,12 +156,12 @@ slots:
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
   enabled_archetypes:
-    - bpc-long-240T
-    - bpc-short-240T
-    - me-long-60T
-    - me-short-60T
-    - fer-long-240T
-    - fer-short-240T
+    # PCM 联合事件回测策略白名单（默认只跑这些）
+    # 当前上线前 2H 集合：禁用 bpc-long-120T / me-long-120T
+    - bpc-short-120T
+    - fer-short-120T
+    - fer-long-120T
+    - me-short-120T
 
   per_strategy_limits:
     # ── BPC 方向拆分 (方案A: 共享全局slot互斥竞争) ──

@@ -54,6 +54,7 @@ feature_pipeline:
 
     # ========== SR 相关 ==========
     - sr_strength_max_f  # 输出包含 sr_strength_max 和 dist_to_nearest_sr
+    - sqs_hal_low_f      # 支撑位质量原值（事件回测/prefilter 规则兜底）
     - sqs_hal_low_pct_f  # 支撑位质量百分位（FER 结构过滤）
 
     # ========== 订单流 ==========
