@@ -3272,6 +3272,27 @@ def pipeline():
 @click.option("--live-root", default="live/highcap", help="1min bar 数据根目录")
 @click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
 @click.option(
+    "--stage",
+    type=click.Choice(
+        [
+            "full",
+            "prefilter",
+            "gate",
+            "entry_filter",
+            "execution_opt",
+            "event_backtest",
+            "pcm_joint",
+            "pcm_slot_grid",
+        ]
+    ),
+    default="full",
+    show_default=True,
+    help=(
+        "运行阶段: full/prefilter/gate/entry_filter/execution_opt/"
+        "event_backtest/pcm_joint/pcm_slot_grid"
+    ),
+)
+@click.option(
     "--event-backtest",
     is_flag=True,
     help="训练后运行事件回测 execution 优化 (sym-r grid search + 交易地图)",
@@ -3292,6 +3313,7 @@ def run(
     use_1min,
     live_root,
     config_path,
+    stage,
     event_backtest,
     event_sym_r,
 ):
@@ -3317,6 +3339,8 @@ def run(
         args.extend(["--live-root", live_root])
     if config_path:
         args.extend(["--config", config_path])
+    if stage != "full":
+        args.extend(["--stage", stage])
     if event_backtest:
         args.append("--event-backtest")
     if event_sym_r != "1.0:0.5:4.0":

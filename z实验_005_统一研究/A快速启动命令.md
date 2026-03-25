@@ -129,6 +129,7 @@ mlbot pipeline run --all
 - `--skip-shap`：跳过 SHAP 特征筛选（快速迭代调试用，正式研究不建议）
 - `--event-backtest`：训练完后自动跑事件回测 execution 优化（sym-r grid search）
 - `--event-sym-r 1.0:0.5:4.0`：execution 优化 sym-r 搜索范围（配合 `--event-backtest`）
+- `--stage`：分层运行（见下方 4.2.1）
 
 ### 4.2 单策略研究（调试）
 
@@ -153,6 +154,40 @@ mlbot pipeline run --strategy bpc-long --use-1min
 ```
 
 > 单策略模式下不运行 PCM 联合回测（无仲裁意义），ADOPT 决策仅基于单策略指标。
+
+### 4.2.1 Stage 分层运行（快速迭代）
+
+```bash
+# 默认：完整管线
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage full
+
+# 只跑单策略分层（会按层前置依赖执行并在该层停止）
+mlbot pipeline run --strategy fer-short-120T --config config/prod_train_pipeline_2h.yaml --stage prefilter
+mlbot pipeline run --strategy fer-short-120T --config config/prod_train_pipeline_2h.yaml --stage gate
+mlbot pipeline run --strategy fer-short-120T --config config/prod_train_pipeline_2h.yaml --stage entry_filter
+
+# 只跑 execution 参数网格（不跑事件回测）
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage execution_opt
+
+# 只跑事件回测（含 execution 优化 + 地图）
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage event_backtest
+
+# 只跑 PCM 联合回测
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm_joint
+
+# 只跑 PCM slot 网格
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm_slot_grid
+```
+
+可用 stage：
+- `full`
+- `prefilter`
+- `gate`
+- `entry_filter`
+- `execution_opt`
+- `event_backtest`
+- `pcm_joint`
+- `pcm_slot_grid`
 
 ### 4.3 输出产物
 
@@ -238,8 +273,13 @@ mlbot pipeline delete --strategy me-long --all
 
 ```bash
 # 对最新实验运行事件回测（无 execution 优化）
-mlbot pipeline event-backtest --strategy me-long
+mlbot pipeline event-backtest --strategy me-long-120T bpc-long-120T --start-date 2024-01-01 --end-date 2026-03-01
 
+python scripts/event_backtest.py \
+  --strategy me-short-120T,bpc-short-120T,me-long-120T,bpc-long-120T,fer-short-120T,fer-long-120T  \
+  --start-date 2024-01-01 \
+  --end-date 2026-03-01 \
+  --fast
 # 对指定实验运行（--hash 指定时间戳）
 mlbot pipeline event-backtest --strategy me-long --hash 20260313_234448
 
@@ -260,12 +300,48 @@ python scripts/backtest_execution_layer.py \
 
 # 在事件地图上叠加蓝圈对比向量回测
 python scripts/event_backtest.py \
-  --strategy me-short \
+  --strategy bpc-short-120T,fer-short-120T,fer-long-120T,me-short-120T \
   --start-date 2025-09-01 --end-date 2026-03-01 \
   --strategies-root results/research_history/me-short/20260313_234144/strategies \
   --trading-map /tmp/event_map_compare.html \
   --compare-trades /tmp/vector_trades_me-short.csv  
+
+  python scripts/event_backtest.py \
+  --strategy bpc-short-120T,fer-short-120T,fer-long-120T,me-short-120T \
+  --start-date 2025-12-01 \
+  --end-date 2026-03-01 \
+  --data-path data/parquet_data \
+  --strategies-root config/strategies \
+  --output results/prod_train_history/pcm_event_120T_latest.json \
+  --export results/prod_train_history/pcm_event_120T_latest_trades.csv \
+  --trading-map results/prod_train_history/event_map_compare.html
 ```
+
+### 6.1.1 Slot 网格回测（推荐，管线内置）
+
+> 不再手动改 `constitution.yaml`。  
+> 直接在 `config/prod_train_pipeline_2h.yaml` 配置 `pcm_slot_grid`（cases + 评分惩罚 + plateau），
+> `mlbot pipeline run --all` 会在 Step 9.5 后自动执行 Step 9.6 的 slot 网格 PCM 对比。
+
+```bash
+# 运行全策略（会自动执行 PCM Slot Grid）
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml
+
+# 仅运行 PCM Slot Grid（不重跑训练/筛选，最快）
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm_slot_grid
+```
+
+输出文件（在首个策略本次实验目录）：
+- `pcm_slot_grid_report.json`：各 case 指标 + 综合 score + 推荐 case
+- `pcm_slot_grid_report.md`：可读表格版（便于复盘）
+- `pcm_slot_grid_<case>.json`：每个 case 的 PCM 事件回测明细
+
+建议重点对比：
+- `sharpe_daily`
+- `total_r`
+- `max_drawdown_r`
+- `slot_full_rate`（=`reject_pcm_slot_full / total_signals_checked`）
+- `per_archetype.*.total_r`
 
 参数说明：
 - `--hash`：实验时间戳，不填则自动使用最新实验
@@ -556,7 +632,7 @@ mlbot pipeline run --strategy fer-short-240T
 4) 看每个窗口结果
 先快速看列表：
 
-python scripts/auto_research_pipeline.py --strategy fer-short --list
+python scripts/auto_research_pipeline.py --strategy fer-short-120T --list
 再做一次聚合（看中位数/稳定性）：
 
 ```bash

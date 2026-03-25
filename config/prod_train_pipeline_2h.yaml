@@ -12,7 +12,85 @@ training:
     - 42
   seed_selection: best_sharpe
 global_toggles:
-  locked_threshold_tuning_enabled: false
+  locked_threshold_tuning_enabled: true
+event_backtest:
+  enabled: true
+  promote: true
+  # execution 对称调优: initial_r=activation_r=trail_r
+  # bpc 趋势骑乘: 给更宽的止损/追踪空间; fer/me: 更紧止损
+  sym_r_default: "1.0:1:6.0"
+  sym_r_by_family:
+    bpc: "2.0:1:6.0"
+    fer: "1:1:4"
+    me: "1:1:4"
+  # execution 参数选择目标:
+  # - 默认仍用 Sharpe
+  # - 对 me 家族启用 risk_aware，惩罚近-1R密集触发与过大回撤
+  exec_objective_default: sharpe
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.0
+    min_trades_soft: 0
+    undertrade_penalty: 0.0
+  exec_objective_by_family:
+    me:
+      objective: risk_aware
+      near_stop_threshold_r: -0.9
+      near_stop_penalty: 0.45
+      max_dd_penalty: 0.02
+      min_trades_soft: 60
+      undertrade_penalty: 0.002
+pcm_slot_grid:
+  # 在 Step 9.5 PCM 联合回测后，自动做 slot 网格对比
+  enabled: true
+  # 平坦区定义：score >= best_score - plateau_delta
+  plateau_delta: 0.03
+  # 软约束：交易数过低会被扣分（防止只靠极少交易抬 Sharpe）
+  min_trades_soft: 80
+  penalties:
+    # 综合分数:
+    # score = sharpe - max_dd_penalty*max_drawdown_r
+    #               - slot_full_rate_penalty*slot_full_rate
+    #               - undertrade_penalty*undertrade_gap
+    max_dd_penalty: 0.02
+    slot_full_rate_penalty: 0.20
+    undertrade_penalty: 0.001
+  # 可按策略家族/方向自由扩展，不限 short-only
+  cases:
+    - name: baseline
+      slots:
+        slot_count: 4
+        risk_per_slot: 0.01
+      per_strategy_limits:
+        bpc-short:
+          max_slots: 1
+        fer-short:
+          max_slots: 1
+        me-short:
+          max_slots: 1
+    - name: short_2_1_2
+      slots:
+        slot_count: 5
+        risk_per_slot: 0.008
+      per_strategy_limits:
+        bpc-short:
+          max_slots: 2
+        fer-short:
+          max_slots: 1
+        me-short:
+          max_slots: 2
+    - name: short_2_2_2
+      slots:
+        slot_count: 6
+        risk_per_slot: 0.007
+      per_strategy_limits:
+        bpc-short:
+          max_slots: 2
+        fer-short:
+          max_slots: 2
+        me-short:
+          max_slots: 2
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a
@@ -83,12 +161,12 @@ strategies:
       sl_r: 4.0
       tp_r: 8.0
       timeout_bars: 500
-  bpc-long-240T:
-    config: config/strategies/bpc-long-240T
-    timeframe: 240T
+  bpc-long-120T:
+    config: config/strategies/bpc-long-120T
+    timeframe: 120T
     dates:
-      holdout_months: 12
-      validation_months: 4
+      holdout_months: 9
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -205,8 +283,8 @@ strategies:
       deploy:
         min_trades: 50
     simple_execution:
-      sl_r: 2.0
-      tp_r: 4.0
+      sl_r: 3.0
+      tp_r: 6.0
       timeout_bars: 120
   fer-long-120T:
     config: config/strategies/fer-long-120T
@@ -270,8 +348,8 @@ strategies:
       deploy:
         min_trades: 50
     simple_execution:
-      sl_r: 2.0
-      tp_r: 4.0
+      sl_r: 3.0
+      tp_r: 6.0
       timeout_bars: 120
   me-short-120T:
     config: config/strategies/me-short-120T
@@ -334,12 +412,12 @@ strategies:
     shap_override:
       stability_threshold: 0.5
       top_k: 25
-  me-long-240T:
-    config: config/strategies/me-long-240T
-    timeframe: 240T
+  me-long-120T:
+    config: config/strategies/me-long-120T
+    timeframe: 120T
     dates:
-      holdout_months: 12
-      validation_months: 4
+      holdout_months: 9
+      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -434,4 +512,4 @@ data_flow:
     execution: logs_gated.parquet
     backtest: logs_gated.parquet
 output:
-  history_dir: results/prod_train_history
+  history_dir: results/120T/prod_train_history
