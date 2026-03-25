@@ -3,30 +3,30 @@ execution_constraints:
   min_order_interval_minutes: 15
 holding:
   max_holding_bars: null
-  time_stop_bars: 72  # ME 负责吃扩散加速段, 默认 3 天内兑现
+  time_stop_bars: 72 # ME 负责吃扩散加速段, 默认 3 天内兑现
 optimization:
   enabled: true
   params:
     stop_loss.initial_r:
       range:
-      - 1.0
-      - 4.0
+        - 1.0
+        - 4.0
       step: 0.5
     stop_loss.trailing.activation_r:
       range:
-      - 0.5
-      - 5.0
+        - 0.5
+        - 5.0
       step: 0.5
     stop_loss.trailing.trail_r:
       range:
-      - 0.5
-      - 3.0
+        - 0.5
+        - 3.0
       step: 0.5
 stop_loss:
   initial_r: 2.0
   guardrails:
     min_stop_pct: 0.006
-    max_stop_pct: 0.020
+    max_stop_pct: 0.10
   trailing:
     activation_r: 1.5
     trail_r: 1.5

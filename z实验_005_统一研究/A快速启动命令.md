@@ -177,6 +177,20 @@ mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm
 
 # 只跑 PCM slot 网格
 mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm_slot_grid
+
+# 仅跑慢变量快照（训练到 entry_filter 停止，并生成 slow snapshot manifest）
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage slow_snapshot
+
+# 仅复盘某一个月快变量（事件回测 + 质量排序 + PCM）
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage fast_month --month 2025-07
+
+# 按月滚动模拟（从 holdout_start 到 end_date 自动逐月）
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage rolling_sim
+
+# rolling_sim 现支持跨月仓位续跑：
+# - 中间月份：月末保留未平仓并写出 end_state.json
+# - 下个月：自动加载上月 end_state.json
+# - 最后一个月：自动强平收口，便于汇总总收益
 ```
 
 可用 stage：
@@ -184,10 +198,23 @@ mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm
 - `prefilter`
 - `gate`
 - `entry_filter`
+- `slow_snapshot`
 - `execution_opt`
 - `event_backtest`
+- `fast_month`
+- `rolling_sim`
 - `pcm_joint`
 - `pcm_slot_grid`
+
+新增辅助命令：
+
+```bash
+# 查看某次 rolling_sim 的 side 状态摘要
+mlbot pipeline report-side-state --run-id 20260326_120001 --config config/prod_train_pipeline_2h.yaml
+
+# 查看某次 rolling_sim 在指定月份的质量分排名明细
+mlbot pipeline debug-quality --run-id 20260326_120001 --month 2025-07 --config config/prod_train_pipeline_2h.yaml
+```
 
 ### 4.3 输出产物
 
@@ -368,6 +395,22 @@ python scripts/event_backtest.py \
   --start-date 2025-06-01 --end-date 2026-03-01 \
   --trading-map results/trading_map_me_bpc.html \
   --export results/event_trades.csv
+
+# 跨月续跑（示例：2025-07 结束状态 -> 2025-08 恢复）
+python scripts/event_backtest.py \
+  --strategy me-short-120T \
+  --start-date 2025-07-01 --end-date 2025-07-31 \
+  --output /tmp/event_2025_07.json \
+  --dump-end-state /tmp/end_state_2025_07.json \
+  --keep-open-positions
+
+python scripts/event_backtest.py \
+  --strategy me-short-120T \
+  --start-date 2025-08-01 --end-date 2025-08-31 \
+  --resume-state /tmp/end_state_2025_07.json \
+  --output /tmp/event_2025_08.json \
+  --dump-end-state /tmp/end_state_2025_08.json \
+  --keep-open-positions
 ```
 
 ### 6.3 Execution 参数 Grid Search（手动）

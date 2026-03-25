@@ -3,7 +3,7 @@ execution_constraints:
   min_order_interval_minutes: 15
 holding:
   max_holding_bars: null
-  time_stop_bars: 36  # 120T 版本进一步缩短持仓, 只保留熊市脉冲段
+  time_stop_bars: 36 # 120T 版本进一步缩短持仓, 只保留熊市脉冲段
 optimization:
   enabled: true
   # ── ME-Short "动能锁定" 模式 (做空版) ──
@@ -11,29 +11,30 @@ optimization:
   # Grid 与 me-long 完全一致 (方向由 direction.yaml 固定)
   # 推荐用法: --sym-r 1.0:0.5:4.0
   constraints:
-    max_sl_activation_ratio: 3.0   # initial_r / activation_r 上限
-    min_win_r: 0.0                 # activation_r - trail_r 下限
+    max_sl_activation_ratio: 3.0 # initial_r / activation_r 上限
+    min_win_r: 0.0 # activation_r - trail_r 下限
   params:
     stop_loss.initial_r:
       range:
-      - 1.0
-      - 4.0
+        - 1.0
+        - 4.0
       step: 0.5
     stop_loss.trailing.activation_r:
       range:
-      - 1.0
-      - 4.0
+        - 1.0
+        - 4.0
       step: 0.5
     stop_loss.trailing.trail_r:
       range:
-      - 1.0
-      - 4.0
+        - 1.0
+        - 4.0
       step: 0.5
 stop_loss:
   initial_r: 2.5
   guardrails:
-    min_stop_pct: 0.008
-    max_stop_pct: 0.030
+    min_stop_pct: 0.01
+    # 放宽上限，尽量保留 ATR 原生止损；仅由 min_stop_pct 防止止损过短
+    max_stop_pct: 0.10
   trailing:
     activation_r: 2.0
     trail_r: 2.0

@@ -3,7 +3,7 @@ execution_constraints:
   min_order_interval_minutes: 15
 holding:
   max_holding_bars: null
-  time_stop_bars: 72  # ME 负责吃扩散加速段, 默认 3 天内兑现, 不与 BPC 抢长尾主仓
+  time_stop_bars: 72 # ME 负责吃扩散加速段, 默认 3 天内兑现, 不与 BPC 抢长尾主仓
 optimization:
   enabled: true
   # ── ME "动能锁定" 模式 ──
@@ -18,23 +18,23 @@ optimization:
   # 注意: 虽然 optimization.params 仍列出三个独立参数 (兼容标准 grid),
   #   但推荐使用 --sym-r 对称模式运行, 大幅减少 combo 数量
   constraints:
-    max_sl_activation_ratio: 3.0   # initial_r / activation_r 上限
-    min_win_r: 0.0                 # activation_r - trail_r 下限
+    max_sl_activation_ratio: 3.0 # initial_r / activation_r 上限
+    min_win_r: 0.0 # activation_r - trail_r 下限
   params:
     stop_loss.initial_r:
       range:
-      - 1.0
-      - 4.0
+        - 1.0
+        - 4.0
       step: 0.5
     stop_loss.trailing.activation_r:
       range:
-      - 1.0
-      - 4.0
+        - 1.0
+        - 4.0
       step: 0.5
     stop_loss.trailing.trail_r:
       range:
-      - 1.0
-      - 4.0
+        - 1.0
+        - 4.0
       step: 0.5
 # ── 当前最优参数 (待重跑 grid search 后更新) ──
 # 注意: 旧值 initial_r=3.0/activation_r=0.5 是退化组合 (ratio=6, random WR=86%)
@@ -42,7 +42,7 @@ stop_loss:
   initial_r: 2.0
   guardrails:
     min_stop_pct: 0.006
-    max_stop_pct: 0.020
+    max_stop_pct: 0.10
   trailing:
     activation_r: 1.5
     trail_r: 1.5

@@ -28,7 +28,6 @@ universe_sets:
         # - ATOM
         # - UNI
 
-
       # alt:
       #   - XMR
       #   - AVAX
@@ -83,5 +82,3 @@ universe_sets:
         - PONKE
         - TURBO
         - NEIRO
-
-

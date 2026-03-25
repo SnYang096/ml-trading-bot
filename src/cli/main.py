@@ -3279,8 +3279,11 @@ def pipeline():
             "prefilter",
             "gate",
             "entry_filter",
+            "slow_snapshot",
             "execution_opt",
             "event_backtest",
+            "fast_month",
+            "rolling_sim",
             "pcm_joint",
             "pcm_slot_grid",
         ]
@@ -3288,10 +3291,11 @@ def pipeline():
     default="full",
     show_default=True,
     help=(
-        "运行阶段: full/prefilter/gate/entry_filter/execution_opt/"
-        "event_backtest/pcm_joint/pcm_slot_grid"
+        "运行阶段: full/prefilter/gate/entry_filter/slow_snapshot/"
+        "execution_opt/event_backtest/fast_month/rolling_sim/pcm_joint/pcm_slot_grid"
     ),
 )
+@click.option("--month", default=None, help="月份窗口 YYYY-MM (fast_month 必填)")
 @click.option(
     "--event-backtest",
     is_flag=True,
@@ -3314,6 +3318,7 @@ def run(
     live_root,
     config_path,
     stage,
+    month,
     event_backtest,
     event_sym_r,
 ):
@@ -3341,6 +3346,8 @@ def run(
         args.extend(["--config", config_path])
     if stage != "full":
         args.extend(["--stage", stage])
+    if month:
+        args.extend(["--month", month])
     if event_backtest:
         args.append("--event-backtest")
     if event_sym_r != "1.0:0.5:4.0":
@@ -3608,6 +3615,29 @@ def pipeline_event_backtest(
     click.echo(f"\n🗺️  交易地图: {map_path}")
     click.echo(f"📄 交易明细: {export_path}")
     sys.exit(rc)
+
+
+@pipeline.command("report-side-state")
+@click.option("--run-id", required=True, help="rolling_sim run id (timestamp)")
+@click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
+def pipeline_report_side_state(run_id, config_path):
+    """查看 rolling_sim side 状态摘要."""
+    args = ["--run-id", str(run_id)]
+    if config_path:
+        args.extend(["--config", config_path])
+    sys.exit(run_script("scripts/pipeline_report_side_state.py", args))
+
+
+@pipeline.command("debug-quality")
+@click.option("--run-id", required=True, help="rolling_sim run id (timestamp)")
+@click.option("--month", required=True, help="月份 YYYY-MM")
+@click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
+def pipeline_debug_quality(run_id, month, config_path):
+    """查看指定月份 quality ranking 明细."""
+    args = ["--run-id", str(run_id), "--month", str(month)]
+    if config_path:
+        args.extend(["--config", config_path])
+    sys.exit(run_script("scripts/pipeline_debug_quality.py", args))
 
 
 @experiment.command("regime-gate")

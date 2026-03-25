@@ -204,6 +204,8 @@ class ExecutionParamGenerator:
         sl_cfg = self.config.get("stop_loss", {})
         trail_cfg = sl_cfg.get("trailing", {})
         guardrails = sl_cfg.get("guardrails", {}) or {}
+        breakeven_cfg = sl_cfg.get("breakeven", {}) or {}
+        exec_constraints = self.config.get("execution_constraints", {}) or {}
 
         # take_profit: 必须检查 enabled 标志，读 target_r (与向量回测一致)
         tp_cfg = self.config.get("take_profit", {})
@@ -214,6 +216,14 @@ class ExecutionParamGenerator:
         # 注意: 不能用 `or 50`，因为 Python 中 0 or 50 = 50
         _raw_tsb = self.config.get("holding", {}).get("time_stop_bars")
         _tsb = int(_raw_tsb) if _raw_tsb is not None and int(_raw_tsb) > 0 else 0
+        # 加仓前需要利润锁定；默认对 allow_add_on 策略启用 breakeven lock。
+        breakeven_enabled = bool(
+            breakeven_cfg.get(
+                "enabled",
+                bool(exec_constraints.get("allow_add_on", False)),
+            )
+        )
+        breakeven_trigger_r = float(breakeven_cfg.get("trigger_r", 1.0))
 
         return {
             "tier_name": "global",
@@ -227,6 +237,8 @@ class ExecutionParamGenerator:
             "structural_exit": sl_cfg.get("structural_exit"),  # "ema200" / None
             "min_stop_pct": guardrails.get("min_stop_pct"),
             "max_stop_pct": guardrails.get("max_stop_pct"),
+            "breakeven_enabled": breakeven_enabled,
+            "breakeven_trigger_r": breakeven_trigger_r,
         }
 
 
@@ -526,6 +538,12 @@ class GenericLiveStrategy:
                     "structural_exit": exec_params.get("structural_exit"),
                     "min_stop_pct": exec_params.get("min_stop_pct"),
                     "max_stop_pct": exec_params.get("max_stop_pct"),
+                },
+                "bpc_position_config": {
+                    "activation_r": exec_params.get("activation_r", 1.0),
+                    "trail_r": exec_params.get("trail_r", 1.5),
+                    "breakeven_enabled": exec_params.get("breakeven_enabled", False),
+                    "breakeven_trigger_r": exec_params.get("breakeven_trigger_r", 1.0),
                 },
                 "strategy_specific": {
                     "direction_rule": rule_id,

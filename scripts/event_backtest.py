@@ -195,6 +195,8 @@ class PositionSimulator:
         self._structural_price: Optional[float] = None
         # order_management 集成 (由 EventBacktester 注入)
         self._om_bridge: Optional["OMBridge"] = None
+        self.max_observed_leverage: float = 0.0
+        self.max_observed_notional_frac: float = 0.0
 
     @property
     def has_positions(self) -> bool:
@@ -203,6 +205,38 @@ class PositionSimulator:
     @property
     def position_count(self) -> int:
         return len(self._positions)
+
+    def snapshot_open_positions(self) -> List[Dict[str, Any]]:
+        """导出当前未平仓状态 (用于跨月续跑)."""
+        rows: List[Dict[str, Any]] = []
+        for pid, pos in self._positions.items():
+            rows.append({"pid": str(pid), "position": _json_safe(pos)})
+        return rows
+
+    def restore_open_positions(self, rows: List[Dict[str, Any]]) -> int:
+        """恢复未平仓状态 (由 --resume-state 提供)."""
+        loaded = 0
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            raw_pos = row.get("position", {})
+            if not isinstance(raw_pos, dict):
+                continue
+            pos = dict(raw_pos)
+            entry_time = pos.get("entry_time")
+            if isinstance(entry_time, str):
+                try:
+                    pos["entry_time"] = pd.Timestamp(entry_time).to_pydatetime()
+                except Exception:
+                    pos["entry_time"] = datetime.now(timezone.utc)
+            elif not isinstance(entry_time, datetime):
+                pos["entry_time"] = datetime.now(timezone.utc)
+            if pos["entry_time"].tzinfo is None:
+                pos["entry_time"] = pos["entry_time"].replace(tzinfo=timezone.utc)
+            pid = str(row.get("pid") or str(uuid.uuid4())[:12])
+            self._positions[pid] = pos
+            loaded += 1
+        return loaded
 
     def open_position(
         self,
@@ -624,6 +658,17 @@ class PositionSimulator:
         ):
             return None
         add_mult = _resolve_add_position_size_multiplier(add_rules, next_add_no, signal)
+        parent_mult = float(parent_pos.get("_size_multiplier", 1.0) or 1.0)
+        projected_lev = float(_current_lev) + float(
+            signal.get("base_leverage_unit", 1.0)
+        ) * float(add_mult)
+        projected_notional = float(_current_notional_frac) + float(_risk_frac) * float(
+            parent_mult
+        ) * float(add_mult)
+        self.max_observed_leverage = max(self.max_observed_leverage, projected_lev)
+        self.max_observed_notional_frac = max(
+            self.max_observed_notional_frac, projected_notional
+        )
 
         # 4. 记录加仓 (更新 ConstitutionRuntimeState — 同实盘 record_add_position)
         executor.record_add_position(
@@ -650,7 +695,6 @@ class PositionSimulator:
         pos["_parent_pid"] = parent_pid
         pos["_add_position_seq"] = next_add_no
         # 加仓继承父仓的 regime scale，但风险预算按 add_size_multipliers 缩小
-        parent_mult = parent_pos.get("_size_multiplier", 1.0)
         pos["_size_multiplier"] = parent_mult * add_mult
         self._positions[pid] = pos
         return pid
@@ -773,6 +817,8 @@ class BacktestResult:
     equity_curve: Optional[List[float]] = None
     # 加仓模拟统计
     add_position_stats: Optional[Dict[str, Any]] = None
+    # 月末未平仓快照 (用于跨月续跑)
+    open_positions_end: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def n_trades(self) -> int:
@@ -908,6 +954,10 @@ class BacktestResult:
                 print(f"    加仓 Mean R: {ap.get('add_mean_r', 0):.4f}")
                 print(f"    加仓 Win%: {ap.get('add_win_rate', 0):.1%}")
                 print(f"    加仓平均倍率: {ap.get('add_mean_size', 0):.2f}x")
+                print(f"    观测最大杠杆: {ap.get('max_observed_leverage', 0):.2f}x")
+
+        if self.open_positions_end:
+            print(f"\n  ♻️  月末未平仓: {len(self.open_positions_end)}")
 
         print("=" * 72)
 
@@ -960,6 +1010,19 @@ def row_to_features(row: pd.Series) -> Dict[str, float]:
         except (ValueError, TypeError):
             continue
     return features
+
+
+def _json_safe(value: Any) -> Any:
+    """递归转换为 JSON-safe 值."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 def _load_strategy_timeframes() -> Dict[str, str]:
@@ -1189,6 +1252,8 @@ class EventBacktester:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         fast_mode: bool = False,
+        resume_state: Optional[Dict[str, Any]] = None,
+        force_close_end: bool = True,
     ) -> BacktestResult:
         """
         运行事件驱动回测 — 多策略 + 多 timeframe + 跨 symbol 时间线交叉处理
@@ -1429,6 +1494,33 @@ class EventBacktester:
             if self._om_bridge:
                 sim._om_bridge = self._om_bridge
             self._simulators[sym] = sim
+
+        # 可选: 加载跨月续跑状态
+        if resume_state:
+            resume_symbols = resume_state.get("symbols", {}) or {}
+            loaded_total = 0
+            for sym, sym_obj in resume_symbols.items():
+                sim = self._simulators.get(str(sym))
+                if sim is None or not isinstance(sym_obj, dict):
+                    continue
+                rows = sym_obj.get("open_positions", []) or []
+                loaded = sim.restore_open_positions(rows)
+                loaded_total += loaded
+                if loaded > 0 and hasattr(self.pcm, "_record_slot"):
+                    for row in rows:
+                        pos = (row or {}).get("position", {}) or {}
+                        if bool(pos.get("_is_add_position", False)):
+                            continue
+                        arch = str(pos.get("archetype", "") or "").strip()
+                        if not arch:
+                            continue
+                        ev = float(pos.get("evidence_score", 0.5) or 0.5)
+                        try:
+                            self.pcm._record_slot(str(sym), arch, ev)
+                        except Exception:
+                            pass
+            if loaded_total > 0:
+                logger.info("Resumed open positions: %d", loaded_total)
 
         logger.info(f"\n{'='*60}")
         logger.info(
@@ -1850,19 +1942,36 @@ class EventBacktester:
 
             # 关闭残留持仓
             if simulator.has_positions:
-                # 从任一可用 timeframe 取最后收盘价
-                last_close = 0.0
-                last_time = datetime.now(timezone.utc)
-                tf_features = data["tf_features"]
-                for tf in sorted(tf_features.keys(), reverse=True):
-                    tdf = tf_features[tf]
-                    if not tdf.empty:
-                        last_close = float(tdf.iloc[-1].get("close", 0))
-                        last_time = tdf.index[-1].to_pydatetime()
-                        break
-                if last_time.tzinfo is None:
-                    last_time = last_time.replace(tzinfo=timezone.utc)
-                simulator.force_close_all(last_close, last_time)
+                if force_close_end:
+                    # 从任一可用 timeframe 取最后收盘价
+                    last_close = 0.0
+                    last_time = datetime.now(timezone.utc)
+                    tf_features = data["tf_features"]
+                    for tf in sorted(tf_features.keys(), reverse=True):
+                        tdf = tf_features[tf]
+                        if not tdf.empty:
+                            last_close = float(tdf.iloc[-1].get("close", 0))
+                            last_time = tdf.index[-1].to_pydatetime()
+                            break
+                    if last_time.tzinfo is None:
+                        last_time = last_time.replace(tzinfo=timezone.utc)
+                    simulator.force_close_all(last_close, last_time)
+                else:
+                    logger.info(
+                        "%s: keep %d open positions for next run",
+                        sym,
+                        simulator.position_count,
+                    )
+
+            if simulator.has_positions:
+                for row in simulator.snapshot_open_positions():
+                    result.open_positions_end.append(
+                        {
+                            "symbol": sym,
+                            "pid": row.get("pid"),
+                            "position": row.get("position", {}),
+                        }
+                    )
 
             sym_trades = simulator.closed_trades
             result.trades.extend(sym_trades)
@@ -1888,6 +1997,20 @@ class EventBacktester:
             add_trades = [t for t in result.trades if t.is_add_position]
             add_pnl = [t.pnl_r for t in add_trades]
             add_mult = [t.size_multiplier for t in add_trades]
+            max_observed_lev = max(
+                (
+                    float(sim.max_observed_leverage or 0.0)
+                    for sim in self._simulators.values()
+                ),
+                default=0.0,
+            )
+            max_observed_notional = max(
+                (
+                    float(sim.max_observed_notional_frac or 0.0)
+                    for sim in self._simulators.values()
+                ),
+                default=0.0,
+            )
             result.add_position_stats = {
                 "enabled": True,
                 "add_count": _add_pos_count,
@@ -1898,6 +2021,8 @@ class EventBacktester:
                 "add_win_rate": (
                     float(np.mean([p > 0 for p in add_pnl])) if add_pnl else 0.0
                 ),
+                "max_observed_leverage": float(max_observed_lev),
+                "max_observed_notional_frac": float(max_observed_notional),
             }
 
         return result
@@ -2311,6 +2436,22 @@ def main():
         default=False,
         help="快速模式: 用 60T bar OHLC 代替 1min bar 更新持仓 (快 ~60x, 止损精度略低)",
     )
+    parser.add_argument(
+        "--resume-state",
+        default=None,
+        help="可选: 从 JSON 恢复上期未平仓状态",
+    )
+    parser.add_argument(
+        "--dump-end-state",
+        default=None,
+        help="可选: 导出本期结束时未平仓状态 JSON",
+    )
+    parser.add_argument(
+        "--keep-open-positions",
+        action="store_true",
+        default=False,
+        help="不在回测结束时强平，保留未平仓用于下一期续跑",
+    )
     args = parser.parse_args()
 
     strategies = [s.strip() for s in args.strategy.split(",")]
@@ -2362,7 +2503,19 @@ def main():
         print(f"  订单落库: {args.db}")
     if args.trading_map:
         print(f"  交易地图: {args.trading_map}")
+    if args.resume_state:
+        print(f"  恢复状态: {args.resume_state}")
+    if args.dump_end_state:
+        print(f"  导出状态: {args.dump_end_state}")
     print("=" * 72)
+
+    resume_state_obj = None
+    if args.resume_state:
+        _rp = Path(args.resume_state)
+        if _rp.exists():
+            resume_state_obj = json.loads(_rp.read_text(encoding="utf-8"))
+        else:
+            logger.warning("resume state not found: %s", _rp)
 
     bt = EventBacktester(
         strategies=strategies,
@@ -2379,6 +2532,8 @@ def main():
         start_date=args.start_date,
         end_date=args.end_date,
         fast_mode=args.fast,
+        resume_state=resume_state_obj,
+        force_close_end=not bool(args.keep_open_positions),
     )
 
     result.print_report()
@@ -2388,6 +2543,35 @@ def main():
 
     if args.output:
         _save_json(result, args.output)
+
+    if args.dump_end_state:
+        state_obj = {
+            "strategy": ",".join(strategies),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "start_date": args.start_date,
+            "end_date": args.end_date,
+            "open_positions_count": len(result.open_positions_end),
+            "symbols": {},
+        }
+        by_symbol: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in result.open_positions_end:
+            sym = str(row.get("symbol", ""))
+            if not sym:
+                continue
+            by_symbol[sym].append(
+                {"pid": row.get("pid"), "position": row.get("position", {})}
+            )
+        for sym, rows in by_symbol.items():
+            state_obj["symbols"][sym] = {
+                "open_positions_count": len(rows),
+                "open_positions": rows,
+            }
+        _dst = Path(args.dump_end_state)
+        _dst.parent.mkdir(parents=True, exist_ok=True)
+        _dst.write_text(
+            json.dumps(state_obj, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"\n  ♻️ End state saved → {_dst}")
 
     if args.trading_map:
         # 根据策略 timeframe 选择 K 线频率
@@ -2483,6 +2667,8 @@ def _save_json(result: BacktestResult, path: str):
             }
             for sym, trades in result.per_symbol.items()
         },
+        "add_position_stats": result.add_position_stats or {},
+        "open_positions_end": result.open_positions_end,
         "trades": [_trade_to_dict(t) for t in result.trades],
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)

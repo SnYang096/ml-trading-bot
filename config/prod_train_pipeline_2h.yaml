@@ -13,6 +13,52 @@ training:
   seed_selection: best_sharpe
 global_toggles:
   locked_threshold_tuning_enabled: true
+strategy_scope:
+  # all | long | short
+  # 控制 --all 时参与训练/回测的策略方向范围
+  direction: all
+pipeline_mode: classic # classic | rolling_live_sim
+slow_loop:
+  cadence_months: 3
+  triggered_retrain:
+    enabled: true
+  freeze_outputs:
+    enabled: true
+    keep_latest: 3
+fast_loop:
+  step_months: 1
+  threshold_calibration:
+    enabled: true
+  symbol_threshold_calibration:
+    enabled: true
+  execution_opt:
+    enabled: true
+  pcm_eval:
+    enabled: true
+symbol_policy:
+  mode: hybrid_carry_forward # global_only | symbol_only | hybrid_carry_forward
+  carry_forward_ttl_months: 2
+  enable_threshold: 0.0
+  min_symbol_trades_soft: 10
+  carry_forward_hard_fail_rules:
+    min_sharpe_r: -0.25
+direction_stack:
+  mode: ema200 # ema200 | vwap_long_anchor | ensemble
+  ema_debounce_bars: 3
+  vwap_window_days: 20
+slot_allocation:
+  mode: quality_ranked
+  max_symbols_per_side: 2
+  reserve_slots_for_secondary_symbols: 1
+  slot_opportunity_penalty: 0.001
+  quality_score_weights:
+    history_edge: 0.55
+    now_strength: 0.45
+  quality_lookback_months: 3
+stitching:
+  enabled: true
+  metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]
+  export_trade_map_html: true
 event_backtest:
   enabled: true
   promote: true

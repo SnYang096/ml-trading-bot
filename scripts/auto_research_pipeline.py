@@ -53,6 +53,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+from calendar import monthrange
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -99,6 +100,103 @@ def resolve_symbols_from_config(cfg: dict) -> str:
     if "symbols" in cfg:
         return cfg["symbols"]
     raise KeyError("research_pipeline.yaml 必须包含 universe_group 或 symbols 配置")
+
+
+def _resolve_strategy_direction_scope(cfg: Dict[str, Any]) -> str:
+    """读取策略方向范围开关: all/long/short."""
+    raw = (cfg.get("strategy_scope", {}) or {}).get("direction", "all") or "all"
+    scope = str(raw).strip().lower()
+    if scope not in {"all", "long", "short"}:
+        print(f"⚠️  未知 strategy_scope.direction={raw}, 回退为 all")
+        return "all"
+    return scope
+
+
+def _filter_strategies_by_direction_scope(
+    strategies: List[str], scope: str
+) -> List[str]:
+    """按方向范围过滤策略名."""
+    if scope == "all":
+        return list(strategies)
+    if scope == "long":
+        return [s for s in strategies if "-long-" in s]
+    if scope == "short":
+        return [s for s in strategies if "-short-" in s]
+    return list(strategies)
+
+
+def _parse_month_token(month_token: str) -> Tuple[int, int]:
+    """Parse YYYY-MM month token."""
+    token = str(month_token or "").strip()
+    try:
+        dt = datetime.strptime(token, "%Y-%m")
+        return dt.year, dt.month
+    except Exception as exc:
+        raise ValueError(f"非法月份格式: {month_token}, 期望 YYYY-MM") from exc
+
+
+def _month_token_to_range(month_token: str) -> Tuple[str, str]:
+    """Convert YYYY-MM to start/end date."""
+    y, m = _parse_month_token(month_token)
+    last_day = monthrange(y, m)[1]
+    return f"{y:04d}-{m:02d}-01", f"{y:04d}-{m:02d}-{last_day:02d}"
+
+
+def _iter_month_tokens(start_date: str, end_date: str) -> List[str]:
+    """List YYYY-MM tokens between [start_date, end_date]."""
+    s = datetime.strptime(start_date, "%Y-%m-%d")
+    e = datetime.strptime(end_date, "%Y-%m-%d")
+    cur_y, cur_m = s.year, s.month
+    out: List[str] = []
+    while (cur_y, cur_m) <= (e.year, e.month):
+        out.append(f"{cur_y:04d}-{cur_m:02d}")
+        if cur_m == 12:
+            cur_y += 1
+            cur_m = 1
+        else:
+            cur_m += 1
+    return out
+
+
+def _quality_score_from_event_metrics(
+    metrics: Dict[str, Any],
+    *,
+    history_w: float = 0.55,
+    now_w: float = 0.45,
+) -> Tuple[float, Dict[str, float]]:
+    """Compute V1 quality score and components for fast-month ranking."""
+    sharpe = float(metrics.get("sharpe_r", 0.0) or 0.0)
+    mean_r = float(metrics.get("mean_r", 0.0) or 0.0)
+    n_trades = float(metrics.get("n_trades", 0.0) or 0.0)
+    near_stop_rate = float(metrics.get("near_stop_rate", 0.0) or 0.0)
+    dd = float(metrics.get("max_drawdown_r", 0.0) or 0.0)
+    trade_boost = min(1.0, n_trades / 40.0)
+    history_edge = (
+        0.70 * sharpe
+        + 0.20 * mean_r
+        + 0.10 * trade_boost
+        - 0.08 * near_stop_rate
+        - 0.04 * max(0.0, dd)
+    )
+    # Optional real-time strength channels (when provided by event metrics)
+    cvd_accel = float(metrics.get("cvd_accel_aligned", 0.0) or 0.0)
+    price_eff = float(metrics.get("price_efficiency_aligned", 0.0) or 0.0)
+    of_strength = float(metrics.get("orderflow_strength_aligned", 0.0) or 0.0)
+    eps = 1e-6
+    now_strength = float(cvd_accel * price_eff)
+    ratio_strength = (
+        float(price_eff / max(eps, abs(of_strength))) if of_strength != 0 else 0.0
+    )
+    # Blend two interpretations; defaults to 0 when channels absent.
+    now_strength = 0.7 * now_strength + 0.3 * ratio_strength
+    score = history_w * history_edge + now_w * now_strength
+    return float(score), {
+        "history_edge": float(history_edge),
+        "now_strength": float(now_strength),
+        "cvd_accel_aligned": float(cvd_accel),
+        "price_efficiency_aligned": float(price_eff),
+        "orderflow_strength_aligned": float(of_strength),
+    }
 
 
 # ====================================================================
@@ -2302,6 +2400,9 @@ def _run_event_backtest_step(
     max_dd_penalty: float = 0.0,
     min_trades_soft: int = 0,
     undertrade_penalty: float = 0.0,
+    resume_state_path: str = "",
+    dump_end_state_path: str = "",
+    keep_open_positions: bool = False,
 ) -> Dict[str, Any]:
     """Step E1: 事件回测 execution 参数优化 + 交易地图生成."""
     log = run_dir / "pipeline.log"
@@ -2354,6 +2455,7 @@ def _run_event_backtest_step(
     # Step E1b: 事件回测 + 交易地图
     map_path = str(results_dir / f"trading_map_{strategy}_event.html")
     export_path = str(results_dir / f"event_trades_{strategy}.csv")
+    event_json_path = str(results_dir / f"event_backtest_{strategy}.json")
     ev_cmd = [
         "python",
         "scripts/event_backtest.py",
@@ -2371,16 +2473,33 @@ def _run_event_backtest_step(
         map_path,
         "--export",
         export_path,
+        "--output",
+        event_json_path,
         "--fast",
     ]
+    if resume_state_path:
+        ev_cmd.extend(["--resume-state", resume_state_path])
+    if dump_end_state_path:
+        ev_cmd.extend(["--dump-end-state", dump_end_state_path])
+    if keep_open_positions:
+        ev_cmd.append("--keep-open-positions")
     rc_ev, ev_out = run_step("Event Backtest", ev_cmd, log, dry_run=dry_run)
 
     event_metrics = _parse_event_stdout(ev_out) if not dry_run else {}
+    if not dry_run:
+        event_metrics.update(_load_pcm_metrics_from_json(event_json_path))
     event_metrics["sym_r"] = sym_r
     event_metrics["objective"] = objective
     event_metrics["trading_map"] = map_path
+    event_metrics["json_path"] = event_json_path
     event_metrics["exec_opt_rc"] = rc_opt
-    return {"rc": rc_ev, "metrics": event_metrics, "map_path": map_path}
+    return {
+        "rc": rc_ev,
+        "metrics": event_metrics,
+        "map_path": map_path,
+        "json_path": event_json_path,
+        "end_state_path": dump_end_state_path,
+    }
 
 
 def _run_event_execution_opt_only(
@@ -2657,15 +2776,7 @@ def _run_pcm_slot_grid_backtest(
     )
     if not first_strat:
         return None
-    first_run_dir_name = next(
-        (
-            r.get("run_dir_name", timestamp)
-            for r in results_summary
-            if r["strategy"] == first_strat
-        ),
-        timestamp,
-    )
-    out_dir = history_dir / first_strat / first_run_dir_name
+    out_dir = history_dir / "_pcm_slot_grid" / timestamp
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'='*70}")
@@ -2876,6 +2987,10 @@ def _load_pcm_metrics_from_json(json_path: str) -> Dict[str, Any]:
             "mean_r": obj.get("mean_r"),
             "total_r": obj.get("total_r"),
             "max_drawdown_r": obj.get("max_drawdown_r"),
+            "add_position_stats": obj.get("add_position_stats", {}),
+            "open_positions_end_count": int(
+                len(obj.get("open_positions_end", []) or [])
+            ),
             "total_signals_checked": total_signals_checked,
             "reject_pcm_slot_full": reject_pcm_slot_full,
             "slot_full_rate": slot_full_rate,
@@ -2931,28 +3046,18 @@ def _run_pcm_joint_backtest(
             print(f"{'='*70}")
         return None
 
-    # PCM 输出路径 (保存到第一个策略的实验目录)
+    # PCM 输出路径 (统一写入独立目录，避免挂在某个策略目录下造成歧义)
     first_strat = strategy_names[0]
-    # 多 seed 模式下 run_dir_name 含 _s{seed} 后缀，必须用实际目录名
-    first_run_dir_name = next(
-        (
-            r.get("run_dir_name", timestamp)
-            for r in results_summary
-            if r["strategy"] == first_strat
-        ),
-        timestamp,
-    )
-    pcm_json_path = str(
-        history_dir / first_strat / first_run_dir_name / f"{output_stem}.json"
-    )
-    pcm_export_path = str(
-        history_dir / first_strat / first_run_dir_name / f"{output_stem}_trades.csv"
-    )
+    pcm_out_dir = history_dir / "_pcm_joint" / timestamp
+    pcm_json_path = str(pcm_out_dir / f"{output_stem}.json")
+    pcm_export_path = str(pcm_out_dir / f"{output_stem}_trades.csv")
+    pcm_map_path = str(pcm_out_dir / f"trading_map_{output_stem}.html")
 
     # 日志文件
-    pcm_log = history_dir / first_strat / first_run_dir_name / f"{output_stem}.log"
+    pcm_log = pcm_out_dir / f"{output_stem}.log"
     Path(pcm_json_path).parent.mkdir(parents=True, exist_ok=True)
     Path(pcm_export_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(pcm_map_path).parent.mkdir(parents=True, exist_ok=True)
     pcm_log.parent.mkdir(parents=True, exist_ok=True)
 
     # 事件回测: --strategy bpc,fer,me-long 多策略 PCM 仲裁
@@ -2985,6 +3090,8 @@ def _run_pcm_joint_backtest(
         pcm_json_path,
         "--export",
         pcm_export_path,
+        "--trading-map",
+        pcm_map_path,
     ]
     if strategies_root:
         cmd.extend(["--strategies-root", strategies_root])
@@ -3039,6 +3146,7 @@ def _run_pcm_joint_backtest(
             f"      → sharpe_daily={sharpe_daily:.2f}, conflict_rate={conflict_rate:.2%}"
         )
     print(f"   📄 回测结果: {pcm_json_path}")
+    print(f"   🗺️  交易地图: {pcm_map_path}")
 
     return {
         "pcm_decision": pcm_decision,
@@ -3056,7 +3164,9 @@ def _run_pcm_joint_backtest(
         "per_archetype": json_metrics.get("per_archetype", {}),
         "strategies": strategy_names,
         "strategies_count": len(strategy_names),
-        "trading_map": pcm_json_path,
+        "trading_map": pcm_map_path,
+        "trades_csv_path": pcm_export_path,
+        "log_path": str(pcm_log),
         "json_path": pcm_json_path,
     }
 
@@ -3159,6 +3269,219 @@ def _print_seed_diagnostics(
     print()
 
 
+def _run_fast_month_stage(
+    *,
+    cfg: Dict[str, Any],
+    strategies: List[str],
+    history_dir: Path,
+    timestamp: str,
+    month_token: str,
+    dry_run: bool,
+    use_1min: bool,
+    live_root: str,
+    data_path: str,
+    event_sym_r: str,
+    prev_side_state: Optional[Dict[str, Any]] = None,
+    prev_resume_state_paths: Optional[Dict[str, str]] = None,
+    keep_open_positions: bool = False,
+) -> Dict[str, Any]:
+    """Run one-month fast loop: per-strategy event backtest + PCM joint."""
+    month_start, month_end = _month_token_to_range(month_token)
+    run_root = history_dir / "_rolling_sim" / timestamp / f"fast_month_{month_token}"
+    run_root.mkdir(parents=True, exist_ok=True)
+    event_promote = False  # fast-month replay should not mutate configs
+
+    results_summary: List[Dict[str, Any]] = []
+    ranking_rows: List[Dict[str, Any]] = []
+    side_state: Dict[str, Any] = {}
+    end_state_paths: Dict[str, str] = {}
+    prev_side_state = prev_side_state or {}
+    prev_resume_state_paths = prev_resume_state_paths or {}
+    symbol_policy = cfg.get("symbol_policy", {}) or {}
+    enable_threshold = float(symbol_policy.get("enable_threshold", 0.0) or 0.0)
+    min_symbol_trades_soft = int(symbol_policy.get("min_symbol_trades_soft", 10) or 10)
+    hard_fail_min_sharpe = float(
+        (symbol_policy.get("carry_forward_hard_fail_rules", {}) or {}).get(
+            "min_sharpe_r", -0.25
+        )
+        or -0.25
+    )
+    slot_alloc = cfg.get("slot_allocation", {}) or {}
+    quality_w = slot_alloc.get("quality_score_weights", {}) or {}
+    hist_w = float(quality_w.get("history_edge", 0.55) or 0.55)
+    now_w = float(quality_w.get("now_strength", 0.45) or 0.45)
+    max_symbols_per_side = int(slot_alloc.get("max_symbols_per_side", 2) or 2)
+
+    print(f"\n{'='*70}")
+    print(f"🗓️  Fast Month Replay: {month_token} ({month_start} ~ {month_end})")
+    print(f"{'='*70}")
+
+    for strat in strategies:
+        if strat not in cfg.get("strategies", {}):
+            continue
+        strat_dir = run_root / strat
+        strat_dir.mkdir(parents=True, exist_ok=True)
+        obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)
+        sym_r = _resolve_event_sym_r_for_strategy(cfg, strat, event_sym_r)
+        print(f"\n   ▶️  {strat}: sym-r={sym_r}, objective={obj_cfg['objective']}")
+        resume_state_path = str(prev_resume_state_paths.get(strat, "") or "")
+        end_state_path = str(strat_dir / "end_state.json")
+        ev = _run_event_backtest_step(
+            strat,
+            str(strat_dir),
+            strat_dir,
+            holdout_start=month_start,
+            end_date=month_end,
+            strategies_root=str(PROJECT_ROOT / "config" / "strategies"),
+            data_path=data_path,
+            dry_run=dry_run,
+            sym_r=sym_r,
+            promote=event_promote,
+            objective=str(obj_cfg["objective"]),
+            near_stop_threshold_r=float(obj_cfg["near_stop_threshold_r"]),
+            near_stop_penalty=float(obj_cfg["near_stop_penalty"]),
+            max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
+            min_trades_soft=int(obj_cfg["min_trades_soft"]),
+            undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
+            resume_state_path=resume_state_path,
+            dump_end_state_path=end_state_path,
+            keep_open_positions=keep_open_positions,
+        )
+        end_state_paths[strat] = end_state_path
+        m = ev.get("metrics", {}) or {}
+        q, q_components = _quality_score_from_event_metrics(
+            m, history_w=hist_w, now_w=now_w
+        )
+        ranking_rows.append(
+            {
+                "strategy": strat,
+                "month": month_token,
+                "quality_score": float(q),
+                "quality_components": q_components,
+                "metrics": m,
+                "map_path": ev.get("map_path"),
+            }
+        )
+        side = (
+            "long"
+            if "-long-" in strat
+            else ("short" if "-short-" in strat else "unknown")
+        )
+        _sh = float(m.get("sharpe_r", 0.0) or 0.0)
+        _nt = int(m.get("n_trades", 0) or 0)
+        active = bool(_sh > enable_threshold and _nt >= min_symbol_trades_soft)
+        prev_state = (prev_side_state.get(strat, {}) or {}).get("state", "disabled")
+        hard_fail = _sh <= hard_fail_min_sharpe
+        can_carry = (
+            side == "long"
+            and prev_state in {"active", "carry_forward"}
+            and not hard_fail
+        )
+        state = "active" if active else ("carry_forward" if can_carry else "disabled")
+        side_state[strat] = {
+            "side": side,
+            "state": state,
+            "month": month_token,
+            "sharpe_r": _sh,
+            "n_trades": _nt,
+            "prev_state": prev_state,
+            "hard_fail": hard_fail,
+            "quality_score": float(q),
+        }
+
+        results_summary.append(
+            {
+                "strategy": strat,
+                "decision": "FAST_MONTH",
+                "evidence_dir": str(strat_dir),
+                "run_dir_name": str(run_root.name),
+                "exp_config_dir": str(PROJECT_ROOT / "config" / "strategies" / strat),
+            }
+        )
+
+    ranking_rows = sorted(
+        ranking_rows,
+        key=lambda r: (
+            -float(r.get("quality_score", 0.0) or 0.0),
+            float((r.get("metrics", {}) or {}).get("near_stop_rate", 1.0) or 1.0),
+            float((r.get("metrics", {}) or {}).get("max_drawdown_r", 1e9) or 1e9),
+            -int((r.get("metrics", {}) or {}).get("n_trades", 0) or 0),
+            str(r.get("strategy", "")),
+        ),
+    )
+
+    # Slot allocation: cap selected strategies per side by quality ranking.
+    side_selected: Dict[str, int] = {"long": 0, "short": 0}
+    selected_strategies: List[str] = []
+    for row in ranking_rows:
+        st = str(row.get("strategy", ""))
+        side = "long" if "-long-" in st else ("short" if "-short-" in st else "unknown")
+        if side not in {"long", "short"}:
+            continue
+        if side_selected[side] >= max_symbols_per_side:
+            row["selected_for_slot"] = False
+            continue
+        row["selected_for_slot"] = True
+        side_selected[side] += 1
+        selected_strategies.append(st)
+
+    quality_path = run_root / f"quality_ranking_{month_token}.json"
+    side_path = run_root / "symbol_side_state.json"
+    quality_path.write_text(
+        json.dumps(
+            {"month": month_token, "rankings": ranking_rows},
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    side_path.write_text(
+        json.dumps(
+            {"month": month_token, "states": side_state},
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    pcm_result = None
+    selected_results_summary = [
+        r
+        for r in results_summary
+        if str(r.get("strategy", "")) in set(selected_strategies)
+    ]
+    if len(selected_results_summary) >= 2:
+        pcm_result = _run_pcm_joint_backtest(
+            selected_results_summary,
+            history_dir,
+            timestamp,
+            dry_run=dry_run,
+            use_1min=use_1min,
+            live_root=live_root,
+            data_path=data_path,
+            holdout_start=month_start,
+            end_date=month_end,
+            output_stem=f"pcm_fast_month_{month_token}",
+            step_name=f"PCM Joint Event Backtest (fast_month {month_token})",
+        )
+
+    summary = {
+        "month": month_token,
+        "month_start": month_start,
+        "month_end": month_end,
+        "run_root": str(run_root),
+        "quality_ranking_path": str(quality_path),
+        "side_state_path": str(side_path),
+        "selected_strategies": selected_strategies,
+        "end_state_paths": end_state_paths,
+        "pcm": pcm_result or {},
+    }
+    (run_root / "fast_month_summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return summary
+
+
 # ====================================================================
 # Main
 # ====================================================================
@@ -3234,16 +3557,24 @@ def main():
             "prefilter",
             "gate",
             "entry_filter",
+            "slow_snapshot",
             "execution_opt",
             "event_backtest",
+            "fast_month",
+            "rolling_sim",
             "pcm_joint",
             "pcm_slot_grid",
         ],
         default="full",
         help=(
-            "运行阶段: full/prefilter/gate/entry_filter/execution_opt/"
-            "event_backtest/pcm_joint/pcm_slot_grid"
+            "运行阶段: full/prefilter/gate/entry_filter/slow_snapshot/"
+            "execution_opt/event_backtest/fast_month/rolling_sim/pcm_joint/pcm_slot_grid"
         ),
+    )
+    p.add_argument(
+        "--month",
+        default="",
+        help="月份窗口 (YYYY-MM), 供 --stage fast_month 使用",
     )
     args = p.parse_args()
 
@@ -3328,14 +3659,148 @@ def main():
         print("   Mode:        DRY RUN")
     print("=" * 70)
 
+    # ── 策略方向范围开关 ──
+    strategy_direction_scope = _resolve_strategy_direction_scope(cfg)
+
     # ── 确定策略列表 ──
     if args.all:
-        strategies = list(cfg["strategies"].keys())
+        strategies = _filter_strategies_by_direction_scope(
+            list(cfg["strategies"].keys()), strategy_direction_scope
+        )
     else:
         strategies = [args.strategy]
+    if args.all:
+        print(f"   StrategyScope: direction={strategy_direction_scope}")
+    if not strategies:
+        p.error(
+            f"当前 --all 在 strategy_scope.direction={strategy_direction_scope} 下无可运行策略"
+        )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_summary = []
+
+    if args.stage == "fast_month":
+        if not args.month:
+            p.error("--stage fast_month 需要 --month YYYY-MM")
+        try:
+            _summary = _run_fast_month_stage(
+                cfg=cfg,
+                strategies=strategies,
+                history_dir=history_dir,
+                timestamp=timestamp,
+                month_token=str(args.month),
+                dry_run=args.dry_run,
+                use_1min=args.use_1min,
+                live_root=args.live_root,
+                data_path=cfg["data_path"],
+                event_sym_r=args.event_sym_r,
+                prev_resume_state_paths={},
+                keep_open_positions=False,
+            )
+        except ValueError as exc:
+            p.error(str(exc))
+        print(f"\n{'='*70}")
+        print("📋 Stage 汇总")
+        print(f"{'='*70}")
+        print(
+            f"   Stage: fast_month | month={_summary.get('month')} "
+            f"range={_summary.get('month_start')}~{_summary.get('month_end')}"
+        )
+        print(f"   Output: {_summary.get('run_root')}")
+        print(f"   SideState: {_summary.get('side_state_path')}")
+        print(f"   Quality: {_summary.get('quality_ranking_path')}")
+        return
+
+    if args.stage == "rolling_sim":
+        month_tokens = _iter_month_tokens(_display_holdout_start, _display_end)
+        if not month_tokens:
+            p.error("rolling_sim 无可用月份窗口")
+        roll_root = history_dir / "_rolling_sim" / timestamp
+        roll_root.mkdir(parents=True, exist_ok=True)
+        ledger: List[Dict[str, Any]] = []
+        side_state_cursor: Dict[str, Any] = {}
+        resume_state_cursor: Dict[str, str] = {}
+        for mt in month_tokens:
+            _is_last_month = mt == month_tokens[-1]
+            _summary = _run_fast_month_stage(
+                cfg=cfg,
+                strategies=strategies,
+                history_dir=history_dir,
+                timestamp=timestamp,
+                month_token=mt,
+                dry_run=args.dry_run,
+                use_1min=args.use_1min,
+                live_root=args.live_root,
+                data_path=cfg["data_path"],
+                event_sym_r=args.event_sym_r,
+                prev_side_state=side_state_cursor,
+                prev_resume_state_paths=resume_state_cursor,
+                keep_open_positions=not _is_last_month,
+            )
+            ledger.append(_summary)
+            try:
+                side_obj = json.loads(
+                    Path(_summary.get("side_state_path", "")).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                side_state_cursor = dict(side_obj.get("states", {}) or {})
+            except Exception:
+                pass
+            resume_state_cursor = dict(_summary.get("end_state_paths", {}) or {})
+        ledger_path = roll_root / "monthly_ledger.jsonl"
+        with ledger_path.open("w", encoding="utf-8") as f:
+            for row in ledger:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        pcm_total_r = float(
+            sum(
+                float(((r.get("pcm") or {}).get("total_r", 0.0) or 0.0)) for r in ledger
+            )
+        )
+        pcm_trades = int(
+            sum(int(((r.get("pcm") or {}).get("total_trades", 0) or 0)) for r in ledger)
+        )
+        month_maps = [
+            str((r.get("pcm") or {}).get("trading_map", "") or "") for r in ledger
+        ]
+        stitch_map = roll_root / "trading_map_stitched.html"
+        stitch_lines = [
+            "<html><head><meta charset='utf-8'><title>Stitched Trading Maps</title></head><body>",
+            "<h2>Rolling Sim Trading Maps</h2>",
+            "<ul>",
+        ]
+        for r in ledger:
+            m = str(r.get("month", ""))
+            mp = str((r.get("pcm") or {}).get("trading_map", "") or "")
+            if mp:
+                stitch_lines.append(f"<li>{m}: <a href='{mp}'>{mp}</a></li>")
+        stitch_lines.extend(["</ul>", "</body></html>"])
+        stitch_map.write_text("\n".join(stitch_lines), encoding="utf-8")
+        stitched = {
+            "run_id": timestamp,
+            "months": [r.get("month") for r in ledger],
+            "count_months": len(ledger),
+            "ledger_path": str(ledger_path),
+            "stitched_total_r": pcm_total_r,
+            "stitched_total_trades": pcm_trades,
+            "stitched_map_index": str(stitch_map),
+            "month_pcm_maps": month_maps,
+        }
+        stitched_path = roll_root / "stitched_summary.json"
+        stitched_path.write_text(
+            json.dumps(stitched, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"\n{'='*70}")
+        print("📋 Stage 汇总")
+        print(f"{'='*70}")
+        print(
+            f"   Stage: rolling_sim | months={len(ledger)} "
+            f"({_display_holdout_start}~{_display_end})"
+        )
+        print(f"   Ledger: {ledger_path}")
+        print(f"   Summary: {stitched_path}")
+        print(f"   StitchedMap: {stitch_map}")
+        return
 
     # ── Stage: 仅跑 PCM slot 网格 ──
     if args.stage == "pcm_slot_grid":
@@ -3345,13 +3810,16 @@ def main():
         if not bool(slot_cfg.get("enabled", False)):
             p.error("配置未启用 pcm_slot_grid.enabled=true")
 
+        scoped_cfg_strategies = _filter_strategies_by_direction_scope(
+            list(cfg["strategies"].keys()), strategy_direction_scope
+        )
         enabled_by_constitution = _load_pcm_enabled_strategies_from_constitution()
         enabled_set = (
             set(enabled_by_constitution)
             if enabled_by_constitution
-            else set(cfg["strategies"].keys())
+            else set(scoped_cfg_strategies)
         )
-        pcm_strategies = [s for s in cfg["strategies"].keys() if s in enabled_set]
+        pcm_strategies = [s for s in scoped_cfg_strategies if s in enabled_set]
         if len(pcm_strategies) < 2:
             p.error("可用于 PCM 的策略数 < 2，无法执行 slot 网格")
 
@@ -3392,13 +3860,16 @@ def main():
     if args.stage == "pcm_joint":
         if not args.all:
             p.error("--stage pcm_joint 需要 --all (使用多策略 PCM 组合)")
+        scoped_cfg_strategies = _filter_strategies_by_direction_scope(
+            list(cfg["strategies"].keys()), strategy_direction_scope
+        )
         enabled_by_constitution = _load_pcm_enabled_strategies_from_constitution()
         enabled_set = (
             set(enabled_by_constitution)
             if enabled_by_constitution
-            else set(cfg["strategies"].keys())
+            else set(scoped_cfg_strategies)
         )
-        pcm_strategies = [s for s in cfg["strategies"].keys() if s in enabled_set]
+        pcm_strategies = [s for s in scoped_cfg_strategies if s in enabled_set]
         if len(pcm_strategies) < 2:
             p.error("可用于 PCM 的策略数 < 2，无法执行联合回测")
 
@@ -3434,7 +3905,13 @@ def main():
                 f"trades={pcm_result.get('total_trades')} total_r={pcm_result.get('total_r')}"
             )
             if pcm_result.get("json_path"):
-                print(f"   输出: {pcm_result.get('json_path')}")
+                print(f"   JSON: {pcm_result.get('json_path')}")
+            if pcm_result.get("trades_csv_path"):
+                print(f"   Trades CSV: {pcm_result.get('trades_csv_path')}")
+            if pcm_result.get("log_path"):
+                print(f"   Log: {pcm_result.get('log_path')}")
+            if pcm_result.get("trading_map"):
+                print(f"   Trading Map: {pcm_result.get('trading_map')}")
         return
 
     if args.stage in ("execution_opt", "event_backtest"):
@@ -3509,7 +3986,8 @@ def main():
                 )
         return
 
-    if args.stage in ("prefilter", "gate", "entry_filter"):
+    if args.stage in ("prefilter", "gate", "entry_filter", "slow_snapshot"):
+        _stage_label = "entry_filter" if args.stage == "slow_snapshot" else args.stage
         print(f"\n{'='*70}")
         print(f"🎯 Stage: {args.stage} (逐策略)")
         print(f"{'='*70}")
@@ -3545,15 +4023,33 @@ def main():
                 config_path=args.config,
                 locked_prefilter_override=args.locked_prefilter_override,
                 disable_auto_locked_tuning=args.disable_auto_locked_tuning,
-                stage_stop=args.stage,
+                stage_stop=_stage_label,
             )
             if "error" in result:
                 print(f"   ❌ {strategy}: {result['error']}")
             else:
                 print(
-                    f"   ✅ {strategy}: stage={result.get('stage', args.stage)} "
+                    f"   ✅ {strategy}: stage={result.get('stage', _stage_label)} "
                     f"run_dir={run_dir}"
                 )
+        if args.stage == "slow_snapshot":
+            snap_root = history_dir / "_rolling_sim" / timestamp
+            snap_root.mkdir(parents=True, exist_ok=True)
+            snap_path = snap_root / "slow_snapshot_manifest.json"
+            snap_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": timestamp,
+                        "stage": "slow_snapshot",
+                        "strategies": strategies,
+                        "created_at": datetime.now().isoformat(),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            print(f"   Snapshot Manifest: {snap_path}")
         return
 
     for strategy in strategies:

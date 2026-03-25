@@ -1,79 +1,224 @@
+# Constitution v1 (YAML-first)
+# This is a non-negotiable contract: the system must NEVER violate it.
+# It encodes the "freedom limits" and "survival + controlled escalation" philosophy.
+
 version: 1
-name: Constitution_v1
-created_at: '2026-01-12'
+name: "Constitution_v1"
+created_at: "2026-01-12"
+
+# -----------------------------------------------------------------------------
+# 1) Kill-switch (hard stops)
+# -----------------------------------------------------------------------------
 kill_switch:
   enabled: true
-  daily_loss_limit: 0.04
-  weekly_loss_limit: 0.08
-  monthly_loss_limit: 0.12
+  # Account-level loss limits (fraction of equity).
+  daily_loss_limit: 0.04 # -4% => stop new risk for the day
+  weekly_loss_limit: 0.08 # -8% => stop new risk for the week
+  monthly_loss_limit: 0.12 # -12% => stop new risk for the month
+  # Cooldown after a hard stop (minutes). Recovery requires cooldown + metrics OK.
   cooldown_minutes: 240
-  daily_reset_timezone: UTC
-  max_dd: 0.2
+  # Daily loss reset is evaluated in this timezone.
+  daily_reset_timezone: "UTC"
+
+  # Execution / data sanity caps (must match execution control checks when used)
+  # Note: Currently only max_dd is enforced at runtime; others are checked in offline evaluation
+  # See: src/time_series_model/core/constitution/constitution_executor.py:validate_drawdown() for max_dd
+  # See: src/time_series_model/rl/exec_control.py for turnover/cost checks (offline only)
+  max_dd: 0.20
+  # Max drawdown (peak-to-trough): 20% hard limit
+  # - Runtime check: YES (in enforce_before_order() safety gate)
+  # - Implementation: src/time_series_model/core/constitution/safety_runtime.py
+  # - Live usage: src/time_series_model/live/enforcement.py
   max_turnover_mean: 0.35
-  max_turnover_p95: 1.0
+  # Mean turnover per step: 35% (fraction of equity)
+  # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
+  # - Implementation: src/time_series_model/rl/exec_control.py:121-128
+  # - Usage: scripts/rl_exec_control_check.py, counterfactual evaluation
+  # - Definition: turnover = abs(target_exposure - prev_exposure) per step
+  # - Example: If prev_exposure=0.5 (50% long), target=0.8 (80% long), then turnover = |0.8-0.5| = 0.3 (30%)
+  # - Example: If prev_exposure=0.0 (flat), target=1.0 (100% long), then turnover = |1.0-0.0| = 1.0 (100%)
+  # - Why check: High turnover = excessive trading = high transaction costs = poor execution
+  # - Recommendation: Should add runtime check to prevent excessive position changes
+  max_turnover_p95: 1.00
+  # 95th percentile turnover: 100% (fraction of equity)
+  # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
+  # - Implementation: src/time_series_model/rl/exec_control.py:122-129
+  # - Definition: 95% of all steps have turnover <= 1.0 (100%)
+  # - Example: If 95% of steps have turnover <= 1.0, but 5% exceed it, this is a violation
+  # - Why check: Prevents extreme position swings that indicate unstable strategy
   max_cost_mean: 0.002
-  max_cost_p95: 0.01
+  # Mean cost per step: 0.2% (20 bps = 0.002)
+  # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
+  # - Implementation: src/time_series_model/rl/exec_control.py:123-130
+  # - Definition: cost = cost_per_turnover * turnover + slippage_bps * abs(target_exposure)
+  # - Example: If turnover=0.3, cost_per_turnover=0.0002, slippage=0.0001, target=0.8:
+  #            cost = 0.0002 * 0.3 + 0.0001 * 0.8 = 0.00006 + 0.00008 = 0.00014 (1.4 bps)
+  # - Why check: High mean cost = strategy is eating into profits with excessive trading
+  # - Recommendation: Should add runtime check to prevent cost accumulation
+  #
+  # Binance BTCUSDT Perpetual Contract Cost Calculation:
+  # 1. Trading Fee (per turnover):
+  #    - Maker: 0.02% (2 bps) - if you provide liquidity (limit orders)
+  #    - Taker: 0.04% (4 bps) - if you take liquidity (market orders)
+  #    - With BNB discount (25%): Maker 0.015%, Taker 0.03%
+  #    - cost_per_turnover = 0.0002 (2 bps) assumes mostly maker orders
+  #    - For taker-heavy: cost_per_turnover = 0.0004 (4 bps)
+  #
+  # 2. Funding Rate (per 8 hours, applied to exposure):
+  #    - Typically: -0.01% to 0.01% per 8h (-10 bps to +10 bps)
+  #    - For 4H timeframe (2 funding periods per step): ~0.0002 to 0.0002 (2-2 bps)
+  #    - If long: pay funding (cost); if short: receive funding (negative cost)
+  #    - slippage_bps can include funding: slippage_bps = 0.0001 (1 bps) for funding
+  #
+  # 3. Slippage (per exposure, depends on order size):
+  #    - Small orders (< 1 BTC): < 0.01% (1 bps) on BTCUSDT
+  #    - Medium orders (1-10 BTC): 0.01-0.05% (1-5 bps)
+  #    - Large orders (> 10 BTC): 0.05-0.2% (5-20 bps) or more
+  #    - slippage_bps = 0.0001 (1 bps) assumes small-medium orders
+  #
+  # Example for Binance BTCUSDT:
+  # - Scenario: Change from 0% to 50% long position (turnover = 0.5)
+  # - Trading fee (maker): 0.0002 * 0.5 = 0.0001 (1 bps)
+  # - Funding (long, 4H): 0.0001 * 0.5 = 0.00005 (0.5 bps)
+  # - Slippage (small order): 0.0001 * 0.5 = 0.00005 (0.5 bps)
+  # - Total cost: 0.0001 + 0.00005 + 0.00005 = 0.0002 (2 bps)
+  #
+  # - If using market orders (taker): 0.0004 * 0.5 = 0.0002 (2 bps) just for trading fee
+  # - Total cost (taker): 0.0002 + 0.00005 + 0.00005 = 0.0003 (3 bps)
+  max_cost_p95: 0.010
+  # 95th percentile cost: 1.0% (100 bps = 0.01)
+  # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
+  # - Implementation: src/time_series_model/rl/exec_control.py:124-131
+  # - Definition: 95% of all steps have cost <= 0.01 (100 bps)
+  # - Example: If 95% of steps have cost <= 0.01, but 5% exceed it, this is a violation
+  # - Why check: Prevents extreme cost spikes that indicate execution problems or excessive trading
+  #
+  # Binance BTCUSDT: When would cost exceed 1.0% (100 bps)?
+  # - Extreme turnover: 100% position flip with taker orders = 0.0004 * 1.0 = 0.0004 (4 bps)
+  # - High slippage: Large order (10+ BTC) with poor timing = 0.002 (20 bps) or more
+  # - Extreme funding: Rare but possible funding rate spikes = 0.01 (100 bps) per 8h
+  # - Combined: 4 bps (fee) + 20 bps (slippage) + 100 bps (funding) = 124 bps > 100 bps limit
+  # - This threshold catches execution problems, not normal trading
+
+  # Kill-switch policy: If true, ANY hard violation => global_pause (force NO_TRADE for new entries)
+  # - When enabled: Any violation (max_dd, daily_loss_limit, weekly_loss_limit, monthly_loss_limit,
+  #   data_bad, hard_violation) will trigger ConstitutionViolation exception
+  # - Effect: System enters global pause state, all new trades forced to NO_TRADE
+  # - Implementation: src/time_series_model/core/constitution/constitution_executor.py:586-591
+  # - Usage: Prevents system from continuing to trade when critical limits are breached
+  # - Recommendation: Keep enabled for production (safety first)
+  # - If false: Violations are logged but don't stop trading (dangerous, not recommended)
   kill_on_any_hard_violation: true
+
+# -----------------------------------------------------------------------------
+# 1.1) Safety state persistence (for restart-safe halts)
+# -----------------------------------------------------------------------------
 safety_state:
-  persist_to: data/db/order_management.db
+  persist_to: "data/db/order_management.db"
+
+# -----------------------------------------------------------------------------
+# 2) Slots (low freedom position structure)
+# -----------------------------------------------------------------------------
 slots:
   enabled: true
   slot_count: 4
+  # Risk budget per slot (fraction of equity). This is NOT "cash allocation".
+  # 每笔交易风险占 equity 的比例 (1% = 0.01)
+  # 用于反算仓位: risk_usd = equity × risk_per_slot
+  #              qty = risk_usd / (stop_loss_r × ATR)
   risk_per_slot: 0.01
+  # If not enough margin/slots, replacement policy decides what to close/replace.
   allow_replacement: true
+
+  # Evidence 仓位缩放 (由 discover_evidence_candidates.py 自动生成 evidence.yaml)
   evidence_min_score: 0.0
   evidence_position_scale: true
+
+  # Slot state tracking (for live / restart safety).
   slot_state_tracking:
-    persist_to: data/db/order_management.db
+    persist_to: "data/db/order_management.db"
+
+# -----------------------------------------------------------------------------
+# 3) Resource Allocation — 唯一权威源
+# -----------------------------------------------------------------------------
+# 所有硬约束数值的唯一定义位置。
+# PCM (pcm_regime.yaml) 在此约束内自由分配优先级和缩放。
+#
+# 权威层级:
+#   Layer 0: slots.slot_count = 全局绝对上限
+#   Layer 0: slots.risk_per_slot = 每 slot 最大风险 (宪法硬上限)
+#   Layer 1: per_strategy_limits = 每策略资源上限 (max_risk_per_trade ≤ risk_per_slot)
+#   Layer 2: pcm_regime.yaml 的仲裁策略在这些限制内运行
+#
+# 约束规则:
+#   per_strategy_limits.*.max_slots ≤ slots.slot_count
+#   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
+#   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
   enabled_archetypes:
-  - bpc-long-120T
-  - bpc-short-120T
-  - fer-long-120T
-  - fer-short-120T
-  - me-long-120T
-  - me-short-120T
+    # PCM 联合事件回测策略白名单（默认只跑这些）
+    # 当前上线前 2H 集合：禁用 bpc-long-120T / me-long-120T
+    # - bpc-long-120T
+    # - fer-long-120T
+    # - me-long-120T
+    - me-short-120T
+    - bpc-short-120T
+    - fer-short-120T
+
   per_strategy_limits:
+    # ── BPC 方向拆分 (方案A: 共享全局slot互斥竞争) ──
+    # bpc-long 和 bpc-short 各独立占 1 slot，全局 4 slots 防止同时过多开仓
     bpc-long:
-      max_slots: 1
-      max_risk_per_trade: 0.02
-      allow_add_position: true
-      max_add_times: 5
+      max_slots: 1 # BPC 方向拆分: long 侧最多 1 slot
+      max_risk_per_trade: 0.02 # 肥尾主仓: 首枪改为 2.00% 风险，5次加仓可以加到5倍杠杆
+      allow_add_position: true # BPC 趋势延续允许加仓
+      max_add_times: 5 # 宪法仅保留上限；触发与梯度下沉到 execution.yaml
     bpc-short:
-      max_slots: 1
-      max_risk_per_trade: 0.02
+      max_slots: 1 # BPC 方向拆分: short 侧最多 1 slot
+      max_risk_per_trade: 0.02 # 熊市尾部主仓: 首枪改为 2.00% 风险
       allow_add_position: true
       max_add_times: 5
+    # ── ME 方向拆分 ──
     me-long:
       max_slots: 1
-      max_risk_per_trade: 0.0035
-      allow_add_position: true
+      max_risk_per_trade: 0.0035 # 动量扩散只做加速段, 首枪更轻
+      allow_add_position: true # ME 动能扩张允许加仓
       max_add_times: 2
     me-short:
-      max_slots: 1
-      max_risk_per_trade: 0.003
-      allow_add_position: true
+      max_slots: 1 # ME-SHORT: 最多 1 slot (防止过度做空)
+      max_risk_per_trade: 0.0030 # 熊市短促脉冲, 保持战术仓位
+      allow_add_position: true # 双边各做 2 次顺势动量扩张加仓
       max_add_times: 2
+    # ── FER 方向拆分 ──
     fer-long:
       max_slots: 1
-      max_risk_per_trade: 0.0035
-      allow_add_position: false
+      max_risk_per_trade: 0.0035 # 反转单不承担尾部主仓职责
+      allow_add_position: false # FER 反转策略不加仓
     fer-short:
       max_slots: 1
       max_risk_per_trade: 0.0035
       allow_add_position: false
+    # ── LV (方向中性, 不拆分) ──
     lv:
-      max_slots: 0
-      max_risk_per_trade: 0.0025
-      allow_add_position: false
+      max_slots: 0 # LV 快进快出，最多 1 个
+      max_risk_per_trade: 0.0025 # LV 极端波动反噬快, 预算进一步下调到 0.25%
+      allow_add_position: false # LV 不加仓
+
+  # 加仓全局安全规则 (适用于所有 allow_add_position=true 的策略)
+  # "adding is allowed only by freed risk budget"
   add_position_rules:
-    max_add_times: 1
+    max_add_times: 1 # 全局 fallback；实际层数优先读各策略 add_position
+    # 加仓前必须已锁定利润 (breakeven stop 已触发)
+    # 确保加仓只用 "已释放" 的风险预算，不增加净风险敞口
     require_locked_profit: true
+    # 触发 breakeven lock 的最低浮盈 R 值
+    # current_r >= 1.0R 时自动将止损移至入场价，视为 "利润已锁定"
     lock_profit_breakeven_trigger_r: 1.0
     state_tracking:
-      persist_to: data/db/order_management.db
+      persist_to: "data/db/order_management.db"
+
   dynamic_slot_policy:
-    total_risk_cap: 0.1
+    total_risk_cap: 0.10
     bpc:
       enabled: true
       base_slots: 1
@@ -86,11 +231,12 @@ resource_allocation:
         max_drawdown: 0.05
         max_daily_loss: 0.02
         min_active_bpc_slots: 2
+
   intent_selection_policy:
-    archetype_priority:
-    - bpc
-    - me
-    - fer
+    archetype_priority: [bpc, me, fer]
+
+  # 同 symbol 同策略家族默认只允许主方向（由 BTC close vs ema_200 决定）
+  # FER 可作为反向例外（短促反转仓位）
   direction_policy:
     enabled: true
     mode: ema200_single_direction
@@ -99,8 +245,9 @@ resource_allocation:
     debounce_bars: 3
     default_side: both
     fer_reverse_allowed: true
-    reverse_exempt_families:
-    - fer
+    reverse_exempt_families: [fer]
+
+  # 名义敞口风控: soft/hard 分层 + winner priority
   notional_policy:
     enabled: true
     soft_max_total_notional_pct: 4.5
@@ -109,8 +256,7 @@ resource_allocation:
     max_family_notional_pct: 3.5
     winner_priority:
       enabled: true
-      allow_families:
-      - bpc
+      allow_families: [bpc]
       require_breakeven_locked: true
       require_min_current_r: 1.0
       block_new_slots_when_soft_cap_hit: true

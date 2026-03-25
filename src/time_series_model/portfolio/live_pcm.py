@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
@@ -1176,15 +1177,17 @@ class LivePCM:
                         continue
             _slot_key = f"{intent.symbol}:{intent.archetype}"
             if _slot_key in self._slot_evidence and not bool(intent.add_position):
-                # 同 symbol + 同 archetype 已有仓位时，禁止再开新 slot；
-                # 必须由下游 add_position 流程处理。
+                # 已有同 symbol+archetype 仓位：将意图标记为加仓，让下游走 try_add_position
+                # (此前直接 continue 会导致加仓链路完全不触发)
+                intent = replace(intent, add_position=True)
                 logger.info(
-                    "PCM: %s %s 已有持仓，拒绝新slot（仅允许 add_position）",
+                    "PCM: %s %s 已有持仓，转为 add_position 意图",
                     intent.symbol,
                     intent.archetype,
                 )
-                continue
-            if not self._slot_available(symbol, intent.archetype):
+            if not bool(intent.add_position) and not self._slot_available(
+                symbol, intent.archetype
+            ):
                 # 该策略 slot 满 → 直接拒绝
                 logger.info(
                     "PCM: %s %s slot 已满 (%d/%d)，拒绝",
@@ -1195,7 +1198,8 @@ class LivePCM:
                 )
                 continue
             ev = intent.confidence if intent.confidence is not None else 0.5
-            self._record_slot(symbol, intent.archetype, ev)
+            if not bool(intent.add_position):
+                self._record_slot(symbol, intent.archetype, ev)
             self._slot_notional_frac[_slot_key] = max(
                 0.0, float(self._slot_notional_frac.get(_slot_key, 0.0) or 0.0)
             ) + max(0.0, delta_notional)
