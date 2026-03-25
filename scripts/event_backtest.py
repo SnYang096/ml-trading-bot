@@ -913,6 +913,8 @@ class BacktestResult:
 
     def export_trades_csv(self, path: str):
         """导出交易明细 CSV"""
+        out_path = Path(path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         rows = []
         for t in self.trades:
             rows.append(
@@ -939,8 +941,8 @@ class BacktestResult:
                 }
             )
         df = pd.DataFrame(rows)
-        df.to_csv(path, index=False)
-        print(f"\n  📤 Trades exported: {len(df)} rows → {path}")
+        df.to_csv(out_path, index=False)
+        print(f"\n  📤 Trades exported: {len(df)} rows → {out_path}")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1753,21 +1755,38 @@ class EventBacktester:
             else:
                 # 诊断拒绝原因: 逐策略检查 _last_funnel 确定最深到达阶段
                 _had_signal = False
-                _deepest = "no_direction"  # 最浅
+                _deepest = "no_evaluable_signal"  # 最浅
                 for s_name, s_obj in self._strats.items():
                     lf = getattr(s_obj, "_last_funnel", {})
                     if not lf:
                         continue  # 未评估 (timeframe 不匹配 / 空特征)
+                    if lf.get("pcm_direction_filter") is False:
+                        if _deepest == "no_evaluable_signal":
+                            _deepest = "pcm_direction_filter"
+                        continue
+                    if lf.get("prefilter") is False:
+                        if _deepest in ("no_evaluable_signal", "pcm_direction_filter"):
+                            _deepest = "prefilter_deny"
+                        continue
                     if not lf.get("direction", False):
                         continue  # direction=0, 无信号
                     # direction != 0
                     if lf.get("gate") is False:
-                        if _deepest == "no_direction":
+                        if _deepest in (
+                            "no_evaluable_signal",
+                            "pcm_direction_filter",
+                            "prefilter_deny",
+                        ):
                             _deepest = "gate_deny"
                         continue
                     # gate passed (or no gate)
                     if lf.get("entry_filter") is False:
-                        if _deepest in ("no_direction", "gate_deny"):
+                        if _deepest in (
+                            "no_evaluable_signal",
+                            "pcm_direction_filter",
+                            "prefilter_deny",
+                            "gate_deny",
+                        ):
                             _deepest = "entry_filter_deny"
                         continue
                     # 全部通过 → 策略产生了信号, 被 slot 拦截
@@ -1775,6 +1794,10 @@ class EventBacktester:
                     break
                 if _had_signal:
                     funnel["reject_pcm_slot_full"] += 1
+                elif _deepest == "pcm_direction_filter":
+                    funnel["reject_pcm_direction_filter"] += 1
+                elif _deepest == "prefilter_deny":
+                    funnel["reject_prefilter_deny"] += 1
                 elif _deepest == "gate_deny":
                     funnel["reject_gate_deny"] += 1
                 elif _deepest == "entry_filter_deny":
@@ -1956,8 +1979,16 @@ def generate_trading_map_html(
     }
     bar_w = _FREQ_MS.get(bar_freq, 4 * 60 * 60 * 1000) * 0.6
 
+    def _arch_family(name: str) -> str:
+        s = str(name or "").lower().strip()
+        return s.split("-")[0] if s else ""
+
     def _strat_color(archetype: str) -> str:
-        return _STRAT_COLORS.get(str(archetype).lower(), _STRAT_COLOR_DEFAULT)
+        key = str(archetype).lower()
+        if key in _STRAT_COLORS:
+            return _STRAT_COLORS[key]
+        fam = _arch_family(key)
+        return _STRAT_COLORS.get(fam, _STRAT_COLOR_DEFAULT)
 
     # ── 所有出现的 archetype ──
     all_archetypes = sorted(set(t.archetype for t in result.trades if t.archetype))
@@ -2121,12 +2152,21 @@ def generate_trading_map_html(
         return p
 
     # ── 构建单个 Tab ──
-    def _build_tab(tab_label: str, strat_filter: "str | None") -> object:
-        tab_trades = [
-            t
-            for t in result.trades
-            if strat_filter is None or str(t.archetype).lower() == strat_filter
-        ]
+    def _build_tab(
+        tab_label: str,
+        strat_filter: "str | None",
+        *,
+        family_mode: bool = False,
+    ) -> object:
+        def _match_trade(t: ClosedTrade) -> bool:
+            if strat_filter is None:
+                return True
+            arch = str(t.archetype).lower()
+            if family_mode:
+                return _arch_family(arch) == str(strat_filter).lower()
+            return arch == str(strat_filter).lower()
+
+        tab_trades = [t for t in result.trades if _match_trade(t)]
         n = len(tab_trades)
         wr = sum(1 for t in tab_trades if t.pnl_r > 0) / n if n else 0
         total = sum(t.pnl_r for t in tab_trades)
@@ -2143,9 +2183,7 @@ def generate_trading_map_html(
         for sym in symbols:
             sym_trades = result.per_symbol.get(sym, [])
             if strat_filter is not None:
-                sym_trades = [
-                    t for t in sym_trades if str(t.archetype).lower() == strat_filter
-                ]
+                sym_trades = [t for t in sym_trades if _match_trade(t)]
             if not sym_trades and not _cmp_by_sym.get(sym):
                 continue
             fig = _build_symbol_figure(sym, sym_trades, cmp_trades=_cmp_by_sym.get(sym))
@@ -2155,8 +2193,11 @@ def generate_trading_map_html(
         child = bk_column(*figs, sizing_mode="stretch_width")
         return TabPanel(child=child, title=tab_label)
 
-    # ── 组装 Tabs (All + 各策略) ──
+    # ── 组装 Tabs (All + 家族聚合 + 各策略) ──
     tabs_list = [_build_tab("All", None)]
+    families = sorted({_arch_family(a) for a in all_archetypes if _arch_family(a)})
+    for fam in families:
+        tabs_list.append(_build_tab(fam.upper(), fam, family_mode=True))
     for arch in all_archetypes:
         tabs_list.append(_build_tab(arch.upper(), arch))
 

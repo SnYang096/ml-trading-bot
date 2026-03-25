@@ -161,9 +161,17 @@ def _identify_plateau(
     param_values: List[List[float]],
     top_frac: float = 0.25,
     cv_threshold: float = 0.15,
+    rank_key: str = "sharpe",
 ) -> Dict[str, Any]:
-    """复用 backtest_execution_layer._identify_plateau 的核心逻辑"""
-    sorted_results = sorted(results, key=lambda r: r["sharpe"], reverse=True)
+    """复用 backtest_execution_layer._identify_plateau 的核心逻辑.
+
+    rank_key:
+      - "sharpe": legacy behavior
+      - "objective_score": risk-aware objective
+    """
+    sorted_results = sorted(
+        results, key=lambda r: r.get(rank_key, float("-inf")), reverse=True
+    )
     top_n = max(3, int(len(sorted_results) * top_frac))
     top = sorted_results[:top_n]
 
@@ -211,9 +219,16 @@ def _identify_plateau(
         sufficient_values[pname] = sufficient_val
 
     if sufficient_values:
-        best_sharpe = sorted_results[0]["sharpe"]
-        threshold = best_sharpe * 0.85
-        eligible = [r for r in sorted_results if r["sharpe"] >= threshold]
+        best_rank_score = float(sorted_results[0].get(rank_key, 0.0))
+        if best_rank_score == 0.0:
+            threshold = -0.05
+        elif best_rank_score > 0.0:
+            threshold = best_rank_score * 0.85
+        else:
+            threshold = best_rank_score * 1.15
+        eligible = [
+            r for r in sorted_results if r.get(rank_key, float("-inf")) >= threshold
+        ]
         if eligible:
 
             def _deviation(r):
@@ -725,6 +740,42 @@ def main():
         help="将 recommended 参数写入 execution.yaml",
     )
     parser.add_argument(
+        "--objective",
+        choices=["sharpe", "risk_aware"],
+        default="sharpe",
+        help="参数选择目标: sharpe(默认) / risk_aware(惩罚近-1R与高回撤)",
+    )
+    parser.add_argument(
+        "--near-stop-threshold-r",
+        type=float,
+        default=-0.9,
+        help="定义'近-1R亏损'阈值 (默认 -0.9)",
+    )
+    parser.add_argument(
+        "--near-stop-penalty",
+        type=float,
+        default=0.0,
+        help="近-1R亏损比例惩罚系数 (risk_aware 生效)",
+    )
+    parser.add_argument(
+        "--max-dd-penalty",
+        type=float,
+        default=0.0,
+        help="max_drawdown_r 惩罚系数 (risk_aware 生效)",
+    )
+    parser.add_argument(
+        "--min-trades-soft",
+        type=int,
+        default=0,
+        help="软最小交易数, 低于该值按 undertrade_penalty 惩罚",
+    )
+    parser.add_argument(
+        "--undertrade-penalty",
+        type=float,
+        default=0.0,
+        help="交易数不足惩罚系数 (risk_aware 生效)",
+    )
+    parser.add_argument(
         "--fee-rate",
         type=float,
         default=0.0004,
@@ -732,7 +783,8 @@ def main():
     )
     args = parser.parse_args()
 
-    strategy = args.strategy.strip().lower()
+    # Keep original strategy casing (Linux paths are case-sensitive).
+    strategy = args.strategy.strip()
     symbols = [s.strip() for s in args.symbols.split(",")]
     output_path = args.output or f"/tmp/{strategy}_event_grid.json"
 
@@ -741,6 +793,7 @@ def main():
     print("=" * 72)
     print(f"  Symbols: {symbols}")
     print(f"  Period:  {args.start_date} → {args.end_date}")
+    print(f"  Objective: {args.objective}")
 
     # 创建 EventBacktester
     bt = EventBacktester(
@@ -878,6 +931,31 @@ def main():
             "max_dd_r": res.max_drawdown_r,
             "sim_time": round(sim_time, 1),
         }
+        pnl_arr = np.array([t.pnl_r for t in res.trades], dtype=float)
+        if len(pnl_arr) > 0:
+            near_stop_rate = float(
+                np.mean(pnl_arr <= float(args.near_stop_threshold_r))
+            )
+            loss_rate = float(np.mean(pnl_arr < 0))
+        else:
+            near_stop_rate = 0.0
+            loss_rate = 0.0
+        r["near_stop_rate"] = near_stop_rate
+        r["loss_rate"] = loss_rate
+        undertrade_gap = (
+            max(0.0, float(args.min_trades_soft) - float(r["trades"]))
+            if int(args.min_trades_soft) > 0
+            else 0.0
+        )
+        if args.objective == "risk_aware":
+            r["objective_score"] = (
+                float(r["sharpe"])
+                - float(args.near_stop_penalty) * near_stop_rate
+                - float(args.max_dd_penalty) * float(r["max_dd_r"])
+                - float(args.undertrade_penalty) * undertrade_gap
+            )
+        else:
+            r["objective_score"] = float(r["sharpe"])
         # Equity
         if res.equity_curve and len(res.equity_curve) > 1:
             r["equity_final"] = res.equity_curve[-1]
@@ -908,7 +986,7 @@ def main():
             eta = elapsed / idx * (total - idx) if idx > 0 else 0
             print(
                 f"   [{idx:3d}/{total}] "
-                f"Sharpe={r['sharpe']:.4f} Trades={r['trades']:4d} "
+                f"Score={r['objective_score']:.4f} Sharpe={r['sharpe']:.4f} Trades={r['trades']:4d} "
                 f"({sim_time:.1f}s/combo, ETA {eta:.0f}s)"
             )
 
@@ -922,7 +1000,8 @@ def main():
 
     # Phase 4: Plateau 分析
     print("\n📊 Plateau 分析...")
-    plateau = _identify_plateau(results, param_names, param_values)
+    rank_key = "objective_score"
+    plateau = _identify_plateau(results, param_names, param_values, rank_key=rank_key)
 
     best = plateau["best"]
     rec = plateau["recommended"]
@@ -943,14 +1022,18 @@ def main():
     for pn in param_names:
         print(f"     {_display_names[param_names.index(pn)]}: {best[_result_key(pn)]}")
     print(
-        f"     Sharpe={best['sharpe']:.4f}  Trades={best['trades']}  WinRate={best['win_rate']:.1%}  MeanR={best['mean_r']:.4f}"
+        f"     Score={best['objective_score']:.4f}  Sharpe={best['sharpe']:.4f}  "
+        f"Trades={best['trades']}  WinRate={best['win_rate']:.1%}  MeanR={best['mean_r']:.4f}  "
+        f"NearStopRate={best.get('near_stop_rate', 0.0):.1%}"
     )
     print()
     print(f"  🎯 Recommended (conservative elbow):")
     for pn in param_names:
         print(f"     {_display_names[param_names.index(pn)]}: {rec[_result_key(pn)]}")
     print(
-        f"     Sharpe={rec['sharpe']:.4f}  Trades={rec['trades']}  WinRate={rec['win_rate']:.1%}  MeanR={rec['mean_r']:.4f}"
+        f"     Score={rec['objective_score']:.4f}  Sharpe={rec['sharpe']:.4f}  "
+        f"Trades={rec['trades']}  WinRate={rec['win_rate']:.1%}  MeanR={rec['mean_r']:.4f}  "
+        f"NearStopRate={rec.get('near_stop_rate', 0.0):.1%}"
     )
 
     # Per-param marginal analysis
@@ -974,13 +1057,16 @@ def main():
     header = "  Rank  " + "  ".join(
         f"{_display_names[i].split('.')[-1]:>10s}" for i, pn in enumerate(param_names)
     )
-    header += "  Sharpe  Trades  WinRate  MeanR  Equity"
+    header += "   Score  Sharpe  Trades  WinRate  MeanR  Equity"
     print(header)
     for i, r in enumerate(plateau["all_sorted"][:10], 1):
         row = f"  {i:4d}  "
         row += "  ".join(f"{r[_result_key(pn)]:10.1f}" for pn in param_names)
         eq_str = f"${r.get('equity_final', 0):.0f}" if "equity_final" in r else "-"
-        row += f"  {r['sharpe']:.4f}  {r['trades']:6d}  {r['win_rate']:6.1%}  {r['mean_r']:.4f}  {eq_str}"
+        row += (
+            f"  {r.get('objective_score', r['sharpe']):.4f}  {r['sharpe']:.4f}  "
+            f"{r['trades']:6d}  {r['win_rate']:6.1%}  {r['mean_r']:.4f}  {eq_str}"
+        )
         print(row)
 
     print(f"{'='*72}")
@@ -999,9 +1085,19 @@ def main():
             "mean_sharpe": plateau["mean_sharpe"],
         },
         "best": {_result_key(pn): best[_result_key(pn)] for pn in param_names},
+        "objective": args.objective,
+        "objective_params": {
+            "near_stop_threshold_r": args.near_stop_threshold_r,
+            "near_stop_penalty": args.near_stop_penalty,
+            "max_dd_penalty": args.max_dd_penalty,
+            "min_trades_soft": args.min_trades_soft,
+            "undertrade_penalty": args.undertrade_penalty,
+        },
+        "best_score": best.get("objective_score", best["sharpe"]),
         "best_sharpe": best["sharpe"],
         "best_trades": best["trades"],
         "recommended": {_result_key(pn): rec[_result_key(pn)] for pn in param_names},
+        "recommended_score": rec.get("objective_score", rec["sharpe"]),
         "recommended_sharpe": rec["sharpe"],
         "recommended_trades": rec["trades"],
         "param_analysis": plateau["param_analysis"],

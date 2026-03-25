@@ -30,13 +30,13 @@ optimization:
       - 4.0
       step: 0.5
 stop_loss:
-  initial_r: 2.0
+  initial_r: 2.5
   guardrails:
-    min_stop_pct: 0.006
-    max_stop_pct: 0.020
+    min_stop_pct: 0.008
+    max_stop_pct: 0.030
   trailing:
-    activation_r: 1.5
-    trail_r: 1.5
+    activation_r: 2.0
+    trail_r: 2.0
   type: trailing
 take_profit:
   enabled: false

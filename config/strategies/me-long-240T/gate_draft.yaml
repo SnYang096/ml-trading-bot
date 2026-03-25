@@ -1,9 +1,9 @@
-# ME-SHORT-240T Gate Draft (auto-generated)
-# 来源: results/train_final_20260319_154113_rr_extreme/me-short-240T
+# ME-LONG-240T Gate Draft (auto-generated)
+# 来源: results/train_final_20260325_131042_rr_extreme/me-long-240T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
-#   mlbot gate apply-archetype --strategy me-short-240T
-#   python scripts/optimize_gate_unified.py --strategy me-short-240T --promote
+#   mlbot gate apply-archetype --strategy me-long-240T
+#   python scripts/optimize_gate_unified.py --strategy me-long-240T --promote
 
 schema:
   phases:
@@ -16,65 +16,59 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_fer_trapped_longs_score
-  tag: HARD_FER_TRAPPED_LONGS_SCORE
+- id: gate_vp_width_ratio
+  tag: HARD_VP_WIDTH_RATIO
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=2.39)
+  reason: 统计验证规则 (lift=1.58)
   when:
-    fer_trapped_longs_score:
-      value_gt: 0.7598
+    vp_width_ratio:
+      value_lt: 0.4713
   then:
     action: deny
-  comment: 'statistical(lift=2.39): fer_trapped_longs_score > 0.7598'
-- id: gate_fer_momentum_efficiency_decay
-  tag: HARD_FER_MOMENTUM_EFFICIENCY_DECAY
+  comment: 'statistical(lift=1.58): vp_width_ratio < 0.4713'
+- id: gate_fer_signed_efficiency_pct
+  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.38)
+  reason: 统计验证规则 (lift=1.22)
   when:
-    fer_momentum_efficiency_decay:
-      value_lt: 0.0092
+    fer_signed_efficiency_pct:
+      value_gt: 0.75
   then:
     action: deny
-  comment: 'statistical(lift=1.38): fer_momentum_efficiency_decay < 0.00917'
-- id: gate_fer_absorption_streak
-  tag: HARD_FER_ABSORPTION_STREAK
+  comment: 'statistical(lift=1.22): fer_signed_efficiency_pct > 0.75'
+- id: gate_vol_persistence
+  tag: HARD_VOL_PERSISTENCE
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.29)
+  reason: 统计验证规则 (lift=1.49)
   when:
-    fer_absorption_streak:
-      value_lt: 0.395
+    vol_persistence:
+      value_lt: 0.0004
   then:
     action: deny
-  comment: 'statistical(lift=1.29): fer_absorption_streak < 0.395'
-- id: gate_vp_poc_deviation_vp_poc_deviation
-  tag: HARD_VP_POC_DEVIATION_VP_POC_DEVIATION
+  comment: 'statistical(lift=1.49): vol_persistence < 0.0004249'
+- id: gate_me_vol_regime
+  tag: HARD_ME_VOL_REGIME
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.74)
+  reason: 统计验证规则 (lift=1.28)
   when:
-    all_of:
-    - vp_poc_deviation:
-        value_gt: -0.5224
-    - vp_poc_deviation:
-        value_lt: -0.3668
+    me_vol_regime:
+      value_gt: 0.77
   then:
     action: deny
-  comment: 'statistical(lift=1.74): vp_poc_deviation > -0.5224 & vp_poc_deviation < -0.3668'
-- id: gate_evt_es_99_left_evt_es_99_left
-  tag: HARD_EVT_ES_99_LEFT_EVT_ES_99_LEFT
+  comment: 'statistical(lift=1.28): me_vol_regime > 0.77'
+- id: gate_evt_scale_left
+  tag: HARD_EVT_SCALE_LEFT
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.74)
+  reason: 统计验证规则 (lift=1.33)
   when:
-    all_of:
-    - evt_es_99_left:
-        value_gt: 0.6587
-    - evt_es_99_left:
-        value_lt: 0.754
+    evt_scale_left:
+      value_lt: 0.0952
   then:
     action: deny
-  comment: 'statistical(lift=1.74): evt_es_99_left > 0.6587 & evt_es_99_left < 0.754'
+  comment: 'statistical(lift=1.33): evt_scale_left < 0.09524'
 guardrails: []

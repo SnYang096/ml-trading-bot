@@ -1,6 +1,6 @@
 # BPC-SHORT-120T Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
-# Date: 2026-03-24 21:09
+# Date: 2026-03-25 12:58
 # Promoted: 5 filters (method=mean_effect)
 # Significance: 统计验证 + robustness ≥ 0.5
 #

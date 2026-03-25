@@ -469,6 +469,7 @@ class GenericLiveStrategy:
 
         # ── 4. Evidence 评分 ──
         evidence_score = 0.5
+        evidence_active = False
         evidence_breakdown = {}
         if (
             self.archetype
@@ -481,6 +482,7 @@ class GenericLiveStrategy:
                 if features.get(feat.feature) is not None
             }
             if feature_values:
+                evidence_active = True
                 evidence_score, evidence_breakdown = (
                     self.archetype.evidence.compute_composite_score(
                         feature_values, self._quantiles
@@ -491,7 +493,7 @@ class GenericLiveStrategy:
                     f"breakdown={evidence_breakdown}"
                 )
 
-        funnel["evidence"] = True
+        funnel["evidence"] = evidence_active
         funnel["evidence_score"] = round(evidence_score, 4)
 
         # ── 5. 执行参数生成 ──
@@ -537,10 +539,17 @@ class GenericLiveStrategy:
             },
         )
 
-        logger.info(
-            f"✅ Signal generated: {action} {symbol} "
-            f"(evidence={evidence_score:.3f}, tier={exec_params.get('tier_name')})"
-        )
+        tier_name = exec_params.get("tier_name")
+        if evidence_active:
+            logger.info(
+                f"✅ Signal generated: {action} {symbol} "
+                f"(tier={tier_name}, evidence={evidence_score:.3f})"
+            )
+        else:
+            logger.info(
+                f"✅ Signal generated: {action} {symbol} "
+                f"(tier={tier_name}, evidence=off)"
+            )
         self._last_funnel = funnel
         return [intent]
 

@@ -943,7 +943,8 @@ class LivePCM:
                             else self._ema_bear_allowed
                         )
                         if arch_name not in _allowed:
-                            strategy._last_funnel = {}  # 清空避免误诊
+                            # 标记为 PCM 方向过滤拒绝，供事件回测漏斗诊断使用
+                            strategy._last_funnel = {"pcm_direction_filter": False}
                             logger.debug(
                                 "PCM: EMA过滤跳过 %s — %s regime (close=%.4f, ema=%.4f)",
                                 arch_name,
@@ -959,7 +960,7 @@ class LivePCM:
                             else self._ema_bear_allowed
                         )
                         if arch_name not in _allowed_fb:
-                            strategy._last_funnel = {}
+                            strategy._last_funnel = {"pcm_direction_filter": False}
                             continue
 
                 intents = strategy.decide(
