@@ -1,5 +1,5 @@
 # ME-SHORT-120T Gate Draft (auto-generated)
-# 来源: results/train_final_20260325_130821_rr_extreme/me-short-120T
+# 来源: results/train_final_20260327_193328_rr_extreme/me-short-120T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me-short-120T
@@ -16,74 +16,65 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_vol_persistence_vol_persistence
-  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
+- id: gate_fer_signed_efficiency_pct
+  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.24)
+  reason: 统计验证规则 (lift=1.57)
   when:
-    all_of:
-    - vol_persistence:
-        value_gt: 0.0029
-    - vol_persistence:
-        value_lt: 0.0299
+    fer_signed_efficiency_pct:
+      value_lt: 0.125
   then:
     action: deny
-  comment: 'statistical(lift=1.24): vol_persistence > 0.002947 & vol_persistence < 0.02987'
-- id: gate_vpin_ma20_vpin_ma20
-  tag: HARD_VPIN_MA20_VPIN_MA20
+  comment: 'statistical(lift=1.57): fer_signed_efficiency_pct < 0.125'
+- id: gate_bpc_recovery_strength
+  tag: HARD_BPC_RECOVERY_STRENGTH
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.21)
+  reason: 统计验证规则 (lift=1.09)
   when:
-    all_of:
-    - vpin_ma20:
-        value_gt: 0.3048
-    - vpin_ma20:
-        value_lt: 0.3202
+    bpc_recovery_strength:
+      value_gt: 0.5478
   then:
     action: deny
-  comment: 'statistical(lift=1.21): vpin_ma20 > 0.3048 & vpin_ma20 < 0.3202'
-- id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
-  tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
+  comment: 'statistical(lift=1.09): bpc_recovery_strength > 0.5478'
+- id: gate_roc_10_roc_10
+  tag: HARD_ROC_10_ROC_10
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.08)
+  reason: 统计验证规则 (lift=1.31)
   when:
     all_of:
-    - vol_leverage_asymmetry:
-        value_gt: 0.0558
-    - vol_leverage_asymmetry:
-        value_lt: 0.1482
+    - roc_10:
+        value_gt: 1.3185
+    - roc_10:
+        value_lt: 4.3652
   then:
     action: deny
-  comment: 'statistical(lift=1.08): vol_leverage_asymmetry > 0.05582 & vol_leverage_asymmetry < 0.1482'
-- id: gate_evt_es_99_evt_es_99
-  tag: HARD_EVT_ES_99_EVT_ES_99
+  comment: 'statistical(lift=1.31): roc_10 > 1.319 & roc_10 < 4.365'
+- id: gate_me_vol_divergence
+  tag: HARD_ME_VOL_DIVERGENCE
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.12)
+  reason: 统计验证规则 (lift=1.08)
   when:
-    all_of:
-    - evt_es_99:
-        value_gt: 0.3532
-    - evt_es_99:
-        value_lt: 0.5119
+    me_vol_divergence:
+      value_lt: 0.1283
   then:
     action: deny
-  comment: 'statistical(lift=1.12): evt_es_99 > 0.3532 & evt_es_99 < 0.5119'
-- id: gate_evt_es_99_right_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT_EVT_ES_99_RIGHT
+  comment: 'statistical(lift=1.08): me_vol_divergence < 0.1283'
+- id: gate_vpin_ignition_score_vpin_ignition_score
+  tag: HARD_VPIN_IGNITION_SCORE_VPIN_IGNITION_SCORE
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.22)
+  reason: 统计验证规则 (lift=1.19)
   when:
     all_of:
-    - evt_es_99_right:
-        value_gt: 0.0635
-    - evt_es_99_right:
-        value_lt: 0.1627
+    - vpin_ignition_score:
+        value_gt: 0.0187
+    - vpin_ignition_score:
+        value_lt: 0.0426
   then:
     action: deny
-  comment: 'statistical(lift=1.22): evt_es_99_right > 0.06349 & evt_es_99_right < 0.1627'
+  comment: 'statistical(lift=1.19): vpin_ignition_score > 0.0187 & vpin_ignition_score < 0.04258'
 guardrails: []

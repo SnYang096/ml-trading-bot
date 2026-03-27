@@ -4,38 +4,6 @@ execution_constraints:
 holding:
   max_holding_bars: null
   time_stop_bars: 0
-optimization:
-  enabled: true
-  # ── BPC "趋势骑乘" 模式 ──
-  # 设计理念 (fattail-holding-pyramiding.md):
-  #   BPC 价格路径: +1R → -0.5R → +2R → -1R → +5R → +10R
-  #   特点: 趋势长, 回撤多, move 慢
-  #   目标: 最大化 fat tail (+10R+), structural_exit=ema200 是主退出
-  #   trail_r 极宽 (仅灾难保护), initial_r 容忍回撤
-  # Grid 设计:
-  #   - initial_r 宽范围 [2.0-6.0]: BPC 需要容忍大回撤才能抓 fat tail
-  #   - activation_r [2.0-5.0]: 较高激活点, 让趋势充分发展
-  #   - trail_r [3.0-8.0]: 极宽 trailing, 仅防黑天鹅 (EMA200 是真正的退出信号)
-  constraints:
-    max_sl_activation_ratio: 3.0
-    min_win_r: 0.0
-  params:
-    stop_loss.initial_r:
-      range:
-        - 2.0
-        - 6.0
-      step: 0.5
-    stop_loss.trailing.activation_r:
-      range:
-        - 2.0
-        - 5.0
-      step: 0.5
-    stop_loss.trailing.trail_r:
-      range:
-        - 3.0
-        - 8.0
-      step: 1.0
-# ── 旧值 initial_r=3.0/activation_r=0.5 是退化组合 (ratio=6, random WR=86%) ──
 stop_loss:
   type: trailing
   initial_r: 4.0
@@ -49,6 +17,9 @@ stop_loss:
   structural_exit: ema200 # 主退出: 价格穿越 EMA200 = 趋势结构破坏
 take_profit:
   enabled: false
+breakeven:
+  enabled: true
+  trigger_r: 4
 add_position:
   max_add_times: 5
   sizing_mode: fixed_multiplier

@@ -33,6 +33,8 @@ class GateRule:
     when: Dict[str, Any]
     then: Dict[str, Any]
     frozen: bool = False  # 禁止优化阈值
+    locked: bool = False  # 特征锁定（慢变量不可删除）
+    disabled: bool = False  # 临时禁用（KPI 不满足时保留但不执行）
 
     @property
     def is_hard(self) -> bool:
@@ -88,6 +90,8 @@ class GateConfig:
                         when=dict(r.get("when") or {}),
                         then=dict(r.get("then") or {}),
                         frozen=bool(r.get("frozen", False)),
+                        locked=bool(r.get("locked", False)),
+                        disabled=bool(r.get("disabled", False)),
                     )
                 )
             return result
@@ -562,6 +566,8 @@ class StrategyArchetype:
         deny_reasons = []
 
         for rule in self.gate.all_rules:
+            if rule.disabled:
+                continue
             matched = _evaluate_when_clause(rule.when, features, quantiles)
 
             if matched:

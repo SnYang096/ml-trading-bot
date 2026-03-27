@@ -2,7 +2,6 @@
 # 来源: /home/yin/trading/ml_trading_bot/results/research_history/me-short-240T/20260320_234232/strategies/me-short-240T/gate_draft.yaml
 # 优化规则: 3/5 条通过优化, 4 条已移除
 # Phase split: system_safety=0, hard_gate=1
-
 schema:
   phases:
   - system_safety
@@ -25,5 +24,7 @@ hard_gates:
   then:
     action: deny
   comment: 'optimizer: stable_plateau_found, threshold=0.5500, lift=0.435'
+  locked: true
+  lock_reason: FER 冲击失败分数：动能衰竭时不宜入场
 guardrails: []
 system_safety: []

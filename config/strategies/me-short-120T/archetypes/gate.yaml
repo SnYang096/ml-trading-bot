@@ -2,7 +2,6 @@
 # 来源: /home/yin/trading/ml_trading_bot/results/prod_train_history/me-short-120T/20260325_125615/strategies/me-short-120T/gate_draft.yaml
 # 优化规则: 0/5 条通过优化, 3 条已移除
 # Phase split: system_safety=1, hard_gate=1
-
 schema:
   phases:
   - system_safety
@@ -28,6 +27,8 @@ hard_gates:
   then:
     action: deny
   comment: 'optimizer: no_stable_plateau, threshold=0.2671, lift=0.452'
+  locked: true
+  lock_reason: VPIN 知情交易均值：持续高信息不对称环境不宜入场
 guardrails: []
 system_safety:
 - id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
@@ -44,3 +45,5 @@ system_safety:
   then:
     action: deny
   comment: 'optimizer: no_stable_plateau, threshold=0.0509, lift=0.123'
+  locked: true
+  lock_reason: 波动率杠杆效应：下跌放大波动，不对称风险加剧

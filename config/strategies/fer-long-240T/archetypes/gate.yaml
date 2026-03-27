@@ -1,7 +1,6 @@
 # FER-LONG Gate (optimized, auto-promoted)
 # 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer-long/20260314_213235/strategies/fer-long/gate_draft.yaml
 # 优化规则: 0/4 条通过优化, 4 条已移除
-
 schema:
   phases:
   - system_safety

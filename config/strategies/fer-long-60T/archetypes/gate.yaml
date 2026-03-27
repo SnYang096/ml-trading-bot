@@ -2,7 +2,6 @@
 # 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer-short/20260315_204634/strategies/fer-short/gate_draft.yaml
 # 优化规则: 0/5 条通过优化, 5 条已移除
 # Phase split: system_safety=3, hard_gate=0
-
 schema:
   phases:
   - system_safety
@@ -27,6 +26,8 @@ system_safety:
   then:
     action: deny
   comment: stat_fallback gate_score=0.299, tail_capture=0.348, good_deny=0.049
+  locked: true
+  lock_reason: EVT 左尾风险强度：中高风险拖泥带水区间对趋势策略表现最差
 - id: gate_stat_evt_scale_right_evt_scale_right
   tag: HARD_STAT_2
   phase: system_safety
@@ -41,6 +42,8 @@ system_safety:
   then:
     action: deny
   comment: stat_fallback gate_score=0.212, tail_capture=0.447, good_deny=0.235
+  locked: true
+  lock_reason: EVT 右尾尺度：泡沫型/极端上行分布结构
 - id: gate_stat_vol_leverage_asymmetry
   tag: HARD_STAT_3
   phase: system_safety
@@ -52,3 +55,5 @@ system_safety:
   then:
     action: deny
   comment: stat_fallback gate_score=0.130, tail_capture=0.591, good_deny=0.461
+  locked: true
+  lock_reason: 波动率杠杆效应：下跌放大波动，不对称风险加剧

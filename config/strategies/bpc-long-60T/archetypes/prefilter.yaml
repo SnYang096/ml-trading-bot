@@ -1,41 +1,35 @@
-# BPC-SHORT Archetype Prefilter (auto-generated)
-# 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-03-14
-# 数据源: features_labeled.parquet, 27840 行
-
 rules:
+  - feature: bpc_volume_compression_pct
+    operator: ">="
+    value: 0.8896
+  - feature: bpc_dir_flip_count
+    operator: ">="
+    value: 0.65
+    rationale: meta-algorithm, KS=0.1477, return_uplift=+2.1389, robustness=100%, holdout验证通过
   - feature: bpc_score_pullback
     operator: ">="
-    value: 0.45
-    rationale: "语义锁定：必须出现可识别的回踩阶段，而非纯 breakout 追空"
+    value: 0.4
+    rationale: 语义锁定：必须出现可识别的回踩阶段，而非纯 breakout 追空
     locked: true
-    lock_reason: "BPC 语义锚点：回踩阶段成立"
+    lock_reason: BPC 语义锚点：回踩阶段成立
   - feature: bpc_pullback_depth
-    operator: "<="
-    value: 0.70
-    rationale: "语义锁定：回撤不能过深，过深更接近结构失败或反转语义"
+    operator: <=
+    value: 0.6
+    rationale: 语义锁定：回撤不能过深，过深更接近结构失败或反转语义
     locked: true
-    lock_reason: "BPC 语义锚点：回踩深度受控"
+    lock_reason: BPC 语义锚点：回踩深度受控
   - feature: bpc_recovery_strength
     operator: ">="
-    value: 0.55
-    rationale: "语义锁定：回踩后必须有恢复力度，确认 continuation 的可执行性"
+    value: 0.5
+    rationale: 语义锁定：回踩后必须有恢复力度，确认 continuation 的可执行性
     locked: true
-    lock_reason: "BPC 语义锚点：恢复强度确认"
-
+    lock_reason: BPC 语义锚点：恢复强度确认
 last_evaluation:
-  # ── 自动生成 (2026-03-14) ──
-  timestamp: "2026-03-14"
-  data_source: "features_labeled.parquet"
-  n_rows: 27840
-  baseline_bad_rate: 0.0000
-  baseline_median_rr: +0.1630
-
-  # ── 正信号 (0 个) ──
+  timestamp: "2026-03-19"
+  data_source: features_labeled.parquet
+  n_rows: 112361
+  baseline_bad_rate: 0.0
+  baseline_median_rr: 0.0276
   positive_signals: []
-
-  # ── 反信号 (0 个) ──
   anti_signals: []
-
-  # ── 低端信号 (0 个) ──
   absence_signals: []

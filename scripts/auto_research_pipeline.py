@@ -70,6 +70,15 @@ from scripts.locked_prefilter_utils import (
     load_locked_prefilter_rules,
     merge_locked_prefilter_rules,
 )
+from scripts.locked_gate_utils import (
+    load_locked_gate_rules,
+    merge_locked_gate_rules,
+)
+from scripts.pipeline import config as pipeline_config
+from scripts.pipeline import cli as pipeline_cli
+from scripts.pipeline import events as pipeline_events
+from scripts.pipeline import strategy_pipeline as pipeline_strategy
+from scripts.pipeline import steps as pipeline_steps
 
 # ====================================================================
 # Config
@@ -79,27 +88,11 @@ DEFAULT_CONFIG = PROJECT_ROOT / "config" / "research_pipeline.yaml"
 
 
 def load_pipeline_config(path: Path) -> dict:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return pipeline_config.load_pipeline_config(path)
 
 
 def resolve_symbols_from_config(cfg: dict) -> str:
-    """
-    解析 research_pipeline.yaml 中的 symbols。
-    优先级：universe_group > symbols。
-    返回逗号分隔的 USDT 合约列表，如 "BTCUSDT,ETHUSDT".
-    """
-    if "universe_group" in cfg:
-        ug = cfg["universe_group"]
-        ug_file = PROJECT_ROOT / ug["file"]
-        ug_data = yaml.safe_load(ug_file.read_text(encoding="utf-8"))
-        universe_set = ug["universe_set"]
-        group = ug["group"]
-        tokens = ug_data["universe_sets"][universe_set]["groups"][group]
-        quote = ug_data.get("quote", "USDT")
-        return ",".join(f"{t}{quote}" for t in tokens)
-    if "symbols" in cfg:
-        return cfg["symbols"]
-    raise KeyError("research_pipeline.yaml 必须包含 universe_group 或 symbols 配置")
+    return pipeline_config.resolve_symbols_from_config(cfg)
 
 
 def _resolve_strategy_direction_scope(cfg: Dict[str, Any]) -> str:
@@ -142,20 +135,51 @@ def _month_token_to_range(month_token: str) -> Tuple[str, str]:
     return f"{y:04d}-{m:02d}-01", f"{y:04d}-{m:02d}-{last_day:02d}"
 
 
+def _add_months(date_str: str, months: int) -> str:
+    """Shift YYYY-MM-DD by month delta; returns first day for shifted month."""
+    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    y = dt.year
+    m = dt.month + int(months)
+    while m > 12:
+        y += 1
+        m -= 12
+    while m <= 0:
+        y -= 1
+        m += 12
+    d = min(dt.day, monthrange(y, m)[1])
+    return f"{y:04d}-{m:02d}-{d:02d}"
+
+
+def _month_start(month_token: str) -> str:
+    y, m = _parse_month_token(month_token)
+    return f"{y:04d}-{m:02d}-01"
+
+
+def _month_prev_end(month_token: str) -> str:
+    ms = _month_start(month_token)
+    prev_month_day = datetime.strptime(ms, "%Y-%m-%d") - timedelta(days=1)
+    return prev_month_day.strftime("%Y-%m-%d")
+
+
+def _calib_and_test_windows(
+    *,
+    month_token: str,
+    calibration_months: int,
+) -> Dict[str, str]:
+    """For target month M: calib=[M-k, M-1], test=[M, M]."""
+    test_start, test_end = _month_token_to_range(month_token)
+    calib_end = _month_prev_end(month_token)
+    calib_start = _add_months(test_start, -int(calibration_months))
+    return {
+        "calib_start": calib_start,
+        "calib_end": calib_end,
+        "test_start": test_start,
+        "test_end": test_end,
+    }
+
+
 def _iter_month_tokens(start_date: str, end_date: str) -> List[str]:
-    """List YYYY-MM tokens between [start_date, end_date]."""
-    s = datetime.strptime(start_date, "%Y-%m-%d")
-    e = datetime.strptime(end_date, "%Y-%m-%d")
-    cur_y, cur_m = s.year, s.month
-    out: List[str] = []
-    while (cur_y, cur_m) <= (e.year, e.month):
-        out.append(f"{cur_y:04d}-{cur_m:02d}")
-        if cur_m == 12:
-            cur_y += 1
-            cur_m = 1
-        else:
-            cur_m += 1
-    return out
+    return pipeline_config.iter_month_tokens(start_date, end_date)
 
 
 def _quality_score_from_event_metrics(
@@ -234,15 +258,7 @@ def detect_latest_data_date(data_path: str, symbols: str) -> str:
 
 
 def compute_holdout_start(end_date: str, holdout_months: int) -> str:
-    """end_date - holdout_months → holdout_start_date."""
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    # 简单月份减法
-    y = end.year
-    m = end.month - holdout_months
-    while m <= 0:
-        m += 12
-        y -= 1
-    return datetime(y, m, 1).strftime("%Y-%m-%d")
+    return pipeline_config.compute_holdout_start(end_date, holdout_months)
 
 
 def resolve_strategy_dates(
@@ -252,42 +268,12 @@ def resolve_strategy_dates(
     default_end_date: str,
     forced_end_date: str = "",
 ) -> Dict[str, Any]:
-    """Resolve per-strategy date settings with global defaults.
-
-    Priority:
-      1) CLI --end-date (forced_end_date)
-      2) strategies.<name>.dates.<field>
-      3) global dates.<field>
-    """
-    global_dates = cfg.get("dates", {})
-    scfg = cfg["strategies"][strategy]
-    strat_dates = (
-        scfg.get("dates", {}) if isinstance(scfg.get("dates", {}), dict) else {}
+    return pipeline_config.resolve_strategy_dates(
+        cfg,
+        strategy=strategy,
+        default_end_date=default_end_date,
+        forced_end_date=forced_end_date,
     )
-
-    end_date = forced_end_date or str(strat_dates.get("end_date", default_end_date))
-    start_date = str(strat_dates.get("start_date", global_dates["start_date"]))
-    holdout_months = int(
-        strat_dates.get("holdout_months", global_dates["holdout_months"])
-    )
-    validation_months = int(
-        strat_dates.get("validation_months", global_dates.get("validation_months", 0))
-    )
-
-    holdout_start = compute_holdout_start(end_date, holdout_months)
-    if validation_months > 0 and validation_months < holdout_months:
-        test_start = compute_holdout_start(end_date, holdout_months - validation_months)
-    else:
-        test_start = holdout_start
-
-    return {
-        "start_date": start_date,
-        "end_date": end_date,
-        "holdout_months": holdout_months,
-        "validation_months": validation_months,
-        "holdout_start": holdout_start,
-        "test_start": test_start,
-    }
 
 
 # ====================================================================
@@ -303,59 +289,11 @@ def run_step(
     dry_run: bool = False,
     cwd: Optional[Path] = None,
 ) -> Tuple[int, str]:
-    """执行一个步骤, 输出到 stdout + log file."""
-    cmd_str = " \\\n  ".join(cmd)
-    header = f"\n{'='*70}\n[STEP] {name}\n{'='*70}\n$ {cmd_str}\n"
-    print(header)
-
-    with open(log_file, "a", encoding="utf-8") as lf:
-        lf.write(header)
-
-    if dry_run:
-        print("  (dry-run, 跳过执行)")
-        return 0, ""
-
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        cwd=cwd or PROJECT_ROOT,
-    )
-    output = proc.stdout + proc.stderr
-
-    with open(log_file, "a", encoding="utf-8") as lf:
-        lf.write(output)
-        lf.write(f"\n[EXIT CODE] {proc.returncode}\n")
-
-    # 打印最后 30 行摘要
-    lines = output.strip().split("\n")
-    summary = "\n".join(lines[-30:]) if len(lines) > 30 else output
-    print(summary)
-
-    if proc.returncode != 0:
-        print(f"\n❌ Step '{name}' FAILED (exit code {proc.returncode})")
-    else:
-        print(f"\n✅ Step '{name}' completed")
-
-    return proc.returncode, output
+    return pipeline_steps.run_step(name, cmd, log_file, dry_run=dry_run, cwd=cwd)
 
 
 def find_output_dir(output: str, strategy: str) -> Optional[str]:
-    """从 mlbot train final 的 stdout 中解析输出目录."""
-    # 尝试匹配 "Results saved to results/train_final_XXXXXXXX_..."
-    m = re.search(r"(results/train_final_\S+/" + re.escape(strategy) + r")", output)
-    if m:
-        return m.group(1)
-    # fallback: 扫描 results/ 找最新
-    results_dir = PROJECT_ROOT / "results"
-    candidates = sorted(
-        results_dir.glob(f"train_final_*/{strategy}"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    if candidates:
-        return str(candidates[0].relative_to(PROJECT_ROOT))
-    return None
+    return pipeline_steps.find_output_dir(output, strategy)
 
 
 # ====================================================================
@@ -364,63 +302,485 @@ def find_output_dir(output: str, strategy: str) -> Optional[str]:
 
 
 def parse_backtest_stdout(output: str) -> Dict[str, Any]:
-    """从回测 stdout 提取指标 (兼容向量回测 + 事件回测两种格式)."""
-    metrics: Dict[str, Any] = {}
+    return pipeline_steps.parse_backtest_stdout(output)
 
-    # --- 交易数 ---
-    # 向量: "Trades: 106  (53/year, span=1.00yr)"
-    # 事件: "交易数: 106"
-    m = re.search(r"Trades:\s*(\d+)", output) or re.search(r"交易数:\s*(\d+)", output)
-    if m:
-        metrics["total_trades"] = int(m.group(1))
 
-    # --- Mean R ---
-    m = re.search(r"Mean R:\s*([\-\d.]+)", output)
-    if m:
-        metrics["mean_r"] = float(m.group(1))
-
-    # --- Win Rate ---
-    # 向量: "Win Rate: 60.38%"
-    # 事件: "胜率: 60.4%"
-    m = re.search(r"Win Rate:\s*([\d.]+)%", output) or re.search(
-        r"胜率:\s*([\d.]+)%", output
+def _looks_like_gate_insufficient_sample(output: str) -> bool:
+    """Detect Gate Train failure caused by too few samples after filtering."""
+    text = str(output or "")
+    tokens = (
+        "Prefilter 后 Train 样本量",
+        "统计不可信",
+        "No objects to concatenate",
+        "No valid samples after filtering",
     )
-    if m:
-        metrics["win_rate"] = float(m.group(1)) / 100
+    return any(tok in text for tok in tokens)
 
-    # --- Sharpe ---
-    # 向量: "Sharpe (per-trade): 0.0940"
-    # 事件: "Sharpe (R): 0.0641"
-    m = re.search(r"Sharpe \(per-trade\):\s*([\-\d.]+)", output) or re.search(
-        r"Sharpe \(R\):\s*([\-\d.]+)", output
+
+def _ensure_timestamp_for_gate_input(parquet_path: Path) -> bool:
+    """Ensure gate input parquet has `timestamp` column; add from `datetime` when possible."""
+    try:
+        if not parquet_path.exists():
+            return False
+        import pandas as pd  # local import to keep startup light
+
+        df = pd.read_parquet(parquet_path)
+        if "timestamp" in df.columns:
+            return True
+        if "datetime" in df.columns:
+            df = df.copy()
+            df["timestamp"] = pd.to_datetime(df["datetime"], errors="coerce")
+            df.to_parquet(parquet_path, index=False)
+            print(f"   🔧 Gate 输入补列: {parquet_path} 添加 timestamp <- datetime")
+            return True
+        return False
+    except Exception as exc:
+        print(f"   ⚠️ Gate 输入 timestamp 补列失败: {exc}")
+        return False
+
+
+def _build_continuous_pcm_trading_map(
+    ledger: List[Dict[str, Any]],
+    output_path: Path,
+    *,
+    data_path: str = "data/parquet_data",
+) -> str:
+    """Build continuous multi-month map with 2H K-lines and trade overlays."""
+    try:
+        import pandas as pd  # local import to keep startup light
+    except Exception as exc:
+        print(f"   ⚠️ 连续地图生成失败（缺少 pandas）: {exc}")
+        return ""
+    try:
+        from bokeh.plotting import figure as bk_figure
+        from bokeh.models import (
+            HoverTool,
+            Range1d,
+            Div,
+            ColumnDataSource,
+            Legend,
+            LegendItem,
+        )
+        from bokeh.layouts import column as bk_column
+        from bokeh.resources import INLINE as BK_RESOURCES
+        from bokeh.embed import file_html as bk_file_html
+    except Exception as exc:
+        print(f"   ⚠️ 连续地图生成失败（缺少 bokeh）: {exc}")
+        return ""
+    try:
+        from src.data_tools.data_handler import DataHandler
+    except Exception as exc:
+        print(f"   ⚠️ 连续地图生成失败（DataHandler 导入失败）: {exc}")
+        return ""
+
+    frames: List[Any] = []
+    for row in ledger:
+        pcm = row.get("pcm") or {}
+        trades_csv = str(pcm.get("trades_csv_path", "") or "")
+        month_tag = str(row.get("month", ""))
+        if not trades_csv:
+            # Fallback: when pcm_eval is disabled, stitch per-strategy event trades.
+            run_root = Path(str(row.get("run_root", "") or ""))
+            end_state_paths = row.get("end_state_paths", {}) or {}
+            for strat in end_state_paths.keys():
+                strat_name = str(strat or "").strip()
+                if not strat_name:
+                    continue
+                ep = run_root / strat_name / f"event_trades_{strat_name}.csv"
+                if not ep.exists():
+                    continue
+                try:
+                    df = pd.read_csv(ep)
+                except Exception:
+                    continue
+                if df.empty:
+                    continue
+                df = df.copy()
+                df["month"] = month_tag
+                df["source"] = f"event:{strat_name}"
+                frames.append(df)
+            continue
+
+        p = Path(trades_csv)
+        if p.exists():
+            try:
+                df = pd.read_csv(p)
+            except Exception:
+                df = pd.DataFrame()
+            if not df.empty:
+                df = df.copy()
+                df["month"] = month_tag
+                df["source"] = "pcm_joint"
+                frames.append(df)
+
+    if not frames:
+        return ""
+
+    merged = pd.concat(frames, ignore_index=True)
+    need_cols = {"symbol", "entry_time", "exit_time", "pnl_r", "archetype", "side"}
+    if not need_cols.issubset(set(merged.columns)):
+        return ""
+
+    merged["entry_time"] = pd.to_datetime(
+        merged["entry_time"], utc=True, errors="coerce"
     )
-    if m:
-        metrics["sharpe_per_trade"] = float(m.group(1))
+    merged["exit_time"] = pd.to_datetime(merged["exit_time"], utc=True, errors="coerce")
+    merged = merged.dropna(subset=["entry_time", "exit_time", "symbol"]).copy()
+    if merged.empty:
+        return ""
 
-    # --- Total R ---
-    m = re.search(r"Total R:\s*([\-\d.]+)", output)
-    if m:
-        metrics["total_r"] = float(m.group(1))
+    merged["entry_price"] = pd.to_numeric(merged.get("entry_price"), errors="coerce")
+    merged["exit_price"] = pd.to_numeric(merged.get("exit_price"), errors="coerce")
+    merged["pnl_r"] = pd.to_numeric(merged["pnl_r"], errors="coerce").fillna(0.0)
+    if "is_add_position" in merged.columns:
+        merged["is_add_position"] = merged["is_add_position"].astype(bool)
+    elif "_is_add_position" in merged.columns:
+        merged["is_add_position"] = merged["_is_add_position"].astype(bool)
+    elif "add_position_seq" in merged.columns:
+        merged["is_add_position"] = (
+            pd.to_numeric(merged["add_position_seq"], errors="coerce")
+            .fillna(0)
+            .astype(int)
+            > 0
+        )
+    else:
+        merged["is_add_position"] = False
+    if "add_position_seq" in merged.columns:
+        merged["add_position_seq"] = (
+            pd.to_numeric(merged["add_position_seq"], errors="coerce")
+            .fillna(0)
+            .astype(int)
+        )
+    elif "_add_position_seq" in merged.columns:
+        merged["add_position_seq"] = (
+            pd.to_numeric(merged["_add_position_seq"], errors="coerce")
+            .fillna(0)
+            .astype(int)
+        )
+    else:
+        merged["add_position_seq"] = 0
+    merged = merged.sort_values("entry_time").reset_index(drop=True)
+    symbols = sorted(str(s) for s in merged["symbol"].dropna().unique().tolist())
+    if not symbols:
+        return ""
 
-    # --- Max DD ---
-    # 事件: "Max DD (R): 10.55"
-    m = re.search(r"Max DD \(R\):\s*([\-\d.]+)", output)
-    if m:
-        metrics["max_drawdown_r"] = float(m.group(1))
+    merged["archetype"] = (
+        merged.get("archetype", "unknown").astype(str).fillna("unknown")
+    )
+    total_trades = int(len(merged))
+    total_r = float(merged["pnl_r"].sum())
+    win_rate = float((merged["pnl_r"] > 0).mean()) if total_trades > 0 else 0.0
+    source_counts = (
+        merged["source"].value_counts().to_dict() if "source" in merged.columns else {}
+    )
+    x_min = merged["entry_time"].min() - pd.Timedelta(days=2)
+    x_max = merged["exit_time"].max() + pd.Timedelta(days=2)
+    archetypes = sorted(
+        str(a) for a in merged["archetype"].dropna().astype(str).unique().tolist()
+    )
+    _palette = [
+        "#2563eb",
+        "#9333ea",
+        "#ea580c",
+        "#0891b2",
+        "#16a34a",
+        "#be123c",
+        "#0d9488",
+        "#7c3aed",
+        "#ca8a04",
+        "#dc2626",
+        "#4f46e5",
+        "#0f766e",
+    ]
+    archetype_colors = {
+        a: _palette[i % len(_palette)] for i, a in enumerate(archetypes)
+    }
+    dh = DataHandler(str(data_path))
+    bar_ms = int(2 * 60 * 60 * 1000 * 0.65)  # 2H body width
+    fig_list: List[Any] = []
 
-    # --- Equity ---
-    # 向量: "Final: $1155  (+15.5%)"
-    # 事件: "Final: $1155 (+15.5%)"
-    m = re.search(r"Final:\s*\$[\d.]+\s*\(([\+\-\d.]+)%\)", output)
-    if m:
-        metrics["equity_return_pct"] = float(m.group(1))
+    # ── Top panel: cumulative R (overall + per archetype) ──
+    cum_df = merged.sort_values("exit_time").copy()
+    cum_df["cum_r_all"] = cum_df["pnl_r"].cumsum()
+    p_cum = bk_figure(
+        title=f"Cumulative R | total_r={total_r:.2f} | trades={total_trades}",
+        x_axis_type="datetime",
+        width=1500,
+        height=630,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+    )
+    p_cum.grid.grid_line_alpha = 0.25
+    p_cum.x_range = Range1d(x_min.to_pydatetime(), x_max.to_pydatetime())
+    p_cum.yaxis.axis_label = "Cumulative R"
+    p_cum.line(
+        x=cum_df["exit_time"],
+        y=cum_df["cum_r_all"],
+        line_color="#111827",
+        line_width=2.2,
+        alpha=0.95,
+        legend_label="ALL",
+    )
+    for arch in archetypes:
+        g = cum_df.loc[cum_df["archetype"] == arch, ["exit_time", "pnl_r"]].copy()
+        if g.empty:
+            continue
+        g = g.sort_values("exit_time")
+        g["cum_r_arch"] = g["pnl_r"].cumsum()
+        p_cum.line(
+            x=g["exit_time"],
+            y=g["cum_r_arch"],
+            line_color=archetype_colors.get(arch, "#6b7280"),
+            line_width=1.6,
+            alpha=0.9,
+            legend_label=f"{arch}",
+        )
+    p_cum.legend.click_policy = "hide"
+    p_cum.add_tools(
+        HoverTool(
+            tooltips=[("time", "@x{%F %T}"), ("cum_r", "@y{0.000}")],
+            formatters={"@x": "datetime"},
+            mode="vline",
+        )
+    )
+    fig_list.append(p_cum)
+    for sym in symbols:
+        tdf = merged.loc[merged["symbol"] == sym].copy()
+        if tdf.empty:
+            continue
+        arch_renderers: Dict[str, List[Any]] = {}
+        p = bk_figure(
+            title=f"{sym} | trades={len(tdf)} | total_r={float(tdf['pnl_r'].sum()):.2f}",
+            x_axis_type="datetime",
+            width=1500,
+            height=720,
+            tools="pan,wheel_zoom,box_zoom,reset,save",
+        )
+        p.grid.grid_line_alpha = 0.25
+        p.x_range = Range1d(x_min.to_pydatetime(), x_max.to_pydatetime())
+        p.yaxis.axis_label = "Price"
 
-    # 向量: "Max DD: 7.1%"
-    m = re.search(r"Max DD:\s*([\d.]+)%", output)
-    if m:
-        metrics["max_drawdown_pct"] = float(m.group(1)) / 100
+        # 2H K-lines
+        try:
+            ohlcv = dh.load_ohlcv(
+                symbol=sym,
+                timeframe="120T",
+                start_date=x_min.strftime("%Y-%m-%d"),
+                end_date=x_max.strftime("%Y-%m-%d"),
+            )
+        except Exception:
+            ohlcv = pd.DataFrame()
+        if ohlcv is not None and not ohlcv.empty:
+            cdf = ohlcv.copy()
+            if not isinstance(cdf.index, pd.DatetimeIndex):
+                cdf.index = pd.to_datetime(
+                    cdf.get("timestamp"), utc=True, errors="coerce"
+                )
+            cdf = cdf[["open", "high", "low", "close"]].dropna()
+            if not cdf.empty:
+                inc = cdf["close"] >= cdf["open"]
+                dec = ~inc
+                p.segment(
+                    cdf.index[inc],
+                    cdf["high"][inc],
+                    cdf.index[inc],
+                    cdf["low"][inc],
+                    color="#26a69a",
+                    line_width=1,
+                )
+                p.segment(
+                    cdf.index[dec],
+                    cdf["high"][dec],
+                    cdf.index[dec],
+                    cdf["low"][dec],
+                    color="#ef5350",
+                    line_width=1,
+                )
+                p.vbar(
+                    cdf.index[inc],
+                    bar_ms,
+                    cdf["open"][inc],
+                    cdf["close"][inc],
+                    fill_color="#26a69a",
+                    line_color="#26a69a",
+                    fill_alpha=0.8,
+                )
+                p.vbar(
+                    cdf.index[dec],
+                    bar_ms,
+                    cdf["open"][dec],
+                    cdf["close"][dec],
+                    fill_color="#ef5350",
+                    line_color="#ef5350",
+                    fill_alpha=0.8,
+                )
 
-    return metrics
+        # Trade overlays (split by archetype)
+        tdf["pnl_color"] = [
+            "#16a34a" if x >= 0 else "#dc2626"
+            for x in tdf["pnl_r"].astype(float).tolist()
+        ]
+        tdf["arch_color"] = [
+            archetype_colors.get(str(a), "#6b7280")
+            for a in tdf["archetype"].astype(str).tolist()
+        ]
+        for arch in sorted(tdf["archetype"].astype(str).unique().tolist()):
+            adf = tdf.loc[tdf["archetype"].astype(str) == arch].copy()
+            if adf.empty:
+                continue
+            arch_renderers.setdefault(arch, [])
+            lines = adf.dropna(subset=["entry_price", "exit_price"]).copy()
+            if not lines.empty:
+                base_lines = lines.loc[~lines["is_add_position"]].copy()
+                add_lines = lines.loc[lines["is_add_position"]].copy()
+                if not base_lines.empty:
+                    src_l = ColumnDataSource(base_lines)
+                    r = p.segment(
+                        x0="entry_time",
+                        y0="entry_price",
+                        x1="exit_time",
+                        y1="exit_price",
+                        source=src_l,
+                        line_color="arch_color",
+                        line_alpha=0.42,
+                        line_width=1.3,
+                    )
+                    arch_renderers[arch].append(r)
+                if not add_lines.empty:
+                    src_la = ColumnDataSource(add_lines)
+                    r = p.segment(
+                        x0="entry_time",
+                        y0="entry_price",
+                        x1="exit_time",
+                        y1="exit_price",
+                        source=src_la,
+                        line_color="arch_color",
+                        line_dash="dashed",
+                        line_alpha=0.75,
+                        line_width=2.0,
+                    )
+                    arch_renderers[arch].append(r)
+            entries = adf.dropna(subset=["entry_price"]).copy()
+            if not entries.empty:
+                base_entries = entries.loc[~entries["is_add_position"]].copy()
+                add_entries = entries.loc[entries["is_add_position"]].copy()
+                if not base_entries.empty:
+                    src_e = ColumnDataSource(base_entries)
+                    r = p.scatter(
+                        x="entry_time",
+                        y="entry_price",
+                        source=src_e,
+                        marker="triangle",
+                        size=10,
+                        fill_color="arch_color",
+                        line_color="pnl_color",
+                        line_width=1.3,
+                        alpha=0.90,
+                    )
+                    arch_renderers[arch].append(r)
+                if not add_entries.empty:
+                    src_ea = ColumnDataSource(add_entries)
+                    r = p.scatter(
+                        x="entry_time",
+                        y="entry_price",
+                        source=src_ea,
+                        marker="diamond",
+                        size=11,
+                        fill_color="arch_color",
+                        line_color="pnl_color",
+                        line_width=1.5,
+                        alpha=0.95,
+                    )
+                    arch_renderers[arch].append(r)
+            exits = adf.dropna(subset=["exit_price"]).copy()
+            if not exits.empty:
+                base_exits = exits.loc[~exits["is_add_position"]].copy()
+                add_exits = exits.loc[exits["is_add_position"]].copy()
+                if not base_exits.empty:
+                    src_x = ColumnDataSource(base_exits)
+                    r = p.scatter(
+                        x="exit_time",
+                        y="exit_price",
+                        source=src_x,
+                        marker="square",
+                        size=7,
+                        fill_color="arch_color",
+                        line_color="pnl_color",
+                        line_width=1.1,
+                        alpha=0.78,
+                    )
+                    arch_renderers[arch].append(r)
+                if not add_exits.empty:
+                    src_xa = ColumnDataSource(add_exits)
+                    r = p.scatter(
+                        x="exit_time",
+                        y="exit_price",
+                        source=src_xa,
+                        marker="circle_x",
+                        size=9,
+                        fill_color="arch_color",
+                        line_color="pnl_color",
+                        line_width=1.4,
+                        alpha=0.9,
+                    )
+                    arch_renderers[arch].append(r)
+        hover = HoverTool(
+            tooltips=[
+                ("time", "@x{%F %T}"),
+                ("price", "@y{0.0000}"),
+            ],
+            formatters={"@x": "datetime"},
+            mode="mouse",
+        )
+        p.add_tools(hover)
+        detail_hover = HoverTool(
+            tooltips=[
+                ("archetype", "@archetype"),
+                ("side", "@side"),
+                ("month", "@month"),
+                ("source", "@source"),
+                ("pnl_r", "@pnl_r{0.000}"),
+                ("is_add_position", "@is_add_position"),
+                ("add_position_seq", "@add_position_seq"),
+                ("entry", "@entry_time{%F %T}"),
+                ("exit", "@exit_time{%F %T}"),
+            ],
+            formatters={"@entry_time": "datetime", "@exit_time": "datetime"},
+            mode="mouse",
+        )
+        p.add_tools(detail_hover)
+        legend_items = [
+            LegendItem(label=str(arch), renderers=rs)
+            for arch, rs in sorted(arch_renderers.items())
+            if rs
+        ]
+        if legend_items:
+            legend = Legend(items=legend_items)
+            legend.click_policy = "hide"
+            p.add_layout(legend, "right")
+        fig_list.append(p)
+
+    run_months = sorted(str(r.get("month", "")) for r in ledger if r.get("month"))
+    title = "Continuous Trading Map (2H K-line)"
+    subtitle = (
+        f"months={run_months[0]}~{run_months[-1]} | "
+        f"trades={total_trades} | total_r={total_r:.4f} | win_rate={win_rate:.2%}"
+        if run_months
+        else f"trades={total_trades} | total_r={total_r:.4f} | win_rate={win_rate:.2%}"
+    )
+    if source_counts:
+        src_part = ", ".join(f"{k}:{v}" for k, v in source_counts.items())
+        subtitle = f"{subtitle} | source=({src_part})"
+    if not fig_list:
+        return ""
+
+    header = Div(
+        text=f"<h2>{title}</h2><p>{subtitle}</p>",
+        width=1500,
+    )
+    html = bk_file_html(bk_column([header] + fig_list), BK_RESOURCES, title)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(html, encoding="utf-8")
+    return str(output_path)
 
 
 def _resolve_trade_objective(
@@ -982,6 +1342,10 @@ def run_strategy_pipeline(
     use_1min: bool = False,
     live_root: str = "live/highcap",
     skip_shap: bool = False,
+    feature_search_enabled: bool = True,
+    threshold_calibration_enabled: bool = True,
+    prefilter_optimization_enabled: bool = True,
+    source_strategies_root: str = "",
     config_path: str = "",
     locked_prefilter_override: str = "",
     disable_auto_locked_tuning: bool = False,
@@ -997,14 +1361,20 @@ def run_strategy_pipeline(
     # ── 实验目录隔离: config 副本到实验工作区 ──────────────────
     exp_strategies_root = run_dir / "strategies"
     exp_config_dir = exp_strategies_root / strategy
-    shutil.copytree(
-        PROJECT_ROOT / prod_config_dir,
-        exp_config_dir,
-        dirs_exist_ok=True,
+    _src_root = (
+        Path(source_strategies_root)
+        if str(source_strategies_root or "").strip()
+        else (PROJECT_ROOT / "config" / "strategies")
     )
+    if not _src_root.is_absolute():
+        _src_root = PROJECT_ROOT / _src_root
+    _src_strategy_dir = _src_root / strategy
+    _fallback_prod_dir = PROJECT_ROOT / prod_config_dir
+    _copy_from = _src_strategy_dir if _src_strategy_dir.exists() else _fallback_prod_dir
+    shutil.copytree(_copy_from, exp_config_dir, dirs_exist_ok=True)
     config_dir = str(exp_config_dir)  # 后续命令全部用实验目录
     strategies_root = str(exp_strategies_root)
-    print(f"\n📦 实验配置隔离: {exp_config_dir}")
+    print(f"\n📦 实验配置隔离: {exp_config_dir} (source={_copy_from})")
     stage_stop = str(stage_stop or "full").strip().lower()
 
     # ── 加载 per-strategy KPI gates ──
@@ -1112,7 +1482,9 @@ def run_strategy_pipeline(
     # SHAP --promote 输出 features_gate_shap.yaml (基于 features_gate 配置生成)
     # 原始 features.yaml 永远不动（保留完整候选池）
     shap_cfg = cfg.get("shap_feature_selection", {})
-    _skip_shap = skip_shap or not shap_cfg.get("enabled", True)
+    _skip_shap = (skip_shap or (not feature_search_enabled)) or not shap_cfg.get(
+        "enabled", True
+    )
     shap_active = False  # 标记 SHAP 是否成功生成了 _shap.yaml
     if not _skip_shap:
         shap_cmd = [
@@ -1200,6 +1572,24 @@ def run_strategy_pipeline(
             dry_run=dry_run,
         )
 
+    if not threshold_calibration_enabled:
+        print("⏭️  阈值校准已禁用: 跳过 prefilter/gate/entry_filter 优化步骤")
+        return {
+            "stage": "entry_filter",
+            "gate_dir": prepare_dir,
+            "evidence_dir": prepare_dir,
+            "backtest_metrics": {
+                "total_trades": 0,
+                "mean_r": 0.0,
+                "win_rate": 0.0,
+                "sharpe_per_trade": 0.0,
+            },
+            "exp_config_dir": str(exp_config_dir),
+            "prod_config_dir": prod_config_dir,
+            "prefilter_comparison": None,
+            "validation_end": test_start,
+        }
+
     # ── Step 4: Prefilter (--promote) ── (方向已确定后, meta-algorithm 按方向分裂学习)
     _pf_results: Dict[str, Any] = {}  # 提前初始化, 供 Sharpe 对比块使用
     _pf_yaml: Optional[Path] = None
@@ -1222,7 +1612,7 @@ def run_strategy_pipeline(
                 f"  🔒 Prefilter locked 规则已启用: {len(_locked_prefilter_rules)} 条 "
                 f"(source={_locked_prefilter_source})"
             )
-    if scfg.get("has_prefilter"):
+    if scfg.get("has_prefilter") and prefilter_optimization_enabled:
         _features_prefilter_path = Path(config_dir) / "features_prefilter.yaml"
         if not _features_prefilter_path.exists():
             print(f"  ❌ Prefilter: {_features_prefilter_path} 不存在, 跳过")
@@ -1342,6 +1732,8 @@ def run_strategy_pipeline(
                             print(f"   📊 [{_pf_method}] rules={_n_rules}")
                     except Exception:
                         pass
+    elif scfg.get("has_prefilter") and not prefilter_optimization_enabled:
+        print("⏭️  Prefilter 规则搜索已禁用: 复用当前 archetypes/prefilter.yaml")
 
     # ── Step 5: Gate 训练 ──
     # Prefilter 兜底: 即使上一步没产出规则文件, 也写入空规则继续后续流程.
@@ -1665,9 +2057,62 @@ def run_strategy_pipeline(
 
             _shutil_gd.copy2(prod_gate_draft, exp_gate_draft)
 
-    # ── Early termination: if Gate Train failed, downstream steps are useless ──
+    # ── Early termination / statistical fallback on Gate Train failure ──
     gate_pred = Path(f"{gate_dir}/predictions.parquet")
-    if rc != 0 or (not dry_run and not gate_pred.exists()):
+    gate_train_ok = rc == 0 and (dry_run or gate_pred.exists())
+    gate_stat_fallback_used = False
+    if not gate_train_ok and not dry_run and _looks_like_gate_insufficient_sample(out):
+        fallback_src = Path(f"{prepare_dir}/features_labeled.parquet")
+        if fallback_src.exists():
+            print(
+                "\n⚠️  Gate Train 样本不足，触发统计法 fallback: "
+                "使用 features_labeled 继续生成 gate。"
+            )
+            gate_pred.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(fallback_src, gate_pred)
+
+            gate_draft = f"{config_dir}/gate_draft.yaml"
+            gate_draft_path = Path(gate_draft)
+            if not gate_draft_path.exists():
+                archetype_gate = Path(f"{config_dir}/archetypes/gate.yaml")
+                if archetype_gate.exists():
+                    shutil.copy2(archetype_gate, gate_draft_path)
+            gate_opt_fallback_cmd = [
+                "python",
+                "scripts/optimize_gate_unified.py",
+                "--strategy",
+                strategy,
+                "--strategies-root",
+                strategies_root,
+                "--logs",
+                str(gate_pred),
+                "--output",
+                f"{gate_dir}/gate_optimization_fallback.json",
+                "--gate-path",
+                gate_draft,
+                "--promote",
+                "--stat-fallback-on-empty",
+            ]
+            if gate_gates.get("min_combined_pass_rate"):
+                gate_opt_fallback_cmd += [
+                    "--min-combined-pass-rate",
+                    str(gate_gates["min_combined_pass_rate"]),
+                ]
+            # Keep Val/Test causality: tune gate only on validation segment.
+            if test_start != holdout_start:
+                gate_opt_fallback_cmd += ["--cutoff-date", test_start]
+            _rc_fallback, _ = run_step(
+                "Gate Stat Fallback Optimize",
+                gate_opt_fallback_cmd,
+                log,
+                dry_run=dry_run,
+            )
+            if _rc_fallback == 0:
+                gate_train_ok = True
+                gate_stat_fallback_used = True
+                print("   ✅ 统计法 fallback 完成，继续后续 Gate/EF/Backtest 流程")
+
+    if not gate_train_ok:
         print(
             f"\n\u274c Gate Train 失败或未产出 predictions.parquet"
             f" (rc={rc}, exists={gate_pred.exists() if not dry_run else 'N/A'})"
@@ -1678,6 +2123,11 @@ def run_strategy_pipeline(
         )
         if not dry_run:
             return {"error": "gate_train_failed", "gate_dir": gate_dir}
+    elif gate_stat_fallback_used:
+        print("   ℹ️ 本轮 Gate Train 使用统计法 fallback 继续执行")
+
+    if not dry_run:
+        _ensure_timestamp_for_gate_input(gate_pred)
 
     # Gate apply (用 gate_draft 作为中间件)
     gate_draft = f"{config_dir}/gate_draft.yaml"
@@ -1764,6 +2214,8 @@ def run_strategy_pipeline(
         )
 
     # Re-apply with optimized gate
+    if not dry_run:
+        _ensure_timestamp_for_gate_input(gate_pred)
     run_step(
         "Gate Re-Apply",
         [
@@ -2403,6 +2855,11 @@ def _run_event_backtest_step(
     resume_state_path: str = "",
     dump_end_state_path: str = "",
     keep_open_positions: bool = False,
+    run_execution_opt: bool = True,
+    opt_start_date: str = "",
+    opt_end_date: str = "",
+    event_start_date: str = "",
+    event_end_date: str = "",
 ) -> Dict[str, Any]:
     """Step E1: 事件回测 execution 参数优化 + 交易地图生成."""
     log = run_dir / "pipeline.log"
@@ -2412,45 +2869,52 @@ def _run_event_backtest_step(
     print(f"🎯 Event Backtest Execution Opt: {strategy}")
     print(f"{'='*70}")
 
+    _opt_start = str(opt_start_date or holdout_start)
+    _opt_end = str(opt_end_date or end_date)
+    _ev_start = str(event_start_date or holdout_start)
+    _ev_end = str(event_end_date or end_date)
+    rc_opt = 0
+
     # Step E1a: Execution 参数优化 (sym-r grid search)
     opt_output = str(run_dir / "event_exec_opt.json")
-    opt_cmd = [
-        "python",
-        "scripts/optimize_event_execution.py",
-        "--strategy",
-        strategy,
-        "--start-date",
-        holdout_start,
-        "--end-date",
-        end_date,
-        "--sym-r",
-        sym_r,
-        "--strategies-root",
-        strategies_root,
-        "--data-path",
-        data_path,
-        "--output",
-        opt_output,
-        "--objective",
-        objective,
-        "--near-stop-threshold-r",
-        str(near_stop_threshold_r),
-        "--near-stop-penalty",
-        str(near_stop_penalty),
-        "--max-dd-penalty",
-        str(max_dd_penalty),
-        "--min-trades-soft",
-        str(min_trades_soft),
-        "--undertrade-penalty",
-        str(undertrade_penalty),
-    ]
-    if promote:
-        opt_cmd.append("--promote")
-    rc_opt, opt_out = run_step(
-        "Event Execution Optimize", opt_cmd, log, dry_run=dry_run
-    )
-    if rc_opt != 0:
-        print("   ⚠️  Execution 优化有异常, 继续使用当前 execution.yaml")
+    if run_execution_opt:
+        opt_cmd = [
+            "python",
+            "scripts/optimize_event_execution.py",
+            "--strategy",
+            strategy,
+            "--start-date",
+            _opt_start,
+            "--end-date",
+            _opt_end,
+            "--sym-r",
+            sym_r,
+            "--strategies-root",
+            strategies_root,
+            "--data-path",
+            data_path,
+            "--output",
+            opt_output,
+            "--objective",
+            objective,
+            "--near-stop-threshold-r",
+            str(near_stop_threshold_r),
+            "--near-stop-penalty",
+            str(near_stop_penalty),
+            "--max-dd-penalty",
+            str(max_dd_penalty),
+            "--min-trades-soft",
+            str(min_trades_soft),
+            "--undertrade-penalty",
+            str(undertrade_penalty),
+        ]
+        if promote:
+            opt_cmd.append("--promote")
+        rc_opt, _ = run_step("Event Execution Optimize", opt_cmd, log, dry_run=dry_run)
+        if rc_opt != 0:
+            print("   ⚠️  Execution 优化有异常, 继续使用当前 execution.yaml")
+    else:
+        print("   ⏭️  跳过 execution 优化, 直接执行事件回测")
 
     # Step E1b: 事件回测 + 交易地图
     map_path = str(results_dir / f"trading_map_{strategy}_event.html")
@@ -2462,9 +2926,9 @@ def _run_event_backtest_step(
         "--strategy",
         strategy,
         "--start-date",
-        holdout_start,
+        _ev_start,
         "--end-date",
-        end_date,
+        _ev_end,
         "--strategies-root",
         strategies_root,
         "--data-path",
@@ -2490,6 +2954,10 @@ def _run_event_backtest_step(
         event_metrics.update(_load_pcm_metrics_from_json(event_json_path))
     event_metrics["sym_r"] = sym_r
     event_metrics["objective"] = objective
+    event_metrics["opt_window_start"] = _opt_start
+    event_metrics["opt_window_end"] = _opt_end
+    event_metrics["event_window_start"] = _ev_start
+    event_metrics["event_window_end"] = _ev_end
     event_metrics["trading_map"] = map_path
     event_metrics["json_path"] = event_json_path
     event_metrics["exec_opt_rc"] = rc_opt
@@ -2801,7 +3269,7 @@ def _run_pcm_slot_grid_backtest(
                 encoding="utf-8",
             )
 
-            case_pcm = _run_pcm_joint_backtest(
+            case_pcm = pipeline_events.run_pcm_joint_backtest(
                 results_summary,
                 history_dir,
                 timestamp,
@@ -3281,15 +3749,71 @@ def _run_fast_month_stage(
     live_root: str,
     data_path: str,
     event_sym_r: str,
+    strategies_root: str = "",
+    calibration_months: int = 3,
+    calibrate_all_layers: bool = True,
+    feature_search_enabled: bool = True,
+    rolling_mode: str = "legacy",
+    config_path: str = "",
     prev_side_state: Optional[Dict[str, Any]] = None,
     prev_resume_state_paths: Optional[Dict[str, str]] = None,
     keep_open_positions: bool = False,
 ) -> Dict[str, Any]:
-    """Run one-month fast loop: per-strategy event backtest + PCM joint."""
+    """Run one-month fast loop with optional calib/test window split."""
     month_start, month_end = _month_token_to_range(month_token)
+    windows = _calib_and_test_windows(
+        month_token=month_token, calibration_months=int(calibration_months)
+    )
+    calib_start = windows["calib_start"]
+    calib_end = windows["calib_end"]
+    test_start = windows["test_start"]
+    test_end = windows["test_end"]
+    if not calibrate_all_layers:
+        # Legacy-compatible behavior: optimize and backtest in the same month window.
+        calib_start, calib_end = test_start, test_end
+    fast_loop_cfg = cfg.get("fast_loop", {}) or {}
+    event_cfg = cfg.get("event_backtest", {}) or {}
+    # Keep legacy path backward compatible: ignore fast_loop toggles there.
+    _fast_loop_active = rolling_mode != "legacy"
+
+    def _section_enabled(name: str, default: bool = True) -> bool:
+        sec = fast_loop_cfg.get(name, {}) or {}
+        if isinstance(sec, dict):
+            return bool(sec.get("enabled", default))
+        return bool(default)
+
+    threshold_calibration_enabled = _section_enabled("threshold_calibration", True)
+    prefilter_cfg = fast_loop_cfg.get("prefilter", {}) or {}
+    prefilter_optimize_enabled = (
+        bool(prefilter_cfg.get("optimize", True))
+        if isinstance(prefilter_cfg, dict)
+        else True
+    )
+    execution_opt_enabled = _section_enabled("execution_opt", True)
+    pcm_eval_enabled = _section_enabled("pcm_eval", True)
+    event_backtest_enabled = bool(event_cfg.get("enabled", True))
+    if not _fast_loop_active:
+        threshold_calibration_enabled = True
+        prefilter_optimize_enabled = True
+        execution_opt_enabled = True
+        pcm_eval_enabled = True
+        event_backtest_enabled = True
+    _calibrate_threshold_layers = bool(
+        calibrate_all_layers and threshold_calibration_enabled
+    )
+    if rolling_mode == "legacy":
+        # Legacy path keeps original lightweight behavior: no prior-window layer calibration.
+        _calibrate_threshold_layers = False
     run_root = history_dir / "_rolling_sim" / timestamp / f"fast_month_{month_token}"
     run_root.mkdir(parents=True, exist_ok=True)
-    event_promote = False  # fast-month replay should not mutate configs
+    _base_strategies_root = (
+        Path(strategies_root)
+        if str(strategies_root or "").strip()
+        else (PROJECT_ROOT / "config" / "strategies")
+    )
+    if not _base_strategies_root.is_absolute():
+        _base_strategies_root = PROJECT_ROOT / _base_strategies_root
+    _base_strategies_root = _base_strategies_root.resolve()
 
     results_summary: List[Dict[str, Any]] = []
     ranking_rows: List[Dict[str, Any]] = []
@@ -3313,8 +3837,102 @@ def _run_fast_month_stage(
     max_symbols_per_side = int(slot_alloc.get("max_symbols_per_side", 2) or 2)
 
     print(f"\n{'='*70}")
-    print(f"🗓️  Fast Month Replay: {month_token} ({month_start} ~ {month_end})")
+    print(f"🗓️  Fast Month Replay: {month_token} ({test_start} ~ {test_end})")
+    print(
+        f"   mode={rolling_mode} | calib={calib_start}~{calib_end} | "
+        f"test={test_start}~{test_end}"
+    )
+    print(f"   base_strategies_root={_base_strategies_root}")
+    print(
+        "   fast_loop: "
+        f"threshold_calibration={threshold_calibration_enabled}, "
+        f"prefilter_optimize={prefilter_optimize_enabled}, "
+        f"execution_opt={execution_opt_enabled}, "
+        f"pcm_eval={pcm_eval_enabled}, "
+        f"event_backtest={event_backtest_enabled}"
+    )
     print(f"{'='*70}")
+
+    # A) Calibrate prefilter/gate/entry on prior window into a month-scoped strategy root.
+    month_strategies_root = run_root / "strategies_calibrated"
+    month_strategies_root.mkdir(parents=True, exist_ok=True)
+    if _calibrate_threshold_layers:
+        for strat in strategies:
+            if strat not in cfg.get("strategies", {}):
+                continue
+            strat_calib_dir = run_root / strat / "threshold_calibration"
+            strat_calib_dir.mkdir(parents=True, exist_ok=True)
+            scfg = cfg["strategies"][strat]
+            strat_dates = (
+                scfg.get("dates", {}) if isinstance(scfg.get("dates"), dict) else {}
+            )
+            _start_date = str(
+                strat_dates.get(
+                    "start_date", (cfg.get("dates", {}) or {}).get("start_date")
+                )
+            )
+            _res = pipeline_strategy.run_strategy_pipeline(
+                strat,
+                cfg,
+                end_date=calib_end,
+                holdout_start=calib_start,
+                holdout_months=int(calibration_months),
+                validation_months=0,
+                start_date=_start_date,
+                symbols=resolve_symbols_from_config(cfg),
+                data_path=data_path,
+                run_dir=strat_calib_dir,
+                seed=42,
+                dry_run=dry_run,
+                use_1min=use_1min,
+                live_root=live_root,
+                skip_shap=(not feature_search_enabled),
+                feature_search_enabled=feature_search_enabled,
+                threshold_calibration_enabled=True,
+                prefilter_optimization_enabled=prefilter_optimize_enabled,
+                source_strategies_root=str(_base_strategies_root),
+                config_path=(config_path or str(DEFAULT_CONFIG)),
+                stage_stop="entry_filter",
+            )
+            exp_cfg_dir = Path(str(_res.get("exp_config_dir", "") or ""))
+            if exp_cfg_dir.exists():
+                dst = month_strategies_root / strat
+                shutil.rmtree(dst, ignore_errors=True)
+                shutil.copytree(exp_cfg_dir, dst, dirs_exist_ok=True)
+    else:
+        for strat in strategies:
+            src = _base_strategies_root / strat
+            dst = month_strategies_root / strat
+            if src.exists():
+                shutil.rmtree(dst, ignore_errors=True)
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+
+    # B) Calibrate execution on prior window and promote into month_strategies_root.
+    if _calibrate_threshold_layers and execution_opt_enabled:
+        for strat in strategies:
+            if strat not in cfg.get("strategies", {}):
+                continue
+            obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)
+            sym_r = _resolve_event_sym_r_for_strategy(cfg, strat, event_sym_r)
+            _opt_dir = run_root / strat / "execution_calibration"
+            _opt_dir.mkdir(parents=True, exist_ok=True)
+            pipeline_events.run_event_execution_opt_only(
+                strat,
+                _opt_dir,
+                holdout_start=calib_start,
+                end_date=calib_end,
+                strategies_root=str(month_strategies_root),
+                data_path=data_path,
+                dry_run=dry_run,
+                sym_r=sym_r,
+                promote=True,
+                objective=str(obj_cfg["objective"]),
+                near_stop_threshold_r=float(obj_cfg["near_stop_threshold_r"]),
+                near_stop_penalty=float(obj_cfg["near_stop_penalty"]),
+                max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
+                min_trades_soft=int(obj_cfg["min_trades_soft"]),
+                undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
+            )
 
     for strat in strategies:
         if strat not in cfg.get("strategies", {}):
@@ -3326,27 +3944,43 @@ def _run_fast_month_stage(
         print(f"\n   ▶️  {strat}: sym-r={sym_r}, objective={obj_cfg['objective']}")
         resume_state_path = str(prev_resume_state_paths.get(strat, "") or "")
         end_state_path = str(strat_dir / "end_state.json")
-        ev = _run_event_backtest_step(
-            strat,
-            str(strat_dir),
-            strat_dir,
-            holdout_start=month_start,
-            end_date=month_end,
-            strategies_root=str(PROJECT_ROOT / "config" / "strategies"),
-            data_path=data_path,
-            dry_run=dry_run,
-            sym_r=sym_r,
-            promote=event_promote,
-            objective=str(obj_cfg["objective"]),
-            near_stop_threshold_r=float(obj_cfg["near_stop_threshold_r"]),
-            near_stop_penalty=float(obj_cfg["near_stop_penalty"]),
-            max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
-            min_trades_soft=int(obj_cfg["min_trades_soft"]),
-            undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
-            resume_state_path=resume_state_path,
-            dump_end_state_path=end_state_path,
-            keep_open_positions=keep_open_positions,
-        )
+        if event_backtest_enabled:
+            ev = pipeline_events.run_event_backtest_step(
+                strat,
+                str(strat_dir),
+                strat_dir,
+                holdout_start=test_start,
+                end_date=test_end,
+                strategies_root=str(month_strategies_root),
+                data_path=data_path,
+                dry_run=dry_run,
+                sym_r=sym_r,
+                promote=False,
+                objective=str(obj_cfg["objective"]),
+                near_stop_threshold_r=float(obj_cfg["near_stop_threshold_r"]),
+                near_stop_penalty=float(obj_cfg["near_stop_penalty"]),
+                max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
+                min_trades_soft=int(obj_cfg["min_trades_soft"]),
+                undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
+                run_execution_opt=(not _calibrate_threshold_layers)
+                and execution_opt_enabled,
+                opt_start_date=calib_start,
+                opt_end_date=calib_end,
+                event_start_date=test_start,
+                event_end_date=test_end,
+                resume_state_path=resume_state_path,
+                dump_end_state_path=end_state_path,
+                keep_open_positions=keep_open_positions,
+            )
+        else:
+            print(f"   ⏭️  跳过事件回测: event_backtest.enabled=false ({strat})")
+            ev = {
+                "rc": 0,
+                "metrics": {"n_trades": 0, "sharpe_r": 0.0, "mean_r": 0.0},
+                "map_path": "",
+                "json_path": "",
+                "end_state_path": end_state_path,
+            }
         end_state_paths[strat] = end_state_path
         m = ev.get("metrics", {}) or {}
         q, q_components = _quality_score_from_event_metrics(
@@ -3395,7 +4029,7 @@ def _run_fast_month_stage(
                 "decision": "FAST_MONTH",
                 "evidence_dir": str(strat_dir),
                 "run_dir_name": str(run_root.name),
-                "exp_config_dir": str(PROJECT_ROOT / "config" / "strategies" / strat),
+                "exp_config_dir": str(month_strategies_root / strat),
             }
         )
 
@@ -3450,8 +4084,8 @@ def _run_fast_month_stage(
         for r in results_summary
         if str(r.get("strategy", "")) in set(selected_strategies)
     ]
-    if len(selected_results_summary) >= 2:
-        pcm_result = _run_pcm_joint_backtest(
+    if pcm_eval_enabled and len(selected_results_summary) >= 2:
+        pcm_result = pipeline_events.run_pcm_joint_backtest(
             selected_results_summary,
             history_dir,
             timestamp,
@@ -3459,16 +4093,22 @@ def _run_fast_month_stage(
             use_1min=use_1min,
             live_root=live_root,
             data_path=data_path,
-            holdout_start=month_start,
-            end_date=month_end,
+            holdout_start=test_start,
+            end_date=test_end,
             output_stem=f"pcm_fast_month_{month_token}",
             step_name=f"PCM Joint Event Backtest (fast_month {month_token})",
         )
+    elif not pcm_eval_enabled:
+        print("   ⏭️  跳过 PCM 联合回测: fast_loop.pcm_eval.enabled=false")
 
     summary = {
         "month": month_token,
         "month_start": month_start,
         "month_end": month_end,
+        "rolling_mode": rolling_mode,
+        "calibration_window": {"start": calib_start, "end": calib_end},
+        "test_window": {"start": test_start, "end": test_end},
+        "strategies_root": str(month_strategies_root),
         "run_root": str(run_root),
         "quality_ranking_path": str(quality_path),
         "side_state_path": str(side_path),
@@ -3480,6 +4120,90 @@ def _run_fast_month_stage(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     return summary
+
+
+def _run_slow_structure_snapshot_for_month(
+    *,
+    cfg: Dict[str, Any],
+    strategies: List[str],
+    history_dir: Path,
+    timestamp: str,
+    month_token: str,
+    data_path: str,
+    dry_run: bool,
+    use_1min: bool,
+    live_root: str,
+    lookback_months: int,
+    source_strategies_root: str,
+    config_path: str,
+) -> Dict[str, Any]:
+    """Build slow structure snapshot as-of previous month end."""
+    prev_end = _month_prev_end(month_token)
+    struct_end = prev_end
+    struct_start = _add_months(f"{month_token}-01", -int(lookback_months))
+    snap_root = (
+        history_dir / "_rolling_sim" / timestamp / f"slow_snapshot_{month_token}"
+    )
+    snap_strategies_root = snap_root / "strategies"
+    snap_root.mkdir(parents=True, exist_ok=True)
+    snap_strategies_root.mkdir(parents=True, exist_ok=True)
+
+    for strategy in strategies:
+        if strategy not in cfg.get("strategies", {}):
+            continue
+        strat_dir = snap_root / strategy
+        strat_dir.mkdir(parents=True, exist_ok=True)
+        res = pipeline_strategy.run_strategy_pipeline(
+            strategy,
+            cfg,
+            end_date=struct_end,
+            holdout_start=compute_holdout_start(struct_end, 3),
+            holdout_months=3,
+            validation_months=0,
+            start_date=struct_start,
+            symbols=resolve_symbols_from_config(cfg),
+            data_path=data_path,
+            run_dir=strat_dir,
+            seed=42,
+            dry_run=dry_run,
+            use_1min=use_1min,
+            live_root=live_root,
+            skip_shap=False,
+            feature_search_enabled=True,
+            threshold_calibration_enabled=False,
+            source_strategies_root=source_strategies_root,
+            config_path=config_path,
+            stage_stop="entry_filter",
+        )
+        exp_cfg_dir = Path(str(res.get("exp_config_dir", "") or ""))
+        if exp_cfg_dir.exists():
+            dst = snap_strategies_root / strategy
+            shutil.rmtree(dst, ignore_errors=True)
+            shutil.copytree(exp_cfg_dir, dst, dirs_exist_ok=True)
+
+    manifest = {
+        "run_id": timestamp,
+        "stage": "slow_snapshot",
+        "mode": "slow_realistic",
+        "target_month": month_token,
+        "structure_start": struct_start,
+        "structure_end": struct_end,
+        "lookback_months": int(lookback_months),
+        "strategies": strategies,
+        "strategies_root": str(snap_strategies_root),
+        "created_at": datetime.now().isoformat(),
+    }
+    manifest_path = snap_root / "slow_snapshot_manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return {
+        "snapshot_root": str(snap_root),
+        "strategies_root": str(snap_strategies_root),
+        "manifest_path": str(manifest_path),
+        "structure_start": struct_start,
+        "structure_end": struct_end,
+    }
 
 
 # ====================================================================
@@ -3614,6 +4338,8 @@ def main():
     # ── 自动检测日期 ──
     if args.end_date:
         default_end_date = args.end_date
+    elif str(dates.get("end_date", "") or "").strip():
+        default_end_date = str(dates["end_date"]).strip()
     else:
         default_end_date = detect_latest_data_date(data_path, symbols)
 
@@ -3682,6 +4408,21 @@ def main():
     if args.stage == "fast_month":
         if not args.month:
             p.error("--stage fast_month 需要 --month YYYY-MM")
+        rolling_cfg = cfg.get("rolling", {}) or {}
+        rolling_mode = str(rolling_cfg.get("mode", "legacy"))
+        calibration_months = int(
+            ((rolling_cfg.get("windows", {}) or {}).get("calibration_months", 3) or 3)
+        )
+        if rolling_mode == "turbo_fixed_features":
+            stage_root = str(
+                (rolling_cfg.get("turbo_fixed_features", {}) or {}).get(
+                    "fixed_strategies_root", "config/strategies"
+                )
+            )
+            stage_feature_search = False
+        else:
+            stage_root = "config/strategies"
+            stage_feature_search = True
         try:
             _summary = _run_fast_month_stage(
                 cfg=cfg,
@@ -3694,6 +4435,12 @@ def main():
                 live_root=args.live_root,
                 data_path=cfg["data_path"],
                 event_sym_r=args.event_sym_r,
+                strategies_root=stage_root,
+                calibration_months=calibration_months,
+                calibrate_all_layers=(rolling_mode != "legacy"),
+                feature_search_enabled=stage_feature_search,
+                rolling_mode=rolling_mode,
+                config_path=args.config,
                 prev_resume_state_paths={},
                 keep_open_positions=False,
             )
@@ -3712,6 +4459,22 @@ def main():
         return
 
     if args.stage == "rolling_sim":
+        rolling_cfg = cfg.get("rolling", {}) or {}
+        rolling_mode = str(rolling_cfg.get("mode", "legacy"))
+        windows_cfg = rolling_cfg.get("windows", {}) or {}
+        slow_cfg = rolling_cfg.get("slow_realistic", {}) or {}
+        turbo_cfg = rolling_cfg.get("turbo_fixed_features", {}) or {}
+        calibration_months = int(windows_cfg.get("calibration_months", 3) or 3)
+        structure_lookback_months = int(
+            windows_cfg.get("structure_lookback_months", 12) or 12
+        )
+        cadence_months = int(slow_cfg.get("cadence_months", 3) or 3)
+        triggered_retrain_enabled = bool(
+            slow_cfg.get("triggered_retrain_enabled", True)
+        )
+        turbo_root = str(turbo_cfg.get("fixed_strategies_root", "config/strategies"))
+        turbo_feature_search = not bool(turbo_cfg.get("disable_feature_search", True))
+
         month_tokens = _iter_month_tokens(_display_holdout_start, _display_end)
         if not month_tokens:
             p.error("rolling_sim 无可用月份窗口")
@@ -3720,7 +4483,39 @@ def main():
         ledger: List[Dict[str, Any]] = []
         side_state_cursor: Dict[str, Any] = {}
         resume_state_cursor: Dict[str, str] = {}
-        for mt in month_tokens:
+        active_strategies_root = str(PROJECT_ROOT / "config" / "strategies")
+        active_slow_manifest = ""
+        for month_idx, mt in enumerate(month_tokens):
+            if rolling_mode == "slow_realistic":
+                if (
+                    triggered_retrain_enabled
+                    and month_idx % max(cadence_months, 1) == 0
+                ):
+                    slow_snapshot = _run_slow_structure_snapshot_for_month(
+                        cfg=cfg,
+                        strategies=strategies,
+                        history_dir=history_dir,
+                        timestamp=timestamp,
+                        month_token=mt,
+                        data_path=cfg["data_path"],
+                        dry_run=args.dry_run,
+                        use_1min=args.use_1min,
+                        live_root=args.live_root,
+                        lookback_months=structure_lookback_months,
+                        source_strategies_root=str(
+                            PROJECT_ROOT / "config" / "strategies"
+                        ),
+                        config_path=args.config,
+                    )
+                    active_strategies_root = str(
+                        slow_snapshot.get("strategies_root", "")
+                    )
+                    active_slow_manifest = str(slow_snapshot.get("manifest_path", ""))
+            elif rolling_mode == "turbo_fixed_features":
+                active_strategies_root = turbo_root
+            else:
+                active_strategies_root = str(PROJECT_ROOT / "config" / "strategies")
+
             _is_last_month = mt == month_tokens[-1]
             _summary = _run_fast_month_stage(
                 cfg=cfg,
@@ -3733,10 +4528,19 @@ def main():
                 live_root=args.live_root,
                 data_path=cfg["data_path"],
                 event_sym_r=args.event_sym_r,
+                strategies_root=active_strategies_root,
+                calibration_months=calibration_months,
+                calibrate_all_layers=(rolling_mode != "legacy"),
+                feature_search_enabled=(rolling_mode == "slow_realistic")
+                or turbo_feature_search,
+                rolling_mode=rolling_mode,
+                config_path=args.config,
                 prev_side_state=side_state_cursor,
                 prev_resume_state_paths=resume_state_cursor,
                 keep_open_positions=not _is_last_month,
             )
+            _summary["slow_manifest"] = active_slow_manifest
+            _summary["active_strategies_root"] = active_strategies_root
             ledger.append(_summary)
             try:
                 side_obj = json.loads(
@@ -3763,10 +4567,20 @@ def main():
         month_maps = [
             str((r.get("pcm") or {}).get("trading_map", "") or "") for r in ledger
         ]
+        continuous_map = _build_continuous_pcm_trading_map(
+            ledger,
+            roll_root / "trading_map_continuous.html",
+            data_path=cfg["data_path"],
+        )
         stitch_map = roll_root / "trading_map_stitched.html"
         stitch_lines = [
             "<html><head><meta charset='utf-8'><title>Stitched Trading Maps</title></head><body>",
             "<h2>Rolling Sim Trading Maps</h2>",
+            (
+                f"<p><a href='{continuous_map}'>continuous_map</a></p>"
+                if continuous_map
+                else ""
+            ),
             "<ul>",
         ]
         for r in ledger:
@@ -3778,6 +4592,7 @@ def main():
         stitch_map.write_text("\n".join(stitch_lines), encoding="utf-8")
         stitched = {
             "run_id": timestamp,
+            "mode": rolling_mode,
             "months": [r.get("month") for r in ledger],
             "count_months": len(ledger),
             "ledger_path": str(ledger_path),
@@ -3785,6 +4600,7 @@ def main():
             "stitched_total_trades": pcm_trades,
             "stitched_map_index": str(stitch_map),
             "month_pcm_maps": month_maps,
+            "continuous_map": continuous_map,
         }
         stitched_path = roll_root / "stitched_summary.json"
         stitched_path.write_text(
@@ -3800,6 +4616,8 @@ def main():
         print(f"   Ledger: {ledger_path}")
         print(f"   Summary: {stitched_path}")
         print(f"   StitchedMap: {stitch_map}")
+        if continuous_map:
+            print(f"   ContinuousMap: {continuous_map}")
         return
 
     # ── Stage: 仅跑 PCM slot 网格 ──
@@ -3883,7 +4701,7 @@ def main():
                     "exp_config_dir": str(PROJECT_ROOT / "config" / "strategies" / s),
                 }
             )
-        pcm_result = _run_pcm_joint_backtest(
+        pcm_result = pipeline_events.run_pcm_joint_backtest(
             results_summary,
             history_dir,
             timestamp,
@@ -3941,7 +4759,7 @@ def main():
                 f"\n   ▶️  {strat}: sym-r={event_sym_r}, objective={obj_cfg['objective']}"
             )
             if args.stage == "execution_opt":
-                _res = _run_event_execution_opt_only(
+                _res = pipeline_events.run_event_execution_opt_only(
                     strat,
                     stage_run_dir,
                     holdout_start=strat_dates["holdout_start"],
@@ -3960,7 +4778,7 @@ def main():
                 )
                 print(f"      rc={_res.get('rc')} output={_res.get('output')}")
             else:
-                _ev = _run_event_backtest_step(
+                _ev = pipeline_events.run_event_backtest_step(
                     strat,
                     str(stage_run_dir),
                     stage_run_dir,
@@ -4004,7 +4822,7 @@ def main():
             run_dir = history_dir / strategy / timestamp
             run_dir.mkdir(parents=True, exist_ok=True)
             stage_seed = int((training_cfg.get("seeds") or [42])[0])
-            result = run_strategy_pipeline(
+            result = pipeline_strategy.run_strategy_pipeline(
                 strategy,
                 cfg,
                 end_date=strategy_dates["end_date"],
@@ -4036,12 +4854,16 @@ def main():
             snap_root = history_dir / "_rolling_sim" / timestamp
             snap_root.mkdir(parents=True, exist_ok=True)
             snap_path = snap_root / "slow_snapshot_manifest.json"
+            rolling_cfg = cfg.get("rolling", {}) or {}
             snap_path.write_text(
                 json.dumps(
                     {
                         "run_id": timestamp,
                         "stage": "slow_snapshot",
+                        "mode": str(rolling_cfg.get("mode", "legacy")),
                         "strategies": strategies,
+                        "strategies_root": str(PROJECT_ROOT / "config" / "strategies"),
+                        "config_path": str(args.config),
                         "created_at": datetime.now().isoformat(),
                     },
                     indent=2,
@@ -4100,7 +4922,7 @@ def main():
                 seed_run_dir = history_dir / strategy / timestamp
             seed_run_dir.mkdir(parents=True, exist_ok=True)
 
-            result = run_strategy_pipeline(
+            result = pipeline_strategy.run_strategy_pipeline(
                 strategy,
                 cfg,
                 end_date=strategy_dates["end_date"],
@@ -4323,7 +5145,7 @@ def main():
             strat_run_dir = history_dir / strat / rdn
             # 事件回测的 strategies_root = 实验子目录中的 strategies/
             ev_strategies_root = str(strat_run_dir / "strategies")
-            ev_result = _run_event_backtest_step(
+            ev_result = pipeline_events.run_event_backtest_step(
                 strat,
                 r["evidence_dir"],
                 strat_run_dir,
@@ -4358,7 +5180,7 @@ def main():
     pcm_result = None
     pcm_slot_grid_result = None
     if args.all and not args.compare_only:
-        pcm_result = _run_pcm_joint_backtest(
+        pcm_result = pipeline_events.run_pcm_joint_backtest(
             results_summary,
             history_dir,
             timestamp,
@@ -4463,8 +5285,8 @@ def main():
 def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool:
     """将实验 archetypes 复制回生产 config.
 
-    语义锁定: 采纳前校验生产 prefilter.yaml 中的 locked 规则是否在实验 prefilter 中存在.
-    locked 信息直接存储在 prefilter.yaml 规则上 (locked: true), 无需 meta.yaml.
+    语义锁定: 采纳前校验生产 prefilter.yaml 和 gate.yaml 中的 locked 规则
+    是否在实验版本中存在. locked 信息直接存储在规则上 (locked: true).
     """
     import yaml as _yaml_adopt
 
@@ -4484,7 +5306,6 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
         locked_rules = [r for r in prod_pf_raw.get("rules", []) if r.get("locked")]
 
         if locked_rules:
-            # 从实验 prefilter.yaml (或 gate.yaml) 中收集特征名
             exp_prefilter = exp_arch / "prefilter.yaml"
             exp_gate = exp_arch / "gate.yaml"
             exp_features = set()
@@ -4524,7 +5345,7 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
 
             if missing_locked:
                 print(
-                    f"   ⛔ 语义锁定拒绝采纳: {len(missing_locked)} 条 locked 规则在实验中缺失:"
+                    f"   ⛔ 语义锁定拒绝采纳: {len(missing_locked)} 条 locked prefilter 规则在实验中缺失:"
                 )
                 for lr in missing_locked:
                     desc = lr.get("feature") or [
@@ -4537,8 +5358,32 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
                 return False
             else:
                 print(
-                    f"   🔒 语义锁定校验通过: {len(locked_rules)} 条 locked 规则均存在"
+                    f"   🔒 Prefilter 语义锁定校验通过: {len(locked_rules)} 条 locked 规则均存在"
                 )
+
+    # ── 语义锁定: 读取生产 gate.yaml 中的 locked 规则, 确保采纳后不丢失 ──
+    prod_gate = prod_arch / "gate.yaml"
+    exp_gate_path = exp_arch / "gate.yaml"
+    if prod_gate.exists():
+        prod_locked_gates = load_locked_gate_rules(prod_gate)
+        if prod_locked_gates:
+            if exp_gate_path.exists():
+                exp_locked_gates = load_locked_gate_rules(exp_gate_path)
+                exp_gate_ids = {r.get("id", "") for r in exp_locked_gates}
+                missing_gate_locked = [
+                    r for r in prod_locked_gates if r.get("id", "") not in exp_gate_ids
+                ]
+                if missing_gate_locked:
+                    print(
+                        f"   🔒 Gate: {len(missing_gate_locked)} 条 locked 规则在实验中缺失, 将自动回补"
+                    )
+            else:
+                missing_gate_locked = prod_locked_gates
+
+            # 采纳后自动回补 locked gate 规则（可能 disabled, 但不丢失）
+            if missing_gate_locked:
+                _merge_target = exp_gate_path if exp_gate_path.exists() else prod_gate
+                merge_locked_gate_rules(_merge_target, missing_gate_locked)
 
     prod_arch.mkdir(parents=True, exist_ok=True)
     copied = 0
@@ -5477,4 +6322,4 @@ def _print_drift_report(
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(pipeline_cli.main())

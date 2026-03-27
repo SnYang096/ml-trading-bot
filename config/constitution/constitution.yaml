@@ -156,11 +156,11 @@ slots:
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
   enabled_archetypes:
-    # PCM 联合事件回测策略白名单（默认只跑这些）
-    # 当前上线前 2H 集合：禁用 bpc-long-120T / me-long-120T
-    # - bpc-long-120T
-    # - fer-long-120T
-    # - me-long-120T
+    # PCM 联合事件回测策略白名单（与 pipeline strategy_scope 交集生效）
+    # 牛市 5x / 长侧实验需启用 long；短侧保持并列以便联合 PCM
+    - bpc-long-120T
+    - fer-long-120T
+    - me-long-120T
     - me-short-120T
     - bpc-short-120T
     - fer-short-120T
@@ -170,33 +170,33 @@ resource_allocation:
     # bpc-long 和 bpc-short 各独立占 1 slot，全局 4 slots 防止同时过多开仓
     bpc-long:
       max_slots: 1 # BPC 方向拆分: long 侧最多 1 slot
-      max_risk_per_trade: 0.02 # 肥尾主仓: 首枪改为 2.00% 风险，5次加仓可以加到5倍杠杆
+      max_risk_per_trade: 0.01 # 肥尾主仓: 首枪改为 2.00% 风险，5次加仓可以加到5倍杠杆
       allow_add_position: true # BPC 趋势延续允许加仓
       max_add_times: 5 # 宪法仅保留上限；触发与梯度下沉到 execution.yaml
     bpc-short:
       max_slots: 1 # BPC 方向拆分: short 侧最多 1 slot
-      max_risk_per_trade: 0.02 # 熊市尾部主仓: 首枪改为 2.00% 风险
+      max_risk_per_trade: 0.01 # 熊市尾部主仓: 首枪改为 2.00% 风险
       allow_add_position: true
       max_add_times: 5
     # ── ME 方向拆分 ──
     me-long:
       max_slots: 1
-      max_risk_per_trade: 0.0035 # 动量扩散只做加速段, 首枪更轻
+      max_risk_per_trade: 0.01 # 动量扩散只做加速段, 首枪更轻
       allow_add_position: true # ME 动能扩张允许加仓
-      max_add_times: 2
+      max_add_times: 3 # 与 execution.add_position.max_add_times 对齐；≥3 便于骑乘实验
     me-short:
       max_slots: 1 # ME-SHORT: 最多 1 slot (防止过度做空)
-      max_risk_per_trade: 0.0030 # 熊市短促脉冲, 保持战术仓位
+      max_risk_per_trade: 0.01 # 熊市短促脉冲, 保持战术仓位
       allow_add_position: true # 双边各做 2 次顺势动量扩张加仓
       max_add_times: 2
     # ── FER 方向拆分 ──
     fer-long:
       max_slots: 1
-      max_risk_per_trade: 0.0035 # 反转单不承担尾部主仓职责
+      max_risk_per_trade: 0.01 # 反转单不承担尾部主仓职责
       allow_add_position: false # FER 反转策略不加仓
     fer-short:
       max_slots: 1
-      max_risk_per_trade: 0.0035
+      max_risk_per_trade: 0.01
       allow_add_position: false
     # ── LV (方向中性, 不拆分) ──
     lv:
@@ -207,13 +207,34 @@ resource_allocation:
   # 加仓全局安全规则 (适用于所有 allow_add_position=true 的策略)
   # "adding is allowed only by freed risk budget"
   add_position_rules:
-    max_add_times: 1 # 全局 fallback；实际层数优先读各策略 add_position
+    max_add_times: 3 # 全局 fallback；实际层数优先读各策略 add_position
     # 加仓前必须已锁定利润 (breakeven stop 已触发)
     # 确保加仓只用 "已释放" 的风险预算，不增加净风险敞口
     require_locked_profit: true
-    # 触发 breakeven lock 的最低浮盈 R 值
-    # current_r >= 1.0R 时自动将止损移至入场价，视为 "利润已锁定"
-    lock_profit_breakeven_trigger_r: 1.0
+    # 用一个多头仓位举例最直观：
+
+    # 入场价：100
+    # ATR=2
+    # 所以 1R = 2 美元价格波动
+    # 1) stop_loss.breakeven.trigger_r = 1.0 是啥
+    # 当浮盈达到 +1R（价格到 102）时，把止损提到入场价 100（保本位）。
+    # 这影响的是这个仓位何时更容易被打掉。
+
+    # 2) constitution.add_position_rules.lock_profit_breakeven_trigger_r = 3.0 是啥
+    # 它是“能不能加仓”的门槛之一。
+    # 意思是：当前仓位盈利达到 +3R（价格到 106）时，系统可判定“已锁盈”，从而允许加仓（还要满足其它规则）。
+
+    # 它不是“保本后再多 3R”，而是“从入场算总共 +3R”。
+
+    # 3) 两者一起看（时间线）
+    # 价格到 102（+1R）：触发仓位 breakeven，SL 提到 100
+    # 价格到 104（+2R）：还没到加仓门槛 3R，通常不能因为这条而加仓
+    # 价格到 106（+3R）：满足 lock_profit_breakeven_trigger_r=3.0，这条门槛通过，可考虑加仓
+    # 一句话区分：
+
+    # stop_loss.breakeven.trigger_r：管平仓保护
+    # lock_profit_breakeven_trigger_r：管加仓许可
+    lock_profit_breakeven_trigger_r: 2.0
     state_tracking:
       persist_to: "data/db/order_management.db"
 

@@ -4,38 +4,79 @@ execution_constraints:
 holding:
   max_holding_bars: null
   time_stop_bars: 0
-optimization:
-  enabled: true
-  # ── BPC-Short "趋势骑乘" 模式 (做空版) ──
-  # 设计理念同 BPC-Long: 宽 SL + structural exit + 极宽 trailing
-  # Grid 与 bpc-long 完全一致 (方向由 direction.yaml 固定)
-  constraints:
-    max_sl_activation_ratio: 3.0
-    min_win_r: 0.0
-  params:
-    stop_loss.initial_r:
-      range:
-      - 2.0
-      - 6.0
-      step: 0.5
-    stop_loss.trailing.activation_r:
-      range:
-      - 2.0
-      - 5.0
-      step: 0.5
-    stop_loss.trailing.trail_r:
-      range:
-      - 3.0
-      - 8.0
-      step: 1.0
-# ── 旧值 initial_r=3.0/activation_r=0.5 是退化组合 (ratio=6, random WR=86%) ──
 stop_loss:
   type: trailing
   initial_r: 4.0
+  guardrails:
+    min_stop_pct: 0.01
+    max_stop_pct: 0.10
+  breakeven:
+    enabled: true
+    trigger_r: 4
   trailing:
     activation_r: 2.5
-    trail_r: 7.0             # 灾难保护: 仅防黑天鹅闪崩, EMA200 是主退出
-  structural_exit: ema200    # 主退出: 价格穿越 EMA200 = 趋势结构破坏
+    trail_r: 7.0 # 灾难保护: 仅防黑天鹅闪崩, EMA200 是主退出
+  structural_exit: ema200 # 主退出: 价格穿越 EMA200 = 趋势结构破坏
 take_profit:
   enabled: false
-version: 49
+add_position:
+  max_add_times: 5
+  sizing_mode: fixed_multiplier
+  add_size_multipliers: [0.5, 0.35, 0.25, 0.20, 0.15]
+  target_leverage_by_add: [2.6, 3.4, 4.1, 4.7, 5.0]
+  max_total_leverage: 5.0
+  max_add_notional_frac: 0.35
+  min_add_notional_usd: 50.0
+  max_add_leverage_step: [1.0, 0.9, 0.8, 0.7, 0.6]
+  min_current_r_by_add: [1.0, 1.75, 2.5, 3.5, 4.5]
+  trigger:
+    type: bpc_follow_signal
+version: 50
+
+# 在 live 层是同一张交易所 STOP_MARKET 止损单动态迁移：
+
+# initial_r：开仓时先算出初始 stop_loss_price，并下第一张交易所 STOP_MARKET（见 trade_executor.py）。
+# breakeven：达到触发后，把本地 stop_loss_price 改到 entry_price（见 position_logic.py），随后 position_tracker.py 会 cancel旧SL + place新SL 同步到交易所。
+# trail_r（配合 activation_r）：激活后持续抬/降 stop_loss_price，同样通过 position_tracker.py 做 cancel+replace 到交易所。
+
+# 每个参数的作用（结合当前 fixed_multiplier 模式）
+# max_add_times: 5
+
+# 最多加 5 次，超过直接拒绝。
+# sizing_mode: fixed_multiplier
+
+# 用固定倍数加仓（按序号取数组值）。
+# add_size_multipliers: [0.5, 0.35, 0.25, 0.20, 0.15]
+
+# 第1次加仓用 0.5 倍基准仓位，第2次 0.35 ... 第5次 0.15。
+# min_current_r_by_add: [1.0, 1.75, 2.5, 3.5, 4.5]
+
+# 第N次加仓前，当前浮盈必须达到对应 R 门槛。
+# trigger.type: bpc_follow_signal
+
+# 还要满足 BPC 跟随触发条件（如 breakout 方向不冲突），否则不加。
+
+# 一个具体例子
+# 假设基准仓位是 1.0：
+
+# 当前 current_r = 2.2
+# 你要做第3次加仓（add_position_seq=3）
+# 检查顺序大致是：
+
+# 次数：3 <= 5，过
+# 浮盈门槛：第3次要求 >=2.5R，但现在 2.2R，拒绝
+# 即使通过，还要看 bpc_follow_signal 条件和 locked_profit（宪法层）是否满足
+# 如果是第2次加仓：
+
+# 第2次门槛 >=1.75R，2.2R 通过
+# 规模倍数 = 0.35（从数组取第2个）
+
+# 你这段里“看起来很多但当前不生效”的项
+# 在 sizing_mode: fixed_multiplier 下，这些字段基本不参与当前倍率计算（主要给 target_leverage_gap 模式准备）：
+
+# target_leverage_by_add
+# max_total_leverage
+# max_add_notional_frac
+# min_add_notional_usd
+# max_add_leverage_step
+# 也就是说，当前真正主导行为的是： max_add_times + add_size_multipliers + min_current_r_by_add + trigger.type，再叠加宪法层 locked_profit 限制。

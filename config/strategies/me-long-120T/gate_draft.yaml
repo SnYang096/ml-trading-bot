@@ -1,5 +1,5 @@
 # ME-LONG-120T Gate Draft (auto-generated)
-# 来源: results/train_final_20260324_212342_rr_extreme/me-long-120T
+# 来源: results/train_final_20260327_193403_rr_extreme/me-long-120T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me-long-120T
@@ -16,71 +16,68 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_recent_compression_decay_recent_compression_decay
-  tag: HARD_RECENT_COMPRESSION_DECAY_RECENT_COMPRESSION_DECAY
+- id: gate_evt_tail_shape_evt_tail_shape
+  tag: HARD_EVT_TAIL_SHAPE_EVT_TAIL_SHAPE
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.31)
+  reason: 统计验证规则 (lift=1.50)
   when:
     all_of:
-    - recent_compression_decay:
-        value_gt: 0.5408
-    - recent_compression_decay:
-        value_lt: 0.7315
+    - evt_tail_shape:
+        value_gt: 0.254
+    - evt_tail_shape:
+        value_lt: 0.7683
   then:
     action: deny
-  comment: 'statistical(lift=1.31): recent_compression_decay > 0.5408 & recent_compression_decay < 0.7315'
-- id: gate_shd_pct
-  tag: HARD_SHD_PCT
+  comment: 'statistical(lift=1.50): evt_tail_shape > 0.254 & evt_tail_shape < 0.7683'
+- id: gate_fer_signed_efficiency_pct
+  tag: HARD_FER_SIGNED_EFFICIENCY_PCT
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.06)
+  reason: 统计验证规则 (lift=1.58)
   when:
-    shd_pct:
-      value_gt: 0.679
+    fer_signed_efficiency_pct:
+      value_lt: 0.15
   then:
     action: deny
-  comment: 'statistical(lift=1.06): shd_pct > 0.679'
-- id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
-  tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
+  comment: 'statistical(lift=1.58): fer_signed_efficiency_pct < 0.15'
+- id: gate_evt_var_99
+  tag: HARD_EVT_VAR_99
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.08)
+  reason: 统计验证规则 (lift=1.25)
   when:
-    all_of:
-    - vol_leverage_asymmetry:
-        value_gt: 0.0558
-    - vol_leverage_asymmetry:
-        value_lt: 0.1482
+    evt_var_99:
+      value_gt: 0.8175
   then:
     action: deny
-  comment: 'statistical(lift=1.08): vol_leverage_asymmetry > 0.05582 & vol_leverage_asymmetry < 0.1482'
-- id: gate_evt_es_99_evt_es_99
-  tag: HARD_EVT_ES_99_EVT_ES_99
+  comment: 'statistical(lift=1.25): evt_var_99 > 0.8175'
+- id: gate_vp_compression_score_vp_compression_score
+  tag: HARD_VP_COMPRESSION_SCORE_VP_COMPRESSION_SCORE
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.12)
+  reason: 统计验证规则 (lift=1.34)
   when:
     all_of:
-    - evt_es_99:
-        value_gt: 0.3532
-    - evt_es_99:
-        value_lt: 0.5119
+    - vp_compression_score:
+        value_gt: 0.241
+    - vp_compression_score:
+        value_lt: 0.257
   then:
     action: deny
-  comment: 'statistical(lift=1.12): evt_es_99 > 0.3532 & evt_es_99 < 0.5119'
-- id: gate_vpin_max20_vpin_max20
-  tag: HARD_VPIN_MAX20_VPIN_MAX20
+  comment: 'statistical(lift=1.34): vp_compression_score > 0.241 & vp_compression_score < 0.257'
+- id: gate_hilbert_price_env_hilbert_price_env
+  tag: HARD_HILBERT_PRICE_ENV_HILBERT_PRICE_ENV
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.19)
+  reason: 统计验证规则 (lift=1.39)
   when:
     all_of:
-    - vpin_max20:
-        value_gt: 0.4486
-    - vpin_max20:
-        value_lt: 0.4799
+    - hilbert_price_env:
+        value_gt: 0.7421
+    - hilbert_price_env:
+        value_lt: 0.8135
   then:
     action: deny
-  comment: 'statistical(lift=1.19): vpin_max20 > 0.4486 & vpin_max20 < 0.4799'
+  comment: 'statistical(lift=1.39): hilbert_price_env > 0.7421 & hilbert_price_env < 0.8135'
 guardrails: []

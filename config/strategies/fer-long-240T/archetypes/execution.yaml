@@ -23,23 +23,23 @@ optimization:
   params:
     stop_loss.initial_r:
       range:
-      - 1.5
-      - 4.0
+        - 1.5
+        - 4.0
       step: 0.5
     stop_loss.trailing.activation_r:
       range:
-      - 1.0
-      - 3.0
+        - 1.0
+        - 3.0
       step: 0.5
     stop_loss.trailing.trail_r:
       range:
-      - 0.5
-      - 2.0
+        - 0.5
+        - 2.0
       step: 0.5
     take_profit.target_r:
       range:
-      - 2.0
-      - 5.0
+        - 2.0
+        - 5.0
       step: 0.5
 stop_loss:
   initial_r: 4.0
@@ -51,4 +51,7 @@ stop_loss:
 take_profit:
   enabled: true
   target_r: 4.0
+breakeven:
+  enabled: true
+  trigger_r: 2
 version: 51

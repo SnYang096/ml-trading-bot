@@ -2,7 +2,6 @@
 # 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer-short-60T/20260319_171221/strategies/fer-short-60T/gate_draft.yaml
 # 优化规则: 1/5 条通过优化, 4 条已移除
 # Phase split: system_safety=1, hard_gate=0
-
 schema:
   phases:
   - system_safety
@@ -27,3 +26,5 @@ system_safety:
   then:
     action: deny
   comment: 'optimizer: stable_plateau_found, threshold=0.6409, lift=0.238'
+  locked: true
+  lock_reason: EVT 右尾 VaR：极端上行风险状态

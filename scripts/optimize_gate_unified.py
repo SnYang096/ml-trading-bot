@@ -1602,6 +1602,7 @@ def _promote_gate_to_archetypes(
     config = yaml.safe_load(raw_text) or {}
 
     # ── Filter hard_gates: only keep rules that passed optimization ──
+    # locked 规则永不删除：优化失败 → disabled: true（保留特征，临时关闭）
     hard_gates = config.get("hard_gates", [])
     kept_rules = []
     removed_rules = []
@@ -1609,10 +1610,11 @@ def _promote_gate_to_archetypes(
 
     for rule in hard_gates:
         rule_id = rule.get("id", "")
+        is_locked = bool(rule.get("locked", False))
         opt = optimization_results.get(rule_id)
 
         if not opt:
-            # No optimization result for this rule → keep as-is (e.g. frozen)
+            # No optimization result for this rule → keep as-is (e.g. frozen/locked)
             kept_rules.append(rule)
             continue
 
@@ -1620,15 +1622,24 @@ def _promote_gate_to_archetypes(
         rec = opt.get("recommended_threshold")
 
         if status not in _VALID_OPT_STATUSES or rec is None:
-            # Optimization failed → remove from production gate
-            # (frozen 规则已在 "if not opt" 分支被保留, 不会到达这里)
-            removed_rules.append(
-                {
-                    "id": rule_id,
-                    "status": status,
-                    "reason": opt.get("reason", "unknown"),
-                }
-            )
+            if is_locked:
+                # Locked 规则优化失败 → disabled 但保留
+                rule["disabled"] = True
+                rule["disabled_reason"] = (
+                    f"optimization_{status or 'failed'}: {opt.get('reason', 'no valid threshold')}"
+                )
+                kept_rules.append(rule)
+                print(
+                    f"  🔒 Locked rule {rule_id}: optimization failed → disabled=true"
+                )
+            else:
+                removed_rules.append(
+                    {
+                        "id": rule_id,
+                        "status": status,
+                        "reason": opt.get("reason", "unknown"),
+                    }
+                )
             continue
 
         # Update threshold from optimization result
@@ -1647,7 +1658,18 @@ def _promote_gate_to_archetypes(
             if isinstance(lift, (int, float))
             else f"optimizer: {status}"
         )
+        # Locked 规则优化成功 → 确保 disabled 被清除
+        if is_locked:
+            rule.pop("disabled", None)
+            rule.pop("disabled_reason", None)
         kept_rules.append(rule)
+
+    # ── Locked rules from system_safety: 保留不可删除 ──
+    for rule in config.get("system_safety") or []:
+        if isinstance(rule, dict) and rule.get("locked"):
+            rule_id = rule.get("id", "")
+            if rule_id and rule_id not in {r.get("id") for r in kept_rules}:
+                kept_rules.append(rule)
 
     # ── prefilter 不再注入 gate (prefilter 和 gate 职责分离) ──
     # prefilter 只在训练时正向过滤数据, 不 promote 到 gate.yaml
@@ -1814,7 +1836,9 @@ def _promote_gate_to_archetypes(
         for rm in removed_rules:
             print(f"     - {rm['id']}: {rm['status']} ({rm['reason']})")
 
-    if not kept_rules:
+    # Count active (non-disabled) rules for stat_fallback decision
+    _active_rules = [r for r in kept_rules if not r.get("disabled")]
+    if not _active_rules:
         if not stat_fallback_on_empty:
             print("\n  ℹ️  hard_gates 为空且已禁用统计兜底，跳过 fallback")
         else:
@@ -1827,7 +1851,7 @@ def _promote_gate_to_archetypes(
                     min_source_features=stat_fallback_min_source_features,
                 )
                 if stat_fallback_rules:
-                    kept_rules = stat_fallback_rules
+                    kept_rules.extend(stat_fallback_rules)
                     print(
                         f"  ✅ 统计兜底成功: 生成 {len(stat_fallback_rules)} 条 hard_gate"
                     )

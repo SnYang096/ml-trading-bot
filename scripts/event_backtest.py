@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 import time
 import uuid
@@ -117,6 +118,64 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("event_backtest")
+
+
+def _timeframe_to_timedelta(tf: str) -> Optional[pd.Timedelta]:
+    """Parse timeframe token like 120T/4H/1D to Timedelta."""
+    token = str(tf or "").strip().upper()
+    if not token:
+        return None
+    m = re.fullmatch(r"(\d+)\s*([A-Z]+)", token)
+    if not m:
+        return None
+    n = int(m.group(1))
+    unit = m.group(2)
+    unit_map = {
+        "T": "min",
+        "MIN": "min",
+        "M": "min",
+        "H": "h",
+        "D": "d",
+    }
+    if unit not in unit_map:
+        return None
+    try:
+        return pd.to_timedelta(n, unit=unit_map[unit])
+    except Exception:
+        return None
+
+
+def _align_feature_index_to_bar_close(
+    features_df: pd.DataFrame, timeframe: str
+) -> pd.DataFrame:
+    """Shift feature index from bar-open label to bar-close timestamp."""
+    if features_df is None or features_df.empty:
+        return features_df
+    tf_delta = _timeframe_to_timedelta(timeframe)
+    if tf_delta is None or tf_delta <= pd.Timedelta(minutes=1):
+        return features_df
+    aligned = features_df.copy()
+    aligned.index = pd.to_datetime(aligned.index, utc=True) + tf_delta
+    return aligned
+
+
+def _iter_update_bars_1min(
+    bars_1min: pd.DataFrame,
+    prev_ts: pd.Timestamp,
+    cur_ts: pd.Timestamp,
+    *,
+    fast_mode: bool = False,
+):
+    """Yield 1min bars in (prev_ts, cur_ts] for position updates.
+
+    `fast_mode` is preserved for CLI compatibility; update path remains
+    1min-exact to keep SL/TP timing consistent with non-fast mode.
+    """
+    if bars_1min is None or bars_1min.empty:
+        return
+    mask = (bars_1min.index > prev_ts) & (bars_1min.index <= cur_ts)
+    for bar_ts, bar_row in bars_1min[mask].iterrows():
+        yield bar_ts, bar_row
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1405,6 +1464,8 @@ class EventBacktester:
                         )
 
                 features_df.index = pd.to_datetime(features_df.index, utc=True)
+                # Keep decision timestamp at bar close to avoid look-ahead leakage.
+                features_df = _align_feature_index_to_bar_close(features_df, tf)
                 quantile_dfs_by_tf[tf].append(features_df)
 
                 test_df = features_df[
@@ -1577,6 +1638,11 @@ class EventBacktester:
         _initial_cash = 1000.0
         _equity = _initial_cash
         _equity_curve = [_equity]
+        if fast_mode:
+            logger.info(
+                "Fast mode compatibility: using 1min-exact position updates "
+                "to avoid approximation drift."
+            )
         _equity_peak = _equity
         _ks_triggers: list = []
         _ks_skipped = 0
@@ -1607,42 +1673,13 @@ class EventBacktester:
                 if upd_prev is None or upd_prev >= ts:
                     continue
 
-                if fast_mode:
-                    # Fast: 用当前 60T 特征里的 OHLC 直接调用一次 update
-                    upd_tf = next(iter(sym_data[upd_sym]["tf_features"].keys()), None)
-                    upd_feats = (
-                        sym_data[upd_sym]["tf_features"].get(upd_tf, {})
-                        if upd_tf
-                        else {}
-                    )
-                    if hasattr(upd_feats, "loc") and ts in upd_feats.index:
-                        _row = upd_feats.loc[ts]
-                        _bar_dict = {
-                            "timestamp": ts,
-                            "open": float(_row.get("open", 0)),
-                            "high": float(_row.get("high", 0)),
-                            "low": float(_row.get("low", 0)),
-                            "close": float(_row.get("close", 0)),
-                        }
-                        closed = upd_sim.update(_bar_dict)
-                        for ct in closed:
-                            self.pcm.notify_position_closed(upd_sym, ct.archetype)
-                        for ct in closed:
-                            sl_r_val = 1.0
-                            pnl_usd = (
-                                _initial_cash * _risk_per_slot * ct.pnl_r / sl_r_val
-                            )
-                            _equity += pnl_usd
-                            _equity = max(_equity, 0.0)
-                            _equity_curve.append(_equity)
-                            if _equity > _equity_peak:
-                                _equity_peak = _equity
-                    _pos_last_ts[upd_sym] = ts
-                    continue
-
                 upd_bars = sym_data[upd_sym]["bars_1min_test"]
-                upd_mask = (upd_bars.index > upd_prev) & (upd_bars.index <= ts)
-                for bar_ts, bar_row in upd_bars[upd_mask].iterrows():
+                for bar_ts, bar_row in _iter_update_bars_1min(
+                    upd_bars,
+                    upd_prev,
+                    ts,
+                    fast_mode=fast_mode,
+                ):
                     bar_dict = {
                         "timestamp": bar_ts,
                         "open": float(bar_row.get("open", 0)),
@@ -1910,18 +1947,7 @@ class EventBacktester:
             # 最后一个信号后的 bars (用 _pos_last_ts 避免重复处理)
             last_update = _pos_last_ts.get(sym)
             if last_update is not None and simulator.has_positions:
-                if fast_mode:
-                    remaining_src = sym_data[sym]["tf_features"].get(
-                        next(iter(sym_data[sym]["tf_features"].keys()), ""),
-                        pd.DataFrame(),
-                    )
-                    remaining = (
-                        remaining_src[remaining_src.index > last_update]
-                        if len(remaining_src)
-                        else pd.DataFrame()
-                    )
-                else:
-                    remaining = bars_1min_test[bars_1min_test.index > last_update]
+                remaining = bars_1min_test[bars_1min_test.index > last_update]
                 for bar_ts, bar_row in remaining.iterrows():
                     bar_dict = {
                         "timestamp": bar_ts,
@@ -2434,7 +2460,7 @@ def main():
         "--fast",
         action="store_true",
         default=False,
-        help="快速模式: 用 60T bar OHLC 代替 1min bar 更新持仓 (快 ~60x, 止损精度略低)",
+        help="兼容参数: 当前仍使用 1min 精确持仓更新（用于保证与非 fast 一致）",
     )
     parser.add_argument(
         "--resume-state",

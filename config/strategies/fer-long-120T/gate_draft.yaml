@@ -1,5 +1,5 @@
 # FER-LONG-120T Gate Draft (auto-generated)
-# 来源: results/train_final_20260325_130530_rr_extreme/fer-long-120T
+# 来源: results/train_final_20260327_011456_rr_extreme/fer-long-120T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fer-long-120T
@@ -16,71 +16,68 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_var_99_right_evt_var_99_right
-  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
+- id: gate_funding_exhaustion_scene_score_funding_exhaustion_scene_score
+  tag: HARD_FUNDING_EXHAUSTION_SCENE_SCORE_FUNDING_EXHAUSTION_SCENE_SCORE
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.26)
+  reason: 统计验证规则 (lift=1.31)
   when:
     all_of:
-    - evt_var_99_right:
-        value_gt: 0.0714
-    - evt_var_99_right:
-        value_lt: 0.2778
+    - funding_exhaustion_scene_score:
+        value_gt: 0.0063
+    - funding_exhaustion_scene_score:
+        value_lt: 0.0091
   then:
     action: deny
-  comment: 'statistical(lift=1.26): evt_var_99_right > 0.07143 & evt_var_99_right < 0.2778'
-- id: gate_evt_tail_shape
-  tag: HARD_EVT_TAIL_SHAPE
+  comment: 'statistical(lift=1.31): funding_exhaustion_scene_score > 0.006315 & funding_exhaustion_scene_score < 0.009091'
+- id: gate_sqs_hal_low_pct_sqs_hal_low_pct
+  tag: HARD_SQS_HAL_LOW_PCT_SQS_HAL_LOW_PCT
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.12)
+  reason: 统计验证规则 (lift=1.18)
   when:
-    evt_tail_shape:
-      value_lt: 0.1825
+    all_of:
+    - sqs_hal_low_pct:
+        value_gt: 0.4453
+    - sqs_hal_low_pct:
+        value_lt: 0.6708
   then:
     action: deny
-  comment: 'statistical(lift=1.12): evt_tail_shape < 0.1825'
-- id: gate_evt_es_99_right_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT_EVT_ES_99_RIGHT
+  comment: 'statistical(lift=1.18): sqs_hal_low_pct > 0.4453 & sqs_hal_low_pct < 0.6708'
+- id: gate_spectrum_price_entropy_spectrum_price_entropy
+  tag: HARD_SPECTRUM_PRICE_ENTROPY_SPECTRUM_PRICE_ENTROPY
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.30)
+  reason: 统计验证规则 (lift=1.23)
   when:
     all_of:
-    - evt_es_99_right:
-        value_gt: 0.0635
-    - evt_es_99_right:
-        value_lt: 0.1667
+    - spectrum_price_entropy:
+        value_gt: 0.9266
+    - spectrum_price_entropy:
+        value_lt: 0.9356
   then:
     action: deny
-  comment: 'statistical(lift=1.30): evt_es_99_right > 0.06349 & evt_es_99_right < 0.1667'
-- id: gate_evt_var_99_evt_var_99
-  tag: HARD_EVT_VAR_99_EVT_VAR_99
+  comment: 'statistical(lift=1.23): spectrum_price_entropy > 0.9266 & spectrum_price_entropy < 0.9356'
+- id: gate_oi_delta_price_sign
+  tag: HARD_OI_DELTA_PRICE_SIGN
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.07)
+  reason: 统计验证规则 (lift=1.06)
   when:
-    all_of:
-    - evt_var_99:
-        value_gt: 0.2421
-    - evt_var_99:
-        value_lt: 0.5159
+    oi_delta_price_sign:
+      value_lt: 1.0
   then:
     action: deny
-  comment: 'statistical(lift=1.07): evt_var_99 > 0.2421 & evt_var_99 < 0.5159'
-- id: gate_evt_scale_right_evt_scale_right
-  tag: HARD_EVT_SCALE_RIGHT_EVT_SCALE_RIGHT
+  comment: 'statistical(lift=1.06): oi_delta_price_sign < 1'
+- id: gate_evt_scale
+  tag: HARD_EVT_SCALE
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.20)
+  reason: 统计验证规则 (lift=1.13)
   when:
-    all_of:
-    - evt_scale_right:
-        value_gt: 0.2143
-    - evt_scale_right:
-        value_lt: 0.3333
+    evt_scale:
+      value_lt: 0.2421
   then:
     action: deny
-  comment: 'statistical(lift=1.20): evt_scale_right > 0.2143 & evt_scale_right < 0.3333'
+  comment: 'statistical(lift=1.13): evt_scale < 0.2421'
 guardrails: []

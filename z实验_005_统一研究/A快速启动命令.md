@@ -181,16 +181,36 @@ mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm
 # 仅跑慢变量快照（训练到 entry_filter 停止，并生成 slow snapshot manifest）
 mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage slow_snapshot
 
-# 仅复盘某一个月快变量（事件回测 + 质量排序 + PCM）
+# 仅复盘某一个月快变量（默认: 前3个月调阈值, 回测当月）
 mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage fast_month --month 2025-07
 
 # 按月滚动模拟（从 holdout_start 到 end_date 自动逐月）
-mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage rolling_sim
+# - slow_realistic: 每季度更新慢变量结构（过去12个月），每月前3个月调阈值，再测当月
+# - turbo_fixed_features: 固定特征，不做特征搜索；每月前3个月调阈值，再测当月
+mlbot pipeline run --all --config config/prod_train_pipeline_2h_strict_2024bull.yaml --stage rolling_sim
 
+config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only.yaml
+mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only.yaml --stage rolling_sim
 # rolling_sim 现支持跨月仓位续跑：
 # - 中间月份：月末保留未平仓并写出 end_state.json
 # - 下个月：自动加载上月 end_state.json
 # - 最后一个月：自动强平收口，便于汇总总收益
+```
+
+`rolling` 模式配置示例（`config/prod_train_pipeline_2h.yaml`）：
+
+```yaml
+rolling:
+  mode: slow_realistic  # slow_realistic | turbo_fixed_features | legacy
+  windows:
+    calibration_months: 3
+    structure_lookback_months: 12
+  slow_realistic:
+    cadence_months: 3
+    triggered_retrain_enabled: true
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: true
 ```
 
 可用 stage：

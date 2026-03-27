@@ -4,31 +4,6 @@ execution_constraints:
 holding:
   max_holding_bars: null
   time_stop_bars: 0
-optimization:
-  enabled: true
-  # ── BPC-Short "趋势骑乘" 模式 (做空版) ──
-  # 设计理念同 BPC-Long: 宽 SL + structural exit + 极宽 trailing
-  # Grid 与 bpc-long 完全一致 (方向由 direction.yaml 固定)
-  constraints:
-    max_sl_activation_ratio: 3.0
-    min_win_r: 0.0
-  params:
-    stop_loss.initial_r:
-      range:
-      - 2.0
-      - 6.0
-      step: 0.5
-    stop_loss.trailing.activation_r:
-      range:
-      - 2.0
-      - 5.0
-      step: 0.5
-    stop_loss.trailing.trail_r:
-      range:
-      - 3.0
-      - 8.0
-      step: 1.0
-# ── 旧值 initial_r=3.0/activation_r=0.5 是退化组合 (ratio=6, random WR=86%) ──
 stop_loss:
   type: trailing
   initial_r: 4.0
@@ -38,4 +13,7 @@ stop_loss:
   structural_exit: ema200    # 主退出: 价格穿越 EMA200 = 趋势结构破坏
 take_profit:
   enabled: false
+breakeven:
+  enabled: true
+  trigger_r: 4
 version: 49
