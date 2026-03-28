@@ -7,13 +7,46 @@ holding:
 stop_loss:
   type: trailing
   initial_r: 4.0
+  guardrails:
+    min_stop_pct: 0.01
+    max_stop_pct: 0.10
+  breakeven:
+    enabled: true
+    trigger_r: 3
   trailing:
     activation_r: 2.5
-    trail_r: 7.0             # 灾难保护: 仅防黑天鹅闪崩, EMA200 是主退出
-  structural_exit: ema200    # 主退出: 价格穿越 EMA200 = 趋势结构破坏
+    trail_r: 7.0 # 只会上提，不会往下放宽
+  structural_exit: ema200 # 主退出: 价格穿越 EMA200 = 趋势结构破坏
 take_profit:
   enabled: false
-breakeven:
-  enabled: true
-  trigger_r: 4
-version: 49
+add_position:
+  max_add_times: 5
+  sizing_mode: fixed_multiplier
+  add_size_multipliers: [0.5, 0.35, 0.25, 0.20, 0.15]
+  min_current_r_by_add: [1.5, 2.5, 3.5, 4.5, 5.5]
+  trigger:
+    type: bpc_follow_signal
+version: 50
+
+# 在 live 层是同一张交易所 STOP_MARKET 止损单动态迁移：
+
+# initial_r：开仓时先算出初始 stop_loss_price，并下第一张交易所 STOP_MARKET（见 trade_executor.py）。
+# breakeven：达到触发后，把本地 stop_loss_price 改到 entry_price（见 position_logic.py），随后 position_tracker.py 会 cancel旧SL + place新SL 同步到交易所。
+# trail_r（配合 activation_r）：激活后持续抬/降 stop_loss_price，同样通过 position_tracker.py 做 cancel+replace 到交易所。
+
+# fixed_multiplier 加仓：max_add_times + add_size_multipliers（按第 N 次取倍数）+
+# trigger.type: bpc_follow_signal（如 breakout 方向一致）；浮盈 R 门槛若需要可再加 min_current_r_by_add。
+# 另叠加宪法层 locked_profit 等限制。
+
+# 在当前实现里，trail_r 不是“从当前利润里减去多少 R”直接得到止损 R，而是：
+
+# 多头：trail_sl = high_water_mark - trail_r * ATR
+# 且 只允许把 SL 往上抬，不会往下放宽（trail_sl > old_sl 才更新）
+# 所以你这个参数组合下：
+
+# breakeven.trigger_r = 2 时，先把 SL 锁到 entry（约 0R）
+# 到 activation_r = 2.5 触发 trailing 时，
+# 理论 trail_sl 约是 2.5R - 7R = -4.5R
+# 但这比当前 0R 更低，不会生效
+# 实际上要等到 high_water_mark 超过 7R 以后，trailing 才可能把 SL 抬到 entry 之上。
+# 一句话：activation_r=2.5 + trail_r=7 在前期基本等于“只靠 breakeven 锁盈，trailing 很晚才接管”。

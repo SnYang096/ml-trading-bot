@@ -1,51 +1,86 @@
 # BPC-SHORT-120T Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
-# Date: 2026-03-25 12:58
-# Promoted: 5 filters (method=mean_effect)
-# Significance: 统计验证 + robustness ≥ 0.5
-#
-# 职责: "现在该入场吗?" → 硬二值控制
-# 多个 filter 之间是 OR 关系
+# Curated locked pool (strong semantics first, reduced collinearity).
+# OR mode with few high-quality enabled filters; redundant variants kept locked+disabled.
 
 filters:
-- id: ef_vpin_max20_0.2
+- id: ef_shd_pct_crowded
   enabled: true
-  description: 'auto: vpin_max20 <= 0.345783'
-  conditions:
-  - feature: vpin_max20
-    operator: <=
-    value: 0.345783
-  notes: method=mean_effect, effect=+1.8681, rob=0.67, pass=20.1%
-- id: ef_shd_pct_0.15
-  enabled: true
-  description: 'auto: shd_pct <= 0.096475'
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'pct: shd_pct <= 0.0965'
   conditions:
   - feature: shd_pct
     operator: <=
-    value: 0.096475
-  notes: method=mean_effect, effect=+1.6798, rob=1.00, pass=15.2%
-- id: ef_vpin_ma20_0.15
+    value: 0.0965
+  notes: pct priority; strongest anti-crowding signal
+- id: ef_ofci_pct_high
   enabled: true
-  description: 'auto: vpin_ma20 <= 0.243094'
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'pct: ofci_pct >= 0.70'
   conditions:
-  - feature: vpin_ma20
-    operator: <=
-    value: 0.243094
-  notes: method=mean_effect, effect=+1.5808, rob=0.67, pass=15.0%
-- id: ef_oi_zscore_0.8
+  - feature: ofci_pct
+    operator: '>='
+    value: 0.70
+  notes: pct priority; order-flow consensus confirmation
+- id: ef_oi_zscore_high
   enabled: true
-  description: 'auto: oi_zscore >= 1.345088'
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'normalized: oi_zscore >= 1.3451'
   conditions:
   - feature: oi_zscore
     operator: '>='
-    value: 1.345088
-  notes: method=mean_effect, effect=+1.5058, rob=1.00, pass=20.0%
-- id: ef_vpin_ma5_0.15
+    value: 1.3451
+  notes: derivatives expansion confirmation
+- id: ef_vpin_max20_low
   enabled: true
-  description: 'auto: vpin_ma5 <= 0.227762'
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'normalized: vpin_max20 <= 0.3458'
+  conditions:
+  - feature: vpin_max20
+    operator: <=
+    value: 0.3458
+  notes: keep one VPIN representative to reduce multi-VPIN collinearity
+- id: ef_volume_ratio_pct_high
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'pct: volume_ratio_pct >= 0.70'
+  conditions:
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.70
+  notes: pct feature retained but disabled by default to control OR pass-through
+- id: ef_vpin_ma20_low
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'normalized: vpin_ma20 <= 0.2431'
+  conditions:
+  - feature: vpin_ma20
+    operator: <=
+    value: 0.2431
+  notes: collinear with vpin_max20; keep locked for threshold retune
+- id: ef_vpin_ma5_low
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'normalized: vpin_ma5 <= 0.2278'
   conditions:
   - feature: vpin_ma5
     operator: <=
-    value: 0.227762
-  notes: method=mean_effect, effect=+1.4397, rob=0.67, pass=15.0%
+    value: 0.2278
+  notes: collinear with vpin_max20; keep locked for threshold retune
+- id: ef_vpin_zscore_20_high
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'normalized: vpin_zscore_20 >= 0.60'
+  conditions:
+  - feature: vpin_zscore_20
+    operator: '>='
+    value: 0.60
+  notes: VPIN alternative representation; disabled to avoid redundancy
 combination_mode: or

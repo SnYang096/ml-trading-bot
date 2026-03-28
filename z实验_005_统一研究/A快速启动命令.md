@@ -191,6 +191,8 @@ mlbot pipeline run --all --config config/prod_train_pipeline_2h_strict_2024bull.
 
 config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only.yaml
 mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only.yaml --stage rolling_sim
+
+mlbot pipeline run --strategy bpc-long-120T --config config/prod_train_pipeline_2h_strict_2024bull.yaml --stage rolling_sim
 # rolling_sim 现支持跨月仓位续跑：
 # - 中间月份：月末保留未平仓并写出 end_state.json
 # - 下个月：自动加载上月 end_state.json

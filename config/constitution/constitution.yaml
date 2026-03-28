@@ -208,9 +208,8 @@ resource_allocation:
   # "adding is allowed only by freed risk budget"
   add_position_rules:
     max_add_times: 3 # 全局 fallback；实际层数优先读各策略 add_position
-    # 加仓前必须已锁定利润 (breakeven stop 已触发)
-    # 确保加仓只用 "已释放" 的风险预算，不增加净风险敞口
-    require_locked_profit: true
+    # 是否要求“先锁盈再加仓”；当前关闭，改由 execution.min_current_r_by_add 控节奏
+    require_locked_profit: false
     # 用一个多头仓位举例最直观：
 
     # 入场价：100

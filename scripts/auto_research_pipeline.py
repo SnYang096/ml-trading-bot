@@ -74,6 +74,10 @@ from scripts.locked_gate_utils import (
     load_locked_gate_rules,
     merge_locked_gate_rules,
 )
+from scripts.locked_entry_filter_utils import (
+    load_locked_entry_filters,
+    merge_locked_entry_filters,
+)
 from scripts.pipeline import config as pipeline_config
 from scripts.pipeline import cli as pipeline_cli
 from scripts.pipeline import events as pipeline_events
@@ -5384,6 +5388,33 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
             if missing_gate_locked:
                 _merge_target = exp_gate_path if exp_gate_path.exists() else prod_gate
                 merge_locked_gate_rules(_merge_target, missing_gate_locked)
+
+    # ── 语义锁定: 读取生产 entry_filters.yaml 中的 locked filters, 确保采纳后不丢失 ──
+    prod_entry_filters = prod_arch / "entry_filters.yaml"
+    exp_entry_filters = exp_arch / "entry_filters.yaml"
+    if prod_entry_filters.exists():
+        prod_locked_entry = load_locked_entry_filters(prod_entry_filters)
+        if prod_locked_entry:
+            if exp_entry_filters.exists():
+                exp_locked_entry = load_locked_entry_filters(exp_entry_filters)
+                exp_ids = {f.get("id", "") for f in exp_locked_entry}
+                missing_locked_entry = [
+                    f for f in prod_locked_entry if f.get("id", "") not in exp_ids
+                ]
+                if missing_locked_entry:
+                    print(
+                        f"   🔒 EntryFilter: {len(missing_locked_entry)} 条 locked 规则在实验中缺失, 将自动回补"
+                    )
+            else:
+                missing_locked_entry = prod_locked_entry
+
+            if missing_locked_entry:
+                _ef_merge_target = (
+                    exp_entry_filters
+                    if exp_entry_filters.exists()
+                    else prod_entry_filters
+                )
+                merge_locked_entry_filters(_ef_merge_target, missing_locked_entry)
 
     prod_arch.mkdir(parents=True, exist_ok=True)
     copied = 0

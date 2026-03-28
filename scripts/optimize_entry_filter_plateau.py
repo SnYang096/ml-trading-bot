@@ -57,6 +57,7 @@ from scripts.stat_method_registry import (
     evaluate_rr_split_method,
     get_canonical_methods,
 )
+from scripts.locked_entry_filter_utils import load_locked_entry_filters
 
 # ================================================================
 # 阈值扫描核心逻辑
@@ -720,16 +721,17 @@ def main() -> int:
         return 1
 
     # 确定要扫描的 filter 列表
+    # locked filter 即使 enabled=false 也要参与扫描（支持后续自动回启）。
     filters_to_scan = []
     for f in entry_cfg.get("filters", []):
-        if not f.get("enabled", True):
+        if not f.get("enabled", True) and not f.get("locked", False):
             continue
         if args.filter and f["id"] != args.filter:
             continue
         filters_to_scan.append(f)
 
     if not filters_to_scan:
-        print("❌ 没有匹配的 enabled filter")
+        print("❌ 没有匹配的 filter（enabled 或 locked）")
         return 1
 
     print("=" * 70)
@@ -1274,16 +1276,39 @@ def _write_empty_entry_filters(
     arch_dir = Path(strategies_root) / strategy / "archetypes"
     arch_dir.mkdir(parents=True, exist_ok=True)
     output_path = arch_dir / "entry_filters.yaml"
+    src_cfg = load_entry_filters_config(strategy, strategies_root, research=False) or {}
+    locked = [
+        copy.deepcopy(f)
+        for f in (src_cfg.get("filters") or [])
+        if isinstance(f, dict) and bool(f.get("locked", False))
+    ]
+    out_filters: List[Dict[str, Any]] = []
+    if locked:
+        for lf in locked:
+            lf["locked"] = True
+            lf["enabled"] = False
+            lf["notes"] = (
+                str(lf.get("notes", "")).strip()
+                + ", auto-disabled(no passing threshold)"
+            ).strip(", ")
+            out_filters.append(lf)
+
     header = (
         f"# {strategy.upper()} Entry Filter Archetype\n"
         f"# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)\n"
         f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-        f"# Promoted: 0 filters\n"
+        f"# Promoted: 0 filters"
+        + (f", locked kept: {len(out_filters)}" if out_filters else "")
+        + "\n"
         f"#\n"
-        f"# 没有 entry filter 通过统计验证, 策略将无条件入场\n"
+        f"# 没有 entry filter 通过统计验证。"
+        f"{' locked 特征池已保留并禁用。' if out_filters else '策略将无条件入场。'}\n"
         f"\n"
     )
-    out_cfg = {"filters": [], "combination_mode": "or"}
+    out_cfg = {
+        "filters": out_filters,
+        "combination_mode": src_cfg.get("combination_mode", "or"),
+    }
     yaml_content = yaml.dump(
         out_cfg, allow_unicode=True, default_flow_style=False, sort_keys=False
     )
@@ -1388,11 +1413,41 @@ def _write_entry_filters(
             }
         )
 
+    # 锁定特征池：允许调阈值/enable，不允许规则被删除
+    src_cfg = load_entry_filters_config(strategy, strategies_root, research=False) or {}
+    locked = [
+        copy.deepcopy(f)
+        for f in (src_cfg.get("filters") or [])
+        if isinstance(f, dict) and bool(f.get("locked", False))
+    ]
+    locked_by_id = {str(f.get("id", "")): f for f in locked if f.get("id")}
+    merged_promoted: List[Dict[str, Any]] = []
+    promoted_ids: set = set()
+    for pf in promoted:
+        fid = str(pf.get("id", ""))
+        if fid in locked_by_id:
+            pf["locked"] = True
+            if locked_by_id[fid].get("lock_reason") and not pf.get("lock_reason"):
+                pf["lock_reason"] = locked_by_id[fid]["lock_reason"]
+        merged_promoted.append(pf)
+        promoted_ids.add(fid)
+    for fid, lf in locked_by_id.items():
+        if fid in promoted_ids:
+            continue
+        nf = copy.deepcopy(lf)
+        nf["locked"] = True
+        nf["enabled"] = False
+        nf["notes"] = (
+            str(nf.get("notes", "")).strip() + ", auto-disabled(no passing threshold)"
+        ).strip(", ")
+        merged_promoted.append(nf)
+
     header = (
         f"# {strategy.upper()} Entry Filter Archetype\n"
         f"# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)\n"
         f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
         f"# Promoted: {len(promoted)} filters ({promoted[0].get('notes', '').split(',')[0] if promoted else 'N/A'})\n"
+        f"# Locked pool: {len(locked)} filters (missing ones auto-disabled)\n"
         f"# Significance: 统计验证 + robustness \u2265 0.5\n"
         f"#\n"
         f'# 职责: "现在该入场吗?" \u2192 硬二值控制\n'
@@ -1400,7 +1455,10 @@ def _write_entry_filters(
         f"\n"
     )
 
-    out_cfg = {"filters": promoted, "combination_mode": "or"}
+    out_cfg = {
+        "filters": merged_promoted,
+        "combination_mode": src_cfg.get("combination_mode", "or"),
+    }
     yaml_content = yaml.dump(
         out_cfg,
         allow_unicode=True,
@@ -1410,7 +1468,7 @@ def _write_entry_filters(
     )
     output_path.write_text(header + yaml_content, encoding="utf-8")
     print(f"\n   ✅ --promote: 写入 {output_path}")
-    for pf in promoted:
+    for pf in merged_promoted:
         print(f"      {pf['id']}: {pf['notes']}")
 
 
@@ -1572,6 +1630,29 @@ def _promote_entry_filters_yaml(
     arch_dir = Path(strategies_root) / strategy / "archetypes"
     arch_dir.mkdir(parents=True, exist_ok=True)
     output_path = arch_dir / "entry_filters.yaml"
+    locked_filters = load_locked_entry_filters(output_path)
+    locked_by_id = {
+        str(f.get("id", "")): copy.deepcopy(f)
+        for f in locked_filters
+        if isinstance(f, dict) and f.get("id")
+    }
+    promoted_ids = {str(f.get("id", "")) for f in promoted_filters if f.get("id")}
+    for pf in promoted_filters:
+        _id = str(pf.get("id", ""))
+        if _id in locked_by_id:
+            pf["locked"] = True
+            if locked_by_id[_id].get("lock_reason") and not pf.get("lock_reason"):
+                pf["lock_reason"] = locked_by_id[_id]["lock_reason"]
+    for lid, lf in locked_by_id.items():
+        if lid in promoted_ids:
+            continue
+        nf = copy.deepcopy(lf)
+        nf["locked"] = True
+        nf["enabled"] = False
+        nf["notes"] = (
+            str(nf.get("notes", "")).strip() + ", auto-disabled(no passing threshold)"
+        ).strip(", ")
+        promoted_filters.append(nf)
 
     if not promoted_filters:
         # 没有 filter 通过 → 清空 archetypes/entry_filters.yaml
@@ -1585,7 +1666,10 @@ def _promote_entry_filters_yaml(
             f"# 没有 entry filter 通过准入, 策略将无条件入场\n"
             f"\n"
         )
-        empty_cfg = {"filters": [], "combination_mode": "or"}
+        empty_cfg = {
+            "filters": [],
+            "combination_mode": entry_cfg.get("combination_mode", "or"),
+        }
         yaml_content = yaml.dump(
             empty_cfg,
             allow_unicode=True,
@@ -1601,6 +1685,7 @@ def _promote_entry_filters_yaml(
         f"# Auto-promoted by optimize_entry_filter_plateau.py\n"
         f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
         f"# Promoted: {len(promoted_filters)} filters ({tier_a_count} plateau + {tier_b_count} snotio-only)\n"
+        f"# Locked pool kept: {len(locked_by_id)} (missing -> disabled)\n"
         f"# Baseline snotio: {bl_snotio:.4f}, \u03c3={sigma_for_test:.3f}\n"
         f"# Significance: z-test p<0.05 required for all tiers\n"
         f"#\n"

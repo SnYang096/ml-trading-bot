@@ -639,18 +639,15 @@ class PositionSimulator:
             else 0.0
         )
 
-        # 2b. 无风险加仓: 所有同 symbol + 同 direction 的活跃仓位必须 breakeven locked
-        #     确保任意时刻最大风险 = 最新一仓的 1R
+        # 2b. 找出同 symbol + 同 direction 的活跃仓位
         same_sym_dir = [
             p
             for p in self._positions.values()
             if p.get("symbol", "") == intent.symbol and p["side"] == new_side
         ]
-        all_locked = same_sym_dir and all(
-            p.get("breakeven_locked", False) for p in same_sym_dir
-        )
-        if not all_locked:
-            return None
+
+        rec = runtime_state.add_position.positions.get(parent_pid)
+        next_add_no = int(rec.add_count) + 1 if rec is not None else 1
 
         # 3. 复用实盘 validate_add_position (raises ConstitutionViolation on failure)
         try:
@@ -659,7 +656,7 @@ class PositionSimulator:
                 position_id=parent_pid,
                 archetype=archetype,
                 current_r=current_r,
-                locked_profit=True,  # 已通过上方 all_locked 检查
+                locked_profit=parent_pos.get("breakeven_locked", False),
             )
         except ConstitutionViolation:
             return None
@@ -676,8 +673,6 @@ class PositionSimulator:
             )
             if _trig:
                 add_rules["trigger"] = _trig
-        rec = runtime_state.add_position.positions.get(parent_pid)
-        next_add_no = int(rec.add_count) + 1 if rec is not None else 1
         if next_add_no > _shared_resolve_add_position_max_times(add_rules):
             return None
         signal = dict(features or {})

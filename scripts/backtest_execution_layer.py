@@ -1400,45 +1400,62 @@ def simulate_rr_execution(
                             if t["symbol"] == trade["symbol"]
                             and t["direction"] == trade["direction"]
                         ]
-                        # 无风险加仓: 所有现有仓位都必须 breakeven locked
-                        _all_locked = _same_sym_dir and all(
-                            t.get("breakeven_locked", False) for t in _same_sym_dir
-                        )
-                        if _all_locked:
-                            # 找父单 (跟踪 add_count 的那个)
-                            for at in _same_sym_dir:
-                                _next_add_no = int(at.get("_add_count", 0)) + 1
-                                if _next_add_no > _ap_max_add:
-                                    continue
-                                _risk_dist = float(
-                                    at.get("initial_r", 0.0) or 0.0
-                                ) * float(at.get("entry_atr", 0.0) or 0.0)
-                                if _risk_dist <= 0:
-                                    continue
-                                current_r = (
-                                    abs(
-                                        float(trade.get("entry_price", 0.0))
-                                        - float(at.get("entry_price", 0.0))
-                                    )
-                                    / _risk_dist
+                        # 找父单 (跟踪 add_count 的那个)
+                        for at in _same_sym_dir:
+                            _next_add_no = int(at.get("_add_count", 0)) + 1
+                            if _next_add_no > _ap_max_add:
+                                continue
+                            _risk_dist = float(at.get("initial_r", 0.0) or 0.0) * float(
+                                at.get("entry_atr", 0.0) or 0.0
+                            )
+                            if _risk_dist <= 0:
+                                continue
+                            current_r = (
+                                abs(
+                                    float(trade.get("entry_price", 0.0))
+                                    - float(at.get("entry_price", 0.0))
                                 )
-                                _signal = dict(_row)
-                                _signal["add_position_seq"] = _next_add_no
-                                _signal["parent_initial_r"] = float(
-                                    at.get("initial_r", 0.0) or 0.0
+                                / _risk_dist
+                            )
+                            _signal = dict(_row)
+                            _signal["add_position_seq"] = _next_add_no
+                            _signal["parent_initial_r"] = float(
+                                at.get("initial_r", 0.0) or 0.0
+                            )
+                            _base_risk_frac = float(
+                                strat_cfg.get("max_risk_per_trade", risk_per_slot)
+                            )
+                            _parent_stop_pct = float(
+                                at.get(
+                                    "effective_stop_pct",
+                                    (
+                                        float(at.get("initial_r", 0.0) or 0.0)
+                                        * float(at.get("entry_atr", 0.0) or 0.0)
+                                        / max(
+                                            float(at.get("entry_price", 1.0) or 1.0),
+                                            1e-9,
+                                        )
+                                    ),
                                 )
-                                _base_risk_frac = float(
-                                    strat_cfg.get("max_risk_per_trade", risk_per_slot)
-                                )
-                                _parent_stop_pct = float(
-                                    at.get(
+                                or 0.0
+                            )
+                            _base_lev_unit = (
+                                _base_risk_frac / _parent_stop_pct
+                                if _parent_stop_pct > 1e-9
+                                else 0.0
+                            )
+                            _current_lev = 0.0
+                            _current_notional_frac = 0.0
+                            for _pos in _same_sym_dir:
+                                _pos_stop = float(
+                                    _pos.get(
                                         "effective_stop_pct",
                                         (
-                                            float(at.get("initial_r", 0.0) or 0.0)
-                                            * float(at.get("entry_atr", 0.0) or 0.0)
+                                            float(_pos.get("initial_r", 0.0) or 0.0)
+                                            * float(_pos.get("entry_atr", 0.0) or 0.0)
                                             / max(
                                                 float(
-                                                    at.get("entry_price", 1.0) or 1.0
+                                                    _pos.get("entry_price", 1.0) or 1.0
                                                 ),
                                                 1e-9,
                                             )
@@ -1446,79 +1463,50 @@ def simulate_rr_execution(
                                     )
                                     or 0.0
                                 )
-                                _base_lev_unit = (
-                                    _base_risk_frac / _parent_stop_pct
-                                    if _parent_stop_pct > 1e-9
-                                    else 0.0
-                                )
-                                _current_lev = 0.0
-                                _current_notional_frac = 0.0
-                                for _pos in _same_sym_dir:
-                                    _pos_stop = float(
-                                        _pos.get(
-                                            "effective_stop_pct",
-                                            (
-                                                float(_pos.get("initial_r", 0.0) or 0.0)
-                                                * float(
-                                                    _pos.get("entry_atr", 0.0) or 0.0
-                                                )
-                                                / max(
-                                                    float(
-                                                        _pos.get("entry_price", 1.0)
-                                                        or 1.0
-                                                    ),
-                                                    1e-9,
-                                                )
-                                            ),
-                                        )
-                                        or 0.0
-                                    )
-                                    if _pos_stop <= 1e-9:
-                                        continue
-                                    _current_lev += (
-                                        _base_risk_frac
-                                        * float(_pos.get("size_multiplier", 1.0) or 1.0)
-                                        / _pos_stop
-                                    )
-                                    _current_notional_frac += _base_risk_frac * float(
-                                        _pos.get("size_multiplier", 1.0) or 1.0
-                                    )
-                                _signal["base_leverage_unit"] = float(_base_lev_unit)
-                                _signal["current_leverage"] = float(_current_lev)
-                                _signal["base_notional_frac"] = float(_base_risk_frac)
-                                _signal["current_notional_frac"] = float(
-                                    _current_notional_frac
-                                )
-                                if not _validate_add_position_trigger(
-                                    archetype=trade_arch,
-                                    direction=int(trade.get("direction", 0)),
-                                    signal=_signal,
-                                    add_position_cfg=strategy_add_cfg,
-                                    current_r=current_r,
-                                ):
+                                if _pos_stop <= 1e-9:
                                     continue
-                                add_size_mult = _resolve_add_position_size_multiplier(
-                                    strategy_add_cfg, _next_add_no, _signal
+                                _current_lev += (
+                                    _base_risk_frac
+                                    * float(_pos.get("size_multiplier", 1.0) or 1.0)
+                                    / _pos_stop
                                 )
-                                can_add = True
-                                for _parent in _same_sym_dir:
-                                    _parent["_add_count"] = _next_add_no
-                                trade["is_add_position"] = True
-                                trade["add_position_seq"] = _next_add_no
-                                trade["size_multiplier"] = add_size_mult
-                                trade["realized_rr"] = (
-                                    float(
-                                        trade.get(
-                                            "raw_realized_rr", trade["realized_rr"]
-                                        )
-                                    )
-                                    * add_size_mult
+                                _current_notional_frac += _base_risk_frac * float(
+                                    _pos.get("size_multiplier", 1.0) or 1.0
                                 )
-                                results.iloc[results.index.get_loc(eidx)] = trade[
-                                    "realized_rr"
-                                ]
-                                _add_pos_count += 1
-                                break
+                            _signal["base_leverage_unit"] = float(_base_lev_unit)
+                            _signal["current_leverage"] = float(_current_lev)
+                            _signal["base_notional_frac"] = float(_base_risk_frac)
+                            _signal["current_notional_frac"] = float(
+                                _current_notional_frac
+                            )
+                            if not _validate_add_position_trigger(
+                                archetype=trade_arch,
+                                direction=int(trade.get("direction", 0)),
+                                signal=_signal,
+                                add_position_cfg=strategy_add_cfg,
+                                current_r=current_r,
+                            ):
+                                continue
+                            add_size_mult = _resolve_add_position_size_multiplier(
+                                strategy_add_cfg, _next_add_no, _signal
+                            )
+                            can_add = True
+                            for _parent in _same_sym_dir:
+                                _parent["_add_count"] = _next_add_no
+                            trade["is_add_position"] = True
+                            trade["add_position_seq"] = _next_add_no
+                            trade["size_multiplier"] = add_size_mult
+                            trade["realized_rr"] = (
+                                float(
+                                    trade.get("raw_realized_rr", trade["realized_rr"])
+                                )
+                                * add_size_mult
+                            )
+                            results.iloc[results.index.get_loc(eidx)] = trade[
+                                "realized_rr"
+                            ]
+                            _add_pos_count += 1
+                            break
 
                 if can_add:
                     accepted = active + [trade]
