@@ -81,6 +81,7 @@ def _make_executor(
     rs = MagicMock()
     # 模拟 active slots
     rs.slots.active = {}
+    rs.add_position.positions = {}
     if slot_active_pids:
         for pid in slot_active_pids:
             rs.slots.active[pid] = MagicMock(symbol="BTCUSDT")
@@ -294,6 +295,72 @@ class TestPositionTrackerIntegration:
             assert pos["_exchange_sl_price"] is not None
         # 必须有持仓被记录
         assert len(positions) == 1
+
+
+class TestAddPositionLivePath:
+
+    def test_add_position_uses_runtime_slot_archetype_for_parent_match(self):
+        ex, om, ce, pt = _make_executor(trade_size=0.001)
+        parent_pid = "BTCUSDT:parent-1"
+        pt.add(
+            parent_pid,
+            {
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+                "entry_price": 50000.0,
+                "initial_risk_distance": 1000.0,
+                "atr_at_entry": 500.0,
+                "tier_name": "default",
+            },
+        )
+        ex.runtime_state.slots.active[parent_pid] = MagicMock(archetype="bpc-long-120T")
+        ex.runtime_state.add_position.positions[parent_pid] = MagicMock(add_count=0)
+        ce.resolve_add_position_for_strategy.return_value = {
+            "enabled": True,
+            "max_add_times": 3,
+            "require_locked_profit": False,
+            "lock_profit_breakeven_trigger_r": 0.0,
+            "trigger": {"enabled": False},
+            "add_size_multipliers": [1.0],
+        }
+        with patch("src.order_management.trade_executor.enforce_before_order"):
+            result = ex.execute(
+                intent=TradeIntent(
+                    action="LONG",
+                    symbol="BTCUSDT",
+                    archetype="bpc-long-120T",
+                    position_id="BTCUSDT:add-2",
+                    add_position=True,
+                    execution_profile={"rr_constraints": {"stop_loss_r": 2.0}},
+                ),
+                features=_make_features(close=52000.0, atr=500.0, equity=10000.0),
+            )
+        assert result is True
+        ce.validate_add_position.assert_called_once()
+
+    def test_add_position_no_parent_is_rejected(self):
+        ex, om, ce, pt = _make_executor(trade_size=0.001)
+        ce.resolve_add_position_for_strategy.return_value = {
+            "enabled": True,
+            "max_add_times": 3,
+            "require_locked_profit": False,
+            "lock_profit_breakeven_trigger_r": 0.0,
+            "trigger": {"enabled": False},
+            "add_size_multipliers": [1.0],
+        }
+        with patch("src.order_management.trade_executor.enforce_before_order"):
+            result = ex.execute(
+                intent=TradeIntent(
+                    action="LONG",
+                    symbol="BTCUSDT",
+                    archetype="bpc-long-120T",
+                    add_position=True,
+                    execution_profile={"rr_constraints": {"stop_loss_r": 2.0}},
+                ),
+                features=_make_features(close=52000.0, atr=500.0, equity=10000.0),
+            )
+        assert result is False
+        om.place_order.assert_not_called()
 
 
 class TestStopGuardrailConsistency:

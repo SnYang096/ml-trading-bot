@@ -1,5 +1,5 @@
 # BPC-LONG-120T Gate Draft (auto-generated)
-# 来源: results/train_final_20260327_125511_rr_extreme/bpc-long-120T
+# 来源: results/train_final_20260330_005352_rr_extreme/bpc-long-120T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc-long-120T
@@ -16,66 +16,65 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_cvd_divergence_score_pct
-  tag: HARD_CVD_DIVERGENCE_SCORE_PCT
+- id: gate_vpin_ma10
+  tag: HARD_VPIN_MA10
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.47)
+  reason: 统计验证规则 (lift=1.54)
   when:
-    cvd_divergence_score_pct:
-      value_gt: 0.5
+    vpin_ma10:
+      value_lt: 0.2033
   then:
     action: deny
-  comment: 'statistical(lift=1.47): cvd_divergence_score_pct > 0.5'
+  comment: 'statistical(lift=1.54): vpin_ma10 < 0.2033'
 - id: gate_bpc_cvd_breakout_confirm
   tag: HARD_BPC_CVD_BREAKOUT_CONFIRM
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.37)
+  reason: 统计验证规则 (lift=1.30)
   when:
     bpc_cvd_breakout_confirm:
-      value_gt: 0.9975
+      value_gt: 0.9568
   then:
     action: deny
-  comment: 'statistical(lift=1.37): bpc_cvd_breakout_confirm > 0.9975'
-- id: gate_vpin_quantile_rank_20
-  tag: HARD_VPIN_QUANTILE_RANK_20
+  comment: 'statistical(lift=1.30): bpc_cvd_breakout_confirm > 0.9568'
+- id: gate_wick_ignition_score
+  tag: HARD_WICK_IGNITION_SCORE
   phase: hard_gate
   priority: 12
   reason: 统计验证规则 (lift=1.21)
   when:
-    vpin_quantile_rank_20:
-      value_gt: 0.875
+    wick_ignition_score:
+      value_lt: 0.1526
   then:
     action: deny
-  comment: 'statistical(lift=1.21): vpin_quantile_rank_20 > 0.875'
-- id: gate_bpc_pullback_depth_bpc_pullback_depth
-  tag: HARD_BPC_PULLBACK_DEPTH_BPC_PULLBACK_DEPTH
+  comment: 'statistical(lift=1.21): wick_ignition_score < 0.1526'
+- id: gate_funding_ignition_score_funding_ignition_score
+  tag: HARD_FUNDING_IGNITION_SCORE_FUNDING_IGNITION_SCORE
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.16)
+  reason: 统计验证规则 (lift=1.20)
   when:
     all_of:
-    - bpc_pullback_depth:
-        value_gt: 0.0538
-    - bpc_pullback_depth:
-        value_lt: 0.1417
+    - funding_ignition_score:
+        value_gt: 0.0005
+    - funding_ignition_score:
+        value_lt: 0.0027
   then:
     action: deny
-  comment: 'statistical(lift=1.16): bpc_pullback_depth > 0.05382 & bpc_pullback_depth < 0.1417'
-- id: gate_vpin_zscore_x_trade_cluster_max_buy_run_rank_vpin_zscore_x_trade_cluster_max_buy_run_rank
-  tag: HARD_VPIN_ZSCORE_X_TRADE_CLUSTER_MAX_BUY_RUN_RANK_VPIN_ZSCORE_X_TRADE_CLUSTER_MAX_BUY_RUN_RANK
+  comment: 'statistical(lift=1.20): funding_ignition_score > 0.000486 & funding_ignition_score < 0.002663'
+- id: gate_cvd_change_5_normalized_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
   priority: 14
   reason: 统计验证规则 (lift=1.29)
   when:
     all_of:
-    - vpin_zscore_x_trade_cluster_max_buy_run_rank:
-        value_gt: 0.8944
-    - vpin_zscore_x_trade_cluster_max_buy_run_rank:
-        value_lt: 0.9466
+    - cvd_change_5_normalized:
+        value_gt: -0.059
+    - cvd_change_5_normalized:
+        value_lt: -0.0455
   then:
     action: deny
-  comment: 'statistical(lift=1.29): vpin_zscore_x_trade_cluster_max_buy_run_rank > 0.8944 & vpin_zscore_x_trade_cluster_max_buy_run_rank
-    < 0.9466'
+  comment: 'statistical(lift=1.29): cvd_change_5_normalized > -0.05901 & cvd_change_5_normalized < -0.0455'
 guardrails: []

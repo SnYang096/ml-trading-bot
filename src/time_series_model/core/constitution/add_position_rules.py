@@ -182,13 +182,42 @@ def resolve_add_position_max_times(
 def resolve_add_position_min_current_r(
     add_position_cfg: Mapping[str, Any] | None,
     add_number: int,
+    signal: Mapping[str, Any] | None = None,
 ) -> float:
     if add_number <= 0:
         return 0.0
     cfg = _as_dict(add_position_cfg)
-    return max(
+    threshold_raw = max(
         0.0, _value_by_add_number(cfg.get("min_current_r_by_add"), add_number, 0.0)
     )
+
+    # Unit semantics for min_current_r_by_add:
+    # - initial_r (default): threshold is in current_r units
+    # - atr: threshold is in ATR units and converted to current_r by parent_initial_r
+    unit = (
+        str(
+            cfg.get(
+                "min_current_r_unit", cfg.get("min_current_by_add_unit", "initial_r")
+            )
+            or "initial_r"
+        )
+        .strip()
+        .lower()
+    )
+    if unit not in {"atr", "initial_r"}:
+        unit = "initial_r"
+    if unit != "atr":
+        return threshold_raw
+
+    sig = _as_dict(signal)
+    try:
+        parent_initial_r = float(sig.get("parent_initial_r", 0.0) or 0.0)
+    except Exception:
+        parent_initial_r = 0.0
+    if parent_initial_r <= 0:
+        # Safe fallback: if ATR conversion basis is unavailable, keep old behavior.
+        return threshold_raw
+    return max(0.0, threshold_raw / parent_initial_r)
 
 
 def _get_num(signal: Mapping[str, Any], *names: str) -> float | None:
@@ -215,7 +244,7 @@ def validate_add_position_trigger(
         return True
 
     add_seq = int(signal.get("add_position_seq", 1) or 1)
-    if current_r < resolve_add_position_min_current_r(cfg, add_seq):
+    if current_r < resolve_add_position_min_current_r(cfg, add_seq, signal):
         return False
 
     trig_type = str(trigger.get("type", "")).strip().lower()

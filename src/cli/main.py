@@ -3266,7 +3266,11 @@ def pipeline():
 @click.option("--end-date", help="数据截止日期 (默认自动检测)")
 @click.option("--dry-run", is_flag=True, help="打印命令但不执行")
 @click.option("--no-adopt", is_flag=True, help="禁止自动采纳, 仅保存实验结果")
-@click.option("--skip-shap", is_flag=True, help="跳过 SHAP 特征筛选 (快速迭代用)")
+@click.option(
+    "--skip-shap",
+    is_flag=True,
+    help="跳过 SHAP 特征筛选；Gate 训练导出亦跳过 TreeSHAP/交互（gain-only，快速迭代）",
+)
 @click.option("--compare-only", is_flag=True, help="只对比, 不重训")
 @click.option("--use-1min", is_flag=True, help="使用 1min bar 精细模拟")
 @click.option("--live-root", default="live/highcap", help="1min bar 数据根目录")
@@ -7013,6 +7017,12 @@ def train_rolling(
     default=None,
     help="Path to archetypes/prefilter.yaml. Filters training data by archetype prerequisites before model training.",
 )
+@click.option(
+    "--skip-gate-shap",
+    is_flag=True,
+    default=False,
+    help="Skip TreeSHAP in risk_gate_draft statistical export (gain-only; faster iterations).",
+)
 def train_final(
     symbol,
     timeframe,
@@ -7032,6 +7042,7 @@ def train_final(
     features,
     prepare_only,
     archetype_prefilter,
+    skip_gate_shap,
 ):
     """Train a final model and save ModelArtifact. With --holdout-*: train/test split by date (no overlap); without: train on full window (--train-all)."""
     from datetime import datetime
@@ -7119,6 +7130,8 @@ def train_final(
                 ),
             ]
         )
+    if skip_gate_shap:
+        args.append("--skip-gate-shap")
     sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 

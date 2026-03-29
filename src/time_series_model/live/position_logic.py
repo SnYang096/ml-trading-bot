@@ -108,6 +108,7 @@ def build_position_dict(
 
     pos: Dict[str, Any] = {
         "symbol": intent.symbol,
+        "archetype": str(getattr(intent, "archetype", "") or ""),
         "side": side,
         "entry_price": entry_price,
         "entry_time": entry_time,

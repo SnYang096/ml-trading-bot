@@ -12,9 +12,9 @@ stop_loss:
     max_stop_pct: 0.10
   breakeven:
     enabled: true
-    trigger_r: 3
+    trigger_r: 4
   trailing:
-    activation_r: 2.5
+    activation_r: 9
     trail_r: 7.0 # 只会上提，不会往下放宽
   structural_exit: ema200 # 主退出: 价格穿越 EMA200 = 趋势结构破坏
 take_profit:
@@ -23,7 +23,11 @@ add_position:
   max_add_times: 5
   sizing_mode: fixed_multiplier
   add_size_multipliers: [0.5, 0.35, 0.25, 0.20, 0.15]
-  min_current_r_by_add: [1.5, 2.5, 3.5, 4.5, 5.5]
+  # min_current_r_by_add 的单位:
+  # - initial_r (默认): 以 current_r 为单位（相对初始风险）
+  # - atr: 以 ATR 为单位（内部会自动换算到 current_r）
+  min_current_r_unit: atr
+  min_current_r_by_add: [0.5, 1.0, 1.5, 2, 2.5]
   trigger:
     type: bpc_follow_signal
 version: 50
@@ -50,3 +54,16 @@ version: 50
 # 但这比当前 0R 更低，不会生效
 # 实际上要等到 high_water_mark 超过 7R 以后，trailing 才可能把 SL 抬到 entry 之上。
 # 一句话：activation_r=2.5 + trail_r=7 在前期基本等于“只靠 breakeven 锁盈，trailing 很晚才接管”。
+
+# 1) 4*ATR≈1340(3%) 时，“加满”能到多少杠杆？
+# 代码里加仓杠杆近似是：
+
+# base_leverage_unit = risk_per_trade / stop_pct
+# 这里 risk_per_trade = 1%（constitution）
+# 若 stop_pct ≈ 3%，则 base ≈ 0.01/0.03 = 0.333x
+# 总杠杆（主仓 + 5次加仓）约为：
+
+# L_total = base * (1 + 0.5 + 0.35 + 0.25 + 0.20 + 0.15)
+# = 0.333 * 2.45 ≈ 0.82x
+# 所以按你这套风控，不存在“很高杠杆加满”，理论上加满也不到 1x。
+# （如果 stop_pct 更大，比如 4.4%，总杠杆还会更低）

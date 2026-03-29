@@ -209,6 +209,7 @@ def discover_features(
     model,
     top_n: int = 8,
     compute_interactions: bool = True,
+    use_shap: bool = True,
 ) -> Tuple[List[str], Dict[str, float], List[Tuple]]:
     """SHAP∩Gain 特征发现 — 委托给 export_lightgbm_rules_to_readme._compute_shap_gain_features."""
     import sys
@@ -221,7 +222,8 @@ def discover_features(
         feature_names,
         model,
         top_n=top_n,
-        compute_interactions=compute_interactions,
+        compute_interactions=compute_interactions if use_shap else False,
+        use_shap=use_shap,
     )
 
 

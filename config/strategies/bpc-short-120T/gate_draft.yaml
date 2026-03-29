@@ -1,5 +1,5 @@
 # BPC-SHORT-120T Gate Draft (auto-generated)
-# 来源: results/train_final_20260326_125158_rr_extreme/bpc-short-120T
+# 来源: results/train_final_20260330_005200_rr_extreme/bpc-short-120T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc-short-120T
@@ -16,65 +16,65 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_vp_width_ratio
-  tag: HARD_VP_WIDTH_RATIO
+- id: gate_vpin_ma10
+  tag: HARD_VPIN_MA10
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.31)
+  reason: 统计验证规则 (lift=1.54)
   when:
-    vp_width_ratio:
-      value_lt: 0.4822
+    vpin_ma10:
+      value_lt: 0.2033
   then:
     action: deny
-  comment: 'statistical(lift=1.31): vp_width_ratio < 0.4822'
-- id: gate_evt_tail_shape_left_evt_tail_shape_left
-  tag: HARD_EVT_TAIL_SHAPE_LEFT_EVT_TAIL_SHAPE_LEFT
+  comment: 'statistical(lift=1.54): vpin_ma10 < 0.2033'
+- id: gate_bpc_cvd_breakout_confirm
+  tag: HARD_BPC_CVD_BREAKOUT_CONFIRM
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.51)
+  reason: 统计验证规则 (lift=1.30)
   when:
-    all_of:
-    - evt_tail_shape_left:
-        value_gt: 0.4126
-    - evt_tail_shape_left:
-        value_lt: 0.6151
+    bpc_cvd_breakout_confirm:
+      value_gt: 0.9568
   then:
     action: deny
-  comment: 'statistical(lift=1.51): evt_tail_shape_left > 0.4126 & evt_tail_shape_left < 0.6151'
-- id: gate_evt_var_99_right_evt_var_99_right
-  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
+  comment: 'statistical(lift=1.30): bpc_cvd_breakout_confirm > 0.9568'
+- id: gate_wick_ignition_score
+  tag: HARD_WICK_IGNITION_SCORE
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.71)
+  reason: 统计验证规则 (lift=1.21)
   when:
-    all_of:
-    - evt_var_99_right:
-        value_gt: 0.7431
-    - evt_var_99_right:
-        value_lt: 0.9563
+    wick_ignition_score:
+      value_lt: 0.1526
   then:
     action: deny
-  comment: 'statistical(lift=1.71): evt_var_99_right > 0.7431 & evt_var_99_right < 0.9563'
-- id: gate_oi_exhaustion_score
-  tag: HARD_OI_EXHAUSTION_SCORE
+  comment: 'statistical(lift=1.21): wick_ignition_score < 0.1526'
+- id: gate_funding_ignition_score_funding_ignition_score
+  tag: HARD_FUNDING_IGNITION_SCORE_FUNDING_IGNITION_SCORE
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.25)
+  reason: 统计验证规则 (lift=1.20)
   when:
-    oi_exhaustion_score:
-      value_lt: 0.0036
+    all_of:
+    - funding_ignition_score:
+        value_gt: 0.0005
+    - funding_ignition_score:
+        value_lt: 0.0027
   then:
     action: deny
-  comment: 'statistical(lift=1.25): oi_exhaustion_score < 0.003588'
-- id: gate_bpc_pullback_depth_long
-  tag: HARD_BPC_PULLBACK_DEPTH_LONG
+  comment: 'statistical(lift=1.20): funding_ignition_score > 0.000486 & funding_ignition_score < 0.002663'
+- id: gate_cvd_change_5_normalized_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.34)
+  reason: 统计验证规则 (lift=1.29)
   when:
-    bpc_pullback_depth_long:
-      value_lt: 0.037
+    all_of:
+    - cvd_change_5_normalized:
+        value_gt: -0.059
+    - cvd_change_5_normalized:
+        value_lt: -0.0455
   then:
     action: deny
-  comment: 'statistical(lift=1.34): bpc_pullback_depth_long < 0.03696'
+  comment: 'statistical(lift=1.29): cvd_change_5_normalized > -0.05901 & cvd_change_5_normalized < -0.0455'
 guardrails: []

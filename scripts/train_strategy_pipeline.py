@@ -310,6 +310,14 @@ def parse_args() -> argparse.Namespace:
             "Example: config/strategies/me/archetypes/prefilter.yaml"
         ),
     )
+    parser.add_argument(
+        "--skip-gate-shap",
+        action="store_true",
+        help=(
+            "Skip TreeSHAP / SHAP∩Gain / interaction in statistical risk_gate_draft export "
+            "(gain-only; faster for turbo / threshold-only iterations)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -4132,6 +4140,9 @@ def train_strategy(
                             ),
                             feature_names=feature_names if feature_names else None,
                             lgbm_model=loaded_model,  # A.7.2: teacher for distillation
+                            skip_gate_shap_discovery=bool(
+                                getattr(args, "skip_gate_shap", False)
+                            ),
                         )
                         print(
                             f"   \U0001f4dc Risk gate draft exported to {risk_gate_path}"

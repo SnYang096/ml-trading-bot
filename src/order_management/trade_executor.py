@@ -20,6 +20,10 @@ import pandas as pd
 
 from src.order_management.models import OrderSide, OrderType
 from src.order_management.position_tracker import PositionTracker
+from src.time_series_model.core.constitution.add_position_rules import (
+    resolve_add_position_size_multiplier,
+    validate_add_position_trigger,
+)
 from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.live.enforcement import enforce_before_order
@@ -28,6 +32,13 @@ from src.time_series_model.live.position_logic import build_position_dict
 from src.time_series_model.portfolio.slot_sizing import compute_slot_size_from_risk
 
 logger = logging.getLogger(__name__)
+
+
+def _family_key(archetype: str) -> str:
+    s = str(archetype or "").strip().lower()
+    if not s:
+        return ""
+    return s.split("-", 1)[0]
 
 
 class TradeExecutor:
@@ -130,6 +141,13 @@ class TradeExecutor:
             entry_price=entry_price,
             rr_constraints=rr_constraints,
         )
+        add_ctx: Optional[Dict[str, Any]] = None
+        if bool(intent.add_position):
+            intent, add_ctx = self._prepare_add_position(
+                intent=intent,
+                features=features,
+                entry_price=entry_price,
+            )
         if abs(sl_r - sl_r_raw) > 1e-9:
             rr_constraints["stop_loss_r"] = float(sl_r)
             exec_profile["rr_constraints"] = rr_constraints
@@ -243,7 +261,156 @@ class TradeExecutor:
         pos["effective_stop_pct"] = float(effective_stop_pct)
         pos["sizing_stop_source"] = stop_source
         self.position_tracker.add(position_id, pos)
+        if add_ctx is not None:
+            self.constitution_executor.record_add_position(
+                st=self.runtime_state,
+                position_id=str(add_ctx.get("parent_position_id", "")),
+                current_r=add_ctx.get("current_r"),
+                locked_profit=add_ctx.get("locked_profit"),
+            )
+            self.constitution_executor.save_runtime_state(self.runtime_state)
         return True
+
+    def _prepare_add_position(
+        self,
+        *,
+        intent: TradeIntent,
+        features: Dict[str, Any],
+        entry_price: Optional[float],
+    ) -> tuple[TradeIntent, Dict[str, Any]]:
+        parent_pid, parent_pos = self._resolve_parent_position(intent)
+        if parent_pid is None or parent_pos is None:
+            raise ConstitutionViolation(
+                code="ADD_POSITION_NO_PARENT",
+                message=(
+                    f"no parent position for add_position "
+                    f"(symbol={self.symbol} archetype={intent.archetype})"
+                ),
+            )
+        current_r = (
+            float(intent.current_r)
+            if intent.current_r is not None
+            else self._compute_current_r(
+                side=str(intent.action).upper(),
+                parent_pos=parent_pos,
+                current_price=entry_price,
+            )
+        )
+        locked_profit = bool(
+            intent.locked_profit
+            if intent.locked_profit is not None
+            else parent_pos.get("breakeven_locked", False)
+        )
+        self.constitution_executor.validate_add_position(
+            st=self.runtime_state,
+            position_id=parent_pid,
+            archetype=str(intent.archetype),
+            current_r=current_r,
+            locked_profit=locked_profit,
+        )
+        add_rules = dict(
+            self.constitution_executor.resolve_add_position_for_strategy(
+                str(intent.archetype)
+            )
+        )
+        _intent_add = (getattr(intent, "execution_profile", {}) or {}).get(
+            "add_position"
+        ) or {}
+        if _intent_add:
+            _trig = dict(add_rules.get("trigger", {}) or {})
+            _trig.update(dict(_intent_add.get("trigger", {}) or {}))
+            add_rules.update({k: v for k, v in dict(_intent_add).items() if k != "trigger"})
+            if _trig:
+                add_rules["trigger"] = _trig
+
+        rec = self.runtime_state.add_position.positions.get(parent_pid)
+        next_add_no = int(rec.add_count) + 1 if rec is not None else 1
+        signal = dict(features or {})
+        signal["add_position_seq"] = next_add_no
+        _atr_parent = float(parent_pos.get("atr_at_entry", 0.0) or 0.0)
+        _risk_parent = float(parent_pos.get("initial_risk_distance", 0.0) or 0.0)
+        if _atr_parent > 0 and _risk_parent > 0:
+            signal["parent_initial_r"] = _risk_parent / _atr_parent
+        if not validate_add_position_trigger(
+            archetype=str(intent.archetype),
+            direction=1 if str(intent.action).upper() in {"LONG", "BUY"} else -1,
+            signal=signal,
+            add_position_cfg=add_rules,
+            current_r=current_r,
+        ):
+            raise ConstitutionViolation(
+                code="ADD_POSITION_TRIGGER_NOT_MET",
+                message=(
+                    f"add trigger not met (symbol={self.symbol} "
+                    f"archetype={intent.archetype} current_r={current_r:.4f})"
+                ),
+            )
+        add_mult = resolve_add_position_size_multiplier(add_rules, next_add_no, signal)
+        total_mult = float(intent.size_multiplier or 1.0) * float(add_mult)
+        enriched = dataclasses.replace(
+            intent,
+            parent_position_id=parent_pid,
+            current_r=float(current_r),
+            locked_profit=locked_profit,
+            size_multiplier=float(total_mult),
+        )
+        return enriched, {
+            "parent_position_id": parent_pid,
+            "current_r": float(current_r),
+            "locked_profit": locked_profit,
+        }
+
+    def _resolve_parent_position(
+        self, intent: TradeIntent
+    ) -> tuple[Optional[str], Optional[Dict[str, Any]]]:
+        pos_all = self.position_tracker.all_positions()
+        if intent.parent_position_id:
+            pid = str(intent.parent_position_id).strip()
+            p = pos_all.get(pid)
+            if p is not None:
+                return pid, p
+        target_side = "LONG" if str(intent.action).upper() in {"LONG", "BUY"} else "SHORT"
+        target_arch = str(intent.archetype or "").strip().lower()
+        target_family = _family_key(target_arch)
+        for pid, pos in pos_all.items():
+            p_side = str(pos.get("side", "")).upper()
+            if p_side not in {"LONG", "SHORT", "BUY", "SELL"}:
+                continue
+            p_norm_side = "LONG" if p_side in {"LONG", "BUY"} else "SHORT"
+            if p_norm_side != target_side:
+                continue
+            p_arch = str(pos.get("archetype", "") or "").strip().lower()
+            slot_arch = ""
+            try:
+                slot_arch = str(
+                    self.runtime_state.slots.active.get(str(pid)).archetype or ""
+                ).strip().lower()
+            except Exception:
+                slot_arch = ""
+            p_tier = str(pos.get("tier_name", "") or "").strip().lower()
+            cand = {p_arch, slot_arch, p_tier}
+            if target_arch and target_arch in cand:
+                return str(pid), pos
+            fams = {_family_key(p_arch), _family_key(slot_arch), _family_key(p_tier)}
+            if target_family and target_family in fams:
+                return str(pid), pos
+        return None, None
+
+    @staticmethod
+    def _compute_current_r(
+        *,
+        side: str,
+        parent_pos: Dict[str, Any],
+        current_price: Optional[float],
+    ) -> float:
+        ep = float(parent_pos.get("entry_price", 0.0) or 0.0)
+        risk_dist = float(parent_pos.get("initial_risk_distance", 0.0) or 0.0)
+        px = float(current_price or 0.0)
+        if ep <= 0 or risk_dist <= 1e-9 or px <= 0:
+            return 0.0
+        if str(side).upper() in {"LONG", "BUY"}:
+            return (px - ep) / risk_dist
+        return (ep - px) / risk_dist
 
     def _resolve_effective_stop_r(
         self,

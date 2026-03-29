@@ -65,6 +65,8 @@ validation:
 # ── SHAP∩Gain 参数 ──
 shap_gain:
   top_n: 8
+  # false: Gate 统计路径仅用 gain 排名（与 mlbot train final --skip-gate-shap 同效）
+  use_shap: true
   compute_interactions: true
 
 # ── Fallback: tree_split 门槛 ──

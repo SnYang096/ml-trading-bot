@@ -41,17 +41,20 @@ slow_loop:
     # 冻结物最多保留最近 N 份，控制历史目录体积。
     keep_latest: 3
 fast_loop:
+  # 快变量月度校准链的全局开关: true=每层都禁用树模型训练
+  disable_model_training: true
   step_months: 1
   threshold_calibration:
+    # 总开关：是否运行每期 prefilter/gate/entry_filter 校准链
     enabled: true
   prefilter:
-    # 仅复用现有 prefilter.yaml，不跑 meta-algorithm 规则搜索
+    # 子开关：在已开启 threshold_calibration 时，是否执行 prefilter 阈值校准
     optimize: true
   symbol_threshold_calibration:
     # 预留字段：当前 orchestrator 不消费
     enabled: true
   execution_opt:
-    # 关闭 execution 网格（不调 SL/TP）
+    # 已手工固定 execution，不跑网格搜索
     enabled: false
   pcm_eval:
     # 可按需开启；关闭可明显缩短月度流程

@@ -199,6 +199,7 @@ def _compute_shap_gain_features(
     lgbm_model=None,
     top_n: int = 10,
     compute_interactions: bool = True,
+    use_shap: bool = True,
 ):
     """
     SHAP ∩ Gain 特征发现 (Gate/Evidence 共用).
@@ -232,94 +233,95 @@ def _compute_shap_gain_features(
                 gain_rank[real_name] = float(gain_importances[i])
         gain_top10 = set(sorted(gain_rank, key=gain_rank.get, reverse=True)[:10])
 
-        # SHAP importance
+        # SHAP importance (可关闭以加速 turbo / 仅调阈值流程)
         shap_top10 = set()
-        try:
-            import shap
+        if use_shap:
+            try:
+                import shap
 
-            X_full = np.zeros((len(pred_df), len(feat_names_model)))
-            for fi, fn in enumerate(feat_names_model):
-                real_fn = model_to_real.get(fn, fn)
-                if real_fn in pred_df.columns:
-                    X_full[:, fi] = pred_df[real_fn].fillna(0).values.astype(float)
-            sample_n = min(2000, len(X_full))
-            rng = np.random.default_rng(42)
-            idx = rng.choice(len(X_full), size=sample_n, replace=False)
-            X_sample = X_full[idx]
+                X_full = np.zeros((len(pred_df), len(feat_names_model)))
+                for fi, fn in enumerate(feat_names_model):
+                    real_fn = model_to_real.get(fn, fn)
+                    if real_fn in pred_df.columns:
+                        X_full[:, fi] = pred_df[real_fn].fillna(0).values.astype(float)
+                sample_n = min(2000, len(X_full))
+                rng = np.random.default_rng(42)
+                idx = rng.choice(len(X_full), size=sample_n, replace=False)
+                X_sample = X_full[idx]
 
-            explainer = shap.TreeExplainer(booster)
-            shap_values = explainer.shap_values(X_sample)
-            if isinstance(shap_values, list):
-                shap_values = (
-                    shap_values[1] if len(shap_values) == 2 else shap_values[0]
+                explainer = shap.TreeExplainer(booster)
+                shap_values = explainer.shap_values(X_sample)
+                if isinstance(shap_values, list):
+                    shap_values = (
+                        shap_values[1] if len(shap_values) == 2 else shap_values[0]
+                    )
+                mean_abs_shap = np.abs(shap_values).mean(axis=0)
+                for fi, fn in enumerate(feat_names_model):
+                    real_name = model_to_real.get(fn, fn)
+                    if real_name in pred_df.columns and fi < len(mean_abs_shap):
+                        shap_importance_map[real_name] = float(mean_abs_shap[fi])
+                shap_top10 = set(
+                    sorted(
+                        shap_importance_map, key=shap_importance_map.get, reverse=True
+                    )[:10]
                 )
-            mean_abs_shap = np.abs(shap_values).mean(axis=0)
-            for fi, fn in enumerate(feat_names_model):
-                real_name = model_to_real.get(fn, fn)
-                if real_name in pred_df.columns and fi < len(mean_abs_shap):
-                    shap_importance_map[real_name] = float(mean_abs_shap[fi])
-            shap_top10 = set(
-                sorted(shap_importance_map, key=shap_importance_map.get, reverse=True)[
-                    :10
-                ]
-            )
 
-            # SHAP interaction
-            if compute_interactions:
-                try:
-                    interact_n = min(500, sample_n)
-                    X_interact = X_sample[:interact_n]
-                    interact_vals = explainer.shap_interaction_values(X_interact)
-                    if isinstance(interact_vals, list):
-                        interact_vals = (
-                            interact_vals[1]
-                            if len(interact_vals) == 2
-                            else interact_vals[0]
-                        )
-                    mean_interact = np.abs(interact_vals).mean(axis=0)
-                    np.fill_diagonal(mean_interact, 0)
-                    n_feat = mean_interact.shape[0]
-                    pair_scores = []
-                    for fi in range(n_feat):
-                        for fj in range(fi + 1, n_feat):
-                            fn_i = (
-                                model_to_real.get(
-                                    feat_names_model[fi], feat_names_model[fi]
-                                )
-                                if fi < len(feat_names_model)
-                                else None
+                # SHAP interaction
+                if compute_interactions:
+                    try:
+                        interact_n = min(500, sample_n)
+                        X_interact = X_sample[:interact_n]
+                        interact_vals = explainer.shap_interaction_values(X_interact)
+                        if isinstance(interact_vals, list):
+                            interact_vals = (
+                                interact_vals[1]
+                                if len(interact_vals) == 2
+                                else interact_vals[0]
                             )
-                            fn_j = (
-                                model_to_real.get(
-                                    feat_names_model[fj], feat_names_model[fj]
+                        mean_interact = np.abs(interact_vals).mean(axis=0)
+                        np.fill_diagonal(mean_interact, 0)
+                        n_feat = mean_interact.shape[0]
+                        pair_scores = []
+                        for fi in range(n_feat):
+                            for fj in range(fi + 1, n_feat):
+                                fn_i = (
+                                    model_to_real.get(
+                                        feat_names_model[fi], feat_names_model[fi]
+                                    )
+                                    if fi < len(feat_names_model)
+                                    else None
                                 )
-                                if fj < len(feat_names_model)
-                                else None
+                                fn_j = (
+                                    model_to_real.get(
+                                        feat_names_model[fj], feat_names_model[fj]
+                                    )
+                                    if fj < len(feat_names_model)
+                                    else None
+                                )
+                                if (
+                                    fn_i
+                                    and fn_j
+                                    and fn_i in pred_df.columns
+                                    and fn_j in pred_df.columns
+                                ):
+                                    score = float(mean_interact[fi, fj])
+                                    if score > 0.001:
+                                        pair_scores.append((fn_i, fn_j, score))
+                        pair_scores.sort(key=lambda x: -x[2])
+                        interaction_pairs = pair_scores[:10]
+                        if interaction_pairs:
+                            top_pair = interaction_pairs[0]
+                            print(
+                                f"   📊 SHAP interaction top pair: "
+                                f"{top_pair[0]} × {top_pair[1]} = {top_pair[2]:.4f}"
                             )
-                            if (
-                                fn_i
-                                and fn_j
-                                and fn_i in pred_df.columns
-                                and fn_j in pred_df.columns
-                            ):
-                                score = float(mean_interact[fi, fj])
-                                if score > 0.001:
-                                    pair_scores.append((fn_i, fn_j, score))
-                    pair_scores.sort(key=lambda x: -x[2])
-                    interaction_pairs = pair_scores[:10]
-                    if interaction_pairs:
-                        top_pair = interaction_pairs[0]
-                        print(
-                            f"   📊 SHAP interaction top pair: "
-                            f"{top_pair[0]} × {top_pair[1]} = {top_pair[2]:.4f}"
-                        )
-                except Exception as e:
-                    print(f"   ⚠️  SHAP interaction 计算跳过: {e}")
+                    except Exception as e:
+                        print(f"   ⚠️  SHAP interaction 计算跳过: {e}")
 
-        except ImportError:
-            print("   ⚠️  shap 未安装，使用 gain importance fallback")
-        except Exception as e:
-            print(f"   ⚠️  SHAP 计算失败: {e}，使用 gain importance fallback")
+            except ImportError:
+                print("   ⚠️  shap 未安装，使用 gain importance fallback")
+            except Exception as e:
+                print(f"   ⚠️  SHAP 计算失败: {e}，使用 gain importance fallback")
 
         # SHAP ∩ Gain 交集
         if shap_top10:
@@ -364,6 +366,8 @@ def _generate_gate_rules_statistical(
     rr_col_name: str,
     lgbm_model=None,
     max_rules: int = 5,
+    *,
+    use_shap: "bool | None" = None,
 ) -> "list | None":
     """
     统计验证法生成 Gate 规则 (v4 最终方案)。
@@ -393,6 +397,9 @@ def _generate_gate_rules_statistical(
     _gc = _gkpi.get("compound", {})
     _gv = _gkpi.get("validation", {})
     _gsg = _gkpi.get("shap_gain", {})
+    _gate_use_shap = (
+        bool(_gsg.get("use_shap", True)) if use_shap is None else bool(use_shap)
+    )
 
     GATE_MIN_LIFT = _gt.get("min_lift", 1.05)
     GATE_MIN_EFFECT = _gt.get("min_effect", 0.10)
@@ -426,12 +433,16 @@ def _generate_gate_rules_statistical(
     from meta_algorithm_unified import discover_features as _discover_feats_gate
 
     _gate_top_n = _gsg.get("top_n", 8)
+    _compute_inter = (
+        bool(_gsg.get("compute_interactions", True)) if _gate_use_shap else False
+    )
     top_features, shap_importance_map, _interaction_pairs = _discover_feats_gate(
         pred_df,
         avail,
         lgbm_model,
         top_n=_gate_top_n,
-        compute_interactions=_gsg.get("compute_interactions", True),
+        compute_interactions=_compute_inter,
+        use_shap=_gate_use_shap,
     )
 
     # ── Step 2: 构建坏交易标签 ──
@@ -744,6 +755,8 @@ def _generate_risk_gate_yaml(
     predictions_path: "Path | str | None" = None,
     feature_names: "list | None" = None,
     lgbm_model=None,
+    *,
+    skip_gate_shap_discovery: bool = False,
 ):
     """
     从树模型分裂规则生成 risk_gate_draft.yaml 草稿。
@@ -791,6 +804,7 @@ def _generate_risk_gate_yaml(
             rr_col_name=rr_col_name,
             lgbm_model=lgbm_model,
             max_rules=top_n,
+            use_shap=(False if skip_gate_shap_discovery else None),
         )
         if validated_rules:
             print("   ✅ 使用统计验证法生成规则")

@@ -256,6 +256,8 @@ class PositionSimulator:
         self._om_bridge: Optional["OMBridge"] = None
         self.max_observed_leverage: float = 0.0
         self.max_observed_notional_frac: float = 0.0
+        # 记录最近一次加仓失败原因（供 funnel 细分统计）
+        self.last_add_reject_reason: str = ""
 
     @property
     def has_positions(self) -> bool:
@@ -596,6 +598,7 @@ class PositionSimulator:
         Returns:
             position_id if added, None if rejected
         """
+        self.last_add_reject_reason = ""
         archetype = getattr(intent, "archetype", "").lower().strip()
         new_side = (
             "LONG"
@@ -607,16 +610,19 @@ class PositionSimulator:
         parent_pid = None
         parent_pos = None
         for pid, pos in self._positions.items():
+            _pos_arch = str(pos.get("archetype", "") or "").lower().strip()
+            _pos_tier = str(pos.get("tier_name", "") or "").lower().strip()
             if (
                 pos.get("symbol", "") == intent.symbol
                 and pos["side"] == new_side
-                and pos.get("tier_name", "").lower() == archetype
+                and (_pos_arch == archetype or _pos_tier == archetype)
             ):
                 parent_pid = pid
                 parent_pos = pos
                 break
 
         if parent_pos is None:
+            self.last_add_reject_reason = "no_parent_position"
             return None  # 没有已有持仓，不是加仓场景
 
         # 2. 计算 current_r (用于 validate_add_position)
@@ -659,6 +665,7 @@ class PositionSimulator:
                 locked_profit=parent_pos.get("breakeven_locked", False),
             )
         except ConstitutionViolation:
+            self.last_add_reject_reason = "constitution_reject"
             return None
 
         add_rules = dict(executor.resolve_add_position_for_strategy(archetype))
@@ -674,6 +681,7 @@ class PositionSimulator:
             if _trig:
                 add_rules["trigger"] = _trig
         if next_add_no > _shared_resolve_add_position_max_times(add_rules):
+            self.last_add_reject_reason = "max_add_times"
             return None
         signal = dict(features or {})
         signal["add_position_seq"] = next_add_no
@@ -710,6 +718,7 @@ class PositionSimulator:
             add_position_cfg=add_rules,
             current_r=current_r,
         ):
+            self.last_add_reject_reason = "trigger_not_met"
             return None
         add_mult = _resolve_add_position_size_multiplier(add_rules, next_add_no, signal)
         parent_mult = float(parent_pos.get("_size_multiplier", 1.0) or 1.0)
@@ -751,6 +760,7 @@ class PositionSimulator:
         # 加仓继承父仓的 regime scale，但风险预算按 add_size_multipliers 缩小
         pos["_size_multiplier"] = parent_mult * add_mult
         self._positions[pid] = pos
+        self.last_add_reject_reason = ""
         return pid
 
 
@@ -1873,7 +1883,27 @@ class EventBacktester:
                                 _add_pos_rejected += 1
                                 funnel.setdefault("add_position_rejected", 0)
                                 funnel["add_position_rejected"] += 1
-                                funnel["reject_max_positions"] += 1
+                                _why = (
+                                    str(
+                                        getattr(simulator, "last_add_reject_reason", "")
+                                    )
+                                    or "other"
+                                )
+                                if _why == "max_add_times":
+                                    funnel.setdefault("reject_add_max_times", 0)
+                                    funnel["reject_add_max_times"] += 1
+                                elif _why == "constitution_reject":
+                                    funnel.setdefault("reject_add_constitution", 0)
+                                    funnel["reject_add_constitution"] += 1
+                                elif _why == "trigger_not_met":
+                                    funnel.setdefault("reject_add_trigger", 0)
+                                    funnel["reject_add_trigger"] += 1
+                                elif _why == "no_parent_position":
+                                    funnel.setdefault("reject_add_no_parent", 0)
+                                    funnel["reject_add_no_parent"] += 1
+                                else:
+                                    funnel.setdefault("reject_add_other", 0)
+                                    funnel["reject_add_other"] += 1
                         else:
                             funnel["reject_max_positions"] += 1
             else:
