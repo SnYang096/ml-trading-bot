@@ -86,6 +86,8 @@ def test_footprint_monthly_cache_hits_avoid_reloading_ticks(monkeypatch):
             persist_monthly=True,
         )
         assert "fp_poc" in out1.columns
+        # Must be unitless ATR-distance, not raw price level (~100)
+        assert pd.to_numeric(out1["fp_poc"], errors="coerce").abs().max() < 20
         assert calls["n"] >= 1
 
         # Second run: should hit cache and NOT call load_tick_data again.
@@ -98,6 +100,7 @@ def test_footprint_monthly_cache_hits_avoid_reloading_ticks(monkeypatch):
             persist_monthly=True,
         )
         assert "fp_poc" in out2.columns
+        assert pd.to_numeric(out2["fp_poc"], errors="coerce").abs().max() < 20
         assert calls["n"] == 0
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)

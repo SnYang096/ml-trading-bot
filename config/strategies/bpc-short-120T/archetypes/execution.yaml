@@ -1,5 +1,5 @@
 execution_constraints:
-  allow_add_on: true
+  allow_add_on: false
   min_order_interval_minutes: 15
 holding:
   max_holding_bars: null
@@ -15,12 +15,12 @@ stop_loss:
     trigger_r: 4
   trailing:
     activation_r: 9
-    trail_r: 7.0 # 只会上提，不会往下放宽
+    trail_r: 14.0 # 只会上提，不会往下放宽
   structural_exit: ema200 # 主退出: 价格穿越 EMA200 = 趋势结构破坏
 take_profit:
   enabled: false
 add_position:
-  max_add_times: 5
+  max_add_times: 0
   sizing_mode: fixed_multiplier
   add_size_multipliers: [0.5, 0.35, 0.25, 0.20, 0.15]
   # min_current_r_by_add 的单位:
@@ -28,8 +28,6 @@ add_position:
   # - atr: 以 ATR 为单位（内部会自动换算到 current_r）
   min_current_r_unit: atr
   min_current_r_by_add: [0.5, 1.0, 1.5, 2, 2.5]
-  trigger:
-    type: bpc_follow_signal
 version: 50
 
 # 在 live 层是同一张交易所 STOP_MARKET 止损单动态迁移：
@@ -38,8 +36,8 @@ version: 50
 # breakeven：达到触发后，把本地 stop_loss_price 改到 entry_price（见 position_logic.py），随后 position_tracker.py 会 cancel旧SL + place新SL 同步到交易所。
 # trail_r（配合 activation_r）：激活后持续抬/降 stop_loss_price，同样通过 position_tracker.py 做 cancel+replace 到交易所。
 
-# fixed_multiplier 加仓：max_add_times + add_size_multipliers（按第 N 次取倍数）+
-# trigger.type: bpc_follow_signal（如 breakout 方向一致）；浮盈 R 门槛若需要可再加 min_current_r_by_add。
+# 当前 bpc-short-120T 已禁用加仓（allow_add_on=false, max_add_times=0）。
+# 若未来恢复加仓，可继续使用 max_add_times + add_size_multipliers + min_current_r_by_add。
 # 另叠加宪法层 locked_profit 等限制。
 
 # 在当前实现里，trail_r 不是“从当前利润里减去多少 R”直接得到止损 R，而是：

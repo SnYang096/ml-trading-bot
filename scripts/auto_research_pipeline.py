@@ -581,6 +581,18 @@ def _build_continuous_pcm_trading_map(
                 )
             cdf = cdf[["open", "high", "low", "close"]].dropna()
             if not cdf.empty:
+                # Overlay trend baseline to visualize long/short separation.
+                ema200 = (
+                    cdf["close"].ewm(span=200, adjust=False, min_periods=200).mean()
+                )
+                p.line(
+                    cdf.index,
+                    ema200,
+                    line_color="#f59e0b",
+                    line_width=1.6,
+                    line_alpha=0.95,
+                    line_dash="dashed",
+                )
                 inc = cdf["close"] >= cdf["open"]
                 dec = ~inc
                 p.segment(
@@ -668,19 +680,46 @@ def _build_continuous_pcm_trading_map(
                 base_entries = entries.loc[~entries["is_add_position"]].copy()
                 add_entries = entries.loc[entries["is_add_position"]].copy()
                 if not base_entries.empty:
-                    src_e = ColumnDataSource(base_entries)
-                    r = p.scatter(
-                        x="entry_time",
-                        y="entry_price",
-                        source=src_e,
-                        marker="triangle",
-                        size=10,
-                        fill_color="arch_color",
-                        line_color="pnl_color",
-                        line_width=1.3,
-                        alpha=0.90,
-                    )
-                    arch_renderers[arch].append(r)
+                    base_long = base_entries.loc[
+                        base_entries["side"]
+                        .astype(str)
+                        .str.upper()
+                        .isin(["LONG", "BUY"])
+                    ].copy()
+                    base_short = base_entries.loc[
+                        base_entries["side"]
+                        .astype(str)
+                        .str.upper()
+                        .isin(["SHORT", "SELL"])
+                    ].copy()
+                    if not base_long.empty:
+                        src_e = ColumnDataSource(base_long)
+                        r = p.scatter(
+                            x="entry_time",
+                            y="entry_price",
+                            source=src_e,
+                            marker="triangle",
+                            size=10,
+                            fill_color="arch_color",
+                            line_color="pnl_color",
+                            line_width=1.3,
+                            alpha=0.90,
+                        )
+                        arch_renderers[arch].append(r)
+                    if not base_short.empty:
+                        src_es = ColumnDataSource(base_short)
+                        r = p.scatter(
+                            x="entry_time",
+                            y="entry_price",
+                            source=src_es,
+                            marker="inverted_triangle",
+                            size=10,
+                            fill_color="arch_color",
+                            line_color="pnl_color",
+                            line_width=1.3,
+                            alpha=0.90,
+                        )
+                        arch_renderers[arch].append(r)
                 if not add_entries.empty:
                     src_ea = ColumnDataSource(add_entries)
                     r = p.scatter(

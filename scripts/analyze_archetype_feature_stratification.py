@@ -68,6 +68,44 @@ TEMPORAL_WINDOW_MONTHS = [2, 3, 4, 6]
 TEMPORAL_MIN_SAMPLES_PER_WINDOW = 1080  # 统计可信最小样本量
 
 
+def _is_prefilter_column_allowed(
+    col: str,
+    norm_type: str,
+    raw_scale_columns: Optional[set[str]] = None,
+) -> bool:
+    """Prefilter candidate guardrail: only keep normalized/cross-asset comparable columns."""
+    c = str(col or "").strip()
+    nt = str(norm_type or "").strip().lower()
+    if not c:
+        return False
+    disallow = {
+        "price_unit",
+        "raw",
+        "usd",
+        "identity",
+        "passthrough",
+        "log1p_robust_rolling",
+    }
+    if nt in disallow:
+        return False
+    if raw_scale_columns and c in raw_scale_columns:
+        return False
+    # 未声明 norm_type 时，按命名约束兜底
+    if nt:
+        return True
+    if c in {"cvd", "cvd_change_1", "cvd_change_5", "cvd_change_20", "fp_delta_poc"}:
+        return False
+    if c.startswith("cvd_change_") and not (
+        c.endswith(("_pct", "_rank", "_zscore", "_normalized", "_f")) or "zscore" in c
+    ):
+        return False
+    if c.endswith(("_pct", "_rank", "_zscore", "_normalized", "_f")):
+        return True
+    if any(k in c for k in ("zscore", "normalized", "_score", "_ratio", "_entropy")):
+        return True
+    return False
+
+
 def _resolve_features_from_config(
     config_path: str,
     deps_path: str,
@@ -92,6 +130,14 @@ def _resolve_features_from_config(
         deps_cfg = yaml.safe_load(f)
 
     all_features_def = deps_cfg.get("features", {})
+    raw_scale_columns: set[str] = set()
+    raw_scale_cfg = deps_cfg.get("raw_scale_columns", {}) or {}
+    if isinstance(raw_scale_cfg, dict):
+        for vals in raw_scale_cfg.values():
+            if isinstance(vals, (list, tuple, set)):
+                raw_scale_columns.update(str(v) for v in vals if str(v).strip())
+    elif isinstance(raw_scale_cfg, (list, tuple, set)):
+        raw_scale_columns.update(str(v) for v in raw_scale_cfg if str(v).strip())
 
     # 3. 解析 _f → output_columns
     resolved_columns = []
@@ -102,9 +148,24 @@ def _resolve_features_from_config(
             print(f"⚠️  _f '{feat_f}' 在 feature_dependencies.yaml 中未找到, 跳过")
             continue
 
-        output_cols = all_features_def[feat_f].get("output_columns", [])
-        matched = [c for c in output_cols if c in available_set]
-        skipped = [c for c in output_cols if c not in available_set]
+        feat_def = all_features_def[feat_f] or {}
+        output_cols = feat_def.get("output_columns", [])
+        norm_map = (feat_def.get("compute_params") or {}).get(
+            "output_normalization_map"
+        ) or {}
+        matched = []
+        skipped = []
+        dropped_raw = []
+        for c in output_cols:
+            if c not in available_set:
+                skipped.append(c)
+                continue
+            if _is_prefilter_column_allowed(
+                c, str(norm_map.get(c, "")), raw_scale_columns
+            ):
+                matched.append(c)
+            else:
+                dropped_raw.append(c)
 
         if matched:
             resolved_columns.extend(matched)
@@ -114,6 +175,8 @@ def _resolve_features_from_config(
             )
         if skipped:
             print(f"  ℹ️  {feat_f}: {len(skipped)} 列不在 parquet 中: {skipped[:5]}")
+        if dropped_raw:
+            print(f"  🛡️  {feat_f}: drop raw/non-normalized {dropped_raw[:5]}")
 
     return sorted(set(resolved_columns))
 
@@ -2109,6 +2172,14 @@ def _resolve_features_from_prefilter_yaml(
         deps_cfg = yaml.safe_load(f)
 
     all_features_def = deps_cfg.get("features", {})
+    raw_scale_columns: set[str] = set()
+    raw_scale_cfg = deps_cfg.get("raw_scale_columns", {}) or {}
+    if isinstance(raw_scale_cfg, dict):
+        for vals in raw_scale_cfg.values():
+            if isinstance(vals, (list, tuple, set)):
+                raw_scale_columns.update(str(v) for v in vals if str(v).strip())
+    elif isinstance(raw_scale_cfg, (list, tuple, set)):
+        raw_scale_columns.update(str(v) for v in raw_scale_cfg if str(v).strip())
     available_set = set(available_columns)
     resolved_columns: List[str] = []
 
@@ -2116,12 +2187,28 @@ def _resolve_features_from_prefilter_yaml(
         if feat_f not in all_features_def:
             print(f"⚠️  _f '{feat_f}' 在 feature_dependencies.yaml 中未找到, 跳过")
             continue
-        output_cols = all_features_def[feat_f].get("output_columns", [])
-        matched = [c for c in output_cols if c in available_set]
+        feat_def = all_features_def[feat_f] or {}
+        output_cols = feat_def.get("output_columns", [])
+        norm_map = (feat_def.get("compute_params") or {}).get(
+            "output_normalization_map"
+        ) or {}
+        matched = []
+        dropped_raw = []
+        for c in output_cols:
+            if c not in available_set:
+                continue
+            if _is_prefilter_column_allowed(
+                c, str(norm_map.get(c, "")), raw_scale_columns
+            ):
+                matched.append(c)
+            else:
+                dropped_raw.append(c)
         if matched:
             resolved_columns.extend(matched)
         else:
             print(f"⚠️  _f '{feat_f}' 的 output_columns 在 parquet 中均不存在, 跳过")
+        if dropped_raw:
+            print(f"🛡️  _f '{feat_f}' drop raw/non-normalized: {dropped_raw[:5]}")
 
     resolved_columns = list(dict.fromkeys(resolved_columns))  # 去重保序
     return resolved_columns

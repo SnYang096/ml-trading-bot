@@ -24,10 +24,12 @@ STRATEGIES = [
 def _load_raw_scale_columns_for_gate(
     config_path: str = "config/feature_dependencies.yaml",
 ) -> set:
-    """Load raw_scale_columns that must be excluded from gate rule generation.
+    """Load columns that must be excluded from gate rule generation.
 
-    These are unnormalized price/flow/energy columns whose absolute values
-    differ across symbols, making them invalid for cross-asset gate rules.
+    Includes:
+      1) legacy raw_scale_columns list
+      2) output_normalization_map marked as price_unit/raw/usd/identity/passthrough
+      3) conservative fallback for log1p_robust_rolling scale
     """
     import yaml as _yaml_rs
 
@@ -36,11 +38,36 @@ def _load_raw_scale_columns_for_gate(
         return set()
     with open(p, "r", encoding="utf-8") as f:
         cfg = _yaml_rs.safe_load(f) or {}
-    raw = cfg.get("raw_scale_columns", {})
     cols: set = set()
+
+    # 1) legacy explicit list
+    raw = cfg.get("raw_scale_columns", {})
     for category_list in raw.values():
         if isinstance(category_list, list):
             cols.update(str(c) for c in category_list)
+
+    # 2) normalization-map based exclusion
+    disallow_norm_types = {
+        "price_unit",
+        "raw",
+        "usd",
+        "identity",
+        "passthrough",
+        "log1p_robust_rolling",
+    }
+    feats = cfg.get("features", {}) or {}
+    for _, meta in feats.items():
+        if not isinstance(meta, dict):
+            continue
+        norm_map = (meta.get("compute_params") or {}).get(
+            "output_normalization_map"
+        ) or {}
+        if not isinstance(norm_map, dict):
+            continue
+        for col, norm_type in norm_map.items():
+            nt = str(norm_type or "").strip().lower()
+            if nt in disallow_norm_types:
+                cols.add(str(col))
     return cols
 
 

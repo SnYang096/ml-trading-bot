@@ -10,8 +10,46 @@
 # Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
 
 filters:
-- id: ef_shd_pct_crowded
+- id: ef_trend_confirm_tier_a
   enabled: true
+  locked: true
+  lock_reason: bpc_entry_trend_confirm_priority
+  description: 'trend-confirm core (AND): orderflow + participation + derivatives expansion + anti-crowding'
+  conditions:
+  - feature: ofci_pct
+    operator: '>='
+    value: 0.70
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.70
+  - feature: oi_zscore
+    operator: '>='
+    value: 1.3451
+  - feature: shd_pct
+    operator: <=
+    value: 0.20
+  notes: strict trend confirmation, reduce compression-zone false entries
+- id: ef_trend_confirm_tier_b
+  enabled: true
+  locked: true
+  lock_reason: bpc_entry_trend_confirm_priority
+  description: 'trend-confirm with VPIN guard (AND): orderflow + participation + derivatives + vpinsanity'
+  conditions:
+  - feature: ofci_pct
+    operator: '>='
+    value: 0.70
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.70
+  - feature: oi_zscore
+    operator: '>='
+    value: 1.3451
+  - feature: vpin_max20
+    operator: <=
+    value: 0.3458
+  notes: keep a volatility/stress guard while preserving trend continuation
+- id: ef_shd_pct_crowded
+  enabled: false
   locked: true
   lock_reason: bpc_entry_orderflow_core_cross_tf
   description: 'pct: shd_pct <= 0.20'
@@ -19,9 +57,9 @@ filters:
   - feature: shd_pct
     operator: <=
     value: 0.20
-  notes: strategy homogeneity stress percentile (bounded [0,1])
+  notes: single-condition legacy fallback
 - id: ef_ofci_pct_high
-  enabled: true
+  enabled: false
   locked: true
   lock_reason: bpc_entry_orderflow_core_cross_tf
   description: 'pct: ofci_pct >= 0.70'
@@ -29,9 +67,9 @@ filters:
   - feature: ofci_pct
     operator: '>='
     value: 0.70
-  notes: order flow consensus percentile (bounded [0,1])
+  notes: single-condition legacy fallback
 - id: ef_volume_ratio_pct_high
-  enabled: true
+  enabled: false
   locked: true
   lock_reason: bpc_entry_orderflow_core_cross_tf
   description: 'pct: volume_ratio_pct >= 0.70'
@@ -39,9 +77,9 @@ filters:
   - feature: volume_ratio_pct
     operator: '>='
     value: 0.70
-  notes: relative volume percentile (bounded [0,1])
+  notes: single-condition legacy fallback
 - id: ef_vpin_zscore_20_high
-  enabled: true
+  enabled: false
   locked: true
   lock_reason: bpc_entry_orderflow_core_cross_tf
   description: 'normalized: vpin_zscore_20 >= 0.60'
@@ -49,9 +87,9 @@ filters:
   - feature: vpin_zscore_20
     operator: '>='
     value: 0.60
-  notes: VPIN stress zscore
+  notes: single-condition legacy fallback
 - id: ef_vpin_max20_low
-  enabled: true
+  enabled: false
   locked: true
   lock_reason: bpc_entry_orderflow_core_cross_tf
   description: 'normalized: vpin_max20 <= 0.3458'
@@ -59,9 +97,9 @@ filters:
   - feature: vpin_max20
     operator: <=
     value: 0.3458
-  notes: VPIN max window stress upper bound
+  notes: single-condition legacy fallback
 - id: ef_vpin_ma20_low
-  enabled: true
+  enabled: false
   locked: true
   lock_reason: bpc_entry_orderflow_core_cross_tf
   description: 'normalized: vpin_ma20 <= 0.2431'
@@ -69,9 +107,9 @@ filters:
   - feature: vpin_ma20
     operator: <=
     value: 0.2431
-  notes: VPIN MA20 stress upper bound
+  notes: single-condition legacy fallback
 - id: ef_vpin_ma5_low
-  enabled: true
+  enabled: false
   locked: true
   lock_reason: bpc_entry_orderflow_core_cross_tf
   description: 'normalized: vpin_ma5 <= 0.2278'
@@ -79,9 +117,9 @@ filters:
   - feature: vpin_ma5
     operator: <=
     value: 0.2278
-  notes: VPIN MA5 stress upper bound
+  notes: single-condition legacy fallback
 - id: ef_oi_zscore_high
-  enabled: true
+  enabled: false
   locked: true
   lock_reason: bpc_entry_orderflow_core_cross_tf
   description: 'normalized: oi_zscore >= 1.3451'
@@ -89,5 +127,5 @@ filters:
   - feature: oi_zscore
     operator: '>='
     value: 1.3451
-  notes: open interest zscore expansion confirmation
+  notes: single-condition legacy fallback
 combination_mode: or

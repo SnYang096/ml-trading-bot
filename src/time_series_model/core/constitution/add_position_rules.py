@@ -239,13 +239,12 @@ def validate_add_position_trigger(
     current_r: float,
 ) -> bool:
     cfg = _as_dict(add_position_cfg)
-    trigger = _as_dict(cfg.get("trigger"))
-    if not trigger:
-        return True
-
     add_seq = int(signal.get("add_position_seq", 1) or 1)
     if current_r < resolve_add_position_min_current_r(cfg, add_seq, signal):
         return False
+    trigger = _as_dict(cfg.get("trigger"))
+    if not trigger:
+        return True
 
     trig_type = str(trigger.get("type", "")).strip().lower()
     if trig_type in {"bpc_follow_signal", "follow_signal"}:

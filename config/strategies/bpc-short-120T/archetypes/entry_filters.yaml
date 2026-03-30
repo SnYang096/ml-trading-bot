@@ -3,8 +3,46 @@
 # OR mode with few high-quality enabled filters; redundant variants kept locked+disabled.
 
 filters:
-- id: ef_shd_pct_crowded
+- id: ef_trend_confirm_tier_a
   enabled: true
+  locked: true
+  lock_reason: bpc_short_entry_trend_confirm_priority
+  description: 'trend-confirm core (AND): orderflow + participation + derivatives expansion + anti-crowding'
+  conditions:
+  - feature: ofci_pct
+    operator: '>='
+    value: 0.70
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.70
+  - feature: oi_zscore
+    operator: '>='
+    value: 1.3451
+  - feature: shd_pct
+    operator: <=
+    value: 0.0965
+  notes: strict trend confirmation, reduce compression-zone false entries
+- id: ef_trend_confirm_tier_b
+  enabled: true
+  locked: true
+  lock_reason: bpc_short_entry_trend_confirm_priority
+  description: 'trend-confirm with VPIN guard (AND): orderflow + participation + derivatives + vpinsanity'
+  conditions:
+  - feature: ofci_pct
+    operator: '>='
+    value: 0.70
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.70
+  - feature: oi_zscore
+    operator: '>='
+    value: 1.3451
+  - feature: vpin_max20
+    operator: <=
+    value: 0.3458
+  notes: keep a volatility/stress guard while preserving trend continuation
+- id: ef_shd_pct_crowded
+  enabled: false
   locked: true
   lock_reason: bpc_short_entry_orderflow_core_cross_tf
   description: 'pct: shd_pct <= 0.0965'
@@ -12,9 +50,9 @@ filters:
   - feature: shd_pct
     operator: <=
     value: 0.0965
-  notes: pct priority; strongest anti-crowding signal
+  notes: single-condition legacy fallback
 - id: ef_ofci_pct_high
-  enabled: true
+  enabled: false
   locked: true
   lock_reason: bpc_short_entry_orderflow_core_cross_tf
   description: 'pct: ofci_pct >= 0.70'
@@ -22,9 +60,9 @@ filters:
   - feature: ofci_pct
     operator: '>='
     value: 0.70
-  notes: pct priority; order-flow consensus confirmation
+  notes: single-condition legacy fallback
 - id: ef_oi_zscore_high
-  enabled: true
+  enabled: false
   locked: true
   lock_reason: bpc_short_entry_orderflow_core_cross_tf
   description: 'normalized: oi_zscore >= 1.3451'
@@ -32,9 +70,9 @@ filters:
   - feature: oi_zscore
     operator: '>='
     value: 1.3451
-  notes: derivatives expansion confirmation
+  notes: single-condition legacy fallback
 - id: ef_vpin_max20_low
-  enabled: true
+  enabled: false
   locked: true
   lock_reason: bpc_short_entry_orderflow_core_cross_tf
   description: 'normalized: vpin_max20 <= 0.3458'
@@ -42,7 +80,7 @@ filters:
   - feature: vpin_max20
     operator: <=
     value: 0.3458
-  notes: keep one VPIN representative to reduce multi-VPIN collinearity
+  notes: single-condition legacy fallback
 - id: ef_volume_ratio_pct_high
   enabled: false
   locked: true

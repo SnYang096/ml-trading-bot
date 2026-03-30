@@ -337,6 +337,11 @@ class TestAddPositionLivePath:
             )
         assert result is True
         ce.validate_add_position.assert_called_once()
+        add_pos = pt.get("BTCUSDT:add-2")
+        assert add_pos is not None
+        assert add_pos.get("_is_add_position") is True
+        assert add_pos.get("_parent_pid") == parent_pid
+        assert add_pos.get("_share_parent_exit") is True
 
     def test_add_position_no_parent_is_rejected(self):
         ex, om, ce, pt = _make_executor(trade_size=0.001)

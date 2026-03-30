@@ -23,13 +23,12 @@ add_position:
   max_add_times: 5
   sizing_mode: fixed_multiplier
   add_size_multipliers: [0.5, 0.35, 0.25, 0.20, 0.15]
+  inherit_parent_stop: true
   # min_current_r_by_add 的单位:
   # - initial_r (默认): 以 current_r 为单位（相对初始风险）
   # - atr: 以 ATR 为单位（内部会自动换算到 current_r）
   min_current_r_unit: atr
   min_current_r_by_add: [0.5, 1.0, 1.5, 2, 2.5]
-  trigger:
-    type: bpc_follow_signal
 version: 50
 
 # 在 live 层是同一张交易所 STOP_MARKET 止损单动态迁移：
@@ -38,8 +37,8 @@ version: 50
 # breakeven：达到触发后，把本地 stop_loss_price 改到 entry_price（见 position_logic.py），随后 position_tracker.py 会 cancel旧SL + place新SL 同步到交易所。
 # trail_r（配合 activation_r）：激活后持续抬/降 stop_loss_price，同样通过 position_tracker.py 做 cancel+replace 到交易所。
 
-# fixed_multiplier 加仓：max_add_times + add_size_multipliers（按第 N 次取倍数）+
-# trigger.type: bpc_follow_signal（如 breakout 方向一致）；浮盈 R 门槛若需要可再加 min_current_r_by_add。
+# fixed_multiplier 加仓：max_add_times + add_size_multipliers（按第 N 次取倍数）
+# 不配置 trigger 时，仅使用浮盈门槛 min_current_r_by_add（再叠加宪法层限制）。
 # 另叠加宪法层 locked_profit 等限制。
 
 # 在当前实现里，trail_r 不是“从当前利润里减去多少 R”直接得到止损 R，而是：

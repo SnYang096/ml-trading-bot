@@ -393,8 +393,17 @@ class PositionSimulator:
 
         closed = []
         to_remove = []
+        parent_close_meta: Dict[str, Dict[str, Any]] = {}
 
         for pid, pos in self._positions.items():
+            if bool(pos.get("_is_add_position", False)) and bool(
+                pos.get("_inherit_parent_stop", False)
+            ):
+                parent_pid = str(pos.get("_parent_pid", "") or "")
+                parent = self._positions.get(parent_pid)
+                if parent is not None and parent.get("stop_loss_price") is not None:
+                    pos["stop_loss_price"] = float(parent.get("stop_loss_price"))
+
             # 调用共享 7 步持仓管理 (structural_price: EMA200)
             close_reason, exit_price = enforce_position(
                 pos,
@@ -463,6 +472,11 @@ class PositionSimulator:
                 closed.append(trade)
                 self.closed_trades.append(trade)
                 to_remove.append(pid)
+                if not bool(pos.get("_is_add_position", False)):
+                    parent_close_meta[str(pid)] = {
+                        "exit_price": float(exit_price),
+                        "normalized_reason": str(normalized_reason),
+                    }
 
                 # 写入 order_management DB
                 if self._om_bridge:
@@ -473,6 +487,62 @@ class PositionSimulator:
                         exit_reason=close_reason,
                         pnl_r=pnl_r,
                     )
+
+        # 母仓退出时，默认强制同 bar 带走其加仓子仓（可通过 _share_parent_exit=False 关闭）
+        if parent_close_meta:
+            for pid, pos in self._positions.items():
+                if pid in to_remove:
+                    continue
+                if not bool(pos.get("_is_add_position", False)):
+                    continue
+                if not bool(pos.get("_share_parent_exit", True)):
+                    continue
+                parent_pid = str(pos.get("_parent_pid", "") or "")
+                meta = parent_close_meta.get(parent_pid)
+                if not meta:
+                    continue
+                entry_price = float(pos.get("entry_price", 0.0) or 0.0)
+                risk = (
+                    float(pos.get("initial_risk_distance", 0.0) or 0.0)
+                    or float(pos.get("atr_at_entry", 0.0) or 0.0)
+                    or 0.0
+                )
+                is_long = pos.get("side") in {"LONG", "BUY"}
+                forced_exit = float(meta.get("exit_price", bar_close) or bar_close)
+                pnl_usd = (
+                    (forced_exit - entry_price)
+                    if is_long
+                    else (entry_price - forced_exit)
+                )
+                _raw_r = pnl_usd / risk if risk > 0 else 0.0
+                if self.fee_rate > 0 and risk > 0:
+                    fee_r = (entry_price + forced_exit) * self.fee_rate / risk
+                    _raw_r -= fee_r
+                pnl_r = _raw_r * float(pos.get("_size_multiplier", 1.0) or 1.0)
+                trade = ClosedTrade(
+                    symbol=pos.get("symbol", ""),
+                    side=pos["side"],
+                    entry_price=entry_price,
+                    exit_price=forced_exit,
+                    entry_time=pos["entry_time"],
+                    exit_time=now,
+                    atr_at_entry=pos.get("atr_at_entry", 0),
+                    pnl_r=pnl_r,
+                    pnl_usd=pnl_usd,
+                    exit_reason=str(meta.get("normalized_reason", "sl")),
+                    archetype=pos.get("archetype", ""),
+                    tier_name=pos.get("tier_name", ""),
+                    evidence_score=pos.get("evidence_score", 0),
+                    bars_held=pos.get("bars_counted", 0),
+                    is_add_position=True,
+                    size_multiplier=pos.get("_size_multiplier", 1.0),
+                    atr_stop_pct=pos.get("atr_stop_pct", 0.0),
+                    effective_stop_pct=pos.get("effective_stop_pct", 0.0),
+                    sizing_stop_source=pos.get("sizing_stop_source", ""),
+                )
+                closed.append(trade)
+                self.closed_trades.append(trade)
+                to_remove.append(pid)
 
         for pid in to_remove:
             self._positions.pop(pid, None)
@@ -757,6 +827,15 @@ class PositionSimulator:
         pos["_is_add_position"] = True
         pos["_parent_pid"] = parent_pid
         pos["_add_position_seq"] = next_add_no
+        pos["_share_parent_exit"] = bool(add_rules.get("share_parent_exit", True))
+        pos["_inherit_parent_stop"] = bool(add_rules.get("inherit_parent_stop", False))
+        if bool(pos["_inherit_parent_stop"]):
+            parent_sl = parent_pos.get("stop_loss_price")
+            if parent_sl is not None:
+                pos["stop_loss_price"] = float(parent_sl)
+            pos["breakeven_enabled"] = False
+            pos["activation_r"] = None
+            pos["trailing_activated"] = False
         # 加仓继承父仓的 regime scale，但风险预算按 add_size_multipliers 缩小
         pos["_size_multiplier"] = parent_mult * add_mult
         self._positions[pid] = pos
@@ -2205,6 +2284,18 @@ def generate_trading_map_html(
             tools="pan,wheel_zoom,box_zoom,reset,save",
         )
         p.grid.grid_line_alpha = 0.3
+
+        # Trend baseline (EMA200) for long/short structure reading.
+        ema200 = df["close"].ewm(span=200, adjust=False, min_periods=200).mean()
+        p.line(
+            df.index,
+            ema200,
+            line_color="#f59e0b",
+            line_width=1.6,
+            line_alpha=0.95,
+            line_dash="dashed",
+            legend_label="EMA200",
+        )
 
         # K 线实体
         inc = df.close >= df.open

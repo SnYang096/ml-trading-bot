@@ -244,6 +244,24 @@ class TestEnforceAll:
         assert closed == []
         assert len(tracker) == 1
 
+    def test_parent_exit_forces_child_add_close_same_bar(self):
+        """母仓触发退出时，子加仓同 bar 强制退出（默认行为）"""
+        om = _make_om()
+        tracker = _make_tracker(om)
+        parent = _make_pos(entry_price=50000.0, atr=500.0, stop_loss_r=2.0)
+        parent["qty"] = 0.01
+        tracker.add("parent", parent)
+        child = _make_pos(entry_price=50500.0, atr=500.0, stop_loss_r=6.0)
+        child["qty"] = 0.005
+        child["_is_add_position"] = True
+        child["_parent_pid"] = "parent"
+        child["_share_parent_exit"] = True
+        tracker.add("child", child)
+        # 48000 会触发 parent SL；child 单独还未到 50500-6*500=47500
+        closed = tracker.enforce_all(_make_features(close=48000.0))
+        assert set(closed) == {"parent", "child"}
+        assert len(tracker) == 0
+
 
 class TestSyncExchangeSL:
 

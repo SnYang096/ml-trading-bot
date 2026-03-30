@@ -203,6 +203,14 @@ class TradeExecutor:
             bar_minutes=self.bar_minutes,
             entry_time=datetime.now(timezone.utc),
         )
+        if add_ctx is not None and bool(add_ctx.get("inherit_parent_stop", False)):
+            parent_sl = add_ctx.get("parent_stop_loss_price")
+            if parent_sl is not None:
+                # Add position shares parent's current SL anchor.
+                pos["stop_loss_price"] = float(parent_sl)
+            pos["breakeven_enabled"] = False
+            pos["activation_r"] = None
+            pos["trailing_activated"] = False
         stop_loss_price = pos.get("stop_loss_price")
         take_profit_price = pos.get("take_profit_price")
 
@@ -260,6 +268,16 @@ class TradeExecutor:
         pos["atr_stop_pct"] = float(atr_stop_pct)
         pos["effective_stop_pct"] = float(effective_stop_pct)
         pos["sizing_stop_source"] = stop_source
+        if add_ctx is not None:
+            pos["_is_add_position"] = True
+            pos["_parent_pid"] = str(add_ctx.get("parent_position_id", ""))
+            pos["_add_position_seq"] = int(add_ctx.get("add_position_seq", 1) or 1)
+            pos["_share_parent_exit"] = bool(
+                add_ctx.get("share_parent_exit", True)
+            )
+            pos["_inherit_parent_stop"] = bool(
+                add_ctx.get("inherit_parent_stop", False)
+            )
         self.position_tracker.add(position_id, pos)
         if add_ctx is not None:
             self.constitution_executor.record_add_position(
@@ -358,6 +376,10 @@ class TradeExecutor:
             "parent_position_id": parent_pid,
             "current_r": float(current_r),
             "locked_profit": locked_profit,
+            "add_position_seq": int(next_add_no),
+            "share_parent_exit": bool(add_rules.get("share_parent_exit", True)),
+            "inherit_parent_stop": bool(add_rules.get("inherit_parent_stop", False)),
+            "parent_stop_loss_price": parent_pos.get("stop_loss_price"),
         }
 
     def _resolve_parent_position(

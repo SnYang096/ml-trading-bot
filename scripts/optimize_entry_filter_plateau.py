@@ -1350,13 +1350,89 @@ def _resolve_features_for_entry_filter(
     available_set = set(available_columns)
     resolved_columns: List[str] = []
 
+    # Entry-filter 候选列强约束:
+    # 1) 明确拒绝 price/raw/usd 量纲；
+    # 2) 对未声明 output_normalization_map 的列，仅允许明显的 normalized 命名。
+    disallow_norm_types = {
+        "price_unit",
+        "raw",
+        "usd",
+        "identity",
+        "passthrough",
+        # 该类通常仍保留绝对量纲，不适合跨标的阈值扫描
+        "log1p_robust_rolling",
+    }
+    normalized_suffixes = ("_pct", "_rank", "_zscore", "_normalized", "_f")
+    raw_exact = {
+        "cvd",
+        "cvd_change_1",
+        "cvd_change_5",
+        "cvd_change_20",
+        "fp_delta_poc",
+    }
+    # 读取 feature_dependencies.yaml 中维护的 raw_scale_columns 黑名单
+    raw_scale_cfg = deps_cfg.get("raw_scale_columns", {}) or {}
+    if isinstance(raw_scale_cfg, dict):
+        for vals in raw_scale_cfg.values():
+            if isinstance(vals, (list, tuple, set)):
+                raw_exact.update(str(v) for v in vals if str(v).strip())
+    elif isinstance(raw_scale_cfg, (list, tuple, set)):
+        raw_exact.update(str(v) for v in raw_scale_cfg if str(v).strip())
+    raw_prefixes = ("cvd_change_",)
+
+    def _looks_normalized(col: str) -> bool:
+        c = str(col or "").strip()
+        if not c:
+            return False
+        if c in raw_exact:
+            return False
+        if any(c.startswith(p) for p in raw_prefixes):
+            if c.endswith(normalized_suffixes) or "zscore" in c:
+                return True
+            return False
+        if c.endswith(normalized_suffixes):
+            return True
+        if any(
+            k in c for k in ("zscore", "normalized", "_score", "_ratio", "_entropy")
+        ):
+            return True
+        return False
+
     for feat_f in requested:
         if feat_f not in all_features_def:
             continue
-        output_cols = all_features_def[feat_f].get("output_columns", [])
-        matched = [c for c in output_cols if c in available_set and c not in exclude]
+        feat_def = all_features_def[feat_f] or {}
+        output_cols = feat_def.get("output_columns", [])
+        norm_map = (feat_def.get("compute_params") or {}).get(
+            "output_normalization_map"
+        ) or {}
+        matched: List[str] = []
+        dropped: List[str] = []
+        for c in output_cols:
+            col = str(c)
+            if col not in available_set or col in exclude:
+                continue
+            norm_type = str(norm_map.get(col, "") or "").strip().lower()
+            if norm_type:
+                if norm_type in disallow_norm_types:
+                    dropped.append(f"{col}({norm_type})")
+                    continue
+                # 有明确 normalization_map 且非禁止类型，允许进入候选
+                matched.append(col)
+                continue
+            # 未声明 normalization_map: 走命名约束，默认只接纳 normalized 样式
+            if _looks_normalized(col):
+                matched.append(col)
+            else:
+                dropped.append(col)
         if matched:
             resolved_columns.extend(matched)
+        if dropped:
+            print(
+                f"   ℹ️  EntryFilter drop raw/non-normalized from {feat_f}: "
+                + ", ".join(dropped[:10])
+                + (" ..." if len(dropped) > 10 else "")
+            )
 
     resolved_columns = list(dict.fromkeys(resolved_columns))  # 去重保序
     return resolved_columns

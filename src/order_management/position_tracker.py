@@ -91,8 +91,10 @@ class PositionTracker:
             return []
 
         closed: List[str] = []
+        close_decisions: Dict[str, Tuple[str, float]] = {}
 
         for pid, pos in list(self._positions.items()):
+            self._sync_child_stop_from_parent(pid, pos)
             structural_price = self._resolve_structural_price(pos, features)
 
             close_reason, exit_price = enforce_position(
@@ -110,14 +112,53 @@ class PositionTracker:
                 self._maybe_sync_exchange_sl(pid, pos)
 
             if close_reason:
-                qty = float(pos.get("qty") or 0.0)
-                self.close(pid, qty, close_reason)
-                closed.append(pid)
+                close_decisions[pid] = (str(close_reason), float(exit_price))
 
-        for pid in closed:
+        # 默认行为: 母仓触发退出时，同 bar 强制平掉对应加仓子仓
+        parent_close_ids = {
+            pid
+            for pid in close_decisions
+            if not bool(self._positions.get(pid, {}).get("_is_add_position", False))
+        }
+        if parent_close_ids:
+            for pid, pos in list(self._positions.items()):
+                if pid in close_decisions:
+                    continue
+                if not bool(pos.get("_is_add_position", False)):
+                    continue
+                if not bool(pos.get("_share_parent_exit", True)):
+                    continue
+                parent_pid = str(pos.get("_parent_pid", "") or "")
+                if parent_pid in parent_close_ids:
+                    reason, px = close_decisions[parent_pid]
+                    close_decisions[pid] = (reason, px)
+
+        for pid, (close_reason, _exit_price) in close_decisions.items():
+            qty = float(self._positions.get(pid, {}).get("qty") or 0.0)
+            self.close(pid, qty, close_reason)
+            closed.append(pid)
+
+        for pid in set(closed):
             self._positions.pop(pid, None)
 
         return closed
+
+    def _sync_child_stop_from_parent(self, pid: str, pos: Dict[str, Any]) -> None:
+        """When enabled, child add-position inherits parent's stop in real time."""
+        if not bool(pos.get("_is_add_position", False)):
+            return
+        if not bool(pos.get("_inherit_parent_stop", False)):
+            return
+        parent_pid = str(pos.get("_parent_pid", "") or "")
+        if not parent_pid:
+            return
+        parent = self._positions.get(parent_pid)
+        if not parent:
+            return
+        parent_sl = parent.get("stop_loss_price")
+        if parent_sl is None:
+            return
+        pos["stop_loss_price"] = float(parent_sl)
 
     def close(self, position_id: str, qty: float, reason: str) -> None:
         """平仓：cancel SL/TP 挂单 → market 平仓
