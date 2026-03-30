@@ -117,43 +117,15 @@ safety_state:
   persist_to: "data/db/order_management.db"
 
 # -----------------------------------------------------------------------------
-# 2) Slots (low freedom position structure)
-# -----------------------------------------------------------------------------
-slots:
-  enabled: true
-  slot_count: 4
-  # Risk budget per slot (fraction of equity). This is NOT "cash allocation".
-  # 每笔交易风险占 equity 的比例 (1% = 0.01)
-  # 用于反算仓位: risk_usd = equity × risk_per_slot
-  #              qty = risk_usd / (stop_loss_r × ATR)
-  risk_per_slot: 0.01
-  # If not enough margin/slots, replacement policy decides what to close/replace.
-  allow_replacement: true
-
-  # Evidence 仓位缩放 (由 discover_evidence_candidates.py 自动生成 evidence.yaml)
-  evidence_min_score: 0.0
-  evidence_position_scale: true
-
-  # Slot state tracking (for live / restart safety).
-  slot_state_tracking:
-    persist_to: "data/db/order_management.db"
-
-# -----------------------------------------------------------------------------
-# 3) Resource Allocation — 唯一权威源
+# 2) Resource Allocation — 唯一权威源
 # -----------------------------------------------------------------------------
 # 所有硬约束数值的唯一定义位置。
 # PCM (pcm_regime.yaml) 在此约束内自由分配优先级和缩放。
 #
 # 权威层级:
-#   Layer 0: slots.slot_count = 全局绝对上限
-#   Layer 0: slots.risk_per_slot = 每 slot 最大风险 (宪法硬上限)
-#   Layer 1: per_strategy_limits = 每策略资源上限 (max_risk_per_trade ≤ risk_per_slot)
+#   Layer 0: risk_budget_policy = 组合/家族/单symbol风险预算
+#   Layer 1: per_strategy_limits = 每策略风险上限（建议不超过 1%）
 #   Layer 2: pcm_regime.yaml 的仲裁策略在这些限制内运行
-#
-# 约束规则:
-#   per_strategy_limits.*.max_slots ≤ slots.slot_count
-#   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
-#   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
   enabled_archetypes:
     # PCM 联合事件回测策略白名单（与 pipeline strategy_scope 交集生效）
@@ -237,21 +209,6 @@ resource_allocation:
     state_tracking:
       persist_to: "data/db/order_management.db"
 
-  dynamic_slot_policy:
-    total_risk_cap: 0.10
-    bpc:
-      enabled: true
-      base_slots: 1
-      max_slots: 3
-      step2:
-        max_drawdown: 0.08
-        max_daily_loss: 0.03
-        min_active_bpc_slots: 1
-      step3:
-        max_drawdown: 0.05
-        max_daily_loss: 0.02
-        min_active_bpc_slots: 2
-
   intent_selection_policy:
     archetype_priority: [bpc, me, fer]
 
@@ -267,16 +224,53 @@ resource_allocation:
     fer_reverse_allowed: true
     reverse_exempt_families: [fer]
 
-  # 名义敞口风控: soft/hard 分层 + winner priority
-  notional_policy:
+  # 统一风险预算（percent 模式）：
+  # 所有开仓/加仓均按“风险占权益百分比”记账，不再使用 notional cap 多阈值互卡。
+  risk_budget_policy:
     enabled: true
-    soft_max_total_notional_pct: 4.5
-    hard_max_total_notional_pct: 6.0
-    max_symbol_notional_pct: 2.5
-    max_family_notional_pct: 3.5
-    winner_priority:
+    risk_budget_mode: percent
+    # 关闭 slot 准入门控：只用风险预算放行；slot 仅作为 add_position 的虚拟映射状态
+    disable_slot_gate: true
+    # 组合总风险预算（5%）
+    max_total_risk_pct: 0.05
+    # 单 family（bpc/me/fer/lv）风险上限（3%）
+    max_family_risk_pct: 0.05
+    # 单 symbol 风险上限（1.5%）
+    max_symbol_risk_pct: 0.05
+    # 仓位达到 breakeven 后释放预算（保留最小缓冲风险）
+    breakeven_release_enabled: true
+    breakeven_residual_risk_pct: 0.005
+    # 顺风放大：仅在已锁盈仓位出现后，逐级提高风险上限（默认只对 bpc 生效）
+    expansion:
       enabled: true
-      allow_families: [bpc]
-      require_breakeven_locked: true
-      require_min_current_r: 1.0
-      block_new_slots_when_soft_cap_hit: true
+      target_families: [bpc]
+      trigger_released_slots: 1
+      step_released_slots: 1
+      step_multiplier: 0.5
+      max_family_multiplier: 3.0
+      max_total_multiplier: 2.0
+      max_symbol_multiplier: 1.6
+    # 逆风收缩：回撤增加时按层级收紧可用预算
+    shrink:
+      enabled: true
+      by_drawdown:
+        - drawdown_gte: 0.05
+          cap_multiplier: 0.60
+        - drawdown_gte: 0.03
+          cap_multiplier: 0.75
+        - drawdown_gte: 0.02
+          cap_multiplier: 0.85
+    # 跳空压力预算：即使常规预算未超，也要满足 shock loss 上限
+    stress:
+      enabled: true
+      shock_pct: 0.04
+      max_stress_loss_pct: 0.08
+    # 分级去杠杆：先冻结新仓，再按最弱仓位渐进减仓
+    deleveraging:
+      enabled: true
+      freeze_new_entries_ratio: 0.90
+      tiers:
+        - trigger_ratio: 1.00
+          reduce_to_ratio: 0.90
+        - trigger_ratio: 1.10
+          reduce_to_ratio: 0.75
