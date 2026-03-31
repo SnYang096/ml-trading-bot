@@ -137,6 +137,10 @@ def _iso_now() -> str:
 def _parse_iso(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except Exception:
+        return None
 
 
 def _strategy_keys(archetype: str) -> list[str]:
@@ -159,10 +163,6 @@ def _strategy_keys(archetype: str) -> list[str]:
             seen.add(kk)
             out.append(kk)
     return out
-    try:
-        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
-    except Exception:
-        return None
 
 
 class ConstitutionExecutor:
@@ -214,6 +214,25 @@ class ConstitutionExecutor:
         obj = self._raw_obj or {}
         ra = obj.get("resource_allocation") or {}
         return dict(ra.get("per_strategy_limits") or {})
+
+    def resolve_add_position_for_strategy(self, archetype: str) -> dict:
+        """Compatibility accessor for add-position config.
+
+        Global add_position_rules has been removed. This now returns a minimal
+        config derived from per_strategy_limits for callers that still merge it
+        with execution_profile.add_position.
+        """
+        limits = self._resolve_per_strategy_limits()
+        strat_cfg: Dict[str, Any] = {}
+        for k in _strategy_keys(archetype):
+            cand = limits.get(k) or {}
+            if isinstance(cand, dict) and cand:
+                strat_cfg = cand
+                break
+        return {
+            "enabled": bool(strat_cfg.get("allow_add_position", True)),
+            "max_add_times": int(strat_cfg.get("max_add_times", 1) or 1),
+        }
 
     def resolve_risk_for_strategy(self, archetype: str) -> float:
         """Return effective risk fraction for a strategy.
