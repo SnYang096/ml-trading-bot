@@ -200,10 +200,10 @@ no pyramiding
 ```yaml
 per_strategy_limits:
   bpc:
-    capacity_limit: 1
+    max_slots: 1
     holding_profile: trend_hold
   me:
-    capacity_limit: 1
+    max_slots: 1
     holding_profile: momentum_hold
 ```
 

@@ -3053,6 +3053,7 @@ def _run_event_backtest_step(
     opt_end_date: str = "",
     event_start_date: str = "",
     event_end_date: str = "",
+    max_slots: int = 0,
 ) -> Dict[str, Any]:
     """Step E1: 事件回测 execution 参数优化 + 交易地图生成."""
     log = run_dir / "pipeline.log"
@@ -3140,6 +3141,8 @@ def _run_event_backtest_step(
         ev_cmd.extend(["--dump-end-state", dump_end_state_path])
     if keep_open_positions:
         ev_cmd.append("--keep-open-positions")
+    if int(max_slots or 0) > 0:
+        ev_cmd.extend(["--max-slots", str(int(max_slots))])
     rc_ev, ev_out = run_step("Event Backtest", ev_cmd, log, dry_run=dry_run)
 
     event_metrics = _parse_event_stdout(ev_out) if not dry_run else {}
@@ -3331,7 +3334,259 @@ def _patch_report_pcm(report_path: Path, pcm_result: Dict[str, Any]):
         pass
 
 
-# NOTE: legacy slot-grid stage has been removed in percent-only mode.
+def _patch_report_pcm_slot_grid(report_path: Path, slot_grid_result: Dict[str, Any]):
+    """将 PCM slot grid 对比结果追加到已保存的 report.json."""
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["pcm_slot_grid"] = slot_grid_result
+        report_path.write_text(
+            json.dumps(report, indent=2, default=str, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _sanitize_case_name(name: str) -> str:
+    cleaned = re.sub(r"[^0-9A-Za-z._-]+", "_", str(name).strip())
+    return cleaned.strip("_") or "case"
+
+
+def _apply_slot_case_to_constitution(
+    base_obj: Dict[str, Any], case_cfg: Dict[str, Any]
+) -> Dict[str, Any]:
+    obj = copy.deepcopy(base_obj)
+    slots = obj.setdefault("slots", {})
+    slot_cfg = case_cfg.get("slots", {}) or {}
+    if "slot_count" in slot_cfg:
+        slots["slot_count"] = int(slot_cfg["slot_count"])
+    if "risk_per_slot" in slot_cfg:
+        slots["risk_per_slot"] = float(slot_cfg["risk_per_slot"])
+
+    ra = obj.setdefault("resource_allocation", {})
+    psl = ra.setdefault("per_strategy_limits", {})
+    case_psl = case_cfg.get("per_strategy_limits", {}) or {}
+    for strategy_name, updates in case_psl.items():
+        if not isinstance(updates, dict):
+            continue
+        dst = psl.setdefault(str(strategy_name), {})
+        for k, v in updates.items():
+            dst[k] = v
+    return obj
+
+
+def _score_pcm_slot_case(
+    case_result: Dict[str, Any], cfg: Dict[str, Any]
+) -> Dict[str, Any]:
+    penalties = cfg.get("penalties", {}) or {}
+    max_dd_penalty = float(penalties.get("max_dd_penalty", 0.0))
+    slot_full_rate_penalty = float(penalties.get("slot_full_rate_penalty", 0.0))
+    undertrade_penalty = float(penalties.get("undertrade_penalty", 0.0))
+    min_trades_soft = int(cfg.get("min_trades_soft", 0) or 0)
+
+    sharpe = float(case_result.get("sharpe_daily", 0.0) or 0.0)
+    max_dd = float(case_result.get("max_drawdown_r", 0.0) or 0.0)
+    slot_full_rate = float(case_result.get("slot_full_rate", 0.0) or 0.0)
+    total_trades = int(case_result.get("total_trades", 0) or 0)
+    undertrade_gap = max(0, min_trades_soft - total_trades)
+
+    score = (
+        sharpe
+        - max_dd_penalty * max_dd
+        - slot_full_rate_penalty * slot_full_rate
+        - undertrade_penalty * undertrade_gap
+    )
+    return {
+        "score": float(score),
+        "score_components": {
+            "sharpe": sharpe,
+            "max_dd_penalty": max_dd_penalty * max_dd,
+            "slot_full_rate_penalty": slot_full_rate_penalty * slot_full_rate,
+            "undertrade_penalty": undertrade_penalty * undertrade_gap,
+            "undertrade_gap": undertrade_gap,
+        },
+    }
+
+
+def _run_pcm_slot_grid_backtest(
+    *,
+    cfg_slot: Dict[str, Any],
+    results_summary: List[Dict[str, Any]],
+    history_dir: Path,
+    timestamp: str,
+    dry_run: bool,
+    use_1min: bool,
+    live_root: str,
+    data_path: str,
+    holdout_start: str,
+    end_date: str,
+) -> Optional[Dict[str, Any]]:
+    """在 pipeline 中运行 slot 网格 PCM 回测，并选择平坦稳定参数."""
+    if not bool(cfg_slot.get("enabled", False)):
+        return None
+
+    raw_cases = cfg_slot.get("cases", []) or []
+    if not isinstance(raw_cases, list) or not raw_cases:
+        print("\n[Step 9.6] PCM Slot Grid: ⏭️  SKIP (未配置 cases)")
+        return None
+
+    constitution_path = PROJECT_ROOT / "config/constitution/constitution.yaml"
+    if not constitution_path.exists():
+        print("\n[Step 9.6] PCM Slot Grid: ⏭️  SKIP (constitution.yaml 不存在)")
+        return None
+
+    first_strat = next(
+        (r["strategy"] for r in results_summary if r.get("evidence_dir")), None
+    )
+    if not first_strat:
+        return None
+    out_dir = history_dir / "_pcm_slot_grid" / timestamp
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n{'='*70}")
+    print("🧪 PCM Slot Grid Backtest (Step 9.6)")
+    print(f"{'='*70}")
+
+    base_text = constitution_path.read_text(encoding="utf-8")
+    base_obj = yaml.safe_load(base_text) or {}
+
+    case_results: List[Dict[str, Any]] = []
+    try:
+        for i, case in enumerate(raw_cases, 1):
+            if not isinstance(case, dict):
+                continue
+            case_name = str(case.get("name", f"case_{i:02d}"))
+            case_safe = _sanitize_case_name(case_name)
+            print(f"\n   ▶️  Slot Case {i}: {case_name}")
+
+            patched = _apply_slot_case_to_constitution(base_obj, case)
+            constitution_path.write_text(
+                yaml.safe_dump(patched, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+
+            case_pcm = pipeline_events.run_pcm_joint_backtest(
+                results_summary,
+                history_dir,
+                timestamp,
+                dry_run=dry_run,
+                use_1min=use_1min,
+                live_root=live_root,
+                data_path=data_path,
+                holdout_start=holdout_start,
+                end_date=end_date,
+                output_stem=f"pcm_slot_grid_{case_safe}",
+                step_name=f"PCM Slot Case: {case_name}",
+            )
+            if not case_pcm:
+                case_results.append(
+                    {
+                        "name": case_name,
+                        "case": case,
+                        "error": "pcm backtest skipped/failed",
+                    }
+                )
+                continue
+
+            scored = _score_pcm_slot_case(case_pcm, cfg_slot)
+            row = {
+                "name": case_name,
+                "case": case,
+                **case_pcm,
+                **scored,
+            }
+            case_results.append(row)
+            print(
+                "      "
+                f"score={row.get('score', 0):+.4f} "
+                f"sharpe={row.get('sharpe_daily', 0):+.4f} "
+                f"dd={row.get('max_drawdown_r', 0):.2f} "
+                f"slot_full={row.get('slot_full_rate', 0):.2%}"
+            )
+    finally:
+        # 无论成功失败都恢复 constitution
+        constitution_path.write_text(base_text, encoding="utf-8")
+
+    valid = [r for r in case_results if "error" not in r]
+    if not valid:
+        return {"enabled": True, "cases": case_results, "recommended_case": None}
+
+    best_score = max(float(r.get("score", -1e9)) for r in valid)
+    plateau_delta = float(cfg_slot.get("plateau_delta", 0.02))
+    plateau = [
+        r for r in valid if float(r.get("score", -1e9)) >= best_score - plateau_delta
+    ]
+    plateau_sorted = sorted(
+        plateau,
+        key=lambda r: (
+            float(r.get("max_drawdown_r", 1e9) or 1e9),
+            float(r.get("slot_full_rate", 1e9) or 1e9),
+            -float(r.get("sharpe_daily", -1e9) or -1e9),
+            -int(r.get("total_trades", 0) or 0),
+        ),
+    )
+    recommended = (
+        plateau_sorted[0]
+        if plateau_sorted
+        else max(valid, key=lambda r: float(r.get("score", -1e9)))
+    )
+
+    report = {
+        "enabled": True,
+        "plateau_delta": plateau_delta,
+        "best_score": best_score,
+        "cases": case_results,
+        "recommended_case": recommended.get("name") if recommended else None,
+        "recommended_metrics": {
+            "score": recommended.get("score") if recommended else None,
+            "sharpe_daily": recommended.get("sharpe_daily") if recommended else None,
+            "total_trades": recommended.get("total_trades") if recommended else None,
+            "total_r": recommended.get("total_r") if recommended else None,
+            "max_drawdown_r": (
+                recommended.get("max_drawdown_r") if recommended else None
+            ),
+            "slot_full_rate": (
+                recommended.get("slot_full_rate") if recommended else None
+            ),
+        },
+    }
+
+    json_path = out_dir / "pcm_slot_grid_report.json"
+    md_path = out_dir / "pcm_slot_grid_report.md"
+    json_path.write_text(
+        json.dumps(report, indent=2, default=str, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    md_lines = [
+        "# PCM Slot Grid Report",
+        "",
+        f"- Recommended case: `{report['recommended_case']}`",
+        f"- Plateau delta: `{plateau_delta}`",
+        "",
+        "| case | score | sharpe | total_r | max_dd_r | trades | slot_full_rate |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for r in sorted(valid, key=lambda x: float(x.get("score", -1e9)), reverse=True):
+        md_lines.append(
+            "| "
+            + f"{r.get('name')} | "
+            + f"{float(r.get('score', 0)):+.4f} | "
+            + f"{float(r.get('sharpe_daily', 0)):+.4f} | "
+            + f"{float(r.get('total_r', 0)):+.4f} | "
+            + f"{float(r.get('max_drawdown_r', 0)):.4f} | "
+            + f"{int(r.get('total_trades', 0))} | "
+            + f"{float(r.get('slot_full_rate', 0)):.2%} |"
+        )
+    md_path.write_text(
+        "\n".join(md_lines) + "\n",
+        encoding="utf-8",
+    )
+    report["report_json"] = str(json_path)
+    report["report_md"] = str(md_path)
+
+    print(f"\n   ✅ Slot Grid 推荐: {report['recommended_case']}")
+    print(f"   📄 报告: {json_path}")
+    return report
 
 
 def _parse_pcm_stdout(output: str) -> Dict[str, Any]:
@@ -3699,6 +3954,7 @@ def _run_fast_month_stage(
     prev_side_state: Optional[Dict[str, Any]] = None,
     prev_resume_state_paths: Optional[Dict[str, str]] = None,
     keep_open_positions: bool = False,
+    max_slots: int = 0,
 ) -> Dict[str, Any]:
     """Run one-month fast loop with optional calib/test window split."""
     month_start, month_end = _month_token_to_range(month_token)
@@ -3818,11 +4074,6 @@ def _run_fast_month_stage(
             strat_calib_dir = run_root / strat / "threshold_calibration"
             strat_calib_dir.mkdir(parents=True, exist_ok=True)
             scfg = cfg["strategies"][strat]
-            if not isinstance(scfg, dict):
-                raise ValueError(
-                    f"Invalid strategy config for '{strat}': expected mapping, got "
-                    f"{type(scfg).__name__}. Check YAML indentation under 'strategies'."
-                )
             strat_dates = (
                 scfg.get("dates", {}) if isinstance(scfg.get("dates"), dict) else {}
             )
@@ -3932,6 +4183,7 @@ def _run_fast_month_stage(
                 resume_state_path=resume_state_path,
                 dump_end_state_path=end_state_path,
                 keep_open_positions=keep_open_positions,
+                max_slots=int(max_slots or 0),
             )
         else:
             print(f"   ⏭️  跳过事件回测: event_backtest.enabled=false ({strat})")
@@ -4226,6 +4478,12 @@ def main():
         help="事件回测 execution 优化的 sym-r 范围 (default: 1.0:0.5:4.0)",
     )
     p.add_argument(
+        "--max-slots",
+        type=int,
+        default=0,
+        help="可选: 覆盖事件回测 PCM 全局与策略 slot 上限（仅本次运行）",
+    )
+    p.add_argument(
         "--locked-prefilter-override",
         default="",
         help="可选: 指定 prefilter.yaml 作为 locked 规则来源 (调参工具专用)",
@@ -4248,11 +4506,12 @@ def main():
             "fast_month",
             "rolling_sim",
             "pcm_joint",
+            "pcm_slot_grid",
         ],
         default="full",
         help=(
             "运行阶段: full/prefilter/gate/entry_filter/slow_snapshot/"
-            "execution_opt/event_backtest/fast_month/rolling_sim/pcm_joint"
+            "execution_opt/event_backtest/fast_month/rolling_sim/pcm_joint/pcm_slot_grid"
         ),
     )
     p.add_argument(
@@ -4395,6 +4654,7 @@ def main():
                 live_root=args.live_root,
                 data_path=cfg["data_path"],
                 event_sym_r=args.event_sym_r,
+                max_slots=int(args.max_slots or 0),
                 strategies_root=stage_root,
                 calibration_months=calibration_months,
                 calibrate_all_layers=(rolling_mode != "legacy"),
@@ -4488,6 +4748,7 @@ def main():
                 live_root=args.live_root,
                 data_path=cfg["data_path"],
                 event_sym_r=args.event_sym_r,
+                max_slots=int(args.max_slots or 0),
                 strategies_root=active_strategies_root,
                 calibration_months=calibration_months,
                 calibrate_all_layers=(rolling_mode != "legacy"),
@@ -4631,6 +4892,61 @@ def main():
             print(f"   ContinuousMap: {continuous_map}")
         return
 
+    # ── Stage: 仅跑 PCM slot 网格 ──
+    if args.stage == "pcm_slot_grid":
+        if not args.all:
+            p.error("--stage pcm_slot_grid 需要 --all (使用多策略 PCM 组合)")
+        slot_cfg = cfg.get("pcm_slot_grid", {}) or {}
+        if not bool(slot_cfg.get("enabled", False)):
+            p.error("配置未启用 pcm_slot_grid.enabled=true")
+
+        scoped_cfg_strategies = _filter_strategies_by_direction_scope(
+            list(cfg["strategies"].keys()), strategy_direction_scope
+        )
+        enabled_by_constitution = _load_pcm_enabled_strategies_from_constitution()
+        enabled_set = (
+            set(enabled_by_constitution)
+            if enabled_by_constitution
+            else set(scoped_cfg_strategies)
+        )
+        pcm_strategies = [s for s in scoped_cfg_strategies if s in enabled_set]
+        if len(pcm_strategies) < 2:
+            p.error("可用于 PCM 的策略数 < 2，无法执行 slot 网格")
+
+        for s in pcm_strategies:
+            results_summary.append(
+                {
+                    "strategy": s,
+                    "decision": "STAGE_ONLY",
+                    "evidence_dir": str(history_dir / s / timestamp / "results"),
+                    "run_dir_name": timestamp,
+                    "exp_config_dir": str(PROJECT_ROOT / "config" / "strategies" / s),
+                }
+            )
+
+        slot_grid_result = _run_pcm_slot_grid_backtest(
+            cfg_slot=slot_cfg,
+            results_summary=results_summary,
+            history_dir=history_dir,
+            timestamp=timestamp,
+            dry_run=args.dry_run,
+            use_1min=args.use_1min,
+            live_root=args.live_root,
+            data_path=cfg["data_path"],
+            holdout_start=_display_holdout_start,
+            end_date=_display_end,
+        )
+        print(f"\n{'='*70}")
+        print("📋 Stage 汇总")
+        print(f"{'='*70}")
+        print(f"   Stage: pcm_slot_grid")
+        print(
+            f"   推荐 Case: {slot_grid_result.get('recommended_case') if slot_grid_result else 'N/A'}"
+        )
+        if slot_grid_result and slot_grid_result.get("report_json"):
+            print(f"   报告: {slot_grid_result.get('report_json')}")
+        return
+
     if args.stage == "pcm_joint":
         if not args.all:
             p.error("--stage pcm_joint 需要 --all (使用多策略 PCM 组合)")
@@ -4731,6 +5047,7 @@ def main():
                     max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
                     min_trades_soft=int(obj_cfg["min_trades_soft"]),
                     undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
+                    max_slots=int(args.max_slots or 0),
                 )
                 print(f"      rc={_res.get('rc')} output={_res.get('output')}")
             else:
@@ -5118,6 +5435,7 @@ def main():
                 max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
                 min_trades_soft=int(obj_cfg["min_trades_soft"]),
                 undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
+                max_slots=int(args.max_slots or 0),
             )
             ev_m = ev_result.get("metrics", {})
             print(
@@ -5134,6 +5452,7 @@ def main():
 
     # ── Step 9.5: PCM 联合回测 (在 execution 优化之后执行) ──
     pcm_result = None
+    pcm_slot_grid_result = None
     if args.all and not args.compare_only:
         pcm_result = pipeline_events.run_pcm_joint_backtest(
             results_summary,
@@ -5146,6 +5465,20 @@ def main():
             holdout_start=_display_holdout_start,
             end_date=_display_end,
         )
+        slot_cfg = cfg.get("pcm_slot_grid", {}) or {}
+        if bool(slot_cfg.get("enabled", False)):
+            pcm_slot_grid_result = _run_pcm_slot_grid_backtest(
+                cfg_slot=slot_cfg,
+                results_summary=results_summary,
+                history_dir=history_dir,
+                timestamp=timestamp,
+                dry_run=args.dry_run,
+                use_1min=args.use_1min,
+                live_root=args.live_root,
+                data_path=cfg["data_path"],
+                holdout_start=_display_holdout_start,
+                end_date=_display_end,
+            )
 
     # ── 汇总 ──
     print(f"\n{'='*70}")
@@ -5201,6 +5534,21 @@ def main():
             strat_run = history_dir / r["strategy"] / rdn
             if strat_run.exists():
                 _patch_report_pcm(strat_run / "report.json", pcm_result)
+                if pcm_slot_grid_result:
+                    _patch_report_pcm_slot_grid(
+                        strat_run / "report.json", pcm_slot_grid_result
+                    )
+    if pcm_slot_grid_result:
+        print(
+            f"\n   🧪 SlotGrid 推荐: {pcm_slot_grid_result.get('recommended_case', 'N/A')}"
+        )
+        print(
+            f"      score={pcm_slot_grid_result.get('recommended_metrics', {}).get('score', 'N/A')} "
+            f"sharpe={pcm_slot_grid_result.get('recommended_metrics', {}).get('sharpe_daily', 'N/A')} "
+            f"dd={pcm_slot_grid_result.get('recommended_metrics', {}).get('max_drawdown_r', 'N/A')}"
+        )
+        if pcm_slot_grid_result.get("report_json"):
+            print(f"      📄 {pcm_slot_grid_result.get('report_json')}")
 
 
 # ====================================================================

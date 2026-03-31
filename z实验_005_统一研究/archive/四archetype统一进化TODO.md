@@ -169,7 +169,7 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 ### 4.1 重构前状态
 
 - 固定优先级: FER > ME > BPC
-- 固定 capacity_limit=2
+- 固定 max_slots=2
 - 无 regime 动态调整
 - 无 KPI 评估
 
@@ -221,10 +221,10 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 ### 4.5.1 配置统一 (Phase 1: 纯配置变更)
 
 - [x] `config/constitution/constitution.yaml` 添加 `resource_allocation` 段
-  - `per_strategy_limits`: 每策略 capacity_limit + allow_add_position
+  - `per_strategy_limits`: 每策略 max_slots + allow_add_position
   - `pcm_config_ref`: 指向 pcm_regime.yaml
 - [x] `config/pcm_regime.yaml` 升级 v3:
-  - `capacity_limit` 从 constitution 读取
+  - `max_slots` 从 constitution 读取
   - 添加 `constitution_ref` 字段
 - [x] `live/highcap/config/constitution/constitution.yaml` 同步更新
 - [x] 验证: config/ 和 live/highcap/config/ 的 constitution.yaml 关键字段一致
@@ -238,7 +238,7 @@ Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄
 ### 4.5.3 PCM 统一加载 (Phase 3)
 
 - [x] `live_pcm.py`: `LivePCM.__init__()` 接受 constitution_yaml
-  - `capacity_limit` 从 constitution 读取
+  - `max_slots` 从 constitution 读取
   - 启动时校验 `archetype_risk ≤ risk_per_slot`
 - [x] `run_live.py`: 加载顺序统一 (constitution → pcm)
 - [x] 测试: 校验一致性的单元测试

@@ -112,6 +112,56 @@ event_backtest:
       max_dd_penalty: 0.02
       min_trades_soft: 60
       undertrade_penalty: 0.002
+pcm_slot_grid:
+  # 在 Step 9.5 PCM 联合回测后，自动做 slot 网格对比
+  enabled: true
+  # 平坦区定义：score >= best_score - plateau_delta
+  plateau_delta: 0.03
+  # 软约束：交易数过低会被扣分（防止只靠极少交易抬 Sharpe）
+  min_trades_soft: 80
+  penalties:
+    # 综合分数:
+    # score = sharpe - max_dd_penalty*max_drawdown_r
+    #               - slot_full_rate_penalty*slot_full_rate
+    #               - undertrade_penalty*undertrade_gap
+    max_dd_penalty: 0.02
+    slot_full_rate_penalty: 0.20
+    undertrade_penalty: 0.001
+  # 可按策略家族/方向自由扩展，不限 short-only
+  cases:
+    - name: baseline
+      slots:
+        slot_count: 4
+        risk_per_slot: 0.01
+      per_strategy_limits:
+        bpc-short:
+          max_slots: 1
+        fer-short:
+          max_slots: 1
+        me-short:
+          max_slots: 1
+    - name: short_2_1_2
+      slots:
+        slot_count: 5
+        risk_per_slot: 0.008
+      per_strategy_limits:
+        bpc-short:
+          max_slots: 2
+        fer-short:
+          max_slots: 1
+        me-short:
+          max_slots: 2
+    - name: short_2_2_2
+      slots:
+        slot_count: 6
+        risk_per_slot: 0.007
+      per_strategy_limits:
+        bpc-short:
+          max_slots: 2
+        fer-short:
+          max_slots: 2
+        me-short:
+          max_slots: 2
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a

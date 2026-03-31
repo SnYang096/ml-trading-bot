@@ -103,7 +103,7 @@ def format_report(results: Dict[str, Any], output_path: Path) -> str:
     lines.append("## Recommendations")
     lines.append("")
     lines.append(
-        "1. Check PCM policy configuration (capacity_limit, risk_release_threshold)"
+        "1. Check PCM policy configuration (max_slots, risk_release_threshold)"
     )
     lines.append("2. Review slot rotation logic")
     lines.append("3. Verify archetype compatibility rules")

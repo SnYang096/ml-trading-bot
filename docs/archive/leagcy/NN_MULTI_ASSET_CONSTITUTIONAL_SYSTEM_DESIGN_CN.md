@@ -217,9 +217,9 @@ v1 的落地顺序建议：
 ## 7. Position Constitution：Slot / Replace / Add（最重要的宪法层）
 
 ### 7.1 Slot（坑位）宪法（v1 建议）
-- `capacity_limit = 2`
+- `max_slots = 2`
 - `risk_per_slot = 0.015`（可在 1%~2% 内选；你文档推荐 1.5%）
-- `max_total_risk = capacity_limit * risk_per_slot`
+- `max_total_risk = max_slots * risk_per_slot`
 
 ### 7.2 Replacement Judge（替换三关 + 单维保守优势）
 - 替换必须“有罪”（必须输出失败原因）
@@ -301,7 +301,7 @@ CUDA_VISIBLE_DEVICES="" /usr/bin/python3 scripts/eval_path_primitives_from_model
 ---
 
 ## 10. 你要我检查的重点清单（review checklist）
-- **自由度是否被显式限制**：capacity_limit、替换判定、加仓次数、symbol cap、kill-switch
+- **自由度是否被显式限制**：max_slots、替换判定、加仓次数、symbol cap、kill-switch
 - **每个自由度是否可开关**：gate/detector/add/replacement/soft_stop
 - **是否能归因**：每个 deny/replace/add/kill 都有 reason
 - **是否能回滚**：artifact 完整 + hash 绑定

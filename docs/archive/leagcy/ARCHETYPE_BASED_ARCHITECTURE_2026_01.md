@@ -73,7 +73,7 @@ if len(passing_candidates) > 1:
 # No conflict rules, no automatic position closing
 if not _are_archetypes_compatible(candidate_arch, slot_arch):
     # Deny entry if incompatible and no free slot
-    if len(slots) >= int(policy.capacity_limit):
+    if len(slots) >= int(policy.max_slots):
         return PCMDecision(allow_entry=False, ...)
 ```
 

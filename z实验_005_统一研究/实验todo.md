@@ -137,8 +137,8 @@ mlbot pipeline run --all --config config/prod_train_pipeline_2h_2025_range_turbo
 mlbot pipeline run --all --config config/prod_train_pipeline_2h_strict_2024bull.yaml --stage execution_opt
 mlbot pipeline run --all --config config/prod_train_pipeline_2h_strict_2024bull.yaml --stage event_backtest
 
-# 组合回测（percent 风险预算）
-mlbot pipeline run --all --config config/prod_train_pipeline_2h_strict_2024bull.yaml --stage pcm_joint
+# slot 高原
+mlbot pipeline run --all --config config/prod_train_pipeline_2h_strict_2024bull.yaml --stage pcm_slot_grid
 ```
 
 ---

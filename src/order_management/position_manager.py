@@ -566,7 +566,7 @@ class PositionManager:
         self,
         symbol: str,
         archetype: str,
-        capacity_limit: int = 2,
+        max_slots: int = 2,
         max_add_count: int = 3,
     ) -> Dict[str, Any]:
         """
@@ -575,7 +575,7 @@ class PositionManager:
         Args:
             symbol: 交易对
             archetype: 策略原型
-            capacity_limit: 最大可用容量（不同 archetype 的最大数量）
+            max_slots: 最大可用 slot 数（不同 archetype 的最大数量）
             max_add_count: 每个 archetype 最大加仓次数
         
         Returns:
@@ -614,16 +614,16 @@ class PositionManager:
         else:
             # 没有相同 archetype -> 新开仓
             unique_archetypes = len(set(p.archetype for p in open_positions if p.archetype))
-            if unique_archetypes >= capacity_limit:
+            if unique_archetypes >= max_slots:
                 return {
                     'can_open': False,
-                    'reason': f'Slot 已满: {unique_archetypes}/{capacity_limit}',
+                    'reason': f'Slot 已满: {unique_archetypes}/{max_slots}',
                     'existing_position': None,
                     'is_add': False,
                 }
             return {
                 'can_open': True,
-                'reason': f'新开仓, 剩余 slot: {capacity_limit - unique_archetypes}',
+                'reason': f'新开仓, 剩余 slot: {max_slots - unique_archetypes}',
                 'existing_position': None,
                 'is_add': False,
             }
@@ -639,7 +639,7 @@ class PositionManager:
         take_profit_price: Optional[float] = None,
         strategy_id: Optional[str] = None,
         order_id: Optional[str] = None,
-        capacity_limit: int = 2,
+        max_slots: int = 2,
         max_add_count: int = 3,
     ) -> Dict[str, Any]:
         """
@@ -659,7 +659,7 @@ class PositionManager:
             take_profit_price: 止盈价格
             strategy_id: 策略ID
             order_id: 订单ID
-            capacity_limit: 最大容量上限
+            max_slots: 最大 slot 数
             max_add_count: 最大加仓次数
         
         Returns:
@@ -671,7 +671,7 @@ class PositionManager:
             }
         """
         # 检查是否可以开仓
-        check = self.can_open_position(symbol, archetype, capacity_limit, max_add_count)
+        check = self.can_open_position(symbol, archetype, max_slots, max_add_count)
         
         if not check['can_open']:
             return {

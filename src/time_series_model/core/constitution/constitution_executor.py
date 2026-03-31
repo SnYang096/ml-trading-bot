@@ -372,16 +372,8 @@ class ConstitutionExecutor:
         archetype: Optional[str] = None,
         opened_at: Optional[str] = None,
     ) -> None:
-        ra = (self._raw_obj or {}).get("resource_allocation") or {}
-        risk_pol = dict(ra.get("risk_budget_policy") or {})
-        # Percent-only mode: slot admission gating is deprecated.
-        if (
-            bool(risk_pol.get("enabled", False))
-            and str(risk_pol.get("risk_budget_mode", "")).strip().lower() == "percent"
-        ):
-            return
         slots = (self._raw_obj or {}).get("slots") or {}
-        if not bool(slots.get("enabled", False)):
+        if not bool(slots.get("enabled", True)):
             return
         slot_count = int(slots.get("slot_count", 2))
         pid = str(position_id).strip()

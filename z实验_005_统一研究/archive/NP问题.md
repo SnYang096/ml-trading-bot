@@ -182,7 +182,7 @@
 | EVT 极值理论        | **EVT 特征**: `evt_shape_xi`, `evt_exceedance_ratio` 直接建模尾部分布                                        | `feature_dependencies.yaml` evt 节点    |
 | 不能假设正态分布    | **Quantile mapping** (非参数): Evidence 用分位数映射而非高斯假设 → suppress/downweight/neutral/favor/amplify | `evidence.yaml` quantile_mapping        |
 | 动态风险评估        | **Tier 分层风控**: T1(≥0.55)/T2(≥0.40)/T3(≥0.25)/T4(<0.25) → 不同仓位大小、止损宽度、超时时间                | `tier.py` + `execution.yaml`            |
-| 相关性结构破裂      | **PCM Portfolio**: capacity_limit=2 硬上限 + slot rotation — 危机时不堆叠头寸                                     | `constitution_executor.py`              |
+| 相关性结构破裂      | **PCM Portfolio**: max_slots=2 硬上限 + slot rotation — 危机时不堆叠头寸                                     | `constitution_executor.py`              |
 
 **评价**: ✅ **强对应**。Gate 的 Youden's J 设计精确对应了"不对称损失"的现实 — 宁可误杀好交易(good_deny)也要捕获坏交易(tail_capture)。
 
@@ -296,12 +296,12 @@
 
 **文章要求**: "危机时所有资产相关性趋向于 1 → 真正分散化"
 
-**现状**: PCM 层仅有 capacity_limit=2 硬上限，没有动态相关性感知。BTC 和 ETH 同时开仓 → 在危机时 100% 相关 → 实质杠杆翻倍。
+**现状**: PCM 层仅有 max_slots=2 硬上限，没有动态相关性感知。BTC 和 ETH 同时开仓 → 在危机时 100% 相关 → 实质杠杆翻倍。
 
 **建议**:
 - PCM 层增加 **动态相关性矩阵**: 用滚动窗口计算资产间相关性
 - 相关性 > 0.8 的资产视为同一 slot → 减少实质暴露
-- 或更简单: CRISIS regime 下 capacity_limit 自动从 2 降到 1
+- 或更简单: CRISIS regime 下 max_slots 自动从 2 降到 1
 
 ### 不足 5: 没有利用低维流形做降维建模
 

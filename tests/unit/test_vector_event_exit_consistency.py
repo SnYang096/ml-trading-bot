@@ -833,8 +833,8 @@ class TestSlotFiltering:
             exec_config,
             atr_col="atr",
             use_tier_params=True,
-            capacity_limit=3,  # 全局 3
-            per_strategy_limits={"bpc": {"capacity_limit": 1}},  # bpc=1
+            max_slots=3,  # 全局 3
+            per_strategy_limits={"bpc": {"max_slots": 1}},  # bpc=1
             bars_1min_dict={"BTCUSDT": bars_btc, "ETHUSDT": bars_eth},
             silent=True,
         )
@@ -931,11 +931,8 @@ class TestSlotFiltering:
             exec_config,
             atr_col="atr",
             use_tier_params=True,
-            capacity_limit=3,
-            per_strategy_limits={
-                "bpc": {"capacity_limit": 1},
-                "fer": {"capacity_limit": 1},
-            },
+            max_slots=3,
+            per_strategy_limits={"bpc": {"max_slots": 1}, "fer": {"max_slots": 1}},
             bars_1min_dict={"BTCUSDT": bars_btc, "ETHUSDT": bars_eth},
             silent=True,
         )

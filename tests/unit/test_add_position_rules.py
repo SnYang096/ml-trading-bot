@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from src.time_series_model.core.constitution.add_position_rules import (
-    resolve_add_position_min_current_r,
     resolve_add_position_size_multiplier,
     validate_add_position_trigger,
 )
@@ -95,34 +94,5 @@ def test_validate_add_trigger_without_trigger_passes_when_min_current_r_met():
         signal=signal,
         add_position_cfg=cfg,
         current_r=1.05,  # above add #2 threshold 1.0
-    )
-    assert ok is True
-
-
-def test_resolve_min_current_r_converts_atr_unit_to_current_r():
-    cfg = {
-        "min_current_r_unit": "atr",
-        "min_current_r_by_add": [0.5],
-    }
-    # parent_initial_r=4 => 0.5 ATR threshold equals 0.125 current_r.
-    out = resolve_add_position_min_current_r(
-        add_position_cfg=cfg,
-        add_number=1,
-        signal={"parent_initial_r": 4.0},
-    )
-    assert out == pytest.approx(0.125)
-
-
-def test_validate_add_trigger_passes_with_atr_unit_when_current_r_meets_converted_threshold():
-    cfg = {
-        "min_current_r_unit": "atr",
-        "min_current_r_by_add": [0.5],
-    }
-    ok = validate_add_position_trigger(
-        archetype="bpc-long-120T",
-        direction=1,
-        signal={"add_position_seq": 1, "parent_initial_r": 4.0},
-        add_position_cfg=cfg,
-        current_r=0.13,  # above converted threshold 0.125
     )
     assert ok is True

@@ -24,7 +24,7 @@ archetype_edges:
 
 # 路由器配置
 router_config:
-  # capacity_limit / slot_count 从 constitution.yaml 读取，不在此重复定义
+  # max_slots 从 constitution.yaml → slots.slot_count 读取，不在此重复定义
   default_edge: 0.50      # 未知 archetype 的默认 Edge
 
 # 统计元数据（可选，用于追溯）

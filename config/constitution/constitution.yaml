@@ -24,7 +24,7 @@ kill_switch:
   # Note: Currently only max_dd is enforced at runtime; others are checked in offline evaluation
   # See: src/time_series_model/core/constitution/constitution_executor.py:validate_drawdown() for max_dd
   # See: src/time_series_model/rl/exec_control.py for turnover/cost checks (offline only)
-  max_dd: 0.05
+  max_dd: 0.20
   # Max drawdown (peak-to-trough): 20% hard limit
   # - Runtime check: YES (in enforce_before_order() safety gate)
   # - Implementation: src/time_series_model/core/constitution/safety_runtime.py
@@ -137,37 +137,42 @@ resource_allocation:
     - bpc-short-120T
     - fer-short-120T
 
-  # per_strategy_limits 配置契约：
-  # - `max_risk_per_trade`：单笔风险上限（风险预算维度）
-  # - `capacity_limit`：可选；该策略可并行持仓上限（容量维度）
-  #   在 percent 风险预算模式下，建议优先依赖风险预算放行，不强制写固定并行上限。
   per_strategy_limits:
+    # ── BPC 方向拆分 (方案A: 共享全局slot互斥竞争) ──
+    # bpc-long 和 bpc-short 各独立占 1 slot，全局 4 slots 防止同时过多开仓
     bpc-long:
+      max_slots: 1 # BPC 方向拆分: long 侧最多 1 slot
       max_risk_per_trade: 0.01 # 肥尾主仓: 首枪改为 2.00% 风险，5次加仓可以加到5倍杠杆
       allow_add_position: true # BPC 趋势延续允许加仓
       max_add_times: 5 # 宪法仅保留上限；触发与梯度下沉到 execution.yaml
     bpc-short:
+      max_slots: 1 # BPC 方向拆分: short 侧最多 1 slot
       max_risk_per_trade: 0.01 # 熊市尾部主仓: 首枪改为 2.00% 风险
       allow_add_position: true
       max_add_times: 5
     # ── ME 方向拆分 ──
     me-long:
+      max_slots: 1
       max_risk_per_trade: 0.01 # 动量扩散只做加速段, 首枪更轻
       allow_add_position: true # ME 动能扩张允许加仓
-      max_add_times: 2
+      max_add_times: 3 # 与 execution.add_position.max_add_times 对齐；≥3 便于骑乘实验
     me-short:
+      max_slots: 1 # ME-SHORT: 最多 1 slot (防止过度做空)
       max_risk_per_trade: 0.01 # 熊市短促脉冲, 保持战术仓位
       allow_add_position: true # 双边各做 2 次顺势动量扩张加仓
       max_add_times: 2
     # ── FER 方向拆分 ──
     fer-long:
+      max_slots: 1
       max_risk_per_trade: 0.01 # 反转单不承担尾部主仓职责
       allow_add_position: false # FER 反转策略不加仓
     fer-short:
+      max_slots: 1
       max_risk_per_trade: 0.01
       allow_add_position: false
     # ── LV (方向中性, 不拆分) ──
     lv:
+      max_slots: 0 # LV 快进快出，最多 1 个
       max_risk_per_trade: 0.0025 # LV 极端波动反噬快, 预算进一步下调到 0.25%
       allow_add_position: false # LV 不加仓
 
@@ -207,7 +212,7 @@ resource_allocation:
   intent_selection_policy:
     archetype_priority: [bpc, me, fer]
 
-  # 同 symbol 同策略家族默认只允许主方向（由该 symbol 的 close vs ema_200 决定）
+  # 同 symbol 同策略家族默认只允许主方向（由 BTC close vs ema_200 决定）
   # FER 可作为反向例外（短促反转仓位）
   direction_policy:
     enabled: true
@@ -224,11 +229,12 @@ resource_allocation:
   risk_budget_policy:
     enabled: true
     risk_budget_mode: percent
-
-    # 组合总风险预算（20%）max_dd=5%, alpha由系统带来，入场即刻要盈利
-    max_total_risk_pct: 0.2
+    # 关闭 slot 准入门控：只用风险预算放行；slot 仅作为 add_position 的虚拟映射状态
+    disable_slot_gate: true
+    # 组合总风险预算（5%）
+    max_total_risk_pct: 0.05
     # 单 family（bpc/me/fer/lv）风险上限（3%）
-    max_family_risk_pct: 0.1
+    max_family_risk_pct: 0.05
     # 单 symbol 风险上限（1.5%）
     max_symbol_risk_pct: 0.05
     # 仓位达到 breakeven 后释放预算（保留最小缓冲风险）
@@ -238,6 +244,8 @@ resource_allocation:
     expansion:
       enabled: true
       target_families: [bpc]
+      trigger_released_slots: 1
+      step_released_slots: 1
       step_multiplier: 0.5
       max_family_multiplier: 3.0
       max_total_multiplier: 2.0
@@ -246,23 +254,23 @@ resource_allocation:
     shrink:
       enabled: true
       by_drawdown:
-        - drawdown_gte: 0.02
-          cap_multiplier: 0.85
-        - drawdown_gte: 0.03
-          cap_multiplier: 0.75
         - drawdown_gte: 0.05
           cap_multiplier: 0.60
+        - drawdown_gte: 0.03
+          cap_multiplier: 0.75
+        - drawdown_gte: 0.02
+          cap_multiplier: 0.85
     # 跳空压力预算：即使常规预算未超，也要满足 shock loss 上限
     stress:
-      enabled: false
-      shock_pct: 0.02
-      max_stress_loss_pct: 0.1
+      enabled: true
+      shock_pct: 0.04
+      max_stress_loss_pct: 0.08
     # 分级去杠杆：先冻结新仓，再按最弱仓位渐进减仓
     deleveraging:
-      enabled: false
-      freeze_new_entries_ratio: 1.8
+      enabled: true
+      freeze_new_entries_ratio: 0.90
       tiers:
-        - trigger_ratio: 2.00
-          reduce_to_ratio: 1.8
-        - trigger_ratio: 2.2
-          reduce_to_ratio: 1.5
+        - trigger_ratio: 1.00
+          reduce_to_ratio: 0.90
+        - trigger_ratio: 1.10
+          reduce_to_ratio: 0.75

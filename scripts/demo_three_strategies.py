@@ -38,7 +38,7 @@ os.environ.setdefault("MLBOT_LIVE_STORAGE_BASE", "data/live_storage")
 os.environ.setdefault("MLBOT_LIVE_USE_FUTURES", "true")
 os.environ.setdefault("MLBOT_LIVE_WARMUP_DAYS", "7")
 os.environ.setdefault("MLBOT_LIVE_TRADE_SIZE", "0.0")  # 0 = 不自动交易
-os.environ.setdefault("MLBOT_CAPACITY_LIMIT", "2")
+os.environ.setdefault("MLBOT_MAX_SLOTS", "2")
 
 # 日志配置
 logging.basicConfig(
@@ -163,10 +163,9 @@ def setup_pcm(strategies):
 
     # 创建 LivePCM 实例
     # Regime-Aware: NORMAL(LV>FER>ME>BPC), HIGH_VOL(LV>ME>FER>BPC)
-    capacity_limit = int(os.environ.get("MLBOT_CAPACITY_LIMIT", "2"))
     pcm = LivePCM(
         archetype_priority=["LV", "FER", "ME-LONG", "BPC"],
-        capacity_limit=capacity_limit,
+        max_slots=int(os.environ.get("MLBOT_MAX_SLOTS", "2")),
         regime_config_path=os.environ.get(
             "MLBOT_PCM_REGIME_CONFIG", "config/pcm_regime.yaml"
         ),
@@ -179,7 +178,7 @@ def setup_pcm(strategies):
 
     print(f"\n📊 PCM 配置:")
     print(f"   优先级顺序: {' > '.join(pcm.archetype_priority)}")
-    print(f"   最大容量上限: {pcm._capacity_limit}")
+    print(f"   最大 slot 数: {pcm._max_slots}")
     print(f"   已注册策略: {', '.join(pcm.registered_archetypes)}")
 
     return pcm

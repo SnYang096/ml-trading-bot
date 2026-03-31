@@ -355,19 +355,6 @@ def _load_constitution_constraints(
     }
 
 
-def _capacity_limit_from_cfg(
-    cfg: Optional[Dict[str, Any]],
-    *,
-    default: int,
-) -> int:
-    """Read strategy/policy parallel capacity from a mapping."""
-    if not isinstance(cfg, dict):
-        return int(default)
-    if "capacity_limit" in cfg:
-        return int(cfg["capacity_limit"])
-    return int(default)
-
-
 class LivePCM:
     """
     Live Portfolio Control Manager (Regime-Aware, v3)
@@ -377,7 +364,7 @@ class LivePCM:
       2. Regime 检测 → 动态优先级 + 仓位缩放
       3. 同 symbol 不同 archetype 同时触发 → 当前 regime 优先级选最高
       4. 同优先级比 Evidence Score（高的优先）
-      5. 跨 symbol slot 控制（从 constitution 读 capacity_limit）
+      5. 跨 symbol slot 控制（从 constitution 读 max_slots）
       6. Regime 仓位缩放 + Evidence 仓位缩放 → size_multiplier 调整
       7. Evidence 入场门槛（score < min_score → 拒绝开仓）
 
@@ -389,7 +376,7 @@ class LivePCM:
     def __init__(
         self,
         archetype_priority: Optional[List[str]] = None,
-        capacity_limit: Optional[int] = None,
+        max_slots: Optional[int] = None,
         get_open_slot_count: Optional[callable] = None,
         regime_detector: Optional[RegimeDetector] = None,
         regime_config_path: Optional[str] = None,
@@ -399,7 +386,7 @@ class LivePCM:
         """
         Args:
             archetype_priority: archetype 静态优先级列表。如有 regime_detector 则被忽略。
-            capacity_limit: 显式指定容量上限（覆盖 constitution）。
+            max_slots: 显式指定 max_slots（覆盖 constitution）。
                 未提供时从 constitution_yaml 读取，均未提供时默认 2。
             get_open_slot_count: 可选回调，返回当前已占用 slot 数
             regime_detector: 可选 RegimeDetector 实例。
@@ -466,27 +453,46 @@ class LivePCM:
             _const_yaml = self._regime_cfg.get("constitution_ref")
         self._constitution = _load_constitution_constraints(_const_yaml)
         _risk_pol = dict(self._constitution.get("risk_budget_policy") or {})
-        # Percent-only runtime: slot gate is permanently disabled.
-        self._slot_gate_enabled = False
-        self._capacity_limit = int(capacity_limit) if capacity_limit is not None else 0
+        self._slot_gate_enabled = bool(self._constitution.get("slots_enabled", True))
+        if (
+            bool(_risk_pol.get("enabled", False))
+            and str(_risk_pol.get("risk_budget_mode", "")).strip().lower() == "percent"
+            and bool(_risk_pol.get("disable_slot_gate", False))
+        ):
+            self._slot_gate_enabled = False
+
+        # max_slots: 显式参数 > constitution > 默认 2
+        if max_slots is not None:
+            self._max_slots = max_slots
+        else:
+            self._max_slots = self._constitution["slot_count"]
         logger.info(
-            "PCM: percent-only mode — slot gate disabled (capacity_limit_compat=%d)",
-            self._capacity_limit,
+            "PCM: max_slots=%d (source=%s)",
+            self._max_slots,
+            "explicit" if max_slots is not None else "constitution",
         )
+        logger.info("PCM: slot_gate_enabled=%s", self._slot_gate_enabled)
 
         # 静态优先级（当无 regime detector 时使用）
         self._archetype_priority = archetype_priority or list(
             DEFAULT_ARCHETYPE_PRIORITY
         )
 
-        # Direction filter source is constitution.direction_policy.
-        # Keep these legacy attrs for compatibility, but disable regime-file EMA gate.
-        self._ema_filter_enabled: bool = False
-        self._ema_close_feature: str = "close"
-        self._ema_feature: str = "ema_200"
-        self._ema_bull_allowed: set = set()
-        self._ema_bear_allowed: set = set()
-        self._ema_fallback: str = "allow_all"
+        # ── EMA 方向过滤器 (price > ema_200 → bull; price ≤ ema_200 → bear) ──
+        _ema_cfg = self._regime_cfg.get("ema_direction_filter", {})
+        self._ema_filter_enabled: bool = bool(_ema_cfg.get("enabled", False))
+        self._ema_close_feature: str = _ema_cfg.get("close_feature", "close")
+        self._ema_feature: str = _ema_cfg.get("ema_feature", "ema_200")
+        self._ema_bull_allowed: set = set(_ema_cfg.get("bull_allowed", []))
+        self._ema_bear_allowed: set = set(_ema_cfg.get("bear_allowed", []))
+        self._ema_fallback: str = _ema_cfg.get("fallback", "allow_all")
+        if self._ema_filter_enabled:
+            logger.info(
+                "PCM: EMA方向过滤器已启用 — bull允许=%s | bear允许=%s | fallback=%s",
+                sorted(self._ema_bull_allowed),
+                sorted(self._ema_bear_allowed),
+                self._ema_fallback,
+            )
 
         # 可选: 监控统计收集器
         self.stats_collector = None  # 通过外部注入 StatsCollector 实例
@@ -555,37 +561,6 @@ class LivePCM:
         size_mult = float(intent.size_multiplier or 1.0)
         return max(0.0, risk_frac * max(0.0, size_mult))
 
-    def rollback_intent_reservation(self, intent: TradeIntent) -> None:
-        """Rollback previously reserved risk for an unfilled intent.
-
-        PCM books risk when an intent is accepted. If downstream execution fails
-        (e.g. add trigger not met/order rejected), caller should rollback to
-        avoid ghost risk occupancy.
-        """
-        try:
-            symbol = str(getattr(intent, "symbol", "") or "").strip()
-            archetype = str(getattr(intent, "archetype", "") or "").strip()
-            if not symbol or not archetype:
-                return
-            key = f"{symbol}:{archetype}"
-            cur = float(self._slot_risk_frac.get(key, 0.0) or 0.0)
-            if cur <= 0.0:
-                return
-            delta = float(self._estimate_intent_risk_frac(intent, {}) or 0.0)
-            if delta <= 0.0:
-                return
-            new_v = max(0.0, cur - delta)
-            if new_v <= 1e-12:
-                # New entry reservation that never became a real position.
-                self._slot_risk_frac.pop(key, None)
-                self._slot_stop_pct.pop(key, None)
-                self._slot_loss_r.pop(key, None)
-                self._slot_evidence.pop(key, None)
-            else:
-                self._slot_risk_frac[key] = new_v
-        except Exception:
-            logger.exception("PCM: rollback_intent_reservation failed")
-
     def _current_total_risk_frac(self) -> float:
         return float(
             sum(max(0.0, float(v or 0.0)) for v in self._slot_risk_frac.values())
@@ -611,41 +586,6 @@ class LivePCM:
             if f == fam:
                 total += max(0.0, float(v or 0.0))
         return float(total)
-
-    def _slot_risk_breakdown(
-        self,
-        *,
-        family: str = "",
-        symbol: str = "",
-        limit: int = 12,
-    ) -> str:
-        """Format current slot risk ledger for debugging rejects."""
-        fam_filter = str(family or "").lower().strip()
-        sym_filter = str(symbol or "").strip()
-        rows = []
-        for key, raw in self._slot_risk_frac.items():
-            risk = max(0.0, float(raw or 0.0))
-            if risk <= 0.0:
-                continue
-            if sym_filter and not key.startswith(f"{sym_filter}:"):
-                continue
-            if fam_filter:
-                try:
-                    _, arch = key.split(":", 1)
-                except Exception:
-                    continue
-                fam, _ = self._parse_family_and_side(arch)
-                if fam != fam_filter:
-                    continue
-            rows.append((key, risk))
-        if not rows:
-            return "<empty>"
-        rows.sort(key=lambda x: x[1], reverse=True)
-        show = rows[: max(1, int(limit or 12))]
-        s = ", ".join(f"{k}={v:.4f}" for k, v in show)
-        if len(rows) > len(show):
-            s += f", ... +{len(rows) - len(show)} more"
-        return s
 
     def _released_slot_count(self, family: str, residual: float) -> int:
         fam = str(family or "").lower().strip()
@@ -706,7 +646,7 @@ class LivePCM:
                 released = self._released_slot_count(
                     str(family or "").lower().strip(), residual
                 )
-                trigger = int(exp.get("trigger_released_slots", 0) or 0)
+                trigger = int(exp.get("trigger_released_slots", 1) or 1)
                 step_slots = max(1, int(exp.get("step_released_slots", 1) or 1))
                 step_mult = float(exp.get("step_multiplier", 0.25) or 0.0)
                 if released >= trigger:
@@ -1208,6 +1148,38 @@ class LivePCM:
                         strategy._last_funnel = {}
                         continue
 
+                # ── EMA 方向过滤 (price > ema_200 → bull; price ≤ ema_200 → bear) ──
+                if self._ema_filter_enabled:
+                    _close = strat_features.get(self._ema_close_feature)
+                    _ema = strat_features.get(self._ema_feature)
+                    if _close is not None and _ema is not None:
+                        _is_bull = float(_close) > float(_ema)
+                        _allowed = (
+                            self._ema_bull_allowed
+                            if _is_bull
+                            else self._ema_bear_allowed
+                        )
+                        if arch_name not in _allowed:
+                            # 标记为 PCM 方向过滤拒绝，供事件回测漏斗诊断使用
+                            strategy._last_funnel = {"pcm_direction_filter": False}
+                            logger.debug(
+                                "PCM: EMA过滤跳过 %s — %s regime (close=%.4f, ema=%.4f)",
+                                arch_name,
+                                "BULL" if _is_bull else "BEAR",
+                                float(_close),
+                                float(_ema),
+                            )
+                            continue
+                    elif self._ema_fallback != "allow_all":
+                        _allowed_fb = (
+                            self._ema_bull_allowed
+                            if self._ema_fallback == "bull"
+                            else self._ema_bear_allowed
+                        )
+                        if arch_name not in _allowed_fb:
+                            strategy._last_funnel = {"pcm_direction_filter": False}
+                            continue
+
                 intents = strategy.decide(
                     features=strat_features, symbol=symbol, bars=bars
                 )
@@ -1295,12 +1267,6 @@ class LivePCM:
             features=features,
             policy=_dir_pol,
         )
-        _ts_ctx = str(
-            features.get("_pcm_ts")
-            or features.get("timestamp")
-            or features.get("time")
-            or ""
-        )
         accepted: List[TradeIntent] = []
         for intent in all_intents:
             if not self._is_direction_allowed(
@@ -1309,8 +1275,7 @@ class LivePCM:
                 policy=_dir_pol,
             ):
                 logger.info(
-                    "PCM: 方向过滤拒绝 ts=%s %s %s action=%s (market_side=%s)",
-                    _ts_ctx,
+                    "PCM: 方向过滤拒绝 %s %s action=%s (market_side=%s)",
                     intent.symbol,
                     intent.archetype,
                     intent.action,
@@ -1404,10 +1369,8 @@ class LivePCM:
                         int(self._risk_reject_counts.get("symbol_cap", 0)) + 1
                     )
                     logger.info(
-                        "PCM: symbol 风险预算超限拒绝 ts=%s %s %s "
-                        "(before=%.4f + delta=%.4f => after=%.4f > cap=%.4f, remain=%.4f) "
-                        "| slot_risk_frac[symbol]=[%s]",
-                        _ts_ctx,
+                        "PCM: symbol 风险预算超限拒绝 %s %s "
+                        "(before=%.4f + delta=%.4f => after=%.4f > cap=%.4f, remain=%.4f)",
                         intent.symbol,
                         intent.archetype,
                         sym_before,
@@ -1415,7 +1378,6 @@ class LivePCM:
                         sym_after,
                         sym_cap,
                         max(0.0, sym_cap - sym_before),
-                        self._slot_risk_breakdown(symbol=intent.symbol),
                     )
                     continue
                 if fam_cap > 0 and fam_after > fam_cap + 1e-12:
@@ -1423,10 +1385,8 @@ class LivePCM:
                         int(self._risk_reject_counts.get("family_cap", 0)) + 1
                     )
                     logger.info(
-                        "PCM: family 风险预算超限拒绝 ts=%s %s %s "
-                        "(before=%.4f + delta=%.4f => after=%.4f > cap=%.4f, remain=%.4f) "
-                        "| slot_risk_frac[family]=[%s]",
-                        _ts_ctx,
+                        "PCM: family 风险预算超限拒绝 %s %s "
+                        "(before=%.4f + delta=%.4f => after=%.4f > cap=%.4f, remain=%.4f)",
                         intent.symbol,
                         intent.archetype,
                         fam_before,
@@ -1434,7 +1394,6 @@ class LivePCM:
                         fam_after,
                         fam_cap,
                         max(0.0, fam_cap - fam_before),
-                        self._slot_risk_breakdown(family=fam),
                     )
                     continue
                 if total_cap > 0 and total_after > total_cap + 1e-12:
@@ -1442,10 +1401,8 @@ class LivePCM:
                         int(self._risk_reject_counts.get("total_cap", 0)) + 1
                     )
                     logger.info(
-                        "PCM: total 风险预算超限拒绝 ts=%s %s %s "
-                        "(before=%.4f + delta=%.4f => after=%.4f > cap=%.4f, remain=%.4f) "
-                        "| slot_risk_frac[total]=[%s]",
-                        _ts_ctx,
+                        "PCM: total 风险预算超限拒绝 %s %s "
+                        "(before=%.4f + delta=%.4f => after=%.4f > cap=%.4f, remain=%.4f)",
                         intent.symbol,
                         intent.archetype,
                         total_before,
@@ -1453,7 +1410,6 @@ class LivePCM:
                         total_after,
                         total_cap,
                         max(0.0, total_cap - total_before),
-                        self._slot_risk_breakdown(),
                     )
                     continue
                 _meta = _intent_meta.get(id(intent), {})
@@ -1488,6 +1444,20 @@ class LivePCM:
                     intent.symbol,
                     intent.archetype,
                 )
+            if (
+                self._slot_gate_enabled
+                and not bool(intent.add_position)
+                and not self._slot_available(symbol, intent.archetype)
+            ):
+                # 该策略 slot 满 → 直接拒绝
+                logger.info(
+                    "PCM: %s %s slot 已满 (%d/%d)，拒绝",
+                    symbol,
+                    intent.archetype,
+                    self._count_archetype_slots(intent.archetype),
+                    self._max_slots_for_strategy(intent.archetype),
+                )
+                continue
             if not bool(intent.add_position):
                 self._record_slot(symbol, intent.archetype, 0.0)
             self._slot_risk_frac[_slot_key] = max(
@@ -1672,10 +1642,10 @@ class LivePCM:
             return self._get_open_slot_count()
         return 0
 
-    def _capacity_limit_for_strategy(self, archetype: str) -> int:
-        """获取策略容量上限（从 per_strategy_limits 读取，缺省回退全局）"""
+    def _max_slots_for_strategy(self, archetype: str) -> int:
+        """获取策略的 max_slots (从 per_strategy_limits 读取，缺省回退全局)"""
         strat = self._limit_cfg_for_archetype(archetype)
-        hard_cap = _capacity_limit_from_cfg(strat, default=self._capacity_limit)
+        hard_cap = int(strat.get("max_slots", self._max_slots))
         dynamic_cap = self._resolve_dynamic_slots(archetype, hard_cap)
         return max(0, min(hard_cap, dynamic_cap))
 
@@ -1689,8 +1659,8 @@ class LivePCM:
             return hard_cap
 
         base_slots = int(bpc_cfg.get("base_slots", 1))
-        family_capacity_limit = _capacity_limit_from_cfg(bpc_cfg, default=hard_cap)
-        slots = max(1, min(hard_cap, family_capacity_limit, base_slots))
+        max_slots = int(bpc_cfg.get("max_slots", hard_cap))
+        slots = max(1, min(hard_cap, max_slots, base_slots))
         dd = float(self._latest_features.get("drawdown", 0.0) or 0.0)
         daily_loss = float(self._latest_features.get("daily_loss", 0.0) or 0.0)
         step2 = dict(bpc_cfg.get("step2") or {})
@@ -1702,7 +1672,7 @@ class LivePCM:
         remaining_risk = max(0.0, total_risk_cap - used_risk)
         bpc_in_use = self._count_family_slots("bpc")
         if (
-            family_capacity_limit >= 2
+            max_slots >= 2
             and dd <= float(step2.get("max_drawdown", 0.08))
             and daily_loss <= float(step2.get("max_daily_loss", 0.03))
             and bpc_in_use >= int(step2.get("min_active_bpc_slots", 1))
@@ -1710,14 +1680,14 @@ class LivePCM:
         ):
             slots = max(slots, 2)
         if (
-            family_capacity_limit >= 3
+            max_slots >= 3
             and dd <= float(step3.get("max_drawdown", 0.05))
             and daily_loss <= float(step3.get("max_daily_loss", 0.02))
             and bpc_in_use >= int(step3.get("min_active_bpc_slots", 2))
             and remaining_risk >= strat_risk
         ):
             slots = max(slots, 3)
-        return max(1, min(hard_cap, family_capacity_limit, slots))
+        return max(1, min(hard_cap, max_slots, slots))
 
     def _risk_for_strategy(self, archetype: str) -> float:
         strat = self._limit_cfg_for_archetype(archetype)
@@ -1754,58 +1724,33 @@ class LivePCM:
         if self._get_open_slot_count is None:
             return True  # 未配置回调，不做限制
         # Per-strategy slot 上限
-        strategy_capacity_limit = self._capacity_limit_for_strategy(archetype)
-        if self._count_archetype_slots(archetype) >= strategy_capacity_limit:
+        max_strat = self._max_slots_for_strategy(archetype)
+        if self._count_archetype_slots(archetype) >= max_strat:
             return False
         # 全局 slot 上限
-        return self._current_slot_count() < self._capacity_limit
+        return self._current_slot_count() < self._max_slots
 
     def _record_slot(self, symbol: str, archetype: str, evidence: float) -> None:
         """记录已入场 slot"""
         key = f"{symbol}:{archetype}"
         self._slot_evidence[key] = evidence
 
-    def notify_position_closed(self, symbol: str, archetype: str = "") -> int:
+    def notify_position_closed(self, symbol: str, archetype: str = "") -> None:
         """外部通知仓位已平仓，清理 slot 追踪
 
         由 PositionManager/OrderFlowListener 在仓位关闭时调用。
         """
-        removed = 0
         if archetype:
             key = f"{symbol}:{archetype}"
-            hit = key in self._slot_evidence or key in self._slot_risk_frac
             self._slot_evidence.pop(key, None)
             self._slot_risk_frac.pop(key, None)
             self._slot_stop_pct.pop(key, None)
             self._slot_loss_r.pop(key, None)
-            if hit:
-                removed += 1
-            else:
-                # Fallback: normalize archetype key in case of case/format mismatch.
-                a_norm = str(archetype or "").strip().lower()
-                candidates = [
-                    kk
-                    for kk in (set(self._slot_evidence) | set(self._slot_risk_frac))
-                    if kk.startswith(f"{symbol}:")
-                ]
-                for k in candidates:
-                    try:
-                        _, arch = k.split(":", 1)
-                    except Exception:
-                        continue
-                    if str(arch).strip().lower() != a_norm:
-                        continue
-                    self._slot_evidence.pop(k, None)
-                    self._slot_risk_frac.pop(k, None)
-                    self._slot_stop_pct.pop(k, None)
-                    self._slot_loss_r.pop(k, None)
-                    removed += 1
         else:
             # archetype 未知，清理该 symbol 的所有 slot
             to_remove = [k for k in self._slot_evidence if k.startswith(f"{symbol}:")]
             for k in to_remove:
                 del self._slot_evidence[k]
-                removed += 1
             to_remove_r = [
                 k for k in self._slot_risk_frac if k.startswith(f"{symbol}:")
             ]
@@ -1817,15 +1762,6 @@ class LivePCM:
             to_remove_l = [k for k in self._slot_loss_r if k.startswith(f"{symbol}:")]
             for k in to_remove_l:
                 del self._slot_loss_r[k]
-        if removed > 0:
-            logger.info(
-                "PCM: notify_position_closed released symbol=%s archetype=%s removed=%d remain_total=%.4f",
-                symbol,
-                archetype or "*",
-                removed,
-                self._current_total_risk_frac(),
-            )
-        return removed
 
     def update_slot_loss_r(self, symbol: str, archetype: str, current_r: float) -> None:
         """Update per-slot loss metric for deleveraging ranking.
@@ -1880,12 +1816,19 @@ class LivePCM:
         stats: Dict[str, Any] = {
             "registered_archetypes": self.registered_archetypes,
             "current_priority": self.archetype_priority,
-            "percent_only_mode": True,
+            "max_slots": self._max_slots,
+            "max_slots_source": (
+                "constitution"
+                if not hasattr(self, "_explicit_max_slots")
+                else "explicit"
+            ),
             "override_enabled": bool(self._override_config),
             "override_rules": (
                 list(self._override_config.keys()) if self._override_config else []
             ),
             "constitution": {
+                "slots_enabled": self._constitution.get("slots_enabled"),
+                "slot_count": self._constitution.get("slot_count"),
                 "risk_per_slot": self._constitution.get("risk_per_slot"),
                 "per_strategy_limits": self._constitution.get("per_strategy_limits"),
                 "risk_budget_policy": self._constitution.get("risk_budget_policy"),
@@ -1921,7 +1864,7 @@ class LivePCM:
 
 def create_live_pcm(
     archetype_priority: Optional[List[str]] = None,
-    capacity_limit: Optional[int] = None,
+    max_slots: Optional[int] = None,
     get_open_slot_count: Optional[callable] = None,
     regime_config_path: Optional[str] = None,
     override_config: Optional[Dict[str, Any]] = None,
@@ -1932,7 +1875,7 @@ def create_live_pcm(
 
     Args:
         archetype_priority: 静态优先级列表。
-        capacity_limit: 显式指定容量上限。未提供时从 constitution 读取。
+        max_slots: 显式指定 max_slots。未提供时从 constitution 读取。
         get_open_slot_count: 可选回调
         regime_config_path: 可选 pcm_regime.yaml 路径
         override_config: Layer 3 Override 配置
@@ -1943,7 +1886,7 @@ def create_live_pcm(
     """
     return LivePCM(
         archetype_priority=archetype_priority,
-        capacity_limit=capacity_limit,
+        max_slots=max_slots,
         get_open_slot_count=get_open_slot_count,
         regime_config_path=regime_config_path,
         override_config=override_config,

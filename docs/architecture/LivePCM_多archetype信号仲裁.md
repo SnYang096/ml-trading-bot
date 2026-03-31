@@ -73,7 +73,7 @@ sort_key = (priority_rank, -evidence)
 ## 3. Slot 控制
 
 可选配置 `get_open_slot_count` 回调：
-- 提供时：当前已占用 slot >= capacity_limit → 拒绝新信号
+- 提供时：当前已占用 slot >= max_slots → 拒绝新信号
 - 不提供时：不做跨 symbol slot 限制（依赖下游 PositionManager）
 
 ## 4. 决策流程（伪代码）

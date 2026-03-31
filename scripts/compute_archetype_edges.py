@@ -85,7 +85,7 @@ def write_edges_yaml(
     config = {
         "archetype_edges": edges,
         "router_config": {
-            "capacity_limit": 2,
+            "max_slots": 2,
             "default_edge": 0.50,
         },
         "metadata": {

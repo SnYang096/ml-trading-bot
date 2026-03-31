@@ -84,7 +84,7 @@ class TestLivePCMSingleStrategy:
     def test_single_strategy_passthrough(self):
         """单策略 → 透传 decide 结果"""
         intent = _make_intent("bpc")
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[intent]))
 
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
@@ -94,7 +94,7 @@ class TestLivePCMSingleStrategy:
 
     def test_single_strategy_no_signal(self):
         """单策略无信号 → 返回空"""
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[]))
 
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
@@ -102,7 +102,7 @@ class TestLivePCMSingleStrategy:
 
     def test_no_registered_strategy(self):
         """无注册策略 → 返回空"""
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
         assert result == []
 
@@ -115,7 +115,7 @@ class TestLivePCMPriority:
         bpc_intent = _make_intent("BPC", confidence=0.5)
         me_intent = _make_intent("ME", confidence=0.9)
 
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[bpc_intent]))
         pcm.register("me", FakeStrategy(intents=[me_intent]))
 
@@ -131,7 +131,7 @@ class TestLivePCMPriority:
         fer_intent = _make_intent("FER", confidence=1.0)
         bpc_intent = _make_intent("BPC", confidence=0.5)
 
-        pcm = LivePCM(capacity_limit=3)
+        pcm = LivePCM(max_slots=3)
         pcm.register("me", FakeStrategy(intents=[me_intent]))
         pcm.register("fer", FakeStrategy(intents=[fer_intent]))
         pcm.register("bpc", FakeStrategy(intents=[bpc_intent]))
@@ -149,7 +149,7 @@ class TestLivePCMPriority:
         fer = _make_intent("FER", confidence=1.0)
         lv = _make_intent("LV", confidence=1.0)
 
-        pcm = LivePCM(capacity_limit=4)
+        pcm = LivePCM(max_slots=4)
         pcm.register("bpc", FakeStrategy(intents=[bpc]))
         pcm.register("me", FakeStrategy(intents=[me]))
         pcm.register("fer", FakeStrategy(intents=[fer]))
@@ -166,7 +166,7 @@ class TestLivePCMPriority:
 
         # 注意: 两个都注册为 archetype "BPC" 的变体
         # 但 per-strategy slot 用 archetype key 限制，所以第二个会被 evidence 竞争
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc1", FakeStrategy(intents=[bpc_low]))
         pcm.register("bpc2", FakeStrategy(intents=[bpc_high]))
 
@@ -180,7 +180,7 @@ class TestLivePCMPriority:
         """只有一个策略出信号 → 直接返回那个"""
         bpc_intent = _make_intent("BPC", confidence=0.8)
 
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[bpc_intent]))
         pcm.register("me", FakeStrategy(intents=[]))
 
@@ -199,7 +199,7 @@ class TestLivePCMPriority:
             confidence=None,  # → 默认 0.5
         )
 
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[bpc_intent]))
         pcm.register("me", FakeStrategy(intents=[me_intent]))
 
@@ -213,7 +213,7 @@ class TestLivePCMPriority:
         bpc_intent = _make_intent("BPC", confidence=0.5)
         me_intent = _make_intent("ME", confidence=0.5)
 
-        pcm = LivePCM(archetype_priority=["ME", "BPC", "FER", "LV"], capacity_limit=2)
+        pcm = LivePCM(archetype_priority=["ME", "BPC", "FER", "LV"], max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[bpc_intent]))
         pcm.register("me", FakeStrategy(intents=[me_intent]))
 
@@ -226,7 +226,7 @@ class TestLivePCMPriority:
         unknown = _make_intent("FooBar", confidence=1.0)
         bpc = _make_intent("BPC", confidence=0.1)
 
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("foobar", FakeStrategy(intents=[unknown]))
         pcm.register("bpc", FakeStrategy(intents=[bpc]))
 
@@ -241,28 +241,28 @@ class TestLivePCMSlotControl:
     """Slot 控制场景"""
 
     def test_slot_full_rejects_single(self):
-        pcm = LivePCM(capacity_limit=2, get_open_slot_count=lambda: 2)
+        pcm = LivePCM(max_slots=2, get_open_slot_count=lambda: 2)
         pcm.register("bpc", FakeStrategy(intents=[_make_intent("bpc")]))
         assert pcm.decide(features=FEATURES, symbol="BTCUSDT") == []
 
     def test_slot_available_allows(self):
-        pcm = LivePCM(capacity_limit=2, get_open_slot_count=lambda: 1)
+        pcm = LivePCM(max_slots=2, get_open_slot_count=lambda: 1)
         pcm.register("bpc", FakeStrategy(intents=[_make_intent("bpc")]))
         assert len(pcm.decide(features=FEATURES, symbol="BTCUSDT")) == 1
 
     def test_no_slot_callback_always_allows(self):
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[_make_intent("bpc")]))
         assert len(pcm.decide(features=FEATURES, symbol="BTCUSDT")) == 1
 
     def test_slot_full_rejects_multi_strategy_winner(self):
-        pcm = LivePCM(capacity_limit=2, get_open_slot_count=lambda: 2)
+        pcm = LivePCM(max_slots=2, get_open_slot_count=lambda: 2)
         pcm.register("bpc", FakeStrategy(intents=[_make_intent("BPC", confidence=0.9)]))
         pcm.register("me", FakeStrategy(intents=[_make_intent("ME", confidence=0.7)]))
         assert pcm.decide(features=FEATURES, symbol="BTCUSDT") == []
 
     def test_same_symbol_same_archetype_rejects_new_slot(self):
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[_make_intent("BPC", confidence=0.8)]))
         first = pcm.decide(features=FEATURES, symbol="BTCUSDT")
         second = pcm.decide(features=FEATURES, symbol="BTCUSDT")
@@ -270,7 +270,7 @@ class TestLivePCMSlotControl:
         assert second == []
 
     def test_same_symbol_same_archetype_allows_when_marked_add_position(self):
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         add_intent = _make_intent("BPC", confidence=0.8)
         add_intent = TradeIntent(
             action=add_intent.action,
@@ -291,15 +291,15 @@ class TestLivePCMSlotControl:
 class TestLivePCMDynamicSlots:
 
     def test_dynamic_slot_step2_and_step3_for_bpc(self):
-        pcm = LivePCM(capacity_limit=3)
+        pcm = LivePCM(max_slots=3)
         pcm._constitution["risk_per_slot"] = 0.01
-        pcm._constitution["per_strategy_limits"] = {"bpc": {"capacity_limit": 3}}
+        pcm._constitution["per_strategy_limits"] = {"bpc": {"max_slots": 3}}
         pcm._constitution["dynamic_slot_policy"] = {
             "total_risk_cap": 0.10,
             "bpc": {
                 "enabled": True,
                 "base_slots": 1,
-                "capacity_limit": 3,
+                "max_slots": 3,
                 "step2": {
                     "max_drawdown": 0.08,
                     "max_daily_loss": 0.03,
@@ -314,10 +314,10 @@ class TestLivePCMDynamicSlots:
         }
         pcm._latest_features = {"drawdown": 0.07, "daily_loss": 0.02}
         pcm._slot_evidence = {"BTCUSDT:bpc": 0.9}
-        assert pcm._capacity_limit_for_strategy("bpc") == 2
+        assert pcm._max_slots_for_strategy("bpc") == 2
         pcm._latest_features = {"drawdown": 0.04, "daily_loss": 0.01}
         pcm._slot_evidence = {"BTCUSDT:bpc": 0.9, "ETHUSDT:bpc": 0.8}
-        assert pcm._capacity_limit_for_strategy("bpc") == 3
+        assert pcm._max_slots_for_strategy("bpc") == 3
 
 
 class TestLivePCMDeterministicSelection:
@@ -325,7 +325,7 @@ class TestLivePCMDeterministicSelection:
     def test_larger_timeframe_wins_same_symbol_archetype(self):
         i1 = _make_intent("BPC", confidence=0.2)
         i2 = _make_intent("BPC", confidence=0.9)
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc60", FakeStrategy(intents=[i1]), timeframe="60T")
         pcm.register("bpc240", FakeStrategy(intents=[i2]), timeframe="240T")
         out = pcm.decide(
@@ -356,7 +356,7 @@ class TestLivePCMDeterministicSelection:
             },
         )
         f = {"close": 10000.0, "atr": 100.0}
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpcA", FakeStrategy(intents=[i1]), timeframe="240T")
         pcm.register("bpcB", FakeStrategy(intents=[i2]), timeframe="240T")
         out = pcm.decide(
@@ -373,7 +373,7 @@ class TestLivePCMErrorHandling:
     """异常处理场景"""
 
     def test_strategy_error_does_not_crash(self):
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[_make_intent("BPC", confidence=0.8)]))
         pcm.register("me", ErrorStrategy())
         result = pcm.decide(features=FEATURES, symbol="BTCUSDT")
@@ -381,7 +381,7 @@ class TestLivePCMErrorHandling:
         assert result[0].archetype == "BPC"
 
     def test_all_strategies_error_returns_empty(self):
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", ErrorStrategy())
         pcm.register("me", ErrorStrategy())
         assert pcm.decide(features=FEATURES, symbol="BTCUSDT") == []
@@ -391,7 +391,7 @@ class TestLivePCMManagement:
     """管理接口场景"""
 
     def test_register_unregister(self):
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy())
         pcm.register("me", FakeStrategy())
         assert set(pcm.registered_archetypes) == {"bpc", "me"}
@@ -400,7 +400,7 @@ class TestLivePCMManagement:
 
     def test_set_quantiles_transparent(self):
         bpc, me = FakeStrategy(), FakeStrategy()
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", bpc)
         pcm.register("me", me)
         pcm.set_quantiles(None)
@@ -408,21 +408,21 @@ class TestLivePCMManagement:
 
     def test_set_quantiles_from_df_transparent(self):
         bpc = FakeStrategy()
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", bpc)
         pcm.set_quantiles_from_df(None)
         assert bpc.quantiles_set
 
     def test_load_all_configs(self):
         bpc, me = FakeStrategy(), FakeStrategy()
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         pcm.register("bpc", bpc)
         pcm.register("me", me)
         pcm.load_all_configs()
         assert bpc.configs_loaded and me.configs_loaded
 
     def test_archetype_priority_property(self):
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         assert pcm.archetype_priority == list(DEFAULT_ARCHETYPE_PRIORITY)
 
     def test_default_priority(self):
@@ -528,14 +528,14 @@ class TestLivePCMWithRegime:
 
     def test_no_regime_detector_uses_static_priority(self):
         """无 regime detector → 使用静态优先级"""
-        pcm = LivePCM(archetype_priority=["FER", "ME", "BPC"], capacity_limit=2)
+        pcm = LivePCM(archetype_priority=["FER", "ME", "BPC"], max_slots=2)
         assert pcm.current_regime == REGIME_NORMAL
         assert pcm.archetype_priority == ["FER", "ME", "BPC"]
 
     def test_with_regime_detector_high_vol_both_pass(self):
         """HIGH_VOL regime → BPC 和 ME 都独立通过（不再竞争）"""
         rd = RegimeDetector(min_bars_in_regime=1)
-        pcm = LivePCM(regime_detector=rd, capacity_limit=2)
+        pcm = LivePCM(regime_detector=rd, max_slots=2)
 
         bpc = _make_intent("BPC", confidence=0.9)
         me = _make_intent("ME", confidence=0.5)
@@ -554,7 +554,7 @@ class TestLivePCMWithRegime:
     def test_with_regime_detector_high_leverage_both_pass(self):
         """HIGH_LEVERAGE regime → 两策略独立通过"""
         rd = RegimeDetector(min_bars_in_regime=1)
-        pcm = LivePCM(regime_detector=rd, capacity_limit=2)
+        pcm = LivePCM(regime_detector=rd, max_slots=2)
 
         bpc = _make_intent("BPC", confidence=1.0)
         lv = _make_intent("LV", confidence=0.3)
@@ -576,7 +576,7 @@ class TestLivePCMWithRegime:
     def test_regime_switch_both_pass(self):
         """regime 切换后两策略均独立通过"""
         rd = RegimeDetector(min_bars_in_regime=1)
-        pcm = LivePCM(regime_detector=rd, capacity_limit=2)
+        pcm = LivePCM(regime_detector=rd, max_slots=2)
 
         fer = _make_intent("FER", confidence=0.8)
         me = _make_intent("ME", confidence=0.8)
@@ -599,7 +599,7 @@ class TestLivePCMWithRegime:
     def test_get_stats_with_regime(self):
         """get_stats() 返回 regime 信息"""
         rd = RegimeDetector(min_bars_in_regime=1)
-        pcm = LivePCM(regime_detector=rd, capacity_limit=2)
+        pcm = LivePCM(regime_detector=rd, max_slots=2)
         pcm.register("bpc", FakeStrategy())
 
         pcm.decide(features={**FEATURES, "atr_percentile": 0.9}, symbol="BTCUSDT")
@@ -646,7 +646,7 @@ class TestLivePCMOverride:
         bpc = _make_intent("BPC", confidence=0.9)
         lv = _make_intent("LV", confidence=0.3)
 
-        pcm = LivePCM(capacity_limit=2, override_config=OVERRIDE_CONFIG)
+        pcm = LivePCM(max_slots=2, override_config=OVERRIDE_CONFIG)
         pcm.register("bpc", FakeStrategy(intents=[bpc]))
         pcm.register("lv", FakeStrategy(intents=[lv]))
 
@@ -660,7 +660,7 @@ class TestLivePCMOverride:
         fer = _make_intent("FER", confidence=1.0)
         lv = _make_intent("LV", confidence=0.1)
 
-        pcm = LivePCM(capacity_limit=4, override_config=OVERRIDE_CONFIG)
+        pcm = LivePCM(max_slots=4, override_config=OVERRIDE_CONFIG)
         pcm.register("bpc", FakeStrategy(intents=[bpc]))
         pcm.register("me", FakeStrategy(intents=[me]))
         pcm.register("fer", FakeStrategy(intents=[fer]))
@@ -675,7 +675,7 @@ class TestLivePCMOverride:
         lv = _make_intent("LV", confidence=0.5)
 
         pcm = LivePCM(
-            capacity_limit=2,
+            max_slots=2,
             get_open_slot_count=lambda: 2,  # slot 已满
             override_config=OVERRIDE_CONFIG,
         )
@@ -690,7 +690,7 @@ class TestLivePCMOverride:
         me = _make_intent("ME", confidence=0.9)
         fer = _make_intent("FER", confidence=0.7)
 
-        pcm = LivePCM(capacity_limit=2, override_config=OVERRIDE_CONFIG)
+        pcm = LivePCM(max_slots=2, override_config=OVERRIDE_CONFIG)
         pcm.register("me", FakeStrategy(intents=[me]))
         pcm.register("fer", FakeStrategy(intents=[fer]))
 
@@ -704,7 +704,7 @@ class TestLivePCMOverride:
         bpc = _make_intent("BPC", confidence=0.3)
         lv = _make_intent("LV", confidence=1.0)
 
-        pcm = LivePCM(capacity_limit=2)  # 无 override_config
+        pcm = LivePCM(max_slots=2)  # 无 override_config
         pcm.register("bpc", FakeStrategy(intents=[bpc]))
         pcm.register("lv", FakeStrategy(intents=[lv]))
 
@@ -719,7 +719,7 @@ class TestLivePCMOverride:
 
         pcm = LivePCM(
             regime_detector=rd,
-            capacity_limit=2,
+            max_slots=2,
             override_config=OVERRIDE_CONFIG,
         )
         pcm.register("bpc", FakeStrategy(intents=[bpc]))
@@ -734,14 +734,14 @@ class TestLivePCMOverride:
 
     def test_get_stats_includes_override_info(self):
         """get_stats() 包含 override 信息"""
-        pcm = LivePCM(capacity_limit=2, override_config=OVERRIDE_CONFIG)
+        pcm = LivePCM(max_slots=2, override_config=OVERRIDE_CONFIG)
         stats = pcm.get_stats()
         assert stats["override_enabled"] is True
         assert set(stats["override_rules"]) == {"LV", "FER", "ME"}
 
     def test_get_stats_no_override(self):
         """get_stats() 无 override 时的输出"""
-        pcm = LivePCM(capacity_limit=2)
+        pcm = LivePCM(max_slots=2)
         stats = pcm.get_stats()
         assert stats["override_enabled"] is False
         assert stats["override_rules"] == []
@@ -896,10 +896,10 @@ slots:
 resource_allocation:
   per_strategy_limits:
     bpc-long:
-      capacity_limit: 3
+      max_slots: 3
       max_risk_per_trade: 0.02
     me-long:
-      capacity_limit: 3
+      max_slots: 3
       max_risk_per_trade: 0.02
   notional_policy:
     enabled: true

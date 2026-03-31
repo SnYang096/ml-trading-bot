@@ -68,13 +68,13 @@ class AddOnRequest:
 class PCMPolicy:
     """
     V0 PCM policy:
-    - capacity_limit=2 fixed
+    - max_slots=2 fixed
     - slot2 requires risk release on slot1 + trend path active
     - replacement only by ppath dominance (ex-post)
     - add-on only for TREND, max once, requires locked profit
     """
 
-    capacity_limit: int = 2
+    max_slots: int = 2
     require_slot1_risk_release_for_slot2: bool = True
     risk_release_threshold_r: float = 0.0
     require_slot1_trend_active_for_slot2: bool = True
@@ -236,7 +236,7 @@ def decide_pcm(
         if not _are_archetypes_compatible(candidate_arch, slot_arch):
             reasons.append(f"archetype_incompatible:{candidate_arch}_vs_{slot_arch}")
             # If incompatible and no free slot, deny entry
-            if len(slots) >= int(policy.capacity_limit):
+            if len(slots) >= int(policy.max_slots):
                 return PCMDecision(
                     allow_entry=False,
                     allow_add_on=allow_add_on,
@@ -244,7 +244,7 @@ def decide_pcm(
                     reasons=reasons,
                 )
 
-    if len(slots) < int(policy.capacity_limit):
+    if len(slots) < int(policy.max_slots):
         # Slot1 always allowed if free slot exists
         if len(slots) == 0:
             allow_entry = True

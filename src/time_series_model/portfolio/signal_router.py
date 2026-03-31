@@ -8,7 +8,7 @@
    - 同 symbol 不同 archetype：选 AOS 最高的
    - 不同 symbol 同 archetype：按 AOS 排序
    - 不同 symbol 不同 archetype：按 AOS 排序
-4. 输出前 N 个最优信号（N = capacity_limit）
+4. 输出前 N 个最优信号（N = max_slots）
 """
 
 from __future__ import annotations
@@ -74,25 +74,21 @@ class SignalRouter:
 
     冲突处理：
         1. 同 symbol 不同 archetype → 只保留 AOS 最高的
-        2. 不同 symbol → 按 AOS 排序，取前 capacity_limit 个
+        2. 不同 symbol → 按 AOS 排序，取前 max_slots 个
     """
 
-    def __init__(
-        self,
-        archetype_edges: Dict[str, float],
-        capacity_limit: int = 2,
-    ):
+    def __init__(self, archetype_edges: Dict[str, float], max_slots: int = 2):
         """
         初始化信号路由器
 
         Args:
             archetype_edges: 各 archetype 的历史 Edge
                 例如：{'BPC': 0.62, 'ME': 0.85, 'Reversal': 0.55}
-            capacity_limit: 最大同时持仓数
+            max_slots: 最大同时持仓数
                 建议从 constitution.yaml → slots.slot_count 读取后传入
         """
         self.archetype_edges = archetype_edges
-        self.capacity_limit = int(capacity_limit)
+        self.max_slots = max_slots
 
     def compute_aos(self, signal: CandidateSignal) -> float:
         """
@@ -118,13 +114,13 @@ class SignalRouter:
         逻辑：
         1. 同 symbol 不同 archetype → 只保留 AOS 最高的
         2. 所有信号按 AOS 排序
-        3. 取前 capacity_limit 个
+        3. 取前 max_slots 个
 
         Args:
             candidates: 所有候选信号
 
         Returns:
-            排序后的信号列表（最多 capacity_limit 个）
+            排序后的信号列表（最多 max_slots 个）
         """
         if not candidates:
             return []
@@ -149,8 +145,8 @@ class SignalRouter:
         # 按 AOS 排序（降序）
         filtered_signals.sort(key=lambda x: x[1], reverse=True)
 
-        # 取前 capacity_limit 个
-        top_signals = filtered_signals[: self.capacity_limit]
+        # 取前 max_slots 个
+        top_signals = filtered_signals[: self.max_slots]
 
         # 封装为 RankedSignal
         ranked_signals: List[RankedSignal] = []

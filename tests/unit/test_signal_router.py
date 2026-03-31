@@ -20,7 +20,7 @@ def test_aos_calculation():
         "ME": 0.85,
         "Reversal": 0.55,
     }
-    router = SignalRouter(archetype_edges=edges, capacity_limit=2)
+    router = SignalRouter(archetype_edges=edges, max_slots=2)
 
     signal = CandidateSignal(
         symbol="BTCUSDT",
@@ -42,7 +42,7 @@ def test_same_symbol_different_archetype():
         "ME": 0.85,
         "Reversal": 0.55,
     }
-    router = SignalRouter(archetype_edges=edges, capacity_limit=2)
+    router = SignalRouter(archetype_edges=edges, max_slots=2)
 
     candidates = [
         CandidateSignal(
@@ -76,7 +76,7 @@ def test_different_symbol_ranking():
         "ME": 0.85,
         "Reversal": 0.55,
     }
-    router = SignalRouter(archetype_edges=edges, capacity_limit=2)
+    router = SignalRouter(archetype_edges=edges, max_slots=2)
 
     candidates = [
         CandidateSignal(
@@ -104,7 +104,7 @@ def test_different_symbol_ranking():
 
     ranked = router.route_signals(candidates)
 
-    # 只取前 2 个（capacity_limit=2）
+    # 只取前 2 个（max_slots=2）
     assert len(ranked) == 2
     assert ranked[0].signal.symbol == "ETHUSDT"  # AOS 最高
     assert ranked[0].signal.archetype == "ME"
@@ -115,10 +115,10 @@ def test_different_symbol_ranking():
     assert ranked[1].rank == 2
 
 
-def test_capacity_limit_enforced():
-    """测试：capacity_limit 限制"""
+def test_max_slots_limit():
+    """测试：max_slots 限制"""
     edges = {"BPC": 0.6, "ME": 0.8}
-    router = SignalRouter(archetype_edges=edges, capacity_limit=1)
+    router = SignalRouter(archetype_edges=edges, max_slots=1)
 
     candidates = [
         CandidateSignal(
@@ -146,7 +146,7 @@ def test_capacity_limit_enforced():
 def test_empty_candidates():
     """测试：空候选列表"""
     edges = {"BPC": 0.6}
-    router = SignalRouter(archetype_edges=edges, capacity_limit=2)
+    router = SignalRouter(archetype_edges=edges, max_slots=2)
 
     ranked = router.route_signals([])
     assert len(ranked) == 0
@@ -155,7 +155,7 @@ def test_empty_candidates():
 def test_update_edge():
     """测试：更新 Edge"""
     edges = {"BPC": 0.6, "ME": 0.8}
-    router = SignalRouter(archetype_edges=edges, capacity_limit=2)
+    router = SignalRouter(archetype_edges=edges, max_slots=2)
 
     router.update_edge("BPC", 0.75)
 
@@ -190,7 +190,7 @@ def test_compute_archetype_edges_from_trades():
 def test_default_edge_for_unknown_archetype():
     """测试：未知 archetype 使用默认 Edge"""
     edges = {"BPC": 0.6}
-    router = SignalRouter(archetype_edges=edges, capacity_limit=2)
+    router = SignalRouter(archetype_edges=edges, max_slots=2)
 
     signal = CandidateSignal(
         symbol="BTCUSDT",

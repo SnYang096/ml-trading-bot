@@ -258,7 +258,7 @@ def layer4_slot_mechanism():
 
     print(f"\n  向量回测 slot 机制:")
     print(f"    - post-hoc: 按 entry_idx 排序, 维护 active trades 集合")
-    print(f"    - per-strategy slot: 各策略独立 capacity_limit")
+    print(f"    - per-strategy slot: 各策略独立 max_slots")
     print(f"    - evidence 竞争: 同 archetype 内 weakest 被替换")
     print(f"\n  事件回测 slot 机制:")
     print(f"    - real-time: LivePCM.decide() 实时检查 slot")

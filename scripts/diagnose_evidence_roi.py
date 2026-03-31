@@ -282,10 +282,10 @@ def diagnose_evidence_predictiveness(df: pd.DataFrame):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def simulate_slot_competition(df: pd.DataFrame, capacity_limit: int = 3):
+def simulate_slot_competition(df: pd.DataFrame, max_slots: int = 3):
     """模拟两种 slot 分配策略的 Sharpe 差异"""
     print(f"\n{'='*70}")
-    print(f"  🎰 Q2: Evidence Slot 竞争 vs 先到先得 (capacity_limit={capacity_limit})")
+    print(f"  🎰 Q2: Evidence Slot 竞争 vs 先到先得 (max_slots={max_slots})")
     print(f"{'='*70}")
 
     has_ev = df["_ev"].notna().sum()
@@ -307,22 +307,20 @@ def simulate_slot_competition(df: pd.DataFrame, capacity_limit: int = 3):
     for mode in ["fcfs", "evidence_rank", "random"]:
         selected_r = []
         for _, group in valid.groupby("_group"):
-            if len(group) <= capacity_limit:
+            if len(group) <= max_slots:
                 # slot 够用，全部通过
                 selected_r.extend(group["_r"].tolist())
             else:
                 # slot 不够，需要选择
                 if mode == "fcfs":
-                    # 先到先得（按原始顺序取前 capacity_limit）
-                    chosen = group.head(capacity_limit)
+                    # 先到先得（按原始顺序取前 max_slots）
+                    chosen = group.head(max_slots)
                 elif mode == "evidence_rank":
                     # 按 evidence score 排序取 top
-                    chosen = group.nlargest(capacity_limit, "_ev")
+                    chosen = group.nlargest(max_slots, "_ev")
                 elif mode == "random":
                     # 随机选择 (baseline)
-                    chosen = group.sample(
-                        min(capacity_limit, len(group)), random_state=42
-                    )
+                    chosen = group.sample(min(max_slots, len(group)), random_state=42)
                 selected_r.extend(chosen["_r"].tolist())
 
         r_arr = np.array(selected_r)
@@ -457,6 +455,9 @@ def main():
         help="strategy:path 格式，或单个 path (需配合 --strategy)",
     )
     parser.add_argument("--strategy", default=None, help="默认策略名")
+    parser.add_argument(
+        "--max-slots", type=int, default=3, help="Slot 上限 (default: 3)"
+    )
     args = parser.parse_args()
 
     print(f"{'='*70}")
@@ -472,7 +473,7 @@ def main():
     layer_stats = diagnose_evidence_predictiveness(df)
 
     # Q2: Slot Competition Simulation
-    slot_results = simulate_slot_competition(df, capacity_limit=3)
+    slot_results = simulate_slot_competition(df, max_slots=args.max_slots)
 
     # Q3: Per-Strategy
     per_strategy_analysis(df)

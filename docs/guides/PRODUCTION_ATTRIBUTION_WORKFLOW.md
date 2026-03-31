@@ -124,7 +124,7 @@ mlbot diagnose pcm-performance \
 - Slot rotation频率
 
 **修复方法**:
-- 检查PCM policy配置（capacity_limit、risk_release_threshold等）
+- 检查PCM policy配置（max_slots、risk_release_threshold等）
 - 调整slot rotation逻辑
 - 检查archetype兼容性规则
 - 调整风险预算分配
@@ -150,7 +150,7 @@ mlbot diagnose outcome-attribution \
 ## PCM层说明
 
 PCM层独立存在，负责：
-- Slot管理（capacity_limit=2，slot rotation逻辑）
+- Slot管理（max_slots=2，slot rotation逻辑）
 - Archetype兼容性检查
 - Risk release检查
 - Position replacement（基于ppath dominance）
