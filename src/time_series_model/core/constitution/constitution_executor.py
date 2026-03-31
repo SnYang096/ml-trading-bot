@@ -17,11 +17,6 @@ from .runtime_state import (
 )
 from .state_store import ConstitutionStatePaths, read_json, write_json
 from .violation import ConstitutionViolation
-from .add_position_rules import (
-    resolve_add_position_max_times,
-    resolve_strategy_add_position_config,
-    _strategy_keys,
-)
 from src.order_management.storage import Storage
 
 SLOT_RELEASE_REASONS = {
@@ -142,6 +137,28 @@ def _iso_now() -> str:
 def _parse_iso(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
+
+
+def _strategy_keys(archetype: str) -> list[str]:
+    """Best-effort key candidates for strategy config lookup."""
+    key = str(archetype or "").strip().lower()
+    parts = [p for p in key.split("-") if p]
+    cands: list[str] = [key]
+    if parts and parts[-1].endswith("t") and parts[-1][:-1].isdigit():
+        cands.append("-".join(parts[:-1]))
+        parts = parts[:-1]
+    if len(parts) >= 2 and parts[1] in {"long", "short"}:
+        cands.append("-".join(parts[:2]))
+    if parts:
+        cands.append(parts[0])
+    out: list[str] = []
+    seen = set()
+    for k in cands:
+        kk = str(k).strip().lower()
+        if kk and kk not in seen:
+            seen.add(kk)
+            out.append(kk)
+    return out
     try:
         return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
     except Exception:
@@ -192,34 +209,11 @@ class ConstitutionExecutor:
             p = (base / p).resolve()
         return p
 
-    def _resolve_add_position(self) -> dict:
-        """Resolve add_position global safety rules.
-
-        New structure: resource_allocation.add_position_rules
-        Backward compat: resource_allocation.add_position > top-level add_position
-        """
-        obj = self._raw_obj or {}
-        ra = obj.get("resource_allocation") or {}
-        addp = (
-            ra.get("add_position_rules")
-            or ra.get("add_position")
-            or obj.get("add_position")
-            or {}
-        )
-        return addp
-
     def _resolve_per_strategy_limits(self) -> dict:
         """Return per_strategy_limits dict from resource_allocation."""
         obj = self._raw_obj or {}
         ra = obj.get("resource_allocation") or {}
         return dict(ra.get("per_strategy_limits") or {})
-
-    def resolve_add_position_for_strategy(self, archetype: str) -> dict:
-        return resolve_strategy_add_position_config(
-            archetype=archetype,
-            add_position_rules=self._resolve_add_position(),
-            per_strategy_limits=self._resolve_per_strategy_limits(),
-        )
 
     def resolve_risk_for_strategy(self, archetype: str) -> float:
         """Return effective risk fraction for a strategy.
@@ -245,9 +239,7 @@ class ConstitutionExecutor:
     def _load_state_paths(self) -> ConstitutionStatePaths:
         obj = self._raw_obj or {}
         slots = obj.get("slots") or {}
-        addp = self._resolve_add_position()
         slots_p = (slots.get("slot_state_tracking") or {}).get("persist_to") or None
-        addp_p = (addp.get("state_tracking") or {}).get("persist_to") or None
 
         base = Path(self._base_dir).resolve()
         tmp = ConstitutionStatePaths(base_dir=base)
@@ -263,13 +255,12 @@ class ConstitutionExecutor:
             return tmp.resolve(raw), None
 
         slots_path, slots_db_path = _split_persist_target(slots_p)
-        addp_path, addp_db_path = _split_persist_target(addp_p)
         return ConstitutionStatePaths(
             base_dir=base,
             slots_path=slots_path,
             slots_db_path=slots_db_path,
-            add_position_path=addp_path,
-            add_position_db_path=addp_db_path,
+            add_position_path=None,
+            add_position_db_path=None,
         )
 
     # -------------------------------------------------------------------------
@@ -441,16 +432,6 @@ class ConstitutionExecutor:
                 context={"archetype": arch_key, **self.meta()},
             )
 
-        # 2. Global add_position safety rules
-        addp = self.resolve_add_position_for_strategy(arch_key)
-        # Backward compat: old 'enabled' flag
-        if not bool(addp.get("enabled", True)):
-            raise ConstitutionViolation(
-                code="ADD_POSITION_DISABLED",
-                message="add_position disabled",
-                context=self.meta(),
-            )
-
         pid = str(position_id).strip()
         if not pid:
             raise ConstitutionViolation(
@@ -460,7 +441,7 @@ class ConstitutionExecutor:
             )
         rec = st.add_position.positions.get(pid)
         add_count = int(rec.add_count) if rec is not None else 0
-        max_add_times = resolve_add_position_max_times(addp)
+        max_add_times = int(strat_cfg.get("max_add_times", 1) or 1)
         if add_count >= max_add_times:
             raise ConstitutionViolation(
                 code="ADD_POSITION_MAX_TIMES",
@@ -468,21 +449,7 @@ class ConstitutionExecutor:
                 context={"position_id": pid, "add_count": add_count, **self.meta()},
             )
 
-        trigger_r = float(addp.get("lock_profit_breakeven_trigger_r", 1.0))
-        inferred_locked = bool(locked_profit) if locked_profit is not None else False
-        if current_r is not None and float(current_r) >= trigger_r:
-            inferred_locked = True
-        if bool(addp.get("require_locked_profit", True)) and not inferred_locked:
-            raise ConstitutionViolation(
-                code="ADD_POSITION_LOCKED_PROFIT_REQUIRED",
-                message="locked_profit required before add",
-                context={
-                    "position_id": pid,
-                    "current_r": current_r,
-                    "locked_profit": inferred_locked,
-                    **self.meta(),
-                },
-            )
+        # 全局 add_position_rules 已移除，仅保留 per_strategy_limits 约束。
 
     def record_add_position(
         self,
@@ -495,11 +462,7 @@ class ConstitutionExecutor:
         pid = str(position_id).strip()
         if not pid:
             return
-        addp = self._resolve_add_position()
-        trigger_r = float(addp.get("lock_profit_breakeven_trigger_r", 1.0))
         inferred_locked = bool(locked_profit) if locked_profit is not None else False
-        if current_r is not None and float(current_r) >= trigger_r:
-            inferred_locked = True
         rec = st.add_position.positions.get(pid)
         add_count = int(rec.add_count) if rec is not None else 0
         st.add_position.positions[pid] = AddPositionRecord(

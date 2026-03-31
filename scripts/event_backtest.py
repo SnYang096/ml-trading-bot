@@ -1089,7 +1089,7 @@ class BacktestResult:
         # 加仓统计
         if self.add_position_stats:
             ap = self.add_position_stats
-            print(f"\n  📈 加仓模拟 (constitution add_position_rules):")
+            print("\n  📈 加仓模拟 (per_strategy_limits + execution.add_position):")
             print(f"    加仓成功: {ap.get('add_count', 0)} 次")
             print(f"    加仓拒绝: {ap.get('rejected_count', 0)} 次")
             print(f"    加仓交易: {ap.get('add_trades', 0)} 笔")
@@ -1706,11 +1706,15 @@ class EventBacktester:
                     for v in _psl.values()
                 )
                 if _add_pos_enabled:
-                    _ap_rules = _executor._resolve_add_position()
+                    _max_add_vals = [
+                        int(v.get("max_add_times", 1) or 1)
+                        for v in _psl.values()
+                        if isinstance(v, dict) and v.get("allow_add_position", False)
+                    ]
                     logger.info(
                         f"加仓模拟 (共享 validate_add_position): "
-                        f"max_add={_ap_rules.get('max_add_times', 1)}, "
-                        f"trigger_r={_ap_rules.get('lock_profit_breakeven_trigger_r', 1.0)}"
+                        f"max_add={max(_max_add_vals) if _max_add_vals else 1}, "
+                        "trigger_r=execution.add_position"
                     )
             except Exception:
                 pass

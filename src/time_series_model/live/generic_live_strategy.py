@@ -224,6 +224,9 @@ class ExecutionParamGenerator:
             )
         )
         breakeven_trigger_r = float(breakeven_cfg.get("trigger_r", 1.0))
+        breakeven_lock_profit_atr = float(
+            breakeven_cfg.get("lock_profit_atr", 0.0) or 0.0
+        )
 
         return {
             "tier_name": "global",
@@ -239,6 +242,7 @@ class ExecutionParamGenerator:
             "max_stop_pct": guardrails.get("max_stop_pct"),
             "breakeven_enabled": breakeven_enabled,
             "breakeven_trigger_r": breakeven_trigger_r,
+            "breakeven_lock_profit_atr": breakeven_lock_profit_atr,
         }
 
 
@@ -544,6 +548,9 @@ class GenericLiveStrategy:
                     "trail_r": exec_params.get("trail_r", 1.5),
                     "breakeven_enabled": exec_params.get("breakeven_enabled", False),
                     "breakeven_trigger_r": exec_params.get("breakeven_trigger_r", 1.0),
+                    "breakeven_lock_profit_atr": exec_params.get(
+                        "breakeven_lock_profit_atr", 0.0
+                    ),
                 },
                 "strategy_specific": {
                     "direction_rule": rule_id,

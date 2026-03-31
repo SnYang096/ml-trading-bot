@@ -314,10 +314,8 @@ def _load_constitution_constraints(
         "risk_per_slot": 0.01,
         "per_strategy_limits": {},
         "add_position_rules": {},
-        "dynamic_slot_policy": {},
         "intent_selection_policy": {},
         "direction_policy": {},
-        "notional_policy": {},
     }
     if not constitution_yaml:
         return defaults
@@ -344,10 +342,8 @@ def _load_constitution_constraints(
         "risk_per_slot": float(slots.get("risk_per_slot", 0.01)),
         "per_strategy_limits": dict(ra.get("per_strategy_limits") or {}),
         "add_position_rules": dict(add_rules),
-        "dynamic_slot_policy": dict(ra.get("dynamic_slot_policy") or {}),
         "intent_selection_policy": dict(ra.get("intent_selection_policy") or {}),
         "direction_policy": dict(ra.get("direction_policy") or {}),
-        "notional_policy": dict(ra.get("notional_policy") or {}),
         "evidence_min_score": float(ra.get("evidence_min_score", 0.0)),
         "evidence_position_scale": bool(ra.get("evidence_position_scale", True)),
     }
@@ -400,15 +396,6 @@ class LivePCM:
 
         # Slot 追踪: key = "{symbol}:{archetype}", value = True
         self._slot_evidence: Dict[str, float] = {}
-        self._slot_notional_frac: Dict[str, float] = {}
-        self._notional_reject_counts: Dict[str, int] = {
-            "symbol_cap": 0,
-            "family_cap": 0,
-            "hard_cap": 0,
-            "soft_cap_new_slot": 0,
-            "soft_cap_non_winner_add": 0,
-        }
-        self._notional_last_snapshot: Dict[str, Any] = {}
         self._latest_features: Dict[str, Any] = {}
         self._dir_state: Dict[str, Dict[str, Any]] = {}
 
@@ -530,74 +517,6 @@ class LivePCM:
             if isinstance(cand, dict) and cand:
                 return cand
         return {}
-
-    def _estimate_intent_notional_frac(
-        self,
-        intent: TradeIntent,
-        meta: Dict[str, Any],
-    ) -> float:
-        """Estimate incremental notional fraction to equity for intent.
-
-        Approximation:
-          notional_frac ~= risk_frac / effective_stop_pct * size_multiplier
-        """
-        risk_frac = float(self.resolve_risk_for_strategy(str(intent.archetype)))
-        stop_pct = float(meta.get("effective_stop_pct", float("inf")) or float("inf"))
-        size_mult = float(intent.size_multiplier or 1.0)
-        if stop_pct <= 1e-9 or not (stop_pct < float("inf")):
-            return 0.0
-        return max(0.0, (risk_frac / stop_pct) * max(0.0, size_mult))
-
-    def _current_total_notional_frac(self) -> float:
-        return float(
-            sum(max(0.0, float(v or 0.0)) for v in self._slot_notional_frac.values())
-        )
-
-    def _current_symbol_notional_frac(self, symbol: str) -> float:
-        sym = str(symbol)
-        total = 0.0
-        for k, v in self._slot_notional_frac.items():
-            if k.startswith(f"{sym}:"):
-                total += max(0.0, float(v or 0.0))
-        return float(total)
-
-    def _current_family_notional_frac(self, family: str) -> float:
-        fam = str(family or "").lower().strip()
-        total = 0.0
-        for k, v in self._slot_notional_frac.items():
-            try:
-                _, arch = k.split(":", 1)
-            except Exception:
-                continue
-            f, _ = self._parse_family_and_side(arch)
-            if f == fam:
-                total += max(0.0, float(v or 0.0))
-        return float(total)
-
-    def _winner_priority_ok(
-        self,
-        intent: TradeIntent,
-        *,
-        family: str,
-        policy: Dict[str, Any],
-    ) -> bool:
-        wp = dict(policy.get("winner_priority") or {})
-        if not bool(wp.get("enabled", False)):
-            return False
-        allow_families = [
-            str(x).lower().strip() for x in (wp.get("allow_families") or ["bpc"])
-        ]
-        if family not in set(allow_families):
-            return False
-        if bool(wp.get("require_breakeven_locked", True)) and not bool(
-            intent.locked_profit
-        ):
-            return False
-        min_r = float(wp.get("require_min_current_r", 1.0))
-        cur_r = float(intent.current_r or 0.0)
-        if cur_r < min_r:
-            return False
-        return True
 
     def _observed_market_side(
         self,
@@ -1032,7 +951,6 @@ class LivePCM:
 
         # ── 3. 每策略独立 slot 检查 (无跨策略竞争) ──
         _dir_pol = dict(self._constitution.get("direction_policy") or {})
-        _notional_pol = dict(self._constitution.get("notional_policy") or {})
         _market_side = self._effective_market_side(
             symbol=str(symbol),
             features=features,
@@ -1078,103 +996,6 @@ class LivePCM:
                     )
                     continue
 
-            # ── 3.1 Notional 预算约束 (soft/hard + winner priority) ──
-            fam, side = self._parse_family_and_side(intent.archetype, intent.action)
-            md = _intent_meta.get(id(intent), {})
-            delta_notional = self._estimate_intent_notional_frac(intent, md)
-            total_before = self._current_total_notional_frac()
-            total_after = total_before + delta_notional
-            sym_before = self._current_symbol_notional_frac(intent.symbol)
-            sym_after = sym_before + delta_notional
-            fam_before = self._current_family_notional_frac(fam)
-            fam_after = fam_before + delta_notional
-
-            if bool(_notional_pol.get("enabled", False)):
-                hard_cap = float(
-                    _notional_pol.get("hard_max_total_notional_pct", 0.0) or 0.0
-                )
-                soft_cap = float(
-                    _notional_pol.get("soft_max_total_notional_pct", 0.0) or 0.0
-                )
-                sym_cap = float(
-                    _notional_pol.get("max_symbol_notional_pct", 0.0) or 0.0
-                )
-                fam_cap = float(
-                    _notional_pol.get("max_family_notional_pct", 0.0) or 0.0
-                )
-
-                if sym_cap > 0 and sym_after > sym_cap + 1e-12:
-                    self._notional_reject_counts["symbol_cap"] = (
-                        int(self._notional_reject_counts.get("symbol_cap", 0)) + 1
-                    )
-                    logger.info(
-                        "PCM: symbol 名义敞口超限拒绝 %s %s (after=%.3f > cap=%.3f)",
-                        intent.symbol,
-                        intent.archetype,
-                        sym_after,
-                        sym_cap,
-                    )
-                    continue
-                if fam_cap > 0 and fam_after > fam_cap + 1e-12:
-                    self._notional_reject_counts["family_cap"] = (
-                        int(self._notional_reject_counts.get("family_cap", 0)) + 1
-                    )
-                    logger.info(
-                        "PCM: family 名义敞口超限拒绝 %s %s (after=%.3f > cap=%.3f)",
-                        intent.symbol,
-                        intent.archetype,
-                        fam_after,
-                        fam_cap,
-                    )
-                    continue
-                if hard_cap > 0 and total_after > hard_cap + 1e-12:
-                    self._notional_reject_counts["hard_cap"] = (
-                        int(self._notional_reject_counts.get("hard_cap", 0)) + 1
-                    )
-                    logger.info(
-                        "PCM: hard total notional 超限拒绝 %s %s (after=%.3f > cap=%.3f)",
-                        intent.symbol,
-                        intent.archetype,
-                        total_after,
-                        hard_cap,
-                    )
-                    continue
-                if soft_cap > 0 and total_after > soft_cap + 1e-12:
-                    wp = dict(_notional_pol.get("winner_priority") or {})
-                    if bool(
-                        wp.get("block_new_slots_when_soft_cap_hit", True)
-                    ) and not bool(intent.add_position):
-                        self._notional_reject_counts["soft_cap_new_slot"] = (
-                            int(
-                                self._notional_reject_counts.get("soft_cap_new_slot", 0)
-                            )
-                            + 1
-                        )
-                        logger.info(
-                            "PCM: soft cap 区间拒绝新slot %s %s (after=%.3f > cap=%.3f)",
-                            intent.symbol,
-                            intent.archetype,
-                            total_after,
-                            soft_cap,
-                        )
-                        continue
-                    if not self._winner_priority_ok(
-                        intent, family=fam, policy=_notional_pol
-                    ):
-                        self._notional_reject_counts["soft_cap_non_winner_add"] = (
-                            int(
-                                self._notional_reject_counts.get(
-                                    "soft_cap_non_winner_add", 0
-                                )
-                            )
-                            + 1
-                        )
-                        logger.info(
-                            "PCM: soft cap 区间拒绝非winner加仓 %s %s",
-                            intent.symbol,
-                            intent.archetype,
-                        )
-                        continue
             _slot_key = f"{intent.symbol}:{intent.archetype}"
             if _slot_key in self._slot_evidence and not bool(intent.add_position):
                 # 已有同 symbol+archetype 仓位：将意图标记为加仓，让下游走 try_add_position
@@ -1200,28 +1021,14 @@ class LivePCM:
             ev = intent.confidence if intent.confidence is not None else 0.5
             if not bool(intent.add_position):
                 self._record_slot(symbol, intent.archetype, ev)
-            self._slot_notional_frac[_slot_key] = max(
-                0.0, float(self._slot_notional_frac.get(_slot_key, 0.0) or 0.0)
-            ) + max(0.0, delta_notional)
-            self._notional_last_snapshot = {
-                "total_notional_frac": self._current_total_notional_frac(),
-                "symbol_notional_frac": self._current_symbol_notional_frac(
-                    intent.symbol
-                ),
-                "family_notional_frac": self._current_family_notional_frac(fam),
-                "symbol": str(intent.symbol),
-                "family": str(fam),
-                "archetype": str(intent.archetype),
-            }
             if self.stats_collector is not None:
                 self.stats_collector.record_pcm_selected(symbol, intent.archetype)
             accepted.append(self._apply_regime_scale(intent))
             logger.info(
-                "PCM: %s 选中 %s (scale=%.2f, total_notional=%.3f)",
+                "PCM: %s 选中 %s (scale=%.2f)",
                 symbol,
                 intent.archetype,
                 self.get_archetype_scale(intent.archetype),
-                float(self._notional_last_snapshot.get("total_notional_frac", 0.0)),
             )
         return accepted
 
@@ -1370,49 +1177,7 @@ class LivePCM:
     def _max_slots_for_strategy(self, archetype: str) -> int:
         """获取策略的 max_slots (从 per_strategy_limits 读取，缺省回退全局)"""
         strat = self._limit_cfg_for_archetype(archetype)
-        hard_cap = int(strat.get("max_slots", self._max_slots))
-        dynamic_cap = self._resolve_dynamic_slots(archetype, hard_cap)
-        return max(0, min(hard_cap, dynamic_cap))
-
-    def _resolve_dynamic_slots(self, archetype: str, hard_cap: int) -> int:
-        policy = dict(self._constitution.get("dynamic_slot_policy") or {})
-        bpc_cfg = dict(policy.get("bpc") or {})
-        if not bpc_cfg or not bool(bpc_cfg.get("enabled", False)):
-            return hard_cap
-        fam, _ = self._parse_family_and_side(archetype)
-        if fam != "bpc":
-            return hard_cap
-
-        base_slots = int(bpc_cfg.get("base_slots", 1))
-        max_slots = int(bpc_cfg.get("max_slots", hard_cap))
-        slots = max(1, min(hard_cap, max_slots, base_slots))
-        dd = float(self._latest_features.get("drawdown", 0.0) or 0.0)
-        daily_loss = float(self._latest_features.get("daily_loss", 0.0) or 0.0)
-        step2 = dict(bpc_cfg.get("step2") or {})
-        step3 = dict(bpc_cfg.get("step3") or {})
-        total_risk_cap = float(policy.get("total_risk_cap", 0.10))
-        risk_per_slot = float(self._constitution.get("risk_per_slot", 0.01))
-        strat_risk = self._risk_for_strategy(archetype)
-        used_risk = float(self._current_slot_count()) * risk_per_slot
-        remaining_risk = max(0.0, total_risk_cap - used_risk)
-        bpc_in_use = self._count_family_slots("bpc")
-        if (
-            max_slots >= 2
-            and dd <= float(step2.get("max_drawdown", 0.08))
-            and daily_loss <= float(step2.get("max_daily_loss", 0.03))
-            and bpc_in_use >= int(step2.get("min_active_bpc_slots", 1))
-            and remaining_risk >= strat_risk
-        ):
-            slots = max(slots, 2)
-        if (
-            max_slots >= 3
-            and dd <= float(step3.get("max_drawdown", 0.05))
-            and daily_loss <= float(step3.get("max_daily_loss", 0.02))
-            and bpc_in_use >= int(step3.get("min_active_bpc_slots", 2))
-            and remaining_risk >= strat_risk
-        ):
-            slots = max(slots, 3)
-        return max(1, min(hard_cap, max_slots, slots))
+        return max(0, int(strat.get("max_slots", self._max_slots)))
 
     def _risk_for_strategy(self, archetype: str) -> float:
         strat = self._limit_cfg_for_archetype(archetype)
@@ -1423,21 +1188,6 @@ class LivePCM:
             return min(risk_per_slot, float(strat.get("max_risk_per_trade")))
         except Exception:
             return risk_per_slot
-
-    def _count_family_slots(self, family: str) -> int:
-        fam = str(family or "").lower().strip()
-        if not fam:
-            return 0
-        n = 0
-        for k in self._slot_evidence:
-            try:
-                _, arch = k.split(":", 1)
-            except Exception:
-                continue
-            f, _ = self._parse_family_and_side(arch)
-            if f == fam:
-                n += 1
-        return n
 
     def _count_archetype_slots(self, archetype: str) -> int:
         """统计某 archetype 当前占用的 slot 数"""
@@ -1468,17 +1218,11 @@ class LivePCM:
         if archetype:
             key = f"{symbol}:{archetype}"
             self._slot_evidence.pop(key, None)
-            self._slot_notional_frac.pop(key, None)
         else:
             # archetype 未知，清理该 symbol 的所有 slot
             to_remove = [k for k in self._slot_evidence if k.startswith(f"{symbol}:")]
             for k in to_remove:
                 del self._slot_evidence[k]
-            to_remove_n = [
-                k for k in self._slot_notional_frac if k.startswith(f"{symbol}:")
-            ]
-            for k in to_remove_n:
-                del self._slot_notional_frac[k]
 
     # ── Quantiles 透传 ──
 
@@ -1535,23 +1279,6 @@ class LivePCM:
                 "slot_count": self._constitution.get("slot_count"),
                 "risk_per_slot": self._constitution.get("risk_per_slot"),
                 "per_strategy_limits": self._constitution.get("per_strategy_limits"),
-                "notional_policy": self._constitution.get("notional_policy"),
-            },
-            "notional_runtime": {
-                "total_notional_frac": self._current_total_notional_frac(),
-                "symbol_notional_frac": {
-                    str(k.split(":", 1)[0]): self._current_symbol_notional_frac(
-                        str(k.split(":", 1)[0])
-                    )
-                    for k in self._slot_notional_frac.keys()
-                },
-                "family_notional_frac": {
-                    fam: self._current_family_notional_frac(fam)
-                    for fam in {"bpc", "me", "fer", "lv"}
-                },
-                "slot_notional_frac": dict(self._slot_notional_frac),
-                "reject_counts": dict(self._notional_reject_counts),
-                "last_snapshot": dict(self._notional_last_snapshot),
             },
         }
         if self._regime_detector is not None:

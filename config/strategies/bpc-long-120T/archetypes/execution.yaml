@@ -12,7 +12,8 @@ stop_loss:
     max_stop_pct: 0.10
   breakeven:
     enabled: true
-    trigger_r: 4
+    trigger_r: 9
+    lock_profit_atr: 1.0 # 触发 breakeven 后，SL 锁到 entry + 1ATR（空头则 entry - 1ATR）
   trailing:
     activation_r: 9
     trail_r: 7.0 # 只会上提，不会往下放宽

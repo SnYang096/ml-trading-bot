@@ -148,6 +148,9 @@ def build_position_dict(
         pos["low_water_mark"] = entry_price if not is_long else None
         pos["breakeven_enabled"] = bpc_cfg.get("breakeven_enabled", False)
         pos["breakeven_trigger_r"] = float(bpc_cfg.get("breakeven_trigger_r", 1.0))
+        pos["breakeven_lock_profit_atr"] = float(
+            bpc_cfg.get("breakeven_lock_profit_atr", 0.0) or 0.0
+        )
         pos["breakeven_locked"] = False
         if "bar_minutes" in bpc_cfg:
             pos["bar_minutes"] = bpc_cfg["bar_minutes"]
@@ -169,6 +172,7 @@ def build_position_dict(
         pos["low_water_mark"] = entry_price if not is_long else None
         pos["breakeven_enabled"] = False
         pos["breakeven_locked"] = False
+        pos["breakeven_lock_profit_atr"] = 0.0
 
     # structural exit (EMA200 trend exit for BPC trend_hold)
     _structural_exit = rr_constraints.get("structural_exit")
@@ -258,7 +262,14 @@ def enforce_position(
             profit_r = (entry_price - check_price) / pos_atr
         if profit_r >= pos.get("breakeven_trigger_r", 1.0):
             pos["breakeven_locked"] = True
-            pos["stop_loss_price"] = entry_price
+            lock_profit_atr = float(pos.get("breakeven_lock_profit_atr", 0.0) or 0.0)
+            if lock_profit_atr > 0:
+                if is_long:
+                    pos["stop_loss_price"] = entry_price + lock_profit_atr * pos_atr
+                else:
+                    pos["stop_loss_price"] = entry_price - lock_profit_atr * pos_atr
+            else:
+                pos["stop_loss_price"] = entry_price
 
     # ── 3. Update high/low water mark ──
     if is_long and pos.get("high_water_mark") is not None:
