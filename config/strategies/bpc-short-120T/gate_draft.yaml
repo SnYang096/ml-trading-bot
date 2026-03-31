@@ -1,5 +1,5 @@
 # BPC-SHORT-120T Gate Draft (auto-generated)
-# 来源: results/train_final_20260331_190255_rr_extreme/bpc-short-120T
+# 来源: results/train_final_20260331_214332_rr_extreme/bpc-short-120T
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc-short-120T
@@ -16,71 +16,71 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_vol_slope_10
-  tag: HARD_VOL_SLOPE_10
+- id: gate_roc_20_roc_20
+  tag: HARD_ROC_20_ROC_20
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.21)
-  when:
-    vol_slope_10:
-      value_gt: 0.0001
-  then:
-    action: deny
-  comment: 'statistical(lift=1.21): vol_slope_10 > 0.0001474'
-- id: gate_vpin_volatility_20_vpin_volatility_20
-  tag: HARD_VPIN_VOLATILITY_20_VPIN_VOLATILITY_20
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.48)
+  reason: 统计验证规则 (lift=1.77)
   when:
     all_of:
-    - vpin_volatility_20:
-        value_gt: 0.0402
-    - vpin_volatility_20:
-        value_lt: 0.0467
+    - roc_20:
+        value_gt: -2.8099
+    - roc_20:
+        value_lt: 1.6414
   then:
     action: deny
-  comment: 'statistical(lift=1.48): vpin_volatility_20 > 0.04023 & vpin_volatility_20 < 0.04667'
+  comment: 'statistical(lift=1.77): roc_20 > -2.81 & roc_20 < 1.641'
+- id: gate_evt_var_99_left_evt_var_99_left
+  tag: HARD_EVT_VAR_99_LEFT_EVT_VAR_99_LEFT
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.47)
+  when:
+    all_of:
+    - evt_var_99_left:
+        value_gt: 0.5317
+    - evt_var_99_left:
+        value_lt: 0.7302
+  then:
+    action: deny
+  comment: 'statistical(lift=1.47): evt_var_99_left > 0.5317 & evt_var_99_left < 0.7302'
 - id: gate_oi_compression_score_oi_compression_score
   tag: HARD_OI_COMPRESSION_SCORE_OI_COMPRESSION_SCORE
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.32)
+  reason: 统计验证规则 (lift=1.40)
   when:
     all_of:
     - oi_compression_score:
-        value_gt: 0.2921
+        value_gt: 0.18
     - oi_compression_score:
-        value_lt: 0.3753
+        value_lt: 0.2766
   then:
     action: deny
-  comment: 'statistical(lift=1.32): oi_compression_score > 0.2921 & oi_compression_score < 0.3753'
-- id: gate_sr_strength_max_sr_strength_max
-  tag: HARD_SR_STRENGTH_MAX_SR_STRENGTH_MAX
+  comment: 'statistical(lift=1.40): oi_compression_score > 0.18 & oi_compression_score < 0.2766'
+- id: gate_price_momentum_div_score_pct_price_momentum_div_score_pct
+  tag: HARD_PRICE_MOMENTUM_DIV_SCORE_PCT_PRICE_MOMENTUM_DIV_SCORE_PCT
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.30)
+  reason: 统计验证规则 (lift=1.38)
   when:
     all_of:
-    - sr_strength_max:
-        value_gt: 3.4406
-    - sr_strength_max:
-        value_lt: 3.5394
+    - price_momentum_div_score_pct:
+        value_gt: 0.3766
+    - price_momentum_div_score_pct:
+        value_lt: 0.4898
   then:
     action: deny
-  comment: 'statistical(lift=1.30): sr_strength_max > 3.441 & sr_strength_max < 3.539'
-- id: gate_evt_scale_left_evt_scale_left
-  tag: HARD_EVT_SCALE_LEFT_EVT_SCALE_LEFT
+  comment: 'statistical(lift=1.38): price_momentum_div_score_pct > 0.3766 & price_momentum_div_score_pct < 0.4898'
+- id: gate_vp_entropy
+  tag: HARD_VP_ENTROPY
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.24)
+  reason: 统计验证规则 (lift=1.36)
   when:
-    all_of:
-    - evt_scale_left:
-        value_gt: 0.8532
-    - evt_scale_left:
-        value_lt: 0.9365
+    vp_entropy:
+      value_lt: 0.8769
   then:
     action: deny
-  comment: 'statistical(lift=1.24): evt_scale_left > 0.8532 & evt_scale_left < 0.9365'
+  comment: 'statistical(lift=1.36): vp_entropy < 0.8769'
 guardrails: []

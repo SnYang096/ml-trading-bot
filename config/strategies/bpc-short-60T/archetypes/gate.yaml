@@ -50,7 +50,7 @@ hard_gates:
   priority: 11
   reason: 统计验证规则 (lift=1.15)
   when:
-    vpin_quantile_rank:
+    vpin_quantile_rank_20:
       value_gt: 0.8
   then:
     action: deny

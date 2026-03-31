@@ -12,9 +12,9 @@ stop_loss:
     max_stop_pct: 0.10
   breakeven:
     enabled: true
-    trigger_r: 3
+    trigger_r: 9
   trailing:
-    activation_r: 2.5
+    activation_r: 9
     trail_r: 7.0 # 只会上提，不会往下放宽
   structural_exit: ema200 # 主退出: 价格穿越 EMA200 = 趋势结构破坏
 take_profit:

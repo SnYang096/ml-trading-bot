@@ -71,8 +71,8 @@ stitching:
   metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]
   export_trade_map_html: true
 event_backtest:
-  enabled: true
-  promote: true
+  enabled: false
+  promote: false
   sym_r_default: "1.0:1:6.0"
   sym_r_by_family:
     bpc: "2.0:1:6.0"
@@ -148,9 +148,6 @@ strategies:
   bpc-short-120T:
     config: config/strategies/bpc-short-120T
     timeframe: 120T
-    dates:
-      holdout_months: 9
-      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -208,9 +205,6 @@ strategies:
   bpc-long-120T:
     config: config/strategies/bpc-long-120T
     timeframe: 120T
-    dates:
-      holdout_months: 9
-      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
