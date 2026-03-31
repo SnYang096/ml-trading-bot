@@ -209,15 +209,14 @@ class EvidenceFeature:
         - amplify: 1.0
         """
         label = self.compute_label(value, quantiles)
-        if label == "suppress":
-            return 0.0
-        if label == "downweight":
-            return 0.25
-        if label == "favor":
-            return 0.75
-        if label == "amplify":
-            return 1.0
-        return 0.5
+        score_map = {
+            "suppress": 0.0,
+            "downweight": 0.25,
+            "neutral": 0.5,
+            "favor": 0.75,
+            "amplify": 1.0,
+        }
+        return score_map.get(label, 0.5)
 
 
 @dataclass

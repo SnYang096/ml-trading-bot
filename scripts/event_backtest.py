@@ -1249,7 +1249,6 @@ class EventBacktester:
         db_path: Optional[str] = None,
         data_path: Optional[str] = None,
         fee_rate: float = 0.0,
-        max_slots: Optional[int] = None,
     ):
         # Keep original strategy casing (e.g. "bpc-short-120T"), because
         # config paths are case-sensitive on Linux.
@@ -1258,7 +1257,6 @@ class EventBacktester:
         self.data_path = data_path  # 研究数据目录 (e.g. data/parquet_data)
         self.strategies_root = strategies_root or "config/strategies"
         self.fee_rate = fee_rate  # 单边手续费率
-        self.max_slots = max_slots
 
         # Per-strategy timeframe 映射
         self._tf_map: Dict[str, str] = {}  # {strategy: "240T"}
@@ -1295,12 +1293,9 @@ class EventBacktester:
                 pcm_regime_yaml if Path(pcm_regime_yaml).exists() else None
             ),
             get_open_slot_count=self._global_open_count,
-            max_slots=max_slots,
         )
         for s in self.strategy_names:
             self.pcm.register(s, self._strats[s], timeframe=self._tf_map[s])
-        if max_slots is not None and int(max_slots) > 0:
-            self._apply_backtest_slot_override(int(max_slots))
 
         # 特征计算器 — 按 unique timeframe 分组 (同 run_live.py)
         # BPC+FER 共享 240T FC，ME 独立 60T FC
@@ -1391,35 +1386,6 @@ class EventBacktester:
     def _global_open_count(self) -> int:
         """跨所有 symbol 的当前持仓数 (供 PCM slot 检查用)"""
         return sum(sim.position_count for sim in self._simulators.values())
-
-    def _apply_backtest_slot_override(self, max_slots: int) -> None:
-        """Override per-strategy slot cap for this backtest run only."""
-        try:
-            const = getattr(self.pcm, "_constitution", {}) or {}
-            limits = dict(const.get("per_strategy_limits") or {})
-            if not isinstance(limits, dict):
-                limits = {}
-            for s in self.strategy_names:
-                ss = str(s or "").strip().lower()
-                parts = [p for p in ss.split("-") if p]
-                if len(parts) >= 2 and parts[0] in {"bpc", "fer", "me"}:
-                    k = f"{parts[0]}-{parts[1]}"
-                elif parts:
-                    k = parts[0]
-                else:
-                    continue
-                cfg = dict(limits.get(k) or {})
-                cfg["max_slots"] = int(max_slots)
-                limits[k] = cfg
-            const["per_strategy_limits"] = limits
-            self.pcm._constitution = const
-            logger.info(
-                "EventBacktester: override per_strategy_limits.max_slots=%d for %s",
-                int(max_slots),
-                ", ".join(self.strategy_names),
-            )
-        except Exception as exc:
-            logger.warning("EventBacktester: failed to apply slot override: %s", exc)
 
     def run(
         self,
@@ -1909,31 +1875,6 @@ class EventBacktester:
                 except (TypeError, ValueError):
                     pass
 
-            # 同步持仓浮亏R到 PCM（用于“亏损最多优先”分级去杠杆）
-            if hasattr(self.pcm, "update_slot_loss_r"):
-                cur_px = float(primary_features.get("close", 0.0) or 0.0)
-                if cur_px > 0:
-                    for _pid, pos in simulator._positions.items():
-                        arch = str(pos.get("archetype", "") or "").strip()
-                        if not arch:
-                            continue
-                        entry_price = float(pos.get("entry_price", 0.0) or 0.0)
-                        risk = float(
-                            pos.get("initial_risk_distance")
-                            or pos.get("atr_at_entry")
-                            or 0.0
-                        )
-                        if entry_price <= 0 or risk <= 0:
-                            continue
-                        side = str(pos.get("side", "")).upper()
-                        is_long = side in {"LONG", "BUY"}
-                        current_r = (
-                            (cur_px - entry_price)
-                            if is_long
-                            else (entry_price - cur_px)
-                        ) / risk
-                        self.pcm.update_slot_loss_r(sym, arch, current_r)
-
             # LivePCM.decide() — 多策略仲裁 + 全局 slot 控制
             intents = self.pcm.decide(
                 features=primary_features,
@@ -1941,7 +1882,8 @@ class EventBacktester:
                 features_by_timeframe=features_by_tf,
             )
 
-            # PCM 分级去杠杆: 先执行驱逐，再处理本轮新信号
+            # NOTE: Evidence slot 竞争已移除 (改为入场门槛 + 仓位缩放)
+            # _last_evictions 始终为空, 此块保留为 no-op 以保持兼容
             for evicted_sym, evicted_arch in getattr(self.pcm, "_last_evictions", []):
                 ev_sim = self._simulators.get(evicted_sym)
                 if ev_sim and ev_sim.has_positions:
@@ -1969,8 +1911,8 @@ class EventBacktester:
                         _equity_curve.append(_equity)
                         if _equity > _equity_peak:
                             _equity_peak = _equity
-                    funnel.setdefault("evicted_by_deleveraging", 0)
-                    funnel["evicted_by_deleveraging"] += len(ev_closed)
+                    funnel.setdefault("evicted_by_evidence", 0)
+                    funnel["evicted_by_evidence"] += len(ev_closed)
 
             if intents:
                 funnel["signals_generated"] += len(intents)
@@ -2637,12 +2579,6 @@ def main():
         help="兼容参数: 当前仍使用 1min 精确持仓更新（用于保证与非 fast 一致）",
     )
     parser.add_argument(
-        "--max-slots",
-        type=int,
-        default=None,
-        help="可选: 覆盖 PCM 全局与已注册策略 max_slots（仅本次事件回测生效）",
-    )
-    parser.add_argument(
         "--resume-state",
         default=None,
         help="可选: 从 JSON 恢复上期未平仓状态",
@@ -2730,7 +2666,6 @@ def main():
         db_path=args.db,
         data_path=args.data_path,
         fee_rate=args.fee_rate,
-        max_slots=args.max_slots,
     )
 
     result = bt.run(

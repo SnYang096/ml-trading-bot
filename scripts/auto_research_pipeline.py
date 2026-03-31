@@ -3053,7 +3053,6 @@ def _run_event_backtest_step(
     opt_end_date: str = "",
     event_start_date: str = "",
     event_end_date: str = "",
-    max_slots: int = 0,
 ) -> Dict[str, Any]:
     """Step E1: 事件回测 execution 参数优化 + 交易地图生成."""
     log = run_dir / "pipeline.log"
@@ -3141,8 +3140,6 @@ def _run_event_backtest_step(
         ev_cmd.extend(["--dump-end-state", dump_end_state_path])
     if keep_open_positions:
         ev_cmd.append("--keep-open-positions")
-    if int(max_slots or 0) > 0:
-        ev_cmd.extend(["--max-slots", str(int(max_slots))])
     rc_ev, ev_out = run_step("Event Backtest", ev_cmd, log, dry_run=dry_run)
 
     event_metrics = _parse_event_stdout(ev_out) if not dry_run else {}
@@ -3954,7 +3951,6 @@ def _run_fast_month_stage(
     prev_side_state: Optional[Dict[str, Any]] = None,
     prev_resume_state_paths: Optional[Dict[str, str]] = None,
     keep_open_positions: bool = False,
-    max_slots: int = 0,
 ) -> Dict[str, Any]:
     """Run one-month fast loop with optional calib/test window split."""
     month_start, month_end = _month_token_to_range(month_token)
@@ -4183,7 +4179,6 @@ def _run_fast_month_stage(
                 resume_state_path=resume_state_path,
                 dump_end_state_path=end_state_path,
                 keep_open_positions=keep_open_positions,
-                max_slots=int(max_slots or 0),
             )
         else:
             print(f"   ⏭️  跳过事件回测: event_backtest.enabled=false ({strat})")
@@ -4478,12 +4473,6 @@ def main():
         help="事件回测 execution 优化的 sym-r 范围 (default: 1.0:0.5:4.0)",
     )
     p.add_argument(
-        "--max-slots",
-        type=int,
-        default=0,
-        help="可选: 覆盖事件回测 PCM 全局与策略 slot 上限（仅本次运行）",
-    )
-    p.add_argument(
         "--locked-prefilter-override",
         default="",
         help="可选: 指定 prefilter.yaml 作为 locked 规则来源 (调参工具专用)",
@@ -4654,7 +4643,6 @@ def main():
                 live_root=args.live_root,
                 data_path=cfg["data_path"],
                 event_sym_r=args.event_sym_r,
-                max_slots=int(args.max_slots or 0),
                 strategies_root=stage_root,
                 calibration_months=calibration_months,
                 calibrate_all_layers=(rolling_mode != "legacy"),
@@ -4748,7 +4736,6 @@ def main():
                 live_root=args.live_root,
                 data_path=cfg["data_path"],
                 event_sym_r=args.event_sym_r,
-                max_slots=int(args.max_slots or 0),
                 strategies_root=active_strategies_root,
                 calibration_months=calibration_months,
                 calibrate_all_layers=(rolling_mode != "legacy"),
@@ -5047,7 +5034,6 @@ def main():
                     max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
                     min_trades_soft=int(obj_cfg["min_trades_soft"]),
                     undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
-                    max_slots=int(args.max_slots or 0),
                 )
                 print(f"      rc={_res.get('rc')} output={_res.get('output')}")
             else:
@@ -5435,7 +5421,6 @@ def main():
                 max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
                 min_trades_soft=int(obj_cfg["min_trades_soft"]),
                 undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
-                max_slots=int(args.max_slots or 0),
             )
             ev_m = ev_result.get("metrics", {})
             print(

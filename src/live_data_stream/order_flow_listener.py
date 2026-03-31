@@ -915,37 +915,6 @@ class OrderFlowListener:
 
         intents = []
 
-        # 给 PCM 同步当前持仓浮亏R（用于“亏损最多优先”去杠杆）
-        if self.decision_handler is not None and hasattr(
-            self.decision_handler, "update_slot_loss_r"
-        ):
-            try:
-                current_price = self._resolve_entry_price(all_features)
-                if current_price is not None and current_price > 0:
-                    for _pid, pos in self._position_tracker.all_positions().items():
-                        arch = str(pos.get("archetype", "") or "").strip()
-                        if not arch:
-                            continue
-                        entry = float(pos.get("entry_price", 0.0) or 0.0)
-                        risk = float(
-                            pos.get("initial_risk_distance")
-                            or pos.get("atr_at_entry")
-                            or 0.0
-                        )
-                        if entry <= 0 or risk <= 0:
-                            continue
-                        side = str(pos.get("side", "")).upper()
-                        is_long = side in {"LONG", "BUY"}
-                        current_r = (
-                            ((current_price - entry) if is_long else (entry - current_price))
-                            / risk
-                        )
-                        self.decision_handler.update_slot_loss_r(
-                            self.symbol, arch, current_r
-                        )
-            except Exception:
-                logger.exception("[%s] 同步 slot_loss_r 失败", self.symbol)
-
         # 使用 decision_handler（GenericLiveStrategy / LivePCM 等）
         # 即使不交易也执行决策，以收集漏斗统计
         if self.decision_handler is not None:
@@ -966,39 +935,6 @@ class OrderFlowListener:
                     bars=(
                         self.memory_window.get_latest(240) if self.memory_window else []
                     ),
-                )
-
-        # 处理 PCM 分级去杠杆驱逐（先减仓，再评估本轮新单）
-        evictions = getattr(self.decision_handler, "_last_evictions", []) or []
-        for ev_symbol, ev_arch in evictions:
-            if str(ev_symbol) != str(self.symbol):
-                continue
-            closed_cnt = 0
-            for pid, pos in self._position_tracker.all_positions().items():
-                p_arch = str(pos.get("archetype", "") or "").strip().lower()
-                if p_arch != str(ev_arch or "").strip().lower():
-                    continue
-                qty = float(pos.get("qty") or 0.0)
-                if qty <= 0.0:
-                    continue
-                self._position_tracker.close(pid, qty, reason="pcm_deleveraging")
-                closed_cnt += 1
-                if hasattr(self.decision_handler, "notify_position_closed"):
-                    try:
-                        self.decision_handler.notify_position_closed(self.symbol, p_arch)
-                    except Exception:
-                        logger.exception(
-                            "[%s] deleveraging notify_position_closed 失败: %s/%s",
-                            self.symbol,
-                            self.symbol,
-                            p_arch,
-                        )
-            if closed_cnt > 0:
-                logger.warning(
-                    "[%s] PCM 去杠杆触发: archetype=%s closed=%d",
-                    self.symbol,
-                    ev_arch,
-                    closed_cnt,
                 )
 
         if not intents:

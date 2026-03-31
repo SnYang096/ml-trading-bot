@@ -104,24 +104,6 @@ mlbot feature-store build --no-docker \
 > 核心命令：`mlbot pipeline run`  
 > 自动完成：Prepare → SHAP → Prefilter → Gate → 向量回测 → PCM 联合回测 → ADOPT 决策
 
-### 4.0.1 三套管线一眼区分（先看这个）
-
-| 管线 | 入口命令 | 产物目录 | 典型用途 |
-|---|---|---|---|
-| 传统实验管线 | `mlbot pipeline run --stage full/event_backtest/...` | `results/research_history/<strategy>/<timestamp>/` | 单策略研究、对比实验、手动 adopt |
-| 快慢变量单月管线 | `mlbot pipeline run --stage fast_month --month YYYY-MM ...` | `results/.../_rolling_sim/<run_id>/fast_month_<month>/` | 快速验证某个月阈值/执行层/交易图 |
-| 滚动回测管线 | `mlbot pipeline run --stage rolling_sim ...` | `results/.../_rolling_sim/<run_id>/` | 多月连续验证与稳健性结论 |
-
-**禁止混用（最容易踩坑）**
-- `mlbot pipeline event-backtest` 只认 `research_history/<strategy>/<hash>` 结构。
-- `fast_month/rolling_sim` 产物在 `_rolling_sim/...`，不要再用 `pipeline event-backtest` 去重放。
-- 对 `_rolling_sim` 场景，优先直接重跑 `--stage fast_month` 或 `--stage rolling_sim`（可加 `--max-slots`）。
-
-**三选一决策**
-- 只看某个月执行细节：`fast_month`
-- 看跨月稳健性：`rolling_sim`
-- 只看某个历史实验 hash 的事件图：`pipeline event-backtest`
-
 ### 4.0 数据划分
 
 1. 应该划分训练集合（1年+），验证集合（调整阈值 3个月），holdout集合（3个月）

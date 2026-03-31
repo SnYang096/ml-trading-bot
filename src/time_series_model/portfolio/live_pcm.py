@@ -311,14 +311,13 @@ def _load_constitution_constraints(
     """
     defaults = {
         "slot_count": 2,
-        "slots_enabled": True,
         "risk_per_slot": 0.01,
         "per_strategy_limits": {},
         "add_position_rules": {},
         "dynamic_slot_policy": {},
         "intent_selection_policy": {},
         "direction_policy": {},
-        "risk_budget_policy": {},
+        "notional_policy": {},
     }
     if not constitution_yaml:
         return defaults
@@ -342,14 +341,13 @@ def _load_constitution_constraints(
     )
     return {
         "slot_count": int(slots.get("slot_count", 2)),
-        "slots_enabled": bool(slots.get("enabled", True)),
         "risk_per_slot": float(slots.get("risk_per_slot", 0.01)),
         "per_strategy_limits": dict(ra.get("per_strategy_limits") or {}),
         "add_position_rules": dict(add_rules),
         "dynamic_slot_policy": dict(ra.get("dynamic_slot_policy") or {}),
         "intent_selection_policy": dict(ra.get("intent_selection_policy") or {}),
         "direction_policy": dict(ra.get("direction_policy") or {}),
-        "risk_budget_policy": dict(ra.get("risk_budget_policy") or {}),
+        "notional_policy": dict(ra.get("notional_policy") or {}),
         "evidence_min_score": float(ra.get("evidence_min_score", 0.0)),
         "evidence_position_scale": bool(ra.get("evidence_position_scale", True)),
     }
@@ -402,20 +400,15 @@ class LivePCM:
 
         # Slot 追踪: key = "{symbol}:{archetype}", value = True
         self._slot_evidence: Dict[str, float] = {}
-        # Per-slot loss metric in R (higher means worse loss, e.g. max(0, -current_r)).
-        self._slot_loss_r: Dict[str, float] = {}
-        # Per-slot risk usage (fraction of equity), used by percent budget policy.
-        self._slot_risk_frac: Dict[str, float] = {}
-        self._slot_stop_pct: Dict[str, float] = {}
-        self._risk_reject_counts: Dict[str, int] = {
+        self._slot_notional_frac: Dict[str, float] = {}
+        self._notional_reject_counts: Dict[str, int] = {
             "symbol_cap": 0,
             "family_cap": 0,
-            "total_cap": 0,
-            "stress_cap": 0,
-            "deleverage_freeze": 0,
+            "hard_cap": 0,
+            "soft_cap_new_slot": 0,
+            "soft_cap_non_winner_add": 0,
         }
-        self._risk_last_snapshot: Dict[str, Any] = {}
-        self._last_evictions: List[Tuple[str, str]] = []
+        self._notional_last_snapshot: Dict[str, Any] = {}
         self._latest_features: Dict[str, Any] = {}
         self._dir_state: Dict[str, Dict[str, Any]] = {}
 
@@ -452,14 +445,6 @@ class LivePCM:
         if not _const_yaml and self._regime_cfg:
             _const_yaml = self._regime_cfg.get("constitution_ref")
         self._constitution = _load_constitution_constraints(_const_yaml)
-        _risk_pol = dict(self._constitution.get("risk_budget_policy") or {})
-        self._slot_gate_enabled = bool(self._constitution.get("slots_enabled", True))
-        if (
-            bool(_risk_pol.get("enabled", False))
-            and str(_risk_pol.get("risk_budget_mode", "")).strip().lower() == "percent"
-            and bool(_risk_pol.get("disable_slot_gate", False))
-        ):
-            self._slot_gate_enabled = False
 
         # max_slots: 显式参数 > constitution > 默认 2
         if max_slots is not None:
@@ -471,7 +456,6 @@ class LivePCM:
             self._max_slots,
             "explicit" if max_slots is not None else "constitution",
         )
-        logger.info("PCM: slot_gate_enabled=%s", self._slot_gate_enabled)
 
         # 静态优先级（当无 regime detector 时使用）
         self._archetype_priority = archetype_priority or list(
@@ -547,37 +531,40 @@ class LivePCM:
                 return cand
         return {}
 
-    def _estimate_intent_risk_frac(
+    def _estimate_intent_notional_frac(
         self,
         intent: TradeIntent,
         meta: Dict[str, Any],
     ) -> float:
-        """Estimate incremental risk fraction to equity for intent.
+        """Estimate incremental notional fraction to equity for intent.
 
-        Percent budget mode uses risk fraction directly:
-          delta_risk ~= resolve_risk_for_strategy * size_multiplier
+        Approximation:
+          notional_frac ~= risk_frac / effective_stop_pct * size_multiplier
         """
         risk_frac = float(self.resolve_risk_for_strategy(str(intent.archetype)))
+        stop_pct = float(meta.get("effective_stop_pct", float("inf")) or float("inf"))
         size_mult = float(intent.size_multiplier or 1.0)
-        return max(0.0, risk_frac * max(0.0, size_mult))
+        if stop_pct <= 1e-9 or not (stop_pct < float("inf")):
+            return 0.0
+        return max(0.0, (risk_frac / stop_pct) * max(0.0, size_mult))
 
-    def _current_total_risk_frac(self) -> float:
+    def _current_total_notional_frac(self) -> float:
         return float(
-            sum(max(0.0, float(v or 0.0)) for v in self._slot_risk_frac.values())
+            sum(max(0.0, float(v or 0.0)) for v in self._slot_notional_frac.values())
         )
 
-    def _current_symbol_risk_frac(self, symbol: str) -> float:
+    def _current_symbol_notional_frac(self, symbol: str) -> float:
         sym = str(symbol)
         total = 0.0
-        for k, v in self._slot_risk_frac.items():
+        for k, v in self._slot_notional_frac.items():
             if k.startswith(f"{sym}:"):
                 total += max(0.0, float(v or 0.0))
         return float(total)
 
-    def _current_family_risk_frac(self, family: str) -> float:
+    def _current_family_notional_frac(self, family: str) -> float:
         fam = str(family or "").lower().strip()
         total = 0.0
-        for k, v in self._slot_risk_frac.items():
+        for k, v in self._slot_notional_frac.items():
             try:
                 _, arch = k.split(":", 1)
             except Exception:
@@ -586,209 +573,6 @@ class LivePCM:
             if f == fam:
                 total += max(0.0, float(v or 0.0))
         return float(total)
-
-    def _released_slot_count(self, family: str, residual: float) -> int:
-        fam = str(family or "").lower().strip()
-        n = 0
-        thr = max(0.0, float(residual)) + 1e-9
-        for key, risk in self._slot_risk_frac.items():
-            try:
-                _, arch = key.split(":", 1)
-            except Exception:
-                continue
-            f, _ = self._parse_family_and_side(arch)
-            if f == fam and float(risk or 0.0) <= thr and float(risk or 0.0) > 0.0:
-                n += 1
-        return n
-
-    def _drawdown_cap_multiplier(self, policy: Dict[str, Any]) -> float:
-        shrink = dict(policy.get("shrink") or {})
-        if not bool(shrink.get("enabled", False)):
-            return 1.0
-        dd = max(0.0, float(self._latest_features.get("drawdown", 0.0) or 0.0))
-        tiers = list(shrink.get("by_drawdown") or [])
-        mult = 1.0
-        for t in tiers:
-            if not isinstance(t, dict):
-                continue
-            try:
-                dd_thr = float(t.get("drawdown_gte", 0.0) or 0.0)
-                cap_mult = float(t.get("cap_multiplier", 1.0) or 1.0)
-            except Exception:
-                continue
-            if dd >= dd_thr:
-                mult = min(mult, max(0.05, cap_mult))
-        return float(mult)
-
-    def _dynamic_caps(
-        self,
-        *,
-        family: str,
-        policy: Dict[str, Any],
-    ) -> Dict[str, float]:
-        total_cap = max(0.0, float(policy.get("max_total_risk_pct", 0.05) or 0.0))
-        family_cap = max(0.0, float(policy.get("max_family_risk_pct", 0.03) or 0.0))
-        symbol_cap = max(0.0, float(policy.get("max_symbol_risk_pct", 0.015) or 0.0))
-
-        # Profit-up expansion
-        exp = dict(policy.get("expansion") or {})
-        total_mult = 1.0
-        family_mult = 1.0
-        symbol_mult = 1.0
-        if bool(exp.get("enabled", False)):
-            targets = {
-                str(x).lower().strip() for x in (exp.get("target_families") or ["bpc"])
-            }
-            if str(family or "").lower().strip() in targets:
-                residual = float(
-                    policy.get("breakeven_residual_risk_pct", 0.001) or 0.0
-                )
-                released = self._released_slot_count(
-                    str(family or "").lower().strip(), residual
-                )
-                trigger = int(exp.get("trigger_released_slots", 1) or 1)
-                step_slots = max(1, int(exp.get("step_released_slots", 1) or 1))
-                step_mult = float(exp.get("step_multiplier", 0.25) or 0.0)
-                if released >= trigger:
-                    steps = ((released - trigger) // step_slots) + 1
-                    bump = max(0.0, float(steps) * max(0.0, step_mult))
-                    family_mult = 1.0 + bump
-                    total_mult = 1.0 + bump
-                    symbol_mult = 1.0 + bump * 0.5
-                family_mult = min(
-                    family_mult,
-                    max(1.0, float(exp.get("max_family_multiplier", 3.0) or 3.0)),
-                )
-                total_mult = min(
-                    total_mult,
-                    max(1.0, float(exp.get("max_total_multiplier", 2.0) or 2.0)),
-                )
-                symbol_mult = min(
-                    symbol_mult,
-                    max(1.0, float(exp.get("max_symbol_multiplier", 1.5) or 1.5)),
-                )
-
-        shrink_mult = self._drawdown_cap_multiplier(policy)
-        total_cap_eff = total_cap * total_mult * shrink_mult
-        family_cap_eff = family_cap * family_mult * shrink_mult
-        symbol_cap_eff = symbol_cap * symbol_mult * shrink_mult
-        return {
-            "total_cap": float(total_cap_eff),
-            "family_cap": float(family_cap_eff),
-            "symbol_cap": float(symbol_cap_eff),
-            "total_mult": float(total_mult),
-            "family_mult": float(family_mult),
-            "symbol_mult": float(symbol_mult),
-            "shrink_mult": float(shrink_mult),
-        }
-
-    def _slot_stress_loss(self, slot_key: str, shock_pct: float) -> float:
-        risk = max(0.0, float(self._slot_risk_frac.get(slot_key, 0.0) or 0.0))
-        stop_pct = max(1e-6, float(self._slot_stop_pct.get(slot_key, 0.0) or 0.0))
-        if risk <= 0.0 or stop_pct <= 0.0:
-            return 0.0
-        notional = risk / stop_pct
-        return max(0.0, notional * max(0.0, float(shock_pct)))
-
-    def _estimate_stress_usage(
-        self,
-        *,
-        policy: Dict[str, Any],
-        slot_key: str,
-        delta_risk: float,
-        delta_stop_pct: float,
-    ) -> Dict[str, float]:
-        stress_cfg = dict(policy.get("stress") or {})
-        if not bool(stress_cfg.get("enabled", False)):
-            return {"before": 0.0, "after": 0.0, "cap": 0.0}
-        shock_pct = max(0.0, float(stress_cfg.get("shock_pct", 0.0) or 0.0))
-        cap = max(0.0, float(stress_cfg.get("max_stress_loss_pct", 0.0) or 0.0))
-        before = 0.0
-        for key in self._slot_risk_frac.keys():
-            before += self._slot_stress_loss(key, shock_pct)
-        delta = 0.0
-        if delta_risk > 0.0 and delta_stop_pct > 0.0:
-            delta = (delta_risk / max(1e-6, delta_stop_pct)) * shock_pct
-        after = before + max(0.0, delta)
-        return {"before": float(before), "after": float(after), "cap": float(cap)}
-
-    def _plan_tiered_deleveraging(
-        self,
-        *,
-        symbol: str,
-        policy: Dict[str, Any],
-    ) -> Tuple[List[Tuple[str, str]], bool]:
-        delev = dict(policy.get("deleveraging") or {})
-        if not bool(delev.get("enabled", False)):
-            return [], False
-
-        total_cap = max(1e-9, float(policy.get("max_total_risk_pct", 0.05) or 0.05))
-        total_now = self._current_total_risk_frac()
-        usage = total_now / total_cap if total_cap > 0 else 0.0
-
-        freeze_ratio = float(delev.get("freeze_new_entries_ratio", 1.0) or 1.0)
-        freeze_new = usage >= freeze_ratio
-
-        tiers = []
-        for t in list(delev.get("tiers") or []):
-            if not isinstance(t, dict):
-                continue
-            try:
-                trig = float(t.get("trigger_ratio", 0.0) or 0.0)
-                reduce_to = float(t.get("reduce_to_ratio", 1.0) or 1.0)
-            except Exception:
-                continue
-            tiers.append((trig, reduce_to))
-        tiers = sorted(tiers, key=lambda x: x[0], reverse=True)
-
-        target_ratio = None
-        for trig, reduce_to in tiers:
-            if usage >= trig:
-                target_ratio = reduce_to
-                break
-        if target_ratio is None:
-            return [], freeze_new
-
-        target_total = max(0.0, target_ratio * total_cap)
-        to_reduce = max(0.0, total_now - target_total)
-        if to_reduce <= 1e-12:
-            return [], freeze_new
-
-        cands: List[Tuple[str, str, float, float]] = []
-        for key, risk in self._slot_risk_frac.items():
-            if not key.startswith(f"{symbol}:"):
-                continue
-            try:
-                sym, arch = key.split(":", 1)
-            except Exception:
-                continue
-            loss_r = float(self._slot_loss_r.get(key, 0.0) or 0.0)
-            cands.append((sym, arch, max(0.0, float(risk or 0.0)), max(0.0, loss_r)))
-        # Worst-loss first, then higher risk concentration first.
-        cands.sort(key=lambda x: (-x[3], -x[2]))
-
-        evictions: List[Tuple[str, str]] = []
-        reduced = 0.0
-        for sym, arch, risk, _ev in cands:
-            if reduced >= to_reduce - 1e-12:
-                break
-            key = f"{sym}:{arch}"
-            reduced += risk
-            evictions.append((sym, arch))
-            self._slot_evidence.pop(key, None)
-            self._slot_risk_frac.pop(key, None)
-            self._slot_stop_pct.pop(key, None)
-            self._slot_loss_r.pop(key, None)
-
-        if evictions:
-            logger.warning(
-                "PCM: 触发分级去杠杆 usage=%.3f target=%.3f reduce=%.4f evictions=%s",
-                usage,
-                float(target_ratio),
-                float(to_reduce),
-                evictions,
-            )
-        return evictions, freeze_new
 
     def _winner_priority_ok(
         self,
@@ -1248,20 +1032,7 @@ class LivePCM:
 
         # ── 3. 每策略独立 slot 检查 (无跨策略竞争) ──
         _dir_pol = dict(self._constitution.get("direction_policy") or {})
-        _risk_pol = dict(self._constitution.get("risk_budget_policy") or {})
-        _mode = str(_risk_pol.get("risk_budget_mode", "percent")).strip().lower()
-        if bool(_risk_pol.get("enabled", True)) and _mode != "percent":
-            logger.error(
-                "PCM: unsupported risk_budget_mode=%s (expected percent)", _mode
-            )
-            return []
-
-        _evictions, _freeze_new_entries = self._plan_tiered_deleveraging(
-            symbol=str(symbol),
-            policy=_risk_pol,
-        )
-        if _evictions:
-            self._last_evictions.extend(_evictions)
+        _notional_pol = dict(self._constitution.get("notional_policy") or {})
         _market_side = self._effective_market_side(
             symbol=str(symbol),
             features=features,
@@ -1309,132 +1080,102 @@ class LivePCM:
 
             # ── 3.1 Notional 预算约束 (soft/hard + winner priority) ──
             fam, side = self._parse_family_and_side(intent.archetype, intent.action)
-            delta_risk = self._estimate_intent_risk_frac(
-                intent, _intent_meta.get(id(intent), {})
-            )
-            _slot_key = f"{intent.symbol}:{intent.archetype}"
-            # Break-even positions release risk budget (keeps a tiny residual buffer).
-            if (
-                _slot_key in self._slot_risk_frac
-                and bool(_risk_pol.get("breakeven_release_enabled", True))
-                and bool(intent.locked_profit)
-            ):
-                residual = float(
-                    _risk_pol.get("breakeven_residual_risk_pct", 0.001) or 0.0
-                )
-                self._slot_risk_frac[_slot_key] = min(
-                    float(self._slot_risk_frac.get(_slot_key, 0.0) or 0.0),
-                    max(0.0, residual),
-                )
+            md = _intent_meta.get(id(intent), {})
+            delta_notional = self._estimate_intent_notional_frac(intent, md)
+            total_before = self._current_total_notional_frac()
+            total_after = total_before + delta_notional
+            sym_before = self._current_symbol_notional_frac(intent.symbol)
+            sym_after = sym_before + delta_notional
+            fam_before = self._current_family_notional_frac(fam)
+            fam_after = fam_before + delta_notional
 
-            total_before = self._current_total_risk_frac()
-            sym_before = self._current_symbol_risk_frac(intent.symbol)
-            fam_before = self._current_family_risk_frac(fam)
-            total_after = total_before + delta_risk
-            sym_after = sym_before + delta_risk
-            fam_after = fam_before + delta_risk
-
-            if bool(_risk_pol.get("enabled", True)):
-                caps = self._dynamic_caps(family=fam, policy=_risk_pol)
-                total_cap = float(caps.get("total_cap", 0.0) or 0.0)
-                fam_cap = float(caps.get("family_cap", 0.0) or 0.0)
-                sym_cap = float(caps.get("symbol_cap", 0.0) or 0.0)
-                logger.debug(
-                    "PCM Caps: symbol=%s family=%s caps(total=%.4f,family=%.4f,symbol=%.4f) mult(total=%.2f,family=%.2f,symbol=%.2f) shrink=%.2f",
-                    intent.symbol,
-                    fam,
-                    total_cap,
-                    fam_cap,
-                    sym_cap,
-                    float(caps.get("total_mult", 1.0)),
-                    float(caps.get("family_mult", 1.0)),
-                    float(caps.get("symbol_mult", 1.0)),
-                    float(caps.get("shrink_mult", 1.0)),
+            if bool(_notional_pol.get("enabled", False)):
+                hard_cap = float(
+                    _notional_pol.get("hard_max_total_notional_pct", 0.0) or 0.0
                 )
-
-                if _freeze_new_entries and not bool(intent.add_position):
-                    self._risk_reject_counts["deleverage_freeze"] = (
-                        int(self._risk_reject_counts.get("deleverage_freeze", 0)) + 1
-                    )
-                    logger.info(
-                        "PCM: 去杠杆冻结新仓拒绝 %s %s (total_usage=%.3f)",
-                        intent.symbol,
-                        intent.archetype,
-                        self._current_total_risk_frac() / max(1e-9, total_cap),
-                    )
-                    continue
+                soft_cap = float(
+                    _notional_pol.get("soft_max_total_notional_pct", 0.0) or 0.0
+                )
+                sym_cap = float(
+                    _notional_pol.get("max_symbol_notional_pct", 0.0) or 0.0
+                )
+                fam_cap = float(
+                    _notional_pol.get("max_family_notional_pct", 0.0) or 0.0
+                )
 
                 if sym_cap > 0 and sym_after > sym_cap + 1e-12:
-                    self._risk_reject_counts["symbol_cap"] = (
-                        int(self._risk_reject_counts.get("symbol_cap", 0)) + 1
+                    self._notional_reject_counts["symbol_cap"] = (
+                        int(self._notional_reject_counts.get("symbol_cap", 0)) + 1
                     )
                     logger.info(
-                        "PCM: symbol 风险预算超限拒绝 %s %s "
-                        "(before=%.4f + delta=%.4f => after=%.4f > cap=%.4f, remain=%.4f)",
+                        "PCM: symbol 名义敞口超限拒绝 %s %s (after=%.3f > cap=%.3f)",
                         intent.symbol,
                         intent.archetype,
-                        sym_before,
-                        delta_risk,
                         sym_after,
                         sym_cap,
-                        max(0.0, sym_cap - sym_before),
                     )
                     continue
                 if fam_cap > 0 and fam_after > fam_cap + 1e-12:
-                    self._risk_reject_counts["family_cap"] = (
-                        int(self._risk_reject_counts.get("family_cap", 0)) + 1
+                    self._notional_reject_counts["family_cap"] = (
+                        int(self._notional_reject_counts.get("family_cap", 0)) + 1
                     )
                     logger.info(
-                        "PCM: family 风险预算超限拒绝 %s %s "
-                        "(before=%.4f + delta=%.4f => after=%.4f > cap=%.4f, remain=%.4f)",
+                        "PCM: family 名义敞口超限拒绝 %s %s (after=%.3f > cap=%.3f)",
                         intent.symbol,
                         intent.archetype,
-                        fam_before,
-                        delta_risk,
                         fam_after,
                         fam_cap,
-                        max(0.0, fam_cap - fam_before),
                     )
                     continue
-                if total_cap > 0 and total_after > total_cap + 1e-12:
-                    self._risk_reject_counts["total_cap"] = (
-                        int(self._risk_reject_counts.get("total_cap", 0)) + 1
+                if hard_cap > 0 and total_after > hard_cap + 1e-12:
+                    self._notional_reject_counts["hard_cap"] = (
+                        int(self._notional_reject_counts.get("hard_cap", 0)) + 1
                     )
                     logger.info(
-                        "PCM: total 风险预算超限拒绝 %s %s "
-                        "(before=%.4f + delta=%.4f => after=%.4f > cap=%.4f, remain=%.4f)",
+                        "PCM: hard total notional 超限拒绝 %s %s (after=%.3f > cap=%.3f)",
                         intent.symbol,
                         intent.archetype,
-                        total_before,
-                        delta_risk,
                         total_after,
-                        total_cap,
-                        max(0.0, total_cap - total_before),
+                        hard_cap,
                     )
                     continue
-                _meta = _intent_meta.get(id(intent), {})
-                _stop = float(_meta.get("effective_stop_pct", 0.0) or 0.0)
-                stress = self._estimate_stress_usage(
-                    policy=_risk_pol,
-                    slot_key=_slot_key,
-                    delta_risk=delta_risk,
-                    delta_stop_pct=_stop,
-                )
-                if stress["cap"] > 0 and stress["after"] > stress["cap"] + 1e-12:
-                    self._risk_reject_counts["stress_cap"] = (
-                        int(self._risk_reject_counts.get("stress_cap", 0)) + 1
-                    )
-                    logger.info(
-                        "PCM: stress 预算超限拒绝 %s %s "
-                        "(before=%.4f + delta=%.4f => after=%.4f > cap=%.4f)",
-                        intent.symbol,
-                        intent.archetype,
-                        stress["before"],
-                        max(0.0, stress["after"] - stress["before"]),
-                        stress["after"],
-                        stress["cap"],
-                    )
-                    continue
+                if soft_cap > 0 and total_after > soft_cap + 1e-12:
+                    wp = dict(_notional_pol.get("winner_priority") or {})
+                    if bool(
+                        wp.get("block_new_slots_when_soft_cap_hit", True)
+                    ) and not bool(intent.add_position):
+                        self._notional_reject_counts["soft_cap_new_slot"] = (
+                            int(
+                                self._notional_reject_counts.get("soft_cap_new_slot", 0)
+                            )
+                            + 1
+                        )
+                        logger.info(
+                            "PCM: soft cap 区间拒绝新slot %s %s (after=%.3f > cap=%.3f)",
+                            intent.symbol,
+                            intent.archetype,
+                            total_after,
+                            soft_cap,
+                        )
+                        continue
+                    if not self._winner_priority_ok(
+                        intent, family=fam, policy=_notional_pol
+                    ):
+                        self._notional_reject_counts["soft_cap_non_winner_add"] = (
+                            int(
+                                self._notional_reject_counts.get(
+                                    "soft_cap_non_winner_add", 0
+                                )
+                            )
+                            + 1
+                        )
+                        logger.info(
+                            "PCM: soft cap 区间拒绝非winner加仓 %s %s",
+                            intent.symbol,
+                            intent.archetype,
+                        )
+                        continue
+            _slot_key = f"{intent.symbol}:{intent.archetype}"
             if _slot_key in self._slot_evidence and not bool(intent.add_position):
                 # 已有同 symbol+archetype 仓位：将意图标记为加仓，让下游走 try_add_position
                 # (此前直接 continue 会导致加仓链路完全不触发)
@@ -1444,10 +1185,8 @@ class LivePCM:
                     intent.symbol,
                     intent.archetype,
                 )
-            if (
-                self._slot_gate_enabled
-                and not bool(intent.add_position)
-                and not self._slot_available(symbol, intent.archetype)
+            if not bool(intent.add_position) and not self._slot_available(
+                symbol, intent.archetype
             ):
                 # 该策略 slot 满 → 直接拒绝
                 logger.info(
@@ -1458,45 +1197,31 @@ class LivePCM:
                     self._max_slots_for_strategy(intent.archetype),
                 )
                 continue
+            ev = intent.confidence if intent.confidence is not None else 0.5
             if not bool(intent.add_position):
-                self._record_slot(symbol, intent.archetype, 0.0)
-            self._slot_risk_frac[_slot_key] = max(
-                0.0, float(self._slot_risk_frac.get(_slot_key, 0.0) or 0.0)
-            ) + max(0.0, delta_risk)
-            _meta = _intent_meta.get(id(intent), {})
-            try:
-                _eff_stop = float(_meta.get("effective_stop_pct", 0.0) or 0.0)
-            except Exception:
-                _eff_stop = 0.0
-            if _eff_stop > 0:
-                self._slot_stop_pct[_slot_key] = _eff_stop
-            self._risk_last_snapshot = {
-                "total_risk_frac": self._current_total_risk_frac(),
-                "symbol_risk_frac": self._current_symbol_risk_frac(intent.symbol),
-                "family_risk_frac": self._current_family_risk_frac(fam),
+                self._record_slot(symbol, intent.archetype, ev)
+            self._slot_notional_frac[_slot_key] = max(
+                0.0, float(self._slot_notional_frac.get(_slot_key, 0.0) or 0.0)
+            ) + max(0.0, delta_notional)
+            self._notional_last_snapshot = {
+                "total_notional_frac": self._current_total_notional_frac(),
+                "symbol_notional_frac": self._current_symbol_notional_frac(
+                    intent.symbol
+                ),
+                "family_notional_frac": self._current_family_notional_frac(fam),
                 "symbol": str(intent.symbol),
                 "family": str(fam),
                 "archetype": str(intent.archetype),
-                "dynamic_caps": (
-                    dict(caps) if bool(_risk_pol.get("enabled", True)) else {}
-                ),
-                "stress_usage": self._estimate_stress_usage(
-                    policy=_risk_pol,
-                    slot_key=_slot_key,
-                    delta_risk=0.0,
-                    delta_stop_pct=0.0,
-                ),
-                "deleveraging_evictions": list(self._last_evictions),
             }
             if self.stats_collector is not None:
                 self.stats_collector.record_pcm_selected(symbol, intent.archetype)
             accepted.append(self._apply_regime_scale(intent))
             logger.info(
-                "PCM: %s 选中 %s (scale=%.2f, total_risk=%.4f)",
+                "PCM: %s 选中 %s (scale=%.2f, total_notional=%.3f)",
                 symbol,
                 intent.archetype,
                 self.get_archetype_scale(intent.archetype),
-                float(self._risk_last_snapshot.get("total_risk_frac", 0.0)),
+                float(self._notional_last_snapshot.get("total_notional_frac", 0.0)),
             )
         return accepted
 
@@ -1743,37 +1468,17 @@ class LivePCM:
         if archetype:
             key = f"{symbol}:{archetype}"
             self._slot_evidence.pop(key, None)
-            self._slot_risk_frac.pop(key, None)
-            self._slot_stop_pct.pop(key, None)
-            self._slot_loss_r.pop(key, None)
+            self._slot_notional_frac.pop(key, None)
         else:
             # archetype 未知，清理该 symbol 的所有 slot
             to_remove = [k for k in self._slot_evidence if k.startswith(f"{symbol}:")]
             for k in to_remove:
                 del self._slot_evidence[k]
-            to_remove_r = [
-                k for k in self._slot_risk_frac if k.startswith(f"{symbol}:")
+            to_remove_n = [
+                k for k in self._slot_notional_frac if k.startswith(f"{symbol}:")
             ]
-            for k in to_remove_r:
-                del self._slot_risk_frac[k]
-            to_remove_s = [k for k in self._slot_stop_pct if k.startswith(f"{symbol}:")]
-            for k in to_remove_s:
-                del self._slot_stop_pct[k]
-            to_remove_l = [k for k in self._slot_loss_r if k.startswith(f"{symbol}:")]
-            for k in to_remove_l:
-                del self._slot_loss_r[k]
-
-    def update_slot_loss_r(self, symbol: str, archetype: str, current_r: float) -> None:
-        """Update per-slot loss metric for deleveraging ranking.
-
-        current_r: unrealized R multiple of an open position. Negative means loss.
-        """
-        key = f"{symbol}:{archetype}"
-        try:
-            cur = float(current_r)
-        except Exception:
-            return
-        self._slot_loss_r[key] = max(0.0, -cur)
+            for k in to_remove_n:
+                del self._slot_notional_frac[k]
 
     # ── Quantiles 透传 ──
 
@@ -1827,30 +1532,26 @@ class LivePCM:
                 list(self._override_config.keys()) if self._override_config else []
             ),
             "constitution": {
-                "slots_enabled": self._constitution.get("slots_enabled"),
                 "slot_count": self._constitution.get("slot_count"),
                 "risk_per_slot": self._constitution.get("risk_per_slot"),
                 "per_strategy_limits": self._constitution.get("per_strategy_limits"),
-                "risk_budget_policy": self._constitution.get("risk_budget_policy"),
+                "notional_policy": self._constitution.get("notional_policy"),
             },
-            "risk_budget_runtime": {
-                "total_risk_frac": self._current_total_risk_frac(),
-                "symbol_risk_frac": {
-                    str(k.split(":", 1)[0]): self._current_symbol_risk_frac(
+            "notional_runtime": {
+                "total_notional_frac": self._current_total_notional_frac(),
+                "symbol_notional_frac": {
+                    str(k.split(":", 1)[0]): self._current_symbol_notional_frac(
                         str(k.split(":", 1)[0])
                     )
-                    for k in self._slot_risk_frac.keys()
+                    for k in self._slot_notional_frac.keys()
                 },
-                "family_risk_frac": {
-                    fam: self._current_family_risk_frac(fam)
+                "family_notional_frac": {
+                    fam: self._current_family_notional_frac(fam)
                     for fam in {"bpc", "me", "fer", "lv"}
                 },
-                "slot_risk_frac": dict(self._slot_risk_frac),
-                "slot_stop_pct": dict(self._slot_stop_pct),
-                "slot_loss_r": dict(self._slot_loss_r),
-                "reject_counts": dict(self._risk_reject_counts),
-                "last_snapshot": dict(self._risk_last_snapshot),
-                "last_evictions": list(self._last_evictions),
+                "slot_notional_frac": dict(self._slot_notional_frac),
+                "reject_counts": dict(self._notional_reject_counts),
+                "last_snapshot": dict(self._notional_last_snapshot),
             },
         }
         if self._regime_detector is not None:

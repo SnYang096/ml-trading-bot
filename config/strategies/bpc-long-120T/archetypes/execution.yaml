@@ -12,7 +12,7 @@ stop_loss:
     max_stop_pct: 0.10
   breakeven:
     enabled: true
-    trigger_r: 9
+    trigger_r: 4
   trailing:
     activation_r: 9
     trail_r: 7.0 # 只会上提，不会往下放宽
