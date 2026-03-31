@@ -33,7 +33,7 @@ stop_loss:
   structural_exit: ema200
   trailing:
     activation_r: 9.0
-    trail_r: 7.0
+    trail_r: 18.0
   type: trailing
 take_profit:
   enabled: false

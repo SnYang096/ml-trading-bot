@@ -94,7 +94,7 @@ event_backtest:
       min_trades_soft: 60
       undertrade_penalty: 0.002
 pcm_slot_grid:
-  enabled: true
+  enabled: false
   plateau_delta: 0.03
   min_trades_soft: 80
   penalties:
@@ -270,24 +270,6 @@ shap_feature_selection:
     - fer_failure_signals_f
   apply_to:
     - features.yaml
-comparison:
-  min_trades: 30
-  sharpe_adopt_ratio: 0.7
-  sharpe_reject_floor: 0.0
-  threshold_drift_warn: 1.0
-retrain_triggers:
-  schedule_days: 90
-  sharpe_decay_ratio: 0.5
-  consecutive_losses: 8
-  max_data_age_days: 120
-  leading_indicator_decay: 0.5
-deploy_gate:
-  trigger_sharpe_improve: 0.05
-  trigger_drift_level: HIGH
-  min_sharpe_change: 0.03
-  require_adopt: true
-  min_trades: 50
-  require_human_confirm: true
 data_flow:
   model_predictions: predictions.parquet
   gated_logs: logs_gated.parquet

@@ -535,6 +535,20 @@ strategies:
     shap_override:
       stability_threshold: 0.5
       top_k: 25
+
+# 会在 mlbot pipeline run 里用到的
+# 块	作用
+# shap_feature_selection	在 run_strategy_pipeline 全链路里读 cfg.get("shap_feature_selection")；enabled: false 或 --skip-shap / 特征搜索被关掉时会跳过 SHAP。你这里 enabled: false，等价于不配也行，但键本身是被代码读的。
+# comparison	仅在 --stage full（默认） 跑完一整条策略流水线后，用于 compare_runs(..., cfg.get("comparison", {}))，影响 ADOPT/ALERT 等决策与 comparison.json。若你从不跑 full，这段配置不会生效。
+# deploy_gate	同样只在 --stage full 末尾 check_deploy_gate(..., cfg.get("deploy_gate", {}))。只跑 event_backtest / rolling_sim 等子阶段时不会执行。
+# 基本不由这份「训练流水线」读取的
+# 块	说明
+# retrain_triggers	在 run_live.py / monitor_retrain.py / check_need_retrain.py 等里用，不是 auto_research_pipeline.py 在跑 pipeline run 时读的。对「只跑研究流水线」而言，相当于给运维/监控脚本预留的约定，流水线本身忽略它。
+# data_flow	仓库里 没有 cfg.get("data_flow") 这类用法；只在个别脚本的注释里提到「见 data_flow」。属于文档式约定，程序不解析。
+# 结论：
+
+# 不是整段「废配置」：comparison / deploy_gate 在跑 full 时有用；shap_feature_selection 在跑带 SHAP 的全链路时有意义（你关了 enabled 就等价于不用）。
+# 若你长期只跑 --stage event_backtest / rolling_sim 等，对你当前命令来说 comparison、deploy_gate 确实不会起作用；retrain_triggers、data_flow 对流水线也基本无效（除非你还跑监控/实盘脚本并共用同一 YAML）。
 shap_feature_selection:
   enabled: true
   n_folds: 8

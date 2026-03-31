@@ -85,8 +85,8 @@ stitching:
   export_trade_map_html: true
 event_backtest:
   # 仍保留当月 OOS 事件回测（仅评估，不做 execution 网格）
-  enabled: true
-  promote: true
+  enabled: false
+  promote: false
   # execution 对称调优: initial_r=activation_r=trail_r
   # bpc 趋势骑乘: 给更宽的止损/追踪空间; fer/me: 更紧止损
   sym_r_default: "1.0:1:6.0"
@@ -114,7 +114,7 @@ event_backtest:
       undertrade_penalty: 0.002
 pcm_slot_grid:
   # 在 Step 9.5 PCM 联合回测后，自动做 slot 网格对比
-  enabled: true
+  enabled: false
   # 平坦区定义：score >= best_score - plateau_delta
   plateau_delta: 0.03
   # 软约束：交易数过低会被扣分（防止只靠极少交易抬 Sharpe）
@@ -175,9 +175,6 @@ strategies:
   bpc-short-120T:
     config: config/strategies/bpc-short-120T
     timeframe: 120T
-    dates:
-      holdout_months: 9
-      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -235,9 +232,6 @@ strategies:
   bpc-long-120T:
     config: config/strategies/bpc-long-120T
     timeframe: 120T
-    dates:
-      holdout_months: 9
-      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -296,8 +290,6 @@ strategies:
     config: config/strategies/fer-short-120T
     timeframe: 120T
     dates:
-      holdout_months: 9
-      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -360,9 +352,6 @@ strategies:
   fer-long-120T:
     config: config/strategies/fer-long-120T
     timeframe: 120T
-    dates:
-      holdout_months: 9
-      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -425,9 +414,6 @@ strategies:
   me-short-120T:
     config: config/strategies/me-short-120T
     timeframe: 120T
-    dates:
-      holdout_months: 9
-      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -486,9 +472,6 @@ strategies:
   me-long-120T:
     config: config/strategies/me-long-120T
     timeframe: 120T
-    dates:
-      holdout_months: 9
-      validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -544,35 +527,6 @@ strategies:
     shap_override:
       stability_threshold: 0.5
       top_k: 25
-shap_feature_selection:
-  enabled: false
-  n_folds: 8
-  top_k: 20
-  stability_threshold: 0.8
-  min_stable_features: 1
-  protected_nodes:
-    - atr_f
-    - fer_failure_signals_f
-  apply_to:
-    - features.yaml
-comparison:
-  min_trades: 30
-  sharpe_adopt_ratio: 0.7
-  sharpe_reject_floor: 0.0
-  threshold_drift_warn: 1.0
-retrain_triggers:
-  schedule_days: 90
-  sharpe_decay_ratio: 0.5
-  consecutive_losses: 8
-  max_data_age_days: 120
-  leading_indicator_decay: 0.5
-deploy_gate:
-  trigger_sharpe_improve: 0.05
-  trigger_drift_level: HIGH
-  min_sharpe_change: 0.03
-  require_adopt: true
-  min_trades: 50
-  require_human_confirm: true
 data_flow:
   model_predictions: predictions.parquet
   gated_logs: logs_gated.parquet
