@@ -1,5 +1,5 @@
 execution_constraints:
-  allow_add_on: false
+  allow_add_on: true
   min_order_interval_minutes: 15
 holding:
   max_holding_bars: null

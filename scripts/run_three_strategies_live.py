@@ -46,7 +46,7 @@ def setup_environment(args):
     os.environ.setdefault("MLBOT_LIVE_STORAGE_BASE", "live/highcap/data")
     os.environ.setdefault("MLBOT_LIVE_USE_FUTURES", "true")
     os.environ.setdefault("MLBOT_LIVE_WARMUP_DAYS", "7")
-    os.environ.setdefault("MLBOT_MAX_SLOTS", "2")
+    os.environ.setdefault("MLBOT_CAPACITY_LIMIT", "2")
 
     # 确保 tick 数据阈值正确传递
     os.environ.setdefault("MLBOT_MIN_TICKS_REQUIRED", "20160")
@@ -124,9 +124,10 @@ def setup_pcm(strategies):
 
     print("\n=== 设置 PCM 仲裁层 ===")
 
+    capacity_limit = int(os.environ.get("MLBOT_CAPACITY_LIMIT", "2"))
     pcm = LivePCM(
         archetype_priority=["fer", "me-long", "bpc"],  # FER 最高优先级
-        max_slots=int(os.environ.get("MLBOT_MAX_SLOTS", "2")),
+        capacity_limit=capacity_limit,
     )
 
     # 注册所有策略
@@ -136,7 +137,7 @@ def setup_pcm(strategies):
 
     print(f"\n📊 PCM 配置:")
     print(f"   优先级顺序: {' > '.join(pcm.archetype_priority)}")
-    print(f"   最大 slot 数: {pcm._max_slots}")
+    print(f"   最大容量上限: {pcm._capacity_limit}")
     print(f"   已注册策略: {', '.join(pcm.registered_archetypes)}")
 
     return pcm

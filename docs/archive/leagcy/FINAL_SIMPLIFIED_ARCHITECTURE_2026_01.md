@@ -223,7 +223,7 @@ execution = Execution(
 pcm.allocate_capital(
     decisions=decisions,
     risk_budget=constitution.max_total_risk,  # 硬约束
-    slot_constraints=constitution.max_slots  # 硬约束
+    slot_constraints=constitution.capacity_limit  # 硬约束
 )
 # 自由度：低（受Constitution硬约束）
 
@@ -354,7 +354,7 @@ for archetype in [TC, TE, FR, ET]:
 pcm.allocate_capital(
     decisions=decisions,
     risk_budget=constitution.max_total_risk,
-    slot_constraints=constitution.max_slots
+    slot_constraints=constitution.capacity_limit
 )
 # PCM层统一控制：
 # - 总仓位上限

@@ -63,7 +63,7 @@ def _policy() -> dict:
 
 
 def test_profit_expansion_activates_after_released_slot():
-    pcm = LivePCM(max_slots=8)
+    pcm = LivePCM(capacity_limit=8)
     pol = _policy()
     pcm._constitution["risk_budget_policy"] = pol
 
@@ -76,7 +76,7 @@ def test_profit_expansion_activates_after_released_slot():
 
 
 def test_drawdown_shrink_contracts_caps():
-    pcm = LivePCM(max_slots=8)
+    pcm = LivePCM(capacity_limit=8)
     pol = _policy()
     pcm._constitution["risk_budget_policy"] = pol
     pcm._latest_features = {"drawdown": 0.04}
@@ -87,7 +87,7 @@ def test_drawdown_shrink_contracts_caps():
 
 
 def test_stress_guard_blocks_risk_increasing_intent():
-    pcm = LivePCM(max_slots=8)
+    pcm = LivePCM(capacity_limit=8)
     pol = _policy()
     pol["max_total_risk_pct"] = 0.2
     pol["max_family_risk_pct"] = 0.2
@@ -101,7 +101,7 @@ def test_stress_guard_blocks_risk_increasing_intent():
 
 
 def test_tiered_deleveraging_emits_weakest_first():
-    pcm = LivePCM(max_slots=8)
+    pcm = LivePCM(capacity_limit=8)
     pol = _policy()
     pcm._constitution["risk_budget_policy"] = pol
     pcm._slot_risk_frac = {
@@ -118,3 +118,20 @@ def test_tiered_deleveraging_emits_weakest_first():
     evictions, freeze = pcm._plan_tiered_deleveraging(symbol="BTCUSDT", policy=pol)
     assert freeze is True
     assert evictions[:2] == [("BTCUSDT", "bpc-c"), ("BTCUSDT", "bpc-a")]
+
+
+def test_family_cap_is_shared_by_bpc_long_and_short():
+    pcm = LivePCM(capacity_limit=8)
+    pol = _policy()
+    pol["max_total_risk_pct"] = 0.2
+    pol["max_family_risk_pct"] = 0.1
+    pol["max_symbol_risk_pct"] = 0.2
+    pcm._constitution["risk_budget_policy"] = pol
+
+    # Existing short risk already consumes full bpc family budget.
+    pcm._slot_risk_frac["ETHUSDT:bpc-short-120T"] = 0.10
+    pcm.register("bpc-long-120T", _StaticStrategy([_intent("bpc-long-120T")]))
+
+    out = pcm.decide(features={"close": 100.0, "atr": 2.0}, symbol="BTCUSDT")
+    assert out == []
+    assert pcm.get_stats()["risk_budget_runtime"]["reject_counts"]["family_cap"] >= 1

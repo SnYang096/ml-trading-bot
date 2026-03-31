@@ -151,7 +151,7 @@ slots:
 #   Layer 2: pcm_regime.yaml 的仲裁策略在这些限制内运行
 #
 # 约束规则:
-#   per_strategy_limits.*.max_slots ≤ slots.slot_count
+#   per_strategy_limits.*.capacity_limit ≤ slots.slot_count
 #   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
@@ -165,35 +165,35 @@ resource_allocation:
 
   per_strategy_limits:
     bpc-long:
-      max_slots: 1
+      capacity_limit: 1
       max_risk_per_trade: 0.02
       allow_add_position: true
       max_add_times: 5
     bpc-short:
-      max_slots: 1
+      capacity_limit: 1
       max_risk_per_trade: 0.02
       allow_add_position: true
       max_add_times: 5
     me-long:
-      max_slots: 1
+      capacity_limit: 1
       max_risk_per_trade: 0.02
       allow_add_position: true
       max_add_times: 2
     me-short:
-      max_slots: 1
+      capacity_limit: 1
       max_risk_per_trade: 0.02
       allow_add_position: true
       max_add_times: 2
     fer-long:
-      max_slots: 1
+      capacity_limit: 1
       max_risk_per_trade: 0.02
       allow_add_position: false
     fer-short:
-      max_slots: 1
+      capacity_limit: 1
       max_risk_per_trade: 0.02
       allow_add_position: false
     lv:
-      max_slots: 0
+      capacity_limit: 0
       max_risk_per_trade: 0.0025
       allow_add_position: false
 
@@ -215,7 +215,7 @@ resource_allocation:
     bpc:
       enabled: true
       base_slots: 1
-      max_slots: 3
+      capacity_limit: 3
       step2:
         max_drawdown: 0.08
         max_daily_loss: 0.03

@@ -137,8 +137,9 @@ def _setup_bpc(
     )
 
     # 包装进 LivePCM
+    capacity_limit = int(os.getenv("MLBOT_CAPACITY_LIMIT", "2"))
     pcm = LivePCM(
-        max_slots=int(os.getenv("MLBOT_MAX_SLOTS", "2")),
+        capacity_limit=capacity_limit,
     )
     pcm.register("bpc", bpc)
 

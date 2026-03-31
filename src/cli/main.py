@@ -3289,14 +3289,13 @@ def pipeline():
             "fast_month",
             "rolling_sim",
             "pcm_joint",
-            "pcm_slot_grid",
         ]
     ),
     default="full",
     show_default=True,
     help=(
         "运行阶段: full/prefilter/gate/entry_filter/slow_snapshot/"
-        "execution_opt/event_backtest/fast_month/rolling_sim/pcm_joint/pcm_slot_grid"
+        "execution_opt/event_backtest/fast_month/rolling_sim/pcm_joint"
     ),
 )
 @click.option("--month", default=None, help="月份窗口 YYYY-MM (fast_month 必填)")
@@ -3309,12 +3308,6 @@ def pipeline():
     "--event-sym-r",
     default="1.0:0.5:4.0",
     help="事件回测 execution 优化 sym-r 范围 (default: 1.0:0.5:4.0)",
-)
-@click.option(
-    "--max-slots",
-    type=int,
-    default=0,
-    help="可选: 覆盖事件回测 PCM 全局与策略 slot 上限（仅本次运行）",
 )
 def run(
     strategy,
@@ -3331,7 +3324,6 @@ def run(
     month,
     event_backtest,
     event_sym_r,
-    max_slots,
 ):
     """执行研究管线."""
     args = []
@@ -3363,9 +3355,6 @@ def run(
         args.append("--event-backtest")
     if event_sym_r != "1.0:0.5:4.0":
         args.extend(["--event-sym-r", event_sym_r])
-    if int(max_slots or 0) > 0:
-        args.extend(["--max-slots", str(int(max_slots))])
-
     sys.exit(run_script("scripts/auto_research_pipeline.py", args))
 
 
@@ -3515,17 +3504,10 @@ def delete(strategy, timestamp, status, delete_all, dry_run, date_range):
 @click.option("--promote", is_flag=True, help="将优化结果写入实验 execution.yaml")
 @click.option("--fast", is_flag=True, default=True, help="快速模式 (60T bar, 默认开启)")
 @click.option("--no-fast", "fast", flag_value=False, help="使用 1min bar 精细模式")
-@click.option(
-    "--max-slots",
-    "max_slots",
-    type=int,
-    default=None,
-    help="可选: 覆盖事件回测 PCM 全局与已注册策略 max_slots（仅本次运行）",
-)
 @click.option("--data-path", default="data/parquet_data", help="研究数据目录")
 @click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
 def pipeline_event_backtest(
-    strategy, exp_hash, sym_r, promote, fast, max_slots, data_path, config_path
+    strategy, exp_hash, sym_r, promote, fast, data_path, config_path
 ):
     """对指定实验运行事件回测 + 可选 execution 优化, 输出交易地图到 research_history."""
     import json
@@ -3631,8 +3613,6 @@ def pipeline_event_backtest(
     ]
     if fast:
         ev_args.append("--fast")
-    if max_slots is not None and int(max_slots) > 0:
-        ev_args.extend(["--max-slots", str(int(max_slots))])
     rc = subprocess.run(ev_args, cwd=str(PROJECT_ROOT)).returncode
     click.echo(f"\n🗺️  交易地图: {map_path}")
     click.echo(f"📄 交易明细: {export_path}")

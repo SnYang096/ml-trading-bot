@@ -30,7 +30,7 @@
 
 | 维度 | ① 经典分段（老管线） | ② 慢变量 / 快变量（滚动阶段） | ③ 模式 A / 模式 B（实施文档 01） |
 |------|----------------------|-------------------------------|-----------------------------------|
-| **是什么** | 一组 **`--stage`**：`full`、`prefilter`、`gate`、`entry_filter`、`execution_opt`、`event_backtest`、`pcm_joint`、`pcm_slot_grid` | 另一组 **`--stage`**：`slow_snapshot`、`fast_month`、`rolling_sim` | **不是**第三套命令；是 YAML 里 **`rolling.mode`**：`slow_realistic` 与 `turbo_fixed_features` |
+| **是什么** | 一组 **`--stage`**：`full`、`prefilter`、`gate`、`entry_filter`、`execution_opt`、`event_backtest`、`pcm_joint` | 另一组 **`--stage`**：`slow_snapshot`、`fast_month`、`rolling_sim` | **不是**第三套命令；是 YAML 里 **`rolling.mode`**：`slow_realistic` 与 `turbo_fixed_features` |
 | **时间怎么切** | 默认**一个**全局窗口（由 `dates` + `end-date`/自动检测决定）；`full` 在该窗口内跑通整条链 | **按日历推进**：季末/月末切片；`rolling_sim` 从 holdout 起点月到截止月**逐月**重复「校准窗 + 当月 OOS」 | 在 ② 的每一次循环里，决定**要不要**做季频结构更新、**要不要**做特征搜索 |
 | **典型用途** | 单次训练与上线前实验、分层调试某一步、跑完一次 PCM slot 网格 | 模拟「慢结构 + 快阈值」的长期行为；月度 ledger、拼接 summary、交易地图 | 在同一滚动框架下对比：**偏真**（季更结构 + SHAP）vs **偏快**（固定特征、只调阈值） |
 
@@ -175,9 +175,9 @@
 | `exec_objective_default` / `exec_objective_params` | 默认优化目标（如 `sharpe`）及风险惩罚参数。 |
 | `exec_objective_by_family` | 按家族覆盖目标（如 ME 用 `risk_aware`）。 |
 
-#### `pcm_slot_grid`
+#### `pcm_joint`
 
-在 PCM 联合回测之后可选的多 slot 方案网格；`plateau_delta`、`min_trades_soft`、`penalties`、`cases[]`（每 case 的 `slots` 与 `per_strategy_limits`）定义评分与推荐逻辑。详见 YAML 内注释。
+组合联合回测阶段。当前风险控制以 percent 风险预算为主，不再使用旧 slot 网格阶段。
 
 #### `universe_group` / `data_path` / `download`
 
@@ -237,7 +237,6 @@
 - `execution_opt`
 - `event_backtest`
 - `pcm_joint`
-- `pcm_slot_grid`
 
 ### 4.2 新增阶段（本方案）
 

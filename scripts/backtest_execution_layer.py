@@ -58,6 +58,7 @@ from src.time_series_model.core.constitution.add_position_rules import (
     resolve_strategy_add_position_config as _shared_resolve_strategy_add_position_config,
     validate_add_position_trigger as _shared_validate_add_position_trigger,
 )
+from src.time_series_model.portfolio.live_pcm import _capacity_limit_from_cfg
 
 try:
     from bokeh.plotting import figure as bk_figure
@@ -639,7 +640,7 @@ def simulate_rr_execution(
     silent: bool = False,
     use_tier_params: bool = False,
     breakeven_lock_r: float = 0.0,
-    max_slots: int = 0,
+    capacity_limit: int = 0,
     bars_1min_dict: Optional[Dict[str, pd.DataFrame]] = None,
     add_position_cfg: Optional[Dict[str, Any]] = None,
     per_strategy_limits: Optional[Dict[str, Any]] = None,
@@ -1240,7 +1241,7 @@ def simulate_rr_execution(
     # ── slot 限制：per-strategy 独立 slot ──
     _add_pos_count = 0
     removed_indices: set = set()  # 初始化以避免 slot 过滤未执行时 NameError
-    if max_slots and max_slots > 0 and trade_details:
+    if capacity_limit and capacity_limit > 0 and trade_details:
         # 加仓配置
         _ap_enabled = add_position_cfg is not None
         _ap_rules = (
@@ -1254,18 +1255,22 @@ def simulate_rr_execution(
         )
 
         # per-strategy slot 限制 — 始终从 constitution per_strategy_limits 读取
-        # (不依赖 add_position_cfg 是否存在, 与事件侧 LivePCM._max_slots_for_strategy 对齐)
-        _per_strat_max = {}  # archetype → max_slots
+        # (不依赖 add_position_cfg 是否存在, 与事件侧 LivePCM._capacity_limit_for_strategy 对齐)
+        _per_strat_max = {}  # archetype → capacity_limit
         # 优先从 per_strategy_limits 参数读取 (直接传入, 独立于 add_position)
         if per_strategy_limits:
             for arch_key, cfg in per_strategy_limits.items():
-                if isinstance(cfg, dict) and "max_slots" in cfg:
-                    _per_strat_max[arch_key.lower()] = int(cfg["max_slots"])
+                if isinstance(cfg, dict) and "capacity_limit" in cfg:
+                    _per_strat_max[arch_key.lower()] = _capacity_limit_from_cfg(
+                        cfg, default=0
+                    )
         elif _ap_per_strat:
             # 兼容旧调用: 从 add_position_cfg 回退读取
             for arch_key, cfg in _ap_per_strat.items():
-                if isinstance(cfg, dict) and "max_slots" in cfg:
-                    _per_strat_max[arch_key.lower()] = int(cfg["max_slots"])
+                if isinstance(cfg, dict) and "capacity_limit" in cfg:
+                    _per_strat_max[arch_key.lower()] = _capacity_limit_from_cfg(
+                        cfg, default=0
+                    )
 
         # 排序: 用时间戳 (跨 symbol 正确) 而非 dataframe index
         # merged 按 (symbol, timestamp) 排序 → 每 symbol 独占一段 index → exit_idx vs eidx 跨 symbol 永远 False
@@ -1304,7 +1309,7 @@ def simulate_rr_execution(
                 active = [t for t in accepted if t["exit_idx"] > eidx]
 
             # 检查 per-strategy slot 限制
-            arch_max = _per_strat_max.get(trade_arch, max_slots)  # 缺省回退全局
+            arch_max = _per_strat_max.get(trade_arch, capacity_limit)  # 缺省回退全局
             if trade_arch.startswith("bpc"):
                 _bpc_dyn = dict((_dyn_slot_policy or {}).get("bpc") or {})
                 if _bpc_dyn.get("enabled", False):
@@ -1312,7 +1317,7 @@ def simulate_rr_execution(
                         1,
                         min(
                             int(_bpc_dyn.get("base_slots", 1)),
-                            int(_bpc_dyn.get("max_slots", arch_max)),
+                            _capacity_limit_from_cfg(_bpc_dyn, default=arch_max),
                         ),
                     )
                     _dd = float(trade.get("drawdown", _row.get("drawdown", 0.0)) or 0.0)
@@ -1354,7 +1359,9 @@ def simulate_rr_execution(
                     ):
                         _bpc_slots = max(_bpc_slots, 3)
                     arch_max = min(
-                        arch_max, int(_bpc_dyn.get("max_slots", arch_max)), _bpc_slots
+                        arch_max,
+                        _capacity_limit_from_cfg(_bpc_dyn, default=arch_max),
+                        _bpc_slots,
                     )
             arch_active = [
                 t
@@ -1368,7 +1375,7 @@ def simulate_rr_execution(
                 and t.get("archetype", "").lower().strip() == trade_arch
             ]
             per_strat_full = len(arch_active) >= arch_max
-            global_full = len(active) >= max_slots
+            global_full = len(active) >= capacity_limit
 
             if per_strat_full or global_full or bool(same_sym_arch_active):
                 # slot 满 — 先检查是否可以加仓
@@ -1534,7 +1541,7 @@ def simulate_rr_execution(
             total_entries -= len(removed_indices)
             if not silent:
                 print(
-                    f"   🔒 Slot limit (max={max_slots}): "
+                    f"   🔒 Slot limit (max={capacity_limit}): "
                     f"rejected {len(rejected_indices)}, "
                     f"kept {total_entries}"
                 )
@@ -1548,7 +1555,7 @@ def simulate_rr_execution(
     if not silent:
         # exit_stats 是 slot 过滤前的全量统计; 有 slot 过滤时重算保留交易的统计
         _display_stats = exit_stats
-        if max_slots and max_slots > 0 and removed_indices:
+        if capacity_limit and capacity_limit > 0 and removed_indices:
             _display_stats = {
                 "sl": 0,
                 "trailing_sl": 0,
@@ -2998,20 +3005,18 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     regime_cfg = load_regime_config(regime_config_path)
     regime_detector = _build_regime_detector(regime_cfg)
 
-    # 从 constitution 读取 max_slots
+    # 从 constitution 读取容量上限
     constitution_yaml = getattr(args, "constitution", None)
     if not constitution_yaml:
         constitution_yaml = regime_cfg.get("constitution_ref")
     const = _load_constitution_constraints(constitution_yaml)
-    max_slots = getattr(args, "max_slots", None) or const["slot_count"]
+    capacity_limit = const["slot_count"]
     evidence_min_score = const.get("evidence_min_score", 0.0)
     evidence_position_scale = const.get("evidence_position_scale", False)
 
     print(f"   📄 Regime config: {regime_config_path}")
     print(f"   📄 Constitution: {constitution_yaml or 'defaults'}")
-    print(
-        f"   🔒 max_slots={max_slots} (from {'args' if getattr(args, 'max_slots', None) else 'constitution'})"
-    )
+    print(f"   🔒 capacity_limit={capacity_limit} (from constitution)")
 
     # ── 1. 解析 --pcm 参数 ──
     arch_specs: Dict[str, str] = {}  # {archetype: logs_path}
@@ -3561,7 +3566,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             _ap_rules = _ra_ap.get("add_position_rules") or {}
             _ap_per_strat = _ra_ap.get("per_strategy_limits") or {}
             _dyn_slot_policy = _ra_ap.get("dynamic_slot_policy") or {}
-            # per_strategy_limits 始终读取 (与事件侧 LivePCM._max_slots_for_strategy 对齐)
+            # per_strategy_limits 始终读取 (与事件侧 LivePCM._capacity_limit_for_strategy 对齐)
             if _ap_per_strat:
                 _per_strategy_limits = _ap_per_strat
             if any(
@@ -3590,7 +3595,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         atr_col="atr",
         use_tier_params=True,
         breakeven_lock_r=breakeven_lock_r,
-        max_slots=max_slots,
+        capacity_limit=capacity_limit,
         bars_1min_dict=bars_1min_dict,
         add_position_cfg=_add_position_cfg,
         per_strategy_limits=_per_strategy_limits,
@@ -5062,12 +5067,6 @@ def main() -> int:
         help="Multi-archetype PCM mode: archetype:path pairs. "
         "Example: --pcm bpc:results/bpc/predictions.parquet me:results/me/predictions.parquet",
     )
-    p.add_argument(
-        "--max-slots",
-        type=int,
-        default=None,
-        help="Max concurrent slots for PCM mode (default: from constitution.yaml)",
-    )
     p.add_argument("--features-store-root", default="feature_store")
     p.add_argument(
         "--features-store-layer",
@@ -5709,7 +5708,7 @@ def main() -> int:
             live_root=getattr(args, "live_root", "live/highcap"),
         )
 
-    # ── 从 constitution.yaml 读取 per_strategy max_slots ──
+    # ── 从 constitution.yaml 读取 per_strategy capacity_limit ──
     from src.time_series_model.portfolio.live_pcm import (
         _load_constitution_constraints as _load_const_pre,
     )
@@ -5723,14 +5722,14 @@ def main() -> int:
     _const_pre = _load_const_pre(_const_yaml_single)
     _per_strat_limits = _const_pre.get("per_strategy_limits") or {}
     _strat_cfg = _per_strat_limits.get(str(args.strategy).lower()) or {}
-    _max_slots_single = int(_strat_cfg.get("max_slots", 1))
+    _capacity_limit_single = _capacity_limit_from_cfg(_strat_cfg, default=1)
     # --simple-execution: 无槽位限制 — 研究管线评估纯信号质量，不做容量管理
     if getattr(args, "simple_execution", False):
-        _max_slots_single = 0
-        print("   ℹ️  --simple-execution: max_slots=0 (unlimited, 评估纯信号质量)")
+        _capacity_limit_single = 0
+        print("   ℹ️  --simple-execution: capacity_limit=0 (unlimited, 评估纯信号质量)")
     else:
         print(
-            f"   🔒 Single-strategy max_slots={_max_slots_single} (from constitution: {_const_yaml_single or 'defaults'})"
+            f"   🔒 Single-strategy capacity_limit={_capacity_limit_single} (from constitution: {_const_yaml_single or 'defaults'})"
         )
 
     # ── 加仓配置 (从 constitution.yaml 加载, 与事件回测一致) ──
@@ -5792,7 +5791,7 @@ def main() -> int:
         atr_col="atr",
         use_tier_params=use_tier_params,
         breakeven_lock_r=breakeven_lock_r,
-        max_slots=_max_slots_single,
+        capacity_limit=_capacity_limit_single,
         bars_1min_dict=bars_1min_dict,
         add_position_cfg=_add_pos_cfg_single,
         per_strategy_limits=_per_strategy_limits_single,

@@ -70,7 +70,7 @@ class TestLivePCMSmoke:
         mock_bpc = MagicMock()
         mock_bpc.decide.return_value = []
 
-        pcm = LivePCM(max_slots=2)
+        pcm = LivePCM(capacity_limit=2)
         pcm.register("bpc", mock_bpc)
 
         # set_quantiles_from_df 应透传
@@ -92,7 +92,7 @@ class TestLivePCMSmoke:
         mock_bpc = MagicMock()
         mock_bpc.decide.return_value = [intent]
 
-        pcm = LivePCM(max_slots=2)
+        pcm = LivePCM(capacity_limit=2)
         pcm.register("bpc", mock_bpc)
 
         result = pcm.decide(

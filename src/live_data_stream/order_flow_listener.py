@@ -1007,7 +1007,14 @@ class OrderFlowListener:
             executor = self._get_trade_executor()
             for intent in intents:
                 logger.info("[%s] 交易信号: %s", self.symbol, intent)
-                executor.execute(intent=intent, features=all_features)
+                placed = executor.execute(intent=intent, features=all_features)
+                if not placed and hasattr(
+                    self.decision_handler, "rollback_intent_reservation"
+                ):
+                    try:
+                        self.decision_handler.rollback_intent_reservation(intent)
+                    except Exception:
+                        logger.exception("[%s] PCM 风险预占回滚失败", self.symbol)
         else:
             for intent in intents:
                 logger.info("[%s] 交易信号(观察模式，不下单): %s", self.symbol, intent)

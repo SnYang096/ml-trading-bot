@@ -45,7 +45,7 @@ def demo_signal_routing_and_execution(
         }
     
     # 2. 初始化信号路由器
-    router = SignalRouter(archetype_edges=archetype_edges, max_slots=2)
+    router = SignalRouter(archetype_edges=archetype_edges, capacity_limit=2)
     
     # 3. 收集候选信号（来自你的策略系统）
     candidates = [
@@ -126,7 +126,7 @@ def demo_signal_routing_and_execution(
             stop_loss_price=signal.stop_loss_price,
             take_profit_price=signal.take_profit_price,
             strategy_id=f'{signal.archetype}_strategy',
-            max_slots=2,
+            capacity_limit=2,
             max_add_count=3,
         )
         
@@ -143,7 +143,8 @@ def demo_signal_routing_and_execution(
     # 6. 查看仓位摘要
     summary = position_manager.get_position_summary()
     print(f"\n=== 仓位摘要 ===")
-    print(f"已用 slot: {summary['used_slots']} / {summary['max_slots']}")
+    cap = summary.get("capacity_limit")
+    print(f"已用 slot: {summary['used_slots']} / {cap}")
     print(f"\n按 archetype 统计:")
     for arch, stat in summary['by_archetype'].items():
         print(f"  {arch}: {stat['count']} 个仓位, 总大小 {stat['total_size']:.2f}")

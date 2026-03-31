@@ -491,10 +491,10 @@ slots:
 resource_allocation:
   per_strategy_limits:
     bpc:
-      max_slots: 2
+      capacity_limit: 2
       allow_add_position: true
     lv:
-      max_slots: 1
+      capacity_limit: 1
       max_risk_per_trade: 0.005
       allow_add_position: false
 """
@@ -587,14 +587,14 @@ slots:
 resource_allocation:
   per_strategy_limits:
     bpc:
-      max_slots: 2
+      capacity_limit: 2
       allow_add_position: true
     lv:
-      max_slots: 1
+      capacity_limit: 1
       max_risk_per_trade: 0.005
       allow_add_position: false
     fer:
-      max_slots: 2
+      capacity_limit: 2
       allow_add_position: false
   add_position_rules:
     max_add_times: 1

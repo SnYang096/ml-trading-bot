@@ -12,12 +12,12 @@
 | 位置 | 字段 | 值 |
 |------|------|----|
 | `config/constitution/constitution.yaml` → `slots.slot_count` | 宪法 slot 上限 | **2** |
-| `config/pcm_regime.yaml` → `max_slots` | PCM slot 上限 | **2** |
+| `config/pcm_regime.yaml` → `capacity_limit` | PCM slot 上限 | **2** |
 
-**问题**: 两个文件各自定义 max_slots，如果修改一个忘改另一个就产生行为不一致。
+**问题**: 两个文件各自定义 capacity_limit，如果修改一个忘改另一个就产生行为不一致。
 `ConstitutionExecutor.reserve_slot()` 读 constitution.yaml；`LivePCM.__init__()` 读 pcm_regime.yaml。
 
-**解决**: Constitution 是唯一权威源。PCM 从 constitution 读取 slot_count，pcm_regime.yaml 移除 max_slots。
+**解决**: Constitution 是唯一权威源。PCM 从 constitution 读取 slot_count，pcm_regime.yaml 移除 capacity_limit。
 
 ### 矛盾 ②：风险预算双源定义
 
@@ -128,7 +128,7 @@ PCM 定义 **每策略实际使用** (`max_risk_per_trade`)，必须 ≤ `risk_p
 1. 加载 `constitution.yaml` → 获取 `slot_count`, `risk_per_slot`, `resource_allocation`
 2. 加载 `pcm_regime.yaml` → 获取 `regimes`, `detection`, `archetype_risk`
 3. **校验**: `archetype_risk[*].max_risk_per_trade ≤ constitution.risk_per_slot`
-4. **校验**: `pcm_regime.yaml` 不得定义 `max_slots` (从 constitution 读取)
+4. **校验**: `pcm_regime.yaml` 不得定义 `capacity_limit` (从 constitution 读取)
 5. 加载各策略 `archetypes/*.yaml`
 
 ### 2.2 Constitution 新增 `resource_allocation` 段
@@ -140,16 +140,16 @@ resource_allocation:
   # PCM 在此约束内自由分配
   per_strategy_limits:
     bpc:
-      max_slots: 2            # BPC 最多占 2 个 slot (骨架策略)
+      capacity_limit: 2            # BPC 最多占 2 个 slot (骨架策略)
       allow_add_position: true
     me:
-      max_slots: 2
+      capacity_limit: 2
       allow_add_position: true
     fer:
-      max_slots: 2
+      capacity_limit: 2
       allow_add_position: false  # FER 反转不加仓
     lv:
-      max_slots: 1            # LV 快进快出，最多 1 个
+      capacity_limit: 1            # LV 快进快出，最多 1 个
       allow_add_position: false
 
   # PCM 配置引用 (非硬约束，告诉宪法去哪里找 PCM 配置)
@@ -159,14 +159,14 @@ resource_allocation:
 ### 2.3 PCM Regime 配置调整
 
 ```yaml
-# config/pcm_regime.yaml — 移除 max_slots，新增 constitution_ref
+# config/pcm_regime.yaml — 移除 capacity_limit，新增 constitution_ref
 version: 3
 
 # 从 constitution.yaml 读取硬约束 (slot_count, risk_per_slot)
 constitution_ref: "config/constitution/constitution.yaml"
 # ↑ 运行时 PCM 会校验: archetype_risk ≤ constitution.risk_per_slot
 
-# max_slots: 删除! 从 constitution.yaml 的 slots.slot_count 读取
+# capacity_limit: 删除! 从 constitution.yaml 的 slots.slot_count 读取
 
 # 保持不变: regimes / detection / min_bars_in_regime / archetype_risk
 ```
@@ -199,7 +199,7 @@ backtest_execution_layer.py --pcm
   ├─ 逐 bar 仲裁:
   │   ├─ PCM 仲裁 (优先级 + Evidence)
   │   ├─ Slot 计数约束 (max concurrent = slot_count)
-  │   ├─ per_strategy_limits 约束 (每策略 max_slots)
+  │   ├─ per_strategy_limits 约束 (每策略 capacity_limit)
   │   └─ Drawdown 模拟 (equity curve → peak → dd → kill switch?)
   ├─ Bar-by-bar 执行模拟
   ├─ 输出:
@@ -415,7 +415,7 @@ results/research_history/{strategy}/{YYYYMMDD_HHMMSS}/
 ### Phase 1: 配置统一 (纯配置变更，零代码)
 
 - [ ] `constitution.yaml` 添加 `resource_allocation` 段
-- [ ] `pcm_regime.yaml` 升级到 v3: 移除 `max_slots`，添加 `constitution_ref`
+- [ ] `pcm_regime.yaml` 升级到 v3: 移除 `capacity_limit`，添加 `constitution_ref`
 - [ ] `live/highcap/config/constitution/constitution.yaml` 同步更新
 - [ ] 验证: 两份 constitution.yaml 一致
 
@@ -430,13 +430,13 @@ results/research_history/{strategy}/{YYYYMMDD_HHMMSS}/
 ### Phase 3: PCM 统一加载
 
 - [ ] `live_pcm.py`: `LivePCM.__init__()` 接受 constitution_config
-  - `max_slots` 从 constitution 读取，不再从 pcm_regime.yaml 读取
+  - `capacity_limit` 从 constitution 读取，不再从 pcm_regime.yaml 读取
   - 启动时校验 `archetype_risk ≤ risk_per_slot`
 - [ ] `run_live.py`: 加载顺序统一
   ```python
   constitution = ConstitutionExecutor(constitution_yaml)
   pcm = LivePCM(
-      max_slots=constitution.slot_count,     # 从宪法读取
+      capacity_limit=constitution.slot_count,     # 从宪法读取
       regime_config_path="config/pcm_regime.yaml",
   )
   ```
@@ -490,10 +490,10 @@ python scripts/validate_constitution_pcm_consistency.py \
 ```
 
 **检查项**:
-1. `pcm_regime.yaml` 不含 `max_slots` (已迁移到 constitution)
+1. `pcm_regime.yaml` 不含 `capacity_limit` (已迁移到 constitution)
 2. 所有 `archetype_risk.*.max_risk_per_trade ≤ constitution.risk_per_slot`
 3. 所有 `archetype_risk` 中的 archetype 都在 `resource_allocation.per_strategy_limits` 中有定义
-4. `per_strategy_limits.*.max_slots ≤ slots.slot_count`
+4. `per_strategy_limits.*.capacity_limit ≤ slots.slot_count`
 5. `constitution_ref` 指向的文件存在
 6. config/ 和 live/highcap/config/ 的 constitution.yaml 关键字段一致
 
@@ -504,7 +504,7 @@ python scripts/validate_constitution_pcm_consistency.py \
 | 测试 | 方法 | 预期 |
 |------|------|------|
 | Slot 约束生效 | 构造 3 个同时信号 + slot_count=2 | 第 3 个被拒 |
-| per_strategy 约束 | LV max_slots=1, 制造 2 个 LV 信号 | 第 2 个 LV 被拒 |
+| per_strategy 约束 | LV capacity_limit=1, 制造 2 个 LV 信号 | 第 2 个 LV 被拒 |
 | Drawdown kill | 注入 -25% drawdown 数据 | 后续 bar 全部 NO_TRADE |
 | 宪法 vs 无宪法 | 同数据对比 | 有宪法 trades ≤ 无宪法 trades |
 | PCM 回测 = 实盘逻辑 | 同优先级/同配置 | 仲裁结果完全一致 |
@@ -537,7 +537,7 @@ python -c "import json; d=json.load(open('/tmp/test_pcm_stats.json')); \
 ### 7.1 向后兼容
 
 - `constitution.yaml` 新增 `resource_allocation` 段，现有代码不读此段 → 无影响
-- `pcm_regime.yaml` 仍保留 `max_slots` 作为 deprecated fallback (代码优先读 constitution)
+- `pcm_regime.yaml` 仍保留 `capacity_limit` 作为 deprecated fallback (代码优先读 constitution)
 - 现有单策略回测 (`--logs --strategy bpc`) 不受影响
 - 现有 PCM 回测 (`--pcm`) 不带 `--constitution` 时行为不变
 

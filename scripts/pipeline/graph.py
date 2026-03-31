@@ -17,5 +17,4 @@ STAGES: Dict[str, Callable] = {
     "fast_month": _noop,
     "rolling_sim": _noop,
     "pcm_joint": _noop,
-    "pcm_slot_grid": _noop,
 }

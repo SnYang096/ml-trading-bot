@@ -643,14 +643,14 @@ class Metrics:
         self,
         runtime_state,
         per_strategy_limits: dict,
-        global_max_slots: int = 2,
+        global_capacity_limit: int = 2,
     ) -> None:
         """从 ConstitutionRuntimeState 更新 per-strategy slot Gauges
 
         Args:
             runtime_state: ConstitutionRuntimeState (包含 slots.active)
             per_strategy_limits: constitution.per_strategy_limits dict
-            global_max_slots: 全局 slot 上限 (fallback)
+            global_capacity_limit: 全局容量上限 (fallback)
         """
         if runtime_state is None:
             return
@@ -671,8 +671,11 @@ class Metrics:
             )
             # max slots: per_strategy_limits > global
             limits = (per_strategy_limits or {}).get(s) or {}
-            max_s = int(limits.get("max_slots", global_max_slots))
-            self.strategy_slots_max.labels(strategy=s).set(max_s)
+            if isinstance(limits, dict) and "capacity_limit" in limits:
+                strategy_capacity_limit = int(limits["capacity_limit"])
+            else:
+                strategy_capacity_limit = global_capacity_limit
+            self.strategy_slots_max.labels(strategy=s).set(strategy_capacity_limit)
 
     def update_pcm_notional_metrics(
         self,

@@ -64,23 +64,21 @@ python scripts/backtest_execution_layer.py \
   --strategies-root config/strategies \
   --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01
 
-# slot=2 (实盘配置对比)
+# percent 风险预算（实盘配置对比）
 python scripts/backtest_execution_layer.py \
   --pcm bpc:results/train_final_20260228_154956_rr_extreme/bpc/logs_gated.parquet \
        fer:results/train_final_20260228_155621_rr_extreme/fer/logs_gated.parquet \
        me:results/train_final_20260228_160522_rr_extreme/me/logs_gated.parquet \
   --strategies-root config/strategies \
-  --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01 \
-  --max-slots 2
+  --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01
 
-# 无 slot 限制 (理论上限)
+# 历史旧参数示例已废弃（不再使用 slot 上限 CLI 参数）
 python scripts/backtest_execution_layer.py \
   --pcm bpc:results/train_final_20260228_154956_rr_extreme/bpc/logs_gated.parquet \
        fer:results/train_final_20260228_155621_rr_extreme/fer/logs_gated.parquet \
        me:results/train_final_20260228_160522_rr_extreme/me/logs_gated.parquet \
   --strategies-root config/strategies \
-  --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01 \
-  --max-slots 999
+  --quantile-train-start 2025-02-01 --quantile-train-end 2025-08-01
 ```
 
 #### P0.2: 信号质量分析

@@ -258,6 +258,7 @@ class PositionSimulator:
         self.max_observed_notional_frac: float = 0.0
         # 记录最近一次加仓失败原因（供 funnel 细分统计）
         self.last_add_reject_reason: str = ""
+        self.last_add_reject_detail: str = ""
 
     @property
     def has_positions(self) -> bool:
@@ -669,6 +670,7 @@ class PositionSimulator:
             position_id if added, None if rejected
         """
         self.last_add_reject_reason = ""
+        self.last_add_reject_detail = ""
         archetype = getattr(intent, "archetype", "").lower().strip()
         new_side = (
             "LONG"
@@ -693,6 +695,9 @@ class PositionSimulator:
 
         if parent_pos is None:
             self.last_add_reject_reason = "no_parent_position"
+            self.last_add_reject_detail = (
+                f"symbol={intent.symbol}, archetype={archetype}, side={new_side}"
+            )
             return None  # 没有已有持仓，不是加仓场景
 
         # 2. 计算 current_r (用于 validate_add_position)
@@ -736,6 +741,11 @@ class PositionSimulator:
             )
         except ConstitutionViolation:
             self.last_add_reject_reason = "constitution_reject"
+            self.last_add_reject_detail = (
+                f"symbol={intent.symbol}, archetype={archetype}, current_r={current_r:.4f}, "
+                f"locked_profit={bool(parent_pos.get('breakeven_locked', False))}, "
+                f"next_add_no={next_add_no}"
+            )
             return None
 
         add_rules = dict(executor.resolve_add_position_for_strategy(archetype))
@@ -752,6 +762,10 @@ class PositionSimulator:
                 add_rules["trigger"] = _trig
         if next_add_no > _shared_resolve_add_position_max_times(add_rules):
             self.last_add_reject_reason = "max_add_times"
+            self.last_add_reject_detail = (
+                f"symbol={intent.symbol}, archetype={archetype}, next_add_no={next_add_no}, "
+                f"max_add_times={_shared_resolve_add_position_max_times(add_rules)}"
+            )
             return None
         signal = dict(features or {})
         signal["add_position_seq"] = next_add_no
@@ -789,6 +803,12 @@ class PositionSimulator:
             current_r=current_r,
         ):
             self.last_add_reject_reason = "trigger_not_met"
+            self.last_add_reject_detail = (
+                f"symbol={intent.symbol}, archetype={archetype}, current_r={current_r:.4f}, "
+                f"next_add_no={next_add_no}, locked_profit={bool(parent_pos.get('breakeven_locked', False))}, "
+                f"current_leverage={float(signal.get('current_leverage', 0.0) or 0.0):.4f}, "
+                f"current_notional_frac={float(signal.get('current_notional_frac', 0.0) or 0.0):.4f}"
+            )
             return None
         add_mult = _resolve_add_position_size_multiplier(add_rules, next_add_no, signal)
         parent_mult = float(parent_pos.get("_size_multiplier", 1.0) or 1.0)
@@ -840,6 +860,7 @@ class PositionSimulator:
         pos["_size_multiplier"] = parent_mult * add_mult
         self._positions[pid] = pos
         self.last_add_reject_reason = ""
+        self.last_add_reject_detail = ""
         return pid
 
 
@@ -1249,7 +1270,6 @@ class EventBacktester:
         db_path: Optional[str] = None,
         data_path: Optional[str] = None,
         fee_rate: float = 0.0,
-        max_slots: Optional[int] = None,
     ):
         # Keep original strategy casing (e.g. "bpc-short-120T"), because
         # config paths are case-sensitive on Linux.
@@ -1258,7 +1278,6 @@ class EventBacktester:
         self.data_path = data_path  # 研究数据目录 (e.g. data/parquet_data)
         self.strategies_root = strategies_root or "config/strategies"
         self.fee_rate = fee_rate  # 单边手续费率
-        self.max_slots = max_slots
 
         # Per-strategy timeframe 映射
         self._tf_map: Dict[str, str] = {}  # {strategy: "240T"}
@@ -1285,7 +1304,7 @@ class EventBacktester:
                 bar_minutes=self._bm_map[s],
             )
 
-        # LivePCM 仲裁器 (同实盘: 读取 constitution slot 配置)
+        # LivePCM 仲裁器 (percent-only 风险预算模式)
         constitution_yaml = str(Path("config") / "constitution" / "constitution.yaml")
         pcm_regime_yaml = str(Path("config") / "pcm_regime.yaml")
         self._simulators: Dict[str, PositionSimulator] = {}
@@ -1294,13 +1313,10 @@ class EventBacktester:
             regime_config_path=(
                 pcm_regime_yaml if Path(pcm_regime_yaml).exists() else None
             ),
-            get_open_slot_count=self._global_open_count,
-            max_slots=max_slots,
+            get_open_slot_count=None,
         )
         for s in self.strategy_names:
             self.pcm.register(s, self._strats[s], timeframe=self._tf_map[s])
-        if max_slots is not None and int(max_slots) > 0:
-            self._apply_backtest_slot_override(int(max_slots))
 
         # 特征计算器 — 按 unique timeframe 分组 (同 run_live.py)
         # BPC+FER 共享 240T FC，ME 独立 60T FC
@@ -1389,37 +1405,8 @@ class EventBacktester:
         return bars_1min, ticks_1min
 
     def _global_open_count(self) -> int:
-        """跨所有 symbol 的当前持仓数 (供 PCM slot 检查用)"""
+        """Deprecated: slot-based gating removed in percent-only mode."""
         return sum(sim.position_count for sim in self._simulators.values())
-
-    def _apply_backtest_slot_override(self, max_slots: int) -> None:
-        """Override per-strategy slot cap for this backtest run only."""
-        try:
-            const = getattr(self.pcm, "_constitution", {}) or {}
-            limits = dict(const.get("per_strategy_limits") or {})
-            if not isinstance(limits, dict):
-                limits = {}
-            for s in self.strategy_names:
-                ss = str(s or "").strip().lower()
-                parts = [p for p in ss.split("-") if p]
-                if len(parts) >= 2 and parts[0] in {"bpc", "fer", "me"}:
-                    k = f"{parts[0]}-{parts[1]}"
-                elif parts:
-                    k = parts[0]
-                else:
-                    continue
-                cfg = dict(limits.get(k) or {})
-                cfg["max_slots"] = int(max_slots)
-                limits[k] = cfg
-            const["per_strategy_limits"] = limits
-            self.pcm._constitution = const
-            logger.info(
-                "EventBacktester: override per_strategy_limits.max_slots=%d for %s",
-                int(max_slots),
-                ", ".join(self.strategy_names),
-            )
-        except Exception as exc:
-            logger.warning("EventBacktester: failed to apply slot override: %s", exc)
 
     def run(
         self,
@@ -1706,7 +1693,7 @@ class EventBacktester:
             f"Timeline: {len(timeline_events)} events across {len(sym_data)} symbols"
         )
         logger.info(f"Strategies: {', '.join(self.strategy_names)}")
-        logger.info(f"PCM max_slots={self.pcm._max_slots}")
+        logger.info("PCM percent-only risk budget mode enabled")
 
         # ── Phase 3: 遍历统一时间线 ──
         prev_ts: Dict[str, pd.Timestamp] = {}
@@ -1807,7 +1794,17 @@ class EventBacktester:
                     }
                     closed = upd_sim.update(bar_dict)
                     for ct in closed:
-                        self.pcm.notify_position_closed(upd_sym, ct.archetype)
+                        released = self.pcm.notify_position_closed(
+                            upd_sym, ct.archetype
+                        )
+                        if released <= 0:
+                            logger.warning(
+                                "PCM/release miss ts=%s symbol=%s archetype=%s reason=%s",
+                                bar_ts,
+                                upd_sym,
+                                ct.archetype,
+                                ct.reason,
+                            )
                     for ct in closed:
                         sl_r_val = 1.0
                         pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r / sl_r_val
@@ -1900,6 +1897,8 @@ class EventBacktester:
 
             # 主特征 = 第一个可用 timeframe 的特征 (PCM 回退用)
             primary_features = next(iter(features_by_tf.values()))
+            # Attach bar timestamp for downstream PCM diagnostics.
+            primary_features["_pcm_ts"] = str(ts)
 
             # 更新 structural_price (EMA200) 用于 BPC trend_hold 结构性退出
             _ema_200_val = primary_features.get("ema_200")
@@ -1962,7 +1961,17 @@ class EventBacktester:
                         evicted_arch, ev_close_price, ev_close_time
                     )
                     for ct in ev_closed:
-                        self.pcm.notify_position_closed(evicted_sym, ct.archetype)
+                        released = self.pcm.notify_position_closed(
+                            evicted_sym, ct.archetype
+                        )
+                        if released <= 0:
+                            logger.warning(
+                                "PCM/release miss ts=%s symbol=%s archetype=%s reason=%s",
+                                ev_close_time,
+                                evicted_sym,
+                                ct.archetype,
+                                ct.reason,
+                            )
                         pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
@@ -2003,6 +2012,7 @@ class EventBacktester:
                     )
                     if opened is None:
                         # 已有持仓，尝试加仓
+                        _intent_applied = False
                         if _add_pos_enabled and _executor:
                             added = simulator.try_add_position(
                                 intent,
@@ -2013,6 +2023,7 @@ class EventBacktester:
                                 bar_minutes=winning_bm,
                             )
                             if added:
+                                _intent_applied = True
                                 _add_pos_count += 1
                                 funnel.setdefault("add_position_ok", 0)
                                 funnel["add_position_ok"] += 1
@@ -2041,8 +2052,31 @@ class EventBacktester:
                                 else:
                                     funnel.setdefault("reject_add_other", 0)
                                     funnel["reject_add_other"] += 1
+                                logger.info(
+                                    "PCM/add reject ts=%s symbol=%s archetype=%s reason=%s detail=%s active_pos_symbol=%d",
+                                    str(ts),
+                                    str(getattr(intent, "symbol", "")),
+                                    str(getattr(intent, "archetype", "")),
+                                    _why,
+                                    str(
+                                        getattr(
+                                            simulator,
+                                            "last_add_reject_detail",
+                                            "",
+                                        )
+                                        or "-"
+                                    ),
+                                    int(simulator.position_count),
+                                )
                         else:
                             funnel["reject_max_positions"] += 1
+                        if not _intent_applied and hasattr(
+                            self.pcm, "rollback_intent_reservation"
+                        ):
+                            try:
+                                self.pcm.rollback_intent_reservation(intent)
+                            except Exception:
+                                pass
             else:
                 # 诊断拒绝原因: 逐策略检查 _last_funnel 确定最深到达阶段
                 _had_signal = False
@@ -2120,7 +2154,15 @@ class EventBacktester:
                     }
                     closed = simulator.update(bar_dict)
                     for ct in closed:
-                        self.pcm.notify_position_closed(sym, ct.archetype)
+                        released = self.pcm.notify_position_closed(sym, ct.archetype)
+                        if released <= 0:
+                            logger.warning(
+                                "PCM/release miss ts=%s symbol=%s archetype=%s reason=%s",
+                                bar_ts,
+                                sym,
+                                ct.archetype,
+                                ct.reason,
+                            )
                         pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
@@ -2143,7 +2185,17 @@ class EventBacktester:
                             break
                     if last_time.tzinfo is None:
                         last_time = last_time.replace(tzinfo=timezone.utc)
-                    simulator.force_close_all(last_close, last_time)
+                    force_closed = simulator.force_close_all(last_close, last_time)
+                    for ct in force_closed:
+                        released = self.pcm.notify_position_closed(sym, ct.archetype)
+                        if released <= 0:
+                            logger.warning(
+                                "PCM/release miss ts=%s symbol=%s archetype=%s reason=%s",
+                                last_time,
+                                sym,
+                                ct.archetype,
+                                ct.reason,
+                            )
                 else:
                     logger.info(
                         "%s: keep %d open positions for next run",
@@ -2344,16 +2396,25 @@ def generate_trading_map_html(
         p.grid.grid_line_alpha = 0.3
 
         # Trend baseline (EMA200) for long/short structure reading.
-        ema200 = df["close"].ewm(span=200, adjust=False, min_periods=200).mean()
-        p.line(
-            df.index,
-            ema200,
-            line_color="#f59e0b",
-            line_width=1.6,
-            line_alpha=0.95,
-            line_dash="dashed",
-            legend_label="EMA200",
-        )
+        # NOTE:
+        # - Single-month 4H data often has <200 bars; min_periods=200 would
+        #   produce all-NaN and the line disappears.
+        # - Prefer existing ema_200 column if available; otherwise fallback to
+        #   ewm(min_periods=1) so the baseline is visible in short windows.
+        if "ema_200" in df.columns:
+            ema200 = pd.to_numeric(df["ema_200"], errors="coerce")
+        else:
+            ema200 = df["close"].ewm(span=200, adjust=False, min_periods=1).mean()
+        if ema200.notna().any():
+            p.line(
+                df.index,
+                ema200,
+                line_color="#f59e0b",
+                line_width=1.6,
+                line_alpha=0.95,
+                line_dash="dashed",
+                legend_label="EMA200",
+            )
 
         # K 线实体
         inc = df.close >= df.open
@@ -2637,12 +2698,6 @@ def main():
         help="兼容参数: 当前仍使用 1min 精确持仓更新（用于保证与非 fast 一致）",
     )
     parser.add_argument(
-        "--max-slots",
-        type=int,
-        default=None,
-        help="可选: 覆盖 PCM 全局与已注册策略 max_slots（仅本次事件回测生效）",
-    )
-    parser.add_argument(
         "--resume-state",
         default=None,
         help="可选: 从 JSON 恢复上期未平仓状态",
@@ -2730,7 +2785,6 @@ def main():
         db_path=args.db,
         data_path=args.data_path,
         fee_rate=args.fee_rate,
-        max_slots=args.max_slots,
     )
 
     result = bt.run(

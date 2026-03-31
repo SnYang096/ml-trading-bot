@@ -115,7 +115,7 @@ mlbot feature-store build --no-docker \
 **禁止混用（最容易踩坑）**
 - `mlbot pipeline event-backtest` 只认 `research_history/<strategy>/<hash>` 结构。
 - `fast_month/rolling_sim` 产物在 `_rolling_sim/...`，不要再用 `pipeline event-backtest` 去重放。
-- 对 `_rolling_sim` 场景，优先直接重跑 `--stage fast_month` 或 `--stage rolling_sim`（可加 `--max-slots`）。
+- 对 `_rolling_sim` 场景，优先直接重跑 `--stage fast_month` 或 `--stage rolling_sim`。
 
 **三选一决策**
 - 只看某个月执行细节：`fast_month`
@@ -193,9 +193,6 @@ mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage eve
 # 只跑 PCM 联合回测
 mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm_joint
 
-# 只跑 PCM slot 网格
-mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm_slot_grid
-
 # 仅跑慢变量快照（训练到 entry_filter 停止，并生成 slow snapshot manifest）
 mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage slow_snapshot
 
@@ -244,7 +241,6 @@ rolling:
 - `fast_month`
 - `rolling_sim`
 - `pcm_joint`
-- `pcm_slot_grid`
 
 新增辅助命令：
 
@@ -384,24 +380,18 @@ python scripts/event_backtest.py \
   --trading-map results/prod_train_history/event_map_compare.html
 ```
 
-### 6.1.1 Slot 网格回测（推荐，管线内置）
+### 6.1.1 Percent 风险预算（当前默认）
 
-> 不再手动改 `constitution.yaml`。  
-> 直接在 `config/prod_train_pipeline_2h.yaml` 配置 `pcm_slot_grid`（cases + 评分惩罚 + plateau），
-> `mlbot pipeline run --all` 会在 Step 9.5 后自动执行 Step 9.6 的 slot 网格 PCM 对比。
+> 已移除旧 slot 网格阶段。  
+> 组合控制统一通过 `constitution.yaml` 的 percent 风险预算参数配置与验证。
 
 ```bash
-# 运行全策略（会自动执行 PCM Slot Grid）
+# 运行全策略（包含 PCM 联合回测）
 mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml
 
-# 仅运行 PCM Slot Grid（不重跑训练/筛选，最快）
-mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm_slot_grid
+# 仅运行 PCM 联合回测（不重跑训练/筛选，最快）
+mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage pcm_joint
 ```
-
-输出文件（在首个策略本次实验目录）：
-- `pcm_slot_grid_report.json`：各 case 指标 + 综合 score + 推荐 case
-- `pcm_slot_grid_report.md`：可读表格版（便于复盘）
-- `pcm_slot_grid_<case>.json`：每个 case 的 PCM 事件回测明细
 
 建议重点对比：
 - `sharpe_daily`
