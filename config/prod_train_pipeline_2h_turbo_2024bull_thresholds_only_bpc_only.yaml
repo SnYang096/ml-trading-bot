@@ -15,7 +15,7 @@ global_toggles:
 rolling:
   mode: turbo_fixed_features
   windows:
-    calibration_months: 3
+    calibration_months: 6
     structure_lookback_months: 12
   turbo_fixed_features:
     fixed_strategies_root: config/strategies

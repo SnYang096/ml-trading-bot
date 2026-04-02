@@ -951,6 +951,7 @@ def main() -> int:
             significance_min_trades=max(
                 2, int(getattr(args, "significance_min_trades", 4) or 4)
             ),
+            preserve_unscanned_locked=bool(args.filter),
         )
 
     return 0
@@ -1588,6 +1589,7 @@ def _promote_entry_filters_yaml(
     *,
     significance_p: float = 0.10,
     significance_min_trades: int = 4,
+    preserve_unscanned_locked: bool = False,
 ) -> None:
     """将优化结果写入 archetypes/entry_filters.yaml。
 
@@ -1598,9 +1600,56 @@ def _promote_entry_filters_yaml(
     两级都需要通过 z-test 显著性检验 (单侧 p < significance_p):
       H0: filter snotio = baseline snotio (无效)
       不显著 = 可能是噪声，自动排除；locked 未通过则 enabled=false
+
+    promote_never_disable (filter 级 YAML 字段):
+      为 true 时永不因 promote 失败而 enabled=false；优先保留磁盘上已有阈值/条件，
+      若无历史则退回本次扫描用的模板 (entry_cfg)。显著性未过但已有 plateau 时同样退回历史阈值。
     """
     import yaml
     from scipy.stats import norm as _norm_dist
+
+    arch_dir_early = Path(strategies_root) / strategy / "archetypes"
+    arch_dir_early.mkdir(parents=True, exist_ok=True)
+    output_path_early = arch_dir_early / "entry_filters.yaml"
+    existing_cfg_early: Dict[str, Any] = {}
+    if output_path_early.exists():
+        try:
+            existing_cfg_early = (
+                yaml.safe_load(output_path_early.read_text(encoding="utf-8")) or {}
+            )
+        except Exception:
+            existing_cfg_early = {}
+    _ex_f = existing_cfg_early.get("filters", [])
+    if not isinstance(_ex_f, list):
+        _ex_f = []
+    existing_by_id: Dict[str, Dict[str, Any]] = {
+        str(f.get("id", "")): copy.deepcopy(f)
+        for f in _ex_f
+        if isinstance(f, dict) and str(f.get("id", "")).strip()
+    }
+    never_disable_ids = set()
+    for _f in entry_cfg.get("filters", []) or []:
+        if (
+            isinstance(_f, dict)
+            and str(_f.get("id", "")).strip()
+            and bool(_f.get("promote_never_disable"))
+        ):
+            never_disable_ids.add(str(_f["id"]))
+
+    def _append_note_once(note_src: str, note: str) -> str:
+        src = str(note_src or "").strip()
+        if note in src:
+            return src
+        return (src + ", " + note).strip(", ")
+
+    def _never_disable(
+        lid: str, lf: Optional[Dict[str, Any]], fdef: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        if fdef and bool(fdef.get("promote_never_disable")):
+            return True
+        if lf and bool(lf.get("promote_never_disable")):
+            return True
+        return str(lid) in never_disable_ids
 
     # --- 计算 baseline snotio (如果有数据) ---
     bl_snotio = 0.0
@@ -1693,6 +1742,27 @@ def _promote_entry_filters_yaml(
                     print(
                         f"      ❌ {fname}: plateau通过但snotio不显著 (sn={sn:.4f} z={z:.2f} p={p:.4f}, need p<{_sig_p:g}), 排除"
                     )
+                    if _never_disable(fname, None, fdef):
+                        prev = existing_by_id.get(fname)
+                        sticky = copy.deepcopy(prev) if prev else copy.deepcopy(fdef)
+                        sticky["locked"] = True
+                        sticky["enabled"] = True
+                        sticky["promote_never_disable"] = True
+                        if sticky.get("lock_reason") is None and isinstance(fdef, dict):
+                            sticky["lock_reason"] = fdef.get("lock_reason")
+                        sticky["notes"] = _append_note_once(
+                            sticky.get("notes", ""),
+                            (
+                                "promote_never_disable: z-test未过，保留磁盘历史阈值"
+                                if prev
+                                else "promote_never_disable: z-test未过，无历史则使用模板阈值"
+                            ),
+                        )
+                        sticky.pop("tier", None)
+                        promoted_filters.append(sticky)
+                        print(
+                            f"      🔒 {fname}: promote_never_disable → enabled=true, 未采用本轮 plateau 阈值"
+                        )
                     continue
                 sig_note = f", z={z:.2f} p={p:.4f}"
             else:
@@ -1721,6 +1791,8 @@ def _promote_entry_filters_yaml(
                 "tier": "A_PLATEAU",
                 "notes": f"plateau: {', '.join(plateau_notes)}{sig_note}",
             }
+            if bool(fdef.get("promote_never_disable")):
+                pf["promote_never_disable"] = True
             promoted_filters.append(pf)
             tier_a_count += 1
             continue
@@ -1738,35 +1810,85 @@ def _promote_entry_filters_yaml(
                     "tier": "B_SNOTIO",
                     "notes": f"snotio={sn:.4f}(>{bl_snotio:.4f} bl), trades={trades}, z={z:.2f} p={p:.4f}, 无plateau用原始阈值",
                 }
+                if bool(fdef.get("promote_never_disable")):
+                    pf["promote_never_disable"] = True
                 promoted_filters.append(pf)
                 tier_b_count += 1
 
-    arch_dir = Path(strategies_root) / strategy / "archetypes"
-    arch_dir.mkdir(parents=True, exist_ok=True)
-    output_path = arch_dir / "entry_filters.yaml"
+    arch_dir = arch_dir_early
+    output_path = output_path_early
+
     locked_filters = load_locked_entry_filters(output_path)
     locked_by_id = {
         str(f.get("id", "")): copy.deepcopy(f)
         for f in locked_filters
         if isinstance(f, dict) and f.get("id")
     }
+    scanned_ids = {
+        str(f.get("id", "")).strip()
+        for f in filters_scanned
+        if isinstance(f, dict) and str(f.get("id", "")).strip()
+    }
     promoted_ids = {str(f.get("id", "")) for f in promoted_filters if f.get("id")}
+    preserved_unscanned = 0
+    auto_disabled = 0
+    sticky_never_disable = 0
+
     for pf in promoted_filters:
         _id = str(pf.get("id", ""))
         if _id in locked_by_id:
             pf["locked"] = True
             if locked_by_id[_id].get("lock_reason") and not pf.get("lock_reason"):
                 pf["lock_reason"] = locked_by_id[_id]["lock_reason"]
+            if locked_by_id[_id].get("promote_never_disable"):
+                pf["promote_never_disable"] = True
     for lid, lf in locked_by_id.items():
         if lid in promoted_ids:
+            continue
+        if preserve_unscanned_locked and lid not in scanned_ids:
+            prev = existing_by_id.get(lid)
+            nf = copy.deepcopy(prev) if prev else copy.deepcopy(lf)
+            nf["locked"] = True
+            if lf.get("lock_reason") and not nf.get("lock_reason"):
+                nf["lock_reason"] = lf["lock_reason"]
+            if _never_disable(lid, lf, None):
+                nf["enabled"] = True
+                nf["promote_never_disable"] = True
+                nf["notes"] = _append_note_once(
+                    nf.get("notes", ""),
+                    "promote_never_disable: 本轮未扫描，保持启用",
+                )
+            promoted_filters.append(nf)
+            preserved_unscanned += 1
+            continue
+        if _never_disable(lid, lf, None):
+            prev = existing_by_id.get(lid)
+            nf = copy.deepcopy(prev) if prev else copy.deepcopy(lf)
+            nf["locked"] = True
+            nf["enabled"] = True
+            nf["promote_never_disable"] = True
+            if lf.get("lock_reason") and not nf.get("lock_reason"):
+                nf["lock_reason"] = lf["lock_reason"]
+            nf["notes"] = _append_note_once(
+                nf.get("notes", ""),
+                (
+                    "promote_never_disable: 未过 Tier A/B，保留磁盘历史阈值"
+                    if prev
+                    else "promote_never_disable: 未过 Tier A/B，使用模板阈值"
+                ),
+            )
+            promoted_filters.append(nf)
+            sticky_never_disable += 1
+            print(f"      🔒 {lid}: promote_never_disable sticky (no auto-disable)")
             continue
         nf = copy.deepcopy(lf)
         nf["locked"] = True
         nf["enabled"] = False
-        nf["notes"] = (
-            str(nf.get("notes", "")).strip() + ", auto-disabled(no passing threshold)"
-        ).strip(", ")
+        nf["notes"] = _append_note_once(
+            nf.get("notes", ""), "auto-disabled(no passing threshold)"
+        )
         promoted_filters.append(nf)
+        auto_disabled += 1
 
     if not promoted_filters:
         # 仅当无 Tier A/B 且无 locked 池时为空（有 locked 时已在上方追加为 enabled=false）
@@ -1825,6 +1947,14 @@ def _promote_entry_filters_yaml(
 
     output_path.write_text(header + yaml_content, encoding="utf-8")
     print(f"\n   ✅ --promote: 写入 {output_path}")
+    if preserve_unscanned_locked:
+        print(
+            f"      Preserve mode: scanned={len(scanned_ids)}, preserved_unscanned={preserved_unscanned}, auto_disabled_scanned_fail={auto_disabled}"
+        )
+    if sticky_never_disable:
+        print(
+            f"      promote_never_disable: sticky Tier-fallback count={sticky_never_disable}"
+        )
     print(f"      Tier A (PLATEAU):  {tier_a_count} filters")
     print(f"      Tier B (SNOTIO):   {tier_b_count} filters")
     for pf in promoted_filters:
