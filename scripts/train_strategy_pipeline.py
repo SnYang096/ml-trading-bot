@@ -2902,9 +2902,7 @@ def train_strategy(
             f"     --config config/strategies/{strategy_config.name}/prefilter.yaml --select-recent 6"
         )
         print(f"\n   # Direction 验证")
-        print(
-            f"   python z\u5b9e\u9a8c_005_\u7edf\u4e00\u7814\u7a76/direction_strict_validation.py \\"
-        )
+        print(f"   python scripts/direction_strict_validation.py \\")
         print(f"     --logs {out_file} --strategy {strategy_config.name}")
         print(f"{'='*80}")
         return

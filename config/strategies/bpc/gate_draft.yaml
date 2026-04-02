@@ -1,0 +1,83 @@
+# BPC Gate Draft (auto-generated)
+# 来源: results/train_final_20260402_002631_rr_extreme/bpc
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy bpc
+#   python scripts/optimize_gate_unified.py --strategy bpc --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_macro_tp_vwap_1200_position_macro_tp_vwap_1200_position
+  tag: HARD_MACRO_TP_VWAP_1200_POSITION_MACRO_TP_VWAP_1200_POSITION
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.23)
+  when:
+    all_of:
+    - macro_tp_vwap_1200_position:
+        value_gt: -0.1101
+    - macro_tp_vwap_1200_position:
+        value_lt: 0.0781
+  then:
+    action: deny
+  comment: 'statistical(lift=1.23): macro_tp_vwap_1200_position > -0.1101 & macro_tp_vwap_1200_position < 0.07807'
+- id: gate_oi_compression_score
+  tag: HARD_OI_COMPRESSION_SCORE
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.25)
+  when:
+    oi_compression_score:
+      value_gt: 0.3063
+  then:
+    action: deny
+  comment: 'statistical(lift=1.25): oi_compression_score > 0.3063'
+- id: gate_evt_tail_shape_right_evt_tail_shape_right
+  tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.32)
+  when:
+    all_of:
+    - evt_tail_shape_right:
+        value_gt: 0.1786
+    - evt_tail_shape_right:
+        value_lt: 0.3299
+  then:
+    action: deny
+  comment: 'statistical(lift=1.32): evt_tail_shape_right > 0.1786 & evt_tail_shape_right < 0.3299'
+- id: gate_vol_clustering_strength
+  tag: HARD_VOL_CLUSTERING_STRENGTH
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.31)
+  when:
+    vol_clustering_strength:
+      value_gt: 0.2421
+  then:
+    action: deny
+  comment: 'statistical(lift=1.31): vol_clustering_strength > 0.2421'
+- id: gate_spectrum_volume_flatness_spectrum_volume_flatness
+  tag: HARD_SPECTRUM_VOLUME_FLATNESS_SPECTRUM_VOLUME_FLATNESS
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.29)
+  when:
+    all_of:
+    - spectrum_volume_flatness:
+        value_gt: 0.6179
+    - spectrum_volume_flatness:
+        value_lt: 0.6472
+  then:
+    action: deny
+  comment: 'statistical(lift=1.29): spectrum_volume_flatness > 0.6179 & spectrum_volume_flatness < 0.6472'
+guardrails: []

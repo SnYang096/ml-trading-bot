@@ -25,6 +25,14 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from src.time_series_model.live.direction_rule_ops import (
+    dual_position_agree_deadband_series,
+    is_direction_rule_enabled,
+    parse_dual_rule,
+    parse_single_position_band_rule,
+    single_position_band_series,
+)
+
 
 EPS = 1e-8
 
@@ -520,27 +528,41 @@ def _compute_direction_from_rules(direction_cfg: dict, df: pd.DataFrame) -> np.n
     assigned = np.zeros(n, dtype=bool)
 
     for rule in rules:
-        feature = rule.get("feature", "")
-        transform = rule.get("transform", "raw")
-        if feature not in df.columns:
+        if not is_direction_rule_enabled(rule):
             continue
-
-        col_data = df[feature]
-        # Guard against duplicate column names: df[feature] may return a DataFrame
-        if isinstance(col_data, pd.DataFrame):
-            col_data = col_data.iloc[:, 0]
-        series = pd.to_numeric(col_data, errors="coerce").fillna(0.0).values
-
-        if transform == "sign":
-            vals = np.sign(series)
-        elif transform == "negate_sign":
-            vals = -np.sign(series)
-        elif transform == "center_sign":
-            vals = np.sign(series - 0.5)
-        elif transform == "negate":
-            vals = -series
+        dual = parse_dual_rule(rule)
+        band = parse_single_position_band_rule(rule)
+        if dual is not None:
+            col_a, col_b, eps = dual
+            if col_a not in df.columns or col_b not in df.columns:
+                continue
+            vals = dual_position_agree_deadband_series(df, col_a, col_b, eps).values
+        elif band is not None:
+            fcol, inner_a, outer_a = band
+            if fcol not in df.columns:
+                continue
+            vals = single_position_band_series(df, fcol, inner_a, outer_a).values
         else:
-            vals = series
+            feature = rule.get("feature", "")
+            transform = rule.get("transform", "raw")
+            if feature not in df.columns:
+                continue
+
+            col_data = df[feature]
+            if isinstance(col_data, pd.DataFrame):
+                col_data = col_data.iloc[:, 0]
+            series = pd.to_numeric(col_data, errors="coerce").fillna(0.0).values
+
+            if transform == "sign":
+                vals = np.sign(series)
+            elif transform == "negate_sign":
+                vals = -np.sign(series)
+            elif transform == "center_sign":
+                vals = np.sign(series - 0.5)
+            elif transform == "negate":
+                vals = -series
+            else:
+                vals = series
 
         unassigned = ~assigned
         direction[unassigned] = vals[unassigned]

@@ -3,7 +3,7 @@
 # 对应生产配置: config/strategies/lv/archetypes/direction.yaml (选中的规则)
 #
 # 用法:
-#   python z实验_005_统一研究/direction_strict_validation.py \
+#   python scripts/direction_strict_validation.py \
 #       --logs results/train_final_xxx/lv/features_labeled.parquet \
 #       --strategy lv --compare-features
 #

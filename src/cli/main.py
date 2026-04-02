@@ -3508,8 +3508,16 @@ def delete(strategy, timestamp, status, delete_all, dry_run, date_range):
 @click.option("--no-fast", "fast", flag_value=False, help="使用 1min bar 精细模式")
 @click.option("--data-path", default="data/parquet_data", help="研究数据目录")
 @click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
+@click.option(
+    "--map-extra-months",
+    default=None,
+    type=int,
+    help=(
+        "交易地图 VWAP/EMA 向前多取的月数；默认读 pipeline 配置 event_backtest.map_extra_months，缺省 12"
+    ),
+)
 def pipeline_event_backtest(
-    strategy, exp_hash, sym_r, promote, fast, data_path, config_path
+    strategy, exp_hash, sym_r, promote, fast, data_path, config_path, map_extra_months
 ):
     """对指定实验运行事件回测 + 可选 execution 优化, 输出交易地图到 research_history."""
     import json
@@ -3517,10 +3525,11 @@ def pipeline_event_backtest(
 
     # 加载 pipeline 配置读取 history_dir
     _cfg_path = config_path or "config/research_pipeline.yaml"
+    _cfg: dict = {}
     try:
         import yaml as _yaml
 
-        _cfg = _yaml.safe_load(Path(_cfg_path).read_text(encoding="utf-8"))
+        _cfg = _yaml.safe_load(Path(_cfg_path).read_text(encoding="utf-8")) or {}
         history_dir = PROJECT_ROOT / _cfg["output"]["history_dir"]
     except Exception:
         history_dir = PROJECT_ROOT / "results/research_history"
@@ -3615,6 +3624,14 @@ def pipeline_event_backtest(
     ]
     if fast:
         ev_args.append("--fast")
+    _mem = map_extra_months
+    if _mem is None:
+        try:
+            _mem = int((_cfg.get("event_backtest") or {}).get("map_extra_months", 12))
+        except (TypeError, ValueError):
+            _mem = 12
+    if _mem >= 0:
+        ev_args.extend(["--map-extra-months", str(_mem)])
     rc = subprocess.run(ev_args, cwd=str(PROJECT_ROOT)).returncode
     click.echo(f"\n🗺️  交易地图: {map_path}")
     click.echo(f"📄 交易明细: {export_path}")

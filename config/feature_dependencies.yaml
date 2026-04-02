@@ -5968,6 +5968,72 @@ features:
         ema_200: price_unit
     column_mappings:
       real: close
+  ema_1200_value_f:
+    module: talib
+    compute_func: compute_talib_indicator_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - ema_1200
+    category: trend
+    normalized: false
+    description: 'EMA(1200) in price units; macro trend anchor (~100d on 2h bars).'
+    pass_full_df: false
+    compute_params:
+      indicator_name: EMA
+      timeperiod: 1200
+      output_column: ema_1200
+      output_normalization_map:
+        ema_1200: price_unit
+    column_mappings:
+      real: close
+  ema_1200_position_f:
+    module: baseline
+    compute_func: compute_price_vs_ma_position_from_series
+    dependencies:
+    - ema_1200_value_f
+    required_columns:
+    - close
+    - ema_1200
+    output_columns:
+    - ema_1200_position
+    category: trend
+    description: '(close - ema_1200) / close; use with sign for macro direction.'
+    pass_full_df: false
+    compute_params:
+      output_column: ema_1200_position
+      normalized: true
+      output_normalization_map:
+        ema_1200_position: bounded_-1_1
+    column_mappings:
+      close: close
+      ma: ema_1200
+  macro_tp_vwap_1200_position_f:
+    module: baseline
+    compute_func: compute_typical_price_vwap_position_from_series
+    dependencies: []
+    required_columns:
+    - high
+    - low
+    - close
+    - volume
+    output_columns:
+    - macro_tp_vwap_1200_position
+    category: trend
+    description: 'Rolling typical-price VWAP over 1200 bars; (close - vwap) / close.'
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      volume: volume
+    compute_params:
+      window: 1200
+      output_column: macro_tp_vwap_1200_position
+      normalized: true
+      output_normalization_map:
+        macro_tp_vwap_1200_position: bounded_-1_1
   vwap_position_f:
     module: baseline
     compute_func: compute_vwap_position_from_series

@@ -9,14 +9,9 @@ dates:
   end_date: "2024-12-31"
   holdout_months: 15
   validation_months: 3
-training:
-  seeds:
-    - 42
-  seed_selection: best_sharpe
+
 global_toggles:
   locked_threshold_tuning_enabled: true
-strategy_scope:
-  direction: all
 rolling:
   mode: turbo_fixed_features
   windows:
@@ -25,13 +20,7 @@ rolling:
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
     disable_feature_search: true
-slow_loop:
-  cadence_months: 3
-  triggered_retrain:
-    enabled: true
-  freeze_outputs:
-    enabled: true
-    keep_latest: 3
+
 fast_loop:
   # 快变量月度校准链的全局开关: true=每层都禁用树模型训练
   disable_model_training: true
@@ -46,95 +35,23 @@ fast_loop:
     enabled: false
   pcm_eval:
     enabled: false
-symbol_policy:
-  mode: hybrid_carry_forward
-  carry_forward_ttl_months: 2
-  enable_threshold: 0.0
-  min_symbol_trades_soft: 10
-  carry_forward_hard_fail_rules:
-    min_sharpe_r: -0.25
-direction_stack:
-  mode: ema200
-  ema_debounce_bars: 3
-  vwap_window_days: 20
-slot_allocation:
-  mode: quality_ranked
-  max_symbols_per_side: 2
-  reserve_slots_for_secondary_symbols: 1
-  slot_opportunity_penalty: 0.001
-  quality_score_weights:
-    history_edge: 0.55
-    now_strength: 0.45
-  quality_lookback_months: 3
-stitching:
-  enabled: true
-  metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]
-  export_trade_map_html: true
-event_backtest:
-  enabled: false
-  promote: false
-  sym_r_default: "1.0:1:6.0"
-  sym_r_by_family:
-    bpc: "2.0:1:6.0"
-    fer: "2:1:4"
-    me: "2:1:4"
-  exec_objective_default: sharpe
-  exec_objective_params:
-    near_stop_threshold_r: -0.9
-    near_stop_penalty: 0.0
-    max_dd_penalty: 0.0
-    min_trades_soft: 0
-    undertrade_penalty: 0.0
-  exec_objective_by_family:
-    me:
-      objective: risk_aware
-      near_stop_threshold_r: -0.9
-      near_stop_penalty: 0.45
-      max_dd_penalty: 0.02
-      min_trades_soft: 60
-      undertrade_penalty: 0.002
-pcm_slot_grid:
-  enabled: false
-  plateau_delta: 0.03
-  min_trades_soft: 80
-  penalties:
-    max_dd_penalty: 0.02
-    slot_full_rate_penalty: 0.20
-    undertrade_penalty: 0.001
-  cases:
-    - name: baseline
-      slots:
-        slot_count: 4
-        risk_per_slot: 0.01
-      per_strategy_limits:
-        bpc-short:
-          max_slots: 1
-        fer-short:
-          max_slots: 1
-        me-short:
-          max_slots: 1
-    - name: short_2_1_2
-      slots:
-        slot_count: 5
-        risk_per_slot: 0.008
-      per_strategy_limits:
-        bpc-short:
-          max_slots: 2
-        fer-short:
-          max_slots: 1
-        me-short:
-          max_slots: 2
-    - name: short_2_2_2
-      slots:
-        slot_count: 6
-        risk_per_slot: 0.007
-      per_strategy_limits:
-        bpc-short:
-          max_slots: 2
-        fer-short:
-          max_slots: 2
-        me-short:
-          max_slots: 2
+  # 方向调优默认每月执行；若需降成本可设 cadence_months: N（每 N 个 rolling 月跑一次）
+  direction_tuning:
+    enabled: true
+    # cadence_months: 1  # 默认 1；勿与 rolling.windows.calibration_months（标定窗口长度）混用
+    # true：跑 direction_strict_validation --compare-features --temporal（工作区 features_direction.yaml）
+    # false：仅 Phase1/2 验证 archetypes/direction.yaml，不读候选特征表
+    compare_features: false
+    # false：不 --promote；阈值已由 macro_epsilon_grid 写入，本步只做验证、不产生 YAML 变更
+    promote_after_validate: false
+    # dual：epsilon_grid；BPC single_position_band：epsilon_grid 视为 inner_abs 候选；
+    # 显式两边：inner_abs_grid + outer_abs_grid（笛卡尔积，需全程 inner < outer）
+    macro_epsilon_grid:
+      enabled: true
+      # patch_workspace 省略：dual 默认同步 features_direction；band 默认只写 archetypes
+      inner_abs_grid: "0.002,0.004,0.005"
+      outer_abs_grid: "0.04,0.05,0.06"
+
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a
@@ -145,13 +62,13 @@ download:
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  bpc-short-120T:
-    config: config/strategies/bpc-short-120T
+  bpc:
+    config: config/strategies/bpc
     timeframe: 120T
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: false
+    has_direction: true
     kpi_gates:
       prefilter:
         min_pass_rate: 0.05
@@ -202,82 +119,10 @@ strategies:
       sl_r: 4.0
       tp_r: 8.0
       timeout_bars: 500
-  bpc-long-120T:
-    config: config/strategies/bpc-long-120T
-    timeframe: 120T
-    features_gate: features.yaml
-    labels_gate: labels_rr_extreme.yaml
-    has_prefilter: true
-    has_direction: false
-    kpi_gates:
-      prefilter:
-        min_pass_rate: 0.05
-        min_rows: 10
-        target_trades_min: 35
-        target_trades_max: 260
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
-        stability_penalty: 0.0
-        enforce_locked_rules_in_experiment: true
-        locked_rules_source: production_prefilter
-        locked_threshold_tuning:
-          enabled: false
-          mode: auto_if_locked
-          skip_if_cached: false
-          max_cases: 12
-          min_trades_target: 60
-          trade_penalty: 0.0025
-          bpc_pullback_score_min_values: 0.40,0.45,0.50
-          bpc_pullback_depth_max_values: 0.55,0.60,0.65
-          bpc_recovery_min_values: 0.50,0.55,0.60
-          target_trades_min: 35
-          target_trades_max: 260
-          trade_penalty_low: 0.002
-          trade_penalty_high: 0.0011
-          stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
-      entry_filter:
-        target_trades_min: 35
-        target_trades_max: 260
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
-        stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
-        min_score_improvement: 0.005
-      gate:
-        require_positive_effect: true
-        min_combined_pass_rate: 0.3
-      backtest:
-        min_trades: 50
-      deploy:
-        min_trades: 50
-    simple_execution:
-      sl_r: 4.0
-      tp_r: 8.0
-      timeout_bars: 500
-shap_feature_selection:
-  enabled: false
-  n_folds: 8
-  top_k: 20
-  stability_threshold: 0.8
-  min_stable_features: 1
-  protected_nodes:
-    - atr_f
-    - fer_failure_signals_f
-  apply_to:
-    - features.yaml
-data_flow:
-  model_predictions: predictions.parquet
-  gated_logs: logs_gated.parquet
-  step_inputs:
-    prefilter: predictions.parquet
-    gate_train: predictions.parquet
-    gate_apply: predictions.parquet
-    execution: logs_gated.parquet
-    backtest: logs_gated.parquet
+
+# 事件回测 / 交易地图：VWAP·EMA 可向前用更多 1m 历史计算；图上只画回测窗（见 event_backtest.py）
+event_backtest:
+  map_extra_months: 3
+
 output:
-  history_dir: results/120T/prod_train_history
+  history_dir: results/bpc/turbo-rolling-sim

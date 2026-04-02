@@ -4387,6 +4387,22 @@ def compute_sma_position_from_series(
     return pd.DataFrame({"sma_200_position": position}, index=close.index)
 
 
+@register_feature("compute_price_vs_ma_position_from_series", category="baseline")
+def compute_price_vs_ma_position_from_series(
+    *,
+    close: pd.Series,
+    ma: pd.Series,
+    output_column: str = "ma_position",
+) -> pd.DataFrame:
+    """(close - ma) / close, clipped to [-1, 1]. ``ma`` 由 column_mappings 绑定 (如 ema_1200)."""
+    close_clean = pd.to_numeric(close, errors="coerce").astype(float)
+    ma_clean = pd.to_numeric(ma, errors="coerce").astype(float)
+    close_safe = close_clean.replace(0, np.nan)
+    position = (close_clean - ma_clean) / close_safe
+    position = position.replace([np.inf, -np.inf], np.nan).clip(-1.0, 1.0).fillna(0.0)
+    return pd.DataFrame({output_column: position}, index=close.index)
+
+
 @register_feature("compute_vwap_position_from_series", category="baseline")
 def compute_vwap_position_from_series(
     *,
@@ -4433,6 +4449,37 @@ def compute_vwap_position_from_series(
         },
         index=close.index,
     )
+
+
+@register_feature("compute_typical_price_vwap_position_from_series", category="baseline")
+def compute_typical_price_vwap_position_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    window: int = 1200,
+    output_column: str = "macro_tp_vwap_1200_position",
+) -> pd.DataFrame:
+    """
+    滚动典型价 VWAP: sum(tp*vol)/sum(vol), tp=(H+L+C)/3；
+    输出 (close - vwap) / close，与 SMA 位置可比、便于 direction 用 sign。
+    """
+    h = pd.to_numeric(high, errors="coerce").astype(float)
+    l = pd.to_numeric(low, errors="coerce").astype(float)
+    c = pd.to_numeric(close, errors="coerce").astype(float)
+    vol = pd.to_numeric(volume, errors="coerce").astype(float).clip(lower=0.0)
+    tp = (h + l + c) / 3.0
+    n = int(len(c))
+    w = max(2, min(int(window), max(n, 2)))
+    min_p = max(3, min(w // 10, max(50, w // 20)))
+    num = (tp * vol).rolling(window=w, min_periods=min_p).sum()
+    den = vol.rolling(window=w, min_periods=min_p).sum()
+    vwap = num / den.replace(0, np.nan)
+    close_safe = c.replace(0, np.nan)
+    position = (c - vwap) / close_safe
+    position = position.replace([np.inf, -np.inf], np.nan).clip(-1.0, 1.0).fillna(0.0)
+    return pd.DataFrame({output_column: position}, index=close.index)
 
 
 @register_feature("compute_volume_ratio_from_series", category="baseline")

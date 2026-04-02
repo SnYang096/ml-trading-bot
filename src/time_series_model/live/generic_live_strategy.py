@@ -31,6 +31,13 @@ from src.time_series_model.execution.entry_filter import (
     check_entry_filters_or_single,
     load_entry_filters_config,
 )
+from src.time_series_model.live.direction_rule_ops import (
+    dual_position_agree_deadband_scalar,
+    is_direction_rule_enabled,
+    parse_dual_rule,
+    parse_single_position_band_rule,
+    single_position_band_scalar,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +87,44 @@ class DirectionEvaluator:
             return 0, None
 
         for rule in self.rules:
+            if not is_direction_rule_enabled(rule):
+                continue
             rule_id = rule.get("id", "unknown")
+            dual = parse_dual_rule(rule)
+            if dual is not None:
+                col_a, col_b, eps = dual
+                direction = dual_position_agree_deadband_scalar(
+                    features.get(col_a), features.get(col_b), eps
+                )
+                if direction != 0:
+                    logger.debug(
+                        "方向匹配: rule=%s dual_deadband %s/%s eps=%s → direction=%s",
+                        rule_id,
+                        col_a,
+                        col_b,
+                        eps,
+                        direction,
+                    )
+                    if self._filter is not None and direction != self._filter:
+                        return 0, None
+                    return direction, str(rule_id)
+                continue
+
+            band = parse_single_position_band_rule(rule)
+            if band is not None:
+                col, inner_abs, outer_abs = band
+                direction = single_position_band_scalar(
+                    features.get(col), inner_abs, outer_abs
+                )
+                if direction != 0:
+                    if self._filter is not None and direction != self._filter:
+                        return 0, None
+                    return direction, str(rule_id)
+                continue
+
             feature_name = rule.get("feature", "")
             transform = rule.get("transform", "raw")
-            description = rule.get("description", "")
 
-            # 获取特征值
             value = features.get(feature_name)
             if value is None:
                 continue
@@ -95,7 +134,6 @@ class DirectionEvaluator:
             except (TypeError, ValueError):
                 continue
 
-            # 应用变换
             direction = self._apply_transform(value, transform)
 
             if direction != 0:
@@ -103,10 +141,9 @@ class DirectionEvaluator:
                     f"方向匹配: rule={rule_id}, feature={feature_name}, "
                     f"value={value:.4f}, transform={transform} → direction={direction}"
                 )
-                # direction_filter: 方向模型返回与过滤方向不匹配时，跳过（返回 0）
                 if self._filter is not None and direction != self._filter:
                     return 0, None
-                return direction, rule_id
+                return direction, str(rule_id)
 
         return 0, None
 
@@ -202,10 +239,14 @@ class ExecutionParamGenerator:
         不影响执行参数。确保向量回测 = 事件回测 = 实盘。
         """
         sl_cfg = self.config.get("stop_loss", {})
-        trail_cfg = sl_cfg.get("trailing", {})
+        trail_cfg = sl_cfg.get("trailing", {}) or {}
         guardrails = sl_cfg.get("guardrails", {}) or {}
         breakeven_cfg = sl_cfg.get("breakeven", {}) or {}
         exec_constraints = self.config.get("execution_constraints", {}) or {}
+        trailing_enabled = bool(trail_cfg.get("enabled", True))
+        se_conf = sl_cfg.get("structural_exit_config") or {}
+        _se_raw = sl_cfg.get("structural_exit")
+        _se_str = str(_se_raw).strip().lower() if _se_raw else ""
 
         # take_profit: 必须检查 enabled 标志，读 target_r (与向量回测一致)
         tp_cfg = self.config.get("take_profit", {})
@@ -228,21 +269,36 @@ class ExecutionParamGenerator:
             breakeven_cfg.get("lock_profit_atr", 0.0) or 0.0
         )
 
+        activation_r = (
+            float(trail_cfg.get("activation_r", 1.0)) if trailing_enabled else None
+        )
+        trail_r = float(trail_cfg.get("trail_r", 1.5)) if trailing_enabled else None
+        vwap_exit_inner_abs = None
+        if _se_str == "vwap1200":
+            try:
+                vwap_exit_inner_abs = float(
+                    se_conf.get("exit_inner_abs", se_conf.get("inner_abs", 0.005))
+                )
+            except (TypeError, ValueError):
+                vwap_exit_inner_abs = 0.005
+
         return {
             "tier_name": "global",
             "initial_r": float(sl_cfg.get("initial_r", 2.0)),
-            "activation_r": float(trail_cfg.get("activation_r", 1.0)),
-            "trail_r": float(trail_cfg.get("trail_r", 1.5)),
+            "activation_r": activation_r,
+            "trail_r": trail_r,
             "take_profit_r": take_profit_r,
             "time_stop_bars": _tsb,
             "max_holding_bars": _tsb,
             "size_multiplier": 1.0,
-            "structural_exit": sl_cfg.get("structural_exit"),  # "ema200" / None
+            "structural_exit": sl_cfg.get("structural_exit"),
+            "vwap_exit_inner_abs": vwap_exit_inner_abs,
             "min_stop_pct": guardrails.get("min_stop_pct"),
             "max_stop_pct": guardrails.get("max_stop_pct"),
             "breakeven_enabled": breakeven_enabled,
             "breakeven_trigger_r": breakeven_trigger_r,
             "breakeven_lock_profit_atr": breakeven_lock_profit_atr,
+            "allow_trailing": trailing_enabled and activation_r is not None,
         }
 
 
@@ -535,17 +591,24 @@ class GenericLiveStrategy:
                 "rr_constraints": {
                     "stop_loss_r": exec_params.get("initial_r", 2.0),
                     "take_profit_r": exec_params.get("take_profit_r", 2.5),
-                    "allow_trailing": True,
-                    "activation_r": exec_params.get("activation_r", 1.0),
-                    "trailing_atr": exec_params.get("trail_r", 1.5),
+                    "allow_trailing": bool(exec_params.get("allow_trailing", True)),
+                    "activation_r": exec_params.get("activation_r"),
+                    "trailing_atr": exec_params.get("trail_r"),
                     "max_holding_bars": exec_params.get("time_stop_bars", 50),
                     "structural_exit": exec_params.get("structural_exit"),
+                    "vwap_exit_inner_abs": exec_params.get("vwap_exit_inner_abs"),
                     "min_stop_pct": exec_params.get("min_stop_pct"),
                     "max_stop_pct": exec_params.get("max_stop_pct"),
                 },
                 "bpc_position_config": {
-                    "activation_r": exec_params.get("activation_r", 1.0),
-                    "trail_r": exec_params.get("trail_r", 1.5),
+                    **(
+                        {
+                            "activation_r": exec_params.get("activation_r"),
+                            "trail_r": exec_params.get("trail_r"),
+                        }
+                        if exec_params.get("activation_r") is not None
+                        else {}
+                    ),
                     "breakeven_enabled": exec_params.get("breakeven_enabled", False),
                     "breakeven_trigger_r": exec_params.get("breakeven_trigger_r", 1.0),
                     "breakeven_lock_profit_atr": exec_params.get(

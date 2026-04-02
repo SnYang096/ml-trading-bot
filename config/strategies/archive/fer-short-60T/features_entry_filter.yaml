@@ -1,0 +1,55 @@
+# FER (FailureExhaustionReversal) 策略特征配置
+# 语义：单边博弈失败→反向清算
+# Entry Filter 语义: 订单流微结构入场确认 (仅保留 order-flow/microstructure)
+
+name: fer-short
+description: |
+  FailureExhaustionReversal archetype: 单边博弈失败→反向清算。
+  核心：识别单边impulse推进失败后的反向清算机会。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    # 必需 scale 列（仅用于 label/回测内部计算，不作为模型输入）
+    - atr_f
+
+    # FER 语义触发（失败-反转相关）
+    - fer_failure_signals_f
+
+    # ---- 订单流主轴 ----
+    - cvd_divergence_v2_f
+    - cvd_change_features_f
+    - vpin_features_f
+    - vpin_scene_semantic_scores_f
+    - ofci_pct_f
+    - shd_pct_f
+    - volume_ratio_pct_f
+    - footprint_basic_f
+    - fp_imbalance_scene_semantic_scores_f
+
+    # ---- 成交流微结构 ----
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f
+
+    # ---- 衍生品拥挤与持仓流 ----
+    - funding_rate_features_f
+    - funding_scene_semantic_scores_f
+    - oi_features_f
+    - oi_scene_semantic_scores_f
+    - funding_oi_crowding_f
+
+    # ---- 订单流交叉特征 ----
+    - dual_exhaustion_f
+    - vpin_zscore_x_trade_cluster_max_buy_run_rank_f
+    - vpin_x_trade_cluster_entropy_rank_f
+
+    # ========== 触发信号: 影线拒绝 + 极值距离 ==========
+    # → wick_upper_ratio, wick_lower_ratio (影线拒绝 = 止损猎杀/失败信号)
+    - wick_ratios_f
+    # → bars_since_local_high/low (swing 距离, 值小=刚在极值处失败)
+    - bars_since_extreme_f
+    - market_cap_normalized_orderflow_f

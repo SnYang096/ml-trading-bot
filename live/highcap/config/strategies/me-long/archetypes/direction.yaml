@@ -4,12 +4,12 @@
 #
 # 用法:
 #   # 默认模式: 只对比本文件 candidates 中的特征
-#   python z实验_005_统一研究/direction_strict_validation.py \
+#   python scripts/direction_strict_validation.py \
 #       --logs results/train_final_xxx/me/features_labeled.parquet \
 #       --strategy me --compare-features
 #
 #   # 发现模式: 扫描全部数值特征 (169+), 用于发现新候选
-#   python z实验_005_统一研究/direction_strict_validation.py \
+#   python scripts/direction_strict_validation.py \
 #       --logs results/train_final_xxx/me/features_labeled.parquet \
 #       --strategy me --compare-features --all-features
 #

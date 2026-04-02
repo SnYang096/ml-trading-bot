@@ -348,8 +348,19 @@ def _build_continuous_pcm_trading_map(
     output_path: Path,
     *,
     data_path: str = "data/parquet_data",
+    map_vwap_window_bars: int = 1200,
+    map_long_ema_span: int = 1200,
+    indicator_lookback_days: int = 140,
 ) -> str:
-    """Build continuous multi-month map with 2H K-lines and trade overlays."""
+    """Build continuous multi-month map with 2H K-lines and trade overlays.
+
+    Price overlays: rolling typical-price VWAP over ``map_vwap_window_bars`` bars
+    (same window as ``macro_tp_vwap_1200_position`` on 2H). ``map_long_ema_span`` is
+    kept for call-site compatibility; EMA overlay was removed as redundant with VWAP.
+    Extra history is loaded before ``x_min`` for stable VWAP; only the trade-window
+    band is drawn on the X axis.
+    Trade segment legend: solid = primary leg, dashed = add-on (palette first color often blue).
+    """
     try:
         import pandas as pd  # local import to keep startup light
     except Exception as exc:
@@ -501,7 +512,18 @@ def _build_continuous_pcm_trading_map(
     }
     dh = DataHandler(str(data_path))
     bar_ms = int(2 * 60 * 60 * 1000 * 0.65)  # 2H body width
+    # Wider figure; legend overlays inside plot (not right panel) so candle width is not squeezed.
+    plot_w = 1900
     fig_list: List[Any] = []
+
+    vw_n = max(2, int(map_vwap_window_bars))
+    _ = map_long_ema_span  # API compat; EMA not drawn
+    lookback_days = max(int(indicator_lookback_days), int((vw_n * 2 + 24) // 24) + 7)
+    try:
+        from scripts.event_backtest import _rolling_tp_vwap as _pcm_rolling_tp_vwap
+    except Exception as exc:
+        print(f"   ⚠️ 连续地图: 无法导入 _rolling_tp_vwap: {exc}")
+        return ""
 
     # ── Top panel: cumulative R (overall + per archetype) ──
     cum_df = merged.sort_values("exit_time").copy()
@@ -509,7 +531,7 @@ def _build_continuous_pcm_trading_map(
     p_cum = bk_figure(
         title=f"Cumulative R | total_r={total_r:.2f} | trades={total_trades}",
         x_axis_type="datetime",
-        width=1500,
+        width=plot_w,
         height=630,
         tools="pan,wheel_zoom,box_zoom,reset,save",
     )
@@ -522,7 +544,7 @@ def _build_continuous_pcm_trading_map(
         line_color="#111827",
         line_width=2.2,
         alpha=0.95,
-        legend_label="ALL",
+        legend_label="ALL (cumulative R)",
     )
     for arch in archetypes:
         g = cum_df.loc[cum_df["archetype"] == arch, ["exit_time", "pnl_r"]].copy()
@@ -536,8 +558,9 @@ def _build_continuous_pcm_trading_map(
             line_color=archetype_colors.get(arch, "#6b7280"),
             line_width=1.6,
             alpha=0.9,
-            legend_label=f"{arch}",
+            legend_label=f"{arch} (cumulative R)",
         )
+    p_cum.legend.location = "top_left"
     p_cum.legend.click_policy = "hide"
     p_cum.add_tools(
         HoverTool(
@@ -555,7 +578,7 @@ def _build_continuous_pcm_trading_map(
         p = bk_figure(
             title=f"{sym} | trades={len(tdf)} | total_r={float(tdf['pnl_r'].sum()):.2f}",
             x_axis_type="datetime",
-            width=1500,
+            width=plot_w,
             height=720,
             tools="pan,wheel_zoom,box_zoom,reset,save",
         )
@@ -563,13 +586,16 @@ def _build_continuous_pcm_trading_map(
         p.x_range = Range1d(x_min.to_pydatetime(), x_max.to_pydatetime())
         p.yaxis.axis_label = "Price"
 
-        # 2H K-lines
+        r_vwap_ref = None
+        # 2H K-lines + 与 event 单图一致的 1200-bar VWAP / 1200-span EMA（多取历史只用于计算）
+        load_start = (x_min - pd.Timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        load_end = x_max.strftime("%Y-%m-%d")
         try:
             ohlcv = dh.load_ohlcv(
                 symbol=sym,
                 timeframe="120T",
-                start_date=x_min.strftime("%Y-%m-%d"),
-                end_date=x_max.strftime("%Y-%m-%d"),
+                start_date=load_start,
+                end_date=load_end,
             )
         except Exception:
             ohlcv = pd.DataFrame()
@@ -579,58 +605,112 @@ def _build_continuous_pcm_trading_map(
                 cdf.index = pd.to_datetime(
                     cdf.get("timestamp"), utc=True, errors="coerce"
                 )
-            cdf = cdf[["open", "high", "low", "close"]].dropna()
+            _cols = ["open", "high", "low", "close"]
+            if "volume" in cdf.columns:
+                _cols.append("volume")
+            cdf = cdf[_cols].dropna(subset=["open", "high", "low", "close"])
             if not cdf.empty:
-                # Overlay trend baseline to visualize long/short separation.
-                ema200 = (
-                    cdf["close"].ewm(span=200, adjust=False, min_periods=200).mean()
-                )
-                p.line(
-                    cdf.index,
-                    ema200,
-                    line_color="#f59e0b",
-                    line_width=1.6,
-                    line_alpha=0.95,
-                    line_dash="dashed",
-                )
-                inc = cdf["close"] >= cdf["open"]
+                vwap_full = _pcm_rolling_tp_vwap(cdf, vw_n)
+
+                view_start = pd.Timestamp(x_min)
+                view_end = pd.Timestamp(x_max)
+                idx = cdf.index
+                if idx.tz is not None:
+                    if view_start.tzinfo is None:
+                        view_start = view_start.tz_localize("UTC").tz_convert(idx.tz)
+                    else:
+                        view_start = view_start.tz_convert(idx.tz)
+                    if view_end.tzinfo is None:
+                        view_end = view_end.tz_localize("UTC").tz_convert(idx.tz)
+                    else:
+                        view_end = view_end.tz_convert(idx.tz)
+                else:
+                    # Trades / merged bounds may be tz-aware while OHLCV index is naive UTC wall-time
+                    if view_start.tzinfo is not None:
+                        view_start = view_start.tz_convert("UTC").tz_localize(None)
+                    if view_end.tzinfo is not None:
+                        view_end = view_end.tz_convert("UTC").tz_localize(None)
+                plot_mask = (idx >= view_start) & (idx <= view_end)
+                cdf_plot = cdf.loc[plot_mask]
+                if cdf_plot.empty:
+                    cdf_plot = cdf
+
+                inc = cdf_plot["close"] >= cdf_plot["open"]
                 dec = ~inc
                 p.segment(
-                    cdf.index[inc],
-                    cdf["high"][inc],
-                    cdf.index[inc],
-                    cdf["low"][inc],
+                    cdf_plot.index[inc],
+                    cdf_plot["high"][inc],
+                    cdf_plot.index[inc],
+                    cdf_plot["low"][inc],
                     color="#26a69a",
                     line_width=1,
                 )
                 p.segment(
-                    cdf.index[dec],
-                    cdf["high"][dec],
-                    cdf.index[dec],
-                    cdf["low"][dec],
+                    cdf_plot.index[dec],
+                    cdf_plot["high"][dec],
+                    cdf_plot.index[dec],
+                    cdf_plot["low"][dec],
                     color="#ef5350",
                     line_width=1,
                 )
                 p.vbar(
-                    cdf.index[inc],
+                    cdf_plot.index[inc],
                     bar_ms,
-                    cdf["open"][inc],
-                    cdf["close"][inc],
+                    cdf_plot["open"][inc],
+                    cdf_plot["close"][inc],
                     fill_color="#26a69a",
                     line_color="#26a69a",
                     fill_alpha=0.8,
                 )
                 p.vbar(
-                    cdf.index[dec],
+                    cdf_plot.index[dec],
                     bar_ms,
-                    cdf["open"][dec],
-                    cdf["close"][dec],
+                    cdf_plot["open"][dec],
+                    cdf_plot["close"][dec],
                     fill_color="#ef5350",
                     line_color="#ef5350",
                     fill_alpha=0.8,
                 )
+                vp = vwap_full.reindex(cdf_plot.index)
+                r_vwap_ref = p.line(
+                    cdf_plot.index,
+                    vp,
+                    line_color="#c026d3",
+                    line_width=1.35,
+                    line_alpha=0.78,
+                )
+                # VWAP position band (matches macro_tp_vwap_1200_position = (close-vwap)/close)
+                _inner = 0.005
+                _outer = 0.05
+                v_dead_lo = (vp / (1.0 + _inner)).clip(lower=0)
+                v_dead_hi = (vp / (1.0 - _inner)).clip(lower=0)
+                v_long_cap = (vp / (1.0 - _outer)).clip(lower=0)
+                r_vwap_dead_lo = p.line(
+                    cdf_plot.index,
+                    v_dead_lo,
+                    line_color="#64748b",
+                    line_width=1.0,
+                    line_alpha=0.55,
+                    line_dash="dashed",
+                )
+                r_vwap_dead_hi = p.line(
+                    cdf_plot.index,
+                    v_dead_hi,
+                    line_color="#64748b",
+                    line_width=1.0,
+                    line_alpha=0.55,
+                    line_dash="dashed",
+                )
+                r_vwap_long_cap = p.line(
+                    cdf_plot.index,
+                    v_long_cap,
+                    line_color="#a855f7",
+                    line_width=1.0,
+                    line_alpha=0.5,
+                    line_dash="dotdash",
+                )
 
-        # Trade overlays (split by archetype)
+                # Trade overlays (split by archetype)
         tdf["pnl_color"] = [
             "#16a34a" if x >= 0 else "#dc2626"
             for x in tdf["pnl_r"].astype(float).tolist()
@@ -791,15 +871,36 @@ def _build_continuous_pcm_trading_map(
             mode="mouse",
         )
         p.add_tools(detail_hover)
-        legend_items = [
-            LegendItem(label=str(arch), renderers=rs)
-            for arch, rs in sorted(arch_renderers.items())
-            if rs
-        ]
+        legend_items: List[Any] = []
+        if r_vwap_ref is not None:
+            legend_items.append(
+                LegendItem(
+                    label=f"Rolling TP-VWAP ({vw_n} bars, price) — same window as macro_tp_vwap_1200",
+                    renderers=[r_vwap_ref],
+                )
+            )
+        legend_items.extend(
+            [
+                LegendItem(label=str(arch), renderers=rs)
+                for arch, rs in sorted(arch_renderers.items())
+                if rs
+            ]
+        )
         if legend_items:
-            legend = Legend(items=legend_items)
+            legend = Legend(
+                items=legend_items,
+                location="top_left",
+                orientation="vertical",
+                spacing=5,
+                padding=8,
+                margin=8,
+                label_text_font_size="10pt",
+                background_fill_alpha=0.88,
+                border_line_color="#94a3b8",
+                border_line_alpha=0.5,
+            )
             legend.click_policy = "hide"
-            p.add_layout(legend, "right")
+            p.add_layout(legend, "center")
         fig_list.append(p)
 
     run_months = sorted(str(r.get("month", "")) for r in ledger if r.get("month"))
@@ -817,8 +918,19 @@ def _build_continuous_pcm_trading_map(
         return ""
 
     header = Div(
-        text=f"<h2>{title}</h2><p>{subtitle}</p>",
-        width=1500,
+        text=(
+            f"<h2>{title}</h2><p>{subtitle}</p>"
+            f"<p style='font-size:13px;line-height:1.45;max-width:{plot_w}px'>"
+            "<b>图例（价格图）</b> 叠在图内左上角，不占用右侧宽度。与单月 "
+            "<code>trading_map_*_event.html</code> 一致：品红实线 = 滚动典型价 VWAP（1200 根 2H bar，"
+            "对应 <code>macro_tp_vwap_1200_position</code> 的价格线）。 "
+            "灰虚线 = VWAP 内侧死区边界（<code>(close-vwap)/close = ±inner</code>，默认 inner=0.005）；"
+            "紫点划 = 多头带通外侧 cap（<code>outer=0.05</code>），与 BPC <code>single_position_band</code> 一致。"
+            "绿/红 K 线为涨跌。入场→出场按策略着色（首色常为蓝）：<b>实线</b>=首仓腿，<b>虚线</b>=加仓腿。"
+            "△ 多 · ▽ 空 · ◇ 加仓 · □ 平仓。"
+            "</p>"
+        ),
+        width=plot_w,
     )
     html = bk_file_html(bk_column([header] + fig_list), BK_RESOURCES, title)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1404,6 +1516,7 @@ def run_strategy_pipeline(
     disable_auto_locked_tuning: bool = False,
     stage_stop: str = "full",
     disable_model_training: bool = False,
+    skip_direction_tuning: bool = False,
 ) -> Dict[str, Any]:
     """执行单个策略训练链，可在指定 stage 提前停止."""
     scfg = cfg["strategies"][strategy]
@@ -1709,25 +1822,207 @@ def run_strategy_pipeline(
             disable_auto_locked_tuning=disable_auto_locked_tuning,
         )
 
+    # ── Step 2.9: Macro dual deadband ε grid (optional, before Direction Validate) ──
+    _fast_loop_cfg = cfg.get("fast_loop") or {}
+    _dir_tune_cfg = _fast_loop_cfg.get("direction_tuning") or {}
+    _meps_cfg = _dir_tune_cfg.get("macro_epsilon_grid") or {}
+    if (
+        scfg.get("has_direction")
+        and not skip_direction_tuning
+        and not dry_run
+        and isinstance(_meps_cfg, dict)
+        and _meps_cfg.get("enabled")
+    ):
+        try:
+            import pandas as pd
+
+            from scripts.tune_direction_macro_epsilon import (
+                apply_band_thresholds_to_strategy_configs,
+                apply_dual_rule_epsilon_to_strategy_configs,
+                archetypes_has_dual_band_rules,
+                epsilon_grid_values_from_config,
+                inner_abs_grid_values_from_config,
+                outer_abs_grid_values_from_config,
+                pick_best_median_band,
+                pick_best_median_epsilon,
+                run_macro_epsilon_sweep,
+                run_single_position_band_sweep,
+            )
+
+            _eps_parquet = Path(prepare_dir) / "features_labeled.parquet"
+            _pws = _meps_cfg.get("patch_workspace")
+            _patch_ws_dual = True if _pws is None else bool(_pws)
+            _patch_ws_band = False if _pws is None else bool(_pws)
+            _eps_list = epsilon_grid_values_from_config(_meps_cfg)
+            _inner_list = inner_abs_grid_values_from_config(_meps_cfg)
+            _outer_list = outer_abs_grid_values_from_config(_meps_cfg)
+            _sr_path = Path(strategies_root)
+            _has_dual_rule, _has_band_rule = archetypes_has_dual_band_rules(
+                _sr_path, strategy
+            )
+            _dual_path = bool(_has_dual_rule and _eps_list)
+            _band_inners = _inner_list if _inner_list else _eps_list
+            _band_path = bool(
+                _has_band_rule
+                and (bool(_inner_list) or bool(_outer_list) or bool(_eps_list))
+            )
+
+            if not _dual_path and not _band_path:
+                if _has_dual_rule and not _eps_list:
+                    print(
+                        "\n⚠️ Macro direction grid: dual rule present but no "
+                        "epsilon_grid / epsilon_min–max; thresholds unchanged"
+                    )
+                elif _has_band_rule and not (_inner_list or _outer_list or _eps_list):
+                    print(
+                        "\n⚠️ Macro direction grid: single_position_band present "
+                        "but no epsilon_grid / inner_abs_grid / outer_abs_grid"
+                    )
+                elif not _has_dual_rule and not _has_band_rule:
+                    print(
+                        "\n⏭️  Macro direction grid: skip (no dual or "
+                        "single_position_band in archetypes/direction.yaml)"
+                    )
+            elif not _eps_parquet.exists():
+                print(
+                    f"\n⚠️ Macro direction grid: missing {_eps_parquet}, "
+                    "thresholds unchanged"
+                )
+            else:
+                _eps_df = pd.read_parquet(_eps_parquet)
+                if "_symbol" in _eps_df.columns and "symbol" not in _eps_df.columns:
+                    _eps_df["symbol"] = _eps_df["_symbol"]
+
+                if _dual_path:
+                    _rows, _has_dual = run_macro_epsilon_sweep(
+                        _eps_df, strategy, _sr_path, _eps_list
+                    )
+                    if _has_dual and _rows:
+                        print(
+                            "\n📐 Macro ε grid (dual_position_agree_deadband) "
+                            f"[n={len(_rows)}]"
+                        )
+                        for _r in _rows:
+                            print(
+                                f"   ε={_r['epsilon']:>10.6g}  "
+                                f"status={str(_r['status']):<14}  "
+                                f"med_rr×dir={str(_r.get('median_in_direction', '')):>8}  "
+                                f"bad={str(_r.get('bad_rate_in_direction', '')):>6}  "
+                                f"n_valid={str(_r.get('n_valid', '')):>6}"
+                            )
+                        _best = pick_best_median_epsilon(_rows)
+                        if _best is not None:
+                            if apply_dual_rule_epsilon_to_strategy_configs(
+                                Path(config_dir),
+                                _best,
+                                patch_workspace=_patch_ws_dual,
+                            ):
+                                print(
+                                    f"   ✅ Applied best epsilon={_best} → "
+                                    f"{config_dir}"
+                                    + (
+                                        " (archetypes + features_direction)"
+                                        if _patch_ws_dual
+                                        else " (archetypes only)"
+                                    )
+                                )
+                            else:
+                                print(
+                                    "   ⚠️ Macro ε grid: could not write YAML "
+                                    "(no dual rule in target files?)"
+                                )
+                        else:
+                            print(
+                                "   ⚠️ Macro ε grid: no OK row "
+                                "(median_in_direction); epsilon unchanged"
+                            )
+                    else:
+                        print("\n⚠️ Macro ε grid: sweep returned no rows")
+
+                elif _band_path:
+                    _rows_b, _has_band = run_single_position_band_sweep(
+                        _eps_df,
+                        strategy,
+                        _sr_path,
+                        _band_inners if _band_inners else None,
+                        _outer_list if _outer_list else None,
+                    )
+                    if _has_band and _rows_b:
+                        print(
+                            "\n📐 Macro band grid (single_position_band inner×outer) "
+                            f"[n={len(_rows_b)}]"
+                        )
+                        for _r in _rows_b:
+                            print(
+                                f"   inner={_r['inner_abs']:>8.6g}  "
+                                f"outer={_r['outer_abs']:>8.6g}  "
+                                f"status={str(_r['status']):<14}  "
+                                f"med_rr×dir={str(_r.get('median_in_direction', '')):>8}  "
+                                f"bad={str(_r.get('bad_rate_in_direction', '')):>6}  "
+                                f"n_valid={str(_r.get('n_valid', '')):>6}"
+                            )
+                        _best_b = pick_best_median_band(_rows_b)
+                        if _best_b is not None:
+                            _inn, _out = _best_b
+                            if apply_band_thresholds_to_strategy_configs(
+                                Path(config_dir),
+                                _inn,
+                                _out,
+                                patch_workspace=_patch_ws_band,
+                            ):
+                                print(
+                                    f"   ✅ Applied best inner_abs={_inn}, "
+                                    f"outer_abs={_out} → {config_dir}"
+                                    + (
+                                        " (archetypes + features_direction)"
+                                        if _patch_ws_band
+                                        else " (archetypes only)"
+                                    )
+                                )
+                            else:
+                                print("   ⚠️ Macro band grid: could not write YAML")
+                        else:
+                            print(
+                                "   ⚠️ Macro band grid: no OK row "
+                                "(median_in_direction); band unchanged"
+                            )
+                    else:
+                        print(
+                            "\n⚠️ Macro band grid: sweep returned no rows "
+                            "(check inner < outer for all pairs)"
+                        )
+        except Exception as exc:
+            print(f"\n⚠️ Macro direction grid failed (thresholds unchanged): {exc}")
+
     # ── Step 3: Direction (--promote) ── (前置于 Prefilter, 使 meta-algorithm 能在方向已知的子集上学习)
-    if scfg.get("has_direction"):
-        run_step(
-            "Direction Validate",
-            [
-                "python",
-                "z实验_005_统一研究/direction_strict_validation.py",
-                "--logs",
-                f"{prepare_dir}/features_labeled.parquet",
-                "--strategy",
-                strategy,
-                "--strategies-root",
-                strategies_root,
-                "--compare-features",
-                "--temporal",
-                "--promote",
-            ],
-            log,
-            dry_run=dry_run,
+    if scfg.get("has_direction") and not skip_direction_tuning:
+        _dir_tune_cmd = _fast_loop_cfg.get("direction_tuning") or {}
+        _compare_feats = _dir_tune_cmd.get("compare_features")
+        if _compare_feats is None:
+            _compare_feats = True
+        _promote_dir = _dir_tune_cmd.get("promote_after_validate")
+        if _promote_dir is None:
+            _promote_dir = True
+        _dir_argv: List[str] = [
+            "python",
+            "scripts/direction_strict_validation.py",
+            "--logs",
+            f"{prepare_dir}/features_labeled.parquet",
+            "--strategy",
+            strategy,
+            "--strategies-root",
+            strategies_root,
+            "--direction-workspace",
+            "features_direction.yaml",
+        ]
+        if _compare_feats:
+            _dir_argv.extend(["--compare-features", "--temporal"])
+        if _promote_dir:
+            _dir_argv.append("--promote")
+        run_step("Direction Validate", _dir_argv, log, dry_run=dry_run)
+    elif scfg.get("has_direction") and skip_direction_tuning:
+        print(
+            "⏭️  Direction 调优跳过: fast_loop.direction_tuning 关闭或未到 cadence 月份"
         )
 
     if not threshold_calibration_enabled:
@@ -3027,6 +3322,15 @@ def _parse_event_stdout(output: str) -> Dict[str, Any]:
     }
 
 
+def _event_trading_map_extra_months(cfg: Dict[str, Any]) -> int:
+    """交易地图：向前多取月数（仅用于 VWAP/EMA 计算，见 event_backtest.map_extra_months）。"""
+    ev = cfg.get("event_backtest", {}) or {}
+    try:
+        return max(0, int(ev.get("map_extra_months", 12)))
+    except (TypeError, ValueError):
+        return 12
+
+
 def _run_event_backtest_step(
     strategy: str,
     evidence_dir: str,
@@ -3053,6 +3357,7 @@ def _run_event_backtest_step(
     opt_end_date: str = "",
     event_start_date: str = "",
     event_end_date: str = "",
+    map_extra_months: int = 12,
 ) -> Dict[str, Any]:
     """Step E1: 事件回测 execution 参数优化 + 交易地图生成."""
     log = run_dir / "pipeline.log"
@@ -3133,6 +3438,8 @@ def _run_event_backtest_step(
         "--output",
         event_json_path,
         "--fast",
+        "--map-extra-months",
+        str(int(map_extra_months)),
     ]
     if resume_state_path:
         ev_cmd.extend(["--resume-state", resume_state_path])
@@ -3951,6 +4258,7 @@ def _run_fast_month_stage(
     prev_side_state: Optional[Dict[str, Any]] = None,
     prev_resume_state_paths: Optional[Dict[str, str]] = None,
     keep_open_positions: bool = False,
+    month_index: int = 0,
 ) -> Dict[str, Any]:
     """Run one-month fast loop with optional calib/test window split."""
     month_start, month_end = _month_token_to_range(month_token)
@@ -3994,6 +4302,20 @@ def _run_fast_month_stage(
     )
     execution_opt_enabled = _section_enabled("execution_opt", True)
     pcm_eval_enabled = _section_enabled("pcm_eval", True)
+    direction_tuning_enabled = _section_enabled("direction_tuning", True)
+    # rolling.windows.calibration_months = 标定窗口长度 (见 _calib_and_test_windows)，
+    # 与「多久跑一次方向调优」无关。方向节奏单独用 direction_tuning.cadence_months，默认 1=每月。
+    _dir_tune_sec = fast_loop_cfg.get("direction_tuning") or {}
+    _direction_cadence_raw = (
+        _dir_tune_sec.get("cadence_months", 1) if isinstance(_dir_tune_sec, dict) else 1
+    )
+    try:
+        _direction_cadence = max(int(_direction_cadence_raw), 1)
+    except (TypeError, ValueError):
+        _direction_cadence = 1
+    skip_direction_for_month = not direction_tuning_enabled or (
+        month_index % _direction_cadence != 0
+    )
     event_backtest_enabled = bool(event_cfg.get("enabled", True))
     if not _fast_loop_active:
         threshold_calibration_enabled = True
@@ -4002,6 +4324,7 @@ def _run_fast_month_stage(
         execution_opt_enabled = True
         pcm_eval_enabled = True
         event_backtest_enabled = True
+        skip_direction_for_month = False
     _calibrate_threshold_layers = bool(
         calibrate_all_layers and threshold_calibration_enabled
     )
@@ -4054,6 +4377,9 @@ def _run_fast_month_stage(
         f"prefilter_optimize={prefilter_optimize_enabled}, "
         f"execution_opt={execution_opt_enabled}, "
         f"pcm_eval={pcm_eval_enabled}, "
+        f"direction_tuning={direction_tuning_enabled} "
+        f"(cadence_months={_direction_cadence}, month_idx={month_index}, "
+        f"run_this_month={not skip_direction_for_month}), "
         f"event_backtest={event_backtest_enabled}"
     )
     if threshold_calibration_enabled and threshold_calibration_disable_model_training:
@@ -4101,6 +4427,7 @@ def _run_fast_month_stage(
                 config_path=(config_path or str(DEFAULT_CONFIG)),
                 stage_stop="entry_filter",
                 disable_model_training=threshold_calibration_disable_model_training,
+                skip_direction_tuning=skip_direction_for_month,
             )
             exp_cfg_dir = Path(str(_res.get("exp_config_dir", "") or ""))
             if exp_cfg_dir.exists():
@@ -4179,6 +4506,7 @@ def _run_fast_month_stage(
                 resume_state_path=resume_state_path,
                 dump_end_state_path=end_state_path,
                 keep_open_positions=keep_open_positions,
+                map_extra_months=_event_trading_map_extra_months(cfg),
             )
         else:
             print(f"   ⏭️  跳过事件回测: event_backtest.enabled=false ({strat})")
@@ -4651,6 +4979,7 @@ def main():
                 config_path=args.config,
                 prev_resume_state_paths={},
                 keep_open_positions=False,
+                month_index=0,
             )
         except ValueError as exc:
             p.error(str(exc))
@@ -4746,6 +5075,7 @@ def main():
                 prev_side_state=side_state_cursor,
                 prev_resume_state_paths=resume_state_cursor,
                 keep_open_positions=not _is_last_month,
+                month_index=month_idx,
             )
             _summary["slow_manifest"] = active_slow_manifest
             _summary["active_strategies_root"] = active_strategies_root
@@ -5054,6 +5384,7 @@ def main():
                     max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
                     min_trades_soft=int(obj_cfg["min_trades_soft"]),
                     undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
+                    map_extra_months=_event_trading_map_extra_months(cfg),
                 )
                 _m = _ev.get("metrics", {})
                 print(
@@ -5421,6 +5752,7 @@ def main():
                 max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
                 min_trades_soft=int(obj_cfg["min_trades_soft"]),
                 undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
+                map_extra_months=_event_trading_map_extra_months(cfg),
             )
             ev_m = ev_result.get("metrics", {})
             print(

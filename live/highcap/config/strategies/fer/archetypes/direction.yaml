@@ -69,7 +69,7 @@ validation:
 
 # 候选特征研究: config/strategies/fer/direction.yaml (如果有)
 # 重新评估命令:
-#   python z实验_005_统一研究/direction_strict_validation.py \
+#   python scripts/direction_strict_validation.py \
 #       --logs results/train_final_xxx/fer/features_labeled.parquet \
 #       --strategy fer
 

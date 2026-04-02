@@ -58,6 +58,13 @@ from src.time_series_model.core.constitution.add_position_rules import (
     resolve_strategy_add_position_config as _shared_resolve_strategy_add_position_config,
     validate_add_position_trigger as _shared_validate_add_position_trigger,
 )
+from src.time_series_model.live.direction_rule_ops import (
+    dual_position_agree_deadband_series,
+    is_direction_rule_enabled,
+    parse_dual_rule,
+    parse_single_position_band_rule,
+    single_position_band_series,
+)
 
 try:
     from bokeh.plotting import figure as bk_figure
@@ -680,9 +687,23 @@ def simulate_rr_execution(
     g_min_stop_pct = _guardrails.get("min_stop_pct")
     g_max_stop_pct = _guardrails.get("max_stop_pct")
 
-    trailing_cfg = stop_loss_cfg.get("trailing", {})
-    g_activation_r = float(trailing_cfg.get("activation_r", 1.0))
-    g_trail_r = float(trailing_cfg.get("trail_r", 1.5))
+    trailing_cfg = stop_loss_cfg.get("trailing", {}) or {}
+    _tr_en = bool(trailing_cfg.get("enabled", True))
+    g_activation_r = (
+        float(trailing_cfg.get("activation_r", 1.0)) if _tr_en else float("nan")
+    )
+    g_trail_r = float(trailing_cfg.get("trail_r", 1.5)) if _tr_en else float("nan")
+    _se_glob = str(stop_loss_cfg.get("structural_exit", "") or "").strip().lower()
+    _sec_glob = stop_loss_cfg.get("structural_exit_config") or {}
+    if _se_glob == "vwap1200":
+        try:
+            g_vwap_exit_inner = float(
+                _sec_glob.get("exit_inner_abs", _sec_glob.get("inner_abs", 0.005))
+            )
+        except (TypeError, ValueError):
+            g_vwap_exit_inner = 0.005
+    else:
+        g_vwap_exit_inner = float("nan")
 
     tp_enabled = take_profit_cfg.get("enabled", False)
     tp_r = float(take_profit_cfg.get("target_r", 2.0)) if tp_enabled else float("inf")
@@ -755,6 +776,7 @@ def simulate_rr_execution(
         "timeout": 0,
         "no_data": 0,
         "structural_exit_ema200": 0,
+        "structural_exit_vwap1200": 0,
     }
 
     # 如果提供了 1min bar 数据，预处理为 numpy 数组以加速查找
@@ -819,6 +841,16 @@ def simulate_rr_execution(
             t_structural_exit = group["_structural_exit"].values
         if _has_ema200:
             t_ema200 = group["ema_200"].values.astype(float)
+        t_vwap_pos = (
+            group["macro_tp_vwap_1200_position"].values.astype(float)
+            if "macro_tp_vwap_1200_position" in group.columns
+            else None
+        )
+        t_vwap_exit_inner = (
+            group["_tier_vwap_exit_inner_abs"].values.astype(float)
+            if tier_mode and "_tier_vwap_exit_inner_abs" in group.columns
+            else None
+        )
 
         for i in range(n):
             d = directions[i]
@@ -895,6 +927,13 @@ def simulate_rr_execution(
             if structural_exit_type == "ema200" and _has_ema200:
                 structural_ema200 = t_ema200[i] if not np.isnan(t_ema200[i]) else 0.0
 
+            vwap_exit_inner_i = 0.005
+            if str(structural_exit_type).strip().lower() == "vwap1200":
+                if t_vwap_exit_inner is not None:
+                    vwap_exit_inner_i = float(t_vwap_exit_inner[i])
+                elif np.isfinite(g_vwap_exit_inner):
+                    vwap_exit_inner_i = float(g_vwap_exit_inner)
+
             # ====== 1min bar 精细模拟 ======
             if use_1min and sym_1min is not None and has_ts:
                 entry_ts_ns = entry_timestamps[i]
@@ -970,9 +1009,27 @@ def simulate_rr_execution(
                                 _1min_exit_mi = mi
                                 break
 
+                    # 2c. Structural exit (VWAP1200 deadband)
+                    if (
+                        str(structural_exit_type).strip().lower() == "vwap1200"
+                        and breakeven_locked
+                        and t_vwap_pos is not None
+                    ):
+                        offset_m = mi - start_m
+                        bm = max(1, int(bar_minutes))
+                        j_coarse = min(i + 1 + max(0, offset_m) // bm, n - 1)
+                        vpos = float(t_vwap_pos[j_coarse])
+                        if np.isfinite(vpos) and abs(vpos) <= vwap_exit_inner_i:
+                            _mc = m_c[mi]
+                            if not np.isnan(_mc):
+                                exit_price = float(_mc)
+                                exit_reason = "structural_exit_vwap1200"
+                                _1min_exit_mi = mi
+                                break
+
                     # 3. 移动止损 (trailing activation + SL update)
                     _just_activated = False
-                    if stop_type == "trailing":
+                    if stop_type == "trailing" and np.isfinite(activation_r):
                         mfe_r = abs(best_price - entry_price) / entry_atr
                         if not trailing_active and mfe_r >= activation_r:
                             trailing_active = True
@@ -1079,8 +1136,20 @@ def simulate_rr_execution(
                                 exit_reason = "structural_exit_ema200"
                                 break
 
+                    # 2c. Structural exit (VWAP1200 deadband)
+                    if (
+                        str(structural_exit_type).strip().lower() == "vwap1200"
+                        and breakeven_locked
+                        and t_vwap_pos is not None
+                    ):
+                        vpos = float(t_vwap_pos[j])
+                        if np.isfinite(vpos) and abs(vpos) <= vwap_exit_inner_i:
+                            exit_price = closes[j]
+                            exit_reason = "structural_exit_vwap1200"
+                            break
+
                     # 3. 移动止损 (trailing activation + SL update)
-                    if stop_type == "trailing":
+                    if stop_type == "trailing" and np.isfinite(activation_r):
                         mfe_r = abs(best_price - entry_price) / entry_atr
                         if not trailing_active and mfe_r >= activation_r:
                             trailing_active = True
@@ -1556,6 +1625,7 @@ def simulate_rr_execution(
                 "timeout": 0,
                 "no_data": 0,
                 "structural_exit_ema200": 0,
+                "structural_exit_vwap1200": 0,
             }
             for t in trade_details:
                 er = t.get("exit_reason", "")
@@ -1565,7 +1635,8 @@ def simulate_rr_execution(
             f"   📊 Simulated {total_entries} trades: "
             f"SL={_display_stats['sl']}, TrailSL={_display_stats['trailing_sl']}, "
             f"TP={_display_stats['tp']}, Timeout={_display_stats['timeout']}, "
-            f"NoData={_display_stats['no_data']}, EMA200Exit={_display_stats['structural_exit_ema200']}"
+            f"NoData={_display_stats['no_data']}, EMA200Exit={_display_stats['structural_exit_ema200']}, "
+            f"VWAP1200Exit={_display_stats.get('structural_exit_vwap1200', 0)}"
         )
         if breakeven_lock_r > 0:
             pct = breakeven_lock_count / total_entries * 100 if total_entries > 0 else 0
@@ -2897,29 +2968,51 @@ def apply_direction_rules(
     applied_rules = []
 
     for rule in rules:
-        feature = rule.get("feature", "")
-        transform = rule.get("transform", "raw")
-
-        if feature not in df.columns:
+        if not is_direction_rule_enabled(rule):
             continue
-
-        series = pd.to_numeric(df[feature], errors="coerce").fillna(0.0)
-        direction_vals = _apply_transform(series, transform)
+        dual = parse_dual_rule(rule)
+        if dual is not None:
+            col_a, col_b, eps = dual
+            if col_a not in df.columns or col_b not in df.columns:
+                continue
+            direction_ser = dual_position_agree_deadband_series(df, col_a, col_b, eps)
+            direction_vals = direction_ser.values
+            rule_label = str(rule.get("id") or f"{col_a}+{col_b}")
+            desc = rule.get("description", rule_label)
+            tf = "dual_position_agree_deadband"
+        else:
+            band = parse_single_position_band_rule(rule)
+            if band is not None:
+                fcol, inner_a, outer_a = band
+                if fcol not in df.columns:
+                    continue
+                direction_ser = single_position_band_series(df, fcol, inner_a, outer_a)
+                direction_vals = direction_ser.values
+                rule_label = str(rule.get("id") or fcol)
+                desc = rule.get("description", rule_label)
+                tf = "single_position_band"
+            else:
+                feature = rule.get("feature", "")
+                transform = rule.get("transform", "raw")
+                if feature not in df.columns:
+                    continue
+                series = pd.to_numeric(df[feature], errors="coerce").fillna(0.0)
+                direction_vals = _apply_transform(series, transform)
+                rule_label = feature
+                desc = rule.get("description", feature)
+                tf = transform
 
         if first_feature is None:
-            # 第一条规则：初始化 entry_direction
             df["entry_direction"] = direction_vals
-            first_feature = feature
-            desc = rule.get("description", feature)
+            first_feature = rule_label
             n_nonzero = int((df["entry_direction"] != 0).sum())
             n_zero = len(df) - n_nonzero
-            print(f"   Direction: {feature} (transform={transform}) | {desc}")
+            print(f"   Direction: {rule_label} (transform={tf}) | {desc}")
             print(f"     → {n_nonzero} have direction, {n_zero} remain undecided")
-            applied_rules.append(feature)
+            applied_rules.append(rule_label)
             if n_zero == 0:
                 return first_feature
         else:
-            # 后续规则：只填充 direction=0 的行
             zero_mask = df["entry_direction"] == 0
             n_before = int(zero_mask.sum())
             if n_before == 0:
@@ -2927,11 +3020,10 @@ def apply_direction_rules(
             df.loc[zero_mask, "entry_direction"] = direction_vals[zero_mask.values]
             n_filled = n_before - int((df["entry_direction"] == 0).sum())
             if n_filled > 0:
-                desc = rule.get("description", feature)
                 print(
-                    f"     fallback: {feature} (transform={transform}) filled {n_filled} rows"
+                    f"     fallback: {rule_label} (transform={tf}) filled {n_filled} rows"
                 )
-                applied_rules.append(feature)
+                applied_rules.append(rule_label)
 
     if first_feature:
         n_final = int((df["entry_direction"] != 0).sum())
@@ -3444,12 +3536,17 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             _add_pos_profiles_pcm[_arch_k.lower()] = dict(_ap)
     first_sl = first_exec.get("stop_loss", {})
     first_guard = first_sl.get("guardrails", {}) or {}
-    first_trail = first_sl.get("trailing", {})
+    first_trail = first_sl.get("trailing", {}) or {}
     first_holding = first_exec.get("holding", {})
+    _first_tr_en = bool(first_trail.get("enabled", True))
 
     merged["_tier_initial_r"] = float(first_sl.get("initial_r", 2.0))
-    merged["_tier_activation_r"] = float(first_trail.get("activation_r", 1.0))
-    merged["_tier_trail_r"] = float(first_trail.get("trail_r", 1.5))
+    merged["_tier_activation_r"] = (
+        float(first_trail.get("activation_r", 1.0)) if _first_tr_en else np.nan
+    )
+    merged["_tier_trail_r"] = (
+        float(first_trail.get("trail_r", 1.5)) if _first_tr_en else np.nan
+    )
     merged["_tier_timeout"] = int(first_holding.get("time_stop_bars", 50) or 50)
     merged["_tier_min_stop_pct"] = (
         float(first_guard.get("min_stop_pct"))
@@ -3464,6 +3561,7 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     merged["_tier_size"] = 1.0
     merged["_tier_name"] = "default"
     merged["_structural_exit"] = ""  # 空 = 无结构性退出, "ema200" = BPC trend_hold
+    merged["_tier_vwap_exit_inner_abs"] = np.nan
 
     # 每行的 bar_minutes (用于 1min 模拟的 timeout 换算 + slot 时间戳比较)
     merged["_bar_minutes"] = 240  # 默认 4H
@@ -3481,16 +3579,21 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         ec = arch_exec_configs[arch_name]
         sl = ec.get("stop_loss", {})
         guard = sl.get("guardrails", {}) or {}
-        trail = sl.get("trailing", {})
+        trail = sl.get("trailing", {}) or {}
         holding = ec.get("holding", {})
+        _tr_en = bool(trail.get("enabled", True))
 
         mask = merged["_pcm_archetype"] == arch_name
         if mask.sum() == 0:
             continue
 
         merged.loc[mask, "_tier_initial_r"] = float(sl.get("initial_r", 2.0))
-        merged.loc[mask, "_tier_activation_r"] = float(trail.get("activation_r", 1.0))
-        merged.loc[mask, "_tier_trail_r"] = float(trail.get("trail_r", 1.5))
+        merged.loc[mask, "_tier_activation_r"] = (
+            float(trail.get("activation_r", 1.0)) if _tr_en else np.nan
+        )
+        merged.loc[mask, "_tier_trail_r"] = (
+            float(trail.get("trail_r", 1.5)) if _tr_en else np.nan
+        )
         merged.loc[mask, "_tier_timeout"] = int(holding.get("time_stop_bars", 50) or 50)
         merged.loc[mask, "_tier_min_stop_pct"] = (
             float(guard.get("min_stop_pct"))
@@ -3503,10 +3606,19 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
             else np.nan
         )
         merged.loc[mask, "_tier_name"] = arch_name
-        # structural_exit: BPC trend_hold 用 ema200 结构性退出
+        # structural_exit: ema200 / vwap1200 等
         _se = sl.get("structural_exit", "")
         if _se:
             merged.loc[mask, "_structural_exit"] = str(_se)
+        _se_l = str(_se or "").strip().lower()
+        if _se_l == "vwap1200":
+            _sec = sl.get("structural_exit_config") or {}
+            try:
+                merged.loc[mask, "_tier_vwap_exit_inner_abs"] = float(
+                    _sec.get("exit_inner_abs", _sec.get("inner_abs", 0.005))
+                )
+            except (TypeError, ValueError):
+                merged.loc[mask, "_tier_vwap_exit_inner_abs"] = 0.005
 
     # 应用 Regime 仓位缩放到 _tier_size
     entry_with_scale = merged["_position_scale"] < 1.0

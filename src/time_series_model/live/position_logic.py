@@ -130,14 +130,28 @@ def build_position_dict(
         "bars_counted": 0,
     }
 
-    # BPC 扩展: activation trailing + breakeven
+    # BPC 扩展: breakeven 可与 activation trailing 解耦 (trailing.enabled=false 时仍可有 breakeven)
     bpc_cfg = exec_profile.get("bpc_position_config") or {}
+    if bpc_cfg:
+        pos["breakeven_enabled"] = bool(bpc_cfg.get("breakeven_enabled", False))
+        pos["breakeven_trigger_r"] = float(bpc_cfg.get("breakeven_trigger_r", 1.0))
+        pos["breakeven_lock_profit_atr"] = float(
+            bpc_cfg.get("breakeven_lock_profit_atr", 0.0) or 0.0
+        )
+        pos["breakeven_locked"] = False
+        if "bar_minutes" in bpc_cfg:
+            pos["bar_minutes"] = bpc_cfg["bar_minutes"]
+
     activation_r = (
-        bpc_cfg.get("activation_r")
-        or rr_constraints.get("activation_r")
-        or rr_constraints.get("trailing_atr")
+        bpc_cfg.get("activation_r") if bpc_cfg else rr_constraints.get("activation_r")
     )
-    trail_r = bpc_cfg.get("trail_r") or rr_constraints.get("trailing_atr")
+    if activation_r is None:
+        activation_r = rr_constraints.get("activation_r")
+    if activation_r is None:
+        activation_r = rr_constraints.get("trailing_atr")
+    trail_r = (bpc_cfg.get("trail_r") if bpc_cfg else None) or rr_constraints.get(
+        "trailing_atr"
+    )
 
     if bpc_cfg and activation_r is not None:
         # BPC 专用 trailing
@@ -146,14 +160,6 @@ def build_position_dict(
         pos["trailing_activated"] = False
         pos["high_water_mark"] = entry_price if is_long else None
         pos["low_water_mark"] = entry_price if not is_long else None
-        pos["breakeven_enabled"] = bpc_cfg.get("breakeven_enabled", False)
-        pos["breakeven_trigger_r"] = float(bpc_cfg.get("breakeven_trigger_r", 1.0))
-        pos["breakeven_lock_profit_atr"] = float(
-            bpc_cfg.get("breakeven_lock_profit_atr", 0.0) or 0.0
-        )
-        pos["breakeven_locked"] = False
-        if "bar_minutes" in bpc_cfg:
-            pos["bar_minutes"] = bpc_cfg["bar_minutes"]
     elif activation_r is not None:
         # 通用 activation trailing (非 BPC)
         pos["activation_r"] = float(activation_r)
@@ -174,10 +180,15 @@ def build_position_dict(
         pos["breakeven_locked"] = False
         pos["breakeven_lock_profit_atr"] = 0.0
 
-    # structural exit (EMA200 trend exit for BPC trend_hold)
     _structural_exit = rr_constraints.get("structural_exit")
     if _structural_exit:
-        pos["structural_exit"] = str(_structural_exit)  # "ema200"
+        pos["structural_exit"] = str(_structural_exit)
+    if str(_structural_exit or "").strip().lower() == "vwap1200":
+        _ve = rr_constraints.get("vwap_exit_inner_abs")
+        try:
+            pos["vwap_exit_inner_abs"] = float(_ve) if _ve is not None else float(0.005)
+        except (TypeError, ValueError):
+            pos["vwap_exit_inner_abs"] = 0.005
 
     return pos
 
@@ -191,6 +202,7 @@ def enforce_position(
     now: datetime,
     default_bar_minutes: int = 240,
     structural_price: Optional[float] = None,
+    macro_tp_vwap_position: Optional[float] = None,
 ) -> Tuple[Optional[str], float]:
     """7步持仓管理 — 实盘/回测公用
 
@@ -219,6 +231,7 @@ def enforce_position(
         now: 当前时间
         default_bar_minutes: 默认 bar 分钟数 (兜底)
         structural_price: EMA200 当前值 (仅 structural_exit="ema200" 时使用)
+        macro_tp_vwap_position: macro_tp_vwap_1200_position 当前值 (vwap1200 出场)
 
     Returns:
         (close_reason, exit_price):
@@ -295,6 +308,22 @@ def enforce_position(
         elif not is_long and price_close > structural_price:
             close_reason = "structural_exit_ema200"
             exit_price = price_close
+
+    # ── 3c. Structural exit (VWAP1200 deadband) — 与 macro_tp_vwap_1200_position 一致
+    if (
+        close_reason is None
+        and str(pos.get("structural_exit") or "").strip().lower() == "vwap1200"
+        and pos.get("breakeven_locked")
+        and macro_tp_vwap_position is not None
+    ):
+        try:
+            inner = float(pos.get("vwap_exit_inner_abs", 0.005) or 0.005)
+            pv = float(macro_tp_vwap_position)
+            if not (pv != pv) and abs(pv) <= inner:
+                close_reason = "structural_exit_vwap1200"
+                exit_price = price_close
+        except (TypeError, ValueError):
+            pass
 
     # ── 4. Activation trailing ──
     if close_reason is None and pos.get("activation_r") is not None and pos_atr > 0:

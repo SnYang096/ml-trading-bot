@@ -1,0 +1,50 @@
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 15
+holding:
+  max_holding_bars: null
+  time_stop_bars: 40
+optimization:
+  enabled: true
+  # ── FER-Short "反弹兑现" 模式 (做空版) ──
+  # 设计理念同 FER-Long: TP 启用 + time_stop 短 + 中等 trailing
+  # Grid 与 fer-long 完全一致 (方向由 direction.yaml 固定)
+  # 新增 take_profit.target_r 扫描: FER 的核心退出参数
+  constraints:
+    max_sl_activation_ratio: 3.0
+    min_win_r: 0.0
+  params:
+    stop_loss.initial_r:
+      range:
+        - 1.5
+        - 4.0
+      step: 0.5
+    stop_loss.trailing.activation_r:
+      range:
+        - 1.0
+        - 3.0
+      step: 0.5
+    stop_loss.trailing.trail_r:
+      range:
+        - 0.5
+        - 2.0
+      step: 0.5
+    take_profit.target_r:
+      range:
+        - 2.0
+        - 5.0
+      step: 0.5
+stop_loss:
+  initial_r: 5.0
+  trailing:
+    activation_r: 3.0
+    step_r: 0.5
+    trail_r: 1.5
+  type: trailing
+take_profit:
+  enabled: true
+  target_r: 5.0
+breakeven:
+  enabled: true
+  trigger_r: 2
+version: 51

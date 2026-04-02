@@ -160,6 +160,13 @@ def _extract_features_from_direction(cfg: Dict[str, Any]) -> Set[str]:
     for rule in rules:
         if not isinstance(rule, dict):
             continue
+        if rule.get("method") == "dual_position_agree_deadband":
+            raw = rule.get("features")
+            if isinstance(raw, list):
+                for f in raw:
+                    if f:
+                        features.add(str(f))
+            continue
         feat = rule.get("feature")
         if feat:
             features.add(str(feat))
