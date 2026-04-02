@@ -466,3 +466,4 @@ live/binance_testnet.env
 live/*/data/
 *.db
 !*.dbproj.schemaview
+log.txt

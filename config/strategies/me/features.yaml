@@ -98,6 +98,8 @@ feature_pipeline:
 
     # ========== VWAP ==========
     - vwap_position_f
+    # 与 BPC 对齐：宏观典型价 VWAP 相对位置（gate 语义锚点 + BTC 锚定 macro_tp_vwap_anchor）
+    - macro_tp_vwap_1200_position_f
 
     # ========== 交叉特征 ==========
     - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空

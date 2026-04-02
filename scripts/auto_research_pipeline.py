@@ -925,7 +925,7 @@ def _build_continuous_pcm_trading_map(
         if r_vwap_ref is not None:
             legend_items.append(
                 LegendItem(
-                    label=f"Rolling TP-VWAP ({vw_n} bars, price) — same window as macro_tp_vwap_1200",
+                    label=f"Rolling TP-VWAP ({vw_n}×2H, local symbol price)",
                     renderers=[r_vwap_ref],
                 )
             )
@@ -971,11 +971,15 @@ def _build_continuous_pcm_trading_map(
         text=(
             f"<h2>{title}</h2><p>{subtitle}</p>"
             f"<p style='font-size:13px;line-height:1.45;max-width:{plot_w}px'>"
-            "<b>图例（价格图）</b> 叠在图内左上角，不占用右侧宽度。与单月 "
-            "<code>trading_map_*_event.html</code> 一致：品红实线 = 滚动典型价 VWAP（1200 根 2H bar，"
-            "对应 <code>macro_tp_vwap_1200_position</code> 的价格线）。 "
-            "绿/红 K 线为涨跌。入场→出场按策略着色（首色常为蓝）：<b>实线</b>=首仓腿，<b>虚线</b>=加仓腿。"
-            "△ 多 · ▽ 空 · ◇ 加仓 · □ 平仓。"
+            "<b>图例（价格图）</b> 叠在图内左上角。品红实线 = 各 symbol <b>自身</b> 2H K 线上"
+            "滚动典型价 VWAP（1200 根 bar，仅价格尺度展示）。"
+            "若策略在 meta 中启用了 <code>macro_tp_vwap_anchor</code>，"
+            "实盘/事件回测里 <code>macro_tp_vwap_1200_position</code>（gate / direction / "
+            "<code>structural_exit vwap1200</code>）用的是<b>锚定品种</b>（默认 BTC）在同一时刻的归一化位置，"
+            "与本图各币种的紫色价格线<b>不一定一致</b>。"
+            "<b>本连续图未拼接漏斗附图</b>（PCM/prefilter/gate 阶梯图仅在单月 "
+            "<code>generate_trading_map_html</code> 路径、且该次回测写入了 <code>funnel_per_bar</code> 时生成）。"
+            "绿/红 K 线为涨跌。入场→出场：<b>实线</b>=首仓腿，<b>虚线</b>=加仓腿；△ 多 · ▽ 空 · ◇ 加仓 · □ 平仓。"
             "</p>"
         ),
         width=plot_w,

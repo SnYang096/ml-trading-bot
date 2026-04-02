@@ -14,5 +14,5 @@ strategy:
   timeframe: "120T" # 1小时
 
   macro_tp_vwap_anchor:
-    enabled: true
+    enabled: false
     symbol: BTCUSDT

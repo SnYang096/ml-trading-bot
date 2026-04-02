@@ -353,10 +353,14 @@ def main() -> int:
         if getattr(feats.index, "name", None) == "timestamp":
             feats = feats.reset_index()
     feats["symbol"] = feats["symbol"].astype(str)
-    feats["timestamp"] = pd.to_datetime(feats["timestamp"], errors="coerce")
+    # Normalize to UTC to avoid merge dtype mismatch:
+    # logs may carry tz-aware UTC while feature-store timestamps are naive UTC.
+    feats["timestamp"] = pd.to_datetime(feats["timestamp"], errors="coerce", utc=True)
     logs_df = logs_df.copy()
     logs_df["symbol"] = logs_df["symbol"].astype(str)
-    logs_df["timestamp"] = pd.to_datetime(logs_df["timestamp"], errors="coerce")
+    logs_df["timestamp"] = pd.to_datetime(
+        logs_df["timestamp"], errors="coerce", utc=True
+    )
 
     merged = logs_df.merge(
         feats, on=["symbol", "timestamp"], how="left", suffixes=("", "_feat")

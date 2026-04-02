@@ -84,7 +84,7 @@ hard_gates:
     then:
       action: deny
     comment: "semantic_anchor: deny long entries when position is over-extended"
-    locked: true
+    locked: false
     lock_reason: VWAP1200 上侧过度偏离区，追涨性价比差
   - id: gate_macro_tp_vwap_1200_overshort
     tag: HARD_MACRO_TP_VWAP_1200_OVERSHORT
@@ -97,7 +97,7 @@ hard_gates:
     then:
       action: deny
     comment: "semantic_anchor: deny entries when price is far below VWAP"
-    locked: true
+    locked: false
     lock_reason: VWAP1200 下侧极端偏离区，结构异常阶段不做入场
   - id: gate_stat_vol_persistence_vol_persistence
     tag: HARD_STAT_3
