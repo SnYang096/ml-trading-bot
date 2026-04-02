@@ -35,6 +35,7 @@ import json
 import logging
 import re
 import sys
+import yaml
 import time
 import uuid
 from collections import defaultdict
@@ -80,6 +81,10 @@ from src.time_series_model.core.constitution.safety_runtime import (
     evaluate_safety_state,
 )
 from src.time_series_model.core.constitution.violation import ConstitutionViolation
+from src.features.cross_symbol.macro_tp_vwap_anchor import (
+    ANCHOR_COLUMN,
+    parse_macro_tp_vwap_anchor_config,
+)
 
 # order_management integration (optional — only when --db is provided)
 try:
@@ -104,6 +109,7 @@ try:
         Div,
         Tabs,
         TabPanel,
+        FixedTicker,
     )
     from bokeh.layouts import column as bk_column
     from bokeh.resources import INLINE as BK_RESOURCES
@@ -986,6 +992,8 @@ class BacktestResult:
     open_positions_end: List[Dict[str, Any]] = field(default_factory=list)
     # 各注册策略 execution.add_position.trigger.type（小写 key）
     add_trigger_types: Dict[str, str] = field(default_factory=dict)
+    # 时间线上每次 PCM 评估后的策略漏斗快照（用于交易地图附图）
+    funnel_per_bar: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def n_trades(self) -> int:
@@ -1571,6 +1579,57 @@ class EventBacktester:
 
         return bars_1min, ticks_1min
 
+    def _preload_anchor_macro_cache(
+        self,
+        *,
+        anchor_sym: str,
+        warmup_start: str,
+        end_date_str: str,
+        use_research: bool,
+        storage: Optional[Any],
+    ) -> Dict[str, pd.Series]:
+        """Compute anchor symbol macro_tp_vwap series per timeframe (when anchor ∉ backtest universe)."""
+        out: Dict[str, pd.Series] = {}
+        if use_research:
+            bars_1min, ticks_1min = self._load_research_data(
+                anchor_sym, warmup_start, end_date_str
+            )
+        else:
+            if storage is None:
+                return out
+            bars_1min = storage.bar_1min.load_range(
+                anchor_sym, warmup_start, end_date_str
+            )
+            ticks_1min = storage.ticks.load_range(
+                anchor_sym, warmup_start, end_date_str
+            )
+        if len(bars_1min) < 100:
+            logger.warning(
+                "macro_tp_vwap_anchor: %s insufficient bars for preload", anchor_sym
+            )
+            return out
+        if "_symbol" not in bars_1min.columns:
+            bars_1min = bars_1min.copy()
+            bars_1min["_symbol"] = anchor_sym
+        for tf, fc in self._feature_computers.items():
+            fc._current_symbol = anchor_sym
+            features_df = fc.compute_features_dataframe(
+                bars_1min=bars_1min,
+                ticks_1min=ticks_1min,
+                primary_timeframe=tf,
+            )
+            if features_df.empty or ANCHOR_COLUMN not in features_df.columns:
+                continue
+            features_df.index = pd.to_datetime(features_df.index, utc=True)
+            features_df = _align_feature_index_to_bar_close(features_df, tf)
+            out[tf] = features_df[ANCHOR_COLUMN].copy()
+        logger.info(
+            "macro_tp_vwap_anchor: preloaded %s for %d timeframes",
+            anchor_sym,
+            len(out),
+        )
+        return out
+
     def _global_open_count(self) -> int:
         """跨所有 symbol 的当前持仓数 (供 PCM slot 检查用)"""
         return sum(sim.position_count for sim in self._simulators.values())
@@ -1635,7 +1694,41 @@ class EventBacktester:
         sym_data: Dict[str, Dict[str, Any]] = {}
         quantile_dfs_by_tf: Dict[str, List[pd.DataFrame]] = defaultdict(list)
 
-        for sym in symbols:
+        _meta_full_ev: Dict[str, Any] = {}
+        _pri_strat = self.strategy_names[0]
+        _meta_path_ev = Path(self.strategies_root) / _pri_strat / "meta.yaml"
+        try:
+            if _meta_path_ev.exists():
+                _meta_full_ev = (
+                    yaml.safe_load(_meta_path_ev.read_text(encoding="utf-8")) or {}
+                )
+        except Exception as _eme:
+            logger.warning("macro_tp_vwap_anchor: meta read failed: %s", _eme)
+        _meta_strat_ev = _meta_full_ev.get("strategy")
+        if not isinstance(_meta_strat_ev, dict):
+            _meta_strat_ev = _meta_full_ev if isinstance(_meta_full_ev, dict) else {}
+        _anchor_en_ev, _anchor_sym_ev = parse_macro_tp_vwap_anchor_config(
+            meta_strategy=_meta_strat_ev,
+            meta_yaml_full=_meta_full_ev,
+        )
+        _anchor_macro_cache: Dict[str, pd.Series] = {}
+        _anchor_u = str(_anchor_sym_ev).strip().upper()
+        _syms_iter = list(symbols)
+        if _anchor_en_ev:
+            _syms_iter = sorted(
+                _syms_iter,
+                key=lambda x: 0 if str(x).strip().upper() == _anchor_u else 1,
+            )
+            if not any(str(s).strip().upper() == _anchor_u for s in symbols):
+                _anchor_macro_cache = self._preload_anchor_macro_cache(
+                    anchor_sym=_anchor_sym_ev,
+                    warmup_start=warmup_start,
+                    end_date_str=end_date_str,
+                    use_research=use_research,
+                    storage=storage,
+                )
+
+        for sym in _syms_iter:
             logger.info(f"{'='*60}")
             logger.info(f"Loading {sym}")
             t0 = time.time()
@@ -1738,6 +1831,24 @@ class EventBacktester:
                 features_df.index = pd.to_datetime(features_df.index, utc=True)
                 # Keep decision timestamp at bar close to avoid look-ahead leakage.
                 features_df = _align_feature_index_to_bar_close(features_df, tf)
+
+                if _anchor_en_ev and ANCHOR_COLUMN in features_df.columns:
+                    if str(sym).strip().upper() == _anchor_u:
+                        _anchor_macro_cache[tf] = features_df[ANCHOR_COLUMN].copy()
+                    else:
+                        ser = _anchor_macro_cache.get(tf)
+                        if ser is not None and len(ser) > 0:
+                            fill = ser.reindex(features_df.index).ffill()
+                            features_df[ANCHOR_COLUMN] = fill.to_numpy(
+                                dtype=float, copy=False
+                            )
+                        else:
+                            logger.warning(
+                                "macro_tp_vwap_anchor: no anchor series for tf=%s sym=%s",
+                                tf,
+                                sym,
+                            )
+
                 quantile_dfs_by_tf[tf].append(features_df)
 
                 test_df = features_df[
@@ -1957,6 +2068,7 @@ class EventBacktester:
         # path_efficiency_pct（类 ER 分位）在每次加仓尝试时的快照，供 er_gated_float_ladder 设计
         _er_rows_signal_add: List[Dict[str, Any]] = []
         _er_rows_float_ladder: List[Dict[str, Any]] = []
+        _funnel_per_bar_rows: List[Dict[str, Any]] = []
 
         for ts, sym, tf_rows in timeline_events:
             simulator = self._simulators[sym]
@@ -2103,6 +2215,24 @@ class EventBacktester:
                 symbol=sym,
                 features_by_timeframe=features_by_tf,
             )
+
+            for s_name, s_obj in self._strats.items():
+                lf = getattr(s_obj, "_last_funnel", None) or {}
+                if not lf:
+                    continue
+                _funnel_per_bar_rows.append(
+                    {
+                        "timestamp": ts,
+                        "symbol": sym,
+                        "strategy": s_name,
+                        "pcm_direction_filter": lf.get("pcm_direction_filter"),
+                        "prefilter": lf.get("prefilter"),
+                        "gate": lf.get("gate"),
+                        "entry_filter": lf.get("entry_filter"),
+                        "direction": lf.get("direction"),
+                        "direction_value": lf.get("direction_value"),
+                    }
+                )
 
             # NOTE: Evidence slot 竞争已移除 (改为入场门槛 + 仓位缩放)
             # _last_evictions 始终为空, 此块保留为 no-op 以保持兼容
@@ -2478,6 +2608,7 @@ class EventBacktester:
 
         result.trades.sort(key=lambda t: t.entry_time)
         result.funnel = dict(funnel)
+        result.funnel_per_bar = _funnel_per_bar_rows
 
         # 保存 equity curve 和 kill switch 统计
         result.equity_curve = _equity_curve
@@ -2720,7 +2851,141 @@ def generate_trading_map_html(
         except Exception as _e:
             logger.warning(f"  ⚠️  对比交易加载失败: {_e}")
 
-    def _build_symbol_figure(sym: str, trades: list, cmp_trades: list = None) -> object:
+    def _funnel_row_matches(
+        row: Mapping[str, Any], sf: "str | None", fam: bool
+    ) -> bool:
+        if sf is None:
+            return True
+        s = str(row.get("strategy") or "").lower()
+        if fam:
+            return _arch_family(s) == str(sf).lower()
+        return s == str(sf).lower()
+
+    def _build_funnel_figures_for_sym(
+        sym: str,
+        *,
+        strat_filter: "str | None",
+        family_mode: bool,
+        x_range,
+        ref_index: Optional[pd.DatetimeIndex],
+    ) -> list:
+        rows_all = getattr(result, "funnel_per_bar", None) or []
+        rows = [
+            r
+            for r in rows_all
+            if str(r.get("symbol") or "") == sym
+            and _funnel_row_matches(r, strat_filter, family_mode)
+        ]
+        if not rows:
+            return []
+
+        def _pcm_y(rec: Mapping[str, Any]) -> float:
+            if rec.get("pcm_direction_filter") is False:
+                return 0.0
+            return 1.0
+
+        def _bool_y(rec: Mapping[str, Any], key: str) -> float:
+            v = rec.get(key)
+            if v is None:
+                return float("nan")
+            return 1.0 if v else 0.0
+
+        def _dir_y(rec: Mapping[str, Any]) -> float:
+            dv = rec.get("direction_value")
+            if dv is None:
+                return float("nan")
+            try:
+                dvi = int(dv)
+            except (TypeError, ValueError):
+                return float("nan")
+            return {-1: 0.0, 0: 0.5, 1: 1.0}.get(dvi, float("nan"))
+
+        def _step_xy(ts: list, vals: list):
+            if not ts:
+                return [], []
+            xs: list = []
+            ys: list = []
+            for i in range(len(ts)):
+                if i > 0:
+                    xs.append(ts[i])
+                    ys.append(vals[i - 1])
+                xs.append(ts[i])
+                ys.append(vals[i])
+            return xs, ys
+
+        by_strat: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for r in rows:
+            by_strat[str(r.get("strategy") or "unknown")].append(dict(r))
+
+        figs: list = []
+        _STAGES = [
+            ("PCM EMA", _pcm_y, "#64748b"),
+            ("Prefilter", lambda rec: _bool_y(rec, "prefilter"), "#3274D9"),
+            ("Gate", lambda rec: _bool_y(rec, "gate"), "#7c3aed"),
+            ("Entry filter", lambda rec: _bool_y(rec, "entry_filter"), "#ca8a04"),
+            ("Direction (−1/0/+1)", _dir_y, "#059669"),
+        ]
+
+        for strat_name in sorted(by_strat.keys()):
+            sub = sorted(by_strat[strat_name], key=lambda t: t["timestamp"])
+            ts = [pd.Timestamp(t["timestamp"]) for t in sub]
+            if ref_index is not None and getattr(ref_index, "tz", None) is not None:
+                _tz = ref_index.tz
+                ts = [
+                    (
+                        x.tz_convert(_tz)
+                        if x.tzinfo
+                        else x.tz_localize("UTC").tz_convert(_tz)
+                    )
+                    for x in ts
+                ]
+            pf = bk_figure(
+                title=f"{sym} · {strat_name} — gate / prefilter / direction",
+                x_axis_type="datetime",
+                width=1400,
+                height=200,
+                tools="pan,wheel_zoom,box_zoom,reset,save",
+                x_range=x_range,
+                y_range=(-0.15, 4.65),
+            )
+            pf.yaxis.ticker = FixedTicker(ticks=[0, 1, 2, 3, 4])
+            pf.yaxis.major_label_overrides = {
+                0: "PCM",
+                1: "Prefilter",
+                2: "Gate",
+                3: "EntryFlt",
+                4: "Dir",
+            }
+            pf.grid.grid_line_alpha = 0.25
+
+            for bi, (label, fn, color) in enumerate(_STAGES):
+                vals = [float(fn(rec)) for rec in sub]
+                xs, ys = _step_xy(ts, [bi + 0.35 * v for v in vals])
+                if xs:
+                    pf.line(
+                        xs, ys, line_color=color, line_width=1.6, legend_label=label
+                    )
+            pf.legend.click_policy = "hide"
+            pf.legend.label_text_font_size = "8pt"
+            pf.legend.location = "top_left"
+            pf.add_tools(
+                HoverTool(
+                    tooltips=[("Time", "@x{%F %H:%M}"), ("y", "@y{0.2f}")],
+                    formatters={"@x": "datetime"},
+                    mode="mouse",
+                )
+            )
+            figs.append(pf)
+        return figs
+
+    def _build_symbol_figure(
+        sym: str,
+        trades: list,
+        cmp_trades: list = None,
+        *,
+        strat_filter: "str | None" = None,
+        family_mode: bool = False,
+    ) -> object:
         bars_1min = result.bars_1min.get(sym)
         if bars_1min is None or bars_1min.empty:
             return None
@@ -2907,6 +3172,16 @@ def generate_trading_map_html(
         p.legend.click_policy = "hide"
         p.legend.location = "top_left"
         p.legend.label_text_font_size = "9pt"
+
+        funnel_figs = _build_funnel_figures_for_sym(
+            sym,
+            strat_filter=strat_filter,
+            family_mode=family_mode,
+            x_range=p.x_range,
+            ref_index=df_plot.index,
+        )
+        if funnel_figs:
+            return bk_column(p, *funnel_figs, sizing_mode="stretch_width")
         return p
 
     # ── 构建单个 Tab ──
@@ -2945,7 +3220,13 @@ def generate_trading_map_html(
             sym_trades = result.per_symbol.get(sym, [])
             if strat_filter is not None:
                 sym_trades = [t for t in sym_trades if _match_trade(t)]
-            fig = _build_symbol_figure(sym, sym_trades, cmp_trades=_cmp_by_sym.get(sym))
+            fig = _build_symbol_figure(
+                sym,
+                sym_trades,
+                cmp_trades=_cmp_by_sym.get(sym),
+                strat_filter=strat_filter,
+                family_mode=family_mode,
+            )
             if fig is not None:
                 figs.append(fig)
 
@@ -3333,6 +3614,7 @@ def _save_json(result: BacktestResult, path: str):
         "add_position_stats": result.add_position_stats or {},
         "add_trigger_types": result.add_trigger_types,
         "open_positions_end": result.open_positions_end,
+        "funnel_per_bar": _json_safe(result.funnel_per_bar or []),
         "trades": [_trade_to_dict(t) for t in result.trades],
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)

@@ -115,6 +115,11 @@ class IncrementalFeatureComputer:
         self.live_feature_set: Set[str] = set()
         self.live_feature_nodes: List[str] = []
 
+        # Persist for live cross-symbol helpers (e.g. macro_tp_vwap anchor overlay).
+        self.archetypes_dir_path: Optional[str] = (
+            str(archetypes_dir) if archetypes_dir else None
+        )
+
         # Strategy A: archetypes auto-detect (preferred — no NN dependency)
         if archetypes_dir is not None:
             try:

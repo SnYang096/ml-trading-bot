@@ -47,6 +47,13 @@ from src.data_tools.tick_loader import list_tick_files, serialize_tick_loader_pa
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.feature_store.layer_naming import resolve_layer_name
 from src.time_series_model.strategy_config import StrategyConfigLoader
+from src.features.cross_symbol.macro_tp_vwap_anchor import (
+    ANCHOR_COLUMN,
+    apply_macro_tp_vwap_anchor,
+    apply_macro_tp_vwap_from_anchor_frame,
+    ensure_datetime_column,
+    parse_macro_tp_vwap_anchor_config,
+)
 from src.time_series_model.pipeline.training.label_utils import (
     simulate_rr_exits,
     future_volatility_label,
@@ -2603,9 +2610,117 @@ def train_strategy(
             f"   ✅ Feature pipeline (train/test) pooled: train_rows={len(df_train_features)}, test_rows={len(df_test_features)}, cols={len(df_train_features.columns)}\n"
         )
 
+    # --- macro_tp_vwap_1200_position: optional cross-symbol anchor (default BTCUSDT) ---
+    _meta_full: Dict[str, Any] = {}
+    try:
+        _mp = strategy_config.path / "meta.yaml"
+        if _mp.exists():
+            _meta_full = yaml.safe_load(_mp.read_text(encoding="utf-8")) or {}
+    except Exception as _me:
+        print(f"   ⚠️  macro_tp_vwap_anchor: could not read meta.yaml: {_me}")
+    _anchor_en, _anchor_sym = parse_macro_tp_vwap_anchor_config(
+        meta_strategy=strategy_config.meta,
+        meta_yaml_full=_meta_full,
+    )
+    _sym_col = "symbol" if "symbol" in df_train_features.columns else "_symbol"
+    if _anchor_en and ANCHOR_COLUMN in df_train_features.columns:
+        if is_multi_symbol:
+            if (
+                _sym_col in df_train_features.columns
+                and "datetime" in df_train_features.columns
+            ):
+                df_train_features = apply_macro_tp_vwap_anchor(
+                    df_train_features,
+                    anchor_symbol=_anchor_sym,
+                    enabled=True,
+                    symbol_col=_sym_col,
+                    time_col="datetime",
+                )
+                df_test_features = apply_macro_tp_vwap_anchor(
+                    df_test_features,
+                    anchor_symbol=_anchor_sym,
+                    enabled=True,
+                    symbol_col=_sym_col,
+                    time_col="datetime",
+                )
+                print(
+                    f"   ✅ macro_tp_vwap_anchor: pooled overlay (anchor={_anchor_sym})"
+                )
+            else:
+                print(
+                    "   ⚠️  macro_tp_vwap_anchor: missing symbol/datetime columns, skip"
+                )
+        else:
+            _main_sym = str(args.symbol).strip().upper()
+            if _main_sym == str(_anchor_sym).strip().upper():
+                print(
+                    f"   ℹ️  macro_tp_vwap_anchor: symbol is anchor {_anchor_sym}, native VWAP"
+                )
+            else:
+                df_train_features = ensure_datetime_column(df_train_features)
+                df_test_features = ensure_datetime_column(df_test_features)
+                _combo = pd.concat([df_train_raw, df_test_raw], axis=0)
+                _dta_combo = _dt_index(_combo)
+                df_ar_full = pd.DataFrame()
+                try:
+                    df_ar_full = data_handler.load_ohlcv(
+                        symbol=_anchor_sym, timeframe=args.timeframe
+                    )
+                    df_ar_full = _crop_df_by_env_dates(df_ar_full)
+                except Exception as _ae:
+                    print(
+                        f"   ⚠️  macro_tp_vwap_anchor: failed to load {_anchor_sym}: {_ae}"
+                    )
+                if df_ar_full is None or df_ar_full.empty or _dta_combo is None:
+                    print(
+                        "   ⚠️  macro_tp_vwap_anchor: no anchor OHLCV or no main dates, skip"
+                    )
+                else:
+                    lo, hi = _dta_combo.min(), _dta_combo.max()
+                    dta = _dt_index(df_ar_full)
+                    if dta is None:
+                        print(
+                            "   ⚠️  macro_tp_vwap_anchor: anchor has no datetime, skip"
+                        )
+                    else:
+                        _mask = (dta >= lo) & (dta <= hi)
+                        atr_slice = df_ar_full.loc[_mask].copy()
+                        if atr_slice.empty:
+                            print(
+                                f"   ⚠️  macro_tp_vwap_anchor: {_anchor_sym} empty in "
+                                f"train+test window, skip"
+                            )
+                        else:
+                            f_anchor = run_feature_pipeline(
+                                atr_slice,
+                                feature_loader=feature_loader,
+                                pipeline_cfg=pipeline_cfg_effective,
+                                fit=True,
+                                feature_store_dir=fs_dir,
+                                feature_store_layer=fs_layer,
+                                feature_store_symbol=str(_anchor_sym),
+                                feature_store_timeframe=str(args.timeframe),
+                            )
+                            f_anchor = ensure_datetime_column(f_anchor)
+                            df_train_features = apply_macro_tp_vwap_from_anchor_frame(
+                                df_train_features,
+                                f_anchor,
+                                time_col="datetime",
+                            )
+                            df_test_features = apply_macro_tp_vwap_from_anchor_frame(
+                                df_test_features,
+                                f_anchor,
+                                time_col="datetime",
+                            )
+                            print(
+                                f"   ✅ macro_tp_vwap_anchor: single-symbol overlay "
+                                f"(anchor={_anchor_sym})"
+                            )
+
     feature_cols = determine_feature_columns(
         df_train_features, strategy_config.features
     )
+
     # NOTE: Previously we auto-included `_symbol` for multi-symbol training,
     # but this causes data leakage (model learns symbol identity instead of features).
     # If needed, explicitly configure symbol as a feature in the strategy config.

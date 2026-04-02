@@ -10,3 +10,8 @@ strategy:
 
   # 默认时间粒度（研发 + 实盘统一）
   timeframe: "120T"
+
+  # 见 bpc/meta.yaml：macro_tp_vwap_1200_position 默认锚定 BTCUSDT。
+  macro_tp_vwap_anchor:
+    enabled: true
+    symbol: BTCUSDT

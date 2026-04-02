@@ -2868,6 +2868,18 @@ def run_strategy_pipeline(
                     _ef_cmd += ["--filter", _ef_target]
                 if test_start != holdout_start:
                     _ef_cmd += ["--cutoff-date", test_start]
+                _ef_sp = _ef_gates.get("significance_p")
+                if _ef_sp is not None:
+                    _ef_cmd += ["--significance-p", str(float(_ef_sp))]
+                _ef_smt = _ef_gates.get("significance_min_trades")
+                if _ef_smt is not None:
+                    _ef_cmd += [
+                        "--significance-min-trades",
+                        str(int(_ef_smt)),
+                    ]
+                _ef_pw = _ef_gates.get("plateau_window")
+                if _ef_pw is not None:
+                    _ef_cmd += ["--plateau-window", str(int(_ef_pw))]
                 _ef_label = _ef_target or "all_enabled"
                 _rc_ap, _ = run_step(
                     f"  EF Archetype Plateau [{_ef_label}]",

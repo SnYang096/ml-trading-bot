@@ -599,6 +599,27 @@ def main() -> int:
         choices=get_canonical_methods(),
         help="评分方法 (canonical names only). 未指定时从 entry_filter_layer.yaml 读取",
     )
+    p.add_argument(
+        "--significance-p",
+        type=float,
+        default=0.10,
+        metavar="P",
+        help="Tier A/B z-test 显著性水平 (单侧 p < P 才 promote; 默认 0.10, 原 0.05 更严)",
+    )
+    p.add_argument(
+        "--significance-min-trades",
+        type=int,
+        default=4,
+        metavar="N",
+        help="显著性检验与 filter snotio 估计所需最少成交笔数 (默认 4)",
+    )
+    p.add_argument(
+        "--plateau-window",
+        type=int,
+        default=4,
+        metavar="W",
+        help="高原检测滑动窗口最少有效扫描点数 (默认 4, 原为 5)",
+    )
     args = p.parse_args()
 
     # 加载数据
@@ -779,7 +800,11 @@ def main() -> int:
                 span_years,
             )
 
-            plateau = _find_plateau(scan_data, operator=operator)
+            plateau = _find_plateau(
+                scan_data,
+                operator=operator,
+                window=max(2, int(getattr(args, "plateau_window", 4) or 4)),
+            )
 
             status = "✅ 高原" if plateau.get("is_plateau") else "❌ 无高原"
             if plateau.get("is_plateau"):
@@ -922,6 +947,10 @@ def main() -> int:
             strategies_root=args.strategies_root,
             merged=merged,
             exec_config=exec_config,
+            significance_p=float(getattr(args, "significance_p", 0.10) or 0.10),
+            significance_min_trades=max(
+                2, int(getattr(args, "significance_min_trades", 4) or 4)
+            ),
         )
 
     return 0
@@ -1556,6 +1585,9 @@ def _promote_entry_filters_yaml(
     strategies_root: str,
     merged: Optional[pd.DataFrame] = None,
     exec_config: Optional[Dict[str, Any]] = None,
+    *,
+    significance_p: float = 0.10,
+    significance_min_trades: int = 4,
 ) -> None:
     """将优化结果写入 archetypes/entry_filters.yaml。
 
@@ -1563,9 +1595,9 @@ def _promote_entry_filters_yaml(
       Tier A (PLATEAU): 有稳定高原 → 用推荐阈值
       Tier B (SNOTIO):  无高原但 snotio > baseline → 用原始阈值直接放过
 
-    两级都需要通过 z-test 显著性检验 (p < 0.05):
+    两级都需要通过 z-test 显著性检验 (单侧 p < significance_p):
       H0: filter snotio = baseline snotio (无效)
-      不显著 = 可能是噪声，自动排除
+      不显著 = 可能是噪声，自动排除；locked 未通过则 enabled=false
     """
     import yaml
     from scipy.stats import norm as _norm_dist
@@ -1575,6 +1607,11 @@ def _promote_entry_filters_yaml(
     bl_std = 1.5
     filter_snotios: Dict[str, Tuple[float, int]] = {}  # {fname: (snotio, trades)}
     can_eval = merged is not None and exec_config is not None
+
+    _sig_n = max(2, int(significance_min_trades))
+    _sig_p = (
+        float(significance_p) if significance_p > 0 and significance_p < 1 else 0.10
+    )
 
     if can_eval:
         original_dir = merged["entry_direction"].copy()
@@ -1589,6 +1626,7 @@ def _promote_entry_filters_yaml(
         print(
             f"   📏 Baseline snotio={bl_snotio:.4f} (trades={len(bl_valid)}, σ={bl_std:.3f})"
         )
+        print(f"   📐 Significance gate: p<{_sig_p:g} (one-sided), min_trades={_sig_n}")
 
         # 逐个 filter 评估 snotio
         for fdef in filters_scanned:
@@ -1599,14 +1637,14 @@ def _promote_entry_filters_yaml(
             merged["entry_direction"] = original_dir.copy()
             merged.loc[~mask, "entry_direction"] = 0.0
             n_entries = int((merged["entry_direction"] != 0).sum())
-            if n_entries < 5:
+            if n_entries < _sig_n:
                 filter_snotios[fname] = (0.0, n_entries)
                 continue
             exec_ret, _ = simulate_rr_execution(
                 merged, exec_config, atr_col="atr", use_tier_params=False
             )
             valid = exec_ret.dropna()
-            sn = float(valid.mean()) if len(valid) >= 5 else 0.0
+            sn = float(valid.mean()) if len(valid) >= _sig_n else 0.0
             filter_snotios[fname] = (sn, len(valid))
         merged["entry_direction"] = original_dir  # 恢复
 
@@ -1617,12 +1655,12 @@ def _promote_entry_filters_yaml(
         """z-test: H0 为 filter snotio = baseline snotio。
         返回 (is_significant, z_score, p_value)。
         """
-        if n < 5 or sigma <= 0:
+        if n < _sig_n or sigma <= 0:
             return False, 0.0, 1.0
         se = sigma / np.sqrt(n)
         z = (sn - bl_snotio) / se
         p = 1 - _norm_dist.cdf(z)
-        return p < 0.05, z, p
+        return p < _sig_p, z, p
 
     # 用实际数据的 std 替代假设值
     sigma_for_test = bl_std if can_eval and bl_std > 0 else 1.5
@@ -1653,7 +1691,7 @@ def _promote_entry_filters_yaml(
                 sig, z, p = _is_significant(sn, trades, sigma_for_test)
                 if not sig:
                     print(
-                        f"      ❌ {fname}: plateau通过但snotio不显著 (sn={sn:.4f} z={z:.2f} p={p:.4f}), 排除"
+                        f"      ❌ {fname}: plateau通过但snotio不显著 (sn={sn:.4f} z={z:.2f} p={p:.4f}, need p<{_sig_p:g}), 排除"
                     )
                     continue
                 sig_note = f", z={z:.2f} p={p:.4f}"
@@ -1691,7 +1729,7 @@ def _promote_entry_filters_yaml(
         if can_eval and fname in filter_snotios:
             sn, trades = filter_snotios[fname]
             sig, z, p = _is_significant(sn, trades, sigma_for_test)
-            if sn > bl_snotio and trades >= 5 and sig:
+            if sn > bl_snotio and trades >= _sig_n and sig:
                 pf = {
                     "id": fname,
                     "enabled": True,
@@ -1731,13 +1769,14 @@ def _promote_entry_filters_yaml(
         promoted_filters.append(nf)
 
     if not promoted_filters:
-        # 没有 filter 通过 → 清空 archetypes/entry_filters.yaml
+        # 仅当无 Tier A/B 且无 locked 池时为空（有 locked 时已在上方追加为 enabled=false）
         empty_header = (
             f"# {strategy.upper()} Entry Filter Archetype\n"
             f"# Auto-promoted by optimize_entry_filter_plateau.py\n"
             f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
             f"# Promoted: 0 filters (全部未通过显著性检验)\n"
             f"# Baseline snotio: {bl_snotio:.4f}, \u03c3={sigma_for_test:.3f}\n"
+            f"# Significance: z-test one-sided p<{significance_p:g}, min_trades={significance_min_trades}\n"
             f"#\n"
             f"# 没有 entry filter 通过准入, 策略将无条件入场\n"
             f"\n"
@@ -1763,7 +1802,7 @@ def _promote_entry_filters_yaml(
         f"# Promoted: {len(promoted_filters)} filters ({tier_a_count} plateau + {tier_b_count} snotio-only)\n"
         f"# Locked pool kept: {len(locked_by_id)} (missing -> disabled)\n"
         f"# Baseline snotio: {bl_snotio:.4f}, \u03c3={sigma_for_test:.3f}\n"
-        f"# Significance: z-test p<0.05 required for all tiers\n"
+        f"# Significance: z-test one-sided p<{significance_p:g}, min_trades={significance_min_trades}\n"
         f"#\n"
         f'# 职责: "现在该入场吗?" \u2192 硬二值控制入场时机\n'
         f"# 多个 filter 之间是 OR 关系\n"

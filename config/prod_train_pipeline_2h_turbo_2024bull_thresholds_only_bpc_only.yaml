@@ -104,6 +104,10 @@ strategies:
       entry_filter:
         meta_algorithm: false
         archetype_plateau: true
+        # Entry archetype plateau: z-test 仍必须显著才 promote；略放宽 p / 样本与高原窗
+        significance_p: 0.10
+        significance_min_trades: 4
+        plateau_window: 4
         archetype_scoring_method: distribution_ks
         target_trades_min: 35
         target_trades_max: 260

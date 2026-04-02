@@ -42,6 +42,9 @@ from src.order_management.position_tracker import PositionTracker
 from src.order_management.trade_executor import TradeExecutor
 from src.order_management.models import OrderStatus, OrderType
 from src.live_data_stream.system_mode import SystemMode
+from src.features.cross_symbol.macro_tp_vwap_anchor import (
+    apply_live_macro_tp_vwap_overlay,
+)
 
 
 class OrderFlowListener:
@@ -740,8 +743,15 @@ class OrderFlowListener:
                     "[%s] 额外时间框架 %s 特征计算失败: %s", self.symbol, tf, e
                 )
 
+        _adir = getattr(self.feature_computer, "archetypes_dir_path", None)
+        apply_live_macro_tp_vwap_overlay(
+            archetypes_dir=_adir,
+            symbol=self.symbol,
+            features_by_timeframe=features_by_timeframe,
+        )
+
         # ── 6. 保存 + 决策 ──
-        all_features = dict(features)
+        all_features = dict(features_by_timeframe[primary_tf])
         all_features["timestamp"] = now
         features_df = pd.DataFrame([all_features])
         self.storage_manager.save_15min_features(self.symbol, features_df, now)

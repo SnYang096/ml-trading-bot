@@ -11,3 +11,9 @@ strategy:
 
   # 默认时间粒度（研发 + 实盘统一）
   timeframe: "120T" # 2小时
+
+  # Altc 使用锚定交易对的 macro_tp_vwap_1200_position（gate / direction / 结构性出场），与训练/事件回测/实盘一致。
+  # 默认等价于 enabled: true, symbol: BTCUSDT；若要恢复「各 symbol 自有 VWAP」可设 enabled: false。
+  macro_tp_vwap_anchor:
+    enabled: true
+    symbol: BTCUSDT

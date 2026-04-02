@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List, Tuple
 
 import yaml
 
@@ -94,6 +94,26 @@ def _extract_prefilter(month: str, path: Path, rows: List[Dict[str, Any]]) -> No
             )
 
 
+def _iter_gate_when_atoms(when_block: Any) -> Iterator[Tuple[str, str, Any]]:
+    """Flatten gate `when` including nested all_of / any_of lists."""
+    if not isinstance(when_block, dict):
+        return
+    if "all_of" in when_block or "any_of" in when_block:
+        key = "all_of" if "all_of" in when_block else "any_of"
+        seq = when_block.get(key) or []
+        if isinstance(seq, list):
+            for item in seq:
+                yield from _iter_gate_when_atoms(item)
+        return
+    for feat, cond in when_block.items():
+        if not isinstance(cond, dict):
+            continue
+        for op, val in cond.items():
+            if not str(op).startswith("value_"):
+                continue
+            yield (str(feat), str(op), val)
+
+
 def _extract_gate(month: str, path: Path, rows: List[Dict[str, Any]]) -> None:
     obj = _safe_load_yaml(path)
     for gate in obj.get("hard_gates") or []:
@@ -103,24 +123,20 @@ def _extract_gate(month: str, path: Path, rows: List[Dict[str, Any]]) -> None:
         when = gate.get("when") or {}
         if not isinstance(when, dict):
             continue
-        for feat, cond in when.items():
-            if not isinstance(cond, dict):
-                continue
-            for op, val in cond.items():
-                if not str(op).startswith("value_"):
-                    continue
-                _append_row(
-                    rows,
-                    month=month,
-                    layer="gate",
-                    key=f"gate:{rid}:{feat}:{op}",
-                    feature=str(feat),
-                    operator=str(op),
-                    value=val,
-                    rule_id=rid,
-                    enabled=True,
-                    source_file=str(path),
-                )
+        g_en = bool(gate.get("enabled", True)) and not bool(gate.get("disabled", False))
+        for feat, op, val in _iter_gate_when_atoms(when):
+            _append_row(
+                rows,
+                month=month,
+                layer="gate",
+                key=f"gate:{rid}:{feat}:{op}",
+                feature=feat,
+                operator=op,
+                value=val,
+                rule_id=rid,
+                enabled=g_en,
+                source_file=str(path),
+            )
 
 
 def _extract_entry_filters(month: str, path: Path, rows: List[Dict[str, Any]]) -> None:

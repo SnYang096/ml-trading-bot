@@ -58,6 +58,10 @@ from src.time_series_model.core.constitution.add_position_rules import (
     resolve_strategy_add_position_config as _shared_resolve_strategy_add_position_config,
     validate_add_position_trigger as _shared_validate_add_position_trigger,
 )
+from src.features.cross_symbol.macro_tp_vwap_anchor import (
+    ANCHOR_COLUMN,
+    parse_macro_tp_vwap_anchor_config,
+)
 from src.time_series_model.live.direction_rule_ops import (
     dual_position_agree_deadband_series,
     is_direction_rule_enabled,
@@ -2099,6 +2103,26 @@ def _load_raw_features_for_archetype(
     # 禁用 live_feature_set 过滤 — 保留所有计算出的特征 (同事件回测)
     fc.live_feature_set = None
 
+    _meta_full_raw: Dict[str, Any] = {}
+    try:
+        _mp_raw = Path(strategies_root) / arch_name / "meta.yaml"
+        if _mp_raw.exists():
+            _meta_full_raw = yaml.safe_load(_mp_raw.read_text(encoding="utf-8")) or {}
+    except Exception:
+        pass
+    _ms_raw = _meta_full_raw.get("strategy")
+    if not isinstance(_ms_raw, dict):
+        _ms_raw = _meta_full_raw if isinstance(_meta_full_raw, dict) else {}
+    _anchor_en_raw, _anchor_sym_raw = parse_macro_tp_vwap_anchor_config(
+        meta_strategy=_ms_raw,
+        meta_yaml_full=_meta_full_raw,
+    )
+    _au_raw = str(_anchor_sym_raw).strip().upper()
+    anchor_series_full: Optional[pd.Series] = None
+    syms_sorted = sorted(
+        symbols, key=lambda x: 0 if str(x).strip().upper() == _au_raw else 1
+    )
+
     # 3. 加载并计算
     test_start_ts = pd.Timestamp(test_start, tz="UTC")
     test_end_ts = pd.Timestamp(test_end, tz="UTC")
@@ -2111,14 +2135,14 @@ def _load_raw_features_for_archetype(
 
     import time as _time
 
-    for sym in symbols:
-        t0 = _time.time()
+    data_root = Path(data_path)
+
+    def _load_sym_features_df(sym: str) -> Tuple[Optional[pd.DataFrame], int]:
         try:
             bars_1min = dh.load_ohlcv(
                 symbol=sym, timeframe="1T", start_date=warmup_start, end_date=end_str
             )
         except Exception as e:
-            # 缓存文件可能损坏, 删除后重试一次
             cache_file = Path("cache/timeframes") / f"{sym}_1T.parquet"
             if cache_file.exists():
                 print(
@@ -2134,16 +2158,16 @@ def _load_raw_features_for_archetype(
                     )
                 except Exception as e2:
                     print(f"   ⚠️  {sym}: 重试仍失败, 跳过 ({e2})")
-                    continue
+                    return None, 0
             else:
                 print(f"   ⚠️  {sym}: 数据加载失败, 跳过 ({e})")
-                continue
+                return None, 0
 
         if bars_1min is None or len(bars_1min) < 100:
             print(
                 f"   ⚠️  {sym}: bars 不足 ({len(bars_1min) if bars_1min is not None else 0}), 跳过"
             )
-            continue
+            return None, 0
 
         bars_1min.index = pd.to_datetime(bars_1min.index, utc=True)
         col_rename = {"buy_qty": "buy_volume", "sell_qty": "sell_volume"}
@@ -2153,9 +2177,7 @@ def _load_raw_features_for_archetype(
         if "timestamp" not in bars_1min.columns:
             bars_1min["timestamp"] = bars_1min.index
 
-        # 加载 ticks (同事件回测)
         tick_frames = []
-        data_root = Path(data_path)
         for fp in sorted(data_root.glob(f"{sym}_*.parquet")):
             try:
                 df_tick = pd.read_parquet(fp)
@@ -2174,10 +2196,7 @@ def _load_raw_features_for_archetype(
         else:
             ticks_1min = pd.DataFrame()
 
-        # 重新初始化 FC 状态 (每个 symbol 独立计算)
         fc.reset()
-
-        # 注入 _symbol 列 — OI join 等特征需要识别 symbol
         bars_1min["_symbol"] = sym
 
         try:
@@ -2188,13 +2207,42 @@ def _load_raw_features_for_archetype(
             )
         except Exception as e:
             print(f"   ⚠️  {sym}: 特征计算异常, 跳过 ({e})")
-            continue
+            return None, 0
 
         if features_df.empty:
             print(f"   ⚠️  {sym}: 特征计算为空, 跳过")
-            continue
+            return None, 0
 
         features_df.index = pd.to_datetime(features_df.index, utc=True)
+        return features_df, len(bars_1min)
+
+    if _anchor_en_raw and _au_raw not in {str(s).strip().upper() for s in symbols}:
+        _fd_anchor, _ = _load_sym_features_df(_anchor_sym_raw)
+        if _fd_anchor is not None and ANCHOR_COLUMN in _fd_anchor.columns:
+            anchor_series_full = _fd_anchor[ANCHOR_COLUMN].copy()
+            print(
+                f"   ✅ macro_tp_vwap_anchor: preloaded {ANCHOR_COLUMN} from "
+                f"{_anchor_sym_raw} (not in symbol list)"
+            )
+
+    for sym in syms_sorted:
+        t0 = _time.time()
+        features_df, n_bars = _load_sym_features_df(sym)
+        if features_df is None:
+            continue
+
+        if _anchor_en_raw and ANCHOR_COLUMN in features_df.columns:
+            if str(sym).strip().upper() == _au_raw:
+                anchor_series_full = features_df[ANCHOR_COLUMN].copy()
+            elif anchor_series_full is not None and len(anchor_series_full) > 0:
+                features_df[ANCHOR_COLUMN] = (
+                    anchor_series_full.reindex(features_df.index).ffill().to_numpy()
+                )
+            else:
+                print(
+                    f"   ⚠️  macro_tp_vwap_anchor: no anchor series for {sym}, "
+                    f"column unchanged"
+                )
 
         # 收集 warmup 特征 (test_start 之前) — 保留以备将来使用
         warmup_df = features_df[features_df.index < test_start_ts]
@@ -2213,7 +2261,7 @@ def _load_raw_features_for_archetype(
         test_df["timestamp"] = test_df.index
         elapsed = _time.time() - t0
         print(
-            f"   {sym}: {len(bars_1min)} 1min bars → {len(test_df)} {tf} bars "
+            f"   {sym}: {n_bars} 1min bars → {len(test_df)} {tf} bars "
             f"({elapsed:.1f}s)"
         )
         parts.append(test_df)
