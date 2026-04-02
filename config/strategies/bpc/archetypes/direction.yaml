@@ -1,14 +1,14 @@
-# 生产方向 — VWAP1200 单锚带通：贴 VWAP 过近 / 过度延伸均不开仓；对侧极端留给 FER。
+# 生产方向 — 由 BPC 语义信号决定方向；VWAP1200 区域过滤改由 gate 处理。
 # 候选与评估见 ../features_direction.yaml
 
-description: "BPC 方向 — macro_tp_vwap_1200_position 带通 (inner<|pos|<outer)"
+description: "BPC 方向 — breakout 主导 + macd 兜底（VWAP 过滤在 gate）"
 
 direction_rules:
-  - method: single_position_band
-    id: vwap1200_band
-    feature: macro_tp_vwap_1200_position
-    inner_abs: 0.005
-    outer_abs: 0.05
-    description: "内侧死区与外侧过度延伸均方向=0；中间段多/空由符号决定"
-    locked: true
-    lock_reason: BPC 语义锚点 VWAP1200 带通
+  - method: feature_sign
+    feature: bpc_breakout_direction
+    transform: raw
+    description: "Donchian 20-bar 突破方向 [-1/+1], BPC 核心方向信号"
+  - method: feature_sign
+    feature: macd_atr
+    transform: sign
+    description: "MACD/ATR 动量方向 (兜底, 覆盖 breakout_direction=0 的样本)"

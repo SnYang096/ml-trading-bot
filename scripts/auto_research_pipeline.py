@@ -343,6 +343,76 @@ def _ensure_timestamp_for_gate_input(parquet_path: Path) -> bool:
         return False
 
 
+def _read_bpc_vwap_band_abs(strategies_root: Path) -> Optional[Tuple[float, float]]:
+    """``single_position_band`` + vwap1200 / macro_tp_vwap → (inner_abs, outer_abs)."""
+    path = strategies_root / "bpc" / "archetypes" / "direction.yaml"
+    if not path.is_file():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        rules = data.get("direction_rules") or []
+        if not isinstance(rules, list):
+            return None
+        for r in rules:
+            if not isinstance(r, dict):
+                continue
+            if str(r.get("method", "")).strip() != "single_position_band":
+                continue
+            fid = str(r.get("id", "") or "")
+            feat = str(r.get("feature", "") or "")
+            if fid != "vwap1200_band" and "macro_tp_vwap" not in feat:
+                continue
+            try:
+                inn = float(r.get("inner_abs"))
+                out = float(r.get("outer_abs"))
+            except (TypeError, ValueError):
+                return None
+            if inn > 0 and inn < 1 and out > inn and out < 1:
+                return (inn, out)
+            return None
+        return None
+    except Exception:
+        return None
+
+
+def _ledger_bpc_vwap_band_schedule(
+    ledger: List[Dict[str, Any]],
+    *,
+    fallback_inner: float,
+    fallback_outer: float,
+) -> List[Dict[str, Any]]:
+    """Each rolling month → inner/outer from ``run_root/strategies_calibrated/bpc/.../direction.yaml``."""
+    fbi = float(fallback_inner)
+    fbo = float(fallback_outer)
+    if not (fbi > 0 and fbi < 1 and fbo > fbi and fbo < 1):
+        fbi, fbo = 0.005, 0.05
+    rows: List[Dict[str, Any]] = []
+    for row in ledger:
+        mt = str(row.get("month", "") or "").strip()
+        if not mt:
+            continue
+        try:
+            d0, d1 = _month_token_to_range(mt)
+        except Exception:
+            continue
+        rr = Path(str(row.get("run_root", "") or ""))
+        sc = rr / "strategies_calibrated"
+        pair = _read_bpc_vwap_band_abs(sc) if sc.is_dir() else None
+        inn, outv = pair if pair else (fbi, fbo)
+        if not (inn > 0 and inn < 1 and outv > inn and outv < 1):
+            inn, outv = fbi, fbo
+        rows.append(
+            {
+                "month": mt,
+                "d0": d0,
+                "d1": d1,
+                "inner": float(inn),
+                "outer": float(outv),
+            }
+        )
+    return rows
+
+
 def _build_continuous_pcm_trading_map(
     ledger: List[Dict[str, Any]],
     output_path: Path,
@@ -351,8 +421,14 @@ def _build_continuous_pcm_trading_map(
     map_vwap_window_bars: int = 1200,
     map_long_ema_span: int = 1200,
     indicator_lookback_days: int = 140,
+    band_inner_abs: float = 0.005,
+    band_outer_abs: float = 0.05,
 ) -> str:
     """Build continuous multi-month map with 2H K-lines and trade overlays.
+
+    VWAP band inner/outer are **piecewise by ledger month** from each
+    ``run_root/strategies_calibrated/bpc/archetypes/direction.yaml``; gaps use
+    ``band_inner_abs`` / ``band_outer_abs`` as fallback.
 
     Price overlays: rolling typical-price VWAP over ``map_vwap_window_bars`` bars
     (same window as ``macro_tp_vwap_1200_position`` on 2H). ``map_long_ema_span`` is
@@ -515,6 +591,9 @@ def _build_continuous_pcm_trading_map(
     # Wider figure; legend overlays inside plot (not right panel) so candle width is not squeezed.
     plot_w = 1900
     fig_list: List[Any] = []
+
+    _ = band_inner_abs
+    _ = band_outer_abs
 
     vw_n = max(2, int(map_vwap_window_bars))
     _ = map_long_ema_span  # API compat; EMA not drawn
@@ -679,36 +758,7 @@ def _build_continuous_pcm_trading_map(
                     line_width=1.35,
                     line_alpha=0.78,
                 )
-                # VWAP position band (matches macro_tp_vwap_1200_position = (close-vwap)/close)
-                _inner = 0.005
-                _outer = 0.05
-                v_dead_lo = (vp / (1.0 + _inner)).clip(lower=0)
-                v_dead_hi = (vp / (1.0 - _inner)).clip(lower=0)
-                v_long_cap = (vp / (1.0 - _outer)).clip(lower=0)
-                r_vwap_dead_lo = p.line(
-                    cdf_plot.index,
-                    v_dead_lo,
-                    line_color="#64748b",
-                    line_width=1.0,
-                    line_alpha=0.55,
-                    line_dash="dashed",
-                )
-                r_vwap_dead_hi = p.line(
-                    cdf_plot.index,
-                    v_dead_hi,
-                    line_color="#64748b",
-                    line_width=1.0,
-                    line_alpha=0.55,
-                    line_dash="dashed",
-                )
-                r_vwap_long_cap = p.line(
-                    cdf_plot.index,
-                    v_long_cap,
-                    line_color="#a855f7",
-                    line_width=1.0,
-                    line_alpha=0.5,
-                    line_dash="dotdash",
-                )
+                # Keep only VWAP reference line on continuous trading map.
 
                 # Trade overlays (split by archetype)
         tdf["pnl_color"] = [
@@ -924,8 +974,6 @@ def _build_continuous_pcm_trading_map(
             "<b>图例（价格图）</b> 叠在图内左上角，不占用右侧宽度。与单月 "
             "<code>trading_map_*_event.html</code> 一致：品红实线 = 滚动典型价 VWAP（1200 根 2H bar，"
             "对应 <code>macro_tp_vwap_1200_position</code> 的价格线）。 "
-            "灰虚线 = VWAP 内侧死区边界（<code>(close-vwap)/close = ±inner</code>，默认 inner=0.005）；"
-            "紫点划 = 多头带通外侧 cap（<code>outer=0.05</code>），与 BPC <code>single_position_band</code> 一致。"
             "绿/红 K 线为涨跌。入场→出场按策略着色（首色常为蓝）：<b>实线</b>=首仓腿，<b>虚线</b>=加仓腿。"
             "△ 多 · ▽ 空 · ◇ 加仓 · □ 平仓。"
             "</p>"
@@ -2751,6 +2799,17 @@ def run_strategy_pipeline(
 
     _ef_yaml_path = Path(config_dir) / "features_entry_filter.yaml"
     _ef_gates = kpi_gates.get("entry_filter", {})
+    _ef_arch_dir = Path(config_dir) / "archetypes"
+    _ef_orig_path = _ef_arch_dir / "entry_filters.yaml"
+    _ef_meta_algorithm = bool(_ef_gates.get("meta_algorithm", True))
+    _ef_archetype_plateau = bool(_ef_gates.get("archetype_plateau", False))
+    _ef_filter_ids_raw = _ef_gates.get("archetype_filter_ids", [])
+    _ef_filter_ids: List[str] = []
+    if isinstance(_ef_filter_ids_raw, str):
+        _ef_filter_ids = [s.strip() for s in _ef_filter_ids_raw.split(",") if s.strip()]
+    elif isinstance(_ef_filter_ids_raw, (list, tuple, set)):
+        _ef_filter_ids = [str(s).strip() for s in _ef_filter_ids_raw if str(s).strip()]
+    _ef_filter_ids = list(dict.fromkeys(_ef_filter_ids))
     _ef_methods = standardize_method_list(
         _ef_gates.get("scoring_method_fallbacks"),
         default=[
@@ -2760,7 +2819,72 @@ def run_strategy_pipeline(
             "upside_positive_rate_ratio",
         ],
     )
-    if _ef_yaml_path.exists() and not dry_run:
+    if _ef_archetype_plateau and not dry_run:
+        _ef_arch_method = str(
+            _ef_gates.get("archetype_scoring_method")
+            or (_ef_methods[0] if _ef_methods else "distribution_ks")
+        ).strip()
+        if not _ef_orig_path.exists():
+            print(
+                "\n  ⚠️  Entry archetype plateau 已启用, 但 archetypes/entry_filters.yaml 不存在, 跳过"
+            )
+        else:
+            _targets = list(_ef_filter_ids)
+            if not _targets:
+                _locked_filters = load_locked_entry_filters(_ef_orig_path)
+                _targets = [
+                    str(f.get("id", "")).strip()
+                    for f in _locked_filters
+                    if str(f.get("id", "")).strip()
+                ]
+                _targets = list(dict.fromkeys(_targets))
+            if not _targets:
+                _targets = [None]
+            _target_hint = (
+                ",".join(_targets)
+                if _targets != [None]
+                else "all enabled/locked filters"
+            )
+            print(
+                f"\n  ⚙️ Entry Archetype Plateau: method={_ef_arch_method}, targets={_target_hint}"
+            )
+            _ef_failed_targets: List[str] = []
+            for _ef_target in _targets:
+                _ef_cmd = [
+                    sys.executable,
+                    "scripts/optimize_entry_filter_plateau.py",
+                    "--logs",
+                    f"{gate_dir}/logs_gated.parquet",
+                    "--strategy",
+                    strategy,
+                    "--strategies-root",
+                    strategies_root,
+                    "--scoring-method",
+                    _ef_arch_method,
+                    "--promote",
+                    "--simple-execution",
+                ]
+                if _ef_target:
+                    _ef_cmd += ["--filter", _ef_target]
+                if test_start != holdout_start:
+                    _ef_cmd += ["--cutoff-date", test_start]
+                _ef_label = _ef_target or "all_enabled"
+                _rc_ap, _ = run_step(
+                    f"  EF Archetype Plateau [{_ef_label}]",
+                    _ef_cmd,
+                    log,
+                )
+                if _rc_ap != 0:
+                    _ef_failed_targets.append(_ef_label)
+            if _ef_failed_targets:
+                print(
+                    "   ⚠️  Entry archetype plateau 部分失败: "
+                    + ",".join(_ef_failed_targets)
+                )
+            else:
+                print("   ✅ Entry archetype plateau 完成")
+
+    if _ef_meta_algorithm and _ef_yaml_path.exists() and not dry_run:
         print(f"\n{'='*72}")
         print(
             f"🔬 Entry Filter 多方法 Sharpe 择优 — {len(_ef_methods)} methods: {_ef_methods}"
@@ -2782,8 +2906,6 @@ def run_strategy_pipeline(
             default_penalty_low=0.0015,
             default_penalty_high=0.001,
         )
-        _ef_arch_dir = Path(config_dir) / "archetypes"
-        _ef_orig_path = _ef_arch_dir / "entry_filters.yaml"
         _simple_exec = scfg.get("simple_execution", {})
         print(
             "   "
@@ -3020,8 +3142,10 @@ def run_strategy_pipeline(
             _tmp = _ef_arch_dir / f"entry_filters_cmp_{_em}.yaml"
             if _tmp.exists() and _tmp != _ef_orig_path:
                 _tmp.unlink()
-    elif not _ef_yaml_path.exists():
+    elif _ef_meta_algorithm and not _ef_yaml_path.exists():
         print(f"\n  ℹ️  Entry Filter: features_entry_filter.yaml 不存在, 跳过")
+    elif not _ef_meta_algorithm:
+        print("\n  ⏭️  Entry Filter meta-algorithm 已关闭: 跳过特征搜索路径")
 
     if stage_stop == "entry_filter":
         return {
@@ -5105,10 +5229,23 @@ def main():
         month_maps = [
             str((r.get("pcm") or {}).get("trading_map", "") or "") for r in ledger
         ]
+        _map_sroot = PROJECT_ROOT / "config" / "strategies"
+        _roll_cfg = cfg.get("rolling") or {}
+        if str(_roll_cfg.get("mode", "") or "") == "turbo_fixed_features":
+            _fs = (_roll_cfg.get("turbo_fixed_features") or {}).get(
+                "fixed_strategies_root"
+            )
+            if _fs:
+                _pfs = Path(str(_fs))
+                _map_sroot = _pfs if _pfs.is_absolute() else PROJECT_ROOT / _pfs
+        _band_pair = _read_bpc_vwap_band_abs(_map_sroot)
+        _bi, _bo = _band_pair if _band_pair else (0.005, 0.05)
         continuous_map = _build_continuous_pcm_trading_map(
             ledger,
             roll_root / "trading_map_continuous.html",
             data_path=cfg["data_path"],
+            band_inner_abs=_bi,
+            band_outer_abs=_bo,
         )
         stitch_map = roll_root / "trading_map_stitched.html"
         stitch_lines = [

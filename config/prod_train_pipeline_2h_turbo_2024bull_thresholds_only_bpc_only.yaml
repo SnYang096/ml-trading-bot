@@ -46,11 +46,14 @@ fast_loop:
     promote_after_validate: false
     # dual：epsilon_grid；BPC single_position_band：epsilon_grid 视为 inner_abs 候选；
     # 显式两边：inner_abs_grid + outer_abs_grid（笛卡尔积，需全程 inner < outer）
+    #     前选优目标是 median(forward_rr × direction) 在 direction≠0 子集上尽量大，不是「非零越多越好」。
+    # 有时 收窄中间带（更挑剔）会丢掉很多 bar，但剩下子集质量更高，中位数反而更好。
+    # 一句话：界大不大取决于校准窗里哪组带通让「按方向算的收益」中位数最好，不是牛市启发式；outer 大确实倾向于让更多点进中间带，但优化目标不是覆盖率。
     macro_epsilon_grid:
       enabled: true
       # patch_workspace 省略：dual 默认同步 features_direction；band 默认只写 archetypes
-      inner_abs_grid: "0.002,0.004,0.005"
-      outer_abs_grid: "0.04,0.05,0.06"
+      inner_abs_grid: "0.01,0.03,0.05,0.07,0.09"
+      outer_abs_grid: "0.1,0.2,0.3"
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
@@ -99,6 +102,9 @@ strategies:
           - distribution_ks
           - mean_effect
       entry_filter:
+        meta_algorithm: false
+        archetype_plateau: true
+        archetype_scoring_method: distribution_ks
         target_trades_min: 35
         target_trades_max: 260
         trade_penalty_low: 0.002

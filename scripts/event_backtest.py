@@ -1122,22 +1122,10 @@ class BacktestResult:
                 print(f"    加仓 Win%: {ap.get('add_win_rate', 0):.1%}")
                 print(f"    加仓平均倍率: {ap.get('add_mean_size', 0):.2f}x")
                 print(f"    观测最大杠杆: {ap.get('max_observed_leverage', 0):.2f}x")
-            pe = ap.get("path_efficiency_pct_at_add")
-            if isinstance(pe, dict):
+            if isinstance(ap.get("path_efficiency_pct_at_add"), dict):
                 print(
-                    "\n  📐 path_efficiency_pct @ 加仓尝试 "
-                    "(类 ER 历史分位 [0,1]，供 er_gated_float_ladder 参考):"
+                    "\n  📐 path_efficiency_pct 分位分布 → 见脚本末尾（避免被交易地图日志顶掉）"
                 )
-                for line in _format_er_pct_summary_lines(
-                    pe.get("signal_add_attempts") or {},
-                    "signal_add（PCM 再意图 / bpc_follow_signal）",
-                ):
-                    print(line)
-                for line in _format_er_pct_summary_lines(
-                    pe.get("float_ladder_attempts") or {},
-                    "float_r_ladder_only（阶梯路径）",
-                ):
-                    print(line)
 
         if self.open_positions_end:
             print(f"\n  ♻️  月末未平仓: {len(self.open_positions_end)}")
@@ -1186,6 +1174,33 @@ class BacktestResult:
                     "    提示: bpc_breakout 拒绝占比高 → 浮盈阶梯不校验该特征，"
                     "对比 float_r_ladder_only 可区分「无信号」vs「信号方向过滤」。"
                 )
+
+    def print_path_efficiency_footer(self) -> None:
+        """path_efficiency_pct 分布：放在 main() 最后打印，便于 pipeline 截尾仍可见 + 与 sidecar JSON 对齐。"""
+        ap = self.add_position_stats
+        if not isinstance(ap, dict):
+            return
+        pe = ap.get("path_efficiency_pct_at_add")
+        if not isinstance(pe, dict):
+            return
+        print()
+        print("=" * 72)
+        print(
+            "  📐 path_efficiency_pct @ 加仓尝试 "
+            "(类 ER 历史分位 [0,1]，path_efficiency_pct_f → path_efficiency_pct)"
+        )
+        print("=" * 72)
+        for line in _format_er_pct_summary_lines(
+            pe.get("signal_add_attempts") or {},
+            "signal_add（PCM 再意图 / bpc_follow_signal）",
+        ):
+            print(line)
+        for line in _format_er_pct_summary_lines(
+            pe.get("float_ladder_attempts") or {},
+            "float_r_ladder_only（阶梯路径）",
+        ):
+            print(line)
+        print("=" * 72)
 
     def export_trades_csv(self, path: str):
         """导出交易明细 CSV"""
@@ -3232,6 +3247,10 @@ def main():
     if args.db:
         print(f"\n  💾 订单数据已保存 → {args.db}")
 
+    result.print_path_efficiency_footer()
+    _anchor = args.output or args.export or args.trading_map
+    _save_path_efficiency_sidecar(result, _anchor)
+
     return 0
 
 
@@ -3320,6 +3339,31 @@ def _save_json(result: BacktestResult, path: str):
     with open(path, "w") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
     print(f"\n  📄 Results saved → {path}")
+
+
+def _save_path_efficiency_sidecar(
+    result: BacktestResult, anchor_path: Optional[str]
+) -> None:
+    """与 event_backtest JSON 同目录写入 path_efficiency 分布，供后续分析。"""
+    ap = result.add_position_stats
+    if not isinstance(ap, dict):
+        return
+    pe = ap.get("path_efficiency_pct_at_add")
+    if not isinstance(pe, dict):
+        return
+    if not anchor_path:
+        return
+    slug = (result.strategy or "multi").replace("+", "_").replace(",", "_")
+    out_path = Path(anchor_path).with_name(f"path_efficiency_pct_at_add_{slug}.json")
+    payload = {
+        "strategy": result.strategy,
+        "path_efficiency_pct_at_add": _json_safe(pe),
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    print(f"\n  📄 path_efficiency 分布 → {out_path}")
 
 
 if __name__ == "__main__":

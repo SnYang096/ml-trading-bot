@@ -57,6 +57,48 @@ hard_gates:
     comment: "optimizer: no_stable_plateau, threshold=0.2959, lift=0.287"
     locked: true
     lock_reason: VPIN 知情交易活跃度：信息不对称过高时入场胜率下降
+  - id: gate_macro_tp_vwap_1200_deadzone
+    tag: HARD_MACRO_TP_VWAP_1200_DEADZONE
+    phase: hard_gate
+    priority: 13
+    reason: 语义锚点规则（VWAP 近场死区）
+    when:
+      all_of:
+        - macro_tp_vwap_1200_position:
+            value_gt: -0.005
+        - macro_tp_vwap_1200_position:
+            value_lt: 0.005
+    then:
+      action: deny
+    comment: "semantic_anchor: deny near VWAP where trend edge is weak"
+    locked: true
+    lock_reason: VWAP1200 近场噪声区（方向不稳定）先过滤
+  - id: gate_macro_tp_vwap_1200_overlong
+    tag: HARD_MACRO_TP_VWAP_1200_OVERLONG
+    phase: hard_gate
+    priority: 14
+    reason: 语义锚点规则（过度偏离 VWAP）
+    when:
+      macro_tp_vwap_1200_position:
+        value_gt: 0.9
+    then:
+      action: deny
+    comment: "semantic_anchor: deny long entries when position is over-extended"
+    locked: true
+    lock_reason: VWAP1200 上侧过度偏离区，追涨性价比差
+  - id: gate_macro_tp_vwap_1200_overshort
+    tag: HARD_MACRO_TP_VWAP_1200_OVERSHORT
+    phase: hard_gate
+    priority: 15
+    reason: 语义锚点规则（反向极端偏离）
+    when:
+      macro_tp_vwap_1200_position:
+        value_lt: -0.9
+    then:
+      action: deny
+    comment: "semantic_anchor: deny entries when price is far below VWAP"
+    locked: true
+    lock_reason: VWAP1200 下侧极端偏离区，结构异常阶段不做入场
   - id: gate_stat_vol_persistence_vol_persistence
     tag: HARD_STAT_3
     phase: system_safety
