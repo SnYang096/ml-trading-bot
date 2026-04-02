@@ -92,6 +92,12 @@ def resolve_strategy_add_position_config(
     return merged
 
 
+def resolve_float_r_ladder_only(add_position_cfg: Mapping[str, Any] | None) -> bool:
+    """True iff ``add_position.trigger.type == "float_r_ladder_only"`` (事件回测浮盈阶梯路径)."""
+    trig = _as_dict(_as_dict(add_position_cfg).get("trigger"))
+    return str(trig.get("type", "")).strip().lower() == "float_r_ladder_only"
+
+
 def resolve_add_position_size_multiplier(
     add_position_cfg: Mapping[str, Any] | None,
     add_number: int,
@@ -247,33 +253,11 @@ def validate_add_position_trigger(
         return True
 
     trig_type = str(trigger.get("type", "")).strip().lower()
-    if trig_type in {"bpc_follow_signal", "follow_signal"}:
-        breakout_dir = _get_num(signal, "bpc_breakout_direction")
-        if breakout_dir is not None and int(breakout_dir) not in (0, direction):
-            return False
+    # 与 resolve_float_r_ladder_only 一致：阶梯模式由事件回测单独路径处理，此处不附加特征条件。
+    if trig_type == "float_r_ladder_only":
         return True
-
-    if trig_type == "bpc_structure_confirm":
-        if _get_num(signal, "bpc_score_pullback") is not None and _get_num(
-            signal, "bpc_score_pullback"
-        ) < float(trigger.get("bpc_score_pullback_min", 0.45)):
-            return False
-        if _get_num(signal, "bpc_pullback_depth") is not None and _get_num(
-            signal, "bpc_pullback_depth"
-        ) > float(trigger.get("bpc_pullback_depth_max", 0.70)):
-            return False
-        if _get_num(signal, "bpc_recovery_strength") is not None and _get_num(
-            signal, "bpc_recovery_strength"
-        ) < float(trigger.get("bpc_recovery_strength_min", 0.55)):
-            return False
-        if _get_num(signal, "bpc_score_continuation") is not None and _get_num(
-            signal, "bpc_score_continuation"
-        ) < float(trigger.get("bpc_score_continuation_min", 0.45)):
-            return False
-        if _get_num(signal, "bpc_momentum_confirm") is not None and _get_num(
-            signal, "bpc_momentum_confirm"
-        ) < float(trigger.get("bpc_momentum_confirm_min", 0.45)):
-            return False
+    # BPC: 加仓触发 — breakout 方向与持仓一致（0 视为中性）。
+    if trig_type in {"bpc_follow_signal", "follow_signal"}:
         breakout_dir = _get_num(signal, "bpc_breakout_direction")
         if breakout_dir is not None and int(breakout_dir) not in (0, direction):
             return False

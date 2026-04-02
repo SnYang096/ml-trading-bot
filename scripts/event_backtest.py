@@ -41,7 +41,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -66,9 +66,12 @@ from src.time_series_model.core.constitution.constitution_executor import (
 )
 from src.time_series_model.core.constitution.add_position_rules import (
     resolve_add_position_max_times as _shared_resolve_add_position_max_times,
+    resolve_add_position_min_current_r,
     resolve_add_position_size_multiplier as _shared_resolve_add_position_size_multiplier,
+    resolve_float_r_ladder_only as _shared_resolve_float_r_ladder_only,
     validate_add_position_trigger as _shared_validate_add_position_trigger,
 )
+from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.core.constitution.runtime_state import (
     ConstitutionRuntimeState,
 )
@@ -97,10 +100,7 @@ except ImportError:
 try:
     from bokeh.plotting import figure as bk_figure
     from bokeh.models import (
-        ColumnDataSource,
         HoverTool,
-        Span,
-        Range1d,
         Div,
         Tabs,
         TabPanel,
@@ -252,6 +252,7 @@ class PositionSimulator:
         self.closed_trades: List[ClosedTrade] = []
         # structural exit: 最新 EMA200 价格 (由主循环在每根 4H bar 到达时更新)
         self._structural_price: Optional[float] = None
+        self._macro_tp_vwap_position: Optional[float] = None
         # order_management 集成 (由 EventBacktester 注入)
         self._om_bridge: Optional["OMBridge"] = None
         self.max_observed_leverage: float = 0.0
@@ -404,7 +405,7 @@ class PositionSimulator:
                 if parent is not None and parent.get("stop_loss_price") is not None:
                     pos["stop_loss_price"] = float(parent.get("stop_loss_price"))
 
-            # 调用共享 7 步持仓管理 (structural_price: EMA200)
+            # 调用共享 7 步持仓管理 (structural: EMA200 / vwap1200)
             close_reason, exit_price = enforce_position(
                 pos,
                 price_high=bar_high,
@@ -413,6 +414,7 @@ class PositionSimulator:
                 now=now,
                 default_bar_minutes=self.default_bar_minutes,
                 structural_price=self._structural_price,
+                macro_tp_vwap_position=self._macro_tp_vwap_position,
             )
 
             if close_reason:
@@ -658,12 +660,18 @@ class PositionSimulator:
         executor: ConstitutionExecutor,
         runtime_state: ConstitutionRuntimeState,
         bar_minutes: Optional[int] = None,
+        *,
+        skip_signal_trigger: bool = False,
     ) -> Optional[str]:
         """加仓模拟: 复用实盘 validate_add_position / record_add_position。
 
         与实盘 constitution_executor.py 100% 同一份代码:
           1. executor.validate_add_position() — 策略/次数/利润锁定检查
           2. executor.record_add_position() — 更新 ConstitutionRuntimeState
+
+        skip_signal_trigger:
+            True 时只检查 min_current_r_by_add（及 ATR 换算），不跑 BPC/ME 等特征 trigger。
+            供 execution.add_position.trigger.type=float_r_ladder_only 浮盈阶梯加仓（事件回测）。
 
         Returns:
             position_id if added, None if rejected
@@ -781,14 +789,28 @@ class PositionSimulator:
         signal["base_notional_frac"] = float(_risk_frac)
         signal["current_notional_frac"] = float(_current_notional_frac)
         signal["equity_usd"] = float(features.get("equity", 0.0) or 0.0)
-        if not _shared_validate_add_position_trigger(
+        if skip_signal_trigger:
+            _thr = resolve_add_position_min_current_r(add_rules, next_add_no, signal)
+            if current_r < _thr:
+                self.last_add_reject_reason = "trigger_not_met"
+                return None
+        elif not _shared_validate_add_position_trigger(
             archetype=archetype,
             direction=1 if new_side == "LONG" else -1,
             signal=signal,
             add_position_cfg=add_rules,
             current_r=current_r,
         ):
-            self.last_add_reject_reason = "trigger_not_met"
+            _thr = resolve_add_position_min_current_r(add_rules, next_add_no, signal)
+            if current_r < _thr:
+                self.last_add_reject_reason = "add_min_current_r"
+            else:
+                _trg = dict(add_rules.get("trigger") or {})
+                _tt = str(_trg.get("type", "")).strip().lower()
+                if _tt in {"bpc_follow_signal", "follow_signal"}:
+                    self.last_add_reject_reason = "add_bpc_breakout_mismatch"
+                else:
+                    self.last_add_reject_reason = "add_trigger_feature_rules"
             return None
         add_mult = _resolve_add_position_size_multiplier(add_rules, next_add_no, signal)
         parent_mult = float(parent_pos.get("_size_multiplier", 1.0) or 1.0)
@@ -962,6 +984,8 @@ class BacktestResult:
     add_position_stats: Optional[Dict[str, Any]] = None
     # 月末未平仓快照 (用于跨月续跑)
     open_positions_end: List[Dict[str, Any]] = field(default_factory=list)
+    # 各注册策略 execution.add_position.trigger.type（小写 key）
+    add_trigger_types: Dict[str, str] = field(default_factory=dict)
 
     @property
     def n_trades(self) -> int:
@@ -1098,11 +1122,70 @@ class BacktestResult:
                 print(f"    加仓 Win%: {ap.get('add_win_rate', 0):.1%}")
                 print(f"    加仓平均倍率: {ap.get('add_mean_size', 0):.2f}x")
                 print(f"    观测最大杠杆: {ap.get('max_observed_leverage', 0):.2f}x")
+            pe = ap.get("path_efficiency_pct_at_add")
+            if isinstance(pe, dict):
+                print(
+                    "\n  📐 path_efficiency_pct @ 加仓尝试 "
+                    "(类 ER 历史分位 [0,1]，供 er_gated_float_ladder 参考):"
+                )
+                for line in _format_er_pct_summary_lines(
+                    pe.get("signal_add_attempts") or {},
+                    "signal_add（PCM 再意图 / bpc_follow_signal）",
+                ):
+                    print(line)
+                for line in _format_er_pct_summary_lines(
+                    pe.get("float_ladder_attempts") or {},
+                    "float_r_ladder_only（阶梯路径）",
+                ):
+                    print(line)
 
         if self.open_positions_end:
             print(f"\n  ♻️  月末未平仓: {len(self.open_positions_end)}")
 
+        self._print_add_position_diagnostics_footer()
+
         print("=" * 72)
+
+    def _print_add_position_diagnostics_footer(self) -> None:
+        """置底简短加仓诊断（pipeline run_step 只打 stdout 末段时仍能看见）。"""
+        fn = self.funnel or {}
+        print("\n  🔎 加仓诊断摘要 (execution.add_position / PCM slot)")
+        if self.add_trigger_types:
+            for sk, tv in sorted(self.add_trigger_types.items()):
+                print(f"    trigger.type [{sk}]: {tv}")
+        keys = [
+            ("total_signals_checked", "时间线检查次数"),
+            ("signals_generated", "产生意图次数"),
+            ("reject_pcm_slot_full", "槽满拒单(有意图)"),
+            ("add_position_ok", "加仓成功次数"),
+            ("add_position_rejected", "加仓拒绝次数"),
+            ("float_ladder_add_ok", "浮盈阶梯成功"),
+            ("reject_add_trigger", "加仓 trigger 类拒绝(合计)"),
+            ("reject_add_detail_min_r", "  └ 未达 min_current_r"),
+            ("reject_add_detail_bpc_breakout", "  └ bpc_breakout 与仓向不一致"),
+            ("reject_add_detail_me_features", "  └ ME/其它特征 trigger"),
+            ("reject_add_no_parent", "无父仓(不应常见)"),
+            ("reject_add_max_times", "超 max_add_times"),
+            ("reject_add_constitution", "constitution 拒"),
+        ]
+        for k, label in keys:
+            if k in fn and int(fn[k]) > 0:
+                print(f"    {label}: {fn[k]}")
+        ap = self.add_position_stats
+        if isinstance(ap, dict) and ap.get("enabled"):
+            tries = int(ap.get("add_count", 0) or 0) + int(
+                ap.get("rejected_count", 0) or 0
+            )
+            print(
+                f"    提示: 信号加仓尝试≈{tries}；若很少，先看槽满/是否常进「无持仓加仓」分支。"
+            )
+            db = int(fn.get("reject_add_detail_bpc_breakout", 0) or 0)
+            tr = int(fn.get("reject_add_trigger", 0) or 0)
+            if tr > 0 and db >= max(1, tr // 2):
+                print(
+                    "    提示: bpc_breakout 拒绝占比高 → 浮盈阶梯不校验该特征，"
+                    "对比 float_r_ladder_only 可区分「无信号」vs「信号方向过滤」。"
+                )
 
     def export_trades_csv(self, path: str):
         """导出交易明细 CSV"""
@@ -1153,6 +1236,96 @@ def row_to_features(row: pd.Series) -> Dict[str, float]:
         except (ValueError, TypeError):
             continue
     return features
+
+
+def _extract_path_efficiency_pct(features: Mapping[str, Any]) -> Optional[float]:
+    """path_efficiency 的滚动历史分位 [0,1]（path_efficiency_pct_f / 列 path_efficiency_pct），语义类似 ER。"""
+    for k in ("path_efficiency_pct", "path_efficiency_pct_f"):
+        v = features.get(k)
+        if v is None:
+            continue
+        try:
+            x = float(v)
+            if np.isfinite(x):
+                return x
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _er_pct_numeric_summary(xs: List[float]) -> Dict[str, float]:
+    if not xs:
+        return {}
+    arr = np.asarray(xs, dtype=float)
+    return {
+        "n": float(len(arr)),
+        "mean": float(np.mean(arr)),
+        "std": float(np.std(arr)) if len(arr) > 1 else 0.0,
+        "min": float(np.min(arr)),
+        "p10": float(np.percentile(arr, 10)),
+        "p25": float(np.percentile(arr, 25)),
+        "p50": float(np.percentile(arr, 50)),
+        "p75": float(np.percentile(arr, 75)),
+        "p90": float(np.percentile(arr, 90)),
+        "max": float(np.max(arr)),
+    }
+
+
+def _er_pct_attempt_stats(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """rows: {pct: Optional[float], outcome: str}"""
+    attempts = len(rows)
+    with_vals = [float(r["pct"]) for r in rows if r.get("pct") is not None]
+    missing = attempts - len(with_vals)
+    out: Dict[str, Any] = {
+        "attempts": attempts,
+        "missing_path_efficiency_pct": missing,
+        "with_feature": len(with_vals),
+        "overall": _er_pct_numeric_summary(with_vals),
+    }
+    by_out: Dict[str, List[float]] = defaultdict(list)
+    for r in rows:
+        p = r.get("pct")
+        if p is None:
+            continue
+        by_out[str(r.get("outcome", "unknown"))].append(float(p))
+    out["by_outcome"] = {
+        k: _er_pct_numeric_summary(v) for k, v in sorted(by_out.items())
+    }
+    return out
+
+
+def _format_er_pct_summary_lines(
+    stats: Dict[str, Any],
+    title: str,
+) -> List[str]:
+    lines: List[str] = [f"    {title}:"]
+    if int(stats.get("attempts", 0) or 0) == 0:
+        lines.append("      (本路径无加仓尝试)")
+        return lines
+    lines.append(
+        f"      尝试={stats['attempts']}, "
+        f"有特征={stats['with_feature']}, "
+        f"缺失 path_efficiency_pct={stats['missing_path_efficiency_pct']}"
+    )
+    ov = stats.get("overall") or {}
+    if not ov:
+        lines.append(
+            "      无有效数值 — 请在策略 features 中包含 path_efficiency_pct_f（→ path_efficiency_pct）"
+        )
+        return lines
+    lines.append(
+        f"      分位[0,1]: n={int(ov['n'])} mean={ov['mean']:.3f} std={ov['std']:.3f} "
+        f"min={ov['min']:.3f} p10={ov['p10']:.3f} p25={ov['p25']:.3f} "
+        f"p50={ov['p50']:.3f} p75={ov['p75']:.3f} p90={ov['p90']:.3f} max={ov['max']:.3f}"
+    )
+    for ok, sub in (stats.get("by_outcome") or {}).items():
+        if not sub or int(sub.get("n", 0) or 0) == 0:
+            continue
+        lines.append(
+            f"      └ outcome={ok}: n={int(sub['n'])} "
+            f"p50={sub['p50']:.3f} p10={sub['p10']:.3f} p90={sub['p90']:.3f}"
+        )
+    return lines
 
 
 def _json_safe(value: Any) -> Any:
@@ -1718,6 +1891,27 @@ class EventBacktester:
                     )
             except Exception:
                 pass
+        # execution.add_position.trigger.type=float_r_ladder_only — 浮盈阶梯加仓（事件回测，不依赖 PCM 再次发信号）
+        _strats_float_ladder_meta: Dict[str, Dict[str, Any]] = {}
+        _add_trigger_types: Dict[str, str] = {}
+        for s in self.strategy_names:
+            raw = self._strats[s].archetype.execution.raw or {}
+            ap = raw.get("add_position")
+            _tt = ""
+            if isinstance(ap, dict):
+                _trg = ap.get("trigger") or {}
+                if isinstance(_trg, dict):
+                    _tt = str(_trg.get("type", "") or "").strip()
+            _add_trigger_types[s.lower()] = _tt or "(missing trigger.type)"
+            if isinstance(ap, dict) and _shared_resolve_float_r_ladder_only(ap):
+                _strats_float_ladder_meta[s.lower()] = {
+                    "strategy": s,
+                    "add_position": dict(ap),
+                    "execution_constraints": dict(
+                        raw.get("execution_constraints") or {}
+                    ),
+                }
+        result.add_trigger_types = dict(_add_trigger_types)
         _risk_per_slot = float(
             self.pcm._constitution.get("risk_per_slot", 0.01)
             if hasattr(self.pcm, "_constitution") and self.pcm._constitution
@@ -1745,6 +1939,9 @@ class EventBacktester:
         # _pos_last_ts: 独立跟踪每个 symbol 持仓上次被处理到的时间点
         # 与 prev_ts (信号时间) 分离, 确保跨 symbol slot 释放不延迟
         _pos_last_ts: Dict[str, pd.Timestamp] = {}
+        # path_efficiency_pct（类 ER 分位）在每次加仓尝试时的快照，供 er_gated_float_ladder 设计
+        _er_rows_signal_add: List[Dict[str, Any]] = []
+        _er_rows_float_ladder: List[Dict[str, Any]] = []
 
         for ts, sym, tf_rows in timeline_events:
             simulator = self._simulators[sym]
@@ -1878,6 +2075,12 @@ class EventBacktester:
                     simulator._structural_price = float(_ema_200_val)
                 except (TypeError, ValueError):
                     pass
+            _mv = primary_features.get("macro_tp_vwap_1200_position")
+            if _mv is not None:
+                try:
+                    simulator._macro_tp_vwap_position = float(_mv)
+                except (TypeError, ValueError):
+                    pass
 
             # LivePCM.decide() — 多策略仲裁 + 全局 slot 控制
             intents = self.pcm.decide(
@@ -1948,21 +2151,44 @@ class EventBacktester:
                         intent, entry_bar, entry_feats, bar_minutes=winning_bm
                     )
                     if opened is None:
-                        # 已有持仓，尝试加仓
+                        # 已有持仓，尝试加仓（trigger.type=float_r_ladder_only 时仅走下方阶梯逻辑）
                         if _add_pos_enabled and _executor:
-                            added = simulator.try_add_position(
-                                intent,
-                                entry_bar,
-                                entry_feats,
-                                executor=_executor,
-                                runtime_state=_runtime_state,
-                                bar_minutes=winning_bm,
-                            )
+                            _win_lc = str(winning_arch or "").strip().lower()
+                            added = None
+                            _tried_signal_add = _win_lc not in _strats_float_ladder_meta
+                            if _tried_signal_add:
+                                added = simulator.try_add_position(
+                                    intent,
+                                    entry_bar,
+                                    entry_feats,
+                                    executor=_executor,
+                                    runtime_state=_runtime_state,
+                                    bar_minutes=winning_bm,
+                                )
+                                _er_rows_signal_add.append(
+                                    {
+                                        "pct": _extract_path_efficiency_pct(
+                                            entry_feats
+                                        ),
+                                        "outcome": (
+                                            "ok"
+                                            if added
+                                            else str(
+                                                getattr(
+                                                    simulator,
+                                                    "last_add_reject_reason",
+                                                    "",
+                                                )
+                                            )
+                                            or "other"
+                                        ),
+                                    }
+                                )
                             if added:
                                 _add_pos_count += 1
                                 funnel.setdefault("add_position_ok", 0)
                                 funnel["add_position_ok"] += 1
-                            else:
+                            elif _tried_signal_add:
                                 _add_pos_rejected += 1
                                 funnel.setdefault("add_position_rejected", 0)
                                 funnel["add_position_rejected"] += 1
@@ -1978,9 +2204,27 @@ class EventBacktester:
                                 elif _why == "constitution_reject":
                                     funnel.setdefault("reject_add_constitution", 0)
                                     funnel["reject_add_constitution"] += 1
-                                elif _why == "trigger_not_met":
+                                elif _why in (
+                                    "trigger_not_met",
+                                    "add_min_current_r",
+                                    "add_bpc_breakout_mismatch",
+                                    "add_trigger_feature_rules",
+                                ):
                                     funnel.setdefault("reject_add_trigger", 0)
                                     funnel["reject_add_trigger"] += 1
+                                    if _why == "add_min_current_r":
+                                        funnel.setdefault("reject_add_detail_min_r", 0)
+                                        funnel["reject_add_detail_min_r"] += 1
+                                    elif _why == "add_bpc_breakout_mismatch":
+                                        funnel.setdefault(
+                                            "reject_add_detail_bpc_breakout", 0
+                                        )
+                                        funnel["reject_add_detail_bpc_breakout"] += 1
+                                    elif _why == "add_trigger_feature_rules":
+                                        funnel.setdefault(
+                                            "reject_add_detail_me_features", 0
+                                        )
+                                        funnel["reject_add_detail_me_features"] += 1
                                 elif _why == "no_parent_position":
                                     funnel.setdefault("reject_add_no_parent", 0)
                                     funnel["reject_add_no_parent"] += 1
@@ -2041,6 +2285,110 @@ class EventBacktester:
                     funnel["reject_entry_filter_deny"] += 1
                 else:
                     funnel["reject_no_direction"] += 1
+
+            # 浮盈阶梯加仓: 不依赖 PCM 再次发信号，按 min_current_r_by_add 逐档检查
+            if (
+                _strats_float_ladder_meta
+                and _add_pos_enabled
+                and _executor
+                and not _ks_blocked
+            ):
+                entry_bar_primary = {
+                    "close": float(primary_features.get("close", 0) or 0),
+                    "high": float(primary_features.get("high", 0) or 0),
+                    "low": float(primary_features.get("low", 0) or 0),
+                    "open": float(primary_features.get("open", 0) or 0),
+                    "timestamp": ts,
+                    "atr": float(primary_features.get("atr", 0) or 0),
+                }
+                pf = dict(primary_features)
+                pf["equity"] = float(_equity)
+                for arch_lc, meta in _strats_float_ladder_meta.items():
+                    ladder_done = False
+                    for _pid, pos in list(simulator._positions.items()):
+                        if ladder_done:
+                            break
+                        if pos.get("symbol") != sym:
+                            continue
+                        if bool(pos.get("_is_add_position", False)):
+                            continue
+                        if str(pos.get("archetype", "")).strip().lower() != arch_lc:
+                            continue
+                        min_gap_m = float(
+                            (meta.get("execution_constraints") or {}).get(
+                                "min_order_interval_minutes", 0
+                            )
+                            or 0
+                        )
+                        last_add = pos.get("_last_float_ladder_add_ts")
+                        if min_gap_m > 0 and last_add is not None:
+                            try:
+                                gap_min = (
+                                    pd.Timestamp(ts) - pd.Timestamp(last_add)
+                                ).total_seconds() / 60.0
+                            except Exception:
+                                gap_min = 1.0e9
+                            if gap_min < min_gap_m:
+                                continue
+                        arch_disp = str(pos.get("archetype", "")).strip()
+                        side = pos.get("side", "LONG")
+                        action = (
+                            "LONG" if str(side).upper() in ("LONG", "BUY") else "SHORT"
+                        )
+                        ladder_intent = TradeIntent(
+                            action=action,
+                            symbol=sym,
+                            archetype=arch_disp,
+                            execution_strategy=str(meta.get("strategy", arch_disp)),
+                            add_position=True,
+                            size_multiplier=float(
+                                pos.get("_size_multiplier", 1.0) or 1.0
+                            ),
+                            execution_profile={
+                                "add_position": meta["add_position"],
+                            },
+                        )
+                        ladder_bm = self._bm_map.get(
+                            arch_disp, self._primary_bar_minutes
+                        )
+                        added_fl = simulator.try_add_position(
+                            ladder_intent,
+                            entry_bar_primary,
+                            pf,
+                            executor=_executor,
+                            runtime_state=_runtime_state,
+                            bar_minutes=ladder_bm,
+                            skip_signal_trigger=True,
+                        )
+                        _er_rows_float_ladder.append(
+                            {
+                                "pct": _extract_path_efficiency_pct(pf),
+                                "outcome": (
+                                    "ok"
+                                    if added_fl
+                                    else str(
+                                        getattr(
+                                            simulator,
+                                            "last_add_reject_reason",
+                                            "",
+                                        )
+                                    )
+                                    or "other"
+                                ),
+                            }
+                        )
+                        if added_fl:
+                            pos["_last_float_ladder_add_ts"] = ts
+                            _add_pos_count += 1
+                            funnel.setdefault("add_position_ok", 0)
+                            funnel["add_position_ok"] = (
+                                int(funnel.get("add_position_ok", 0)) + 1
+                            )
+                            funnel.setdefault("float_ladder_add_ok", 0)
+                            funnel["float_ladder_add_ok"] = (
+                                int(funnel.get("float_ladder_add_ok", 0)) + 1
+                            )
+                            ladder_done = True
 
             # 更新 _pos_last_ts 确保当前 symbol 也被跟踪
             if sym not in _pos_last_ts or ts > _pos_last_ts[sym]:
@@ -2157,6 +2505,16 @@ class EventBacktester:
                 ),
                 "max_observed_leverage": float(max_observed_lev),
                 "max_observed_notional_frac": float(max_observed_notional),
+                "path_efficiency_pct_at_add": {
+                    "note": (
+                        "path_efficiency_pct = path_efficiency_pct_f 输出的历史分位 [0,1] "
+                        "(净位移/路径长度，因果 shift)；用于对照 ER-gated 加仓门槛"
+                    ),
+                    "signal_add_attempts": _er_pct_attempt_stats(_er_rows_signal_add),
+                    "float_ladder_attempts": _er_pct_attempt_stats(
+                        _er_rows_float_ladder
+                    ),
+                },
             }
 
         return result
@@ -2179,16 +2537,93 @@ def _resample_bars(bars_1min: pd.DataFrame, freq: str = "4h") -> pd.DataFrame:
     return ohlc
 
 
+def _rolling_tp_vwap(ohlc: pd.DataFrame, window: int) -> pd.Series:
+    """Rolling typical-price VWAP: sum(tp*vol)/sum(vol) over ``window`` bars."""
+    h = ohlc["high"].astype(float)
+    l = ohlc["low"].astype(float)
+    c = ohlc["close"].astype(float)
+    tp = (h + l + c) / 3.0
+    if "volume" in ohlc.columns:
+        vol = ohlc["volume"].astype(float).clip(lower=0.0)
+    else:
+        vol = pd.Series(1.0, index=ohlc.index)
+    n = len(ohlc)
+    w = max(2, min(int(window), n))
+    min_p = max(3, min(w // 10, max(50, w // 20)))
+    num = (tp * vol).rolling(window=w, min_periods=min_p).sum()
+    den = vol.rolling(window=w, min_periods=min_p).sum()
+    out = num / den.replace(0, np.nan)
+    return out
+
+
+def _merge_1min_for_chart(
+    sym: str,
+    bars_1min: pd.DataFrame,
+    data_path: Optional[str],
+    extra_months: int,
+) -> pd.DataFrame:
+    """1m OHLCV from (test_start − extra_months) through test_end; merge with backtest bars."""
+    if bars_1min is None or bars_1min.empty:
+        return bars_1min
+    b = bars_1min.copy()
+    b.index = pd.to_datetime(b.index, utc=True)
+    cols = [c for c in ("open", "high", "low", "close", "volume") if c in b.columns]
+    if not cols or "close" not in cols:
+        return bars_1min
+    b = b[cols]
+    if not data_path or int(extra_months) <= 0:
+        return b
+    dp = Path(data_path)
+    if not dp.is_dir():
+        return b
+    idx_min = b.index.min()
+    idx_max = b.index.max()
+    start_ts = idx_min - pd.DateOffset(months=int(extra_months))
+    start_s = start_ts.strftime("%Y-%m-%d")
+    end_day = pd.Timestamp(idx_max)
+    if getattr(end_day, "tz", None) is not None:
+        end_day = end_day.tz_convert("UTC")
+    end_s = (end_day.normalize() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        dh = DataHandler(str(dp))
+        ext = dh.load_ohlcv(
+            symbol=sym, timeframe="1T", start_date=start_s, end_date=end_s
+        )
+    except Exception as e:
+        logger.warning("trading map: extended 1m load failed %s: %s", sym, e)
+        return b
+    if ext is None or ext.empty:
+        return b
+    ext = ext.sort_index()
+    ext.index = pd.to_datetime(ext.index, utc=True)
+    ec = [c for c in ("open", "high", "low", "close", "volume") if c in ext.columns]
+    if not ec or "close" not in ec:
+        return b
+    ext = ext[ec]
+    merged = pd.concat([ext, b]).sort_index()
+    merged = merged[~merged.index.duplicated(keep="last")]
+    return merged
+
+
 def generate_trading_map_html(
     result: BacktestResult,
     output_path: str,
     bar_freq: str = "4h",
     compare_trades_csv: Optional[str] = None,
+    *,
+    data_path: Optional[str] = None,
+    map_extra_months: int = 12,
+    map_vwap_window_bars: int = 1200,
+    map_long_ema_span: int = 1200,
 ) -> str:
     """生成 K线 + 交易标记 HTML 交易地图 (多策略分 Tab)。
 
+    可选从 ``data_path`` 向前多取 ``map_extra_months`` 月 1m 数据，仅在 **计算** VWAP 时使用；
+    **图上 X 轴只覆盖本次回测窗口**（``result.bars_1min`` 对应区间），不把向前扩展的历史整段画出来。
+    主图价格轴叠画滚动典型价 VWAP（``map_long_ema_span`` 仅保留 CLI/API 兼容，不再绘制 EMA）。
+
     可视化规则:
-      入场标记颜色 = 策略 (BPC=蓝 / FER=紫 / ME=橙)
+      入场填充色   = 方向 (多=绿 / 空=红), 描边色 = 策略 (BPC=蓝 / FER=紫 / ME=橙)
       标记形状     = 方向+加仓 (△=多头, ▽=空头, ◇=加仓多, ◈=加仓空)
       连接线颜色   = 盈亏 (绿=盈利, 红=亏损)
       出场标记颜色 = 盈亏 (绿=盈利, 红=亏损)
@@ -2199,9 +2634,9 @@ def generate_trading_map_html(
         logger.warning("❌ Bokeh 未安装, 无法生成交易地图. pip install bokeh")
         return ""
 
-    symbols = sorted(result.per_symbol.keys())
+    symbols = sorted(set(result.per_symbol.keys()) | set(result.bars_1min.keys()))
     if not symbols:
-        logger.warning("❌ 没有交易数据, 无法生成交易地图")
+        logger.warning("❌ 无 symbol（无成交且无 bars_1min）, 无法生成交易地图")
         return ""
 
     # ── 颜色方案 ──
@@ -2216,6 +2651,9 @@ def generate_trading_map_html(
     _COLOR_LOSS = "#ef5350"  # 亏损 红
     _COLOR_UP = "#26a69a"  # K线 阳
     _COLOR_DOWN = "#ef5350"  # K线 阴
+    # 入场填充: 多空分离 (与 K 线涨跌绿红区分略提高饱和度)
+    _ENTRY_FILL_LONG = "#2e7d32"
+    _ENTRY_FILL_SHORT = "#c62828"
 
     # ── 标记映射 ──
     _MARKER_MAP = {
@@ -2224,16 +2662,14 @@ def generate_trading_map_html(
         ("LONG", True): "diamond",  # ◇ 加仓多
         ("SHORT", True): "diamond_cross",  # ◈ 加仓空
     }
-    _LABEL_MAP = {
-        ("LONG", False): "△ Long",
-        ("SHORT", False): "▽ Short",
-        ("LONG", True): "◇ Add Long",
-        ("SHORT", True): "◈ Add Short",
-    }
+
+    def _entry_fill_for_side(side: str) -> str:
+        return _ENTRY_FILL_LONG if str(side).upper() == "LONG" else _ENTRY_FILL_SHORT
 
     _FREQ_MS = {
         "15min": 15 * 60 * 1000,
         "1h": 60 * 60 * 1000,
+        "2h": 2 * 60 * 60 * 1000,
         "4h": 4 * 60 * 60 * 1000,
     }
     bar_w = _FREQ_MS.get(bar_freq, 4 * 60 * 60 * 1000) * 0.6
@@ -2273,9 +2709,36 @@ def generate_trading_map_html(
         bars_1min = result.bars_1min.get(sym)
         if bars_1min is None or bars_1min.empty:
             return None
-        df = _resample_bars(bars_1min, freq=bar_freq)
+        bars_full = _merge_1min_for_chart(sym, bars_1min, data_path, map_extra_months)
+        df = _resample_bars(bars_full, freq=bar_freq)
         if df.empty:
             return None
+
+        # 全量 df 上算指标（含 map_extra_months 向前扩展），图上只画回测窗
+        vw_n = int(map_vwap_window_bars)
+        _ = map_long_ema_span  # CLI compat; EMA overlay removed
+        vwap_price = _rolling_tp_vwap(df, vw_n)
+
+        view_start = pd.Timestamp(bars_1min.index.min())
+        view_end = pd.Timestamp(bars_1min.index.max())
+        idx = df.index
+        if idx.tz is not None:
+            if view_start.tzinfo is None:
+                view_start = view_start.tz_localize("UTC").tz_convert(idx.tz)
+            else:
+                view_start = view_start.tz_convert(idx.tz)
+            if view_end.tzinfo is None:
+                view_end = view_end.tz_localize("UTC").tz_convert(idx.tz)
+            else:
+                view_end = view_end.tz_convert(idx.tz)
+        plot_mask = (idx >= view_start) & (idx <= view_end)
+        df_plot = df.loc[plot_mask]
+        if df_plot.empty:
+            df_plot = df
+            logger.warning(
+                "trading map %s: plot window empty after tz align, using full merged range",
+                sym,
+            )
 
         cmp_trades = cmp_trades or []
         sym_r = sum(t.pnl_r for t in trades)
@@ -2289,54 +2752,58 @@ def generate_trading_map_html(
         )
         p.grid.grid_line_alpha = 0.3
 
-        # Trend baseline (EMA200) for long/short structure reading.
-        ema200 = df["close"].ewm(span=200, adjust=False, min_periods=200).mean()
-        p.line(
-            df.index,
-            ema200,
-            line_color="#f59e0b",
-            line_width=1.6,
-            line_alpha=0.95,
-            line_dash="dashed",
-            legend_label="EMA200",
-        )
+        try:
+            p.x_range.start = df_plot.index.min()
+            p.x_range.end = df_plot.index.max()
+            p.x_range.range_padding = 0.02
+        except Exception:
+            pass
 
-        # K 线实体
-        inc = df.close >= df.open
+        inc = df_plot.close >= df_plot.open
         dec = ~inc
         p.segment(
-            df.index[inc],
-            df.high[inc],
-            df.index[inc],
-            df.low[inc],
+            df_plot.index[inc],
+            df_plot.high[inc],
+            df_plot.index[inc],
+            df_plot.low[inc],
             color=_COLOR_UP,
             line_width=1,
         )
         p.segment(
-            df.index[dec],
-            df.high[dec],
-            df.index[dec],
-            df.low[dec],
+            df_plot.index[dec],
+            df_plot.high[dec],
+            df_plot.index[dec],
+            df_plot.low[dec],
             color=_COLOR_DOWN,
             line_width=1,
         )
         p.vbar(
-            df.index[inc],
+            df_plot.index[inc],
             bar_w,
-            df.open[inc],
-            df.close[inc],
+            df_plot.open[inc],
+            df_plot.close[inc],
             fill_color=_COLOR_UP,
             line_color=_COLOR_UP,
             fill_alpha=0.8,
         )
         p.vbar(
-            df.index[dec],
+            df_plot.index[dec],
             bar_w,
-            df.open[dec],
-            df.close[dec],
+            df_plot.open[dec],
+            df_plot.close[dec],
             fill_color=_COLOR_DOWN,
             line_color=_COLOR_DOWN,
             fill_alpha=0.8,
+        )
+
+        vp = vwap_price.reindex(df_plot.index)
+        p.line(
+            df_plot.index,
+            vp,
+            line_color="#c026d3",
+            line_width=1.35,
+            line_alpha=0.78,
+            legend_label=f"Rolling TP-VWAP ({vw_n} bars, price)",
         )
 
         if trades:
@@ -2365,18 +2832,23 @@ def generate_trading_map_html(
                 entry_groups.setdefault(key, []).append(t)
 
             for (arch, side, is_add), batch in sorted(entry_groups.items()):
-                strat_c = _strat_color(arch)
+                strat_line = _strat_color(arch)
+                fill_c = _entry_fill_for_side(side)
                 marker = _MARKER_MAP.get((side, is_add), "circle")
                 sz = 13 if is_add else 11
-                shape_label = _LABEL_MAP.get((side, is_add), side)
-                legend_lbl = f"{arch.upper()} {shape_label}"
+                add_txt = "Add " if is_add else ""
+                leg_side = "Long" if str(side).upper() == "LONG" else "Short"
+                # 图例只写字，形状由 glyph 表达，避免与 Unicode 符号重复叠字
+                legend_lbl = f"{arch.upper()} {add_txt}{leg_side}"
                 p.scatter(
                     x=[t.entry_time for t in batch],
                     y=[t.entry_price for t in batch],
                     marker=marker,
                     size=sz,
-                    color=strat_c,
-                    alpha=0.85,
+                    fill_color=fill_c,
+                    line_color=strat_line,
+                    line_width=2,
+                    fill_alpha=0.88,
                     legend_label=legend_lbl,
                 )
 
@@ -2452,11 +2924,12 @@ def generate_trading_map_html(
         figs: list = [Div(text=title_html)]
 
         for sym in symbols:
+            _bars = result.bars_1min.get(sym)
+            if _bars is None or getattr(_bars, "empty", True):
+                continue
             sym_trades = result.per_symbol.get(sym, [])
             if strat_filter is not None:
                 sym_trades = [t for t in sym_trades if _match_trade(t)]
-            if not sym_trades and not _cmp_by_sym.get(sym):
-                continue
             fig = _build_symbol_figure(sym, sym_trades, cmp_trades=_cmp_by_sym.get(sym))
             if fig is not None:
                 figs.append(fig)
@@ -2556,6 +3029,27 @@ def main():
         "--trading-map",
         default=None,
         help="交易地图 HTML 输出路径 (4H K线 + 交易标记)",
+    )
+    parser.add_argument(
+        "--map-extra-months",
+        type=int,
+        default=12,
+        help=(
+            "交易地图: 从 --data-path 向前多加载 1m 月数，仅用于 VWAP 计算；"
+            "K 线横轴仍为回测窗。0=不向前扩展"
+        ),
+    )
+    parser.add_argument(
+        "--map-vwap-window-bars",
+        type=int,
+        default=1200,
+        help="交易地图: 滚动典型价 VWAP 窗口 (按地图 K 线根数)",
+    )
+    parser.add_argument(
+        "--map-long-ema-span",
+        type=int,
+        default=1200,
+        help="交易地图: 已废弃（不再绘制 EMA），保留参数以兼容旧脚本",
     )
     parser.add_argument(
         "--compare-trades",
@@ -2721,7 +3215,7 @@ def main():
 
     if args.trading_map:
         # 根据策略 timeframe 选择 K 线频率
-        tf_to_freq = {"15T": "15min", "60T": "1h", "240T": "4h"}
+        tf_to_freq = {"15T": "15min", "60T": "1h", "120T": "2h", "240T": "4h"}
         primary_tf = _get_timeframe(strategies[0])
         map_freq = tf_to_freq.get(primary_tf, "4h")
         generate_trading_map_html(
@@ -2729,6 +3223,10 @@ def main():
             args.trading_map,
             bar_freq=map_freq,
             compare_trades_csv=getattr(args, "compare_trades", None),
+            data_path=args.data_path,
+            map_extra_months=int(getattr(args, "map_extra_months", 12)),
+            map_vwap_window_bars=int(getattr(args, "map_vwap_window_bars", 1200)),
+            map_long_ema_span=int(getattr(args, "map_long_ema_span", 1200)),
         )
 
     if args.db:
@@ -2814,6 +3312,7 @@ def _save_json(result: BacktestResult, path: str):
             for sym, trades in result.per_symbol.items()
         },
         "add_position_stats": result.add_position_stats or {},
+        "add_trigger_types": result.add_trigger_types,
         "open_positions_end": result.open_positions_end,
         "trades": [_trade_to_dict(t) for t in result.trades],
     }

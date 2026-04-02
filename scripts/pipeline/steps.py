@@ -40,7 +40,9 @@ def run_step(
         lf.write(f"\n[EXIT CODE] {proc.returncode}\n")
 
     lines = output.strip().split("\n")
-    summary = "\n".join(lines[-30:]) if len(lines) > 30 else output
+    # 事件回测报告较长；末尾含「加仓诊断摘要」，多打几行以免被截断
+    tail_n = 60 if "Event Backtest" in name else 30
+    summary = "\n".join(lines[-tail_n:]) if len(lines) > tail_n else output
     print(summary)
 
     if proc.returncode != 0:
