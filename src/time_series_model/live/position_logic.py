@@ -294,11 +294,10 @@ def enforce_position(
 
     # ── 3b. Structural exit (EMA200) ──
     # BPC trend_hold: 价格穿越 EMA200 = 趋势结构破坏
-    # 仅在 breakeven locked 后才生效 (避免入场即退出)
+    # 与 breakeven 逻辑并行，不互相依赖。
     if (
         close_reason is None
         and pos.get("structural_exit") == "ema200"
-        and pos.get("breakeven_locked")
         and structural_price is not None
         and structural_price > 0
     ):
@@ -313,7 +312,6 @@ def enforce_position(
     if (
         close_reason is None
         and str(pos.get("structural_exit") or "").strip().lower() == "vwap1200"
-        and pos.get("breakeven_locked")
         and macro_tp_vwap_position is not None
     ):
         try:

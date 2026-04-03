@@ -994,12 +994,8 @@ def simulate_rr_execution(
                             best_price = l
 
                     # 2b. Structural exit (EMA200) — BPC trend_hold
-                    # 仅在 breakeven locked 后才检查 (避免入场即退出)
-                    if (
-                        structural_exit_type == "ema200"
-                        and breakeven_locked
-                        and structural_ema200 > 0
-                    ):
+                    # 与 breakeven 逻辑并行，不互相依赖。
+                    if structural_exit_type == "ema200" and structural_ema200 > 0:
                         _mc = m_c[mi]  # 1min close
                         if not np.isnan(_mc):
                             if direction == 1 and _mc < structural_ema200:
@@ -1016,7 +1012,6 @@ def simulate_rr_execution(
                     # 2c. Structural exit (VWAP1200 deadband)
                     if (
                         str(structural_exit_type).strip().lower() == "vwap1200"
-                        and breakeven_locked
                         and t_vwap_pos is not None
                     ):
                         offset_m = mi - start_m
@@ -1124,11 +1119,7 @@ def simulate_rr_execution(
 
                     # 2b. Structural exit (EMA200) — BPC trend_hold
                     # 4H bar 模式: 用当前 bar 的 ema_200 (动态更新)
-                    if (
-                        structural_exit_type == "ema200"
-                        and breakeven_locked
-                        and _has_ema200
-                    ):
+                    if structural_exit_type == "ema200" and _has_ema200:
                         _ema_j = t_ema200[j] if j < len(t_ema200) else 0.0
                         if _ema_j > 0 and not np.isnan(_ema_j):
                             if direction == 1 and closes[j] < _ema_j:
@@ -1143,7 +1134,6 @@ def simulate_rr_execution(
                     # 2c. Structural exit (VWAP1200 deadband)
                     if (
                         str(structural_exit_type).strip().lower() == "vwap1200"
-                        and breakeven_locked
                         and t_vwap_pos is not None
                     ):
                         vpos = float(t_vwap_pos[j])

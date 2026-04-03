@@ -274,6 +274,15 @@ class PositionSimulator:
     def position_count(self) -> int:
         return len(self._positions)
 
+    @property
+    def slot_position_count(self) -> int:
+        """供 PCM 全局 slot 统计：加仓腿不占全局 slot。"""
+        return sum(
+            1
+            for pos in self._positions.values()
+            if not bool((pos or {}).get("_is_add_position", False))
+        )
+
     def snapshot_open_positions(self) -> List[Dict[str, Any]]:
         """导出当前未平仓状态 (用于跨月续跑)."""
         rows: List[Dict[str, Any]] = []
@@ -1631,8 +1640,8 @@ class EventBacktester:
         return out
 
     def _global_open_count(self) -> int:
-        """跨所有 symbol 的当前持仓数 (供 PCM slot 检查用)"""
-        return sum(sim.position_count for sim in self._simulators.values())
+        """跨所有 symbol 的全局 slot 数（仅母仓，加仓不占全局 slot）。"""
+        return sum(sim.slot_position_count for sim in self._simulators.values())
 
     def run(
         self,
