@@ -153,12 +153,37 @@ def _extract_features_from_prefilter(cfg: Dict[str, Any]) -> Set[str]:
 
 def _extract_features_from_direction(cfg: Dict[str, Any]) -> Set[str]:
     """Extract feature columns referenced in direction.yaml direction_rules."""
+    from src.time_series_model.live.direction_rule_ops import (
+        parse_dual_rule,
+        parse_signal_match_position_band_rule,
+        parse_single_position_band_rule,
+    )
+
     features: Set[str] = set()
     rules = cfg.get("direction_rules")
     if not isinstance(rules, list):
         return features
     for rule in rules:
         if not isinstance(rule, dict):
+            continue
+        cmp = parse_signal_match_position_band_rule(rule)
+        if cmp is not None:
+            features.add(cmp["band_feature"])
+            for sr in cmp.get("signal_rules") or []:
+                if not isinstance(sr, dict):
+                    continue
+                dr = parse_dual_rule(sr)
+                if dr is not None:
+                    features.add(str(dr[0]))
+                    features.add(str(dr[1]))
+                    continue
+                b2 = parse_single_position_band_rule(sr)
+                if b2 is not None:
+                    features.add(str(b2[0]))
+                    continue
+                f2 = sr.get("feature")
+                if f2:
+                    features.add(str(f2))
             continue
         if rule.get("method") == "dual_position_agree_deadband":
             raw = rule.get("features")

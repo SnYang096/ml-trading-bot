@@ -35,6 +35,7 @@ from src.time_series_model.live.direction_rule_ops import (
     dual_position_agree_deadband_scalar,
     is_direction_rule_enabled,
     parse_dual_rule,
+    parse_signal_match_position_band_rule,
     parse_single_position_band_rule,
     single_position_band_scalar,
 )
@@ -90,6 +91,36 @@ class DirectionEvaluator:
             if not is_direction_rule_enabled(rule):
                 continue
             rule_id = rule.get("id", "unknown")
+            compound = parse_signal_match_position_band_rule(rule)
+            if compound is not None:
+                candidate = 0
+                for sr in compound["signal_rules"]:
+                    if not isinstance(sr, dict):
+                        continue
+                    if not is_direction_rule_enabled(sr):
+                        continue
+                    d_atom = self._evaluate_atomic_direction_rule(sr, features)
+                    if d_atom != 0:
+                        candidate = d_atom
+                        break
+                if candidate == 0:
+                    continue
+                band_dir = single_position_band_scalar(
+                    features.get(compound["band_feature"]),
+                    float(compound["inner_abs"]),
+                    float(compound["outer_abs"]),
+                )
+                if band_dir != candidate:
+                    continue
+                logger.debug(
+                    "方向匹配: rule=%s signal_match_position_band → direction=%s",
+                    rule_id,
+                    candidate,
+                )
+                if self._filter is not None and candidate != self._filter:
+                    return 0, None
+                return candidate, str(rule_id)
+
             dual = parse_dual_rule(rule)
             if dual is not None:
                 col_a, col_b, eps = dual
@@ -146,6 +177,35 @@ class DirectionEvaluator:
                 return direction, str(rule_id)
 
         return 0, None
+
+    def _evaluate_atomic_direction_rule(
+        self, rule: Dict[str, Any], features: Dict[str, Any]
+    ) -> int:
+        """单条子规则（不含 signal_match_position_band 嵌套）→ ±1 或 0。"""
+        if not isinstance(rule, dict):
+            return 0
+        if str(rule.get("method", "")).strip().lower() == "signal_match_position_band":
+            return 0
+        dual = parse_dual_rule(rule)
+        if dual is not None:
+            col_a, col_b, eps = dual
+            return dual_position_agree_deadband_scalar(
+                features.get(col_a), features.get(col_b), eps
+            )
+        band = parse_single_position_band_rule(rule)
+        if band is not None:
+            col, inner_abs, outer_abs = band
+            return single_position_band_scalar(features.get(col), inner_abs, outer_abs)
+        feature_name = rule.get("feature", "")
+        transform = rule.get("transform", "raw")
+        value = features.get(feature_name)
+        if value is None:
+            return 0
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return 0
+        return self._apply_transform(value, transform)
 
     def _apply_transform(self, value: float, transform: str) -> int:
         """应用变换函数"""

@@ -9,7 +9,9 @@ from src.time_series_model.live.direction_rule_ops import (
     dual_position_agree_deadband_series,
     is_direction_rule_enabled,
     parse_dual_rule,
+    parse_signal_match_position_band_rule,
     parse_single_position_band_rule,
+    signal_match_position_band_series,
     single_position_band_scalar,
     single_position_band_series,
 )
@@ -174,6 +176,75 @@ def test_compute_direction_series_from_rules_single_position_band():
     assert s.iloc[1] == 1.0
     assert s.iloc[2] == -1.0
     assert s.iloc[3] == 0.0
+
+
+def test_parse_signal_match_position_band_rule():
+    r = {
+        "method": "signal_match_position_band",
+        "id": "x",
+        "signal_rules": [
+            {"feature": "bpc_breakout_direction", "transform": "raw"},
+            {"feature": "macd_atr", "transform": "sign"},
+        ],
+        "position_band": {
+            "feature": "macro_tp_vwap_1200_position",
+            "inner_abs": 0.005,
+            "outer_abs": 0.95,
+        },
+    }
+    p = parse_signal_match_position_band_rule(r)
+    assert p is not None
+    assert p["band_feature"] == "macro_tp_vwap_1200_position"
+    assert p["inner_abs"] == 0.005
+    assert p["outer_abs"] == 0.95
+    assert len(p["signal_rules"]) == 2
+    assert direction_rule_ft_key(r)[0] == "signal_match_position_band"
+
+
+def test_signal_match_position_band_series_aligns_long_short():
+    df = pd.DataFrame(
+        {
+            "bpc_breakout_direction": [1.0, 1.0, -1.0, -1.0],
+            "macd_atr": [0.0, 0.0, 0.0, 0.0],
+            "macro_tp_vwap_1200_position": [0.02, -0.02, -0.02, 0.02],
+        }
+    )
+    s = signal_match_position_band_series(
+        df,
+        signal_rules=[
+            {"feature": "bpc_breakout_direction", "transform": "raw"},
+            {"feature": "macd_atr", "transform": "sign"},
+        ],
+        band_feature="macro_tp_vwap_1200_position",
+        inner_abs=0.005,
+        outer_abs=0.95,
+    )
+    assert s.iloc[0] == 1.0
+    assert s.iloc[1] == 0.0
+    assert s.iloc[2] == -1.0
+    assert s.iloc[3] == 0.0
+
+
+def test_signal_match_position_band_series_macd_fallback():
+    df = pd.DataFrame(
+        {
+            "bpc_breakout_direction": [0.0, 0.0],
+            "macd_atr": [0.5, -0.3],
+            "macro_tp_vwap_1200_position": [0.02, -0.03],
+        }
+    )
+    s = signal_match_position_band_series(
+        df,
+        signal_rules=[
+            {"feature": "bpc_breakout_direction", "transform": "raw"},
+            {"feature": "macd_atr", "transform": "sign"},
+        ],
+        band_feature="macro_tp_vwap_1200_position",
+        inner_abs=0.005,
+        outer_abs=0.95,
+    )
+    assert s.iloc[0] == 1.0
+    assert s.iloc[1] == -1.0
 
 
 def test_compute_direction_series_skips_disabled_then_applies_next():

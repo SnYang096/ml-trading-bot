@@ -42,7 +42,9 @@ from src.time_series_model.live.direction_rule_ops import (
     dual_position_agree_deadband_series,
     is_direction_rule_enabled,
     parse_dual_rule,
+    parse_signal_match_position_band_rule,
     parse_single_position_band_rule,
+    signal_match_position_band_series,
     single_position_band_series,
 )
 
@@ -221,6 +223,40 @@ def compute_direction_series_from_rules(df: pd.DataFrame, rules: list) -> pd.Ser
     for rule in rules:
         if not is_direction_rule_enabled(rule):
             continue
+        cmp = parse_signal_match_position_band_rule(rule)
+        if cmp is not None:
+            need = [cmp["band_feature"]]
+            for sr in cmp["signal_rules"]:
+                if not isinstance(sr, dict):
+                    continue
+                dr = parse_dual_rule(sr)
+                if dr is not None:
+                    need.extend([dr[0], dr[1]])
+                    continue
+                b2 = parse_single_position_band_rule(sr)
+                if b2 is not None:
+                    need.append(b2[0])
+                    continue
+                f2 = sr.get("feature")
+                if f2:
+                    need.append(str(f2))
+            if any(c not in df.columns for c in need):
+                continue
+            vals = signal_match_position_band_series(
+                df,
+                signal_rules=cmp["signal_rules"],
+                band_feature=cmp["band_feature"],
+                inner_abs=float(cmp["inner_abs"]),
+                outer_abs=float(cmp["outer_abs"]),
+            )
+            unassigned = ~assigned
+            direction.loc[unassigned] = vals.loc[unassigned]
+            newly = unassigned & (direction != 0)
+            assigned = assigned | newly
+            if assigned.all():
+                break
+            continue
+
         dual = parse_dual_rule(rule)
         band = parse_single_position_band_rule(rule)
         if dual is not None:

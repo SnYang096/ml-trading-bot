@@ -66,7 +66,9 @@ from src.time_series_model.live.direction_rule_ops import (
     dual_position_agree_deadband_series,
     is_direction_rule_enabled,
     parse_dual_rule,
+    parse_signal_match_position_band_rule,
     parse_single_position_band_rule,
+    signal_match_position_band_series,
     single_position_band_series,
 )
 
@@ -2996,37 +2998,72 @@ def apply_direction_rules(
     for rule in rules:
         if not is_direction_rule_enabled(rule):
             continue
-        dual = parse_dual_rule(rule)
-        if dual is not None:
-            col_a, col_b, eps = dual
-            if col_a not in df.columns or col_b not in df.columns:
+        cmp = parse_signal_match_position_band_rule(rule)
+        if cmp is not None:
+            req = [cmp["band_feature"]]
+            for sr in cmp["signal_rules"]:
+                if not isinstance(sr, dict):
+                    continue
+                dr = parse_dual_rule(sr)
+                if dr is not None:
+                    req.extend([dr[0], dr[1]])
+                    continue
+                b2 = parse_single_position_band_rule(sr)
+                if b2 is not None:
+                    req.append(b2[0])
+                    continue
+                f2 = sr.get("feature")
+                if f2:
+                    req.append(str(f2))
+            if any(c not in df.columns for c in req):
                 continue
-            direction_ser = dual_position_agree_deadband_series(df, col_a, col_b, eps)
+            direction_ser = signal_match_position_band_series(
+                df,
+                signal_rules=cmp["signal_rules"],
+                band_feature=cmp["band_feature"],
+                inner_abs=float(cmp["inner_abs"]),
+                outer_abs=float(cmp["outer_abs"]),
+            )
             direction_vals = direction_ser.values
-            rule_label = str(rule.get("id") or f"{col_a}+{col_b}")
+            rule_label = str(rule.get("id") or cmp["band_feature"])
             desc = rule.get("description", rule_label)
-            tf = "dual_position_agree_deadband"
+            tf = "signal_match_position_band"
         else:
-            band = parse_single_position_band_rule(rule)
-            if band is not None:
-                fcol, inner_a, outer_a = band
-                if fcol not in df.columns:
+            dual = parse_dual_rule(rule)
+            if dual is not None:
+                col_a, col_b, eps = dual
+                if col_a not in df.columns or col_b not in df.columns:
                     continue
-                direction_ser = single_position_band_series(df, fcol, inner_a, outer_a)
+                direction_ser = dual_position_agree_deadband_series(
+                    df, col_a, col_b, eps
+                )
                 direction_vals = direction_ser.values
-                rule_label = str(rule.get("id") or fcol)
+                rule_label = str(rule.get("id") or f"{col_a}+{col_b}")
                 desc = rule.get("description", rule_label)
-                tf = "single_position_band"
+                tf = "dual_position_agree_deadband"
             else:
-                feature = rule.get("feature", "")
-                transform = rule.get("transform", "raw")
-                if feature not in df.columns:
-                    continue
-                series = pd.to_numeric(df[feature], errors="coerce").fillna(0.0)
-                direction_vals = _apply_transform(series, transform)
-                rule_label = feature
-                desc = rule.get("description", feature)
-                tf = transform
+                band = parse_single_position_band_rule(rule)
+                if band is not None:
+                    fcol, inner_a, outer_a = band
+                    if fcol not in df.columns:
+                        continue
+                    direction_ser = single_position_band_series(
+                        df, fcol, inner_a, outer_a
+                    )
+                    direction_vals = direction_ser.values
+                    rule_label = str(rule.get("id") or fcol)
+                    desc = rule.get("description", rule_label)
+                    tf = "single_position_band"
+                else:
+                    feature = rule.get("feature", "")
+                    transform = rule.get("transform", "raw")
+                    if feature not in df.columns:
+                        continue
+                    series = pd.to_numeric(df[feature], errors="coerce").fillna(0.0)
+                    direction_vals = _apply_transform(series, transform)
+                    rule_label = feature
+                    desc = rule.get("description", feature)
+                    tf = transform
 
         if first_feature is None:
             df["entry_direction"] = direction_vals

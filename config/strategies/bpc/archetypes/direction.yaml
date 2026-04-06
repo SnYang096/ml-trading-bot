@@ -1,14 +1,18 @@
-# 生产方向 — 由 BPC 语义信号决定方向；VWAP1200 区域过滤改由 gate 处理。
-# 候选与评估见 ../features_direction.yaml
+# 生产方向 — breakout→macd 候选方向须与 macro_tp_vwap_1200_position 带通同号，
+# 与 execution structural_exit vwap1200（多 pv<0 / 空 pv>0）对齐，避免价在 VWAP 错误一侧仍开仓。
 
-description: "BPC 方向 — breakout 主导 + macd 兜底（VWAP 过滤在 gate）"
+description: "BPC 方向 — 语义信号与 VWAP1200 相对位置同号（signal_match_position_band）"
 
 direction_rules:
-  - method: feature_sign
-    feature: bpc_breakout_direction
-    transform: raw
-    description: "Donchian 20-bar 突破方向 [-1/+1], BPC 核心方向信号"
-  - method: feature_sign
-    feature: macd_atr
-    transform: sign
-    description: "MACD/ATR 动量方向 (兜底, 覆盖 breakout_direction=0 的样本)"
+  - id: bpc_breakout_macd_vwap1200_align
+    method: signal_match_position_band
+    description: "Donchian 突破优先，MACD 兜底；须落在 VWAP 多/空带通内"
+    signal_rules:
+      - feature: bpc_breakout_direction
+        transform: raw
+      - feature: macd_atr
+        transform: sign
+    position_band:
+      feature: macro_tp_vwap_1200_position
+      inner_abs: 0
+      outer_abs: 1

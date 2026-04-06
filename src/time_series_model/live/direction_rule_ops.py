@@ -4,13 +4,14 @@ Shared direction rule helpers — single implementation for live, validation, ba
 
 from __future__ import annotations
 
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 METHOD_DUAL_POSITION_AGREE_DEADBAND = "dual_position_agree_deadband"
 METHOD_SINGLE_POSITION_BAND = "single_position_band"
+METHOD_SIGNAL_MATCH_POSITION_BAND = "signal_match_position_band"
 
 
 def dual_position_agree_deadband_scalar(v1: Any, v2: Any, epsilon: float) -> int:
@@ -115,6 +116,93 @@ def single_position_band_series(
     return out
 
 
+def parse_signal_match_position_band_rule(rule: dict) -> Optional[Dict[str, Any]]:
+    """Compound rule: cascade signal_rules (first non-zero) must match VWAP band sign."""
+    if not isinstance(rule, dict):
+        return None
+    if str(rule.get("method", "")).strip().lower() != METHOD_SIGNAL_MATCH_POSITION_BAND:
+        return None
+    srs = rule.get("signal_rules")
+    if not isinstance(srs, list) or not srs:
+        return None
+    pb = rule.get("position_band")
+    if not isinstance(pb, dict):
+        return None
+    feat = pb.get("feature")
+    if not isinstance(feat, str) or not feat.strip():
+        return None
+    try:
+        inner = float(pb.get("inner_abs", pb.get("inner", 0.0)))
+        outer = float(pb.get("outer_abs", pb.get("outer", 0.0)))
+    except (TypeError, ValueError):
+        return None
+    return {
+        "signal_rules": list(srs),
+        "band_feature": feat.strip(),
+        "inner_abs": inner,
+        "outer_abs": outer,
+    }
+
+
+def signal_match_position_band_series(
+    df: pd.DataFrame,
+    *,
+    signal_rules: List[dict],
+    band_feature: str,
+    inner_abs: float,
+    outer_abs: float,
+) -> pd.Series:
+    """Vectorized compound direction: first-hit signal per row ∩ band same sign."""
+    cand = pd.Series(0.0, index=df.index, dtype=float)
+    for sr in signal_rules:
+        if not is_direction_rule_enabled(sr):
+            continue
+        if (
+            isinstance(sr, dict)
+            and str(sr.get("method", "")).strip().lower()
+            == METHOD_SIGNAL_MATCH_POSITION_BAND
+        ):
+            continue
+        dual = parse_dual_rule(sr)
+        if dual is not None:
+            col_a, col_b, eps = dual
+            if col_a not in df.columns or col_b not in df.columns:
+                continue
+            d = dual_position_agree_deadband_series(df, col_a, col_b, eps)
+        else:
+            band = parse_single_position_band_rule(sr)
+            if band is not None:
+                fcol, ia, oa = band
+                if fcol not in df.columns:
+                    continue
+                d = single_position_band_series(df, fcol, ia, oa)
+            else:
+                feature = sr.get("feature", "")
+                transform = str(sr.get("transform", "raw"))
+                if not feature or feature not in df.columns:
+                    continue
+                series = pd.to_numeric(df[feature], errors="coerce").fillna(0.0)
+                if transform == "sign":
+                    raw = np.sign(series).astype(float)
+                elif transform == "negate_sign":
+                    raw = (-np.sign(series)).astype(float)
+                elif transform == "center_sign":
+                    raw = np.sign(series - 0.5).astype(float)
+                elif transform == "threshold":
+                    thr = float(sr.get("threshold", 0.0))
+                    raw = np.where(series > thr, 1.0, -1.0).astype(float)
+                else:
+                    raw = series.astype(float)
+                d = pd.Series(raw, index=df.index, dtype=float)
+        cand = cand.where(cand != 0, d)
+
+    if band_feature not in df.columns:
+        return pd.Series(0.0, index=df.index, dtype=float)
+    band_d = single_position_band_series(df, band_feature, inner_abs, outer_abs)
+    mask = (cand != 0) & (cand == band_d)
+    return cand.where(mask, 0.0)
+
+
 def parse_single_position_band_rule(
     rule: dict,
 ) -> Optional[tuple[str, float, float]]:
@@ -165,6 +253,15 @@ def direction_rule_ft_key(rule: dict) -> Tuple[Any, ...]:
     if band is not None:
         f, inn, out = band
         return ("single_position_band", f, float(inn), float(out))
+    cmp = parse_signal_match_position_band_rule(rule)
+    if cmp is not None:
+        return (
+            METHOD_SIGNAL_MATCH_POSITION_BAND,
+            cmp["band_feature"],
+            float(cmp["inner_abs"]),
+            float(cmp["outer_abs"]),
+            len(cmp["signal_rules"]),
+        )
     return (rule.get("feature"), rule.get("transform"))
 
 
