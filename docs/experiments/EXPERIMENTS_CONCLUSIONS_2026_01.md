@@ -238,10 +238,12 @@
 
 ### 主要实验报告
 
+> 完整保留列表与已归档/已删除说明见 **[EXPERIMENTS_SUMMARY.md](EXPERIMENTS_SUMMARY.md)**。
+
 1. **FR/ET优化实验**:
-   - `EXP_FR_ET_MEAN_REGIME_OPTIMIZATION_2026_01.md`: 初始优化实验
-   - `EXP_FR_ET_MEAN_REGIME_OPTIMIZATION_V2_2026_01.md`: 优化后验证实验
-   - `EXP_MEAN_REGIME_RELAXATION_ANALYSIS_2026_01.md`: 条件放宽分析
+   - `EXP_FR_ET_MEAN_REGIME_OPTIMIZATION_V2_2026_01.md`: MEAN_REGIME 与物理特征修复后验证
+   - `EXP_MEAN_REGIME_FR_ET_DEEP_ANALYSIS_2026_01.md`: 深度分析
+   - 条件放宽的定量讨论见本文 **第三节**（原独立放宽报告若需可查 Git 历史）
 
 2. **Regime和Gate分析**:
    - `EXP_SUMMARY_REGIME_GATE_2026_01.md`: 综合汇总
@@ -257,7 +259,7 @@
 
 ### 解决方案文档
 
-- `SOLUTION_PHYSICAL_FEATURES_AND_REGIME.md`: 物理特征和regime问题解决方案
+- `docs/archive/leagcy/legacy_regime/SOLUTION_PHYSICAL_FEATURES_AND_REGIME.md`: 物理特征和 regime 问题（归档）
 
 ---
 

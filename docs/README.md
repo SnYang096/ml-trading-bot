@@ -65,11 +65,12 @@
 
 ### 🔬 实验报告
 
-- **[实验索引](experiments/README.md)** - 所有实验报告的索引（最后更新: 2026-01-22）
+- **[实验索引](experiments/README.md)** - 实验报告入口与按主题导航（最后更新: 2026-04-07）
+- **[实验结论导读](experiments/EXPERIMENTS_SUMMARY.md)** - 保留报告摘要与删除说明
 
 #### 重要实验
 
-- **[FR/ET优化实验](experiments/EXP_FR_ET_MEAN_REGIME_OPTIMIZATION_2026_01.md)** - FR/ET表现优化
+- **[FR/ET优化实验](experiments/EXP_FR_ET_MEAN_REGIME_OPTIMIZATION_V2_2026_01.md)** - FR/ET 与 MEAN_REGIME（物理特征修复后）
 - **[Regime Gate对比](experiments/EXP_REGIME_GATE_COMPARISON_V2_2026_01.md)** - Regime和Gate重要性分析
 - **[实验结论汇总](experiments/EXPERIMENTS_CONCLUSIONS_2026_01.md)** - 实验总结
 
@@ -148,7 +149,7 @@ docs/
 
 ### 🔬 研究者
 
-1. 阅读 **[实验索引](experiments/README.md)** 查看所有实验
+1. 阅读 **[实验结论导读](experiments/EXPERIMENTS_SUMMARY.md)** 与 **[实验索引](experiments/README.md)**
 2. 参考 **[特征搜索Playbook](strategies/FEATURE_SEARCH_PLAYBOOK.md)** 进行特征研究
 3. 查看 **[实验结论汇总](experiments/EXPERIMENTS_CONCLUSIONS_2026_01.md)** 了解研究进展
 
