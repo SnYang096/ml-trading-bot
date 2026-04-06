@@ -96,3 +96,84 @@ def test_execution_report_without_position_id_reconciles_when_exchange_flat():
 
     assert listener._position_tracker.get(pid) is None
     ce.release_slot.assert_called()
+
+
+def test_account_update_zero_position_reconciles_local_position():
+    listener, _, ce, rs, _ = _make_listener()
+    pid = "BTCUSDT:3"
+    listener._position_tracker.add(
+        pid,
+        {
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "entry_time": datetime.now(timezone.utc) - timedelta(minutes=5),
+            "qty": 0.02,
+        },
+    )
+    rs.slots.active[pid] = SlotRecord(
+        position_id=pid, symbol="BTCUSDT", archetype="bpc"
+    )
+
+    listener.on_account_update(
+        {
+            "positions": [
+                {"symbol": "BTCUSDT", "position_amount": 0.0},
+            ],
+            "wallet_balance": 1234.5,
+            "available_balance": 1100.0,
+            "unrealized_pnl_total": 12.3,
+            "event_time": 1710000000,
+        }
+    )
+
+    assert listener._position_tracker.get(pid) is None
+    ce.release_slot.assert_called()
+
+
+def test_account_update_accepts_raw_binance_position_keys():
+    """positions 可直接用交易所原始字段 s / pa（不经 UserStream 规范化）。"""
+    listener, _, ce, rs, _ = _make_listener()
+    pid = "BTCUSDT:raw"
+    listener._position_tracker.add(
+        pid,
+        {
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "entry_time": datetime.now(timezone.utc) - timedelta(minutes=1),
+            "qty": 0.01,
+        },
+    )
+    rs.slots.active[pid] = SlotRecord(
+        position_id=pid, symbol="BTCUSDT", archetype="bpc"
+    )
+
+    listener.on_account_update(
+        {
+            "positions": [{"s": "BTCUSDT", "pa": "0"}],
+            "wallet_balance": 100.0,
+        }
+    )
+
+    assert listener._position_tracker.get(pid) is None
+    ce.release_slot.assert_called()
+
+
+def test_account_update_injects_equity_features():
+    listener, _, _, _, _ = _make_listener()
+    features = {"close": 50000.0}
+    listener.on_account_update(
+        {
+            "wallet_balance": 2345.6,
+            "available_balance": 2100.0,
+            "unrealized_pnl_total": -15.2,
+            "event_time": 1710001234,
+            "positions": [],
+        }
+    )
+
+    listener._inject_account_features(features)
+
+    assert features["equity"] == 2345.6
+    assert features["account_available_balance"] == 2100.0
+    assert features["account_unrealized_pnl"] == -15.2
+    assert features["account_event_time"] == 1710001234

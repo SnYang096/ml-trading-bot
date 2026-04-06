@@ -148,10 +148,9 @@ class OrderFlowListener:
         self.abnormal_quick_stop_seconds: int = int(
             os.getenv("MLBOT_ABNORMAL_QUICK_STOP_SECONDS", "10")
         )
-        self.abnormal_enabled: bool = (
-            str(os.getenv("MLBOT_ABNORMAL_ENABLED", "1")).strip().lower()
-            not in {"0", "false", "no"}
-        )
+        self.abnormal_enabled: bool = str(
+            os.getenv("MLBOT_ABNORMAL_ENABLED", "1")
+        ).strip().lower() not in {"0", "false", "no"}
 
         # 持仓管理层（由 PositionTracker + TradeExecutor 接管）
         self._position_tracker = PositionTracker(
@@ -162,6 +161,7 @@ class OrderFlowListener:
         self._trade_executor: TradeExecutor | None = (
             None  # 延迟建立，等 risk_per_slot 注入完成
         )
+        self._latest_account_update: Dict[str, Any] = {}
 
         # 1分钟聚合状态（bar级别）
         self.current_1min_bar: Optional[Dict[str, Any]] = None
@@ -210,14 +210,22 @@ class OrderFlowListener:
             self._release_runtime_for_position(pid, reason="position_closed")
             return
 
-        otype = str(order.order_type.value if hasattr(order.order_type, "value") else order.order_type).lower()
+        otype = str(
+            order.order_type.value
+            if hasattr(order.order_type, "value")
+            else order.order_type
+        ).lower()
         if otype == OrderType.STOP_MARKET.value:
             reason = "stop_loss_hit"
         elif otype == OrderType.TAKE_PROFIT_MARKET.value:
             reason = "take_profit_hit"
         else:
             reason = "position_closed"
-        exit_px = report.get("avg_price") or report.get("last_filled_price") or report.get("price")
+        exit_px = (
+            report.get("avg_price")
+            or report.get("last_filled_price")
+            or report.get("price")
+        )
         try:
             exit_price = float(exit_px) if exit_px is not None else None
         except Exception:
@@ -231,6 +239,26 @@ class OrderFlowListener:
             self._release_runtime_for_position(pid, reason=reason)
             if reason == "stop_loss_hit":
                 self._maybe_trigger_abnormal_on_quick_stop(pid, pos, report)
+
+    def on_account_update(self, update: Dict[str, Any]) -> None:
+        """处理账户推送: 刷新权益快照 + 本 symbol 0 仓位时清理本地残留。"""
+        if not isinstance(update, dict):
+            return
+        self._latest_account_update = dict(update)
+
+        for p in update.get("positions") or []:
+            try:
+                # 规范化 dict（UserStream）与原始 Binance 字段（s / pa）都接受
+                sym = str(p.get("symbol") or p.get("s") or "").upper().strip()
+                _amt = p.get("position_amount", p.get("pa", 0.0))
+                amt = float(_amt if _amt is not None else 0.0)
+            except Exception:
+                continue
+            if sym != self.symbol:
+                continue
+            if abs(amt) <= 1e-9:
+                self._close_all_local_positions(reason="position_closed")
+            break
 
     def _release_runtime_for_position(self, position_id: str, *, reason: str) -> None:
         if self.constitution_executor is None or self.runtime_state is None:
@@ -265,13 +293,16 @@ class OrderFlowListener:
                 continue
         if abs(size) > 1e-9:
             return
+        self._close_all_local_positions(reason="position_closed")
+
+    def _close_all_local_positions(self, *, reason: str) -> None:
         for pid in list(self._position_tracker.all_positions().keys()):
             self._position_tracker.close_from_exchange(
                 pid,
-                reason="position_closed",
+                reason=reason,
                 exit_price=None,
             )
-            self._release_runtime_for_position(pid, reason="position_closed")
+            self._release_runtime_for_position(pid, reason=reason)
 
     def _maybe_trigger_abnormal_on_quick_stop(
         self,
@@ -915,6 +946,8 @@ class OrderFlowListener:
         if self.on_feature_callback:
             self.on_feature_callback(all_features)
 
+        self._inject_account_features(all_features)
+
         # 是否允许实际下单
         trading_enabled = self.order_manager is not None
         if self.mode_manager is not None:
@@ -966,6 +999,25 @@ class OrderFlowListener:
 
         # 每 15min 决策周期结束后 flush 统计 (始终执行)
         self._flush_stats()
+
+    def _inject_account_features(self, all_features: Dict[str, Any]) -> None:
+        """将账户推送快照注入实时特征（仅覆盖账户相关键）。"""
+        if not self._latest_account_update:
+            return
+        upd = self._latest_account_update
+        try:
+            equity = float(upd.get("wallet_balance", 0.0) or 0.0)
+            available = float(upd.get("available_balance", 0.0) or 0.0)
+            unrealized = float(upd.get("unrealized_pnl_total", 0.0) or 0.0)
+        except Exception:
+            return
+        if equity > 0:
+            all_features["equity"] = equity
+        all_features["account_available_balance"] = available
+        all_features["account_unrealized_pnl"] = unrealized
+        evt = upd.get("event_time")
+        if evt is not None:
+            all_features["account_event_time"] = evt
 
     def _get_trade_executor(self) -> TradeExecutor:
         """获取或创建 TradeExecutor（单例，配置变化时自动重建）"""

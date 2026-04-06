@@ -2,15 +2,17 @@
 Binance User Data Stream (Futures)
 负责listenKey维护与订单成交事件处理
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any, List
 
 try:
     import websockets
+
     WEBSOCKETS_AVAILABLE = True
 except ImportError:  # pragma: no cover
     WEBSOCKETS_AVAILABLE = False
@@ -28,6 +30,7 @@ class BinanceUserStream:
         self,
         binance_api: BinanceAPI,
         on_execution_report: Callable[[Dict[str, Any]], None],
+        on_account_update: Optional[Callable[[Dict[str, Any]], None]] = None,
         keepalive_interval: int = 30 * 60,
     ) -> None:
         if not WEBSOCKETS_AVAILABLE:
@@ -35,6 +38,7 @@ class BinanceUserStream:
 
         self.binance_api = binance_api
         self.on_execution_report = on_execution_report
+        self.on_account_update = on_account_update
         self.keepalive_interval = keepalive_interval
         self._listen_key: Optional[str] = None
         self._ws_task: Optional[asyncio.Task] = None
@@ -108,8 +112,17 @@ class BinanceUserStream:
                     self.on_execution_report(report)
                 except Exception as e:
                     logger.error(f"处理executionReport回调失败: {e}")
+        elif event_type in ("ACCOUNT_UPDATE", "outboundAccountPosition"):
+            account = self._normalize_account_update(data)
+            if account and self.on_account_update is not None:
+                try:
+                    self.on_account_update(account)
+                except Exception as e:
+                    logger.error(f"处理accountUpdate回调失败: {e}")
 
-    def _normalize_execution_report(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _normalize_execution_report(
+        self, data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         """统一执行回报字段（兼容期货与现货格式）"""
         if data.get("e") == "ORDER_TRADE_UPDATE":
             payload = data.get("o", {})
@@ -142,4 +155,101 @@ class BinanceUserStream:
             "avg_price": float(payload.get("ap") or payload.get("avgPrice") or 0),
             "event_time": _ms_to_s(data.get("E")),
             "trade_time": _ms_to_s(payload.get("T") or payload.get("tradeTime")),
+        }
+
+    def _normalize_account_update(
+        self, data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """统一账户推送字段（兼容 Futures ACCOUNT_UPDATE / Spot outboundAccountPosition）"""
+        event_type = data.get("e") or data.get("eventType")
+        if event_type == "ACCOUNT_UPDATE":
+            payload = data.get("a", {})
+        else:
+            payload = data
+        if not isinstance(payload, dict):
+            return None
+
+        def _ms_to_s(ts: Optional[int]) -> Optional[int]:
+            if ts is None:
+                return None
+            try:
+                ts_int = int(ts)
+            except (TypeError, ValueError):
+                return None
+            return ts_int // 1000 if ts_int > 10**12 else ts_int
+
+        def _to_float(v: Any) -> float:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return 0.0
+
+        balances: List[Dict[str, Any]] = []
+        for b in payload.get("B", []) or []:
+            asset = str(b.get("a") or b.get("asset") or "").upper().strip()
+            balances.append(
+                {
+                    "asset": asset,
+                    "wallet_balance": _to_float(
+                        b.get("wb") if "wb" in b else b.get("walletBalance")
+                    ),
+                    "cross_wallet_balance": _to_float(
+                        b.get("cw") if "cw" in b else b.get("crossWalletBalance")
+                    ),
+                    "balance_change": _to_float(
+                        b.get("bc") if "bc" in b else b.get("balanceChange")
+                    ),
+                }
+            )
+
+        positions: List[Dict[str, Any]] = []
+        for p in payload.get("P", []) or []:
+            positions.append(
+                {
+                    "symbol": str(p.get("s") or p.get("symbol") or "").upper().strip(),
+                    "position_amount": _to_float(
+                        p.get("pa") if "pa" in p else p.get("positionAmt")
+                    ),
+                    "entry_price": _to_float(
+                        p.get("ep") if "ep" in p else p.get("entryPrice")
+                    ),
+                    "unrealized_pnl": _to_float(
+                        p.get("up") if "up" in p else p.get("unrealizedProfit")
+                    ),
+                    "position_side": str(p.get("ps") or p.get("positionSide") or "")
+                    .upper()
+                    .strip(),
+                }
+            )
+
+        usdt_balance = next(
+            (
+                b
+                for b in balances
+                if str(b.get("asset", "")).upper() in {"USDT", "USDC"}
+            ),
+            None,
+        )
+        wallet_balance = (
+            float(usdt_balance.get("wallet_balance", 0.0)) if usdt_balance else 0.0
+        )
+        available_balance = (
+            float(usdt_balance.get("cross_wallet_balance", 0.0))
+            if usdt_balance
+            else 0.0
+        )
+        unrealized_pnl_total = float(
+            sum(float(p.get("unrealized_pnl", 0.0) or 0.0) for p in positions)
+        )
+
+        return {
+            "event_type": str(event_type or ""),
+            "event_time": _ms_to_s(data.get("E")),
+            "transaction_time": _ms_to_s(data.get("T")),
+            "reason": payload.get("m"),
+            "balances": balances,
+            "positions": positions,
+            "wallet_balance": wallet_balance,
+            "available_balance": available_balance,
+            "unrealized_pnl_total": unrealized_pnl_total,
         }
