@@ -2,7 +2,7 @@
 
 **状态**: ✅ 当前版本  
 **最后更新**: 2026-01  
-**相关文档**: [主文档索引](../README.md), [README_CN.md](../../README_CN.md)
+**相关文档**: [主文档索引](../README.md), [README_CN.md](../../README_CN.md), [Rolling Sim 时间窗与配置说明](./ROLLING_SIM_TIME_WINDOWS_CN.md)
 
 本文档描述完整的交易系统工作流命令序列。
 

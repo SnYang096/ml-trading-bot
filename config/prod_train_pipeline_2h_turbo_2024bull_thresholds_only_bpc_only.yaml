@@ -16,6 +16,7 @@ rolling:
   mode: turbo_fixed_features
   windows:
     calibration_months: 6
+    #  structure_lookback_months：慢速滚动里的「结构快照往回看多久」（你现在是 turbo → 基本不用）。
     structure_lookback_months: 12
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
@@ -133,8 +134,9 @@ strategies:
 # 事件回测 / 交易地图：VWAP·EMA 可向前用更多 1m 历史计算；图上只画回测窗（见 event_backtest.py）
 event_backtest:
   # 建议显式声明 enabled，避免依赖默认值导致误跑/误停
-  enabled: false
-  map_extra_months: 3
+  enabled: true
+  # map_extra_months：事件回测交易地图的「为画 VWAP 多向前取多少月 1m」（仅事件回测 + 出图时有意义）。
+  map_extra_months: 4
 
 output:
   history_dir: results/bpc/turbo-rolling-sim
