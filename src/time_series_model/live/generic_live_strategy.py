@@ -274,7 +274,6 @@ class ExecutionParamGenerator:
         )
         trail_r = float(trail_cfg.get("trail_r", 1.5)) if trailing_enabled else None
         vwap_exit_inner_abs = None
-        vwap_exit_break_abs = None
         if _se_str == "vwap1200":
             try:
                 vwap_exit_inner_abs = float(
@@ -282,13 +281,6 @@ class ExecutionParamGenerator:
                 )
             except (TypeError, ValueError):
                 vwap_exit_inner_abs = 0.005
-            if "exit_break_abs" in se_conf:
-                try:
-                    _xb = float(se_conf.get("exit_break_abs"))
-                    if _xb > 0.0:
-                        vwap_exit_break_abs = _xb
-                except (TypeError, ValueError):
-                    pass
 
         return {
             "tier_name": "global",
@@ -301,7 +293,6 @@ class ExecutionParamGenerator:
             "size_multiplier": 1.0,
             "structural_exit": sl_cfg.get("structural_exit"),
             "vwap_exit_inner_abs": vwap_exit_inner_abs,
-            "vwap_exit_break_abs": vwap_exit_break_abs,
             "min_stop_pct": guardrails.get("min_stop_pct"),
             "max_stop_pct": guardrails.get("max_stop_pct"),
             "breakeven_enabled": breakeven_enabled,
@@ -606,7 +597,6 @@ class GenericLiveStrategy:
                     "max_holding_bars": exec_params.get("time_stop_bars", 50),
                     "structural_exit": exec_params.get("structural_exit"),
                     "vwap_exit_inner_abs": exec_params.get("vwap_exit_inner_abs"),
-                    "vwap_exit_break_abs": exec_params.get("vwap_exit_break_abs"),
                     "min_stop_pct": exec_params.get("min_stop_pct"),
                     "max_stop_pct": exec_params.get("max_stop_pct"),
                 },

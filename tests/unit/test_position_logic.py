@@ -839,14 +839,13 @@ class TestBuildPositionDictStructuralExit:
         pos = build_position_dict(intent, entry_price=50000, atr=500, entry_time=_now())
         assert "structural_exit" not in pos
 
-    def test_vwap1200_stores_inner_and_break_from_rr(self):
-        """vwap1200 + vwap_exit_break_abs → pos 中同时有 inner / break"""
+    def test_vwap1200_stores_inner_from_rr(self):
+        """vwap1200 → pos 中有 vwap_exit_inner_abs（无 break 阈值字段）"""
         rr = {
             "stop_loss_r": 4.0,
             "max_holding_bars": 0,
             "structural_exit": "vwap1200",
             "vwap_exit_inner_abs": 0.01,
-            "vwap_exit_break_abs": 0.02,
         }
         ep = {"rr_constraints": rr}
         intent = TradeIntent(
@@ -859,7 +858,7 @@ class TestBuildPositionDictStructuralExit:
         pos = build_position_dict(intent, entry_price=50000, atr=500, entry_time=_now())
         assert pos["structural_exit"] == "vwap1200"
         assert pos["vwap_exit_inner_abs"] == pytest.approx(0.01)
-        assert pos["vwap_exit_break_abs"] == pytest.approx(0.02)
+        assert "vwap_exit_break_abs" not in pos
 
 
 def _bpc_trend_hold_pos(
@@ -1174,8 +1173,8 @@ class TestEnforceVwap1200StructuralExit:
         assert reason == "structural_exit_vwap1200"
         assert px == 50050
 
-    def test_vwap1200_no_exit_outside_deadband_without_break(self):
-        """|pv|>inner 且未配置 vwap_exit_break_abs → 不因 VWAP 规则平仓"""
+    def test_vwap1200_no_exit_when_above_vwap_outside_deadband(self):
+        """多仓 |pv|>inner 且 pv>0（价在 VWAP 上方）→ 不因 VWAP 规则平仓"""
         pos = {
             "side": "LONG",
             "entry_price": 50000,
@@ -1194,11 +1193,11 @@ class TestEnforceVwap1200StructuralExit:
             price_low=50000,
             price_close=50050,
             now=_now() + timedelta(hours=1),
-            macro_tp_vwap_position=-0.015,
+            macro_tp_vwap_position=0.015,
         )
         assert reason is None
 
-    def test_vwap1200_break_long_when_far_below_vwap(self):
+    def test_vwap1200_cross_long_when_price_below_vwap(self):
         pos = {
             "side": "LONG",
             "entry_price": 50000,
@@ -1209,7 +1208,6 @@ class TestEnforceVwap1200StructuralExit:
             "stop_loss_price": 48000,
             "structural_exit": "vwap1200",
             "vwap_exit_inner_abs": 0.005,
-            "vwap_exit_break_abs": 0.02,
             "breakeven_locked": True,
         }
         reason, px = enforce_position(
@@ -1220,10 +1218,10 @@ class TestEnforceVwap1200StructuralExit:
             now=_now() + timedelta(hours=1),
             macro_tp_vwap_position=-0.05,
         )
-        assert reason == "structural_exit_vwap1200_break"
+        assert reason == "structural_exit_vwap1200_cross"
         assert px == 47000
 
-    def test_vwap1200_break_short_when_far_above_vwap(self):
+    def test_vwap1200_cross_short_when_price_above_vwap(self):
         pos = {
             "side": "SHORT",
             "entry_price": 50000,
@@ -1234,7 +1232,6 @@ class TestEnforceVwap1200StructuralExit:
             "stop_loss_price": 52000,
             "structural_exit": "vwap1200",
             "vwap_exit_inner_abs": 0.005,
-            "vwap_exit_break_abs": 0.02,
             "breakeven_locked": True,
         }
         reason, px = enforce_position(
@@ -1245,5 +1242,5 @@ class TestEnforceVwap1200StructuralExit:
             now=_now() + timedelta(hours=1),
             macro_tp_vwap_position=0.05,
         )
-        assert reason == "structural_exit_vwap1200_break"
+        assert reason == "structural_exit_vwap1200_cross"
         assert px == 53000

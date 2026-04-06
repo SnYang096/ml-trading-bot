@@ -35,10 +35,9 @@ stop_loss:
   initial_r: 4.0
   structural_exit: vwap1200
   structural_exit_config:
+    # macro_tp_vwap_1200_position = (close-vwap)/close；贴近 VWAP 的窄带平仓。
     exit_inner_abs: 0.005
-    # 相对 1200×2H 典型价 VWAP：macro position = (close-vwap)/close。
-    # 多仓 pv <= -exit_break_abs 时空头弱势破位平仓（解决「长期在 VWAP 下方却只等宽止损」）。
-    exit_break_abs: 0.02
+    # 另：多仓 pv<0（价在 VWAP 下方）、空仓 pv>0（价在 VWAP 上方）即结构平仓，无需调 exit_break_abs。
   trailing:
     enabled: false
     activation_r: 9.0
@@ -46,4 +45,4 @@ stop_loss:
   type: trailing
 take_profit:
   enabled: false
-version: 55
+version: 56
