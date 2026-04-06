@@ -189,6 +189,14 @@ def build_position_dict(
             pos["vwap_exit_inner_abs"] = float(_ve) if _ve is not None else float(0.005)
         except (TypeError, ValueError):
             pos["vwap_exit_inner_abs"] = 0.005
+        _vb = rr_constraints.get("vwap_exit_break_abs")
+        if _vb is not None:
+            try:
+                _bb = float(_vb)
+                if _bb > 0.0:
+                    pos["vwap_exit_break_abs"] = _bb
+            except (TypeError, ValueError):
+                pass
 
     return pos
 
@@ -308,7 +316,9 @@ def enforce_position(
             close_reason = "structural_exit_ema200"
             exit_price = price_close
 
-    # ── 3c. Structural exit (VWAP1200 deadband) — 与 macro_tp_vwap_1200_position 一致
+    # ── 3c. Structural exit (VWAP1200) — 与 macro_tp_vwap_1200_position 一致
+    #  - 死区: |pv| <= inner（贴近 VWAP）
+    #  - 破位: 可选 vwap_exit_break_abs — 多 pv <= -break、空 pv >= +break（明显偏离 VWAP）
     if (
         close_reason is None
         and str(pos.get("structural_exit") or "").strip().lower() == "vwap1200"
@@ -317,9 +327,21 @@ def enforce_position(
         try:
             inner = float(pos.get("vwap_exit_inner_abs", 0.005) or 0.005)
             pv = float(macro_tp_vwap_position)
-            if not (pv != pv) and abs(pv) <= inner:
-                close_reason = "structural_exit_vwap1200"
-                exit_price = price_close
+            if not (pv != pv):
+                if abs(pv) <= inner:
+                    close_reason = "structural_exit_vwap1200"
+                    exit_price = price_close
+                else:
+                    _brk = pos.get("vwap_exit_break_abs")
+                    if _brk is not None:
+                        bb = float(_brk)
+                        if bb > 0.0:
+                            if is_long and pv <= -bb:
+                                close_reason = "structural_exit_vwap1200_break"
+                                exit_price = price_close
+                            elif not is_long and pv >= bb:
+                                close_reason = "structural_exit_vwap1200_break"
+                                exit_price = price_close
         except (TypeError, ValueError):
             pass
 

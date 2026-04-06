@@ -839,6 +839,28 @@ class TestBuildPositionDictStructuralExit:
         pos = build_position_dict(intent, entry_price=50000, atr=500, entry_time=_now())
         assert "structural_exit" not in pos
 
+    def test_vwap1200_stores_inner_and_break_from_rr(self):
+        """vwap1200 + vwap_exit_break_abs → pos 中同时有 inner / break"""
+        rr = {
+            "stop_loss_r": 4.0,
+            "max_holding_bars": 0,
+            "structural_exit": "vwap1200",
+            "vwap_exit_inner_abs": 0.01,
+            "vwap_exit_break_abs": 0.02,
+        }
+        ep = {"rr_constraints": rr}
+        intent = TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype="bpc",
+            confidence=0.8,
+            execution_profile=ep,
+        )
+        pos = build_position_dict(intent, entry_price=50000, atr=500, entry_time=_now())
+        assert pos["structural_exit"] == "vwap1200"
+        assert pos["vwap_exit_inner_abs"] == pytest.approx(0.01)
+        assert pos["vwap_exit_break_abs"] == pytest.approx(0.02)
+
 
 def _bpc_trend_hold_pos(
     side="LONG",
@@ -948,12 +970,12 @@ class TestStructuralExitShort:
 class TestStructuralExitPreconditions:
     """structural_exit 前置条件: breakeven_locked + 有效 structural_price"""
 
-    def test_no_exit_before_breakeven_locked(self):
-        """breakeven 未锁定 → structural exit 不生效 (避免入场即退出)"""
+    def test_structural_ema200_triggers_even_if_breakeven_not_locked(self):
+        """EMA200 穿越与 breakeven 并行：未锁保本仍可结构出场"""
         pos = _bpc_trend_hold_pos(
             side="LONG", entry_price=50000, breakeven_locked=False
         )
-        reason, _ = enforce_position(
+        reason, px = enforce_position(
             pos,
             price_high=49500,
             price_low=49000,
@@ -961,9 +983,8 @@ class TestStructuralExitPreconditions:
             now=_now() + timedelta(hours=4),
             structural_price=49800,
         )
-        # breakeven 未锁 → 不触发 structural exit
-        # 但 SL 可能触发 (49000 <= SL=48000? 不会)
-        assert reason is None
+        assert reason == "structural_exit_ema200"
+        assert px == 49200
 
     def test_no_exit_when_structural_price_none(self):
         """structural_price=None → 不触发"""
@@ -1153,7 +1174,8 @@ class TestEnforceVwap1200StructuralExit:
         assert reason == "structural_exit_vwap1200"
         assert px == 50050
 
-    def test_vwap1200_no_exit_before_breakeven(self):
+    def test_vwap1200_no_exit_outside_deadband_without_break(self):
+        """|pv|>inner 且未配置 vwap_exit_break_abs → 不因 VWAP 规则平仓"""
         pos = {
             "side": "LONG",
             "entry_price": 50000,
@@ -1172,6 +1194,56 @@ class TestEnforceVwap1200StructuralExit:
             price_low=50000,
             price_close=50050,
             now=_now() + timedelta(hours=1),
-            macro_tp_vwap_position=0.001,
+            macro_tp_vwap_position=-0.015,
         )
         assert reason is None
+
+    def test_vwap1200_break_long_when_far_below_vwap(self):
+        pos = {
+            "side": "LONG",
+            "entry_price": 50000,
+            "entry_time": _now(),
+            "atr_at_entry": 500,
+            "max_holding_bars": 0,
+            "bar_minutes": 120,
+            "stop_loss_price": 48000,
+            "structural_exit": "vwap1200",
+            "vwap_exit_inner_abs": 0.005,
+            "vwap_exit_break_abs": 0.02,
+            "breakeven_locked": True,
+        }
+        reason, px = enforce_position(
+            pos,
+            price_high=50100,
+            price_low=47000,
+            price_close=47000,
+            now=_now() + timedelta(hours=1),
+            macro_tp_vwap_position=-0.05,
+        )
+        assert reason == "structural_exit_vwap1200_break"
+        assert px == 47000
+
+    def test_vwap1200_break_short_when_far_above_vwap(self):
+        pos = {
+            "side": "SHORT",
+            "entry_price": 50000,
+            "entry_time": _now(),
+            "atr_at_entry": 500,
+            "max_holding_bars": 0,
+            "bar_minutes": 120,
+            "stop_loss_price": 52000,
+            "structural_exit": "vwap1200",
+            "vwap_exit_inner_abs": 0.005,
+            "vwap_exit_break_abs": 0.02,
+            "breakeven_locked": True,
+        }
+        reason, px = enforce_position(
+            pos,
+            price_high=53000,
+            price_low=49900,
+            price_close=53000,
+            now=_now() + timedelta(hours=1),
+            macro_tp_vwap_position=0.05,
+        )
+        assert reason == "structural_exit_vwap1200_break"
+        assert px == 53000
