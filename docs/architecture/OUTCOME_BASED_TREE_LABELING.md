@@ -560,6 +560,6 @@ Strategy-Based Label 是“打磨信仰”的锉。
 
 ## 参考文档
 
-- `docs/strategies/树策略导出的可泛化规则.md`
-- `docs/strategies/标签设计如何区分策略与树模型的regime_shift问题.md`
+- `docs/architecture/strategies/树策略导出的可泛化规则.md`
+- `docs/architecture/strategies/标签设计如何区分策略与树模型的regime_shift问题.md`
 - `config/strategies/*/labels.yaml`

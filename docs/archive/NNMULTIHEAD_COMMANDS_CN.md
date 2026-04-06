@@ -136,7 +136,7 @@ mlbot diagnose threshold-plateau --no-docker \
 - `<OUT_DIR>/router_thresholds_best.json`（用于 0.2.2 的完整 tuned 版）
 - `<OUT_DIR>/summary.json` / `report.html`（复盘口径）
 
-协议解释见：`docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`
+协议解释见：`docs/architecture/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`
 
 **举例（EXP_006 Top9 best 阈值）**：
 - `--mfe-min 0.1259208384`
@@ -240,7 +240,7 @@ mlbot rule diagnose-gate-application --no-docker \
 - **`--returns-source`**：这就是你说的 execution 假设入口：
   - `rr_execution`：用你当前的 rr_execution 模拟（更贴近“用 primitives 做执行”的路线）
   - `momentum_proxy`：更像“execution 解耦”的对照口径（隔离 execution 影响，用来评估 Router 切分本身）
-  - 详细说明见：[`docs/guides/NNMULTIHEAD_RETURNS_SOURCE_CN.md`](docs/guides/NNMULTIHEAD_RETURNS_SOURCE_CN.md)
+  - 详细说明见：[`docs/archive/NNMULTIHEAD_RETURNS_SOURCE_CN.md`](NNMULTIHEAD_RETURNS_SOURCE_CN.md)
 
 **常见坑**
 - timestamp 不对齐会导致 `n_rows=0`（我们之前已经修过）；如果再出现，优先检查 preds/mode/raw 的时间范围与 timezone。
@@ -479,7 +479,7 @@ mlbot nnmultihead factor-eval --no-docker \
   - `primitives_factor_eval_summary.json`
   - `features_pool_b_primitives.yaml`
 
-下一步（推荐）：参考 `docs/strategies/NNMULTIHEAD_FEATURE_SEARCH_PLAYBOOK_CN.md` 把 Pool B 变成可迭代的 `features.yaml`（required/optional_blocks）并做 multi-run 对比。
+下一步（推荐）：参考 `docs/architecture/strategies/NNMULTIHEAD_FEATURE_SEARCH_PLAYBOOK_CN.md` 把 Pool B 变成可迭代的 `features.yaml`（required/optional_blocks）并做 multi-run 对比。
 
 ---
 

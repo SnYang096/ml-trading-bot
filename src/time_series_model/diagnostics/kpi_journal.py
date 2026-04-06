@@ -360,7 +360,7 @@ def _append_html_section(journal_html_path: Path, title: str, html_body: str) ->
 def _metric_explain(name: str) -> str | None:
     """
     Human explanation for KPI fields (for UI tooltips/details).
-    Keep short; link the mental model to docs/architecture/谁对sharp负责.md.
+    Keep short; link the mental model to docs/archive/architecture/谁对sharp负责.md.
     """
     n = str(name)
     m: Dict[str, str] = {

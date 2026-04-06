@@ -1,100 +1,140 @@
-# 架构文档索引
+# 架构文档索引（工程专题）
 
-**状态**: ✅ 当前版本  
-**最后更新**: 2026-01-25  
-**相关文档**: [主文档索引](../README.md)
+**最后更新**: 2026-04-07  
+**相关文档**: [主文档索引](../README.md) · [系统架构（统一版）](../ARCHITECTURE.md)
 
-## 核心架构文档
+> **主线**：当前产品叙述以 **BPC 纯规则** 为主（见根目录 `ARCHITECTURE.md`）。长篇随笔、NN/Router 哲学对比等已迁至 **[docs/archive/architecture/](../archive/architecture/README.md)**。
 
-### 系统架构（统一版）
+---
 
-- **[系统架构（统一版）](../ARCHITECTURE.md)** ✅ 当前版本
-  - 系统分层与职责边界
-  - v0/v1/v2 哲学划分
-  - 端到端 Pipeline 统一路径
-  - Tree → NN 知识迁移
+## 必读与主线延伸
 
-- **[最终简化架构（2026-01）](FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md)** ✅ 当前版本
-  - 工程收敛状态说明
-  - 从树模型到分层架构的统一
-  - 归因能力与设计目标
-  - 具体实现细节
+| 文档 | 说明 |
+|------|------|
+| [../ARCHITECTURE.md](../ARCHITECTURE.md) | 分层、BPC 管线、配置入口、Pipeline TODO（权威入口） |
+| [backtest_vs_live_execution.md](backtest_vs_live_execution.md) | 回测与实盘执行差异 |
+| [path2.5_math_features.md](path2.5_math_features.md) | 数学特征分层 |
+| [仓位管理办法.md](仓位管理办法.md) | 仓位与 PCM 相关长篇说明 |
+| [LivePCM_多archetype信号仲裁.md](LivePCM_多archetype信号仲裁.md) | 多 archetype 与 PCM |
+| [自由度限制.md](自由度限制.md) / [自由度限制-归因-仓位和加仓.md](自由度限制-归因-仓位和加仓.md) | 自由度与组合约束 |
 
-> **说明**: 两个架构文档互补，建议都阅读：
-> - `ARCHITECTURE.md`: 系统分层、职责边界、Pipeline组织（高层设计）
-> - `FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md`: 具体实现、设计目标、问题解决（详细设计）
+---
 
-## 专题架构文档
+## 实验循环与稳健性
 
-### 实验循环与Pipeline
+| 文档 | 说明 |
+|------|------|
+| [EXPERIMENT_LOOP_ARCHITECTURE.md](EXPERIMENT_LOOP_ARCHITECTURE.md) | Layer A/B/C、TaskSpec、特征搜索与稳定性 |
+| [walk_forward_validation.md](walk_forward_validation.md) | Walk-forward |
+| [multi_seed_and_execution_stability.md](multi_seed_and_execution_stability.md) | 多 seed 与执行稳定性 |
+| [数据切分与look-ahead风险.md](数据切分与look-ahead风险.md) | 切分与泄漏风险 |
+| [Failure-first研究方法.md](Failure-first研究方法.md) | Failure-first |
+| [FAILURE_TO_RETURN_PIPELINE.md](FAILURE_TO_RETURN_PIPELINE.md) | Failure→Return 管线 |
 
-- **[工业化实验循环](EXPERIMENT_LOOP_ARCHITECTURE.md)** - Layer A/B/C、TaskSpec、Filter→Wrapper、稳定性规则
+---
 
-### 特征系统
+## Evidence / Gate / 树与标签
 
-- **[特征目录](FEATURE_CATALOG.md)** - 全部208个特征节点的归一化状态
-- **[特征归一化策略](FEATURE_NORMALIZATION_POLICY.md)** - Phase 1/2/3归一化实现进度
-- **[归一化契约与检查](NORMALIZATION_CONTRACT_AND_CHECKS.md)** - 归一化契约说明
-- **[NNMULTIHEAD特征契约](NNMULTIHEAD_FEATURE_CONTRACT_BLOCK_GATING.md)** - 特征契约与Block Gating
+| 文档 | 说明 |
+|------|------|
+| [EVIDENCE_ARCHITECTURE_V2.md](EVIDENCE_ARCHITECTURE_V2.md) | Evidence 架构 v2 |
+| [EVIDENCE_SCORING_ARCHITECTURE.md](EVIDENCE_SCORING_ARCHITECTURE.md) | Evidence 打分 |
+| [OUTCOME_BASED_TREE_LABELING.md](OUTCOME_BASED_TREE_LABELING.md) | 结果导向树标签 |
+| [树模型规则导出与维护方法.md](树模型规则导出与维护方法.md) | 规则导出与维护 |
+| [规则重要性分析_vs_特征组搜索.md](规则重要性分析_vs_特征组搜索.md) | 规则 vs 特征组 |
+| [INTERACTION_SCREENING.md](INTERACTION_SCREENING.md) | 交互筛选 |
+| [策略中dir的使用方式.md](策略中dir的使用方式.md) | dir 字段 |
+| [标签在规则类的作用.md](标签在规则类的作用.md) | 标签与规则类 |
 
-### 系统设计
+---
 
-- **[NN多资产系统设计](NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md)** - Task/Router/Gate/Execution宪法与运维设计
-- **[架构升级V1](ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md)** - TaskSpec + Constitution + PCM
-- **[Archetype架构](ARCHETYPE_BASED_ARCHITECTURE_2026_01.md)** - 基于Archetype的架构设计
-- **[NN多头路径原语架构](架构：NN多头路径原语（Path Primitives）+Router解耦升级.md)** - Path Primitives + Router解耦
+## 特征与执行细节
 
-### Regime与Gate
+| 文档 | 说明 |
+|------|------|
+| [math_feature_separation_principle.md](math_feature_separation_principle.md) | 数学特征分离原则 |
+| [数学特征如何使用.md](数学特征如何使用.md) | 数学特征使用 |
+| [VOLUME_PROFILE_WPT_BOUNDARY_DESIGN.md](VOLUME_PROFILE_WPT_BOUNDARY_DESIGN.md) | Volume Profile / WPT 边界 |
+| [订单流特征聚合频率的选择.md](订单流特征聚合频率的选择.md) | 订单流聚合频率 |
+| [MAX_HOLDING_BARS_DESIGN_DECISION.md](MAX_HOLDING_BARS_DESIGN_DECISION.md) | 最长持仓 bar 设计 |
+| [币安交易成本计算.md](币安交易成本计算.md) | 手续费与成本 |
 
-- **[为什么用规则做Regime判断](WHY_REGIME_RULES_OVER_NN_CN.md)** - Regime规则优于NN的原因
-- **[Regime Filter + Trade Quality方案](REGIME_FILTER_TRADE_QUALITY_PLAN_CN.md)** - Regime过滤与交易质量
-- **[Gate一组可组合的约束算子](Gate一组可组合的约束算子.md)** - Gate设计原理
+---
 
-### 策略与执行
+## 策略与组合
 
-- **[树模型策略知识迁移](树模型策略知识迁移到多头模型.md)** - Tree→NN迁移方法
-- **[树模型在多头模型下游的角色](树模型在多头模型下游的角色.md)** - Tree模型定位
-- **[FR策略中dir的使用方式](FR策略中dir的使用方式.md)** - FR策略方向判断
+| 文档 | 说明 |
+|------|------|
+| [BPC_FER_互补对冲设计.md](BPC_FER_互补对冲设计.md) | BPC 与 FER 互补 |
+| [6种对称策略的启发式规则.md](6种对称策略的启发式规则.md) | 对称策略启发式（与 archetype 设计对照用） |
+| [archetype特征语义约束规范.md](archetype特征语义约束规范.md) | Archetype 特征语义 |
+| [最优参数寻找方法.md](最优参数寻找方法.md) | 参数搜索方法 |
 
-### 风险与生存
+---
 
-- **[Archetype灭绝级回测](archetype灭绝级回测.md)** - 压力测试→生存评分→Router/Size映射
-- **[OOD头的训练](ood头的训练.md)** - OOD/Survival Head监督信号定义
-- **[LiveDashboard](LiveDashboard.md)** - 只盯5个数，用于阻止系统犯蠢
+## 非平稳与方法论（仍偏工程）
 
-### 设计哲学
+| 文档 | 说明 |
+|------|------|
+| [P5_非平稳性防护方案.md](P5_非平稳性防护方案.md) | Regime/OOD/Alpha decay 方案 |
+| [WHY_STATISTICAL_RULES_OVER_E2E_MODEL_CN.md](WHY_STATISTICAL_RULES_OVER_E2E_MODEL_CN.md) | 统计规则 vs 端到端模型（设计取舍） |
 
-- **[为什么用统计规则而非端到端模型](WHY_STATISTICAL_RULES_OVER_E2E_MODEL_CN.md)** - 统计规则管线 vs LightGBM/MLP 端到端方案的取舍
-- **[谁对sharp负责](谁对sharp负责.md)** - Sharpe责任归属
-- **[职责坍缩](职责坍缩.md)** - 职责边界设计
-- **[仓位管理办法](仓位管理办法.md)** - 仓位管理策略
-- **[自由度限制](自由度限制.md)** - 自由度控制原则
-- **[为什么延迟RL](WHY_RL_IS_DELAYED_CN.md)** - RL延迟原因
+---
 
-### 其他专题
+## 工程指南（`guides/` 子目录）
 
-- **[可选块语义与实现](NNMULTIHEAD_FEATURE_CONTRACT_BLOCK_GATING.md)** - Optional Blocks完整说明（语义、需求、实现）
-- **[Archetype上线前Checklist](ARCHETYPE_PRELIVE_CHECKLIST_CN.md)** - 上线前检查清单
-- **[6种archetype简化成4种的原因](6种archetype简化成4种的原因.md)** - Archetype简化逻辑
+可操作工作流与调参协议见 **[guides/README.md](guides/README.md)**；以下为快速入口。
 
-## 文档分类
+### 工作流与 Plateau
 
-### 按主题分类
+| 文档 | 说明 |
+|------|------|
+| [guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md](guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md) | 阈值平坦高原协议 |
+| [guides/PLATEAU_OPTIMIZATION_METHODOLOGY.md](guides/PLATEAU_OPTIMIZATION_METHODOLOGY.md) | Plateau 方法论 |
+| [guides/PLATEAU_OPTIMIZATION_WORKFLOW.md](guides/PLATEAU_OPTIMIZATION_WORKFLOW.md) | Gate 高原优化工作流 |
+| [guides/BASELINE_TESTING_WORKFLOW.md](guides/BASELINE_TESTING_WORKFLOW.md) | 基线测试 |
+| [guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md](guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md) | 实盘归因 |
+| [guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md](guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md) | 研发→上线分层（Tier×Universe×TaskSpec） |
 
-- **系统设计**: ARCHITECTURE.md, FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md, NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md
-- **特征系统**: FEATURE_CATALOG.md, FEATURE_NORMALIZATION_POLICY.md, NORMALIZATION_CONTRACT_AND_CHECKS.md
-- **策略与执行**: 树模型相关文档, FR策略相关文档
-- **风险控制**: archetype灭绝级回测.md, ood头的训练.md, LiveDashboard.md
-- **设计哲学**: 谁对sharp负责.md, 职责坍缩.md, 自由度限制.md
+### Gate / BPC / 特征
 
-### 按重要性分类
+| 文档 | 说明 |
+|------|------|
+| [guides/GATE_WHEN_THEN_EXECUTION_ORDER.md](guides/GATE_WHEN_THEN_EXECUTION_ORDER.md) | Gate when/then 与执行顺序 |
+| [guides/HARD_GATE_SYSTEM.md](guides/HARD_GATE_SYSTEM.md) | Hard-Gate 协议 |
+| [guides/MULTI_OBJECTIVE_GATE_OPTIMIZATION.md](guides/MULTI_OBJECTIVE_GATE_OPTIMIZATION.md) | 多目标 Gate 优化 |
+| [guides/GATE_OPTIMIZATION_FEATURESTORE_IMPLEMENTATION.md](guides/GATE_OPTIMIZATION_FEATURESTORE_IMPLEMENTATION.md) | Gate×FeatureStore 实现说明 |
+| [guides/GATE_OPTIMIZATION_FEATURESTORE_USAGE.md](guides/GATE_OPTIMIZATION_FEATURESTORE_USAGE.md) | FeatureStore 使用 |
+| [guides/BPC_ADD_POSITION_LEVERAGE_ATR_NOTE.md](guides/BPC_ADD_POSITION_LEVERAGE_ATR_NOTE.md) | BPC 加仓与 ATR 注记 |
+| [guides/FEATURE_COMPLEXITY_LAYERS_CN.md](guides/FEATURE_COMPLEXITY_LAYERS_CN.md) | 特征复杂度分层 |
+| [guides/FEATURE_PIPELINE_EXCLUDE_COLUMNS_CN.md](guides/FEATURE_PIPELINE_EXCLUDE_COLUMNS_CN.md) | `exclude_columns` 机制 |
+| [guides/TREE_TRAINING_DATA_AND_CACHE.md](guides/TREE_TRAINING_DATA_AND_CACHE.md) | 树训练数据与缓存 |
 
-- **⭐ 必读**: ARCHITECTURE.md, FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md
-- **📖 推荐**: EXPERIMENT_LOOP_ARCHITECTURE.md, FEATURE_CATALOG.md, NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md
-- **📚 参考**: 其他专题文档
+### 树模型 / Pool-B（已归档）
 
-## 相关文档
+树模型 MVP、特征组搜索预设/调参、研究 Playbook、`ModelArtifact` 等已从 **`guides/tree/`** 迁至 **[docs/archive/guides/tree/](../archive/guides/tree/)**（主线已转向 BPC / 规则类；树路径仅作历史参考）。索引见 [archive/guides/README.md](../archive/guides/README.md)。
 
-- [主文档索引](../README.md)
-- [工作流文档](../workflow/PIPELINE_WORKFLOW.md)
-- [使用指南](../guides/)
+原 **`docs/guides/`** 仅保留 [占位索引](../guides/README.md)；历史 Gate 状态/截面 pipeline 等见 **[docs/archive/guides/](../archive/guides/README.md)**。
+
+---
+
+## 指标、报告、实盘、策略与部署
+
+| 主题 | 入口 |
+|------|------|
+| 指标与评估 | [metrics/README.md](metrics/README.md) |
+| 特征筛选 / 归一化报告 | [reports/README.md](reports/README.md) |
+| 深度学习等性能笔记 | [performance/README.md](performance/README.md) |
+| 实时流与实盘 | [live_stream/README.md](live_stream/README.md) |
+| 策略 Playbook 与协议 | [strategies/README.md](strategies/README.md) |
+| Terraform 部署对比 | [terraform部署方案对比.md](terraform部署方案对比.md) |
+
+原 **`docs/metrics/`、`docs/reports/`、`docs/live_stream/`、`docs/performance/`、`docs/strategies/`** 仅保留 [占位索引](../metrics/README.md) 等；过程性策略笔记与 legacy 实盘分析见 **[docs/archive/strategies/](../archive/strategies/README.md)**、**[docs/archive/live_stream/](../archive/live_stream/README.md)**、**[docs/archive/reports/](../archive/reports/README.md)**。
+
+---
+
+## 相关归档（NN 多头、旧索引等）
+
+- [docs/archive/](../archive/)：NNMULTIHEAD、旧架构长文、横截面实验代码与说明等  
+- [docs/archive/architecture/](../archive/architecture/)：已从本目录迁出的随笔与长文研究  
+- [docs/archive/guides/](../archive/guides/)：已从 `docs/guides/` 迁出的历史与专项指南  

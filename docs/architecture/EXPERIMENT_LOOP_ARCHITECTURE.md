@@ -78,7 +78,7 @@ flowchart LR
   - `scripts/train_strategy_pipeline.py`（训练 + 回测 + 输出 results.json/metrics）
 - **Recorder（结果落盘）**：
   - `results/**`（每次 run 记录输入/输出）
-  - `docs/strategies/SR_REVERSAL_EXPERIMENT_PROTOCOL.md`（结论记录，避免“口口相传”）
+  - `docs/architecture/strategies/SR_REVERSAL_EXPERIMENT_PROTOCOL.md`（结论记录，避免“口口相传”）
 - **Search Controller（搜索/组合验证）**：
   - `mlbot diagnose feature-group-search`（组级 wrapper）
   - `mlbot analyze ts-feature-eval` / `mlbot analyze factor-eval`（filter）

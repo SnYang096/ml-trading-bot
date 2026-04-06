@@ -239,5 +239,5 @@
 
 ### 参考文档
 
-- `docs/architecture/archetype灭绝级回测.md` - ET的语义定义
+- `docs/archive/architecture/archetype灭绝级回测.md` - ET的语义定义
 - `docs/architecture/树模型策略知识迁移到多头模型.md` - ET的触发条件

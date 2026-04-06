@@ -12,9 +12,9 @@
 大概率启发式规则本身（比如订单流/结构/VP 场景）是对的，框架的职责是在历史上反证“在哪些子场景成功率明显掉下去”，然后把这些场景排除掉或降权。
 
 ## 底层哲学
-[系统哲学基础](docs/architecture/系统哲学基础.md)
-[顶级量化团队.md](docs/architecture/顶级量化团队.md)
-[一道一宿速正道](docs/architecture/一道一宿速正道.md)
+[系统哲学基础](docs/archive/architecture/系统哲学基础.md)
+[顶级量化团队.md](docs/archive/architecture/顶级量化团队.md)
+[一道一宿速正道](docs/archive/architecture/一道一宿速正道.md)
 
 **Alpha不是收集的，是雕刻的。**
 
@@ -115,29 +115,29 @@ mlbot data download-funding-rate \
 ## 推荐工作流（MVP：最小闭环）
 
 > README 只保留"可复制的最小命令"。详细解释与扩展流程见：
-> - `docs/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md`
-> - `docs/guides/CROSS_SECTIONAL_PIPELINE_CN.md`（CS：截面因子评估→筛选→回测→训练）
-> - `docs/guides/CROSS_SECTIONAL_WORKFLOW_END2END_CN.md`（CS：端到端一张图 + 回测审计与产物）
-> - `docs/guides/CS_VS_TS_PIPELINE_CN.md`（CS vs TS：两套 pipeline 差异与指标取舍）
+> - `docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md`
+> - `docs/archive/guides/cs/CROSS_SECTIONAL_PIPELINE_CN.md`（CS：截面因子评估→筛选→回测→训练）
+> - `docs/archive/guides/cs/CROSS_SECTIONAL_WORKFLOW_END2END_CN.md`（CS：端到端一张图 + 回测审计与产物）
+> - `docs/archive/guides/cs/CS_VS_TS_PIPELINE_CN.md`（CS vs TS：两套 pipeline 差异与指标取舍）
 > - `docs/architecture/CROSS_SECTIONAL_ALPHA101_FEATURESTORE_ARCH_CN.md`（CS Alpha101：为何不走 DAG + 缓存复用架构）
-> - `docs/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`（多资产合约实盘落地路线图）
+> - `docs/archive/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`（多资产合约实盘落地路线图）
 > - `docs/architecture/NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md`（NN 多资产系统：Task/Router/Gate/Execution 宪法与运维落地设计）
 > - `docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`（架构升级 V1：TaskSpec + Constitution + PCM）
-> - `docs/architecture/archetype灭绝级回测.md`（Archetype 灭绝级回测：压力测试→生存评分→Router/Size 映射）
-> - `docs/architecture/ood头的训练.md`（OOD/Survival Head：监督信号定义、loss、评估曲线、熄火/复燃验证）
-> - `docs/architecture/LiveDashboard.md`（LiveDashboard：只盯 5 个数（含增强版），用于阻止系统犯蠢）
+> - `docs/archive/architecture/archetype灭绝级回测.md`（Archetype 灭绝级回测：压力测试→生存评分→Router/Size 映射）
+> - `docs/archive/leagcy/ood头的训练.md`（OOD/Survival Head：监督信号定义、loss、评估曲线、熄火/复燃验证）
+> - `docs/archive/architecture/LiveDashboard.md`（LiveDashboard：只盯 5 个数（含增强版），用于阻止系统犯蠢）
 > - `docs/architecture/树模型规则导出与维护方法.md`（树模型规则导出：可归因性、SR聚合、规则重要性分析）
 > - `docs/architecture/规则重要性分析_vs_特征组搜索.md`（规则重要性分析 vs Feature Group Search：本质差异与结合使用）
-> - `docs/guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md`（研发→上线分层工作流：Tier×Universe×TaskSpec）
-> - `docs/guides/POOLB_INVERT_FEATURES_CN.md`（Pool‑B 反向特征：invert_features 处理规则）
-> - `docs/strategies/树策略导出的可泛化规则.md`（tree 策略 if/else：语义规则模板 + 扫描汇总（含 VPIN/订单流规则））
-> - `docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`（阈值调参：找"平坦高原"而非尖峰，Router/SLTP 通用）
-> - `docs/live_stream/README.md`（实盘事件流/回放/对账/稳定性：Live 边缘系统入口）
-> - `docs/guides/NNMULTIHEAD_CONFIG_FILES_CN.md`（nnmultihead 配置文件职责图：TaskSpec/FeaturePlan/features.yaml/labels.yaml/model.yaml）
+> - `docs/architecture/guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md`（研发→上线分层工作流：Tier×Universe×TaskSpec）
+> - `docs/archive/guides/tree/POOLB_INVERT_FEATURES_CN.md`（Pool‑B 反向特征：invert_features 处理规则）
+> - `docs/architecture/strategies/树策略导出的可泛化规则.md`（tree 策略 if/else：语义规则模板 + 扫描汇总（含 VPIN/订单流规则））
+> - `docs/architecture/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`（阈值调参：找"平坦高原"而非尖峰，Router/SLTP 通用）
+> - `docs/architecture/live_stream/README.md`（实盘事件流/回放/对账/稳定性：Live 边缘系统入口）
+> - `docs/archive/NNMULTIHEAD_CONFIG_FILES_CN.md`（nnmultihead 配置文件职责图：TaskSpec/FeaturePlan/features.yaml/labels.yaml/model.yaml）
 > - **工作流程指南**：
->   - `docs/guides/BASELINE_TESTING_WORKFLOW.md`（基线测试工作流程：建立各archetype性能基准）
->   - `docs/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`（平坦高原优化工作流程：Gate规则参数优化方法）
->   - `docs/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md`（实盘归因工作流程：分层诊断和上线评估）
+>   - `docs/architecture/guides/BASELINE_TESTING_WORKFLOW.md`（基线测试工作流程：建立各archetype性能基准）
+>   - `docs/architecture/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`（平坦高原优化工作流程：Gate规则参数优化方法）
+>   - `docs/architecture/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md`（实盘归因工作流程：分层诊断和上线评估）
 
 ### 0) 质量闸门（推荐）
 
@@ -170,13 +170,13 @@ mlbot diagnose poolb-semantic-search \
 
 你只需要记住这一条命令即可；详细说明见：
 
-- `docs/guides/FEATURE_GROUP_SEARCH_PRESETS_CN.md`
+- `docs/archive/guides/tree/FEATURE_GROUP_SEARCH_PRESETS_CN.md`
   - 性能加速（Fast Mode / 频谱拆分 / 月度并行）：见该文档第 6 节
-  - 特征按计算复杂性分层（先易后难、逐层解锁）：`docs/guides/FEATURE_COMPLEXITY_LAYERS_CN.md`
+  - 特征按计算复杂性分层（先易后难、逐层解锁）：`docs/architecture/guides/FEATURE_COMPLEXITY_LAYERS_CN.md`
 
 > 重要补充：Stage B / C 写回的 `features_suggested_*.yaml` **是可直接喂给模型训练/回测的候选特征配置**；  
 > 但“可用 ≠ 可上线”，合并/上线前建议用 holdout/rolling/多标的/Nautilus 做验收门禁。  
-> 具体命令与解释见 `docs/guides/FEATURE_GROUP_SEARCH_PRESETS_CN.md` 的 “B/C 输出能不能直接用？（以及为什么还要验收/门禁）”。
+> 具体命令与解释见 `docs/archive/guides/tree/FEATURE_GROUP_SEARCH_PRESETS_CN.md` 的 “B/C 输出能不能直接用？（以及为什么还要验收/门禁）”。
 
 ### 2) 最终验收：6 个月 Holdout（只验收，不再调参）
 
@@ -207,9 +207,9 @@ mlbot train final \
 
 ### 4) （可选）rolling / Nautilus
 
-- rolling：用于**跨月稳定性验证**与**上线后监控**（见 `docs/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md`）
+- rolling：用于**跨月稳定性验证**与**上线后监控**（见 `docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md`）
   - 说明：`poolb-semantic-search` 不是 rolling；它是在**单个训练窗 + 单个测试窗**（time split + 多 seed）上做特征搜索/收敛。
-- Nautilus：用于“回测=实盘一致性验证”（事件驱动回放）（见 `docs/live_stream/reference/Nautilus_Trader_集成指南.md`、`docs/live_stream/07_与NautilusTrader对齐清单.md`）
+- Nautilus：用于“回测=实盘一致性验证”（事件驱动回放）（见 `docs/architecture/live_stream/reference/Nautilus_Trader_集成指南.md`、`docs/architecture/live_stream/07_与NautilusTrader对齐清单.md`）
 
 **Nautilus MetaRouter 事件回测（本地数据 / 多币）**
 
@@ -384,7 +384,7 @@ python scripts/run_full_pipeline.py \
 ### 3.1) Router 阈值：用“平坦高原”协议做稳健调参（推荐）
 
 > 目的：避免“找尖峰”导致的炼丹，优先选多窗口/bootstrapped 都稳的阈值组合。  
-> 详细解释见：`docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`
+> 详细解释见：`docs/architecture/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`
 >
 > 说明：`mlbot nnmultihead pipeline-3action-e2e` 会在输出目录下自动写出
 > `router_thresholds_baseline.json`（使用你传入的阈值覆盖 + 未传入则用 Router 默认值），
@@ -452,7 +452,7 @@ mlbot nnmultihead pipeline-3action-e2e --no-docker \
 ### 3.2) 灭绝回放（Extinction Replay）：产出 survival labels（给 Survival Head / 熄火复燃验证）
 
 > 目的：把 “在极端路径里会不会死” 变成可回放、可产物、可训练的标签（`labels.parquet`）。
-> 对应长文：`docs/architecture/archetype灭绝级回测.md`、`docs/architecture/ood头的训练.md`
+> 对应长文：`docs/archive/architecture/archetype灭绝级回测.md`、`docs/archive/leagcy/ood头的训练.md`
 
 ```bash
 mlbot diagnose extinction-replay-3action --no-docker \
@@ -515,20 +515,20 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
 
 ### 核心工作流文档
 
-- **上线 MVP 闭环（最重要，先看这个）**：[docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md](docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md)
+- **上线 MVP 闭环（树模型，已归档）**：[docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md](docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md)（当前主线见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)）
   - Pool‑B + 语义组搜索 → 6 个月 holdout 验收 → 训练最终上线模型
   - rolling 与 Nautilus 的职责边界（OOS vs 实盘一致性）
 
-- **多资产合约实盘落地路线图（从 1w→10w 的可执行路线，低维护）**：`docs/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`
-- **ETH 拖累处理与 Universe 演进（V1 交易 / V2 Shadow 监控）**：`docs/guides/ETH_DRAG_AND_UNIVERSE_EVOLUTION_CN.md`
-- **特征搜索 Playbook（详细算法/命令/概念）**：`docs/strategies/FEATURE_SEARCH_PLAYBOOK_CN.md`
-- **语义特征单列展开说明**：`docs/strategies/SEMANTIC_GROUPS_SINGLETON_EXPANSION.md`
+- **多资产合约实盘落地路线图（从 1w→10w 的可执行路线，低维护）**：`docs/archive/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`
+- **ETH 拖累处理与 Universe 演进**：仓库内暂无独立文档（若需可从 Git 历史检索 `ETH_DRAG_AND_UNIVERSE_EVOLUTION_CN`）
+- **特征搜索 Playbook（详细算法/命令/概念）**：`docs/architecture/strategies/FEATURE_SEARCH_PLAYBOOK_CN.md`
+- **语义特征单列展开说明**：`docs/architecture/strategies/SEMANTIC_GROUPS_SINGLETON_EXPANSION.md`
 - **归一化契约与检查**：`docs/architecture/NORMALIZATION_CONTRACT_AND_CHECKS.md`
-- **“保留但不喂给模型”的列排除机制（exclude_columns）**：`docs/guides/FEATURE_PIPELINE_EXCLUDE_COLUMNS_CN.md`
-- **Feature-group-search / pipeline 调参指南**：`docs/guides/FEATURE_GROUP_SEARCH_TUNING_GUIDE_CN.md`
+- **“保留但不喂给模型”的列排除机制（exclude_columns）**：`docs/architecture/guides/FEATURE_PIPELINE_EXCLUDE_COLUMNS_CN.md`
+- **Feature-group-search / pipeline 调参指南**：`docs/archive/guides/tree/FEATURE_GROUP_SEARCH_TUNING_GUIDE_CN.md`
   - nnmultihead 推荐顺序：search → train(primitives) → OOS predict → build-logs → Router 阈值调参 → BC/RL
 - **特征测试设计与覆盖（4类测试 + 覆盖快照保存）**：`docs/tests/FEATURE_TEST_DESIGN_AND_COVERAGE_CN.md`
-- **实盘特征契约与证据字段（缺失策略/has_orderflow/has_sr_quality）**：`docs/guides/LIVE_FEATURE_CONTRACT_AND_EVIDENCE_CN.md`
+- **实盘特征契约与证据字段（缺失策略/has_orderflow/has_sr_quality）**：`docs/archive/LIVE_FEATURE_CONTRACT_AND_EVIDENCE_CN.md`
 - **Archetype 上线前 Checklist（v0）**：`docs/architecture/ARCHETYPE_PRELIVE_CHECKLIST_CN.md`
 
 - **项目 TODO / Roadmap**：`docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`
@@ -552,20 +552,20 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
 
 - **工业化 Experiment Loop（Layer A/B/C、TaskSpec、Filter→Wrapper、稳定性口径）**：`docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`
 - **NN 多头 Path Primitives + Router→Execution（NO/MEAN/TREND）**：`docs/时序模型/架构：NN多头路径原语（Path Primitives）+Router解耦升级.md`
-- **研究 Playbook（标签/执行一致性、timeframe、仓位管理）**：`docs/guides/RESEARCH_PLAYBOOK_CN.md`
-- **Policy 执行假设（intrabar vs close）**：`docs/strategies/POLICY_EXECUTION_ASSUMPTIONS_CN.md`
-- **NN 多头 → 3-action → RL/BC e2e（长文档）**：`docs/guides/NNMULTIHEAD_3ACTION_E2E_CN.md`
+- **研究 Playbook（标签/执行一致性、timeframe、仓位管理）**：`docs/archive/guides/tree/RESEARCH_PLAYBOOK_CN.md`
+- **Policy 执行假设（intrabar vs close）**：`docs/architecture/strategies/POLICY_EXECUTION_ASSUMPTIONS_CN.md`
+- **NN 多头 → 3-action → RL/BC e2e（长文档）**：`docs/archive/NNMULTIHEAD_3ACTION_E2E_CN.md`
 - [多头NN和订单流的使用分类和评估](/workspaces/ml_trading_bot/docs/architecture/多头NN和订单流.md)
-- [训练落地文档](docs/guides/FEATURE_COMPLEXITY_LAYERS_CN.md)
-- [谁对sharp负责](docs/architecture/谁对sharp负责.md)
+- [训练落地文档](docs/architecture/guides/FEATURE_COMPLEXITY_LAYERS_CN.md)
+- [谁对sharp负责](docs/archive/architecture/谁对sharp负责.md)
 - [删除的策略(该不做什么)](docs/architecture/删除的策略该不做什么.md)
-- [alpha可以更多吗](docs/architecture/alpha可以更多吗.md)
+- [alpha可以更多吗](docs/archive/architecture/alpha可以更多吗.md)
 - [VolMean难在哪里](docs/architecture/VolMean难在哪里.md)
-- [时间框架高级甜点区](docs/architecture/时间框架高级甜点区.md)
-- [职责坍缩](docs/architecture/职责坍缩.md)
+- [时间框架高级甜点区](docs/archive/architecture/时间框架高级甜点区.md)
+- [职责坍缩](docs/archive/architecture/职责坍缩.md)
 - [GATE_FEATURE_MAPPING_VS_TREE_PHASE1](docs/architecture/GATE_FEATURE_MAPPING_VS_TREE_PHASE1.md)
-- [PLATEAU_OPTIMIZATION_METHODOLOGY](docs/guides/PLATEAU_OPTIMIZATION_METHODOLOGY.md)
-- [NNMULTIHEAD_COMMANDS_CN](docs/guides/NNMULTIHEAD_COMMANDS_CN.md)
+- [PLATEAU_OPTIMIZATION_METHODOLOGY](docs/architecture/guides/PLATEAU_OPTIMIZATION_METHODOLOGY.md)
+- [NNMULTIHEAD_COMMANDS_CN](docs/archive/NNMULTIHEAD_COMMANDS_CN.md)
 - [meta_router_core_pipeline](docs/architecture/meta_router_core_pipeline.md)
 - [数学特征如何使用](docs/architecture/数学特征如何使用.md)
 ---
@@ -580,7 +580,7 @@ mlbot --help
 
 ## 实盘（Live：WebSocket + MetaRouterCore）
 
-> 实盘入口与事件流/回放/对账等细节：见 `docs/live_stream/README.md`。
+> 实盘入口与事件流/回放/对账等细节：见 `docs/architecture/live_stream/README.md`。
 
 启动实盘交易系统（WebSocket → OrderFlowListener → MetaRouterCore → OrderManager）：
 

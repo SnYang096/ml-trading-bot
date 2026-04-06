@@ -198,4 +198,4 @@ results/live_logs/
 
 - [反身性特征实现](../features/reflexivity_features.md)
 - [ET对冲机制实现](../execution/et_hedge.md)
-- [执行日志架构](../guides/EXECUTION_LOG_SCHEMA_CN.md)
+- [执行日志架构](../archive/EXECUTION_LOG_SCHEMA_CN.md)

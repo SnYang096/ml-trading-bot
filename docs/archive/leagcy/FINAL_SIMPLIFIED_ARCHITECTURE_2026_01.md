@@ -1244,9 +1244,9 @@ coverage_per_bucket ≥ N_min  # 每桶最少交易数
 - `docs/architecture/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md`: 本文档
 
 ### 工作流程指南
-- `docs/guides/BASELINE_TESTING_WORKFLOW.md`: 基线测试工作流程 - 建立各archetype性能基准
-- `docs/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`: 平坦高原优化工作流程 - Gate规则参数优化方法
-- `docs/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md`: 实盘归因工作流程 - 分层诊断和上线评估
+- `docs/architecture/guides/BASELINE_TESTING_WORKFLOW.md`: 基线测试工作流程 - 建立各archetype性能基准
+- `docs/architecture/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`: 平坦高原优化工作流程 - Gate规则参数优化方法
+- `docs/architecture/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md`: 实盘归因工作流程 - 分层诊断和上线评估
 
 ---
 
@@ -2053,7 +2053,7 @@ if cvd_z > 1.5 and path_efficiency > 0.75:
 
 - 不找单点最大 Sharpe，而找 Sharpe > 阈值 的参数区域
 - 例如：对 EMA 周期扫描 [20, 60]，若 Sharpe 波动 < 0.2 的区域，才是可用的"平坦高原"
-- **工程实现**：平坦高原搜索（参见 `docs/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`）
+- **工程实现**：平坦高原搜索（参见 `docs/architecture/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`）
 
 ```python
 # 伪代码示例
@@ -2099,7 +2099,7 @@ final_param = random.choice(robust_zone)  # 避免过度优化
 
 **工程实践**：
 
-- 使用平坦高原优化工作流程（`docs/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`）
+- 使用平坦高原优化工作流程（`docs/architecture/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`）
 - 禁止指数加仓，采用固定风险比例或杠铃策略
 - 回测必须包含反事实压力测试
 - 监控"如果没被 Gate 拒绝，会亏多少"（反脆弱归因）
@@ -2743,6 +2743,6 @@ if shd_p > 0.9: DENY
 ---
 
 ### 工作流程指南
-- `docs/guides/BASELINE_TESTING_WORKFLOW.md`: 基线测试工作流程 - 建立各archetype性能基准
-- `docs/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`: 平坦高原优化工作流程 - Gate规则参数优化方法
-- `docs/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md`: 实盘归因工作流程 - 分层诊断和上线评估
+- `docs/architecture/guides/BASELINE_TESTING_WORKFLOW.md`: 基线测试工作流程 - 建立各archetype性能基准
+- `docs/architecture/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`: 平坦高原优化工作流程 - Gate规则参数优化方法
+- `docs/architecture/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md`: 实盘归因工作流程 - 分层诊断和上线评估

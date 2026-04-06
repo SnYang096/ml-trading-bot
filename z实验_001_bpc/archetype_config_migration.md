@@ -674,7 +674,7 @@ config/strategies/
 - [ ] `ARCHITECTURE.md` - 更新架构图和配置说明
 - [ ] `cmd: 树模型到archetype.md` - 更新所有命令的配置路径
 - [ ] `完整命令速查表.md` - 更新 `mlbot train` 系列命令
-- [ ] `docs/guides/` 下所有相关文档
+- [ ] `docs/architecture/guides/` 与 `docs/archive/guides/` 下相关文档
 
 **文档中需要修改的内容**：
 - 所有 `config/nnmultihead/execution_archetypes.yaml` → `config/strategies/{strategy}/archetypes/`

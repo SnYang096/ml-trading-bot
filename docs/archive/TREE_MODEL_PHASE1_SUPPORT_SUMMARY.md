@@ -2,7 +2,7 @@
 
 ## 来源文档
 - `docs/architecture/树模型策略知识迁移到多头模型.md`
-- `docs/strategies/树模型策略区分机制.md`
+- `docs/architecture/strategies/树模型策略区分机制.md`
 - `docs/architecture/6种对称策略的启发式规则.md`
 
 ## 使用原则（从树模型到 Gate）

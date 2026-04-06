@@ -18,7 +18,7 @@ This folder contains live-trading helpers.
 ## Architecture
 The live trading flow is: **WebSocket → OrderFlowListener → GenericLiveStrategy / LivePCM → ConstitutionExecutor → OrderManager**
 
-See `docs/live_stream/README.md` for details.
+See `docs/architecture/live_stream/README.md` for details.
 
 ## Live Feature Plan
 `IncrementalFeatureComputer` reads `MLBOT_LIVE_FEATURE_PLAN_YAML` (default:

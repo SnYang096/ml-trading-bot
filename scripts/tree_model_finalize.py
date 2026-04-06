@@ -369,7 +369,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--doc-out",
-        default="docs/strategies/树模型策略结论TREE_STRATEGY_FINAL_FEATURES_CN.md",
+        default="docs/architecture/strategies/树模型策略结论TREE_STRATEGY_FINAL_FEATURES_CN.md",
         help="Output markdown doc path (relative to repo root).",
     )
     ap.add_argument(

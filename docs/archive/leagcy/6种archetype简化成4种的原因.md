@@ -1,7 +1,7 @@
 # 6种Archetype简化成4种的原因
 
 > **文档创建时间**: 2026-01-11  
-> **来源**: 基于 `docs/architecture/archetype灭绝级回测.md` 和 `docs/architecture/6种对称策略的启发式规则.md` 的总结
+> **来源**: 基于 `docs/archive/architecture/archetype灭绝级回测.md` 和 `docs/architecture/6种对称策略的启发式规则.md` 的总结
 
 ---
 
@@ -271,7 +271,7 @@ Safety仓位可控
 
 ## 📚 相关文档
 
-- `docs/architecture/archetype灭绝级回测.md` - 灭绝分析详细说明
+- `docs/archive/architecture/archetype灭绝级回测.md` - 灭绝分析详细说明
 - `docs/architecture/6种对称策略的启发式规则.md` - 原6种策略的订单流语义
 - `config/nnmultihead/execution_archetypes.yaml` - 最终4种archetype的配置
 

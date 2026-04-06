@@ -278,7 +278,7 @@ assert feature.std() > 0.01, "标准差应该 > 0.01（避免常量）"
 
 ## 🔗 相关文档
 
-- `docs/strategies/BEST_FEATURE_COLUMNS_BY_STRATEGY.md` - 各策略最佳特征列
+- `docs/architecture/reports/BEST_FEATURE_COLUMNS_BY_STRATEGY.md` - 各策略最佳特征列
 - `config/feature_dependencies.yaml` - 特征定义
 - `docs/architecture/reports/ATR_SEMANTICS_AND_NORMALIZATION.md` - ATR 的语义统一（为什么 `atr` 必须是价格单位）
 

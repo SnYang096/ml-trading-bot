@@ -7,7 +7,7 @@
 ## 一、四种 Archetype 的最常见失败模式（必须写清楚）
 
 > 这些来源于 `docs/architecture/6种archetype简化成4种的原因.md` 与  
-> `docs/architecture/archetype灭绝级回测.md` 的约束假设。
+> `docs/archive/architecture/archetype灭绝级回测.md` 的约束假设。
 
 - **TC（Trend Continuation）**  
   - 最常见失败：**假结构**（结构确认错误 / 回踩后失效）

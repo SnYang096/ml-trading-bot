@@ -2,7 +2,7 @@
 
 本文把你现有系统（FeatureStore + NN path primitives + Router(3-action) + E2E/Shadow/Counterfactual）升级成一个**宪法驱动（Constitutional）**的可上线架构：**模型只产出证据（evidence）**，所有“自由度”都被关在可解释、可开关、可回滚的模块中（Router/Gate/Execution/Slot/kill-switch）。
 
-> 关联背景与路线图：`docs/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`  
+> 关联背景与路线图：`docs/archive/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`  
 > 宪法与自由度理论：`docs/architecture/自由度限制.md`、`docs/architecture/自由度限制-归因-仓位和加仓.md`
 
 ---

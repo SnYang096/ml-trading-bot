@@ -142,7 +142,7 @@ pytest tests/test_ts_sr_reversal_optuna.py::TestSampleParams -v
 ## 相关文档
 
 - `docs/tests/Optuna测试运行说明.md` - 详细的测试运行说明
-- `docs/strategies/Optuna不平衡数据处理说明.md` - 不平衡数据处理说明
+- `docs/archive/strategies/Optuna不平衡数据处理说明.md` - 不平衡数据处理说明
 - `src/time_series_model/optimization/README.md` - Optuna 优化脚本说明
 
 ## 总结

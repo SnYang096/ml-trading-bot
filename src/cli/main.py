@@ -8534,7 +8534,7 @@ def diagnose_threshold_plateau(
     This wraps `scripts/plateau_tune_rule_router_3action.py` and implements a robust
     "flat plateau" protocol (multi-window + bootstrap + local perturbations).
 
-    Detailed guide: docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md
+    Detailed guide: docs/architecture/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md
     """
     use_workspace_prefix = docker and not _is_in_docker()
     args = [

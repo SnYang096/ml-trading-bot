@@ -46,8 +46,8 @@ The recommended workflow uses **config-driven architecture** with strategy-speci
 
 - **Industrial Experiment Loop (Layer A/B/C, TaskSpec, Filter→Wrapper, stability rules)**: `docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`
 - **NN Multi-head Path Primitives + Router→Execution (NO/MEAN/TREND) architecture**: `docs/时序模型/架构：NN多头路径原语（Path Primitives）+Router解耦升级.md`
-- **Feature Search Playbook (Pool B + semantic groups, greedy baselines, singleton ablation, and the roadmap for Halving/Beam/SFFS)**: `docs/strategies/FEATURE_SEARCH_PLAYBOOK.md`
-- **Plateau Optimization Methodology (为什么慢 + 怎么改)**: `docs/guides/PLATEAU_OPTIMIZATION_METHODOLOGY.md` - 关键：Plateau 搜索不允许同时调节超过 3 个连续阈值参数
+- **Feature Search Playbook (Pool B + semantic groups, greedy baselines, singleton ablation, and the roadmap for Halving/Beam/SFFS)**: `docs/architecture/strategies/FEATURE_SEARCH_PLAYBOOK.md`
+- **Plateau Optimization Methodology (为什么慢 + 怎么改)**: `docs/architecture/guides/PLATEAU_OPTIMIZATION_METHODOLOGY.md` - 关键：Plateau 搜索不允许同时调节超过 3 个连续阈值参数
 
 Quick mental model:
 - **PolicyTask (direct entry)**: train a model that directly produces trade signals; fastest research loop.
@@ -867,7 +867,7 @@ mlbot cross-section workflow --no-docker \
 - **[文档索引](docs/README.md)** - 统一文档导航入口（推荐从这里开始）
 - **[系统架构](docs/ARCHITECTURE.md)** - 系统架构（统一版）
 - **[工作流文档](docs/workflow/PIPELINE_WORKFLOW.md)** - 完整工作流命令序列
-- **[上线MVP闭环](docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md)** - MVP工作流指南（中文）
+- **[上线MVP闭环（树模型，已归档）](docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md)** — 历史树路径工作流（中文）
 
 ## Recent Feature Updates
 
