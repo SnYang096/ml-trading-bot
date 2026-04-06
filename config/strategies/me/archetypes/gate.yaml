@@ -1,6 +1,6 @@
 # ME-SHORT Gate
 # 结构对齐 BPC（EVT 尾形 / VPIN 分位 / 宏观 VWAP 锚 / vol persistence），保留 ME 原统计优化 VPIN 规则。
-# 语义：与 BPC 同属趋势骑乘，ME 更偏「短期强动量」；宏观标尺与噪声过滤仍沿用同一套 anchor，细节由 entry/evidence 收紧。
+# 语义：与 BPC 同属趋势骑乘，ME 更偏「短期强动量」；宏观 VWAP 标尺（含极端偏离拒单）仍与 BPC 对齐，细节由 entry/evidence 收紧。
 # 来源 ME 专有规则: results/research_history/me-short/20260313_234144/strategies/me-short/gate_draft.yaml
 schema:
   phases:
@@ -58,22 +58,6 @@ hard_gates:
     comment: "aligned_with_bpc: deny when informed-flow rank extreme"
     locked: true
     lock_reason: VPIN 分位过高：知情侧过强时短线动量信号噪声大
-  - id: gate_macro_tp_vwap_1200_deadzone
-    tag: HARD_MACRO_TP_VWAP_1200_DEADZONE
-    phase: hard_gate
-    priority: 13
-    reason: 宏观 VWAP 近场死区（与 BPC 同阈；锚定见 meta macro_tp_vwap_anchor）
-    when:
-      all_of:
-        - macro_tp_vwap_1200_position:
-            value_gt: -0.005
-        - macro_tp_vwap_1200_position:
-            value_lt: 0.005
-    then:
-      action: deny
-    comment: "semantic_anchor: ME 仍需避开近 VWAP 弱趋势带，强动量应在带外确认"
-    locked: true
-    lock_reason: VWAP1200 近场噪声区，不利于「干净」的短期动量扩张
   - id: gate_macro_tp_vwap_1200_overlong
     tag: HARD_MACRO_TP_VWAP_1200_OVERLONG
     phase: hard_gate

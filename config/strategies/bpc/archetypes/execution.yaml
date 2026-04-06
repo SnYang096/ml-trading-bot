@@ -33,7 +33,7 @@ stop_loss:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
   initial_r: 4.0
-  # VWAP 近场死区由 gate（如 HARD_MACRO_TP_VWAP_1200_DEADZONE）过滤；执行层仅按 pv 符号穿越平仓。
+  # vwap1200：执行层在 pv=(close-vwap)/close 变号时结构平仓（多 pv<0 / 空 pv>0）。
   structural_exit: vwap1200
   trailing:
     enabled: false
@@ -42,4 +42,4 @@ stop_loss:
   type: trailing
 take_profit:
   enabled: false
-version: 57
+version: 58
