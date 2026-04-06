@@ -244,9 +244,6 @@ class ExecutionParamGenerator:
         breakeven_cfg = sl_cfg.get("breakeven", {}) or {}
         exec_constraints = self.config.get("execution_constraints", {}) or {}
         trailing_enabled = bool(trail_cfg.get("enabled", True))
-        se_conf = sl_cfg.get("structural_exit_config") or {}
-        _se_raw = sl_cfg.get("structural_exit")
-        _se_str = str(_se_raw).strip().lower() if _se_raw else ""
 
         # take_profit: 必须检查 enabled 标志，读 target_r (与向量回测一致)
         tp_cfg = self.config.get("take_profit", {})
@@ -273,14 +270,6 @@ class ExecutionParamGenerator:
             float(trail_cfg.get("activation_r", 1.0)) if trailing_enabled else None
         )
         trail_r = float(trail_cfg.get("trail_r", 1.5)) if trailing_enabled else None
-        vwap_exit_inner_abs = None
-        if _se_str == "vwap1200":
-            try:
-                vwap_exit_inner_abs = float(
-                    se_conf.get("exit_inner_abs", se_conf.get("inner_abs", 0.005))
-                )
-            except (TypeError, ValueError):
-                vwap_exit_inner_abs = 0.005
 
         return {
             "tier_name": "global",
@@ -292,7 +281,6 @@ class ExecutionParamGenerator:
             "max_holding_bars": _tsb,
             "size_multiplier": 1.0,
             "structural_exit": sl_cfg.get("structural_exit"),
-            "vwap_exit_inner_abs": vwap_exit_inner_abs,
             "min_stop_pct": guardrails.get("min_stop_pct"),
             "max_stop_pct": guardrails.get("max_stop_pct"),
             "breakeven_enabled": breakeven_enabled,
@@ -596,7 +584,6 @@ class GenericLiveStrategy:
                     "trailing_atr": exec_params.get("trail_r"),
                     "max_holding_bars": exec_params.get("time_stop_bars", 50),
                     "structural_exit": exec_params.get("structural_exit"),
-                    "vwap_exit_inner_abs": exec_params.get("vwap_exit_inner_abs"),
                     "min_stop_pct": exec_params.get("min_stop_pct"),
                     "max_stop_pct": exec_params.get("max_stop_pct"),
                 },

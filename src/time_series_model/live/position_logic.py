@@ -183,12 +183,6 @@ def build_position_dict(
     _structural_exit = rr_constraints.get("structural_exit")
     if _structural_exit:
         pos["structural_exit"] = str(_structural_exit)
-    if str(_structural_exit or "").strip().lower() == "vwap1200":
-        _ve = rr_constraints.get("vwap_exit_inner_abs")
-        try:
-            pos["vwap_exit_inner_abs"] = float(_ve) if _ve is not None else float(0.005)
-        except (TypeError, ValueError):
-            pos["vwap_exit_inner_abs"] = 0.005
 
     return pos
 
@@ -309,25 +303,20 @@ def enforce_position(
             exit_price = price_close
 
     # ── 3c. Structural exit (VWAP1200) — pv = macro_tp_vwap_1200_position = (close-vwap)/close
-    #  - |pv| <= inner: 贴近 VWAP 窄带平仓
-    #  - 多 pv < 0 / 空 pv > 0: 价在 VWAP 错误一侧，立即结构平仓（无额外阈值）
+    # 近 VWAP 噪声区由 gate 过滤；执行层仅判断穿越：多 pv<0、空 pv>0。
     if (
         close_reason is None
         and str(pos.get("structural_exit") or "").strip().lower() == "vwap1200"
         and macro_tp_vwap_position is not None
     ):
         try:
-            inner = float(pos.get("vwap_exit_inner_abs", 0.005) or 0.005)
             pv = float(macro_tp_vwap_position)
             if not (pv != pv):
-                if abs(pv) <= inner:
+                if is_long and pv < 0.0:
                     close_reason = "structural_exit_vwap1200"
                     exit_price = price_close
-                elif is_long and pv < 0.0:
-                    close_reason = "structural_exit_vwap1200_cross"
-                    exit_price = price_close
                 elif not is_long and pv > 0.0:
-                    close_reason = "structural_exit_vwap1200_cross"
+                    close_reason = "structural_exit_vwap1200"
                     exit_price = price_close
         except (TypeError, ValueError):
             pass

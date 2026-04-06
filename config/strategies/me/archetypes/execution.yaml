@@ -33,8 +33,6 @@ stop_loss:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
   initial_r: 4.0
-  structural_exit_config:
-    exit_inner_abs: 0.005
   trailing:
     enabled: true
     activation_r: 4
@@ -42,4 +40,4 @@ stop_loss:
   type: trailing
 take_profit:
   enabled: false
-version: 55
+version: 56

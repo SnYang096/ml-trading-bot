@@ -839,13 +839,12 @@ class TestBuildPositionDictStructuralExit:
         pos = build_position_dict(intent, entry_price=50000, atr=500, entry_time=_now())
         assert "structural_exit" not in pos
 
-    def test_vwap1200_stores_inner_from_rr(self):
-        """vwap1200 → pos 中有 vwap_exit_inner_abs（无 break 阈值字段）"""
+    def test_vwap1200_no_execution_inner_key(self):
+        """vwap1200 仅标记 structural_exit；近场由 gate，执行层不写 vwap_exit_inner_abs"""
         rr = {
             "stop_loss_r": 4.0,
             "max_holding_bars": 0,
             "structural_exit": "vwap1200",
-            "vwap_exit_inner_abs": 0.01,
         }
         ep = {"rr_constraints": rr}
         intent = TradeIntent(
@@ -857,8 +856,7 @@ class TestBuildPositionDictStructuralExit:
         )
         pos = build_position_dict(intent, entry_price=50000, atr=500, entry_time=_now())
         assert pos["structural_exit"] == "vwap1200"
-        assert pos["vwap_exit_inner_abs"] == pytest.approx(0.01)
-        assert "vwap_exit_break_abs" not in pos
+        assert "vwap_exit_inner_abs" not in pos
 
 
 def _bpc_trend_hold_pos(
@@ -1149,7 +1147,8 @@ class TestStructuralExitIntegration:
 
 
 class TestEnforceVwap1200StructuralExit:
-    def test_vwap1200_exit_after_breakeven_when_position_in_deadband(self):
+    def test_vwap1200_no_exit_when_slightly_above_vwap(self):
+        """多仓 pv>0（价在 VWAP 上方，含贴边小正 pv）→ 不因 VWAP 规则平仓"""
         pos = {
             "side": "LONG",
             "entry_price": 50000,
@@ -1159,10 +1158,9 @@ class TestEnforceVwap1200StructuralExit:
             "bar_minutes": 120,
             "stop_loss_price": 48000,
             "structural_exit": "vwap1200",
-            "vwap_exit_inner_abs": 0.005,
             "breakeven_locked": True,
         }
-        reason, px = enforce_position(
+        reason, _ = enforce_position(
             pos,
             price_high=50100,
             price_low=50000,
@@ -1170,11 +1168,10 @@ class TestEnforceVwap1200StructuralExit:
             now=_now() + timedelta(hours=1),
             macro_tp_vwap_position=0.002,
         )
-        assert reason == "structural_exit_vwap1200"
-        assert px == 50050
+        assert reason is None
 
-    def test_vwap1200_no_exit_when_above_vwap_outside_deadband(self):
-        """多仓 |pv|>inner 且 pv>0（价在 VWAP 上方）→ 不因 VWAP 规则平仓"""
+    def test_vwap1200_no_exit_when_above_vwap(self):
+        """多仓 pv>0 → 不因 VWAP 规则平仓"""
         pos = {
             "side": "LONG",
             "entry_price": 50000,
@@ -1184,7 +1181,6 @@ class TestEnforceVwap1200StructuralExit:
             "bar_minutes": 120,
             "stop_loss_price": 48000,
             "structural_exit": "vwap1200",
-            "vwap_exit_inner_abs": 0.005,
             "breakeven_locked": False,
         }
         reason, _ = enforce_position(
@@ -1207,7 +1203,6 @@ class TestEnforceVwap1200StructuralExit:
             "bar_minutes": 120,
             "stop_loss_price": 48000,
             "structural_exit": "vwap1200",
-            "vwap_exit_inner_abs": 0.005,
             "breakeven_locked": True,
         }
         reason, px = enforce_position(
@@ -1218,7 +1213,7 @@ class TestEnforceVwap1200StructuralExit:
             now=_now() + timedelta(hours=1),
             macro_tp_vwap_position=-0.05,
         )
-        assert reason == "structural_exit_vwap1200_cross"
+        assert reason == "structural_exit_vwap1200"
         assert px == 47000
 
     def test_vwap1200_cross_short_when_price_above_vwap(self):
@@ -1231,7 +1226,6 @@ class TestEnforceVwap1200StructuralExit:
             "bar_minutes": 120,
             "stop_loss_price": 52000,
             "structural_exit": "vwap1200",
-            "vwap_exit_inner_abs": 0.005,
             "breakeven_locked": True,
         }
         reason, px = enforce_position(
@@ -1242,5 +1236,5 @@ class TestEnforceVwap1200StructuralExit:
             now=_now() + timedelta(hours=1),
             macro_tp_vwap_position=0.05,
         )
-        assert reason == "structural_exit_vwap1200_cross"
+        assert reason == "structural_exit_vwap1200"
         assert px == 53000

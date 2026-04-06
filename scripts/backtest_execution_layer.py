@@ -697,17 +697,6 @@ def simulate_rr_execution(
         float(trailing_cfg.get("activation_r", 1.0)) if _tr_en else float("nan")
     )
     g_trail_r = float(trailing_cfg.get("trail_r", 1.5)) if _tr_en else float("nan")
-    _se_glob = str(stop_loss_cfg.get("structural_exit", "") or "").strip().lower()
-    _sec_glob = stop_loss_cfg.get("structural_exit_config") or {}
-    if _se_glob == "vwap1200":
-        try:
-            g_vwap_exit_inner = float(
-                _sec_glob.get("exit_inner_abs", _sec_glob.get("inner_abs", 0.005))
-            )
-        except (TypeError, ValueError):
-            g_vwap_exit_inner = 0.005
-    else:
-        g_vwap_exit_inner = float("nan")
 
     tp_enabled = take_profit_cfg.get("enabled", False)
     tp_r = float(take_profit_cfg.get("target_r", 2.0)) if tp_enabled else float("inf")
@@ -781,7 +770,6 @@ def simulate_rr_execution(
         "no_data": 0,
         "structural_exit_ema200": 0,
         "structural_exit_vwap1200": 0,
-        "structural_exit_vwap1200_cross": 0,
     }
 
     # 如果提供了 1min bar 数据，预处理为 numpy 数组以加速查找
@@ -851,12 +839,6 @@ def simulate_rr_execution(
             if "macro_tp_vwap_1200_position" in group.columns
             else None
         )
-        t_vwap_exit_inner = (
-            group["_tier_vwap_exit_inner_abs"].values.astype(float)
-            if tier_mode and "_tier_vwap_exit_inner_abs" in group.columns
-            else None
-        )
-
         for i in range(n):
             d = directions[i]
             a = atrs[i]
@@ -932,13 +914,6 @@ def simulate_rr_execution(
             if structural_exit_type == "ema200" and _has_ema200:
                 structural_ema200 = t_ema200[i] if not np.isnan(t_ema200[i]) else 0.0
 
-            vwap_exit_inner_i = 0.005
-            if str(structural_exit_type).strip().lower() == "vwap1200":
-                if t_vwap_exit_inner is not None:
-                    vwap_exit_inner_i = float(t_vwap_exit_inner[i])
-                elif np.isfinite(g_vwap_exit_inner):
-                    vwap_exit_inner_i = float(g_vwap_exit_inner)
-
             # ====== 1min bar 精细模拟 ======
             if use_1min and sym_1min is not None and has_ts:
                 entry_ts_ns = entry_timestamps[i]
@@ -1010,7 +985,7 @@ def simulate_rr_execution(
                                 _1min_exit_mi = mi
                                 break
 
-                    # 2c. Structural exit (VWAP1200: 窄带 / 价在 VWAP 错误一侧)
+                    # 2c. Structural exit (VWAP1200: 多 pv<0 / 空 pv>0；近场由 gate)
                     if (
                         str(structural_exit_type).strip().lower() == "vwap1200"
                         and t_vwap_pos is not None
@@ -1022,19 +997,14 @@ def simulate_rr_execution(
                         if np.isfinite(vpos):
                             _mc = m_c[mi]
                             if not np.isnan(_mc):
-                                if abs(vpos) <= vwap_exit_inner_i:
+                                if direction == 1 and vpos < 0.0:
                                     exit_price = float(_mc)
                                     exit_reason = "structural_exit_vwap1200"
                                     _1min_exit_mi = mi
                                     break
-                                if direction == 1 and vpos < 0.0:
-                                    exit_price = float(_mc)
-                                    exit_reason = "structural_exit_vwap1200_cross"
-                                    _1min_exit_mi = mi
-                                    break
                                 if direction == -1 and vpos > 0.0:
                                     exit_price = float(_mc)
-                                    exit_reason = "structural_exit_vwap1200_cross"
+                                    exit_reason = "structural_exit_vwap1200"
                                     _1min_exit_mi = mi
                                     break
 
@@ -1143,7 +1113,7 @@ def simulate_rr_execution(
                                 exit_reason = "structural_exit_ema200"
                                 break
 
-                    # 2c. Structural exit (VWAP1200: 窄带 / 价在 VWAP 错误一侧)
+                    # 2c. Structural exit (VWAP1200: 多 pv<0 / 空 pv>0；近场由 gate)
                     if (
                         str(structural_exit_type).strip().lower() == "vwap1200"
                         and t_vwap_pos is not None
@@ -1151,17 +1121,13 @@ def simulate_rr_execution(
                         vpos = float(t_vwap_pos[j])
                         if np.isfinite(vpos):
                             _cj = closes[j]
-                            if abs(vpos) <= vwap_exit_inner_i:
+                            if direction == 1 and vpos < 0.0:
                                 exit_price = _cj
                                 exit_reason = "structural_exit_vwap1200"
                                 break
-                            if direction == 1 and vpos < 0.0:
-                                exit_price = _cj
-                                exit_reason = "structural_exit_vwap1200_cross"
-                                break
                             if direction == -1 and vpos > 0.0:
                                 exit_price = _cj
-                                exit_reason = "structural_exit_vwap1200_cross"
+                                exit_reason = "structural_exit_vwap1200"
                                 break
 
                     # 3. 移动止损 (trailing activation + SL update)
@@ -1642,7 +1608,6 @@ def simulate_rr_execution(
                 "no_data": 0,
                 "structural_exit_ema200": 0,
                 "structural_exit_vwap1200": 0,
-                "structural_exit_vwap1200_cross": 0,
             }
             for t in trade_details:
                 er = t.get("exit_reason", "")
@@ -1653,8 +1618,7 @@ def simulate_rr_execution(
             f"SL={_display_stats['sl']}, TrailSL={_display_stats['trailing_sl']}, "
             f"TP={_display_stats['tp']}, Timeout={_display_stats['timeout']}, "
             f"NoData={_display_stats['no_data']}, EMA200Exit={_display_stats['structural_exit_ema200']}, "
-            f"VWAP1200Exit={_display_stats.get('structural_exit_vwap1200', 0)}, "
-            f"VWAP1200Cross={_display_stats.get('structural_exit_vwap1200_cross', 0)}"
+            f"VWAP1200Exit={_display_stats.get('structural_exit_vwap1200', 0)}"
         )
         if breakeven_lock_r > 0:
             pct = breakeven_lock_count / total_entries * 100 if total_entries > 0 else 0
@@ -3623,7 +3587,6 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
     merged["_tier_size"] = 1.0
     merged["_tier_name"] = "default"
     merged["_structural_exit"] = ""  # 空 = 无结构性退出, "ema200" = BPC trend_hold
-    merged["_tier_vwap_exit_inner_abs"] = np.nan
 
     # 每行的 bar_minutes (用于 1min 模拟的 timeout 换算 + slot 时间戳比较)
     merged["_bar_minutes"] = 240  # 默认 4H
@@ -3672,15 +3635,6 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         _se = sl.get("structural_exit", "")
         if _se:
             merged.loc[mask, "_structural_exit"] = str(_se)
-        _se_l = str(_se or "").strip().lower()
-        if _se_l == "vwap1200":
-            _sec = sl.get("structural_exit_config") or {}
-            try:
-                merged.loc[mask, "_tier_vwap_exit_inner_abs"] = float(
-                    _sec.get("exit_inner_abs", _sec.get("inner_abs", 0.005))
-                )
-            except (TypeError, ValueError):
-                merged.loc[mask, "_tier_vwap_exit_inner_abs"] = 0.005
 
     # 应用 Regime 仓位缩放到 _tier_size
     entry_with_scale = merged["_position_scale"] < 1.0

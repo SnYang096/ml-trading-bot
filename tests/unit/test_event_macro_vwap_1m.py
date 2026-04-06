@@ -1,4 +1,4 @@
-"""Regression: vwap1200 deadband must be evaluable on 1m closes between primary TF bars."""
+"""Regression: macro VWAP level + 1m pv 用于 vwap1200 结构出场（仅 pv 符号穿越）。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def test_frozen_vwap_level_identity_from_feature_row() -> None:
     assert abs((close - vwap) / close - pv) < 1e-9
 
 
-def test_live_pv_crosses_deadband_using_frozen_level() -> None:
+def test_live_pv_near_frozen_level() -> None:
     sim = PositionSimulator()
     row = pd.Series(
         {"close": 100.0, "macro_tp_vwap_1200_position": 0.02},
@@ -46,17 +46,16 @@ def test_position_simulator_passes_intraminute_pv_to_enforce() -> None:
         "bar_minutes": 120,
         "stop_loss_price": 90.0,
         "structural_exit": "vwap1200",
-        "vwap_exit_inner_abs": 0.005,
         "breakeven_locked": True,
     }
     sim._positions["p1"] = pos
     closed = sim.update(
         {
             "timestamp": now,
-            "open": 100.1,
-            "high": 100.2,
-            "low": 100.0,
-            "close": 100.15,
+            "open": 99.0,
+            "high": 99.1,
+            "low": 98.0,
+            "close": 98.5,
         }
     )
     assert len(closed) == 1
