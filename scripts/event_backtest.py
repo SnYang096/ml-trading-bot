@@ -184,6 +184,123 @@ def _iter_update_bars_1min(
         yield bar_ts, bar_row
 
 
+def _feature_asof_from_sym_tf_features(
+    sym_entry: Dict[str, Any],
+    bar_ts: Any,
+    column: str,
+) -> Optional[float]:
+    """Pick latest ``column`` from any timeframe row with index <= ``bar_ts``.
+
+    Multi-symbol timeline: structural inputs must follow **the symbol being
+    updated**, not only the symbol of the current PCM event. Previously only
+    ``simulators[sym_event]._macro_tp_vwap_position`` was refreshed, so ADA
+    could keep stale/BTC macro values during 1m ``update()`` → vwap1200 deadband
+    rarely matched reality (late / missing structural exits).
+    """
+    tfd = sym_entry.get("tf_features") or {}
+    best_ix: Optional[pd.Timestamp] = None
+    best_val: Optional[float] = None
+    for _tf, tdf in tfd.items():
+        if tdf is None or getattr(tdf, "empty", True):
+            continue
+        if column not in tdf.columns:
+            continue
+        try:
+            sub = tdf.loc[tdf.index <= bar_ts]
+        except Exception:
+            continue
+        if sub.empty:
+            continue
+        ts_last = sub.index[-1]
+        raw = sub[column].iloc[-1]
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if v != v:  # NaN
+            continue
+        if best_ix is None or ts_last > best_ix:
+            best_ix = ts_last
+            best_val = v
+    return best_val
+
+
+def _feature_row_asof_from_sym_tf_features(
+    sym_entry: Dict[str, Any],
+    bar_ts: Any,
+    *,
+    require_macro: bool = True,
+) -> Optional[pd.Series]:
+    """Latest feature row with index <= ``bar_ts`` (max timestamp across TFs).
+
+    When ``require_macro`` is True, only consider frames that expose
+    ``macro_tp_vwap_1200_position`` and rows with a finite value, so the
+    returned row can drive both stored position and frozen VWAP level.
+    """
+    tfd = sym_entry.get("tf_features") or {}
+    best_ix: Optional[pd.Timestamp] = None
+    best_row: Optional[pd.Series] = None
+    for _tf, tdf in tfd.items():
+        if tdf is None or getattr(tdf, "empty", True):
+            continue
+        if require_macro and "macro_tp_vwap_1200_position" not in tdf.columns:
+            continue
+        try:
+            sub = tdf.loc[tdf.index <= bar_ts]
+        except Exception:
+            continue
+        if sub.empty:
+            continue
+        ts_last = sub.index[-1]
+        row = sub.iloc[-1]
+        if require_macro:
+            raw = row.get("macro_tp_vwap_1200_position")
+            try:
+                pv = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if pv != pv:
+                continue
+        if best_ix is None or ts_last > best_ix:
+            best_ix = ts_last
+            best_row = row
+    return best_row
+
+
+def _sync_macro_tp_vwap_from_feature_row(
+    sim: "PositionSimulator",
+    row: Optional[pd.Series],
+) -> None:
+    """Set simulator macro position + frozen typical-price VWAP from one feature row.
+
+    ``macro_tp_vwap_1200_position`` = (close - vwap) / close on the decision bar.
+    Between primary-TF bar closes, VWAP level is held fixed so each 1m close can
+    recompute pv = (close_1m - vwap) / close_1m — otherwise crossing the deadband
+    between 2H updates would never be seen (stale pv).
+    """
+    if row is None:
+        return
+    try:
+        mv = row.get("macro_tp_vwap_1200_position")
+        if mv is None:
+            return
+        pv = float(mv)
+        if pv != pv:
+            return
+        sim._macro_tp_vwap_position = pv
+        cfeat = row.get("close")
+        if cfeat is None:
+            sim._macro_tp_vwap_level = None
+            return
+        c2 = float(cfeat)
+        if c2 <= 0:
+            sim._macro_tp_vwap_level = None
+            return
+        sim._macro_tp_vwap_level = c2 * (1.0 - pv)
+    except (TypeError, ValueError):
+        pass
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 1. ClosedTrade — 已关闭交易记录
 # ═════════════════════════════════════════════════════════════════════════════
@@ -259,6 +376,9 @@ class PositionSimulator:
         # structural exit: 最新 EMA200 价格 (由主循环在每根 4H bar 到达时更新)
         self._structural_price: Optional[float] = None
         self._macro_tp_vwap_position: Optional[float] = None
+        # 与 macro_tp_vwap_1200_position 同根特征行的滚动典型价 VWAP 价格水平；
+        # 在两次 primary-TF 收盘之间冻结，供 1m bar 用 (close_1m - level)/close_1m 检测死区穿越
+        self._macro_tp_vwap_level: Optional[float] = None
         # order_management 集成 (由 EventBacktester 注入)
         self._om_bridge: Optional["OMBridge"] = None
         self.max_observed_leverage: float = 0.0
@@ -420,6 +540,21 @@ class PositionSimulator:
                 if parent is not None and parent.get("stop_loss_price") is not None:
                     pos["stop_loss_price"] = float(parent.get("stop_loss_price"))
 
+            # vwap1200: 特征表里的 pv 只在 primary-TF 收盘更新；1m 上用冻结的 VWAP 水平对当前 close 重算 pv，
+            # 否则价格在两根 2H 之间穿越死区不会触发结构性出场。
+            macro_pv: Optional[float] = self._macro_tp_vwap_position
+            _lvl = getattr(self, "_macro_tp_vwap_level", None)
+            if _lvl is not None and bar_close > 0:
+                try:
+                    lv = float(_lvl)
+                    bc = float(bar_close)
+                    if lv == lv and bc == bc and bc > 0.0:
+                        live_pv = (bc - lv) / bc
+                        if live_pv == live_pv:
+                            macro_pv = max(-1.0, min(1.0, float(live_pv)))
+                except (TypeError, ValueError, ZeroDivisionError):
+                    pass
+
             # 调用共享 7 步持仓管理 (structural: EMA200 / vwap1200)
             close_reason, exit_price = enforce_position(
                 pos,
@@ -429,7 +564,7 @@ class PositionSimulator:
                 now=now,
                 default_bar_minutes=self.default_bar_minutes,
                 structural_price=self._structural_price,
-                macro_tp_vwap_position=self._macro_tp_vwap_position,
+                macro_tp_vwap_position=macro_pv,
             )
 
             if close_reason:
@@ -2095,12 +2230,34 @@ class EventBacktester:
                     continue
 
                 upd_bars = sym_data[upd_sym]["bars_1min_test"]
+                _sym_bundle = sym_data.get(upd_sym) or {}
                 for bar_ts, bar_row in _iter_update_bars_1min(
                     upd_bars,
                     upd_prev,
                     ts,
                     fast_mode=fast_mode,
                 ):
+                    _frow = _feature_row_asof_from_sym_tf_features(
+                        _sym_bundle,
+                        bar_ts,
+                        require_macro=True,
+                    )
+                    _sync_macro_tp_vwap_from_feature_row(upd_sim, _frow)
+                    if _frow is not None and "ema_200" in _frow.index:
+                        try:
+                            _e = float(_frow["ema_200"])
+                            if _e == _e and _e > 0.0:
+                                upd_sim._structural_price = _e
+                        except (TypeError, ValueError):
+                            pass
+                    else:
+                        _ema_upd = _feature_asof_from_sym_tf_features(
+                            _sym_bundle,
+                            bar_ts,
+                            "ema_200",
+                        )
+                        if _ema_upd is not None:
+                            upd_sim._structural_price = _ema_upd
                     bar_dict = {
                         "timestamp": bar_ts,
                         "open": float(bar_row.get("open", 0)),
@@ -2217,6 +2374,17 @@ class EventBacktester:
                     simulator._macro_tp_vwap_position = float(_mv)
                 except (TypeError, ValueError):
                     pass
+            else:
+                simulator._macro_tp_vwap_level = None
+            try:
+                _pcl = primary_features.get("close")
+                if _mv is not None and _pcl is not None:
+                    _c = float(_pcl)
+                    _m = float(_mv)
+                    if _c > 0.0 and _m == _m:
+                        simulator._macro_tp_vwap_level = _c * (1.0 - _m)
+            except (TypeError, ValueError):
+                pass
 
             # LivePCM.decide() — 多策略仲裁 + 全局 slot 控制
             intents = self.pcm.decide(

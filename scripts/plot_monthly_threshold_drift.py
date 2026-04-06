@@ -114,29 +114,37 @@ def _iter_gate_when_atoms(when_block: Any) -> Iterator[Tuple[str, str, Any]]:
             yield (str(feat), str(op), val)
 
 
+# Gate YAML may list rules under hard_gates only (legacy) or split phases
+# (e.g. hard_gates: [] + system_safety: [...] after calibration).
+_GATE_RULE_SECTIONS: Tuple[str, ...] = ("hard_gates", "system_safety", "guardrails")
+
+
 def _extract_gate(month: str, path: Path, rows: List[Dict[str, Any]]) -> None:
     obj = _safe_load_yaml(path)
-    for gate in obj.get("hard_gates") or []:
-        if not isinstance(gate, dict):
-            continue
-        rid = str(gate.get("id", ""))
-        when = gate.get("when") or {}
-        if not isinstance(when, dict):
-            continue
-        g_en = bool(gate.get("enabled", True)) and not bool(gate.get("disabled", False))
-        for feat, op, val in _iter_gate_when_atoms(when):
-            _append_row(
-                rows,
-                month=month,
-                layer="gate",
-                key=f"gate:{rid}:{feat}:{op}",
-                feature=feat,
-                operator=op,
-                value=val,
-                rule_id=rid,
-                enabled=g_en,
-                source_file=str(path),
+    for section in _GATE_RULE_SECTIONS:
+        for gate in obj.get(section) or []:
+            if not isinstance(gate, dict):
+                continue
+            rid = str(gate.get("id", ""))
+            when = gate.get("when") or {}
+            if not isinstance(when, dict):
+                continue
+            g_en = bool(gate.get("enabled", True)) and not bool(
+                gate.get("disabled", False)
             )
+            for feat, op, val in _iter_gate_when_atoms(when):
+                _append_row(
+                    rows,
+                    month=month,
+                    layer="gate",
+                    key=f"gate:{rid}:{feat}:{op}",
+                    feature=feat,
+                    operator=op,
+                    value=val,
+                    rule_id=rid,
+                    enabled=g_en,
+                    source_file=str(path),
+                )
 
 
 def _extract_entry_filters(month: str, path: Path, rows: List[Dict[str, Any]]) -> None:
