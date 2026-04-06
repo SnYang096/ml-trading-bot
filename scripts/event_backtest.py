@@ -996,6 +996,11 @@ class PositionSimulator:
                 else datetime.now(timezone.utc)
             ),
         )
+        # float_r_ladder_only 等 intent 常仅有 add_position、无 rr_constraints → 无 structural_exit。
+        # 否则 vwap1200 只在首仓 enforce，加仓腿仅宽止损/共享止损离场，图上会像「结构止损失效」。
+        _p_se = parent_pos.get("structural_exit")
+        if _p_se and not pos.get("structural_exit"):
+            pos["structural_exit"] = str(_p_se)
         pos["_is_add_position"] = True
         pos["_parent_pid"] = parent_pid
         pos["_add_position_seq"] = next_add_no
