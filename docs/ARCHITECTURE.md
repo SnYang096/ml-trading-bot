@@ -1,7 +1,7 @@
 # 系统架构（BPC 纯规则版）
 
 **状态**: ✅ 当前版本  
-**最后更新**: 2026-02-10
+**最后更新**: 2026-04-07
 
 > 这份文档回答三个问题：
 > 1) 系统分层与职责边界是什么？
@@ -105,7 +105,8 @@ Execution 层负责单仓生命周期管理：
 - `config/strategies/bpc/archetypes/evidence.yaml` — Evidence 特征 (9 条, quantile mapping)
 - `config/strategies/bpc/archetypes/entry_filters.yaml` — Entry Filter (bb OR liq_silence)
 - `config/strategies/bpc/archetypes/execution.yaml` — Execution (3 tier + trailing SL + noise penalty)
-- `config/live/live_feature_plan.yaml` — Live 特征计划 (104 features, 47 nodes)
+- **`config/strategies/<strategy>/archetypes/`** — 实盘默认由此目录自动汇总所需特征列与节点（`run_live.py` 传入 `archetypes_dir`，见 `IncrementalFeatureComputer`）；无需单独维护一份 `live_feature_plan.yaml` 即可跑 BPC。
+- `config/live/live_feature_plan.yaml` — **遗留路径**：仅当未设置 `archetypes_dir` 时，代码会回退读取该文件（或环境变量 `MLBOT_LIVE_FEATURE_PLAN_YAML`）；仓库可能未包含此文件，NN/旧链路如需使用请自备。
 - `config/strategies/bpc/archetypes/holding.yaml` — 持仓管理参数 (breakeven/trailing/time_stop)
 
 ---
@@ -222,7 +223,8 @@ MLBOT_LIVE_SYMBOLS=BTCUSDT python scripts/run_live.py
 | `config/strategies/bpc/archetypes/entry_filters.yaml` | Entry Filter (bb OR liq_silence) |
 | `config/strategies/bpc/archetypes/execution.yaml` | Execution (3 tier + trailing SL + noise penalty) |
 | `config/strategies/bpc/archetypes/holding.yaml` | 持仓管理参数 |
-| `config/live/live_feature_plan.yaml` | Live 特征计划 (104 features, 47 nodes) |
+| `config/strategies/bpc/archetypes/*.yaml` | 实盘特征集合（自动从 archetypes 解析；与下方 legacy 二选一） |
+| `config/live/live_feature_plan.yaml` | （可选/遗留）未使用 archetypes 自动检测时的特征清单 |
 | `config/feature_dependencies.yaml` | 特征 DAG 与归一化契约 |
 
 ### 代码文件

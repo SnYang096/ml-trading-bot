@@ -1,13 +1,17 @@
 # Pipeline Workflow
 
 **状态**: ✅ 当前版本  
-**最后更新**: 2026-01  
+**最后更新**: 2026-04-07  
 **相关文档**: [主文档索引](../README.md), [README_CN.md](../../README_CN.md), [Rolling Sim 时间窗与配置说明](./ROLLING_SIM_TIME_WINDOWS_CN.md)
 
 本文档描述完整的交易系统工作流命令序列。
 
 > **注意**: 本文档是 `README_CN.md` 中工作流部分的详细扩展版本。  
 > 基础命令和快速开始请参考 `README_CN.md`。
+
+> **`mlbot nnmultihead` 与 TaskSpec**：当前 CLI 下 `train` / `predict` / `build-feature-store` / `eval` / `pipeline-3action-e2e` / `feature-group-search` 等 **必须** 提供 `--task-spec`（已不再支持仅传 `--config` 目录）。仓库内示例：`config/tasks/minimal_path_primitives_task_spec.yaml`。FeatureStore 的 layer 默认值来自 TaskSpec 引用的 `feature_plan.yaml` 中 `feature_store.layer`；示例中若使用 `path_primitives` 计划，默认层名为 `nnmh_tree_union_all_240T_v2`，请与你本地实际构建的 layer 保持一致。  
+> **`predict` 输出**：使用 `--output`（可为目录或 `.parquet` 路径；多 symbol 时常用输出目录）。  
+> **`apply-tree-gate`**：传入 physics regime 文件时使用 **`--physics-regime`**，不是 `--regime`（`--regime` 用于 `diagnose-gate-filtering` 等子命令）。
 
 ## 完整工作流命令序列
 
@@ -17,13 +21,13 @@
 
 ```bash
 mlbot nnmultihead build-feature-store \
-  --task-spec config/tasks/task_spec_highcap6_2024_202510.yaml \
+  --task-spec config/tasks/minimal_path_primitives_task_spec.yaml \
   --symbols BTCUSDT,ETHUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
   --end-date 2025-10-31 \
   --feature-store-root feature_store \
-  --layer nnmh_highcap6_240T_2024_2025_test \
+  --layer nnmh_tree_union_all_240T_v2 \
   --warmup-months 1 \
   --no-docker
 ```
@@ -43,15 +47,15 @@ mlbot nnmultihead build-feature-store \
 
 ```bash
 mlbot nnmultihead predict \
-  --task-spec config/tasks/task_spec_highcap6_2024_202510.yaml \
+  --task-spec config/tasks/minimal_path_primitives_task_spec.yaml \
   --symbols BTCUSDT,ETHUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
   --end-date 2024-12-31 \
   --model results/nnmultihead/.../model.pt \
-  --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --feature-store-layer nnmh_tree_union_all_240T_v2 \
   --feature-store-root feature_store \
-  --output-dir results/pipeline_<run_id>/preds \
+  --output results/pipeline_<run_id>/preds \
   --no-docker
 ```
 
@@ -111,7 +115,7 @@ mlbot rule extract-evidence-keys --no-docker \
 ```bash
 mlbot rule build-evidence-quantiles --no-docker \
   --feature-store-root feature_store \
-  --layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --layer nnmh_tree_union_all_240T_v2 \
   --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 --end-date 2024-12-31 \
@@ -125,7 +129,7 @@ mlbot rule build-evidence-quantiles --no-docker \
 python scripts/apply_archetype_gate.py \
   --logs results/pipeline_<run_id>/logs_execution.parquet \
   --out results/pipeline_<run_id>/logs_execution_gated.parquet \
-  --features-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --features-store-layer nnmh_tree_union_all_240T_v2 \
   --features-store-root feature_store \
   --db-path data/order_management.db \
   --evidence-quantiles results/pipeline_<run_id>/evidence_quantiles.json \
@@ -154,7 +158,7 @@ python scripts/add_reflexivity_features_to_logs.py \
   --logs results/pipeline_<run_id>/logs_execution.parquet \
   --out-dir results/pipeline_<run_id>/exec_logs \
   --feature-store-dir feature_store \
-  --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --feature-store-layer nnmh_tree_union_all_240T_v2 \
   --data-path data/parquet_data \
   --timeframe 240T \
   --run-id <run_id> \
@@ -286,26 +290,27 @@ RUN_ID="pipeline_$(date +%Y%m%d_%H%M%S)"
 
 # 0. FeatureStore构建（如果需要）
 mlbot nnmultihead build-feature-store \
-  --task-spec config/tasks/task_spec_highcap6_2024_202510.yaml \
+  --task-spec config/tasks/minimal_path_primitives_task_spec.yaml \
   --symbols BTCUSDT,ETHUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
   --end-date 2024-12-31 \
   --feature-store-root feature_store \
-  --layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --layer nnmh_tree_union_all_240T_v2 \
   --warmup-months 1 \
   --no-docker 2>&1 | tee results/${RUN_ID}/featurestore_build.log
 
 # 1. Predict
 mlbot nnmultihead predict \
-  --task-spec config/tasks/task_spec_highcap6_2024_202510.yaml \
+  --task-spec config/tasks/minimal_path_primitives_task_spec.yaml \
   --symbols BTCUSDT,ETHUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
   --end-date 2024-12-31 \
   --model results/nnmultihead/.../model.pt \
-  --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
-  --output-dir results/${RUN_ID}/preds \
+  --feature-store-root feature_store \
+  --feature-store-layer nnmh_tree_union_all_240T_v2 \
+  --output results/${RUN_ID}/preds \
   --no-docker 2>&1 | tee results/${RUN_ID}/predict.log
 
 # 2. Regime classification
@@ -331,11 +336,10 @@ mlbot nnmultihead build-execution-logs \
 # 4. Gate filtering
 mlbot rule apply-tree-gate \
   --logs results/${RUN_ID}/logs_execution.parquet \
-  --regime results/${RUN_ID}/physics_regime.parquet \
+  --physics-regime results/${RUN_ID}/physics_regime.parquet \
   --out results/${RUN_ID}/logs_execution_gated.parquet \
-  --features-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --features-store-layer nnmh_tree_union_all_240T_v2 \
   --features-store-root feature_store \
-  --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
   --db-path data/order_management.db \
   --no-docker 2>&1 | tee results/${RUN_ID}/gate.log
 
@@ -345,7 +349,7 @@ python scripts/add_reflexivity_features_to_logs.py \
   --logs results/${RUN_ID}/logs_execution.parquet \
   --out-dir results/${RUN_ID}/exec_logs \
   --feature-store-dir feature_store \
-  --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --feature-store-layer nnmh_tree_union_all_240T_v2 \
   --data-path data/parquet_data \
   --timeframe 240T \
   --run-id ${RUN_ID} \

@@ -1,0 +1,17 @@
+# Minimal TaskSpec (v1) for `mlbot nnmultihead *` — copy and edit windows / task_id for your run.
+# Feature tiers and FeatureStore defaults come from feature_plan_ref (single source of truth).
+version: 1
+task_id: minimal_path_primitives_240T
+
+windows:
+  train:
+    start: "2024-01-01"
+    end: "2024-12-31"
+  oos:
+    start: "2025-01-01"
+    end: "2025-06-30"
+
+feature_plan_ref: config/nnmultihead/path_primitives_4h_80h_min/feature_plan.yaml
+
+model_plan:
+  base_config_dir: config/nnmultihead/path_primitives_4h_80h_min

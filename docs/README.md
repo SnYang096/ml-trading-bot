@@ -1,6 +1,6 @@
 # 项目文档索引
 
-**最后更新**: 2026-01-25  
+**最后更新**: 2026-04-07  
 **状态**: ✅ 当前版本
 
 > 本文档是项目文档的统一入口，帮助您快速找到所需信息。
@@ -22,24 +22,22 @@
   - v0/v1/v2 哲学划分
   - 端到端 Pipeline 统一路径
   
-- **[最终简化架构（2026-01）](architecture/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md)** ✅ 当前版本
+- **[最终简化架构（2026-01）](archive/leagcy/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md)**（归档）
   - 工程收敛状态说明
   - 从树模型到分层架构的统一
   - 归因能力与设计目标
 
-> **说明**: 两个架构文档互补：
-> - `ARCHITECTURE.md`: 系统分层、职责边界、Pipeline组织（高层设计）
-> - `FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md`: 具体实现、设计目标、问题解决（详细设计）
+> **说明**: 主架构见 `ARCHITECTURE.md`；`FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md` 已迁入 `docs/archive/leagcy/`，作历史参考。
 
 #### 架构专题文档
 
 - **[工业化实验循环](architecture/EXPERIMENT_LOOP_ARCHITECTURE.md)** - Layer A/B/C、TaskSpec、Filter→Wrapper
-- **[NN多头路径原语架构](architecture/架构：NN多头路径原语（Path Primitives）+Router解耦升级.md)** - Path Primitives + Router 解耦
-- **[Archetype架构](architecture/ARCHETYPE_BASED_ARCHITECTURE_2026_01.md)** - 基于Archetype的架构设计
-- **[特征目录](architecture/FEATURE_CATALOG.md)** - 全部特征列表与归一化状态
-- **[特征归一化策略](architecture/FEATURE_NORMALIZATION_POLICY.md)** - 归一化实现进度与方法
-- **[NN多资产系统设计](architecture/NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md)** - Task/Router/Gate/Execution 宪法设计
-- **[架构升级V1](architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md)** - TaskSpec + Constitution + PCM
+- **[NN多头路径原语架构](archive/leagcy/架构：NN多头路径原语（Path Primitives）+Router解耦升级.md)**（归档）- Path Primitives + Router 解耦
+- **[Archetype架构](archive/leagcy/ARCHETYPE_BASED_ARCHITECTURE_2026_01.md)**（归档）- 基于 Archetype 的架构设计
+- **[特征目录](archive/leagcy/FEATURE_CATALOG.md)**（归档）- 全部特征列表与归一化状态
+- **[特征归一化策略](archive/leagcy/FEATURE_NORMALIZATION_POLICY.md)**（归档）- 归一化实现进度与方法
+- **[NN多资产系统设计](archive/leagcy/NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md)**（归档）- Task/Router/Gate/Execution 宪法设计
+- **[架构升级V1](archive/leagcy/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md)**（归档）- TaskSpec + Constitution + PCM
 
 ### 📖 使用指南
 
@@ -55,9 +53,10 @@
 #### 特征与模型
 
 - **[特征搜索Playbook](strategies/FEATURE_SEARCH_PLAYBOOK.md)** - Pool-B + 语义组搜索详细说明
-- **[NNMULTIHEAD配置文件](guides/NNMULTIHEAD_CONFIG_FILES_CN.md)** - TaskSpec/FeaturePlan配置说明
-- **[NNMULTIHEAD命令总览](guides/NNMULTIHEAD_COMMANDS_CN.md)** - 含RL/BC/FSM说明
-- **[NNMULTIHEAD 3-action E2E](guides/NNMULTIHEAD_3ACTION_E2E_CN.md)** - 完整端到端流程
+- **[NNMULTIHEAD配置文件](archive/NNMULTIHEAD_CONFIG_FILES_CN.md)**（归档）- TaskSpec/FeaturePlan 配置说明
+- **[NNMULTIHEAD命令总览](archive/NNMULTIHEAD_COMMANDS_CN.md)**（归档）- 含 RL/BC/FSM 说明
+- **[NNMULTIHEAD 3-action E2E](archive/NNMULTIHEAD_3ACTION_E2E_CN.md)**（归档）- 完整端到端流程
+- **TaskSpec 示例**: `config/tasks/minimal_path_primitives_task_spec.yaml`（仓库内可引用路径）
 
 #### 阈值与优化
 
@@ -100,11 +99,10 @@ docs/
 ├── README.md                    # 本文档（主索引）
 ├── ARCHITECTURE.md              # 系统架构（统一版）✅
 │
-├── architecture/                # 架构文档
-│   ├── FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md  # 最终简化架构 ✅
+├── architecture/                # 架构文档（当前专题）
 │   ├── EXPERIMENT_LOOP_ARCHITECTURE.md           # 实验循环架构
-│   ├── FEATURE_CATALOG.md                        # 特征目录
 │   └── [其他架构专题文档]
+├── archive/leagcy/              # 历史架构长文（FEATURE_CATALOG / FINAL_SIMPLIFIED_* 等）
 │
 ├── guides/                      # 使用指南
 │   ├── tree/DEPLOYMENT_MVP_WORKFLOW_CN.md      # MVP工作流 ⭐
@@ -144,8 +142,8 @@ docs/
 ### 👨‍💻 开发者
 
 1. 阅读 **[系统架构（统一版）](ARCHITECTURE.md)** 了解系统设计
-2. 查看 **[最终简化架构](architecture/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md)** 了解实现细节
-3. 参考 **[特征目录](architecture/FEATURE_CATALOG.md)** 和 **[归一化策略](architecture/FEATURE_NORMALIZATION_POLICY.md)**
+2. 查看 **[最终简化架构（归档）](archive/leagcy/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md)** 了解历史设计细节
+3. 参考 **[特征目录（归档）](archive/leagcy/FEATURE_CATALOG.md)** 和 **[归一化策略（归档）](archive/leagcy/FEATURE_NORMALIZATION_POLICY.md)**
 4. 查看 **[测试文档](tests/)** 了解测试方法
 
 ### 🔬 研究者
@@ -158,7 +156,7 @@ docs/
 
 1. 阅读 **[实时流计算入口](live_stream/README.md)** 了解实盘架构
 2. 参考 **[实盘归因工作流](guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md)** 进行上线评估
-3. 查看 **[Archetype上线前Checklist](architecture/ARCHETYPE_PRELIVE_CHECKLIST_CN.md)**
+3. 查看 **[Archetype上线前Checklist（归档）](archive/leagcy/ARCHETYPE_PRELIVE_CHECKLIST_CN.md)**
 
 ## 📌 文档状态说明
 
