@@ -3,21 +3,19 @@ add_position:
     - 0.5
     - 0.35
     - 0.25
-    - 0.2
-    - 0.15
   inherit_parent_stop: true
-  max_add_times: 5
+  max_add_times: 3
   min_current_r_by_add:
     - 0.5
     - 1.0
     - 1.5
-    - 2
-    - 2.5
+  # 父仓 initial_r≈4（4×ATR 止损宽），第 1 档 0.5（ATR）≈ 要求 current_r ≥ 0.5/4 = 0.125R。
+  # 若把 min_current_r_unit 改成 initial_r，那列表里的数就直接当 R 门槛用，不再做这次除法。
   min_current_r_unit: atr
   sizing_mode: fixed_multiplier
   trigger:
     # float_r_ladder_only = 浮盈 R 阶梯（事件回测）；bpc_follow_signal = 仅 PCM 再次意图时加仓
-    type: bpc_follow_signal
+    type: float_r_ladder_only
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
@@ -42,4 +40,4 @@ stop_loss:
   type: trailing
 take_profit:
   enabled: false
-version: 57
+version: 58

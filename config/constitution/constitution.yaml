@@ -170,14 +170,14 @@ resource_allocation:
     # bpc-long 和 bpc-short 各独立占 1 slot，全局 4 slots 防止同时过多开仓
     bpc-long:
       max_slots: 5 # BPC 方向拆分: long 侧最多 1 slot
-      max_risk_per_trade: 0.01 # 肥尾主仓: 首枪改为 2.00% 风险，5次加仓可以加到5倍杠杆
+      max_risk_per_trade: 0.01 # 肥尾主仓: 首枪 2.00% 风险；加仓次数与 execution.add_position 对齐
       allow_add_position: true # BPC 趋势延续允许加仓
-      max_add_times: 5 # 宪法仅保留上限；触发与梯度下沉到 execution.yaml
+      max_add_times: 3 # 宪法上限；触发与梯度见 archetypes/execution.yaml
     bpc-short:
       max_slots: 5 # BPC 方向拆分: short 侧最多 1 slot
       max_risk_per_trade: 0.01 # 熊市尾部主仓: 首枪改为 2.00% 风险
       allow_add_position: true
-      max_add_times: 5
+      max_add_times: 3
     # ── ME 方向拆分 ──
     me-long:
       max_slots: 3
