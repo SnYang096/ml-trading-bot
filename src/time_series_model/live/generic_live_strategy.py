@@ -312,8 +312,17 @@ class ExecutionParamGenerator:
 
         # time_stop_bars: 0 表示禁用时间止损 (fat tail 模式)
         # 注意: 不能用 `or 50`，因为 Python 中 0 or 50 = 50
-        _raw_tsb = self.config.get("holding", {}).get("time_stop_bars")
-        _tsb = int(_raw_tsb) if _raw_tsb is not None and int(_raw_tsb) > 0 else 0
+        holding = self.config.get("holding", {}) or {}
+        _raw_tsb = holding.get("time_stop_bars")
+        _raw_mhb = holding.get("max_holding_bars")
+        if _raw_tsb is not None and int(_raw_tsb) == 0:
+            _tsb = 0
+        elif _raw_tsb is not None and int(_raw_tsb) > 0:
+            _tsb = int(_raw_tsb)
+        elif _raw_mhb is not None and int(_raw_mhb) > 0:
+            _tsb = int(_raw_mhb)
+        else:
+            _tsb = 0
         # 加仓前需要利润锁定；默认对 allow_add_on 策略启用 breakeven lock。
         breakeven_enabled = bool(
             breakeven_cfg.get(

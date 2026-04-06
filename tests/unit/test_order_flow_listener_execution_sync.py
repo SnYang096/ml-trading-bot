@@ -98,7 +98,7 @@ def test_execution_report_without_position_id_reconciles_when_exchange_flat():
     ce.release_slot.assert_called()
 
 
-def test_account_update_zero_position_reconciles_local_position():
+def test_account_update_zero_position_does_not_force_close_local_position():
     listener, _, ce, rs, _ = _make_listener()
     pid = "BTCUSDT:3"
     listener._position_tracker.add(
@@ -126,8 +126,9 @@ def test_account_update_zero_position_reconciles_local_position():
         }
     )
 
-    assert listener._position_tracker.get(pid) is None
-    ce.release_slot.assert_called()
+    # 账户推送只做快照更新，不直接关本地仓（避免秒进秒出）。
+    assert listener._position_tracker.get(pid) is not None
+    ce.release_slot.assert_not_called()
 
 
 def test_account_update_accepts_raw_binance_position_keys():
@@ -154,8 +155,8 @@ def test_account_update_accepts_raw_binance_position_keys():
         }
     )
 
-    assert listener._position_tracker.get(pid) is None
-    ce.release_slot.assert_called()
+    assert listener._position_tracker.get(pid) is not None
+    ce.release_slot.assert_not_called()
 
 
 def test_account_update_injects_equity_features():

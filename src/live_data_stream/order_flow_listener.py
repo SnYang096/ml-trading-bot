@@ -241,24 +241,10 @@ class OrderFlowListener:
                 self._maybe_trigger_abnormal_on_quick_stop(pid, pos, report)
 
     def on_account_update(self, update: Dict[str, Any]) -> None:
-        """处理账户推送: 刷新权益快照 + 本 symbol 0 仓位时清理本地残留。"""
+        """处理账户推送: 刷新权益快照（不直接做仓位关闭）。"""
         if not isinstance(update, dict):
             return
         self._latest_account_update = dict(update)
-
-        for p in update.get("positions") or []:
-            try:
-                # 规范化 dict（UserStream）与原始 Binance 字段（s / pa）都接受
-                sym = str(p.get("symbol") or p.get("s") or "").upper().strip()
-                _amt = p.get("position_amount", p.get("pa", 0.0))
-                amt = float(_amt if _amt is not None else 0.0)
-            except Exception:
-                continue
-            if sym != self.symbol:
-                continue
-            if abs(amt) <= 1e-9:
-                self._close_all_local_positions(reason="position_closed")
-            break
 
     def _release_runtime_for_position(self, position_id: str, *, reason: str) -> None:
         if self.constitution_executor is None or self.runtime_state is None:

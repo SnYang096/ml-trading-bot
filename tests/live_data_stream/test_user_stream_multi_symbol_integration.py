@@ -65,7 +65,7 @@ def test_account_update_broadcasts_equity_snapshot_to_all_listeners():
     assert btc._latest_account_update["event_time"] == 1710000000
 
 
-def test_account_update_zero_position_only_clears_matching_symbol():
+def test_account_update_zero_position_does_not_force_clear_local_symbol():
     manager = _make_manager(["BTCUSDT", "ETHUSDT"])
     btc = manager.listeners["BTCUSDT"]
     eth = manager.listeners["ETHUSDT"]
@@ -92,7 +92,7 @@ def test_account_update_zero_position_only_clears_matching_symbol():
         }
     )
 
-    assert btc._position_tracker.get("pid-btc") is None
+    assert btc._position_tracker.get("pid-btc") is not None
     assert eth._position_tracker.get("pid-eth") is not None
 
 

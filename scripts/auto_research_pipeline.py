@@ -110,16 +110,48 @@ def _resolve_strategy_direction_scope(cfg: Dict[str, Any]) -> str:
 
 
 def _filter_strategies_by_direction_scope(
-    strategies: List[str], scope: str
+    strategies: List[str], scope: str, cfg: Optional[Dict[str, Any]] = None
 ) -> List[str]:
-    """按方向范围过滤策略名."""
+    """按方向范围过滤策略。优先读配置 side，兼容旧命名后缀。"""
+    cfg = cfg or {}
+    scfg_all = (
+        cfg.get("strategies", {}) if isinstance(cfg.get("strategies"), dict) else {}
+    )
+
+    def _resolve_side(strategy_name: str) -> str:
+        scfg = scfg_all.get(strategy_name, {}) if isinstance(scfg_all, dict) else {}
+        side_raw = ""
+        if isinstance(scfg, dict):
+            side_raw = str(scfg.get("side", "") or "").strip().lower()
+        if side_raw in {"long", "short", "both"}:
+            return side_raw
+        n = str(strategy_name).lower()
+        if "-long-" in n or n.endswith("-long"):
+            return "long"
+        if "-short-" in n or n.endswith("-short"):
+            return "short"
+        return "both"
+
     if scope == "all":
         return list(strategies)
     if scope == "long":
-        return [s for s in strategies if "-long-" in s]
+        return [s for s in strategies if _resolve_side(s) in {"long", "both"}]
     if scope == "short":
-        return [s for s in strategies if "-short-" in s]
+        return [s for s in strategies if _resolve_side(s) in {"short", "both"}]
     return list(strategies)
+
+
+def _resolve_strategy_side(strategy_name: str, scfg: Dict[str, Any]) -> str:
+    """策略侧向：优先配置 side，其次兼容旧命名。"""
+    side_raw = str((scfg or {}).get("side", "") or "").strip().lower()
+    if side_raw in {"long", "short", "both"}:
+        return side_raw
+    n = str(strategy_name).lower()
+    if "-long-" in n or n.endswith("-long"):
+        return "long"
+    if "-short-" in n or n.endswith("-short"):
+        return "short"
+    return "both"
 
 
 def _parse_month_token(month_token: str) -> Tuple[int, int]:
@@ -184,6 +216,93 @@ def _calib_and_test_windows(
 
 def _iter_month_tokens(start_date: str, end_date: str) -> List[str]:
     return pipeline_config.iter_month_tokens(start_date, end_date)
+
+
+def _resolve_stage_strategies_root(cfg: Dict[str, Any], stage: str) -> Path:
+    """Best-effort root for config consistency checks."""
+    rolling_cfg = cfg.get("rolling", {}) or {}
+    mode = str(rolling_cfg.get("mode", "legacy") or "legacy").strip().lower()
+    if mode == "turbo_fixed_features":
+        turbo_cfg = rolling_cfg.get("turbo_fixed_features", {}) or {}
+        root = Path(
+            str(
+                turbo_cfg.get("fixed_strategies_root", "config/strategies")
+                or "config/strategies"
+            )
+        )
+        return root if root.is_absolute() else (PROJECT_ROOT / root)
+    return PROJECT_ROOT / "config" / "strategies"
+
+
+def _run_config_consistency_checks(
+    *,
+    cfg: Dict[str, Any],
+    strategies: List[str],
+    stage: str,
+    dry_run: bool,
+) -> None:
+    """Print high-signal config consistency diagnostics before running."""
+    _ = dry_run  # reserved for future strict toggles
+    stage_root = _resolve_stage_strategies_root(cfg, stage=stage)
+    print(f"   ConfigCheck: strategies_root={stage_root}")
+    for strategy in strategies:
+        scfg = cfg.get("strategies", {}).get(strategy, {}) or {}
+        if not isinstance(scfg, dict):
+            scfg = {}
+        cfg_tf = str(scfg.get("timeframe", "") or "").strip()
+        cfg_dir = str(scfg.get("config", "") or "").strip()
+        side = _resolve_strategy_side(strategy, scfg)
+        print(
+            f"   ConfigCheck[{strategy}]: timeframe={cfg_tf or 'N/A'} "
+            f"side={side} config={cfg_dir or 'N/A'}"
+        )
+
+        # 优先 stage_root，其次 strategies.*.config
+        cand_dirs: List[Path] = [stage_root / strategy]
+        if cfg_dir:
+            cfg_path = Path(cfg_dir)
+            if not cfg_path.is_absolute():
+                cfg_path = PROJECT_ROOT / cfg_path
+            cand_dirs.append(cfg_path)
+        meta_path = next(
+            (d / "meta.yaml" for d in cand_dirs if (d / "meta.yaml").exists()), None
+        )
+        dir_path = next(
+            (
+                d / "archetypes" / "direction.yaml"
+                for d in cand_dirs
+                if (d / "archetypes" / "direction.yaml").exists()
+            ),
+            None,
+        )
+
+        meta_tf = ""
+        if meta_path is not None:
+            try:
+                meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+                meta_tf = str(
+                    ((meta.get("strategy", {}) or {}).get("timeframe", "")) or ""
+                ).strip()
+            except Exception:
+                meta_tf = ""
+
+        if meta_tf and cfg_tf and meta_tf != cfg_tf:
+            print(
+                f"⚠️  ConfigCheck[{strategy}]: timeframe 不一致 "
+                f"(strategies.{strategy}.timeframe={cfg_tf}, meta={meta_tf}, meta_path={meta_path})"
+            )
+
+        has_direction = bool(scfg.get("has_direction", False))
+        if has_direction and dir_path is None:
+            print(
+                f"⚠️  ConfigCheck[{strategy}]: has_direction=true 但未找到 "
+                "archetypes/direction.yaml (在 stage_root 或 strategies.*.config 下)"
+            )
+
+        if side == "both":
+            print(
+                f"ℹ️  ConfigCheck[{strategy}]: side=both（建议在策略配置显式声明 side: long/short/both）"
+            )
 
 
 def _quality_score_from_event_metrics(
@@ -1594,6 +1713,14 @@ def run_strategy_pipeline(
     config_dir = str(exp_config_dir)  # 后续命令全部用实验目录
     strategies_root = str(exp_strategies_root)
     print(f"\n📦 实验配置隔离: {exp_config_dir} (source={_copy_from})")
+    if bool(scfg.get("has_direction", False)):
+        _dir_path = Path(config_dir) / "archetypes" / "direction.yaml"
+        if not _dir_path.exists():
+            raise ValueError(
+                f"{strategy}: has_direction=true 但缺少配置文件 {_dir_path}. "
+                "方向来源必须来自配置，不再使用 default/fallback。"
+            )
+        print(f"   🧭 Direction source: {_dir_path}")
     stage_stop = str(stage_stop or "full").strip().lower()
     disable_model_training = bool(disable_model_training)
     if disable_model_training:
@@ -4414,6 +4541,11 @@ def _run_fast_month_stage(
         calib_start, calib_end = test_start, test_end
     fast_loop_cfg = cfg.get("fast_loop", {}) or {}
     event_cfg = cfg.get("event_backtest", {}) or {}
+    if isinstance(event_cfg, dict) and "enabled" not in event_cfg:
+        print(
+            "⚠️  event_backtest.enabled 未显式设置；当前按默认 true 处理。"
+            "建议在配置中明确声明。"
+        )
     # Keep legacy path backward compatible: ignore fast_loop toggles there.
     _fast_loop_active = rolling_mode != "legacy"
 
@@ -4672,21 +4804,15 @@ def _run_fast_month_stage(
                 "map_path": ev.get("map_path"),
             }
         )
-        side = (
-            "long"
-            if "-long-" in strat
-            else ("short" if "-short-" in strat else "unknown")
+        side = _resolve_strategy_side(
+            strat, cfg.get("strategies", {}).get(strat, {}) or {}
         )
         _sh = float(m.get("sharpe_r", 0.0) or 0.0)
         _nt = int(m.get("n_trades", 0) or 0)
         active = bool(_sh > enable_threshold and _nt >= min_symbol_trades_soft)
         prev_state = (prev_side_state.get(strat, {}) or {}).get("state", "disabled")
         hard_fail = _sh <= hard_fail_min_sharpe
-        can_carry = (
-            side == "long"
-            and prev_state in {"active", "carry_forward"}
-            and not hard_fail
-        )
+        can_carry = prev_state in {"active", "carry_forward"} and not hard_fail
         state = "active" if active else ("carry_forward" if can_carry else "disabled")
         side_state[strat] = {
             "side": side,
@@ -4725,8 +4851,10 @@ def _run_fast_month_stage(
     selected_strategies: List[str] = []
     for row in ranking_rows:
         st = str(row.get("strategy", ""))
-        side = "long" if "-long-" in st else ("short" if "-short-" in st else "unknown")
+        side = _resolve_strategy_side(st, cfg.get("strategies", {}).get(st, {}) or {})
         if side not in {"long", "short"}:
+            row["selected_for_slot"] = True
+            selected_strategies.append(st)
             continue
         if side_selected[side] >= max_symbols_per_side:
             row["selected_for_slot"] = False
@@ -5067,7 +5195,7 @@ def main():
     # ── 确定策略列表 ──
     if args.all:
         strategies = _filter_strategies_by_direction_scope(
-            list(cfg["strategies"].keys()), strategy_direction_scope
+            list(cfg["strategies"].keys()), strategy_direction_scope, cfg
         )
     else:
         strategies = [args.strategy]
@@ -5077,6 +5205,12 @@ def main():
         p.error(
             f"当前 --all 在 strategy_scope.direction={strategy_direction_scope} 下无可运行策略"
         )
+    _run_config_consistency_checks(
+        cfg=cfg,
+        strategies=strategies,
+        stage=str(args.stage or "full"),
+        dry_run=bool(args.dry_run),
+    )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_summary = []

@@ -42,7 +42,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -74,6 +74,7 @@ from src.time_series_model.core.constitution.add_position_rules import (
 )
 from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.core.constitution.runtime_state import (
+    AddPositionRecord,
     ConstitutionRuntimeState,
 )
 from src.time_series_model.core.constitution.safety_runtime import (
@@ -433,6 +434,15 @@ class PositionSimulator:
             pid = str(row.get("pid") or str(uuid.uuid4())[:12])
             self._positions[pid] = pos
             loaded += 1
+        for pid, pos in self._positions.items():
+            if not bool(pos.get("_is_add_position", False)):
+                continue
+            parent = self._positions.get(str(pos.get("_parent_pid") or ""))
+            if not isinstance(parent, dict):
+                continue
+            se = parent.get("structural_exit")
+            if se and not pos.get("structural_exit"):
+                pos["structural_exit"] = se
         return loaded
 
     def open_position(
@@ -1018,6 +1028,125 @@ class PositionSimulator:
         self._positions[pid] = pos
         self.last_add_reject_reason = ""
         return pid
+
+
+def _count_open_add_legs_for_parent(sim: PositionSimulator, parent_pid: str) -> int:
+    n = 0
+    pp = str(parent_pid)
+    for pos in sim._positions.values():
+        if (
+            bool(pos.get("_is_add_position", False))
+            and str(pos.get("_parent_pid") or "") == pp
+        ):
+            n += 1
+    return n
+
+
+def _rehydrate_add_position_runtime_from_simulator(
+    sim: PositionSimulator, st: ConstitutionRuntimeState
+) -> None:
+    for pid, pos in sim._positions.items():
+        if bool(pos.get("_is_add_position", False)):
+            continue
+        n = _count_open_add_legs_for_parent(sim, str(pid))
+        if n <= 0:
+            continue
+        st.add_position.positions[str(pid)] = AddPositionRecord(
+            position_id=str(pid), add_count=n
+        )
+
+
+def _load_add_position_runtime_from_resume(
+    resume_blob: Dict[str, Any], st: ConstitutionRuntimeState
+) -> int:
+    raw = (resume_blob or {}).get("add_position_state") or {}
+    positions = raw.get("positions") if isinstance(raw, dict) else None
+    if not isinstance(positions, dict):
+        return 0
+    n = 0
+    for pid, row in positions.items():
+        if not isinstance(row, dict):
+            continue
+        st.add_position.positions[str(pid)] = AddPositionRecord(
+            position_id=str(row.get("position_id") or pid),
+            add_count=int(row.get("add_count", 0) or 0),
+            locked_profit=bool(row.get("locked_profit", False)),
+            current_r=(
+                float(row["current_r"])
+                if row.get("current_r") is not None
+                and str(row.get("current_r", "")).strip() != ""
+                else None
+            ),
+            updated_at=(
+                str(row["updated_at"])
+                if isinstance(row.get("updated_at"), str)
+                else None
+            ),
+        )
+        n += 1
+    return n
+
+
+def _collect_open_parent_pids(simulators: Mapping[str, PositionSimulator]) -> Set[str]:
+    out: Set[str] = set()
+    for sim in (simulators or {}).values():
+        if sim is None:
+            continue
+        for pid, pos in sim._positions.items():
+            if not isinstance(pos, dict):
+                continue
+            if not bool(pos.get("_is_add_position", False)):
+                out.add(str(pid))
+    return out
+
+
+def _prune_stale_add_position_records(
+    st: ConstitutionRuntimeState, open_parent_pids: Set[str]
+) -> None:
+    ap = st.add_position.positions
+    for k in list(ap.keys()):
+        if k not in open_parent_pids:
+            del ap[k]
+
+
+def _merge_add_position_runtime_with_open_legs(
+    sim: PositionSimulator, st: ConstitutionRuntimeState
+) -> None:
+    for pid, pos in sim._positions.items():
+        if bool(pos.get("_is_add_position", False)):
+            continue
+        spid = str(pid)
+        open_legs = _count_open_add_legs_for_parent(sim, spid)
+        rec = st.add_position.positions.get(spid)
+        if rec is None:
+            if open_legs > 0:
+                st.add_position.positions[spid] = AddPositionRecord(
+                    position_id=spid, add_count=open_legs
+                )
+            continue
+        rec.add_count = max(int(rec.add_count), open_legs)
+
+
+def _filter_add_position_dict_for_open_parents(
+    full: Dict[str, Any], rows: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    open_parents: Set[str] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        pos = row.get("position") or {}
+        if not isinstance(pos, dict) or bool(pos.get("_is_add_position", False)):
+            continue
+        p = row.get("pid")
+        if p is not None:
+            open_parents.add(str(p))
+    positions = (full or {}).get("positions") or {}
+    if not isinstance(positions, dict):
+        return {"positions": {}}
+    out_pos = {
+        k: v for k, v in positions.items() if k in open_parents and isinstance(v, dict)
+    }
+    return {"positions": out_pos}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2129,6 +2258,14 @@ class EventBacktester:
         _executor: Optional[ConstitutionExecutor] = None
         _runtime_state = ConstitutionRuntimeState()
         _safety_state = SafetyRuntimeState()
+        if resume_state:
+            ap_root = resume_state.get("add_position_state")
+            if isinstance(ap_root, dict) and ap_root.get("positions"):
+                _load_add_position_runtime_from_resume(resume_state, _runtime_state)
+            open_parent_ids = _collect_open_parent_pids(self._simulators)
+            _prune_stale_add_position_records(_runtime_state, open_parent_ids)
+            for _sim in self._simulators.values():
+                _merge_add_position_runtime_with_open_legs(_sim, _runtime_state)
         constitution_path = str(Path("config") / "constitution" / "constitution.yaml")
         try:
             _executor = ConstitutionExecutor(constitution_yaml=constitution_path)

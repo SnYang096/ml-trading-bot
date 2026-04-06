@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 import scripts.auto_research_pipeline as arp
 
 
@@ -304,3 +306,91 @@ def test_fast_month_direction_cadence_stride(tmp_path, monkeypatch):
         assert captured == [
             expect_skip
         ], f"month_index={month_idx} skip_direction_tuning should be {expect_skip}"
+
+
+def test_load_pipeline_config_warns_when_slow_loop_present_in_slow_mode(
+    tmp_path, capsys
+):
+    cfg_path = tmp_path / "slow_warn.yaml"
+    cfg_path.write_text(
+        "\n".join(
+            [
+                "rolling:",
+                "  mode: slow_realistic",
+                "  windows:",
+                "    calibration_months: 3",
+                "    structure_lookback_months: 12",
+                "  slow_realistic:",
+                "    cadence_months: 3",
+                "    triggered_retrain_enabled: true",
+                "slow_loop:",
+                "  cadence_months: 5",
+                "  triggered_retrain:",
+                "    enabled: false",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cfg = arp.load_pipeline_config(cfg_path)
+    out = capsys.readouterr().out
+    assert "rolling.slow_realistic" in out
+    assert cfg["rolling"]["slow_realistic"]["cadence_months"] == 3
+
+
+def test_load_pipeline_config_errors_when_slow_loop_policy_error(tmp_path):
+    cfg_path = tmp_path / "slow_error.yaml"
+    cfg_path.write_text(
+        "\n".join(
+            [
+                "config_contract:",
+                "  slow_loop_policy: error",
+                "rolling:",
+                "  mode: slow_realistic",
+                "  windows:",
+                "    calibration_months: 3",
+                "    structure_lookback_months: 12",
+                "  slow_realistic:",
+                "    cadence_months: 3",
+                "    triggered_retrain_enabled: true",
+                "slow_loop:",
+                "  cadence_months: 6",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        arp.load_pipeline_config(cfg_path)
+
+
+def test_load_pipeline_config_warns_event_backtest_enabled_missing(tmp_path, capsys):
+    cfg_path = tmp_path / "ev_default.yaml"
+    cfg_path.write_text(
+        "\n".join(
+            [
+                "rolling:",
+                "  mode: turbo_fixed_features",
+                "  windows:",
+                "    calibration_months: 3",
+                "    structure_lookback_months: 12",
+                "  turbo_fixed_features:",
+                "    fixed_strategies_root: config/strategies",
+                "    disable_feature_search: true",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cfg = arp.load_pipeline_config(cfg_path)
+    out = capsys.readouterr().out
+    assert "event_backtest.enabled" in out
+    assert cfg["event_backtest"]["enabled"] is True
+
+
+def test_filter_strategies_scope_prefers_explicit_side():
+    cfg = {"strategies": {"bpc": {"side": "long"}, "fer": {"side": "short"}}}
+    got_long = arp._filter_strategies_by_direction_scope(["bpc", "fer"], "long", cfg)
+    got_short = arp._filter_strategies_by_direction_scope(["bpc", "fer"], "short", cfg)
+    assert got_long == ["bpc"]
+    assert got_short == ["fer"]

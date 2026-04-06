@@ -132,6 +132,8 @@ strategies:
 
 # 事件回测 / 交易地图：VWAP·EMA 可向前用更多 1m 历史计算；图上只画回测窗（见 event_backtest.py）
 event_backtest:
+  # 建议显式声明 enabled，避免依赖默认值导致误跑/误停
+  enabled: false
   map_extra_months: 3
 
 output:

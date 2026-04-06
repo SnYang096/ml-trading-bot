@@ -278,6 +278,9 @@ class TradeExecutor:
             pos["_inherit_parent_stop"] = bool(
                 add_ctx.get("inherit_parent_stop", False)
             )
+            _pse = add_ctx.get("parent_structural_exit")
+            if _pse and not pos.get("structural_exit"):
+                pos["structural_exit"] = str(_pse)
         self.position_tracker.add(position_id, pos)
         if add_ctx is not None:
             self.constitution_executor.record_add_position(
@@ -380,6 +383,7 @@ class TradeExecutor:
             "share_parent_exit": bool(add_rules.get("share_parent_exit", True)),
             "inherit_parent_stop": bool(add_rules.get("inherit_parent_stop", False)),
             "parent_stop_loss_price": parent_pos.get("stop_loss_price"),
+            "parent_structural_exit": parent_pos.get("structural_exit"),
         }
 
     def _resolve_parent_position(

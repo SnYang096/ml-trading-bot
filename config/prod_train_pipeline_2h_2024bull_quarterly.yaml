@@ -30,6 +30,9 @@ rolling:
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
     disable_feature_search: true
+
+# rolling_sim 实际读取 rolling.slow_realistic.*；下方 slow_loop 仅供运营/文档契约对照，
+# load_pipeline_config 可校验其与 slow_realistic 是否一致（不直接驱动 rolling_sim）。
 slow_loop:
   cadence_months: 3
   triggered_retrain:

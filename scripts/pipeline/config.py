@@ -51,6 +51,51 @@ def load_pipeline_config(path: Path) -> dict:
     if not fixed_root:
         raise ValueError("rolling.turbo_fixed_features.fixed_strategies_root 不能为空")
 
+    # slow_loop 是运营/文档契约层；rolling_sim 实际读取 rolling.slow_realistic。
+    # 若两层都配置，允许通过 config_contract.slow_loop_policy 选择 warn/error。
+    slow_loop = cfg.get("slow_loop", {}) or {}
+    if not isinstance(slow_loop, dict):
+        slow_loop = {}
+    contract_cfg = cfg.get("config_contract", {}) or {}
+    if not isinstance(contract_cfg, dict):
+        contract_cfg = {}
+    slow_loop_policy = str(
+        contract_cfg.get("slow_loop_policy", "warn") or "warn"
+    ).lower()
+    if slow_loop_policy not in {"warn", "error", "ignore"}:
+        slow_loop_policy = "warn"
+    if mode == "slow_realistic" and slow_loop:
+        mismatches = []
+        if "cadence_months" in slow_loop:
+            try:
+                sl_cad = int(
+                    slow_loop.get("cadence_months", cadence_months) or cadence_months
+                )
+                if sl_cad != cadence_months:
+                    mismatches.append(
+                        f"slow_loop.cadence_months={sl_cad} vs rolling.slow_realistic.cadence_months={cadence_months}"
+                    )
+            except Exception:
+                mismatches.append("slow_loop.cadence_months 非法")
+        trig = slow_loop.get("triggered_retrain")
+        if isinstance(trig, dict) and "enabled" in trig:
+            sl_trig = bool(trig.get("enabled"))
+            sr_trig = bool(slow_realistic.get("triggered_retrain_enabled", True))
+            if sl_trig != sr_trig:
+                mismatches.append(
+                    f"slow_loop.triggered_retrain.enabled={sl_trig} vs rolling.slow_realistic.triggered_retrain_enabled={sr_trig}"
+                )
+        _msg = (
+            "检测到 slow_loop 配置；rolling_sim 在 slow_realistic 模式只读取 "
+            "rolling.slow_realistic.*，slow_loop.* 不会直接生效。"
+        )
+        if mismatches:
+            _msg += " 键值不一致: " + "; ".join(mismatches)
+        if slow_loop_policy == "error":
+            raise ValueError(_msg)
+        if slow_loop_policy == "warn":
+            print(f"⚠️  {path}: {_msg}")
+
     rolling = {
         "mode": mode,
         "windows": {
@@ -71,6 +116,24 @@ def load_pipeline_config(path: Path) -> dict:
         },
     }
     cfg["rolling"] = rolling
+
+    # Event-backtest 契约：默认 true，但建议显式声明 enabled，避免误跑。
+    event_cfg = cfg.get("event_backtest", {}) or {}
+    if not isinstance(event_cfg, dict):
+        event_cfg = {}
+    require_event_enabled = bool(
+        contract_cfg.get("require_event_backtest_enabled", False)
+    )
+    if "enabled" not in event_cfg:
+        _msg = (
+            "event_backtest.enabled 未显式设置；将使用默认值 true。"
+            "建议在配置中明确声明，避免 rolling_sim 误跑/误停。"
+        )
+        if require_event_enabled:
+            raise ValueError(f"{path}: {_msg}")
+        print(f"⚠️  {path}: {_msg}")
+    event_cfg["enabled"] = bool(event_cfg.get("enabled", True))
+    cfg["event_backtest"] = event_cfg
 
     # Fast-loop contract (backward compatible defaults)
     fast_loop = cfg.get("fast_loop", {}) or {}
