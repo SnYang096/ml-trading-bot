@@ -69,9 +69,6 @@ def test_load_pipeline_config_preserves_fast_loop_extras(tmp_path):
                 "  direction_tuning:",
                 "    enabled: true",
                 "    compare_features: false",
-                "    macro_epsilon_grid:",
-                "      enabled: true",
-                "      inner_abs_grid: '0.01'",
             ]
         )
         + "\n",
@@ -82,7 +79,6 @@ def test_load_pipeline_config_preserves_fast_loop_extras(tmp_path):
     assert fl["disable_model_training"] is True
     assert fl["direction_tuning"]["enabled"] is True
     assert fl["direction_tuning"]["compare_features"] is False
-    assert fl["direction_tuning"]["macro_epsilon_grid"]["enabled"] is True
 
 
 def test_fast_month_stage_uses_fast_loop_switches(tmp_path, monkeypatch):

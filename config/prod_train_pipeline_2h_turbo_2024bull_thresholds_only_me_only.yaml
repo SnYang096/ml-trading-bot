@@ -56,8 +56,8 @@ download:
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  bpc:
-    config: config/strategies/bpc
+  me:
+    config: config/strategies/me
     timeframe: 120T
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml

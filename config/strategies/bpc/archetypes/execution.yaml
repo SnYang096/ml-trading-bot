@@ -6,9 +6,9 @@ add_position:
   inherit_parent_stop: true
   max_add_times: 3
   min_current_r_by_add:
-    - 0.5
-    - 1.0
-    - 1.5
+    - 1
+    - 2
+    - 3
   # 父仓 initial_r≈4（4×ATR 止损宽），第 1 档 0.5（ATR）≈ 要求 current_r ≥ 0.5/4 = 0.125R。
   # 若把 min_current_r_unit 改成 initial_r，那列表里的数就直接当 R 门槛用，不再做这次除法。
   min_current_r_unit: atr
@@ -24,7 +24,7 @@ holding:
   time_stop_bars: 0
 stop_loss:
   breakeven:
-    enabled: true
+    enabled: false
     lock_profit_atr: 1.0
     trigger_r: 9
   guardrails:

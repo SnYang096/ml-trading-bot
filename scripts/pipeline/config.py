@@ -165,7 +165,7 @@ def load_pipeline_config(path: Path) -> dict:
         "pcm_eval": {"enabled": _enabled("pcm_eval", True)},
     }
     # Do not drop keys the normalizer does not materialize (direction_tuning,
-    # disable_model_training, macro_epsilon_grid under direction_tuning, etc.).
+    # disable_model_training, etc.).
     for _fk, _fv in fast_loop.items():
         if _fk not in cfg["fast_loop"]:
             cfg["fast_loop"][_fk] = _fv

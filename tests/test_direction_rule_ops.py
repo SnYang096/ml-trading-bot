@@ -54,48 +54,6 @@ def test_dual_series_missing_columns():
     assert (s == 0).all()
 
 
-def test_epsilon_grid_values_from_config():
-    from scripts.tune_direction_macro_epsilon import epsilon_grid_values_from_config
-
-    assert epsilon_grid_values_from_config({"epsilon_grid": "0.1, 0.2"}) == [0.1, 0.2]
-    assert epsilon_grid_values_from_config(
-        {"epsilon_min": 0.0, "epsilon_max": 1.0, "epsilon_steps": 3}
-    ) == [0.0, 0.5, 1.0]
-
-
-def test_inner_outer_abs_grid_values_from_config():
-    from scripts.tune_direction_macro_epsilon import (
-        inner_abs_grid_values_from_config,
-        outer_abs_grid_values_from_config,
-        pick_best_median_band,
-    )
-
-    assert inner_abs_grid_values_from_config({"inner_abs_grid": "0.01, 0.02"}) == [
-        0.01,
-        0.02,
-    ]
-    assert outer_abs_grid_values_from_config({}) == []
-    assert outer_abs_grid_values_from_config({"outer_abs_grid": "0.4,0.5"}) == [
-        0.4,
-        0.5,
-    ]
-    rows = [
-        {
-            "status": "OK",
-            "median_in_direction": 1.0,
-            "inner_abs": 0.01,
-            "outer_abs": 0.1,
-        },
-        {
-            "status": "OK",
-            "median_in_direction": 2.0,
-            "inner_abs": 0.02,
-            "outer_abs": 0.1,
-        },
-    ]
-    assert pick_best_median_band(rows) == (0.02, 0.1)
-
-
 def test_single_position_band_scalar():
     assert single_position_band_scalar(0.0, 0.01, 0.1) == 0
     assert single_position_band_scalar(0.02, 0.01, 0.1) == 1

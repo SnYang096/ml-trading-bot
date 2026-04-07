@@ -328,6 +328,8 @@ class ClosedTrade:
     atr_stop_pct: float = 0.0
     effective_stop_pct: float = 0.0
     sizing_stop_source: str = ""
+    # 平仓时刻是否已触发保本锁（止损价已按 breakeven 规则上移/下移）
+    breakeven_locked_at_exit: bool = False
 
 
 def _resolve_add_position_size_multiplier(
@@ -630,6 +632,7 @@ class PositionSimulator:
                     atr_stop_pct=pos.get("atr_stop_pct", 0.0),
                     effective_stop_pct=pos.get("effective_stop_pct", 0.0),
                     sizing_stop_source=pos.get("sizing_stop_source", ""),
+                    breakeven_locked_at_exit=bool(pos.get("breakeven_locked", False)),
                 )
                 closed.append(trade)
                 self.closed_trades.append(trade)
@@ -638,6 +641,7 @@ class PositionSimulator:
                     parent_close_meta[str(pid)] = {
                         "exit_price": float(exit_price),
                         "normalized_reason": str(normalized_reason),
+                        "breakeven_locked": bool(pos.get("breakeven_locked", False)),
                     }
 
                 # 写入 order_management DB
@@ -701,6 +705,7 @@ class PositionSimulator:
                     atr_stop_pct=pos.get("atr_stop_pct", 0.0),
                     effective_stop_pct=pos.get("effective_stop_pct", 0.0),
                     sizing_stop_source=pos.get("sizing_stop_source", ""),
+                    breakeven_locked_at_exit=bool(meta.get("breakeven_locked", False)),
                 )
                 closed.append(trade)
                 self.closed_trades.append(trade)
@@ -748,6 +753,7 @@ class PositionSimulator:
                 atr_stop_pct=pos.get("atr_stop_pct", 0.0),
                 effective_stop_pct=pos.get("effective_stop_pct", 0.0),
                 sizing_stop_source=pos.get("sizing_stop_source", ""),
+                breakeven_locked_at_exit=bool(pos.get("breakeven_locked", False)),
             )
             closed.append(trade)
             self.closed_trades.append(trade)
@@ -804,6 +810,7 @@ class PositionSimulator:
                 atr_stop_pct=pos.get("atr_stop_pct", 0.0),
                 effective_stop_pct=pos.get("effective_stop_pct", 0.0),
                 sizing_stop_source=pos.get("sizing_stop_source", ""),
+                breakeven_locked_at_exit=bool(pos.get("breakeven_locked", False)),
             )
             closed.append(trade)
             self.closed_trades.append(trade)
@@ -1522,6 +1529,7 @@ class BacktestResult:
                     "atr_stop_pct": round(t.atr_stop_pct, 6),
                     "effective_stop_pct": round(t.effective_stop_pct, 6),
                     "sizing_stop_source": t.sizing_stop_source,
+                    "breakeven_locked_at_exit": t.breakeven_locked_at_exit,
                 }
             )
         df = pd.DataFrame(rows)
@@ -3880,6 +3888,7 @@ def _trade_to_dict(t: ClosedTrade) -> dict:
         "atr_stop_pct": round(t.atr_stop_pct, 6),
         "effective_stop_pct": round(t.effective_stop_pct, 6),
         "sizing_stop_source": t.sizing_stop_source,
+        "breakeven_locked_at_exit": t.breakeven_locked_at_exit,
     }
 
 
