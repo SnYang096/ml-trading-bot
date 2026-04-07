@@ -158,46 +158,32 @@ resource_allocation:
   enabled_archetypes:
     # PCM 联合事件回测策略白名单（与 pipeline strategy_scope 交集生效）
     # 牛市 5x / 长侧实验需启用 long；短侧保持并列以便联合 PCM
-    - bpc-long-120T
-    - fer-long-120T
-    - me-long-120T
-    - me-short-120T
-    - bpc-short-120T
-    - fer-short-120T
+    - bpc
+    - fer
+    - me
 
   per_strategy_limits:
     # ── BPC 方向拆分 (方案A: 共享全局slot互斥竞争) ──
     # bpc-long 和 bpc-short 各独立占 1 slot，全局 4 slots 防止同时过多开仓
-    bpc-long:
+    bpc:
       max_slots: 5 # BPC 方向拆分: long 侧最多 1 slot
       max_risk_per_trade: 0.01 # 肥尾主仓: 首枪 2.00% 风险；加仓次数与 execution.add_position 对齐
       allow_add_position: true # BPC 趋势延续允许加仓
       max_add_times: 3 # 宪法上限；触发与梯度见 archetypes/execution.yaml
-    bpc-short:
-      max_slots: 5 # BPC 方向拆分: short 侧最多 1 slot
-      max_risk_per_trade: 0.01 # 熊市尾部主仓: 首枪改为 2.00% 风险
-      allow_add_position: true
-      max_add_times: 3
+
     # ── ME 方向拆分 ──
-    me-long:
-      max_slots: 3
+    me:
+      max_slots: 5
       max_risk_per_trade: 0.01 # 动量扩散只做加速段, 首枪更轻
       allow_add_position: true # ME 动能扩张允许加仓
       max_add_times: 3 # 与 execution.add_position.max_add_times 对齐；≥3 便于骑乘实验
-    me-short:
-      max_slots: 3 # ME-SHORT: 最多 1 slot (防止过度做空)
-      max_risk_per_trade: 0.01 # 熊市短促脉冲, 保持战术仓位
-      allow_add_position: true # 双边各做 2 次顺势动量扩张加仓
-      max_add_times: 2
+
     # ── FER 方向拆分 ──
-    fer-long:
+    fer:
       max_slots: 3
       max_risk_per_trade: 0.01 # 反转单不承担尾部主仓职责
       allow_add_position: false # FER 反转策略不加仓
-    fer-short:
-      max_slots: 3
-      max_risk_per_trade: 0.01
-      allow_add_position: false
+
     # ── LV (方向中性, 不拆分) ──
     lv:
       max_slots: 0 # LV 快进快出，最多 1 个
@@ -218,4 +204,3 @@ resource_allocation:
     default_side: both
     fer_reverse_allowed: true
     reverse_exempt_families: [fer]
-

@@ -328,10 +328,11 @@ class TradeExecutor:
             archetype=str(intent.archetype),
             current_r=current_r,
             locked_profit=locked_profit,
+            position_action=str(intent.action),
         )
         add_rules = dict(
             self.constitution_executor.resolve_add_position_for_strategy(
-                str(intent.archetype)
+                str(intent.archetype), position_action=str(intent.action)
             )
         )
         _intent_add = (getattr(intent, "execution_profile", {}) or {}).get(

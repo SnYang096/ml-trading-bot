@@ -701,3 +701,44 @@ resource_allocation:
                 locked_profit=True,
             )
         assert exc_info.value.code == "ADD_POSITION_MAX_TIMES"
+
+    def test_validate_add_position_bare_bpc_matches_directional_limits(self, tmp_path):
+        """constitution 仅有 bpc-long 时，家族名 bpc + LONG 应命中加仓上限（与实盘 intent 一致）。"""
+        from src.time_series_model.core.constitution.runtime_state import (
+            AddPositionRecord,
+            ConstitutionRuntimeState,
+        )
+
+        yaml_content = """\
+version: 1
+name: "C_DIR"
+kill_switch:
+  enabled: false
+slots:
+  risk_per_slot: 0.01
+resource_allocation:
+  per_strategy_limits:
+    bpc-long:
+      allow_add_position: true
+      max_add_times: 3
+"""
+        ex = self._make_executor(tmp_path, yaml_content)
+        st = ConstitutionRuntimeState()
+        st.add_position.positions["p1"] = AddPositionRecord(
+            position_id="p1",
+            add_count=1,
+        )
+        ex.validate_add_position(
+            st=st,
+            position_id="p1",
+            archetype="bpc",
+            current_r=2.0,
+            locked_profit=True,
+            position_action="LONG",
+        )
+        assert (
+            ex.resolve_add_position_for_strategy("bpc", position_action="LONG")[
+                "max_add_times"
+            ]
+            == 3
+        )

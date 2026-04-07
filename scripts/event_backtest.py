@@ -901,12 +901,17 @@ class PositionSimulator:
                 archetype=archetype,
                 current_r=current_r,
                 locked_profit=parent_pos.get("breakeven_locked", False),
+                position_action=new_side,
             )
         except ConstitutionViolation:
             self.last_add_reject_reason = "constitution_reject"
             return None
 
-        add_rules = dict(executor.resolve_add_position_for_strategy(archetype))
+        add_rules = dict(
+            executor.resolve_add_position_for_strategy(
+                archetype, position_action=new_side
+            )
+        )
         _intent_add = (getattr(intent, "execution_profile", {}) or {}).get(
             "add_position"
         ) or {}
@@ -928,7 +933,9 @@ class PositionSimulator:
         _risk_parent = float(parent_pos.get("initial_risk_distance", 0) or 0)
         if _atr_parent > 0 and _risk_parent > 0:
             signal["parent_initial_r"] = _risk_parent / _atr_parent
-        _risk_frac = float(executor.resolve_risk_for_strategy(archetype))
+        _risk_frac = float(
+            executor.resolve_risk_for_strategy(archetype, position_action=new_side)
+        )
         _current_lev = 0.0
         _current_notional_frac = 0.0
         for _pos in same_sym_dir:

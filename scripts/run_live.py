@@ -52,6 +52,23 @@ def _load_strategy_timeframe(strategies_root: str, strategy_name: str) -> str:
     return "240T"
 
 
+def _me_strategy_package_name(strategies_root: str) -> str:
+    """On-disk ME 配置目录：优先 ``me/``（研究仓布局），否则 ``me-long/``（旧 live 布局）。"""
+    for name in ("me", "me-long"):
+        base = os.path.join(strategies_root, name)
+        if os.path.isdir(base) and (
+            os.path.isfile(os.path.join(base, "meta.yaml"))
+            or os.path.isdir(os.path.join(base, "archetypes"))
+        ):
+            return name
+    return "me-long"
+
+
+def _me_enabled_in_allowlist(enabled_archetypes: List[str]) -> bool:
+    """宪法 ``enabled_archetypes`` 里写家族名 ``me`` 或与旧版 ``me-long`` / ``me-short`` 等价。"""
+    return bool(set(enabled_archetypes) & {"me", "me-long", "me-short"})
+
+
 def _parse_symbols(raw: str) -> List[str]:
     return [s.strip().upper() for s in (raw or "").split(",") if s.strip()]
 
@@ -316,7 +333,7 @@ def _setup_three_strategies(
         "MLBOT_CONSTITUTION_YAML",
         os.path.join(config_root, "constitution", "constitution.yaml"),
     )
-    _ALL_ARCHETYPES = ["bpc", "me-long", "fer", "lv"]
+    _ALL_ARCHETYPES = ["bpc", "me", "fer", "lv"]
     _const_cfg = {}
     try:
         with open(constitution_yaml_path, "r", encoding="utf-8") as _f:
@@ -338,8 +355,9 @@ def _setup_three_strategies(
     )
 
     # ── 1. 从 meta.yaml 读取各策略 timeframe (不再硬编码) ──
+    me_pkg = _me_strategy_package_name(strategies_root)
     tf_bpc = _load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
-    tf_me = _load_strategy_timeframe(strategies_root, "me-long")  # 默认 60T
+    tf_me = _load_strategy_timeframe(strategies_root, me_pkg)
     tf_fer = _load_strategy_timeframe(strategies_root, "fer")  # 默认 240T
     tf_lv = _load_strategy_timeframe(strategies_root, "lv")  # 默认 15T
 
@@ -364,15 +382,15 @@ def _setup_three_strategies(
             bar_minutes=bar_minutes_bpc,
         )
         _tf_map["bpc"] = tf_bpc
-    if "me-long" in enabled_archetypes:
-        _strategy_map["me-long"] = GenericLiveStrategy(
-            strategy_name="me-long",
+    if _me_enabled_in_allowlist(enabled_archetypes):
+        _strategy_map[me_pkg] = GenericLiveStrategy(
+            strategy_name=me_pkg,
             strategies_root=strategies_root,
             trade_size=trade_size,
             primary_timeframe=tf_me,
             bar_minutes=bar_minutes_me,
         )
-        _tf_map["me-long"] = tf_me
+        _tf_map[me_pkg] = tf_me
     if "fer" in enabled_archetypes:
         _strategy_map["fer"] = GenericLiveStrategy(
             strategy_name="fer",
@@ -394,15 +412,16 @@ def _setup_three_strategies(
 
     # 将1个变量方便后续使用
     bpc = _strategy_map.get("bpc")
-    me = _strategy_map.get("me-long")
+    me = _strategy_map.get(me_pkg)
     fer = _strategy_map.get("fer")
     lv = _strategy_map.get("lv")
 
     logger.info("✅ 策略初始化完成: %s", list(_strategy_map.keys()))
 
     # ── 2. 创建 PCM 仲裁层 (注册策略 + timeframe 绑定) ──
+    # 同时列出 me / me-long，与磁盘包名、旧版优先级字符串兼容
     pcm = LivePCM(
-        archetype_priority=["LV", "FER", "ME-LONG", "BPC"],
+        archetype_priority=["LV", "FER", "ME-LONG", "ME", "BPC"],
         constitution_yaml=constitution_yaml_path,
     )
     for _name, _strat in _strategy_map.items():
@@ -415,7 +434,7 @@ def _setup_three_strategies(
     # ── 3. 创建特征计算器 (per-symbol, per-timeframe) ──
     bpc_archetypes = os.path.join(strategies_root, "bpc", "archetypes")
     fer_archetypes = os.path.join(strategies_root, "fer", "archetypes")
-    me_archetypes = os.path.join(strategies_root, "me-long", "archetypes")
+    me_archetypes = os.path.join(strategies_root, me_pkg, "archetypes")
     lv_archetypes = os.path.join(strategies_root, "lv", "archetypes")
 
     # 预提取 FER 特征集 (用于合并到 4H FC)

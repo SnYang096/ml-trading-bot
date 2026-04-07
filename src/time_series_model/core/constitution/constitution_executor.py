@@ -143,18 +143,36 @@ def _parse_iso(s: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _strategy_keys(archetype: str) -> list[str]:
-    """Best-effort key candidates for strategy config lookup."""
+def _strategy_keys(archetype: str, position_action: Optional[str] = None) -> list[str]:
+    """Best-effort key candidates for per_strategy_limits lookup.
+
+    PCM / TradeIntent often register a family-only archetype (e.g. ``bpc``) while
+    constitution.yaml uses directional keys (``bpc-long``, ``bpc-short``). When
+    ``position_action`` is LONG/BUY/SHORT, prepend ``{family}-long|short`` so
+    add-position limits and risk caps resolve like LivePCM._limit_cfg_for_archetype.
+    """
     key = str(archetype or "").strip().lower()
     parts = [p for p in key.split("-") if p]
-    cands: list[str] = [key]
-    if parts and parts[-1].endswith("t") and parts[-1][:-1].isdigit():
-        cands.append("-".join(parts[:-1]))
-        parts = parts[:-1]
-    if len(parts) >= 2 and parts[1] in {"long", "short"}:
-        cands.append("-".join(parts[:2]))
-    if parts:
-        cands.append(parts[0])
+    work = list(parts)
+    if work and work[-1].endswith("t") and work[-1][:-1].isdigit():
+        work = work[:-1]
+    has_direction_token = len(work) >= 2 and work[1] in {"long", "short"}
+
+    head: list[str] = []
+    act = str(position_action or "").upper().strip()
+    if not has_direction_token and work and act in ("LONG", "BUY", "SHORT"):
+        side = "long" if act in ("LONG", "BUY") else "short"
+        head.append(f"{work[0]}-{side}")
+
+    cands: list[str] = head + [key]
+    parts_tail = list(parts)
+    if parts_tail and parts_tail[-1].endswith("t") and parts_tail[-1][:-1].isdigit():
+        cands.append("-".join(parts_tail[:-1]))
+        parts_tail = parts_tail[:-1]
+    if len(parts_tail) >= 2 and parts_tail[1] in {"long", "short"}:
+        cands.append("-".join(parts_tail[:2]))
+    if parts_tail:
+        cands.append(parts_tail[0])
     out: list[str] = []
     seen = set()
     for k in cands:
@@ -215,7 +233,9 @@ class ConstitutionExecutor:
         ra = obj.get("resource_allocation") or {}
         return dict(ra.get("per_strategy_limits") or {})
 
-    def resolve_add_position_for_strategy(self, archetype: str) -> dict:
+    def resolve_add_position_for_strategy(
+        self, archetype: str, position_action: Optional[str] = None
+    ) -> dict:
         """Compatibility accessor for add-position config.
 
         Global add_position_rules has been removed. This now returns a minimal
@@ -224,7 +244,7 @@ class ConstitutionExecutor:
         """
         limits = self._resolve_per_strategy_limits()
         strat_cfg: Dict[str, Any] = {}
-        for k in _strategy_keys(archetype):
+        for k in _strategy_keys(archetype, position_action):
             cand = limits.get(k) or {}
             if isinstance(cand, dict) and cand:
                 strat_cfg = cand
@@ -234,7 +254,9 @@ class ConstitutionExecutor:
             "max_add_times": int(strat_cfg.get("max_add_times", 1) or 1),
         }
 
-    def resolve_risk_for_strategy(self, archetype: str) -> float:
+    def resolve_risk_for_strategy(
+        self, archetype: str, position_action: Optional[str] = None
+    ) -> float:
         """Return effective risk fraction for a strategy.
 
         Logic: min(risk_per_slot, strategy.max_risk_per_trade)
@@ -245,7 +267,7 @@ class ConstitutionExecutor:
         risk_per_slot = float(slots.get("risk_per_slot", 0.01))
         limits = self._resolve_per_strategy_limits()
         strat = {}
-        for k in _strategy_keys(archetype):
+        for k in _strategy_keys(archetype, position_action):
             cand = limits.get(k) or {}
             if isinstance(cand, dict) and cand:
                 strat = cand
@@ -433,12 +455,13 @@ class ConstitutionExecutor:
         archetype: Optional[str],
         current_r: Optional[float],
         locked_profit: Optional[bool] = None,
+        position_action: Optional[str] = None,
     ) -> None:
         # 1. Check per-strategy allow_add_position
         arch_key = str(archetype or "").strip().lower()
         limits = self._resolve_per_strategy_limits()
         strat_cfg = {}
-        for k in _strategy_keys(arch_key):
+        for k in _strategy_keys(arch_key, position_action):
             cand = limits.get(k) or {}
             if isinstance(cand, dict) and cand:
                 strat_cfg = cand
