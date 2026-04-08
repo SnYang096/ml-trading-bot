@@ -5,7 +5,7 @@ name: me-short
 description: |
   MomentumExpansion Short archetype: 向下流动性加速 + 波动扩张驱动。
   核心特征：流动性加速 + 波动扩张 (atr/range/volume)。
-  与 me-long 共用相同特征集，做空视角下负相关特征会被 LightGBM 自动识别。
+  ME 策略特征集（config/strategies/me）；做空视角下负相关特征会被 LightGBM 自动识别。
 
 feature_pipeline:
   exclude_columns:
@@ -98,7 +98,7 @@ feature_pipeline:
 
     # ========== VWAP ==========
     - vwap_position_f
-    # 与 BPC 对齐：宏观典型价 VWAP 相对位置（gate 语义锚点 + BTC 锚定 macro_tp_vwap_anchor）
+    # 与 BPC 对齐：宏观典型价 VWAP 相对位置（gate / direction；锚定见 meta macro_tp_vwap_anchor，默认各 symbol 自有）
     - macro_tp_vwap_1200_position_f
 
     # ========== 交叉特征 ==========

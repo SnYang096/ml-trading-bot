@@ -55,7 +55,14 @@ LIVE_STRATEGIES = LIVE_CONFIG / "strategies"
 LIVE_ROOT = PROJECT_ROOT / "live"
 
 # 部署的策略列表 (不含 LV, 暂缓)
-DEFAULT_STRATEGIES = ["bpc", "me-long", "fer"]
+DEFAULT_STRATEGIES = ["bpc", "me", "fer"]
+
+
+def _normalize_deploy_strategy(slug: str) -> str:
+    """研究仓目录为 config/strategies/me/；``me-long`` 视为别名。"""
+    s = str(slug).strip().lower()
+    return "me" if s == "me-long" else s
+
 
 # 需要同步的文件 (archetypes 目录 + 顶层配置)
 ARCHETYPE_FILES = [
@@ -515,7 +522,8 @@ def main():
     )
     args = p.parse_args()
 
-    strategies = args.strategy or DEFAULT_STRATEGIES
+    raw = args.strategy or DEFAULT_STRATEGIES
+    strategies = list(dict.fromkeys(_normalize_deploy_strategy(s) for s in raw))
 
     print("=" * 70)
     print("🚀 DEPLOY: 研究 config → 实盘 config")

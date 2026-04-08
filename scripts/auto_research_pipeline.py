@@ -1735,6 +1735,12 @@ def run_strategy_pipeline(
         """
         import pandas as pd
 
+        if bool(scfg.get("skip_locked_prefilter_reanchor", False)):
+            print(
+                "   ⏭️  skip_locked_prefilter_reanchor: 跳过 locked prefilter 重锚定（保留手写语义阈值）"
+            )
+            return 0
+
         pf_path = Path(config_dir) / "archetypes" / "prefilter.yaml"
         logs_path = Path(prepare_dir) / "features_labeled.parquet"
         if not pf_path.exists() or not logs_path.exists():
@@ -2796,6 +2802,7 @@ def run_strategy_pipeline(
                     str(f.get("id", "")).strip()
                     for f in _locked_filters
                     if str(f.get("id", "")).strip()
+                    and not bool(f.get("skip_plateau", False))
                 ]
                 _targets = list(dict.fromkeys(_targets))
             if not _targets:

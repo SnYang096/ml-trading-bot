@@ -83,21 +83,35 @@ def merge_locked_prefilter_rules(
     return {"added": added, "total": len(merged_rules)}
 
 
+def _locked_prefilter_features(rules: List[Any]) -> set:
+    """Top-level locked rules: include ``feature`` and features inside ``any_of`` children."""
+    feats: set = set()
+    for r in rules:
+        if not isinstance(r, dict) or not r.get("locked"):
+            continue
+        if r.get("feature"):
+            feats.add(r["feature"])
+        subs = r.get("any_of")
+        if isinstance(subs, list):
+            for sub in subs:
+                if isinstance(sub, dict) and sub.get("feature"):
+                    feats.add(sub["feature"])
+    return feats
+
+
 def detect_locked_template(prefilter_raw: Dict[str, Any]) -> str:
     rules = prefilter_raw.get("rules") or []
     if not isinstance(rules, list):
         return "unknown"
-    feats = {r.get("feature") for r in rules if isinstance(r, dict) and r.get("locked")}
+    feats = _locked_prefilter_features(rules)
     if {
         "fer_signed_efficiency_pct",
         "sr_strength_max",
         "dist_to_nearest_sr",
     }.issubset(feats):
         return "fer"
-    if {
-        "me_atr_pct",
-        "me_cvd_alignment",
-    }.issubset(feats) and (
+    # ME：ATR 带 + 加速度（signed 或 long/short 拆分）；不要求 me_cvd_alignment（精简 prefilter 时仍识别）
+    if "me_atr_pct" in feats and (
         "me_accel_5k_long" in feats
         or "me_accel_5k_short" in feats
         or "me_accel_5k" in feats
@@ -119,6 +133,99 @@ def detect_locked_template(prefilter_raw: Dict[str, Any]) -> str:
     return "unknown"
 
 
+def _apply_value_transform(value: float, transform: str) -> float:
+    t = str(transform or "identity").strip().lower()
+    if t in {"identity", "none"}:
+        return float(value)
+    if t == "abs":
+        return float(abs(value))
+    if t in {"negate", "neg"}:
+        return float(-value)
+    if t in {"neg_abs", "negative_abs"}:
+        return float(-abs(value))
+    raise ValueError(f"unsupported value_transform: {transform}")
+
+
+def _apply_config_bindings(
+    out: Dict[str, Any],
+    *,
+    params: Dict[str, float],
+    bindings: List[Dict[str, Any]],
+    strict: bool = True,
+) -> Dict[str, Any]:
+    rules = out.get("rules", [])
+    if not isinstance(rules, list):
+        raise ValueError("prefilter.yaml rules 必须为 list")
+    if not bindings:
+        raise ValueError("writeback bindings 为空")
+
+    seen_match: Dict[str, bool] = {}
+    seen_param: Dict[str, bool] = {}
+    for b in bindings:
+        if not isinstance(b, dict):
+            continue
+        p = str(b.get("param", "")).strip()
+        if not p:
+            continue
+        seen_match.setdefault(p, False)
+        seen_param.setdefault(p, False)
+        if p in params:
+            seen_param[p] = True
+
+    for r in rules:
+        if not isinstance(r, dict) or not r.get("locked"):
+            continue
+        targets: List[Tuple[Dict[str, Any], bool]] = [(r, False)]
+        subs = r.get("any_of")
+        if isinstance(subs, list):
+            for sub in subs:
+                if isinstance(sub, dict):
+                    targets.append((sub, True))
+        for node, is_sub in targets:
+            feat = node.get("feature")
+            op = node.get("operator")
+            if not feat or not op:
+                continue
+            for b in bindings:
+                if not isinstance(b, dict):
+                    continue
+                p = str(b.get("param", "")).strip()
+                if not p:
+                    continue
+                if p not in params:
+                    continue
+                bf = b.get("feature")
+                bo = b.get("operator")
+                target = str(b.get("target", "any")).strip().lower()
+                if bf and str(bf) != str(feat):
+                    continue
+                if bo and str(bo) != str(op):
+                    continue
+                if target == "rule" and is_sub:
+                    continue
+                if target in {"any_of", "sub"} and not is_sub:
+                    continue
+                transformed = _apply_value_transform(
+                    float(params[p]), str(b.get("value_transform", "identity"))
+                )
+                node["value"] = transformed
+                seen_match[p] = True
+
+    if strict:
+        missing_params = [k for k, v in seen_param.items() if not v]
+        if missing_params:
+            raise ValueError(
+                f"writeback bindings 需要的参数缺失: {missing_params}; got={sorted(params.keys())}"
+            )
+        missing_match = [k for k, v in seen_match.items() if not v]
+        if missing_match:
+            raise ValueError(
+                f"writeback bindings 未命中任何 locked 规则: {missing_match}"
+            )
+
+    return out
+
+
 def apply_locked_thresholds(
     prefilter_raw: Dict[str, Any],
     *,
@@ -137,12 +244,23 @@ def apply_locked_thresholds(
     bpc_pullback_score_min: float | None = None,
     bpc_pullback_depth_max: float | None = None,
     bpc_recovery_min: float | None = None,
+    params: Dict[str, float] | None = None,
+    bindings: List[Dict[str, Any]] | None = None,
+    strict_bindings: bool = True,
     template: str | None = None,
 ) -> Dict[str, Any]:
     out = json.loads(json.dumps(prefilter_raw))
     rules = out.get("rules", [])
     if not isinstance(rules, list):
         raise ValueError("prefilter.yaml rules 必须为 list")
+
+    if bindings:
+        return _apply_config_bindings(
+            out,
+            params={k: float(v) for k, v in (params or {}).items()},
+            bindings=bindings,
+            strict=strict_bindings,
+        )
 
     tpl = (template or detect_locked_template(out)).lower()
     if tpl == "unknown":
@@ -206,22 +324,97 @@ def apply_locked_thresholds(
         return out
 
     if tpl == "me":
-        required = {
+        # 旧版「压缩语义」ME prefilter（atr + compression_duration + …），与动量 ME 共用 template 名 me
+        is_compression = any(
+            isinstance(r, dict)
+            and r.get("locked")
+            and r.get("feature") == "compression_duration"
+            for r in rules
+        )
+        if is_compression:
+            required = {
+                "atr_lower": atr_lower,
+                "atr_upper": atr_upper,
+                "compression_min": compression_min,
+                "decay_upper": decay_upper,
+                "oi_min": oi_min,
+            }
+            missing_params = [k for k, v in required.items() if v is None]
+            if missing_params:
+                raise ValueError(f"ME(compression) tuned 参数缺失: {missing_params}")
+            seen = {
+                "atr_lower": False,
+                "atr_upper": False,
+                "compression": False,
+                "decay": False,
+                "oi": False,
+            }
+            for r in rules:
+                if not isinstance(r, dict) or not r.get("locked"):
+                    continue
+                feat = r.get("feature")
+                op = r.get("operator")
+                if feat in ("atr_percentile", "me_atr_pct") and op == ">=":
+                    r["value"] = float(atr_lower)
+                    seen["atr_lower"] = True
+                elif feat in ("atr_percentile", "me_atr_pct") and op == "<=":
+                    r["value"] = float(atr_upper)
+                    seen["atr_upper"] = True
+                elif feat == "compression_duration" and op == ">=":
+                    r["value"] = float(compression_min)
+                    seen["compression"] = True
+                elif feat == "recent_compression_decay" and op == "<=":
+                    r["value"] = float(decay_upper)
+                    seen["decay"] = True
+                elif feat == "oi_compression_score" and op == ">=":
+                    r["value"] = float(oi_min)
+                    seen["oi"] = True
+            missing = [k for k, v in seen.items() if not v]
+            if missing:
+                raise ValueError(
+                    f"prefilter.yaml 缺少必要 ME(compression) locked 规则: {missing}"
+                )
+            return out
+
+        wants_cvd = any(
+            isinstance(r, dict)
+            and r.get("locked")
+            and r.get("feature") == "me_cvd_alignment"
+            for r in rules
+        )
+        required: Dict[str, Any] = {
             "atr_lower": atr_lower,
             "atr_upper": atr_upper,
             "me_accel_abs_min": me_accel_abs_min,
-            "me_cvd_min": me_cvd_min,
         }
+        if wants_cvd:
+            required["me_cvd_min"] = me_cvd_min
         missing_params = [k for k, v in required.items() if v is None]
         if missing_params:
             raise ValueError(f"ME tuned 参数缺失: {missing_params}")
 
-        seen = {
+        seen: Dict[str, bool] = {
             "atr_lower": False,
             "atr_upper": False,
             "accel": False,
-            "cvd": False,
         }
+        if wants_cvd:
+            seen["cvd"] = False
+
+        def _apply_me_accel_to_rule(feat: str, op: str, rdict: Dict[str, Any]) -> None:
+            if feat == "me_accel_5k_long" and op == ">=":
+                rdict["value"] = float(abs(float(me_accel_abs_min)))
+                seen["accel"] = True
+            elif feat == "me_accel_5k_short" and op == ">=":
+                rdict["value"] = float(abs(float(me_accel_abs_min)))
+                seen["accel"] = True
+            elif feat == "me_accel_5k" and op == ">=":
+                rdict["value"] = float(abs(float(me_accel_abs_min)))
+                seen["accel"] = True
+            elif feat == "me_accel_5k" and op == "<=":
+                rdict["value"] = float(-abs(float(me_accel_abs_min)))
+                seen["accel"] = True
+
         for r in rules:
             if not isinstance(r, dict) or not r.get("locked"):
                 continue
@@ -233,23 +426,19 @@ def apply_locked_thresholds(
             elif feat in ("atr_percentile", "me_atr_pct") and op == "<=":
                 r["value"] = float(atr_upper)
                 seen["atr_upper"] = True
-            elif feat == "me_accel_5k_long" and op == ">=":
-                r["value"] = float(abs(float(me_accel_abs_min)))
-                seen["accel"] = True
-            elif feat == "me_accel_5k_short" and op == ">=":
-                r["value"] = float(abs(float(me_accel_abs_min)))
-                seen["accel"] = True
-            elif feat == "me_accel_5k" and op == ">=":
-                # Backward compatibility for old long-side configs.
-                r["value"] = float(abs(float(me_accel_abs_min)))
-                seen["accel"] = True
-            elif feat == "me_accel_5k" and op == "<=":
-                # Backward compatibility for old short-side configs.
-                r["value"] = float(-abs(float(me_accel_abs_min)))
-                seen["accel"] = True
             elif feat == "me_cvd_alignment" and op == ">=":
                 r["value"] = float(me_cvd_min)
                 seen["cvd"] = True
+            elif r.get("any_of") and isinstance(r["any_of"], list):
+                for sub in r["any_of"]:
+                    if not isinstance(sub, dict):
+                        continue
+                    sf, so = sub.get("feature"), sub.get("operator")
+                    if sf and so:
+                        _apply_me_accel_to_rule(str(sf), str(so), sub)
+            else:
+                if feat and op:
+                    _apply_me_accel_to_rule(str(feat), str(op), r)
         missing = [k for k, v in seen.items() if not v]
         if missing:
             raise ValueError(f"prefilter.yaml 缺少必要 ME locked 规则: {missing}")
@@ -362,9 +551,26 @@ def build_override_prefilter(
     output_path: Path,
     params: Dict[str, float],
     *,
+    bindings: List[Dict[str, Any]] | None = None,
+    strict_bindings: bool = True,
     template: str | None = None,
 ) -> Path:
     base = yaml.safe_load(prod_prefilter_path.read_text(encoding="utf-8")) or {}
+    if bindings:
+        tuned = apply_locked_thresholds(
+            base,
+            params=params,
+            bindings=bindings,
+            strict_bindings=strict_bindings,
+            template=template,
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            yaml.safe_dump(tuned, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        return output_path
+
     tpl = (template or _infer_template_from_params(params)).lower()
     if tpl == "unknown":
         tpl = detect_locked_template(base)

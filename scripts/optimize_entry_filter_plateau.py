@@ -743,8 +743,11 @@ def main() -> int:
 
     # 确定要扫描的 filter 列表
     # locked filter 即使 enabled=false 也要参与扫描（支持后续自动回启）。
+    # skip_plateau: 显式不参与 plateau（用于 A/B：保持 enabled=false 不被月度校准洗回）
     filters_to_scan = []
     for f in entry_cfg.get("filters", []):
+        if bool(f.get("skip_plateau", False)):
+            continue
         if not f.get("enabled", True) and not f.get("locked", False):
             continue
         if args.filter and f["id"] != args.filter:

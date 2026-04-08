@@ -1,0 +1,52 @@
+# BPC 语义链（粗筛，与 entry 分工）
+# ---------------------------------------------------------------------------
+# 1) 先 breakout：bpc_is_after_breakout — 近窗 Donchian 突破语境已成立。
+# 2) 再在 pullback：bpc_score_pullback — 当前落在可识别回踩段（阈值取 entry 三臂最低档 0.22，避免挡掉臂 C）。
+# 3) 回撤粗上限：bpc_pullback_depth — 仅防「踩穿过深」；浅回撤的收紧在 entry（≤0.40~0.48）。
+# 4) 弱化强 continue（粗）：bpc_score_continuation 上限 — 比 entry（≤0.32~0.38）松，粗层先挡一轮追价盘。
+# 5) 恢复下限：bpc_recovery_strength — 你设的 0.12 表示允许「刚探头」的回踩承接，与 entry 吸收条件互补。
+# ---------------------------------------------------------------------------
+# 已去掉主线 meta 的 volume_compression / dir_flip：本 lab 粗筛纯 BPC 因果链；树边界若需可再加回（非 locked）。
+# 特征来自 features_prefilter（含 bpc_soft_phase_f）；delta/footprint/VPIN 等吸收在 entry。
+
+rules:
+  - feature: bpc_is_after_breakout
+    operator: ">="
+    value: 0.99
+    rationale: 语义锁定：近窗须出现过突破语境，再谈回踩吸收
+    locked: true
+    lock_reason: BPC 语义锚点：breakout → pullback 因果序
+  - feature: bpc_score_pullback
+    operator: ">="
+    value: 0.22
+    rationale: 与 entry 三臂最低门槛对齐，避免 prefilter 比 entry 更严
+    locked: true
+    lock_reason: BPC 语义锚点：pullback 阶段成立
+  - feature: bpc_pullback_depth
+    operator: <=
+    value: 0.72
+    rationale: 粗层防深踩穿；entry 再收紧到 0.40~0.48（且须 locked 三件套供 BPC 模板识别）
+    locked: true
+    lock_reason: BPC 语义锚点：回踩深度粗上限
+  - feature: bpc_score_continuation
+    operator: <=
+    value: 0.55
+    rationale: 粗层弱化强延续；entry 用更严 0.32~0.38
+    locked: true
+    lock_reason: BPC 语义锚点：continuation 不主导（粗）
+  - feature: bpc_recovery_strength
+    operator: ">="
+    value: 0.12
+    rationale: 允许极轻「恢复探头」，与 pullback 内吸收叙事一致；强承接在 entry
+    locked: true
+    lock_reason: BPC 语义锚点：恢复强度下限
+
+last_evaluation:
+  timestamp: "2026-04-08"
+  data_source: features_labeled.parquet
+  n_rows: 0
+  baseline_bad_rate: 0.0
+  baseline_median_rr: 0.0
+  positive_signals: []
+  anti_signals: []
+  absence_signals: []

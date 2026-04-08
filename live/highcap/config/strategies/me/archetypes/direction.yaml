@@ -1,6 +1,6 @@
 # ME 方向特征候选声明
 # 职责: 声明待验证的方向候选特征 (--compare-features 的输入)
-# 对应生产配置: config/strategies/me-long/archetypes/direction.yaml (选中的规则)
+# 对应研发配置: config/strategies/me/archetypes/direction.yaml
 #
 # 用法:
 #   # 默认模式: 只对比本文件 candidates 中的特征
@@ -16,7 +16,7 @@
 #   # 加 --temporal 查看时间稳定性
 #   ... --compare-features --temporal
 
-description: "ME 方向特征候选 — 动能方向 (跟钱走)"
+description: "ME 方向 — 动能级联与 VWAP1200 相对位置同号（生产规则见 direction_rules）"
 
 # ════════════════════════════════════════════════════════════════
 # 候选特征 (输入) — 脚本从这里读取待评估的特征列表
@@ -65,22 +65,24 @@ candidates:
 # 数据源: features_labeled.parquet, 157,086 行, 2023-01 ~ 2025-12
 # 基线: always-long  Median RR=+0.0593, Bad Rate=44.2%
 
-# ── direction_rules (自动生成 by --promote 2026-02-24) ──
-# 选择标准: med_rr>0 + p<0.05 + short%>=20% + temporal CV<1.5 + 未衰减
-# 级联规则: 规则1覆盖的行不再用规则2, 依此类推
+# ── direction_rules (生产) ──
+# 与 config/strategies/bpc 对齐：动能信号级联须与 macro_tp_vwap_1200_position 多空带同号；
+# Gate 死区 ±0.005 仍过滤近 VWAP；execution structural_exit vwap1200 与方向一致。
 direction_rules:
-  - method: feature_sign
-    feature: me_delta_net_flow
-    transform: sign
-    description: "规则1: me_delta_net_flow (med_rr=+0.1273, p=0.005, short=43%)"
-  - method: feature_sign
-    feature: me_cvd_alignment
-    transform: center_sign
-    description: "规则2: me_cvd_alignment (med_rr=+0.1273, p=0.005, short=43%)"
-  - method: feature_sign
-    feature: macd_signal_atr
-    transform: sign
-    description: "规则3: macd_signal_atr (med_rr=+0.0659, p=0.005, short=49%)"
+  - id: me_flow_cvd_macd_vwap1200_align
+    method: signal_match_position_band
+    description: "ME 净流→CVD→MACD signal 级联；须落在 VWAP1200 多/空带通内（默认各 symbol 自有 VWAP，见 meta）"
+    signal_rules:
+      - feature: me_delta_net_flow
+        transform: sign
+      - feature: me_cvd_alignment
+        transform: center_sign
+      - feature: macd_signal_atr
+        transform: sign
+    position_band:
+      feature: macro_tp_vwap_1200_position
+      inner_abs: 0
+      outer_abs: 1
 
 last_evaluation:
   # ── 自动生成 by --compare-features (2026-03-08) ──

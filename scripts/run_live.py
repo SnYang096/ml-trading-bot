@@ -61,12 +61,18 @@ def _me_strategy_package_name(strategies_root: str) -> str:
             or os.path.isdir(os.path.join(base, "archetypes"))
         ):
             return name
-    return "me-long"
+    return "me"
 
 
 def _me_enabled_in_allowlist(enabled_archetypes: List[str]) -> bool:
-    """宪法 ``enabled_archetypes`` 里写家族名 ``me`` 或与旧版 ``me-long`` / ``me-short`` 等价。"""
-    return bool(set(enabled_archetypes) & {"me", "me-long", "me-short"})
+    """宪法 enabled_archetypes 中含 me / me-long / me-short 或 ``me-*`` / ``me-long-*`` / ``me-short-*`` 即启用 ME 包。"""
+    for raw in enabled_archetypes:
+        a = str(raw).lower().strip()
+        if a in {"me", "me-long", "me-short"}:
+            return True
+        if a.startswith(("me-long-", "me-short-", "me-")):
+            return True
+    return False
 
 
 def _parse_symbols(raw: str) -> List[str]:
@@ -419,9 +425,9 @@ def _setup_three_strategies(
     logger.info("✅ 策略初始化完成: %s", list(_strategy_map.keys()))
 
     # ── 2. 创建 PCM 仲裁层 (注册策略 + timeframe 绑定) ──
-    # 同时列出 me / me-long，与磁盘包名、旧版优先级字符串兼容
+    # ME 磁盘包名为 me/（旧版 me-long/）；优先级含 ME 与 ME-LONG 兼容历史 intent
     pcm = LivePCM(
-        archetype_priority=["LV", "FER", "ME-LONG", "ME", "BPC"],
+        archetype_priority=["LV", "FER", "ME", "ME-LONG", "BPC"],
         constitution_yaml=constitution_yaml_path,
     )
     for _name, _strat in _strategy_map.items():
@@ -810,7 +816,7 @@ def _run_retrain_check() -> None:
 
     strategy_names = list(cfg.get("strategies", {}).keys())
     if not strategy_names:
-        strategy_names = ["bpc", "fer", "me-long"]
+        strategy_names = ["bpc", "fer", "me"]
 
     for strat in strategy_names:
         try:

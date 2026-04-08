@@ -1,8 +1,8 @@
-# ============================================================
-# 上线前训练流水线 (2H only, BPC-only)
-# 基于 prod_train_pipeline_2h_turbo_2024bull_thresholds_only
-# 仅保留 bpc-short-120T / bpc-long-120T
-# ============================================================
+# BPC pullback lab — 极致「回撤不破」（唯一保留的实验根；原 ①②③ 分层 lab 已移除）
+# - entry：bpc_pullback_depth / score_pullback / score_continuation / macro_tp_vwap_1200_position 精确定义（见该目录 entry_filters 头注释）
+# - gate：收窄 VWAP 死区至 ±0.001，避免主线 ±0.005 挡掉贴锚回踩
+# - prefilter：略松于 entry，与 ③ 同思路；skip_locked_prefilter_reanchor 保留手写 recovery/depth
+# 策略根：config/strategies_pullback_lab_extreme_pullback/bpc（须先 ./scripts/repair_bpc_pullback_lab_symlinks.sh）
 
 dates:
   start_date: "2023-01-01"
@@ -16,14 +16,12 @@ rolling:
   mode: turbo_fixed_features
   windows:
     calibration_months: 6
-    #  structure_lookback_months：慢速滚动里的「结构快照往回看多久」（你现在是 turbo → 基本不用）。
     structure_lookback_months: 12
   turbo_fixed_features:
-    fixed_strategies_root: config/strategies
+    fixed_strategies_root: config/strategies_pullback_lab_extreme_pullback
     disable_feature_search: true
 
 fast_loop:
-  # 快变量月度校准链的全局开关: true=每层都禁用树模型训练
   disable_model_training: true
   step_months: 1
   threshold_calibration:
@@ -36,14 +34,9 @@ fast_loop:
     enabled: false
   pcm_eval:
     enabled: false
-  # 方向调优默认每月执行；若需降成本可设 cadence_months: N（每 N 个 rolling 月跑一次）
   direction_tuning:
     enabled: true
-    # cadence_months: 1  # 默认 1；勿与 rolling.windows.calibration_months（标定窗口长度）混用
-    # true：跑 direction_strict_validation --compare-features --temporal（工作区 features_direction.yaml）
-    # false：仅 Phase1/2 验证 archetypes/direction.yaml，不读候选特征表
     compare_features: false
-    # false：direction_strict_validation 不 --promote，仅验证 archetypes/direction.yaml
     promote_after_validate: false
 
 universe_group:
@@ -56,8 +49,9 @@ download:
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  me:
-    config: config/strategies/me
+  bpc:
+    config: config/strategies_pullback_lab_extreme_pullback/bpc
+    skip_locked_prefilter_reanchor: true
     timeframe: 120T
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
@@ -95,7 +89,6 @@ strategies:
       entry_filter:
         meta_algorithm: false
         archetype_plateau: true
-        # Entry archetype plateau: z-test 仍必须显著才 promote；略放宽 p / 样本与高原窗
         significance_p: 0.10
         significance_min_trades: 4
         plateau_window: 4
@@ -117,13 +110,9 @@ strategies:
       deploy:
         min_trades: 50
 
-# 事件回测 / 交易地图：VWAP·EMA 可向前用更多 1m 历史计算；图上只画回测窗（见 event_backtest.py）
 event_backtest:
-  # 建议显式声明 enabled，避免依赖默认值导致误跑/误停
   enabled: true
-  # map_extra_months：事件回测交易地图的「为画 VWAP 多向前取多少月 1m」（仅事件回测 + 出图时有意义）。
   map_extra_months: 4
 
 output:
-  # 与 BPC-only 分离，避免 rolling_sim 与 bpc 同目录互相覆盖
-  history_dir: results/me/turbo-rolling-sim
+  history_dir: results/bpc/turbo-rolling-sim-pullback-lab-extreme-pullback

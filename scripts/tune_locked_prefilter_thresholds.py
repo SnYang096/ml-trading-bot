@@ -49,8 +49,14 @@ class CaseParams:
     bpc_pullback_score_min: float = 0.0
     bpc_pullback_depth_max: float = 0.0
     bpc_recovery_min: float = 0.0
+    custom_params: Dict[str, float] | None = None
 
     def key(self) -> str:
+        if self.custom_params:
+            parts = [
+                f"{k}={float(v):.4g}" for k, v in sorted(self.custom_params.items())
+            ]
+            return "cfg{" + ", ".join(parts) + "}"
         if self.mode == "me":
             return (
                 f"atr[{self.atr_lower:.4g},{self.atr_upper:.4g}]_"
@@ -88,6 +94,19 @@ def parse_text_list(text: str) -> List[str]:
     return out
 
 
+def parse_values_list(v: Any) -> List[float]:
+    if isinstance(v, str):
+        return parse_float_list(v)
+    if isinstance(v, (list, tuple)):
+        out: List[float] = []
+        for x in v:
+            out.append(float(x))
+        return out
+    if isinstance(v, (int, float)):
+        return [float(v)]
+    raise ValueError(f"unsupported values payload: {type(v).__name__}")
+
+
 def list_strategy_runs(history_dir: Path, strategy: str) -> List[str]:
     strat_dir = history_dir / strategy
     if not strat_dir.exists():
@@ -96,9 +115,16 @@ def list_strategy_runs(history_dir: Path, strategy: str) -> List[str]:
 
 
 def build_override_prefilter(
-    prod_prefilter_path: Path, params: CaseParams, output_path: Path
+    prod_prefilter_path: Path,
+    params: CaseParams,
+    output_path: Path,
+    *,
+    writeback_bindings: List[Dict[str, Any]] | None = None,
+    strict_bindings: bool = True,
 ) -> Path:
-    if params.mode == "me":
+    if params.custom_params:
+        payload = dict(params.custom_params)
+    elif params.mode == "me":
         payload = {
             "atr_lower": params.atr_lower,
             "atr_upper": params.atr_upper,
@@ -123,6 +149,8 @@ def build_override_prefilter(
         prod_prefilter_path,
         output_path,
         payload,
+        bindings=writeback_bindings,
+        strict_bindings=strict_bindings,
         template=params.mode,
     )
 
@@ -339,8 +367,23 @@ def main() -> int:
         else:
             template = "fer"
 
+    writeback_bindings = tcfg.get("writeback_bindings", []) or []
+    strict_bindings = bool(tcfg.get("writeback_strict", True))
+    generic_search_space = tcfg.get("search_space", {}) or {}
+
     cases: List[CaseParams] = []
-    if template == "me":
+    if (
+        isinstance(generic_search_space, dict)
+        and generic_search_space
+        and isinstance(writeback_bindings, list)
+        and writeback_bindings
+    ):
+        keys = [str(k) for k in generic_search_space.keys()]
+        values_lists = [parse_values_list(generic_search_space[k]) for k in keys]
+        for combo in itertools.product(*values_lists):
+            params_map = {k: float(v) for k, v in zip(keys, combo)}
+            cases.append(CaseParams(mode=template, custom_params=params_map))
+    elif template == "me":
         atr_lows = parse_float_list(
             str(tcfg.get("atr_lower_values", args.atr_lower_values))
         )
@@ -492,7 +535,11 @@ def main() -> int:
         case_dir = out_dir / f"case_{idx:03d}"
         case_dir.mkdir(parents=True, exist_ok=True)
         override_path = build_override_prefilter(
-            prod_prefilter, case, case_dir / "prefilter_locked_override.yaml"
+            prod_prefilter,
+            case,
+            case_dir / "prefilter_locked_override.yaml",
+            writeback_bindings=writeback_bindings if writeback_bindings else None,
+            strict_bindings=strict_bindings,
         )
 
         per_window: List[Dict[str, Any]] = []
@@ -546,6 +593,9 @@ def main() -> int:
             "bpc_pullback_score_min": case.bpc_pullback_score_min,
             "bpc_pullback_depth_max": case.bpc_pullback_depth_max,
             "bpc_recovery_min": case.bpc_recovery_min,
+            "custom_params_json": json.dumps(
+                case.custom_params or {}, ensure_ascii=False
+            ),
             **agg,
             "windows": per_window,
         }
@@ -601,6 +651,7 @@ def main() -> int:
                 "bpc_pullback_score_min",
                 "bpc_pullback_depth_max",
                 "bpc_recovery_min",
+                "custom_params_json",
                 "score",
                 "median_sharpe",
                 "positive_ratio",
@@ -631,6 +682,7 @@ def main() -> int:
                     r["bpc_pullback_score_min"],
                     r["bpc_pullback_depth_max"],
                     r["bpc_recovery_min"],
+                    r["custom_params_json"],
                     r["score"],
                     r["median_sharpe"],
                     r["positive_ratio"],
@@ -644,7 +696,9 @@ def main() -> int:
 
     print("\nTop 5 cases:")
     for i, r in enumerate(summary_rows[:5], 1):
-        if r["mode"] == "me":
+        if (r.get("custom_params_json") or "{}") not in {"{}", ""}:
+            param_desc = f"custom={r.get('custom_params_json')}"
+        elif r["mode"] == "me":
             param_desc = (
                 f"atr=[{r['atr_lower']:.3g},{r['atr_upper']:.3g}] "
                 f"accel_abs>={r['me_accel_abs_min']:.3g} "

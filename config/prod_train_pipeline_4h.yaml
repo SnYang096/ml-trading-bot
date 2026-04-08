@@ -160,67 +160,7 @@ download:
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  bpc-short-240T:
-    config: config/strategies/bpc-short-240T
-    timeframe: 240T
-    dates:
-      holdout_months: 12
-      validation_months: 4
-    features_gate: features.yaml
-    labels_gate: labels_rr_extreme.yaml
-    has_prefilter: true
-    has_direction: false
-    kpi_gates:
-      prefilter:
-        min_pass_rate: 0.05
-        min_rows: 10
-        target_trades_min: 35
-        target_trades_max: 260
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
-        stability_penalty: 0.0
-        enforce_locked_rules_in_experiment: true
-        locked_rules_source: production_prefilter
-        locked_threshold_tuning:
-          enabled: false
-          mode: auto_if_locked
-          skip_if_cached: false
-          max_cases: 12
-          min_trades_target: 60
-          trade_penalty: 0.0025
-          bpc_pullback_score_min_values: 0.40,0.45,0.50
-          bpc_pullback_depth_max_values: 0.55,0.60,0.65
-          bpc_recovery_min_values: 0.50,0.55,0.60
-          target_trades_min: 35
-          target_trades_max: 260
-          trade_penalty_low: 0.002
-          trade_penalty_high: 0.0011
-          stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
-      entry_filter:
-        target_trades_min: 35
-        target_trades_max: 260
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
-        stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
-        min_score_improvement: 0.005
-      gate:
-        require_positive_effect: true
-        min_combined_pass_rate: 0.3
-      backtest:
-        min_trades: 50
-      deploy:
-        min_trades: 50
-    simple_execution:
-      sl_r: 4.0
-      tp_r: 8.0
-      timeout_bars: 500
-  bpc-long-240T:
+  bpc:
     config: config/strategies/bpc-long-240T
     timeframe: 240T
     dates:
@@ -280,72 +220,7 @@ strategies:
       sl_r: 4.0
       tp_r: 8.0
       timeout_bars: 500
-  fer-short-240T:
-    config: config/strategies/fer-short-240T
-    timeframe: 240T
-    dates:
-      holdout_months: 12
-      validation_months: 4
-    features_gate: features.yaml
-    labels_gate: labels_rr_extreme.yaml
-    has_prefilter: true
-    has_direction: false
-    kpi_gates:
-      prefilter:
-        min_pass_rate: 0.05
-        min_rows: 300
-        target_trades_min: 40
-        target_trades_max: 240
-        trade_penalty_low: 0.0021
-        trade_penalty_high: 0.0012
-        stability_penalty: 0.0
-        enforce_locked_rules_in_experiment: true
-        locked_rules_source: production_prefilter
-        locked_threshold_tuning:
-          enabled: false
-          mode: auto_if_locked
-          skip_if_cached: false
-          max_cases: 12
-          min_trades_target: 70
-          trade_penalty: 0.0025
-          fer_eff_pct_lower_values: 0.0,0.05
-          fer_eff_pct_upper_values: 0.30,0.40
-          sr_strength_min_values: 0.45,0.55
-          dist_to_sr_atr_max_values: 0.8,1.0
-          sqs_quality_min_values: 0.50,0.60
-          target_trades_min: 40
-          target_trades_max: 240
-          trade_penalty_low: 0.0021
-          trade_penalty_high: 0.0012
-          stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
-      gate:
-        require_positive_effect: true
-        min_combined_pass_rate: 0.3
-        stat_fallback_on_empty: true
-        stat_fallback_max_rules: 3
-        stat_fallback_min_source_features: 2
-      entry_filter:
-        target_trades_min: 40
-        target_trades_max: 240
-        trade_penalty_low: 0.0021
-        trade_penalty_high: 0.0012
-        stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
-        min_score_improvement: 0.005
-      backtest:
-        min_trades: 50
-      deploy:
-        min_trades: 50
-    simple_execution:
-      sl_r: 3.0
-      tp_r: 6.0
-      timeout_bars: 120
-  fer-long-240T:
+  fer:
     config: config/strategies/fer-long-240T
     timeframe: 240T
     dates:
@@ -410,68 +285,7 @@ strategies:
       sl_r: 3.0
       tp_r: 6.0
       timeout_bars: 120
-  me-short-240T:
-    config: config/strategies/me-short-240T
-    timeframe: 240T
-    dates:
-      holdout_months: 12
-      validation_months: 4
-    features_gate: features.yaml
-    labels_gate: labels_rr_extreme.yaml
-    has_prefilter: true
-    has_direction: false
-    kpi_gates:
-      prefilter:
-        min_pass_rate: 0.05
-        min_rows: 200
-        target_trades_min: 30
-        target_trades_max: 200
-        trade_penalty_low: 0.0022
-        trade_penalty_high: 0.0013
-        stability_penalty: 0.0
-        enforce_locked_rules_in_experiment: true
-        locked_rules_source: production_prefilter
-        locked_threshold_tuning:
-          enabled: false
-          mode: auto_if_locked
-          skip_if_cached: false
-          max_cases: 12
-          min_trades_target: 55
-          trade_penalty: 0.0025
-          atr_lower_values: 0.45,0.55
-          atr_upper_values: 0.88,0.92
-          me_accel_abs_min_values: 0.10,0.14
-          me_cvd_min_values: 0.55,0.65
-          target_trades_min: 30
-          target_trades_max: 200
-          trade_penalty_low: 0.0022
-          trade_penalty_high: 0.0013
-          stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
-        deny_rate_max: 0.97
-      gate:
-        require_positive_effect: true
-        min_combined_pass_rate: 0.2
-      entry_filter:
-        target_trades_min: 30
-        target_trades_max: 200
-        trade_penalty_low: 0.0022
-        trade_penalty_high: 0.0013
-        stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
-        min_score_improvement: 0.005
-      backtest:
-        min_trades: 50
-      deploy:
-        min_trades: 50
-    shap_override:
-      stability_threshold: 0.5
-      top_k: 25
-  me-long-240T:
+  me:
     config: config/strategies/me-long-240T
     timeframe: 240T
     dates:

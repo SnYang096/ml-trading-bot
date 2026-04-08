@@ -15,3 +15,8 @@ strategy:
   
   # 默认时间粒度（研发 + 实盘统一）
   timeframe: "60T"  # 1小时，ME 动量扩张适合更快的时间粒度
+
+  # false：gate / direction / structural_exit 用的 macro_tp_vwap_1200_position 按各 symbol 自身 VWAP。
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

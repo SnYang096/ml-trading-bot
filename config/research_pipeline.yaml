@@ -921,7 +921,7 @@ strategies:
       top_k: 25
 
   me-long-120T:
-    config: config/strategies/me-long-120T
+    config: config/strategies/me
     timeframe: "120T"
     dates:
       holdout_months: 9

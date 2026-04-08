@@ -61,18 +61,21 @@ candidates:
 # ════════════════════════════════════════════════════════════════
 # 尚未评估, 运行上方命令后此处会自动填充
 
-# ── direction_rules (手动指定, 匹配实盘) ──
-# BPC 方向 = 结构突破方向, 不应被统计优化
-# bpc_score_continuation (center_sign) 被拒绝: short%=89% > 80% 常数偏差护栏
+# ── direction_rules (生产, 与 config/strategies/bpc/archetypes/direction.yaml 一致) ──
+# 突破→MACD 级联须与 macro_tp_vwap_1200_position 带通同号；与 execution structural_exit vwap1200 对齐。
 direction_rules:
-  - method: feature_sign
-    feature: bpc_breakout_direction
-    transform: raw
-    description: "Donchian 20-bar 突破方向 [-1/+1], BPC 核心方向信号"
-  - method: feature_sign
-    feature: macd_atr
-    transform: sign
-    description: "MACD/ATR 动量方向 (兜底, 覆盖 breakout_direction=0 的样本)"
+  - id: bpc_breakout_macd_vwap1200_align
+    method: signal_match_position_band
+    description: "Donchian 突破优先，MACD 兜底；须落在 VWAP 多/空带通内"
+    signal_rules:
+      - feature: bpc_breakout_direction
+        transform: raw
+      - feature: macd_atr
+        transform: sign
+    position_band:
+      feature: macro_tp_vwap_1200_position
+      inner_abs: 0
+      outer_abs: 1
 
 last_evaluation:
   # ── 自动生成 by --compare-features (2026-03-08) ──

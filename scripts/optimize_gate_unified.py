@@ -1619,6 +1619,12 @@ def _promote_gate_to_archetypes(
             continue
 
         status = opt.get("status", "")
+        # 优化器对 frozen 规则跳过调参，结果里 status=frozen；必须原样保留 YAML，
+        # 不能走下方「locked 优化失败 → disabled」分支（否则会误伤语义锁定规则）。
+        if status == "frozen" or bool(rule.get("frozen")):
+            kept_rules.append(rule)
+            continue
+
         rec = opt.get("recommended_threshold")
 
         if status not in _VALID_OPT_STATUSES or rec is None:

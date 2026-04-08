@@ -23,13 +23,19 @@ optimization:
         - 3.0
       step: 0.5
 stop_loss:
-  initial_r: 2.0
+  breakeven:
+    enabled: true
+    lock_profit_atr: 0.75
+    trigger_r: 2.5
+  initial_r: 3.0
   guardrails:
     min_stop_pct: 0.006
     max_stop_pct: 0.10
+  structural_exit: vwap1200
   trailing:
-    activation_r: 1.5
-    trail_r: 1.5
+    enabled: true
+    activation_r: 2.0
+    trail_r: 2.5
   type: trailing
 take_profit:
   enabled: false
@@ -44,8 +50,5 @@ add_position:
   max_add_leverage_step: [0.9, 0.7]
   min_current_r_by_add: [1.0, 2.0]
   trigger:
-    type: me_atr_step_add
-    atr_step: 0.5
-    require_momentum_sign: true
-    breakout_recent_extreme_max: 0.10
-version: 32
+    type: float_r_ladder_only
+version: 34

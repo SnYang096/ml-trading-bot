@@ -1,7 +1,6 @@
-# ME-LONG Archetype Prefilter (auto-generated)
+# ME Prefilter（双边动量扩张）— archetype 环境门槛，多空由 direction 决定
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-03-13
-# 数据源: features_labeled.parquet, 112361 行
+# 源自自动生成底稿 (2026-03-13)；加速度规则已改为多空任一满足。
 
 rules:
   - feature: me_atr_pct
@@ -15,16 +14,23 @@ rules:
     value: 0.92
     locked: true
     lock_reason: "ME语义：避免极端尾段过热后追单"
-  - feature: me_accel_5k_long
-    operator: ">="
-    value: 0.10
+
+  # 上行或下行扩张强度（me_accel_5k_split_f）；事件侧若仅有 signed me_accel_5k 可改用 bilateral any_of 该列
+  - any_of:
+      - feature: me_accel_5k_long
+        operator: ">="
+        value: 0.10
+      - feature: me_accel_5k_short
+        operator: ">="
+        value: 0.10
     locked: true
-    lock_reason: "ME-Long语义：要求中短周期加速度为正，确认上行动能推进"
+    lock_reason: "ME语义：确认存在单向动能扩张（多或空），非方向判定"
+
   - feature: me_cvd_alignment
     operator: ">="
     value: 0.55
     locked: true
-    lock_reason: "ME-Long语义：价格与资金流方向一致，避免无量上涨噪声"
+    lock_reason: "ME语义：价流短期一致（涨时同向吸货/跌时同向抛压），双边均要求参与确认"
 
 last_evaluation:
   # ── 自动生成 (2026-03-13) ──

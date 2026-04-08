@@ -156,12 +156,9 @@ slots:
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
   enabled_archetypes:
-    - bpc-long-240T
-    - bpc-short-240T
-    - me-long-60T
-    - me-short-60T
-    - fer-long-240T
-    - fer-short-240T
+    - bpc
+    - me
+    - fer
 
   per_strategy_limits:
     bpc-long:
@@ -169,26 +166,12 @@ resource_allocation:
       max_risk_per_trade: 0.02
       allow_add_position: true
       max_add_times: 5
-    bpc-short:
-      max_slots: 1
-      max_risk_per_trade: 0.02
-      allow_add_position: true
-      max_add_times: 5
-    me-long:
+    me:
       max_slots: 1
       max_risk_per_trade: 0.02
       allow_add_position: true
       max_add_times: 2
-    me-short:
-      max_slots: 1
-      max_risk_per_trade: 0.02
-      allow_add_position: true
-      max_add_times: 2
-    fer-long:
-      max_slots: 1
-      max_risk_per_trade: 0.02
-      allow_add_position: false
-    fer-short:
+    fer:
       max_slots: 1
       max_risk_per_trade: 0.02
       allow_add_position: false

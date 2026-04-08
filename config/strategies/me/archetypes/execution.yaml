@@ -17,7 +17,7 @@ add_position:
   sizing_mode: fixed_multiplier
   trigger:
     # float_r_ladder_only = 浮盈 R 阶梯（事件回测）；bpc_follow_signal = 仅 PCM 再次意图时加仓
-    type: me_atr_step_add
+    type: float_r_ladder_only
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
@@ -28,14 +28,14 @@ stop_loss:
   breakeven:
     enabled: true
     lock_profit_atr: 1
-    trigger_r: 4
+    trigger_r: 9
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
   initial_r: 4.0
   trailing:
     enabled: true
-    activation_r: 4
+    activation_r: 9
     trail_r: 4
   type: trailing
 take_profit:

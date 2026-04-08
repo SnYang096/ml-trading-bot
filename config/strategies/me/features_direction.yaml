@@ -1,6 +1,6 @@
 # ME 方向特征候选声明
 # 职责: 声明待验证的方向候选特征 (--compare-features 的输入)
-# 对应生产配置: config/strategies/me-long/archetypes/direction.yaml (选中的规则)
+# 对应配置: config/strategies/me/archetypes/direction.yaml
 #
 # 用法:
 #   # 默认模式: 只对比本文件 candidates 中的特征

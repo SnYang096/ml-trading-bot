@@ -23,7 +23,7 @@ label_generator:
     horizon: 50
     filter_good_only: true  # 只返回 GOOD 样本
     direction_aware: true  # per-bar direction from direction.yaml
-    strategy: me-long  # load config/strategies/me-long/archetypes/direction.yaml
+    strategy: me  # load config/strategies/me/archetypes/direction.yaml
 
 # 标签元信息
 label_meta:

@@ -1,12 +1,13 @@
 name: me_short_prefilter
 description: 'ME-Short Prefilter 特征: 向下 ME 的背景条件特征。
 
-  与 me-long 相同特征集，但 prefilter 规则会从做空角度自动发现。
+  与 ME 主 features 相同特征集，但 prefilter 规则会从做空角度自动发现。
 
   '
 feature_pipeline:
   requested_features:
     - market_cap_normalized_orderflow_f
+    # 下列 ME 模块产出列被 archetypes/prefilter.yaml 直接引用（勿删以免 prefilter 缺列全拒单）
     - me_soft_phase_f
     - me_accel_5k_split_f
     - me_context_f

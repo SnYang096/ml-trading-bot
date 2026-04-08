@@ -8,7 +8,7 @@
 
 支持多策略 PCM 仲裁 (同实盘 run_live.py):
   - 多策略注册 (BPC + FER + ME)
-  - 多 timeframe 特征计算 (BPC/FER=240T, ME=60T)
+  - 多 timeframe 特征计算（各策略 timeframe 优先读 meta.yaml）
   - LivePCM 优先级仲裁 + Regime 感知缩放
   - 跨 symbol slot 控制
 
@@ -1657,34 +1657,6 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _load_strategy_timeframes() -> Dict[str, str]:
-    """从 research_pipeline.yaml 动态加载策略 timeframe 映射"""
-    import yaml
-
-    _cache_key = "_strategy_timeframes"
-    if hasattr(_load_strategy_timeframes, _cache_key):
-        return getattr(_load_strategy_timeframes, _cache_key)
-
-    fallback = {"me-long": "60T", "fer": "240T", "bpc": "240T", "lv": "15T"}
-    try:
-        cfg_path = Path("config") / "research_pipeline.yaml"
-        if cfg_path.exists():
-            with open(cfg_path) as f:
-                cfg = yaml.safe_load(f)
-            strats = cfg.get("strategies", {})
-            mapping = {}
-            for s_name, s_cfg in strats.items():
-                tf = s_cfg.get("timeframe", "240T")
-                mapping[s_name.lower()] = tf
-            if mapping:
-                setattr(_load_strategy_timeframes, _cache_key, mapping)
-                return mapping
-    except Exception:
-        pass
-    setattr(_load_strategy_timeframes, _cache_key, fallback)
-    return fallback
-
-
 def _tf_to_minutes(tf: str) -> int:
     """'15T' → 15, '60T' → 60, '240T' → 240"""
     tf = tf.strip().upper()
@@ -1695,17 +1667,54 @@ def _tf_to_minutes(tf: str) -> int:
     return int(tf)
 
 
-def _get_bar_minutes(strategy: str) -> int:
+def _timeframe_from_strategy_meta(strategy: str, strategies_root: str) -> Optional[str]:
+    """从策略目录 meta.yaml 读取 timeframe（与 run_live / backtest_execution_layer 对齐）。"""
+    import yaml
+
+    meta_path = Path(strategies_root) / strategy / "meta.yaml"
+    if not meta_path.is_file():
+        return None
+    try:
+        meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+        tf = meta.get("timeframe")
+        if isinstance(tf, str) and tf.strip():
+            return tf.strip()
+        st = meta.get("strategy")
+        if isinstance(st, dict):
+            tf = st.get("timeframe")
+            if isinstance(tf, str) and tf.strip():
+                return tf.strip()
+    except Exception:
+        return None
+    return None
+
+
+def _get_bar_minutes(
+    strategy: str, *, strategies_root: str = "config/strategies"
+) -> int:
     """策略 → 信号时钟分钟数"""
-    mapping = _load_strategy_timeframes()
-    tf = mapping.get(strategy.lower(), "240T")
-    return _tf_to_minutes(tf)
+    return _tf_to_minutes(_get_timeframe(strategy, strategies_root=strategies_root))
 
 
-def _get_timeframe(strategy: str) -> str:
-    """策略 → timeframe string"""
-    mapping = _load_strategy_timeframes()
-    return mapping.get(strategy.lower(), "240T")
+# 缺失 meta timeframe 时每个 (strategies_root, strategy) 只 warn 一次
+_TIMEFRAME_FALLBACK_WARNED: Set[Tuple[str, str]] = set()
+
+
+def _get_timeframe(strategy: str, *, strategies_root: str = "config/strategies") -> str:
+    """策略 → timeframe：仅策略目录 meta.yaml（顶层或 strategy.timeframe）；缺失则 240T 并打一次 warning。"""
+    meta_tf = _timeframe_from_strategy_meta(strategy, strategies_root)
+    if meta_tf:
+        return meta_tf
+    key = (strategies_root, strategy)
+    if key not in _TIMEFRAME_FALLBACK_WARNED:
+        _TIMEFRAME_FALLBACK_WARNED.add(key)
+        logger.warning(
+            "strategy %r: no timeframe in %s/%s/meta.yaml — using 240T",
+            strategy,
+            strategies_root,
+            strategy,
+        )
+    return "240T"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1720,12 +1729,12 @@ class EventBacktester:
     与实盘一致的架构:
       1. LivePCM 仲裁 (全局 slot 控制, 优先级排序, Regime 感知)
       2. 多策略 GenericLiveStrategy.decide() 信号生成 (BPC + FER + ME)
-      3. 多 timeframe 特征计算 (BPC/FER=240T, ME=60T)
+      3. 多 timeframe 特征计算（timeframe 优先来自各策略 meta.yaml）
       4. PositionSimulator: 1min bar 持仓管理
       5. 跨 symbol 时间线交叉处理 (同实盘顺序)
 
     用法:
-        bt = EventBacktester(strategies=["bpc","fer","me-long"], live_root="live/highcap")
+        bt = EventBacktester(strategies=["bpc", "fer", "me"], live_root="live/highcap")
         result = bt.run(symbols=["BTCUSDT", ...], days=180)
         result.print_report()
     """
@@ -1751,8 +1760,8 @@ class EventBacktester:
         self._tf_map: Dict[str, str] = {}  # {strategy: "240T"}
         self._bm_map: Dict[str, int] = {}  # {strategy: 240}
         for s in self.strategy_names:
-            self._tf_map[s] = _get_timeframe(s)
-            self._bm_map[s] = _get_bar_minutes(s)
+            self._tf_map[s] = _get_timeframe(s, strategies_root=self.strategies_root)
+            self._bm_map[s] = _get_bar_minutes(s, strategies_root=self.strategies_root)
 
         # 主 bar 分钟数 (position simulator default)
         self._primary_bar_minutes = max(self._bm_map.values())
@@ -3123,7 +3132,8 @@ def generate_trading_map_html(
     _STRAT_COLORS: dict = {
         "bpc": "#3274D9",  # 蓝
         "fer": "#B877D9",  # 紫
-        "me-long": "#FF9830",  # 橙
+        "me": "#FF9830",  # 橙
+        "me-long": "#FF9830",  # 橙（别名）
         "lv": "#73BF69",  # 绿
     }
     _STRAT_COLOR_DEFAULT = "#aaaaaa"
@@ -3846,7 +3856,8 @@ def main():
     if args.trading_map:
         # 根据策略 timeframe 选择 K 线频率
         tf_to_freq = {"15T": "15min", "60T": "1h", "120T": "2h", "240T": "4h"}
-        primary_tf = _get_timeframe(strategies[0])
+        _sr_map = args.strategies_root or "config/strategies"
+        primary_tf = _get_timeframe(strategies[0], strategies_root=_sr_map)
         map_freq = tf_to_freq.get(primary_tf, "4h")
         generate_trading_map_html(
             result,
