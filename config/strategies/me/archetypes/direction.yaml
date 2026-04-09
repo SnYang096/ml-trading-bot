@@ -1,33 +1,29 @@
-# ME 方向特征候选声明
-# 职责: 声明待验证的方向候选特征 (--compare-features 的输入)
-# 对应生产配置: config/strategies/me-long/archetypes/direction.yaml (选中的规则)
+# ME 生产方向 — 与 BPC 同构：级联信号须与 macro_tp_vwap_1200_position 带通同号，
+# 与 execution structural_exit vwap1200（多 pv<0 / 空 pv>0）及 gate 宏观死区语义一致。
 #
-# 用法:
-#   # 默认模式: 只对比本文件 candidates 中的特征
-#   python scripts/direction_strict_validation.py \
-#       --logs results/train_final_xxx/me/features_labeled.parquet \
-#       --strategy me --compare-features
-#
-#   # 发现模式: 扫描全部数值特征 (169+), 用于发现新候选
-#   python scripts/direction_strict_validation.py \
-#       --logs results/train_final_xxx/me/features_labeled.parquet \
-#       --strategy me --compare-features --all-features
-#
-#   # 加 --temporal 查看时间稳定性
-#   ... --compare-features --temporal
+# 级联语义（为何不用 me_delta_net_flow 打头）：
+# - ME 的核心是「扩张加速度」me_soft_phase 里的 me_accel_5k（价速变化相对 ATR），sign 直接对应扩张方向。
+# - me_delta_net_flow 更偏订单流净方向，在单边趋势里易长期同号，级联时若放第一会掩盖后面规则且不够「ME 专属」。
+# - me_cvd_alignment 用 center_sign：>0.5 价流一致偏多、<0.5 偏空；与 prefilter 里参与确认一致，作第二棒。
+# - macd_atr 与 BPC 兜底一致，在 accel≈0、CVD 中性时给慢速趋势方向。
 
-description: "ME 方向特征候选 — 动能方向 (跟钱走)"
+description: "ME 方向 — 扩张加速度优先，价流对齐次之，MACD 兜底；与 VWAP1200 带通同号"
 
 direction_rules:
-  - method: feature_sign
-    feature: me_delta_net_flow
-    transform: sign
-    description: "规则1: me_delta_net_flow (med_rr=+0.1273, p=0.005, short=43%)"
-  - method: feature_sign
-    feature: me_cvd_alignment
-    transform: center_sign
-    description: "规则2: me_cvd_alignment (med_rr=+0.1273, p=0.005, short=43%)"
-  - method: feature_sign
-    feature: macd_signal_atr
-    transform: sign
-    description: "规则3: macd_signal_atr (med_rr=+0.0659, p=0.005, short=49%)"
+  - id: me_accel_cvd_macd_vwap1200_align
+    method: signal_match_position_band
+    description: "me_accel_5k 定扩张方向 → me_cvd_alignment → macd_atr；须落在 VWAP 多/空带通内"
+    signal_rules:
+      - feature: me_accel_5k
+        transform: sign
+      - feature: me_cvd_alignment
+        transform: center_sign
+      - feature: macd_atr
+        transform: sign
+    position_band:
+      feature: macro_tp_vwap_1200_position
+      inner_abs: 0
+      outer_abs: 1
+
+# 方向候选扫描（可选）仍可用 scripts/direction_strict_validation.py --strategy me --compare-features；
+# 需在实验分支用原子 feature_sign 规则对比；生产以本文件为准。

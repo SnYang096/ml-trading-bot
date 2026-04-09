@@ -467,3 +467,4 @@ live/*/data/
 *.db
 !*.dbproj.schemaview
 log.txt
+log.me.txt
