@@ -43,7 +43,7 @@ DEFAULT_DECAY_WINDOW = 20  # 衰减计算窗口
 DEFAULT_DIVERGENCE_WINDOW = 10  # 背离检测窗口
 
 EPS = 1e-9
-FEATURE_VERSION = "2.1"
+FEATURE_VERSION = "2.2"
 
 # CVD 活跃度检测参数
 CVD_ACTIVITY_QUANTILE = 0.05  # 低于历史 5th percentile 视为"无流动性"
@@ -97,6 +97,7 @@ def _safe_divide(numerator, denominator, fill: float = 0.0):
         # === Impulse 失败 ===
         "fer_impulse_failure_score",
         "fer_impulse_failure_direction",
+        "fer_impulse_failure_direction_signed",
         # === 衰减 ===
         "fer_momentum_efficiency_decay",
         # === 背离 ===
@@ -393,23 +394,26 @@ def compute_fer_failure_signals_from_series(
     # 失败方向
     cvd5_val = cvd5.values
     price_chg_5 = _rolling_diff(close, 5).values
-    fer_impulse_failure_direction = pd.Series(
+    # 离散交易方向语义（供 direction.yaml 规则1，与 decay 列分离）:
+    #   -1 = 多头 impulse 失败 → 交易方向 SHORT
+    #   +1 = 空头 impulse 失败 → 交易方向 LONG
+    #    0 = 无事件 → 交由 CVD/ROC 规则
+    fer_impulse_failure_direction_signed = pd.Series(
         np.where(
             (cvd5_val > EPS) & (price_chg_5 < -EPS),
-            -1.0,  # 多头失败→做空
+            -1.0,
             np.where(
                 (cvd5_val < -EPS) & (price_chg_5 > EPS),
-                1.0,  # 空头失败→做多
+                1.0,
                 0.0,
             ),
         ),
         index=idx,
     )
-    # impulse 失败方向转化为连续衰减信号 [0,1]：
-    # 发生失败事件时=1，此后指数衰减 (EWM span=failure_window)
-    # 语义: 最近是否发生过 impulse 失败 (与方向无关，预滤 direction-agnostic)
+    # fer_impulse_failure_direction: 连续衰减 [0,1]，语义「最近失败事件强度」
+    # （Gate/prefilter 等仍可用；勿再用于 negate_sign 方向）
     _impulse_failure_event = pd.Series(
-        np.abs(fer_impulse_failure_direction.values), index=idx
+        np.abs(fer_impulse_failure_direction_signed.values), index=idx
     ).astype(float)
     fer_impulse_failure_direction = (
         _impulse_failure_event.ewm(span=failure_window, adjust=False)
@@ -480,6 +484,7 @@ def compute_fer_failure_signals_from_series(
             # Impulse 失败
             "fer_impulse_failure_score": fer_impulse_failure_score,
             "fer_impulse_failure_direction": fer_impulse_failure_direction,
+            "fer_impulse_failure_direction_signed": fer_impulse_failure_direction_signed,
             # 衰减
             "fer_momentum_efficiency_decay": fer_momentum_efficiency_decay,
             # 背离
@@ -504,6 +509,7 @@ def compute_fer_failure_signals_from_series(
         "fer_trapped_shorts_score",
         "fer_impulse_failure_score",
         "fer_impulse_failure_direction",
+        "fer_impulse_failure_direction_signed",
     ]
     for col in cvd_dependent_cols:
         result[col] = result[col].where(cvd_active, 0.0).fillna(0.0)

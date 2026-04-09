@@ -164,6 +164,22 @@ def _parse_month_token(month_token: str) -> Tuple[int, int]:
         raise ValueError(f"非法月份格式: {month_token}, 期望 YYYY-MM") from exc
 
 
+def _split_month_list(month_spec: str) -> List[str]:
+    """Parse one or more YYYY-MM tokens from comma/space/semicolon-separated string."""
+    raw = str(month_spec or "").strip()
+    if not raw:
+        return []
+    parts = re.split(r"[\s,;]+", raw)
+    out: List[str] = []
+    for p in parts:
+        t = p.strip()
+        if not t:
+            continue
+        _parse_month_token(t)
+        out.append(t)
+    return out
+
+
 def _month_token_to_range(month_token: str) -> Tuple[str, str]:
     """Convert YYYY-MM to start/end date."""
     y, m = _parse_month_token(month_token)
@@ -530,6 +546,46 @@ def _ledger_bpc_vwap_band_schedule(
             }
         )
     return rows
+
+
+def _ledger_stitched_pcm_fallback_totals(
+    ledger: List[Dict[str, Any]],
+) -> Tuple[float, int]:
+    """Sum trades/R when ``pcm_eval`` is off: ``ledger['pcm']`` is empty but event CSVs exist.
+
+    Mirrors the fallback in ``_build_continuous_pcm_trading_map`` so ``stitched_summary.json``
+    matches continuous / per-symbol map statistics.
+    """
+    try:
+        import pandas as pd
+    except Exception:
+        return 0.0, 0
+    total_r = 0.0
+    n = 0
+    for row in ledger:
+        run_root = Path(str(row.get("run_root", "") or ""))
+        if not run_root.is_dir():
+            continue
+        end_state_paths = row.get("end_state_paths", {}) or {}
+        for strat in end_state_paths.keys():
+            strat_name = str(strat or "").strip()
+            if not strat_name:
+                continue
+            ep = run_root / strat_name / f"event_trades_{strat_name}.csv"
+            if not ep.exists():
+                continue
+            try:
+                df = pd.read_csv(ep)
+            except Exception:
+                continue
+            if df.empty:
+                continue
+            n += len(df)
+            if "pnl_r" in df.columns:
+                total_r += float(
+                    pd.to_numeric(df["pnl_r"], errors="coerce").fillna(0.0).sum()
+                )
+    return total_r, n
 
 
 def _build_continuous_pcm_trading_map(
@@ -4938,7 +4994,10 @@ def main():
     p.add_argument(
         "--month",
         default="",
-        help="月份窗口 (YYYY-MM), 供 --stage fast_month 使用",
+        help=(
+            "月份窗口 (YYYY-MM), 供 --stage fast_month 使用；"
+            "多个月可用逗号或空格分隔, 例如 2024-07,2024-08,2024-09"
+        ),
     )
     args = p.parse_args()
 
@@ -5053,7 +5112,13 @@ def main():
 
     if args.stage == "fast_month":
         if not args.month:
-            p.error("--stage fast_month 需要 --month YYYY-MM")
+            p.error(
+                "--stage fast_month 需要 --month YYYY-MM "
+                "(多个月: 逗号或空格分隔, 如 2024-07,2024-08)"
+            )
+        month_tokens = _split_month_list(str(args.month))
+        if not month_tokens:
+            p.error("--month 解析后为空")
         rolling_cfg = cfg.get("rolling", {}) or {}
         rolling_mode = str(rolling_cfg.get("mode", "legacy"))
         calibration_months = int(
@@ -5069,40 +5134,58 @@ def main():
         else:
             stage_root = "config/strategies"
             stage_feature_search = True
-        try:
-            _summary = _run_fast_month_stage(
-                cfg=cfg,
-                strategies=strategies,
-                history_dir=history_dir,
-                timestamp=timestamp,
-                month_token=str(args.month),
-                dry_run=args.dry_run,
-                use_1min=args.use_1min,
-                live_root=args.live_root,
-                data_path=cfg["data_path"],
-                event_sym_r=args.event_sym_r,
-                strategies_root=stage_root,
-                calibration_months=calibration_months,
-                calibrate_all_layers=(rolling_mode != "legacy"),
-                feature_search_enabled=stage_feature_search,
-                rolling_mode=rolling_mode,
-                config_path=args.config,
-                prev_resume_state_paths={},
-                keep_open_positions=False,
-                month_index=0,
-            )
-        except ValueError as exc:
-            p.error(str(exc))
+        side_state_cursor: Dict[str, Any] = {}
+        resume_state_cursor: Dict[str, str] = {}
+        summaries: List[Dict[str, Any]] = []
+        for month_idx, mt in enumerate(month_tokens):
+            _is_last_month = month_idx == len(month_tokens) - 1
+            try:
+                _summary = _run_fast_month_stage(
+                    cfg=cfg,
+                    strategies=strategies,
+                    history_dir=history_dir,
+                    timestamp=timestamp,
+                    month_token=mt,
+                    dry_run=args.dry_run,
+                    use_1min=args.use_1min,
+                    live_root=args.live_root,
+                    data_path=cfg["data_path"],
+                    event_sym_r=args.event_sym_r,
+                    strategies_root=stage_root,
+                    calibration_months=calibration_months,
+                    calibrate_all_layers=(rolling_mode != "legacy"),
+                    feature_search_enabled=stage_feature_search,
+                    rolling_mode=rolling_mode,
+                    config_path=args.config,
+                    prev_side_state=side_state_cursor,
+                    prev_resume_state_paths=resume_state_cursor,
+                    keep_open_positions=not _is_last_month,
+                    month_index=month_idx,
+                )
+            except ValueError as exc:
+                p.error(str(exc))
+            summaries.append(_summary)
+            try:
+                _ssp = str(_summary.get("side_state_path", "") or "")
+                if _ssp:
+                    side_obj = json.loads(Path(_ssp).read_text(encoding="utf-8"))
+                    side_state_cursor = dict(side_obj.get("states", {}) or {})
+            except Exception:
+                pass
+            resume_state_cursor = dict(_summary.get("end_state_paths", {}) or {})
         print(f"\n{'='*70}")
         print("📋 Stage 汇总")
         print(f"{'='*70}")
-        print(
-            f"   Stage: fast_month | month={_summary.get('month')} "
-            f"range={_summary.get('month_start')}~{_summary.get('month_end')}"
-        )
-        print(f"   Output: {_summary.get('run_root')}")
-        print(f"   SideState: {_summary.get('side_state_path')}")
-        print(f"   Quality: {_summary.get('quality_ranking_path')}")
+        print(f"   Stage: fast_month | months={month_tokens}")
+        for _s in summaries:
+            print(
+                f"   • {_s.get('month')}: {_s.get('month_start')}~{_s.get('month_end')} "
+                f"→ {_s.get('run_root')}"
+            )
+        if summaries:
+            _last = summaries[-1]
+            print(f"   (最后一月) SideState: {_last.get('side_state_path')}")
+            print(f"   (最后一月) Quality: {_last.get('quality_ranking_path')}")
         return
 
     if args.stage == "rolling_sim":
@@ -5212,6 +5295,11 @@ def main():
         pcm_trades = int(
             sum(int(((r.get("pcm") or {}).get("total_trades", 0) or 0)) for r in ledger)
         )
+        if pcm_trades == 0:
+            _fb_r, _fb_n = _ledger_stitched_pcm_fallback_totals(ledger)
+            if _fb_n > 0:
+                pcm_total_r = _fb_r
+                pcm_trades = _fb_n
         month_maps = [
             str((r.get("pcm") or {}).get("trading_map", "") or "") for r in ledger
         ]

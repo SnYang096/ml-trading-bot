@@ -31,6 +31,7 @@ from src.time_series_model.execution.entry_filter import (
     check_entry_filters_or_single,
     load_entry_filters_config,
 )
+from src.time_series_model.live.fer_diagnostics import record_fer_entry_eval
 from src.time_series_model.live.direction_rule_ops import (
     dual_position_agree_deadband_scalar,
     is_direction_rule_enabled,
@@ -536,10 +537,19 @@ class GenericLiveStrategy:
         """
         if not features:
             self._last_funnel = {}
+            record_fer_entry_eval(
+                strategy=self.strategy_name,
+                symbol=symbol,
+                signal_ts=None,
+                outcome="empty_features",
+                funnel={},
+                features={},
+            )
             return []
 
         # 漏斗跟踪 (bool 标记 + 丰富元数据)
         funnel: Dict[str, Any] = {}
+        _sig_ts = features.get("timestamp")
 
         # ── 0. Prefilter 前置条件检查 ──
         if self.archetype and self.archetype.prefilter.rules:
@@ -549,6 +559,14 @@ class GenericLiveStrategy:
                 logger.debug(f"❌ Prefilter denied: {pf_reason}")
                 funnel["prefilter_reason"] = pf_reason
                 self._last_funnel = funnel
+                record_fer_entry_eval(
+                    strategy=self.strategy_name,
+                    symbol=symbol,
+                    signal_ts=_sig_ts,
+                    outcome="prefilter_deny",
+                    funnel=funnel,
+                    features=features,
+                )
                 return []
             logger.debug("✅ Prefilter passed")
 
@@ -556,14 +574,31 @@ class GenericLiveStrategy:
         if self.direction_evaluator is None:
             logger.error("❌ Direction evaluator not initialized")
             self._last_funnel = funnel
+            record_fer_entry_eval(
+                strategy=self.strategy_name,
+                symbol=symbol,
+                signal_ts=_sig_ts,
+                outcome="no_direction_config",
+                funnel=funnel,
+                features=features,
+            )
             return []
 
         direction, rule_id = self.direction_evaluator.evaluate(features)
         funnel["direction"] = direction != 0
         funnel["direction_value"] = direction  # 1=long, -1=short, 0=none
+        funnel["direction_rule"] = rule_id
         if direction == 0:
             logger.debug("❌ No valid direction found")
             self._last_funnel = funnel
+            record_fer_entry_eval(
+                strategy=self.strategy_name,
+                symbol=symbol,
+                signal_ts=_sig_ts,
+                outcome="no_direction",
+                funnel=funnel,
+                features=features,
+            )
             return []
 
         side_str = "BUY" if direction == 1 else "SELL"
@@ -580,6 +615,14 @@ class GenericLiveStrategy:
                 funnel["gate"] = False
                 funnel["gate_reasons"] = gate_reasons  # 拦截原因列表
                 self._last_funnel = funnel
+                record_fer_entry_eval(
+                    strategy=self.strategy_name,
+                    symbol=symbol,
+                    signal_ts=_sig_ts,
+                    outcome="gate_deny",
+                    funnel=funnel,
+                    features=features,
+                )
                 return []
             funnel["gate"] = True
             funnel["gate_weight"] = round(gate_weight, 4)
@@ -592,6 +635,14 @@ class GenericLiveStrategy:
                 logger.debug("❌ Entry filter denied")
                 funnel["entry_filter"] = False
                 self._last_funnel = funnel
+                record_fer_entry_eval(
+                    strategy=self.strategy_name,
+                    symbol=symbol,
+                    signal_ts=_sig_ts,
+                    outcome="entry_filter_deny",
+                    funnel=funnel,
+                    features=features,
+                )
                 return []
             funnel["entry_filter"] = True
             logger.debug("✅ Entry filter passed")
@@ -695,6 +746,14 @@ class GenericLiveStrategy:
                 f"(tier={tier_name}, evidence=off)"
             )
         self._last_funnel = funnel
+        record_fer_entry_eval(
+            strategy=self.strategy_name,
+            symbol=symbol,
+            signal_ts=_sig_ts,
+            outcome="signal",
+            funnel=funnel,
+            features=features,
+        )
         return [intent]
 
     # ── 兼容属性: 脚本通过 strat._archetype 访问 archetype ──

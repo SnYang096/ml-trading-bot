@@ -13,18 +13,6 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-  - id: gate_cvd_change_5_normalized
-    locked: true
-    tag: HARD_CVD_CHANGE_5_NORMALIZED
-    phase: hard_gate
-    priority: 10
-    reason: 统计验证规则 (lift=1.55)
-    when:
-      cvd_change_5_normalized:
-        value_lt: -0.0176
-    then:
-      action: deny
-    comment: "optimizer: no_stable_plateau, threshold=-0.0176, lift=0.784"
   - id: bell_or_pass_prefilter_vp_poc_deviation_prefilter_oi_exhaustion_score_gate_fer_volume_price_divergence_fer_volume_price_divergence
     locked: true
     tag: BELL_OR_PASS_2

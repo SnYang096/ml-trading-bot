@@ -849,6 +849,22 @@ class LivePCM:
                         )
                         # 清空 _last_funnel 避免诊断代码读到上一次的结果
                         strategy._last_funnel = {}
+                        if str(arch_name).lower() == "fer":
+                            try:
+                                from src.time_series_model.live.fer_diagnostics import (
+                                    record_fer_entry_eval,
+                                )
+
+                                record_fer_entry_eval(
+                                    strategy=str(arch_name),
+                                    symbol=symbol,
+                                    signal_ts=None,
+                                    outcome="pcm_timeframe_missing",
+                                    funnel={"pcm_timeframe": tf},
+                                    features=dict(features or {}),
+                                )
+                            except Exception:
+                                pass
                         continue
 
                 # ── EMA 方向过滤 (price > ema_200 → bull; price ≤ ema_200 → bear) ──
@@ -872,6 +888,27 @@ class LivePCM:
                                 float(_close),
                                 float(_ema),
                             )
+                            if str(arch_name).lower() == "fer":
+                                try:
+                                    from src.time_series_model.live.fer_diagnostics import (
+                                        record_fer_entry_eval,
+                                    )
+
+                                    record_fer_entry_eval(
+                                        strategy=str(arch_name),
+                                        symbol=symbol,
+                                        signal_ts=strat_features.get("timestamp"),
+                                        outcome="pcm_ema_filter_deny",
+                                        funnel={
+                                            "pcm_direction_filter": False,
+                                            "pcm_ema_regime": (
+                                                "bull" if _is_bull else "bear"
+                                            ),
+                                        },
+                                        features=dict(strat_features),
+                                    )
+                                except Exception:
+                                    pass
                             continue
                     elif self._ema_fallback != "allow_all":
                         _allowed_fb = (
@@ -881,6 +918,22 @@ class LivePCM:
                         )
                         if arch_name not in _allowed_fb:
                             strategy._last_funnel = {"pcm_direction_filter": False}
+                            if str(arch_name).lower() == "fer":
+                                try:
+                                    from src.time_series_model.live.fer_diagnostics import (
+                                        record_fer_entry_eval,
+                                    )
+
+                                    record_fer_entry_eval(
+                                        strategy=str(arch_name),
+                                        symbol=symbol,
+                                        signal_ts=strat_features.get("timestamp"),
+                                        outcome="pcm_ema_fallback_deny",
+                                        funnel={"pcm_direction_filter": False},
+                                        features=dict(strat_features),
+                                    )
+                                except Exception:
+                                    pass
                             continue
 
                 intents = strategy.decide(

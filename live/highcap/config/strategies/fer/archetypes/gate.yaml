@@ -26,6 +26,8 @@ hard_gates:
   frozen: true
   comment: prefilter条件 (训练-推理一致性, frozen=true)
 - id: gate_cvd_change_5_normalized
+  # 与 direction 规则2（CVD 负→做多）冲突；禁用保留 YAML 供审计
+  disabled: true
   tag: HARD_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
   priority: 10

@@ -13,11 +13,7 @@
 #   方向 = -failed_impulse_direction (失败方向的反向)
 #   "谁失败了，就做反方向"
 #
-# 数据验证 (features_labeled.parquet, 38,826 行, baseline bad_rate=45.4%):
-#   fer_impulse_failure_direction (negate_sign):
-#     dir=-1 (上行失败→做空): 9,930 样本, bad=44.5%(-0.9%), medRR=+0.00
-#     dir=+1 (下行失败→做多): 1,310 样本, bad=50.2%(+4.8%), medRR=-0.81
-#     dir= 0 (无失败信号):   24,519 样本 (68.6%) → 降级到规则2
+# 规则1 使用 fer_impulse_failure_direction_signed（离散 -1/0/+1）；decay 列勿做 negate_sign。
 #   cvd_change_5_normalized (negate_sign):
 #     dir=+1 (CVD负→做多):  28,421 样本, bad=43.9%(-1.5%), medRR=+0.11 ✅
 #     dir=-1 (CVD正→做空):  10,405 样本, bad=49.5%(+4.1%), medRR=-0.72
@@ -37,13 +33,11 @@ version: 1
 # 方向确定规则 (按优先级从高到低)
 # 命中第一个可用 method 后停止
 direction_rules:
-  # 规则 1: FER 失败脉冲方向的反向 (最纯粹的 FER 信号)
-  # fer_impulse_failure_direction: +1=上行失败, -1=下行失败, 0=无信号
-  # 覆盖率 31.4%, 其余 68.6% 降级到规则 2
+  # 规则 1: impulse 失败 → 交易方向（signed 列已是 ±1）
   - method: feature_sign
-    feature: fer_impulse_failure_direction
-    description: "失败脉冲方向的反向: -sign(impulse_failure_direction)"
-    transform: negate_sign  # direction = -sign(feature_value)
+    feature: fer_impulse_failure_direction_signed
+    description: "impulse 失败方向（signed）"
+    transform: raw
 
   # 规则 2: CVD 短周期变化的反向 (最佳量化信号)
   # CVD 正 = 买方推进 → 如果推进失败 → 做空

@@ -1,3 +1,12 @@
+# ME execution — 爆发段猎手（无 VWAP 结构出场）
+#
+# 设计要点（与 direction/gate 的「扩张段」一致）：
+# 1) initial_r 偏宽：扛住爆发前洗盘与假突破，避免在火箭点火前被扫。
+# 2) 延后 + 偏宽的 activation trailing：浮盈达到 activation_r 后才跟踪；
+#    trail_r 用较大 ATR 倍数，让肥尾多跑几格，替代「靠 VWAP 结构」的盈利侧出场。
+# 3) breakeven 默认关：避免过早抬到盈亏附近后被正常回调洗出；加仓仍受 min_current_r_by_add 约束。
+# 4) take_profit / time_stop 关：靠 trailing + 硬止损 + 回测结束强平；若需封顶可另开 target_r。
+#
 add_position:
   add_size_multipliers:
     - 0.8
@@ -30,11 +39,13 @@ stop_loss:
     min_stop_pct: 0.01
   initial_r: 4.0
   trailing:
-    enabled: false
-    activation_r: 9
-    trail_r: 4
+    enabled: true
+    # 浮盈 ≥ activation_r×ATR 后启用跟踪；宜与 initial_r 同量级或略小，避免「刚浮盈就跟踪」被洗
+    activation_r: 4.0
+    # 从极值回撤 trail_r×ATR 平仓；偏大 = 更耐回踩，偏小 = 更快落袋
+    trail_r: 3.5
   type: trailing
-  structural_exit: vwap1200
+  # 无 structural_exit（不设 vwap1200）；出场序：时间(若配) → breakeven(若开) → trailing → 硬止损 → 固定止盈(若开)
 take_profit:
   enabled: false
-version: 56
+version: 58

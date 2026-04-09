@@ -1,8 +1,4 @@
 rules:
-  - feature: vp_poc_deviation
-    operator: <=
-    value: 0.325
-    rationale: meta-algorithm, KS=0.1086, return_uplift=+1.6316, robustness=100%, holdout验证通过
   - feature: sr_strength_max
     operator: ">="
     value: 0.55
@@ -21,7 +17,3 @@ rules:
     rationale: "heuristic: 距最近SR不超过1.2ATR（上界），限制远离关键位追单"
     locked: true
     lock_reason: A组基线：SR邻域约束
-  - feature: oi_exhaustion_score
-    operator: "<"
-    value: 0.002
-    rationale: "meta-algorithm, KS=0.1064, return_uplift=+0.0365, robustness=100%, holdout验证通过"

@@ -410,9 +410,20 @@ class PrefilterConfig:
                         any_pass = True
                         break
                 if not any_pass:
-                    descs = [
-                        f"{s['feature']}{s['operator']}{s['value']}" for s in sub_rules
-                    ]
+                    descs = []
+                    for s in sub_rules:
+                        if not isinstance(s, dict):
+                            continue
+                        fn = s.get("feature", "?")
+                        fv = features.get(fn)
+                        av = (
+                            "missing"
+                            if fv is None
+                            else (f"{float(fv):.6g}" if fv == fv else "nan")
+                        )
+                        descs.append(
+                            f"{fn}{s.get('operator', '?')}{s.get('value', '?')}(got={av})"
+                        )
                     return False, f"prefilter_any_of_fail: {' OR '.join(descs)}"
                 continue
 
@@ -421,7 +432,16 @@ class PrefilterConfig:
                 feat = rule.get("feature", "?")
                 op_str = rule.get("operator", "?")
                 val = rule.get("value", "?")
-                return False, f"prefilter_fail: {feat} {op_str} {val}"
+                fv = features.get(feat)
+                if fv is None:
+                    actual = "missing"
+                else:
+                    try:
+                        fv_f = float(fv)
+                        actual = "nan" if fv_f != fv_f else f"{fv_f:.6g}"
+                    except (TypeError, ValueError):
+                        actual = str(fv)
+                return False, f"prefilter_fail: {feat} {op_str} {val} (actual={actual})"
 
         return True, None
 

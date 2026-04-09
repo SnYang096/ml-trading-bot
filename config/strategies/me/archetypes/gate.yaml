@@ -1,7 +1,7 @@
-# ME-SHORT Gate
-# 结构对齐 BPC（EVT 尾形 / VPIN 分位 / 宏观 VWAP 锚 / vol persistence），保留 ME 原统计优化 VPIN 规则。
-# 语义：与 BPC 同属趋势骑乘，ME 更偏「短期强动量」；宏观标尺与噪声过滤仍沿用同一套 anchor，细节由 entry/evidence 收紧。
-# 来源 ME 专有规则: results/research_history/me-short/20260313_234144/strategies/me-short/gate_draft.yaml
+# ME Gate — 「爆发段猎手」变体
+# 已移除三条 macro_tp_vwap_1200_* hard_gate（死区 / 过度多 / 过度空），避免用宏观 VWAP 标尺挡爆发前入场。
+# 保留：EVT 尾形、VPIN 分位、vol_persistence、ME 统计 VPIN 段 — 仍防尾形与极端知情流噪声。
+# 来源底稿含 BPC 对齐段 + ME VPIN；VWAP 门控见 BPC 策略，本变体刻意不绑 macro_tp_vwap_1200_position。
 schema:
   phases:
     - system_safety
@@ -58,48 +58,6 @@ hard_gates:
     comment: "aligned_with_bpc: deny when informed-flow rank extreme"
     locked: true
     lock_reason: VPIN 分位过高：知情侧过强时短线动量信号噪声大
-  - id: gate_macro_tp_vwap_1200_deadzone
-    tag: HARD_MACRO_TP_VWAP_1200_DEADZONE
-    phase: hard_gate
-    priority: 13
-    reason: 宏观 VWAP 近场死区（与 BPC 同阈；锚定见 meta macro_tp_vwap_anchor）
-    when:
-      all_of:
-        - macro_tp_vwap_1200_position:
-            value_gt: -0.005
-        - macro_tp_vwap_1200_position:
-            value_lt: 0.005
-    then:
-      action: deny
-    comment: "semantic_anchor: ME 仍需避开近 VWAP 弱趋势带，强动量应在带外确认"
-    locked: true
-    lock_reason: VWAP1200 近场噪声区，不利于「干净」的短期动量扩张
-  - id: gate_macro_tp_vwap_1200_overlong
-    tag: HARD_MACRO_TP_VWAP_1200_OVERLONG
-    phase: hard_gate
-    priority: 14
-    reason: 宏观 VWAP 上侧过度偏离（追涨性价比差）
-    when:
-      macro_tp_vwap_1200_position:
-        value_gt: 0.9
-    then:
-      action: deny
-    comment: "semantic_anchor: 与 BPC 一致，避免极端拉伸后接力"
-    locked: true
-    lock_reason: VWAP1200 上侧过度偏离，追短动量盈亏比差
-  - id: gate_macro_tp_vwap_1200_overshort
-    tag: HARD_MACRO_TP_VWAP_1200_OVERSHORT
-    phase: hard_gate
-    priority: 15
-    reason: 宏观 VWAP 下侧极端偏离
-    when:
-      macro_tp_vwap_1200_position:
-        value_lt: -0.9
-    then:
-      action: deny
-    comment: "semantic_anchor: 结构异常阶段不做动量入场"
-    locked: true
-    lock_reason: VWAP1200 下侧极端偏离区，结构异常阶段不做入场
   - id: gate_stat_vol_persistence_vol_persistence
     tag: HARD_STAT_VOL_PERSISTENCE
     phase: system_safety

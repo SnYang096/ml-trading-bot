@@ -7693,6 +7693,7 @@ features:
     # === Impulse 失败 ===
     - fer_impulse_failure_score
     - fer_impulse_failure_direction
+    - fer_impulse_failure_direction_signed
     # === 衰减 ===
     - fer_momentum_efficiency_decay
     # === 背离 ===
@@ -7719,6 +7720,7 @@ features:
         fer_trapped_shorts_score: bounded_0_1      # /5.0 normalized
         fer_impulse_failure_score: bounded_0_1
         fer_impulse_failure_direction: bounded_0_1 # EWM decay of failure event [0,1]
+        fer_impulse_failure_direction_signed: bounded_-1_1 # discrete {-1,0,1} trade-direction hint
         fer_momentum_efficiency_decay: bounded_0_1
         fer_volume_price_divergence: bounded_0_1
     column_mappings:

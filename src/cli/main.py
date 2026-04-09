@@ -3299,7 +3299,11 @@ def pipeline():
         "execution_opt/event_backtest/fast_month/rolling_sim/pcm_joint/pcm_slot_grid"
     ),
 )
-@click.option("--month", default=None, help="月份窗口 YYYY-MM (fast_month 必填)")
+@click.option(
+    "--month",
+    default=None,
+    help="月份 YYYY-MM，fast_month 必填；多个月用逗号/空格分隔，如 2024-07,2024-08",
+)
 @click.option(
     "--event-backtest",
     is_flag=True,

@@ -636,6 +636,22 @@ class PositionSimulator:
                 )
                 closed.append(trade)
                 self.closed_trades.append(trade)
+                if str(pos.get("archetype", "") or "").lower() == "fer":
+                    try:
+                        from src.time_series_model.live.fer_diagnostics import (
+                            record_fer_exit,
+                        )
+
+                        record_fer_exit(
+                            pos=dict(pos),
+                            close_reason_raw=str(close_reason),
+                            exit_reason_normalized=str(normalized_reason),
+                            exit_price=float(exit_price),
+                            now=now,
+                            pnl_r=float(pnl_r),
+                        )
+                    except Exception:
+                        pass
                 to_remove.append(pid)
                 if not bool(pos.get("_is_add_position", False)):
                     parent_close_meta[str(pid)] = {
