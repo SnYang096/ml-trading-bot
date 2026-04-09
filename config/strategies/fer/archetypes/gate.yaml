@@ -4,59 +4,41 @@
 # Phase split: system_safety=3, hard_gate=0
 schema:
   phases:
-  - system_safety
-  - hard_gate
-  - guardrail
+    - system_safety
+    - hard_gate
+    - guardrail
   evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
-hard_gates: []
+hard_gates:
+  - id: gate_cvd_change_5_normalized
+    locked: true
+    tag: HARD_CVD_CHANGE_5_NORMALIZED
+    phase: hard_gate
+    priority: 10
+    reason: 统计验证规则 (lift=1.55)
+    when:
+      cvd_change_5_normalized:
+        value_lt: -0.0176
+    then:
+      action: deny
+    comment: "optimizer: no_stable_plateau, threshold=-0.0176, lift=0.784"
+  - id: bell_or_pass_prefilter_vp_poc_deviation_prefilter_oi_exhaustion_score_gate_fer_volume_price_divergence_fer_volume_price_divergence
+    locked: true
+    tag: BELL_OR_PASS_2
+    phase: hard_gate
+    priority: 1
+    reason: "Bell Partition OR-pass: prefilter_vp_poc_deviation ∨ prefilter_oi_exhaustion_score ∨ gate_fer_volume_price_divergence_fer_volume_price_divergence"
+    when:
+      all_of:
+        - fer_volume_price_divergence:
+            value_gt: 0.425
+        - fer_volume_price_divergence:
+            value_lt: 0.675
+    then:
+      action: deny
+    frozen: true
 guardrails: []
-system_safety:
-- id: gate_stat_evt_tail_shape
-  tag: HARD_STAT_1
-  phase: system_safety
-  priority: 20
-  reason: 统计法兜底规则（tree gate 为空）
-  when:
-    evt_tail_shape:
-      value_lt: 0.1706
-  then:
-    action: deny
-  comment: stat_fallback gate_score=0.177, tail_capture=0.373, good_deny=0.197
-  locked: true
-  lock_reason: EVT 尾部形状：极端风险分布结构
-- id: gate_stat_evt_es_99_right_evt_es_99_right
-  tag: HARD_STAT_2
-  phase: system_safety
-  priority: 21
-  reason: 统计法兜底规则（tree gate 为空）
-  when:
-    all_of:
-    - evt_es_99_right:
-        value_gt: 0.0873
-    - evt_es_99_right:
-        value_lt: 0.1825
-  then:
-    action: deny
-  comment: stat_fallback gate_score=0.099, tail_capture=0.165, good_deny=0.066
-  locked: true
-  lock_reason: EVT 右尾 ES：极端右尾缺口风险
-- id: gate_stat_evt_var_99_evt_var_99
-  tag: HARD_STAT_3
-  phase: system_safety
-  priority: 22
-  reason: 统计法兜底规则（tree gate 为空）
-  when:
-    all_of:
-    - evt_var_99:
-        value_gt: 0.8056
-    - evt_var_99:
-        value_lt: 0.9008
-  then:
-    action: deny
-  comment: stat_fallback gate_score=0.064, tail_capture=0.140, good_deny=0.076
-  locked: true
-  lock_reason: EVT 左尾风险强度：中高风险拖泥带水区间对趋势策略表现最差
+system_safety: []

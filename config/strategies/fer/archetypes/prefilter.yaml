@@ -1,60 +1,27 @@
 rules:
-- feature: vp_poc_deviation
-  operator: <=
-  value: 0.325
-  rationale: meta-algorithm, KS=0.1086, return_uplift=+1.6316, robustness=100%, holdout验证通过
-- feature: sqs_hal_low
-  operator: '>='
-  value: 0.2412
-  rationale: range lower, meta-algorithm, KS=0.0896, return_uplift=+1.8313, robustness=100%,
-    holdout验证通过
-- feature: sqs_hal_low
-  operator: <=
-  value: 0.9139
-  rationale: range upper, meta-algorithm, KS=0.0896, return_uplift=+1.8313, robustness=100%,
-    holdout验证通过
-- feature: fer_signed_efficiency_pct
-  operator: '>='
-  value: 0.0
-  rationale: A组基线：百分位语义下界（跨symbol可比）
-  locked: true
-  lock_reason: A组基线：FER失败效率百分位下界
-- feature: fer_signed_efficiency_pct
-  operator: <=
-  value: 0.35
-  rationale: A组基线：低分位=失败效率区间，避免追随高效率趋势延续
-  locked: true
-  lock_reason: A组基线：FER失败效率百分位上界
-- feature: sr_strength_max
-  operator: '>='
-  value: 0.55
-  rationale: 'heuristic: 要求触发位具备足够SR强度，避免弱结构噪声反转'
-  locked: true
-  lock_reason: A组基线：SR强度约束
-- feature: sqs_hal_low
-  operator: '>='
-  value: 0.55
-  rationale: 'heuristic: long 仅在高质量支撑位触发（百分位语义），过滤弱结构噪声'
-  locked: true
-  lock_reason: A组基线：支撑位质量百分位约束
-- feature: dist_to_nearest_sr
-  operator: '>='
-  value: -1.2
-  rationale: 'heuristic: 距最近SR不超过1.2ATR（下界），限制远离关键位追单'
-  locked: true
-  lock_reason: A组基线：SR邻域约束
-- feature: dist_to_nearest_sr
-  operator: <=
-  value: 1.2
-  rationale: 'heuristic: 距最近SR不超过1.2ATR（上界），限制远离关键位追单'
-  locked: true
-  lock_reason: A组基线：SR邻域约束
-last_evaluation:
-  timestamp: '2026-03-24'
-  data_source: features_labeled.parquet
-  n_rows: 53486
-  baseline_bad_rate: 0.0
-  baseline_median_rr: -0.0486
-  positive_signals: []
-  anti_signals: []
-  absence_signals: []
+  - feature: vp_poc_deviation
+    operator: <=
+    value: 0.325
+    rationale: meta-algorithm, KS=0.1086, return_uplift=+1.6316, robustness=100%, holdout验证通过
+  - feature: sr_strength_max
+    operator: ">="
+    value: 0.55
+    rationale: "heuristic: 要求触发位具备足够SR强度，避免弱结构噪声反转"
+    locked: true
+    lock_reason: A组基线：SR强度约束
+  - feature: dist_to_nearest_sr
+    operator: ">="
+    value: -1.2
+    rationale: "heuristic: 距最近SR不超过1.2ATR（下界），限制远离关键位追单"
+    locked: true
+    lock_reason: A组基线：SR邻域约束
+  - feature: dist_to_nearest_sr
+    operator: <=
+    value: 1.2
+    rationale: "heuristic: 距最近SR不超过1.2ATR（上界），限制远离关键位追单"
+    locked: true
+    lock_reason: A组基线：SR邻域约束
+  - feature: oi_exhaustion_score
+    operator: "<"
+    value: 0.002
+    rationale: "meta-algorithm, KS=0.1064, return_uplift=+0.0365, robustness=100%, holdout验证通过"
