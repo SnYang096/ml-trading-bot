@@ -35,4 +35,13 @@ filters:
         operator: ">="
         value: -0.176468
     notes: Δrr=+1.7265, t=5.08, p=0.0000, pass=80.0%
+  - id: ev_fer_sr_failed_breakout_score_pct
+    enabled: true
+    locked: true
+    description: "FER-SR 子语义: fer_sr_failed_breakout_score_pct >= 0.70"
+    conditions:
+      - feature: fer_sr_failed_breakout_score_pct
+        operator: ">="
+        value: 0.70
+    notes: "heuristic: 允许 SR 失败突破高置信样本直接通过 entry OR 分支"
 combination_mode: or

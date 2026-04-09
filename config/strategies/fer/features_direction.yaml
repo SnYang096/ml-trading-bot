@@ -33,13 +33,19 @@ version: 1
 # 方向确定规则 (按优先级从高到低)
 # 命中第一个可用 method 后停止
 direction_rules:
-  # 规则 1: signed 离散方向（-1 空 / +1 多 / 0 降级）
+  # 规则 1: SR 子语义（边界失败突破）方向
+  - method: feature_sign
+    feature: fer_sr_failed_breakout_direction_signed
+    description: "SR 边界失败突破方向（signed）"
+    transform: raw
+
+  # 规则 2: signed 离散方向（-1 空 / +1 多 / 0 降级）
   - method: feature_sign
     feature: fer_impulse_failure_direction_signed
     description: "impulse 失败方向（signed）"
     transform: raw
 
-  # 规则 2: CVD 短周期变化的反向 (最佳量化信号)
+  # 规则 3: CVD 短周期变化的反向 (最佳量化信号)
   # CVD 正 = 买方推进 → 如果推进失败 → 做空
   # CVD 负 = 卖方推进 → 如果推进失败 → 做多
   # 覆盖率 100%, bad_rate 差异 ±1.5%
@@ -48,7 +54,7 @@ direction_rules:
     description: "CVD 5-bar 变化的反向: -sign(cvd), 失败推进的反向"
     transform: negate_sign
 
-  # 规则 3: ROC 动量反向 (兜底)
+  # 规则 4: ROC 动量反向 (兜底)
   # 上涨 (roc>0) 失败 → 做空; 下跌 (roc<0) 失败 → 做多
   # 覆盖率 100%, bad_rate 差异 ±1.3%
   - method: feature_sign

@@ -33,6 +33,8 @@ def _baseline_features() -> dict:
         "timestamp": "2024-08-15T12:00:00+00:00",
         "dist_to_nearest_sr": 0.4,
         "sr_strength_max": 0.6,
+        "fer_sr_failed_breakout_direction_signed": 0.0,
+        "fer_sr_failed_breakout_score_pct": 0.0,
         "fer_impulse_failure_direction": 0.0,
         "fer_impulse_failure_direction_signed": 0.0,
         # 规则2 CVD：略正 → negate_sign → SHORT

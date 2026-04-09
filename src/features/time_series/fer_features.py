@@ -98,6 +98,10 @@ def _safe_divide(numerator, denominator, fill: float = 0.0):
         "fer_impulse_failure_score",
         "fer_impulse_failure_direction",
         "fer_impulse_failure_direction_signed",
+        # === SR 子语义：边界失败突破 ===
+        "fer_sr_failed_breakout_score",
+        "fer_sr_failed_breakout_score_pct",
+        "fer_sr_failed_breakout_direction_signed",
         # === 衰减 ===
         "fer_momentum_efficiency_decay",
         # === 背离 ===
@@ -114,6 +118,10 @@ def compute_fer_failure_signals_from_series(
     # 订单流（可选但强烈推荐）
     cvd: pd.Series = None,
     cvd_change_5: pd.Series = None,
+    # SR 上下文（可选；无则 SR 子语义置 0）
+    dist_to_nearest_sr: Optional[pd.Series] = None,
+    direction_to_nearest_sr: Optional[pd.Series] = None,
+    fake_breakout: Optional[pd.Series] = None,
     # 参数
     efficiency_window: int = DEFAULT_EFFICIENCY_WINDOW,
     absorption_window: int = DEFAULT_ABSORPTION_WINDOW,
@@ -121,6 +129,7 @@ def compute_fer_failure_signals_from_series(
     failure_window: int = DEFAULT_FAILURE_WINDOW,
     decay_window: int = DEFAULT_DECAY_WINDOW,
     divergence_window: int = DEFAULT_DIVERGENCE_WINDOW,
+    sr_near_atr: float = 1.2,
 ) -> pd.DataFrame:
     """
     FER 失败反转特征 v2：语义原子输出，不做 composite 加权。
@@ -422,6 +431,100 @@ def compute_fer_failure_signals_from_series(
     )
 
     # ================================================================
+    # 5b️⃣ SR 子语义：边界失败突破（FER-SR）
+    # 语义：在 SR 邻域内，出现 impulse failure 且方向与 SR 相对位置一致
+    # ================================================================
+    if dist_to_nearest_sr is not None:
+        dist_sr = (
+            pd.to_numeric(dist_to_nearest_sr, errors="coerce")
+            .reindex(idx)
+            .astype(float)
+        )
+    else:
+        dist_sr = pd.Series(np.nan, index=idx, dtype=float)
+
+    if direction_to_nearest_sr is not None:
+        dir_to_sr = (
+            pd.to_numeric(direction_to_nearest_sr, errors="coerce")
+            .reindex(idx)
+            .fillna(0.0)
+            .astype(float)
+        )
+    else:
+        # fallback: direction_to_nearest_sr 未给时由 dist 符号推断（与 baseline 定义一致）
+        dir_to_sr = pd.Series(-np.sign(dist_sr.fillna(0.0).values), index=idx, dtype=float)
+
+    near_sr_score = pd.Series(
+        np.clip(
+            1.0 - (dist_sr.abs().fillna(np.inf).values / max(float(sr_near_atr), EPS)),
+            0.0,
+            1.0,
+        ),
+        index=idx,
+    )
+
+    # 方向对齐：trade_dir == -direction_to_nearest_sr
+    sr_alignment = pd.Series(
+        np.where(
+            (fer_impulse_failure_direction_signed.values != 0.0)
+            & (np.sign(dir_to_sr.values) != 0.0)
+            & (
+                fer_impulse_failure_direction_signed.values
+                == -np.sign(dir_to_sr.values).astype(float)
+            ),
+            1.0,
+            0.0,
+        ),
+        index=idx,
+    )
+
+    fer_sr_failed_breakout_score = pd.Series(
+        np.clip(
+            near_sr_score.values
+            * sr_alignment.values
+            * (
+                0.55 * _impulse_failure_event.values
+                + 0.25 * fer_impulse_failure_score.values
+                + 0.20 * fer_efficiency_flip_strength.values
+            ),
+            0.0,
+            1.0,
+        ),
+        index=idx,
+    )
+
+    if fake_breakout is not None:
+        fake_breakout_s = (
+            pd.to_numeric(fake_breakout, errors="coerce")
+            .reindex(idx)
+            .fillna(0.0)
+            .clip(0.0, 1.0)
+        )
+        fer_sr_failed_breakout_score = (
+            fer_sr_failed_breakout_score
+            + 0.20 * fake_breakout_s * near_sr_score * _impulse_failure_event
+        ).clip(0.0, 1.0)
+
+    sr_rank_window = max(failure_window * 8, 40)
+    fer_sr_failed_breakout_score_pct = (
+        fer_sr_failed_breakout_score.rolling(
+            sr_rank_window, min_periods=max(failure_window * 2, 10)
+        )
+        .rank(pct=True)
+        .fillna(0.0)
+    )
+    fer_sr_failed_breakout_direction_signed = pd.Series(
+        np.where(
+            (fer_sr_failed_breakout_score.values >= 0.12)
+            & (near_sr_score.values > 0.0)
+            & (_impulse_failure_event.values > 0.0),
+            fer_impulse_failure_direction_signed.values,
+            0.0,
+        ),
+        index=idx,
+    )
+
+    # ================================================================
     # 6️⃣ 动量效率衰减
     # ================================================================
     price_chg_current = _rolling_abs_diff(close, decay_window)
@@ -485,6 +588,9 @@ def compute_fer_failure_signals_from_series(
             "fer_impulse_failure_score": fer_impulse_failure_score,
             "fer_impulse_failure_direction": fer_impulse_failure_direction,
             "fer_impulse_failure_direction_signed": fer_impulse_failure_direction_signed,
+            "fer_sr_failed_breakout_score": fer_sr_failed_breakout_score,
+            "fer_sr_failed_breakout_score_pct": fer_sr_failed_breakout_score_pct,
+            "fer_sr_failed_breakout_direction_signed": fer_sr_failed_breakout_direction_signed,
             # 衰减
             "fer_momentum_efficiency_decay": fer_momentum_efficiency_decay,
             # 背离
@@ -510,6 +616,9 @@ def compute_fer_failure_signals_from_series(
         "fer_impulse_failure_score",
         "fer_impulse_failure_direction",
         "fer_impulse_failure_direction_signed",
+        "fer_sr_failed_breakout_score",
+        "fer_sr_failed_breakout_score_pct",
+        "fer_sr_failed_breakout_direction_signed",
     ]
     for col in cvd_dependent_cols:
         result[col] = result[col].where(cvd_active, 0.0).fillna(0.0)

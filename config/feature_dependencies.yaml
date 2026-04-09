@@ -7670,6 +7670,7 @@ features:
     dependencies:
     - atr_f
     - cvd_change_features_f
+    - sr_strength_max_f
     required_columns:
     - close
     - high
@@ -7677,6 +7678,8 @@ features:
     - volume
     - atr
     - cvd
+    - dist_to_nearest_sr
+    - direction_to_nearest_sr
     output_columns:
     # === 方向化推进效率 ===
     - fer_signed_efficiency
@@ -7694,6 +7697,10 @@ features:
     - fer_impulse_failure_score
     - fer_impulse_failure_direction
     - fer_impulse_failure_direction_signed
+    # === SR 子语义：边界失败突破 ===
+    - fer_sr_failed_breakout_score
+    - fer_sr_failed_breakout_score_pct
+    - fer_sr_failed_breakout_direction_signed
     # === 衰减 ===
     - fer_momentum_efficiency_decay
     # === 背离 ===
@@ -7721,6 +7728,9 @@ features:
         fer_impulse_failure_score: bounded_0_1
         fer_impulse_failure_direction: bounded_0_1 # EWM decay of failure event [0,1]
         fer_impulse_failure_direction_signed: bounded_-1_1 # discrete {-1,0,1} trade-direction hint
+        fer_sr_failed_breakout_score: bounded_0_1
+        fer_sr_failed_breakout_score_pct: bounded_0_1
+        fer_sr_failed_breakout_direction_signed: bounded_-1_1
         fer_momentum_efficiency_decay: bounded_0_1
         fer_volume_price_divergence: bounded_0_1
     column_mappings:
@@ -7731,6 +7741,8 @@ features:
       atr: atr
       cvd: cvd
       cvd_change_5: cvd_change_5
+      dist_to_nearest_sr: dist_to_nearest_sr
+      direction_to_nearest_sr: direction_to_nearest_sr
 
   # ---------------------------------------------------------------------------
   # ME (MomentumExpansion) v3.0 - Energy × Acceleration × Participation

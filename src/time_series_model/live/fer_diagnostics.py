@@ -32,6 +32,8 @@ SR_SNAPSHOT_KEYS: tuple[str, ...] = (
     "cvd_change_5_normalized",
     "fer_impulse_failure_direction",
     "fer_impulse_failure_direction_signed",
+    "fer_sr_failed_breakout_score_pct",
+    "fer_sr_failed_breakout_direction_signed",
     "roc_20",
     "close",
     "atr",

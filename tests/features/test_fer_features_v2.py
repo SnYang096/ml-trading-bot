@@ -58,6 +58,9 @@ CVD_DEPENDENT_COLS = [
     "fer_impulse_failure_score",
     "fer_impulse_failure_direction",
     "fer_impulse_failure_direction_signed",
+    "fer_sr_failed_breakout_score",
+    "fer_sr_failed_breakout_score_pct",
+    "fer_sr_failed_breakout_direction_signed",
 ]
 
 # 纯价量列（不受 CVD 影响）
@@ -206,7 +209,7 @@ class TestFERFunctionalCorrectness:
         return create_ohlcv_with_cvd(n=500, seed=77)
 
     def test_output_columns(self, data):
-        """输出应有 13 列"""
+        """输出应有 16 列"""
         result = compute_fer_failure_signals_from_series(**data)
         assert set(result.columns) == set(ALL_COLS), (
             f"列不匹配: 缺={set(ALL_COLS)-set(result.columns)}, "
@@ -226,6 +229,8 @@ class TestFERFunctionalCorrectness:
             "fer_trapped_shorts_score",  # v2.1+ /5.0 [0,1]
             "fer_impulse_failure_score",
             "fer_impulse_failure_direction",  # v2.1+ EWM decay [0,1]
+            "fer_sr_failed_breakout_score",
+            "fer_sr_failed_breakout_score_pct",
             "fer_momentum_efficiency_decay",
             "fer_volume_price_divergence",
         ]
@@ -261,6 +266,13 @@ class TestFERFunctionalCorrectness:
         """v2.2+: signed 列为离散 {-1, 0, 1}"""
         result = compute_fer_failure_signals_from_series(**data)
         valid = result["fer_impulse_failure_direction_signed"].dropna()
+        uniq = set(np.unique(valid.values.round(6)))
+        assert uniq.issubset({-1.0, 0.0, 1.0}), f"unexpected values: {uniq}"
+
+    def test_sr_failed_breakout_direction_signed_ternary(self, data):
+        """SR 子语义方向列也应是离散 {-1, 0, 1}"""
+        result = compute_fer_failure_signals_from_series(**data)
+        valid = result["fer_sr_failed_breakout_direction_signed"].dropna()
         uniq = set(np.unique(valid.values.round(6)))
         assert uniq.issubset({-1.0, 0.0, 1.0}), f"unexpected values: {uniq}"
 
@@ -355,7 +367,7 @@ class TestFERCVDNeutralValueLiveSafety:
     """CVD 不活跃时输出 0.0，不被实盘 pd.isna() 丢弃"""
 
     def test_inactive_cvd_no_nan_in_output(self):
-        """CVD 不活跃 → 13 列全部无 NaN (保证实盘不丢特征)"""
+        """CVD 不活跃 → 16 列全部无 NaN (保证实盘不丢特征)"""
         data = create_ohlcv_with_cvd(n=300, seed=99)
         del data["cvd"]
         del data["cvd_change_5"]
@@ -369,7 +381,7 @@ class TestFERCVDNeutralValueLiveSafety:
             )
 
     def test_live_feature_extraction_preserves_all_fer(self):
-        """模拟实盘特征提取流程：即使 CVD 不活跃，13 列全部进入 features dict"""
+        """模拟实盘特征提取流程：即使 CVD 不活跃，16 列全部进入 features dict"""
         data = create_ohlcv_with_cvd(n=300, seed=99)
         del data["cvd"]
         del data["cvd_change_5"]
@@ -389,7 +401,7 @@ class TestFERCVDNeutralValueLiveSafety:
             )
 
     def test_zero_cvd_live_extraction(self):
-        """CVD 全零 → 实盘提取保留所有 13 列"""
+        """CVD 全零 → 实盘提取保留所有 16 列"""
         data = create_ohlcv_with_cvd(n=300, seed=88)
         data["cvd"] = pd.Series(0.0, index=data["close"].index)
         data["cvd_change_5"] = pd.Series(0.0, index=data["close"].index)
@@ -417,8 +429,20 @@ class TestFERCVDNeutralValueLiveSafety:
             "fer_efficiency_flip_strength",
             "fer_impulse_failure_direction",
             "fer_impulse_failure_direction_signed",
+            "fer_sr_failed_breakout_score",
+            "fer_sr_failed_breakout_score_pct",
+            "fer_sr_failed_breakout_direction_signed",
+        }
+        sr_context_required_cols = {
+            "fer_sr_failed_breakout_score",
+            "fer_sr_failed_breakout_score_pct",
+            "fer_sr_failed_breakout_direction_signed",
         }
         for col in CVD_DEPENDENT_COLS:
+            if col in sr_context_required_cols:
+                # 本测试数据未提供 SR 上下文列（dist_to_nearest_sr / direction_to_nearest_sr），
+                # FER-SR 子语义应保持中性 0.0。
+                continue
             valid = result[col].iloc[100:]
             nonzero = (valid != 0.0).sum()
             threshold = 10 if col in sparse_cols else 50
