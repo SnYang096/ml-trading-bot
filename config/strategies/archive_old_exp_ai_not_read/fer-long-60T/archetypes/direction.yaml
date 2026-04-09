@@ -1,5 +1,0 @@
-# FER-LONG direction config
-# FER 方向拆分后: fer-short 固定做空 (direction_aware=false)
-
-fixed_direction: long  # fer-long: 固定 LONG, 训练时 direction_aware=false
-direction_rules: []

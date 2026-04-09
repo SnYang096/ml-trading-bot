@@ -1,5 +1,0 @@
-# ME-SHORT direction config
-# ME 方向拆分后: me-short 固定做空 (direction_aware=false)
-
-fixed_direction: short  # me-short: 固定 SHORT, 训练时 direction_aware=false
-direction_rules: []

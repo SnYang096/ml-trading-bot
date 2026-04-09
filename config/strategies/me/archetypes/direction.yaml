@@ -1,23 +1,29 @@
-# ME 方向 — 「爆发段猎手」变体：仅动能/参与/趋势兜底级联，不要求 macro_tp_vwap_1200_position。
-# 与 BPC 式「方向须与 VWAP 带通同号」脱钩，避免启动前洗盘时价在 VWAP 另一侧导致 direction=0。
+# ME 生产方向 — 与 BPC 同构：级联信号须与 macro_tp_vwap_1200_position 带通同号，
+# 与 execution structural_exit vwap1200（多 pv<0 / 空 pv>0）及 gate 宏观死区语义一致。
 #
-# 级联：第一条给出非零 ±1 即采用（与 GenericLiveStrategy DirectionEvaluator 一致）。
-# - me_accel_5k + sign：扩张加速度方向（ME 核心）
-# - me_cvd_alignment + center_sign：价流一致（>0.5 多、<0.5 空）
-# - macd_atr + sign：慢速兜底
+# 级联语义（为何不用 me_delta_net_flow 打头）：
+# - ME 的核心是「扩张加速度」me_soft_phase 里的 me_accel_5k（价速变化相对 ATR），sign 直接对应扩张方向。
+# - me_delta_net_flow 更偏订单流净方向，在单边趋势里易长期同号，级联时若放第一会掩盖后面规则且不够「ME 专属」。
+# - me_cvd_alignment 用 center_sign：>0.5 价流一致偏多、<0.5 偏空；与 prefilter 里参与确认一致，作第二棒。
+# - macd_atr 与 BPC 兜底一致，在 accel≈0、CVD 中性时给慢速趋势方向。
 
-description: "ME 方向（爆发段）— accel → CVD 对齐 → MACD；无 VWAP 带约束"
+description: "ME 方向 — 扩张加速度优先，价流对齐次之，MACD 兜底；与 VWAP1200 带通同号"
 
 direction_rules:
-  - id: me_burst_accel
-    feature: me_accel_5k
-    transform: sign
-    description: "扩张加速度符号定主方向"
-  - id: me_burst_cvd
-    feature: me_cvd_alignment
-    transform: center_sign
-    description: "价流短期一致方向"
-  - id: me_burst_macd
-    feature: macd_atr
-    transform: sign
-    description: "MACD/ATR 符号兜底"
+  - id: me_accel_cvd_macd_vwap1200_align
+    method: signal_match_position_band
+    description: "me_accel_5k 定扩张方向 → me_cvd_alignment → macd_atr；须落在 VWAP 多/空带通内"
+    signal_rules:
+      - feature: me_accel_5k
+        transform: sign
+      - feature: me_cvd_alignment
+        transform: center_sign
+      - feature: macd_atr
+        transform: sign
+    position_band:
+      feature: macro_tp_vwap_1200_position
+      inner_abs: 0
+      outer_abs: 1
+
+# 方向候选扫描（可选）仍可用 scripts/direction_strict_validation.py --strategy me --compare-features；
+# 需在实验分支用原子 feature_sign 规则对比；生产以本文件为准。

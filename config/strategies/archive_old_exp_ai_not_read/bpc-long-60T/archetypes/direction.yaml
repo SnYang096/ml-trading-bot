@@ -1,5 +1,0 @@
-# BPC-LONG-60T direction config
-# BPC 方向拆分后: bpc-long 固定做多 (direction_aware=false)
-
-fixed_direction: long  # bpc-long: 固定 LONG, 训练时 direction_aware=false
-direction_rules: []

@@ -15,6 +15,18 @@ rules:
     locked: true
     lock_reason: "ME语义：避免极端尾段过热后追单"
 
+  - feature: recent_compression_decay
+    operator: ">="
+    value: 0.02
+    locked: true
+    lock_reason: "ME-Short语义：要求近期确实经历压缩释放"
+
+  - feature: recent_compression_decay
+    operator: "<="
+    value: 0.20
+    locked: true
+    lock_reason: "ME-Short语义：限制在释放早段，避免中后段衰竭"
+
   # 上行或下行扩张强度（me_accel_5k_split_f）；事件侧若仅有 signed me_accel_5k 可改用 bilateral any_of 该列
   - any_of:
       - feature: me_accel_5k_long

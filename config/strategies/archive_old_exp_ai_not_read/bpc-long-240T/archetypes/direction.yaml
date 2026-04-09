@@ -1,6 +1,0 @@
-# BPC-LONG direction config
-# BPC 方向拆分后: bpc-long 固定做多 (direction_aware=false)
-# direction_rules 留空, 由 fixed_direction 强制指定
-
-fixed_direction: long  # bpc-long: 固定 LONG, 训练时 direction_aware=false
-direction_rules: []

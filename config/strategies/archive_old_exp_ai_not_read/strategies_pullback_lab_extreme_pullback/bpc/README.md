@@ -1,1 +1,0 @@
-../../strategies/bpc/README.md

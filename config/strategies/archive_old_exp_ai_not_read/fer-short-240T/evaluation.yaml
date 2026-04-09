@@ -1,6 +1,0 @@
-# FER 评估配置
-# 使用默认指标
-
-evaluation:
-  metrics: []
-  save_details: true

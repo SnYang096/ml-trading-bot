@@ -1,5 +1,0 @@
-# BPC-SHORT direction config
-# BPC 方向拆分后: bpc-short 固定做空 (direction_aware=false)
-
-fixed_direction: short  # bpc-short: 固定 SHORT, 训练时 direction_aware=false
-direction_rules: []
