@@ -14,9 +14,9 @@ backtest:
   enabled: true
   params:
     price_col: close
-    freq: 4H
+    freq: 2H
     use_signal_direction: false
-    
+
     # ⚠️  根据使用的 label 类型调整此值：
     # - labels_rr_extreme: 0.8 (原始配置，但模型预测范围 0.53-0.64)
     # - labels_rr_extreme: 0.60 (调整后，匹配实际预测范围 Q75)

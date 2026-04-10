@@ -1,50 +1,39 @@
+add_position:
+  add_size_multipliers:
+  - 0.8
+  - 0.5
+  - 0.3
+  inherit_parent_stop: true
+  max_add_times: 3
+  min_current_r_by_add:
+  - 1
+  - 2
+  - 3
+  min_current_r_unit: atr
+  sizing_mode: fixed_multiplier
+  trigger:
+    type: float_r_ladder_only
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
 holding:
   max_holding_bars: null
   time_stop_bars: 0
-optimization:
-  enabled: true
-  params:
-    stop_loss.initial_r:
-      range:
-        - 1.0
-        - 4.0
-      step: 0.5
-    stop_loss.trailing.activation_r:
-      range:
-        - 0.5
-        - 5.0
-      step: 0.5
-    stop_loss.trailing.trail_r:
-      range:
-        - 0.5
-        - 3.0
-      step: 0.5
-# ── 旧值 initial_r=3.0/activation_r=0.5 是退化组合 (ratio=6, random WR=86%) ──
 stop_loss:
-  type: trailing
-  initial_r: 4.0
+  breakeven:
+    enabled: false
+    lock_profit_atr: 1.0
+    trigger_r: 9
   guardrails:
-    min_stop_pct: 0.008
-    max_stop_pct: 0.10
+    max_stop_pct: 0.1
+    min_stop_pct: 0.01
+  initial_r: 2.0
+  structural_exit: vwap1200
   trailing:
-    activation_r: 2.5
-    trail_r: 7.0 # 灾难保护: 仅防黑天鹅闪崩, EMA200 是主退出
-  structural_exit: ema200 # 主退出: 价格穿越 EMA200 = 趋势结构破坏
+    activation_r: 2.0
+    enabled: false
+    trail_r: 2.0
+  type: trailing
 take_profit:
   enabled: false
-add_position:
-  max_add_times: 5
-  sizing_mode: fixed_multiplier
-  add_size_multipliers: [0.5, 0.35, 0.25, 0.20, 0.15]
-  target_leverage_by_add: [2.6, 3.4, 4.1, 4.7, 5.0]
-  max_total_leverage: 5.0
-  max_add_notional_frac: 0.35
-  min_add_notional_usd: 50.0
-  max_add_leverage_step: [1.0, 0.9, 0.8, 0.7, 0.6]
-  min_current_r_by_add: [1.0, 1.75, 2.5, 3.5, 4.5]
-  trigger:
-    type: bpc_follow_signal
-version: 49
+version: 59

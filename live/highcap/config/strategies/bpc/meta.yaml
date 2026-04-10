@@ -1,17 +1,19 @@
-# BPC (BreakoutPullbackContinuation) 策略元信息
+# BPC-Long (BreakoutPullbackContinuation Long) 策略元信息
 
 strategy:
-  name: bpc
+  name: bpc-long-120T
   description: |
-    BreakoutPullbackContinuation archetype: 趋势中回踩后延续。
-    在已确认的趋势中，识别健康的回踩并在回踩位置顺势入场。
-  tags:
-    - pullback
-    - continuation
-    - trend
-    - breakout
+    BreakoutPullbackContinuation Long archetype: 趋势中回踩后延续（做多方向）。
+    在已确认的下降趋势中，识别健康的回踩并在回踩位置做空入场。
+
   owner: quant_team
-  archetype: BreakoutPullbackContinuation
-  
+  archetype: BreakoutPullbackContinuationLong
+
   # 默认时间粒度（研发 + 实盘统一）
-  timeframe: "240T"  # 4小时，对应 backtest.yaml 的 freq: 4H
+  timeframe: "120T" # 2小时
+
+  # Altc 使用锚定交易对的 macro_tp_vwap_1200_position（gate / direction / 结构性出场），与训练/事件回测/实盘一致。
+  # 默认等价于 enabled: true, symbol: BTCUSDT；若要恢复「各 symbol 自有 VWAP」可设 enabled: false。
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

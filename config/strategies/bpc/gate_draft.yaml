@@ -1,5 +1,5 @@
 # BPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260410_130538_rr_extreme/bpc
+# 来源: results/train_final_20260410_190624_rr_extreme/bpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc
@@ -30,34 +30,34 @@ hard_gates:
   then:
     action: deny
   comment: 'statistical(lift=1.16): macro_tp_vwap_1200_position > -0.1256 & macro_tp_vwap_1200_position < 0.1575'
-- id: gate_evt_scale_evt_scale
-  tag: HARD_EVT_SCALE_EVT_SCALE
+- id: gate_ema_1200_position_ema_1200_position
+  tag: HARD_EMA_1200_POSITION_EMA_1200_POSITION
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.15)
+  reason: 统计验证规则 (lift=1.28)
   when:
     all_of:
-    - evt_scale:
-        value_gt: 0.246
-    - evt_scale:
-        value_lt: 0.5238
+    - ema_1200_position:
+        value_gt: 0.0996
+    - ema_1200_position:
+        value_lt: 0.1461
   then:
     action: deny
-  comment: 'statistical(lift=1.15): evt_scale > 0.246 & evt_scale < 0.5238'
-- id: gate_fer_signed_efficiency_fer_signed_efficiency
-  tag: HARD_FER_SIGNED_EFFICIENCY_FER_SIGNED_EFFICIENCY
+  comment: 'statistical(lift=1.28): ema_1200_position > 0.09964 & ema_1200_position < 0.1461'
+- id: gate_vol_persistence_vol_persistence
+  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.09)
+  reason: 统计验证规则 (lift=1.24)
   when:
     all_of:
-    - fer_signed_efficiency:
-        value_gt: 0.0
-    - fer_signed_efficiency:
-        value_lt: 0.0005
+    - vol_persistence:
+        value_gt: 0.0029
+    - vol_persistence:
+        value_lt: 0.0299
   then:
     action: deny
-  comment: 'statistical(lift=1.09): fer_signed_efficiency > 2.189e-09 & fer_signed_efficiency < 0.0004633'
+  comment: 'statistical(lift=1.24): vol_persistence > 0.002947 & vol_persistence < 0.02987'
 - id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
   tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
   phase: hard_gate
@@ -72,18 +72,18 @@ hard_gates:
   then:
     action: deny
   comment: 'statistical(lift=1.08): vol_leverage_asymmetry > 0.05582 & vol_leverage_asymmetry < 0.1482'
-- id: gate_evt_es_99_evt_es_99
-  tag: HARD_EVT_ES_99_EVT_ES_99
+- id: gate_fer_ols_pos_fer_ols_pos
+  tag: HARD_FER_OLS_POS_FER_OLS_POS
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.12)
+  reason: 统计验证规则 (lift=1.08)
   when:
     all_of:
-    - evt_es_99:
-        value_gt: 0.3532
-    - evt_es_99:
-        value_lt: 0.5119
+    - fer_ols_pos:
+        value_gt: 0.063
+    - fer_ols_pos:
+        value_lt: 0.5188
   then:
     action: deny
-  comment: 'statistical(lift=1.12): evt_es_99 > 0.3532 & evt_es_99 < 0.5119'
+  comment: 'statistical(lift=1.08): fer_ols_pos > 0.06296 & fer_ols_pos < 0.5188'
 guardrails: []

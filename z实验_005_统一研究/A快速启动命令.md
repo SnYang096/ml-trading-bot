@@ -733,7 +733,7 @@ mlbot pipeline run --strategy fer-short-240T
 4) 看每个窗口结果
 先快速看列表：
 
-python scripts/auto_research_pipeline.py --strategy fer-short-120T --list
+python scripts/auto_research_pipeline.py --strategy bpc --list
 再做一次聚合（看中位数/稳定性）：
 
 ```bash

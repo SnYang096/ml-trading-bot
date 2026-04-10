@@ -26,7 +26,7 @@ rolling:
     # 慢变量重训结构窗: 过去 N 个月
     structure_lookback_months: 12
   slow_realistic:
-    # 每隔 N 个月触发一次慢变量结构更新
+    # 慢变量节奏仅此处生效（rolling_sim 只读本块，勿再配重复的 slow_loop）
     cadence_months: 3
     triggered_retrain_enabled: true
   turbo_fixed_features:
@@ -35,15 +35,6 @@ rolling:
     # true 表示禁用 SHAP/特征搜索, 仅调阈值
     disable_feature_search: true
 
-# rolling_sim 实际读取 rolling.slow_realistic.*；下方 slow_loop 仅供运营/文档契约对照，
-# load_pipeline_config 可校验其与 slow_realistic 是否一致（不直接驱动 rolling_sim）。
-slow_loop:
-  cadence_months: 3
-  triggered_retrain:
-    enabled: true
-  freeze_outputs:
-    enabled: true
-    keep_latest: 3
 fast_loop:
   step_months: 1
   threshold_calibration:

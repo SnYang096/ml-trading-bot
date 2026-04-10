@@ -3440,6 +3440,9 @@ def save_report(
                     json.dumps(report, indent=2, default=str, ensure_ascii=False),
                     encoding="utf-8",
                 )
+                # 同步内存中的路径，否则后续 event_backtest 仍把 trading_map 写到已搬走的 train_final_*
+                pipeline_result["gate_dir"] = _new_rel
+                pipeline_result["evidence_dir"] = _new_rel
                 # 清理空的 train_final_* 父目录
                 _parent = _src.parent
                 if _parent.exists() and not any(_parent.iterdir()):

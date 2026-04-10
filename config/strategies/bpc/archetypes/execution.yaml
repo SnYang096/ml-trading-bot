@@ -1,20 +1,17 @@
 add_position:
   add_size_multipliers:
-    - 0.8
-    - 0.5
-    - 0.3
+  - 0.8
+  - 0.5
+  - 0.3
   inherit_parent_stop: true
   max_add_times: 3
   min_current_r_by_add:
-    - 1
-    - 2
-    - 3
-  # 父仓 initial_r≈4（4×ATR 止损宽），第 1 档 0.5（ATR）≈ 要求 current_r ≥ 0.5/4 = 0.125R。
-  # 若把 min_current_r_unit 改成 initial_r，那列表里的数就直接当 R 门槛用，不再做这次除法。
+  - 1
+  - 2
+  - 3
   min_current_r_unit: atr
   sizing_mode: fixed_multiplier
   trigger:
-    # float_r_ladder_only = 浮盈 R 阶梯（事件回测）；bpc_follow_signal = 仅 PCM 再次意图时加仓
     type: float_r_ladder_only
 execution_constraints:
   allow_add_on: true
@@ -30,14 +27,13 @@ stop_loss:
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
-  initial_r: 4.0
-  # VWAP 近场死区由 gate（如 HARD_MACRO_TP_VWAP_1200_DEADZONE）过滤；执行层仅按 pv 符号穿越平仓。
+  initial_r: 2.0
   structural_exit: vwap1200
   trailing:
+    activation_r: 2.0
     enabled: false
-    activation_r: 9.0
-    trail_r: 18.0
+    trail_r: 2.0
   type: trailing
 take_profit:
   enabled: false
-version: 58
+version: 59

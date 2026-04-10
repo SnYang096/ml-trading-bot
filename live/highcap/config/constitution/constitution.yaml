@@ -121,7 +121,7 @@ safety_state:
 # -----------------------------------------------------------------------------
 slots:
   enabled: true
-  slot_count: 4
+  slot_count: 10
   # Risk budget per slot (fraction of equity). This is NOT "cash allocation".
   # 每笔交易风险占 equity 的比例 (1% = 0.01)
   # 用于反算仓位: risk_usd = equity × risk_per_slot
@@ -156,57 +156,39 @@ slots:
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
   enabled_archetypes:
+    # PCM 联合事件回测策略白名单（与 pipeline strategy_scope 交集生效）
+    # 牛市 5x / 长侧实验需启用 long；短侧保持并列以便联合 PCM
     - bpc
-    - me
     - fer
+    - me
 
   per_strategy_limits:
-    bpc-long:
-      max_slots: 1
-      max_risk_per_trade: 0.02
-      allow_add_position: true
-      max_add_times: 5
-    me:
-      max_slots: 1
-      max_risk_per_trade: 0.02
-      allow_add_position: true
-      max_add_times: 2
-    fer:
-      max_slots: 1
-      max_risk_per_trade: 0.02
-      allow_add_position: false
-    lv:
-      max_slots: 0
-      max_risk_per_trade: 0.0025
-      allow_add_position: false
-
-  # 加仓全局安全规则 (适用于所有 allow_add_position=true 的策略)
-  # "adding is allowed only by freed risk budget"
-  add_position_rules:
-    max_add_times: 1 # 全局 fallback；实际层数优先读各策略 add_position
-    # 加仓前必须已锁定利润 (breakeven stop 已触发)
-    # 确保加仓只用 "已释放" 的风险预算，不增加净风险敞口
-    require_locked_profit: true
-    # 触发 breakeven lock 的最低浮盈 R 值
-    # current_r >= 1.0R 时自动将止损移至入场价，视为 "利润已锁定"
-    lock_profit_breakeven_trigger_r: 1.0
-    state_tracking:
-      persist_to: "data/db/order_management.db"
-
-  dynamic_slot_policy:
-    total_risk_cap: 0.10
+    # ── BPC 方向拆分 (方案A: 共享全局slot互斥竞争) ──
+    # bpc-long 和 bpc-short 各独立占 1 slot，全局 4 slots 防止同时过多开仓
     bpc:
-      enabled: true
-      base_slots: 1
+      max_slots: 5 # BPC 方向拆分: long 侧最多 1 slot
+      max_risk_per_trade: 0.01 # 肥尾主仓: 首枪 2.00% 风险；加仓次数与 execution.add_position 对齐
+      allow_add_position: true # BPC 趋势延续允许加仓
+      max_add_times: 3 # 宪法上限；触发与梯度见 archetypes/execution.yaml
+
+    # ── ME 方向拆分 ──
+    me:
+      max_slots: 5
+      max_risk_per_trade: 0.01 # 动量扩散只做加速段, 首枪更轻
+      allow_add_position: true # ME 动能扩张允许加仓
+      max_add_times: 3 # 与 execution.add_position.max_add_times 对齐；≥3 便于骑乘实验
+
+    # ── FER 方向拆分 ──
+    fer:
       max_slots: 3
-      step2:
-        max_drawdown: 0.08
-        max_daily_loss: 0.03
-        min_active_bpc_slots: 1
-      step3:
-        max_drawdown: 0.05
-        max_daily_loss: 0.02
-        min_active_bpc_slots: 2
+      max_risk_per_trade: 0.01 # 反转单不承担尾部主仓职责
+      allow_add_position: false # FER 反转策略不加仓
+
+    # ── LV (方向中性, 不拆分) ──
+    lv:
+      max_slots: 0 # LV 快进快出，最多 1 个
+      max_risk_per_trade: 0.0025 # LV 极端波动反噬快, 预算进一步下调到 0.25%
+      allow_add_position: false # LV 不加仓
 
   intent_selection_policy:
     archetype_priority: [bpc, me, fer]
@@ -222,17 +204,3 @@ resource_allocation:
     default_side: both
     fer_reverse_allowed: true
     reverse_exempt_families: [fer]
-
-  # 名义敞口风控: soft/hard 分层 + winner priority
-  notional_policy:
-    enabled: true
-    soft_max_total_notional_pct: 4.5
-    hard_max_total_notional_pct: 6.0
-    max_symbol_notional_pct: 2.5
-    max_family_notional_pct: 3.5
-    winner_priority:
-      enabled: true
-      allow_families: [bpc]
-      require_breakeven_locked: true
-      require_min_current_r: 1.0
-      block_new_slots_when_soft_cap_hit: true

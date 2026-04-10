@@ -1,39 +1,32 @@
-# BPC Archetype Prefilter (auto-generated)
-# 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 自动生成: 2026-03-08
-# 数据源: features_labeled.parquet, 40672 行
-
 rules:
-  - feature: bpc_bb_compression
-    operator: ">"
-    value: 0.9462
-    rationale: "meta-algorithm, KS=0.1655, return_uplift=+0.0292, robustness=100%, holdout验证通过"
-  - feature: bpc_volume_compression_pct
-    operator: ">"
-    value: 0.9239
-    rationale: "meta-algorithm, KS=0.1448, return_uplift=-0.0937, robustness=100%, holdout验证通过"
-  - feature: bpc_impulse_return_atr
-    operator: "<"
-    value: -0.9512
-    rationale: "meta-algorithm, KS=0.1125, return_uplift=-0.0604, robustness=100%, holdout验证通过"
-
+- feature: bpc_volume_compression_pct
+  operator: '>='
+  value: 0.8905
+  rationale: meta-algorithm, KS=0.1325, return_uplift=+1.2660, robustness=100%, holdout验证通过
+- feature: bpc_score_pullback
+  operator: '>='
+  value: 0.4
+  rationale: 语义锁定：必须出现可识别的回踩阶段，而非纯 breakout 追空
+  locked: true
+  lock_reason: BPC 语义锚点：回踩阶段成立
+- feature: bpc_pullback_depth
+  operator: <=
+  value: 0.55
+  rationale: 语义锁定：回撤不能过深，过深更接近结构失败或反转语义
+  locked: true
+  lock_reason: BPC 语义锚点：回踩深度受控
+- feature: bpc_recovery_strength
+  operator: '>='
+  value: 0.6
+  rationale: 语义锁定：回踩后必须有恢复力度，确认 continuation 的可执行性
+  locked: true
+  lock_reason: BPC 语义锚点：恢复强度确认
 last_evaluation:
-  # ── 自动生成 (2026-03-08) ──
-  timestamp: "2026-03-08"
-  data_source: "features_labeled.parquet"
-  n_rows: 40672
-  baseline_bad_rate: 0.0000
-  baseline_median_rr: -0.0203
-
-  # ── 正信号 (0 个) ──
-  positive_signals:
-    []
-
-  # ── 反信号 (0 个) ──
-  anti_signals:
-    []
-
-  # ── 低端信号 (0 个) ──
-  absence_signals:
-    []
-
+  timestamp: '2026-04-10'
+  data_source: features_labeled.parquet
+  n_rows: 53486
+  baseline_bad_rate: 0.0
+  baseline_median_rr: -0.0486
+  positive_signals: []
+  anti_signals: []
+  absence_signals: []

@@ -1,226 +1,222 @@
-# BPC Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py --meta-algorithm
-# Date: 2026-03-06 00:04
-#
-# 职责: "现在该入场吗?" → 硬二值控制入场时机；多个 filter 之间是 OR 关系。
-# 已移除 enabled:false 的单条件 legacy 条目（与 tier A/B 重复）；新组合仍可从
-# features_entry_filter.yaml 候选池在管线中扫描。
-
 filters:
-  # BPC-SHORT-120T Entry Filter Archetype
-  # promote_never_disable 条目置顶（优先阅读 / 与 plateau sticky 一致）；其余为可选扫描池。
-
-  - id: ef_trend_confirm_tier_a
-    enabled: true
-    promote_never_disable: true
-    locked: true
-    lock_reason: bpc_short_entry_trend_confirm_priority
-    description: "trend-confirm core (AND): orderflow + participation + derivatives expansion + anti-crowding"
-    conditions:
-      - feature: ofci_pct
-        operator: ">="
-        value: 0.70
-      - feature: volume_ratio_pct
-        operator: ">="
-        value: 0.70
-      - feature: oi_zscore
-        operator: ">="
-        value: 1.3451
-      - feature: shd_pct
-        operator: <=
-        value: 0.0965
-    notes: strict trend confirmation + promote_never_disable; thresholds from promote/history
-  - id: ef_trend_confirm_tier_b
-    enabled: true
-    promote_never_disable: true
-    locked: true
-    lock_reason: bpc_short_entry_trend_confirm_priority
-    description: "trend-confirm with VPIN guard (AND): orderflow + participation + derivatives + vpinsanity"
-    conditions:
-      - feature: ofci_pct
-        operator: ">="
-        value: 0.70
-      - feature: volume_ratio_pct
-        operator: ">="
-        value: 0.70
-      - feature: oi_zscore
-        operator: ">="
-        value: 1.3451
-      - feature: vpin_max20
-        operator: <=
-        value: 0.3458
-    notes: VPIN guard variant + promote_never_disable; thresholds from promote/history
-  - id: ef_bpc_pullback_absorb_dual_compression
-    enabled: true
-    promote_never_disable: true
-    locked: true
-    lock_reason: bpc_entry_semantic_pool_bpc_core
-    description: "BPC core: pullback absorption + dual compression + baseline flow confirmation"
-    conditions:
-      - feature: bpc_pullback_delta_absorption
-        operator: ">="
-        value: 0.58
-      - feature: dual_compression_score
-        operator: ">="
-        value: 0.55
-      - feature: ofci_pct
-        operator: ">="
-        value: 0.60
-    notes: semantic pool + promote_never_disable; OR arm stays enabled, thresholds from promote/history
-  - id: ef_cvd_trend_div_alignment
-    enabled: true
-    promote_never_disable: true
-    locked: true
-    lock_reason: bpc_entry_semantic_pool_cvd
-    description: "CVD divergence continuation: aligned trend-divergence with controlled location pressure"
-    conditions:
-      - feature: cvd_divergence_score_pct
-        operator: ">="
-        value: 0.60
-      - feature: trend_div_alignment
-        operator: ">="
-        value: 0.12
-      - feature: div_location_pressure
-        operator: <=
-        value: 0.70
-    notes: semantic pool + promote_never_disable; OR arm stays enabled, thresholds from promote/history
-  - id: ef_low_crowding_with_participation
-    enabled: true
-    promote_never_disable: true
-    locked: true
-    lock_reason: bpc_entry_semantic_pool_derivatives
-    description: "Derivatives crowding guard: moderate crowding with still-strong participation"
-    conditions:
-      - feature: funding_oi_crowding_score
-        operator: <=
-        value: 0.70
-      - feature: oi_zscore
-        operator: ">="
-        value: 0.90
-      - feature: volume_ratio_pct
-        operator: ">="
-        value: 0.62
-    notes: semantic pool + promote_never_disable; OR arm stays enabled, thresholds from promote/history
-  - id: ef_pullback_reaccept_flow
-    enabled: true
-    promote_never_disable: true
-    locked: true
-    lock_reason: bpc_entry_semantic_pool_pullback
-    description: "Pullback re-accept: absorption + low crowdedness + renewed participation"
-    conditions:
-      - feature: bpc_pullback_delta_absorption
-        operator: ">="
-        value: 0.55
-      - feature: shd_pct
-        operator: <=
-        value: 0.18
-      - feature: volume_ratio_pct
-        operator: ">="
-        value: 0.62
-    notes: semantic pool + promote_never_disable; OR arm stays enabled, thresholds from promote/history
-  - id: ef_shd_pct_crowded
-    enabled: false
-    locked: true
-    lock_reason: bpc_short_entry_orderflow_core_cross_tf
-    description: "pct: shd_pct <= 0.0965"
-    conditions:
-      - feature: shd_pct
-        operator: <=
-        value: 0.0965
-    notes: single-condition legacy fallback
-  - id: ef_ofci_pct_high
-    enabled: false
-    locked: true
-    lock_reason: bpc_short_entry_orderflow_core_cross_tf
-    description: "pct: ofci_pct >= 0.70"
-    conditions:
-      - feature: ofci_pct
-        operator: ">="
-        value: 0.70
-    notes: single-condition legacy fallback
-  - id: ef_oi_zscore_high
-    enabled: false
-    locked: true
-    lock_reason: bpc_short_entry_orderflow_core_cross_tf
-    description: "normalized: oi_zscore >= 1.3451"
-    conditions:
-      - feature: oi_zscore
-        operator: ">="
-        value: 1.3451
-    notes: single-condition legacy fallback
-  - id: ef_vpin_max20_low
-    enabled: false
-    locked: true
-    lock_reason: bpc_short_entry_orderflow_core_cross_tf
-    description: "normalized: vpin_max20 <= 0.3458"
-    conditions:
-      - feature: vpin_max20
-        operator: <=
-        value: 0.3458
-    notes: single-condition legacy fallback
-  - id: ef_volume_ratio_pct_high
-    enabled: false
-    locked: true
-    lock_reason: bpc_short_entry_orderflow_core_cross_tf
-    description: "pct: volume_ratio_pct >= 0.70"
-    conditions:
-      - feature: volume_ratio_pct
-        operator: ">="
-        value: 0.70
-    notes: pct feature retained but disabled by default to control OR pass-through
-  - id: ef_vpin_ma20_low
-    enabled: false
-    locked: true
-    lock_reason: bpc_short_entry_orderflow_core_cross_tf
-    description: "normalized: vpin_ma20 <= 0.2431"
-    conditions:
-      - feature: vpin_ma20
-        operator: <=
-        value: 0.2431
-    notes: collinear with vpin_max20; keep locked for threshold retune
-  - id: ef_vpin_ma5_low
-    enabled: false
-    locked: true
-    lock_reason: bpc_short_entry_orderflow_core_cross_tf
-    description: "normalized: vpin_ma5 <= 0.2278"
-    conditions:
-      - feature: vpin_ma5
-        operator: <=
-        value: 0.2278
-    notes: collinear with vpin_max20; keep locked for threshold retune
-  - id: ef_vpin_zscore_20_high
-    enabled: false
-    locked: true
-    lock_reason: bpc_short_entry_orderflow_core_cross_tf
-    description: "normalized: vpin_zscore_20 >= 0.60"
-    conditions:
-      - feature: vpin_zscore_20
-        operator: ">="
-        value: 0.60
-    notes: VPIN alternative representation; disabled to avoid redundancy
-  - id: ef_vpin_ignition_absorption_not_exhausted
-    enabled: false
-    locked: true
-    lock_reason: bpc_entry_semantic_pool_vpin_scene
-    description: "VPIN scene: ignition + absorption while exhaustion remains controlled"
-    conditions:
-      - feature: vpin_ignition_score
-        operator: ">="
-        value: 0.55
-      - feature: vpin_absorption_score
-        operator: ">="
-        value: 0.55
-      - feature: vpin_exhaustion_scene_score
-        operator: <=
-        value: 0.68
-    notes: semantic candidate pool; avoid late-stage chase by capping exhaustion score
-  - id: ev_trade_cluster_max_buy_run_ma20
-    enabled: true
-    locked: true
-    description: "Evidence bin: trade_cluster_max_buy_run_ma20 <= 0.0705"
-    conditions:
-      - feature: trade_cluster_max_buy_run_ma20
-        operator: <=
-        value: 0.0705
-    notes: Δrr=+4.5489, t=14.63, p=0.0000, pass=80.1%
+- id: ef_trend_confirm_tier_a
+  enabled: false
+  promote_never_disable: true
+  locked: true
+  lock_reason: bpc_short_entry_trend_confirm_priority
+  description: 'trend-confirm core (AND): orderflow + participation + derivatives
+    expansion + anti-crowding'
+  conditions:
+  - feature: ofci_pct
+    operator: '>='
+    value: 0.7
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.7
+  - feature: oi_zscore
+    operator: '>='
+    value: 1.3451
+  - feature: shd_pct
+    operator: <=
+    value: 0.0965
+  notes: strict trend confirmation + promote_never_disable; thresholds from promote/history
+- id: ef_trend_confirm_tier_b
+  enabled: false
+  promote_never_disable: true
+  locked: true
+  lock_reason: bpc_short_entry_trend_confirm_priority
+  description: 'trend-confirm with VPIN guard (AND): orderflow + participation + derivatives
+    + vpinsanity'
+  conditions:
+  - feature: ofci_pct
+    operator: '>='
+    value: 0.7
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.7
+  - feature: oi_zscore
+    operator: '>='
+    value: 1.3451
+  - feature: vpin_max20
+    operator: <=
+    value: 0.3458
+  notes: VPIN guard variant + promote_never_disable; thresholds from promote/history
+- id: ef_bpc_pullback_absorb_dual_compression
+  enabled: false
+  promote_never_disable: true
+  locked: true
+  lock_reason: bpc_entry_semantic_pool_bpc_core
+  description: 'BPC core: pullback absorption + dual compression + baseline flow confirmation'
+  conditions:
+  - feature: bpc_pullback_delta_absorption
+    operator: '>='
+    value: 0.58
+  - feature: dual_compression_score
+    operator: '>='
+    value: 0.55
+  - feature: ofci_pct
+    operator: '>='
+    value: 0.6
+  notes: semantic pool + promote_never_disable; OR arm stays enabled, thresholds from
+    promote/history
+- id: ef_cvd_trend_div_alignment
+  enabled: false
+  promote_never_disable: true
+  locked: true
+  lock_reason: bpc_entry_semantic_pool_cvd
+  description: 'CVD divergence continuation: aligned trend-divergence with controlled
+    location pressure'
+  conditions:
+  - feature: cvd_divergence_score_pct
+    operator: '>='
+    value: 0.6
+  - feature: trend_div_alignment
+    operator: '>='
+    value: 0.12
+  - feature: div_location_pressure
+    operator: <=
+    value: 0.7
+  notes: semantic pool + promote_never_disable; OR arm stays enabled, thresholds from
+    promote/history
+- id: ef_low_crowding_with_participation
+  enabled: false
+  promote_never_disable: true
+  locked: true
+  lock_reason: bpc_entry_semantic_pool_derivatives
+  description: 'Derivatives crowding guard: moderate crowding with still-strong participation'
+  conditions:
+  - feature: funding_oi_crowding_score
+    operator: <=
+    value: 0.7
+  - feature: oi_zscore
+    operator: '>='
+    value: 0.9
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.62
+  notes: semantic pool + promote_never_disable; OR arm stays enabled, thresholds from
+    promote/history
+- id: ef_pullback_reaccept_flow
+  enabled: false
+  promote_never_disable: true
+  locked: true
+  lock_reason: bpc_entry_semantic_pool_pullback
+  description: 'Pullback re-accept: absorption + low crowdedness + renewed participation'
+  conditions:
+  - feature: bpc_pullback_delta_absorption
+    operator: '>='
+    value: 0.55
+  - feature: shd_pct
+    operator: <=
+    value: 0.18
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.62
+  notes: semantic pool + promote_never_disable; OR arm stays enabled, thresholds from
+    promote/history
+- id: ef_shd_pct_crowded
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'pct: shd_pct <= 0.0965'
+  conditions:
+  - feature: shd_pct
+    operator: <=
+    value: 0.0965
+  notes: single-condition legacy fallback
+- id: ef_ofci_pct_high
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'pct: ofci_pct >= 0.70'
+  conditions:
+  - feature: ofci_pct
+    operator: '>='
+    value: 0.7
+  notes: single-condition legacy fallback
+- id: ef_oi_zscore_high
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'normalized: oi_zscore >= 1.3451'
+  conditions:
+  - feature: oi_zscore
+    operator: '>='
+    value: 1.3451
+  notes: single-condition legacy fallback
+- id: ef_vpin_max20_low
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'normalized: vpin_max20 <= 0.3458'
+  conditions:
+  - feature: vpin_max20
+    operator: <=
+    value: 0.3458
+  notes: single-condition legacy fallback
+- id: ef_volume_ratio_pct_high
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'pct: volume_ratio_pct >= 0.70'
+  conditions:
+  - feature: volume_ratio_pct
+    operator: '>='
+    value: 0.7
+  notes: pct feature retained but disabled by default to control OR pass-through
+- id: ef_vpin_ma20_low
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'normalized: vpin_ma20 <= 0.2431'
+  conditions:
+  - feature: vpin_ma20
+    operator: <=
+    value: 0.2431
+  notes: collinear with vpin_max20; keep locked for threshold retune
+- id: ef_vpin_ma5_low
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'normalized: vpin_ma5 <= 0.2278'
+  conditions:
+  - feature: vpin_ma5
+    operator: <=
+    value: 0.2278
+  notes: collinear with vpin_max20; keep locked for threshold retune
+- id: ef_vpin_zscore_20_high
+  enabled: false
+  locked: true
+  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  description: 'normalized: vpin_zscore_20 >= 0.60'
+  conditions:
+  - feature: vpin_zscore_20
+    operator: '>='
+    value: 0.6
+  notes: VPIN alternative representation; disabled to avoid redundancy
+- id: ef_vpin_ignition_absorption_not_exhausted
+  enabled: false
+  locked: true
+  lock_reason: bpc_entry_semantic_pool_vpin_scene
+  description: 'VPIN scene: ignition + absorption while exhaustion remains controlled'
+  conditions:
+  - feature: vpin_ignition_score
+    operator: '>='
+    value: 0.55
+  - feature: vpin_absorption_score
+    operator: '>='
+    value: 0.55
+  - feature: vpin_exhaustion_scene_score
+    operator: <=
+    value: 0.68
+  notes: semantic candidate pool; avoid late-stage chase by capping exhaustion score
+- id: ev_trade_cluster_max_buy_run_ma20
+  enabled: false
+  locked: true
+  description: 'Evidence bin: trade_cluster_max_buy_run_ma20 <= 0.0705'
+  conditions:
+  - feature: trade_cluster_max_buy_run_ma20
+    operator: <=
+    value: 0.0705
+  notes: Δrr=+4.5489, t=14.63, p=0.0000, pass=80.1%
 combination_mode: or

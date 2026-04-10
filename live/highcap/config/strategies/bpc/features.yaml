@@ -93,6 +93,8 @@ feature_pipeline:
 
     # ========== 基础 ==========
     - sma_200_f
+    - ema_1200_position_f     # 宏观 EMA1200 相对位置 (direction 级联)
+    - macro_tp_vwap_1200_position_f  # 典型价滚动 VWAP 1200 根 (direction 级联)
     - jump_risk_pct_f         # 跳空风险分位
 
     # ========== Volume Profile ==========
@@ -111,7 +113,8 @@ feature_pipeline:
     - oi_scene_semantic_scores_f           # OI 场景语义 (compression/ignition/absorption/exhaustion)
 
     # ========== GARCH 波动率建模 ==========
-    # - garch_features_f  # DISABLED: 370s/cycle, temporarily removed for live performance                     # garch_volatility, garch_persistence, garch_leverage_gamma
+    # - garch_features_f                     # garch_volatility, garch_persistence, garch_leverage_gamma
+    - volatility_regime_f                    # vol_persistence(≈α+β), vol_leverage_asymmetry(≈γ), vol_clustering_strength
 
     # ========== 场景语义 (补充) ==========
     - fp_imbalance_scene_semantic_scores_f # Footprint 不平衡场景语义
@@ -157,6 +160,7 @@ feature_pipeline:
     - session_features_f           # session_id, hour_sin/cos, is_session_overlap
     - bars_since_extreme_f         # bars_since_local_high/low (避免追单)
 
+    - market_cap_normalized_orderflow_f
   ensure_signal_column:
     name: signal
     default_value: 0
