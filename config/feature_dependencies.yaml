@@ -7705,6 +7705,10 @@ features:
     - fer_momentum_efficiency_decay
     # === 背离 ===
     - fer_volume_price_divergence
+    # === 结构锚点（新增） ===
+    - fer_range_pos_20
+    - fer_ols_pos
+    - fer_ols_width_norm
     category: fer
     description: FER failure-exhaustion-reversal signals for identifying single-side failure and reversal opportunities.
     pass_full_df: false
@@ -7715,6 +7719,8 @@ features:
       failure_window: 10
       decay_window: 20
       divergence_window: 10
+      range_window: 20
+      ols_window: 96
       normalized: true
       output_normalization_map:
         fer_signed_efficiency: signed_ratio
@@ -7733,6 +7739,9 @@ features:
         fer_sr_failed_breakout_direction_signed: bounded_-1_1
         fer_momentum_efficiency_decay: bounded_0_1
         fer_volume_price_divergence: bounded_0_1
+        fer_range_pos_20: bounded_0_1
+        fer_ols_pos: bounded_0_1
+        fer_ols_width_norm: bounded_0_1
     column_mappings:
       close: close
       high: high
@@ -7824,6 +7833,30 @@ features:
         me_accel_5k_short: bounded_0_3
     column_mappings:
       me_accel_5k: me_accel_5k
+
+  me_vwap_structure_bypass_f:
+    module: momentum_expansion
+    compute_func: compute_me_vwap_structure_bypass_direction_from_series
+    dependencies:
+    - me_soft_phase_f
+    - macro_tp_vwap_1200_position_f
+    required_columns:
+    - me_accel_5k
+    - macro_tp_vwap_1200_position
+    output_columns:
+    - me_vwap_structure_bypass_direction
+    category: momentum_expansion
+    description: >-
+      ME 方向绕过 VWAP 带通：|me_accel_5k|≥阈值 或 连续三根 K 线 macro_tp_vwap_1200_position 同号（价在 VWAP 同侧）。
+    pass_full_df: false
+    compute_params:
+      accel_abs_min: 1.5
+      normalized: true
+      output_normalization_map:
+        me_vwap_structure_bypass_direction: bounded_-1_1
+    column_mappings:
+      me_accel_5k: me_accel_5k
+      macro_tp_vwap_1200_position: macro_tp_vwap_1200_position
 
   me_failure_f:
     module: momentum_expansion

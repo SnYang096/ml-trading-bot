@@ -513,3 +513,50 @@ def compute_momentum_expansion_context_from_series(
         "me_reflex_risk": me_reflex_risk,
         "me_regime_suitable": me_regime_suitable,
     }, index=close.index)
+
+
+@register_feature(
+    "compute_me_vwap_structure_bypass_direction_from_series",
+    category="momentum_expansion",
+    description=(
+        "ME direction bypass vs VWAP band: strong |accel_5k| or 3 consecutive bars "
+        "on same side of macro_tp_vwap_1200_position (close vs VWAP)."
+    ),
+    outputs=["me_vwap_structure_bypass_direction"],
+)
+def compute_me_vwap_structure_bypass_direction_from_series(
+    *,
+    me_accel_5k: pd.Series,
+    macro_tp_vwap_1200_position: pd.Series,
+    accel_abs_min: float = 1.5,
+) -> pd.DataFrame:
+    """
+    输出 ∈ {-1, 0, +1}，供 direction.yaml 第二条规则 `transform: raw` 使用。
+
+    语义（OR，优先级：极强 accel > 三连 VWAP 侧）：
+    - 极强多：me_accel_5k >= accel_abs_min → +1
+    - 极强空：me_accel_5k <= -accel_abs_min → -1
+    - 否则若当前与前 2 根 K 的 macro_tp_vwap_1200_position 均 > 0（价在 VWAP 上方）→ +1
+    - 否则若三连均 < 0 → -1
+    - 否则 0
+
+    me_accel_5k 典型裁剪到 [-3, 3]；默认 accel_abs_min=1.5 约等于「半档满加速」。
+    """
+    a = pd.to_numeric(me_accel_5k, errors="coerce").astype(float)
+    pv = pd.to_numeric(macro_tp_vwap_1200_position, errors="coerce").astype(float)
+    thr = float(accel_abs_min)
+    long_accel = (a >= thr).to_numpy(dtype=bool)
+    short_accel = (a <= -thr).to_numpy(dtype=bool)
+    ok3 = (
+        pv.notna() & pv.shift(1).notna() & pv.shift(2).notna()
+    ).to_numpy(dtype=bool)
+    pv0 = pv.to_numpy(dtype=float)
+    pv1 = pv.shift(1).to_numpy(dtype=float)
+    pv2 = pv.shift(2).to_numpy(dtype=float)
+    long_pierce = ok3 & (pv0 > 0) & (pv1 > 0) & (pv2 > 0)
+    short_pierce = ok3 & (pv0 < 0) & (pv1 < 0) & (pv2 < 0)
+    base = np.where(long_accel, 1.0, np.where(short_accel, -1.0, 0.0))
+    base = np.where((base == 0) & long_pierce, 1.0, base)
+    base = np.where((base == 0) & short_pierce, -1.0, base)
+    out = pd.Series(base, index=pv.index, dtype=float, name="me_vwap_structure_bypass_direction")
+    return pd.DataFrame({"me_vwap_structure_bypass_direction": out})

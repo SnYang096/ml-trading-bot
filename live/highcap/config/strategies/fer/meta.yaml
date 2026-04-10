@@ -6,6 +6,8 @@ strategy:
     FailureExhaustionReversal archetype: 单边博弈失败→反向清算。
     识别单边impulse推进失败后的反向清算机会。
     核心：钱还在冲，但价格不再配合。
+    live/highcap 实验(2026-04): 方向仅规则1/2（无 CVD/ROC 兜底）；prefilter 以 fer_impulse_failure_score
+    为主、去掉 dist_to_nearest_sr 几何硬门（与 BPC/ME 概念区分）。
   tags:
     - reversal
     - exhaustion

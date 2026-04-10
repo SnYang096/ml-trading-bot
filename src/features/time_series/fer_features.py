@@ -72,6 +72,66 @@ def _safe_divide(numerator, denominator, fill: float = 0.0):
     return np.where(np.isnan(result), fill, result)
 
 
+def _rolling_ols_channel(close: pd.Series, window: int) -> tuple[pd.Series, pd.Series]:
+    """Compute OLS channel mid/width using a fixed rolling window."""
+    y = pd.to_numeric(close, errors="coerce").astype(float).ffill().fillna(0.0)
+    n = len(y)
+    if n == 0:
+        empty = pd.Series([], dtype=float, index=close.index)
+        return empty, empty
+
+    w = max(8, int(window))
+    if n < w:
+        nan_s = pd.Series(np.nan, index=close.index, dtype=float)
+        return nan_s, nan_s
+
+    yv = y.to_numpy(dtype=float)
+    idx = np.arange(n, dtype=float)
+    x = np.arange(w, dtype=float)
+    sum_x = float(x.sum())
+    sum_x2 = float((x**2).sum())
+    mean_x = sum_x / w
+    denom = float(w * sum_x2 - sum_x * sum_x)
+    if abs(denom) < EPS:
+        nan_s = pd.Series(np.nan, index=close.index, dtype=float)
+        return nan_s, nan_s
+
+    csum_y = np.concatenate([[0.0], np.cumsum(yv)])
+    csum_y2 = np.concatenate([[0.0], np.cumsum(yv * yv)])
+    csum_iy = np.concatenate([[0.0], np.cumsum(idx * yv)])
+
+    mid = np.full(n, np.nan, dtype=float)
+    width = np.full(n, np.nan, dtype=float)
+
+    for t in range(w - 1, n):
+        s = t - w + 1
+        sum_y = csum_y[t + 1] - csum_y[s]
+        sum_y2 = csum_y2[t + 1] - csum_y2[s]
+        sum_iy = csum_iy[t + 1] - csum_iy[s]
+        sum_xy = sum_iy - s * sum_y  # convert global index to local x=0..w-1
+
+        slope = (w * sum_xy - sum_x * sum_y) / denom
+        intercept = (sum_y / w) - slope * mean_x
+        mid_t = intercept + slope * (w - 1)
+
+        sse = (
+            sum_y2
+            + w * intercept * intercept
+            + slope * slope * sum_x2
+            + 2.0 * intercept * slope * sum_x
+            - 2.0 * intercept * sum_y
+            - 2.0 * slope * sum_xy
+        )
+        resid_std = np.sqrt(max(float(sse) / max(1, w), 0.0))
+        mid[t] = mid_t
+        width[t] = 2.0 * resid_std
+
+    return (
+        pd.Series(mid, index=close.index, dtype=float).ffill(),
+        pd.Series(width, index=close.index, dtype=float).ffill(),
+    )
+
+
 # =============================================================================
 # 🎯 主函数：FER 失败反转信号
 # =============================================================================
@@ -106,6 +166,10 @@ def _safe_divide(numerator, denominator, fill: float = 0.0):
         "fer_momentum_efficiency_decay",
         # === 背离 ===
         "fer_volume_price_divergence",
+        # === 结构锚点（新增） ===
+        "fer_range_pos_20",
+        "fer_ols_pos",
+        "fer_ols_width_norm",
     ],
 )
 def compute_fer_failure_signals_from_series(
@@ -130,6 +194,8 @@ def compute_fer_failure_signals_from_series(
     decay_window: int = DEFAULT_DECAY_WINDOW,
     divergence_window: int = DEFAULT_DIVERGENCE_WINDOW,
     sr_near_atr: float = 1.2,
+    range_window: int = 20,
+    ols_window: int = 96,
 ) -> pd.DataFrame:
     """
     FER 失败反转特征 v2：语义原子输出，不做 composite 加权。
@@ -569,6 +635,27 @@ def compute_fer_failure_signals_from_series(
         .fillna(0.0)
     )
 
+    # ================================================================
+    # 8️⃣ 结构锚点（新增）
+    # ================================================================
+    rolling_high = high.rolling(range_window, min_periods=1).max()
+    rolling_low = low.rolling(range_window, min_periods=1).min()
+    range_den = (rolling_high - rolling_low).replace(0.0, np.nan)
+    fer_range_pos_20 = ((close - rolling_low) / range_den).clip(0.0, 1.0).fillna(0.5)
+
+    ols_mid, ols_width = _rolling_ols_channel(close, window=ols_window)
+    ols_half = (ols_width / 2.0).replace(0.0, np.nan)
+    fer_ols_pos = ((close - (ols_mid - ols_half)) / (2.0 * ols_half)).clip(0.0, 1.0)
+    fer_ols_pos = fer_ols_pos.fillna(0.5)
+
+    ols_width_atr = (ols_width / atr_s.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
+    fer_ols_width_norm = (
+        ols_width_atr.rolling(max(40, ols_window * 2), min_periods=max(16, ols_window // 2))
+        .rank(pct=True)
+        .fillna(0.5)
+        .clip(0.0, 1.0)
+    )
+
     # ========== 组装输出 (无 composite, 每个信号独立) ==========
     result = pd.DataFrame(
         {
@@ -595,6 +682,10 @@ def compute_fer_failure_signals_from_series(
             "fer_momentum_efficiency_decay": fer_momentum_efficiency_decay,
             # 背离
             "fer_volume_price_divergence": fer_volume_price_divergence,
+            # 结构锚点
+            "fer_range_pos_20": fer_range_pos_20,
+            "fer_ols_pos": fer_ols_pos,
+            "fer_ols_width_norm": fer_ols_width_norm,
         },
         index=idx,
     )

@@ -1,6 +1,6 @@
-# FER Gate (optimized, auto-promoted)
+# FER Gate — live/highcap 实验版 (与 prefilter / direction 2026-04 对齐)
 # 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260308_204733/strategies/fer/gate_draft.yaml
-# 优化规则: 1/3 条通过优化, 1 条已移除
+# 变更: 去掉 dist_to_nearest_sr mirror；增加 fer_impulse_failure_score 与 prefilter 一致的硬门
 
 schema:
   phases:
@@ -13,20 +13,20 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: prefilter_dist_to_nearest_sr
-  tag: PREFILTER_DIST_TO_NEAREST_SR
+- id: prefilter_fer_impulse_failure_min
+  tag: PREFILTER_FER_IMPULSE_FAILURE_MIN
   phase: hard_gate
   priority: 1
-  reason: 'prefilter: dist_to_nearest_sr < -3.4118'
+  reason: "prefilter: fer_impulse_failure_score < 0.20（与 archetypes/prefilter.yaml 对齐）"
   when:
-    dist_to_nearest_sr:
-      value_lt: -3.4118
+    fer_impulse_failure_score:
+      value_lt: 0.20
   then:
     action: deny
   frozen: true
-  comment: prefilter条件 (训练-推理一致性, frozen=true)
+  comment: 训练-推理一致性；阈值与 prefilter fer_impulse_failure_score 同步
 - id: gate_cvd_change_5_normalized
-  # 与 direction 规则2（CVD 负→做多）冲突；禁用保留 YAML 供审计
+  # direction 已移除 CVD 兜底；本规则保持 disabled 供审计
   disabled: true
   tag: HARD_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate

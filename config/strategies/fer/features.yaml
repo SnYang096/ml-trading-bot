@@ -15,6 +15,8 @@ feature_pipeline:
     - atr_f                       # ATR（label 计算必需，通过 exclude_columns 排除模型输入）
 
     # ===== FER 专属特征 (核心) =====
+    # fer_failure_signals_f 现包含结构锚点扩展：
+    #   fer_range_pos_20, fer_ols_pos, fer_ols_width_norm
     - fer_failure_signals_f
 
     - roc_5_f

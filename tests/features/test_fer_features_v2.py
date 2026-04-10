@@ -69,7 +69,14 @@ PRICE_ONLY_COLS = [
     "fer_volume_price_divergence",
 ]
 
-ALL_COLS = CVD_DEPENDENT_COLS + PRICE_ONLY_COLS
+# 结构锚点（价/ATR/通道，不依赖 CVD；CVD 掩码不覆盖）
+ANCHOR_COLS = [
+    "fer_range_pos_20",
+    "fer_ols_pos",
+    "fer_ols_width_norm",
+]
+
+ALL_COLS = CVD_DEPENDENT_COLS + PRICE_ONLY_COLS + ANCHOR_COLS
 
 # =============================================================================
 # 1️⃣ 未来函数检测
@@ -209,7 +216,7 @@ class TestFERFunctionalCorrectness:
         return create_ohlcv_with_cvd(n=500, seed=77)
 
     def test_output_columns(self, data):
-        """输出应有 16 列"""
+        """输出列 = CVD 依赖 + 价量 + 结构锚点"""
         result = compute_fer_failure_signals_from_series(**data)
         assert set(result.columns) == set(ALL_COLS), (
             f"列不匹配: 缺={set(ALL_COLS)-set(result.columns)}, "
@@ -233,6 +240,9 @@ class TestFERFunctionalCorrectness:
             "fer_sr_failed_breakout_score_pct",
             "fer_momentum_efficiency_decay",
             "fer_volume_price_divergence",
+            "fer_range_pos_20",
+            "fer_ols_pos",
+            "fer_ols_width_norm",
         ]
         for col in bounded_cols:
             valid = result[col].dropna()
@@ -240,6 +250,47 @@ class TestFERFunctionalCorrectness:
                 continue
             assert valid.min() >= -1e-9, f"{col} 下界越界: {valid.min()}"
             assert valid.max() <= 1.0 + 1e-9, f"{col} 上界越界: {valid.max()}"
+
+    def test_anchor_range_pos_extremes(self):
+        """fer_range_pos_20: 价格贴滚动上沿 → 接近 1，贴下沿 → 接近 0"""
+        n = 120
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+        close = pd.Series(np.linspace(100.0, 100.0, n), index=dates)
+        high = close + 1.0
+        low = close - 1.0
+        vol = pd.Series(1000.0, index=dates)
+        atr = pd.Series(1.0, index=dates)
+        cvd = pd.Series(np.cumsum(np.random.RandomState(0).randn(n) * 10), index=dates)
+        cvd5 = cvd.diff(5)
+        out = compute_fer_failure_signals_from_series(
+            close=close,
+            high=high,
+            low=low,
+            volume=vol,
+            atr=atr,
+            cvd=cvd,
+            cvd_change_5=cvd5,
+        )
+        # 常数价 → range 退化，中位附近
+        mid = out["fer_range_pos_20"].iloc[50:80].median()
+        assert 0.0 <= mid <= 1.0
+        close2 = close.copy()
+        close2.iloc[-5:] = low.iloc[-5:] - 5.0  # 明显在下沿以下已 clip，改为压低下轨
+        low2 = low.copy()
+        low2.iloc[-30:] = close2.iloc[-30:] - 0.01
+        high2 = high.copy()
+        high2.iloc[-30:] = close2.iloc[-30:] + 50.0
+        out2 = compute_fer_failure_signals_from_series(
+            close=close2,
+            high=high2,
+            low=low2,
+            volume=vol,
+            atr=atr,
+            cvd=cvd,
+            cvd_change_5=cvd5,
+        )
+        tail_low = out2["fer_range_pos_20"].iloc[-3]
+        assert tail_low < 0.35, f"expect low range position, got {tail_low}"
 
     def test_efficiency_flip_continuous(self, data):
         """efficiency_flip v2.1+: EWM衰减信号 [0,1]，不再是 {-1,0,1}"""
@@ -367,7 +418,7 @@ class TestFERCVDNeutralValueLiveSafety:
     """CVD 不活跃时输出 0.0，不被实盘 pd.isna() 丢弃"""
 
     def test_inactive_cvd_no_nan_in_output(self):
-        """CVD 不活跃 → 16 列全部无 NaN (保证实盘不丢特征)"""
+        """CVD 不活跃 → 全部输出列无 NaN (保证实盘不丢特征)"""
         data = create_ohlcv_with_cvd(n=300, seed=99)
         del data["cvd"]
         del data["cvd_change_5"]
@@ -381,7 +432,7 @@ class TestFERCVDNeutralValueLiveSafety:
             )
 
     def test_live_feature_extraction_preserves_all_fer(self):
-        """模拟实盘特征提取流程：即使 CVD 不活跃，16 列全部进入 features dict"""
+        """模拟实盘特征提取流程：即使 CVD 不活跃，全部列进入 features dict"""
         data = create_ohlcv_with_cvd(n=300, seed=99)
         del data["cvd"]
         del data["cvd_change_5"]
@@ -401,7 +452,7 @@ class TestFERCVDNeutralValueLiveSafety:
             )
 
     def test_zero_cvd_live_extraction(self):
-        """CVD 全零 → 实盘提取保留所有 16 列"""
+        """CVD 全零 → 实盘提取保留所有输出列"""
         data = create_ohlcv_with_cvd(n=300, seed=88)
         data["cvd"] = pd.Series(0.0, index=data["close"].index)
         data["cvd_change_5"] = pd.Series(0.0, index=data["close"].index)

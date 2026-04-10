@@ -1,47 +1,92 @@
-# FER Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)
-# Date: 2026-03-08 20:50
-# Promoted: 3 filters (evidence Spearman bins)
-# Significance: forward_rr t-test p<0.05 required
-#
-# 职责: "现在该入场吗?" → 硬二值控制
-# 多个 filter 之间是 OR 关系
+# FER Entry：先保留 2 条主分支恢复成交密度（OR），VWAP 分支暂关，便于逐步加严。
+# 数据（同上 parquet，且仅统计「放宽后 prefilter 通过」子集 n≈2572）:
+#   short-signed: fer_range_pos_20 中位 ~0.53，bars_since_local_high 中位 0.18、p75 0.32
+#   long-signed:  fer_range_pos_20 中位 ~0.57，bars_since_local_low  中位 0.22、p75 0.30
+# 阈值取中位~分位之间：上沿空 range>=0.55、bars_since_high<=0.28；下沿多 range<=0.48、bars_since_low<=0.28
+# fer_impulse_failure_score 分支内 >=0.14（低于 prefilter 0.12 无意义，此处略高于底以保证事件强度）
+# combination_mode: or
 
 filters:
-  # DISABLED: bpc_garch_compression depends on garch_features_f (370s/cycle)
-  # - id: ev_bpc_garch_compression
-  #   enabled: true
-  #   description: 'Evidence bin: bpc_garch_compression <= 0.91'
-  #   conditions:
-  #   - feature: bpc_garch_compression
-  #     operator: <=
-  #     value: 0.91
-  #   notes: Δrr=+1.9489, t=6.48, p=0.0000, pass=70.3%
-  - id: ev_fer_trapped_shorts_score
-    locked: true
+  - id: short_upper_extreme_fail
     enabled: true
-    description: "Evidence bin: fer_trapped_shorts_score >= 0.065147"
+    locked: true
+    description: "做空: 上沿失败 + 放宽高位/极值距离 + 量价背离确认"
     conditions:
+      - feature: fer_impulse_failure_direction_signed
+        operator: "<="
+        value: -1
+      - feature: fer_range_pos_20
+        operator: ">="
+        value: 0.55
+      - feature: bars_since_local_high
+        operator: "<="
+        value: 0.28
+      - feature: fer_impulse_failure_score
+        operator: ">="
+        value: 0.14
+      - feature: fer_volume_price_divergence
+        operator: ">="
+        value: 0.42
+    notes: "density-fix v1: short branch (data-calibrated)"
+
+  - id: long_lower_extreme_fail
+    enabled: true
+    locked: true
+    description: "做多: 下沿失败 + 放宽低位/极值距离 + trapped-shorts 确认"
+    conditions:
+      - feature: fer_impulse_failure_direction_signed
+        operator: ">="
+        value: 1
+      - feature: fer_range_pos_20
+        operator: "<="
+        value: 0.48
+      - feature: bars_since_local_low
+        operator: "<="
+        value: 0.28
+      - feature: fer_impulse_failure_score
+        operator: ">="
+        value: 0.14
       - feature: fer_trapped_shorts_score
         operator: ">="
-        value: 0.065147
-    notes: Δrr=+1.7982, t=4.92, p=0.0000, pass=80.0%
-  - id: ev_vol_mom_10
-    enabled: true
+        value: 0.05
+    notes: "density-fix v1: long branch (data-calibrated)"
+
+  - id: short_vwap_reject
+    enabled: false
     locked: true
-    description: "Evidence bin: vol_mom_10 >= -0.176468"
+    description: "（暂关）做空: VWAP 上方拒绝 + 通道上沿 + 吸收 — 第二步再加回"
     conditions:
-      - feature: vol_mom_10
+      - feature: fer_impulse_failure_direction_signed
+        operator: "<="
+        value: -1
+      - feature: vwap_position
         operator: ">="
-        value: -0.176468
-    notes: Δrr=+1.7265, t=5.08, p=0.0000, pass=80.0%
-  - id: ev_fer_sr_failed_breakout_score_pct
-    enabled: true
-    locked: true
-    description: "FER-SR 子语义: fer_sr_failed_breakout_score_pct >= 0.70"
-    conditions:
-      - feature: fer_sr_failed_breakout_score_pct
+        value: 0.20
+      - feature: fer_ols_pos
         operator: ">="
         value: 0.70
-    notes: "heuristic: 允许 SR 失败突破高置信样本直接通过 entry OR 分支"
+      - feature: fer_aggressor_absorption
+        operator: ">="
+        value: 0.55
+    notes: "disabled for density recovery; re-enable after short/long branch stable"
+
+  - id: long_vwap_reclaim
+    enabled: false
+    locked: true
+    description: "（暂关）做多: VWAP 下方回收 + 通道下沿 + 吸收 — 第二步再加回"
+    conditions:
+      - feature: fer_impulse_failure_direction_signed
+        operator: ">="
+        value: 1
+      - feature: vwap_position
+        operator: "<="
+        value: -0.20
+      - feature: fer_ols_pos
+        operator: "<="
+        value: 0.30
+      - feature: fer_aggressor_absorption
+        operator: ">="
+        value: 0.55
+    notes: "disabled for density recovery; re-enable after short/long branch stable"
+
 combination_mode: or

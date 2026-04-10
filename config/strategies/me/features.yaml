@@ -100,6 +100,8 @@ feature_pipeline:
     - vwap_position_f
     # 与 BPC 对齐：宏观典型价 VWAP 相对位置（gate / direction；锚定见 meta macro_tp_vwap_anchor，默认各 symbol 自有）
     - macro_tp_vwap_1200_position_f
+    # direction：极强 accel 或三连 VWAP 侧 → 绕过 VWAP 带通（见 archetypes/direction.yaml 第二条）
+    - me_vwap_structure_bypass_f
 
     # ========== 交叉特征 ==========
     - exhaustion_at_liquidity_void_f       # 力竭 × 流动性真空

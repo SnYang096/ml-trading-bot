@@ -1,9 +1,13 @@
 # FER Direction Determination
-# 版本: 1.0
+# 版本: 1.1 (live/highcap 实验)
 # 创建时间: 2026-02-22
 #
 # 职责: 确定 FER archetype 的交易方向 (long/short)
 # 原则: 方向来自"失败方向的反向"，是 deterministic 的，不让模型学
+#
+# 2026-04 实验语义（与 BPC/ME 区分）:
+#   - 仅当存在「可命名的失败事件」时才给方向；无事件则 direction=0（下游 require_nonzero 跳过）
+#   - 已移除 CVD/ROC 兜底：避免在任意价位用动量符号冒充 FER，减少「阻力多/支撑空」类错觉
 #
 # Pipeline 位置:
 #   Direction (本文件) → Gate → Entry Filter → Evidence → Execution
@@ -28,7 +32,7 @@
 #   - WPT 当前值 (动能逻辑, 属于 ME)
 #   - funding_rate (杠杆逻辑, 属于 LV)
 
-version: 1
+version: 1.1
 
 # 方向确定规则 (按优先级从高到低)
 # 命中第一个可用 method 后停止
@@ -45,22 +49,8 @@ direction_rules:
     description: "impulse 失败方向（signed）"
     transform: raw
 
-  # 规则 3: CVD 短周期变化的反向 (最佳量化信号)
-  # CVD 正 = 买方推进 → 如果推进失败 → 做空
-  # CVD 负 = 卖方推进 → 如果推进失败 → 做多
-  # 覆盖率 100%, bad_rate 差异 ±1.5%
-  - method: feature_sign
-    feature: cvd_change_5_normalized
-    description: "CVD 5-bar 变化的反向: -sign(cvd), 失败推进的反向"
-    transform: negate_sign
-
-  # 规则 4: ROC 动量反向 (兜底)
-  # 上涨 (roc>0) 失败 → 做空; 下跌 (roc<0) 失败 → 做多
-  # 覆盖率 100%, bad_rate 差异 ±1.3%
-  - method: feature_sign
-    feature: roc_20
-    description: "20-bar ROC 方向的反向: -sign(roc)"
-    transform: negate_sign
+  # 规则 3–4（CVD / ROC 兜底）已刻意移除 — 见文件头「实验语义」。
+  # 若需恢复兜底，从 config/strategies/fer/archetypes/direction.yaml 历史或 git 拷回。
 
 # 方向验证 (direction == 0 视为无信号)
 validation:

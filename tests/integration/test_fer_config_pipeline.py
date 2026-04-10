@@ -1,8 +1,6 @@
 """
-FER 配置管线集成测试 — 解释「为何长时间不开仓」的典型机制。
-
-覆盖生产目录 config/strategies/fer/archetypes/ 下当前 YAML，
-不依赖行情文件；用于回归与文档化配置冲突。
+FER 配置管线集成测试 — 覆盖 config/strategies/fer/archetypes/ 当前 YAML，
+不依赖行情文件；用于回归（prefilter / direction / gate / entry）。
 """
 
 from __future__ import annotations
@@ -28,21 +26,20 @@ def _fer() -> GenericLiveStrategy:
 
 
 def _baseline_features() -> dict:
-    """过 prefilter + gate(当前两条 hard) + entry_filter + direction 的一组保守正值。"""
+    """满足当前 prefilter + gate + direction(仅 signed failure) + entry(做多分支) 的一组正值。"""
     return {
         "timestamp": "2024-08-15T12:00:00+00:00",
-        "dist_to_nearest_sr": 0.4,
         "sr_strength_max": 0.6,
+        "fer_impulse_failure_score": 0.25,
+        "fer_aggressor_absorption": 0.50,
+        "fer_ols_width_norm": 0.50,
         "fer_sr_failed_breakout_direction_signed": 0.0,
-        "fer_sr_failed_breakout_score_pct": 0.0,
-        "fer_impulse_failure_direction": 0.0,
-        "fer_impulse_failure_direction_signed": 0.0,
-        # 规则2 CVD：略正 → negate_sign → SHORT
-        "cvd_change_5_normalized": 0.02,
-        "roc_20": 0.01,
-        "fer_volume_price_divergence": 0.2,
-        "fer_trapped_shorts_score": 0.1,
-        "vol_mom_10": 0.0,
+        "fer_impulse_failure_direction_signed": 1.0,
+        # gate：fer_volume_price_divergence 在 (0.425, 0.675) 内会 deny；取低端外
+        "fer_volume_price_divergence": 0.20,
+        "fer_trapped_shorts_score": 0.15,
+        "fer_range_pos_20": 0.35,
+        "bars_since_local_low": 0.15,
         "close": 60000.0,
         "atr": 100.0,
     }
@@ -53,43 +50,48 @@ def fer_strategy() -> GenericLiveStrategy:
     return _fer()
 
 
-def test_prefilter_rejects_when_price_too_far_from_sr(fer_strategy):
+def test_prefilter_rejects_when_impulse_failure_below_threshold(fer_strategy):
     f = deepcopy(_baseline_features())
-    f["dist_to_nearest_sr"] = 2.5
-    f["sr_strength_max"] = 0.7
+    f["fer_impulse_failure_score"] = 0.05
     out = fer_strategy.decide(features=f, symbol="BTCUSDT")
     assert out == []
     assert fer_strategy._last_funnel.get("prefilter") is False
-    assert "dist_to_nearest_sr" in str(
+    assert "fer_impulse_failure_score" in str(
         fer_strategy._last_funnel.get("prefilter_reason", "")
     )
 
 
-def test_prefilter_rejects_when_sr_strength_below_threshold(fer_strategy):
+def test_prefilter_rejects_when_absorption_below_threshold(fer_strategy):
     f = deepcopy(_baseline_features())
-    f["sr_strength_max"] = 0.5
+    f["fer_aggressor_absorption"] = 0.10
     out = fer_strategy.decide(features=f, symbol="BTCUSDT")
     assert out == []
     assert fer_strategy._last_funnel.get("prefilter") is False
-    assert "sr_strength_max" in str(
+    assert "fer_aggressor_absorption" in str(
         fer_strategy._last_funnel.get("prefilter_reason", "")
     )
 
 
-def test_strongly_negative_cvd_long_passes_gate_when_cvd_hard_gate_disabled(
-    fer_strategy,
-):
-    """方向规则2：CVD 负 → LONG；CVD hard gate 已 disabled，不得再整单 veto。"""
+def test_prefilter_rejects_when_ols_width_below_threshold(fer_strategy):
+    f = deepcopy(_baseline_features())
+    f["fer_ols_width_norm"] = 0.10
+    out = fer_strategy.decide(features=f, symbol="BTCUSDT")
+    assert out == []
+    assert fer_strategy._last_funnel.get("prefilter") is False
+    assert "fer_ols_width_norm" in str(
+        fer_strategy._last_funnel.get("prefilter_reason", "")
+    )
+
+
+def test_no_direction_when_signed_failure_missing(fer_strategy):
+    """direction 仅认 SR / impulse signed；二者皆为 0 时不应给方向成交。"""
     f = deepcopy(_baseline_features())
     f["fer_impulse_failure_direction_signed"] = 0.0
-    f["fer_impulse_failure_direction"] = 0.0
-    f["cvd_change_5_normalized"] = -0.08
-    f["roc_20"] = 0.0
+    f["fer_sr_failed_breakout_direction_signed"] = 0.0
     out = fer_strategy.decide(features=f, symbol="BTCUSDT")
-    assert len(out) == 1
+    assert out == []
     assert fer_strategy._last_funnel.get("prefilter") is True
-    assert fer_strategy._last_funnel.get("direction_value") == 1
-    assert fer_strategy._last_funnel.get("gate") is True
+    assert fer_strategy._last_funnel.get("direction") is False
 
 
 def test_gate_vetoes_fer_volume_price_divergence_mid_band(fer_strategy):
@@ -102,10 +104,9 @@ def test_gate_vetoes_fer_volume_price_divergence_mid_band(fer_strategy):
     assert len(reasons) >= 1
 
 
-def test_entry_filter_blocks_when_both_or_legs_fail(fer_strategy):
+def test_entry_filter_blocks_when_long_branch_fails_range(fer_strategy):
     f = deepcopy(_baseline_features())
-    f["fer_trapped_shorts_score"] = 0.0
-    f["vol_mom_10"] = -0.5
+    f["fer_range_pos_20"] = 0.90
     out = fer_strategy.decide(features=f, symbol="BTCUSDT")
     assert out == []
     assert fer_strategy._last_funnel.get("entry_filter") is False

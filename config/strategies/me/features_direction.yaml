@@ -36,6 +36,8 @@ candidates:
   - feature: me_volume_accel # 成交量加速 [0,1]
   - feature: me_accel_2k # 2k 加速度 [-3,3]
   - feature: me_multi_tf_alignment # 多时间框架对齐 [0,1]
+  - feature: me_vwap_structure_bypass_direction # VWAP 绕行合成方向 {-1,0,1}
+    transform: raw
 
   # ── 动量指标 ──
   - feature: macd_atr # MACD/ATR (有正负)
