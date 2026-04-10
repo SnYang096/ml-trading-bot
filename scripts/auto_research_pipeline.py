@@ -250,6 +250,22 @@ def _resolve_stage_strategies_root(cfg: Dict[str, Any], stage: str) -> Path:
     return PROJECT_ROOT / "config" / "strategies"
 
 
+def _read_timeframe_from_meta_yaml_path(meta_path: Path | None) -> str:
+    """从策略 meta.yaml 读取周期：优先 strategy.timeframe，其次顶层 timeframe。"""
+    if meta_path is None or not meta_path.is_file():
+        return ""
+    try:
+        meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return ""
+    st = meta.get("strategy")
+    if isinstance(st, dict):
+        tf = str(st.get("timeframe", "") or "").strip()
+        if tf:
+            return tf
+    return str(meta.get("timeframe", "") or "").strip()
+
+
 def _run_config_consistency_checks(
     *,
     cfg: Dict[str, Any],
@@ -268,10 +284,6 @@ def _run_config_consistency_checks(
         cfg_tf = str(scfg.get("timeframe", "") or "").strip()
         cfg_dir = str(scfg.get("config", "") or "").strip()
         side = _resolve_strategy_side(strategy, scfg)
-        print(
-            f"   ConfigCheck[{strategy}]: timeframe={cfg_tf or 'N/A'} "
-            f"side={side} config={cfg_dir or 'N/A'}"
-        )
 
         # 优先 stage_root，其次 strategies.*.config
         cand_dirs: List[Path] = [stage_root / strategy]
@@ -292,20 +304,20 @@ def _run_config_consistency_checks(
             None,
         )
 
-        meta_tf = ""
-        if meta_path is not None:
-            try:
-                meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
-                meta_tf = str(
-                    ((meta.get("strategy", {}) or {}).get("timeframe", "")) or ""
-                ).strip()
-            except Exception:
-                meta_tf = ""
-
-        if meta_tf and cfg_tf and meta_tf != cfg_tf:
+        meta_tf = _read_timeframe_from_meta_yaml_path(meta_path)
+        print(
+            f"   ConfigCheck[{strategy}]: timeframe={meta_tf or 'N/A'} (meta.yaml) "
+            f"side={side} config={cfg_dir or 'N/A'}"
+        )
+        if cfg_tf and meta_tf and cfg_tf != meta_tf:
             print(
-                f"⚠️  ConfigCheck[{strategy}]: timeframe 不一致 "
-                f"(strategies.{strategy}.timeframe={cfg_tf}, meta={meta_tf}, meta_path={meta_path})"
+                f"⚠️  ConfigCheck[{strategy}]: 管线仅使用 meta 的 timeframe={meta_tf}；"
+                f"strategies.{strategy}.timeframe={cfg_tf} 将被忽略（请删除 YAML 键或改为与 meta 一致）"
+            )
+        elif cfg_tf and not meta_tf:
+            print(
+                f"⚠️  ConfigCheck[{strategy}]: 配置了 strategies.{strategy}.timeframe={cfg_tf}，"
+                f"但未从 meta.yaml 读到周期；管线 **只认 meta**，请补全 meta 并去掉 YAML 中 timeframe"
             )
 
         has_direction = bool(scfg.get("has_direction", False))
@@ -1581,9 +1593,10 @@ def _maybe_auto_tune_locked_prefilter(
         print("  ℹ️  locked tuning: no locked rules, skip")
         return ""
 
-    if strategy.startswith("me-"):
+    # 管线 strategies.* 键名与配置统一为短名（bpc / me），不再使用 bpc-long 等前缀。
+    if strategy == "me":
         template = "me"
-    elif strategy.startswith("bpc-"):
+    elif strategy == "bpc":
         template = "bpc"
     else:
         template = "fer"
@@ -1717,6 +1730,24 @@ def _yaml_rolling_feature_search_enabled(cfg: dict) -> bool:
     return not bool(turbo.get("disable_feature_search", True))
 
 
+def _resolve_pipeline_strategy_timeframe(strategy: str, scfg: dict) -> str:
+    """策略周期仅以 strategies.*.config 下 meta.yaml 为准（忽略 pipeline YAML 的 timeframe 键）。"""
+    prod_rel = str(scfg.get("config", "") or "").strip()
+    if not prod_rel:
+        raise KeyError(
+            f"{strategy}: 未配置 strategies.{strategy}.config，无法从 meta.yaml 读取 timeframe"
+        )
+    meta_path = (PROJECT_ROOT / prod_rel / "meta.yaml").resolve()
+    tf = _read_timeframe_from_meta_yaml_path(meta_path)
+    if not tf:
+        if not meta_path.is_file():
+            raise FileNotFoundError(f"{strategy}: 找不到 meta.yaml: {meta_path}")
+        raise ValueError(
+            f"{strategy}: meta.yaml 未设置 strategy.timeframe（或顶层 timeframe）: {meta_path}"
+        )
+    return tf
+
+
 def run_strategy_pipeline(
     strategy: str,
     cfg: dict,
@@ -1748,7 +1779,7 @@ def run_strategy_pipeline(
     """执行单个策略训练链，可在指定 stage 提前停止."""
     scfg = cfg["strategies"][strategy]
     prod_config_dir = scfg["config"]
-    timeframe = scfg["timeframe"]
+    timeframe = _resolve_pipeline_strategy_timeframe(strategy, scfg)
     log = run_dir / "pipeline.log"
     log.parent.mkdir(parents=True, exist_ok=True)
 

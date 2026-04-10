@@ -1,7 +1,15 @@
 # ============================================================
-# 上线前训练流水线 (2H only, BPC-only)
+# 上线前训练流水线 (2H, FER-only, turbo / 阈值链)
 # 基于 prod_train_pipeline_2h_turbo_2024bull_thresholds_only
-# 仅保留 bpc-short-120T / bpc-long-120T
+#
+# 本版相对「宽区间」turbo 的调整（压信号密度、打开执行层 R 网格）：
+# - prefilter / entry_filter：收窄 target_trades_max，略抬高 trade_penalty，与 prod FER 对齐 min_rows
+# - gate：提高 min_combined_pass_rate，并启用 prod FER 的 stat_fallback 门控
+# - fast_loop.execution_opt：true → 月度对称 R 网格（依赖下方 event_backtest.sym_r_by_family.fer）
+# - 周期：仅以 config/strategies/fer/meta.yaml 为准（此处不写 timeframe）
+#
+# 加仓：FER archetypes/execution 已为 allow_add_on: false；若 PCM 仍出现 add 意图，查 constitution /
+#       live 侧 intent，不在本 YAML 内覆盖。
 # ============================================================
 
 dates:
@@ -16,14 +24,12 @@ rolling:
   mode: turbo_fixed_features
   windows:
     calibration_months: 6
-    #  structure_lookback_months：慢速滚动里的「结构快照往回看多久」（你现在是 turbo → 基本不用）。
     structure_lookback_months: 12
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
     disable_feature_search: true
 
 fast_loop:
-  # 快变量月度校准链的全局开关: true=每层都禁用树模型训练
   disable_model_training: true
   step_months: 1
   threshold_calibration:
@@ -33,17 +39,12 @@ fast_loop:
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
-    enabled: false
+    enabled: true
   pcm_eval:
     enabled: false
-  # 方向调优默认每月执行；若需降成本可设 cadence_months: N（每 N 个 rolling 月跑一次）
   direction_tuning:
     enabled: true
-    # cadence_months: 1  # 默认 1；勿与 rolling.windows.calibration_months（标定窗口长度）混用
-    # true：跑 direction_strict_validation --compare-features --temporal（工作区 features_direction.yaml）
-    # false：仅 Phase1/2 验证 archetypes/direction.yaml，不读候选特征表
     compare_features: false
-    # false：direction_strict_validation 不 --promote，仅验证 archetypes/direction.yaml
     promote_after_validate: false
 
 universe_group:
@@ -58,7 +59,6 @@ download:
 strategies:
   fer:
     config: config/strategies/fer
-    timeframe: 120T
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -66,11 +66,12 @@ strategies:
     kpi_gates:
       prefilter:
         min_pass_rate: 0.05
-        min_rows: 10
-        target_trades_min: 35
-        target_trades_max: 260
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
+        min_rows: 300
+        # 收窄上限，校准器会更惩罚「过密」样本（原 260 易偏多笔）
+        target_trades_min: 40
+        target_trades_max: 140
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
         stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
@@ -79,15 +80,17 @@ strategies:
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
-          min_trades_target: 60
+          min_trades_target: 70
           trade_penalty: 0.0025
-          bpc_pullback_score_min_values: 0.40,0.45,0.50
-          bpc_pullback_depth_max_values: 0.55,0.60,0.65
-          bpc_recovery_min_values: 0.50,0.55,0.60
-          target_trades_min: 35
-          target_trades_max: 260
-          trade_penalty_low: 0.002
-          trade_penalty_high: 0.0011
+          fer_eff_pct_lower_values: 0.0,0.05
+          fer_eff_pct_upper_values: 0.30,0.40
+          sr_strength_min_values: 0.45,0.55
+          dist_to_sr_atr_max_values: 0.8,1.0
+          sqs_quality_min_values: 0.50,0.60
+          target_trades_min: 40
+          target_trades_max: 140
+          trade_penalty_low: 0.0021
+          trade_penalty_high: 0.0014
           stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
@@ -95,35 +98,50 @@ strategies:
       entry_filter:
         meta_algorithm: false
         archetype_plateau: true
-        # Entry archetype plateau: z-test 仍必须显著才 promote；略放宽 p / 样本与高原窗
         significance_p: 0.10
         significance_min_trades: 4
         plateau_window: 4
         archetype_scoring_method: distribution_ks
-        target_trades_min: 35
-        target_trades_max: 260
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
+        target_trades_min: 40
+        target_trades_max: 140
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
         stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-        min_score_improvement: 0.005
+        min_score_improvement: 0.008
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.3
+        min_combined_pass_rate: 0.38
+        stat_fallback_on_empty: true
+        stat_fallback_max_rules: 3
+        stat_fallback_min_source_features: 2
       backtest:
         min_trades: 50
       deploy:
         min_trades: 50
+    simple_execution:
+      sl_r: 3.0
+      tp_r: 6.0
+      timeout_bars: 120
 
-# 事件回测 / 交易地图：VWAP·EMA 可向前用更多 1m 历史计算；图上只画回测窗（见 event_backtest.py）
 event_backtest:
-  # 建议显式声明 enabled，避免依赖默认值导致误跑/误停
   enabled: true
-  # map_extra_months：事件回测交易地图的「为画 VWAP 多向前取多少月 1m」（仅事件回测 + 出图时有意义）。
+  promote: true
   map_extra_months: 4
+  sym_r_default: "1.0:1:6.0"
+  sym_r_by_family:
+    bpc: "2.0:1:6.0"
+    fer: "2:1:4"
+    me: "2:1:4"
+  exec_objective_default: sharpe
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.0
+    min_trades_soft: 0
+    undertrade_penalty: 0.0
 
 output:
-  # 与 BPC-only 分离，避免 rolling_sim 与 bpc 同目录互相覆盖
   history_dir: results/fer/turbo-rolling-sim

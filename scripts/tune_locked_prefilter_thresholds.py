@@ -276,7 +276,11 @@ def aggregate_case(
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Tune locked prefilter thresholds")
-    p.add_argument("--strategy", default="fer-short")
+    p.add_argument(
+        "--strategy",
+        default="fer-short",
+        help="与管线 YAML strategies.* 键一致；BPC/ME 分别为 bpc、me（勿再用 bpc-long 等作键名）",
+    )
     p.add_argument(
         "--template",
         choices=["auto", "fer", "me", "bpc"],
@@ -360,9 +364,9 @@ def main() -> int:
 
     template = args.template
     if template == "auto":
-        if args.strategy.startswith("me-"):
+        if args.strategy == "me":
             template = "me"
-        elif args.strategy.startswith("bpc-"):
+        elif args.strategy == "bpc":
             template = "bpc"
         else:
             template = "fer"

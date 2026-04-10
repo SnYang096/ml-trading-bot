@@ -1,5 +1,5 @@
 # BPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260402_002631_rr_extreme/bpc
+# 来源: results/train_final_20260410_002136_rr_extreme/bpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc
@@ -16,68 +16,68 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_macro_tp_vwap_1200_position_macro_tp_vwap_1200_position
-  tag: HARD_MACRO_TP_VWAP_1200_POSITION_MACRO_TP_VWAP_1200_POSITION
+- id: gate_evt_es_99_right
+  tag: HARD_EVT_ES_99_RIGHT
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.23)
+  reason: 统计验证规则 (lift=2.02)
   when:
-    all_of:
-    - macro_tp_vwap_1200_position:
-        value_gt: -0.1101
-    - macro_tp_vwap_1200_position:
-        value_lt: 0.0781
+    evt_es_99_right:
+      value_lt: 0.0437
   then:
     action: deny
-  comment: 'statistical(lift=1.23): macro_tp_vwap_1200_position > -0.1101 & macro_tp_vwap_1200_position < 0.07807'
-- id: gate_oi_compression_score
-  tag: HARD_OI_COMPRESSION_SCORE
+  comment: 'statistical(lift=2.02): evt_es_99_right < 0.04365'
+- id: gate_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.25)
+  reason: 统计验证规则 (lift=1.74)
   when:
-    oi_compression_score:
-      value_gt: 0.3063
+    evt_var_99_right:
+      value_lt: 0.0437
   then:
     action: deny
-  comment: 'statistical(lift=1.25): oi_compression_score > 0.3063'
-- id: gate_evt_tail_shape_right_evt_tail_shape_right
-  tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
+  comment: 'statistical(lift=1.74): evt_var_99_right < 0.04365'
+- id: gate_evt_es_99_evt_es_99
+  tag: HARD_EVT_ES_99_EVT_ES_99
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.32)
+  reason: 统计验证规则 (lift=1.84)
   when:
     all_of:
-    - evt_tail_shape_right:
-        value_gt: 0.1786
-    - evt_tail_shape_right:
-        value_lt: 0.3299
+    - evt_es_99:
+        value_gt: 0.1627
+    - evt_es_99:
+        value_lt: 0.2619
   then:
     action: deny
-  comment: 'statistical(lift=1.32): evt_tail_shape_right > 0.1786 & evt_tail_shape_right < 0.3299'
-- id: gate_vol_clustering_strength
-  tag: HARD_VOL_CLUSTERING_STRENGTH
+  comment: 'statistical(lift=1.84): evt_es_99 > 0.1627 & evt_es_99 < 0.2619'
+- id: gate_evt_var_99_evt_var_99
+  tag: HARD_EVT_VAR_99_EVT_VAR_99
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.31)
-  when:
-    vol_clustering_strength:
-      value_gt: 0.2421
-  then:
-    action: deny
-  comment: 'statistical(lift=1.31): vol_clustering_strength > 0.2421'
-- id: gate_spectrum_volume_flatness_spectrum_volume_flatness
-  tag: HARD_SPECTRUM_VOLUME_FLATNESS_SPECTRUM_VOLUME_FLATNESS
-  phase: hard_gate
-  priority: 14
-  reason: 统计验证规则 (lift=1.29)
+  reason: 统计验证规则 (lift=1.89)
   when:
     all_of:
-    - spectrum_volume_flatness:
-        value_gt: 0.6179
-    - spectrum_volume_flatness:
-        value_lt: 0.6472
+    - evt_var_99:
+        value_gt: 0.1905
+    - evt_var_99:
+        value_lt: 0.3214
   then:
     action: deny
-  comment: 'statistical(lift=1.29): spectrum_volume_flatness > 0.6179 & spectrum_volume_flatness < 0.6472'
+  comment: 'statistical(lift=1.89): evt_var_99 > 0.1905 & evt_var_99 < 0.3214'
+- id: gate_evt_tail_shape_evt_tail_shape
+  tag: HARD_EVT_TAIL_SHAPE_EVT_TAIL_SHAPE
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.58)
+  when:
+    all_of:
+    - evt_tail_shape:
+        value_gt: 0.8333
+    - evt_tail_shape:
+        value_lt: 0.9841
+  then:
+    action: deny
+  comment: 'statistical(lift=1.58): evt_tail_shape > 0.8333 & evt_tail_shape < 0.9841'
 guardrails: []

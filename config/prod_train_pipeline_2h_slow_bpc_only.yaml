@@ -1,0 +1,216 @@
+# ============================================================
+# 上线前训练流水线 (2H, BPC-only, 慢模式 / slow_realistic)
+# 目标: 近似「每季度做结构快照 + 每月快变量」的实盘节奏
+#   - rolling.slow_realistic.cadence_months: 3 → 每季度一次结构流水线（各层特征搜索等到 entry_filter）
+#   - rolling_sim 仍按 holdout 内自然月推进；每月阈值/标定窗见 rolling.windows.calibration_months
+# 策略树: config/strategies/bpc（周期以 meta.yaml strategy.timeframe 为准，此处不显式写 timeframe）
+#
+# 联合 PCM / pcm_slot_grid：代码要求同次流水线内 ≥2 个 strategies.* 才有联合事件回测。
+# 本文件仅 BPC，故关闭 pcm_eval 与 pcm_slot_grid；单策略的 execution_opt / event_backtest 仍照常。
+#
+# 示例:
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_bpc_only.yaml --stage rolling_sim
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_bpc_only.yaml --stage fast_month --month 2024-09
+# ============================================================
+
+dates:
+  start_date: "2024-01-01"
+  holdout_months: 9
+  validation_months: 3
+training:
+  seeds:
+    - 42
+  seed_selection: best_sharpe
+global_toggles:
+  locked_threshold_tuning_enabled: true
+strategy_scope:
+  direction: all
+rolling:
+  mode: slow_realistic
+  windows:
+    calibration_months: 3
+    structure_lookback_months: 12
+  slow_realistic:
+    cadence_months: 3
+    triggered_retrain_enabled: true
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: true
+
+fast_loop:
+  step_months: 1
+  threshold_calibration:
+    enabled: true
+  symbol_threshold_calibration:
+    enabled: true
+  execution_opt:
+    enabled: true
+  pcm_eval:
+    enabled: false
+  # 方向层: 默认 compare_features / promote 与代码缺省一致；显式写出便于对照「全层慢研」契约
+  direction_tuning:
+    enabled: true
+    compare_features: true
+    promote_after_validate: true
+symbol_policy:
+  mode: hybrid_carry_forward
+  carry_forward_ttl_months: 2
+  enable_threshold: 0.0
+  min_symbol_trades_soft: 10
+  carry_forward_hard_fail_rules:
+    min_sharpe_r: -0.25
+direction_stack:
+  mode: ema200
+  ema_debounce_bars: 3
+  vwap_window_days: 20
+slot_allocation:
+  mode: quality_ranked
+  max_symbols_per_side: 2
+  reserve_slots_for_secondary_symbols: 1
+  slot_opportunity_penalty: 0.001
+  quality_score_weights:
+    history_edge: 0.55
+    now_strength: 0.45
+  quality_lookback_months: 3
+stitching:
+  enabled: true
+  metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]
+  export_trade_map_html: true
+event_backtest:
+  enabled: true
+  promote: true
+  map_extra_months: 4
+  sym_r_default: "1.0:1:6.0"
+  sym_r_by_family:
+    bpc: "2.0:1:6.0"
+  exec_objective_default: sharpe
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.0
+    min_trades_soft: 0
+    undertrade_penalty: 0.0
+pcm_slot_grid:
+  enabled: false
+  plateau_delta: 0.03
+  min_trades_soft: 80
+  penalties:
+    max_dd_penalty: 0.02
+    slot_full_rate_penalty: 0.20
+    undertrade_penalty: 0.001
+  cases: []
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+data_path: data/parquet_data
+download:
+  enabled: true
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+strategies:
+  bpc:
+    config: config/strategies/bpc
+    dates:
+      holdout_months: 9
+      validation_months: 3
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.05
+        min_rows: 10
+        target_trades_min: 35
+        target_trades_max: 260
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0011
+        stability_penalty: 0.0
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: false
+          mode: auto_if_locked
+          skip_if_cached: false
+          max_cases: 12
+          min_trades_target: 60
+          trade_penalty: 0.0025
+          bpc_pullback_score_min_values: 0.40,0.45,0.50
+          bpc_pullback_depth_max_values: 0.55,0.60,0.65
+          bpc_recovery_min_values: 0.50,0.55,0.60
+          target_trades_min: 35
+          target_trades_max: 260
+          trade_penalty_low: 0.002
+          trade_penalty_high: 0.0011
+          stability_penalty: 0.0
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+      entry_filter:
+        meta_algorithm: false
+        archetype_plateau: true
+        significance_p: 0.10
+        significance_min_trades: 4
+        plateau_window: 4
+        archetype_scoring_method: distribution_ks
+        target_trades_min: 35
+        target_trades_max: 260
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0011
+        stability_penalty: 0.0
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+        min_score_improvement: 0.005
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.3
+      backtest:
+        min_trades: 50
+      deploy:
+        min_trades: 50
+    simple_execution:
+      sl_r: 4.0
+      tp_r: 8.0
+      timeout_bars: 500
+
+shap_feature_selection:
+  enabled: true
+  n_folds: 8
+  top_k: 20
+  stability_threshold: 0.8
+  min_stable_features: 1
+  protected_nodes:
+    - atr_f
+  apply_to:
+    - features.yaml
+comparison:
+  min_trades: 30
+  sharpe_adopt_ratio: 0.7
+  sharpe_reject_floor: 0.0
+  threshold_drift_warn: 1.0
+retrain_triggers:
+  schedule_days: 90
+  sharpe_decay_ratio: 0.5
+  consecutive_losses: 8
+  max_data_age_days: 120
+  leading_indicator_decay: 0.5
+deploy_gate:
+  trigger_sharpe_improve: 0.05
+  trigger_drift_level: HIGH
+  min_sharpe_change: 0.03
+  require_adopt: true
+  min_trades: 50
+  require_human_confirm: true
+data_flow:
+  model_predictions: predictions.parquet
+  gated_logs: logs_gated.parquet
+  step_inputs:
+    prefilter: predictions.parquet
+    gate_train: predictions.parquet
+    gate_apply: predictions.parquet
+    execution: logs_gated.parquet
+    backtest: logs_gated.parquet
+output:
+  history_dir: results/bpc/slow-rolling-sim
