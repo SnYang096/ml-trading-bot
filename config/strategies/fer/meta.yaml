@@ -13,6 +13,14 @@ strategy:
   # 默认时间粒度（研发 + 实盘统一）
   timeframe: "120T" # 1小时
 
+  # 跨 bar 对齐（先仅放宽 prefilter，direction/gate/entry 仍要求同 bar）
+  decision_alignment:
+    enabled: true
+    mode: prefilter_recent_window
+    window_bars: 3
+    layers_allow_recent_window: [prefilter]
+    layers_required_same_bar: [direction, gate, entry_filter]
+
   macro_tp_vwap_anchor:
     enabled: false
     symbol: BTCUSDT

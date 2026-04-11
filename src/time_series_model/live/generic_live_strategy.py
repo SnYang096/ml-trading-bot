@@ -14,6 +14,7 @@ GenericLiveStrategy - 配置驱动的通用策略解析引擎
 
 from __future__ import annotations
 
+from collections import deque
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -402,6 +403,14 @@ class GenericLiveStrategy:
         self._last_funnel: Dict[str, Any] = (
             {}
         )  # 上次 decide() 的漏斗结果 (含丰富元数据)
+        self._decision_alignment: Dict[str, Any] = {
+            "enabled": False,
+            "mode": "prefilter_recent_window",
+            "window_bars": 0,
+            "layers_allow_recent_window": [],
+            "layers_required_same_bar": [],
+        }
+        self._prefilter_recent_state: Dict[str, deque] = {}
 
         # 加载配置
         self.load_configs()
@@ -450,10 +459,96 @@ class GenericLiveStrategy:
             self.execution_generator = ExecutionParamGenerator(
                 self.archetype.execution.raw or {}
             )
+            self._decision_alignment = self._load_decision_alignment_config()
+            logger.info(
+                "✅ Decision alignment: enabled=%s mode=%s window_bars=%d",
+                self._decision_alignment.get("enabled", False),
+                self._decision_alignment.get("mode", "prefilter_recent_window"),
+                self._decision_alignment.get("window_bars", 0),
+            )
 
         except Exception as e:
             logger.error(f"❌ Failed to load configs for {self.strategy_name}: {e}")
             raise
+
+    def _load_decision_alignment_config(self) -> Dict[str, Any]:
+        """从 strategy meta.yaml 读取跨 bar 对齐配置。"""
+        cfg: Dict[str, Any] = {
+            "enabled": False,
+            "mode": "prefilter_recent_window",
+            "window_bars": 0,
+            "layers_allow_recent_window": [],
+            "layers_required_same_bar": [],
+        }
+        meta_path = Path(self.strategies_root) / self.strategy_name / "meta.yaml"
+        if not meta_path.exists():
+            return cfg
+
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                raw_meta = yaml.safe_load(f) or {}
+        except Exception as exc:
+            logger.warning("⚠️  Failed to read meta.yaml for alignment config: %s", exc)
+            return cfg
+
+        meta_strategy = raw_meta.get("strategy", raw_meta)
+        da = (
+            meta_strategy.get("decision_alignment")
+            or raw_meta.get("decision_alignment")
+            or {}
+        )
+        if not isinstance(da, dict):
+            return cfg
+
+        window_bars = int(
+            da.get("window_bars", da.get("alignment_window_bars", 0)) or 0
+        )
+        mode = str(da.get("mode", "prefilter_recent_window")).strip().lower()
+        enabled = bool(da.get("enabled", False)) and window_bars > 0
+        if mode not in {"prefilter_recent_window"}:
+            mode = "prefilter_recent_window"
+
+        cfg.update(
+            {
+                "enabled": enabled,
+                "mode": mode,
+                "window_bars": max(0, window_bars),
+                "layers_allow_recent_window": list(
+                    da.get("layers_allow_recent_window") or []
+                ),
+                "layers_required_same_bar": list(
+                    da.get("layers_required_same_bar") or []
+                ),
+            }
+        )
+        return cfg
+
+    def _update_prefilter_recent_state(self, symbol: str, passed: bool) -> None:
+        """更新按 symbol 隔离的 prefilter 近期通过窗口。"""
+        if not self._decision_alignment.get("enabled", False):
+            return
+        if self._decision_alignment.get("mode") != "prefilter_recent_window":
+            return
+        if "prefilter" not in self._decision_alignment.get(
+            "layers_allow_recent_window", []
+        ):
+            return
+
+        window = int(self._decision_alignment.get("window_bars", 0))
+        if window <= 0:
+            return
+        key = str(symbol or "")
+        if key not in self._prefilter_recent_state:
+            self._prefilter_recent_state[key] = deque(maxlen=window)
+        self._prefilter_recent_state[key].append(bool(passed))
+
+    def _has_recent_prefilter_pass(self, symbol: str) -> bool:
+        """最近 window_bars 内是否有 prefilter 通过。"""
+        key = str(symbol or "")
+        q = self._prefilter_recent_state.get(key)
+        if not q:
+            return False
+        return any(q)
 
     def set_quantiles(self, features_df) -> None:
         """设置分位数阈值（用于 Gate quantile 规则）"""
@@ -555,19 +650,32 @@ class GenericLiveStrategy:
         if self.archetype and self.archetype.prefilter.rules:
             pf_passed, pf_reason = self.archetype.prefilter.evaluate(features)
             funnel["prefilter"] = pf_passed
+            self._update_prefilter_recent_state(symbol, pf_passed)
             if not pf_passed:
+                alignment_used = self._has_recent_prefilter_pass(symbol)
+                funnel["prefilter_recent_pass"] = alignment_used
+                funnel["alignment_used"] = alignment_used
                 logger.debug(f"❌ Prefilter denied: {pf_reason}")
+                if alignment_used:
+                    logger.debug(
+                        "↪️ Alignment override: recent prefilter pass within last %d bars",
+                        int(self._decision_alignment.get("window_bars", 0)),
+                    )
+                    funnel["prefilter_alignment_override"] = True
+                else:
+                    funnel["prefilter_alignment_override"] = False
                 funnel["prefilter_reason"] = pf_reason
-                self._last_funnel = funnel
-                record_fer_entry_eval(
-                    strategy=self.strategy_name,
-                    symbol=symbol,
-                    signal_ts=_sig_ts,
-                    outcome="prefilter_deny",
-                    funnel=funnel,
-                    features=features,
-                )
-                return []
+                if not alignment_used:
+                    self._last_funnel = funnel
+                    record_fer_entry_eval(
+                        strategy=self.strategy_name,
+                        symbol=symbol,
+                        signal_ts=_sig_ts,
+                        outcome="prefilter_deny",
+                        funnel=funnel,
+                        features=features,
+                    )
+                    return []
             logger.debug("✅ Prefilter passed")
 
         # ── 1. 方向判定 ──
@@ -860,3 +968,4 @@ class GenericLiveStrategy:
         if self.entry_filter_checker and self.entry_filter_checker.ef_state:
             self.entry_filter_checker.ef_state.reset()
         self._last_tier_params = None
+        self._prefilter_recent_state.clear()

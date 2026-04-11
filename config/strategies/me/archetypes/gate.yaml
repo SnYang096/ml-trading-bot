@@ -91,17 +91,5 @@ hard_gates:
     comment: "optimizer: stable_plateau_found, threshold=0.3250, lift=0.678"
     locked: true
     lock_reason: VPIN 峰值区间：突发知情流与短动量信号容易背离
-  - id: gate_vpin_ma20
-    tag: HARD_VPIN_MA20
-    phase: hard_gate
-    priority: 17
-    reason: ME 统计验证规则 (lift=1.15)
-    when:
-      vpin_ma20:
-        value_gt: 0.3
-    then:
-      action: deny
-    comment: "optimizer: no_stable_plateau, threshold=0.3000, lift=0.206"
-    locked: true
-    lock_reason: VPIN 均值持续偏高：信息不对称环境下不宜做 ME 扩张
+
 guardrails: []

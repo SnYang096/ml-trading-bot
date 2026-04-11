@@ -1,0 +1,17 @@
+# FBF Prefilter: 以 SR 失败突破语义为核心
+rules:
+  - feature: fer_sr_failed_breakout_score
+    operator: ">="
+    value: 0.30
+    locked: true
+    lock_reason: FBF 语义锚点：失败突破强度（先保留中等强度以保证样本密度）
+  - feature: sr_strength_max
+    operator: ">="
+    value: 0.45
+    locked: true
+    lock_reason: FBF 语义锚点：关键结构强度（避免弱结构噪声）
+  - feature: fer_ols_width_norm
+    operator: ">="
+    value: 0.18
+    locked: true
+    lock_reason: 结构锚点：避免过窄区间噪声（不过度收紧）
