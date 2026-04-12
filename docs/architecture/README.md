@@ -124,12 +124,11 @@
 |------|------|
 | 指标与评估 | [metrics/README.md](metrics/README.md) |
 | 特征筛选 / 归一化报告 | [reports/README.md](reports/README.md) |
-| 深度学习等性能笔记 | [performance/README.md](performance/README.md) |
 | 实时流与实盘 | [live_stream/README.md](live_stream/README.md) |
 | 策略 Playbook 与协议 | [strategies/README.md](strategies/README.md) |
 | Terraform 部署对比 | [terraform部署方案对比.md](terraform部署方案对比.md) |
 
-原 **`docs/metrics/`、`docs/reports/`、`docs/live_stream/`、`docs/performance/`、`docs/strategies/`** 仅保留 [占位索引](../metrics/README.md) 等；过程性策略笔记与 legacy 实盘分析见 **[docs/archive/strategies/](../archive/strategies/README.md)**、**[docs/archive/live_stream/](../archive/live_stream/README.md)**、**[docs/archive/reports/](../archive/reports/README.md)**。
+原 **`docs/metrics/`、`docs/reports/`、`docs/live_stream/`、`docs/strategies/`** 仅保留 [占位索引](../metrics/README.md) 等；过程性策略笔记与 legacy 实盘分析见 **[docs/archive/strategies/](../archive/strategies/README.md)**、**[docs/archive/live_stream/](../archive/live_stream/README.md)**、**[docs/archive/reports/](../archive/reports/README.md)**。
 
 ---
 

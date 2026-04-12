@@ -262,7 +262,7 @@ MLBOT_LIVE_SYMBOLS=BTCUSDT python scripts/run_live.py
 | 策略与 Playbook | [docs/architecture/strategies/](architecture/strategies/) | 特征搜索协议、Policy 假设等；过程性笔记见 [docs/archive/strategies/](archive/strategies/) |
 | 特征报告与审计 | [docs/architecture/reports/](architecture/reports/) | 特征筛选索引、归一化/订单流审计；中间结果见 [docs/archive/reports/](archive/reports/) |
 | 实盘数据流 | [docs/architecture/live_stream/](architecture/live_stream/) | 契约、事件流、补全与对账；legacy 见 [docs/archive/live_stream/legacy/](archive/live_stream/legacy/) |
-| 指标与性能 | [docs/architecture/metrics/](architecture/metrics/)、[docs/architecture/performance/](architecture/performance/) | Sharpe/泄漏鉴别、性能笔记 |
+| 指标与评估 | [docs/architecture/metrics/](architecture/metrics/) | Sharpe、泄漏鉴别等 |
 | 部署 | [docs/architecture/terraform部署方案对比.md](architecture/terraform部署方案对比.md) | Docker vs 裸机 |
 | 总归档 | [docs/archive/](archive/) | NN 多头、旧架构长文、随笔等 |
 

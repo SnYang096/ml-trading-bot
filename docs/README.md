@@ -78,10 +78,9 @@
 - **[实时流计算（占位索引）](live_stream/README.md)** → 正文 **[architecture/live_stream/README.md](architecture/live_stream/README.md)**
 - **[Terraform 部署方案对比（Docker vs 裸机）](architecture/terraform部署方案对比.md)**
 
-### 📐 指标与性能
+### 📐 指标与评估
 
 - **[指标与评估](architecture/metrics/README.md)** - Sharpe 口径、特征相关性与泄漏鉴别
-- **[性能说明](architecture/performance/README.md)** - 例如深度学习特征 CPU/GPU 对比
 
 ### 🏷️ 标签
 
@@ -121,7 +120,6 @@ docs/
 │   └── [实验报告文件]
 │
 ├── metrics/                     # 占位索引 → architecture/metrics
-├── performance/                 # 占位索引 → architecture/performance
 ├── reports/                     # 占位索引 → architecture/reports（过程性见 archive/reports）
 ├── labels/                      # 标签专题索引（正文多在 architecture/）
 │
