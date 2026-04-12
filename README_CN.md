@@ -209,7 +209,7 @@ mlbot train final \
 
 - rolling：用于**跨月稳定性验证**与**上线后监控**（见 `docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md`）
   - 说明：`poolb-semantic-search` 不是 rolling；它是在**单个训练窗 + 单个测试窗**（time split + 多 seed）上做特征搜索/收敛。
-- Nautilus：用于“回测=实盘一致性验证”（事件驱动回放）（见 `docs/architecture/live_stream/reference/Nautilus_Trader_集成指南.md`、`docs/architecture/live_stream/07_与NautilusTrader对齐清单.md`）
+- **事件回测与实盘对齐（主线）**：`scripts/event_backtest.py` + `docs/architecture/event_drive_backtest/`；实盘管线见 `docs/architecture/live_stream/README.md`。可选：`mlbot backtest nautilus`（见下文命令，非默认主路径）。
 
 **Nautilus MetaRouter 事件回测（本地数据 / 多币）**
 
