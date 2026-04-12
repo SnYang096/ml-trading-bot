@@ -12,11 +12,11 @@ created_at: "2026-01-12"
 kill_switch:
   enabled: true
   # Account-level loss limits (fraction of equity).
-  daily_loss_limit: 0.04 # -4% => stop new risk for the day
+  daily_loss_limit: 0.06 # -6% => stop new risk for the day (was 4%; raised to accommodate 5-slot ME)
   weekly_loss_limit: 0.08 # -8% => stop new risk for the week
   monthly_loss_limit: 0.12 # -12% => stop new risk for the month
   # Cooldown after a hard stop (minutes). Recovery requires cooldown + metrics OK.
-  cooldown_minutes: 240
+  cooldown_minutes: 720 # 12h = 6x 2h bars (was 240min; extended for ME 2h decision cycle)
   # Daily loss reset is evaluated in this timezone.
   daily_reset_timezone: "UTC"
 
@@ -177,6 +177,7 @@ resource_allocation:
       max_risk_per_trade: 0.01 # 动量扩散只做加速段, 首枪更轻
       allow_add_position: true # ME 动能扩张允许加仓
       max_add_times: 3 # 与 execution.add_position.max_add_times 对齐；≥3 便于骑乘实验
+      max_new_entries_per_day: 3 # 日内新开仓上限（不含加仓），3 x 1% = 3% < daily_loss_limit
 
     # ── FER 方向拆分 ──
     fer:

@@ -1,4 +1,7 @@
-# FBF Prefilter: 以 SR 失败突破语义为核心
+# FBF Prefilter: SR 失败突破语义锚点（3 条 locked）
+# 与 turbo 基线对齐：fer_sr_failed_breakout_score >= 0.30 保证样本密度
+# trend_r2_20 制度闸已移除：FBF 在趋势初期仍有假突破回踩机会，一刀切排除趋势区丢失盈利信号
+
 rules:
   - feature: fer_sr_failed_breakout_score
     operator: ">="

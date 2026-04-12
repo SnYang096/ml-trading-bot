@@ -4,7 +4,7 @@ strategy:
   name: bpc-long-120T
   description: |
     BreakoutPullbackContinuation Long archetype: 趋势中回踩后延续（做多方向）。
-    在已确认的下降趋势中，识别健康的回踩并在回踩位置做空入场。
+    在已确认的上升趋势中，识别健康的回踩并在回踩位置做多入场。
 
   owner: quant_team
   archetype: BreakoutPullbackContinuationLong

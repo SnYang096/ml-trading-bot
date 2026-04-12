@@ -97,6 +97,7 @@ class PositionTracker:
             self._sync_child_stop_from_parent(pid, pos)
             structural_price = self._resolve_structural_price(pos, features)
             macro_tp_vwap = self._resolve_macro_tp_vwap_position(pos, features)
+            ema_1200_pos = self._resolve_ema_1200_position(pos, features)
 
             close_reason, exit_price = enforce_position(
                 pos,
@@ -107,6 +108,7 @@ class PositionTracker:
                 default_bar_minutes=self.default_bar_minutes,
                 structural_price=structural_price,
                 macro_tp_vwap_position=macro_tp_vwap,
+                ema_1200_position=ema_1200_pos,
             )
 
             # trailing SL 更新时同步交易所挂单（仅在未触发退出时）
@@ -349,6 +351,20 @@ class PositionTracker:
         if str(pos.get("structural_exit") or "").strip().lower() != "vwap1200":
             return None
         v = features.get("macro_tp_vwap_1200_position")
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _resolve_ema_1200_position(
+        pos: Dict[str, Any], features: Dict[str, Any]
+    ) -> Optional[float]:
+        if str(pos.get("structural_exit") or "").strip().lower() != "ema1200":
+            return None
+        v = features.get("ema_1200_position")
         if v is None:
             return None
         try:

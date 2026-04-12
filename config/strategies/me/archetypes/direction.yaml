@@ -1,21 +1,22 @@
-# ME 方向 — VWAP1200 带通（主路径）+ 结构绕行（备路径）
+# ME 方向 — EMA1200 带通（主路径）+ 结构绕行（备路径）
 #
-# 评估顺序：先 strict VWAP 级联；若不成立（含「级联有方向但价不在带内」）再试备路径。
+# 2026-04 改进：VWAP1200 → EMA1200，与 BPC 对齐。
+# 统计依据：VWAP/EMA 方向分歧时 (6.4% bars)，EMA 正确率显著优于 VWAP
+#   VWAP>0 & EMA<0 → medRR=-1.52 (VWAP 放行了坏交易)
+#   VWAP<0 & EMA>0 → medRR=+2.54 (VWAP 拦截了好交易)
 #
-# 1) 主规则：与 BPC 同构 — me_accel_5k → me_cvd_alignment → macd_atr 级联，且须与
-#    macro_tp_vwap_1200_position 多头带 / 空头带 同号。
-#    outer_abs>1：归一化 p 顶到 1.0 时仍满足 strict inner<p<outer（原 outer=1 时 p==1 被挡）。
-# 2) 备规则：me_vwap_structure_bypass_direction（me_vwap_structure_bypass_f）：
-#    极强 accel 或三连 K 同侧 VWAP；transform: raw。
+# 评估顺序：先 strict EMA 级联；若不成立再试备路径。
 #
-# 与 execution structural_exit vwap1200 仍可并用；gate 见 gate.yaml。
+# 1) 主规则：me_accel_5k → me_cvd_alignment → macd_atr 级联，须与
+#    ema_1200_position 多头带 / 空头带 同号。
+# 2) 备规则：me_vwap_structure_bypass_direction（极强 accel 或三连 K 同侧）
 
-description: "ME 方向 — VWAP 带通级联为主；极强 accel 或三连 VWAP 侧绕行"
+description: "ME 方向 — EMA1200 带通级联为主；极强 accel 或三连 VWAP 侧绕行"
 
 direction_rules:
-  - id: me_accel_cvd_macd_vwap1200_align
+  - id: me_accel_cvd_macd_ema1200_align
     method: signal_match_position_band
-    description: "me_accel_5k → me_cvd_alignment → macd_atr；须落在 VWAP 多/空带通内"
+    description: "me_accel_5k → me_cvd_alignment → macd_atr；须落在 EMA1200 多/空带通内"
     signal_rules:
       - feature: me_accel_5k
         transform: sign
@@ -24,13 +25,11 @@ direction_rules:
       - feature: macd_atr
         transform: sign
     position_band:
-      feature: macro_tp_vwap_1200_position
+      feature: ema_1200_position
       inner_abs: 0
-      outer_abs: 1.001
+      outer_abs: 1
 
   - id: me_vwap_bypass_accel_or_3bar_pierce
     feature: me_vwap_structure_bypass_direction
     transform: raw
     description: "极强 accel 或三连 K 在 VWAP 同侧时绕过带通（依赖 me_vwap_structure_bypass_f）"
-
-# 方向候选扫描仍可用 scripts/direction_strict_validation.py --strategy me --compare-features

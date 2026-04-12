@@ -772,6 +772,7 @@ def simulate_rr_execution(
         "no_data": 0,
         "structural_exit_ema200": 0,
         "structural_exit_vwap1200": 0,
+        "structural_exit_ema1200": 0,
     }
 
     # 如果提供了 1min bar 数据，预处理为 numpy 数组以加速查找
@@ -829,7 +830,7 @@ def simulate_rr_execution(
                 else None
             )
 
-        # structural exit 数组 (BPC trend_hold: ema200)
+        # structural exit 数组 (BPC trend_hold: ema200 / vwap1200 / ema1200)
         _has_structural = "_structural_exit" in group.columns
         _has_ema200 = "ema_200" in group.columns
         if _has_structural:
@@ -839,6 +840,11 @@ def simulate_rr_execution(
         t_vwap_pos = (
             group["macro_tp_vwap_1200_position"].values.astype(float)
             if "macro_tp_vwap_1200_position" in group.columns
+            else None
+        )
+        t_ema1200_pos = (
+            group["ema_1200_position"].values.astype(float)
+            if "ema_1200_position" in group.columns
             else None
         )
         for i in range(n):
@@ -1010,6 +1016,29 @@ def simulate_rr_execution(
                                     _1min_exit_mi = mi
                                     break
 
+                    # 2d. Structural exit (EMA1200: 同 VWAP1200 逻辑，用 ema_1200_position)
+                    if (
+                        str(structural_exit_type).strip().lower() == "ema1200"
+                        and t_ema1200_pos is not None
+                    ):
+                        offset_m = mi - start_m
+                        bm = max(1, int(bar_minutes))
+                        j_coarse = min(i + 1 + max(0, offset_m) // bm, n - 1)
+                        epos = float(t_ema1200_pos[j_coarse])
+                        if np.isfinite(epos):
+                            _mc = m_c[mi]
+                            if not np.isnan(_mc):
+                                if direction == 1 and epos < 0.0:
+                                    exit_price = float(_mc)
+                                    exit_reason = "structural_exit_ema1200"
+                                    _1min_exit_mi = mi
+                                    break
+                                if direction == -1 and epos > 0.0:
+                                    exit_price = float(_mc)
+                                    exit_reason = "structural_exit_ema1200"
+                                    _1min_exit_mi = mi
+                                    break
+
                     # 3. 移动止损 (trailing activation + SL update)
                     _just_activated = False
                     if stop_type == "trailing" and np.isfinite(activation_r):
@@ -1130,6 +1159,23 @@ def simulate_rr_execution(
                             if direction == -1 and vpos > 0.0:
                                 exit_price = _cj
                                 exit_reason = "structural_exit_vwap1200"
+                                break
+
+                    # 2d. Structural exit (EMA1200: 同 VWAP1200 逻辑)
+                    if (
+                        str(structural_exit_type).strip().lower() == "ema1200"
+                        and t_ema1200_pos is not None
+                    ):
+                        epos = float(t_ema1200_pos[j])
+                        if np.isfinite(epos):
+                            _cj = closes[j]
+                            if direction == 1 and epos < 0.0:
+                                exit_price = _cj
+                                exit_reason = "structural_exit_ema1200"
+                                break
+                            if direction == -1 and epos > 0.0:
+                                exit_price = _cj
+                                exit_reason = "structural_exit_ema1200"
                                 break
 
                     # 3. 移动止损 (trailing activation + SL update)
@@ -1610,6 +1656,7 @@ def simulate_rr_execution(
                 "no_data": 0,
                 "structural_exit_ema200": 0,
                 "structural_exit_vwap1200": 0,
+                "structural_exit_ema1200": 0,
             }
             for t in trade_details:
                 er = t.get("exit_reason", "")
@@ -1620,7 +1667,8 @@ def simulate_rr_execution(
             f"SL={_display_stats['sl']}, TrailSL={_display_stats['trailing_sl']}, "
             f"TP={_display_stats['tp']}, Timeout={_display_stats['timeout']}, "
             f"NoData={_display_stats['no_data']}, EMA200Exit={_display_stats['structural_exit_ema200']}, "
-            f"VWAP1200Exit={_display_stats.get('structural_exit_vwap1200', 0)}"
+            f"VWAP1200Exit={_display_stats.get('structural_exit_vwap1200', 0)}, "
+            f"EMA1200Exit={_display_stats.get('structural_exit_ema1200', 0)}"
         )
         if breakeven_lock_r > 0:
             pct = breakeven_lock_count / total_entries * 100 if total_entries > 0 else 0

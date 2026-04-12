@@ -197,6 +197,7 @@ def enforce_position(
     default_bar_minutes: int = 240,
     structural_price: Optional[float] = None,
     macro_tp_vwap_position: Optional[float] = None,
+    ema_1200_position: Optional[float] = None,
 ) -> Tuple[Optional[str], float]:
     """7步持仓管理 — 实盘/回测公用
 
@@ -205,6 +206,8 @@ def enforce_position(
       2. Breakeven lock
       3. Update HWM/LWM
       3b. Structural exit (EMA200)
+      3c. Structural exit (VWAP1200)
+      3d. Structural exit (EMA1200)
       4. Activation trailing
       5. SL hit (保守: SL 优先于 TP)
       6. TP hit
@@ -226,6 +229,7 @@ def enforce_position(
         default_bar_minutes: 默认 bar 分钟数 (兜底)
         structural_price: EMA200 当前值 (仅 structural_exit="ema200" 时使用)
         macro_tp_vwap_position: macro_tp_vwap_1200_position 当前值 (vwap1200 出场)
+        ema_1200_position: ema_1200_position 当前值 (ema1200 出场)
 
     Returns:
         (close_reason, exit_price):
@@ -317,6 +321,25 @@ def enforce_position(
                     exit_price = price_close
                 elif not is_long and pv > 0.0:
                     close_reason = "structural_exit_vwap1200"
+                    exit_price = price_close
+        except (TypeError, ValueError):
+            pass
+
+    # ── 3d. Structural exit (EMA1200) — ev = ema_1200_position = (close-ema1200)/close
+    # 统计依据: EMA1200 零点穿越比 VWAP1200 更可靠 (VWAP/EMA 分歧时 EMA 正确率显著更高)
+    if (
+        close_reason is None
+        and str(pos.get("structural_exit") or "").strip().lower() == "ema1200"
+        and ema_1200_position is not None
+    ):
+        try:
+            ev = float(ema_1200_position)
+            if not (ev != ev):
+                if is_long and ev < 0.0:
+                    close_reason = "structural_exit_ema1200"
+                    exit_price = price_close
+                elif not is_long and ev > 0.0:
+                    close_reason = "structural_exit_ema1200"
                     exit_price = price_close
         except (TypeError, ValueError):
             pass

@@ -3535,6 +3535,7 @@ def _run_event_backtest_step(
     data_path: str,
     dry_run: bool = False,
     sym_r: str = "1.0:0.5:4.0",
+    exec_grid: Optional[Dict[str, str]] = None,
     promote: bool = True,
     objective: str = "sharpe",
     near_stop_threshold_r: float = -0.9,
@@ -3567,7 +3568,7 @@ def _run_event_backtest_step(
     _ev_end = str(event_end_date or end_date)
     rc_opt = 0
 
-    # Step E1a: Execution 参数优化 (sym-r grid search)
+    # Step E1a: Execution 参数优化 (sym-r grid search or independent grid)
     opt_output = str(run_dir / "event_exec_opt.json")
     if run_execution_opt:
         opt_cmd = [
@@ -3579,27 +3580,39 @@ def _run_event_backtest_step(
             _opt_start,
             "--end-date",
             _opt_end,
-            "--sym-r",
-            sym_r,
-            "--strategies-root",
-            strategies_root,
-            "--data-path",
-            data_path,
-            "--output",
-            opt_output,
-            "--objective",
-            objective,
-            "--near-stop-threshold-r",
-            str(near_stop_threshold_r),
-            "--near-stop-penalty",
-            str(near_stop_penalty),
-            "--max-dd-penalty",
-            str(max_dd_penalty),
-            "--min-trades-soft",
-            str(min_trades_soft),
-            "--undertrade-penalty",
-            str(undertrade_penalty),
         ]
+        if exec_grid:
+            if "initial_r" in exec_grid:
+                opt_cmd.extend(["--initial-r", exec_grid["initial_r"]])
+            if "activation_r" in exec_grid:
+                opt_cmd.extend(["--activation-r", exec_grid["activation_r"]])
+            if "trail_r" in exec_grid:
+                opt_cmd.extend(["--trail-r", exec_grid["trail_r"]])
+            opt_cmd.append("--trailing")
+        else:
+            opt_cmd.extend(["--sym-r", sym_r])
+        opt_cmd.extend(
+            [
+                "--strategies-root",
+                strategies_root,
+                "--data-path",
+                data_path,
+                "--output",
+                opt_output,
+                "--objective",
+                objective,
+                "--near-stop-threshold-r",
+                str(near_stop_threshold_r),
+                "--near-stop-penalty",
+                str(near_stop_penalty),
+                "--max-dd-penalty",
+                str(max_dd_penalty),
+                "--min-trades-soft",
+                str(min_trades_soft),
+                "--undertrade-penalty",
+                str(undertrade_penalty),
+            ]
+        )
         if promote:
             opt_cmd.append("--promote")
         rc_opt, _ = run_step("Event Execution Optimize", opt_cmd, log, dry_run=dry_run)
@@ -3676,6 +3689,7 @@ def _run_event_execution_opt_only(
     data_path: str,
     dry_run: bool = False,
     sym_r: str = "1.0:0.5:4.0",
+    exec_grid: Optional[Dict[str, str]] = None,
     promote: bool = True,
     objective: str = "sharpe",
     near_stop_threshold_r: float = -0.9,
@@ -3696,27 +3710,39 @@ def _run_event_execution_opt_only(
         holdout_start,
         "--end-date",
         end_date,
-        "--sym-r",
-        sym_r,
-        "--strategies-root",
-        strategies_root,
-        "--data-path",
-        data_path,
-        "--output",
-        opt_output,
-        "--objective",
-        objective,
-        "--near-stop-threshold-r",
-        str(near_stop_threshold_r),
-        "--near-stop-penalty",
-        str(near_stop_penalty),
-        "--max-dd-penalty",
-        str(max_dd_penalty),
-        "--min-trades-soft",
-        str(min_trades_soft),
-        "--undertrade-penalty",
-        str(undertrade_penalty),
     ]
+    if exec_grid:
+        if "initial_r" in exec_grid:
+            opt_cmd.extend(["--initial-r", exec_grid["initial_r"]])
+        if "activation_r" in exec_grid:
+            opt_cmd.extend(["--activation-r", exec_grid["activation_r"]])
+        if "trail_r" in exec_grid:
+            opt_cmd.extend(["--trail-r", exec_grid["trail_r"]])
+        opt_cmd.append("--trailing")
+    else:
+        opt_cmd.extend(["--sym-r", sym_r])
+    opt_cmd.extend(
+        [
+            "--strategies-root",
+            strategies_root,
+            "--data-path",
+            data_path,
+            "--output",
+            opt_output,
+            "--objective",
+            objective,
+            "--near-stop-threshold-r",
+            str(near_stop_threshold_r),
+            "--near-stop-penalty",
+            str(near_stop_penalty),
+            "--max-dd-penalty",
+            str(max_dd_penalty),
+            "--min-trades-soft",
+            str(min_trades_soft),
+            "--undertrade-penalty",
+            str(undertrade_penalty),
+        ]
+    )
     if promote:
         opt_cmd.append("--promote")
     rc_opt, _ = run_step(
@@ -3731,6 +3757,26 @@ def _run_event_execution_opt_only(
         "sym_r": sym_r,
         "output": opt_output,
     }
+
+
+def _resolve_event_exec_grid_for_strategy(
+    cfg: Dict[str, Any],
+    strategy: str,
+) -> Optional[Dict[str, str]]:
+    """Resolve independent execution grid (initial_r/activation_r/trail_r).
+
+    Returns dict like {"initial_r": "2:1:6", "activation_r": "2:1:6", "trail_r": "1:0.5:3"}
+    or None if not configured (caller should fall back to sym_r).
+    """
+    ev_cfg = cfg.get("event_backtest", {}) or {}
+    by_family = ev_cfg.get("exec_grid_by_family", {}) or {}
+    family = str(strategy).split("-")[0].lower().strip()
+    grid = by_family.get(strategy) or by_family.get(family)
+    if isinstance(grid, dict) and any(
+        k in grid for k in ("initial_r", "activation_r", "trail_r")
+    ):
+        return {k: str(v) for k, v in grid.items()}
+    return None
 
 
 def _resolve_event_sym_r_for_strategy(
@@ -4650,6 +4696,7 @@ def _run_fast_month_stage(
                 continue
             obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)
             sym_r = _resolve_event_sym_r_for_strategy(cfg, strat, event_sym_r)
+            _exec_grid = _resolve_event_exec_grid_for_strategy(cfg, strat)
             _opt_dir = run_root / strat / "execution_calibration"
             _opt_dir.mkdir(parents=True, exist_ok=True)
             pipeline_events.run_event_execution_opt_only(
@@ -4661,6 +4708,7 @@ def _run_fast_month_stage(
                 data_path=data_path,
                 dry_run=dry_run,
                 sym_r=sym_r,
+                exec_grid=_exec_grid,
                 promote=True,
                 objective=str(obj_cfg["objective"]),
                 near_stop_threshold_r=float(obj_cfg["near_stop_threshold_r"]),
@@ -4677,7 +4725,9 @@ def _run_fast_month_stage(
         strat_dir.mkdir(parents=True, exist_ok=True)
         obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)
         sym_r = _resolve_event_sym_r_for_strategy(cfg, strat, event_sym_r)
-        print(f"\n   ▶️  {strat}: sym-r={sym_r}, objective={obj_cfg['objective']}")
+        _exec_grid = _resolve_event_exec_grid_for_strategy(cfg, strat)
+        _grid_label = f"grid={_exec_grid}" if _exec_grid else f"sym-r={sym_r}"
+        print(f"\n   ▶️  {strat}: {_grid_label}, objective={obj_cfg['objective']}")
         resume_state_path = str(prev_resume_state_paths.get(strat, "") or "")
         end_state_path = str(strat_dir / "end_state.json")
         if event_backtest_enabled:
@@ -4691,6 +4741,7 @@ def _run_fast_month_stage(
                 data_path=data_path,
                 dry_run=dry_run,
                 sym_r=sym_r,
+                exec_grid=_exec_grid,
                 promote=False,
                 objective=str(obj_cfg["objective"]),
                 near_stop_threshold_r=float(obj_cfg["near_stop_threshold_r"]),
@@ -5591,13 +5642,13 @@ def main():
             event_sym_r = _resolve_event_sym_r_for_strategy(
                 cfg, strat, args.event_sym_r
             )
+            _exec_grid = _resolve_event_exec_grid_for_strategy(cfg, strat)
             obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)
             stage_run_dir = history_dir / strat / timestamp
             stage_run_dir.mkdir(parents=True, exist_ok=True)
             stage_strategies_root = str(PROJECT_ROOT / "config" / "strategies")
-            print(
-                f"\n   ▶️  {strat}: sym-r={event_sym_r}, objective={obj_cfg['objective']}"
-            )
+            _grid_label = f"grid={_exec_grid}" if _exec_grid else f"sym-r={event_sym_r}"
+            print(f"\n   ▶️  {strat}: {_grid_label}, objective={obj_cfg['objective']}")
             if args.stage == "execution_opt":
                 _res = pipeline_events.run_event_execution_opt_only(
                     strat,
@@ -5608,6 +5659,7 @@ def main():
                     data_path=data_path,
                     dry_run=args.dry_run,
                     sym_r=event_sym_r,
+                    exec_grid=_exec_grid,
                     promote=event_promote,
                     objective=str(obj_cfg["objective"]),
                     near_stop_threshold_r=float(obj_cfg["near_stop_threshold_r"]),
@@ -5628,6 +5680,7 @@ def main():
                     data_path=data_path,
                     dry_run=args.dry_run,
                     sym_r=event_sym_r,
+                    exec_grid=_exec_grid,
                     promote=event_promote,
                     objective=str(obj_cfg["objective"]),
                     near_stop_threshold_r=float(obj_cfg["near_stop_threshold_r"]),

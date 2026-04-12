@@ -1,4 +1,6 @@
-# FBF Entry: 仅保留上下沿失败突破两条主分支
+# FBF Entry Filter: 4 核心条件版（与 turbo plateau 验证对齐）
+# 去掉 v2 的 5 个额外 AND 条件（fer_ols_pos band, dist_to_nearest_sr band, rsi），
+# 恢复 auto-disable 行为：plateau 扫不到有效阈值时 all entries pass（turbo 2023-09/11 即此模式）
 
 filters:
   - id: fbf_short_upper_fail

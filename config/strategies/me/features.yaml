@@ -103,9 +103,10 @@ feature_pipeline:
 
     # ========== VWAP ==========
     - vwap_position_f
-    # 与 BPC 对齐：宏观典型价 VWAP 相对位置（gate / direction；锚定见 meta macro_tp_vwap_anchor，默认各 symbol 自有）
     - macro_tp_vwap_1200_position_f
-    # direction：极强 accel 或三连 VWAP 侧 → 绕过 VWAP 带通（见 archetypes/direction.yaml 第二条）
+    # direction: EMA1200 替代 VWAP1200 带通（与 BPC 对齐，统计显示 EMA 在分歧时更准确）
+    - ema_1200_position_f
+    # direction bypass：极强 accel 或三连 K 同侧 → 绕过带通
     - me_vwap_structure_bypass_f
 
     # ========== 交叉特征 ==========

@@ -1962,7 +1962,7 @@ def _promote_entry_filters_yaml(
     print(f"      Tier B (SNOTIO):   {tier_b_count} filters")
     for pf in promoted_filters:
         tier_label = "🅰" if pf.get("tier") == "A_PLATEAU" else "🅱"
-        print(f"      {tier_label} {pf['id']}: {pf['notes']}")
+        print(f"      {tier_label} {pf['id']}: {pf.get('notes', '')}")
 
 
 def _run_dedup_analysis(

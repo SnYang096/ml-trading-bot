@@ -70,22 +70,38 @@ hard_gates:
   comment: 'semantic_anchor: deny near VWAP where trend edge is weak'
   locked: true
   lock_reason: VWAP1200 近场噪声区（方向不稳定）先过滤
-- id: gate_stat_vol_persistence_vol_persistence
-  tag: HARD_STAT_3
-  phase: system_safety
-  priority: 22
-  reason: 统计法兜底规则（tree gate 为空）
+- id: gate_ema_1200_position_ema_1200_position
+  tag: HARD_EMA_1200_POSITION_EMA_1200_POSITION
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.28)
   when:
     all_of:
-    - vol_persistence:
-        value_gt: 0.0275
-    - vol_persistence:
-        value_lt: 0.0616
+    - ema_1200_position:
+        value_gt: 0.0996
+    - ema_1200_position:
+        value_lt: 0.1461
   then:
     action: deny
-  comment: stat_fallback gate_score=0.051, tail_capture=0.136, good_deny=0.085
+  comment: 'from gate_draft(20260410_190624): medRR=-1.63, bad=59.3%, deny=10%'
   locked: true
-  lock_reason: 波动率持久性：噪声切换/拖泥带水期对短线策略不利
+  lock_reason: EMA1200 浅上方位置：接近均线但不够强势的假突破区间
+- id: gate_fer_ols_pos_fer_ols_pos
+  tag: HARD_FER_OLS_POS_FER_OLS_POS
+  phase: hard_gate
+  priority: 15
+  reason: 统计验证规则 (lift=1.08)
+  when:
+    all_of:
+    - fer_ols_pos:
+        value_gt: 0.063
+    - fer_ols_pos:
+        value_lt: 0.5188
+  then:
+    action: deny
+  comment: 'from gate_draft(20260410_190624): medRR=-0.61, bad=52.9%, deny=25%'
+  locked: true
+  lock_reason: FER OLS 定位：资金费率正溢价中等区间对做多入场不利
 guardrails: []
 system_safety:
 - id: gate_vol_persistence_vol_persistence
@@ -98,10 +114,12 @@ system_safety:
     - vol_persistence:
         value_gt: 0.0029
     - vol_persistence:
-        value_lt: 0.0299
+        value_lt: 0.0616
   then:
     action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=0.1500, lift=0.118'
+  comment: 'merged: (0.0029,0.0299) + stat_fallback (0.0275,0.0616) → full deny zone. MeanRR=-0.60, BadRate=51.8%'
+  locked: true
+  lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利
 - id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
   tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
   phase: system_safety

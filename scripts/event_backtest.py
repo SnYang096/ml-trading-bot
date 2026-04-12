@@ -302,6 +302,38 @@ def _sync_macro_tp_vwap_from_feature_row(
         pass
 
 
+def _sync_ema_1200_from_feature_row(
+    sim: "PositionSimulator",
+    row: Optional[pd.Series],
+) -> None:
+    """Set simulator EMA1200 position + frozen EMA1200 level from one feature row.
+
+    Same mechanism as VWAP1200: freeze the EMA1200 price level at primary-TF
+    bar close, recompute position on each 1m bar in between.
+    """
+    if row is None:
+        return
+    try:
+        mv = row.get("ema_1200_position")
+        if mv is None:
+            return
+        ev = float(mv)
+        if ev != ev:
+            return
+        sim._ema_1200_position = ev
+        cfeat = row.get("close")
+        if cfeat is None:
+            sim._ema_1200_level = None
+            return
+        c2 = float(cfeat)
+        if c2 <= 0:
+            sim._ema_1200_level = None
+            return
+        sim._ema_1200_level = c2 * (1.0 - ev)
+    except (TypeError, ValueError):
+        pass
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 1. ClosedTrade — 已关闭交易记录
 # ═════════════════════════════════════════════════════════════════════════════
@@ -382,6 +414,10 @@ class PositionSimulator:
         # 与 macro_tp_vwap_1200_position 同根特征行的滚动典型价 VWAP 价格水平；
         # 在两次 primary-TF 收盘之间冻结，供 1m bar 用 (close_1m - level)/close_1m 检测死区穿越
         self._macro_tp_vwap_level: Optional[float] = None
+        # EMA1200 结构性出场: 与 VWAP1200 同理，冻结 EMA1200 水平供 1m 重算
+        # 统计依据: EMA1200 零点穿越比 VWAP1200 更可靠 (分歧时 EMA 正确率显著更高)
+        self._ema_1200_position: Optional[float] = None
+        self._ema_1200_level: Optional[float] = None
         # order_management 集成 (由 EventBacktester 注入)
         self._om_bridge: Optional["OMBridge"] = None
         self.max_observed_leverage: float = 0.0
@@ -567,7 +603,21 @@ class PositionSimulator:
                 except (TypeError, ValueError, ZeroDivisionError):
                     pass
 
-            # 调用共享 7 步持仓管理 (structural: EMA200 / vwap1200)
+            # ema1200: 同理冻结 EMA1200 水平，1m 重算 position
+            ema_1200_pv: Optional[float] = self._ema_1200_position
+            _ema_lvl = getattr(self, "_ema_1200_level", None)
+            if _ema_lvl is not None and bar_close > 0:
+                try:
+                    elv = float(_ema_lvl)
+                    bc = float(bar_close)
+                    if elv == elv and bc == bc and bc > 0.0:
+                        live_ev = (bc - elv) / bc
+                        if live_ev == live_ev:
+                            ema_1200_pv = max(-1.0, min(1.0, float(live_ev)))
+                except (TypeError, ValueError, ZeroDivisionError):
+                    pass
+
+            # 调用共享 7 步持仓管理 (structural: EMA200 / vwap1200 / ema1200)
             close_reason, exit_price = enforce_position(
                 pos,
                 price_high=bar_high,
@@ -577,6 +627,7 @@ class PositionSimulator:
                 default_bar_minutes=self.default_bar_minutes,
                 structural_price=self._structural_price,
                 macro_tp_vwap_position=macro_pv,
+                ema_1200_position=ema_1200_pv,
             )
 
             if close_reason:
@@ -2396,6 +2447,22 @@ class EventBacktester:
         _prev_week = None
         _prev_month = None
 
+        # ── 每日入场节流 (max_new_entries_per_day) ──
+        _daily_entry_limits: Dict[str, Optional[int]] = {}
+        if _executor:
+            for s in self.strategy_names:
+                _daily_entry_limits[s.lower()] = (
+                    _executor.resolve_max_new_entries_per_day(s)
+                )
+        _daily_entry_counts: Dict[tuple, int] = {}  # (strategy, date) -> count
+        _daily_entry_limit_log = False
+        for _s, _lim in _daily_entry_limits.items():
+            if _lim is not None:
+                if not _daily_entry_limit_log:
+                    logger.info("每日入场节流:")
+                    _daily_entry_limit_log = True
+                logger.info(f"  {_s}: max_new_entries_per_day={_lim}")
+
         # _pos_last_ts: 独立跟踪每个 symbol 持仓上次被处理到的时间点
         # 与 prev_ts (信号时间) 分离, 确保跨 symbol slot 释放不延迟
         _pos_last_ts: Dict[str, pd.Timestamp] = {}
@@ -2433,6 +2500,7 @@ class EventBacktester:
                         require_macro=True,
                     )
                     _sync_macro_tp_vwap_from_feature_row(upd_sim, _frow)
+                    _sync_ema_1200_from_feature_row(upd_sim, _frow)
                     if _frow is not None and "ema_200" in _frow.index:
                         try:
                             _e = float(_frow["ema_200"])
@@ -2576,6 +2644,24 @@ class EventBacktester:
             except (TypeError, ValueError):
                 pass
 
+            # EMA1200 structural exit: 同步 ema_1200_position 和冻结的 EMA1200 水平
+            _ev = primary_features.get("ema_1200_position")
+            if _ev is not None:
+                try:
+                    simulator._ema_1200_position = float(_ev)
+                except (TypeError, ValueError):
+                    pass
+            else:
+                simulator._ema_1200_level = None
+            try:
+                if _ev is not None and _pcl is not None:
+                    _c = float(_pcl)
+                    _e = float(_ev)
+                    if _c > 0.0 and _e == _e:
+                        simulator._ema_1200_level = _c * (1.0 - _e)
+            except (TypeError, ValueError):
+                pass
+
             # LivePCM.decide() — 多策略仲裁 + 全局 slot 控制
             intents = self.pcm.decide(
                 features=primary_features,
@@ -2663,9 +2749,33 @@ class EventBacktester:
                     winning_bm = self._bm_map.get(
                         winning_arch, self._primary_bar_minutes
                     )
+
+                    # ── 每日入场节流: 仅限新开仓（非加仓），检查日内上限 ──
+                    _arch_lc = str(winning_arch or "").strip().lower()
+                    _entry_limit = _daily_entry_limits.get(_arch_lc)
+                    _ts_date = ts.date() if hasattr(ts, "date") else None
+                    _is_new_entry = not any(
+                        p.get("symbol") == sym
+                        and str(p.get("archetype", "")).lower().strip() == _arch_lc
+                        for p in simulator._positions.values()
+                    )
+                    if (
+                        _entry_limit is not None
+                        and _ts_date is not None
+                        and _is_new_entry
+                    ):
+                        _dk = (_arch_lc, _ts_date)
+                        if _daily_entry_counts.get(_dk, 0) >= _entry_limit:
+                            funnel.setdefault("reject_daily_entry_limit", 0)
+                            funnel["reject_daily_entry_limit"] += 1
+                            continue
+
                     opened = simulator.open_position(
                         intent, entry_bar, entry_feats, bar_minutes=winning_bm
                     )
+                    if opened is not None and _entry_limit is not None and _ts_date:
+                        _dk2 = (_arch_lc, _ts_date)
+                        _daily_entry_counts[_dk2] = _daily_entry_counts.get(_dk2, 0) + 1
                     if opened is None:
                         # 已有持仓，尝试加仓（trigger.type=float_r_ladder_only 时仅走下方阶梯逻辑）
                         if _add_pos_enabled and _executor:

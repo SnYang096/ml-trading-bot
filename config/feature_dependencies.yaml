@@ -7850,7 +7850,7 @@ features:
       ME 方向绕过 VWAP 带通：|me_accel_5k|≥阈值 或 连续三根 K 线 macro_tp_vwap_1200_position 同号（价在 VWAP 同侧）。
     pass_full_df: false
     compute_params:
-      accel_abs_min: 1.5
+      accel_abs_min: 1.0
       normalized: true
       output_normalization_map:
         me_vwap_structure_bypass_direction: bounded_-1_1

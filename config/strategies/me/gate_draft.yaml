@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260411_215928_rr_extreme/me
+# 来源: results/train_final_20260412_135122_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -20,41 +20,38 @@ hard_gates:
   tag: HARD_MACRO_TP_VWAP_1200_POSITION
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.17)
+  reason: 统计验证规则 (lift=1.35)
   when:
     macro_tp_vwap_1200_position:
-      value_lt: -0.1083
+      value_gt: 0.1812
   then:
     action: deny
-  comment: 'statistical(lift=1.17): macro_tp_vwap_1200_position < -0.1083'
+  comment: 'statistical(lift=1.35): macro_tp_vwap_1200_position > 0.1812'
+- id: gate_vol_persistence
+  tag: HARD_VOL_PERSISTENCE
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.30)
+  when:
+    vol_persistence:
+      value_lt: 0.0084
+  then:
+    action: deny
+  comment: 'statistical(lift=1.30): vol_persistence < 0.008362'
 - id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
   tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
   phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.39)
-  when:
-    all_of:
-    - vol_leverage_asymmetry:
-        value_gt: 0.0418
-    - vol_leverage_asymmetry:
-        value_lt: 0.0802
-  then:
-    action: deny
-  comment: 'statistical(lift=1.39): vol_leverage_asymmetry > 0.04175 & vol_leverage_asymmetry < 0.08017'
-- id: gate_vol_persistence_vol_persistence
-  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
-  phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.25)
+  reason: 统计验证规则 (lift=1.37)
   when:
     all_of:
-    - vol_persistence:
-        value_gt: 0.1576
-    - vol_persistence:
-        value_lt: 0.2074
+    - vol_leverage_asymmetry:
+        value_gt: 0.061
+    - vol_leverage_asymmetry:
+        value_lt: 0.0887
   then:
     action: deny
-  comment: 'statistical(lift=1.25): vol_persistence > 0.1576 & vol_persistence < 0.2074'
+  comment: 'statistical(lift=1.37): vol_leverage_asymmetry > 0.06099 & vol_leverage_asymmetry < 0.08868'
 - id: gate_cvd_change_5_normalized_cvd_change_5_normalized
   tag: HARD_CVD_CHANGE_5_NORMALIZED_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
@@ -63,24 +60,10 @@ hard_gates:
   when:
     all_of:
     - cvd_change_5_normalized:
-        value_gt: -0.0028
+        value_gt: -0.0296
     - cvd_change_5_normalized:
-        value_lt: 0.0056
+        value_lt: -0.0171
   then:
     action: deny
-  comment: 'statistical(lift=1.10): cvd_change_5_normalized > -0.002776 & cvd_change_5_normalized < 0.005631'
-- id: gate_vol_clustering_strength_vol_clustering_strength
-  tag: HARD_VOL_CLUSTERING_STRENGTH_VOL_CLUSTERING_STRENGTH
-  phase: hard_gate
-  priority: 14
-  reason: 统计验证规则 (lift=1.09)
-  when:
-    all_of:
-    - vol_clustering_strength:
-        value_gt: 0.1919
-    - vol_clustering_strength:
-        value_lt: 0.2361
-  then:
-    action: deny
-  comment: 'statistical(lift=1.09): vol_clustering_strength > 0.1919 & vol_clustering_strength < 0.2361'
+  comment: 'statistical(lift=1.10): cvd_change_5_normalized > -0.02963 & cvd_change_5_normalized < -0.01705'
 guardrails: []

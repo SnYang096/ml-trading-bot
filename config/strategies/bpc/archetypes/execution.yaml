@@ -1,14 +1,15 @@
 add_position:
   add_size_multipliers:
-  - 0.8
-  - 0.5
-  - 0.3
+    # 这里越加越多是因为根据数据统计，越后面成功率越高
+    - 1
+    - 2
+    - 3
   inherit_parent_stop: true
   max_add_times: 3
   min_current_r_by_add:
-  - 1
-  - 2
-  - 3
+    - 1
+    - 2
+    - 3
   min_current_r_unit: atr
   sizing_mode: fixed_multiplier
   trigger:
@@ -17,7 +18,7 @@ execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
 holding:
-  max_holding_bars: null
+  max_holding_bars: 360
   time_stop_bars: 0
 stop_loss:
   breakeven:
@@ -28,12 +29,14 @@ stop_loss:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
   initial_r: 2.0
-  structural_exit: vwap1200
+  # 统计依据: EMA1200 零点穿越比 VWAP1200 更可靠；
+  # 两者分歧时 (6.4% bars) EMA 方向正确率显著更高 (medRR +2.5 vs -1.5)
+  structural_exit: ema1200
   trailing:
     activation_r: 2.0
     enabled: false
     trail_r: 2.0
-  type: trailing
+  type: fixed
 take_profit:
   enabled: false
 version: 59

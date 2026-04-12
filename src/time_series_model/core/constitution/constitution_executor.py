@@ -233,6 +233,20 @@ class ConstitutionExecutor:
         ra = obj.get("resource_allocation") or {}
         return dict(ra.get("per_strategy_limits") or {})
 
+    def resolve_max_new_entries_per_day(
+        self, archetype: str, position_action: Optional[str] = None
+    ) -> Optional[int]:
+        """Return max_new_entries_per_day for a strategy, or None if unlimited."""
+        limits = self._resolve_per_strategy_limits()
+        for k in _strategy_keys(archetype, position_action):
+            cand = limits.get(k) or {}
+            if isinstance(cand, dict) and cand:
+                v = cand.get("max_new_entries_per_day")
+                if v is not None:
+                    return int(v)
+                return None
+        return None
+
     def resolve_add_position_for_strategy(
         self, archetype: str, position_action: Optional[str] = None
     ) -> dict:

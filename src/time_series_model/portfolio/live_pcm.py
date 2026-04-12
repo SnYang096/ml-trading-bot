@@ -465,6 +465,16 @@ class LivePCM:
                 self._ema_fallback,
             )
 
+        # ── 每日入场节流 (max_new_entries_per_day) ──
+        self._daily_entry_counts: Dict[tuple, int] = {}  # (family, date_str) -> count
+        self._daily_entry_limits: Dict[str, Optional[int]] = {}
+        _psl = self._constitution.get("per_strategy_limits") or {}
+        for _fam, _cfg in _psl.items():
+            if isinstance(_cfg, dict) and "max_new_entries_per_day" in _cfg:
+                _lim = int(_cfg["max_new_entries_per_day"])
+                self._daily_entry_limits[str(_fam).lower().strip()] = _lim
+                logger.info("PCM: %s max_new_entries_per_day=%d", _fam, _lim)
+
         # 可选: 监控统计收集器
         self.stats_collector = None  # 通过外部注入 StatsCollector 实例
 
@@ -1051,14 +1061,34 @@ class LivePCM:
 
             _slot_key = f"{intent.symbol}:{intent.archetype}"
             if _slot_key in self._slot_evidence and not bool(intent.add_position):
-                # 已有同 symbol+archetype 仓位：将意图标记为加仓，让下游走 try_add_position
-                # (此前直接 continue 会导致加仓链路完全不触发)
                 intent = replace(intent, add_position=True)
                 logger.info(
                     "PCM: %s %s 已有持仓，转为 add_position 意图",
                     intent.symbol,
                     intent.archetype,
                 )
+
+            # ── 每日入场节流: 新开仓检查日内上限 ──
+            if not bool(intent.add_position):
+                _fam_throttle, _ = self._parse_family_and_side(
+                    intent.archetype, intent.action
+                )
+                _throttle_limit = self._daily_entry_limits.get(_fam_throttle)
+                if _throttle_limit is not None:
+                    from datetime import datetime as _dt, timezone as _tz
+
+                    _today_str = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+                    _dk = (_fam_throttle, _today_str)
+                    if self._daily_entry_counts.get(_dk, 0) >= _throttle_limit:
+                        logger.info(
+                            "PCM: %s %s 日入场上限已满 (%d/%d)，拒绝",
+                            symbol,
+                            intent.archetype,
+                            self._daily_entry_counts[_dk],
+                            _throttle_limit,
+                        )
+                        continue
+
             if not bool(intent.add_position) and not self._slot_available(
                 symbol, intent.archetype
             ):
@@ -1074,6 +1104,17 @@ class LivePCM:
             ev = intent.confidence if intent.confidence is not None else 0.5
             if not bool(intent.add_position):
                 self._record_slot(symbol, intent.archetype, ev)
+                _fam_rec, _ = self._parse_family_and_side(
+                    intent.archetype, intent.action
+                )
+                if _fam_rec in self._daily_entry_limits:
+                    from datetime import datetime as _dt, timezone as _tz
+
+                    _today_str = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+                    _dk = (_fam_rec, _today_str)
+                    self._daily_entry_counts[_dk] = (
+                        self._daily_entry_counts.get(_dk, 0) + 1
+                    )
             if self.stats_collector is not None:
                 self.stats_collector.record_pcm_selected(symbol, intent.archetype)
             accepted.append(self._apply_regime_scale(intent))

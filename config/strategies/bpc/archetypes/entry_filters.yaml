@@ -3,7 +3,7 @@ filters:
   enabled: false
   promote_never_disable: true
   locked: true
-  lock_reason: bpc_short_entry_trend_confirm_priority
+  lock_reason: bpc_long_entry_trend_confirm_priority
   description: 'trend-confirm core (AND): orderflow + participation + derivatives
     expansion + anti-crowding'
   conditions:
@@ -24,7 +24,7 @@ filters:
   enabled: false
   promote_never_disable: true
   locked: true
-  lock_reason: bpc_short_entry_trend_confirm_priority
+  lock_reason: bpc_long_entry_trend_confirm_priority
   description: 'trend-confirm with VPIN guard (AND): orderflow + participation + derivatives
     + vpinsanity'
   conditions:
@@ -117,7 +117,7 @@ filters:
 - id: ef_shd_pct_crowded
   enabled: false
   locked: true
-  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  lock_reason: bpc_long_entry_orderflow_core_cross_tf
   description: 'pct: shd_pct <= 0.0965'
   conditions:
   - feature: shd_pct
@@ -127,7 +127,7 @@ filters:
 - id: ef_ofci_pct_high
   enabled: false
   locked: true
-  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  lock_reason: bpc_long_entry_orderflow_core_cross_tf
   description: 'pct: ofci_pct >= 0.70'
   conditions:
   - feature: ofci_pct
@@ -137,7 +137,7 @@ filters:
 - id: ef_oi_zscore_high
   enabled: false
   locked: true
-  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  lock_reason: bpc_long_entry_orderflow_core_cross_tf
   description: 'normalized: oi_zscore >= 1.3451'
   conditions:
   - feature: oi_zscore
@@ -147,7 +147,7 @@ filters:
 - id: ef_vpin_max20_low
   enabled: false
   locked: true
-  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  lock_reason: bpc_long_entry_orderflow_core_cross_tf
   description: 'normalized: vpin_max20 <= 0.3458'
   conditions:
   - feature: vpin_max20
@@ -157,7 +157,7 @@ filters:
 - id: ef_volume_ratio_pct_high
   enabled: false
   locked: true
-  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  lock_reason: bpc_long_entry_orderflow_core_cross_tf
   description: 'pct: volume_ratio_pct >= 0.70'
   conditions:
   - feature: volume_ratio_pct
@@ -167,7 +167,7 @@ filters:
 - id: ef_vpin_ma20_low
   enabled: false
   locked: true
-  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  lock_reason: bpc_long_entry_orderflow_core_cross_tf
   description: 'normalized: vpin_ma20 <= 0.2431'
   conditions:
   - feature: vpin_ma20
@@ -177,7 +177,7 @@ filters:
 - id: ef_vpin_ma5_low
   enabled: false
   locked: true
-  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  lock_reason: bpc_long_entry_orderflow_core_cross_tf
   description: 'normalized: vpin_ma5 <= 0.2278'
   conditions:
   - feature: vpin_ma5
@@ -187,7 +187,7 @@ filters:
 - id: ef_vpin_zscore_20_high
   enabled: false
   locked: true
-  lock_reason: bpc_short_entry_orderflow_core_cross_tf
+  lock_reason: bpc_long_entry_orderflow_core_cross_tf
   description: 'normalized: vpin_zscore_20 >= 0.60'
   conditions:
   - feature: vpin_zscore_20

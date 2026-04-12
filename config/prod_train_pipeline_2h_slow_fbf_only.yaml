@@ -1,25 +1,23 @@
 # ============================================================
-# 上线前训练流水线 (2H, ME-only, 慢模式 / slow_realistic)
-# 底稿: prod_train_pipeline_2h_slow_bpc_only.yaml → 策略换为 me + 输出目录分离
+# 上线前训练流水线 (2H, FBF-only, 慢模式 / slow_realistic)
+# 底稿: prod_train_pipeline_2h_slow_bpc_only.yaml 的 rolling / SHAP / 快环契约
+#       + prod_train_pipeline_2h_turbo_2024bull_thresholds_only_fbf_only.yaml 的 dates / strategies.fbf
+#
+# 与 turbo 差异:
+#   - rolling.mode: slow_realistic，cadence 月重跑结构快照，rolling_sim 内 feature_search_enabled=true
+#   - 不设 fast_loop.disable_model_training（与 slow_bpc 一致，走完整训练/SHAP 路径）
+#   - direction_tuning: compare_features + promote_after_validate 开启
 #
 # 示例:
-#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_me_only.yaml --stage rolling_sim
-#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_me_only.yaml --stage fast_month --month 2024-09
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_fbf_only.yaml --stage rolling_sim
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_fbf_only.yaml --stage rolling_sim --skip-shap
 #
-# ── 回测月份要落在 2024-01 ~ 2024-12（12 个自然月）时 dates 怎么设 ──
-#   • rolling_sim 枚举的月份 = holdout_start 所在月 ～ end_date 所在月（见 z实验_005_统一研究/ROLLING_SIM_TIME_WINDOWS_CN.md）
-#   • end_date 用年末: "2024-12-31"
-#   • holdout_months 须为 11（不是 12）: compute_holdout_start(2024-12-31, 11) → 2024-01-01；
-#     若写成 12 会得到 2023-12-01，多滚一个月 2023-12。
-#   • start_date: 须早于 holdout，供训练/结构快照用历史（示例 2021-01-01）。
-#   • validation_months: 0 表示 holdout 内不再切 Val/Test，Gate 等 cutoff 与 holdout 对齐；
-#     若写 3，则纯 OOS「Test」段为 2024-04～2024-12，但 rolling_sim 仍会逐月滚过 2024 全年 12 个月。
+# 备选「仅 2024 自然年 12 个月」窗口: 见 z实验_005_统一研究/ROLLING_SIM_TIME_WINDOWS_CN.md（调整 dates + holdout_months）
 # ============================================================
 
 dates:
-  start_date: "2022-08-01"
+  start_date: "2023-01-01"
   end_date: "2024-12-31"
-  # 11 → holdout 从 2024-01-01 起，与 end_date 合起来共 12 个日历月；勿改成 12 除非接受多滚 2023-12
   holdout_months: 15
   validation_months: 3
 
@@ -27,16 +25,15 @@ training:
   seeds:
     - 42
   seed_selection: best_sharpe
+
 global_toggles:
   locked_threshold_tuning_enabled: true
+
 strategy_scope:
   direction: all
+
 rolling:
   mode: slow_realistic
-  # 下列三者语义不同，不能合并成一个 calibration_months：
-  # - calibration_months：每个自然月 M 的「快变量标定窗」长度（M 之前连续 N 个月，不含 M）。
-  # - structure_lookback_months：触发慢结构快照时，从锚点往回取多少个月历史跑 SHAP/特征搜索等。
-  # - slow_realistic.cadence_months：每隔几个月才跑一次慢结构快照；其余月份复用上次冻结的 strategies。
   windows:
     calibration_months: 3
     structure_lookback_months: 12
@@ -48,8 +45,11 @@ rolling:
     disable_feature_search: true
 
 fast_loop:
+  step_months: 1
   threshold_calibration:
     enabled: true
+  prefilter:
+    optimize: true
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
@@ -60,6 +60,7 @@ fast_loop:
     enabled: true
     compare_features: true
     promote_after_validate: true
+
 symbol_policy:
   mode: hybrid_carry_forward
   carry_forward_ttl_months: 2
@@ -67,10 +68,12 @@ symbol_policy:
   min_symbol_trades_soft: 10
   carry_forward_hard_fail_rules:
     min_sharpe_r: -0.25
+
 direction_stack:
   mode: ema200
   ema_debounce_bars: 3
   vwap_window_days: 20
+
 slot_allocation:
   mode: quality_ranked
   max_symbols_per_side: 2
@@ -80,21 +83,19 @@ slot_allocation:
     history_edge: 0.55
     now_strength: 0.45
   quality_lookback_months: 3
+
 stitching:
   enabled: true
   metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]
   export_trade_map_html: true
+
 event_backtest:
   enabled: true
   promote: true
-  no_kill_switch: false
   map_extra_months: 4
   sym_r_default: "1.0:1:6.0"
-  exec_grid_by_family:
-    me:
-      initial_r: "2.0:1:6.0"
-      activation_r: "2.0:1:6.0"
-      trail_r: "1.5:0.5:4.0"
+  sym_r_by_family:
+    fbf: "2:1:4"
   exec_objective_default: sharpe
   exec_objective_params:
     near_stop_threshold_r: -0.9
@@ -102,6 +103,7 @@ event_backtest:
     max_dd_penalty: 0.0
     min_trades_soft: 0
     undertrade_penalty: 0.0
+
 pcm_slot_grid:
   enabled: false
   plateau_delta: 0.03
@@ -111,37 +113,34 @@ pcm_slot_grid:
     slot_full_rate_penalty: 0.20
     undertrade_penalty: 0.001
   cases: []
+
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a
   group: highcap
+
 data_path: data/parquet_data
+
 download:
   enabled: true
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
+
 strategies:
-  me:
-    config: config/strategies/me
-    timeframe: 120T
-    dates:
-      holdout_months: 11
-      validation_months: 0
+  fbf:
+    config: config/strategies/fbf
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
     kpi_gates:
       prefilter:
-        # 收紧单条 meta 规则的 deny 上限，避免标定窗里「极窄 OI 区间」进 prefilter 后在 OOS 急涨段整月失效
-        # （与从 features_prefilter 去掉 oi_scene 语义分配合；见 diagnose_me_rolling_month_funnel）
-        deny_rate_max: 0.89
         min_pass_rate: 0.05
-        min_rows: 10
-        target_trades_min: 35
-        target_trades_max: 260
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
+        min_rows: 300
+        target_trades_min: 40
+        target_trades_max: 140
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
         stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
@@ -150,15 +149,12 @@ strategies:
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
-          min_trades_target: 60
+          min_trades_target: 70
           trade_penalty: 0.0025
-          bpc_pullback_score_min_values: 0.40,0.45,0.50
-          bpc_pullback_depth_max_values: 0.55,0.60,0.65
-          bpc_recovery_min_values: 0.50,0.55,0.60
-          target_trades_min: 35
-          target_trades_max: 260
-          trade_penalty_low: 0.002
-          trade_penalty_high: 0.0011
+          target_trades_min: 40
+          target_trades_max: 140
+          trade_penalty_low: 0.0021
+          trade_penalty_high: 0.0014
           stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
@@ -170,26 +166,29 @@ strategies:
         significance_min_trades: 4
         plateau_window: 4
         archetype_scoring_method: distribution_ks
-        target_trades_min: 35
-        target_trades_max: 260
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
+        target_trades_min: 40
+        target_trades_max: 140
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
         stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-        min_score_improvement: 0.005
+        min_score_improvement: 0.008
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.3
+        min_combined_pass_rate: 0.38
+        stat_fallback_on_empty: true
+        stat_fallback_max_rules: 3
+        stat_fallback_min_source_features: 2
       backtest:
         min_trades: 50
       deploy:
         min_trades: 50
     simple_execution:
-      sl_r: 4.0
-      tp_r: 8.0
-      timeout_bars: 500
+      sl_r: 3.0
+      tp_r: 6.0
+      timeout_bars: 120
 
 shap_feature_selection:
   enabled: true
@@ -201,17 +200,20 @@ shap_feature_selection:
     - atr_f
   apply_to:
     - features.yaml
+
 comparison:
   min_trades: 30
   sharpe_adopt_ratio: 0.7
   sharpe_reject_floor: 0.0
   threshold_drift_warn: 1.0
+
 retrain_triggers:
   schedule_days: 90
   sharpe_decay_ratio: 0.5
   consecutive_losses: 8
   max_data_age_days: 120
   leading_indicator_decay: 0.5
+
 deploy_gate:
   trigger_sharpe_improve: 0.05
   trigger_drift_level: HIGH
@@ -219,6 +221,7 @@ deploy_gate:
   require_adopt: true
   min_trades: 50
   require_human_confirm: true
+
 data_flow:
   model_predictions: predictions.parquet
   gated_logs: logs_gated.parquet
@@ -228,5 +231,6 @@ data_flow:
     gate_apply: predictions.parquet
     execution: logs_gated.parquet
     backtest: logs_gated.parquet
+
 output:
-  history_dir: results/me/slow-rolling-sim
+  history_dir: results/fbf/slow-rolling-sim
