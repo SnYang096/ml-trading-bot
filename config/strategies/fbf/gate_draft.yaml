@@ -1,5 +1,5 @@
 # FBF Gate Draft (auto-generated)
-# 来源: results/train_final_20260412_142736_rr_extreme/fbf
+# 来源: results/train_final_20260413_001358_rr_extreme/fbf
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fbf
@@ -20,11 +20,11 @@ hard_gates:
   tag: HARD_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
   priority: 10
-  reason: cvd_change_5_normalized 触发树分裂条件 (分裂 8 次)
+  reason: cvd_change_5_normalized 触发树分裂条件 (分裂 1 次)
   when:
     cvd_change_5_normalized:
-      value_gt: -0.0214
+      value_lt: 0.0066
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 8 次 | 阈值 -0.02144 | 方向: data_verified (low=2.021, high=0.132)'
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.006616 | 方向: data_verified (low=-2.339, high=-1.799)'
 guardrails: []

@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260412_135122_rr_extreme/me
+# 来源: results/train_final_20260412_233416_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -16,54 +16,68 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_macro_tp_vwap_1200_position
-  tag: HARD_MACRO_TP_VWAP_1200_POSITION
+- id: gate_recent_compression_decay_recent_compression_decay
+  tag: HARD_RECENT_COMPRESSION_DECAY_RECENT_COMPRESSION_DECAY
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.35)
+  reason: 统计验证规则 (lift=2.10)
   when:
-    macro_tp_vwap_1200_position:
-      value_gt: 0.1812
+    all_of:
+    - recent_compression_decay:
+        value_gt: 0.0006
+    - recent_compression_decay:
+        value_lt: 0.0077
   then:
     action: deny
-  comment: 'statistical(lift=1.35): macro_tp_vwap_1200_position > 0.1812'
-- id: gate_vol_persistence
-  tag: HARD_VOL_PERSISTENCE
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.30)
-  when:
-    vol_persistence:
-      value_lt: 0.0084
-  then:
-    action: deny
-  comment: 'statistical(lift=1.30): vol_persistence < 0.008362'
+  comment: 'statistical(lift=2.10): recent_compression_decay > 0.0006388 & recent_compression_decay < 0.00765'
 - id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
   tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
   phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.37)
+  priority: 11
+  reason: 统计验证规则 (lift=1.48)
   when:
     all_of:
     - vol_leverage_asymmetry:
-        value_gt: 0.061
+        value_gt: 0.0586
     - vol_leverage_asymmetry:
-        value_lt: 0.0887
+        value_lt: 0.0812
   then:
     action: deny
-  comment: 'statistical(lift=1.37): vol_leverage_asymmetry > 0.06099 & vol_leverage_asymmetry < 0.08868'
-- id: gate_cvd_change_5_normalized_cvd_change_5_normalized
-  tag: HARD_CVD_CHANGE_5_NORMALIZED_CVD_CHANGE_5_NORMALIZED
+  comment: 'statistical(lift=1.48): vol_leverage_asymmetry > 0.05862 & vol_leverage_asymmetry < 0.08116'
+- id: gate_macro_tp_vwap_1200_position
+  tag: HARD_MACRO_TP_VWAP_1200_POSITION
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.29)
+  when:
+    macro_tp_vwap_1200_position:
+      value_gt: 0.212
+  then:
+    action: deny
+  comment: 'statistical(lift=1.29): macro_tp_vwap_1200_position > 0.212'
+- id: gate_vpin_ma20_vpin_ma20
+  tag: HARD_VPIN_MA20_VPIN_MA20
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.10)
+  reason: 统计验证规则 (lift=1.21)
   when:
     all_of:
-    - cvd_change_5_normalized:
-        value_gt: -0.0296
-    - cvd_change_5_normalized:
-        value_lt: -0.0171
+    - vpin_ma20:
+        value_gt: 0.3228
+    - vpin_ma20:
+        value_lt: 0.3476
   then:
     action: deny
-  comment: 'statistical(lift=1.10): cvd_change_5_normalized > -0.02963 & cvd_change_5_normalized < -0.01705'
+  comment: 'statistical(lift=1.21): vpin_ma20 > 0.3228 & vpin_ma20 < 0.3476'
+- id: gate_macd_signal_atr
+  tag: HARD_MACD_SIGNAL_ATR
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.08)
+  when:
+    macd_signal_atr:
+      value_lt: -0.0927
+  then:
+    action: deny
+  comment: 'statistical(lift=1.08): macd_signal_atr < -0.09266'
 guardrails: []

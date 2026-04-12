@@ -135,10 +135,10 @@ strategies:
     has_direction: true
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.05
-        min_rows: 300
-        target_trades_min: 40
-        target_trades_max: 140
+        min_pass_rate: 0.03
+        min_rows: 200
+        target_trades_min: 15
+        target_trades_max: 100
         trade_penalty_low: 0.0021
         trade_penalty_high: 0.0014
         stability_penalty: 0.0
@@ -149,10 +149,10 @@ strategies:
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
-          min_trades_target: 70
+          min_trades_target: 30
           trade_penalty: 0.0025
-          target_trades_min: 40
-          target_trades_max: 140
+          target_trades_min: 15
+          target_trades_max: 100
           trade_penalty_low: 0.0021
           trade_penalty_high: 0.0014
           stability_penalty: 0.0
@@ -163,11 +163,11 @@ strategies:
         meta_algorithm: false
         archetype_plateau: true
         significance_p: 0.10
-        significance_min_trades: 4
+        significance_min_trades: 3
         plateau_window: 4
         archetype_scoring_method: distribution_ks
-        target_trades_min: 40
-        target_trades_max: 140
+        target_trades_min: 15
+        target_trades_max: 100
         trade_penalty_low: 0.0021
         trade_penalty_high: 0.0014
         stability_penalty: 0.0
@@ -177,14 +177,14 @@ strategies:
         min_score_improvement: 0.008
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.38
+        min_combined_pass_rate: 0.30
         stat_fallback_on_empty: true
         stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
       backtest:
-        min_trades: 50
+        min_trades: 20
       deploy:
-        min_trades: 50
+        min_trades: 20
     simple_execution:
       sl_r: 3.0
       tp_r: 6.0
@@ -202,7 +202,7 @@ shap_feature_selection:
     - features.yaml
 
 comparison:
-  min_trades: 30
+  min_trades: 15
   sharpe_adopt_ratio: 0.7
   sharpe_reject_floor: 0.0
   threshold_drift_warn: 1.0
@@ -219,7 +219,7 @@ deploy_gate:
   trigger_drift_level: HIGH
   min_sharpe_change: 0.03
   require_adopt: true
-  min_trades: 50
+  min_trades: 20
   require_human_confirm: true
 
 data_flow:
