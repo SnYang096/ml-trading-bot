@@ -10,6 +10,12 @@ description: |
 feature_pipeline:
   exclude_columns:
     - atr
+  # 永不调度这些特征模块（即使误写回 requested_features 也会在 loader 中扣减）
+  forbidden_requested_features:
+    - oi_scene_semantic_scores_f
+  # meta-prefilter（analyze_archetype_feature_stratification）候选列按列名剔除，不禁用模块本身
+  forbidden_prefilter_meta_columns:
+    - me_vol_regime
   requested_features:
     # ========== 必需的 scale 列 ==========
     - atr_f
@@ -87,7 +93,6 @@ feature_pipeline:
 
     # ========== OI (期货持仓量) ==========
     - oi_features_f
-    - oi_scene_semantic_scores_f
 
     # ========== GARCH 波动率建模 ==========
     - volatility_regime_f

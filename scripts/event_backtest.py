@@ -1962,6 +1962,7 @@ class EventBacktester:
         fast_mode: bool = False,
         resume_state: Optional[Dict[str, Any]] = None,
         force_close_end: bool = True,
+        no_kill_switch: bool = False,
     ) -> BacktestResult:
         """
         运行事件驱动回测 — 多策略 + 多 timeframe + 跨 symbol 时间线交叉处理
@@ -2309,7 +2310,14 @@ class EventBacktester:
         constitution_path = str(Path("config") / "constitution" / "constitution.yaml")
         try:
             _executor = ConstitutionExecutor(constitution_yaml=constitution_path)
-            if _executor.cfg.kill_enabled:
+            if no_kill_switch:
+                import dataclasses as _dc
+
+                object.__setattr__(
+                    _executor, "cfg", _dc.replace(_executor.cfg, kill_enabled=False)
+                )
+                logger.info("Kill Switch 已通过 --no-kill-switch 禁用")
+            elif _executor.cfg.kill_enabled:
                 logger.info(
                     f"Kill Switch (共享 evaluate_safety_state): "
                     f"max_dd={_executor.cfg.max_dd:.0%}, "
@@ -2579,19 +2587,23 @@ class EventBacktester:
                 lf = getattr(s_obj, "_last_funnel", None) or {}
                 if not lf:
                     continue
-                _funnel_per_bar_rows.append(
-                    {
-                        "timestamp": ts,
-                        "symbol": sym,
-                        "strategy": s_name,
-                        "pcm_direction_filter": lf.get("pcm_direction_filter"),
-                        "prefilter": lf.get("prefilter"),
-                        "gate": lf.get("gate"),
-                        "entry_filter": lf.get("entry_filter"),
-                        "direction": lf.get("direction"),
-                        "direction_value": lf.get("direction_value"),
-                    }
-                )
+                _frow = {
+                    "timestamp": ts,
+                    "symbol": sym,
+                    "strategy": s_name,
+                    "pcm_direction_filter": lf.get("pcm_direction_filter"),
+                    "prefilter": lf.get("prefilter"),
+                    "gate": lf.get("gate"),
+                    "entry_filter": lf.get("entry_filter"),
+                    "direction": lf.get("direction"),
+                    "direction_value": lf.get("direction_value"),
+                }
+                # 供离线统计「是 gate 挡还是 prefilter 挡、触发了哪条规则」
+                if lf.get("gate_reasons") is not None:
+                    _frow["gate_reasons"] = lf.get("gate_reasons")
+                if lf.get("prefilter_reason") is not None:
+                    _frow["prefilter_reason"] = lf.get("prefilter_reason")
+                _funnel_per_bar_rows.append(_frow)
 
             # NOTE: Evidence slot 竞争已移除 (改为入场门槛 + 仓位缩放)
             # _last_evictions 始终为空, 此块保留为 no-op 以保持兼容
@@ -3748,6 +3760,12 @@ def main():
         default=False,
         help="不在回测结束时强平，保留未平仓用于下一期续跑",
     )
+    parser.add_argument(
+        "--no-kill-switch",
+        action="store_true",
+        default=False,
+        help="禁用 constitution kill switch（用于诊断策略真实表现，不受亏损限额约束）",
+    )
     args = parser.parse_args()
 
     strategies = [s.strip() for s in args.strategy.split(",")]
@@ -3830,6 +3848,7 @@ def main():
         fast_mode=args.fast,
         resume_state=resume_state_obj,
         force_close_end=not bool(args.keep_open_positions),
+        no_kill_switch=args.no_kill_switch,
     )
 
     result.print_report()

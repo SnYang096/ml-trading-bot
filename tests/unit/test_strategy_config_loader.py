@@ -63,6 +63,46 @@ def test_strategy_config_loader_success(tmp_path: Path):
     assert config.evaluation.metrics[0]["name"] == "test"
 
 
+def test_strategy_config_loader_forbidden_requested_features(tmp_path: Path):
+    config_dir = tmp_path / "with_forbidden"
+    config_dir.mkdir()
+    _write_yaml(
+        config_dir / "features.yaml",
+        """
+        name: x
+        feature_pipeline:
+          forbidden_requested_features:
+            - bar_mod
+          requested_features:
+            - foo_mod
+            - bar_mod
+          post_processors: []
+        """,
+    )
+    _write_yaml(
+        config_dir / "labels.yaml",
+        """
+        target_column: label
+        label_generator:
+          module: tests.sample_module
+          function: fake_label
+        """,
+    )
+    _write_yaml(
+        config_dir / "model.yaml",
+        """
+        trainer:
+          module: tests.sample_module
+          function: fake_trainer
+        """,
+    )
+
+    loader = StrategyConfigLoader(config_dir)
+    config = loader.load()
+    assert config.features.requested_features == ["foo_mod"]
+    assert config.features.forbidden_requested_features == ["bar_mod"]
+
+
 def test_strategy_config_loader_missing_required(tmp_path: Path):
     config_dir = tmp_path / "bad_strategy"
     config_dir.mkdir()

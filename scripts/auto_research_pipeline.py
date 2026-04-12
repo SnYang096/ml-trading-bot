@@ -3551,6 +3551,7 @@ def _run_event_backtest_step(
     event_start_date: str = "",
     event_end_date: str = "",
     map_extra_months: int = 12,
+    no_kill_switch: bool = False,
 ) -> Dict[str, Any]:
     """Step E1: 事件回测 execution 参数优化 + 交易地图生成."""
     log = run_dir / "pipeline.log"
@@ -3640,6 +3641,8 @@ def _run_event_backtest_step(
         ev_cmd.extend(["--dump-end-state", dump_end_state_path])
     if keep_open_positions:
         ev_cmd.append("--keep-open-positions")
+    if no_kill_switch:
+        ev_cmd.append("--no-kill-switch")
     rc_ev, ev_out = run_step("Event Backtest", ev_cmd, log, dry_run=dry_run)
 
     event_metrics = _parse_event_stdout(ev_out) if not dry_run else {}
@@ -4705,6 +4708,9 @@ def _run_fast_month_stage(
                 dump_end_state_path=end_state_path,
                 keep_open_positions=keep_open_positions,
                 map_extra_months=_event_trading_map_extra_months(cfg),
+                no_kill_switch=bool(
+                    (cfg.get("event_backtest") or {}).get("no_kill_switch", False)
+                ),
             )
         else:
             print(f"   ⏭️  跳过事件回测: event_backtest.enabled=false ({strat})")
@@ -5630,6 +5636,9 @@ def main():
                     min_trades_soft=int(obj_cfg["min_trades_soft"]),
                     undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
                     map_extra_months=_event_trading_map_extra_months(cfg),
+                    no_kill_switch=bool(
+                        (cfg.get("event_backtest") or {}).get("no_kill_switch", False)
+                    ),
                 )
                 _m = _ev.get("metrics", {})
                 print(
@@ -5998,6 +6007,9 @@ def main():
                 min_trades_soft=int(obj_cfg["min_trades_soft"]),
                 undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
                 map_extra_months=_event_trading_map_extra_months(cfg),
+                no_kill_switch=bool(
+                    (cfg.get("event_backtest") or {}).get("no_kill_switch", False)
+                ),
             )
             ev_m = ev_result.get("metrics", {})
             print(

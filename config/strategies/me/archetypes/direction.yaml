@@ -3,22 +3,16 @@
 # 评估顺序：先 strict VWAP 级联；若不成立（含「级联有方向但价不在带内」）再试备路径。
 #
 # 1) 主规则：与 BPC 同构 — me_accel_5k → me_cvd_alignment → macd_atr 级联，且须与
-#    macro_tp_vwap_1200_position 多头带 (0,1) / 空头带 (-1,0) 同号。
-# 2) 备规则：特征 me_vwap_structure_bypass_direction（见 me_vwap_structure_bypass_f）：
-#    - |me_accel_5k| ≥ accel_abs_min（默认 1.5，可在 feature_dependencies 调）；或
-#    - 连续三根 K 线的 macro_tp_vwap_1200_position 同号（价在 VWAP 同侧），视为已「打穿」站稳。
-#    transform: raw → 输出 -1/0/+1 直接作方向。
+#    macro_tp_vwap_1200_position 多头带 / 空头带 同号。
+#    outer_abs>1：归一化 p 顶到 1.0 时仍满足 strict inner<p<outer（原 outer=1 时 p==1 被挡）。
+# 2) 备规则：me_vwap_structure_bypass_direction（me_vwap_structure_bypass_f）：
+#    极强 accel 或三连 K 同侧 VWAP；transform: raw。
 #
-# 与 execution structural_exit vwap1200 仍可并用；gate 侧是否绑 VWAP 见 gate.yaml。
+# 与 execution structural_exit vwap1200 仍可并用；gate 见 gate.yaml。
 
 description: "ME 方向 — VWAP 带通级联为主；极强 accel 或三连 VWAP 侧绕行"
 
 direction_rules:
-  - id: me_vwap_bypass_accel_or_3bar_pierce
-    feature: me_vwap_structure_bypass_direction
-    transform: raw
-    description: "极强 accel 或三连 K 在 VWAP 同侧时绕过带通（依赖 features 中 me_vwap_structure_bypass_f）"
-
   - id: me_accel_cvd_macd_vwap1200_align
     method: signal_match_position_band
     description: "me_accel_5k → me_cvd_alignment → macd_atr；须落在 VWAP 多/空带通内"
@@ -32,6 +26,11 @@ direction_rules:
     position_band:
       feature: macro_tp_vwap_1200_position
       inner_abs: 0
-      outer_abs: 1
+      outer_abs: 1.001
+
+  - id: me_vwap_bypass_accel_or_3bar_pierce
+    feature: me_vwap_structure_bypass_direction
+    transform: raw
+    description: "极强 accel 或三连 K 在 VWAP 同侧时绕过带通（依赖 me_vwap_structure_bypass_f）"
 
 # 方向候选扫描仍可用 scripts/direction_strict_validation.py --strategy me --compare-features

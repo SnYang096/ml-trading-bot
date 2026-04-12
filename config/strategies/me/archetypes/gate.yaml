@@ -1,7 +1,11 @@
-# ME Gate — 「爆发段猎手」变体
-# 已移除三条 macro_tp_vwap_1200_* hard_gate（死区 / 过度多 / 过度空），避免用宏观 VWAP 标尺挡爆发前入场。
-# 保留：EVT 尾形、VPIN 分位、vol_persistence、ME 统计 VPIN 段 — 仍防尾形与极端知情流噪声。
-# 来源底稿含 BPC 对齐段 + ME VPIN；VWAP 门控见 BPC 策略，本变体刻意不绑 macro_tp_vwap_1200_position。
+# ME Gate — 动量扩张专用
+#
+# 2026-04 全面修正：移除 5 条「与 BPC 对齐」的 locked 规则。
+# BPC 做回调、ME 做趋势延续，语义相反；BPC 的 EVT/VPIN/vol_persistence band
+# 在动量主升段拦截 48-54%（SOL/XRP 2024-11 实测）。
+#
+# 清空 locked hard_gates，让 rolling 标定（optimize_gate_unified）从当月数据
+# 自行发现适合 ME 的 gate 规则（如 VWAP position、vol_clustering 等）。
 schema:
   phases:
     - system_safety
@@ -12,84 +16,5 @@ schema:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
-hard_gates:
-  - id: gate_evt_var_99_evt_var_99
-    tag: HARD_EVT_VAR_99_EVT_VAR_99
-    phase: hard_gate
-    priority: 10
-    reason: 与 BPC 对齐 — EVT 左尾风险拖泥带水区对趋势/动量延续不利
-    when:
-      all_of:
-        - evt_var_99:
-            value_gt: 0.6706
-        - evt_var_99:
-            value_lt: 0.7976
-    then:
-      action: deny
-    comment: "aligned_with_bpc: stable_plateau_found (bpc reference thresholds)"
-    locked: true
-    lock_reason: EVT 左尾风险强度中高区间：动量扩张易被假突破/回撤打断
-  - id: gate_evt_tail_shape_right_evt_tail_shape_right
-    tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
-    phase: hard_gate
-    priority: 12
-    reason: 与 BPC 对齐 — 右尾形状偏「假强势」时对顺势策略不利
-    when:
-      all_of:
-        - evt_tail_shape_right:
-            value_gt: 0.3373
-        - evt_tail_shape_right:
-            value_lt: 0.5317
-    then:
-      action: deny
-    comment: "aligned_with_bpc: stable_plateau_found (bpc reference thresholds)"
-    locked: true
-    lock_reason: EVT 右尾形状：上冲下砸结构下不宜追短期强动量
-  - id: gate_vpin_quantile_rank_20_high
-    tag: HARD_VPIN_QUANTILE_RANK_20
-    phase: hard_gate
-    priority: 11
-    reason: 与 BPC 对齐 — VPIN 分位过高 = 持续信息不对称
-    when:
-      vpin_quantile_rank_20:
-        value_gt: 0.8
-    then:
-      action: deny
-    comment: "aligned_with_bpc: deny when informed-flow rank extreme"
-    locked: true
-    lock_reason: VPIN 分位过高：知情侧过强时短线动量信号噪声大
-  - id: gate_stat_vol_persistence_vol_persistence
-    tag: HARD_STAT_VOL_PERSISTENCE
-    phase: system_safety
-    priority: 22
-    reason: 与 BPC 对齐 — 波动率持久性「噪声切换」区间
-    when:
-      all_of:
-        - vol_persistence:
-            value_gt: 0.0275
-        - vol_persistence:
-            value_lt: 0.0616
-    then:
-      action: deny
-    comment: "aligned_with_bpc: vol_persistence band from bpc gate"
-    locked: true
-    lock_reason: 波动率持久性：噪声切换期对短周期动量策略同样不利
-  # ── ME 原统计优化规则（VPIN 峰值区间 + 均值过高）──
-  - id: gate_vpin_max20_vpin_max20
-    tag: HARD_VPIN_MAX20_VPIN_MAX20
-    phase: hard_gate
-    priority: 16
-    reason: ME 统计验证规则 (lift=1.46)
-    when:
-      all_of:
-        - vpin_max20:
-            value_gt: 0.2037
-        - vpin_max20:
-            value_lt: 0.2952
-    then:
-      action: deny
-    comment: "optimizer: stable_plateau_found, threshold=0.3250, lift=0.678"
-    locked: true
-    lock_reason: VPIN 峰值区间：突发知情流与短动量信号容易背离
-
+hard_gates: []
 guardrails: []

@@ -110,11 +110,13 @@ def detect_locked_template(prefilter_raw: Dict[str, Any]) -> str:
         "dist_to_nearest_sr",
     }.issubset(feats):
         return "fer"
-    # ME：ATR 带 + 加速度（signed 或 long/short 拆分）；不要求 me_cvd_alignment（精简 prefilter 时仍识别）
+    # ME：ATR 带 + 加速度/对齐特征；多种 locked 组合均识别为 me
     if "me_atr_pct" in feats and (
         "me_accel_5k_long" in feats
         or "me_accel_5k_short" in feats
         or "me_accel_5k" in feats
+        or "me_accel_persistence" in feats
+        or "me_multi_tf_alignment" in feats
     ):
         return "me"
     if {

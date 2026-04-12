@@ -106,6 +106,68 @@ def _is_prefilter_column_allowed(
     return False
 
 
+def _load_forbidden_requested_features_from_strategy_features_yaml(
+    strategy: str,
+) -> List[str]:
+    """Read feature_pipeline.forbidden_requested_features from repo features.yaml."""
+    path = PROJECT_ROOT / "config" / "strategies" / strategy / "features.yaml"
+    if not path.exists():
+        return []
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    fp = raw.get("feature_pipeline", {}) or {}
+    fr = fp.get("forbidden_requested_features", []) or []
+    out: List[str] = []
+    for x in fr:
+        if isinstance(x, (str, int)) and str(x).strip():
+            out.append(str(x).strip())
+    return out
+
+
+def _load_forbidden_prefilter_meta_columns_from_strategy_features_yaml(
+    strategy: str,
+) -> List[str]:
+    """Read feature_pipeline.forbidden_prefilter_meta_columns (exact parquet names).
+
+    Used only by meta-prefilter column resolution: drops listed columns after
+    module expansion so SHAP/meta rules cannot latch onto them (e.g. ME
+    ``me_vol_regime`` vs steady ATR plateaus).
+    """
+    path = PROJECT_ROOT / "config" / "strategies" / strategy / "features.yaml"
+    if not path.exists():
+        return []
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    fp = raw.get("feature_pipeline", {}) or {}
+    fr = fp.get("forbidden_prefilter_meta_columns", []) or []
+    out: List[str] = []
+    for x in fr:
+        if isinstance(x, (str, int)) and str(x).strip():
+            out.append(str(x).strip())
+    return out
+
+
+def _prefilter_matched_columns_for_module(
+    feat_f: str,
+    all_features_def: Dict[str, Any],
+    available_set: set[str],
+    raw_scale_columns: set[str],
+) -> List[str]:
+    """Expand one feature_dependencies module to parquet-backed prefilter-meta columns."""
+    if feat_f not in all_features_def:
+        return []
+    feat_def = all_features_def[feat_f] or {}
+    output_cols = feat_def.get("output_columns", [])
+    norm_map = (feat_def.get("compute_params") or {}).get(
+        "output_normalization_map"
+    ) or {}
+    matched: List[str] = []
+    for c in output_cols:
+        if c not in available_set:
+            continue
+        if _is_prefilter_column_allowed(c, str(norm_map.get(c, "")), raw_scale_columns):
+            matched.append(str(c))
+    return matched
+
+
 def _resolve_features_from_config(
     config_path: str,
     deps_path: str,
@@ -2148,6 +2210,7 @@ def _resolve_features_from_prefilter_yaml(
     prefilter_yaml_path: str,
     deps_path: str,
     available_columns: List[str],
+    strategy: Optional[str] = None,
 ) -> List[str]:
     """从 features_prefilter.yaml + feature_dependencies.yaml 解析列名.
 
@@ -2156,6 +2219,11 @@ def _resolve_features_from_prefilter_yaml(
           requested_features:
             - bpc_soft_phase_f
             - dual_compression_f
+
+    若传入 strategy，则再读 config/strategies/{strategy}/features.yaml 中
+    feature_pipeline.forbidden_requested_features，从候选列中剔除对应模块产出列（双保险）；
+    以及 feature_pipeline.forbidden_prefilter_meta_columns，按列名精确剔除 meta 候选
+    （例如 ME 的 me_vol_regime 与匀速趋势段 ATR 走平语义冲突，不宜交给元算法做 AND 门槛）。
     """
     with open(prefilter_yaml_path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
@@ -2187,22 +2255,22 @@ def _resolve_features_from_prefilter_yaml(
         if feat_f not in all_features_def:
             print(f"⚠️  _f '{feat_f}' 在 feature_dependencies.yaml 中未找到, 跳过")
             continue
-        feat_def = all_features_def[feat_f] or {}
+        matched = _prefilter_matched_columns_for_module(
+            str(feat_f), all_features_def, available_set, raw_scale_columns
+        )
+        feat_def = all_features_def.get(str(feat_f)) or {}
         output_cols = feat_def.get("output_columns", [])
         norm_map = (feat_def.get("compute_params") or {}).get(
             "output_normalization_map"
         ) or {}
-        matched = []
-        dropped_raw = []
-        for c in output_cols:
-            if c not in available_set:
-                continue
-            if _is_prefilter_column_allowed(
+        dropped_raw = [
+            c
+            for c in output_cols
+            if c in available_set
+            and not _is_prefilter_column_allowed(
                 c, str(norm_map.get(c, "")), raw_scale_columns
-            ):
-                matched.append(c)
-            else:
-                dropped_raw.append(c)
+            )
+        ]
         if matched:
             resolved_columns.extend(matched)
         else:
@@ -2211,6 +2279,49 @@ def _resolve_features_from_prefilter_yaml(
             print(f"🛡️  _f '{feat_f}' drop raw/non-normalized: {dropped_raw[:5]}")
 
     resolved_columns = list(dict.fromkeys(resolved_columns))  # 去重保序
+
+    forbidden_mods = (
+        _load_forbidden_requested_features_from_strategy_features_yaml(strategy)
+        if strategy
+        else []
+    )
+    if forbidden_mods:
+        forbidden_cols: set[str] = set()
+        for feat_f in forbidden_mods:
+            forbidden_cols.update(
+                _prefilter_matched_columns_for_module(
+                    feat_f, all_features_def, available_set, raw_scale_columns
+                )
+            )
+        if forbidden_cols:
+            before = list(resolved_columns)
+            resolved_columns = [c for c in resolved_columns if c not in forbidden_cols]
+            stripped = sorted(set(before) - set(resolved_columns))
+            if stripped:
+                preview = stripped[:8]
+                more = f", +{len(stripped) - 8} more" if len(stripped) > 8 else ""
+                print(
+                    f"🚫 strategy={strategy}: forbidden_requested_features stripped "
+                    f"{len(stripped)} prefilter-meta cols (e.g. {preview}{more})"
+                )
+
+    forbidden_cols_exact = (
+        _load_forbidden_prefilter_meta_columns_from_strategy_features_yaml(strategy)
+        if strategy
+        else []
+    )
+    if forbidden_cols_exact:
+        before2 = list(resolved_columns)
+        forbidden_set = {str(c).strip() for c in forbidden_cols_exact if str(c).strip()}
+        resolved_columns = [c for c in resolved_columns if c not in forbidden_set]
+        stripped2 = sorted(set(before2) - set(resolved_columns))
+        if stripped2:
+            preview = stripped2[:8]
+            more = f", +{len(stripped2) - 8} more" if len(stripped2) > 8 else ""
+            print(
+                f"🚫 strategy={strategy}: forbidden_prefilter_meta_columns stripped "
+                f"{len(stripped2)} cols (e.g. {preview}{more})"
+            )
     return resolved_columns
 
 
@@ -2284,7 +2395,10 @@ def _meta_algorithm_prefilter(
 
     deps_path = Path(args.deps)
     features = _resolve_features_from_prefilter_yaml(
-        str(prefilter_yaml), str(deps_path), list(df.columns)
+        str(prefilter_yaml),
+        str(deps_path),
+        list(df.columns),
+        strategy=str(strategy),
     )
     if not features:
         print("❌ 未解析到任何特征列")
@@ -3891,7 +4005,10 @@ def main() -> int:
         # 优先使用 --features-prefilter 或自动检测的 features_prefilter.yaml (新格式)
         if _fp_arg and Path(_fp_arg).exists():
             features = _resolve_features_from_prefilter_yaml(
-                str(Path(_fp_arg)), str(deps_path), list(df.columns)
+                str(Path(_fp_arg)),
+                str(deps_path),
+                list(df.columns),
+                strategy=str(args.strategy),
             )
             if not features:
                 print(f"❌ 从 features_prefilter.yaml 解析后无匹配列")

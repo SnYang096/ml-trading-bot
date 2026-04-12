@@ -25,6 +25,9 @@ class ModuleFunctionConfig:
 @dataclass
 class FeaturePipelineConfig:
     requested_features: List[str] = field(default_factory=list)
+    # Optional: feature module names (e.g. "oi_scene_semantic_scores_f") removed from
+    # effective requested_features at load time even if duplicated in requested_features.
+    forbidden_requested_features: List[str] = field(default_factory=list)
     # Optional: output-column names to multiply by -1 BEFORE training/inference.
     # Used to align negative-direction factors into a consistent "higher = more bullish" convention.
     invert_features: List[str] = field(default_factory=list)
@@ -245,6 +248,14 @@ class StrategyConfigLoader:
                     flattened.extend(block_features)
             requested = flattened
 
+        forbidden_raw = pipeline.get("forbidden_requested_features", []) or []
+        forbidden_list = [
+            str(x).strip()
+            for x in forbidden_raw
+            if isinstance(x, (str, int)) and str(x).strip()
+        ]
+        forbidden_set = set(forbidden_list)
+
         invert_features = pipeline.get("invert_features", []) or []
         exclude_columns = pipeline.get("exclude_columns", []) or []
         post_processors = [
@@ -257,8 +268,15 @@ class StrategyConfigLoader:
             else None
         )
         ensure_signal = pipeline.get("ensure_signal_column")
+        if forbidden_set:
+            requested = [
+                str(r).strip()
+                for r in requested
+                if str(r).strip() and str(r).strip() not in forbidden_set
+            ]
         return FeaturePipelineConfig(
             requested_features=requested,
+            forbidden_requested_features=forbidden_list,
             invert_features=(
                 invert_features if isinstance(invert_features, list) else []
             ),

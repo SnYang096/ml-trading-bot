@@ -87,6 +87,7 @@ stitching:
 event_backtest:
   enabled: true
   promote: true
+  no_kill_switch: true
   map_extra_months: 4
   sym_r_default: "1.0:1:6.0"
   sym_r_by_family:
@@ -129,6 +130,9 @@ strategies:
     has_direction: true
     kpi_gates:
       prefilter:
+        # 收紧单条 meta 规则的 deny 上限，避免标定窗里「极窄 OI 区间」进 prefilter 后在 OOS 急涨段整月失效
+        # （与从 features_prefilter 去掉 oi_scene 语义分配合；见 diagnose_me_rolling_month_funnel）
+        deny_rate_max: 0.89
         min_pass_rate: 0.05
         min_rows: 10
         target_trades_min: 35

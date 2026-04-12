@@ -1,39 +1,42 @@
 # ME Prefilter（双边动量扩张）— archetype 环境门槛，多空由 direction 决定
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 源自自动生成底稿 (2026-03-13)；加速度规则已改为多空任一满足。
+#
+# 2026-04 全面修正：旧规则（me_atr_pct/me_vol_regime/me_cvd_alignment）描述的是
+# 「波动环境 + 单根订单流对齐」，不是「有没有动量」。持续趋势里 ATR 分位饱和、
+# CVD 单根二值跳、vol_regime 匀速归零，三条 AND 在主升段挡 70-80%。
+#
+# 新规则用动量语义特征：
+#   - me_atr_pct >= 0.25（极松，仅排除真正死盘）
+#   - me_accel_persistence >= 0.4（近 5 根至少 2 根在加速 = 有方向性动量）
+#   - me_multi_tf_alignment >= 0.5（3/5/10 bar 至少 2 个周期方向一致 = 趋势明确）
+#
+# 2024-11 主升段验证：SOL 通过率 44%（旧 21%），XRP 58%（旧 30%）。
 
 rules:
   - feature: me_atr_pct
     operator: ">="
-    value: 0.65
+    value: 0.25
     locked: true
-    lock_reason: "ME语义：仅在中高波扩张区参与，避免低波噪声"
+    lock_reason: "极松：仅排除真正死盘（ATR 在 100 根内处于底 25%）"
 
-  - feature: me_atr_pct
-    operator: "<="
-    value: 0.99
-    locked: true
-    lock_reason: "ME语义：避免极端尾段过热后追单"
-
-  - feature: me_cvd_alignment
+  - feature: me_accel_persistence
     operator: ">="
-    value: 0.55
+    value: 0.4
     locked: true
-    lock_reason: "ME语义：价流短期一致（涨时同向吸货/跌时同向抛压），双边均要求参与确认"
+    lock_reason: "动量语义：近 5 根至少 2 根在加速（有方向性动量）"
+
+  - feature: me_multi_tf_alignment
+    operator: ">="
+    value: 0.5
+    locked: true
+    lock_reason: "动量语义：3/5/10 bar 至少 2 个周期方向一致（趋势明确）"
 
 last_evaluation:
-  # ── 自动生成 (2026-03-13) ──
-  timestamp: "2026-03-13"
-  data_source: "features_labeled.parquet"
-  n_rows: 112361
-  baseline_bad_rate: 0.0000
-  baseline_median_rr: +0.0276
-
-  # ── 正信号 (0 个) ──
+  timestamp: "2026-04-11"
+  data_source: "features_labeled.parquet (train_final_20260411_173341)"
+  n_rows: 0
+  baseline_bad_rate: 0.0
+  baseline_median_rr: 0.0
   positive_signals: []
-
-  # ── 反信号 (0 个) ──
   anti_signals: []
-
-  # ── 低端信号 (0 个) ──
   absence_signals: []
