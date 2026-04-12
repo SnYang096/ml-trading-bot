@@ -90,11 +90,8 @@ event_backtest:
   no_kill_switch: false
   map_extra_months: 4
   sym_r_default: "1.0:1:6.0"
-  exec_grid_by_family:
-    me:
-      initial_r: "2.0:1:6.0"
-      activation_r: "2.0:1:6.0"
-      trail_r: "1.5:0.5:4.0"
+  sym_r_by_family:
+    me: "2.0:1:6.0"
   exec_objective_default: sharpe
   exec_objective_params:
     near_stop_threshold_r: -0.9
