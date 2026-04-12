@@ -2,7 +2,7 @@
 
 **最后更新**: 2026-04-07
 
-此处存放**过程性 / 中间态**报告。对外索引与当前推荐口径见 **[docs/architecture/reports/](../../architecture/reports/FEATURE_SELECTION_REPORTS.md)**。
+此处存放**过程性 / 中间态**报告。对外索引与当前推荐口径见 **[docs/architecture/树模型策略report/](../../architecture/树模型策略report/FEATURE_SELECTION_REPORTS.md)**。
 
 | 文档 | 说明 |
 |------|------|

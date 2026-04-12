@@ -260,7 +260,7 @@ MLBOT_LIVE_SYMBOLS=BTCUSDT python scripts/run_live.py
 | 当前工程指南 | [docs/architecture/guides/](architecture/guides/) | Plateau、Gate、BPC 注记、基线/归因、特征分层、`TREE_TRAINING_DATA_AND_CACHE` 等 |
 | 树模型历史指南 | [docs/archive/guides/tree/](archive/guides/tree/) | 原 `architecture/guides/tree/`：**MVP 闭环**、特征组搜索预设/调参、研究 Playbook、`ModelArtifact` 等（**非当前产品主线**） |
 | 策略与 Playbook | [docs/architecture/strategies/](architecture/strategies/) | 特征搜索协议、Policy 假设等；过程性笔记见 [docs/archive/strategies/](archive/strategies/) |
-| 特征报告与审计 | [docs/architecture/reports/](architecture/reports/) | 特征筛选索引、归一化/订单流审计；中间结果见 [docs/archive/reports/](archive/reports/) |
+| 树模型策略报告 | [docs/architecture/树模型策略report/](architecture/树模型策略report/) | 特征筛选索引、归一化/订单流审计；中间结果见 [docs/archive/reports/](archive/reports/) |
 | 实盘数据流 | [docs/architecture/live_stream/](architecture/live_stream/) | 契约、事件流、补全与对账；legacy 见 [docs/archive/live_stream/legacy/](archive/live_stream/legacy/) |
 | 指标与评估 | [docs/architecture/metrics/](architecture/metrics/) | Sharpe、泄漏鉴别等 |
 | 部署 | [docs/architecture/terraform部署方案对比.md](architecture/terraform部署方案对比.md) | Docker vs 裸机 |

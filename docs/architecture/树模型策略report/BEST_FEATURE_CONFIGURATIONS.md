@@ -5,7 +5,7 @@
 **更新时间**：2024-12-30
 
 > ⚠️ **维护状态**：本文件已被更“统一/最新”的入口文档替代（避免多处维护导致口径不一致）。
-> 请优先阅读：`docs/architecture/reports/FEATURE_SELECTION_REPORTS.md`
+> 请优先阅读：`docs/architecture/树模型策略report/FEATURE_SELECTION_REPORTS.md`
 
 ---
 

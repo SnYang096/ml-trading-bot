@@ -41,7 +41,7 @@ def _md_link(label: str, path: Path) -> str:
 
 def main() -> int:
     now = datetime.now().isoformat(timespec="seconds")
-    out = ROOT / "docs/architecture/reports/feature_group_search_summary.md"
+    out = ROOT / "docs/architecture/树模型策略report/feature_group_search_summary.md"
 
     runs = [
         StrategyRun(

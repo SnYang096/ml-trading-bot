@@ -86,7 +86,7 @@ def main() -> int:
     lines.append(f"## Progress Monitor ({now})")
     lines.append("")
     # Goal 1: global normalization
-    global_report = ROOT / "docs/architecture/reports/norm_contract_global.md"
+    global_report = ROOT / "docs/architecture/树模型策略report/norm_contract_global.md"
     lines.append("### Goal 1 — Global normalization contract")
     if global_report.exists():
         head = global_report.read_text(encoding="utf-8").splitlines()[:10]

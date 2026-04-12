@@ -5,7 +5,7 @@
 > **方法**: Greedy Forward Selection + LightGBM Gain Importance
 
 > ✅ **统一入口**：该文档的“列级别建议”已被纳入统一索引，便于和最新 rerun 的“节点/组级推荐 YAML”放在同一处查看：
-> `docs/architecture/reports/FEATURE_SELECTION_REPORTS.md`
+> `docs/architecture/树模型策略report/FEATURE_SELECTION_REPORTS.md`
 
 ---
 

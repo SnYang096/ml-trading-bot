@@ -133,7 +133,7 @@ Preset 的定义在：`src/time_series_model/diagnostics/feature_group_search.py
 - **最终写回 YAML（以 C 为准）**：
   - `config/strategies/<strategy>/features_suggested_<algo>_poolb_semantic_<TAG>_C.yaml`
 - **报告**：
-  - `docs/architecture/reports/feature_group_search_summary_<TAG>_poolb_semantic.md`
+  - `docs/architecture/树模型策略report/feature_group_search_summary_<TAG>_poolb_semantic.md`
 
 （补充）报告会把每个策略的 Stage A/B/C 都列出来，但最终以 **Stage C** 的 writeback YAML 作为“最终特征组合”。
 

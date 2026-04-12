@@ -3,7 +3,7 @@
 > **目的**：把“最佳特征配置（节点/组级）”与“最佳特征列（列级 importance）”以及 **2026-01-02 rerun** 的最新 greedy 结果放到同一处，避免多份文档各自维护、口径不一致。
 >
 > **优先级/口径建议（读这份文档时）**：
-> 1. **最新 rerun**（`docs/architecture/reports/feature_group_search_summary_20260102_rerun.md` + `features_suggested_greedy_20260102_rerun.yaml`）
+> 1. **最新 rerun**（`docs/architecture/树模型策略report/feature_group_search_summary_20260102_rerun.md` + `features_suggested_greedy_20260102_rerun.yaml`）
 > 2. **列级别建议**（`BEST_FEATURE_COLUMNS_BY_STRATEGY.md`，用于“组内裁剪/排除列/invert 候选”）
 > 3. **历史 best_combo 汇总**（`BEST_FEATURE_CONFIGURATIONS.md`，用于回溯历史，不保证可比）
 
@@ -12,7 +12,7 @@
 ## 1) Latest rerun (2026-01-02) — Greedy multi-seed (tree models)
 
 来源：
-- 报告：`docs/architecture/reports/feature_group_search_summary_20260102_rerun.md`
+- 报告：`docs/architecture/树模型策略report/feature_group_search_summary_20260102_rerun.md`
 - 写回 YAML：
   - `config/strategies/sr_breakout/features_suggested_greedy_20260102_rerun.yaml`
   - `config/strategies/compression_breakout/features_suggested_greedy_20260102_rerun.yaml`
@@ -53,7 +53,7 @@
 ## 2) Column-level recommendations (importance / exclude / invert candidates)
 
 来源：
-- `docs/architecture/reports/BEST_FEATURE_COLUMNS_BY_STRATEGY.md`（2026-01-01）
+- `docs/architecture/树模型策略report/BEST_FEATURE_COLUMNS_BY_STRATEGY.md`（2026-01-01）
 
 这份内容适合做：
 - **组内裁剪**（未来：`exclude_columns`）
@@ -79,7 +79,7 @@
 ## 3) Historical “best configurations” (for reference / archaeology)
 
 来源：
-- `docs/architecture/reports/BEST_FEATURE_CONFIGURATIONS.md`（更新时间显示 2024-12-30）
+- `docs/architecture/树模型策略report/BEST_FEATURE_CONFIGURATIONS.md`（更新时间显示 2024-12-30）
 
 用途：
 - 用于回看历史 best_combo（multisymbol / quick / v4 / v5 等）的“当时最佳组合”
@@ -90,7 +90,7 @@
 ## 4) Recommended maintenance: single source of truth
 
 为了让“明天早上看到稳定闭环”更可控，建议把未来的“对外结论”只沉淀在：
-- `docs/architecture/reports/feature_group_search_summary_YYYYMMDD_*.md`（每次 rerun 产出一份）
+- `docs/architecture/树模型策略report/feature_group_search_summary_YYYYMMDD_*.md`（每次 rerun 产出一份）
 - `config/strategies/<strategy>/features_suggested_greedy_YYYYMMDD_*.yaml`（可直接用于训练/回测）
 
 而：

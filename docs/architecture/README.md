@@ -123,7 +123,7 @@
 | 主题 | 入口 |
 |------|------|
 | 指标与评估 | [metrics/README.md](metrics/README.md) |
-| 特征筛选 / 归一化报告 | [reports/README.md](reports/README.md) |
+| 树模型策略报告（特征筛选 / 归一化） | [树模型策略report/README.md](树模型策略report/README.md) |
 | 实时流与实盘 | [live_stream/README.md](live_stream/README.md) |
 | 策略 Playbook 与协议 | [strategies/README.md](strategies/README.md) |
 | Terraform 部署对比 | [terraform部署方案对比.md](terraform部署方案对比.md) |

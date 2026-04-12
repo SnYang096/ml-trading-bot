@@ -211,8 +211,8 @@ norm-contract:
 		--strategy-features-yaml config/strategies/sr_breakout/features.yaml \
 		--strategy-features-yaml config/strategies/compression_breakout/features.yaml \
 		--strategy-features-yaml config/strategies/trend_following/features.yaml \
-		--out-dir docs/architecture/reports
-	@echo "✅ Reports updated under docs/architecture/reports"
+		--out-dir docs/architecture/树模型策略report
+	@echo "✅ Reports updated under docs/architecture/树模型策略report"
 
 list-features-all:
 	@$(PYTHON) scripts/list_features.py --all

@@ -120,7 +120,7 @@ mlbot diagnose feature-group-search \
 Compare:
 
 - **non-singletons baseline** vs **singletons ablation**
-- latest runs vs historical stable reruns (e.g. `docs/architecture/reports/feature_group_search_summary_20260102_rerun.md`)
+- latest runs vs historical stable reruns (e.g. `docs/architecture/树模型策略report/feature_group_search_summary_20260102_rerun.md`)
 
 Key things to compare per strategy:
 

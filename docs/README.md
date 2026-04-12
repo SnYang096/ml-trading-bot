@@ -53,7 +53,7 @@
 #### 特征与模型（主线 + 归档）
 
 - **[特征搜索Playbook](architecture/strategies/FEATURE_SEARCH_PLAYBOOK.md)** - Pool-B + 语义组搜索详细说明
-- **[特征筛选报告索引](architecture/reports/FEATURE_SELECTION_REPORTS.md)** - rerun / 列级建议 / 历史 best 统一入口
+- **[树模型策略报告索引](architecture/树模型策略report/FEATURE_SELECTION_REPORTS.md)** - rerun / 列级建议 / 历史 best 统一入口
 - **NN 多头 / TaskSpec（非 BPC 主线，归档）**：[NNMULTIHEAD命令总览](archive/NNMULTIHEAD_COMMANDS_CN.md) · [配置文件](archive/NNMULTIHEAD_CONFIG_FILES_CN.md) · [3-action E2E](archive/NNMULTIHEAD_3ACTION_E2E_CN.md)；示例 `config/tasks/minimal_path_primitives_task_spec.yaml`
 
 #### 阈值与优化
@@ -120,7 +120,7 @@ docs/
 │   └── [实验报告文件]
 │
 ├── metrics/                     # 占位索引 → architecture/metrics
-├── reports/                     # 占位索引 → architecture/reports（过程性见 archive/reports）
+├── reports/                     # 占位索引 → architecture/树模型策略report/（过程性见 archive/reports）
 ├── labels/                      # 标签专题索引（正文多在 architecture/）
 │
 ├── live_stream/                 # 占位索引 → architecture/live_stream（legacy → archive/live_stream）
