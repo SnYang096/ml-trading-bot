@@ -1,5 +1,11 @@
 # Plateau 优化方法论：为什么慢 + 怎么改
 
+## 与仓库实现的关系（对齐说明）
+
+- 本文是**流程与自由度**层面的方法论，不绑定某一脚本标志位；仓库里与「阈值扫描 + 高原/稳健性」直接相关的实现主要是 **`scripts/optimize_gate_unified.py`**（lift、plateau 宽度、`interval-method`、pass-rate 下界等，见 `--help`）。
+- **命令行入口**：`mlbot optimize gate-plateau` 仍可能指向已缺失的 `optimize_gate_plateau.py`，以 [PLATEAU_OPTIMIZATION_WORKFLOW.md](./PLATEAU_OPTIMIZATION_WORKFLOW.md) 与 [guides/README.md](./README.md) 中的维护说明为准。
+- **Optuna**：方法论中的 Optuna 阶段与 `optimize_gate_unified` **无硬耦合**；若需自动找锚点，可在管线外接 Optuna，再把候选阈值域交给统一脚本或自研扫描。
+
 ## 核心结论（两句话）
 
 1. **Plateau 搜索慢的核心原因不是算力，而是可变参数太多 + 每个参数都被当成"可塑形变量"**
@@ -428,18 +434,14 @@ score = (
 
 ### 🧠 Step 3：Plateau 的 KPI 也要"冻结语义"
 
-**Plateau 不看：**
+**在「选稳区间」这一层，优先看的往往是结构/行为指标，而不是主优化目标：**
 
-- trade_rate
-- pnl
+- 例如：switch_rate、entropy、extreme_contraction 等是否随阈值微扰而剧烈抖动。
 
-**Plateau 只看：**
+**同时要与「硬约束」区分：**
 
-- switch_rate
-- entropy
-- extreme_contraction
-
-这一步是 **plateau 的正宗用途**。
+- 工程脚本（如 **`optimize_gate_unified.py`**）里仍会使用 **`min_pass_rate` / `min_lift`** 等，防止区间「很稳但全拒单」——这是**可行性约束**，不必然作为「plateau 区间内排序」的主目标。
+- **PnL / Sharpe** 更适合放在 Phase 1（锚点）或事后验收，而不是与「窄阈值鲁棒性」混在同一目标里盲搜。
 
 ---
 
@@ -493,5 +495,7 @@ score = (
 ## 相关文档
 
 - [平坦高原优化工作流程](./PLATEAU_OPTIMIZATION_WORKFLOW.md)
-- [Plateau vs Optuna 对比](./PLATEAU_VS_OPTUNA_COMPARISON.md)
-- [Hard-Gate System](../architecture/HARD_GATE_SYSTEM.md)
+- [阈值平坦高原协议（长文）](./THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md)
+- [Hard-Gate System](./HARD_GATE_SYSTEM.md)
+- [多目标 Gate 策略（与稳健性权衡）](./MULTI_OBJECTIVE_GATE_OPTIMIZATION.md)
+- Optuna 相关历史笔记见 [docs/archive/strategies/](../../archive/strategies/) 下各篇（无与本文 1:1 的 `PLATEAU_VS_OPTUNA_COMPARISON.md` 单文件）。
