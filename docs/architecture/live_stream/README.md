@@ -1,41 +1,38 @@
 # 实时流计算（权威入口）
 
-**状态**: ✅ 当前版本  
-**最后更新**: 2026-01  
+**最后更新**: 2026-04  
 **相关文档**: [主文档索引](../../README.md)
 
-本目录用于**统一说明**本项目在**事件回测**与**实盘**下的实时数据流：数据接入 → 事件流 → 特征计算 → 存储 → 补全/对账 → 异常发现与自愈，目标是：
+本目录说明**当前主线**：`BinanceWebSocket` → `MultiSymbolManager` → `OrderFlowListener` → **`GenericLiveStrategy.decide`**（+ 可选 `OrderManager`），数据落 **`StorageManager` Parquet**（`--live-root` 下），与 **QuestDB 为中心** 的旧草案无关。
 
-- **回测与实盘一致**：同一套事件模型、同一套特征契约、同一套异常处理策略。
-- **实盘稳定**：可恢复（重连/补全/重放）、可观测（质量监控/告警）、可降级（熔断/跳过交易/跳过部分特征）。
+## 阅读顺序（编号短文）
 
-## 你应该先读什么
+1. [`01_一致性原则与契约.md`](./01_一致性原则与契约.md)
+2. [`02_事件流与时间对齐.md`](./02_事件流与时间对齐.md)
+3. [`03_特征计算_状态与缓存.md`](./03_特征计算_状态与缓存.md)
+4. [`04_存储_回放与审计.md`](./04_存储_回放与审计.md)
+5. [`05_补全_对账与异常处理.md`](./05_补全_对账与异常处理.md)
+6. [`06_实盘稳定性运行手册.md`](./06_实盘稳定性运行手册.md)
 
-- `01_一致性原则与契约.md`
-- `02_事件流与时间对齐.md`
-- `03_特征计算_状态与缓存.md`
-- `04_存储_回放与审计.md`
-- `05_补全_对账与异常处理.md`
-- `06_实盘稳定性运行手册.md`
-- `07_与NautilusTrader对齐清单.md`
+**专题**（与 `run_live` 强相关）：
 
-## 实盘启动（当前主入口）
+- [`数据补全架构.md`](./数据补全架构.md)
+- [`实盘特征计算机制.md`](./实盘特征计算机制.md)
 
-当前实盘启动脚本已统一为 **WebSocket + OrderFlowListener + BPCLiveStrategy** 链路，入口在：
+**事件回测（与实盘同逻辑链）**：[`docs/architecture/event_drive_backtest/`](../event_drive_backtest/)
 
-- `scripts/run_live.py`
+## 实盘启动（主入口）
 
-核心说明与完整环境变量见：
+- **脚本**：[`scripts/run_live.py`](../../../scripts/run_live.py)  
+- **命令与环境变量**：根目录 [`README_CN.md`](../../../README_CN.md)
 
-- **[README_CN.md](../../README_CN.md)**（实盘启动命令与参数）
+说明摘要：
 
-> 说明：
-> - 若启用 `MLBOT_ORDER_MANAGER_ENABLED=true`，会自动注入 `OrderManager`，用于 SL/TP + 持仓时间 + 追踪止损。
-> - 研究/回测阶段不需要注入 OrderManager（默认不启用）。
+- 多策略由 **`LivePCM`** 与宪法配置协同；策略体为 **`GenericLiveStrategy`**（非 Nautilus `Strategy` 适配器主线）。
+- 设置 **`MLBOT_ORDER_MANAGER_ENABLED=true`** 时注入 **`OrderManager`**（SL/TP、持仓时间、追踪止损等）；研究/回测默认可不启用。
 
-## 目录结构
+## `reference/`
 
-- `reference/`: 相关的长文档（架构设计、使用指南等），作为细节参考。
-- **历史 legacy**：已迁至 [`docs/archive/live_stream/legacy/`](../../archive/live_stream/legacy/)（旧流程/选型分析，仅供追溯）。
+已清理与代码不符的 QuestDB 中心化长文；见 [`reference/README.md`](./reference/README.md)。
 
-
+**历史 legacy**（旧流程/选型）：[`docs/archive/live_stream/legacy/`](../../archive/live_stream/legacy/)

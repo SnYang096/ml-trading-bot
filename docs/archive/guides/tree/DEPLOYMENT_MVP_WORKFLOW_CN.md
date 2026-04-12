@@ -112,13 +112,13 @@ mlbot train final \
 默认输出：
 - `models/<strategy_name>/`（ModelArtifact + preprocessor + results 等）
 
-### 5) 事件驱动一致性验证（Nautilus）
+### 5) 事件驱动一致性验证（实盘 / 事件回测）
 
-定位：验证“回测=实盘”，不是拿来做特征/模型选择的主指标。
+定位：验证「事件回测 ≈ 实盘」逻辑链，不是拿来做特征/模型选择的主指标。
 
 参考文档：
-- `docs/architecture/live_stream/reference/Nautilus_Trader_集成指南.md`
+- `docs/architecture/event_drive_backtest/`（`scripts/event_backtest.py` 与实盘对齐说明）
 - `docs/architecture/live_stream/06_实盘稳定性运行手册.md`
-- `docs/architecture/live_stream/07_与NautilusTrader对齐清单.md`
+- 历史选型分析见 `docs/archive/live_stream/legacy/`
 
 
