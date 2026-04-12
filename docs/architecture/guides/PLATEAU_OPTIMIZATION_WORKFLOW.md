@@ -1,5 +1,7 @@
 # 平坦高原优化工作流程
 
+> **仓库同步**：`mlbot optimize gate-plateau` / `gate-plateau-all` 在 `src/cli/main.py` 中仍调用 **`scripts/optimize_gate_plateau.py`**，该文件**已缺失**，命令可能直接失败。可改用 **`python scripts/optimize_gate_unified.py --help`** 完成阈值扫描与高原选择（策略侧 logs 工作流，参数与下表旧示例不完全一致）。
+
 ## 概述
 
 使用平坦高原方法优化gate规则的阈值，找到在多个分桶维度下都表现稳定的阈值区间。

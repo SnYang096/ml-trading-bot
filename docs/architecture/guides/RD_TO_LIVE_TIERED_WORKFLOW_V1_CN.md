@@ -5,7 +5,7 @@
 建议先读：
 - `docs/architecture/guides/FEATURE_COMPLEXITY_LAYERS_CN.md`（理念与分层定义）
 - `docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md`（上线闭环与验收范式）
-- `docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`（TaskSpec+Constitution+PCM 总体架构）
+- `docs/archive/leagcy/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`（TaskSpec+Constitution+PCM 总体架构，归档）
 
 ---
 
@@ -91,11 +91,14 @@ mlbot nnmultihead pipeline-3action-e2e --no-docker \
 - 只引入 Tier1（压缩/SR质量/语义评分），不要同时扩 symbols。
 
 ### 4.2 U1→U2（HighCap6）
-- 在 U1 稳定后扩 universe。\n
+- 在 U1 稳定后扩 universe。
+
 ### 4.3 解锁 Tier2（DTW/Spectrum/WPT/Hilbert）
-- 一次只解锁一个 block。\n
+- 一次只解锁一个 block。
+
 ### 4.4 解锁 Tier3（orderflow/ticks）
-- 建议启用：\n
+- 建议启用：
+
 ```bash
 --feature-monthly-workers 4 --feature-monthly-backend process --fast-features
 ```
@@ -105,14 +108,14 @@ mlbot nnmultihead pipeline-3action-e2e --no-docker \
 ## 5) Tree（策略侧）如何“正确参与”：只做 Gate/Detector（不直接 alpha->trade）
 
 - Tree 的位置：**Router 下游**，做 veto/throttle/permission，并支持规则导出（可审计）  
-- 具体思想见：`docs/architecture/树模型在多头模型下游的角色.md`
+- 具体思想见：`docs/archive/树模型在多头模型下游的角色.md`
 
 ---
 
 ## 6) 你应该如何用 TaskSpec/Constitution 把流程“锁死”
 
-- 用 `config/tasks/task_spec.yaml` 固定：窗口、universe、feature tier、FeatureStore layer、router 阈值来源、执行假设\n
-- 用 `config/constitution/constitution.yaml` 固定：kill-switch、slots、加仓合法方式、跃迁条款\n
+- 用 `config/tasks/task_spec.yaml` 固定：窗口、universe、feature tier、FeatureStore layer、router 阈值来源、执行假设。
+- 用 `config/constitution/constitution.yaml` 固定：kill-switch、slots、加仓合法方式、跃迁条款。
 
-任何一次训练/调参/上线，都必须把 TaskSpec ID 写入产物目录与报告。\n
+任何一次训练/调参/上线，都必须把 TaskSpec ID 写入产物目录与报告。
 

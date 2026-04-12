@@ -331,7 +331,7 @@ if regime_score < floor:
 
 **工具（建议用 q=0.05 起步）**
 ```bash
-python3 scripts/compute_regime_score_floors.py \
+python3 scripts/_legacy_regime/compute_regime_score_floors.py \
   --mode results/.../mode_3action_..._soft_khalf.parquet \
   --q 0.05 \
   --out results/.../regime_score_floors_q05.json

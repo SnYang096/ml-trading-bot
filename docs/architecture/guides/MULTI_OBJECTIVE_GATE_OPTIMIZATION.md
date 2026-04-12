@@ -1,5 +1,7 @@
 # Gate多目标优化策略指南
 
+> **仓库同步**：文中的 `optimize_gate_plateau_progressive.py` 及 `--multi-objective` 示例**对应脚本已不在仓库**；稳健性 / 交易率权衡的实现请查阅 **`scripts/optimize_gate_unified.py`** 内 plateau、robustness 与区间写回相关逻辑（`python scripts/optimize_gate_unified.py --help`）。
+
 ## 概述
 
 Gate规则优化需要在多个目标之间进行权衡：
@@ -98,14 +100,7 @@ combined_score = w_r * (robustness / max_robustness) + w_t * (trade_rate / max_t
 2. **风险控制**：更高的robustness意味着规则更可靠，减少意外损失
 3. **可预测性**：稳健的规则在不同市场条件下表现一致
 
-**使用示例**：
-```bash
-python scripts/optimize_gate_plateau_progressive.py \
-    --multi-objective \
-    --multi-objective-strategy max_robustness \
-    --min-trade-rate 0.001 \
-    ...
-```
+**使用示例（当前）**：在 `optimize_gate_unified.py` 中通过 lift / pass-rate / plateau width / `interval-method` 等参数体现多目标权衡，无与旧版完全相同的 CLI 开关名；请以上述脚本 `--help` 为准。
 
 ### 研究环境：balanced
 
@@ -113,14 +108,7 @@ python scripts/optimize_gate_plateau_progressive.py \
 1. **探索性**：可以同时考虑两个目标
 2. **灵活性**：可以通过调整权重适应不同需求
 
-**使用示例**：
-```bash
-python scripts/optimize_gate_plateau_progressive.py \
-    --multi-objective \
-    --multi-objective-strategy balanced \
-    --multi-objective-weights 0.6 0.4 \
-    ...
-```
+**使用示例**：同上，用统一脚本调参扫描；若需显式 Pareto 集，可在研究分支上扩展或离线分析优化输出的 JSON。
 
 ## 集成到渐进式优化
 
@@ -142,7 +130,7 @@ FeatureStore → Gate Rules → Execution → Returns
 ```
 
 相关文档：
-- [Gate优化架构](../architecture/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md)
+- [Gate优化架构（归档）](../../archive/leagcy/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md)
 - [Hard-Gate System指南](./HARD_GATE_SYSTEM.md)
 - [渐进式优化工作流](./PLATEAU_OPTIMIZATION_WORKFLOW.md)
 
@@ -190,7 +178,7 @@ def compute_pareto_frontier(results: pd.DataFrame) -> pd.DataFrame:
 
 ### 选择策略实现
 
-见 `scripts/optimize_gate_plateau.py` 中的 `select_multi_objective_threshold` 函数。
+旧版中的 `select_multi_objective_threshold` 随 `optimize_gate_plateau.py` 一并移除；等价逻辑分散在 **`scripts/optimize_gate_unified.py`** 的阈值扫描与 plateau / robustness 选点分支中，请直接阅读源码。
 
 ## 使用建议
 

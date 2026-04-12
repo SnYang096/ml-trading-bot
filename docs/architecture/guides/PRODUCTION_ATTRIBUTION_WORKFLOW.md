@@ -4,6 +4,8 @@
 
 当实盘出现连续亏损或Sharpe下降时，通过分层诊断定位问题层，并提供修复建议。
 
+> **与仓库同步**：下文「分层诊断」中曾列举的 `diagnose_nn_path_head.py`、`diagnose_gate_performance.py`、`diagnose_archetype_stability.py`、`diagnose_execution_performance.py` **当前不在 `scripts/`**。下列替换为仓库内**现成**的诊断脚本（参数请以 `python scripts/<name>.py --help` 为准）。
+
 ## 检测层级
 
 1. **Layer 1: NN Path Head** - IC、Rank IC、Calibration
@@ -33,14 +35,14 @@ mlbot diagnose production-attribution \
 
 ### 分层诊断
 
-#### Layer 1: NN Path Head
+#### Layer 1: NN Path Head（预测 / 集中度）
 
-```bash
-python scripts/diagnose_nn_path_head.py \
-  --preds results/predictions \
-  --logs results/production_logs.parquet \
-  --output results/diagnostics/nn_path_head.md
-```
+仓库内无同名一站式脚本，可按需选用例如：
+
+- `scripts/diagnostics/diagnose_prediction_concentration.py`
+- `scripts/diagnostics/diagnose_long_only_predictions.py`
+
+或自行对 `preds_*.parquet` 做 IC / 分位漂移分析。
 
 **检测指标**:
 - IC(dir)下降
@@ -54,12 +56,12 @@ python scripts/diagnose_nn_path_head.py \
 
 #### Layer 2: Gate
 
-```bash
-python scripts/diagnose_gate_performance.py \
-  --logs results/production_logs.parquet \
-  --baseline results/baseline_smoke_test/logs_baseline.parquet \
-  --output results/diagnostics/gate_performance.md
-```
+可选用（示例，参数见 `--help`）：
+
+- `scripts/diagnose_gate_diff.py`
+- `scripts/diagnose_gate_filtering.py`
+- `scripts/diagnose_gate_application.py`
+- `scripts/diagnose_baseline_performance_drop.py`
 
 **检测指标**:
 - Gate on vs off的Sharpe差异变化
@@ -73,12 +75,9 @@ python scripts/diagnose_gate_performance.py \
 
 #### Layer 3: Archetype
 
-```bash
-python scripts/diagnose_archetype_stability.py \
-  --logs results/production_logs.parquet \
-  --baseline results/baseline_smoke_test/logs_baseline.parquet \
-  --output results/diagnostics/archetype_stability.md
-```
+可选用：
+
+- `scripts/diagnose_archetype_trade_counts.py`
 
 **检测指标**:
 - 各archetype的稳定性变化
@@ -92,11 +91,11 @@ python scripts/diagnose_archetype_stability.py \
 
 #### Layer 4: Execution
 
-```bash
-python scripts/diagnose_execution_performance.py \
-  --logs results/production_logs.parquet \
-  --output results/diagnostics/execution_performance.md
-```
+可选用：
+
+- `scripts/diagnose_execution_gate_plateau.py`
+- `scripts/diagnose_execution_constraints_plateau.py`
+- `scripts/diagnose_e2e_kpi.py`（配合 `mlbot diagnose e2e-kpi`）
 
 **检测指标**:
 - R-multiple下降

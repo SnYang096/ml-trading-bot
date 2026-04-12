@@ -1,5 +1,7 @@
 # Hard-Gate System 规则调优协议
 
+> **仓库同步（2026）**：本文中的 `scripts/optimize_gate_plateau_hard_gate.py`、`scripts/optimize_gate_plateau.py` 等入口**已不存在**。当前 Gate 阈值扫描与高原/稳健性逻辑集中在 **`scripts/optimize_gate_unified.py`**（`python scripts/optimize_gate_unified.py --help`）。`mlbot optimize gate-plateau` 仍指向缺失的 `optimize_gate_plateau.py`，若需 CLI 级封装需在代码中恢复或改指向统一脚本。
+
 ## 概述
 
 Hard-Gate System 是一个严格的规则调优协议，确保规则按照语义优先级顺序逐一优化，已优化的规则参数被冻结，后续优化基于前序规则过滤后的数据集进行。
@@ -32,30 +34,20 @@ Hard-Gate System 是一个严格的规则调优协议，确保规则按照语义
 
 ## 使用方法
 
-### 方法1: 使用专门的Hard-Gate脚本
+### 方法1: 统一优化脚本（当前推荐）
 
 ```bash
-python scripts/optimize_gate_plateau_hard_gate.py \
-    --gated-logs results/pipeline_with_reflexivity_2024_full/logs_execution_gated.parquet \
-    --raw-logs results/pipeline_with_reflexivity_2024_full/logs_execution.parquet \
-    --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
-    --output results/gate_optimization_hard_gate.json \
-    --min-trade-rate 0.001 \
-    --min-trades-per-bucket 5 \
-    --min-sharpe-threshold 0.1 \
-    --threshold-step 0.05
+python scripts/optimize_gate_unified.py \
+  --strategy bpc \
+  --logs path/to/trade_logs_with_features.parquet \
+  --output results/gate_optimization_bpc.json
 ```
 
-### 方法2: 使用主优化脚本的--hard-gate参数
+按需追加：`--gate-path`、`--promote`、`--prefilter`、`--cutoff-date` 等（见 `--help`）。
 
-```bash
-python scripts/optimize_gate_plateau.py \
-    --gated-logs results/pipeline_with_reflexivity_2024_full/logs_execution_gated.parquet \
-    --raw-logs results/pipeline_with_reflexivity_2024_full/logs_execution.parquet \
-    --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
-    --output results/gate_optimization.json \
-    --hard-gate
-```
+### 方法2: 历史 `mlbot optimize gate-plateau` / `optimize_gate_plateau.py`
+
+上述 CLI 与旧脚本依赖的 parquet 形态与统一脚本**不完全相同**；在新管线未把 `scripts/optimize_gate_plateau.py` 恢复前，**优先使用方法 1**。
 
 ## 工作流程
 

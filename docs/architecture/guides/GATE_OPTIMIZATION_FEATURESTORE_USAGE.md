@@ -1,5 +1,7 @@
 # Gate优化脚本FeatureStore使用指南
 
+> **仓库同步**：下文中的 `optimize_gate_plateau_hard_gate.py`、`optimize_gate_plateau_progressive.py`、`compare_gate_optimization_methods.py` **已不在仓库**。FeatureStore 合并思路仍成立；**当前可执行**的 Gate 优化入口为 **`scripts/optimize_gate_unified.py`**（见 `--help`）。若需从 FeatureStore 补全 logs 列，可继续沿用「先 merge 再喂给优化脚本」的流程，但具体脚本名与参数需按统一脚本调整。
+
 ## 概述
 
 Gate优化脚本现在支持从FeatureStore动态加载特征，解决了logs文件缺少gate规则所需特征的问题。
@@ -23,52 +25,20 @@ Gate优化脚本现在支持从FeatureStore动态加载特征，解决了logs文
 
 ## 使用方法
 
-### Hard-Gate System优化
+### 当前推荐：统一优化（含 hard-gate / plateau 思路）
+
+先用既有工具把 **logs 与 FeatureStore 特征列对齐**（例如沿用 `mlbot gate apply-archetype` 或自研 merge），再运行：
 
 ```bash
-python scripts/optimize_gate_plateau_hard_gate.py \
-    --gated-logs results/pipeline_<run_id>/logs_execution_gated.parquet \
-    --raw-logs results/pipeline_<run_id>/logs_execution.parquet \
-    --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
-    --output results/gate_optimization_hard_gate.json \
-    --feature-store-root feature_store \
-    --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
-    --timeframe 240T \
-    --start-date 2024-01-01 \
-    --end-date 2024-12-31 \
-    --min-trade-rate 0.001 \
-    --min-trades-per-bucket 3 \
-    --min-sharpe-threshold 0.05 \
-    --threshold-step 0.05
+python scripts/optimize_gate_unified.py \
+  --strategy bpc \
+  --logs results/pipeline_<run_id>/logs_with_gate_features.parquet \
+  --output results/gate_optimization_unified.json
 ```
 
-### 渐进式优化
+### 历史：Hard-Gate / 渐进式 / 对比脚本
 
-```bash
-python scripts/optimize_gate_plateau_progressive.py \
-    --gated-logs results/pipeline_<run_id>/logs_execution_gated.parquet \
-    --raw-logs results/pipeline_<run_id>/logs_execution.parquet \
-    --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
-    --output results/gate_optimization_progressive.json \
-    --feature-store-root feature_store \
-    --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
-    --timeframe 240T \
-    --target-trades 200 \
-    --tighten-step 0.05
-```
-
-### 对比实验
-
-```bash
-python scripts/compare_gate_optimization_methods.py \
-    --gated-logs results/pipeline_<run_id>/logs_execution_gated.parquet \
-    --raw-logs results/pipeline_<run_id>/logs_execution.parquet \
-    --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
-    --output-dir results/gate_optimization_comparison \
-    --feature-store-root feature_store \
-    --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
-    --timeframe 240T
-```
+以下命令来自旧版独立脚本，**文件已删除**，仅保留字段含义参考；`--feature-store-root` / `--feature-store-layer` / `--timeframe` 等仍可作为「补特征」阶段的参数记忆。
 
 ## 参数说明
 

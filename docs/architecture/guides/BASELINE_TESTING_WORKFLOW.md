@@ -6,9 +6,9 @@
 
 ## 数据范围
 
-- **时间范围**: 2024-01-01 ~ 2025-12-31
+- **时间范围**: 文档示例常用 2024-01-01 ~ 2025-12-31；**请按你本地 `data/` 与 logs 实际覆盖区间改**。
 - **FeatureStore layer**: `nnmh_highcap6_240T_2024_202510_v2` 或 `nnmh_highcap6_240T_2024_202510_ma_adx_cvd_vwap_v1`
-- **前置条件**: 需要先通过`mlbot nnmultihead build-execution-logs`生成logs文件
+- **前置条件**: 需要先有 execution logs（Parquet）。主路径请用 **`mlbot nnmultihead build-execution-logs`**（`mlbot rl build-execution-logs` 已弃用，CLI 会提示迁移）。
 
 ## 工作流程
 
