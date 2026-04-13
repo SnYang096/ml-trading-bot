@@ -1,5 +1,5 @@
 # FBF Gate Draft (auto-generated)
-# 来源: results/train_final_20260413_001358_rr_extreme/fbf
+# 来源: results/train_final_20260413_143553_rr_extreme/fbf
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy fbf
@@ -20,11 +20,50 @@ hard_gates:
   tag: HARD_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
   priority: 10
-  reason: cvd_change_5_normalized 触发树分裂条件 (分裂 1 次)
+  reason: 统计验证规则 (lift=1.45)
   when:
     cvd_change_5_normalized:
-      value_lt: 0.0066
+      value_gt: 0.0101
   then:
     action: deny
-  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.006616 | 方向: data_verified (low=-2.339, high=-1.799)'
+  comment: 'statistical(lift=1.45): cvd_change_5_normalized > 0.0101'
+- id: gate_vol_clustering_strength
+  tag: HARD_VOL_CLUSTERING_STRENGTH
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.15)
+  when:
+    vol_clustering_strength:
+      value_gt: 0.2244
+  then:
+    action: deny
+  comment: 'statistical(lift=1.15): vol_clustering_strength > 0.2244'
+- id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
+  tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.18)
+  when:
+    all_of:
+    - vol_leverage_asymmetry:
+        value_gt: 0.1691
+    - vol_leverage_asymmetry:
+        value_lt: 0.1927
+  then:
+    action: deny
+  comment: 'statistical(lift=1.18): vol_leverage_asymmetry > 0.1691 & vol_leverage_asymmetry < 0.1927'
+- id: gate_vol_persistence_vol_persistence
+  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.10)
+  when:
+    all_of:
+    - vol_persistence:
+        value_gt: 0.0774
+    - vol_persistence:
+        value_lt: 0.1255
+  then:
+    action: deny
+  comment: 'statistical(lift=1.10): vol_persistence > 0.07735 & vol_persistence < 0.1255'
 guardrails: []

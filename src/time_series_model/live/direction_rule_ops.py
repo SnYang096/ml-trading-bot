@@ -136,11 +136,13 @@ def parse_signal_match_position_band_rule(rule: dict) -> Optional[Dict[str, Any]
         outer = float(pb.get("outer_abs", pb.get("outer", 0.0)))
     except (TypeError, ValueError):
         return None
+    consensus = str(rule.get("consensus_mode", "first")).strip().lower()
     return {
         "signal_rules": list(srs),
         "band_feature": feat.strip(),
         "inner_abs": inner,
         "outer_abs": outer,
+        "consensus_mode": consensus,
     }
 
 
@@ -151,9 +153,15 @@ def signal_match_position_band_series(
     band_feature: str,
     inner_abs: float,
     outer_abs: float,
+    consensus_mode: str = "first",
 ) -> pd.Series:
-    """Vectorized compound direction: first-hit signal per row ∩ band same sign."""
-    cand = pd.Series(0.0, index=df.index, dtype=float)
+    """Vectorized compound direction: signal cascade ∩ band same sign.
+
+    consensus_mode:
+        "first" (default) — first non-zero signal per row determines direction.
+        "all" — ALL non-zero signals must agree; any disagreement → 0.
+    """
+    all_signals: List[pd.Series] = []
     for sr in signal_rules:
         if not is_direction_rule_enabled(sr):
             continue
@@ -194,7 +202,27 @@ def signal_match_position_band_series(
                 else:
                     raw = series.astype(float)
                 d = pd.Series(raw, index=df.index, dtype=float)
-        cand = cand.where(cand != 0, d)
+        all_signals.append(d)
+
+    if consensus_mode == "all" and all_signals:
+        cand = pd.Series(0.0, index=df.index, dtype=float)
+        for i, s in enumerate(all_signals):
+            non_zero = s != 0
+            if i == 0:
+                cand = s.copy()
+            else:
+                disagree = non_zero & (cand != 0) & (s != cand)
+                cand = cand.where(~disagree, 0.0)
+                new_info = non_zero & (cand == 0) & (~disagree)
+                cand = cand.where(~new_info, s)
+        has_nonzero = pd.Series(False, index=df.index)
+        for s in all_signals:
+            has_nonzero = has_nonzero | (s != 0)
+        cand = cand.where(has_nonzero, 0.0)
+    else:
+        cand = pd.Series(0.0, index=df.index, dtype=float)
+        for d in all_signals:
+            cand = cand.where(cand != 0, d)
 
     if band_feature not in df.columns:
         return pd.Series(0.0, index=df.index, dtype=float)

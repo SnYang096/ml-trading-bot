@@ -1,0 +1,18 @@
+# TPC (TrendPullbackContinuation) 策略元信息
+# 与 BPC 的核心区别: 不依赖 Donchian 突破，直接以 EMA1200 趋势方向为基准
+
+strategy:
+  name: tpc-long-120T
+  description: |
+    TrendPullbackContinuation archetype: 趋势中回踩后延续。
+    不要求 Donchian 突破，仅需 EMA1200 方向确认趋势成立即可检测回踩与延续。
+    相比 BPC 更宽松，可捕获 BPC 因缺乏突破而错过的趋势段。
+
+  owner: quant_team
+  archetype: TrendPullbackContinuationLong
+
+  timeframe: "120T"
+
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

@@ -1,25 +1,24 @@
-# FBF Prefilter: SR 失败突破语义锚点 + 制度闸
-# FBF 是区间边界反转策略，强趋势中不应交易
-# trend_r2_20 <= 0.55 过滤强趋势环境（p70 分位），只在横盘/弱趋势中寻找失败突破
+# FBF Prefilter: SR 失败突破语义锚点 + 制度闸（稀疏 / 高置信）
+# 强趋势少做；只在结构清晰、失败突破更「像样」、区间有足够宽度时放行
 
 rules:
   - feature: fer_sr_failed_breakout_score
     operator: ">="
-    value: 0.30
+    value: 0.38
     locked: true
-    lock_reason: FBF 语义锚点：失败突破强度（先保留中等强度以保证样本密度）
+    lock_reason: 提高失败突破强度门槛，减少弱信号与噪声开仓
   - feature: sr_strength_max
     operator: ">="
-    value: 0.45
+    value: 0.52
     locked: true
-    lock_reason: FBF 语义锚点：关键结构强度（避免弱结构噪声）
+    lock_reason: 关键位强度更高时才参与边界反转
   - feature: fer_ols_width_norm
     operator: ">="
-    value: 0.18
+    value: 0.22
     locked: true
-    lock_reason: 结构锚点：避免过窄区间噪声（不过度收紧）
+    lock_reason: 区间要有足够「盒子」宽度，偏波动区而非极窄噪声
   - feature: trend_r2_20
     operator: "<="
-    value: 0.55
+    value: 0.50
     locked: true
-    lock_reason: 制度闸：限制强趋势区（p70），FBF 只在横盘/弱趋势做区间边界反转
+    lock_reason: 制度闸略收紧：更少在偏趋势环境出手

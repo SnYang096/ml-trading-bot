@@ -90,94 +90,35 @@ def _compute_adaptive_pullback_decay(volatility_pct: np.ndarray) -> np.ndarray:
 # =============================================================================
 
 
-@register_feature(
-    "compute_bpc_soft_phase_from_series",
-    category="bpc",
-    description="BPC soft phase scores with volume and orderflow confirmation",
-    outputs=[
-        # === ATOMIC: Breakout 原子信号 ===
-        "bpc_price_breakout_strength",
-        "bpc_vol_breakout_confirm",
-        "bpc_cvd_breakout_confirm",
-        "bpc_vpin_breakout_confirm",
-        # === ATOMIC: Pullback 原子信号 ===
-        "bpc_pullback_depth",
-        "bpc_pullback_quality",
-        "bpc_vol_pullback_confirm",
-        "bpc_cvd_absorption",
-        # === ATOMIC: Continuation 原子信号 ===
-        "bpc_recovery_strength",
-        "bpc_momentum_confirm",
-        "bpc_vol_continuation_confirm",
-        "bpc_cvd_momentum",
-        "bpc_vpin_rising",
-        # === ATOMIC: Neutral 原子信号 ===
-        "bpc_bb_compression",
-        "bpc_vol_compression",
-        # === COMPOSITE: 组合分数（领域知识加权） ===
-        "bpc_score_breakout",
-        "bpc_score_pullback",
-        "bpc_score_continuation",
-        "bpc_score_neutral",
-        # === CONTEXTUAL: 状态信号 ===
-        "bpc_breakout_direction",
-        "bpc_direction_confidence",
-        "bpc_is_after_breakout",
-        "bpc_was_in_pullback",
-        "bpc_vol_ratio",
-        "bpc_cvd_z",
-    ],
-)
-def compute_bpc_soft_phase_from_series(
+def _compute_soft_phase_core(
     *,
     close: pd.Series,
     high: pd.Series,
     low: pd.Series,
     atr: pd.Series,
     volume: pd.Series,
-    # 订单流特征（可选但推荐）
     cvd_change_5: pd.Series = None,
     vpin: pd.Series = None,
     ofci_pct: pd.Series = None,
-    # 波动率压缩（可选）
     bb_width_normalized: pd.Series = None,
-    # 参数
     lookback_breakout: int = 20,
     breakout_atr_mult: float = 1.0,
     pullback_decay: float = 0.3,
     vol_ma_window: int = 20,
+    gate_pullback_on_breakout: bool = True,
+    ema_position: pd.Series = None,
+    prefix: str = "bpc",
 ) -> pd.DataFrame:
+    """Shared core for BPC and TPC soft phase scores.
+
+    When ``gate_pullback_on_breakout=True`` (default, BPC behaviour):
+      - ``is_after_breakout`` gates pullback/continuation scores
+      - ``recent_direction`` is derived from Donchian breakout direction
+
+    When ``gate_pullback_on_breakout=False`` (TPC behaviour):
+      - ``is_after_breakout`` is always 1.0 (no breakout gate)
+      - ``recent_direction`` comes from sign of ``ema_position``
     """
-    BPC 软阶段分数：输出连续概率而非离散标签
-
-    Args:
-        close: 收盘价序列
-        high: 最高价序列
-        low: 最低价序列
-        atr: ATR 序列（价格单位）
-        volume: 成交量序列
-        cvd_change_5: CVD 5周期变化（可选）
-        vpin: VPIN 指标（可选）
-        ofci_pct: OFCI 百分位（可选）
-        bb_width_normalized: 布林带宽度归一化（可选）
-        lookback_breakout: Breakout 检测回看窗口
-        breakout_atr_mult: Breakout ATR 倍数阈值
-        pullback_decay: Pullback 质量衰减系数
-        vol_ma_window: 成交量均线窗口
-
-    Returns:
-        DataFrame with soft phase scores and auxiliary features
-
-    设计理念：
-        - 软阶段概率代替硬阶段标签（连续、可微、无跳变）
-        - 每个阶段 = 价格信号 × 成交量确认 × 订单流验证
-        - Price tells you WHAT, Volume tells you IF, Order flow tells you WHO
-
-    ⚠️ 使用注意：
-        - 必须按 instrument 单独调用，不要拼接多个 instrument 的数据
-        - 所有状态在函数内部初始化，不会跨调用残留
-    """
-    # ========== 类型转换 ==========
     close = pd.to_numeric(close, errors="coerce").astype(float)
     high = pd.to_numeric(high, errors="coerce").astype(float)
     low = pd.to_numeric(low, errors="coerce").astype(float)
@@ -187,19 +128,16 @@ def compute_bpc_soft_phase_from_series(
     n = len(close)
     eps = 1e-8
 
-    # ========== 预计算基础指标 ==========
     rolling_high = high.rolling(lookback_breakout, min_periods=1).max().shift(1)
     rolling_low = low.rolling(lookback_breakout, min_periods=1).min().shift(1)
     rolling_range = (rolling_high - rolling_low).clip(lower=eps)
 
-    # 成交量基准
     vol_ma = volume.rolling(vol_ma_window, min_periods=1).mean()
     vol_ratio = (volume / vol_ma.clip(lower=eps)).fillna(1.0)
     vol_pct = (
         volume.rolling(vol_ma_window * 2, min_periods=20).rank(pct=True).fillna(0.5)
     )
 
-    # 订单流处理（如果提供）
     if cvd_change_5 is not None:
         cvd = pd.to_numeric(cvd_change_5, errors="coerce").fillna(0.0)
         cvd_ma = cvd.rolling(vol_ma_window, min_periods=1).mean()
@@ -218,12 +156,10 @@ def compute_bpc_soft_phase_from_series(
     else:
         ofci = pd.Series(0.5, index=close.index)
 
-    # ========== 1️⃣ Breakout 分数：价格突破 × 放量 × CVD确认 ==========
-    # 价格强度：距离前高的 ATR 倍数（带符号，正=多头突破，负=空头突破）
+    # ── 1. Breakout scores ──
     breakout_long_raw = (close - rolling_high) / (atr_s * breakout_atr_mult + eps)
     breakout_short_raw = (rolling_low - close) / (atr_s * breakout_atr_mult + eps)
 
-    # 取较强的方向
     breakout_strength = np.maximum(
         breakout_long_raw.fillna(0).values, breakout_short_raw.fillna(0).values
     )
@@ -232,10 +168,8 @@ def compute_bpc_soft_phase_from_series(
         breakout_long_raw.fillna(0).values > breakout_short_raw.fillna(0).values, 1, -1
     )
 
-    # 成交量确认：放量 > VOL_BREAKOUT_THRESHOLD 倍均量
     vol_breakout_confirm = (vol_ratio / VOL_BREAKOUT_THRESHOLD).clip(0, 1).values
 
-    # 订单流确认：CVD 同向 + VPIN 活跃
     cvd_z_values = cvd_z.values if hasattr(cvd_z, "values") else np.full(n, 0.0)
     vpin_values = vpin_s.values if hasattr(vpin_s, "values") else np.full(n, 0.5)
 
@@ -246,7 +180,6 @@ def compute_bpc_soft_phase_from_series(
     )
     vpin_breakout_confirm = (vpin_values / VPIN_ACTIVE_THRESHOLD).clip(0, 1)
 
-    # 综合 Breakout 分数
     bpc_score_breakout = (
         breakout_strength * 0.4
         + breakout_strength * vol_breakout_confirm * 0.3
@@ -255,35 +188,38 @@ def compute_bpc_soft_phase_from_series(
     )
     bpc_score_breakout = np.clip(bpc_score_breakout, 0, 1)
 
-    # ========== 2️⃣ Pullback 分数：回踩深度 × 缩量 × 订单流吸收 ==========
-    # 是否近期有 breakout（滑动窗口）
-    bpc_score_breakout_series = pd.Series(bpc_score_breakout, index=close.index)
-    recent_breakout_strength = bpc_score_breakout_series.rolling(
-        lookback_breakout, min_periods=1
-    ).max()
-    is_after_breakout = (
-        (recent_breakout_strength > BREAKOUT_TRIGGER_THRESHOLD).astype(float).values
-    )
+    # ── 2. Pullback scores ──
+    if gate_pullback_on_breakout:
+        # BPC: require a recent Donchian breakout
+        bpc_score_breakout_series = pd.Series(bpc_score_breakout, index=close.index)
+        recent_breakout_strength = bpc_score_breakout_series.rolling(
+            lookback_breakout, min_periods=1
+        ).max()
+        is_after_breakout = (
+            (recent_breakout_strength > BREAKOUT_TRIGGER_THRESHOLD).astype(float).values
+        )
+        # Direction from Donchian breakout, forward-filled
+        recent_direction = breakout_direction.copy()
+        recent_direction_series = pd.Series(recent_direction, index=close.index)
+        weak_mask = breakout_strength < WEAK_BREAKOUT_THRESHOLD
+        recent_direction_series[weak_mask] = np.nan
+        recent_direction = recent_direction_series.ffill().fillna(0).values.astype(int)
+    else:
+        # TPC: no breakout gate; direction from EMA position sign
+        is_after_breakout = np.ones(n, dtype=float)
+        if ema_position is not None:
+            ema_pos = pd.to_numeric(ema_position, errors="coerce").fillna(0.0)
+            recent_direction = np.sign(ema_pos.values).astype(int)
+        else:
+            recent_direction = np.sign(close.diff(lookback_breakout).fillna(0).values).astype(int)
 
-    # 回踩深度（多头：从高点下来；空头：从低点上来）
     pullback_depth_long = ((rolling_high - close) / rolling_range).clip(0, 1).values
     pullback_depth_short = ((close - rolling_low) / rolling_range).clip(0, 1).values
-
-    # 使用 breakout 方向决定用哪个 depth
-    # 向前填充最近的方向（使用 ffill 替代 Python 循环，性能优化）
-    recent_direction = breakout_direction.copy()
-    # 将弱 breakout 位置设为 NaN，然后 ffill
-    recent_direction_series = pd.Series(recent_direction, index=close.index)
-    weak_mask = breakout_strength < WEAK_BREAKOUT_THRESHOLD
-    recent_direction_series[weak_mask] = np.nan
-    recent_direction = recent_direction_series.ffill().fillna(0).values.astype(int)
 
     pullback_depth = np.where(
         recent_direction > 0, pullback_depth_long, pullback_depth_short
     )
 
-    # 回踩质量：深度越浅越好（指数衰减）
-    # 使用自适应 pullback_decay（逐 bar 计算）
     vol_pct_adaptive = (
         atr_s.rolling(VOL_ADAPTIVE_WINDOW, min_periods=20)
         .rank(pct=True)
@@ -293,32 +229,26 @@ def compute_bpc_soft_phase_from_series(
     pullback_decay_adaptive = _compute_adaptive_pullback_decay(vol_pct_adaptive)
     pullback_quality = np.exp(-pullback_depth / pullback_decay_adaptive)
 
-    # 成交量确认：缩量 < 0.8倍均量
     vol_pct_values = vol_pct.values if hasattr(vol_pct, "values") else np.full(n, 0.5)
     vol_pullback_confirm = (1 - vol_pct_values).clip(0, 1)
 
-    # 订单流确认：CVD 从谷底/顶部回升 = 吸收（使用相对变化替代硬编码阈值）
     cvd_z_series = pd.Series(cvd_z_values, index=close.index)
     cvd_rolling_min = cvd_z_series.rolling(10, min_periods=1).min().values
     cvd_rolling_max = cvd_z_series.rolling(10, min_periods=1).max().values
-    # 多头：CVD 从近期低点回升 > CVD_ABSORPTION_THRESHOLD 个标准差
-    # 空头：CVD 从近期高点下降 > CVD_ABSORPTION_THRESHOLD 个标准差
     cvd_absorption = np.where(
         recent_direction > 0,
         ((cvd_z_values - cvd_rolling_min) > CVD_ABSORPTION_THRESHOLD).astype(float),
         ((cvd_rolling_max - cvd_z_values) > CVD_ABSORPTION_THRESHOLD).astype(float),
     )
 
-    # 综合 Pullback 分数
-    bpc_score_pullback = (
+    score_pullback = (
         is_after_breakout * pullback_quality * 0.3
         + is_after_breakout * pullback_quality * vol_pullback_confirm * 0.3
         + is_after_breakout * pullback_quality * cvd_absorption * 0.4
     )
-    bpc_score_pullback = np.clip(bpc_score_pullback, 0, 1)
+    score_pullback = np.clip(score_pullback, 0, 1)
 
-    # ========== 3️⃣ Continuation 分数：价格恢复 × 动量 × 再次放量 + CVD ==========
-    # 计算 pullback 期间的极值（滑动窗口近似）
+    # ── 3. Continuation scores ──
     pullback_low_series = (
         low.rolling(lookback_breakout // 2, min_periods=1).min().values
     )
@@ -326,24 +256,20 @@ def compute_bpc_soft_phase_from_series(
         high.rolling(lookback_breakout // 2, min_periods=1).max().values
     )
 
-    # 价格恢复强度
     atr_values = atr_s.values
     close_values = close.values
     recovery_long = ((close_values - pullback_low_series) / atr_values).clip(0, 2) / 2
     recovery_short = ((pullback_high_series - close_values) / atr_values).clip(0, 2) / 2
     recovery_strength = np.where(recent_direction > 0, recovery_long, recovery_short)
 
-    # 动量确认：短期方向与 breakout 方向一致
     momentum_dir = np.sign(close.diff(3).values)
     momentum_confirm = (momentum_dir == recent_direction).astype(float)
 
-    # 成交量确认：再次放量
     vol_ratio_values = vol_ratio.values
     vol_continuation_confirm = (vol_ratio_values / VOL_CONTINUATION_THRESHOLD).clip(
         0, 1
     )
 
-    # 订单流确认：CVD 恢复 + VPIN 上升（修复因果性：使用 shift 替代 np.roll）
     cvd_z_shifted = pd.Series(cvd_z_values, index=close.index).shift(3).fillna(0).values
     cvd_momentum = np.where(
         recent_direction > 0,
@@ -353,27 +279,24 @@ def compute_bpc_soft_phase_from_series(
     vpin_shifted = pd.Series(vpin_values, index=close.index).shift(3).fillna(0.5).values
     vpin_rising = (vpin_values > vpin_shifted).astype(float)
 
-    # 需要先经过 pullback 阶段（改进：检查 pullback 已结束而非仅发生过）
-    bpc_score_pullback_series = pd.Series(bpc_score_pullback, index=close.index)
+    score_pullback_series = pd.Series(score_pullback, index=close.index)
     pullback_recent_high = (
-        bpc_score_pullback_series.rolling(10, min_periods=1).max().values
+        score_pullback_series.rolling(10, min_periods=1).max().values
     )
-    pullback_current = bpc_score_pullback
-    # 条件：最近有 pullback（>BREAKOUT_TRIGGER_THRESHOLD）且当前已从峰值衰减（<峰值的 PULLBACK_END_RATIO）
+    pullback_current = score_pullback
     was_in_pullback = (pullback_recent_high > BREAKOUT_TRIGGER_THRESHOLD) & (
         pullback_current < pullback_recent_high * PULLBACK_END_RATIO
     )
 
-    # 综合 Continuation 分数
-    bpc_score_continuation = (
+    score_continuation = (
         was_in_pullback * recovery_strength * momentum_confirm * 0.3
         + was_in_pullback * recovery_strength * vol_continuation_confirm * 0.3
         + was_in_pullback * recovery_strength * cvd_momentum * 0.25
         + was_in_pullback * recovery_strength * vpin_rising * 0.15
     )
-    bpc_score_continuation = np.clip(bpc_score_continuation, 0, 1)
+    score_continuation = np.clip(score_continuation, 0, 1)
 
-    # ========== 4️⃣ Neutral 分数：波动率压缩 × 成交量压缩 ==========
+    # ── 4. Neutral scores ──
     if bb_width_normalized is not None:
         bb_compression = (
             1
@@ -383,7 +306,6 @@ def compute_bpc_soft_phase_from_series(
             .values
         )
     else:
-        # 用 ATR percentile 近似
         atr_pct = (
             atr_s.rolling(vol_ma_window * 2, min_periods=20).rank(pct=True).fillna(0.5)
         )
@@ -391,8 +313,6 @@ def compute_bpc_soft_phase_from_series(
 
     vol_compression = 1 - vol_pct_values
 
-    # ========== 计算方向置信度（修复：使用方向分离度替代 sign 差） ==========
-    # 方向置信度 = 最强突破强度 × 方向分离度
     long_strength = breakout_long_raw.fillna(0).clip(0, 1).values
     short_strength = breakout_short_raw.fillna(0).clip(0, 1).values
     direction_separation = np.abs(long_strength - short_strength)
@@ -401,56 +321,49 @@ def compute_bpc_soft_phase_from_series(
     )
     direction_confidence = np.clip(direction_confidence, 0, 1)
 
-    # Neutral = 低波动 + 低成交量 + 方向模糊（不依赖其他阶段，避免循环依赖）
-    bpc_score_neutral = (
+    score_neutral = (
         bb_compression * 0.4 + vol_compression * 0.4 + (1 - direction_confidence) * 0.2
     )
-    bpc_score_neutral = np.clip(bpc_score_neutral, 0, 1)
+    score_neutral = np.clip(score_neutral, 0, 1)
 
-    # ========== 输出（三层分类） ==========
+    # ── Output ──
+    p = prefix
     result = pd.DataFrame(
         {
-            # === ATOMIC: Breakout 原子信号（供树模型自由组合） ===
-            "bpc_price_breakout_strength": breakout_strength,
-            "bpc_vol_breakout_confirm": vol_breakout_confirm,
-            "bpc_cvd_breakout_confirm": cvd_breakout_confirm,
-            "bpc_vpin_breakout_confirm": vpin_breakout_confirm,
-            # === ATOMIC: Pullback 原子信号 ===
-            "bpc_pullback_depth": pullback_depth,
-            "bpc_pullback_quality": pullback_quality,
-            "bpc_vol_pullback_confirm": vol_pullback_confirm,
-            "bpc_cvd_absorption": cvd_absorption,
-            # === ATOMIC: Continuation 原子信号 ===
-            "bpc_recovery_strength": recovery_strength,
-            "bpc_momentum_confirm": momentum_confirm,
-            "bpc_vol_continuation_confirm": vol_continuation_confirm,
-            "bpc_cvd_momentum": cvd_momentum,
-            "bpc_vpin_rising": vpin_rising,
-            # === ATOMIC: Neutral 原子信号 ===
-            "bpc_bb_compression": bb_compression,
-            "bpc_vol_compression": vol_compression,
-            # === COMPOSITE: 组合分数（领域知识加权，作为强先验） ===
-            "bpc_score_breakout": bpc_score_breakout,
-            "bpc_score_pullback": bpc_score_pullback,
-            "bpc_score_continuation": bpc_score_continuation,
-            "bpc_score_neutral": bpc_score_neutral,
-            # === CONTEXTUAL: 状态信号（提供上下文） ===
-            "bpc_breakout_direction": recent_direction,
-            "bpc_direction_confidence": direction_confidence,
-            "bpc_is_after_breakout": is_after_breakout,
-            "bpc_was_in_pullback": was_in_pullback.astype(float),
-            "bpc_vol_ratio": vol_ratio_values,
-            "bpc_cvd_z": cvd_z_values,
+            f"{p}_price_breakout_strength": breakout_strength,
+            f"{p}_vol_breakout_confirm": vol_breakout_confirm,
+            f"{p}_cvd_breakout_confirm": cvd_breakout_confirm,
+            f"{p}_vpin_breakout_confirm": vpin_breakout_confirm,
+            f"{p}_pullback_depth": pullback_depth,
+            f"{p}_pullback_quality": pullback_quality,
+            f"{p}_vol_pullback_confirm": vol_pullback_confirm,
+            f"{p}_cvd_absorption": cvd_absorption,
+            f"{p}_recovery_strength": recovery_strength,
+            f"{p}_momentum_confirm": momentum_confirm,
+            f"{p}_vol_continuation_confirm": vol_continuation_confirm,
+            f"{p}_cvd_momentum": cvd_momentum,
+            f"{p}_vpin_rising": vpin_rising,
+            f"{p}_bb_compression": bb_compression,
+            f"{p}_vol_compression": vol_compression,
+            f"{p}_score_breakout": bpc_score_breakout,
+            f"{p}_score_pullback": score_pullback,
+            f"{p}_score_continuation": score_continuation,
+            f"{p}_score_neutral": score_neutral,
+            f"{p}_breakout_direction": recent_direction,
+            f"{p}_direction_confidence": direction_confidence,
+            f"{p}_is_after_breakout": is_after_breakout,
+            f"{p}_was_in_pullback": was_in_pullback.astype(float),
+            f"{p}_vol_ratio": vol_ratio_values,
+            f"{p}_cvd_z": cvd_z_values,
         },
         index=close.index,
     )
 
-    # ========== 添加元数据（用于 Outcome-Based Audit 追溯） ==========
     result.attrs["feature_version"] = FEATURE_VERSION
     result.attrs["param_lookback_breakout"] = lookback_breakout
     result.attrs["param_breakout_atr_mult"] = breakout_atr_mult
     result.attrs["param_vol_ma_window"] = vol_ma_window
-    result.attrs["param_pullback_decay"] = "adaptive"  # 标记为自适应
+    result.attrs["param_pullback_decay"] = "adaptive"
     result.attrs["thresholds"] = {
         "vol_breakout": VOL_BREAKOUT_THRESHOLD,
         "vol_continuation": VOL_CONTINUATION_THRESHOLD,
@@ -461,6 +374,148 @@ def compute_bpc_soft_phase_from_series(
     }
 
     return result
+
+
+# -- BPC registered wrapper (backward-compatible) --
+
+@register_feature(
+    "compute_bpc_soft_phase_from_series",
+    category="bpc",
+    description="BPC soft phase scores with volume and orderflow confirmation",
+    outputs=[
+        "bpc_price_breakout_strength",
+        "bpc_vol_breakout_confirm",
+        "bpc_cvd_breakout_confirm",
+        "bpc_vpin_breakout_confirm",
+        "bpc_pullback_depth",
+        "bpc_pullback_quality",
+        "bpc_vol_pullback_confirm",
+        "bpc_cvd_absorption",
+        "bpc_recovery_strength",
+        "bpc_momentum_confirm",
+        "bpc_vol_continuation_confirm",
+        "bpc_cvd_momentum",
+        "bpc_vpin_rising",
+        "bpc_bb_compression",
+        "bpc_vol_compression",
+        "bpc_score_breakout",
+        "bpc_score_pullback",
+        "bpc_score_continuation",
+        "bpc_score_neutral",
+        "bpc_breakout_direction",
+        "bpc_direction_confidence",
+        "bpc_is_after_breakout",
+        "bpc_was_in_pullback",
+        "bpc_vol_ratio",
+        "bpc_cvd_z",
+    ],
+)
+def compute_bpc_soft_phase_from_series(
+    *,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    atr: pd.Series,
+    volume: pd.Series,
+    cvd_change_5: pd.Series = None,
+    vpin: pd.Series = None,
+    ofci_pct: pd.Series = None,
+    bb_width_normalized: pd.Series = None,
+    lookback_breakout: int = 20,
+    breakout_atr_mult: float = 1.0,
+    pullback_decay: float = 0.3,
+    vol_ma_window: int = 20,
+) -> pd.DataFrame:
+    """BPC soft phase scores: breakout-gated pullback/continuation."""
+    return _compute_soft_phase_core(
+        close=close,
+        high=high,
+        low=low,
+        atr=atr,
+        volume=volume,
+        cvd_change_5=cvd_change_5,
+        vpin=vpin,
+        ofci_pct=ofci_pct,
+        bb_width_normalized=bb_width_normalized,
+        lookback_breakout=lookback_breakout,
+        breakout_atr_mult=breakout_atr_mult,
+        pullback_decay=pullback_decay,
+        vol_ma_window=vol_ma_window,
+        gate_pullback_on_breakout=True,
+        prefix="bpc",
+    )
+
+
+# -- TPC registered wrapper (trend-based, no breakout gate) --
+
+@register_feature(
+    "compute_tpc_soft_phase_from_series",
+    category="tpc",
+    description="TPC soft phase scores: trend-based pullback/continuation (no breakout gate)",
+    outputs=[
+        "tpc_price_breakout_strength",
+        "tpc_vol_breakout_confirm",
+        "tpc_cvd_breakout_confirm",
+        "tpc_vpin_breakout_confirm",
+        "tpc_pullback_depth",
+        "tpc_pullback_quality",
+        "tpc_vol_pullback_confirm",
+        "tpc_cvd_absorption",
+        "tpc_recovery_strength",
+        "tpc_momentum_confirm",
+        "tpc_vol_continuation_confirm",
+        "tpc_cvd_momentum",
+        "tpc_vpin_rising",
+        "tpc_bb_compression",
+        "tpc_vol_compression",
+        "tpc_score_breakout",
+        "tpc_score_pullback",
+        "tpc_score_continuation",
+        "tpc_score_neutral",
+        "tpc_breakout_direction",
+        "tpc_direction_confidence",
+        "tpc_is_after_breakout",
+        "tpc_was_in_pullback",
+        "tpc_vol_ratio",
+        "tpc_cvd_z",
+    ],
+)
+def compute_tpc_soft_phase_from_series(
+    *,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    atr: pd.Series,
+    volume: pd.Series,
+    cvd_change_5: pd.Series = None,
+    vpin: pd.Series = None,
+    ofci_pct: pd.Series = None,
+    bb_width_normalized: pd.Series = None,
+    ema_1200_position: pd.Series = None,
+    lookback_breakout: int = 20,
+    breakout_atr_mult: float = 1.0,
+    pullback_decay: float = 0.3,
+    vol_ma_window: int = 20,
+) -> pd.DataFrame:
+    """TPC soft phase scores: trend direction from EMA, no breakout gate."""
+    return _compute_soft_phase_core(
+        close=close,
+        high=high,
+        low=low,
+        atr=atr,
+        volume=volume,
+        cvd_change_5=cvd_change_5,
+        vpin=vpin,
+        ofci_pct=ofci_pct,
+        bb_width_normalized=bb_width_normalized,
+        lookback_breakout=lookback_breakout,
+        breakout_atr_mult=breakout_atr_mult,
+        pullback_decay=pullback_decay,
+        vol_ma_window=vol_ma_window,
+        gate_pullback_on_breakout=False,
+        ema_position=ema_1200_position,
+        prefix="tpc",
+    )
 
 
 # =============================================================================

@@ -1,0 +1,17 @@
+# TPC 方向: MACD sign 为信号源，EMA1200 位置带通做过滤
+# 与 BPC 区别: 去掉了 bpc_breakout_direction 信号源（Donchian 突破方向）
+# 只保留 MACD sign 作为主信号，EMA1200 带通过滤方向模糊区间
+
+description: "TPC 方向 — MACD sign 与 EMA1200 相对位置同号（signal_match_position_band）"
+
+direction_rules:
+  - id: tpc_macd_ema1200_align
+    method: signal_match_position_band
+    description: "MACD sign 作为方向信号；须落在 EMA1200 多/空带通内"
+    signal_rules:
+      - feature: macd_atr
+        transform: sign
+    position_band:
+      feature: ema_1200_position
+      inner_abs: 0
+      outer_abs: 1

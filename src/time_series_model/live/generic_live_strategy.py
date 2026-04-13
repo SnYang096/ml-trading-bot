@@ -95,16 +95,30 @@ class DirectionEvaluator:
             rule_id = rule.get("id", "unknown")
             compound = parse_signal_match_position_band_rule(rule)
             if compound is not None:
+                consensus = compound.get("consensus_mode", "first")
                 candidate = 0
-                for sr in compound["signal_rules"]:
-                    if not isinstance(sr, dict):
-                        continue
-                    if not is_direction_rule_enabled(sr):
-                        continue
-                    d_atom = self._evaluate_atomic_direction_rule(sr, features)
-                    if d_atom != 0:
-                        candidate = d_atom
-                        break
+                if consensus == "all":
+                    votes = []
+                    for sr in compound["signal_rules"]:
+                        if not isinstance(sr, dict):
+                            continue
+                        if not is_direction_rule_enabled(sr):
+                            continue
+                        d_atom = self._evaluate_atomic_direction_rule(sr, features)
+                        if d_atom != 0:
+                            votes.append(d_atom)
+                    if votes and all(v == votes[0] for v in votes):
+                        candidate = votes[0]
+                else:
+                    for sr in compound["signal_rules"]:
+                        if not isinstance(sr, dict):
+                            continue
+                        if not is_direction_rule_enabled(sr):
+                            continue
+                        d_atom = self._evaluate_atomic_direction_rule(sr, features)
+                        if d_atom != 0:
+                            candidate = d_atom
+                            break
                 if candidate == 0:
                     continue
                 band_dir = single_position_band_scalar(

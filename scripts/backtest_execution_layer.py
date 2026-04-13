@@ -3071,6 +3071,7 @@ def apply_direction_rules(
                 band_feature=cmp["band_feature"],
                 inner_abs=float(cmp["inner_abs"]),
                 outer_abs=float(cmp["outer_abs"]),
+                consensus_mode=cmp.get("consensus_mode", "first"),
             )
             direction_vals = direction_ser.values
             rule_label = str(rule.get("id") or cmp["band_feature"])

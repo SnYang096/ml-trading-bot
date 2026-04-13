@@ -161,6 +161,7 @@ resource_allocation:
     - bpc
     - fer
     - me
+    - tpc
 
   per_strategy_limits:
     # ── BPC 方向拆分 (方案A: 共享全局slot互斥竞争) ──
@@ -170,6 +171,15 @@ resource_allocation:
       max_risk_per_trade: 0.01 # 肥尾主仓: 首枪 2.00% 风险；加仓次数与 execution.add_position 对齐
       allow_add_position: true # BPC 趋势延续允许加仓
       max_add_times: 3 # 宪法上限；触发与梯度见 archetypes/execution.yaml
+
+    # ── TPC（Trend Pullback Continuation）──
+    # 未配置时 ConstitutionExecutor.validate_add_position 对未知策略将 max_add_times 默认=1，
+    # 会导致「每母仓只能加仓一次」，事件回测里表现为加仓笔数远少于 BPC。须与 execution.add_position.max_add_times 对齐。
+    tpc:
+      max_slots: 5
+      max_risk_per_trade: 0.01
+      allow_add_position: true
+      max_add_times: 3
 
     # ── ME 方向拆分 ──
     me:
@@ -192,7 +202,7 @@ resource_allocation:
       allow_add_position: false # LV 不加仓
 
   intent_selection_policy:
-    archetype_priority: [bpc, me, fer]
+    archetype_priority: [bpc, tpc, me, fer]
 
   # 同 symbol 同策略家族默认只允许主方向（由 BTC close vs ema_200 决定）
   # FER 可作为反向例外（短促反转仓位）

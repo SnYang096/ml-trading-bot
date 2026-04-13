@@ -16,8 +16,9 @@
 # ============================================================
 
 dates:
-  start_date: "2023-01-01"
+  start_date: "2022-08-01"
   end_date: "2024-12-31"
+  # 11 → holdout 从 2024-01-01 起，与 end_date 合起来共 12 个日历月；勿改成 12 除非接受多滚 2023-12
   holdout_months: 15
   validation_months: 3
 
@@ -52,8 +53,9 @@ fast_loop:
     optimize: true
   symbol_threshold_calibration:
     enabled: true
+  # 稀疏 + 固定 RR：不在月度网格里强行 sym_r trailing，避免覆盖 archetype 的 fixed SL/TP
   execution_opt:
-    enabled: true
+    enabled: false
   pcm_eval:
     enabled: false
   direction_tuning:
@@ -94,8 +96,9 @@ event_backtest:
   promote: true
   map_extra_months: 4
   sym_r_default: "1.0:1:6.0"
+  # execution_opt 关闭时仅作文档参考；若重新开启优化可配合独立 exec_grid
   sym_r_by_family:
-    fbf: "2:1:4"
+    fbf: "1:0.5:2"
   exec_objective_default: sharpe
   exec_objective_params:
     near_stop_threshold_r: -0.9
@@ -135,10 +138,10 @@ strategies:
     has_direction: true
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.03
-        min_rows: 200
-        target_trades_min: 15
-        target_trades_max: 100
+        min_pass_rate: 0.02
+        min_rows: 150
+        target_trades_min: 6
+        target_trades_max: 55
         trade_penalty_low: 0.0021
         trade_penalty_high: 0.0014
         stability_penalty: 0.0
@@ -149,10 +152,10 @@ strategies:
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
-          min_trades_target: 30
+          min_trades_target: 20
           trade_penalty: 0.0025
-          target_trades_min: 15
-          target_trades_max: 100
+          target_trades_min: 6
+          target_trades_max: 55
           trade_penalty_low: 0.0021
           trade_penalty_high: 0.0014
           stability_penalty: 0.0
@@ -166,8 +169,8 @@ strategies:
         significance_min_trades: 3
         plateau_window: 4
         archetype_scoring_method: distribution_ks
-        target_trades_min: 15
-        target_trades_max: 100
+        target_trades_min: 6
+        target_trades_max: 55
         trade_penalty_low: 0.0021
         trade_penalty_high: 0.0014
         stability_penalty: 0.0
@@ -182,13 +185,13 @@ strategies:
         stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
       backtest:
-        min_trades: 20
+        min_trades: 12
       deploy:
-        min_trades: 20
+        min_trades: 12
     simple_execution:
-      sl_r: 3.0
-      tp_r: 6.0
-      timeout_bars: 120
+      sl_r: 1.0
+      tp_r: 2.0
+      timeout_bars: 108
 
 shap_feature_selection:
   enabled: true
@@ -202,7 +205,7 @@ shap_feature_selection:
     - features.yaml
 
 comparison:
-  min_trades: 15
+  min_trades: 10
   sharpe_adopt_ratio: 0.7
   sharpe_reject_floor: 0.0
   threshold_drift_warn: 1.0
@@ -219,7 +222,7 @@ deploy_gate:
   trigger_drift_level: HIGH
   min_sharpe_change: 0.03
   require_adopt: true
-  min_trades: 20
+  min_trades: 12
   require_human_confirm: true
 
 data_flow:

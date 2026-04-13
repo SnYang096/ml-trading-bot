@@ -7409,6 +7409,96 @@ features:
       ofci_pct: ofci_pct
       bb_width_normalized: bb_width_normalized_pct  # 使用 _pct 版本，值域 [0,1]
 
+  # --- TPC: Trend Pullback Continuation (breakout-free variant of BPC) ---
+  tpc_soft_phase_f:
+    module: bpc
+    compute_func: compute_tpc_soft_phase_from_series
+    dependencies:
+    - atr_f
+    - cvd_change_5_pct_f
+    - vpin_features_f
+    - ofci_pct_f
+    - bb_width_normalized_pct_f
+    - ema_1200_position_f
+    required_columns:
+    - close
+    - high
+    - low
+    - atr
+    - volume
+    output_columns:
+    - tpc_price_breakout_strength
+    - tpc_vol_breakout_confirm
+    - tpc_cvd_breakout_confirm
+    - tpc_vpin_breakout_confirm
+    - tpc_pullback_depth
+    - tpc_pullback_quality
+    - tpc_vol_pullback_confirm
+    - tpc_cvd_absorption
+    - tpc_recovery_strength
+    - tpc_momentum_confirm
+    - tpc_vol_continuation_confirm
+    - tpc_cvd_momentum
+    - tpc_vpin_rising
+    - tpc_bb_compression
+    - tpc_vol_compression
+    - tpc_score_breakout
+    - tpc_score_pullback
+    - tpc_score_continuation
+    - tpc_score_neutral
+    - tpc_breakout_direction
+    - tpc_direction_confidence
+    - tpc_is_after_breakout
+    - tpc_was_in_pullback
+    - tpc_vol_ratio
+    - tpc_cvd_z
+    category: tpc
+    description: TPC soft phase scores - trend-based pullback/continuation without breakout gate. Direction from EMA1200 sign.
+    pass_full_df: false
+    compute_params:
+      lookback_breakout: 20
+      breakout_atr_mult: 1.0
+      pullback_decay: 0.3
+      vol_ma_window: 20
+      normalized: true
+      output_normalization_map:
+        tpc_price_breakout_strength: bounded_0_1
+        tpc_vol_breakout_confirm: bounded_0_1
+        tpc_cvd_breakout_confirm: bounded_0_1
+        tpc_vpin_breakout_confirm: bounded_0_1
+        tpc_pullback_depth: bounded_0_1
+        tpc_pullback_quality: bounded_0_1
+        tpc_vol_pullback_confirm: bounded_0_1
+        tpc_cvd_absorption: bounded_0_1
+        tpc_recovery_strength: bounded_0_1
+        tpc_momentum_confirm: bounded_0_1
+        tpc_vol_continuation_confirm: bounded_0_1
+        tpc_cvd_momentum: bounded_0_1
+        tpc_vpin_rising: bounded_0_1
+        tpc_bb_compression: bounded_0_1
+        tpc_vol_compression: bounded_0_1
+        tpc_score_breakout: bounded_0_1
+        tpc_score_pullback: bounded_0_1
+        tpc_score_continuation: bounded_0_1
+        tpc_score_neutral: bounded_0_1
+        tpc_breakout_direction: discrete
+        tpc_direction_confidence: bounded_0_1
+        tpc_is_after_breakout: bounded_0_1
+        tpc_was_in_pullback: bounded_0_1
+        tpc_vol_ratio: ratio
+        tpc_cvd_z: zscore
+    column_mappings:
+      close: close
+      high: high
+      low: low
+      atr: atr
+      volume: volume
+      cvd_change_5: cvd_change_5
+      vpin: vpin
+      ofci_pct: ofci_pct
+      bb_width_normalized: bb_width_normalized_pct
+      ema_1200_position: ema_1200_position
+
   bpc_pullback_depth_pct_f:
     module: bpc
     compute_func: compute_bpc_pullback_depth_pct_from_series

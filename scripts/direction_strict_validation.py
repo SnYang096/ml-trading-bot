@@ -248,6 +248,7 @@ def compute_direction_series_from_rules(df: pd.DataFrame, rules: list) -> pd.Ser
                 band_feature=cmp["band_feature"],
                 inner_abs=float(cmp["inner_abs"]),
                 outer_abs=float(cmp["outer_abs"]),
+                consensus_mode=cmp.get("consensus_mode", "first"),
             )
             unassigned = ~assigned
             direction.loc[unassigned] = vals.loc[unassigned]

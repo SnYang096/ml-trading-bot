@@ -14,8 +14,10 @@
 # ============================================================
 
 dates:
-  start_date: "2024-01-01"
-  holdout_months: 9
+  start_date: "2022-08-01"
+  end_date: "2024-12-31"
+  # 11 → holdout 从 2024-01-01 起，与 end_date 合起来共 12 个日历月；勿改成 12 除非接受多滚 2023-12
+  holdout_months: 15
   validation_months: 3
 training:
   seeds:

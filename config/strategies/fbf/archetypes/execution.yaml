@@ -4,22 +4,23 @@ execution_constraints:
 
 holding:
   max_holding_bars: null
-  time_stop_bars: 40
+  time_stop_bars: 36
 
 stop_loss:
-  initial_r: 5.0
+  type: fixed
+  initial_r: 1.0
   trailing:
+    enabled: false
     activation_r: 3.0
     step_r: 0.5
     trail_r: 1.5
-  type: trailing
 
 take_profit:
   enabled: true
-  target_r: 5.0
+  target_r: 2.0
 
 breakeven:
-  enabled: true
+  enabled: false
   trigger_r: 2
 
-version: 51
+version: 53

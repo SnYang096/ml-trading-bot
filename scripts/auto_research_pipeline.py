@@ -610,6 +610,8 @@ def _build_continuous_pcm_trading_map(
     indicator_lookback_days: int = 140,
     band_inner_abs: float = 0.005,
     band_outer_abs: float = 0.05,
+    chart_x_start: str | None = None,
+    chart_x_end: str | None = None,
 ) -> str:
     """Build continuous multi-month map with 2H K-lines and trade overlays.
 
@@ -620,8 +622,10 @@ def _build_continuous_pcm_trading_map(
     Price overlays: rolling typical-price VWAP over ``map_vwap_window_bars`` bars
     (same window as ``macro_tp_vwap_1200_position`` on 2H). ``map_long_ema_span`` is
     kept for call-site compatibility; EMA overlay was removed as redundant with VWAP.
-    Extra history is loaded before ``x_min`` for stable VWAP; only the trade-window
-    band is drawn on the X axis.
+    Extra history is loaded before ``x_min`` for stable VWAP; by default the X axis
+    spans first trade → last trade. If ``chart_x_start`` / ``chart_x_end`` (YYYY-MM-DD)
+    are set (typically pipeline ``dates.start_date`` / ``dates.end_date``), the axis
+    is widened so K线 shows the full configured sample even when early months have no trades.
     Trade segment legend: solid = primary leg, dashed = add-on (palette first color often blue).
     """
     try:
@@ -753,6 +757,24 @@ def _build_continuous_pcm_trading_map(
     )
     x_min = merged["entry_time"].min() - pd.Timedelta(days=2)
     x_max = merged["exit_time"].max() + pd.Timedelta(days=2)
+    if chart_x_start:
+        try:
+            xs = pd.Timestamp(str(chart_x_start).strip(), tz="UTC")
+            if xs.tzinfo is None:
+                xs = xs.tz_localize("UTC")
+            if xs < x_min:
+                x_min = xs
+        except Exception:
+            pass
+    if chart_x_end:
+        try:
+            xe = pd.Timestamp(str(chart_x_end).strip(), tz="UTC")
+            if xe.tzinfo is None:
+                xe = xe.tz_localize("UTC")
+            if xe > x_max:
+                x_max = xe
+        except Exception:
+            pass
     archetypes = sorted(
         str(a) for a in merged["archetype"].dropna().astype(str).unique().tolist()
     )
@@ -1730,6 +1752,34 @@ def _yaml_rolling_feature_search_enabled(cfg: dict) -> bool:
     return not bool(turbo.get("disable_feature_search", True))
 
 
+def _apply_symbol_exclude(strategy: str, scfg: dict, symbols: str) -> str:
+    """Filter out symbols listed in meta.yaml strategy.symbol_exclude."""
+    prod_rel = str(scfg.get("config", "") or "").strip()
+    if not prod_rel:
+        return symbols
+    meta_path = (PROJECT_ROOT / prod_rel / "meta.yaml").resolve()
+    if not meta_path.is_file():
+        return symbols
+    try:
+        meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return symbols
+    strat_block = meta.get("strategy") or meta
+    exclude = strat_block.get("symbol_exclude") or []
+    if not exclude:
+        return symbols
+    exclude_set = {s.strip().upper() for s in exclude if s}
+    filtered = [s for s in symbols.split(",") if s.strip().upper() not in exclude_set]
+    if exclude_set:
+        removed = [s for s in symbols.split(",") if s.strip().upper() in exclude_set]
+        if removed:
+            print(
+                f"   🚫 symbol_exclude[{strategy}]: 移除 {removed} "
+                f"(meta.yaml), 保留 {len(filtered)} symbols"
+            )
+    return ",".join(filtered)
+
+
 def _resolve_pipeline_strategy_timeframe(strategy: str, scfg: dict) -> str:
     """策略周期仅以 strategies.*.config 下 meta.yaml 为准（忽略 pipeline YAML 的 timeframe 键）。"""
     prod_rel = str(scfg.get("config", "") or "").strip()
@@ -1936,6 +1986,8 @@ def run_strategy_pipeline(
         test_start = compute_holdout_start(end_date, holdout_months - validation_months)
     else:
         test_start = holdout_start  # 不分离, 兼容旧行为
+
+    symbols = _apply_symbol_exclude(strategy, scfg, symbols)
 
     common_train_args = [
         "--symbol",
@@ -5405,12 +5457,15 @@ def main():
                 _map_sroot = _pfs if _pfs.is_absolute() else PROJECT_ROOT / _pfs
         _band_pair = _read_bpc_vwap_band_abs(_map_sroot)
         _bi, _bo = _band_pair if _band_pair else (0.005, 0.05)
+        _dates_for_map = cfg.get("dates") or {}
         continuous_map = _build_continuous_pcm_trading_map(
             ledger,
             roll_root / "trading_map_continuous.html",
             data_path=cfg["data_path"],
             band_inner_abs=_bi,
             band_outer_abs=_bo,
+            chart_x_start=str(_dates_for_map.get("start_date") or "").strip() or None,
+            chart_x_end=str(_dates_for_map.get("end_date") or "").strip() or None,
         )
         stitch_map = roll_root / "trading_map_stitched.html"
         stitch_lines = [
