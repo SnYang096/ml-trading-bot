@@ -1,0 +1,2 @@
+# TPC entry filters: 初始全部禁用，由管线自动校准
+filters: []

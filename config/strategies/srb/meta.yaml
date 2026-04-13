@@ -1,0 +1,17 @@
+# SRB (Structural Range Breakout) — MVP：关键位成功突破后的结构延续
+# 与 BPC/TPC/FBF 边界见 z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB.md
+
+strategy:
+  name: srb-120T
+  description: |
+    StructuralRangeBreakout：边界被决定性打破后的顺势延续（与 FBF 假破相反）。
+    MVP 复用 TPC 壳 + SR/频谱突破邻域特征；后续可加专用成功突破 score。
+
+  owner: quant_team
+  archetype: StructuralRangeBreakout
+
+  timeframe: "120T"
+
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

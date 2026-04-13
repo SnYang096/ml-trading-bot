@@ -1,0 +1,12 @@
+name: srb_prefilter
+description: |
+  SRB Prefilter：结构位强度 + SR 突破频谱 + 软阶段（MVP 占位，后续收紧语义）。
+
+feature_pipeline:
+  requested_features:
+    - market_cap_normalized_orderflow_f
+    - spectrum_features_sr_breakout_f
+    - sr_strength_max_f
+    - tpc_soft_phase_f
+    - volatility_regime_f
+    - bpc_impulse_return_atr_f

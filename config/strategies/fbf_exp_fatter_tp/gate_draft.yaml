@@ -1,0 +1,61 @@
+# FBF Gate Draft (auto-generated)
+# 来源: results/train_final_20260413_182542_rr_extreme/fbf
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy fbf
+#   python scripts/optimize_gate_unified.py --strategy fbf --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
+  tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.36)
+  when:
+    all_of:
+    - vol_leverage_asymmetry:
+        value_gt: 0.061
+    - vol_leverage_asymmetry:
+        value_lt: 0.0879
+  then:
+    action: deny
+  comment: 'statistical(lift=1.36): vol_leverage_asymmetry > 0.06099 & vol_leverage_asymmetry < 0.08792'
+- id: gate_cvd_change_5_normalized_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED_CVD_CHANGE_5_NORMALIZED
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.10)
+  when:
+    all_of:
+    - cvd_change_5_normalized:
+        value_gt: -0.0296
+    - cvd_change_5_normalized:
+        value_lt: -0.017
+  then:
+    action: deny
+  comment: 'statistical(lift=1.10): cvd_change_5_normalized > -0.02963 & cvd_change_5_normalized < -0.01702'
+- id: gate_vol_persistence_vol_persistence
+  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.05)
+  when:
+    all_of:
+    - vol_persistence:
+        value_gt: 0.1595
+    - vol_persistence:
+        value_lt: 0.2092
+  then:
+    action: deny
+  comment: 'statistical(lift=1.05): vol_persistence > 0.1595 & vol_persistence < 0.2092'
+guardrails: []

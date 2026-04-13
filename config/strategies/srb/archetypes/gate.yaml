@@ -1,0 +1,15 @@
+# SRB Gate MVP：空白，由管线 stat / meta 后续填充；避免误拷 TPC 硬阈值
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+hard_gates: []
+guardrails: []
+system_safety: []
