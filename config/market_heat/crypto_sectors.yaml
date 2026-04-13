@@ -1,0 +1,35 @@
+version: 1
+description: "Crypto sector mapping for heat dashboard"
+
+# Source priority: manual overrides > coingecko
+# Run `python -m src.market_heat.sync_sectors` to refresh from CoinGecko
+
+sectors:
+  L1:
+    description: "Layer 1 公链"
+    symbols: [BTC, ETH, SOL, BNB, ADA, AVAX, SUI, TON, NEAR, APT, SEI, TIA]
+
+  L2:
+    description: "Layer 2 扩容"
+    symbols: [ARB, OP, MATIC, STRK, MANTA, BLAST]
+
+  DeFi:
+    description: "去中心化金融"
+    symbols: [UNI, AAVE, MKR, CRV, DYDX, SNX, COMP, SUSHI]
+
+  Meme:
+    description: "Meme 币"
+    symbols: [DOGE, SHIB, PEPE, WIF, BONK, FLOKI, BOME, BRETT, NEIRO]
+
+  AI:
+    description: "AI + DePIN"
+    symbols: [FET, RNDR, TAO, AR, FIL, THETA, AKT]
+
+  GameFi:
+    description: "游戏 + 元宇宙"
+    symbols: [AXS, SAND, MANA, IMX, GALA, ILV]
+
+# Top-level market reference: use BTC + ETH weighted average as "crypto market"
+market_proxy:
+  symbols: [BTC, ETH]
+  weights: [0.6, 0.4]

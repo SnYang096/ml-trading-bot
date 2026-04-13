@@ -1,0 +1,1366 @@
+{
+    "annotations": {
+        "list": []
+    },
+    "editable": true,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [
+        {
+            "title": "📊 Overview",
+            "url": "/d/quant-engine-main",
+            "type": "link",
+            "icon": "apps",
+            "targetBlank": false
+        },
+        {
+            "title": "📡 Signal Pipeline",
+            "url": "/d/quant-signal-pipeline",
+            "type": "link",
+            "icon": "bolt",
+            "targetBlank": false
+        },
+        {
+            "title": "💰 Account & Market",
+            "url": "/d/quant-account-market",
+            "type": "link",
+            "icon": "cloud",
+            "targetBlank": false
+        }
+    ],
+    "panels": [
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 0
+            },
+            "id": 1,
+            "title": "🌍 Market Overview",
+            "type": "row"
+        },
+        {
+            "description": "Overall crypto market heat score (BTC 60% + ETH 40% weighted)",
+            "fieldConfig": {
+                "defaults": {
+                    "decimals": 3,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "#F2495C",
+                                "value": null
+                            },
+                            {
+                                "color": "#FADE2A",
+                                "value": 0.2
+                            },
+                            {
+                                "color": "#73BF69",
+                                "value": 0.5
+                            }
+                        ]
+                    },
+                    "min": 0,
+                    "max": 1
+                }
+            },
+            "gridPos": {
+                "h": 5,
+                "w": 6,
+                "x": 0,
+                "y": 1
+            },
+            "id": 2,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                },
+                "textMode": "value_and_name"
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_heat_market_score{market=\"crypto\"}",
+                    "legendFormat": "Market Heat"
+                }
+            ],
+            "title": "🌡️ Market Heat",
+            "type": "stat"
+        },
+        {
+            "description": "Number of sectors with state = HOT (score >= 0.5)",
+            "fieldConfig": {
+                "defaults": {
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "#F2495C",
+                                "value": null
+                            },
+                            {
+                                "color": "#FADE2A",
+                                "value": 1
+                            },
+                            {
+                                "color": "#73BF69",
+                                "value": 3
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 5,
+                "w": 4,
+                "x": 6,
+                "y": 1
+            },
+            "id": 3,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "count(mlbot_heat_sector_score >= 0.5)",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "HOT Sectors",
+            "type": "stat"
+        },
+        {
+            "description": "Number of sectors with state = COLD (score < 0.2)",
+            "fieldConfig": {
+                "defaults": {
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "#73BF69",
+                                "value": null
+                            },
+                            {
+                                "color": "#FADE2A",
+                                "value": 1
+                            },
+                            {
+                                "color": "#F2495C",
+                                "value": 3
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 5,
+                "w": 4,
+                "x": 10,
+                "y": 1
+            },
+            "id": 4,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "count(mlbot_heat_sector_score < 0.2)",
+                    "legendFormat": ""
+                }
+            ],
+            "title": "COLD Sectors",
+            "type": "stat"
+        },
+        {
+            "description": "Market heat score trend",
+            "fieldConfig": {
+                "defaults": {
+                    "decimals": 3,
+                    "min": 0,
+                    "max": 1,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "#F2495C",
+                                "value": null
+                            },
+                            {
+                                "color": "#FADE2A",
+                                "value": 0.2
+                            },
+                            {
+                                "color": "#73BF69",
+                                "value": 0.5
+                            }
+                        ]
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineWidth": 2,
+                        "fillOpacity": 15,
+                        "gradientMode": "scheme",
+                        "thresholdsStyle": {
+                            "mode": "area"
+                        }
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 5,
+                "w": 10,
+                "x": 14,
+                "y": 1
+            },
+            "id": 5,
+            "targets": [
+                {
+                    "expr": "mlbot_heat_market_score{market=\"crypto\"}",
+                    "legendFormat": "Market"
+                }
+            ],
+            "title": "📈 Market Heat Trend",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 6
+            },
+            "id": 6,
+            "title": "📊 Sector Heat Map",
+            "type": "row"
+        },
+        {
+            "description": "Sector heat scores ranked high to low",
+            "fieldConfig": {
+                "defaults": {
+                    "decimals": 3,
+                    "min": 0,
+                    "max": 1,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "#F2495C",
+                                "value": null
+                            },
+                            {
+                                "color": "#FADE2A",
+                                "value": 0.2
+                            },
+                            {
+                                "color": "#73BF69",
+                                "value": 0.5
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 10,
+                "x": 0,
+                "y": 7
+            },
+            "id": 7,
+            "options": {
+                "displayMode": "gradient",
+                "orientation": "horizontal",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                },
+                "showUnfilled": true
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_heat_sector_score",
+                    "legendFormat": "{{sector}}"
+                }
+            ],
+            "title": "🏷️ Sector Scores",
+            "type": "bargauge"
+        },
+        {
+            "description": "Sector heat detail table",
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {
+                        "align": "center"
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "sector"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 80
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Value"
+                        },
+                        "properties": [
+                            {
+                                "id": "displayName",
+                                "value": "Score"
+                            },
+                            {
+                                "id": "decimals",
+                                "value": 3
+                            },
+                            {
+                                "id": "thresholds",
+                                "value": {
+                                    "steps": [
+                                        {
+                                            "color": "#F2495C",
+                                            "value": null
+                                        },
+                                        {
+                                            "color": "#FADE2A",
+                                            "value": 0.2
+                                        },
+                                        {
+                                            "color": "#73BF69",
+                                            "value": 0.5
+                                        }
+                                    ]
+                                }
+                            },
+                            {
+                                "id": "custom.displayMode",
+                                "value": "color-background"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 14,
+                "x": 10,
+                "y": 7
+            },
+            "id": 8,
+            "options": {
+                "showHeader": true,
+                "sortBy": [
+                    {
+                        "displayName": "Score",
+                        "desc": true
+                    }
+                ]
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_heat_sector_score",
+                    "legendFormat": "",
+                    "format": "table",
+                    "instant": true
+                }
+            ],
+            "title": "📋 Sector Detail",
+            "type": "table",
+            "transformations": [
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {
+                            "Time": true,
+                            "__name__": true,
+                            "instance": true,
+                            "job": true
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "description": "All sector scores over time for trend comparison",
+            "fieldConfig": {
+                "defaults": {
+                    "decimals": 3,
+                    "min": 0,
+                    "max": 1,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineWidth": 2,
+                        "fillOpacity": 0,
+                        "showPoints": "never"
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 7,
+                "w": 24,
+                "x": 0,
+                "y": 15
+            },
+            "id": 9,
+            "targets": [
+                {
+                    "expr": "mlbot_heat_sector_score",
+                    "legendFormat": "{{sector}}"
+                }
+            ],
+            "title": "📈 Sector Heat Trends",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": true,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 22
+            },
+            "id": 12,
+            "title": "🏷️ AI — AI + DePIN (7 symbols)",
+            "type": "row",
+            "panels": [
+                {
+                    "description": "AI sector symbol heat detail",
+                    "fieldConfig": {
+                        "defaults": {
+                            "custom": {
+                                "align": "center"
+                            }
+                        },
+                        "overrides": [
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "symbol"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "custom.width",
+                                        "value": 80
+                                    }
+                                ]
+                            },
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "Value"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "displayName",
+                                        "value": "Score"
+                                    },
+                                    {
+                                        "id": "decimals",
+                                        "value": 3
+                                    },
+                                    {
+                                        "id": "thresholds",
+                                        "value": {
+                                            "steps": [
+                                                {
+                                                    "color": "#F2495C",
+                                                    "value": null
+                                                },
+                                                {
+                                                    "color": "#FADE2A",
+                                                    "value": 0.2
+                                                },
+                                                {
+                                                    "color": "#73BF69",
+                                                    "value": 0.5
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "id": "custom.displayMode",
+                                        "value": "color-background"
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 0,
+                        "y": 23
+                    },
+                    "id": 10,
+                    "options": {
+                        "showHeader": true,
+                        "sortBy": [
+                            {
+                                "displayName": "Score",
+                                "desc": true
+                            }
+                        ]
+                    },
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"AI\"}",
+                            "legendFormat": "",
+                            "format": "table",
+                            "instant": true
+                        }
+                    ],
+                    "title": "📋 AI Symbols",
+                    "type": "table",
+                    "transformations": [
+                        {
+                            "id": "organize",
+                            "options": {
+                                "excludeByName": {
+                                    "Time": true,
+                                    "__name__": true,
+                                    "instance": true,
+                                    "job": true,
+                                    "sector": true
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "description": "AI symbol heat scores over time",
+                    "fieldConfig": {
+                        "defaults": {
+                            "decimals": 3,
+                            "min": 0,
+                            "max": 1,
+                            "custom": {
+                                "drawStyle": "line",
+                                "lineWidth": 1,
+                                "fillOpacity": 0,
+                                "showPoints": "never"
+                            }
+                        }
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 12,
+                        "y": 23
+                    },
+                    "id": 11,
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"AI\"}",
+                            "legendFormat": "{{symbol}}"
+                        }
+                    ],
+                    "title": "📈 AI Symbol Trends",
+                    "type": "timeseries"
+                }
+            ]
+        },
+        {
+            "collapsed": true,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 23
+            },
+            "id": 15,
+            "title": "🏷️ DeFi — 去中心化金融 (8 symbols)",
+            "type": "row",
+            "panels": [
+                {
+                    "description": "DeFi sector symbol heat detail",
+                    "fieldConfig": {
+                        "defaults": {
+                            "custom": {
+                                "align": "center"
+                            }
+                        },
+                        "overrides": [
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "symbol"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "custom.width",
+                                        "value": 80
+                                    }
+                                ]
+                            },
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "Value"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "displayName",
+                                        "value": "Score"
+                                    },
+                                    {
+                                        "id": "decimals",
+                                        "value": 3
+                                    },
+                                    {
+                                        "id": "thresholds",
+                                        "value": {
+                                            "steps": [
+                                                {
+                                                    "color": "#F2495C",
+                                                    "value": null
+                                                },
+                                                {
+                                                    "color": "#FADE2A",
+                                                    "value": 0.2
+                                                },
+                                                {
+                                                    "color": "#73BF69",
+                                                    "value": 0.5
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "id": "custom.displayMode",
+                                        "value": "color-background"
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 0,
+                        "y": 24
+                    },
+                    "id": 13,
+                    "options": {
+                        "showHeader": true,
+                        "sortBy": [
+                            {
+                                "displayName": "Score",
+                                "desc": true
+                            }
+                        ]
+                    },
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"DeFi\"}",
+                            "legendFormat": "",
+                            "format": "table",
+                            "instant": true
+                        }
+                    ],
+                    "title": "📋 DeFi Symbols",
+                    "type": "table",
+                    "transformations": [
+                        {
+                            "id": "organize",
+                            "options": {
+                                "excludeByName": {
+                                    "Time": true,
+                                    "__name__": true,
+                                    "instance": true,
+                                    "job": true,
+                                    "sector": true
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "description": "DeFi symbol heat scores over time",
+                    "fieldConfig": {
+                        "defaults": {
+                            "decimals": 3,
+                            "min": 0,
+                            "max": 1,
+                            "custom": {
+                                "drawStyle": "line",
+                                "lineWidth": 1,
+                                "fillOpacity": 0,
+                                "showPoints": "never"
+                            }
+                        }
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 12,
+                        "y": 24
+                    },
+                    "id": 14,
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"DeFi\"}",
+                            "legendFormat": "{{symbol}}"
+                        }
+                    ],
+                    "title": "📈 DeFi Symbol Trends",
+                    "type": "timeseries"
+                }
+            ]
+        },
+        {
+            "collapsed": true,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 24
+            },
+            "id": 18,
+            "title": "🏷️ GameFi — 游戏 + 元宇宙 (6 symbols)",
+            "type": "row",
+            "panels": [
+                {
+                    "description": "GameFi sector symbol heat detail",
+                    "fieldConfig": {
+                        "defaults": {
+                            "custom": {
+                                "align": "center"
+                            }
+                        },
+                        "overrides": [
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "symbol"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "custom.width",
+                                        "value": 80
+                                    }
+                                ]
+                            },
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "Value"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "displayName",
+                                        "value": "Score"
+                                    },
+                                    {
+                                        "id": "decimals",
+                                        "value": 3
+                                    },
+                                    {
+                                        "id": "thresholds",
+                                        "value": {
+                                            "steps": [
+                                                {
+                                                    "color": "#F2495C",
+                                                    "value": null
+                                                },
+                                                {
+                                                    "color": "#FADE2A",
+                                                    "value": 0.2
+                                                },
+                                                {
+                                                    "color": "#73BF69",
+                                                    "value": 0.5
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "id": "custom.displayMode",
+                                        "value": "color-background"
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 0,
+                        "y": 25
+                    },
+                    "id": 16,
+                    "options": {
+                        "showHeader": true,
+                        "sortBy": [
+                            {
+                                "displayName": "Score",
+                                "desc": true
+                            }
+                        ]
+                    },
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"GameFi\"}",
+                            "legendFormat": "",
+                            "format": "table",
+                            "instant": true
+                        }
+                    ],
+                    "title": "📋 GameFi Symbols",
+                    "type": "table",
+                    "transformations": [
+                        {
+                            "id": "organize",
+                            "options": {
+                                "excludeByName": {
+                                    "Time": true,
+                                    "__name__": true,
+                                    "instance": true,
+                                    "job": true,
+                                    "sector": true
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "description": "GameFi symbol heat scores over time",
+                    "fieldConfig": {
+                        "defaults": {
+                            "decimals": 3,
+                            "min": 0,
+                            "max": 1,
+                            "custom": {
+                                "drawStyle": "line",
+                                "lineWidth": 1,
+                                "fillOpacity": 0,
+                                "showPoints": "never"
+                            }
+                        }
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 12,
+                        "y": 25
+                    },
+                    "id": 17,
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"GameFi\"}",
+                            "legendFormat": "{{symbol}}"
+                        }
+                    ],
+                    "title": "📈 GameFi Symbol Trends",
+                    "type": "timeseries"
+                }
+            ]
+        },
+        {
+            "collapsed": true,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 25
+            },
+            "id": 21,
+            "title": "🏷️ L1 — Layer 1 公链 (12 symbols)",
+            "type": "row",
+            "panels": [
+                {
+                    "description": "L1 sector symbol heat detail",
+                    "fieldConfig": {
+                        "defaults": {
+                            "custom": {
+                                "align": "center"
+                            }
+                        },
+                        "overrides": [
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "symbol"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "custom.width",
+                                        "value": 80
+                                    }
+                                ]
+                            },
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "Value"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "displayName",
+                                        "value": "Score"
+                                    },
+                                    {
+                                        "id": "decimals",
+                                        "value": 3
+                                    },
+                                    {
+                                        "id": "thresholds",
+                                        "value": {
+                                            "steps": [
+                                                {
+                                                    "color": "#F2495C",
+                                                    "value": null
+                                                },
+                                                {
+                                                    "color": "#FADE2A",
+                                                    "value": 0.2
+                                                },
+                                                {
+                                                    "color": "#73BF69",
+                                                    "value": 0.5
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "id": "custom.displayMode",
+                                        "value": "color-background"
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 0,
+                        "y": 26
+                    },
+                    "id": 19,
+                    "options": {
+                        "showHeader": true,
+                        "sortBy": [
+                            {
+                                "displayName": "Score",
+                                "desc": true
+                            }
+                        ]
+                    },
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"L1\"}",
+                            "legendFormat": "",
+                            "format": "table",
+                            "instant": true
+                        }
+                    ],
+                    "title": "📋 L1 Symbols",
+                    "type": "table",
+                    "transformations": [
+                        {
+                            "id": "organize",
+                            "options": {
+                                "excludeByName": {
+                                    "Time": true,
+                                    "__name__": true,
+                                    "instance": true,
+                                    "job": true,
+                                    "sector": true
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "description": "L1 symbol heat scores over time",
+                    "fieldConfig": {
+                        "defaults": {
+                            "decimals": 3,
+                            "min": 0,
+                            "max": 1,
+                            "custom": {
+                                "drawStyle": "line",
+                                "lineWidth": 1,
+                                "fillOpacity": 0,
+                                "showPoints": "never"
+                            }
+                        }
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 12,
+                        "y": 26
+                    },
+                    "id": 20,
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"L1\"}",
+                            "legendFormat": "{{symbol}}"
+                        }
+                    ],
+                    "title": "📈 L1 Symbol Trends",
+                    "type": "timeseries"
+                }
+            ]
+        },
+        {
+            "collapsed": true,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 26
+            },
+            "id": 24,
+            "title": "🏷️ L2 — Layer 2 扩容 (6 symbols)",
+            "type": "row",
+            "panels": [
+                {
+                    "description": "L2 sector symbol heat detail",
+                    "fieldConfig": {
+                        "defaults": {
+                            "custom": {
+                                "align": "center"
+                            }
+                        },
+                        "overrides": [
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "symbol"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "custom.width",
+                                        "value": 80
+                                    }
+                                ]
+                            },
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "Value"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "displayName",
+                                        "value": "Score"
+                                    },
+                                    {
+                                        "id": "decimals",
+                                        "value": 3
+                                    },
+                                    {
+                                        "id": "thresholds",
+                                        "value": {
+                                            "steps": [
+                                                {
+                                                    "color": "#F2495C",
+                                                    "value": null
+                                                },
+                                                {
+                                                    "color": "#FADE2A",
+                                                    "value": 0.2
+                                                },
+                                                {
+                                                    "color": "#73BF69",
+                                                    "value": 0.5
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "id": "custom.displayMode",
+                                        "value": "color-background"
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 0,
+                        "y": 27
+                    },
+                    "id": 22,
+                    "options": {
+                        "showHeader": true,
+                        "sortBy": [
+                            {
+                                "displayName": "Score",
+                                "desc": true
+                            }
+                        ]
+                    },
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"L2\"}",
+                            "legendFormat": "",
+                            "format": "table",
+                            "instant": true
+                        }
+                    ],
+                    "title": "📋 L2 Symbols",
+                    "type": "table",
+                    "transformations": [
+                        {
+                            "id": "organize",
+                            "options": {
+                                "excludeByName": {
+                                    "Time": true,
+                                    "__name__": true,
+                                    "instance": true,
+                                    "job": true,
+                                    "sector": true
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "description": "L2 symbol heat scores over time",
+                    "fieldConfig": {
+                        "defaults": {
+                            "decimals": 3,
+                            "min": 0,
+                            "max": 1,
+                            "custom": {
+                                "drawStyle": "line",
+                                "lineWidth": 1,
+                                "fillOpacity": 0,
+                                "showPoints": "never"
+                            }
+                        }
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 12,
+                        "y": 27
+                    },
+                    "id": 23,
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"L2\"}",
+                            "legendFormat": "{{symbol}}"
+                        }
+                    ],
+                    "title": "📈 L2 Symbol Trends",
+                    "type": "timeseries"
+                }
+            ]
+        },
+        {
+            "collapsed": true,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 27
+            },
+            "id": 27,
+            "title": "🏷️ Meme — Meme 币 (9 symbols)",
+            "type": "row",
+            "panels": [
+                {
+                    "description": "Meme sector symbol heat detail",
+                    "fieldConfig": {
+                        "defaults": {
+                            "custom": {
+                                "align": "center"
+                            }
+                        },
+                        "overrides": [
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "symbol"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "custom.width",
+                                        "value": 80
+                                    }
+                                ]
+                            },
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "Value"
+                                },
+                                "properties": [
+                                    {
+                                        "id": "displayName",
+                                        "value": "Score"
+                                    },
+                                    {
+                                        "id": "decimals",
+                                        "value": 3
+                                    },
+                                    {
+                                        "id": "thresholds",
+                                        "value": {
+                                            "steps": [
+                                                {
+                                                    "color": "#F2495C",
+                                                    "value": null
+                                                },
+                                                {
+                                                    "color": "#FADE2A",
+                                                    "value": 0.2
+                                                },
+                                                {
+                                                    "color": "#73BF69",
+                                                    "value": 0.5
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "id": "custom.displayMode",
+                                        "value": "color-background"
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 0,
+                        "y": 28
+                    },
+                    "id": 25,
+                    "options": {
+                        "showHeader": true,
+                        "sortBy": [
+                            {
+                                "displayName": "Score",
+                                "desc": true
+                            }
+                        ]
+                    },
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"Meme\"}",
+                            "legendFormat": "",
+                            "format": "table",
+                            "instant": true
+                        }
+                    ],
+                    "title": "📋 Meme Symbols",
+                    "type": "table",
+                    "transformations": [
+                        {
+                            "id": "organize",
+                            "options": {
+                                "excludeByName": {
+                                    "Time": true,
+                                    "__name__": true,
+                                    "instance": true,
+                                    "job": true,
+                                    "sector": true
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "description": "Meme symbol heat scores over time",
+                    "fieldConfig": {
+                        "defaults": {
+                            "decimals": 3,
+                            "min": 0,
+                            "max": 1,
+                            "custom": {
+                                "drawStyle": "line",
+                                "lineWidth": 1,
+                                "fillOpacity": 0,
+                                "showPoints": "never"
+                            }
+                        }
+                    },
+                    "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 12,
+                        "y": 28
+                    },
+                    "id": 26,
+                    "targets": [
+                        {
+                            "expr": "mlbot_heat_score{sector=\"Meme\"}",
+                            "legendFormat": "{{symbol}}"
+                        }
+                    ],
+                    "title": "📈 Meme Symbol Trends",
+                    "type": "timeseries"
+                }
+            ]
+        }
+    ],
+    "refresh": "5m",
+    "schemaVersion": 39,
+    "tags": [
+        "trading",
+        "quant",
+        "market-heat"
+    ],
+    "templating": {
+        "list": [
+            {
+                "allValue": "",
+                "current": {
+                    "text": "All",
+                    "value": "$__all"
+                },
+                "datasource": {
+                    "type": "prometheus",
+                    "uid": "${DS_PROMETHEUS}"
+                },
+                "definition": "label_values(mlbot_heat_score, sector)",
+                "hide": 0,
+                "includeAll": true,
+                "label": "Sector",
+                "multi": true,
+                "name": "sector",
+                "query": "label_values(mlbot_heat_score, sector)",
+                "refresh": 1,
+                "regex": "",
+                "type": "query"
+            }
+        ]
+    },
+    "time": {
+        "from": "now-7d",
+        "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "utc",
+    "title": "🌡️ Market Heat Dashboard",
+    "uid": "quant-market-heat",
+    "version": 1
+}
