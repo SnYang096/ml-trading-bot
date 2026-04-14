@@ -1,5 +1,5 @@
 # BPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260413_114440_rr_extreme/bpc
+# 来源: results/train_final_20260413_183041_rr_extreme/bpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc
@@ -16,65 +16,71 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_vol_leverage_asymmetry
-  tag: HARD_VOL_LEVERAGE_ASYMMETRY
+- id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
+  tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.50)
+  reason: 统计验证规则 (lift=1.60)
   when:
-    vol_leverage_asymmetry:
-      value_lt: 0.086
+    all_of:
+    - vol_leverage_asymmetry:
+        value_gt: 0.0564
+    - vol_leverage_asymmetry:
+        value_lt: 0.0792
   then:
     action: deny
-  comment: 'statistical(lift=1.50): vol_leverage_asymmetry < 0.08601'
-- id: gate_vpin_ma5
-  tag: HARD_VPIN_MA5
+  comment: 'statistical(lift=1.60): vol_leverage_asymmetry > 0.05641 & vol_leverage_asymmetry < 0.07915'
+- id: gate_ema_1200_position
+  tag: HARD_EMA_1200_POSITION
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.36)
+  reason: 统计验证规则 (lift=1.22)
   when:
-    vpin_ma5:
-      value_gt: 0.3422
+    ema_1200_position:
+      value_gt: 0.149
   then:
     action: deny
-  comment: 'statistical(lift=1.36): vpin_ma5 > 0.3422'
-- id: gate_macro_tp_vwap_1200_position
-  tag: HARD_MACRO_TP_VWAP_1200_POSITION
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.35)
-  when:
-    macro_tp_vwap_1200_position:
-      value_lt: -0.4442
-  then:
-    action: deny
-  comment: 'statistical(lift=1.35): macro_tp_vwap_1200_position < -0.4442'
+  comment: 'statistical(lift=1.22): ema_1200_position > 0.149'
 - id: gate_vol_persistence_vol_persistence
   tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
   phase: hard_gate
-  priority: 13
-  reason: 统计验证规则 (lift=1.30)
+  priority: 12
+  reason: 统计验证规则 (lift=1.17)
   when:
     all_of:
     - vol_persistence:
-        value_gt: 0.1435
+        value_gt: 0.1247
     - vol_persistence:
-        value_lt: 0.1999
+        value_lt: 0.1676
   then:
     action: deny
-  comment: 'statistical(lift=1.30): vol_persistence > 0.1435 & vol_persistence < 0.1999'
-- id: gate_vpin_volatility_10_vpin_volatility_10
-  tag: HARD_VPIN_VOLATILITY_10_VPIN_VOLATILITY_10
+  comment: 'statistical(lift=1.17): vol_persistence > 0.1247 & vol_persistence < 0.1676'
+- id: gate_macro_tp_vwap_1200_position_macro_tp_vwap_1200_position
+  tag: HARD_MACRO_TP_VWAP_1200_POSITION_MACRO_TP_VWAP_1200_POSITION
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.18)
+  when:
+    all_of:
+    - macro_tp_vwap_1200_position:
+        value_gt: -0.0599
+    - macro_tp_vwap_1200_position:
+        value_lt: -0.0281
+  then:
+    action: deny
+  comment: 'statistical(lift=1.18): macro_tp_vwap_1200_position > -0.05985 & macro_tp_vwap_1200_position < -0.02807'
+- id: gate_cvd_change_5_normalized_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.30)
+  reason: 统计验证规则 (lift=1.06)
   when:
     all_of:
-    - vpin_volatility_10:
-        value_gt: 0.0584
-    - vpin_volatility_10:
-        value_lt: 0.0688
+    - cvd_change_5_normalized:
+        value_gt: -0.0278
+    - cvd_change_5_normalized:
+        value_lt: -0.015
   then:
     action: deny
-  comment: 'statistical(lift=1.30): vpin_volatility_10 > 0.05837 & vpin_volatility_10 < 0.06884'
+  comment: 'statistical(lift=1.06): cvd_change_5_normalized > -0.02778 & cvd_change_5_normalized < -0.01502'
 guardrails: []

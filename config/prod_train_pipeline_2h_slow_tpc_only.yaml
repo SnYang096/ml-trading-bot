@@ -6,16 +6,17 @@
 # 示例:
 #   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_tpc_only.yaml --stage rolling_sim
 #
-# 时间窗：顶层 dates 与 prod_train_pipeline_2h_slow_bpc_only 对齐，便于 BPC vs TPC 对比。
-# strategies.tpc.dates 的 holdout/validation 须与 strategies.bpc.dates 一致，否则 resolve_strategy_dates
-# 会给出不同 holdout 长度，对比失真。
+# 时间窗：与 prod_train_pipeline_2h_slow_bpc_only 对齐，便于 BPC vs TPC 对比。
+#   • end_date=2026-03-31, holdout_months=26 → holdout_start=2024-01-01（rolling 覆盖 202401～202603）
+#   • validation_months=3 → Gate 调参用 holdout 内前 3 个月；纯 OOS 约从 2024-04-01 到 end_date
+# strategies.*.dates 须与顶层 holdout/validation 一致，否则 per-strategy 会覆盖全局（常见踩坑：仍为 9）
+# trading_map_continuous：X 轴会拉到 dates.end_date，但 K 线依赖 parquet；无数据则蜡烛停在最后有数据的月份
 # ============================================================
 
 dates:
   start_date: "2022-08-01"
-  end_date: "2024-12-31"
-  # 11 → holdout 从 2024-01-01 起，与 end_date 合起来共 12 个日历月；勿改成 12 除非接受多滚 2023-12
-  holdout_months: 15
+  end_date: "2026-03-31"
+  holdout_months: 26
   validation_months: 3
 training:
   seeds:
@@ -104,7 +105,7 @@ strategies:
   tpc:
     config: config/strategies/tpc
     dates:
-      holdout_months: 9
+      holdout_months: 26
       validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml

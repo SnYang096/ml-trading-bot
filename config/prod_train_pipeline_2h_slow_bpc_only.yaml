@@ -15,9 +15,9 @@
 
 dates:
   start_date: "2022-08-01"
-  end_date: "2024-12-31"
-  # 11 → holdout 从 2024-01-01 起，与 end_date 合起来共 12 个日历月；勿改成 12 除非接受多滚 2023-12
-  holdout_months: 15
+  end_date: "2026-03-31"
+  # end=2026-03-31, holdout=26 → holdout_start=2024-01-01；rolling 月约 202401～202603（与 TPC 管线对齐）
+  holdout_months: 26
   validation_months: 3
 training:
   seeds:
@@ -114,7 +114,7 @@ strategies:
   bpc:
     config: config/strategies/bpc
     dates:
-      holdout_months: 9
+      holdout_months: 26
       validation_months: 3
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml

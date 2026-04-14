@@ -1,5 +1,5 @@
 # TPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260413_114619_rr_extreme/tpc
+# 来源: results/train_final_20260413_215609_rr_extreme/tpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy tpc
@@ -16,68 +16,68 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_vol_leverage_asymmetry
-  tag: HARD_VOL_LEVERAGE_ASYMMETRY
+- id: gate_ema_1200_position
+  tag: HARD_EMA_1200_POSITION
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.44)
+  reason: 统计验证规则 (lift=1.33)
   when:
-    vol_leverage_asymmetry:
-      value_lt: 0.0904
+    ema_1200_position:
+      value_gt: 0.1499
   then:
     action: deny
-  comment: 'statistical(lift=1.44): vol_leverage_asymmetry < 0.0904'
-- id: gate_vol_clustering_strength
-  tag: HARD_VOL_CLUSTERING_STRENGTH
+  comment: 'statistical(lift=1.33): ema_1200_position > 0.1499'
+- id: gate_vol_persistence
+  tag: HARD_VOL_PERSISTENCE
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.16)
-  when:
-    vol_clustering_strength:
-      value_lt: 0.1086
-  then:
-    action: deny
-  comment: 'statistical(lift=1.16): vol_clustering_strength < 0.1086'
-- id: gate_vol_persistence_vol_persistence
-  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.49)
-  when:
-    all_of:
-    - vol_persistence:
-        value_gt: 0.0322
-    - vol_persistence:
-        value_lt: 0.0704
-  then:
-    action: deny
-  comment: 'statistical(lift=1.49): vol_persistence > 0.03215 & vol_persistence < 0.07037'
-- id: gate_ema_1200_position_ema_1200_position
-  tag: HARD_EMA_1200_POSITION_EMA_1200_POSITION
-  phase: hard_gate
-  priority: 13
   reason: 统计验证规则 (lift=1.30)
   when:
-    all_of:
-    - ema_1200_position:
-        value_gt: -0.0876
-    - ema_1200_position:
-        value_lt: -0.0571
+    vol_persistence:
+      value_lt: 0.0084
   then:
     action: deny
-  comment: 'statistical(lift=1.30): ema_1200_position > -0.08757 & ema_1200_position < -0.0571'
+  comment: 'statistical(lift=1.30): vol_persistence < 0.008362'
+- id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
+  tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.37)
+  when:
+    all_of:
+    - vol_leverage_asymmetry:
+        value_gt: 0.061
+    - vol_leverage_asymmetry:
+        value_lt: 0.0887
+  then:
+    action: deny
+  comment: 'statistical(lift=1.37): vol_leverage_asymmetry > 0.06099 & vol_leverage_asymmetry < 0.08868'
 - id: gate_macro_tp_vwap_1200_position_macro_tp_vwap_1200_position
   tag: HARD_MACRO_TP_VWAP_1200_POSITION_MACRO_TP_VWAP_1200_POSITION
   phase: hard_gate
-  priority: 14
-  reason: 统计验证规则 (lift=1.20)
+  priority: 13
+  reason: 统计验证规则 (lift=1.06)
   when:
     all_of:
     - macro_tp_vwap_1200_position:
-        value_gt: -0.1845
+        value_gt: -0.0588
     - macro_tp_vwap_1200_position:
-        value_lt: -0.1533
+        value_lt: 0.0712
   then:
     action: deny
-  comment: 'statistical(lift=1.20): macro_tp_vwap_1200_position > -0.1845 & macro_tp_vwap_1200_position < -0.1533'
+  comment: 'statistical(lift=1.06): macro_tp_vwap_1200_position > -0.05878 & macro_tp_vwap_1200_position < 0.07121'
+- id: gate_cvd_change_5_normalized_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED_CVD_CHANGE_5_NORMALIZED
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.10)
+  when:
+    all_of:
+    - cvd_change_5_normalized:
+        value_gt: -0.0296
+    - cvd_change_5_normalized:
+        value_lt: -0.0171
+  then:
+    action: deny
+  comment: 'statistical(lift=1.10): cvd_change_5_normalized > -0.02963 & cvd_change_5_normalized < -0.01705'
 guardrails: []
