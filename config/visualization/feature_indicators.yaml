@@ -4,6 +4,8 @@
 
 display:
   show_plots: true
+  # Cap points per series in charts (HTML size / browser embed stability).
+  max_plot_points: 2500
   max_columns_per_chart: 6
   chart_height_per_row: 250
   show_samples: true

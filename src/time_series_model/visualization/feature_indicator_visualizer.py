@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
 import io
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 import pandas as pd
@@ -23,7 +24,7 @@ try:
     from bokeh.plotting import figure
     from bokeh.layouts import column, gridplot
     from bokeh.embed import components
-    from bokeh.models import HoverTool, CrosshairTool, ColumnDataSource
+    from bokeh.models import Div, HoverTool, CrosshairTool, ColumnDataSource
     from bokeh.resources import CDN
     import bokeh
 
@@ -95,6 +96,30 @@ def load_data_with_strategy_features(
     feature_loader = StrategyFeatureLoader(
         feature_deps_path=str(PROJECT_ROOT / "config" / "feature_dependencies.yaml"),
     )
+
+    # Same as scripts/build_feature_store_from_config.py: VPIN / trade-cluster
+    # streaming alignment requires compute_params.freq (bar duration).
+    meta_timeframe = (getattr(strategy_config, "meta", None) or {}).get("timeframe")
+    effective_freq = meta_timeframe or timeframe
+    if meta_timeframe:
+        print(f"   ℹ️  strategy.timeframe from meta.yaml: {meta_timeframe}")
+    elif effective_freq:
+        print(
+            f"   ℹ️  No strategy.timeframe in meta.yaml; using CLI timeframe for freq: {effective_freq}"
+        )
+    if effective_freq:
+        feature_deps = feature_loader.feature_deps.get("features", {})
+        for feat_name in (
+            "vpin_base_aligned_features_f",
+            "trade_cluster_base_aligned_features_f",
+            "trade_cluster_semantic_scores_f",
+        ):
+            if feat_name not in feature_deps:
+                continue
+            compute_params = feature_deps[feat_name].setdefault("compute_params", {})
+            if "freq" not in compute_params:
+                compute_params["freq"] = effective_freq
+                print(f"   ✅ Injected freq='{effective_freq}' → {feat_name}")
 
     # Configure ticks_loader_json for VPIN features
     try:
@@ -463,23 +488,22 @@ def _build_strategy_feature_groups(
     return groups
 
 
-def _plot_feature_time_series_bokeh(
+def _build_feature_group_gridplot(
     df: pd.DataFrame,
     columns: List[str],
-    title: str,
     max_cols: int = 6,
     height_per_row: int = 250,
-) -> Optional[str]:
-    """Plot interactive time series for given columns using Bokeh; return HTML div string."""
+    max_plot_points: Optional[int] = None,
+) -> Optional[Any]:
+    """Build one Bokeh gridplot for a feature group (no embed); caller composes into a single document."""
     if not _BOKEH_AVAILABLE or not columns:
         print(
             f"      ❌ Early return: bokeh={_BOKEH_AVAILABLE}, cols={len(columns) if columns else 0}"
         )
         return None
     cols = columns[:max_cols]
-    n = len(cols)
-    if n == 0:
-        print(f"      ❌ No columns after slice")
+    if not cols:
+        print("      ❌ No columns after slice")
         return None
     try:
         plots = []
@@ -488,8 +512,13 @@ def _plot_feature_time_series_bokeh(
                 print(f"      ⚠️  Column {col} not in df")
                 continue
             series = df[col].dropna()
+            n_raw = len(series)
+            if max_plot_points is not None and n_raw > max_plot_points:
+                step = max(1, n_raw // max_plot_points)
+                series = series.iloc[::step]
             print(
-                f"      - {col}: {len(series)} non-null values (total: {len(df[col])}, null: {df[col].isnull().sum()})"
+                f"      - {col}: {len(series)} plot points (raw non-null: {n_raw}, "
+                f"total rows: {len(df[col])})"
             )
             if len(series) == 0:
                 continue
@@ -527,19 +556,17 @@ def _plot_feature_time_series_bokeh(
             plots.append(p)
 
         if not plots:
-            print(f"      ❌ No plots generated (all series empty?)")
+            print("      ❌ No plots generated (all series empty?)")
             return None
 
-        # Arrange in grid (3 columns max)
         ncols = min(3, len(plots))
         grid_rows = []
         for i in range(0, len(plots), ncols):
             grid_rows.append(plots[i : i + ncols])
 
         grid = gridplot(grid_rows, sizing_mode="stretch_width")
-        script, div = components(grid)
-        print(f"      ✅ Generated plot with {len(plots)} subplots")
-        return f"{script}\n{div}"
+        print(f"      ✅ Built subplot grid with {len(plots)} panels")
+        return grid
     except Exception as e:
         print(f"   ⚠️  Bokeh plot error: {e}")
         import traceback
@@ -575,45 +602,55 @@ def generate_html_report(
         raise ValueError("--strategy-config is required for feature visualization")
     available_features = _build_strategy_feature_groups(df, strategy_config_dir)
 
-    # Generate time-series plots for each feature type that has columns
-    plot_html_sections: List[str] = []
+    # One Bokeh document for all groups: dozens of separate embed_items() calls
+    # produce ~10MB+ HTML and many browsers only paint the last/first chart block.
     print(
         f"   📊 Generating plots: show_plots={show_plots}, bokeh_available={_BOKEH_AVAILABLE}"
     )
     print(
         f"   📊 Feature groups with data: {sum(1 for f in available_features if f['count'] > 0)}"
     )
+    raw_cap = display_config.get("max_plot_points", 2500)
+    max_plot_pts: Optional[int] = None
+    if isinstance(raw_cap, (int, float)) and raw_cap > 0:
+        max_plot_pts = int(raw_cap)
+
+    plots_section_html = ""
     if show_plots and _BOKEH_AVAILABLE:
+        plot_blocks: List[Any] = []
         for feat in available_features:
             if feat["count"] == 0:
                 continue
             print(f"   📊 Plotting {feat['key']} ({feat['count']} cols)...")
-            bokeh_html = _plot_feature_time_series_bokeh(
+            grid = _build_feature_group_gridplot(
                 df,
                 feat["columns"],
-                title=f"{feat['display_name']} — {symbol} {timeframe}",
                 max_cols=max_cols_per_chart,
                 height_per_row=chart_height_per_row,
+                max_plot_points=max_plot_pts,
             )
-            if bokeh_html:
-                plot_html_sections.append(
-                    f'<div class="chart-block">'
-                    f'<h3>{feat["display_name"]}</h3>'
-                    f'<p class="chart-desc">{feat["description"]}</p>'
-                    f"{bokeh_html}"
-                    f"</div>"
-                )
+            if grid is None:
+                continue
+            header = (
+                '<div class="chart-block">'
+                f"<h3>{html.escape(str(feat['display_name']))}</h3>"
+                '<p class="chart-desc">'
+                f"{html.escape(str(feat.get('description') or ''))}</p></div>"
+            )
+            plot_blocks.append(Div(text=header, sizing_mode="stretch_width"))
+            plot_blocks.append(grid)
+        if plot_blocks:
+            combined = column(*plot_blocks, sizing_mode="stretch_width")
+            script, div = components(combined)
+            plots_section_html = (
+                "<h2>Feature Plots</h2>"
+                "<p>Time-series of indicator values over the dataset period.</p>"
+                f"{script}\n{div}"
+            )
     elif show_plots and not _BOKEH_AVAILABLE:
-        plot_html_sections.append(
-            '<p class="chart-warn">Charts require bokeh. Install with: <code>pip install bokeh</code></p>'
-        )
-
-    plots_section_html = ""
-    if plot_html_sections:
         plots_section_html = (
-            "<h2>Feature Plots</h2>"
-            "<p>Time-series of indicator values over the dataset period.</p>"
-            + "\n".join(plot_html_sections)
+            '<p class="chart-warn">Charts require bokeh. Install with: '
+            "<code>pip install bokeh</code></p>"
         )
 
     # Build feature table rows
@@ -772,6 +809,8 @@ def generate_html_report(
             <p>To customize which features are visualized, edit the configuration file.</p>
         </div>
 
+        {plots_section_html}
+
         <h2>Feature Types Status</h2>
         <table class="feature-table">
             <thead>
@@ -786,8 +825,6 @@ def generate_html_report(
 {''.join(feature_rows)}
             </tbody>
         </table>
-
-        {plots_section_html}
 
         <div class="note">
             <h3>📝 Note</h3>
