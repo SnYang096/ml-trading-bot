@@ -89,8 +89,8 @@ event_backtest:
   map_extra_months: 4
   sym_r_default: "1.0:1:6.0"
   sym_r_by_family:
-    # 与 ME 相同网格，便于与 me 的 execution 口径对照（initial_r≈sl 侧）
-    srb: "3.0:1:6.0"
+    # 与更宽的 archetype SL 对齐，事件优化网格略放大
+    srb: "4.0:1:9.0"
   exec_objective_default: sharpe
   exec_objective_params:
     near_stop_threshold_r: -0.9
@@ -174,10 +174,10 @@ strategies:
       deploy:
         min_trades: 20
     simple_execution:
-      # 与 config/prod_train_pipeline_2h_slow_me_only.yaml 中 ME 的 simple_execution 一致
-      sl_r: 4.0
-      tp_r: 8.0
-      timeout_bars: 500
+      # 宽 SL / 远 TP，与 srb archetypes/execution 大带宽一致（2:1 RR）
+      sl_r: 6.0
+      tp_r: 12.0
+      timeout_bars: 600
 
 shap_feature_selection:
   enabled: true

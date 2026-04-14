@@ -1,7 +1,6 @@
-# SRB execution — 止盈止损与 trailing 语义对齐 ME（见 me/archetypes/execution.yaml）
+# SRB execution — trailing 语义同 ME，但止损/回撤带宽更大（更耐洗）
 #
-# 与 ME 一致：宽 initial_r、延后 activation trailing、无固定止盈、无 ema1200 结构出场。
-# SRB 仍保持「不加仓」：allow_add_on=false，不配置 add_position。
+# 宽 initial_r、延后 activation trailing、无固定止盈、无结构出场；不加仓。
 
 execution_constraints:
   allow_add_on: false
@@ -19,14 +18,14 @@ stop_loss:
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
-  initial_r: 4.0
+  initial_r: 6.0
   trailing:
     enabled: true
-    activation_r: 4.0
-    trail_r: 3.5
+    activation_r: 6.0
+    trail_r: 5.0
   type: trailing
 
 take_profit:
   enabled: false
 
-version: 2
+version: 3
