@@ -107,7 +107,6 @@ def _compute_soft_phase_core(
     vol_ma_window: int = 20,
     gate_pullback_on_breakout: bool = True,
     ema_position: pd.Series = None,
-    macro_vwap_position: pd.Series | None = None,
     tpc_semantic_reweight: bool = False,
     prefix: str = "bpc",
 ) -> pd.DataFrame:
@@ -120,9 +119,9 @@ def _compute_soft_phase_core(
     When ``gate_pullback_on_breakout=False`` (TPC behaviour):
       - ``is_after_breakout`` is always 1.0 (no breakout gate)
       - ``recent_direction`` comes from sign of ``ema_position``
-      - If ``tpc_semantic_reweight`` and ``macro_vwap_position`` are set: rescales
-        pullback vs continuation toward deeper VWAP discount and away from chop /
-        VWAP stretch (see ``tpc_semantic_*`` outputs).
+      - If ``tpc_semantic_reweight`` and ``ema_position`` are set: rescales pullback
+        vs continuation toward deeper EMA1200 discount and away from chop / stretch
+        (see ``tpc_semantic_*`` outputs).
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     high = pd.to_numeric(high, errors="coerce").astype(float)
@@ -334,47 +333,46 @@ def _compute_soft_phase_core(
     # ── TPC: 语义对齐（更深回踩、弱化延续、压震荡区与动量末端追涨杀跌）──
     semantic_chop = np.zeros(n, dtype=float)
     semantic_extension = np.zeros(n, dtype=float)
-    semantic_vwap_discount = np.full(n, 0.5, dtype=float)
-    if tpc_semantic_reweight and (not gate_pullback_on_breakout) and macro_vwap_position is not None:
-        mv_s = pd.to_numeric(macro_vwap_position, errors="coerce").fillna(0.0)
-        mv = mv_s.values
+    semantic_ema_discount = np.full(n, 0.5, dtype=float)
+    if (
+        tpc_semantic_reweight
+        and (not gate_pullback_on_breakout)
+        and ema_position is not None
+    ):
+        ep_s = pd.to_numeric(ema_position, errors="coerce").fillna(0.0)
+        ep = ep_s.values
         # 震荡区：BB 偏窄 + 方向置信低 → 类似「波动区来回扫」
         chop_raw = bb_compression * (1.0 - direction_confidence)
         semantic_chop = np.clip(chop_raw * 2.0, 0.0, 1.0)
-        # 动量末端：价相对 VWAP1200 过度拉伸（多头在正侧、空头在负侧）
-        ext_long = np.clip((mv - 0.03) / 0.10, 0.0, 1.0)
-        ext_short = np.clip((-mv - 0.03) / 0.10, 0.0, 1.0)
+        # 动量末端：价相对 EMA1200 过度拉伸（多头在正侧、空头在负侧）
+        ext_long = np.clip((ep - 0.03) / 0.10, 0.0, 1.0)
+        ext_short = np.clip((-ep - 0.03) / 0.10, 0.0, 1.0)
         semantic_extension = np.where(recent_direction > 0, ext_long, ext_short).astype(
             float
         )
-        # 相对 VWAP 的「折让」深度：多头希望价为负（在 VWAP 下方回踩更深）
-        semantic_vwap_discount = np.where(
+        # 相对 EMA1200 的「折让」深度：多头希望价为负（在均线下方回踩更深）
+        semantic_ema_discount = np.where(
             recent_direction > 0,
-            np.clip((-mv) / 0.14, 0.0, 1.0),
-            np.clip(mv / 0.14, 0.0, 1.0),
+            np.clip((-ep) / 0.14, 0.0, 1.0),
+            np.clip(ep / 0.14, 0.0, 1.0),
         ).astype(float)
-        ema_arr = (
-            pd.to_numeric(ema_position, errors="coerce").fillna(0.0).values
-            if ema_position is not None
-            else np.zeros(n, dtype=float)
-        )
-        ema_slope = pd.Series(ema_arr, index=close.index).diff(24).fillna(0.0).values
-        mv_slope = mv_s.diff(12).fillna(0.0).values
-        # 长期锚上行且仍偏多头语境：仍在 VWAP 上方、且 macro 位置在变差（更贵）→ 加重末端惩罚
-        long_uptrend = (recent_direction > 0) & (ema_arr > 0.02) & (ema_slope > 0)
-        chase_risk = long_uptrend & (mv > -0.015) & (mv_slope > 0)
+        ema_slope = ep_s.diff(24).fillna(0.0).values
+        ep_slope = ep_s.diff(12).fillna(0.0).values
+        # 趋势上行且仍偏多头语境：仍在 EMA 上方、且位置继续变差（更贵）→ 加重末端惩罚
+        long_uptrend = (recent_direction > 0) & (ep > 0.02) & (ema_slope > 0)
+        chase_risk = long_uptrend & (ep > -0.015) & (ep_slope > 0)
         semantic_extension = np.clip(
             semantic_extension + chase_risk.astype(float) * 0.35, 0.0, 1.0
         )
-        short_downtrend = (recent_direction < 0) & (ema_arr < -0.02) & (ema_slope < 0)
-        chase_risk_s = short_downtrend & (mv < 0.015) & (mv_slope < 0)
+        short_downtrend = (recent_direction < 0) & (ep < -0.02) & (ema_slope < 0)
+        chase_risk_s = short_downtrend & (ep < 0.015) & (ep_slope < 0)
         semantic_extension = np.clip(
             semantic_extension + chase_risk_s.astype(float) * 0.35, 0.0, 1.0
         )
         # 弱化延续、强化「深折让」与 Donchian 回踩深度
         depth_w = pullback_depth.astype(float)
         p_scale = (
-            (0.42 + 0.58 * semantic_vwap_discount)
+            (0.42 + 0.58 * semantic_ema_discount)
             * (0.72 + 0.28 * depth_w)
             * (1.0 - 0.48 * semantic_chop)
         )
@@ -414,7 +412,7 @@ def _compute_soft_phase_core(
     if p == "tpc":
         out_cols["tpc_semantic_chop"] = semantic_chop
         out_cols["tpc_semantic_extension"] = semantic_extension
-        out_cols["tpc_semantic_vwap_discount"] = semantic_vwap_discount
+        out_cols["tpc_semantic_ema_discount"] = semantic_ema_discount
 
     result = pd.DataFrame(out_cols, index=close.index)
 
@@ -539,7 +537,7 @@ def compute_bpc_soft_phase_from_series(
         "tpc_cvd_z",
         "tpc_semantic_chop",
         "tpc_semantic_extension",
-        "tpc_semantic_vwap_discount",
+        "tpc_semantic_ema_discount",
     ],
 )
 def compute_tpc_soft_phase_from_series(
@@ -554,7 +552,6 @@ def compute_tpc_soft_phase_from_series(
     ofci_pct: pd.Series = None,
     bb_width_normalized: pd.Series = None,
     ema_1200_position: pd.Series = None,
-    macro_tp_vwap_1200_position: pd.Series = None,
     lookback_breakout: int = 20,
     breakout_atr_mult: float = 1.0,
     pullback_decay: float = 0.3,
@@ -577,8 +574,7 @@ def compute_tpc_soft_phase_from_series(
         vol_ma_window=vol_ma_window,
         gate_pullback_on_breakout=False,
         ema_position=ema_1200_position,
-        macro_vwap_position=macro_tp_vwap_1200_position,
-        tpc_semantic_reweight=macro_tp_vwap_1200_position is not None,
+        tpc_semantic_reweight=ema_1200_position is not None,
         prefix="tpc",
     )
 

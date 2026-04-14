@@ -7436,7 +7436,6 @@ features:
     - ofci_pct_f
     - bb_width_normalized_pct_f
     - ema_1200_position_f
-    - macro_tp_vwap_1200_position_f
     required_columns:
     - close
     - high
@@ -7471,7 +7470,7 @@ features:
     - tpc_cvd_z
     - tpc_semantic_chop
     - tpc_semantic_extension
-    - tpc_semantic_vwap_discount
+    - tpc_semantic_ema_discount
     category: tpc
     description: TPC soft phase scores - trend-based pullback/continuation without breakout gate. Direction from EMA1200 sign.
     pass_full_df: false
@@ -7511,7 +7510,7 @@ features:
         tpc_cvd_z: zscore
         tpc_semantic_chop: bounded_0_1
         tpc_semantic_extension: bounded_0_1
-        tpc_semantic_vwap_discount: bounded_0_1
+        tpc_semantic_ema_discount: bounded_0_1
     column_mappings:
       close: close
       high: high
@@ -7523,7 +7522,6 @@ features:
       ofci_pct: ofci_pct
       bb_width_normalized: bb_width_normalized_pct
       ema_1200_position: ema_1200_position
-      macro_tp_vwap_1200_position: macro_tp_vwap_1200_position
 
   bpc_pullback_depth_pct_f:
     module: bpc
