@@ -7,6 +7,10 @@ strategy:
     识别多头impulse推进失败后的做空反转清算机会。
     核心：多头还在冲，但价格不再配合。
 
+    产品语义（研究配置对齐）：先相对长期均线（SMA200）明显偏离，再出现价量推进效率衰减
+    （「没力气顺畅上涨」），辅以效率翻转与 impulse/absorption 等 FER 原子信号抓反转清算；
+    具体阈值见 archetypes/prefilter.yaml 中非 locked 段 + locked 锚点。
+
   owner: quant_team
   archetype: FailureExhaustionReversalLong
 

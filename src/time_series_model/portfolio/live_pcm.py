@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
@@ -31,6 +31,31 @@ import yaml
 from src.time_series_model.core.trade_intent import TradeIntent
 
 logger = logging.getLogger(__name__)
+
+
+def _calendar_day_utc_str(
+    *, features: Dict[str, Any], decision_time: Any = None
+) -> str:
+    """PCM 日内节流用的日历日 (UTC YYYY-MM-DD)。
+
+    优先 ``decision_time``，其次 ``features["timestamp"]``；缺失时回退为当前 UTC 日（实盘）。
+    """
+    cand = decision_time if decision_time is not None else features.get("timestamp")
+    if cand is None:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        if hasattr(cand, "date") and callable(getattr(cand, "date")):
+            d = cand.date()
+            if isinstance(d, date):
+                return d.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    try:
+        if isinstance(cand, str) and len(cand) >= 10:
+            return cand[:10]
+    except Exception:
+        pass
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 # ────────────────────────────────────────────────────
@@ -478,6 +503,9 @@ class LivePCM:
         # 可选: 监控统计收集器
         self.stats_collector = None  # 通过外部注入 StatsCollector 实例
 
+        # 最近一次 decide() 的候选 intent 与 PCM 层拒因（供事件回测漏斗 / 排障）
+        self._last_decide_trace: Dict[str, Any] = {}
+
     def _parse_family_and_side(
         self,
         archetype: str,
@@ -801,6 +829,7 @@ class LivePCM:
         symbol: str,
         bars: Optional[List[Dict[str, Any]]] = None,
         features_by_timeframe: Optional[Dict[str, Dict[str, Any]]] = None,
+        decision_time: Any = None,
     ) -> List[TradeIntent]:
         """
         多策略独立 slot 仲裁 → 返回所有通过 per-strategy slot 检查的 TradeIntent
@@ -818,10 +847,22 @@ class LivePCM:
             features_by_timeframe: 多时间框架特征 {timeframe: features_dict}
                 用于多策略多 timeframe 路由。各策略绑定的 timeframe
                 通过 register(timeframe=...) 注册。
+            decision_time: 可选，当前决策 bar 的时间（与 event_backtest 时间线一致）。
+                用于 ``max_new_entries_per_day`` 的日历键；不传则尽量用 ``features["timestamp"]``，
+                仍无时回退 ``datetime.now``（实盘）。
 
         Returns:
             List[TradeIntent]（每策略最多 1 个，可返回多个）
         """
+        _pcm_day = _calendar_day_utc_str(features=features, decision_time=decision_time)
+        self._last_decide_trace = {
+            "all_intents": 0,
+            "accepted": 0,
+            "drop_direction_policy": 0,
+            "drop_family_conflict": 0,
+            "drop_daily_limit": 0,
+            "drop_slot": 0,
+        }
         if not self._strategies:
             return []
 
@@ -1012,6 +1053,8 @@ class LivePCM:
                 _dedup[_k] = intent
         all_intents = list(_dedup.values()) + _dedup_out
 
+        self._last_decide_trace["all_intents"] = int(len(all_intents))
+
         # ── 3. 每策略独立 slot 检查 (无跨策略竞争) ──
         _dir_pol = dict(self._constitution.get("direction_policy") or {})
         _market_side = self._effective_market_side(
@@ -1026,6 +1069,10 @@ class LivePCM:
                 market_side=_market_side,
                 policy=_dir_pol,
             ):
+                self._last_decide_trace["drop_direction_policy"] = (
+                    int(self._last_decide_trace.get("drop_direction_policy", 0) or 0)
+                    + 1
+                )
                 logger.info(
                     "PCM: 方向过滤拒绝 %s %s action=%s (market_side=%s)",
                     intent.symbol,
@@ -1050,6 +1097,10 @@ class LivePCM:
                         _conflict = True
                         break
                 if _conflict:
+                    self._last_decide_trace["drop_family_conflict"] = (
+                        int(self._last_decide_trace.get("drop_family_conflict", 0) or 0)
+                        + 1
+                    )
                     logger.info(
                         "PCM: 家族方向冲突拒绝 %s %s (family=%s side=%s)",
                         intent.symbol,
@@ -1075,11 +1126,12 @@ class LivePCM:
                 )
                 _throttle_limit = self._daily_entry_limits.get(_fam_throttle)
                 if _throttle_limit is not None:
-                    from datetime import datetime as _dt, timezone as _tz
-
-                    _today_str = _dt.now(_tz.utc).strftime("%Y-%m-%d")
-                    _dk = (_fam_throttle, _today_str)
+                    _dk = (_fam_throttle, _pcm_day)
                     if self._daily_entry_counts.get(_dk, 0) >= _throttle_limit:
+                        self._last_decide_trace["drop_daily_limit"] = (
+                            int(self._last_decide_trace.get("drop_daily_limit", 0) or 0)
+                            + 1
+                        )
                         logger.info(
                             "PCM: %s %s 日入场上限已满 (%d/%d)，拒绝",
                             symbol,
@@ -1093,6 +1145,9 @@ class LivePCM:
                 symbol, intent.archetype
             ):
                 # 该策略 slot 满 → 直接拒绝
+                self._last_decide_trace["drop_slot"] = (
+                    int(self._last_decide_trace.get("drop_slot", 0) or 0) + 1
+                )
                 logger.info(
                     "PCM: %s %s slot 已满 (%d/%d)，拒绝",
                     symbol,
@@ -1108,10 +1163,7 @@ class LivePCM:
                     intent.archetype, intent.action
                 )
                 if _fam_rec in self._daily_entry_limits:
-                    from datetime import datetime as _dt, timezone as _tz
-
-                    _today_str = _dt.now(_tz.utc).strftime("%Y-%m-%d")
-                    _dk = (_fam_rec, _today_str)
+                    _dk = (_fam_rec, _pcm_day)
                     self._daily_entry_counts[_dk] = (
                         self._daily_entry_counts.get(_dk, 0) + 1
                     )
@@ -1124,6 +1176,7 @@ class LivePCM:
                 intent.archetype,
                 self.get_archetype_scale(intent.archetype),
             )
+        self._last_decide_trace["accepted"] = int(len(accepted))
         return accepted
 
     # ── Layer 3: Override 极端信号覆盖 ──

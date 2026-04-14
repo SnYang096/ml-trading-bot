@@ -13,12 +13,17 @@
 9. LV override 逻辑
 """
 
+import json
+from pathlib import Path
+
 import pytest
+import pandas as pd
 from typing import Any, Dict, List, Optional
 
 from time_series_model.core.trade_intent import TradeIntent
 from time_series_model.portfolio.live_pcm import (
     LivePCM,
+    _calendar_day_utc_str,
     DEFAULT_ARCHETYPE_PRIORITY,
     RegimeDetector,
     REGIME_NORMAL,
@@ -76,6 +81,93 @@ def _make_intent(
 FEATURES = {"close": 50000.0, "volume": 100.0}
 
 # ── 测试 ──
+
+
+class TestLivePCMBacktestParity:
+    """事件回测 / 实盘一致性行为（日历键、诊断 trace）"""
+
+    def test_calendar_day_utc_str_from_pandas_timestamp(self):
+        ts = pd.Timestamp("2024-11-07 08:00:00+00:00")
+        assert (
+            _calendar_day_utc_str(features={"timestamp": ts}, decision_time=None)
+            == "2024-11-07"
+        )
+        assert (
+            _calendar_day_utc_str(features={"close": 1.0}, decision_time=ts)
+            == "2024-11-07"
+        )
+
+    def test_pcm_daily_throttle_uses_decision_time_not_wall_clock(self):
+        """同一仿真日超过 max_new_entries_per_day 后拒单；换仿真日重置。"""
+        pcm = LivePCM(max_slots=10)
+        pcm._daily_entry_limits["me"] = 2
+        pcm.register("me", FakeStrategy(intents=[_make_intent("ME")]))
+        base_feat = {"close": 50000.0, "ema_200": 40000.0, "volume": 1.0}
+        day_a = pd.Timestamp("2024-11-07 00:00:00+00:00")
+        day_b = pd.Timestamp("2024-11-08 00:00:00+00:00")
+        for _ in range(2):
+            out = pcm.decide(
+                features={**base_feat, "timestamp": day_a},
+                symbol="BTCUSDT",
+                decision_time=day_a,
+            )
+            assert len(out) == 1
+            # 与 intent.archetype 大小写一致，否则 slot 未清、会走 add 意图并绕过日限统计
+            pcm.notify_position_closed("BTCUSDT", "ME")
+        out3 = pcm.decide(
+            features={**base_feat, "timestamp": day_a},
+            symbol="BTCUSDT",
+            decision_time=day_a,
+        )
+        assert out3 == []
+        assert int(pcm._last_decide_trace.get("drop_daily_limit", 0) or 0) >= 1
+        pcm.notify_position_closed("BTCUSDT", "ME")
+        out4 = pcm.decide(
+            features={**base_feat, "timestamp": day_b},
+            symbol="BTCUSDT",
+            decision_time=day_b,
+        )
+        assert len(out4) == 1
+
+    def test_last_decide_trace_keys_after_decide(self):
+        pcm = LivePCM(max_slots=2)
+        pcm.register("bpc", FakeStrategy(intents=[_make_intent("bpc")]))
+        pcm.decide(features=FEATURES, symbol="BTCUSDT")
+        for k in (
+            "all_intents",
+            "accepted",
+            "drop_direction_policy",
+            "drop_family_conflict",
+            "drop_daily_limit",
+            "drop_slot",
+        ):
+            assert k in pcm._last_decide_trace
+
+    def test_saved_event_backtest_json_has_pcm_funnel_columns(self):
+        """本地 rolling 产物：event_backtest 写出 funnel_per_bar 的 pcm_* 列（无文件则 skip）。"""
+        root = Path(__file__).resolve().parents[2]
+        p = (
+            root
+            / "results/me/slow-rolling-sim/_rolling_sim/20260413_130313/fast_month_2024-11/me"
+            / "event_backtest_me_pcm_trace.json"
+        )
+        if not p.is_file():
+            pytest.skip(f"artifact not present: {p}")
+        data = json.loads(p.read_text(encoding="utf-8"))
+        rows = [
+            r for r in (data.get("funnel_per_bar") or []) if r.get("strategy") == "me"
+        ]
+        assert rows
+        need = {
+            "pcm_n_candidates",
+            "pcm_n_accepted",
+            "pcm_drop_direction_policy",
+            "pcm_drop_family_conflict",
+            "pcm_drop_daily_limit",
+            "pcm_drop_slot",
+        }
+        for k in need:
+            assert k in rows[0], f"missing funnel_per_bar column {k}"
 
 
 class TestLivePCMSingleStrategy:
@@ -261,13 +353,15 @@ class TestLivePCMSlotControl:
         pcm.register("me", FakeStrategy(intents=[_make_intent("ME", confidence=0.7)]))
         assert pcm.decide(features=FEATURES, symbol="BTCUSDT") == []
 
-    def test_same_symbol_same_archetype_rejects_new_slot(self):
+    def test_same_symbol_same_archetype_becomes_add_position_intent(self):
+        """已有 {symbol}:{archetype} slot 时，同策略再次触发会转为 add_position 意图（仍返回 1 条）。"""
         pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[_make_intent("BPC", confidence=0.8)]))
         first = pcm.decide(features=FEATURES, symbol="BTCUSDT")
         second = pcm.decide(features=FEATURES, symbol="BTCUSDT")
         assert len(first) == 1
-        assert second == []
+        assert len(second) == 1
+        assert bool(second[0].add_position) is True
 
     def test_same_symbol_same_archetype_allows_when_marked_add_position(self):
         pcm = LivePCM(max_slots=2)
@@ -922,7 +1016,7 @@ resource_allocation:
         *,
         add: bool = False,
         locked: bool = False,
-        cur_r: float = 0.0
+        cur_r: float = 0.0,
     ):
         return TradeIntent(
             action="LONG",

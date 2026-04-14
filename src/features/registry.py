@@ -328,6 +328,8 @@ FEATURE_MODULES = [
     "src.features.time_series.momentum_expansion_features",
     # FER (FailureExhaustionReversal) features
     "src.features.time_series.fer_features",
+    # SRB (Structural breakout success near SR) features
+    "src.features.time_series.srb_features",
     # Session & Microstructure features
     "src.features.time_series.session_features",
 ]

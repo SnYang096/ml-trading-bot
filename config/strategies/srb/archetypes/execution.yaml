@@ -1,27 +1,32 @@
-# SRB execution MVP：固定 RR + EMA1200 结构出场，不加仓（与 TPC 加仓版区分）
+# SRB execution — 止盈止损与 trailing 语义对齐 ME（见 me/archetypes/execution.yaml）
+#
+# 与 ME 一致：宽 initial_r、延后 activation trailing、无固定止盈、无 ema1200 结构出场。
+# SRB 仍保持「不加仓」：allow_add_on=false，不配置 add_position。
+
 execution_constraints:
   allow_add_on: false
   min_order_interval_minutes: 15
 
 holding:
-  max_holding_bars: 200
+  max_holding_bars: null
   time_stop_bars: 0
 
 stop_loss:
-  type: fixed
-  initial_r: 2.0
-  structural_exit: ema1200
-  trailing:
+  breakeven:
     enabled: false
-    activation_r: 2.0
-    trail_r: 2.0
+    lock_profit_atr: 1
+    trigger_r: 9
+  guardrails:
+    max_stop_pct: 0.1
+    min_stop_pct: 0.01
+  initial_r: 4.0
+  trailing:
+    enabled: true
+    activation_r: 4.0
+    trail_r: 3.5
+  type: trailing
 
 take_profit:
-  enabled: true
-  target_r: 4.0
-
-breakeven:
   enabled: false
-  trigger_r: 2
 
-version: 1
+version: 2

@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260413_143552_rr_extreme/me
+# 来源: results/train_final_20260414_213325_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -16,65 +16,62 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_var_99_left
-  tag: HARD_EVT_VAR_99_LEFT
-  phase: hard_gate
-  priority: 10
-  reason: 统计验证规则 (lift=1.10)
-  when:
-    evt_var_99_left:
-      value_lt: 0.6389
-  then:
-    action: deny
-  comment: 'statistical(lift=1.10): evt_var_99_left < 0.6389'
 - id: gate_evt_es_99_left
   tag: HARD_EVT_ES_99_LEFT
   phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.13)
+  priority: 10
+  reason: 统计验证规则 (lift=1.05)
   when:
     evt_es_99_left:
-      value_lt: 0.2579
+      value_gt: 0.2937
   then:
     action: deny
-  comment: 'statistical(lift=1.13): evt_es_99_left < 0.2579'
-- id: gate_vpin_max20_vpin_max20
-  tag: HARD_VPIN_MAX20_VPIN_MAX20
+  comment: 'statistical(lift=1.05): evt_es_99_left > 0.2937'
+- id: gate_bpc_cvd_absorption
+  tag: HARD_BPC_CVD_ABSORPTION
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.06)
+  when:
+    bpc_cvd_absorption:
+      value_gt: 0.0
+  then:
+    action: deny
+  comment: 'statistical(lift=1.06): bpc_cvd_absorption > 0'
+- id: gate_evt_var_99_right_evt_var_99_right
+  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
   phase: hard_gate
   priority: 12
-  reason: 统计验证规则 (lift=1.28)
+  reason: 统计验证规则 (lift=1.24)
   when:
     all_of:
-    - vpin_max20:
-        value_gt: 0.3554
-    - vpin_max20:
-        value_lt: 0.4005
+    - evt_var_99_right:
+        value_gt: 0.3214
+    - evt_var_99_right:
+        value_lt: 0.5913
   then:
     action: deny
-  comment: 'statistical(lift=1.28): vpin_max20 > 0.3554 & vpin_max20 < 0.4005'
-- id: gate_evt_es_99
-  tag: HARD_EVT_ES_99
+  comment: 'statistical(lift=1.24): evt_var_99_right > 0.3214 & evt_var_99_right < 0.5913'
+- id: gate_bpc_vol_pullback_confirm
+  tag: HARD_BPC_VOL_PULLBACK_CONFIRM
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.16)
+  reason: 统计验证规则 (lift=1.20)
   when:
-    evt_es_99:
-      value_lt: 0.1468
+    bpc_vol_pullback_confirm:
+      value_lt: 0.125
   then:
     action: deny
-  comment: 'statistical(lift=1.16): evt_es_99 < 0.1468'
-- id: gate_evt_scale_left_evt_scale_left
-  tag: HARD_EVT_SCALE_LEFT_EVT_SCALE_LEFT
+  comment: 'statistical(lift=1.20): bpc_vol_pullback_confirm < 0.125'
+- id: gate_bpc_price_breakout_strength
+  tag: HARD_BPC_PRICE_BREAKOUT_STRENGTH
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.29)
+  reason: 统计验证规则 (lift=1.12)
   when:
-    all_of:
-    - evt_scale_left:
-        value_gt: 0.5873
-    - evt_scale_left:
-        value_lt: 0.7579
+    bpc_price_breakout_strength:
+      value_gt: 0.0
   then:
     action: deny
-  comment: 'statistical(lift=1.29): evt_scale_left > 0.5873 & evt_scale_left < 0.7579'
+  comment: 'statistical(lift=1.12): bpc_price_breakout_strength > 0'
 guardrails: []

@@ -385,6 +385,8 @@ features:
     description: Percentile rank of jump_risk (microstructure stability, used in gate rules)
     pass_full_df: false
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       window: 10
       percentile_window: 540
       shift: 1
@@ -407,6 +409,8 @@ features:
     description: Percentile rank of path_length (rolling path length in ATR units, used in gate rules)
     pass_full_df: false
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       window: 20
       percentile_window: 540
       shift: 1
@@ -429,6 +433,8 @@ features:
     description: Percentile rank of path_efficiency (net_displacement / total_path_length, used in gate rules)
     pass_full_df: false
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       window: 20
       percentile_window: 540
       shift: 1
@@ -472,6 +478,8 @@ features:
     compute_params:
       window: 5
       normalized: false
+      output_normalization_map:
+        path_efficiency_slope_5: unitless
     column_mappings:
       path_efficiency_pct: path_efficiency_pct
   price_dir_consistency_slope_5_f:
@@ -488,6 +496,8 @@ features:
     compute_params:
       window: 5
       normalized: false
+      output_normalization_map:
+        price_dir_consistency_slope_5: unitless
     column_mappings:
       price_dir_consistency_pct: price_dir_consistency_pct
   trend_volatility_alignment_f:
@@ -2123,6 +2133,8 @@ features:
       window: 100
       ticks_dir: data/parquet_data
       lookback_minutes: 60
+      output_normalization_map:
+        ofci: bounded_neg1_1
   ofci_pct_f:
     module: reflexivity
     compute_func: compute_ofci_pct_from_series
@@ -2155,6 +2167,8 @@ features:
     pass_full_df: false
     compute_params:
       window: 60
+      output_normalization_map:
+        shd: bounded_0_1
     column_mappings:
       close: close
       cvd: cvd
@@ -7361,6 +7375,8 @@ features:
     description: BPC soft phase scores with atomic/composite/contextual features for tree model exploration.
     pass_full_df: false
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       lookback_breakout: 20
       breakout_atr_mult: 1.0
       pullback_decay: 0.3
@@ -7456,6 +7472,8 @@ features:
     description: TPC soft phase scores - trend-based pullback/continuation without breakout gate. Direction from EMA1200 sign.
     pass_full_df: false
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       lookback_breakout: 20
       breakout_atr_mult: 1.0
       pullback_decay: 0.3
@@ -7585,6 +7603,8 @@ features:
     description: BPC impulse return normalized by ATR, with direction preserved (signed)
     pass_full_df: false
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       lookback: 20
       normalized: true
       output_normalization_map:
@@ -7673,6 +7693,8 @@ features:
     description: BPC pullback delta absorption using z-score (high = accumulation signal)
     pass_full_df: false
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       lookback: 50
       normalized: true
       output_normalization_map:
@@ -7803,6 +7825,8 @@ features:
     description: FER failure-exhaustion-reversal signals for identifying single-side failure and reversal opportunities.
     pass_full_df: false
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       efficiency_window: 20
       absorption_window: 10
       trapped_lookback: 20
@@ -7843,6 +7867,41 @@ features:
       dist_to_nearest_sr: dist_to_nearest_sr
       direction_to_nearest_sr: direction_to_nearest_sr
 
+  # SRB 对偶：近 SR 成功推进 / 结构突破（与 fer_sr_failed_breakout_* 相反语义）
+  srb_sr_success_breakout_f:
+    module: srb
+    compute_func: compute_srb_sr_success_breakout_from_series
+    dependencies:
+    - cvd_change_features_f
+    - sr_strength_max_f
+    required_columns:
+    - close
+    - cvd
+    - dist_to_nearest_sr
+    - direction_to_nearest_sr
+    output_columns:
+    - srb_sr_success_breakout_score
+    - srb_sr_success_breakout_score_pct
+    - srb_sr_success_breakout_direction_signed
+    category: srb
+    description: SRB structural breakout success near SR (dual of FER fer_sr_failed_breakout); CVD-price continuation aligned with direction_to_nearest_sr.
+    pass_full_df: false
+    compute_params:
+      efficiency_window: 20
+      failure_window: 10
+      sr_near_atr: 1.2
+      normalized: true
+      output_normalization_map:
+        srb_sr_success_breakout_score: bounded_0_1
+        srb_sr_success_breakout_score_pct: bounded_0_1
+        srb_sr_success_breakout_direction_signed: bounded_-1_1
+    column_mappings:
+      close: close
+      cvd: cvd
+      cvd_change_5: cvd_change_5
+      dist_to_nearest_sr: dist_to_nearest_sr
+      direction_to_nearest_sr: direction_to_nearest_sr
+
   # ---------------------------------------------------------------------------
   # ME (MomentumExpansion) v3.0 - Energy × Acceleration × Participation
   # ---------------------------------------------------------------------------
@@ -7877,6 +7936,8 @@ features:
     description: ME v3.0 Energy × Acceleration × Participation three-factor model with 11 core features.
     pass_full_df: false
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       lookback: 20
       pct_window: 100
       normalized: true

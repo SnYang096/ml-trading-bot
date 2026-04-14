@@ -42,6 +42,10 @@ def _baseline_features() -> dict:
         "bars_since_local_low": 0.15,
         "close": 60000.0,
         "atr": 100.0,
+        # prefilter：SMA 偏离 + 推进衰减 + 效率翻转
+        "sma_200_position": 0.03,
+        "fer_momentum_efficiency_decay": 0.20,
+        "fer_efficiency_flip": 0.12,
     }
 
 

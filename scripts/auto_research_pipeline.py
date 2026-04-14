@@ -1529,6 +1529,8 @@ def run_data_download(
     ed = datetime.strptime(end_date, "%Y-%m-%d")
 
     # Step 0a: Download
+    # mlbot data download --symbols 为「逗号分隔的单个 TEXT」，不可拆成多个 argv
+    sym_csv = ",".join(s.strip() for s in symbols.split(",") if s.strip())
     rc, _ = run_step(
         "Data Download",
         [
@@ -1537,7 +1539,7 @@ def run_data_download(
             "download",
             "--no-docker",
             "--symbols",
-            *[s.strip() for s in symbols.split(",")],
+            sym_csv,
             "--start-year",
             str(sd.year),
             "--start-month",
@@ -1677,6 +1679,7 @@ def _maybe_auto_tune_locked_prefilter(
         str(float(tcfg.get("trade_penalty_high", 0.001) or 0.001)),
         "--stability-penalty",
         str(float(tcfg.get("stability_penalty", 0.0) or 0.0)),
+        "--skip-shap",
     ]
     proc = subprocess.run(
         cmd,

@@ -947,24 +947,31 @@ class OrderFlowListener:
         # 使用 decision_handler（GenericLiveStrategy / LivePCM 等）
         # 即使不交易也执行决策，以收集漏斗统计
         if self.decision_handler is not None:
+            _bars = (
+                self.memory_window.get_latest(240) if self.memory_window else []
+            )
             try:
                 intents = self.decision_handler.decide(
                     features=all_features,
                     symbol=self.symbol,
-                    bars=(
-                        self.memory_window.get_latest(240) if self.memory_window else []
-                    ),
+                    bars=_bars,
                     features_by_timeframe=features_by_timeframe,
+                    decision_time=all_features.get("timestamp"),
                 )
             except TypeError:
-                # 后向兼容: handler 不支持 features_by_timeframe (如单策略 GenericLiveStrategy)
-                intents = self.decision_handler.decide(
-                    features=all_features,
-                    symbol=self.symbol,
-                    bars=(
-                        self.memory_window.get_latest(240) if self.memory_window else []
-                    ),
-                )
+                try:
+                    intents = self.decision_handler.decide(
+                        features=all_features,
+                        symbol=self.symbol,
+                        bars=_bars,
+                        features_by_timeframe=features_by_timeframe,
+                    )
+                except TypeError:
+                    intents = self.decision_handler.decide(
+                        features=all_features,
+                        symbol=self.symbol,
+                        bars=_bars,
+                    )
 
         if not intents:
             logger.info("[%s] 无交易信号", self.symbol)

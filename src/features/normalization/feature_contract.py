@@ -37,7 +37,9 @@ def _infer_meta_for_feature(feature_name: str, feature_info: Dict[str, Any]) -> 
     # Primary, explicit sources
     normalize_mode = compute_params.get("normalize_mode")
     output_norm = compute_params.get("output_normalization")
-    output_norm_map = compute_params.get("output_normalization_map") or {}
+    # Per-output methods: prefer compute_params; also accept legacy top-level key on the feature node.
+    output_norm_map = dict(feature_info.get("output_normalization_map") or {})
+    output_norm_map.update(compute_params.get("output_normalization_map") or {})
     # Note: some features declare normalized at the top-level (older style); keep it honored.
     normalized_flag = bool(compute_params.get("normalized", False)) or bool(
         feature_info.get("normalized", False)
@@ -84,7 +86,7 @@ def _infer_meta_for_feature(feature_name: str, feature_info: Dict[str, Any]) -> 
                 col_expected_range = (-1.0, 1.0)
             elif col_method == "bounded_0_1":
                 col_expected_range = (0.0, 1.0)
-            elif col_method == "bounded_-1_1":
+            elif col_method in {"bounded_-1_1", "bounded_neg1_1"}:
                 col_expected_range = (-1.0, 1.0)
             elif col_method == "rank_rolling":
                 col_expected_range = (0.0, 1.0)

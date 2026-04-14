@@ -578,7 +578,9 @@ def _run_simulation(
             features=primary_features,
             symbol=sym,
             features_by_timeframe=features_by_tf,
+            decision_time=ts,
         )
+        _pcm_tr = dict(getattr(bt.pcm, "_last_decide_trace", None) or {})
 
         if intents:
             funnel["signals_generated"] += len(intents)
@@ -601,6 +603,20 @@ def _run_simulation(
                 if opened is None:
                     funnel["reject_max_positions"] += 1
         else:
+            _pcm_cand = int(_pcm_tr.get("all_intents", 0) or 0)
+            if _pcm_cand > 0:
+                funnel["reject_pcm_direction_policy"] = int(
+                    funnel.get("reject_pcm_direction_policy", 0) or 0
+                ) + int(_pcm_tr.get("drop_direction_policy", 0) or 0)
+                funnel["reject_pcm_family_conflict"] = int(
+                    funnel.get("reject_pcm_family_conflict", 0) or 0
+                ) + int(_pcm_tr.get("drop_family_conflict", 0) or 0)
+                funnel["reject_pcm_daily_throttle"] = int(
+                    funnel.get("reject_pcm_daily_throttle", 0) or 0
+                ) + int(_pcm_tr.get("drop_daily_limit", 0) or 0)
+                funnel["reject_pcm_slot_full"] = int(
+                    funnel.get("reject_pcm_slot_full", 0) or 0
+                ) + int(_pcm_tr.get("drop_slot", 0) or 0)
             _had_signal = False
             _deepest = "no_direction"
             for s_name, s_obj in bt._strats.items():
@@ -619,8 +635,11 @@ def _run_simulation(
                     continue
                 _had_signal = True
                 break
-            if _had_signal:
-                funnel["reject_pcm_slot_full"] += 1
+            if _pcm_cand > 0:
+                pass
+            elif _had_signal:
+                funnel.setdefault("reject_pcm_struct_pass_no_intent", 0)
+                funnel["reject_pcm_struct_pass_no_intent"] += 1
             elif _deepest == "gate_deny":
                 funnel["reject_gate_deny"] += 1
             elif _deepest == "entry_filter_deny":

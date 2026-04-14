@@ -1511,7 +1511,13 @@ class BacktestResult:
         keys = [
             ("total_signals_checked", "时间线检查次数"),
             ("signals_generated", "产生意图次数"),
-            ("reject_pcm_slot_full", "槽满拒单(有意图)"),
+            ("reject_pcm_slot_full", "PCM全局/策略槽满(drop_slot)"),
+            ("reject_pcm_direction_policy", "PCM宪法方向过滤(按候选intent计次)"),
+            ("reject_pcm_family_conflict", "PCM同symbol家族反向冲突"),
+            ("reject_pcm_daily_throttle", "PCM家族日内入场上限"),
+            ("reject_pcm_struct_pass_no_intent", "结构全过但无候选intent(极少)"),
+            ("reject_open_atr_nonpositive", "开仓时ATR≤0拒单"),
+            ("reject_open_duplicate_archetype", "同symbol同archetype已持仓拒新开"),
             ("add_position_ok", "加仓成功次数"),
             ("add_position_rejected", "加仓拒绝次数"),
             ("float_ladder_add_ok", "浮盈阶梯成功"),
@@ -2667,7 +2673,9 @@ class EventBacktester:
                 features=primary_features,
                 symbol=sym,
                 features_by_timeframe=features_by_tf,
+                decision_time=ts,
             )
+            _pcm_tr = dict(getattr(self.pcm, "_last_decide_trace", None) or {})
 
             for s_name, s_obj in self._strats.items():
                 lf = getattr(s_obj, "_last_funnel", None) or {}
@@ -2683,6 +2691,18 @@ class EventBacktester:
                     "entry_filter": lf.get("entry_filter"),
                     "direction": lf.get("direction"),
                     "direction_value": lf.get("direction_value"),
+                    "pcm_n_candidates": int(_pcm_tr.get("all_intents", 0) or 0),
+                    "pcm_n_accepted": int(len(intents)),
+                    "pcm_drop_direction_policy": int(
+                        _pcm_tr.get("drop_direction_policy", 0) or 0
+                    ),
+                    "pcm_drop_family_conflict": int(
+                        _pcm_tr.get("drop_family_conflict", 0) or 0
+                    ),
+                    "pcm_drop_daily_limit": int(
+                        _pcm_tr.get("drop_daily_limit", 0) or 0
+                    ),
+                    "pcm_drop_slot": int(_pcm_tr.get("drop_slot", 0) or 0),
                 }
                 # 供离线统计「是 gate 挡还是 prefilter 挡、触发了哪条规则」
                 if lf.get("gate_reasons") is not None:
@@ -2777,8 +2797,20 @@ class EventBacktester:
                         _dk2 = (_arch_lc, _ts_date)
                         _daily_entry_counts[_dk2] = _daily_entry_counts.get(_dk2, 0) + 1
                     if opened is None:
+                        _atr_open = float(entry_feats.get("atr", 0) or 0.0)
+                        _dup_open = any(
+                            p.get("symbol") == sym
+                            and str(p.get("archetype", "")).lower().strip() == _arch_lc
+                            for p in simulator._positions.values()
+                        )
+                        if _atr_open <= 0.0:
+                            funnel.setdefault("reject_open_atr_nonpositive", 0)
+                            funnel["reject_open_atr_nonpositive"] += 1
+                        elif _dup_open:
+                            funnel.setdefault("reject_open_duplicate_archetype", 0)
+                            funnel["reject_open_duplicate_archetype"] += 1
                         # 已有持仓，尝试加仓（trigger.type=float_r_ladder_only 时仅走下方阶梯逻辑）
-                        if _add_pos_enabled and _executor:
+                        elif _add_pos_enabled and _executor:
                             _win_lc = str(winning_arch or "").strip().lower()
                             added = None
                             _tried_signal_add = _win_lc not in _strats_float_ladder_meta
@@ -2860,6 +2892,20 @@ class EventBacktester:
                         else:
                             funnel["reject_max_positions"] += 1
             else:
+                _pcm_cand = int(_pcm_tr.get("all_intents", 0) or 0)
+                if _pcm_cand > 0:
+                    funnel["reject_pcm_direction_policy"] = int(
+                        funnel.get("reject_pcm_direction_policy", 0) or 0
+                    ) + int(_pcm_tr.get("drop_direction_policy", 0) or 0)
+                    funnel["reject_pcm_family_conflict"] = int(
+                        funnel.get("reject_pcm_family_conflict", 0) or 0
+                    ) + int(_pcm_tr.get("drop_family_conflict", 0) or 0)
+                    funnel["reject_pcm_daily_throttle"] = int(
+                        funnel.get("reject_pcm_daily_throttle", 0) or 0
+                    ) + int(_pcm_tr.get("drop_daily_limit", 0) or 0)
+                    funnel["reject_pcm_slot_full"] = int(
+                        funnel.get("reject_pcm_slot_full", 0) or 0
+                    ) + int(_pcm_tr.get("drop_slot", 0) or 0)
                 # 诊断拒绝原因: 逐策略检查 _last_funnel 确定最深到达阶段
                 _had_signal = False
                 _deepest = "no_evaluable_signal"  # 最浅
@@ -2896,11 +2942,15 @@ class EventBacktester:
                         ):
                             _deepest = "entry_filter_deny"
                         continue
-                    # 全部通过 → 策略产生了信号, 被 slot 拦截
+                    # 全部通过 → 策略层已产 intent，但 pcm.decide 返回空（见 _pcm_tr）
                     _had_signal = True
                     break
-                if _had_signal:
-                    funnel["reject_pcm_slot_full"] += 1
+                if _pcm_cand > 0:
+                    # 已在上方按 _last_decide_trace 细分，不再用 _deepest 重复归因
+                    pass
+                elif _had_signal:
+                    funnel.setdefault("reject_pcm_struct_pass_no_intent", 0)
+                    funnel["reject_pcm_struct_pass_no_intent"] += 1
                 elif _deepest == "pcm_direction_filter":
                     funnel["reject_pcm_direction_filter"] += 1
                 elif _deepest == "prefilter_deny":
