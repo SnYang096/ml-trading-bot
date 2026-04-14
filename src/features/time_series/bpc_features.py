@@ -107,6 +107,8 @@ def _compute_soft_phase_core(
     vol_ma_window: int = 20,
     gate_pullback_on_breakout: bool = True,
     ema_position: pd.Series = None,
+    macro_vwap_position: pd.Series | None = None,
+    tpc_semantic_reweight: bool = False,
     prefix: str = "bpc",
 ) -> pd.DataFrame:
     """Shared core for BPC and TPC soft phase scores.
@@ -118,6 +120,9 @@ def _compute_soft_phase_core(
     When ``gate_pullback_on_breakout=False`` (TPC behaviour):
       - ``is_after_breakout`` is always 1.0 (no breakout gate)
       - ``recent_direction`` comes from sign of ``ema_position``
+      - If ``tpc_semantic_reweight`` and ``macro_vwap_position`` are set: rescales
+        pullback vs continuation toward deeper VWAP discount and away from chop /
+        VWAP stretch (see ``tpc_semantic_*`` outputs).
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     high = pd.to_numeric(high, errors="coerce").astype(float)
@@ -326,38 +331,92 @@ def _compute_soft_phase_core(
     )
     score_neutral = np.clip(score_neutral, 0, 1)
 
+    # ── TPC: 语义对齐（更深回踩、弱化延续、压震荡区与动量末端追涨杀跌）──
+    semantic_chop = np.zeros(n, dtype=float)
+    semantic_extension = np.zeros(n, dtype=float)
+    semantic_vwap_discount = np.full(n, 0.5, dtype=float)
+    if tpc_semantic_reweight and (not gate_pullback_on_breakout) and macro_vwap_position is not None:
+        mv_s = pd.to_numeric(macro_vwap_position, errors="coerce").fillna(0.0)
+        mv = mv_s.values
+        # 震荡区：BB 偏窄 + 方向置信低 → 类似「波动区来回扫」
+        chop_raw = bb_compression * (1.0 - direction_confidence)
+        semantic_chop = np.clip(chop_raw * 2.0, 0.0, 1.0)
+        # 动量末端：价相对 VWAP1200 过度拉伸（多头在正侧、空头在负侧）
+        ext_long = np.clip((mv - 0.03) / 0.10, 0.0, 1.0)
+        ext_short = np.clip((-mv - 0.03) / 0.10, 0.0, 1.0)
+        semantic_extension = np.where(recent_direction > 0, ext_long, ext_short).astype(
+            float
+        )
+        # 相对 VWAP 的「折让」深度：多头希望价为负（在 VWAP 下方回踩更深）
+        semantic_vwap_discount = np.where(
+            recent_direction > 0,
+            np.clip((-mv) / 0.14, 0.0, 1.0),
+            np.clip(mv / 0.14, 0.0, 1.0),
+        ).astype(float)
+        ema_arr = (
+            pd.to_numeric(ema_position, errors="coerce").fillna(0.0).values
+            if ema_position is not None
+            else np.zeros(n, dtype=float)
+        )
+        ema_slope = pd.Series(ema_arr, index=close.index).diff(24).fillna(0.0).values
+        mv_slope = mv_s.diff(12).fillna(0.0).values
+        # 长期锚上行且仍偏多头语境：仍在 VWAP 上方、且 macro 位置在变差（更贵）→ 加重末端惩罚
+        long_uptrend = (recent_direction > 0) & (ema_arr > 0.02) & (ema_slope > 0)
+        chase_risk = long_uptrend & (mv > -0.015) & (mv_slope > 0)
+        semantic_extension = np.clip(
+            semantic_extension + chase_risk.astype(float) * 0.35, 0.0, 1.0
+        )
+        short_downtrend = (recent_direction < 0) & (ema_arr < -0.02) & (ema_slope < 0)
+        chase_risk_s = short_downtrend & (mv < 0.015) & (mv_slope < 0)
+        semantic_extension = np.clip(
+            semantic_extension + chase_risk_s.astype(float) * 0.35, 0.0, 1.0
+        )
+        # 弱化延续、强化「深折让」与 Donchian 回踩深度
+        depth_w = pullback_depth.astype(float)
+        p_scale = (
+            (0.42 + 0.58 * semantic_vwap_discount)
+            * (0.72 + 0.28 * depth_w)
+            * (1.0 - 0.48 * semantic_chop)
+        )
+        c_scale = (1.0 - 0.62 * semantic_extension) * (1.0 - 0.52 * semantic_chop)
+        score_pullback = np.clip(score_pullback * p_scale, 0.0, 1.0)
+        score_continuation = np.clip(score_continuation * c_scale, 0.0, 1.0)
+
     # ── Output ──
     p = prefix
-    result = pd.DataFrame(
-        {
-            f"{p}_price_breakout_strength": breakout_strength,
-            f"{p}_vol_breakout_confirm": vol_breakout_confirm,
-            f"{p}_cvd_breakout_confirm": cvd_breakout_confirm,
-            f"{p}_vpin_breakout_confirm": vpin_breakout_confirm,
-            f"{p}_pullback_depth": pullback_depth,
-            f"{p}_pullback_quality": pullback_quality,
-            f"{p}_vol_pullback_confirm": vol_pullback_confirm,
-            f"{p}_cvd_absorption": cvd_absorption,
-            f"{p}_recovery_strength": recovery_strength,
-            f"{p}_momentum_confirm": momentum_confirm,
-            f"{p}_vol_continuation_confirm": vol_continuation_confirm,
-            f"{p}_cvd_momentum": cvd_momentum,
-            f"{p}_vpin_rising": vpin_rising,
-            f"{p}_bb_compression": bb_compression,
-            f"{p}_vol_compression": vol_compression,
-            f"{p}_score_breakout": bpc_score_breakout,
-            f"{p}_score_pullback": score_pullback,
-            f"{p}_score_continuation": score_continuation,
-            f"{p}_score_neutral": score_neutral,
-            f"{p}_breakout_direction": recent_direction,
-            f"{p}_direction_confidence": direction_confidence,
-            f"{p}_is_after_breakout": is_after_breakout,
-            f"{p}_was_in_pullback": was_in_pullback.astype(float),
-            f"{p}_vol_ratio": vol_ratio_values,
-            f"{p}_cvd_z": cvd_z_values,
-        },
-        index=close.index,
-    )
+    out_cols: Dict[str, Any] = {
+        f"{p}_price_breakout_strength": breakout_strength,
+        f"{p}_vol_breakout_confirm": vol_breakout_confirm,
+        f"{p}_cvd_breakout_confirm": cvd_breakout_confirm,
+        f"{p}_vpin_breakout_confirm": vpin_breakout_confirm,
+        f"{p}_pullback_depth": pullback_depth,
+        f"{p}_pullback_quality": pullback_quality,
+        f"{p}_vol_pullback_confirm": vol_pullback_confirm,
+        f"{p}_cvd_absorption": cvd_absorption,
+        f"{p}_recovery_strength": recovery_strength,
+        f"{p}_momentum_confirm": momentum_confirm,
+        f"{p}_vol_continuation_confirm": vol_continuation_confirm,
+        f"{p}_cvd_momentum": cvd_momentum,
+        f"{p}_vpin_rising": vpin_rising,
+        f"{p}_bb_compression": bb_compression,
+        f"{p}_vol_compression": vol_compression,
+        f"{p}_score_breakout": bpc_score_breakout,
+        f"{p}_score_pullback": score_pullback,
+        f"{p}_score_continuation": score_continuation,
+        f"{p}_score_neutral": score_neutral,
+        f"{p}_breakout_direction": recent_direction,
+        f"{p}_direction_confidence": direction_confidence,
+        f"{p}_is_after_breakout": is_after_breakout,
+        f"{p}_was_in_pullback": was_in_pullback.astype(float),
+        f"{p}_vol_ratio": vol_ratio_values,
+        f"{p}_cvd_z": cvd_z_values,
+    }
+    if p == "tpc":
+        out_cols["tpc_semantic_chop"] = semantic_chop
+        out_cols["tpc_semantic_extension"] = semantic_extension
+        out_cols["tpc_semantic_vwap_discount"] = semantic_vwap_discount
+
+    result = pd.DataFrame(out_cols, index=close.index)
 
     result.attrs["feature_version"] = FEATURE_VERSION
     result.attrs["param_lookback_breakout"] = lookback_breakout
@@ -478,6 +537,9 @@ def compute_bpc_soft_phase_from_series(
         "tpc_was_in_pullback",
         "tpc_vol_ratio",
         "tpc_cvd_z",
+        "tpc_semantic_chop",
+        "tpc_semantic_extension",
+        "tpc_semantic_vwap_discount",
     ],
 )
 def compute_tpc_soft_phase_from_series(
@@ -492,6 +554,7 @@ def compute_tpc_soft_phase_from_series(
     ofci_pct: pd.Series = None,
     bb_width_normalized: pd.Series = None,
     ema_1200_position: pd.Series = None,
+    macro_tp_vwap_1200_position: pd.Series = None,
     lookback_breakout: int = 20,
     breakout_atr_mult: float = 1.0,
     pullback_decay: float = 0.3,
@@ -514,6 +577,8 @@ def compute_tpc_soft_phase_from_series(
         vol_ma_window=vol_ma_window,
         gate_pullback_on_breakout=False,
         ema_position=ema_1200_position,
+        macro_vwap_position=macro_tp_vwap_1200_position,
+        tpc_semantic_reweight=macro_tp_vwap_1200_position is not None,
         prefix="tpc",
     )
 
