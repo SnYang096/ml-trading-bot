@@ -9,6 +9,46 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
+# --- BPC 语义门控（与 TPC 对齐）：压波动区、压 EMA1200 过度拉伸追涨杀跌 ---
+- id: gate_bpc_semantic_chop_high
+  tag: HARD_BPC_SEMANTIC_CHOP
+  phase: hard_gate
+  priority: 6
+  reason: BPC 专用：BB 偏窄且方向置信低 → 典型震荡来回扫区
+  when:
+    bpc_semantic_chop:
+      value_gt: 0.62
+  then:
+    action: deny
+  comment: 'semantic: same construction as tpc_semantic_chop'
+  locked: true
+  lock_reason: 波动区过滤：减少横盘噪声中的试探单
+- id: gate_bpc_late_long_above_ema1200
+  tag: HARD_BPC_LATE_LONG_EMA1200
+  phase: hard_gate
+  priority: 7
+  reason: BPC 专用：价远高于 EMA1200（动量末端追涨）
+  when:
+    ema_1200_position:
+      value_gt: 0.10
+  then:
+    action: deny
+  comment: 'semantic: aligned with TPC late-long EMA stretch gate'
+  locked: true
+  lock_reason: 弱化延续语义：高位远离 EMA1200 时不追多
+- id: gate_bpc_late_short_below_ema1200
+  tag: HARD_BPC_LATE_SHORT_EMA1200
+  phase: hard_gate
+  priority: 7
+  reason: BPC 专用：价远低于 EMA1200（动量末端追空）
+  when:
+    ema_1200_position:
+      value_lt: -0.10
+  then:
+    action: deny
+  comment: 'semantic: symmetric late chase on ema_1200_position'
+  locked: true
+  lock_reason: 弱化延续语义：低位远离 EMA1200 时不追空
 - id: gate_evt_var_99_evt_var_99
   tag: HARD_EVT_VAR_99_EVT_VAR_99
   phase: hard_gate

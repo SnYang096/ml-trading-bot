@@ -107,7 +107,7 @@ def _compute_soft_phase_core(
     vol_ma_window: int = 20,
     gate_pullback_on_breakout: bool = True,
     ema_position: pd.Series = None,
-    tpc_semantic_reweight: bool = False,
+    semantic_ema_reweight: bool = False,
     prefix: str = "bpc",
 ) -> pd.DataFrame:
     """Shared core for BPC and TPC soft phase scores.
@@ -119,9 +119,9 @@ def _compute_soft_phase_core(
     When ``gate_pullback_on_breakout=False`` (TPC behaviour):
       - ``is_after_breakout`` is always 1.0 (no breakout gate)
       - ``recent_direction`` comes from sign of ``ema_position``
-      - If ``tpc_semantic_reweight`` and ``ema_position`` are set: rescales pullback
-        vs continuation toward deeper EMA1200 discount and away from chop / stretch
-        (see ``tpc_semantic_*`` outputs).
+      - If ``semantic_ema_reweight`` and ``ema_position`` are set (BPC or TPC):
+        rescales pullback vs continuation toward deeper EMA1200 discount and away
+        from chop / stretch (see ``bpc_semantic_*`` / ``tpc_semantic_*`` outputs).
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     high = pd.to_numeric(high, errors="coerce").astype(float)
@@ -330,15 +330,11 @@ def _compute_soft_phase_core(
     )
     score_neutral = np.clip(score_neutral, 0, 1)
 
-    # ── TPC: 语义对齐（更深回踩、弱化延续、压震荡区与动量末端追涨杀跌）──
+    # ── BPC/TPC 语义对齐（更深回踩、弱化延续、压震荡区与动量末端追涨杀跌）──
     semantic_chop = np.zeros(n, dtype=float)
     semantic_extension = np.zeros(n, dtype=float)
     semantic_ema_discount = np.full(n, 0.5, dtype=float)
-    if (
-        tpc_semantic_reweight
-        and (not gate_pullback_on_breakout)
-        and ema_position is not None
-    ):
+    if semantic_ema_reweight and ema_position is not None:
         ep_s = pd.to_numeric(ema_position, errors="coerce").fillna(0.0)
         ep = ep_s.values
         # 震荡区：BB 偏窄 + 方向置信低 → 类似「波动区来回扫」
@@ -413,6 +409,10 @@ def _compute_soft_phase_core(
         out_cols["tpc_semantic_chop"] = semantic_chop
         out_cols["tpc_semantic_extension"] = semantic_extension
         out_cols["tpc_semantic_ema_discount"] = semantic_ema_discount
+    elif p == "bpc":
+        out_cols["bpc_semantic_chop"] = semantic_chop
+        out_cols["bpc_semantic_extension"] = semantic_extension
+        out_cols["bpc_semantic_ema_discount"] = semantic_ema_discount
 
     result = pd.DataFrame(out_cols, index=close.index)
 
@@ -465,6 +465,9 @@ def _compute_soft_phase_core(
         "bpc_was_in_pullback",
         "bpc_vol_ratio",
         "bpc_cvd_z",
+        "bpc_semantic_chop",
+        "bpc_semantic_extension",
+        "bpc_semantic_ema_discount",
     ],
 )
 def compute_bpc_soft_phase_from_series(
@@ -478,6 +481,7 @@ def compute_bpc_soft_phase_from_series(
     vpin: pd.Series = None,
     ofci_pct: pd.Series = None,
     bb_width_normalized: pd.Series = None,
+    ema_1200_position: pd.Series = None,
     lookback_breakout: int = 20,
     breakout_atr_mult: float = 1.0,
     pullback_decay: float = 0.3,
@@ -499,6 +503,8 @@ def compute_bpc_soft_phase_from_series(
         pullback_decay=pullback_decay,
         vol_ma_window=vol_ma_window,
         gate_pullback_on_breakout=True,
+        ema_position=ema_1200_position,
+        semantic_ema_reweight=ema_1200_position is not None,
         prefix="bpc",
     )
 
@@ -574,7 +580,7 @@ def compute_tpc_soft_phase_from_series(
         vol_ma_window=vol_ma_window,
         gate_pullback_on_breakout=False,
         ema_position=ema_1200_position,
-        tpc_semantic_reweight=ema_1200_position is not None,
+        semantic_ema_reweight=ema_1200_position is not None,
         prefix="tpc",
     )
 
