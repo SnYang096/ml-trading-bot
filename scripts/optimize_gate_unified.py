@@ -1575,6 +1575,8 @@ def _promote_gate_to_archetypes(
 
     关键行为:
       - 优化失败的规则 (no_valid_threshold/skip) 会被移除
+      - locked 且优化失败 → 默认 disabled=true；若规则带 promote_never_disable=true
+        则保留启用并沿用 YAML 阈值（与 entry 的 promote_never_disable 语义对齐）
       - 累积 AND pass rate 过低时自动裁剪最弱规则 (防止全部 veto)
     """
     import yaml
@@ -1602,7 +1604,8 @@ def _promote_gate_to_archetypes(
     config = yaml.safe_load(raw_text) or {}
 
     # ── Filter hard_gates: only keep rules that passed optimization ──
-    # locked 规则永不删除：优化失败 → disabled: true（保留特征，临时关闭）
+    # locked 规则永不删除：优化失败 → 默认 disabled: true；
+    # promote_never_disable → 不 disabled，保留 YAML 阈值（仍可对非 frozen 规则做阈值优化）
     hard_gates = config.get("hard_gates", [])
     kept_rules = []
     removed_rules = []
@@ -1611,6 +1614,7 @@ def _promote_gate_to_archetypes(
     for rule in hard_gates:
         rule_id = rule.get("id", "")
         is_locked = bool(rule.get("locked", False))
+        never_disable = bool(rule.get("promote_never_disable"))
         opt = optimization_results.get(rule_id)
 
         if not opt:
@@ -1628,7 +1632,22 @@ def _promote_gate_to_archetypes(
         rec = opt.get("recommended_threshold")
 
         if status not in _VALID_OPT_STATUSES or rec is None:
-            if is_locked:
+            if never_disable:
+                rule.pop("disabled", None)
+                rule.pop("disabled_reason", None)
+                reason_txt = opt.get("reason", "no valid threshold")
+                sticky = (
+                    f"promote_never_disable: optimizer {status or 'failed'}, "
+                    f"kept YAML threshold ({reason_txt})"
+                )
+                prev = rule.get("comment")
+                rule["comment"] = f"{prev}; {sticky}" if prev else sticky
+                kept_rules.append(rule)
+                print(
+                    f"  🔒 Rule {rule_id}: promote_never_disable → "
+                    f"kept active, YAML threshold (not disabled)"
+                )
+            elif is_locked:
                 # Locked 规则优化失败 → disabled 但保留
                 rule["disabled"] = True
                 rule["disabled_reason"] = (
@@ -1664,8 +1683,8 @@ def _promote_gate_to_archetypes(
             if isinstance(lift, (int, float))
             else f"optimizer: {status}"
         )
-        # Locked 规则优化成功 → 确保 disabled 被清除
-        if is_locked:
+        # Locked / promote_never_disable 规则优化成功 → 确保 disabled 被清除
+        if is_locked or never_disable:
             rule.pop("disabled", None)
             rule.pop("disabled_reason", None)
         kept_rules.append(rule)
@@ -1760,7 +1779,11 @@ def _promote_gate_to_archetypes(
             print(f"  🔧 按 lift 裁剪...")
             prunable = []
             for rule in kept_rules:
-                if rule.get("frozen"):
+                if (
+                    rule.get("frozen")
+                    or rule.get("locked")
+                    or rule.get("promote_never_disable")
+                ):
                     continue
                 rule_id = rule.get("id", "")
                 opt = optimization_results.get(rule_id, {})

@@ -105,6 +105,75 @@ def test_execution_param_generator_regime_and_sr():
     assert abs(p["sr_exit_price"] - 0.95) < 1e-9
 
 
+def test_check_srb_reverse_basic():
+    """PositionSimulator.check_srb_reverse: 基本流程测试。"""
+    from scripts.event_backtest import PositionSimulator
+
+    sim = PositionSimulator()
+    sim._srb_reverse_policy = {
+        "enabled": True,
+        "confirm_k": 2,
+        "fake_lookahead": 5,
+        "cooldown_bars": 3,
+    }
+    sim._primary_bar_count = 10
+    sim._reverse_candidate = {
+        "sr_level": 100.0,
+        "original_side": "LONG",
+        "sl_bar": 10,
+        "sl_price": 95.0,
+        "confirm_count": 0,
+        "used": False,
+        "symbol": "BTCUSDT",
+        "atr_at_entry": 2.0,
+        "tier_name": "global",
+        "evidence_score": 0.5,
+    }
+    # bar 11: price below sr_level → confirm resets
+    assert sim.check_srb_reverse(99.0, 11) is None
+    assert sim._reverse_candidate["confirm_count"] == 0
+    # bar 12: price above → confirm 1
+    assert sim.check_srb_reverse(101.0, 12) is None
+    assert sim._reverse_candidate["confirm_count"] == 1
+    # bar 13: price above → confirm 2 → triggers
+    rev = sim.check_srb_reverse(102.0, 13)
+    assert rev is not None
+    assert rev["side"] == "LONG"
+    assert rev["symbol"] == "BTCUSDT"
+    assert sim._reverse_candidate["used"]
+    assert sim._reverse_cooldown_until_bar == 13 + 3
+
+
+def test_check_srb_reverse_expires():
+    """反手候选超出 fake_lookahead 后过期。"""
+    from scripts.event_backtest import PositionSimulator
+
+    sim = PositionSimulator()
+    sim._srb_reverse_policy = {
+        "enabled": True,
+        "confirm_k": 3,
+        "fake_lookahead": 2,
+        "cooldown_bars": 5,
+    }
+    sim._primary_bar_count = 10
+    sim._reverse_candidate = {
+        "sr_level": 100.0,
+        "original_side": "SHORT",
+        "sl_bar": 10,
+        "sl_price": 105.0,
+        "confirm_count": 0,
+        "used": False,
+        "symbol": "ETHUSDT",
+        "atr_at_entry": 3.0,
+        "tier_name": "global",
+        "evidence_score": 0.5,
+    }
+    # bar 13: 3 bars since sl_bar=10, lookahead=2 → expired
+    assert sim.check_srb_reverse(98.0, 13) is None
+    assert sim._reverse_candidate is None
+    assert sim._last_reverse_status == "expired"
+
+
 def test_structural_sr_break_long():
     intent = TradeIntent(
         action="LONG",

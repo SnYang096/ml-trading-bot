@@ -3,12 +3,6 @@ rules:
   operator: '>='
   value: 0.8905
   rationale: meta-algorithm, KS=0.1325, return_uplift=+1.2660, robustness=100%, holdout验证通过
-- feature: bpc_score_pullback
-  operator: '>='
-  value: 0.4
-  rationale: 语义锁定：必须出现可识别的回踩阶段，而非纯 breakout 追空
-  locked: true
-  lock_reason: BPC 语义锚点：回踩阶段成立
 - feature: bpc_pullback_depth
   operator: <=
   value: 0.55

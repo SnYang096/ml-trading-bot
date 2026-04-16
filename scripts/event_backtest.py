@@ -360,6 +360,7 @@ class ClosedTrade:
     evidence_score: float = 0.5  # evidence composite score (0-1)
     bars_held: int = 0
     is_add_position: bool = False  # 加仓标记
+    is_reverse: bool = False  # SRB 假突破反手标记
     size_multiplier: float = 1.0  # regime position scale
     atr_stop_pct: float = 0.0
     effective_stop_pct: float = 0.0
@@ -430,6 +431,12 @@ class PositionSimulator:
         self.last_add_reject_reason: str = ""
         # SRB 加仓门控（由 EventBacktester 从 execution.yaml 注入）
         self._srb_add_policy: Optional[Dict[str, Any]] = None
+        # SRB 假突破反手状态（由 EventBacktester 注入配置）
+        self._srb_reverse_policy: Optional[Dict[str, Any]] = None
+        self._reverse_candidate: Optional[Dict[str, Any]] = None
+        self._reverse_cooldown_until_bar: int = 0
+        self._last_reverse_status: str = ""
+        self._primary_bar_count: int = 0
 
     @property
     def has_positions(self) -> bool:
@@ -685,6 +692,7 @@ class PositionSimulator:
                     evidence_score=pos.get("evidence_score", 0),
                     bars_held=pos.get("bars_counted", 0),
                     is_add_position=pos.get("_is_add_position", False),
+                    is_reverse=pos.get("_is_reverse", False),
                     size_multiplier=pos.get("_size_multiplier", 1.0),
                     atr_stop_pct=pos.get("atr_stop_pct", 0.0),
                     effective_stop_pct=pos.get("effective_stop_pct", 0.0),
@@ -693,6 +701,28 @@ class PositionSimulator:
                 )
                 closed.append(trade)
                 self.closed_trades.append(trade)
+                # SRB 假突破反手：非 trailing 止损时记录反手候选
+                if (
+                    str(pos.get("archetype", "") or "").lower() == "srb"
+                    and normalized_reason == "sl"
+                    and not pos.get("_is_add_position", False)
+                    and self._srb_reverse_policy
+                    and self._srb_reverse_policy.get("enabled")
+                    and self._reverse_candidate is None
+                    and self._primary_bar_count >= self._reverse_cooldown_until_bar
+                ):
+                    self._reverse_candidate = {
+                        "sr_level": float(entry_price),
+                        "original_side": str(pos["side"]),
+                        "sl_bar": self._primary_bar_count,
+                        "sl_price": float(exit_price),
+                        "confirm_count": 0,
+                        "used": False,
+                        "symbol": str(pos.get("symbol", "")),
+                        "atr_at_entry": float(pos.get("atr_at_entry", 0)),
+                        "tier_name": str(pos.get("tier_name", "")),
+                        "evidence_score": float(pos.get("evidence_score", 0.5)),
+                    }
                 if str(pos.get("archetype", "") or "").lower() == "fer":
                     try:
                         from src.time_series_model.live.fer_diagnostics import (
@@ -822,6 +852,7 @@ class PositionSimulator:
                 evidence_score=pos.get("evidence_score", 0),
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
+                is_reverse=pos.get("_is_reverse", False),
                 size_multiplier=pos.get("_size_multiplier", 1.0),
                 atr_stop_pct=pos.get("atr_stop_pct", 0.0),
                 effective_stop_pct=pos.get("effective_stop_pct", 0.0),
@@ -879,6 +910,7 @@ class PositionSimulator:
                 evidence_score=pos.get("evidence_score", 0),
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
+                is_reverse=pos.get("_is_reverse", False),
                 size_multiplier=pos.get("_size_multiplier", 1.0),
                 atr_stop_pct=pos.get("atr_stop_pct", 0.0),
                 effective_stop_pct=pos.get("effective_stop_pct", 0.0),
@@ -891,6 +923,58 @@ class PositionSimulator:
         for pid in to_remove:
             self._positions.pop(pid, None)
         return closed
+
+    def check_srb_reverse(
+        self,
+        current_price: float,
+        current_bar_count: int,
+    ) -> Optional[Dict[str, Any]]:
+        """SRB 假突破反手检查（每根 primary bar 调用一次）。
+
+        如果条件满足返回反手开仓参数 dict，否则返回 None。
+        仅对 SRB archetype 有效——无反手候选时直接 return None。
+        """
+        self._last_reverse_status = ""
+        cand = self._reverse_candidate
+        if cand is None or cand.get("used"):
+            return None
+        pol = self._srb_reverse_policy or {}
+        if not pol.get("enabled"):
+            self._reverse_candidate = None
+            return None
+        lookahead = int(pol.get("fake_lookahead", 10))
+        confirm_k = int(pol.get("confirm_k", 3))
+        bars_since = current_bar_count - cand["sl_bar"]
+        if bars_since > lookahead:
+            self._reverse_candidate = None
+            self._last_reverse_status = "expired"
+            return None
+        sr_level = cand["sr_level"]
+        orig_side = str(cand["original_side"]).upper()
+        if orig_side in ("LONG", "BUY"):
+            if current_price > sr_level:
+                cand["confirm_count"] = cand.get("confirm_count", 0) + 1
+            else:
+                cand["confirm_count"] = 0
+        else:
+            if current_price < sr_level:
+                cand["confirm_count"] = cand.get("confirm_count", 0) + 1
+            else:
+                cand["confirm_count"] = 0
+        if cand["confirm_count"] >= confirm_k:
+            cand["used"] = True
+            cooldown = int(pol.get("cooldown_bars", 10))
+            self._reverse_cooldown_until_bar = current_bar_count + cooldown
+            return {
+                "side": orig_side,
+                "symbol": cand["symbol"],
+                "sr_level": sr_level,
+                "sl_price": cand["sl_price"],
+                "atr_at_entry": cand["atr_at_entry"],
+                "tier_name": cand["tier_name"],
+                "evidence_score": cand["evidence_score"],
+            }
+        return None
 
     def try_add_position(
         self,
@@ -1611,6 +1695,7 @@ class BacktestResult:
                     "evidence": round(t.evidence_score, 4),
                     "bars_held": t.bars_held,
                     "is_add_position": t.is_add_position,
+                    "is_reverse": t.is_reverse,
                     "size_multiplier": round(t.size_multiplier, 4),
                     "atr_stop_pct": round(t.atr_stop_pct, 6),
                     "effective_stop_pct": round(t.effective_stop_pct, 6),
@@ -2336,8 +2421,17 @@ class EventBacktester:
                 ).get("srb_add_position_policy")
             except Exception:
                 _srb_add_policy = None
+        _srb_reverse_policy: Optional[Dict[str, Any]] = None
+        if "srb" in self._strats:
+            try:
+                _srb_reverse_policy = (
+                    self._strats["srb"].archetype.execution.raw or {}
+                ).get("fake_break_reverse")
+            except Exception:
+                _srb_reverse_policy = None
         for _sim in self._simulators.values():
             _sim._srb_add_policy = _srb_add_policy
+            _sim._srb_reverse_policy = _srb_reverse_policy
 
         # 可选: 加载跨月续跑状态
         if resume_state:
@@ -2673,6 +2767,48 @@ class EventBacktester:
                     for _k, _v in list(features_by_tf[_tf_srb].items()):
                         if str(_k).startswith("srb_"):
                             primary_features[_k] = _v
+
+            # SRB 假突破反手检查（primary bar 计数 + 反手候选检查）
+            simulator._primary_bar_count += 1
+            _rev = simulator.check_srb_reverse(
+                current_price=float(primary_features.get("close", 0) or 0),
+                current_bar_count=simulator._primary_bar_count,
+            )
+            _rev_status = getattr(simulator, "_last_reverse_status", "")
+            if _rev_status == "expired":
+                funnel.setdefault("srb_reverse_expired", 0)
+                funnel["srb_reverse_expired"] += 1
+            if _rev is not None:
+                funnel.setdefault("srb_reverse_opened", 0)
+                funnel["srb_reverse_opened"] += 1
+                _rev_side = str(_rev["side"])
+                _rev_atr = float(_rev.get("atr_at_entry", 0) or 0)
+                _rev_entry_bar = {
+                    "close": primary_features.get("close", 0),
+                    "high": primary_features.get("high", 0),
+                    "low": primary_features.get("low", 0),
+                    "open": primary_features.get("open", 0),
+                    "timestamp": ts,
+                    "atr": primary_features.get("atr", 0) or _rev_atr,
+                }
+                _rev_intent_d = type(
+                    "ReverseIntent",
+                    (),
+                    {
+                        "archetype": "srb",
+                        "side": _rev_side,
+                        "tier_name": _rev.get("tier_name", ""),
+                        "evidence_score": _rev.get("evidence_score", 0.5),
+                    },
+                )()
+                _rev_bm = self._bm_map.get("srb", self._primary_bar_minutes)
+                _rev_pid = simulator.open_position(
+                    _rev_intent_d, _rev_entry_bar, primary_features, bar_minutes=_rev_bm
+                )
+                if _rev_pid is not None:
+                    _rp = simulator._positions.get(_rev_pid)
+                    if _rp is not None:
+                        _rp["_is_reverse"] = True
 
             # 更新 structural_price (EMA200) 用于 BPC trend_hold 结构性退出
             _ema_200_val = primary_features.get("ema_200")
@@ -4148,6 +4284,7 @@ def _trade_to_dict(t: ClosedTrade) -> dict:
         "evidence_score": round(t.evidence_score, 4),
         "size_multiplier": round(t.size_multiplier, 4),
         "is_add_position": t.is_add_position,
+        "is_reverse": t.is_reverse,
         "atr_stop_pct": round(t.atr_stop_pct, 6),
         "effective_stop_pct": round(t.effective_stop_pct, 6),
         "sizing_stop_source": t.sizing_stop_source,

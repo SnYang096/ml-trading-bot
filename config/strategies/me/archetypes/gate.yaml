@@ -1,11 +1,7 @@
-# ME Gate — 动量扩张专用
+# ME Gate — 与 BPC/TPC 对齐的语义硬门
 #
-# 2026-04 全面修正：移除 5 条「与 BPC 对齐」的 locked 规则。
-# BPC 做回调、ME 做趋势延续，语义相反；BPC 的 EVT/VPIN/vol_persistence band
-# 在动量主升段拦截 48-54%（SOL/XRP 2024-11 实测）。
-#
-# 清空 locked hard_gates，让 rolling 标定（optimize_gate_unified）从当月数据
-# 自行发现适合 ME 的 gate 规则（如 VWAP position、vol_clustering 等）。
+# locked：rolling 采纳回补 + pass-rate 裁剪跳过；promote_never_disable：优化失败不写 disabled；
+# 不设 frozen 以便 Gate Train 在 Val 上调 value_gt / value_lt。
 schema:
   phases:
     - system_safety
@@ -16,5 +12,47 @@ schema:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
-hard_gates: []
+hard_gates:
+  - id: gate_me_semantic_chop_high
+    tag: HARD_ME_SEMANTIC_CHOP
+    phase: hard_gate
+    priority: 6
+    reason: ME 共用语义：BB 偏窄且方向置信低 → 震荡噪声区，不开仓
+    when:
+      bpc_semantic_chop:
+        value_gt: 0.62
+    then:
+      action: deny
+    comment: "semantic: same construction as tpc_semantic_chop / gate_bpc_semantic_chop_high"
+    locked: true
+    promote_never_disable: true
+    lock_reason: 波动区过滤：减少横盘噪声中的试探单
+  - id: gate_me_late_long_above_ema1200
+    tag: HARD_ME_LATE_LONG_EMA1200
+    phase: hard_gate
+    priority: 7
+    reason: 价远高于 EMA1200（动量末端追涨）
+    when:
+      ema_1200_position:
+        value_gt: 0.10
+    then:
+      action: deny
+    comment: "semantic: aligned with TPC/BPC late-long EMA stretch gate"
+    locked: true
+    promote_never_disable: true
+    lock_reason: 高位远离 EMA1200 时不追多
+  - id: gate_me_late_short_below_ema1200
+    tag: HARD_ME_LATE_SHORT_EMA1200
+    phase: hard_gate
+    priority: 7
+    reason: 价远低于 EMA1200（动量末端追空）
+    when:
+      ema_1200_position:
+        value_lt: -0.10
+    then:
+      action: deny
+    comment: "semantic: symmetric late chase on ema_1200_position"
+    locked: true
+    promote_never_disable: true
+    lock_reason: 低位远离 EMA1200 时不追空
 guardrails: []

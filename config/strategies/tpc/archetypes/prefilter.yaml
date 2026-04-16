@@ -5,21 +5,9 @@ rules:
   operator: '>='
   value: 0.8905
   rationale: meta-algorithm, KS=0.1325, return_uplift=+1.2660, robustness=100%, holdout验证通过
-- feature: tpc_score_pullback
-  operator: '>='
-  value: 0.3
-  rationale: 语义锁定：必须出现可识别的回踩阶段（TPC 门控更松，阈值比 BPC 略低）
-  locked: true
-  lock_reason: TPC 语义锚点：回踩阶段成立
 - feature: tpc_pullback_depth
   operator: <=
-  value: 0.55
-  rationale: 语义锁定：回撤不能过深，过深更接近结构失败或反转语义
+  value: 0.75
+  rationale: TPC 语义改为“回调不破结构”，允许 continuation 较弱
   locked: true
-  lock_reason: TPC 语义锚点：回踩深度受控
-- feature: tpc_recovery_strength
-  operator: '>='
-  value: 0.5
-  rationale: 语义锁定：回踩后必须有恢复力度（TPC 略低于 BPC 的 0.6，因为无突破先验）
-  locked: true
-  lock_reason: TPC 语义锚点：恢复强度确认
+  lock_reason: TPC 语义锚点：回调不破结构（深度受控）即可

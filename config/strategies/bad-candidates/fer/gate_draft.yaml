@@ -1,0 +1,86 @@
+# FER Gate Draft (auto-generated)
+# 来源: results/train_final_20260416_143424_rr_extreme/fer
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy fer
+#   python scripts/optimize_gate_unified.py --strategy fer --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_volume_stability
+  tag: HARD_VOLUME_STABILITY
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.08)
+  when:
+    volume_stability:
+      value_gt: 0.5824
+  then:
+    action: deny
+  comment: 'statistical(lift=1.08): volume_stability > 0.5824'
+- id: gate_hurst_cvd_rolling_hurst_cvd_rolling
+  tag: HARD_HURST_CVD_ROLLING_HURST_CVD_ROLLING
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.08)
+  when:
+    all_of:
+    - hurst_cvd_rolling:
+        value_gt: 0.6356
+    - hurst_cvd_rolling:
+        value_lt: 0.7465
+  then:
+    action: deny
+  comment: 'statistical(lift=1.08): hurst_cvd_rolling > 0.6356 & hurst_cvd_rolling < 0.7465'
+- id: gate_bpc_cvd_breakout_confirm_bpc_cvd_breakout_confirm
+  tag: HARD_BPC_CVD_BREAKOUT_CONFIRM_BPC_CVD_BREAKOUT_CONFIRM
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.19)
+  when:
+    all_of:
+    - bpc_cvd_breakout_confirm:
+        value_gt: 0.4824
+    - bpc_cvd_breakout_confirm:
+        value_lt: 0.6735
+  then:
+    action: deny
+  comment: 'statistical(lift=1.19): bpc_cvd_breakout_confirm > 0.4824 & bpc_cvd_breakout_confirm < 0.6735'
+- id: gate_hilbert_cvd_env_hilbert_cvd_env
+  tag: HARD_HILBERT_CVD_ENV_HILBERT_CVD_ENV
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.13)
+  when:
+    all_of:
+    - hilbert_cvd_env:
+        value_gt: 0.1905
+    - hilbert_cvd_env:
+        value_lt: 0.3135
+  then:
+    action: deny
+  comment: 'statistical(lift=1.13): hilbert_cvd_env > 0.1905 & hilbert_cvd_env < 0.3135'
+- id: gate_vp_skewness_vp_skewness
+  tag: HARD_VP_SKEWNESS_VP_SKEWNESS
+  phase: hard_gate
+  priority: 14
+  reason: 统计验证规则 (lift=1.08)
+  when:
+    all_of:
+    - vp_skewness:
+        value_gt: 0.132
+    - vp_skewness:
+        value_lt: 0.385
+  then:
+    action: deny
+  comment: 'statistical(lift=1.08): vp_skewness > 0.132 & vp_skewness < 0.385'
+guardrails: []

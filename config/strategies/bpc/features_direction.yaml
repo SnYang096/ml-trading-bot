@@ -39,12 +39,6 @@ candidates:
   - feature: bpc_direction_confidence # 突破方向置信度 [0,1]
     transform: center_sign
 
-  # ── BPC 软阶段分数 (方向隐含) ──
-  - feature: bpc_score_breakout # 突破阶段分数 [0,1]
-    transform: center_sign
-  - feature: bpc_score_continuation # 延续阶段分数 [0,1]
-    transform: center_sign
-
   # ── BPC 方向一致性 ──
   - feature: bpc_dir_consistency_short # 短期方向一致性
   - feature: bpc_dir_consistency_mid # 中期方向一致性

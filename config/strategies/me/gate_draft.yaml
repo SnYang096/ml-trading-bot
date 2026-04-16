@@ -1,5 +1,5 @@
 # ME Gate Draft (auto-generated)
-# 来源: results/train_final_20260414_213325_rr_extreme/me
+# 来源: results/train_final_20260416_152824_rr_extreme/me
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy me
@@ -16,62 +16,68 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_es_99_left
-  tag: HARD_EVT_ES_99_LEFT
+- id: gate_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.05)
-  when:
-    evt_es_99_left:
-      value_gt: 0.2937
-  then:
-    action: deny
-  comment: 'statistical(lift=1.05): evt_es_99_left > 0.2937'
-- id: gate_bpc_cvd_absorption
-  tag: HARD_BPC_CVD_ABSORPTION
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.06)
-  when:
-    bpc_cvd_absorption:
-      value_gt: 0.0
-  then:
-    action: deny
-  comment: 'statistical(lift=1.06): bpc_cvd_absorption > 0'
-- id: gate_evt_var_99_right_evt_var_99_right
-  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
-  phase: hard_gate
-  priority: 12
   reason: 统计验证规则 (lift=1.24)
   when:
-    all_of:
-    - evt_var_99_right:
-        value_gt: 0.3214
-    - evt_var_99_right:
-        value_lt: 0.5913
+    cvd_change_5_normalized:
+      value_gt: 0.0022
   then:
     action: deny
-  comment: 'statistical(lift=1.24): evt_var_99_right > 0.3214 & evt_var_99_right < 0.5913'
-- id: gate_bpc_vol_pullback_confirm
-  tag: HARD_BPC_VOL_PULLBACK_CONFIRM
+  comment: 'statistical(lift=1.24): cvd_change_5_normalized > 0.002188'
+- id: gate_trade_cluster_imbalance_zscore_50_trade_cluster_imbalance_zscore_50
+  tag: HARD_TRADE_CLUSTER_IMBALANCE_ZSCORE_50_TRADE_CLUSTER_IMBALANCE_ZSCORE_50
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.25)
+  when:
+    all_of:
+    - trade_cluster_imbalance_zscore_50:
+        value_gt: 0.0909
+    - trade_cluster_imbalance_zscore_50:
+        value_lt: 1.207
+  then:
+    action: deny
+  comment: 'statistical(lift=1.25): trade_cluster_imbalance_zscore_50 > 0.09095 & trade_cluster_imbalance_zscore_50 < 1.207'
+- id: gate_bpc_pullback_depth_bpc_pullback_depth
+  tag: HARD_BPC_PULLBACK_DEPTH_BPC_PULLBACK_DEPTH
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.16)
+  when:
+    all_of:
+    - bpc_pullback_depth:
+        value_gt: 0.0852
+    - bpc_pullback_depth:
+        value_lt: 0.1701
+  then:
+    action: deny
+  comment: 'statistical(lift=1.16): bpc_pullback_depth > 0.08519 & bpc_pullback_depth < 0.1701'
+- id: gate_fp_volume_skew_fp_volume_skew
+  tag: HARD_FP_VOLUME_SKEW_FP_VOLUME_SKEW
   phase: hard_gate
   priority: 13
-  reason: 统计验证规则 (lift=1.20)
+  reason: 统计验证规则 (lift=1.09)
   when:
-    bpc_vol_pullback_confirm:
-      value_lt: 0.125
+    all_of:
+    - fp_volume_skew:
+        value_gt: 0.7022
+    - fp_volume_skew:
+        value_lt: 0.8229
   then:
     action: deny
-  comment: 'statistical(lift=1.20): bpc_vol_pullback_confirm < 0.125'
-- id: gate_bpc_price_breakout_strength
-  tag: HARD_BPC_PRICE_BREAKOUT_STRENGTH
+  comment: 'statistical(lift=1.09): fp_volume_skew > 0.7022 & fp_volume_skew < 0.8229'
+- id: gate_trade_cluster_net_runs_zscore_20
+  tag: HARD_TRADE_CLUSTER_NET_RUNS_ZSCORE_20
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.12)
+  reason: 统计验证规则 (lift=1.07)
   when:
-    bpc_price_breakout_strength:
-      value_gt: 0.0
+    trade_cluster_net_runs_zscore_20:
+      value_lt: -0.4544
   then:
     action: deny
-  comment: 'statistical(lift=1.12): bpc_price_breakout_strength > 0'
+  comment: 'statistical(lift=1.07): trade_cluster_net_runs_zscore_20 < -0.4544'
 guardrails: []

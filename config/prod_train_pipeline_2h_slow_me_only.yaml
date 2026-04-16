@@ -180,7 +180,8 @@ strategies:
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.3
+        # 多条 hard_gate 叠加时 allow 比例下限；chop + 统计门在个别月会很低，0.3 易触发裁剪
+        min_combined_pass_rate: 0.15
       backtest:
         min_trades: 50
       deploy:

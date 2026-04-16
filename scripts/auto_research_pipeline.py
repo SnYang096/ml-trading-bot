@@ -2406,6 +2406,14 @@ def run_strategy_pipeline(
     if _skip_shap:
         gate_train_args.append("--skip-gate-shap")
 
+    # 缓存“本月起始”的 locked gate 规则，避免被候选对比中的 Gate Opt --promote 覆盖后丢失。
+    # 后续所有 gate_draft 注入都优先使用该快照，保证语义锁定在整个月流程可追踪。
+    _month_locked_gate_rules: List[Dict[str, Any]] = []
+    if not dry_run:
+        _month_locked_gate_rules = load_locked_gate_rules(
+            Path(f"{config_dir}/archetypes/gate.yaml")
+        )
+
     # ── Prefilter Score 对比: 每个候选 prefilter 跑 mini-pipeline, 按 Score 择优 ──
     # 空 prefilter (empty) 仅在显式允许时参与候选。
     # 关键保护：如果开启了 locked 规则强制注入，默认不允许 empty 覆盖。
@@ -2474,6 +2482,11 @@ def run_strategy_pipeline(
                 _cpd = PROJECT_ROOT / f"config/strategies/{strategy}/gate_draft.yaml"
                 if _cpd.exists():
                     shutil.copy2(_cpd, Path(f"{config_dir}/gate_draft.yaml"))
+                # Ensure candidate gate_draft always carries month locked gate rules.
+                if _month_locked_gate_rules:
+                    merge_locked_gate_rules(
+                        Path(f"{config_dir}/gate_draft.yaml"), _month_locked_gate_rules
+                    )
                 # Gate Apply (draft)
                 run_step(
                     f"  Gate Apply [{_cm}]",
@@ -2772,6 +2785,24 @@ def run_strategy_pipeline(
 
     if not dry_run:
         _ensure_timestamp_for_gate_input(gate_pred)
+
+    if not dry_run:
+        # Ensure month gate_draft always carries locked semantic gate rules
+        # from the month archetype gate, even if Gate Train rewrote gate_draft.
+        gate_draft_path = Path(f"{config_dir}/gate_draft.yaml")
+        archetype_gate_path = Path(f"{config_dir}/archetypes/gate.yaml")
+        _locked_gate_rules = (
+            _month_locked_gate_rules
+            if _month_locked_gate_rules
+            else load_locked_gate_rules(archetype_gate_path)
+        )
+        if _locked_gate_rules:
+            _m_gate = merge_locked_gate_rules(gate_draft_path, _locked_gate_rules)
+            if int(_m_gate.get("added", 0) or 0) > 0:
+                print(
+                    f"   🔒 Gate locked 规则已注入 gate_draft: +{_m_gate['added']} "
+                    f"(total={_m_gate['total']})"
+                )
 
     # Gate apply (用 gate_draft 作为中间件)
     gate_draft = f"{config_dir}/gate_draft.yaml"

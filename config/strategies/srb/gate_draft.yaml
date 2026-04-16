@@ -1,5 +1,5 @@
 # SRB Gate Draft (auto-generated)
-# 来源: results/train_final_20260415_033038_rr_extreme/srb
+# 来源: results/train_final_20260416_152847_rr_extreme/srb
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy srb
@@ -16,68 +16,71 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_scale_right
-  tag: HARD_EVT_SCALE_RIGHT
+- id: gate_evt_tail_shape_right_evt_tail_shape_right
+  tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.57)
-  when:
-    evt_scale_right:
-      value_gt: 0.9286
-  then:
-    action: deny
-  comment: 'statistical(lift=1.57): evt_scale_right > 0.9286'
-- id: gate_macro_tp_vwap_1200_position
-  tag: HARD_MACRO_TP_VWAP_1200_POSITION
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.35)
-  when:
-    macro_tp_vwap_1200_position:
-      value_gt: 0.1812
-  then:
-    action: deny
-  comment: 'statistical(lift=1.35): macro_tp_vwap_1200_position > 0.1812'
-- id: gate_evt_tail_shape_evt_tail_shape
-  tag: HARD_EVT_TAIL_SHAPE_EVT_TAIL_SHAPE
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.25)
+  reason: 统计验证规则 (lift=1.44)
   when:
     all_of:
-    - evt_tail_shape:
-        value_gt: 0.4762
-    - evt_tail_shape:
-        value_lt: 0.7183
+    - evt_tail_shape_right:
+        value_gt: 0.1111
+    - evt_tail_shape_right:
+        value_lt: 0.4084
   then:
     action: deny
-  comment: 'statistical(lift=1.25): evt_tail_shape > 0.4762 & evt_tail_shape < 0.7183'
+  comment: 'statistical(lift=1.44): evt_tail_shape_right > 0.1111 & evt_tail_shape_right < 0.4084'
+- id: gate_evt_tail_shape
+  tag: HARD_EVT_TAIL_SHAPE
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.31)
+  when:
+    evt_tail_shape:
+      value_gt: 0.7302
+  then:
+    action: deny
+  comment: 'statistical(lift=1.31): evt_tail_shape > 0.7302'
 - id: gate_evt_var_99_right_evt_var_99_right
   tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
   phase: hard_gate
-  priority: 13
-  reason: 统计验证规则 (lift=1.32)
+  priority: 12
+  reason: 统计验证规则 (lift=1.48)
   when:
     all_of:
     - evt_var_99_right:
-        value_gt: 0.2341
+        value_gt: 0.5694
     - evt_var_99_right:
-        value_lt: 0.373
+        value_lt: 0.7659
   then:
     action: deny
-  comment: 'statistical(lift=1.32): evt_var_99_right > 0.2341 & evt_var_99_right < 0.373'
-- id: gate_shd_pct_shd_pct
-  tag: HARD_SHD_PCT_SHD_PCT
+  comment: 'statistical(lift=1.48): evt_var_99_right > 0.5694 & evt_var_99_right < 0.7659'
+- id: gate_evt_es_99_left_evt_es_99_left
+  tag: HARD_EVT_ES_99_LEFT_EVT_ES_99_LEFT
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.40)
+  when:
+    all_of:
+    - evt_es_99_left:
+        value_gt: 0.4365
+    - evt_es_99_left:
+        value_lt: 0.5992
+  then:
+    action: deny
+  comment: 'statistical(lift=1.40): evt_es_99_left > 0.4365 & evt_es_99_left < 0.5992'
+- id: gate_evt_scale_right_evt_scale_right
+  tag: HARD_EVT_SCALE_RIGHT_EVT_SCALE_RIGHT
   phase: hard_gate
   priority: 14
-  reason: 统计验证规则 (lift=1.34)
+  reason: 统计验证规则 (lift=1.56)
   when:
     all_of:
-    - shd_pct:
-        value_gt: 0.6234
-    - shd_pct:
-        value_lt: 0.7124
+    - evt_scale_right:
+        value_gt: 0.2103
+    - evt_scale_right:
+        value_lt: 0.3581
   then:
     action: deny
-  comment: 'statistical(lift=1.34): shd_pct > 0.6234 & shd_pct < 0.7124'
+  comment: 'statistical(lift=1.56): evt_scale_right > 0.2103 & evt_scale_right < 0.3581'
 guardrails: []

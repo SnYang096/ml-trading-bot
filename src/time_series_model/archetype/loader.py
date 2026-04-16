@@ -34,6 +34,8 @@ class GateRule:
     then: Dict[str, Any]
     frozen: bool = False  # 禁止优化阈值
     locked: bool = False  # 特征锁定（慢变量不可删除）
+    # promote 时优化失败也不写 disabled（可与 locked 配合，且仍允许非 frozen 下调阈值）
+    promote_never_disable: bool = False
     disabled: bool = False  # 临时禁用（KPI 不满足时保留但不执行）
 
     @property
@@ -91,6 +93,9 @@ class GateConfig:
                         then=dict(r.get("then") or {}),
                         frozen=bool(r.get("frozen", False)),
                         locked=bool(r.get("locked", False)),
+                        promote_never_disable=bool(
+                            r.get("promote_never_disable", False)
+                        ),
                         disabled=bool(r.get("disabled", False)),
                     )
                 )
