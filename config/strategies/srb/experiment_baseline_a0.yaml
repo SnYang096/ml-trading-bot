@@ -1,0 +1,26 @@
+# SRB Phase 0 — 基线 A0（示例：一次已跑完的 rolling_sim；新实验请复制本文件改 label）
+baseline:
+  label: A0
+  description: "SRB slow rolling 示例基线（20260414_220229）；后续实验与此对比 Δstitched_total_r / 回撤"
+  rolling_config: config/prod_train_pipeline_2h_slow_srb_only.yaml
+
+paths:
+  stitched_summary: results/srb/slow-rolling-sim/_rolling_sim/20260414_220229/stitched_summary.json
+  monthly_ledger: results/srb/slow-rolling-sim/_rolling_sim/20260414_220229/monthly_ledger.jsonl
+  event_trades_glob: results/srb/slow-rolling-sim/_rolling_sim/20260414_220229/fast_month_*/srb/event_trades_srb.csv
+
+metrics:
+  stitched_total_r: 46.9801
+  stitched_total_trades: 129
+  stitched_sharpe_r: null
+  max_drawdown_r: null
+  exit_sl_count: 59
+  exit_trailing_sl_count: 69
+  exit_structural_sr_count: 0
+
+acceptance:
+  max_dd_ratio_vs_baseline: 1.2
+
+notes:
+  - "报告命令: python scripts/srb_experiment_report.py --run-dir <rolling_root>"
+  - "网格命令: python scripts/srb_execution_grid.py"

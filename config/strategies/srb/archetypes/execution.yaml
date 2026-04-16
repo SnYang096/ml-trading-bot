@@ -1,9 +1,26 @@
 # SRB execution — trailing 语义同 ME，但止损/回撤带宽更大（更耐洗）
 #
-# 宽 initial_r、延后 activation trailing、无固定止盈、无结构出场；不加仓。
+# 浮盈阶梯加仓与 ME 对齐（float_r_ladder_only）；加仓前须经 srb_add_position_policy：
+# ADX/ER bucket 白名单 + 压缩特征上限（事件回测 try_add_position 与 float ladder 共用）。
+
+add_position:
+  add_size_multipliers:
+    - 0.8
+    - 0.5
+    - 0.3
+  inherit_parent_stop: true
+  max_add_times: 3
+  min_current_r_by_add:
+    - 0.5
+    - 1.0
+    - 1.5
+  min_current_r_unit: atr
+  sizing_mode: fixed_multiplier
+  trigger:
+    type: float_r_ladder_only
 
 execution_constraints:
-  allow_add_on: false
+  allow_add_on: true
   min_order_interval_minutes: 15
 
 holding:
@@ -27,5 +44,60 @@ stop_loss:
 
 take_profit:
   enabled: false
+
+# ---------------------------------------------------------------------------
+# SRB 加仓门控：仅当 regime_execution 未开时，用下列阈值算 bucket（与上表独立）
+# ---------------------------------------------------------------------------
+srb_add_position_policy:
+  enabled: true
+  allow_regime_buckets:
+    - high_adx_low_er
+    - high_adx_high_er
+  max_volume_compression_pct: 0.55
+  volume_compression_feature: bpc_volume_compression_pct
+  regime_adx_period: 14
+  regime_er_window_bars: 20
+  regime_thresholds:
+    adx_high: 40.0
+    er_high: 0.36
+
+# ---------------------------------------------------------------------------
+# SRB 实验扩展（默认全关；事件回测在 primary TF 上注入 srb_regime_* / srb_sr_*）
+# ---------------------------------------------------------------------------
+sr_structural_exit:
+  enabled: false
+  lookback_bars: 20
+  buffer_atr: 0.25
+
+regime_execution:
+  enabled: false
+  adx_period: 14
+  er_window_bars: 20
+  thresholds:
+    adx_high: 40.0
+    er_high: 0.36
+  buckets:
+    default: {}
+    high_adx_low_er:
+      initial_r: 6.0
+      activation_r: 6.0
+      trail_r: 5.0
+      size_multiplier: 1.0
+    high_adx_high_er:
+      initial_r: 4.5
+      activation_r: 5.0
+      trail_r: 4.5
+      size_multiplier: 0.85
+    low_adx_low_er:
+      initial_r: 5.0
+      activation_r: 5.5
+      trail_r: 5.0
+      size_multiplier: 1.0
+    low_adx_high_er:
+      initial_r: 5.0
+      activation_r: 5.5
+      trail_r: 5.0
+      size_multiplier: 1.0
+    unknown: {}
 
 version: 3

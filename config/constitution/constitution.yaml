@@ -186,8 +186,8 @@ resource_allocation:
     srb:
       max_slots: 4
       max_risk_per_trade: 0.01
-      allow_add_position: false
-      max_add_times: 1
+      allow_add_position: true
+      max_add_times: 3
 
     # ── ME 方向拆分 ──
     me:

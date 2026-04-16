@@ -183,6 +183,16 @@ def build_position_dict(
     _structural_exit = rr_constraints.get("structural_exit")
     if _structural_exit:
         pos["structural_exit"] = str(_structural_exit)
+    if str(pos.get("structural_exit") or "").strip().lower() == "sr_break_level":
+        _sp = rr_constraints.get("sr_exit_price")
+        if _sp is not None:
+            try:
+                pos["sr_exit_price"] = float(_sp)
+            except (TypeError, ValueError):
+                pos["sr_exit_price"] = None
+        pos["sr_exit_buffer_atr"] = float(
+            rr_constraints.get("sr_exit_buffer_atr", 0.25) or 0.25
+        )
 
     return pos
 
@@ -208,6 +218,7 @@ def enforce_position(
       3b. Structural exit (EMA200)
       3c. Structural exit (VWAP1200)
       3d. Structural exit (EMA1200)
+      3e. Structural exit (SR break level, SRB)
       4. Activation trailing
       5. SL hit (保守: SL 优先于 TP)
       6. TP hit
@@ -343,6 +354,29 @@ def enforce_position(
                     exit_price = price_close
         except (TypeError, ValueError):
             pass
+
+    # ── 3e. Structural exit (SR break level) — SRB 专用：跌破冻结支撑 / 涨破冻结阻力
+    if close_reason is None and str(
+        pos.get("structural_exit") or ""
+    ).strip().lower() == ("sr_break_level"):
+        lvl = pos.get("sr_exit_price")
+        buf_atr = float(pos.get("sr_exit_buffer_atr", 0.25) or 0.25) * float(
+            pos_atr or 0.0
+        )
+        if lvl is not None and pos_atr > 0:
+            try:
+                lv = float(lvl)
+                if lv == lv:
+                    thr_long = lv - buf_atr
+                    thr_short = lv + buf_atr
+                    if is_long and entry_price > lv and price_close < thr_long:
+                        close_reason = "structural_exit_sr_break"
+                        exit_price = price_close
+                    elif not is_long and entry_price < lv and price_close > thr_short:
+                        close_reason = "structural_exit_sr_break"
+                        exit_price = price_close
+            except (TypeError, ValueError):
+                pass
 
     # ── 4. Activation trailing ──
     if close_reason is None and pos.get("activation_r") is not None and pos_atr > 0:

@@ -308,12 +308,18 @@ class ExecutionParamGenerator:
     def __init__(self, execution_config: Dict[str, Any]):
         self.config = execution_config
 
-    def generate_params(self, evidence_score: float) -> Dict[str, Any]:
+    def generate_params(
+        self,
+        evidence_score: float,
+        features: Optional[Dict[str, Any]] = None,
+        direction: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """生成执行参数 — 统一使用全局参数（grid search 优化的）
 
-        方案 A: 移除 tier 分档，evidence 只在 gate 层做开/关决策，
-        不影响执行参数。确保向量回测 = 事件回测 = 实盘。
+        可选 ``features`` / ``direction``：SRB 实验用（regime_execution / sr_structural_exit），
+        由事件回测注入 ``srb_regime_*`` / ``srb_sr_*`` 后传入；缺省行为与旧版完全一致。
         """
+        features = features or {}
         sl_cfg = self.config.get("stop_loss", {})
         trail_cfg = sl_cfg.get("trailing", {}) or {}
         guardrails = sl_cfg.get("guardrails", {}) or {}
@@ -356,7 +362,7 @@ class ExecutionParamGenerator:
         )
         trail_r = float(trail_cfg.get("trail_r", 1.5)) if trailing_enabled else None
 
-        return {
+        result: Dict[str, Any] = {
             "tier_name": "global",
             "initial_r": float(sl_cfg.get("initial_r", 2.0)),
             "activation_r": activation_r,
@@ -373,6 +379,46 @@ class ExecutionParamGenerator:
             "breakeven_lock_profit_atr": breakeven_lock_profit_atr,
             "allow_trailing": trailing_enabled and activation_r is not None,
         }
+
+        re_cfg = self.config.get("regime_execution") or {}
+        if re_cfg.get("enabled"):
+            bucket = str(features.get("srb_regime_bucket", "unknown"))
+            buckets = re_cfg.get("buckets") or {}
+            patch = buckets.get(bucket) or buckets.get("default") or {}
+            for k in ("initial_r", "activation_r", "trail_r", "take_profit_r"):
+                if k in patch and patch[k] is not None:
+                    try:
+                        result[k] = float(patch[k])
+                    except (TypeError, ValueError):
+                        pass
+            if "size_multiplier" in patch and patch["size_multiplier"] is not None:
+                try:
+                    result["size_multiplier"] = float(patch["size_multiplier"])
+                except (TypeError, ValueError):
+                    pass
+            if "allow_trailing" in patch:
+                at = bool(patch["allow_trailing"])
+                result["allow_trailing"] = at and result.get("activation_r") is not None
+
+        se_cfg = self.config.get("sr_structural_exit") or {}
+        if se_cfg.get("enabled") and direction is not None:
+            buf = float(se_cfg.get("buffer_atr", 0.25) or 0.25)
+            sp: Optional[float] = None
+            if direction == 1:
+                sp = features.get("srb_sr_support")
+            elif direction == -1:
+                sp = features.get("srb_sr_resistance")
+            if sp is not None:
+                try:
+                    fp = float(sp)
+                    if np.isfinite(fp):
+                        result["structural_exit"] = "sr_break_level"
+                        result["sr_exit_price"] = fp
+                        result["sr_exit_buffer_atr"] = buf
+                except (TypeError, ValueError):
+                    pass
+
+        return result
 
 
 # =============================================================================
@@ -801,14 +847,24 @@ class GenericLiveStrategy:
         # ── 5. 执行参数生成 ──
         exec_params = {}
         if self.execution_generator is not None:
-            exec_params = self.execution_generator.generate_params(evidence_score)
+            exec_params = self.execution_generator.generate_params(
+                evidence_score, features=features, direction=direction
+            )
             self._last_tier_params = exec_params
             logger.debug(f"⚙️  Execution params: {exec_params}")
 
+        if str(self.strategy_name).lower() == "srb":
+            funnel["srb_regime_bucket"] = features.get("srb_regime_bucket")
+            funnel["srb_regime_adx14"] = features.get("srb_regime_adx14")
+            funnel["srb_regime_er20"] = features.get("srb_regime_er20")
+            funnel["srb_sr_support"] = features.get("srb_sr_support")
+            funnel["srb_sr_resistance"] = features.get("srb_sr_resistance")
+
         # ── 6. 构建 TradeIntent ──
         action = "LONG" if direction == 1 else "SHORT"
-        # evidence 缩放: score 0→0.5x, 0.5→0.75x, 1→1.0x
-        ev_size_multiplier = 0.5 + evidence_score
+        # evidence 缩放: score 0→0.5x, 0.5→0.75x, 1→1.0x；可选 regime size_multiplier
+        _reg_sm = float(exec_params.get("size_multiplier", 1.0) or 1.0)
+        ev_size_multiplier = (0.5 + evidence_score) * _reg_sm
         intent = TradeIntent(
             action=action,
             symbol=symbol,
@@ -826,6 +882,8 @@ class GenericLiveStrategy:
                     "trailing_atr": exec_params.get("trail_r"),
                     "max_holding_bars": exec_params.get("time_stop_bars", 50),
                     "structural_exit": exec_params.get("structural_exit"),
+                    "sr_exit_price": exec_params.get("sr_exit_price"),
+                    "sr_exit_buffer_atr": exec_params.get("sr_exit_buffer_atr"),
                     "min_stop_pct": exec_params.get("min_stop_pct"),
                     "max_stop_pct": exec_params.get("max_stop_pct"),
                 },
@@ -957,7 +1015,9 @@ class GenericLiveStrategy:
         # Tier 选择
         exec_params = {}
         if self.execution_generator is not None:
-            exec_params = self.execution_generator.generate_params(adjusted_score)
+            exec_params = self.execution_generator.generate_params(
+                adjusted_score, features=features, direction=direction
+            )
             self._last_tier_params = exec_params
 
         # ── 5. 构建 signal_info ──

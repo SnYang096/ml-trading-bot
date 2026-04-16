@@ -61,6 +61,10 @@ from src.time_series_model.live.position_logic import (
     build_position_dict,
     enforce_position,
 )
+from src.time_series_model.live.srb_regime import (
+    maybe_inject_srb_experiment_features,
+    srb_add_position_allowed,
+)
 from src.time_series_model.portfolio.live_pcm import LivePCM
 from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
@@ -424,6 +428,8 @@ class PositionSimulator:
         self.max_observed_notional_frac: float = 0.0
         # 记录最近一次加仓失败原因（供 funnel 细分统计）
         self.last_add_reject_reason: str = ""
+        # SRB 加仓门控（由 EventBacktester 从 execution.yaml 注入）
+        self._srb_add_policy: Optional[Dict[str, Any]] = None
 
     @property
     def has_positions(self) -> bool:
@@ -936,6 +942,13 @@ class PositionSimulator:
         if parent_pos is None:
             self.last_add_reject_reason = "no_parent_position"
             return None  # 没有已有持仓，不是加仓场景
+
+        _pol = getattr(self, "_srb_add_policy", None)
+        if archetype == "srb" and _pol:
+            _ok, _why = srb_add_position_allowed(features or {}, _pol)
+            if not _ok:
+                self.last_add_reject_reason = _why
+                return None
 
         # 2. 计算 current_r (用于 validate_add_position)
         entry_price = parent_pos["entry_price"]
@@ -2315,6 +2328,17 @@ class EventBacktester:
                 sim._om_bridge = self._om_bridge
             self._simulators[sym] = sim
 
+        _srb_add_policy: Optional[Dict[str, Any]] = None
+        if "srb" in self.strategy_names:
+            try:
+                _srb_add_policy = (
+                    self._strats["srb"].archetype.execution.raw or {}
+                ).get("srb_add_position_policy")
+            except Exception:
+                _srb_add_policy = None
+        for _sim in self._simulators.values():
+            _sim._srb_add_policy = _srb_add_policy
+
         # 可选: 加载跨月续跑状态
         if resume_state:
             resume_symbols = resume_state.get("symbols", {}) or {}
@@ -2625,6 +2649,31 @@ class EventBacktester:
             # 主特征 = 第一个可用 timeframe 的特征 (PCM 回退用)
             primary_features = next(iter(features_by_tf.values()))
 
+            # SRB 实验：在策略对应 primary TF 特征上注入 srb_regime_* / srb_sr_*（供 ExecutionParamGenerator）
+            if "srb" in self.strategy_names:
+                _tf_srb = self._tf_map.get("srb")
+                _raw_srb = self._strats["srb"].archetype.execution.raw or {}
+                _df_srb = (
+                    sym_data[sym]["tf_features"].get(_tf_srb)
+                    if _tf_srb and sym in sym_data
+                    else None
+                )
+                if (
+                    _df_srb is not None
+                    and not _df_srb.empty
+                    and _tf_srb
+                    and _tf_srb in features_by_tf
+                ):
+                    maybe_inject_srb_experiment_features(
+                        df=_df_srb,
+                        ts=ts,
+                        exec_raw=_raw_srb,
+                        out=features_by_tf[_tf_srb],
+                    )
+                    for _k, _v in list(features_by_tf[_tf_srb].items()):
+                        if str(_k).startswith("srb_"):
+                            primary_features[_k] = _v
+
             # 更新 structural_price (EMA200) 用于 BPC trend_hold 结构性退出
             _ema_200_val = primary_features.get("ema_200")
             if _ema_200_val is not None:
@@ -2886,6 +2935,14 @@ class EventBacktester:
                                 elif _why == "no_parent_position":
                                     funnel.setdefault("reject_add_no_parent", 0)
                                     funnel["reject_add_no_parent"] += 1
+                                elif _why == "srb_policy_regime_bucket":
+                                    funnel.setdefault("reject_add_srb_regime_bucket", 0)
+                                    funnel["reject_add_srb_regime_bucket"] += 1
+                                elif _why == "srb_policy_volume_compression":
+                                    funnel.setdefault(
+                                        "reject_add_srb_volume_compression", 0
+                                    )
+                                    funnel["reject_add_srb_volume_compression"] += 1
                                 else:
                                     funnel.setdefault("reject_add_other", 0)
                                     funnel["reject_add_other"] += 1
