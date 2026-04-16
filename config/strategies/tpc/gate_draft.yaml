@@ -1,5 +1,5 @@
 # TPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260416_151719_rr_extreme/tpc
+# 来源: results/train_final_20260416_182357_rr_extreme/tpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy tpc
@@ -16,68 +16,29 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_scale
-  tag: HARD_EVT_SCALE
+- id: gate_ema_1200_position_ema_1200_position
+  tag: HARD_EMA_1200_POSITION_EMA_1200_POSITION
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.24)
+  reason: 统计验证规则 (lift=1.30)
   when:
-    evt_scale:
-      value_lt: 0.5476
+    all_of:
+    - ema_1200_position:
+        value_gt: -0.0876
+    - ema_1200_position:
+        value_lt: -0.0571
   then:
     action: deny
-  comment: 'statistical(lift=1.24): evt_scale < 0.5476'
-- id: gate_evt_tail_shape
-  tag: HARD_EVT_TAIL_SHAPE
+  comment: 'statistical(lift=1.30): ema_1200_position > -0.08757 & ema_1200_position < -0.0571'
+- id: gate_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.51)
+  reason: 统计验证规则 (lift=1.10)
   when:
-    evt_tail_shape:
-      value_lt: 0.0119
+    cvd_change_5_normalized:
+      value_gt: 0.0257
   then:
     action: deny
-  comment: 'statistical(lift=1.51): evt_tail_shape < 0.0119'
-- id: gate_evt_es_99_right_evt_es_99_right
-  tag: HARD_EVT_ES_99_RIGHT_EVT_ES_99_RIGHT
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.56)
-  when:
-    all_of:
-    - evt_es_99_right:
-        value_gt: 0.1944
-    - evt_es_99_right:
-        value_lt: 0.3651
-  then:
-    action: deny
-  comment: 'statistical(lift=1.56): evt_es_99_right > 0.1944 & evt_es_99_right < 0.3651'
-- id: gate_evt_var_99_right_evt_var_99_right
-  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
-  phase: hard_gate
-  priority: 13
-  reason: 统计验证规则 (lift=1.23)
-  when:
-    all_of:
-    - evt_var_99_right:
-        value_gt: 0.1508
-    - evt_var_99_right:
-        value_lt: 0.4444
-  then:
-    action: deny
-  comment: 'statistical(lift=1.23): evt_var_99_right > 0.1508 & evt_var_99_right < 0.4444'
-- id: gate_evt_var_99_evt_var_99
-  tag: HARD_EVT_VAR_99_EVT_VAR_99
-  phase: hard_gate
-  priority: 14
-  reason: 统计验证规则 (lift=1.43)
-  when:
-    all_of:
-    - evt_var_99:
-        value_gt: 0.8095
-    - evt_var_99:
-        value_lt: 0.9087
-  then:
-    action: deny
-  comment: 'statistical(lift=1.43): evt_var_99 > 0.8095 & evt_var_99 < 0.9087'
+  comment: 'statistical(lift=1.10): cvd_change_5_normalized > 0.02565'
 guardrails: []
