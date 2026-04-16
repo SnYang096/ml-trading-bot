@@ -1,4 +1,4 @@
-# ME Gate — 与 BPC/TPC 对齐的语义硬门
+# ME Gate — 保留对 ME 更稳定的末端追涨/追空抑制门
 #
 # locked：rolling 采纳回补 + pass-rate 裁剪跳过；promote_never_disable：优化失败不写 disabled；
 # 不设 frozen 以便 Gate Train 在 Val 上调 value_gt / value_lt。
@@ -13,20 +13,6 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-  - id: gate_me_semantic_chop_high
-    tag: HARD_ME_SEMANTIC_CHOP
-    phase: hard_gate
-    priority: 6
-    reason: ME 共用语义：BB 偏窄且方向置信低 → 震荡噪声区，不开仓
-    when:
-      bpc_semantic_chop:
-        value_gt: 0.62
-    then:
-      action: deny
-    comment: "semantic: same construction as tpc_semantic_chop / gate_bpc_semantic_chop_high"
-    locked: true
-    promote_never_disable: true
-    lock_reason: 波动区过滤：减少横盘噪声中的试探单
   - id: gate_me_late_long_above_ema1200
     tag: HARD_ME_LATE_LONG_EMA1200
     phase: hard_gate
