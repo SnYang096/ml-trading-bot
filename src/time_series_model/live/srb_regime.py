@@ -97,6 +97,109 @@ def swing_sr_levels(
     return sup, res
 
 
+def should_reject_srb_wide_entry(
+    side: str,
+    close: float,
+    atr: float,
+    support_wide: Optional[float],
+    resistance_wide: Optional[float],
+    min_distance_atr: float,
+) -> bool:
+    """
+    宽窗 SR 入场屏蔽（与 ``scripts/event_backtest.py`` PCM 路径一致）。
+
+    LONG: 若上方宽窗阻力距现价 < min_distance_atr × ATR → True（拒绝）。
+    SHORT: 若下方宽窗支撑距现价 < min_distance_atr × ATR → True。
+
+    min_distance_atr≤0 / 无效价格或 ATR 时不拦截。
+    """
+    try:
+        mn = float(min_distance_atr)
+        px = float(close)
+        a = float(atr)
+    except (TypeError, ValueError):
+        return False
+    if mn <= 0 or not (px > 0) or not (a > 0):
+        return False
+    su = support_wide
+    re = resistance_wide
+    try:
+        sw = float(su) if su is not None and su == su else 0.0
+        rw = float(re) if re is not None and re == re else 0.0
+    except (TypeError, ValueError):
+        sw = rw = 0.0
+
+    u = str(side or "").upper()
+    if u in ("LONG", "BUY"):
+        # 阻力在价格上方且过近
+        if rw > px and (rw - px) < mn * a:
+            return True
+    elif u in ("SHORT", "SELL"):
+        # 支撑在价格下方且过近
+        if 0 < sw < px and (px - sw) < mn * a:
+            return True
+    return False
+
+
+def pick_srb_true_sr_level(
+    side: str,
+    entry_px: float,
+    atr: float,
+    *,
+    narrow_support: Optional[float],
+    narrow_resistance: Optional[float],
+    wide_support: Optional[float],
+    wide_resistance: Optional[float],
+    fallback_atr: float,
+) -> float:
+    """
+    fake_break_reverse Stage 2 锚点：默认用窄窗 SR（突破侧）；若窄窗距入场过近则用宽窗。
+
+    与 ``event_backtest.open_position`` 后写入 ``_srb_true_sr_level`` 的逻辑一致。
+    """
+    try:
+        ep = float(entry_px)
+        ae = float(atr)
+        fb = float(fallback_atr)
+    except (TypeError, ValueError):
+        return float(entry_px or 0)
+
+    def _f(x: Any) -> Optional[float]:
+        if x is None:
+            return None
+        try:
+            v = float(x)
+            return v if v == v and np.isfinite(v) else None
+        except (TypeError, ValueError):
+            return None
+
+    ns = _f(narrow_support)
+    nr = _f(narrow_resistance)
+    ws = _f(wide_support)
+    wr = _f(wide_resistance)
+
+    u = str(side or "").upper()
+    if u in ("LONG", "BUY"):
+        narrow = ns
+        wide = ws
+    elif u in ("SHORT", "SELL"):
+        narrow = nr
+        wide = wr
+    else:
+        return ep
+
+    pick = float(narrow) if narrow is not None else ep
+    if (
+        fb > 0
+        and narrow is not None
+        and ae > 0
+        and wide is not None
+        and abs(ep - narrow) < fb * ae
+    ):
+        pick = float(wide)
+    return float(pick)
+
+
 def resolve_regime_bucket(
     adx: float,
     er: float,
@@ -132,12 +235,21 @@ def maybe_inject_srb_experiment_features(
     re_cfg = (exec_raw or {}).get("regime_execution") or {}
     sr_cfg = (exec_raw or {}).get("sr_structural_exit") or {}
     add_pol = (exec_raw or {}).get("srb_add_position_policy") or {}
+    rev_cfg = (exec_raw or {}).get("fake_break_reverse") or {}
+    sr_inj = (exec_raw or {}).get("sr_feature_injection") or {}
+    wide_guard = (exec_raw or {}).get("sr_wide_entry_guard") or {}
     need_regime = bool(re_cfg.get("enabled")) or (
         bool(add_pol.get("enabled"))
         and isinstance(add_pol.get("allow_regime_buckets"), list)
         and len(add_pol.get("allow_regime_buckets") or []) > 0
     )
-    need_sr = bool(sr_cfg.get("enabled"))
+    wide_lb = int(sr_inj.get("swing_lookback_wide_bars") or 0)
+    need_sr = (
+        bool(sr_cfg.get("enabled"))
+        or bool(rev_cfg.get("enabled"))
+        or wide_lb > 0
+        or bool(wide_guard.get("enabled"))
+    )
     if not need_regime and not need_sr:
         return out
 
@@ -188,6 +300,15 @@ def maybe_inject_srb_experiment_features(
             out["srb_sr_support"] = float(sup)
         if res is not None:
             out["srb_sr_resistance"] = float(res)
+        wide_bars = wide_lb
+        if wide_bars <= 0 and bool(wide_guard.get("enabled")):
+            wide_bars = 96  # 与 archetypes 默认 swing_lookback_wide_bars 对齐
+        if wide_bars > 0:
+            sup_w, res_w = swing_sr_levels(df, ts, max(3, wide_bars))
+            if sup_w is not None:
+                out["srb_sr_support_wide"] = float(sup_w)
+            if res_w is not None:
+                out["srb_sr_resistance_wide"] = float(res_w)
 
     return out
 

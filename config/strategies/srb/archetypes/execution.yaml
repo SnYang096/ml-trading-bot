@@ -3,6 +3,17 @@
 # 浮盈阶梯加仓与 ME 对齐（float_r_ladder_only）；加仓前须经 srb_add_position_policy：
 # ADX/ER bucket 白名单 + 压缩特征上限（事件回测 try_add_position 与 float ladder 共用）。
 
+
+
+# 宽窗 SR (wide swing) — 注入特征 + 入场屏蔽 / 反手锚点 fallback（见 sr_wide_entry_guard / fake_break_reverse）
+sr_feature_injection:
+  swing_lookback_wide_bars: 96
+
+# 宽窗 SR：距反向宽窗位 < min_distance_atr × ATR 时拒绝新开仓（与 live decide / event_backtest 对齐）
+sr_wide_entry_guard:
+  enabled: true
+  min_distance_atr: 2.0
+  apply_to_new_only: true
 add_position:
   add_size_multipliers:
     - 0.8
@@ -38,6 +49,10 @@ stop_loss:
   initial_r: 6.0
   trailing:
     enabled: true
+    # trailing 带宽 = trail_r × max(入场 ATR, 当前主周期 ATR)
+    # 数据依据：baseline trailing_sl 交易里，出场 bar 的 ATR 中位数 = 入场 ATR 的 1.51×，
+    # 53.8% trailing_sl 出场后沿原方向继续走 ≥ 2 ATR（"洗盘"） —— 见 z实验_005_统一研究/SRB_ablation_results_20260418.md
+    expand_with_primary_atr: true
     activation_r: 6.0
     trail_r: 5.0
   type: trailing
@@ -67,10 +82,14 @@ srb_add_position_policy:
 # ---------------------------------------------------------------------------
 fake_break_reverse:
   enabled: true
-  confirm_k: 3              # 价格回到 SR 正确侧后需连续确认的 bar 数
-  fake_lookahead: 10         # 止损后最多等多少根 primary bar
-  max_reverse_per_level: 1   # 同一 SR 位只反手 1 次
-  cooldown_bars: 10          # 反手后冷却多少 bar 不再产生新反手候选
+  reclaim_k: 1                  # Stage 1: 脱离 stop-hunt extreme 的最小连续确认 bar 数
+  confirm_k: 2                  # Stage 2: 回到 true SR level 正确侧后的连续确认 bar 数
+  fake_lookahead: 10            # 止损后最多等多少根 primary bar
+  stop_hunt_buffer_atr: 0.3     # extreme = sl_price ± atr * buffer
+  max_reverse_per_level: 1      # 同一 SR 位只反手 1 次
+  cooldown_bars: 10             # 反手后冷却多少 bar 不再产生新反手候选
+  # 窄窗 SR 距入场 < N×ATR 时用宽窗 SR 作为 Stage 2 锚点（二期结构）
+  true_sr_wide_fallback_atr: 2.0
 
 # ---------------------------------------------------------------------------
 # SRB 实验扩展（默认全关；事件回测在 primary TF 上注入 srb_regime_* / srb_sr_*）

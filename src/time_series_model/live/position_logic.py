@@ -8,10 +8,14 @@
 使用方式:
   - 实盘 (order_flow_listener):
       pos = build_position_dict(intent, entry_price, atr, bar_minutes)
-      reason, exit_price = enforce_position(pos, price, price, price, now)
+      reason, exit_price = enforce_position(
+          pos, price, price, price, now, primary_tf_atr=features.get("atr")
+      )
   - 回测 (event_backtest):
       pos = build_position_dict(intent, entry_price, atr, bar_minutes)
-      reason, exit_price = enforce_position(pos, bar_high, bar_low, bar_close, now)
+      reason, exit_price = enforce_position(
+          pos, bar_high, bar_low, bar_close, now, primary_tf_atr=last_primary_atr
+      )
 """
 
 from __future__ import annotations
@@ -130,6 +134,13 @@ def build_position_dict(
         "bars_counted": 0,
     }
 
+    _tsr = strategy_specific.get("srb_true_sr_level")
+    if _tsr is not None:
+        try:
+            pos["_srb_true_sr_level"] = float(_tsr)
+        except (TypeError, ValueError):
+            pass
+
     # BPC 扩展: breakeven 可与 activation trailing 解耦 (trailing.enabled=false 时仍可有 breakeven)
     bpc_cfg = exec_profile.get("bpc_position_config") or {}
     if bpc_cfg:
@@ -194,6 +205,11 @@ def build_position_dict(
             rr_constraints.get("sr_exit_buffer_atr", 0.25) or 0.25
         )
 
+    # Trailing 带宽：可选使用 max(入场ATR, 当前主周期ATR)，避免波动扩张后跟踪过紧
+    pos["trail_expand_primary_atr"] = bool(
+        rr_constraints.get("trail_expand_primary_atr", False)
+    )
+
     return pos
 
 
@@ -208,6 +224,7 @@ def enforce_position(
     structural_price: Optional[float] = None,
     macro_tp_vwap_position: Optional[float] = None,
     ema_1200_position: Optional[float] = None,
+    primary_tf_atr: Optional[float] = None,
 ) -> Tuple[Optional[str], float]:
     """7步持仓管理 — 实盘/回测公用
 
@@ -241,6 +258,8 @@ def enforce_position(
         structural_price: EMA200 当前值 (仅 structural_exit="ema200" 时使用)
         macro_tp_vwap_position: macro_tp_vwap_1200_position 当前值 (vwap1200 出场)
         ema_1200_position: ema_1200_position 当前值 (ema1200 出场)
+        primary_tf_atr: 当前主周期（如 2H）ATR；若 pos.trail_expand_primary_atr 为 True，
+            trailing 距离用 max(atr_at_entry, primary_tf_atr)，减轻趋势加速后被窄跟踪洗出。
 
     Returns:
         (close_reason, exit_price):
@@ -388,6 +407,14 @@ def enforce_position(
 
         activation_r = pos["activation_r"]
         trail_r = pos.get("trail_r", 1.0)
+        trail_base_atr = float(pos_atr)
+        if pos.get("trail_expand_primary_atr") and primary_tf_atr is not None:
+            try:
+                pta = float(primary_tf_atr)
+                if pta > 0:
+                    trail_base_atr = max(trail_base_atr, pta)
+            except (TypeError, ValueError):
+                pass
         if profit_r >= activation_r:
             _was_activated = pos.get("trailing_activated", False)
             if not _was_activated:
@@ -396,10 +423,10 @@ def enforce_position(
                 pos["trailing_activation_bar"] = True
             if is_long:
                 hwm = pos.get("high_water_mark", check_price)
-                trail_sl = hwm - trail_r * pos_atr
+                trail_sl = hwm - trail_r * trail_base_atr
             else:
                 lwm = pos.get("low_water_mark", check_price)
-                trail_sl = lwm + trail_r * pos_atr
+                trail_sl = lwm + trail_r * trail_base_atr
             old_sl = pos.get("stop_loss_price")
             if old_sl is not None:
                 if is_long and trail_sl > old_sl:

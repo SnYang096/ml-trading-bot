@@ -33,6 +33,10 @@ from src.time_series_model.execution.entry_filter import (
     load_entry_filters_config,
 )
 from src.time_series_model.live.fer_diagnostics import record_fer_entry_eval
+from src.time_series_model.live.srb_regime import (
+    pick_srb_true_sr_level,
+    should_reject_srb_wide_entry,
+)
 from src.time_series_model.live.direction_rule_ops import (
     dual_position_agree_deadband_scalar,
     is_direction_rule_enabled,
@@ -361,6 +365,7 @@ class ExecutionParamGenerator:
             float(trail_cfg.get("activation_r", 1.0)) if trailing_enabled else None
         )
         trail_r = float(trail_cfg.get("trail_r", 1.5)) if trailing_enabled else None
+        trail_expand_primary_atr = bool(trail_cfg.get("expand_with_primary_atr", False))
 
         result: Dict[str, Any] = {
             "tier_name": "global",
@@ -378,6 +383,7 @@ class ExecutionParamGenerator:
             "breakeven_trigger_r": breakeven_trigger_r,
             "breakeven_lock_profit_atr": breakeven_lock_profit_atr,
             "allow_trailing": trailing_enabled and activation_r is not None,
+            "trail_expand_primary_atr": trail_expand_primary_atr,
         }
 
         re_cfg = self.config.get("regime_execution") or {}
@@ -853,15 +859,58 @@ class GenericLiveStrategy:
             self._last_tier_params = exec_params
             logger.debug(f"⚙️  Execution params: {exec_params}")
 
+        action = "LONG" if direction == 1 else "SHORT"
+        _srb_true_sr: Optional[float] = None
+
         if str(self.strategy_name).lower() == "srb":
             funnel["srb_regime_bucket"] = features.get("srb_regime_bucket")
             funnel["srb_regime_adx14"] = features.get("srb_regime_adx14")
             funnel["srb_regime_er20"] = features.get("srb_regime_er20")
             funnel["srb_sr_support"] = features.get("srb_sr_support")
             funnel["srb_sr_resistance"] = features.get("srb_sr_resistance")
+            funnel["srb_sr_support_wide"] = features.get("srb_sr_support_wide")
+            funnel["srb_sr_resistance_wide"] = features.get("srb_sr_resistance_wide")
+
+            _raw_ex = (self.archetype.execution.raw or {}) if self.archetype else {}
+            _wg = _raw_ex.get("sr_wide_entry_guard") or {}
+            if _wg.get("enabled"):
+                _mn = float(_wg.get("min_distance_atr", 0) or 0)
+                _cl = float(features.get("close") or 0)
+                _at = float(features.get("atr") or 0)
+                if should_reject_srb_wide_entry(
+                    action,
+                    _cl,
+                    _at,
+                    features.get("srb_sr_support_wide"),
+                    features.get("srb_sr_resistance_wide"),
+                    _mn,
+                ):
+                    funnel["reject_srb_wide_sr_too_close"] = True
+                    self._last_funnel = funnel
+                    record_fer_entry_eval(
+                        strategy=self.strategy_name,
+                        symbol=symbol,
+                        signal_ts=_sig_ts,
+                        outcome="srb_wide_sr_guard",
+                        funnel=funnel,
+                        features=features,
+                    )
+                    return []
+
+            _fbr = _raw_ex.get("fake_break_reverse") or {}
+            _fb_atr = float(_fbr.get("true_sr_wide_fallback_atr", 0) or 0)
+            _srb_true_sr = pick_srb_true_sr_level(
+                action,
+                float(features.get("close") or 0),
+                float(features.get("atr") or 0),
+                narrow_support=features.get("srb_sr_support"),
+                narrow_resistance=features.get("srb_sr_resistance"),
+                wide_support=features.get("srb_sr_support_wide"),
+                wide_resistance=features.get("srb_sr_resistance_wide"),
+                fallback_atr=_fb_atr,
+            )
 
         # ── 6. 构建 TradeIntent ──
-        action = "LONG" if direction == 1 else "SHORT"
         # evidence 缩放: score 0→0.5x, 0.5→0.75x, 1→1.0x；可选 regime size_multiplier
         _reg_sm = float(exec_params.get("size_multiplier", 1.0) or 1.0)
         ev_size_multiplier = (0.5 + evidence_score) * _reg_sm
@@ -886,6 +935,9 @@ class GenericLiveStrategy:
                     "sr_exit_buffer_atr": exec_params.get("sr_exit_buffer_atr"),
                     "min_stop_pct": exec_params.get("min_stop_pct"),
                     "max_stop_pct": exec_params.get("max_stop_pct"),
+                    "trail_expand_primary_atr": bool(
+                        exec_params.get("trail_expand_primary_atr", False)
+                    ),
                 },
                 "bpc_position_config": {
                     **(
@@ -907,6 +959,11 @@ class GenericLiveStrategy:
                     "evidence_score": evidence_score,
                     "gate_weight": gate_weight,
                     "tier_name": exec_params.get("tier_name", "default"),
+                    **(
+                        {"srb_true_sr_level": float(_srb_true_sr)}
+                        if _srb_true_sr is not None
+                        else {}
+                    ),
                 },
                 "add_position": (
                     (self.archetype.execution.raw or {}).get("add_position") or {}
