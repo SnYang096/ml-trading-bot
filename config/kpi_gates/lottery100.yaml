@@ -1,0 +1,62 @@
+# Lottery100 分层 KPI — 显式围绕「100x 名义杠杆不爆仓」设计
+# 策略 YAML 目录：`config/strategies/bad-candidates/lottery100/`（归档；PCM 默认不启用）
+#
+# 对应 archetypes：
+#   prefilter  → 宏观/结构窗口（ema_1200_position, macro_tp_vwap_1200_position, cvd_roll288）
+#   gate       → 硬拒绝（late long / vwap / cvd 极端卖）
+#   entry_filter → 订单流方向确认（taker_buy_ratio, cvd_roll20）
+#   execution  → 极窄止损 + 不加仓 + 快速结构/止盈出场
+#
+# 说明：
+#   - 「100x 存活」的核心不是「胜率高」而是「任何一笔的即期反向回撤在可控 %」，
+#     因此 backtest 层的关键 KPI 是 max_observed_stop_pct 与 worst_single_trade_r。
+#   - v4 capacity 样本的 lmax_adj 中位数 ≥ 100 作为**离线**门禁（由 bundle 产出）。
+
+strategy: lottery100
+
+layer_semantics:
+  prefilter:  "macro_regime_window — 只在宏观动量/结构支持的 bar 上判断"
+  gate:       "survival_deny — 一票否决即期风险（价位 / 订单流崩溃）"
+  entry_filter: "orderflow_confirm — 做多订单流方向确认"
+  backtest:   "event_survival — 在回测中直接验证 100x 存活与盈亏"
+  deploy:     "forward_min_sample — 前向最小样本与 backtest 对齐"
+
+kpi_gates:
+  prefilter:
+    # 宏观窗口不应该太稀也不能太密（过密 → 规则失效；过稀 → 无法形成 portfolio）
+    min_passed_bar_fraction: 0.05
+    max_passed_bar_fraction: 0.40
+
+  gate:
+    # 硬拒绝层的拦截力度。容量研究显示尾部显著集中在窗口内，拦截 > 60% 是合理的
+    min_deny_rate: 0.30
+    max_deny_rate: 0.85
+
+  entry_filter:
+    enabled: true
+    # 订单流确认的通过率（在 prefilter+gate 之后）不能过低，否则样本枯竭
+    min_pass_rate: 0.10
+
+  backtest:
+    min_trades: 10
+    min_win_rate: 0.30
+
+    # 100x 存活核心约束：
+    # 任何成交的硬止损绝对百分比不得超过爆仓缓冲
+    max_observed_stop_pct: 0.009
+    # 单笔最糟亏损（以 R 计）不得低于 -1.2 → 与 initial_r 1.2 + 1 倍越界缓冲一致
+    worst_single_trade_r: -1.5
+    # 事件回测期间权益最大回撤（R 计），留有安全余量
+    max_drawdown_r: -5.0
+    # 回测期间模拟「100x 名义」下的组合最大单日回撤估计（% 价，用 ATR × nominal_lev 近似）
+    max_simulated_daily_drawdown_pct: 0.35
+
+  # 离线容量研究校验（可选，由 bundle 写入后比对）
+  capacity_offline:
+    min_lmax_adj_p50: 100.0
+    min_bull_bar_fraction: 0.35
+    max_bull_bar_fraction: 0.92
+
+  deploy:
+    min_trades: 8
+    min_win_rate: 0.28
