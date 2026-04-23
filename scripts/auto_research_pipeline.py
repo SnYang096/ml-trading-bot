@@ -439,8 +439,11 @@ def run_step(
     *,
     dry_run: bool = False,
     cwd: Optional[Path] = None,
+    env_extra: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, str]:
-    return pipeline_steps.run_step(name, cmd, log_file, dry_run=dry_run, cwd=cwd)
+    return pipeline_steps.run_step(
+        name, cmd, log_file, dry_run=dry_run, cwd=cwd, env_extra=env_extra
+    )
 
 
 def find_output_dir(output: str, strategy: str) -> Optional[str]:

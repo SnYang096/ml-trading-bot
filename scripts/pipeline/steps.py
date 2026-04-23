@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -15,9 +16,13 @@ def run_step(
     *,
     dry_run: bool = False,
     cwd: Optional[Path] = None,
+    env_extra: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, str]:
     cmd_str = " \\\n  ".join(cmd)
     header = f"\n{'='*70}\n[STEP] {name}\n{'='*70}\n$ {cmd_str}\n"
+    if env_extra:
+        _envs = " ".join(f"{k}={v}" for k, v in env_extra.items())
+        header += f"$ env: {_envs}\n"
     print(header)
 
     with open(log_file, "a", encoding="utf-8") as lf:
@@ -27,11 +32,15 @@ def run_step(
         print("  (dry-run, 跳过执行)")
         return 0, ""
 
+    _env = None
+    if env_extra:
+        _env = {**os.environ, **env_extra}
     proc = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         cwd=cwd or PROJECT_ROOT,
+        env=_env,
     )
     output = proc.stdout + proc.stderr
 
