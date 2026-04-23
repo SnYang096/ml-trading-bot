@@ -36,6 +36,14 @@ thresholds:
   deny_rate_min: 0.05
   deny_rate_max: 0.90
 
+  # Range-deny 最小宽度 (× feature std). 防止 `feat > lo & feat < hi` 形式的
+  # "针尖 range" 过拟合：width < N × σ 的区间一律拒收.
+  # 与 prefilter (analyze_archetype_feature_stratification: 2σ) 对齐;
+  # meta_algorithm_unified prefilter 路径默认 1σ, gate 作为尾部拦截层更严格.
+  # 历史诊断：BPC gate_draft 曾生成 macro_tp_vwap ∈ [0.1204, 0.1641] (宽 0.044,
+  # 约 1σ 擦边) 的针尖 deny, 与 2024-04~06 +1086R→-157R 衰退直接相关.
+  min_range_width_sigma: 2.0
+
 # ── Compound 规则门槛 (Lift Surface / 2D 交互) ──
 compound:
   # Lift Surface 分位网格: 9 个切点 → 10 bins

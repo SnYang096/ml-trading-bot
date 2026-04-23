@@ -700,8 +700,15 @@ def run_shap_selection(
     promote: bool = False,
     apply_to: Optional[List[str]] = None,
     plots: bool = True,
+    cutoff_date: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run complete SHAP feature selection pipeline."""
+    """Run complete SHAP feature selection pipeline.
+
+    Args:
+        cutoff_date: Val/Test 切分边界 (ISO-8601, e.g. "2025-10-01").
+            非空时仅使用 timestamp < cutoff_date 的样本做 SHAP 训练与 stability
+            评估, 避免 Test 段泄漏到特征筛选. 对齐 gate optimize 的 --cutoff-date.
+    """
 
     if protected_nodes is None:
         protected_nodes = list(DEFAULT_PROTECTED_NODES)
@@ -712,6 +719,18 @@ def run_shap_selection(
     print(f"{'='*70}")
 
     df, feature_cols, label_col = load_data(logs_path, label_col)
+
+    # ── 可选 Val/Test 切分: 防止 Test 段泄漏进 SHAP 稳定性评估 ──
+    if cutoff_date:
+        _n_before = len(df)
+        _cut_ts = pd.to_datetime(cutoff_date, utc=True)
+        df = df[df["timestamp"] < _cut_ts].reset_index(drop=True)
+        print(
+            f"   🛡️  Val-only cutoff {cutoff_date}: {_n_before:,} → {len(df):,} rows "
+            f"({len(df)/max(_n_before,1):.1%} retained)"
+        )
+        if len(df) < 200:
+            print(f"   ⚠️  Val-only subset 行数过少 ({len(df)}), SHAP 结果可能不稳定")
 
     # ── Load feature dependencies ──
     node2cols = load_feature_deps()
@@ -894,6 +913,13 @@ Examples:
         "--pipeline-config",
         help="从 research_pipeline.yaml 读取 SHAP 参数 (覆盖 CLI 参数)",
     )
+    p.add_argument(
+        "--cutoff-date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Val/Test 切分边界. 仅用 timestamp < cutoff-date 的样本做 SHAP 训练 + "
+        "stability 评估, 避免 Test 段泄漏 (推荐 pipeline 注入 test_start).",
+    )
 
     args = p.parse_args()
 
@@ -958,6 +984,7 @@ Examples:
         promote=args.promote,
         apply_to=apply_to,
         plots=not args.no_plots,
+        cutoff_date=args.cutoff_date,
     )
 
 

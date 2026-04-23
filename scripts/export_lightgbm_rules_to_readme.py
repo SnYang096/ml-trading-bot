@@ -435,6 +435,9 @@ def _generate_gate_rules_statistical(
     GATE_CORR_THRESHOLD = _gt.get("correlation_threshold", 0.80)
     GATE_DENY_RATE_MIN = _gt.get("deny_rate_min", 0.05)
     GATE_DENY_RATE_MAX = _gt.get("deny_rate_max", 0.70)
+    # Range-deny 最小宽度 (× feature std). 与 prefilter 守门对齐, 避免
+    # `feat > lo & feat < hi` 针尖 range 过拟合. 0 禁用守门.
+    GATE_MIN_RANGE_WIDTH_SIGMA = float(_gt.get("min_range_width_sigma", 2.0))
 
     avail = [f for f in feature_names if f in pred_df.columns]
 
@@ -496,6 +499,7 @@ def _generate_gate_rules_statistical(
     n_folds = _gv.get("n_folds", 5)
     fold_size = n_total // n_folds
     candidates = []
+    _narrow_range_skipped_total = 0
 
     for feat in top_features:
         col = pred_df[feat].values.astype(float)
@@ -504,6 +508,14 @@ def _generate_gate_rules_statistical(
             continue
 
         thresholds = np.unique(np.quantile(col[valid], quantiles))
+        # Range-width 守门：width (hi - lo) 必须 >= N × std(col), 否则拒收.
+        # 防止针尖 range 过拟合 Val 段噪声 (2024-04~06 BPC 衰退直接成因).
+        _col_std = float(np.nanstd(col[valid])) if valid.any() else 0.0
+        _min_width_abs = (
+            GATE_MIN_RANGE_WIDTH_SIGMA * _col_std
+            if (GATE_MIN_RANGE_WIDTH_SIGMA > 0 and _col_std > 0)
+            else 0.0
+        )
 
         # ── 收集候选 deny_mask: 单阈值 + 区间 ──
         _rule_specs = []  # [(deny_mask, op_str, thr_val, thr_low, thr_high)]
@@ -519,6 +531,10 @@ def _generate_gate_rules_statistical(
         # (B) 区间规则: deny = 区间内 (区间 = bad zone)
         for i_lo, thr_lo in enumerate(thresholds):
             for thr_hi in thresholds[i_lo + 1 :]:
+                _width = float(thr_hi) - float(thr_lo)
+                if _min_width_abs > 0 and _width < _min_width_abs:
+                    _narrow_range_skipped_total += 1
+                    continue
                 dm = ((col >= thr_lo) & (col <= thr_hi)) & valid
                 _rule_specs.append(
                     (dm, "range_deny", None, float(thr_lo), float(thr_hi))
@@ -584,6 +600,12 @@ def _generate_gate_rules_statistical(
                 "_deny_mask": deny_mask,
             }
             candidates.append(_cand_dict)
+
+    if _narrow_range_skipped_total > 0:
+        print(
+            f"   🛡️  range-width (< {GATE_MIN_RANGE_WIDTH_SIGMA}σ): 跳过 "
+            f"{_narrow_range_skipped_total} 条针尖 range 候选"
+        )
 
     if not candidates:
         print("   ⚠️  统计验证: 无候选规则通过 lift+robustness 筛选")

@@ -103,6 +103,17 @@ class UnifiedOptimizationConfig:
     nan_lift_min_robustness: float = 0.60  # robustness 下限
     nan_lift_min_plateau_width: float = 0.03  # 阈值区间宽度下限（排除点估计）
 
+    # =========================================================================
+    # require_positive_effect
+    # 语义：gate 优化的候选阈值必须满足 mean_rr(allow) > mean_rr(deny),
+    #      防止 range_deny 把连续收益分布"砍中腰留两尾", lift>0 但 mean effect <=0
+    #      的 pathological gate 通过审查. 回归 binary lift 等价性问题见评估文档.
+    # 仅当 rr_col 存在且非空时生效; 否则 skip 并打印一次警告.
+    # =========================================================================
+    require_positive_effect: bool = False
+    # 允许的等价容忍度 (effect >= -tol 即算非负, 默认 0 严格禁止负 effect).
+    positive_effect_tol: float = 0.0
+
 
 def compute_lift_for_threshold(
     df: pd.DataFrame,
@@ -778,6 +789,7 @@ def optimize_gate_rule_unified(
     label_col: str = "is_good",
     config: Optional[UnifiedOptimizationConfig] = None,
     step: float = 0.05,
+    rr_col: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     统一的门控规则优化函数
@@ -788,6 +800,9 @@ def optimize_gate_rule_unified(
         label_col: 标签列名
         config: 优化配置
         step: 阈值扫描步长
+        rr_col: 连续收益列名 (e.g. forward_rr / bpc_impulse_return_atr).
+            仅当 config.require_positive_effect=True 时使用,
+            用于剔除 mean_rr(allow) <= mean_rr(deny) 的病态 gate.
 
     Returns:
         优化结果
@@ -840,6 +855,66 @@ def optimize_gate_rule_unified(
         and r.get("n_good", 0) >= config.min_samples_good
         and r.get("n_bad", 0) >= config.min_samples_bad
     ]
+
+    # ── require_positive_effect: 连续收益口径补护栏 ──
+    # binary lift > 0 并不等价于 mean_rr(allow) > mean_rr(deny), 因为 range_deny
+    # 形式的规则可能把中腰砍掉而留下两端尾部 (尾部 good 比例高但亏损大). 当配置
+    # require_positive_effect 时, 额外要求候选阈值的连续 effect >= -tol.
+    if config.require_positive_effect and valid_results:
+        if rr_col is None or rr_col not in df.columns:
+            # rr_col 不可用时直接 skip 本护栏, 打印一次警告 (用全局 flag 避免刷屏)
+            global _REQUIRE_POS_EFFECT_WARNED
+            try:
+                _REQUIRE_POS_EFFECT_WARNED
+            except NameError:
+                _REQUIRE_POS_EFFECT_WARNED = False
+            if not _REQUIRE_POS_EFFECT_WARNED:
+                print(
+                    f"    ⚠️ require_positive_effect=True 但 rr_col={rr_col!r} 不可用, 本次 skip 此护栏"
+                )
+                _REQUIRE_POS_EFFECT_WARNED = True
+        else:
+            _rr_vals = df[rr_col].to_numpy(dtype=float, copy=False)
+            _feat_vals = df[feature_col].to_numpy(dtype=float, copy=False)
+            _feat_valid = ~np.isnan(_feat_vals)
+            _kept: list = []
+            _skipped_neg_effect = 0
+            for r in valid_results:
+                _th = r.get("threshold")
+                if _th is None or not np.isfinite(_th):
+                    _kept.append(r)
+                    continue
+                if operator == "lt":
+                    _deny = _feat_valid & (_feat_vals < _th)
+                elif operator == "le":
+                    _deny = _feat_valid & (_feat_vals <= _th)
+                elif operator == "gt":
+                    _deny = _feat_valid & (_feat_vals > _th)
+                elif operator == "ge":
+                    _deny = _feat_valid & (_feat_vals >= _th)
+                else:
+                    _kept.append(r)
+                    continue
+                _allow = _feat_valid & ~_deny
+                if not _deny.any() or not _allow.any():
+                    _kept.append(r)
+                    continue
+                _rr_allow_mean = float(np.nanmean(_rr_vals[_allow]))
+                _rr_deny_mean = float(np.nanmean(_rr_vals[_deny]))
+                _effect = _rr_allow_mean - _rr_deny_mean
+                r["mean_rr_allow"] = _rr_allow_mean
+                r["mean_rr_deny"] = _rr_deny_mean
+                r["mean_effect"] = _effect
+                if _effect < -float(config.positive_effect_tol):
+                    _skipped_neg_effect += 1
+                    continue
+                _kept.append(r)
+            if _skipped_neg_effect > 0:
+                print(
+                    f"    🛡️  require_positive_effect: 跳过 {_skipped_neg_effect} 条 mean effect<=0 候选 "
+                    f"(feat={feature_col}, rr={rr_col})"
+                )
+            valid_results = _kept
 
     if not valid_results:
         # =========================================================================
@@ -2182,6 +2257,19 @@ def main() -> int:
         "默认不限制 (None)；推荐由 research_pipeline.yaml "
         "kpi_gates.gate.max_system_safety 显式设置.",
     )
+    parser.add_argument(
+        "--require-positive-effect",
+        action="store_true",
+        default=False,
+        help="要求每个候选阈值满足 mean_rr(allow) > mean_rr(deny), "
+        "防止 range_deny 砍中腰留两尾 (lift>0 但连续 effect<=0) 的病态 gate 通过.",
+    )
+    parser.add_argument(
+        "--positive-effect-tol",
+        type=float,
+        default=0.0,
+        help="effect >= -tol 视为非负 (默认 0 严格禁止负 effect).",
+    )
     args = parser.parse_args()
 
     # Load logs
@@ -2289,7 +2377,14 @@ def main() -> int:
         min_plateau_width=args.min_plateau_width,
         max_lift_std_ratio=args.max_lift_std_ratio,
         threshold_step=args.step,
+        require_positive_effect=bool(args.require_positive_effect),
+        positive_effect_tol=float(args.positive_effect_tol),
     )
+    if config.require_positive_effect:
+        print(
+            f"🛡️  require_positive_effect enabled (tol={config.positive_effect_tol}, "
+            f"rr_col={rr_col!r})"
+        )
 
     # Run optimizations
     all_results = {}
@@ -2320,7 +2415,7 @@ def main() -> int:
                 continue
 
             result = optimize_gate_rule_unified(
-                df, rule, args.label_col, config, args.step
+                df, rule, args.label_col, config, args.step, rr_col=rr_col
             )
             all_results[rule.id] = result
 

@@ -2113,6 +2113,10 @@ def run_strategy_pipeline(
             if "n_folds" in _shap_ov:
                 shap_cmd += ["--n-folds", str(_shap_ov["n_folds"])]
             print(f"   📋 SHAP override for {strategy}: {_shap_ov}")
+        # Val/Test 分离: SHAP 稳定性仅看 Val 段 [holdout_start, test_start).
+        # 使 gate/prefilter 共享同一 cutoff 语义, 避免 Test 段特征泄漏进特征选择.
+        if test_start and holdout_start and test_start != holdout_start:
+            shap_cmd += ["--cutoff-date", test_start]
         rc_shap, _ = run_step(
             "SHAP Feature Selection",
             shap_cmd,
@@ -2534,6 +2538,11 @@ def run_strategy_pipeline(
                         "--max-system-safety",
                         str(int(gate_gates["max_system_safety"])),
                     ]
+                if bool(gate_gates.get("require_positive_effect", False)):
+                    _cg_opt += ["--require-positive-effect"]
+                    _tol = gate_gates.get("positive_effect_tol")
+                    if _tol is not None:
+                        _cg_opt += ["--positive-effect-tol", str(float(_tol))]
                 # Val/Test 分离: mini-pipeline Gate Opt 在完整 Val 上调阈值 (不需要 cutoff)
                 # 预筛选选择也在 Val 上评估, Test 保留给最终 Backtest
                 run_step(f"  Gate Opt [{_cm}]", _cg_opt, log)
@@ -2775,6 +2784,11 @@ def run_strategy_pipeline(
                     "--max-system-safety",
                     str(int(gate_gates["max_system_safety"])),
                 ]
+            if bool(gate_gates.get("require_positive_effect", False)):
+                gate_opt_fallback_cmd += ["--require-positive-effect"]
+                _tol = gate_gates.get("positive_effect_tol")
+                if _tol is not None:
+                    gate_opt_fallback_cmd += ["--positive-effect-tol", str(float(_tol))]
             # Keep Val/Test causality: tune gate only on validation segment.
             if test_start != holdout_start:
                 gate_opt_fallback_cmd += ["--cutoff-date", test_start]
@@ -2877,6 +2891,11 @@ def run_strategy_pipeline(
             "--max-system-safety",
             str(int(gate_gates["max_system_safety"])),
         ]
+    if bool(gate_gates.get("require_positive_effect", False)):
+        gate_optimize_cmd += ["--require-positive-effect"]
+        _tol = gate_gates.get("positive_effect_tol")
+        if _tol is not None:
+            gate_optimize_cmd += ["--positive-effect-tol", str(float(_tol))]
     # Val/Test 分离: Gate Optimize 只用 Val 段 [holdout_start, test_start)
     if test_start != holdout_start:
         gate_optimize_cmd += ["--cutoff-date", test_start]
