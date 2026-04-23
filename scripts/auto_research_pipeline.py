@@ -1837,6 +1837,12 @@ def run_strategy_pipeline(
     log.parent.mkdir(parents=True, exist_ok=True)
 
     # ── 实验目录隔离: config 副本到实验工作区 ──────────────────
+    # 源目录优先级（高→低）:
+    #   1) scfg["config"] 被显式指向非默认路径（如 fbf_strict）→ 以它为准
+    #   2) source_strategies_root / strategy（根级 override）存在 → 用它
+    #   3) scfg["config"]（兜底）
+    # 旧逻辑只检查 (2)+(3)，忽略 scfg["config"] 的显式 per-strategy 覆盖，
+    # 结果 config/strategies/fbf 存在时永远遮蔽 config/strategies/fbf_strict。
     exp_strategies_root = run_dir / "strategies"
     exp_config_dir = exp_strategies_root / strategy
     _src_root = (
@@ -1847,8 +1853,14 @@ def run_strategy_pipeline(
     if not _src_root.is_absolute():
         _src_root = PROJECT_ROOT / _src_root
     _src_strategy_dir = _src_root / strategy
-    _fallback_prod_dir = PROJECT_ROOT / prod_config_dir
-    _copy_from = _src_strategy_dir if _src_strategy_dir.exists() else _fallback_prod_dir
+    _prod_config_abs = (PROJECT_ROOT / prod_config_dir).resolve()
+    _default_config_abs = (PROJECT_ROOT / "config" / "strategies" / strategy).resolve()
+    if _prod_config_abs != _default_config_abs and _prod_config_abs.exists():
+        _copy_from = _prod_config_abs
+    elif _src_strategy_dir.exists():
+        _copy_from = _src_strategy_dir
+    else:
+        _copy_from = _prod_config_abs
     shutil.copytree(_copy_from, exp_config_dir, dirs_exist_ok=True)
     config_dir = str(exp_config_dir)  # 后续命令全部用实验目录
     strategies_root = str(exp_strategies_root)
@@ -4868,9 +4880,23 @@ def _run_fast_month_stage(
                 shutil.copytree(exp_cfg_dir, dst, dirs_exist_ok=True)
     else:
         for strat in strategies:
-            src = _base_strategies_root / strat
+            # 同上：优先尊重 strategies.<strat>.config 的显式 per-strategy 覆盖。
+            _strat_scfg = cfg.get("strategies", {}).get(strat, {}) or {}
+            _strat_prod_cfg = str(_strat_scfg.get("config", "") or "").strip()
+            _strat_default = (PROJECT_ROOT / "config" / "strategies" / strat).resolve()
+            src: Optional[Path] = None
+            if _strat_prod_cfg:
+                _prod_abs = (PROJECT_ROOT / _strat_prod_cfg).resolve()
+                if _prod_abs != _strat_default and _prod_abs.exists():
+                    src = _prod_abs
+            if src is None:
+                _cand = _base_strategies_root / strat
+                if _cand.exists():
+                    src = _cand
+                elif _strat_prod_cfg:
+                    src = (PROJECT_ROOT / _strat_prod_cfg).resolve()
             dst = month_strategies_root / strat
-            if src.exists():
+            if src is not None and src.exists():
                 shutil.rmtree(dst, ignore_errors=True)
                 shutil.copytree(src, dst, dirs_exist_ok=True)
 
