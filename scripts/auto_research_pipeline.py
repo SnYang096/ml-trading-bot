@@ -2259,35 +2259,44 @@ def run_strategy_pipeline(
                         "--min-prefilter-rows",
                         str(prefilter_gates["min_rows"]),
                     ]
-                # Wave 2-E (method-selection overfitting 防护):
-                # 强制 distribution_ks, 忽略 scoring_method / scoring_method_fallbacks.
-                # 原因:
-                #   之前循环跑 [distribution_ks, mean_effect, tail_bad_rate_ratio,
-                #   upside_positive_rate_ratio], 每个方法产生不同规则集, 再在同一
-                #   Val 段 backtest 取 Sharpe 最高的 = method-selection overfitting.
-                #   自由度 ≈ 方法数 × 特征数 × 分位数, 等于在 Val 上做多重假设检验
-                #   然后挑冠军, Val 段被用到饱和. 改成固定单一 KS 方法可以让 Val
-                #   段只做一次假设检验, 保留纯净的 hold-out 验证能力.
-                # Trade-off:
-                #   若 KS 选不出规则, Prefilter 退化为空规则 + locked 兜底 (预期行为).
+                # Wave 2-E (method-shopping 防护) + 按层先验分工:
+                # Prefilter 强制固定 distribution_ks, 不做 method-shopping.
+                #
+                # 为什么是 distribution_ks:
+                #   Prefilter 的目的是"筛出结构有利的样本", 即判断
+                #   '满足 archetype 结构 vs 不满足' 两个子集上特征分布是否
+                #   显著不同. KS 统计量对整个分布的差异敏感, 不假设尾部/中心,
+                #   与 Prefilter 的"结构先验判别"目标先验匹配.
+                #
+                # 为什么不做 fallback:
+                #   原 fallback 到 [ks, mean_effect, tail_bad_rate_ratio,
+                #   upside_positive_rate_ratio] 并在 Val Sharpe 上择优 =
+                #   method-shopping (garden of forking paths):
+                #     - 4 方法 I 类错误膨胀 ~18.5% (单方法 5%)
+                #     - Val 被当 train 用, 信息泄露
+                #     - 冠军期望 ≈ max of K samples, 产生 Sharpe 幻觉
+                #     - 月度冠军漂移 = regime 噪声, 不可诊断
+                #   空规则时兜底 locked 规则 (已在下游 merge_locked_prefilter_rules),
+                #   不跨方法 fallback.
                 _pf_fallback_cfg = prefilter_gates.get("scoring_method_fallbacks")
                 _pf_method_cfg = prefilter_gates.get("scoring_method")
+                _pf_forced_method = "distribution_ks"
                 if _pf_fallback_cfg:
                     print(
                         "   ⚠️  [Wave 2-E] Prefilter scoring_method_fallbacks="
-                        f"{_pf_fallback_cfg} 已忽略 (method-selection "
-                        "overfitting 防护); 强制 distribution_ks"
+                        f"{_pf_fallback_cfg} 已忽略 (method-shopping 防护); "
+                        f"强制 {_pf_forced_method} (Prefilter 先验匹配方法)"
                     )
                 elif (
                     _pf_method_cfg
-                    and str(_pf_method_cfg).strip().lower() != "distribution_ks"
+                    and str(_pf_method_cfg).strip().lower() != _pf_forced_method
                 ):
                     print(
                         "   ⚠️  [Wave 2-E] Prefilter scoring_method="
-                        f"{_pf_method_cfg} 已忽略 (method-selection "
-                        "overfitting 防护); 强制 distribution_ks"
+                        f"{_pf_method_cfg} 已忽略 (method-shopping 防护); "
+                        f"强制 {_pf_forced_method} (Prefilter 先验匹配方法)"
                     )
-                _pf_methods = ["distribution_ks"]
+                _pf_methods = [_pf_forced_method]
 
                 def _append_pf_kpi_args(cmd):
                     """追加非 scoring_method 的 KPI 参数."""
@@ -3014,26 +3023,40 @@ def run_strategy_pipeline(
     elif isinstance(_ef_filter_ids_raw, (list, tuple, set)):
         _ef_filter_ids = [str(s).strip() for s in _ef_filter_ids_raw if str(s).strip()]
     _ef_filter_ids = list(dict.fromkeys(_ef_filter_ids))
-    # Wave 2-E (method-selection overfitting 防护):
-    # Entry Filter 同样强制 distribution_ks, 废除 scoring_method_fallbacks.
-    # 详见上文 Prefilter 同名守护的注释. Entry Filter 原本 fallback 到
-    # [distribution_ks, mean_effect, tail_bad_rate_ratio,
-    #  upside_positive_rate_ratio] 4 个方法, method-shopping 问题尤其严重.
+    # Wave 2-E (method-selection overfitting 防护) + 按层先验分工:
+    # Entry Filter 强制固定 upside_positive_rate_ratio, 不做 method-shopping.
+    #
+    # 为什么不是 distribution_ks:
+    #   EF 的目的是"在已 gate 过的样本中, 找能进一步放大上涨赢面的条件",
+    #   upside_positive_rate_ratio 直接对应该目标 (单侧上涨条件概率).
+    #   distribution_ks 对"整体分布差异"敏感, 容易被"整体位置偏移但上涨概率
+    #   没变"的特征误导 (e.g. 趋势类特征).
+    #
+    # 为什么不做 fallback:
+    #   原方案 fallback 到 [ks, mean_effect, tail_bad_rate_ratio,
+    #   upside_positive_rate_ratio] 4 个方法并在 Val Sharpe 上择优 = 典型
+    #   method-shopping (garden of forking paths, Gelman 2013):
+    #     - 4 方法 I 类错误膨胀到 ~18.5% (单方法 5%)
+    #     - Val 段被当 train 用, 信息泄露
+    #     - 冠军期望 ≈ max of K samples, 产生纯噪声 Sharpe 幻觉
+    #     - 月度冠军漂移 = regime 噪声 = 不可诊断
+    #   空规则时兜底 "no filter" (原语义), 不跨方法 fallback.
     _ef_fallback_cfg = _ef_gates.get("scoring_method_fallbacks")
     _ef_method_cfg = _ef_gates.get("scoring_method")
+    _ef_forced_method = "upside_positive_rate_ratio"
     if _ef_fallback_cfg:
         print(
             "   ⚠️  [Wave 2-E] Entry Filter scoring_method_fallbacks="
-            f"{_ef_fallback_cfg} 已忽略 (method-selection overfitting "
-            "防护); 强制 distribution_ks"
+            f"{_ef_fallback_cfg} 已忽略 (method-shopping 防护); "
+            f"强制 {_ef_forced_method} (EF 先验匹配方法)"
         )
-    elif _ef_method_cfg and str(_ef_method_cfg).strip().lower() != "distribution_ks":
+    elif _ef_method_cfg and str(_ef_method_cfg).strip().lower() != _ef_forced_method:
         print(
             "   ⚠️  [Wave 2-E] Entry Filter scoring_method="
-            f"{_ef_method_cfg} 已忽略 (method-selection overfitting "
-            "防护); 强制 distribution_ks"
+            f"{_ef_method_cfg} 已忽略 (method-shopping 防护); "
+            f"强制 {_ef_forced_method} (EF 先验匹配方法)"
         )
-    _ef_methods = ["distribution_ks"]
+    _ef_methods = [_ef_forced_method]
     if _ef_archetype_plateau and not dry_run:
         _ef_arch_method = str(
             _ef_gates.get("archetype_scoring_method")
