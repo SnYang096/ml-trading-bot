@@ -43,6 +43,66 @@ from src.time_series_model.archetype import (
 )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate feature whitelist (features_gate.yaml)
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 是"执行风险层"，只允许 deny 执行/订单流/风险尾部/波动稳定性等"可防御"
+# 特征。策略结构 / 趋势方向 / 位置类特征一律交给 prefilter。
+#
+# 历史教训：BPC 2024-04~06 +1086R → -157R 衰退，元凶是
+# `ema_1200_position > 0.1 deny` —— binary label 视角下强趋势浅 pullback 多被 SL
+# 打，KS 把 ema_1200_position 选成 deny 候选，把 BPC 最肥的肉切掉了。
+#
+# 对称于 features_prefilter.yaml 的 forbidden_prefilter_meta_columns 机制：
+# 每策略维护一份 config/strategies/<s>/features_gate.yaml，正向声明
+# allowed_gate_deny_features (支持 fnmatch 通配符). 空 / 缺失 = 允许所有
+# (向后兼容).
+def _load_allowed_gate_deny_features_for_strategy(
+    strategy: Optional[str],
+) -> List[str]:
+    """读取 config/strategies/<strategy>/features_gate.yaml 的白名单.
+
+    返回:
+        fnmatch patterns 列表. 空列表 = 本策略未配置 = 允许所有特征 (向后兼容).
+    """
+    if not strategy:
+        return []
+    try:
+        import yaml as _yaml
+    except Exception:
+        return []
+    path = PROJECT_ROOT / "config" / "strategies" / strategy / "features_gate.yaml"
+    if not path.exists():
+        return []
+    try:
+        raw = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    fp = raw.get("feature_pipeline", {}) or {}
+    allowed = fp.get("allowed_gate_deny_features", []) or []
+    patterns: List[str] = []
+    for x in allowed:
+        if isinstance(x, (str, int)):
+            s = str(x).strip()
+            if s:
+                patterns.append(s)
+    return patterns
+
+
+def _is_feature_allowed_for_gate_deny(feature: str, patterns: List[str]) -> bool:
+    """匹配 fnmatch 模式. 空 patterns 视为允许所有 (向后兼容)."""
+    if not patterns:
+        return True
+    if not feature:
+        return False
+    import fnmatch as _fn
+
+    for pat in patterns:
+        if _fn.fnmatchcase(feature, pat):
+            return True
+    return False
+
+
 @dataclass
 class RobustnessScore:
     """Robustness Score dataclass - 用于评估门控参数的稳定性"""
@@ -790,6 +850,8 @@ def optimize_gate_rule_unified(
     config: Optional[UnifiedOptimizationConfig] = None,
     step: float = 0.05,
     rr_col: Optional[str] = None,
+    strategy: Optional[str] = None,
+    allowed_features: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     统一的门控规则优化函数
@@ -803,6 +865,9 @@ def optimize_gate_rule_unified(
         rr_col: 连续收益列名 (e.g. forward_rr / bpc_impulse_return_atr).
             仅当 config.require_positive_effect=True 时使用,
             用于剔除 mean_rr(allow) <= mean_rr(deny) 的病态 gate.
+        strategy: 策略名; 用于读取 features_gate.yaml 的白名单 (覆盖特征层
+            deny 允许清单). 仅当 allowed_features 未显式传入时使用.
+        allowed_features: 显式传入的白名单 fnmatch patterns; 空 = 允许所有.
 
     Returns:
         优化结果
@@ -829,6 +894,34 @@ def optimize_gate_rule_unified(
             "status": "skip",
             "reason": f"Feature {feature_col} not found in DataFrame",
         }
+
+    # features_gate.yaml 白名单守门:
+    # locked / frozen / promote_never_disable 规则是用户显式决策, 永远保留;
+    # 其余规则只有在特征命中策略白名单时才允许进入优化循环.
+    _is_protected_user_rule = bool(
+        getattr(rule, "locked", False)
+        or getattr(rule, "frozen", False)
+        or getattr(rule, "promote_never_disable", False)
+    )
+    if not _is_protected_user_rule:
+        _whitelist = (
+            allowed_features
+            if allowed_features is not None
+            else _load_allowed_gate_deny_features_for_strategy(strategy)
+        )
+        if _whitelist and not _is_feature_allowed_for_gate_deny(
+            feature_col, _whitelist
+        ):
+            return {
+                "rule_id": rule.id,
+                "feature": feature_col,
+                "status": "skip",
+                "reason": (
+                    f"Feature {feature_col} not in features_gate.yaml "
+                    f"allowed_gate_deny_features (strategy={strategy!r}); "
+                    "gate is execution-layer only."
+                ),
+            }
 
     # 确定阈值范围
     # 对于 quantile 特征，范围是 [0, 1]
@@ -2415,7 +2508,13 @@ def main() -> int:
                 continue
 
             result = optimize_gate_rule_unified(
-                df, rule, args.label_col, config, args.step, rr_col=rr_col
+                df,
+                rule,
+                args.label_col,
+                config,
+                args.step,
+                rr_col=rr_col,
+                strategy=args.strategy,
             )
             all_results[rule.id] = result
 

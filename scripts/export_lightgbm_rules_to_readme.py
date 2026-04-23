@@ -395,6 +395,7 @@ def _generate_gate_rules_statistical(
     max_rules: int = 5,
     *,
     use_shap: "bool | None" = None,
+    strategy: "str | None" = None,
 ) -> "list | None":
     """
     统计验证法生成 Gate 规则 (v4 最终方案)。
@@ -451,6 +452,36 @@ def _generate_gate_rules_statistical(
                 f"   \U0001f6e1\ufe0f  Excluded {_n_before - len(avail)} raw_scale_columns "
                 f"from gate candidates"
             )
+
+    # ── features_gate.yaml 白名单过滤: 只保留策略允许 deny 的特征 ──
+    # gate 是执行风险层, 策略结构/趋势方向类特征一律交给 prefilter.
+    # 实现与 scripts/optimize_gate_unified.py 对称; 空白名单 = 向后兼容.
+    if strategy:
+        try:
+            import sys as _sys_wl
+
+            _sys_wl.path.insert(0, str(_Path(__file__).resolve().parent))
+            from optimize_gate_unified import (
+                _is_feature_allowed_for_gate_deny as _gate_allowed,
+            )
+            from optimize_gate_unified import (
+                _load_allowed_gate_deny_features_for_strategy as _gate_wl_load,
+            )
+
+            _gate_wl = _gate_wl_load(strategy)
+        except Exception:
+            _gate_wl = []
+            _gate_allowed = None
+        if _gate_wl and _gate_allowed is not None:
+            _n_before_wl = len(avail)
+            avail = [f for f in avail if _gate_allowed(f, _gate_wl)]
+            _excluded = _n_before_wl - len(avail)
+            if _excluded:
+                print(
+                    f"   \U0001f6e1\ufe0f  features_gate.yaml whitelist "
+                    f"({strategy}): excluded {_excluded}/"
+                    f"{_n_before_wl} features not in allowed_gate_deny_features"
+                )
 
     if len(avail) < 2 or not rr_col_name or rr_col_name not in pred_df.columns:
         print("   ⚠️  统计验证: 可用特征或收益列不足，跳过")
@@ -854,6 +885,7 @@ def _generate_risk_gate_yaml(
             lgbm_model=lgbm_model,
             max_rules=top_n,
             use_shap=(False if skip_gate_shap_discovery else None),
+            strategy=strategy,
         )
         if validated_rules:
             print("   ✅ 使用统计验证法生成规则")

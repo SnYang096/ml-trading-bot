@@ -1,0 +1,33 @@
+name: bpc_gate
+description: |
+  BPC Gate 特征白名单：gate 作为"执行风险层"只允许 deny 以下可防御特征.
+  策略结构 / 趋势方向 / 位置类特征一律留给 prefilter, gate 不得重复把关.
+
+  历史教训 (2024-04~06 +1086R → -157R 衰退)：
+    早期 BPC gate.yaml hard_gates=[] 跑出 +1086R; "chop-gate hardening"
+    引入 ema_1200_position>0.1 deny 之后, 把所有肥尾月多头入场一票否决.
+    根因: binary label `forward_rr>=-0.8` 视角下, 强趋势浅 pullback 容易被
+    SL 打 → ema_1200_position 高处 bad 聚集 → KS 选它 → gate 把 BPC 最肥的肉切掉.
+    修复: prefilter 已经锁住三段结构 (breakout/pullback/recovery);
+    gate 白名单只保留真正"执行层 / 订单流 / 波动稳定性 / 尾部风险"类特征.
+
+feature_pipeline:
+  # 只有匹配这里任一 pattern (支持 fnmatch 通配符) 的特征才允许作为 gate 候选.
+  # locked / frozen 规则不受此列表约束 (它们是用户显式决策, 永远保留).
+  allowed_gate_deny_features:
+    # 订单流 / 知情交易活跃度
+    - "vpin_*"
+    # 波动率稳定性 / 杠杆非对称 (极端市场结构, 执行层风险)
+    - "vol_persistence"
+    - "vol_leverage_asymmetry"
+    - "vol_regime_shift*"
+    # 尾部风险统计 (stat_evt_* / EVT / tail shape)
+    - "stat_evt_var_*"
+    - "stat_evt_tail_shape*"
+    - "stat_evt_expected_shortfall*"
+    - "stat_evt_excess_vol*"
+    # BPC 专属 chop 语义 (BB 窄 + 方向置信低, 与 EMA 位置无关的震荡噪声)
+    - "bpc_semantic_chop"
+    # 纯 chop / 震荡噪声 (与策略结构无关的执行环境)
+    - "bb_width_normalized_pct"
+    - "range_compression_*"

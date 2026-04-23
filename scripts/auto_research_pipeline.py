@@ -2259,19 +2259,35 @@ def run_strategy_pipeline(
                         "--min-prefilter-rows",
                         str(prefilter_gates["min_rows"]),
                     ]
-                # Per-strategy KPI 覆盖: scoring_method / min_ks / max_ks_pvalue / min_lift
-                # 支持 scoring_method_fallbacks: 自动降级直到生成有效规则
-                _pf_fallbacks = prefilter_gates.get("scoring_method_fallbacks")
-                if _pf_fallbacks and isinstance(_pf_fallbacks, list):
-                    _pf_methods = standardize_method_list(
-                        _pf_fallbacks, default=["distribution_ks"]
+                # Wave 2-E (method-selection overfitting 防护):
+                # 强制 distribution_ks, 忽略 scoring_method / scoring_method_fallbacks.
+                # 原因:
+                #   之前循环跑 [distribution_ks, mean_effect, tail_bad_rate_ratio,
+                #   upside_positive_rate_ratio], 每个方法产生不同规则集, 再在同一
+                #   Val 段 backtest 取 Sharpe 最高的 = method-selection overfitting.
+                #   自由度 ≈ 方法数 × 特征数 × 分位数, 等于在 Val 上做多重假设检验
+                #   然后挑冠军, Val 段被用到饱和. 改成固定单一 KS 方法可以让 Val
+                #   段只做一次假设检验, 保留纯净的 hold-out 验证能力.
+                # Trade-off:
+                #   若 KS 选不出规则, Prefilter 退化为空规则 + locked 兜底 (预期行为).
+                _pf_fallback_cfg = prefilter_gates.get("scoring_method_fallbacks")
+                _pf_method_cfg = prefilter_gates.get("scoring_method")
+                if _pf_fallback_cfg:
+                    print(
+                        "   ⚠️  [Wave 2-E] Prefilter scoring_method_fallbacks="
+                        f"{_pf_fallback_cfg} 已忽略 (method-selection "
+                        "overfitting 防护); 强制 distribution_ks"
                     )
-                elif prefilter_gates.get("scoring_method"):
-                    _pf_methods = standardize_method_list(
-                        [prefilter_gates["scoring_method"]], default=["distribution_ks"]
+                elif (
+                    _pf_method_cfg
+                    and str(_pf_method_cfg).strip().lower() != "distribution_ks"
+                ):
+                    print(
+                        "   ⚠️  [Wave 2-E] Prefilter scoring_method="
+                        f"{_pf_method_cfg} 已忽略 (method-selection "
+                        "overfitting 防护); 强制 distribution_ks"
                     )
-                else:
-                    _pf_methods = ["distribution_ks"]  # 默认
+                _pf_methods = ["distribution_ks"]
 
                 def _append_pf_kpi_args(cmd):
                     """追加非 scoring_method 的 KPI 参数."""
@@ -2998,15 +3014,26 @@ def run_strategy_pipeline(
     elif isinstance(_ef_filter_ids_raw, (list, tuple, set)):
         _ef_filter_ids = [str(s).strip() for s in _ef_filter_ids_raw if str(s).strip()]
     _ef_filter_ids = list(dict.fromkeys(_ef_filter_ids))
-    _ef_methods = standardize_method_list(
-        _ef_gates.get("scoring_method_fallbacks"),
-        default=[
-            "distribution_ks",
-            "mean_effect",
-            "tail_bad_rate_ratio",
-            "upside_positive_rate_ratio",
-        ],
-    )
+    # Wave 2-E (method-selection overfitting 防护):
+    # Entry Filter 同样强制 distribution_ks, 废除 scoring_method_fallbacks.
+    # 详见上文 Prefilter 同名守护的注释. Entry Filter 原本 fallback 到
+    # [distribution_ks, mean_effect, tail_bad_rate_ratio,
+    #  upside_positive_rate_ratio] 4 个方法, method-shopping 问题尤其严重.
+    _ef_fallback_cfg = _ef_gates.get("scoring_method_fallbacks")
+    _ef_method_cfg = _ef_gates.get("scoring_method")
+    if _ef_fallback_cfg:
+        print(
+            "   ⚠️  [Wave 2-E] Entry Filter scoring_method_fallbacks="
+            f"{_ef_fallback_cfg} 已忽略 (method-selection overfitting "
+            "防护); 强制 distribution_ks"
+        )
+    elif _ef_method_cfg and str(_ef_method_cfg).strip().lower() != "distribution_ks":
+        print(
+            "   ⚠️  [Wave 2-E] Entry Filter scoring_method="
+            f"{_ef_method_cfg} 已忽略 (method-selection overfitting "
+            "防护); 强制 distribution_ks"
+        )
+    _ef_methods = ["distribution_ks"]
     if _ef_archetype_plateau and not dry_run:
         _ef_arch_method = str(
             _ef_gates.get("archetype_scoring_method")
