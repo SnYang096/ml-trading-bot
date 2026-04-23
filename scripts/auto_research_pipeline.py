@@ -2362,6 +2362,15 @@ def run_strategy_pipeline(
                             # 保存当前结果到临时文件 (供 Sharpe 对比使用)
                             _tmp = _pf_yaml.parent / f"prefilter_{_pf_method}.yaml"
                             shutil.copy(_pf_yaml, _tmp)
+                            # 同时落盘到 _candidates/method=<name>/ 给 T4 共识矩阵读取
+                            # (scripts/slow_candidate_report.py consensus 消费此目录).
+                            _cand_dir = (
+                                Path(config_dir)
+                                / "_candidates"
+                                / f"method={_pf_method}"
+                            )
+                            _cand_dir.mkdir(parents=True, exist_ok=True)
+                            shutil.copy(_pf_yaml, _cand_dir / "prefilter.yaml")
                             _pf_results[_pf_method] = {
                                 "n_rules": _n_rules,
                                 "path": _tmp,
@@ -3198,6 +3207,11 @@ def run_strategy_pipeline(
             # 保存临时规则文件
             _ef_tmp = _ef_arch_dir / f"entry_filters_cmp_{_em}.yaml"
             shutil.copy(_ef_orig_path, _ef_tmp)
+            # 同时落盘到 _candidates/method=<name>/ 给 T4 共识矩阵读取
+            # (scripts/slow_candidate_report.py consensus 消费此目录).
+            _cand_dir = Path(config_dir) / "_candidates" / f"method={_em}"
+            _cand_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(_ef_orig_path, _cand_dir / "entry_filters.yaml")
 
             # mini-backtest on Val 段
             _ef_bt = [
