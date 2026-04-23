@@ -180,8 +180,22 @@ strategies:
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        # 多条 hard_gate 叠加时 allow 比例下限；chop + 统计门在个别月会很低，0.3 易触发裁剪
-        min_combined_pass_rate: 0.15
+        # 多条 hard_gate 叠加时 allow 比例下限；chop gate 收紧到 0.60 后，chop 月
+        # combined allow 可能降到 5-10%，0.15 会把 chop gate 当作"过严"裁掉 → 降到 0.05
+        min_combined_pass_rate: 0.05
+        # ME Top-N gate cap. base/archetypes/gate.yaml 当前 locked=3 (chop_high +
+        # late_long/short_above_ema1200)+0。cap=3/2 即:
+        #   hard_gates 锁死 3 条 locked，不让 slow 再加新条;
+        #   system_safety 允许 slow 最多补 2 条（例如 vol_persistence / evt_tail）。
+        # 需要放宽时先改 base gate.yaml 的 locked 集再提 cap。
+        max_hard_gates: 3
+        max_system_safety: 2
+        # 防御性：显式写 0 trade_penalty，允许 gate 在整月 chop 时把该月归零
+        # 与 prefilter.trade_penalty=0.002 形成对比：prefilter 宽松、gate 敢严
+        target_trades_min: 0
+        trade_penalty_low: 0.0
+        trade_penalty_high: 0.0
+        stability_penalty: 0.0
       backtest:
         min_trades: 50
       deploy:

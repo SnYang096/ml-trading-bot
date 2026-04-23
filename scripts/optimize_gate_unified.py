@@ -1566,6 +1566,8 @@ def _promote_gate_to_archetypes(
     stat_fallback_on_empty: bool = True,
     stat_fallback_max_rules: int = 3,
     stat_fallback_min_source_features: int = 2,
+    max_hard_gates: Optional[int] = 2,
+    max_system_safety: Optional[int] = 2,
 ) -> None:
     """
     将优化后的 gate 规则写入 archetypes/gate.yaml。
@@ -1578,6 +1580,12 @@ def _promote_gate_to_archetypes(
       - locked 且优化失败 → 默认 disabled=true；若规则带 promote_never_disable=true
         则保留启用并沿用 YAML 阈值（与 entry 的 promote_never_disable 语义对齐）
       - 累积 AND pass rate 过低时自动裁剪最弱规则 (防止全部 veto)
+      - 在 phase 分裂之前按 phase 做 **Top-N cap**:
+          max_hard_gates / max_system_safety 分别限制两个 phase 的规则数。
+          locked / frozen / promote_never_disable 规则必保 (不占额度也不受 cap);
+          非 locked 规则按 (robustness_score.overall_score, |lift|) 排序取 top-K,
+          K = max(0, max_N - len(locked_in_phase))。超出的规则被丢弃并记入 removed。
+          传 None 表示不做 phase cap (旧行为)。
     """
     import yaml
 
@@ -1777,6 +1785,10 @@ def _promote_gate_to_archetypes(
 
             # Build priority for each rule by lift
             print(f"  🔧 按 lift 裁剪...")
+            # BUGFIX: 必须把 locked / frozen / promote_never_disable 规则分离出来 —
+            # 它们不能被裁剪, 但在 AND 累积模拟中必须始终参与, 最终也必须保留在 kept_rules 里。
+            # 旧代码 `kept_rules = remaining_opt` 会把这些不可裁的规则整批丢弃。
+            locked_kept: List[Dict[str, Any]] = []
             prunable = []
             for rule in kept_rules:
                 if (
@@ -1784,6 +1796,7 @@ def _promote_gate_to_archetypes(
                     or rule.get("locked")
                     or rule.get("promote_never_disable")
                 ):
+                    locked_kept.append(rule)
                     continue
                 rule_id = rule.get("id", "")
                 opt = optimization_results.get(rule_id, {})
@@ -1803,14 +1816,18 @@ def _promote_gate_to_archetypes(
                 wid = weakest.get("id", "unknown")
                 wpri = next((pv for r, pv in prunable if r is weakest), 0)
                 pruned_ids.append(wid)
-                test_rules = prefilter_gates + remaining_opt
+                # 模拟时必须包含 locked_kept, 否则会低估被锁定规则的过滤影响,
+                # 导致 pass rate 虚高, 进而少裁或误判 "不需要裁剪"。
+                test_rules = prefilter_gates + locked_kept + remaining_opt
                 combined_rate = _simulate_combined_pass_rate(test_rules, df)
                 print(
                     f"    ✂️  移除 {wid} (priority={wpri:.3f}) "
                     f"→ pass rate={combined_rate:.1%}"
                 )
 
-            kept_rules = remaining_opt
+            # 关键: locked_kept 永远保留, 追加在 remaining_opt 之前,
+            # 让最终 gate.yaml 里 locked 规则排在统计规则之前 (phase=hard_gate, 先评估)。
+            kept_rules = locked_kept + remaining_opt
 
             # ── Phase 2: frozen prefilter gates ──
             if combined_rate < min_combined_pass_rate and len(prefilter_gates) > 1:
@@ -1903,6 +1920,87 @@ def _promote_gate_to_archetypes(
             safety_rules.append(rule)
         else:
             archetype_rules.append(rule)
+
+    # ── Top-N cap per phase (locked / frozen / promote_never_disable 必保，不占额度) ──
+    # 动机: 不加此守门时 slow pipeline 会把 gate_draft 里所有统计发现的规则
+    #       (通常 5~9 条) 一起 promote 到 gate.yaml，导致 base config 的 2+2 精简
+    #       在一次 pipeline 后就失效。参见 20260413_144115 vs 20260421_174335 对比
+    #       (2024-04~06 同期 +1086R → -157R) 的诊断。
+    def _cap_rules_with_locked_priority(
+        rules: List[Dict[str, Any]],
+        limit: Optional[int],
+        phase_label: str,
+    ) -> List[Dict[str, Any]]:
+        if limit is None or len(rules) <= limit:
+            return rules
+
+        def _is_protected(r: Dict[str, Any]) -> bool:
+            return bool(
+                r.get("locked") or r.get("frozen") or r.get("promote_never_disable")
+            )
+
+        protected = [r for r in rules if _is_protected(r)]
+        candidates = [r for r in rules if not _is_protected(r)]
+
+        if len(protected) >= limit:
+            if len(protected) > limit:
+                print(
+                    f"  ⚠️  {phase_label}: protected(locked/frozen)={len(protected)} "
+                    f"> max={limit}；保留全部 protected 并丢弃 {len(candidates)} 条非 locked 候选"
+                )
+            for dropped in candidates:
+                removed_rules.append(
+                    {
+                        "id": dropped.get("id", "unknown"),
+                        "status": "cap_exceeded",
+                        "reason": f"{phase_label} cap={limit}; all slots filled by locked rules",
+                    }
+                )
+            return protected
+
+        slots_for_candidates = limit - len(protected)
+
+        def _rank_key(r: Dict[str, Any]) -> float:
+            rid = r.get("id", "")
+            opt = optimization_results.get(rid, {}) or {}
+            rob = opt.get("robustness_score")
+            if isinstance(rob, dict):
+                rob_score = rob.get("overall_score")
+                if isinstance(rob_score, (int, float)):
+                    return float(rob_score) * 10.0
+            lift = opt.get("lift_at_mid", opt.get("lift", 0))
+            if isinstance(lift, (int, float)):
+                return float(abs(lift))
+            return 0.0
+
+        candidates_sorted = sorted(candidates, key=_rank_key, reverse=True)
+        kept_cand = candidates_sorted[:slots_for_candidates]
+        dropped_cand = candidates_sorted[slots_for_candidates:]
+        for dropped in dropped_cand:
+            removed_rules.append(
+                {
+                    "id": dropped.get("id", "unknown"),
+                    "status": "cap_exceeded",
+                    "reason": (
+                        f"{phase_label} cap={limit}; outranked by top-{slots_for_candidates} "
+                        f"non-locked (rank_key={_rank_key(dropped):.3f})"
+                    ),
+                }
+            )
+        if dropped_cand:
+            ids = [d.get("id", "?") for d in dropped_cand]
+            print(
+                f"  ✂️  {phase_label} top-N cap: protected={len(protected)} + "
+                f"top-{len(kept_cand)} non-locked kept, dropped {len(dropped_cand)}: {ids}"
+            )
+        return protected + kept_cand
+
+    archetype_rules = _cap_rules_with_locked_priority(
+        archetype_rules, max_hard_gates, "hard_gates"
+    )
+    safety_rules = _cap_rules_with_locked_priority(
+        safety_rules, max_system_safety, "system_safety"
+    )
 
     config["system_safety"] = safety_rules
     config["hard_gates"] = archetype_rules
@@ -2064,6 +2162,25 @@ def main() -> int:
         type=int,
         default=2,
         help="统计法 fallback 的最小 source gate 特征数",
+    )
+    parser.add_argument(
+        "--max-hard-gates",
+        type=int,
+        default=None,
+        metavar="N",
+        help="promote 时 hard_gates phase 保留的最大规则数 (locked/frozen 必保，不占额度). "
+        "超出部分按 robustness_score / |lift| 排序丢弃最弱者. "
+        "默认不限制 (None) 以保持向后兼容；推荐由 research_pipeline.yaml "
+        "kpi_gates.gate.max_hard_gates (如 BPC=2) 显式设置.",
+    )
+    parser.add_argument(
+        "--max-system-safety",
+        type=int,
+        default=None,
+        metavar="N",
+        help="promote 时 system_safety phase 保留的最大规则数 (locked/frozen 必保). "
+        "默认不限制 (None)；推荐由 research_pipeline.yaml "
+        "kpi_gates.gate.max_system_safety 显式设置.",
     )
     args = parser.parse_args()
 
@@ -2338,6 +2455,13 @@ def main() -> int:
     # --promote: 将优化后的规则写入 archetypes/gate.yaml
     # ==========================================================================
     if args.promote:
+        # stat_fallback 生成的规则全属 hard_gate phase (risk/tail 关键词走 system_safety
+        # 时不在该路径)，因此兜底上限不得超过 hard_gates cap，避免绕过 Top-N。
+        _eff_stat_fallback_max = args.stat_fallback_max_rules
+        if args.max_hard_gates is not None:
+            _eff_stat_fallback_max = min(
+                _eff_stat_fallback_max, max(0, args.max_hard_gates)
+            )
         _promote_gate_to_archetypes(
             args.strategy,
             args.strategies_root,
@@ -2347,8 +2471,10 @@ def main() -> int:
             df=df,
             min_combined_pass_rate=args.min_combined_pass_rate,
             stat_fallback_on_empty=args.stat_fallback_on_empty,
-            stat_fallback_max_rules=args.stat_fallback_max_rules,
+            stat_fallback_max_rules=_eff_stat_fallback_max,
             stat_fallback_min_source_features=args.stat_fallback_min_source_features,
+            max_hard_gates=args.max_hard_gates,
+            max_system_safety=args.max_system_safety,
         )
 
     return 0

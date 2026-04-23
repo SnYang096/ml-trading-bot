@@ -184,6 +184,11 @@ strategies:
         stat_fallback_on_empty: true
         stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
+        # FBF Top-N gate cap. base gate.yaml 当前 0 locked，cap=2/2 允许 slow
+        # 按 robustness 在空 base 上补最多 2 条 hard + 2 条 safety。需要 FBF
+        # 依赖更多 gate 时显式调大或改 base 锁定关键语义规则。
+        max_hard_gates: 2
+        max_system_safety: 2
       backtest:
         min_trades: 12
       deploy:

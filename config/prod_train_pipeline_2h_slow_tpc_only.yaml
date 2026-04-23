@@ -158,7 +158,22 @@ strategies:
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.3
+        # 多条 hard_gate 叠加时 allow 比例下限；chop gate 收紧到 0.60 后，chop 月
+        # combined allow 可能降到 5-10%，0.3 会把 chop gate 当作"过严"裁掉 → 降到 0.05
+        min_combined_pass_rate: 0.05
+        # TPC Top-N gate cap. base/archetypes/gate.yaml 当前 locked=7 (chop_high +
+        # late_long/short_above_ema1200 + evt_var_99 + evt_tail_shape_right + vpin_ma20
+        # + fer_ols_pos)+1 locked (vol_persistence)。cap=7/2 锁死当前 hard，不让 slow
+        # 再加新 hard gate; safety 允许补 1 条。若需精简 locked (BPC 同步过), 同步
+        # 下调 cap 即可让 cap 继续"锁死新现状"。
+        max_hard_gates: 7
+        max_system_safety: 2
+        # 防御性：显式写 0 trade_penalty，允许 gate 在整月 chop 时把该月归零
+        # 与 prefilter.trade_penalty=0.002 形成对比：prefilter 宽松、gate 敢严
+        target_trades_min: 0
+        trade_penalty_low: 0.0
+        trade_penalty_high: 0.0
+        stability_penalty: 0.0
       backtest:
         min_trades: 50
       deploy:

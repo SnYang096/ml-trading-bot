@@ -6,7 +6,7 @@
 #   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_srb_only.yaml --stage rolling_sim
 #   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_srb_only.yaml --stage train_final
 #
-# 家族对照: z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB.md
+# 家族对照: z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB_RMR.md
 # ============================================================
 
 dates:
@@ -43,7 +43,10 @@ fast_loop:
   threshold_calibration:
     enabled: true
   prefilter:
-    optimize: true
+    # SRB 研究：关闭每月 prefilter 重优化，固定 meta/locked 规则 →
+    # 方向决策不会在月份之间漂移，SL/trailing/加仓 改动才可被独立评估。
+    # 上线前若要 re-optimize，改 true 并在报告中标注。
+    optimize: false
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
@@ -169,6 +172,11 @@ strategies:
         stat_fallback_on_empty: true
         stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
+        # SRB Top-N gate cap. base gate.yaml 目前 0 locked (SRB 主逻辑在 state
+        # machine)，cap=2/2 允许 slow 在 base 为空时按 robustness 补最多 2 条 hard
+        # + 2 条 safety。stat_fallback_max_rules 也会被压到 ≤ max_hard_gates。
+        max_hard_gates: 2
+        max_system_safety: 2
       backtest:
         min_trades: 20
       deploy:

@@ -2524,6 +2524,16 @@ def run_strategy_pipeline(
                         "--min-combined-pass-rate",
                         str(gate_gates["min_combined_pass_rate"]),
                     ]
+                if gate_gates.get("max_hard_gates") is not None:
+                    _cg_opt += [
+                        "--max-hard-gates",
+                        str(int(gate_gates["max_hard_gates"])),
+                    ]
+                if gate_gates.get("max_system_safety") is not None:
+                    _cg_opt += [
+                        "--max-system-safety",
+                        str(int(gate_gates["max_system_safety"])),
+                    ]
                 # Val/Test 分离: mini-pipeline Gate Opt 在完整 Val 上调阈值 (不需要 cutoff)
                 # 预筛选选择也在 Val 上评估, Test 保留给最终 Backtest
                 run_step(f"  Gate Opt [{_cm}]", _cg_opt, log)
@@ -2755,6 +2765,16 @@ def run_strategy_pipeline(
                     "--min-combined-pass-rate",
                     str(gate_gates["min_combined_pass_rate"]),
                 ]
+            if gate_gates.get("max_hard_gates") is not None:
+                gate_opt_fallback_cmd += [
+                    "--max-hard-gates",
+                    str(int(gate_gates["max_hard_gates"])),
+                ]
+            if gate_gates.get("max_system_safety") is not None:
+                gate_opt_fallback_cmd += [
+                    "--max-system-safety",
+                    str(int(gate_gates["max_system_safety"])),
+                ]
             # Keep Val/Test causality: tune gate only on validation segment.
             if test_start != holdout_start:
                 gate_opt_fallback_cmd += ["--cutoff-date", test_start]
@@ -2846,6 +2866,16 @@ def run_strategy_pipeline(
         gate_optimize_cmd += [
             "--min-combined-pass-rate",
             str(gate_gates["min_combined_pass_rate"]),
+        ]
+    if gate_gates.get("max_hard_gates") is not None:
+        gate_optimize_cmd += [
+            "--max-hard-gates",
+            str(int(gate_gates["max_hard_gates"])),
+        ]
+    if gate_gates.get("max_system_safety") is not None:
+        gate_optimize_cmd += [
+            "--max-system-safety",
+            str(int(gate_gates["max_system_safety"])),
         ]
     # Val/Test 分离: Gate Optimize 只用 Val 段 [holdout_start, test_start)
     if test_start != holdout_start:

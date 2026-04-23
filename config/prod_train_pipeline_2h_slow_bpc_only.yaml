@@ -43,6 +43,14 @@ fast_loop:
   step_months: 1
   threshold_calibration:
     enabled: true
+  prefilter:
+    # 2026-04-22 晚：meta-algorithm 根因已修（range-width + polarity 两道守门），
+    #   - scripts/meta_algorithm_unified.py::sweep_thresholds
+    #     · min_range_width_sigma (默认 1.0σ) 拦掉针尖 range 规则
+    #     · get_feature_polarity 按 semantic_polarity.yaml 拒绝反向
+    #   - config/strategies/bpc/semantic_polarity.yaml 补声明 bpc_dir_flip_count 等
+    # 重新打开 meta optimize 做验证。若又出现坏规则再关。
+    optimize: true
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
@@ -89,9 +97,9 @@ event_backtest:
   exec_objective_params:
     near_stop_threshold_r: -0.9
     near_stop_penalty: 0.0
-    max_dd_penalty: 0.0
+    max_dd_penalty: 0.02
     min_trades_soft: 0
-    undertrade_penalty: 0.0
+    undertrade_penalty: 0.001
 pcm_slot_grid:
   enabled: false
   plateau_delta: 0.03
@@ -132,7 +140,7 @@ strategies:
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
-          enabled: false
+          enabled: true
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
@@ -167,7 +175,21 @@ strategies:
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.3
+        # 多条 hard_gate 叠加时 allow 比例下限；chop gate 收紧到 0.60 后，chop 月
+        # combined allow 可能降到 5-10%，0.3 会把 chop gate 当作"过严"裁掉 → 降到 0.05
+        min_combined_pass_rate: 0.05
+        # BPC Top-N gate cap (base gate.yaml 中 locked=2+2 已占满，统计发现的 non-locked
+        # 规则一律被丢弃；若 locked 减少则按 robustness_score/|lift| 从 gate_draft 候选中
+        # 补齐到该上限)。历史诊断 (20260413_144115 vs 20260421_174335, 2024 Q2 +1086R
+        # → -157R) 确认：gate_draft 自动堆叠 5+ 条统计规则是 BPC slow pipeline 衰退主因。
+        max_hard_gates: 2
+        max_system_safety: 2
+        # 防御性：显式写 0 trade_penalty，允许 gate 在整月 chop 时把该月归零
+        # 与 prefilter.trade_penalty=0.002 形成对比：prefilter 宽松、gate 敢严
+        target_trades_min: 0
+        trade_penalty_low: 0.0
+        trade_penalty_high: 0.0
+        stability_penalty: 0.0
       backtest:
         min_trades: 50
       deploy:
