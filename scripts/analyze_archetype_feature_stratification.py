@@ -128,20 +128,32 @@ def _load_forbidden_prefilter_meta_columns_from_strategy_features_yaml(
 ) -> List[str]:
     """Read feature_pipeline.forbidden_prefilter_meta_columns (exact parquet names).
 
+    Read from BOTH `features_prefilter.yaml` and `features.yaml` under the
+    strategy folder and return the union. `features_prefilter.yaml` is the
+    preferred location (it owns the meta-prefilter candidate column set);
+    `features.yaml` is supported for backward compatibility (existing ME uses
+    it there). Each entry can be either an exact column name or a shell-style
+    wildcard (``*_score_*``, ``*_semantic_extension`` etc.) — wildcard
+    expansion happens downstream in _resolve_features_from_prefilter_yaml.
+
     Used only by meta-prefilter column resolution: drops listed columns after
-    module expansion so SHAP/meta rules cannot latch onto them (e.g. ME
-    ``me_vol_regime`` vs steady ATR plateaus).
+    module expansion so SHAP/meta rules cannot latch onto them.
     """
-    path = PROJECT_ROOT / "config" / "strategies" / strategy / "features.yaml"
-    if not path.exists():
-        return []
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    fp = raw.get("feature_pipeline", {}) or {}
-    fr = fp.get("forbidden_prefilter_meta_columns", []) or []
     out: List[str] = []
-    for x in fr:
-        if isinstance(x, (str, int)) and str(x).strip():
-            out.append(str(x).strip())
+    seen: set[str] = set()
+    for fname in ("features_prefilter.yaml", "features.yaml"):
+        path = PROJECT_ROOT / "config" / "strategies" / strategy / fname
+        if not path.exists():
+            continue
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        fp = raw.get("feature_pipeline", {}) or {}
+        fr = fp.get("forbidden_prefilter_meta_columns", []) or []
+        for x in fr:
+            if isinstance(x, (str, int)):
+                s = str(x).strip()
+                if s and s not in seen:
+                    seen.add(s)
+                    out.append(s)
     return out
 
 
@@ -2311,9 +2323,26 @@ def _resolve_features_from_prefilter_yaml(
         else []
     )
     if forbidden_cols_exact:
+        import fnmatch as _fnmatch
+
         before2 = list(resolved_columns)
-        forbidden_set = {str(c).strip() for c in forbidden_cols_exact if str(c).strip()}
-        resolved_columns = [c for c in resolved_columns if c not in forbidden_set]
+        exact_set: set[str] = set()
+        patterns: List[str] = []
+        for c in forbidden_cols_exact:
+            s = str(c).strip()
+            if not s:
+                continue
+            if any(ch in s for ch in "*?["):
+                patterns.append(s)
+            else:
+                exact_set.add(s)
+
+        def _is_forbidden(col: str) -> bool:
+            if col in exact_set:
+                return True
+            return any(_fnmatch.fnmatchcase(col, pat) for pat in patterns)
+
+        resolved_columns = [c for c in resolved_columns if not _is_forbidden(c)]
         stripped2 = sorted(set(before2) - set(resolved_columns))
         if stripped2:
             preview = stripped2[:8]
@@ -2618,6 +2647,7 @@ def _meta_algorithm_prefilter(
         train_lightgbm as _train_lgb,
         discover_features as _discover_feats,
         find_plateau as _find_plateau,
+        get_feature_polarity as _get_polarity,
     )
 
     avail_features = [f for f in features if f in df_train_sub.columns]
@@ -2852,6 +2882,13 @@ def _meta_algorithm_prefilter(
                     f"   ⚠️ dir_uplift={_dir_uplift:+.4f} < 0.05, 方向前置规则所增价弱, 跳过"
                 )
 
+    _polarity_skipped_total = 0
+    _polarity_skipped_feats: list[str] = []
+    # Range-width 守门阈值（单位 = σ）。
+    # 防止「针尖 range」过拟合：pass=[lo,hi] 只让极窄取值通过 holdout 来拟合噪声。
+    # 典型坑（2026-04-22）：bpc_impulse_return_atr ∈ [-0.877, -0.669] (宽 ≈ 1σ 擦边)
+    _MIN_RANGE_WIDTH_SIGMA = 2.0
+    _narrow_range_skipped_total = 0
     for feat in top_features:
         if feat not in df_holdout_sub.columns:
             continue
@@ -2862,22 +2899,53 @@ def _meta_algorithm_prefilter(
 
         thresholds = np.unique(np.quantile(col[valid], quantiles))
 
+        # ── Semantic polarity (per-strategy + shared fallback) ──
+        # higher_is_better → 只允许 deny_low (direction="lt", flip 后 pass=">=" high)
+        # lower_is_better  → 只允许 deny_high (direction="gt", flip 后 pass="<=" low)
+        # unknown          → 两侧方向 + range 都扫
+        _pol = _get_polarity(feat, strategy)
+        _allow_gt = _pol in ("unknown", "lower_is_better")
+        _allow_lt = _pol in ("unknown", "higher_is_better")
+        _allow_range = _pol == "unknown"
+        if _pol != "unknown":
+            _polarity_skipped_feats.append(f"{feat}[{_pol}]")
+
         # ── 收集候选 deny_mask 列表: 单阈值 + 区间 ──
         _rule_specs = []  # [(deny_mask, op_str, thr_val, thr_low, thr_high)]
 
         # (A) 单阈值规则
         for thr in thresholds:
             for direction in ["gt", "lt"]:
+                if direction == "gt" and not _allow_gt:
+                    _polarity_skipped_total += 1
+                    continue
+                if direction == "lt" and not _allow_lt:
+                    _polarity_skipped_total += 1
+                    continue
                 dm = (col > thr) if direction == "gt" else (col < thr)
                 dm = dm & valid
                 op_s = ">" if direction == "gt" else "<"
                 _rule_specs.append((dm, op_s, float(thr), None, None))
 
-        # (B) 区间规则: pass = [low, high], deny = 两侧
-        for i_lo, thr_lo in enumerate(thresholds):
-            for thr_hi in thresholds[i_lo + 1 :]:
-                dm = ((col < thr_lo) | (col > thr_hi)) & valid
-                _rule_specs.append((dm, "range", None, float(thr_lo), float(thr_hi)))
+        # (B) 区间规则: pass = [low, high], deny = 两侧 (polarity 明确时跳过)
+        if _allow_range:
+            # Range-width 守门：禁止「针尖 pass range」过拟合 holdout 噪声。
+            # pass 窗口 hi - lo 必须 >= _MIN_RANGE_WIDTH_SIGMA * std(col)
+            _col_std = float(np.nanstd(col[valid])) if valid.any() else 0.0
+            _min_width_abs = _MIN_RANGE_WIDTH_SIGMA * _col_std if _col_std > 0 else 0.0
+            for i_lo, thr_lo in enumerate(thresholds):
+                for thr_hi in thresholds[i_lo + 1 :]:
+                    _width = float(thr_hi) - float(thr_lo)
+                    if _min_width_abs > 0 and _width < _min_width_abs:
+                        _narrow_range_skipped_total += 1
+                        continue
+                    dm = ((col < thr_lo) | (col > thr_hi)) & valid
+                    _rule_specs.append(
+                        (dm, "range", None, float(thr_lo), float(thr_hi))
+                    )
+        else:
+            _n_thr = len(thresholds)
+            _polarity_skipped_total += _n_thr * (_n_thr - 1) // 2
 
         for deny_mask, _op_str, _thr_val, _thr_low, _thr_high in _rule_specs:
             deny_rate = float(deny_mask.mean())
@@ -3114,6 +3182,21 @@ def _meta_algorithm_prefilter(
                     "_deny_mask": deny_mask,
                 }
             )
+
+    if _narrow_range_skipped_total > 0:
+        print(
+            f"\n🛡️  range-width (< {_MIN_RANGE_WIDTH_SIGMA}σ): 跳过 "
+            f"{_narrow_range_skipped_total} 条针尖 range 候选"
+        )
+
+    if _polarity_skipped_total > 0:
+        _pol_feats_str = ", ".join(_polarity_skipped_feats[:6]) + (
+            " …" if len(_polarity_skipped_feats) > 6 else ""
+        )
+        print(
+            f"\n🛡️  semantic-polarity: 跳过 {_polarity_skipped_total} 条反向/range 候选 "
+            f"({len(_polarity_skipped_feats)} 个特征受约束: {_pol_feats_str})"
+        )
 
     # ── 5a-post. rank-based score 归一化 (主 KPI 驱动) ──
     if candidates:

@@ -72,6 +72,12 @@ class MetaAlgorithmConfig:
     )
     deny_rate_min: float = 0.03
     deny_rate_max: float = 0.40
+    # Range 规则（同 feature 上 lo <= x <= hi 的 deny）最小宽度，单位 = σ（feature std）。
+    # 目的：防止「针尖 range」过拟合 —— holdout KS 看似高，但语义完全无法解释。
+    # 2026-04-22 BPC 坑示例：bpc_impulse_return_atr ∈ [-0.877, -0.669]（宽 ≈0.2σ）
+    #                         bpc_dir_flip_count    ∈ [0.35, 0.65]     （宽 ≈0.6σ）
+    # 建议值：1.0（保底 1σ 宽；若需研究期探索，可降到 0.5）
+    min_range_width_sigma: float = 1.0
 
     # ── KPI 门禁 ──
     scoring_method: str = "ks"  # "ks" | "bad_rate_lift" | "positive_rr" | "combined"
@@ -95,6 +101,88 @@ class MetaAlgorithmConfig:
 
     # ── 策略 ──
     strategy: str = ""
+
+
+# ====================================================================
+# 0. Semantic Polarity Registry (per-strategy, no shared fallback)
+# ====================================================================
+#
+# 每个策略在自己目录下声明单调特征的方向语义:
+#   config/strategies/{strategy}/semantic_polarity.yaml
+#
+# 不共享: 同名特征在不同策略语义可能不同 (e.g. dollar_volume_over_mcap
+# 在 ME 语义里是 higher_is_better, 在低波动轮动策略里可能是 lower_is_better),
+# 所以每个策略需要在自己的文件里显式声明。
+#
+# 三档:
+#   higher_is_better → skip direction="gt" (deny high) + skip range
+#   lower_is_better  → skip direction="lt" (deny low)  + skip range
+#   unknown / 未列入 → 两侧方向 + range 都扫 (保留原自由度)
+
+_POLARITY_CACHE: Dict[str, Dict[str, str]] = {}  # key: strategy name
+_POLARITY_VALID = {"higher_is_better", "lower_is_better", "unknown"}
+
+
+def _find_config_root() -> Optional[Path]:
+    """Return the repo's config/ directory, or None if not found."""
+    here = Path(__file__).resolve()
+    for candidate in (here.parent.parent / "config", Path.cwd() / "config"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _read_polarity_file(path: Path) -> Dict[str, str]:
+    """Parse a single semantic_polarity.yaml file. Returns empty dict on failure."""
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        raw = data.get("polarity", {}) or {}
+        out: Dict[str, str] = {}
+        for k, v in raw.items():
+            if not isinstance(v, str):
+                continue
+            v_norm = v.strip().lower()
+            if v_norm in _POLARITY_VALID:
+                out[str(k)] = v_norm
+        return out
+    except Exception as exc:  # noqa: BLE001
+        print(f"   ⚠️  {path.name} 加载失败, 忽略: {exc}")
+        return {}
+
+
+def _load_semantic_polarity(strategy: Optional[str] = None) -> Dict[str, str]:
+    """Load per-strategy polarity map (cached).
+
+    Args:
+        strategy: strategy name (e.g. "me", "bpc", "tpc"). None/empty → no polarity map.
+
+    Returns:
+        Dict[feature_name, polarity]. Empty if strategy not given or file missing.
+    """
+    key = (strategy or "").strip().lower()
+    if key in _POLARITY_CACHE:
+        return _POLARITY_CACHE[key]
+
+    mapping: Dict[str, str] = {}
+    config_root = _find_config_root()
+    if config_root is not None and key:
+        mapping = _read_polarity_file(
+            config_root / "strategies" / key / "semantic_polarity.yaml"
+        )
+
+    _POLARITY_CACHE[key] = mapping
+    return mapping
+
+
+def get_feature_polarity(feature: str, strategy: Optional[str] = None) -> str:
+    """Return polarity for a feature name under the given strategy.
+
+    No strategy (or strategy has no polarity file) → always 'unknown' (free sweep).
+    """
+    return _load_semantic_polarity(strategy).get(feature, "unknown")
 
 
 # ====================================================================
@@ -271,6 +359,8 @@ def sweep_thresholds(
         return []
 
     candidates = []
+    polarity_skipped = 0
+    narrow_range_skipped = 0
     for feat in features:
         if feat not in df.columns:
             continue
@@ -281,23 +371,51 @@ def sweep_thresholds(
 
         thresholds = np.unique(np.quantile(col[valid], quantiles))
 
+        # ── Semantic polarity filter ──
+        # higher_is_better → only allow deny_low (direction="lt", flips to ">=" pass)
+        # lower_is_better  → only allow deny_high (direction="gt", flips to "<=" pass)
+        # unknown          → both directions + range (original behavior)
+        feat_polarity = get_feature_polarity(feat, cfg.strategy)
+        allow_gt = feat_polarity in ("unknown", "lower_is_better")
+        allow_lt = feat_polarity in ("unknown", "higher_is_better")
+        allow_range = feat_polarity == "unknown"
+
         rule_specs = []  # (deny_mask, op_str, thr_val, thr_low, thr_high)
 
         # (A) Single threshold rules
         for thr in thresholds:
             for direction in ["gt", "lt"]:
+                if direction == "gt" and not allow_gt:
+                    polarity_skipped += 1
+                    continue
+                if direction == "lt" and not allow_lt:
+                    polarity_skipped += 1
+                    continue
                 dm = (col > thr) if direction == "gt" else (col < thr)
                 dm = dm & valid
                 op_s = ">" if direction == "gt" else "<"
                 rule_specs.append((dm, op_s, float(thr), None, None))
 
-        # (B) Range rules: deny = in-range
-        for i_lo, thr_lo in enumerate(thresholds):
-            for thr_hi in thresholds[i_lo + 1 :]:
-                dm = ((col >= thr_lo) & (col <= thr_hi)) & valid
-                rule_specs.append(
-                    (dm, "range_deny", None, float(thr_lo), float(thr_hi))
-                )
+        # (B) Range rules: deny = in-range (skip for polarity-defined features)
+        if allow_range:
+            # Range-width 守门：禁止「针尖 range」过拟合规则。
+            # width (hi - lo) 必须 >= min_range_width_sigma * std(col)，否则拒收。
+            col_std = float(np.nanstd(col[valid])) if valid.any() else 0.0
+            min_width_abs = cfg.min_range_width_sigma * col_std if col_std > 0 else 0.0
+            for i_lo, thr_lo in enumerate(thresholds):
+                for thr_hi in thresholds[i_lo + 1 :]:
+                    width = float(thr_hi) - float(thr_lo)
+                    if min_width_abs > 0 and width < min_width_abs:
+                        narrow_range_skipped += 1
+                        continue
+                    dm = ((col >= thr_lo) & (col <= thr_hi)) & valid
+                    rule_specs.append(
+                        (dm, "range_deny", None, float(thr_lo), float(thr_hi))
+                    )
+        else:
+            # counts of range candidates we would have emitted
+            n_thr = len(thresholds)
+            polarity_skipped += n_thr * (n_thr - 1) // 2
 
         for deny_mask, _op_str, _thr_val, _thr_low, _thr_high in rule_specs:
             deny_rate = float(deny_mask.mean())
@@ -360,6 +478,12 @@ def sweep_thresholds(
             )
 
     candidates.sort(key=lambda x: -x["score"])
+    if polarity_skipped > 0:
+        print(f"   🛡️  semantic-polarity: 跳过 {polarity_skipped} 条反向/range 候选规则")
+    if narrow_range_skipped > 0:
+        print(
+            f"   🛡️  range-width (< {cfg.min_range_width_sigma}σ): 跳过 {narrow_range_skipped} 条针尖 range 候选"
+        )
     return candidates
 
 
