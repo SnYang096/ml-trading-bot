@@ -935,6 +935,45 @@ features:
       hal_high: hal_high
       hal_low: hal_low
     notes: baseline-only 版本：通过 poc_hal_features_close_f 生成 POC/HAL，从而不引入 WPT。输出已归一化。
+  wide_sr_swing_f:
+    module: baseline
+    compute_func: compute_wide_sr_swing_from_series
+    dependencies:
+    - atr_f
+    required_columns:
+    - high
+    - low
+    - close
+    - atr
+    output_columns:
+    - wide_sr_upper_px
+    - wide_sr_lower_px
+    - wide_sr_dist_atr
+    - wide_sr_side
+    - wide_sr_range_width_atr
+    category: sr_structure
+    description: |
+      Large-scale SR (L3) proxy — rolling swing high/low over wide_window bars,
+      shifted by anchor_shift to avoid self-containing the current bar. On the
+      2H primary timeframe the defaults (240 bar, shift 12) correspond to a ~1
+      month window anchored 1 day back.
+
+      Outputs include both raw prices (wide_sr_upper_px / wide_sr_lower_px) and
+      ATR-normalized summaries (dist/side/range_width). Upper/lower prices are
+      the canonical "large-scale SR anchors" shared by FBF filters and SRB
+      structural SL / entry guard; dist/side are useful as ML features.
+
+      L1 (~1-2 day, narrow swing) and L2 (~2 week, POC/HAL) SR remain provided
+      by `srb_regime.swing_sr_levels(20)` and `poc_hal_features_*_f` respectively.
+    compute_params:
+      wide_window: 240
+      anchor_shift: 12
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      atr: atr
   wpt_price_fluctuation_f:
     module: enhanced
     compute_func: extract_wpt_price_features_normalized
@@ -7343,6 +7382,7 @@ features:
     output_columns:
     # === ATOMIC: Breakout 原子信号 ===
     - bpc_price_breakout_strength
+    - bpc_recent_breakout_strength
     - bpc_vol_breakout_confirm
     - bpc_cvd_breakout_confirm
     - bpc_vpin_breakout_confirm
@@ -7374,7 +7414,8 @@ features:
     - bpc_cvd_z
     - bpc_semantic_chop
     - bpc_semantic_extension
-    - bpc_semantic_ema_discount
+    # bpc_semantic_ema_discount 已于 2026-04-22 从 BPC 输出移除
+    # （与 pullback_depth / ema_1200_position gate 冗余，且在启动月归零导致 meta-algorithm 误用为 prefilter）
     category: bpc
     description: BPC soft phase scores with atomic/composite/contextual features for tree model exploration.
     pass_full_df: false
@@ -7386,9 +7427,12 @@ features:
       pullback_decay: 0.3
       vol_ma_window: 20
       normalized: true
+      # 2026-04-22: 删除 bpc_semantic_ema_discount 输出 + p_scale 不再含该因子 → 强制重算
+      node_cache_version: "bpc_soft_phase_v2_drop_ema_discount"
       output_normalization_map:
         # ATOMIC: Breakout
         bpc_price_breakout_strength: bounded_0_1
+        bpc_recent_breakout_strength: bounded_0_1
         bpc_vol_breakout_confirm: bounded_0_1
         bpc_cvd_breakout_confirm: bounded_0_1
         bpc_vpin_breakout_confirm: bounded_0_1
@@ -7420,7 +7464,6 @@ features:
         bpc_cvd_z: zscore
         bpc_semantic_chop: bounded_0_1
         bpc_semantic_extension: bounded_0_1
-        bpc_semantic_ema_discount: bounded_0_1
     column_mappings:
       close: close
       high: high
@@ -7452,6 +7495,7 @@ features:
     - volume
     output_columns:
     - tpc_price_breakout_strength
+    - tpc_recent_breakout_strength
     - tpc_vol_breakout_confirm
     - tpc_cvd_breakout_confirm
     - tpc_vpin_breakout_confirm
@@ -7478,7 +7522,7 @@ features:
     - tpc_cvd_z
     - tpc_semantic_chop
     - tpc_semantic_extension
-    - tpc_semantic_ema_discount
+    # tpc_semantic_ema_discount 已于 2026-04-22 从 TPC 输出移除（与 BPC 一致）
     category: tpc
     description: TPC soft phase scores - trend-based pullback/continuation without breakout gate. Direction from EMA1200 sign.
     pass_full_df: false
@@ -7490,8 +7534,11 @@ features:
       pullback_decay: 0.3
       vol_ma_window: 20
       normalized: true
+      # 2026-04-22: 删除 tpc_semantic_ema_discount 输出 + p_scale 不再含该因子 → 强制重算
+      node_cache_version: "tpc_soft_phase_v2_drop_ema_discount"
       output_normalization_map:
         tpc_price_breakout_strength: bounded_0_1
+        tpc_recent_breakout_strength: bounded_0_1
         tpc_vol_breakout_confirm: bounded_0_1
         tpc_cvd_breakout_confirm: bounded_0_1
         tpc_vpin_breakout_confirm: bounded_0_1
@@ -7518,7 +7565,6 @@ features:
         tpc_cvd_z: zscore
         tpc_semantic_chop: bounded_0_1
         tpc_semantic_extension: bounded_0_1
-        tpc_semantic_ema_discount: bounded_0_1
     column_mappings:
       close: close
       high: high
@@ -7613,17 +7659,23 @@ features:
     output_columns:
     - bpc_impulse_return_atr
     - bpc_impulse_direction_match
+    - bpc_impulse_return_atr_long
+    - bpc_impulse_return_atr_short
     category: bpc
-    description: BPC impulse return normalized by ATR, with direction preserved (signed)
+    description: BPC impulse return normalized by ATR, with direction + split long/short branches (both higher_is_better, prefilter-safe)
     pass_full_df: false
     compute_params:
       input_normalization_map:
         atr: price_unit
       lookback: 20
       normalized: true
+      # 2026-04-22: 新增 _long / _short 单侧拆分列 → 强制重算
+      node_cache_version: "bpc_impulse_v2_split_long_short"
       output_normalization_map:
         bpc_impulse_return_atr: bounded_-1_1
         bpc_impulse_direction_match: bounded_0_1
+        bpc_impulse_return_atr_long: bounded_0_1
+        bpc_impulse_return_atr_short: bounded_0_1
     column_mappings:
       close: close
       atr: atr
@@ -7703,16 +7755,22 @@ features:
     - atr
     output_columns:
     - bpc_pullback_delta_absorption
+    - bpc_pullback_delta_absorption_long
+    - bpc_pullback_delta_absorption_short
     category: bpc
-    description: BPC pullback delta absorption using z-score (high = accumulation signal)
+    description: BPC pullback delta absorption using z-score + split long/short branches (long=price↓×cvd↑ accumulation, short=price↑×cvd↓ distribution)
     pass_full_df: false
     compute_params:
       input_normalization_map:
         atr: price_unit
       lookback: 50
       normalized: true
+      # 2026-04-22: 新增 _long / _short 单侧拆分列 → 强制重算
+      node_cache_version: "bpc_pullback_delta_absorption_v2_split_long_short"
       output_normalization_map:
         bpc_pullback_delta_absorption: bounded_0_1
+        bpc_pullback_delta_absorption_long: bounded_0_1
+        bpc_pullback_delta_absorption_short: bounded_0_1
     column_mappings:
       close: close
       cvd_change_5: cvd_change_5
@@ -7925,6 +7983,7 @@ features:
     dependencies:
     - atr_f
     - cvd_change_5_pct_f
+    - bb_width_normalized_pct_f
     required_columns:
     - close
     - high
@@ -7946,8 +8005,10 @@ features:
     - me_volume_surge
     - me_volume_accel
     - me_delta_net_flow
+    # === Semantic (场景语义) ===
+    - me_semantic_chop
     category: momentum_expansion
-    description: ME v3.0 Energy × Acceleration × Participation three-factor model with 11 core features.
+    description: ME v3.0 Energy × Acceleration × Participation three-factor model with 11 core features + me_semantic_chop.
     pass_full_df: false
     compute_params:
       input_normalization_map:
@@ -7955,6 +8016,7 @@ features:
       lookback: 20
       pct_window: 100
       normalized: true
+      node_cache_version: "me_soft_phase_v2_chop"
       output_normalization_map:
         # Energy
         me_atr_pct: bounded_0_1
@@ -7970,6 +8032,8 @@ features:
         me_volume_surge: bounded_0_1
         me_volume_accel: bounded_0_1
         me_delta_net_flow: bounded_neg1_1
+        # Semantic
+        me_semantic_chop: bounded_0_1
     column_mappings:
       close: close
       high: high
@@ -7977,6 +8041,7 @@ features:
       atr: atr
       volume: volume
       cvd_change_5: cvd_change_5
+      bb_width_normalized: bb_width_normalized_pct  # 使用 _pct 版本，值域 [0,1]
 
   me_accel_5k_split_f:
     module: momentum_expansion

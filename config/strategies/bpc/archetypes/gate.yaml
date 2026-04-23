@@ -8,8 +8,28 @@ schema:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
+
+# ==========================================================================
+# BPC gate.yaml —— 2026-04-22 "回归早期" 精简版
+# --------------------------------------------------------------------------
+# 历史教训（诊断 2024-04~06 崩盘的回溯）：
+#   早期 BPC (20260413_144115) run 2024-04~06 累计 +1086R，hard_gates = []。
+#   之后的 "chop-gate hardening" 引入了 9 条 locked hard_gates，结果同期变 -157R。
+#   元凶 gate：
+#     - gate_bpc_late_long_above_ema1200 (ema_1200_position > 0.10 deny)
+#       → 强势牛市期价远高于 EMA1200，等于把所有肥尾月多头入场一票否决
+#     - gate_ema_1200_position_* / gate_bpc_late_short_below_ema1200 / gate_fer_ols_pos_*
+#       / gate_macro_tp_vwap_1200_deadzone / gate_evt_* 等，全样本 KS 看似合理，
+#       但在 BPC 肥尾子集上会批量挡掉真信号。
+# 设计约束（用户 2026-04-22 规定）：
+#   hard_gates 最多 2 条，system_safety 最多 2 条。剩下的靠 prefilter/execution 管。
+# 保留理由：
+#   - gate_bpc_semantic_chop_high: BPC 专属「BB 窄 × 方向置信低」chop 语义，牛市期该值低，
+#     不会误杀单边肥尾
+#   - gate_vpin_ma20: 订单流极端（信息不对称过高）保护，与 EMA 位置无关
+# ==========================================================================
+
 hard_gates:
-# --- BPC 语义门控（与 TPC 对齐）：压波动区、压 EMA1200 过度拉伸追涨杀跌 ---
 - id: gate_bpc_semantic_chop_high
   tag: HARD_BPC_SEMANTIC_CHOP
   phase: hard_gate
@@ -17,70 +37,13 @@ hard_gates:
   reason: BPC 专用：BB 偏窄且方向置信低 → 典型震荡来回扫区
   when:
     bpc_semantic_chop:
-      value_gt: 0.90
+      value_gt: 0.60
   then:
     action: deny
-  comment: 'semantic: same construction as tpc_semantic_chop'
+  comment: 'semantic: same construction as tpc_semantic_chop; 0.60 对应全局 deny≈25%'
   locked: true
-  lock_reason: 波动区过滤（放宽）：仅拦截极端震荡区，先验证交易恢复
-- id: gate_bpc_late_long_above_ema1200
-  tag: HARD_BPC_LATE_LONG_EMA1200
-  phase: hard_gate
-  priority: 7
-  reason: BPC 专用：价远高于 EMA1200（动量末端追涨）
-  when:
-    ema_1200_position:
-      value_gt: 0.10
-  then:
-    action: deny
-  comment: 'semantic: aligned with TPC late-long EMA stretch gate'
-  locked: true
-  lock_reason: 弱化延续语义：高位远离 EMA1200 时不追多
-- id: gate_bpc_late_short_below_ema1200
-  tag: HARD_BPC_LATE_SHORT_EMA1200
-  phase: hard_gate
-  priority: 7
-  reason: BPC 专用：价远低于 EMA1200（动量末端追空）
-  when:
-    ema_1200_position:
-      value_lt: -0.10
-  then:
-    action: deny
-  comment: 'semantic: symmetric late chase on ema_1200_position'
-  locked: true
-  lock_reason: 弱化延续语义：低位远离 EMA1200 时不追空
-- id: gate_evt_var_99_evt_var_99
-  tag: HARD_EVT_VAR_99_EVT_VAR_99
-  phase: hard_gate
-  priority: 10
-  reason: 统计验证规则 (lift=1.54)
-  when:
-    all_of:
-    - evt_var_99:
-        value_gt: 0.6706
-    - evt_var_99:
-        value_lt: 0.7976
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.4698, lift=0.230'
-  locked: true
-  lock_reason: EVT 左尾风险强度：中高风险拖泥带水区间对趋势策略表现最差
-- id: gate_evt_tail_shape_right_evt_tail_shape_right
-  tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.33)
-  when:
-    all_of:
-    - evt_tail_shape_right:
-        value_gt: 0.3373
-    - evt_tail_shape_right:
-        value_lt: 0.5317
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.2290, lift=0.582'
-  locked: true
-  lock_reason: EVT 右尾形状：假强势/上冲下砸结构对趋势策略不利
+  promote_never_disable: true
+  lock_reason: 波动区过滤（标准）：BB偏窄且方向置信低即拒绝，避免 chop bar 假突破
 - id: gate_vpin_ma20
   tag: HARD_VPIN_MA20
   phase: hard_gate
@@ -94,55 +57,9 @@ hard_gates:
   comment: 'optimizer: no_stable_plateau, threshold=0.2959, lift=0.287'
   locked: true
   lock_reason: VPIN 知情交易活跃度：信息不对称过高时入场胜率下降
-- id: gate_macro_tp_vwap_1200_deadzone
-  tag: HARD_MACRO_TP_VWAP_1200_DEADZONE
-  phase: hard_gate
-  priority: 13
-  reason: 语义锚点规则（VWAP 近场死区）
-  when:
-    all_of:
-    - macro_tp_vwap_1200_position:
-        value_gt: -0.005
-    - macro_tp_vwap_1200_position:
-        value_lt: 0.005
-  then:
-    action: deny
-  comment: 'semantic_anchor: deny near VWAP where trend edge is weak'
-  locked: true
-  lock_reason: VWAP1200 近场噪声区（方向不稳定）先过滤
-- id: gate_ema_1200_position_ema_1200_position
-  tag: HARD_EMA_1200_POSITION_EMA_1200_POSITION
-  phase: hard_gate
-  priority: 14
-  reason: 统计验证规则 (lift=1.28)
-  when:
-    all_of:
-    - ema_1200_position:
-        value_gt: 0.0996
-    - ema_1200_position:
-        value_lt: 0.1461
-  then:
-    action: deny
-  comment: 'from gate_draft(20260410_190624): medRR=-1.63, bad=59.3%, deny=10%'
-  locked: true
-  lock_reason: EMA1200 浅上方位置：接近均线但不够强势的假突破区间
-- id: gate_fer_ols_pos_fer_ols_pos
-  tag: HARD_FER_OLS_POS_FER_OLS_POS
-  phase: hard_gate
-  priority: 15
-  reason: 统计验证规则 (lift=1.08)
-  when:
-    all_of:
-    - fer_ols_pos:
-        value_gt: 0.063
-    - fer_ols_pos:
-        value_lt: 0.5188
-  then:
-    action: deny
-  comment: 'from gate_draft(20260410_190624): medRR=-0.61, bad=52.9%, deny=25%'
-  locked: true
-  lock_reason: FER OLS 定位：资金费率正溢价中等区间对做多入场不利
+
 guardrails: []
+
 system_safety:
 - id: gate_vol_persistence_vol_persistence
   tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
@@ -174,3 +91,5 @@ system_safety:
   then:
     action: deny
   comment: 'optimizer: stable_plateau_found, threshold=0.1259, lift=0.119'
+  locked: true
+  lock_reason: 波动杠杆非对称：α/γ 严重失衡期趋势容易被拖垮

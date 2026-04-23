@@ -1,0 +1,46 @@
+# ==========================================================================
+# BPC (Breakout → Pullback → Continuation) — Semantic Polarity
+# ==========================================================================
+# 作用: meta-algorithm sweep 只扫描与语义一致的方向, 防止反向规则被 promote。
+# 加载: scripts/meta_algorithm_unified.py 按策略加载本文件
+#       (不共享, 同名特征在不同策略可以有不同语义)
+# --------------------------------------------------------------------------
+
+polarity:
+  # ── BPC 三段语义锚点 ──
+  bpc_recent_breakout_strength: higher_is_better  # Breakout 成立
+  bpc_recovery_strength:        higher_is_better  # Continuation 恢复力度
+  bpc_pullback_depth:           lower_is_better   # Pullback 越浅越好
+
+  # ── 订单流 ──
+  bpc_cvd_absorption:           higher_is_better
+
+  # ── 压缩 prior ──
+  bpc_volume_compression_pct:   higher_is_better  # 压缩后更易爆发
+
+  # ── 场景语义 ──
+  bpc_semantic_chop:            lower_is_better   # BB 带窄 × 方向置信低 (值越高越震荡)
+
+  # ── 方向一致性 / 回撤形态（2026-04-22 补声明）──
+  # 坑：未声明 polarity 的特征会 fallback 到 unknown → meta 允许 range 规则，
+  #     2025-11 meta 选 bpc_dir_flip_count ∈ [0.35, 0.65] 导致整月 0 笔。
+  bpc_dir_flip_count:           lower_is_better   # 方向翻转次数越少越好（越一致）
+  bpc_dir_consistency_short:    higher_is_better  # 多窗一致性（短）
+  bpc_dir_consistency_mid:      higher_is_better  # 多窗一致性（中）
+  bpc_dir_consistency_long:     higher_is_better  # 多窗一致性（长）
+  bpc_pullback_speed:           higher_is_better  # 回撤速度快 → 利于 continuation
+
+  # ── 双向特征拆分（2026-04-22 新增）──
+  # 原双向列 bpc_impulse_return_atr / bpc_pullback_delta_absorption 无法单调，
+  # 拆成 _long / _short 两个单侧列（ReLU 两侧），每侧都是 higher_is_better。
+  # 对应 side 的 prefilter 可放心启用；反侧那列在本方向下恒为 0，不会被 meta 选中。
+  bpc_impulse_return_atr_long:        higher_is_better
+  bpc_impulse_return_atr_short:       higher_is_better
+  bpc_pullback_delta_absorption_long: higher_is_better
+  bpc_pullback_delta_absorption_short: higher_is_better
+
+  # ── 未声明（保持 unknown，靠 min_range_width_sigma 兜底）──
+  # bpc_impulse_return_atr        — 原双向列，保留向后兼容（仍在黑名单）
+  # bpc_pullback_delta_absorption — 原双向列，同上
+  # bpc_pullback_duration         — 中等时长可能最好（U 型），不适合单调
+  # bpc_phase_transition_*        — 类别性特征

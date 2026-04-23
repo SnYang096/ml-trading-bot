@@ -1,0 +1,39 @@
+# ==========================================================================
+# TPC (Trend Pullback Continuation) — Semantic Polarity
+# ==========================================================================
+# 作用: meta-algorithm sweep 只扫描与语义一致的方向, 防止反向规则被 promote。
+# 加载: scripts/meta_algorithm_unified.py 按策略加载本文件
+#       (不共享, 同名特征在不同策略可以有不同语义)
+# --------------------------------------------------------------------------
+
+polarity:
+  # ── TPC 语义: 回调不破结构, continuation 允许较弱 ──
+  tpc_recovery_strength:  higher_is_better
+  tpc_cvd_absorption:     higher_is_better
+  tpc_pullback_depth:     lower_is_better
+
+  # ── 场景语义 ──
+  tpc_semantic_chop:      lower_is_better   # BB 带窄 × 方向置信低 (值越高越震荡)
+
+  # ── 方向一致性 / 回撤形态（从 BPC 模块复用，与 BPC 同向）──
+  # 坑（BPC 同类）：未声明 polarity → meta 写窄 range 规则（0 笔月）。
+  bpc_dir_flip_count:        lower_is_better
+  bpc_dir_consistency_short: higher_is_better
+  bpc_dir_consistency_mid:   higher_is_better
+  bpc_dir_consistency_long:  higher_is_better
+  bpc_volume_compression_pct: higher_is_better
+  bpc_pullback_speed:        higher_is_better
+
+  # ── 双向特征拆分 (2026-04-22 新增，与 BPC 共享) ──
+  bpc_impulse_return_atr_long:        higher_is_better
+  bpc_impulse_return_atr_short:       higher_is_better
+  bpc_pullback_delta_absorption_long: higher_is_better
+  bpc_pullback_delta_absorption_short: higher_is_better
+
+  # ── 未声明 (留 unknown，靠 min_range_width_sigma 兜底) ──
+  # ema_1200_position           — 近场死区 U 型
+  # macro_tp_vwap_1200_position — 同上
+  # bpc_impulse_return_atr      — 原双向列，保留向后兼容（仍在黑名单）
+  # bpc_pullback_delta_absorption — 原双向列，同上
+  # bpc_pullback_duration       — 中等时长可能最好
+  # tpc_score_*                 — 组合分，已在 features_prefilter.yaml 黑名单

@@ -193,12 +193,16 @@ def _compute_soft_phase_core(
     bpc_score_breakout = np.clip(bpc_score_breakout, 0, 1)
 
     # ── 2. Pullback scores ──
+    # 统一计算「近 N 根内的最强突破」作为 breakout 是否真实发生过的原子语义锚点。
+    # BPC 依赖它做 pullback/continuation 的突破门控；TPC 不做门控，但仍导出供 prefilter/tree 使用。
+    bpc_score_breakout_series = pd.Series(bpc_score_breakout, index=close.index)
+    recent_breakout_strength = (
+        bpc_score_breakout_series.rolling(lookback_breakout, min_periods=1)
+        .max()
+        .fillna(0.0)
+        .clip(0.0, 1.0)
+    )
     if gate_pullback_on_breakout:
-        # BPC: require a recent Donchian breakout
-        bpc_score_breakout_series = pd.Series(bpc_score_breakout, index=close.index)
-        recent_breakout_strength = bpc_score_breakout_series.rolling(
-            lookback_breakout, min_periods=1
-        ).max()
         is_after_breakout = (
             (recent_breakout_strength > BREAKOUT_TRIGGER_THRESHOLD).astype(float).values
         )
@@ -330,10 +334,10 @@ def _compute_soft_phase_core(
     )
     score_neutral = np.clip(score_neutral, 0, 1)
 
-    # ── BPC/TPC 语义对齐（更深回踩、弱化延续、压震荡区与动量末端追涨杀跌）──
+    # ── BPC/TPC 语义对齐（弱化延续、压震荡区与动量末端追涨杀跌）──
+    # 2026-04-22: semantic_ema_discount 已废弃（见下方 p_scale 注释）。
     semantic_chop = np.zeros(n, dtype=float)
     semantic_extension = np.zeros(n, dtype=float)
-    semantic_ema_discount = np.full(n, 0.5, dtype=float)
     if semantic_ema_reweight and ema_position is not None:
         ep_s = pd.to_numeric(ema_position, errors="coerce").fillna(0.0)
         ep = ep_s.values
@@ -346,12 +350,6 @@ def _compute_soft_phase_core(
         semantic_extension = np.where(recent_direction > 0, ext_long, ext_short).astype(
             float
         )
-        # 相对 EMA1200 的「折让」深度：多头希望价为负（在均线下方回踩更深）
-        semantic_ema_discount = np.where(
-            recent_direction > 0,
-            np.clip((-ep) / 0.14, 0.0, 1.0),
-            np.clip(ep / 0.14, 0.0, 1.0),
-        ).astype(float)
         ema_slope = ep_s.diff(24).fillna(0.0).values
         ep_slope = ep_s.diff(12).fillna(0.0).values
         # 趋势上行且仍偏多头语境：仍在 EMA 上方、且位置继续变差（更贵）→ 加重末端惩罚
@@ -365,13 +363,15 @@ def _compute_soft_phase_core(
         semantic_extension = np.clip(
             semantic_extension + chase_risk_s.astype(float) * 0.35, 0.0, 1.0
         )
-        # 弱化延续、强化「深折让」与 Donchian 回踩深度
+        # 弱化延续、强化 Donchian 回踩深度，波动区压低
+        # 2026-04-22：BPC/TPC 均不再使用 semantic_ema_discount 作为 pullback 重权。
+        # 原因：
+        #   1) Donchian pullback_depth 已表达「本次突破的回踩深度」，与 ema_discount 高度相关但更就地；
+        #   2) ema_1200_position 已经在 gate 层做 late-long/short 抑制，重复建模；
+        #   3) 作为 reweight 时把启动月（ep>0、discount=0）的 pullback score 砍到 42%，
+        #      加上 meta-algorithm 把它选入 prefilter，BPC/TPC 在启动月 0 笔。
         depth_w = pullback_depth.astype(float)
-        p_scale = (
-            (0.42 + 0.58 * semantic_ema_discount)
-            * (0.72 + 0.28 * depth_w)
-            * (1.0 - 0.48 * semantic_chop)
-        )
+        p_scale = (0.72 + 0.28 * depth_w) * (1.0 - 0.48 * semantic_chop)
         c_scale = (1.0 - 0.62 * semantic_extension) * (1.0 - 0.52 * semantic_chop)
         score_pullback = np.clip(score_pullback * p_scale, 0.0, 1.0)
         score_continuation = np.clip(score_continuation * c_scale, 0.0, 1.0)
@@ -380,6 +380,7 @@ def _compute_soft_phase_core(
     p = prefix
     out_cols: Dict[str, Any] = {
         f"{p}_price_breakout_strength": breakout_strength,
+        f"{p}_recent_breakout_strength": recent_breakout_strength.values,
         f"{p}_vol_breakout_confirm": vol_breakout_confirm,
         f"{p}_cvd_breakout_confirm": cvd_breakout_confirm,
         f"{p}_vpin_breakout_confirm": vpin_breakout_confirm,
@@ -408,11 +409,10 @@ def _compute_soft_phase_core(
     if p == "tpc":
         out_cols["tpc_semantic_chop"] = semantic_chop
         out_cols["tpc_semantic_extension"] = semantic_extension
-        out_cols["tpc_semantic_ema_discount"] = semantic_ema_discount
     elif p == "bpc":
         out_cols["bpc_semantic_chop"] = semantic_chop
         out_cols["bpc_semantic_extension"] = semantic_extension
-        out_cols["bpc_semantic_ema_discount"] = semantic_ema_discount
+    # 2026-04-22：不再输出 {bpc,tpc}_semantic_ema_discount（见上方 p_scale 处注释）。
 
     result = pd.DataFrame(out_cols, index=close.index)
 
@@ -441,6 +441,7 @@ def _compute_soft_phase_core(
     description="BPC soft phase scores with volume and orderflow confirmation",
     outputs=[
         "bpc_price_breakout_strength",
+        "bpc_recent_breakout_strength",
         "bpc_vol_breakout_confirm",
         "bpc_cvd_breakout_confirm",
         "bpc_vpin_breakout_confirm",
@@ -467,7 +468,6 @@ def _compute_soft_phase_core(
         "bpc_cvd_z",
         "bpc_semantic_chop",
         "bpc_semantic_extension",
-        "bpc_semantic_ema_discount",
     ],
 )
 def compute_bpc_soft_phase_from_series(
@@ -517,6 +517,7 @@ def compute_bpc_soft_phase_from_series(
     description="TPC soft phase scores: trend-based pullback/continuation (no breakout gate)",
     outputs=[
         "tpc_price_breakout_strength",
+        "tpc_recent_breakout_strength",
         "tpc_vol_breakout_confirm",
         "tpc_cvd_breakout_confirm",
         "tpc_vpin_breakout_confirm",
@@ -543,7 +544,6 @@ def compute_bpc_soft_phase_from_series(
         "tpc_cvd_z",
         "tpc_semantic_chop",
         "tpc_semantic_extension",
-        "tpc_semantic_ema_discount",
     ],
 )
 def compute_tpc_soft_phase_from_series(
@@ -733,8 +733,13 @@ def compute_bpc_pullback_speed_from_series(
 @register_feature(
     "compute_bpc_impulse_return_atr_from_series",
     category="bpc",
-    description="BPC impulse return normalized by ATR, with direction",
-    outputs=["bpc_impulse_return_atr", "bpc_impulse_direction_match"],
+    description="BPC impulse return normalized by ATR, with direction + split long/short branches",
+    outputs=[
+        "bpc_impulse_return_atr",
+        "bpc_impulse_direction_match",
+        "bpc_impulse_return_atr_long",
+        "bpc_impulse_return_atr_short",
+    ],
 )
 def compute_bpc_impulse_return_atr_from_series(
     *,
@@ -751,23 +756,32 @@ def compute_bpc_impulse_return_atr_from_series(
     - 绝对值 < 1 ATR: 弱 impulse
     - 绝对值 1-3 ATR: 正常 impulse
     - 绝对值 > 3 ATR: 强 impulse
+
+    拆分分支（2026-04-22 新增）：为让 prefilter 可用单调 polarity，拆出两个 ∈[0,1] 的单侧列：
+    - bpc_impulse_return_atr_long  = max(0, signed)  —— LONG 视角：越正越好
+    - bpc_impulse_return_atr_short = max(0, -signed) —— SHORT 视角：|negative| 越大越好
+    两列都是 higher_is_better；同一 bar 只有一侧非零。
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     atr_s = pd.to_numeric(atr, errors="coerce").astype(float).clip(lower=1e-8)
 
     returns = close - close.shift(lookback)
-    # 保留符号
     ratio_signed = (returns / atr_s).fillna(0.0).clip(-5.0, 5.0)
 
-    # 方向匹配特征（与近期趋势方向是否一致）
     trend_dir = np.sign(close.rolling(lookback * 2).mean().diff())
     impulse_dir = np.sign(returns)
     direction_match = (trend_dir == impulse_dir).astype(float)
 
+    signed_norm = ratio_signed / 5.0
+    long_branch = signed_norm.clip(lower=0.0)
+    short_branch = (-signed_norm).clip(lower=0.0)
+
     return pd.DataFrame(
         {
-            "bpc_impulse_return_atr": ratio_signed / 5.0,  # 归一化到 [-1, 1]
+            "bpc_impulse_return_atr": signed_norm,
             "bpc_impulse_direction_match": direction_match,
+            "bpc_impulse_return_atr_long": long_branch,
+            "bpc_impulse_return_atr_short": short_branch,
         }
     )
 
@@ -887,8 +901,12 @@ def compute_bpc_volume_compression_pct_from_series(
 @register_feature(
     "compute_bpc_pullback_delta_absorption_from_series",
     category="bpc",
-    description="BPC pullback delta absorption using z-score",
-    outputs=["bpc_pullback_delta_absorption"],
+    description="BPC pullback delta absorption using z-score + split long/short accumulation branches",
+    outputs=[
+        "bpc_pullback_delta_absorption",
+        "bpc_pullback_delta_absorption_long",
+        "bpc_pullback_delta_absorption_short",
+    ],
 )
 def compute_bpc_pullback_delta_absorption_from_series(
     *,
@@ -905,6 +923,12 @@ def compute_bpc_pullback_delta_absorption_from_series(
     语义：
     - 高吸收（> 0.7）: 大量反向订单流但价格不动 → 有人在吸筹
     - 低吸收（< 0.3）: 订单流与价格同向 → 正常回踩
+
+    拆分分支（2026-04-22 新增）：原列取 |cvd_z| 合并掉方向信息。为让 prefilter 可用单调 polarity，
+    按「pullback 方向 × cvd 方向」拆出两个单侧列：
+    - bpc_pullback_delta_absorption_long:  price↓ × cvd↑（多头吸筹，LONG 有效）
+    - bpc_pullback_delta_absorption_short: price↑ × cvd↓（空头分派，SHORT 有效）
+    两列都是 higher_is_better，同一 bar 只有一侧非零；原合并列保留以维持向后兼容。
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     cvd = pd.to_numeric(cvd_change_5, errors="coerce").fillna(0.0)
@@ -912,22 +936,35 @@ def compute_bpc_pullback_delta_absorption_from_series(
 
     price_change = close.diff(5)
 
-    # 使用滚动 z-score 标准化 CVD
     cvd_mean = cvd.rolling(lookback, min_periods=10).mean()
     cvd_std = cvd.rolling(lookback, min_periods=10).std().replace(0, np.nan)
     cvd_z = ((cvd - cvd_mean) / cvd_std).fillna(0.0).clip(-3, 3)
 
-    # 吸收定义：CVD 与 price 方向相反，且 CVD 绝对值大
     price_dir = np.sign(price_change)
     cvd_dir = np.sign(cvd)
     is_counter = (price_dir != cvd_dir) & (price_dir != 0)
 
-    # 吸收强度 = 反向 CVD z-score 的绝对值（仅在反向时计算）
-    absorption = np.where(is_counter, cvd_z.abs() / 3.0, 0.0)
+    abs_strength = cvd_z.abs() / 3.0
+    absorption = np.where(is_counter, abs_strength, 0.0)
 
-    out = pd.Series(absorption, index=close.index).fillna(0.0).clip(0.0, 1.0)
+    # 单侧拆分：只在本侧方向组合下非零
+    long_mask = (price_dir < 0) & (cvd_dir > 0)
+    short_mask = (price_dir > 0) & (cvd_dir < 0)
+    long_branch = np.where(long_mask, abs_strength, 0.0)
+    short_branch = np.where(short_mask, abs_strength, 0.0)
 
-    return out.rename("bpc_pullback_delta_absorption").to_frame()
+    idx = close.index
+    out_combined = pd.Series(absorption, index=idx).fillna(0.0).clip(0.0, 1.0)
+    out_long = pd.Series(long_branch, index=idx).fillna(0.0).clip(0.0, 1.0)
+    out_short = pd.Series(short_branch, index=idx).fillna(0.0).clip(0.0, 1.0)
+
+    return pd.DataFrame(
+        {
+            "bpc_pullback_delta_absorption": out_combined,
+            "bpc_pullback_delta_absorption_long": out_long,
+            "bpc_pullback_delta_absorption_short": out_short,
+        }
+    )
 
 
 # =============================================================================
