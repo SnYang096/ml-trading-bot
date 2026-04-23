@@ -1,0 +1,16 @@
+# BPC Wave 1+2 baseline fast_month run timestamps
+# Launched: 2026-04-23 12:22:51 UTC+8
+# Completed: 2026-04-23 13:33:35 UTC+8
+# Code state: post Wave 2 (A+E) commits
+# 6 key months for Wave 3 validation
+#
+# month,run_timestamp,n_trades
+2024-04,20260423_122252,12
+2024-05,20260423_123942,10
+2024-06,20260423_125350,8
+2025-11,20260423_130549,12
+2025-12,20260423_131543,5
+2024-03,20260423_132457,17
+#
+# CSV list (for compare_monthly_pnl.py --baseline-runs):
+# 20260423_122252,20260423_123942,20260423_125350,20260423_130549,20260423_131543,20260423_132457
