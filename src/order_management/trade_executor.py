@@ -135,11 +135,13 @@ class TradeExecutor:
         sl_r_raw = float(rr_constraints.get("stop_loss_r", 0.0) or 0.0)
         atr = pick_atr(features) or 0.0
         entry_price = self._resolve_entry_price(features)
-        sl_r, atr_stop_pct, effective_stop_pct, stop_source = self._resolve_effective_stop_r(
-            sl_r=sl_r_raw,
-            atr=atr,
-            entry_price=entry_price,
-            rr_constraints=rr_constraints,
+        sl_r, atr_stop_pct, effective_stop_pct, stop_source = (
+            self._resolve_effective_stop_r(
+                sl_r=sl_r_raw,
+                atr=atr,
+                entry_price=entry_price,
+                rr_constraints=rr_constraints,
+            )
         )
         add_ctx: Optional[Dict[str, Any]] = None
         if bool(intent.add_position):
@@ -164,6 +166,12 @@ class TradeExecutor:
         if qty <= 0:
             return False
 
+        # ── 3. order_manager 可用性检查 ──
+        if self.order_manager is None:
+            raise RuntimeError(
+                "order_manager is None — 检查 MLBOT_ORDER_MANAGER_ENABLED "
+                "和 BINANCE_API_KEY/BINANCE_API_SECRET 环境变量"
+            )
         # ── 2. slot 预留（enforce_before_order 在 place_order 前调用）──
         position_id = intent.position_id
         enforce_before_order(
@@ -187,13 +195,6 @@ class TradeExecutor:
             evt_risk_flag=features.get("evt_risk_flag"),
             pcm_budget=intent.pcm_budget,
         )
-
-        # ── 3. order_manager 可用性检查 ──
-        if self.order_manager is None:
-            raise RuntimeError(
-                "order_manager is None — 检查 MLBOT_ORDER_MANAGER_ENABLED "
-                "和 BINANCE_API_KEY/BINANCE_API_SECRET 环境变量"
-            )
 
         # ── 4. 构建持仓字典 ──
         pos = build_position_dict(
@@ -272,9 +273,7 @@ class TradeExecutor:
             pos["_is_add_position"] = True
             pos["_parent_pid"] = str(add_ctx.get("parent_position_id", ""))
             pos["_add_position_seq"] = int(add_ctx.get("add_position_seq", 1) or 1)
-            pos["_share_parent_exit"] = bool(
-                add_ctx.get("share_parent_exit", True)
-            )
+            pos["_share_parent_exit"] = bool(add_ctx.get("share_parent_exit", True))
             pos["_inherit_parent_stop"] = bool(
                 add_ctx.get("inherit_parent_stop", False)
             )
@@ -341,7 +340,9 @@ class TradeExecutor:
         if _intent_add:
             _trig = dict(add_rules.get("trigger", {}) or {})
             _trig.update(dict(_intent_add.get("trigger", {}) or {}))
-            add_rules.update({k: v for k, v in dict(_intent_add).items() if k != "trigger"})
+            add_rules.update(
+                {k: v for k, v in dict(_intent_add).items() if k != "trigger"}
+            )
             if _trig:
                 add_rules["trigger"] = _trig
 
@@ -396,7 +397,9 @@ class TradeExecutor:
             p = pos_all.get(pid)
             if p is not None:
                 return pid, p
-        target_side = "LONG" if str(intent.action).upper() in {"LONG", "BUY"} else "SHORT"
+        target_side = (
+            "LONG" if str(intent.action).upper() in {"LONG", "BUY"} else "SHORT"
+        )
         target_arch = str(intent.archetype or "").strip().lower()
         target_family = _family_key(target_arch)
         for pid, pos in pos_all.items():
@@ -409,9 +412,11 @@ class TradeExecutor:
             p_arch = str(pos.get("archetype", "") or "").strip().lower()
             slot_arch = ""
             try:
-                slot_arch = str(
-                    self.runtime_state.slots.active.get(str(pid)).archetype or ""
-                ).strip().lower()
+                slot_arch = (
+                    str(self.runtime_state.slots.active.get(str(pid)).archetype or "")
+                    .strip()
+                    .lower()
+                )
             except Exception:
                 slot_arch = ""
             p_tier = str(pos.get("tier_name", "") or "").strip().lower()
@@ -468,7 +473,11 @@ class TradeExecutor:
         if effective_stop_pct <= 0:
             return sl_r, atr_stop_pct, atr_stop_pct, "atr"
         effective_stop_r = effective_stop_pct * float(entry_price) / float(atr)
-        source = "atr" if abs(effective_stop_pct - atr_stop_pct) <= 1e-9 else "guardrail_clip"
+        source = (
+            "atr"
+            if abs(effective_stop_pct - atr_stop_pct) <= 1e-9
+            else "guardrail_clip"
+        )
         return max(1e-6, effective_stop_r), atr_stop_pct, effective_stop_pct, source
 
     def _calc_qty(

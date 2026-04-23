@@ -1,4 +1,4 @@
-"""持仓追踪器 — 管理实盘开仓、SL/TP/trailing/EMA200 退出、平仓
+"""持仓追踪器 — 管理实盘开仓、SL/TP/trailing/EMA1200/VWAP1200 退出、平仓
 
 从 order_flow_listener.py 拆分出来的独立模块，职责:
   - 维护 _open_positions 状态
@@ -99,6 +99,18 @@ class PositionTracker:
             macro_tp_vwap = self._resolve_macro_tp_vwap_position(pos, features)
             ema_1200_pos = self._resolve_ema_1200_position(pos, features)
 
+            # L3 dynamic trailing 读取当前 feature 中的 wide_sr 价格位。
+            _w_up = features.get("wide_sr_upper_px") if isinstance(features, dict) else None
+            _w_lo = features.get("wide_sr_lower_px") if isinstance(features, dict) else None
+            try:
+                _w_up_f = float(_w_up) if _w_up is not None and _w_up == _w_up else None
+            except (TypeError, ValueError):
+                _w_up_f = None
+            try:
+                _w_lo_f = float(_w_lo) if _w_lo is not None and _w_lo == _w_lo else None
+            except (TypeError, ValueError):
+                _w_lo_f = None
+
             close_reason, exit_price = enforce_position(
                 pos,
                 price_high=current_price,
@@ -109,6 +121,8 @@ class PositionTracker:
                 structural_price=structural_price,
                 macro_tp_vwap_position=macro_tp_vwap,
                 ema_1200_position=ema_1200_pos,
+                wide_sr_upper_px=_w_up_f,
+                wide_sr_lower_px=_w_lo_f,
             )
 
             # trailing SL 更新时同步交易所挂单（仅在未触发退出时）
@@ -148,7 +162,11 @@ class PositionTracker:
         return closed
 
     def _sync_child_stop_from_parent(self, pid: str, pos: Dict[str, Any]) -> None:
-        """When enabled, child add-position inherits parent's stop in real time."""
+        """Child add-position inherits parent's stop in real time — tighten-only.
+
+        子仓 SL 跟随父仓 SL，但只允许向入场有利方向移动（tighten-only），
+        避免父仓 breakeven 尚未触发时反而把子仓 SL 放宽。
+        """
         if not bool(pos.get("_is_add_position", False)):
             return
         if not bool(pos.get("_inherit_parent_stop", False)):
@@ -162,7 +180,24 @@ class PositionTracker:
         parent_sl = parent.get("stop_loss_price")
         if parent_sl is None:
             return
-        pos["stop_loss_price"] = float(parent_sl)
+        try:
+            new_sl = float(parent_sl)
+        except (TypeError, ValueError):
+            return
+        old_sl = pos.get("stop_loss_price")
+        is_long = str(pos.get("side", "")).upper() in {"LONG", "BUY"}
+        if old_sl is None:
+            pos["stop_loss_price"] = new_sl
+            return
+        try:
+            old_sl_f = float(old_sl)
+        except (TypeError, ValueError):
+            pos["stop_loss_price"] = new_sl
+            return
+        if is_long and new_sl > old_sl_f:
+            pos["stop_loss_price"] = new_sl
+        elif (not is_long) and new_sl < old_sl_f:
+            pos["stop_loss_price"] = new_sl
 
     def close(self, position_id: str, qty: float, reason: str) -> None:
         """平仓：cancel SL/TP 挂单 → market 平仓

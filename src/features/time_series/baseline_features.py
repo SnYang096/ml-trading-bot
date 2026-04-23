@@ -5033,6 +5033,61 @@ def compute_sr_strength_max_from_series(
     return out
 
 
+@register_feature("compute_wide_sr_swing_from_series", category="baseline")
+def compute_wide_sr_swing_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    atr: pd.Series,
+    wide_window: int = 240,
+    anchor_shift: int = 12,
+) -> pd.DataFrame:
+    """大级别 SR 代理（L3，全仓库唯一实现）：滚动 swing high / low。
+
+    输入：
+        wide_window: 回看 bar 数（默认 240，在 2H 主周期上 ≈ 1 个月）。
+        anchor_shift: 向前平移 bar 数（默认 12，≈ 1 天），避免极值被"当下 bar"自含。
+
+    与其它 SR 层的互补关系：
+        L1 局部 SR  — `srb_regime.swing_sr_levels(20)`             ≈ 1-2 日
+        L2 中期 SR  — `poc_hal_features_*_f` (poc_window=160)      ≈ 2 周
+        L3 大级别 SR — 本特征 (wide_window=240, shift=12)           ≈ 1 个月
+
+    输出列：
+        wide_sr_upper_px        : 上沿价格（rolling max of high, shifted）
+        wide_sr_lower_px        : 下沿价格（rolling min of low,  shifted）
+        wide_sr_dist_atr        : min(|close - upper|, |close - lower|) / ATR
+        wide_sr_side            : +1 更近上沿，-1 更近下沿
+        wide_sr_range_width_atr : (upper - lower) / ATR
+    """
+    high_s = pd.to_numeric(high, errors="coerce").astype(float)
+    low_s = pd.to_numeric(low, errors="coerce").astype(float)
+    close_s = pd.to_numeric(close, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).replace(0.0, np.nan)
+
+    min_periods = max(wide_window // 2, 10)
+    roll_high = high_s.rolling(wide_window, min_periods=min_periods).max().shift(anchor_shift)
+    roll_low = low_s.rolling(wide_window, min_periods=min_periods).min().shift(anchor_shift)
+
+    d_high = (close_s - roll_high).abs() / atr_s
+    d_low = (close_s - roll_low).abs() / atr_s
+    dist = np.minimum(d_high, d_low).replace([np.inf, -np.inf], np.nan)
+    side = np.where(d_high <= d_low, 1.0, -1.0)
+    width = (roll_high - roll_low) / atr_s
+
+    return pd.DataFrame(
+        {
+            "wide_sr_upper_px": roll_high.astype(float),
+            "wide_sr_lower_px": roll_low.astype(float),
+            "wide_sr_dist_atr": dist.astype(float),
+            "wide_sr_side": pd.Series(side, index=close.index).astype(float),
+            "wide_sr_range_width_atr": width.replace([np.inf, -np.inf], np.nan).astype(float),
+        },
+        index=close.index,
+    )
+
+
 # ============================================================================
 # P5 非平稳性: Regime State / OOD Score
 # ============================================================================

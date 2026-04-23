@@ -64,6 +64,7 @@ from src.time_series_model.live.position_logic import (
 from src.time_series_model.live.srb_regime import (
     maybe_inject_srb_experiment_features,
     pick_srb_true_sr_level,
+    should_reject_srb_add_by_shape,
     should_reject_srb_wide_entry,
     srb_add_position_allowed,
 )
@@ -433,14 +434,15 @@ class PositionSimulator:
         self.last_add_reject_reason: str = ""
         # SRB 加仓门控（由 EventBacktester 从 execution.yaml 注入）
         self._srb_add_policy: Optional[Dict[str, Any]] = None
-        # SRB 假突破反手状态（由 EventBacktester 注入配置）
-        self._srb_reverse_policy: Optional[Dict[str, Any]] = None
-        self._reverse_candidate: Optional[Dict[str, Any]] = None
-        self._reverse_cooldown_until_bar: int = 0
-        self._last_reverse_status: str = ""
         self._primary_bar_count: int = 0
         # 主周期（primary TF）最新收盘 ATR — trailing 可选与入场 ATR 取 max 放宽带宽
         self._primary_tf_atr: Optional[float] = None
+        # L3 dynamic trailing 所需：当前 primary bar 的 wide_sr 上下沿价格
+        self._wide_sr_upper_px: Optional[float] = None
+        self._wide_sr_lower_px: Optional[float] = None
+        # Phase D 加仓形态门 recent_momentum 所需：近 N 根 primary close 滚动缓存（净位移用）
+        self._primary_close_buffer: List[float] = []
+        self._primary_close_buffer_max: int = 16
 
     @property
     def has_positions(self) -> bool:
@@ -603,7 +605,21 @@ class PositionSimulator:
                 parent_pid = str(pos.get("_parent_pid", "") or "")
                 parent = self._positions.get(parent_pid)
                 if parent is not None and parent.get("stop_loss_price") is not None:
-                    pos["stop_loss_price"] = float(parent.get("stop_loss_price"))
+                    # tighten-only：子仓 SL 只向入场有利方向跟随父仓
+                    new_sl = float(parent.get("stop_loss_price"))
+                    old_sl = pos.get("stop_loss_price")
+                    is_long = str(pos.get("side", "")).upper() in {"LONG", "BUY"}
+                    if old_sl is None:
+                        pos["stop_loss_price"] = new_sl
+                    else:
+                        try:
+                            old_sl_f = float(old_sl)
+                            if is_long and new_sl > old_sl_f:
+                                pos["stop_loss_price"] = new_sl
+                            elif (not is_long) and new_sl < old_sl_f:
+                                pos["stop_loss_price"] = new_sl
+                        except (TypeError, ValueError):
+                            pos["stop_loss_price"] = new_sl
 
             # vwap1200: 特征表里的 pv 只在 primary-TF 收盘更新；1m 上用冻结的 VWAP 水平对当前 close 重算 pv，
             # 否则价格在两根 2H 之间穿越死区不会触发结构性出场。
@@ -646,6 +662,8 @@ class PositionSimulator:
                 macro_tp_vwap_position=macro_pv,
                 ema_1200_position=ema_1200_pv,
                 primary_tf_atr=self._primary_tf_atr,
+                wide_sr_upper_px=getattr(self, "_wide_sr_upper_px", None),
+                wide_sr_lower_px=getattr(self, "_wide_sr_lower_px", None),
             )
 
             if close_reason:
@@ -697,7 +715,7 @@ class PositionSimulator:
                     evidence_score=pos.get("evidence_score", 0),
                     bars_held=pos.get("bars_counted", 0),
                     is_add_position=pos.get("_is_add_position", False),
-                    is_reverse=pos.get("_is_reverse", False),
+                    is_reverse=False,
                     size_multiplier=pos.get("_size_multiplier", 1.0),
                     atr_stop_pct=pos.get("atr_stop_pct", 0.0),
                     effective_stop_pct=pos.get("effective_stop_pct", 0.0),
@@ -706,51 +724,6 @@ class PositionSimulator:
                 )
                 closed.append(trade)
                 self.closed_trades.append(trade)
-                # SRB 假突破反手：非 trailing 止损时记录反手候选
-                if (
-                    str(pos.get("archetype", "") or "").lower() == "srb"
-                    and normalized_reason == "sl"
-                    and not pos.get("_is_add_position", False)
-                    and self._srb_reverse_policy
-                    and self._srb_reverse_policy.get("enabled")
-                    and self._reverse_candidate is None
-                    and self._primary_bar_count >= self._reverse_cooldown_until_bar
-                ):
-                    _sl_price = float(exit_price)
-                    _atr_at_e = float(pos.get("atr_at_entry", 0))
-                    _buf_atr = float(
-                        (self._srb_reverse_policy or {}).get(
-                            "stop_hunt_buffer_atr", 0.3
-                        )
-                    )
-                    _orig_side = str(pos["side"]).upper()
-                    if _orig_side in ("LONG", "BUY"):
-                        _she = _sl_price - _atr_at_e * _buf_atr
-                    else:
-                        _she = _sl_price + _atr_at_e * _buf_atr
-                    _true_sr = float(pos.get("_srb_true_sr_level", 0) or entry_price)
-                    self._reverse_candidate = {
-                        "true_sr_level": _true_sr,
-                        "stop_hunt_extreme": _she,
-                        "entry_price": float(entry_price),
-                        "original_side": _orig_side,
-                        "sl_bar": self._primary_bar_count,
-                        "sl_price": _sl_price,
-                        "reclaim_count": 0,
-                        "confirm_count": 0,
-                        "recover_stage": False,
-                        "used": False,
-                        "symbol": str(pos.get("symbol", "")),
-                        "atr_at_entry": _atr_at_e,
-                        "tier_name": str(pos.get("tier_name", "")),
-                        "evidence_score": float(pos.get("evidence_score", 0.5)),
-                        "execution_profile": (
-                            pos.get("_srb_orig_execution_profile") or {}
-                        ),
-                        "orig_confidence": float(
-                            pos.get("_srb_orig_confidence", 0.0) or 0.0
-                        ),
-                    }
                 if str(pos.get("archetype", "") or "").lower() == "fer":
                     try:
                         from src.time_series_model.live.fer_diagnostics import (
@@ -880,7 +853,7 @@ class PositionSimulator:
                 evidence_score=pos.get("evidence_score", 0),
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
-                is_reverse=pos.get("_is_reverse", False),
+                is_reverse=False,
                 size_multiplier=pos.get("_size_multiplier", 1.0),
                 atr_stop_pct=pos.get("atr_stop_pct", 0.0),
                 effective_stop_pct=pos.get("effective_stop_pct", 0.0),
@@ -938,7 +911,7 @@ class PositionSimulator:
                 evidence_score=pos.get("evidence_score", 0),
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
-                is_reverse=pos.get("_is_reverse", False),
+                is_reverse=False,
                 size_multiplier=pos.get("_size_multiplier", 1.0),
                 atr_stop_pct=pos.get("atr_stop_pct", 0.0),
                 effective_stop_pct=pos.get("effective_stop_pct", 0.0),
@@ -951,78 +924,6 @@ class PositionSimulator:
         for pid in to_remove:
             self._positions.pop(pid, None)
         return closed
-
-    def check_srb_reverse(
-        self,
-        current_price: float,
-        current_bar_count: int,
-    ) -> Optional[Dict[str, Any]]:
-        """SRB 假突破反手检查 — 两阶段确认（每根 primary bar 调用一次）。
-
-        Stage 1 (reclaim): 价格脱离 stop_hunt_extreme（连续 reclaim_k bar）。
-        Stage 2 (confirm): 价格站回 true_sr_level 正确侧（连续 confirm_k bar）。
-        """
-        self._last_reverse_status = ""
-        cand = self._reverse_candidate
-        if cand is None or cand.get("used"):
-            return None
-        pol = self._srb_reverse_policy or {}
-        if not pol.get("enabled"):
-            self._reverse_candidate = None
-            return None
-
-        lookahead = int(pol.get("fake_lookahead", 10))
-        bars_since = current_bar_count - cand["sl_bar"]
-        if bars_since > lookahead:
-            self._reverse_candidate = None
-            self._last_reverse_status = "expired"
-            return None
-
-        reclaim_k = int(pol.get("reclaim_k", 1))
-        confirm_k = int(pol.get("confirm_k", 2))
-        extreme = float(cand["stop_hunt_extreme"])
-        true_sr = float(cand["true_sr_level"])
-        orig_side = str(cand["original_side"]).upper()
-        is_long = orig_side in ("LONG", "BUY")
-
-        # Stage 1: reclaim from stop-hunt extreme
-        if not cand.get("recover_stage"):
-            reclaimed = (
-                (current_price > extreme) if is_long else (current_price < extreme)
-            )
-            if reclaimed:
-                cand["reclaim_count"] = cand.get("reclaim_count", 0) + 1
-            else:
-                cand["reclaim_count"] = 0
-            if cand["reclaim_count"] >= reclaim_k:
-                cand["recover_stage"] = True
-
-        # Stage 2: confirm back on correct side of true SR level
-        if cand.get("recover_stage"):
-            confirmed = (
-                (current_price > true_sr) if is_long else (current_price < true_sr)
-            )
-            if confirmed:
-                cand["confirm_count"] = cand.get("confirm_count", 0) + 1
-            else:
-                cand["confirm_count"] = 0
-            if cand["confirm_count"] >= confirm_k:
-                cand["used"] = True
-                cooldown = int(pol.get("cooldown_bars", 10))
-                self._reverse_cooldown_until_bar = current_bar_count + cooldown
-                return {
-                    "side": orig_side,
-                    "symbol": cand["symbol"],
-                    "true_sr_level": true_sr,
-                    "stop_hunt_extreme": extreme,
-                    "sl_price": cand["sl_price"],
-                    "atr_at_entry": cand["atr_at_entry"],
-                    "tier_name": cand["tier_name"],
-                    "evidence_score": cand["evidence_score"],
-                    "execution_profile": cand.get("execution_profile") or {},
-                    "orig_confidence": float(cand.get("orig_confidence", 0.0) or 0.0),
-                }
-        return None
 
     def try_add_position(
         self,
@@ -1101,6 +1002,87 @@ class PositionSimulator:
             if risk > 0
             else 0.0
         )
+
+        # 2a-Phase-D: 加仓事后形态门（srb_add_position_policy.post_hoc_shape_gate）。
+        # 仅 SRB：若 post_hoc_shape_gate 下任一子项 enabled，追加形态确认。
+        if archetype == "srb" and _pol:
+            _gate_cfg = _pol.get("post_hoc_shape_gate") or {}
+            if any(
+                bool((_gate_cfg.get(_k) or {}).get("enabled", False))
+                for _k in (
+                    "retrace_guard",
+                    "recent_momentum",
+                    "trend_r2_gate",
+                    "wide_sr_expansion",
+                    "trend_health_gate",
+                )
+            ):
+                # 计算母仓 MFE R（用 initial_risk_distance 归一化，与退出逻辑对齐）
+                _hwm = parent_pos.get("high_water_mark")
+                _lwm = parent_pos.get("low_water_mark")
+                if is_long and _hwm is not None:
+                    _mfe_r = (float(_hwm) - entry_price) / risk if risk > 0 else 0.0
+                elif (not is_long) and _lwm is not None:
+                    _mfe_r = (entry_price - float(_lwm)) / risk if risk > 0 else 0.0
+                else:
+                    _mfe_r = max(0.0, current_r)
+                # recent_net_move_atr：近 N primary close 净变化 / ATR（与 mother 方向同向为正）
+                _shape_feat = dict(features or {})
+                _shape_feat["mfe_r"] = _mfe_r
+                _shape_feat["current_r"] = current_r
+                if "recent_net_move_atr" not in _shape_feat:
+                    _rn = (_gate_cfg.get("recent_momentum") or {}).get(
+                        "lookback_bars", 6
+                    ) or 6
+                    try:
+                        _rn = int(_rn)
+                    except (TypeError, ValueError):
+                        _rn = 6
+                    _buf = getattr(self, "_primary_close_buffer", None) or []
+                    _atr_now = float(
+                        features.get("atr") or parent_pos.get("atr_at_entry") or 0.0
+                    )
+                    if len(_buf) >= 2 and _atr_now > 0:
+                        _tail = _buf[-max(2, min(_rn + 1, len(_buf))) :]
+                        _net = _tail[-1] - _tail[0]
+                        # 保留带符号：正 = 上涨，负 = 下跌；gate 内部按 side 判方向。
+                        _shape_feat["recent_net_move_atr"] = _net / _atr_now
+                # bars_since_mother_entry（E4）：用 entry_bar 的 timestamp 与 parent.entry_time
+                # 的差，按 bar_minutes 转成 primary bar 数。缺失时兜底 0。
+                try:
+                    _parent_et = parent_pos.get("entry_time")
+                    _now_ts = entry_bar.name if hasattr(entry_bar, "name") else None
+                    _bm = int(
+                        parent_pos.get("bar_minutes")
+                        or self._primary_bar_minutes
+                        or 240
+                    )
+                    if _parent_et is not None and _now_ts is not None and _bm > 0:
+                        _pt = pd.Timestamp(_parent_et)
+                        _nt = pd.Timestamp(_now_ts)
+                        if _pt.tzinfo is None:
+                            _pt = _pt.tz_localize("UTC")
+                        if _nt.tzinfo is None:
+                            _nt = _nt.tz_localize("UTC")
+                        _delta_min = (_nt - _pt).total_seconds() / 60.0
+                        _shape_feat["bars_since_mother_entry"] = max(
+                            0.0, _delta_min / float(_bm)
+                        )
+                except Exception:
+                    pass
+                # wide_sr_dist_atr：从 features 直接读（已存在）
+                _mother_ctx = {
+                    "side": parent_pos.get("side"),
+                    "entry_wide_sr_dist_atr": parent_pos.get(
+                        "_srb_entry_wide_sr_dist_atr"
+                    ),
+                }
+                _rej, _why = should_reject_srb_add_by_shape(
+                    _shape_feat, _mother_ctx, _gate_cfg
+                )
+                if _rej:
+                    self.last_add_reject_reason = _why
+                    return None
 
         # 2b. 找出同 symbol + 同 direction 的活跃仓位
         same_sym_dir = [
@@ -2469,14 +2451,6 @@ class EventBacktester:
                 ).get("srb_add_position_policy")
             except Exception:
                 _srb_add_policy = None
-        _srb_reverse_policy: Optional[Dict[str, Any]] = None
-        if "srb" in self._strats:
-            try:
-                _srb_reverse_policy = (
-                    self._strats["srb"].archetype.execution.raw or {}
-                ).get("fake_break_reverse")
-            except Exception:
-                _srb_reverse_policy = None
         _srb_wide_entry_guard: Optional[Dict[str, Any]] = None
         if "srb" in self._strats:
             try:
@@ -2487,7 +2461,6 @@ class EventBacktester:
                 _srb_wide_entry_guard = None
         for _sim in self._simulators.values():
             _sim._srb_add_policy = _srb_add_policy
-            _sim._srb_reverse_policy = _srb_reverse_policy
             _sim._srb_wide_entry_guard = _srb_wide_entry_guard
 
         # 可选: 加载跨月续跑状态
@@ -2832,64 +2805,35 @@ class EventBacktester:
             except (TypeError, ValueError):
                 pass
 
-            # SRB 假突破反手检查（primary bar 计数 + 反手候选检查）
+            # L3 dynamic trailing 需要最新的 wide_sr_upper_px / wide_sr_lower_px
+            # （来自 wide_sr_swing_f，默认 240 bar 窗口）。随 primary bar 同步更新。
+            for _wk in ("wide_sr_upper_px", "wide_sr_lower_px"):
+                _wv = primary_features.get(_wk)
+                if _wv is None:
+                    continue
+                try:
+                    _wf = float(_wv)
+                    if _wf == _wf:
+                        setattr(simulator, f"_{_wk}", _wf)
+                except (TypeError, ValueError):
+                    pass
+
+            # Phase D: 维护近 N primary close 的滚动缓存用于 recent_net_move_atr
+            try:
+                _pc_val = primary_features.get("close")
+                if _pc_val is not None:
+                    _pc_f = float(_pc_val)
+                    if _pc_f == _pc_f:
+                        simulator._primary_close_buffer.append(_pc_f)
+                        if (
+                            len(simulator._primary_close_buffer)
+                            > simulator._primary_close_buffer_max
+                        ):
+                            simulator._primary_close_buffer.pop(0)
+            except (TypeError, ValueError):
+                pass
+
             simulator._primary_bar_count += 1
-            _rev = simulator.check_srb_reverse(
-                current_price=float(primary_features.get("close", 0) or 0),
-                current_bar_count=simulator._primary_bar_count,
-            )
-            _rev_status = getattr(simulator, "_last_reverse_status", "")
-            if _rev_status == "expired":
-                funnel.setdefault("srb_reverse_expired", 0)
-                funnel["srb_reverse_expired"] += 1
-            if _rev is not None:
-                funnel.setdefault("srb_reverse_opened", 0)
-                funnel["srb_reverse_opened"] += 1
-                _rev_side = str(_rev["side"])
-                _rev_atr = float(_rev.get("atr_at_entry", 0) or 0)
-                _rev_entry_bar = {
-                    "close": primary_features.get("close", 0),
-                    "high": primary_features.get("high", 0),
-                    "low": primary_features.get("low", 0),
-                    "open": primary_features.get("open", 0),
-                    "timestamp": ts,
-                    "atr": primary_features.get("atr", 0) or _rev_atr,
-                }
-                # 使用真正的 TradeIntent（含完整 execution_profile），与原始入场一致
-                # —— 保证 build_position_dict() 能正确构造 SL/TP/trailing 等字段，
-                # 同时便于未来在实盘 order_flow_listener 中复用同一套 reverse 逻辑。
-                _rev_exec_profile = dict(_rev.get("execution_profile") or {})
-                # reverse 作为独立新仓，剔除 add_position/ladder 等仅对原持仓有意义的配置
-                _rev_exec_profile.pop("add_position", None)
-                _rev_conf = float(
-                    _rev.get("orig_confidence", 0.0) or _rev.get("evidence_score", 0.5)
-                )
-                if _rev_exec_profile:
-                    _rev_strategy_specific = dict(
-                        _rev_exec_profile.get("strategy_specific") or {}
-                    )
-                    _rev_strategy_specific["tier_name"] = _rev.get("tier_name", "")
-                    _rev_strategy_specific["is_reverse"] = True
-                    _rev_exec_profile["strategy_specific"] = _rev_strategy_specific
-                _rev_intent_d = TradeIntent(
-                    action=_rev_side,
-                    symbol=str(_rev.get("symbol", "") or ""),
-                    archetype="srb",
-                    confidence=_rev_conf,
-                    execution_profile=_rev_exec_profile,
-                    execution_tags=["srb_fake_break_reverse"],
-                )
-                _rev_bm = self._bm_map.get("srb", self._primary_bar_minutes)
-                _rev_pid = simulator.open_position(
-                    _rev_intent_d, _rev_entry_bar, primary_features, bar_minutes=_rev_bm
-                )
-                if _rev_pid is not None:
-                    _rp = simulator._positions.get(_rev_pid)
-                    if _rp is not None:
-                        _rp["_is_reverse"] = True
-                        _rp["_srb_true_sr_level"] = float(
-                            _rev.get("true_sr_level", 0) or 0
-                        )
 
             # 更新 structural_price (EMA200) 用于 BPC trend_hold 结构性退出
             _ema_200_val = primary_features.get("ema_200")
@@ -3072,8 +3016,8 @@ class EventBacktester:
                                 _side_wg,
                                 _px_wg,
                                 _atr_wg,
-                                entry_feats.get("srb_sr_support_wide"),
-                                entry_feats.get("srb_sr_resistance_wide"),
+                                entry_feats.get("wide_sr_lower_px"),
+                                entry_feats.get("wide_sr_upper_px"),
                                 _min_atr,
                             ):
                                 funnel.setdefault("reject_srb_wide_sr_too_close", 0)
@@ -3090,11 +3034,15 @@ class EventBacktester:
                         _srb_pos = simulator._positions.get(opened)
                         if _srb_pos is not None:
                             _srb_side = str(_srb_pos.get("side", "")).upper()
-                            _fbr_cfg_inline = (
-                                getattr(simulator, "_srb_reverse_policy", None) or {}
-                            )
+                            # true_sr_level.wide_fallback_atr: 窄窗紧贴入场时改用 L3 大级别锚点
+                            try:
+                                _tsl_cfg = (
+                                    self._strats["srb"].archetype.execution.raw or {}
+                                ).get("true_sr_level") or {}
+                            except Exception:
+                                _tsl_cfg = {}
                             _fallback_atr = float(
-                                _fbr_cfg_inline.get("true_sr_wide_fallback_atr", 0) or 0
+                                _tsl_cfg.get("wide_fallback_atr", 0) or 0
                             )
                             _entry_px = float(entry_bar.get("close", 0) or 0)
                             _atr_e = float(entry_feats.get("atr", 0) or 0)
@@ -3104,24 +3052,20 @@ class EventBacktester:
                                 _atr_e,
                                 narrow_support=entry_feats.get("srb_sr_support"),
                                 narrow_resistance=entry_feats.get("srb_sr_resistance"),
-                                wide_support=entry_feats.get("srb_sr_support_wide"),
-                                wide_resistance=entry_feats.get(
-                                    "srb_sr_resistance_wide"
-                                ),
+                                wide_lower_px=entry_feats.get("wide_sr_lower_px"),
+                                wide_upper_px=entry_feats.get("wide_sr_upper_px"),
                                 fallback_atr=_fallback_atr,
                             )
                             _srb_pos["_srb_true_sr_level"] = float(_pick)
-                            # 快照原始 intent 的 execution_profile / symbol / confidence，
-                            # 供后续 fake_break_reverse 构建真正的 TradeIntent 使用。
-                            _srb_pos["_srb_orig_execution_profile"] = (
-                                getattr(intent, "execution_profile", None) or {}
-                            )
-                            _srb_pos["_srb_orig_symbol"] = str(
-                                getattr(intent, "symbol", "") or ""
-                            )
-                            _srb_pos["_srb_orig_confidence"] = float(
-                                getattr(intent, "confidence", 0.0) or 0.0
-                            )
+                            # Phase D: 记录母仓入场时 wide_sr_dist_atr，供加仓 wide_sr_expansion gate 比对
+                            try:
+                                _ewd = entry_feats.get("wide_sr_dist_atr")
+                                if _ewd is not None and _ewd == _ewd:
+                                    _srb_pos["_srb_entry_wide_sr_dist_atr"] = float(
+                                        _ewd
+                                    )
+                            except (TypeError, ValueError):
+                                pass
                     if opened is None:
                         _atr_open = float(entry_feats.get("atr", 0) or 0.0)
                         _dup_open = any(
@@ -3220,6 +3164,10 @@ class EventBacktester:
                                         "reject_add_srb_volume_compression", 0
                                     )
                                     funnel["reject_add_srb_volume_compression"] += 1
+                                elif _why.startswith("shape_gate_"):
+                                    _key = f"reject_add_{_why}"
+                                    funnel.setdefault(_key, 0)
+                                    funnel[_key] += 1
                                 else:
                                     funnel.setdefault("reject_add_other", 0)
                                     funnel["reject_add_other"] += 1

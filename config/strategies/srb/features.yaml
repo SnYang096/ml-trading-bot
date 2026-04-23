@@ -65,6 +65,9 @@ feature_pipeline:
 
     # ========== SR ==========
     - sr_strength_max_f
+    # L3 大级别 SR（240 bar, anchor_shift=12；≈1 月视角，上下沿价格+距离/侧别/带宽）
+    # 消费方：结构化 SL 对面锚点 fallback（true_sr_level.wide_fallback_atr）+ sr_wide_entry_guard
+    - wide_sr_swing_f
 
     # ========== 订单流 ==========
     - vpin_features_f

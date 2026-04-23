@@ -105,6 +105,33 @@ def build_position_dict(
         # TP 仅在启用时设置
         tp_price = computed_tp if take_profit_r > 0 else None
 
+        # ── SRB 结构化 SL：SL 锚定"对面 SR"（LONG=support, SHORT=resistance）──
+        # 语义：SRB 突破 resistance 做 LONG，真正的失效位是下方 support（不是 X×ATR）。
+        # 距 entry 过近（SR 紧贴）时兜底到 ATR-based；距 entry 过远时不 clip，
+        # 仓位通过 sizing 公式自然缩小以对冲。
+        ssl_cfg = rr_constraints.get("structural_sl") or {}
+        _opp_sr = strategy_specific.get("srb_opposite_sr_level")
+        if ssl_cfg and bool(ssl_cfg.get("enabled", False)) and _opp_sr is not None:
+            try:
+                _opp_v = float(_opp_sr)
+                _buf = float(ssl_cfg.get("opposite_sr_buffer_atr", 0.5) or 0.5) * atr
+                _min_dist = float(ssl_cfg.get("min_distance_atr", 2.0) or 2.0) * atr
+                if _opp_v == _opp_v and _opp_v > 0:
+                    if is_long:
+                        struct_sl = _opp_v - _buf
+                        struct_dist = entry_price - struct_sl
+                    else:
+                        struct_sl = _opp_v + _buf
+                        struct_dist = struct_sl - entry_price
+                    # 紧贴兜底：结构化距离 < 最小距离时，保留 ATR-based SL
+                    if struct_dist >= _min_dist:
+                        sl_price = struct_sl
+                        sizing_stop_source = "structural_opposite_sr"
+                        effective_stop_pct = struct_dist / entry_price
+                        stop_loss_r = struct_dist / atr
+            except (TypeError, ValueError):
+                pass
+
     if entry_time is None:
         entry_time = datetime.now(timezone.utc)
     if entry_time.tzinfo is None:
@@ -141,17 +168,49 @@ def build_position_dict(
         except (TypeError, ValueError):
             pass
 
-    # BPC 扩展: breakeven 可与 activation trailing 解耦 (trailing.enabled=false 时仍可有 breakeven)
+    # ------------------------------------------------------------------
+    # Unified breakeven lock（2026-04-22 重构）
+    # 来源：rr_constraints.breakeven_{enabled,trigger_r,lock_level_r,measure}
+    # 兼容：若 exec_profile.bpc_position_config 存在旧字段（历史测试固件），仍读取。
+    # ------------------------------------------------------------------
     bpc_cfg = exec_profile.get("bpc_position_config") or {}
-    if bpc_cfg:
-        pos["breakeven_enabled"] = bool(bpc_cfg.get("breakeven_enabled", False))
-        pos["breakeven_trigger_r"] = float(bpc_cfg.get("breakeven_trigger_r", 1.0))
-        pos["breakeven_lock_profit_atr"] = float(
-            bpc_cfg.get("breakeven_lock_profit_atr", 0.0) or 0.0
+    be_enabled = bool(
+        rr_constraints.get("breakeven_enabled", bpc_cfg.get("breakeven_enabled", False))
+    )
+    be_trigger_r = float(
+        rr_constraints.get(
+            "breakeven_trigger_r", bpc_cfg.get("breakeven_trigger_r", 1.0)
         )
-        pos["breakeven_locked"] = False
-        if "bar_minutes" in bpc_cfg:
-            pos["bar_minutes"] = bpc_cfg["bar_minutes"]
+        or 1.0
+    )
+    # 兼容旧 `breakeven_lock_profit_atr`（仅 bpc_position_config 测试固件在用）
+    _legacy_lock_atr = bpc_cfg.get("breakeven_lock_profit_atr")
+    be_lock_level_r = float(
+        rr_constraints.get(
+            "breakeven_lock_level_r",
+            _legacy_lock_atr if _legacy_lock_atr is not None else 0.0,
+        )
+        or 0.0
+    )
+    # 默认 measure：新配置走 initial_risk；若存在 bpc_cfg（历史固件/旧调用方），保持 atr 口径。
+    _default_measure = "atr" if bpc_cfg else "initial_risk"
+    be_measure = (
+        str(
+            rr_constraints.get("breakeven_measure", _default_measure)
+            or _default_measure
+        )
+        .strip()
+        .lower()
+    )
+    if be_measure not in {"initial_risk", "atr"}:
+        be_measure = "initial_risk"
+    pos["breakeven_enabled"] = be_enabled
+    pos["breakeven_trigger_r"] = be_trigger_r
+    pos["breakeven_lock_level_r"] = be_lock_level_r
+    pos["breakeven_measure"] = be_measure
+    pos["breakeven_locked"] = False
+    if "bar_minutes" in bpc_cfg:
+        pos["bar_minutes"] = bpc_cfg["bar_minutes"]
 
     activation_r = (
         bpc_cfg.get("activation_r") if bpc_cfg else rr_constraints.get("activation_r")
@@ -164,22 +223,12 @@ def build_position_dict(
         "trailing_atr"
     )
 
-    if bpc_cfg and activation_r is not None:
-        # BPC 专用 trailing
+    if activation_r is not None:
         pos["activation_r"] = float(activation_r)
         pos["trail_r"] = float(trail_r or 1.0)
         pos["trailing_activated"] = False
         pos["high_water_mark"] = entry_price if is_long else None
         pos["low_water_mark"] = entry_price if not is_long else None
-    elif activation_r is not None:
-        # 通用 activation trailing (非 BPC)
-        pos["activation_r"] = float(activation_r)
-        pos["trail_r"] = float(trail_r or 1.0)
-        pos["trailing_activated"] = False
-        pos["high_water_mark"] = entry_price if is_long else None
-        pos["low_water_mark"] = entry_price if not is_long else None
-        pos["breakeven_enabled"] = False
-        pos["breakeven_locked"] = False
     elif rr_constraints.get("allow_trailing", False):
         # 通用 trailing (allow_trailing=True 但无 activation_r)
         pos["activation_r"] = float(rr_constraints.get("trailing_atr", 1.0))
@@ -187,9 +236,28 @@ def build_position_dict(
         pos["trailing_activated"] = False
         pos["high_water_mark"] = entry_price if is_long else None
         pos["low_water_mark"] = entry_price if not is_long else None
-        pos["breakeven_enabled"] = False
-        pos["breakeven_locked"] = False
-        pos["breakeven_lock_profit_atr"] = 0.0
+
+    # SRB L3 dynamic trailing：反向 L3 距离阈值切换 trail_r_far / trail_r_near。
+    # 仅当配置了 trail_r_far / trail_r_near / l3_near_threshold_atr 且有 trailing 启用时生效。
+    if pos.get("activation_r") is not None:
+        _trf = rr_constraints.get("trail_r_far")
+        _trn = rr_constraints.get("trail_r_near")
+        _thr = rr_constraints.get("l3_near_threshold_atr")
+        if _trf is not None:
+            try:
+                pos["trail_r_far"] = float(_trf)
+            except (TypeError, ValueError):
+                pass
+        if _trn is not None:
+            try:
+                pos["trail_r_near"] = float(_trn)
+            except (TypeError, ValueError):
+                pass
+        if _thr is not None:
+            try:
+                pos["l3_near_threshold_atr"] = float(_thr)
+            except (TypeError, ValueError):
+                pass
 
     _structural_exit = rr_constraints.get("structural_exit")
     if _structural_exit:
@@ -210,6 +278,24 @@ def build_position_dict(
         rr_constraints.get("trail_expand_primary_atr", False)
     )
 
+    # 2026-04-23 E1: time_stop 分层 — MFE 达阈值则不 time_stop（趋势在跑）
+    _uncap = rr_constraints.get("time_stop_uncap_mfe_r")
+    if _uncap is not None:
+        try:
+            pos["time_stop_uncap_mfe_r"] = float(_uncap)
+        except (TypeError, ValueError):
+            pass
+
+    # 2026-04-23 E2: L3 structural exit（独立 flag；不走 structural_exit 枚举串行）
+    if bool(rr_constraints.get("l3_structural_exit_enabled", False)):
+        pos["l3_structural_exit_enabled"] = True
+        try:
+            pos["l3_structural_exit_buffer_atr"] = float(
+                rr_constraints.get("l3_structural_exit_buffer_atr", 0.25) or 0.25
+            )
+        except (TypeError, ValueError):
+            pos["l3_structural_exit_buffer_atr"] = 0.25
+
     return pos
 
 
@@ -225,12 +311,14 @@ def enforce_position(
     macro_tp_vwap_position: Optional[float] = None,
     ema_1200_position: Optional[float] = None,
     primary_tf_atr: Optional[float] = None,
+    wide_sr_upper_px: Optional[float] = None,
+    wide_sr_lower_px: Optional[float] = None,
 ) -> Tuple[Optional[str], float]:
     """7步持仓管理 — 实盘/回测公用
 
     检查顺序 (同 _enforce_open_positions):
       1. Time stop
-      2. Breakeven lock
+      2. Unified breakeven lock (MFE ≥ trigger_r × R → SL = entry ± lock_level_r × R, tighten-only)
       3. Update HWM/LWM
       3b. Structural exit (EMA200)
       3c. Structural exit (VWAP1200)
@@ -279,8 +367,30 @@ def enforce_position(
     close_reason: Optional[str] = None
     exit_price = price_close
 
-    # ── 1. Time stop ──
-    if holding_expired(
+    # ── 1. Time stop（E1 2026-04-23：分层解除）──
+    # 若 pos.time_stop_uncap_mfe_r 已配置且当前 MFE_r ≥ 阈值，跳过 time_stop 让趋势继续跑。
+    # R 单位按 breakeven_measure 对齐：initial_risk → initial_risk_distance；atr → atr_at_entry。
+    _uncap_r = pos.get("time_stop_uncap_mfe_r")
+    _skip_time_stop = False
+    if _uncap_r is not None and _uncap_r > 0:
+        _m = str(pos.get("breakeven_measure", "initial_risk")).strip().lower()
+        if _m == "atr":
+            _r_unit = float(pos_atr or 0.0)
+        else:
+            _r_unit = float(pos.get("initial_risk_distance") or pos_atr or 0.0)
+        if _r_unit > 0:
+            _hwm = pos.get("high_water_mark")
+            _lwm = pos.get("low_water_mark")
+            if is_long and _hwm is not None:
+                _mfe_r = (float(_hwm) - entry_price) / _r_unit
+            elif (not is_long) and _lwm is not None:
+                _mfe_r = (entry_price - float(_lwm)) / _r_unit
+            else:
+                _mfe_r = 0.0
+            if _mfe_r >= float(_uncap_r):
+                _skip_time_stop = True
+
+    if not _skip_time_stop and holding_expired(
         entry_time=entry_time,
         now=now,
         max_holding_bars=pos.get("max_holding_bars"),
@@ -289,28 +399,44 @@ def enforce_position(
         close_reason = "time_stop"
         exit_price = price_close
 
-    # ── 2. Breakeven lock ──
+    # ── 2. Unified breakeven lock（2026-04-22 重构：原 2 + 2b 合并）──
+    # 语义：MFE ≥ trigger_r × R 时，SL = entry ± lock_level_r × R；tighten-only（硬编码）。
+    #   measure="initial_risk"（默认）：R = |SL - entry| at entry（与 structural_sl 兼容）；
+    #   measure="atr"：R = 入场时 ATR（BPC 历史口径）。
+    # 范围：子仓的 breakeven 由 PositionTracker._sync_child_stop_from_parent 覆盖成母仓 SL，
+    #       因此"母仓-only"语义由 inherit_parent_stop 机制天然保证，无需 scope 参数。
     if (
         close_reason is None
         and pos.get("breakeven_enabled")
         and not pos.get("breakeven_locked")
-        and pos_atr > 0
     ):
-        check_price = price_high if is_long else price_low
-        if is_long:
-            profit_r = (check_price - entry_price) / pos_atr
+        be_measure = str(pos.get("breakeven_measure", "initial_risk")).strip().lower()
+        if be_measure == "atr":
+            r_unit = float(pos_atr or 0.0)
         else:
-            profit_r = (entry_price - check_price) / pos_atr
-        if profit_r >= pos.get("breakeven_trigger_r", 1.0):
-            pos["breakeven_locked"] = True
-            lock_profit_atr = float(pos.get("breakeven_lock_profit_atr", 0.0) or 0.0)
-            if lock_profit_atr > 0:
-                if is_long:
-                    pos["stop_loss_price"] = entry_price + lock_profit_atr * pos_atr
-                else:
-                    pos["stop_loss_price"] = entry_price - lock_profit_atr * pos_atr
+            r_unit = float(pos.get("initial_risk_distance") or pos_atr or 0.0)
+        if r_unit > 0:
+            check_price = price_high if is_long else price_low
+            if is_long:
+                mfe_r = (check_price - entry_price) / r_unit
             else:
-                pos["stop_loss_price"] = entry_price
+                mfe_r = (entry_price - check_price) / r_unit
+            trigger_r = float(pos.get("breakeven_trigger_r", 1.0) or 1.0)
+            if mfe_r >= trigger_r:
+                lock_level_r = float(pos.get("breakeven_lock_level_r", 0.0) or 0.0)
+                if is_long:
+                    new_sl = entry_price + lock_level_r * r_unit
+                else:
+                    new_sl = entry_price - lock_level_r * r_unit
+                old_sl = pos.get("stop_loss_price")
+                # tighten-only（硬编码）：SL 只能向入场有利方向移动
+                if (
+                    old_sl is None
+                    or (is_long and new_sl > old_sl)
+                    or (not is_long and new_sl < old_sl)
+                ):
+                    pos["stop_loss_price"] = new_sl
+                pos["breakeven_locked"] = True
 
     # ── 3. Update high/low water mark ──
     if is_long and pos.get("high_water_mark") is not None:
@@ -397,6 +523,33 @@ def enforce_position(
             except (TypeError, ValueError):
                 pass
 
+    # ── 3f. L3 Structural exit (wide_sr_swing_f) — SRB E2 2026-04-23 ──
+    # 语义：L3 大级别 SR 是 SRB 突破的 "宏观边界"，被完全反向击穿即视为趋势结构失效。
+    #   - LONG：price_close < wide_sr_lower_px - buffer × ATR（跌穿 L3 支撑）
+    #   - SHORT：price_close > wide_sr_upper_px + buffer × ATR（涨穿 L3 阻力）
+    # wide_sr_upper_px / wide_sr_lower_px 来自特征 wide_sr_swing_f（240 bar shift=12）。
+    if (
+        close_reason is None
+        and bool(pos.get("l3_structural_exit_enabled", False))
+        and pos_atr > 0
+    ):
+        buf = float(pos.get("l3_structural_exit_buffer_atr", 0.25) or 0.25) * float(
+            pos_atr
+        )
+        try:
+            if is_long and wide_sr_lower_px is not None:
+                lv = float(wide_sr_lower_px)
+                if lv > 0 and lv == lv and price_close < lv - buf:
+                    close_reason = "structural_exit_l3"
+                    exit_price = price_close
+            elif (not is_long) and wide_sr_upper_px is not None:
+                uv = float(wide_sr_upper_px)
+                if uv > 0 and uv == uv and price_close > uv + buf:
+                    close_reason = "structural_exit_l3"
+                    exit_price = price_close
+        except (TypeError, ValueError):
+            pass
+
     # ── 4. Activation trailing ──
     if close_reason is None and pos.get("activation_r") is not None and pos_atr > 0:
         check_price = price_high if is_long else price_low
@@ -413,6 +566,34 @@ def enforce_position(
                 pta = float(primary_tf_atr)
                 if pta > 0:
                     trail_base_atr = max(trail_base_atr, pta)
+            except (TypeError, ValueError):
+                pass
+        # L3 dynamic trailing：价距反向 L3 近则收到 trail_r_near，远则放到 trail_r_far
+        # 仅当 pos 下配置了三项 (trail_r_far / trail_r_near / l3_near_threshold_atr)
+        # 且当前 bar 提供了对应侧的 wide_sr price 时生效。
+        _trf = pos.get("trail_r_far")
+        _trn = pos.get("trail_r_near")
+        _thr = pos.get("l3_near_threshold_atr")
+        if _trf is not None and _trn is not None and _thr is not None:
+            try:
+                _ref_px = (
+                    float(wide_sr_upper_px)
+                    if is_long and wide_sr_upper_px is not None
+                    else (
+                        float(wide_sr_lower_px)
+                        if (not is_long) and wide_sr_lower_px is not None
+                        else None
+                    )
+                )
+                if _ref_px is not None and trail_base_atr > 0:
+                    if is_long:
+                        _rev_dist_atr = (_ref_px - float(price_close)) / trail_base_atr
+                    else:
+                        _rev_dist_atr = (float(price_close) - _ref_px) / trail_base_atr
+                    if _rev_dist_atr < float(_thr):
+                        trail_r = float(_trn)
+                    else:
+                        trail_r = float(_trf)
             except (TypeError, ValueError):
                 pass
         if profit_r >= activation_r:

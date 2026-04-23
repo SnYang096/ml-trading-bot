@@ -101,17 +101,18 @@ def should_reject_srb_wide_entry(
     side: str,
     close: float,
     atr: float,
-    support_wide: Optional[float],
-    resistance_wide: Optional[float],
+    wide_lower_px: Optional[float],
+    wide_upper_px: Optional[float],
     min_distance_atr: float,
 ) -> bool:
     """
-    宽窗 SR 入场屏蔽（与 ``scripts/event_backtest.py`` PCM 路径一致）。
+    L3 大级别 SR 入场屏蔽：距反向的大级别边界过近时拒绝新开仓。
 
-    LONG: 若上方宽窗阻力距现价 < min_distance_atr × ATR → True（拒绝）。
-    SHORT: 若下方宽窗支撑距现价 < min_distance_atr × ATR → True。
+    LONG：若 ``wide_upper_px`` 在价格上方且 (upper - close) < min_distance_atr × ATR → True。
+    SHORT：若 ``wide_lower_px`` 在价格下方且 (close - lower) < min_distance_atr × ATR → True。
 
-    min_distance_atr≤0 / 无效价格或 ATR 时不拦截。
+    wide_{upper,lower}_px 来源于特征 ``wide_sr_swing_f``（L3，默认 240 bar, anchor_shift=12）。
+    min_distance_atr ≤ 0 / 无效价格或 ATR 时不拦截。
     """
     try:
         mn = float(min_distance_atr)
@@ -121,22 +122,28 @@ def should_reject_srb_wide_entry(
         return False
     if mn <= 0 or not (px > 0) or not (a > 0):
         return False
-    su = support_wide
-    re = resistance_wide
     try:
-        sw = float(su) if su is not None and su == su else 0.0
-        rw = float(re) if re is not None and re == re else 0.0
+        lo = (
+            float(wide_lower_px)
+            if wide_lower_px is not None and wide_lower_px == wide_lower_px
+            else 0.0
+        )
+        up = (
+            float(wide_upper_px)
+            if wide_upper_px is not None and wide_upper_px == wide_upper_px
+            else 0.0
+        )
     except (TypeError, ValueError):
-        sw = rw = 0.0
+        lo = up = 0.0
 
     u = str(side or "").upper()
     if u in ("LONG", "BUY"):
-        # 阻力在价格上方且过近
-        if rw > px and (rw - px) < mn * a:
+        # 上方宽窗阻力过近 → 拒单
+        if up > px and (up - px) < mn * a:
             return True
     elif u in ("SHORT", "SELL"):
-        # 支撑在价格下方且过近
-        if 0 < sw < px and (px - sw) < mn * a:
+        # 下方宽窗支撑过近 → 拒单
+        if 0 < lo < px and (px - lo) < mn * a:
             return True
     return False
 
@@ -148,14 +155,19 @@ def pick_srb_true_sr_level(
     *,
     narrow_support: Optional[float],
     narrow_resistance: Optional[float],
-    wide_support: Optional[float],
-    wide_resistance: Optional[float],
+    wide_lower_px: Optional[float],
+    wide_upper_px: Optional[float],
     fallback_atr: float,
 ) -> float:
     """
-    fake_break_reverse Stage 2 锚点：默认用窄窗 SR（突破侧）；若窄窗距入场过近则用宽窗。
+    SRB 真 SR 锚点选择：
+      - 默认用 L1 窄窗 swing SR（突破侧）。
+      - 若窄窗距入场 < fallback_atr × ATR（说明窄 SR 紧贴入场），改用 L3 大级别 SR。
 
-    与 ``event_backtest.open_position`` 后写入 ``_srb_true_sr_level`` 的逻辑一致。
+    用途：结构化止损的对面 SR 与突破确认的 true_sr_level（见 build_position_dict /
+    event_backtest.open_position 后写入 ``_srb_true_sr_level``）。
+
+    wide_{upper,lower}_px 来自 ``wide_sr_swing_f``（240 bar, shift=12）。
     """
     try:
         ep = float(entry_px)
@@ -175,16 +187,19 @@ def pick_srb_true_sr_level(
 
     ns = _f(narrow_support)
     nr = _f(narrow_resistance)
-    ws = _f(wide_support)
-    wr = _f(wide_resistance)
+    wlo = _f(wide_lower_px)
+    wup = _f(wide_upper_px)
 
+    # _srb_true_sr_level 语义：方向侧的"结构参考位"
+    #   LONG  → 下方 support（加仓底线 / 结构化 SL 锚点）
+    #   SHORT → 上方 resistance（镜像）
     u = str(side or "").upper()
     if u in ("LONG", "BUY"):
         narrow = ns
-        wide = ws
+        wide = wlo
     elif u in ("SHORT", "SELL"):
         narrow = nr
-        wide = wr
+        wide = wup
     else:
         return ep
 
@@ -231,24 +246,29 @@ def maybe_inject_srb_experiment_features(
     """
     将 SRB 实验用字段合并到 out（通常为 primary_features）。
     exec_raw: srb archetypes/execution.yaml 的 raw dict。
+
+    只注入 SRB 专有字段：
+      - srb_regime_* (ADX/ER bucket)
+      - srb_sr_support / srb_sr_resistance  （L1 窄窗，lookback_bars=20）
+
+    L3 大级别 SR（wide_sr_upper_px / wide_sr_lower_px / wide_sr_dist_atr ...）由
+    统一的特征 ``wide_sr_swing_f`` 在特征管线里计算，不在此函数里重复。
     """
     re_cfg = (exec_raw or {}).get("regime_execution") or {}
     sr_cfg = (exec_raw or {}).get("sr_structural_exit") or {}
     add_pol = (exec_raw or {}).get("srb_add_position_policy") or {}
-    rev_cfg = (exec_raw or {}).get("fake_break_reverse") or {}
-    sr_inj = (exec_raw or {}).get("sr_feature_injection") or {}
+    true_sr_cfg = (exec_raw or {}).get("true_sr_level") or {}
     wide_guard = (exec_raw or {}).get("sr_wide_entry_guard") or {}
     need_regime = bool(re_cfg.get("enabled")) or (
         bool(add_pol.get("enabled"))
         and isinstance(add_pol.get("allow_regime_buckets"), list)
         and len(add_pol.get("allow_regime_buckets") or []) > 0
     )
-    wide_lb = int(sr_inj.get("swing_lookback_wide_bars") or 0)
+    # L1 窄窗 SR：结构化 SL / 宽窗入场屏蔽 / 结构化退出 / true_sr fallback 任一用到即注入
     need_sr = (
         bool(sr_cfg.get("enabled"))
-        or bool(rev_cfg.get("enabled"))
-        or wide_lb > 0
         or bool(wide_guard.get("enabled"))
+        or bool(true_sr_cfg)
     )
     if not need_regime and not need_sr:
         return out
@@ -300,15 +320,6 @@ def maybe_inject_srb_experiment_features(
             out["srb_sr_support"] = float(sup)
         if res is not None:
             out["srb_sr_resistance"] = float(res)
-        wide_bars = wide_lb
-        if wide_bars <= 0 and bool(wide_guard.get("enabled")):
-            wide_bars = 96  # 与 archetypes 默认 swing_lookback_wide_bars 对齐
-        if wide_bars > 0:
-            sup_w, res_w = swing_sr_levels(df, ts, max(3, wide_bars))
-            if sup_w is not None:
-                out["srb_sr_support_wide"] = float(sup_w)
-            if res_w is not None:
-                out["srb_sr_resistance_wide"] = float(res_w)
 
     return out
 
@@ -348,3 +359,116 @@ def srb_add_position_allowed(
             except (TypeError, ValueError):
                 pass
     return True, ""
+
+
+def should_reject_srb_add_by_shape(
+    features: Mapping[str, Any],
+    mother_ctx: Mapping[str, Any],
+    gate_cfg: Mapping[str, Any],
+) -> Tuple[bool, str]:
+    """
+    SRB 加仓 "事后形态门" (Phase D, 2026-04-22)。
+
+    用于在 ``float_r_ladder_only`` 绕过 validate_add_position_trigger 的情况下，
+    对加仓行为追加执行层形态确认。全部子项独立 enable/disable，单测覆盖单项行为。
+
+    gate_cfg (execution.yaml → srb_add_position_policy.post_hoc_shape_gate):
+      - retrace_guard.enabled + min_captured_pct (current_r / mfe_r ≥ pct 才允许)
+      - recent_momentum.enabled + lookback_bars + min_net_move_atr
+      - trend_r2_gate.enabled + min_r2
+      - wide_sr_expansion.enabled + min_expansion_atr (与母仓入场时 wide_sr_dist_atr 对比)
+
+    features 期望含（不强制）：
+      - mfe_r (已计算的母仓 MFE R 值)
+      - current_r (加仓候选的即时 R)
+      - trend_r2_20
+      - wide_sr_dist_atr
+      - recent_net_move_atr  (caller 预算：最近 N bar 同向净位移)
+    mother_ctx 期望含：
+      - entry_wide_sr_dist_atr (母仓入场时 wide_sr_dist_atr)
+      - side (LONG / SHORT)
+
+    Returns:
+      (reject, reason)：reject=True 表示拒绝本次加仓，reason 作为 funnel 细分 tag。
+    """
+    if not gate_cfg:
+        return False, ""
+
+    # A. retrace_guard：current_r 相对 MFE 不能缩水过多
+    rg = gate_cfg.get("retrace_guard") or {}
+    if bool(rg.get("enabled", False)):
+        try:
+            mfe = float(features.get("mfe_r") or 0.0)
+            cur = float(features.get("current_r") or 0.0)
+            min_pct = float(rg.get("min_captured_pct", 0.7) or 0.7)
+        except (TypeError, ValueError):
+            mfe, cur, min_pct = 0.0, 0.0, 0.7
+        if mfe > 0 and cur < min_pct * mfe:
+            return True, "shape_gate_retrace"
+
+    # B. recent_momentum：近 N bar 的同向净位移 ≥ 阈值
+    rm = gate_cfg.get("recent_momentum") or {}
+    if bool(rm.get("enabled", False)):
+        side = str(mother_ctx.get("side", "")).upper()
+        try:
+            move = float(features.get("recent_net_move_atr") or 0.0)
+            min_move = float(rm.get("min_net_move_atr", 1.5) or 1.5)
+        except (TypeError, ValueError):
+            move, min_move = 0.0, 1.5
+        if side in ("LONG", "BUY") and move < min_move:
+            return True, "shape_gate_momentum"
+        if side in ("SHORT", "SELL") and move > -min_move:
+            return True, "shape_gate_momentum"
+
+    # C. trend_r2_gate：当前 trend_r2_20 ≥ 阈值
+    tg = gate_cfg.get("trend_r2_gate") or {}
+    if bool(tg.get("enabled", False)):
+        try:
+            r2 = float(features.get("trend_r2_20") or 0.0)
+            min_r2 = float(tg.get("min_r2", 0.4) or 0.4)
+        except (TypeError, ValueError):
+            r2, min_r2 = 0.0, 0.4
+        if r2 < min_r2:
+            return True, "shape_gate_r2"
+
+    # D. wide_sr_expansion：加仓时 wide_sr_dist_atr 相对入场扩张 ≥ 阈值
+    we = gate_cfg.get("wide_sr_expansion") or {}
+    if bool(we.get("enabled", False)):
+        try:
+            cur_dist = float(features.get("wide_sr_dist_atr") or 0.0)
+            entry_dist = float(mother_ctx.get("entry_wide_sr_dist_atr") or 0.0)
+            min_exp = float(we.get("min_expansion_atr", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            cur_dist, entry_dist, min_exp = 0.0, 0.0, 1.0
+        if (cur_dist - entry_dist) < min_exp:
+            return True, "shape_gate_wide_expansion"
+
+    # E. trend_health_gate（E4, 2026-04-23）：只允许在母仓"已赚到钱 + 未过久"时加仓
+    # 语义：
+    #   - min_mother_mfe_r：母仓 MFE_r 必须 ≥ 阈值（避免 0 盈利还补仓 → 放大失败）
+    #   - max_bars_since_mother_entry：母仓入场超过 N bar 仍无突破性盈利 → 禁加仓
+    # features 需含 mfe_r（母仓） + bars_since_mother_entry（caller 计算）。
+    th = gate_cfg.get("trend_health_gate") or {}
+    if bool(th.get("enabled", False)):
+        try:
+            min_mfe = float(th.get("min_mother_mfe_r", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            min_mfe = 1.0
+        try:
+            max_bars = float(th.get("max_bars_since_mother_entry", 360) or 360)
+        except (TypeError, ValueError):
+            max_bars = 360.0
+        try:
+            mother_mfe = float(features.get("mfe_r") or 0.0)
+        except (TypeError, ValueError):
+            mother_mfe = 0.0
+        try:
+            bars_since = float(features.get("bars_since_mother_entry") or 0.0)
+        except (TypeError, ValueError):
+            bars_since = 0.0
+        if mother_mfe < min_mfe:
+            return True, "shape_gate_trend_health_mfe"
+        if max_bars > 0 and bars_since > max_bars:
+            return True, "shape_gate_trend_health_stale"
+
+    return False, ""

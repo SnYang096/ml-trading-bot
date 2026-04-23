@@ -42,6 +42,9 @@ def _make_intent(
     trailing_atr=None,
     bpc_position_config=None,
     strategy_specific=None,
+    structural_sl=None,
+    activation_r=None,
+    trail_r=None,
 ) -> TradeIntent:
     """构造一个带 execution_profile 的 TradeIntent"""
     rr = {
@@ -52,6 +55,12 @@ def _make_intent(
     }
     if trailing_atr is not None:
         rr["trailing_atr"] = trailing_atr
+    if structural_sl is not None:
+        rr["structural_sl"] = structural_sl
+    if activation_r is not None:
+        rr["activation_r"] = activation_r
+    if trail_r is not None:
+        rr["trailing_atr"] = trail_r
     ep = {"rr_constraints": rr}
     if bpc_position_config is not None:
         ep["bpc_position_config"] = bpc_position_config
@@ -313,6 +322,128 @@ class TestEnforcePositionTimeStop:
             price_low=49900,
             price_close=50050,
             now=within,
+        )
+        assert reason is None
+
+    def test_time_stop_uncap_when_mfe_above_threshold(self):
+        """E1: 母仓 MFE ≥ time_stop_uncap_mfe_r × R 时，time_stop 跳过（趋势在跑）"""
+        entry_time = _now()
+        pos = {
+            "side": "LONG",
+            "entry_price": 50000,
+            "entry_time": entry_time,
+            "atr_at_entry": 500,
+            "max_holding_bars": 10,
+            "bar_minutes": 240,
+            "stop_loss_price": 49000,
+            "initial_risk_distance": 1000,  # 1R = 1000
+            "time_stop_uncap_mfe_r": 2.0,
+            "breakeven_measure": "initial_risk",
+            "high_water_mark": 53000,  # MFE = 3R ≥ 2R → uncap
+        }
+        future = entry_time + timedelta(hours=100)
+        reason, _ = enforce_position(
+            pos,
+            price_high=52500,
+            price_low=52000,
+            price_close=52200,
+            now=future,
+        )
+        assert reason is None  # time_stop 被 uncap 跳过
+
+    def test_time_stop_triggers_when_mfe_below_uncap(self):
+        """E1: MFE < uncap 阈值时保持原 time_stop 行为"""
+        entry_time = _now()
+        pos = {
+            "side": "LONG",
+            "entry_price": 50000,
+            "entry_time": entry_time,
+            "atr_at_entry": 500,
+            "max_holding_bars": 10,
+            "bar_minutes": 240,
+            "stop_loss_price": 49000,
+            "initial_risk_distance": 1000,
+            "time_stop_uncap_mfe_r": 2.0,
+            "breakeven_measure": "initial_risk",
+            "high_water_mark": 50500,  # MFE = 0.5R < 2R
+        }
+        future = entry_time + timedelta(hours=100)
+        reason, exit_price = enforce_position(
+            pos,
+            price_high=50100,
+            price_low=49900,
+            price_close=50050,
+            now=future,
+        )
+        assert reason == "time_stop"
+
+    def test_l3_structural_exit_long_breaks_lower_l3(self):
+        """E2: LONG 价格跌破 wide_sr_lower_px - buffer × ATR 时触发 L3 结构退出"""
+        pos = {
+            "side": "LONG",
+            "entry_price": 50000,
+            "entry_time": _now(),
+            "atr_at_entry": 500,
+            "stop_loss_price": 48000,
+            "l3_structural_exit_enabled": True,
+            "l3_structural_exit_buffer_atr": 0.25,
+        }
+        # wide_sr_lower_px = 49000；buffer = 0.25 × 500 = 125；threshold = 48875
+        reason, exit_price = enforce_position(
+            pos,
+            price_high=49500,
+            price_low=48500,
+            price_close=48800,  # < 48875 → exit
+            now=_now() + timedelta(hours=10),
+            wide_sr_upper_px=55000,
+            wide_sr_lower_px=49000,
+        )
+        assert reason == "structural_exit_l3"
+        assert exit_price == 48800
+
+    def test_l3_structural_exit_short_breaks_upper_l3(self):
+        """E2: SHORT 价格涨破 wide_sr_upper_px + buffer × ATR 时触发"""
+        pos = {
+            "side": "SHORT",
+            "entry_price": 50000,
+            "entry_time": _now(),
+            "atr_at_entry": 500,
+            "stop_loss_price": 52000,
+            "l3_structural_exit_enabled": True,
+            "l3_structural_exit_buffer_atr": 0.25,
+        }
+        # wide_sr_upper_px = 51000；buffer = 125；threshold = 51125
+        reason, exit_price = enforce_position(
+            pos,
+            price_high=51500,
+            price_low=50800,
+            price_close=51200,  # > 51125 → exit
+            now=_now() + timedelta(hours=10),
+            wide_sr_upper_px=51000,
+            wide_sr_lower_px=45000,
+        )
+        assert reason == "structural_exit_l3"
+
+    def test_l3_structural_exit_no_trigger_within_buffer(self):
+        """E2: 未穿越 L3 ± buffer 时不触发"""
+        pos = {
+            "side": "LONG",
+            "entry_price": 50000,
+            "entry_time": _now(),
+            "atr_at_entry": 500,
+            "stop_loss_price": 48000,
+            "l3_structural_exit_enabled": True,
+            "l3_structural_exit_buffer_atr": 0.25,
+        }
+        # threshold = 49000 - 125 = 48875；close 48900 ≥ threshold
+        reason, _ = enforce_position(
+            pos,
+            price_high=49500,
+            price_low=48850,
+            price_close=48900,
+            now=_now() + timedelta(hours=10),
+            wide_sr_upper_px=55000,
+            wide_sr_lower_px=49000,
         )
         assert reason is None
 
@@ -579,6 +710,303 @@ class TestEnforcePositionTrailing:
         )
         assert pos["high_water_mark"] == 51500
         assert pos["stop_loss_price"] == pytest.approx(51100)
+
+    def test_breakeven_initial_risk_triggers_long(self):
+        """LONG: measure=initial_risk, MFE ≥ trigger_r × R → SL 抬到 entry + lock*R。"""
+        pos = {
+            "side": "LONG",
+            "entry_price": 100.0,
+            "entry_time": _now(),
+            "atr_at_entry": 2.0,
+            "initial_risk_distance": 2.0,  # 1R = $2
+            "max_holding_bars": 50,
+            "bar_minutes": 240,
+            "stop_loss_price": 98.0,
+            "take_profit_price": 120.0,
+            "activation_r": None,
+            "breakeven_enabled": True,
+            "breakeven_trigger_r": 3.0,
+            "breakeven_lock_level_r": 0.0,
+            "breakeven_measure": "initial_risk",
+            "breakeven_locked": False,
+        }
+        # price_high=106 → MFE_r = (106-100)/2 = 3.0 >= 3.0 → SL 锁到 entry=100
+        enforce_position(
+            pos,
+            price_high=106.0,
+            price_low=100.5,
+            price_close=105.0,
+            now=_now() + timedelta(hours=1),
+        )
+        assert pos["breakeven_locked"] is True
+        assert pos["stop_loss_price"] == pytest.approx(100.0)
+
+    def test_breakeven_initial_risk_uses_structural_sl_distance(self):
+        """measure=initial_risk 使用 initial_risk_distance（可能 != atr，如 structural_sl）。"""
+        pos = {
+            "side": "LONG",
+            "entry_price": 100.0,
+            "entry_time": _now(),
+            "atr_at_entry": 2.0,  # ATR=2
+            "initial_risk_distance": 4.0,  # 结构化 SL 距离：1R=$4（≠ ATR）
+            "max_holding_bars": 50,
+            "bar_minutes": 240,
+            "stop_loss_price": 96.0,
+            "take_profit_price": 120.0,
+            "activation_r": None,
+            "breakeven_enabled": True,
+            "breakeven_trigger_r": 3.0,
+            "breakeven_lock_level_r": 0.0,
+            "breakeven_measure": "initial_risk",
+            "breakeven_locked": False,
+        }
+        # 基于 initial_risk_distance=4: MFE_r = (112-100)/4 = 3.0 → 触发
+        enforce_position(
+            pos,
+            price_high=112.0,
+            price_low=100.5,
+            price_close=111.0,
+            now=_now() + timedelta(hours=1),
+        )
+        assert pos["breakeven_locked"] is True
+        assert pos["stop_loss_price"] == pytest.approx(100.0)
+
+    def test_breakeven_atr_measure_matches_legacy(self):
+        """measure=atr 保持 BPC 历史口径：profit_r = (price-entry)/atr。"""
+        pos = {
+            "side": "LONG",
+            "entry_price": 100.0,
+            "entry_time": _now(),
+            "atr_at_entry": 2.0,
+            "initial_risk_distance": 4.0,  # 设置但 measure=atr 时应该忽略
+            "max_holding_bars": 50,
+            "bar_minutes": 240,
+            "stop_loss_price": 96.0,
+            "take_profit_price": 120.0,
+            "activation_r": None,
+            "breakeven_enabled": True,
+            "breakeven_trigger_r": 3.0,
+            "breakeven_lock_level_r": 1.0,  # 锁 1R = 1*ATR = $2
+            "breakeven_measure": "atr",
+            "breakeven_locked": False,
+        }
+        # MFE_r = (106-100)/2 = 3.0 → 触发；SL = 100 + 1*2 = 102
+        enforce_position(
+            pos,
+            price_high=106.0,
+            price_low=100.5,
+            price_close=105.0,
+            now=_now() + timedelta(hours=1),
+        )
+        assert pos["breakeven_locked"] is True
+        assert pos["stop_loss_price"] == pytest.approx(102.0)
+
+    def test_breakeven_tighten_only_does_not_retract_sl(self):
+        """tighten-only（硬编码）：若 SL 已超过 lock_level，不回撤。"""
+        pos = {
+            "side": "LONG",
+            "entry_price": 100.0,
+            "entry_time": _now(),
+            "atr_at_entry": 2.0,
+            "initial_risk_distance": 2.0,
+            "max_holding_bars": 50,
+            "bar_minutes": 240,
+            # SL 已被 trailing 抬到 105（entry+2.5R）
+            "stop_loss_price": 105.0,
+            "take_profit_price": 120.0,
+            "activation_r": None,
+            "breakeven_enabled": True,
+            "breakeven_trigger_r": 3.0,
+            "breakeven_lock_level_r": 0.0,
+            "breakeven_measure": "initial_risk",
+            "breakeven_locked": False,
+        }
+        enforce_position(
+            pos,
+            price_high=108.0,
+            price_low=104.0,
+            price_close=107.0,
+            now=_now() + timedelta(hours=1),
+        )
+        # trigger 激活但 tighten-only: 新 SL = entry = 100 < 老 SL 105 → 保留 105
+        assert pos["breakeven_locked"] is True
+        assert pos["stop_loss_price"] == pytest.approx(105.0)
+
+    def test_breakeven_short_with_lock_profit(self):
+        """SHORT MFE ≥ trigger 时 SL 下移到 entry - lock_level_r × R。"""
+        pos = {
+            "side": "SHORT",
+            "entry_price": 100.0,
+            "entry_time": _now(),
+            "atr_at_entry": 2.0,
+            "initial_risk_distance": 2.0,
+            "max_holding_bars": 50,
+            "bar_minutes": 240,
+            "stop_loss_price": 102.0,
+            "take_profit_price": 80.0,
+            "activation_r": None,
+            "breakeven_enabled": True,
+            "breakeven_trigger_r": 3.0,
+            "breakeven_lock_level_r": 0.5,  # 锁 0.5R 利润
+            "breakeven_measure": "initial_risk",
+            "breakeven_locked": False,
+        }
+        # price_low=94 → MFE_r = (100-94)/2 = 3.0 >= 3.0
+        # new_sl = 100 - 0.5*2 = 99
+        enforce_position(
+            pos,
+            price_high=100.5,
+            price_low=94.0,
+            price_close=95.0,
+            now=_now() + timedelta(hours=1),
+        )
+        assert pos["breakeven_locked"] is True
+        assert pos["stop_loss_price"] == pytest.approx(99.0)
+
+    def test_trailing_l3_dynamic_long_near_reverse_l3(self):
+        """LONG: 价距反向 L3（上沿）< threshold 时使用 trail_r_near（收紧）。"""
+        pos = {
+            "side": "LONG",
+            "entry_price": 50000,
+            "entry_time": _now(),
+            "atr_at_entry": 500,
+            "max_holding_bars": 50,
+            "bar_minutes": 240,
+            "stop_loss_price": 49000,
+            "take_profit_price": 60000,
+            "activation_r": 1.0,
+            "trail_r": 5.0,
+            "trail_r_far": 7.0,
+            "trail_r_near": 3.0,
+            "l3_near_threshold_atr": 2.0,
+            "trailing_activated": False,
+            "high_water_mark": 50000,
+            "low_water_mark": None,
+            "breakeven_enabled": False,
+            "breakeven_locked": False,
+        }
+        # price_close=51000, wide_sr_upper_px=51500 → rev_dist = (51500-51000)/500 = 1.0 < 2.0
+        # → 用 trail_r_near=3.0 → trail_sl = 51200 - 3.0*500 = 49700
+        enforce_position(
+            pos,
+            price_high=51200,
+            price_low=50900,
+            price_close=51000,
+            now=_now() + timedelta(hours=1),
+            wide_sr_upper_px=51500,
+            wide_sr_lower_px=48000,
+        )
+        assert pos["trailing_activated"] is True
+        assert pos["stop_loss_price"] == pytest.approx(49700)
+
+    def test_trailing_l3_dynamic_long_far_from_reverse_l3(self):
+        """LONG: 价距反向 L3（上沿）>= threshold 时使用 trail_r_far（放宽）。"""
+        pos = {
+            "side": "LONG",
+            "entry_price": 50000,
+            "entry_time": _now(),
+            "atr_at_entry": 500,
+            "max_holding_bars": 50,
+            "bar_minutes": 240,
+            "stop_loss_price": 49000,
+            "take_profit_price": 60000,
+            "activation_r": 1.0,
+            "trail_r": 5.0,
+            "trail_r_far": 7.0,
+            "trail_r_near": 3.0,
+            "l3_near_threshold_atr": 2.0,
+            "trailing_activated": False,
+            "high_water_mark": 50000,
+            "low_water_mark": None,
+            "breakeven_enabled": False,
+            "breakeven_locked": False,
+        }
+        # price_close=51000, wide_sr_upper_px=55000 → rev_dist = (55000-51000)/500 = 8.0 >= 2.0
+        # → 用 trail_r_far=7.0 → trail_sl = 51200 - 7.0*500 = 47700 < old 49000, 不会更新
+        enforce_position(
+            pos,
+            price_high=51200,
+            price_low=50900,
+            price_close=51000,
+            now=_now() + timedelta(hours=1),
+            wide_sr_upper_px=55000,
+            wide_sr_lower_px=48000,
+        )
+        assert pos["trailing_activated"] is True
+        # trail_sl 47700 < old 49000, 保持原 SL
+        assert pos["stop_loss_price"] == pytest.approx(49000)
+
+    def test_trailing_l3_dynamic_short(self):
+        """SHORT: 价距反向 L3（下沿）< threshold 时使用 trail_r_near（收紧）。"""
+        pos = {
+            "side": "SHORT",
+            "entry_price": 3000,
+            "entry_time": _now(),
+            "atr_at_entry": 100,
+            "max_holding_bars": 50,
+            "bar_minutes": 240,
+            "stop_loss_price": 3200,
+            "take_profit_price": 2000,
+            "activation_r": 1.0,
+            "trail_r": 5.0,
+            "trail_r_far": 7.0,
+            "trail_r_near": 3.0,
+            "l3_near_threshold_atr": 2.0,
+            "trailing_activated": False,
+            "high_water_mark": None,
+            "low_water_mark": 3000,
+            "breakeven_enabled": False,
+            "breakeven_locked": False,
+        }
+        # price_close=2900, wide_sr_lower_px=2750 → rev_dist = (2900-2750)/100 = 1.5 < 2.0
+        # → 用 trail_r_near=3.0 → trail_sl = 2800 + 3.0*100 = 3100
+        enforce_position(
+            pos,
+            price_high=2950,
+            price_low=2800,
+            price_close=2900,
+            now=_now() + timedelta(hours=1),
+            wide_sr_upper_px=3300,
+            wide_sr_lower_px=2750,
+        )
+        assert pos["trailing_activated"] is True
+        assert pos["low_water_mark"] == 2800
+        assert pos["stop_loss_price"] == pytest.approx(3100)
+
+    def test_trailing_l3_dynamic_falls_back_without_wide_levels(self):
+        """缺少 wide_sr_upper_px / wide_sr_lower_px 时回退到 trail_r（原有行为）。"""
+        pos = {
+            "side": "LONG",
+            "entry_price": 50000,
+            "entry_time": _now(),
+            "atr_at_entry": 500,
+            "max_holding_bars": 50,
+            "bar_minutes": 240,
+            "stop_loss_price": 49000,
+            "take_profit_price": 60000,
+            "activation_r": 1.0,
+            "trail_r": 5.0,
+            "trail_r_far": 7.0,
+            "trail_r_near": 3.0,
+            "l3_near_threshold_atr": 2.0,
+            "trailing_activated": False,
+            "high_water_mark": 50000,
+            "low_water_mark": None,
+            "breakeven_enabled": False,
+            "breakeven_locked": False,
+        }
+        enforce_position(
+            pos,
+            price_high=51200,
+            price_low=50900,
+            price_close=51000,
+            now=_now() + timedelta(hours=1),
+            wide_sr_upper_px=None,
+            wide_sr_lower_px=None,
+        )
+        assert pos["trailing_activated"] is True
+        # 回退 trail_r=5.0 → trail_sl = 51200 - 5*500 = 48700 < old 49000 → 保持 49000
+        assert pos["stop_loss_price"] == pytest.approx(49000)
 
     def test_activation_trailing_short(self):
         """SHORT: 利润达到 activation_r 后, trailing SL 下移"""
@@ -1238,3 +1666,87 @@ class TestEnforceVwap1200StructuralExit:
         )
         assert reason == "structural_exit_vwap1200"
         assert px == 53000
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SRB structural_sl tests — SL 锚定"对面 SR"
+# 语义：LONG 突破 resistance → SL 放在下方 support；SHORT 突破 support → SL 放在上方 resistance。
+#       SL 过远时不 clip（sizing 公式会用 stop_pct 自动缩小仓位）；过近时兜底到 ATR-based。
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestStructuralSL:
+    def test_long_sl_anchored_to_support(self):
+        """LONG entry=101 atr=0.5 initial_r=6 → ATR-based SL=98（距 entry 6 ATR）。
+        对面 support=95（远，距 entry 12 ATR） → 结构化 SL = 95 - 0.5×0.5 = 94.75。
+        不 clip（min_distance_atr=2 满足：12 ATR >> 2）→ 最终 SL=94.75。
+        """
+        intent = _make_intent(
+            action="LONG",
+            stop_loss_r=6.0,
+            take_profit_r=0,
+            structural_sl={
+                "enabled": True,
+                "opposite_sr_buffer_atr": 0.5,
+                "min_distance_atr": 2.0,
+            },
+            strategy_specific={"srb_opposite_sr_level": 95.0},
+        )
+        pos = build_position_dict(intent, entry_price=101.0, atr=0.5)
+        assert pos["stop_loss_price"] == pytest.approx(94.75, rel=1e-6)
+        assert pos["sizing_stop_source"] == "structural_opposite_sr"
+        # effective_stop_pct = (101-94.75)/101 ≈ 0.0619
+        assert pos["effective_stop_pct"] == pytest.approx(0.0618811881, rel=1e-4)
+
+    def test_long_sl_fallback_when_support_too_close(self):
+        """LONG entry=101 atr=0.5。对面 support=100.5（距 entry 1 ATR，紧贴）。
+        结构化距离 = (101 - 100.25) / 0.5 = 1.5 ATR < min_distance_atr=2 → 兜底到 ATR-based。
+        ATR-based SL = 101 - 6×0.5 = 98。
+        """
+        intent = _make_intent(
+            action="LONG",
+            stop_loss_r=6.0,
+            take_profit_r=0,
+            structural_sl={
+                "enabled": True,
+                "opposite_sr_buffer_atr": 0.5,
+                "min_distance_atr": 2.0,
+            },
+            strategy_specific={"srb_opposite_sr_level": 100.5},
+        )
+        pos = build_position_dict(intent, entry_price=101.0, atr=0.5)
+        assert pos["stop_loss_price"] == pytest.approx(98.0, rel=1e-6)
+        assert pos["sizing_stop_source"] != "structural_opposite_sr"
+
+    def test_short_sl_anchored_to_resistance(self):
+        """SHORT entry=99 atr=0.5 initial_r=6 → ATR-based SL=102。
+        对面 resistance=105（距 entry 12 ATR）→ 结构化 SL = 105 + 0.5×0.5 = 105.25。
+        不 clip → 最终 SL=105.25。
+        """
+        intent = _make_intent(
+            action="SHORT",
+            stop_loss_r=6.0,
+            take_profit_r=0,
+            structural_sl={
+                "enabled": True,
+                "opposite_sr_buffer_atr": 0.5,
+                "min_distance_atr": 2.0,
+            },
+            strategy_specific={"srb_opposite_sr_level": 105.0},
+        )
+        pos = build_position_dict(intent, entry_price=99.0, atr=0.5)
+        assert pos["stop_loss_price"] == pytest.approx(105.25, rel=1e-6)
+        assert pos["sizing_stop_source"] == "structural_opposite_sr"
+
+    def test_disabled_when_no_opposite_sr(self):
+        """无 srb_opposite_sr_level → 走原 ATR-based。"""
+        intent = _make_intent(
+            action="LONG",
+            stop_loss_r=6.0,
+            take_profit_r=0,
+            structural_sl={"enabled": True},
+            strategy_specific={},
+        )
+        pos = build_position_dict(intent, entry_price=101.0, atr=0.5)
+        assert pos["stop_loss_price"] == pytest.approx(98.0, rel=1e-6)
+        assert pos["sizing_stop_source"] == "atr"

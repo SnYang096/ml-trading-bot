@@ -349,17 +349,29 @@ class ExecutionParamGenerator:
             _tsb = int(_raw_mhb)
         else:
             _tsb = 0
-        # 加仓前需要利润锁定；默认对 allow_add_on 策略启用 breakeven lock。
+        # ------------------------------------------------------------------
+        # Unified breakeven lock（2026-04-22 重构，统一 mother_breakeven）
+        # ------------------------------------------------------------------
+        # 语义：MFE ≥ trigger_r × R 时，SL 抬到 entry + lock_level_r × R；
+        #       tighten-only（硬编码：永不回退）；子仓通过 inherit_parent_stop 跟随。
+        #   measure: "initial_risk"（默认）| "atr"
+        #   lock_level_r: 0 = 纯保本；>0 = 锁进 N R 利润
+        # 加仓前需要利润锁定；默认对 allow_add_on 策略启用。
         breakeven_enabled = bool(
             breakeven_cfg.get(
                 "enabled",
                 bool(exec_constraints.get("allow_add_on", False)),
             )
         )
-        breakeven_trigger_r = float(breakeven_cfg.get("trigger_r", 1.0))
-        breakeven_lock_profit_atr = float(
-            breakeven_cfg.get("lock_profit_atr", 0.0) or 0.0
+        breakeven_trigger_r = float(breakeven_cfg.get("trigger_r", 1.0) or 1.0)
+        breakeven_lock_level_r = float(breakeven_cfg.get("lock_level_r", 0.0) or 0.0)
+        breakeven_measure = (
+            str(breakeven_cfg.get("measure", "initial_risk") or "initial_risk")
+            .strip()
+            .lower()
         )
+        if breakeven_measure not in {"initial_risk", "atr"}:
+            breakeven_measure = "initial_risk"
 
         activation_r = (
             float(trail_cfg.get("activation_r", 1.0)) if trailing_enabled else None
@@ -367,11 +379,50 @@ class ExecutionParamGenerator:
         trail_r = float(trail_cfg.get("trail_r", 1.5)) if trailing_enabled else None
         trail_expand_primary_atr = bool(trail_cfg.get("expand_with_primary_atr", False))
 
+        # L3 dynamic trailing：当反向 L3 距离 < l3_near_threshold_atr × ATR 时使用 trail_r_near，
+        # 否则使用 trail_r_far；两者都缺失时回退到 trail_r。
+        def _opt_float(key: str) -> Optional[float]:
+            v = trail_cfg.get(key)
+            if v is None or not trailing_enabled:
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        trail_r_far = _opt_float("trail_r_far")
+        trail_r_near = _opt_float("trail_r_near")
+        l3_near_threshold_atr = _opt_float("l3_near_threshold_atr")
+
+        # E1 (2026-04-23): time_stop 分层解除 —— MFE ≥ 阈值时跳过 max_holding_bars
+        _uncap_raw = holding.get("time_stop_uncap_mfe_r")
+        try:
+            time_stop_uncap_mfe_r = (
+                float(_uncap_raw)
+                if _uncap_raw is not None and float(_uncap_raw) > 0
+                else None
+            )
+        except (TypeError, ValueError):
+            time_stop_uncap_mfe_r = None
+
+        # E2 (2026-04-23): L3 大级别结构化退出
+        _l3_exit_cfg = self.config.get("l3_structural_exit") or {}
+        l3_structural_exit_enabled = bool(_l3_exit_cfg.get("enabled", False))
+        try:
+            l3_structural_exit_buffer_atr = float(
+                _l3_exit_cfg.get("buffer_atr", 0.25) or 0.25
+            )
+        except (TypeError, ValueError):
+            l3_structural_exit_buffer_atr = 0.25
+
         result: Dict[str, Any] = {
             "tier_name": "global",
             "initial_r": float(sl_cfg.get("initial_r", 2.0)),
             "activation_r": activation_r,
             "trail_r": trail_r,
+            "trail_r_far": trail_r_far,
+            "trail_r_near": trail_r_near,
+            "l3_near_threshold_atr": l3_near_threshold_atr,
             "take_profit_r": take_profit_r,
             "time_stop_bars": _tsb,
             "max_holding_bars": _tsb,
@@ -381,9 +432,15 @@ class ExecutionParamGenerator:
             "max_stop_pct": guardrails.get("max_stop_pct"),
             "breakeven_enabled": breakeven_enabled,
             "breakeven_trigger_r": breakeven_trigger_r,
-            "breakeven_lock_profit_atr": breakeven_lock_profit_atr,
+            "breakeven_lock_level_r": breakeven_lock_level_r,
+            "breakeven_measure": breakeven_measure,
             "allow_trailing": trailing_enabled and activation_r is not None,
             "trail_expand_primary_atr": trail_expand_primary_atr,
+            "time_stop_uncap_mfe_r": time_stop_uncap_mfe_r,
+            "l3_structural_exit_enabled": l3_structural_exit_enabled,
+            "l3_structural_exit_buffer_atr": l3_structural_exit_buffer_atr,
+            # SRB 结构化 SL（若 execution.yaml 下配置），透传到 rr_constraints
+            "structural_sl": sl_cfg.get("structural_sl") or {},
         }
 
         re_cfg = self.config.get("regime_execution") or {}
@@ -861,6 +918,7 @@ class GenericLiveStrategy:
 
         action = "LONG" if direction == 1 else "SHORT"
         _srb_true_sr: Optional[float] = None
+        _srb_opposite_sr: Optional[float] = None
 
         if str(self.strategy_name).lower() == "srb":
             funnel["srb_regime_bucket"] = features.get("srb_regime_bucket")
@@ -868,8 +926,8 @@ class GenericLiveStrategy:
             funnel["srb_regime_er20"] = features.get("srb_regime_er20")
             funnel["srb_sr_support"] = features.get("srb_sr_support")
             funnel["srb_sr_resistance"] = features.get("srb_sr_resistance")
-            funnel["srb_sr_support_wide"] = features.get("srb_sr_support_wide")
-            funnel["srb_sr_resistance_wide"] = features.get("srb_sr_resistance_wide")
+            funnel["wide_sr_upper_px"] = features.get("wide_sr_upper_px")
+            funnel["wide_sr_lower_px"] = features.get("wide_sr_lower_px")
 
             _raw_ex = (self.archetype.execution.raw or {}) if self.archetype else {}
             _wg = _raw_ex.get("sr_wide_entry_guard") or {}
@@ -881,8 +939,8 @@ class GenericLiveStrategy:
                     action,
                     _cl,
                     _at,
-                    features.get("srb_sr_support_wide"),
-                    features.get("srb_sr_resistance_wide"),
+                    features.get("wide_sr_lower_px"),
+                    features.get("wide_sr_upper_px"),
                     _mn,
                 ):
                     funnel["reject_srb_wide_sr_too_close"] = True
@@ -897,18 +955,31 @@ class GenericLiveStrategy:
                     )
                     return []
 
-            _fbr = _raw_ex.get("fake_break_reverse") or {}
-            _fb_atr = float(_fbr.get("true_sr_wide_fallback_atr", 0) or 0)
+            _tsl_cfg = _raw_ex.get("true_sr_level") or {}
+            _fb_atr = float(_tsl_cfg.get("wide_fallback_atr", 0) or 0)
             _srb_true_sr = pick_srb_true_sr_level(
                 action,
                 float(features.get("close") or 0),
                 float(features.get("atr") or 0),
                 narrow_support=features.get("srb_sr_support"),
                 narrow_resistance=features.get("srb_sr_resistance"),
-                wide_support=features.get("srb_sr_support_wide"),
-                wide_resistance=features.get("srb_sr_resistance_wide"),
+                wide_lower_px=features.get("wide_sr_lower_px"),
+                wide_upper_px=features.get("wide_sr_upper_px"),
                 fallback_atr=_fb_atr,
             )
+            # SRB 结构化 SL 锚点：LONG 用对面 support，SHORT 用对面 resistance
+            _srb_opposite_sr: Optional[float] = None
+            if action == "LONG":
+                _raw_opp = features.get("srb_sr_support")
+            else:
+                _raw_opp = features.get("srb_sr_resistance")
+            if _raw_opp is not None:
+                try:
+                    _v = float(_raw_opp)
+                    if np.isfinite(_v) and _v > 0:
+                        _srb_opposite_sr = _v
+                except (TypeError, ValueError):
+                    pass
 
         # ── 6. 构建 TradeIntent ──
         # evidence 缩放: score 0→0.5x, 0.5→0.75x, 1→1.0x；可选 regime size_multiplier
@@ -929,6 +1000,9 @@ class GenericLiveStrategy:
                     "allow_trailing": bool(exec_params.get("allow_trailing", True)),
                     "activation_r": exec_params.get("activation_r"),
                     "trailing_atr": exec_params.get("trail_r"),
+                    "trail_r_far": exec_params.get("trail_r_far"),
+                    "trail_r_near": exec_params.get("trail_r_near"),
+                    "l3_near_threshold_atr": exec_params.get("l3_near_threshold_atr"),
                     "max_holding_bars": exec_params.get("time_stop_bars", 50),
                     "structural_exit": exec_params.get("structural_exit"),
                     "sr_exit_price": exec_params.get("sr_exit_price"),
@@ -938,20 +1012,27 @@ class GenericLiveStrategy:
                     "trail_expand_primary_atr": bool(
                         exec_params.get("trail_expand_primary_atr", False)
                     ),
-                },
-                "bpc_position_config": {
-                    **(
-                        {
-                            "activation_r": exec_params.get("activation_r"),
-                            "trail_r": exec_params.get("trail_r"),
-                        }
-                        if exec_params.get("activation_r") is not None
-                        else {}
+                    "structural_sl": exec_params.get("structural_sl") or {},
+                    # Unified breakeven block（2026-04-22 重构）
+                    "breakeven_enabled": bool(
+                        exec_params.get("breakeven_enabled", False)
                     ),
-                    "breakeven_enabled": exec_params.get("breakeven_enabled", False),
-                    "breakeven_trigger_r": exec_params.get("breakeven_trigger_r", 1.0),
-                    "breakeven_lock_profit_atr": exec_params.get(
-                        "breakeven_lock_profit_atr", 0.0
+                    "breakeven_trigger_r": float(
+                        exec_params.get("breakeven_trigger_r", 1.0) or 1.0
+                    ),
+                    "breakeven_lock_level_r": float(
+                        exec_params.get("breakeven_lock_level_r", 0.0) or 0.0
+                    ),
+                    "breakeven_measure": str(
+                        exec_params.get("breakeven_measure", "initial_risk")
+                    ),
+                    # 2026-04-23 E1: time_stop 分层；E2: L3 结构化退出
+                    "time_stop_uncap_mfe_r": exec_params.get("time_stop_uncap_mfe_r"),
+                    "l3_structural_exit_enabled": bool(
+                        exec_params.get("l3_structural_exit_enabled", False)
+                    ),
+                    "l3_structural_exit_buffer_atr": float(
+                        exec_params.get("l3_structural_exit_buffer_atr", 0.25) or 0.25
                     ),
                 },
                 "strategy_specific": {
@@ -962,6 +1043,11 @@ class GenericLiveStrategy:
                     **(
                         {"srb_true_sr_level": float(_srb_true_sr)}
                         if _srb_true_sr is not None
+                        else {}
+                    ),
+                    **(
+                        {"srb_opposite_sr_level": float(_srb_opposite_sr)}
+                        if _srb_opposite_sr is not None
                         else {}
                     ),
                 },

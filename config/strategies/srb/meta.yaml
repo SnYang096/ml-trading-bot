@@ -1,10 +1,25 @@
 # SRB (Structural Range Breakout) — MVP：关键位成功突破后的结构延续
-# 与 BPC/TPC/FBF 边界见 z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB.md
+# 与 BPC/TPC/FBF/RMR 边界见 z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB_RMR.md
 
 strategy:
   name: srb-120T
   description: |
-    StructuralRangeBreakout：边界被决定性打破后的顺势延续（与 FBF 假破相反）。
+    StructuralRangeBreakout：纯粹的"SR 成功突破 → 顺势延续"策略。
+      入场：sr_cross_state_machine 确认收盘决定性打破关键 SR。
+      止损：结构化 SL 锚定对面 SR（LONG 用 support，SHORT 用 resistance），
+           SR 紧贴入场时兜底到 initial_r × ATR；SL 宽时通过 sizing 自然缩仓。
+      退出：expand_with_primary_atr 扩带 trailing + 可选结构化退出。
+      被止损后：不自动反手、不同向再入 —— 扫到单子是策略应尽风险。
+    与其它策略的边界：
+      FBF：事前预判 SR 位假破、反向入场。RMR / Hub Rebound 已废弃（数据统计无优势），不归 SRB。
+      SRB 只负责「真突破 → 顺势延续」。
+    SR 多层结构（全仓库统一）：
+      L1 局部 SR（≈1-2 日）  — srb_regime.swing_sr_levels(lookback=20)，srb_sr_{support,resistance}
+      L2 中期 SR（≈2 周）    — poc_hal_features_*_f (poc_window=160)，sr_strength_max / dist_to_nearest_sr
+      L3 大级别 SR（≈1 月）  — wide_sr_swing_f (wide_window=240, anchor_shift=12)，
+                               wide_sr_{upper,lower}_px / wide_sr_dist_atr（与 FBF 共用特征）
+    SRB 用法：L1 做破位判定/结构化 SL 主锚点；L3 做 true_sr fallback + 入场屏蔽
+      （true_sr_level.wide_fallback_atr、sr_wide_entry_guard，见 archetypes/execution.yaml）。
     MVP 复用 TPC 壳 + SR/频谱突破邻域特征；后续可加专用成功突破 score。
 
   owner: quant_team

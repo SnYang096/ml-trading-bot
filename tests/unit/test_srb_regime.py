@@ -15,6 +15,7 @@ from src.time_series_model.live.srb_regime import (
     path_efficiency_last,
     pick_srb_true_sr_level,
     resolve_regime_bucket,
+    should_reject_srb_add_by_shape,
     should_reject_srb_wide_entry,
     srb_add_position_allowed,
 )
@@ -74,7 +75,11 @@ def test_maybe_inject_disabled():
     assert "srb_regime_adx14" not in out
 
 
-def test_maybe_inject_wide_sr_levels():
+def test_maybe_inject_narrow_sr_only():
+    """
+    L1 窄窗 SR 依然由 srb_regime 注入；L3 大级别 SR 已统一由 wide_sr_swing_f 特征管线提供，
+    不再在此函数里重复计算（不应看到 srb_sr_*_wide）。
+    """
     idx = pd.date_range("2024-01-01", periods=120, freq="2h", tz="UTC")
     df = pd.DataFrame(
         {
@@ -89,14 +94,17 @@ def test_maybe_inject_wide_sr_levels():
         df=df,
         ts=idx[100],
         exec_raw={
-            "fake_break_reverse": {"enabled": True},
-            "sr_feature_injection": {"swing_lookback_wide_bars": 96},
+            "sr_wide_entry_guard": {"enabled": True},
+            "sr_structural_exit": {"enabled": True, "lookback_bars": 20},
         },
         out={},
     )
-    assert "srb_sr_support" in out and "srb_sr_support_wide" in out
-    assert np.isfinite(float(out["srb_sr_support_wide"]))
-    assert np.isfinite(float(out["srb_sr_resistance_wide"]))
+    assert "srb_sr_support" in out and "srb_sr_resistance" in out
+    assert np.isfinite(float(out["srb_sr_support"]))
+    assert np.isfinite(float(out["srb_sr_resistance"]))
+    # L3 大级别 SR 不再由 inject 写入
+    assert "srb_sr_support_wide" not in out
+    assert "srb_sr_resistance_wide" not in out
 
 
 def test_execution_param_generator_regime_and_sr():
@@ -132,169 +140,6 @@ def test_execution_param_generator_regime_and_sr():
     assert abs(p["sr_exit_price"] - 0.95) < 1e-9
 
 
-def _make_reverse_candidate(
-    *,
-    original_side="LONG",
-    true_sr_level=100.0,
-    stop_hunt_extreme=94.4,
-    entry_price=100.0,
-    sl_bar=10,
-    sl_price=95.0,
-    atr_at_entry=2.0,
-):
-    return {
-        "true_sr_level": true_sr_level,
-        "stop_hunt_extreme": stop_hunt_extreme,
-        "entry_price": entry_price,
-        "original_side": original_side,
-        "sl_bar": sl_bar,
-        "sl_price": sl_price,
-        "reclaim_count": 0,
-        "confirm_count": 0,
-        "recover_stage": False,
-        "used": False,
-        "symbol": "BTCUSDT",
-        "atr_at_entry": atr_at_entry,
-        "tier_name": "global",
-        "evidence_score": 0.5,
-    }
-
-
-def test_check_srb_reverse_two_stage_long():
-    """Two-stage confirmation: reclaim from extreme, then confirm at SR."""
-    from scripts.event_backtest import PositionSimulator
-
-    sim = PositionSimulator()
-    sim._srb_reverse_policy = {
-        "enabled": True,
-        "reclaim_k": 1,
-        "confirm_k": 2,
-        "fake_lookahead": 8,
-        "cooldown_bars": 3,
-        "stop_hunt_buffer_atr": 0.3,
-    }
-    sim._primary_bar_count = 10
-    # LONG stopped out at 95, extreme = 94.4, true_sr = 100
-    sim._reverse_candidate = _make_reverse_candidate()
-
-    # bar 11: price still below extreme → reclaim_count stays 0
-    assert sim.check_srb_reverse(93.0, 11) is None
-    assert not sim._reverse_candidate.get("recover_stage")
-    assert sim._reverse_candidate["reclaim_count"] == 0
-
-    # bar 12: price above extreme (94.4) but below true_sr → reclaim_k=1 met
-    assert sim.check_srb_reverse(96.0, 12) is None
-    assert sim._reverse_candidate.get("recover_stage")
-    # stage 2 starts: 96 < 100 → confirm_count = 0
-    assert sim._reverse_candidate["confirm_count"] == 0
-
-    # bar 13: price above true_sr (100) → confirm 1
-    assert sim.check_srb_reverse(101.0, 13) is None
-    assert sim._reverse_candidate["confirm_count"] == 1
-
-    # bar 14: price above true_sr → confirm 2 → triggers
-    rev = sim.check_srb_reverse(102.0, 14)
-    assert rev is not None
-    assert rev["side"] == "LONG"
-    assert rev["symbol"] == "BTCUSDT"
-    assert rev["true_sr_level"] == 100.0
-    assert sim._reverse_candidate["used"]
-    assert sim._reverse_cooldown_until_bar == 14 + 3
-
-
-def test_check_srb_reverse_two_stage_short():
-    """Two-stage confirmation for SHORT: reclaim down from extreme, confirm below SR."""
-    from scripts.event_backtest import PositionSimulator
-
-    sim = PositionSimulator()
-    sim._srb_reverse_policy = {
-        "enabled": True,
-        "reclaim_k": 1,
-        "confirm_k": 1,
-        "fake_lookahead": 5,
-        "cooldown_bars": 5,
-        "stop_hunt_buffer_atr": 0.3,
-    }
-    sim._primary_bar_count = 20
-    # SHORT stopped out at 105, extreme = 105.9, true_sr = 100
-    sim._reverse_candidate = _make_reverse_candidate(
-        original_side="SHORT",
-        true_sr_level=100.0,
-        stop_hunt_extreme=105.9,
-        sl_bar=20,
-        sl_price=105.0,
-    )
-
-    # bar 21: price below extreme → reclaim
-    assert sim.check_srb_reverse(104.0, 21) is None
-    assert sim._reverse_candidate.get("recover_stage")
-
-    # bar 22: price below true_sr → confirm 1 → triggers
-    rev = sim.check_srb_reverse(99.0, 22)
-    assert rev is not None
-    assert rev["side"] == "SHORT"
-    assert sim._reverse_candidate["used"]
-
-
-def test_check_srb_reverse_expires():
-    """反手候选超出 fake_lookahead 后过期。"""
-    from scripts.event_backtest import PositionSimulator
-
-    sim = PositionSimulator()
-    sim._srb_reverse_policy = {
-        "enabled": True,
-        "reclaim_k": 1,
-        "confirm_k": 2,
-        "fake_lookahead": 2,
-        "cooldown_bars": 5,
-        "stop_hunt_buffer_atr": 0.3,
-    }
-    sim._primary_bar_count = 10
-    sim._reverse_candidate = _make_reverse_candidate(
-        original_side="SHORT",
-        true_sr_level=100.0,
-        stop_hunt_extreme=105.9,
-        sl_bar=10,
-        sl_price=105.0,
-    )
-    # bar 13: 3 bars since sl_bar=10, lookahead=2 → expired
-    assert sim.check_srb_reverse(98.0, 13) is None
-    assert sim._reverse_candidate is None
-    assert sim._last_reverse_status == "expired"
-
-
-def test_check_srb_reverse_reclaim_resets():
-    """Reclaim count resets when price dips back below extreme."""
-    from scripts.event_backtest import PositionSimulator
-
-    sim = PositionSimulator()
-    sim._srb_reverse_policy = {
-        "enabled": True,
-        "reclaim_k": 2,
-        "confirm_k": 1,
-        "fake_lookahead": 10,
-        "cooldown_bars": 3,
-        "stop_hunt_buffer_atr": 0.3,
-    }
-    sim._primary_bar_count = 10
-    sim._reverse_candidate = _make_reverse_candidate()
-
-    # bar 11: above extreme → reclaim 1
-    assert sim.check_srb_reverse(95.0, 11) is None
-    assert sim._reverse_candidate["reclaim_count"] == 1
-    assert not sim._reverse_candidate.get("recover_stage")
-
-    # bar 12: drops below extreme → reclaim resets
-    assert sim.check_srb_reverse(93.0, 12) is None
-    assert sim._reverse_candidate["reclaim_count"] == 0
-
-    # bar 13-14: above extreme for 2 consecutive → reclaim_k met
-    assert sim.check_srb_reverse(95.0, 13) is None
-    assert sim._reverse_candidate["reclaim_count"] == 1
-    assert sim.check_srb_reverse(96.0, 14) is None
-    assert sim._reverse_candidate.get("recover_stage")
-
-
 def test_structural_sr_break_long():
     intent = TradeIntent(
         action="LONG",
@@ -326,49 +171,217 @@ def test_structural_sr_break_long():
 
 
 def test_should_reject_srb_wide_entry_long_and_short():
+    # 参数顺序: (side, close, atr, wide_lower_px, wide_upper_px, min_distance_atr)
+    # LONG：看上方 wide_upper_px 是否过近
     assert not should_reject_srb_wide_entry("LONG", 100.0, 1.0, None, 103.0, 2.0)
     assert should_reject_srb_wide_entry("LONG", 100.0, 1.0, None, 101.9, 2.0)
+    # SHORT：看下方 wide_lower_px 是否过近
     assert not should_reject_srb_wide_entry("SHORT", 100.0, 1.0, 97.0, None, 2.0)
     assert should_reject_srb_wide_entry("SHORT", 100.0, 1.0, 98.1, None, 2.0)
+    # 边界：距离正好 = 阈值 → 不拦截
     assert not should_reject_srb_wide_entry("LONG", 100.0, 1.0, None, 104.0, 2.0)
 
 
 def test_pick_srb_true_sr_level_fallback_and_no_fallback():
+    # LONG: 窄窗 support=100.0 距 entry 100.5 仅 0.5 < 2×ATR → 回退到 L3 下沿
     ts = pick_srb_true_sr_level(
         "LONG",
         100.5,
         1.0,
         narrow_support=100.0,
         narrow_resistance=105.0,
-        wide_support=95.0,
-        wide_resistance=110.0,
+        wide_lower_px=95.0,
+        wide_upper_px=110.0,
         fallback_atr=2.0,
     )
     assert abs(ts - 95.0) < 1e-9
 
+    # SHORT: 窄窗 resistance=100.0 距 entry 99.5 仅 0.5 < 2×ATR → 回退到 L3 上沿
     ts2 = pick_srb_true_sr_level(
         "SHORT",
         99.5,
         1.0,
         narrow_support=92.0,
         narrow_resistance=100.0,
-        wide_support=90.0,
-        wide_resistance=105.0,
+        wide_lower_px=90.0,
+        wide_upper_px=105.0,
         fallback_atr=2.0,
     )
     assert abs(ts2 - 105.0) < 1e-9
 
+    # LONG: 窄窗 support=100.0 距 entry 105.0 是 5×ATR ≥ 2×ATR → 不回退，用窄窗
     ts3 = pick_srb_true_sr_level(
         "LONG",
         105.0,
         1.0,
         narrow_support=100.0,
         narrow_resistance=110.0,
-        wide_support=95.0,
-        wide_resistance=115.0,
+        wide_lower_px=95.0,
+        wide_upper_px=115.0,
         fallback_atr=2.0,
     )
     assert abs(ts3 - 100.0) < 1e-9
+
+
+def _shape_gate_cfg(**overrides):
+    cfg = {
+        "retrace_guard": {"enabled": False, "min_captured_pct": 0.7},
+        "recent_momentum": {
+            "enabled": False,
+            "lookback_bars": 6,
+            "min_net_move_atr": 1.5,
+        },
+        "trend_r2_gate": {"enabled": False, "min_r2": 0.4},
+        "wide_sr_expansion": {"enabled": False, "min_expansion_atr": 1.0},
+        "trend_health_gate": {
+            "enabled": False,
+            "min_mother_mfe_r": 1.0,
+            "max_bars_since_mother_entry": 360,
+        },
+    }
+    for k, v in overrides.items():
+        cfg[k] = {**cfg[k], **v}
+    return cfg
+
+
+def test_shape_gate_all_disabled_passes():
+    rej, why = should_reject_srb_add_by_shape({}, {}, _shape_gate_cfg())
+    assert rej is False
+    assert why == ""
+
+
+def test_shape_gate_retrace_guard_rejects_when_current_r_deep_below_mfe():
+    cfg = _shape_gate_cfg(retrace_guard={"enabled": True, "min_captured_pct": 0.7})
+    # mfe=5, current=2 → captured=0.4 < 0.7 → reject
+    rej, why = should_reject_srb_add_by_shape(
+        {"mfe_r": 5.0, "current_r": 2.0}, {"side": "LONG"}, cfg
+    )
+    assert rej is True
+    assert why == "shape_gate_retrace"
+    # mfe=5, current=4 → captured=0.8 ≥ 0.7 → pass
+    rej, _ = should_reject_srb_add_by_shape(
+        {"mfe_r": 5.0, "current_r": 4.0}, {"side": "LONG"}, cfg
+    )
+    assert rej is False
+
+
+def test_shape_gate_recent_momentum_long_and_short():
+    cfg = _shape_gate_cfg(
+        recent_momentum={"enabled": True, "lookback_bars": 6, "min_net_move_atr": 1.5}
+    )
+    # LONG: move 1.0 < 1.5 → reject
+    rej, why = should_reject_srb_add_by_shape(
+        {"recent_net_move_atr": 1.0}, {"side": "LONG"}, cfg
+    )
+    assert rej is True and why == "shape_gate_momentum"
+    # LONG: move 2.0 ≥ 1.5 → pass
+    rej, _ = should_reject_srb_add_by_shape(
+        {"recent_net_move_atr": 2.0}, {"side": "LONG"}, cfg
+    )
+    assert rej is False
+    # SHORT: move -1.0 > -1.5 → reject
+    rej, why = should_reject_srb_add_by_shape(
+        {"recent_net_move_atr": -1.0}, {"side": "SHORT"}, cfg
+    )
+    assert rej is True and why == "shape_gate_momentum"
+    # SHORT: move -2.0 ≤ -1.5 → pass
+    rej, _ = should_reject_srb_add_by_shape(
+        {"recent_net_move_atr": -2.0}, {"side": "SHORT"}, cfg
+    )
+    assert rej is False
+
+
+def test_shape_gate_trend_r2_gate():
+    cfg = _shape_gate_cfg(trend_r2_gate={"enabled": True, "min_r2": 0.4})
+    rej, why = should_reject_srb_add_by_shape(
+        {"trend_r2_20": 0.2}, {"side": "LONG"}, cfg
+    )
+    assert rej is True and why == "shape_gate_r2"
+    rej, _ = should_reject_srb_add_by_shape({"trend_r2_20": 0.5}, {"side": "LONG"}, cfg)
+    assert rej is False
+
+
+def test_shape_gate_wide_sr_expansion_requires_expansion():
+    cfg = _shape_gate_cfg(wide_sr_expansion={"enabled": True, "min_expansion_atr": 1.0})
+    # 入场时 dist=3，加仓时 dist=3.5 → 扩张 0.5 < 1.0 → reject
+    rej, why = should_reject_srb_add_by_shape(
+        {"wide_sr_dist_atr": 3.5},
+        {"side": "LONG", "entry_wide_sr_dist_atr": 3.0},
+        cfg,
+    )
+    assert rej is True and why == "shape_gate_wide_expansion"
+    # 扩张 2.0 ≥ 1.0 → pass
+    rej, _ = should_reject_srb_add_by_shape(
+        {"wide_sr_dist_atr": 5.0},
+        {"side": "LONG", "entry_wide_sr_dist_atr": 3.0},
+        cfg,
+    )
+    assert rej is False
+
+
+def test_shape_gate_trend_health_gate_mfe():
+    """E4: 母仓 MFE < min_mother_mfe_r 时拒绝加仓（新 gate）"""
+    cfg = _shape_gate_cfg(
+        trend_health_gate={
+            "enabled": True,
+            "min_mother_mfe_r": 1.0,
+            "max_bars_since_mother_entry": 360,
+        }
+    )
+    # MFE = 0.4 < 1.0 → reject (mfe bucket)
+    rej, why = should_reject_srb_add_by_shape(
+        {"mfe_r": 0.4, "bars_since_mother_entry": 10},
+        {"side": "LONG"},
+        cfg,
+    )
+    assert rej is True and why == "shape_gate_trend_health_mfe"
+    # MFE = 1.5 ≥ 1.0 且 bars 充足 → pass
+    rej, _ = should_reject_srb_add_by_shape(
+        {"mfe_r": 1.5, "bars_since_mother_entry": 50},
+        {"side": "LONG"},
+        cfg,
+    )
+    assert rej is False
+
+
+def test_shape_gate_trend_health_gate_stale():
+    """E4: 母仓入场 > max_bars_since_mother_entry 时拒绝（趋势未爆发却拖太久）"""
+    cfg = _shape_gate_cfg(
+        trend_health_gate={
+            "enabled": True,
+            "min_mother_mfe_r": 1.0,
+            "max_bars_since_mother_entry": 360,
+        }
+    )
+    # MFE 通过 gate 第一项，但 bars > 360 → stale 触发
+    rej, why = should_reject_srb_add_by_shape(
+        {"mfe_r": 1.5, "bars_since_mother_entry": 500},
+        {"side": "LONG"},
+        cfg,
+    )
+    assert rej is True and why == "shape_gate_trend_health_stale"
+
+
+def test_shape_gate_trend_health_gate_disabled_is_noop():
+    cfg = _shape_gate_cfg()  # 全部默认 off
+    rej, _ = should_reject_srb_add_by_shape(
+        {"mfe_r": 0.0, "bars_since_mother_entry": 1000}, {"side": "LONG"}, cfg
+    )
+    assert rej is False
+
+
+def test_shape_gate_first_match_wins():
+    # 两门同时 enabled 且都会 reject，retrace 先于 momentum 判断
+    cfg = _shape_gate_cfg(
+        retrace_guard={"enabled": True, "min_captured_pct": 0.7},
+        recent_momentum={"enabled": True, "min_net_move_atr": 1.5},
+    )
+    rej, why = should_reject_srb_add_by_shape(
+        {"mfe_r": 5.0, "current_r": 1.0, "recent_net_move_atr": 0.5},
+        {"side": "LONG"},
+        cfg,
+    )
+    assert rej is True and why == "shape_gate_retrace"
 
 
 def test_build_position_dict_propagates_srb_true_sr_level():
