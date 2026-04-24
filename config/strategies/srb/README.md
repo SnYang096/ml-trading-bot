@@ -52,3 +52,10 @@ PY
 ## 2026-04-25（Prefilter 语义：SR 突破，非盒）
 
 - Prefilter 改为 **L3 关键 SR 带 + L2 强度 + 突破频谱 + impulse**；去掉盒/路径效率/trend_r2 主过滤，与「Structural Range Breakout」命名一致。
+
+## 2026-04-26（肥尾 / 跟趋势执行预设）
+
+- **止损与出场**：`initial_r` 8；`breakeven` 6.5R / lock **-0.3R**；`trailing` activation **7R**，`trail_r`/`trail_r_far` **7 / 10.5**；`l3_structural_exit.buffer` **0.45**；`structural_sl` buffer **0.9**。
+- **持仓**：`max_holding_bars` **480**，`time_stop_uncap_mfe_r` **1.5**。
+- **加仓**：`trend_health_gate` MFE **0.35**，staleness **360** bars。
+- **2a+2b**：`post_2a_max_bars` **32**，`ema_slope_bars` **3**，`ema_pos_min` **0.02**，`ema_slope_min` **0.008**，`arm_pcm_bars` **12**。

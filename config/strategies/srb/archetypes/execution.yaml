@@ -48,12 +48,9 @@ execution_constraints:
 
 holding:
   # 2026-04-23 E1：母仓分层 time_stop
-  # - max_holding_bars: 360 bars ≈ 2H × 360 = 30 天
-  # - time_stop_uncap_mfe_r: 若母仓 MFE ≥ 2.0R（趋势真的跑起来），解除 time_stop 让利润继续跑
-  # - 子仓（加仓）跟随母仓生死，不独立 time_stop（enforce_position 内部处理）
-  # 动机：解决 XRP 2024-03 / 2024-07 长期震荡区 "僵尸母仓" + 一路加仓放大亏损的问题。
-  max_holding_bars: 360
-  time_stop_uncap_mfe_r: 2.0
+  # 2026-04-26：肥尾 / 跟趋势 — 延长持仓上限 + 略早 uncap，利于长趋势段不被 30d 硬切
+  max_holding_bars: 480
+  time_stop_uncap_mfe_r: 1.5
 
 stop_loss:
   # ------------------------------------------------------------------
@@ -76,15 +73,15 @@ stop_loss:
   # ------------------------------------------------------------------
   breakeven:
     enabled: true
-    # 2026-04-24b：BNB 等大突破后首段洗盘易扫「entry 贴价」SL → 推迟保本 + 小幅回吐缓冲（LONG 略低于 entry）
-    trigger_r: 5.5
-    lock_level_r: -0.2
+    # 2026-04-26：多跟趋势 / 肥尾 — 更晚保本 + 更大回吐缓冲（愿承担洗盘止损换后续延伸）
+    trigger_r: 6.5
+    lock_level_r: -0.3
     measure: initial_risk
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
-  # 略加宽首仓风险带：给结构 SL→ATR 兜底时多留一点「假破」空间，利于骑乘大趋势首段
-  initial_r: 7.0
+  # ATR 兜底首仓更宽：明确用更大止损换噪声免疫，肥尾由 trailing 接手
+  initial_r: 8.0
   trailing:
     enabled: true
     # trailing 带宽 = trail_r × max(入场 ATR, 当前主周期 ATR)
@@ -94,13 +91,12 @@ stop_loss:
     # 2026-04-22 最终决定（见 SRB_l3_dynamic_trailing_20260422.md 结尾"rolling_sim 终审"节）：
     # - activation_r 保留 6.0：simulator 扫参预测 +33R 被 rolling_sim 证伪（实跑 -72R vs baseline）
     #   激进激活会连带砍掉后续 add leg 的生存率（2023-11 -78R / 2024-03 -36R）。
-    # - L3 dynamic trailing 保留：反向 L3 距离 < l3_near_threshold_atr × ATR 时收到 trail_r_near，
-    #   否则放到 trail_r_far。只有在 MFE ≥ 6R 真正激活后才有效，与母仓生存时间兼容。
-    activation_r: 6.0
-    trail_r: 6.0              # fallback：当 wide_sr_upper_px / wide_sr_lower_px 缺失时使用
-    trail_r_far: 9.0          # 远离反向 L3：更宽 trailing，减少抛物段被「正常回调」洗出
-    trail_r_near: 6.0         # 接近反向 L3 仍略宽于旧版，避免贴边过早止盈
-    l3_near_threshold_atr: 2.0  # 反向 L3 距离 < 此阈值判为 "近"
+    # 2026-04-26：更高 activation + 更宽 trail_far — 前段少收紧，利于单边肥尾；反转时愿付止损
+    activation_r: 7.0
+    trail_r: 7.0
+    trail_r_far: 10.5
+    trail_r_near: 7.0
+    l3_near_threshold_atr: 2.0
   type: trailing
   # ------------------------------------------------------------------
   # SRB 结构化 SL：SL 锚定"对面 SR"（LONG 用 support，SHORT 用 resistance）
@@ -112,7 +108,7 @@ stop_loss:
   # 加仓共享母仓 SL，母仓 SL 变到对面 SR 后，加仓本地 R 也自然变小 —— 不需要加仓 R gate。
   structural_sl:
     enabled: true
-    opposite_sr_buffer_atr: 0.75
+    opposite_sr_buffer_atr: 0.9
     min_distance_atr: 2.0
 take_profit:
   enabled: false
@@ -170,10 +166,10 @@ srb_add_position_policy:
     #   min_mother_mfe_r=1.0 太严：与 float_r_ladder_only[0.5] 不同步 → 误杀 2024-02/2024-11 的大赢加仓（-55R）。
     #   保留配置项，默认只启 staleness（设 min_mfe=0.0 实质关闭 MFE 子项），后续扫参再调。
     trend_health_gate:
-      # B：母仓已有浮盈 + 时间不过久才允许加仓（松于文档里 1.0R 的杀招版本）
+      # 2026-04-26：长跑趋势里仍允许加仓（放宽 stale + 略降 MFE 门槛）
       enabled: true
-      min_mother_mfe_r: 0.5
-      max_bars_since_mother_entry: 288
+      min_mother_mfe_r: 0.35
+      max_bars_since_mother_entry: 360
 
 # ---------------------------------------------------------------------------
 # 假突破反手 —— 已从 SRB 中移除（见 docs/design/srb_fake_break_reverse.md）。
@@ -197,8 +193,8 @@ sr_structural_exit:
 # 动机：XRP 2024-03/07 长空震荡期，价格几次反向穿破 L3 未触发 SL，time_stop 又未开 —— 靠 L3 兜底。
 l3_structural_exit:
   enabled: true
-  # 略放宽：减少 L3 边界附近噪声 K 线误触「结构破坏」提前离场
-  buffer_atr: 0.35
+  # 肥尾段减少「擦边 L3」被扫出场；真反转仍付止损由 initial/trailing 承担
+  buffer_atr: 0.45
 
 regime_execution:
   enabled: false
@@ -238,16 +234,16 @@ regime_execution:
 # 仅事件回测接线（event_backtest）；live 未接。
 # ---------------------------------------------------------------------------
 srb_staged_entry_2b:
-  # C：两段式确认，减少盒内假穿后再开仓（事件回测已接线）
+  # 2026-04-26：2b 略强化宏观趋势（EMA1200），PCM arm 窗口加长，便于跟上突破后延续
   enabled: true
   cross:
     confirm_k: 3
     fake_lookahead: 10
     cooldown_bars: 10
-  post_2a_max_bars: 24
-  ema_slope_bars: 2
-  ema_pos_min: 0.0
-  ema_slope_min: 0.0
-  arm_pcm_bars: 8
+  post_2a_max_bars: 32
+  ema_slope_bars: 3
+  ema_pos_min: 0.02
+  ema_slope_min: 0.008
+  arm_pcm_bars: 12
 
 version: 3
