@@ -7,13 +7,13 @@
 | **BPC** | 突破 → **回踩** → 延续 | Donchian + pullback/restore + `box_compression` 蓄势 | Donchian × MACD × EMA1200 |
 | **ME** | **动量扩张** | accel + multi-TF alignment + VWAP 带 | accel/cvd/MACD × VWAP1200 |
 | **TPC** | 大趋势中 **回调不破** | EMA1200 死区规避 + `tpc_pullback_depth` | MACD × EMA1200 |
-| **SRB** | **关键位成功突破 → 顺势延续** | SR + 频谱 + **`tpc_score_breakout`** + **盒沿突破/扩张** + path/trend_r2 | **ROC20 × EMA1200** |
+| **SRB** | **关键位成功突破 → 顺势延续** | **L3 wide SR 带**（`wide_sr_dist_atr`）+ `sr_strength_max` + 突破频谱 + `impulse` + `tpc_score_breakout` | **ROC20 × EMA1200** |
 
-目标：**SRB 尽量吃「结构突破后的趋势段」**，不在「长期窄盒横盘」里高频刷单；与 ME/BPC/TPC 的**信号源错开**，减少同源拥挤。
+目标：**SRB 尽量吃「关键支撑/阻力被突破后的趋势段」**；prefilter 以 **SR 层级（L2 强度 + L3 关键带）** 为主，不用盒结构当主语义；与 ME/BPC/TPC **错开**。
 
 ## A~E 改动映射（2026-04-24）
 
-- **A（Prefilter）**：去掉「高 `box_stability` + 极窄 `box_width`」；改为 **`box_compression_score >= 1`** + **`box_breakout_up/down` any_of** + `tpc_score_breakout` + `path_efficiency` / `trend_r2_20` + `bpc_impulse_return_atr`。
+- **A（Prefilter）**：以 **支撑/阻力突破语境** 为主：`sr_strength_max` + **`wide_sr_dist_atr`（贴近 L3 上/下沿）** + 频谱 + `bpc_impulse_return_atr` + `tpc_score_breakout`（与 TPC 回调区分）；**已移除** 盒结构 / path_efficiency / trend_r2 主过滤。
 - **B（执行/加仓）**：`min_order_interval_minutes: 120`，`max_add_times: 2`，`trend_health_gate` 启用（母仓 ≥0.5R 且入场 ≤288 bar 才加仓）。
 - **C（两段式）**：`srb_staged_entry_2b.enabled: true`（`archetypes/execution.yaml`）。
 - **D（方向）**：`archetypes/direction.yaml` 改为 **ROC20 sign × EMA1200**，不再与 TPC 共用 MACD×EMA1200。
@@ -43,9 +43,12 @@ PY
 
 ## 回退
 
-若通过率过低或 stitched 变差：优先放宽 **`tpc_score_breakout`**、`path_efficiency_pct`、`box_compression_score` 门槛；其次将 **`srb_staged_entry_2b.enabled`** 设回 `false` 做消融。
+若通过率过低：放宽 **`wide_sr_dist_atr`** 上界（如 1.25→1.5）、**`tpc_score_breakout`**、**`bpc_impulse_return_atr`**；若过稀再略降 **`sr_strength_max`**（慎用，伤语义）。Execution 侧可将 **`srb_staged_entry_2b.enabled`** 设回 `false` 做消融。
 
 ## 2026-04-24b（统计放宽 + 骑趋势出场）
 
-- **Prefilter**：`tpc_score_breakout` 0.30→0.18、`bpc_impulse_return_atr` 0.12→0.05、`box_compression_score` 1.0→0.88、`path_efficiency` 0.26→0.18、`trend_r2_20` 0.06→0.03，盒宽上下界略放宽（rolling 过稀时对症）。
-- **Execution**：`initial_r` 6→7；`breakeven` trigger 3.5→5.5、`lock_level_r` 0→**-0.2**（多空对称：LONG SL 略低于 entry、SHORT SL 略高于 entry，减洗盘扫「贴价保本」）；`trail_r`/`trail_r_far` 加宽；`opposite_sr_buffer_atr`、`l3_structural_exit.buffer_atr` 略放宽。
+- **Execution**：`initial_r` 6→7；`breakeven` trigger 3.5→5.5、`lock_level_r` **-0.2**；`trail_r`/`trail_r_far` 加宽；`opposite_sr_buffer_atr`、`l3_structural_exit.buffer_atr` 略放宽。
+
+## 2026-04-25（Prefilter 语义：SR 突破，非盒）
+
+- Prefilter 改为 **L3 关键 SR 带 + L2 强度 + 突破频谱 + impulse**；去掉盒/路径效率/trend_r2 主过滤，与「Structural Range Breakout」命名一致。

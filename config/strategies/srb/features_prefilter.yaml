@@ -1,17 +1,14 @@
 name: srb_prefilter
 description: |
-  SRB Prefilter：结构位强度 + SR 突破频谱 + 软阶段（MVP 占位，后续收紧语义）。
+  SRB Prefilter：L3 关键 SR 带 + L2 结构强度 + SR 突破频谱 + impulse；方向列供 direction archetype。
 
 feature_pipeline:
   requested_features:
     - market_cap_normalized_orderflow_f
     - spectrum_features_sr_breakout_f
     - sr_strength_max_f
+    - wide_sr_swing_f
     - tpc_soft_phase_f
     - volatility_regime_f
     - bpc_impulse_return_atr_f
-    # Box-structure + 趋势骑乘 prefilter（与 ME/BPC/TPC 不同源）
-    - box_structure_f
-    - trend_r2_20_f
-    - path_efficiency_pct_f
     - roc_20_f

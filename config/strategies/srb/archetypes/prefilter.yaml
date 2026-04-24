@@ -1,80 +1,48 @@
-# SRB prefilter — 「关键位 + 频谱突破 + 脱离压缩/盒内刷单」
+# SRB prefilter — **支撑/阻力关键位** + 决定性突破语境（非「盒统计」主语义）
 #
-# 与其它趋势策略的语义分工（避免同源拥挤）：
-# - **BPC**：Donchian 突破 → 回踩深度/恢复（pullback continuation），含 box_compression 作「突破前蓄势」。
-# - **ME**：多周期 accel + alignment + VWAP 带（动量扩张）。
-# - **TPC**：EMA1200 宏观死区规避 + **pullback_depth**（大趋势中回调不破）。
-# - **SRB（本文件）**：**SR 强度 + 频谱邻域 + tpc_score_breakout（非 pullback）**；
-#   用 **box 扩张/边缘脱离**（compression≥1 + breakout OR）禁止在「长期稳定窄盒」里反复点火；
-#   用 **path_efficiency / trend_r2_20** 轻挡纯随机游走，与 ME 的动量级联不同源。
+# SRB = Structural Range Breakout：在 **有质量的 SR 结构** 上，价格处于 **突破/刚突破**
+# 的典型语境（贴近 L3 swing 箱体的上沿或下沿之一 + L2 强度 + 突破频谱 + 单 bar impulse）。
 #
-# 2026-04-24：收紧「压缩区刷单」——移除「高 stability + 极窄 width」组合（易等于长横盘盒内高频假突破）。
+# 与其它策略分工：
+# - **BPC**：Donchian 突破 → **回踩** 深度/恢复（pullback continuation）。
+# - **ME**：accel / VWAP 带（动量扩张），不强调「刚穿关键价位」。
+# - **TPC**：EMA1200 + **pullback_depth**（大趋势回调不破）。
+# - **SRB（本文件）**：**L3 关键带（wide swing 上/下沿）** + `sr_strength_max` + **SR 突破频谱**
+#   + `bpc_impulse_return_atr`；用 **`tpc_score_breakout`** 只做「突破相 / 非回调相」软区分，不与 TPC 同源。
+#
+# 说明：`wide_sr_dist_atr` = min(|close−上沿|, |close−下沿|)/ATR，**小**表示贴近 **大级别阻力或支撑带之一**，
+# 与 BPC 的「回踩链」、TPC 的「回调深度」不是同一套条件。
 
 rules:
   - feature: sr_strength_max
     operator: ">="
     value: 0.42
     locked: true
-    lock_reason: SRB 语义锚点：关键位需有足够结构强度
+    lock_reason: 关键位结构强度（L2 HAL/POC 语义），SRB 锚点
 
   - feature: spectrum_price_high_freq_ratio
     operator: ">="
     value: 0.22
     locked: true
-    lock_reason: SRB 占位：突破邻域频谱能量（与 ME 的 accel、BPC 的 Donchian 无重叠）
+    lock_reason: SR 突破专用频谱（策略内建语义，非泛趋势指标）
 
-  # 与 TPC 的「continuation / 回调」语义区分：SRB 只吃「突破相」软分
-  # 2026-04-24b：rolling_sim 全窗仅 4 笔 → 统计性放宽（仍保留 breakout 相，不与 pullback 同源）
+  # 贴近 L3 月度 swing 箱体的 **上沿或下沿**（关键阻力/支撑带），突破发生区
+  - feature: wide_sr_dist_atr
+    operator: "<="
+    value: 1.25
+    locked: false
+    lock_reason: 距 wide SR 上/下沿较近（ATR）；避免在区间正中当 SRB 触发
+
+  # 与 TPC 区分：偏突破相软分（非 pullback_depth / continuation 主逻辑）
   - feature: tpc_score_breakout
     operator: ">="
-    value: 0.18
+    value: 0.15
     locked: false
-    lock_reason: "SRB vs TPC：用 breakout 分而非 continuation / pullback_depth"
+    lock_reason: SRB vs TPC 软分离，阈值可 rolling 重标定
 
+  # 单 bar 上破/下破关键位常伴随可度量 impulse（与 BPC 整条 pullback 链不同）
   - feature: bpc_impulse_return_atr
     operator: ">="
-    value: 0.05
+    value: 0.04
     locked: false
-    lock_reason: "突破瞬时要有可度量 impulse；与 BPC 整条 pullback 链不同，仅作单标量门槛"
-
-  # 禁止在「相对压缩脚」开首仓：短窗相对长窗已不更窄（扩张或至少持平）
-  - feature: box_compression_score
-    operator: ">="
-    value: 0.88
-    locked: false
-    lock_reason: "略低于 1.0：允许刚脱离压缩、避免与 breakout 条件叠成过稀样本"
-
-  # 当前 bar 须为盒上/下沿「刚脱离」信号之一（与单纯高 stability 窄盒区分）
-  - any_of:
-      - feature: box_breakout_up
-        operator: ">="
-        value: 1
-      - feature: box_breakout_down
-        operator: ">="
-        value: 1
-    locked: false
-    lock_reason: "仅当盒 regime 出现上/下沿突破标志；减少盒内震荡密点"
-
-  - feature: box_width_pct_120
-    operator: ">="
-    value: 0.018
-    locked: false
-    lock_reason: "排除极窄噪声盒"
-
-  - feature: box_width_pct_120
-    operator: "<="
-    value: 0.28
-    locked: false
-    lock_reason: "过宽仍属大震荡，先软顶；可交给 meta 收紧"
-
-  - feature: path_efficiency_pct
-    operator: ">="
-    value: 0.18
-    locked: false
-    lock_reason: "路径非纯随机游走；与 ME multi_tf_alignment 不同源"
-
-  - feature: trend_r2_20
-    operator: ">="
-    value: 0.03
-    locked: false
-    lock_reason: "极弱斜率底限，只挡死盘；不与 ME accel 阈值同源"
+    lock_reason: 突破动能标量门槛，非 Donchian 回踩语义

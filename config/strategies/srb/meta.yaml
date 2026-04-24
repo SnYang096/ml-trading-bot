@@ -6,7 +6,8 @@ strategy:
   description: |
     StructuralRangeBreakout：纯粹的"SR 成功突破 → 顺势延续"策略（偏 **骑趋势** 配置）。
       入场：sr_cross_state_machine 确认收盘决定性打破关键 SR；
-           Prefilter 强调 **脱离压缩 / 盒沿突破** + **tpc_score_breakout**（与 TPC 回调语义区分），
+           Prefilter 强调 **L3 wide SR 关键带**（`wide_sr_dist_atr`）+ **L2 `sr_strength_max`**
+           + 突破频谱 + **impulse**，并用 **tpc_score_breakout** 与 TPC 回调相区分；
            方向用 **ROC20×EMA1200**（与 BPC/MACD、ME/VWAP 级联区分）。
       止损：结构化 SL 锚定对面 SR（LONG 用 support，SHORT 用 resistance），
            SR 紧贴入场时兜底到 initial_r × ATR；SL 宽时通过 sizing 自然缩仓。
