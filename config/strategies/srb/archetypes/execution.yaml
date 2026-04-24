@@ -228,4 +228,21 @@ regime_execution:
       size_multiplier: 1.0
     unknown: {}
 
+# ---------------------------------------------------------------------------
+# 2026-04-24：两段式首仓（cross 2a + EMA1200 2b）→ arm 窗口内才允许 PCM 开 SRB 母仓
+# 语义与 scripts/experiment_srb_staged_entry_2a2b.py 对齐；默认关闭。
+# 仅事件回测接线（event_backtest）；live 未接。
+# ---------------------------------------------------------------------------
+srb_staged_entry_2b:
+  enabled: false
+  cross:
+    confirm_k: 3
+    fake_lookahead: 10
+    cooldown_bars: 10
+  post_2a_max_bars: 24
+  ema_slope_bars: 2
+  ema_pos_min: 0.0
+  ema_slope_min: 0.0
+  arm_pcm_bars: 8
+
 version: 3

@@ -2592,6 +2592,24 @@ class EventBacktester:
             )
         _equity_peak = _equity
         _ks_triggers: list = []
+        # SRB：2a+2b staged 首仓门控（execution.srb_staged_entry_2b.enabled）
+        _srb_staged_rt = None
+        _srb_tf_global = (
+            self._tf_map.get("srb") if "srb" in self.strategy_names else None
+        )
+        if "srb" in self.strategy_names:
+            _st_blk = (self._strats["srb"].archetype.execution.raw or {}).get(
+                "srb_staged_entry_2b"
+            )
+            if isinstance(_st_blk, dict) and bool(_st_blk.get("enabled")):
+                from src.time_series_model.live.srb_staged_entry_2b import (
+                    SrbStagedEntry2bRuntime,
+                )
+
+                _srb_staged_rt = SrbStagedEntry2bRuntime.from_execution_block(_st_blk)
+                logger.info(
+                    "SRB staged entry 2b: ENABLED (PCM mother entries require arm window)"
+                )
         _ks_skipped = 0
         _ks_executed = 0
         _period_equity_daily = _equity
@@ -2835,6 +2853,42 @@ class EventBacktester:
 
             simulator._primary_bar_count += 1
 
+            # SRB staged 2b：每根 primary 推进 cross+EMA 确认，产生 arm 窗口
+            if (
+                _srb_staged_rt is not None
+                and _srb_tf_global
+                and "srb" in self.strategy_names
+            ):
+                _df_srb_adv = (
+                    sym_data.get(sym, {}).get("tf_features", {}).get(_srb_tf_global)
+                )
+                if _df_srb_adv is not None and not _df_srb_adv.empty:
+                    _has_srb_open = any(
+                        str(p.get("archetype", "")).lower().strip() == "srb"
+                        for p in simulator._positions.values()
+                    )
+                    _row_adv = {
+                        k: primary_features.get(k)
+                        for k in (
+                            "open",
+                            "high",
+                            "low",
+                            "close",
+                            "volume",
+                            "atr",
+                            "ema_1200_position",
+                        )
+                    }
+                    _row_adv["volume_ma"] = primary_features.get("volume_ma")
+                    _srb_staged_rt.advance(
+                        symbol=sym,
+                        df_srb=_df_srb_adv,
+                        ts=ts,
+                        bar_idx=int(simulator._primary_bar_count),
+                        row=_row_adv,
+                        has_srb_position=_has_srb_open,
+                    )
+
             # 更新 structural_price (EMA200) 用于 BPC trend_hold 结构性退出
             _ema_200_val = primary_features.get("ema_200")
             if _ema_200_val is not None:
@@ -3024,9 +3078,36 @@ class EventBacktester:
                                 funnel["reject_srb_wide_sr_too_close"] += 1
                                 continue
 
+                    # SRB staged 2b：首仓需与 cross+EMA arm 同向且在窗口内（先于 open_position）
+                    if (
+                        _arch_lc == "srb"
+                        and _is_new_entry
+                        and _srb_staged_rt is not None
+                    ):
+                        _pcm_side = str(intent.action or "").upper()
+                        if _pcm_side in ("BUY",):
+                            _pcm_side = "LONG"
+                        if _pcm_side in ("SELL",):
+                            _pcm_side = "SHORT"
+                        if not _srb_staged_rt.match_arm(
+                            sym,
+                            _pcm_side,
+                            int(simulator._primary_bar_count),
+                        ):
+                            funnel.setdefault("reject_srb_staged_2b_arm", 0)
+                            funnel["reject_srb_staged_2b_arm"] += 1
+                            continue
+
                     opened = simulator.open_position(
                         intent, entry_bar, entry_feats, bar_minutes=winning_bm
                     )
+                    if (
+                        opened is not None
+                        and _arch_lc == "srb"
+                        and _is_new_entry
+                        and _srb_staged_rt is not None
+                    ):
+                        _srb_staged_rt.consume_arm(sym)
                     if opened is not None and _entry_limit is not None and _ts_date:
                         _dk2 = (_arch_lc, _ts_date)
                         _daily_entry_counts[_dk2] = _daily_entry_counts.get(_dk2, 0) + 1

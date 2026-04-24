@@ -23,6 +23,8 @@ def _load_month(arm_dir: Path, month: str) -> Dict[str, Any]:
         "add_r": 0.0,
         "add_n": 0,
         "rej_retrace": 0,
+        "rej_prefilter": 0,
+        "rej_staged_2b_arm": 0,
         "rej_other": 0,
     }
     if trades_csv.exists():
@@ -51,6 +53,10 @@ def _load_month(arm_dir: Path, month: str) -> Dict[str, Any]:
             funnel = js.get("funnel_stats") or {}
             out["rej_retrace"] = int(
                 funnel.get("reject_add_shape_gate_retrace", 0) or 0
+            )
+            out["rej_prefilter"] = int(funnel.get("reject_prefilter_deny", 0) or 0)
+            out["rej_staged_2b_arm"] = int(
+                funnel.get("reject_srb_staged_2b_arm", 0) or 0
             )
         except Exception:
             pass
@@ -82,6 +88,8 @@ def main() -> int:
             row[f"{a}_addR"] = round(v["add_r"], 2)
             row[f"{a}_addN"] = v["add_n"]
             row[f"{a}_rej"] = v["rej_retrace"]
+            row[f"{a}_rejPF"] = v["rej_prefilter"]
+            row[f"{a}_rej2b"] = v["rej_staged_2b_arm"]
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -107,12 +115,27 @@ def main() -> int:
         )
     )
 
-    print("\n=== per-arm rejections ===")
+    print("\n=== per-arm rejections (add shape retrace) ===")
     print(
         df[[c for c in df.columns if c == "month" or c.endswith("_rej")]].to_string(
             index=False
         )
     )
+
+    print("\n=== per-arm rejections (prefilter_deny) ===")
+    print(
+        df[[c for c in df.columns if c == "month" or c.endswith("_rejPF")]].to_string(
+            index=False
+        )
+    )
+
+    if any(c.endswith("_rej2b") for c in df.columns):
+        print("\n=== per-arm rejections (srb_staged_2b arm) ===")
+        print(
+            df[
+                [c for c in df.columns if c == "month" or c.endswith("_rej2b")]
+            ].to_string(index=False)
+        )
 
     print("\n=== per-arm n / add_n ===")
     print(
