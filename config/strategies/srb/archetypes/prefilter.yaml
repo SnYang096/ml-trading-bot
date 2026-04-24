@@ -24,24 +24,25 @@ rules:
     lock_reason: SRB 占位：突破邻域频谱能量（与 ME 的 accel、BPC 的 Donchian 无重叠）
 
   # 与 TPC 的「continuation / 回调」语义区分：SRB 只吃「突破相」软分
+  # 2026-04-24b：rolling_sim 全窗仅 4 笔 → 统计性放宽（仍保留 breakout 相，不与 pullback 同源）
   - feature: tpc_score_breakout
     operator: ">="
-    value: 0.30
+    value: 0.18
     locked: false
     lock_reason: "SRB vs TPC：用 breakout 分而非 continuation / pullback_depth"
 
   - feature: bpc_impulse_return_atr
     operator: ">="
-    value: 0.12
+    value: 0.05
     locked: false
     lock_reason: "突破瞬时要有可度量 impulse；与 BPC 整条 pullback 链不同，仅作单标量门槛"
 
   # 禁止在「相对压缩脚」开首仓：短窗相对长窗已不更窄（扩张或至少持平）
   - feature: box_compression_score
     operator: ">="
-    value: 1.0
+    value: 0.88
     locked: false
-    lock_reason: "box_width_60 / width_240 ≥ 1 → 已离开相对压缩段，避免盒心反复扫"
+    lock_reason: "略低于 1.0：允许刚脱离压缩、避免与 breakout 条件叠成过稀样本"
 
   # 当前 bar 须为盒上/下沿「刚脱离」信号之一（与单纯高 stability 窄盒区分）
   - any_of:
@@ -56,24 +57,24 @@ rules:
 
   - feature: box_width_pct_120
     operator: ">="
-    value: 0.025
+    value: 0.018
     locked: false
     lock_reason: "排除极窄噪声盒"
 
   - feature: box_width_pct_120
     operator: "<="
-    value: 0.22
+    value: 0.28
     locked: false
     lock_reason: "过宽仍属大震荡，先软顶；可交给 meta 收紧"
 
   - feature: path_efficiency_pct
     operator: ">="
-    value: 0.26
+    value: 0.18
     locked: false
     lock_reason: "路径非纯随机游走；与 ME multi_tf_alignment 不同源"
 
   - feature: trend_r2_20
     operator: ">="
-    value: 0.06
+    value: 0.03
     locked: false
     lock_reason: "极弱斜率底限，只挡死盘；不与 ME accel 阈值同源"

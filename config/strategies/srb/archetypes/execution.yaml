@@ -76,14 +76,15 @@ stop_loss:
   # ------------------------------------------------------------------
   breakeven:
     enabled: true
-    # E：略推迟保本，减少趋势初中段被「锁在 entry」后洗盘扫出（与 meta 扫参冲突时请回退）
-    trigger_r: 3.5
-    lock_level_r: 0.0
+    # 2026-04-24b：BNB 等大突破后首段洗盘易扫「entry 贴价」SL → 推迟保本 + 小幅回吐缓冲（LONG 略低于 entry）
+    trigger_r: 5.5
+    lock_level_r: -0.2
     measure: initial_risk
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
-  initial_r: 6.0
+  # 略加宽首仓风险带：给结构 SL→ATR 兜底时多留一点「假破」空间，利于骑乘大趋势首段
+  initial_r: 7.0
   trailing:
     enabled: true
     # trailing 带宽 = trail_r × max(入场 ATR, 当前主周期 ATR)
@@ -96,9 +97,9 @@ stop_loss:
     # - L3 dynamic trailing 保留：反向 L3 距离 < l3_near_threshold_atr × ATR 时收到 trail_r_near，
     #   否则放到 trail_r_far。只有在 MFE ≥ 6R 真正激活后才有效，与母仓生存时间兼容。
     activation_r: 6.0
-    trail_r: 5.0              # fallback：当 wide_sr_upper_px / wide_sr_lower_px 缺失时使用
-    trail_r_far: 7.0          # 远离反向 L3 时的 trailing 带宽
-    trail_r_near: 5.0         # 接近反向 L3 时的 trailing 带宽（收紧以锁住临边收益）
+    trail_r: 6.0              # fallback：当 wide_sr_upper_px / wide_sr_lower_px 缺失时使用
+    trail_r_far: 9.0          # 远离反向 L3：更宽 trailing，减少抛物段被「正常回调」洗出
+    trail_r_near: 6.0         # 接近反向 L3 仍略宽于旧版，避免贴边过早止盈
     l3_near_threshold_atr: 2.0  # 反向 L3 距离 < 此阈值判为 "近"
   type: trailing
   # ------------------------------------------------------------------
@@ -111,7 +112,7 @@ stop_loss:
   # 加仓共享母仓 SL，母仓 SL 变到对面 SR 后，加仓本地 R 也自然变小 —— 不需要加仓 R gate。
   structural_sl:
     enabled: true
-    opposite_sr_buffer_atr: 0.5
+    opposite_sr_buffer_atr: 0.75
     min_distance_atr: 2.0
 take_profit:
   enabled: false
@@ -196,7 +197,8 @@ sr_structural_exit:
 # 动机：XRP 2024-03/07 长空震荡期，价格几次反向穿破 L3 未触发 SL，time_stop 又未开 —— 靠 L3 兜底。
 l3_structural_exit:
   enabled: true
-  buffer_atr: 0.25
+  # 略放宽：减少 L3 边界附近噪声 K 线误触「结构破坏」提前离场
+  buffer_atr: 0.35
 
 regime_execution:
   enabled: false

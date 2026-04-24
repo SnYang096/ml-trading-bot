@@ -44,3 +44,8 @@ PY
 ## 回退
 
 若通过率过低或 stitched 变差：优先放宽 **`tpc_score_breakout`**、`path_efficiency_pct`、`box_compression_score` 门槛；其次将 **`srb_staged_entry_2b.enabled`** 设回 `false` 做消融。
+
+## 2026-04-24b（统计放宽 + 骑趋势出场）
+
+- **Prefilter**：`tpc_score_breakout` 0.30→0.18、`bpc_impulse_return_atr` 0.12→0.05、`box_compression_score` 1.0→0.88、`path_efficiency` 0.26→0.18、`trend_r2_20` 0.06→0.03，盒宽上下界略放宽（rolling 过稀时对症）。
+- **Execution**：`initial_r` 6→7；`breakeven` trigger 3.5→5.5、`lock_level_r` 0→**-0.2**（多空对称：LONG SL 略低于 entry、SHORT SL 略高于 entry，减洗盘扫「贴价保本」）；`trail_r`/`trail_r_far` 加宽；`opposite_sr_buffer_atr`、`l3_structural_exit.buffer_atr` 略放宽。
