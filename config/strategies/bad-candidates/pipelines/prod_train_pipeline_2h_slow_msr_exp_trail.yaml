@@ -194,7 +194,7 @@ strategies:
       timeout_bars: 180
 
 shap_feature_selection:
-  enabled: true
+  enabled: false
   n_folds: 5
   # 样本稀疏：减小 top_k 防过拟合
   top_k: 12

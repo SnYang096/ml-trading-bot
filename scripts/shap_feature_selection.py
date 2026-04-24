@@ -965,7 +965,7 @@ Examples:
                     protected_nodes = shap_cfg["protected_nodes"]
                 if "apply_to" in shap_cfg:
                     apply_to = shap_cfg["apply_to"]
-                if not shap_cfg.get("enabled", True):
+                if not shap_cfg.get("enabled", False):
                     print("   ⏭️  SHAP feature selection disabled in config")
                     return
 

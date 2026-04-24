@@ -199,7 +199,7 @@ strategies:
       timeout_bars: 144
 
 shap_feature_selection:
-  enabled: true
+  enabled: false
   n_folds: 8
   top_k: 20
   stability_threshold: 0.8

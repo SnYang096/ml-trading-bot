@@ -344,7 +344,7 @@ strategies:
       stability_threshold: 0.5
       top_k: 25
 shap_feature_selection:
-  enabled: true
+  enabled: false
   n_folds: 8
   top_k: 20
   stability_threshold: 0.8

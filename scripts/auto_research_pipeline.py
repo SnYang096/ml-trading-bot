@@ -2097,7 +2097,9 @@ def run_strategy_pipeline(
     _fs_effective = bool(
         feature_search_enabled
     ) and _yaml_rolling_feature_search_enabled(cfg)
-    _skip_shap = skip_shap or (not _fs_effective) or not shap_cfg.get("enabled", True)
+    # Default off: gate 特征以 features_gate.yaml 人工/策略白名单为准；需实验时再在
+    # research_pipeline.yaml / prod yaml 中设 shap_feature_selection.enabled: true。
+    _skip_shap = skip_shap or (not _fs_effective) or not shap_cfg.get("enabled", False)
     shap_active = False  # 标记 SHAP 是否成功生成了 _shap.yaml
     if not _skip_shap:
         shap_cmd = [
