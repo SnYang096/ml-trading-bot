@@ -837,13 +837,15 @@ def _generate_risk_gate_yaml(
     lgbm_model=None,
     *,
     skip_gate_shap_discovery: bool = False,
+    gate_draft_path: "Path | None" = None,
 ):
     """
     从树模型分裂规则生成 risk_gate_draft.yaml 草稿。
 
     ✅ 生成 archetype 兼容格式 (when/then/action)，可直接用于 gate apply-archetype。
     ✅ 自动用 predictions 数据确定语义方向（deny 收益更差的那一侧）。
-    同时写入 config/strategies/{strategy}/archetypes/gate_draft.yaml。
+    另可选写入 gate_draft_path：与 --config 同目录或模型目录（管线隔离输出），
+    不写入仓库内 config/strategies/** 模板（由调用方传 gate_draft_path）。
     """
     import yaml
 
@@ -1037,12 +1039,9 @@ def _generate_risk_gate_yaml(
     )
     output_path.write_text(yaml_content, encoding="utf-8")
 
-    # 同时写入策略配置目录 (config/strategies/{strategy}/gate_draft.yaml)
-    # 与 prefilter.yaml / direction.yaml 同级，审核后复制到 archetypes/gate.yaml
-    project_root = Path(__file__).resolve().parents[1]
-    strategy_dir = project_root / "config" / "strategies" / strategy
-    if strategy_dir.is_dir():
-        draft_path = strategy_dir / "gate_draft.yaml"
+    if gate_draft_path is not None:
+        draft_path = Path(gate_draft_path)
+        draft_path.parent.mkdir(parents=True, exist_ok=True)
         direction_note = (
             "# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)\n"
             if pred_df is not None
@@ -1474,6 +1473,7 @@ def main():
                 predictions_path=_pred_path if _pred_path.exists() else None,
                 feature_names=feature_names if feature_names else None,
                 lgbm_model=model,
+                gate_draft_path=artifact_dir / "gate_draft.yaml",
             )
             _dir_msg = "方向已自动确定" if _pred_path.exists() else "需人工审核方向"
             print(f"  ✅ {risk_gate_path} ({_dir_msg})")

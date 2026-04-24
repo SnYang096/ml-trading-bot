@@ -2509,10 +2509,7 @@ def run_strategy_pipeline(
                     _cmp_low_penalty[_cm] = 0.0
                     _cmp_high_penalty[_cm] = 0.0
                     continue
-                # Sync gate_draft
-                _cpd = PROJECT_ROOT / f"config/strategies/{strategy}/gate_draft.yaml"
-                if _cpd.exists():
-                    shutil.copy2(_cpd, Path(f"{config_dir}/gate_draft.yaml"))
+                # gate_draft 由 Gate Train 写入 {config_dir}/（与 --config 同目录的实验隔离树）
                 # Ensure candidate gate_draft always carries month locked gate rules.
                 if _month_locked_gate_rules:
                     merge_locked_gate_rules(
@@ -2749,16 +2746,7 @@ def run_strategy_pipeline(
         rc, out = run_step("Gate Train", gate_train_args, log, dry_run=dry_run)
         gate_dir = find_output_dir(out, strategy) or prepare_dir
 
-        # ── Sync gate_draft: Gate Train 写到 config/ 生产目录, 需同步回实验目录 ──
-        if not dry_run:
-            prod_gate_draft = (
-                PROJECT_ROOT / f"config/strategies/{strategy}/gate_draft.yaml"
-            )
-            exp_gate_draft = Path(f"{config_dir}/gate_draft.yaml")
-            if prod_gate_draft.exists():
-                import shutil as _shutil_gd
-
-                _shutil_gd.copy2(prod_gate_draft, exp_gate_draft)
+        # Gate Train 已将 gate_draft.yaml 写到 {config_dir}/（--config 指向的实验策略目录）
 
         # ── Early termination / statistical fallback on Gate Train failure ──
         gate_pred = Path(f"{gate_dir}/predictions.parquet")
@@ -6508,10 +6496,7 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
             shutil.copy2(f, prod_arch / f.name)
             copied += 1
 
-    # 也复制 gate_draft.yaml (如果有)
-    exp_draft = exp_config_dir / "gate_draft.yaml"
-    if exp_draft.exists():
-        shutil.copy2(exp_draft, PROJECT_ROOT / prod_config_dir / "gate_draft.yaml")
+    # gate_draft.yaml 仅保留在实验/rolling 输出目录，不 adopt 到 config/strategies（与模板分离）
 
     print(f"   ✅ Adopted: {copied} files → {prod_arch}")
     return True

@@ -347,7 +347,10 @@ def _parse_strategy_dir(strat_dir: Path, month: str, strategy: str) -> SnapshotD
     digest.prefilter_rules = _parse_prefilter_yaml(
         strat_dir / "archetypes" / "prefilter.yaml"
     )
-    digest.gate_rules = _parse_gate_yaml(strat_dir / "gate_draft.yaml")
+    _gd = strat_dir / "gate_draft.yaml"
+    if not _gd.is_file():
+        _gd = strat_dir / "archetypes" / "gate.yaml"
+    digest.gate_rules = _parse_gate_yaml(_gd)
     digest.entry_filters = _parse_entry_filters_yaml(
         strat_dir / "archetypes" / "entry_filters.yaml"
     )

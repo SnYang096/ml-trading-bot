@@ -4256,6 +4256,7 @@ def train_strategy(
                             skip_gate_shap_discovery=bool(
                                 getattr(args, "skip_gate_shap", False)
                             ),
+                            gate_draft_path=strategy_config.path / "gate_draft.yaml",
                         )
                         print(
                             f"   \U0001f4dc Risk gate draft exported to {risk_gate_path}"
