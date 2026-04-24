@@ -1,5 +1,9 @@
 # TPC (TrendPullbackContinuation) 策略元信息
 # 与 BPC 的核心区别: 不依赖 Donchian 突破，直接以 EMA1200 趋势方向为基准
+#
+# 名称说明: `tpc-long-120T` 为产品/历史命名；管线里 `has_direction: true` 且
+# `archetypes/direction.yaml` 为 MACD×EMA1200 时，**多空方向均可**由规则与数据决定。
+# 全样本里多头成交占绝大多数、偶发少量空头属常见；与「只做多」的硬编码不同。
 
 strategy:
   name: tpc-long-120T
