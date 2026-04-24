@@ -4,8 +4,10 @@
 strategy:
   name: srb-120T
   description: |
-    StructuralRangeBreakout：纯粹的"SR 成功突破 → 顺势延续"策略。
-      入场：sr_cross_state_machine 确认收盘决定性打破关键 SR。
+    StructuralRangeBreakout：纯粹的"SR 成功突破 → 顺势延续"策略（偏 **骑趋势** 配置）。
+      入场：sr_cross_state_machine 确认收盘决定性打破关键 SR；
+           Prefilter 强调 **脱离压缩 / 盒沿突破** + **tpc_score_breakout**（与 TPC 回调语义区分），
+           方向用 **ROC20×EMA1200**（与 BPC/MACD、ME/VWAP 级联区分）。
       止损：结构化 SL 锚定对面 SR（LONG 用 support，SHORT 用 resistance），
            SR 紧贴入场时兜底到 initial_r × ATR；SL 宽时通过 sizing 自然缩仓。
       退出：expand_with_primary_atr 扩带 trailing + 可选结构化退出。

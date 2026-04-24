@@ -1,31 +1,79 @@
-# SRB prefilter — MVP：结构强度 + 突破频谱能量 + 非极端横盘 + box 结构过滤
+# SRB prefilter — 「关键位 + 频谱突破 + 脱离压缩/盒内刷单」
+#
+# 与其它趋势策略的语义分工（避免同源拥挤）：
+# - **BPC**：Donchian 突破 → 回踩深度/恢复（pullback continuation），含 box_compression 作「突破前蓄势」。
+# - **ME**：多周期 accel + alignment + VWAP 带（动量扩张）。
+# - **TPC**：EMA1200 宏观死区规避 + **pullback_depth**（大趋势中回调不破）。
+# - **SRB（本文件）**：**SR 强度 + 频谱邻域 + tpc_score_breakout（非 pullback）**；
+#   用 **box 扩张/边缘脱离**（compression≥1 + breakout OR）禁止在「长期稳定窄盒」里反复点火；
+#   用 **path_efficiency / trend_r2_20** 轻挡纯随机游走，与 ME 的动量级联不同源。
+#
+# 2026-04-24：收紧「压缩区刷单」——移除「高 stability + 极窄 width」组合（易等于长横盘盒内高频假突破）。
+
 rules:
   - feature: sr_strength_max
     operator: ">="
     value: 0.42
     locked: true
     lock_reason: SRB 语义锚点：关键位需有足够结构强度
+
   - feature: spectrum_price_high_freq_ratio
     operator: ">="
     value: 0.22
     locked: true
-    lock_reason: SRB 占位：突破邻域频谱能量（后续可换专用成功突破 score）
-  - feature: tpc_score_continuation
+    lock_reason: SRB 占位：突破邻域频谱能量（与 ME 的 accel、BPC 的 Donchian 无重叠）
+
+  # 与 TPC 的「continuation / 回调」语义区分：SRB 只吃「突破相」软分
+  - feature: tpc_score_breakout
     operator: ">="
-    value: 0.2
-    locked: true
-    lock_reason: MVP：沿用 TPC continuation 分作为延续倾向占位
-  # Box-structure prefilter: require the 120-bar 2H window before the breakout
-  # to look like a real consolidation (stable and not too wide). This directly
-  # implements the "CBC as prefilter upgrade of SRB" decision documented in
-  # docs/z实验_005_统一研究/box_features_causal_vs_oracle_20260424.md.
-  - feature: box_stability_120
-    operator: ">="
-    value: 0.70
+    value: 0.30
     locked: false
-    lock_reason: Box prefilter upgrade — require ≥70% stability in past 240 bars
-  - feature: box_width_pct_120
-    operator: "<="
+    lock_reason: "SRB vs TPC：用 breakout 分而非 continuation / pullback_depth"
+
+  - feature: bpc_impulse_return_atr
+    operator: ">="
     value: 0.12
     locked: false
-    lock_reason: Box prefilter upgrade — reject breakouts from excessively wide ranges
+    lock_reason: "突破瞬时要有可度量 impulse；与 BPC 整条 pullback 链不同，仅作单标量门槛"
+
+  # 禁止在「相对压缩脚」开首仓：短窗相对长窗已不更窄（扩张或至少持平）
+  - feature: box_compression_score
+    operator: ">="
+    value: 1.0
+    locked: false
+    lock_reason: "box_width_60 / width_240 ≥ 1 → 已离开相对压缩段，避免盒心反复扫"
+
+  # 当前 bar 须为盒上/下沿「刚脱离」信号之一（与单纯高 stability 窄盒区分）
+  - any_of:
+      - feature: box_breakout_up
+        operator: ">="
+        value: 1
+      - feature: box_breakout_down
+        operator: ">="
+        value: 1
+    locked: false
+    lock_reason: "仅当盒 regime 出现上/下沿突破标志；减少盒内震荡密点"
+
+  - feature: box_width_pct_120
+    operator: ">="
+    value: 0.025
+    locked: false
+    lock_reason: "排除极窄噪声盒"
+
+  - feature: box_width_pct_120
+    operator: "<="
+    value: 0.22
+    locked: false
+    lock_reason: "过宽仍属大震荡，先软顶；可交给 meta 收紧"
+
+  - feature: path_efficiency_pct
+    operator: ">="
+    value: 0.26
+    locked: false
+    lock_reason: "路径非纯随机游走；与 ME multi_tf_alignment 不同源"
+
+  - feature: trend_r2_20
+    operator: ">="
+    value: 0.06
+    locked: false
+    lock_reason: "极弱斜率底限，只挡死盘；不与 ME accel 阈值同源"

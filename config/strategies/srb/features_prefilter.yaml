@@ -10,5 +10,8 @@ feature_pipeline:
     - tpc_soft_phase_f
     - volatility_regime_f
     - bpc_impulse_return_atr_f
-    # Box-structure prefilter upgrade: only allow breakouts from a real box
+    # Box-structure + 趋势骑乘 prefilter（与 ME/BPC/TPC 不同源）
     - box_structure_f
+    - trend_r2_20_f
+    - path_efficiency_pct_f
+    - roc_20_f

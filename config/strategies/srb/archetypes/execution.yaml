@@ -30,13 +30,12 @@ add_position:
   add_size_multipliers:
     - 0.8
     - 0.5
-    - 0.3
   inherit_parent_stop: true
-  max_add_times: 3
+  # B：减少震荡区「死亡加仓」
+  max_add_times: 2
   min_current_r_by_add:
     - 0.5
     - 1.0
-    - 1.5
   min_current_r_unit: atr
   sizing_mode: fixed_multiplier
   trigger:
@@ -44,7 +43,8 @@ add_position:
 
 execution_constraints:
   allow_add_on: true
-  min_order_interval_minutes: 15
+  # A：压「密点刷单」——同策略最小再入场间隔（2H 上约 2.5 天）
+  min_order_interval_minutes: 120
 
 holding:
   # 2026-04-23 E1：母仓分层 time_stop
@@ -76,7 +76,8 @@ stop_loss:
   # ------------------------------------------------------------------
   breakeven:
     enabled: true
-    trigger_r: 3.0
+    # E：略推迟保本，减少趋势初中段被「锁在 entry」后洗盘扫出（与 meta 扫参冲突时请回退）
+    trigger_r: 3.5
     lock_level_r: 0.0
     measure: initial_risk
   guardrails:
@@ -168,9 +169,10 @@ srb_add_position_policy:
     #   min_mother_mfe_r=1.0 太严：与 float_r_ladder_only[0.5] 不同步 → 误杀 2024-02/2024-11 的大赢加仓（-55R）。
     #   保留配置项，默认只启 staleness（设 min_mfe=0.0 实质关闭 MFE 子项），后续扫参再调。
     trend_health_gate:
-      enabled: false
-      min_mother_mfe_r: 0.0
-      max_bars_since_mother_entry: 360
+      # B：母仓已有浮盈 + 时间不过久才允许加仓（松于文档里 1.0R 的杀招版本）
+      enabled: true
+      min_mother_mfe_r: 0.5
+      max_bars_since_mother_entry: 288
 
 # ---------------------------------------------------------------------------
 # 假突破反手 —— 已从 SRB 中移除（见 docs/design/srb_fake_break_reverse.md）。
@@ -234,7 +236,8 @@ regime_execution:
 # 仅事件回测接线（event_backtest）；live 未接。
 # ---------------------------------------------------------------------------
 srb_staged_entry_2b:
-  enabled: false
+  # C：两段式确认，减少盒内假穿后再开仓（事件回测已接线）
+  enabled: true
   cross:
     confirm_k: 3
     fake_lookahead: 10
