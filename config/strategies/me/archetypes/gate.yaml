@@ -13,6 +13,20 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
+  - id: gate_me_semantic_chop_high
+    tag: HARD_ME_SEMANTIC_CHOP
+    phase: hard_gate
+    priority: 6
+    reason: ME 专用：BB 偏窄且多周期方向发散 → 压缩-震荡区，动量扩张语义不成立
+    when:
+      me_semantic_chop:
+        value_gt: 0.60
+    then:
+      action: deny
+    comment: "semantic: me_semantic_chop = (1 - bb_width_normalized) × (1 - me_multi_tf_alignment) × 2; 与 BPC/TPC 同构，0.60 对应全局 deny≈25%"
+    locked: true
+    promote_never_disable: true
+    lock_reason: ME 动量扩张语义：波动区不追，避免 chop bar 上的假动量
   - id: gate_me_late_long_above_ema1200
     tag: HARD_ME_LATE_LONG_EMA1200
     phase: hard_gate

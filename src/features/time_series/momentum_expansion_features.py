@@ -23,7 +23,7 @@ ME = Energy × Acceleration × Participation
 - Evidence: Energy × |Acceleration_5K| × Participation（乘法）
 - Entry: Micro acceleration burst(2K) + Orderflow spike
 
-参考：z实验_003_me/ME特征语义分析.md
+参考：docs/z实验_003_me/ME特征语义分析.md
 """
 
 from __future__ import annotations
@@ -79,6 +79,8 @@ def _stream_safe_percentile(series: pd.Series, window: int) -> pd.Series:
         "me_volume_surge",          # 成交量爆发百分位 [0-1]
         "me_volume_accel",          # 成交量加速百分位 [0-1]
         "me_delta_net_flow",        # Delta净流×方向 [-1,1]
+        # === Semantic (语义场景) ===
+        "me_semantic_chop",         # BB 带窄 × 多周期方向发散，对齐 bpc_semantic_chop
     ],
 )
 def compute_momentum_expansion_soft_phase_from_series(
@@ -91,6 +93,8 @@ def compute_momentum_expansion_soft_phase_from_series(
     # 可选订单流
     cvd_change_5: pd.Series = None,
     delta: pd.Series = None,
+    # 可选结构：Bollinger 带宽分位（[0,1]，高=带宽宽），用于 me_semantic_chop
+    bb_width_normalized: pd.Series = None,
     # 参数
     lookback: int = 20,
     pct_window: int = 100,
@@ -112,7 +116,7 @@ def compute_momentum_expansion_soft_phase_from_series(
         pct_window: 百分位计算窗口
 
     Returns:
-        DataFrame with 11 core features
+        DataFrame with core ME features plus me_semantic_chop
     """
     # ========== 类型转换 ==========
     close = pd.to_numeric(close, errors="coerce").astype(float)
@@ -213,6 +217,19 @@ def compute_momentum_expansion_soft_phase_from_series(
     else:
         me_delta_net_flow = pd.Series(0.0, index=close.index)
 
+    # ========== 4️⃣ Semantic（场景语义）==========
+    # me_semantic_chop：BB 带窄 + 多周期方向发散 → "压缩震荡"场景
+    # 构造与 bpc_semantic_chop 同构：chop = bb_compression × (1 - direction_confidence) × 2，clip[0,1]
+    # 这里用 me_multi_tf_alignment 充当 direction_confidence 的 ME 语义版本（3/5/10 bar 方向一致度）
+    if bb_width_normalized is not None:
+        bb_w = pd.to_numeric(bb_width_normalized, errors="coerce").fillna(0.5).clip(0, 1)
+        bb_compression = (1.0 - bb_w).clip(lower=0.0, upper=1.0)
+    else:
+        # 退化：无 BB 输入时置 0（不触发 chop gate），保持回归兼容
+        bb_compression = pd.Series(0.0, index=close.index)
+    dir_dissonance = (1.0 - me_multi_tf_alignment).clip(lower=0.0, upper=1.0)
+    me_semantic_chop = (bb_compression * dir_dissonance * 2.0).clip(0, 1)
+
     # ========== 输出 ==========
     result = pd.DataFrame({
         # Energy
@@ -229,6 +246,8 @@ def compute_momentum_expansion_soft_phase_from_series(
         "me_volume_surge": me_volume_surge,
         "me_volume_accel": me_volume_accel,
         "me_delta_net_flow": me_delta_net_flow,
+        # Semantic
+        "me_semantic_chop": me_semantic_chop,
     }, index=close.index)
 
     result.attrs['feature_version'] = FEATURE_VERSION

@@ -1,0 +1,75 @@
+# RMR Gate Draft (auto-generated)
+# 来源: results/train_final_20260420_234112_rr_extreme/rmr
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy rmr
+#   python scripts/optimize_gate_unified.py --strategy rmr --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_macd_signal_atr_macd_signal_atr
+  tag: HARD_MACD_SIGNAL_ATR_MACD_SIGNAL_ATR
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.20)
+  when:
+    all_of:
+    - macd_signal_atr:
+        value_gt: -0.0987
+    - macd_signal_atr:
+        value_lt: 0.4972
+  then:
+    action: deny
+  comment: 'statistical(lift=1.20): macd_signal_atr > -0.09871 & macd_signal_atr < 0.4972'
+- id: gate_macd_atr_macd_atr
+  tag: HARD_MACD_ATR_MACD_ATR
+  phase: hard_gate
+  priority: 11
+  reason: 统计验证规则 (lift=1.20)
+  when:
+    all_of:
+    - macd_atr:
+        value_gt: 0.1782
+    - macd_atr:
+        value_lt: 0.5069
+  then:
+    action: deny
+  comment: 'statistical(lift=1.20): macd_atr > 0.1782 & macd_atr < 0.5069'
+- id: gate_cvd_change_5_normalized_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED_CVD_CHANGE_5_NORMALIZED
+  phase: hard_gate
+  priority: 12
+  reason: 统计验证规则 (lift=1.06)
+  when:
+    all_of:
+    - cvd_change_5_normalized:
+        value_gt: -0.0175
+    - cvd_change_5_normalized:
+        value_lt: -0.0052
+  then:
+    action: deny
+  comment: 'statistical(lift=1.06): cvd_change_5_normalized > -0.01748 & cvd_change_5_normalized < -0.005192'
+- id: gate_macd_histogram_atr_macd_histogram_atr
+  tag: HARD_MACD_HISTOGRAM_ATR_MACD_HISTOGRAM_ATR
+  phase: hard_gate
+  priority: 13
+  reason: 统计验证规则 (lift=1.09)
+  when:
+    all_of:
+    - macd_histogram_atr:
+        value_gt: -0.2255
+    - macd_histogram_atr:
+        value_lt: -0.1588
+  then:
+    action: deny
+  comment: 'statistical(lift=1.09): macd_histogram_atr > -0.2255 & macd_histogram_atr < -0.1588'
+guardrails: []

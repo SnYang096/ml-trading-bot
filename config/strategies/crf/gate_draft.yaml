@@ -1,0 +1,18 @@
+# CRF Gate Draft (MVP placeholder)
+# 等 slow pipeline 第一次 rolling 训练后由 `optimize_gate_unified.py` 填充。
+# 设计期望：不需要很多 hard_gate（CRF 本身由 box prefilter 保护），
+# 最多添加 1-2 条用来避开"盒子内突然出现的方向性冲击"。
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+hard_gates: []
+guardrails: []

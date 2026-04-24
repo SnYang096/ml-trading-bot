@@ -41,3 +41,5 @@ feature_pipeline:
     - bpc_phase_transition_f
     - bpc_compression_state_f
     - dual_compression_f
+    # Box-structure prefilter upgrade: only take pullbacks in small/mid boxes
+    - box_structure_f

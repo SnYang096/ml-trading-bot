@@ -87,7 +87,7 @@ stop_loss:
     enabled: true
     # trailing 带宽 = trail_r × max(入场 ATR, 当前主周期 ATR)
     # 数据依据：baseline trailing_sl 交易里，出场 bar 的 ATR 中位数 = 入场 ATR 的 1.51×，
-    # 53.8% trailing_sl 出场后沿原方向继续走 ≥ 2 ATR（"洗盘"） —— 见 z实验_005_统一研究/SRB_ablation_results_20260418.md
+    # 53.8% trailing_sl 出场后沿原方向继续走 ≥ 2 ATR（"洗盘"） —— 见 docs/z实验_005_统一研究/SRB_ablation_results_20260418.md
     expand_with_primary_atr: true
     # 2026-04-22 最终决定（见 SRB_l3_dynamic_trailing_20260422.md 结尾"rolling_sim 终审"节）：
     # - activation_r 保留 6.0：simulator 扫参预测 +33R 被 rolling_sim 证伪（实跑 -72R vs baseline）

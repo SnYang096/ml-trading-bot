@@ -159,8 +159,10 @@ resource_allocation:
     # PCM 联合事件回测策略白名单（与 pipeline strategy_scope 交集生效）
     # 牛市 5x / 长侧实验需启用 long；短侧保持并列以便联合 PCM
     - bpc
+    - fbf
     - fer
     - me
+    - msr
     - srb
     - tpc
 
@@ -203,6 +205,20 @@ resource_allocation:
       max_risk_per_trade: 0.01 # 反转单不承担尾部主仓职责
       allow_add_position: false # FER 反转策略不加仓
 
+    # ── FBF (L2 POC/HAL 盒子边沿失败突破反转，方向双向) ──
+    # 独立于 FER：FER 是单边耗竭反转，FBF 是结构性盒子边沿假破。
+    fbf:
+      max_slots: 3
+      max_risk_per_trade: 0.01
+      allow_add_position: false
+
+    # ── MSR (L3 大级别 swing SR 假破反转) ──
+    # 稀疏高置信：预期 1-2 单/币/月，max_slots 低，不加仓
+    msr:
+      max_slots: 2
+      max_risk_per_trade: 0.01
+      allow_add_position: false
+
     # ── LV (方向中性, 不拆分) ──
     lv:
       max_slots: 0 # LV 快进快出，最多 1 个
@@ -210,7 +226,7 @@ resource_allocation:
       allow_add_position: false # LV 不加仓
 
   intent_selection_policy:
-    archetype_priority: [bpc, tpc, srb, me, fer]
+    archetype_priority: [bpc, tpc, srb, me, fbf, msr, fer]
 
   # 同 symbol 同策略家族默认只允许主方向（由 BTC close vs ema_200 决定）
   # FER 可作为反向例外（短促反转仓位）

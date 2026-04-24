@@ -1,5 +1,5 @@
 # SRB (Structural Range Breakout) — MVP：关键位成功突破后的结构延续
-# 与 BPC/TPC/FBF/RMR 边界见 z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB_RMR.md
+# 与 BPC/TPC/FBF/RMR 边界见 docs/z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB_RMR.md
 
 strategy:
   name: srb-120T

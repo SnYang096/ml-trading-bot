@@ -10,3 +10,5 @@ feature_pipeline:
     - tpc_soft_phase_f
     - volatility_regime_f
     - bpc_impulse_return_atr_f
+    # Box-structure prefilter upgrade: only allow breakouts from a real box
+    - box_structure_f

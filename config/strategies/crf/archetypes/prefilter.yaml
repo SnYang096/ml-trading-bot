@@ -1,0 +1,29 @@
+# CRF prefilter — 只允许"当前处于稳定盒子"的 bar 参与决策。
+# prefilter 只做"是不是盒子"的门，方向由 archetypes/direction.yaml 在 box_pos 基础上判断。
+rules:
+  - feature: box_stability_120
+    operator: ">="
+    value: 0.70
+    locked: true
+    lock_reason: "CRF 语义锚点 1/2：必须处于真盒子（stability ≥ 0.70）"
+
+  - feature: box_width_pct_120
+    operator: ">="
+    value: 0.04
+    locked: true
+    lock_reason: "CRF 语义锚点 2/2：盒子够宽才有 fade 空间（≥ 4%）"
+
+  # 不要把盒子限得太窄——根据 P2 诊断，BTC 2024 盒子宽度 30% 左右依然可做
+  - feature: box_width_pct_120
+    operator: "<="
+    value: 0.50
+    locked: false
+    lock_reason: "上限防御：盒子过宽 (>50%) 通常是 regime-change 中段，风险大"
+
+last_evaluation:
+  timestamp: "2026-04-24"
+  data_source: "reports/box_btc_2024_causal.csv"
+  n_rows: 6
+  notes: |
+    BTC 2024 全年 6 个 causal-box 事件 + 14 笔 CRF 模拟 92.9% 胜率。
+    阈值保守，允许 meta-algorithm 进一步收紧。

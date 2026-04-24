@@ -1,0 +1,30 @@
+# FBF Gate Draft (auto-generated)
+# 来源: results/train_final_20260422_001342_rr_extreme/fbf
+# ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy fbf
+#   python scripts/optimize_gate_unified.py --strategy fbf --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_cvd_change_5_normalized
+  tag: HARD_CVD_CHANGE_5_NORMALIZED
+  phase: hard_gate
+  priority: 10
+  reason: cvd_change_5_normalized 触发树分裂条件 (分裂 1 次)
+  when:
+    cvd_change_5_normalized:
+      value_lt: -0.0206
+  then:
+    action: deny
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 -0.02062 | 方向: data_verified (low=-2.306, high=-2.119)'
+guardrails: []

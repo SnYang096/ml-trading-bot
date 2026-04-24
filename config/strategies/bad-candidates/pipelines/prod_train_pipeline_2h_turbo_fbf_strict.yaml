@@ -1,0 +1,143 @@
+# ============================================================
+# FBF-strict Turbo (快速管线) — 2H, Pure Trailing, 边界外侧+衰竭
+#
+# 与 prod_train_pipeline_2h_turbo_2024bull_thresholds_only_fbf_only.yaml 差异：
+#   * strategies.fbf.config → config/strategies/fbf_strict
+#     (新 prefilter: any_of fer_ols_pos ≤0.10 / ≥0.90
+#      新 entry_filters: 4 filter (_flip 或 _absorp, OR)
+#      execution: 与 fbf_exp_trail 相同 Pure Trailing)
+#   * output.history_dir → results/fbf/turbo-rolling-sim-strict
+#   * 全部关闭自动 tune / promote：strict 的 filter/prefilter 必须保持
+#     locked-as-is，不能被 optimize_entry_filter_plateau / prefilter.optimize
+#     覆盖成 baseline（慢管线的那次已出现过这问题）。
+#   * KPI gates 的 target_trades 下调到 4~40（offline filter_then_resim
+#     预期 30~85 trades / 9 个月 snapshot）。
+#
+# 预期（离线基准 173→D80 53 trades +43.91R Sharpe 1.80 maxDD -5）：
+#   全 universe + 全 rolling 2023-2024 → ≥200 trades, Sharpe ≥1.5
+#
+# 跑法:
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_fbf_strict.yaml \
+#       --stage rolling_sim --skip-shap
+# ============================================================
+
+dates:
+  start_date: "2023-01-01"
+  end_date: "2024-12-31"
+  holdout_months: 15
+  validation_months: 3
+
+global_toggles:
+  locked_threshold_tuning_enabled: false
+
+rolling:
+  mode: turbo_fixed_features
+  windows:
+    calibration_months: 6
+    structure_lookback_months: 12
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: true
+
+fast_loop:
+  disable_model_training: true
+  step_months: 1
+  threshold_calibration:
+    enabled: false       # strict filter 必须保持 locked，不跑阈值搜索
+  prefilter:
+    optimize: false      # prefilter 也保持 locked（边界外侧硬条件）
+  symbol_threshold_calibration:
+    enabled: false
+  execution_opt:
+    enabled: false       # execution 继承自 fbf_exp_trail 的 Pure Trailing
+  pcm_eval:
+    enabled: false
+  direction_tuning:
+    enabled: false
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: true
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  fbf:
+    # 管线已修好：当 config 路径与 default (config/strategies/<name>) 不同时，
+    # 优先使用该路径。所以这里可以直接指向 fbf_strict，不被 baseline 的
+    # config/strategies/fbf/ 遮蔽（见 auto_research_pipeline.py L1842）。
+    config: config/strategies/fbf_strict
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.01
+        min_rows: 120
+        target_trades_min: 4
+        target_trades_max: 40
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: false
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+      entry_filter:
+        meta_algorithm: false
+        archetype_plateau: false        # 不跑 plateau auto-promote
+        significance_p: 0.10
+        significance_min_trades: 3
+        plateau_window: 4
+        archetype_scoring_method: distribution_ks
+        target_trades_min: 4
+        target_trades_max: 40
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+        min_score_improvement: 0.008
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
+        stat_fallback_on_empty: true
+        stat_fallback_max_rules: 3
+        stat_fallback_min_source_features: 2
+      backtest:
+        min_trades: 4
+      deploy:
+        min_trades: 4
+    simple_execution:
+      sl_r: 1.0
+      tp_r: 4.0
+      timeout_bars: 144
+
+event_backtest:
+  enabled: true
+  promote: false                 # 不 promote 回 strategies/ 目录
+  map_extra_months: 4
+  sym_r_default: "1.0:1:6.0"
+  sym_r_by_family:
+    fbf: "1:1:4"
+  exec_objective_default: sharpe
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.0
+    min_trades_soft: 0
+    undertrade_penalty: 0.0
+
+output:
+  history_dir: results/fbf/turbo-rolling-sim-strict

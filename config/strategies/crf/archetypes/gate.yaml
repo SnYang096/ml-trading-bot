@@ -1,0 +1,36 @@
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+# ==========================================================================
+# CRF gate.yaml —— MVP: 仅 system_safety 保护，hard_gate 留给 meta 生成。
+# --------------------------------------------------------------------------
+# 设计理念：CRF 的 "不该入场" 判据主要在 prefilter (不在真盒子里)
+# 和 entry_filters (边缘没衰竭感)。Gate 层只兜底系统性风险。
+# ==========================================================================
+
+hard_gates: []
+
+guardrails: []
+
+system_safety:
+- id: gate_vol_persistence
+  tag: HARD_VOL_PERSISTENCE
+  phase: system_safety
+  priority: 12
+  reason: 波动率持久性极端低时通常意味着假盘整（蓄势突破前夜），不适合 fade
+  when:
+    vol_persistence:
+      value_lt: 0.005
+  then:
+    action: deny
+  comment: 'CRF 专用：低波持久性 → 马上要突破，避免做 fade'
+  locked: false
+  lock_reason: 系统性风险兜底（MVP，可由 meta 调整）

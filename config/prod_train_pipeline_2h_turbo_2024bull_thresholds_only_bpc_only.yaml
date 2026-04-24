@@ -5,9 +5,10 @@
 # ============================================================
 
 dates:
-  start_date: "2023-01-01"
-  end_date: "2024-12-31"
-  holdout_months: 15
+  start_date: "2022-08-01"
+  end_date: "2026-03-31"
+  # end=2026-03-31, holdout=26 → holdout_start=2024-01-01；rolling 月约 202401～202603（与 TPC 管线对齐）
+  holdout_months: 26
   validation_months: 3
 
 global_toggles:

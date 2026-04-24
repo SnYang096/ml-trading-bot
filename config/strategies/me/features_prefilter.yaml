@@ -13,5 +13,9 @@ feature_pipeline:
     - me_context_f
     - me_failure_f
     - dual_ignition_f
-    # 勿恢复 oi_scene_semantic_scores_f：元算法易选 oi_compression/ignition 进 prefilter，
-    # 与 2024-11 急涨段统计冲突（见 scripts/diagnose_me_rolling_month_funnel.py）；主 features.yaml 仍含 OI。
+    # Box-structure prefilter upgrade: compression score as a "compression → expansion" prior
+    - box_structure_f
+    # oi_scene_semantic_scores_f：已在主 config/strategies/me/features.yaml 的 requested_features 中启用。
+    # 历史原因：元算法曾易选 oi_compression/ignition 进 prefilter，与 2024-11 急涨段统计冲突
+    # （见 scripts/diagnose_me_rolling_month_funnel.py）。若 prefilter 漏斗漂移，可把该模块加回
+    # features.yaml 的 forbidden_requested_features。

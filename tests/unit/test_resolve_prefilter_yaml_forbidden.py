@@ -8,9 +8,10 @@ from scripts.analyze_archetype_feature_stratification import (
 )
 
 
-def test_resolve_prefilter_yaml_me_forbidden_strips_oi_scene_columns(
+def test_resolve_prefilter_yaml_me_keeps_oi_scene_when_not_forbidden(
     tmp_path: Path,
 ) -> None:
+    """ME features.yaml 已允许 oi_scene_semantic_scores_f 进主池时，meta 解析不应再剔除 OI 语义列。"""
     fp = tmp_path / "features_prefilter.yaml"
     fp.write_text(
         """
@@ -31,8 +32,8 @@ feature_pipeline:
         "datetime",
     ]
     out = _resolve_features_from_prefilter_yaml(str(fp), str(deps), cols, strategy="me")
-    assert "oi_compression_score" not in out
-    assert "oi_ignition_score" not in out
+    assert "oi_compression_score" in out
+    assert "oi_ignition_score" in out
     assert "me_atr_pct" in out
 
 

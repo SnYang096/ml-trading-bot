@@ -1,0 +1,16 @@
+# CRF 方向 — 由 box_pos_120 决定。
+# 不走"signal + position_band"模板（那是趋势策略的），而是 threshold_compare：
+#   box_pos_120 <= 0.15  →  做多（从底部回归中线 / 对边 edge）
+#   box_pos_120 >= 0.85  →  做空（从顶部回归中线 / 对边 edge）
+#   其他 → 不入场（方向未定）
+
+description: "CRF 方向 — 由 box_pos_120 相对阈值决定"
+
+direction_rules:
+  - id: crf_box_pos_fade
+    method: threshold_compare
+    description: "底部做多 / 顶部做空（pos ∈ [0,1]）"
+    feature: box_pos_120
+    thresholds:
+      long_if_below: 0.15
+      short_if_above: 0.85

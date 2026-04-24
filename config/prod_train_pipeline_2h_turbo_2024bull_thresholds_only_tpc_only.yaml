@@ -1,0 +1,114 @@
+# ============================================================
+# 上线前训练流水线 (2H only, TPC-only)
+# 基于 prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only
+# 仅保留 tpc-short-120T / tpc-long-120T
+# ============================================================
+
+dates:
+  start_date: "2022-08-01"
+  end_date: "2026-03-31"
+  holdout_months: 26
+  validation_months: 3
+
+global_toggles:
+  locked_threshold_tuning_enabled: true
+rolling:
+  mode: turbo_fixed_features
+  windows:
+    calibration_months: 6
+    structure_lookback_months: 12
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: true
+
+fast_loop:
+  disable_model_training: true
+  step_months: 1
+  threshold_calibration:
+    enabled: true
+  prefilter:
+    optimize: true
+  symbol_threshold_calibration:
+    enabled: true
+  execution_opt:
+    enabled: false
+  pcm_eval:
+    enabled: false
+  direction_tuning:
+    enabled: true
+    compare_features: false
+    promote_after_validate: false
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+data_path: data/parquet_data
+download:
+  enabled: true
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+strategies:
+  tpc:
+    config: config/strategies/tpc
+    timeframe: 120T
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.05
+        min_rows: 10
+        target_trades_min: 35
+        target_trades_max: 260
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0011
+        stability_penalty: 0.0
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: false
+          mode: auto_if_locked
+          skip_if_cached: false
+          max_cases: 12
+          min_trades_target: 60
+          trade_penalty: 0.0025
+          target_trades_min: 35
+          target_trades_max: 260
+          trade_penalty_low: 0.002
+          trade_penalty_high: 0.0011
+          stability_penalty: 0.0
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+      entry_filter:
+        meta_algorithm: false
+        archetype_plateau: true
+        significance_p: 0.10
+        significance_min_trades: 4
+        plateau_window: 4
+        archetype_scoring_method: distribution_ks
+        target_trades_min: 35
+        target_trades_max: 260
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0011
+        stability_penalty: 0.0
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+        min_score_improvement: 0.005
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.3
+      backtest:
+        min_trades: 50
+      deploy:
+        min_trades: 50
+
+event_backtest:
+  enabled: true
+  map_extra_months: 4
+
+output:
+  history_dir: results/tpc/turbo-rolling-sim

@@ -21,10 +21,16 @@ holding:
   max_holding_bars: 360
   time_stop_bars: 0
 stop_loss:
+  # 2026-04-22 统一 breakeven 口径（见 src/time_series_model/live/position_logic.py）：
+  #   trigger_r: MFE 阈值
+  #   lock_level_r: SL 锁到 entry + lock_level_r × R（0=纯保本，>0=锁利润）
+  #   measure: "initial_risk" | "atr"（BPC 历史口径用 atr，保持原语义）
+  # 对应旧配置：lock_profit_atr=1.0, trigger_r=9, measure=atr → 新配置不变。
   breakeven:
     enabled: false
-    lock_profit_atr: 1.0
     trigger_r: 9
+    lock_level_r: 1.0
+    measure: atr
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01

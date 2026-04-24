@@ -31,6 +31,21 @@ rules:
     locked: true
     lock_reason: "动量语义：3/5/10 bar 至少 2 个周期方向一致（趋势明确）"
 
+  # Box-structure prefilter upgrade for ME:
+  # ME trades momentum expansion — ideally it should fire right after a
+  # compression phase. box_compression_score = width_60 / width_240:
+  #   * <= 1.0 means the last 60 bars are not wider than the last 240,
+  #     i.e. the short-term range has not exploded yet (we're at or near the
+  #     compression foot). Momentum expansion from a compressed base is the
+  #     textbook ME setup.
+  # We set 1.0 rather than 0.6 to avoid over-filtering in trending regimes;
+  # 0.6 can be explored via meta-algorithm if slow-pipeline promotes.
+  - feature: box_compression_score
+    operator: "<="
+    value: 1.00
+    locked: false
+    lock_reason: Box prefilter upgrade — compression-before-expansion prior (conservative draft; tighten via meta-algorithm)
+
 last_evaluation:
   timestamp: "2026-04-11"
   data_source: "features_labeled.parquet (train_final_20260411_173341)"

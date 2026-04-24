@@ -1,0 +1,244 @@
+# ============================================================
+# FBF-only 慢滚 — 实验：边界外侧 (fer_ols_pos≤0.1 OR ≥0.9) + 衰竭证据 (q80)
+#
+# 与 prod_train_pipeline_2h_slow_fbf_exp_trail.yaml 唯一差异：
+#   - strategies.fbf.config → config/strategies/fbf_strict
+#       (archetypes/prefilter.yaml: 新增 any_of(fer_ols_pos ≥0.9 或 ≤0.1)
+#        archetypes/entry_filters.yaml: 每向 2 filter（flip OR absorption）
+#        archetypes/execution.yaml: 与 fbf_exp_trail 相同，Pure Trailing)
+#   - output.history_dir → results/fbf/slow-rolling-sim-strict
+#
+# 对比基线：results/fbf/slow-rolling-sim-exp-trail/_rolling_sim/20260422_202736
+#
+# 预期（基于 173 笔离线 filter_then_resim，见
+#   docs/z实验_005_统一研究/FBF_strict_boundary_exhaustion_20260423.md）：
+#     BASELINE  173 trades · totalR +37.83 · Sharpe +1.21 · maxDD -16.11
+#     A-OLS     85  trades · totalR +44.97 · Sharpe +1.75 · maxDD  -7.37
+#     D80       53  trades · totalR +43.91 · Sharpe +1.80 · maxDD  -5.00
+#     D90       31  trades · totalR +37.06 · Sharpe +2.70 · maxDD  -2.00
+#
+# 实盘跑法示例:
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_fbf_strict.yaml \
+#       --stage rolling_sim --skip-shap
+# ============================================================
+
+dates:
+  start_date: "2022-08-01"
+  end_date: "2024-12-31"
+  holdout_months: 15
+  validation_months: 3
+
+training:
+  seeds:
+    - 42
+  seed_selection: best_sharpe
+
+global_toggles:
+  locked_threshold_tuning_enabled: true
+
+strategy_scope:
+  direction: all
+
+rolling:
+  mode: slow_realistic
+  windows:
+    calibration_months: 3
+    structure_lookback_months: 12
+  slow_realistic:
+    cadence_months: 3
+    triggered_retrain_enabled: true
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: true
+
+fast_loop:
+  step_months: 1
+  threshold_calibration:
+    enabled: true
+  prefilter:
+    optimize: true
+  symbol_threshold_calibration:
+    enabled: true
+  execution_opt:
+    enabled: false
+  pcm_eval:
+    enabled: false
+  direction_tuning:
+    enabled: true
+    compare_features: true
+    promote_after_validate: true
+
+symbol_policy:
+  mode: hybrid_carry_forward
+  carry_forward_ttl_months: 2
+  enable_threshold: 0.0
+  min_symbol_trades_soft: 10
+  carry_forward_hard_fail_rules:
+    min_sharpe_r: -0.25
+
+direction_stack:
+  mode: ema200
+  ema_debounce_bars: 3
+  vwap_window_days: 20
+
+slot_allocation:
+  mode: quality_ranked
+  max_symbols_per_side: 2
+  reserve_slots_for_secondary_symbols: 1
+  slot_opportunity_penalty: 0.001
+  quality_score_weights:
+    history_edge: 0.55
+    now_strength: 0.45
+  quality_lookback_months: 3
+
+stitching:
+  enabled: true
+  metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]
+  export_trade_map_html: true
+
+event_backtest:
+  enabled: true
+  promote: true
+  map_extra_months: 4
+  sym_r_default: "1.0:1:6.0"
+  sym_r_by_family:
+    fbf: "1:1:4"
+  exec_objective_default: sharpe
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.0
+    min_trades_soft: 0
+    undertrade_penalty: 0.0
+
+pcm_slot_grid:
+  enabled: false
+  plateau_delta: 0.03
+  min_trades_soft: 80
+  penalties:
+    max_dd_penalty: 0.02
+    slot_full_rate_penalty: 0.20
+    undertrade_penalty: 0.001
+  cases: []
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: true
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  fbf:
+    config: config/strategies/fbf_strict
+    features_gate: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+    kpi_gates:
+      prefilter:
+        # 更严的 prefilter：把 target_trades 下调（73%→~30-45% pass rate）
+        min_pass_rate: 0.01
+        min_rows: 120
+        target_trades_min: 4
+        target_trades_max: 40
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: false
+          mode: auto_if_locked
+          skip_if_cached: false
+          max_cases: 12
+          min_trades_target: 15
+          trade_penalty: 0.0025
+          target_trades_min: 4
+          target_trades_max: 40
+          trade_penalty_low: 0.0021
+          trade_penalty_high: 0.0014
+          stability_penalty: 0.0
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+      entry_filter:
+        meta_algorithm: false
+        archetype_plateau: true
+        significance_p: 0.10
+        significance_min_trades: 3
+        plateau_window: 4
+        archetype_scoring_method: distribution_ks
+        target_trades_min: 4
+        target_trades_max: 40
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+        min_score_improvement: 0.008
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
+        stat_fallback_on_empty: true
+        stat_fallback_max_rules: 3
+        stat_fallback_min_source_features: 2
+      backtest:
+        min_trades: 8
+      deploy:
+        min_trades: 8
+    simple_execution:
+      sl_r: 1.0
+      tp_r: 4.0
+      timeout_bars: 144
+
+shap_feature_selection:
+  enabled: true
+  n_folds: 8
+  top_k: 20
+  stability_threshold: 0.8
+  min_stable_features: 1
+  protected_nodes:
+    - atr_f
+  apply_to:
+    - features.yaml
+
+comparison:
+  min_trades: 8
+  sharpe_adopt_ratio: 0.7
+  sharpe_reject_floor: 0.0
+  threshold_drift_warn: 1.0
+
+retrain_triggers:
+  schedule_days: 90
+  sharpe_decay_ratio: 0.5
+  consecutive_losses: 8
+  max_data_age_days: 120
+  leading_indicator_decay: 0.5
+
+deploy_gate:
+  trigger_sharpe_improve: 0.05
+  trigger_drift_level: HIGH
+  min_sharpe_change: 0.03
+  require_adopt: true
+  min_trades: 8
+  require_human_confirm: true
+
+data_flow:
+  model_predictions: predictions.parquet
+  gated_logs: logs_gated.parquet
+  step_inputs:
+    prefilter: predictions.parquet
+    gate_train: predictions.parquet
+    gate_apply: predictions.parquet
+    execution: logs_gated.parquet
+    backtest: logs_gated.parquet
+
+output:
+  history_dir: results/fbf/slow-rolling-sim-strict

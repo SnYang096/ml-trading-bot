@@ -1,5 +1,5 @@
 # BPC Gate Draft (auto-generated)
-# 来源: results/train_final_20260416_103908_rr_extreme/bpc
+# 来源: results/train_final_20260424_032558_rr_extreme/bpc
 # ✅ 方向已由 predictions 数据自动确定 (deny 收益更差的一侧)
 # 已是 archetype 兼容格式，可直接用于:
 #   mlbot gate apply-archetype --strategy bpc
@@ -16,71 +16,26 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-- id: gate_evt_tail_shape
-  tag: HARD_EVT_TAIL_SHAPE
+- id: gate_ema_1200_position
+  tag: HARD_EMA_1200_POSITION
   phase: hard_gate
   priority: 10
-  reason: 统计验证规则 (lift=1.41)
+  reason: ema_1200_position 触发树分裂条件 (分裂 2 次)
   when:
-    evt_tail_shape:
-      value_lt: 0.1071
+    ema_1200_position:
+      value_lt: -0.0377
   then:
     action: deny
-  comment: 'statistical(lift=1.41): evt_tail_shape < 0.1071'
-- id: gate_evt_var_99_right_evt_var_99_right
-  tag: HARD_EVT_VAR_99_RIGHT_EVT_VAR_99_RIGHT
+  comment: '自动生成(tree_split fallback): 分裂 2 次 | 阈值 -0.03767 | 方向: data_verified (low=0.982, high=5.195)'
+- id: gate_macro_tp_vwap_1200_position
+  tag: HARD_MACRO_TP_VWAP_1200_POSITION
   phase: hard_gate
   priority: 11
-  reason: 统计验证规则 (lift=1.30)
+  reason: macro_tp_vwap_1200_position 触发树分裂条件 (分裂 1 次)
   when:
-    all_of:
-    - evt_var_99_right:
-        value_gt: 0.0635
-    - evt_var_99_right:
-        value_lt: 0.2381
+    macro_tp_vwap_1200_position:
+      value_gt: 0.1512
   then:
     action: deny
-  comment: 'statistical(lift=1.30): evt_var_99_right > 0.06349 & evt_var_99_right < 0.2381'
-- id: gate_evt_scale_left_evt_scale_left
-  tag: HARD_EVT_SCALE_LEFT_EVT_SCALE_LEFT
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.68)
-  when:
-    all_of:
-    - evt_scale_left:
-        value_gt: 0.2103
-    - evt_scale_left:
-        value_lt: 0.2937
-  then:
-    action: deny
-  comment: 'statistical(lift=1.68): evt_scale_left > 0.2103 & evt_scale_left < 0.2937'
-- id: gate_evt_scale_right_evt_scale_right
-  tag: HARD_EVT_SCALE_RIGHT_EVT_SCALE_RIGHT
-  phase: hard_gate
-  priority: 13
-  reason: 统计验证规则 (lift=1.37)
-  when:
-    all_of:
-    - evt_scale_right:
-        value_gt: 0.496
-    - evt_scale_right:
-        value_lt: 0.6905
-  then:
-    action: deny
-  comment: 'statistical(lift=1.37): evt_scale_right > 0.496 & evt_scale_right < 0.6905'
-- id: gate_macro_tp_vwap_1200_position_macro_tp_vwap_1200_position
-  tag: HARD_MACRO_TP_VWAP_1200_POSITION_MACRO_TP_VWAP_1200_POSITION
-  phase: hard_gate
-  priority: 14
-  reason: 统计验证规则 (lift=1.51)
-  when:
-    all_of:
-    - macro_tp_vwap_1200_position:
-        value_gt: 0.07
-    - macro_tp_vwap_1200_position:
-        value_lt: 0.0977
-  then:
-    action: deny
-  comment: 'statistical(lift=1.51): macro_tp_vwap_1200_position > 0.07 & macro_tp_vwap_1200_position < 0.09772'
+  comment: '自动生成(tree_split fallback): 分裂 1 次 | 阈值 0.1512 | 方向: data_verified (low=1.461, high=0.000)'
 guardrails: []

@@ -86,7 +86,11 @@ thresholds:
   correlation_threshold: 0.80
 
   # 最终规则数上限 (OR 组合)
-  max_rules: 5
+  # 历史经验: plateau 真正过线的候选通常只有 1-2 条, 很少达到 3 条.
+  # 放宽到 5 反而会让边缘显著 (p≈0.08) 的候选被塞进 OR, 而 OR 组合 pass rate
+  # 会随数量非线性抬升 (5 条 ≈ 83% 已贴近 combined_or_pass_rate_max 上限).
+  # 收紧到 3 基本不会压制正常的 plateau 扫描, 但能挡掉边缘候选的过拟合。
+  max_rules: 3
 
   # Pass rate 合法范围 (太小无意义, 太大等于没有 filter)
   # 注意: OR 组合下每条规则应是「选入最好」而非「排除最差」,

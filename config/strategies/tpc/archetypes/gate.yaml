@@ -19,12 +19,13 @@ hard_gates:
   reason: TPC 专用：BB 偏窄且方向置信低 → 典型震荡来回扫区
   when:
     tpc_semantic_chop:
-      value_gt: 0.62
+      value_gt: 0.60
   then:
     action: deny
-  comment: 'semantic: tpc_semantic_chop = f(bb_compression, 1-direction_confidence)'
+  comment: 'semantic: tpc_semantic_chop = f(bb_compression, 1-direction_confidence); 0.60 对应全局 deny≈25%'
   locked: true
-  lock_reason: 波动区过滤：减少横盘噪声中的试探单
+  promote_never_disable: true
+  lock_reason: 波动区过滤（标准）：与 BPC/ME 三策略同构，避免 chop bar 上的虚假回调
 - id: gate_tpc_late_long_above_ema1200
   tag: HARD_TPC_LATE_LONG_EMA1200
   phase: hard_gate
@@ -96,38 +97,9 @@ hard_gates:
   comment: 'optimizer: no_stable_plateau, threshold=0.2959, lift=0.287'
   locked: true
   lock_reason: VPIN 知情交易活跃度：信息不对称过高时入场胜率下降
-- id: gate_macro_tp_vwap_1200_deadzone
-  tag: HARD_MACRO_TP_VWAP_1200_DEADZONE
-  phase: hard_gate
-  priority: 13
-  reason: 语义锚点规则（VWAP 近场死区）
-  when:
-    all_of:
-    - macro_tp_vwap_1200_position:
-        value_gt: -0.005
-    - macro_tp_vwap_1200_position:
-        value_lt: 0.005
-  then:
-    action: deny
-  comment: 'semantic_anchor: deny near VWAP where trend edge is weak'
-  locked: true
-  lock_reason: VWAP1200 近场噪声区（方向不稳定）先过滤
-- id: gate_ema_1200_position_ema_1200_position
-  tag: HARD_EMA_1200_POSITION_EMA_1200_POSITION
-  phase: hard_gate
-  priority: 14
-  reason: 统计验证规则 (lift=1.28)
-  when:
-    all_of:
-    - ema_1200_position:
-        value_gt: 0.0996
-    - ema_1200_position:
-        value_lt: 0.1461
-  then:
-    action: deny
-  comment: 'from gate_draft(20260410_190624): medRR=-1.63, bad=59.3%, deny=10%'
-  locked: true
-  lock_reason: EMA1200 浅上方位置：接近均线但不够强势的假突破区间
+# NOTE: gate_macro_tp_vwap_1200_deadzone / gate_ema_1200_position_ema_1200_position
+# 已按语义（prefilter=先划分数据）上提到 archetypes/prefilter.yaml 中
+# 以 any_of 形式表达（不在死区一侧），此处不再重复过滤。
 - id: gate_fer_ols_pos_fer_ols_pos
   tag: HARD_FER_OLS_POS_FER_OLS_POS
   phase: hard_gate

@@ -1,32 +1,40 @@
-# ME-Short Entry Filters (seeded)
-# 职责: "现在该入场做空吗?" → 硬二值控制
-# 这是一组偏保守的初始规则，目标是限制在扩张早段。
+# ME Entry Filters (seeded)
+# 职责: "现在该入场吗?" → 硬二值控制
+# 语义: ME = 动量扩张直接入场（不要求 pullback）
+#   - 候选池以 OR 组合
+#   - 不再使用 locked/promote_never_disable: plateau 自己根据统计显著性决定保留/禁用
+#   - 原来锁定的「压缩→点火+订单流」三重 AND 拆成 3 条独立 OR 候选，避免 prefilter 过滤后的样本空间里几乎不可能同时命中 3 个阈值
 
 filters:
-  - id: ef_me_cvd_strength_high
+  # === 压缩→点火语义拆解：独立 OR 候选 ===
+  - id: ef_me_dual_compression
     enabled: true
-    description: "normalized: me_cvd_strength >= 0.65"
+    description: "ME 语义：刚从压缩区被点燃（funding × vpin 压缩）"
+    conditions:
+      - feature: dual_compression_score
+        operator: ">="
+        value: 0.45
+    notes: "semantic: compression context (funding + vpin compression)"
+
+  - id: ef_me_dual_ignition
+    enabled: true
+    description: "ME 语义：funding × footprint 双路点火触发"
+    conditions:
+      - feature: dual_ignition_score
+        operator: ">="
+        value: 0.45
+    notes: "semantic: ignition trigger (funding + footprint imbalance)"
+
+  - id: ef_me_cvd_strength
+    enabled: true
+    description: "ME 语义：CVD 订单流方向确认"
     conditions:
       - feature: me_cvd_strength
         operator: ">="
-        value: 0.65
-    notes: "orderflow core strength (normalized [0,1])"
-  - id: ef_shd_pct_crowded
-    enabled: true
-    description: "pct: shd_pct <= 0.20"
-    conditions:
-      - feature: shd_pct
-        operator: "<="
-        value: 0.20
-    notes: "strategy homogeneity stress percentile (bounded [0,1])"
-  - id: ef_ofci_pct_high
-    enabled: true
-    description: "pct: ofci_pct >= 0.70"
-    conditions:
-      - feature: ofci_pct
-        operator: ">="
-        value: 0.70
-    notes: "order flow consensus percentile (bounded [0,1])"
+        value: 0.55
+    notes: "semantic: orderflow directional confirmation"
+
+  # === 单维订单流 / 拥挤 / VPIN / trade_cluster 维持原候选池 ===
   - id: ef_vpin_zscore_20_high
     enabled: true
     description: "normalized: vpin_zscore_20 >= 0.60"
@@ -35,6 +43,7 @@ filters:
         operator: ">="
         value: 0.60
     notes: "VPIN stress zscore"
+
   - id: ef_trade_cluster_net_runs_z20
     enabled: true
     description: "normalized: trade_cluster_net_runs_zscore_20 >= 0.30"

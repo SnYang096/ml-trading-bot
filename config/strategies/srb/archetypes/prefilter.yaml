@@ -1,4 +1,4 @@
-# SRB prefilter — MVP：结构强度 + 突破频谱能量 + 非极端横盘
+# SRB prefilter — MVP：结构强度 + 突破频谱能量 + 非极端横盘 + box 结构过滤
 rules:
   - feature: sr_strength_max
     operator: ">="
@@ -15,3 +15,17 @@ rules:
     value: 0.2
     locked: true
     lock_reason: MVP：沿用 TPC continuation 分作为延续倾向占位
+  # Box-structure prefilter: require the 120-bar 2H window before the breakout
+  # to look like a real consolidation (stable and not too wide). This directly
+  # implements the "CBC as prefilter upgrade of SRB" decision documented in
+  # docs/z实验_005_统一研究/box_features_causal_vs_oracle_20260424.md.
+  - feature: box_stability_120
+    operator: ">="
+    value: 0.70
+    locked: false
+    lock_reason: Box prefilter upgrade — require ≥70% stability in past 240 bars
+  - feature: box_width_pct_120
+    operator: "<="
+    value: 0.12
+    locked: false
+    lock_reason: Box prefilter upgrade — reject breakouts from excessively wide ranges

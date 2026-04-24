@@ -70,12 +70,11 @@ mlbot data pipeline \
 `pipeline-universe` 会按 universe 配置解析 symbol 列表，并 **下载后立刻转成 Parquet**：
 
 ```bash
-mlbot data pipeline-universe \
+mlbot data pipeline-universe --no-docker \
   --universe-config config/download/crypto_4h_token_universe_groups.yaml \
-  --universe-set starter_a \
-  --start-year 2022 \
-  --start-month 1 \
-  --no-docker
+  --universe-groups highcap \
+  --start-year 2023 \
+  --start-month 1
 ```
 
 ### 扩展数据：市值（Market Cap）与资金费率（Funding Rate）
@@ -98,46 +97,70 @@ mlbot data update-market-cap \
 #### 2) Binance 资金费率（按月 ZIP → Parquet）
 
 ```bash
-mlbot data download-funding-rate \
+# 方式 A：Universe 驱动（推荐）
+mlbot data download-funding-rate --no-docker \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-groups highcap \
+  --start-year 2023 --start-month 1
+
+# 方式 B：手工传 symbol 列表
+mlbot data download-funding-rate --no-docker \
   --symbols BTCUSDT,ETHUSDT \
-  --start-year 2022 \
-  --start-month 1 \
-  --progress-every 10 \
-  --no-docker
+  --start-year 2023 --start-month 1 \
+  --progress-every 10
 ```
 
 结果默认落盘：
 - ZIP：`data/funding_rate/zip/`
 - Parquet：`data/funding_rate/parquet/`
 
+#### 3) Binance 未平仓合约（OI）
+
+```bash
+mlbot data download-open-interest \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-groups highcap \
+  --start-year 2023 --start-month 1 --progress-every 1
+```
+
 ---
 
-## 推荐工作流（MVP：最小闭环）
+## 推荐工作流（当前主线：`mlbot pipeline run`）
 
-> README 只保留"可复制的最小命令"。详细解释与扩展流程见：
-> - `docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md`
-> - `docs/archive/guides/cs/CROSS_SECTIONAL_PIPELINE_CN.md`（CS：截面因子评估→筛选→回测→训练）
-> - `docs/archive/guides/cs/CROSS_SECTIONAL_WORKFLOW_END2END_CN.md`（CS：端到端一张图 + 回测审计与产物）
-> - `docs/archive/guides/cs/CS_VS_TS_PIPELINE_CN.md`（CS vs TS：两套 pipeline 差异与指标取舍）
-> - `docs/architecture/CROSS_SECTIONAL_ALPHA101_FEATURESTORE_ARCH_CN.md`（CS Alpha101：为何不走 DAG + 缓存复用架构）
-> - `docs/archive/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`（多资产合约实盘落地路线图）
-> - `docs/architecture/NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md`（NN 多资产系统：Task/Router/Gate/Execution 宪法与运维落地设计）
-> - `docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`（架构升级 V1：TaskSpec + Constitution + PCM）
-> - `docs/archive/architecture/archetype灭绝级回测.md`（Archetype 灭绝级回测：压力测试→生存评分→Router/Size 映射）
-> - `docs/archive/leagcy/ood头的训练.md`（OOD/Survival Head：监督信号定义、loss、评估曲线、熄火/复燃验证）
-> - `docs/archive/architecture/LiveDashboard.md`（LiveDashboard：只盯 5 个数（含增强版），用于阻止系统犯蠢）
-> - `docs/architecture/树模型规则导出与维护方法.md`（树模型规则导出：可归因性、SR聚合、规则重要性分析）
-> - `docs/architecture/规则重要性分析_vs_特征组搜索.md`（规则重要性分析 vs Feature Group Search：本质差异与结合使用）
-> - `docs/architecture/guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md`（研发→上线分层工作流：Tier×Universe×TaskSpec）
-> - `docs/archive/guides/tree/POOLB_INVERT_FEATURES_CN.md`（Pool‑B 反向特征：invert_features 处理规则）
-> - `docs/architecture/strategies/树策略导出的可泛化规则.md`（tree 策略 if/else：语义规则模板 + 扫描汇总（含 VPIN/订单流规则））
-> - `docs/architecture/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`（阈值调参：找"平坦高原"而非尖峰，Router/SLTP 通用）
-> - `docs/architecture/live_stream/README.md`（实盘事件流/回放/对账/稳定性：Live 边缘系统入口）
-> - `docs/archive/NNMULTIHEAD_CONFIG_FILES_CN.md`（nnmultihead 配置文件职责图：TaskSpec/FeaturePlan/features.yaml/labels.yaml/model.yaml）
-> - **工作流程指南**：
->   - `docs/architecture/guides/BASELINE_TESTING_WORKFLOW.md`（基线测试工作流程：建立各archetype性能基准）
->   - `docs/architecture/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`（平坦高原优化工作流程：Gate规则参数优化方法）
->   - `docs/architecture/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md`（实盘归因工作流程：分层诊断和上线评估）
+> **当前主线不再以 `mlbot train final` 为入口**。研究/回测/阈值调优/Event Backtest 全部走统一管线 `mlbot pipeline run`（底层会调训练/评估的各子步）。
+>
+> **最全命令手册**（含所有 stage / flag / 跨月续跑 / 稳定性实验）：
+> - `docs/z实验_005_统一研究/A快速启动命令.md`（最新，长文档）
+> - `docs/z实验_005_统一研究/实施文档_01_2024牛市_5x趋势骑乘.md`（5x 趋势骑乘实验 + turbo 调阈值工作流）
+
+### 活跃策略 & 对应管线 YAML
+
+**当前 `config/strategies/` 里的活跃策略**（FBF / FER / MSR / LV / LOTTERY 已归档到 `config/strategies/bad-candidates/`）：
+
+| 策略目录         | 语义                                            | 默认 `meta.yaml` timeframe |
+| ---------------- | ----------------------------------------------- | -------------------------- |
+| `bpc`            | Breakout → Pullback → Continuation（趋势延续）  | `120T`                     |
+| `tpc`            | Trend → Pullback → Continuation（趋势回踩）     | `120T`                     |
+| `srb`            | Structural Range Breakout（盒子突破成功延续）   | `120T`                     |
+| `me`             | Momentum Expansion（动量扩张）                  | `120T`                     |
+| `crf`            | Consolidation Range Fade（盒子内双向均值回归）  | `120T`                     |
+
+**当前仓库中常用的 pipeline YAML**（按用途）：
+
+| YAML                                                                             | 用途                                                              | `rolling.mode`         |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------- |
+| `config/prod_train_pipeline_2h.yaml`                                             | 主生产向：多策略 + PCM 联合回测                                   | `slow_realistic`       |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml`     | BPC-only / turbo：阈值链 + execution 优化，不做特征搜索           | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_me_only.yaml`      | ME-only / turbo                                                   | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_tpc_only.yaml`     | TPC-only / turbo                                                  | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_turbo_crf_only.yaml`                              | CRF-only / turbo（新立项，配合 `box_structure_f` 特征）           | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_slow_bpc_only.yaml`                               | BPC-only 慢模式（季度结构 + 月度快变量）                          | `slow_realistic`       |
+| `config/prod_train_pipeline_2h_slow_me_only.yaml`                                | ME-only 慢模式                                                    | `slow_realistic`       |
+| `config/prod_train_pipeline_2h_slow_srb_only.yaml`                               | SRB-only 慢模式                                                   | `slow_realistic`       |
+| `config/prod_train_pipeline_2h_slow_tpc_only.yaml`                               | TPC-only 慢模式                                                   | `slow_realistic`       |
+
+> `turbo_fixed_features`：特征集固定，只做阈值链 / execution 优化 / 月度滚动 → **快**。  
+> `slow_realistic`：每季度重做结构快照（prefilter/gate 元算法），月度 fast_loop 调阈值 → **稳**。
 
 ### 0) 质量闸门（推荐）
 
@@ -146,178 +169,222 @@ make test-key-features-all
 mlbot diagnose feature-contract --no-docker
 ```
 
-### 1) 特征搜索（Pool‑B + 语义组，一键输出建议 features）
+### 1) 数据下载 + Feature Store 构建
+
+```bash
+# 一次性拉齐 highcap universe 所有 symbol 的 2H OHLCV（含 1min 原始）
+mlbot data pipeline-universe --no-docker \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-groups highcap \
+  --start-year 2023 --start-month 1
+
+# 资金费率 + OI（可选但推荐）
+mlbot data download-funding-rate --no-docker \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-groups highcap \
+  --start-year 2023 --start-month 1
+
+mlbot data download-open-interest \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-groups highcap \
+  --start-year 2023 --start-month 1
+
+# Feature Store（按策略构建；新增/修改特征后必须重跑对应策略）
+mlbot feature-store build --no-docker \
+  --config config/strategies/bpc \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-groups highcap \
+  --timeframe 120T \
+  --start-date 2023-01-01 --end-date 2026-03-01 \
+  --warmup-months 6
+```
+
+> 同一 feature layer（hash 相同）会跨策略复用；新增/改特征代码或 `config/feature_dependencies.yaml` 后需要对相关策略重跑 `feature-store build`。
+
+### 2) 研究管线（turbo 快模式：只调阈值，不搜特征）
+
+```bash
+# BPC turbo（推荐先跑单月验证，再开全 rolling）
+mlbot pipeline run --all \
+  --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml \
+  --stage fast_month --month 2024-09 --skip-shap 2>&1 | tee log.bpc.txt
+
+# 全量 rolling_sim（从 holdout_start 到 end_date 自动逐月）
+mlbot pipeline run --all \
+  --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml \
+  --stage rolling_sim --skip-shap 2>&1 | tee log.bpc.txt
+
+# ME / TPC / SRB / CRF 同理，只换 --config
+mlbot pipeline run --all \
+  --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_me_only.yaml \
+  --stage rolling_sim --skip-shap
+
+mlbot pipeline run --all \
+  --config config/prod_train_pipeline_2h_turbo_crf_only.yaml \
+  --stage rolling_sim --skip-shap
+```
+
+**常用 stage**（分层调试）：
+
+```
+prefilter → gate → entry_filter → slow_snapshot → execution_opt → event_backtest
+fast_month   # 仅复盘某个月（默认：前 3 个月调阈值，回测当月）
+rolling_sim  # 按月滚动：结构快照 / 阈值调优 / 当月回测 / 月间仓位续跑
+pcm_joint    # PCM 联合仲裁
+pcm_slot_grid  # Slot 网格（替代手动改 constitution.yaml）
+```
+
+### 3) 研究管线（slow 慢模式：季度结构 + 月度阈值 — 上线前完整验证）
+
+```bash
+mlbot pipeline run --all \
+  --config config/prod_train_pipeline_2h_slow_bpc_only.yaml \
+  --stage rolling_sim 2>&1 | tee log.bpc.slow.txt
+
+# 单月复盘（调试用）
+mlbot pipeline run --all \
+  --config config/prod_train_pipeline_2h_slow_bpc_only.yaml \
+  --stage fast_month --month 2024-09
+```
+
+### 4) 事件回测（Event Backtest）
+
+> 用真实 1min bar 逐笔触发信号，与实盘时序严格对齐；支持 execution 参数 grid search。
+
+```bash
+# A. 走 pipeline（最省事，会自动跑 execution 优化并写回 archetypes/execution.yaml）
+mlbot pipeline run --all \
+  --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml \
+  --stage event_backtest --skip-shap
+
+# B. 直接跑单次 event_backtest（最快）
+python scripts/event_backtest.py \
+  --strategy bpc,me,tpc,srb,crf \
+  --start-date 2024-01-01 --end-date 2026-03-01 \
+  --strategies-root config/strategies \
+  --data-path data/parquet_data \
+  --fast
+
+# C. 对已有实验重放（不重训，带交易地图）
+mlbot pipeline event-backtest \
+  --strategy bpc --hash 20260313_234448 \
+  --sym-r 1.0:0.5:4.0 --promote    # 同步网格优化 execution，并写回实验目录
+```
+
+### 5) 慢管线产物对比（`slow_candidate_report.py`）
+
+> 当 slow pipeline 跑完后，用这组命令把「每月 Prefilter/Gate/EF 选了什么 / 和 turbo 基线的差异 / 月度 R delta」一张表产出来，**无需重跑**。
+
+```bash
+RUN=results/bpc/slow-rolling-sim/_rolling_sim/20260423_223716
+BASE=results/bpc/turbo-rolling-sim/_rolling_sim/<turbo_ts>
+OUT=results/bpc/slow_candidate_reports/${RUN##*/}
+mkdir -p "$OUT"
+
+PYTHONPATH=. python3 scripts/slow_candidate_report.py review \
+  --slow-run-dir "$RUN" --baseline-run-dir "$BASE" \
+  --strategy bpc --output "$OUT/review.md"
+
+# 其他子命令：manifest / drift / digest / consensus
+```
+
+### 6) Adopt & Deploy（研究 → 实盘）
+
+```bash
+# 列出历史实验 + 决策（ADOPT/REJECT）
+mlbot pipeline list --all
+mlbot pipeline list --strategy bpc
+
+# 采纳指定实验（把该实验的 config 写回 config/strategies/<name>/）
+mlbot pipeline adopt 20260313_234448 --strategy bpc
+
+# 研究仓 → 实盘 highcap
+python scripts/deploy_config_to_live.py --diff --strategy bpc
+python scripts/deploy_config_to_live.py --deploy --strategy bpc --git-commit
+```
+
+### 7) （可选）最终验收 & 最终训练模型
+
+> 这两条命令对应 **nnmultihead / 传统 tree 最终模型的单次一致性验收**，**不是日常 rolling_sim 的替代**；日常研究用 §2-§5 的 rolling 工作流即可。
+
+```bash
+# 6 个月 Holdout 验收（只验收，不调参）
+mlbot diagnose holdout-eval \
+  --config config/strategies/bpc \
+  --symbol BTCUSDT --timeframe 120T \
+  --train-start-date 2024-01-01 \
+  --holdout-start-date 2025-10-01 \
+  --holdout-end-date 2026-03-31 \
+  --output-root results/holdout_eval --deterministic --no-docker
+
+# 全窗训练最终模型
+mlbot train final \
+  --config config/strategies/bpc \
+  --symbol BTCUSDT --timeframe 120T \
+  --start-date 2024-01-01 --end-date 2026-03-31 \
+  --output-root models --deterministic --no-docker
+```
+
+### 8) 近期实验 & 分支路径（可选；不含 Nautilus — 已弃用）
+
+#### 8.1 盒子特征（`box_structure_f`）+ CRF 立项
+
+> 基础设施：`src/features/time_series/box_structure_features.py`（因果、滚动，26 列 `box_*`）  
+> 诊断脚本（oracle vs causal 对照）：`scripts/diag_consolidation_structure.py --mode {oracle,causal}`  
+> 方法与结论文档：
+> - `docs/z实验_005_统一研究/box_features_causal_vs_oracle_20260424.md`
+> - `docs/z实验_005_统一研究/CRF_CBC_structure_diagnosis_20260424.md`
+
+CRF 策略跑法（box-based 双向均值回归）：
+
+```bash
+mlbot feature-store build --no-docker \
+  --config config/strategies/crf \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-groups highcap \
+  --timeframe 120T \
+  --start-date 2023-01-01 --end-date 2026-03-01 --warmup-months 6
+
+mlbot pipeline run --all \
+  --config config/prod_train_pipeline_2h_turbo_crf_only.yaml \
+  --stage rolling_sim --skip-shap 2>&1 | tee log.crf.txt
+```
+
+SRB / BPC / ME 已把 `box_*` 作为 prefilter 草稿（`locked: false`），跑现有 turbo 管线即可生效。
+
+#### 8.2 Pool-B + 语义组特征搜索（分支，非主线）
 
 ```bash
 mlbot diagnose poolb-semantic-search \
-  --strategies <strategy_dir_name> \
-  --tag <TAG> \
-  --symbol BTCUSDT --timeframe 240T \
+  --strategies bpc \
+  --symbol BTCUSDT --timeframe 120T \
   --start-date 2024-01-01 --end-date 2025-04-30 \
-  --search-algo pipeline \
-  --expand-semantic-singletons \
-  --regen-poolb --rerun-search \
+  --search-algo pipeline --expand-semantic-singletons \
+  --regen-poolb --rerun-search
 ```
 
-#### A/B/C 预算预设（推荐工作流：A → B → C）
+> 详细 A/B/C 预算预设见 `docs/archive/guides/tree/FEATURE_GROUP_SEARCH_PRESETS_CN.md`。
 
-这个命令固定执行 **最稳** 的 staged 工作流（你不需要再手动串 A/B/C）：
+#### 8.3 Locked 阈值调参（分支工具）
 
-- **Pool‑B**：先生成候选因子池（factor-eval → `features_pool_b.yaml`）
-- **Stage A**：preset A（快筛）→ 自动导出 shortlist
-- **Stage B**：preset B（收敛）→ 自动导出 shortlist
-- **Stage C**：preset C（最终验收）→ 输出最终 `features_suggested_*_C.yaml`
-
-你只需要记住这一条命令即可；详细说明见：
-
-- `docs/archive/guides/tree/FEATURE_GROUP_SEARCH_PRESETS_CN.md`
-  - 性能加速（Fast Mode / 频谱拆分 / 月度并行）：见该文档第 6 节
-  - 特征按计算复杂性分层（先易后难、逐层解锁）：`docs/architecture/guides/FEATURE_COMPLEXITY_LAYERS_CN.md`
-
-> 重要补充：Stage B / C 写回的 `features_suggested_*.yaml` **是可直接喂给模型训练/回测的候选特征配置**；  
-> 但“可用 ≠ 可上线”，合并/上线前建议用 holdout/rolling/多标的/Nautilus 做验收门禁。  
-> 具体命令与解释见 `docs/archive/guides/tree/FEATURE_GROUP_SEARCH_PRESETS_CN.md` 的 “B/C 输出能不能直接用？（以及为什么还要验收/门禁）”。
-
-### 2) 最终验收：6 个月 Holdout（只验收，不再调参）
+> 保持 locked 语义特征不变，只扫阈值；多窗口滚动评分。
 
 ```bash
-mlbot diagnose holdout-eval \
-  --config config/strategies/<strategy> \
-  --symbol BTCUSDT --timeframe 240T \
-  --train-start-date 2024-01-01 \
-  --holdout-start-date 2025-05-01 \
-  --holdout-end-date 2025-10-31 \
-  --output-root results/holdout_eval \
-  --deterministic \
-  --no-docker
+python scripts/tune_locked_prefilter_thresholds.py \
+  --strategy bpc \
+  --end-dates 2025-10-01,2025-11-01,2025-12-01,2026-01-01,2026-02-01,2026-03-01 \
+  --min-trades-target 60 --trade-penalty 0.002
 ```
 
-### 3) 上线产物：训练最终模型（全窗训练）
+> 当 `prefilter.yaml` 有 `locked: true` 规则时，`mlbot pipeline run` 会自动触发；缓存在 `results/locked_tuning/cache/`，加 `--disable-auto-locked-tuning` 可关闭。
 
-```bash
-mlbot train final \
-  --config config/strategies/<strategy> \
-  --symbol BTCUSDT --timeframe 240T \
-  --start-date 2024-01-01 \
-  --end-date 2025-10-31 \
-  --output-root models \
-  --deterministic \
-  --no-docker
-```
-
-### 4) （可选）rolling / Nautilus
-
-- rolling：用于**跨月稳定性验证**与**上线后监控**（见 `docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md`）
-  - 说明：`poolb-semantic-search` 不是 rolling；它是在**单个训练窗 + 单个测试窗**（time split + 多 seed）上做特征搜索/收敛。
-- **事件回测与实盘对齐（主线）**：`scripts/event_backtest.py` + `docs/architecture/event_drive_backtest/`；实盘管线见 `docs/architecture/live_stream/README.md`。可选：`mlbot backtest nautilus`（见下文命令，非默认主路径）。
-
-**Nautilus MetaRouter 事件回测（本地数据 / 多币）**
-
-```bash
-mlbot backtest nautilus \
-  --symbols BTCUSDT,ETHUSDT \
-  --timeframe 240T \
-  --start-date 2020-01-01 --end-date 2020-01-02 \
-  --trade-size 0.001 \
-  --output-dir results/backtest_smoke_multi \
-  --max-files 1 \
-  --no-docker
-```
-
-**Nautilus 事件抽样回测（vectorbt 选点 → Nautilus 只跑窗口）**
-
-先把 vectorbt trades 导出为 json/csv（包含 `Entry Timestamp` 或 `entry_time` 列），然后生成窗口：
-
-```bash
-# 第一步：从 vectorbt 回测产物导出 trades.json（不用手工拼）
-mlbot diagnose export-vectorbt-trades \
-  --artifacts-dir results/strategies/sr_reversal_long/BTCUSDT \
-  --out results/backtest/vectorbt_trades.json \
-  --no-docker
-```
-
-```bash
-# 第二步：把 trades 转成“回放窗口”列表（前后扩展 pre/post，必要时合并重叠窗口）
-mlbot diagnose backtest-time-windows \
-  --trades results/backtest/vectorbt_trades.json \
-  --out results/backtest/time_windows.json \
-  --pre-minutes 480 \
-  --post-minutes 480 \
-  --default-symbol BTCUSDT \
-  --merge-overlap \
-  --no-docker
-```
-
-然后用 Nautilus 只回放这些窗口：
-
-```bash
-mlbot backtest nautilus \
-  --symbols BTCUSDT,ETHUSDT \
-  --timeframe 240T \
-  --start-date 2020-01-01 --end-date 2020-01-02 \
-  --trade-size 0.001 \
-  --time-windows-json results/backtest/time_windows.json \
-  --output-dir results/backtest_smoke_windows \
-  --no-docker
-```
-> 说明：即使提供了 `--time-windows-json`，当前实现仍要求给出 `--start-date/--end-date` 用于框定全局回测区间；
-> 真正的数据过滤由窗口列表完成。`trade-size` 目前仍是 CLI 参数（后续可以迁移到 live config / yaml）。
-
-**Nautilus Adapter 数据流（testnet）**
-
-先把 testnet key 放到本地文件（已默认忽略）：
-
-```bash
-source config/local/env.testnet
-```
-
-然后运行：
-
-```bash
-mlbot backtest nautilus \
-  --symbols BTCUSDT,ETHUSDT \
-  --timeframe 240T \
-  --start-date 2020-01-01 --end-date 2020-01-02 \
-  --trade-size 0.001 \
-  --output-dir results/backtest_smoke_adapter \
-  --max-files 1 \
-  --use-adapter-data \
-  --adapter-testnet \
-  --adapter-account-type USDT_FUTURES \
-  --env-file config/local/env.testnet \
-  --no-docker
-```
-> 说明：`--max-files` 用于本地 parquet 的“抽样加载”（smoke 级别），只读前 N 个文件，加速验证链路。
-
-**Nautilus Adapter 数据流（live）**
-
-```bash
-source config/local/env.live
-```
-
-```bash
-mlbot backtest nautilus \
-  --symbols BTCUSDT,ETHUSDT \
-  --timeframe 240T \
-  --start-date 2020-01-01 --end-date 2020-01-02 \
-  --trade-size 0.001 \
-  --output-dir results/backtest_smoke_adapter_live \
-  --max-files 1 \
-  --use-adapter-data \
-  --adapter-account-type USDT_FUTURES \
-  --env-file config/local/env.live \
-  --no-docker
-```
-
----
-
-## TaskSpec 驱动的 Tier0/Tier1 对比（nnmultihead）
+#### 8.4 TaskSpec 驱动的 Tier0/Tier1 对比（nnmultihead，分支）
 
 你问的“Tier0/Tier1 会如何影响训练？是不是跑两次看报告？”——**是的**，但需要做到两点才能可复盘：  
 1) 每个 Tier 生成一个**具体可执行的 config 目录**（不直接靠“标签”）  
 2) 用各自 config 训练出 model，再用统一流程评估（A-layer + system/e2e）  
 
-### 1) 先从 TaskSpec 生成派生 config（让 tiers 变成真实 features.yaml）
+##### 1) 先从 TaskSpec 生成派生 config（让 tiers 变成真实 features.yaml）
 
 ```bash
 mlbot nnmultihead materialize-config-from-task-spec --no-docker \
@@ -328,7 +395,7 @@ mlbot nnmultihead materialize-config-from-task-spec --no-docker \
 
 > `task_spec.yaml` 里通过 `feature_plan.tiers_enabled` + `tier_feature_files` 显式定义 Tier0/Tier1 的 feature nodes 列表。  
 
-### 2) 训练（TaskSpec-only：命令会自动 materialize 派生 config）
+##### 2) 训练（TaskSpec-only：命令会自动 materialize 派生 config）
 
 ```bash
 mlbot nnmultihead train --no-docker \
@@ -336,7 +403,7 @@ mlbot nnmultihead train --no-docker \
   --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT
 ```
 
-### 3) 跑主链路评估（predict → router → build-logs → e2e）（TaskSpec-only）
+##### 3) 跑主链路评估（predict → router → build-logs → e2e）（TaskSpec-only）
 
 ```bash
 mlbot nnmultihead pipeline-3action-e2e --no-docker \
@@ -351,7 +418,7 @@ mlbot nnmultihead pipeline-3action-e2e --no-docker \
 
 > **详细工作流文档**: 完整的命令序列、Gate 过滤说明、ET/FR 交易缺失原因分析等，见 [`docs/workflow/PIPELINE_WORKFLOW.md`](docs/workflow/PIPELINE_WORKFLOW.md)
 
-#### 完整Pipeline工作流（固定流程）
+##### 完整 NN Pipeline 工作流（固定流程）
 
 **推荐使用一键脚本**（见 `scripts/run_full_pipeline.py`）：
 
@@ -381,7 +448,7 @@ python scripts/run_full_pipeline.py \
 
 详细命令和说明见 [`docs/workflow/PIPELINE_WORKFLOW.md`](docs/workflow/PIPELINE_WORKFLOW.md)
 
-### 3.1) Router 阈值：用“平坦高原”协议做稳健调参（推荐）
+##### 3.1) Router 阈值：用"平坦高原"协议做稳健调参
 
 > 目的：避免“找尖峰”导致的炼丹，优先选多窗口/bootstrapped 都稳的阈值组合。  
 > 详细解释见：`docs/architecture/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`
@@ -449,7 +516,7 @@ mlbot nnmultihead pipeline-3action-e2e --no-docker \
   --out results/nnmh_e2e/tier01_tuned
 ```
 
-### 3.2) 灭绝回放（Extinction Replay）：产出 survival labels（给 Survival Head / 熄火复燃验证）
+##### 3.2) 灭绝回放（Extinction Replay）：产出 survival labels
 
 > 目的：把 “在极端路径里会不会死” 变成可回放、可产物、可训练的标签（`labels.parquet`）。
 > 对应长文：`docs/archive/architecture/archetype灭绝级回测.md`、`docs/archive/leagcy/ood头的训练.md`
@@ -460,7 +527,7 @@ mlbot diagnose extinction-replay-3action --no-docker \
   --out  results/extinction_replay/tier01_v1
 ```
 
-### 3.3) 训练 Survival Head（MLP）：产出 survival_prob（给 size cap / 熄火复燃）
+##### 3.3) 训练 Survival Head（MLP）：产出 survival_prob
 
 > 输入：`logs_3action.parquet` + 上一步产出的 `labels.parquet`  
 > 输出：`model.pt` + `survival_preds.parquet` + `report.html`（含 ROC/PR/Calibration 曲线）
@@ -472,7 +539,7 @@ mlbot diagnose survival-head-train --no-docker \
   --out    results/survival_head/tier01_v1
 ```
 
-### 3.4) Conditional Survival Table：学习 OOD → Archetype 生存权重（baseline）
+##### 3.4) Conditional Survival Table：学习 OOD → Archetype 生存权重
 
 > 目的：先用最稳的“表格基线”学习 `survival_rate(archetype | ood_bin)`，并导出可部署的 `weights.yaml`。  
 > 备注：需要 `logs_3action.parquet` 中存在 `ood_score` 与 `active_archetype` 列（通常来自 LiveDashboard/Router 产物合并）。
@@ -513,11 +580,18 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
 
 > **📚 统一文档索引**: [docs/README.md](docs/README.md) - 推荐从这里开始浏览所有文档
 
+### ⭐ 日常研究必备（最新）
+
+- **`docs/z实验_005_统一研究/A快速启动命令.md`** — 最完整的命令手册：数据下载 / Feature Store / pipeline run 所有 stage / 事件回测 / 滚动多窗口 / locked 阈值调优工具
+- **`docs/z实验_005_统一研究/实施文档_01_2024牛市_5x趋势骑乘.md`** — 2024 牛市 5x 趋势骑乘实验：turbo 快模式（只调阈值）/ slow 模式 / event_backtest / FS 问题修复 / adopt-deploy 流程
+- **`docs/z实验_005_统一研究/box_features_causal_vs_oracle_20260424.md`** — 盒子结构特征（`box_*`）的因果 vs oracle 对照
+- **`docs/z实验_005_统一研究/CRF_CBC_structure_diagnosis_20260424.md`** — CRF/CBC 策略结构诊断
+
 ### 核心工作流文档
 
 - **上线 MVP 闭环（树模型，已归档）**：[docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md](docs/archive/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md)（当前主线见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)）
   - Pool‑B + 语义组搜索 → 6 个月 holdout 验收 → 训练最终上线模型
-  - rolling 与 Nautilus 的职责边界（OOS vs 实盘一致性）
+  - rolling 与事件回测的职责边界（OOS vs 实盘一致性）
 
 - **多资产合约实盘落地路线图（从 1w→10w 的可执行路线，低维护）**：`docs/archive/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`
 - **ETH 拖累处理与 Universe 演进**：仓库内暂无独立文档（若需可从 Git 历史检索 `ETH_DRAG_AND_UNIVERSE_EVOLUTION_CN`）

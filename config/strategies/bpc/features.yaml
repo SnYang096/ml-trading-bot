@@ -94,6 +94,7 @@ feature_pipeline:
     # ========== 基础 ==========
     - sma_200_f
     - ema_1200_position_f     # 宏观 EMA1200 相对位置 (direction 级联)
+    - ema_1200_slope_f        # 10-bar EMA1200 斜率；slope × side 对齐，aligned 多赚 +1.6R/trade
     - macro_tp_vwap_1200_position_f  # 典型价滚动 VWAP 1200 根 (direction 级联)
     - jump_risk_pct_f         # 跳空风险分位
 

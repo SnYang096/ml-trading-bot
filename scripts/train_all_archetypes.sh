@@ -25,7 +25,7 @@ FS_ROOT="feature_store"
 FS_LAYER_4H="unified_4h_2023_2025"
 FS_LAYER_1H="unified_1h_2023_2025"
 FS_LAYER_15M="unified_15m_2023_2025"
-OUTPUT_ROOT="z实验_005_统一研究/reports/train_$(date +%Y%m%d_%H%M%S)"
+OUTPUT_ROOT="docs/z实验_005_统一研究/reports/train_$(date +%Y%m%d_%H%M%S)"
 
 echo "================================================================"
 echo "  四 Archetype 全量训练"

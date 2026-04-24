@@ -7,7 +7,7 @@
 #   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_me_only.yaml --stage fast_month --month 2024-09
 #
 # ── 回测月份要落在 2024-01 ~ 2024-12（12 个自然月）时 dates 怎么设 ──
-#   • rolling_sim 枚举的月份 = holdout_start 所在月 ～ end_date 所在月（见 z实验_005_统一研究/ROLLING_SIM_TIME_WINDOWS_CN.md）
+#   • rolling_sim 枚举的月份 = holdout_start 所在月 ～ end_date 所在月（见 docs/z实验_005_统一研究/ROLLING_SIM_TIME_WINDOWS_CN.md）
 #   • end_date 用年末: "2024-12-31"
 #   • holdout_months 须为 11（不是 12）: compute_holdout_start(2024-12-31, 11) → 2024-01-01；
 #     若写成 12 会得到 2023-12-01，多滚一个月 2023-12。

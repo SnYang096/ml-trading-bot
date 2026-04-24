@@ -330,6 +330,8 @@ FEATURE_MODULES = [
     "src.features.time_series.fer_features",
     # SRB (Structural breakout success near SR) features
     "src.features.time_series.srb_features",
+    # Box-structure (consolidation detector) features
+    "src.features.time_series.box_structure_features",
     # Session & Microstructure features
     "src.features.time_series.session_features",
 ]

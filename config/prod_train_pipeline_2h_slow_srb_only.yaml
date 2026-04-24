@@ -6,7 +6,7 @@
 #   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_srb_only.yaml --stage rolling_sim
 #   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_srb_only.yaml --stage train_final
 #
-# 家族对照: z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB_RMR.md
+# 家族对照: docs/z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB_RMR.md
 # ============================================================
 
 dates:

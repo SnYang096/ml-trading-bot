@@ -25,8 +25,9 @@ optimization:
 stop_loss:
   breakeven:
     enabled: true
-    lock_profit_atr: 0.75
     trigger_r: 2.5
+    lock_level_r: 0.75
+    measure: atr
   initial_r: 3.0
   guardrails:
     min_stop_pct: 0.006

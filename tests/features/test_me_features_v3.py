@@ -93,10 +93,11 @@ class TestMECoreFunction:
         "me_volume_surge",
         "me_volume_accel",
         "me_delta_net_flow",
+        "me_semantic_chop",
     ]
 
     def test_basic_output(self, sample_data):
-        """11 个输出列全部存在"""
+        """核心输出列（含 me_semantic_chop）全部存在"""
         df, cvd, delta = sample_data
         result = compute_momentum_expansion_soft_phase_from_series(
             close=df["close"],
@@ -134,6 +135,7 @@ class TestMECoreFunction:
             "me_cvd_strength",
             "me_volume_surge",
             "me_volume_accel",
+            "me_semantic_chop",
         ]
         for col in bounded_01:
             vals = result[col].dropna()
@@ -245,6 +247,31 @@ class TestMECoreFunction:
         assert (result["me_cvd_strength"] == 0.5).all()
         # Delta 相关应为 0
         assert (result["me_delta_net_flow"] == 0.0).all()
+        # 无 BB 宽度输入时 chop 语义退化为 0（不触发 gate）
+        assert (result["me_semantic_chop"] == 0.0).all()
+
+    def test_me_semantic_chop_with_bb_width(self, sample_data):
+        """有 bb_width_normalized 时 me_semantic_chop ∈ [0,1] 且与 BPC 同构公式一致。"""
+        df, cvd, delta = sample_data
+        bb_w = pd.Series(0.3, index=df.index)
+        result = compute_momentum_expansion_soft_phase_from_series(
+            close=df["close"],
+            high=df["high"],
+            low=df["low"],
+            volume=df["volume"],
+            atr=df["atr"],
+            cvd_change_5=cvd,
+            delta=delta,
+            bb_width_normalized=bb_w,
+        )
+        chop = result["me_semantic_chop"].dropna()
+        assert chop.min() >= -1e-9
+        assert chop.max() <= 1 + 1e-9
+        bb_c = (1.0 - bb_w).clip(0, 1)
+        dis = (1.0 - result["me_multi_tf_alignment"]).clip(0, 1)
+        expected = (bb_c * dis * 2.0).clip(0, 1)
+        diff = (chop - expected).abs().max()
+        assert diff < 1e-9, f"me_semantic_chop formula mismatch max_diff={diff}"
 
     def test_acceleration_not_trend(self, sample_data):
         """稳定趋势中加速度应接近 0"""

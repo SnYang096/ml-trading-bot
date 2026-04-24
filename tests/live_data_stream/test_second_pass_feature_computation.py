@@ -488,6 +488,9 @@ class TestMESoftPhaseNeedsAtr:
         assert "atr" in (
             me_sp.get("required_columns") or []
         ), "me_soft_phase_f 的 required_columns 应包含 atr"
+        assert "bb_width_normalized_pct_f" in (
+            me_sp.get("dependencies") or []
+        ), "me_soft_phase_f 应依赖 bb_width_normalized_pct_f 以计算 me_semantic_chop"
 
 
 class TestBpcSoftPhaseSecondPassIntegration:

@@ -1,0 +1,26 @@
+# CRF entry filter — 在 prefilter + direction 都通过之后，
+# 还要确认边缘触达的"衰竭感"，避免在突破瞬间做反向。
+
+filters:
+  - id: crf_edge_exhaustion
+    enabled: true
+    locked: false
+    description: "边缘衰竭确认：靠近 box 边沿时 FER 失败信号抬头"
+    conditions:
+      - feature: fer_fer_composite_score
+        operator: ">="
+        value: 0.30
+
+  - id: crf_not_breaking_out
+    enabled: true
+    locked: true
+    description: "拒绝刚刚破出盒子的 bar（避免反向追杀 box_breakout_up/down=1 的情形）"
+    conditions:
+      - feature: box_breakout_up
+        operator: "=="
+        value: 0
+      - feature: box_breakout_down
+        operator: "=="
+        value: 0
+
+combination_mode: and

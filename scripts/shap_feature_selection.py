@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SHAP Walk-Forward 特征稳定性筛选 — 自动裁剪不稳定特征
 
-设计文档: z实验_005_统一研究/SHAP特征筛选方案.md
+设计文档: docs/z实验_005_统一研究/SHAP特征筛选方案.md
 
 核心算法:
   1. 按时间切 N 个 fold

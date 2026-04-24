@@ -11,9 +11,12 @@ feature_pipeline:
   exclude_columns:
     - atr
   # 永不调度这些特征模块（即使误写回 requested_features 也会在 loader 中扣减）
-  forbidden_requested_features:
-    - oi_scene_semantic_scores_f
+  forbidden_requested_features: []
   # meta-prefilter（analyze_archetype_feature_stratification）候选列按列名剔除，不禁用模块本身
+  # ⚠️ 单调语义反向的拦截已经由 config/strategies/me/semantic_polarity.yaml + scripts/meta_algorithm_unified 处理,
+  #    meta sweep 阶段会直接跳过与 polarity 冲突的方向, me_volume_surge 和 dollar_volume_over_mcap 物理上不会再被
+  #    选成 <= 阈值. 本黑名单只保留无法用单调 polarity 表达的特征:
+  #   - me_vol_regime: 类别型 regime 标签, 不是单调特征, 不适合 polarity, 保留黑名单
   forbidden_prefilter_meta_columns:
     - me_vol_regime
   requested_features:
@@ -93,6 +96,9 @@ feature_pipeline:
 
     # ========== OI (期货持仓量) ==========
     - oi_features_f
+    # OI 场景语义（compression/ignition/absorption/exhaustion）；与 oi_features_f 互补。
+    # 风险：元算法在 prefilter 阶段曾倾向选 oi_* 语义列，与部分急涨段统计冲突 — 见 features_prefilter.yaml 注释；若 rolling 漏斗异常可再列入 forbidden。
+    - oi_scene_semantic_scores_f
 
     # ========== GARCH 波动率建模 ==========
     - volatility_regime_f
@@ -106,6 +112,7 @@ feature_pipeline:
     - macro_tp_vwap_1200_position_f
     # direction: EMA1200 替代 VWAP1200 带通（与 BPC 对齐，统计显示 EMA 在分歧时更准确）
     - ema_1200_position_f
+    - ema_1200_slope_f        # 10-bar EMA1200 斜率；slope × side 对齐过滤（2026-04 分析支持）
     # direction bypass：极强 accel 或三连 K 同侧 → 绕过带通
     - me_vwap_structure_bypass_f
 

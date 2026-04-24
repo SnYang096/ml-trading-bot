@@ -4347,6 +4347,26 @@ def compute_sma_slope_from_series(*, sma_200: pd.Series, window: int = 5) -> pd.
     return out
 
 
+@register_feature("compute_ma_slope_from_series", category="baseline")
+def compute_ma_slope_from_series(
+    *,
+    ma: pd.Series,
+    window: int = 10,
+    output_column: str = "ma_slope",
+) -> pd.DataFrame:
+    """Generic N-bar MA slope, normalized by current MA level.
+
+    slope_t = (ma_t - ma_{t-window}) / ma_t
+
+    Used by ``ema_1200_slope_f`` (with column_mappings: ma=ema_1200).
+    """
+    ma_series = pd.to_numeric(ma, errors="coerce").astype(float)
+    ma_diff = ma_series.diff(window)
+    ma_safe = ma_series.replace(0, np.nan)
+    slope = (ma_diff / ma_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return pd.DataFrame({output_column: slope}, index=ma.index)
+
+
 @register_feature("compute_sma_position_from_series", category="baseline")
 def compute_sma_position_from_series(
     *,

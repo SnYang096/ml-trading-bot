@@ -37,8 +37,8 @@
 
 **报告（实验笔记）：**
 
-- `z实验_008_lottery/`（归档 v1–v4 杠杆容量文档，见该目录 `README.md`）
-- 亦保留于 `z实验_007_lv/` 中 v1–v3 副本（与 008 同步复制）
+- `docs/z实验_008_lottery/`（归档 v1–v4 杠杆容量文档，见该目录 `README.md`）
+- 亦保留于 `docs/z实验_007_lv/` 中 v1–v3 副本（与 008 同步复制）
 
 **数值产物：** 历史运行仍可能在 `reports/leverage_capacity_v2/` 等旧路径；**bundle 默认输出**为 **`results/lottery100_bundle/`**（v4 子目录 + `bplus/` + `summary_bundle.json`）。
 
@@ -63,7 +63,7 @@
 ## 5. B+ 回测（交易级 PnL / 资金曲线）
 
 从杠杆容量 parquet 对齐 FS 收盘价，机械执行「开仓 bar 收盘 → 持有 H 根 → 平仓收盘」，输出 `trades.csv`、`equity_curve.csv`。  
-脚本 **`scripts/lottery_backtest_bplus.py`**，默认配置 **`config/strategies/bad-candidates/lottery100/backtest_bplus.yaml`**；口径说明见 **`z实验_008_lottery/B+回测说明.md`**。
+脚本 **`scripts/lottery_backtest_bplus.py`**，默认配置 **`config/strategies/bad-candidates/lottery100/backtest_bplus.yaml`**；口径说明见 **`docs/z实验_008_lottery/B+回测说明.md`**。
 
 ## 6. 后续建议（维护者）
 

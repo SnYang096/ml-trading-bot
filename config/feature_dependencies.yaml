@@ -6062,6 +6062,26 @@ features:
     column_mappings:
       close: close
       ma: ema_1200
+  ema_1200_slope_f:
+    module: baseline
+    compute_func: compute_ma_slope_from_series
+    dependencies:
+    - ema_1200_value_f
+    required_columns:
+    - ema_1200
+    output_columns:
+    - ema_1200_slope_10
+    category: trend
+    description: '10-bar EMA(1200) slope, normalized by current level. Macro trend direction + strength; aligns with ema_1200_position for trend strategies (TPC/ME/BPC).'
+    pass_full_df: false
+    compute_params:
+      window: 10
+      output_column: ema_1200_slope_10
+      normalized: true
+      output_normalization_map:
+        ema_1200_slope_10: bounded_-1_1
+    column_mappings:
+      ma: ema_1200
   macro_tp_vwap_1200_position_f:
     module: baseline
     compute_func: compute_typical_price_vwap_position_from_series
@@ -7975,6 +7995,90 @@ features:
       direction_to_nearest_sr: direction_to_nearest_sr
 
   # ---------------------------------------------------------------------------
+  # Box-structure (causal consolidation-box detector) features
+  # Shared infrastructure: used by CRF (entry), SRB/BPC/ME (prefilter upgrades).
+  # ---------------------------------------------------------------------------
+  box_structure_f:
+    module: box_structure
+    compute_func: compute_box_structure_from_series
+    dependencies:
+    - atr_f
+    required_columns:
+    - close
+    - high
+    - low
+    output_columns:
+    - box_hi_60
+    - box_lo_60
+    - box_width_pct_60
+    - box_pos_60
+    - box_stability_60
+    - box_touches_hi_60
+    - box_touches_lo_60
+    - box_hi_120
+    - box_lo_120
+    - box_width_pct_120
+    - box_pos_120
+    - box_stability_120
+    - box_touches_hi_120
+    - box_touches_lo_120
+    - box_hi_240
+    - box_lo_240
+    - box_width_pct_240
+    - box_pos_240
+    - box_stability_240
+    - box_touches_hi_240
+    - box_touches_lo_240
+    - box_compression_score
+    - box_regime_label
+    - box_breakout_up
+    - box_breakout_down
+    - box_prior_trend_sign
+    category: box_structure
+    description: >-
+      Causal consolidation-box detector on three windows (60/120/240 2H bars):
+      rolling hi/lo, width, position, stability, edge touches, plus compression
+      score, regime label (small/mid/big/none), breakout flags (from the 120
+      window), and prior-trend sign. Shared feature feeding CRF and the
+      srb/bpc/me prefilter upgrades.
+    pass_full_df: false
+    compute_params:
+      atr_period: 14
+      trend_window: 60
+      output_normalization_map:
+        box_hi_60: price_unit
+        box_lo_60: price_unit
+        box_hi_120: price_unit
+        box_lo_120: price_unit
+        box_hi_240: price_unit
+        box_lo_240: price_unit
+        box_width_pct_60: bounded_0_1
+        box_width_pct_120: bounded_0_1
+        box_width_pct_240: bounded_0_1
+        box_pos_60: bounded_0_1
+        box_pos_120: bounded_0_1
+        box_pos_240: bounded_0_1
+        box_stability_60: bounded_0_1
+        box_stability_120: bounded_0_1
+        box_stability_240: bounded_0_1
+        box_touches_hi_60: count
+        box_touches_lo_60: count
+        box_touches_hi_120: count
+        box_touches_lo_120: count
+        box_touches_hi_240: count
+        box_touches_lo_240: count
+        box_compression_score: bounded_0_10
+        box_regime_label: categorical
+        box_breakout_up: bounded_0_1
+        box_breakout_down: bounded_0_1
+        box_prior_trend_sign: bounded_-1_1
+    column_mappings:
+      close: close
+      high: high
+      low: low
+      atr: atr
+
+  # ---------------------------------------------------------------------------
   # ME (MomentumExpansion) v3.0 - Energy × Acceleration × Participation
   # ---------------------------------------------------------------------------
   me_soft_phase_f:
@@ -8309,6 +8413,13 @@ raw_scale_columns:
     - wpt_price_trend
     - wpt_price_fluctuation
     - wpt_price_reconstructed
+    # Box-structure rolling hi/lo (raw price levels)
+    - box_hi_60
+    - box_lo_60
+    - box_hi_120
+    - box_lo_120
+    - box_hi_240
+    - box_lo_240
 
   # --- 原始资金流 / delta ---
   raw_flow:

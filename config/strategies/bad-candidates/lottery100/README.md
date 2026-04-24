@@ -16,7 +16,7 @@
 - **Archetypes（与 BPC 同契约）**：`archetypes/*.yaml` — 供 **`event_backtest` / `GenericLiveStrategy`** 与 **`--adopt`** 使用；说明见 **`archetypes/README.md`**
 - **串联执行（主）**：`python scripts/auto_research_pipeline.py --strategy lottery100 --config config/prod_train_pipeline_2h_lottery100.yaml`（识别 **`strategy_family: lottery100`**，Feature Store → event_backtest → 写入实验目录 `execution.yaml`；产物在 **`results/research_history/.../results/lottery100_event/`**）
 - **串联执行（离线研究）**：`python scripts/run_lottery_research_bundle.py --config config/prod_train_pipeline_2h_lottery100.yaml` → **`results/lottery100_bundle/`**
-- **实验笔记归档**：`z实验_008_lottery/README.md`
+- **实验笔记归档**：`docs/z实验_008_lottery/README.md`
 
 ### 是否需要接 `research_pipeline`？
 
