@@ -157,8 +157,14 @@ strategies:
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
       entry_filter:
-        meta_algorithm: false
+        # Wave 2-E 验证: 打开 EF meta_algorithm 以验证 auto_research_pipeline
+        # 强制 upside_positive_rate_ratio 的路径. 原先关闭是因为 shopping
+        # 模式下规则漂移严重, 改走 archetype_plateau only. 现在单一方法固定,
+        # 打开 meta_algorithm 可以真正测试 Wave 2-E EF 路径.
+        meta_algorithm: true
         archetype_plateau: true
         significance_p: 0.10
         significance_min_trades: 4
@@ -172,6 +178,8 @@ strategies:
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true

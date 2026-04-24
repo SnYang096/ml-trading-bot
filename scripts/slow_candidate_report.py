@@ -990,6 +990,350 @@ def _render_matrix(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# review: 一键综合报告 = ΔR 排行 + 退步月诊断 + 候选特征建议
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _collect_fast_month_candidates(
+    slow_run_dir: Path, strategy: str, month: str
+) -> Dict[str, MethodCandidate]:
+    """Load per-method candidate dumps from fast_month_<M>/strategies_calibrated/.
+
+    Pipeline dumps candidates at
+      fast_month_<M>/strategies_calibrated/<strategy>/_candidates/method=<m>/
+    (same layout as slow_snapshot/<strategy>/_candidates/ but populated each
+    month, not just every cadence tick).
+    """
+    out: Dict[str, MethodCandidate] = {}
+    cand_root = (
+        slow_run_dir
+        / f"fast_month_{month}"
+        / "strategies_calibrated"
+        / strategy
+        / "_candidates"
+    )
+    if not cand_root.is_dir():
+        return out
+    for method_dir in sorted(cand_root.iterdir()):
+        if not method_dir.is_dir() or not method_dir.name.startswith("method="):
+            continue
+        method = method_dir.name.replace("method=", "", 1)
+        pf = _parse_prefilter_yaml(method_dir / "prefilter.yaml")
+        ef = _parse_entry_filters_yaml(method_dir / "entry_filters.yaml")
+        out[method] = MethodCandidate(
+            method=method, prefilter_rules=pf, entry_filters=ef
+        )
+    return out
+
+
+def _diagnose_month(md: MonthDiff) -> List[str]:
+    """Translate a MonthDiff into human-readable "why did slow regress" bullets."""
+    bullets: List[str] = []
+    pf = md.pf_rules_diff
+    gt = md.gate_rules_diff
+    ef = md.ef_filters_diff
+    if pf.added or pf.dropped or pf.changed:
+        if pf.dropped:
+            bullets.append(
+                f"Prefilter 丢了 {len(pf.dropped)} 条规则: "
+                + ", ".join(r.display() for r in pf.dropped[:3])
+                + ("…" if len(pf.dropped) > 3 else "")
+            )
+        if pf.added:
+            bullets.append(
+                f"Prefilter 新加 {len(pf.added)} 条: "
+                + ", ".join(r.display() for r in pf.added[:3])
+                + ("…" if len(pf.added) > 3 else "")
+            )
+        if pf.changed:
+            bullets.append(f"Prefilter 阈值移动 {len(pf.changed)} 条")
+    if gt.dropped or gt.added:
+        if gt.dropped:
+            bullets.append(
+                f"Gate 砍掉 {len(gt.dropped)} 条 baseline 规则 "
+                "(可能是 Gate 元算法在短 Val 上把它们踢出去了)"
+            )
+        if gt.added:
+            bullets.append(
+                f"Gate 替换为 {len(gt.added)} 条新规则: "
+                + ", ".join(r.display() for r in gt.added[:3])
+                + ("…" if len(gt.added) > 3 else "")
+            )
+    if ef.dropped or ef.added:
+        if ef.dropped:
+            bullets.append(
+                f"Entry Filter 砍掉 {len(ef.dropped)} 条 baseline filter "
+                "(元算法 require_positive_effect 没通过 → 成熟 locked filter 被推出)"
+            )
+        if ef.added:
+            bullets.append(
+                f"Entry Filter 新加 {len(ef.added)} 条: "
+                + ", ".join(f.display() for f in ef.added[:3])
+            )
+    if not bullets:
+        bullets.append("规则未变更 → 退步来自 fast_month 阈值标定或 baseline 行情差异")
+    return bullets
+
+
+def _vote_candidates(
+    candidates: Dict[str, MethodCandidate],
+    current_keys: Set[str],
+    pick: str,  # "prefilter" or "entry_filter"
+) -> Tuple[List[Tuple[Any, List[str]]], List[Tuple[Any, List[str]]]]:
+    """Vote rules/filters across methods; return (tier1_consensus, tier2_single)."""
+    key_votes: Dict[str, Tuple[Any, int, List[str]]] = {}
+    for method, mc in candidates.items():
+        items = mc.prefilter_rules if pick == "prefilter" else mc.entry_filters
+        for r in items:
+            if r.key in current_keys:
+                continue
+            if r.key not in key_votes:
+                key_votes[r.key] = (r, 0, [])
+            rule, votes, methods = key_votes[r.key]
+            key_votes[r.key] = (rule, votes + 1, methods + [method])
+    tier1: List[Tuple[Any, List[str]]] = []
+    tier2: List[Tuple[Any, List[str]]] = []
+    for _, (rule, votes, methods) in key_votes.items():
+        (tier1 if votes >= 2 else tier2).append((rule, methods))
+    tier1.sort(key=lambda x: x[0].key)
+    tier2.sort(key=lambda x: x[0].key)
+    return tier1, tier2
+
+
+def _recommend_features(
+    candidates: Dict[str, MethodCandidate],
+    current_pf: List[RuleSig],
+    current_ef: List[EntryFilterSig],
+    gate_new: Optional[List[GateRuleSig]] = None,
+    gate_dropped: Optional[List[GateRuleSig]] = None,
+) -> List[str]:
+    """Recommend Prefilter + Entry Filter + Gate candidates, separated by layer.
+
+    根据特征语义分工:
+      - Prefilter: 结构性/慢变 (形态锚点、chop 判定)
+      - Entry Filter: 事件性/快变 (订单流确认、flow quality)
+      - Gate: 风险过滤 (单方法 Youden's J, 无共识概念;
+             直接对比 slow vs baseline 的增减供人工审阅)
+    """
+    if not candidates and not gate_new and not gate_dropped:
+        return ["*(无 `_candidates/method=*/` dump, 无法推荐)*"]
+
+    pf_keys = {r.key for r in current_pf}
+    ef_keys = {f.key for f in current_ef}
+    pf_tier1, pf_tier2 = (
+        _vote_candidates(candidates, pf_keys, "prefilter") if candidates else ([], [])
+    )
+    ef_tier1, ef_tier2 = (
+        _vote_candidates(candidates, ef_keys, "entry_filter")
+        if candidates
+        else ([], [])
+    )
+
+    lines: List[str] = []
+
+    # Prefilter section
+    lines.append("*[Prefilter 候选]*")
+    if not pf_tier1 and not pf_tier2:
+        lines.append("  - *(无新增建议, 全部已在 Prefilter 中)*")
+    else:
+        if pf_tier1:
+            lines.append(f"  - **Tier 1 共识** ({len(pf_tier1)}):")
+            for rule, methods in pf_tier1[:5]:
+                lines.append(f"    - `{rule.display()}` ({', '.join(methods)})")
+        if pf_tier2:
+            lines.append(f"  - **Tier 2 单方法** ({len(pf_tier2)}):")
+            for rule, methods in pf_tier2[:3]:
+                lines.append(f"    - `{rule.display()}` ({methods[0]})")
+
+    # Entry Filter section
+    lines.append("*[Entry Filter 候选]*")
+    if not ef_tier1 and not ef_tier2:
+        lines.append("  - *(无新增建议, 全部已在 Entry Filter 中)*")
+    else:
+        if ef_tier1:
+            lines.append(f"  - **Tier 1 共识** ({len(ef_tier1)}):")
+            for f, methods in ef_tier1[:5]:
+                lines.append(f"    - `{f.display()}` ({', '.join(methods)})")
+        if ef_tier2:
+            lines.append(f"  - **Tier 2 单方法** ({len(ef_tier2)}):")
+            for f, methods in ef_tier2[:3]:
+                lines.append(f"    - `{f.display()}` ({methods[0]})")
+
+    # Gate section (single-method, diff-based)
+    lines.append("*[Gate 候选]* (单方法 Youden's J, 对比 slow vs baseline)")
+    if not gate_new and not gate_dropped:
+        lines.append("  - *(slow 与 baseline 的 Gate 集合一致)*")
+    else:
+        if gate_new:
+            lines.append(f"  - **Slow 新加** ({len(gate_new)}):")
+            for g in gate_new[:5]:
+                lines.append(f"    - `{g.display()}`")
+            if len(gate_new) > 5:
+                lines.append(f"    - …还有 {len(gate_new) - 5} 条")
+        if gate_dropped:
+            lines.append(
+                f"  - **Slow 砍掉 baseline** ({len(gate_dropped)}): 需人审是否应保留"
+            )
+            for g in gate_dropped[:5]:
+                lines.append(f"    - `{g.display()}`")
+            if len(gate_dropped) > 5:
+                lines.append(f"    - …还有 {len(gate_dropped) - 5} 条")
+    return lines
+
+
+def render_review(
+    slow_run_dir: Path,
+    baseline_run_dir: Path,
+    strategy: str,
+    attribution: str,
+    top_n: int = 5,
+) -> str:
+    """One-shot review: regression ranking + diagnosis + feature suggestions."""
+    snaps = parse_slow_run(slow_run_dir, strategy)
+    base = parse_turbo_baseline(baseline_run_dir, strategy)
+    try:
+        slow_r = _load_monthly_r(slow_run_dir, strategy, attribution)
+    except Exception as exc:  # noqa: BLE001
+        slow_r = {}
+        print(f"   ⚠️  slow monthly R load failed: {exc}", file=sys.stderr)
+    try:
+        base_r = _load_monthly_r(baseline_run_dir, strategy, attribution)
+    except Exception as exc:  # noqa: BLE001
+        base_r = {}
+        print(f"   ⚠️  baseline monthly R load failed: {exc}", file=sys.stderr)
+
+    common_months = sorted(set(slow_r) & set(base_r))
+    rows: List[Tuple[str, float, int, float, int, float]] = []
+    for m in common_months:
+        sn, sr = slow_r[m]
+        bn, br = base_r[m]
+        rows.append((m, sr - br, sn, sr, bn, br))
+    rows.sort(key=lambda x: x[1])  # worst first
+
+    lines: List[str] = []
+    lines.append(f"# Slow vs Turbo — Monthly Review — {strategy}")
+    lines.append("")
+    lines.append(f"- **Slow run**: `{slow_run_dir}`")
+    lines.append(f"- **Turbo baseline**: `{baseline_run_dir}`")
+    lines.append(f"- **Attribution**: `{attribution}`")
+    lines.append(f"- **Months compared**: {len(rows)}")
+    if rows:
+        total = sum(r[1] for r in rows)
+        regressions = [r for r in rows if r[1] < 0]
+        lines.append(
+            f"- **Total ΔR**: {total:+.1f}R | "
+            f"**退步月数**: {len(regressions)} (累计 {sum(r[1] for r in regressions):+.1f}R)"
+        )
+    lines.append("")
+
+    lines.append("## 月度 ΔR 排行（slow − turbo，从差到好）")
+    lines.append("")
+    lines.append("| Rank | Month | ΔR | Slow n/R | Turbo n/R | Rule Δ | Status |")
+    lines.append("|---:|:---|---:|---:|---:|---:|:---:|")
+    for i, (m, d, sn, sr, bn, br) in enumerate(rows, start=1):
+        if m in snaps and m in base:
+            md = diff_digest(base[m], snaps[m])
+            n_rule_changes = (
+                len(md.pf_rules_diff.added)
+                + len(md.pf_rules_diff.dropped)
+                + len(md.pf_rules_diff.changed)
+                + len(md.gate_rules_diff.added)
+                + len(md.gate_rules_diff.dropped)
+                + len(md.ef_filters_diff.added)
+                + len(md.ef_filters_diff.dropped)
+            )
+        else:
+            n_rule_changes = 0
+        status = "❌" if d < -30 else ("⚠️" if d < 0 else "✅")
+        lines.append(
+            f"| {i} | {m} | {d:+.1f} | {sn}/{sr:+.1f} | {bn}/{br:+.1f} | "
+            f"{n_rule_changes} | {status} |"
+        )
+    lines.append("")
+
+    regression_months = [r for r in rows if r[1] < -30][:top_n]
+    if not regression_months:
+        lines.append("## 退步月份诊断")
+        lines.append("")
+        lines.append("_无显著退步（所有月份 ΔR ≥ -30R）_")
+        lines.append("")
+        return "\n".join(lines) + "\n"
+
+    lines.append(f"## 退步月份诊断（Top {len(regression_months)}）")
+    lines.append("")
+    for m, delta, sn, sr, bn, br in regression_months:
+        lines.append(
+            f"### {m}  ΔR = {delta:+.1f}R  (slow {sn}/{sr:+.1f} vs turbo {bn}/{br:+.1f})"
+        )
+        lines.append("")
+        if m in snaps and m in base:
+            md = diff_digest(base[m], snaps[m])
+            lines.append("**原因分析**:")
+            for bullet in _diagnose_month(md):
+                lines.append(f"- {bullet}")
+        else:
+            lines.append("_slow_snapshot 或 baseline 缺该月数据_")
+        lines.append("")
+
+        candidates = _collect_fast_month_candidates(slow_run_dir, strategy, m)
+        # 若该月无 slow_snapshot (cadence 外), 回退到最近一次 snapshot 作为 "当前规则" 基线,
+        # 避免把已存在的锁定规则误报为新建议.
+        if m in snaps:
+            active_snap = snaps[m]
+        else:
+            prior = [s for s in sorted(snaps.keys()) if s <= m]
+            active_snap = snaps[prior[-1]] if prior else None
+        current_pf = active_snap.prefilter_rules if active_snap else []
+        current_ef = active_snap.entry_filters if active_snap else []
+
+        # Gate diff: 拿 baseline 同月 (或最近) gate 对比 active_snap.gate_rules
+        if m in base:
+            base_gate = base[m].gate_rules
+        else:
+            prior_base = [s for s in sorted(base.keys()) if s <= m]
+            base_gate = base[prior_base[-1]].gate_rules if prior_base else []
+        active_gate = active_snap.gate_rules if active_snap else []
+        gate_diff = (
+            _diff_by_key(base_gate, active_gate, _gate_eq)
+            if (base_gate or active_gate)
+            else None
+        )
+        gate_new = gate_diff.added if gate_diff else []
+        gate_dropped = gate_diff.dropped if gate_diff else []
+
+        lines.append("**候选特征建议**:")
+        for rec in _recommend_features(
+            candidates, current_pf, current_ef, gate_new, gate_dropped
+        ):
+            lines.append(f"- {rec}" if not rec.startswith(" ") else rec)
+        lines.append("")
+
+        lines.append("**下一步实验建议**:")
+        if m in snaps and m in base:
+            md = diff_digest(base[m], snaps[m])
+            if md.ef_filters_diff.dropped:
+                lines.append(
+                    f"- 回滚该月被 slow 元算法砍掉的 "
+                    f"{len(md.ef_filters_diff.dropped)} 条 locked EF filter, 用 fast pipeline 验证 ΔR"
+                )
+            if md.gate_rules_diff.dropped:
+                lines.append(
+                    f"- 保留 baseline 的 {len(md.gate_rules_diff.dropped)} 条 Gate, 用 fast pipeline 单独 A/B"
+                )
+            if md.pf_rules_diff.changed:
+                lines.append(
+                    "- 尝试 baseline 原阈值（slow 元算法把 PF 阈值移动过远可能是过拟合）"
+                )
+        if candidates:
+            lines.append(
+                "- 把上面 Tier 1 共识候选特征加到 `features_prefilter.yaml::requested_features` "
+                "并跑 fast pipeline 验证"
+            )
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CLI
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1050,6 +1394,22 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_review(args: argparse.Namespace) -> int:
+    slow_dir = Path(args.slow_run_dir).resolve()
+    base_dir = Path(args.baseline_run_dir).resolve()
+    if not slow_dir.is_dir():
+        print(f"❌ slow run dir not found: {slow_dir}", file=sys.stderr)
+        return 2
+    if not base_dir.is_dir():
+        print(f"❌ baseline run dir not found: {base_dir}", file=sys.stderr)
+        return 2
+    content = render_review(
+        slow_dir, base_dir, args.strategy, args.attribution, top_n=args.top_n
+    )
+    _write_or_print(content, Path(args.output).resolve() if args.output else None)
+    return 0
+
+
 def _cmd_consensus(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir).resolve()
     if not run_dir.is_dir():
@@ -1098,6 +1458,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p4.add_argument("--strategy", required=True)
     p4.add_argument("--output")
     p4.set_defaults(func=_cmd_consensus)
+
+    p5 = sub.add_parser(
+        "review",
+        help="One-shot: ΔR ranking + regression diagnosis + feature suggestions",
+    )
+    p5.add_argument("--slow-run-dir", required=True)
+    p5.add_argument(
+        "--baseline-run-dir", required=True, help="turbo rolling_sim run dir"
+    )
+    p5.add_argument("--strategy", required=True)
+    p5.add_argument(
+        "--attribution",
+        default="linear_days",
+        choices=["entry_month", "exit_month", "linear_days"],
+    )
+    p5.add_argument("--top-n", type=int, default=5, help="退步月份诊断数量上限")
+    p5.add_argument("--output")
+    p5.set_defaults(func=_cmd_review)
 
     args = parser.parse_args(argv)
     return args.func(args)
