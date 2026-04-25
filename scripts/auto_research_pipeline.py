@@ -56,7 +56,7 @@ import textwrap
 from calendar import monthrange
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 
@@ -603,6 +603,251 @@ def _ledger_stitched_pcm_fallback_totals(
     return total_r, n
 
 
+def _load_funnel_per_bar_from_ledger(
+    ledger: List[Dict[str, Any]], symbols: Set[str]
+) -> List[Dict[str, Any]]:
+    """Merge ``funnel_per_bar`` from PCM joint JSONs and/or per-strategy event_backtest_*.json.
+
+    Per rolling month, either ``pcm.json_path`` exists (multi-strategy PCM) or we fall back to
+    ``<run_root>/<strat>/event_backtest_<strat>.json`` (single-strategy / no PCM eval).
+    """
+    out: List[Dict[str, Any]] = []
+    if not ledger or not symbols:
+        return out
+    for row in ledger:
+        pcm = row.get("pcm") or {}
+        jp = str(pcm.get("json_path") or "").strip()
+        if jp and Path(jp).is_file():
+            try:
+                data = json.loads(Path(jp).read_text(encoding="utf-8"))
+                for r in data.get("funnel_per_bar") or []:
+                    if str(r.get("symbol") or "") in symbols:
+                        out.append(dict(r))
+            except Exception as exc:
+                print(f"   ⚠️  连续地图: 读取 funnel PCM JSON 失败 {jp}: {exc}")
+        else:
+            run_root = Path(str(row.get("run_root", "") or ""))
+            if not run_root.is_dir():
+                continue
+            for pjson in sorted(run_root.glob("*/event_backtest_*.json")):
+                try:
+                    data = json.loads(pjson.read_text(encoding="utf-8"))
+                    for r in data.get("funnel_per_bar") or []:
+                        if str(r.get("symbol") or "") in symbols:
+                            out.append(dict(r))
+                except Exception as exc:
+                    print(f"   ⚠️  连续地图: 读取 funnel JSON 失败 {pjson}: {exc}")
+    return out
+
+
+def _build_continuous_funnel_figures(
+    sym: str,
+    funnel_rows: List[Dict[str, Any]],
+    x_range: Any,
+    ref_index: Optional[Any],
+    plot_w: int,
+) -> List[Any]:
+    """Same stacked ladder as ``event_backtest.generate_trading_map_html`` funnel panel."""
+    if not funnel_rows:
+        return []
+    try:
+        import pandas as pd
+        from bokeh.models import ColumnDataSource, FixedTicker, HoverTool
+        from bokeh.plotting import figure as bk_figure
+    except Exception as exc:
+        print(f"   ⚠️  连续地图: 无法绘制 funnel 附图: {exc}")
+        return []
+
+    by_strat: Dict[str, List[Dict[str, Any]]] = {}
+    for r in funnel_rows:
+        sk = str(r.get("strategy") or "unknown")
+        by_strat.setdefault(sk, []).append(dict(r))
+
+    def _pcm_y(rec: Dict[str, Any]) -> float:
+        if rec.get("pcm_direction_filter") is False:
+            return 0.0
+        return 1.0
+
+    def _bool_y(rec: Dict[str, Any], key: str) -> float:
+        v = rec.get(key)
+        if v is None:
+            return float("nan")
+        return 1.0 if v else 0.0
+
+    def _dir_y(rec: Dict[str, Any]) -> float:
+        dv = rec.get("direction_value")
+        if dv is None:
+            return float("nan")
+        try:
+            dvi = int(dv)
+        except (TypeError, ValueError):
+            return float("nan")
+        return {-1: 0.0, 0: 0.5, 1: 1.0}.get(dvi, float("nan"))
+
+    def _step_xy(ts: list, vals: list) -> tuple:
+        if not ts:
+            return [], []
+        xs: list = []
+        ys: list = []
+        for i in range(len(ts)):
+            if i > 0:
+                xs.append(ts[i])
+                ys.append(vals[i - 1])
+            xs.append(ts[i])
+            ys.append(vals[i])
+        return xs, ys
+
+    _STAGES = [
+        ("PCM EMA", _pcm_y, "#64748b"),
+        ("Prefilter", lambda rec: _bool_y(rec, "prefilter"), "#3274D9"),
+        ("Gate", lambda rec: _bool_y(rec, "gate"), "#7c3aed"),
+        ("Entry filter", lambda rec: _bool_y(rec, "entry_filter"), "#ca8a04"),
+        ("Direction (−1/0/+1)", _dir_y, "#059669"),
+    ]
+
+    def _compact_reason(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple)):
+            return "; ".join(str(x) for x in value[:6])
+        return str(value)
+
+    def _block_points(sub_rows: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
+        out: Dict[str, List[Any]] = {
+            "x": [],
+            "y": [],
+            "stage": [],
+            "reason": [],
+            "strategy": [],
+            "direction": [],
+        }
+        for rec in sub_rows:
+            stage = ""
+            reason = ""
+            y = float("nan")
+            if rec.get("prefilter") is False:
+                stage = "Prefilter"
+                reason = _compact_reason(rec.get("prefilter_reason"))
+                y = 1.0
+            elif rec.get("direction_value") == 0:
+                stage = "Direction"
+                reason = _compact_reason(
+                    rec.get("direction_reason") or rec.get("direction_rule")
+                )
+                y = 4.0
+            elif rec.get("gate") is False:
+                stage = "Gate"
+                reason = _compact_reason(rec.get("gate_reasons"))
+                y = 2.0
+            elif rec.get("entry_filter") is False:
+                stage = "Entry"
+                reason = _compact_reason(rec.get("entry_filter_reason"))
+                y = 3.0
+            elif int(rec.get("pcm_drop_slot", 0) or 0) > 0:
+                stage = "PCM"
+                reason = "slot_full"
+                y = 0.0
+            elif int(rec.get("pcm_drop_direction_policy", 0) or 0) > 0:
+                stage = "PCM"
+                reason = "direction_policy"
+                y = 0.0
+            elif int(rec.get("pcm_drop_family_conflict", 0) or 0) > 0:
+                stage = "PCM"
+                reason = "family_conflict"
+                y = 0.0
+            elif int(rec.get("pcm_drop_daily_limit", 0) or 0) > 0:
+                stage = "PCM"
+                reason = "daily_limit"
+                y = 0.0
+            if not stage:
+                continue
+            out["x"].append(pd.Timestamp(rec["timestamp"]))
+            out["y"].append(y)
+            out["stage"].append(stage)
+            out["reason"].append(reason)
+            out["strategy"].append(str(rec.get("strategy") or ""))
+            out["direction"].append(str(rec.get("direction_value")))
+        return out
+
+    figs: List[Any] = []
+    for strat_name in sorted(by_strat.keys()):
+        sub = sorted(
+            by_strat[strat_name], key=lambda t: pd.Timestamp(t.get("timestamp"))
+        )
+        ts = [pd.Timestamp(t["timestamp"]) for t in sub]
+        if ref_index is not None and getattr(ref_index, "tz", None) is not None:
+            _tz = ref_index.tz
+            ts = [
+                (
+                    x.tz_convert(_tz)
+                    if x.tzinfo
+                    else x.tz_localize("UTC").tz_convert(_tz)
+                )
+                for x in ts
+            ]
+        pf = bk_figure(
+            title=f"{sym} · {strat_name} — gate / prefilter / direction",
+            x_axis_type="datetime",
+            width=plot_w,
+            height=200,
+            tools="pan,wheel_zoom,box_zoom,reset,save",
+            x_range=x_range,
+            y_range=(-0.15, 4.65),
+        )
+        pf.yaxis.ticker = FixedTicker(ticks=[0, 1, 2, 3, 4])
+        pf.yaxis.major_label_overrides = {
+            0: "PCM",
+            1: "Prefilter",
+            2: "Gate",
+            3: "EntryFlt",
+            4: "Dir",
+        }
+        pf.grid.grid_line_alpha = 0.25
+        for _bi, (label, fn, color) in enumerate(_STAGES):
+            vals = [float(fn(rec)) for rec in sub]
+            xs, ys = _step_xy(ts, [float(_bi) + 0.35 * v for v in vals])
+            if xs:
+                pf.line(xs, ys, line_color=color, line_width=1.6, legend_label=label)
+        block_data = _block_points(sub)
+        if block_data["x"]:
+            bsrc = ColumnDataSource(block_data)
+            blocked = pf.scatter(
+                "x",
+                "y",
+                source=bsrc,
+                marker="x",
+                size=9,
+                line_width=2,
+                color="#dc2626",
+                legend_label="No-entry reason",
+            )
+            pf.add_tools(
+                HoverTool(
+                    renderers=[blocked],
+                    tooltips=[
+                        ("Time", "@x{%F %H:%M}"),
+                        ("Stage", "@stage"),
+                        ("Reason", "@reason"),
+                        ("Strategy", "@strategy"),
+                        ("Dir", "@direction"),
+                    ],
+                    formatters={"@x": "datetime"},
+                )
+            )
+        pf.legend.click_policy = "hide"
+        pf.legend.label_text_font_size = "8pt"
+        pf.legend.location = "top_left"
+        pf.add_tools(
+            HoverTool(
+                tooltips=[("Time", "@x{%F %H:%M}"), ("y", "@y{0.2f}")],
+                formatters={"@x": "datetime"},
+                mode="mouse",
+            )
+        )
+        figs.append(pf)
+    return figs
+
+
 def _build_continuous_pcm_trading_map(
     ledger: List[Dict[str, Any]],
     output_path: Path,
@@ -745,9 +990,19 @@ def _build_continuous_pcm_trading_map(
     else:
         merged["add_position_seq"] = 0
     merged = merged.sort_values("entry_time").reset_index(drop=True)
+    for _c in ("month", "source"):
+        if _c not in merged.columns:
+            merged[_c] = ""
+        else:
+            merged[_c] = merged[_c].fillna("").astype(str)
     symbols = sorted(str(s) for s in merged["symbol"].dropna().unique().tolist())
     if not symbols:
         return ""
+    funnel_all = _load_funnel_per_bar_from_ledger(ledger, set(symbols))
+    if funnel_all:
+        print(
+            f"   连续地图: 已合并 funnel_per_bar 行数={len(funnel_all)} (PCM/单月 event JSON)"
+        )
 
     merged["archetype"] = (
         merged.get("archetype", "unknown").astype(str).fillna("unknown")
@@ -865,7 +1120,14 @@ def _build_continuous_pcm_trading_map(
         tdf = merged.loc[merged["symbol"] == sym].copy()
         if tdf.empty:
             continue
+        for _c in ("month", "source"):
+            if _c not in tdf.columns:
+                tdf[_c] = ""
+            else:
+                tdf[_c] = tdf[_c].fillna("").astype(str)
         arch_renderers: Dict[str, List[Any]] = {}
+        r_crf_box: Any = None
+        ref_idx_for_funnel: Any = None
         p = bk_figure(
             title=f"{sym} | trades={len(tdf)} | total_r={float(tdf['pnl_r'].sum()):.2f}",
             x_axis_type="datetime",
@@ -925,6 +1187,7 @@ def _build_continuous_pcm_trading_map(
                 cdf_plot = cdf.loc[plot_mask]
                 if cdf_plot.empty:
                     cdf_plot = cdf
+                ref_idx_for_funnel = cdf_plot.index
 
                 inc = cdf_plot["close"] >= cdf_plot["open"]
                 dec = ~inc
@@ -971,6 +1234,71 @@ def _build_continuous_pcm_trading_map(
                     line_alpha=0.78,
                 )
                 # Keep only VWAP reference line on continuous trading map.
+
+                # ── CRF box: rolling 120 lo/hi band (not merged min/max rects) ──
+                # 与 prefilter 同条件处着色；每根 bar 用当期的 box_hi/lo，避免长段连绿盖住整图。
+                if "crf" in archetypes:
+                    try:
+                        import numpy as _np
+                        from src.features.time_series.box_structure_features import (
+                            compute_box_structure_from_series as _box_feat,
+                        )
+
+                        _bx = _box_feat(
+                            close=cdf["close"],
+                            high=cdf["high"],
+                            low=cdf["low"],
+                        )
+                    except Exception as _bex:
+                        print(f"   ⚠️ CRF box overlay failed for {sym}: {_bex}")
+                        _bx = None
+                    if _bx is not None and not _bx.empty:
+                        _bx = _bx.reindex(cdf_plot.index)
+                        _stab = pd.to_numeric(
+                            _bx.get("box_stability_240"), errors="coerce"
+                        )
+                        _widp = pd.to_numeric(
+                            _bx.get("box_width_pct_240"), errors="coerce"
+                        )
+                        _hi = pd.to_numeric(_bx.get("box_hi_240"), errors="coerce")
+                        _lo = pd.to_numeric(_bx.get("box_lo_240"), errors="coerce")
+                        _touch_hi = pd.to_numeric(
+                            _bx.get("box_touches_hi_240"), errors="coerce"
+                        )
+                        _touch_lo = pd.to_numeric(
+                            _bx.get("box_touches_lo_240"), errors="coerce"
+                        )
+                        # Keep in sync with config/strategies/crf/archetypes/prefilter.yaml:
+                        #   stab>=0.85, 0.04 <= width <= 0.30, hi/lo touches>=5
+                        _qual = (
+                            (_stab.fillna(0.0) >= 0.85)
+                            & (_widp.fillna(0.0) >= 0.04)
+                            & (_widp.fillna(1.0) <= 0.30)
+                            & (_touch_hi.fillna(0.0) >= 5)
+                            & (_touch_lo.fillna(0.0) >= 5)
+                        )
+
+                        _pass_rate = float(_qual.mean()) if len(_qual) else 0.0
+                        print(
+                            f"   CRF prefilter overlay {sym}: pass_rate={_pass_rate:.1%}"
+                        )
+
+                        # Use per-bar vbar (one thin rectangle per qualified bar) so
+                        # non-qualifying gaps are truly empty — varea would otherwise
+                        # bridge NaNs visually and make everything look green.
+                        qidx = cdf_plot.index[_qual.values]
+                        if len(qidx) > 0:
+                            q_lo = _lo.values[_qual.values]
+                            q_hi = _hi.values[_qual.values]
+                            r_crf_box = p.vbar(
+                                x=qidx,
+                                width=bar_ms,
+                                top=q_hi,
+                                bottom=q_lo,
+                                fill_color="#22c55e",
+                                fill_alpha=0.18,
+                                line_color=None,
+                            )
 
                 # Trade overlays (split by archetype)
         tdf["pnl_color"] = [
@@ -1108,37 +1436,64 @@ def _build_continuous_pcm_trading_map(
                         alpha=0.9,
                     )
                     arch_renderers[arch].append(r)
-        hover = HoverTool(
-            tooltips=[
-                ("time", "@x{%F %T}"),
-                ("price", "@y{0.0000}"),
-            ],
-            formatters={"@x": "datetime"},
-            mode="mouse",
-        )
-        p.add_tools(hover)
-        detail_hover = HoverTool(
-            tooltips=[
-                ("archetype", "@archetype"),
-                ("side", "@side"),
-                ("month", "@month"),
-                ("source", "@source"),
-                ("pnl_r", "@pnl_r{0.000}"),
-                ("is_add_position", "@is_add_position"),
-                ("add_position_seq", "@add_position_seq"),
-                ("entry", "@entry_time{%F %T}"),
-                ("exit", "@exit_time{%F %T}"),
-            ],
-            formatters={"@entry_time": "datetime", "@exit_time": "datetime"},
-            mode="mouse",
-        )
-        p.add_tools(detail_hover)
+        all_trade_renderers: List[Any] = [
+            r for rs in arch_renderers.values() for r in rs
+        ]
+        if r_vwap_ref is not None:
+            p.add_tools(
+                HoverTool(
+                    tooltips=[
+                        ("time", "@x{%F %T}"),
+                        ("vwap_px", "@y{0.0000}"),
+                    ],
+                    formatters={"@x": "datetime"},
+                    mode="mouse",
+                    renderers=[r_vwap_ref],
+                )
+            )
+        if all_trade_renderers:
+            p.add_tools(
+                HoverTool(
+                    tooltips=[
+                        ("archetype", "@archetype"),
+                        ("side", "@side"),
+                        ("month", "@month"),
+                        ("source", "@source"),
+                        ("pnl_r", "@pnl_r{0.000}"),
+                        ("is_add", "@is_add_position"),
+                        ("add_seq", "@add_position_seq"),
+                        ("entry", "@entry_time{%F %T}"),
+                        ("exit", "@exit_time{%F %T}"),
+                    ],
+                    formatters={"@entry_time": "datetime", "@exit_time": "datetime"},
+                    mode="mouse",
+                    renderers=all_trade_renderers,
+                )
+            )
+        if r_crf_box is not None:
+            p.add_tools(
+                HoverTool(
+                    tooltips=[
+                        ("box_lo_240", "@y1{0.0000}"),
+                        ("box_hi_240", "@y2{0.0000}"),
+                    ],
+                    mode="mouse",
+                    renderers=[r_crf_box],
+                )
+            )
         legend_items: List[Any] = []
         if r_vwap_ref is not None:
             legend_items.append(
                 LegendItem(
                     label=f"Rolling TP-VWAP ({vw_n}×2H, local symbol price)",
                     renderers=[r_vwap_ref],
+                )
+            )
+        if r_crf_box is not None:
+            legend_items.append(
+                LegendItem(
+                    label="CRF: rolling 240 lo/hi (where prefilter passes)",
+                    renderers=[r_crf_box],
                 )
             )
         legend_items.extend(
@@ -1164,6 +1519,15 @@ def _build_continuous_pcm_trading_map(
             legend.click_policy = "hide"
             p.add_layout(legend, "center")
         fig_list.append(p)
+        _funnel_rows_sym = [r for r in funnel_all if str(r.get("symbol") or "") == sym]
+        for _f_pf in _build_continuous_funnel_figures(
+            sym,
+            _funnel_rows_sym,
+            p.x_range,
+            ref_idx_for_funnel,
+            plot_w,
+        ):
+            fig_list.append(_f_pf)
 
     run_months = sorted(str(r.get("month", "")) for r in ledger if r.get("month"))
     title = "Continuous Trading Map (2H K-line)"
@@ -1179,6 +1543,9 @@ def _build_continuous_pcm_trading_map(
     if not fig_list:
         return ""
 
+    for _fi, _fblk in enumerate(fig_list):
+        _fblk.xaxis.visible = _fi == len(fig_list) - 1
+
     header = Div(
         text=(
             f"<h2>{title}</h2><p>{subtitle}</p>"
@@ -1189,9 +1556,13 @@ def _build_continuous_pcm_trading_map(
             "实盘/事件回测里 <code>macro_tp_vwap_1200_position</code>（gate / direction / "
             "<code>structural_exit vwap1200</code>）用的是<b>锚定品种</b>（默认 BTC）在同一时刻的归一化位置，"
             "与本图各币种的紫色价格线<b>不一定一致</b>。"
-            "<b>本连续图未拼接漏斗附图</b>（PCM/prefilter/gate 阶梯图仅在单月 "
-            "<code>generate_trading_map_html</code> 路径、且该次回测写入了 <code>funnel_per_bar</code> 时生成）。"
-            "绿/红 K 线为涨跌。入场→出场：<b>实线</b>=首仓腿，<b>虚线</b>=加仓腿；△ 多 · ▽ 空 · ◇ 加仓 · □ 平仓。"
+            "<b>各 symbol 价格图下方</b> 附 <code>funnel_per_bar</code> 阶梯图"
+            "（PCM / prefilter / gate / entry / direction，与单月 event map 同源；数据来自每月经 ledger 的 "
+            "PCM JSON 或 <code>event_backtest_*.json</code>，无该字段则该段不显示附图）。"
+            "红色 x 标记为<b>未开仓拦截点</b>，悬浮可查看 Prefilter/Gate/Direction/Entry/PCM 的具体原因。"
+            "浅绿带 = 各时刻因果 <code>box_lo_240</code>~<code>box_hi_240</code>（与 prefilter 同条件时着色），"
+            "是<b>每根 2H</b> 的 rolling 上下沿，<b>不是</b>把长段 min/max 合成一块矩形。"
+            " 绿/红 K 线为涨跌。入场→出场：<b>实线</b>=首仓腿，<b>虚线</b>=加仓腿；△ 多 · ▽ 空 · ◇ 加仓 · □ 平仓。"
             "</p>"
         ),
         width=plot_w,

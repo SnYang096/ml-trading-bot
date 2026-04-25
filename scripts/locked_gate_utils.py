@@ -92,37 +92,50 @@ def merge_locked_gate_rules(
     if gate_path.exists():
         raw = yaml.safe_load(gate_path.read_text(encoding="utf-8")) or {}
 
-    existing_ids: set = set()
+    existing_by_sig: Dict[str, Dict[str, Any]] = {}
     for section in ("hard_gates", "system_safety", "guardrails"):
         for rule in raw.get(section) or []:
             if isinstance(rule, dict):
-                existing_ids.add(_gate_rule_signature(rule))
+                existing_by_sig[_gate_rule_signature(rule)] = rule
 
     added = 0
+    updated = 0
     target_section = "hard_gates"
     if target_section not in raw or not isinstance(raw.get(target_section), list):
         raw[target_section] = []
 
     for lr in locked_rules:
         sig = _gate_rule_signature(lr)
-        if sig in existing_ids:
+        if sig in existing_by_sig:
+            existing = existing_by_sig[sig]
+            for key in (
+                "locked",
+                "frozen",
+                "promote_never_disable",
+                "disabled",
+                "disabled_reason",
+                "lock_reason",
+            ):
+                if key in lr and existing.get(key) != lr.get(key):
+                    existing[key] = copy.deepcopy(lr[key])
+                    updated += 1
             continue
         raw[target_section].append(copy.deepcopy(lr))
-        existing_ids.add(sig)
+        existing_by_sig[sig] = raw[target_section][-1]
         added += 1
 
     total = sum(
         len(raw.get(s) or []) for s in ("hard_gates", "system_safety", "guardrails")
     )
 
-    if added > 0 or not gate_path.exists():
+    if added > 0 or updated > 0 or not gate_path.exists():
         gate_path.parent.mkdir(parents=True, exist_ok=True)
         gate_path.write_text(
             yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
 
-    return {"added": added, "total": total}
+    return {"added": added, "updated": updated, "total": total}
 
 
 # ---------------------------------------------------------------------------

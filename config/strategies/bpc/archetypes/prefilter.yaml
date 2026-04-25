@@ -5,6 +5,16 @@
 # - bpc_pullback_depth: 锚点 2/3，回撤受控、未破结构
 # - bpc_recovery_strength: 锚点 3/3，回撤后恢复力度到位（Continuation 可执行）
 rules:
+- any_of:
+  - feature: ema_1200_position
+    operator: <=
+    value: -0.03
+  - feature: ema_1200_position
+    operator: '>='
+    value: 0.03
+  rationale: 近 EMA1200 中轴无趋势优势：20260425 BPC |ema_1200_position|<0.05 的交易 n=11, R=-41
+  locked: true
+  lock_reason: BPC 必须离开 EMA1200 噪声中轴后才允许 breakout-pullback-continuation
 - feature: bpc_volume_compression_pct
   operator: '>='
   value: 0.8905
@@ -17,10 +27,10 @@ rules:
   lock_reason: BPC 语义锚点 1/3：Breakout 成立
 - feature: bpc_pullback_depth
   operator: <=
-  value: 0.55
-  rationale: 语义锁定：回撤不能过深，过深更接近结构失败或反转语义
+  value: 0.65
+  rationale: 语义锁定：回撤不能过深，过深更接近结构失败或反转语义；放宽到既有候选上沿以保留牛熊单边里的深回踩肥尾
   locked: true
-  lock_reason: BPC 语义锚点 2/3：Pullback 受控（未破结构）
+  lock_reason: BPC 语义锚点 2/3：Pullback 受控（未破结构，允许较深但仍有效的趋势回踩）
 - feature: bpc_recovery_strength
   operator: '>='
   value: 0.6
@@ -41,6 +51,22 @@ rules:
   rationale: Short-term width must not be significantly wider than long-term (keeps BPC semantic of consolidation → breakout → pullback)
   locked: false
   lock_reason: Box prefilter upgrade
+- any_of:
+  - feature: box_pos_120
+    operator: <=
+    value: 0.15
+  - feature: box_pos_120
+    operator: '>='
+    value: 0.85
+  - feature: box_breakout_up
+    operator: '>='
+    value: 0.5
+  - feature: box_breakout_down
+    operator: '>='
+    value: 0.5
+  rationale: box 中部且未突破不开仓：20260425 BPC inside_box_no_breakout n=31, R=-86
+  locked: true
+  lock_reason: BPC 只做突破后的边缘回踩，不在箱体中部来回扫区开仓
 last_evaluation:
   timestamp: '2026-04-20'
   data_source: features_labeled.parquet

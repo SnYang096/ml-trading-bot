@@ -1789,6 +1789,12 @@ def _promote_gate_to_archetypes(
 
     for rule in hard_gates:
         rule_id = rule.get("id", "")
+        if bool(rule.get("disabled", False)):
+            # Manual disabled rules are governance decisions, not optimization failures.
+            # Keep them in the promoted YAML for traceability, but never revive them
+            # via threshold optimization or promote_never_disable.
+            kept_rules.append(rule)
+            continue
         is_locked = bool(rule.get("locked", False))
         never_disable = bool(rule.get("promote_never_disable"))
         opt = optimization_results.get(rule_id)

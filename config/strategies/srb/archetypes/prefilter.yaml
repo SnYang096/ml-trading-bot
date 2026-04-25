@@ -1,14 +1,14 @@
-# SRB prefilter — **支撑/阻力关键位** + 决定性突破语境（非「盒统计」主语义）
+# SRB prefilter — 只回答「是否处在大结构 SR 关键位 / 突破窗口」
 #
 # SRB = Structural Range Breakout：在 **有质量的 SR 结构** 上，价格处于 **突破/刚突破**
-# 的典型语境（贴近 L3 swing 箱体的上沿或下沿之一 + L2 强度 + 突破频谱 + 单 bar impulse）。
+# 的典型语境。订单流、EMA 2b、impulse 确认不放在 prefilter，分别交给 entry / gate / direction。
 #
 # 与其它策略分工：
 # - **BPC**：Donchian 突破 → **回踩** 深度/恢复（pullback continuation）。
 # - **ME**：accel / VWAP 带（动量扩张），不强调「刚穿关键价位」。
 # - **TPC**：EMA1200 + **pullback_depth**（大趋势回调不破）。
-# - **SRB（本文件）**：**L3 关键带（wide swing 上/下沿）** + `sr_strength_max` + **SR 突破频谱**
-#   + `bpc_impulse_return_atr`；用 **`tpc_score_breakout`** 只做「突破相 / 非回调相」软区分，不与 TPC 同源。
+# - **SRB（本文件）**：**L3 关键带（wide swing 上/下沿）** + `sr_strength_max`
+#   + `srb_l3_breakout_age_decay`（突破后若干 K 的因果衰减窗口）。
 #
 # 说明：`wide_sr_dist_atr` = min(|close−上沿|, |close−下沿|)/ATR，**小**表示贴近 **大级别阻力或支撑带之一**，
 # 与 BPC 的「回踩链」、TPC 的「回调深度」不是同一套条件。
@@ -26,23 +26,31 @@ rules:
     locked: true
     lock_reason: SR 突破专用频谱（策略内建语义，非泛趋势指标）
 
-  # 贴近 L3 月度 swing 箱体的 **上沿或下沿**（关键阻力/支撑带），突破发生区
-  - feature: wide_sr_dist_atr
-    operator: "<="
-    value: 1.25
-    locked: false
-    lock_reason: 距 wide SR 上/下沿较近（ATR）；避免在区间正中当 SRB 触发
+  # 处在 L3 月度 swing 箱体的边界附近，或刚完成 L3 上/下沿突破后的衰减窗口内。
+  # 注意：这里不使用带符号的 bpc_impulse_return_atr，避免天然只放 LONG、挡掉跌破支撑 SHORT。
+  - any_of:
+      - feature: wide_sr_dist_atr
+        operator: "<="
+        value: 1.50
+      - feature: srb_l3_breakout_age_decay
+        operator: ">="
+        value: 0.10
 
-  # 与 TPC 区分：偏突破相软分（非 pullback_depth / continuation 主逻辑）
-  - feature: tpc_score_breakout
-    operator: ">="
-    value: 0.15
-    locked: false
-    lock_reason: SRB vs TPC 软分离，阈值可 rolling 重标定
-
-  # 单 bar 上破/下破关键位常伴随可度量 impulse（与 BPC 整条 pullback 链不同）
-  - feature: bpc_impulse_return_atr
-    operator: ">="
-    value: 0.04
-    locked: false
-    lock_reason: 突破动能标量门槛，非 Donchian 回踩语义
+  # 不吃箱体中部起点：SRB 只允许贴近 box 边缘或已完成 box 突破。
+  # 与 BPC/TPC/ME 的通用防波动门一致，但不额外套 EMA 近零 / semantic_chop，
+  # 因为最新 SRB 样本里这两类过滤并未呈现负贡献。
+  - any_of:
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.25
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.75
+      - feature: box_breakout_up
+        operator: ">="
+        value: 0.5
+      - feature: box_breakout_down
+        operator: ">="
+        value: 0.5
+    locked: true
+    lock_reason: SRB 只做 SR/box 边界与突破，不在箱体中部未确认区提前开仓

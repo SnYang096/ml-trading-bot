@@ -14,6 +14,17 @@ rules:
   - any_of:
       - feature: ema_1200_position
         operator: "<="
+        value: -0.03
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.03
+    rationale: "近 EMA1200 中轴无趋势优势：20260425 成交诊断 |ema_1200_position|<0.05 的 TPC 交易 n=129, R=-349"
+    locked: true
+    lock_reason: TPC 大趋势锚点 0/3：必须离开 EMA1200 噪声中轴后才允许谈回调
+
+  - any_of:
+      - feature: ema_1200_position
+        operator: "<="
         value: 0.0996
       - feature: ema_1200_position
         operator: ">="
@@ -24,7 +35,24 @@ rules:
 
   - feature: tpc_pullback_depth
     operator: <=
-    value: 0.75
-    rationale: TPC 语义：回调不破结构，允许 continuation 较弱
+    value: 0.85
+    rationale: TPC 语义：大级别趋势内较深回调也允许，只要不破结构
     locked: true
-    lock_reason: TPC 大趋势锚点 3/3：回调深度受控
+    lock_reason: TPC 大趋势锚点 3/3：回调深度受控（略放宽，避免过浅带误杀实回调）
+
+  - any_of:
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.15
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.85
+      - feature: box_breakout_up
+        operator: ">="
+        value: 0.5
+      - feature: box_breakout_down
+        operator: ">="
+        value: 0.5
+    rationale: "box 中部且未突破不开仓：20260425 TPC inside_box_no_breakout n=154, R=-425"
+    locked: true
+    lock_reason: TPC 只交易趋势回调/边缘突破，不在箱体中部来回扫区开仓

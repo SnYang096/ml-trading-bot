@@ -173,6 +173,43 @@ class DirectionEvaluator:
                     return direction, str(rule_id)
                 continue
 
+            # threshold_compare: feature <= long_if_below → +1; feature >= short_if_above → -1。
+            # 专为 CRF/ 边缘回归类策略设计（box_pos_120 ∈ [0,1]）。
+            if str(rule.get("method", "")).strip().lower() == "threshold_compare":
+                feat_name = str(rule.get("feature", "")).strip()
+                thr = rule.get("thresholds") or {}
+                raw_v = features.get(feat_name)
+                if raw_v is None or feat_name == "":
+                    continue
+                try:
+                    v = float(raw_v)
+                except (TypeError, ValueError):
+                    continue
+                if v != v:  # NaN
+                    continue
+                long_if_below = thr.get("long_if_below")
+                short_if_above = thr.get("short_if_above")
+                direction = 0
+                try:
+                    if long_if_below is not None and v <= float(long_if_below):
+                        direction = 1
+                    elif short_if_above is not None and v >= float(short_if_above):
+                        direction = -1
+                except (TypeError, ValueError):
+                    direction = 0
+                if direction != 0:
+                    logger.debug(
+                        "方向匹配: rule=%s threshold_compare %s=%.4f → direction=%s",
+                        rule_id,
+                        feat_name,
+                        v,
+                        direction,
+                    )
+                    if self._filter is not None and direction != self._filter:
+                        return 0, None
+                    return direction, str(rule_id)
+                continue
+
             feature_name = rule.get("feature", "")
             transform = rule.get("transform", "raw")
 
@@ -282,6 +319,7 @@ class EntryFilterChecker:
     def __init__(self, entry_config: Dict[str, Any]):
         self.config = entry_config
         self.ef_state = DerivedEntryFeatureState()
+        self._last_merged_features: Dict[str, Any] = {}
 
     def check(self, features: Dict[str, Any]) -> bool:
         """检查是否满足入场条件"""
@@ -291,8 +329,45 @@ class EntryFilterChecker:
         # 更新派生特征
         ef_features = self.ef_state.update(features)
         merged = {**features, **ef_features}
+        self._last_merged_features = merged
 
         return check_entry_filters_or_single(merged, self.config)
+
+    def explain(self, features: Dict[str, Any]) -> List[str]:
+        """Return compact failure reasons for the enabled entry filters."""
+        if not self.config:
+            return []
+
+        merged = self._last_merged_features or dict(features)
+        reasons: List[str] = []
+        for filt in self.config.get("filters", []):
+            if not filt.get("enabled", False):
+                continue
+            fid = str(filt.get("id") or "entry_filter")
+            failed: List[str] = []
+            for cond in filt.get("conditions", []) or []:
+                feat = str(cond.get("feature") or "")
+                op = str(cond.get("operator") or "")
+                threshold = cond.get("value")
+                val = merged.get(feat)
+                try:
+                    v = float(val)
+                    t = float(threshold)
+                    passed = {
+                        ">": v > t,
+                        ">=": v >= t,
+                        "<": v < t,
+                        "<=": v <= t,
+                        "==": v == t,
+                        "!=": v != t,
+                    }.get(op, False)
+                    if not passed:
+                        failed.append(f"{feat}={v:.4g} not {op} {t:.4g}")
+                except (TypeError, ValueError):
+                    failed.append(f"{feat}=missing")
+            if failed:
+                reasons.append(f"{fid}: " + "; ".join(failed[:3]))
+        return reasons[:8]
 
 
 # =============================================================================
@@ -335,14 +410,22 @@ class ExecutionParamGenerator:
         tp_cfg = self.config.get("take_profit", {})
         tp_enabled = tp_cfg.get("enabled", False)
         take_profit_r = float(tp_cfg.get("target_r", 0.0)) if tp_enabled else 0.0
+        stop_loss_type = str(sl_cfg.get("type", "fixed") or "fixed").strip().lower()
+        take_profit_type = str(tp_cfg.get("type", "fixed") or "fixed").strip().lower()
+        box_window = int(sl_cfg.get("box_window", tp_cfg.get("box_window", 120)) or 120)
 
         # time_stop_bars: 0 表示禁用时间止损 (fat tail 模式)
         # 注意: 不能用 `or 50`，因为 Python 中 0 or 50 = 50
         holding = self.config.get("holding", {}) or {}
         _raw_tsb = holding.get("time_stop_bars")
         _raw_mhb = holding.get("max_holding_bars")
+        # time_stop_bars: 0 的常用语义是「不单独用 time_stop 名」而仍要尊重 max_holding_bars
+        # （CRF / BPC）；若显式 0 且没有 max，则 0=禁用时间出场（ME 等长持模式）。
         if _raw_tsb is not None and int(_raw_tsb) == 0:
-            _tsb = 0
+            if _raw_mhb is not None and int(_raw_mhb) > 0:
+                _tsb = int(_raw_mhb)
+            else:
+                _tsb = 0
         elif _raw_tsb is not None and int(_raw_tsb) > 0:
             _tsb = int(_raw_tsb)
         elif _raw_mhb is not None and int(_raw_mhb) > 0:
@@ -424,6 +507,16 @@ class ExecutionParamGenerator:
             "trail_r_near": trail_r_near,
             "l3_near_threshold_atr": l3_near_threshold_atr,
             "take_profit_r": take_profit_r,
+            "stop_loss_type": stop_loss_type,
+            "take_profit_type": take_profit_type,
+            "box_window": box_window,
+            "box_stop_buffer_frac": float(
+                sl_cfg.get("box_buffer_frac", sl_cfg.get("stop_buffer_frac", 0.25))
+                or 0.25
+            ),
+            "box_target_edge_frac": float(
+                tp_cfg.get("edge_frac", tp_cfg.get("target_edge_frac", 0.15)) or 0.15
+            ),
             "time_stop_bars": _tsb,
             "max_holding_bars": _tsb,
             "size_multiplier": 1.0,
@@ -442,6 +535,32 @@ class ExecutionParamGenerator:
             # SRB 结构化 SL（若 execution.yaml 下配置），透传到 rr_constraints
             "structural_sl": sl_cfg.get("structural_sl") or {},
         }
+
+        # CRF/box-aware execution: capture causal box boundaries at signal time.
+        # ``position_logic`` turns these into actual price SL/TP if execution.yaml
+        # requests box_edge / opposite_edge. Missing/invalid values safely fall back
+        # to ATR-based fixed R behavior.
+        if stop_loss_type == "box_edge" or take_profit_type in {
+            "opposite_edge",
+            "box_mid",
+        }:
+            _box_map = {
+                "box_hi": f"box_hi_{box_window}",
+                "box_lo": f"box_lo_{box_window}",
+                "box_width_pct": f"box_width_pct_{box_window}",
+                "box_pos": f"box_pos_{box_window}",
+            }
+            for _dst, _src in _box_map.items():
+                if _src in features and features.get(_src) is not None:
+                    result[_dst] = features.get(_src)
+            for _k in (
+                f"box_hi_{box_window}",
+                f"box_lo_{box_window}",
+                f"box_width_pct_{box_window}",
+                f"box_pos_{box_window}",
+            ):
+                if _k in features and features.get(_k) is not None:
+                    result[_k] = features.get(_k)
 
         re_cfg = self.config.get("regime_execution") or {}
         if re_cfg.get("enabled"):
@@ -821,6 +940,7 @@ class GenericLiveStrategy:
         funnel["direction_rule"] = rule_id
         if direction == 0:
             logger.debug("❌ No valid direction found")
+            funnel["direction_reason"] = "no_direction_rule_matched"
             self._last_funnel = funnel
             record_fer_entry_eval(
                 strategy=self.strategy_name,
@@ -865,6 +985,9 @@ class GenericLiveStrategy:
             if not ef_passed:
                 logger.debug("❌ Entry filter denied")
                 funnel["entry_filter"] = False
+                funnel["entry_filter_reason"] = self.entry_filter_checker.explain(
+                    features
+                )
                 self._last_funnel = funnel
                 record_fer_entry_eval(
                     strategy=self.strategy_name,
@@ -997,13 +1120,32 @@ class GenericLiveStrategy:
                 "rr_constraints": {
                     "stop_loss_r": exec_params.get("initial_r", 2.0),
                     "take_profit_r": exec_params.get("take_profit_r", 2.5),
+                    "stop_loss_type": exec_params.get("stop_loss_type", "fixed"),
+                    "take_profit_type": exec_params.get("take_profit_type", "fixed"),
+                    "box_window": exec_params.get("box_window", 120),
+                    "box_stop_buffer_frac": exec_params.get(
+                        "box_stop_buffer_frac", 0.25
+                    ),
+                    "box_target_edge_frac": exec_params.get(
+                        "box_target_edge_frac", 0.15
+                    ),
+                    "box_hi": exec_params.get("box_hi"),
+                    "box_lo": exec_params.get("box_lo"),
+                    "box_width_pct": exec_params.get("box_width_pct"),
+                    "box_pos": exec_params.get("box_pos"),
+                    "box_hi_120": exec_params.get("box_hi_120"),
+                    "box_lo_120": exec_params.get("box_lo_120"),
+                    "box_width_pct_120": exec_params.get("box_width_pct_120"),
+                    "box_pos_120": exec_params.get("box_pos_120"),
                     "allow_trailing": bool(exec_params.get("allow_trailing", True)),
                     "activation_r": exec_params.get("activation_r"),
                     "trailing_atr": exec_params.get("trail_r"),
                     "trail_r_far": exec_params.get("trail_r_far"),
                     "trail_r_near": exec_params.get("trail_r_near"),
                     "l3_near_threshold_atr": exec_params.get("l3_near_threshold_atr"),
-                    "max_holding_bars": exec_params.get("time_stop_bars", 50),
+                    "max_holding_bars": exec_params.get(
+                        "max_holding_bars", exec_params.get("time_stop_bars", 0)
+                    ),
                     "structural_exit": exec_params.get("structural_exit"),
                     "sr_exit_price": exec_params.get("sr_exit_price"),
                     "sr_exit_buffer_atr": exec_params.get("sr_exit_buffer_atr"),

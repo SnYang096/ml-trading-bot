@@ -13,6 +13,16 @@
 # 2024-11 主升段验证：SOL 通过率 44%（旧 21%），XRP 58%（旧 30%）。
 
 rules:
+  - any_of:
+      - feature: ema_1200_position
+        operator: "<="
+        value: -0.03
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.03
+    locked: true
+    lock_reason: "近 EMA1200 中轴无趋势优势：20260425 ME |ema_1200_position|<0.05 的交易 n=44, R=-90"
+
   - feature: me_atr_pct
     operator: ">="
     value: 0.25
@@ -45,6 +55,22 @@ rules:
     value: 1.00
     locked: false
     lock_reason: Box prefilter upgrade — compression-before-expansion prior (conservative draft; tighten via meta-algorithm)
+
+  - any_of:
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.15
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.85
+      - feature: box_breakout_up
+        operator: ">="
+        value: 0.5
+      - feature: box_breakout_down
+        operator: ">="
+        value: 0.5
+    locked: true
+    lock_reason: "ME 只做压缩后点火/边缘扩张，不在 box 中部未突破区域追假动量；20260425 inside_box_no_breakout R=-59"
 
 last_evaluation:
   timestamp: "2026-04-11"

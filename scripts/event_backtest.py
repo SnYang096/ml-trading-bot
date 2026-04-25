@@ -118,6 +118,7 @@ try:
         Tabs,
         TabPanel,
         FixedTicker,
+        ColumnDataSource,
     )
     from bokeh.layouts import column as bk_column
     from bokeh.resources import INLINE as BK_RESOURCES
@@ -2999,6 +3000,12 @@ class EventBacktester:
                     _frow["gate_reasons"] = lf.get("gate_reasons")
                 if lf.get("prefilter_reason") is not None:
                     _frow["prefilter_reason"] = lf.get("prefilter_reason")
+                if lf.get("direction_rule") is not None:
+                    _frow["direction_rule"] = lf.get("direction_rule")
+                if lf.get("direction_reason") is not None:
+                    _frow["direction_reason"] = lf.get("direction_reason")
+                if lf.get("entry_filter_reason") is not None:
+                    _frow["entry_filter_reason"] = lf.get("entry_filter_reason")
                 _funnel_per_bar_rows.append(_frow)
 
             # NOTE: Evidence slot 竞争已移除 (改为入场门槛 + 仓位缩放)
@@ -3847,6 +3854,70 @@ def generate_trading_map_html(
             ("Direction (−1/0/+1)", _dir_y, "#059669"),
         ]
 
+        def _compact_reason(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, (list, tuple)):
+                return "; ".join(str(x) for x in value[:6])
+            return str(value)
+
+        def _block_points(sub_rows: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
+            out: Dict[str, List[Any]] = {
+                "x": [],
+                "y": [],
+                "stage": [],
+                "reason": [],
+                "strategy": [],
+                "direction": [],
+            }
+            for rec in sub_rows:
+                stage = ""
+                reason = ""
+                y = float("nan")
+                if rec.get("prefilter") is False:
+                    stage = "Prefilter"
+                    reason = _compact_reason(rec.get("prefilter_reason"))
+                    y = 1.0
+                elif rec.get("direction_value") == 0:
+                    stage = "Direction"
+                    reason = _compact_reason(
+                        rec.get("direction_reason") or rec.get("direction_rule")
+                    )
+                    y = 4.0
+                elif rec.get("gate") is False:
+                    stage = "Gate"
+                    reason = _compact_reason(rec.get("gate_reasons"))
+                    y = 2.0
+                elif rec.get("entry_filter") is False:
+                    stage = "Entry"
+                    reason = _compact_reason(rec.get("entry_filter_reason"))
+                    y = 3.0
+                elif int(rec.get("pcm_drop_slot", 0) or 0) > 0:
+                    stage = "PCM"
+                    reason = "slot_full"
+                    y = 0.0
+                elif int(rec.get("pcm_drop_direction_policy", 0) or 0) > 0:
+                    stage = "PCM"
+                    reason = "direction_policy"
+                    y = 0.0
+                elif int(rec.get("pcm_drop_family_conflict", 0) or 0) > 0:
+                    stage = "PCM"
+                    reason = "family_conflict"
+                    y = 0.0
+                elif int(rec.get("pcm_drop_daily_limit", 0) or 0) > 0:
+                    stage = "PCM"
+                    reason = "daily_limit"
+                    y = 0.0
+                if not stage:
+                    continue
+                out["x"].append(pd.Timestamp(rec["timestamp"]))
+                out["y"].append(y)
+                out["stage"].append(stage)
+                out["reason"].append(reason)
+                out["strategy"].append(str(rec.get("strategy") or ""))
+                out["direction"].append(str(rec.get("direction_value")))
+            return out
+
         for strat_name in sorted(by_strat.keys()):
             sub = sorted(by_strat[strat_name], key=lambda t: t["timestamp"])
             ts = [pd.Timestamp(t["timestamp"]) for t in sub]
@@ -3886,6 +3957,32 @@ def generate_trading_map_html(
                     pf.line(
                         xs, ys, line_color=color, line_width=1.6, legend_label=label
                     )
+            block_data = _block_points(sub)
+            if block_data["x"]:
+                bsrc = ColumnDataSource(block_data)
+                blocked = pf.scatter(
+                    "x",
+                    "y",
+                    source=bsrc,
+                    marker="x",
+                    size=9,
+                    line_width=2,
+                    color="#dc2626",
+                    legend_label="No-entry reason",
+                )
+                pf.add_tools(
+                    HoverTool(
+                        renderers=[blocked],
+                        tooltips=[
+                            ("Time", "@x{%F %H:%M}"),
+                            ("Stage", "@stage"),
+                            ("Reason", "@reason"),
+                            ("Strategy", "@strategy"),
+                            ("Dir", "@direction"),
+                        ],
+                        formatters={"@x": "datetime"},
+                    )
+                )
             pf.legend.click_policy = "hide"
             pf.legend.label_text_font_size = "8pt"
             pf.legend.location = "top_left"
@@ -4007,8 +4104,10 @@ def generate_trading_map_html(
             legend_label=f"Rolling TP-VWAP ({vw_n} bars, price)",
         )
 
-        # ── CRF: rolling 120 lo/hi band (same bar as prefilter; no min/max merge rects)
-        _draw_box = strat_filter is None or str(strat_filter).strip().lower() == "crf"
+        # ── CRF: rolling 120 lo/hi band（仅 CRF 语义；勿在「All」Tab 叠到 SRB/BPC 等图上）
+        # ``strat_filter is None`` 对应 Tabs 里的 **All**，若此处画 CRF 盒会把「盒通过」
+        # 误读成当前 Tab 策略的 prefilter，造成 SRB 图与漏斗严重不一致。
+        _draw_box = str(strat_filter or "").strip().lower() == "crf"
         if _draw_box:
             try:
                 import numpy as _np
@@ -4025,16 +4124,24 @@ def generate_trading_map_html(
                 _bx = None
             if _bx is not None and not _bx.empty:
                 _bx = _bx.reindex(df_plot.index)
-                _stab = pd.to_numeric(_bx.get("box_stability_120"), errors="coerce")
-                _widp = pd.to_numeric(_bx.get("box_width_pct_120"), errors="coerce")
-                _hi = pd.to_numeric(_bx.get("box_hi_120"), errors="coerce")
-                _lo = pd.to_numeric(_bx.get("box_lo_120"), errors="coerce")
+                _stab = pd.to_numeric(_bx.get("box_stability_240"), errors="coerce")
+                _widp = pd.to_numeric(_bx.get("box_width_pct_240"), errors="coerce")
+                _hi = pd.to_numeric(_bx.get("box_hi_240"), errors="coerce")
+                _lo = pd.to_numeric(_bx.get("box_lo_240"), errors="coerce")
+                _touch_hi = pd.to_numeric(
+                    _bx.get("box_touches_hi_240"), errors="coerce"
+                )
+                _touch_lo = pd.to_numeric(
+                    _bx.get("box_touches_lo_240"), errors="coerce"
+                )
                 # Keep in sync with config/strategies/crf/archetypes/prefilter.yaml:
-                #   stab>=0.80, 0.04 <= width <= 0.25
+                #   stab>=0.85, 0.04 <= width <= 0.30, hi/lo touches>=5
                 _qual = (
-                    (_stab.fillna(0.0) >= 0.80)
+                    (_stab.fillna(0.0) >= 0.85)
                     & (_widp.fillna(0.0) >= 0.04)
-                    & (_widp.fillna(1.0) <= 0.25)
+                    & (_widp.fillna(1.0) <= 0.30)
+                    & (_touch_hi.fillna(0.0) >= 5)
+                    & (_touch_lo.fillna(0.0) >= 5)
                 )
                 _pass_rate = float(_qual.mean()) if len(_qual) else 0.0
                 print(f"   CRF prefilter overlay: pass_rate={_pass_rate:.1%}")

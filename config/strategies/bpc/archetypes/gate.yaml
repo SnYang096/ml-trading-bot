@@ -37,11 +37,12 @@ hard_gates:
   reason: BPC 专用：BB 偏窄且方向置信低 → 典型震荡来回扫区
   when:
     bpc_semantic_chop:
-      value_gt: 0.60
+      value_gt: 0.40
   then:
     action: deny
-  comment: 'semantic: same construction as tpc_semantic_chop; 0.60 对应全局 deny≈25%'
+  comment: '20260425 trade diagnostic: chop>=0.40 的 BPC 成交 n=38, R=-181；下调到 0.40 防止波动区假突破/假回踩'
   locked: true
+  frozen: true
   promote_never_disable: true
   lock_reason: 波动区过滤（标准）：BB偏窄且方向置信低即拒绝，避免 chop bar 假突破
 - id: gate_vpin_ma20
