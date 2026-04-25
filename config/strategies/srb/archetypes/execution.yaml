@@ -24,7 +24,8 @@ true_sr_level:
 # 与 live decide / event_backtest 同源，读同一字段。
 sr_wide_entry_guard:
   enabled: true
-  min_distance_atr: 2.0
+  # 2.0 时常在「贴近月度下沿的做空 / 跌破初期」误杀 SHORT；略放宽以换分布/破位空
+  min_distance_atr: 1.15
   apply_to_new_only: true
 add_position:
   add_size_multipliers:
@@ -237,13 +238,13 @@ srb_staged_entry_2b:
   # 2026-04-26：2b 略强化宏观趋势（EMA1200），PCM arm 窗口加长，便于跟上突破后延续
   enabled: true
   cross:
-    confirm_k: 3
+    confirm_k: 2
     fake_lookahead: 10
     cooldown_bars: 10
   post_2a_max_bars: 32
   ema_slope_bars: 3
-  ema_pos_min: 0.02
-  ema_slope_min: 0.008
+  ema_pos_min: 0.008
+  ema_slope_min: 0.004
   arm_pcm_bars: 12
 
 version: 3

@@ -1,18 +1,19 @@
-# SRB 方向 — ROC(20) 速度符号 + EMA1200 宏观带通
+# SRB 方向 — 严格带通 + 放宽双特征门（解决「启动期 EMA 滞后」与「下跌初段 EMA 仍为正」）
 #
-# 与 BPC / TPC / ME 的区分：
-# - **BPC**：Donchian 突破方向 × MACD × EMA1200。
-# - **TPC / 旧 SRB**：MACD sign × EMA1200（同源拥挤）。
-# - **ME**：accel / cvd / macd 级联 × VWAP1200。
-# - **SRB（本文件）**：**roc_20 符号** 作为方向速度源，**ema_1200_position** 仅作宏观同向过滤；
-#   与 MACD 解耦，减少与 TPC 同图「跟 MACD 抖动」的拥挤。
+# 规则按顺序匹配，**先**尝试严格 ROC×EMA 带通（噪声少），**未命中**再用放宽 dual：
+# - **严格**：roc_20 符号与 ema_1200 宏观带同号（与原 SRB/TPC 解耦思路一致）。
+# - **放宽**：dual_position_agree_deadband，epsilon<0 扩大「同向」可接受区：
+#     LONG：突破启动时常出现 roc>0 而 ema_1200 仍略负；
+#     SHORT：distribution 下跌初段常出现 roc<0 而 ema_1200 仍略正。
+#
+# 与 BPC / ME / TPC：仍不用 MACD×EMA1200（TPC）；不用 VWAP 级联（ME）。
 
-description: "SRB 方向 — ROC(20) sign 与 EMA1200 相对位置同号（signal_match_position_band）"
+description: "SRB 方向 — 严格 signal_match_position_band，失败则 dual(roc_20, ema_1200_position) 软带"
 
 direction_rules:
-  - id: srb_roc20_ema1200_align
+  - id: srb_roc20_ema1200_align_strict
     method: signal_match_position_band
-    description: "20 根价格速度方向；须落在 EMA1200 多/空带通内"
+    description: "强一致：20 根价格速度符号与 EMA1200 多/空带同号"
     signal_rules:
       - feature: roc_20
         transform: sign
@@ -20,3 +21,11 @@ direction_rules:
       feature: ema_1200_position
       inner_abs: 0
       outer_abs: 1
+
+  - id: srb_roc20_ema1200_dual_relaxed
+    method: dual_position_agree_deadband
+    description: "软带：同向动量 + 宏观位，允许 EMA 略滞后（epsilon=-0.065）"
+    features:
+      - roc_20
+      - ema_1200_position
+    epsilon: -0.065

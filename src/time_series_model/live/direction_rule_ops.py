@@ -16,13 +16,16 @@ METHOD_SIGNAL_MATCH_POSITION_BAND = "signal_match_position_band"
 
 def dual_position_agree_deadband_scalar(v1: Any, v2: Any, epsilon: float) -> int:
     """
-    Strong long: v1 > eps and v2 > eps -> +1
-    Strong short: v1 < -eps and v2 < -eps -> -1
-    Else -> 0 (including NaN, missing, disagree, or either in [-eps, eps]).
+    eps >= 0 (deadband):
+      Long: v1 > eps and v2 > eps -> +1
+      Short: v1 < -eps and v2 < -eps -> -1
+
+    eps < 0 (relaxed band, e.g. SRB 启动期 / 下跌初段 EMA 滞后):
+      Long: v1 > eps and v2 > eps (easier than eps>=0 case)
+      Short: v1 < -eps and v2 < -eps  with threshold -eps > 0
+      If both match, long wins (same order as two separate if branches).
     """
     eps = float(epsilon)
-    if eps < 0:
-        eps = 0.0
     try:
         p1 = float(v1)
         p2 = float(v2)
@@ -30,9 +33,16 @@ def dual_position_agree_deadband_scalar(v1: Any, v2: Any, epsilon: float) -> int
         return 0
     if np.isnan(p1) or np.isnan(p2):
         return 0
+    if eps >= 0:
+        if p1 > eps and p2 > eps:
+            return 1
+        if p1 < -eps and p2 < -eps:
+            return -1
+        return 0
     if p1 > eps and p2 > eps:
         return 1
-    if p1 < -eps and p2 < -eps:
+    thr = -eps
+    if p1 < thr and p2 < thr:
         return -1
     return 0
 
@@ -48,18 +58,21 @@ def dual_position_agree_deadband_series(
         return pd.Series(0.0, index=df.index, dtype=float)
 
     eps = float(epsilon)
-    if eps < 0:
-        eps = 0.0
 
     s1 = pd.to_numeric(df[col_a], errors="coerce").astype(float)
     s2 = pd.to_numeric(df[col_b], errors="coerce").astype(float)
 
     out = pd.Series(0.0, index=df.index, dtype=float)
     valid = s1.notna() & s2.notna()
-    long_m = valid & (s1 > eps) & (s2 > eps)
-    short_m = valid & (s1 < -eps) & (s2 < -eps)
+    if eps >= 0:
+        long_m = valid & (s1 > eps) & (s2 > eps)
+        short_m = valid & (s1 < -eps) & (s2 < -eps)
+    else:
+        thr = -eps
+        long_m = valid & (s1 > eps) & (s2 > eps)
+        short_m = valid & (s1 < thr) & (s2 < thr)
     out.loc[long_m] = 1.0
-    out.loc[short_m] = -1.0
+    out.loc[short_m & ~long_m] = -1.0
     return out
 
 

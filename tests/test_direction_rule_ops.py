@@ -31,8 +31,10 @@ def test_dual_scalar(v1, v2, eps, expected):
     assert dual_position_agree_deadband_scalar(v1, v2, eps) == expected
 
 
-def test_dual_scalar_negative_epsilon_clamped():
+def test_dual_scalar_negative_epsilon_relaxed_long_short():
     assert dual_position_agree_deadband_scalar(0.01, 0.02, -1.0) == 1
+    assert dual_position_agree_deadband_scalar(0.05, -0.04, -0.065) == 1
+    assert dual_position_agree_deadband_scalar(-0.08, 0.03, -0.065) == -1
 
 
 def test_dual_series_matches_scalar():

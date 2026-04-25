@@ -53,6 +53,12 @@ PY
 
 - Prefilter 改为 **L3 关键 SR 带 + L2 强度 + 突破频谱 + impulse**；去掉盒/路径效率/trend_r2 主过滤，与「Structural Range Breakout」命名一致。
 
+## 2026-04-27（更早启动 + 空单可用性）
+
+- **方向**：`direction.yaml` 增加 **strict → relaxed dual**（`roc_20` + `ema_1200_position`，`epsilon: -0.065`），缓解 EMA1200 滞后导致的多空「永远对不齐」。
+- **sr_wide_entry_guard**：`min_distance_atr` **2.0 → 1.15**，减少贴近 L3 下沿时的 **SHORT** 误拒。
+- **2a+2b**：`confirm_k` **3→2**；`ema_pos_min` / `ema_slope_min` 略降，arm 略提前。
+
 ## 2026-04-26（肥尾 / 跟趋势执行预设）
 
 - **止损与出场**：`initial_r` 8；`breakeven` 6.5R / lock **-0.3R**；`trailing` activation **7R**，`trail_r`/`trail_r_far` **7 / 10.5**；`l3_structural_exit.buffer` **0.45**；`structural_sl` buffer **0.9**。
