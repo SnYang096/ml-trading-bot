@@ -1755,6 +1755,29 @@ def row_to_features(row: pd.Series) -> Dict[str, float]:
     return features
 
 
+def _apply_pcm_direction_ffill(
+    symbol: str,
+    timeframe: str,
+    features: Dict[str, float],
+    cache: Dict[Tuple[str, str], Dict[str, float]],
+    *,
+    keys: Tuple[str, ...] = ("ema_1200_position", "roc_20"),
+) -> None:
+    """因果填充：本 bar 缺列/NaN 时用该 (symbol, tf) 上一有效值，避免 Direction 因键缺失恒为 0。
+
+    ``row_to_features`` 会丢弃 NaN；慢窗特征在部分 bar 上为空时，decide() 收不到
+    ``ema_1200_position`` / ``roc_20``，signal_match 与 dual 均失败 —— 与 prefilter 是否通过无关。
+    """
+    ck = (str(symbol), str(timeframe))
+    slot = cache.setdefault(ck, {})
+    for k in keys:
+        v = features.get(k)
+        if v is not None and v == v and np.isfinite(v):
+            slot[k] = float(v)
+        elif k in slot:
+            features[k] = slot[k]
+
+
 def _extract_path_efficiency_pct(features: Mapping[str, Any]) -> Optional[float]:
     """path_efficiency 的滚动历史分位 [0,1]（path_efficiency_pct_f / 列 path_efficiency_pct），语义类似 ER。"""
     for k in ("path_efficiency_pct", "path_efficiency_pct_f"):
@@ -2642,6 +2665,7 @@ class EventBacktester:
         _er_rows_signal_add: List[Dict[str, Any]] = []
         _er_rows_float_ladder: List[Dict[str, Any]] = []
         _funnel_per_bar_rows: List[Dict[str, Any]] = []
+        _pcm_direction_ffill: Dict[Tuple[str, str], Dict[str, float]] = {}
 
         for ts, sym, tf_rows in timeline_events:
             simulator = self._simulators[sym]
@@ -2786,7 +2810,9 @@ class EventBacktester:
             # 构建 features_by_timeframe 供 PCM 路由
             features_by_tf: Dict[str, Dict[str, float]] = {}
             for tf, row in tf_rows.items():
-                features_by_tf[tf] = row_to_features(row)
+                _fd = row_to_features(row)
+                _apply_pcm_direction_ffill(sym, tf, _fd, _pcm_direction_ffill)
+                features_by_tf[tf] = _fd
 
             # 主特征 = 第一个可用 timeframe 的特征 (PCM 回退用)
             primary_features = next(iter(features_by_tf.values()))
@@ -3980,6 +4006,51 @@ def generate_trading_map_html(
             line_alpha=0.78,
             legend_label=f"Rolling TP-VWAP ({vw_n} bars, price)",
         )
+
+        # ── CRF: rolling 120 lo/hi band (same bar as prefilter; no min/max merge rects)
+        _draw_box = strat_filter is None or str(strat_filter).strip().lower() == "crf"
+        if _draw_box:
+            try:
+                import numpy as _np
+                from src.features.time_series.box_structure_features import (
+                    compute_box_structure_from_series as _box_feat,
+                )
+
+                _bx = _box_feat(
+                    close=df_plot["close"],
+                    high=df_plot["high"],
+                    low=df_plot["low"],
+                )
+            except Exception:
+                _bx = None
+            if _bx is not None and not _bx.empty:
+                _bx = _bx.reindex(df_plot.index)
+                _stab = pd.to_numeric(_bx.get("box_stability_120"), errors="coerce")
+                _widp = pd.to_numeric(_bx.get("box_width_pct_120"), errors="coerce")
+                _hi = pd.to_numeric(_bx.get("box_hi_120"), errors="coerce")
+                _lo = pd.to_numeric(_bx.get("box_lo_120"), errors="coerce")
+                # Keep in sync with config/strategies/crf/archetypes/prefilter.yaml:
+                #   stab>=0.80, 0.04 <= width <= 0.25
+                _qual = (
+                    (_stab.fillna(0.0) >= 0.80)
+                    & (_widp.fillna(0.0) >= 0.04)
+                    & (_widp.fillna(1.0) <= 0.25)
+                )
+                _pass_rate = float(_qual.mean()) if len(_qual) else 0.0
+                print(f"   CRF prefilter overlay: pass_rate={_pass_rate:.1%}")
+                qidx = df_plot.index[_qual.values]
+                if len(qidx) > 0:
+                    # Per-bar vbar — true gaps where filter fails, no NaN bridging.
+                    p.vbar(
+                        x=qidx,
+                        width=bar_w,
+                        top=_hi.values[_qual.values],
+                        bottom=_lo.values[_qual.values],
+                        fill_color="#22c55e",
+                        fill_alpha=0.18,
+                        line_color=None,
+                        legend_label="CRF: box (prefilter pass)",
+                    )
 
         if trades:
             # ── 连接线: 颜色 = win/loss ──

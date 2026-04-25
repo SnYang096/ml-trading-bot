@@ -53,6 +53,10 @@ PY
 
 - Prefilter 改为 **L3 关键 SR 带 + L2 强度 + 突破频谱 + impulse**；去掉盒/路径效率/trend_r2 主过滤，与「Structural Range Breakout」命名一致。
 
+## 方向诊断（图上 Prefilter 有脉冲但 Dir 恒为 0）
+
+常见原因不是「规则太严」而是 **特征 dict 里根本没有 `ema_1200_position` / `roc_20`**：`row_to_features` 会丢掉 NaN，慢窗在部分 bar 上为空 → `DirectionEvaluator` 两档全失败 → `direction_value=0`，与 prefilter 是否通过无关。事件回测已对上述两列做 **按 (symbol, tf) 的因果前向填充**（`event_backtest._apply_pcm_direction_ffill`），并保留 `roc_20` **sign 兜底**规则。
+
 ## 2026-04-27（更早启动 + 空单可用性）
 
 - **方向**：`direction.yaml` 增加 **strict → relaxed dual**（`roc_20` + `ema_1200_position`，`epsilon: -0.065`），缓解 EMA1200 滞后导致的多空「永远对不齐」。

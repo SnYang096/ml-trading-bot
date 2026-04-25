@@ -29,3 +29,9 @@ direction_rules:
       - roc_20
       - ema_1200_position
     epsilon: -0.065
+
+  # 最后兜底：前两步因缺列/全 0 失败时仍给符号方向（噪声↑；依赖 gate/prefilter 收口）
+  - id: srb_roc20_sign_fallback
+    feature: roc_20
+    transform: sign
+    description: "仅 roc_20 符号；在前两条均无法产出方向时使用"
