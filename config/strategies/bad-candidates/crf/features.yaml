@@ -26,6 +26,14 @@ feature_pipeline:
     - market_cap_normalized_orderflow_f
     - volatility_regime_f
     - atr_percentile_f
+    - bb_width_normalized_pct_f
+
+    # ========== Gate 防御：震荡语义 + EMA1200 中轴/斜率 ==========
+    # bpc_soft_phase_f 输出 bpc_semantic_chop；CRF 反向使用它：
+    #   趋势策略里 high chop = 拒绝追趋势；CRF 里 low chop = 不像 range，不交易。
+    - bpc_soft_phase_f
+    - ema_1200_position_f
+    - ema_1200_slope_f
 
     # ========== 辅助：衰竭 / 极值 ==========
     # 让 CRF 知道"盒子边缘"是不是已经进入衰竭（提高 fade 胜率）

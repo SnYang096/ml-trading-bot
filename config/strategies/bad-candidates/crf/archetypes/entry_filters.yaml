@@ -3,9 +3,9 @@
 
 filters:
   - id: crf_edge_exhaustion
-    enabled: true
+    enabled: false
     locked: false
-    description: "边缘衰竭确认：靠近 box 边沿时 FER 失败信号抬头"
+    description: "边缘衰竭确认：暂不启用；CRF 当前由 box_pos + 多次触达定义边界，不再借用 FER 失败信号代理"
     conditions:
       - feature: fer_fer_composite_score
         operator: ">="

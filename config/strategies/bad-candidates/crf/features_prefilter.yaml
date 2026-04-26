@@ -8,3 +8,7 @@ feature_pipeline:
     - market_cap_normalized_orderflow_f
     - box_structure_f
     - volatility_regime_f
+    - bb_width_normalized_pct_f
+    - bpc_soft_phase_f
+    - ema_1200_position_f
+    - ema_1200_slope_f
