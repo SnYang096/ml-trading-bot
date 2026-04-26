@@ -1,21 +1,11 @@
-# FBF Pure Trailing 执行方案（P0 v2 生产验证通过 · 2026-04-22）
+# FBF 短打执行基线（恢复 20260413/20260416/20260417 稳定 run 的共同配置）
 #
-# 生产验证 run: results/fbf/slow-rolling-sim-exp-trail/_rolling_sim/20260422_202736
-# 16 月 173 trades · totalR=37.83 · Sharpe=2.22 · PF=1.39 · win=48.0% · maxR=9.84
-#   vs baseline target_r=2.0:  totalR +123%, Sharpe +158%, trades -19%
-#   vs fatter-TP target_r=4.0: totalR +15.6%, Sharpe +71%,  trades -36%
-#
-# 语义核心：
-#   FBF 赢单不是"精确到 2R"的机械模式 —— 04-16 baseline 历史上 100% TP 赢单都精确卡在
-#   1.9x~1.98R，这是固定 target_r=2.0 的伪稳定；2H resim 与 1-min rolling_sim 一致显示，
-#   一旦释放封顶让 trailing 接管，赢单分布出现显著右尾（>2R 占赢单 40%+，最大 9.84R）。
-#
-# 执行参数选择（trail_r=0.5 最优）：
-#   - 2H resim 扫描：0.5 / 0.8 / 1.0 / 1.2 ATR 回撤距离，0.5 最优（totalR +85%, Sharpe 2.26→2.86）
-#   - 1-min 1 年实测：0.5 下 totalR 翻倍、Sharpe 翻倍，且月度 0 trades 的月份（threshold 过滤）
-#     正好规避了 2024-12 的杀人回测（baseline 该月 -12.5R）
-#
-# 回滚：git checkout pre-fbf-trail-promote-20260422 -- config/strategies/fbf/archetypes/execution.yaml
+# 共同特征：
+# - allow_add_on=false
+# - initial_r=1.0
+# - fixed target_r=2.0
+# - time_stop_bars=36
+# - no trailing / no breakeven
 
 execution_constraints:
   allow_add_on: false
@@ -23,29 +13,23 @@ execution_constraints:
 
 holding:
   max_holding_bars: null
-  time_stop_bars: 48  # 从 36 放宽到 48（2H bars ≈ 4 days），给 trailing 足够的尾部捕捉空间
+  time_stop_bars: 36
 
 stop_loss:
   type: fixed
   initial_r: 1.0
   trailing:
-    enabled: true
-    # activation_r=1.5: 1.5R 以上才开始 trail；1.0R 用 breakeven 锁定
-    activation_r: 1.5
+    enabled: false
+    activation_r: 3.0
     step_r: 0.5
-    # trail_r=0.5: 从 HWM 回撤 0.5 ATR 离场；0.8 次优，1.2 太宽会吃掉 retrace
-    trail_r: 0.5
-    expand_with_primary_atr: false
+    trail_r: 1.5
 
 take_profit:
-  # Pure Trailing: 关闭固定 TP，尾部完全由 trailing_sl 释放
-  enabled: false
-  target_r: 2.0  # 保留旧值仅供回溯对比
+  enabled: true
+  target_r: 2.0
 
 breakeven:
-  # 1.0R 触发保本锁（SL 抬到 entry + 0 ATR）；与 activation_r=1.5 一起构成"阶梯式保护"
-  enabled: true
-  trigger_r: 1.0
-  lock_profit_atr: 0.0
+  enabled: false
+  trigger_r: 2
 
-version: 54
+version: 55

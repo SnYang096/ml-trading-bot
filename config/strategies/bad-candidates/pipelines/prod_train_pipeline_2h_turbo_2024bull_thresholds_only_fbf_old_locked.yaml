@@ -1,7 +1,8 @@
 # ============================================================
-# 上线前训练流水线 (2H only, FBF, turbo / 固定特征 + 阈值链)
-# 参考慢速稳定 run: 20260413_133344, 20260413_162634, 20260416_223806,
-# 20260417_184110, 20260417_191527
+# FBF old-stable locked fast validation
+# Uses config/strategies/bad-candidates/fbf as an old stable short-cycle config,
+# but disables the turbo threshold chain so fast rolling does not rewrite it.
+# Reference slow runs: 20260416_223806, 20260413_162634.
 # ============================================================
 
 dates:
@@ -11,7 +12,7 @@ dates:
   validation_months: 3
 
 global_toggles:
-  locked_threshold_tuning_enabled: true
+  locked_threshold_tuning_enabled: false
 
 rolling:
   mode: turbo_fixed_features
@@ -26,17 +27,17 @@ fast_loop:
   disable_model_training: true
   step_months: 1
   threshold_calibration:
-    enabled: true
+    enabled: false
   prefilter:
-    optimize: true
+    optimize: false
   symbol_threshold_calibration:
-    enabled: true
+    enabled: false
   execution_opt:
     enabled: false
   pcm_eval:
     enabled: false
   direction_tuning:
-    enabled: true
+    enabled: false
     compare_features: false
     promote_after_validate: false
 
@@ -73,22 +74,12 @@ strategies:
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
           enabled: false
-          mode: auto_if_locked
-          skip_if_cached: false
-          max_cases: 12
-          min_trades_target: 70
-          trade_penalty: 0.0025
-          target_trades_min: 40
-          target_trades_max: 140
-          trade_penalty_low: 0.0021
-          trade_penalty_high: 0.0014
-          stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
       entry_filter:
         meta_algorithm: false
-        archetype_plateau: true
+        archetype_plateau: false
         significance_p: 0.10
         significance_min_trades: 4
         plateau_window: 4
@@ -103,20 +94,20 @@ strategies:
           - mean_effect
         min_score_improvement: 0.008
       gate:
-        require_positive_effect: true
-        min_combined_pass_rate: 0.38
-        stat_fallback_on_empty: true
-        stat_fallback_max_rules: 3
-        stat_fallback_min_source_features: 2
+        require_positive_effect: false
+        min_combined_pass_rate: 0.0
+        stat_fallback_on_empty: false
+        stat_fallback_max_rules: 0
+        stat_fallback_min_source_features: 0
       backtest:
-        min_trades: 50
+        min_trades: 0
       deploy:
-        min_trades: 50
+        min_trades: 0
 
 event_backtest:
   enabled: true
-  promote: true
+  promote: false
   map_extra_months: 4
 
 output:
-  history_dir: results/fbf/turbo-rolling-sim
+  history_dir: results/fbf/turbo-rolling-sim-old-locked
