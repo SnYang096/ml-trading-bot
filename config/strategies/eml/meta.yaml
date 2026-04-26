@@ -1,0 +1,19 @@
+# EML — EMA1200 Trend Umbrella（研究用）
+# 用 EMA1200 位置 + 斜率划定大结构，entry filter 承接 BPC/TPC/ME/SRB 的吸收/动量触发。
+
+strategy:
+  name: eml-120T
+  description: |
+    EMA1200 Trend Umbrella（多空）：价在 EMA1200 一侧且 EMA1200 斜率同向时定义大结构；
+    BPC/TPC 的吸收延续、ME 的动量点火、SRB 的关键位推进作为 entry filter 候选。
+    Gate 只过滤极端不利场景；执行层为 ATR 初始止损 + 浮盈 R 阶梯加仓 + EMA1200 结构出场。
+    非生产策略；用于验证趋势族能否合并到统一 EMA 趋势框架。
+
+  owner: quant_team
+  archetype: TrendPullbackContinuationLong
+
+  timeframe: "120T"
+
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT
