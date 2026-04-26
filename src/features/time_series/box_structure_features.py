@@ -129,21 +129,20 @@ def _compute_one_window(
 
     pos = ((close - box_lo) / width).clip(0.0, 1.0)
 
-    # tol in price units
+    # tol in price units (atr or pct of mid, whichever is larger)
     tol = np.maximum(TOL_ATR_MULT * atr.fillna(0.0), TOL_PCT * mid.abs())
 
-    # stability: fraction of past-N bars where [low, high] lies inside box ± tol.
-    # Cast bool→float and explicitly zero-fill NaN so warm-up NaNs don't bleed
-    # into the rolling mean and artificially depress stability post-warm-up.
-    inside = (
-        (low >= (box_lo - tol)) & (high <= (box_hi + tol))
-    ).astype(float)
-    # Where box boundaries are NaN (warm-up), inside is NaN from the comparison
-    # above; convert to 0 to keep the rolling mean well-defined.
-    inside = inside.where(inside.notna(), 0.0)
-    stability = (
-        inside.rolling(2 * n, min_periods=n).mean()
-    )
+    # Stability: how range-bound vs trending the past N bars are.
+    #
+    # Old definition (low>=box_lo-tol & high<=box_hi+tol) was TRIVIALLY TRUE
+    # by construction (box_lo/hi are rolling min/max), so stability ≡ 1.0 and
+    # prefilter never rejected anything.
+    #
+    # New causal definition: stability = 1 - R² of linear fit of close[-N:].
+    #   • Pure trend:     R² ≈ 1  → stability ≈ 0
+    #   • Noisy chop:     R² ≈ 0  → stability ≈ 1
+    # Uses the same helper as trend_r2 to stay causal.
+    stability = (1.0 - _trend_r2_signed(close, n).abs()).clip(0.0, 1.0)
 
     # touches within tol of the edge (again past-N window)
     near_hi = (high >= (box_hi - tol)).astype(float).fillna(0.0)
@@ -277,3 +276,96 @@ def compute_box_structure_from_series(
     out["box_prior_trend_sign"] = out["box_prior_trend_sign"].fillna(0.0)
 
     return out
+
+
+@register_feature(
+    "compute_bpt_macro_box_direction_from_series",
+    category="box_structure",
+    description=(
+        "Box Pullback Trend direction feature: local EMA1200 macro trend aligned "
+        "with 120-bar box edge/chop pullback window."
+    ),
+    outputs=[
+        "bpt_macro_box_direction",
+        "bpt_box_pullback_window",
+        "bpt_semantic_chop",
+    ],
+)
+def compute_bpt_macro_box_direction_from_series(
+    *,
+    close: pd.Series,
+    box_pos_120: pd.Series,
+    box_stability_120: pd.Series,
+    box_width_pct_120: pd.Series,
+    box_touches_hi_120: pd.Series,
+    box_touches_lo_120: pd.Series,
+    ema_1200_position: pd.Series,
+    ema_1200_slope_10: pd.Series,
+    edge_frac: float = 0.15,
+    stability_min: float = 0.85,
+    width_min: float = 0.04,
+    width_max: float = 0.30,
+    touches_min: float = 5.0,
+    chop_min: float = 0.40,
+    ema_position_min_abs: float = 0.03,
+) -> pd.DataFrame:
+    """Emit +1/-1/0 for macro-aligned box-edge pullbacks.
+
+    This is the pipeline version of the research diagnostic. It currently uses
+    each symbol's own EMA1200 state as macro direction; the BTC-anchored variant
+    remains in the diagnostic script until a generic cross-symbol EMA overlay is
+    added to the feature pipeline.
+    """
+    idx = box_pos_120.index
+    close = _nan_safe_series(close).reindex(idx)
+    pos = _nan_safe_series(box_pos_120).reindex(idx).fillna(0.5)
+    stability = _nan_safe_series(box_stability_120).reindex(idx).fillna(0.0)
+    width = _nan_safe_series(box_width_pct_120).reindex(idx).fillna(np.inf)
+    touches_hi = _nan_safe_series(box_touches_hi_120).reindex(idx).fillna(0.0)
+    touches_lo = _nan_safe_series(box_touches_lo_120).reindex(idx).fillna(0.0)
+    ema_pos = _nan_safe_series(ema_1200_position).reindex(idx).fillna(0.0)
+    ema_slope = _nan_safe_series(ema_1200_slope_10).reindex(idx).fillna(0.0)
+
+    ma = close.rolling(20, min_periods=20).mean()
+    std = close.rolling(20, min_periods=20).std()
+    bb_width = (4.0 * std / ma.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
+    bb_width_pctile = (
+        bb_width.rolling(240, min_periods=60).rank(pct=True).fillna(0.5)
+    )
+    signs = pd.concat(
+        [
+            np.sign(close.pct_change(3)),
+            np.sign(close.pct_change(5)),
+            np.sign(close.pct_change(10)),
+        ],
+        axis=1,
+    ).fillna(0.0)
+    direction_confidence = signs.abs().mean(axis=1) * signs.mean(axis=1).abs()
+    bb_compression = (1.0 - bb_width_pctile.clip(0.0, 1.0)).clip(0.0, 1.0)
+    chop = (bb_compression * (1.0 - direction_confidence.clip(0.0, 1.0)) * 2.0).clip(
+        0.0, 1.0
+    )
+
+    box_ok = (
+        (stability >= float(stability_min))
+        & (width >= float(width_min))
+        & (width <= float(width_max))
+        & (chop >= float(chop_min))
+    )
+    lower_edge = (pos <= float(edge_frac)) & (touches_lo >= float(touches_min))
+    upper_edge = (pos >= 1.0 - float(edge_frac)) & (touches_hi >= float(touches_min))
+    macro_up = (ema_pos >= float(ema_position_min_abs)) & (ema_slope > 0.0)
+    macro_down = (ema_pos <= -float(ema_position_min_abs)) & (ema_slope < 0.0)
+
+    direction = pd.Series(0, index=idx, dtype="int8")
+    direction.loc[box_ok & lower_edge & macro_up] = 1
+    direction.loc[box_ok & upper_edge & macro_down] = -1
+
+    return pd.DataFrame(
+        {
+            "bpt_macro_box_direction": direction.astype("int8"),
+            "bpt_box_pullback_window": (direction != 0).astype("int8"),
+            "bpt_semantic_chop": chop.fillna(0.0).astype(float),
+        },
+        index=idx,
+    )

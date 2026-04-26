@@ -8124,6 +8124,55 @@ features:
       low: low
       atr: atr
 
+  bpt_macro_box_direction_f:
+    module: box_structure
+    compute_func: compute_bpt_macro_box_direction_from_series
+    dependencies:
+    - box_structure_f
+    - ema_1200_position_f
+    - ema_1200_slope_f
+    required_columns:
+    - close
+    - box_pos_120
+    - box_stability_120
+    - box_width_pct_120
+    - box_touches_hi_120
+    - box_touches_lo_120
+    - ema_1200_position
+    - ema_1200_slope_10
+    output_columns:
+    - bpt_macro_box_direction
+    - bpt_box_pullback_window
+    - bpt_semantic_chop
+    category: box_structure
+    description: >-
+      Box Pullback Trend direction feature. Emits +1 for local EMA1200 macro-up
+      lower-edge box/chop pullbacks, -1 for macro-down upper-edge pullbacks, and
+      0 otherwise.
+    pass_full_df: false
+    compute_params:
+      edge_frac: 0.15
+      stability_min: 0.85
+      width_min: 0.04
+      width_max: 0.30
+      touches_min: 5.0
+      chop_min: 0.40
+      ema_position_min_abs: 0.03
+      node_cache_version: bpt_macro_box_direction_v1
+      output_normalization_map:
+        bpt_macro_box_direction: discrete
+        bpt_box_pullback_window: bounded_0_1
+        bpt_semantic_chop: bounded_0_1
+    column_mappings:
+      close: close
+      box_pos_120: box_pos_120
+      box_stability_120: box_stability_120
+      box_width_pct_120: box_width_pct_120
+      box_touches_hi_120: box_touches_hi_120
+      box_touches_lo_120: box_touches_lo_120
+      ema_1200_position: ema_1200_position
+      ema_1200_slope_10: ema_1200_slope_10
+
   # ---------------------------------------------------------------------------
   # ME (MomentumExpansion) v3.0 - Energy × Acceleration × Participation
   # ---------------------------------------------------------------------------

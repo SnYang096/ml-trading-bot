@@ -1,0 +1,42 @@
+name: box_pullback_trend
+status: research_only
+
+regime:
+  box_window: 120
+  stability_min: 0.85
+  width_min: 0.04
+  width_max: 0.30
+  touches_min: 5
+  chop_min: 0.40
+
+direction:
+  diagnostic_macro_source: BTCUSDT
+  pipeline_macro_source: self
+  macro_feature: ema1200_state
+  macro_ema_span: 1200
+  macro_slope_bars: 10
+  long_when: macro_up_and_box_lower_edge
+  short_when: macro_down_and_box_upper_edge
+  edge_frac: 0.15
+
+execution:
+  candidates:
+    - atr_fixed
+    - box_mid
+    - box_opposite
+  atr_stop_r: 1.5
+  atr_tp_r: 1.2
+  horizon_bars: 60
+
+validation:
+  diagnostic_script: scripts/diagnose_box_pullback_trend.py
+  compare_against:
+    - tpc
+    - bpc
+    - me
+    - srb
+  required_next_checks:
+    - overlap_by_timestamp
+    - exclusive_signal_r
+    - monthly_stability
+    - side_stability
