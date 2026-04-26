@@ -1,0 +1,126 @@
+# CDR Entry Filter: late-trend context + exhaustion confirmation
+#
+# 二阶段反转分支：
+# - Short: 长期上涨后期，买盘 run/成交簇参与度消失 + 波动压缩 + CVD 背离确认。
+# - Long: 长期下跌后期，OI 去杠杆/低波动极端 + CVD 背离确认。
+
+filters:
+  - id: cdr_short_late_uptrend_participation_loss
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "做空：长期上涨后期 + 买盘持续性消失 + 压缩 + CVD 背离"
+    conditions:
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.035
+      - feature: trade_cluster_max_buy_run_ma20
+        operator: "<="
+        value: 0.030
+      - feature: cvd_divergence_score_pct
+        operator: ">="
+        value: 0.75
+      - feature: roc_5
+        operator: "<="
+        value: 0.0
+
+  - id: cdr_short_late_uptrend_compression_hilbert
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "做空：长期上涨后期 + BB/EVT 压缩 + CVD-Hilbert 背离"
+    conditions:
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.035
+      - feature: bb_width_normalized_pct
+        operator: "<="
+        value: 0.10
+      - feature: hilbert_cvd_price_env_ratio
+        operator: ">="
+        value: 2.00
+      - feature: roc_5
+        operator: "<="
+        value: 0.0
+
+  - id: cdr_long_late_downtrend_oi_deleveraging
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "做多：长期下跌后期 + OI 去杠杆 + CVD 背离确认"
+    conditions:
+      - feature: ema_1200_position
+        operator: "<="
+        value: -0.035
+      - feature: oi_zscore
+        operator: "<="
+        value: -2.3
+      - feature: oi_flow_zscore
+        operator: "<="
+        value: -1.5
+      - feature: cvd_divergence_score_pct
+        operator: ">="
+        value: 0.90
+      - feature: roc_5
+        operator: ">="
+        value: 0.0
+
+  - id: cdr_long_late_downtrend_compression_rebound
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "做多：长期下跌后期 + 极低波动/结构压缩 + CVD 背离"
+    conditions:
+      - feature: ema_1200_position
+        operator: "<="
+        value: -0.035
+      - feature: atr_percentile
+        operator: "<="
+        value: 0.05
+      - feature: box_stability_240
+        operator: "<="
+        value: 0.12
+      - feature: cvd_divergence_score_pct
+        operator: ">="
+        value: 0.90
+      - feature: roc_5
+        operator: ">="
+        value: 0.0
+
+  - id: cdr_short_upper_failed_breakout_confirmation
+    enabled: true
+    locked: true
+    description: "做空：保留原 failed-breakout 语义，但增加末端压缩确认"
+    conditions:
+      - feature: fer_sr_failed_breakout_direction_signed
+        operator: "<="
+        value: -1
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.70
+      - feature: atr_percentile
+        operator: "<="
+        value: 0.20
+      - feature: cvd_divergence_score_pct
+        operator: ">="
+        value: 0.75
+
+  - id: cdr_long_lower_failed_breakout_confirmation
+    enabled: true
+    locked: true
+    description: "做多：保留原 failed-breakout 语义，但增加 OI/CVD 确认"
+    conditions:
+      - feature: fer_sr_failed_breakout_direction_signed
+        operator: ">="
+        value: 1
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.30
+      - feature: oi_zscore
+        operator: "<="
+        value: -1.5
+      - feature: cvd_divergence_score_pct
+        operator: ">="
+        value: 0.75
+
+combination_mode: or
