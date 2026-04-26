@@ -822,7 +822,14 @@ def main() -> None:
     parser.add_argument("--start", default="2022-01-01")
     parser.add_argument("--end", default="2026-03-31")
     parser.add_argument("--warmup-days", type=int, default=120)
-    parser.add_argument("--timeframe", default="2h")
+    parser.add_argument(
+        "--timeframe",
+        default="2h",
+        help=(
+            "Pandas resample offset (e.g. 2h, 1min). Loaded from 1m parquet then "
+            "resampled. 1min = native 1m bars; min/max segment lengths count these bars."
+        ),
+    )
     parser.add_argument(
         "--box-window",
         type=int,

@@ -424,7 +424,7 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         )
         print(f"{symbol}: segments={len(segs)}")
         for seq, (s, e) in enumerate(segs, start=1):
-            seg_id = f"{symbol}_{seq:04d}_{df.index[s].strftime('%Y%m%d%H')}"
+            seg_id = f"{symbol}_{seq:04d}_{df.index[s].strftime('%Y%m%d%H%M')}"
             direction = str(df["trend_direction"].iloc[s])
             trades, summary = simulate_dual_add_segment(
                 df.iloc[s : e + 1],
@@ -442,6 +442,7 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
 def summarize(trades: pd.DataFrame, segments: pd.DataFrame) -> pd.DataFrame:
     if trades.empty or segments.empty:
         return pd.DataFrame()
+    sum_pc = float(trades["pnl_per_capital"].sum())
     return pd.DataFrame(
         [
             {
@@ -449,9 +450,14 @@ def summarize(trades: pd.DataFrame, segments: pd.DataFrame) -> pd.DataFrame:
                 "trades": len(trades),
                 "trade_win_rate": (trades["pnl_pct"] > 0).mean(),
                 "segment_win_rate": (segments["pnl_per_capital"] > 0).mean(),
-                "sum_pnl_per_capital": trades["pnl_per_capital"].sum(),
+                "sum_pnl_per_capital": sum_pc,
+                # Same convention as chop_grid_backtest trade summary: sum of per-trade
+                # capital-normalized PnL, expressed as percentage points.
+                "return_pct": sum_pc * 100.0,
                 "worst_segment": segments["pnl_per_capital"].min(),
                 "median_drawdown": segments["max_drawdown"].median(),
+                # Fraction of segments that hit max_loss_per_segment (mtm stop) before
+                # the segment would otherwise end; see simulate_dual_add_segment risk_stop.
                 "risk_stop_rate": segments["risk_stop"].mean(),
                 "max_gross_units": segments["max_gross_units"].max(),
                 "max_abs_net_units": segments["max_abs_net_units"].max(),
@@ -633,7 +639,16 @@ def main() -> None:
     ap.add_argument("--start", default="2022-01-01")
     ap.add_argument("--end", default="2026-03-31")
     ap.add_argument("--warmup-days", type=int, default=120)
-    ap.add_argument("--timeframe", default="2h")
+    ap.add_argument(
+        "--timeframe",
+        default="2h",
+        help=(
+            "Pandas resample offset (e.g. 2h, 1min). Data is loaded as 1m OHLCV then "
+            "resampled; use 1min for bar-level simulation at 1-minute resolution "
+            "(much slower / more bars). min_segment_bars / max_segment_bars count bars "
+            "in this timeframe."
+        ),
+    )
     ap.add_argument(
         "--regime", choices=["trend", "chop"], default=defaults.get("regime", "trend")
     )
