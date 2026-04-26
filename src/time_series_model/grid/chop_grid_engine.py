@@ -115,14 +115,22 @@ class ChopGridEngine:
         symbol: str,
         regime: str,
         segment_id: str,
+        anchor_close: float | None = None,
+        anchor_atr: float | None = None,
     ) -> GridSegmentResult:
         if seg.empty:
             return GridSegmentResult(
                 [], {"status": "empty", "segment_id": segment_id}, []
             )
 
-        center = float(seg["close"].iloc[0])
-        atr = float(seg["atr14"].iloc[0])
+        center = (
+            float(anchor_close)
+            if anchor_close is not None
+            else float(seg["close"].iloc[0])
+        )
+        atr = (
+            float(anchor_atr) if anchor_atr is not None else float(seg["atr14"].iloc[0])
+        )
         if not np.isfinite(center + atr) or center <= 0 or atr <= 0:
             return GridSegmentResult(
                 [], {"status": "invalid", "segment_id": segment_id}, []

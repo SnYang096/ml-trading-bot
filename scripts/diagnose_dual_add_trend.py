@@ -29,6 +29,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.diagnose_chop_grid import GridConfig, _hysteresis_segments, build_features
 from scripts.capital_report import write_capital_report_from_trades
 from scripts.diagnose_crf_edge import _load_symbol_1m, _resample_ohlcv
+from src.time_series_model.grid.subbar_replay import (
+    merge_signal_features_onto_execution_bars,
+    slice_execution_window,
+    timeframe_to_timedelta,
+)
 from scripts.multi_leg_trading_map import write_continuous_trading_map
 
 DEFAULT_DUAL_ADD_CONFIG = (
@@ -134,11 +139,17 @@ def simulate_dual_add_segment(
     symbol: str,
     segment_id: str,
     direction: str,
+    frozen_center: float | None = None,
+    frozen_atr: float | None = None,
 ) -> Tuple[List[dict], dict]:
     if seg.empty:
         return [], {}
-    center = float(seg["close"].iloc[0])
-    atr = float(seg["atr14"].iloc[0])
+    center = (
+        float(frozen_center)
+        if frozen_center is not None
+        else float(seg["close"].iloc[0])
+    )
+    atr = float(frozen_atr) if frozen_atr is not None else float(seg["atr14"].iloc[0])
     if not np.isfinite(center + atr) or center <= 0 or atr <= 0:
         return [], {}
     fee = cfg.fee_bps / 10000.0
@@ -399,10 +410,18 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         raw = _load_symbol_1m(data_dir, symbol, warmup_start, end)
         if raw.empty:
             continue
-        bars = _resample_ohlcv(raw, args.timeframe)
-        df = build_features(symbol, bars, grid_cfg)
+        bars_signal = _resample_ohlcv(raw, args.timeframe)
+        df = build_features(symbol, bars_signal, grid_cfg)
         df = _add_trend_features(df)
         df = df[(df.index >= start) & (df.index <= end)].copy()
+        exec_tf = args.execution_timeframe or args.timeframe
+        if exec_tf != args.timeframe:
+            bars_exec = _resample_ohlcv(raw, exec_tf)
+            df_exec = merge_signal_features_onto_execution_bars(bars_exec, df)
+            sig_delta = timeframe_to_timedelta(args.timeframe)
+        else:
+            df_exec = None
+            sig_delta = None
         if cfg.regime == "trend":
             entry = (df["trend_confidence"] >= cfg.trend_min) & (
                 df["semantic_chop"] <= cfg.exit_chop_min
@@ -426,13 +445,27 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         for seq, (s, e) in enumerate(segs, start=1):
             seg_id = f"{symbol}_{seq:04d}_{df.index[s].strftime('%Y%m%d%H%M')}"
             direction = str(df["trend_direction"].iloc[s])
-            trades, summary = simulate_dual_add_segment(
-                df.iloc[s : e + 1],
-                cfg=cfg,
-                symbol=symbol,
-                segment_id=seg_id,
-                direction=direction,
-            )
+            if df_exec is not None:
+                seg_slice = slice_execution_window(df_exec, df.index, s, e, sig_delta)
+                anchor_c = float(df.iloc[s]["close"])
+                anchor_a = float(df.iloc[s]["atr14"])
+                trades, summary = simulate_dual_add_segment(
+                    seg_slice,
+                    cfg=cfg,
+                    symbol=symbol,
+                    segment_id=seg_id,
+                    direction=direction,
+                    frozen_center=anchor_c,
+                    frozen_atr=anchor_a,
+                )
+            else:
+                trades, summary = simulate_dual_add_segment(
+                    df.iloc[s : e + 1],
+                    cfg=cfg,
+                    symbol=symbol,
+                    segment_id=seg_id,
+                    direction=direction,
+                )
             all_trades.extend(trades)
             if summary:
                 all_segments.append(summary)
@@ -643,10 +676,18 @@ def main() -> None:
         "--timeframe",
         default="2h",
         help=(
-            "Pandas resample offset (e.g. 2h, 1min). Data is loaded as 1m OHLCV then "
-            "resampled; use 1min for bar-level simulation at 1-minute resolution "
-            "(much slower / more bars). min_segment_bars / max_segment_bars count bars "
-            "in this timeframe."
+            "Signal timeframe (pandas offset, e.g. 2h). Segments and regime masks use "
+            "this bar length; features are built on this grid."
+        ),
+    )
+    ap.add_argument(
+        "--execution-timeframe",
+        default=None,
+        help=(
+            "Optional finer resample for inventory simulation (e.g. 1min). When set and "
+            "different from --timeframe, segment boundaries follow the signal grid but "
+            "TP/add/risk use execution OHLC with signal columns asof-joined. "
+            "max_loser_hold_bars counts execution bars."
         ),
     )
     ap.add_argument(

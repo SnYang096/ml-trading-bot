@@ -45,6 +45,11 @@ from src.time_series_model.grid.chop_grid_engine import (  # noqa: E402
     GridEngineConfig,
     hysteresis_segments,
 )
+from src.time_series_model.grid.subbar_replay import (  # noqa: E402
+    merge_signal_features_onto_execution_bars,
+    slice_execution_window,
+    timeframe_to_timedelta,
+)
 
 
 DEFAULT_GRID_CONFIG = PROJECT_ROOT / "config/strategies/chop_grid/grid.yaml"
@@ -314,11 +319,20 @@ def run_backtest(
         if raw.empty:
             print(f"skip {symbol}: no data")
             continue
-        bars = _resample_ohlcv(raw, args.timeframe)
-        df = build_features(symbol, bars, cfg)
+        bars_signal = _resample_ohlcv(raw, args.timeframe)
+        df = build_features(symbol, bars_signal, cfg)
         df = df[(df.index >= start) & (df.index <= end)].copy()
         if df.empty:
             continue
+
+        exec_tf = args.execution_timeframe or args.timeframe
+        if exec_tf != args.timeframe:
+            bars_exec = _resample_ohlcv(raw, exec_tf)
+            df_exec = merge_signal_features_onto_execution_bars(bars_exec, df)
+            sig_delta = timeframe_to_timedelta(args.timeframe)
+        else:
+            df_exec = None
+            sig_delta = None
 
         entry_mask = df["semantic_chop"] >= cfg.chop_min
         hold_mask = df["semantic_chop"] >= cfg.exit_chop_min
@@ -336,13 +350,26 @@ def run_backtest(
         )
         print(f"{symbol}: segments={len(segs)}, entry_rate={entry_mask.mean():.1%}")
         for seq, (s, e) in enumerate(segs, start=1):
-            seg_id = f"{symbol}_{seq:04d}_{df.index[s].strftime('%Y%m%d%H')}"
-            result = engine.simulate_segment(
-                df.iloc[s : e + 1],
-                symbol=symbol,
-                regime=regime,
-                segment_id=seg_id,
-            )
+            seg_id = f"{symbol}_{seq:04d}_{df.index[s].strftime('%Y%m%d%H%M')}"
+            if df_exec is not None:
+                seg_slice = slice_execution_window(df_exec, df.index, s, e, sig_delta)
+                anchor_c = float(df.iloc[s]["close"])
+                anchor_a = float(df.iloc[s]["atr14"])
+                result = engine.simulate_segment(
+                    seg_slice,
+                    symbol=symbol,
+                    regime=regime,
+                    segment_id=seg_id,
+                    anchor_close=anchor_c,
+                    anchor_atr=anchor_a,
+                )
+            else:
+                result = engine.simulate_segment(
+                    df.iloc[s : e + 1],
+                    symbol=symbol,
+                    regime=regime,
+                    segment_id=seg_id,
+                )
             all_trades.extend(t.to_dict() for t in result.trades)
             all_segments.append(result.summary)
 
@@ -826,8 +853,20 @@ def main() -> None:
         "--timeframe",
         default="2h",
         help=(
-            "Pandas resample offset (e.g. 2h, 1min). Loaded from 1m parquet then "
-            "resampled. 1min = native 1m bars; min/max segment lengths count these bars."
+            "Signal timeframe: pandas resample offset (e.g. 2h, 4h). Loaded from 1m "
+            "parquet then resampled; segments and regime masks use this grid."
+        ),
+    )
+    parser.add_argument(
+        "--execution-timeframe",
+        default=None,
+        help=(
+            "Optional finer resample for high/low path (e.g. 1min). When set and "
+            "different from --timeframe, segment boundaries stay on the signal grid "
+            "but grid fills use execution bars with signal features asof-joined "
+            "(see src/time_series_model/grid/subbar_replay.py). "
+            "max_loser_hold_bars / segment bar counts in other tools still refer to "
+            "signal bars unless you scale them manually."
         ),
     )
     parser.add_argument(
