@@ -1,0 +1,509 @@
+"""Live/shadow engine for the standalone dual_add_trend strategy.
+
+The engine owns multi-leg inventory state and emits exchange-facing action
+dicts. Execution, portfolio risk, and reconciliation are handled by
+``MultiLegLiveOrchestrator`` outside this module.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+
+import yaml
+
+from src.order_management.grid_execution_adapter import GridExecutionResult
+from src.order_management.multi_leg_reconciliation import (
+    LocalOrderSnapshot,
+    LocalPositionSnapshot,
+    ReconciliationReport,
+)
+
+
+@dataclass(frozen=True)
+class DualAddEngineConfig:
+    entry_trend_min: float = 0.80
+    exit_trend_below: float = 0.50
+    max_entry_chop: float = 0.25
+    max_hold_chop: float = 0.40
+    exclude_box_prefilter: bool = True
+    step_atr_mult: float = 0.50
+    tp_atr_mult: float = 0.25
+    tp_pct: float = 0.0005
+    tp_abs: float = 0.0
+    fee_bps: float = 4.0
+    max_adds_per_side: int = 3
+    max_gross_units: int = 4
+    max_net_units: int = 2
+    max_loss_per_segment: float = 0.01
+    flip_action: str = "close_offside_all"
+
+
+@dataclass
+class DualAddOrder:
+    order_id: str
+    symbol: str
+    side: str
+    price: float
+    quantity: float
+    reason: str
+    seq: int = 0
+    status: str = "pending"
+    created_at: str = ""
+    exchange_order_id: str = ""
+    client_order_id: str = ""
+    filled_quantity: float = 0.0
+
+
+@dataclass
+class DualAddPosition:
+    leg_id: str
+    symbol: str
+    side: str
+    entry_price: float
+    quantity: float
+    seq: int
+    entry_time: str
+
+
+@dataclass
+class DualAddTrendState:
+    segment_id: str = ""
+    symbol: str = ""
+    active: bool = False
+    center: float = 0.0
+    atr: float = 0.0
+    last_add_long: float = 0.0
+    last_add_short: float = 0.0
+    add_long_count: int = 0
+    add_short_count: int = 0
+    trend_side: str = ""
+    realized_pnl: float = 0.0
+    pending_orders: List[DualAddOrder] = field(default_factory=list)
+    inventory: List[DualAddPosition] = field(default_factory=list)
+    last_timestamp: str = ""
+    last_reconciliation_ok: bool = True
+    last_reconciliation_issues: List[str] = field(default_factory=list)
+
+
+def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
+    obj = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    regime = obj.get("regime", {}) or {}
+    inv = obj.get("inventory", {}) or {}
+    spacing = obj.get("add_spacing", {}) or {}
+    tp = obj.get("take_profit", {}) or {}
+    risk = obj.get("risk", {}) or {}
+    return DualAddEngineConfig(
+        entry_trend_min=float(regime.get("entry_min", 0.80)),
+        exit_trend_below=float(regime.get("exit_below", 0.50)),
+        max_entry_chop=float(regime.get("max_semantic_chop_entry", 0.25)),
+        max_hold_chop=float(regime.get("max_semantic_chop_hold", 0.40)),
+        exclude_box_prefilter=bool(regime.get("exclude_box_prefilter", True)),
+        step_atr_mult=float(spacing.get("atr_mult", 0.50)),
+        tp_atr_mult=float(tp.get("atr_mult", 0.25)),
+        tp_pct=float(tp.get("min_pct", 0.0005)),
+        tp_abs=float(tp.get("min_abs", 0.0)),
+        fee_bps=float(risk.get("diagnostic_fee_bps", risk.get("fee_bps", 4.0))),
+        max_adds_per_side=int(inv.get("max_adds_per_side", 3)),
+        max_gross_units=int(inv.get("max_gross_exposure_units", 4)),
+        max_net_units=int(inv.get("max_net_exposure_units", 2)),
+        max_loss_per_segment=float(risk.get("max_loss_per_segment", 0.01)),
+        flip_action=str(inv.get("flip_action", "close_offside_all")),
+    )
+
+
+class DualAddTrendLiveEngine:
+    """Bar-driven dual-add engine that implements multi-leg orchestration hooks."""
+
+    def __init__(
+        self,
+        *,
+        config_path: str | Path = "config/strategies/dual_add_trend/dual_add.yaml",
+        state_path: str | Path = "results/dual_add_trend/live_state.json",
+        unit_notional: float = 1.0,
+    ) -> None:
+        self.config_path = Path(config_path)
+        self.state_path = Path(state_path)
+        self.cfg = _load_dual_add_config(self.config_path)
+        self.unit_notional = float(unit_notional)
+        self.state = self.load_state()
+
+    def load_state(self) -> DualAddTrendState:
+        if not self.state_path.exists():
+            return DualAddTrendState()
+        raw = json.loads(self.state_path.read_text(encoding="utf-8"))
+        return DualAddTrendState(
+            segment_id=str(raw.get("segment_id", "")),
+            symbol=str(raw.get("symbol", "")),
+            active=bool(raw.get("active", False)),
+            center=_as_float(raw.get("center")),
+            atr=_as_float(raw.get("atr")),
+            last_add_long=_as_float(raw.get("last_add_long")),
+            last_add_short=_as_float(raw.get("last_add_short")),
+            add_long_count=int(raw.get("add_long_count", 0) or 0),
+            add_short_count=int(raw.get("add_short_count", 0) or 0),
+            trend_side=str(raw.get("trend_side", "")),
+            realized_pnl=_as_float(raw.get("realized_pnl")),
+            pending_orders=[DualAddOrder(**o) for o in raw.get("pending_orders", [])],
+            inventory=[DualAddPosition(**p) for p in raw.get("inventory", [])],
+            last_timestamp=str(raw.get("last_timestamp", "")),
+            last_reconciliation_ok=bool(raw.get("last_reconciliation_ok", True)),
+            last_reconciliation_issues=[
+                str(x) for x in raw.get("last_reconciliation_issues", [])
+            ],
+        )
+
+    def save_state(self) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_path.write_text(
+            json.dumps(asdict(self.state), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def on_bar(
+        self,
+        *,
+        symbol: str,
+        timestamp: str,
+        high: float,
+        low: float,
+        close: float,
+        atr: float,
+        features: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Process one completed bar and return desired order actions."""
+        actions: List[Dict[str, Any]] = []
+        trend_conf = _as_float(features.get("trend_confidence"), 0.0)
+        chop = _as_float(features.get("semantic_chop"), 1.0)
+        is_box = bool(features.get("box_prefilter", False))
+        trend_side = (
+            "LONG" if str(features.get("trend_direction", "UP")) == "UP" else "SHORT"
+        )
+        self.state.last_timestamp = timestamp
+
+        should_enter = (
+            not self.state.active
+            and trend_conf >= self.cfg.entry_trend_min
+            and chop <= self.cfg.max_entry_chop
+            and not (self.cfg.exclude_box_prefilter and is_box)
+        )
+        if should_enter:
+            actions.extend(
+                self._start_segment(symbol, timestamp, close, atr, trend_side)
+            )
+            self.save_state()
+            return actions
+
+        if self.state.active and self.state.symbol == symbol:
+            if trend_conf < self.cfg.exit_trend_below or chop > self.cfg.max_hold_chop:
+                actions.extend(self._exit_all(close, timestamp, reason="regime_exit"))
+            else:
+                if trend_side != self.state.trend_side:
+                    actions.extend(
+                        self._handle_trend_flip(close, timestamp, trend_side)
+                    )
+                actions.extend(self._target_exits(high, low, timestamp))
+                actions.extend(self._trend_adds(high, low, timestamp, trend_side))
+
+        self.save_state()
+        return actions
+
+    def local_order_snapshots(self) -> List[LocalOrderSnapshot]:
+        return [
+            LocalOrderSnapshot(
+                order_id=o.order_id,
+                symbol=o.symbol,
+                side=o.side,
+                quantity=max(0.0, o.quantity - o.filled_quantity),
+                price=o.price,
+                exchange_order_id=o.exchange_order_id,
+                client_order_id=o.client_order_id,
+            )
+            for o in self.state.pending_orders
+            if o.status not in {"filled", "canceled"}
+        ]
+
+    def local_position_snapshots(self) -> List[LocalPositionSnapshot]:
+        return [
+            LocalPositionSnapshot(p.symbol, p.side, p.quantity)
+            for p in self.state.inventory
+        ]
+
+    def on_execution_results(self, results: Iterable[GridExecutionResult]) -> None:
+        for result in results:
+            raw = result.raw or {}
+            local_id = str(raw.get("order_id") or "")
+            if result.action == "place":
+                order = self._find_order(
+                    local_id=local_id, client_id=result.client_order_id
+                )
+                if order is not None:
+                    order.exchange_order_id = result.order_id
+                    order.client_order_id = result.client_order_id
+                    order.status = str(result.status or "submitted")
+            elif result.action == "cancel":
+                order = self._find_order(
+                    local_id=local_id,
+                    exchange_id=result.order_id,
+                    client_id=result.client_order_id,
+                )
+                if order is not None and result.status in {"canceled", "shadow"}:
+                    order.status = "canceled"
+        self.state.pending_orders = [
+            o for o in self.state.pending_orders if o.status != "canceled"
+        ]
+        self.save_state()
+
+    def on_reconciliation_report(self, report: ReconciliationReport) -> None:
+        issues: List[str] = []
+        issues.extend(
+            f"missing_exchange_order:{o.order_id}"
+            for o in report.missing_exchange_orders
+        )
+        issues.extend(
+            "orphan_exchange_order:"
+            f"{o.get('order_id') or o.get('orderId') or o.get('client_order_id')}"
+            for o in report.orphan_exchange_orders
+        )
+        issues.extend(
+            f"position_mismatch:{m.symbol}:{m.side}:{m.local_quantity}->{m.exchange_quantity}"
+            for m in report.position_mismatches
+        )
+        self.state.last_reconciliation_ok = report.ok
+        self.state.last_reconciliation_issues = issues
+        self.save_state()
+
+    def on_execution_report(self, report: Dict[str, Any]) -> None:
+        order = self._find_order(
+            exchange_id=str(report.get("order_id") or ""),
+            client_id=str(report.get("client_order_id") or ""),
+        )
+        if order is None:
+            return
+        status = str(report.get("status") or "").upper()
+        filled_qty = _as_float(report.get("filled_qty"), order.filled_quantity)
+        last_px = _as_float(report.get("last_filled_price"), order.price)
+        order.filled_quantity = max(
+            order.filled_quantity, min(filled_qty, order.quantity)
+        )
+        order.status = status.lower() if status else order.status
+        if status == "FILLED" or order.filled_quantity >= order.quantity:
+            pos_side = "LONG" if order.side == "BUY" else "SHORT"
+            self.state.inventory.append(
+                DualAddPosition(
+                    leg_id=order.order_id,
+                    symbol=order.symbol,
+                    side=pos_side,
+                    entry_price=last_px if last_px > 0 else order.price,
+                    quantity=order.filled_quantity or order.quantity,
+                    seq=order.seq,
+                    entry_time=str(
+                        report.get("trade_time") or self.state.last_timestamp
+                    ),
+                )
+            )
+            self.state.pending_orders = [
+                o for o in self.state.pending_orders if o.order_id != order.order_id
+            ]
+        self.save_state()
+
+    def _start_segment(
+        self, symbol: str, timestamp: str, close: float, atr: float, trend_side: str
+    ) -> List[Dict[str, Any]]:
+        self.state = DualAddTrendState(
+            segment_id=f"{symbol}_{timestamp}",
+            symbol=symbol,
+            active=True,
+            center=close,
+            atr=atr,
+            last_add_long=close,
+            last_add_short=close,
+            trend_side=trend_side,
+            last_timestamp=timestamp,
+        )
+        return [
+            self._place_order("BUY", close, timestamp, "initial_long", seq=0),
+            self._place_order("SELL", close, timestamp, "initial_short", seq=0),
+        ]
+
+    def _handle_trend_flip(
+        self, close: float, timestamp: str, trend_side: str
+    ) -> List[Dict[str, Any]]:
+        self.state.trend_side = trend_side
+        if self.cfg.flip_action == "keep":
+            return []
+        keep_side = trend_side
+        actions: List[Dict[str, Any]] = []
+        remaining: List[DualAddPosition] = []
+        for pos in self.state.inventory:
+            close_pos = pos.side != keep_side
+            if self.cfg.flip_action == "close_offside_adds" and pos.seq == 0:
+                close_pos = False
+            if close_pos:
+                actions.append(self._market_exit(pos, close, timestamp, "trend_flip"))
+            else:
+                remaining.append(pos)
+        self.state.inventory = remaining
+        return actions
+
+    def _target_exits(
+        self, high: float, low: float, timestamp: str
+    ) -> List[Dict[str, Any]]:
+        actions: List[Dict[str, Any]] = []
+        remaining: List[DualAddPosition] = []
+        for pos in self.state.inventory:
+            tp = self._tp_distance(pos.entry_price)
+            if pos.side == "LONG" and high >= pos.entry_price + tp:
+                actions.append(
+                    self._market_exit(pos, pos.entry_price + tp, timestamp, "tp")
+                )
+            elif pos.side == "SHORT" and low <= pos.entry_price - tp:
+                actions.append(
+                    self._market_exit(pos, pos.entry_price - tp, timestamp, "tp")
+                )
+            else:
+                remaining.append(pos)
+        self.state.inventory = remaining
+        return actions
+
+    def _trend_adds(
+        self, high: float, low: float, timestamp: str, trend_side: str
+    ) -> List[Dict[str, Any]]:
+        step = self.cfg.step_atr_mult * self.state.atr
+        if step <= 0:
+            return []
+        actions: List[Dict[str, Any]] = []
+        if trend_side == "LONG":
+            while (
+                high >= self.state.last_add_long + step
+                and self.state.add_long_count < self.cfg.max_adds_per_side
+                and self._can_add("LONG")
+            ):
+                self.state.last_add_long += step
+                self.state.add_long_count += 1
+                actions.append(
+                    self._place_order(
+                        "BUY",
+                        self.state.last_add_long,
+                        timestamp,
+                        "trend_add",
+                        seq=self.state.add_long_count,
+                    )
+                )
+        else:
+            while (
+                low <= self.state.last_add_short - step
+                and self.state.add_short_count < self.cfg.max_adds_per_side
+                and self._can_add("SHORT")
+            ):
+                self.state.last_add_short -= step
+                self.state.add_short_count += 1
+                actions.append(
+                    self._place_order(
+                        "SELL",
+                        self.state.last_add_short,
+                        timestamp,
+                        "trend_add",
+                        seq=self.state.add_short_count,
+                    )
+                )
+        return actions
+
+    def _exit_all(
+        self, close: float, timestamp: str, *, reason: str
+    ) -> List[Dict[str, Any]]:
+        actions = [
+            self._market_exit(pos, close, timestamp, reason)
+            for pos in self.state.inventory
+        ]
+        for order in self.state.pending_orders:
+            actions.append(
+                {
+                    "action": "cancel",
+                    "order_id": order.order_id,
+                    "symbol": order.symbol,
+                    "exchange_order_id": order.exchange_order_id,
+                    "reason": reason,
+                }
+            )
+        self.state.pending_orders = []
+        self.state.inventory = []
+        self.state.active = False
+        return actions
+
+    def _place_order(
+        self, side: str, price: float, timestamp: str, reason: str, *, seq: int
+    ) -> Dict[str, Any]:
+        qty = self.unit_notional / max(price, 1e-12)
+        order = DualAddOrder(
+            order_id=f"{self.state.segment_id}_{reason}_{side}_{seq}_{len(self.state.pending_orders)}",
+            symbol=self.state.symbol,
+            side=side,
+            price=price,
+            quantity=qty,
+            reason=reason,
+            seq=seq,
+            created_at=timestamp,
+        )
+        self.state.pending_orders.append(order)
+        return {"action": "place", "order_type": "limit", **asdict(order)}
+
+    def _market_exit(
+        self, pos: DualAddPosition, price: float, timestamp: str, reason: str
+    ) -> Dict[str, Any]:
+        return {
+            "action": "market_exit",
+            "order_id": f"{pos.leg_id}_exit_{reason}_{timestamp}",
+            "symbol": pos.symbol,
+            "side": pos.side,
+            "quantity": pos.quantity,
+            "exit_price": price,
+            "reason": reason,
+            "timestamp": timestamp,
+        }
+
+    def _tp_distance(self, entry: float) -> float:
+        fee_buffer = 2.0 * (self.cfg.fee_bps / 10000.0) * entry
+        net_target = max(
+            self.cfg.tp_abs,
+            self.cfg.tp_atr_mult * self.state.atr,
+            self.cfg.tp_pct * entry,
+        )
+        return fee_buffer + net_target
+
+    def _can_add(self, side: str) -> bool:
+        long_units = sum(1 for p in self.state.inventory if p.side == "LONG")
+        short_units = sum(1 for p in self.state.inventory if p.side == "SHORT")
+        if side == "LONG":
+            long_units += 1
+        else:
+            short_units += 1
+        return (
+            long_units + short_units <= self.cfg.max_gross_units
+            and abs(long_units - short_units) <= self.cfg.max_net_units
+        )
+
+    def _find_order(
+        self,
+        *,
+        local_id: str = "",
+        exchange_id: str = "",
+        client_id: str = "",
+    ) -> Optional[DualAddOrder]:
+        for order in self.state.pending_orders:
+            if local_id and order.order_id == local_id:
+                return order
+            if exchange_id and order.exchange_order_id == exchange_id:
+                return order
+            if client_id and order.client_order_id == client_id:
+                return order
+        return None
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default

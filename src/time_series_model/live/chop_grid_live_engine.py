@@ -10,10 +10,16 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import yaml
 
+from src.order_management.grid_execution_adapter import GridExecutionResult
+from src.order_management.multi_leg_reconciliation import (
+    LocalOrderSnapshot,
+    LocalPositionSnapshot,
+    ReconciliationReport,
+)
 from src.time_series_model.grid.chop_grid_engine import GridEngineConfig
 
 
@@ -27,6 +33,9 @@ class GridOrder:
     quantity: float
     status: str = "pending"
     created_at: str = ""
+    exchange_order_id: str = ""
+    client_order_id: str = ""
+    filled_quantity: float = 0.0
 
 
 @dataclass
@@ -51,6 +60,8 @@ class GridState:
     inventory: List[GridPosition] = field(default_factory=list)
     last_timestamp: str = ""
     current_regime: str = "idle"
+    last_reconciliation_ok: bool = True
+    last_reconciliation_issues: List[str] = field(default_factory=list)
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -116,6 +127,10 @@ class ChopGridLiveEngine:
             inventory=[GridPosition(**p) for p in raw.get("inventory", [])],
             last_timestamp=str(raw.get("last_timestamp", "")),
             current_regime=str(raw.get("current_regime", "idle")),
+            last_reconciliation_ok=bool(raw.get("last_reconciliation_ok", True)),
+            last_reconciliation_issues=[
+                str(x) for x in raw.get("last_reconciliation_issues", [])
+            ],
         )
 
     def save_state(self) -> None:
@@ -124,6 +139,112 @@ class ChopGridLiveEngine:
             json.dumps(asdict(self.state), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    def local_order_snapshots(self) -> List[LocalOrderSnapshot]:
+        """Expose pending orders for exchange reconciliation."""
+        return [
+            LocalOrderSnapshot(
+                order_id=o.order_id,
+                symbol=o.symbol,
+                side=o.side,
+                quantity=max(0.0, o.quantity - o.filled_quantity),
+                price=o.price,
+                exchange_order_id=o.exchange_order_id,
+                client_order_id=o.client_order_id,
+            )
+            for o in self.state.pending_orders
+            if o.status not in {"filled", "canceled"}
+        ]
+
+    def local_position_snapshots(self) -> List[LocalPositionSnapshot]:
+        """Expose inventory for exchange position reconciliation."""
+        return [
+            LocalPositionSnapshot(
+                symbol=p.symbol,
+                side=p.side,
+                quantity=p.quantity,
+            )
+            for p in self.state.inventory
+        ]
+
+    def on_execution_results(self, results: Iterable[GridExecutionResult]) -> None:
+        """Persist exchange/client ids returned by the execution adapter."""
+        for result in results:
+            raw = result.raw or {}
+            local_id = str(raw.get("order_id") or "")
+            if result.action == "place":
+                order = self._find_order(
+                    local_id=local_id, client_id=result.client_order_id
+                )
+                if order is not None:
+                    order.exchange_order_id = result.order_id
+                    order.client_order_id = result.client_order_id
+                    order.status = str(result.status or "submitted")
+            elif result.action == "cancel":
+                order = self._find_order(
+                    local_id=local_id,
+                    exchange_id=result.order_id,
+                    client_id=result.client_order_id,
+                )
+                if order is not None and result.status in {"canceled", "shadow"}:
+                    order.status = "canceled"
+        self.state.pending_orders = [
+            o for o in self.state.pending_orders if o.status != "canceled"
+        ]
+        self.save_state()
+
+    def on_reconciliation_report(self, report: ReconciliationReport) -> None:
+        issues: List[str] = []
+        issues.extend(
+            f"missing_exchange_order:{o.order_id}"
+            for o in report.missing_exchange_orders
+        )
+        issues.extend(
+            "orphan_exchange_order:"
+            f"{o.get('order_id') or o.get('orderId') or o.get('client_order_id')}"
+            for o in report.orphan_exchange_orders
+        )
+        issues.extend(
+            f"position_mismatch:{m.symbol}:{m.side}:{m.local_quantity}->{m.exchange_quantity}"
+            for m in report.position_mismatches
+        )
+        self.state.last_reconciliation_ok = report.ok
+        self.state.last_reconciliation_issues = issues
+        self.save_state()
+
+    def on_execution_report(self, report: Dict[str, Any]) -> None:
+        """Apply normalized user-stream fill updates to local pending inventory."""
+        order = self._find_order(
+            exchange_id=str(report.get("order_id") or ""),
+            client_id=str(report.get("client_order_id") or ""),
+        )
+        if order is None:
+            return
+        status = str(report.get("status") or "").upper()
+        filled_qty = _as_float(report.get("filled_qty"), order.filled_quantity)
+        last_px = _as_float(report.get("last_filled_price"), order.price)
+        order.filled_quantity = max(
+            order.filled_quantity, min(filled_qty, order.quantity)
+        )
+        order.status = status.lower() if status else order.status
+        if status == "FILLED" or order.filled_quantity >= order.quantity:
+            pos_side = "LONG" if order.side == "BUY" else "SHORT"
+            self.state.inventory.append(
+                GridPosition(
+                    symbol=order.symbol,
+                    side=pos_side,
+                    level=order.level,
+                    entry_price=last_px if last_px > 0 else order.price,
+                    quantity=order.filled_quantity or order.quantity,
+                    entry_time=str(
+                        report.get("trade_time") or self.state.last_timestamp
+                    ),
+                )
+            )
+            self.state.pending_orders = [
+                o for o in self.state.pending_orders if o.order_id != order.order_id
+            ]
+        self.save_state()
 
     def on_bar(
         self,
@@ -355,3 +476,19 @@ class ChopGridLiveEngine:
         if self.cfg.taker_fee_bps is not None:
             return float(self.cfg.taker_fee_bps)
         return float(self.cfg.fee_bps)
+
+    def _find_order(
+        self,
+        *,
+        local_id: str = "",
+        exchange_id: str = "",
+        client_id: str = "",
+    ) -> Optional[GridOrder]:
+        for order in self.state.pending_orders:
+            if local_id and order.order_id == local_id:
+                return order
+            if exchange_id and order.exchange_order_id == exchange_id:
+                return order
+            if client_id and order.client_order_id == client_id:
+                return order
+        return None

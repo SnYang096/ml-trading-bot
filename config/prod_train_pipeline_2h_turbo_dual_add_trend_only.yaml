@@ -1,0 +1,66 @@
+# ============================================================
+# Dual Add Trend standalone research pipeline (2H, turbo fixed features)
+# ============================================================
+
+dates:
+  start_date: "2022-01-01"
+  end_date: "2026-03-31"
+  holdout_months: 26
+  validation_months: 3
+
+rolling:
+  mode: turbo_fixed_features
+  windows:
+    calibration_months: 6
+    structure_lookback_months: 12
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: true
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: false
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  dual_add_trend:
+    strategy_type: dual_add_trend
+    config: config/strategies/dual_add_trend
+    timeframe: 120T
+    features_gate: features.yaml
+    has_prefilter: false
+    has_direction: false
+
+event_backtest:
+  enabled: false
+
+dual_add_backtest:
+  enabled: true
+  output_dir: results/dual_add_trend/turbo-full-cycle
+  start_date: "2022-01-01"
+  end_date: "2026-03-31"
+  symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+  timeframe: 2h
+  regime: trend
+  add_mode: trend
+  flip_action: close_offside_all
+  exclude_box: true
+  step_atr_mult: 0.50
+  tp_atr_mult: 0.25
+  tp_pct: 0.0005
+  max_loss_per_segment: 0.01
+  max_gross_exposure: 4
+  max_net_exposure: 2
+  max_adds_per_side: 3
+  fee_bps: 4.0
+
+output:
+  history_dir: results/dual_add_trend/pipeline-history
+  latest_dir: results/dual_add_trend/latest

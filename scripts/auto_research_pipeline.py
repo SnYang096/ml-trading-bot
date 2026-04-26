@@ -1255,18 +1255,18 @@ def _build_continuous_pcm_trading_map(
                     if _bx is not None and not _bx.empty:
                         _bx = _bx.reindex(cdf_plot.index)
                         _stab = pd.to_numeric(
-                            _bx.get("box_stability_240"), errors="coerce"
+                            _bx.get("box_stability_120"), errors="coerce"
                         )
                         _widp = pd.to_numeric(
-                            _bx.get("box_width_pct_240"), errors="coerce"
+                            _bx.get("box_width_pct_120"), errors="coerce"
                         )
-                        _hi = pd.to_numeric(_bx.get("box_hi_240"), errors="coerce")
-                        _lo = pd.to_numeric(_bx.get("box_lo_240"), errors="coerce")
+                        _hi = pd.to_numeric(_bx.get("box_hi_120"), errors="coerce")
+                        _lo = pd.to_numeric(_bx.get("box_lo_120"), errors="coerce")
                         _touch_hi = pd.to_numeric(
-                            _bx.get("box_touches_hi_240"), errors="coerce"
+                            _bx.get("box_touches_hi_120"), errors="coerce"
                         )
                         _touch_lo = pd.to_numeric(
-                            _bx.get("box_touches_lo_240"), errors="coerce"
+                            _bx.get("box_touches_lo_120"), errors="coerce"
                         )
                         # Keep in sync with config/strategies/crf/archetypes/prefilter.yaml:
                         #   stab>=0.85, 0.04 <= width <= 0.30, hi/lo touches>=5
@@ -1474,8 +1474,8 @@ def _build_continuous_pcm_trading_map(
             p.add_tools(
                 HoverTool(
                     tooltips=[
-                        ("box_lo_240", "@y1{0.0000}"),
-                        ("box_hi_240", "@y2{0.0000}"),
+                        ("box_lo_120", "@y1{0.0000}"),
+                        ("box_hi_120", "@y2{0.0000}"),
                     ],
                     mode="mouse",
                     renderers=[r_crf_box],
@@ -1492,7 +1492,7 @@ def _build_continuous_pcm_trading_map(
         if r_crf_box is not None:
             legend_items.append(
                 LegendItem(
-                    label="CRF: rolling 240 lo/hi (where prefilter passes)",
+                    label="CRF: rolling 120 lo/hi (where prefilter passes)",
                     renderers=[r_crf_box],
                 )
             )
@@ -1560,7 +1560,7 @@ def _build_continuous_pcm_trading_map(
             "（PCM / prefilter / gate / entry / direction，与单月 event map 同源；数据来自每月经 ledger 的 "
             "PCM JSON 或 <code>event_backtest_*.json</code>，无该字段则该段不显示附图）。"
             "红色 x 标记为<b>未开仓拦截点</b>，悬浮可查看 Prefilter/Gate/Direction/Entry/PCM 的具体原因。"
-            "浅绿带 = 各时刻因果 <code>box_lo_240</code>~<code>box_hi_240</code>（与 prefilter 同条件时着色），"
+            "浅绿带 = 各时刻因果 <code>box_lo_120</code>~<code>box_hi_120</code>（与 prefilter 同条件时着色），"
             "是<b>每根 2H</b> 的 rolling 上下沿，<b>不是</b>把长段 min/max 合成一块矩形。"
             " 绿/红 K 线为涨跌。入场→出场：<b>实线</b>=首仓腿，<b>虚线</b>=加仓腿；△ 多 · ▽ 空 · ◇ 加仓 · □ 平仓。"
             "</p>"
@@ -4765,6 +4765,122 @@ def _run_grid_backtest_stage(
     return summaries
 
 
+def _run_dual_add_backtest_stage(
+    *,
+    cfg: Dict[str, Any],
+    strategies: List[str],
+    history_dir: Path,
+    timestamp: str,
+    dry_run: bool,
+    data_path: str,
+    symbols: str,
+    start_date: str,
+    end_date: str,
+) -> List[Dict[str, Any]]:
+    """Run standalone dual-add trend strategies with multi-leg inventory accounting."""
+    _ = history_dir
+    dual_cfg = cfg.get("dual_add_backtest", {}) or {}
+    if not bool(dual_cfg.get("enabled", True)):
+        print("\n[Dual Add Backtest] ⏭️  SKIP (dual_add_backtest.enabled=false)")
+        return []
+
+    out_root = PROJECT_ROOT / str(
+        dual_cfg.get("output_dir", f"results/dual_add_trend/pipeline/{timestamp}")
+    )
+    out_root.mkdir(parents=True, exist_ok=True)
+    summaries: List[Dict[str, Any]] = []
+    print(f"\n{'='*70}")
+    print("🧪 Dual Add Trend Backtest Stage")
+    print(f"{'='*70}")
+    print(f"   Output: {out_root}")
+
+    for strat in strategies:
+        scfg = (cfg.get("strategies", {}) or {}).get(strat, {}) or {}
+        strategy_type = str(scfg.get("strategy_type", "") or "").lower()
+        if strategy_type != "dual_add_trend":
+            print(
+                f"   ⏭️  skip {strat}: strategy_type={strategy_type or 'single_position'}"
+            )
+            continue
+
+        out_dir = out_root / strat
+        cmd = [
+            sys.executable,
+            "scripts/diagnose_dual_add_trend.py",
+            "--data-dir",
+            data_path,
+            "--symbols",
+            str(dual_cfg.get("symbols", symbols) or symbols),
+            "--start",
+            start_date,
+            "--end",
+            end_date,
+            "--timeframe",
+            str(dual_cfg.get("timeframe", scfg.get("timeframe", "2h"))),
+            "--regime",
+            str(dual_cfg.get("regime", "trend")),
+            "--add-mode",
+            str(dual_cfg.get("add_mode", "trend")),
+            "--flip-action",
+            str(dual_cfg.get("flip_action", "close_offside_all")),
+            "--step-atr-mult",
+            str(float(dual_cfg.get("step_atr_mult", 0.50))),
+            "--tp-atr-mult",
+            str(float(dual_cfg.get("tp_atr_mult", 0.25))),
+            "--tp-pct",
+            str(float(dual_cfg.get("tp_pct", 0.0005))),
+            "--max-loss-per-segment",
+            str(float(dual_cfg.get("max_loss_per_segment", 0.01))),
+            "--max-gross-exposure",
+            str(int(dual_cfg.get("max_gross_exposure", 4))),
+            "--max-net-exposure",
+            str(int(dual_cfg.get("max_net_exposure", 2))),
+            "--max-adds-per-side",
+            str(int(dual_cfg.get("max_adds_per_side", 3))),
+            "--fee-bps",
+            str(float(dual_cfg.get("fee_bps", 4.0))),
+            "--out-dir",
+            str(out_dir),
+        ]
+        if bool(dual_cfg.get("exclude_box", True)):
+            cmd.append("--exclude-box")
+        print(f"\n   ▶️  {strat}: {' '.join(cmd)}")
+        if dry_run:
+            summaries.append(
+                {"strategy": strat, "out_dir": str(out_dir), "dry_run": True}
+            )
+            continue
+        proc = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "")[-2000:]
+            raise RuntimeError(f"dual_add_backtest failed for {strat}\n{tail}")
+        if proc.stdout:
+            print(proc.stdout[-2000:])
+        summary_path = out_dir / "summary.csv"
+        summary: Dict[str, Any] = {}
+        if summary_path.exists():
+            try:
+                import pandas as pd
+
+                df_summary = pd.read_csv(summary_path)
+                if not df_summary.empty:
+                    summary = df_summary.iloc[0].to_dict()
+            except Exception as exc:  # pragma: no cover - report best effort only
+                summary = {"summary_parse_error": str(exc)}
+        summaries.append(
+            {
+                "strategy": strat,
+                "out_dir": str(out_dir),
+                "summary": summary,
+            }
+        )
+    (out_root / "dual_add_backtest_summary.json").write_text(
+        json.dumps(summaries, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    return summaries
+
+
 def _parse_pcm_stdout(output: str) -> Dict[str, Any]:
     """从事件回测 (PCM 多策略联合) stdout 提取指标."""
     # 复用 parse_backtest_stdout (事件回测输出格式)
@@ -5718,13 +5834,15 @@ def main():
             "fast_month",
             "rolling_sim",
             "grid_backtest",
+            "dual_add_backtest",
             "pcm_joint",
             "pcm_slot_grid",
         ],
         default="full",
         help=(
             "运行阶段: full/prefilter/gate/entry_filter/slow_snapshot/"
-            "execution_opt/event_backtest/fast_month/rolling_sim/grid_backtest/pcm_joint/pcm_slot_grid"
+            "execution_opt/event_backtest/fast_month/rolling_sim/grid_backtest/"
+            "dual_add_backtest/pcm_joint/pcm_slot_grid"
         ),
     )
     p.add_argument(
@@ -5872,6 +5990,40 @@ def main():
             print(
                 f"   • {row.get('strategy')}: {row.get('report') or row.get('out_dir')}"
             )
+        return
+
+    if args.stage == "dual_add_backtest":
+        dual_start = str(
+            (cfg.get("dual_add_backtest", {}) or {}).get("start_date")
+            or dates["start_date"]
+        )
+        dual_end = str(
+            (cfg.get("dual_add_backtest", {}) or {}).get("end_date") or default_end_date
+        )
+        summaries = _run_dual_add_backtest_stage(
+            cfg=cfg,
+            strategies=strategies,
+            history_dir=history_dir,
+            timestamp=timestamp,
+            dry_run=args.dry_run,
+            data_path=cfg["data_path"],
+            symbols=symbols,
+            start_date=dual_start,
+            end_date=dual_end,
+        )
+        print(f"\n{'='*70}")
+        print("📋 Dual Add Backtest 汇总")
+        print(f"{'='*70}")
+        for row in summaries:
+            print(f"   • {row.get('strategy')}: {row.get('out_dir')}")
+            summary = row.get("summary") or {}
+            if summary:
+                print(
+                    "     "
+                    f"net={summary.get('sum_pnl_per_capital')} "
+                    f"win={summary.get('segment_win_rate')} "
+                    f"worst={summary.get('worst_segment')}"
+                )
         return
 
     if args.stage == "fast_month":
