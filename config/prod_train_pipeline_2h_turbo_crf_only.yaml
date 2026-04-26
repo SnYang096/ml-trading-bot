@@ -59,10 +59,11 @@ strategies:
       prefilter:
         min_pass_rate: 0.02
         min_rows: 10
-        target_trades_min: 20
-        target_trades_max: 200
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
+        # CRF 经过严格盒子 + 边界触达后，月度交易数天然较低；用更贴近 range fade 的目标。
+        target_trades_min: 8
+        target_trades_max: 80
+        trade_penalty_low: 0.0015
+        trade_penalty_high: 0.0015
         stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
@@ -71,12 +72,12 @@ strategies:
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
-          min_trades_target: 40
-          trade_penalty: 0.0025
-          target_trades_min: 20
-          target_trades_max: 200
-          trade_penalty_low: 0.002
-          trade_penalty_high: 0.0011
+          min_trades_target: 20
+          trade_penalty: 0.0020
+          target_trades_min: 8
+          target_trades_max: 80
+          trade_penalty_low: 0.0015
+          trade_penalty_high: 0.0015
           stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
@@ -88,10 +89,10 @@ strategies:
         significance_min_trades: 4
         plateau_window: 4
         archetype_scoring_method: distribution_ks
-        target_trades_min: 20
-        target_trades_max: 200
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
+        target_trades_min: 8
+        target_trades_max: 80
+        trade_penalty_low: 0.0015
+        trade_penalty_high: 0.0015
         stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
@@ -101,9 +102,9 @@ strategies:
         require_positive_effect: true
         min_combined_pass_rate: 0.3
       backtest:
-        min_trades: 30
+        min_trades: 8
       deploy:
-        min_trades: 30
+        min_trades: 8
 
 event_backtest:
   enabled: true
