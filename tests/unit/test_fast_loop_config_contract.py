@@ -419,6 +419,25 @@ def test_capital_report_r_multiple_explains_money_assumption(tmp_path):
     assert (tmp_path / "capital_report.html").exists()
 
 
+def test_capital_report_empty_trades_file_is_zero_trade_run(tmp_path):
+    trades = tmp_path / "event_trades.csv"
+    trades.write_text("", encoding="utf-8")
+
+    report = write_capital_report_from_trades(
+        trades_path=trades,
+        out_dir=tmp_path / "out",
+        unit="r_multiple",
+        title="Zero trades",
+        initial_capital=10000.0,
+        risk_per_r=0.01,
+    )
+
+    assert report["trades"] == 0
+    assert report["reason"] == "no trades"
+    assert report["final_capital"] == 10000.0
+    assert (tmp_path / "out" / "capital_report.json").exists()
+
+
 def _write_dual_add_strategy(root: Path) -> None:
     strat = root / "dual_add_trend"
     strat.mkdir(parents=True, exist_ok=True)

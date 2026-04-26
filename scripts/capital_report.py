@@ -56,7 +56,10 @@ def write_capital_report_from_trades(
         _write_report(report, report_path, html_path)
         return report
 
-    trades = pd.read_csv(trades_path)
+    try:
+        trades = pd.read_csv(trades_path)
+    except pd.errors.EmptyDataError:
+        trades = pd.DataFrame()
     if trades.empty:
         report = _empty_report(
             title=title,

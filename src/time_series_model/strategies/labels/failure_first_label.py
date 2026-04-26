@@ -542,6 +542,25 @@ def _compute_direction_from_rules(direction_cfg: dict, df: pd.DataFrame) -> np.n
             if fcol not in df.columns:
                 continue
             vals = single_position_band_series(df, fcol, inner_a, outer_a).values
+        elif str(rule.get("method", "")).strip().lower() == "threshold_compare":
+            feat_name = str(rule.get("feature", "")).strip()
+            if feat_name not in df.columns:
+                continue
+            thr = rule.get("thresholds") or {}
+            col_data = df[feat_name]
+            if isinstance(col_data, pd.DataFrame):
+                col_data = col_data.iloc[:, 0]
+            s = pd.to_numeric(col_data, errors="coerce")
+            vals = np.zeros(len(df), dtype=float)
+            try:
+                lb = thr.get("long_if_below")
+                sa = thr.get("short_if_above")
+                if lb is not None:
+                    vals = np.where(s.values <= float(lb), 1.0, vals)
+                if sa is not None:
+                    vals = np.where(s.values >= float(sa), -1.0, vals)
+            except (TypeError, ValueError):
+                vals = np.zeros(len(df), dtype=float)
         else:
             feature = rule.get("feature", "")
             transform = rule.get("transform", "raw")

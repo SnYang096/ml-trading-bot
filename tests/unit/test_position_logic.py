@@ -45,6 +45,7 @@ def _make_intent(
     structural_sl=None,
     activation_r=None,
     trail_r=None,
+    extra_rr=None,
 ) -> TradeIntent:
     """构造一个带 execution_profile 的 TradeIntent"""
     rr = {
@@ -61,6 +62,8 @@ def _make_intent(
         rr["activation_r"] = activation_r
     if trail_r is not None:
         rr["trailing_atr"] = trail_r
+    if extra_rr is not None:
+        rr.update(extra_rr)
     ep = {"rr_constraints": rr}
     if bpc_position_config is not None:
         ep["bpc_position_config"] = bpc_position_config
@@ -114,6 +117,54 @@ class TestBuildPositionDict:
         assert pos["stop_loss_price"] == pytest.approx(3150, abs=1)
         # SHORT TP = entry - 2.0 * atr = 3000 - 200 = 2800
         assert pos["take_profit_price"] == pytest.approx(2800, abs=1)
+
+    def test_crf_box_edge_long_uses_box_stop_and_opposite_tp(self):
+        intent = _make_intent(
+            action="LONG",
+            archetype="crf",
+            stop_loss_r=1.5,
+            take_profit_r=1.2,
+            extra_rr={
+                "stop_loss_type": "box_edge",
+                "take_profit_type": "opposite_edge",
+                "box_hi_120": 120.0,
+                "box_lo_120": 100.0,
+                "box_stop_buffer_frac": 0.25,
+                "box_target_edge_frac": 0.15,
+            },
+        )
+        pos = build_position_dict(
+            intent, entry_price=104.0, atr=2.0, bar_minutes=120, entry_time=_now()
+        )
+
+        assert pos["stop_loss_price"] == pytest.approx(95.0)
+        assert pos["take_profit_price"] == pytest.approx(117.0)
+        assert pos["sizing_stop_source"] == "box_edge"
+        assert pos["initial_risk_distance"] == pytest.approx(9.0)
+
+    def test_crf_box_edge_short_uses_box_stop_and_opposite_tp(self):
+        intent = _make_intent(
+            action="SHORT",
+            archetype="crf",
+            stop_loss_r=1.5,
+            take_profit_r=1.2,
+            extra_rr={
+                "stop_loss_type": "box_edge",
+                "take_profit_type": "opposite_edge",
+                "box_hi_120": 120.0,
+                "box_lo_120": 100.0,
+                "box_stop_buffer_frac": 0.25,
+                "box_target_edge_frac": 0.15,
+            },
+        )
+        pos = build_position_dict(
+            intent, entry_price=116.0, atr=2.0, bar_minutes=120, entry_time=_now()
+        )
+
+        assert pos["stop_loss_price"] == pytest.approx(125.0)
+        assert pos["take_profit_price"] == pytest.approx(103.0)
+        assert pos["sizing_stop_source"] == "box_edge"
+        assert pos["initial_risk_distance"] == pytest.approx(9.0)
 
     def test_no_sl_tp_when_atr_zero(self):
         intent = _make_intent(stop_loss_r=2.0, take_profit_r=2.5)

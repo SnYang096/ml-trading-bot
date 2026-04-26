@@ -105,6 +105,63 @@ def build_position_dict(
         # TP 仅在启用时设置
         tp_price = computed_tp if take_profit_r > 0 else None
 
+        # ── CRF / consolidation-box execution ─────────────────────────────
+        # For range fade, an ATR stop is often inside the box noise. If the
+        # intent carries causal box boundaries, anchor SL outside the entry edge
+        # and TP near the opposite edge (or box mid), then update the risk
+        # distance used for sizing / R accounting.
+        _sl_type = str(rr_constraints.get("stop_loss_type") or "").strip().lower()
+        _tp_type = str(rr_constraints.get("take_profit_type") or "").strip().lower()
+        if _sl_type == "box_edge" or _tp_type in {"opposite_edge", "box_mid"}:
+            try:
+                box_hi = float(
+                    rr_constraints.get("box_hi", rr_constraints.get("box_hi_120"))
+                )
+                box_lo = float(
+                    rr_constraints.get("box_lo", rr_constraints.get("box_lo_120"))
+                )
+                box_width = box_hi - box_lo
+                if (
+                    box_hi == box_hi
+                    and box_lo == box_lo
+                    and box_hi > box_lo > 0.0
+                    and box_width > 0.0
+                ):
+                    if _sl_type == "box_edge":
+                        buf = float(
+                            rr_constraints.get("box_stop_buffer_frac", 0.25) or 0.25
+                        )
+                        if is_long:
+                            box_sl = box_lo - buf * box_width
+                            struct_dist = entry_price - box_sl
+                        else:
+                            box_sl = box_hi + buf * box_width
+                            struct_dist = box_sl - entry_price
+                        if struct_dist > 0.0:
+                            sl_price = box_sl
+                            sizing_stop_source = "box_edge"
+                            effective_stop_pct = struct_dist / entry_price
+                            stop_loss_r = struct_dist / atr
+
+                    if _tp_type in {"opposite_edge", "box_mid"}:
+                        if _tp_type == "box_mid":
+                            box_tp = (box_hi + box_lo) * 0.5
+                        else:
+                            edge_frac = float(
+                                rr_constraints.get("box_target_edge_frac", 0.15) or 0.15
+                            )
+                            box_tp = (
+                                box_hi - edge_frac * box_width
+                                if is_long
+                                else box_lo + edge_frac * box_width
+                            )
+                        if (is_long and box_tp > entry_price) or (
+                            (not is_long) and box_tp < entry_price
+                        ):
+                            tp_price = box_tp
+            except (TypeError, ValueError):
+                pass
+
         # ── SRB 结构化 SL：SL 锚定"对面 SR"（LONG=support, SHORT=resistance）──
         # 语义：SRB 突破 resistance 做 LONG，真正的失效位是下方 support（不是 X×ATR）。
         # 距 entry 过近（SR 紧贴）时兜底到 ATR-based；距 entry 过远时不 clip，

@@ -103,9 +103,43 @@ def validate_archetype(arch_name: str, df: pd.DataFrame) -> dict:
     for rule in rules:
         if not is_direction_rule_enabled(rule):
             continue
+        method = str(rule.get("method", "") or "").strip()
         dual = parse_dual_rule(rule)
         band = parse_single_position_band_rule(rule)
         rk = str(rule.get("id", "")) or ""
+        if method == "threshold_compare":
+            feature = str(rule.get("feature", "") or "")
+            rk = rk or feature
+            if feature not in df.columns:
+                rule_hits[rk] = {"status": "NOT_IN_DATA", "count": 0}
+                continue
+            th = rule.get("thresholds") or {}
+            try:
+                long_below = float(th["long_if_below"])
+                short_above = float(th["short_if_above"])
+            except (KeyError, TypeError, ValueError):
+                rule_hits[rk] = {"status": "BAD_THRESHOLDS", "count": 0}
+                continue
+            series = pd.to_numeric(df[feature], errors="coerce")
+            vals = pd.Series(0.0, index=df.index)
+            vals.loc[series <= long_below] = 1.0
+            vals.loc[series >= short_above] = -1.0
+            unassigned = ~assigned
+            direction.loc[unassigned] = vals.loc[unassigned]
+            newly = unassigned & (direction != 0)
+            count = int(newly.sum())
+            assigned = assigned | newly
+            rule_hits[rk] = {
+                "status": "HIT",
+                "transform": "threshold_compare",
+                "feature": feature,
+                "long_if_below": long_below,
+                "short_if_above": short_above,
+                "count": count,
+            }
+            if assigned.all():
+                break
+            continue
         if dual is not None:
             col_a, col_b, eps = dual
             rk = rk or f"dual_{col_a}_{col_b}"
@@ -222,6 +256,28 @@ def compute_direction_series_from_rules(df: pd.DataFrame, rules: list) -> pd.Ser
 
     for rule in rules:
         if not is_direction_rule_enabled(rule):
+            continue
+        method = str(rule.get("method", "") or "").strip()
+        if method == "threshold_compare":
+            feature = str(rule.get("feature", "") or "")
+            if feature not in df.columns:
+                continue
+            th = rule.get("thresholds") or {}
+            try:
+                long_below = float(th["long_if_below"])
+                short_above = float(th["short_if_above"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            series = pd.to_numeric(df[feature], errors="coerce")
+            vals = pd.Series(0.0, index=df.index)
+            vals.loc[series <= long_below] = 1.0
+            vals.loc[series >= short_above] = -1.0
+            unassigned = ~assigned
+            direction.loc[unassigned] = vals.loc[unassigned]
+            newly = unassigned & (direction != 0)
+            assigned = assigned | newly
+            if assigned.all():
+                break
             continue
         cmp = parse_signal_match_position_band_rule(rule)
         if cmp is not None:
@@ -492,10 +548,17 @@ def _print_coverage(arch_name: str, r: dict) -> bool:
                 f"命中 {info['count']} 行"
             )
 
+    sparse_allowed = any(
+        str(info.get("transform") or "") == "threshold_compare"
+        for info in r["rule_hits"].values()
+        if isinstance(info, dict)
+    )
     passed = True
     if r["coverage_pct"] < 100:
         print(f"  ⚠️  覆盖率不足 100% — {r['zero']} 行无方向")
-        if r["zero"] > 0:
+        if sparse_allowed and (r["long"] + r["short"]) > 0:
+            print("  ✅ threshold_compare 允许中间区间无方向（例如盒子中部不交易）")
+        elif r["zero"] > 0:
             passed = False
     else:
         print(f"  ✅ 覆盖率 100%")
