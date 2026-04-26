@@ -4667,6 +4667,104 @@ def _run_pcm_slot_grid_backtest(
     return report
 
 
+def _run_grid_backtest_stage(
+    *,
+    cfg: Dict[str, Any],
+    strategies: List[str],
+    history_dir: Path,
+    timestamp: str,
+    dry_run: bool,
+    data_path: str,
+    symbols: str,
+    start_date: str,
+    end_date: str,
+) -> List[Dict[str, Any]]:
+    """Run standalone grid strategies without the single-position event path."""
+    grid_cfg = cfg.get("grid_backtest", {}) or {}
+    if not bool(grid_cfg.get("enabled", True)):
+        print("\n[Grid Backtest] ⏭️  SKIP (grid_backtest.enabled=false)")
+        return []
+
+    out_root = PROJECT_ROOT / str(
+        grid_cfg.get("output_dir", f"results/chop_grid/pipeline/{timestamp}")
+    )
+    out_root.mkdir(parents=True, exist_ok=True)
+    summaries: List[Dict[str, Any]] = []
+    print(f"\n{'='*70}")
+    print("🧪 Chop Grid Backtest Stage")
+    print(f"{'='*70}")
+    print(f"   Output: {out_root}")
+
+    for strat in strategies:
+        scfg = (cfg.get("strategies", {}) or {}).get(strat, {}) or {}
+        strategy_type = str(scfg.get("strategy_type", "") or "").lower()
+        if strategy_type != "grid":
+            print(
+                f"   ⏭️  skip {strat}: strategy_type={strategy_type or 'single_position'}"
+            )
+            continue
+        strat_cfg_dir = PROJECT_ROOT / str(
+            scfg.get("config", f"config/strategies/{strat}")
+        )
+        grid_yaml = strat_cfg_dir / "grid.yaml"
+        if not grid_yaml.exists():
+            raise FileNotFoundError(f"grid strategy config missing: {grid_yaml}")
+
+        out_dir = out_root / strat
+        cmd = [
+            sys.executable,
+            "scripts/chop_grid_backtest.py",
+            "--config",
+            str(grid_yaml),
+            "--data-dir",
+            data_path,
+            "--symbols",
+            symbols,
+            "--start",
+            start_date,
+            "--end",
+            end_date,
+            "--timeframe",
+            str(scfg.get("timeframe", "2h")),
+            "--out-dir",
+            str(out_dir),
+        ]
+        map_symbols = str(grid_cfg.get("map_symbols", "") or "").strip()
+        if map_symbols:
+            cmd.extend(["--map-symbols", map_symbols])
+        if "map_months" in grid_cfg:
+            cmd.extend(["--map-months", str(int(grid_cfg.get("map_months", 12) or 12))])
+        print(f"\n   ▶️  {strat}: {' '.join(cmd)}")
+        if dry_run:
+            summaries.append(
+                {"strategy": strat, "out_dir": str(out_dir), "dry_run": True}
+            )
+            continue
+        proc = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "")[-2000:]
+            raise RuntimeError(f"grid_backtest failed for {strat}\n{tail}")
+        if proc.stdout:
+            print(proc.stdout[-2000:])
+        metrics_path = out_dir / "metrics.json"
+        metrics = {}
+        if metrics_path.exists():
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        summaries.append(
+            {
+                "strategy": strat,
+                "out_dir": str(out_dir),
+                "report": str(out_dir / "report.html"),
+                "metrics": metrics.get("metrics", {}),
+            }
+        )
+    (out_root / "grid_backtest_summary.json").write_text(
+        json.dumps(summaries, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    return summaries
+
+
 def _parse_pcm_stdout(output: str) -> Dict[str, Any]:
     """从事件回测 (PCM 多策略联合) stdout 提取指标."""
     # 复用 parse_backtest_stdout (事件回测输出格式)
@@ -5619,13 +5717,14 @@ def main():
             "event_backtest",
             "fast_month",
             "rolling_sim",
+            "grid_backtest",
             "pcm_joint",
             "pcm_slot_grid",
         ],
         default="full",
         help=(
             "运行阶段: full/prefilter/gate/entry_filter/slow_snapshot/"
-            "execution_opt/event_backtest/fast_month/rolling_sim/pcm_joint/pcm_slot_grid"
+            "execution_opt/event_backtest/fast_month/rolling_sim/grid_backtest/pcm_joint/pcm_slot_grid"
         ),
     )
     p.add_argument(
@@ -5746,6 +5845,34 @@ def main():
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_summary = []
+
+    if args.stage == "grid_backtest":
+        grid_start = str(
+            (cfg.get("grid_backtest", {}) or {}).get("start_date")
+            or dates["start_date"]
+        )
+        grid_end = str(
+            (cfg.get("grid_backtest", {}) or {}).get("end_date") or default_end_date
+        )
+        summaries = _run_grid_backtest_stage(
+            cfg=cfg,
+            strategies=strategies,
+            history_dir=history_dir,
+            timestamp=timestamp,
+            dry_run=args.dry_run,
+            data_path=cfg["data_path"],
+            symbols=symbols,
+            start_date=grid_start,
+            end_date=grid_end,
+        )
+        print(f"\n{'='*70}")
+        print("📋 Grid Backtest 汇总")
+        print(f"{'='*70}")
+        for row in summaries:
+            print(
+                f"   • {row.get('strategy')}: {row.get('report') or row.get('out_dir')}"
+            )
+        return
 
     if args.stage == "fast_month":
         if not args.month:

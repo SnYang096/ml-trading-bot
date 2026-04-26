@@ -1,0 +1,27 @@
+# Chop Grid feature configuration
+# 语义：广义无趋势/震荡区网格，不依赖稳定上下沿 box。
+
+name: chop_grid
+description: |
+  Neutral grid inside semantic_chop / chop_not_box regimes. The strategy uses
+  ATR for grid spacing and semantic_chop for regime entry/exit.
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    # Grid spacing and volatility normalization
+    - atr_f
+    - atr_percentile_f
+    - volatility_regime_f
+    - bb_width_normalized_pct_f
+
+    # semantic_chop source: bpc_soft_phase_f outputs bpc_semantic_chop
+    - bpc_soft_phase_f
+
+    # Used only to optionally exclude stable CRF-style boxes.
+    - box_structure_f
+
+    # Risk context / future filtering candidates.
+    - ema_1200_position_f
+    - ema_1200_slope_f

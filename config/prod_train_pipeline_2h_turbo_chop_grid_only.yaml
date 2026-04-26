@@ -1,0 +1,54 @@
+# ============================================================
+# Chop Grid standalone pipeline (2H, grid backtest path)
+# ============================================================
+
+dates:
+  start_date: "2022-01-01"
+  end_date: "2026-03-31"
+  holdout_months: 26
+  validation_months: 3
+
+rolling:
+  mode: turbo_fixed_features
+  windows:
+    calibration_months: 6
+    structure_lookback_months: 12
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: true
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: false
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  chop_grid:
+    strategy_type: grid
+    config: config/strategies/chop_grid
+    timeframe: 120T
+    features_gate: features.yaml
+    has_prefilter: false
+    has_direction: false
+
+event_backtest:
+  enabled: false
+
+grid_backtest:
+  enabled: true
+  output_dir: results/chop_grid/pipeline
+  start_date: "2022-01-01"
+  end_date: "2026-03-31"
+  map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+  map_months: 12
+
+output:
+  history_dir: results/chop_grid/pipeline-history
+  latest_dir: results/chop_grid/latest
