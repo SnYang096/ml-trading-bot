@@ -126,7 +126,7 @@ event_backtest:
   map_extra_months: 4
   exec_grid_by_family:
     bpc:
-      initial_r: "2.5:0.5:5.0"
+      initial_r: "3.0:0.5:6.0"
       activation_r: "2.5:0.5:5.0"
       trail_r: "1.5:0.5:4.0"
   exec_objective_default: risk_aware
