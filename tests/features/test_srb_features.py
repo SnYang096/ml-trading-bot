@@ -17,6 +17,7 @@ import pytest
 from src.features.registry import ensure_features_registered, get_feature_func
 from src.features.time_series.srb_features import (
     FEATURE_VERSION,
+    compute_srb_l3_breakout_window_from_series,
     compute_srb_sr_success_breakout_from_series,
 )
 
@@ -24,6 +25,16 @@ SRB_COLS = [
     "srb_sr_success_breakout_score",
     "srb_sr_success_breakout_score_pct",
     "srb_sr_success_breakout_direction_signed",
+]
+
+SRB_L3_COLS = [
+    "srb_l3_breakout_side",
+    "srb_l3_breakout_age_bars",
+    "srb_l3_breakout_age_decay",
+    "srb_l3_breakout_hold",
+    "srb_l3_breakout_ema_pos_align",
+    "srb_l3_breakout_ema_slope_align",
+    "srb_l3_breakout_2b_score",
 ]
 
 
@@ -211,7 +222,85 @@ def test_feature_registered():
     ensure_features_registered()
     f = get_feature_func("compute_srb_sr_success_breakout_from_series")
     assert f is compute_srb_sr_success_breakout_from_series
+    f_l3 = get_feature_func("compute_srb_l3_breakout_window_from_series")
+    assert f_l3 is compute_srb_l3_breakout_window_from_series
 
 
 def test_feature_version_string():
     assert isinstance(FEATURE_VERSION, str) and len(FEATURE_VERSION) > 0
+
+
+class TestSRBL3BreakoutWindow:
+    def test_long_and_short_breakout_windows_are_symmetric(self):
+        idx = pd.date_range("2024-01-01", periods=12, freq="2h")
+        close = pd.Series(
+            [99, 100, 101, 103, 104, 103, 101, 99, 97, 96, 97, 98],
+            index=idx,
+            dtype=float,
+        )
+        atr = pd.Series(1.0, index=idx)
+        upper = pd.Series(102.0, index=idx)
+        lower = pd.Series(98.0, index=idx)
+        ema_pos = pd.Series(
+            [
+                -0.01,
+                -0.005,
+                0.0,
+                0.01,
+                0.02,
+                0.03,
+                0.0,
+                -0.005,
+                -0.01,
+                -0.02,
+                -0.03,
+                -0.02,
+            ],
+            index=idx,
+            dtype=float,
+        )
+
+        out = compute_srb_l3_breakout_window_from_series(
+            close=close,
+            atr=atr,
+            wide_sr_upper_px=upper,
+            wide_sr_lower_px=lower,
+            ema_1200_position=ema_pos,
+            max_age_bars=3,
+            ema_pos_min=0.008,
+            ema_slope_min=0.004,
+        )
+
+        assert out["srb_l3_breakout_side"].iloc[3] == 1.0
+        assert out["srb_l3_breakout_side"].iloc[8] == -1.0
+        assert out["srb_l3_breakout_age_decay"].iloc[3] == 1.0
+        assert out["srb_l3_breakout_age_decay"].iloc[4] < 1.0
+        assert out["srb_l3_breakout_2b_score"].iloc[4] > 0.0
+        assert out["srb_l3_breakout_2b_score"].iloc[9] > 0.0
+
+    def test_l3_breakout_window_no_future_leak(self):
+        idx = pd.date_range("2024-01-01", periods=80, freq="2h")
+        close = pd.Series(np.linspace(95.0, 110.0, len(idx)), index=idx)
+        atr = pd.Series(1.0, index=idx)
+        upper = pd.Series(102.0, index=idx)
+        lower = pd.Series(98.0, index=idx)
+        ema_pos = pd.Series(np.linspace(-0.02, 0.04, len(idx)), index=idx)
+        base = compute_srb_l3_breakout_window_from_series(
+            close=close,
+            atr=atr,
+            wide_sr_upper_px=upper,
+            wide_sr_lower_px=lower,
+            ema_1200_position=ema_pos,
+        )
+        close_mod = close.copy()
+        close_mod.iloc[50:] = 50.0
+        mod = compute_srb_l3_breakout_window_from_series(
+            close=close_mod,
+            atr=atr,
+            wide_sr_upper_px=upper,
+            wide_sr_lower_px=lower,
+            ema_1200_position=ema_pos,
+        )
+        for col in SRB_L3_COLS:
+            diff = (base[col].iloc[:40] - mod[col].iloc[:40]).abs().max()
+            assert diff < 1e-12, f"{col} future leak: {diff}"

@@ -253,3 +253,142 @@ def compute_srb_sr_success_breakout_from_series(
         result[col] = result[col].where(cvd_active, 0.0).fillna(0.0)
 
     return result
+
+
+@register_feature(
+    "compute_srb_l3_breakout_window_from_series",
+    category="srb",
+    description=(
+        "SRB L3 structural breakout window: causal wide-SR cross side, age decay, "
+        "hold state, and EMA1200 2b alignment as ordinary features."
+    ),
+    outputs=[
+        "srb_l3_breakout_side",
+        "srb_l3_breakout_age_bars",
+        "srb_l3_breakout_age_decay",
+        "srb_l3_breakout_hold",
+        "srb_l3_breakout_ema_pos_align",
+        "srb_l3_breakout_ema_slope_align",
+        "srb_l3_breakout_2b_score",
+    ],
+)
+def compute_srb_l3_breakout_window_from_series(
+    *,
+    close: pd.Series,
+    atr: pd.Series,
+    wide_sr_upper_px: pd.Series,
+    wide_sr_lower_px: pd.Series,
+    ema_1200_position: Optional[pd.Series] = None,
+    max_age_bars: int = 24,
+    cross_buffer_atr: float = 0.0,
+    hold_buffer_atr: float = 0.0,
+    ema_slope_bars: int = 3,
+    ema_pos_min: float = 0.008,
+    ema_slope_min: float = 0.004,
+) -> pd.DataFrame:
+    """Causal L3 SR breakout window used to replace SRB's runtime 2a/2b state machine.
+
+    2a is a close crossing beyond the shifted wide SR boundary. The breakout remains
+    armed while price holds outside that boundary, with a linear age decay. 2b is
+    expressed as EMA1200 position/slope alignment to the same breakout side.
+    """
+    close_s = pd.to_numeric(close, errors="coerce").astype(float)
+    idx = close_s.index
+    atr_s = pd.to_numeric(atr, errors="coerce").reindex(idx).astype(float)
+    upper = pd.to_numeric(wide_sr_upper_px, errors="coerce").reindex(idx).astype(float)
+    lower = pd.to_numeric(wide_sr_lower_px, errors="coerce").reindex(idx).astype(float)
+    atr_safe = atr_s.where(atr_s > EPS, np.nan)
+
+    cross_buf = float(cross_buffer_atr) * atr_safe
+    hold_buf = float(hold_buffer_atr) * atr_safe
+    up_level = upper + cross_buf
+    dn_level = lower - cross_buf
+    up_hold_level = upper - hold_buf
+    dn_hold_level = lower + hold_buf
+
+    prev_close = close_s.shift(1)
+    prev_up = up_level.shift(1)
+    prev_dn = dn_level.shift(1)
+    cross_up = (close_s > up_level) & (prev_close <= prev_up)
+    cross_down = (close_s < dn_level) & (prev_close >= prev_dn)
+    outside_up = close_s > up_hold_level
+    outside_down = close_s < dn_hold_level
+
+    max_age = max(1, int(max_age_bars))
+    sides: list[float] = []
+    ages: list[float] = []
+    holds: list[float] = []
+    active_side = 0
+    active_age = 0
+
+    for i in range(len(idx)):
+        if bool(cross_up.iloc[i]):
+            active_side = 1
+            active_age = 0
+        elif bool(cross_down.iloc[i]):
+            active_side = -1
+            active_age = 0
+        elif active_side == 1 and bool(outside_up.iloc[i]) and active_age < max_age:
+            active_age += 1
+        elif active_side == -1 and bool(outside_down.iloc[i]) and active_age < max_age:
+            active_age += 1
+        else:
+            active_side = 0
+            active_age = 0
+
+        sides.append(float(active_side))
+        ages.append(float(active_age) if active_side else 0.0)
+        holds.append(1.0 if active_side else 0.0)
+
+    side_s = pd.Series(sides, index=idx, dtype=float)
+    age_s = pd.Series(ages, index=idx, dtype=float)
+    hold_s = pd.Series(holds, index=idx, dtype=float)
+    decay_s = (1.0 - (age_s / float(max_age))).clip(0.0, 1.0) * hold_s
+
+    if ema_1200_position is not None:
+        ema_pos = (
+            pd.to_numeric(ema_1200_position, errors="coerce")
+            .reindex(idx)
+            .astype(float)
+        )
+    else:
+        ema_pos = pd.Series(0.0, index=idx, dtype=float)
+    slope_bars = max(1, int(ema_slope_bars))
+    ema_slope = ema_pos - ema_pos.shift(slope_bars)
+
+    ema_pos_align = pd.Series(
+        np.where(
+            side_s > 0,
+            ema_pos >= float(ema_pos_min),
+            np.where(side_s < 0, ema_pos <= -float(ema_pos_min), False),
+        ),
+        index=idx,
+        dtype=float,
+    )
+    ema_slope_align = pd.Series(
+        np.where(
+            side_s > 0,
+            ema_slope >= float(ema_slope_min),
+            np.where(side_s < 0, ema_slope <= -float(ema_slope_min), False),
+        ),
+        index=idx,
+        dtype=float,
+    )
+    ema_pos_align = ema_pos_align.where(hold_s > 0, 0.0).fillna(0.0)
+    ema_slope_align = ema_slope_align.where(hold_s > 0, 0.0).fillna(0.0)
+    two_b_score = (0.5 * ema_pos_align + 0.5 * ema_slope_align).where(
+        hold_s > 0, 0.0
+    )
+
+    return pd.DataFrame(
+        {
+            "srb_l3_breakout_side": side_s.fillna(0.0),
+            "srb_l3_breakout_age_bars": age_s.fillna(0.0),
+            "srb_l3_breakout_age_decay": decay_s.fillna(0.0),
+            "srb_l3_breakout_hold": hold_s.fillna(0.0),
+            "srb_l3_breakout_ema_pos_align": ema_pos_align,
+            "srb_l3_breakout_ema_slope_align": ema_slope_align,
+            "srb_l3_breakout_2b_score": two_b_score.fillna(0.0),
+        },
+        index=idx,
+    )
