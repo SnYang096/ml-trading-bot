@@ -185,8 +185,10 @@ resource_allocation:
       max_add_times: 3
 
     # ── SRB（Structural Range Breakout，成功突破延续 MVP）──
+    # 6-symbol rolling 中 4/5 slots 会在突破簇时过早饿死后到的同质有效信号（如 ADA 2024-11）；
+    # SRB 无 evidence 排名时不应靠 symbol 时间顺序做隐式择优，允许 6 币宇宙全覆盖。
     srb:
-      max_slots: 4
+      max_slots: 6
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 3
@@ -238,4 +240,4 @@ resource_allocation:
     debounce_bars: 3
     default_side: both
     fer_reverse_allowed: true
-    reverse_exempt_families: [fer]
+    reverse_exempt_families: [fer, crf]  # CRF 也是 fade/mean-reversion，天然需要双向（顶部做空/底部做多）
