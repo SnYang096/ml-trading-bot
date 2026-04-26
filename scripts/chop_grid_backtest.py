@@ -464,6 +464,51 @@ def _summary_tables(
     return trade_summary, segment_summary
 
 
+def summarize_dual_add_aligned(
+    trades: pd.DataFrame, segments: pd.DataFrame
+) -> pd.DataFrame:
+    """One-row aggregate with the same columns as scripts/diagnose_dual_add_trend.summarize.
+
+    Semantics (chop grid vs dual-add):
+    - ``risk_stop_rate``: fraction of segments with at least one ``risk_exit`` trade.
+    - ``max_gross_units`` / ``max_abs_net_units``: grid uses ``max_open_levels`` on
+      inventory; we expose max open levels as ``max_gross_units`` and leave net as NaN
+      (dual-add tracks discrete leg units).
+    - ``loser_timeout_rate``: always 0 (no loser_timeout exit in grid engine).
+    - ``tp_rate`` / ``forced_rate``: ``grid_tp`` vs all other exit reasons (same pattern
+      as dual-add ``tp`` vs non-``tp``).
+    """
+    if trades.empty or segments.empty:
+        return pd.DataFrame()
+    sum_pc = float(trades["pnl_per_capital"].sum())
+    risk_col = segments["risk_exits"] if "risk_exits" in segments.columns else None
+    risk_stop_rate = float((risk_col > 0).mean()) if risk_col is not None else 0.0
+    max_open = (
+        segments["max_open_levels"] if "max_open_levels" in segments.columns else None
+    )
+    max_gross = int(max_open.max()) if max_open is not None else 0
+    return pd.DataFrame(
+        [
+            {
+                "segments": len(segments),
+                "trades": len(trades),
+                "trade_win_rate": (trades["pnl_pct"] > 0).mean(),
+                "segment_win_rate": (segments["pnl_per_capital"] > 0).mean(),
+                "sum_pnl_per_capital": sum_pc,
+                "return_pct": sum_pc * 100.0,
+                "worst_segment": segments["pnl_per_capital"].min(),
+                "median_drawdown": segments["max_drawdown"].median(),
+                "risk_stop_rate": risk_stop_rate,
+                "max_gross_units": max_gross,
+                "max_abs_net_units": float("nan"),
+                "loser_timeout_rate": 0.0,
+                "tp_rate": (trades["exit_reason"] == "grid_tp").mean(),
+                "forced_rate": (trades["exit_reason"] != "grid_tp").mean(),
+            }
+        ]
+    )
+
+
 def build_metrics(
     trades: pd.DataFrame, segments: pd.DataFrame, equity: pd.DataFrame
 ) -> dict:
@@ -942,6 +987,9 @@ def main() -> None:
     segments.to_csv(out_dir / "grid_segments.csv", index=False)
     equity.to_csv(out_dir / "equity_curve.csv", index=False)
     metrics = build_metrics(trades, segments, equity)
+    aligned = summarize_dual_add_aligned(trades, segments)
+    if not aligned.empty:
+        aligned.to_csv(out_dir / "summary.csv", index=False)
     (out_dir / "metrics.json").write_text(
         json.dumps({"args": vars(args), "metrics": metrics}, indent=2, default=str),
         encoding="utf-8",
@@ -974,6 +1022,12 @@ def main() -> None:
         )
 
     trade_summary, segment_summary = _summary_tables(trades, segments, equity)
+    print("\n=== Summary (dual_add schema, summary.csv) ===")
+    print(
+        aligned.to_string(index=False)
+        if not aligned.empty
+        else "(empty — no trades or segments)"
+    )
     print("\n=== Trade Summary ===")
     print(
         trade_summary.to_string(index=False) if not trade_summary.empty else "(empty)"
