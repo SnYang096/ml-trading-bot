@@ -313,7 +313,15 @@ class ChopGridLiveEngine:
         actions: List[Dict[str, Any]] = []
         for order in self.state.pending_orders:
             actions.append(
-                {"action": "cancel", "order_id": order.order_id, "reason": reason}
+                {
+                    "action": "cancel",
+                    "order_id": order.order_id,
+                    "symbol": order.symbol,
+                    "side": order.side,
+                    "level": order.level,
+                    "price": order.price,
+                    "reason": reason,
+                }
             )
         for pos in self.state.inventory:
             actions.append(
