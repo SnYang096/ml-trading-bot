@@ -31,7 +31,7 @@ fast_loop:
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
-    enabled: false
+    enabled: true
   pcm_eval:
     enabled: false
   direction_tuning:
@@ -109,6 +109,18 @@ strategies:
 event_backtest:
   enabled: true
   map_extra_months: 4
+  exec_grid_by_family:
+    tpc:
+      initial_r: "1.5:0.5:3.0"
+      activation_r: "1.5:0.5:3.0"
+      trail_r: "1.0:0.5:2.5"
+  exec_objective_default: risk_aware
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.02
+    min_trades_soft: 0
+    undertrade_penalty: 0.001
 
 output:
   history_dir: results/tpc/turbo-rolling-sim

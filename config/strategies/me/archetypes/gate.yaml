@@ -60,4 +60,66 @@ hard_gates:
     lock_reason: 低位远离 EMA1200 时不追空
     disabled: true
     disabled_reason: 允许熊市单边动量扩张肥尾；末端风险交给 semantic_chop / prefilter / execution 管
+  - id: gate_me_vpin_ma20_high
+    tag: HARD_ME_VPIN_MA20
+    phase: hard_gate
+    priority: 11
+    reason: 借用 BPC：VPIN 知情交易活跃度过高时不追动量
+    when:
+      vpin_quantile_rank_20:
+        value_gt: 0.8
+    then:
+      action: deny
+    locked: true
+    promote_never_disable: true
+    lock_reason: BPC 同款订单流风险门；用于压 ME 过度开仓与高噪声追入
+  - id: gate_me_evt_var_99_mid_high
+    tag: HARD_ME_EVT_VAR_99
+    phase: hard_gate
+    priority: 12
+    reason: 借用 TPC：中高 EVT 左尾风险窄带拒绝，测试是否能压 ME 回撤
+    when:
+      all_of:
+        - evt_var_99:
+            value_gt: 0.6706
+        - evt_var_99:
+            value_lt: 0.7976
+    then:
+      action: deny
+    locked: true
+    promote_never_disable: true
+    lock_reason: TPC EVT 风险门实验版；ME 当前过度交易，先严格过滤再看 score
 guardrails: []
+system_safety:
+  - id: gate_me_vol_persistence_mid
+    tag: HARD_ME_VOL_PERSISTENCE
+    phase: system_safety
+    priority: 20
+    reason: 借用 BPC/TPC：低波噪声切换/拖泥带水期不做动量扩张
+    when:
+      all_of:
+        - vol_persistence:
+            value_gt: 0.0029
+        - vol_persistence:
+            value_lt: 0.0616
+    then:
+      action: deny
+    locked: true
+    promote_never_disable: true
+    lock_reason: BPC/TPC 同款波动持久性安全门
+  - id: gate_me_vol_leverage_asymmetry_mid
+    tag: HARD_ME_VOL_LEVERAGE_ASYMMETRY
+    phase: system_safety
+    priority: 21
+    reason: 借用 BPC：波动杠杆非对称严重时趋势容易被拖垮
+    when:
+      all_of:
+        - vol_leverage_asymmetry:
+            value_gt: 0.0558
+        - vol_leverage_asymmetry:
+            value_lt: 0.1482
+    then:
+      action: deny
+    locked: true
+    promote_never_disable: true
+    lock_reason: BPC 同款 vol leverage asymmetry 安全门

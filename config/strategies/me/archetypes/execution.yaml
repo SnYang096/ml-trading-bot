@@ -42,6 +42,7 @@ stop_loss:
   initial_r: 4.0
   trailing:
     enabled: true
+    expand_with_primary_atr: true
     # 浮盈 ≥ activation_r×ATR 后启用跟踪；宜与 initial_r 同量级或略小，避免「刚浮盈就跟踪」被洗
     activation_r: 4.0
     # 从极值回撤 trail_r×ATR 平仓；极大 ≈ 主要靠硬止损/时间/强平，跟踪极宽

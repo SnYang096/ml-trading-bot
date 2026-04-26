@@ -18,6 +18,8 @@ feature_pipeline:
     - "vol_leverage_asymmetry"
     - "vol_regime_shift*"
     # 尾部风险
+    - "evt_var_99"
+    - "evt_var_99_*"
     - "stat_evt_var_*"
     - "stat_evt_tail_shape*"
     - "stat_evt_expected_shortfall*"

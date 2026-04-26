@@ -34,7 +34,7 @@ fast_loop:
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
-    enabled: false
+    enabled: true
   pcm_eval:
     enabled: false
   # 方向调优默认每月执行；若需降成本可设 cadence_months: N（每 N 个 rolling 月跑一次）
@@ -124,6 +124,18 @@ event_backtest:
   enabled: true
   # map_extra_months：事件回测交易地图的「为画 VWAP 多向前取多少月 1m」（仅事件回测 + 出图时有意义）。
   map_extra_months: 4
+  exec_grid_by_family:
+    bpc:
+      initial_r: "2.5:0.5:5.0"
+      activation_r: "2.5:0.5:5.0"
+      trail_r: "1.5:0.5:4.0"
+  exec_objective_default: risk_aware
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.02
+    min_trades_soft: 0
+    undertrade_penalty: 0.001
 
 output:
   history_dir: results/bpc/turbo-rolling-sim

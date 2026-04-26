@@ -35,9 +35,10 @@ stop_loss:
   structural_exit: ema1200
   trailing:
     activation_r: 2.0
-    enabled: false
+    enabled: true
+    expand_with_primary_atr: true
     trail_r: 2.0
-  type: fixed
+  type: trailing
 take_profit:
   enabled: false
 version: 1
