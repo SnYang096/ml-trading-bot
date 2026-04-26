@@ -26,15 +26,13 @@ rules:
     locked: true
     lock_reason: SR 突破专用频谱（策略内建语义，非泛趋势指标）
 
-  # 处在 L3 月度 swing 箱体的边界附近，或刚完成 L3 上/下沿突破后的衰减窗口内。
-  # 注意：这里不使用带符号的 bpc_impulse_return_atr，避免天然只放 LONG、挡掉跌破支撑 SHORT。
-  - any_of:
-      - feature: wide_sr_dist_atr
-        operator: "<="
-        value: 1.50
-      - feature: srb_l3_breakout_age_decay
-        operator: ">="
-        value: 0.10
+  # 20260425 SRB 双边化复盘：仅贴近 L3 边界会过早开仓，亏损集中在结构退出。
+  # SRB 只吃“已经完成 L3 上/下沿突破后的因果窗口”，放弃边界内提前埋伏。
+  - feature: srb_l3_breakout_age_decay
+    operator: ">="
+    value: 0.10
+    locked: true
+    lock_reason: SRB 只做突破后的趋势确认，不在 L3 边界内提前抢起点
 
   # 不吃箱体中部起点：SRB 只允许贴近 box 边缘或已完成 box 突破。
   # 与 BPC/TPC/ME 的通用防波动门一致，但不额外套 EMA 近零 / semantic_chop，

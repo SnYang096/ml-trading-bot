@@ -1,4 +1,4 @@
-# SRB Gate MVP：空白，由管线 stat / meta 后续填充；避免误拷 TPC 硬阈值
+# SRB Gate：宏观 2b 环境确认。大结构定位在 prefilter，订单流在 entry_filter。
 schema:
   phases:
     - system_safety
@@ -10,6 +10,19 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 
-hard_gates: []
+hard_gates:
+  - id: gate_srb_l3_breakout_2b_low
+    tag: HARD_SRB_L3_BREAKOUT_2B_LOW
+    phase: hard_gate
+    priority: 10
+    reason: "L3 突破方向未获得 EMA1200 位置/斜率 2b 确认"
+    locked: true
+    promote_never_disable: true
+    when:
+      srb_l3_breakout_2b_score:
+        value_lt: 1.0
+    then:
+      action: deny
+    comment: "20260425 SRB 双边化复盘：0.5 只要求 EMA 位置/斜率二选一，结构退出亏损过大；SRB 改为必须位置和斜率都同向确认"
 guardrails: []
 system_safety: []
