@@ -7,15 +7,15 @@
 | **BPC** | 突破 → **回踩** → 延续 | Donchian + pullback/restore + `box_compression` 蓄势 | Donchian × MACD × EMA1200 |
 | **ME** | **动量扩张** | accel + multi-TF alignment + VWAP 带 | accel/cvd/MACD × VWAP1200 |
 | **TPC** | 大趋势中 **回调不破** | EMA1200 死区规避 + `tpc_pullback_depth` | MACD × EMA1200 |
-| **SRB** | **关键位成功突破 → 顺势延续** | **L3 wide SR 带**（`wide_sr_dist_atr`）+ `sr_strength_max` + 突破频谱 + `impulse` + `tpc_score_breakout` | **ROC20 × EMA1200** |
+| **SRB** | **关键位成功突破 → 顺势延续** | **L3 wide SR 带**（`wide_sr_dist_atr`）+ `sr_strength_max` + `srb_l3_breakout_age_decay`；订单流放 entry | **L3 breakout side → ROC20 × EMA1200** |
 
 目标：**SRB 尽量吃「关键支撑/阻力被突破后的趋势段」**；prefilter 以 **SR 层级（L2 强度 + L3 关键带）** 为主，不用盒结构当主语义；与 ME/BPC/TPC **错开**。
 
 ## A~E 改动映射（2026-04-24）
 
-- **A（Prefilter）**：以 **支撑/阻力突破语境** 为主：`sr_strength_max` + **`wide_sr_dist_atr`（贴近 L3 上/下沿）** + 频谱 + `bpc_impulse_return_atr` + `tpc_score_breakout`（与 TPC 回调区分）；**已移除** 盒结构 / path_efficiency / trend_r2 主过滤。
-- **B（执行/加仓）**：`min_order_interval_minutes: 120`，`max_add_times: 2`，`trend_health_gate` 启用（母仓 ≥0.5R 且入场 ≤288 bar 才加仓）。
-- **C（两段式）**：`srb_staged_entry_2b.enabled: true`（`archetypes/execution.yaml`）。
+- **A（Prefilter）**：只用 **大结构**：`sr_strength_max` + **`wide_sr_dist_atr`（贴近 L3 上/下沿）** 或 `srb_l3_breakout_age_decay`（突破后窗口）。订单流 / EMA 2b / impulse 不放 prefilter。
+- **B（执行/加仓）**：模仿 BPC 的 ATR ladder：`min_current_r_by_add: [1,2,3]`、`add_size_multipliers: [1,2,3]`，不依赖再次出现 SRB signal。
+- **C（两段式）**：runtime `srb_staged_entry_2b` 已关闭；2a/2b 下沉为普通特征：`srb_l3_breakout_age_decay` + `srb_l3_breakout_2b_score`。
 - **D（方向）**：`archetypes/direction.yaml` 改为 **ROC20 sign × EMA1200**，不再与 TPC 共用 MACD×EMA1200。
 - **E（统计）**：用下面命令做 **rolling_sim 前后对比**（建议 `--no-adopt`）。
 
@@ -43,7 +43,7 @@ PY
 
 ## 回退
 
-若通过率过低：放宽 **`wide_sr_dist_atr`** 上界（如 1.25→1.5）、**`tpc_score_breakout`**、**`bpc_impulse_return_atr`**；若过稀再略降 **`sr_strength_max`**（慎用，伤语义）。Execution 侧可将 **`srb_staged_entry_2b.enabled`** 设回 `false` 做消融。
+若通过率过低：放宽 **`wide_sr_dist_atr`** 上界、降低 **`srb_l3_breakout_age_decay`** 阈值或延长其 feature `max_age_bars`；若过稀再略降 **`sr_strength_max`**（慎用，伤语义）。Entry 侧可下调 `srb_sr_success_breakout_score`。
 
 ## 2026-04-24b（统计放宽 + 骑趋势出场）
 

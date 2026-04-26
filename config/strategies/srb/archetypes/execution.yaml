@@ -24,19 +24,19 @@ true_sr_level:
 # 与 live decide / event_backtest 同源，读同一字段。
 sr_wide_entry_guard:
   enabled: true
-  # 2.0 时常在「贴近月度下沿的做空 / 跌破初期」误杀 SHORT；略放宽以换分布/破位空
-  min_distance_atr: 1.15
+  min_distance_atr: 2.0
   apply_to_new_only: true
 add_position:
   add_size_multipliers:
     - 0.8
     - 0.5
+    - 0.3
   inherit_parent_stop: true
-  # B：减少震荡区「死亡加仓」
-  max_add_times: 2
+  max_add_times: 3
   min_current_r_by_add:
     - 0.5
     - 1.0
+    - 1.5
   min_current_r_unit: atr
   sizing_mode: fixed_multiplier
   trigger:
@@ -44,14 +44,12 @@ add_position:
 
 execution_constraints:
   allow_add_on: true
-  # A：压「密点刷单」——同策略最小再入场间隔（2H 上约 2.5 天）
-  min_order_interval_minutes: 120
+  # ATR ladder 加仓不依赖再次出现 SRB 信号；保持 BPC 级别的最小间隔。
+  min_order_interval_minutes: 15
 
 holding:
-  # 2026-04-23 E1：母仓分层 time_stop
-  # 2026-04-26：肥尾 / 跟趋势 — 延长持仓上限 + 略早 uncap，利于长趋势段不被 30d 硬切
-  max_holding_bars: 480
-  time_stop_uncap_mfe_r: 1.5
+  max_holding_bars: null
+  time_stop_bars: 0
 
 stop_loss:
   # ------------------------------------------------------------------
@@ -74,29 +72,23 @@ stop_loss:
   # ------------------------------------------------------------------
   breakeven:
     enabled: true
-    # 2026-04-26：多跟趋势 / 肥尾 — 更晚保本 + 更大回吐缓冲（愿承担洗盘止损换后续延伸）
-    trigger_r: 6.5
-    lock_level_r: -0.3
+    trigger_r: 3.0
+    lock_level_r: 0.0
     measure: initial_risk
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
-  # ATR 兜底首仓更宽：明确用更大止损换噪声免疫，肥尾由 trailing 接手
-  initial_r: 8.0
+  initial_r: 9.0
   trailing:
     enabled: true
     # trailing 带宽 = trail_r × max(入场 ATR, 当前主周期 ATR)
     # 数据依据：baseline trailing_sl 交易里，出场 bar 的 ATR 中位数 = 入场 ATR 的 1.51×，
     # 53.8% trailing_sl 出场后沿原方向继续走 ≥ 2 ATR（"洗盘"） —— 见 docs/z实验_005_统一研究/SRB_ablation_results_20260418.md
     expand_with_primary_atr: true
-    # 2026-04-22 最终决定（见 SRB_l3_dynamic_trailing_20260422.md 结尾"rolling_sim 终审"节）：
-    # - activation_r 保留 6.0：simulator 扫参预测 +33R 被 rolling_sim 证伪（实跑 -72R vs baseline）
-    #   激进激活会连带砍掉后续 add leg 的生存率（2023-11 -78R / 2024-03 -36R）。
-    # 2026-04-26：更高 activation + 更宽 trail_far — 前段少收紧，利于单边肥尾；反转时愿付止损
-    activation_r: 7.0
-    trail_r: 7.0
-    trail_r_far: 10.5
-    trail_r_near: 7.0
+    activation_r: 9.0
+    trail_r: 9.0
+    trail_r_far: 7.0
+    trail_r_near: 5.0
     l3_near_threshold_atr: 2.0
   type: trailing
   # ------------------------------------------------------------------
@@ -109,7 +101,7 @@ stop_loss:
   # 加仓共享母仓 SL，母仓 SL 变到对面 SR 后，加仓本地 R 也自然变小 —— 不需要加仓 R gate。
   structural_sl:
     enabled: true
-    opposite_sr_buffer_atr: 0.9
+    opposite_sr_buffer_atr: 0.5
     min_distance_atr: 2.0
 take_profit:
   enabled: false
@@ -193,9 +185,8 @@ sr_structural_exit:
 # 与 breakeven / trailing 并行（优先级同其它 structural_exit，在 enforce_position block 3f）。
 # 动机：XRP 2024-03/07 长空震荡期，价格几次反向穿破 L3 未触发 SL，time_stop 又未开 —— 靠 L3 兜底。
 l3_structural_exit:
-  enabled: true
-  # 肥尾段减少「擦边 L3」被扫出场；真反转仍付止损由 initial/trailing 承担
-  buffer_atr: 0.45
+  enabled: false
+  buffer_atr: 0.25
 
 regime_execution:
   enabled: false
@@ -235,8 +226,9 @@ regime_execution:
 # 仅事件回测接线（event_backtest）；live 未接。
 # ---------------------------------------------------------------------------
 srb_staged_entry_2b:
-  # 2026-04-26：2b 略强化宏观趋势（EMA1200），PCM arm 窗口加长，便于跟上突破后延续
-  enabled: true
+  # 2a/2b 已下沉为普通特征：srb_l3_breakout_age_decay + srb_l3_breakout_2b_score。
+  # 避免 runtime arm 状态机与 prefilter/gate 重复拦截。
+  enabled: false
   cross:
     confirm_k: 2
     fake_lookahead: 10
@@ -247,4 +239,4 @@ srb_staged_entry_2b:
   ema_slope_min: 0.004
   arm_pcm_bars: 12
 
-version: 3
+version: 4

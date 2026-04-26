@@ -12,6 +12,10 @@ feature_pipeline:
 
     # ========== SRB：SR 突破频谱（占位语义锚） ==========
     - spectrum_features_sr_breakout_f
+    # L3 大结构突破窗口：side / age decay / hold / EMA1200 2b 对齐
+    - srb_l3_breakout_window_f
+    # 订单流确认：近 SR 成功推进（entry filter 使用）
+    - srb_sr_success_breakout_f
 
     # ========== 软阶段（与 TPC 共享管线，后续可换专用 phase） ==========
     - tpc_soft_phase_f  # 输出: tpc_score_breakout/pullback/continuation/neutral

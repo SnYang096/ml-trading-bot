@@ -1,4 +1,4 @@
-# SRB Gate：宏观 2b 环境确认。大结构定位在 prefilter，订单流在 entry_filter。
+# SRB Gate：复刻 20260422_212338 slow-good 统计兜底门。
 schema:
   phases:
     - system_safety
@@ -11,18 +11,34 @@ schema:
     alert_threshold: 0.25
 
 hard_gates:
-  - id: gate_srb_l3_breakout_2b_low
-    tag: HARD_SRB_L3_BREAKOUT_2B_LOW
+  - id: gate_stat_cvd_change_5_normalized
+    tag: HARD_STAT_1
     phase: hard_gate
-    priority: 10
-    reason: "L3 突破方向未获得 EMA1200 位置/斜率 2b 确认"
-    locked: true
-    promote_never_disable: true
+    priority: 20
+    reason: 统计法兜底规则（tree gate 为空）
     when:
-      srb_l3_breakout_2b_score:
-        value_lt: 1.0
+      cvd_change_5_normalized:
+        value_gt: -0.0006
     then:
       action: deny
-    comment: "20260425 SRB 双边化复盘：0.5 只要求 EMA 位置/斜率二选一，结构退出亏损过大；SRB 改为必须位置和斜率都同向确认"
+    locked: true
+    promote_never_disable: true
+    comment: "20260422_212338 stat_fallback gate_score=0.088, tail_capture=0.312, good_deny=0.224"
+  - id: gate_stat_macro_tp_vwap_1200_position_macro_tp_vwap_1200_position
+    tag: HARD_STAT_2
+    phase: hard_gate
+    priority: 21
+    reason: 统计法兜底规则（tree gate 为空）
+    when:
+      all_of:
+        - macro_tp_vwap_1200_position:
+            value_gt: 0.1036
+        - macro_tp_vwap_1200_position:
+            value_lt: 0.1543
+    then:
+      action: deny
+    locked: true
+    promote_never_disable: true
+    comment: "20260422_212338 stat_fallback gate_score=0.080, tail_capture=0.206, good_deny=0.126"
 guardrails: []
 system_safety: []

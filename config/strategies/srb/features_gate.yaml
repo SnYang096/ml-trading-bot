@@ -1,11 +1,12 @@
 name: srb_gate
 description: |
-  SRB Gate 特征白名单：SRB 是"宽 SR 区间 fake-break + 反转"策略,
-  结构层 (wide_sr_*, fake_break_*) 留给 prefilter; gate 只管执行风险.
+  SRB Gate 特征白名单：复刻 20260422_212338，允许订单流、宏观 VWAP 与执行风险统计门。
 
 feature_pipeline:
   allowed_gate_deny_features:
-    # 订单流 (fake-break 时订单流失衡是执行层风险)
+    # 订单流与宏观位置（20260422_212338 stat gates）
+    - "cvd_change_5_normalized"
+    - "macro_tp_vwap_1200_position"
     - "vpin_*"
     # 波动率稳定性
     - "vol_persistence"

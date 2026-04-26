@@ -1,6 +1,6 @@
 name: srb_prefilter
 description: |
-  SRB Prefilter：L3 关键 SR 带 + L2 结构强度 + SR 突破频谱 + impulse；方向列供 direction archetype。
+  SRB Prefilter：复刻 20260422_212338，使用结构强度 + 频谱 + TPC continuation。
 
 feature_pipeline:
   requested_features:
