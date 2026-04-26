@@ -48,7 +48,9 @@ grid_backtest:
   end_date: "2026-03-31"
   map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
   map_months: 12
+  continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+  continuous_map_months: 0
 
 output:
-  history_dir: results/chop_grid/pipeline-history
+  history_dir: results/chop_grid/turbo-rolling-sim
   latest_dir: results/chop_grid/latest

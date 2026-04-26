@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 import scripts.auto_research_pipeline as arp
+from scripts.capital_report import write_capital_report_from_trades
 
 
 def test_load_pipeline_config_normalizes_fast_loop_defaults(tmp_path):
@@ -390,3 +391,244 @@ def test_filter_strategies_scope_prefers_explicit_side():
     got_short = arp._filter_strategies_by_direction_scope(["bpc", "fer"], "short", cfg)
     assert got_long == ["bpc"]
     assert got_short == ["fer"]
+
+
+def test_capital_report_r_multiple_explains_money_assumption(tmp_path):
+    trades = tmp_path / "event_trades.csv"
+    trades.write_text(
+        "exit_time,pnl_r\n"
+        "2024-01-01T00:00:00+00:00,2.0\n"
+        "2024-01-02T00:00:00+00:00,-1.0\n",
+        encoding="utf-8",
+    )
+
+    report = write_capital_report_from_trades(
+        trades_path=trades,
+        out_dir=tmp_path,
+        unit="r_multiple",
+        title="Event Capital Report",
+        initial_capital=10000.0,
+        risk_per_r=0.01,
+        start_date="2024-01-01",
+        end_date="2025-01-01",
+    )
+
+    assert report["final_capital"] == 10100.0
+    assert report["total_r"] == 1.0
+    assert "raw sum(pnl_r)" in report["unit_explanation"]
+    assert (tmp_path / "capital_report.html").exists()
+
+
+def _write_dual_add_strategy(root: Path) -> None:
+    strat = root / "dual_add_trend"
+    strat.mkdir(parents=True, exist_ok=True)
+    (strat / "meta.yaml").write_text(
+        "strategy:\n  timeframe: '120T'\n  bidirectional: true\n", encoding="utf-8"
+    )
+    (strat / "dual_add.yaml").write_text(
+        "\n".join(
+            [
+                "strategy_type: dual_add_trend",
+                "regime:",
+                "  entry_min: 0.80",
+                "  exit_below: 0.50",
+                "  max_semantic_chop_entry: 0.25",
+                "  max_semantic_chop_hold: 0.40",
+                "  exclude_box_prefilter: true",
+                "inventory:",
+                "  add_mode: trend",
+                "  flip_action: close_offside_all",
+                "  max_adds_per_side: 3",
+                "  max_gross_exposure_units: 4",
+                "  max_net_exposure_units: 2",
+                "  max_loser_hold_bars: 24",
+                "add_spacing:",
+                "  atr_mult: 0.50",
+                "take_profit:",
+                "  atr_mult: 0.25",
+                "  min_pct: 0.0005",
+                "  min_abs: 0.0",
+                "risk:",
+                "  min_segment_bars: 6",
+                "  max_segment_bars: 120",
+                "  max_loss_per_segment: 0.01",
+                "  diagnostic_fee_bps: 4.0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _fake_dual_add_subprocess(cmd, cwd=None, capture_output=True, text=True):
+    from types import SimpleNamespace
+
+    out_dir = Path(cmd[cmd.index("--out-dir") + 1])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "summary.csv").write_text(
+        "\n".join(
+            [
+                "segments,trades,trade_win_rate,segment_win_rate,sum_pnl_per_capital,worst_segment,median_drawdown,risk_stop_rate,max_gross_units,max_abs_net_units,loser_timeout_rate,tp_rate,forced_rate",
+                "2,5,0.8,0.5,0.12,-0.01,-0.001,0.0,4,2,0.0,0.8,0.2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (out_dir / "dual_add_trades.csv").write_text(
+        "symbol,side,entry_time,exit_time,entry_price,exit_price,pnl_pct,exit_reason\n"
+        "BTCUSDT,LONG,2024-04-01 00:00:00+00:00,2024-04-01 02:00:00+00:00,1,2,1,tp\n",
+        encoding="utf-8",
+    )
+    (out_dir / "dual_add_segments.csv").write_text(
+        "symbol,start,end,direction,pnl_per_capital\n"
+        "BTCUSDT,2024-04-01 00:00:00+00:00,2024-04-01 02:00:00+00:00,UP,0.1\n",
+        encoding="utf-8",
+    )
+    return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+
+def test_fast_month_multileg_uses_backtest_adapter(tmp_path, monkeypatch):
+    base_root = tmp_path / "strategies"
+    _write_dual_add_strategy(base_root)
+    captured = {"event_calls": 0, "strategy_calls": 0, "commands": []}
+
+    def _fail_strategy_pipeline(*args, **kwargs):
+        captured["strategy_calls"] += 1
+        raise AssertionError("multi-leg strategy should not enter TradeIntent pipeline")
+
+    def _fail_event(*args, **kwargs):
+        captured["event_calls"] += 1
+        raise AssertionError("multi-leg strategy should not enter event_backtest")
+
+    def _fake_run(cmd, cwd=None, capture_output=True, text=True):
+        captured["commands"].append(list(cmd))
+        return _fake_dual_add_subprocess(cmd, cwd, capture_output, text)
+
+    monkeypatch.setattr(
+        arp.pipeline_strategy, "run_strategy_pipeline", _fail_strategy_pipeline
+    )
+    monkeypatch.setattr(arp.pipeline_events, "run_event_backtest_step", _fail_event)
+    monkeypatch.setattr(arp.subprocess, "run", _fake_run)
+    monkeypatch.setattr(arp, "resolve_symbols_from_config", lambda cfg: "BTCUSDT")
+
+    cfg = {
+        "strategies": {"dual_add_trend": {"strategy_type": "dual_add_trend"}},
+        "dates": {"start_date": "2023-01-01", "end_date": "2024-04-30"},
+        "symbol_policy": {
+            "enable_threshold": 0.0,
+            "min_symbol_trades_soft": 1,
+            "carry_forward_hard_fail_rules": {"min_sharpe_r": -0.25},
+        },
+        "slot_allocation": {
+            "max_symbols_per_side": 2,
+            "quality_score_weights": {"history_edge": 0.55, "now_strength": 0.45},
+        },
+        "fast_loop": {
+            "threshold_calibration": {"enabled": True},
+            "execution_opt": {"enabled": True},
+            "pcm_eval": {"enabled": True},
+        },
+        "event_backtest": {"enabled": True},
+        "dual_add_backtest": {"symbols": "BTCUSDT", "exclude_box": True},
+    }
+
+    summary = arp._run_fast_month_stage(
+        cfg=cfg,
+        strategies=["dual_add_trend"],
+        history_dir=tmp_path / "history",
+        timestamp="20260426_000000",
+        month_token="2024-04",
+        dry_run=False,
+        use_1min=False,
+        live_root="live/highcap",
+        data_path="data/parquet_data",
+        event_sym_r="1.0:0.5:4.0",
+        strategies_root=str(base_root),
+        calibration_months=3,
+        calibrate_all_layers=True,
+        feature_search_enabled=False,
+        rolling_mode="turbo_fixed_features",
+        config_path="config/test.yaml",
+    )
+
+    run_root = Path(summary["run_root"])
+    assert captured["strategy_calls"] == 0
+    assert captured["event_calls"] == 0
+    assert captured["commands"]
+    assert (run_root / "strategies_calibrated/dual_add_trend/dual_add.yaml").exists()
+    assert (run_root / "dual_add_trend/multileg_summary.json").exists()
+    assert summary["selected_strategies"] == ["dual_add_trend"]
+
+
+def test_slow_snapshot_multileg_writes_snapshot_config(tmp_path, monkeypatch):
+    base_root = tmp_path / "strategies"
+    _write_dual_add_strategy(base_root)
+    monkeypatch.setattr(arp.subprocess, "run", _fake_dual_add_subprocess)
+    monkeypatch.setattr(arp, "resolve_symbols_from_config", lambda cfg: "BTCUSDT")
+
+    cfg = {
+        "strategies": {"dual_add_trend": {"strategy_type": "dual_add_trend"}},
+        "dates": {"start_date": "2023-01-01", "end_date": "2024-04-30"},
+        "dual_add_backtest": {"symbols": "BTCUSDT", "exclude_box": True},
+    }
+
+    result = arp._run_slow_structure_snapshot_for_month(
+        cfg=cfg,
+        strategies=["dual_add_trend"],
+        history_dir=tmp_path / "history",
+        timestamp="20260426_000001",
+        month_token="2024-04",
+        data_path="data/parquet_data",
+        dry_run=False,
+        use_1min=False,
+        live_root="live/highcap",
+        lookback_months=6,
+        source_strategies_root=str(base_root),
+        config_path="config/test.yaml",
+    )
+
+    snap_root = Path(result["snapshot_root"])
+    assert (snap_root / "strategies/dual_add_trend/dual_add.yaml").exists()
+    assert (snap_root / "slow_snapshot_manifest.json").exists()
+
+
+def test_multileg_rolling_continuous_map_collects_monthly_artifacts(
+    tmp_path, monkeypatch
+):
+    run_root = tmp_path / "roll/fast_month_2024-04"
+    strat_dir = run_root / "dual_add_trend"
+    strat_dir.mkdir(parents=True)
+    (strat_dir / "dual_add_trades.csv").write_text(
+        "symbol,side,entry_time,exit_time,entry_price,exit_price,pnl_pct,exit_reason\n"
+        "BTCUSDT,LONG,2024-04-01 00:00:00+00:00,2024-04-01 02:00:00+00:00,1,2,1,tp\n",
+        encoding="utf-8",
+    )
+    (strat_dir / "dual_add_segments.csv").write_text(
+        "symbol,start,end,direction,pnl_per_capital\n"
+        "BTCUSDT,2024-04-01 00:00:00+00:00,2024-04-01 02:00:00+00:00,UP,0.1\n",
+        encoding="utf-8",
+    )
+
+    def _fake_write_map(**kwargs):
+        kwargs["out_path"].write_text("<html>map</html>", encoding="utf-8")
+
+    monkeypatch.setattr(arp, "write_continuous_trading_map", _fake_write_map)
+    monkeypatch.setattr(arp, "resolve_symbols_from_config", lambda cfg: "BTCUSDT")
+    cfg = {
+        "strategies": {"dual_add_trend": {"strategy_type": "dual_add_trend"}},
+        "dates": {"start_date": "2024-04-01", "end_date": "2024-04-30"},
+    }
+    out = tmp_path / "roll/trading_map_continuous.html"
+
+    got = arp._build_multileg_rolling_continuous_map(
+        cfg=cfg,
+        ledger=[{"run_root": str(run_root)}],
+        strategies=["dual_add_trend"],
+        roll_root=tmp_path / "roll",
+        data_path="data/parquet_data",
+        output_path=out,
+    )
+
+    assert got == str(out)
+    assert out.exists()

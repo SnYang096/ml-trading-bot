@@ -20,13 +20,54 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.diagnose_chop_grid import GridConfig, _hysteresis_segments, build_features
+from scripts.capital_report import write_capital_report_from_trades
 from scripts.diagnose_crf_edge import _load_symbol_1m, _resample_ohlcv
+from scripts.multi_leg_trading_map import write_continuous_trading_map
+
+DEFAULT_DUAL_ADD_CONFIG = (
+    PROJECT_ROOT / "config/strategies/dual_add_trend/dual_add.yaml"
+)
+
+
+def _load_dual_add_defaults(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    regime = cfg.get("regime", {}) or {}
+    inv = cfg.get("inventory", {}) or {}
+    spacing = cfg.get("add_spacing", {}) or {}
+    tp = cfg.get("take_profit", {}) or {}
+    risk = cfg.get("risk", {}) or {}
+    return {
+        "regime": "trend",
+        "add_mode": str(inv.get("add_mode", "trend")),
+        "flip_action": str(inv.get("flip_action", "close_offside_all")),
+        "chop_min": float(regime.get("max_semantic_chop_hold", 0.40)),
+        "exit_chop_min": float(regime.get("max_semantic_chop_entry", 0.25)),
+        "trend_min": float(regime.get("entry_min", 0.80)),
+        "trend_exit_min": float(regime.get("exit_below", 0.50)),
+        "box_window": int(regime.get("box_window", 120)),
+        "step_atr_mult": float(spacing.get("atr_mult", 0.50)),
+        "tp_atr_mult": float(tp.get("atr_mult", 0.25)),
+        "tp_abs": float(tp.get("min_abs", 0.0)),
+        "tp_pct": float(tp.get("min_pct", 0.0005)),
+        "max_adds_per_side": int(inv.get("max_adds_per_side", 3)),
+        "max_net_exposure": int(inv.get("max_net_exposure_units", 2)),
+        "max_gross_exposure": int(inv.get("max_gross_exposure_units", 4)),
+        "max_loser_hold_bars": int(inv.get("max_loser_hold_bars", 24)),
+        "max_loss_per_segment": float(risk.get("max_loss_per_segment", 0.01)),
+        "min_segment_bars": int(risk.get("min_segment_bars", 6)),
+        "max_segment_bars": int(risk.get("max_segment_bars", 120)),
+        "fee_bps": float(risk.get("diagnostic_fee_bps", risk.get("fee_bps", 4.0))),
+        "exclude_box": bool(regime.get("exclude_box_prefilter", True)),
+    }
 
 
 @dataclass(frozen=True)
@@ -38,6 +79,7 @@ class DualAddConfig:
     exit_chop_min: float = 0.25
     trend_min: float = 0.80
     trend_exit_min: float = 0.50
+    box_window: int = 120
     step_atr_mult: float = 0.50
     tp_atr_mult: float = 0.50
     tp_abs: float = 0.0
@@ -327,6 +369,7 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         exit_chop_min=args.exit_chop_min,
         trend_min=args.trend_min,
         trend_exit_min=args.trend_exit_min,
+        box_window=args.box_window,
         step_atr_mult=args.step_atr_mult,
         tp_atr_mult=args.tp_atr_mult,
         tp_abs=args.tp_abs,
@@ -340,7 +383,11 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         fee_bps=args.fee_bps,
         max_loss_per_segment=args.max_loss_per_segment,
     )
-    grid_cfg = GridConfig(chop_min=cfg.chop_min, exit_chop_min=cfg.exit_chop_min)
+    grid_cfg = GridConfig(
+        box_window=cfg.box_window,
+        chop_min=cfg.chop_min,
+        exit_chop_min=cfg.exit_chop_min,
+    )
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     start = pd.Timestamp(args.start, tz="UTC")
     end = pd.Timestamp(args.end, tz="UTC")
@@ -416,8 +463,169 @@ def summarize(trades: pd.DataFrame, segments: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def write_trading_maps(
+    out_dir: Path,
+    args: argparse.Namespace,
+    trades: pd.DataFrame,
+    segments: pd.DataFrame,
+) -> None:
+    """Write per-symbol visual maps for dual-add segments and leg exits."""
+    if trades.empty and segments.empty:
+        return
+    try:
+        from bokeh.io import output_file, save
+        from bokeh.models import BoxAnnotation, ColumnDataSource, HoverTool
+        from bokeh.plotting import figure
+    except Exception as exc:  # pragma: no cover - optional report dependency
+        print(f"skip trading map: bokeh unavailable ({exc})")
+        return
+
+    symbols = [s.strip().upper() for s in args.map_symbols.split(",") if s.strip()]
+    if not symbols:
+        symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()][:1]
+    start = pd.Timestamp(args.start, tz="UTC")
+    end = pd.Timestamp(args.end, tz="UTC")
+    if args.map_months > 0:
+        start = max(start, end - pd.DateOffset(months=int(args.map_months)))
+    warmup_start = start - pd.Timedelta(days=args.warmup_days)
+    data_dir = Path(args.data_dir)
+    bar_width_ms = pd.Timedelta(args.timeframe).total_seconds() * 1000 * 0.72
+
+    for symbol in symbols:
+        raw = _load_symbol_1m(data_dir, symbol, warmup_start, end)
+        if raw.empty:
+            continue
+        bars = _resample_ohlcv(raw, args.timeframe)
+        df = bars[(bars.index >= start) & (bars.index <= end)].copy()
+        if df.empty:
+            continue
+        df = df.reset_index(names="time")
+        inc = df["close"] >= df["open"]
+        dec = ~inc
+        p = figure(
+            x_axis_type="datetime",
+            width=1300,
+            height=720,
+            title=f"Dual Add Trend Trading Map - {symbol}",
+            tools="pan,wheel_zoom,box_zoom,reset,save",
+        )
+        p.segment(
+            df["time"], df["high"], df["time"], df["low"], color="#6b7280", alpha=0.6
+        )
+        p.vbar(
+            df.loc[inc, "time"],
+            bar_width_ms,
+            df.loc[inc, "open"],
+            df.loc[inc, "close"],
+            fill_color="#16a34a",
+            line_color="#16a34a",
+            alpha=0.65,
+        )
+        p.vbar(
+            df.loc[dec, "time"],
+            bar_width_ms,
+            df.loc[dec, "open"],
+            df.loc[dec, "close"],
+            fill_color="#dc2626",
+            line_color="#dc2626",
+            alpha=0.65,
+        )
+
+        sseg = (
+            segments[segments["symbol"] == symbol].copy()
+            if not segments.empty
+            else pd.DataFrame()
+        )
+        if not sseg.empty:
+            sseg["start"] = pd.to_datetime(sseg["start"], utc=True)
+            sseg["end"] = pd.to_datetime(sseg["end"], utc=True)
+            sseg = sseg[(sseg["end"] >= start) & (sseg["start"] <= end)]
+            for _, row in sseg.iterrows():
+                fill_color = "#22c55e" if row.get("direction") == "UP" else "#ef4444"
+                p.add_layout(
+                    BoxAnnotation(
+                        left=row["start"],
+                        right=row["end"],
+                        fill_color=fill_color,
+                        fill_alpha=0.07,
+                        line_alpha=0.0,
+                    )
+                )
+
+        strades = (
+            trades[trades["symbol"] == symbol].copy()
+            if not trades.empty
+            else pd.DataFrame()
+        )
+        if not strades.empty:
+            strades["entry_time"] = pd.to_datetime(strades["entry_time"], utc=True)
+            strades["exit_time"] = pd.to_datetime(strades["exit_time"], utc=True)
+            strades = strades[
+                (strades["exit_time"] >= start) & (strades["entry_time"] <= end)
+            ]
+            for side, color, marker in [
+                ("LONG", "#2563eb", "triangle"),
+                ("SHORT", "#9333ea", "inverted_triangle"),
+            ]:
+                src_df = strades[strades["side"] == side]
+                if src_df.empty:
+                    continue
+                entry_src = ColumnDataSource(src_df)
+                glyph = getattr(p, marker)
+                r = glyph(
+                    "entry_time",
+                    "entry_price",
+                    source=entry_src,
+                    size=8,
+                    color=color,
+                    alpha=0.85,
+                    legend_label=f"{side} entry",
+                )
+                p.add_tools(
+                    HoverTool(
+                        renderers=[r],
+                        tooltips=[
+                            ("side", "@side"),
+                            ("seq", "@seq"),
+                            ("entry", "@entry_price{0.0000}"),
+                            ("exit", "@exit_price{0.0000}"),
+                            ("pnl", "@pnl_pct{0.0000}"),
+                            ("reason", "@exit_reason"),
+                        ],
+                    )
+                )
+            exit_src = ColumnDataSource(strades)
+            p.circle(
+                "exit_time",
+                "exit_price",
+                source=exit_src,
+                size=5,
+                color="#111827",
+                alpha=0.55,
+                legend_label="exit",
+            )
+
+        p.legend.location = "top_left"
+        p.legend.click_policy = "hide"
+        p.xaxis.axis_label = "Time"
+        p.yaxis.axis_label = "Price"
+        out_path = out_dir / f"trading_map_dual_add_{symbol}.html"
+        output_file(out_path, title=f"Dual Add Trend Trading Map - {symbol}")
+        save(p)
+        print(f"Saved trading map -> {out_path}")
+
+
 def main() -> None:
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", default=str(DEFAULT_DUAL_ADD_CONFIG))
+    pre_args, _ = pre.parse_known_args()
+    config_path = Path(pre_args.config)
+    if not config_path.is_absolute():
+        config_path = PROJECT_ROOT / config_path
+    defaults = _load_dual_add_defaults(config_path)
+
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--config", default=str(config_path))
     ap.add_argument("--data-dir", default="data/parquet_data")
     ap.add_argument(
         "--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT"
@@ -426,31 +634,75 @@ def main() -> None:
     ap.add_argument("--end", default="2026-03-31")
     ap.add_argument("--warmup-days", type=int, default=120)
     ap.add_argument("--timeframe", default="2h")
-    ap.add_argument("--regime", choices=["trend", "chop"], default="trend")
-    ap.add_argument("--add-mode", choices=["both", "trend"], default="both")
+    ap.add_argument(
+        "--regime", choices=["trend", "chop"], default=defaults.get("regime", "trend")
+    )
+    ap.add_argument(
+        "--add-mode",
+        choices=["both", "trend"],
+        default=defaults.get("add_mode", "trend"),
+    )
     ap.add_argument(
         "--flip-action",
         choices=["keep", "close_offside_adds", "close_offside_all"],
-        default="keep",
+        default=defaults.get("flip_action", "close_offside_all"),
     )
-    ap.add_argument("--chop-min", type=float, default=0.40)
-    ap.add_argument("--exit-chop-min", type=float, default=0.25)
-    ap.add_argument("--trend-min", type=float, default=0.80)
-    ap.add_argument("--trend-exit-min", type=float, default=0.50)
-    ap.add_argument("--step-atr-mult", type=float, default=0.50)
-    ap.add_argument("--tp-atr-mult", type=float, default=0.50)
-    ap.add_argument("--tp-abs", type=float, default=0.0)
-    ap.add_argument("--tp-pct", type=float, default=0.0)
-    ap.add_argument("--max-adds-per-side", type=int, default=3)
-    ap.add_argument("--max-net-exposure", type=int, default=3)
-    ap.add_argument("--max-gross-exposure", type=int, default=5)
-    ap.add_argument("--max-loser-hold-bars", type=int, default=24)
-    ap.add_argument("--max-loss-per-segment", type=float, default=0.01)
-    ap.add_argument("--min-segment-bars", type=int, default=6)
-    ap.add_argument("--max-segment-bars", type=int, default=120)
-    ap.add_argument("--fee-bps", type=float, default=4.0)
-    ap.add_argument("--exclude-box", action="store_true")
+    ap.add_argument("--chop-min", type=float, default=defaults.get("chop_min", 0.40))
+    ap.add_argument(
+        "--exit-chop-min", type=float, default=defaults.get("exit_chop_min", 0.25)
+    )
+    ap.add_argument("--trend-min", type=float, default=defaults.get("trend_min", 0.80))
+    ap.add_argument(
+        "--trend-exit-min", type=float, default=defaults.get("trend_exit_min", 0.50)
+    )
+    ap.add_argument("--box-window", type=int, default=defaults.get("box_window", 120))
+    ap.add_argument(
+        "--step-atr-mult", type=float, default=defaults.get("step_atr_mult", 0.50)
+    )
+    ap.add_argument(
+        "--tp-atr-mult", type=float, default=defaults.get("tp_atr_mult", 0.25)
+    )
+    ap.add_argument("--tp-abs", type=float, default=defaults.get("tp_abs", 0.0))
+    ap.add_argument("--tp-pct", type=float, default=defaults.get("tp_pct", 0.0005))
+    ap.add_argument(
+        "--max-adds-per-side",
+        type=int,
+        default=defaults.get("max_adds_per_side", 3),
+    )
+    ap.add_argument(
+        "--max-net-exposure", type=int, default=defaults.get("max_net_exposure", 2)
+    )
+    ap.add_argument(
+        "--max-gross-exposure", type=int, default=defaults.get("max_gross_exposure", 4)
+    )
+    ap.add_argument(
+        "--max-loser-hold-bars",
+        type=int,
+        default=defaults.get("max_loser_hold_bars", 24),
+    )
+    ap.add_argument(
+        "--max-loss-per-segment",
+        type=float,
+        default=defaults.get("max_loss_per_segment", 0.01),
+    )
+    ap.add_argument(
+        "--min-segment-bars", type=int, default=defaults.get("min_segment_bars", 6)
+    )
+    ap.add_argument(
+        "--max-segment-bars", type=int, default=defaults.get("max_segment_bars", 120)
+    )
+    ap.add_argument("--fee-bps", type=float, default=defaults.get("fee_bps", 4.0))
+    ap.add_argument(
+        "--exclude-box",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.get("exclude_box", True),
+    )
     ap.add_argument("--out-dir", default="results/dual_add_trend_diagnostic")
+    ap.add_argument("--map-symbols", default="BTCUSDT")
+    ap.add_argument("--map-months", type=int, default=12)
+    ap.add_argument("--continuous-map-symbols", default="")
+    ap.add_argument("--continuous-map-months", type=int, default=0)
+    ap.add_argument("--no-maps", action="store_true")
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -460,6 +712,31 @@ def main() -> None:
     trades.to_csv(out_dir / "dual_add_trades.csv", index=False)
     segments.to_csv(out_dir / "dual_add_segments.csv", index=False)
     summary.to_csv(out_dir / "summary.csv", index=False)
+    write_capital_report_from_trades(
+        trades_path=out_dir / "dual_add_trades.csv",
+        out_dir=out_dir,
+        unit="capital_normalized",
+        title="Dual Add Trend Capital Report",
+        start_date=args.start,
+        end_date=args.end,
+        total_r=float(trades["pnl_per_capital"].sum()) if not trades.empty else 0.0,
+    )
+    if not args.no_maps:
+        write_trading_maps(out_dir, args, trades, segments)
+        write_continuous_trading_map(
+            out_path=out_dir / "trading_map_continuous.html",
+            data_dir=Path(args.data_dir),
+            symbols=args.symbols,
+            map_symbols=args.continuous_map_symbols,
+            timeframe=args.timeframe,
+            start=args.start,
+            end=args.end,
+            warmup_days=args.warmup_days,
+            map_months=args.continuous_map_months,
+            trades=trades,
+            segments=segments,
+            title="Dual Add Trend Continuous Trading Map",
+        )
     (out_dir / "config.json").write_text(
         json.dumps(vars(args), indent=2), encoding="utf-8"
     )

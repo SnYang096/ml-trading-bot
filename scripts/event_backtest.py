@@ -36,6 +36,8 @@ import logging
 import re
 import sys
 import yaml
+
+from scripts.capital_report import write_capital_report_from_trades
 import time
 import uuid
 from collections import defaultdict
@@ -4124,15 +4126,15 @@ def generate_trading_map_html(
                 _bx = None
             if _bx is not None and not _bx.empty:
                 _bx = _bx.reindex(df_plot.index)
-                _stab = pd.to_numeric(_bx.get("box_stability_240"), errors="coerce")
-                _widp = pd.to_numeric(_bx.get("box_width_pct_240"), errors="coerce")
-                _hi = pd.to_numeric(_bx.get("box_hi_240"), errors="coerce")
-                _lo = pd.to_numeric(_bx.get("box_lo_240"), errors="coerce")
+                _stab = pd.to_numeric(_bx.get("box_stability_120"), errors="coerce")
+                _widp = pd.to_numeric(_bx.get("box_width_pct_120"), errors="coerce")
+                _hi = pd.to_numeric(_bx.get("box_hi_120"), errors="coerce")
+                _lo = pd.to_numeric(_bx.get("box_lo_120"), errors="coerce")
                 _touch_hi = pd.to_numeric(
-                    _bx.get("box_touches_hi_240"), errors="coerce"
+                    _bx.get("box_touches_hi_120"), errors="coerce"
                 )
                 _touch_lo = pd.to_numeric(
-                    _bx.get("box_touches_lo_240"), errors="coerce"
+                    _bx.get("box_touches_lo_120"), errors="coerce"
                 )
                 # Keep in sync with config/strategies/crf/archetypes/prefilter.yaml:
                 #   stab>=0.85, 0.04 <= width <= 0.30, hi/lo touches>=5
@@ -4385,6 +4387,23 @@ def main():
         help="导出交易明细 CSV 路径",
     )
     parser.add_argument(
+        "--capital-report",
+        default=None,
+        help="输出 capital_report.json/html 的目录；默认跟 --export 同目录",
+    )
+    parser.add_argument(
+        "--initial-capital",
+        type=float,
+        default=10000.0,
+        help="capital report 初始资金，默认 10000",
+    )
+    parser.add_argument(
+        "--risk-per-r",
+        type=float,
+        default=0.01,
+        help="event pnl_r 转美元时每 1R 占初始资金比例，默认 1%",
+    )
+    parser.add_argument(
         "--output",
         default=None,
         help="保存 JSON 结果路径",
@@ -4556,6 +4575,26 @@ def main():
 
     if args.export:
         result.export_trades_csv(args.export)
+        cap_dir = (
+            Path(args.capital_report)
+            if args.capital_report
+            else Path(args.export).parent
+        )
+        cap = write_capital_report_from_trades(
+            trades_path=args.export,
+            out_dir=cap_dir,
+            unit="r_multiple",
+            title=f"{','.join(strategies)} Capital Report",
+            initial_capital=float(args.initial_capital),
+            risk_per_r=float(args.risk_per_r),
+            start_date=args.start_date or "",
+            end_date=args.end_date or "",
+            total_r=float(sum(t.pnl_r for t in result.trades)),
+        )
+        print(
+            f"  资金报告: {cap_dir / 'capital_report.html'} "
+            f"(final=${cap.get('final_capital', 0.0):,.2f}, CAGR={cap.get('cagr', 0.0):.2%})"
+        )
 
     if args.output:
         _save_json(result, args.output)

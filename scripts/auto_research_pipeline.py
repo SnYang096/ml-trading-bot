@@ -83,6 +83,8 @@ from scripts.pipeline import cli as pipeline_cli
 from scripts.pipeline import events as pipeline_events
 from scripts.pipeline import strategy_pipeline as pipeline_strategy
 from scripts.pipeline import steps as pipeline_steps
+from scripts.capital_report import write_capital_report_from_trades
+from scripts.multi_leg_trading_map import write_continuous_trading_map
 
 # ====================================================================
 # Config
@@ -4056,6 +4058,45 @@ def _event_trading_map_extra_months(cfg: Dict[str, Any]) -> int:
         return 12
 
 
+def _capital_report_initial_capital(cfg: Dict[str, Any]) -> float:
+    cap_cfg = cfg.get("capital_report", {}) or {}
+    try:
+        return float(cap_cfg.get("initial_capital", 10000.0))
+    except (TypeError, ValueError):
+        return 10000.0
+
+
+def _capital_report_risk_per_r(cfg: Dict[str, Any]) -> float:
+    cap_cfg = cfg.get("capital_report", {}) or {}
+    try:
+        return float(cap_cfg.get("risk_per_r", 0.01))
+    except (TypeError, ValueError):
+        return 0.01
+
+
+def _write_event_capital_report(
+    *,
+    cfg: Dict[str, Any],
+    trades_path: str | Path,
+    out_dir: str | Path,
+    title: str,
+    start_date: str,
+    end_date: str,
+    total_r: Optional[float] = None,
+) -> Dict[str, Any]:
+    return write_capital_report_from_trades(
+        trades_path=trades_path,
+        out_dir=out_dir,
+        unit="r_multiple",
+        title=title,
+        initial_capital=_capital_report_initial_capital(cfg),
+        risk_per_r=_capital_report_risk_per_r(cfg),
+        start_date=start_date,
+        end_date=end_date,
+        total_r=total_r,
+    )
+
+
 def _run_event_backtest_step(
     strategy: str,
     evidence_dir: str,
@@ -4202,6 +4243,20 @@ def _run_event_backtest_step(
     event_metrics["trading_map"] = map_path
     event_metrics["json_path"] = event_json_path
     event_metrics["exec_opt_rc"] = rc_opt
+    if not dry_run:
+        cap = write_capital_report_from_trades(
+            trades_path=export_path,
+            out_dir=results_dir,
+            unit="r_multiple",
+            title=f"{strategy} Capital Report",
+            initial_capital=10000.0,
+            risk_per_r=0.01,
+            start_date=_ev_start,
+            end_date=_ev_end,
+            total_r=event_metrics.get("total_r"),
+        )
+        event_metrics["capital_report"] = str(results_dir / "capital_report.json")
+        event_metrics["capital_report_metrics"] = cap
     return {
         "rc": rc_ev,
         "metrics": event_metrics,
@@ -4734,6 +4789,18 @@ def _run_grid_backtest_stage(
             cmd.extend(["--map-symbols", map_symbols])
         if "map_months" in grid_cfg:
             cmd.extend(["--map-months", str(int(grid_cfg.get("map_months", 12) or 12))])
+        continuous_map_symbols = str(
+            grid_cfg.get("continuous_map_symbols", "") or ""
+        ).strip()
+        if continuous_map_symbols:
+            cmd.extend(["--continuous-map-symbols", continuous_map_symbols])
+        if "continuous_map_months" in grid_cfg:
+            cmd.extend(
+                [
+                    "--continuous-map-months",
+                    str(int(grid_cfg.get("continuous_map_months", 0) or 0)),
+                ]
+            )
         print(f"\n   ▶️  {strat}: {' '.join(cmd)}")
         if dry_run:
             summaries.append(
@@ -4802,11 +4869,19 @@ def _run_dual_add_backtest_stage(
                 f"   ⏭️  skip {strat}: strategy_type={strategy_type or 'single_position'}"
             )
             continue
+        strat_cfg_dir = PROJECT_ROOT / str(
+            scfg.get("config", f"config/strategies/{strat}")
+        )
+        dual_yaml = strat_cfg_dir / "dual_add.yaml"
+        if not dual_yaml.exists():
+            raise FileNotFoundError(f"dual_add strategy config missing: {dual_yaml}")
 
         out_dir = out_root / strat
         cmd = [
             sys.executable,
             "scripts/diagnose_dual_add_trend.py",
+            "--config",
+            str(dual_yaml),
             "--data-dir",
             data_path,
             "--symbols",
@@ -4839,6 +4914,14 @@ def _run_dual_add_backtest_stage(
             str(int(dual_cfg.get("max_adds_per_side", 3))),
             "--fee-bps",
             str(float(dual_cfg.get("fee_bps", 4.0))),
+            "--map-symbols",
+            str(dual_cfg.get("map_symbols", "BTCUSDT")),
+            "--map-months",
+            str(int(dual_cfg.get("map_months", 12))),
+            "--continuous-map-symbols",
+            str(dual_cfg.get("continuous_map_symbols", "")),
+            "--continuous-map-months",
+            str(int(dual_cfg.get("continuous_map_months", 0))),
             "--out-dir",
             str(out_dir),
         ]
@@ -5103,6 +5186,17 @@ def _run_pcm_joint_backtest(
         )
     print(f"   📄 回测结果: {pcm_json_path}")
     print(f"   🗺️  交易地图: {pcm_map_path}")
+    capital_report = write_capital_report_from_trades(
+        trades_path=pcm_export_path,
+        out_dir=pcm_out_dir,
+        unit="r_multiple",
+        title=f"{output_stem} Capital Report",
+        initial_capital=10000.0,
+        risk_per_r=0.01,
+        start_date=holdout_start,
+        end_date=end_date,
+        total_r=json_metrics.get("total_r"),
+    )
 
     return {
         "pcm_decision": pcm_decision,
@@ -5121,6 +5215,8 @@ def _run_pcm_joint_backtest(
         "strategies": strategy_names,
         "strategies_count": len(strategy_names),
         "trading_map": pcm_map_path,
+        "capital_report": str(pcm_out_dir / "capital_report.json"),
+        "capital_report_metrics": capital_report,
         "trades_csv_path": pcm_export_path,
         "log_path": str(pcm_log),
         "json_path": pcm_json_path,
@@ -5223,6 +5319,623 @@ def _print_seed_diagnostics(
             bar = "█" * int(pct / 10)
             print(f"     {feat:<30s} {cnt}/{n_valid} ({pct:.0f}%) {bar}")
     print()
+
+
+def _strategy_type(cfg: Dict[str, Any], strategy: str) -> str:
+    scfg = (cfg.get("strategies", {}) or {}).get(strategy, {}) or {}
+    return str(scfg.get("strategy_type", "") or "").lower()
+
+
+def _is_multi_leg_strategy(cfg: Dict[str, Any], strategy: str) -> bool:
+    return _strategy_type(cfg, strategy) in {"grid", "dual_add_trend"}
+
+
+def _resolve_strategy_config_dir(
+    cfg: Dict[str, Any],
+    strategy: str,
+    strategies_root: Path,
+) -> Path:
+    scfg = (cfg.get("strategies", {}) or {}).get(strategy, {}) or {}
+    cfg_dir = str(scfg.get("config", "") or "").strip()
+    default_dir = strategies_root / strategy
+    if cfg_dir:
+        explicit = Path(cfg_dir)
+        if not explicit.is_absolute():
+            explicit = PROJECT_ROOT / explicit
+        if explicit.exists():
+            return explicit.resolve()
+    return default_dir.resolve()
+
+
+def _multileg_calibration_candidates(strategy_type: str) -> List[Dict[str, Any]]:
+    if strategy_type == "grid":
+        return [
+            {
+                "box_window": 60,
+                "entry_chop_min": 0.35,
+                "exit_chop_below": 0.22,
+                "atr_mult": 0.50,
+                "min_pct": 0.004,
+                "exclude_box_prefilter": True,
+            },
+            {
+                "box_window": 120,
+                "entry_chop_min": 0.40,
+                "exit_chop_below": 0.25,
+                "atr_mult": 0.50,
+                "min_pct": 0.004,
+                "exclude_box_prefilter": True,
+            },
+            {
+                "box_window": 240,
+                "entry_chop_min": 0.45,
+                "exit_chop_below": 0.30,
+                "atr_mult": 0.65,
+                "min_pct": 0.006,
+                "exclude_box_prefilter": False,
+            },
+        ]
+    if strategy_type == "dual_add_trend":
+        return [
+            {
+                "box_window": 60,
+                "entry_min": 0.75,
+                "exit_below": 0.45,
+                "max_semantic_chop_entry": 0.20,
+                "max_semantic_chop_hold": 0.35,
+                "step_atr_mult": 0.50,
+            },
+            {
+                "box_window": 120,
+                "entry_min": 0.80,
+                "exit_below": 0.50,
+                "max_semantic_chop_entry": 0.25,
+                "max_semantic_chop_hold": 0.40,
+                "step_atr_mult": 0.50,
+            },
+            {
+                "box_window": 240,
+                "entry_min": 0.85,
+                "exit_below": 0.55,
+                "max_semantic_chop_entry": 0.30,
+                "max_semantic_chop_hold": 0.45,
+                "step_atr_mult": 0.65,
+            },
+        ]
+    return [{}]
+
+
+def _apply_multileg_candidate(
+    strategy_type: str,
+    config_dir: Path,
+    candidate: Dict[str, Any],
+) -> None:
+    if strategy_type == "grid":
+        path = config_dir / "grid.yaml"
+        obj = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        regime = obj.setdefault("regime", {})
+        grid = obj.setdefault("grid", {})
+        spacing = grid.setdefault("spacing", {})
+        if "box_window" in candidate:
+            regime["box_window"] = int(candidate["box_window"])
+        if "entry_chop_min" in candidate:
+            regime["entry_chop_min"] = float(candidate["entry_chop_min"])
+        if "exit_chop_below" in candidate:
+            regime["exit_chop_below"] = float(candidate["exit_chop_below"])
+        if "exclude_box_prefilter" in candidate:
+            regime["exclude_box_prefilter"] = bool(candidate["exclude_box_prefilter"])
+        if "atr_mult" in candidate:
+            spacing["atr_mult"] = float(candidate["atr_mult"])
+        if "min_pct" in candidate:
+            spacing["min_pct"] = float(candidate["min_pct"])
+        path.write_text(yaml.safe_dump(obj, sort_keys=False), encoding="utf-8")
+        return
+
+    if strategy_type == "dual_add_trend":
+        path = config_dir / "dual_add.yaml"
+        obj = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        regime = obj.setdefault("regime", {})
+        inv = obj.setdefault("inventory", {})
+        spacing = obj.setdefault("add_spacing", {})
+        tp = obj.setdefault("take_profit", {})
+        if "box_window" in candidate:
+            regime["box_window"] = int(candidate["box_window"])
+        if "entry_min" in candidate:
+            regime["entry_min"] = float(candidate["entry_min"])
+        if "exit_below" in candidate:
+            regime["exit_below"] = float(candidate["exit_below"])
+        if "max_semantic_chop_entry" in candidate:
+            regime["max_semantic_chop_entry"] = float(
+                candidate["max_semantic_chop_entry"]
+            )
+        if "max_semantic_chop_hold" in candidate:
+            regime["max_semantic_chop_hold"] = float(
+                candidate["max_semantic_chop_hold"]
+            )
+        if "step_atr_mult" in candidate:
+            spacing["atr_mult"] = float(candidate["step_atr_mult"])
+        if "tp_atr_mult" in candidate:
+            tp["atr_mult"] = float(candidate["tp_atr_mult"])
+        if "tp_pct" in candidate:
+            tp["min_pct"] = float(candidate["tp_pct"])
+        if "flip_action" in candidate:
+            inv["flip_action"] = str(candidate["flip_action"])
+        path.write_text(yaml.safe_dump(obj, sort_keys=False), encoding="utf-8")
+
+
+def _run_multileg_backtest_command(
+    *,
+    cfg: Dict[str, Any],
+    strategy: str,
+    config_dir: Path,
+    data_path: str,
+    symbols: str,
+    start_date: str,
+    end_date: str,
+    out_dir: Path,
+    with_maps: bool,
+) -> Tuple[List[str], Dict[str, Any]]:
+    scfg = (cfg.get("strategies", {}) or {}).get(strategy, {}) or {}
+    strategy_type = _strategy_type(cfg, strategy)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    timeframe = str(scfg.get("timeframe", "2h"))
+    if timeframe == "120T":
+        timeframe = "2h"
+
+    if strategy_type == "grid":
+        grid_cfg = cfg.get("grid_backtest", {}) or {}
+        cmd = [
+            sys.executable,
+            "scripts/chop_grid_backtest.py",
+            "--config",
+            str(config_dir / "grid.yaml"),
+            "--data-dir",
+            data_path,
+            "--symbols",
+            symbols,
+            "--start",
+            start_date,
+            "--end",
+            end_date,
+            "--timeframe",
+            timeframe,
+            "--out-dir",
+            str(out_dir),
+        ]
+        if with_maps:
+            cmd.extend(
+                [
+                    "--map-symbols",
+                    str(grid_cfg.get("map_symbols", symbols) or symbols),
+                    "--map-months",
+                    str(int(grid_cfg.get("map_months", 12) or 12)),
+                    "--continuous-map-symbols",
+                    str(grid_cfg.get("continuous_map_symbols", symbols) or symbols),
+                    "--continuous-map-months",
+                    str(int(grid_cfg.get("continuous_map_months", 0) or 0)),
+                ]
+            )
+        else:
+            cmd.append("--no-maps")
+        return cmd, {"metrics_path": str(out_dir / "metrics.json")}
+
+    if strategy_type == "dual_add_trend":
+        dual_cfg = cfg.get("dual_add_backtest", {}) or {}
+        cmd = [
+            sys.executable,
+            "scripts/diagnose_dual_add_trend.py",
+            "--config",
+            str(config_dir / "dual_add.yaml"),
+            "--data-dir",
+            data_path,
+            "--symbols",
+            str(dual_cfg.get("symbols", symbols) or symbols),
+            "--start",
+            start_date,
+            "--end",
+            end_date,
+            "--timeframe",
+            timeframe,
+            "--out-dir",
+            str(out_dir),
+        ]
+        if bool(dual_cfg.get("exclude_box", True)):
+            cmd.append("--exclude-box")
+        if with_maps:
+            cmd.extend(
+                [
+                    "--map-symbols",
+                    str(dual_cfg.get("map_symbols", "BTCUSDT")),
+                    "--map-months",
+                    str(int(dual_cfg.get("map_months", 12))),
+                    "--continuous-map-symbols",
+                    str(dual_cfg.get("continuous_map_symbols", symbols) or symbols),
+                    "--continuous-map-months",
+                    str(int(dual_cfg.get("continuous_map_months", 0))),
+                ]
+            )
+        else:
+            cmd.append("--no-maps")
+        return cmd, {"summary_path": str(out_dir / "summary.csv")}
+
+    raise ValueError(f"unsupported multi-leg strategy_type={strategy_type}")
+
+
+def _parse_multileg_metrics(strategy_type: str, out_dir: Path) -> Dict[str, Any]:
+    if strategy_type == "grid":
+        metrics_path = out_dir / "metrics.json"
+        if not metrics_path.exists():
+            return {"n_trades": 0, "sharpe_r": 0.0}
+        obj = json.loads(metrics_path.read_text(encoding="utf-8"))
+        metrics = obj.get("metrics", {}) or {}
+        trade = metrics.get("trade_summary", {}) or {}
+        segment = metrics.get("segment_summary", {}) or {}
+        n_trades = int(trade.get("trades", 0) or 0)
+        pnl = float(trade.get("sum_pnl_per_capital", 0.0) or 0.0)
+        return {
+            "n_trades": n_trades,
+            "sharpe_r": float(trade.get("trade_sharpe", 0.0) or 0.0),
+            "mean_r": float(pnl / max(n_trades, 1)),
+            "total_r": pnl,
+            "win_rate": float(trade.get("win_rate", 0.0) or 0.0),
+            "max_drawdown_r": float(trade.get("max_drawdown", 0.0) or 0.0),
+            "near_stop_rate": float(trade.get("forced_rate", 0.0) or 0.0),
+            "worst_segment": float(segment.get("worst_segment", 0.0) or 0.0),
+            "segment_win_rate": float(segment.get("segment_win_rate", 0.0) or 0.0),
+            "forced_rate": float(trade.get("forced_rate", 0.0) or 0.0),
+        }
+
+    summary_path = out_dir / "summary.csv"
+    if not summary_path.exists():
+        return {"n_trades": 0, "sharpe_r": 0.0}
+    import pandas as pd
+
+    df = pd.read_csv(summary_path)
+    if df.empty:
+        return {"n_trades": 0, "sharpe_r": 0.0}
+    row = df.iloc[0].to_dict()
+    n_trades = int(row.get("trades", 0) or 0)
+    pnl = float(row.get("sum_pnl_per_capital", 0.0) or 0.0)
+    risk_stop = float(row.get("risk_stop_rate", 0.0) or 0.0)
+    forced = float(row.get("forced_rate", 0.0) or 0.0)
+    return {
+        "n_trades": n_trades,
+        "sharpe_r": float(row.get("segment_win_rate", 0.0) or 0.0),
+        "mean_r": float(pnl / max(n_trades, 1)),
+        "total_r": pnl,
+        "win_rate": float(row.get("trade_win_rate", 0.0) or 0.0),
+        "segment_win_rate": float(row.get("segment_win_rate", 0.0) or 0.0),
+        "max_drawdown_r": float(row.get("median_drawdown", 0.0) or 0.0),
+        "near_stop_rate": risk_stop,
+        "worst_segment": float(row.get("worst_segment", 0.0) or 0.0),
+        "risk_stop_rate": risk_stop,
+        "forced_rate": forced,
+        "max_gross_units": int(row.get("max_gross_units", 0) or 0),
+        "max_abs_net_units": int(row.get("max_abs_net_units", 0) or 0),
+    }
+
+
+def _score_multileg_candidate(metrics: Dict[str, Any]) -> float:
+    total = float(metrics.get("total_r", 0.0) or 0.0)
+    worst = float(metrics.get("worst_segment", 0.0) or 0.0)
+    forced = float(metrics.get("forced_rate", 0.0) or 0.0)
+    risk_stop = float(
+        metrics.get("risk_stop_rate", metrics.get("near_stop_rate", 0.0)) or 0.0
+    )
+    return total + 5.0 * worst - 0.25 * forced - 0.50 * risk_stop
+
+
+def _run_multileg_month_strategy(
+    *,
+    cfg: Dict[str, Any],
+    strategy: str,
+    run_root: Path,
+    month_strategies_root: Path,
+    base_strategies_root: Path,
+    data_path: str,
+    symbols: str,
+    calib_start: str,
+    calib_end: str,
+    test_start: str,
+    test_end: str,
+    dry_run: bool,
+    calibrate: bool,
+) -> Dict[str, Any]:
+    strategy_type = _strategy_type(cfg, strategy)
+    source_dir = _resolve_strategy_config_dir(cfg, strategy, base_strategies_root)
+    calibrated_dir = month_strategies_root / strategy
+    shutil.rmtree(calibrated_dir, ignore_errors=True)
+    shutil.copytree(source_dir, calibrated_dir, dirs_exist_ok=True)
+
+    best: Dict[str, Any] = {"candidate": {}, "metrics": {}, "score": 0.0}
+    calib_dir = run_root / strategy / "multileg_calibration"
+    if calibrate and not dry_run:
+        calib_dir.mkdir(parents=True, exist_ok=True)
+        candidates = _multileg_calibration_candidates(strategy_type)
+        rows = []
+        for idx, candidate in enumerate(candidates, start=1):
+            cand_cfg_dir = calib_dir / f"candidate_{idx:02d}" / "config"
+            cand_out_dir = calib_dir / f"candidate_{idx:02d}" / "results"
+            shutil.copytree(source_dir, cand_cfg_dir, dirs_exist_ok=True)
+            _apply_multileg_candidate(strategy_type, cand_cfg_dir, candidate)
+            cmd, _ = _run_multileg_backtest_command(
+                cfg=cfg,
+                strategy=strategy,
+                config_dir=cand_cfg_dir,
+                data_path=data_path,
+                symbols=symbols,
+                start_date=calib_start,
+                end_date=calib_end,
+                out_dir=cand_out_dir,
+                with_maps=False,
+            )
+            proc = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+            if proc.returncode != 0:
+                rows.append(
+                    {
+                        "candidate": candidate,
+                        "error": (proc.stderr or proc.stdout or "")[-1000:],
+                    }
+                )
+                continue
+            metrics = _parse_multileg_metrics(strategy_type, cand_out_dir)
+            score = _score_multileg_candidate(metrics)
+            rows.append({"candidate": candidate, "metrics": metrics, "score": score})
+            if not best["metrics"] or score > float(best["score"]):
+                best = {"candidate": candidate, "metrics": metrics, "score": score}
+        (calib_dir / "calibration_results.json").write_text(
+            json.dumps(rows, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        if best["metrics"]:
+            shutil.rmtree(calibrated_dir, ignore_errors=True)
+            shutil.copytree(source_dir, calibrated_dir, dirs_exist_ok=True)
+            _apply_multileg_candidate(strategy_type, calibrated_dir, best["candidate"])
+
+    strat_dir = run_root / strategy
+    strat_dir.mkdir(parents=True, exist_ok=True)
+    if dry_run:
+        metrics = {"n_trades": 0, "sharpe_r": 0.0, "mean_r": 0.0, "total_r": 0.0}
+        result = {"rc": 0, "metrics": metrics, "map_path": "", "json_path": ""}
+    else:
+        cmd, _ = _run_multileg_backtest_command(
+            cfg=cfg,
+            strategy=strategy,
+            config_dir=calibrated_dir,
+            data_path=data_path,
+            symbols=symbols,
+            start_date=test_start,
+            end_date=test_end,
+            out_dir=strat_dir,
+            with_maps=True,
+        )
+        print(f"\n   ▶️  {strategy}: multi-leg {' '.join(cmd)}")
+        proc = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "")[-2000:]
+            raise RuntimeError(f"multi-leg backtest failed for {strategy}\n{tail}")
+        if proc.stdout:
+            print(proc.stdout[-1200:])
+        metrics = _parse_multileg_metrics(strategy_type, strat_dir)
+        result = {
+            "rc": 0,
+            "metrics": metrics,
+            "map_path": str(strat_dir / "trading_map_continuous.html"),
+            "json_path": str(strat_dir / "multileg_summary.json"),
+            "capital_report": str(strat_dir / "capital_report.json"),
+        }
+    summary = {
+        "strategy": strategy,
+        "strategy_type": strategy_type,
+        "calibration_window": {"start": calib_start, "end": calib_end},
+        "test_window": {"start": test_start, "end": test_end},
+        "calibrated_config_dir": str(calibrated_dir),
+        "best_calibration": best,
+        "metrics": result["metrics"],
+        "map_path": result["map_path"],
+        "capital_report": result.get("capital_report", ""),
+    }
+    (strat_dir / "multileg_summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
+    return result
+
+
+def _collect_multileg_stitched_metrics(
+    *,
+    cfg: Dict[str, Any],
+    ledger: List[Dict[str, Any]],
+    strategies: List[str],
+) -> Dict[str, Any]:
+    month_rows: List[Dict[str, Any]] = []
+    total_r = 0.0
+    total_trades = 0
+    worst_segment: Optional[float] = None
+    worst_single_month_dd: Optional[float] = None
+    trade_points: List[Tuple[Any, float]] = []
+
+    for row in ledger:
+        run_root = Path(str(row.get("run_root", "") or ""))
+        month = str(row.get("month", "") or "")
+        month_r = 0.0
+        month_trades = 0
+        month_dd = 0.0
+        active = False
+        for strategy in strategies:
+            if not _is_multi_leg_strategy(cfg, strategy):
+                continue
+            summary_path = run_root / strategy / "multileg_summary.json"
+            if _strategy_type(cfg, strategy) == "grid":
+                trade_path = run_root / strategy / "grid_trades.csv"
+            else:
+                trade_path = run_root / strategy / "dual_add_trades.csv"
+            if trade_path.exists():
+                try:
+                    import pandas as pd
+
+                    tdf = pd.read_csv(trade_path)
+                    if (
+                        not tdf.empty
+                        and "exit_time" in tdf.columns
+                        and "pnl_per_capital" in tdf.columns
+                    ):
+                        for _, tr in tdf.iterrows():
+                            trade_points.append(
+                                (
+                                    pd.Timestamp(tr["exit_time"]),
+                                    float(tr.get("pnl_per_capital", 0.0) or 0.0),
+                                )
+                            )
+                except Exception:
+                    pass
+            if not summary_path.exists():
+                continue
+            try:
+                obj = json.loads(summary_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            metrics = obj.get("metrics", {}) or {}
+            active = True
+            _r = float(metrics.get("total_r", 0.0) or 0.0)
+            _n = int(metrics.get("n_trades", 0) or 0)
+            _dd = float(metrics.get("max_drawdown_r", 0.0) or 0.0)
+            _worst = float(metrics.get("worst_segment", 0.0) or 0.0)
+            month_r += _r
+            month_trades += _n
+            month_dd = min(month_dd, _dd)
+            worst_segment = (
+                _worst if worst_segment is None else min(worst_segment, _worst)
+            )
+            worst_single_month_dd = (
+                _dd
+                if worst_single_month_dd is None
+                else min(worst_single_month_dd, _dd)
+            )
+        if active:
+            month_rows.append(
+                {
+                    "month": month,
+                    "total_r": month_r,
+                    "trades": month_trades,
+                    "max_drawdown_r": month_dd,
+                }
+            )
+            total_r += month_r
+            total_trades += month_trades
+
+    equity = 0.0
+    peak = 0.0
+    stitched_maxdd = 0.0
+    if trade_points:
+        for _, pnl in sorted(trade_points, key=lambda x: x[0]):
+            equity += float(pnl)
+            peak = max(peak, equity)
+            stitched_maxdd = min(stitched_maxdd, equity - peak)
+    else:
+        for row in month_rows:
+            equity += float(row.get("total_r", 0.0) or 0.0)
+            peak = max(peak, equity)
+            stitched_maxdd = min(stitched_maxdd, equity - peak)
+
+    return {
+        "total_r": total_r,
+        "total_trades": total_trades,
+        "max_drawdown_r": stitched_maxdd,
+        "max_drawdown_source": "trade_equity" if trade_points else "monthly_equity",
+        "worst_single_month_drawdown_r": worst_single_month_dd or 0.0,
+        "worst_segment": worst_segment or 0.0,
+        "monthly": month_rows,
+    }
+
+
+def _build_multileg_rolling_continuous_map(
+    *,
+    cfg: Dict[str, Any],
+    ledger: List[Dict[str, Any]],
+    strategies: List[str],
+    roll_root: Path,
+    data_path: str,
+    output_path: Path,
+) -> str:
+    import pandas as pd
+
+    trade_frames = []
+    segment_frames = []
+    for row in ledger:
+        run_root = Path(str(row.get("run_root", "") or ""))
+        if not run_root.is_dir():
+            continue
+        for strategy in strategies:
+            if not _is_multi_leg_strategy(cfg, strategy):
+                continue
+            strat_dir = run_root / strategy
+            if _strategy_type(cfg, strategy) == "grid":
+                trade_path = strat_dir / "grid_trades.csv"
+                segment_path = strat_dir / "grid_segments.csv"
+            else:
+                trade_path = strat_dir / "dual_add_trades.csv"
+                segment_path = strat_dir / "dual_add_segments.csv"
+            if trade_path.exists():
+                df = pd.read_csv(trade_path)
+                if not df.empty:
+                    df["strategy"] = strategy
+                    trade_frames.append(df)
+            if segment_path.exists():
+                df = pd.read_csv(segment_path)
+                if not df.empty:
+                    df["strategy"] = strategy
+                    segment_frames.append(df)
+    if not trade_frames and not segment_frames:
+        return ""
+    trades = (
+        pd.concat(trade_frames, ignore_index=True) if trade_frames else pd.DataFrame()
+    )
+    segments = (
+        pd.concat(segment_frames, ignore_index=True)
+        if segment_frames
+        else pd.DataFrame()
+    )
+    dates = cfg.get("dates", {}) or {}
+    ledger_months = [str(r.get("month", "") or "") for r in ledger if r.get("month")]
+    if ledger_months:
+        report_start, _ = _month_token_to_range(ledger_months[0])
+        _, report_end = _month_token_to_range(ledger_months[-1])
+    else:
+        report_start = str(dates.get("start_date") or "")
+        report_end = str(dates.get("end_date") or "")
+    combined_trades_path = output_path.parent / "multi_leg_all_trades.csv"
+    trades.to_csv(combined_trades_path, index=False)
+    write_capital_report_from_trades(
+        trades_path=combined_trades_path,
+        out_dir=output_path.parent,
+        unit="capital_normalized",
+        title="Multi-Leg Rolling Capital Report",
+        initial_capital=_capital_report_initial_capital(cfg),
+        risk_per_r=_capital_report_risk_per_r(cfg),
+        start_date=report_start,
+        end_date=report_end,
+        total_r=(
+            float(trades["pnl_per_capital"].sum())
+            if "pnl_per_capital" in trades.columns
+            else None
+        ),
+    )
+    write_continuous_trading_map(
+        out_path=output_path,
+        data_dir=PROJECT_ROOT / str(data_path),
+        symbols=resolve_symbols_from_config(cfg),
+        map_symbols=resolve_symbols_from_config(cfg),
+        timeframe="2h",
+        start=str(dates.get("start_date") or "2022-01-01"),
+        end=str(dates.get("end_date") or ""),
+        warmup_days=120,
+        map_months=0,
+        trades=trades,
+        segments=segments,
+        title="Multi-Leg Rolling Continuous Trading Map",
+    )
+    return str(output_path) if output_path.exists() else ""
 
 
 def _run_fast_month_stage(
@@ -5386,6 +6099,8 @@ def _run_fast_month_stage(
         for strat in strategies:
             if strat not in cfg.get("strategies", {}):
                 continue
+            if _is_multi_leg_strategy(cfg, strat):
+                continue
             strat_calib_dir = run_root / strat / "threshold_calibration"
             strat_calib_dir.mkdir(parents=True, exist_ok=True)
             scfg = cfg["strategies"][strat]
@@ -5454,6 +6169,8 @@ def _run_fast_month_stage(
         for strat in strategies:
             if strat not in cfg.get("strategies", {}):
                 continue
+            if _is_multi_leg_strategy(cfg, strat):
+                continue
             obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)
             sym_r = _resolve_event_sym_r_for_strategy(cfg, strat, event_sym_r)
             _exec_grid = _resolve_event_exec_grid_for_strategy(cfg, strat)
@@ -5483,14 +6200,30 @@ def _run_fast_month_stage(
             continue
         strat_dir = run_root / strat
         strat_dir.mkdir(parents=True, exist_ok=True)
-        obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)
-        sym_r = _resolve_event_sym_r_for_strategy(cfg, strat, event_sym_r)
-        _exec_grid = _resolve_event_exec_grid_for_strategy(cfg, strat)
-        _grid_label = f"grid={_exec_grid}" if _exec_grid else f"sym-r={sym_r}"
-        print(f"\n   ▶️  {strat}: {_grid_label}, objective={obj_cfg['objective']}")
-        resume_state_path = str(prev_resume_state_paths.get(strat, "") or "")
         end_state_path = str(strat_dir / "end_state.json")
-        if event_backtest_enabled:
+        if _is_multi_leg_strategy(cfg, strat):
+            ev = _run_multileg_month_strategy(
+                cfg=cfg,
+                strategy=strat,
+                run_root=run_root,
+                month_strategies_root=month_strategies_root,
+                base_strategies_root=_base_strategies_root,
+                data_path=data_path,
+                symbols=resolve_symbols_from_config(cfg),
+                calib_start=calib_start,
+                calib_end=calib_end,
+                test_start=test_start,
+                test_end=test_end,
+                dry_run=dry_run,
+                calibrate=_calibrate_threshold_layers,
+            )
+        elif event_backtest_enabled:
+            obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)
+            sym_r = _resolve_event_sym_r_for_strategy(cfg, strat, event_sym_r)
+            _exec_grid = _resolve_event_exec_grid_for_strategy(cfg, strat)
+            _grid_label = f"grid={_exec_grid}" if _exec_grid else f"sym-r={sym_r}"
+            print(f"\n   ▶️  {strat}: {_grid_label}, objective={obj_cfg['objective']}")
+            resume_state_path = str(prev_resume_state_paths.get(strat, "") or "")
             ev = pipeline_events.run_event_backtest_step(
                 strat,
                 str(strat_dir),
@@ -5630,6 +6363,7 @@ def _run_fast_month_stage(
         r
         for r in results_summary
         if str(r.get("strategy", "")) in set(selected_strategies)
+        and not _is_multi_leg_strategy(cfg, str(r.get("strategy", "")))
     ]
     if pcm_eval_enabled and len(selected_results_summary) >= 2:
         pcm_result = pipeline_events.run_pcm_joint_backtest(
@@ -5700,6 +6434,26 @@ def _run_slow_structure_snapshot_for_month(
             continue
         strat_dir = snap_root / strategy
         strat_dir.mkdir(parents=True, exist_ok=True)
+        if _is_multi_leg_strategy(cfg, strategy):
+            base_root = Path(source_strategies_root)
+            if not base_root.is_absolute():
+                base_root = PROJECT_ROOT / base_root
+            _run_multileg_month_strategy(
+                cfg=cfg,
+                strategy=strategy,
+                run_root=snap_root,
+                month_strategies_root=snap_strategies_root,
+                base_strategies_root=base_root,
+                data_path=data_path,
+                symbols=resolve_symbols_from_config(cfg),
+                calib_start=struct_start,
+                calib_end=struct_end,
+                test_start=struct_start,
+                test_end=struct_end,
+                dry_run=dry_run,
+                calibrate=True,
+            )
+            continue
         res = pipeline_strategy.run_strategy_pipeline(
             strategy,
             cfg,
@@ -6216,6 +6970,14 @@ def main():
             if _fb_n > 0:
                 pcm_total_r = _fb_r
                 pcm_trades = _fb_n
+        multi_leg_metrics = _collect_multileg_stitched_metrics(
+            cfg=cfg,
+            ledger=ledger,
+            strategies=strategies,
+        )
+        if pcm_trades == 0 and int(multi_leg_metrics.get("total_trades", 0) or 0) > 0:
+            pcm_total_r = float(multi_leg_metrics.get("total_r", 0.0) or 0.0)
+            pcm_trades = int(multi_leg_metrics.get("total_trades", 0) or 0)
         month_maps = [
             str((r.get("pcm") or {}).get("trading_map", "") or "") for r in ledger
         ]
@@ -6240,6 +7002,23 @@ def main():
             chart_x_start=str(_dates_for_map.get("start_date") or "").strip() or None,
             chart_x_end=str(_dates_for_map.get("end_date") or "").strip() or None,
         )
+        multi_leg_continuous_map = ""
+        if any(_is_multi_leg_strategy(cfg, _st) for _st in strategies):
+            _multi_leg_map_path = (
+                roll_root / "trading_map_continuous.html"
+                if all(_is_multi_leg_strategy(cfg, _st) for _st in strategies)
+                else roll_root / "trading_map_continuous_multi_leg.html"
+            )
+            multi_leg_continuous_map = _build_multileg_rolling_continuous_map(
+                cfg=cfg,
+                ledger=ledger,
+                strategies=strategies,
+                roll_root=roll_root,
+                data_path=cfg["data_path"],
+                output_path=_multi_leg_map_path,
+            )
+            if multi_leg_continuous_map and not continuous_map:
+                continuous_map = multi_leg_continuous_map
         stitch_map = roll_root / "trading_map_stitched.html"
         stitch_lines = [
             "<html><head><meta charset='utf-8'><title>Stitched Trading Maps</title></head><body>",
@@ -6266,9 +7045,19 @@ def main():
             "ledger_path": str(ledger_path),
             "stitched_total_r": pcm_total_r,
             "stitched_total_trades": pcm_trades,
+            "stitched_max_drawdown_r": float(
+                multi_leg_metrics.get("max_drawdown_r", 0.0) or 0.0
+            ),
+            "multi_leg_metrics": multi_leg_metrics,
             "stitched_map_index": str(stitch_map),
             "month_pcm_maps": month_maps,
             "continuous_map": continuous_map,
+            "multi_leg_continuous_map": multi_leg_continuous_map,
+            "capital_report": (
+                str(roll_root / "capital_report.json")
+                if (roll_root / "capital_report.json").exists()
+                else ""
+            ),
         }
         stitched_path = roll_root / "stitched_summary.json"
         stitched_path.write_text(
@@ -6537,6 +7326,34 @@ def main():
         for strategy in strategies:
             if strategy not in cfg["strategies"]:
                 print(f"\n❌ 未知策略: {strategy}, 跳过")
+                continue
+            if args.stage == "slow_snapshot" and _is_multi_leg_strategy(cfg, strategy):
+                if not args.month:
+                    p.error(
+                        "--stage slow_snapshot 对 multi-leg 策略需要 --month YYYY-MM"
+                    )
+                rolling_cfg = cfg.get("rolling", {}) or {}
+                windows_cfg = rolling_cfg.get("windows", {}) or {}
+                lookback_months = int(
+                    windows_cfg.get("structure_lookback_months", 12) or 12
+                )
+                snap = _run_slow_structure_snapshot_for_month(
+                    cfg=cfg,
+                    strategies=[strategy],
+                    history_dir=history_dir,
+                    timestamp=timestamp,
+                    month_token=str(args.month).split(",")[0].strip(),
+                    data_path=cfg["data_path"],
+                    dry_run=args.dry_run,
+                    use_1min=args.use_1min,
+                    live_root=args.live_root,
+                    lookback_months=lookback_months,
+                    source_strategies_root=str(PROJECT_ROOT / "config" / "strategies"),
+                    config_path=args.config,
+                )
+                print(
+                    f"   ✅ {strategy}: multi-leg slow_snapshot={snap.get('manifest_path')}"
+                )
                 continue
             strategy_dates = resolve_strategy_dates(
                 cfg,

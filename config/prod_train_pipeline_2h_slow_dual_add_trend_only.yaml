@@ -1,5 +1,5 @@
 # ============================================================
-# Dual Add Trend standalone research pipeline (2H, turbo fixed features)
+# Dual Add Trend standalone pipeline (2H, slow_realistic rolling)
 # ============================================================
 
 dates:
@@ -9,13 +9,24 @@ dates:
   validation_months: 3
 
 rolling:
-  mode: turbo_fixed_features
+  mode: slow_realistic
   windows:
     calibration_months: 6
     structure_lookback_months: 12
+  slow_realistic:
+    cadence_months: 3
+    triggered_retrain_enabled: true
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
     disable_feature_search: true
+
+fast_loop:
+  threshold_calibration:
+    enabled: true
+  execution_opt:
+    enabled: true
+  pcm_eval:
+    enabled: false
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
@@ -43,7 +54,7 @@ event_backtest:
 
 dual_add_backtest:
   enabled: true
-  output_dir: results/dual_add_trend/turbo-full-cycle
+  output_dir: results/dual_add_trend/slow-full-cycle
   start_date: "2022-01-01"
   end_date: "2026-03-31"
   symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
@@ -66,5 +77,5 @@ dual_add_backtest:
   continuous_map_months: 0
 
 output:
-  history_dir: results/dual_add_trend/turbo-rolling-sim
+  history_dir: results/dual_add_trend/slow-rolling-sim
   latest_dir: results/dual_add_trend/latest

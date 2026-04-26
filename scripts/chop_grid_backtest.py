@@ -34,10 +34,12 @@ from scripts.diagnose_chop_grid import (  # noqa: E402
     _pnl_short,
     build_features,
 )
+from scripts.capital_report import write_capital_report_from_trades  # noqa: E402
 from scripts.diagnose_crf_edge import (  # noqa: E402
     _load_symbol_1m,
     _resample_ohlcv,
 )
+from scripts.multi_leg_trading_map import write_continuous_trading_map  # noqa: E402
 from src.time_series_model.grid.chop_grid_engine import (  # noqa: E402
     ChopGridEngine,
     GridEngineConfig,
@@ -882,6 +884,9 @@ def main() -> None:
     parser.add_argument("--out-dir", default="results/chop_grid/backtest")
     parser.add_argument("--map-symbols", default="BTCUSDT")
     parser.add_argument("--map-months", type=int, default=12)
+    parser.add_argument("--continuous-map-symbols", default="")
+    parser.add_argument("--continuous-map-months", type=int, default=0)
+    parser.add_argument("--no-maps", action="store_true")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -896,7 +901,31 @@ def main() -> None:
         encoding="utf-8",
     )
     write_report(out_dir, args, trades, segments, equity)
-    write_trading_maps(out_dir, args, trades, segments)
+    write_capital_report_from_trades(
+        trades_path=out_dir / "grid_trades.csv",
+        out_dir=out_dir,
+        unit="capital_normalized",
+        title="Chop Grid Capital Report",
+        start_date=args.start,
+        end_date=args.end,
+        total_r=float(trades["pnl_per_capital"].sum()) if not trades.empty else 0.0,
+    )
+    if not args.no_maps:
+        write_trading_maps(out_dir, args, trades, segments)
+        write_continuous_trading_map(
+            out_path=out_dir / "trading_map_continuous.html",
+            data_dir=Path(args.data_dir),
+            symbols=args.symbols,
+            map_symbols=args.continuous_map_symbols,
+            timeframe=args.timeframe,
+            start=args.start,
+            end=args.end,
+            warmup_days=args.warmup_days,
+            map_months=args.continuous_map_months,
+            trades=trades,
+            segments=segments,
+            title="Chop Grid Continuous Trading Map",
+        )
 
     trade_summary, segment_summary = _summary_tables(trades, segments, equity)
     print("\n=== Trade Summary ===")
