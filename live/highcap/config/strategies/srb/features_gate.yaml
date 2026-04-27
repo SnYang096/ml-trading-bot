@@ -1,0 +1,23 @@
+name: srb_gate
+description: |
+  SRB Gate 特征白名单：复刻 20260422_212338，允许订单流、宏观 VWAP 与执行风险统计门。
+
+feature_pipeline:
+  allowed_gate_deny_features:
+    # 订单流与宏观位置（20260422_212338 stat gates）
+    - "cvd_change_5_normalized"
+    - "macro_tp_vwap_1200_position"
+    - "vpin_*"
+    # 波动率稳定性
+    - "vol_persistence"
+    - "vol_leverage_asymmetry"
+    - "vol_regime_shift*"
+    # 尾部风险
+    - "stat_evt_var_*"
+    - "stat_evt_tail_shape*"
+    - "stat_evt_expected_shortfall*"
+    - "stat_evt_excess_vol*"
+    # Chop / 震荡噪声 (SR 区间内窄 BB 是噪声环境)
+    - "tpc_semantic_chop"
+    - "bb_width_normalized_pct"
+    - "range_compression_*"

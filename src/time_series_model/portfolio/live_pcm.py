@@ -1025,7 +1025,7 @@ class LivePCM:
         _sel = dict(self._constitution.get("intent_selection_policy") or {})
         _arch_pri = [
             str(x).lower().strip()
-            for x in (_sel.get("archetype_priority") or ["bpc", "me", "fer"])
+            for x in (_sel.get("archetype_priority") or ["bpc", "tpc", "me", "srb"])
         ]
         _arch_rank = {a: i for i, a in enumerate(_arch_pri)}
 

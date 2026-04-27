@@ -160,7 +160,6 @@ resource_allocation:
     # 牛市 5x / 长侧实验需启用 long；短侧保持并列以便联合 PCM
     - bpc
     - fbf
-    - fer
     - me
     - msr
     - srb
@@ -201,12 +200,6 @@ resource_allocation:
       max_add_times: 3 # 与 execution.add_position.max_add_times 对齐；≥3 便于骑乘实验
       max_new_entries_per_day: 3 # 日内新开仓上限（不含加仓），3 x 1% = 3% < daily_loss_limit
 
-    # ── FER 方向拆分 ──
-    fer:
-      max_slots: 3
-      max_risk_per_trade: 0.01 # 反转单不承担尾部主仓职责
-      allow_add_position: false # FER 反转策略不加仓
-
     # ── FBF (L2 POC/HAL 盒子边沿失败突破反转，方向双向) ──
     # 独立于 FER：FER 是单边耗竭反转，FBF 是结构性盒子边沿假破。
     fbf:
@@ -228,10 +221,9 @@ resource_allocation:
       allow_add_position: false # LV 不加仓
 
   intent_selection_policy:
-    archetype_priority: [bpc, tpc, srb, me, fbf, msr, fer]
+    archetype_priority: [bpc, tpc, srb, me, fbf, msr]
 
   # 同 symbol 同策略家族默认只允许主方向（由 BTC close vs ema_200 决定）
-  # FER 可作为反向例外（短促反转仓位）
   direction_policy:
     enabled: true
     mode: ema200_single_direction
@@ -239,5 +231,5 @@ resource_allocation:
     ema_feature: ema_200
     debounce_bars: 3
     default_side: both
-    fer_reverse_allowed: true
-    reverse_exempt_families: [fer, crf]  # CRF 也是 fade/mean-reversion，天然需要双向（顶部做空/底部做多）
+    fer_reverse_allowed: false
+    reverse_exempt_families: [crf]  # CRF fade/mean-reversion 需双向时保留

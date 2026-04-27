@@ -1,0 +1,46 @@
+# TPC — 趋势回调延续；执行档与 ME 对齐为宽止损/宽 trailing，仓位 sizing 吸收更宽风险；
+# EMA1200 结构保底，不设 breakeven。
+
+add_position:
+  add_size_multipliers:
+    - 1
+    - 2
+    - 3
+  inherit_parent_stop: true
+  max_add_times: 3
+  min_current_r_by_add:
+    - 1
+    - 2
+    - 3
+  min_current_r_unit: atr
+  sizing_mode: fixed_multiplier
+  trigger:
+    type: float_r_ladder_only
+execution_constraints:
+  allow_add_on: true
+  min_order_interval_minutes: 15
+holding:
+  max_holding_bars: 360
+  time_stop_bars: 0
+stop_loss:
+  # 2026-04-22 统一 breakeven 口径（见 position_logic.py）：
+  # measure=atr 保持历史语义；lock_level_r 等价于旧 lock_profit_atr（ATR 单位）。
+  breakeven:
+    enabled: false
+    trigger_r: 9
+    lock_level_r: 1.0
+    measure: atr
+  guardrails:
+    max_stop_pct: 0.1
+    min_stop_pct: 0.01
+  initial_r: 4.0
+  structural_exit: ema1200
+  trailing:
+    activation_r: 4.0
+    enabled: true
+    expand_with_primary_atr: true
+    trail_r: 12.0
+  type: trailing
+take_profit:
+  enabled: false
+version: 1

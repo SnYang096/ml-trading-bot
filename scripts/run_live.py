@@ -1,7 +1,7 @@
 """run_live.py — Live 实盘入口
 
 GenericLiveStrategy → 配置驱动通用决策引擎
-支持 BPC/ME/FER 任意策略，通过 YAML 配置驱动。
+支持 BPC/ME/SRB/TPC（及可选 LV）等 TradeIntent 策略，通过 YAML 配置驱动。
 
 数据管线:
   BinanceWS → MultiSymbolManager → OrderFlowListener → GenericLiveStrategy decide → OrderManager
@@ -307,15 +307,15 @@ def _setup_three_strategies(
     trade_size: float,
     risk_per_trade: float = 0.0,
 ):
-    """三策略实盘启动 (BPC + ME + FER) — 多时间框架
+    """多策略实盘启动 (BPC + ME + SRB + TPC + 可选 LV) — 多时间框架
 
-    时间框架:
-      BPC: 4H (240T)
-      FER: 4H (240T)
-      ME:  1H (60T)
+    时间框架 (默认来自各策略 meta.yaml):
+      BPC: 通常 240T
+      SRB / TPC: 通常 120T（若相同则共用一个增量 FC；不同则各 FC）
+      ME: 通常 60T
 
     数据管线:
-      同一组 1min bars/ticks → 分别重采样为 240T/60T → 各策略拿对应 timeframe 的特征
+      同一组 1min bars/ticks → 主 FC (BPC timeframe) + extra FC 按各策略 timeframe 重采样
     """
     from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
     from src.time_series_model.portfolio.live_pcm import LivePCM
@@ -339,7 +339,7 @@ def _setup_three_strategies(
         "MLBOT_CONSTITUTION_YAML",
         os.path.join(config_root, "constitution", "constitution.yaml"),
     )
-    _ALL_ARCHETYPES = ["bpc", "me", "fer", "lv"]
+    _ALL_ARCHETYPES = ["bpc", "me", "srb", "tpc", "lv"]
     _const_cfg = {}
     try:
         with open(constitution_yaml_path, "r", encoding="utf-8") as _f:
@@ -364,8 +364,11 @@ def _setup_three_strategies(
     me_pkg = _me_strategy_package_name(strategies_root)
     tf_bpc = _load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
     tf_me = _load_strategy_timeframe(strategies_root, me_pkg)
-    tf_fer = _load_strategy_timeframe(strategies_root, "fer")  # 默认 240T
     tf_lv = _load_strategy_timeframe(strategies_root, "lv")  # 默认 15T
+    _srb_on = "srb" in enabled_archetypes
+    _tpc_on = "tpc" in enabled_archetypes
+    tf_srb = _load_strategy_timeframe(strategies_root, "srb") if _srb_on else ""
+    tf_tpc = _load_strategy_timeframe(strategies_root, "tpc") if _tpc_on else ""
 
     def _tf_to_bar_minutes(tf: str) -> int:
         """'240T' → 240, '60T' → 60"""
@@ -373,7 +376,6 @@ def _setup_three_strategies(
 
     bar_minutes_bpc = _tf_to_bar_minutes(tf_bpc)
     bar_minutes_me = _tf_to_bar_minutes(tf_me)
-    bar_minutes_fer = _tf_to_bar_minutes(tf_fer)
     bar_minutes_lv = _tf_to_bar_minutes(tf_lv)
 
     # ── 初始化已启用的策略对象 ──
@@ -397,15 +399,24 @@ def _setup_three_strategies(
             bar_minutes=bar_minutes_me,
         )
         _tf_map[me_pkg] = tf_me
-    if "fer" in enabled_archetypes:
-        _strategy_map["fer"] = GenericLiveStrategy(
-            strategy_name="fer",
+    if _srb_on:
+        _strategy_map["srb"] = GenericLiveStrategy(
+            strategy_name="srb",
             strategies_root=strategies_root,
             trade_size=trade_size,
-            primary_timeframe=tf_fer,
-            bar_minutes=bar_minutes_fer,
+            primary_timeframe=tf_srb,
+            bar_minutes=_tf_to_bar_minutes(tf_srb),
         )
-        _tf_map["fer"] = tf_fer
+        _tf_map["srb"] = tf_srb
+    if _tpc_on:
+        _strategy_map["tpc"] = GenericLiveStrategy(
+            strategy_name="tpc",
+            strategies_root=strategies_root,
+            trade_size=trade_size,
+            primary_timeframe=tf_tpc,
+            bar_minutes=_tf_to_bar_minutes(tf_tpc),
+        )
+        _tf_map["tpc"] = tf_tpc
     if "lv" in enabled_archetypes:
         _strategy_map["lv"] = GenericLiveStrategy(
             strategy_name="lv",
@@ -419,7 +430,6 @@ def _setup_three_strategies(
     # 将1个变量方便后续使用
     bpc = _strategy_map.get("bpc")
     me = _strategy_map.get(me_pkg)
-    fer = _strategy_map.get("fer")
     lv = _strategy_map.get("lv")
 
     logger.info("✅ 策略初始化完成: %s", list(_strategy_map.keys()))
@@ -427,7 +437,7 @@ def _setup_three_strategies(
     # ── 2. 创建 PCM 仲裁层 (注册策略 + timeframe 绑定) ──
     # ME 磁盘包名为 me/（旧版 me-long/）；优先级含 ME 与 ME-LONG 兼容历史 intent
     pcm = LivePCM(
-        archetype_priority=["LV", "FER", "ME", "ME-LONG", "BPC"],
+        archetype_priority=["LV", "TPC", "SRB", "ME", "ME-LONG", "BPC"],
         constitution_yaml=constitution_yaml_path,
     )
     for _name, _strat in _strategy_map.items():
@@ -439,40 +449,72 @@ def _setup_three_strategies(
 
     # ── 3. 创建特征计算器 (per-symbol, per-timeframe) ──
     bpc_archetypes = os.path.join(strategies_root, "bpc", "archetypes")
-    fer_archetypes = os.path.join(strategies_root, "fer", "archetypes")
+    srb_archetypes = os.path.join(strategies_root, "srb", "archetypes")
+    tpc_archetypes = os.path.join(strategies_root, "tpc", "archetypes")
     me_archetypes = os.path.join(strategies_root, me_pkg, "archetypes")
     lv_archetypes = os.path.join(strategies_root, "lv", "archetypes")
 
-    # 预提取 FER 特征集 (用于合并到 4H FC)
-    fer_extra_feat_set = set()
-    fer_extra_feat_nodes = []
-    try:
-        fer_extra_feat_set, fer_extra_feat_nodes = extract_features_from_archetypes(
-            fer_archetypes
-        )
-        logger.info(
-            "  FER features: %d columns, %d nodes",
-            len(fer_extra_feat_set),
-            len(fer_extra_feat_nodes),
-        )
-    except Exception as e:
-        logger.warning("  FER feature extraction failed: %s", e)
+    srb_extra_feat_set: set = set()
+    srb_extra_feat_nodes: list = []
+    if _srb_on:
+        try:
+            srb_extra_feat_set, srb_extra_feat_nodes = extract_features_from_archetypes(
+                srb_archetypes
+            )
+            logger.info(
+                "  SRB features: %d columns, %d nodes",
+                len(srb_extra_feat_set),
+                len(srb_extra_feat_nodes),
+            )
+        except Exception as e:
+            logger.warning("  SRB feature extraction failed: %s", e)
+
+    tpc_extra_feat_set: set = set()
+    tpc_extra_feat_nodes: list = []
+    if _tpc_on:
+        try:
+            tpc_extra_feat_set, tpc_extra_feat_nodes = extract_features_from_archetypes(
+                tpc_archetypes
+            )
+            logger.info(
+                "  TPC features: %d columns, %d nodes",
+                len(tpc_extra_feat_set),
+                len(tpc_extra_feat_nodes),
+            )
+        except Exception as e:
+            logger.warning("  TPC feature extraction failed: %s", e)
 
     def _make_feature_computer_4h(symbol: str) -> IncrementalFeatureComputer:
-        """4H FC: BPC + FER 合并特征集 (timeframe 从 meta.yaml 读取)"""
-        fc = IncrementalFeatureComputer(
+        """Primary FC: BPC archetypes only (timeframe 从 meta.yaml)."""
+        return IncrementalFeatureComputer(
             tick_window_minutes=bar_minutes_bpc,
             bar_window_size=bar_minutes_bpc * 2,
             archetypes_dir=bpc_archetypes,
             primary_timeframe=tf_bpc,
         )
-        # 合并 FER 特征到 4H FC
-        if fer_extra_feat_set:
-            fc.live_feature_set |= fer_extra_feat_set
-            merged_nodes = sorted(
-                set(fc.live_feature_nodes) | set(fer_extra_feat_nodes)
-            )
-            fc.live_feature_nodes = merged_nodes
+
+    def _make_srb_tpc_fc(
+        symbol: str, tf: str, base_archetypes_dir: str
+    ) -> IncrementalFeatureComputer:
+        """SRB/TPC 共用或分 timeframe 的增量 FC；在各自 tf 上合并特征列需求。"""
+        bm = _tf_to_bar_minutes(tf)
+        fc = IncrementalFeatureComputer(
+            tick_window_minutes=bm,
+            bar_window_size=bm * 2,
+            archetypes_dir=base_archetypes_dir,
+            primary_timeframe=tf,
+        )
+        merged: set = set()
+        nodes: list = []
+        if _srb_on and tf == tf_srb:
+            merged |= srb_extra_feat_set
+            nodes.extend(srb_extra_feat_nodes)
+        if _tpc_on and tf == tf_tpc:
+            merged |= tpc_extra_feat_set
+            nodes.extend(tpc_extra_feat_nodes)
+        if merged:
+            fc.live_feature_set |= merged
+            fc.live_feature_nodes = sorted(set(nodes))
         return fc
 
     def _make_feature_computer_me(symbol: str) -> IncrementalFeatureComputer:
@@ -554,17 +596,26 @@ def _setup_three_strategies(
             listener.risk_per_trade = risk_per_trade
         # 注入监控统计收集器
         listener.stats_collector = stats_collector
-        # 注入 ME FC + LV FC (各自独立 timeframe)
+        # 注入 ME / LV / SRB+TPC 的 extra FC（按 timeframe 键路由）
         _extra_fcs = {}
         if me is not None:
             _extra_fcs[tf_me] = _make_feature_computer_me(sym)
         if lv is not None:
             _extra_fcs[tf_lv] = _make_feature_computer_lv(sym)
+        if _srb_on and _tpc_on and tf_srb == tf_tpc:
+            _extra_fcs[tf_srb] = _make_srb_tpc_fc(sym, tf_srb, srb_archetypes)
+        elif _srb_on and _tpc_on and tf_srb != tf_tpc:
+            _extra_fcs[tf_srb] = _make_srb_tpc_fc(sym, tf_srb, srb_archetypes)
+            _extra_fcs[tf_tpc] = _make_srb_tpc_fc(sym, tf_tpc, tpc_archetypes)
+        elif _srb_on:
+            _extra_fcs[tf_srb] = _make_srb_tpc_fc(sym, tf_srb, srb_archetypes)
+        elif _tpc_on:
+            _extra_fcs[tf_tpc] = _make_srb_tpc_fc(sym, tf_tpc, tpc_archetypes)
         listener.extra_feature_computers = _extra_fcs
 
     logger.info(
-        f"✅ 三策略实盘启动完成: {len(symbols)} symbols, "
-        f"BPC={tf_bpc}, FER={tf_fer}, ME={tf_me}, "
+        f"✅ 多策略实盘启动完成: {len(symbols)} symbols, "
+        f"BPC={tf_bpc}, SRB={tf_srb or '-'}, TPC={tf_tpc or '-'}, ME={tf_me}, "
         f"window={window_minutes}min, archetypes={pcm.registered_archetypes}"
     )
     return manager, pcm
@@ -658,8 +709,8 @@ def _compute_initial_quantiles(
     合并所有 symbol 的数据计算 quantiles。
 
     支持多时间框架:
-      - 主 FC 计算 primary_timeframe quantiles (4H) → BPC/FER
-      - 额外 FC 计算 extra_timeframe quantiles (1H) → ME
+      - 主 FC 计算 primary_timeframe quantiles → BPC
+      - 额外 FC 计算各策略 timeframe → ME / SRB / TPC / LV
       - 按 timeframe 分别设置给对应策略
     """
     if not hasattr(decision_handler, "set_quantiles") and not hasattr(
@@ -816,7 +867,7 @@ def _run_retrain_check() -> None:
 
     strategy_names = list(cfg.get("strategies", {}).keys())
     if not strategy_names:
-        strategy_names = ["bpc", "fer", "me"]
+        strategy_names = ["bpc", "me", "srb", "tpc"]
 
     for strat in strategy_names:
         try:

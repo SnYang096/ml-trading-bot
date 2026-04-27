@@ -12,11 +12,11 @@ created_at: "2026-01-12"
 kill_switch:
   enabled: true
   # Account-level loss limits (fraction of equity).
-  daily_loss_limit: 0.04 # -4% => stop new risk for the day
+  daily_loss_limit: 0.06 # -6% => stop new risk for the day (was 4%; raised to accommodate 5-slot ME)
   weekly_loss_limit: 0.08 # -8% => stop new risk for the week
   monthly_loss_limit: 0.12 # -12% => stop new risk for the month
   # Cooldown after a hard stop (minutes). Recovery requires cooldown + metrics OK.
-  cooldown_minutes: 240
+  cooldown_minutes: 720 # 12h = 6x 2h bars (was 240min; extended for ME 2h decision cycle)
   # Daily loss reset is evaluated in this timezone.
   daily_reset_timezone: "UTC"
 
@@ -159,8 +159,10 @@ resource_allocation:
     # PCM 联合事件回测策略白名单（与 pipeline strategy_scope 交集生效）
     # 牛市 5x / 长侧实验需启用 long；短侧保持并列以便联合 PCM
     - bpc
-    - fer
+    - fbf
     - me
+    - msr
+    - srb
     - tpc
 
   per_strategy_limits:
@@ -172,8 +174,20 @@ resource_allocation:
       allow_add_position: true # BPC 趋势延续允许加仓
       max_add_times: 3 # 宪法上限；触发与梯度见 archetypes/execution.yaml
 
+    # ── TPC（Trend Pullback Continuation）──
+    # 未配置时 ConstitutionExecutor.validate_add_position 对未知策略将 max_add_times 默认=1，
+    # 会导致「每母仓只能加仓一次」，事件回测里表现为加仓笔数远少于 BPC。须与 execution.add_position.max_add_times 对齐。
     tpc:
       max_slots: 5
+      max_risk_per_trade: 0.01
+      allow_add_position: true
+      max_add_times: 3
+
+    # ── SRB（Structural Range Breakout，成功突破延续 MVP）──
+    # 6-symbol rolling 中 4/5 slots 会在突破簇时过早饿死后到的同质有效信号（如 ADA 2024-11）；
+    # SRB 无 evidence 排名时不应靠 symbol 时间顺序做隐式择优，允许 6 币宇宙全覆盖。
+    srb:
+      max_slots: 6
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 3
@@ -184,12 +198,21 @@ resource_allocation:
       max_risk_per_trade: 0.01 # 动量扩散只做加速段, 首枪更轻
       allow_add_position: true # ME 动能扩张允许加仓
       max_add_times: 3 # 与 execution.add_position.max_add_times 对齐；≥3 便于骑乘实验
+      max_new_entries_per_day: 3 # 日内新开仓上限（不含加仓），3 x 1% = 3% < daily_loss_limit
 
-    # ── FER 方向拆分 ──
-    fer:
+    # ── FBF (L2 POC/HAL 盒子边沿失败突破反转，方向双向) ──
+    # 独立于 FER：FER 是单边耗竭反转，FBF 是结构性盒子边沿假破。
+    fbf:
       max_slots: 3
-      max_risk_per_trade: 0.01 # 反转单不承担尾部主仓职责
-      allow_add_position: false # FER 反转策略不加仓
+      max_risk_per_trade: 0.01
+      allow_add_position: false
+
+    # ── MSR (L3 大级别 swing SR 假破反转) ──
+    # 稀疏高置信：预期 1-2 单/币/月，max_slots 低，不加仓
+    msr:
+      max_slots: 2
+      max_risk_per_trade: 0.01
+      allow_add_position: false
 
     # ── LV (方向中性, 不拆分) ──
     lv:
@@ -198,10 +221,9 @@ resource_allocation:
       allow_add_position: false # LV 不加仓
 
   intent_selection_policy:
-    archetype_priority: [bpc, tpc, me, fer]
+    archetype_priority: [bpc, tpc, srb, me, fbf, msr]
 
   # 同 symbol 同策略家族默认只允许主方向（由 BTC close vs ema_200 决定）
-  # FER 可作为反向例外（短促反转仓位）
   direction_policy:
     enabled: true
     mode: ema200_single_direction
@@ -209,5 +231,5 @@ resource_allocation:
     ema_feature: ema_200
     debounce_bars: 3
     default_side: both
-    fer_reverse_allowed: true
-    reverse_exempt_families: [fer]
+    fer_reverse_allowed: false
+    reverse_exempt_families: [crf]  # CRF fade/mean-reversion 需双向时保留

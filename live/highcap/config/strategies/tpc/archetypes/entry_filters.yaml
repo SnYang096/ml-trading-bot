@@ -1,0 +1,29 @@
+# TPC entry filters: 订单流驱动入场时机（吸收后顺势）
+filters:
+  - id: tpc_long_absorption_follow_trend
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "做多：大级别偏多 + 回调吸收成立后顺势入场"
+    conditions:
+      - feature: tpc_cvd_absorption
+        operator: ">="
+        value: 1.0
+      - feature: tpc_recovery_strength
+        operator: ">="
+        value: 0.15
+
+  - id: tpc_short_absorption_follow_trend
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "做空：大级别偏空 + 回调吸收成立后顺势入场"
+    conditions:
+      - feature: tpc_cvd_absorption
+        operator: ">="
+        value: 1.0
+      - feature: tpc_recovery_strength
+        operator: ">="
+        value: 0.15
+
+combination_mode: or

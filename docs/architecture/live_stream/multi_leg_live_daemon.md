@@ -26,7 +26,7 @@
 ```text
 Binance WebSocket（行情 / 成交 tick）
   → MultiSymbolManager → OrderFlowListener → IncrementalFeatureComputer
-  → GenericLiveStrategy（BPC / TPC / ME / SRB 等 TradeIntent 策略）
+  → GenericLiveStrategy（BPC / ME / SRB / TPC 等 TradeIntent 策略）
   → LivePCM / OrderManager → BinanceAPI
 ```
 

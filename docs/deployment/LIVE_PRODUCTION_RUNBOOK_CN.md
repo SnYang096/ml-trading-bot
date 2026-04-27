@@ -5,7 +5,7 @@
 **相关文档**：
 
 - 流水线：`.github/workflows/deploy.yml`
-- 历史部署清单（三策略 BPC/ME/FER）：`docs/z实验_006_统一实盘/实盘部署TODO.md`
+- 历史部署清单（经典多策略）：`docs/z实验_006_统一实盘/实盘部署TODO.md`
 - 多腿架构与命令：`docs/architecture/live_stream/multi_leg_live_daemon.md`
 
 ---
@@ -14,7 +14,7 @@
 
 | 路径 | 入口脚本 | 典型策略 | 订单语义 |
 |------|------------|----------|----------|
-| **经典实盘** | `scripts/run_live.py`（生产镜像默认：`live/scripts/start_live.sh` → 同路径） | 由 `constitution.yaml` 的 `enabled_archetypes` 决定；代码里已接线 **BPC、ME、FER**（及可选 LV） | `TradeIntent` + `LivePCM` + `OrderManager` |
+| **经典实盘** | `scripts/run_live.py`（生产镜像默认：`live/scripts/start_live.sh` → 同路径） | 由 `constitution.yaml` 的 `enabled_archetypes` 决定；代码里已接线 **BPC、ME、SRB、TPC**（及可选 LV） | `TradeIntent` + `LivePCM` + `OrderManager` |
 | **多腿实盘 / 影子** | `scripts/run_multi_leg_live.py` | `chop_grid`、`dual_add_trend`（`--strategies` 逗号分隔） | 多腿库存 + `MultiLegExecutionAdapter` + User Stream 成交确认 |
 
 **结论**：可以同时在一台机器上跑 **「经典进程 + 多腿进程」**（推荐 **两个 systemd 单元** 或两条 Docker `command`），但：
@@ -24,23 +24,19 @@
 
 ---
 
-## 2. 你问的五种策略能否「同时」跑？
+## 2. 经典 vs 多腿：谁能同进程？
 
 | 名称 | 能否与经典同进程 | 说明 |
 |------|------------------|------|
-| **BPC** | 能（经典） | `enabled_archetypes` 含 `bpc` 时注册。 |
-| **ME** | 能（经典） | `enabled_archetypes` 含 `me` / `me-long` / `me-short` 等 ME 包前缀时注册（见 `run_live.py`）。 |
-| **TPC** | **当前仓库未在 `run_live.py` 接线** | 经典路径里已接线的是 **FER**（及 BPC/ME/LV），不是 TPC。若 constitution 里只写 `tpc`，**不会**像 BPC 那样自动创建 `GenericLiveStrategy("tpc", …)`，需要按 FER 的模式增加工程接线后才可与 BPC/ME 同进程运行。 |
-| **SRB** | **当前未在 `run_live.py` 接线** | 与 TPC 相同：磁盘上可有 `config/strategies/srb/`，但经典 live 进程不会自动注册；需工程扩展（注册、`LivePCM` 优先级、`pcm_regime`、以及与哪条 timeframe 的 FC 合并）。 |
-| **chop_grid** | 否（独立多腿进程） | `run_multi_leg_live.py --strategies chop_grid,...`。 |
-| **dual_add_trend** | 否（独立多腿进程） | 同上，默认与 `chop_grid` 可写在同一 `--strategies` 里一次拉起。 |
+| **BPC / ME / SRB / TPC** | 能（同一 `run_live`） | `enabled_archetypes` 控制是否注册；SRB/TPC 使用 **独立 timeframe 的 extra FC**（默认与 `meta.yaml` 一致，多为 120T；二者 timeframe 相同时共用一个增量 FC）。 |
+| **chop_grid / dual_add_trend** | **否（刻意分进程）** | 走 `run_multi_leg_live.py`：`MultiLegOrchestrator`、对冲库存、User Stream 成交语义与 `OrderManager` / `TradeIntent` 不兼容，**不是**「再开一个线程」就能合并。 |
 
-因此：**合并到 `main` 后**，默认可靠组合是：
+**合并到 `main` 后的推荐组合**：经典一条服务（BPC+ME+SRB+TPC 视宪法） + 可选第二条服务跑多腿（testnet/shadow）。
 
-- **经典一条进程**：BPC + ME + FER（由 live 侧 `constitution.yaml` / `pcm_regime.yaml` 与策略包配置决定实际是否下单）。
-- **多腿一条进程**：`chop_grid` 与 `dual_add_trend` 并行（testnet/shadow）。
+### 2.1 两个进程会不会「内存加倍」？
 
-若要 **SRB / TPC 与 BPC/ME 同进程**，需要先完成 `run_live.py` 侧与 FER 对称的注册、特征集合并（若与 BPC 同 bar 周期）、`LivePCM.archetype_priority` 与 `pcm_regime.yaml` 对齐，再在 `enabled_archetypes` 中启用。
+- **不会简单 ×2**：两份进程各自有 Python 堆与缓存，但 **只读代码页** 等可由 OS 共享；大头是 **tick/bar 缓冲与特征状态** —— 若强行塞进一个进程，仍要维护 **两套决策状态**（PCM 与多腿编排），峰值内存未必低于两进程，且 **故障域耦在一起**（一处 OOM/死锁全停）。
+- **想共用一份行情**：可以两条服务 **挂同一块只读 tick 盘**、或未来做「单 WS 收包 → 多订阅者」的独立小服务；那是 **IPC/架构级** 优化，不等于把 `run_live` 与 `run_multi_leg_live` 合成一个脚本。
 
 ---
 
@@ -56,28 +52,23 @@
 | `GHCR_TOKEN` | GitHub PAT（需 `read:packages` + `write:packages`，供服务器 `docker pull`） |
 | `BINANCE_API_KEY` | 经典实盘主账户（写入服务器 `/opt/quant-engine/live/binance_mainnet.env`） |
 | `BINANCE_API_SECRET` | 同上 |
+| `MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY` | （可选）多腿 testnet，与 `run_multi_leg_live.py` 变量名一致 |
+| `MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET` | （可选）同上 |
 
 **说明**：
 
 - **`GITHUB_TOKEN`** 由 Actions 自带，用于 `docker/login-action` 推 ghcr，无需手建为 Secret（与 `GHCR_TOKEN` 不同）。
-- **多腿专用密钥**（`MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY` / `SECRET`）**当前未写入** `deploy.yml`，不会自动下发到服务器。多腿若在服务器跑，需 **手动** 在主机上创建仅含多腿变量的 env 文件（如 `/opt/quant-engine/live/binance_multi_leg_testnet.env`，权限 `600`），并在独立 unit 里 `source`；勿与 `binance_mainnet.env` 混用若要坚持子账户隔离。
+- **多腿 testnet**：若上述 `MULTI_LEG_*` 两个 Secret **都已配置**，部署步骤会写入 **`/opt/quant-engine/live/binance_multi_leg_testnet.env`**（权限 `600`），与主账户 `binance_mainnet.env` 分离。若 **任一空**，流水线会 **跳过** 该文件，不报错（多腿服务需自行 `EnvironmentFile=` 或本地手写 env）。
+- 多腿与主账户仍 **强烈建议不同子账户**；勿把 testnet 多腿密钥误当主网经典密钥使用。
 
 多腿脚本内的变量名（见 `scripts/run_multi_leg_live.py` 头部注释）：
 
-- 推荐：`MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY`、`MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET`
-- 若未设置且必须共用 testnet 密钥：需显式传入 **`--allow-shared-account`**（不推荐与经典并行主策略时共用）。
+- 与写入文件一致：`MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY`、`MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET`
+- 若未配置 `MULTI_LEG_*` 且必须共用 testnet 密钥：需显式 **`--allow-shared-account`**（不推荐与经典并行主策略时共用）。
 
-### 3.1 「未写进 workflow」是什么意思？
+### 3.1 与「仅手动 env」版本的区别
 
-**Workflow** 指 `.github/workflows/deploy.yml`：里面只有一步会把 **`BINANCE_API_KEY` / `BINANCE_API_SECRET`** 通过 SSH 写到服务器的 `binance_mainnet.env`，供 **`quant-engine`（经典 `run_live`）** 使用。
-
-**多腿变量**（`MULTI_LEG_BINANCE_FUTURES_TESTNET_*`）在这份 YAML 里 **既没有对应的 GitHub Secret 名，也没有 `printf` 写入服务器的步骤**。因此：
-
-- GitHub 不会替你「同步」多腿密钥到机器上；
-- 你在仓库 Settings 里就算新建了名为 `MULTI_LEG_...` 的 Secret，**现有流水线也不会去读、更不会写文件**；
-- 要在服务器跑多腿，只能 **自己在主机上维护** 一个 env 文件（或以后改 workflow：增加 Secret + SSH 写第二个 env 文件），并在 **第二个 systemd / 第二条 `docker run`** 里加载它。
-
-这样设计是为了：**主账户密钥仍走现成自动化**；多腿账户与经典隔离时，由运维显式配置第二条服务，避免误把 testnet 多腿密钥写进主网经典路径。
+此前多腿密钥只能运维手写；**现网 workflow 已在 SSH 步骤中增加可选写入**。未配 Secret 时行为与旧版一致（跳过）；配齐后 **systemd 多腿 unit** 可直接 `EnvironmentFile=/opt/quant-engine/live/binance_multi_leg_testnet.env`。
 
 ---
 

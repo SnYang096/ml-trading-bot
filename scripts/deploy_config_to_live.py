@@ -55,7 +55,7 @@ LIVE_STRATEGIES = LIVE_CONFIG / "strategies"
 LIVE_ROOT = PROJECT_ROOT / "live"
 
 # 部署的策略列表 (不含 LV, 暂缓)
-DEFAULT_STRATEGIES = ["bpc", "me", "fer"]
+DEFAULT_STRATEGIES = ["bpc", "me", "srb", "tpc"]
 
 
 def _normalize_deploy_strategy(slug: str) -> str:
