@@ -95,7 +95,8 @@ def main() -> None:
     p.add_argument("--execution", default="atr_stop_box_mid")
     p.add_argument("--tolerance-hours", type=int, default=24)
     p.add_argument(
-        "--out-dir", default="results/box_pullback_trend/diagnostic/overlap_tpc"
+        "--out-dir",
+        default="results/bad-candidates/box_pullback_trend/diagnostic/overlap_tpc",
     )
     args = p.parse_args()
 

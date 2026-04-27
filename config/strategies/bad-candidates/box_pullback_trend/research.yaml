@@ -1,5 +1,5 @@
 name: box_pullback_trend
-status: research_only
+status: bad_candidate
 
 regime:
   box_window: 120

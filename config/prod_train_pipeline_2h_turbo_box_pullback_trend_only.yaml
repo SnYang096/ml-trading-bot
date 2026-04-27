@@ -1,4 +1,6 @@
 # ============================================================
+# 归档：BPT 已移至 config/strategies/bad-candidates/box_pullback_trend
+# （成交极稀疏，不再作为生产候选；见该目录 README。）
 # 上线前训练流水线 (2H only, Box Pullback Trend only, turbo)
 # ============================================================
 
@@ -48,7 +50,7 @@ download:
   parquet_dir: data/parquet_data
 strategies:
   box_pullback_trend:
-    config: config/strategies/box_pullback_trend
+    config: config/strategies/bad-candidates/box_pullback_trend
     timeframe: 120T
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml

@@ -225,7 +225,10 @@ def main() -> None:
     p.add_argument("--touches-min", type=float, default=8.0)
     p.add_argument("--macro-ema-span", type=int, default=1200)
     p.add_argument("--macro-slope-bars", type=int, default=10)
-    p.add_argument("--out-dir", default="results/box_pullback_trend/diagnostic")
+    p.add_argument(
+        "--out-dir",
+        default="results/bad-candidates/box_pullback_trend/diagnostic",
+    )
     args = p.parse_args()
 
     out = run(args)
