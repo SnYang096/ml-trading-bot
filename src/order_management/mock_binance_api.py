@@ -31,6 +31,9 @@ class MockBinanceAPI:
         self._positions: Dict[str, Dict[str, Any]] = {}  # symbol → position info
         self._open_orders: Dict[str, Dict[str, Any]] = {}  # order_id → order
         self._last_prices: Dict[str, float] = {}  # symbol → last known price
+        # Multi-leg live (`GridExecutionAdapter.sync_positions`) expects this flag;
+        # `scripts/run_multi_leg_live.py` sets hedge_mode=True for shadow runs.
+        self.hedge_mode: bool = False
 
     # ─── Price feed (called by backtest to update current prices) ───
 
@@ -98,7 +101,11 @@ class MockBinanceAPI:
 
         logger.debug(
             "MockBinanceAPI.place_order: %s %s %s qty=%.6f @ %.4f",
-            symbol, side_val, type_val, quantity, fill_price,
+            symbol,
+            side_val,
+            type_val,
+            quantity,
+            fill_price,
         )
         return result
 
@@ -120,6 +127,44 @@ class MockBinanceAPI:
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """No open orders in mock (everything fills instantly)."""
         return []
+
+    def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Return open positions in the same shape as ``BinanceAPI.get_positions``."""
+        out: List[Dict[str, Any]] = []
+        for sym, pos in self._positions.items():
+            if symbol and str(sym).upper() != str(symbol).upper():
+                continue
+            try:
+                qty = float(pos.get("contracts") or pos.get("size") or 0.0)
+            except (TypeError, ValueError):
+                qty = 0.0
+            if qty == 0:
+                continue
+            raw_side = str(pos.get("side", "") or "").upper()
+            if raw_side in {"LONG", "SHORT"}:
+                side = raw_side
+            else:
+                side = "LONG" if qty >= 0 else "SHORT"
+            mark = float(
+                pos.get("mark_price") or self._last_prices.get(sym, 0.0) or 0.0
+            )
+            entry = float(pos.get("entry_price") or 0.0)
+            out.append(
+                {
+                    "symbol": sym,
+                    "side": side.lower(),
+                    "position_side": side,
+                    "positionSide": side,
+                    "position_amount": abs(qty),
+                    "positionAmt": abs(qty),
+                    "contracts": abs(qty),
+                    "mark_price": mark,
+                    "markPrice": mark,
+                    "entry_price": entry,
+                    "entryPrice": entry,
+                }
+            )
+        return out
 
     def get_position(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get mock position for a symbol."""
