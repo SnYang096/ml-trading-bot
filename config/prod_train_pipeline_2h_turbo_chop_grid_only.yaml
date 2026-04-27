@@ -43,7 +43,7 @@ event_backtest:
 
 grid_backtest:
   enabled: true
-  output_dir: results/chop_grid/pipeline
+  # output_dir: omit to write under output.history_dir / _rolling_sim/<run_id>/grid_full_window/
   start_date: "2022-01-01"
   end_date: "2026-03-31"
   map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT

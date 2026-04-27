@@ -4722,6 +4722,30 @@ def _run_pcm_slot_grid_backtest(
     return report
 
 
+def _multileg_standalone_backtest_out_root(
+    *,
+    history_dir: Path,
+    timestamp: str,
+    section: Dict[str, Any],
+    nest_dirname: str,
+) -> Path:
+    """Resolve output root for --stage grid_backtest / dual_add_backtest.
+
+    When ``output_dir`` is unset or blank, write under ``history_dir`` (same
+    turbo tree as ``rolling_sim``) so ``output.history_dir`` and artifacts align.
+    If ``output_dir`` is set, keep legacy behavior: path relative to repo root.
+    """
+    raw = str((section or {}).get("output_dir") or "").strip()
+    if not raw:
+        out = history_dir / "_rolling_sim" / timestamp / nest_dirname
+        out.mkdir(parents=True, exist_ok=True)
+        return out
+    p = Path(raw)
+    out = p.resolve() if p.is_absolute() else (PROJECT_ROOT / p).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 def _run_grid_backtest_stage(
     *,
     cfg: Dict[str, Any],
@@ -4740,15 +4764,18 @@ def _run_grid_backtest_stage(
         print("\n[Grid Backtest] ⏭️  SKIP (grid_backtest.enabled=false)")
         return []
 
-    out_root = PROJECT_ROOT / str(
-        grid_cfg.get("output_dir", f"results/chop_grid/pipeline/{timestamp}")
+    out_root = _multileg_standalone_backtest_out_root(
+        history_dir=history_dir,
+        timestamp=timestamp,
+        section=grid_cfg,
+        nest_dirname="grid_full_window",
     )
-    out_root.mkdir(parents=True, exist_ok=True)
     summaries: List[Dict[str, Any]] = []
     print(f"\n{'='*70}")
     print("🧪 Chop Grid Backtest Stage")
     print(f"{'='*70}")
     print(f"   Output: {out_root}")
+    print(f"   history_dir: {history_dir}")
 
     for strat in strategies:
         scfg = (cfg.get("strategies", {}) or {}).get(strat, {}) or {}
@@ -4845,21 +4872,23 @@ def _run_dual_add_backtest_stage(
     end_date: str,
 ) -> List[Dict[str, Any]]:
     """Run standalone dual-add trend strategies with multi-leg inventory accounting."""
-    _ = history_dir
     dual_cfg = cfg.get("dual_add_backtest", {}) or {}
     if not bool(dual_cfg.get("enabled", True)):
         print("\n[Dual Add Backtest] ⏭️  SKIP (dual_add_backtest.enabled=false)")
         return []
 
-    out_root = PROJECT_ROOT / str(
-        dual_cfg.get("output_dir", f"results/dual_add_trend/pipeline/{timestamp}")
+    out_root = _multileg_standalone_backtest_out_root(
+        history_dir=history_dir,
+        timestamp=timestamp,
+        section=dual_cfg,
+        nest_dirname="dual_add_full_window",
     )
-    out_root.mkdir(parents=True, exist_ok=True)
     summaries: List[Dict[str, Any]] = []
     print(f"\n{'='*70}")
     print("🧪 Dual Add Trend Backtest Stage")
     print(f"{'='*70}")
     print(f"   Output: {out_root}")
+    print(f"   history_dir: {history_dir}")
 
     for strat in strategies:
         scfg = (cfg.get("strategies", {}) or {}).get(strat, {}) or {}

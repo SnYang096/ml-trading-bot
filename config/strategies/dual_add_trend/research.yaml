@@ -33,6 +33,8 @@ risk:
 
 validation:
   script: scripts/diagnose_dual_add_trend.py
+  # Manual CLI default; prod pipeline omits dual_add_backtest.output_dir and writes
+  # under output.history_dir / _rolling_sim/<run_id>/dual_add_full_window/
   output_dir: results/dual_add_trend/turbo-full-cycle
   baseline_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
   baseline_periods: [2022, 2023, 2024, 2025, 2026Q1]

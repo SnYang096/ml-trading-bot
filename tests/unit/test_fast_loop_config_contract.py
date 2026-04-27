@@ -651,3 +651,29 @@ def test_multileg_rolling_continuous_map_collects_monthly_artifacts(
 
     assert got == str(out)
     assert out.exists()
+
+
+def test_multileg_standalone_backtest_out_root_defaults_under_history_dir(tmp_path):
+    history = tmp_path / "results/chop_grid/turbo-rolling-sim"
+    history.mkdir(parents=True)
+    got = arp._multileg_standalone_backtest_out_root(
+        history_dir=history,
+        timestamp="20260427_120000",
+        section={},
+        nest_dirname="grid_full_window",
+    )
+    assert got == history / "_rolling_sim/20260427_120000/grid_full_window"
+    assert got.is_dir()
+
+
+def test_multileg_standalone_backtest_out_root_respects_explicit_output_dir(tmp_path):
+    history = tmp_path / "hist"
+    history.mkdir()
+    custom = tmp_path / "custom_out"
+    got = arp._multileg_standalone_backtest_out_root(
+        history_dir=history,
+        timestamp="ts",
+        section={"output_dir": str(custom)},
+        nest_dirname="ignored",
+    )
+    assert got.resolve() == custom.resolve()

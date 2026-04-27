@@ -43,7 +43,7 @@ event_backtest:
 
 dual_add_backtest:
   enabled: true
-  output_dir: results/dual_add_trend/turbo-full-cycle
+  # output_dir: omit to write under output.history_dir / _rolling_sim/<run_id>/dual_add_full_window/
   start_date: "2022-01-01"
   end_date: "2026-03-31"
   symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
