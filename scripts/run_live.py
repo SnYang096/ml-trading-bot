@@ -541,13 +541,19 @@ def _setup_three_strategies(
         return fc
 
     def _make_feature_computer_me(symbol: str) -> IncrementalFeatureComputer:
-        """ME FC: timeframe 从 meta.yaml 读取"""
-        return IncrementalFeatureComputer(
+        """ME FC: timeframe 从 meta.yaml；可选并入 FER-side 列（与 BPC 主 FC 一致）。"""
+        fc = IncrementalFeatureComputer(
             tick_window_minutes=bar_minutes_me,
             bar_window_size=bar_minutes_me * 2,
             archetypes_dir=me_archetypes,
             primary_timeframe=tf_me,
         )
+        if fer_extra_feat_set:
+            fc.live_feature_set |= fer_extra_feat_set
+            fc.live_feature_nodes = sorted(
+                set(fc.live_feature_nodes) | set(fer_extra_feat_nodes)
+            )
+        return fc
 
     def _make_feature_computer_lv(symbol: str) -> IncrementalFeatureComputer:
         """LV FC: 15T timeframe 从 meta.yaml 读取"""
