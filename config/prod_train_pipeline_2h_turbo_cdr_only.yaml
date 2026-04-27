@@ -52,7 +52,7 @@ download:
   parquet_dir: data/parquet_data
 strategies:
   cdr:
-    config: config/strategies/cdr
+    config: config/strategies/bad-candidates/cdr
     timeframe: 120T
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml

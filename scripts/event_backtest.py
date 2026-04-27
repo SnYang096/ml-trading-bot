@@ -35,11 +35,9 @@ import json
 import logging
 import re
 import sys
-import yaml
-
-from scripts.capital_report import write_capital_report_from_trades
 import time
 import uuid
+import yaml
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -49,7 +47,12 @@ from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+_repo_root = Path(__file__).resolve().parents[1]
+_repo_root_s = str(_repo_root)
+if _repo_root_s not in sys.path:
+    sys.path.insert(0, _repo_root_s)
+
+from scripts.capital_report import write_capital_report_from_trades
 
 from src.live_data_stream.feature_storage import StorageManager
 from src.feature_store import FeatureStore, FeatureStoreSpec

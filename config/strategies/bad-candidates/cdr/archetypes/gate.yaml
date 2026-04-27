@@ -4,6 +4,7 @@
 # 参考 BPC gate_bpc_semantic_chop_high：用可观测 primitive 拼「chop」，不复用 bpc_semantic_chop
 #（CDR 特征池无该列）。
 # 约束：prod_train_pipeline_2h_turbo_cdr_only.yaml 里 max_hard_gates: 2，此处仅 2 条 hard_gate。
+# 策略根目录：config/strategies/bad-candidates/cdr（见 README.md）。
 # 教训（见 BPC gate 注释）：避免单条 ema_1200_position 单边 hard veto 误杀肥尾趋势月；
 # 此处 EMA 仅与「窄斜率 deadband」联用，表示宏观未决而非「价在均线上方就禁」。
 # --------------------------------------------------------------------------
