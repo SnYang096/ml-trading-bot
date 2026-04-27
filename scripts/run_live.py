@@ -484,14 +484,37 @@ def _setup_three_strategies(
         except Exception as e:
             logger.warning("  TPC feature extraction failed: %s", e)
 
+    # BPC/ME 的 features.yaml 仍可能引用 fer_* 节点：若磁盘上存在 fer/archetypes，
+    # 合并进主 timeframe FC，但不注册 FER 策略（宪法已下线 FER）。
+    fer_archetypes = os.path.join(strategies_root, "fer", "archetypes")
+    fer_extra_feat_set: set = set()
+    fer_extra_feat_nodes: list = []
+    if os.path.isdir(fer_archetypes):
+        try:
+            fer_extra_feat_set, fer_extra_feat_nodes = extract_features_from_archetypes(
+                fer_archetypes
+            )
+            logger.info(
+                "  FER-side nodes merged into primary FC (no FER strategy): %d cols",
+                len(fer_extra_feat_set),
+            )
+        except Exception as e:
+            logger.warning("  FER archetype extraction for primary FC failed: %s", e)
+
     def _make_feature_computer_4h(symbol: str) -> IncrementalFeatureComputer:
-        """Primary FC: BPC archetypes only (timeframe 从 meta.yaml)."""
-        return IncrementalFeatureComputer(
+        """Primary FC: BPC + 可选 FER 特征列（同 bar 周期，无 FER 策略）。"""
+        fc = IncrementalFeatureComputer(
             tick_window_minutes=bar_minutes_bpc,
             bar_window_size=bar_minutes_bpc * 2,
             archetypes_dir=bpc_archetypes,
             primary_timeframe=tf_bpc,
         )
+        if fer_extra_feat_set:
+            fc.live_feature_set |= fer_extra_feat_set
+            fc.live_feature_nodes = sorted(
+                set(fc.live_feature_nodes) | set(fer_extra_feat_nodes)
+            )
+        return fc
 
     def _make_srb_tpc_fc(
         symbol: str, tf: str, base_archetypes_dir: str
