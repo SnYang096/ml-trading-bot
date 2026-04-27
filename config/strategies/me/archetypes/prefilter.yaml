@@ -11,6 +11,7 @@
 #   - me_multi_tf_alignment >= 0.5（3/5/10 bar 至少 2 个周期方向一致 = 趋势明确）
 #
 # 2024-11 主升段验证：SOL 通过率 44%（旧 21%），XRP 58%（旧 30%）。
+# chop 见 gate_me_semantic_chop_high，不在此重复。
 
 rules:
   - any_of:

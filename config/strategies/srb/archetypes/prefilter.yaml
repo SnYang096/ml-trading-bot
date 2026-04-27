@@ -1,4 +1,5 @@
 # SRB prefilter — 20260422_212338 slow-good 风格：结构强度 + 突破频谱能量 + continuation
+# tpc_semantic_chop 仅在 gate（gate_srb_tpc_semantic_chop_high），避免与 gate 双拦。
 
 rules:
   - feature: sr_strength_max
@@ -17,3 +18,8 @@ rules:
     value: 0.2
     locked: true
     lock_reason: MVP：沿用 TPC continuation 分作为延续倾向占位
+  - feature: bpc_impulse_direction_match
+    operator: ">="
+    value: 0.35
+    locked: true
+    lock_reason: anti-chop：突破后需要有同向 impulse，避免只在 SR 附近来回扫

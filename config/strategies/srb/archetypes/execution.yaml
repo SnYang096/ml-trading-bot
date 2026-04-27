@@ -1,6 +1,7 @@
-# SRB — 与 TPC/BPC/ME 趋势长持分开：只抓关键位真破后「一段」推进；默认更紧的 ATR 兜
-# 底 + 跟踪；主锚仍是 structural_sl（SR）而非 EMA1200。震荡/压缩区少开仓见 prefilter 与
-# srb_add_position_policy。退出依赖 trailing + expand_with_primary_atr，不设 breakeven。
+# SRB — 与 TPC/BPC/ME 趋势长持分开：只抓关键位真破后「一段」推进；默认使用接近
+# BPC 的 ATR 兜底 + 更快跟踪；主锚仍是 structural_sl（SR）而非 EMA1200。
+# 震荡/压缩区少开仓见 prefilter 的 impulse 同向门与 srb_add_position_policy。
+# 退出依赖 trailing + expand_with_primary_atr，不设 breakeven。
 #
 # 浮盈阶梯：float_r_ladder_only；加仓前经 srb_add_position_policy（ADX/ER + 压缩门）。
 
@@ -78,16 +79,16 @@ stop_loss:
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
-  # 兜底 ATR 倍数（无可用对面 SR 时）；偏紧以匹配「单段」；真宽停由 structural_sl 决定
-  initial_r: 5.0
+  # 兜底 ATR 倍数（无可用对面 SR 时）；接近 BPC，而非 ME 宽尾档；真宽停由 structural_sl 决定
+  initial_r: 3.5
   trailing:
     enabled: true
     # trailing 带宽 = trail_r × max(入场 ATR, 当前主周期 ATR)
     expand_with_primary_atr: true
-    activation_r: 4.0
-    trail_r: 4.0
-    trail_r_far: 3.5
-    trail_r_near: 2.5
+    activation_r: 3.0
+    trail_r: 3.0
+    trail_r_far: 3.0
+    trail_r_near: 2.0
     l3_near_threshold_atr: 2.0
   type: trailing
   # ------------------------------------------------------------------

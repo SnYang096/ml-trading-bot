@@ -124,12 +124,12 @@ event_backtest:
   enabled: true
   # map_extra_months：事件回测交易地图的「为画 VWAP 多向前取多少月 1m」（仅事件回测 + 出图时有意义）。
   map_extra_months: 4
-  # 中间档：min 与上界均落在 TPC 之上、ME 之下
+  # 趋势族统一宽执行档：与 ME 对齐；更宽止损由 sizing 自动降低仓位。
   exec_grid_by_family:
     bpc:
-      initial_r: "2.5:0.5:5.0"
-      activation_r: "2.5:0.5:4.5"
-      trail_r: "2.0:0.5:4.0"
+      initial_r: "4.0:0.5:7.0"
+      activation_r: "3.5:0.5:6.0"
+      trail_r: "6.0:1.0:15.0"
   exec_objective_default: risk_aware
   exec_objective_params:
     near_stop_threshold_r: -0.9

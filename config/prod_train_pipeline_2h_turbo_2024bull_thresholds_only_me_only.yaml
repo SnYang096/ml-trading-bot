@@ -126,12 +126,13 @@ event_backtest:
   enabled: true
   # map_extra_months：事件回测交易地图的「为画 VWAP 多向前取多少月 1m」（仅事件回测 + 出图时有意义）。
   map_extra_months: 4
-  # 搜索上界/下界保持 ME > BPC > TPC，避免标定窗选到与「冲段」语义冲突的过紧 triplet
+  # 搜索上界/下界保持 ME > BPC > TPC，覆盖 execution.yaml 默认宽尾档，
+  # 避免标定窗选到与「冲段」语义冲突的过紧 triplet。
   exec_grid_by_family:
     me:
       initial_r: "4.0:0.5:7.0"
       activation_r: "3.5:0.5:6.0"
-      trail_r: "3.0:0.5:8.0"
+      trail_r: "6.0:1.0:15.0"
   exec_objective_default: risk_aware
   exec_objective_params:
     near_stop_threshold_r: -0.9

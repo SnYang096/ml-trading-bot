@@ -18,5 +18,6 @@ feature_pipeline:
     - "stat_evt_expected_shortfall*"
     - "stat_evt_excess_vol*"
     # Chop / 震荡噪声 (SR 区间内窄 BB 是噪声环境)
+    - "tpc_semantic_chop"
     - "bb_width_normalized_pct"
     - "range_compression_*"

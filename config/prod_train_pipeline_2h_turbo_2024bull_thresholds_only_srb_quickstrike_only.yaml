@@ -106,7 +106,7 @@ strategies:
         stat_fallback_on_empty: true
         stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
-        max_hard_gates: 2
+        max_hard_gates: 3
         max_system_safety: 2
       backtest:
         min_trades: 20

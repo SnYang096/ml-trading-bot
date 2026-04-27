@@ -10,6 +10,7 @@
 # 注：短期 EMA10/20/50 斜率一致性（slope_consistency_score）属于短线趋势，
 #     不符合 TPC「大趋势回调」语义，因此不放 prefilter。
 #     带方向的慢变量（ema_1200_position / sma_200_slope）用在 direction / entry_filter。
+# chop 见 gate_tpc_semantic_chop_high，不在此重复。
 rules:
   - any_of:
       - feature: ema_1200_position

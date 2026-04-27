@@ -1,4 +1,5 @@
-# BPC — 突破后延续/回踩再上车；执行档：TPC < BPC < ME；EMA1200 结构保底，不设 breakeven。
+# BPC — 趋势延续；执行档与 ME 对齐为宽止损/宽 trailing，仓位 sizing 吸收更宽风险；
+# EMA1200 结构保底，不设 breakeven。
 
 add_position:
   add_size_multipliers:
@@ -36,16 +37,16 @@ stop_loss:
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
-  # 故意宽于 TPC(2.0) / 窄于 ME(4.0)，减少假破洗出；与 turbo exec_grid 下限对齐
-  initial_r: 3.0
+  # 宽止损防止趋势延续段被震出；风险通过 sizing 自动降仓。
+  initial_r: 4.0
   # 统计依据: EMA1200 零点穿越比 VWAP1200 更可靠；
   # 两者分歧时 (6.4% bars) EMA 方向正确率显著更高 (medRR +2.5 vs -1.5)
   structural_exit: ema1200
   trailing:
-    activation_r: 3.0
+    activation_r: 4.0
     enabled: true
     expand_with_primary_atr: true
-    trail_r: 3.0
+    trail_r: 12.0
   type: trailing
 take_profit:
   enabled: false

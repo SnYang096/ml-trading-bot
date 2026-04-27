@@ -1,5 +1,6 @@
 # BPC prefilter — 三层语义锚点：Breakout → Pullback → Continuation
 # 全部使用原子特征，不依赖 bpc_score_* 组合分数。
+# chop 见 gate_bpc_semantic_chop_high，不在此重复。
 # - bpc_volume_compression_pct: 非锁定 prior（突破前蓄势），允许 pipeline 调阈值/移除
 # - bpc_recent_breakout_strength: 锚点 1/3，确认最近确实出现过 Donchian 突破
 # - bpc_pullback_depth: 锚点 2/3，回撤受控、未破结构
