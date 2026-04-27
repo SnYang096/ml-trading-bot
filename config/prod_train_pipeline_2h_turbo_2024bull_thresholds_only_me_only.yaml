@@ -133,13 +133,13 @@ event_backtest:
       initial_r: "4.0:0.5:7.0"
       activation_r: "3.5:0.5:6.0"
       trail_r: "6.0:1.0:15.0"
-  exec_objective_default: risk_aware
+  exec_objective_default: total_r_over_dd
   exec_objective_params:
     near_stop_threshold_r: -0.9
-    near_stop_penalty: 0.0
-    max_dd_penalty: 0.02
+    near_stop_penalty: 5.0
+    max_dd_penalty: 0.15
     min_trades_soft: 0
-    undertrade_penalty: 0.001
+    undertrade_penalty: 0.0
 
 output:
   # 与 BPC-only 分离，避免 rolling_sim 与 bpc 同目录互相覆盖

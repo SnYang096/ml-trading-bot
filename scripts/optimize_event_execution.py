@@ -760,9 +760,13 @@ def main():
     )
     parser.add_argument(
         "--objective",
-        choices=["sharpe", "risk_aware"],
+        choices=["sharpe", "risk_aware", "total_r_over_dd"],
         default="sharpe",
-        help="参数选择目标: sharpe(默认) / risk_aware(惩罚近-1R与高回撤)",
+        help=(
+            "参数选择目标: sharpe(默认) / risk_aware(sharpe-惩罚项) / "
+            "total_r_over_dd( total_r/max(max_dd_r,eps) - max_dd_penalty*max_dd_r "
+            "- near_stop_penalty*near_stop_rate，偏总R与控回撤)"
+        ),
     )
     parser.add_argument(
         "--near-stop-threshold-r",
@@ -774,13 +778,13 @@ def main():
         "--near-stop-penalty",
         type=float,
         default=0.0,
-        help="近-1R亏损比例惩罚系数 (risk_aware 生效)",
+        help="近-1R亏损比例惩罚系数 (risk_aware / total_r_over_dd 生效)",
     )
     parser.add_argument(
         "--max-dd-penalty",
         type=float,
         default=0.0,
-        help="max_drawdown_r 惩罚系数 (risk_aware 生效)",
+        help="max_drawdown_r 线性惩罚系数 (risk_aware / total_r_over_dd 生效)",
     )
     parser.add_argument(
         "--min-trades-soft",
@@ -971,6 +975,15 @@ def main():
                 float(r["sharpe"])
                 - float(args.near_stop_penalty) * near_stop_rate
                 - float(args.max_dd_penalty) * float(r["max_dd_r"])
+                - float(args.undertrade_penalty) * undertrade_gap
+            )
+        elif args.objective == "total_r_over_dd":
+            max_dd = float(r["max_dd_r"])
+            dd_floor = max(max_dd, 1e-6)
+            r["objective_score"] = (
+                float(r["total_r"]) / dd_floor
+                - float(args.max_dd_penalty) * max_dd
+                - float(args.near_stop_penalty) * near_stop_rate
                 - float(args.undertrade_penalty) * undertrade_gap
             )
         else:
