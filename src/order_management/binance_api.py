@@ -134,6 +134,9 @@ class BinanceAPI:
         self.exchange = ccxt.binance(
             {"apiKey": api_key, "secret": api_secret, **exchange_options}
         )
+        # ``MultiLegLiveOrchestrator`` syncs all open orders with ``symbol=None``;
+        # ccxt-binance otherwise raises ExchangeError until this flag is set.
+        self.exchange.options["warnOnFetchOpenOrdersWithoutSymbol"] = False
 
         # Monkey patch nonce 方法以自动修正时间偏移
         original_nonce = self.exchange.nonce
