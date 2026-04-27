@@ -1,4 +1,5 @@
-# TPC execution: 与 BPC 相同（EMA1200 structural exit, 增量加仓）
+# TPC — 大结构里回调不破；R 档最紧（< BPC < ME），EMA1200 保底，不设 breakeven。
+
 add_position:
   add_size_multipliers:
     - 1

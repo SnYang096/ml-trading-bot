@@ -9,6 +9,11 @@ strategy:
     Gate 只过滤极端不利场景；执行层为 ATR 初始止损 + 浮盈 R 阶梯加仓 + EMA1200 结构出场。
     非生产策略；用于验证趋势族能否合并到统一 EMA 趋势框架。
 
+    定位：可作「大结构 / base 层」实验——先回答「这条 K 上允不允许做趋势多/空」，
+    再挂子语义（BPC=延续、TPC=回调、ME=动量、SRB=位破）。它本身不是对 BPC/TPC/ME
+    的替代：缺少各家族完整门控/标签管线时，R 与样本通常 weaker；适合作为研究对照与
+    umbrella 设计稿，不模糊时再用 production 策略填 slot。
+
   owner: quant_team
   archetype: TrendPullbackContinuationLong
 

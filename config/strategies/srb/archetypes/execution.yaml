@@ -1,7 +1,8 @@
-# SRB execution — trailing 语义同 ME，但止损/回撤带宽更大（更耐洗）
+# SRB — 与 TPC/BPC/ME 趋势长持分开：只抓关键位真破后「一段」推进；默认更紧的 ATR 兜
+# 底 + 跟踪；主锚仍是 structural_sl（SR）而非 EMA1200。震荡/压缩区少开仓见 prefilter 与
+# srb_add_position_policy。退出依赖 trailing + expand_with_primary_atr，不设 breakeven。
 #
-# 浮盈阶梯加仓与 ME 对齐（float_r_ladder_only）；加仓前须经 srb_add_position_policy：
-# ADX/ER bucket 白名单 + 压缩特征上限（事件回测 try_add_position 与 float ladder 共用）。
+# 浮盈阶梯：float_r_ladder_only；加仓前经 srb_add_position_policy（ADX/ER + 压缩门）。
 
 
 
@@ -67,28 +68,26 @@ stop_loss:
   #     adds 的自触发 breakeven 会被 PositionTracker._sync_child_stop_from_parent 覆盖掉，
   #     实际效果等价于"仅母仓触发"。
   #
-  # 2026-04-22 rolling_sim 终审：SRB 在 trigger_r=3.0 / measure=initial_risk / lock_level_r=0.0 下
-  # 对 XRP 2024-06/08/11 反转月份有 +55R 收益；保留启用。
+  # breakeven 关：与趋势族统一为 trailing+结构 SL；细调可再开。
   # ------------------------------------------------------------------
   breakeven:
-    enabled: true
+    enabled: false
     trigger_r: 3.0
     lock_level_r: 0.0
     measure: initial_risk
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
-  initial_r: 9.0
+  # 兜底 ATR 倍数（无可用对面 SR 时）；偏紧以匹配「单段」；真宽停由 structural_sl 决定
+  initial_r: 5.0
   trailing:
     enabled: true
     # trailing 带宽 = trail_r × max(入场 ATR, 当前主周期 ATR)
-    # 数据依据：baseline trailing_sl 交易里，出场 bar 的 ATR 中位数 = 入场 ATR 的 1.51×，
-    # 53.8% trailing_sl 出场后沿原方向继续走 ≥ 2 ATR（"洗盘"） —— 见 docs/z实验_005_统一研究/SRB_ablation_results_20260418.md
     expand_with_primary_atr: true
-    activation_r: 9.0
-    trail_r: 9.0
-    trail_r_far: 7.0
-    trail_r_near: 5.0
+    activation_r: 4.0
+    trail_r: 4.0
+    trail_r_far: 3.5
+    trail_r_near: 2.5
     l3_near_threshold_atr: 2.0
   type: trailing
   # ------------------------------------------------------------------

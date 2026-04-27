@@ -1,3 +1,5 @@
+# BPC — 突破后延续/回踩再上车；执行档：TPC < BPC < ME；EMA1200 结构保底，不设 breakeven。
+
 add_position:
   add_size_multipliers:
     # 这里越加越多是因为根据数据统计，越后面成功率越高
