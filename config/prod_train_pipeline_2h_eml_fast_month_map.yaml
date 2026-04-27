@@ -2,7 +2,7 @@
 # EML：单月 fast_month 快速出「交易地图」
 #
 # threshold_calibration.enabled=false 时，fast_month 会跳过 train prepare 长步骤，
-# 直接从 config/strategies/eml 拷贝策略并跑 event_backtest → trading_map_*.html
+# 直接从 config/strategies/bad-candidates/eml 拷贝策略并跑 event_backtest → trading_map_*.html
 # ============================================================
 # 其它字段与 prod_train_pipeline_2h_turbo_eml_only.yaml 一致。
 
@@ -54,7 +54,7 @@ download:
   parquet_dir: data/parquet_data
 strategies:
   eml:
-    config: config/strategies/eml
+    config: config/strategies/bad-candidates/eml
     side: both
     timeframe: 120T
     features_gate: features_gate.yaml

@@ -1,4 +1,5 @@
-# EML — EMA1200 Trend Umbrella（研究用）
+# EML — EMA1200 Trend Umbrella（已迁入 bad-candidates）
+# 路径：config/strategies/bad-candidates/eml — 原因见同目录 README.md（开仓偏多、置信度低于 BPC/TPC/ME，仅作基线）。
 # 用 EMA1200 位置 + 斜率划定大结构，entry filter 承接 BPC/TPC/ME/SRB 的吸收/动量触发。
 
 strategy:
@@ -13,6 +14,8 @@ strategy:
     再挂子语义（BPC=延续、TPC=回调、ME=动量、SRB=位破）。它本身不是对 BPC/TPC/ME
     的替代：缺少各家族完整门控/标签管线时，R 与样本通常 weaker；适合作为研究对照与
     umbrella 设计稿，不模糊时再用 production 策略填 slot。
+
+    已移至 bad-candidates：相对 BPC/TPC/ME 开仓更密、门控更宽，单笔语义置信度偏低，只保留为基线对照。
 
   owner: quant_team
   archetype: TrendPullbackContinuationLong

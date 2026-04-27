@@ -49,7 +49,7 @@ download:
   parquet_dir: data/parquet_data
 strategies:
   eml:
-    config: config/strategies/eml
+    config: config/strategies/bad-candidates/eml
     side: both
     timeframe: 120T
     features_gate: features_gate.yaml
