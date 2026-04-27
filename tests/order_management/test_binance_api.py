@@ -7,8 +7,10 @@ import os
 from unittest.mock import Mock, MagicMock, patch, PropertyMock
 from datetime import datetime
 
-from src.order_management.binance_api import BinanceAPI
+from src.order_management.binance_api import BinanceAPI, _ccxt_linear_usdt_perp_symbol
 from src.order_management.models import OrderSide, OrderType
+
+_CCXT_BTC_PERP = "BTC/USDT:USDT"
 
 
 @pytest.fixture
@@ -191,6 +193,39 @@ def binance_api_testnet(mock_ccxt_exchange):
         return api
 
 
+def test_open_order_from_binance_rest_normalizes_row(binance_api):
+    """Binance REST openOrders 行字段映射到 get_open_orders 条目形状。"""
+    row = {
+        "orderId": 99,
+        "symbol": "BTCUSDT",
+        "clientOrderId": "c1",
+        "price": "50000",
+        "origQty": "0.1",
+        "executedQty": "0.02",
+        "status": "NEW",
+        "side": "BUY",
+        "type": "LIMIT",
+        "time": 1700000000000,
+    }
+    out = binance_api._open_order_from_binance_rest(row)
+    assert out["order_id"] == "99"
+    assert out["symbol"] == "BTCUSDT"
+    assert out["side"] == "buy"
+    assert out["status"] == "new"
+    assert out["quantity"] == 0.1
+    assert out["filled"] == 0.02
+    assert out["remaining"] == pytest.approx(0.08)
+    assert out["price"] == 50000.0
+    assert out["created_at"] == 1700000000
+
+
+def test_ccxt_linear_usdt_perp_symbol_mapping():
+    assert _ccxt_linear_usdt_perp_symbol("BTCUSDT") == "BTC/USDT:USDT"
+    assert _ccxt_linear_usdt_perp_symbol("btcusdt") == "BTC/USDT:USDT"
+    assert _ccxt_linear_usdt_perp_symbol("BTC/USDT:USDT") == "BTC/USDT:USDT"
+    assert _ccxt_linear_usdt_perp_symbol(None) is None
+
+
 def test_init_mainnet(binance_api):
     """测试主网初始化"""
     assert binance_api.api_key == "test_key"
@@ -284,7 +319,9 @@ def test_get_positions_with_symbol(binance_api):
     positions = binance_api.get_positions("BTCUSDT")
 
     assert len(positions) == 1
-    binance_api.exchange.fetch_positions.assert_called_once_with(symbols=["BTCUSDT"])
+    binance_api.exchange.fetch_positions.assert_called_once_with(
+        symbols=[_CCXT_BTC_PERP]
+    )
 
 
 def test_get_positions_empty(binance_api):
@@ -370,6 +407,33 @@ def test_place_stop_order(binance_api):
     binance_api.exchange.create_order.assert_called_once()
 
 
+def test_place_stop_market_accepts_explicit_hedge_protection_params(binance_api):
+    """测试 Hedge Mode 条件保护单参数透传。"""
+    binance_api.hedge_mode = True
+
+    binance_api.place_order(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.STOP_MARKET,
+        quantity=0.1,
+        stop_price=49000.0,
+        reduce_only=True,
+        position_side="LONG",
+        working_type="MARK_PRICE",
+        price_protect=True,
+        client_order_id="cg_sl_1",
+    )
+
+    params = binance_api.exchange.create_order.call_args.kwargs["params"]
+    assert params["positionSide"] == "LONG"
+    assert params["stopPrice"] == 49000.0
+    assert params["type"] == "STOP_MARKET"
+    assert params["workingType"] == "MARK_PRICE"
+    assert params["priceProtect"] == "TRUE"
+    assert params["newClientOrderId"] == "cg_sl_1"
+    assert "reduceOnly" not in params
+
+
 def test_place_stop_order_no_stop_price(binance_api):
     """测试下止损单未指定止损价格"""
     with pytest.raises(ValueError, match="止损单需要指定止损价格"):
@@ -404,7 +468,7 @@ def test_cancel_order(binance_api):
 
     assert success == True
     binance_api.exchange.cancel_order.assert_called_once_with(
-        "binance_order_123", "BTCUSDT"
+        "binance_order_123", _CCXT_BTC_PERP
     )
 
 
@@ -424,7 +488,7 @@ def test_cancel_all_orders(binance_api):
 
     result = binance_api.cancel_all_orders("BTCUSDT")
     assert len(result) == 1
-    binance_api.exchange.cancel_all_orders.assert_called_once_with("BTCUSDT")
+    binance_api.exchange.cancel_all_orders.assert_called_once_with(_CCXT_BTC_PERP)
 
 
 def test_cancel_all_orders_all_symbols(binance_api):
@@ -471,7 +535,7 @@ def test_get_order(binance_api):
     assert order["status"] == "filled"
     assert isinstance(order["created_at"], int)
     binance_api.exchange.fetch_order.assert_called_once_with(
-        "binance_order_123", "BTCUSDT"
+        "binance_order_123", _CCXT_BTC_PERP
     )
 
 
@@ -497,7 +561,7 @@ def test_get_open_orders_with_symbol(binance_api):
     orders = binance_api.get_open_orders("BTCUSDT")
 
     assert len(orders) == 1
-    binance_api.exchange.fetch_open_orders.assert_called_once_with("BTCUSDT")
+    binance_api.exchange.fetch_open_orders.assert_called_once_with(_CCXT_BTC_PERP)
 
 
 def test_get_symbol_info(binance_api):
@@ -555,7 +619,7 @@ def test_set_leverage(binance_api):
     success = binance_api.set_leverage("BTCUSDT", 20)
 
     assert success == True
-    binance_api.exchange.set_leverage.assert_called_once_with(20, "BTCUSDT")
+    binance_api.exchange.set_leverage.assert_called_once_with(20, _CCXT_BTC_PERP)
 
 
 def test_set_leverage_failed(binance_api):

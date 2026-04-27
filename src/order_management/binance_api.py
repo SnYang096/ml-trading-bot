@@ -6,6 +6,10 @@ Binance API封装
 
 import logging
 import os
+import time
+import hmac
+import hashlib
+from urllib.parse import urlencode
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import ccxt
@@ -14,6 +18,18 @@ import requests
 from .models import Order, OrderSide, OrderType, OrderStatus
 
 logger = logging.getLogger(__name__)
+
+
+def _ccxt_linear_usdt_perp_symbol(symbol: Optional[str]) -> Optional[str]:
+    """Map ``BTCUSDT`` -> ``BTC/USDT:USDT`` for ccxt Binance USDT-M perps."""
+    if not symbol:
+        return None
+    s = str(symbol).strip().upper()
+    if "/" in s or ":" in s:
+        return s
+    if s.endswith("USDT") and len(s) > 4:
+        return f"{s[:-4]}/USDT:USDT"
+    return s
 
 
 class BinanceAPI:
@@ -38,7 +54,7 @@ class BinanceAPI:
             api_secret: API密钥
             testnet: 是否使用测试网
             sandbox: 是否使用沙箱环境（与testnet相同）
-            use_proxy: 是否使用代理（None表示从环境变量USE_SOCKS5_PROXY读取，仅主网有效）
+            use_proxy: 是否使用代理（None 表示从环境变量 USE_SOCKS5_PROXY / HTTP_PROXY 推断）
             proxy_type: 代理类型 ('socks5' 或 'http')
             proxy_host: 代理主机地址（None表示从环境变量或默认值获取）
             proxy_port: 代理端口
@@ -51,8 +67,8 @@ class BinanceAPI:
         if use_proxy is None:
             # 从环境变量读取
             use_proxy = os.environ.get("USE_SOCKS5_PROXY", "false").lower() == "true"
-            # 或检查是否有 HTTP_PROXY/HTTPS_PROXY 环境变量（主网通常需要）
-            if not use_proxy and not testnet:
+            # HTTP(S) 代理：主网 / 测试网都应支持（本机 Clash 等常见为 7890 mixed）
+            if not use_proxy:
                 has_http_proxy = bool(
                     os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
                 )
@@ -322,6 +338,102 @@ class BinanceAPI:
         proxy_url = f"{self.proxy_type}://{self.proxy_host}:{self.proxy_port}"
         return {"http": proxy_url, "https": proxy_url}
 
+    def _futures_market_id(self, symbol: Optional[str]) -> Optional[str]:
+        """Binance 合约 REST 用的原生 symbol，如 ``BTCUSDT``。"""
+        if not symbol:
+            return None
+        s = str(symbol).strip().upper()
+        try:
+            self.exchange.load_markets()
+            ccxt_sym = _ccxt_linear_usdt_perp_symbol(s) or s
+            if ccxt_sym in self.exchange.markets:
+                return str(self.exchange.markets[ccxt_sym]["id"])
+            if s in self.exchange.markets:
+                return str(self.exchange.markets[s]["id"])
+        except Exception:
+            pass
+        if "/" in s or ":" in s:
+            return None
+        return s if s.endswith("USDT") else None
+
+    def _fapi_signed_get(self, path: str, params: Dict[str, Any]) -> Any:
+        """
+        对 ``/fapi/v1/...`` 做签名 GET。
+
+        在部分环境下 ccxt 对 testnet 的 ``fapiPrivate*`` 会拿到空 body（解析成 ``""``），
+        与 Binance 实际返回的 JSON 不一致；关键读接口用本方法走 ``requests`` 更可靠。
+        """
+        p = dict(params)
+        if "timestamp" not in p:
+            p["timestamp"] = int(time.time() * 1000) + getattr(
+                self, "time_offset", 0
+            )
+        query = urlencode(sorted((k, v) for k, v in p.items() if v is not None))
+        sig = hmac.new(
+            self.api_secret.encode(),
+            query.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        url = f"{self._get_futures_base_url()}{path}?{query}&signature={sig}"
+        resp = requests.get(
+            url,
+            headers={"X-MBX-APIKEY": self.api_key},
+            timeout=30,
+            proxies=self._get_requests_proxies(),
+        )
+        resp.raise_for_status()
+        text = (resp.text or "").strip()
+        if not text:
+            return []
+        data = resp.json()
+        if isinstance(data, dict) and "code" in data and "msg" in data:
+            raise RuntimeError(
+                f"Binance futures API error {data.get('code')}: {data.get('msg')}"
+            )
+        return data
+
+    def _open_order_from_binance_rest(self, o: Dict[str, Any]) -> Dict[str, Any]:
+        """将 ``/fapi/v1/openOrders`` 单行转为与 ccxt 分支一致的 dict。"""
+        price_raw = o.get("price")
+        try:
+            price_f = float(price_raw) if price_raw is not None else 0.0
+        except (TypeError, ValueError):
+            price_f = 0.0
+        price = price_f if price_f else None
+        orig = float(o.get("origQty") or 0)
+        filled = float(o.get("executedQty") or 0)
+        rem = max(orig - filled, 0.0)
+        ts = o.get("time") or o.get("updateTime")
+        ts_ms = int(ts) if ts is not None else None
+        return {
+            "order_id": str(o.get("orderId", "")),
+            "client_order_id": o.get("clientOrderId"),
+            "symbol": o.get("symbol"),
+            "side": (o.get("side") or "").lower(),
+            "type": (o.get("type") or "").lower(),
+            "status": (o.get("status") or "").lower(),
+            "quantity": orig,
+            "price": price,
+            "filled": filled,
+            "remaining": rem,
+            "created_at": self._normalize_timestamp(ts_ms),
+            "info": o,
+        }
+
+    def _get_open_orders_fapi_rest(self, symbol: Optional[str]) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {}
+        mid = self._futures_market_id(symbol)
+        if mid:
+            params["symbol"] = mid
+        raw = self._fapi_signed_get("/fapi/v1/openOrders", params)
+        if not isinstance(raw, list):
+            raise ValueError(f"openOrders expected list, got {type(raw)}: {raw!r}")
+        return [
+            self._open_order_from_binance_rest(x)
+            for x in raw
+            if isinstance(x, dict)
+        ]
+
     def _check_time_sync(self) -> None:
         """
         检查本地时间与 Binance 服务器时间的偏移
@@ -458,8 +570,9 @@ class BinanceAPI:
             仓位列表
         """
         try:
+            ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol)
             positions = self.exchange.fetch_positions(
-                symbols=[symbol] if symbol else None
+                symbols=[ccxt_sym] if ccxt_sym else None
             )
             result = []
             for pos in positions:
@@ -524,6 +637,9 @@ class BinanceAPI:
         reduce_only: bool = False,
         close_position: bool = False,
         client_order_id: Optional[str] = None,
+        position_side: Optional[str] = None,
+        working_type: Optional[str] = None,
+        price_protect: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         下单
@@ -537,21 +653,35 @@ class BinanceAPI:
             stop_price: 止损价格（止损单需要）
             reduce_only: 是否只减仓
             close_position: 是否平仓
+            position_side: Hedge Mode 持仓方向（LONG/SHORT），None 表示自动推断
+            working_type: 条件单触发价格类型（如 MARK_PRICE 或 CONTRACT_PRICE）
+            price_protect: Binance Futures priceProtect 参数
 
         Returns:
             订单信息
         """
         try:
+            ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol) or symbol
             # 转换订单类型
             ccxt_side = "buy" if side == OrderSide.BUY else "sell"
             ccxt_type = self._convert_order_type(order_type)
 
             params: Dict[str, Any] = {}
+            explicit_position_side = (
+                str(position_side).strip().upper() if position_side else ""
+            )
+            if explicit_position_side and explicit_position_side not in {
+                "LONG",
+                "SHORT",
+            }:
+                raise ValueError(f"position_side must be LONG/SHORT: {position_side}")
             if self.hedge_mode:
                 # Hedge Mode 下必须指定 positionSide，且不能使用 reduceOnly
                 # 开仓: BUY→LONG, SELL→SHORT
                 # 平仓(reduce_only): BUY→SHORT, SELL→LONG
-                if reduce_only or close_position:
+                if explicit_position_side:
+                    params["positionSide"] = explicit_position_side
+                elif reduce_only or close_position:
                     # 平仓：方向与仓位相反
                     params["positionSide"] = "SHORT" if ccxt_side == "buy" else "LONG"
                 else:
@@ -569,16 +699,25 @@ class BinanceAPI:
                 # Binance Futures支持newClientOrderId
                 params["newClientOrderId"] = client_order_id
                 params["clientOrderId"] = client_order_id
+            if working_type:
+                wt = str(working_type).strip().upper()
+                if wt not in {"MARK_PRICE", "CONTRACT_PRICE"}:
+                    raise ValueError(
+                        f"working_type must be MARK_PRICE/CONTRACT_PRICE: {working_type}"
+                    )
+                params["workingType"] = wt
+            if price_protect is not None:
+                params["priceProtect"] = "TRUE" if price_protect else "FALSE"
 
             if order_type == OrderType.MARKET:
                 order = self.exchange.create_market_order(
-                    symbol, ccxt_side, quantity, params=params
+                    ccxt_sym, ccxt_side, quantity, params=params
                 )
             elif order_type == OrderType.LIMIT:
                 if price is None:
                     raise ValueError("限价单需要指定价格")
                 order = self.exchange.create_limit_order(
-                    symbol, ccxt_side, quantity, price, params=params
+                    ccxt_sym, ccxt_side, quantity, price, params=params
                 )
             elif order_type in [OrderType.STOP, OrderType.STOP_MARKET]:
                 if stop_price is None:
@@ -587,7 +726,7 @@ class BinanceAPI:
                 if order_type == OrderType.STOP_MARKET:
                     params["type"] = "STOP_MARKET"
                 order = self.exchange.create_order(
-                    symbol, ccxt_type, ccxt_side, quantity, price, params=params
+                    ccxt_sym, ccxt_type, ccxt_side, quantity, price, params=params
                 )
             elif order_type in [OrderType.TAKE_PROFIT, OrderType.TAKE_PROFIT_MARKET]:
                 if stop_price is None:
@@ -596,7 +735,7 @@ class BinanceAPI:
                 if order_type == OrderType.TAKE_PROFIT_MARKET:
                     params["type"] = "TAKE_PROFIT_MARKET"
                 order = self.exchange.create_order(
-                    symbol, ccxt_type, ccxt_side, quantity, price, params=params
+                    ccxt_sym, ccxt_type, ccxt_side, quantity, price, params=params
                 )
             else:
                 raise ValueError(f"不支持的订单类型: {order_type}")
@@ -634,7 +773,8 @@ class BinanceAPI:
             是否成功
         """
         try:
-            result = self.exchange.cancel_order(order_id, symbol)
+            ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol) or symbol
+            result = self.exchange.cancel_order(order_id, ccxt_sym)
             return result.get("status") == "canceled"
         except Exception as e:
             logger.error(f"撤单失败: {e}")
@@ -652,7 +792,8 @@ class BinanceAPI:
         """
         try:
             if symbol:
-                result = self.exchange.cancel_all_orders(symbol)
+                ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol) or symbol
+                result = self.exchange.cancel_all_orders(ccxt_sym)
             else:
                 # 需要获取所有交易对的订单
                 open_orders = self.get_open_orders()
@@ -683,7 +824,8 @@ class BinanceAPI:
             订单信息
         """
         try:
-            order = self.exchange.fetch_order(order_id, symbol)
+            ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol) or symbol
+            order = self.exchange.fetch_order(order_id, ccxt_sym)
             return {
                 "order_id": order["id"],
                 "client_order_id": order.get("clientOrderId")
@@ -715,7 +857,11 @@ class BinanceAPI:
             订单列表
         """
         try:
-            orders = self.exchange.fetch_open_orders(symbol)
+            ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol)
+            # testnet + ccxt：部分私有 fapi 响应在库内变成空字符串，parse_orders 会崩
+            if self.testnet:
+                return self._get_open_orders_fapi_rest(symbol)
+            orders = self.exchange.fetch_open_orders(ccxt_sym)
             result = []
             for order in orders:
                 result.append(
@@ -766,8 +912,14 @@ class BinanceAPI:
         """
         try:
             markets = self.exchange.load_markets()
-            if symbol in markets:
-                market = markets[symbol]
+            ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol)
+            market_key = None
+            for key in (symbol, ccxt_sym):
+                if key and key in markets:
+                    market_key = key
+                    break
+            if market_key:
+                market = markets[market_key]
                 tick_size = None
                 step_size = None
                 filters = market.get("info", {}).get("filters", [])
@@ -777,7 +929,7 @@ class BinanceAPI:
                     elif f.get("filterType") in ("LOT_SIZE", "MARKET_LOT_SIZE"):
                         step_size = f.get("stepSize")
                 return {
-                    "symbol": symbol,
+                    "symbol": market_key,
                     "base": market["base"],
                     "quote": market["quote"],
                     "precision": {
@@ -834,7 +986,8 @@ class BinanceAPI:
             是否成功
         """
         try:
-            self.exchange.set_leverage(leverage, symbol)
+            ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol) or symbol
+            self.exchange.set_leverage(leverage, ccxt_sym)
             return True
         except Exception as e:
             logger.error(f"设置杠杆倍数失败: {e}")

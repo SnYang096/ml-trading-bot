@@ -118,6 +118,9 @@ def test_dual_add_maps_execution_result_and_fill_to_position(tmp_path: Path) -> 
     positions = engine.local_position_snapshots()
     assert len(positions) == 1
     assert positions[0].side == "LONG"
+    follow_ups = engine.pop_pending_actions()
+    assert [a["protection_type"] for a in follow_ups] == ["take_profit", "stop_loss"]
+    assert all(a["action"] == "place_protection" for a in follow_ups)
 
 
 def test_dual_add_trend_flip_exits_offside_inventory(tmp_path: Path) -> None:

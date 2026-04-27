@@ -66,6 +66,7 @@ class DualAddPosition:
     quantity: float
     seq: int
     entry_time: str
+    protection_order_ids: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -129,6 +130,7 @@ class DualAddTrendLiveEngine:
         self.cfg = _load_dual_add_config(self.config_path)
         self.unit_notional = float(unit_notional)
         self.state = self.load_state()
+        self._pending_actions: List[Dict[str, Any]] = []
 
     def load_state(self) -> DualAddTrendState:
         if not self.state_path.exists():
@@ -251,6 +253,11 @@ class DualAddTrendLiveEngine:
                 )
                 if order is not None and result.status in {"canceled", "shadow"}:
                     order.status = "canceled"
+            elif result.action == "place_protection":
+                raw = result.raw or {}
+                pos = self._find_position(str(raw.get("leg_id") or ""))
+                if pos is not None and result.order_id:
+                    pos.protection_order_ids.append(result.order_id)
         self.state.pending_orders = [
             o for o in self.state.pending_orders if o.status != "canceled"
         ]
@@ -304,10 +311,23 @@ class DualAddTrendLiveEngine:
                     ),
                 )
             )
+            self._pending_actions.extend(
+                self._protection_actions(
+                    pos=self.state.inventory[-1],
+                    timestamp=str(
+                        report.get("trade_time") or self.state.last_timestamp
+                    ),
+                )
+            )
             self.state.pending_orders = [
                 o for o in self.state.pending_orders if o.order_id != order.order_id
             ]
         self.save_state()
+
+    def pop_pending_actions(self) -> List[Dict[str, Any]]:
+        actions = list(self._pending_actions)
+        self._pending_actions.clear()
+        return actions
 
     def _start_segment(
         self, symbol: str, timestamp: str, close: float, atr: float, trend_side: str
@@ -464,6 +484,43 @@ class DualAddTrendLiveEngine:
             "timestamp": timestamp,
         }
 
+    def _protection_actions(
+        self, *, pos: DualAddPosition, timestamp: str
+    ) -> List[Dict[str, Any]]:
+        tp_dist = self._tp_distance(pos.entry_price)
+        # Catastrophic exchange-side stop. Strategy exits can still be faster.
+        sl_dist = max(tp_dist * 4.0, self.state.atr * max(self.cfg.step_atr_mult, 1.0))
+        if pos.side == "LONG":
+            tp = pos.entry_price + tp_dist
+            sl = pos.entry_price - sl_dist
+        else:
+            tp = pos.entry_price - tp_dist
+            sl = pos.entry_price + sl_dist
+        return [
+            {
+                "action": "place_protection",
+                "order_id": f"{pos.leg_id}_tp",
+                "leg_id": pos.leg_id,
+                "symbol": pos.symbol,
+                "side": pos.side,
+                "quantity": pos.quantity,
+                "trigger_price": tp,
+                "protection_type": "take_profit",
+                "timestamp": timestamp,
+            },
+            {
+                "action": "place_protection",
+                "order_id": f"{pos.leg_id}_sl",
+                "leg_id": pos.leg_id,
+                "symbol": pos.symbol,
+                "side": pos.side,
+                "quantity": pos.quantity,
+                "trigger_price": sl,
+                "protection_type": "stop_loss",
+                "timestamp": timestamp,
+            },
+        ]
+
     def _tp_distance(self, entry: float) -> float:
         fee_buffer = 2.0 * (self.cfg.fee_bps / 10000.0) * entry
         net_target = max(
@@ -499,6 +556,14 @@ class DualAddTrendLiveEngine:
                 return order
             if client_id and order.client_order_id == client_id:
                 return order
+        return None
+
+    def _find_position(self, leg_id: str) -> Optional[DualAddPosition]:
+        if not leg_id:
+            return None
+        for pos in self.state.inventory:
+            if pos.leg_id == leg_id:
+                return pos
         return None
 
 

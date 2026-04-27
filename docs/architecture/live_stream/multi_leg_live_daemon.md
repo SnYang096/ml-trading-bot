@@ -19,6 +19,34 @@
 
 ---
 
+## 与经典实盘流程对齐（双进程、双账户并行）
+
+**经典实盘（未改）**：入口 `scripts/run_live.py`。数据与执行语义与原先一致：
+
+```text
+Binance WebSocket（行情 / 成交 tick）
+  → MultiSymbolManager → OrderFlowListener → IncrementalFeatureComputer
+  → GenericLiveStrategy（BPC / TPC / ME / SRB 等 TradeIntent 策略）
+  → LivePCM / OrderManager → BinanceAPI
+```
+
+**多腿进程（并行）**：入口 `scripts/run_multi_leg_live.py`。与经典路径**并存**，不替换 `run_live`：
+
+- **驱动 bar**：仍为 **Parquet 已收盘 K 线 + 特征**（与经典「WS 推 tick → 增量特征」不同，这是多腿脚本的有意设计，便于离线一致的特征与慢周期 2H）。
+- **交易所推送**：在 `--mode testnet` 且使用真实 `BinanceAPI` 时，通过 **合约 User Data Stream（WebSocket，`BinanceUserStream`）** 接收订单/成交，经 `MultiLegLiveOrchestrator.on_execution_report` 进入引擎；语义上对齐「实盘靠 WS 拿交易所侧订单与成交更新」，**仅作用于多腿账户**，不接管经典路径的行情 WebSocket。
+
+**推荐：chop_grid / dual_add 使用另一个币安子账户**
+
+- 与 BPC 等共用同一 API Key 会导致持仓/挂单在同一账户内混用，风险与对账边界都不清晰。
+- 多腿 testnet 优先使用专用环境变量（与 `OrderManager` / `run_live` 的 testnet 变量解耦）：
+  - `MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY`
+  - `MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET`
+- 若未设置上述变量，脚本仍回落到 `BINANCE_FUTURES_TESTNET_API_KEY` / `SECRET`（兼容单账户、单进程）。
+
+同一台机器上并行跑两个进程时：经典进程加载主账户（或主 testnet）配置；多腿进程在**单独 shell / systemd 单元**中 `source` 仅含 `MULTI_LEG_*` 的 env 文件即可。
+
+---
+
 ## 经典 Live 路径（旧路径）
 
 现有实盘主路径为：
@@ -49,15 +77,26 @@ BinanceWS
 新路径为：
 
 ```text
-已收盘 2H K 线 + 特征
+慢信号：
+Binance Market WebSocket 或 Parquet 回放
+-> MultiLegBarProvider
 -> ChopGridLiveEngine / DualAddTrendLiveEngine
 -> MultiLegLiveOrchestrator（编排器）
 -> MultiLegPortfolioRiskGovernor（账户级风控）
--> GridExecutionAdapter（下单适配器）
+-> MultiLegExecutionAdapter（下单适配器）
 -> BinanceAPI
 -> MultiLegReconciler（对账）
 -> 引擎状态更新 / 回调
+
+快执行：
+Binance User Data Stream (WS)
+-> on_execution_report
+-> 引擎确认 leg 成交
+-> 自动生成 per-leg reduce-only 保护单（TP / SL）
+-> MultiLegExecutionAdapter
 ```
+
+`--bar-source parquet` 用于回放/影子；`--bar-source websocket` 复用经典 live 的底层行情栈（`BinanceWebSocketClient` / `MultiSymbolManager` / `OrderFlowListener` / `IncrementalFeatureComputer`），但不进入 `GenericLiveStrategy` / `LivePCM` / `OrderManager`。
 
 守护进程入口示例：
 
@@ -74,14 +113,20 @@ python scripts/run_multi_leg_live.py \
   --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
 ```
 
-测试网需设置环境变量后运行：
+测试网需设置环境变量后运行（**第二账户**请用 `MULTI_LEG_*`）：
 
 ```bash
-export BINANCE_FUTURES_TESTNET_API_KEY=...
-export BINANCE_FUTURES_TESTNET_API_SECRET=...
+export MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY=...
+export MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET=...
 
-python scripts/run_multi_leg_live.py --mode testnet
+python scripts/run_multi_leg_live.py \
+  --mode testnet \
+  --bar-source websocket \
+  --symbols BTCUSDT \
+  --strategies chop_grid,dual_add_trend
 ```
+
+若与 `run_live` 共用同一 testnet 密钥（不推荐），必须显式添加 `--allow-shared-account`，脚本会打印 warning。
 
 ---
 
@@ -131,13 +176,17 @@ on_execution_report(report)
 
 ### 执行适配器（Execution Adapter）
 
-`GridExecutionAdapter` 是薄层期货执行适配：
+`MultiLegExecutionAdapter` 是薄层期货执行适配（旧名 `GridExecutionAdapter` 暂保留为兼容 alias）：
 
 - `place` → Binance 限价单
 - `cancel` → 撤单
 - `market_exit` → 市价减仓（reduce-only 语义由 `BinanceAPI` 与对冲模式处理）
+- `place_protection` → per-leg `STOP_MARKET` / `TAKE_PROFIT_MARKET`
+- `cancel_protection` → 撤销保护单
 
 真实执行需要 **Binance 合约对冲模式（Hedge Mode）**，避免 long/short 在单向持仓模式下被交易所净额合并，破坏「按腿」记账。
+
+保护单默认按 logical leg 的数量挂 `reduce_only=True`，显式传 `positionSide=LONG/SHORT`，不使用 `closePosition=True`，避免误关整个 symbol side。
 
 ### 对账器（Reconciler）
 
@@ -199,8 +248,11 @@ on_execution_report(report)
 
 后续生产化工作包括但不限于：
 
-- 将 `BinanceUserStream` 接到 `MultiLegLiveOrchestrator.on_execution_report`
-- 进程重启后持久化 `exchange_order_id` ↔ 本地 `order_id` 映射
+- 已完成：`BinanceUserStream` 在 `run_multi_leg_live.py` 的 testnet + `BinanceAPI` 下接入 `MultiLegLiveOrchestrator.on_execution_report`
+- 已完成：`--bar-source websocket` 复用经典 live 的行情/特征底层组件，作为多腿慢信号输入
+- 已完成：per-leg reduce-only TP / SL 保护单动作与 `multi_leg_*` 独立持久化表
+- 主网多腿：与 `MULTI_LEG_*` 对称的专用主网 API 环境变量（若扩展 `--mode live`）
+- 进程重启后基于 `multi_leg_orders` / engine state 完整恢复保护单映射
 - 明确「持仓漂移」策略：仅告警 vs 自动减仓
 - 跨经典 Live 与多腿 Live 的 account master governor
 - 对「被拒动作」「对账漂移」做指标与告警

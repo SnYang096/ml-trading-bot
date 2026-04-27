@@ -46,6 +46,8 @@ class GridPosition:
     entry_price: float
     quantity: float
     entry_time: str
+    leg_id: str = ""
+    protection_order_ids: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -111,6 +113,7 @@ class ChopGridLiveEngine:
         self.cfg = _load_grid_config(self.config_path)
         self.level_notional = float(level_notional)
         self.state = self.load_state()
+        self._pending_actions: List[Dict[str, Any]] = []
 
     def load_state(self) -> GridState:
         if not self.state_path.exists():
@@ -188,6 +191,11 @@ class ChopGridLiveEngine:
                 )
                 if order is not None and result.status in {"canceled", "shadow"}:
                     order.status = "canceled"
+            elif result.action == "place_protection":
+                raw = result.raw or {}
+                pos = self._find_position(str(raw.get("leg_id") or ""))
+                if pos is not None and result.order_id:
+                    pos.protection_order_ids.append(result.order_id)
         self.state.pending_orders = [
             o for o in self.state.pending_orders if o.status != "canceled"
         ]
@@ -239,12 +247,27 @@ class ChopGridLiveEngine:
                     entry_time=str(
                         report.get("trade_time") or self.state.last_timestamp
                     ),
+                    leg_id=order.order_id,
+                )
+            )
+            self._pending_actions.extend(
+                self._protection_actions(
+                    order_id=order.order_id,
+                    pos=self.state.inventory[-1],
+                    timestamp=str(
+                        report.get("trade_time") or self.state.last_timestamp
+                    ),
                 )
             )
             self.state.pending_orders = [
                 o for o in self.state.pending_orders if o.order_id != order.order_id
             ]
         self.save_state()
+
+    def pop_pending_actions(self) -> List[Dict[str, Any]]:
+        actions = list(self._pending_actions)
+        self._pending_actions.clear()
+        return actions
 
     def on_bar(
         self,
@@ -467,6 +490,48 @@ class ChopGridLiveEngine:
         self.state.current_regime = "idle"
         return actions
 
+    def _protection_actions(
+        self, *, order_id: str, pos: GridPosition, timestamp: str
+    ) -> List[Dict[str, Any]]:
+        """Create native exchange protection orders for a filled grid leg."""
+
+        if self.state.spacing <= 0:
+            return []
+        if pos.side == "LONG":
+            tp = pos.entry_price + self.state.spacing
+            sl = pos.entry_price - self.state.spacing * (
+                self.cfg.max_levels_per_side + 1
+            )
+        else:
+            tp = pos.entry_price - self.state.spacing
+            sl = pos.entry_price + self.state.spacing * (
+                self.cfg.max_levels_per_side + 1
+            )
+        return [
+            {
+                "action": "place_protection",
+                "order_id": f"{order_id}_tp",
+                "leg_id": order_id,
+                "symbol": pos.symbol,
+                "side": pos.side,
+                "quantity": pos.quantity,
+                "trigger_price": tp,
+                "protection_type": "take_profit",
+                "timestamp": timestamp,
+            },
+            {
+                "action": "place_protection",
+                "order_id": f"{order_id}_sl",
+                "leg_id": order_id,
+                "symbol": pos.symbol,
+                "side": pos.side,
+                "quantity": pos.quantity,
+                "trigger_price": sl,
+                "protection_type": "stop_loss",
+                "timestamp": timestamp,
+            },
+        ]
+
     def _maker_fee_bps(self) -> float:
         if self.cfg.maker_fee_bps is not None:
             return float(self.cfg.maker_fee_bps)
@@ -491,4 +556,12 @@ class ChopGridLiveEngine:
                 return order
             if client_id and order.client_order_id == client_id:
                 return order
+        return None
+
+    def _find_position(self, leg_id: str) -> Optional[GridPosition]:
+        if not leg_id:
+            return None
+        for pos in self.state.inventory:
+            if pos.leg_id == leg_id:
+                return pos
         return None

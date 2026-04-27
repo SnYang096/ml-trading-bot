@@ -117,6 +117,9 @@ def test_chop_grid_execution_report_moves_filled_order_to_inventory(
     assert len(positions) == 1
     assert positions[0].side == "LONG"
     assert positions[0].quantity == 1.0
+    follow_ups = engine.pop_pending_actions()
+    assert [a["protection_type"] for a in follow_ups] == ["take_profit", "stop_loss"]
+    assert all(a["action"] == "place_protection" for a in follow_ups)
 
 
 def test_chop_grid_records_reconciliation_issues(tmp_path: Path) -> None:

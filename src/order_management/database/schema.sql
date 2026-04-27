@@ -140,6 +140,90 @@ CREATE TABLE IF NOT EXISTS add_position_state (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 9. Multi-leg runtime runs (isolated from classic OrderManager tables)
+CREATE TABLE IF NOT EXISTS multi_leg_runs (
+    run_id TEXT PRIMARY KEY,
+    mode TEXT NOT NULL,
+    strategies TEXT,
+    symbols TEXT,
+    account_label TEXT,
+    config_json TEXT,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP,
+    status TEXT DEFAULT 'running',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 10. Multi-leg orders (local/exchange id mapping per strategy leg)
+CREATE TABLE IF NOT EXISTS multi_leg_orders (
+    local_order_id TEXT PRIMARY KEY,
+    run_id TEXT,
+    strategy TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    leg_id TEXT,
+    side TEXT NOT NULL,
+    position_side TEXT,
+    order_type TEXT NOT NULL,
+    purpose TEXT,
+    quantity REAL NOT NULL,
+    price REAL,
+    stop_price REAL,
+    client_order_id TEXT,
+    exchange_order_id TEXT,
+    status TEXT NOT NULL,
+    raw_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES multi_leg_runs(run_id)
+);
+
+-- 11. Multi-leg positions (strategy-owned leg inventory, not classic positions)
+CREATE TABLE IF NOT EXISTS multi_leg_positions (
+    leg_id TEXT PRIMARY KEY,
+    run_id TEXT,
+    strategy TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    quantity REAL NOT NULL,
+    status TEXT NOT NULL,
+    parent_leg_id TEXT,
+    protection_order_ids TEXT,
+    raw_json TEXT,
+    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES multi_leg_runs(run_id)
+);
+
+-- 12. Multi-leg user-stream / execution reports (append-only audit log)
+CREATE TABLE IF NOT EXISTS multi_leg_execution_reports (
+    event_id TEXT PRIMARY KEY,
+    run_id TEXT,
+    strategy TEXT,
+    symbol TEXT,
+    order_id TEXT,
+    client_order_id TEXT,
+    status TEXT,
+    execution_type TEXT,
+    raw_json TEXT NOT NULL,
+    event_time TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES multi_leg_runs(run_id)
+);
+
+-- 13. Multi-leg reconciliation snapshots (append-only drift audit)
+CREATE TABLE IF NOT EXISTS multi_leg_reconciliation_snapshots (
+    snapshot_id TEXT PRIMARY KEY,
+    run_id TEXT,
+    strategy TEXT,
+    symbol TEXT,
+    ok INTEGER NOT NULL,
+    raw_json TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES multi_leg_runs(run_id)
+);
+
 -- 创建索引以提高查询性能
 CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
@@ -153,5 +237,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_order_id ON orders(client_or
 CREATE INDEX IF NOT EXISTS idx_stop_loss_trailing_position_id ON stop_loss_trailing(position_id);
 CREATE INDEX IF NOT EXISTS idx_performance_metrics_date ON performance_metrics(date);
 CREATE INDEX IF NOT EXISTS idx_performance_metrics_symbol ON performance_metrics(symbol);
+CREATE INDEX IF NOT EXISTS idx_multi_leg_orders_run ON multi_leg_orders(run_id);
+CREATE INDEX IF NOT EXISTS idx_multi_leg_orders_strategy_symbol ON multi_leg_orders(strategy, symbol);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_multi_leg_orders_client_order_id ON multi_leg_orders(client_order_id);
+CREATE INDEX IF NOT EXISTS idx_multi_leg_positions_run ON multi_leg_positions(run_id);
+CREATE INDEX IF NOT EXISTS idx_multi_leg_positions_strategy_symbol ON multi_leg_positions(strategy, symbol);
+CREATE INDEX IF NOT EXISTS idx_multi_leg_execution_reports_run ON multi_leg_execution_reports(run_id);
+CREATE INDEX IF NOT EXISTS idx_multi_leg_reconciliation_run ON multi_leg_reconciliation_snapshots(run_id);
 
 -- Live trading config: read from config/live/live_config_defaults.yaml at startup (no DB table).

@@ -7,6 +7,7 @@ import pytest
 from src.order_management.grid_execution_adapter import (
     GridExecutionAdapter,
     GridExecutionError,
+    MultiLegExecutionAdapter,
 )
 from src.order_management.models import OrderSide, OrderType
 
@@ -77,6 +78,10 @@ def test_place_limit_translates_grid_place_action() -> None:
     assert result.status == "open"
 
 
+def test_multi_leg_adapter_name_is_primary_alias() -> None:
+    assert MultiLegExecutionAdapter is GridExecutionAdapter
+
+
 def test_market_exit_uses_reduce_only_opposite_side() -> None:
     api = _api()
     adapter = GridExecutionAdapter(api)
@@ -96,6 +101,61 @@ def test_market_exit_uses_reduce_only_opposite_side() -> None:
     assert kwargs["order_type"] == OrderType.MARKET
     assert kwargs["quantity"] == 0.03
     assert kwargs["reduce_only"] is True
+
+
+def test_place_stop_loss_protection_uses_explicit_position_side() -> None:
+    api = _api()
+    adapter = MultiLegExecutionAdapter(api)
+
+    result = adapter.execute_action(
+        {
+            "action": "place_protection",
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "quantity": 0.03,
+            "trigger_price": 99000.0,
+            "protection_type": "stop_loss",
+            "order_id": "leg_l1_sl",
+        }
+    )
+
+    kwargs = api.place_order.call_args.kwargs
+    assert kwargs["side"] == OrderSide.SELL
+    assert kwargs["order_type"] == OrderType.STOP_MARKET
+    assert kwargs["quantity"] == 0.03
+    assert kwargs["stop_price"] == 99000.0
+    assert kwargs["reduce_only"] is True
+    assert kwargs["close_position"] is False
+    assert kwargs["position_side"] == "LONG"
+    assert kwargs["working_type"] == "MARK_PRICE"
+    assert kwargs["price_protect"] is True
+    assert result.action == "place_protection"
+
+
+def test_place_take_profit_protection_for_short_uses_buy() -> None:
+    api = _api()
+    adapter = MultiLegExecutionAdapter(api)
+
+    adapter.execute_action(
+        {
+            "action": "place_protection",
+            "symbol": "BTCUSDT",
+            "side": "SHORT",
+            "quantity": 0.02,
+            "stop_price": 95000.0,
+            "protection_type": "take_profit",
+            "order_id": "leg_s1_tp",
+            "working_type": "CONTRACT_PRICE",
+            "price_protect": False,
+        }
+    )
+
+    kwargs = api.place_order.call_args.kwargs
+    assert kwargs["side"] == OrderSide.BUY
+    assert kwargs["order_type"] == OrderType.TAKE_PROFIT_MARKET
+    assert kwargs["position_side"] == "SHORT"
+    assert kwargs["working_type"] == "CONTRACT_PRICE"
+    assert kwargs["price_protect"] is False
 
 
 def test_cancel_requires_symbol_and_calls_exchange() -> None:
