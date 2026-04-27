@@ -97,6 +97,7 @@ class DualAddConfig:
     min_segment_bars: int = 6
     fee_bps: float = 4.0
     max_loss_per_segment: float = 0.01
+    initial_hedge: bool = True
 
 
 def _max_drawdown(values: List[float]) -> float:
@@ -160,22 +161,34 @@ def simulate_dual_add_segment(
 
     # Capital units are the maximum gross inventory this experiment allows.
     capital_units = max(2, cfg.max_gross_exposure)
-    positions: List[dict] = [
-        {
-            "side": "LONG",
-            "entry": center,
-            "entry_time": seg.index[0],
-            "entry_bar": 0,
-            "seq": 0,
-        },
-        {
-            "side": "SHORT",
-            "entry": center,
-            "entry_time": seg.index[0],
-            "entry_bar": 0,
-            "seq": 0,
-        },
-    ]
+    if cfg.initial_hedge:
+        positions = [
+            {
+                "side": "LONG",
+                "entry": center,
+                "entry_time": seg.index[0],
+                "entry_bar": 0,
+                "seq": 0,
+            },
+            {
+                "side": "SHORT",
+                "entry": center,
+                "entry_time": seg.index[0],
+                "entry_bar": 0,
+                "seq": 0,
+            },
+        ]
+    else:
+        open_side = "LONG" if direction == "UP" else "SHORT"
+        positions = [
+            {
+                "side": open_side,
+                "entry": center,
+                "entry_time": seg.index[0],
+                "entry_bar": 0,
+                "seq": 0,
+            },
+        ]
     trades: List[dict] = []
     last_add_long = center
     last_add_short = center
@@ -371,7 +384,28 @@ def simulate_dual_add_segment(
     return trades, summary
 
 
+def _effective_max_loser_hold_bars(args: argparse.Namespace) -> int:
+    base = int(args.max_loser_hold_bars)
+    exec_tf = args.execution_timeframe or args.timeframe
+    if not args.scale_max_loser_hold_to_signal:
+        return max(1, base)
+    if exec_tf == args.timeframe:
+        return max(1, base)
+    sig_s = timeframe_to_timedelta(args.timeframe).total_seconds()
+    ex_s = timeframe_to_timedelta(exec_tf).total_seconds()
+    if ex_s <= 0:
+        return max(1, base)
+    ratio = sig_s / ex_s
+    return max(1, int(round(base * ratio)))
+
+
 def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    eff_hold = _effective_max_loser_hold_bars(args)
+    if eff_hold != int(args.max_loser_hold_bars):
+        print(
+            f"(resolved max_loser_hold_bars={eff_hold} from CLI "
+            f"{int(args.max_loser_hold_bars)} via --scale-max-loser-hold-to-signal)"
+        )
     cfg = DualAddConfig(
         regime=args.regime,
         add_mode=args.add_mode,
@@ -388,11 +422,12 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         max_adds_per_side=args.max_adds_per_side,
         max_net_exposure=args.max_net_exposure,
         max_gross_exposure=args.max_gross_exposure,
-        max_loser_hold_bars=args.max_loser_hold_bars,
+        max_loser_hold_bars=eff_hold,
         max_segment_bars=args.max_segment_bars,
         min_segment_bars=args.min_segment_bars,
         fee_bps=args.fee_bps,
         max_loss_per_segment=args.max_loss_per_segment,
+        initial_hedge=args.initial_hedge,
     )
     grid_cfg = GridConfig(
         box_window=cfg.box_window,
@@ -687,7 +722,8 @@ def main() -> None:
             "Optional finer resample for inventory simulation (e.g. 1min). When set and "
             "different from --timeframe, segment boundaries follow the signal grid but "
             "TP/add/risk use execution OHLC with signal columns asof-joined. "
-            "max_loser_hold_bars counts execution bars."
+            "max_loser_hold_bars counts execution bars unless "
+            "--scale-max-loser-hold-to-signal is enabled."
         ),
     )
     ap.add_argument(
@@ -735,6 +771,28 @@ def main() -> None:
         "--max-loser-hold-bars",
         type=int,
         default=defaults.get("max_loser_hold_bars", 24),
+    )
+    ap.add_argument(
+        "--scale-max-loser-hold-to-signal",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "When --execution-timeframe is finer than --timeframe, scale "
+            "max_loser_hold_bars by (signal bar length / exec bar length) so one "
+            "unit of hold still means the same wall-clock patience as on the "
+            "signal grid (e.g. 24 @ 2h -> 2880 @ 1min). Off by default for "
+            "backward compatibility."
+        ),
+    )
+    ap.add_argument(
+        "--initial-hedge",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "If disabled, open only the trend-direction leg at segment start "
+            "(no opening long+short straddle). For research on directional "
+            "fast legs vs hedged inventory."
+        ),
     )
     ap.add_argument(
         "--max-loss-per-segment",
@@ -793,8 +851,10 @@ def main() -> None:
             segments=segments,
             title="Dual Add Trend Continuous Trading Map",
         )
+    cfg_dump = dict(vars(args))
+    cfg_dump["_resolved_max_loser_hold_bars"] = _effective_max_loser_hold_bars(args)
     (out_dir / "config.json").write_text(
-        json.dumps(vars(args), indent=2), encoding="utf-8"
+        json.dumps(cfg_dump, indent=2, default=str), encoding="utf-8"
     )
     print("\n=== Dual Add Summary ===")
     print(summary.to_string(index=False) if not summary.empty else "(empty)")
