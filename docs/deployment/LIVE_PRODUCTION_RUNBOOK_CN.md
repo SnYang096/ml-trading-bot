@@ -31,6 +31,7 @@
 | **BPC** | 能（经典） | `enabled_archetypes` 含 `bpc` 时注册。 |
 | **ME** | 能（经典） | `enabled_archetypes` 含 `me` / `me-long` / `me-short` 等 ME 包前缀时注册（见 `run_live.py`）。 |
 | **TPC** | **当前仓库未在 `run_live.py` 接线** | 经典路径里已接线的是 **FER**（及 BPC/ME/LV），不是 TPC。若 constitution 里只写 `tpc`，**不会**像 BPC 那样自动创建 `GenericLiveStrategy("tpc", …)`，需要按 FER 的模式增加工程接线后才可与 BPC/ME 同进程运行。 |
+| **SRB** | **当前未在 `run_live.py` 接线** | 与 TPC 相同：磁盘上可有 `config/strategies/srb/`，但经典 live 进程不会自动注册；需工程扩展（注册、`LivePCM` 优先级、`pcm_regime`、以及与哪条 timeframe 的 FC 合并）。 |
 | **chop_grid** | 否（独立多腿进程） | `run_multi_leg_live.py --strategies chop_grid,...`。 |
 | **dual_add_trend** | 否（独立多腿进程） | 同上，默认与 `chop_grid` 可写在同一 `--strategies` 里一次拉起。 |
 
@@ -39,7 +40,7 @@
 - **经典一条进程**：BPC + ME + FER（由 live 侧 `constitution.yaml` / `pcm_regime.yaml` 与策略包配置决定实际是否下单）。
 - **多腿一条进程**：`chop_grid` 与 `dual_add_trend` 并行（testnet/shadow）。
 
-若要 **TPC 与 BPC/ME 同进程**，需要先完成 `run_live.py` 侧与 FER 同级的 TPC 注册与特征时间框配置，再写入 `enabled_archetypes`。
+若要 **SRB / TPC 与 BPC/ME 同进程**，需要先完成 `run_live.py` 侧与 FER 对称的注册、特征集合并（若与 BPC 同 bar 周期）、`LivePCM.archetype_priority` 与 `pcm_regime.yaml` 对齐，再在 `enabled_archetypes` 中启用。
 
 ---
 
@@ -65,6 +66,18 @@
 
 - 推荐：`MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY`、`MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET`
 - 若未设置且必须共用 testnet 密钥：需显式传入 **`--allow-shared-account`**（不推荐与经典并行主策略时共用）。
+
+### 3.1 「未写进 workflow」是什么意思？
+
+**Workflow** 指 `.github/workflows/deploy.yml`：里面只有一步会把 **`BINANCE_API_KEY` / `BINANCE_API_SECRET`** 通过 SSH 写到服务器的 `binance_mainnet.env`，供 **`quant-engine`（经典 `run_live`）** 使用。
+
+**多腿变量**（`MULTI_LEG_BINANCE_FUTURES_TESTNET_*`）在这份 YAML 里 **既没有对应的 GitHub Secret 名，也没有 `printf` 写入服务器的步骤**。因此：
+
+- GitHub 不会替你「同步」多腿密钥到机器上；
+- 你在仓库 Settings 里就算新建了名为 `MULTI_LEG_...` 的 Secret，**现有流水线也不会去读、更不会写文件**；
+- 要在服务器跑多腿，只能 **自己在主机上维护** 一个 env 文件（或以后改 workflow：增加 Secret + SSH 写第二个 env 文件），并在 **第二个 systemd / 第二条 `docker run`** 里加载它。
+
+这样设计是为了：**主账户密钥仍走现成自动化**；多腿账户与经典隔离时，由运维显式配置第二条服务，避免误把 testnet 多腿密钥写进主网经典路径。
 
 ---
 
