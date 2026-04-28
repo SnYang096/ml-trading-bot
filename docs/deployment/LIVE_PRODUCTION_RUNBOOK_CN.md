@@ -38,16 +38,27 @@
 - **不会简单 ×2**：两份进程各自有 Python 堆与缓存，但 **只读代码页** 等可由 OS 共享；大头是 **tick/bar 缓冲与特征状态** —— 若强行塞进一个进程，仍要维护 **两套决策状态**（PCM 与多腿编排），峰值内存未必低于两进程，且 **故障域耦在一起**（一处 OOM/死锁全停）。
 - **想共用一份行情**：可以两条服务 **挂同一块只读 tick 盘**、或未来做「单 WS 收包 → 多订阅者」的独立小服务；那是 **IPC/架构级** 优化，不等于把 `run_live` 与 `run_multi_leg_live` 合成一个脚本。
 
-### 2.2 4GB / 窄带宽：有没有必要上 IPC？
+### 2.2 4GB / 窄带宽：先用磁盘 Feature Bus，不先上 IPC
 
-**默认结论：先不必做。** IPC 或「单 WS 多订阅」属于 **在已确认瓶颈之后** 的工程投入；在没量过 RSS、swap、OOM 和出口带宽之前，优先级通常低于 **减载**。
+**默认结论：第一版用 B 框架的磁盘 Feature Bus。** 它只保留一个行情/特征发布进程，经典/多腿进程从磁盘读已闭合的 bar/features；不先引入 Redis/NATS/ZeroMQ 等 IPC 队列。
 
 更省事的顺序建议：
 
-1. **量一下再决定**：`free -h`、`systemctl status`、有无 OOM killer 日志；多腿若开 WS，看出口是否长期顶满。没有持续 OOM/严重丢包，就不必为「理论上的双倍」去写 IPC。
-2. **减载比 IPC 便宜**：少挂几个 symbol、缩短 warmup / `memory_window_hours`（多腿见 `run_multi_leg_live.py --help`）、经典侧控制 tick 保留策略；多腿若可接受 **parquet 驱动 bar**（`--bar-source parquet`），可减少 **第二条行情 WS** 对带宽的占用（与经典是否 WS 无关，需你接受数据路径差异）。
-3. **算力与内存真的不够时**：常见做法是 **拆机**——例如 4G 小机只跑 `quant-engine`，多腿 testnet 放到第二台低配或本机，而不是先在 4G 上叠 IPC 复杂方案。
-4. **何时才值得做 IPC/单 WS 中继**：长期观测表明 **重复订阅同一组 trade/aggTrade** 占满带宽或 CPU 解压成为主因，且减载后仍不可接受——再立项单独的行情服务更划算。
+1. **先用磁盘共享**：`scripts/run_market_feature_publisher.py` 负责 Binance WS、1m bar、60T/120T/240T/2h feature snapshots，并原子写入 `live/shared_feature_bus/`。
+2. **多腿读 feature-store**：`scripts/run_multi_leg_live.py --bar-source feature-store` 直接读取 `live/shared_feature_bus/features/2h/*.parquet`，避免第二条 market WS 与重复 tick buffer。
+3. **经典先可继续现有 WS**：等多腿 feature-store 稳定后，再把 `run_live.py` 改成 external feature mode；这样上线风险最低。
+4. **何时才值得做 IPC/单 WS 中继**：如果磁盘轮询延迟、IO 或跨机器分发成为瓶颈，再升级 SQLite WAL / Unix socket / NATS；不要第一版就上复杂队列。
+
+磁盘 Feature Bus 布局：
+
+```text
+live/shared_feature_bus/
+  bars_1min/{SYMBOL}.parquet
+  features/{TIMEFRAME}/{SYMBOL}.parquet
+  latest/{kind}/{SYMBOL}.json
+```
+
+写入采用「临时文件 → rename」原子替换；消费者只读完整 parquet，并按 timestamp 去重。
 
 ---
 
@@ -100,9 +111,29 @@ sudo journalctl -u quant-engine -n 80 --no-pager
 
 ---
 
-## 5. 服务器侧（多腿：第二进程示例）
+## 5. 服务器侧（Feature Bus + 多腿：第二/第三进程示例）
 
 以下仅为 **示例**；路径与 unit 名按你方规范调整。
+
+行情/特征发布进程（推荐先跑）：
+
+```ini
+# /etc/systemd/system/quant-feature-bus.service（示例）
+[Service]
+WorkingDirectory=/opt/quant-engine
+ExecStart=/usr/bin/docker run --rm \
+  --name quant-feature-bus \
+  -v /opt/quant-engine/live:/opt/quant-engine/live \
+  -v /opt/quant-engine/data:/opt/quant-engine/data \
+  quant-engine:latest \
+  python scripts/run_market_feature_publisher.py \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+  --feature-bus-root live/shared_feature_bus \
+  --live-storage-base data/live_storage \
+  --warmup-days 0
+```
+
+多腿进程消费 Feature Bus：
 
 ```ini
 # /etc/systemd/system/quant-multi-leg.service（示例）
@@ -112,18 +143,37 @@ WorkingDirectory=/opt/quant-engine
 ExecStart=/usr/bin/docker run --rm \
   --name quant-multi-leg \
   -v /opt/quant-engine/live:/opt/quant-engine/live \
+  -v /opt/quant-engine/data:/opt/quant-engine/data \
   quant-engine:latest \
   python scripts/run_multi_leg_live.py --mode testnet \
   --strategies chop_grid,dual_add_trend \
   --symbols BTCUSDT \
-  --bar-source websocket
+  --bar-source feature-store \
+  --feature-bus-root live/shared_feature_bus \
+  --feature-store-timeframe 2h
 ```
 
 上线前请确认：
 
 - 合约账户 **双向持仓（hedge）** 与脚本要求一致（非 shadow 时 orchestrator 会要求 hedge）。
-- **`--bar-source websocket`** 时仍需磁盘上足够历史 bar/tick 或合理 **`--warmup-days`**，避免冷启动特征计算因 tick 不足失败（见 `multi_leg_live_daemon.md`）。
+- **`--bar-source feature-store`** 依赖 `quant-feature-bus` 已写出 `features/2h/{SYMBOL}.parquet`；若无新 timestamp，多腿循环会保持空转等待。
+- **`--bar-source websocket`** 仍可作为 fallback，但会重新打开一条 market WS 并维护自己的 tick/feature buffer。
 - 多腿 **SQLite** 路径若启用：使用 `--multi-leg-db-path` 指向持久卷（见脚本 `--help`）。
+
+### 5.1 2h signal + 1min execution 回测复核
+
+本次已跑：
+
+```bash
+PYTHONPATH=src python3 scripts/chop_grid_backtest.py \
+  --timeframe 2h --execution-timeframe 1min \
+  --start 2022-01-01 --end 2026-03-31 \
+  --out-dir results/feature_bus_live/chop_grid_2h_1min --no-maps
+```
+
+结果摘要：`segments=723`、`trades=2878`、`return_pct=200.65`、`max_drawdown=-1.49%`、`risk_stop_rate=0.0`。对照纯 2h：`return_pct=222.96`、`max_drawdown=-1.51%`。1min execution 更保守但未暴露出 `max_loss_per_grid` 大量 intrabar 风险。
+
+`dual_add_trend` 的 2h signal + 1min execution 结果较差：`return_pct=-476.80`、`risk_stop_rate=3.40%`、`loser_timeout_rate=46.19%`。对照纯 2h：`return_pct=585.05`、`risk_stop_rate=2.76%`、`loser_timeout_rate=0.0`。说明该策略对 execution timeframe 非常敏感；上线前不建议直接用现有参数上 `dual_add_trend`，应单独调参或先 shadow。
 
 ---
 
@@ -136,9 +186,10 @@ ExecStart=/usr/bin/docker run --rm \
 
 ## 7. 清单速查
 
-- [ ] GitHub 6 个 Secrets 已配置且 PAT 未过期  
-- [ ] `live/highcap/config/constitution/constitution.yaml` 中 `enabled_archetypes` 与预期策略一致（BPC/ME/FER；TPC 需代码支持）  
+- [ ] GitHub Secrets 已配置且 PAT 未过期  
+- [ ] `live/highcap/config/constitution/constitution.yaml` 中 `enabled_archetypes` 与预期策略一致（BPC/ME/SRB/TPC）  
 - [ ] 经典 warmup / 数据目录就绪  
+- [ ] Feature Bus（若启用）：`quant-feature-bus` 已写出 `live/shared_feature_bus/features/2h/*.parquet`  
 - [ ] 多腿（若启用）：独立 env、独立账户、独立 systemd、testnet 密钥与 `--mode testnet`  
 - [ ] 安全组仅开放必要端口；API Key 绑定服务器出口 IP  
 

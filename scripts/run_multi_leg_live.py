@@ -51,6 +51,9 @@ from src.order_management.grid_execution_adapter import (
 )  # noqa: E402
 from src.order_management.mock_binance_api import MockBinanceAPI  # noqa: E402
 from src.order_management.multi_leg_storage import MultiLegStorage  # noqa: E402
+from src.order_management.multi_leg_feature_store_provider import (  # noqa: E402
+    FeatureStoreBarProvider,
+)
 from src.order_management.multi_leg_ws_provider import (  # noqa: E402
     MultiLegWebSocketBarProvider,
 )
@@ -206,7 +209,12 @@ def build_daemon(
         max_symbol_net_notional=args.max_symbol_net_notional,
         max_resting_orders=args.max_resting_orders,
     )
-    if args.bar_source == "websocket":
+    if args.bar_source == "feature-store":
+        provider = FeatureStoreBarProvider(
+            feature_bus_root=args.feature_bus_root,
+            timeframe=args.feature_store_timeframe,
+        )
+    elif args.bar_source == "websocket":
         provider = MultiLegWebSocketBarProvider(
             symbols=symbols,
             storage_base_path=args.live_storage_base,
@@ -306,8 +314,14 @@ def parse_args() -> argparse.Namespace:
         "--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT"
     )
     p.add_argument("--data-dir", default="data/parquet_data")
-    p.add_argument("--bar-source", choices=["parquet", "websocket"], default="parquet")
+    p.add_argument(
+        "--bar-source",
+        choices=["parquet", "websocket", "feature-store"],
+        default="parquet",
+    )
     p.add_argument("--live-storage-base", default="data/live_storage")
+    p.add_argument("--feature-bus-root", default="live/shared_feature_bus")
+    p.add_argument("--feature-store-timeframe", default="2h")
     p.add_argument("--timeframe", default="2h")
     p.add_argument("--lookback-days", type=int, default=180)
     p.add_argument("--warmup-days", type=int, default=0)
