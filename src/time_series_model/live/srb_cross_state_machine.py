@@ -2,12 +2,9 @@
 SRB cross-event 状态机（纯函数 / dataclass 容器）。
 
 **当前消费面**：
-- **事件回测 / rolling_sim**：当 ``execution.yaml`` 中 ``srb_staged_entry_2b.enabled: true`` 时，
-  ``scripts/event_backtest.py`` 通过 ``SrbStagedEntry2bRuntime.advance()`` **每根 primary bar**
-  调用 ``update_cross_state()``，完成 **2a（cross 确认）**；再在同级逻辑里做 **2b（EMA1200
-  位置 + 斜率）** 后 ``arm``，PCM 首仓须在 ``arm_pcm_bars`` 窗口内同向才放行。
-  Prefilter/gate/PCM 仍照常过滤信号；2a/2b 是 **在 PCM 拟开仓前多一层结构 + 趋势确认**。
-- **Live（generic_live_strategy）**：**未接** 本状态机与 staged 2b；live 侧仍仅靠 prefilter/gate/PCM。
+- **事件回测**：不再接入 ``srb_staged_entry_2b`` / ``SrbStagedEntry2bRuntime``；SRB 与其它策略
+  一样走 PCM → ``open_position``。本状态机仍可被独立脚本或实验代码调用。
+- **Live**：未接本状态机；方向与结构由策略内 gate / 特征与 PCM 仲裁完成。
 
 每根 primary bar 调用 ``update_cross_state()``；当价格"穿越关键位"时起一个
 候选（``CrossCandidate``），在 ``fake_lookahead`` 根 bar 内：

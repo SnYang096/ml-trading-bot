@@ -66,11 +66,9 @@ from src.time_series_model.live.position_logic import (
     build_position_dict,
     enforce_position,
 )
+from src.time_series_model.live.event_backtest_srb_hooks import SrbEventBacktestHooks
 from src.time_series_model.live.srb_regime import (
-    maybe_inject_srb_experiment_features,
-    pick_srb_true_sr_level,
     should_reject_srb_add_by_shape,
-    should_reject_srb_wide_entry,
     srb_add_position_allowed,
 )
 from src.time_series_model.portfolio.live_pcm import LivePCM
@@ -2472,25 +2470,15 @@ class EventBacktester:
                 sim._om_bridge = self._om_bridge
             self._simulators[sym] = sim
 
-        _srb_add_policy: Optional[Dict[str, Any]] = None
-        if "srb" in self.strategy_names:
-            try:
-                _srb_add_policy = (
-                    self._strats["srb"].archetype.execution.raw or {}
-                ).get("srb_add_position_policy")
-            except Exception:
-                _srb_add_policy = None
-        _srb_wide_entry_guard: Optional[Dict[str, Any]] = None
-        if "srb" in self._strats:
-            try:
-                _srb_wide_entry_guard = (
-                    self._strats["srb"].archetype.execution.raw or {}
-                ).get("sr_wide_entry_guard")
-            except Exception:
-                _srb_wide_entry_guard = None
-        for _sim in self._simulators.values():
-            _sim._srb_add_policy = _srb_add_policy
-            _sim._srb_wide_entry_guard = _srb_wide_entry_guard
+        _srb_hooks = SrbEventBacktestHooks.try_from_strategies(
+            self.strategy_names, self._strats
+        )
+        if _srb_hooks is not None:
+            _srb_hooks.attach_to_simulators(self._simulators)
+        else:
+            for _sim in self._simulators.values():
+                _sim._srb_add_policy = None
+                _sim._srb_wide_entry_guard = None
 
         # 可选: 加载跨月续跑状态
         if resume_state:
@@ -2621,24 +2609,6 @@ class EventBacktester:
             )
         _equity_peak = _equity
         _ks_triggers: list = []
-        # SRB：2a+2b staged 首仓门控（execution.srb_staged_entry_2b.enabled）
-        _srb_staged_rt = None
-        _srb_tf_global = (
-            self._tf_map.get("srb") if "srb" in self.strategy_names else None
-        )
-        if "srb" in self.strategy_names:
-            _st_blk = (self._strats["srb"].archetype.execution.raw or {}).get(
-                "srb_staged_entry_2b"
-            )
-            if isinstance(_st_blk, dict) and bool(_st_blk.get("enabled")):
-                from src.time_series_model.live.srb_staged_entry_2b import (
-                    SrbStagedEntry2bRuntime,
-                )
-
-                _srb_staged_rt = SrbStagedEntry2bRuntime.from_execution_block(_st_blk)
-                logger.info(
-                    "SRB staged entry 2b: ENABLED (PCM mother entries require arm window)"
-                )
         _ks_skipped = 0
         _ks_executed = 0
         _period_equity_daily = _equity
@@ -2823,30 +2793,15 @@ class EventBacktester:
             # 主特征 = 第一个可用 timeframe 的特征 (PCM 回退用)
             primary_features = next(iter(features_by_tf.values()))
 
-            # SRB 实验：在策略对应 primary TF 特征上注入 srb_regime_* / srb_sr_*（供 ExecutionParamGenerator）
-            if "srb" in self.strategy_names:
-                _tf_srb = self._tf_map.get("srb")
-                _raw_srb = self._strats["srb"].archetype.execution.raw or {}
-                _df_srb = (
-                    sym_data[sym]["tf_features"].get(_tf_srb)
-                    if _tf_srb and sym in sym_data
-                    else None
+            if _srb_hooks is not None:
+                _srb_hooks.inject_regime_features(
+                    sym=sym,
+                    ts=ts,
+                    sym_bundle=sym_data[sym],
+                    tf_srb=self._tf_map.get("srb"),
+                    features_by_tf=features_by_tf,
+                    primary_features=primary_features,
                 )
-                if (
-                    _df_srb is not None
-                    and not _df_srb.empty
-                    and _tf_srb
-                    and _tf_srb in features_by_tf
-                ):
-                    maybe_inject_srb_experiment_features(
-                        df=_df_srb,
-                        ts=ts,
-                        exec_raw=_raw_srb,
-                        out=features_by_tf[_tf_srb],
-                    )
-                    for _k, _v in list(features_by_tf[_tf_srb].items()):
-                        if str(_k).startswith("srb_"):
-                            primary_features[_k] = _v
 
             try:
                 _pat = float(primary_features.get("atr") or 0)
@@ -2855,18 +2810,9 @@ class EventBacktester:
             except (TypeError, ValueError):
                 pass
 
-            # L3 dynamic trailing 需要最新的 wide_sr_upper_px / wide_sr_lower_px
-            # （来自 wide_sr_swing_f，默认 240 bar 窗口）。随 primary bar 同步更新。
-            for _wk in ("wide_sr_upper_px", "wide_sr_lower_px"):
-                _wv = primary_features.get(_wk)
-                if _wv is None:
-                    continue
-                try:
-                    _wf = float(_wv)
-                    if _wf == _wf:
-                        setattr(simulator, f"_{_wk}", _wf)
-                except (TypeError, ValueError):
-                    pass
+            SrbEventBacktestHooks.sync_wide_sr_levels_on_simulator(
+                simulator, primary_features
+            )
 
             # Phase D: 维护近 N primary close 的滚动缓存用于 recent_net_move_atr
             try:
@@ -2884,42 +2830,6 @@ class EventBacktester:
                 pass
 
             simulator._primary_bar_count += 1
-
-            # SRB staged 2b：每根 primary 推进 cross+EMA 确认，产生 arm 窗口
-            if (
-                _srb_staged_rt is not None
-                and _srb_tf_global
-                and "srb" in self.strategy_names
-            ):
-                _df_srb_adv = (
-                    sym_data.get(sym, {}).get("tf_features", {}).get(_srb_tf_global)
-                )
-                if _df_srb_adv is not None and not _df_srb_adv.empty:
-                    _has_srb_open = any(
-                        str(p.get("archetype", "")).lower().strip() == "srb"
-                        for p in simulator._positions.values()
-                    )
-                    _row_adv = {
-                        k: primary_features.get(k)
-                        for k in (
-                            "open",
-                            "high",
-                            "low",
-                            "close",
-                            "volume",
-                            "atr",
-                            "ema_1200_position",
-                        )
-                    }
-                    _row_adv["volume_ma"] = primary_features.get("volume_ma")
-                    _srb_staged_rt.advance(
-                        symbol=sym,
-                        df_srb=_df_srb_adv,
-                        ts=ts,
-                        bar_idx=int(simulator._primary_bar_count),
-                        row=_row_adv,
-                        has_srb_position=_has_srb_open,
-                    )
 
             # 更新 structural_price (EMA200) 用于 BPC trend_hold 结构性退出
             _ema_200_val = primary_features.get("ema_200")
@@ -3092,99 +3002,34 @@ class EventBacktester:
                             funnel["reject_daily_entry_limit"] += 1
                             continue
 
-                    # ── Exp 4c: 宽窗 SR 入场屏蔽 ──
-                    # sr_wide_entry_guard:
-                    #   enabled: true
-                    #   min_distance_atr: 2.0   # 价格到"反向"宽窗 SR < min×ATR 则拒绝新开仓
-                    #   apply_to_new_only: true # 仅拦截全新开仓，不拦加仓/反手
-                    if _arch_lc == "srb" and _is_new_entry:
-                        _wg = getattr(simulator, "_srb_wide_entry_guard", None) or {}
-                        if _wg.get("enabled"):
-                            _min_atr = float(_wg.get("min_distance_atr", 0) or 0)
-                            _atr_wg = float(entry_feats.get("atr", 0) or 0)
-                            _px_wg = float(entry_feats.get("close", 0) or 0)
-                            _side_wg = str(intent.action or "").upper()
-                            if should_reject_srb_wide_entry(
-                                _side_wg,
-                                _px_wg,
-                                _atr_wg,
-                                entry_feats.get("wide_sr_lower_px"),
-                                entry_feats.get("wide_sr_upper_px"),
-                                _min_atr,
-                            ):
-                                funnel.setdefault("reject_srb_wide_sr_too_close", 0)
-                                funnel["reject_srb_wide_sr_too_close"] += 1
-                                continue
-
-                    # SRB staged 2b：首仓需与 cross+EMA arm 同向且在窗口内（先于 open_position）
                     if (
-                        _arch_lc == "srb"
-                        and _is_new_entry
-                        and _srb_staged_rt is not None
+                        _srb_hooks is not None
+                        and _srb_hooks.reject_new_entry_wide_sr_guard(
+                            arch_lc=_arch_lc,
+                            is_new_entry=_is_new_entry,
+                            simulator=simulator,
+                            entry_feats=entry_feats,
+                            intent=intent,
+                            funnel=funnel,
+                        )
                     ):
-                        _pcm_side = str(intent.action or "").upper()
-                        if _pcm_side in ("BUY",):
-                            _pcm_side = "LONG"
-                        if _pcm_side in ("SELL",):
-                            _pcm_side = "SHORT"
-                        if not _srb_staged_rt.match_arm(
-                            sym,
-                            _pcm_side,
-                            int(simulator._primary_bar_count),
-                        ):
-                            funnel.setdefault("reject_srb_staged_2b_arm", 0)
-                            funnel["reject_srb_staged_2b_arm"] += 1
-                            continue
+                        continue
 
                     opened = simulator.open_position(
                         intent, entry_bar, entry_feats, bar_minutes=winning_bm
                     )
-                    if (
-                        opened is not None
-                        and _arch_lc == "srb"
-                        and _is_new_entry
-                        and _srb_staged_rt is not None
-                    ):
-                        _srb_staged_rt.consume_arm(sym)
+                    if _srb_hooks is not None:
+                        _srb_hooks.annotate_mother_on_open(
+                            opened=opened,
+                            arch_lc=_arch_lc,
+                            is_new_entry=_is_new_entry,
+                            simulator=simulator,
+                            entry_feats=entry_feats,
+                            entry_bar=entry_bar,
+                        )
                     if opened is not None and _entry_limit is not None and _ts_date:
                         _dk2 = (_arch_lc, _ts_date)
                         _daily_entry_counts[_dk2] = _daily_entry_counts.get(_dk2, 0) + 1
-                    if opened is not None and _arch_lc == "srb":
-                        _srb_pos = simulator._positions.get(opened)
-                        if _srb_pos is not None:
-                            _srb_side = str(_srb_pos.get("side", "")).upper()
-                            # true_sr_level.wide_fallback_atr: 窄窗紧贴入场时改用 L3 大级别锚点
-                            try:
-                                _tsl_cfg = (
-                                    self._strats["srb"].archetype.execution.raw or {}
-                                ).get("true_sr_level") or {}
-                            except Exception:
-                                _tsl_cfg = {}
-                            _fallback_atr = float(
-                                _tsl_cfg.get("wide_fallback_atr", 0) or 0
-                            )
-                            _entry_px = float(entry_bar.get("close", 0) or 0)
-                            _atr_e = float(entry_feats.get("atr", 0) or 0)
-                            _pick = pick_srb_true_sr_level(
-                                _srb_side,
-                                _entry_px,
-                                _atr_e,
-                                narrow_support=entry_feats.get("srb_sr_support"),
-                                narrow_resistance=entry_feats.get("srb_sr_resistance"),
-                                wide_lower_px=entry_feats.get("wide_sr_lower_px"),
-                                wide_upper_px=entry_feats.get("wide_sr_upper_px"),
-                                fallback_atr=_fallback_atr,
-                            )
-                            _srb_pos["_srb_true_sr_level"] = float(_pick)
-                            # Phase D: 记录母仓入场时 wide_sr_dist_atr，供加仓 wide_sr_expansion gate 比对
-                            try:
-                                _ewd = entry_feats.get("wide_sr_dist_atr")
-                                if _ewd is not None and _ewd == _ewd:
-                                    _srb_pos["_srb_entry_wide_sr_dist_atr"] = float(
-                                        _ewd
-                                    )
-                            except (TypeError, ValueError):
-                                pass
                     if opened is None:
                         _atr_open = float(entry_feats.get("atr", 0) or 0.0)
                         _dup_open = any(
