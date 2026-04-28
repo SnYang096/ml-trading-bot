@@ -14,10 +14,10 @@
 #   GHCR_TOKEN       — GitHub PAT (需 read:packages + write:packages)
 #   BINANCE_API_KEY  — Binance API Key
 #   BINANCE_API_SECRET — Binance API Secret
-#   （可选）多腿 testnet 与 run_multi_leg_live 对齐:
-#   MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY
-#   MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET
-#   未配置时跳过写入 multi-leg env 文件
+#   （可选）多腿专用主网密钥（写入 binance_mainnet.env 末尾，优先于 BINANCE_*）:
+#   MULTI_LEG_BINANCE_FUTURES_API_KEY / MULTI_LEG_BINANCE_FUTURES_API_SECRET
+#   （可选）多腿 testnet 本地文件 binance_multi_leg_testnet.env:
+#   MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY / MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET
 # =============================================================
 
 name: 🚀 Build & Deploy
@@ -127,13 +127,15 @@ jobs:
         env:
           BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
           BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+          MULTI_LEG_BINANCE_FUTURES_API_KEY: ${{ secrets.MULTI_LEG_BINANCE_FUTURES_API_KEY }}
+          MULTI_LEG_BINANCE_FUTURES_API_SECRET: ${{ secrets.MULTI_LEG_BINANCE_FUTURES_API_SECRET }}
           MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY: ${{ secrets.MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY }}
           MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET: ${{ secrets.MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: BINANCE_API_KEY,BINANCE_API_SECRET,MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY,MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET
+          envs: BINANCE_API_KEY,BINANCE_API_SECRET,MULTI_LEG_BINANCE_FUTURES_API_KEY,MULTI_LEG_BINANCE_FUTURES_API_SECRET,MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY,MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET
           script: |
             sudo mkdir -p /opt/quant-engine/live
             # 防止 Docker 将文件路径创建为目录（首次启动时 -v 会自动创建缺失路径为目录）
@@ -143,6 +145,12 @@ jobs:
             echo "✅ API keys written (binance_mainnet.env)"
             # 验证写入格式正确（行首无空格）
             sudo head -1 /opt/quant-engine/live/binance_mainnet.env | cut -c1-20
+            if [ -n "${MULTI_LEG_BINANCE_FUTURES_API_KEY}" ] && [ -n "${MULTI_LEG_BINANCE_FUTURES_API_SECRET}" ]; then
+              printf '\nMULTI_LEG_BINANCE_FUTURES_API_KEY=%s\nMULTI_LEG_BINANCE_FUTURES_API_SECRET=%s\n' \
+                "${MULTI_LEG_BINANCE_FUTURES_API_KEY}" "${MULTI_LEG_BINANCE_FUTURES_API_SECRET}" \
+                | sudo tee -a /opt/quant-engine/live/binance_mainnet.env > /dev/null
+              echo "✅ Multi-leg dedicated mainnet keys appended to binance_mainnet.env"
+            fi
             if [ -n "${MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY}" ] && [ -n "${MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET}" ]; then
               sudo rm -f /opt/quant-engine/live/binance_multi_leg_testnet.env
               printf 'MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY=%s\nMULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET=%s\n' \
@@ -181,16 +189,134 @@ jobs:
             docker tag "$IMAGE_FULL" quant-engine:latest
 
             echo ""
-            echo "=== 🔄 重启服务 ==="
-            sudo systemctl restart quant-engine
-            sleep 5
+            echo "=== 🧩 写入三进程 systemd units ==="
+            sudo tee /etc/systemd/system/quant-feature-bus.service >/dev/null <<'EOF'
+            [Unit]
+            Description=Quant market feature publisher
+            After=docker.service network-online.target
+            Requires=docker.service
 
-            if sudo systemctl is-active --quiet quant-engine; then
-              echo "✅ quant-engine 运行中"
-              sudo systemctl status quant-engine --no-pager | head -15
+            [Service]
+            Restart=always
+            RestartSec=10
+            Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+            ExecStartPre=-/usr/bin/docker rm -f quant-feature-bus
+            ExecStart=/usr/bin/docker run --rm --name quant-feature-bus \
+              -e MLBOT_LIVE_SYMBOLS \
+              -v /opt/quant-engine/live:/app/live \
+              -v /opt/quant-engine/data:/app/data \
+              quant-engine:latest \
+              bash -lc 'python scripts/run_market_feature_publisher.py \
+                --symbols "$MLBOT_LIVE_SYMBOLS" \
+                --feature-bus-root live/shared_feature_bus \
+                --live-storage-base live/highcap/data \
+                --strategies-root live/highcap/config/strategies \
+                --warmup-days 0 \
+                --max-rows 3000 \
+                --fast-bar-threshold-pct 0.03 \
+                --fast-bar-bucket-seconds 10'
+            ExecStop=/usr/bin/docker stop quant-feature-bus
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            sudo tee /etc/systemd/system/quant-engine.service >/dev/null <<'EOF'
+            [Unit]
+            Description=Quant classic live consumer
+            After=docker.service network-online.target quant-feature-bus.service
+            Requires=docker.service
+            Wants=quant-feature-bus.service
+
+            [Service]
+            Restart=always
+            RestartSec=10
+            Environment=MLBOT_FEATURE_SOURCE=bus
+            Environment=MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus
+            Environment=MLBOT_FEATURE_BUS_POLL_SECONDS=5
+            Environment=MLBOT_FEATURE_BUS_MAX_STALENESS_SECONDS=1800
+            Environment=MLBOT_FEATURE_BUS_BARS_LOOKBACK=240
+            Environment=MLBOT_LIVE_WARMUP_DAYS=0
+            ExecStartPre=-/usr/bin/docker rm -f quant-engine
+            ExecStart=/usr/bin/docker run --rm --name quant-engine \
+              --env-file /opt/quant-engine/live/binance_mainnet.env \
+              -e MLBOT_FEATURE_SOURCE \
+              -e MLBOT_FEATURE_BUS_ROOT \
+              -e MLBOT_FEATURE_BUS_POLL_SECONDS \
+              -e MLBOT_FEATURE_BUS_MAX_STALENESS_SECONDS \
+              -e MLBOT_FEATURE_BUS_BARS_LOOKBACK \
+              -e MLBOT_LIVE_WARMUP_DAYS \
+              -v /opt/quant-engine/live:/app/live \
+              -v /opt/quant-engine/data:/app/data \
+              quant-engine:latest \
+              bash live/scripts/start_live.sh highcap
+            ExecStop=/usr/bin/docker stop quant-engine
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            sudo tee /etc/systemd/system/quant-multi-leg.service >/dev/null <<'EOF'
+            [Unit]
+            Description=Quant multi-leg feature-store consumer (mainnet)
+            After=docker.service network-online.target quant-feature-bus.service
+            Requires=docker.service
+            Wants=quant-feature-bus.service
+
+            [Service]
+            Restart=always
+            RestartSec=10
+            Environment=MLBOT_MULTI_LEG_SYMBOLS=BTCUSDT
+            ExecStartPre=-/usr/bin/docker rm -f quant-multi-leg
+            ExecStart=/usr/bin/docker run --rm --name quant-multi-leg \
+              --env-file /opt/quant-engine/live/binance_mainnet.env \
+              -e MLBOT_MULTI_LEG_SYMBOLS \
+              -v /opt/quant-engine/live:/app/live \
+              -v /opt/quant-engine/data:/app/data \
+              quant-engine:latest \
+              bash -lc 'python scripts/run_multi_leg_live.py \
+                --mode mainnet \
+                --allow-shared-account \
+                --strategies chop_grid,dual_add_trend \
+                --symbols "$MLBOT_MULTI_LEG_SYMBOLS" \
+                --bar-source feature-store \
+                --feature-bus-root live/shared_feature_bus \
+                --feature-store-timeframe 2h \
+                --feature-store-execution-timeframe 1min \
+                --poll-seconds 5'
+            ExecStop=/usr/bin/docker stop quant-multi-leg
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            sudo sed -i 's/^            //' /etc/systemd/system/quant-feature-bus.service /etc/systemd/system/quant-engine.service /etc/systemd/system/quant-multi-leg.service
+            sudo systemctl daemon-reload
+            sudo systemctl enable quant-feature-bus quant-engine quant-multi-leg
+
+            echo ""
+            echo "=== 🔄 重启服务 ==="
+            sudo systemctl restart quant-feature-bus
+            sudo systemctl restart quant-engine
+            sudo systemctl restart quant-multi-leg
+            sleep 8
+
+            for svc in quant-feature-bus quant-engine; do
+              if sudo systemctl is-active --quiet "$svc"; then
+                echo "✅ $svc 运行中"
+                sudo systemctl status "$svc" --no-pager | head -15
+              else
+                echo "❌ $svc 启动失败"
+                sudo journalctl -u "$svc" --no-pager -n 30
+                exit 1
+              fi
+            done
+            if sudo systemctl is-active --quiet quant-multi-leg; then
+              echo "✅ quant-multi-leg 运行中"
+              sudo systemctl status quant-multi-leg --no-pager | head -15
             else
-              echo "❌ quant-engine 启动失败"
-              sudo journalctl -u quant-engine --no-pager -n 30
+              echo "❌ quant-multi-leg 启动失败"
+              sudo journalctl -u quant-multi-leg --no-pager -n 30
               exit 1
             fi
 
@@ -203,6 +329,8 @@ jobs:
             echo "=== 📊 部署统计 ==="
             echo "Image: $IMAGE_FULL"
             echo "Container: $(docker ps --filter name=quant-engine --format '{{.Status}}')"
+            echo "FeatureBus: $(docker ps --filter name=quant-feature-bus --format '{{.Status}}')"
+            echo "MultiLeg: $(docker ps --filter name=quant-multi-leg --format '{{.Status}}')"
             echo "Disk: $(df -h / | tail -1 | awk '{print $4}') free"
 
       - name: 📊 Sync Grafana dashboards & restart

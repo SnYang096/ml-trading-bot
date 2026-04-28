@@ -5015,20 +5015,16 @@ def _parse_pcm_stdout(output: str) -> Dict[str, Any]:
 def _load_pcm_enabled_strategies_from_constitution(
     constitution_path: Path = PROJECT_ROOT / "config/constitution/constitution.yaml",
 ) -> List[str]:
-    """Load PCM-enabled strategy allowlist from constitution.
-
-    Source of truth:
-      resource_allocation.enabled_archetypes
-    """
+    """Load PCM-enabled strategy allowlist from constitution (same as classic live)."""
     try:
         if not constitution_path.exists():
             return []
+        from src.live_data_stream.constitution_config import (
+            enabled_archetypes_from_constitution,
+        )
+
         obj = yaml.safe_load(constitution_path.read_text(encoding="utf-8")) or {}
-        ra = obj.get("resource_allocation") or {}
-        enabled = ra.get("enabled_archetypes") or []
-        if not isinstance(enabled, list):
-            return []
-        return [str(x).strip() for x in enabled if str(x).strip()]
+        return enabled_archetypes_from_constitution(obj)
     except Exception:
         return []
 

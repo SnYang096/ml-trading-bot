@@ -10,6 +10,16 @@ from src.order_management.multi_leg_feature_store_provider import (
 
 def test_feature_store_bar_provider_returns_new_events_once(tmp_path):
     writer = FeatureBusWriter(tmp_path)
+    writer.append_bar_1m(
+        "BTCUSDT",
+        {
+            "timestamp": pd.Timestamp("2024-01-01T00:01:00Z"),
+            "open": 99.0,
+            "high": 106.0,
+            "low": 98.0,
+            "close": 104.0,
+        },
+    )
     writer.append_features(
         symbol="BTCUSDT",
         timeframe="2h",
@@ -33,5 +43,9 @@ def test_feature_store_bar_provider_returns_new_events_once(tmp_path):
     assert len(first) == 1
     assert first[0].symbol == "BTCUSDT"
     assert first[0].atr == 3.0
+    assert first[0].timestamp == "2024-01-01 00:01:00+00:00"
+    assert first[0].high == 106.0
+    assert first[0].close == 104.0
     assert first[0].features["semantic_chop"] == 0.55
+    assert first[0].features["_signal_timestamp"] == "2024-01-01 00:00:00+00:00"
     assert second == []

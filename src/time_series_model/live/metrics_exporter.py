@@ -121,6 +121,13 @@ class Metrics:
             self.pcm_notional_reject_count = _NOOP
             self.pcm_notional_soft_cap = _NOOP
             self.pcm_notional_hard_cap = _NOOP
+            self.multi_leg_bars_processed = _NOOP
+            self.multi_leg_actions_total = _NOOP
+            self.multi_leg_risk_rejected_total = _NOOP
+            self.multi_leg_execution_results_total = _NOOP
+            self.multi_leg_reconciliation_issues_total = _NOOP
+            self.multi_leg_user_stream_events_total = _NOOP
+            self.multi_leg_daemon_polls_total = _NOOP
             return
 
         # ── Counters (累计值，只增不减) ──
@@ -146,6 +153,41 @@ class Metrics:
             "mlbot_orders_total",
             "Orders placed",
             ["strategy"],
+        )
+
+        self.multi_leg_bars_processed = Counter(
+            "mlbot_multi_leg_bars_processed_total",
+            "Multi-leg daemon processed bar ticks",
+            ["strategy", "symbol"],
+        )
+        self.multi_leg_actions_total = Counter(
+            "mlbot_multi_leg_actions_total",
+            "Multi-leg engine actions submitted to orchestrator",
+            ["strategy", "symbol"],
+        )
+        self.multi_leg_risk_rejected_total = Counter(
+            "mlbot_multi_leg_risk_rejected_total",
+            "Multi-leg actions rejected by risk governor",
+            ["strategy", "symbol"],
+        )
+        self.multi_leg_execution_results_total = Counter(
+            "mlbot_multi_leg_execution_results_total",
+            "Multi-leg execution adapter results (orders/fills pipeline)",
+            ["strategy", "symbol"],
+        )
+        self.multi_leg_reconciliation_issues_total = Counter(
+            "mlbot_multi_leg_reconciliation_issues_total",
+            "Multi-leg reconciliation failures (ok=false)",
+            ["strategy"],
+        )
+        self.multi_leg_user_stream_events_total = Counter(
+            "mlbot_multi_leg_user_stream_events_total",
+            "Binance user data stream execution reports routed to multi-leg",
+            ["strategy", "symbol"],
+        )
+        self.multi_leg_daemon_polls_total = Counter(
+            "mlbot_multi_leg_daemon_polls_total",
+            "Completed multi-leg daemon poll iterations (run_forever loop ticks)",
         )
 
         # ── Gauges (当前值，可升可降) ──
@@ -308,6 +350,12 @@ class Metrics:
             "mlbot_feature_critical_nan",
             "1 if critical features (atr, oi_*) are NaN, 0 otherwise",
             ["symbol", "timeframe"],
+        )
+
+        self.feature_bus_snapshot_age_seconds = Gauge(
+            "mlbot_feature_bus_snapshot_age_seconds",
+            "Age (seconds) of latest disk feature-bus snapshot per symbol",
+            ["symbol"],
         )
 
         self.feature_loader_errors = Counter(

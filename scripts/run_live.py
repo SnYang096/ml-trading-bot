@@ -1,10 +1,11 @@
 """run_live.py — Live 实盘入口
 
 GenericLiveStrategy → 配置驱动通用决策引擎
-支持 BPC/ME/SRB/TPC（及可选 LV）等 TradeIntent 策略，通过 YAML 配置驱动。
+支持 BPC/ME/SRB/TPC（及可选 LV）等 TradeIntent 策略；``resource_allocation.enabled_archetypes`` 决定参与集合。
 
-数据管线:
-  BinanceWS → MultiSymbolManager → OrderFlowListener → GenericLiveStrategy decide → OrderManager
+数据管线（唯一支持）:
+  quant-feature-bus: BinanceWS → 特征 → 磁盘 shared_feature_bus
+  本进程: 磁盘 Feature Bus → MultiSymbolManager → PCM → OrderManager（+ 可选 User Stream）
 """
 
 from __future__ import annotations
@@ -13,16 +14,28 @@ import asyncio
 import logging
 import os
 from datetime import timedelta
-from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from src.live_data_stream import StorageManager, GapFiller, MultiSymbolManager
-from src.live_data_stream.websocket_client import BinanceWebSocketClient, BinanceTick
+from src.live_data_stream.classic_feature_bus_provider import ClassicFeatureBusProvider
+from src.live_data_stream.constitution_config import (
+    enabled_archetypes_from_constitution,
+    load_constitution_dict,
+    pcm_archetype_priority_for_registry,
+    pcm_resolve_registry_key,
+    resolve_constitution_yaml,
+)
 from src.live_data_stream.order_manager_factory import init_order_manager_from_env
-from src.time_series_model.live.incremental_feature_computer import (
-    IncrementalFeatureComputer,
+from src.live_data_stream.classic_listener_feature_stack import (
+    build_extra_feature_computers_for_symbol,
+    make_primary_feature_computer_factory,
+)
+from src.live_data_stream.strategy_runtime_config import (
+    load_strategy_timeframe,
+    me_enabled_in_allowlist,
+    me_strategy_package_name,
 )
 from src.time_series_model.live.stats_collector import StatsCollector
 from src.time_series_model.live.metrics_exporter import start_metrics_server, METRICS
@@ -34,59 +47,8 @@ from src.time_series_model.core.constitution.constitution_executor import (
 logger = logging.getLogger(__name__)
 
 
-def _load_strategy_timeframe(strategies_root: str, strategy_name: str) -> str:
-    """从 meta.yaml 读取策略的 timeframe，缺失时 fallback 到 240T。"""
-    import yaml
-
-    meta_path = os.path.join(strategies_root, strategy_name, "meta.yaml")
-    try:
-        with open(meta_path) as f:
-            meta = yaml.safe_load(f) or {}
-        tf = (meta.get("strategy") or {}).get("timeframe")
-        if tf:
-            return str(tf)
-    except FileNotFoundError:
-        logger.warning("meta.yaml 不存在: %s，使用默认 240T", meta_path)
-    except Exception as e:
-        logger.warning("读取 meta.yaml 失败: %s — %s，使用默认 240T", meta_path, e)
-    return "240T"
-
-
-def _me_strategy_package_name(strategies_root: str) -> str:
-    """On-disk ME 配置目录：优先 ``me/``（研究仓布局），否则 ``me-long/``（旧 live 布局）。"""
-    for name in ("me", "me-long"):
-        base = os.path.join(strategies_root, name)
-        if os.path.isdir(base) and (
-            os.path.isfile(os.path.join(base, "meta.yaml"))
-            or os.path.isdir(os.path.join(base, "archetypes"))
-        ):
-            return name
-    return "me"
-
-
-def _me_enabled_in_allowlist(enabled_archetypes: List[str]) -> bool:
-    """宪法 enabled_archetypes 中含 me / me-long / me-short 或 ``me-*`` / ``me-long-*`` / ``me-short-*`` 即启用 ME 包。"""
-    for raw in enabled_archetypes:
-        a = str(raw).lower().strip()
-        if a in {"me", "me-long", "me-short"}:
-            return True
-        if a.startswith(("me-long-", "me-short-", "me-")):
-            return True
-    return False
-
-
 def _parse_symbols(raw: str) -> List[str]:
     return [s.strip().upper() for s in (raw or "").split(",") if s.strip()]
-
-
-def _tick_to_listener_tick(tick: BinanceTick) -> Any:
-    return SimpleNamespace(
-        price=float(tick.price),
-        size=float(tick.volume),
-        side=int(tick.side),
-        timestamp=pd.Timestamp(tick.timestamp_ms, unit="ms", tz="UTC"),
-        trade_id=tick.trade_id,
-    )
 
 
 def _build_gap_filler(storage: StorageManager):
@@ -130,85 +92,6 @@ def _build_gap_filler(storage: StorageManager):
         )
     except Exception:
         return None
-
-
-def _setup_bpc(
-    symbols: List[str],
-    storage: StorageManager,
-    gap_filler,
-    trade_size: float,
-    risk_per_trade: float = 0.0,
-):
-    """BPC 单策略模式（通过 GenericLiveStrategy + LivePCM 包装）"""
-    from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
-    from src.time_series_model.portfolio.live_pcm import LivePCM
-
-    strategies_root = os.getenv("MLBOT_STRATEGIES_ROOT", "config/strategies")
-    bar_minutes = int(os.getenv("MLBOT_BPC_BAR_MINUTES", "240"))
-    window_minutes = int(os.getenv("MLBOT_BPC_WINDOW_MINUTES", "15"))
-
-    # Archetypes directory: auto-detect features from gate/evidence/entry_filters
-    archetypes_dir = os.path.join(strategies_root, "bpc", "archetypes")
-
-    # 创建 BPC 决策引擎（使用通用 GenericLiveStrategy）
-    bpc = GenericLiveStrategy(
-        strategy_name="bpc",
-        strategies_root=strategies_root,
-        trade_size=trade_size,
-        primary_timeframe=f"{bar_minutes}T",
-        bar_minutes=bar_minutes,
-    )
-
-    # 包装进 LivePCM
-    pcm = LivePCM(
-        max_slots=int(os.getenv("MLBOT_MAX_SLOTS", "2")),
-    )
-    pcm.register("bpc", bpc)
-
-    order_manager = init_order_manager_from_env()
-
-    # 为每个 symbol 创建 IncrementalFeatureComputer (archetypes auto-detect)
-    def _make_feature_computer(symbol: str) -> IncrementalFeatureComputer:
-        return IncrementalFeatureComputer(
-            tick_window_minutes=bar_minutes,
-            bar_window_size=bar_minutes * 2,
-            archetypes_dir=archetypes_dir,
-            primary_timeframe=f"{bar_minutes}T",
-        )
-
-    manager = MultiSymbolManager(
-        symbols=symbols,
-        storage_manager=storage,
-        feature_computer_factory=_make_feature_computer,
-        gap_filler=gap_filler,
-        feature_compute_interval_minutes=window_minutes,
-        orderflow_window_minutes=window_minutes,
-        order_manager=order_manager,
-    )
-
-    # 给每个 listener 注入 LivePCM 作为 decision_handler
-    risk_per_slot = pcm.constitution.get("risk_per_slot", 0.01)
-    per_strategy_limits = pcm.constitution.get("per_strategy_limits", {})
-    for sym in symbols:
-        listener = manager.get_listener(sym)
-        if listener is None:
-            continue
-        listener.decision_handler = pcm
-        listener.order_manager = order_manager
-        listener.risk_per_slot = risk_per_slot
-        listener.per_strategy_limits = per_strategy_limits
-        if trade_size > 0:
-            listener.trade_size = trade_size
-        if risk_per_trade > 0:
-            listener.risk_per_trade = risk_per_trade
-
-    logger.info(
-        f"[bpc] Initialized via LivePCM: {len(symbols)} symbols, "
-        f"bar_minutes={bar_minutes}, window={window_minutes}min, "
-        f"risk_per_slot={risk_per_slot:.2%}, "
-        f"archetypes={pcm.registered_archetypes}"
-    )
-    return manager, pcm
 
 
 def _ccxt_symbol_to_raw(sym: str) -> str:
@@ -314,14 +197,11 @@ def _setup_three_strategies(
       SRB / TPC: 通常 120T（若相同则共用一个增量 FC；不同则各 FC）
       ME: 通常 60T
 
-    数据管线:
-      同一组 1min bars/ticks → 主 FC (BPC timeframe) + extra FC 按各策略 timeframe 重采样
+    数据管线（本进程不连行情 WS）:
+      Feature Bus 磁盘 → listener 按各 timeframe 重放特征 → PCM
     """
     from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
     from src.time_series_model.portfolio.live_pcm import LivePCM
-    from src.time_series_model.live.incremental_feature_computer import (
-        IncrementalFeatureComputer,
-    )
     from src.time_series_model.live.live_feature_plan import (
         extract_features_from_archetypes,
     )
@@ -331,113 +211,76 @@ def _setup_three_strategies(
     )
     window_minutes = int(os.getenv("MLBOT_BPC_WINDOW_MINUTES", "15"))
 
-    # ── 0. 从 constitution 读取 enabled_archetypes ──
-    import yaml as _yaml
-
-    config_root = os.path.join(strategies_root, "..")
-    constitution_yaml_path = os.getenv(
-        "MLBOT_CONSTITUTION_YAML",
-        os.path.join(config_root, "constitution", "constitution.yaml"),
-    )
-    _ALL_ARCHETYPES = ["bpc", "me", "srb", "tpc", "lv"]
-    _const_cfg = {}
-    try:
-        with open(constitution_yaml_path, "r", encoding="utf-8") as _f:
-            _const_cfg = _yaml.safe_load(_f) or {}
-    except Exception as _e:
-        logger.warning("读取 constitution.yaml 失败: %s", _e)
-
+    # ── 0. 从 constitution 读取 enabled_archetypes（与 quant-feature-bus 同源）──
+    constitution_yaml_path = resolve_constitution_yaml(strategies_root, override=None)
+    _const_cfg = load_constitution_dict(constitution_yaml_path)
     _from_const = (
-        ((_const_cfg.get("resource_allocation") or {}).get("enabled_archetypes"))
+        (_const_cfg.get("resource_allocation") or {}).get("enabled_archetypes")
         or _const_cfg.get("enabled_archetypes")
         or []
     )
-    _enabled_raw = _from_const or _ALL_ARCHETYPES
-    enabled_archetypes = [str(a).lower() for a in _enabled_raw]
+    enabled_archetypes = enabled_archetypes_from_constitution(_const_cfg)
     logger.info(
         "📋 enabled_archetypes=%s (source=%s)",
         enabled_archetypes,
         "constitution" if _from_const else "default_all",
     )
 
-    # ── 1. 从 meta.yaml 读取各策略 timeframe (不再硬编码) ──
-    me_pkg = _me_strategy_package_name(strategies_root)
-    tf_bpc = _load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
-    tf_me = _load_strategy_timeframe(strategies_root, me_pkg)
-    tf_lv = _load_strategy_timeframe(strategies_root, "lv")  # 默认 15T
-    _srb_on = "srb" in enabled_archetypes
-    _tpc_on = "tpc" in enabled_archetypes
-    tf_srb = _load_strategy_timeframe(strategies_root, "srb") if _srb_on else ""
-    tf_tpc = _load_strategy_timeframe(strategies_root, "tpc") if _tpc_on else ""
+    # ── 1. BPC 主周期（主 FC 时钟）；其余 timeframe 来自各已注册策略 meta.yaml ──
+    me_pkg = me_strategy_package_name(strategies_root)
+    tf_bpc = load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
 
     def _tf_to_bar_minutes(tf: str) -> int:
         """'240T' → 240, '60T' → 60"""
         return int(tf.replace("T", ""))
 
     bar_minutes_bpc = _tf_to_bar_minutes(tf_bpc)
-    bar_minutes_me = _tf_to_bar_minutes(tf_me)
-    bar_minutes_lv = _tf_to_bar_minutes(tf_lv)
 
-    # ── 初始化已启用的策略对象 ──
-    _strategy_map = {}
-    _tf_map = {}
-    if "bpc" in enabled_archetypes:
-        _strategy_map["bpc"] = GenericLiveStrategy(
-            strategy_name="bpc",
-            strategies_root=strategies_root,
-            trade_size=trade_size,
-            primary_timeframe=tf_bpc,
-            bar_minutes=bar_minutes_bpc,
-        )
-        _tf_map["bpc"] = tf_bpc
-    if _me_enabled_in_allowlist(enabled_archetypes):
-        _strategy_map[me_pkg] = GenericLiveStrategy(
-            strategy_name=me_pkg,
-            strategies_root=strategies_root,
-            trade_size=trade_size,
-            primary_timeframe=tf_me,
-            bar_minutes=bar_minutes_me,
-        )
-        _tf_map[me_pkg] = tf_me
-    if _srb_on:
-        _strategy_map["srb"] = GenericLiveStrategy(
-            strategy_name="srb",
-            strategies_root=strategies_root,
-            trade_size=trade_size,
-            primary_timeframe=tf_srb,
-            bar_minutes=_tf_to_bar_minutes(tf_srb),
-        )
-        _tf_map["srb"] = tf_srb
-    if _tpc_on:
-        _strategy_map["tpc"] = GenericLiveStrategy(
-            strategy_name="tpc",
-            strategies_root=strategies_root,
-            trade_size=trade_size,
-            primary_timeframe=tf_tpc,
-            bar_minutes=_tf_to_bar_minutes(tf_tpc),
-        )
-        _tf_map["tpc"] = tf_tpc
-    if "lv" in enabled_archetypes:
-        _strategy_map["lv"] = GenericLiveStrategy(
-            strategy_name="lv",
-            strategies_root=strategies_root,
-            trade_size=trade_size,
-            primary_timeframe=tf_lv,
-            bar_minutes=bar_minutes_lv,
-        )
-        _tf_map["lv"] = tf_lv
+    # ── 初始化 PCM 注册策略（与 Step 9.5 / feature-bus 同源：仅 ``enabled_archetypes``）──
+    logger.info(
+        "📋 LivePCM register candidates (enabled_archetypes)=%s", enabled_archetypes
+    )
 
-    # 将1个变量方便后续使用
-    bpc = _strategy_map.get("bpc")
-    me = _strategy_map.get(me_pkg)
-    lv = _strategy_map.get("lv")
+    _strategy_map: Dict[str, Any] = {}
+    _tf_map: Dict[str, str] = {}
+    for arch in enabled_archetypes:
+        rk = pcm_resolve_registry_key(str(arch), me_pkg, me_enabled_in_allowlist)
+        if not rk or rk in _strategy_map:
+            continue
+        disk = me_pkg if rk == me_pkg else rk
+        strat_dir = os.path.join(strategies_root, disk)
+        if not os.path.isdir(strat_dir):
+            logger.warning("PCM: skip %s (missing directory %s)", arch, strat_dir)
+            continue
+        tf = load_strategy_timeframe(strategies_root, disk)
+        bm = _tf_to_bar_minutes(tf)
+        _strategy_map[rk] = GenericLiveStrategy(
+            strategy_name=disk,
+            strategies_root=strategies_root,
+            trade_size=trade_size,
+            primary_timeframe=tf,
+            bar_minutes=bm,
+        )
+        _tf_map[rk] = tf
 
-    logger.info("✅ 策略初始化完成: %s", list(_strategy_map.keys()))
+    if "bpc" not in _strategy_map:
+        raise ValueError(
+            "constitution resource_allocation.enabled_archetypes must include `bpc` "
+            "and strategies/bpc must exist (primary feature computer uses "
+            "strategies/bpc/archetypes)."
+        )
+
+    logger.info("✅ PCM 策略注册完成: %s", list(_strategy_map.keys()))
 
     # ── 2. 创建 PCM 仲裁层 (注册策略 + timeframe 绑定) ──
-    # ME 磁盘包名为 me/（旧版 me-long/）；优先级含 ME 与 ME-LONG 兼容历史 intent
+    pcm_priority = pcm_archetype_priority_for_registry(
+        _const_cfg,
+        registry_keys=set(_strategy_map.keys()),
+        me_pkg=me_pkg,
+        me_enabled_in_allowlist_fn=me_enabled_in_allowlist,
+    )
     pcm = LivePCM(
-        archetype_priority=["LV", "TPC", "SRB", "ME", "ME-LONG", "BPC"],
+        archetype_priority=pcm_priority,
         constitution_yaml=constitution_yaml_path,
     )
     for _name, _strat in _strategy_map.items():
@@ -447,45 +290,8 @@ def _setup_three_strategies(
 
     order_manager = init_order_manager_from_env()
 
-    # ── 3. 创建特征计算器 (per-symbol, per-timeframe) ──
+    # ── 3. 特征计算器：主 BPC 时钟 + 与 BPC 同周期的已注册策略列合并进主 FC ──
     bpc_archetypes = os.path.join(strategies_root, "bpc", "archetypes")
-    srb_archetypes = os.path.join(strategies_root, "srb", "archetypes")
-    tpc_archetypes = os.path.join(strategies_root, "tpc", "archetypes")
-    me_archetypes = os.path.join(strategies_root, me_pkg, "archetypes")
-    lv_archetypes = os.path.join(strategies_root, "lv", "archetypes")
-
-    srb_extra_feat_set: set = set()
-    srb_extra_feat_nodes: list = []
-    if _srb_on:
-        try:
-            srb_extra_feat_set, srb_extra_feat_nodes = extract_features_from_archetypes(
-                srb_archetypes
-            )
-            logger.info(
-                "  SRB features: %d columns, %d nodes",
-                len(srb_extra_feat_set),
-                len(srb_extra_feat_nodes),
-            )
-        except Exception as e:
-            logger.warning("  SRB feature extraction failed: %s", e)
-
-    tpc_extra_feat_set: set = set()
-    tpc_extra_feat_nodes: list = []
-    if _tpc_on:
-        try:
-            tpc_extra_feat_set, tpc_extra_feat_nodes = extract_features_from_archetypes(
-                tpc_archetypes
-            )
-            logger.info(
-                "  TPC features: %d columns, %d nodes",
-                len(tpc_extra_feat_set),
-                len(tpc_extra_feat_nodes),
-            )
-        except Exception as e:
-            logger.warning("  TPC feature extraction failed: %s", e)
-
-    # BPC/ME 的 features.yaml 仍可能引用 fer_* 节点：若磁盘上存在 fer/archetypes，
-    # 合并进主 timeframe FC，但不注册 FER 策略（宪法已下线 FER）。
     fer_archetypes = os.path.join(strategies_root, "fer", "archetypes")
     fer_extra_feat_set: set = set()
     fer_extra_feat_nodes: list = []
@@ -501,74 +307,35 @@ def _setup_three_strategies(
         except Exception as e:
             logger.warning("  FER archetype extraction for primary FC failed: %s", e)
 
-    def _make_feature_computer_4h(symbol: str) -> IncrementalFeatureComputer:
-        """Primary FC: BPC + 可选 FER 特征列（同 bar 周期，无 FER 策略）。"""
-        fc = IncrementalFeatureComputer(
-            tick_window_minutes=bar_minutes_bpc,
-            bar_window_size=bar_minutes_bpc * 2,
-            archetypes_dir=bpc_archetypes,
-            primary_timeframe=tf_bpc,
-        )
-        if fer_extra_feat_set:
-            fc.live_feature_set |= fer_extra_feat_set
-            fc.live_feature_nodes = sorted(
-                set(fc.live_feature_nodes) | set(fer_extra_feat_nodes)
-            )
-        return fc
-
-    def _make_srb_tpc_fc(
-        symbol: str, tf: str, base_archetypes_dir: str
-    ) -> IncrementalFeatureComputer:
-        """SRB/TPC 共用或分 timeframe 的增量 FC；在各自 tf 上合并特征列需求。"""
-        bm = _tf_to_bar_minutes(tf)
-        fc = IncrementalFeatureComputer(
-            tick_window_minutes=bm,
-            bar_window_size=bm * 2,
-            archetypes_dir=base_archetypes_dir,
-            primary_timeframe=tf,
-        )
-        merged: set = set()
-        nodes: list = []
-        if _srb_on and tf == tf_srb:
-            merged |= srb_extra_feat_set
-            nodes.extend(srb_extra_feat_nodes)
-        if _tpc_on and tf == tf_tpc:
-            merged |= tpc_extra_feat_set
-            nodes.extend(tpc_extra_feat_nodes)
-        if merged:
-            fc.live_feature_set |= merged
-            fc.live_feature_nodes = sorted(set(nodes))
-        return fc
-
-    def _make_feature_computer_me(symbol: str) -> IncrementalFeatureComputer:
-        """ME FC: timeframe 从 meta.yaml；可选并入 FER-side 列（与 BPC 主 FC 一致）。"""
-        fc = IncrementalFeatureComputer(
-            tick_window_minutes=bar_minutes_me,
-            bar_window_size=bar_minutes_me * 2,
-            archetypes_dir=me_archetypes,
-            primary_timeframe=tf_me,
-        )
-        if fer_extra_feat_set:
-            fc.live_feature_set |= fer_extra_feat_set
-            fc.live_feature_nodes = sorted(
-                set(fc.live_feature_nodes) | set(fer_extra_feat_nodes)
-            )
-        return fc
-
-    def _make_feature_computer_lv(symbol: str) -> IncrementalFeatureComputer:
-        """LV FC: 15T timeframe 从 meta.yaml 读取"""
-        return IncrementalFeatureComputer(
-            tick_window_minutes=bar_minutes_lv,
-            bar_window_size=bar_minutes_lv * 2,
-            archetypes_dir=lv_archetypes,
-            primary_timeframe=tf_lv,
+    same_tf_other_dirs: List[str] = []
+    for rk, tf in _tf_map.items():
+        if rk == "bpc" or tf != tf_bpc:
+            continue
+        disk = me_pkg if rk == me_pkg else rk
+        ad = os.path.join(strategies_root, disk, "archetypes")
+        if os.path.isdir(ad):
+            same_tf_other_dirs.append(ad)
+    if same_tf_other_dirs:
+        logger.info(
+            "  primary FC also merges archetypes dirs (same tf as BPC): %s",
+            same_tf_other_dirs,
         )
 
-    # ── 4. MultiSymbolManager (primary FC = 4H) ──
+    primary_fc_factory = make_primary_feature_computer_factory(
+        strategies_root=strategies_root,
+        tf_bpc=tf_bpc,
+        bar_minutes_bpc=bar_minutes_bpc,
+        bpc_archetypes_dir=bpc_archetypes,
+        fer_feat=fer_extra_feat_set,
+        fer_nodes=fer_extra_feat_nodes,
+        same_tf_other_dirs=same_tf_other_dirs,
+    )
+
+    # ── 4. MultiSymbolManager (primary FC = BPC 周期) ──
     manager = MultiSymbolManager(
         symbols=symbols,
         storage_manager=storage,
-        feature_computer_factory=_make_feature_computer_4h,
+        feature_computer_factory=primary_fc_factory,
         gap_filler=gap_filler,
         feature_compute_interval_minutes=window_minutes,
         orderflow_window_minutes=window_minutes,
@@ -594,11 +361,7 @@ def _setup_three_strategies(
         "✅ StatsCollector 启用: %s (auto_cleanup=%s)", stats_db_path, auto_cleanup
     )
 
-    # 创建 ConstitutionExecutor + RuntimeState
-    constitution_yaml_path = os.getenv(
-        "MLBOT_CONSTITUTION_YAML",
-        os.path.join(config_root, "constitution", "constitution.yaml"),
-    )
+    # 创建 ConstitutionExecutor + RuntimeState（路径与上方 enabled_archetypes 一致）
     constitution_exec = ConstitutionExecutor(constitution_yaml=constitution_yaml_path)
     runtime_st = constitution_exec.load_runtime_state()
     logger.info("✅ ConstitutionExecutor 初始化: %s", constitution_yaml_path)
@@ -606,6 +369,7 @@ def _setup_three_strategies(
     # ── 启动时 slot 同步: 从 Binance 查真实持仓，清理残留 stale slot ──
     _sync_slots_with_exchange(order_manager, constitution_exec, runtime_st, symbols)
 
+    logged_extra_timeframes: Optional[List[str]] = None
     for sym in symbols:
         listener = manager.get_listener(sym)
         if listener is None:
@@ -625,27 +389,25 @@ def _setup_three_strategies(
             listener.risk_per_trade = risk_per_trade
         # 注入监控统计收集器
         listener.stats_collector = stats_collector
-        # 注入 ME / LV / SRB+TPC 的 extra FC（按 timeframe 键路由）
-        _extra_fcs = {}
-        if me is not None:
-            _extra_fcs[tf_me] = _make_feature_computer_me(sym)
-        if lv is not None:
-            _extra_fcs[tf_lv] = _make_feature_computer_lv(sym)
-        if _srb_on and _tpc_on and tf_srb == tf_tpc:
-            _extra_fcs[tf_srb] = _make_srb_tpc_fc(sym, tf_srb, srb_archetypes)
-        elif _srb_on and _tpc_on and tf_srb != tf_tpc:
-            _extra_fcs[tf_srb] = _make_srb_tpc_fc(sym, tf_srb, srb_archetypes)
-            _extra_fcs[tf_tpc] = _make_srb_tpc_fc(sym, tf_tpc, tpc_archetypes)
-        elif _srb_on:
-            _extra_fcs[tf_srb] = _make_srb_tpc_fc(sym, tf_srb, srb_archetypes)
-        elif _tpc_on:
-            _extra_fcs[tf_tpc] = _make_srb_tpc_fc(sym, tf_tpc, tpc_archetypes)
-        listener.extra_feature_computers = _extra_fcs
+        _xf = build_extra_feature_computers_for_symbol(
+            strategies_root=strategies_root,
+            registry_tf_map=_tf_map,
+            me_pkg=me_pkg,
+            tf_bpc=tf_bpc,
+            fer_feat=fer_extra_feat_set,
+            fer_nodes=fer_extra_feat_nodes,
+        )
+        listener.extra_feature_computers = _xf
+        if logged_extra_timeframes is None:
+            logged_extra_timeframes = list(_xf.keys())
 
     logger.info(
-        f"✅ 多策略实盘启动完成: {len(symbols)} symbols, "
-        f"BPC={tf_bpc}, SRB={tf_srb or '-'}, TPC={tf_tpc or '-'}, ME={tf_me}, "
-        f"window={window_minutes}min, archetypes={pcm.registered_archetypes}"
+        "✅ 多策略实盘启动完成: %s symbols primary=%s extras_tf=%s window=%smin pcm=%s",
+        len(symbols),
+        tf_bpc,
+        logged_extra_timeframes or [],
+        window_minutes,
+        pcm.registered_archetypes,
     )
     return manager, pcm
 
@@ -956,6 +718,246 @@ def _run_retrain_check() -> None:
             logger.warning("[retrain-check] %s failed: %s", strat, exc)
 
 
+def _manager_primary_timeframe(manager: MultiSymbolManager) -> str:
+    for listener in manager.listeners.values():
+        tf = getattr(
+            getattr(listener, "feature_computer", None), "primary_timeframe", None
+        )
+        if tf:
+            return str(tf)
+    return "240T"
+
+
+def _manager_feature_timeframes(
+    manager: MultiSymbolManager, pcm: Any, primary_timeframe: str
+) -> List[str]:
+    tfs: List[str] = [primary_timeframe]
+    for listener in manager.listeners.values():
+        for tf in getattr(listener, "extra_feature_computers", {}).keys():
+            if str(tf) not in tfs:
+                tfs.append(str(tf))
+    for tf in getattr(pcm, "_strategy_timeframes", {}).values():
+        if str(tf) not in tfs:
+            tfs.append(str(tf))
+    return tfs
+
+
+def _add_bus_bars_to_listener(listener: Any, bars: List[Dict[str, Any]]) -> None:
+    if not bars:
+        return
+    for bar in bars:
+        try:
+            listener.memory_window.add(dict(bar))
+        except Exception:
+            logger.debug("[%s] feature-bus bar memory update skipped", listener.symbol)
+    try:
+        listener.current_1min_bar = dict(bars[-1])
+        listener._bar_count += len(bars)
+    except Exception:
+        pass
+
+
+def _enforce_bus_execution_bars(
+    listener: Any,
+    bars: List[Dict[str, Any]],
+    feature_context: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Run software exits on 1m/fast bars without triggering new entries."""
+    if not bars:
+        return
+    _add_bus_bars_to_listener(listener, bars)
+    tracker = getattr(listener, "_position_tracker", None)
+    order_manager = getattr(listener, "order_manager", None)
+    if tracker is None or order_manager is None:
+        return
+    for bar in bars:
+        features = dict(feature_context or {})
+        features.update(
+            {
+                "timestamp": bar.get("timestamp"),
+                "open": bar.get("open"),
+                "high": bar.get("high"),
+                "low": bar.get("low"),
+                "close": bar.get("close"),
+                "price": bar.get("close"),
+            }
+        )
+        closed = tracker.enforce_all(features=features)
+        if closed:
+            logger.info(
+                "[%s] 1m bus execution closed positions: %s", listener.symbol, closed
+            )
+
+
+async def _run_external_feature_bus_mode(
+    *,
+    manager: MultiSymbolManager,
+    pcm: Any,
+    symbols: List[str],
+    bg_gap_task: Optional[asyncio.Task],
+) -> None:
+    """Run classic live decisions from disk Feature Bus instead of market WS."""
+
+    feature_bus_root = os.getenv("MLBOT_FEATURE_BUS_ROOT", "live/shared_feature_bus")
+    poll_seconds = float(os.getenv("MLBOT_FEATURE_BUS_POLL_SECONDS", "5"))
+    max_stale = float(os.getenv("MLBOT_FEATURE_BUS_MAX_STALENESS_SECONDS", "1800"))
+    primary_tf = _manager_primary_timeframe(manager)
+    timeframes = _manager_feature_timeframes(manager, pcm, primary_tf)
+    provider = ClassicFeatureBusProvider(
+        feature_bus_root=feature_bus_root,
+        symbols=symbols,
+        primary_timeframe=primary_tf,
+        timeframes=timeframes,
+        max_staleness_seconds=max_stale,
+        bars_lookback=int(os.getenv("MLBOT_FEATURE_BUS_BARS_LOOKBACK", "240")),
+    )
+    latest_features: Dict[str, Dict[str, Any]] = {}
+    logger.info(
+        "🚌 External Feature Bus mode: root=%s primary=%s timeframes=%s poll=%.1fs",
+        feature_bus_root,
+        primary_tf,
+        timeframes,
+        poll_seconds,
+    )
+
+    if manager.user_stream is not None:
+        await manager.user_stream.start()
+
+    async def _periodic_market_update() -> None:
+        interval = int(os.getenv("MLBOT_MARKET_DATA_INTERVAL", "30"))
+        _mode_map = {"OFFLINE": 0, "DEGRADED": 1, "NORMAL": 2}
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, METRICS.update_market_data, symbols)
+                await loop.run_in_executor(None, METRICS.update_account_data)
+                cur_mode = manager.mode_manager.get_current_mode()
+                METRICS.system_mode.set(_mode_map.get(cur_mode.value, 0))
+                for sym in symbols:
+                    listener = manager.get_listener(sym)
+                    METRICS.ws_connected.labels(symbol=sym).set(1)
+                    if listener and listener.last_feature_compute_time:
+                        now = pd.Timestamp.now(tz="UTC")
+                        age = (now - listener.last_feature_compute_time).total_seconds()
+                        METRICS.last_bar_age.labels(symbol=sym).set(age)
+                _first_listener = manager.get_listener(symbols[0]) if symbols else None
+                if _first_listener:
+                    _rs = getattr(_first_listener, "runtime_state", None)
+                    _psl = getattr(_first_listener, "per_strategy_limits", {}) or {}
+                    _slots_cfg = (pcm.constitution or {}).get("slots", {})
+                    _global_max = int(_slots_cfg.get("slot_count", 2))
+                    METRICS.update_slot_metrics(_rs, _psl, _global_max)
+                try:
+                    _pcm_stats = pcm.get_stats() if pcm is not None else {}
+                    METRICS.update_pcm_notional_metrics(
+                        runtime=_pcm_stats.get("notional_runtime") or {},
+                        policy=(
+                            (_pcm_stats.get("constitution") or {}).get(
+                                "notional_policy"
+                            )
+                        )
+                        or {},
+                    )
+                except Exception:
+                    logger.debug("PCM notional metrics 更新异常", exc_info=True)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.debug("市场数据更新异常: %s", exc)
+                await asyncio.sleep(60)
+
+    async def _daily_funding_oi_refresh() -> None:
+        interval = 12 * 3600
+        await asyncio.sleep(interval)
+        while True:
+            try:
+                from scripts.refresh_funding_oi_data import refresh_all
+
+                logger.info("📊 定时刷新 Funding/OI 数据...")
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    None, refresh_all, symbols, "data", 30
+                )
+                logger.info(
+                    "✅ Funding/OI 刷新完成: FR=%d files, OI=%d files",
+                    result["funding_rate_files"],
+                    result["oi_files"],
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("定时 Funding/OI 刷新失败: %s", exc)
+            await asyncio.sleep(interval)
+
+    async def _periodic_retrain_check() -> None:
+        await asyncio.sleep(300)
+        while True:
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, _run_retrain_check)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("重训检测异常: %s", exc)
+            await asyncio.sleep(6 * 3600)
+
+    market_task = asyncio.create_task(_periodic_market_update())
+    funding_oi_task = asyncio.create_task(_daily_funding_oi_refresh())
+    retrain_task = asyncio.create_task(_periodic_retrain_check())
+
+    try:
+        while True:
+            for sym in symbols:
+                snap_age = provider.reader.latest_snapshot_age_seconds(
+                    symbol=sym, timeframe=primary_tf
+                )
+                if snap_age is not None:
+                    METRICS.feature_bus_snapshot_age_seconds.labels(symbol=sym).set(
+                        snap_age
+                    )
+            for symbol, bars in provider.poll_bars().items():
+                listener = manager.get_listener(symbol)
+                if listener is None:
+                    continue
+                context = latest_features.get(symbol)
+                if context is None:
+                    bundle = provider.latest_feature_bundle(symbol)
+                    context = bundle.get(primary_tf, {})
+                    if context:
+                        latest_features[symbol] = context
+                _enforce_bus_execution_bars(listener, bars, context)
+
+            events = provider.poll()
+            for event in events:
+                listener = manager.get_listener(event.symbol)
+                if listener is None:
+                    continue
+                _enforce_bus_execution_bars(listener, event.bars, event.features)
+                latest_features[event.symbol] = dict(event.features)
+                listener.last_feature_compute_time = event.timestamp
+                listener._handle_features(
+                    dict(event.features),
+                    features_by_timeframe=(
+                        event.features_by_timeframe
+                        if len(event.features_by_timeframe) > 1
+                        else None
+                    ),
+                )
+                METRICS.last_bar_age.labels(symbol=event.symbol).set(0)
+            await asyncio.sleep(poll_seconds)
+    except KeyboardInterrupt:
+        logger.info("External Feature Bus mode interrupted")
+    finally:
+        market_task.cancel()
+        funding_oi_task.cancel()
+        retrain_task.cancel()
+        if bg_gap_task:
+            bg_gap_task.cancel()
+        if manager.user_stream is not None:
+            await manager.user_stream.stop()
+
+
 async def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -967,11 +969,6 @@ async def main() -> None:
         raise ValueError("No symbols provided. Set MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT")
 
     storage_base = os.getenv("MLBOT_LIVE_STORAGE_BASE", "data/live_storage")
-    use_futures = os.getenv("MLBOT_LIVE_USE_FUTURES", "true").lower() in {
-        "1",
-        "true",
-        "yes",
-    }
     # warmup 只需恢复 memory_window + 时间戳（7 天足够）
     # 特征计算通过 compute_features_batch() 从磁盘直接读取 90+ 天数据
     warmup_days = int(os.getenv("MLBOT_LIVE_WARMUP_DAYS", "7"))
@@ -993,16 +990,9 @@ async def main() -> None:
     metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
     start_metrics_server(port=metrics_port)
 
-    # 选择启动模式: bpc (单策略) 或 three_strategies (三策略多时间框架)
-    live_mode = os.getenv("MLBOT_LIVE_MODE", "bpc")
-    if live_mode == "three_strategies":
-        manager, pcm = _setup_three_strategies(
-            symbols, storage, gap_filler, trade_size, risk_per_trade
-        )
-    else:
-        manager, pcm = _setup_bpc(
-            symbols, storage, gap_filler, trade_size, risk_per_trade
-        )
+    manager, pcm = _setup_three_strategies(
+        symbols, storage, gap_filler, trade_size, risk_per_trade
+    )
 
     # Warmup 与启动质量闸门
     if warmup_days > 0:
@@ -1082,129 +1072,19 @@ async def main() -> None:
     # ── 计算 Evidence 分位数阈值（从历史数据）──
     _compute_initial_quantiles(pcm, manager, storage)
 
-    await manager.start_all()
-
-    ws_client = BinanceWebSocketClient(symbols=symbols, use_futures=use_futures)
-
-    def _handle_tick(tick: BinanceTick) -> None:
-        listener_tick = _tick_to_listener_tick(tick)
-        manager.on_trade_tick(tick.symbol, listener_tick)
-        # 更新 WebSocket 连接状态指标
-        METRICS.ws_connected.labels(symbol=tick.symbol).set(1)
-
-    ws_client.add_callback(_handle_tick)
-
-    # ── 定期获取市场数据 & 账户数据 & 连接状态 ──
-    async def _periodic_market_update() -> None:
-        """30s 一次获取 Binance 市场数据 (funding rate / mark price / OI / account)"""
-        interval = int(os.getenv("MLBOT_MARKET_DATA_INTERVAL", "30"))
-        _mode_map = {"OFFLINE": 0, "DEGRADED": 1, "NORMAL": 2}
-        while True:
-            try:
-                await asyncio.sleep(interval)
-                # 在线程池中执行同步 HTTP 请求，避免阻塞事件循环
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, METRICS.update_market_data, symbols)
-                await loop.run_in_executor(None, METRICS.update_account_data)
-                # 更新系统模式指标
-                cur_mode = manager.mode_manager.get_current_mode()
-                METRICS.system_mode.set(_mode_map.get(cur_mode.value, 0))
-                # 更新 WebSocket 连接状态
-                ws_health = ws_client.get_health_status()
-                ws_ok = 1 if ws_health.get("status") in ("healthy", "degraded") else 0
-                for sym in symbols:
-                    METRICS.ws_connected.labels(symbol=sym).set(ws_ok)
-                # 更新数据新鲜度（距上次特征计算的秒数）
-                now = pd.Timestamp.now(tz="UTC")
-                for sym in symbols:
-                    listener = manager.get_listener(sym)
-                    if listener and listener.last_feature_compute_time:
-                        age = (now - listener.last_feature_compute_time).total_seconds()
-                        METRICS.last_bar_age.labels(symbol=sym).set(age)
-                # 更新 per-strategy slot 指标
-                _first_listener = manager.get_listener(symbols[0]) if symbols else None
-                if _first_listener:
-                    _rs = getattr(_first_listener, "runtime_state", None)
-                    _psl = getattr(_first_listener, "per_strategy_limits", {}) or {}
-                    _slots_cfg = (pcm.constitution or {}).get("slots", {})
-                    _global_max = int(_slots_cfg.get("slot_count", 2))
-                    METRICS.update_slot_metrics(_rs, _psl, _global_max)
-                # 更新 PCM 名义敞口风控运行时指标
-                try:
-                    _pcm_stats = pcm.get_stats() if pcm is not None else {}
-                    _notional_rt = _pcm_stats.get("notional_runtime") or {}
-                    _notional_pol = (
-                        (_pcm_stats.get("constitution") or {}).get("notional_policy")
-                    ) or {}
-                    METRICS.update_pcm_notional_metrics(
-                        runtime=_notional_rt,
-                        policy=_notional_pol,
-                    )
-                except Exception:
-                    logger.debug("PCM notional metrics 更新异常", exc_info=True)
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.debug("市场数据更新异常: %s", exc)
-                await asyncio.sleep(60)  # 出错后等 60s 再重试
-
-    market_task = asyncio.create_task(_periodic_market_update())
-
-    # ── 每日刷新 Funding Rate / OI parquet 数据 ──
-    async def _daily_funding_oi_refresh() -> None:
-        """12h 一次增量刷新 funding_rate / OI parquet (Binance 公开 API)"""
-        interval = 12 * 3600  # 12 小时
-        await asyncio.sleep(interval)  # 首次延迟: 启动时 start_live.sh 已刷新
-        while True:
-            try:
-                from scripts.refresh_funding_oi_data import refresh_all
-
-                logger.info("📊 定时刷新 Funding/OI 数据...")
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(
-                    None, refresh_all, symbols, "data", 30
-                )
-                logger.info(
-                    "✅ Funding/OI 刷新完成: FR=%d files, OI=%d files",
-                    result["funding_rate_files"],
-                    result["oi_files"],
-                )
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.warning("定时 Funding/OI 刷新失败: %s", exc)
-            await asyncio.sleep(interval)
-
-    funding_oi_task = asyncio.create_task(_daily_funding_oi_refresh())
-
-    # ── 定期重训触发检测 (6h) ──
-    async def _periodic_retrain_check() -> None:
-        """6h 一次检查重训触发条件, 更新 Prometheus"""
-        await asyncio.sleep(300)  # 首次延迟 5min 等系统稳定
-        while True:
-            try:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, _run_retrain_check)
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.warning("重训检测异常: %s", exc)
-            await asyncio.sleep(6 * 3600)
-
-    retrain_task = asyncio.create_task(_periodic_retrain_check())
-
-    stop_event = asyncio.Event()
-    try:
-        await ws_client.run(stop_event)
-    except KeyboardInterrupt:
-        stop_event.set()
-    finally:
-        market_task.cancel()
-        funding_oi_task.cancel()
-        retrain_task.cancel()
-        if bg_gap_task:
-            bg_gap_task.cancel()
-        await manager.stop_all()
+    feature_source = os.getenv("MLBOT_FEATURE_SOURCE", "bus").strip().lower()
+    if feature_source not in {"bus", "feature-bus", "feature_store", "feature-store"}:
+        raise SystemExit(
+            "MLBOT_FEATURE_SOURCE must be bus / feature-bus / feature-store. "
+            "Classic live only consumes the disk feature bus; run quant-feature-bus "
+            "(scripts/run_market_feature_publisher.py) for ticks → features → disk."
+        )
+    await _run_external_feature_bus_mode(
+        manager=manager,
+        pcm=pcm,
+        symbols=symbols,
+        bg_gap_task=bg_gap_task,
+    )
 
 
 if __name__ == "__main__":

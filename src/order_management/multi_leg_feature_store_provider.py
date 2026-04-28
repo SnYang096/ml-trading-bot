@@ -42,34 +42,73 @@ class FeatureStoreBarProvider:
         *,
         feature_bus_root: str | Path,
         timeframe: str = "2h",
+        execution_timeframe: str = "1min",
     ) -> None:
         self.reader = FeatureBusReader(feature_bus_root)
         self.timeframe = str(timeframe)
-        self._last_seen: Dict[str, pd.Timestamp] = {}
+        self.execution_timeframe = str(execution_timeframe)
+        self._last_seen_features: Dict[str, pd.Timestamp] = {}
+        self._last_seen_bars: Dict[str, pd.Timestamp] = {}
 
     def latest_closed_bars(self, symbols: Iterable[str]) -> List[MultiLegBarEvent]:
         out: List[MultiLegBarEvent] = []
         for raw_symbol in symbols:
             symbol = str(raw_symbol).upper()
-            row = self.reader.latest_features(
-                symbol=symbol,
-                timeframe=self.timeframe,
-                after=self._last_seen.get(symbol),
+            signal = self.reader.latest_features(
+                symbol=symbol, timeframe=self.timeframe
             )
-            if row is None:
+            if signal is None:
                 continue
-            ts = pd.Timestamp(row["timestamp"])
-            self._last_seen[symbol] = ts
-            close = _as_float(row, ["close", "Close"], 0.0)
+            signal_ts = pd.Timestamp(signal["timestamp"])
+            bars = self.reader.latest_bars_1m(
+                symbol=symbol,
+                after=self._last_seen_bars.get(symbol),
+            )
+            if not bars.empty:
+                bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True)
+                self._last_seen_bars[symbol] = bars["timestamp"].max()
+                for _, bar in bars.iterrows():
+                    out.append(self._event_from_signal_and_bar(symbol, signal, bar))
+                self._last_seen_features[symbol] = signal_ts
+                continue
+
+            if self._last_seen_features.get(symbol) == signal_ts:
+                continue
+            self._last_seen_features[symbol] = signal_ts
+            close = _as_float(signal, ["close", "Close"], 0.0)
             out.append(
                 MultiLegBarEvent(
                     symbol=symbol,
-                    timestamp=str(ts),
-                    high=_as_float(row, ["high", "High"], close),
-                    low=_as_float(row, ["low", "Low"], close),
+                    timestamp=str(signal_ts),
+                    high=_as_float(signal, ["high", "High"], close),
+                    low=_as_float(signal, ["low", "Low"], close),
                     close=close,
-                    atr=_as_float(row, ["atr14", "atr", "ATR", "volatility_atr"], 0.0),
-                    features=_features_from_row(row),
+                    atr=_as_float(
+                        signal, ["atr14", "atr", "ATR", "volatility_atr"], 0.0
+                    ),
+                    features=_features_from_row(signal),
                 )
             )
         return out
+
+    def _event_from_signal_and_bar(
+        self, symbol: str, signal: pd.Series, bar: pd.Series
+    ) -> MultiLegBarEvent:
+        close = _as_float(bar, ["close", "Close"], _as_float(signal, ["close"], 0.0))
+        features = _features_from_row(signal)
+        features.update(
+            {
+                "_signal_timestamp": str(pd.Timestamp(signal["timestamp"])),
+                "_execution_timeframe": self.execution_timeframe,
+                "_execution_bar_kind": str(bar.get("_bar_kind", "1min")),
+            }
+        )
+        return MultiLegBarEvent(
+            symbol=symbol,
+            timestamp=str(pd.Timestamp(bar["timestamp"])),
+            high=_as_float(bar, ["high", "High"], close),
+            low=_as_float(bar, ["low", "Low"], close),
+            close=close,
+            atr=_as_float(signal, ["atr14", "atr", "ATR", "volatility_atr"], 0.0),
+            features=features,
+        )

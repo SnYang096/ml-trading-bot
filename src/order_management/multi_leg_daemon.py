@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Protocol
 
 from src.order_management.multi_leg_orchestrator import MultiLegLiveOrchestrator
+from src.time_series_model.live.metrics_exporter import METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,27 @@ class MultiLegLiveDaemon:
             )
             if report.reconciliation is not None and not report.reconciliation.ok:
                 reconciliation_issue_count += 1
+            try:
+                METRICS.multi_leg_bars_processed.labels(
+                    strategy=rt.name, symbol=rt.symbol
+                ).inc(1)
+                METRICS.multi_leg_actions_total.labels(
+                    strategy=rt.name, symbol=rt.symbol
+                ).inc(len(actions))
+                METRICS.multi_leg_risk_rejected_total.labels(
+                    strategy=rt.name, symbol=rt.symbol
+                ).inc(len(report.risk.rejected))
+                METRICS.multi_leg_execution_results_total.labels(
+                    strategy=rt.name, symbol=rt.symbol
+                ).inc(
+                    len(report.execution_results) + len(report.reconciliation_results)
+                )
+                if report.reconciliation is not None and not report.reconciliation.ok:
+                    METRICS.multi_leg_reconciliation_issues_total.labels(
+                        strategy=rt.name
+                    ).inc(1)
+            except Exception:
+                logger.debug("multi-leg metrics update skipped", exc_info=True)
 
         return MultiLegDaemonReport(
             bars_seen=bars_seen,
@@ -113,6 +135,10 @@ class MultiLegLiveDaemon:
         iterations = 0
         while self._running:
             report = self.run_once()
+            try:
+                METRICS.multi_leg_daemon_polls_total.inc(1)
+            except Exception:
+                logger.debug("multi-leg poll metric skipped", exc_info=True)
             logger.info(
                 "multi-leg daemon tick: bars=%s actions=%s rejected=%s executed=%s reconcile_issues=%s",
                 report.bars_seen,

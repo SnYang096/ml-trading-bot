@@ -46,7 +46,7 @@
 
 1. **先用磁盘共享**：`scripts/run_market_feature_publisher.py` 负责 Binance WS、1m bar、60T/120T/240T/2h feature snapshots，并原子写入 `live/shared_feature_bus/`。
 2. **多腿读 feature-store**：`scripts/run_multi_leg_live.py --bar-source feature-store` 直接读取 `live/shared_feature_bus/features/2h/*.parquet`，避免第二条 market WS 与重复 tick buffer。
-3. **经典先可继续现有 WS**：等多腿 feature-store 稳定后，再把 `run_live.py` 改成 external feature mode；这样上线风险最低。
+3. **经典读 Feature Bus**：`MLBOT_FEATURE_SOURCE=bus` 时，`scripts/run_live.py` 不再启动 market WS，而是轮询 `live/shared_feature_bus/features/{TIMEFRAME}/*.parquet`，再走原来的 `LivePCM` / `OrderManager`。
 4. **何时才值得做 IPC/单 WS 中继**：如果磁盘轮询延迟、IO 或跨机器分发成为瓶颈，再升级 SQLite WAL / Unix socket / NATS；不要第一版就上复杂队列。
 
 磁盘 Feature Bus 布局：
@@ -58,7 +58,7 @@ live/shared_feature_bus/
   latest/{kind}/{SYMBOL}.json
 ```
 
-写入采用「临时文件 → rename」原子替换；消费者只读完整 parquet，并按 timestamp 去重。
+写入采用「临时文件 → rename」原子替换；消费者只读完整 parquet，并按 timestamp 去重。经典 bus 模式默认使用 `MLBOT_FEATURE_BUS_MAX_STALENESS_SECONDS=1800` 做 freshness fail-closed；过旧特征不会触发决策。publisher 额外启用 **fast execution bar**：任意 tick 到来时，只要相对当前 10s 微窗口 open 波动超过 3%，立即写一条 `_bar_kind=fast_intraminute` 的补充执行 bar；标准 1m bar 仍照常写出，不被改写。
 
 ---
 
@@ -111,9 +111,15 @@ sudo journalctl -u quant-engine -n 80 --no-pager
 
 ---
 
-## 5. 服务器侧（Feature Bus + 多腿：第二/第三进程示例）
+## 5. 服务器侧（三进程：Feature Bus + 经典 + 多腿）
 
-以下仅为 **示例**；路径与 unit 名按你方规范调整。
+现网 workflow 会刷新以下 systemd units：
+
+- `quant-feature-bus.service`：唯一 market WS，写 `live/shared_feature_bus/`
+- `quant-engine.service`：经典策略，`MLBOT_FEATURE_SOURCE=bus`
+- `quant-multi-leg.service`：多腿 testnet，`--bar-source feature-store`（仅当 `/opt/quant-engine/live/binance_multi_leg_testnet.env` 存在时启动）
+
+以下命令片段用于理解 unit 语义；实际以 `.github/workflows/deploy.yml` 写入的 unit 为准。
 
 行情/特征发布进程（推荐先跑）：
 
@@ -132,6 +138,19 @@ ExecStart=/usr/bin/docker run --rm \
   --live-storage-base data/live_storage \
   --warmup-days 0
 ```
+
+经典进程消费 Feature Bus（替代经典 market WS）：
+
+```ini
+# /etc/systemd/system/quant-engine.service（示例差异）
+[Service]
+Environment=MLBOT_FEATURE_SOURCE=bus
+Environment=MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus
+Environment=MLBOT_FEATURE_BUS_POLL_SECONDS=5
+Environment=MLBOT_FEATURE_BUS_MAX_STALENESS_SECONDS=1800
+```
+
+开启后，`run_live.py` 仍会初始化原来的 `LivePCM` / `OrderManager` / User Stream，但不会启动 `BinanceWebSocketClient`；特征与 1m bars 来自 `quant-feature-bus`。
 
 多腿进程消费 Feature Bus：
 
@@ -156,6 +175,8 @@ ExecStart=/usr/bin/docker run --rm \
 上线前请确认：
 
 - 合约账户 **双向持仓（hedge）** 与脚本要求一致（非 shadow 时 orchestrator 会要求 hedge）。
+- 经典 bus 模式依赖 `quant-feature-bus` 已写出经典策略所需 timeframe（如 `240T`、`120T`、`60T`）；缺失 timeframe 会导致对应策略被 PCM 跳过。
+- 经典与多腿都会读取 `bars_1min` 作为执行时钟；慢周期 feature row 只作为 signal context。fast execution bar 仅用于更快执行止盈/止损，不用于重写标准 1m 特征历史。
 - **`--bar-source feature-store`** 依赖 `quant-feature-bus` 已写出 `features/2h/{SYMBOL}.parquet`；若无新 timestamp，多腿循环会保持空转等待。
 - **`--bar-source websocket`** 仍可作为 fallback，但会重新打开一条 market WS 并维护自己的 tick/feature buffer。
 - 多腿 **SQLite** 路径若启用：使用 `--multi-leg-db-path` 指向持久卷（见脚本 `--help`）。

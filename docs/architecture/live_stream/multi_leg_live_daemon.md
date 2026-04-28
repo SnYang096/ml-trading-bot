@@ -98,6 +98,38 @@ Binance User Data Stream (WS)
 
 `--bar-source parquet` 用于回放/影子；`--bar-source websocket` 复用经典 live 的底层行情栈（`BinanceWebSocketClient` / `MultiSymbolManager` / `OrderFlowListener` / `IncrementalFeatureComputer`），但不进入 `GenericLiveStrategy` / `LivePCM` / `OrderManager`。
 
+### 单行情源 Feature Bus 模式
+
+若希望一台机器只保留一个 market WebSocket，可运行独立发布进程：
+
+```text
+run_market_feature_publisher.py
+-> live/shared_feature_bus/bars_1min/*.parquet
+-> live/shared_feature_bus/features/{TIMEFRAME}/*.parquet
+```
+
+随后两个消费者都读同一份已闭合快照：
+
+```text
+经典 run_live.py
+  MLBOT_FEATURE_SOURCE=bus
+  -> FeatureBusReader
+  -> LivePCM / OrderManager
+
+多腿 run_multi_leg_live.py
+  --bar-source feature-store
+  -> FeatureBusReader
+  -> MultiLegLiveOrchestrator
+```
+
+此模式下，`run_live.py` 不再启动 market `BinanceWebSocketClient`，但仍保留 User Stream、PCM、`OrderManager` 与持仓管理；多腿继续使用独立账户/独立进程边界。
+
+执行时钟与信号时钟分离：
+
+- `features/{TIMEFRAME}` 是慢信号（如 `240T`、`120T`、`60T`、`2h`）。
+- `bars_1min` 是执行时钟。经典 bus 模式用它驱动软件止盈/止损检查；多腿 `feature-store` 用它驱动 grid fill、target exit、dual_add target/add 等执行动作。
+- publisher 在任意 tick 到来时检测当前 10s 微窗口；只要价格相对该窗口 open 波动超过 3%，立即额外写一条 `_bar_kind=fast_intraminute` 的补充执行 bar。标准 1m bar 不被覆盖，后续仍正常写出。
+
 守护进程入口示例：
 
 ```bash

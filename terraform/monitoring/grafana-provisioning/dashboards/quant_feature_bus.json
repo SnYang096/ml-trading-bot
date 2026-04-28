@@ -1,0 +1,104 @@
+{
+    "annotations": {"list": []},
+    "editable": true,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [
+        {
+            "title": "📊 Overview",
+            "url": "/d/quant-engine-main",
+            "type": "link",
+            "icon": "apps",
+            "targetBlank": false
+        }
+    ],
+    "panels": [
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s",
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": null},
+                            {"color": "yellow", "value": 120},
+                            {"color": "red", "value": 600}
+                        ]
+                    }
+                }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "id": 1,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_feature_bus_snapshot_age_seconds",
+                    "legendFormat": "{{symbol}}"
+                }
+            ],
+            "title": "Feature bus 快照年龄 (磁盘 latest/*.json)",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s",
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": null},
+                            {"color": "yellow", "value": 120},
+                            {"color": "red", "value": 600}
+                        ]
+                    }
+                }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+            "id": 2,
+            "options": {
+                "orientation": "horizontal",
+                "displayMode": "gradient",
+                "reduceOptions": {"calcs": ["lastNotNull"]}
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_feature_bus_snapshot_age_seconds",
+                    "legendFormat": "{{symbol}}"
+                }
+            ],
+            "title": "当前快照滞后 (按 symbol)",
+            "type": "bargauge"
+        },
+        {
+            "description": "经典 live 在 bus 模式下处理决策后归零；与上行「磁盘快照年龄」对照可区分 publisher 延迟与消费者处理延迟。",
+            "fieldConfig": {"defaults": {"unit": "s"}},
+            "gridPos": {"h": 7, "w": 24, "x": 0, "y": 8},
+            "id": 3,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_last_bar_age_seconds",
+                    "legendFormat": "{{symbol}}"
+                }
+            ],
+            "title": "最后处理的 bar / 特征年龄 (quant-engine)",
+            "type": "timeseries"
+        }
+    ],
+    "refresh": "15s",
+    "schemaVersion": 39,
+    "tags": ["trading", "quant", "feature-bus"],
+    "templating": {"list": []},
+    "time": {"from": "now-6h", "to": "now"},
+    "timepicker": {},
+    "timezone": "utc",
+    "title": "🚌 Feature Bus / 经典 bus",
+    "uid": "quant-feature-bus",
+    "version": 1
+}

@@ -1,0 +1,224 @@
+{
+    "annotations": {"list": []},
+    "editable": true,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [
+        {
+            "title": "📊 Overview",
+            "url": "/d/quant-engine-main",
+            "type": "link",
+            "icon": "apps",
+            "targetBlank": false
+        },
+        {
+            "title": "📈 策略 · 特征",
+            "url": "/d/quant-strategies-features",
+            "type": "link",
+            "icon": "graph-bar",
+            "targetBlank": false
+        },
+        {
+            "title": "🚌 Feature Bus",
+            "url": "/d/quant-feature-bus",
+            "type": "link",
+            "icon": "bolt",
+            "targetBlank": false
+        }
+    ],
+    "panels": [
+        {
+            "collapsed": false,
+            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+            "id": 800,
+            "title": "🦵 多腿守护进程（统计）",
+            "type": "row"
+        },
+        {
+            "description": "run_forever 每完成一次 run_once 计 +1；用于观察轮询是否卡住。",
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 7, "w": 12, "x": 0, "y": 1},
+            "id": 801,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "single"}
+            },
+            "targets": [
+                {
+                    "expr": "rate(mlbot_multi_leg_daemon_polls_total[5m])",
+                    "legendFormat": "polls/s"
+                }
+            ],
+            "title": "Daemon 轮询速率",
+            "type": "timeseries"
+        },
+        {
+            "description": "累计轮询次数（单调递增）。",
+            "fieldConfig": {"defaults": {"unit": "none"}},
+            "gridPos": {"h": 7, "w": 12, "x": 12, "y": 1},
+            "id": 802,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "single"}
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_multi_leg_daemon_polls_total",
+                    "legendFormat": "total polls"
+                }
+            ],
+            "title": "Daemon 轮询累计",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 8},
+            "id": 810,
+            "title": "Bar / 动作 / 风控",
+            "type": "row"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 9},
+            "id": 811,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_bars_processed_total[5m]))",
+                    "legendFormat": "{{strategy}} {{symbol}}"
+                }
+            ],
+            "title": "已处理 bar（按策略·合约）",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 9},
+            "id": 812,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total[5m]))",
+                    "legendFormat": "actions {{strategy}} {{symbol}}"
+                }
+            ],
+            "title": "提交动作速率",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 17},
+            "id": 813,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_risk_rejected_total[5m]))",
+                    "legendFormat": "rejected {{strategy}} {{symbol}}"
+                }
+            ],
+            "title": "风控拒绝速率",
+            "type": "timeseries"
+        },
+        {
+            "description": "拒绝数 / 动作数，按策略·合约聚合（密集开仓时关注是否异常升高）。",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "max": 1,
+                    "min": 0
+                }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 17},
+            "id": 814,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_risk_rejected_total[5m])) / (sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total[5m])) + 1e-9)",
+                    "legendFormat": "reject ratio {{strategy}} {{symbol}}"
+                }
+            ],
+            "title": "风控拒绝占比（近似）",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 25},
+            "id": 820,
+            "title": "执行 / 对账 / User Stream",
+            "type": "row"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 7, "w": 12, "x": 0, "y": 26},
+            "id": 821,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_execution_results_total[5m]))",
+                    "legendFormat": "{{strategy}} {{symbol}}"
+                }
+            ],
+            "title": "执行结果事件速率",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 7, "w": 12, "x": 12, "y": 26},
+            "id": 822,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy) (rate(mlbot_multi_leg_reconciliation_issues_total[5m]))",
+                    "legendFormat": "{{strategy}}"
+                }
+            ],
+            "title": "对账异常（ok=false）",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 7, "w": 24, "x": 0, "y": 33},
+            "id": 823,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_user_stream_events_total[5m]))",
+                    "legendFormat": "{{strategy}} {{symbol}}"
+                }
+            ],
+            "title": "User Stream 成交流入",
+            "type": "timeseries"
+        }
+    ],
+    "refresh": "15s",
+    "schemaVersion": 39,
+    "tags": ["trading", "quant", "multi-leg"],
+    "templating": {"list": []},
+    "time": {"from": "now-6h", "to": "now"},
+    "timepicker": {},
+    "timezone": "utc",
+    "title": "🦵 Multi-leg 统计",
+    "uid": "quant-multi-leg",
+    "version": 1
+}

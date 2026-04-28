@@ -60,14 +60,18 @@ def test_current_strategy_status():
     fer_imported = "GenericLiveStrategy" in content and 'strategy_name="fer"' in content
     me_imported = "GenericLiveStrategy" in content and 'strategy_name="me"' in content
 
-    pcm_registered_bpc = 'pcm.register("bpc", bpc)' in content
+    pcm_yaml_loop = (
+        "for arch in enabled_archetypes" in content and "pcm.register(_name" in content
+    )
+    pcm_registered_bpc = pcm_yaml_loop or 'pcm.register("bpc", bpc)' in content
     pcm_registered_fer = 'pcm.register("fer", fer)' in content
-    pcm_registered_me = 'pcm.register("me", me)' in content
+    pcm_registered_me = pcm_yaml_loop or 'pcm.register("me", me)' in content
 
     print(f"   BPC 导入 (GenericLiveStrategy): {'✅' if bpc_imported else '❌'}")
     print(f"   FER 导入 (GenericLiveStrategy): {'✅' if fer_imported else '❌'}")
     print(f"   ME 导入 (GenericLiveStrategy): {'✅' if me_imported else '❌'}")
     print()
+    print(f"   PCM 宪法驱动注册循环: {'✅' if pcm_yaml_loop else '❌'}")
     print(f"   BPC 注册: {'✅' if pcm_registered_bpc else '❌'}")
     print(f"   FER 注册: {'✅' if pcm_registered_fer else '❌'}")
     print(f"   ME 注册: {'✅' if pcm_registered_me else '❌'}")
@@ -114,15 +118,17 @@ def test_current_strategy_status():
         ]
     )
 
-    registered_count = sum([pcm_registered_bpc, pcm_registered_fer, pcm_registered_me])
+    registered_count = sum([pcm_registered_bpc, pcm_registered_me])
+    if pcm_registered_fer:
+        registered_count += 1
 
     print("4. 总体结论:")
     print(f"   ✅ 已实现策略: {implemented_count}/3")
-    print(f"   ✅ 已注册策略: {registered_count}/3")
+    print(f"   ✅ PCM 注册路径: {registered_count}/2 (BPC+ME 必须; FER 可选)")
     print()
 
-    if implemented_count == 3 and registered_count == 3:
-        print("🎉 结论: 可以同时启动 BPC + FER + ME")
+    if implemented_count == 3 and pcm_registered_bpc and pcm_registered_me:
+        print("🎉 结论: BPC+ME 多策略路径就绪（FER 为可选/历史）")
         return True
     else:
         print("❌ 结论: 无法同时启动")
@@ -134,15 +140,8 @@ def test_current_strategy_status():
                 if not os.path.exists(v["live_strategy"])
             ]
             print(f"     - 缺少实现实盘策略: {', '.join(missing)}")
-        if registered_count < 3:
-            unregistered = []
-            if not pcm_registered_bpc:
-                unregistered.append("BPC")
-            if not pcm_registered_fer:
-                unregistered.append("FER")
-            if not pcm_registered_me:
-                unregistered.append("ME")
-            print(f"     - 未在 run_live.py 中注册: {', '.join(unregistered)}")
+        if not pcm_registered_bpc or not pcm_registered_me:
+            print("     - run_live.py 未检测到 BPC/ME 的 PCM 注册路径")
         return False
 
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Iterable
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.order_management.grid_execution_adapter import GridExecutionResult
 from src.order_management.multi_leg_daemon import (
@@ -168,3 +169,31 @@ def test_daemon_can_route_same_bar_to_two_strategy_runtimes() -> None:
     assert report.action_count == 2
     assert engine_a.calls == 1
     assert engine_b.calls == 1
+
+
+def test_run_forever_increments_poll_metric_once_per_iteration() -> None:
+    bar = MultiLegBarEvent(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01 00:00:00+00:00",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={},
+    )
+    engine = FakeEngine()
+    adapter = _adapter()
+    daemon = MultiLegLiveDaemon(
+        bar_provider=FakeProvider([bar]),
+        runtimes=[_runtime("dual_add_trend", "BTCUSDT", engine, adapter)],
+        poll_seconds=0.01,
+    )
+    poll_inc = MagicMock()
+    with patch(
+        "src.order_management.multi_leg_daemon.METRICS.multi_leg_daemon_polls_total"
+    ) as poll_ctr:
+        poll_ctr.inc = poll_inc
+        asyncio.run(daemon.run_forever(max_iterations=3))
+
+    assert poll_inc.call_count == 3
+    assert all(c.args[0] == 1 for c in poll_inc.call_args_list)

@@ -382,38 +382,6 @@ class TestLivePCMSlotControl:
         assert len(out) == 1
 
 
-class TestLivePCMDynamicSlots:
-
-    def test_dynamic_slot_step2_and_step3_for_bpc(self):
-        pcm = LivePCM(max_slots=3)
-        pcm._constitution["risk_per_slot"] = 0.01
-        pcm._constitution["per_strategy_limits"] = {"bpc": {"max_slots": 3}}
-        pcm._constitution["dynamic_slot_policy"] = {
-            "total_risk_cap": 0.10,
-            "bpc": {
-                "enabled": True,
-                "base_slots": 1,
-                "max_slots": 3,
-                "step2": {
-                    "max_drawdown": 0.08,
-                    "max_daily_loss": 0.03,
-                    "min_active_bpc_slots": 1,
-                },
-                "step3": {
-                    "max_drawdown": 0.05,
-                    "max_daily_loss": 0.02,
-                    "min_active_bpc_slots": 2,
-                },
-            },
-        }
-        pcm._latest_features = {"drawdown": 0.07, "daily_loss": 0.02}
-        pcm._slot_evidence = {"BTCUSDT:bpc": 0.9}
-        assert pcm._max_slots_for_strategy("bpc") == 2
-        pcm._latest_features = {"drawdown": 0.04, "daily_loss": 0.01}
-        pcm._slot_evidence = {"BTCUSDT:bpc": 0.9, "ETHUSDT:bpc": 0.8}
-        assert pcm._max_slots_for_strategy("bpc") == 3
-
-
 class TestLivePCMDeterministicSelection:
 
     def test_larger_timeframe_wins_same_symbol_archetype(self):

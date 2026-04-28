@@ -167,6 +167,25 @@ class FeatureBusReader:
             return None
         return df.sort_values("timestamp").iloc[-1]
 
+    def latest_snapshot_age_seconds(
+        self, *, symbol: str, timeframe: str
+    ) -> Optional[float]:
+        """Return seconds since the writer's ``latest/features/<tf>/`` JSON timestamp.
+
+        Lightweight (reads one small JSON file); used for Prometheus bus health.
+        """
+        tf = normalize_timeframe(timeframe)
+        meta = self.root / "latest" / f"features/{tf}" / f"{symbol.upper()}.json"
+        if not meta.exists():
+            return None
+        try:
+            raw = json.loads(meta.read_text(encoding="utf-8"))
+            ts = _utc_timestamp(raw.get("timestamp"))
+        except (OSError, ValueError, TypeError, KeyError):
+            return None
+        now = pd.Timestamp.now(tz="UTC")
+        return max(0.0, float((now - ts).total_seconds()))
+
     def latest_bars_1m(
         self, *, symbol: str, after: Optional[pd.Timestamp] = None
     ) -> pd.DataFrame:

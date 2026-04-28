@@ -155,21 +155,21 @@ slots:
 #   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
+  # 经典 LivePCM 注册 + Step 9.5 PCM 联合回测白名单（与 pipeline strategy_scope 交集）唯一来源
+  # 列表顺序 = 同 bar 多 archetype 时 PCM 仲裁优先级（除非另写 intent_selection_policy.archetype_priority）
   enabled_archetypes:
-    # PCM 联合事件回测策略白名单（与 pipeline strategy_scope 交集生效）
     # 牛市 5x / 长侧实验需启用 long；短侧保持并列以便联合 PCM
     - bpc
-    - fbf
-    - me
-    - msr
-    - srb
     - tpc
+    - srb
+    - me
+    - fbf
+    - msr
 
   per_strategy_limits:
-    # ── BPC 方向拆分 (方案A: 共享全局slot互斥竞争) ──
-    # bpc-long 和 bpc-short 各独立占 1 slot，全局 4 slots 防止同时过多开仓
+    # ── BPC：PCM 侧每 archetype 最多同时占用的 slot 数（跨 symbol 合计）
     bpc:
-      max_slots: 5 # BPC 方向拆分: long 侧最多 1 slot
+      max_slots: 5 # 调大可让多 symbol 同时有机会开仓（仍受全局 slots.slot_count 等约束）
       max_risk_per_trade: 0.01 # 肥尾主仓: 首枪 2.00% 风险；加仓次数与 execution.add_position 对齐
       allow_add_position: true # BPC 趋势延续允许加仓
       max_add_times: 3 # 宪法上限；触发与梯度见 archetypes/execution.yaml
@@ -220,16 +220,19 @@ resource_allocation:
       max_risk_per_trade: 0.0025 # LV 极端波动反噬快, 预算进一步下调到 0.25%
       allow_add_position: false # LV 不加仓
 
-  intent_selection_policy:
-    archetype_priority: [bpc, tpc, srb, me, fbf, msr]
+  # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。
 
-  # 同 symbol 同策略家族默认只允许主方向（由 BTC close vs ema_200 决定）
-  direction_policy:
-    enabled: true
-    mode: ema200_single_direction
-    close_feature: close
-    ema_feature: ema_200
-    debounce_bars: 3
-    default_side: both
-    fer_reverse_allowed: false
-    reverse_exempt_families: [crf]  # CRF fade/mean-reversion 需双向时保留
+# -----------------------------------------------------------------------------
+# 4) Multi-leg account (separate Binance API keys; run_multi_leg_live.py)
+# -----------------------------------------------------------------------------
+multi_leg:
+  strategies:
+    - chop_grid
+    - dual_add_trend
+  unit_notional: 100.0
+  risk_limits:
+    max_gross_notional: 2000
+    max_net_notional: 1000
+    max_symbol_gross_notional: 800
+    max_symbol_net_notional: 400
+    max_resting_orders: 60

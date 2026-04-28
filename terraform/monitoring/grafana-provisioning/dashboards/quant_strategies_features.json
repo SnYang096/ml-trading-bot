@@ -1,0 +1,259 @@
+{
+    "annotations": {"list": []},
+    "editable": true,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [
+        {
+            "title": "📊 Overview",
+            "url": "/d/quant-engine-main",
+            "type": "link",
+            "icon": "apps",
+            "targetBlank": false
+        },
+        {
+            "title": "📡 Signal Pipeline",
+            "url": "/d/quant-signal-pipeline",
+            "type": "link",
+            "icon": "bolt",
+            "targetBlank": false
+        },
+        {
+            "title": "🚌 Feature Bus",
+            "url": "/d/quant-feature-bus",
+            "type": "link",
+            "icon": "bolt",
+            "targetBlank": false
+        },
+        {
+            "title": "🦵 Multi-leg",
+            "url": "/d/quant-multi-leg",
+            "type": "link",
+            "icon": "dashboard",
+            "targetBlank": false
+        }
+    ],
+    "panels": [
+        {
+            "collapsed": false,
+            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+            "id": 700,
+            "title": "各策略 · 信号与下单",
+            "type": "row"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
+            "id": 701,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy) (rate(mlbot_signals_total[5m]))",
+                    "legendFormat": "{{strategy}}"
+                }
+            ],
+            "title": "信号生成速率",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 1},
+            "id": 702,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy) (rate(mlbot_orders_total[5m]))",
+                    "legendFormat": "{{strategy}}"
+                }
+            ],
+            "title": "下单速率",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 9},
+            "id": 703,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (stage, strategy) (rate(mlbot_funnel_total[5m]))",
+                    "legendFormat": "{{strategy}} {{stage}}"
+                }
+            ],
+            "title": "漏斗各层速率（按策略）",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 17},
+            "id": 710,
+            "title": "Slot · Gate",
+            "type": "row"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": null},
+                            {"color": "yellow", "value": 1}
+                        ]
+                    }
+                }
+            },
+            "gridPos": {"h": 6, "w": 12, "x": 0, "y": 18},
+            "id": 711,
+            "options": {
+                "displayMode": "gradient",
+                "orientation": "horizontal",
+                "reduceOptions": {"calcs": ["lastNotNull"]}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy) (mlbot_strategy_slots_active)",
+                    "legendFormat": "{{strategy}}"
+                }
+            ],
+            "title": "当前活跃 Slot（按策略）",
+            "type": "bargauge"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 6, "w": 12, "x": 12, "y": 18},
+            "id": 712,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy) (rate(mlbot_gate_rejected_total[5m]))",
+                    "legendFormat": "{{strategy}}"
+                }
+            ],
+            "title": "Gate 拒绝速率",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24},
+            "id": 720,
+            "title": "特征健康（symbol · timeframe）",
+            "type": "row"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "max": 1,
+                    "min": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": null},
+                            {"color": "yellow", "value": 0.05},
+                            {"color": "red", "value": 0.2}
+                        ]
+                    }
+                }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 25},
+            "id": 721,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_feature_nan_ratio",
+                    "legendFormat": "{{symbol}} {{timeframe}}"
+                }
+            ],
+            "title": "特征 NaN 占比",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {
+                "defaults": {
+                    "max": 1,
+                    "min": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": null},
+                            {"color": "red", "value": 1}
+                        ]
+                    }
+                }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 25},
+            "id": 722,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_feature_critical_nan",
+                    "legendFormat": "{{symbol}} {{timeframe}}"
+                }
+            ],
+            "title": "关键特征缺失（1=异常）",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "ops"}},
+            "gridPos": {"h": 7, "w": 12, "x": 0, "y": 33},
+            "id": 723,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (symbol, timeframe, node) (rate(mlbot_feature_loader_errors_total[15m]))",
+                    "legendFormat": "{{symbol}} {{timeframe}} {{node}}"
+                }
+            ],
+            "title": "特征加载/计算错误（rate）",
+            "type": "timeseries"
+        },
+        {
+            "fieldConfig": {"defaults": {"unit": "s"}},
+            "gridPos": {"h": 7, "w": 12, "x": 12, "y": 33},
+            "id": 724,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_last_bar_age_seconds",
+                    "legendFormat": "{{symbol}}"
+                }
+            ],
+            "title": "经典引擎 last bar 年龄",
+            "type": "timeseries"
+        }
+    ],
+    "refresh": "15s",
+    "schemaVersion": 39,
+    "tags": ["trading", "quant", "strategies", "features"],
+    "templating": {"list": []},
+    "time": {"from": "now-6h", "to": "now"},
+    "timepicker": {},
+    "timezone": "utc",
+    "title": "📈 策略与特征",
+    "uid": "quant-strategies-features",
+    "version": 1
+}

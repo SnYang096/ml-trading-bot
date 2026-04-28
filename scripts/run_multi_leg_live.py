@@ -12,7 +12,7 @@ positions.
   ``OrderManager`` (see that file’s docstring).
 - Multi-leg: this script — ``--bar-source parquet`` for replay/shadow, or
   ``--bar-source websocket`` to reuse the classic market-data WebSocket stack
-  for slow signal features. In ``--mode testnet``, it also starts **Futures User
+  for slow signal features. In   ``--mode testnet`` or ``--mode mainnet``, it also starts **Futures User
   Data Stream WebSocket** (``BinanceUserStream``) for fills/order updates into
   ``MultiLegLiveOrchestrator.on_execution_report``.
 
@@ -72,6 +72,13 @@ from src.order_management.multi_leg_reconciliation import (  # noqa: E402
 from src.order_management.multi_leg_risk_governor import (  # noqa: E402
     MultiLegPortfolioRiskGovernor,
     MultiLegRiskLimits,
+)
+from src.live_data_stream.constitution_config import (  # noqa: E402
+    apply_multi_leg_args_from_constitution,
+)
+from src.time_series_model.live.metrics_exporter import (  # noqa: E402
+    start_metrics_server,
+    METRICS,
 )
 from src.time_series_model.live.chop_grid_live_engine import (
     ChopGridLiveEngine,
@@ -153,6 +160,38 @@ def _make_api(mode: str, *, allow_shared_account: bool = False) -> Any:
         api = MockBinanceAPI()
         api.hedge_mode = True
         return api
+    if mode == "mainnet":
+        api_key = os.getenv("MULTI_LEG_BINANCE_FUTURES_API_KEY", "") or os.getenv(
+            "MULTI_LEG_BINANCE_API_KEY", ""
+        )
+        api_secret = os.getenv("MULTI_LEG_BINANCE_FUTURES_API_SECRET", "") or os.getenv(
+            "MULTI_LEG_BINANCE_API_SECRET", ""
+        )
+        using_shared = False
+        if (not api_key or not api_secret) and allow_shared_account:
+            api_key = os.getenv("BINANCE_API_KEY", "") or os.getenv(
+                "BINANCE_FUTURES_API_KEY", ""
+            )
+            api_secret = os.getenv("BINANCE_API_SECRET", "") or os.getenv(
+                "BINANCE_FUTURES_API_SECRET", ""
+            )
+            using_shared = bool(api_key and api_secret)
+        if not api_key or not api_secret:
+            raise RuntimeError(
+                "mainnet mode requires API keys: set "
+                "MULTI_LEG_BINANCE_FUTURES_API_KEY/SECRET (dedicated futures account) "
+                "or pass --allow-shared-account to reuse BINANCE_API_KEY/SECRET."
+            )
+        if using_shared:
+            print(
+                "WARNING: run_multi_leg_live.py is reusing BINANCE_* for mainnet; "
+                "prefer MULTI_LEG_BINANCE_FUTURES_API_KEY/SECRET for isolation.",
+                file=sys.stderr,
+            )
+        return BinanceAPI(
+            api_key=api_key, api_secret=api_secret, testnet=False, use_proxy=None
+        )
+    # testnet
     api_key = os.getenv(
         "MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY",
         "",
@@ -187,6 +226,7 @@ def _make_api(mode: str, *, allow_shared_account: bool = False) -> Any:
 def build_daemon(
     args: argparse.Namespace,
 ) -> Tuple[MultiLegLiveDaemon, Any, MultiLegStorage | None, str | None]:
+    apply_multi_leg_args_from_constitution(args)
     symbols = _parse_symbols(args.symbols)
     strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
     api = _make_api(args.mode, allow_shared_account=args.allow_shared_account)
@@ -199,7 +239,11 @@ def build_daemon(
             mode=args.mode,
             strategies=strategies,
             symbols=symbols,
-            account_label="multi_leg_testnet" if args.mode == "testnet" else "shadow",
+            account_label=(
+                "multi_leg_testnet"
+                if args.mode == "testnet"
+                else ("multi_leg_mainnet" if args.mode == "mainnet" else "shadow")
+            ),
             config=vars(args),
         )
     risk_limits = MultiLegRiskLimits(
@@ -213,6 +257,7 @@ def build_daemon(
         provider = FeatureStoreBarProvider(
             feature_bus_root=args.feature_bus_root,
             timeframe=args.feature_store_timeframe,
+            execution_timeframe=args.feature_store_execution_timeframe,
         )
     elif args.bar_source == "websocket":
         provider = MultiLegWebSocketBarProvider(
@@ -303,12 +348,13 @@ def parse_args() -> argparse.Namespace:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Testnet keys: prefer MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY and "
-            "MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET for a dedicated account "
-            "parallel to run_live.py; otherwise BINANCE_FUTURES_TESTNET_* is used."
+            "Mainnet: MULTI_LEG_BINANCE_FUTURES_API_KEY/SECRET or "
+            "--allow-shared-account + BINANCE_API_KEY/SECRET. "
+            "Testnet: MULTI_LEG_BINANCE_FUTURES_TESTNET_* or shared "
+            "BINANCE_FUTURES_TESTNET_*."
         ),
     )
-    p.add_argument("--mode", choices=["shadow", "testnet"], default="shadow")
+    p.add_argument("--mode", choices=["shadow", "testnet", "mainnet"], default="shadow")
     p.add_argument("--strategies", default="chop_grid,dual_add_trend")
     p.add_argument(
         "--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT"
@@ -322,6 +368,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--live-storage-base", default="data/live_storage")
     p.add_argument("--feature-bus-root", default="live/shared_feature_bus")
     p.add_argument("--feature-store-timeframe", default="2h")
+    p.add_argument("--feature-store-execution-timeframe", default="1min")
     p.add_argument("--timeframe", default="2h")
     p.add_argument("--lookback-days", type=int, default=180)
     p.add_argument("--warmup-days", type=int, default=0)
@@ -347,11 +394,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-symbol-net-notional", type=float, default=400.0)
     p.add_argument("--max-resting-orders", type=int, default=60)
     p.add_argument(
+        "--constitution-yaml",
+        default="",
+        help="Optional path; default from MLBOT_STRATEGIES_ROOT/../constitution/constitution.yaml",
+    )
+    p.add_argument(
         "--allow-shared-account",
         action="store_true",
         help=(
-            "Allow fallback to BINANCE_FUTURES_TESTNET_* when MULTI_LEG_* keys "
-            "are unset. Not recommended for parallel classic live + multi-leg."
+            "testnet: fallback to BINANCE_FUTURES_TESTNET_* when MULTI_LEG_* unset. "
+            "mainnet: fallback to BINANCE_API_KEY/SECRET. Not recommended if you "
+            "need strict account isolation."
         ),
     )
     p.add_argument(
@@ -365,6 +418,8 @@ def parse_args() -> argparse.Namespace:
 
 async def async_main() -> None:
     args = parse_args()
+    metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
+    start_metrics_server(port=metrics_port)
     daemon, exchange_api, storage, run_id = build_daemon(args)
     bar_provider = daemon.bar_provider
 
@@ -387,6 +442,12 @@ async def async_main() -> None:
                                 "raw": dict(exec_report),
                             }
                         )
+                    try:
+                        METRICS.multi_leg_user_stream_events_total.labels(
+                            strategy=rt.name, symbol=sym
+                        ).inc(1)
+                    except Exception:
+                        pass
 
         user_stream = BinanceUserStream(exchange_api, on_execution_report)
         await user_stream.start()

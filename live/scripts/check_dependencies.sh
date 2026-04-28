@@ -207,14 +207,12 @@ echo ""
 if [ $FAILED_CHECKS -eq 0 ]; then
     echo "🎉 所有依赖检查通过！"
     echo ""
-    echo "可以启动实盘测试（观察模式）："
-    echo "  export MLBOT_LIVE_MODE=bpc"
+    echo "可以启动实盘测试（先起 quant-feature-bus，再 classic bus）："
+    echo "  export MLBOT_FEATURE_SOURCE=bus"
     echo "  export MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT"
     echo "  export MLBOT_LIVE_TRADE_SIZE=0.0  # 观察模式，不下单"
-    echo "  export MLBOT_LIVE_USE_FUTURES=true"
-    echo "  export MLBOT_BPC_BAR_MINUTES=240"
-    echo "  export MLBOT_BPC_WINDOW_MINUTES=15"
-    echo "  python scripts/run_live.py"
+    echo "  python scripts/run_market_feature_publisher.py ...   # 终端 1"
+    echo "  bash live/scripts/start_live.sh highcap              # 终端 2"
     echo ""
     exit 0
 else

@@ -66,7 +66,10 @@ fi
 echo "📦 第1步：Warmup 数据检查..."
 TICKS_DIR="$LIVE_ROOT/data/ticks"
 BARS_DIR="$LIVE_ROOT/data/bars"
-if [ -d "$TICKS_DIR" ] && [ "$(ls -A $TICKS_DIR 2>/dev/null)" ]; then
+FEATURE_SOURCE="${MLBOT_FEATURE_SOURCE:-websocket}"
+if [ "$FEATURE_SOURCE" = "bus" ] || [ "$FEATURE_SOURCE" = "feature-bus" ] || [ "$FEATURE_SOURCE" = "feature-store" ]; then
+  echo "   ✅ Feature Bus 模式：跳过本进程 warmup ticks/bars 强依赖"
+elif [ -d "$TICKS_DIR" ] && [ "$(ls -A $TICKS_DIR 2>/dev/null)" ]; then
   echo "   ✅ 已有 ticks warmup 数据，补充缺失的 daily 数据..."
   bash live/scripts/prepare_warmup_ticks.sh "$UNIVERSE" 6 --fill-gap
 else
@@ -82,7 +85,9 @@ else
 fi
 
 # 检查 bars 目录（bars 是特征计算的必要数据）
-if [ -d "$BARS_DIR" ]; then
+if [ "$FEATURE_SOURCE" = "bus" ] || [ "$FEATURE_SOURCE" = "feature-bus" ] || [ "$FEATURE_SOURCE" = "feature-store" ]; then
+  echo "   ✅ Feature Bus 模式：bars 由 publisher/Feature Bus 提供"
+elif [ -d "$BARS_DIR" ]; then
   BARS_FILES=$(find "$BARS_DIR" -name "*.parquet" 2>/dev/null | wc -l)
   echo "   📊 bars 目录: $BARS_FILES 个 parquet 文件"
   if [ "$BARS_FILES" -lt 100 ]; then
@@ -119,7 +124,11 @@ echo "⚙️  第3步：配置环境变量..."
 
 export MLBOT_LIVE_SYMBOLS="$SYMBOLS"
 export MLBOT_LIVE_STORAGE_BASE="$LIVE_ROOT/data"
-export MLBOT_LIVE_WARMUP_DAYS="30"
+if [ "$FEATURE_SOURCE" = "bus" ] || [ "$FEATURE_SOURCE" = "feature-bus" ] || [ "$FEATURE_SOURCE" = "feature-store" ]; then
+  export MLBOT_LIVE_WARMUP_DAYS="${MLBOT_LIVE_WARMUP_DAYS:-0}"
+else
+  export MLBOT_LIVE_WARMUP_DAYS="${MLBOT_LIVE_WARMUP_DAYS:-30}"
+fi
 export MLBOT_LIVE_TRADE_SIZE="0.001"  # 最小开仓量 fallback（风险反算 qty 太小时使用）
 # risk_per_slot 已经在 constitution.yaml 中配置 (slots.risk_per_slot = 0.01 = 1%)
 # MLBOT_RISK_PER_TRADE 作为备用 fallback（无 equity 时用固定美元）
@@ -131,11 +140,11 @@ export MLBOT_LIVE_GAP_FILL="true"
 export MLBOT_STRATEGIES_ROOT="$LIVE_ROOT/config/strategies"
 export MLBOT_BPC_WINDOW_MINUTES="15"  # 15分钟
 
-# Constitution 配置（全局配置在 live/highcap/config/ 下）
+# Constitution 配置（全局配置在 live/highcap/config/ 下；含 multi_leg 节）
 export MLBOT_CONSTITUTION_YAML="$LIVE_ROOT/config/constitution/constitution.yaml"
 
-# 启动模式: bpc (单策略) 或 three_strategies (三策略多时间框架)
-export MLBOT_LIVE_MODE="${MLBOT_LIVE_MODE:-three_strategies}"
+# 唯一数据路径：quant-feature-bus 写盘，本进程只读 Feature Bus
+export MLBOT_FEATURE_SOURCE="${MLBOT_FEATURE_SOURCE:-bus}"
 
 # 策略B：live 不再依赖 Feature Store，所有特征基于 ticks/bars 实时重算
 # export MLBOT_FEATURE_STORE_DIR="$LIVE_ROOT/feature_store"  # 已废弃

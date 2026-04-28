@@ -40,6 +40,27 @@
             "type": "link",
             "icon": "dashboard",
             "targetBlank": false
+        },
+        {
+            "title": "🚌 Feature Bus",
+            "url": "/d/quant-feature-bus",
+            "type": "link",
+            "icon": "bolt",
+            "targetBlank": false
+        },
+        {
+            "title": "📈 策略 · 特征",
+            "url": "/d/quant-strategies-features",
+            "type": "link",
+            "icon": "graph-bar",
+            "targetBlank": false
+        },
+        {
+            "title": "🦵 Multi-leg",
+            "url": "/d/quant-multi-leg",
+            "type": "link",
+            "icon": "dashboard",
+            "targetBlank": false
         }
     ],
     "panels": [
@@ -934,6 +955,96 @@
                 }
             ],
             "title": "Notional Reject Count by Reason",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 41},
+            "id": 130,
+            "title": "📈 策略流量 / 特征健康",
+            "type": "row"
+        },
+        {
+            "description": "各策略下单速率（quant-engine /metrics）",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 42},
+            "id": 131,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy) (rate(mlbot_orders_total[5m]))",
+                    "legendFormat": "{{strategy}}"
+                }
+            ],
+            "title": "下单速率 by strategy",
+            "type": "timeseries"
+        },
+        {
+            "description": "各策略信号（evidence 通过后）",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 42},
+            "id": 132,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy) (rate(mlbot_signals_total[5m]))",
+                    "legendFormat": "{{strategy}}"
+                }
+            ],
+            "title": "信号速率 by strategy",
+            "type": "timeseries"
+        },
+        {
+            "description": "特征 NaN 占比（0=健康）；按 symbol / timeframe",
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "max": 1,
+                    "min": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": null},
+                            {"color": "yellow", "value": 0.05},
+                            {"color": "red", "value": 0.15}
+                        ]
+                    }
+                }
+            },
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 50},
+            "id": 133,
+            "options": {
+                "legend": {"displayMode": "table", "placement": "right"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "mlbot_feature_nan_ratio",
+                    "legendFormat": "{{symbol}} {{timeframe}}"
+                }
+            ],
+            "title": "特征 NaN 比例 (per symbol / timeframe)",
+            "type": "timeseries"
+        },
+        {
+            "description": "漏斗 direction 阶段按策略",
+            "gridPos": {"h": 7, "w": 24, "x": 0, "y": 58},
+            "id": 134,
+            "options": {
+                "legend": {"displayMode": "list", "placement": "bottom"},
+                "tooltip": {"mode": "multi"}
+            },
+            "targets": [
+                {
+                    "expr": "sum by (strategy) (rate(mlbot_funnel_total{stage=\"direction\"}[15m]))",
+                    "legendFormat": "{{strategy}}"
+                }
+            ],
+            "title": "Direction 漏斗 by strategy",
             "type": "timeseries"
         }
     ],

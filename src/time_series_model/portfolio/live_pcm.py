@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 import yaml
 
+from src.live_data_stream.constitution_config import intent_archetype_priority_tokens
 from src.time_series_model.core.trade_intent import TradeIntent
 
 logger = logging.getLogger(__name__)
@@ -341,6 +342,7 @@ def _load_constitution_constraints(
         "add_position_rules": {},
         "intent_selection_policy": {},
         "direction_policy": {},
+        "resource_allocation": {},
     }
     if not constitution_yaml:
         return defaults
@@ -371,6 +373,8 @@ def _load_constitution_constraints(
         "direction_policy": dict(ra.get("direction_policy") or {}),
         "evidence_min_score": float(ra.get("evidence_min_score", 0.0)),
         "evidence_position_scale": bool(ra.get("evidence_position_scale", True)),
+        # Full RA for intent_archetype_priority_tokens (enabled_archetypes order fallback)
+        "resource_allocation": dict(ra),
     }
 
 
@@ -1021,12 +1025,8 @@ class LivePCM:
             return []
 
         # deterministic v1:
-        # timeframe(大优先) -> archetype(BPC>ME>FER) -> effective_stop_pct(小优先) -> FIFO
-        _sel = dict(self._constitution.get("intent_selection_policy") or {})
-        _arch_pri = [
-            str(x).lower().strip()
-            for x in (_sel.get("archetype_priority") or ["bpc", "tpc", "me", "srb"])
-        ]
+        # timeframe(大优先) -> archetype (constitution) -> effective_stop_pct(小优先) -> FIFO
+        _arch_pri = intent_archetype_priority_tokens(self._constitution)
         _arch_rank = {a: i for i, a in enumerate(_arch_pri)}
 
         def _intent_sort_key(intent: TradeIntent) -> tuple:
