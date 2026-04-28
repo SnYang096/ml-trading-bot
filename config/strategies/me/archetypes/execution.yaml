@@ -24,8 +24,8 @@ execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
 holding:
-  max_holding_bars: null
-  time_stop_bars: 0
+  # 时间强平只认 max_holding_bars（与 ExecutionParamGenerator 一致）。0 = 禁用，由 SL / trailing / 结构出场决定持仓长度。
+  max_holding_bars: 0
 stop_loss:
   breakeven:
     enabled: false

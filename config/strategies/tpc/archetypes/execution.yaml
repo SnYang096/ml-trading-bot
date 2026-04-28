@@ -20,8 +20,8 @@ execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
 holding:
-  max_holding_bars: 360
-  time_stop_bars: 0
+  # 仅 max_holding_bars；0 = 无墙钟时间强平（与 ME/BPC 对齐）。
+  max_holding_bars: 0
 stop_loss:
   # 2026-04-22 统一 breakeven 口径（见 position_logic.py）：
   # measure=atr 保持历史语义；lock_level_r 等价于旧 lock_profit_atr（ATR 单位）。

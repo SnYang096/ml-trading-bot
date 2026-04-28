@@ -100,7 +100,17 @@ strategies:
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.3
+        # 与 prod_train_pipeline_2h_slow_tpc_only 对齐：chop 月 combined allow 很低时仍保留硬门，
+        # 避免 min_combined_pass_rate=0.3 把 semantic_chop 等裁掉后横盘开仓暴增。
+        min_combined_pass_rate: 0.05
+        # optimize_gate_unified 默认 max_hard_gates=2；放宽到 4 以容纳更多 hard_gate（仍低于 slow 的 7）。
+        max_hard_gates: 4
+        max_system_safety: 2
+        # 与 slow 一致：gate 阶段不强推成交量 KPI，敢在整月 chop 时把该月压到接近 0 trade。
+        target_trades_min: 0
+        trade_penalty_low: 0.0
+        trade_penalty_high: 0.0
+        stability_penalty: 0.0
       backtest:
         min_trades: 50
       deploy:

@@ -112,7 +112,14 @@ strategies:
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.3
+        # 与 turbo TPC / slow 语义对齐：低 combined pass 仍保留硬门，抑制横盘乱开仓。
+        min_combined_pass_rate: 0.05
+        max_hard_gates: 4
+        max_system_safety: 2
+        target_trades_min: 0
+        trade_penalty_low: 0.0
+        trade_penalty_high: 0.0
+        stability_penalty: 0.0
       backtest:
         min_trades: 50
       deploy:
