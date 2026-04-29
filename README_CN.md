@@ -474,6 +474,27 @@ SRB / BPC / ME 已把 `box_*` 作为 prefilter 草稿（`locked: false`），跑
 
 #### 8.2 Pool-B + 语义组特征搜索（分支，非主线）
 
+> **为什么树模型没有「原样上线」，主线改成「分层规则 + SRB / nnmultihead」？**  
+> 不是否认树的研究价值，而是 **生产约束** 与 **架构选型** 不同：  
+> 1) **可审计与可回滚**：整段 Boosting 推理在实盘上难逐项说明「为何此刻算通过」；`prefilter → gate → direction → execution` 一类 **YAML 分层** 可以按层 adopt、diff、关断和复盘，和 rolling / adopt 流程一致。  
+> 2) **体制漂移与过拟合风险**：高维特征 + Pool-B / 语义组搜索很容易在回测窗内极靓、窗外脆弱；上线更需要 **显式边界**（locked 规则、held-out、多标的），规则层比单模型分数更容易收紧和统一。  
+> 3) **树的角色后移**：树与 FGS 更适合做 **离线探矿**（哪些语义组、哪些列值得进特征集）；可泛化部分再抽象成规则模板（见 [`docs/architecture/strategies/树策略导出的可泛化规则.md`](docs/architecture/strategies/树策略导出的可泛化规则.md)），而不是把某颗 `model` 当红盒直接挂链上。  
+> 因此 **`tree_strategies/`** 与 **`poolb-semantic-search`** 保留为 **分支与考古入口**；默认训练与部署仍走 `config/strategies/bpc` 等当代配置。
+
+> **树直上相比「导出规则」可以图什么？**  
+> - **表达力 / 近似无损**：集成树在单次推理里可堆叠大量 **轴对齐切分** 与 **特征交互**；`RuleFit` 等导出的 if/else 是 **可解释近似**，通常会丢掉原模型的曲面细节，规则条数膨胀也未必追得上。  
+> - **迭代成本**：探索期换特征、重训、调校准阈值，往往 **改模型 artifact + 监控** 比维护一大坨手写 YAML **更快**（规则适合把已验证的语义 **冻结成契约**）。  
+> - **数据驱动的细缝**：在难以事先命名的 regime 边界上，树能啃 **小区域模式**；纯导出规则要么覆盖不到，要么组合爆炸。  
+> 实务上常见折中是 **外层分层门控（YAML）+ 内层树打分**，兼顾审计与表达力；纯「分数阈值裸奔」仍不推荐。
+
+> **若将来仍要「整颗树」直接上线，需要额外盯什么？**  
+> 是的：**拟合、正则化、回测** 都是核心，但还不够，建议按条打勾：  
+> - **拟合 / 多重检验**：特征组搜索、Pool-B、多 seed 会放大「挑到最好窗」的概率；要有 **严格 holdout**、**rolling / walk-forward**、**多标的** 与 **冻结特征集后再训** 的独立复跑，不能只信单次全样本 Sharpe。  
+> - **正则化与容量**：`num_leaves` / `min_data_in_leaf` / 采样、早停、单调约束（若有先验）等要 **和搜索空间一起** 标定；FGS 扩出来的列越多，越要用 **更保守的树复杂度** 或 **两段式**（先锁列再调树）。  
+> - **回测诚实性**：成本与滑点、成交可行性、标签 **因果对齐**（避免未来函数）、样本外时间顺序；必要时与 **paper / shadow** 对照。  
+> - **上线周边**：推理延迟与确定性、模型与特征版本 **与 feature-store 同步**、熔断与仓位上限、可观测性（至少能记录 top 贡献特征与分数分布漂移）。  
+> 与主线分层规则相比，树直挂时 **「为何开仓」** 仍弱，上述项里 **回测与体制外验证** 的权重应更高；能规则化的门控仍建议保留一层 YAML，而不是纯分数阈值裸奔。
+
 > **来源**：这套命令是为 **树模型 + prefilter 语义组** 时期沉淀的端到端工具（`analyze factor-eval` 生成 Pool-B → `diagnose feature-group-search` 做 A/B/C 分阶段搜索并写回 `features_suggested_*_poolb_semantic_*.yaml`）。实现集中在 `scripts/run_poolb_semantic_search.py`；A/B/C 预算与目录约定仍以当时写的说明为准：  
 > [`docs/archive/guides/tree/FEATURE_GROUP_SEARCH_PRESETS_CN.md`](docs/archive/guides/tree/FEATURE_GROUP_SEARCH_PRESETS_CN.md)（同目录还有 `FEATURE_GROUP_SEARCH_TUNING_GUIDE_CN.md` 等）。
 
@@ -504,6 +525,12 @@ mlbot diagnose poolb-semantic-search \
   --search-algo pipeline --expand-semantic-singletons \
   --regen-poolb --rerun-search
 ```
+
+> **当前团队口径（优先级）**  
+> - **数据与门**：`prefilter` / `gate` 之后有效样本偏少时，**末端 NN、整棵决策树暂不直接上链**。  
+> - **树的用途**：以 **SHAP 等离线筛特征** 为主；**Pool-B + 语义组特征搜索** 保持 **非主线**，用来判断 **特征是否值得进池**，不默认当产线模型。  
+> - **实验分支**：个别「单策略直树」实验曾到 **Sharpe≈2** 量级，但 **并行分支过多** 会拖累复现与运维。  
+> - **近期主线**：**先把分层规则路径跑通**（adopt / rolling / 上线闸门）；高 Sharpe 分支 **另册登记**，再决定是否 **只吸收特征或阈值进 `archetypes/`**，不与主线同等摊平。
 
 #### 8.3 Locked 阈值调参（分支工具）
 
