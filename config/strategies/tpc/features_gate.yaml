@@ -9,6 +9,7 @@ feature_pipeline:
     - "ema_1200_position"
     # TPC 专属 chop 语义
     - "tpc_semantic_chop"
+    - "tpc_semantic_chop_ts_q"
     # 波动率（与 gate: vol_persistence 对齐；已删除未实证命中的 vpin/杠杆对称 gate）
     - "vol_persistence"
     - "vol_regime_shift*"

@@ -54,11 +54,11 @@ run_month () {
 
   # 两臂都覆盖当前 HEAD 的 execution.yaml / prefilter.yaml / features_prefilter.yaml
   # (snapshot 里的 yaml 是校准时的老版，我们要让 AB 基于 HEAD)
-  cp config/strategies/srb/archetypes/execution.yaml \
+  cp config/strategies/bad-candidates/srb/archetypes/execution.yaml \
      "${strat_root_run}/srb/archetypes/execution.yaml"
-  cp config/strategies/srb/archetypes/prefilter.yaml \
+  cp config/strategies/bad-candidates/srb/archetypes/prefilter.yaml \
      "${strat_root_run}/srb/archetypes/prefilter.yaml"
-  cp config/strategies/srb/features_prefilter.yaml \
+  cp config/strategies/bad-candidates/srb/features_prefilter.yaml \
      "${strat_root_run}/srb/features_prefilter.yaml"
 
   if [[ "${arm}" == "treatment" ]]; then

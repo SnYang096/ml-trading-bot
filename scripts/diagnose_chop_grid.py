@@ -21,10 +21,11 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 import numpy as np
 import pandas as pd
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -39,6 +40,56 @@ from scripts.diagnose_crf_edge import (  # noqa: E402
     _semantic_chop,
     build_symbol_dataset,
 )
+from src.features.time_series.semantic_chop_ts_quantile import (  # noqa: E402
+    semantic_chop_ts_quantile,
+)
+
+DEFAULT_CHOP_GRID_YAML = PROJECT_ROOT / "config/strategies/chop_grid/grid.yaml"
+
+
+def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
+    """Load strategy knobs from ``grid.yaml`` for backtests, diagnostics, sweeps.
+
+    Includes ``regime.box_prefilter`` (StudyConfig / ``box_prefilter`` column),
+    ``chop_series`` (raw vs ts_quantile), and risk/spacing used by CLIs.
+    """
+    if not path.exists():
+        return {}
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    regime = cfg.get("regime", {}) or {}
+    grid = cfg.get("grid", {}) or {}
+    spacing = grid.get("spacing", {}) or {}
+    risk = cfg.get("risk", {}) or {}
+    box_pf = regime.get("box_prefilter") or {}
+    chop_series = cfg.get("chop_series", {}) or {}
+    out: Dict[str, Any] = {
+        "box_window": int(regime.get("box_window", 120)),
+        "chop_min": float(regime.get("entry_chop_min", 0.40)),
+        "exit_chop_min": float(regime.get("exit_chop_below", 0.25)),
+        "grid_atr_mult": float(spacing.get("atr_mult", 0.50)),
+        "grid_pct": float(spacing.get("min_pct", 0.004)),
+        "max_levels": int(grid.get("max_levels_per_side", 3)),
+        "min_segment_bars": int(risk.get("min_segment_bars", 6)),
+        "max_segment_bars": int(risk.get("max_segment_bars", 120)),
+        "fee_bps": float(risk.get("fee_bps", 4.0)),
+        "maker_fee_bps": float(risk.get("maker_fee_bps", risk.get("fee_bps", 4.0))),
+        "taker_fee_bps": float(risk.get("taker_fee_bps", risk.get("fee_bps", 4.0))),
+        "forced_exit_slippage_bps": float(risk.get("forced_exit_slippage_bps", 0.0)),
+        "funding_cost_bps_per_8h": float(risk.get("funding_cost_bps_per_8h", 0.0)),
+        "exclude_box": bool(regime.get("exclude_box_prefilter", True)),
+        "max_loss_per_grid": float(risk.get("max_loss_per_grid", 0.03)),
+        "max_open_levels_total": int(risk.get("max_open_levels_total", 6)),
+        "stability_min": float(box_pf.get("stability_min", 0.85)),
+        "width_min": float(box_pf.get("width_min", 0.04)),
+        "width_max": float(box_pf.get("width_max", 0.30)),
+        "touches_min": int(box_pf.get("touches_min", 5)),
+        "chop_signal": str(chop_series.get("chop_signal", "raw")),
+        "chop_ts_window": int(chop_series.get("chop_ts_window", 1200)),
+        "chop_ts_min_periods": int(chop_series.get("chop_ts_min_periods", 150)),
+    }
+    if "compute_semantic_chop_ts_q" in chop_series:
+        out["compute_chop_ts_q"] = chop_series.get("compute_semantic_chop_ts_q")
+    return out
 
 
 @dataclass(frozen=True)
@@ -52,6 +103,39 @@ class GridConfig:
     grid_pct: float = 0.004
     max_levels: int = 3
     fee_bps: float = 4.0
+    # Regime masks: "raw" uses semantic_chop [0,1]; "ts_quantile" uses rolling
+    # percentile rank of raw chop vs past window (~[0,1], causal).
+    chop_signal: str = "raw"
+    chop_ts_window: int = 1200
+    chop_ts_min_periods: int = 150
+    # None: compute ts_q column only when chop_signal == "ts_quantile" (faster raw runs).
+    compute_semantic_chop_ts_q: bool | None = None
+    # Box prefilter column (StudyConfig / build_symbol_dataset); must match grid.yaml.
+    stability_min: float = 0.85
+    width_min: float = 0.04
+    width_max: float = 0.30
+    touches_min: int = 5
+
+
+def should_compute_semantic_chop_ts_q(cfg: GridConfig) -> bool:
+    if cfg.compute_semantic_chop_ts_q is True:
+        return True
+    if cfg.compute_semantic_chop_ts_q is False:
+        return False
+    return cfg.chop_signal == "ts_quantile"
+
+
+def regime_chop_series(df: pd.DataFrame, cfg: GridConfig) -> pd.Series:
+    """Series used for chop hysteresis (same comparisons as raw semantic_chop)."""
+    if cfg.chop_signal == "ts_quantile":
+        if "semantic_chop_ts_q" not in df.columns:
+            raise KeyError("semantic_chop_ts_q missing; call build_features first")
+        return pd.to_numeric(df["semantic_chop_ts_q"], errors="coerce")
+    return pd.to_numeric(df["semantic_chop"], errors="coerce")
+
+
+def regime_chop_column(cfg: GridConfig) -> str:
+    return "semantic_chop_ts_q" if cfg.chop_signal == "ts_quantile" else "semantic_chop"
 
 
 def _segments(mask: pd.Series, *, min_len: int, max_len: int) -> List[Tuple[int, int]]:
@@ -204,10 +288,10 @@ def build_features(symbol: str, bars: pd.DataFrame, cfg: GridConfig) -> pd.DataF
     study_cfg = StudyConfig(
         box_window=cfg.box_window,
         chop_min=cfg.chop_min,
-        stability_min=0.85,
-        width_min=0.04,
-        width_max=0.30,
-        touches_min=5,
+        stability_min=float(cfg.stability_min),
+        width_min=float(cfg.width_min),
+        width_max=float(cfg.width_max),
+        touches_min=int(cfg.touches_min),
     )
     # Reuse CRF diagnostic features so box/chop definitions stay comparable.
     df = build_symbol_dataset(symbol, bars, study_cfg)
@@ -215,6 +299,16 @@ def build_features(symbol: str, bars: pd.DataFrame, cfg: GridConfig) -> pd.DataF
     if "semantic_chop" not in df:
         df["bb_width_pctile"] = _bb_width_pctile(df["close"])
         df["semantic_chop"] = _semantic_chop(df["close"], df["bb_width_pctile"])
+    if should_compute_semantic_chop_ts_q(cfg):
+        raw_chop = pd.to_numeric(df["semantic_chop"], errors="coerce").to_numpy(
+            dtype=float
+        )
+        df["semantic_chop_ts_q"] = semantic_chop_ts_quantile(
+            raw_chop,
+            df.index,
+            window=int(cfg.chop_ts_window),
+            min_periods=int(cfg.chop_ts_min_periods),
+        )
     return df
 
 
@@ -246,8 +340,9 @@ def run_one_period(
         if df.empty:
             continue
 
-        chop = df["semantic_chop"] >= cfg.chop_min
-        chop_hold = df["semantic_chop"] >= cfg.exit_chop_min
+        chop_s = regime_chop_series(df, cfg)
+        chop = chop_s >= cfg.chop_min
+        chop_hold = chop_s >= cfg.exit_chop_min
         box = df["box_prefilter"]
         chop_not_box = chop & ~box
         regimes = {
@@ -286,8 +381,8 @@ def run_one_period(
                     {
                         "symbol": symbol,
                         "regime": regime_name,
-                        "entry_chop": float(seg["semantic_chop"].iloc[0]),
-                        "median_chop": float(seg["semantic_chop"].median()),
+                        "entry_chop": float(regime_chop_series(seg, cfg).iloc[0]),
+                        "median_chop": float(regime_chop_series(seg, cfg).median()),
                         "entry_box_stability": float(seg["box_stability"].iloc[0]),
                         "entry_box_width_pct": float(seg["box_width_pct"].iloc[0]),
                         **sim,
@@ -328,6 +423,14 @@ def summarize_segments(segments: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--grid-config", default=str(DEFAULT_CHOP_GRID_YAML))
+    pre_args, _ = pre.parse_known_args()
+    grid_yaml = Path(pre_args.grid_config)
+    if not grid_yaml.is_absolute():
+        grid_yaml = PROJECT_ROOT / grid_yaml
+    yd = merge_chop_grid_yaml(grid_yaml)
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", default="data/parquet_data")
     parser.add_argument(
@@ -337,15 +440,77 @@ def main() -> None:
     parser.add_argument("--end", default="2024-12-31")
     parser.add_argument("--warmup-days", type=int, default=120)
     parser.add_argument("--timeframe", default="2h")
-    parser.add_argument("--box-window", type=int, default=120, choices=[60, 120, 240])
-    parser.add_argument("--chop-min", type=float, default=0.40)
-    parser.add_argument("--exit-chop-min", type=float, default=0.25)
-    parser.add_argument("--min-segment-bars", type=int, default=6)
-    parser.add_argument("--max-segment-bars", type=int, default=120)
-    parser.add_argument("--grid-atr-mult", type=float, default=0.75)
-    parser.add_argument("--grid-pct", type=float, default=0.004)
-    parser.add_argument("--max-levels", type=int, default=3)
-    parser.add_argument("--fee-bps", type=float, default=4.0)
+    parser.add_argument(
+        "--grid-config",
+        default=str(grid_yaml),
+        help="Chop grid strategy YAML (defaults for thresholds, box_prefilter, chop_series).",
+    )
+    parser.add_argument(
+        "--box-window",
+        type=int,
+        default=int(yd.get("box_window", 120)),
+        choices=[60, 120, 240],
+    )
+    parser.add_argument(
+        "--chop-min", type=float, default=float(yd.get("chop_min", 0.40))
+    )
+    parser.add_argument(
+        "--exit-chop-min", type=float, default=float(yd.get("exit_chop_min", 0.25))
+    )
+    parser.add_argument(
+        "--min-segment-bars",
+        type=int,
+        default=int(yd.get("min_segment_bars", 6)),
+    )
+    parser.add_argument(
+        "--max-segment-bars",
+        type=int,
+        default=int(yd.get("max_segment_bars", 120)),
+    )
+    parser.add_argument(
+        "--grid-atr-mult", type=float, default=float(yd.get("grid_atr_mult", 0.75))
+    )
+    parser.add_argument(
+        "--grid-pct", type=float, default=float(yd.get("grid_pct", 0.004))
+    )
+    parser.add_argument("--max-levels", type=int, default=int(yd.get("max_levels", 3)))
+    parser.add_argument("--fee-bps", type=float, default=float(yd.get("fee_bps", 4.0)))
+    parser.add_argument(
+        "--chop-signal",
+        choices=["raw", "ts_quantile"],
+        default=str(yd.get("chop_signal", "raw")),
+        help="Chop series for regime masks (ts_quantile = rolling pct rank of semantic_chop).",
+    )
+    parser.add_argument(
+        "--chop-ts-window",
+        type=int,
+        default=int(yd.get("chop_ts_window", 1200)),
+    )
+    parser.add_argument(
+        "--chop-ts-min-periods",
+        type=int,
+        default=int(yd.get("chop_ts_min_periods", 150)),
+    )
+    parser.add_argument(
+        "--compute-chop-ts-q",
+        action=argparse.BooleanOptionalAction,
+        default=yd.get("compute_chop_ts_q"),
+        help="Override ts_q column build (default: from grid.yaml chop_series if set).",
+    )
+    parser.add_argument(
+        "--stability-min",
+        type=float,
+        default=float(yd.get("stability_min", 0.85)),
+    )
+    parser.add_argument(
+        "--width-min", type=float, default=float(yd.get("width_min", 0.04))
+    )
+    parser.add_argument(
+        "--width-max", type=float, default=float(yd.get("width_max", 0.30))
+    )
+    parser.add_argument(
+        "--touches-min", type=int, default=int(yd.get("touches_min", 5))
+    )
     parser.add_argument("--out-dir", default="results/chop_grid_diagnostic")
     args = parser.parse_args()
 
@@ -359,6 +524,14 @@ def main() -> None:
         grid_pct=args.grid_pct,
         max_levels=args.max_levels,
         fee_bps=args.fee_bps,
+        chop_signal=args.chop_signal,
+        chop_ts_window=args.chop_ts_window,
+        chop_ts_min_periods=args.chop_ts_min_periods,
+        compute_semantic_chop_ts_q=args.compute_chop_ts_q,
+        stability_min=args.stability_min,
+        width_min=args.width_min,
+        width_max=args.width_max,
+        touches_min=args.touches_min,
     )
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     start = pd.Timestamp(args.start, tz="UTC")

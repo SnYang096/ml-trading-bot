@@ -43,7 +43,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.diagnose_chop_grid import GridConfig, build_features  # noqa: E402
 from scripts.diagnose_crf_edge import _load_symbol_1m, _resample_ohlcv  # noqa: E402
-from scripts.diagnose_dual_add_trend import _add_trend_features  # noqa: E402
+from src.features.time_series.baseline_features import (  # noqa: E402
+    compute_trend_confidence_from_series,
+)
 from src.order_management.binance_api import BinanceAPI  # noqa: E402
 from src.order_management.binance_user_stream import BinanceUserStream  # noqa: E402
 from src.order_management.grid_execution_adapter import (
@@ -121,7 +123,13 @@ class ParquetFeatureBarProvider:
             if bars.empty:
                 continue
             df = build_features(symbol, bars, GridConfig())
-            df = _add_trend_features(df)
+            if (
+                "trend_confidence" not in df.columns
+                or "trend_direction" not in df.columns
+            ):
+                bundle = compute_trend_confidence_from_series(close=df["close"])
+                for col in bundle.columns:
+                    df[col] = bundle[col]
             df = df[df.index <= cutoff]
             if df.empty:
                 continue

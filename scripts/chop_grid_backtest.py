@@ -21,7 +21,6 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -33,6 +32,9 @@ from scripts.diagnose_chop_grid import (  # noqa: E402
     _pnl_long,
     _pnl_short,
     build_features,
+    merge_chop_grid_yaml,
+    regime_chop_column,
+    regime_chop_series,
 )
 from scripts.capital_report import write_capital_report_from_trades  # noqa: E402
 from scripts.diagnose_crf_edge import (  # noqa: E402
@@ -56,31 +58,7 @@ DEFAULT_GRID_CONFIG = PROJECT_ROOT / "config/strategies/chop_grid/grid.yaml"
 
 
 def _load_grid_defaults(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    regime = cfg.get("regime", {}) or {}
-    grid = cfg.get("grid", {}) or {}
-    spacing = grid.get("spacing", {}) or {}
-    risk = cfg.get("risk", {}) or {}
-    return {
-        "box_window": int(regime.get("box_window", 120)),
-        "chop_min": float(regime.get("entry_chop_min", 0.40)),
-        "exit_chop_min": float(regime.get("exit_chop_below", 0.25)),
-        "grid_atr_mult": float(spacing.get("atr_mult", 0.50)),
-        "grid_pct": float(spacing.get("min_pct", 0.004)),
-        "max_levels": int(grid.get("max_levels_per_side", 3)),
-        "min_segment_bars": int(risk.get("min_segment_bars", 6)),
-        "max_segment_bars": int(risk.get("max_segment_bars", 120)),
-        "fee_bps": float(risk.get("fee_bps", 4.0)),
-        "maker_fee_bps": float(risk.get("maker_fee_bps", risk.get("fee_bps", 4.0))),
-        "taker_fee_bps": float(risk.get("taker_fee_bps", risk.get("fee_bps", 4.0))),
-        "forced_exit_slippage_bps": float(risk.get("forced_exit_slippage_bps", 0.0)),
-        "funding_cost_bps_per_8h": float(risk.get("funding_cost_bps_per_8h", 0.0)),
-        "exclude_box": bool(regime.get("exclude_box_prefilter", True)),
-        "max_loss_per_grid": risk.get("max_loss_per_grid", 0.03),
-        "max_open_levels_total": risk.get("max_open_levels_total", 6),
-    }
+    return merge_chop_grid_yaml(path)
 
 
 def _fmt(x: float, digits: int = 4) -> str:
@@ -257,8 +235,8 @@ def simulate_segment_detailed(
         "start": seg.index[0],
         "end": seg.index[-1],
         "bars": len(seg),
-        "entry_chop": float(seg["semantic_chop"].iloc[0]),
-        "median_chop": float(seg["semantic_chop"].median()),
+        "entry_chop": float(regime_chop_series(seg, cfg).iloc[0]),
+        "median_chop": float(regime_chop_series(seg, cfg).median()),
         "entry_box_prefilter": bool(seg["box_prefilter"].iloc[0]),
         "center": center,
         "spacing_pct": spacing / center,
@@ -271,6 +249,67 @@ def simulate_segment_detailed(
         "max_drawdown": max_drawdown,
     }
     return seg_trades, summary
+
+
+def collect_chop_grid_trades_for_symbol(
+    symbol: str,
+    df: pd.DataFrame,
+    df_exec: pd.DataFrame | None,
+    sig_delta: pd.Timedelta | None,
+    cfg: GridConfig,
+    engine: ChopGridEngine,
+    *,
+    exclude_box: bool,
+) -> Tuple[List[dict], List[dict], int, float]:
+    """Simulate chop grid for one symbol given pre-built feature ``df`` (signal timeframe).
+
+    Returns ``(trades, summaries, n_segments, entry_mask_mean)``.
+    """
+    chop_s = regime_chop_series(df, cfg)
+    chop_col = regime_chop_column(cfg)
+    entry_mask = chop_s >= cfg.chop_min
+    hold_mask = chop_s >= cfg.exit_chop_min
+    if exclude_box:
+        entry_mask &= ~df["box_prefilter"]
+        hold_mask &= ~df["box_prefilter"]
+        regime = "chop_not_box"
+    else:
+        regime = "semantic_chop"
+    segs = hysteresis_segments(
+        entry_mask,
+        hold_mask,
+        min_len=cfg.min_segment_bars,
+        max_len=cfg.max_segment_bars,
+    )
+    entry_rate = float(entry_mask.mean()) if len(entry_mask) else 0.0
+    trades_out: List[dict] = []
+    summaries_out: List[dict] = []
+    for seq, (s, e) in enumerate(segs, start=1):
+        seg_id = f"{symbol}_{seq:04d}_{df.index[s].strftime('%Y%m%d%H%M')}"
+        if df_exec is not None and sig_delta is not None:
+            seg_slice = slice_execution_window(df_exec, df.index, s, e, sig_delta)
+            anchor_c = float(df.iloc[s]["close"])
+            anchor_a = float(df.iloc[s]["atr14"])
+            result = engine.simulate_segment(
+                seg_slice,
+                symbol=symbol,
+                regime=regime,
+                segment_id=seg_id,
+                anchor_close=anchor_c,
+                anchor_atr=anchor_a,
+                regime_chop_col=chop_col,
+            )
+        else:
+            result = engine.simulate_segment(
+                df.iloc[s : e + 1],
+                symbol=symbol,
+                regime=regime,
+                segment_id=seg_id,
+                regime_chop_col=chop_col,
+            )
+        trades_out.extend(t.to_dict() for t in result.trades)
+        summaries_out.append(result.summary)
+    return trades_out, summaries_out, len(segs), entry_rate
 
 
 def run_backtest(
@@ -286,6 +325,14 @@ def run_backtest(
         grid_pct=args.grid_pct,
         max_levels=args.max_levels,
         fee_bps=args.fee_bps,
+        chop_signal=args.chop_signal,
+        chop_ts_window=args.chop_ts_window,
+        chop_ts_min_periods=args.chop_ts_min_periods,
+        compute_semantic_chop_ts_q=getattr(args, "compute_chop_ts_q", None),
+        stability_min=args.stability_min,
+        width_min=args.width_min,
+        width_max=args.width_max,
+        touches_min=args.touches_min,
     )
     engine_cfg = GridEngineConfig(
         box_window=args.box_window,
@@ -334,44 +381,18 @@ def run_backtest(
             df_exec = None
             sig_delta = None
 
-        entry_mask = df["semantic_chop"] >= cfg.chop_min
-        hold_mask = df["semantic_chop"] >= cfg.exit_chop_min
-        if args.exclude_box:
-            entry_mask &= ~df["box_prefilter"]
-            hold_mask &= ~df["box_prefilter"]
-            regime = "chop_not_box"
-        else:
-            regime = "semantic_chop"
-        segs = hysteresis_segments(
-            entry_mask,
-            hold_mask,
-            min_len=cfg.min_segment_bars,
-            max_len=cfg.max_segment_bars,
+        tlist, slist, n_seg, entry_rate = collect_chop_grid_trades_for_symbol(
+            symbol,
+            df,
+            df_exec,
+            sig_delta,
+            cfg,
+            engine,
+            exclude_box=bool(args.exclude_box),
         )
-        print(f"{symbol}: segments={len(segs)}, entry_rate={entry_mask.mean():.1%}")
-        for seq, (s, e) in enumerate(segs, start=1):
-            seg_id = f"{symbol}_{seq:04d}_{df.index[s].strftime('%Y%m%d%H%M')}"
-            if df_exec is not None:
-                seg_slice = slice_execution_window(df_exec, df.index, s, e, sig_delta)
-                anchor_c = float(df.iloc[s]["close"])
-                anchor_a = float(df.iloc[s]["atr14"])
-                result = engine.simulate_segment(
-                    seg_slice,
-                    symbol=symbol,
-                    regime=regime,
-                    segment_id=seg_id,
-                    anchor_close=anchor_c,
-                    anchor_atr=anchor_a,
-                )
-            else:
-                result = engine.simulate_segment(
-                    df.iloc[s : e + 1],
-                    symbol=symbol,
-                    regime=regime,
-                    segment_id=seg_id,
-                )
-            all_trades.extend(t.to_dict() for t in result.trades)
-            all_segments.append(result.summary)
+        print(f"{symbol}: segments={n_seg}, entry_rate={entry_rate:.1%}")
+        all_trades.extend(tlist)
+        all_segments.extend(slist)
 
     trades_df = pd.DataFrame(all_trades)
     segments_df = pd.DataFrame(all_segments)
@@ -696,7 +717,8 @@ def write_report(
 <body>
   <h1>Chop Grid Backtest Report</h1>
   <p class="note">
-    Entry: semantic_chop >= {args.chop_min}; exit all inventory when semantic_chop < {args.exit_chop_min}.
+    Entry: {args.chop_signal} chop at or above {args.chop_min}; hold until chop drops below {args.exit_chop_min}.
+    (raw = semantic_chop; ts_quantile = rolling pct rank, window {args.chop_ts_window}.)
     Grid spacing: max({args.grid_atr_mult} ATR, {args.grid_pct:.2%}); levels per side: {args.max_levels};
     fee: {args.fee_bps} bps; slippage sensitivity: {args.slippage_bps} bps. Exclude box: {args.exclude_box}.
     Realistic costs: maker={args.maker_fee_bps} bps, taker={args.taker_fee_bps} bps,
@@ -971,6 +993,62 @@ def main() -> None:
         "--max-open-levels-total",
         type=int,
         default=defaults.get("max_open_levels_total", 6),
+    )
+    parser.add_argument(
+        "--chop-signal",
+        choices=["raw", "ts_quantile"],
+        default=str(defaults.get("chop_signal", "raw")),
+        help=(
+            "Regime feature for chop masks: raw semantic_chop in [0,1], or "
+            "ts_quantile = causal rolling percentile rank of semantic_chop vs past "
+            "window (also ~[0,1]; try e.g. --chop-min 0.4 --exit-chop-min 0.25 as p40/p25)."
+        ),
+    )
+    parser.add_argument(
+        "--chop-ts-window",
+        type=int,
+        default=int(defaults.get("chop_ts_window", 1200)),
+        help="Rolling window (bars) for semantic_chop_ts_quantile when --chop-signal ts_quantile.",
+    )
+    parser.add_argument(
+        "--chop-ts-min-periods",
+        type=int,
+        default=int(defaults.get("chop_ts_min_periods", 150)),
+        help="min_periods for semantic_chop_ts_quantile (rolling window).",
+    )
+    parser.add_argument(
+        "--compute-chop-ts-q",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.get("compute_chop_ts_q"),
+        help=(
+            "Force semantic_chop_ts_q column in build_features. "
+            "Default: grid.yaml chop_series.compute_semantic_chop_ts_q if set, "
+            "else only when --chop-signal ts_quantile."
+        ),
+    )
+    parser.add_argument(
+        "--stability-min",
+        type=float,
+        default=float(defaults.get("stability_min", 0.85)),
+        help="Box prefilter: min stability (StudyConfig); see regime.box_prefilter in grid.yaml.",
+    )
+    parser.add_argument(
+        "--width-min",
+        type=float,
+        default=float(defaults.get("width_min", 0.04)),
+        help="Box prefilter width lower bound (StudyConfig).",
+    )
+    parser.add_argument(
+        "--width-max",
+        type=float,
+        default=float(defaults.get("width_max", 0.30)),
+        help="Box prefilter width upper bound (StudyConfig).",
+    )
+    parser.add_argument(
+        "--touches-min",
+        type=int,
+        default=int(defaults.get("touches_min", 5)),
+        help="Box prefilter minimum boundary touches (StudyConfig).",
     )
     parser.add_argument("--out-dir", default="results/chop_grid/backtest")
     parser.add_argument("--map-symbols", default="BTCUSDT")

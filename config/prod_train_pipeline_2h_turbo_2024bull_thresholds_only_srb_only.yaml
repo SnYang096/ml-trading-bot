@@ -1,6 +1,6 @@
 # ============================================================
 # 上线前训练流水线 (2H only, SRB-only, turbo / 固定特征 + 阈值链)
-# SRB + box_structure_f 预过滤（见 config/strategies/srb/features_prefilter.yaml）
+# SRB 已迁入 bad-candidates；预过滤见 config/strategies/bad-candidates/srb/features_prefilter.yaml
 #
 # 示例:
 #   mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_srb_only.yaml --stage rolling_sim --skip-shap
@@ -52,7 +52,7 @@ download:
   parquet_dir: data/parquet_data
 strategies:
   srb:
-    config: config/strategies/srb
+    config: config/strategies/bad-candidates/srb
     timeframe: 120T
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml

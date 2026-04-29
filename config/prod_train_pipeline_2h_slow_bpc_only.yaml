@@ -1,12 +1,20 @@
 # ============================================================
 # 上线前训练流水线 (2H, BPC-only, 慢模式 / slow_realistic)
+# BPC = Breakout Pullback Continuation；策略树 config/strategies/bpc
+# （周期以 meta.yaml strategy.timeframe 为准，此处不显式写 timeframe）
+#
 # 目标: 近似「每季度做结构快照 + 每月快变量」的实盘节奏
 #   - rolling.slow_realistic.cadence_months: 3 → 每季度一次结构流水线（各层特征搜索等到 entry_filter）
 #   - rolling_sim 仍按 holdout 内自然月推进；每月阈值/标定窗见 rolling.windows.calibration_months
-# 策略树: config/strategies/bpc（周期以 meta.yaml strategy.timeframe 为准，此处不显式写 timeframe）
 #
 # 联合 PCM / pcm_slot_grid：代码要求同次流水线内 ≥2 个 strategies.* 才有联合事件回测。
 # 本文件仅 BPC，故关闭 pcm_eval 与 pcm_slot_grid；单策略的 execution_opt / event_backtest 仍照常。
+#
+# 时间窗：与 prod_train_pipeline_2h_slow_tpc_only 对齐，便于 BPC vs TPC 对比。
+#   • end_date=2026-03-31, holdout_months=26 → holdout_start=2024-01-01（rolling 覆盖 202401～202603）
+#   • validation_months=3 → Gate 调参用 holdout 内前 3 个月；纯 OOS 约从 2024-04-01 到 end_date
+# strategies.*.dates 须与顶层 holdout/validation 一致，否则 per-strategy 会覆盖全局（常见踩坑：仍为 9）
+# trading_map_continuous：X 轴会拉到 dates.end_date，但 K 线依赖 parquet；无数据则蜡烛停在最后有数据的月份
 #
 # 示例:
 #   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_bpc_only.yaml --stage rolling_sim
@@ -16,7 +24,6 @@
 dates:
   start_date: "2022-08-01"
   end_date: "2026-03-31"
-  # end=2026-03-31, holdout=26 → holdout_start=2024-01-01；rolling 月约 202401～202603（与 TPC 管线对齐）
   holdout_months: 26
   validation_months: 3
 training:
@@ -29,6 +36,10 @@ strategy_scope:
   direction: all
 rolling:
   mode: slow_realistic
+  # 下列三者语义不同，不能合并成一个 calibration_months：
+  # - calibration_months：每个自然月 M 的「快变量标定窗」长度（M 之前连续 N 个月，不含 M）。
+  # - structure_lookback_months：触发慢结构快照时，从锚点往回取多少个月历史跑 SHAP/特征搜索等。
+  # - slow_realistic.cadence_months：每隔几个月才跑一次慢结构快照；其余月份复用上次冻结的 strategies。
   windows:
     calibration_months: 3
     structure_lookback_months: 12
@@ -43,21 +54,12 @@ fast_loop:
   step_months: 1
   threshold_calibration:
     enabled: true
-  prefilter:
-    # 2026-04-22 晚：meta-algorithm 根因已修（range-width + polarity 两道守门），
-    #   - scripts/meta_algorithm_unified.py::sweep_thresholds
-    #     · min_range_width_sigma (默认 1.0σ) 拦掉针尖 range 规则
-    #     · get_feature_polarity 按 semantic_polarity.yaml 拒绝反向
-    #   - config/strategies/bpc/semantic_polarity.yaml 补声明 bpc_dir_flip_count 等
-    # 重新打开 meta optimize 做验证。若又出现坏规则再关。
-    optimize: true
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
     enabled: true
   pcm_eval:
     enabled: false
-  # 方向层: 默认 compare_features / promote 与代码缺省一致；显式写出便于对照「全层慢研」契约
   direction_tuning:
     enabled: true
     compare_features: true
@@ -89,6 +91,7 @@ stitching:
 event_backtest:
   enabled: true
   promote: true
+  no_kill_switch: false
   map_extra_months: 4
   sym_r_default: "1.0:1:6.0"
   sym_r_by_family:
@@ -97,18 +100,11 @@ event_backtest:
   exec_objective_params:
     near_stop_threshold_r: -0.9
     near_stop_penalty: 0.0
-    max_dd_penalty: 0.02
+    max_dd_penalty: 0.0
     min_trades_soft: 0
-    undertrade_penalty: 0.001
+    undertrade_penalty: 0.0
 pcm_slot_grid:
   enabled: false
-  plateau_delta: 0.03
-  min_trades_soft: 80
-  penalties:
-    max_dd_penalty: 0.02
-    slot_full_rate_penalty: 0.20
-    undertrade_penalty: 0.001
-  cases: []
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a

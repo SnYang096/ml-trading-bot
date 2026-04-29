@@ -117,6 +117,7 @@ class ChopGridEngine:
         segment_id: str,
         anchor_close: float | None = None,
         anchor_atr: float | None = None,
+        regime_chop_col: str | None = None,
     ) -> GridSegmentResult:
         if seg.empty:
             return GridSegmentResult(
@@ -323,6 +324,10 @@ class ChopGridEngine:
         if len(pnl_values):
             max_drawdown = float((pnl_values - np.maximum.accumulate(pnl_values)).min())
 
+        _chop_col = regime_chop_col or "semantic_chop"
+        if _chop_col not in seg.columns:
+            _chop_col = "semantic_chop"
+        _chop_series = pd.to_numeric(seg[_chop_col], errors="coerce")
         summary = {
             "status": "ok",
             "symbol": symbol,
@@ -331,8 +336,8 @@ class ChopGridEngine:
             "start": seg.index[0],
             "end": exit_ts,
             "bars": len(equity_path),
-            "entry_chop": float(seg["semantic_chop"].iloc[0]),
-            "median_chop": float(seg["semantic_chop"].median()),
+            "entry_chop": float(_chop_series.iloc[0]),
+            "median_chop": float(_chop_series.median()),
             "entry_box_prefilter": (
                 bool(seg["box_prefilter"].iloc[0]) if "box_prefilter" in seg else False
             ),

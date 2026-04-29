@@ -94,6 +94,7 @@ class TestMECoreFunction:
         "me_volume_accel",
         "me_delta_net_flow",
         "me_semantic_chop",
+        "me_semantic_chop_ts_q",
     ]
 
     def test_basic_output(self, sample_data):
@@ -136,6 +137,7 @@ class TestMECoreFunction:
             "me_volume_surge",
             "me_volume_accel",
             "me_semantic_chop",
+            "me_semantic_chop_ts_q",
         ]
         for col in bounded_01:
             vals = result[col].dropna()

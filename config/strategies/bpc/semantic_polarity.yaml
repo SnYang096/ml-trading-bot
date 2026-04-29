@@ -20,6 +20,7 @@ polarity:
 
   # ── 场景语义 ──
   bpc_semantic_chop:            lower_is_better   # BB 带窄 × 方向置信低 (值越高越震荡)
+  bpc_semantic_chop_ts_q:       lower_is_better   # 同品种 rolling 分位，高=相对近期更 chop
 
   # ── 方向一致性 / 回撤形态（2026-04-22 补声明）──
   # 坑：未声明 polarity 的特征会 fallback 到 unknown → meta 允许 range 规则，

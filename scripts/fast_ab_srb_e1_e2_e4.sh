@@ -7,7 +7,7 @@
 #
 # 做什么：
 #   1) 复用 20260422_212338/fast_month_$M/strategies_calibrated 作 baseline（threshold 已校准）
-#   2) 再把当前 config/strategies/srb 覆盖到一份新的 calibrated snapshot，作为 treatment
+#   2) 再把当前 config/strategies/bad-candidates/srb 覆盖到一份新的 calibrated snapshot，作为 treatment
 #   3) 对两组都跑 event_backtest.py --fast，输出到 reports/srb_fast_ab_$TAG/{baseline,treatment}/$M/
 #   4) 汇总 trades.csv → total_r / n_trades / add_n / add_r 摘要
 set -euo pipefail
@@ -49,7 +49,7 @@ run_month () {
 
   # 两臂都用 HEAD yaml 作底本，避免历史 activation_r/trail_r 差异污染 AB。
   # baseline 臂：关闭 E1/E2/E4 flags；treatment 臂：保持 HEAD 配置。
-  cp config/strategies/srb/archetypes/execution.yaml \
+  cp config/strategies/bad-candidates/srb/archetypes/execution.yaml \
      "${strat_root_run}/srb/archetypes/execution.yaml"
 
   if [[ "${arm}" == "baseline" ]]; then

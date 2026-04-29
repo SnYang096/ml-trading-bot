@@ -19,13 +19,13 @@ hard_gates:
     tag: HARD_TPC_SEMANTIC_CHOP
     phase: hard_gate
     priority: 6
-    reason: TPC 专用：BB 偏窄且方向置信低 → 典型震荡来回扫区
+    reason: TPC 专用：同品种 semantic_chop 滚动分位高 → 相对近期历史偏 chop，拒开仓
     when:
-      tpc_semantic_chop:
-        value_gt: 0.40
+      tpc_semantic_chop_ts_q:
+        value_gt: 0.25
     then:
       action: deny
-    comment: "20260425 trade diagnostic: chop>=0.40 的 TPC 成交 n=234, R=-860；下调到 0.40 防止波动区来回扫开仓"
+    comment: "20260428–30: tpc_semantic_chop_ts_q>0.25 deny（1200bar/min150 滚动分位）；替代原 raw tpc_semantic_chop>0.40"
     locked: true
     frozen: true
     promote_never_disable: true

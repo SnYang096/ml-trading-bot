@@ -54,8 +54,30 @@ LIVE_CONFIG = PROJECT_ROOT / "live" / "highcap" / "config"
 LIVE_STRATEGIES = LIVE_CONFIG / "strategies"
 LIVE_ROOT = PROJECT_ROOT / "live"
 
-# 部署的策略列表 (不含 LV, 暂缓)
-DEFAULT_STRATEGIES = ["bpc", "me", "srb", "tpc"]
+# 部署的策略列表 (不含 LV, 暂缓)。SRB 已迁入 bad-candidates，默认不同步至 live。
+DEFAULT_STRATEGIES = ["bpc", "me", "tpc", "chop_grid", "dual_add_trend"]
+
+# 研究侧策略目录覆盖（slug -> 绝对路径）；其余仍使用 config/strategies/<slug>/
+STRATEGY_RESEARCH_PATH_OVERRIDES = {
+    "srb": RESEARCH_STRATEGIES / "bad-candidates" / "srb",
+}
+
+
+def research_strategy_dir(strat: str) -> Path:
+    """Resolve packaged strategy root under config/strategies/ (or bad-candidates)."""
+    s = _normalize_deploy_strategy(strat)
+    if s in STRATEGY_RESEARCH_PATH_OVERRIDES:
+        return STRATEGY_RESEARCH_PATH_OVERRIDES[s]
+    return RESEARCH_STRATEGIES / s
+
+
+# Multi-leg strategies: archetypes/*.yaml (any name) + canonical engine yaml at root.
+MULTI_LEG_STRATEGIES = frozenset({"chop_grid", "dual_add_trend"})
+MULTI_LEG_ENGINE_YAML = {"chop_grid": "grid.yaml", "dual_add_trend": "dual_add.yaml"}
+
+
+def _is_multi_leg_deploy(strat: str) -> bool:
+    return _normalize_deploy_strategy(strat) in MULTI_LEG_STRATEGIES
 
 
 def _normalize_deploy_strategy(slug: str) -> str:
@@ -166,7 +188,7 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
     summary = {}
 
     for strat in strategies:
-        src_dir = RESEARCH_STRATEGIES / strat
+        src_dir = research_strategy_dir(strat)
         dst_dir = LIVE_STRATEGIES / strat
 
         if not src_dir.exists():
@@ -175,7 +197,7 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
 
         print(f"\n{'─'*70}")
         print(
-            f"📋 {strat.upper()}: config/strategies/{strat} vs live/highcap/config/strategies/{strat}"
+            f"📋 {strat.upper()}: {src_dir.relative_to(PROJECT_ROOT)} vs live/highcap/config/strategies/{strat}"
         )
         print(f"{'─'*70}")
 
@@ -186,7 +208,12 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
         dst_arch = dst_dir / "archetypes"
 
         if src_arch.exists():
-            for fname in ARCHETYPE_FILES:
+            if _is_multi_leg_deploy(strat):
+                arch_files = sorted(p.name for p in src_arch.iterdir() if p.is_file())
+            else:
+                arch_files = [f for f in ARCHETYPE_FILES if (src_arch / f).exists()]
+
+            for fname in arch_files:
                 src_file = src_arch / fname
                 dst_file = dst_arch / fname
                 if not src_file.exists():
@@ -206,6 +233,26 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
                         print(f"    {line}")
                     if len(diff_lines) > 10:
                         print(f"    ... 还有 {len(diff_lines) - 10} 行差异")
+
+        # multi-leg canonical engine yaml (grid.yaml / dual_add.yaml)
+        if _is_multi_leg_deploy(strat):
+            eng = MULTI_LEG_ENGINE_YAML.get(strat, "")
+            if eng:
+                src_eng = src_dir / eng
+                dst_eng = dst_dir / eng
+                if src_eng.exists():
+                    status, diff_lines = compare_file(src_eng, dst_eng)
+                    strat_summary[status] = strat_summary.get(status, 0) + 1
+                    strat_summary["files"][eng] = status
+                    label = eng
+                    if status == "identical":
+                        print(f"  ✅ {label}: 无变化")
+                    elif status == "new":
+                        print(f"  🆕 {label}: 新文件")
+                    elif status == "modified":
+                        print(f"  ⚡ {label}: 有差异")
+                        for line in diff_lines[:8]:
+                            print(f"    {line}")
 
         # top-level configs
         for fname in TOP_LEVEL_CONFIGS:
@@ -284,7 +331,7 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
 
 def deploy_strategy(strat: str) -> int:
     """部署单个策略: config/strategies/{strat}/ → live/highcap/config/strategies/{strat}/"""
-    src_dir = RESEARCH_STRATEGIES / strat
+    src_dir = research_strategy_dir(strat)
     dst_dir = LIVE_STRATEGIES / strat
 
     if not src_dir.exists():
@@ -298,11 +345,17 @@ def deploy_strategy(strat: str) -> int:
     dst_arch = dst_dir / "archetypes"
     if src_arch.exists():
         dst_arch.mkdir(parents=True, exist_ok=True)
-        for fname in ARCHETYPE_FILES:
-            src_file = src_arch / fname
-            if src_file.exists():
-                shutil.copy2(src_file, dst_arch / fname)
-                copied += 1
+        if _is_multi_leg_deploy(strat):
+            for src_file in sorted(src_arch.iterdir()):
+                if src_file.is_file():
+                    shutil.copy2(src_file, dst_arch / src_file.name)
+                    copied += 1
+        else:
+            for fname in ARCHETYPE_FILES:
+                src_file = src_arch / fname
+                if src_file.exists():
+                    shutil.copy2(src_file, dst_arch / fname)
+                    copied += 1
 
     # top-level configs
     dst_dir.mkdir(parents=True, exist_ok=True)
@@ -311,6 +364,14 @@ def deploy_strategy(strat: str) -> int:
         if src_file.exists():
             shutil.copy2(src_file, dst_dir / fname)
             copied += 1
+
+    if _is_multi_leg_deploy(strat):
+        eng = MULTI_LEG_ENGINE_YAML.get(strat, "")
+        if eng:
+            src_eng = src_dir / eng
+            if src_eng.exists():
+                shutil.copy2(src_eng, dst_dir / eng)
+                copied += 1
 
     return copied
 
@@ -352,7 +413,7 @@ def _sync_training_baselines(strategies: List[str]) -> int:
         if not candidates:
             continue
         latest = Path(candidates[0])
-        dst = RESEARCH_STRATEGIES / strat / "training_baseline.json"
+        dst = research_strategy_dir(strat) / "training_baseline.json"
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(latest, dst)
         print(

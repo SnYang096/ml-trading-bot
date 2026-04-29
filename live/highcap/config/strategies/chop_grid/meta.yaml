@@ -1,0 +1,12 @@
+# Chop Grid 策略元信息
+
+strategy:
+  name: chop-grid-120T
+  description: |
+    Neutral limit grid inside broad semantic_chop regimes. It is intentionally
+    isolated from the single-position TradeIntent pipeline.
+  owner: quant_team
+  archetype: ChopGrid
+  timeframe: "120T"
+  bidirectional: true
+  symbol_exclude: []

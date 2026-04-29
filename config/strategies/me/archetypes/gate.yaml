@@ -17,13 +17,13 @@ hard_gates:
     tag: HARD_ME_SEMANTIC_CHOP
     phase: hard_gate
     priority: 6
-    reason: ME 专用：BB 偏窄且多周期方向发散 → 压缩-震荡区，动量扩张语义不成立
+    reason: ME 专用：同品种 rolling 分位上 chop 偏高（相对近期自身历史）→ 压缩震荡相对更差的一段
     when:
-      me_semantic_chop:
+      me_semantic_chop_ts_q:
         value_gt: 0.40
     then:
       action: deny
-    comment: "semantic: me_semantic_chop = (1 - bb_width_normalized) × (1 - me_multi_tf_alignment) × 2; 20260425 后统一 0.40，避免压缩震荡中假动量开仓"
+    comment: "me_semantic_chop_ts_q>0.40 deny（1200bar/min150 滚动分位，与 BPC/TPC 同源）；0.25 过杀已弃用；raw 0.4 历史 run 不复跑"
     locked: true
     frozen: true
     promote_never_disable: true

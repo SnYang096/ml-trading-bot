@@ -1,42 +1,80 @@
 """
-币安WebSocket实盘测试
+币安 WebSocket 相关测试。
 
-展示如何使用BinanceWebSocketClient连接币安实盘数据流，并集成到OrderFlowListener。
-
-注意：
-- 币安的trade stream是公开的，不需要API key
-- 此测试连接到币安实盘WebSocket，会接收真实的市场数据
-- 建议先用测试网或少量数据测试
+- **默认不连交易所**：连接实盘的 async 测试会阻塞很久（甚至数小时）若网络/对端
+  无 tick 或半开连接；CI 与本地「Run all live_data_stream tests」应秒过。
+- 需要真连时设置环境变量：``MLBOT_RUN_LIVE_WS_TESTS=1``（可选再调
+  ``MLBOT_LIVE_WS_TEST_TIMEOUT_SEC``，默认 90 秒）。
 """
 
-import pytest
-import asyncio
-from datetime import datetime
-from typing import List, Optional
-import logging
+from __future__ import annotations
 
-from src.live_data_stream.websocket_client import BinanceWebSocketClient, BinanceTick
-from src.live_data_stream import (
-    StorageManager,
-    OrderFlowListener,
-    MultiSymbolManager,
-)
-from src.time_series_model.live.incremental_feature_computer import (
-    IncrementalFeatureComputer,
-)
+import asyncio
+import logging
+import os
+
+import pytest
+
+from src.live_data_stream import OrderFlowListener, StorageManager
+from src.live_data_stream.websocket_client import BinanceTick, BinanceWebSocketClient
 
 logger = logging.getLogger(__name__)
 
 
+def _live_ws_tests_enabled() -> bool:
+    v = os.environ.get("MLBOT_RUN_LIVE_WS_TESTS", "").strip().lower()
+    return v in ("1", "true", "yes")
+
+
+def _live_ws_timeout_sec() -> float:
+    raw = os.environ.get("MLBOT_LIVE_WS_TEST_TIMEOUT_SEC", "").strip()
+    if not raw:
+        return 90.0
+    return max(5.0, float(raw))
+
+
+live_ws = pytest.mark.live_binance_ws
+
+
+def _require_live_ws() -> None:
+    if not _live_ws_tests_enabled():
+        pytest.skip(
+            "Live Binance WebSocket tests are off by default (can hang without ticks). "
+            "Set MLBOT_RUN_LIVE_WS_TESTS=1 to enable; optional MLBOT_LIVE_WS_TEST_TIMEOUT_SEC=90."
+        )
+
+
+async def _stream_ticks_until(
+    client: BinanceWebSocketClient,
+    stop_event: asyncio.Event,
+    *,
+    stop_after_n_ticks: int,
+    timeout_sec: float,
+) -> int:
+    """Consume stream until ``stop_after_n_ticks`` or timeout; always sets ``stop_event``."""
+
+    async def _consume() -> int:
+        n = 0
+        async for _tick in client.stream_ticks(stop_event):
+            n += 1
+            if n >= stop_after_n_ticks:
+                break
+        return n
+
+    try:
+        n = await asyncio.wait_for(_consume(), timeout=timeout_sec)
+    finally:
+        stop_event.set()
+    return n
+
+
+@live_ws
 @pytest.mark.asyncio
 async def test_binance_websocket_connection():
-    """
-    测试币安WebSocket连接（不处理数据，只验证连接）
-
-    此测试连接到币安实盘WebSocket，验证连接是否正常。
-    """
+    """连接币安 futures trade 流，收到若干条 tick 即通过。"""
+    _require_live_ws()
     symbols = ["BTCUSDT", "ETHUSDT"]
-    use_futures = True  # 使用期货市场
+    use_futures = True
 
     client = BinanceWebSocketClient(
         symbols=symbols,
@@ -47,93 +85,87 @@ async def test_binance_websocket_connection():
     )
 
     stop_event = asyncio.Event()
-    tick_count = 0
-    max_ticks = 10  # 只接收10条tick验证连接
+    max_ticks = 10
+    timeout_sec = _live_ws_timeout_sec()
 
     try:
-        async for tick in client.stream_ticks(stop_event):
-            tick_count += 1
-            logger.info(f"收到tick: {tick.symbol} @ {tick.price} (vol: {tick.volume})")
-
-            if tick_count >= max_ticks:
-                logger.info(f"✅ 成功接收 {tick_count} 条tick，连接正常")
-                stop_event.set()
-                break
-
+        tick_count = await _stream_ticks_until(
+            client, stop_event, stop_after_n_ticks=max_ticks, timeout_sec=timeout_sec
+        )
+    except asyncio.TimeoutError as e:
+        pytest.fail(
+            f"WebSocket: no {max_ticks} ticks within {timeout_sec}s "
+            f"(check network / firewall). {e}"
+        )
     except Exception as e:
         pytest.fail(f"WebSocket连接失败: {e}")
 
     assert tick_count > 0, "应该至少接收到1条tick"
 
 
+@live_ws
 @pytest.mark.asyncio
 async def test_binance_websocket_with_order_flow_listener():
-    """
-    测试币安WebSocket + OrderFlowListener集成
-
-    此测试连接到币安实盘WebSocket，并将数据传递给OrderFlowListener处理。
-    """
+    """WebSocket + OrderFlowListener：tick 计数在回调与流两侧一致。"""
+    _require_live_ws()
     symbols = ["BTCUSDT"]
     use_futures = True
 
-    # 创建存储管理器
     storage_manager = StorageManager(base_path="data/test_live_storage")
 
-    # 创建OrderFlowListener
     listener = OrderFlowListener(
         symbol=symbols[0],
         storage_manager=storage_manager,
-        memory_window_hours=1.0,  # 测试时使用较小的窗口
-        feature_compute_interval_minutes=60,  # 测试时不会触发
+        memory_window_hours=1.0,
+        feature_compute_interval_minutes=60,
         feature_4h_interval_hours=4,
     )
 
-    # 创建WebSocket客户端
     client = BinanceWebSocketClient(
         symbols=symbols,
         use_futures=use_futures,
     )
 
     stop_event = asyncio.Event()
-    tick_count = 0
-    max_ticks = 50  # 接收50条tick进行测试
+    cb_count = 0
+    max_ticks = 50
+    timeout_sec = max(_live_ws_timeout_sec(), 120.0)
 
     def on_tick(tick: BinanceTick):
-        """处理tick数据"""
-        nonlocal tick_count
-        tick_count += 1
+        nonlocal cb_count
+        cb_count += 1
+        logger.info(f"callback tick {cb_count}: {tick.symbol} @ {tick.price}")
 
-        # 转换为Nautilus Trader格式（如果需要）
-        # 这里直接使用BinanceTick，OrderFlowListener需要适配
-        logger.info(f"处理tick {tick_count}: {tick.symbol} @ {tick.price}")
-
-    # 添加回调
     client.add_callback(on_tick)
 
+    stream_count = 0
     try:
-        async for tick in client.stream_ticks(stop_event):
-            # 这里可以进一步处理tick，转换为TradeTick格式
-            # 目前OrderFlowListener期望Nautilus Trader的TradeTick对象
-            # 需要适配层或使用Nautilus Trader的数据客户端
 
-            if tick_count >= max_ticks:
-                logger.info(f"✅ 成功处理 {tick_count} 条tick")
-                stop_event.set()
-                break
+        async def _both():
+            nonlocal stream_count
+            async for tick in client.stream_ticks(stop_event):
+                stream_count += 1
+                if cb_count >= max_ticks or stream_count >= max_ticks:
+                    break
 
+        await asyncio.wait_for(_both(), timeout=timeout_sec)
+    except asyncio.TimeoutError as e:
+        pytest.fail(
+            f"WebSocket+listener: fewer than {max_ticks} ticks in {timeout_sec}s. {e}"
+        )
     except Exception as e:
         pytest.fail(f"WebSocket处理失败: {e}")
+    finally:
+        stop_event.set()
 
-    assert tick_count > 0, "应该至少处理1条tick"
+    assert cb_count > 0 and stream_count > 0, "应收到 tick（回调与流均 >0）"
 
 
+@live_ws
 @pytest.mark.asyncio
 async def test_binance_websocket_multi_symbol():
-    """
-    测试币安WebSocket多symbol连接
-
-    验证可以同时订阅多个symbol的数据流。
-    """
+    """多 symbol：在超时内尽量收到各 symbol 的成交；不强求各 5 条以免久等。"""
+    _require_live_ws()
     symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
     use_futures = True
 
@@ -144,36 +176,32 @@ async def test_binance_websocket_multi_symbol():
 
     stop_event = asyncio.Event()
     tick_counts = {symbol: 0 for symbol in symbols}
-    max_ticks_per_symbol = 5
+    timeout_sec = max(_live_ws_timeout_sec(), 120.0)
+    min_per = 2
 
     try:
-        async for tick in client.stream_ticks(stop_event):
-            if tick.symbol in tick_counts:
-                tick_counts[tick.symbol] += 1
-                logger.info(
-                    f"收到 {tick.symbol} tick: {tick_counts[tick.symbol]}/{max_ticks_per_symbol}"
-                )
 
-            # 如果所有symbol都收到足够的tick，停止
-            if all(count >= max_ticks_per_symbol for count in tick_counts.values()):
-                logger.info(f"✅ 所有symbol都收到足够的tick: {tick_counts}")
-                stop_event.set()
-                break
+        async def _multi():
+            async for tick in client.stream_ticks(stop_event):
+                if tick.symbol in tick_counts:
+                    tick_counts[tick.symbol] += 1
+                if all(tick_counts[s] >= min_per for s in symbols):
+                    break
 
-    except Exception as e:
-        pytest.fail(f"多symbol WebSocket连接失败: {e}")
+        await asyncio.wait_for(_multi(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        stop_event.set()
 
-    # 验证每个symbol都收到了数据
     for symbol in symbols:
-        assert tick_counts[symbol] > 0, f"{symbol} 应该至少接收到1条tick"
+        assert (
+            tick_counts[symbol] > 0
+        ), f"{symbol} 在 {timeout_sec}s 内应至少收到 1 条 tick"
 
 
 def test_binance_websocket_client_creation():
-    """
-    测试BinanceWebSocketClient创建（不连接）
-
-    验证客户端可以正常创建，不实际连接WebSocket。
-    """
+    """仅创建客户端与 URL，不建立连接。"""
     symbols = ["BTCUSDT"]
     use_futures = True
 
@@ -183,15 +211,13 @@ def test_binance_websocket_client_creation():
     )
 
     assert client.symbols == ["BTCUSDT"]
-    assert client.use_futures == True
-    assert client.reconnect_delay == 5
+    assert client.use_futures is True
+    assert client.reconnect_manager.config.initial_delay == 5.0
 
-    # 验证URL构建
     url = client._ws_url()
     assert "fstream.binance.com" in url or "stream.binance.com" in url
-    assert "btcusdt@trade" in url.lower()
+    assert "btcusdt@aggtrade" in url.lower()
 
 
 if __name__ == "__main__":
-    # 直接运行测试（需要pytest-asyncio）
     pytest.main([__file__, "-v", "-s"])

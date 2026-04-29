@@ -26,6 +26,11 @@ import pandas as pd
 from typing import Optional, Dict, Any
 
 from src.features.registry import register_feature
+from src.features.time_series.semantic_chop_ts_quantile import (
+    DEFAULT_CHOP_TS_MIN_PERIODS,
+    DEFAULT_CHOP_TS_WINDOW,
+    semantic_chop_ts_quantile,
+)
 from src.features.time_series.utils_garch_features import (
     compute_ewma_vol,
     compute_ewma_vol_percentile,
@@ -406,12 +411,20 @@ def _compute_soft_phase_core(
         f"{p}_vol_ratio": vol_ratio_values,
         f"{p}_cvd_z": cvd_z_values,
     }
+    chop_ts_q_vals = semantic_chop_ts_quantile(
+        semantic_chop,
+        close.index,
+        window=DEFAULT_CHOP_TS_WINDOW,
+        min_periods=DEFAULT_CHOP_TS_MIN_PERIODS,
+    )
     if p == "tpc":
         out_cols["tpc_semantic_chop"] = semantic_chop
         out_cols["tpc_semantic_extension"] = semantic_extension
+        out_cols["tpc_semantic_chop_ts_q"] = chop_ts_q_vals
     elif p == "bpc":
         out_cols["bpc_semantic_chop"] = semantic_chop
         out_cols["bpc_semantic_extension"] = semantic_extension
+        out_cols["bpc_semantic_chop_ts_q"] = chop_ts_q_vals
     # 2026-04-22：不再输出 {bpc,tpc}_semantic_ema_discount（见上方 p_scale 处注释）。
 
     result = pd.DataFrame(out_cols, index=close.index)
@@ -468,6 +481,7 @@ def _compute_soft_phase_core(
         "bpc_cvd_z",
         "bpc_semantic_chop",
         "bpc_semantic_extension",
+        "bpc_semantic_chop_ts_q",
     ],
 )
 def compute_bpc_soft_phase_from_series(
@@ -544,6 +558,7 @@ def compute_bpc_soft_phase_from_series(
         "tpc_cvd_z",
         "tpc_semantic_chop",
         "tpc_semantic_extension",
+        "tpc_semantic_chop_ts_q",
     ],
 )
 def compute_tpc_soft_phase_from_series(

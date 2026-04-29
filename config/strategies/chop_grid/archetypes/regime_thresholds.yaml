@@ -1,0 +1,8 @@
+# Promoted / adoptable regime slice (optional overlay).
+# Canonical engine config remains ../grid.yaml. After rolling, calibrated values
+# may be exported here for `mlbot pipeline adopt` → config/strategies/chop_grid/archetypes/.
+#
+# Example keys (consumed when merge logic is added; today informational only):
+# regime:
+#   entry_chop_min: 0.40
+#   exit_chop_below: 0.25

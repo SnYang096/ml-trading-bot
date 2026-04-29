@@ -16,7 +16,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -26,7 +26,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.diagnose_chop_grid import GridConfig, _hysteresis_segments, build_features
+from scripts.diagnose_chop_grid import (
+    GridConfig,
+    _hysteresis_segments,
+    build_features,
+    regime_chop_series,
+)
 from scripts.capital_report import write_capital_report_from_trades
 from scripts.diagnose_crf_edge import _load_symbol_1m, _resample_ohlcv
 from src.time_series_model.grid.subbar_replay import (
@@ -35,6 +40,9 @@ from src.time_series_model.grid.subbar_replay import (
     timeframe_to_timedelta,
 )
 from scripts.multi_leg_trading_map import write_continuous_trading_map
+from src.features.time_series.baseline_features import (  # noqa: E402
+    compute_trend_confidence_from_series,
+)
 
 DEFAULT_DUAL_ADD_CONFIG = (
     PROJECT_ROOT / "config/strategies/dual_add_trend/dual_add.yaml"
@@ -50,7 +58,9 @@ def _load_dual_add_defaults(path: Path) -> dict:
     spacing = cfg.get("add_spacing", {}) or {}
     tp = cfg.get("take_profit", {}) or {}
     risk = cfg.get("risk", {}) or {}
-    return {
+    box_pf = regime.get("box_prefilter") or {}
+    chop_series = cfg.get("chop_series", {}) or {}
+    out: Dict[str, Any] = {
         "regime": "trend",
         "add_mode": str(inv.get("add_mode", "trend")),
         "flip_action": str(inv.get("flip_action", "close_offside_all")),
@@ -72,7 +82,17 @@ def _load_dual_add_defaults(path: Path) -> dict:
         "max_segment_bars": int(risk.get("max_segment_bars", 120)),
         "fee_bps": float(risk.get("diagnostic_fee_bps", risk.get("fee_bps", 4.0))),
         "exclude_box": bool(regime.get("exclude_box_prefilter", True)),
+        "stability_min": float(box_pf.get("stability_min", 0.85)),
+        "width_min": float(box_pf.get("width_min", 0.04)),
+        "width_max": float(box_pf.get("width_max", 0.30)),
+        "touches_min": int(box_pf.get("touches_min", 5)),
+        "chop_signal": str(chop_series.get("chop_signal", "raw")),
+        "chop_ts_window": int(chop_series.get("chop_ts_window", 1200)),
+        "chop_ts_min_periods": int(chop_series.get("chop_ts_min_periods", 150)),
     }
+    if "compute_semantic_chop_ts_q" in chop_series:
+        out["compute_chop_ts_q"] = chop_series.get("compute_semantic_chop_ts_q")
+    return out
 
 
 @dataclass(frozen=True)
@@ -80,6 +100,15 @@ class DualAddConfig:
     regime: str = "trend"
     add_mode: str = "both"
     flip_action: str = "keep"
+    chop_signal: str = "raw"
+    chop_ts_window: int = 1200
+    chop_ts_min_periods: int = 150
+    compute_semantic_chop_ts_q: bool | None = None
+    trend_return_horizons: Tuple[int, ...] = (3, 5, 10)
+    stability_min: float = 0.85
+    width_min: float = 0.04
+    width_max: float = 0.30
+    touches_min: int = 5
     chop_min: float = 0.40
     exit_chop_min: float = 0.25
     trend_min: float = 0.80
@@ -113,17 +142,18 @@ def _position_pnl(side: str, entry: float, px: float, fee: float) -> float:
     return (entry - px) / entry - 2.0 * fee
 
 
-def _add_trend_features(df: pd.DataFrame) -> pd.DataFrame:
+def _add_trend_features(
+    df: pd.DataFrame, horizons: Tuple[int, ...] = (3, 5, 10)
+) -> pd.DataFrame:
+    """Attach dual_add trend columns; skip if already present (e.g. feature pipeline)."""
     out = df.copy()
-    ret3 = out["close"].pct_change(3)
-    ret5 = out["close"].pct_change(5)
-    ret10 = out["close"].pct_change(10)
-    signs = pd.concat([np.sign(ret3), np.sign(ret5), np.sign(ret10)], axis=1).fillna(
-        0.0
-    )
-    out["trend_direction_raw"] = np.sign(signs.mean(axis=1))
-    out["trend_confidence"] = signs.abs().mean(axis=1) * signs.mean(axis=1).abs()
-    out["trend_direction"] = np.where(out["trend_direction_raw"] >= 0, "UP", "DOWN")
+    if not horizons:
+        horizons = (3, 5, 10)
+    if "trend_confidence" in out.columns and "trend_direction" in out.columns:
+        return out
+    bundle = compute_trend_confidence_from_series(close=out["close"], horizons=horizons)
+    for col in bundle.columns:
+        out[col] = bundle[col]
     return out
 
 
@@ -406,10 +436,23 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
             f"(resolved max_loser_hold_bars={eff_hold} from CLI "
             f"{int(args.max_loser_hold_bars)} via --scale-max-loser-hold-to-signal)"
         )
+    hparts = [
+        x.strip() for x in str(args.trend_return_horizons).split(",") if x.strip()
+    ]
+    trend_horizons = tuple(int(x) for x in hparts) if hparts else (3, 5, 10)
     cfg = DualAddConfig(
         regime=args.regime,
         add_mode=args.add_mode,
         flip_action=args.flip_action,
+        chop_signal=args.chop_signal,
+        chop_ts_window=args.chop_ts_window,
+        chop_ts_min_periods=args.chop_ts_min_periods,
+        compute_semantic_chop_ts_q=getattr(args, "compute_chop_ts_q", None),
+        trend_return_horizons=trend_horizons,
+        stability_min=float(args.stability_min),
+        width_min=float(args.width_min),
+        width_max=float(args.width_max),
+        touches_min=int(args.touches_min),
         chop_min=args.chop_min,
         exit_chop_min=args.exit_chop_min,
         trend_min=args.trend_min,
@@ -433,6 +476,14 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         box_window=cfg.box_window,
         chop_min=cfg.chop_min,
         exit_chop_min=cfg.exit_chop_min,
+        chop_signal=cfg.chop_signal,
+        chop_ts_window=cfg.chop_ts_window,
+        chop_ts_min_periods=cfg.chop_ts_min_periods,
+        compute_semantic_chop_ts_q=cfg.compute_semantic_chop_ts_q,
+        stability_min=cfg.stability_min,
+        width_min=cfg.width_min,
+        width_max=cfg.width_max,
+        touches_min=cfg.touches_min,
     )
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     start = pd.Timestamp(args.start, tz="UTC")
@@ -447,7 +498,7 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
             continue
         bars_signal = _resample_ohlcv(raw, args.timeframe)
         df = build_features(symbol, bars_signal, grid_cfg)
-        df = _add_trend_features(df)
+        df = _add_trend_features(df, cfg.trend_return_horizons)
         df = df[(df.index >= start) & (df.index <= end)].copy()
         exec_tf = args.execution_timeframe or args.timeframe
         if exec_tf != args.timeframe:
@@ -457,16 +508,17 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         else:
             df_exec = None
             sig_delta = None
+        chop_s = regime_chop_series(df, grid_cfg)
         if cfg.regime == "trend":
             entry = (df["trend_confidence"] >= cfg.trend_min) & (
-                df["semantic_chop"] <= cfg.exit_chop_min
+                chop_s <= cfg.exit_chop_min
             )
             hold = (df["trend_confidence"] >= cfg.trend_exit_min) & (
-                df["semantic_chop"] <= cfg.chop_min
+                chop_s <= cfg.chop_min
             )
         else:
-            entry = df["semantic_chop"] >= cfg.chop_min
-            hold = df["semantic_chop"] >= cfg.exit_chop_min
+            entry = chop_s >= cfg.chop_min
+            hold = chop_s >= cfg.exit_chop_min
         if args.exclude_box:
             entry &= ~df["box_prefilter"]
             hold &= ~df["box_prefilter"]
@@ -742,6 +794,59 @@ def main() -> None:
     ap.add_argument("--chop-min", type=float, default=defaults.get("chop_min", 0.40))
     ap.add_argument(
         "--exit-chop-min", type=float, default=defaults.get("exit_chop_min", 0.25)
+    )
+    ap.add_argument(
+        "--chop-signal",
+        choices=["raw", "ts_quantile"],
+        default=str(defaults.get("chop_signal", "raw")),
+        help="Chop series for regime masks: raw semantic_chop or causal ts quantile (~pct).",
+    )
+    ap.add_argument(
+        "--chop-ts-window",
+        type=int,
+        default=int(defaults.get("chop_ts_window", 1200)),
+    )
+    ap.add_argument(
+        "--chop-ts-min-periods",
+        type=int,
+        default=int(defaults.get("chop_ts_min_periods", 150)),
+    )
+    ap.add_argument(
+        "--compute-chop-ts-q",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.get("compute_chop_ts_q"),
+        help=(
+            "Force build of semantic_chop_ts_q column. "
+            "Default: dual_add.yaml chop_series if set, else only when --chop-signal ts_quantile."
+        ),
+    )
+    _hdef = defaults.get("trend_return_horizons", (3, 5, 10))
+    ap.add_argument(
+        "--trend-return-horizons",
+        type=str,
+        default=",".join(str(x) for x in _hdef),
+        help="Comma-separated lookback bars for trend_confidence (e.g. 3,5,10).",
+    )
+    ap.add_argument(
+        "--stability-min",
+        type=float,
+        default=float(defaults.get("stability_min", 0.85)),
+        help="Box prefilter stability_min (StudyConfig); see regime.box_prefilter.",
+    )
+    ap.add_argument(
+        "--width-min",
+        type=float,
+        default=float(defaults.get("width_min", 0.04)),
+    )
+    ap.add_argument(
+        "--width-max",
+        type=float,
+        default=float(defaults.get("width_max", 0.30)),
+    )
+    ap.add_argument(
+        "--touches-min",
+        type=int,
+        default=int(defaults.get("touches_min", 5)),
     )
     ap.add_argument("--trend-min", type=float, default=defaults.get("trend_min", 0.80))
     ap.add_argument(

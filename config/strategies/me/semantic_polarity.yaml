@@ -24,6 +24,7 @@ polarity:
   # ── ME 反向风险 / 场景语义 (值越大越差) ──
   me_reflex_risk:         lower_is_better
   me_semantic_chop:       lower_is_better   # BB 带窄 × 多周期发散 (值越高越压缩/震荡)
+  me_semantic_chop_ts_q:  lower_is_better   # 同品种 rolling 分位，高=相对近期更 chop
 
   # ── 活跃度 / 流动性 (ME 视角: 值越大越好) ──
   # 其他策略如果也用到这些特征, 需要在各自的 semantic_polarity.yaml 里声明一次,

@@ -5355,6 +5355,45 @@ def _is_multi_leg_strategy(cfg: Dict[str, Any], strategy: str) -> bool:
     return _strategy_type(cfg, strategy) in {"grid", "dual_add_trend"}
 
 
+_MULTILEG_PROD_SLUGS = frozenset({"chop_grid", "dual_add_trend"})
+
+
+def _export_multileg_adopt_bundle_after_rolling(
+    *,
+    cfg: Dict[str, Any],
+    history_dir: Path,
+    timestamp: str,
+    ledger: List[Dict[str, Any]],
+    strategies: List[str],
+) -> None:
+    """Write ``history_dir/<strat>/<ts>/strategies/<strat>/`` for ``pipeline adopt``."""
+    if not ledger:
+        return
+    last = ledger[-1]
+    run_root_last = Path(str(last.get("run_root", "") or ""))
+    calib_root = run_root_last / "strategies_calibrated"
+    if not calib_root.is_dir():
+        return
+    for strat in strategies:
+        if not _is_multi_leg_strategy(cfg, strat):
+            continue
+        src = calib_root / strat
+        if not src.is_dir():
+            continue
+        dst = history_dir / strat / timestamp / "strategies" / strat
+        shutil.rmtree(dst, ignore_errors=True)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+        repo_arch = PROJECT_ROOT / "config" / "strategies" / strat / "archetypes"
+        dst_arch = dst / "archetypes"
+        if repo_arch.is_dir():
+            dst_arch.mkdir(parents=True, exist_ok=True)
+            for rf in repo_arch.iterdir():
+                if rf.is_file() and not (dst_arch / rf.name).exists():
+                    shutil.copy2(rf, dst_arch / rf.name)
+        print(f"   📦 multileg adopt bundle → {dst}")
+
+
 def _resolve_strategy_config_dir(
     cfg: Dict[str, Any],
     strategy: str,
@@ -7088,6 +7127,13 @@ def main():
         stitched_path.write_text(
             json.dumps(stitched, indent=2, ensure_ascii=False), encoding="utf-8"
         )
+        _export_multileg_adopt_bundle_after_rolling(
+            cfg=cfg,
+            history_dir=history_dir,
+            timestamp=timestamp,
+            ledger=ledger,
+            strategies=strategies,
+        )
         # ── Auto threshold-drift report (per strategy) ──
         if args.dry_run:
             print("   ⏭️  ThresholdDrift: skipped (dry-run)")
@@ -7867,6 +7913,21 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
     if not exp_arch.exists():
         print(f"   ❌ 实验 archetypes 不存在: {exp_arch}")
         return False
+
+    prod_slug = Path(str(prod_config_dir).strip()).name
+    if prod_slug in _MULTILEG_PROD_SLUGS:
+        prod_arch.mkdir(parents=True, exist_ok=True)
+        for f in exp_arch.iterdir():
+            if f.is_file():
+                shutil.copy2(f, prod_arch / f.name)
+        eng = "grid.yaml" if prod_slug == "chop_grid" else "dual_add.yaml"
+        exp_eng = exp_config_dir / eng
+        prod_eng = PROJECT_ROOT / prod_config_dir / eng
+        if exp_eng.exists():
+            prod_eng.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(exp_eng, prod_eng)
+        print(f"   ✅ multileg adopt → {prod_arch} (+ {eng} if present)")
+        return True
 
     # ── 语义锁定: 读取生产 prefilter.yaml 中的 locked 规则, 检查实验版本是否保留 ──
     prod_prefilter = prod_arch / "prefilter.yaml"

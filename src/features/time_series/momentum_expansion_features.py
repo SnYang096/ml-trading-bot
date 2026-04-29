@@ -33,6 +33,11 @@ import pandas as pd
 from typing import Optional
 
 from src.features.registry import register_feature
+from src.features.time_series.semantic_chop_ts_quantile import (
+    DEFAULT_CHOP_TS_MIN_PERIODS,
+    DEFAULT_CHOP_TS_WINDOW,
+    semantic_chop_ts_quantile,
+)
 
 
 # =============================================================================
@@ -81,6 +86,7 @@ def _stream_safe_percentile(series: pd.Series, window: int) -> pd.Series:
         "me_delta_net_flow",        # Delta净流×方向 [-1,1]
         # === Semantic (语义场景) ===
         "me_semantic_chop",         # BB 带窄 × 多周期方向发散，对齐 bpc_semantic_chop
+        "me_semantic_chop_ts_q",    # 同品种 rolling 分位 [0,1]，与 BPC/TPC chop_ts_q 对齐
     ],
 )
 def compute_momentum_expansion_soft_phase_from_series(
@@ -229,6 +235,12 @@ def compute_momentum_expansion_soft_phase_from_series(
         bb_compression = pd.Series(0.0, index=close.index)
     dir_dissonance = (1.0 - me_multi_tf_alignment).clip(lower=0.0, upper=1.0)
     me_semantic_chop = (bb_compression * dir_dissonance * 2.0).clip(0, 1)
+    me_semantic_chop_ts_q = semantic_chop_ts_quantile(
+        me_semantic_chop.to_numpy(dtype=float, copy=False),
+        close.index,
+        window=DEFAULT_CHOP_TS_WINDOW,
+        min_periods=DEFAULT_CHOP_TS_MIN_PERIODS,
+    )
 
     # ========== 输出 ==========
     result = pd.DataFrame({
@@ -248,6 +260,7 @@ def compute_momentum_expansion_soft_phase_from_series(
         "me_delta_net_flow": me_delta_net_flow,
         # Semantic
         "me_semantic_chop": me_semantic_chop,
+        "me_semantic_chop_ts_q": me_semantic_chop_ts_q,
     }, index=close.index)
 
     result.attrs['feature_version'] = FEATURE_VERSION

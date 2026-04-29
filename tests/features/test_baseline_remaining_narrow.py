@@ -23,6 +23,7 @@ from src.features.time_series.baseline_features import (
     compute_compression_to_breakout_prob,
     compute_compression_to_breakout_prob_from_series,
     compute_roc_5_from_series,
+    compute_trend_confidence_from_series,
 )
 
 
@@ -120,6 +121,25 @@ def test_remaining_baseline_series_entrypoints_match_df_versions():
         raise AssertionError(
             "legacy compute_compression_to_breakout_prob did not create output column"
         )
+
+
+def test_compute_trend_confidence_from_series_matches_sign_bundle():
+    idx = pd.date_range("2024-01-01", periods=80, freq="1h")
+    rng = np.random.default_rng(7)
+    close = pd.Series(100 + np.cumsum(rng.normal(0, 0.3, len(idx))), index=idx)
+    horizons = (3, 5, 10)
+    rets = [close.pct_change(int(h)) for h in horizons]
+    signs = pd.concat([np.sign(r) for r in rets], axis=1).fillna(0.0)
+    signs.columns = list(range(len(horizons)))
+    mean_signs = signs.mean(axis=1)
+    expected = signs.abs().mean(axis=1) * mean_signs.abs()
+    out = compute_trend_confidence_from_series(close=close, horizons=horizons)
+    assert list(out.columns) == [
+        "trend_confidence",
+        "trend_direction_raw",
+        "trend_direction",
+    ]
+    assert np.allclose(out["trend_confidence"].values, expected.values, equal_nan=True)
 
 
 def test_compute_atr_from_series():

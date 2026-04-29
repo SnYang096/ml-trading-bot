@@ -11,6 +11,7 @@ feature_pipeline:
     - "ema_1200_position"
     # ME 专属 chop 语义
     - "me_semantic_chop"
+    - "me_semantic_chop_ts_q"
     # 订单流
     - "vpin_*"
     # 波动率稳定性 / 杠杆非对称

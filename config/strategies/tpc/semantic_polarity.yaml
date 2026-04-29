@@ -14,6 +14,7 @@ polarity:
 
   # ── 场景语义 ──
   tpc_semantic_chop:      lower_is_better   # BB 带窄 × 方向置信低 (值越高越震荡)
+  tpc_semantic_chop_ts_q: lower_is_better   # 同品种 rolling 分位，高=相对近期更 chop
 
   # ── 方向一致性 / 回撤形态（从 BPC 模块复用，与 BPC 同向）──
   # 坑（BPC 同类）：未声明 polarity → meta 写窄 range 规则（0 笔月）。

@@ -658,7 +658,7 @@ def _run_retrain_check() -> None:
 
     strategy_names = list(cfg.get("strategies", {}).keys())
     if not strategy_names:
-        strategy_names = ["bpc", "me", "srb", "tpc"]
+        strategy_names = ["bpc", "me", "tpc"]
 
     for strat in strategy_names:
         try:

@@ -1,6 +1,6 @@
 # ============================================================
 # 上线前训练流水线 (2H, SRB-only, 慢模式 / slow_realistic)
-# SRB = Structural Range Breakout（关键位成功突破后延续），MVP 见 config/strategies/srb
+# SRB = Structural Range Breakout（关键位成功突破后延续）；配置已归档至 config/strategies/bad-candidates/srb
 #
 # 示例:
 #   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_srb_only.yaml --stage rolling_sim
@@ -119,7 +119,7 @@ download:
 
 strategies:
   srb:
-    config: config/strategies/srb
+    config: config/strategies/bad-candidates/srb
     features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true

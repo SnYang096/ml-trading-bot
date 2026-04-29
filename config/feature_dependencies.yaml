@@ -315,6 +315,26 @@ features:
       normalized: true
     column_mappings:
       close: close
+  trend_confidence_f:
+    module: baseline
+    compute_func: compute_trend_confidence_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - trend_confidence
+    - trend_direction_raw
+    - trend_direction
+    category: trend
+    description: Multi-horizon return-sign agreement (dual_add_trend; unitless [0,1] confidence)
+    pass_full_df: false
+    compute_params:
+      horizons:
+      - 3
+      - 5
+      - 10
+    column_mappings:
+      close: close
   trend_r2_50_f:
     module: baseline
     compute_func: compute_trend_r2_50_from_series
@@ -7434,6 +7454,7 @@ features:
     - bpc_cvd_z
     - bpc_semantic_chop
     - bpc_semantic_extension
+    - bpc_semantic_chop_ts_q
     # bpc_semantic_ema_discount 已于 2026-04-22 从 BPC 输出移除
     # （与 pullback_depth / ema_1200_position gate 冗余，且在启动月归零导致 meta-algorithm 误用为 prefilter）
     category: bpc
@@ -7447,8 +7468,8 @@ features:
       pullback_decay: 0.3
       vol_ma_window: 20
       normalized: true
-      # 2026-04-22: 删除 bpc_semantic_ema_discount 输出 + p_scale 不再含该因子 → 强制重算
-      node_cache_version: "bpc_soft_phase_v2_drop_ema_discount"
+      # 2026-04-28: +bpc_semantic_chop_ts_q；2026-04-30: chop_ts_q 窗 1200×min150
+      node_cache_version: "bpc_soft_phase_v4_chop_ts_q_1200"
       output_normalization_map:
         # ATOMIC: Breakout
         bpc_price_breakout_strength: bounded_0_1
@@ -7484,6 +7505,7 @@ features:
         bpc_cvd_z: zscore
         bpc_semantic_chop: bounded_0_1
         bpc_semantic_extension: bounded_0_1
+        bpc_semantic_chop_ts_q: bounded_0_1
     column_mappings:
       close: close
       high: high
@@ -7542,6 +7564,7 @@ features:
     - tpc_cvd_z
     - tpc_semantic_chop
     - tpc_semantic_extension
+    - tpc_semantic_chop_ts_q
     # tpc_semantic_ema_discount 已于 2026-04-22 从 TPC 输出移除（与 BPC 一致）
     category: tpc
     description: TPC soft phase scores - trend-based pullback/continuation without breakout gate. Direction from EMA1200 sign.
@@ -7554,8 +7577,8 @@ features:
       pullback_decay: 0.3
       vol_ma_window: 20
       normalized: true
-      # 2026-04-22: 删除 tpc_semantic_ema_discount 输出 + p_scale 不再含该因子 → 强制重算
-      node_cache_version: "tpc_soft_phase_v2_drop_ema_discount"
+      # 2026-04-28: +tpc_semantic_chop_ts_q；2026-04-30: chop_ts_q 窗 1200×min150
+      node_cache_version: "tpc_soft_phase_v4_chop_ts_q_1200"
       output_normalization_map:
         tpc_price_breakout_strength: bounded_0_1
         tpc_recent_breakout_strength: bounded_0_1
@@ -7585,6 +7608,7 @@ features:
         tpc_cvd_z: zscore
         tpc_semantic_chop: bounded_0_1
         tpc_semantic_extension: bounded_0_1
+        tpc_semantic_chop_ts_q: bounded_0_1
     column_mappings:
       close: close
       high: high
@@ -8206,6 +8230,7 @@ features:
     - me_delta_net_flow
     # === Semantic (场景语义) ===
     - me_semantic_chop
+    - me_semantic_chop_ts_q
     category: momentum_expansion
     description: ME v3.0 Energy × Acceleration × Participation three-factor model with 11 core features + me_semantic_chop.
     pass_full_df: false
@@ -8215,7 +8240,8 @@ features:
       lookback: 20
       pct_window: 100
       normalized: true
-      node_cache_version: "me_soft_phase_v2_chop"
+      # 2026-04-30: chop_ts_q 窗 1200×min150（与 BPC/TPC 同源常量）
+      node_cache_version: "me_soft_phase_v4_chop_ts_q_1200"
       output_normalization_map:
         # Energy
         me_atr_pct: bounded_0_1
@@ -8233,6 +8259,7 @@ features:
         me_delta_net_flow: bounded_neg1_1
         # Semantic
         me_semantic_chop: bounded_0_1
+        me_semantic_chop_ts_q: bounded_0_1
     column_mappings:
       close: close
       high: high

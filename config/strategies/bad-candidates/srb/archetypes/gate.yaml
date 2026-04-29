@@ -15,13 +15,13 @@ hard_gates:
     tag: HARD_SRB_TPC_SEMANTIC_CHOP
     phase: hard_gate
     priority: 6
-    reason: SRB 与 TPC 共享 soft phase：BB 偏窄且方向置信低 → 典型震荡来回扫，不做 SR 突破延续
+    reason: SRB 借用 TPC soft phase：同品种 chop 滚动分位高 → 相对近期偏来回扫，不做 SR 突破延续
     when:
-      tpc_semantic_chop:
-        value_gt: 0.40
+      tpc_semantic_chop_ts_q:
+        value_gt: 0.25
     then:
       action: deny
-    comment: "与 BPC/TPC/ME semantic_chop 同阈值；SRB 原 stat-only gate 无 chop 兜底，补上"
+    comment: "20260428–30: tpc_semantic_chop_ts_q>0.25（1200bar/min150 滚动分位）；替代 raw tpc_semantic_chop>0.40"
     locked: true
     frozen: true
     promote_never_disable: true

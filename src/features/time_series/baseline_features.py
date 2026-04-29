@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 from sklearn.linear_model import LinearRegression
 
 import talib
@@ -3490,6 +3490,39 @@ def compute_roc_5_from_series(
     )
     roc_5.name = "roc_5"
     return roc_5
+
+
+@register_feature("compute_trend_confidence_from_series", category="baseline")
+def compute_trend_confidence_from_series(
+    *,
+    close: pd.Series,
+    horizons: Union[Sequence[int], Tuple[int, ...], List[int], None] = None,
+) -> pd.DataFrame:
+    """Multi-horizon sign agreement trend score (dual_add_trend / multi-leg).
+
+    ``trend_confidence = mean(|sign(ret_h)|) * |mean(sign(ret_h))|`` over
+    ``horizons`` (default 3, 5, 10 bars), matching legacy ``_add_trend_features``.
+    """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    if horizons is None or len(horizons) == 0:
+        hs: Tuple[int, ...] = (3, 5, 10)
+    else:
+        hs = tuple(int(x) for x in horizons)
+    rets = [close.pct_change(h) for h in hs]
+    signs = pd.concat([np.sign(r) for r in rets], axis=1).fillna(0.0)
+    signs.columns = list(range(len(hs)))
+    mean_signs = signs.mean(axis=1)
+    trend_direction_raw = np.sign(mean_signs)
+    trend_confidence = signs.abs().mean(axis=1) * mean_signs.abs()
+    trend_direction = np.where(trend_direction_raw >= 0, "UP", "DOWN")
+    return pd.DataFrame(
+        {
+            "trend_confidence": trend_confidence,
+            "trend_direction_raw": trend_direction_raw,
+            "trend_direction": trend_direction,
+        },
+        index=close.index,
+    )
 
 
 @register_feature("compute_acceleration_3_from_series", category="baseline")
