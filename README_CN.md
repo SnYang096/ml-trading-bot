@@ -135,29 +135,75 @@ mlbot data download-open-interest \
 
 ### 活跃策略 & 对应管线 YAML
 
-**当前 `config/strategies/` 里的活跃策略**（FBF / FER / MSR / LV / LOTTERY 已归档到 `config/strategies/bad-candidates/`）：
+**当前 `config/strategies/` 顶层活跃目录**（不含 `bad-candidates/`）：
 
-| 策略目录         | 语义                                            | 默认 `meta.yaml` timeframe |
-| ---------------- | ----------------------------------------------- | -------------------------- |
-| `bpc`            | Breakout → Pullback → Continuation（趋势延续）  | `120T`                     |
-| `tpc`            | Trend → Pullback → Continuation（趋势回踩）     | `120T`                     |
-| `srb`            | Structural Range Breakout（盒子突破成功延续）   | `120T`                     |
-| `me`             | Momentum Expansion（动量扩张）                  | `120T`                     |
-| `crf`            | Consolidation Range Fade（盒子内双向均值回归）  | `120T`                     |
+- **经典单腿链**（prefilter / gate / direction、`TradeIntent` 路径）：`bpc`、`tpc`、`me`。
+- **多腿独立策略**（自有 inventory；研究 adopt / deploy / 实盘见下文 **§6.1**）：`chop_grid`、`dual_add_trend`。
 
-**当前仓库中常用的 pipeline YAML**（按用途）：
+**`bad-candidates/`**：历史实验与废弃候选（含 `fbf`、`fer`、`msr`、`lv`、`lottery`、以及 **`srb` / `crf` 等当前主树副本**）；日常主线以顶层五目录为准。
 
-| YAML                                                                             | 用途                                                              | `rolling.mode`         |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------- |
-| `config/prod_train_pipeline_2h.yaml`                                             | 主生产向：多策略 + PCM 联合回测                                   | `slow_realistic`       |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml`     | BPC-only / turbo：阈值链 + execution 优化，不做特征搜索           | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_me_only.yaml`      | ME-only / turbo                                                   | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_tpc_only.yaml`     | TPC-only / turbo                                                  | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_turbo_crf_only.yaml`                              | CRF-only / turbo（新立项，配合 `box_structure_f` 特征）           | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_slow_bpc_only.yaml`                               | BPC-only 慢模式（季度结构 + 月度快变量）                          | `slow_realistic`       |
-| `config/prod_train_pipeline_2h_slow_me_only.yaml`                                | ME-only 慢模式                                                    | `slow_realistic`       |
-| `config/prod_train_pipeline_2h_slow_srb_only.yaml`                               | SRB-only 慢模式                                                   | `slow_realistic`       |
-| `config/prod_train_pipeline_2h_slow_tpc_only.yaml`                               | TPC-only 慢模式                                                   | `slow_realistic`       |
+| 策略目录          | 语义                                                         | 默认 `meta.yaml` timeframe |
+| ----------------- | ------------------------------------------------------------ | -------------------------- |
+| `bpc`             | Breakout → Pullback → Continuation（趋势延续）               | `120T`                     |
+| `tpc`             | Trend → Pullback → Continuation（趋势回踩）                  | `120T`                     |
+| `me`              | Momentum Expansion（动量扩张）                               | `120T`                     |
+| `chop_grid`       | 语义 chop + 盒过滤下的小网格段（**多腿**；根配置 `grid.yaml`） | `120T`                     |
+| `dual_add_trend`  | 趋势置信 + chop/盒过滤下双腿加仓（**多腿**；根配置 `dual_add.yaml`） | `120T`                     |
+
+**常用 pipeline YAML**（按 **`config/strategies/<策略>/`** 归类；**`mlbot pipeline run --config …`** 仍使用 **`config/` 根目录下** 的 `prod_train_pipeline_*.yaml` 路径）。
+
+> **与 `live/highcap/config/strategies/` 的分工**：实盘镜像里是同名的 **`meta.yaml` / `features.yaml` / `archetypes/` / 根引擎 yaml**（由 `scripts/deploy_config_to_live.py` 同步）；**不会**把 `prod_train_pipeline_*.yaml` 拷到 `live/…/strategies/bpc/`——那些文件是**研究编排入口**，留在 `config/` 根目录便于脚本与 CI 引用。若将来要把某策略的 pipeline 物理挪到 `config/strategies/<slug>/pipelines/`，需同步改所有 `--config` 引用。
+
+#### 全局 / 多策略
+
+| YAML | 用途 | `rolling.mode` |
+| ---- | ---- | ---------------- |
+| `config/prod_train_pipeline_2h.yaml` | 主生产向：多策略 + PCM 联合回测 | `slow_realistic` |
+
+#### `bpc` — `config/strategies/bpc/`（镜像：`live/highcap/config/strategies/bpc/`）
+
+| YAML | 用途 | `rolling.mode` |
+| ---- | ---- | ---------------- |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml` | turbo：阈值链 + execution 优化，不做特征搜索 | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_slow_bpc_only.yaml` | 慢模式：季度结构 + 月度快变量 | `slow_realistic` |
+
+#### `tpc` — `config/strategies/tpc/`（镜像：`live/highcap/config/strategies/tpc/`）
+
+| YAML | 用途 | `rolling.mode` |
+| ---- | ---- | ---------------- |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_tpc_only.yaml` | turbo | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_slow_tpc_only.yaml` | 慢模式 | `slow_realistic` |
+
+#### `me` — `config/strategies/me/`（镜像：`live/highcap/config/strategies/me/`）
+
+| YAML | 用途 | `rolling.mode` |
+| ---- | ---- | ---------------- |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_me_only.yaml` | turbo | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_slow_me_only.yaml` | 慢模式 | `slow_realistic` |
+
+#### `chop_grid` — `config/strategies/chop_grid/`（镜像：`live/highcap/config/strategies/chop_grid/`）
+
+| YAML | 用途 | `rolling.mode` |
+| ---- | ---- | ---------------- |
+| `config/prod_train_pipeline_2h_turbo_chop_grid_only.yaml` | 多腿网格 rolling（turbo） | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_slow_chop_grid_only.yaml` | 多腿慢模式 | `slow_realistic` |
+
+#### `dual_add_trend` — `config/strategies/dual_add_trend/`（镜像：`live/highcap/config/strategies/dual_add_trend/`）
+
+| YAML | 用途 | `rolling.mode` |
+| ---- | ---- | ---------------- |
+| `config/prod_train_pipeline_2h_turbo_dual_add_trend_only.yaml` | 多腿双腿策略 rolling（turbo） | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_slow_dual_add_trend_only.yaml` | 多腿慢模式 | `slow_realistic` |
+
+#### `bad-candidates/`（策略树 + 专用管线；非顶层主线）
+
+| YAML | 用途 | `rolling.mode` |
+| ---- | ---- | ---------------- |
+| `config/prod_train_pipeline_2h_turbo_crf_only.yaml` | CRF / turbo（`bad-candidates/crf`，`box_structure_f`） | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_srb_only.yaml` | SRB / turbo（`bad-candidates/srb`） | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_srb_quickstrike_only.yaml` | SRB quickstrike / turbo | `turbo_fixed_features` |
+| `config/prod_train_pipeline_2h_slow_srb_only.yaml` | SRB 慢模式 | `slow_realistic` |
+| `config/strategies/bad-candidates/pipelines/*.yaml` | 历史 FBF / FER / MSR 等实验编排 | （见各文件） |
 
 > `turbo_fixed_features`：特征集固定，只做阈值链 / execution 优化 / 月度滚动 → **快**。  
 > `slow_realistic`：每季度重做结构快照（prefilter/gate 元算法），月度 fast_loop 调阈值 → **稳**。
@@ -302,6 +348,80 @@ mlbot pipeline adopt 20260313_234448 --strategy bpc
 python scripts/deploy_config_to_live.py --diff --strategy bpc
 python scripts/deploy_config_to_live.py --deploy --strategy bpc --git-commit
 ```
+
+### 6.1) 多腿策略（`chop_grid` / `dual_add_trend`）：配置、研究 adopt、同步实盘、多腿进程
+
+与 BPC 同一套心智：**研究配置**在 `config/strategies/<策略名>/`，根目录 **`grid.yaml`**（chop_grid）或 **`dual_add.yaml`**（dual_add_trend）为**主配置**；**`archetypes/*.yaml`** 为可推广 / 可 adopt 的薄层；**实盘镜像**在 `live/highcap/config/strategies/<策略名>/`（用下方 deploy 同步）。
+
+**1）离线诊断（不跑 pipeline）**
+
+```bash
+# chop_grid：语义 chop + 盒过滤 + 网格段回测（读 grid.yaml）
+python scripts/diagnose_chop_grid.py \
+  --start 2024-01-01 --end 2024-12-31 \
+  --symbols BTCUSDT,ETHUSDT --timeframe 2h
+
+# dual_add_trend：趋势段 + 双腿加仓仿真（读 dual_add.yaml；trend 列来自注册特征同一公式）
+python scripts/diagnose_dual_add_trend.py \
+  --start 2024-01-01 --end 2024-12-31 \
+  --symbols BTCUSDT,ETHUSDT --timeframe 2h
+# 可选：覆盖 trend 用的多周期回看（默认与 feature_dependencies 中 trend_confidence_f 的 horizons 一致时可不写）
+# python scripts/diagnose_dual_add_trend.py ... --trend-return-horizons 3,5,10
+```
+
+**2）研究管线 + rolling 产物（便于 adopt）**
+
+多腿 turbo 示例配置：`config/prod_train_pipeline_2h_turbo_chop_grid_only.yaml`（其中 `output.history_dir` 决定结果根目录）。跑完 **`rolling_sim`** 后，流水线会把**最后一月**的 `strategies_calibrated/<策略>/` 拷到：
+
+`{history_dir}/<策略名>/<本次 run 时间戳>/strategies/<策略名>/`
+
+这样 **`mlbot pipeline adopt`** 能按与 BPC 相同的目录约定找到 `strategies/<策略>/archetypes`（多腿 adopt **不**走 BPC 的 locked prefilter/gate 校验，以复制为主）。
+
+**重要：`list` / `adopt` / `diff` 的实验根目录 = 当前 `--config` 里的 `output.history_dir`。**  
+若 rolling 用的是 `prod_train_pipeline_2h_turbo_chop_grid_only.yaml`（`history_dir` 在 `results/chop_grid/...`），则 **`mlbot pipeline adopt` 必须带同一 `--config`**；否则 CLI 默认读 `config/research_pipeline.yaml`，会去 `results/research_history/...`，会报「实验不存在」。
+
+```bash
+CHOP_CFG=config/prod_train_pipeline_2h_turbo_chop_grid_only.yaml
+DUAL_CFG=config/prod_train_pipeline_2h_turbo_dual_add_trend_only.yaml
+
+mlbot pipeline run --strategy chop_grid --config "$CHOP_CFG" \
+  --stage rolling_sim --skip-shap
+
+mlbot pipeline run --strategy dual_add_trend --config "$DUAL_CFG" \
+  --stage rolling_sim --skip-shap
+
+# 列出 / 采纳须与上面同一 --config
+mlbot pipeline list --strategy chop_grid --config "$CHOP_CFG"
+mlbot pipeline adopt <时间戳> --strategy chop_grid --config "$CHOP_CFG"
+
+mlbot pipeline list --strategy dual_add_trend --config "$DUAL_CFG"
+mlbot pipeline adopt <时间戳> --strategy dual_add_trend --config "$DUAL_CFG"
+```
+
+**3）研究仓 → 实盘 highcap（多腿会 diff/deploy 全部 archetypes + 根 engine yaml）**
+
+```bash
+python scripts/deploy_config_to_live.py --diff --strategy chop_grid
+python scripts/deploy_config_to_live.py --deploy --strategy chop_grid --git-commit
+
+python scripts/deploy_config_to_live.py --diff --strategy dual_add_trend
+python scripts/deploy_config_to_live.py --deploy --strategy dual_add_trend --git-commit
+```
+
+**4）多腿实盘 / 影子进程（与 `scripts/run_live.py` 分离）**
+
+```bash
+# 默认 shadow + parquet 回放；bar 源还可选 websocket / feature-store
+python scripts/run_multi_leg_live.py --mode shadow --bar-source parquet --once
+
+# 指定策略与策略 yaml（默认已指向 config/strategies/...）
+python scripts/run_multi_leg_live.py \
+  --strategies chop_grid \
+  --chop-grid-config config/strategies/chop_grid/grid.yaml \
+  --once
+```
+
+密钥与账户隔离见脚本首屏 docstring（推荐 `MULTI_LEG_BINANCE_FUTURES_*`）；更完整的 live 事件流说明见 `docs/architecture/live_stream/README.md`。
 
 ### 7) （可选）最终验收 & 最终训练模型
 
