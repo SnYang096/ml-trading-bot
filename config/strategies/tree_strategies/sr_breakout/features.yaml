@@ -1,0 +1,129 @@
+name: sr_breakout
+description: 'SR breakout strategy focusing on breakout quality, momentum persistence,
+  and liquidity void confirmation using WPT/Hilbert/Spectrum features.
+
+  '
+feature_pipeline:
+  # Keep label/backtest-required columns (like raw `atr`) in the dataframe, but do NOT feed them into the model.
+  # This aligns tree behavior with nnmultihead (atr used for labels, excluded from model inputs).
+  exclude_columns:
+  - atr
+  requested_features:
+  # Recommended baseline (node-level) for rolling training
+  #
+  # Source:
+  # - feature-group-search (semantic groups + Pool-B), tag=20260103_norm_full
+  # - results json: results/feature_group_search/sr_breakout_greedy_poolb_semantic_20260103_norm_full/feature_group_search_result.json
+  #
+  # Notes:
+  # - Keep this node-level baseline for stability and synergy.
+  # - We also ran a singleton semantic-column ablation (tag=20260103_norm_full_singletons),
+  #   but its final Sharpe_mean was lower for sr_breakout.
+  # For multi-asset training, prefer scale-free volatility inputs:
+  - atr_ratio_f
+  - poc_hal_features_f
+  - hal_low
+  # SR 结构特征（sr_strength_max, dist_to_nearest_sr 来自 sr_strength_max_close_f）
+  - sr_strength_max_f
+  - sqs_hal_high_f
+  - sqs_hal_low_f
+  # Volume Profile：波动率特征 + 边界稳定性（vp_boundary_stability_score 来自 unified_volume_profile_f）
+  - volume_profile_volatility_features_f
+  - unified_volume_profile_f
+  - trend_r2_20_f
+  - bb_width_f
+  - wick_ratios_f
+  - volume_ratio_f
+  - trade_cluster_scene_semantic_scores_f
+  - atr_percentile_f
+  - price_range_symmetry_f
+  - wick_ratios_f
+  - bb_width_f
+  - volume_anomaly_f
+  - adx_f
+  - vwap_position_f
+  - cvd_basic_f
+
+  # Percentile features for gate rules (used in execution_archetypes.yaml)
+  # These features are computed from OHLCV and are lightweight, suitable for tier0
+  - path_efficiency_pct_f
+  - jump_risk_pct_f
+  - path_length_pct_f
+  - price_dir_consistency_pct_f
+  - cvd_change_5_normalized_pct_f
+  - volume_ratio_pct_f
+  - bb_width_normalized_pct_f
+  # Tier1 (medium): bar-level semantic/structural features (compression/SR-quality/zigzag/scene scores, etc.)
+  # Used by TaskSpec-driven tier materialization in `mlbot nnmultihead pipeline-3action-e2e --task-spec ...`
+  #
+  # Note: this file is a YAML *list* of feature nodes (compute functions, usually *_f).
+  #
+  # Design intent:
+  # - Tier1 should be dominated by "structure description" features (可解释/可维护/可复盘).
+  # - Exclude tick-heavy orderflow + heavy math/WPT features from Tier1; those belong to Tier2+.
+
+  # Core compression / release context (bar-level, no ticks)
+  - compression_duration_f
+  - compression_to_breakout_prob_f
+  - compression_score_f
+  - compression_energy_f
+
+  # Wick semantics (structure + context; no ticks)
+  - wick_scene_semantic_scores_f
+
+  # Liquidity-void (gap / thin-book proxy from bars; no ticks)
+  - liquidity_void_f
+
+  # SR quality / proximity (close-based POC/HAL to avoid WPT dependence)
+  # MLP 不需要 WPT 的原因
+  # 1. MLP 可以自动学习噪声模式
+  # MLP 是通用函数逼近器，能学习复杂非线性关系
+  # 训练过程中会自动识别信号与噪声
+  # 通过正则化（dropout、L2 等）抑制过拟合
+  # 2. WPT 可能丢失信息
+  # WPT 去除高频可能同时去除真实信号
+  # MLP 能从原始数据中学习更丰富的模式
+  # 预处理可能限制模型的学习能力
+  # 3. 树模型 vs MLP 的区别
+  # 树模型：需要清晰的边界和规则，WPT 有助于稳定结构
+  # MLP：可以处理更复杂、更原始的特征，自动学习模式
+  # 对 Tier1 的建议
+  # 既然 Tier1 是为 MLP 设计的，应该：
+  # 保留 sr_strength_max_close_f（基于 close，无 WPT）
+  # 移除 sr_strength_max_f（基于 WPT）
+  # 这样符合 Tier1 的设计原则：避免 WPT 依赖，让 MLP 自己学习。
+  - poc_hal_features_f
+  - sr_strength_max_f
+
+  # Volume Profile boundary stability
+  - unified_volume_profile_f
+
+  # ZigZag structure (proxy for swing points; no ticks)
+  - zigzag_high_low_f
+  - dist_to_zz_high_atr_f
+  - dist_to_zz_low_atr_f
+
+## Tier2 (Orderflow-only)
+# Subset of Tier2 features focusing on orderflow evidence.
+
+  - vpin_base_aligned_features_f
+  - vpin_derived_features_f
+  - vpin_features_f
+  - ofi_short_f
+  - vpin_scene_semantic_scores_f
+
+  - trade_cluster_base_aligned_features_f
+  - trade_cluster_derived_features_f
+  - trade_cluster_scene_semantic_scores_f
+
+  # Optional footprint (can be heavy; keep Tier2 only)
+  - footprint_basic_f
+
+
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+  invert_features:
+  - hal_mid
+  - trade_cluster_compression_score
+  - trade_cluster_exhaustion_scene_score

@@ -12,6 +12,10 @@ Each feature-group-search run uses:
    - semantic groups (auto groups-yaml by strategy dir name)
    - Pool-B YAML as additional singleton candidate groups
 
+**Strategy config resolution** (poolb / FGS only; production pipelines unchanged):
+   - If `config/strategies/tree_strategies/<name>/` exists, use it (legacy tree-model bundles).
+   - Otherwise use `config/strategies/<name>/` (e.g. bpc, me).
+
 Key behavior:
 - `--tag` affects ALL outputs: Pool-B dir, search output dir, writeback YAML, and report.
 
@@ -72,6 +76,19 @@ def _today_tag() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d")
 
 
+def _resolve_poolb_strategy_dir(strategy: str) -> Path:
+    """Config root for factor-eval / feature-group-search (not pipeline default)."""
+    tree = ROOT / "config" / "strategies" / "tree_strategies" / strategy
+    flat = ROOT / "config" / "strategies" / strategy
+    if tree.is_dir():
+        return tree
+    if flat.is_dir():
+        return flat
+    raise FileNotFoundError(
+        f"Strategy config not found for poolb workflow: tried {tree} and {flat}"
+    )
+
+
 def _pool_b_dir(strategy: str, tag: str) -> Path:
     # Tag-aware Pool-B dir to avoid overwriting the default pool_b YAML across runs.
     # Convention:
@@ -82,7 +99,7 @@ def _pool_b_dir(strategy: str, tag: str) -> Path:
 def _build_runs(*, strategies: List[str], tag: str, search_algo: str) -> List[RunSpec]:
     out: List[RunSpec] = []
     for s in strategies:
-        strategy_dir = ROOT / "config" / "strategies" / s
+        strategy_dir = _resolve_poolb_strategy_dir(s)
         pool_b_dir = _pool_b_dir(s, tag)
         pool_b_yaml = pool_b_dir / "features_pool_b.yaml"
         out.append(
@@ -339,13 +356,9 @@ def write_report(
                 rp = stage_paths.get(stage)
                 if rp:
                     lines.append(f"  - stage_{stage}_result: `{rp.relative_to(ROOT)}`")
-            # Convention: final writeback is stage C YAML
-            final_writeback = (
-                ROOT
-                / "config"
-                / "strategies"
-                / s.strategy
-                / f"features_suggested_{s.search_algo}_poolb_semantic_{tag}_C.yaml"
+            # Convention: final writeback is stage C YAML (under same dir as base config)
+            final_writeback = s.strategy_dir / (
+                f"features_suggested_{s.search_algo}_poolb_semantic_{tag}_C.yaml"
             )
             lines.append(f"  - final_writeback: `{final_writeback.relative_to(ROOT)}`")
     lines.append("")
@@ -478,12 +491,8 @@ def main() -> None:
                 / "feature_group_search"
                 / f"{spec.strategy}_{args.search_algo}_poolb_semantic_{tag}_A"
             )
-            wb_a = (
-                ROOT
-                / "config"
-                / "strategies"
-                / spec.strategy
-                / f"features_suggested_{args.search_algo}_poolb_semantic_{tag}_A.yaml"
+            wb_a = spec.strategy_dir / (
+                f"features_suggested_{args.search_algo}_poolb_semantic_{tag}_A.yaml"
             )
             r_a = run_feature_group_search(
                 spec,
@@ -518,12 +527,8 @@ def main() -> None:
                 / "feature_group_search"
                 / f"{spec.strategy}_{args.search_algo}_poolb_semantic_{tag}_B"
             )
-            wb_b = (
-                ROOT
-                / "config"
-                / "strategies"
-                / spec.strategy
-                / f"features_suggested_{args.search_algo}_poolb_semantic_{tag}_B.yaml"
+            wb_b = spec.strategy_dir / (
+                f"features_suggested_{args.search_algo}_poolb_semantic_{tag}_B.yaml"
             )
             r_b = run_feature_group_search(
                 spec,
@@ -558,12 +563,8 @@ def main() -> None:
                 / "feature_group_search"
                 / f"{spec.strategy}_{args.search_algo}_poolb_semantic_{tag}_C"
             )
-            wb_c = (
-                ROOT
-                / "config"
-                / "strategies"
-                / spec.strategy
-                / f"features_suggested_{args.search_algo}_poolb_semantic_{tag}_C.yaml"
+            wb_c = spec.strategy_dir / (
+                f"features_suggested_{args.search_algo}_poolb_semantic_{tag}_C.yaml"
             )
             r_c = run_feature_group_search(
                 spec,

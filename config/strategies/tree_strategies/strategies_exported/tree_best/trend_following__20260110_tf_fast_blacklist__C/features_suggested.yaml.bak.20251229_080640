@@ -1,0 +1,104 @@
+name: trend_following__suggested
+description: 'Trend-following strategy leveraging WPT trend, Hurst persistence, Hilbert
+  phase stability, and multi-timeframe context features.
+
+  '
+feature_pipeline:
+  requested_features:
+  - wpt_price_reconstructed_f
+  - wpt_price_fluctuation_f
+  - wpt_cvd_fluctuation_f
+  - hurst_price_f
+  - hurst_cvd_f
+  - hurst_volume_f
+  - hilbert_phase_f
+  - hilbert_price_env
+  - hilbert_cvd_env
+  - hilbert_cvd_price_env_ratio
+  - hilbert_price_env_slope
+  - hilbert_cvd_env_slope
+  - hilbert_price_env_qnorm
+  - hilbert_cvd_env_qnorm
+  - hilbert_volume_env
+  - hilbert_env_price_vol_ratio
+  - spectrum_features_trend_following_f
+  - atr_f
+  - rsi_f
+  - vpin_features_f
+  - footprint_basic_f
+  - hurst_x_trend_r2_f
+  - evt_x_trend_r2_f
+  - sma_slope_x_price_pos_f
+  - vpin_signed_imbalance_x_trade_cluster_imbalance_f
+  - vpin_x_trade_cluster_entropy_f
+  - dtw_features_trend_f
+  - liquidity_void_scene_semantic_scores_f
+  invert_features: []
+feature_group_search:
+  base_strategy_dir: config/strategies/trend_following
+  objective: Sharpe_mean
+  min_trades: 10
+  seeds:
+  - 1
+  selected_groups:
+  - liquidity_void_scene
+  stop_reason: no_improvement
+  base_features:
+  - wpt_price_reconstructed_f
+  - wpt_price_fluctuation_f
+  - wpt_cvd_fluctuation_f
+  - hurst_price_f
+  - hurst_cvd_f
+  - hurst_volume_f
+  - hilbert_phase_f
+  - hilbert_price_env
+  - hilbert_cvd_env
+  - hilbert_cvd_price_env_ratio
+  - hilbert_price_env_slope
+  - hilbert_cvd_env_slope
+  - hilbert_price_env_qnorm
+  - hilbert_cvd_env_qnorm
+  - hilbert_volume_env
+  - hilbert_env_price_vol_ratio
+  - spectrum_features_trend_following_f
+  - atr_f
+  - rsi_f
+  - vpin_features_f
+  - footprint_basic_f
+  - hurst_x_trend_r2_f
+  - evt_x_trend_r2_f
+  - sma_slope_x_price_pos_f
+  - vpin_signed_imbalance_x_trade_cluster_imbalance_f
+  - vpin_x_trade_cluster_entropy_f
+  - dtw_features_trend_f
+  final_features:
+  - wpt_price_reconstructed_f
+  - wpt_price_fluctuation_f
+  - wpt_cvd_fluctuation_f
+  - hurst_price_f
+  - hurst_cvd_f
+  - hurst_volume_f
+  - hilbert_phase_f
+  - hilbert_price_env
+  - hilbert_cvd_env
+  - hilbert_cvd_price_env_ratio
+  - hilbert_price_env_slope
+  - hilbert_cvd_env_slope
+  - hilbert_price_env_qnorm
+  - hilbert_cvd_env_qnorm
+  - hilbert_volume_env
+  - hilbert_env_price_vol_ratio
+  - spectrum_features_trend_following_f
+  - atr_f
+  - rsi_f
+  - vpin_features_f
+  - footprint_basic_f
+  - hurst_x_trend_r2_f
+  - evt_x_trend_r2_f
+  - sma_slope_x_price_pos_f
+  - vpin_signed_imbalance_x_trade_cluster_imbalance_f
+  - vpin_x_trade_cluster_entropy_f
+  - dtw_features_trend_f
+  - liquidity_void_scene_semantic_scores_f
+  groups_source: config/feature_groups_trend_following_semantic.yaml
+  feature_blacklist: []

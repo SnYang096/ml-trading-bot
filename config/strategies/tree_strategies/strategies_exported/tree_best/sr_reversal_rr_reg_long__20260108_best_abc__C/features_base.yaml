@@ -1,0 +1,15 @@
+# SR Reversal 策略的基础特征（feature-group-search 必需）
+# 这些特征是标签生成器和回测所必需的，不参与搜索优化
+#
+# 用法：
+#   mlbot diagnose feature-group-search \
+#     --base-features-yaml config/strategies/sr_reversal_rr_reg_long/features_base.yaml \
+#     --pool-b-yaml ... \
+#     --groups-yaml ...
+
+# 标签生成器依赖的特征（必需！否则标签生成会失败）
+- poc_hal_features_close_f     # 输出 dist_to_nearest_sr (标签生成必需)
+- atr_f                        # ATR (标签生成 + 回测必需)
+
+# 注意：cvd_features_f 等策略信号特征不是必需的，它们应该参与优化竞争
+

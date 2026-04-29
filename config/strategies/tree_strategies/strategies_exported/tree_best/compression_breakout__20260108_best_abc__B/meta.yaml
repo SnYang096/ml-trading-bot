@@ -1,0 +1,10 @@
+strategy:
+  name: compression_breakout
+  description: >
+    Compression breakout strategy capturing volatility expansion after
+    prolonged low-volatility phases.
+  tags:
+    - compression
+    - breakout
+  owner: quant_team
+

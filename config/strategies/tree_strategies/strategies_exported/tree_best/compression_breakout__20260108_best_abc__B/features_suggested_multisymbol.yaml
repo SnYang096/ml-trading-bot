@@ -1,0 +1,90 @@
+name: compression_breakout__suggested
+description: 'Compression breakout strategy combining compression strength, trigger,
+  and direction confirmation signals across WPT/VPVR/Spectrum domains.
+
+  '
+feature_pipeline:
+  requested_features:
+  - atr_f
+  - wpt_price_reconstructed_f
+  - wpt_price_fluctuation_f
+  - wpt_volume_energy_f
+  - wpt_cvd_fluctuation_f
+  - spectrum_features_compression_breakout_f
+  - liquidity_void_f
+  - hilbert_phase_f
+  - hurst_price_f
+  - hurst_cvd_f
+  - vpin_features_f
+  - footprint_basic_f
+  - liquidity_void_x_wpt_risk_f
+  - compression_energy_x_ofi_short_f
+  - vpin_x_compression_f
+  - vpin_zscore_x_trade_cluster_max_buy_run_f
+  - vpin_x_trade_cluster_entropy_f
+  - dtw_features_compression_f
+  - volume_profile_scene_semantic_scores_f
+  - vpin_scene_semantic_scores_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+  invert_features: []
+feature_group_search:
+  base_strategy_dir: config/strategies/compression_breakout
+  objective: Sharpe_mean
+  min_trades: 10
+  seeds:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  selected_groups:
+  - volume_profile_scene
+  - vpin_scene
+  stop_reason: no_improvement
+  base_features:
+  - atr_f
+  - wpt_price_reconstructed_f
+  - wpt_price_fluctuation_f
+  - wpt_volume_energy_f
+  - wpt_cvd_fluctuation_f
+  - spectrum_features_compression_breakout_f
+  - liquidity_void_f
+  - hilbert_phase_f
+  - hurst_price_f
+  - hurst_cvd_f
+  - vpin_features_f
+  - footprint_basic_f
+  - liquidity_void_x_wpt_risk_f
+  - compression_energy_x_ofi_short_f
+  - vpin_x_compression_f
+  - vpin_zscore_x_trade_cluster_max_buy_run_f
+  - vpin_x_trade_cluster_entropy_f
+  - dtw_features_compression_f
+  final_features:
+  - atr_f
+  - wpt_price_reconstructed_f
+  - wpt_price_fluctuation_f
+  - wpt_volume_energy_f
+  - wpt_cvd_fluctuation_f
+  - spectrum_features_compression_breakout_f
+  - liquidity_void_f
+  - hilbert_phase_f
+  - hurst_price_f
+  - hurst_cvd_f
+  - vpin_features_f
+  - footprint_basic_f
+  - liquidity_void_x_wpt_risk_f
+  - compression_energy_x_ofi_short_f
+  - vpin_x_compression_f
+  - vpin_zscore_x_trade_cluster_max_buy_run_f
+  - vpin_x_trade_cluster_entropy_f
+  - dtw_features_compression_f
+  - volume_profile_scene_semantic_scores_f
+  - vpin_scene_semantic_scores_f
+  groups_source: groups_yaml:auto:config/feature_groups_compression_breakout_semantic.yaml
+  groups_yaml_auto: true
+  pool_b_yaml: null
+  pool_b_merged_singletons: false
+  feature_blacklist: []

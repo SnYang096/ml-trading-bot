@@ -204,7 +204,7 @@ mlbot data download-open-interest \
 | `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_srb_quickstrike_only.yaml` | SRB quickstrike / turbo | `turbo_fixed_features` |
 | `config/prod_train_pipeline_2h_slow_srb_only.yaml` | SRB 慢模式 | `slow_realistic` |
 | `config/strategies/bad-candidates/pipelines/*.yaml` | 历史 FBF / FER / MSR 等实验编排 | （见各文件） |
-
+O
 > `turbo_fixed_features`：特征集固定，只做阈值链 / execution 优化 / 月度滚动 → **快**。  
 > `slow_realistic`：每季度重做结构快照（prefilter/gate 元算法），月度 fast_loop 调阈值 → **稳**。
 
@@ -474,7 +474,29 @@ SRB / BPC / ME 已把 `box_*` 作为 prefilter 草稿（`locked: false`），跑
 
 #### 8.2 Pool-B + 语义组特征搜索（分支，非主线）
 
+> **来源**：这套命令是为 **树模型 + prefilter 语义组** 时期沉淀的端到端工具（`analyze factor-eval` 生成 Pool-B → `diagnose feature-group-search` 做 A/B/C 分阶段搜索并写回 `features_suggested_*_poolb_semantic_*.yaml`）。实现集中在 `scripts/run_poolb_semantic_search.py`；A/B/C 预算与目录约定仍以当时写的说明为准：  
+> [`docs/archive/guides/tree/FEATURE_GROUP_SEARCH_PRESETS_CN.md`](docs/archive/guides/tree/FEATURE_GROUP_SEARCH_PRESETS_CN.md)（同目录还有 `FEATURE_GROUP_SEARCH_TUNING_GUIDE_CN.md` 等）。
+
+**策略怎么选**：`mlbot diagnose poolb-semantic-search` 的默认 `--strategies` 是 **`bpc,me,fer,lv`**（`src/cli/main.py`）。`scripts/run_poolb_semantic_search.py` 直接执行时默认仍是四个 **树策略短名**（`DEFAULT_STRATEGIES`）。
+
+**Pool-B 工作流的配置路径**（仅 `poolb-semantic-search` / `run_poolb_semantic_search.py`；**`mlbot pipeline run` 等管线仍默认** `config/strategies/<策略名>/`，不变）：  
+- 若存在 **`config/strategies/tree_strategies/<策略名>/`**（老树模型打包），则 factor-eval、feature-group-search 的 `--base-strategy-config` 与写回的 `features_suggested_*_poolb_semantic_*.yaml` **均使用该目录**。  
+- 否则回退到 **`config/strategies/<策略名>/`**（如 `bpc`、`me`）。  
+
+树策略目录已放回仓库：`config/strategies/tree_strategies/{compression_breakout,sr_breakout,sr_reversal_rr_reg_long,trend_following,...}`。若本地误删，可 `git checkout 3251e50^ -- config/strategies/tree_strategies` 从删除前父提交取回。
+
 ```bash
+# 树策略（配置在 tree_strategies/ 下，无需再建符号链接）
+mlbot diagnose poolb-semantic-search \
+  --strategies compression_breakout \
+  --symbol BTCUSDT --timeframe 240T \
+  --start-date 2023-01-01 --end-date 2025-12-31 \
+  --search-algo pipeline --expand-semantic-singletons \
+  --regen-poolb --rerun-search
+```
+
+```bash
+# 单跑 BPC（2H，与本文其它 BPC 示例一致）
 mlbot diagnose poolb-semantic-search \
   --strategies bpc \
   --symbol BTCUSDT --timeframe 120T \
@@ -482,8 +504,6 @@ mlbot diagnose poolb-semantic-search \
   --search-algo pipeline --expand-semantic-singletons \
   --regen-poolb --rerun-search
 ```
-
-> 详细 A/B/C 预算预设见 `docs/archive/guides/tree/FEATURE_GROUP_SEARCH_PRESETS_CN.md`。
 
 #### 8.3 Locked 阈值调参（分支工具）
 

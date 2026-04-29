@@ -1,0 +1,68 @@
+name: sr_reversal_rr_reg_long
+description: "Regression mainline (optimized): 基于 feature-group-search 列级别分析优化"
+feature_pipeline:
+  # Keep label/backtest-required columns (like raw `atr`) in the dataframe, but do NOT feed them into the model.
+  exclude_columns:
+  - atr
+  requested_features:
+    # ============================================
+    # Tier 1: 核心特征（CVD 系列 - 最高 importance）
+    # ============================================
+    # CVD 特征在 baseline 中，由标签生成器自动添加
+
+    # ============================================
+    # Tier 2: SR 结构特征（关键提升）
+    # ============================================
+    - poc_hal_features_close_f
+    - sqs_hal_high_f           # Sharpe +36%！
+    - sqs_hal_low_f
+    - sr_strength_max_close_f
+
+    # ============================================
+    # Tier 3: Volume Profile 特征（推荐）
+    # ============================================
+    - volume_profile_volatility_features_f  # vp_poc_deviation, vp_entropy 等
+
+    # ============================================
+    # Tier 4: K线技术特征（基础）
+    # ============================================
+    - macd_atr_f
+    - rsi_f
+    - sma_200_f
+    - atr_f
+    - atr_percentile_f  # ⭐ 相对阈值特征：自适应 regime shift
+    - trend_r2_20_f
+    - bb_width_f
+    - wick_ratios_f
+    - roc_5_f
+    - mom_10_f
+    - acceleration_3_f
+    - price_range_symmetry_f
+
+    # ============================================
+    # Tier 5: 语义场景特征（推荐）
+    # ============================================
+    - vpin_scene_semantic_scores_f
+
+    # ============================================
+    # 已移除（负面特征）
+    # ============================================
+    # - trend_r2_50_f           # ❌ Sharpe -1.504，严重负面！
+    # - dtw_features_reversal_f # ❌ Sharpe -0.866，负面
+    # - bbands_f                # 与 bb_width_f 重复
+
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+
+notes: |
+  基于 feature-group-search 列级别分析优化的配置。
+  
+  优化点：
+  1. 移除 trend_r2_50_f（Sharpe -1.504，严重负面）
+  2. 添加 volume_profile_volatility_features_f（Sharpe +18%）
+  3. 保留 sqs_hal_high_f（Sharpe +36%，关键特征）
+  
+  预期 Sharpe: ~2.0+ (基于 feature-group-search 最佳组合)
+  
+  参考文档: docs/strategies/BEST_FEATURE_COLUMNS_BY_STRATEGY.md

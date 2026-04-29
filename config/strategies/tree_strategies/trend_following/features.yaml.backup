@@ -1,0 +1,82 @@
+name: trend_following
+description: >
+  Trend-following strategy leveraging WPT trend, Hurst persistence, Hilbert
+  phase stability, and multi-timeframe context features.
+
+feature_pipeline:
+  requested_features:
+    # WPT 特征（多尺度趋势分析）
+    - wpt_price_reconstructed  # 包含: wpt_price_trend, wpt_price_fluctuation, wpt_price_reconstructed
+    - wpt_price_fluctuation    # 包含: wpt_price_energy_low_ratio, wpt_price_energy_mid_ratio, wpt_price_energy_high_ratio
+    - wpt_cvd_fluctuation      # CVD 波动（资金流去趋势）
+    # Hurst 特征（趋势持续性）
+    - hurst_price
+    - hurst_cvd  # CVD 资金流的持续性（确认趋势质量）
+    - hurst_volume  # 成交量的持续性（确认趋势质量）
+    - hilbert_phase
+    - hilbert_price_env
+    - hilbert_cvd_env
+    - hilbert_cvd_price_env_ratio
+    - hilbert_price_env_slope
+    - hilbert_cvd_env_slope
+    # Hilbert 高级功能：分位数标准化（跨品种可比）+ 成交量融合（确认趋势质量）
+    - hilbert_price_env_qnorm
+    - hilbert_cvd_env_qnorm
+    - hilbert_volume_env
+    - hilbert_env_price_vol_ratio
+    # 频谱特征（精确选择）- 作为"环境传感器"，动态开关趋势模型
+    # 核心逻辑：频谱 ≠ 直接信号，而是"市场可交易性诊断器"
+    # 
+    # 需要的特征列（在 selector 函数中选择）：
+    # - spectrum_price_low_freq_ratio   (核心：趋势驱动识别，low_freq 高 = 长期驱动主导)
+    # - spectrum_price_flatness         (核心：市场结构识别，flatness 低 = 有结构，非白噪声)
+    # - spectrum_price_high_freq_ratio  (辅助：噪声水平，用于降权)
+    # 
+    # 不需要的特征：
+    # - spectrum_price_entropy          (主要用于反转策略)
+    # - spectrum_price_has_dominant_freq (金融收益率通常无显著主频)
+    # - spectrum_price_centroid          (主要用于波动率预测)
+    # 
+    # 使用方式（参考文档）：
+    # 1. Low-Freq Energy Ratio ↑ + Spectral Flatness ↓ → 激活趋势模型
+    # 2. 否则降权或暂停（避免在 choppy 市场强行追趋势）
+    # 3. 趋势 = 能量集中在低频 + 频谱稀疏（非白噪声），两者缺一不可
+    # 
+    # 趋势市特征：flatness 低（有结构），low_freq_ratio 高（长期驱动主导）
+    # 震荡市特征：flatness 高（白噪声），high_freq_ratio 高（噪声主导）
+    # 
+    # 趋势模型激活条件：
+    # - low_freq_energy > 阈值（长期驱动主导）
+    # - flatness < 阈值（有结构，非白噪声）
+    # 
+    # 注意：阈值由 LightGBM 模型自动学习，不需要硬编码
+    # 上述阈值说明仅用于理解特征含义，实际使用中模型会根据数据自动学习最优阈值
+    - spectrum_features_trend_following  # 精确选择：low_freq_ratio, flatness, high_freq_ratio
+    - atr
+    - rsi
+    # 订单流特征（VPIN）- 包含多维统计特征（关键改进：保留峰值信号）
+    # 新增多维特征（自动包含，无需单独添加）：
+    # - vpin: 均值（整体不平衡度，向后兼容）
+    # - vpin_max: 峰值（捕捉极端知情交易，避免峰值被稀释）
+    # - vpin_last: 最新值（反映最新情绪，趋势延续信号）
+    # - vpin_std: 标准差（衡量VPIN在K线内的波动性，健康趋势应低波动）
+    # - vpin_count: 事件数（代理流动性，持续活跃的特征）
+    # - vpin_signed_imbalance_last: Signed imbalance 最新值（趋势方向确认）
+    # 推荐组合：vpin（整体）+ vpin_signed_imbalance_last（方向）+ vpin_std（稳定性）
+    - vpin_features
+    # 单根K线 Footprint 特征（POC/HVN/LVN/VAH/VAL + delta/imbalance/skew/exhaustion/divergence）
+    - footprint_basic
+    # 交互特征（状态 × 动量）
+    - hurst_x_trend_r2  # Hurst × 趋势 R²（确认趋势持续性）
+    - evt_x_trend_r2  # EVT × 趋势强度（风险管理）
+    - sma_slope_x_price_pos  # 均线斜率 × 价格位置（趋势确认）
+    # VPIN × Trade Clustering 交叉特征（趋势跟踪策略）
+    - vpin_signed_imbalance_x_trade_cluster_imbalance  # 方向一致性（趋势方向验证）
+    - vpin_x_trade_cluster_entropy  # VPIN × 方向熵（低熵 = 健康趋势，高熵 = 趋势混乱）
+    # DTW 形态匹配特征（改进版：中继形态识别）
+    # 专注于中继形态：旗形、三角收敛（趋势中继确认）
+    # 只包含中继形态及其反向模板，用于对比学习
+    - dtw_features_trend
+  # 注意：post_processors 和 selector 已移除，特征选择通过 YAML 中的精确特征定义完成
+  # 所有特征通过统一的 feature_dependencies.yaml 加载，不需要策略特定的处理函数
+

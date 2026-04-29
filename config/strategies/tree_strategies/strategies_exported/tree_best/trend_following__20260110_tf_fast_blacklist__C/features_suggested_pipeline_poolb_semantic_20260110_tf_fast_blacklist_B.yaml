@@ -1,0 +1,69 @@
+name: trend_following__suggested
+description: 'Trend-following strategy leveraging WPT trend, Hurst persistence, Hilbert
+  phase stability, and multi-timeframe context features.
+
+  '
+feature_pipeline:
+  exclude_columns:
+  - atr
+  requested_features:
+  - atr_f
+  - macd_atr_f
+  - rsi_f
+  - trend_r2_20_f
+  - bb_width_f
+  - wick_ratios_f
+  - volume_ratio_f
+  invert_features:
+  - atr
+  - dtw_triangle_dist_w25
+  - dtw_triangle_dist_w35
+  - dtw_triangle_dist_w45
+  - evt_x_trend_r2
+  - fp_delta_poc
+  - fp_delta_skew
+  - fp_exhaustion_zscore
+  - fp_volume_skew
+  - hilbert_price_env
+  - hilbert_volume_env
+  - trade_cluster_avg_sell_run
+  - trade_cluster_directional_entropy_change
+  - vpin_change_pct
+  - vpin_quantile_rank_50
+  - vpin_std
+  - vpin_volatility_20
+  - wpt_cvd_fluctuation
+  - wpt_price_energy_high_ratio
+feature_group_search:
+  base_strategy_dir: /workspaces/ml_trading_bot/config/strategies/trend_following
+  objective: CV_mean
+  min_trades: 10
+  seeds:
+  - 1
+  - 2
+  - 3
+  selected_groups:
+  - kline_core
+  - poolb__spectrum_features_f
+  - poolb__footprint_basic_f
+  stop_reason: completed
+  base_features:
+  - atr_f
+  final_features:
+  - atr_f
+  - macd_atr_f
+  - rsi_f
+  - trend_r2_20_f
+  - bb_width_f
+  - wick_ratios_f
+  - volume_ratio_f
+  groups_source: groups_yaml:/workspaces/ml_trading_bot/results/feature_group_search/trend_following_pipeline_poolb_semantic_20260110_tf_fast_blacklist_A/shortlist_groups_A.yaml
+  groups_yaml_auto: false
+  pool_b_yaml: /workspaces/ml_trading_bot/results/pools/trend_following/pool_b/20260110_tf_fast_blacklist/features_pool_b.yaml
+  pool_b_merged_singletons: true
+  feature_blacklist:
+  - order_flow_all_features_f
+  - footprint_basic_f
+  - dtw_features_reversal_f
+  - dtw_features_trend_f
+  - spectrum_features_f
