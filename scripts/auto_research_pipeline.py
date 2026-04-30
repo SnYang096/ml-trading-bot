@@ -870,9 +870,9 @@ def _build_continuous_pcm_trading_map(
     ``band_inner_abs`` / ``band_outer_abs`` as fallback.
 
     Price overlays: rolling typical-price VWAP over ``map_vwap_window_bars`` bars
-    (same window as ``macro_tp_vwap_1200_position`` on 2H). ``map_long_ema_span`` is
-    kept for call-site compatibility; EMA overlay was removed as redundant with VWAP.
-    Extra history is loaded before ``x_min`` for stable VWAP; by default the X axis
+    (same window as ``macro_tp_vwap_1200_position`` on 2H), plus **EMA(close,
+    ``map_long_ema_span``)** (default 1200, same span as ``ema_1200`` in features).
+    Extra history is loaded before ``x_min`` for stable VWAP/EMA; by default the X axis
     spans first trade → last trade. If ``chart_x_start`` / ``chart_x_end`` (YYYY-MM-DD)
     are set (typically pipeline ``dates.start_date`` / ``dates.end_date``), the axis
     is widened so K线 shows the full configured sample even when early months have no trades.
@@ -1065,8 +1065,10 @@ def _build_continuous_pcm_trading_map(
     _ = band_outer_abs
 
     vw_n = max(2, int(map_vwap_window_bars))
-    _ = map_long_ema_span  # API compat; EMA not drawn
-    lookback_days = max(int(indicator_lookback_days), int((vw_n * 2 + 24) // 24) + 7)
+    ema_n = max(2, int(map_long_ema_span))
+    lookback_days = max(
+        int(indicator_lookback_days), int((max(vw_n, ema_n) * 2 + 24) // 24) + 7
+    )
     try:
         from scripts.event_backtest import _rolling_tp_vwap as _pcm_rolling_tp_vwap
     except Exception as exc:
@@ -1142,7 +1144,8 @@ def _build_continuous_pcm_trading_map(
         p.yaxis.axis_label = "Price"
 
         r_vwap_ref = None
-        # 2H K-lines + 与 event 单图一致的 1200-bar VWAP / 1200-span EMA（多取历史只用于计算）
+        r_ema_ref = None
+        # 2H K-lines + 与 event 单图一致的 1200-bar VWAP + EMA(close, ema_n)（多取历史只用于计算）
         load_start = (x_min - pd.Timedelta(days=lookback_days)).strftime("%Y-%m-%d")
         load_end = x_max.strftime("%Y-%m-%d")
         try:
@@ -1166,6 +1169,7 @@ def _build_continuous_pcm_trading_map(
             cdf = cdf[_cols].dropna(subset=["open", "high", "low", "close"])
             if not cdf.empty:
                 vwap_full = _pcm_rolling_tp_vwap(cdf, vw_n)
+                ema_full = cdf["close"].ewm(span=ema_n, adjust=False).mean()
 
                 view_start = pd.Timestamp(x_min)
                 view_end = pd.Timestamp(x_max)
@@ -1235,7 +1239,14 @@ def _build_continuous_pcm_trading_map(
                     line_width=1.35,
                     line_alpha=0.78,
                 )
-                # Keep only VWAP reference line on continuous trading map.
+                em = ema_full.reindex(cdf_plot.index)
+                r_ema_ref = p.line(
+                    cdf_plot.index,
+                    em,
+                    line_color="#ea580c",
+                    line_width=1.25,
+                    line_alpha=0.82,
+                )
 
                 # ── CRF box: rolling 120 lo/hi band (not merged min/max rects) ──
                 # 与 prefilter 同条件处着色；每根 bar 用当期的 box_hi/lo，避免长段连绿盖住整图。
@@ -1453,6 +1464,18 @@ def _build_continuous_pcm_trading_map(
                     renderers=[r_vwap_ref],
                 )
             )
+        if r_ema_ref is not None:
+            p.add_tools(
+                HoverTool(
+                    tooltips=[
+                        ("time", "@x{%F %T}"),
+                        ("ema_px", "@y{0.0000}"),
+                    ],
+                    formatters={"@x": "datetime"},
+                    mode="mouse",
+                    renderers=[r_ema_ref],
+                )
+            )
         if all_trade_renderers:
             p.add_tools(
                 HoverTool(
@@ -1489,6 +1512,13 @@ def _build_continuous_pcm_trading_map(
                 LegendItem(
                     label=f"Rolling TP-VWAP ({vw_n}×2H, local symbol price)",
                     renderers=[r_vwap_ref],
+                )
+            )
+        if r_ema_ref is not None:
+            legend_items.append(
+                LegendItem(
+                    label=f"EMA({ema_n}) on close (local symbol price)",
+                    renderers=[r_ema_ref],
                 )
             )
         if r_crf_box is not None:

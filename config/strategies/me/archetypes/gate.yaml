@@ -1,7 +1,6 @@
-# ME Gate — 保留对 ME 更稳定的末端追涨/追空抑制门
+# ME Gate — chop_ts_q 高阈拒单（与 TPC/BPC 同构）+ 末端追涨/追空等语义门
 #
-# locked：rolling 采纳回补 + pass-rate 裁剪跳过；promote_never_disable：优化失败不写 disabled；
-# 不设 frozen 以便 Gate Train 在 Val 上调 value_gt / value_lt。
+# locked / promote_never_disable：rolling 采纳回补与裁剪；chop 上阈 frozen，改数值即扫 0.25/0.30/0.35/0.40。
 schema:
   phases:
     - system_safety
@@ -17,17 +16,17 @@ hard_gates:
     tag: HARD_ME_SEMANTIC_CHOP
     phase: hard_gate
     priority: 6
-    reason: ME 专用：同品种 rolling 分位上 chop 偏高（相对近期自身历史）→ 压缩震荡相对更差的一段
+    reason: ME 专用：同品种 semantic_chop_ts_q 过高 → 拒开仓；低分位放行（与 TPC/BPC 对齐）
     when:
       me_semantic_chop_ts_q:
-        value_gt: 0.40
+        value_gte: 0.40
     then:
       action: deny
-    comment: "me_semantic_chop_ts_q>0.40 deny（1200bar/min150 滚动分位，与 BPC/TPC 同源）；0.25 过杀已弃用；raw 0.4 历史 run 不复跑"
+    comment: "deny iff ts_q>=0.40（放行 ts_q<0.40）。上阈可扫 0.25/0.30/0.35/0.40（改 value_gte）"
     locked: true
     frozen: true
     promote_never_disable: true
-    lock_reason: ME 动量扩张语义：波动区不追，避免 chop bar 上的假动量
+    lock_reason: 高 chop 分位拒单；低分位放行；与 TPC/BPC 对齐
   - id: gate_me_late_long_above_ema1200
     tag: HARD_ME_LATE_LONG_EMA1200
     phase: hard_gate

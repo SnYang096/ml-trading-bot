@@ -19,17 +19,17 @@ hard_gates:
     tag: HARD_TPC_SEMANTIC_CHOP
     phase: hard_gate
     priority: 6
-    reason: TPC 专用：同品种 semantic_chop 滚动分位高 → 相对近期历史偏 chop，拒开仓
+    reason: TPC 专用：同品种 semantic_chop_ts_q 过高（相对近期更 chop）→ 拒开仓；低分位不拦
     when:
       tpc_semantic_chop_ts_q:
-        value_gt: 0.25
+        value_gte: 0.40
     then:
       action: deny
-    comment: "20260428–30: tpc_semantic_chop_ts_q>0.25 deny（1200bar/min150 滚动分位）；替代原 raw tpc_semantic_chop>0.40"
+    comment: "deny iff ts_q>=0.40（放行 ts_q<0.40）。上阈可扫 0.25/0.30/0.35/0.40（改 value_gte）；父单样本见 turbo CSV 对比"
     locked: true
     frozen: true
     promote_never_disable: true
-    lock_reason: 波动区过滤（标准）：与 BPC/ME 三策略同构，避免 chop bar 上的虚假回调
+    lock_reason: 高 chop 分位拒单；与 BPC/ME 同构；低分位放行
   # - id: gate_tpc_late_short_below_ema1200
   #   tag: HARD_TPC_LATE_SHORT_EMA1200
   #   phase: hard_gate

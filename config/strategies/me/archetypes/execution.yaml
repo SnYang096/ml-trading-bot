@@ -1,20 +1,19 @@
-# ME execution — 动量扩张 / 冲段（ATR 大、假突破多）
-#
-# 执行档相对关系（与 TPC 回撤、BPC 延续区分）：
-#   ME > BPC > TPC  于 initial / activation / trail 默认量纲，避免「冲段」用得过紧被洗。
-# 退出：structural_exit EMA1200 作结构保底 + trailing + expand_with_primary_atr 随 ATR 扩带；不设 breakeven。
+# ME — 动量扩张 / 冲段（ATR 大、假突破多）；执行档与 TPC/BPC 数值对齐。
+# 原则：宁可共宽止损、用仓位与 sizing 控暴露，也不单独把 ME 拧得更紧以免被洗出场；
+# 同一套 initial_r / trailing / 加仓阶梯；EMA1200 结构保底 + trailing；不设 breakeven。
 
 add_position:
   add_size_multipliers:
-    - 0.8
-    - 0.5
-    - 0.3
+    # 这里越加越多是因为根据数据统计，越后面成功率越高
+    - 1
+    - 2
+    - 3
   inherit_parent_stop: true
   max_add_times: 3
   min_current_r_by_add:
-    - 0.5
-    - 1.0
-    - 1.5
+    - 1
+    - 2
+    - 3
   min_current_r_unit: atr
   sizing_mode: fixed_multiplier
   trigger:
@@ -35,6 +34,7 @@ stop_loss:
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
+  # initial_r 与 TPC/BPC 一致；宁可宽止损共口径，暴露用仓位与 sizing 收。
   initial_r: 4.0
   structural_exit: ema1200
   trailing:

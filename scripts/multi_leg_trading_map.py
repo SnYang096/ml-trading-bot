@@ -69,7 +69,9 @@ def write_continuous_trading_map(
         df = bars[(bars.index >= x_start) & (bars.index <= x_end)].copy()
         if df.empty:
             continue
+        _ema_n = 1200
         df["tp_vwap_1200"] = _rolling_tp_vwap(df, 1200)
+        df["ema_1200"] = df["close"].ewm(span=_ema_n, adjust=False).mean()
         df = df.reset_index(names="time")
         inc = df["close"] >= df["open"]
         dec = ~inc
@@ -108,6 +110,14 @@ def write_continuous_trading_map(
             line_width=1.35,
             line_alpha=0.78,
             legend_label="Rolling TP-VWAP (1200x2H, local symbol price)",
+        )
+        p.line(
+            df["time"],
+            df["ema_1200"],
+            line_color="#ea580c",
+            line_width=1.25,
+            line_alpha=0.82,
+            legend_label=f"EMA({_ema_n}) on close (local symbol price)",
         )
 
         _add_segment_boxes(p, segments, symbol, x_start, x_end)
@@ -167,7 +177,7 @@ def _summary_html(
         f"| win_rate={win_rate:.2%} | source=({source})</p>"
         f"<p style='font-size:13px;line-height:1.45;max-width:{width}px'>"
         "<b>图例（价格图）</b> 叠在图内左上角。品红实线 = 各 symbol <b>自身</b> 2H K 线上"
-        "滚动典型价 VWAP（1200 根 bar，仅价格尺度展示）。"
+        "滚动典型价 VWAP（1200 根 bar，仅价格尺度展示）；橙线 = 同周期 <b>EMA(1200)</b> on close。"
         "Multi-leg 策略不走旧 <code>TradeIntent/event_backtest</code>，因此本连续图未拼接"
         "PCM/prefilter/gate 阶梯漏斗附图；这些策略的阈值/结构选择来自 rolling calibration window "
         "写出的 <code>strategies_calibrated</code>。"
