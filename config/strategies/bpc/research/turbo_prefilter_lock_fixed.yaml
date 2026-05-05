@@ -1,0 +1,9 @@
+# BPC · fixed locked prefilter — extends turbo；仅关闭 tune_locked_prefilter，沿用 archetypes 锚数值。
+extends: turbo.yaml
+
+strategies:
+  bpc:
+    kpi_gates:
+      prefilter:
+        locked_threshold_tuning:
+          enabled: false

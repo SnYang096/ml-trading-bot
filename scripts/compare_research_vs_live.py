@@ -254,6 +254,7 @@ def main():
             "bpc_bb_compression",
             "bpc_score_breakout",
             "bpc_score_pullback",
+            "bpc_recent_breakout_strength",
             "bpc_was_in_pullback",
             "bpc_pullback_depth",
             "bpc_direction_confidence",

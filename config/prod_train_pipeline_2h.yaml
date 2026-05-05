@@ -185,9 +185,9 @@ strategies:
           max_cases: 12
           min_trades_target: 60
           trade_penalty: 0.0025
-          bpc_pullback_score_min_values: 0.40,0.45,0.50
+          bpc_recent_breakout_strength_min_values: 0.40,0.45,0.50
           bpc_pullback_depth_max_values: 0.55,0.60,0.65
-          bpc_recovery_min_values: 0.50,0.55,0.60
+          bpc_recovery_strength_min_values: 0.50,0.55,0.60
           target_trades_min: 35
           target_trades_max: 260
           trade_penalty_low: 0.002

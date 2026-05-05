@@ -1,6 +1,6 @@
 # BPC prefilter — 三层语义锚点：Breakout → Pullback → Continuation
 # 全部使用原子特征，不依赖 bpc_score_* 组合分数。
-# chop 见 gate_bpc_semantic_chop_high，不在此重复。
+# chop 见 gate_bpc_semantic_chop_high；箱体/压缩类「扫区/扩张」拦截见 archetypes/gate.yaml（与 TPC 同构，避免 prefilter 重复）。
 # - bpc_volume_compression_pct: 非锁定 prior（突破前蓄势），允许 pipeline 调阈值/移除
 # - bpc_recent_breakout_strength: 锚点 1/3，确认最近确实出现过 Donchian 突破
 # - bpc_pullback_depth: 锚点 2/3，回撤受控、未破结构
@@ -15,6 +15,7 @@ rules:
     value: 0.03
   rationale: 近 EMA1200 中轴无趋势优势：20260425 BPC |ema_1200_position|<0.05 的交易 n=11, R=-41
   locked: true
+  skip_parquet_tune: true
   lock_reason: BPC 必须离开 EMA1200 噪声中轴后才允许 breakout-pullback-continuation
 - feature: bpc_volume_compression_pct
   operator: '>='
@@ -38,36 +39,6 @@ rules:
   rationale: 语义锁定：回踩后必须有恢复力度，确认 continuation 的可执行性
   locked: true
   lock_reason: BPC 语义锚点 3/3：Continuation 确认
-# Box-structure prefilter upgrade for BPC:
-# BPC is "breakout → pullback → continuation". The semantic requirement is:
-# the *pre-breakout* window was a consolidation (compressed range). Since the
-# rule evaluator sees only the current bar's features, we proxy this via
-# box_compression_score = width_60 / width_240. Values <=1.0 mean the short-
-# term window is not wider than the long-term window, i.e. no wild late-stage
-# expansion before the pullback. This filters out "pullbacks inside a runaway
-# widening range" which are low-quality BPC signals.
-- feature: box_compression_score
-  operator: '<='
-  value: 1.50
-  rationale: Short-term width must not be significantly wider than long-term (keeps BPC semantic of consolidation → breakout → pullback)
-  locked: false
-  lock_reason: Box prefilter upgrade
-- any_of:
-  - feature: box_pos_120
-    operator: <=
-    value: 0.15
-  - feature: box_pos_120
-    operator: '>='
-    value: 0.85
-  - feature: box_breakout_up
-    operator: '>='
-    value: 0.5
-  - feature: box_breakout_down
-    operator: '>='
-    value: 0.5
-  rationale: box 中部且未突破不开仓：20260425 BPC inside_box_no_breakout n=31, R=-86
-  locked: true
-  lock_reason: BPC 只做突破后的边缘回踩，不在箱体中部来回扫区开仓
 last_evaluation:
   timestamp: '2026-04-20'
   data_source: features_labeled.parquet

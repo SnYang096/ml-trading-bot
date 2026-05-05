@@ -1,0 +1,25 @@
+# ============================================================
+# TPC — non_rolling（一次性全周期，不跑 rolling_sim / fast_month）
+# ============================================================
+#
+# - 与 ``turbo.yaml`` 共用策略体与数据配置；仅 ``rolling.mode`` 与产物目录不同。
+# - ``rolling_sim`` / ``--stage fast_month`` 会拒绝：请用 ``turbo.yaml`` / ``slow.yaml``。
+# - 时间：``start_date`` / ``end_date`` / ``holdout_months`` / ``calibration_months`` 等继承自 ``extends: turbo.yaml``
+#   （loader 对 ``dates`` 做深合并）。此处只声明 **non_rolling / --stage full** 用的 holdout 内切段：
+#   ``validation_months`` = holdout 前缀用于阈值拟合的月数，余下为纯 OOS（见 ``resolve_strategy_dates``）。
+#   turbo/slow 的 ``fast_month`` 不使用本字段。
+#
+# ============================================================
+
+extends: turbo.yaml
+
+# 仅覆盖 dates 子集；其余日期字段见基类 ``turbo.yaml``
+dates:
+  validation_months: 3
+
+rolling:
+  mode: non_rolling
+  time_split_policy: static_holdout
+
+output:
+  history_dir: results/tpc/non-rolling-sim

@@ -1,0 +1,132 @@
+# dual_add_trend · turbo_fixed_features — 执行参数在下列键；[INDEX] dates→rolling→tc→data→strategies→event→dual_add_backtest→study→threshold_search→output
+
+dates:
+  start_date: "2022-01-01"
+  end_date: "2026-03-31"
+  holdout_months: 26
+  validation_months: 3
+
+rolling:
+  mode: turbo_fixed_features
+  windows:
+    calibration_months: 6
+    structure_lookback_months: 12
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+
+threshold_calibration:
+  enable_model_training: false
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: false
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  dual_add_trend:
+    strategy_type: dual_add_trend
+    config: config/strategies/dual_add_trend
+    timeframe: 120T
+    prepare_features: features.yaml
+    has_prefilter: false
+    has_direction: false
+
+event_backtest:
+  enabled: false
+
+dual_add_backtest:
+  enabled: true
+  output_dir: results/dual_add_trend/turbo-full-cycle
+  symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+  timeframe: 2h
+  regime: trend
+  add_mode: trend
+  flip_action: close_offside_all
+  exclude_box: true
+  step_atr_mult: 0.50
+  tp_atr_mult: 0.25
+  tp_pct: 0.0005
+  max_loss_per_segment: 0.01
+  max_gross_exposure: 4
+  max_net_exposure: 2
+  max_adds_per_side: 3
+  fee_bps: 4.0
+  map_symbols: BTCUSDT
+  map_months: 12
+  continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+  continuous_map_months: 0
+
+study:
+  name: dual_add_trend
+  status: research_only
+  description: "Initial dual-open trend inventory with fee-aware dynamic take profit and flip-time offside exits."
+
+  regime:
+    entry_feature: trend_confidence
+    entry_min: 0.80
+    exit_below: 0.50
+    exclude_chop: true
+    max_entry_semantic_chop: 0.25
+    max_hold_semantic_chop: 0.40
+    exclude_box_prefilter: true
+
+  inventory:
+    initial_legs: [LONG, SHORT]
+    add_mode: dynamic_trend_side_only
+    flip_action: close_offside_all
+    max_adds_per_side: 3
+    max_gross_exposure_units: 4
+    max_net_exposure_units: 2
+
+  take_profit:
+    fee_aware: true
+    formula: "fee_buffer + max(0.25 * ATR14, 0.05% * entry_price)"
+    note: "A position only exits at TP if the modeled round-trip fee is covered and net profit remains positive."
+
+  risk:
+    max_loss_per_segment: 0.01
+    min_segment_bars: 6
+    max_segment_bars: 120
+    force_exit_on_regime_loss: true
+    no_unbounded_adds: true
+
+  validation:
+    script: scripts/diagnose_dual_add_trend.py
+    output_dir: results/dual_add_trend/turbo-full-cycle
+    baseline_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+    baseline_periods: [2022, 2023, 2024, 2025, 2026Q1]
+    notes: |
+      Keep this strategy outside the generic single-position event_backtest until
+      multi-leg inventory, flip-time exits, and gross/net exposure accounting are
+      first-class execution concepts.
+
+threshold_search:
+  objective:
+    primary: equal_weight_cagr_after_fees
+    constraints:
+      min_positive_periods: 5
+      max_worst_segment: -0.03
+      max_risk_stop_rate: 0.05
+      max_gross_exposure: 4
+      max_net_exposure: 2
+
+  search_space:
+    trend_min: [0.70, 0.80, 0.90]
+    trend_exit_min: [0.40, 0.50, 0.60]
+    tp_atr_mult: [0.20, 0.25, 0.35, 0.50]
+    tp_pct: [0.0004, 0.0005, 0.0007, 0.0010]
+    max_gross_exposure: [3, 4, 5]
+    max_net_exposure: [1, 2, 3]
+    max_loss_per_segment: [0.005, 0.01, 0.02]
+    flip_action: [close_offside_adds, close_offside_all]
+
+output:
+  history_dir: results/dual_add_trend/turbo-rolling-sim
+  latest_dir: results/dual_add_trend/latest

@@ -1,0 +1,13 @@
+# BPC · non_rolling — 一次性全周期（--stage full）；extends turbo；覆写 dates/rolling/output。locked 调参与 turbo 一致（全周期上仍可用 parquet + 最新 labeled 数据搜阈值）。
+
+extends: turbo.yaml
+
+dates:
+  validation_months: 3
+
+rolling:
+  mode: non_rolling
+  time_split_policy: static_holdout
+
+output:
+  history_dir: results/bpc/non-rolling-sim

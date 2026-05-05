@@ -26,8 +26,32 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# BPC：网格键 = infer 产出的 param 名；新增 locked 标量后请在 locked_threshold_tuning 增加 ``{param}_values``，
+# 否则 tune 使用启发式默认（见 _bpc_grid_csv_for_param）。
+_BPC_GRID_DEFAULTS = {
+    "bpc_recent_breakout_strength_min": "0.40,0.50",
+    "bpc_pullback_depth_max": "0.55,0.65",
+    "bpc_recovery_strength_min": "0.50,0.60",
+}
+
+
+def _bpc_grid_csv_for_param(param_name: str, tcfg: Dict[str, Any]) -> str:
+    """Resolve ``{param}_values`` for BPC grid; supports newly inferred params."""
+    key = f"{param_name}_values"
+    if key in tcfg and tcfg[key] is not None:
+        return str(tcfg[key])
+    if param_name in _BPC_GRID_DEFAULTS:
+        return _BPC_GRID_DEFAULTS[param_name]
+    if param_name.endswith("_min"):
+        return "0.35,0.45,0.55"
+    if param_name.endswith("_max"):
+        return "0.55,0.65,0.75"
+    return "0.45,0.55"
+
+
 from scripts.locked_prefilter_utils import (
     build_override_prefilter as build_override_prefilter_base,
+    infer_writeback_bindings_from_prefilter,
 )
 
 
@@ -46,9 +70,6 @@ class CaseParams:
     compression_min: float = 0.0
     decay_upper: float = 0.0
     oi_min: float = 0.0
-    bpc_pullback_score_min: float = 0.0
-    bpc_pullback_depth_max: float = 0.0
-    bpc_recovery_min: float = 0.0
     custom_params: Dict[str, float] | None = None
 
     def key(self) -> str:
@@ -64,11 +85,7 @@ class CaseParams:
                 f"cvd>={self.me_cvd_min:.4g}"
             )
         if self.mode == "bpc":
-            return (
-                f"pullback>={self.bpc_pullback_score_min:.4g}_"
-                f"depth<={self.bpc_pullback_depth_max:.4g}_"
-                f"recovery>={self.bpc_recovery_min:.4g}"
-            )
+            raise RuntimeError("BPC cases must use custom_params")
         return (
             f"fer[{self.fer_lower:.4g},{self.fer_upper:.4g}]_"
             f"sr>={self.sr_min:.4g}_dist<=±{self.dist_max:.4g}_sqs>={self.fer_sqs_min:.4g}"
@@ -130,12 +147,6 @@ def build_override_prefilter(
             "atr_upper": params.atr_upper,
             "me_accel_abs_min": params.me_accel_abs_min,
             "me_cvd_min": params.me_cvd_min,
-        }
-    elif params.mode == "bpc":
-        payload = {
-            "bpc_pullback_score_min": params.bpc_pullback_score_min,
-            "bpc_pullback_depth_max": params.bpc_pullback_depth_max,
-            "bpc_recovery_min": params.bpc_recovery_min,
         }
     else:
         payload = {
@@ -305,9 +316,6 @@ def main() -> int:
     p.add_argument("--compression-min-values", default="0.02,0.05,0.08")
     p.add_argument("--decay-upper-values", default="0.15,0.25,0.35")
     p.add_argument("--oi-min-values", default="0.25,0.35,0.45")
-    p.add_argument("--bpc-pullback-score-min-values", default="0.40,0.50")
-    p.add_argument("--bpc-pullback-depth-max-values", default="0.60,0.75")
-    p.add_argument("--bpc-recovery-min-values", default="0.50,0.60")
     p.add_argument("--max-cases", type=int, default=0, help="0 means all")
     p.add_argument("--min-trades-target", type=int, default=60)
     p.add_argument(
@@ -348,6 +356,14 @@ def main() -> int:
     if not prod_prefilter.exists():
         raise SystemExit(f"prefilter not found: {prod_prefilter}")
 
+    raw_pf: Dict[str, Any] = (
+        yaml.safe_load(prod_prefilter.read_text(encoding="utf-8")) or {}
+    )
+    explicit_wb = [
+        b for b in (tcfg.get("writeback_bindings") or []) if isinstance(b, dict)
+    ]
+    resolved_writeback = explicit_wb or infer_writeback_bindings_from_prefilter(raw_pf)
+
     out_root = PROJECT_ROOT / args.output_dir / args.strategy
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = out_root / ts
@@ -371,7 +387,6 @@ def main() -> int:
         else:
             template = "fer"
 
-    writeback_bindings = tcfg.get("writeback_bindings", []) or []
     strict_bindings = bool(tcfg.get("writeback_strict", True))
     generic_search_space = tcfg.get("search_space", {}) or {}
 
@@ -379,8 +394,7 @@ def main() -> int:
     if (
         isinstance(generic_search_space, dict)
         and generic_search_space
-        and isinstance(writeback_bindings, list)
-        and writeback_bindings
+        and resolved_writeback
     ):
         keys = [str(k) for k in generic_search_space.keys()]
         values_lists = [parse_values_list(generic_search_space[k]) for k in keys]
@@ -415,32 +429,21 @@ def main() -> int:
                 )
             )
     elif template == "bpc":
-        pullback_mins = parse_float_list(
-            str(
-                tcfg.get(
-                    "bpc_pullback_score_min_values", args.bpc_pullback_score_min_values
-                )
+        keys = [
+            str(b.get("param", "")).strip()
+            for b in resolved_writeback
+            if isinstance(b, dict) and str(b.get("param", "")).strip()
+        ]
+        if not keys:
+            raise SystemExit(
+                "BPC locked tuning: 无 writeback 绑定；请在 locked_threshold_tuning 显式写 "
+                "writeback_bindings，或检查 archetypes/prefilter.yaml 的 locked 规则"
             )
-        )
-        depth_maxs = parse_float_list(
-            str(
-                tcfg.get(
-                    "bpc_pullback_depth_max_values", args.bpc_pullback_depth_max_values
-                )
-            )
-        )
-        recovery_mins = parse_float_list(
-            str(tcfg.get("bpc_recovery_min_values", args.bpc_recovery_min_values))
-        )
-        for pb, dep, rec in itertools.product(pullback_mins, depth_maxs, recovery_mins):
-            cases.append(
-                CaseParams(
-                    mode="bpc",
-                    bpc_pullback_score_min=pb,
-                    bpc_pullback_depth_max=dep,
-                    bpc_recovery_min=rec,
-                )
-            )
+        value_lists: List[List[float]] = []
+        for k in keys:
+            value_lists.append(parse_float_list(_bpc_grid_csv_for_param(k, tcfg)))
+        for combo in itertools.product(*value_lists):
+            cases.append(CaseParams(mode="bpc", custom_params=dict(zip(keys, combo))))
     else:
         # New semantic FER keys are preferred; old keys are kept for backward compatibility.
         fer_lows = parse_float_list(
@@ -542,7 +545,7 @@ def main() -> int:
             prod_prefilter,
             case,
             case_dir / "prefilter_locked_override.yaml",
-            writeback_bindings=writeback_bindings if writeback_bindings else None,
+            writeback_bindings=resolved_writeback if resolved_writeback else None,
             strict_bindings=strict_bindings,
         )
 
@@ -594,9 +597,6 @@ def main() -> int:
             "compression_min": case.compression_min,
             "decay_upper": case.decay_upper,
             "oi_min": case.oi_min,
-            "bpc_pullback_score_min": case.bpc_pullback_score_min,
-            "bpc_pullback_depth_max": case.bpc_pullback_depth_max,
-            "bpc_recovery_min": case.bpc_recovery_min,
             "custom_params_json": json.dumps(
                 case.custom_params or {}, ensure_ascii=False
             ),
@@ -652,9 +652,6 @@ def main() -> int:
                 "compression_min",
                 "decay_upper",
                 "oi_min",
-                "bpc_pullback_score_min",
-                "bpc_pullback_depth_max",
-                "bpc_recovery_min",
                 "custom_params_json",
                 "score",
                 "median_sharpe",
@@ -683,9 +680,6 @@ def main() -> int:
                     r["compression_min"],
                     r["decay_upper"],
                     r["oi_min"],
-                    r["bpc_pullback_score_min"],
-                    r["bpc_pullback_depth_max"],
-                    r["bpc_recovery_min"],
                     r["custom_params_json"],
                     r["score"],
                     r["median_sharpe"],
@@ -709,11 +703,7 @@ def main() -> int:
                 f"cvd>={r['me_cvd_min']:.3g}"
             )
         elif r["mode"] == "bpc":
-            param_desc = (
-                f"pullback>={r['bpc_pullback_score_min']:.3g} "
-                f"depth<={r['bpc_pullback_depth_max']:.3g} "
-                f"recovery>={r['bpc_recovery_min']:.3g}"
-            )
+            param_desc = f"bpc={r.get('custom_params_json')}"
         else:
             param_desc = (
                 f"fer=[{r['fer_lower']:.3g},{r['fer_upper']:.3g}] "

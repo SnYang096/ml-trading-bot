@@ -69,11 +69,18 @@ def test_aggregate_case_with_trade_penalty():
         {"metrics": {"sharpe_per_trade": 0.2, "total_trades": 50}},
         {"metrics": {"sharpe_per_trade": -0.1, "total_trades": 70}},
     ]
-    agg = aggregate_case(case_results, min_trades_target=60, trade_penalty=0.01)
+    agg = aggregate_case(
+        case_results,
+        target_trades_min=60,
+        target_trades_max=10_000,
+        trade_penalty_low=0.01,
+        trade_penalty_high=0.0,
+        stability_penalty=0.0,
+    )
     assert round(agg["median_sharpe"], 6) == 0.2
     assert round(agg["positive_ratio"], 6) == round(2 / 3, 6)
     assert agg["median_trades"] == 50.0
-    # score = 0.2 - 0.01 * (60 - 50)
+    # score = 0.2 - 0.01 * low_gap, low_gap = max(0, 60 - 50)
     assert round(agg["score"], 6) == 0.1
 
 
@@ -133,7 +140,7 @@ def test_apply_locked_thresholds_updates_bpc_rules():
     raw = {
         "rules": [
             {
-                "feature": "bpc_score_pullback",
+                "feature": "bpc_recent_breakout_strength",
                 "operator": ">=",
                 "value": 0.45,
                 "locked": True,
@@ -154,10 +161,12 @@ def test_apply_locked_thresholds_updates_bpc_rules():
     }
     out = apply_locked_thresholds(
         raw,
-        bpc_pullback_score_min=0.5,
-        bpc_pullback_depth_max=0.6,
-        bpc_recovery_min=0.6,
         template="bpc",
+        params={
+            "bpc_recent_breakout_strength_min": 0.5,
+            "bpc_pullback_depth_max": 0.6,
+            "bpc_recovery_strength_min": 0.6,
+        },
     )
     rules = out["rules"]
     assert rules[0]["value"] == 0.5

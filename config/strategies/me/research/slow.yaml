@@ -1,37 +1,32 @@
 # ============================================================
-# 上线前训练流水线 (2H, BPC-only, 慢模式 / slow_realistic)
-# BPC = Breakout Pullback Continuation；策略树 config/strategies/bpc
-# （周期以 meta.yaml strategy.timeframe 为准，此处不显式写 timeframe）
-#
-# 目标: 近似「每季度做结构快照 + 每月快变量」的实盘节奏
-#   - rolling.slow_realistic.cadence_months: 3 → 每季度一次结构流水线（各层特征搜索等到 entry_filter）
-#   - rolling_sim 仍按 holdout 内自然月推进；每月阈值/标定窗见 rolling.windows.calibration_months
-#
-# 联合 PCM / pcm_slot_grid：代码要求同次流水线内 ≥2 个 strategies.* 才有联合事件回测。
-# 本文件仅 BPC，故关闭 pcm_eval 与 pcm_slot_grid；单策略的 execution_opt / event_backtest 仍照常。
-#
-# 时间窗：与 prod_train_pipeline_2h_slow_tpc_only 对齐，便于 BPC vs TPC 对比。
-#   • end_date=2026-03-31, holdout_months=26 → holdout_start=2024-01-01（rolling 覆盖 202401～202603）
-#   • validation_months=3 → Gate 调参用 holdout 内前 3 个月；纯 OOS 约从 2024-04-01 到 end_date
-# strategies.*.dates 须与顶层 holdout/validation 一致，否则 per-strategy 会覆盖全局（常见踩坑：仍为 9）
-# trading_map_continuous：X 轴会拉到 dates.end_date，但 K 线依赖 parquet；无数据则蜡烛停在最后有数据的月份
+# 上线前训练流水线 (2H, ME-only, 慢模式 / slow_realistic)
+# 底稿: config/strategies/bpc/research/slow.yaml → 策略换为 me + 输出目录分离
 #
 # 示例:
-#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_bpc_only.yaml --stage rolling_sim
-#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_bpc_only.yaml --stage fast_month --month 2024-09
+#   mlbot pipeline run --all --config config/strategies/me/research/slow.yaml --stage rolling_sim
+#   mlbot pipeline run --all --config config/strategies/me/research/slow.yaml --stage fast_month --month 2024-09
+#
+# ── 回测月份要落在 2024-01 ~ 2024-12（12 个自然月）时 dates 怎么设 ──
+#   • rolling_sim 枚举的月份 = holdout_start 所在月 ～ end_date 所在月（见 docs/z实验_005_统一研究/ROLLING_SIM_TIME_WINDOWS_CN.md）
+#   • end_date 用年末: "2024-12-31"
+#   • holdout_months 须为 11（不是 12）: compute_holdout_start(2024-12-31, 11) → 2024-01-01；
+#     若写成 12 会得到 2023-12-01，多滚一个月 2023-12。
+#   • start_date: 须早于 holdout，供训练/结构快照用历史（示例 2021-01-01）。
+#   • validation_months: 0 表示 holdout 内不再切 Val/Test，Gate 等 cutoff 与 holdout 对齐；
+#     若写 3，则纯 OOS「Test」段为 2024-04～2024-12，但 rolling_sim 仍会逐月滚过 2024 全年 12 个月。
 # ============================================================
 
 dates:
   start_date: "2022-08-01"
   end_date: "2026-03-31"
+  # end=2026-03-31, holdout=26 → holdout_start=2024-01-01；rolling 月约 202401～202603（与 TPC 管线对齐）
   holdout_months: 26
   validation_months: 3
+
 training:
   seeds:
     - 42
   seed_selection: best_sharpe
-global_toggles:
-  locked_threshold_tuning_enabled: true
 strategy_scope:
   direction: all
 rolling:
@@ -48,22 +43,15 @@ rolling:
     triggered_retrain_enabled: true
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
-    disable_feature_search: true
 
-fast_loop:
-  step_months: 1
-  threshold_calibration:
-    enabled: true
-  symbol_threshold_calibration:
-    enabled: true
+threshold_calibration:
   execution_opt:
-    enabled: true
+    # 关闭执行层网格：事件回测使用 archetypes/execution.yaml 手写止损/跟踪，不再每月 sym_r promote 覆盖
+    enabled: false
   pcm_eval:
     enabled: false
   direction_tuning:
     enabled: true
-    compare_features: true
-    promote_after_validate: true
 symbol_policy:
   mode: hybrid_carry_forward
   carry_forward_ttl_months: 2
@@ -95,7 +83,8 @@ event_backtest:
   map_extra_months: 4
   sym_r_default: "1.0:1:6.0"
   sym_r_by_family:
-    bpc: "2.0:1:6.0"
+    me: "3.0:1:6.0"
+  # execution_opt 关闭时不在滚动里用 sym_r；保留供单独跑 optimize / event-backtest CLI 时参考
   exec_objective_default: sharpe
   exec_objective_params:
     near_stop_threshold_r: -0.9
@@ -105,6 +94,13 @@ event_backtest:
     undertrade_penalty: 0.0
 pcm_slot_grid:
   enabled: false
+  plateau_delta: 0.03
+  min_trades_soft: 80
+  penalties:
+    max_dd_penalty: 0.02
+    slot_full_rate_penalty: 0.20
+    undertrade_penalty: 0.001
+  cases: []
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a
@@ -115,17 +111,22 @@ download:
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  bpc:
-    config: config/strategies/bpc
+  me:
+    config: config/strategies/me
+    timeframe: 120T
     dates:
-      holdout_months: 26
-      validation_months: 3
-    features_gate: features.yaml
+      holdout_months: 11
+      validation_months: 0
+    # Prepare / SHAP / Gate train 的 ``--features``；磁盘 ``features_gate.yaml`` 为 allowed_gate_deny 白名单。
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
     kpi_gates:
       prefilter:
+        # 收紧单条 meta 规则的 deny 上限，避免标定窗里「极窄 OI 区间」进 prefilter 后在 OOS 急涨段整月失效
+        # （与从 features_prefilter 去掉 oi_scene 语义分配合；见 diagnose_me_rolling_month_funnel）
+        deny_rate_max: 0.89
         min_pass_rate: 0.05
         min_rows: 10
         target_trades_min: 35
@@ -136,31 +137,16 @@ strategies:
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
-          enabled: true
-          mode: auto_if_locked
+          enabled: false
           skip_if_cached: false
-          max_cases: 12
-          min_trades_target: 60
-          trade_penalty: 0.0025
-          bpc_recent_breakout_strength_min_values: 0.40,0.45,0.50
-          bpc_pullback_depth_max_values: 0.55,0.60,0.65
-          bpc_recovery_strength_min_values: 0.50,0.55,0.60
-          target_trades_min: 35
-          target_trades_max: 260
-          trade_penalty_low: 0.002
-          trade_penalty_high: 0.0011
-          stability_penalty: 0.0
+          search_mode: parquet_plateau
+          plateau_scan_points: 25
+          plateau_coord_rounds: 3
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-          - tail_bad_rate_ratio
-          - upside_positive_rate_ratio
       entry_filter:
-        # Wave 2-E 验证: 打开 EF meta_algorithm 以验证 auto_research_pipeline
-        # 强制 upside_positive_rate_ratio 的路径. 原先关闭是因为 shopping
-        # 模式下规则漂移严重, 改走 archetype_plateau only. 现在单一方法固定,
-        # 打开 meta_algorithm 可以真正测试 Wave 2-E EF 路径.
-        meta_algorithm: true
+        meta_algorithm: false
         archetype_plateau: true
         significance_p: 0.10
         significance_min_trades: 4
@@ -174,19 +160,18 @@ strategies:
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-          - tail_bad_rate_ratio
-          - upside_positive_rate_ratio
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
         # 多条 hard_gate 叠加时 allow 比例下限；chop gate 收紧到 0.60 后，chop 月
-        # combined allow 可能降到 5-10%，0.3 会把 chop gate 当作"过严"裁掉 → 降到 0.05
+        # combined allow 可能降到 5-10%，0.15 会把 chop gate 当作"过严"裁掉 → 降到 0.05
         min_combined_pass_rate: 0.05
-        # BPC Top-N gate cap (base gate.yaml 中 locked=2+2 已占满，统计发现的 non-locked
-        # 规则一律被丢弃；若 locked 减少则按 robustness_score/|lift| 从 gate_draft 候选中
-        # 补齐到该上限)。历史诊断 (20260413_144115 vs 20260421_174335, 2024 Q2 +1086R
-        # → -157R) 确认：gate_draft 自动堆叠 5+ 条统计规则是 BPC slow pipeline 衰退主因。
-        max_hard_gates: 2
+        # ME Top-N gate cap. base/archetypes/gate.yaml 当前 locked=3 (chop_high +
+        # late_long/short_above_ema1200)+0。cap=3/2 即:
+        #   hard_gates 锁死 3 条 locked，不让 slow 再加新条;
+        #   system_safety 允许 slow 最多补 2 条（例如 vol_persistence / evt_tail）。
+        # 需要放宽时先改 base gate.yaml 的 locked 集再提 cap。
+        max_hard_gates: 3
         max_system_safety: 2
         # 防御性：显式写 0 trade_penalty，允许 gate 在整月 chop 时把该月归零
         # 与 prefilter.trade_penalty=0.002 形成对比：prefilter 宽松、gate 敢严
@@ -211,6 +196,9 @@ shap_feature_selection:
   min_stable_features: 1
   protected_nodes:
     - atr_f
+    - bpc_soft_phase_f # bpc_bb_compression: 假动量最强区分特征 (AUC=0.941, p=0.018)
+    - footprint_basic_f # fp_delta_poc: 订单流POC delta (AUC=0.952, p=0.020)
+    - vpin_features_f # vpin_trend: VPIN毒性流趋势 (AUC=0.922, p=0.026)
   apply_to:
     - features.yaml
 comparison:
@@ -241,4 +229,4 @@ data_flow:
     execution: logs_gated.parquet
     backtest: logs_gated.parquet
 output:
-  history_dir: results/bpc/slow-rolling-sim
+  history_dir: results/me/slow-rolling-sim

@@ -75,9 +75,9 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          bpc_pullback_score_min_values: "0.40,0.50"
+          bpc_recent_breakout_strength_min_values: "0.40,0.50"
           bpc_pullback_depth_max_values: "0.60,0.75"
-          bpc_recovery_min_values: "0.50,0.60"
+          bpc_recovery_strength_min_values: "0.50,0.60"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -140,9 +140,9 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          bpc_pullback_score_min_values: "0.40,0.50"
+          bpc_recent_breakout_strength_min_values: "0.40,0.50"
           bpc_pullback_depth_max_values: "0.60,0.75"
-          bpc_recovery_min_values: "0.50,0.60"
+          bpc_recovery_strength_min_values: "0.50,0.60"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -205,9 +205,9 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          bpc_pullback_score_min_values: "0.40,0.50"
+          bpc_recent_breakout_strength_min_values: "0.40,0.50"
           bpc_pullback_depth_max_values: "0.60,0.75"
-          bpc_recovery_min_values: "0.50,0.60"
+          bpc_recovery_strength_min_values: "0.50,0.60"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -270,9 +270,9 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          bpc_pullback_score_min_values: "0.40,0.50"
+          bpc_recent_breakout_strength_min_values: "0.40,0.50"
           bpc_pullback_depth_max_values: "0.60,0.75"
-          bpc_recovery_min_values: "0.50,0.60"
+          bpc_recovery_strength_min_values: "0.50,0.60"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -335,9 +335,9 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          bpc_pullback_score_min_values: "0.40,0.50"
+          bpc_recent_breakout_strength_min_values: "0.40,0.50"
           bpc_pullback_depth_max_values: "0.60,0.75"
-          bpc_recovery_min_values: "0.50,0.60"
+          bpc_recovery_strength_min_values: "0.50,0.60"
         scoring_method_fallbacks:
           [
             distribution_ks,
@@ -400,9 +400,9 @@ strategies:
           max_cases: 20
           min_trades_target: 50
           trade_penalty: 0.002
-          bpc_pullback_score_min_values: "0.40,0.50"
+          bpc_recent_breakout_strength_min_values: "0.40,0.50"
           bpc_pullback_depth_max_values: "0.60,0.75"
-          bpc_recovery_min_values: "0.50,0.60"
+          bpc_recovery_strength_min_values: "0.50,0.60"
         scoring_method_fallbacks:
           [
             distribution_ks,

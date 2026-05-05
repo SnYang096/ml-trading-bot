@@ -1,0 +1,62 @@
+# ============================================================
+# Chop Grid standalone pipeline (2H, slow_realistic rolling)
+# ============================================================
+
+dates:
+  start_date: "2022-01-01"
+  end_date: "2026-03-31"
+  holdout_months: 26
+  validation_months: 3
+
+rolling:
+  mode: slow_realistic
+  windows:
+    calibration_months: 6
+    structure_lookback_months: 12
+  slow_realistic:
+    cadence_months: 3
+    triggered_retrain_enabled: true
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+
+threshold_calibration:
+  execution_opt:
+    enabled: true
+  pcm_eval:
+    enabled: false
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: false
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  chop_grid:
+    strategy_type: grid
+    config: config/strategies/chop_grid
+    timeframe: 120T
+    prepare_features: features.yaml
+    has_prefilter: false
+    has_direction: false
+
+event_backtest:
+  enabled: false
+
+grid_backtest:
+  enabled: true
+  output_dir: results/chop_grid/slow-full-cycle
+  map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+  map_months: 12
+  continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+  continuous_map_months: 0
+
+output:
+  history_dir: results/chop_grid/slow-rolling-sim
+  latest_dir: results/chop_grid/latest

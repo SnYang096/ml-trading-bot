@@ -1,0 +1,116 @@
+# chop_grid · turbo_fixed_features + grid_backtest — 执行参数在下列键；[INDEX] dates→rolling→tc→data→strategies→event/grid→study→threshold_search→output
+
+dates:
+  start_date: "2022-01-01"
+  end_date: "2026-03-31"
+  holdout_months: 26
+  validation_months: 3
+
+rolling:
+  mode: turbo_fixed_features
+  windows:
+    calibration_months: 6
+    structure_lookback_months: 12
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+
+threshold_calibration:
+  enable_model_training: false
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: false
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  chop_grid:
+    strategy_type: grid
+    config: config/strategies/chop_grid
+    timeframe: 120T
+    prepare_features: features.yaml
+    has_prefilter: false
+    has_direction: false
+
+event_backtest:
+  enabled: false
+
+grid_backtest:
+  enabled: true
+  output_dir: results/chop_grid/turbo-full-cycle
+  map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+  map_months: 12
+  continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+  continuous_map_months: 0
+
+study:
+  name: chop_grid
+  status: research_only
+  description: "Neutral grid inside semantic_chop; close all inventory when trend returns."
+
+  regime:
+    entry_feature: semantic_chop
+    entry_min: 0.40
+    exit_below: 0.25
+    prefer_chop_not_box: true
+
+  grid:
+    spacing:
+      primary: atr
+      atr_mult: 0.50
+      min_pct: 0.004
+    max_levels_per_side: 3
+    level_notional_mode: equal
+    same_bar_entry_exit: false
+
+  risk:
+    max_segment_bars: 120
+    min_segment_bars: 6
+    force_exit_on_regime_loss: true
+    fee_bps: 4.0
+
+  validation:
+    script: scripts/diagnose_chop_grid.py
+    baseline_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+    baseline_periods: [2022, 2023, 2024, 2025, 2026Q1]
+    notes: |
+      Evidence supports broad semantic_chop / chop_not_box grid more than CRF-style
+      stable box boundary fading. Keep this strategy separate from the generic
+      single-position event_backtest until grid inventory is implemented.
+
+threshold_search:
+  objective:
+    metric: return_with_drawdown_penalty
+    maximize: true
+    min_segments: 30
+    min_trades: 100
+    max_forced_exit_rate: 0.35
+    max_drawdown_floor: -0.08
+
+  search_space:
+    entry_chop_min: [0.35, 0.40, 0.45, 0.50]
+    exit_chop_below: [0.20, 0.25, 0.30]
+    exclude_box_prefilter: [true, false]
+    grid_atr_mult: [0.50, 0.75, 1.00]
+    grid_min_pct: [0.003, 0.004, 0.006]
+    max_levels_per_side: [2, 3, 4]
+    max_segment_bars: [60, 120]
+
+  validation:
+    periods:
+      - ["2022-01-01", "2022-12-31"]
+      - ["2023-01-01", "2023-12-31"]
+      - ["2024-01-01", "2024-12-31"]
+      - ["2025-01-01", "2025-12-31"]
+      - ["2026-01-01", "2026-03-31"]
+    symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+
+output:
+  history_dir: results/chop_grid/turbo-rolling-sim
+  latest_dir: results/chop_grid/latest

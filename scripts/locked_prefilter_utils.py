@@ -99,6 +99,77 @@ def _locked_prefilter_features(rules: List[Any]) -> set:
     return feats
 
 
+def infer_writeback_bindings_from_prefilter(
+    prefilter_raw: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """从 archetypes/prefilter.yaml 中 ``locked`` 规则推导 parquet/tune 写回 bindings。
+
+    - 原子规则：一条 binding。
+    - ``any_of``：每个子句一条 binding（与 ``prefilter_rules_pass_mask`` 一致）。
+    - 默认参数名：``{feature}_min`` / ``{feature}_max``（按 operator）；同名冲突时追加 ``__2``…
+    - 可选在规则节点上设置 ``tune_param``（或 ``writeback_param``）覆盖参数名。
+    - ``skip_parquet_tune: true``：整条规则不参与推导（仍可为 locked）。
+    """
+    rules = prefilter_raw.get("rules") or []
+    if not isinstance(rules, list):
+        return []
+
+    stem_counts: Dict[str, int] = {}
+    assigned: set[str] = set()
+    out: List[Dict[str, Any]] = []
+
+    def _unique_final(name: str) -> str:
+        if name not in assigned:
+            assigned.add(name)
+            return name
+        i = 2
+        while True:
+            cand = f"{name}__{i}"
+            if cand not in assigned:
+                assigned.add(cand)
+                return cand
+            i += 1
+
+    def _alloc_default_param(feature: str, operator: str) -> str:
+        o = str(operator).strip()
+        if o in (">=", ">"):
+            stem = f"{feature}_min"
+        elif o in ("<=", "<"):
+            stem = f"{feature}_max"
+        else:
+            stem = f"{feature}_thr"
+        n = stem_counts.get(stem, 0) + 1
+        stem_counts[stem] = n
+        raw = stem if n == 1 else f"{stem}__{n}"
+        return _unique_final(raw)
+
+    def _emit_clause(node: Dict[str, Any]) -> None:
+        feat = node.get("feature")
+        op = node.get("operator")
+        if feat is None or op is None:
+            return
+        override = node.get("tune_param") or node.get("writeback_param")
+        if override is not None and str(override).strip():
+            pname = _unique_final(str(override).strip())
+        else:
+            pname = _alloc_default_param(str(feat), str(op))
+        out.append({"param": pname, "feature": feat, "operator": str(op).strip()})
+
+    for rule in rules:
+        if not isinstance(rule, dict) or not rule.get("locked"):
+            continue
+        if rule.get("skip_parquet_tune"):
+            continue
+        if rule.get("any_of") and isinstance(rule["any_of"], list):
+            for sub in rule["any_of"]:
+                if isinstance(sub, dict):
+                    _emit_clause(sub)
+            continue
+        _emit_clause(rule)
+
+    return out
+
+
 def detect_locked_template(prefilter_raw: Dict[str, Any]) -> str:
     rules = prefilter_raw.get("rules") or []
     if not isinstance(rules, list):
@@ -127,7 +198,7 @@ def detect_locked_template(prefilter_raw: Dict[str, Any]) -> str:
     }.issubset(feats):
         return "me"
     if {
-        "bpc_score_pullback",
+        "bpc_recent_breakout_strength",
         "bpc_pullback_depth",
         "bpc_recovery_strength",
     }.issubset(feats):
@@ -243,9 +314,6 @@ def apply_locked_thresholds(
     compression_min: float | None = None,
     decay_upper: float | None = None,
     oi_min: float | None = None,
-    bpc_pullback_score_min: float | None = None,
-    bpc_pullback_depth_max: float | None = None,
-    bpc_recovery_min: float | None = None,
     params: Dict[str, float] | None = None,
     bindings: List[Dict[str, Any]] | None = None,
     strict_bindings: bool = True,
@@ -269,25 +337,37 @@ def apply_locked_thresholds(
         raise ValueError("无法识别 locked 规则模板，请显式传入 template")
 
     if tpl == "fer":
+        sqs_feats = (
+            "sqs_hal_high",
+            "sqs_hal_low",
+            "sqs_hal_high_pct",
+            "sqs_hal_low_pct",
+        )
+        fer_has_sqs_locked = any(
+            isinstance(r, dict) and r.get("locked") and r.get("feature") in sqs_feats
+            for r in rules
+        )
         required = {
             "fer_lower": fer_lower,
             "fer_upper": fer_upper,
             "sr_min": sr_min,
             "dist_max": dist_max,
-            "fer_sqs_min": fer_sqs_min,
         }
+        if fer_has_sqs_locked:
+            required["fer_sqs_min"] = fer_sqs_min
         missing_params = [k for k, v in required.items() if v is None]
         if missing_params:
             raise ValueError(f"FER tuned 参数缺失: {missing_params}")
 
-        seen = {
+        seen: Dict[str, bool] = {
             "fer_lower": False,
             "fer_upper": False,
             "sr_min": False,
             "dist_lower": False,
             "dist_upper": False,
-            "sqs_min": False,
         }
+        if fer_has_sqs_locked:
+            seen["sqs_min"] = False
         for r in rules:
             if not isinstance(r, dict) or not r.get("locked"):
                 continue
@@ -308,16 +388,9 @@ def apply_locked_thresholds(
             elif feat == "dist_to_nearest_sr" and op == "<=":
                 r["value"] = float(dist_max)
                 seen["dist_upper"] = True
-            elif (
-                feat
-                in (
-                    "sqs_hal_high",
-                    "sqs_hal_low",
-                    "sqs_hal_high_pct",
-                    "sqs_hal_low_pct",
-                )
-                and op == ">="
-            ):
+            elif feat in sqs_feats and op == ">=":
+                if fer_sqs_min is None:
+                    continue
                 r["value"] = float(fer_sqs_min)
                 seen["sqs_min"] = True
         missing = [k for k, v in seen.items() if not v]
@@ -447,38 +520,18 @@ def apply_locked_thresholds(
         return out
 
     if tpl == "bpc":
-        required = {
-            "bpc_pullback_score_min": bpc_pullback_score_min,
-            "bpc_pullback_depth_max": bpc_pullback_depth_max,
-            "bpc_recovery_min": bpc_recovery_min,
-        }
-        missing_params = [k for k, v in required.items() if v is None]
-        if missing_params:
-            raise ValueError(f"BPC tuned 参数缺失: {missing_params}")
-
-        seen = {
-            "pullback_score_min": False,
-            "pullback_depth_max": False,
-            "recovery_min": False,
-        }
-        for r in rules:
-            if not isinstance(r, dict) or not r.get("locked"):
-                continue
-            feat = r.get("feature")
-            op = r.get("operator")
-            if feat == "bpc_score_pullback" and op == ">=":
-                r["value"] = float(bpc_pullback_score_min)
-                seen["pullback_score_min"] = True
-            elif feat == "bpc_pullback_depth" and op == "<=":
-                r["value"] = float(bpc_pullback_depth_max)
-                seen["pullback_depth_max"] = True
-            elif feat == "bpc_recovery_strength" and op == ">=":
-                r["value"] = float(bpc_recovery_min)
-                seen["recovery_min"] = True
-        missing = [k for k, v in seen.items() if not v]
+        ib = infer_writeback_bindings_from_prefilter(out)
+        if not ib:
+            raise ValueError(
+                "BPC archetype 无可写回的 locked 规则（或全部为 skip_parquet_tune）；"
+                "检查 archetypes/prefilter.yaml"
+            )
+        pd = {k: float(v) for k, v in (params or {}).items()}
+        req = [str(b.get("param", "")).strip() for b in ib if isinstance(b, dict)]
+        missing = [p for p in req if p and p not in pd]
         if missing:
-            raise ValueError(f"prefilter.yaml 缺少必要 BPC locked 规则: {missing}")
-        return out
+            raise ValueError(f"BPC tuned 参数缺失: {missing}; got={sorted(pd.keys())}")
+        return _apply_config_bindings(out, params=pd, bindings=ib, strict=True)
 
     raise ValueError(f"不支持的 template: {tpl}")
 
@@ -504,12 +557,6 @@ def _infer_template_from_params(params: Dict[str, float]) -> str:
         params.keys()
     ):
         return "me"
-    if {
-        "bpc_pullback_score_min",
-        "bpc_pullback_depth_max",
-        "bpc_recovery_min",
-    }.issubset(params.keys()):
-        return "bpc"
     return "unknown"
 
 
@@ -540,11 +587,7 @@ def _normalize_params_for_template(
             "me_cvd_min": 0.0,
         }
     if template == "bpc":
-        return {
-            "bpc_pullback_score_min": float(params["bpc_pullback_score_min"]),
-            "bpc_pullback_depth_max": float(params["bpc_pullback_depth_max"]),
-            "bpc_recovery_min": float(params["bpc_recovery_min"]),
-        }
+        return {k: float(v) for k, v in params.items()}
     raise ValueError(f"不支持的 template: {template}")
 
 
@@ -575,9 +618,12 @@ def build_override_prefilter(
 
     tpl = (template or _infer_template_from_params(params)).lower()
     if tpl == "unknown":
-        tpl = detect_locked_template(base)
+        tpl = detect_locked_template(base).lower()
     norm = _normalize_params_for_template(params, tpl)
-    tuned = apply_locked_thresholds(base, template=tpl, **norm)
+    if tpl == "bpc":
+        tuned = apply_locked_thresholds(base, template="bpc", params=norm)
+    else:
+        tuned = apply_locked_thresholds(base, template=tpl, **norm)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         yaml.safe_dump(tuned, allow_unicode=True, sort_keys=False),

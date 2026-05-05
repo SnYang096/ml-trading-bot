@@ -1,24 +1,16 @@
 # ============================================================
-# 上线前训练流水线 (2H, BPC-only, 慢模式 / slow_realistic)
-# BPC = Breakout Pullback Continuation；策略树 config/strategies/bpc
-# （周期以 meta.yaml strategy.timeframe 为准，此处不显式写 timeframe）
+# 上线前训练流水线 (2H, TPC-only, 慢模式 / slow_realistic)
+# TPC = Trend Pullback Continuation: 无突破门控，EMA1200 趋势方向做回踩延续
+# 与 BPC 共享相同的 gate/execution 配置，区别在于 tpc_soft_phase_f 特征（无 breakout gate）
 #
-# 目标: 近似「每季度做结构快照 + 每月快变量」的实盘节奏
-#   - rolling.slow_realistic.cadence_months: 3 → 每季度一次结构流水线（各层特征搜索等到 entry_filter）
-#   - rolling_sim 仍按 holdout 内自然月推进；每月阈值/标定窗见 rolling.windows.calibration_months
+# 示例:
+#   mlbot pipeline run --all --config config/strategies/tpc/research/slow.yaml --stage rolling_sim
 #
-# 联合 PCM / pcm_slot_grid：代码要求同次流水线内 ≥2 个 strategies.* 才有联合事件回测。
-# 本文件仅 BPC，故关闭 pcm_eval 与 pcm_slot_grid；单策略的 execution_opt / event_backtest 仍照常。
-#
-# 时间窗：与 prod_train_pipeline_2h_slow_tpc_only 对齐，便于 BPC vs TPC 对比。
+# 时间窗：与 ``config/strategies/bpc/research/slow.yaml`` 对齐，便于 BPC vs TPC 对比。
 #   • end_date=2026-03-31, holdout_months=26 → holdout_start=2024-01-01（rolling 覆盖 202401～202603）
 #   • validation_months=3 → Gate 调参用 holdout 内前 3 个月；纯 OOS 约从 2024-04-01 到 end_date
 # strategies.*.dates 须与顶层 holdout/validation 一致，否则 per-strategy 会覆盖全局（常见踩坑：仍为 9）
 # trading_map_continuous：X 轴会拉到 dates.end_date，但 K 线依赖 parquet；无数据则蜡烛停在最后有数据的月份
-#
-# 示例:
-#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_bpc_only.yaml --stage rolling_sim
-#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_bpc_only.yaml --stage fast_month --month 2024-09
 # ============================================================
 
 dates:
@@ -30,16 +22,10 @@ training:
   seeds:
     - 42
   seed_selection: best_sharpe
-global_toggles:
-  locked_threshold_tuning_enabled: true
 strategy_scope:
   direction: all
 rolling:
   mode: slow_realistic
-  # 下列三者语义不同，不能合并成一个 calibration_months：
-  # - calibration_months：每个自然月 M 的「快变量标定窗」长度（M 之前连续 N 个月，不含 M）。
-  # - structure_lookback_months：触发慢结构快照时，从锚点往回取多少个月历史跑 SHAP/特征搜索等。
-  # - slow_realistic.cadence_months：每隔几个月才跑一次慢结构快照；其余月份复用上次冻结的 strategies。
   windows:
     calibration_months: 3
     structure_lookback_months: 12
@@ -48,22 +34,15 @@ rolling:
     triggered_retrain_enabled: true
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
-    disable_feature_search: true
 
-fast_loop:
+threshold_calibration:
   step_months: 1
-  threshold_calibration:
-    enabled: true
-  symbol_threshold_calibration:
-    enabled: true
   execution_opt:
     enabled: true
   pcm_eval:
     enabled: false
   direction_tuning:
     enabled: true
-    compare_features: true
-    promote_after_validate: true
 symbol_policy:
   mode: hybrid_carry_forward
   carry_forward_ttl_months: 2
@@ -91,11 +70,10 @@ stitching:
 event_backtest:
   enabled: true
   promote: true
-  no_kill_switch: false
   map_extra_months: 4
   sym_r_default: "1.0:1:6.0"
   sym_r_by_family:
-    bpc: "2.0:1:6.0"
+    tpc: "2.0:1:6.0"
   exec_objective_default: sharpe
   exec_objective_params:
     near_stop_threshold_r: -0.9
@@ -115,12 +93,13 @@ download:
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  bpc:
-    config: config/strategies/bpc
+  tpc:
+    config: config/strategies/tpc
     dates:
       holdout_months: 26
       validation_months: 3
-    features_gate: features.yaml
+    # Prepare / SHAP / Gate train 的 ``--features``；磁盘 ``features_gate.yaml`` 为 allowed_gate_deny 白名单。
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
@@ -136,31 +115,17 @@ strategies:
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
-          enabled: true
-          mode: auto_if_locked
+          enabled: false
           skip_if_cached: false
-          max_cases: 12
-          min_trades_target: 60
-          trade_penalty: 0.0025
-          bpc_recent_breakout_strength_min_values: 0.40,0.45,0.50
-          bpc_pullback_depth_max_values: 0.55,0.60,0.65
-          bpc_recovery_strength_min_values: 0.50,0.55,0.60
-          target_trades_min: 35
-          target_trades_max: 260
-          trade_penalty_low: 0.002
-          trade_penalty_high: 0.0011
-          stability_penalty: 0.0
+          search_mode: parquet_plateau
+          plateau_scan_points: 25
+          plateau_coord_rounds: 3
+          # TPC locked 规则含 any_of（见 archetypes/prefilter.yaml）；启用 locked 调参前需模板可被识别（writeback_bindings 或扩展 detect_locked_template）
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-          - tail_bad_rate_ratio
-          - upside_positive_rate_ratio
       entry_filter:
-        # Wave 2-E 验证: 打开 EF meta_algorithm 以验证 auto_research_pipeline
-        # 强制 upside_positive_rate_ratio 的路径. 原先关闭是因为 shopping
-        # 模式下规则漂移严重, 改走 archetype_plateau only. 现在单一方法固定,
-        # 打开 meta_algorithm 可以真正测试 Wave 2-E EF 路径.
-        meta_algorithm: true
+        meta_algorithm: false
         archetype_plateau: true
         significance_p: 0.10
         significance_min_trades: 4
@@ -174,19 +139,18 @@ strategies:
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-          - tail_bad_rate_ratio
-          - upside_positive_rate_ratio
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
         # 多条 hard_gate 叠加时 allow 比例下限；chop gate 收紧到 0.60 后，chop 月
         # combined allow 可能降到 5-10%，0.3 会把 chop gate 当作"过严"裁掉 → 降到 0.05
         min_combined_pass_rate: 0.05
-        # BPC Top-N gate cap (base gate.yaml 中 locked=2+2 已占满，统计发现的 non-locked
-        # 规则一律被丢弃；若 locked 减少则按 robustness_score/|lift| 从 gate_draft 候选中
-        # 补齐到该上限)。历史诊断 (20260413_144115 vs 20260421_174335, 2024 Q2 +1086R
-        # → -157R) 确认：gate_draft 自动堆叠 5+ 条统计规则是 BPC slow pipeline 衰退主因。
-        max_hard_gates: 2
+        # TPC Top-N gate cap. base/archetypes/gate.yaml 当前 locked=7 (chop_high +
+        # late_long/short_above_ema1200 + evt_var_99 + evt_tail_shape_right + vpin_ma20
+        # + fer_ols_pos)+1 locked (vol_persistence)。cap=7/2 锁死当前 hard，不让 slow
+        # 再加新 hard gate; safety 允许补 1 条。若需精简 locked (BPC 同步过), 同步
+        # 下调 cap 即可让 cap 继续"锁死新现状"。
+        max_hard_gates: 7
         max_system_safety: 2
         # 防御性：显式写 0 trade_penalty，允许 gate 在整月 chop 时把该月归零
         # 与 prefilter.trade_penalty=0.002 形成对比：prefilter 宽松、gate 敢严
@@ -241,4 +205,4 @@ data_flow:
     execution: logs_gated.parquet
     backtest: logs_gated.parquet
 output:
-  history_dir: results/bpc/slow-rolling-sim
+  history_dir: results/tpc/slow-rolling-sim

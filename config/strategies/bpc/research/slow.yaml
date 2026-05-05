@@ -1,0 +1,149 @@
+# BPC · slow_realistic — extends turbo.yaml；下列仅慢管线相对 turbo 的差量。
+
+extends: turbo.yaml
+
+dates:
+  calibration_months: 3
+
+training:
+  seeds:
+    - 42
+  seed_selection: best_sharpe
+
+strategy_scope:
+  direction: all
+
+rolling:
+  mode: slow_realistic
+  windows:
+    structure_lookback_months: 12
+  slow_realistic:
+    cadence_months: 3
+    triggered_retrain_enabled: true
+
+threshold_calibration:
+  step_months: 1
+  execution_opt:
+    enabled: true
+  pcm_eval:
+    enabled: false
+  direction_tuning:
+    enabled: true
+
+symbol_policy:
+  mode: hybrid_carry_forward
+  carry_forward_ttl_months: 2
+  enable_threshold: 0.0
+  min_symbol_trades_soft: 10
+  carry_forward_hard_fail_rules:
+    min_sharpe_r: -0.25
+
+direction_stack:
+  mode: ema200
+  ema_debounce_bars: 3
+  vwap_window_days: 20
+
+slot_allocation:
+  mode: quality_ranked
+  max_symbols_per_side: 2
+  reserve_slots_for_secondary_symbols: 1
+  slot_opportunity_penalty: 0.001
+  quality_score_weights:
+    history_edge: 0.55
+    now_strength: 0.45
+  quality_lookback_months: 3
+
+stitching:
+  enabled: true
+  metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]
+  export_trade_map_html: true
+
+pcm_slot_grid:
+  enabled: false
+
+strategies:
+  bpc:
+    kpi_gates:
+      prefilter:
+        locked_threshold_tuning:
+          enabled: true
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
+      entry_filter:
+        meta_algorithm: true
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
+      gate:
+        # archetypes/gate.yaml：inside_box + compression + chop + vpin = 4，须 ≥ 规则数以避免 optimize 截断
+        max_hard_gates: 4
+    simple_execution:
+      sl_r: 4.0
+      tp_r: 8.0
+      timeout_bars: 500
+
+shap_feature_selection:
+  enabled: false
+  n_folds: 8
+  top_k: 20
+  stability_threshold: 0.8
+  min_stable_features: 1
+  protected_nodes:
+    - atr_f
+  apply_to:
+    - features.yaml
+
+comparison:
+  min_trades: 30
+  sharpe_adopt_ratio: 0.7
+  sharpe_reject_floor: 0.0
+  threshold_drift_warn: 1.0
+
+retrain_triggers:
+  schedule_days: 90
+  sharpe_decay_ratio: 0.5
+  consecutive_losses: 8
+  max_data_age_days: 120
+  leading_indicator_decay: 0.5
+
+deploy_gate:
+  trigger_sharpe_improve: 0.05
+  trigger_drift_level: HIGH
+  min_sharpe_change: 0.03
+  require_adopt: true
+  min_trades: 50
+  require_human_confirm: true
+
+data_flow:
+  model_predictions: predictions.parquet
+  gated_logs: logs_gated.parquet
+  step_inputs:
+    prefilter: predictions.parquet
+    gate_train: predictions.parquet
+    gate_apply: predictions.parquet
+    execution: logs_gated.parquet
+    backtest: logs_gated.parquet
+
+event_backtest:
+  enabled: true
+  promote: true
+  no_kill_switch: false
+  map_extra_months: 4
+  sym_r_default: "1.0:1:6.0"
+  sym_r_by_family:
+    bpc: "2.0:1:6.0"
+  exec_objective_default: sharpe
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.0
+    min_trades_soft: 0
+    undertrade_penalty: 0.0
+
+output:
+  history_dir: results/bpc/slow-rolling-sim
