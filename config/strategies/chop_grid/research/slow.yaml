@@ -18,8 +18,11 @@ rolling:
     triggered_retrain_enabled: true
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
+    disable_feature_search: true
 
-threshold_calibration:
+fast_loop:
+  threshold_calibration:
+    enabled: true
   execution_opt:
     enabled: true
   pcm_eval:
@@ -52,6 +55,8 @@ event_backtest:
 grid_backtest:
   enabled: true
   output_dir: results/chop_grid/slow-full-cycle
+  start_date: "2022-01-01"
+  end_date: "2026-03-31"
   map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
   map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT

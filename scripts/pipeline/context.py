@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG = PROJECT_ROOT / "config" / "research_pipeline.yaml"
+DEFAULT_CONFIG = PROJECT_ROOT / "config" / "pipelines" / "pcm_orchestrate_2h.yaml"
 
 
 @dataclass

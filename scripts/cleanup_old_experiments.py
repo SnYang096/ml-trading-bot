@@ -12,7 +12,6 @@
 """
 
 import argparse
-import os
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -42,30 +41,66 @@ def parse_arguments():
         action="store_true",
         help="dry-run 模式，只显示将要删除的内容，不实际删除",
     )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="pipeline YAML；若指定则扫描 output.history_dir/<strategy>/（与 mlbot pipeline delete 一致）",
+    )
 
     return parser.parse_args()
 
 
-def get_experiment_dirs(strategy):
-    """获取指定策略的所有实验目录"""
-    base_path = Path("results/research_history") / strategy
-    if not base_path.exists():
-        print(f"策略 {strategy} 的实验目录不存在: {base_path}")
+def _is_timestamp_experiment_dir(name: str) -> bool:
+    """Match YYYYMMDD_HHMMSS or YYYYMMDD_HHMMSS_sN under a strategy folder."""
+    if not name.startswith(("202", "19")) or "_" not in name:
+        return False
+    parts = name.split("_")
+    if len(parts) < 2 or len(parts[0]) != 8 or len(parts[1]) != 6:
+        return False
+    try:
+        datetime.strptime(parts[0] + parts[1], "%Y%m%d%H%M%S")
+    except ValueError:
+        return False
+    return True
+
+
+def _collect_timestamp_dirs(base_path: Path) -> list:
+    if not base_path.is_dir():
         return []
-
-    experiment_dirs = []
+    out = []
     for item in base_path.iterdir():
-        if item.is_dir() and item.name.startswith(("202", "19")) and "_" in item.name:
-            # 支持 YYYYMMDD_HHMMSS 和 YYYYMMDD_HHMMSS_sN (多seed) 两种格式
-            parts = item.name.split("_")
-            if len(parts) >= 2 and len(parts[0]) == 8 and len(parts[1]) == 6:
-                try:
-                    timestamp = datetime.strptime(parts[0] + parts[1], "%Y%m%d%H%M%S")
-                    experiment_dirs.append(item)
-                except ValueError:
-                    continue
+        if item.is_dir() and _is_timestamp_experiment_dir(item.name):
+            out.append(item)
+    return out
 
-    return sorted(experiment_dirs, key=lambda x: x.name)
+
+def get_experiment_dirs(
+    strategy: str,
+    *,
+    history_root: Path | None = None,
+    project_root: Path | None = None,
+) -> list:
+    """列出某策略键下的实验目录（时间戳子目录）。
+
+    搜索顺序（按时间戳目录名去重，先出现的根优先）:
+    1. ``{history_root}/{strategy}/`` — 与 ``output.history_dir`` + pipeline ``strategies`` 键一致
+    2. 遗留路径 ``results/research_history/{strategy}/``
+    """
+    project_root = project_root or Path(__file__).resolve().parents[1]
+    by_name: dict[str, Path] = {}
+    bases: list[Path] = []
+    if history_root is not None:
+        hr = (
+            history_root
+            if history_root.is_absolute()
+            else (project_root / history_root)
+        )
+        bases.append((hr / strategy).resolve())
+    bases.append((project_root / "results" / "research_history" / strategy).resolve())
+    for base_path in bases:
+        for item in _collect_timestamp_dirs(base_path):
+            by_name.setdefault(item.name, item)
+    return sorted(by_name.values(), key=lambda x: x.name)
 
 
 def get_experiment_status(exp_dir):
@@ -120,7 +155,20 @@ def main():
             print("取消操作")
             return
 
-    experiment_dirs = get_experiment_dirs(args.strategy)
+    project_root = Path(__file__).resolve().parents[1]
+    history_root: Path | None = None
+    if args.config:
+        from scripts.pipeline import config as pipeline_config
+
+        cfg_path = Path(args.config)
+        if not cfg_path.is_absolute():
+            cfg_path = (project_root / cfg_path).resolve()
+        cfg = pipeline_config.load_pipeline_config(cfg_path)
+        history_root = (project_root / cfg["output"]["history_dir"]).resolve()
+
+    experiment_dirs = get_experiment_dirs(
+        args.strategy, history_root=history_root, project_root=project_root
+    )
     if not experiment_dirs:
         print(f"没有找到 {args.strategy} 策略的实验目录")
         return

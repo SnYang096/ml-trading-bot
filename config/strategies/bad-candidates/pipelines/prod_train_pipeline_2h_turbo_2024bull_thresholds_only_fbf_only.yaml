@@ -56,7 +56,7 @@ strategies:
   fbf:
     config: config/strategies/bad-candidates/fbf
     timeframe: 120T
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true

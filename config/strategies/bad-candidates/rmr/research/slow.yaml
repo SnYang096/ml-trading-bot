@@ -124,7 +124,7 @@ download:
 strategies:
   rmr:
     config: config/strategies/bad-candidates/rmr
-    features_gate: features.yaml
+    prepare_features: features.yaml
     # labels_gate 用 rr_extreme 子标签（success_no_rr_extreme），与 SRB/TPC/FBF 保持一致
     # 策略模型自身训练仍用 labels.yaml 的 success_label
     labels_gate: labels_rr_extreme.yaml

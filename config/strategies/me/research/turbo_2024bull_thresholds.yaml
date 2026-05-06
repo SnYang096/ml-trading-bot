@@ -57,10 +57,10 @@ download:
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  bpc:
-    config: config/strategies/bpc
+  me:
+    config: config/strategies/me
     timeframe: 120T
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
@@ -112,7 +112,7 @@ strategies:
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        # 与 turbo TPC / slow 语义对齐：低 combined pass 仍保留硬门，抑制横盘乱开仓。
+        # 与 turbo TPC / BPC 统一：min_combined_pass_rate 0.05 + gate 不强推成交量 KPI。
         min_combined_pass_rate: 0.05
         max_hard_gates: 4
         max_system_safety: 2
@@ -131,13 +131,13 @@ event_backtest:
   enabled: true
   # map_extra_months：事件回测交易地图的「为画 VWAP 多向前取多少月 1m」（仅事件回测 + 出图时有意义）。
   map_extra_months: 4
-  # 趋势族统一宽执行档：与 ME 对齐；更宽止损由 sizing 自动降低仓位。
+  # 搜索上界/下界保持 ME > BPC > TPC，覆盖 execution.yaml 默认宽尾档，
+  # 避免标定窗选到与「冲段」语义冲突的过紧 triplet。
   exec_grid_by_family:
-    bpc:
+    me:
       initial_r: "4.0:0.5:7.0"
       activation_r: "3.5:0.5:6.0"
       trail_r: "6.0:1.0:15.0"
-  # 事件执行标定：最大化 total_r / max_dd 语义，并显式惩罚近止损占比与绝对回撤
   exec_objective_default: total_r_over_dd
   exec_objective_params:
     near_stop_threshold_r: -0.9
@@ -147,4 +147,5 @@ event_backtest:
     undertrade_penalty: 0.0
 
 output:
-  history_dir: results/bpc/turbo-rolling-sim
+  # 与 BPC-only 分离，避免 rolling_sim 与 bpc 同目录互相覆盖
+  history_dir: results/me/turbo-rolling-sim

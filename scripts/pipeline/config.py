@@ -6,40 +6,107 @@ from typing import Any, Dict, List
 
 import yaml
 
+from src.config.strategy_layout import deep_merge_dicts
+
 from .context import PROJECT_ROOT
 
 
+def _load_yaml_extends_chain(path: Path) -> Dict[str, Any]:
+    """Load YAML following ``extends`` (child overlays parent). Paths are relative to each file."""
+    chain: List[Dict[str, Any]] = []
+    cur = path.resolve()
+    visited: set[Path] = set()
+    for _ in range(64):
+        if cur in visited:
+            raise ValueError(f"extends 循环引用: {cur}")
+        visited.add(cur)
+        raw = yaml.safe_load(cur.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError(f"配置文件格式错误: {cur}")
+        ext = raw.pop("extends", None)
+        chain.append(raw)
+        if not ext:
+            break
+        nxt = (cur.parent / str(ext).strip()).resolve()
+        if not nxt.is_file():
+            raise ValueError(f"extends 指向的文件不存在: {ext!r}（自 {cur}）")
+        cur = nxt
+    merged: Dict[str, Any] = {}
+    for layer in reversed(chain):
+        merged = deep_merge_dicts(merged, layer)
+    return merged
+
+
 def load_pipeline_config(path: Path) -> dict:
-    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    cfg = _load_yaml_extends_chain(path)
     if not isinstance(cfg, dict):
         raise ValueError(f"配置文件格式错误: {path}")
 
-    # Rolling contract (backward compatible defaults)
+    dates = cfg.get("dates", {}) or {}
+    if isinstance(dates, dict):
+        d_cal = dates.get("calibration_months")
+        rolling = cfg.setdefault("rolling", {})
+        windows = rolling.setdefault("windows", {})
+        if d_cal is not None and windows.get("calibration_months") is None:
+            windows["calibration_months"] = d_cal
+        rw_cal = windows.get("calibration_months")
+        if d_cal is not None and rw_cal is not None and int(d_cal) != int(rw_cal):
+            raise ValueError(
+                "rolling.windows.calibration_months 与 dates.calibration_months 冲突"
+            )
+
+    grid_bt = cfg.get("grid_backtest")
+    if isinstance(grid_bt, dict) and bool(grid_bt.get("enabled")):
+        ds = (
+            (cfg.get("dates") or {}).get("start_date")
+            if isinstance(dates, dict)
+            else None
+        )
+        gs = grid_bt.get("start_date")
+        if ds and gs and str(ds).strip() != str(gs).strip():
+            raise ValueError("grid_backtest.start_date 与 dates.start_date 不一致")
+
     rolling = cfg.get("rolling", {}) or {}
     if not isinstance(rolling, dict):
         rolling = {}
     mode = (
         str(rolling.get("mode", "slow_realistic") or "slow_realistic").strip().lower()
     )
-    if mode not in {"slow_realistic", "turbo_fixed_features", "legacy"}:
+    if mode not in {
+        "slow_realistic",
+        "turbo_fixed_features",
+        "legacy",
+        "non_rolling",
+    }:
         raise ValueError(
-            f"rolling.mode 非法: {mode} (允许 slow_realistic/turbo_fixed_features/legacy)"
+            f"rolling.mode 非法: {mode} (允许 slow_realistic/turbo_fixed_features/legacy/non_rolling)"
         )
+
+    tsp = rolling.get("time_split_policy")
+    if tsp is not None:
+        tsp_s = str(tsp).strip().lower()
+        if tsp_s not in {"static_holdout"}:
+            raise ValueError(f"time_split_policy 非法: {tsp} (仅支持 static_holdout)")
+        rolling["time_split_policy"] = tsp_s
+    elif mode == "turbo_fixed_features":
+        rolling["time_split_policy"] = "static_holdout"
+
     windows = rolling.get("windows", {}) or {}
     if not isinstance(windows, dict):
         windows = {}
     calibration_months = int(windows.get("calibration_months", 3) or 3)
     structure_lookback_months = int(windows.get("structure_lookback_months", 12) or 12)
-    if calibration_months <= 0:
-        raise ValueError("rolling.windows.calibration_months 必须 > 0")
-    if structure_lookback_months <= 0:
-        raise ValueError("rolling.windows.structure_lookback_months 必须 > 0")
+    if mode != "non_rolling":
+        if calibration_months <= 0:
+            raise ValueError("rolling.windows.calibration_months 必须 > 0")
+        if structure_lookback_months <= 0:
+            raise ValueError("rolling.windows.structure_lookback_months 必须 > 0")
 
     slow_realistic = rolling.get("slow_realistic", {}) or {}
     if not isinstance(slow_realistic, dict):
         slow_realistic = {}
     cadence_months = int(slow_realistic.get("cadence_months", 3) or 3)
-    if cadence_months <= 0:
+    if mode == "slow_realistic" and cadence_months <= 0:
         raise ValueError("rolling.slow_realistic.cadence_months 必须 > 0")
 
     turbo_fixed = rolling.get("turbo_fixed_features", {}) or {}
@@ -48,17 +115,15 @@ def load_pipeline_config(path: Path) -> dict:
     fixed_root = str(
         turbo_fixed.get("fixed_strategies_root", "config/strategies") or ""
     ).strip()
-    if not fixed_root:
+    if mode in {"slow_realistic", "turbo_fixed_features", "legacy"} and not fixed_root:
         raise ValueError("rolling.turbo_fixed_features.fixed_strategies_root 不能为空")
 
-    # slow_loop 是运营/文档契约层；rolling_sim 实际读取 rolling.slow_realistic。
-    # 若两层都配置，允许通过 config_contract.slow_loop_policy 选择 warn/error。
-    slow_loop = cfg.get("slow_loop", {}) or {}
-    if not isinstance(slow_loop, dict):
-        slow_loop = {}
     contract_cfg = cfg.get("config_contract", {}) or {}
     if not isinstance(contract_cfg, dict):
         contract_cfg = {}
+    slow_loop = cfg.get("slow_loop", {}) or {}
+    if not isinstance(slow_loop, dict):
+        slow_loop = {}
     slow_loop_policy = str(
         contract_cfg.get("slow_loop_policy", "warn") or "warn"
     ).lower()
@@ -96,34 +161,29 @@ def load_pipeline_config(path: Path) -> dict:
         if slow_loop_policy == "warn":
             print(f"⚠️  {path}: {_msg}")
 
-    rolling = {
-        "mode": mode,
-        "windows": {
-            "calibration_months": calibration_months,
-            "structure_lookback_months": structure_lookback_months,
-        },
-        "slow_realistic": {
-            "cadence_months": cadence_months,
-            "triggered_retrain_enabled": bool(
-                slow_realistic.get("triggered_retrain_enabled", True)
-            ),
-        },
-        "turbo_fixed_features": {
-            "fixed_strategies_root": fixed_root,
-            "disable_feature_search": bool(
-                turbo_fixed.get("disable_feature_search", True)
-            ),
-        },
+    rolling["mode"] = mode
+    rolling["windows"] = {
+        "calibration_months": calibration_months,
+        "structure_lookback_months": structure_lookback_months,
+    }
+    rolling["slow_realistic"] = {
+        "cadence_months": cadence_months,
+        "triggered_retrain_enabled": bool(
+            slow_realistic.get("triggered_retrain_enabled", True)
+        ),
+    }
+    rolling["turbo_fixed_features"] = {
+        "fixed_strategies_root": fixed_root,
+        "disable_feature_search": bool(turbo_fixed.get("disable_feature_search", True)),
     }
     cfg["rolling"] = rolling
 
-    # Event-backtest 契约：默认 true，但建议显式声明 enabled，避免误跑。
-    event_cfg = cfg.get("event_backtest", {}) or {}
-    if not isinstance(event_cfg, dict):
-        event_cfg = {}
     require_event_enabled = bool(
         contract_cfg.get("require_event_backtest_enabled", False)
     )
+    event_cfg = cfg.get("event_backtest", {}) or {}
+    if not isinstance(event_cfg, dict):
+        event_cfg = {}
     if "enabled" not in event_cfg:
         _msg = (
             "event_backtest.enabled 未显式设置；将使用默认值 true。"
@@ -135,7 +195,6 @@ def load_pipeline_config(path: Path) -> dict:
     event_cfg["enabled"] = bool(event_cfg.get("enabled", True))
     cfg["event_backtest"] = event_cfg
 
-    # Fast-loop contract (backward compatible defaults)
     fast_loop = cfg.get("fast_loop", {}) or {}
     if not isinstance(fast_loop, dict):
         fast_loop = {}
@@ -164,8 +223,6 @@ def load_pipeline_config(path: Path) -> dict:
         "execution_opt": {"enabled": _enabled("execution_opt", True)},
         "pcm_eval": {"enabled": _enabled("pcm_eval", True)},
     }
-    # Do not drop keys the normalizer does not materialize (direction_tuning,
-    # disable_model_training, etc.).
     for _fk, _fv in fast_loop.items():
         if _fk not in cfg["fast_loop"]:
             cfg["fast_loop"][_fk] = _fv

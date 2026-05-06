@@ -52,7 +52,7 @@ strategies:
     dates:
       holdout_months: 6
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -117,7 +117,7 @@ strategies:
     dates:
       holdout_months: 9
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -182,7 +182,7 @@ strategies:
     dates:
       holdout_months: 12
       validation_months: 4
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
@@ -247,7 +247,7 @@ strategies:
     dates:
       holdout_months: 6
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -312,7 +312,7 @@ strategies:
     dates:
       holdout_months: 9
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -377,7 +377,7 @@ strategies:
     dates:
       holdout_months: 12
       validation_months: 4
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -442,7 +442,7 @@ strategies:
     dates:
       holdout_months: 6
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -512,7 +512,7 @@ strategies:
     dates:
       holdout_months: 9
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -582,7 +582,7 @@ strategies:
     dates:
       holdout_months: 12
       validation_months: 4
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
@@ -650,7 +650,7 @@ strategies:
     dates:
       holdout_months: 6
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -720,7 +720,7 @@ strategies:
     dates:
       holdout_months: 9
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -790,7 +790,7 @@ strategies:
     dates:
       holdout_months: 12
       validation_months: 4
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -860,7 +860,7 @@ strategies:
     dates:
       holdout_months: 6
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 long (见 labels_rr_extreme.yaml)
@@ -926,7 +926,7 @@ strategies:
     dates:
       holdout_months: 9
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -992,7 +992,7 @@ strategies:
     dates:
       holdout_months: 12
       validation_months: 4
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -1058,7 +1058,7 @@ strategies:
     dates:
       holdout_months: 6
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -1124,7 +1124,7 @@ strategies:
     dates:
       holdout_months: 9
       validation_months: 3
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -1190,7 +1190,7 @@ strategies:
     dates:
       holdout_months: 12
       validation_months: 4
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false # direction_aware: false, 方向固定为 short (见 labels_rr_extreme.yaml)
@@ -1256,7 +1256,7 @@ strategies:
     dates:
       holdout_months: 3
       validation_months: 1
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true

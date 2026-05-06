@@ -22,7 +22,7 @@ def main() -> int:
     p.add_argument("--run-id", required=True, help="rolling_sim run id (timestamp)")
     p.add_argument(
         "--config",
-        default=str(PROJECT_ROOT / "config" / "research_pipeline.yaml"),
+        default=str(PROJECT_ROOT / "config" / "pipelines" / "pcm_orchestrate_2h.yaml"),
         help="pipeline config path",
     )
     args = p.parse_args()

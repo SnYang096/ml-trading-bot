@@ -132,7 +132,7 @@ download:
 strategies:
   fbf:
     config: config/strategies/fbf
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true

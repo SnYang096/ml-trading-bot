@@ -7,7 +7,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
-DEFAULT_RESEARCH_PIPELINE_REL = Path("config/research_pipeline.yaml")
+# 全局默认（无 --strategy）：多策略 PCM 编排；历史遗留单体研究包仍可用 ``pipelines/research_pipeline.yaml`` 显式传入。
+DEFAULT_PCM_ORCHESTRATE_REL = Path("config/pipelines/pcm_orchestrate_2h.yaml")
+LEGACY_RESEARCH_PIPELINE_REL = Path("config/pipelines/research_pipeline.yaml")
 RESEARCH_PIPELINE_PROBE_NAMES = ("turbo.yaml", "slow.yaml", "pipeline.yaml")
 
 
@@ -33,7 +35,7 @@ def resolve_default_pipeline_config(
         p = explicit_config if explicit_config.is_absolute() else (project_root / explicit_config)
         return p.resolve(), warnings
     if not strategy_slug or not str(strategy_slug).strip():
-        fb = (project_root / DEFAULT_RESEARCH_PIPELINE_REL).resolve()
+        fb = (project_root / DEFAULT_PCM_ORCHESTRATE_REL).resolve()
         warnings.append(
             f"No --strategy/--config; using default {fb.relative_to(project_root)}"
         )
@@ -49,7 +51,7 @@ def resolve_default_pipeline_config(
         warnings.extend(w)
         return resolved, warnings
 
-    fb = (project_root / DEFAULT_RESEARCH_PIPELINE_REL).resolve()
+    fb = (project_root / DEFAULT_PCM_ORCHESTRATE_REL).resolve()
     warnings.append(
         f"No {', '.join(RESEARCH_PIPELINE_PROBE_NAMES)} under "
         f"{research.relative_to(project_root)}; falling back to "
@@ -69,7 +71,7 @@ def _resolve_research_pipeline_marker(
             rel_m = marker.relative_to(project_root)
             rel_t = target.relative_to(project_root)
             return target, [f"Resolved pipeline via {rel_m} → {rel_t}"]
-        fb = (project_root / DEFAULT_RESEARCH_PIPELINE_REL).resolve()
+        fb = (project_root / DEFAULT_PCM_ORCHESTRATE_REL).resolve()
         return fb, [
             f"{marker.relative_to(project_root)}: extends {ext!r} missing; "
             f"falling back to {fb.relative_to(project_root)}"

@@ -35,8 +35,8 @@ _BPC_GRID_DEFAULTS = {
 }
 
 
-def _bpc_grid_csv_for_param(param_name: str, tcfg: Dict[str, Any]) -> str:
-    """Resolve ``{param}_values`` for BPC grid; supports newly inferred params."""
+def _binding_param_grid_csv(param_name: str, tcfg: Dict[str, Any]) -> str:
+    """Resolve ``{param}_values`` for inferred binding params (BPC / bindings templates)."""
     key = f"{param_name}_values"
     if key in tcfg and tcfg[key] is not None:
         return str(tcfg[key])
@@ -57,12 +57,9 @@ from scripts.locked_prefilter_utils import (
 
 @dataclass
 class CaseParams:
-    mode: str = "fer"
-    fer_lower: float = 0.0
-    fer_upper: float = 0.0
-    sr_min: float = 0.0
-    dist_max: float = 0.0
-    fer_sqs_min: float = 0.0
+    """ME uses explicit fields; BPC / bindings use ``custom_params`` (infer 导出的参数名)."""
+
+    mode: str = "bindings"
     atr_lower: float = 0.0
     atr_upper: float = 0.0
     me_accel_abs_min: float = 0.0
@@ -84,12 +81,7 @@ class CaseParams:
                 f"accel_abs>={self.me_accel_abs_min:.4g}_"
                 f"cvd>={self.me_cvd_min:.4g}"
             )
-        if self.mode == "bpc":
-            raise RuntimeError("BPC cases must use custom_params")
-        return (
-            f"fer[{self.fer_lower:.4g},{self.fer_upper:.4g}]_"
-            f"sr>={self.sr_min:.4g}_dist<=±{self.dist_max:.4g}_sqs>={self.fer_sqs_min:.4g}"
-        )
+        raise RuntimeError("bindings/bpc cases must set custom_params")
 
 
 def parse_float_list(text: str) -> List[float]:
@@ -139,7 +131,7 @@ def build_override_prefilter(
     writeback_bindings: List[Dict[str, Any]] | None = None,
     strict_bindings: bool = True,
 ) -> Path:
-    if params.custom_params:
+    if params.custom_params is not None:
         payload = dict(params.custom_params)
     elif params.mode == "me":
         payload = {
@@ -149,20 +141,20 @@ def build_override_prefilter(
             "me_cvd_min": params.me_cvd_min,
         }
     else:
-        payload = {
-            "fer_lower": params.fer_lower,
-            "fer_upper": params.fer_upper,
-            "sr_min": params.sr_min,
-            "dist_max": params.dist_max,
-            "fer_sqs_min": params.fer_sqs_min,
-        }
+        raise RuntimeError(
+            "BPC/bindings locked tuning requires CaseParams.custom_params "
+            "(infer 参数名，与 archetypes/prefilter.yaml 一致)"
+        )
+    tpl = params.mode
+    if tpl == "fer":
+        tpl = "bindings"
     return build_override_prefilter_base(
         prod_prefilter_path,
         output_path,
         payload,
         bindings=writeback_bindings,
         strict_bindings=strict_bindings,
-        template=params.mode,
+        template=tpl,
     )
 
 
@@ -294,11 +286,11 @@ def main() -> int:
     )
     p.add_argument(
         "--template",
-        choices=["auto", "fer", "me", "bpc"],
+        choices=["auto", "fer", "bindings", "me", "bpc"],
         default="auto",
-        help="locked 调优模板: auto(按 strategy 推断) / fer / me / bpc",
+        help="locked 调优模板: auto / fer(同 bindings) / bindings / me / bpc；bindings+bpc 使用 infer 参数名",
     )
-    p.add_argument("--config", default="config/research_pipeline.yaml")
+    p.add_argument("--config", default="config/pipelines/pcm_orchestrate_2h.yaml")
     p.add_argument(
         "--end-dates",
         default="",
@@ -379,13 +371,15 @@ def main() -> int:
         end_dates = [""]
 
     template = args.template
+    if template == "fer":
+        template = "bindings"
     if template == "auto":
         if args.strategy == "me":
             template = "me"
         elif args.strategy == "bpc":
             template = "bpc"
         else:
-            template = "fer"
+            template = "bindings"
 
     strict_bindings = bool(tcfg.get("writeback_strict", True))
     generic_search_space = tcfg.get("search_space", {}) or {}
@@ -395,6 +389,7 @@ def main() -> int:
         isinstance(generic_search_space, dict)
         and generic_search_space
         and resolved_writeback
+        and template in ("bpc", "bindings")
     ):
         keys = [str(k) for k in generic_search_space.keys()]
         values_lists = [parse_values_list(generic_search_space[k]) for k in keys]
@@ -428,7 +423,7 @@ def main() -> int:
                     me_cvd_min=cvd_min,
                 )
             )
-    elif template == "bpc":
+    elif template in ("bpc", "bindings"):
         keys = [
             str(b.get("param", "")).strip()
             for b in resolved_writeback
@@ -436,70 +431,15 @@ def main() -> int:
         ]
         if not keys:
             raise SystemExit(
-                "BPC locked tuning: 无 writeback 绑定；请在 locked_threshold_tuning 显式写 "
+                "locked tuning: 无 writeback 绑定；请在 locked_threshold_tuning 写 "
                 "writeback_bindings，或检查 archetypes/prefilter.yaml 的 locked 规则"
             )
         value_lists: List[List[float]] = []
         for k in keys:
-            value_lists.append(parse_float_list(_bpc_grid_csv_for_param(k, tcfg)))
+            value_lists.append(parse_float_list(_binding_param_grid_csv(k, tcfg)))
         for combo in itertools.product(*value_lists):
-            cases.append(CaseParams(mode="bpc", custom_params=dict(zip(keys, combo))))
-    else:
-        # New semantic FER keys are preferred; old keys are kept for backward compatibility.
-        fer_lows = parse_float_list(
-            str(
-                tcfg.get(
-                    "fer_eff_pct_lower_values",
-                    tcfg.get("fer_lower_values", args.fer_lower_values),
-                )
-            )
-        )
-        fer_ups = parse_float_list(
-            str(
-                tcfg.get(
-                    "fer_eff_pct_upper_values",
-                    tcfg.get("fer_upper_values", args.fer_upper_values),
-                )
-            )
-        )
-        sr_mins = parse_float_list(
-            str(
-                tcfg.get(
-                    "sr_strength_min_values",
-                    tcfg.get("sr_min_values", args.sr_min_values),
-                )
-            )
-        )
-        dist_maxs = parse_float_list(
-            str(
-                tcfg.get(
-                    "dist_to_sr_atr_max_values",
-                    tcfg.get("dist_max_values", args.dist_max_values),
-                )
-            )
-        )
-        sqs_mins = parse_float_list(
-            str(
-                tcfg.get(
-                    "sqs_quality_min_values",
-                    tcfg.get("sqs_min_values", args.sqs_min_values),
-                )
-            )
-        )
-        for lo, hi, sr, dist, sqs in itertools.product(
-            fer_lows, fer_ups, sr_mins, dist_maxs, sqs_mins
-        ):
-            if lo > hi:
-                continue
             cases.append(
-                CaseParams(
-                    mode="fer",
-                    fer_lower=lo,
-                    fer_upper=hi,
-                    sr_min=sr,
-                    dist_max=dist,
-                    fer_sqs_min=sqs,
-                )
+                CaseParams(mode=template, custom_params=dict(zip(keys, combo)))
             )
     if args.max_cases > 0:
         cases = cases[: args.max_cases]
@@ -585,11 +525,11 @@ def main() -> int:
         row = {
             "case_id": idx,
             "mode": case.mode,
-            "fer_lower": case.fer_lower,
-            "fer_upper": case.fer_upper,
-            "sr_min": case.sr_min,
-            "dist_max": case.dist_max,
-            "fer_sqs_min": case.fer_sqs_min,
+            "fer_lower": 0.0,
+            "fer_upper": 0.0,
+            "sr_min": 0.0,
+            "dist_max": 0.0,
+            "fer_sqs_min": 0.0,
             "atr_lower": case.atr_lower,
             "atr_upper": case.atr_upper,
             "me_accel_abs_min": case.me_accel_abs_min,
@@ -694,21 +634,14 @@ def main() -> int:
 
     print("\nTop 5 cases:")
     for i, r in enumerate(summary_rows[:5], 1):
-        if (r.get("custom_params_json") or "{}") not in {"{}", ""}:
-            param_desc = f"custom={r.get('custom_params_json')}"
-        elif r["mode"] == "me":
+        if r["mode"] == "me":
             param_desc = (
                 f"atr=[{r['atr_lower']:.3g},{r['atr_upper']:.3g}] "
                 f"accel_abs>={r['me_accel_abs_min']:.3g} "
                 f"cvd>={r['me_cvd_min']:.3g}"
             )
-        elif r["mode"] == "bpc":
-            param_desc = f"bpc={r.get('custom_params_json')}"
         else:
-            param_desc = (
-                f"fer=[{r['fer_lower']:.3g},{r['fer_upper']:.3g}] "
-                f"sr>={r['sr_min']:.3g} dist<=±{r['dist_max']:.3g} sqs>={r['fer_sqs_min']:.3g}"
-            )
+            param_desc = f"params={r.get('custom_params_json')}"
         print(
             f"  {i}. case={r['case_id']:03d} score={r['score']:+.4f} "
             f"sharpe={r['median_sharpe']:+.4f} trades={r['median_trades']:.1f} "

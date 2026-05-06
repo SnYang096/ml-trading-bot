@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 
-from scripts.tune_locked_prefilter_thresholds import (
-    CaseParams,
-    aggregate_case,
-    parse_float_list,
-)
+from scripts.tune_locked_prefilter_thresholds import aggregate_case, parse_float_list
 from scripts.locked_prefilter_utils import apply_locked_thresholds
 
 
@@ -47,13 +43,16 @@ def test_apply_locked_thresholds_updates_expected_rules():
             },
         ]
     }
-    params = CaseParams(fer_lower=0.05, fer_upper=0.4, sr_min=0.6, dist_max=1.0)
     out = apply_locked_thresholds(
         raw,
-        fer_lower=params.fer_lower,
-        fer_upper=params.fer_upper,
-        sr_min=params.sr_min,
-        dist_max=params.dist_max,
+        template="bindings",
+        params={
+            "fer_signed_efficiency_pct_min": 0.05,
+            "fer_signed_efficiency_pct_max": 0.4,
+            "sr_strength_max_min": 0.6,
+            "dist_to_nearest_sr_min": -1.0,
+            "dist_to_nearest_sr_max": 1.0,
+        },
     )
     rules = out["rules"]
     assert rules[0]["value"] == 0.05

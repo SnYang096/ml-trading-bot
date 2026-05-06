@@ -68,7 +68,7 @@ strategies:
       holdout_months: 26
       validation_months: 3
     # 以下字段与常规策略保持同构；lottery100 由 strategy_family 分支直接走 event_backtest
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true

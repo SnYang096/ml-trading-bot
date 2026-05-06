@@ -52,7 +52,7 @@ strategies:
   tpc:
     config: config/strategies/tpc
     timeframe: 120T
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
@@ -83,7 +83,7 @@ strategies:
           - distribution_ks
           - mean_effect
       entry_filter:
-        meta_algorithm: false
+        meta_algorithm: true
         archetype_plateau: true
         significance_p: 0.10
         significance_min_trades: 4

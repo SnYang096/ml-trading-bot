@@ -1,7 +1,10 @@
 # ============================================================
-# 快速管线：2H only, EML-only (EMA1200 Trend Umbrella 实验)
-# 基于 prod_train_pipeline_2h_turbo_crf_only.yaml，仅替换 strategies 与输出路径。
+# EML：单月 fast_month 快速出「交易地图」
+#
+# threshold_calibration.enabled=false 时，fast_month 会跳过 train prepare 长步骤，
+# 直接从 config/strategies/bad-candidates/eml 拷贝策略并跑 event_backtest → trading_map_*.html
 # ============================================================
+# 其它字段与 prod_train_pipeline_2h_turbo_eml_only.yaml 一致。
 
 dates:
   start_date: "2022-08-01"
@@ -11,6 +14,7 @@ dates:
 
 global_toggles:
   locked_threshold_tuning_enabled: true
+
 rolling:
   mode: turbo_fixed_features
   windows:
@@ -24,9 +28,10 @@ fast_loop:
   disable_model_training: true
   step_months: 1
   threshold_calibration:
-    enabled: true
+    enabled: false
   prefilter:
-    optimize: true
+    # false：保持仓库 archetypes/prefilter 的 EMA 死区+斜率语义，不把 meta KS 区间叠进实验副本
+    optimize: false
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
@@ -52,7 +57,7 @@ strategies:
     config: config/strategies/bad-candidates/eml
     side: both
     timeframe: 120T
-    features_gate: features_gate.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true

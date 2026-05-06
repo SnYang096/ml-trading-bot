@@ -1,9 +1,5 @@
 # ============================================================
-# 上线前训练流水线 (2H only, SRB-only, turbo / 固定特征 + 阈值链)
-# SRB 已迁入 bad-candidates；预过滤见 config/strategies/bad-candidates/srb/features_prefilter.yaml
-#
-# 示例:
-#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_srb_only.yaml --stage rolling_sim --skip-shap
+# 上线前训练流水线 (2H only, SRB QuickStrike, turbo / 固定特征 + 阈值链)
 # ============================================================
 
 dates:
@@ -14,6 +10,7 @@ dates:
 
 global_toggles:
   locked_threshold_tuning_enabled: true
+
 rolling:
   mode: turbo_fixed_features
   windows:
@@ -33,7 +30,7 @@ fast_loop:
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
-    enabled: true
+    enabled: false
   pcm_eval:
     enabled: false
   direction_tuning:
@@ -45,16 +42,19 @@ universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a
   group: highcap
+
 data_path: data/parquet_data
+
 download:
   enabled: true
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
+
 strategies:
   srb:
-    config: config/strategies/bad-candidates/srb
+    config: config/strategies/srb_quickstrike
     timeframe: 120T
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
@@ -116,18 +116,6 @@ strategies:
 event_backtest:
   enabled: true
   map_extra_months: 4
-  exec_grid_by_family:
-    srb:
-      initial_r: "2.5:0.5:4.5"
-      activation_r: "2.0:0.5:4.5"
-      trail_r: "2.0:0.5:6.0"
-  exec_objective_default: total_r_over_dd
-  exec_objective_params:
-    near_stop_threshold_r: -0.9
-    near_stop_penalty: 5.0
-    max_dd_penalty: 0.15
-    min_trades_soft: 0
-    undertrade_penalty: 0.0
 
 output:
-  history_dir: results/srb/turbo-rolling-sim
+  history_dir: results/srb_quickstrike/turbo-rolling-sim

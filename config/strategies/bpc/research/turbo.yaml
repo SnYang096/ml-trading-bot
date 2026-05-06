@@ -46,7 +46,6 @@ strategies:
     config: config/strategies/bpc
     timeframe: 120T
     prepare_features: features.yaml
-    features_gate: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true

@@ -150,61 +150,61 @@ mlbot data download-open-interest \
 | `chop_grid`       | 语义 chop + 盒过滤下的小网格段（**多腿**；根配置 `grid.yaml`） | `120T`                     |
 | `dual_add_trend`  | 趋势置信 + chop/盒过滤下双腿加仓（**多腿**；根配置 `dual_add.yaml`） | `120T`                     |
 
-**常用 pipeline YAML**（按 **`config/strategies/<策略>/`** 归类；**`mlbot pipeline run --config …`** 仍使用 **`config/` 根目录下** 的 `prod_train_pipeline_*.yaml` 路径）。
+**常用 pipeline YAML**：研究入口按策略包放在 **`config/strategies/<slug>/research/`**（`turbo.yaml` → `slow.yaml` → `pipeline.yaml` 探测顺序；可通过顶层 `extends:` 指向共享片段）。**`mlbot pipeline`** 省略 `--config` 且带 `--strategy <slug>` 时按上述顺序解析；既无 `--strategy` 也无 `--config` 时默认 **`config/pipelines/pcm_orchestrate_2h.yaml`**（PCM 多策略编排）。仓库级统一模板（显式引用或工具默认）为 **`config/pipelines/research_pipeline.yaml`**。
 
-> **与 `live/highcap/config/strategies/` 的分工**：实盘镜像里是同名的 **`meta.yaml` / `features.yaml` / `archetypes/` / 根引擎 yaml**（由 `scripts/deploy_config_to_live.py` 同步）；**不会**把 `prod_train_pipeline_*.yaml` 拷到 `live/…/strategies/bpc/`——那些文件是**研究编排入口**，留在 `config/` 根目录便于脚本与 CI 引用。若将来要把某策略的 pipeline 物理挪到 `config/strategies/<slug>/pipelines/`，需同步改所有 `--config` 引用。
+> **与 `live/highcap/config/strategies/` 的分工**：实盘镜像里是同名的 **`meta.yaml` / `features.yaml` / `archetypes/` / 根引擎 yaml**（由 `scripts/deploy_config_to_live.py` 同步）；**不会**把 `research/*.yaml` 管线入口拷到 `live/…`——那些文件留在 **`config/strategies/<slug>/research/`** 供研究与脚本引用。
 
 #### 全局 / 多策略
 
 | YAML | 用途 | `rolling.mode` |
 | ---- | ---- | ---------------- |
-| `config/prod_train_pipeline_2h.yaml` | 主生产向：多策略 + PCM 联合回测 | `slow_realistic` |
+| `config/pipelines/pcm_orchestrate_2h.yaml` | PCM 多策略编排（2H）：联合回测 / slot 等 | `slow_realistic` |
 
 #### `bpc` — `config/strategies/bpc/`（镜像：`live/highcap/config/strategies/bpc/`）
 
 | YAML | 用途 | `rolling.mode` |
 | ---- | ---- | ---------------- |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml` | turbo：阈值链 + execution 优化，不做特征搜索 | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_slow_bpc_only.yaml` | 慢模式：季度结构 + 月度快变量 | `slow_realistic` |
+| `config/strategies/bpc/research/turbo.yaml` | turbo：阈值链 + execution 优化（默认探测首项） | `turbo_fixed_features` |
+| `config/strategies/bpc/research/slow.yaml` | 慢模式：季度结构 + 月度快变量 | `slow_realistic` |
 
 #### `tpc` — `config/strategies/tpc/`（镜像：`live/highcap/config/strategies/tpc/`）
 
 | YAML | 用途 | `rolling.mode` |
 | ---- | ---- | ---------------- |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_tpc_only.yaml` | turbo | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_slow_tpc_only.yaml` | 慢模式 | `slow_realistic` |
+| `config/strategies/tpc/research/turbo.yaml` | turbo | `turbo_fixed_features` |
+| `config/strategies/tpc/research/slow.yaml` | 慢模式 | `slow_realistic` |
 
 #### `me` — `config/strategies/me/`（镜像：`live/highcap/config/strategies/me/`）
 
 | YAML | 用途 | `rolling.mode` |
 | ---- | ---- | ---------------- |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_me_only.yaml` | turbo | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_slow_me_only.yaml` | 慢模式 | `slow_realistic` |
+| `config/strategies/me/research/turbo.yaml` | turbo | `turbo_fixed_features` |
+| `config/strategies/me/research/slow.yaml` | 慢模式 | `slow_realistic` |
 
 #### `chop_grid` — `config/strategies/chop_grid/`（镜像：`live/highcap/config/strategies/chop_grid/`）
 
 | YAML | 用途 | `rolling.mode` |
 | ---- | ---- | ---------------- |
-| `config/prod_train_pipeline_2h_turbo_chop_grid_only.yaml` | 多腿网格 rolling（turbo） | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_slow_chop_grid_only.yaml` | 多腿慢模式 | `slow_realistic` |
+| `config/strategies/chop_grid/research/turbo.yaml` | 多腿网格 rolling（turbo） | `turbo_fixed_features` |
+| `config/strategies/chop_grid/research/slow.yaml` | 多腿慢模式 | `slow_realistic` |
 
 #### `dual_add_trend` — `config/strategies/dual_add_trend/`（镜像：`live/highcap/config/strategies/dual_add_trend/`）
 
 | YAML | 用途 | `rolling.mode` |
 | ---- | ---- | ---------------- |
-| `config/prod_train_pipeline_2h_turbo_dual_add_trend_only.yaml` | 多腿双腿策略 rolling（turbo） | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_slow_dual_add_trend_only.yaml` | 多腿慢模式 | `slow_realistic` |
+| `config/strategies/dual_add_trend/research/turbo.yaml` | 多腿双腿策略 rolling（turbo） | `turbo_fixed_features` |
+| `config/strategies/dual_add_trend/research/slow.yaml` | 多腿慢模式 | `slow_realistic` |
 
 #### `bad-candidates/`（策略树 + 专用管线；非顶层主线）
 
 | YAML | 用途 | `rolling.mode` |
 | ---- | ---- | ---------------- |
-| `config/prod_train_pipeline_2h_turbo_crf_only.yaml` | CRF / turbo（`bad-candidates/crf`，`box_structure_f`） | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_srb_only.yaml` | SRB / turbo（`bad-candidates/srb`） | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_srb_quickstrike_only.yaml` | SRB quickstrike / turbo | `turbo_fixed_features` |
-| `config/prod_train_pipeline_2h_slow_srb_only.yaml` | SRB 慢模式 | `slow_realistic` |
-| `config/strategies/bad-candidates/pipelines/*.yaml` | 历史 FBF / FER / MSR 等实验编排 | （见各文件） |
-O
+| `config/strategies/bad-candidates/crf/research/turbo.yaml` | CRF / turbo（`box_structure_f`） | `turbo_fixed_features` |
+| `config/strategies/bad-candidates/srb/research/turbo_2024bull_thresholds.yaml` | SRB / turbo | `turbo_fixed_features` |
+| `config/strategies/bad-candidates/srb/research/turbo_2024bull_quickstrike.yaml` | SRB quickstrike / turbo | `turbo_fixed_features` |
+| `config/strategies/bad-candidates/srb/research/slow.yaml` | SRB 慢模式 | `slow_realistic` |
+| `config/strategies/bad-candidates/*/research/*.yaml` | 其它历史实验（FBF / FER / MSR 等） | （见各文件） |
+
 > `turbo_fixed_features`：特征集固定，只做阈值链 / execution 优化 / 月度滚动 → **快**。  
 > `slow_realistic`：每季度重做结构快照（prefilter/gate 元算法），月度 fast_loop 调阈值 → **稳**。
 
@@ -250,23 +250,24 @@ mlbot feature-store build --no-docker \
 ### 2) 研究管线（turbo 快模式：只调阈值，不搜特征）
 
 ```bash
-# BPC turbo（推荐先跑单月验证，再开全 rolling）
+# BPC turbo（推荐先跑单月验证，再开全 rolling；也可省略 --config 与 --strategy bpc 配对使用）
 mlbot pipeline run --all \
-  --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml \
+  --config config/strategies/bpc/research/turbo.yaml \
   --stage fast_month --month 2024-09 --skip-shap 2>&1 | tee log.bpc.txt
 
 # 全量 rolling_sim（从 holdout_start 到 end_date 自动逐月）
 mlbot pipeline run --all \
-  --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml \
+  --config config/strategies/bpc/research/turbo.yaml \
   --stage rolling_sim --skip-shap 2>&1 | tee log.bpc.txt
 
-# ME / TPC / SRB / CRF 同理，只换 --config
+# ME / TPC 同理：换成对应 research/turbo.yaml
 mlbot pipeline run --all \
-  --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_me_only.yaml \
+  --config config/strategies/me/research/turbo.yaml \
   --stage rolling_sim --skip-shap
 
+# CRF（bad-candidates）
 mlbot pipeline run --all \
-  --config config/prod_train_pipeline_2h_turbo_crf_only.yaml \
+  --config config/strategies/bad-candidates/crf/research/turbo.yaml \
   --stage rolling_sim --skip-shap
 ```
 
@@ -284,12 +285,12 @@ pcm_slot_grid  # Slot 网格（替代手动改 constitution.yaml）
 
 ```bash
 mlbot pipeline run --all \
-  --config config/prod_train_pipeline_2h_slow_bpc_only.yaml \
+  --config config/strategies/bpc/research/slow.yaml \
   --stage rolling_sim 2>&1 | tee log.bpc.slow.txt
 
 # 单月复盘（调试用）
 mlbot pipeline run --all \
-  --config config/prod_train_pipeline_2h_slow_bpc_only.yaml \
+  --config config/strategies/bpc/research/slow.yaml \
   --stage fast_month --month 2024-09
 ```
 
@@ -300,7 +301,7 @@ mlbot pipeline run --all \
 ```bash
 # A. 走 pipeline（最省事，会自动跑 execution 优化并写回 archetypes/execution.yaml）
 mlbot pipeline run --all \
-  --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml \
+  --config config/strategies/bpc/research/turbo.yaml \
   --stage event_backtest --skip-shap
 
 # B. 直接跑单次 event_backtest（最快）
@@ -337,17 +338,85 @@ PYTHONPATH=. python3 scripts/slow_candidate_report.py review \
 ### 6) Adopt & Deploy（研究 → 实盘）
 
 ```bash
-# 列出历史实验 + 决策（ADOPT/REJECT）
+# 列出历史实验：扫描 config/strategies/*；默认每个包只解析 turbo→slow→pipeline 首个存在的入口（多为 turbo 的 history_dir）
 mlbot pipeline list --all
+# 各包内 turbo / slow / pipeline 入口各列一遍（可看 turbo 与 slow 两套 results）
+mlbot pipeline list --all --list-all-profiles
+# 同上，并包含 bad-candidates/<pkg>/ 子包
+mlbot pipeline list --all --include-bad-candidates
+
+# 指定 YAML：脚本会先打印「配置文件路径 + rolling.mode + history_dir」，再列实验
+mlbot pipeline list --all --config config/pipelines/pcm_orchestrate_2h.yaml
 mlbot pipeline list --strategy bpc
 
 # 采纳指定实验（把该实验的 config 写回 config/strategies/<name>/）
 mlbot pipeline adopt 20260313_234448 --strategy bpc
 
+# 删除实验（须与 list 使用同一套 history_dir；推荐显式 --config）
+# mlbot pipeline delete --strategy bpc --status error --config config/strategies/bpc/research/slow.yaml --dry-run
+# mlbot pipeline delete --strategy bpc --timestamp 20260501_012111 --config config/strategies/bpc/research/turbo.yaml
+
 # 研究仓 → 实盘 highcap
 python scripts/deploy_config_to_live.py --diff --strategy bpc
 python scripts/deploy_config_to_live.py --deploy --strategy bpc --git-commit
 ```
+
+#### 实验目录 vs `rolling_sim` 批次根（怎么用）
+
+同一份 pipeline YAML 的 `output.history_dir` 下，有两种并列的产物树，**不要混用一种心智去读另一种**：
+
+| 层级 | 路径模式 | 用途 |
+|------|-----------|------|
+| **单次管线快照（list / adopt / delete 默认对齐）** | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/` | 一整段研究跑完生成的顶层实验目录；`mlbot pipeline list` 表格里的「历史实验」指的就是这里的子目录。 |
+| **rolling_sim 批次聚合（研究调试用）** | `{history_dir}/_rolling_sim/<批次时间戳>/…` | `--stage rolling_sim` 时按月滚动、阶段产物嵌套在此树下（Prefilter/Gate/月度复盘等）；体量更大，**一般不当作 adopt 主列表**。 |
+
+**命令行为**：当你执行带 `--config` 的 `mlbot pipeline list …`（或对某策略包扫描到的等价入口），脚本在打印完上述「快照」表格后，若磁盘上存在 `_rolling_sim`，会在末尾多一行类似：
+
+`ℹ️ rolling_sim 批次根 …: results/…/_rolling_sim/ （约 N 个时间戳子目录）`
+
+含义：**在同级的 `_rolling_sim/` 下还有 N 个「批次根」目录**，每个批次根内部才是按月/按阶段的子结构；与上方 `{history_dir}/<策略键>/<ts>/` **不是同一棵树**。
+
+**日常怎么用**：
+
+1. **认 adopt / 删快照**：只看 `{history_dir}/<策略键>/<ts>/`，与 `list` 主表一致；`adopt`、`delete` 的时间戳也应针对这一层（并带同一 `--config`）。  
+2. **查 rolling 跑完了哪几次批次、下面多大**：对提示里的路径直接列目录即可。
+
+```bash
+# 将路径换成你 list 末尾 ℹ️ 里那一行（或 slow.yaml 里 history_dir + /_rolling_sim）
+ROLL_ROOT=results/bpc/slow-rolling-sim/_rolling_sim
+ls -la "$ROLL_ROOT"
+# 只看批次名与时间排序
+ls -1 "$ROLL_ROOT" | tail
+
+# 进入某一批次再看月度/阶段子目录（具体结构随流水线版本可能变化）
+LEDGER_TS=20260423_223716
+find "$ROLL_ROOT/$LEDGER_TS" -maxdepth 3 -type d | head -40
+```
+
+与 slow 产物对比脚本衔接：§5「慢管线产物对比」里的 `--slow-run-dir` 指向的正是 **`_rolling_sim` 下某一批次目录**（例如 `…/_rolling_sim/20260423_223716`），不是 `{history_dir}/bpc/<ts>/`。
+
+**与 `mlbot server` 的关系**：`rolling-dashboard` 在根路径上**已经**按 `results/` 提供静态文件，和 `mlbot server --dir results` 是同一类服务，并多了 `/dashboard` 汇总页。**同一端口不要同时开两个**；日常直接开 `rolling-dashboard` 即可，不必再开 `server`。
+
+**浏览器汇总看板（已实现）**：本地扫描全部 `results/**/_rolling_sim/<批次>/`，表格展示 `stitched_summary.json` 中的月数 / stitched R / trades，并链到 `trading_map_continuous.html`、`trading_map_stitched.html` 等；**其它 URL 与单独开 `mlbot server --dir results` 完全一致**（例如 `/me/turbo-rolling-sim/_rolling_sim/<批次>/trading_map_continuous.html`）。
+
+```bash
+# 默认 http://127.0.0.1:8008/dashboard ，静态根为仓库下 results/
+mlbot rolling-dashboard --port 8008
+# 或
+PYTHONPATH=. python scripts/rolling_dashboard_server.py --port 8008 --root results
+
+# 只看某一策略顶层目录（路径第一段），例如 me、bpc
+# 浏览器打开 http://127.0.0.1:8008/dashboard?strategy=me
+# 路径子串筛选（大小写不敏感）
+# http://127.0.0.1:8008/dashboard?q=turbo-rolling-sim
+
+# 机器可读索引
+curl -s http://127.0.0.1:8008/api/rolling-ledgers.json | head
+```
+
+端口占用时可加 `--force`（依赖 psutil，与 `mlbot server --force` 同类）。
+
+**CLI-only 的补充**：若将来加入 `mlbot pipeline list-rolling-ledgers`，则只对 `_rolling_sim/` 打纯文本索引；当前浏览器看板已覆盖「列举 + 关键链接」需求。
 
 ### 6.1) 多腿策略（`chop_grid` / `dual_add_trend`）：配置、研究 adopt、同步实盘、多腿进程
 
@@ -371,18 +440,18 @@ python scripts/diagnose_dual_add_trend.py \
 
 **2）研究管线 + rolling 产物（便于 adopt）**
 
-多腿 turbo 示例配置：`config/prod_train_pipeline_2h_turbo_chop_grid_only.yaml`（其中 `output.history_dir` 决定结果根目录）。跑完 **`rolling_sim`** 后，流水线会把**最后一月**的 `strategies_calibrated/<策略>/` 拷到：
+多腿 turbo 示例配置：`config/strategies/chop_grid/research/turbo.yaml`（其中 `output.history_dir` 决定结果根目录）。跑完 **`rolling_sim`** 后，流水线会把**最后一月**的 `strategies_calibrated/<策略>/` 拷到：
 
 `{history_dir}/<策略名>/<本次 run 时间戳>/strategies/<策略名>/`
 
 这样 **`mlbot pipeline adopt`** 能按与 BPC 相同的目录约定找到 `strategies/<策略>/archetypes`（多腿 adopt **不**走 BPC 的 locked prefilter/gate 校验，以复制为主）。
 
 **重要：`list` / `adopt` / `diff` 的实验根目录 = 当前 `--config` 里的 `output.history_dir`。**  
-若 rolling 用的是 `prod_train_pipeline_2h_turbo_chop_grid_only.yaml`（`history_dir` 在 `results/chop_grid/...`），则 **`mlbot pipeline adopt` 必须带同一 `--config`**；否则 CLI 默认读 `config/research_pipeline.yaml`，会去 `results/research_history/...`，会报「实验不存在」。
+若 rolling 用的是 `config/strategies/chop_grid/research/turbo.yaml`（`history_dir` 在 `results/chop_grid/...`），则 **`mlbot pipeline adopt` 必须带同一 `--config`**；若省略 `--config` 且带了 `--strategy chop_grid`，CLI 会解析到该策略 `research/turbo.yaml`；若既未指定 `--strategy` 也未指定 `--config`，默认读 `config/pipelines/pcm_orchestrate_2h.yaml`（勿混用其它根的 `history_dir`，否则会报「实验不存在」）。
 
 ```bash
-CHOP_CFG=config/prod_train_pipeline_2h_turbo_chop_grid_only.yaml
-DUAL_CFG=config/prod_train_pipeline_2h_turbo_dual_add_trend_only.yaml
+CHOP_CFG=config/strategies/chop_grid/research/turbo.yaml
+DUAL_CFG=config/strategies/dual_add_trend/research/turbo.yaml
 
 mlbot pipeline run --strategy chop_grid --config "$CHOP_CFG" \
   --stage rolling_sim --skip-shap
@@ -459,14 +528,14 @@ CRF 策略跑法（box-based 双向均值回归）：
 
 ```bash
 mlbot feature-store build --no-docker \
-  --config config/strategies/crf \
+  --config config/strategies/bad-candidates/crf \
   --universe-config config/download/crypto_4h_token_universe_groups.yaml \
   --universe-groups highcap \
   --timeframe 120T \
   --start-date 2023-01-01 --end-date 2026-03-01 --warmup-months 6
 
 mlbot pipeline run --all \
-  --config config/prod_train_pipeline_2h_turbo_crf_only.yaml \
+  --config config/strategies/bad-candidates/crf/research/turbo.yaml \
   --stage rolling_sim --skip-shap 2>&1 | tee log.crf.txt
 ```
 

@@ -1,31 +1,31 @@
 # ============================================================
-# 上线前训练流水线 (2H, TPC-only, 慢模式 / slow_realistic)
-# TPC = Trend Pullback Continuation: 无突破门控，EMA1200 趋势方向做回踩延续
-# 与 BPC 共享相同的 gate/execution 配置，区别在于 tpc_soft_phase_f 特征（无 breakout gate）
+# 上线前训练流水线 (2H, SRB-only, 慢模式 / slow_realistic)
+# SRB = Structural Range Breakout（关键位成功突破后延续）；配置已归档至 config/strategies/bad-candidates/srb
 #
 # 示例:
-#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_tpc_only.yaml --stage rolling_sim
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_srb_only.yaml --stage rolling_sim
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_srb_only.yaml --stage train_final
 #
-# 时间窗：与 prod_train_pipeline_2h_slow_bpc_only 对齐，便于 BPC vs TPC 对比。
-#   • end_date=2026-03-31, holdout_months=26 → holdout_start=2024-01-01（rolling 覆盖 202401～202603）
-#   • validation_months=3 → Gate 调参用 holdout 内前 3 个月；纯 OOS 约从 2024-04-01 到 end_date
-# strategies.*.dates 须与顶层 holdout/validation 一致，否则 per-strategy 会覆盖全局（常见踩坑：仍为 9）
-# trading_map_continuous：X 轴会拉到 dates.end_date，但 K 线依赖 parquet；无数据则蜡烛停在最后有数据的月份
+# 家族对照: docs/z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB_RMR.md
 # ============================================================
 
 dates:
   start_date: "2022-08-01"
-  end_date: "2026-03-31"
-  holdout_months: 26
+  end_date: "2024-12-31"
+  holdout_months: 15
   validation_months: 3
+
 training:
   seeds:
     - 42
   seed_selection: best_sharpe
+
 global_toggles:
   locked_threshold_tuning_enabled: true
+
 strategy_scope:
   direction: all
+
 rolling:
   mode: slow_realistic
   windows:
@@ -42,6 +42,11 @@ fast_loop:
   step_months: 1
   threshold_calibration:
     enabled: true
+  prefilter:
+    # SRB 研究：关闭每月 prefilter 重优化，固定 meta/locked 规则 →
+    # 方向决策不会在月份之间漂移，SL/trailing/加仓 改动才可被独立评估。
+    # 上线前若要 re-optimize，改 true 并在报告中标注。
+    optimize: false
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
@@ -52,6 +57,7 @@ fast_loop:
     enabled: true
     compare_features: true
     promote_after_validate: true
+
 symbol_policy:
   mode: hybrid_carry_forward
   carry_forward_ttl_months: 2
@@ -59,10 +65,12 @@ symbol_policy:
   min_symbol_trades_soft: 10
   carry_forward_hard_fail_rules:
     min_sharpe_r: -0.25
+
 direction_stack:
   mode: ema200
   ema_debounce_bars: 3
   vwap_window_days: 20
+
 slot_allocation:
   mode: quality_ranked
   max_symbols_per_side: 2
@@ -72,17 +80,20 @@ slot_allocation:
     history_edge: 0.55
     now_strength: 0.45
   quality_lookback_months: 3
+
 stitching:
   enabled: true
   metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]
   export_trade_map_html: true
+
 event_backtest:
   enabled: true
   promote: true
   map_extra_months: 4
   sym_r_default: "1.0:1:6.0"
   sym_r_by_family:
-    tpc: "2.0:1:6.0"
+    # 与更宽的 archetype SL 对齐，事件优化网格略放大
+    srb: "4.0:1:9.0"
   exec_objective_default: sharpe
   exec_objective_params:
     near_stop_threshold_r: -0.9
@@ -90,35 +101,37 @@ event_backtest:
     max_dd_penalty: 0.0
     min_trades_soft: 0
     undertrade_penalty: 0.0
+
 pcm_slot_grid:
   enabled: false
+
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a
   group: highcap
+
 data_path: data/parquet_data
+
 download:
   enabled: true
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
+
 strategies:
-  tpc:
-    config: config/strategies/tpc
-    dates:
-      holdout_months: 26
-      validation_months: 3
-    features_gate: features.yaml
+  srb:
+    config: config/strategies/bad-candidates/srb
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.05
-        min_rows: 10
-        target_trades_min: 35
-        target_trades_max: 260
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
+        min_pass_rate: 0.03
+        min_rows: 150
+        target_trades_min: 15
+        target_trades_max: 120
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
         stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
@@ -127,15 +140,12 @@ strategies:
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
-          min_trades_target: 60
+          min_trades_target: 40
           trade_penalty: 0.0025
-          tpc_pullback_score_min_values: 0.25,0.30,0.35,0.40
-          tpc_pullback_depth_max_values: 0.55,0.60,0.65
-          tpc_recovery_min_values: 0.40,0.45,0.50,0.55
-          target_trades_min: 35
-          target_trades_max: 260
-          trade_penalty_low: 0.002
-          trade_penalty_high: 0.0011
+          target_trades_min: 15
+          target_trades_max: 120
+          trade_penalty_low: 0.0021
+          trade_penalty_high: 0.0014
           stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
@@ -144,44 +154,37 @@ strategies:
         meta_algorithm: false
         archetype_plateau: true
         significance_p: 0.10
-        significance_min_trades: 4
+        significance_min_trades: 3
         plateau_window: 4
         archetype_scoring_method: distribution_ks
-        target_trades_min: 35
-        target_trades_max: 260
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.0011
+        target_trades_min: 15
+        target_trades_max: 120
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
         stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-        min_score_improvement: 0.005
+        min_score_improvement: 0.008
       gate:
         require_positive_effect: true
-        # 多条 hard_gate 叠加时 allow 比例下限；chop gate 收紧到 0.60 后，chop 月
-        # combined allow 可能降到 5-10%，0.3 会把 chop gate 当作"过严"裁掉 → 降到 0.05
-        min_combined_pass_rate: 0.05
-        # TPC Top-N gate cap. base/archetypes/gate.yaml 当前 locked=7 (chop_high +
-        # late_long/short_above_ema1200 + evt_var_99 + evt_tail_shape_right + vpin_ma20
-        # + fer_ols_pos)+1 locked (vol_persistence)。cap=7/2 锁死当前 hard，不让 slow
-        # 再加新 hard gate; safety 允许补 1 条。若需精简 locked (BPC 同步过), 同步
-        # 下调 cap 即可让 cap 继续"锁死新现状"。
-        max_hard_gates: 7
+        min_combined_pass_rate: 0.30
+        stat_fallback_on_empty: true
+        stat_fallback_max_rules: 3
+        stat_fallback_min_source_features: 2
+        # SRB Top-N gate cap：base 含 1 条 locked chop + 最多 2 条 stat hard；
+        # cap=3 与 archetypes/gate.yaml 对齐。stat_fallback_max_rules 也会被压到 ≤ max_hard_gates。
+        max_hard_gates: 3
         max_system_safety: 2
-        # 防御性：显式写 0 trade_penalty，允许 gate 在整月 chop 时把该月归零
-        # 与 prefilter.trade_penalty=0.002 形成对比：prefilter 宽松、gate 敢严
-        target_trades_min: 0
-        trade_penalty_low: 0.0
-        trade_penalty_high: 0.0
-        stability_penalty: 0.0
       backtest:
-        min_trades: 50
+        min_trades: 20
       deploy:
-        min_trades: 50
+        min_trades: 20
     simple_execution:
-      sl_r: 4.0
-      tp_r: 8.0
-      timeout_bars: 500
+      # 宽 SL / 远 TP，与 srb archetypes/execution 大带宽一致（2:1 RR）
+      sl_r: 6.0
+      tp_r: 12.0
+      timeout_bars: 600
 
 shap_feature_selection:
   enabled: false
@@ -193,24 +196,28 @@ shap_feature_selection:
     - atr_f
   apply_to:
     - features.yaml
+
 comparison:
-  min_trades: 30
+  min_trades: 15
   sharpe_adopt_ratio: 0.7
   sharpe_reject_floor: 0.0
   threshold_drift_warn: 1.0
+
 retrain_triggers:
   schedule_days: 90
   sharpe_decay_ratio: 0.5
   consecutive_losses: 8
   max_data_age_days: 120
   leading_indicator_decay: 0.5
+
 deploy_gate:
   trigger_sharpe_improve: 0.05
   trigger_drift_level: HIGH
   min_sharpe_change: 0.03
   require_adopt: true
-  min_trades: 50
+  min_trades: 20
   require_human_confirm: true
+
 data_flow:
   model_predictions: predictions.parquet
   gated_logs: logs_gated.parquet
@@ -220,5 +227,6 @@ data_flow:
     gate_apply: predictions.parquet
     execution: logs_gated.parquet
     backtest: logs_gated.parquet
+
 output:
-  history_dir: results/tpc/slow-rolling-sim
+  history_dir: results/srb/slow-rolling-sim

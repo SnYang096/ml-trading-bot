@@ -1,6 +1,6 @@
 # ============================================================
-# 上线前训练流水线 (2H only, CRF-only, turbo)
-# 基于 prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only
+# 快速管线：2H only, EML-only (EMA1200 Trend Umbrella 实验)
+# 基于 prod_train_pipeline_2h_turbo_crf_only.yaml，仅替换 strategies 与输出路径。
 # ============================================================
 
 dates:
@@ -44,26 +44,26 @@ universe_group:
   group: highcap
 data_path: data/parquet_data
 download:
-  enabled: true
+  enabled: false
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  crf:
-    config: config/strategies/crf
+  eml:
+    config: config/strategies/bad-candidates/eml
+    side: both
     timeframe: 120T
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.02
+        min_pass_rate: 0.005
         min_rows: 10
-        # CRF 经过严格盒子 + 边界触达后，月度交易数天然较低；用更贴近 range fade 的目标。
-        target_trades_min: 8
-        target_trades_max: 80
-        trade_penalty_low: 0.0015
-        trade_penalty_high: 0.0015
+        target_trades_min: 4
+        target_trades_max: 120
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.002
         stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
@@ -72,12 +72,12 @@ strategies:
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
-          min_trades_target: 20
+          min_trades_target: 8
           trade_penalty: 0.0020
-          target_trades_min: 8
-          target_trades_max: 80
-          trade_penalty_low: 0.0015
-          trade_penalty_high: 0.0015
+          target_trades_min: 4
+          target_trades_max: 120
+          trade_penalty_low: 0.002
+          trade_penalty_high: 0.002
           stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
@@ -85,31 +85,31 @@ strategies:
       entry_filter:
         meta_algorithm: false
         archetype_plateau: true
-        significance_p: 0.10
-        significance_min_trades: 4
+        significance_p: 0.12
+        significance_min_trades: 3
         plateau_window: 4
         archetype_scoring_method: distribution_ks
-        target_trades_min: 8
-        target_trades_max: 80
-        trade_penalty_low: 0.0015
-        trade_penalty_high: 0.0015
+        target_trades_min: 4
+        target_trades_max: 120
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.002
         stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-        min_score_improvement: 0.005
+        min_score_improvement: 0.003
       gate:
-        require_positive_effect: true
-        min_combined_pass_rate: 0.3
+        require_positive_effect: false
+        min_combined_pass_rate: 0.15
       backtest:
-        min_trades: 8
+        min_trades: 4
       deploy:
-        min_trades: 8
+        min_trades: 4
 
 event_backtest:
   enabled: true
   map_extra_months: 4
 
 output:
-  history_dir: results/crf/turbo-rolling-sim
-  latest_dir: results/crf/turbo-latest
+  history_dir: results/eml/turbo-rolling-sim
+  latest_dir: results/eml/turbo-latest

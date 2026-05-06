@@ -1,10 +1,8 @@
 # ============================================================
-# EML：单月 fast_month 快速出「交易地图」
-#
-# threshold_calibration.enabled=false 时，fast_month 会跳过 train prepare 长步骤，
-# 直接从 config/strategies/bad-candidates/eml 拷贝策略并跑 event_backtest → trading_map_*.html
+# 归档：BPT 已移至 config/strategies/bad-candidates/box_pullback_trend
+# （成交极稀疏，不再作为生产候选；见该目录 README。）
+# 上线前训练流水线 (2H only, Box Pullback Trend only, turbo)
 # ============================================================
-# 其它字段与 prod_train_pipeline_2h_turbo_eml_only.yaml 一致。
 
 dates:
   start_date: "2022-08-01"
@@ -14,7 +12,6 @@ dates:
 
 global_toggles:
   locked_threshold_tuning_enabled: true
-
 rolling:
   mode: turbo_fixed_features
   windows:
@@ -28,10 +25,9 @@ fast_loop:
   disable_model_training: true
   step_months: 1
   threshold_calibration:
-    enabled: false
+    enabled: true
   prefilter:
-    # false：保持仓库 archetypes/prefilter 的 EMA 死区+斜率语义，不把 meta KS 区间叠进实验副本
-    optimize: false
+    optimize: true
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
@@ -49,26 +45,25 @@ universe_group:
   group: highcap
 data_path: data/parquet_data
 download:
-  enabled: false
+  enabled: true
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  eml:
-    config: config/strategies/bad-candidates/eml
-    side: both
+  box_pullback_trend:
+    config: config/strategies/bad-candidates/box_pullback_trend
     timeframe: 120T
-    features_gate: features_gate.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.005
-        min_rows: 10
-        target_trades_min: 4
-        target_trades_max: 120
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.002
+        min_pass_rate: 0.01
+        min_rows: 20
+        target_trades_min: 8
+        target_trades_max: 100
+        trade_penalty_low: 0.0018
+        trade_penalty_high: 0.0015
         stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
@@ -77,12 +72,12 @@ strategies:
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
-          min_trades_target: 8
+          min_trades_target: 20
           trade_penalty: 0.0020
-          target_trades_min: 4
-          target_trades_max: 120
-          trade_penalty_low: 0.002
-          trade_penalty_high: 0.002
+          target_trades_min: 8
+          target_trades_max: 100
+          trade_penalty_low: 0.0018
+          trade_penalty_high: 0.0015
           stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
@@ -90,31 +85,36 @@ strategies:
       entry_filter:
         meta_algorithm: false
         archetype_plateau: true
-        significance_p: 0.12
+        significance_p: 0.10
         significance_min_trades: 3
         plateau_window: 4
         archetype_scoring_method: distribution_ks
-        target_trades_min: 4
-        target_trades_max: 120
-        trade_penalty_low: 0.002
-        trade_penalty_high: 0.002
+        target_trades_min: 8
+        target_trades_max: 100
+        trade_penalty_low: 0.0018
+        trade_penalty_high: 0.0015
         stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-        min_score_improvement: 0.003
+        min_score_improvement: 0.005
       gate:
-        require_positive_effect: false
-        min_combined_pass_rate: 0.15
+        require_positive_effect: true
+        min_combined_pass_rate: 0.20
+        stat_fallback_on_empty: true
+        stat_fallback_max_rules: 2
+        stat_fallback_min_source_features: 2
+        max_hard_gates: 2
+        max_system_safety: 2
       backtest:
-        min_trades: 4
+        min_trades: 8
       deploy:
-        min_trades: 4
+        min_trades: 8
 
 event_backtest:
   enabled: true
   map_extra_months: 4
 
 output:
-  history_dir: results/eml/turbo-rolling-sim
-  latest_dir: results/eml/turbo-latest
+  history_dir: results/box_pullback_trend/turbo-rolling-sim
+  latest_dir: results/box_pullback_trend/turbo-latest

@@ -73,7 +73,7 @@ strategies:
     # 优先使用该路径。所以这里可以直接指向 fbf_strict，不被 baseline 的
     # config/strategies/fbf/ 遮蔽（见 auto_research_pipeline.py L1842）。
     config: config/strategies/fbf_strict
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true

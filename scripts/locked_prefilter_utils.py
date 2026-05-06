@@ -153,7 +153,15 @@ def infer_writeback_bindings_from_prefilter(
             pname = _unique_final(str(override).strip())
         else:
             pname = _alloc_default_param(str(feat), str(op))
-        out.append({"param": pname, "feature": feat, "operator": str(op).strip()})
+        entry: Dict[str, Any] = {
+            "param": pname,
+            "feature": feat,
+            "operator": str(op).strip(),
+        }
+        vt = node.get("value_transform")
+        if vt is not None and str(vt).strip():
+            entry["value_transform"] = str(vt).strip()
+        out.append(entry)
 
     for rule in rules:
         if not isinstance(rule, dict) or not rule.get("locked"):
@@ -180,7 +188,7 @@ def detect_locked_template(prefilter_raw: Dict[str, Any]) -> str:
         "sr_strength_max",
         "dist_to_nearest_sr",
     }.issubset(feats):
-        return "fer"
+        return "bindings"
     # ME：ATR 带 + 加速度/对齐特征；多种 locked 组合均识别为 me
     if "me_atr_pct" in feats and (
         "me_accel_5k_long" in feats
@@ -299,14 +307,30 @@ def _apply_config_bindings(
     return out
 
 
+def _apply_inferred_bindings_template(
+    out: Dict[str, Any],
+    merged_params: Dict[str, float],
+    *,
+    label: str,
+) -> Dict[str, Any]:
+    ib = infer_writeback_bindings_from_prefilter(out)
+    if not ib:
+        raise ValueError(
+            f"{label}: 无可写回的 locked 规则（或全部为 skip_parquet_tune）；"
+            "检查 archetypes/prefilter.yaml"
+        )
+    req = [str(b.get("param", "")).strip() for b in ib if isinstance(b, dict)]
+    missing = [p for p in req if p and p not in merged_params]
+    if missing:
+        raise ValueError(
+            f"{label} tuned 参数缺失: {missing}; got={sorted(merged_params.keys())}"
+        )
+    return _apply_config_bindings(out, params=merged_params, bindings=ib, strict=True)
+
+
 def apply_locked_thresholds(
     prefilter_raw: Dict[str, Any],
     *,
-    fer_lower: float | None = None,
-    fer_upper: float | None = None,
-    sr_min: float | None = None,
-    dist_max: float | None = None,
-    fer_sqs_min: float | None = None,
     atr_lower: float | None = None,
     atr_upper: float | None = None,
     me_accel_abs_min: float | None = None,
@@ -333,70 +357,10 @@ def apply_locked_thresholds(
         )
 
     tpl = (template or detect_locked_template(out)).lower()
+    if tpl == "fer":
+        tpl = "bindings"
     if tpl == "unknown":
         raise ValueError("无法识别 locked 规则模板，请显式传入 template")
-
-    if tpl == "fer":
-        sqs_feats = (
-            "sqs_hal_high",
-            "sqs_hal_low",
-            "sqs_hal_high_pct",
-            "sqs_hal_low_pct",
-        )
-        fer_has_sqs_locked = any(
-            isinstance(r, dict) and r.get("locked") and r.get("feature") in sqs_feats
-            for r in rules
-        )
-        required = {
-            "fer_lower": fer_lower,
-            "fer_upper": fer_upper,
-            "sr_min": sr_min,
-            "dist_max": dist_max,
-        }
-        if fer_has_sqs_locked:
-            required["fer_sqs_min"] = fer_sqs_min
-        missing_params = [k for k, v in required.items() if v is None]
-        if missing_params:
-            raise ValueError(f"FER tuned 参数缺失: {missing_params}")
-
-        seen: Dict[str, bool] = {
-            "fer_lower": False,
-            "fer_upper": False,
-            "sr_min": False,
-            "dist_lower": False,
-            "dist_upper": False,
-        }
-        if fer_has_sqs_locked:
-            seen["sqs_min"] = False
-        for r in rules:
-            if not isinstance(r, dict) or not r.get("locked"):
-                continue
-            feat = r.get("feature")
-            op = r.get("operator")
-            if feat == "fer_signed_efficiency_pct" and op == ">=":
-                r["value"] = float(fer_lower)
-                seen["fer_lower"] = True
-            elif feat == "fer_signed_efficiency_pct" and op == "<=":
-                r["value"] = float(fer_upper)
-                seen["fer_upper"] = True
-            elif feat == "sr_strength_max" and op == ">=":
-                r["value"] = float(sr_min)
-                seen["sr_min"] = True
-            elif feat == "dist_to_nearest_sr" and op == ">=":
-                r["value"] = float(-float(dist_max))
-                seen["dist_lower"] = True
-            elif feat == "dist_to_nearest_sr" and op == "<=":
-                r["value"] = float(dist_max)
-                seen["dist_upper"] = True
-            elif feat in sqs_feats and op == ">=":
-                if fer_sqs_min is None:
-                    continue
-                r["value"] = float(fer_sqs_min)
-                seen["sqs_min"] = True
-        missing = [k for k, v in seen.items() if not v]
-        if missing:
-            raise ValueError(f"prefilter.yaml 缺少必要 FER locked 规则: {missing}")
-        return out
 
     if tpl == "me":
         # 旧版「压缩语义」ME prefilter（atr + compression_duration + …），与动量 ME 共用 template 名 me
@@ -519,32 +483,15 @@ def apply_locked_thresholds(
             raise ValueError(f"prefilter.yaml 缺少必要 ME locked 规则: {missing}")
         return out
 
-    if tpl == "bpc":
-        ib = infer_writeback_bindings_from_prefilter(out)
-        if not ib:
-            raise ValueError(
-                "BPC archetype 无可写回的 locked 规则（或全部为 skip_parquet_tune）；"
-                "检查 archetypes/prefilter.yaml"
-            )
+    if tpl in ("bpc", "bindings"):
         pd = {k: float(v) for k, v in (params or {}).items()}
-        req = [str(b.get("param", "")).strip() for b in ib if isinstance(b, dict)]
-        missing = [p for p in req if p and p not in pd]
-        if missing:
-            raise ValueError(f"BPC tuned 参数缺失: {missing}; got={sorted(pd.keys())}")
-        return _apply_config_bindings(out, params=pd, bindings=ib, strict=True)
+        lab = "BPC" if tpl == "bpc" else "bindings"
+        return _apply_inferred_bindings_template(out, pd, label=lab)
 
     raise ValueError(f"不支持的 template: {tpl}")
 
 
 def _infer_template_from_params(params: Dict[str, float]) -> str:
-    if {
-        "fer_lower",
-        "fer_upper",
-        "sr_min",
-        "dist_max",
-        "fer_sqs_min",
-    }.issubset(params.keys()):
-        return "fer"
     if {"atr_lower", "atr_upper", "me_accel_abs_min", "me_cvd_min"}.issubset(
         params.keys()
     ) or {
@@ -563,14 +510,8 @@ def _infer_template_from_params(params: Dict[str, float]) -> str:
 def _normalize_params_for_template(
     params: Dict[str, float], template: str
 ) -> Dict[str, float]:
-    if template == "fer":
-        return {
-            "fer_lower": float(params["fer_lower"]),
-            "fer_upper": float(params["fer_upper"]),
-            "sr_min": float(params["sr_min"]),
-            "dist_max": float(params["dist_max"]),
-            "fer_sqs_min": float(params["fer_sqs_min"]),
-        }
+    if template in ("bindings", "bpc"):
+        return {k: float(v) for k, v in params.items()}
     if template == "me":
         if {"me_accel_abs_min", "me_cvd_min"}.issubset(params.keys()):
             return {
@@ -586,8 +527,6 @@ def _normalize_params_for_template(
             "me_accel_abs_min": 0.0,
             "me_cvd_min": 0.0,
         }
-    if template == "bpc":
-        return {k: float(v) for k, v in params.items()}
     raise ValueError(f"不支持的 template: {template}")
 
 
@@ -617,13 +556,19 @@ def build_override_prefilter(
         return output_path
 
     tpl = (template or _infer_template_from_params(params)).lower()
+    if tpl == "fer":
+        tpl = "bindings"
     if tpl == "unknown":
         tpl = detect_locked_template(base).lower()
+    if tpl == "fer":
+        tpl = "bindings"
     norm = _normalize_params_for_template(params, tpl)
-    if tpl == "bpc":
-        tuned = apply_locked_thresholds(base, template="bpc", params=norm)
+    if tpl in ("bpc", "bindings"):
+        tuned = apply_locked_thresholds(base, template=tpl, params=norm)
+    elif tpl == "me":
+        tuned = apply_locked_thresholds(base, template="me", **norm)
     else:
-        tuned = apply_locked_thresholds(base, template=tpl, **norm)
+        raise ValueError(f"build_override_prefilter: unsupported template {tpl!r}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         yaml.safe_dump(tuned, allow_unicode=True, sort_keys=False),

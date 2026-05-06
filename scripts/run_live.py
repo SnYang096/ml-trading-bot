@@ -639,7 +639,7 @@ def _run_retrain_check() -> None:
     )
 
     project_root = _Path(__file__).resolve().parents[1]
-    config_path = project_root / "config" / "research_pipeline.yaml"
+    config_path = project_root / "config" / "pipelines" / "pcm_orchestrate_2h.yaml"
     if not config_path.exists():
         logger.warning("[retrain-check] config not found: %s", config_path)
         return

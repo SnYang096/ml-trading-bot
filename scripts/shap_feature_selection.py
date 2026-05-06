@@ -26,7 +26,7 @@
     python scripts/shap_feature_selection.py \\
       --logs results/train_final_.../bpc/features_labeled.parquet \\
       --strategy bpc \\
-      --pipeline-config config/research_pipeline.yaml \\
+      --pipeline-config config/pipelines/research_pipeline.yaml \\
       --promote
 """
 from __future__ import annotations
@@ -863,7 +863,7 @@ Examples:
   # 从 pipeline config 读取参数
   python scripts/shap_feature_selection.py \\
     --logs results/train_final_.../bpc/features_labeled.parquet \\
-    --strategy bpc --pipeline-config config/research_pipeline.yaml --promote
+    --strategy bpc --pipeline-config config/pipelines/research_pipeline.yaml --promote
         """,
     )
 

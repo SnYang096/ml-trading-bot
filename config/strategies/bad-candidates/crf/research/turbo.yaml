@@ -1,9 +1,6 @@
 # ============================================================
-# 上线前训练流水线 (2H only, CDR-only, turbo / 固定特征 + 阈值链)
-# CDR = Conversion Divergence Reversal：结构转换 / 背离反转
-#
-# 示例:
-#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_cdr_only.yaml --stage rolling_sim --skip-shap
+# 上线前训练流水线 (2H only, CRF-only, turbo)
+# 基于 prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only
 # ============================================================
 
 dates:
@@ -51,20 +48,21 @@ download:
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  cdr:
-    config: config/strategies/bad-candidates/cdr
+  crf:
+    config: config/strategies/crf
     timeframe: 120T
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.01
-        min_rows: 20
+        min_pass_rate: 0.02
+        min_rows: 10
+        # CRF 经过严格盒子 + 边界触达后，月度交易数天然较低；用更贴近 range fade 的目标。
         target_trades_min: 8
         target_trades_max: 80
-        trade_penalty_low: 0.0018
+        trade_penalty_low: 0.0015
         trade_penalty_high: 0.0015
         stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
@@ -78,7 +76,7 @@ strategies:
           trade_penalty: 0.0020
           target_trades_min: 8
           target_trades_max: 80
-          trade_penalty_low: 0.0018
+          trade_penalty_low: 0.0015
           trade_penalty_high: 0.0015
           stability_penalty: 0.0
         scoring_method_fallbacks:
@@ -88,12 +86,12 @@ strategies:
         meta_algorithm: false
         archetype_plateau: true
         significance_p: 0.10
-        significance_min_trades: 3
+        significance_min_trades: 4
         plateau_window: 4
         archetype_scoring_method: distribution_ks
         target_trades_min: 8
         target_trades_max: 80
-        trade_penalty_low: 0.0018
+        trade_penalty_low: 0.0015
         trade_penalty_high: 0.0015
         stability_penalty: 0.0
         scoring_method_fallbacks:
@@ -102,12 +100,7 @@ strategies:
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.20
-        stat_fallback_on_empty: true
-        stat_fallback_max_rules: 3
-        stat_fallback_min_source_features: 2
-        max_hard_gates: 2
-        max_system_safety: 2
+        min_combined_pass_rate: 0.3
       backtest:
         min_trades: 8
       deploy:
@@ -118,5 +111,5 @@ event_backtest:
   map_extra_months: 4
 
 output:
-  history_dir: results/cdr/turbo-rolling-sim
-  latest_dir: results/cdr/turbo-latest
+  history_dir: results/crf/turbo-rolling-sim
+  latest_dir: results/crf/turbo-latest

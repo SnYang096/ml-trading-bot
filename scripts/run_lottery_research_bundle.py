@@ -1,7 +1,7 @@
 """Run Lottery100 research chain: v4 capacity → B+ backtest → merged summary.
 
-Reads `config/prod_train_pipeline_2h_lottery100.yaml` key `lottery_bundle` (or
-`--config` to point to a YAML with the same block).
+Reads `config/strategies/bad-candidates/pipelines/prod_train_pipeline_2h_lottery100.yaml` key
+`lottery_bundle` (or ``--config`` to point to a YAML with the same block).
 
 Also invoked by ``auto_research_pipeline.py`` when ``strategy_family: lottery100``.
 
@@ -68,7 +68,14 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--config",
-        default=str(ROOT / "config/prod_train_pipeline_2h_lottery100.yaml"),
+        default=str(
+            ROOT
+            / "config"
+            / "strategies"
+            / "bad-candidates"
+            / "pipelines"
+            / "prod_train_pipeline_2h_lottery100.yaml"
+        ),
         help="YAML containing a `lottery_bundle` block",
     )
     p.add_argument(

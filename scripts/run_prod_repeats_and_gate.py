@@ -224,7 +224,7 @@ def main() -> None:
     )
     p.add_argument(
         "--config",
-        default="config/prod_train_pipeline_2h.yaml",
+        default="config/pipelines/pcm_orchestrate_2h.yaml",
         help="Pipeline config path.",
     )
     p.add_argument("--end-date", required=True, help="Pipeline end date (YYYY-MM-DD).")

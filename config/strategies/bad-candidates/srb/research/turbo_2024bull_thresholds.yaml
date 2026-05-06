@@ -1,7 +1,9 @@
 # ============================================================
-# 归档：BPT 已移至 config/strategies/bad-candidates/box_pullback_trend
-# （成交极稀疏，不再作为生产候选；见该目录 README。）
-# 上线前训练流水线 (2H only, Box Pullback Trend only, turbo)
+# 上线前训练流水线 (2H only, SRB-only, turbo / 固定特征 + 阈值链)
+# SRB 已迁入 bad-candidates；预过滤见 config/strategies/bad-candidates/srb/features_prefilter.yaml
+#
+# 示例:
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_srb_only.yaml --stage rolling_sim --skip-shap
 # ============================================================
 
 dates:
@@ -31,7 +33,7 @@ fast_loop:
   symbol_threshold_calibration:
     enabled: true
   execution_opt:
-    enabled: false
+    enabled: true
   pcm_eval:
     enabled: false
   direction_tuning:
@@ -49,21 +51,21 @@ download:
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 strategies:
-  box_pullback_trend:
-    config: config/strategies/bad-candidates/box_pullback_trend
+  srb:
+    config: config/strategies/bad-candidates/srb
     timeframe: 120T
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: true
     kpi_gates:
       prefilter:
-        min_pass_rate: 0.01
-        min_rows: 20
-        target_trades_min: 8
-        target_trades_max: 100
-        trade_penalty_low: 0.0018
-        trade_penalty_high: 0.0015
+        min_pass_rate: 0.03
+        min_rows: 150
+        target_trades_min: 15
+        target_trades_max: 120
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
         stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
@@ -72,12 +74,12 @@ strategies:
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
-          min_trades_target: 20
-          trade_penalty: 0.0020
-          target_trades_min: 8
-          target_trades_max: 100
-          trade_penalty_low: 0.0018
-          trade_penalty_high: 0.0015
+          min_trades_target: 40
+          trade_penalty: 0.0025
+          target_trades_min: 15
+          target_trades_max: 120
+          trade_penalty_low: 0.0021
+          trade_penalty_high: 0.0014
           stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
@@ -89,32 +91,43 @@ strategies:
         significance_min_trades: 3
         plateau_window: 4
         archetype_scoring_method: distribution_ks
-        target_trades_min: 8
-        target_trades_max: 100
-        trade_penalty_low: 0.0018
-        trade_penalty_high: 0.0015
+        target_trades_min: 15
+        target_trades_max: 120
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
         stability_penalty: 0.0
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-        min_score_improvement: 0.005
+        min_score_improvement: 0.008
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.20
+        min_combined_pass_rate: 0.30
         stat_fallback_on_empty: true
-        stat_fallback_max_rules: 2
+        stat_fallback_max_rules: 3
         stat_fallback_min_source_features: 2
-        max_hard_gates: 2
+        max_hard_gates: 3
         max_system_safety: 2
       backtest:
-        min_trades: 8
+        min_trades: 20
       deploy:
-        min_trades: 8
+        min_trades: 20
 
 event_backtest:
   enabled: true
   map_extra_months: 4
+  exec_grid_by_family:
+    srb:
+      initial_r: "2.5:0.5:4.5"
+      activation_r: "2.0:0.5:4.5"
+      trail_r: "2.0:0.5:6.0"
+  exec_objective_default: total_r_over_dd
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 5.0
+    max_dd_penalty: 0.15
+    min_trades_soft: 0
+    undertrade_penalty: 0.0
 
 output:
-  history_dir: results/box_pullback_trend/turbo-rolling-sim
-  latest_dir: results/box_pullback_trend/turbo-latest
+  history_dir: results/srb/turbo-rolling-sim

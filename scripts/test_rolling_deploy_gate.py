@@ -52,7 +52,7 @@ from scripts.auto_research_pipeline import (
     save_report,
 )
 
-DEFAULT_CONFIG = PROJECT_ROOT / "config" / "research_pipeline.yaml"
+DEFAULT_CONFIG = PROJECT_ROOT / "config" / "pipelines" / "pcm_orchestrate_2h.yaml"
 ROLLING_ROOT = PROJECT_ROOT / "results" / "rolling_deploy_test"
 
 

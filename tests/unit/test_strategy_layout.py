@@ -39,7 +39,7 @@ def test_resolve_bpc_turbo_single_file():
 
 def test_resolve_explicit_config_no_warnings():
     root = _repo_root()
-    explicit = root / "config" / "research_pipeline.yaml"
+    explicit = root / "config" / "pipelines" / "research_pipeline.yaml"
     p, warns = resolve_default_pipeline_config(root, "bpc", explicit)
     assert p == explicit.resolve()
     assert warns == []
@@ -50,7 +50,7 @@ def test_resolve_unknown_strategy_fallback():
     p, warns = resolve_default_pipeline_config(
         root, "___no_such_strategy_slug___", None
     )
-    assert p == (root / "config" / "research_pipeline.yaml").resolve()
+    assert p == (root / "config" / "pipelines" / "pcm_orchestrate_2h.yaml").resolve()
     assert warns and "falling back" in warns[0]
 
 

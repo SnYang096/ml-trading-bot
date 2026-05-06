@@ -7,7 +7,7 @@
   - Part B 实盘监控联动: 灯号异常 → 触发本地验证 → 决定是否重训
   - 重训决策树: 触发条件满足 → 调用 auto_research_pipeline.py
 
-触发条件 (config/research_pipeline.yaml → retrain_triggers):
+触发条件 (config/pipelines/research_pipeline.yaml → retrain_triggers):
   1. schedule_days:      定期重训 (默认 90 天)
   2. sharpe_decay_ratio:  实盘滚动 Sharpe / 回测基线 < 50%
   3. consecutive_losses:  连续亏损次数 >= 8
@@ -56,7 +56,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 os.chdir(PROJECT_ROOT)
 
-DEFAULT_CONFIG = PROJECT_ROOT / "config" / "research_pipeline.yaml"
+DEFAULT_CONFIG = PROJECT_ROOT / "config" / "pipelines" / "pcm_orchestrate_2h.yaml"
 
 
 # ====================================================================

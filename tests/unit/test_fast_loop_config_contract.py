@@ -53,7 +53,7 @@ def test_load_pipeline_config_preserves_fast_loop_extras(tmp_path):
                 "  bpc:",
                 "    config: config/strategies/bpc",
                 "    timeframe: 120T",
-                "    features_gate: features.yaml",
+                "    prepare_features: features.yaml",
                 "    labels_gate: labels.yaml",
                 "    has_prefilter: true",
                 "    has_direction: true",
@@ -148,7 +148,7 @@ def test_fast_month_stage_uses_fast_loop_switches(tmp_path, monkeypatch):
         calibrate_all_layers=True,
         feature_search_enabled=False,
         rolling_mode="turbo_fixed_features",
-        config_path="config/prod_train_pipeline_2h_turbo_2024bull.yaml",
+        config_path="config/strategies/bpc/research/turbo_2024bull_thresholds.yaml",
     )
 
     assert len(captured["rs_calls"]) == 1
@@ -226,7 +226,7 @@ def test_fast_month_direction_runs_every_month_by_default(tmp_path, monkeypatch)
             calibrate_all_layers=True,
             feature_search_enabled=False,
             rolling_mode="turbo_fixed_features",
-            config_path="config/prod_train_pipeline_2h_turbo_2024bull.yaml",
+            config_path="config/strategies/bpc/research/turbo_2024bull_thresholds.yaml",
             month_index=month_idx,
         )
         assert captured == [False], f"month_index={month_idx} should run direction"
@@ -297,7 +297,7 @@ def test_fast_month_direction_cadence_stride(tmp_path, monkeypatch):
             calibrate_all_layers=True,
             feature_search_enabled=False,
             rolling_mode="turbo_fixed_features",
-            config_path="config/prod_train_pipeline_2h_turbo_2024bull.yaml",
+            config_path="config/strategies/bpc/research/turbo_2024bull_thresholds.yaml",
             month_index=month_idx,
         )
         assert captured == [

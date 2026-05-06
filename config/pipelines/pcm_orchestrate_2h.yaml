@@ -1,3 +1,5 @@
+# PCM 多策略编排（2H）：联合 PCM / slot / 多 legs；后续可拆成 YAML fragments 并引用各策略包内片段。
+# 单策略训练/rolling 请用 config/strategies/<slug>/research/{turbo,slow,non_rolling}.yaml。
 # ============================================================
 # 上线前训练流水线 (2H only)
 # 目标: 稳健优先, 平坦高原阈值搜索, 生产候选版本训练
@@ -5,8 +7,8 @@
 
 dates:
   start_date: "2024-01-01"
-  holdout_months: 12
-  validation_months: 4
+  holdout_months: 9
+  validation_months: 3
 training:
   seeds:
     - 42
@@ -18,26 +20,23 @@ strategy_scope:
   # 控制 --all 时参与训练/回测的策略方向范围
   direction: all
 rolling:
+  # slow_realistic | turbo_fixed_features | legacy
   mode: slow_realistic
   windows:
+    # 每月用过去 N 个月校准阈值, 再测试当月
     calibration_months: 3
+    # 慢变量重训结构窗: 过去 N 个月
     structure_lookback_months: 12
   slow_realistic:
+    # 慢变量节奏仅此处生效（rolling_sim 只读本块，勿再配重复的 slow_loop）
     cadence_months: 3
     triggered_retrain_enabled: true
   turbo_fixed_features:
+    # 极速模式: 固定特征来源
     fixed_strategies_root: config/strategies
+    # true 表示禁用 SHAP/特征搜索, 仅调阈值
     disable_feature_search: true
 
-# rolling_sim 实际读取 rolling.slow_realistic.*；下方 slow_loop 仅供运营/文档契约对照，
-# load_pipeline_config 可校验其与 slow_realistic 是否一致（不直接驱动 rolling_sim）。
-slow_loop:
-  cadence_months: 3
-  triggered_retrain:
-    enabled: true
-  freeze_outputs:
-    enabled: true
-    keep_latest: 3
 fast_loop:
   step_months: 1
   threshold_calibration:
@@ -80,8 +79,8 @@ event_backtest:
   sym_r_default: "1.0:1:6.0"
   sym_r_by_family:
     bpc: "2.0:1:6.0"
-    fer: "1:1:4"
-    me: "1:1:4"
+    fer: "2:1:4"
+    me: "2:1:4"
   # execution 参数选择目标:
   # - 默认仍用 Sharpe
   # - 对 me 家族启用 risk_aware，惩罚近-1R密集触发与过大回撤
@@ -161,15 +160,15 @@ download:
   parquet_dir: data/parquet_data
 strategies:
   bpc:
-    config: config/strategies/bpc-long-240T
-    timeframe: 240T
+    config: config/strategies/bpc
+    timeframe: 120T
     dates:
-      holdout_months: 12
+      holdout_months: 9
       validation_months: 4
-    features_gate: features.yaml
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: false
+    has_direction: true
     kpi_gates:
       prefilter:
         min_pass_rate: 0.05
@@ -182,7 +181,7 @@ strategies:
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
-          enabled: false
+          enabled: true
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
@@ -221,12 +220,12 @@ strategies:
       tp_r: 8.0
       timeout_bars: 500
   fer:
-    config: config/strategies/fer-long-240T
-    timeframe: 240T
+    config: config/strategies/fer
+    timeframe: 120T
     dates:
-      holdout_months: 12
-      validation_months: 4
-    features_gate: features.yaml
+      holdout_months: 9
+      validation_months: 3
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false
@@ -242,7 +241,7 @@ strategies:
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
-          enabled: false
+          enabled: true
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
@@ -286,12 +285,12 @@ strategies:
       tp_r: 6.0
       timeout_bars: 120
   me:
-    config: config/strategies/me-long-240T
-    timeframe: 240T
+    config: config/strategies/me
+    timeframe: 120T
     dates:
-      holdout_months: 12
-      validation_months: 4
-    features_gate: features.yaml
+      holdout_months: 9
+      validation_months: 3
+    prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
     has_direction: false
@@ -307,7 +306,7 @@ strategies:
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
-          enabled: false
+          enabled: true
           mode: auto_if_locked
           skip_if_cached: false
           max_cases: 12
@@ -385,4 +384,4 @@ data_flow:
     execution: logs_gated.parquet
     backtest: logs_gated.parquet
 output:
-  history_dir: results/prod_train_history
+  history_dir: results/120T/prod_train_history

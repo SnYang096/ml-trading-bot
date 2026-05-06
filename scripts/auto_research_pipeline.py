@@ -65,6 +65,27 @@ os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.config.strategy_layout import (
+    RESEARCH_PIPELINE_PROBE_NAMES,
+    resolve_default_pipeline_config,
+    strategy_packaged_root,
+)
+
+
+def _strategy_prepare_features_yaml(scfg: Dict[str, Any]) -> str:
+    """Prepare / SHAP basename：候选特征定义来自 ``prepare_features``（如 ``features.yaml``）。
+
+    与磁盘上的 ``features_gate.yaml``（Gate 白名单）区分：先在大池上算列并落盘，
+    Gate 训练仍走同一路径；若开启 SHAP，则在 ``prepare_features`` 基名上生成 ``*_shap.yaml``。
+    """
+    pf = scfg.get("prepare_features")
+    if pf is not None and str(pf).strip():
+        return str(pf).strip()
+    raise KeyError(
+        "strategy config needs prepare_features (e.g. features.yaml) in strategies.<slug>"
+    )
+
+
 from scripts.stat_method_registry import standardize_method_list
 from scripts.locked_prefilter_utils import (
     load_locked_prefilter_rules,
@@ -90,11 +111,26 @@ from scripts.multi_leg_trading_map import write_continuous_trading_map
 # Config
 # ====================================================================
 
-DEFAULT_CONFIG = PROJECT_ROOT / "config" / "research_pipeline.yaml"
+DEFAULT_PCM_ORCHESTRATE = (
+    PROJECT_ROOT / "config" / "pipelines" / "pcm_orchestrate_2h.yaml"
+)
+LEGACY_RESEARCH_PIPELINE = (
+    PROJECT_ROOT / "config" / "pipelines" / "research_pipeline.yaml"
+)
+DEFAULT_CONFIG = DEFAULT_PCM_ORCHESTRATE
 
 
 def load_pipeline_config(path: Path) -> dict:
     return pipeline_config.load_pipeline_config(path)
+
+
+def _resolve_cli_pipeline_config_path(args: argparse.Namespace) -> Path:
+    """``--config`` 省略时：有 ``--strategy`` → 策略包 ``research/turbo|slow|pipeline``；否则 PCM 编排。"""
+    strat = getattr(args, "strategy", None)
+    if strat and str(strat).strip():
+        p, _ = resolve_default_pipeline_config(PROJECT_ROOT, str(strat).strip(), None)
+        return p.resolve()
+    return DEFAULT_PCM_ORCHESTRATE.resolve()
 
 
 def resolve_symbols_from_config(cfg: dict) -> str:
@@ -2029,7 +2065,7 @@ def _maybe_auto_tune_locked_prefilter(
     elif strategy == "bpc":
         template = "bpc"
     else:
-        template = "fer"
+        template = "bindings"
     key_payload = {
         "strategy": strategy,
         "end_date": end_date,
@@ -2467,6 +2503,8 @@ def run_strategy_pipeline(
     if rc != 0 and not dry_run:
         return {"error": "feature_store_build_failed"}
 
+    prepare_features_yaml = _strategy_prepare_features_yaml(scfg)
+
     # ── Step 2: Prepare-only (features_labeled.parquet) ──
     rc, out = run_step(
         "Prepare Only",
@@ -2479,7 +2517,7 @@ def run_strategy_pipeline(
             "--config",
             config_dir,
             "--features",
-            f"{config_dir}/{scfg['features_gate']}",
+            f"{config_dir}/{prepare_features_yaml}",
             "--labels",
             f"{config_dir}/{scfg['labels_gate']}",
             *common_train_args,
@@ -2491,10 +2529,10 @@ def run_strategy_pipeline(
     prepare_dir = find_output_dir(out, strategy)
     if not prepare_dir and not dry_run:
         return {"error": "prepare_dir_not_found"}
-    prepare_dir = prepare_dir or f"results/train_final_DRYRUN/{strategy}"
+    prepare_dir = prepare_dir or f"results/{strategy}/train_final_DRYRUN/{strategy}"
 
     # ── Step 2.5: SHAP Feature Selection (可选, 默认开启) ──
-    # SHAP --promote 输出 features_gate_shap.yaml (基于 features_gate 配置生成)
+    # SHAP --promote 输出 <prepare_basename>_shap.yaml（基名来自 prepare_features）
     # 原始 features.yaml 永远不动（保留完整候选池）
     shap_cfg = cfg.get("shap_feature_selection", {})
     _fs_effective = bool(
@@ -2543,8 +2581,8 @@ def run_strategy_pipeline(
             log,
             dry_run=dry_run,
         )
-        # 检查 _shap.yaml 是否生成
-        gate_shap = Path(config_dir) / scfg["features_gate"].replace(
+        # 检查 _shap.yaml 是否生成（基名来自 prepare_features）
+        gate_shap = Path(config_dir) / prepare_features_yaml.replace(
             ".yaml", "_shap.yaml"
         )
         if dry_run or gate_shap.exists():
@@ -2555,11 +2593,11 @@ def run_strategy_pipeline(
     else:
         print("\u23ed\ufe0f  SHAP Feature Selection: skipped")
 
-    # 决定 Gate/Evidence 用哪个特征文件
-    features_gate_file = (
-        scfg["features_gate"].replace(".yaml", "_shap.yaml")
+    # 决定 Gate 训练 --features 用哪个文件（与 prepare_features 基名 / SHAP 后缀一致）
+    gate_train_features_file = (
+        prepare_features_yaml.replace(".yaml", "_shap.yaml")
         if shap_active
-        else scfg["features_gate"]
+        else prepare_features_yaml
     )
 
     # ── Auto locked tuning (optional) ──
@@ -2830,7 +2868,7 @@ def run_strategy_pipeline(
         "--config",
         config_dir,
         "--features",
-        f"{config_dir}/{features_gate_file}",
+        f"{config_dir}/{gate_train_features_file}",
         "--labels",
         f"{config_dir}/{scfg['labels_gate']}",
         "--archetype-prefilter",
@@ -6606,12 +6644,219 @@ def _run_slow_structure_snapshot_for_month(
 # ====================================================================
 
 
+def _strategy_package_meta_blurb(
+    project_root: Path, slug: str, *, max_len: int = 160
+) -> str:
+    """Short one-line description from config/strategies/<slug>/meta.yaml if present."""
+    meta_path = strategy_packaged_root(project_root, slug) / "meta.yaml"
+    if not meta_path.is_file():
+        return ""
+    try:
+        raw = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return ""
+    strat = raw.get("strategy") if isinstance(raw, dict) else None
+    if not isinstance(strat, dict):
+        return ""
+    desc = strat.get("description") or strat.get("summary") or ""
+    if isinstance(desc, str) and desc.strip():
+        line = desc.strip().splitlines()[0].strip()
+        if len(line) > max_len:
+            return line[: max_len - 3] + "..."
+        return line
+    name = strat.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return ""
+
+
+def _print_list_config_summary(cfg_path: Path, cfg: dict, project_root: Path) -> None:
+    """Print resolved YAML path + rolling mode + history_dir (list/diff/adopt context)."""
+    try:
+        rel_cfg = cfg_path.resolve().relative_to(project_root)
+    except ValueError:
+        rel_cfg = cfg_path.resolve()
+    out = (cfg.get("output") or {}).get("history_dir", "?")
+    rolling = cfg.get("rolling") or {}
+    mode = rolling.get("mode", "?") if isinstance(rolling, dict) else "?"
+    keys = list((cfg.get("strategies") or {}).keys())
+    print("\n" + "=" * 70)
+    print("📂 当前加载的 pipeline 配置")
+    print("=" * 70)
+    print(f"   路径:        {rel_cfg}")
+    print(f"   rolling.mode: {mode}")
+    print(f"   history_dir:   {out}")
+    print(f"   strategies:    {', '.join(keys)}")
+    print("=" * 70)
+
+
+def _iter_packaged_research_entry_files(
+    project_root: Path, slug: str
+) -> List[Tuple[str, Path]]:
+    """(label, path) for each of turbo/slow/pipeline that exists on disk (scan order)."""
+    research = strategy_packaged_root(project_root, slug) / "research"
+    pairs: List[Tuple[str, str]] = [
+        ("turbo", "turbo.yaml"),
+        ("slow", "slow.yaml"),
+        ("pipeline", "pipeline.yaml"),
+    ]
+    out: List[Tuple[str, Path]] = []
+    for label, name in pairs:
+        p = research / name
+        if p.is_file():
+            out.append((label, p.resolve()))
+    return out
+
+
+def _slug_has_packaged_research_marker(project_root: Path, slug: str) -> bool:
+    """True if config/strategies/<slug>/research has turbo|slow|pipeline marker."""
+    research = strategy_packaged_root(project_root, slug) / "research"
+    if not research.is_dir():
+        return False
+    return any((research / name).is_file() for name in RESEARCH_PIPELINE_PROBE_NAMES)
+
+
+def _iter_packaged_strategy_slugs(
+    project_root: Path, *, include_bad_candidates: bool
+) -> List[str]:
+    """Top-level dirs under config/strategies (bad-candidates subdirs optional)."""
+    root = project_root / "config" / "strategies"
+    out: List[str] = []
+    if not root.is_dir():
+        return out
+    for p in sorted(root.iterdir()):
+        if not p.is_dir():
+            continue
+        if p.name == "bad-candidates":
+            if not include_bad_candidates:
+                continue
+            for sub in sorted(p.iterdir()):
+                if sub.is_dir():
+                    out.append(f"bad-candidates/{sub.name}")
+            continue
+        out.append(p.name)
+    return out
+
+
+def _print_rolling_sim_ledger_hint(hist_root: Path, project_root: Path) -> None:
+    """Note where rolling_sim stage writes nested batch dirs (separate from flat per-run dirs)."""
+    rs = hist_root / "_rolling_sim"
+    if not rs.is_dir():
+        return
+    n = sum(
+        1
+        for p in rs.iterdir()
+        if p.is_dir() and p.name.startswith(("202", "19")) and "_" in p.name
+    )
+    try:
+        rel = rs.relative_to(project_root.resolve())
+    except ValueError:
+        rel = rs
+    print(
+        f"\n   ℹ️  rolling_sim 批次根（rolling_sim 阶段输出，与上方列出的 `<策略键>/<时间戳>/` 目录并列）: "
+        f"{rel}/ （约 {n} 个时间戳子目录）"
+    )
+
+
+def _cmd_list_experiments_all_strategy_packages(
+    project_root: Path,
+    *,
+    include_bad_candidates: bool,
+    all_profiles: bool,
+) -> None:
+    """List experiments for every strategy package (default or every turbo/slow/pipeline file)."""
+    print("\n" + "=" * 70)
+    print("📋 pipeline list --all（未指定 --config）")
+    print("=" * 70)
+    if all_profiles:
+        print(
+            "   模式: 每个策略包内存在的 research/{turbo,slow,pipeline}.yaml "
+            "各加载一次（含 extends 合并），分别按其 output.history_dir 列实验。"
+        )
+    else:
+        print(
+            "   模式: 每个策略包只解析 **默认入口**：research/"
+            "turbo.yaml → slow.yaml → pipeline.yaml（首个存在的文件）。"
+        )
+        print(
+            "   因此默认看到的是 **turbo** 历史目录（若存在 turbo.yaml）；"
+            "要看 slow 与 turbo 两套结果请加 **--list-all-profiles**。"
+        )
+    print(
+        "   实验目录 = 各 YAML 里 strategies.<键> 对应的 "
+        "{history_dir}/<键>/<时间戳>/（非 meta.yaml 决定路径）。"
+    )
+    print("=" * 70)
+
+    for slug in _iter_packaged_strategy_slugs(
+        project_root, include_bad_candidates=include_bad_candidates
+    ):
+        if not _slug_has_packaged_research_marker(project_root, slug):
+            continue
+        meta_line = _strategy_package_meta_blurb(project_root, slug)
+        pack_header = f"\n━━ 策略包: {slug}"
+        if meta_line:
+            pack_header += f"\n   摘要 (meta.yaml): {meta_line}"
+        print(pack_header)
+
+        entry_specs: List[Tuple[str, Path]]
+        if all_profiles:
+            entry_specs = _iter_packaged_research_entry_files(project_root, slug)
+            if not entry_specs:
+                print("   ⚠️  无 turbo/slow/pipeline 入口文件，跳过")
+                continue
+        else:
+            try:
+                cfg_path, _warns = resolve_default_pipeline_config(
+                    project_root, slug, None
+                )
+                cfg_path = cfg_path.resolve()
+                entry_specs = [("default", cfg_path)]
+            except Exception as exc:
+                print(f"\n⚠️  {slug}: 跳过 ({exc})")
+                continue
+
+        for profile_label, cfg_path in entry_specs:
+            try:
+                rel_cfg = cfg_path.relative_to(project_root.resolve())
+            except ValueError:
+                rel_cfg = cfg_path
+            try:
+                cfg = load_pipeline_config(cfg_path)
+            except Exception as exc:
+                print(f"\n⚠️  {slug} [{profile_label}] {rel_cfg}: 跳过 ({exc})")
+                continue
+            hist_rel = (cfg.get("output") or {}).get("history_dir", "?")
+            rolling = cfg.get("rolling") or {}
+            mode = rolling.get("mode", "?") if isinstance(rolling, dict) else "?"
+            print(
+                f"\n   ▸ 配置 [{profile_label}]  {rel_cfg}\n"
+                f"      rolling.mode={mode}  history_dir={hist_rel}"
+            )
+            hist_root = project_root / cfg["output"]["history_dir"]
+            strat_keys = list((cfg.get("strategies") or {}).keys())
+            if not strat_keys:
+                print(f"      ⚠️  strategies 为空")
+                continue
+            for sk in strat_keys:
+                _cmd_list_experiments(hist_root, sk)
+            _print_rolling_sim_ledger_hint(hist_root, project_root)
+
+
 def main():
     p = argparse.ArgumentParser(description="自动研究流水线 (实验隔离版)")
     p.add_argument("--strategy", help="策略名 (bpc/fer/me-long)")
     p.add_argument("--all", action="store_true", help="执行所有策略")
     p.add_argument("--end-date", help="数据截止日期 (默认自动检测)")
-    p.add_argument("--config", default=str(DEFAULT_CONFIG), help="pipeline 配置文件")
+    p.add_argument(
+        "--config",
+        default=None,
+        help=(
+            "pipeline 配置文件；省略时若提供 --strategy 则解析为该策略 "
+            "config/strategies/<slug>/research/turbo|slow|pipeline，否则使用 "
+            "config/pipelines/pcm_orchestrate_2h.yaml"
+        ),
+    )
     p.add_argument("--compare-only", action="store_true", help="只对比, 不重训")
     p.add_argument("--dry-run", action="store_true", help="打印命令但不执行")
     p.add_argument(
@@ -6622,6 +6867,19 @@ def main():
         dest="list_experiments",
         action="store_true",
         help="列出历史实验及其 metrics",
+    )
+    p.add_argument(
+        "--include-bad-candidates",
+        action="store_true",
+        help="与 --list --all 且未指定 --config 时联用：同时扫描 config/strategies/bad-candidates/*/",
+    )
+    p.add_argument(
+        "--list-all-profiles",
+        action="store_true",
+        help=(
+            "与 --list --all 且未指定 --config 时联用：对每个策略包分别列出 "
+            "research/turbo.yaml、slow.yaml、pipeline.yaml（若存在）各自的 history_dir"
+        ),
     )
     p.add_argument(
         "--adopt",
@@ -6703,6 +6961,19 @@ def main():
     )
     args = p.parse_args()
 
+    if args.list_experiments and args.all and args.config is None:
+        _cmd_list_experiments_all_strategy_packages(
+            PROJECT_ROOT,
+            include_bad_candidates=bool(args.include_bad_candidates),
+            all_profiles=bool(args.list_all_profiles),
+        )
+        return
+
+    if args.config is None:
+        args.config = str(_resolve_cli_pipeline_config_path(args))
+    else:
+        args.config = str(Path(args.config).resolve())
+
     cfg = load_pipeline_config(Path(args.config))
     history_dir = PROJECT_ROOT / cfg["output"]["history_dir"]
 
@@ -6710,9 +6981,11 @@ def main():
     if args.list_experiments:
         if not args.strategy and not args.all:
             p.error("--list 需要指定 --strategy 或 --all")
+        _print_list_config_summary(Path(args.config), cfg, PROJECT_ROOT)
         strats = list(cfg["strategies"].keys()) if args.all else [args.strategy]
         for s in strats:
             _cmd_list_experiments(history_dir, s)
+        _print_rolling_sim_ledger_hint(history_dir, PROJECT_ROOT)
         return
 
     # ── 子命令: 手动采纳实验 ──
