@@ -24,7 +24,10 @@ from scripts.rolling_dashboard.constants import PACKAGE_DIR
 from scripts.rolling_dashboard.dashboard_cards_slice import (
     build_dashboard_cards_slice_html,
 )
-from scripts.rolling_dashboard.dashboard_render import render_dashboard_hub
+from scripts.rolling_dashboard.dashboard_render import (
+    render_dashboard_hub,
+    render_pipeline_run_page,
+)
 from scripts.rolling_dashboard_server import _render_dashboard
 
 
@@ -109,6 +112,31 @@ def test_root_path_is_dashboard_not_browse(tmp_path: Path) -> None:
     root.mkdir()
     html = _render_dashboard(root, strategy_filter=None, q=None, page="all")
     assert "实验看板" in html or "合并视图" in html
+
+
+def test_research_dashboard_has_no_embedded_pipeline_runner(tmp_path: Path) -> None:
+    root = tmp_path / "results"
+    root.mkdir()
+    html = _render_dashboard(root, strategy_filter=None, q=None, page="research")
+    assert 'id="pipeline-runner-panel"' not in html
+
+
+def test_pipeline_run_page_includes_config_ui(tmp_path: Path) -> None:
+    html = render_pipeline_run_page(tmp_path)
+    assert "bpc-config-select" in html
+    assert "/dashboard/research/pipeline" in html
+    assert "/api/bpc-research-configs.json" in (
+        PACKAGE_DIR / "static" / "pipeline_run.js"
+    ).read_text(encoding="utf-8")
+
+
+def test_estimate_progress_failed_not_full_bar() -> None:
+    from scripts.rolling_dashboard.pipeline_jobs import estimate_progress_from_log
+
+    r = estimate_progress_from_log("Prefilter done line\n", job_status="failed")
+    assert r["pct"] < 100
+    r2 = estimate_progress_from_log("ok\n", job_status="done")
+    assert r2["pct"] == 100
 
 
 def test_ledger_detail_quick_links(tmp_path: Path) -> None:

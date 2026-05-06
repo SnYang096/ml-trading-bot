@@ -42,6 +42,7 @@ def run_server(
     print(f"   bind:    http://{bind}:{port}/")
     print(f"   看板入口: http://{bind}:{port}/dashboard")
     print(f"   研究管线: http://{bind}:{port}/dashboard/research")
+    print(f"   运行管线: http://{bind}:{port}/dashboard/research/pipeline")
     print(f"   上线管线: http://{bind}:{port}/dashboard/prod")
     print(f"   浏览目录: http://{bind}:{port}/browse")
     print(

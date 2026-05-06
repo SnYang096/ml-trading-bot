@@ -57,6 +57,7 @@ def test_load_bpc_slow_from_strategy_research():
     assert cfg.get("rolling", {}).get("mode") == "slow_realistic"
     assert cfg["rolling"]["windows"]["calibration_months"] == 3
     assert "validation_months" not in cfg["dates"]
+    assert (cfg.get("shap_feature_selection") or {}).get("enabled") is True
 
 
 def test_bpc_turbo_prefilter_locked_fields_are_explicit():
@@ -107,7 +108,7 @@ def test_bpc_slow_overrides_locked_enabled_true():
     assert cfg["threshold_calibration"]["prefilter"]["optimize"] is True
 
 
-def test_load_bpc_non_rolling_extends_turbo():
+def test_load_bpc_non_rolling_extends_slow():
     cfg = load_pipeline_config(
         _root() / "config/strategies/bpc/research/non_rolling.yaml"
     )
@@ -120,9 +121,13 @@ def test_load_bpc_non_rolling_extends_turbo():
     assert d.get("validation_months") == 3
     assert d.get("holdout_months") == 26
     assert d.get("start_date") == "2022-08-01"
+    assert (
+        cfg["strategies"]["bpc"]["kpi_gates"]["entry_filter"]["meta_algorithm"] is True
+    )
+    assert (cfg.get("shap_feature_selection") or {}).get("enabled") is True
 
 
-def test_load_me_non_rolling_extends_turbo():
+def test_load_me_non_rolling_extends_slow():
     cfg = load_pipeline_config(
         _root() / "config/strategies/me/research/non_rolling.yaml"
     )
@@ -135,9 +140,13 @@ def test_load_me_non_rolling_extends_turbo():
     assert d.get("validation_months") == 3
     assert d.get("holdout_months") == 26
     assert d.get("start_date") == "2022-08-01"
+    assert (
+        cfg["strategies"]["me"]["kpi_gates"]["entry_filter"]["meta_algorithm"] is True
+    )
+    assert (cfg.get("shap_feature_selection") or {}).get("enabled") is True
 
 
-def test_load_tpc_non_rolling_extends_turbo():
+def test_load_tpc_non_rolling_extends_slow():
     cfg = load_pipeline_config(
         _root() / "config/strategies/tpc/research/non_rolling.yaml"
     )
@@ -150,6 +159,10 @@ def test_load_tpc_non_rolling_extends_turbo():
     assert d.get("validation_months") == 3
     assert d.get("holdout_months") == 26
     assert d.get("start_date") == "2022-08-01"
+    assert (
+        cfg["strategies"]["tpc"]["kpi_gates"]["entry_filter"]["meta_algorithm"] is True
+    )
+    assert (cfg.get("shap_feature_selection") or {}).get("enabled") is True
 
 
 def test_multileg_backtest_dates_mismatch_raises(tmp_path: Path):

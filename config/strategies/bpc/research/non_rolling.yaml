@@ -1,6 +1,20 @@
-# BPC · non_rolling — 一次性全周期（--stage full）；extends turbo；覆写 dates/rolling/output。locked 调参与 turbo 一致（全周期上仍可用 parquet + 最新 labeled 数据搜阈值）。
+# =============================================================================
+# BPC · non_rolling — 目的与节奏
+# -----------------------------------------------------------------------------
+# 目的
+#   - 非滚动、静态 holdout（time_split_policy: static_holdout）：在整段样本上做一次「全周期」
+#     研究产出（典型 CLI：--stage full），用于上线新的配置与阈值组合。
+#   - 适合：slow（或监控）发现特征 / 规则结构变化大、需要在整段历史上重新对齐 features、
+#     gate、entry、execution 等后再 adopt；不仅是当月阈值微调。
+# 建议节奏
+#   - 按需触发，常见 1–3 个月一次，或慢管线/漂移告警触发；频率低于 turbo 月度、可与 slow 季度对齐。
+# 执行注意
+#   - extends slow：与 slow 相同地开启 entry meta、各层阈值 optimize、SHAP 特征筛选；
+#     仅 rolling 改为 non_rolling + static_holdout，output 单独目录。
+# -----------------------------------------------------------------------------
+# 覆写 dates / rolling / output；其余与同目录 slow.yaml 一致。
 
-extends: turbo.yaml
+extends: slow.yaml
 
 dates:
   validation_months: 3

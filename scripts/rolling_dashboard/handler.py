@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from http.server import SimpleHTTPRequestHandler
@@ -19,7 +20,11 @@ from .constants import (
 )
 from .response_cache import DashboardAPICaches
 from .dashboard_cards_slice import build_dashboard_cards_slice_html
-from .dashboard_render import render_dashboard, render_dashboard_hub
+from .dashboard_render import (
+    render_dashboard,
+    render_dashboard_hub,
+    render_pipeline_run_page,
+)
 from .paths import (
     _safe_browse_target,
     bulk_delete_paths,
@@ -28,8 +33,25 @@ from .paths import (
 )
 from .scan import list_flat_run_paths, list_incomplete_rolling_paths
 from .stats import build_layer_stats_for_dashboard
+from . import pipeline_jobs
 
-_ALLOWED_ASSETS = frozenset({"dashboard.css", "dashboard.js"})
+_ALLOWED_ASSETS = frozenset({"dashboard.css", "dashboard.js", "pipeline_run.js"})
+
+
+def _pipeline_post_allowed(client_host: str) -> bool:
+    """默认仅本机可触发管线；设 ``ROLLING_DASHBOARD_PIPELINE_REMOTE=1`` 放开。"""
+    if os.environ.get("ROLLING_DASHBOARD_PIPELINE_REMOTE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return True
+    ch = (client_host or "").strip()
+    if ch in ("127.0.0.1", "::1"):
+        return True
+    if ch.startswith("::ffff:") and ch.rsplit(":", 1)[-1] == "127.0.0.1":
+        return True
+    return False
 
 
 def _parse_nonneg_int(raw: str | None, default: int, *, upper: int) -> int:
@@ -151,6 +173,14 @@ def build_request_handler(results_root: Path):
                 body = render_dashboard(
                     root, strategy_filter=strategy_f, q=q, page="research"
                 ).encode("utf-8")
+                self._send_html(body)
+                return
+
+            if path == "/dashboard/research/pipeline":
+                if not vis["research"]:
+                    self.send_error(404)
+                    return
+                body = render_pipeline_run_page(root).encode("utf-8")
                 self._send_html(body)
                 return
 
@@ -327,12 +357,104 @@ def build_request_handler(results_root: Path):
                 self.wfile.write(payload)
                 return
 
+            if path == "/api/pipeline-run/status":
+                jid = (qs.get("id") or [""])[0].strip()
+                if not jid:
+                    out = json.dumps(
+                        {"ok": False, "error": "missing_id"}, ensure_ascii=False
+                    ).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(out)
+                    return
+                st = pipeline_jobs.job_status_json(jid, root)
+                if not st:
+                    out = json.dumps(
+                        {"ok": False, "error": "not_found"}, ensure_ascii=False
+                    ).encode("utf-8")
+                    self.send_response(404)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(out)
+                    return
+                out = json.dumps(
+                    {"ok": True, "job": st}, indent=2, ensure_ascii=False
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(out)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(out)
+                return
+
+            if path == "/api/pipeline-run/log":
+                jid = (qs.get("id") or [""])[0].strip()
+                if not jid:
+                    out = json.dumps(
+                        {"ok": False, "error": "missing_id"}, ensure_ascii=False
+                    ).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(out)
+                    return
+                j = pipeline_jobs.get_job(jid)
+                if not j:
+                    out = json.dumps(
+                        {"ok": False, "error": "not_found"}, ensure_ascii=False
+                    ).encode("utf-8")
+                    self.send_response(404)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(out)
+                    return
+                mb_raw = (qs.get("max_bytes") or ["96000"])[0]
+                max_b = _parse_nonneg_int(mb_raw, 96000, upper=500_000)
+                text = pipeline_jobs.read_log_tail(root, j.log_path, max_bytes=max_b)
+                out = json.dumps(
+                    {"ok": True, "tail": text, "log_path": j.log_path},
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(out)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(out)
+                return
+
+            if path == "/api/bpc-research-configs.json":
+                proj = pipeline_jobs.resolve_project_root(root)
+                items = pipeline_jobs.list_bpc_research_configs(proj)
+                out = json.dumps(
+                    {"ok": True, "configs": items},
+                    indent=2,
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(out)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(out)
+                return
+
             return SimpleHTTPRequestHandler.do_GET(self)
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
-            if path not in ("/api/delete-run", "/api/bulk-delete"):
+            if path not in ("/api/delete-run", "/api/bulk-delete", "/api/pipeline-run"):
                 self.send_error(404)
                 return
             try:
@@ -350,6 +472,92 @@ def build_request_handler(results_root: Path):
                     {"ok": False, "error": "bad_json"}, ensure_ascii=False
                 ).encode("utf-8")
                 self.send_response(400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+                return
+
+            if path == "/api/pipeline-run":
+                if not pipeline_jobs.pipeline_run_enabled():
+                    out = json.dumps(
+                        {"ok": False, "error": "pipeline_run_disabled"},
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    self.send_response(503)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.end_headers()
+                    self.wfile.write(out)
+                    return
+                if not _pipeline_post_allowed(self.client_address[0]):
+                    out = json.dumps(
+                        {"ok": False, "error": "forbidden_non_loopback"},
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    self.send_response(403)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.end_headers()
+                    self.wfile.write(out)
+                    return
+                job, err = pipeline_jobs.start_pipeline_job(root, payload)
+                if err == "busy":
+                    out = json.dumps(
+                        {
+                            "ok": False,
+                            "error": "busy",
+                            "active": pipeline_jobs.active_job_summary(),
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    self.send_response(409)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.end_headers()
+                    self.wfile.write(out)
+                    return
+                if err == "disabled":
+                    out = json.dumps(
+                        {"ok": False, "error": "pipeline_run_disabled"},
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    self.send_response(503)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.end_headers()
+                    self.wfile.write(out)
+                    return
+                if err == "missing_auto_research_pipeline":
+                    out = json.dumps(
+                        {"ok": False, "error": err}, ensure_ascii=False
+                    ).encode("utf-8")
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.end_headers()
+                    self.wfile.write(out)
+                    return
+                if err or job is None:
+                    out = json.dumps(
+                        {"ok": False, "error": err or "start_failed"},
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.end_headers()
+                    self.wfile.write(out)
+                    return
+                out = json.dumps(
+                    {
+                        "ok": True,
+                        "job": pipeline_jobs.job_status_json(job.job_id, root),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(out)))
                 self.end_headers()

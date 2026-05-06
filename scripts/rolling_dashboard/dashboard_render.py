@@ -133,6 +133,22 @@ def render_dashboard(
     )
 
 
+def render_pipeline_run_page(results_root: Path) -> str:
+    """独立页：按 ``config/strategies/bpc/research/*.yaml`` 跑完整研究管线（无分阶段）。"""
+    rr = results_root.resolve()
+    vis = dashboard_visibility()
+    tpl = _jinja_env().get_template("pipeline_run.html")
+    return tpl.render(
+        title="运行研究管线（BPC）",
+        results_root=html.escape(str(rr)),
+        dash_assets=DASHBOARD_ASSET_PREFIX,
+        vis_research=vis["research"],
+        vis_prod=vis["prod"],
+        show_scope_nav=vis["research"] or vis["prod"],
+        nav_active_pipeline=True,
+    )
+
+
 def render_dashboard_hub(results_root: Path) -> str:
     """入口页：研究管线 / 上线管线 二选一。"""
     rr = results_root.resolve()

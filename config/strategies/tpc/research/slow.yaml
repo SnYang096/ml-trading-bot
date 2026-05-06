@@ -1,22 +1,26 @@
-# TPC · slow_realistic — extends turbo.yaml；下列仅慢管线相对 turbo 的差量。
-#
-# 示例:
-#   mlbot pipeline run --all --config config/strategies/tpc/research/slow.yaml --stage rolling_sim
+# =============================================================================
+# TPC · slow（slow_realistic）— 目的与节奏
+# -----------------------------------------------------------------------------
+# 目的
+#   - 慢滚 + entry meta + SHAP + 各层阈值 optimize（与 BPC slow 骨架一致）。
+# 建议节奏
+#   - 约每 1–3 个月（cadence_months: 3）。
+# 与 turbo / non_rolling 的分工
+#   - turbo：固定特征、阈值微调。
+#   - slow：特征+阈值体检；漂移大 → non_rolling。
+#   - SHAP（shap_feature_selection）开启。
+# -----------------------------------------------------------------------------
+# 下列仅慢管线相对 turbo 的差量。
 
 extends: turbo.yaml
 
 dates:
-  end_date: "2026-03-31"
-  validation_months: 3
   calibration_months: 3
 
 training:
   seeds:
     - 42
   seed_selection: best_sharpe
-
-global_toggles:
-  locked_threshold_tuning_enabled: true
 
 strategy_scope:
   direction: all
@@ -28,9 +32,6 @@ rolling:
   slow_realistic:
     cadence_months: 3
     triggered_retrain_enabled: true
-  turbo_fixed_features:
-    fixed_strategies_root: config/strategies
-    disable_feature_search: true
 
 threshold_calibration:
   step_months: 1
@@ -40,21 +41,6 @@ threshold_calibration:
     enabled: false
   direction_tuning:
     enabled: true
-
-fast_loop:
-  step_months: 1
-  threshold_calibration:
-    enabled: true
-  symbol_threshold_calibration:
-    enabled: true
-  execution_opt:
-    enabled: true
-  pcm_eval:
-    enabled: false
-  direction_tuning:
-    enabled: true
-    compare_features: true
-    promote_after_validate: true
 
 symbol_policy:
   mode: hybrid_carry_forward
@@ -89,9 +75,6 @@ pcm_slot_grid:
 
 strategies:
   tpc:
-    dates:
-      holdout_months: 26
-      validation_months: 3
     kpi_gates:
       prefilter:
         locked_threshold_tuning:
@@ -102,6 +85,7 @@ strategies:
           - tail_bad_rate_ratio
           - upside_positive_rate_ratio
       entry_filter:
+        meta_algorithm: true
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
@@ -109,18 +93,19 @@ strategies:
           - upside_positive_rate_ratio
       gate:
         max_hard_gates: 4
-
     simple_execution:
       sl_r: 4.0
       tp_r: 8.0
       timeout_bars: 500
 
 shap_feature_selection:
-  enabled: false
+  enabled: true
   n_folds: 8
   top_k: 20
   stability_threshold: 0.8
   min_stable_features: 1
+  # protected_nodes：SHAP/稳定性筛选时强制保留的依赖图节点，避免误删跨品种可比尺度等基础列。
+  # 三趋势策略对齐为仅 atr_f；确需钉死更多节点时在对应策略 slow 中覆写。
   protected_nodes:
     - atr_f
   apply_to:
@@ -160,6 +145,7 @@ data_flow:
 event_backtest:
   enabled: true
   promote: true
+  no_kill_switch: false
   map_extra_months: 4
   sym_r_default: "1.0:1:6.0"
   sym_r_by_family:

@@ -1,4 +1,16 @@
-# BPC · turbo_fixed_features — 研究管线入口（执行参数均在下列键；文件名仅便于区分 turbo/slow/non_rolling）。仅锚定 locked、不调参：turbo_prefilter_lock_fixed.yaml。
+# =============================================================================
+# BPC · turbo（turbo_fixed_features）— 目的与节奏
+# -----------------------------------------------------------------------------
+# 目的
+#   - 生产特征集固定（fixed_strategies_root → 与线上一致的 archetypes / features）。
+#   - 主要做「阈值漂移」：在 locked 规则与 parquet_plateau 等口径下重标定 prefilter / gate /
+#     entry_filter / execution；threshold_calibration 关闭树模型训练，不做 SHAP 式特征发现。
+#   - 适合：线上例行轻量重校准、rolling_sim 或 fast_month 按月推进。
+# 建议节奏
+#   - 约每月（与 threshold_calibration.step_months: 1 一致；具体由 rolling / 运维排期决定）。
+# 何时不要用 turbo
+#   - 需要改特征定义 / archetype 结构、或 slow 显示特征层漂移很大 → 改用 slow 或 non_rolling。
+# -----------------------------------------------------------------------------
 # [INDEX] dates → rolling → threshold_calibration → data → strategies.bpc → event_backtest → output
 # slow / non_rolling：extends 本文件并覆写差量（见各自文件）。
 

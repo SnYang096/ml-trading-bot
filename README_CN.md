@@ -73,7 +73,7 @@ mlbot data pipeline \
 mlbot data pipeline-universe --no-docker \
   --universe-config config/download/crypto_4h_token_universe_groups.yaml \
   --universe-groups highcap \
-  --start-year 2023 \
+  --start-year 2026 \
   --start-month 1
 ```
 
@@ -101,12 +101,12 @@ mlbot data update-market-cap \
 mlbot data download-funding-rate --no-docker \
   --universe-config config/download/crypto_4h_token_universe_groups.yaml \
   --universe-groups highcap \
-  --start-year 2023 --start-month 1
+  --start-year 2026 --start-month 1
 
 # 方式 B：手工传 symbol 列表
 mlbot data download-funding-rate --no-docker \
   --symbols BTCUSDT,ETHUSDT \
-  --start-year 2023 --start-month 1 \
+  --start-year 2026 --start-month 1 \
   --progress-every 10
 ```
 
@@ -120,7 +120,7 @@ mlbot data download-funding-rate --no-docker \
 mlbot data download-open-interest \
   --universe-config config/download/crypto_4h_token_universe_groups.yaml \
   --universe-groups highcap \
-  --start-year 2023 --start-month 1 --progress-every 1
+  --start-year 2026 --start-month 1 --progress-every 1
 ```
 
 ---
@@ -142,13 +142,13 @@ mlbot data download-open-interest \
 
 **`bad-candidates/`**：历史实验与废弃候选（含 `fbf`、`fer`、`msr`、`lv`、`lottery`、以及 **`srb` / `crf` 等当前主树副本**）；日常主线以顶层五目录为准。
 
-| 策略目录          | 语义                                                         | 默认 `meta.yaml` timeframe |
-| ----------------- | ------------------------------------------------------------ | -------------------------- |
-| `bpc`             | Breakout → Pullback → Continuation（趋势延续）               | `120T`                     |
-| `tpc`             | Trend → Pullback → Continuation（趋势回踩）                  | `120T`                     |
-| `me`              | Momentum Expansion（动量扩张）                               | `120T`                     |
-| `chop_grid`       | 语义 chop + 盒过滤下的小网格段（**多腿**；根配置 `grid.yaml`） | `120T`                     |
-| `dual_add_trend`  | 趋势置信 + chop/盒过滤下双腿加仓（**多腿**；根配置 `dual_add.yaml`） | `120T`                     |
+| 策略目录         | 语义                                                                 | 默认 `meta.yaml` timeframe |
+| ---------------- | -------------------------------------------------------------------- | -------------------------- |
+| `bpc`            | Breakout → Pullback → Continuation（趋势延续）                       | `120T`                     |
+| `tpc`            | Trend → Pullback → Continuation（趋势回踩）                          | `120T`                     |
+| `me`             | Momentum Expansion（动量扩张）                                       | `120T`                     |
+| `chop_grid`      | 语义 chop + 盒过滤下的小网格段（**多腿**；根配置 `grid.yaml`）       | `120T`                     |
+| `dual_add_trend` | 趋势置信 + chop/盒过滤下双腿加仓（**多腿**；根配置 `dual_add.yaml`） | `120T`                     |
 
 **常用 pipeline YAML**：研究入口按策略包放在 **`config/strategies/<slug>/research/`**（`turbo.yaml` → `slow.yaml` → `pipeline.yaml` 探测顺序；可通过顶层 `extends:` 指向共享片段）。**`mlbot pipeline`** 省略 `--config` 且带 `--strategy <slug>` 时按上述顺序解析；既无 `--strategy` 也无 `--config` 时默认 **`config/pipelines/pcm_orchestrate_2h.yaml`**（PCM 多策略编排）。仓库级统一模板（显式引用或工具默认）为 **`config/pipelines/research_pipeline.yaml`**。
 
@@ -156,54 +156,54 @@ mlbot data download-open-interest \
 
 #### 全局 / 多策略
 
-| YAML | 用途 | `rolling.mode` |
-| ---- | ---- | ---------------- |
+| YAML                                       | 用途                                     | `rolling.mode`   |
+| ------------------------------------------ | ---------------------------------------- | ---------------- |
 | `config/pipelines/pcm_orchestrate_2h.yaml` | PCM 多策略编排（2H）：联合回测 / slot 等 | `slow_realistic` |
 
 #### `bpc` — `config/strategies/bpc/`（镜像：`live/highcap/config/strategies/bpc/`）
 
-| YAML | 用途 | `rolling.mode` |
-| ---- | ---- | ---------------- |
+| YAML                                        | 用途                                           | `rolling.mode`         |
+| ------------------------------------------- | ---------------------------------------------- | ---------------------- |
 | `config/strategies/bpc/research/turbo.yaml` | turbo：阈值链 + execution 优化（默认探测首项） | `turbo_fixed_features` |
-| `config/strategies/bpc/research/slow.yaml` | 慢模式：季度结构 + 月度快变量 | `slow_realistic` |
+| `config/strategies/bpc/research/slow.yaml`  | 慢模式：季度结构 + 月度快变量                  | `slow_realistic`       |
 
 #### `tpc` — `config/strategies/tpc/`（镜像：`live/highcap/config/strategies/tpc/`）
 
-| YAML | 用途 | `rolling.mode` |
-| ---- | ---- | ---------------- |
-| `config/strategies/tpc/research/turbo.yaml` | turbo | `turbo_fixed_features` |
-| `config/strategies/tpc/research/slow.yaml` | 慢模式 | `slow_realistic` |
+| YAML                                        | 用途   | `rolling.mode`         |
+| ------------------------------------------- | ------ | ---------------------- |
+| `config/strategies/tpc/research/turbo.yaml` | turbo  | `turbo_fixed_features` |
+| `config/strategies/tpc/research/slow.yaml`  | 慢模式 | `slow_realistic`       |
 
 #### `me` — `config/strategies/me/`（镜像：`live/highcap/config/strategies/me/`）
 
-| YAML | 用途 | `rolling.mode` |
-| ---- | ---- | ---------------- |
-| `config/strategies/me/research/turbo.yaml` | turbo | `turbo_fixed_features` |
-| `config/strategies/me/research/slow.yaml` | 慢模式 | `slow_realistic` |
+| YAML                                       | 用途   | `rolling.mode`         |
+| ------------------------------------------ | ------ | ---------------------- |
+| `config/strategies/me/research/turbo.yaml` | turbo  | `turbo_fixed_features` |
+| `config/strategies/me/research/slow.yaml`  | 慢模式 | `slow_realistic`       |
 
 #### `chop_grid` — `config/strategies/chop_grid/`（镜像：`live/highcap/config/strategies/chop_grid/`）
 
-| YAML | 用途 | `rolling.mode` |
-| ---- | ---- | ---------------- |
+| YAML                                              | 用途                      | `rolling.mode`         |
+| ------------------------------------------------- | ------------------------- | ---------------------- |
 | `config/strategies/chop_grid/research/turbo.yaml` | 多腿网格 rolling（turbo） | `turbo_fixed_features` |
-| `config/strategies/chop_grid/research/slow.yaml` | 多腿慢模式 | `slow_realistic` |
+| `config/strategies/chop_grid/research/slow.yaml`  | 多腿慢模式                | `slow_realistic`       |
 
 #### `dual_add_trend` — `config/strategies/dual_add_trend/`（镜像：`live/highcap/config/strategies/dual_add_trend/`）
 
-| YAML | 用途 | `rolling.mode` |
-| ---- | ---- | ---------------- |
+| YAML                                                   | 用途                          | `rolling.mode`         |
+| ------------------------------------------------------ | ----------------------------- | ---------------------- |
 | `config/strategies/dual_add_trend/research/turbo.yaml` | 多腿双腿策略 rolling（turbo） | `turbo_fixed_features` |
-| `config/strategies/dual_add_trend/research/slow.yaml` | 多腿慢模式 | `slow_realistic` |
+| `config/strategies/dual_add_trend/research/slow.yaml`  | 多腿慢模式                    | `slow_realistic`       |
 
 #### `bad-candidates/`（策略树 + 专用管线；非顶层主线）
 
-| YAML | 用途 | `rolling.mode` |
-| ---- | ---- | ---------------- |
-| `config/strategies/bad-candidates/crf/research/turbo.yaml` | CRF / turbo（`box_structure_f`） | `turbo_fixed_features` |
-| `config/strategies/bad-candidates/srb/research/turbo_2024bull_thresholds.yaml` | SRB / turbo | `turbo_fixed_features` |
-| `config/strategies/bad-candidates/srb/research/turbo_2024bull_quickstrike.yaml` | SRB quickstrike / turbo | `turbo_fixed_features` |
-| `config/strategies/bad-candidates/srb/research/slow.yaml` | SRB 慢模式 | `slow_realistic` |
-| `config/strategies/bad-candidates/*/research/*.yaml` | 其它历史实验（FBF / FER / MSR 等） | （见各文件） |
+| YAML                                                                            | 用途                               | `rolling.mode`         |
+| ------------------------------------------------------------------------------- | ---------------------------------- | ---------------------- |
+| `config/strategies/bad-candidates/crf/research/turbo.yaml`                      | CRF / turbo（`box_structure_f`）   | `turbo_fixed_features` |
+| `config/strategies/bad-candidates/srb/research/turbo_2024bull_thresholds.yaml`  | SRB / turbo                        | `turbo_fixed_features` |
+| `config/strategies/bad-candidates/srb/research/turbo_2024bull_quickstrike.yaml` | SRB quickstrike / turbo            | `turbo_fixed_features` |
+| `config/strategies/bad-candidates/srb/research/slow.yaml`                       | SRB 慢模式                         | `slow_realistic`       |
+| `config/strategies/bad-candidates/*/research/*.yaml`                            | 其它历史实验（FBF / FER / MSR 等） | （见各文件）           |
 
 > `turbo_fixed_features`：特征集固定，只做阈值链 / execution 优化 / 月度滚动 → **快**。  
 > `slow_realistic`：每季度重做结构快照（prefilter/gate 元算法），月度 fast_loop 调阈值 → **稳**。
@@ -365,10 +365,10 @@ python scripts/deploy_config_to_live.py --deploy --strategy bpc --git-commit
 
 同一份 pipeline YAML 的 `output.history_dir` 下，有两种并列的产物树，**不要混用一种心智去读另一种**：
 
-| 层级 | 路径模式 | 用途 |
-|------|-----------|------|
-| **单次管线快照（list / adopt / delete 默认对齐）** | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/` | 一整段研究跑完生成的顶层实验目录；`mlbot pipeline list` 表格里的「历史实验」指的就是这里的子目录。 |
-| **rolling_sim 批次聚合（研究调试用）** | `{history_dir}/_rolling_sim/<批次时间戳>/…` | `--stage rolling_sim` 时按月滚动、阶段产物嵌套在此树下（Prefilter/Gate/月度复盘等）；体量更大，**一般不当作 adopt 主列表**。 |
+| 层级                                               | 路径模式                                    | 用途                                                                                                                         |
+| -------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **单次管线快照（list / adopt / delete 默认对齐）** | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/` | 一整段研究跑完生成的顶层实验目录；`mlbot pipeline list` 表格里的「历史实验」指的就是这里的子目录。                           |
+| **rolling_sim 批次聚合（研究调试用）**             | `{history_dir}/_rolling_sim/<批次时间戳>/…` | `--stage rolling_sim` 时按月滚动、阶段产物嵌套在此树下（Prefilter/Gate/月度复盘等）；体量更大，**一般不当作 adopt 主列表**。 |
 
 **命令行为**：当你执行带 `--config` 的 `mlbot pipeline list …`（或对某策略包扫描到的等价入口），脚本在打印完上述「快照」表格后，若磁盘上存在 `_rolling_sim`，会在末尾多一行类似：
 

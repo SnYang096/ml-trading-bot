@@ -65,6 +65,95 @@
     h1 { font-size: 1.35rem; font-weight: 650; margin: 0 0 0.35rem; letter-spacing: -0.02em; }
     .subhead { color: var(--muted); font-size: 0.9rem; margin: 0 0 1rem; }
     .subhead code { font-size: 0.82rem; }
+    .pipeline-runner-panel {
+      margin-bottom: 1.25rem; padding: 0.85rem 1rem;
+      background: #121820; border: 1px solid var(--border); border-radius: 10px;
+    }
+    .pipeline-runner-title { font-size: 1.05rem; font-weight: 650; margin: 0 0 0.35rem; }
+    .pipeline-runner-hint { font-size: 0.82rem; margin: 0 0 0.65rem; max-width: 52rem; line-height: 1.45; }
+    .pipeline-runner-controls {
+      display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: center;
+      margin-bottom: 0.65rem;
+    }
+    .pipeline-runner-field { display: flex; align-items: center; gap: 0.45rem; font-size: 0.88rem; }
+    .pipeline-runner-label { color: var(--muted); font-size: 0.82rem; }
+    .pipeline-runner-field select {
+      background: var(--panel); border: 1px solid var(--border); color: var(--text);
+      padding: 0.35rem 0.5rem; border-radius: 8px; font-size: 0.84rem;
+    }
+    .pipeline-runner-check { display: flex; align-items: center; gap: 0.4rem; font-size: 0.84rem; cursor: pointer; }
+    .pipeline-runner-check input { accent-color: var(--accent); }
+    .pipeline-runner-buttons {
+      display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
+      margin-bottom: 0.5rem;
+    }
+    .btn-pipeline-primary {
+      background: #238636; border: 1px solid #2ea043; color: #fff;
+      padding: 0.45rem 0.75rem; border-radius: 8px; cursor: pointer; font-size: 0.84rem;
+    }
+    .btn-pipeline-primary:hover { filter: brightness(1.08); }
+    .btn-pipeline-primary:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
+    .btn-pipeline-secondary {
+      background: transparent; border: 1px solid var(--accent); color: var(--accent);
+      padding: 0.45rem 0.75rem; border-radius: 8px; cursor: pointer; font-size: 0.84rem;
+    }
+    .btn-pipeline-secondary:hover:not(:disabled) { background: #388bfd18; }
+    .btn-pipeline-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-pipeline-warn {
+      background: transparent; border: 1px solid #d29922; color: #d29922;
+      padding: 0.45rem 0.75rem; border-radius: 8px; cursor: pointer; font-size: 0.84rem;
+    }
+    .btn-pipeline-warn:hover { background: #d2992218; }
+    .pipeline-runner-status { font-size: 0.84rem; margin: 0.35rem 0; min-height: 1.25rem; }
+    .pipeline-runner-log-link { margin: 0 0 0.35rem; font-size: 0.82rem; }
+    .pipeline-runner-log-link a { color: var(--accent); }
+    .pipeline-log-pre {
+      margin: 0; max-height: 14rem; overflow: auto;
+      padding: 0.65rem 0.75rem; font-size: 0.78rem; line-height: 1.35;
+      background: #0d1117; border: 1px solid var(--border); border-radius: 8px;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .pipeline-run-wrap { max-width: 46rem; }
+    .pipeline-run-card {
+      margin-bottom: 1.25rem; padding: 0.85rem 1rem;
+      background: #121820; border: 1px solid var(--border); border-radius: 10px;
+    }
+    .pipeline-run-card-title { font-size: 1.02rem; font-weight: 650; margin: 0 0 0.65rem; }
+    .pipeline-run-field label {
+      display: block; font-size: 0.82rem; color: var(--muted); margin-bottom: 0.35rem;
+    }
+    .pipeline-run-field select {
+      width: 100%; max-width: 36rem;
+      background: var(--panel); border: 1px solid var(--border); color: var(--text);
+      padding: 0.45rem 0.55rem; border-radius: 8px; font-size: 0.88rem;
+    }
+    .pipeline-run-check { margin: 0.65rem 0; display: flex; align-items: center; gap: 0.4rem; font-size: 0.84rem; cursor: pointer; }
+    .pipeline-run-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+    .pipeline-progress-wrap { margin-top: 0.35rem; }
+    .pipeline-progress-track {
+      height: 10px; background: #21262d; border-radius: 999px; overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .pipeline-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #1f6feb, #3fb950);
+      border-radius: 999px;
+      transition: width 0.45s ease;
+      width: 0%;
+    }
+    .pipeline-progress-fill.indeterminate {
+      width: 32% !important;
+      animation: pipeline-indet-slide 1.25s ease-in-out infinite;
+    }
+    @keyframes pipeline-indet-slide {
+      0% { margin-left: 0; }
+      50% { margin-left: 68%; }
+      100% { margin-left: 0; }
+    }
+    .pipeline-progress-meta { margin: 0.4rem 0 0; font-size: 0.8rem; line-height: 1.4; word-break: break-word; }
+    .pipeline-run-log-note { font-size: 0.82rem; margin: 0.65rem 0 0; }
+    .pipeline-result-ul { margin: 0; padding-left: 1.15rem; font-size: 0.88rem; line-height: 1.55; }
+    .pipeline-result-ul a { color: var(--accent); }
     .toolbar {
       display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center;
       margin-bottom: 1rem;

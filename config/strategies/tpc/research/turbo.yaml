@@ -1,4 +1,13 @@
-# TPC · turbo_fixed_features — 执行参数均在下列键；文件名仅区分策略包入口。
+# =============================================================================
+# TPC · turbo（turbo_fixed_features）— 目的与节奏
+# -----------------------------------------------------------------------------
+# 目的
+#   - 生产特征集固定；主要做「阈值漂移」与执行层标定；标定链关闭树模型训练。
+# 建议节奏
+#   - 约每月（threshold_calibration.step_months: 1）。
+# 何时不要用 turbo
+#   - 需改特征 / archetype、或 slow 显示漂移大 → slow / non_rolling。
+# -----------------------------------------------------------------------------
 # [INDEX] dates → rolling → threshold_calibration → data → strategies.tpc → event_backtest → output
 
 dates:
@@ -65,13 +74,22 @@ strategies:
           search_mode: parquet_plateau
           plateau_scan_points: 25
           plateau_coord_rounds: 3
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
       entry_filter:
-        meta_algorithm: true
+        meta_algorithm: false
         archetype_plateau: true
         significance_p: 0.10
         significance_min_trades: 4
         plateau_window: 4
-        archetype_scoring_method: distribution_ks
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
         target_trades_min: 10
         target_trades_max: 50
         trade_penalty_low: 0.002
@@ -88,9 +106,9 @@ strategies:
         trade_penalty_high: 0.0
         stability_penalty: 0.0
       backtest:
-        min_trades: 50
+        min_trades: 10
       deploy:
-        min_trades: 50
+        min_trades: 10
 
 event_backtest:
   enabled: true

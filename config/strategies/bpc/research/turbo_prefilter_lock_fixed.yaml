@@ -1,4 +1,5 @@
-# BPC · fixed locked prefilter — extends turbo；仅关闭 tune_locked_prefilter，沿用 archetypes 锚数值。
+# 变体：与 turbo 相同管线，但关闭 prefilter locked 阈值自动调优（手工锁定阈值时用）。
+
 extends: turbo.yaml
 
 strategies:

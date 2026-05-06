@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="{{ dash_assets }}/dashboard.css"/>
+</head>
+<body>
+  <div class="wrap pipeline-run-wrap">
+    {% if show_scope_nav %}
+    <nav class="dash-scope-nav" aria-label="看板视图切换">
+      <span class="dash-scope-nav-label muted">视图</span>
+      {% if vis_research or vis_prod %}
+      <a href="/dashboard">入口</a>
+      {% endif %}
+      {% if vis_research %}
+      <a href="/dashboard/research">研究管线</a>
+      <a href="/dashboard/research/pipeline" class="active">运行管线</a>
+      {% endif %}
+      {% if vis_prod %}
+      <a href="/dashboard/prod">上线管线</a>
+      {% endif %}
+    </nav>
+    {% endif %}
+    <h1>{{ title }}</h1>
+    <p class="subhead">根目录 <code>{{ results_root }}</code>
+      · 使用 <code>config/strategies/bpc/research/*.yaml</code> 作为 <code>--config</code>，执行<strong>完整</strong>自动研究流水线（不传 <code>--stage</code>）。日志仍写入 <code>results/logs/bpc/</code>。</p>
+
+    <section class="pipeline-run-card" aria-labelledby="h-pipeline-run">
+      <h2 id="h-pipeline-run" class="pipeline-run-card-title">启动任务</h2>
+      <div class="pipeline-run-field">
+        <label for="bpc-config-select">研究配置（YAML）</label>
+        <select id="bpc-config-select" aria-label="BPC research yaml"></select>
+      </div>
+      <label class="pipeline-runner-check pipeline-run-check">
+        <input type="checkbox" id="pipeline-skip-shap" checked/>
+        <span>跳过 SHAP（<code>--skip-shap</code>）</span>
+      </label>
+      <div class="pipeline-run-actions">
+        <button type="button" class="btn-pipeline-primary" id="btn-run-bpc-config">运行所选配置</button>
+        <button type="button" class="btn-pipeline-warn" id="btn-run-all-strategies">全部策略（<code>--all</code>）</button>
+      </div>
+    </section>
+
+    <section class="pipeline-run-card" aria-labelledby="h-pipeline-prog" id="sec-progress">
+      <h2 id="h-pipeline-prog" class="pipeline-run-card-title">进度</h2>
+      <p class="pipeline-runner-status" id="pipeline-status" aria-live="polite">就绪</p>
+      <div class="pipeline-progress-wrap" aria-hidden="false">
+        <div class="pipeline-progress-track">
+          <div class="pipeline-progress-fill" id="pipeline-progress-fill" style="width:0%"></div>
+        </div>
+        <p class="pipeline-progress-meta muted" id="pipeline-progress-label"></p>
+      </div>
+      <p class="muted pipeline-run-log-note" id="pipeline-log-note" hidden>
+        完整日志（排障）：<a id="pipeline-log-link" href="#" target="_blank" rel="noopener noreferrer"></a>
+      </p>
+      <div class="pipeline-result-links" id="pipeline-result-links" hidden>
+        <p class="muted" style="margin:0 0 0.35rem;font-size:0.84rem;">完成后跳转</p>
+        <ul class="pipeline-result-ul" id="pipeline-result-ul"></ul>
+      </div>
+    </section>
+  </div>
+  <script>
+    window.__DASHBOARD_ASSET_PREFIX__ = "{{ dash_assets }}";
+  </script>
+  <script defer src="{{ dash_assets }}/pipeline_run.js"></script>
+</body>
+</html>
