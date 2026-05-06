@@ -12,10 +12,9 @@ rolling:
   mode: turbo_fixed_features
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
-    # 仍使用策略侧已定特征列；不做 SHAP/特征空间重搜（与下方多打分方法无关）。
-    disable_feature_search: true
 
 threshold_calibration:
+  # 标定链不做树模型训练 → 不触发 meta 特征发现 / SHAP 搜特征；与 turbo 固定列一致，仅此一处开关即可。
   enable_model_training: false
   step_months: 1
   prefilter:
@@ -78,7 +77,8 @@ strategies:
           - tail_bad_rate_ratio
           - upside_positive_rate_ratio
       entry_filter:
-        meta_algorithm: true
+        # 关闭 meta 多法 Sharpe 择优与特征发现式 entry 搜索；仍可用 archetype_plateau + scoring_method_fallbacks 的统计口径。
+        meta_algorithm: false
         archetype_plateau: true
         significance_p: 0.10
         significance_min_trades: 4

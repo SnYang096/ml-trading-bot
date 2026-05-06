@@ -60,15 +60,15 @@ def test_load_bpc_slow_from_strategy_research():
 
 
 def test_bpc_turbo_prefilter_locked_fields_are_explicit():
-    """turbo：locked_threshold_tuning 单文件内聚；prefilter/entry_filter 与 slow 同一套多打分方法。"""
+    """turbo：locked_threshold + 多打分方法；entry_filter 关闭 meta_algorithm（slow 覆写为 true）。"""
     cfg = load_pipeline_config(_root() / "config/strategies/bpc/research/turbo.yaml")
     pf = cfg["strategies"]["bpc"]["kpi_gates"]["prefilter"]
     assert pf["locked_threshold_tuning"]["enabled"] is True
     fb = pf.get("scoring_method_fallbacks") or []
     assert len(fb) == 4
     ef = cfg["strategies"]["bpc"]["kpi_gates"]["entry_filter"]
-    assert ef["meta_algorithm"] is True
     assert len(ef.get("scoring_method_fallbacks") or []) == 4
+    assert ef["meta_algorithm"] is False
 
 
 def test_bpc_non_rolling_inherits_locked_tune_from_turbo():
