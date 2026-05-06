@@ -104,9 +104,9 @@ strategies:
         trade_penalty_high: 0.0
         stability_penalty: 0.0
       backtest:
-        min_trades: 50
+        min_trades: 10
       deploy:
-        min_trades: 50
+        min_trades: 10
 
 event_backtest:
   enabled: true
