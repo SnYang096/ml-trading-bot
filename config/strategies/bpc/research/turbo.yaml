@@ -12,6 +12,8 @@ rolling:
   mode: turbo_fixed_features
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
+    # 仍使用策略侧已定特征列；不做 SHAP/特征空间重搜（与下方多打分方法无关）。
+    disable_feature_search: true
 
 threshold_calibration:
   enable_model_training: false
@@ -70,13 +72,22 @@ strategies:
           # writeback_bindings 可选；省略时由 archetypes/prefilter.yaml 推导。
           # 新增 locked 原子阈值：infer 自动生成绑定；网格键 locked_threshold_tuning.{param}_values。
           # OR/any_of 结构锁：可用 skip_parquet_tune；参数别名用 tune_param。
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
       entry_filter:
-        meta_algorithm: false
+        meta_algorithm: true
         archetype_plateau: true
         significance_p: 0.10
         significance_min_trades: 4
         plateau_window: 4
-        archetype_scoring_method: distribution_ks
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
         target_trades_min: 10
         target_trades_max: 50
         trade_penalty_low: 0.002
