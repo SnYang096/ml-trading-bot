@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="{{ dash_assets }}/dashboard.css"/>
+</head>
+<body>
+  <div class="wrap" id="dash-wrap" data-dash-view="{% if show_partition_tabs %}all{% elif show_sec_rolling %}rolling{% else %}history{% endif %}">
+    {% if show_scope_nav %}
+    <nav class="dash-scope-nav" aria-label="看板视图切换">
+      <span class="dash-scope-nav-label muted">视图</span>
+      {% if vis_research or vis_prod %}
+      <a href="/dashboard">入口</a>
+      {% endif %}
+      {% if vis_research %}
+      <a href="/dashboard/research" class="{% if nav_active == 'research' %}active{% endif %}">研究管线</a>
+      {% endif %}
+      {% if vis_prod %}
+      <a href="/dashboard/prod" class="{% if nav_active == 'prod' %}active{% endif %}">上线管线</a>
+      {% endif %}
+    </nav>
+    {% endif %}
+    <h1>{{ title }}</h1>
+    <p class="subhead">根目录 <code>{{ results_root }}</code>
+      · Rolling <strong>{{ rolling_n }}</strong> · History（单次） <strong>{{ flat_n }}</strong>
+      · 本页合计 <strong>{{ total_n }}</strong>{{ filter_hint | safe }}</p>
+    {% if show_prod_ops_panel %}
+    <div class="prod-ops-panel" role="region" aria-label="上线常用命令">
+      <p><strong>终端命令（项目根目录）</strong></p>
+      <ul class="muted" style="margin:0.35rem 0 0 1rem;font-size:0.84rem;line-height:1.5;">
+        <li>采纳实验：<code>mlbot pipeline adopt --strategy &lt;策略&gt; &lt;时间戳目录名&gt;</code></li>
+        <li>列出实验：<code>mlbot pipeline list --strategy &lt;策略&gt;</code></li>
+        <li>Deploy：请查看该批次 <code>report.json</code> 中的 <code>deploy_gate</code> 等字段；具体上线流程以团队规范为准。</li>
+      </ul>
+    </div>
+    {% endif %}
+    <div class="toolbar">
+      <form class="search" method="get" action="{{ form_action }}">
+        <input type="hidden" name="strategy" value="{% if initial_tab_raw != '__all__' %}{{ initial_tab_raw }}{% endif %}"/>
+        <label for="q">搜索路径</label>
+        <input id="q" name="q" type="search" placeholder="如 turbo、research_history…" value="{{ q_esc }}"/>
+        <button type="submit">筛选</button>
+      </form>
+      {% if show_btn_stale %}
+      <button type="button" class="btn-stale" id="btn-del-stale" title="删除当前筛选下、无有效 stitched_summary.json 的 rolling 批次（缺失/空/坏 JSON）">
+        一键删除未汇总 rolling…
+      </button>
+      {% endif %}
+      {% if show_btn_flat_del %}
+      <button type="button" class="btn-flat-del" id="btn-del-flat" title="删除当前策略/搜索筛选下的全部 History（单次）批次目录">
+        一键删除 History（单次）批次…
+      </button>
+      {% endif %}
+      <span class="links-row muted">
+        <a href="/api/rolling-ledgers.json" target="_blank" rel="noopener noreferrer">rolling-ledgers.json</a>
+        · <a href="/api/incomplete-rolling.json" target="_blank" rel="noopener noreferrer">incomplete-rolling.json</a>
+        · <a href="/browse" target="_blank" rel="noopener noreferrer">浏览 results 根目录</a>
+      </span>
+    </div>
+    <div class="tabs" id="strategy-tabs" role="tablist" aria-label="策略"
+      data-active-tab="{{ initial_tab_esc }}">
+      {{ tab_buttons_html | safe }}
+    </div>
+    <div id="layer-chips" class="stat-chips" aria-live="polite"></div>
+    {% if show_partition_tabs %}
+    <div class="view-seg" role="tablist" aria-label="Rolling 与 History">
+      <span class="view-seg-label muted">分区切换</span>
+      <button type="button" class="view-seg-btn" data-view="all" aria-selected="true">全部</button>
+      <button type="button" class="view-seg-btn" data-view="rolling" aria-selected="false">仅 Rolling</button>
+      <button type="button" class="view-seg-btn" data-view="history" aria-selected="false">仅 History（单次）</button>
+    </div>
+    {% endif %}
+    <div id="dash-cards"
+         data-initial-tab="{{ initial_tab_esc }}"
+         data-card-page="{{ card_page }}"
+         data-dashboard-scope="{{ page_scope }}"
+         data-adopt-buttons="{{ '1' if adopt_buttons_js else '0' }}">
+      {% if show_sec_rolling %}
+      <section class="dash-section" id="sec-rolling" aria-labelledby="h-rolling">
+        <h2 id="h-rolling">Rolling（<code>_rolling_sim</code>）</h2>
+        <p class="muted sec-hint">月度阶段跑完后由 Stitch 写入 <code>stitched_summary.json</code>；若缺失则指标为「—」。</p>
+        <div class="ledger-list" id="ledger-list-rolling">
+          <p class="muted">加载中…</p>
+        </div>
+        <p class="muted load-hint" id="rolling-load-hint" hidden></p>
+        <button type="button" class="btn-load-more" id="btn-more-rolling" hidden>加载更多 Rolling…</button>
+      </section>
+      {% endif %}
+      {% if show_sec_history %}
+      <section class="dash-section" id="sec-history" aria-labelledby="h-history">
+        <h2 id="h-history">History / 单次实验（<code>output.history_dir</code>）</h2>
+        <p class="muted sec-hint">约定：<code>…/&lt;策略键&gt;/&lt;YYYYMMDD_HHMMSS&gt;/</code>，路径中<strong>无</strong>
+          <code>_rolling_sim</code>（例如 <code>research_history/me/…</code>、<code>…/turbo-rolling-sim/me/…</code>）。</p>
+        {{ history_banner | safe }}
+        <div class="ledger-list" id="ledger-list-flat">
+          <p class="muted">加载中…</p>
+        </div>
+        <p class="muted load-hint" id="flat-load-hint" hidden></p>
+        <button type="button" class="btn-load-more" id="btn-more-flat" hidden>加载更多 History…</button>
+      </section>
+      {% endif %}
+    </div>
+    <p class="muted" style="font-size:0.8rem;margin-top:1.25rem;">
+      列表分页加载以减轻卡顿。删除无回收站。交易地图见各卡片 <code>continuous</code> / <code>stitched</code> 等快捷链接。
+    </p>
+  </div>
+  <script>
+    window.__DASHBOARD_ASSET_PREFIX__ = "{{ dash_assets }}";
+    window.__DASHBOARD_CARD_PAGE__ = {{ card_page }};
+    window.__DASHBOARD_SCOPE__ = "{{ page_scope }}";
+    window.__DASHBOARD_ADOPT_BUTTONS__ = {{ "true" if adopt_buttons_js else "false" }};
+  </script>
+  <script defer src="{{ dash_assets }}/dashboard.js"></script>
+</body>
+</html>

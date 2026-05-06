@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>results 实验看板 · 入口</title>
+  <link rel="stylesheet" href="{{ dash_assets }}/dashboard.css"/>
+</head>
+<body>
+  <div class="wrap hub-wrap">
+    <h1>results 实验看板</h1>
+    <p class="subhead muted">根目录 <code>{{ results_root }}</code>
+      · Rolling <strong>{{ rolling_n }}</strong> · History（单次） <strong>{{ flat_n }}</strong></p>
+    <p class="muted" style="font-size:0.88rem;">选择管线视图；也可用环境变量隐藏某一侧：
+      <code>ROLLING_DASHBOARD_HIDE_RESEARCH=1</code> 或 <code>ROLLING_DASHBOARD_HIDE_PROD=1</code>。</p>
+    <div class="hub-grid">
+      {% if vis_research %}
+      <a class="hub-card" href="/dashboard/research">
+        <span class="hub-card-title">研究管线</span>
+        <span class="hub-card-desc">Rolling <code>_rolling_sim</code>、月度 Stitch、一键清理未汇总批次</span>
+      </a>
+      {% endif %}
+      {% if vis_prod %}
+      <a class="hub-card" href="/dashboard/prod">
+        <span class="hub-card-title">上线管线</span>
+        <span class="hub-card-desc">History / 单次实验目录、<code>mlbot pipeline adopt</code> 快捷与 deploy 说明</span>
+      </a>
+      {% endif %}
+    </div>
+    <p class="muted" style="font-size:0.82rem;margin-top:1.25rem;">
+      <a href="/browse" target="_blank" rel="noopener noreferrer">浏览 results 根目录</a>
+      · <a href="/api/dashboard-stats.json" target="_blank" rel="noopener noreferrer">dashboard-stats.json</a>
+    </p>
+  </div>
+</body>
+</html>
