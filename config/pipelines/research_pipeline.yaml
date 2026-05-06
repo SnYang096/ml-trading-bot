@@ -126,8 +126,8 @@ strategies:
         min_pass_rate: 0.05
         min_rows: 10
         # Soft target band for stable prefilter selection (not hard reject)
-        target_trades_min: 35
-        target_trades_max: 250
+        target_trades_min: 10
+        target_trades_max: 50
         trade_penalty_low: 0.0018
         trade_penalty_high: 0.001
         stability_penalty: 0.0
@@ -152,8 +152,8 @@ strategies:
           ]
       entry_filter:
         # Soft target band for entry-filter selection (not hard reject)
-        target_trades_min: 35
-        target_trades_max: 250
+        target_trades_min: 10
+        target_trades_max: 50
         trade_penalty_low: 0.0018
         trade_penalty_high: 0.001
         stability_penalty: 0.0
@@ -321,8 +321,8 @@ strategies:
         min_pass_rate: 0.05
         min_rows: 10
         # Soft target band for stable prefilter selection (not hard reject)
-        target_trades_min: 35
-        target_trades_max: 250
+        target_trades_min: 10
+        target_trades_max: 50
         trade_penalty_low: 0.0018
         trade_penalty_high: 0.001
         stability_penalty: 0.0
@@ -347,8 +347,8 @@ strategies:
           ]
       entry_filter:
         # Soft target band for entry-filter selection (not hard reject)
-        target_trades_min: 35
-        target_trades_max: 250
+        target_trades_min: 10
+        target_trades_max: 50
         trade_penalty_low: 0.0018
         trade_penalty_high: 0.001
         stability_penalty: 0.0
@@ -870,7 +870,7 @@ strategies:
         min_rows: 200
         # Soft target band for stable prefilter selection (not hard reject)
         target_trades_min: 45
-        target_trades_max: 260
+        target_trades_max: 50
         trade_penalty_low: 0.0017
         trade_penalty_high: 0.001
         stability_penalty: 0.0
@@ -901,7 +901,7 @@ strategies:
       entry_filter:
         # Soft target band for entry-filter selection (not hard reject)
         target_trades_min: 45
-        target_trades_max: 260
+        target_trades_max: 50
         trade_penalty_low: 0.0017
         trade_penalty_high: 0.001
         stability_penalty: 0.0
@@ -935,8 +935,8 @@ strategies:
         min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
         # Soft target band for stable prefilter selection (not hard reject)
-        target_trades_min: 35
-        target_trades_max: 180
+        target_trades_min: 10
+        target_trades_max: 50
         trade_penalty_low: 0.002
         trade_penalty_high: 0.0012
         stability_penalty: 0.0
@@ -966,8 +966,8 @@ strategies:
         min_combined_pass_rate: 0.20
       entry_filter:
         # Soft target band for entry-filter selection (not hard reject)
-        target_trades_min: 35
-        target_trades_max: 180
+        target_trades_min: 10
+        target_trades_max: 50
         trade_penalty_low: 0.002
         trade_penalty_high: 0.0012
         stability_penalty: 0.0
@@ -1068,7 +1068,7 @@ strategies:
         min_rows: 200
         # Soft target band for stable prefilter selection (not hard reject)
         target_trades_min: 45
-        target_trades_max: 260
+        target_trades_max: 50
         trade_penalty_low: 0.0017
         trade_penalty_high: 0.001
         stability_penalty: 0.0
@@ -1099,7 +1099,7 @@ strategies:
       entry_filter:
         # Soft target band for entry-filter selection (not hard reject)
         target_trades_min: 45
-        target_trades_max: 260
+        target_trades_max: 50
         trade_penalty_low: 0.0017
         trade_penalty_high: 0.001
         stability_penalty: 0.0
@@ -1133,8 +1133,8 @@ strategies:
         min_pass_rate: 0.05 # ME-Short 同 ME, 高选择性 archetype
         min_rows: 200
         # Soft target band for stable prefilter selection (not hard reject)
-        target_trades_min: 35
-        target_trades_max: 180
+        target_trades_min: 10
+        target_trades_max: 50
         trade_penalty_low: 0.002
         trade_penalty_high: 0.0012
         stability_penalty: 0.0
@@ -1164,8 +1164,8 @@ strategies:
         min_combined_pass_rate: 0.20
       entry_filter:
         # Soft target band for entry-filter selection (not hard reject)
-        target_trades_min: 35
-        target_trades_max: 180
+        target_trades_min: 10
+        target_trades_max: 50
         trade_penalty_low: 0.002
         trade_penalty_high: 0.0012
         stability_penalty: 0.0
