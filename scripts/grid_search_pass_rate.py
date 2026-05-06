@@ -63,9 +63,13 @@ def find_gate_artifacts(run_dir: Path, strategy: str, logs_override: str = None)
 
     if logs_gated is None or not logs_gated.exists():
         # fallback: 扫描 results/train_final_*_rr_extreme 目录 (取最新)
+        _r = Path("results")
         candidates = sorted(
-            Path("results").glob(
-                f"train_final_*_rr_extreme/{strategy}/logs_gated.parquet"
+            list(_r.glob(f"train_final_*_rr_extreme/{strategy}/logs_gated.parquet"))
+            + list(
+                _r.glob(
+                    f"{strategy}/train_final_*_rr_extreme/{strategy}/logs_gated.parquet"
+                )
             )
         )
         if candidates:

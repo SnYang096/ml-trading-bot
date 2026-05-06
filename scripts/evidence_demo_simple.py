@@ -62,7 +62,14 @@ TAIL_R = 2.0
 
 def find_logs(strat):
     cands = sorted(
-        PROJECT.glob(f"results/train_final_*_rr_extreme/{strat}/logs_gated.parquet"),
+        list(
+            PROJECT.glob(f"results/train_final_*_rr_extreme/{strat}/logs_gated.parquet")
+        )
+        + list(
+            PROJECT.glob(
+                f"results/{strat}/train_final_*_rr_extreme/{strat}/logs_gated.parquet"
+            )
+        ),
         key=lambda p: p.stat().st_mtime,
     )
     return cands[-1] if cands else None

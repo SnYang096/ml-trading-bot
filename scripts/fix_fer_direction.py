@@ -89,8 +89,9 @@ def main():
 
     # 按时间排序，找最新的
     train_dirs = sorted(
-        [d for d in results_dir.glob("train_final_*_return_tree")],
-        key=lambda x: x.name,
+        list(results_dir.glob("train_final_*_return_tree"))
+        + list((results_dir / "fer").glob("train_final_*_return_tree")),
+        key=lambda x: x.stat().st_mtime,
         reverse=True,
     )
 

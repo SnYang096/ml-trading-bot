@@ -714,6 +714,40 @@ def server(port: int, directory: str, bind: str, force: bool) -> None:
     _serve_static_dir(port=port, directory=directory, bind=bind, force=force)
 
 
+@cli.command("rolling-dashboard")
+@click.option("--port", "-p", type=int, default=8008, show_default=True)
+@click.option(
+    "--dir",
+    "-d",
+    "directory",
+    default="results",
+    show_default=True,
+    help="Directory to serve (same layout as mlbot server)",
+)
+@click.option(
+    "--bind",
+    default="127.0.0.1",
+    show_default=True,
+    help="Bind address",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="If port is in use, kill the listener (requires psutil)",
+)
+def rolling_dashboard(port: int, directory: str, bind: str, force: bool) -> None:
+    """rolling_sim 批次汇总页 + 静态 results（浏览器打开 /dashboard）。"""
+    from scripts.rolling_dashboard_server import run_from_project
+
+    run_from_project(
+        PROJECT_ROOT,
+        bind=bind,
+        port=int(port),
+        results_rel=directory,
+        force=force,
+    )
+
+
 @cli.command("serve-results", hidden=True)
 @click.option("--port", "-p", type=int, default=8008, show_default=True, help="Port")
 @click.option(
@@ -3367,14 +3401,31 @@ def run(
 @pipeline.command("list")
 @click.option("--strategy", help="策略名")
 @click.option("--all", "list_all", is_flag=True, help="列出所有策略")
+@click.option(
+    "--include-bad-candidates",
+    is_flag=True,
+    help="与 --all 联用：同时列出 config/strategies/bad-candidates/<pkg>/ 下各包",
+)
+@click.option(
+    "--list-all-profiles",
+    "list_all_profiles",
+    is_flag=True,
+    help="与 --all 且未指定 --config 联用：turbo/slow/pipeline 各入口各列一遍",
+)
 @click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
-def pipeline_list(strategy, list_all, config_path):
+def pipeline_list(
+    strategy, list_all, include_bad_candidates, list_all_profiles, config_path
+):
     """列出历史实验及其 metrics."""
     args = ["--list"]
     if strategy:
         args.extend(["--strategy", strategy])
     if list_all:
         args.append("--all")
+    if include_bad_candidates:
+        args.append("--include-bad-candidates")
+    if list_all_profiles:
+        args.append("--list-all-profiles")
     if config_path:
         args.extend(["--config", config_path])
 
@@ -3415,7 +3466,13 @@ def diff(strategy, ts1, ts2, config_path):
 @click.option("--all", "delete_all", is_flag=True, help="删除全部历史实验")
 @click.option("--dry-run", is_flag=True, help="预览要删除的实验")
 @click.option("--date-range", nargs=2, help="日期范围 (YYYY-MM-DD YYYY-MM-DD)")
-def delete(strategy, timestamp, status, delete_all, dry_run, date_range):
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    help="pipeline YAML；用于 output.history_dir（与 list/adopt 一致，否则按默认 research 解析）",
+)
+def delete(strategy, timestamp, status, delete_all, dry_run, date_range, config_path):
     """删除实验 (集成 cleanup_old_experiments 功能)."""
     # Import core functions from cleanup script
     _scripts_dir = str(PROJECT_ROOT / "scripts")
@@ -3432,9 +3489,32 @@ def delete(strategy, timestamp, status, delete_all, dry_run, date_range):
         click.echo("❌ 无法导入 cleanup_old_experiments 模块")
         sys.exit(1)
 
+    from pathlib import Path as _Path
+
+    from scripts.pipeline import config as pipeline_config
+    from src.config.strategy_layout import resolve_default_pipeline_config
+
     import shutil
 
-    experiment_dirs = get_experiment_dirs(strategy)
+    if config_path:
+        cfg_p = _Path(config_path).resolve()
+    else:
+        cfg_p, _warns = resolve_default_pipeline_config(
+            PROJECT_ROOT, str(strategy).strip(), None
+        )
+    cfg = pipeline_config.load_pipeline_config(cfg_p)
+    history_root = (PROJECT_ROOT / cfg["output"]["history_dir"]).resolve()
+    try:
+        rel_cfg = cfg_p.relative_to(PROJECT_ROOT)
+    except ValueError:
+        rel_cfg = cfg_p
+    click.echo(f"配置: {rel_cfg}")
+    click.echo(f"实验子目录根: {history_root / strategy}")
+    click.echo(f"（另会尝试遗留路径 results/research_history/{strategy}/）")
+
+    experiment_dirs = get_experiment_dirs(
+        strategy, history_root=history_root, project_root=PROJECT_ROOT
+    )
     if not experiment_dirs:
         click.echo(f"没有找到 {strategy} 策略的实验目录")
         return
@@ -3528,7 +3608,7 @@ def pipeline_event_backtest(
     import subprocess
 
     # 加载 pipeline 配置读取 history_dir
-    _cfg_path = config_path or "config/research_pipeline.yaml"
+    _cfg_path = config_path or "config/pipelines/pcm_orchestrate_2h.yaml"
     _cfg: dict = {}
     try:
         import yaml as _yaml
@@ -7006,7 +7086,10 @@ def train_rolling(
 @click.option(
     "--output-root",
     default=None,
-    help="Root dir for outputs. Default: results/train_final_<timestamp>/ (auto-generated).",
+    help=(
+        "Root dir for outputs. Default: results/<strategy>/train_final_<timestamp>_<label>/ "
+        "(strategy from --config dirname; auto-generated)."
+    ),
 )
 @click.option(
     "--data-path", default="data/parquet_data", show_default=True, help="Data directory"
@@ -7069,9 +7152,11 @@ def train_final(
     from datetime import datetime
     from pathlib import Path
 
-    # 自动生成带时间戳和 label 名称的输出目录
+    # 自动生成带时间戳和 label 名称的输出目录（按策略分子目录，避免 results/ 根目录杂乱）
     if output_root is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _cfg = Path(config)
+        strategy_key = _cfg.parent.name if _cfg.is_file() else _cfg.name
         # 提取 label 名称（如 labels_no_opportunity.yaml -> no_opportunity）
         label_suffix = ""
         if labels:
@@ -7080,7 +7165,7 @@ def train_final(
                 label_suffix = f"_{label_name[7:]}"  # 去掉 "labels_" 前缀
             elif label_name != "labels":
                 label_suffix = f"_{label_name}"
-        output_root = f"results/train_final_{timestamp}{label_suffix}"
+        output_root = f"results/{strategy_key}/train_final_{timestamp}{label_suffix}"
         click.echo(f"📂 Output directory: {output_root}")
 
     use_workspace_prefix = docker and not _is_in_docker()
@@ -9750,14 +9835,25 @@ def gate_apply_archetype(
         results_dir = Path("results")
         if results_dir.exists():
             # 查找匹配 strategy 的最新训练目录
+            # 新布局: results/<strategy>/train_final_*/<strategy>/
+            # 旧布局: results/train_final_*/<strategy>/
             train_dirs = []
-            for d in results_dir.iterdir():
-                if d.is_dir() and d.name.startswith("train_final_"):
-                    strategy_dir = d / strategy if strategy else None
-                    if strategy_dir and strategy_dir.exists():
-                        train_dirs.append(strategy_dir)
-                    elif not strategy:
+            for d in results_dir.glob("train_final_*"):
+                if d.is_dir():
+                    if strategy:
+                        strategy_dir = d / strategy
+                        if strategy_dir.is_dir():
+                            train_dirs.append(strategy_dir)
+                    else:
                         train_dirs.append(d)
+            if strategy:
+                strat_root = results_dir / strategy
+                if strat_root.is_dir():
+                    for d in strat_root.glob("train_final_*"):
+                        if d.is_dir():
+                            sd = d / strategy
+                            if sd.is_dir():
+                                train_dirs.append(sd)
 
             if train_dirs:
                 latest_train = max(train_dirs, key=lambda p: p.stat().st_mtime)

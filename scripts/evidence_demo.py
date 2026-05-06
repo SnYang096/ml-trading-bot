@@ -94,7 +94,12 @@ def find_latest_logs_gated(strategy: str) -> Path | None:
     """找到某策略最新的 logs_gated.parquet."""
     results = PROJECT / "results"
     candidates = sorted(
-        results.glob(f"train_final_*_rr_extreme/{strategy}/logs_gated.parquet"),
+        list(results.glob(f"train_final_*_rr_extreme/{strategy}/logs_gated.parquet"))
+        + list(
+            results.glob(
+                f"{strategy}/train_final_*_rr_extreme/{strategy}/logs_gated.parquet"
+            )
+        ),
         key=lambda p: p.stat().st_mtime,
     )
     return candidates[-1] if candidates else None
