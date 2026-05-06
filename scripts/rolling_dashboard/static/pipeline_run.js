@@ -1,8 +1,6 @@
 (function () {
-  var sel = document.getElementById("bpc-config-select");
-  var btnRun = document.getElementById("btn-run-bpc-config");
+  var cardRoot = document.getElementById("strategy-run-cards");
   var btnAll = document.getElementById("btn-run-all-strategies");
-  var elSkip = document.getElementById("pipeline-skip-shap");
   var elStatus = document.getElementById("pipeline-status");
   var elFill = document.getElementById("pipeline-progress-fill");
   var elProgLabel = document.getElementById("pipeline-progress-label");
@@ -12,12 +10,30 @@
   var elResUl = document.getElementById("pipeline-result-ul");
   var pollTimer = null;
   var jobId = null;
+  var runButtons = [];
 
-  if (!sel || !btnRun) return;
+  if (!elStatus) return;
+
+  if (btnAll) {
+    btnAll.addEventListener("click", function () {
+      if (
+        !confirm(
+          "将执行 PCM 多策略编排（--all + pcm_orchestrate 配置），耗时很长。确定？"
+        )
+      )
+        return;
+      postPayload({ run_all: true });
+    });
+  }
+
+  if (!cardRoot) return;
 
   function setBusy(busy) {
-    btnRun.disabled = !!busy;
-    if (btnAll) btnAll.disabled = !!busy;
+    var v = !!busy;
+    runButtons.forEach(function (b) {
+      b.disabled = v;
+    });
+    if (btnAll) btnAll.disabled = v;
   }
 
   function stopPoll() {
@@ -158,49 +174,142 @@
       });
   }
 
+  function strategySlugFromRel(rel) {
+    var parts = String(rel || "").replace(/\\/g, "/").split("/");
+    if (
+      parts.length >= 4 &&
+      parts[0] === "config" &&
+      parts[1] === "strategies"
+    ) {
+      return parts[2];
+    }
+    return "（其它）";
+  }
+
+  function displayRelUnderStrategy(rel, slug) {
+    var prefix = "config/strategies/" + slug + "/research/";
+    var r = String(rel || "").replace(/\\/g, "/");
+    if (r.indexOf(prefix) === 0) return r.slice(prefix.length);
+    var fallback = "config/strategies/" + slug + "/";
+    if (r.indexOf(fallback) === 0) return r.slice(fallback.length);
+    return r;
+  }
+
+  function slugToDomId(slug) {
+    return String(slug || "x")
+      .replace(/[^a-zA-Z0-9_-]/g, "_")
+      .replace(/^_+|_+$/g, "") || "other";
+  }
+
+  function buildStrategyCard(slug, list) {
+    var section = document.createElement("section");
+    section.className = "pipeline-run-card pipeline-strategy-card";
+    section.setAttribute("data-strategy", slug);
+
+    var h2 = document.createElement("h2");
+    h2.className = "pipeline-run-card-title pipeline-strategy-card-title";
+    h2.textContent = slug;
+    section.appendChild(h2);
+
+    var hint = document.createElement("p");
+    hint.className = "muted";
+    hint.style.fontSize = "0.84rem";
+    hint.style.margin = "0 0 0.5rem";
+    hint.style.lineHeight = "1.45";
+    hint.textContent =
+      "本卡仅含 config/strategies/" +
+      slug +
+      "/research/ 下 " +
+      list.length +
+      " 个管线配置；选项值为完整路径。";
+    section.appendChild(hint);
+
+    var field = document.createElement("div");
+    field.className = "pipeline-run-field";
+
+    var selId = "pipeline-select-" + slugToDomId(slug);
+    var label = document.createElement("label");
+    label.setAttribute("for", selId);
+    label.textContent = "研究配置（YAML）";
+
+    var sel = document.createElement("select");
+    sel.id = selId;
+    sel.setAttribute("aria-label", slug + " 策略 yaml");
+
+    list.forEach(function (c) {
+      var opt = document.createElement("option");
+      opt.value = c.rel_path;
+      opt.textContent = displayRelUnderStrategy(c.rel_path, slug);
+      sel.appendChild(opt);
+    });
+
+    field.appendChild(label);
+    field.appendChild(sel);
+    section.appendChild(field);
+
+    var actions = document.createElement("div");
+    actions.className = "pipeline-run-actions";
+
+    var btnRun = document.createElement("button");
+    btnRun.type = "button";
+    btnRun.className = "btn-pipeline-primary";
+    btnRun.textContent = "运行所选配置";
+    btnRun.addEventListener("click", function () {
+      var rel = (sel.value || "").trim();
+      if (!rel) return;
+      postPayload({ config_path: rel });
+    });
+
+    runButtons.push(btnRun);
+    actions.appendChild(btnRun);
+    section.appendChild(actions);
+
+    return section;
+  }
+
   fetch("/api/bpc-research-configs.json")
     .then(function (r) {
       return r.json();
     })
     .then(function (data) {
       var cfgs = (data && data.configs) || [];
-      sel.innerHTML = "";
+      cardRoot.innerHTML = "";
+      runButtons = [];
+
       if (!cfgs.length) {
-        sel.innerHTML =
-          '<option value="">（未发现 yaml，请检查 config/strategies/bpc/research/）</option>';
-        btnRun.disabled = true;
+        var empty = document.createElement("section");
+        empty.className = "pipeline-run-card";
+        empty.innerHTML =
+          "<h2 class=\"pipeline-run-card-title\">无配置</h2><p class=\"muted\" style=\"font-size:0.84rem;margin:0\">未发现 research 管线 yaml，请检查 <code>config/strategies/&lt;slug&gt;/research/</code></p>";
+        cardRoot.appendChild(empty);
         return;
       }
+
+      var bySlug = {};
       cfgs.forEach(function (c) {
-        var opt = document.createElement("option");
-        opt.value = c.name;
-        opt.textContent = c.name + " → " + c.rel_path;
-        sel.appendChild(opt);
+        var slug = strategySlugFromRel(c.rel_path);
+        if (!bySlug[slug]) bySlug[slug] = [];
+        bySlug[slug].push(c);
+      });
+      var slugs = Object.keys(bySlug).sort(function (a, b) {
+        return a.localeCompare(b, "en");
+      });
+
+      slugs.forEach(function (slug) {
+        var list = bySlug[slug].slice().sort(function (a, b) {
+          return String(a.rel_path).localeCompare(String(b.rel_path), "en");
+        });
+        cardRoot.appendChild(buildStrategyCard(slug, list));
       });
     })
     .catch(function () {
-      sel.innerHTML = '<option value="">加载配置列表失败</option>';
-      btnRun.disabled = true;
+      cardRoot.innerHTML = "";
+      runButtons = [];
+      var err = document.createElement("section");
+      err.className = "pipeline-run-card";
+      err.innerHTML =
+        "<h2 class=\"pipeline-run-card-title\">加载失败</h2><p class=\"muted\" style=\"font-size:0.84rem;margin:0\">无法拉取配置列表</p>";
+      cardRoot.appendChild(err);
     });
 
-  btnRun.addEventListener("click", function () {
-    var name = (sel.value || "").trim();
-    if (!name) return;
-    postPayload({
-      strategy: "bpc",
-      bpc_research_config: name,
-      skip_shap: elSkip ? !!elSkip.checked : true,
-    });
-  });
-
-  if (btnAll)
-    btnAll.addEventListener("click", function () {
-      if (
-        !confirm(
-          "将执行 --all（全部策略），耗时很长且无单一 BPC yaml。确定？"
-        )
-      )
-        return;
-      postPayload({ run_all: true, skip_shap: elSkip ? !!elSkip.checked : true });
-    });
 })();

@@ -32,7 +32,11 @@ _VALID_STAGES = frozenset(
     }
 )
 
-_BPC_RESEARCH_DIR = Path("config/strategies/bpc/research")
+_STRATEGIES_ROOT = Path("config/strategies")
+_EXCLUDED_STRATEGY_SUBDIRS = frozenset({"bad-candidates", "tree_strategies"})
+
+# PCM 多策略编排（与 scripts/auto_research_pipeline.DEFAULT_PCM_ORCHESTRATE 对齐）
+_DEFAULT_PCM_ORCHESTRATE_REL = "config/pipelines/pcm_orchestrate_2h.yaml"
 
 # Ordered phases (substring match on recent log); pct upper bound for that phase while running.
 _PROGRESS_MARKERS: List[Tuple[str, int]] = [
@@ -84,37 +88,52 @@ def _utc_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _strategy_slug_from_strategies_rel(rel_posix: str) -> Optional[str]:
+    parts = rel_posix.split("/")
+    if len(parts) < 4:
+        return None
+    if parts[0] != "config" or parts[1] != "strategies":
+        return None
+    return parts[2]
+
+
+def _is_research_pipeline_yaml_rel(rel_posix: str) -> bool:
+    """Only ``config/strategies/<slug>/research/**/*.yaml`` (per-strategy research pipelines)."""
+    parts = rel_posix.split("/")
+    if len(parts) < 5:
+        return False
+    if parts[0] != "config" or parts[1] != "strategies":
+        return False
+    slug = parts[2]
+    if slug in _EXCLUDED_STRATEGY_SUBDIRS:
+        return False
+    return parts[3] == "research"
+
+
 def list_bpc_research_configs(project_root: Path) -> List[Dict[str, str]]:
-    """YAML files under ``config/strategies/bpc/research/``."""
-    d = (project_root / _BPC_RESEARCH_DIR).resolve()
+    """Research pipeline YAMLs: ``config/strategies/<slug>/research/**/*.yaml`` (and ``.yml``).
+
+    Omits ``archetypes/``, ``features/``, etc. — only the ``research/`` subtree.
+    Excludes strategy roots ``bad-candidates`` and ``tree_strategies``.
+    """
+    root = project_root.resolve()
+    d = (root / _STRATEGIES_ROOT).resolve()
     if not d.is_dir():
         return []
-    out: List[Dict[str, str]] = []
-    for p in sorted(d.glob("*.yaml")):
-        rel = p.relative_to(project_root.resolve())
-        out.append(
-            {
-                "name": p.name,
-                "rel_path": rel.as_posix(),
-            }
-        )
-    for p in sorted(d.glob("*.yml")):
-        rel = p.relative_to(project_root.resolve())
-        out.append(
-            {
-                "name": p.name,
-                "rel_path": rel.as_posix(),
-            }
-        )
-    # de-dupe by name
-    seen = set()
-    uniq: List[Dict[str, str]] = []
-    for item in out:
-        if item["name"] in seen:
+    paths: List[Path] = []
+    for p in d.rglob("*"):
+        if not p.is_file():
             continue
-        seen.add(item["name"])
-        uniq.append(item)
-    return uniq
+        if p.suffix.lower() not in {".yaml", ".yml"}:
+            continue
+        rel = p.relative_to(root).as_posix()
+        if not _is_research_pipeline_yaml_rel(rel):
+            continue
+        paths.append(p)
+    return [
+        {"name": p.name, "rel_path": p.relative_to(root).as_posix()}
+        for p in sorted(paths, key=lambda x: x.relative_to(root).as_posix())
+    ]
 
 
 def estimate_progress_from_log(tail: str, *, job_status: str) -> Dict[str, Any]:
@@ -169,7 +188,7 @@ def result_navigation_hints(
     if run_all:
         links.append(
             {
-                "label": "研究管线看板（全部策略）",
+                "label": "研究管线看板（PCM 多策略）",
                 "href": "/dashboard/research",
             }
         )
@@ -305,23 +324,34 @@ def validate_payload(
         base = str(bpc_rc).strip()
         if run_all:
             return None, "bpc_research_config_conflicts_run_all"
-        if strategy != "bpc":
-            return None, "bpc_research_config_requires_strategy_bpc"
         if not _RE_SAFE_YAML_NAME.match(base):
             return None, "invalid_bpc_research_config"
-        derived = (_BPC_RESEARCH_DIR / base).as_posix()
+        derived = (_STRATEGIES_ROOT / "bpc" / "research" / base).as_posix()
         if config_path_s and config_path_s != derived:
             return None, "config_path_conflicts_bpc_research_config"
         config_path_s = derived
 
+    pcm_rel = os.environ.get("ROLLING_DASHBOARD_PCM_CONFIG", "").strip()
+    if not pcm_rel:
+        pcm_rel = _DEFAULT_PCM_ORCHESTRATE_REL
+
     if run_all:
         if strategy:
             return None, "run_all_conflicts_with_strategy"
-        if config_path_s:
-            return None, "run_all_conflicts_with_config"
+        config_path_s = pcm_rel
     else:
-        if not strategy or not _slug_ok(strategy):
-            return None, "invalid_strategy"
+        if config_path_s:
+            if not _is_research_pipeline_yaml_rel(config_path_s):
+                return None, "config_path_not_under_strategies_research_or_excluded"
+            derived_strategy = _strategy_slug_from_strategies_rel(config_path_s)
+            if derived_strategy is None:
+                return None, "config_path_not_under_strategies_or_excluded"
+            if strategy and strategy != derived_strategy:
+                return None, "strategy_mismatches_config_path"
+            strategy = derived_strategy
+        else:
+            if not strategy or not _slug_ok(strategy):
+                return None, "invalid_strategy"
         if len(strategy) > 64:
             return None, "strategy_too_long"
 

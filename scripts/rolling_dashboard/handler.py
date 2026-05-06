@@ -143,7 +143,12 @@ def build_request_handler(results_root: Path):
                 self.send_response(200)
                 self.send_header("Content-Type", ct)
                 self.send_header("Content-Length", str(len(data)))
-                self.send_header("Cache-Control", "public, max-age=3600")
+                # pipeline_run.js 与页面 DOM 强耦合；长缓存会导致旧脚本 + 新 HTML → 功能缺失。
+                if asset.name == "pipeline_run.js":
+                    cc = "no-store, max-age=0, must-revalidate"
+                else:
+                    cc = "public, max-age=3600"
+                self.send_header("Cache-Control", cc)
                 self.end_headers()
                 self.wfile.write(data)
                 return

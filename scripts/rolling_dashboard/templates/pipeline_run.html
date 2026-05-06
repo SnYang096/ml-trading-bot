@@ -25,21 +25,18 @@
     {% endif %}
     <h1>{{ title }}</h1>
     <p class="subhead">根目录 <code>{{ results_root }}</code>
-      · 使用 <code>config/strategies/bpc/research/*.yaml</code> 作为 <code>--config</code>，执行<strong>完整</strong>自动研究流水线（不传 <code>--stage</code>）。日志仍写入 <code>results/logs/bpc/</code>。</p>
+      · 下拉列表仅含各策略的 <code>config/strategies/&lt;slug&gt;/research/**/*.yaml</code>（研究管线入口配置，不含 archetypes/features 等碎片）；排除策略根 <code>bad-candidates</code>、<code>tree_strategies</code>。所选文件作为 <code>--config</code>，并自动带上对应 <code>--strategy</code>，执行<strong>完整</strong>自动研究流水线（不传 <code>--stage</code>）。SHAP 等由所选 YAML / 管线配置决定，界面不传 <code>--skip-shap</code>。
+      「PCM 多策略」为<strong>全局</strong>任务（不绑定某一策略目录），使用 <code>config/pipelines/pcm_orchestrate_2h.yaml</code>（可用 <code>ROLLING_DASHBOARD_PCM_CONFIG</code> 覆盖）跑 <code>--all</code>。后台同一时刻仅一个任务；单策略日志 <code>results/logs/&lt;策略&gt;/</code>；PCM 日志 <code>results/logs/all/</code>。</p>
 
-    <section class="pipeline-run-card" aria-labelledby="h-pipeline-run">
-      <h2 id="h-pipeline-run" class="pipeline-run-card-title">启动任务</h2>
-      <div class="pipeline-run-field">
-        <label for="bpc-config-select">研究配置（YAML）</label>
-        <select id="bpc-config-select" aria-label="BPC research yaml"></select>
-      </div>
-      <label class="pipeline-runner-check pipeline-run-check">
-        <input type="checkbox" id="pipeline-skip-shap" checked/>
-        <span>跳过 SHAP（<code>--skip-shap</code>）</span>
-      </label>
+    <div id="strategy-run-cards" class="pipeline-strategy-cards" aria-label="按策略启动">
+      <p class="muted pipeline-strategy-cards-loading" id="strategy-cards-loading" style="margin:0;font-size:0.88rem;">正在加载策略列表…（若长时间无各策略卡片，请强制刷新浏览器缓存：Ctrl+Shift+R）</p>
+    </div>
+
+    <section class="pipeline-run-card pipeline-run-card-pcm" aria-labelledby="h-pipeline-pcm">
+      <h2 id="h-pipeline-pcm" class="pipeline-run-card-title">多策略 PCM</h2>
+      <p class="muted pipeline-run-pcm-hint">全局编排：不针对某一 <code>config/strategies/&lt;slug&gt;</code> 目录。与上方各策略卡片中的「运行所选配置」互斥（排队）。</p>
       <div class="pipeline-run-actions">
-        <button type="button" class="btn-pipeline-primary" id="btn-run-bpc-config">运行所选配置</button>
-        <button type="button" class="btn-pipeline-warn" id="btn-run-all-strategies">全部策略（<code>--all</code>）</button>
+        <button type="button" class="btn-pipeline-warn" id="btn-run-all-strategies">PCM 多策略（<code>--all</code> + pcm 编排）</button>
       </div>
     </section>
 
@@ -64,6 +61,6 @@
   <script>
     window.__DASHBOARD_ASSET_PREFIX__ = "{{ dash_assets }}";
   </script>
-  <script defer src="{{ dash_assets }}/pipeline_run.js"></script>
+  <script defer src="{{ dash_assets }}/pipeline_run.js?v={{ pipeline_js_v }}"></script>
 </body>
 </html>

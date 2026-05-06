@@ -133,15 +133,26 @@ def render_dashboard(
     )
 
 
+_PIPELINE_RUN_JS = Path(__file__).resolve().parent / "static" / "pipeline_run.js"
+
+
+def _pipeline_run_js_v() -> str:
+    try:
+        return str(int(_PIPELINE_RUN_JS.stat().st_mtime))
+    except OSError:
+        return "0"
+
+
 def render_pipeline_run_page(results_root: Path) -> str:
-    """独立页：按 ``config/strategies/bpc/research/*.yaml`` 跑完整研究管线（无分阶段）。"""
+    """独立页：从 ``config/strategies`` 选 YAML 跑完整研究管线；PCM 按钮跑多策略编排。"""
     rr = results_root.resolve()
     vis = dashboard_visibility()
     tpl = _jinja_env().get_template("pipeline_run.html")
     return tpl.render(
-        title="运行研究管线（BPC）",
+        title="运行研究管线",
         results_root=html.escape(str(rr)),
         dash_assets=DASHBOARD_ASSET_PREFIX,
+        pipeline_js_v=_pipeline_run_js_v(),
         vis_research=vis["research"],
         vis_prod=vis["prod"],
         show_scope_nav=vis["research"] or vis["prod"],
