@@ -53,6 +53,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import yaml
 
+from src.config.strategy_layout import is_research_turbo_or_slow_yaml
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 os.chdir(PROJECT_ROOT)
 
@@ -519,8 +521,8 @@ def trigger_retrain(
         "--config",
         str(config_path),
     ]
-
-    if dry_run:
+    if is_research_turbo_or_slow_yaml(config_path):
+        cmd.extend(["--stage", "rolling_sim"])
         print(f"  [DRY-RUN] 命令: {' '.join(cmd)}")
         return 0
 

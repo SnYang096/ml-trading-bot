@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# BPC / ME / TPC × turbo / slow / non_rolling（默认 full 管线），分阶段并行：
+# BPC / ME / TPC × turbo / slow / non_rolling，分阶段并行：
+#   turbo / slow → --stage rolling_sim；non_rolling → 默认 full
 #   阶段 1 — 三个策略同时跑 turbo
 #   阶段 2 — 三个策略同时跑 slow
 #   阶段 3 — 三个策略同时跑 non_rolling
@@ -24,13 +25,17 @@ run_parallel_phase() {
   local profile=$1
   local -a strat=(bpc me tpc)
   local -a pids=()
+  local -a stage_args=()
+  if [[ "$profile" == "turbo" || "$profile" == "slow" ]]; then
+    stage_args=(--stage rolling_sim)
+  fi
   echo "===== PHASE START $(date -Is) profile=${profile} strategies=${strat[*]} =====" | tee -a "$SUMMARY"
   for s in "${strat[@]}"; do
     local tag="${s}_${profile}"
     local log="${LOGDIR}/${tag}.log"
     {
       echo "===== START $(date -Is) ${tag} ====="
-      echo "cmd: python scripts/auto_research_pipeline.py --strategy ${s} --config config/strategies/${s}/research/${profile}.yaml --no-adopt"
+      echo "cmd: python scripts/auto_research_pipeline.py --strategy ${s} --config config/strategies/${s}/research/${profile}.yaml ${stage_args[*]} --no-adopt"
     } | tee -a "$SUMMARY"
     rm -f "$log"
     (
@@ -38,6 +43,7 @@ run_parallel_phase() {
       python scripts/auto_research_pipeline.py \
         --strategy "$s" \
         --config "config/strategies/${s}/research/${profile}.yaml" \
+        "${stage_args[@]}" \
         --no-adopt 2>&1 | tee -a "$log"
       exit "${PIPESTATUS[0]}"
     ) &

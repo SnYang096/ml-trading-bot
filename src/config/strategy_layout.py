@@ -79,6 +79,17 @@ def _resolve_research_pipeline_marker(
     return marker.resolve(), []
 
 
+def is_research_turbo_or_slow_yaml(config_path: Path) -> bool:
+    """True for ``config/strategies/*/research/turbo.yaml`` or ``slow.yaml``."""
+    try:
+        parts = config_path.resolve().parts
+    except Exception:
+        parts = config_path.parts
+    if len(parts) < 2:
+        return False
+    return parts[-1] in ("turbo.yaml", "slow.yaml") and parts[-2] == "research"
+
+
 def deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """Deep-merge two dicts (override wins); lists and scalars are replaced."""
     out: Dict[str, Any] = dict(base)

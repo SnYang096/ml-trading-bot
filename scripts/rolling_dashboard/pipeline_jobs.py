@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .constants import PACKAGE_DIR
+from src.config.strategy_layout import is_research_turbo_or_slow_yaml
 
 _VALID_STAGES = frozenset(
     {
@@ -540,6 +541,13 @@ def validate_payload(
         if len(strategy) > 64:
             return None, "strategy_too_long"
 
+    if (
+        config_path_s
+        and stage_opt is None
+        and is_research_turbo_or_slow_yaml(Path(config_path_s))
+    ):
+        stage_opt = "rolling_sim"
+
     return (
         {
             "run_all": run_all,
@@ -577,9 +585,22 @@ def start_pipeline_job(
     if not script.is_file():
         return None, "missing_auto_research_pipeline"
 
-    if norm.get("config_path") and not _verify_config_exists(
-        project_root, norm["config_path"]
-    ):
+    cfg_rel = (norm.get("config_path") or "").strip()
+    stage_run: Optional[str] = norm.get("stage")
+    if not norm["run_all"] and not cfg_rel and norm.get("strategy"):
+        from src.config.strategy_layout import resolve_default_pipeline_config
+
+        p, _ = resolve_default_pipeline_config(project_root, norm["strategy"], None)
+        pr = project_root.resolve()
+        try:
+            cfg_rel = str(p.resolve().relative_to(pr))
+        except ValueError:
+            cfg_rel = str(p.resolve())
+
+    if cfg_rel and stage_run is None and is_research_turbo_or_slow_yaml(Path(cfg_rel)):
+        stage_run = "rolling_sim"
+
+    if cfg_rel and not _verify_config_exists(project_root, cfg_rel):
         return None, "config_not_found"
 
     logs_base = results_root.resolve() / "logs"
@@ -595,21 +616,21 @@ def start_pipeline_job(
         cmd.append("--all")
     else:
         cmd.extend(["--strategy", norm["strategy"]])
-    if norm["config_path"]:
-        cmd.extend(["--config", norm["config_path"]])
-    if norm["stage"]:
-        cmd.extend(["--stage", norm["stage"]])
+    if cfg_rel:
+        cmd.extend(["--config", cfg_rel])
+    if stage_run:
+        cmd.extend(["--stage", stage_run])
     if norm["skip_shap"]:
         cmd.append("--skip-shap")
 
-    stage_disp = norm["stage"] or "full"
+    stage_disp = stage_run or "full"
 
     job = PipelineJob(
         job_id=job_id,
         strategy=strat_dir,
         stage=stage_disp,
         run_all=norm["run_all"],
-        config_path=norm["config_path"],
+        config_path=cfg_rel or None,
         skip_shap=norm["skip_shap"],
         status="running",
         started_at=_utc_iso(),

@@ -48,6 +48,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import yaml
 
+from src.config.strategy_layout import is_research_turbo_or_slow_yaml
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 os.chdir(PROJECT_ROOT)
 
@@ -378,6 +380,8 @@ def fill_missing_data(
             "--config",
             str(config_path),
         ]
+        if is_research_turbo_or_slow_yaml(config_path):
+            cmd.extend(["--stage", "rolling_sim"])
         if dry_run:
             print(f"  [DRY-RUN] {' '.join(cmd)}")
             filled += 1

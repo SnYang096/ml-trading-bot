@@ -69,6 +69,7 @@ from src.config.strategy_layout import (
     RESEARCH_PIPELINE_PROBE_NAMES,
     resolve_default_pipeline_config,
     strategy_packaged_root,
+    is_research_turbo_or_slow_yaml,
 )
 
 
@@ -6978,6 +6979,25 @@ def main():
 
     cfg = load_pipeline_config(Path(args.config))
     history_dir = PROJECT_ROOT / cfg["output"]["history_dir"]
+
+    if (
+        args.stage == "full"
+        and not args.list_experiments
+        and not args.adopt
+        and not args.diff
+        and is_research_turbo_or_slow_yaml(Path(args.config))
+        and not args.compare_only
+        and not str(args.locked_prefilter_override or "").strip()
+    ):
+        p.error(
+            "research turbo.yaml / slow.yaml 已禁用 --stage full（整段 holdout 一次跑完）。\n"
+            "请改用:\n"
+            "  • 月滚动与 continuous 交易图: --stage rolling_sim\n"
+            "  • 整段静态 holdout 全量研究: config/strategies/<slug>/research/non_rolling.yaml "
+            "+ 默认 full\n"
+            "  • 只做 drift 对比: --compare-only\n"
+            "  • locked 预过滤调参子进程: 保留 --locked-prefilter-override"
+        )
 
     # ── 子命令: 列出历史实验 ──
     if args.list_experiments:
