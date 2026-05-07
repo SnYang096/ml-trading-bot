@@ -428,6 +428,43 @@ flowchart TB
   end
 ```
 
+#### 首次上线、例行迭代与 Regime shift（图 4）
+
+**算力体感**：一次 **`slow` + `rolling_sim`** 通常要跑 **多个月 × 每层阶段（含 SHAP / meta 等）**，Wall time 上往往比**单轮** **`non_rolling` + `full`** 更「重」；**`non_rolling`** 则是 **整段静态 holdout 上的一口气大跑**，更适合 **首版基线 / 结构重挂后的整段对齐**。两者**谁更吃机器**与月份数、数据量有关；**分工**仍以前文 **图 1–2**（slow 体检特征与规则、non_rolling 整段重对齐）为准，不矛盾。
+
+**图 4 — 首次上线、例行迭代、Regime shift**
+
+```mermaid
+flowchart TB
+  start([首次上线 或\n结构重挂后大盘])
+
+  start --> nr["non_rolling + full\n（整段静态 holdout）"]
+  nr --> c1{ADOPT?}
+  c1 -->|否| nr
+  c1 -->|是| ad1["pipeline adopt\n→ deploy live\n刷新监控基线"]
+  ad1 --> routine[例行迭代循环]
+
+  routine --> turbo["turbo + rolling_sim\n约月度 · 阈值/执行"]
+  routine --> slow["slow + rolling_sim\n约季度 · SHAP/meta/规则体检"]
+  turbo --> gate{ADOPT 且过\ndeploy 门禁?}
+  slow --> gate
+  gate -->|是| ad2["adopt → deploy"]
+  gate -->|否| routine
+  ad2 --> routine
+
+  turbo --> mon{怀疑 Regime shift\n或监控告警?}
+  slow --> mon
+  ad2 --> mon
+  mon -->|否 继续例行| routine
+  mon -->|L1 偏刻度| turbo
+  mon -->|L2 特征/规则| slow
+  mon -->|L3 重挂结构| nr
+```
+
+- **首次**：冷启动或 regime 后「新版」首次落盘，多半走 **`non_rolling` → adopt → deploy**（与 **图 2** 中「结构层要动」一致）。  
+- **例行**：**turbo** 跟刻度，**slow** 做体检；过关再 **deploy**。  
+- **Regime shift**：先 **L1 加密/加强 turbo**，仍不对再 **L2 slow**，仍要改结构再 **L3 non_rolling** 回到左侧大环。
+
 #### 实验目录 vs `rolling_sim` 批次根（怎么用）
 
 同一份 **`turbo` / `slow` YAML** 的 `output.history_dir` 下，产物分三层心智，**不要混读**：
