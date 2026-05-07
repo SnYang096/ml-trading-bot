@@ -361,25 +361,94 @@ python scripts/deploy_config_to_live.py --diff --strategy bpc
 python scripts/deploy_config_to_live.py --deploy --strategy bpc --git-commit
 ```
 
+#### Turbo / Slow / Non_rolling：分工与流程图
+
+以下为 **BPC 研究管线**（`config/strategies/bpc/research/*.yaml`）的推荐阅读顺序；ME / TPC 等策略包结构相同。CLI 约定：**`turbo.yaml` / `slow.yaml` 日常用 `--stage rolling_sim`**；**`non_rolling.yaml` 用默认 `--stage full`**（整段静态 holdout）。`mlbot pipeline run` 与 `python scripts/auto_research_pipeline.py` 等价时需带齐同一套参数。
+
+**图 1 — 总览：三条管线如何接到一起**
+
+```mermaid
+flowchart TB
+  subgraph routine["例行（高频）"]
+    T["Turbo + research/turbo.yaml\n--stage rolling_sim"]
+    T --> TR["_rolling_sim / 批次根\nstitched_summary · trading_map_continuous"]
+  end
+
+  subgraph periodic["定期体检（中频）"]
+    S["Slow + research/slow.yaml\n--stage rolling_sim"]
+    S --> SR["同上 history_dir\nSHAP · meta entry · 结构 lookback"]
+  end
+
+  subgraph heavy["按需大修（低频）"]
+    N["Non_rolling + research/non_rolling.yaml\n--stage full"]
+    N --> NR["non-rolling-sim / … / bpc / 时间戳\n整段静态 holdout 对齐"]
+  end
+
+  TR --> Q{"Slow 体检：\n特征/规则层漂移大？"}
+  Q -->|否| T
+  Q -->|是| N
+
+  SR --> Q
+```
+
+**图 2 — 操作顺序：从新一期研究到是否 adopt**
+
+```mermaid
+flowchart LR
+  A[准备数据 / end_date] --> B{这轮要动什么？}
+
+  B -->|只跟进阈值与执行| C["turbo.yaml\nrolling_sim"]
+  B -->|查特征与规则是否还成立| D["slow.yaml\nrolling_sim"]
+
+  C --> E{指标与 drift\n可接受？}
+  D --> E
+
+  E -->|是| F[按需 adopt / deploy]
+  E -->|否，结构层要动| G["non_rolling.yaml\nfull"]
+
+  G --> H{ADOPT / ALERT？}
+  H -->|ADOPT| F
+  H -->|再观察| D
+```
+
+**图 3 — 目录心智（避免看错结果）**
+
+```mermaid
+flowchart TB
+  subgraph turbo_slow["Turbo / Slow 共用 history_dir（如 turbo-rolling-sim）"]
+    H1["results/.../turbo-rolling-sim"]
+    H1 --> RS["_rolling_sim / 本批时间戳 /\nstitched_summary · trading_map_continuous"]
+    RS --> FM["fast_month_YYYY-MM /\n该月「全窗口」管线产物\nstrategies_calibrated · report · …"]
+    H1 --> LEG["bpc me tpc / 时间戳 /\n顶层快照：turbo·slow 默认 full 已禁用\n可能为空；non_rolling 不在此树"]
+  end
+
+  subgraph nr["Non_rolling"]
+    H2["results/.../non-rolling-sim"]
+    H2 --> BPC["bpc / 时间戳\nlist · adopt 对齐 non_rolling 的 history_dir"]
+  end
+```
+
 #### 实验目录 vs `rolling_sim` 批次根（怎么用）
 
-同一份 pipeline YAML 的 `output.history_dir` 下，有两种并列的产物树，**不要混用一种心智去读另一种**：
+同一份 **`turbo` / `slow` YAML** 的 `output.history_dir` 下，产物分三层心智，**不要混读**：
 
-| 层级                                               | 路径模式                                    | 用途                                                                                                                         |
-| -------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **单次管线快照（list / adopt / delete 默认对齐）** | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/` | 一整段研究跑完生成的顶层实验目录；`mlbot pipeline list` 表格里的「历史实验」指的就是这里的子目录。                           |
-| **rolling_sim 批次聚合（研究调试用）**             | `{history_dir}/_rolling_sim/<批次时间戳>/…` | `--stage rolling_sim` 时按月滚动、阶段产物嵌套在此树下（Prefilter/Gate/月度复盘等）；体量更大，**一般不当作 adopt 主列表**。 |
+| 层级 | 路径模式 | 用途 |
+| ---- | -------- | ---- |
+| **rolling_sim 批次根** | `{history_dir}/_rolling_sim/<本批YYYYMMDD_HHMMSS>/` | **`--stage rolling_sim` 一次 invocation 的批次根**：`monthly_ledger.jsonl`、`stitched_summary.json`、`trading_map_continuous.html`、跨月拼接索引等。 |
+| **批次内的「月度全窗口」子树** | `{history_dir}/_rolling_sim/<本批>/<fast_month_YYYY-MM>/`（及 slow 模式下可能的 `slow_snapshot_*` 等） | 每个月 rolling 推进时，在该目录下跑完**当月标定窗内整套阶段**（等价于嵌在滚动里的一棵「月粒度 full 产物」：`strategies_calibrated/`、各层 plateau、事件回测、实验配置副本等），**不是** CLI 顶层 `--stage full`。 |
+| **顶层策略快照目录** | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/` | **单机全段 `full` 的典型落点**（`report.json` 等）。当前 **`research/turbo.yaml` / `slow.yaml` 已禁止默认 `full`**，该路径常为空或仅出现在例外（如 `--locked-prefilter-override` 子进程、历史遗留）。**整段静态 holdout** 用 **`non_rolling.yaml`**，目录在 **`non-rolling-sim`**。**多腿策略**在 `rolling_sim` 收尾时可能把最后一月的 `strategies_calibrated` **拷贝**到 `{history_dir}/<策略>/<本批时间戳>/strategies/<策略>/` 供 `pipeline adopt`，见下文 §6.1。 |
 
 **命令行为**：当你执行带 `--config` 的 `mlbot pipeline list …`（或对某策略包扫描到的等价入口），脚本在打印完上述「快照」表格后，若磁盘上存在 `_rolling_sim`，会在末尾多一行类似：
 
 `ℹ️ rolling_sim 批次根 …: results/…/_rolling_sim/ （约 N 个时间戳子目录）`
 
-含义：**在同级的 `_rolling_sim/` 下还有 N 个「批次根」目录**，每个批次根内部才是按月/按阶段的子结构；与上方 `{history_dir}/<策略键>/<ts>/` **不是同一棵树**。
+含义：**`_rolling_sim/` 下每一子目录是一次滚动批次的根**；其内部的 **`fast_month_*`**（或等价前缀）才是按月拆开的子实验树，与顶层的 `{history_dir}/<策略键>/<ts>/` **不是同一棵树**。
 
 **日常怎么用**：
 
-1. **认 adopt / 删快照**：只看 `{history_dir}/<策略键>/<ts>/`，与 `list` 主表一致；`adopt`、`delete` 的时间戳也应针对这一层（并带同一 `--config`）。  
-2. **查 rolling 跑完了哪几次批次、下面多大**：对提示里的路径直接列目录即可。
+1. **看滚动结果 / 连续交易图**：进 `{history_dir}/_rolling_sim/<本批>/`，读 `stitched_summary.json`、打开 `trading_map_continuous.html`；需排查单月细节时进对应 **`fast_month_<YYYY-MM>/`**。  
+2. **认 adopt / 删快照（顶层 `list` 表）**：对 **`non_rolling`** 仍看 `{non-rolling-sim}/<策略>/<ts>/`；对 **BPC 类 turbo/slow** 若顶层无新快照， adopt 流程以你们当前脚本约定为准（多腿见 §6.1）。  
+3. **查 rolling 跑完了哪几次批次**：对 `list` 末尾 ℹ️ 路径 `ls` 各批次根即可。
 
 ```bash
 # 将路径换成你 list 末尾 ℹ️ 里那一行（或 slow.yaml 里 history_dir + /_rolling_sim）
