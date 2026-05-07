@@ -415,6 +415,7 @@ class TestVPINStreamingVsBatch:
             ticks=ticks,
             vpin_n_buckets=50,
             vpin_adaptive=True,
+            freq="1T",
         )
 
         # 流式计算（分块处理，模拟在线推理）
@@ -436,6 +437,7 @@ class TestVPINStreamingVsBatch:
                     ticks=chunk_ticks,
                     vpin_n_buckets=50,
                     vpin_adaptive=True,
+                    freq="1T",
                 )
                 streaming_results.append(chunk_result)
 

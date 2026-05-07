@@ -211,9 +211,16 @@ mlbot data download-open-interest \
 ### 0) 质量闸门（推荐）
 
 ```bash
+# 关键特征门禁（本机 pytest，需已 pip install -e ".[dev]" 或装齐 tests 依赖）
 make test-key-features-all
+# 特征依赖 / 注册表合同检查（不启 Docker）
 mlbot diagnose feature-contract --no-docker
+# 可选：归一化合同 + 报告（轻量）
+make norm-contract
 ```
+
+**说明**：`make test-key-features-all` 会在仓库内跑 **VPIN / WPT / Volume Profile Volatility** 等与未来泄漏、多资产相关的 pytest；若某条因环境缺库失败，可先只跑 `feature-contract` / `norm-contract`。  
+`make start-docker` 只做 **Docker 守护进程**；`docker ps` 里若出现 **`api-server-api` 等 Restarting**，一般是你本机 **别的 compose/项目** 的容器，**不是** 本仓库 `Makefile` 里用于 `DOCKER_IMAGE`（`docker/build-gpu.sh`）的训练镜像——应在对应项目里 `docker logs` 排查。本书与数据/诊断相关的流水多数可用 **`--no-docker`**，不依赖该容器。
 
 ### 1) 数据下载 + Feature Store 构建
 
@@ -469,11 +476,11 @@ flowchart TB
 
 同一份 **`turbo` / `slow` YAML** 的 `output.history_dir` 下，产物分三层心智，**不要混读**：
 
-| 层级 | 路径模式 | 用途 |
-| ---- | -------- | ---- |
-| **rolling_sim 批次根** | `{history_dir}/_rolling_sim/<本批YYYYMMDD_HHMMSS>/` | **`--stage rolling_sim` 一次 invocation 的批次根**：`monthly_ledger.jsonl`、`stitched_summary.json`、`trading_map_continuous.html`、跨月拼接索引等。 |
-| **批次内的「月度全窗口」子树** | `{history_dir}/_rolling_sim/<本批>/<fast_month_YYYY-MM>/`（及 slow 模式下可能的 `slow_snapshot_*` 等） | 每个月 rolling 推进时，在该目录下跑完**当月标定窗内整套阶段**（等价于嵌在滚动里的一棵「月粒度 full 产物」：`strategies_calibrated/`、各层 plateau、事件回测、实验配置副本等），**不是** CLI 顶层 `--stage full`。 |
-| **顶层策略快照目录** | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/` | **单机全段 `full` 的典型落点**（`report.json` 等）。当前 **`research/turbo.yaml` / `slow.yaml` 已禁止默认 `full`**，该路径常为空或仅出现在例外（如 `--locked-prefilter-override` 子进程、历史遗留）。**整段静态 holdout** 用 **`non_rolling.yaml`**，目录在 **`non-rolling-sim`**。**多腿策略**在 `rolling_sim` 收尾时可能把最后一月的 `strategies_calibrated` **拷贝**到 `{history_dir}/<策略>/<本批时间戳>/strategies/<策略>/` 供 `pipeline adopt`，见下文 §6.1。 |
+| 层级                           | 路径模式                                                                                               | 用途                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **rolling_sim 批次根**         | `{history_dir}/_rolling_sim/<本批YYYYMMDD_HHMMSS>/`                                                    | **`--stage rolling_sim` 一次 invocation 的批次根**：`monthly_ledger.jsonl`、`stitched_summary.json`、`trading_map_continuous.html`、跨月拼接索引等。                                                                                                                                                                                                                                                                                                                |
+| **批次内的「月度全窗口」子树** | `{history_dir}/_rolling_sim/<本批>/<fast_month_YYYY-MM>/`（及 slow 模式下可能的 `slow_snapshot_*` 等） | 每个月 rolling 推进时，在该目录下跑完**当月标定窗内整套阶段**（等价于嵌在滚动里的一棵「月粒度 full 产物」：`strategies_calibrated/`、各层 plateau、事件回测、实验配置副本等），**不是** CLI 顶层 `--stage full`。                                                                                                                                                                                                                                                   |
+| **顶层策略快照目录**           | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/`                                                            | **单机全段 `full` 的典型落点**（`report.json` 等）。当前 **`research/turbo.yaml` / `slow.yaml` 已禁止默认 `full`**，该路径常为空或仅出现在例外（如 `--locked-prefilter-override` 子进程、历史遗留）。**整段静态 holdout** 用 **`non_rolling.yaml`**，目录在 **`non-rolling-sim`**。**多腿策略**在 `rolling_sim` 收尾时可能把最后一月的 `strategies_calibrated` **拷贝**到 `{history_dir}/<策略>/<本批时间戳>/strategies/<策略>/` 供 `pipeline adopt`，见下文 §6.1。 |
 
 **命令行为**：当你执行带 `--config` 的 `mlbot pipeline list …`（或对某策略包扫描到的等价入口），脚本在打印完上述「快照」表格后，若磁盘上存在 `_rolling_sim`，会在末尾多一行类似：
 

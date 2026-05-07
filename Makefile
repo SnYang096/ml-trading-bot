@@ -1101,11 +1101,6 @@ test-optuna-all:
 	@echo "   Running tests in Docker for full dependency support"
 	$(DOCKER_RUN_NO_TTY) pytest tests/test_ts_sr_reversal_optuna.py tests/test_ts_sr_reversal_optuna_joint.py tests/test_optuna_imbalanced_data.py tests/integration/test_optimization_integration.py::TestTSRReversalOptuna tests/integration/test_optimization_integration.py::test_optimization_scripts_importable tests/integration/test_ts_sr_reversal_optuna_integration.py -v
 
-# Docker startup helper
-start-docker:
-	@echo "🔧 Starting Docker..."
-	@bash scripts/start_docker.sh
-
 alphalens-example:
 	@echo "📊 Running complete Alphalens example with comprehensive analysis..."
 	$(DOCKER_RUN_NO_TTY) python3 scripts/alphalens_example.py
@@ -1121,5 +1116,19 @@ alphalens-evaluate:
 
 test-vpin-multi-dimensional:
 	@echo "🧪 Testing VPIN multi-dimensional features (peak preservation, correctness, no future leak)..."
-	@$(DOCKER_RUN_NO_TTY) python3 tests/test_vpin_multi_dimensional_features.py
+	@$(DOCKER_RUN_NO_TTY) python3 -m pytest tests/features/test_vpin_multi_dimensional_features.py -v
 	@echo "✅ VPIN multi-dimensional features test completed"
+
+# ---------------------------------------------------------------------------
+# Key feature gate (host pytest — aligns with README “质量闸门” + --no-docker diagnose)
+# ---------------------------------------------------------------------------
+
+test-key-features-all:
+	@echo "🧪 Key features: VPIN + WPT + Volume Profile Volatility (future leak / multi-asset gates)..."
+	PYTHONPATH=src $(PYTHON) -m pytest \
+		tests/features/test_vpin_future_leak_and_multi_asset.py \
+		tests/features/test_vpin_multi_dimensional_features.py \
+		tests/features/test_wpt_future_leak_and_multi_asset.py \
+		tests/features/test_volume_profile_volatility_future_leak_and_multi_asset.py \
+		-v --tb=short
+	@echo "✅ test-key-features-all completed"
