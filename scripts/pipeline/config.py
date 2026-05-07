@@ -96,11 +96,53 @@ def load_pipeline_config(path: Path) -> dict:
         windows = {}
     calibration_months = int(windows.get("calibration_months", 3) or 3)
     structure_lookback_months = int(windows.get("structure_lookback_months", 12) or 12)
+    _stw_raw = (
+        str(windows.get("structure_train_window", "rolling_window") or "rolling_window")
+        .strip()
+        .lower()
+    )
+    if _stw_raw not in {"rolling_window", "full_history"}:
+        raise ValueError(
+            "rolling.windows.structure_train_window 非法: "
+            f"{windows.get('structure_train_window')!r} "
+            "(仅允许 rolling_window / full_history)"
+        )
+    structure_train_window = _stw_raw
+
     if mode != "non_rolling":
         if calibration_months <= 0:
             raise ValueError("rolling.windows.calibration_months 必须 > 0")
         if structure_lookback_months <= 0:
             raise ValueError("rolling.windows.structure_lookback_months 必须 > 0")
+        if (
+            mode == "slow_realistic"
+            and structure_train_window != "full_history"
+            and structure_lookback_months <= calibration_months
+        ):
+            raise ValueError(
+                f"slow_realistic（rolling_window）要求 rolling.windows.structure_lookback_months "
+                f"({structure_lookback_months}) > rolling.windows.calibration_months "
+                f"({calibration_months})，否则慢结构快照窗内无训练段。"
+                "请增大 structure_lookback_months 或减小 calibration_months（或 dates.calibration_months）；"
+                "或使用 structure_train_window: full_history（起点为 dates.start_date）。"
+            )
+        if mode == "slow_realistic" and structure_train_window == "full_history":
+            _gdates = cfg.get("dates")
+            if not isinstance(_gdates, dict):
+                raise ValueError(
+                    "structure_train_window: full_history 需要 cfg dates 为字典且含 start_date"
+                )
+            _ds = _gdates.get("start_date")
+            if not _ds or not str(_ds).strip():
+                raise ValueError(
+                    "structure_train_window: full_history 需要 dates.start_date（慢结构快照起点）"
+                )
+            try:
+                datetime.strptime(str(_ds).strip()[:10], "%Y-%m-%d")
+            except ValueError as exc:
+                raise ValueError(
+                    f"dates.start_date 非法（期望 YYYY-MM-DD）: {_ds!r}"
+                ) from exc
 
     slow_realistic = rolling.get("slow_realistic", {}) or {}
     if not isinstance(slow_realistic, dict):
@@ -165,6 +207,7 @@ def load_pipeline_config(path: Path) -> dict:
     rolling["windows"] = {
         "calibration_months": calibration_months,
         "structure_lookback_months": structure_lookback_months,
+        "structure_train_window": structure_train_window,
     }
     rolling["slow_realistic"] = {
         "cadence_months": cadence_months,

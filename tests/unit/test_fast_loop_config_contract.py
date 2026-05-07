@@ -603,6 +603,7 @@ def test_slow_snapshot_multileg_writes_snapshot_config(tmp_path, monkeypatch):
         use_1min=False,
         live_root="live/highcap",
         lookback_months=6,
+        structure_holdout_months=3,
         source_strategies_root=str(base_root),
         config_path="config/test.yaml",
     )
@@ -610,6 +611,54 @@ def test_slow_snapshot_multileg_writes_snapshot_config(tmp_path, monkeypatch):
     snap_root = Path(result["snapshot_root"])
     assert (snap_root / "strategies/dual_add_trend/dual_add.yaml").exists()
     assert (snap_root / "slow_snapshot_manifest.json").exists()
+
+
+def test_slow_snapshot_full_history_uses_dates_start(tmp_path, monkeypatch):
+    import json
+
+    captured: dict = {}
+
+    def _fake_run(strategy, cfg, **kwargs):
+        captured["start_date"] = kwargs.get("start_date")
+        rd = kwargs.get("run_dir")
+        if rd is not None:
+            ed = Path(rd) / "exp_out"
+            ed.mkdir(parents=True, exist_ok=True)
+            return {"exp_config_dir": str(ed)}
+        return {"exp_config_dir": str(tmp_path / "fallback")}
+
+    monkeypatch.setattr(arp.pipeline_strategy, "run_strategy_pipeline", _fake_run)
+    monkeypatch.setattr(arp, "resolve_symbols_from_config", lambda cfg: "BTCUSDT")
+
+    cfg = {
+        "dates": {"start_date": "2021-06-15"},
+        "symbols": "BTCUSDT",
+        "strategies": {"bpc": {}},
+        "rolling": {"windows": {"structure_train_window": "full_history"}},
+    }
+    result = arp._run_slow_structure_snapshot_for_month(
+        cfg=cfg,
+        strategies=["bpc"],
+        history_dir=tmp_path / "history",
+        timestamp="fh_001",
+        month_token="2024-04",
+        data_path="data/parquet_data",
+        dry_run=False,
+        use_1min=False,
+        live_root="live/highcap",
+        lookback_months=6,
+        structure_holdout_months=3,
+        source_strategies_root=str(tmp_path / "src_strat"),
+        config_path="config/test.yaml",
+    )
+    assert captured.get("start_date") == "2021-06-15"
+    manifest = json.loads(
+        (Path(result["snapshot_root"]) / "slow_snapshot_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest.get("structure_train_window") == "full_history"
+    assert manifest.get("structure_start") == "2021-06-15"
 
 
 def test_multileg_rolling_continuous_map_collects_monthly_artifacts(

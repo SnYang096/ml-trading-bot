@@ -15,7 +15,7 @@
 extends: turbo.yaml
 
 dates:
-  calibration_months: 3
+  calibration_months: 6
 
 training:
   seeds:
@@ -28,7 +28,9 @@ strategy_scope:
 rolling:
   mode: slow_realistic
   windows:
-    structure_lookback_months: 12
+    # full_history：慢快照 struct_start = dates.start_date（跨牛熊更长样本）；rolling_window 时仍用下方 lookback 月数。
+    structure_train_window: full_history
+    structure_lookback_months: 24
   slow_realistic:
     cadence_months: 3
     triggered_retrain_enabled: true

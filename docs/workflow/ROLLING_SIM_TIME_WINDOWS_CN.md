@@ -58,8 +58,12 @@ month_tokens = _iter_month_tokens(_display_holdout_start, _display_end)
 
 | 配置 | 含义 |
 |------|------|
-| `rolling.windows.structure_lookback_months` | 仅在 **`rolling.mode: slow_realistic`** 且按 cadence 跑 **slow snapshot** 时：从「目标月上月末」往回，用**多长历史**跑结构流水线（特征搜索等到 `entry_filter`），生成冻结的 `strategies` 快照目录。 |
-| `rolling.slow_realistic.cadence_months` | 隔多少个月做一次上述结构快照（与 `calibration_months` 无关）。 |
+| `rolling.windows.structure_train_window` | `rolling_window`（默认）：`struct_start` 由 `month_token` 与 `structure_lookback_months` 回溯得到。`full_history`：`struct_start = dates.start_date`，`struct_end` 仍为「目标月上一月末」，用于慢快照内尽量使用**从全局起点到快照时点**的全段历史（**更耗算力**）。 |
+| `rolling.windows.structure_lookback_months` | 在 **`structure_train_window: rolling_window`** 时：从「目标月当月 1 号」往回数若干月作为 `struct_start`。在 **`full_history`** 时**不决定起点**，可保留该数值便于切回 `rolling_window`。 |
+| `rolling.windows.calibration_months`（可由 `dates.calibration_months` 回填） | **Fast month** 标定窗长度；**同时也是**慢结构快照内 `run_strategy_pipeline` 的 **尾部 OOS / holdout 月数**（与同文件 fast 环一致，替代历史写死 3 个月）。 |
+| `rolling.slow_realistic.cadence_months` | 隔多少个月做一次上述结构快照。 |
+
+**契约**：`slow_realistic` + **`rolling_window`** 时要求 **`structure_lookback_months > calibration_months`**。若为 **`full_history`**，不比较二者（但仍要求 `structure_lookback_months > 0`），且 **`dates.start_date`** 必须合法。
 
 当 **`rolling.mode: turbo_fixed_features`** 时：`rolling_sim` **不调用** slow snapshot，`structure_lookback_months` / `cadence_months` **基本不参与**当月逻辑；配置可视为契约占位或便于日后切回 `slow_realistic`。
 

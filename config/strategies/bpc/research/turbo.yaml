@@ -15,8 +15,10 @@
 # slow / non_rolling：extends 本文件并覆写差量（见各自文件）。
 
 dates:
-  start_date: "2022-08-01"
+  # 与 slow（structure_train_window: full_history）struct_start = start_date 对齐；略早以留 feature warmup。
+  start_date: "2022-01-01"
   end_date: "2026-05-01"
+  # 2024-03 起滚到 2026-05
   holdout_months: 26
   calibration_months: 6
 

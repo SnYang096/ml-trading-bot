@@ -11,7 +11,7 @@
 # [INDEX] dates → rolling → threshold_calibration → data → strategies.tpc → event_backtest → output
 
 dates:
-  start_date: "2022-08-01"
+  start_date: "2022-01-01"
   end_date: "2026-05-01"
   holdout_months: 26
   calibration_months: 6

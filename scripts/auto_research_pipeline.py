@@ -6550,13 +6550,37 @@ def _run_slow_structure_snapshot_for_month(
     use_1min: bool,
     live_root: str,
     lookback_months: int,
+    structure_holdout_months: int,
     source_strategies_root: str,
     config_path: str,
 ) -> Dict[str, Any]:
-    """Build slow structure snapshot as-of previous month end."""
+    """Build slow structure snapshot as-of previous month end.
+
+    Rolling ``structure_train_window`` (from ``cfg["rolling"]["windows"]``):
+    ``rolling_window`` uses ``lookback_months`` back from ``month_token``;
+    ``full_history`` sets ``struct_start`` to ``dates.start_date``.
+
+    structure_holdout_months: inner OOS tail length inside [struct_start, struct_end],
+        aligned with rolling.windows.calibration_months (same source as fast_month).
+    """
     prev_end = _month_prev_end(month_token)
     struct_end = prev_end
-    struct_start = _add_months(f"{month_token}-01", -int(lookback_months))
+    _rw = (cfg.get("rolling") or {}).get("windows") or {}
+    _stw = str((_rw.get("structure_train_window") or "rolling_window")).strip().lower()
+    if _stw == "full_history":
+        _gdates = cfg.get("dates") or {}
+        if not isinstance(_gdates, dict):
+            raise ValueError("slow snapshot full_history 需要 dates 字典")
+        struct_start = str(_gdates.get("start_date", "")).strip()[:10]
+        if not struct_start:
+            raise ValueError("slow snapshot full_history 需要 dates.start_date")
+    elif _stw == "rolling_window":
+        struct_start = _add_months(f"{month_token}-01", -int(lookback_months))
+    else:
+        raise ValueError(
+            f"rolling.windows.structure_train_window 非法: {_stw!r} "
+            "(仅允许 rolling_window / full_history)"
+        )
     snap_root = (
         history_dir / "_rolling_sim" / timestamp / f"slow_snapshot_{month_token}"
     )
@@ -6589,12 +6613,13 @@ def _run_slow_structure_snapshot_for_month(
                 calibrate=True,
             )
             continue
+        _shm = max(int(structure_holdout_months), 1)
         res = pipeline_strategy.run_strategy_pipeline(
             strategy,
             cfg,
             end_date=struct_end,
-            holdout_start=compute_holdout_start(struct_end, 3),
-            holdout_months=3,
+            holdout_start=compute_holdout_start(struct_end, _shm),
+            holdout_months=_shm,
             validation_months=0,
             start_date=struct_start,
             symbols=resolve_symbols_from_config(cfg),
@@ -6622,9 +6647,11 @@ def _run_slow_structure_snapshot_for_month(
         "stage": "slow_snapshot",
         "mode": "slow_realistic",
         "target_month": month_token,
+        "structure_train_window": _stw,
         "structure_start": struct_start,
         "structure_end": struct_end,
         "lookback_months": int(lookback_months),
+        "structure_holdout_months": max(int(structure_holdout_months), 1),
         "strategies": strategies,
         "strategies_root": str(snap_strategies_root),
         "created_at": datetime.now().isoformat(),
@@ -7291,6 +7318,7 @@ def main():
                         use_1min=args.use_1min,
                         live_root=args.live_root,
                         lookback_months=structure_lookback_months,
+                        structure_holdout_months=calibration_months,
                         source_strategies_root=str(
                             PROJECT_ROOT / "config" / "strategies"
                         ),
@@ -7733,6 +7761,7 @@ def main():
                 lookback_months = int(
                     windows_cfg.get("structure_lookback_months", 12) or 12
                 )
+                _sh_hold = int(windows_cfg.get("calibration_months", 3) or 3)
                 snap = _run_slow_structure_snapshot_for_month(
                     cfg=cfg,
                     strategies=[strategy],
@@ -7744,6 +7773,7 @@ def main():
                     use_1min=args.use_1min,
                     live_root=args.live_root,
                     lookback_months=lookback_months,
+                    structure_holdout_months=_sh_hold,
                     source_strategies_root=str(PROJECT_ROOT / "config" / "strategies"),
                     config_path=args.config,
                 )
