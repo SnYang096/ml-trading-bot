@@ -33,11 +33,6 @@ def test_fast_month_stage_threads_resume_and_dump_paths(tmp_path, monkeypatch):
 
     cfg = {
         "strategies": {"fer-short-120T": {}, "me-short-120T": {}},
-        "symbol_policy": {"enable_threshold": 0.0, "min_symbol_trades_soft": 1},
-        "slot_allocation": {
-            "max_symbols_per_side": 2,
-            "quality_score_weights": {"history_edge": 0.55, "now_strength": 0.45},
-        },
     }
     history_dir = tmp_path / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
@@ -53,7 +48,6 @@ def test_fast_month_stage_threads_resume_and_dump_paths(tmp_path, monkeypatch):
         live_root="live/highcap",
         data_path="data/parquet_data",
         event_sym_r="1.0:0.5:4.0",
-        prev_side_state={},
         prev_resume_state_paths={"fer-short-120T": "/tmp/prev_fer_state.json"},
         keep_open_positions=True,
     )
@@ -69,6 +63,10 @@ def test_fast_month_stage_threads_resume_and_dump_paths(tmp_path, monkeypatch):
     assert summary["end_state_paths"]["me-short-120T"].endswith(
         "/me-short-120T/end_state.json"
     )
+    assert sorted(summary["trend_pcm_candidates"]) == [
+        "fer-short-120T",
+        "me-short-120T",
+    ]
 
 
 def test_event_backtest_json_includes_open_positions_and_add_stats(tmp_path):

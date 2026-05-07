@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -372,4 +372,42 @@ def iter_month_tokens(start_date: str, end_date: str) -> List[str]:
             cur_m = 1
         else:
             cur_m += 1
+    return out
+
+
+def rolling_sim_iteration_schedule(
+    full_roll_month_tokens: List[str],
+    requested_tokens: Optional[List[str]],
+) -> List[Tuple[int, str]]:
+    """Months to run under ``rolling_sim`` with preserved global indices.
+
+    Indices match ``enumerate(full_roll_month_tokens)`` so ``cadence_months`` /
+    slow snapshot pacing stays aligned even when CLI ``--month`` filters a subset.
+
+    Args:
+        full_roll_month_tokens: Chronological YYYY-MM from holdout start through end (inclusive).
+        requested_tokens: Subset tokens in desired run order (dedupe first occurrence); ``None`` = all.
+
+    Raises:
+        ValueError: Empty full list or a requested month not present in ``full_roll_month_tokens``.
+    """
+    if not full_roll_month_tokens:
+        return []
+    if requested_tokens is None:
+        return list(enumerate(full_roll_month_tokens))
+    if len(requested_tokens) == 0:
+        raise ValueError("requested_tokens 为空（需要至少一个 YYYY-MM）")
+    idx_by = {tok: idx for idx, tok in enumerate(full_roll_month_tokens)}
+    out: List[Tuple[int, str]] = []
+    seen: set[str] = set()
+    for m in requested_tokens:
+        if m in seen:
+            continue
+        seen.add(m)
+        if m not in idx_by:
+            raise ValueError(
+                f"月份 {m!r} 不在 holdout 滚动窗口内（{full_roll_month_tokens[0]} … "
+                f"{full_roll_month_tokens[-1]}）"
+            )
+        out.append((idx_by[m], m))
     return out

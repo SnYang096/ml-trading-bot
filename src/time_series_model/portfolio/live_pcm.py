@@ -28,7 +28,10 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 import yaml
 
-from src.live_data_stream.constitution_config import intent_archetype_priority_tokens
+from src.live_data_stream.constitution_config import (
+    classic_slot_policy_from_constitution,
+    intent_archetype_priority_tokens,
+)
 from src.time_series_model.core.trade_intent import TradeIntent
 
 logger = logging.getLogger(__name__)
@@ -342,6 +345,7 @@ def _load_constitution_constraints(
         "add_position_rules": {},
         "intent_selection_policy": {},
         "direction_policy": {},
+        "slot_policy": {},
         "resource_allocation": {},
     }
     if not constitution_yaml:
@@ -364,6 +368,7 @@ def _load_constitution_constraints(
         or obj.get("add_position")
         or {}
     )
+    slot_policy = classic_slot_policy_from_constitution(obj)
     return {
         "slot_count": int(slots.get("slot_count", 2)),
         "risk_per_slot": float(slots.get("risk_per_slot", 0.01)),
@@ -371,6 +376,7 @@ def _load_constitution_constraints(
         "add_position_rules": dict(add_rules),
         "intent_selection_policy": dict(ra.get("intent_selection_policy") or {}),
         "direction_policy": dict(ra.get("direction_policy") or {}),
+        "slot_policy": slot_policy,
         "evidence_min_score": float(ra.get("evidence_min_score", 0.0)),
         "evidence_position_scale": bool(ra.get("evidence_position_scale", True)),
         # Full RA for intent_archetype_priority_tokens (enabled_archetypes order fallback)
@@ -503,6 +509,16 @@ class LivePCM:
                 _lim = int(_cfg["max_new_entries_per_day"])
                 self._daily_entry_limits[str(_fam).lower().strip()] = _lim
                 logger.info("PCM: %s max_new_entries_per_day=%d", _fam, _lim)
+        self._slot_policy = dict(self._constitution.get("slot_policy") or {})
+        self._max_trend_slots_per_symbol = int(
+            self._slot_policy.get("max_trend_slots_per_symbol", 0) or 0
+        )
+        self._enforce_single_trend_per_symbol = self._max_trend_slots_per_symbol == 1
+        self._trend_families = {
+            str(x).strip().lower()
+            for x in (self._slot_policy.get("trend_archetypes") or [])
+            if str(x).strip()
+        }
 
         # 可选: 监控统计收集器
         self.stats_collector = None  # 通过外部注入 StatsCollector 实例
@@ -559,6 +575,37 @@ class LivePCM:
             if isinstance(cand, dict) and cand:
                 return cand
         return {}
+
+    def _family_token(self, archetype: str) -> str:
+        key = str(archetype or "").lower().strip()
+        if not key:
+            return ""
+        return key.split("-", 1)[0]
+
+    def _is_trend_archetype(self, archetype: str) -> bool:
+        fam = self._family_token(archetype)
+        return bool(fam and fam in self._trend_families)
+
+    def _has_other_trend_slot_on_symbol(self, symbol: str, archetype: str) -> bool:
+        sym = str(symbol or "").upper().strip()
+        if not sym:
+            return False
+        target_fam = self._family_token(archetype)
+        target_arch = str(archetype or "").lower().strip()
+        for key in self._slot_evidence:
+            if not key.startswith(f"{sym}:"):
+                continue
+            try:
+                _, existing_arch = key.split(":", 1)
+            except Exception:
+                continue
+            if not self._is_trend_archetype(existing_arch):
+                continue
+            if self._family_token(existing_arch) != target_fam:
+                return True
+            if str(existing_arch).lower().strip() != target_arch:
+                return True
+        return False
 
     def _observed_market_side(
         self,
@@ -1118,6 +1165,29 @@ class LivePCM:
                     intent.symbol,
                     intent.archetype,
                 )
+            if (
+                self._enforce_single_trend_per_symbol
+                and not bool(intent.add_position)
+                and self._is_trend_archetype(intent.archetype)
+                and self._has_other_trend_slot_on_symbol(
+                    intent.symbol, intent.archetype
+                )
+            ):
+                self._last_decide_trace["drop_trend_symbol_slot_conflict"] = (
+                    int(
+                        self._last_decide_trace.get(
+                            "drop_trend_symbol_slot_conflict", 0
+                        )
+                        or 0
+                    )
+                    + 1
+                )
+                logger.info(
+                    "PCM: trend symbol slot conflict reject %s %s",
+                    intent.symbol,
+                    intent.archetype,
+                )
+                continue
 
             # ── 每日入场节流: 新开仓检查日内上限 ──
             if not bool(intent.add_position):

@@ -45,34 +45,37 @@ rolling:
     cadence_months: 3
     # triggered_retrain_enabled：为 true 时按 cadence_months 执行慢结构快照并刷新滚动使用的 strategies_root；为 false 时整段 rolling 不跑快照、始终用仓库 config/strategies。每月阈值标定与当月 test 仍照常进行，与该项无关。
     triggered_retrain_enabled: true
+    # adoption_gate：慢快照的“新旧结构切换门禁”。
+    # 不再机械地 cadence 到就替换：会用最近已完成窗口（validation_months）比较
+    # candidate(新结构) vs current(旧结构) 的风险调整分，只有更优才切换。
+    adoption_gate:
+      enabled: true
+      validation_months: 1
+      adopt_ratio: 1.0
+      min_improvement: 0.0
+      score_weights:
+        sharpe_r: 1.0
+        max_drawdown_r: 0.15
+        near_stop_rate: 0.5
+      # 交易数用软惩罚（不是硬门槛）：趋势策略允许某些月份“不交易更好”。
+      undertrade:
+        target_trades_soft: 10
+        penalty: 0.15
+      # n_trades=0 视作现金基准分（可赢过亏损结构）。
+      cash_score_when_no_trades: 0.0
+      # 极端坏表现的硬拒绝（可按策略风险偏好调节）。
+      hard_reject:
+        sharpe_floor: -0.5
 
 threshold_calibration:
   # slow 要跑完整特征寻找链：允许 prefilter/gate 树模型训练、SHAP/分裂点打分，再叠加阈值调整。
   enable_model_training: true
   # execution_opt / pcm_eval / direction_tuning 与 extends 的 turbo 一致，不写则继承。
 
-symbol_policy:
-  mode: hybrid_carry_forward
-  carry_forward_ttl_months: 2
-  enable_threshold: 0.0
-  min_symbol_trades_soft: 10
-  carry_forward_hard_fail_rules:
-    min_sharpe_r: -0.25
-
 direction_stack:
   mode: ema200
   ema_debounce_bars: 3
   vwap_window_days: 20
-
-slot_allocation:
-  mode: quality_ranked
-  max_symbols_per_side: 2
-  reserve_slots_for_secondary_symbols: 1
-  slot_opportunity_penalty: 0.001
-  quality_score_weights:
-    history_edge: 0.55
-    now_strength: 0.45
-  quality_lookback_months: 3
 
 stitching:
   enabled: true

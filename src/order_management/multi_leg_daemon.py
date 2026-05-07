@@ -68,6 +68,17 @@ class MultiLegLiveDaemon:
         symbols = sorted({rt.symbol for rt in self.runtimes})
         bars = self.bar_provider.latest_closed_bars(symbols)
         bars_by_symbol = {bar.symbol: bar for bar in bars}
+        # Contract: at most one multi-leg strategy may hold/open on one symbol.
+        symbol_owner: Dict[str, str] = {}
+        for rt in self.runtimes:
+            try:
+                has_pos = bool(list(rt.engine.local_position_snapshots()))
+            except Exception:
+                has_pos = False
+            if has_pos:
+                sym = str(rt.symbol or "").upper().strip()
+                if sym and sym not in symbol_owner:
+                    symbol_owner[sym] = str(rt.name or "")
         action_count = 0
         rejected_count = 0
         execution_count = 0
@@ -92,9 +103,36 @@ class MultiLegLiveDaemon:
                 atr=bar.atr,
                 features=bar.features,
             )
+            sym = str(rt.symbol or "").upper().strip()
+            owner = symbol_owner.get(sym, "")
+            if owner and owner != str(rt.name or ""):
+                dropped = [
+                    a
+                    for a in actions
+                    if str((a or {}).get("action", "") or "").lower() == "place"
+                ]
+                if dropped:
+                    actions = [
+                        a
+                        for a in actions
+                        if str((a or {}).get("action", "") or "").lower() != "place"
+                    ]
+                    rejected_count += len(dropped)
+                    logger.info(
+                        "multi-leg symbol conflict: reject %d opening actions for %s (%s owned by %s)",
+                        len(dropped),
+                        sym,
+                        rt.name,
+                        owner,
+                    )
             action_count += len(actions)
             report = rt.orchestrator.run_actions(actions)
             rejected_count += len(report.risk.rejected)
+            if any(
+                str((a or {}).get("action", "") or "").lower() == "place"
+                for a in (report.risk.approved_actions or [])
+            ):
+                symbol_owner[sym] = str(rt.name or "")
             execution_count += len(report.execution_results) + len(
                 report.reconciliation_results
             )

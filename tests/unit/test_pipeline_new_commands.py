@@ -9,7 +9,7 @@ def test_pipeline_help_includes_new_commands_and_stages():
     result = runner.invoke(cli, ["pipeline", "--help"])
     assert result.exit_code == 0
     assert "report-side-state" in result.output
-    assert "debug-quality" in result.output
+    assert "debug-pcm-candidates" in result.output
 
     result_run = runner.invoke(cli, ["pipeline", "run", "--help"])
     assert result_run.exit_code == 0
@@ -96,7 +96,7 @@ def test_pipeline_report_side_state_command(monkeypatch):
     ]
 
 
-def test_pipeline_debug_quality_command(monkeypatch):
+def test_pipeline_debug_pcm_candidates_command(monkeypatch):
     runner = CliRunner()
     called = {}
 
@@ -111,7 +111,7 @@ def test_pipeline_debug_quality_command(monkeypatch):
         cli,
         [
             "pipeline",
-            "debug-quality",
+            "debug-pcm-candidates",
             "--run-id",
             "20260326_120001",
             "--month",
@@ -121,7 +121,7 @@ def test_pipeline_debug_quality_command(monkeypatch):
         ],
     )
     assert result.exit_code == 0
-    assert called["script_path"] == "scripts/pipeline_debug_quality.py"
+    assert called["script_path"] == "scripts/pipeline_debug_pcm_candidates.py"
     assert called["args"] == [
         "--run-id",
         "20260326_120001",

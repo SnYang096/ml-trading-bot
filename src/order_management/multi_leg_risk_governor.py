@@ -16,13 +16,19 @@ Action = Dict[str, Any]
 
 @dataclass(frozen=True)
 class MultiLegRiskLimits:
-    """Hard caps for a shared account running multi-leg strategies."""
+    """Hard caps for the dedicated multi-leg account.
+
+    Notional fields are USDT exposure ceilings. They do not reuse classic trend
+    slots/risk; callers may derive them from a separate account equity budget.
+    """
 
     max_gross_notional: float
     max_net_notional: float
     max_symbol_gross_notional: Optional[float] = None
     max_symbol_net_notional: Optional[float] = None
     max_resting_orders: Optional[int] = None
+    account_equity_usdt: Optional[float] = None
+    max_drawdown_pct: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,7 @@ class MultiLegPortfolioRiskGovernor:
         *,
         positions: Iterable[ExposureSnapshot] = (),
         open_orders: Iterable[Mapping[str, Any]] = (),
+        drawdown_pct: Optional[float] = None,
     ) -> RiskCheckResult:
         approved: List[Action] = []
         rejected: List[RiskRejection] = []
@@ -91,6 +98,20 @@ class MultiLegPortfolioRiskGovernor:
                 continue
             if kind != "place":
                 approved.append(dict(action))
+                continue
+
+            if (
+                self.limits.max_drawdown_pct is not None
+                and drawdown_pct is not None
+                and float(drawdown_pct) >= float(self.limits.max_drawdown_pct)
+            ):
+                rejected.append(
+                    RiskRejection(
+                        dict(action),
+                        f"max_drawdown_pct exceeded: {float(drawdown_pct):.4f} >= "
+                        f"{float(self.limits.max_drawdown_pct):.4f}",
+                    )
+                )
                 continue
 
             if (

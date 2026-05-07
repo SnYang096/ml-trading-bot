@@ -131,3 +131,30 @@ def test_processes_batch_incrementally_for_symbol_caps() -> None:
     assert len(result.approved_actions) == 1
     assert len(result.rejected) == 1
     assert "max_symbol_gross_notional exceeded" in result.rejected[0].reason
+
+
+def test_rejects_new_places_when_drawdown_limit_is_reached() -> None:
+    governor = MultiLegPortfolioRiskGovernor(
+        MultiLegRiskLimits(
+            max_gross_notional=10_000.0,
+            max_net_notional=10_000.0,
+            account_equity_usdt=10_000.0,
+            max_drawdown_pct=0.12,
+        )
+    )
+
+    result = governor.check_actions(
+        [
+            {
+                "action": "place",
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "quantity": 0.01,
+                "price": 60_000.0,
+            }
+        ],
+        drawdown_pct=0.12,
+    )
+
+    assert result.approved_actions == []
+    assert "max_drawdown_pct exceeded" in result.rejected[0].reason

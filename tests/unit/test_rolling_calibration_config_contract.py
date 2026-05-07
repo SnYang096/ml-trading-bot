@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -112,15 +113,6 @@ def test_fast_month_stage_respects_rolling_calibration_switches(tmp_path, monkey
     cfg = {
         "strategies": {"bpc-long-120T": {"dates": {}}},
         "dates": {"start_date": "2023-01-01"},
-        "symbol_policy": {
-            "enable_threshold": 0.0,
-            "min_symbol_trades_soft": 1,
-            "carry_forward_hard_fail_rules": {"min_sharpe_r": -0.25},
-        },
-        "slot_allocation": {
-            "max_symbols_per_side": 2,
-            "quality_score_weights": {"history_edge": 0.55, "now_strength": 0.45},
-        },
         "rolling_calibration": {
             "step_months": 1,
             "threshold_calibration": {"enabled": True},
@@ -189,15 +181,6 @@ def test_fast_month_direction_runs_every_month_by_default(tmp_path, monkeypatch)
     base_cfg = {
         "strategies": {"bpc-long-120T": {"dates": {}}},
         "dates": {"start_date": "2023-01-01"},
-        "symbol_policy": {
-            "enable_threshold": 0.0,
-            "min_symbol_trades_soft": 1,
-            "carry_forward_hard_fail_rules": {"min_sharpe_r": -0.25},
-        },
-        "slot_allocation": {
-            "max_symbols_per_side": 2,
-            "quality_score_weights": {"history_edge": 0.55, "now_strength": 0.45},
-        },
         "rolling_calibration": {
             "step_months": 1,
             "threshold_calibration": {"enabled": True},
@@ -260,15 +243,6 @@ def test_fast_month_direction_cadence_stride(tmp_path, monkeypatch):
     cfg = {
         "strategies": {"bpc-long-120T": {"dates": {}}},
         "dates": {"start_date": "2023-01-01"},
-        "symbol_policy": {
-            "enable_threshold": 0.0,
-            "min_symbol_trades_soft": 1,
-            "carry_forward_hard_fail_rules": {"min_sharpe_r": -0.25},
-        },
-        "slot_allocation": {
-            "max_symbols_per_side": 2,
-            "quality_score_weights": {"history_edge": 0.55, "now_strength": 0.45},
-        },
         "rolling_calibration": {
             "step_months": 1,
             "threshold_calibration": {"enabled": True},
@@ -536,15 +510,6 @@ def test_fast_month_multileg_uses_backtest_adapter(tmp_path, monkeypatch):
     cfg = {
         "strategies": {"dual_add_trend": {"strategy_type": "dual_add_trend"}},
         "dates": {"start_date": "2023-01-01", "end_date": "2024-04-30"},
-        "symbol_policy": {
-            "enable_threshold": 0.0,
-            "min_symbol_trades_soft": 1,
-            "carry_forward_hard_fail_rules": {"min_sharpe_r": -0.25},
-        },
-        "slot_allocation": {
-            "max_symbols_per_side": 2,
-            "quality_score_weights": {"history_edge": 0.55, "now_strength": 0.45},
-        },
         "rolling_calibration": {
             "threshold_calibration": {"enabled": True},
             "execution_opt": {"enabled": True},
@@ -579,7 +544,14 @@ def test_fast_month_multileg_uses_backtest_adapter(tmp_path, monkeypatch):
     assert captured["commands"]
     assert (run_root / "strategies_calibrated/dual_add_trend/dual_add.yaml").exists()
     assert (run_root / "dual_add_trend/multileg_summary.json").exists()
-    assert summary["selected_strategies"] == ["dual_add_trend"]
+    assert summary["trend_pcm_candidates"] == []
+    assert summary["multi_leg_pcm_candidates"] == ["dual_add_trend"]
+    assert Path(summary["multi_leg_pcm_path"]).exists()
+    qobj = json.loads(Path(summary["pcm_candidates_path"]).read_text(encoding="utf-8"))
+    rows = qobj.get("candidates", [])
+    assert len(rows) == 1
+    assert rows[0].get("trend_pcm_candidate") is False
+    assert rows[0].get("multi_leg_pcm_candidate") is True
 
 
 def test_slow_snapshot_multileg_writes_snapshot_config(tmp_path, monkeypatch):
@@ -704,6 +676,37 @@ def test_multileg_rolling_continuous_map_collects_monthly_artifacts(
     assert out.exists()
 
 
+def test_build_multi_leg_pcm_artifact_rejects_same_symbol_overlap(tmp_path):
+    run_root = tmp_path / "roll/fast_month_2024-04"
+    cg = run_root / "chop_grid"
+    da = run_root / "dual_add_trend"
+    cg.mkdir(parents=True)
+    da.mkdir(parents=True)
+    (cg / "grid_trades.csv").write_text(
+        "symbol,entry_time,exit_time,entry_price,exit_price,pnl_per_capital\n"
+        "BTCUSDT,2024-04-01 00:00:00+00:00,2024-04-01 03:00:00+00:00,1,1.1,0.1\n",
+        encoding="utf-8",
+    )
+    (da / "dual_add_trades.csv").write_text(
+        "symbol,entry_time,exit_time,entry_price,exit_price,pnl_per_capital\n"
+        "BTCUSDT,2024-04-01 01:00:00+00:00,2024-04-01 04:00:00+00:00,1,1.2,0.2\n",
+        encoding="utf-8",
+    )
+    cfg = {
+        "strategies": {
+            "chop_grid": {"strategy_type": "grid"},
+            "dual_add_trend": {"strategy_type": "dual_add_trend"},
+        }
+    }
+    with pytest.raises(ValueError, match="multi-leg same-symbol overlap conflict"):
+        arp._build_multi_leg_pcm_artifact(
+            cfg=cfg,
+            run_root=run_root,
+            month_token="2024-04",
+            strategies=["chop_grid", "dual_add_trend"],
+        )
+
+
 def test_multileg_standalone_backtest_out_root_defaults_under_history_dir(tmp_path):
     history = tmp_path / "results/chop_grid/turbo-rolling-sim"
     history.mkdir(parents=True)
@@ -728,3 +731,95 @@ def test_multileg_standalone_backtest_out_root_respects_explicit_output_dir(tmp_
         nest_dirname="ignored",
     )
     assert got.resolve() == custom.resolve()
+
+
+def test_slow_adoption_gate_soft_undertrade_allows_better_low_frequency_candidate():
+    gate_cfg = {
+        "adopt_ratio": 1.0,
+        "min_improvement": 0.0,
+        "cash_score_when_no_trades": 0.0,
+        "score_weights": {
+            "sharpe_r": 1.0,
+            "max_drawdown_r": 0.15,
+            "near_stop_rate": 0.5,
+        },
+        "undertrade": {"target_trades_soft": 10, "penalty": 0.15},
+        "hard_reject": {"sharpe_floor": -0.5, "max_drawdown_r": None},
+    }
+    old_metrics = {
+        "n_trades": 18,
+        "sharpe_r": 0.35,
+        "max_drawdown_r": 2.2,
+        "near_stop_rate": 0.14,
+    }
+    # 低频但质量更高：应允许采纳（而不是被 min_trades 硬门槛拒绝）
+    new_metrics = {
+        "n_trades": 5,
+        "sharpe_r": 0.82,
+        "max_drawdown_r": 1.1,
+        "near_stop_rate": 0.04,
+    }
+
+    d = arp._decide_slow_adoption_for_strategy(old_metrics, new_metrics, gate_cfg)
+    assert d["adopt"] is True
+    assert d["new"]["undertrade_penalty"] > 0.0
+    assert d["new"]["score"] > d["old"]["score"]
+
+
+def test_slow_adoption_gate_cash_baseline_can_beat_losing_old_structure():
+    gate_cfg = {
+        "adopt_ratio": 1.0,
+        "min_improvement": 0.0,
+        "cash_score_when_no_trades": 0.0,
+        "score_weights": {
+            "sharpe_r": 1.0,
+            "max_drawdown_r": 0.15,
+            "near_stop_rate": 0.5,
+        },
+        "undertrade": {"target_trades_soft": 10, "penalty": 0.15},
+        "hard_reject": {"sharpe_floor": -0.5, "max_drawdown_r": None},
+    }
+    old_metrics = {
+        "n_trades": 14,
+        "sharpe_r": -0.45,
+        "max_drawdown_r": 3.8,
+        "near_stop_rate": 0.28,
+    }
+    # 新结构本月不交易，按现金基准分处理
+    new_metrics = {"n_trades": 0}
+
+    d = arp._decide_slow_adoption_for_strategy(old_metrics, new_metrics, gate_cfg)
+    assert d["adopt"] is True
+    assert d["new"]["score"] == 0.0
+    assert d["old"]["score"] < 0.0
+
+
+def test_slow_adoption_gate_hard_reject_blocks_bad_candidate():
+    gate_cfg = {
+        "adopt_ratio": 1.0,
+        "min_improvement": 0.0,
+        "cash_score_when_no_trades": 0.0,
+        "score_weights": {
+            "sharpe_r": 1.0,
+            "max_drawdown_r": 0.15,
+            "near_stop_rate": 0.5,
+        },
+        "undertrade": {"target_trades_soft": 10, "penalty": 0.15},
+        "hard_reject": {"sharpe_floor": -0.5, "max_drawdown_r": None},
+    }
+    old_metrics = {
+        "n_trades": 12,
+        "sharpe_r": 0.42,
+        "max_drawdown_r": 1.5,
+        "near_stop_rate": 0.10,
+    }
+    new_metrics = {
+        "n_trades": 9,
+        "sharpe_r": -0.8,
+        "max_drawdown_r": 1.0,
+        "near_stop_rate": 0.09,
+    }
+
+    d = arp._decide_slow_adoption_for_strategy(old_metrics, new_metrics, gate_cfg)
+    assert d["adopt"] is False
+    assert "sharpe_floor" in d["reason"]

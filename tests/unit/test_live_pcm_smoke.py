@@ -25,6 +25,7 @@ def test_run_live_pcm_registration_uses_enabled_archetypes_only() -> None:
     assert "for arch in enabled_archetypes" in text
     assert "pcm.register(_name" in text
     assert "pcm_registered_archetypes" not in text
+    assert "get_open_slot_count=lambda: runtime_st.slots.active_count()" in text
 
 
 def test_live_pcm_quantiles_passthrough() -> None:

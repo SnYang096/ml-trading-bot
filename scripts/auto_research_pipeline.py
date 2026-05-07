@@ -372,47 +372,6 @@ def _run_config_consistency_checks(
             )
 
 
-def _quality_score_from_event_metrics(
-    metrics: Dict[str, Any],
-    *,
-    history_w: float = 0.55,
-    now_w: float = 0.45,
-) -> Tuple[float, Dict[str, float]]:
-    """Compute V1 quality score and components for fast-month ranking."""
-    sharpe = float(metrics.get("sharpe_r", 0.0) or 0.0)
-    mean_r = float(metrics.get("mean_r", 0.0) or 0.0)
-    n_trades = float(metrics.get("n_trades", 0.0) or 0.0)
-    near_stop_rate = float(metrics.get("near_stop_rate", 0.0) or 0.0)
-    dd = float(metrics.get("max_drawdown_r", 0.0) or 0.0)
-    trade_boost = min(1.0, n_trades / 40.0)
-    history_edge = (
-        0.70 * sharpe
-        + 0.20 * mean_r
-        + 0.10 * trade_boost
-        - 0.08 * near_stop_rate
-        - 0.04 * max(0.0, dd)
-    )
-    # Optional real-time strength channels (when provided by event metrics)
-    cvd_accel = float(metrics.get("cvd_accel_aligned", 0.0) or 0.0)
-    price_eff = float(metrics.get("price_efficiency_aligned", 0.0) or 0.0)
-    of_strength = float(metrics.get("orderflow_strength_aligned", 0.0) or 0.0)
-    eps = 1e-6
-    now_strength = float(cvd_accel * price_eff)
-    ratio_strength = (
-        float(price_eff / max(eps, abs(of_strength))) if of_strength != 0 else 0.0
-    )
-    # Blend two interpretations; defaults to 0 when channels absent.
-    now_strength = 0.7 * now_strength + 0.3 * ratio_strength
-    score = history_w * history_edge + now_w * now_strength
-    return float(score), {
-        "history_edge": float(history_edge),
-        "now_strength": float(now_strength),
-        "cvd_accel_aligned": float(cvd_accel),
-        "price_efficiency_aligned": float(price_eff),
-        "orderflow_strength_aligned": float(of_strength),
-    }
-
-
 # ====================================================================
 
 
@@ -5100,6 +5059,33 @@ def _load_pcm_enabled_strategies_from_constitution(
         return []
 
 
+def _validate_pipeline_constitution_contract(
+    cfg: Dict[str, Any], *, context_label: str, symbols: Optional[List[str]] = None
+) -> Dict[str, List[str]]:
+    from src.live_data_stream.constitution_config import (
+        load_constitution_dict,
+        resolve_constitution_yaml,
+        validate_classic_slot_capacity,
+        validate_pipeline_constitution_alignment,
+    )
+
+    strategies_root = str(PROJECT_ROOT / "config" / "strategies")
+    constitution_yaml = resolve_constitution_yaml(strategies_root, override=None)
+    constitution_cfg = load_constitution_dict(constitution_yaml)
+    if not constitution_cfg:
+        raise ValueError(
+            f"{context_label}: constitution not found or unreadable at {constitution_yaml}"
+        )
+    if symbols is not None:
+        validate_classic_slot_capacity(
+            constitution_cfg=constitution_cfg,
+            symbols=symbols,
+        )
+    return validate_pipeline_constitution_alignment(
+        pipeline_cfg=cfg, constitution_cfg=constitution_cfg, context_label=context_label
+    )
+
+
 def _load_pcm_metrics_from_json(json_path: str) -> Dict[str, Any]:
     """从 PCM 事件回测 JSON 中提取补充指标."""
     try:
@@ -5156,22 +5142,6 @@ def _run_pcm_joint_backtest(
     """
     # 收集已完成的策略
     strategy_names = [r["strategy"] for r in results_summary if r.get("evidence_dir")]
-
-    # Constitution-driven allowlist filter (single source of truth).
-    enabled_by_constitution = _load_pcm_enabled_strategies_from_constitution()
-    if enabled_by_constitution:
-        _enabled_set = set(enabled_by_constitution)
-        _before = list(strategy_names)
-        strategy_names = [s for s in strategy_names if s in _enabled_set]
-        _removed = [s for s in _before if s not in _enabled_set]
-        if _removed:
-            print(f"\n{'='*70}")
-            print("[Step 9.5] PCM 策略过滤 (Constitution enabled_archetypes)")
-            print(
-                f"   ✅ 保留: {', '.join(strategy_names) if strategy_names else '(none)'}"
-            )
-            print(f"   ⛔ 跳过: {', '.join(_removed)}")
-            print(f"{'='*70}")
 
     if len(strategy_names) < 2:
         if len(results_summary) >= 2:
@@ -5984,6 +5954,117 @@ def _collect_multileg_stitched_metrics(
     }
 
 
+def _multi_leg_trade_path_for_strategy(
+    *, cfg: Dict[str, Any], run_root: Path, strategy: str
+) -> Path:
+    return (
+        run_root / strategy / "grid_trades.csv"
+        if _strategy_type(cfg, strategy) == "grid"
+        else run_root / strategy / "dual_add_trades.csv"
+    )
+
+
+def _build_multi_leg_pcm_artifact(
+    *,
+    cfg: Dict[str, Any],
+    run_root: Path,
+    month_token: str,
+    strategies: List[str],
+) -> Dict[str, Any]:
+    import pandas as pd
+
+    multi_leg_candidates = [s for s in strategies if _is_multi_leg_strategy(cfg, s)]
+    rows: List[Dict[str, Any]] = []
+    conflicts: List[Dict[str, Any]] = []
+    for strategy in multi_leg_candidates:
+        trade_path = _multi_leg_trade_path_for_strategy(
+            cfg=cfg, run_root=run_root, strategy=strategy
+        )
+        if not trade_path.exists():
+            continue
+        try:
+            tdf = pd.read_csv(trade_path)
+        except Exception:
+            continue
+        if tdf.empty or "symbol" not in tdf.columns:
+            continue
+        start_col = "entry_time" if "entry_time" in tdf.columns else ""
+        end_col = "exit_time" if "exit_time" in tdf.columns else start_col
+        if not start_col:
+            continue
+        tdf = tdf.copy()
+        tdf[start_col] = pd.to_datetime(tdf[start_col], utc=True, errors="coerce")
+        tdf[end_col] = pd.to_datetime(tdf[end_col], utc=True, errors="coerce")
+        tdf = tdf.dropna(subset=[start_col]).sort_values(start_col)
+        if tdf.empty:
+            continue
+        for _, tr in tdf.iterrows():
+            symbol = str(tr.get("symbol", "") or "").upper().strip()
+            if not symbol:
+                continue
+            start_ts = tr[start_col]
+            end_ts = tr[end_col] if end_col else tr[start_col]
+            if pd.isna(end_ts):
+                end_ts = start_ts
+            rows.append(
+                {
+                    "strategy": strategy,
+                    "symbol": symbol,
+                    "entry_time": str(start_ts),
+                    "exit_time": str(end_ts),
+                    "_start": start_ts,
+                    "_end": end_ts,
+                }
+            )
+
+    by_symbol: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        by_symbol.setdefault(str(row["symbol"]), []).append(row)
+
+    for symbol, items in by_symbol.items():
+        items.sort(key=lambda x: x["_start"])
+        active: List[Dict[str, Any]] = []
+        for row in items:
+            start_ts = row["_start"]
+            active = [a for a in active if a["_end"] >= start_ts]
+            for a in active:
+                if str(a["strategy"]) == str(row["strategy"]):
+                    continue
+                conflicts.append(
+                    {
+                        "symbol": symbol,
+                        "strategy_a": a["strategy"],
+                        "strategy_b": row["strategy"],
+                        "a_entry": a["entry_time"],
+                        "a_exit": a["exit_time"],
+                        "b_entry": row["entry_time"],
+                        "b_exit": row["exit_time"],
+                    }
+                )
+            active.append(row)
+
+    artifact = {
+        "month": month_token,
+        "policy": "one_multi_leg_strategy_per_symbol",
+        "multi_leg_candidates": multi_leg_candidates,
+        "symbols_with_activity": sorted(by_symbol.keys()),
+        "overlap_conflicts": conflicts,
+    }
+    path = run_root / f"multi_leg_pcm_{month_token}.json"
+    path.write_text(
+        json.dumps(artifact, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    if conflicts:
+        first = conflicts[0]
+        raise ValueError(
+            "multi-leg same-symbol overlap conflict: "
+            f"{first.get('symbol')} {first.get('strategy_a')} vs {first.get('strategy_b')} "
+            f"({first.get('a_entry')}~{first.get('a_exit')} | "
+            f"{first.get('b_entry')}~{first.get('b_exit')})"
+        )
+    return {"path": str(path), "artifact": artifact}
+
+
 def _build_multileg_rolling_continuous_map(
     *,
     cfg: Dict[str, Any],
@@ -6098,6 +6179,329 @@ def _resolved_enable_model_training_for_rolling_month(
     return True
 
 
+def _resolve_slow_adoption_gate_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve slow snapshot adoption gate config from rolling.slow_realistic.adoption_gate.
+
+    This gate decides whether a newly generated slow snapshot should replace the
+    currently active strategy root for future rolling months.
+    """
+    slow_cfg = (cfg.get("rolling") or {}).get("slow_realistic") or {}
+    gate = (slow_cfg.get("adoption_gate") or {}) if isinstance(slow_cfg, dict) else {}
+    if not isinstance(gate, dict):
+        gate = {}
+    undertrade = gate.get("undertrade") or {}
+    if not isinstance(undertrade, dict):
+        undertrade = {}
+    hard_reject = gate.get("hard_reject") or {}
+    if not isinstance(hard_reject, dict):
+        hard_reject = {}
+    return {
+        "enabled": bool(gate.get("enabled", False)),
+        "validation_months": max(int(gate.get("validation_months", 1) or 1), 1),
+        "adopt_ratio": float(gate.get("adopt_ratio", 1.0) or 1.0),
+        "min_improvement": float(gate.get("min_improvement", 0.0) or 0.0),
+        "score_weights": {
+            "sharpe_r": float(
+                ((gate.get("score_weights") or {}).get("sharpe_r", 1.0) or 1.0)
+            ),
+            "max_drawdown_r": float(
+                ((gate.get("score_weights") or {}).get("max_drawdown_r", 0.15) or 0.15)
+            ),
+            "near_stop_rate": float(
+                ((gate.get("score_weights") or {}).get("near_stop_rate", 0.5) or 0.5)
+            ),
+        },
+        "undertrade": {
+            "target_trades_soft": max(
+                int(undertrade.get("target_trades_soft", 10) or 10), 1
+            ),
+            "penalty": float(undertrade.get("penalty", 0.15) or 0.15),
+        },
+        "cash_score_when_no_trades": float(gate.get("cash_score_when_no_trades", 0.0)),
+        "hard_reject": {
+            "sharpe_floor": (
+                float(hard_reject.get("sharpe_floor"))
+                if hard_reject.get("sharpe_floor") is not None
+                else None
+            ),
+            "max_drawdown_r": (
+                float(hard_reject.get("max_drawdown_r"))
+                if hard_reject.get("max_drawdown_r") is not None
+                else None
+            ),
+        },
+    }
+
+
+def _score_slow_adoption_candidate(
+    metrics: Dict[str, Any], gate_cfg: Dict[str, Any]
+) -> Dict[str, float]:
+    """Score one candidate with soft undertrade penalty.
+
+    The gate should allow "not trading is better" months for trend strategies,
+    therefore trade count is a soft penalty (not a hard reject).
+    """
+    m = metrics or {}
+    n_trades = int(m.get("n_trades", 0) or 0)
+    if n_trades <= 0:
+        return {
+            "score": float(gate_cfg.get("cash_score_when_no_trades", 0.0) or 0.0),
+            "n_trades": 0.0,
+            "sharpe_r": 0.0,
+            "max_drawdown_r": 0.0,
+            "near_stop_rate": 0.0,
+            "undertrade_penalty": 0.0,
+        }
+
+    w = gate_cfg.get("score_weights", {}) or {}
+    sharpe_r = float(m.get("sharpe_r", 0.0) or 0.0)
+    max_dd_r = abs(float(m.get("max_drawdown_r", 0.0) or 0.0))
+    near_stop_rate = float(m.get("near_stop_rate", 0.0) or 0.0)
+
+    undertrade_cfg = gate_cfg.get("undertrade", {}) or {}
+    target_trades_soft = max(int(undertrade_cfg.get("target_trades_soft", 10) or 10), 1)
+    undertrade_weight = float(undertrade_cfg.get("penalty", 0.15) or 0.15)
+    undertrade_penalty = 0.0
+    if n_trades < target_trades_soft:
+        undertrade_penalty = (
+            float(target_trades_soft - n_trades) / float(target_trades_soft)
+        ) * undertrade_weight
+
+    score = (
+        float(w.get("sharpe_r", 1.0) or 1.0) * sharpe_r
+        - float(w.get("max_drawdown_r", 0.15) or 0.15) * max_dd_r
+        - float(w.get("near_stop_rate", 0.5) or 0.5) * near_stop_rate
+        - undertrade_penalty
+    )
+    return {
+        "score": float(score),
+        "n_trades": float(n_trades),
+        "sharpe_r": float(sharpe_r),
+        "max_drawdown_r": float(max_dd_r),
+        "near_stop_rate": float(near_stop_rate),
+        "undertrade_penalty": float(undertrade_penalty),
+    }
+
+
+def _decide_slow_adoption_for_strategy(
+    old_metrics: Dict[str, Any],
+    new_metrics: Dict[str, Any],
+    gate_cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Decide whether to adopt new slow snapshot for one strategy."""
+    old_scored = _score_slow_adoption_candidate(old_metrics, gate_cfg)
+    new_scored = _score_slow_adoption_candidate(new_metrics, gate_cfg)
+
+    hard_reject = gate_cfg.get("hard_reject", {}) or {}
+    reasons: List[str] = []
+    rejected = False
+    sharpe_floor = hard_reject.get("sharpe_floor")
+    if sharpe_floor is not None and float(new_scored.get("sharpe_r", 0.0)) <= float(
+        sharpe_floor
+    ):
+        rejected = True
+        reasons.append(
+            f"new_sharpe={new_scored['sharpe_r']:.4f} <= sharpe_floor={float(sharpe_floor):.4f}"
+        )
+    max_dd_limit = hard_reject.get("max_drawdown_r")
+    if max_dd_limit is not None and float(
+        new_scored.get("max_drawdown_r", 0.0)
+    ) > float(max_dd_limit):
+        rejected = True
+        reasons.append(
+            f"new_max_dd={new_scored['max_drawdown_r']:.4f} > max_drawdown_r={float(max_dd_limit):.4f}"
+        )
+
+    if rejected:
+        return {
+            "adopt": False,
+            "reason": "; ".join(reasons),
+            "old": old_scored,
+            "new": new_scored,
+            "target_score": None,
+        }
+
+    old_score = float(old_scored.get("score", 0.0) or 0.0)
+    target_score = old_score + float(gate_cfg.get("min_improvement", 0.0) or 0.0)
+    adopt_ratio = float(gate_cfg.get("adopt_ratio", 1.0) or 1.0)
+    if old_score > 0:
+        target_score = max(target_score, old_score * adopt_ratio)
+
+    new_score = float(new_scored.get("score", 0.0) or 0.0)
+    adopt = new_score >= target_score
+    reason = (
+        f"new_score={new_score:.4f} >= target_score={target_score:.4f}"
+        if adopt
+        else f"new_score={new_score:.4f} < target_score={target_score:.4f}"
+    )
+    return {
+        "adopt": bool(adopt),
+        "reason": reason,
+        "old": old_scored,
+        "new": new_scored,
+        "target_score": float(target_score),
+    }
+
+
+def _load_pcm_candidate_metrics_by_strategy(path: str) -> Dict[str, Dict[str, Any]]:
+    p = Path(str(path or ""))
+    if not p.exists():
+        return {}
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for row in raw.get("candidates", []) or []:
+        if not isinstance(row, dict):
+            continue
+        k = str(row.get("strategy", "") or "").strip()
+        if not k:
+            continue
+        out[k] = dict(row.get("metrics", {}) or {})
+    return out
+
+
+def _run_slow_snapshot_adoption_gate(
+    *,
+    cfg: Dict[str, Any],
+    strategies: List[str],
+    history_dir: Path,
+    timestamp: str,
+    month_token: str,
+    candidate_strategies_root: str,
+    current_strategies_root: str,
+    calibration_months: int,
+    dry_run: bool,
+    use_1min: bool,
+    live_root: str,
+    data_path: str,
+    event_sym_r: str,
+    config_path: str,
+) -> Dict[str, Any]:
+    """Run old-vs-new structure gate and return adopted root.
+
+    For target month M (current month_token), gate evaluates both roots on
+    month M-k (k=validation_months), so only information available before M
+    participates in switching decision.
+    """
+    gate_cfg = _resolve_slow_adoption_gate_cfg(cfg)
+    if not gate_cfg.get("enabled", False):
+        return {
+            "enabled": False,
+            "adopted_root": str(candidate_strategies_root),
+            "report_path": "",
+        }
+    if dry_run:
+        return {
+            "enabled": True,
+            "adopted_root": str(candidate_strategies_root),
+            "report_path": "",
+            "dry_run": True,
+        }
+
+    validation_months = max(int(gate_cfg.get("validation_months", 1) or 1), 1)
+    eval_token = _add_months(f"{month_token}-01", -validation_months)[:7]
+    gate_root = (
+        history_dir / "_rolling_sim" / timestamp / f"slow_adoption_gate_{month_token}"
+    )
+    gate_root.mkdir(parents=True, exist_ok=True)
+
+    old_summary = _run_fast_month_stage(
+        cfg=cfg,
+        strategies=strategies,
+        history_dir=history_dir,
+        timestamp=f"{timestamp}_slow_gate_old_{month_token}",
+        month_token=eval_token,
+        dry_run=dry_run,
+        use_1min=use_1min,
+        live_root=live_root,
+        data_path=data_path,
+        event_sym_r=event_sym_r,
+        strategies_root=str(current_strategies_root),
+        calibration_months=calibration_months,
+        calibrate_all_layers=True,
+        feature_search_enabled=False,
+        rolling_mode="slow_realistic",
+        config_path=config_path,
+        prev_resume_state_paths={},
+        keep_open_positions=False,
+        month_index=0,
+    )
+    new_summary = _run_fast_month_stage(
+        cfg=cfg,
+        strategies=strategies,
+        history_dir=history_dir,
+        timestamp=f"{timestamp}_slow_gate_new_{month_token}",
+        month_token=eval_token,
+        dry_run=dry_run,
+        use_1min=use_1min,
+        live_root=live_root,
+        data_path=data_path,
+        event_sym_r=event_sym_r,
+        strategies_root=str(candidate_strategies_root),
+        calibration_months=calibration_months,
+        calibrate_all_layers=True,
+        feature_search_enabled=False,
+        rolling_mode="slow_realistic",
+        config_path=config_path,
+        prev_resume_state_paths={},
+        keep_open_positions=False,
+        month_index=0,
+    )
+
+    old_metrics = _load_pcm_candidate_metrics_by_strategy(
+        str(old_summary.get("pcm_candidates_path", ""))
+    )
+    new_metrics = _load_pcm_candidate_metrics_by_strategy(
+        str(new_summary.get("pcm_candidates_path", ""))
+    )
+
+    adopted_root = gate_root / "adopted_strategies"
+    adopted_root.mkdir(parents=True, exist_ok=True)
+    decisions: Dict[str, Any] = {}
+    for strat in strategies:
+        d = _decide_slow_adoption_for_strategy(
+            old_metrics.get(strat, {}),
+            new_metrics.get(strat, {}),
+            gate_cfg,
+        )
+        decisions[strat] = d
+        src = (
+            Path(candidate_strategies_root) / strat
+            if bool(d.get("adopt"))
+            else Path(current_strategies_root) / strat
+        )
+        dst = adopted_root / strat
+        if src.exists():
+            shutil.rmtree(dst, ignore_errors=True)
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+
+    report = {
+        "month": month_token,
+        "evaluation_month": eval_token,
+        "validation_months": validation_months,
+        "gate_config": gate_cfg,
+        "current_strategies_root": str(current_strategies_root),
+        "candidate_strategies_root": str(candidate_strategies_root),
+        "adopted_strategies_root": str(adopted_root),
+        "decisions": decisions,
+        "old_pcm_candidates_path": str(old_summary.get("pcm_candidates_path", "")),
+        "new_pcm_candidates_path": str(new_summary.get("pcm_candidates_path", "")),
+    }
+    report_path = gate_root / "adoption_gate_report.json"
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return {
+        "enabled": True,
+        "adopted_root": str(adopted_root),
+        "report_path": str(report_path),
+        "evaluation_month": eval_token,
+    }
+
+
 def _run_fast_month_stage(
     *,
     cfg: Dict[str, Any],
@@ -6116,7 +6520,6 @@ def _run_fast_month_stage(
     feature_search_enabled: bool = True,
     rolling_mode: str = "legacy",
     config_path: str = "",
-    prev_side_state: Optional[Dict[str, Any]] = None,
     prev_resume_state_paths: Optional[Dict[str, str]] = None,
     keep_open_positions: bool = False,
     month_index: int = 0,
@@ -6220,24 +6623,8 @@ def _run_fast_month_stage(
 
     results_summary: List[Dict[str, Any]] = []
     ranking_rows: List[Dict[str, Any]] = []
-    side_state: Dict[str, Any] = {}
     end_state_paths: Dict[str, str] = {}
-    prev_side_state = prev_side_state or {}
     prev_resume_state_paths = prev_resume_state_paths or {}
-    symbol_policy = cfg.get("symbol_policy", {}) or {}
-    enable_threshold = float(symbol_policy.get("enable_threshold", 0.0) or 0.0)
-    min_symbol_trades_soft = int(symbol_policy.get("min_symbol_trades_soft", 10) or 10)
-    hard_fail_min_sharpe = float(
-        (symbol_policy.get("carry_forward_hard_fail_rules", {}) or {}).get(
-            "min_sharpe_r", -0.25
-        )
-        or -0.25
-    )
-    slot_alloc = cfg.get("slot_allocation", {}) or {}
-    quality_w = slot_alloc.get("quality_score_weights", {}) or {}
-    hist_w = float(quality_w.get("history_edge", 0.55) or 0.55)
-    now_w = float(quality_w.get("now_strength", 0.45) or 0.45)
-    max_symbols_per_side = int(slot_alloc.get("max_symbols_per_side", 2) or 2)
 
     print(f"\n{'='*70}")
     print(f"🗓️  Fast Month Replay: {month_token} ({test_start} ~ {test_end})")
@@ -6439,40 +6826,14 @@ def _run_fast_month_stage(
                 "end_state_path": end_state_path,
             }
         end_state_paths[strat] = end_state_path
-        m = ev.get("metrics", {}) or {}
-        q, q_components = _quality_score_from_event_metrics(
-            m, history_w=hist_w, now_w=now_w
-        )
         ranking_rows.append(
             {
                 "strategy": strat,
                 "month": month_token,
-                "quality_score": float(q),
-                "quality_components": q_components,
-                "metrics": m,
+                "metrics": ev.get("metrics", {}) or {},
                 "map_path": ev.get("map_path"),
             }
         )
-        side = _resolve_strategy_side(
-            strat, cfg.get("strategies", {}).get(strat, {}) or {}
-        )
-        _sh = float(m.get("sharpe_r", 0.0) or 0.0)
-        _nt = int(m.get("n_trades", 0) or 0)
-        active = bool(_sh > enable_threshold and _nt >= min_symbol_trades_soft)
-        prev_state = (prev_side_state.get(strat, {}) or {}).get("state", "disabled")
-        hard_fail = _sh <= hard_fail_min_sharpe
-        can_carry = prev_state in {"active", "carry_forward"} and not hard_fail
-        state = "active" if active else ("carry_forward" if can_carry else "disabled")
-        side_state[strat] = {
-            "side": side,
-            "state": state,
-            "month": month_token,
-            "sharpe_r": _sh,
-            "n_trades": _nt,
-            "prev_state": prev_state,
-            "hard_fail": hard_fail,
-            "quality_score": float(q),
-        }
 
         results_summary.append(
             {
@@ -6484,58 +6845,39 @@ def _run_fast_month_stage(
             }
         )
 
-    ranking_rows = sorted(
-        ranking_rows,
-        key=lambda r: (
-            -float(r.get("quality_score", 0.0) or 0.0),
-            float((r.get("metrics", {}) or {}).get("near_stop_rate", 1.0) or 1.0),
-            float((r.get("metrics", {}) or {}).get("max_drawdown_r", 1e9) or 1e9),
-            -int((r.get("metrics", {}) or {}).get("n_trades", 0) or 0),
-            str(r.get("strategy", "")),
-        ),
-    )
-
-    # Slot allocation: cap selected strategies per side by quality ranking.
-    side_selected: Dict[str, int] = {"long": 0, "short": 0}
-    selected_strategies: List[str] = []
+    # 趋势 PCM 与 multi-leg PCM 为两个独立账户池：互不竞争、不共用 slot。
+    trend_pcm_candidates: List[str] = []
+    multi_leg_pcm_candidates: List[str] = []
     for row in ranking_rows:
-        st = str(row.get("strategy", ""))
-        side = _resolve_strategy_side(st, cfg.get("strategies", {}).get(st, {}) or {})
-        if side not in {"long", "short"}:
-            row["selected_for_slot"] = True
-            selected_strategies.append(st)
-            continue
-        if side_selected[side] >= max_symbols_per_side:
-            row["selected_for_slot"] = False
-            continue
-        row["selected_for_slot"] = True
-        side_selected[side] += 1
-        selected_strategies.append(st)
+        st = str(row.get("strategy", "") or "")
+        is_multi_leg = _is_multi_leg_strategy(cfg, st)
+        row["trend_pcm_candidate"] = not is_multi_leg
+        row["multi_leg_pcm_candidate"] = is_multi_leg
+        row["candidate_pool"] = "multi_leg" if is_multi_leg else "trend"
+        if is_multi_leg:
+            multi_leg_pcm_candidates.append(st)
+        else:
+            trend_pcm_candidates.append(st)
 
-    quality_path = run_root / f"quality_ranking_{month_token}.json"
-    side_path = run_root / "symbol_side_state.json"
-    quality_path.write_text(
+    pcm_candidates_path = run_root / f"pcm_candidates_{month_token}.json"
+    pcm_candidates_path.write_text(
         json.dumps(
-            {"month": month_token, "rankings": ranking_rows},
+            {"month": month_token, "candidates": ranking_rows},
             indent=2,
             ensure_ascii=False,
         ),
         encoding="utf-8",
     )
-    side_path.write_text(
-        json.dumps(
-            {"month": month_token, "states": side_state},
-            indent=2,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+
+    multi_leg_pcm = _build_multi_leg_pcm_artifact(
+        cfg=cfg, run_root=run_root, month_token=month_token, strategies=strategies
     )
 
     pcm_result = None
     selected_results_summary = [
         r
         for r in results_summary
-        if str(r.get("strategy", "")) in set(selected_strategies)
+        if str(r.get("strategy", "")) in set(trend_pcm_candidates)
         and not _is_multi_leg_strategy(cfg, str(r.get("strategy", "")))
     ]
     if pcm_eval_enabled and len(selected_results_summary) >= 2:
@@ -6564,9 +6906,11 @@ def _run_fast_month_stage(
         "test_window": {"start": test_start, "end": test_end},
         "strategies_root": str(month_strategies_root),
         "run_root": str(run_root),
-        "quality_ranking_path": str(quality_path),
-        "side_state_path": str(side_path),
-        "selected_strategies": selected_strategies,
+        "pcm_candidates_path": str(pcm_candidates_path),
+        "side_state_path": "",
+        "trend_pcm_candidates": trend_pcm_candidates,
+        "multi_leg_pcm_candidates": multi_leg_pcm_candidates,
+        "multi_leg_pcm_path": str(multi_leg_pcm.get("path", "")),
         "end_state_paths": end_state_paths,
         "pcm": pcm_result or {},
     }
@@ -7023,7 +7367,8 @@ def main():
         "--month",
         default="",
         help=(
-            "月份窗口 (YYYY-MM), 供 --stage fast_month 使用；"
+            "月份窗口 (YYYY-MM): --stage fast_month 必填；"
+            "--stage rolling_sim 可选，用于只跑 holdout 内子集（仍按全局月序触发 cadence / slow 快照）。"
             "多个月可用逗号或空格分隔, 例如 2024-07,2024-08,2024-09"
         ),
     )
@@ -7168,6 +7513,19 @@ def main():
         stage=str(args.stage or "full"),
         dry_run=bool(args.dry_run),
     )
+    constitution_alignment: Dict[str, List[str]] = {"classic": [], "multi_leg": []}
+    if args.stage in {"fast_month", "rolling_sim", "pcm_slot_grid", "pcm_joint"} or (
+        args.all and not args.compare_only
+    ):
+        try:
+            constitution_alignment = _validate_pipeline_constitution_contract(
+                cfg, context_label=f"stage={args.stage}", symbols=symbols
+            )
+        except ValueError as exc:
+            p.error(
+                f"{exc}\n请先将 pipeline strategies 与 constitution "
+                "resource_allocation.enabled_archetypes / multi_leg.strategies 调整一致后重试。"
+            )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_summary = []
@@ -7258,7 +7616,6 @@ def main():
         else:
             stage_root = "config/strategies"
             stage_feature_search = True
-        side_state_cursor: Dict[str, Any] = {}
         resume_state_cursor: Dict[str, str] = {}
         summaries: List[Dict[str, Any]] = []
         for month_idx, mt in enumerate(month_tokens):
@@ -7281,7 +7638,6 @@ def main():
                     feature_search_enabled=stage_feature_search,
                     rolling_mode=rolling_mode,
                     config_path=args.config,
-                    prev_side_state=side_state_cursor,
                     prev_resume_state_paths=resume_state_cursor,
                     keep_open_positions=not _is_last_month,
                     month_index=month_idx,
@@ -7289,13 +7645,6 @@ def main():
             except ValueError as exc:
                 p.error(str(exc))
             summaries.append(_summary)
-            try:
-                _ssp = str(_summary.get("side_state_path", "") or "")
-                if _ssp:
-                    side_obj = json.loads(Path(_ssp).read_text(encoding="utf-8"))
-                    side_state_cursor = dict(side_obj.get("states", {}) or {})
-            except Exception:
-                pass
             resume_state_cursor = dict(_summary.get("end_state_paths", {}) or {})
         print(f"\n{'='*70}")
         print("📋 Stage 汇总")
@@ -7308,8 +7657,7 @@ def main():
             )
         if summaries:
             _last = summaries[-1]
-            print(f"   (最后一月) SideState: {_last.get('side_state_path')}")
-            print(f"   (最后一月) Quality: {_last.get('quality_ranking_path')}")
+            print(f"   (最后一月) PCM candidates: {_last.get('pcm_candidates_path')}")
         return
 
     if args.stage == "rolling_sim":
@@ -7329,17 +7677,37 @@ def main():
         turbo_root = str(turbo_cfg.get("fixed_strategies_root", "config/strategies"))
         turbo_feature_search = not bool(turbo_cfg.get("disable_feature_search", True))
 
-        month_tokens = _iter_month_tokens(_display_holdout_start, _display_end)
-        if not month_tokens:
+        full_roll_months = _iter_month_tokens(_display_holdout_start, _display_end)
+        if not full_roll_months:
             p.error("rolling_sim 无可用月份窗口")
+        month_filter_raw = str(args.month or "").strip()
+        if month_filter_raw:
+            _req = _split_month_list(month_filter_raw)
+            if not _req:
+                p.error("--month 解析后为空")
+            try:
+                rolling_month_iter = pipeline_config.rolling_sim_iteration_schedule(
+                    full_roll_months, _req
+                )
+            except ValueError as exc:
+                p.error(str(exc))
+            print(
+                f"   rolling_sim --month 子集: {[t for _, t in rolling_month_iter]} "
+                f"(holdout 全序 {len(full_roll_months)} 月, cadence 按全局月序下标)"
+            )
+        else:
+            rolling_month_iter = pipeline_config.rolling_sim_iteration_schedule(
+                full_roll_months, None
+            )
         roll_root = history_dir / "_rolling_sim" / timestamp
         roll_root.mkdir(parents=True, exist_ok=True)
         ledger: List[Dict[str, Any]] = []
-        side_state_cursor: Dict[str, Any] = {}
         resume_state_cursor: Dict[str, str] = {}
         active_strategies_root = str(PROJECT_ROOT / "config" / "strategies")
         active_slow_manifest = ""
-        for month_idx, mt in enumerate(month_tokens):
+        active_slow_adoption_report = ""
+        last_scheduled_token = rolling_month_iter[-1][1] if rolling_month_iter else ""
+        for month_idx, mt in rolling_month_iter:
             if rolling_mode == "slow_realistic":
                 if (
                     triggered_retrain_enabled
@@ -7362,16 +7730,36 @@ def main():
                         ),
                         config_path=args.config,
                     )
+                    candidate_root = str(slow_snapshot.get("strategies_root", "") or "")
+                    adoption = _run_slow_snapshot_adoption_gate(
+                        cfg=cfg,
+                        strategies=strategies,
+                        history_dir=history_dir,
+                        timestamp=timestamp,
+                        month_token=mt,
+                        candidate_strategies_root=candidate_root,
+                        current_strategies_root=active_strategies_root,
+                        calibration_months=calibration_months,
+                        dry_run=args.dry_run,
+                        use_1min=args.use_1min,
+                        live_root=args.live_root,
+                        data_path=cfg["data_path"],
+                        event_sym_r=args.event_sym_r,
+                        config_path=args.config,
+                    )
                     active_strategies_root = str(
-                        slow_snapshot.get("strategies_root", "")
+                        adoption.get(
+                            "adopted_root", candidate_root or active_strategies_root
+                        )
                     )
                     active_slow_manifest = str(slow_snapshot.get("manifest_path", ""))
+                    active_slow_adoption_report = str(adoption.get("report_path", ""))
             elif rolling_mode == "turbo_fixed_features":
                 active_strategies_root = turbo_root
             else:
                 active_strategies_root = str(PROJECT_ROOT / "config" / "strategies")
 
-            _is_last_month = mt == month_tokens[-1]
+            _is_last_month = mt == last_scheduled_token
             _summary = _run_fast_month_stage(
                 cfg=cfg,
                 strategies=strategies,
@@ -7390,23 +7778,14 @@ def main():
                 or turbo_feature_search,
                 rolling_mode=rolling_mode,
                 config_path=args.config,
-                prev_side_state=side_state_cursor,
                 prev_resume_state_paths=resume_state_cursor,
                 keep_open_positions=not _is_last_month,
                 month_index=month_idx,
             )
             _summary["slow_manifest"] = active_slow_manifest
+            _summary["slow_adoption_report"] = active_slow_adoption_report
             _summary["active_strategies_root"] = active_strategies_root
             ledger.append(_summary)
-            try:
-                side_obj = json.loads(
-                    Path(_summary.get("side_state_path", "")).read_text(
-                        encoding="utf-8"
-                    )
-                )
-                side_state_cursor = dict(side_obj.get("states", {}) or {})
-            except Exception:
-                pass
             resume_state_cursor = dict(_summary.get("end_state_paths", {}) or {})
         ledger_path = roll_root / "monthly_ledger.jsonl"
         with ledger_path.open("w", encoding="utf-8") as f:
@@ -7579,9 +7958,14 @@ def main():
         print(f"\n{'='*70}")
         print("📋 Stage 汇总")
         print(f"{'='*70}")
+        _roll_label = (
+            f"{[r.get('month') for r in ledger]}"
+            if ledger
+            else str([t for _, t in rolling_month_iter])
+        )
         print(
-            f"   Stage: rolling_sim | months={len(ledger)} "
-            f"({_display_holdout_start}~{_display_end})"
+            f"   Stage: rolling_sim | ran_months={len(ledger)} "
+            f"({_display_holdout_start}~{_display_end}) order={_roll_label}"
         )
         print(f"   Ledger: {ledger_path}")
         print(f"   Summary: {stitched_path}")
@@ -7601,13 +7985,8 @@ def main():
         scoped_cfg_strategies = _filter_strategies_by_direction_scope(
             list(cfg["strategies"].keys()), strategy_direction_scope
         )
-        enabled_by_constitution = _load_pcm_enabled_strategies_from_constitution()
-        enabled_set = (
-            set(enabled_by_constitution)
-            if enabled_by_constitution
-            else set(scoped_cfg_strategies)
-        )
-        pcm_strategies = [s for s in scoped_cfg_strategies if s in enabled_set]
+        classic_set = set(constitution_alignment.get("classic", []) or [])
+        pcm_strategies = [s for s in scoped_cfg_strategies if s in classic_set]
         if len(pcm_strategies) < 2:
             p.error("可用于 PCM 的策略数 < 2，无法执行 slot 网格")
 
@@ -7651,13 +8030,8 @@ def main():
         scoped_cfg_strategies = _filter_strategies_by_direction_scope(
             list(cfg["strategies"].keys()), strategy_direction_scope
         )
-        enabled_by_constitution = _load_pcm_enabled_strategies_from_constitution()
-        enabled_set = (
-            set(enabled_by_constitution)
-            if enabled_by_constitution
-            else set(scoped_cfg_strategies)
-        )
-        pcm_strategies = [s for s in scoped_cfg_strategies if s in enabled_set]
+        classic_set = set(constitution_alignment.get("classic", []) or [])
+        pcm_strategies = [s for s in scoped_cfg_strategies if s in classic_set]
         if len(pcm_strategies) < 2:
             p.error("可用于 PCM 的策略数 < 2，无法执行联合回测")
 

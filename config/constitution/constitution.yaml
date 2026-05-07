@@ -147,11 +147,11 @@ slots:
 # 权威层级:
 #   Layer 0: slots.slot_count = 全局绝对上限
 #   Layer 0: slots.risk_per_slot = 每 slot 最大风险 (宪法硬上限)
-#   Layer 1: per_strategy_limits = 每策略资源上限 (max_risk_per_trade ≤ risk_per_slot)
+#   Layer 1: slot_policy = classic/trend 账户池的 symbol 级 slot 规则
+#   Layer 1: per_strategy_limits = 每策略风险/加仓/日内节流上限 (max_risk_per_trade ≤ risk_per_slot)
 #   Layer 2: pcm_regime.yaml 的仲裁策略在这些限制内运行
 #
 # 约束规则:
-#   per_strategy_limits.*.max_slots ≤ slots.slot_count
 #   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
@@ -166,10 +166,22 @@ resource_allocation:
     # - fbf
     # - msr
 
+  # classic/trend 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
+  # trend 集合只在 archetype_groups.trend 定义一次，避免 slot_policy 重复维护名单。
+  slot_policy:
+    trend_group: trend
+    min_trend_slots_per_symbol: 1
+    max_trend_slots_per_symbol: 1
+
+  archetype_groups:
+    trend:
+      - bpc
+      - tpc
+      - me
+
   per_strategy_limits:
-    # ── BPC：PCM 侧每 archetype 最多同时占用的 slot 数（跨 symbol 合计，见 LivePCM._count_archetype_slots）
+    # ── BPC：策略级风险/加仓约束；slot 数由 resource_allocation.slot_policy 按 symbol 管理。
     bpc:
-      max_slots: 5 # 调大可让多 symbol 同时有机会开仓（仍受全局 slots.slot_count 等约束）
       max_risk_per_trade: 0.01 # 肥尾主仓: 首枪 2.00% 风险；加仓次数与 execution.add_position 对齐
       allow_add_position: true # BPC 趋势延续允许加仓
       max_add_times: 3 # 宪法上限；触发与梯度见 archetypes/execution.yaml
@@ -178,7 +190,6 @@ resource_allocation:
     # 未配置时 ConstitutionExecutor.validate_add_position 对未知策略将 max_add_times 默认=1，
     # 会导致「每母仓只能加仓一次」，事件回测里表现为加仓笔数远少于 BPC。须与 execution.add_position.max_add_times 对齐。
     tpc:
-      max_slots: 5
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 3
@@ -194,7 +205,6 @@ resource_allocation:
 
     # ── ME 方向拆分 ──
     me:
-      max_slots: 5
       max_risk_per_trade: 0.01 # 动量扩散只做加速段, 首枪更轻
       allow_add_position: true # ME 动能扩张允许加仓
       max_add_times: 3 # 与 execution.add_position.max_add_times 对齐；≥3 便于骑乘实验
@@ -206,15 +216,20 @@ resource_allocation:
 # -----------------------------------------------------------------------------
 # 4) Multi-leg account (separate Binance API keys; run_multi_leg_live.py)
 # -----------------------------------------------------------------------------
-# Classic live uses slots/per_strategy_limits above; multi-leg uses notional caps here.
+# Classic live uses slots/per_strategy_limits above; multi-leg uses a separate account budget here.
+# Notional caps are exposure ceilings for the dedicated multi-leg account, not classic trend risk slots.
+# multi-leg 合约约束：同一 symbol 同时最多 1 个 multi-leg 策略占用（chop_grid / dual_add_trend 互斥）。
 multi_leg:
   strategies:
     - chop_grid
     - dual_add_trend
   unit_notional: 100.0
+  account:
+    equity_usdt: 10000
+    max_drawdown_pct: 0.12
   risk_limits:
-    max_gross_notional: 2000
-    max_net_notional: 1000
-    max_symbol_gross_notional: 800
-    max_symbol_net_notional: 400
+    max_gross_notional_pct: 0.20
+    max_net_notional_pct: 0.10
+    max_symbol_gross_notional_pct: 0.08
+    max_symbol_net_notional_pct: 0.04
     max_resting_orders: 60

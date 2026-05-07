@@ -1110,3 +1110,40 @@ resource_allocation:
         assert out == []  # 第3次会触发 hard cap 拒绝
         s = pcm.get_stats()
         assert s["notional_runtime"]["reject_counts"]["hard_cap"] >= 1
+
+
+def test_live_pcm_enforces_single_trend_per_symbol_when_enabled(tmp_path):
+    constitution = tmp_path / "constitution.yaml"
+    constitution.write_text(
+        "\n".join(
+            [
+                "slots:",
+                "  slot_count: 10",
+                "  risk_per_slot: 0.01",
+                "resource_allocation:",
+                "  slot_policy:",
+                "    trend_group: trend",
+                "    min_trend_slots_per_symbol: 1",
+                "    max_trend_slots_per_symbol: 1",
+                "  archetype_groups:",
+                "    trend: [bpc, tpc, me]",
+                "  per_strategy_limits:",
+                "    bpc: { max_risk_per_trade: 0.01 }",
+                "    tpc: { max_risk_per_trade: 0.01 }",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    bpc = _make_intent("BPC", confidence=0.8)
+    tpc = _make_intent("TPC", confidence=0.7)
+    pcm = LivePCM(constitution_yaml=str(constitution), get_open_slot_count=lambda: 0)
+    pcm.register("bpc", FakeStrategy(intents=[bpc]))
+    pcm.register("tpc", FakeStrategy(intents=[tpc]))
+
+    got = pcm.decide(features=FEATURES, symbol="BTCUSDT")
+
+    assert len(got) == 1
+    assert (
+        int(pcm._last_decide_trace.get("drop_trend_symbol_slot_conflict", 0) or 0) >= 1
+    )

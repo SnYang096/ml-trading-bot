@@ -14,8 +14,11 @@ def test_apply_multi_leg_args_from_constitution(tmp_path, monkeypatch) -> None:
 multi_leg:
   strategies: "chop_grid"
   unit_notional: 50
+  account:
+    equity_usdt: 1000
+    max_drawdown_pct: 0.2
   risk_limits:
-    max_gross_notional: 99
+    max_gross_notional_pct: 0.099
     max_resting_orders: 3
 """
     )
@@ -31,6 +34,8 @@ multi_leg:
         max_symbol_gross_notional=800.0,
         max_symbol_net_notional=400.0,
         max_resting_orders=60,
+        account_equity_usdt=10000.0,
+        max_drawdown_pct=0.12,
         constitution_yaml="",
     )
     apply_multi_leg_args_from_constitution(args)
@@ -38,6 +43,8 @@ multi_leg:
     assert args.unit_notional == 50.0
     assert args.max_gross_notional == 99.0
     assert args.max_resting_orders == 3
+    assert args.account_equity_usdt == 1000.0
+    assert args.max_drawdown_pct == 0.2
 
 
 def test_apply_multi_leg_empty_section_noop(tmp_path, monkeypatch) -> None:
@@ -59,6 +66,8 @@ def test_apply_multi_leg_empty_section_noop(tmp_path, monkeypatch) -> None:
         max_symbol_gross_notional=800.0,
         max_symbol_net_notional=400.0,
         max_resting_orders=60,
+        account_equity_usdt=10000.0,
+        max_drawdown_pct=0.12,
         constitution_yaml="",
     )
     apply_multi_leg_args_from_constitution(args)
@@ -93,6 +102,8 @@ multi_leg:
         max_symbol_gross_notional=800.0,
         max_symbol_net_notional=400.0,
         max_resting_orders=60,
+        account_equity_usdt=10000.0,
+        max_drawdown_pct=0.12,
         constitution_yaml="",
     )
     apply_multi_leg_args_from_constitution(args)

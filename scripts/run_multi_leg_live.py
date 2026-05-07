@@ -260,7 +260,19 @@ def build_daemon(
         max_symbol_gross_notional=args.max_symbol_gross_notional,
         max_symbol_net_notional=args.max_symbol_net_notional,
         max_resting_orders=args.max_resting_orders,
+        account_equity_usdt=getattr(args, "account_equity_usdt", None),
+        max_drawdown_pct=getattr(args, "max_drawdown_pct", None),
     )
+
+    def _drawdown_pct_from_env() -> float | None:
+        raw = os.getenv("MULTI_LEG_CURRENT_DRAWDOWN_PCT", "")
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+
     if args.bar_source == "feature-store":
         provider = FeatureStoreBarProvider(
             feature_bus_root=args.feature_bus_root,
@@ -312,6 +324,7 @@ def build_daemon(
                 run_id=run_id,
                 strategy_name=strategy,
                 symbol=symbol,
+                drawdown_pct_provider=_drawdown_pct_from_env,
             )
             runtimes.append(
                 StrategyRuntime(
@@ -396,6 +409,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--state-dir", default="results/multi_leg_live/state")
     p.add_argument("--multi-leg-db-path", default="data/multi_leg_order_management.db")
     p.add_argument("--unit-notional", type=float, default=100.0)
+    p.add_argument("--account-equity-usdt", type=float, default=10_000.0)
+    p.add_argument("--max-drawdown-pct", type=float, default=0.12)
     p.add_argument("--max-gross-notional", type=float, default=2_000.0)
     p.add_argument("--max-net-notional", type=float, default=1_000.0)
     p.add_argument("--max-symbol-gross-notional", type=float, default=800.0)

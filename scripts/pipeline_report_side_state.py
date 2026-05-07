@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""rolling_sim / fast_month 排障：读 pcm_candidates_*.json（不再读 symbol_side_state）。
+
+逐月列出 trend PCM 候选与 multi-leg 独立候选，二者为不同账户池。"""
 from __future__ import annotations
 
 import argparse
@@ -18,7 +21,12 @@ def _load_history_dir(config_path: str) -> Path:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Report rolling_sim side state.")
+    p = argparse.ArgumentParser(
+        description=(
+            "rolling_sim 排障：从 pcm_candidates_*.json 汇总 "
+            "trend/multi-leg 两个独立候选池。"
+        )
+    )
     p.add_argument("--run-id", required=True, help="rolling_sim run id (timestamp)")
     p.add_argument(
         "--config",
@@ -33,28 +41,33 @@ def main() -> int:
         print(f"❌ run_id 不存在: {run_root}")
         return 1
 
-    side_files = sorted(run_root.glob("**/symbol_side_state.json"))
-    if not side_files:
-        print(f"⚠️ 未找到 symbol_side_state.json: {run_root}")
+    candidate_files = sorted(run_root.glob("**/pcm_candidates_*.json"))
+    if not candidate_files:
+        print(f"⚠️ 未找到 pcm_candidates_*.json: {run_root}")
         return 2
 
     print(f"📁 Run Root: {run_root}")
-    for sf in side_files:
+    for rf in candidate_files:
         try:
-            obj = json.loads(sf.read_text(encoding="utf-8"))
+            obj = json.loads(rf.read_text(encoding="utf-8"))
         except Exception:
-            print(f"⚠️ 读取失败: {sf}")
+            print(f"⚠️ 读取失败: {rf}")
             continue
         month = obj.get("month", "N/A")
-        states = obj.get("states", {}) or {}
-        counts = {"active": 0, "carry_forward": 0, "disabled": 0}
-        for _, v in states.items():
-            st = str((v or {}).get("state", "disabled"))
-            counts[st] = counts.get(st, 0) + 1
+        rows = obj.get("candidates", []) or []
+        trend_sel = [
+            str((r or {}).get("strategy", ""))
+            for r in rows
+            if (r or {}).get("trend_pcm_candidate")
+        ]
+        multi_leg_sel = [
+            str((r or {}).get("strategy", ""))
+            for r in rows
+            if (r or {}).get("multi_leg_pcm_candidate")
+        ]
         print(
-            f"- {month} | active={counts.get('active',0)} "
-            f"carry_forward={counts.get('carry_forward',0)} "
-            f"disabled={counts.get('disabled',0)} | {sf}"
+            f"- {month} | trend_pcm({len(trend_sel)})={trend_sel} "
+            f"| multi_leg_pcm({len(multi_leg_sel)})={multi_leg_sel} | {rf}"
         )
     return 0
 

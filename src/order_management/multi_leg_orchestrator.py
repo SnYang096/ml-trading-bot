@@ -10,7 +10,7 @@ It intentionally keeps exchange transport and strategy inventory logic separate.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, runtime_checkable
 
 from src.order_management.grid_execution_adapter import (
     MultiLegExecutionAdapter,
@@ -77,6 +77,7 @@ class MultiLegLiveOrchestrator:
         run_id: Optional[str] = None,
         strategy_name: str = "",
         symbol: str = "",
+        drawdown_pct_provider: Optional[Callable[[], Optional[float]]] = None,
     ) -> None:
         self.engine = engine
         self.governor = governor
@@ -87,6 +88,7 @@ class MultiLegLiveOrchestrator:
         self.run_id = run_id
         self.strategy_name = strategy_name
         self.symbol = symbol
+        self.drawdown_pct_provider = drawdown_pct_provider
 
     def run_actions(self, actions: Iterable[Action]) -> OrchestrationReport:
         """Risk-check, execute, reconcile, then notify engine."""
@@ -98,6 +100,7 @@ class MultiLegLiveOrchestrator:
             action_list,
             positions=_exchange_positions_to_exposures(exchange_positions),
             open_orders=exchange_orders,
+            drawdown_pct=self._current_drawdown_pct(),
         )
         execution_results = (
             self.adapter.execute_actions(risk.approved_actions)
@@ -116,6 +119,20 @@ class MultiLegLiveOrchestrator:
             reconciliation=reconciliation,
             reconciliation_results=reconciliation_results,
         )
+
+    def _current_drawdown_pct(self) -> Optional[float]:
+        if self.drawdown_pct_provider is None:
+            return None
+        try:
+            v = self.drawdown_pct_provider()
+        except Exception:
+            return None
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
 
     def reconcile(
         self,

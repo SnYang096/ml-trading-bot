@@ -12,7 +12,10 @@ from src.order_management.multi_leg_daemon import (
     StrategyRuntime,
 )
 from src.order_management.multi_leg_orchestrator import MultiLegLiveOrchestrator
-from src.order_management.multi_leg_reconciliation import MultiLegReconciler
+from src.order_management.multi_leg_reconciliation import (
+    LocalPositionSnapshot,
+    MultiLegReconciler,
+)
 from src.order_management.multi_leg_risk_governor import (
     MultiLegPortfolioRiskGovernor,
     MultiLegRiskLimits,
@@ -166,9 +169,43 @@ def test_daemon_can_route_same_bar_to_two_strategy_runtimes() -> None:
     report = daemon.run_once()
 
     assert report.bars_seen == 2
-    assert report.action_count == 2
+    assert report.action_count == 1
+    assert report.rejected_count == 1
     assert engine_a.calls == 1
     assert engine_b.calls == 1
+
+
+def test_daemon_blocks_opening_actions_when_other_strategy_already_owns_symbol() -> (
+    None
+):
+    bar = MultiLegBarEvent(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01 00:00:00+00:00",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={},
+    )
+    engine_a = FakeEngine()
+    engine_b = FakeEngine()
+    engine_a.local_position_snapshots = lambda: [
+        LocalPositionSnapshot(symbol="BTCUSDT", side="LONG", quantity=0.01)
+    ]
+    adapter_a = _adapter()
+    adapter_b = _adapter()
+    daemon = MultiLegLiveDaemon(
+        bar_provider=FakeProvider([bar]),
+        runtimes=[
+            _runtime("chop_grid", "BTCUSDT", engine_a, adapter_a),
+            _runtime("dual_add_trend", "BTCUSDT", engine_b, adapter_b),
+        ],
+    )
+
+    report = daemon.run_once()
+
+    assert report.rejected_count >= 1
+    adapter_b.execute_actions.assert_not_called()
 
 
 def test_run_forever_increments_poll_metric_once_per_iteration() -> None:

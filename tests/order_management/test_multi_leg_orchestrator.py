@@ -217,3 +217,39 @@ def test_run_actions_uses_exchange_positions_for_risk_projection() -> None:
     assert not report.risk.ok
     assert "max_gross_notional exceeded" in report.risk.rejected[0].reason
     adapter.execute_actions.assert_not_called()
+
+
+def test_run_actions_passes_drawdown_provider_to_governor() -> None:
+    engine = FakeEngine()
+    adapter = _adapter()
+    orchestrator = MultiLegLiveOrchestrator(
+        engine=engine,
+        governor=MultiLegPortfolioRiskGovernor(
+            MultiLegRiskLimits(
+                max_gross_notional=10_000.0,
+                max_net_notional=10_000.0,
+                max_drawdown_pct=0.12,
+            )
+        ),
+        adapter=adapter,
+        reconciler=MultiLegReconciler(
+            ReconciliationPolicy(client_id_prefixes={"dat_", "cg_"})
+        ),
+        drawdown_pct_provider=lambda: 0.12,
+    )
+
+    report = orchestrator.run_actions(
+        [
+            {
+                "action": "place",
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "quantity": 0.01,
+                "price": 50_000.0,
+            }
+        ]
+    )
+
+    assert not report.risk.ok
+    assert "max_drawdown_pct exceeded" in report.risk.rejected[0].reason
+    adapter.execute_actions.assert_not_called()

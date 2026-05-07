@@ -5,9 +5,16 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from src.live_data_stream.constitution_config import (
+    classic_slot_policy_from_constitution,
     enabled_archetypes_from_constitution,
     load_constitution_dict,
+    multi_leg_strategies_from_constitution,
+    partition_pipeline_strategies_by_type,
+    validate_classic_slot_capacity,
+    validate_pipeline_constitution_alignment,
 )
 
 
@@ -92,3 +99,98 @@ def test_load_pcm_enabled_missing_file_returns_empty() -> None:
         )
         == []
     )
+
+
+def test_multi_leg_strategies_from_constitution_supports_list_and_string() -> None:
+    assert (
+        multi_leg_strategies_from_constitution({"multi_leg": {"strategies": []}}) == []
+    )
+    assert multi_leg_strategies_from_constitution(
+        {"multi_leg": {"strategies": ["chop_grid", "dual_add_trend"]}}
+    ) == ["chop_grid", "dual_add_trend"]
+    assert multi_leg_strategies_from_constitution(
+        {"multi_leg": {"strategies": "chop_grid, dual_add_trend"}}
+    ) == ["chop_grid", "dual_add_trend"]
+
+
+def test_partition_pipeline_strategies_by_type() -> None:
+    cfg = {
+        "strategies": {
+            "bpc": {"strategy_type": "single"},
+            "me": {},
+            "chop_grid": {"strategy_type": "grid"},
+            "dual_add_trend": {"strategy_type": "dual_add_trend"},
+        }
+    }
+    got = partition_pipeline_strategies_by_type(cfg)
+    assert got["classic"] == {"bpc", "me"}
+    assert got["multi_leg"] == {"chop_grid", "dual_add_trend"}
+
+
+def test_classic_slot_policy_uses_archetype_groups_without_duplicate_list() -> None:
+    cfg = {
+        "resource_allocation": {
+            "slot_policy": {
+                "trend_group": "trend",
+                "min_trend_slots_per_symbol": 1,
+                "max_trend_slots_per_symbol": 1,
+            },
+            "archetype_groups": {"trend": ["bpc", "tpc", "me"]},
+        }
+    }
+    policy = classic_slot_policy_from_constitution(cfg)
+    assert policy["trend_archetypes"] == ["bpc", "tpc", "me"]
+    assert policy["max_trend_slots_per_symbol"] == 1
+
+
+def test_validate_classic_slot_capacity_rejects_too_few_slots() -> None:
+    cfg = {
+        "slots": {"slot_count": 1},
+        "resource_allocation": {
+            "slot_policy": {"min_trend_slots_per_symbol": 1},
+            "archetype_groups": {"trend": ["bpc"]},
+        },
+    }
+    with pytest.raises(ValueError, match="slot_count is too small"):
+        validate_classic_slot_capacity(
+            constitution_cfg=cfg, symbols=["BTCUSDT", "ETHUSDT"]
+        )
+
+
+def test_validate_pipeline_constitution_alignment_ok() -> None:
+    cfg = {
+        "strategies": {
+            "bpc": {},
+            "tpc": {},
+            "me": {},
+            "chop_grid": {"strategy_type": "grid"},
+            "dual_add_trend": {"strategy_type": "dual_add_trend"},
+        }
+    }
+    constitution = {
+        "resource_allocation": {"enabled_archetypes": ["bpc", "tpc", "me"]},
+        "multi_leg": {"strategies": ["chop_grid", "dual_add_trend"]},
+    }
+    got = validate_pipeline_constitution_alignment(
+        pipeline_cfg=cfg, constitution_cfg=constitution, context_label="unit_test"
+    )
+    assert got["classic"] == ["bpc", "me", "tpc"]
+    assert got["multi_leg"] == ["chop_grid", "dual_add_trend"]
+
+
+def test_validate_pipeline_constitution_alignment_raises_on_mismatch() -> None:
+    cfg = {
+        "strategies": {
+            "bpc": {},
+            "fer": {},
+            "chop_grid": {"strategy_type": "grid"},
+        }
+    }
+    constitution = {
+        "resource_allocation": {"enabled_archetypes": ["bpc", "tpc"]},
+        "multi_leg": {"strategies": ["dual_add_trend"]},
+    }
+    with pytest.raises(ValueError, match="pipeline/constitution strategy mismatch"):
+        validate_pipeline_constitution_alignment(
+            pipeline_cfg=cfg, constitution_cfg=constitution, context_label="rolling"
+        )

@@ -18,7 +18,7 @@ def _load_history_dir(config_path: str) -> Path:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Debug monthly quality ranking.")
+    p = argparse.ArgumentParser(description="Debug monthly PCM candidate pools.")
     p.add_argument("--run-id", required=True, help="rolling_sim run id (timestamp)")
     p.add_argument("--month", required=True, help="month token YYYY-MM")
     p.add_argument(
@@ -34,28 +34,30 @@ def main() -> int:
         print(f"❌ run_id 不存在: {run_root}")
         return 1
 
-    qf = run_root / f"fast_month_{args.month}" / f"quality_ranking_{args.month}.json"
-    if not qf.exists():
-        # rolling_sim layout nested under _rolling_sim/<run_id>/fast_month_<month>/...
-        cand = list(run_root.glob(f"**/quality_ranking_{args.month}.json"))
+    candidate_file = (
+        run_root / f"fast_month_{args.month}" / f"pcm_candidates_{args.month}.json"
+    )
+    if not candidate_file.exists():
+        cand = list(run_root.glob(f"**/pcm_candidates_{args.month}.json"))
         if cand:
-            qf = cand[0]
+            candidate_file = cand[0]
         else:
-            print(f"❌ 未找到 quality 文件: {args.month}")
+            print(f"❌ 未找到 PCM candidates 文件: {args.month}")
             return 2
 
-    obj = json.loads(qf.read_text(encoding="utf-8"))
-    rows = list(obj.get("rankings", []) or [])
-    print(f"📄 {qf}")
+    obj = json.loads(candidate_file.read_text(encoding="utf-8"))
+    rows = list(obj.get("candidates", []) or [])
+    print(f"📄 {candidate_file}")
     print(f"📅 month={obj.get('month')}, rows={len(rows)}")
-    print("rank | strategy | quality | sharpe | trades | mean_r")
-    print("-----|----------|---------|--------|--------|-------")
+    print("idx | pool | strategy | sharpe | trades | mean_r")
+    print("----|------|----------|--------|--------|-------")
     for i, r in enumerate(rows, 1):
         m = r.get("metrics", {}) or {}
         print(
-            f"{i:>4d} | {r.get('strategy','')} | {float(r.get('quality_score',0.0)):>7.4f} "
-            f"| {float(m.get('sharpe_r',0.0)):>6.3f} | {int(m.get('n_trades',0)):>6d} "
-            f"| {float(m.get('mean_r',0.0)):>6.3f}"
+            f"{i:>3d} | {r.get('candidate_pool','')} | {r.get('strategy','')} "
+            f"| {float(m.get('sharpe_r', 0.0)):>6.3f} "
+            f"| {int(m.get('n_trades', 0)):>6d} "
+            f"| {float(m.get('mean_r', 0.0)):>6.3f}"
         )
     return 0
 

@@ -255,8 +255,8 @@ rolling:
 # 查看某次 rolling_sim 的 side 状态摘要
 mlbot pipeline report-side-state --run-id 20260326_120001 --config config/prod_train_pipeline_2h.yaml
 
-# 查看某次 rolling_sim 在指定月份的质量分排名明细
-mlbot pipeline debug-quality --run-id 20260326_120001 --month 2025-07 --config config/prod_train_pipeline_2h.yaml
+# 查看某次 rolling_sim 在指定月份的 PCM 候选池明细
+mlbot pipeline debug-pcm-candidates --run-id 20260326_120001 --month 2025-07 --config config/prod_train_pipeline_2h.yaml
 ```
 
 ### 4.3 输出产物

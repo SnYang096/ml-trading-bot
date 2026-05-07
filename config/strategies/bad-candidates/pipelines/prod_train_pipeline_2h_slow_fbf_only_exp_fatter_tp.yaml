@@ -56,28 +56,11 @@ rolling_calibration:
     compare_features: true
     promote_after_validate: true
 
-symbol_policy:
-  mode: hybrid_carry_forward
-  carry_forward_ttl_months: 2
-  enable_threshold: 0.0
-  min_symbol_trades_soft: 10
-  carry_forward_hard_fail_rules:
-    min_sharpe_r: -0.25
 
 direction_stack:
   mode: ema200
   ema_debounce_bars: 3
   vwap_window_days: 20
-
-slot_allocation:
-  mode: quality_ranked
-  max_symbols_per_side: 2
-  reserve_slots_for_secondary_symbols: 1
-  slot_opportunity_penalty: 0.001
-  quality_score_weights:
-    history_edge: 0.55
-    now_strength: 0.45
-  quality_lookback_months: 3
 
 stitching:
   enabled: true

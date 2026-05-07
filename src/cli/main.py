@@ -3726,23 +3726,23 @@ def pipeline_event_backtest(
 @click.option("--run-id", required=True, help="rolling_sim run id (timestamp)")
 @click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
 def pipeline_report_side_state(run_id, config_path):
-    """查看 rolling_sim side 状态摘要."""
+    """汇总 rolling_sim 每月 PCM 候选池（不再使用 symbol_side_state）。"""
     args = ["--run-id", str(run_id)]
     if config_path:
         args.extend(["--config", config_path])
     sys.exit(run_script("scripts/pipeline_report_side_state.py", args))
 
 
-@pipeline.command("debug-quality")
+@pipeline.command("debug-pcm-candidates")
 @click.option("--run-id", required=True, help="rolling_sim run id (timestamp)")
 @click.option("--month", required=True, help="月份 YYYY-MM")
 @click.option("--config", "config_path", default=None, help="pipeline 配置文件路径")
-def pipeline_debug_quality(run_id, month, config_path):
-    """查看指定月份 quality ranking 明细."""
+def pipeline_debug_pcm_candidates(run_id, month, config_path):
+    """查看指定月份 PCM 候选池明细."""
     args = ["--run-id", str(run_id), "--month", str(month)]
     if config_path:
         args.extend(["--config", config_path])
-    sys.exit(run_script("scripts/pipeline_debug_quality.py", args))
+    sys.exit(run_script("scripts/pipeline_debug_pcm_candidates.py", args))
 
 
 @experiment.command("regime-gate")

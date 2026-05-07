@@ -26,6 +26,7 @@ from src.live_data_stream.constitution_config import (
     pcm_archetype_priority_for_registry,
     pcm_resolve_registry_key,
     resolve_constitution_yaml,
+    validate_classic_slot_capacity,
 )
 from src.live_data_stream.order_manager_factory import init_order_manager_from_env
 from src.live_data_stream.classic_listener_feature_stack import (
@@ -219,6 +220,10 @@ def _setup_three_strategies(
         or _const_cfg.get("enabled_archetypes")
         or []
     )
+    validate_classic_slot_capacity(
+        constitution_cfg=_const_cfg,
+        symbols=symbols,
+    )
     enabled_archetypes = enabled_archetypes_from_constitution(_const_cfg)
     logger.info(
         "📋 enabled_archetypes=%s (source=%s)",
@@ -272,6 +277,11 @@ def _setup_three_strategies(
 
     logger.info("✅ PCM 策略注册完成: %s", list(_strategy_map.keys()))
 
+    # 创建 ConstitutionExecutor + RuntimeState（与 enabled_archetypes 同源文件）
+    constitution_exec = ConstitutionExecutor(constitution_yaml=constitution_yaml_path)
+    runtime_st = constitution_exec.load_runtime_state()
+    logger.info("✅ ConstitutionExecutor 初始化: %s", constitution_yaml_path)
+
     # ── 2. 创建 PCM 仲裁层 (注册策略 + timeframe 绑定) ──
     pcm_priority = pcm_archetype_priority_for_registry(
         _const_cfg,
@@ -282,6 +292,7 @@ def _setup_three_strategies(
     pcm = LivePCM(
         archetype_priority=pcm_priority,
         constitution_yaml=constitution_yaml_path,
+        get_open_slot_count=lambda: runtime_st.slots.active_count(),
     )
     for _name, _strat in _strategy_map.items():
         pcm.register(_name, _strat, timeframe=_tf_map[_name])
@@ -360,11 +371,6 @@ def _setup_three_strategies(
     logger.info(
         "✅ StatsCollector 启用: %s (auto_cleanup=%s)", stats_db_path, auto_cleanup
     )
-
-    # 创建 ConstitutionExecutor + RuntimeState（路径与上方 enabled_archetypes 一致）
-    constitution_exec = ConstitutionExecutor(constitution_yaml=constitution_yaml_path)
-    runtime_st = constitution_exec.load_runtime_state()
-    logger.info("✅ ConstitutionExecutor 初始化: %s", constitution_yaml_path)
 
     # ── 启动时 slot 同步: 从 Binance 查真实持仓，清理残留 stale slot ──
     _sync_slots_with_exchange(order_manager, constitution_exec, runtime_st, symbols)
