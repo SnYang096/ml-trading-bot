@@ -220,6 +220,13 @@ def validate_pipeline_constitution_alignment(
     constitution_cfg: Dict[str, Any],
     context_label: str = "rolling_research",
 ) -> Dict[str, List[str]]:
+    """Ensure every strategy in the pipeline YAML is authorized by the constitution.
+
+    Subset semantics (single-strategy research): ``enabled_archetypes`` / ``multi_leg``
+    may list more than the pipeline; only **pipeline ⊂ constitution** is required.
+    Violations: a classic name not in ``enabled_archetypes``, or a multi-leg name not
+    in ``multi_leg.strategies``.
+    """
     parts = partition_pipeline_strategies_by_type(pipeline_cfg)
     pipeline_classic = set(parts["classic"])
     pipeline_multi_leg = set(parts["multi_leg"])
@@ -227,18 +234,12 @@ def validate_pipeline_constitution_alignment(
     const_multi_leg = set(multi_leg_strategies_from_constitution(constitution_cfg))
 
     classic_missing_in_const = sorted(pipeline_classic - const_classic)
-    classic_extra_in_const = sorted(const_classic - pipeline_classic)
     multi_missing_in_const = sorted(pipeline_multi_leg - const_multi_leg)
-    multi_extra_in_const = sorted(const_multi_leg - pipeline_multi_leg)
 
-    if (
-        classic_missing_in_const
-        or classic_extra_in_const
-        or multi_missing_in_const
-        or multi_extra_in_const
-    ):
+    if classic_missing_in_const or multi_missing_in_const:
         msg_lines = [
-            f"{context_label}: pipeline/constitution strategy mismatch",
+            f"{context_label}: pipeline strategy not allowed by constitution "
+            "(pipeline must be a subset of constitution lists)",
             f"  classic pipeline={sorted(pipeline_classic)}",
             f"  classic constitution={sorted(const_classic)}",
             f"  multi_leg pipeline={sorted(pipeline_multi_leg)}",
@@ -246,23 +247,13 @@ def validate_pipeline_constitution_alignment(
         ]
         if classic_missing_in_const:
             msg_lines.append(
-                "  missing in constitution.enabled_archetypes="
+                "  not in constitution.enabled_archetypes="
                 f"{classic_missing_in_const}"
-            )
-        if classic_extra_in_const:
-            msg_lines.append(
-                "  extra in constitution.enabled_archetypes="
-                f"{classic_extra_in_const}"
             )
         if multi_missing_in_const:
             msg_lines.append(
-                "  missing in constitution.multi_leg.strategies="
+                "  not in constitution.multi_leg.strategies="
                 f"{multi_missing_in_const}"
-            )
-        if multi_extra_in_const:
-            msg_lines.append(
-                "  extra in constitution.multi_leg.strategies="
-                f"{multi_extra_in_const}"
             )
         raise ValueError("\n".join(msg_lines))
 

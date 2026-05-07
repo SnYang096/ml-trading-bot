@@ -7523,8 +7523,9 @@ def main():
             )
         except ValueError as exc:
             p.error(
-                f"{exc}\n请先将 pipeline strategies 与 constitution "
-                "resource_allocation.enabled_archetypes / multi_leg.strategies 调整一致后重试。"
+                f"{exc}\n请确保 YAML 中的每个策略均在宪法 allowlist 内："
+                "经典策略 ∈ resource_allocation.enabled_archetypes；"
+                "multi-leg ∈ multi_leg.strategies（单策略跑滚测时宪法可为超集）。"
             )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
