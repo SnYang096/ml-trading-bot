@@ -40,6 +40,7 @@ rolling:
   slow_realistic:
     # 在 rolling_sim 且 rolling.mode == slow_realistic 时，会用 cadence_months 决定 隔几个月跑一次慢结构快照
     cadence_months: 3
+    # triggered_retrain_enabled：为 true 时按 cadence_months 执行慢结构快照并刷新滚动使用的 strategies_root；为 false 时整段 rolling 不跑快照、始终用仓库 config/strategies。每月阈值标定与当月 test 仍照常进行，与该项无关。
     triggered_retrain_enabled: true
 
 threshold_calibration:
