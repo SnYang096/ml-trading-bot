@@ -277,8 +277,7 @@ SR 位虽然自适应，围绕它的**交易参数**却不是：
 
 ### 3.2 方向来源应改为 SR 穿越驱动
 
-**现状**：SRB 方向由 `direction_stack (ema200/MACD)` 决定 — 这限制了反手能力，
-因为如果 ema200 说 LONG-only，假突破下方后想做 SHORT 反手就被禁了。
+**现状**：SRB 方向主要来自 `archetypes/direction.yaml` 与研究管线里的 `direction_tuning`（旧 YAML 占位键 `direction_stack` 已移除且无代码消费）。当规则等价为仅靠 ema200/MACD 给出 LONG-only 时，假突破下方后想做 SHORT 反手就会被禁。
 
 **目标**：SRB 的方向应由 **SR 穿越事件** 驱动，而非趋势指标：
 - 价格向上穿越阻力 → LONG 候选

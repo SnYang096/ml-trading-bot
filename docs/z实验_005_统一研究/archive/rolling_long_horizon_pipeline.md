@@ -127,14 +127,7 @@
 | `symbol_threshold_calibration.enabled` | 预留字段：当前代码未消费，不影响运行结果。 |
 | `execution_opt.enabled` | 是否跑 execution 优化（sym-r 网格等）。 |
 | `pcm_eval.enabled` | 是否在流程中纳入 PCM 相关评估（与联合回测步骤配合）。 |
-
-#### `direction_stack`
-
-| 字段 | 说明 |
-|------|------|
-| `mode` | `ema200` \| `vwap_long_anchor` \| `ensemble`：方向过滤/叠加逻辑（V1 常用 `ema200`）。 |
-| `ema_debounce_bars` | EMA 方向翻转去抖 K 线数。 |
-| `vwap_window_days` | VWAP 锚定窗口（天），非 `vwap_*` 模式时可忽略。 |
+| `direction_tuning.enabled` | 是否按 cadence 跑方向层择优（配合策略 `has_direction` 与 `archetypes/direction.yaml`）。旧版 YAML 中的 `direction_stack` 占位已移除且无代码消费。 |
 
 #### PCM 候选池
 

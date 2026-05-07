@@ -58,11 +58,6 @@ threshold_calibration:
   enable_model_training: true
   # execution_opt / pcm_eval / direction_tuning 与 extends 的 turbo 一致，不写则继承。
 
-direction_stack:
-  mode: ema200
-  ema_debounce_bars: 3
-  vwap_window_days: 20
-
 stitching:
   enabled: true
   metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]

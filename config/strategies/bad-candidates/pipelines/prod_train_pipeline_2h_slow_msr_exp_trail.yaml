@@ -61,11 +61,6 @@ rolling_calibration:
     compare_features: true
     promote_after_validate: true
 
-direction_stack:
-  mode: ema200
-  ema_debounce_bars: 3
-  vwap_window_days: 20
-
 stitching:
   enabled: true
   metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]
