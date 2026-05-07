@@ -157,6 +157,22 @@ def test_validate_classic_slot_capacity_rejects_too_few_slots() -> None:
         )
 
 
+def test_validate_classic_slot_capacity_accepts_csv_string_from_pipeline() -> None:
+    cfg = {
+        "slots": {"slot_count": 10},
+        "resource_allocation": {
+            "slot_policy": {"min_trend_slots_per_symbol": 1},
+            "archetype_groups": {"trend": ["bpc"]},
+        },
+    }
+    got = validate_classic_slot_capacity(
+        constitution_cfg=cfg,
+        symbols="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT",
+    )
+    assert got["required_trend_slots"] == 6
+    assert len(got["symbols"]) == 6
+
+
 def test_validate_pipeline_constitution_alignment_ok() -> None:
     cfg = {
         "strategies": {

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set, Union
 
 logger = logging.getLogger(__name__)
 MULTI_LEG_STRATEGY_TYPES = frozenset({"grid", "dual_add_trend"})
@@ -141,11 +141,35 @@ def classic_slot_policy_from_constitution(cfg: Dict[str, Any]) -> Dict[str, Any]
     return policy
 
 
+def normalize_symbols_for_slot_validation(
+    symbols: Optional[Union[str, Iterable[str]]],
+) -> List[str]:
+    """Coerce universe input to uppercase symbol tokens.
+
+    Callers historically pass either a ``list[str]`` (live) or a comma-separated
+    ``str`` from ``resolve_symbols_from_config`` (research); iterating a string
+    byte-by-character would wrongly inflate slot requirements.
+    """
+    if symbols is None:
+        return []
+    if isinstance(symbols, str):
+        raw = symbols.replace("|", ",").replace(";", ",")
+        out: List[str] = []
+        for chunk in raw.split(","):
+            t = chunk.strip().upper()
+            if t:
+                out.append(t)
+        return out
+    return [str(s).strip().upper() for s in symbols if str(s).strip()]
+
+
 def validate_classic_slot_capacity(
-    *, constitution_cfg: Dict[str, Any], symbols: Iterable[str]
+    *,
+    constitution_cfg: Dict[str, Any],
+    symbols: Optional[Union[str, Iterable[str]]],
 ) -> Dict[str, Any]:
     policy = classic_slot_policy_from_constitution(constitution_cfg)
-    clean_symbols = sorted({str(s).upper().strip() for s in symbols if str(s).strip()})
+    clean_symbols = sorted(set(normalize_symbols_for_slot_validation(symbols)))
     slots = constitution_cfg.get("slots") or {}
     slot_count = int(slots.get("slot_count", 0) or 0)
     min_per_symbol = int(policy.get("min_trend_slots_per_symbol", 1) or 1)
