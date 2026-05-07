@@ -7087,8 +7087,9 @@ def train_rolling(
     "--output-root",
     default=None,
     help=(
-        "Root dir for outputs. Default: results/<strategy>/train_final_<timestamp>_<label>/ "
-        "(strategy from --config dirname; auto-generated)."
+        "Root dir for outputs. Default: results/train_final/<strategy>/train_final_<timestamp>_<label>/ "
+        "(strategy from --config dirname; auto-generated). "
+        "Legacy dirs results/<strategy>/train_final_* and results/train_final_* remain discoverable."
     ),
 )
 @click.option(
@@ -7152,7 +7153,7 @@ def train_final(
     from datetime import datetime
     from pathlib import Path
 
-    # 自动生成带时间戳和 label 名称的输出目录（按策略分子目录，避免 results/ 根目录杂乱）
+    # 自动生成带时间戳和 label 名称的输出目录（集中到 results/train_final/<策略>/ 便于清理）
     if output_root is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         _cfg = Path(config)
@@ -7165,7 +7166,10 @@ def train_final(
                 label_suffix = f"_{label_name[7:]}"  # 去掉 "labels_" 前缀
             elif label_name != "labels":
                 label_suffix = f"_{label_name}"
-        output_root = f"results/{strategy_key}/train_final_{timestamp}{label_suffix}"
+        output_root = (
+            f"results/train_final/{strategy_key}/"
+            f"train_final_{timestamp}{label_suffix}"
+        )
         click.echo(f"📂 Output directory: {output_root}")
 
     use_workspace_prefix = docker and not _is_in_docker()
@@ -9835,7 +9839,8 @@ def gate_apply_archetype(
         results_dir = Path("results")
         if results_dir.exists():
             # 查找匹配 strategy 的最新训练目录
-            # 新布局: results/<strategy>/train_final_*/<strategy>/
+            # 现行: results/train_final/<strategy>/train_final_*/<strategy>/
+            # 仍兼容: results/<strategy>/train_final_*/<strategy>/
             # 旧布局: results/train_final_*/<strategy>/
             train_dirs = []
             for d in results_dir.glob("train_final_*"):
@@ -9847,6 +9852,13 @@ def gate_apply_archetype(
                     else:
                         train_dirs.append(d)
             if strategy:
+                bucket = results_dir / "train_final" / strategy
+                if bucket.is_dir():
+                    for d in bucket.glob("train_final_*"):
+                        if d.is_dir():
+                            sd = d / strategy
+                            if sd.is_dir():
+                                train_dirs.append(sd)
                 strat_root = results_dir / strategy
                 if strat_root.is_dir():
                     for d in strat_root.glob("train_final_*"):

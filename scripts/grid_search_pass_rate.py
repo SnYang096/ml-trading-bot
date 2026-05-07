@@ -71,6 +71,11 @@ def find_gate_artifacts(run_dir: Path, strategy: str, logs_override: str = None)
                     f"{strategy}/train_final_*_rr_extreme/{strategy}/logs_gated.parquet"
                 )
             )
+            + list(
+                _r.glob(
+                    f"train_final/{strategy}/train_final_*_rr_extreme/{strategy}/logs_gated.parquet"
+                )
+            )
         )
         if candidates:
             logs_gated = candidates[-1]

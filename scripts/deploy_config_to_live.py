@@ -393,7 +393,8 @@ def deploy_global_configs() -> int:
 def _sync_training_baselines(strategies: List[str]) -> int:
     """Auto-copy latest training_baseline.json from results/ to config/strategies/.
 
-    Scans results/train_final_*/{strategy}/ and results/{strategy}/train_final_*/*/training_baseline.json,
+    Scans results/train_final/{strategy}/train_final_*/*/, results/{strategy}/train_final_*/*/,
+    results/train_final_*/{strategy}/ for training_baseline.json,
     picks the most recent per strategy, and copies to
     config/strategies/{strategy}/training_baseline.json.
     This ensures the deploy step always has the latest OOD baseline.
@@ -404,6 +405,17 @@ def _sync_training_baselines(strategies: List[str]) -> int:
     for strat in strategies:
         candidates = sorted(
             glob.glob(
+                str(
+                    PROJECT_ROOT
+                    / "results"
+                    / "train_final"
+                    / strat
+                    / "train_final_*"
+                    / strat
+                    / "training_baseline.json"
+                )
+            )
+            + glob.glob(
                 str(
                     PROJECT_ROOT
                     / "results"

@@ -362,6 +362,29 @@ def build_request_handler(results_root: Path):
                 self.wfile.write(payload)
                 return
 
+            if path == "/api/pipeline-run/jobs":
+                run_only_raw = (
+                    (qs.get("running_only") or qs.get("running") or ["1"])[0]
+                    .strip()
+                    .lower()
+                )
+                running_only = run_only_raw not in ("0", "false", "no", "all")
+                items = pipeline_jobs.list_jobs_status_json(
+                    root, running_only=running_only, limit=100
+                )
+                out = json.dumps(
+                    {"ok": True, "jobs": items},
+                    indent=2,
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(out)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(out)
+                return
+
             if path == "/api/pipeline-run/status":
                 jid = (qs.get("id") or [""])[0].strip()
                 if not jid:
@@ -411,7 +434,7 @@ def build_request_handler(results_root: Path):
                     self.end_headers()
                     self.wfile.write(out)
                     return
-                j = pipeline_jobs.get_job(jid)
+                j = pipeline_jobs.get_job(jid, root)
                 if not j:
                     out = json.dumps(
                         {"ok": False, "error": "not_found"}, ensure_ascii=False
@@ -507,21 +530,6 @@ def build_request_handler(results_root: Path):
                     self.wfile.write(out)
                     return
                 job, err = pipeline_jobs.start_pipeline_job(root, payload)
-                if err == "busy":
-                    out = json.dumps(
-                        {
-                            "ok": False,
-                            "error": "busy",
-                            "active": pipeline_jobs.active_job_summary(),
-                        },
-                        ensure_ascii=False,
-                    ).encode("utf-8")
-                    self.send_response(409)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Content-Length", str(len(out)))
-                    self.end_headers()
-                    self.wfile.write(out)
-                    return
                 if err == "disabled":
                     out = json.dumps(
                         {"ok": False, "error": "pipeline_run_disabled"},

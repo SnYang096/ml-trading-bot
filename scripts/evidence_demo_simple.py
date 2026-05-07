@@ -69,6 +69,11 @@ def find_logs(strat):
             PROJECT.glob(
                 f"results/{strat}/train_final_*_rr_extreme/{strat}/logs_gated.parquet"
             )
+        )
+        + list(
+            PROJECT.glob(
+                f"results/train_final/{strat}/train_final_*_rr_extreme/{strat}/logs_gated.parquet"
+            )
         ),
         key=lambda p: p.stat().st_mtime,
     )

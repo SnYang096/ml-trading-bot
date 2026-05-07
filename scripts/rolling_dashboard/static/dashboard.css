@@ -162,6 +162,18 @@
       padding-bottom: 0.45rem;
       margin-bottom: 0.65rem;
     }
+    .pipeline-card-progress {
+      margin-top: 0.75rem;
+      padding-top: 0.65rem;
+      border-top: 1px solid var(--border);
+    }
+    .pipeline-card-progress .pipeline-card-status {
+      font-size: 0.84rem;
+      margin: 0 0 0.35rem;
+      min-height: 1.2rem;
+      line-height: 1.35;
+      word-break: break-word;
+    }
     .pipeline-run-card-pcm { border-color: #a371f755; }
     .pipeline-run-pcm-hint {
       font-size: 0.84rem; margin: 0 0 0.65rem; line-height: 1.45; max-width: 40rem;

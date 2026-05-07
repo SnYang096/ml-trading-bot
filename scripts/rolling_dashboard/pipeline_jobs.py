@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -165,9 +166,10 @@ def estimate_progress_from_log(tail: str, *, job_status: str) -> Dict[str, Any]:
     if len(best_label) > 140:
         best_label = best_label[:137] + "…"
 
-    if job_status == "failed":
+    if job_status in ("failed", "interrupted"):
         pct = min(max(best_pct, 8), 95)
-        return {"pct": pct, "label": best_label or "失败", "indeterminate": False}
+        lab = "已中断" if job_status == "interrupted" else (best_label or "失败")
+        return {"pct": pct, "label": lab, "indeterminate": False}
 
     if running:
         pct = max(2, min(best_pct, 99))
@@ -219,7 +221,7 @@ class PipelineJob:
     run_all: bool
     config_path: Optional[str]
     skip_shap: bool
-    status: str  # running | done | failed
+    status: str  # running | done | failed | interrupted
     started_at: str
     log_path: str  # relative to results root, posix
     returncode: Optional[int] = None
@@ -229,17 +231,191 @@ class PipelineJob:
 
 _jobs_lock = threading.Lock()
 _jobs: Dict[str, PipelineJob] = {}
-_active_job_id: Optional[str] = None
+_db_lock = threading.Lock()
+_reconciled_results_roots: set[str] = set()
 
 
-def active_job_summary() -> Optional[Dict[str, Any]]:
-    with _jobs_lock:
-        if not _active_job_id:
-            return None
-        j = _jobs.get(_active_job_id)
-        if not j:
-            return None
-        return _job_to_json(j)
+def _jobs_sqlite_path(results_root: Path) -> Path:
+    return results_root.resolve() / ".pipeline_run_dashboard.sqlite"
+
+
+def _db_connect(results_root: Path) -> sqlite3.Connection:
+    p = _jobs_sqlite_path(results_root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(p), check_same_thread=False, timeout=60.0)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_jobs (
+            job_id TEXT PRIMARY KEY,
+            strategy TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            run_all INTEGER NOT NULL,
+            config_path TEXT,
+            skip_shap INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            returncode INTEGER,
+            error TEXT,
+            log_path TEXT NOT NULL,
+            cmd_json TEXT NOT NULL DEFAULT '[]'
+        )
+        """
+    )
+    conn.commit()
+
+
+def _maybe_reconcile_stale_running(results_root: Path) -> None:
+    """Mark DB ``running`` rows as interrupted once per results_root (after process restart)."""
+    key = str(results_root.resolve())
+    with _db_lock:
+        if key in _reconciled_results_roots:
+            return
+        conn = _db_connect(results_root)
+        try:
+            _init_schema(conn)
+            now = _utc_iso()
+            msg = "dashboard 进程重启：此前 running 状态未再跟踪"
+            conn.execute(
+                """
+                UPDATE pipeline_jobs
+                SET status = 'interrupted', ended_at = ?, error = ?
+                WHERE status = 'running'
+                """,
+                (now, msg),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        _reconciled_results_roots.add(key)
+
+
+def _row_to_job(row: sqlite3.Row) -> PipelineJob:
+    return PipelineJob(
+        job_id=str(row["job_id"]),
+        strategy=str(row["strategy"]),
+        stage=str(row["stage"]),
+        run_all=bool(row["run_all"]),
+        config_path=str(row["config_path"]) if row["config_path"] else None,
+        skip_shap=bool(row["skip_shap"]),
+        status=str(row["status"]),
+        started_at=str(row["started_at"]),
+        log_path=str(row["log_path"]),
+        returncode=(int(row["returncode"]) if row["returncode"] is not None else None),
+        error=str(row["error"]) if row["error"] else None,
+        ended_at=str(row["ended_at"]) if row["ended_at"] else None,
+    )
+
+
+def _persist_job_insert(results_root: Path, job: PipelineJob, cmd: List[str]) -> None:
+    _maybe_reconcile_stale_running(results_root)
+    with _db_lock:
+        conn = _db_connect(results_root)
+        try:
+            _init_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO pipeline_jobs (
+                    job_id, strategy, stage, run_all, config_path, skip_shap,
+                    status, started_at, ended_at, returncode, error, log_path, cmd_json
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    job.job_id,
+                    job.strategy,
+                    job.stage,
+                    int(job.run_all),
+                    job.config_path,
+                    int(job.skip_shap),
+                    job.status,
+                    job.started_at,
+                    None,
+                    None,
+                    None,
+                    job.log_path,
+                    json.dumps(cmd, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _persist_job_finalize(
+    results_root: Path,
+    job_id: str,
+    *,
+    status: str,
+    ended_at: str,
+    returncode: Optional[int],
+    error: Optional[str],
+) -> None:
+    with _db_lock:
+        conn = _db_connect(results_root)
+        try:
+            _init_schema(conn)
+            conn.execute(
+                """
+                UPDATE pipeline_jobs
+                SET status = ?, ended_at = ?, returncode = ?, error = ?
+                WHERE job_id = ?
+                """,
+                (status, ended_at, returncode, error, job_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _fetch_job_row(results_root: Path, job_id: str) -> Optional[sqlite3.Row]:
+    _maybe_reconcile_stale_running(results_root)
+    with _db_lock:
+        conn = _db_connect(results_root)
+        try:
+            _init_schema(conn)
+            cur = conn.execute(
+                "SELECT * FROM pipeline_jobs WHERE job_id = ?", (job_id,)
+            )
+            return cur.fetchone()
+        finally:
+            conn.close()
+
+
+def list_trackable_jobs(
+    results_root: Path, *, running_only: bool = False, limit: int = 100
+) -> List[PipelineJob]:
+    _maybe_reconcile_stale_running(results_root)
+    with _db_lock:
+        conn = _db_connect(results_root)
+        try:
+            _init_schema(conn)
+            if running_only:
+                cur = conn.execute(
+                    """
+                    SELECT * FROM pipeline_jobs
+                    WHERE status = 'running'
+                    ORDER BY started_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    SELECT * FROM pipeline_jobs
+                    ORDER BY started_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            return [_row_to_job(row) for row in cur.fetchall()]
+        finally:
+            conn.close()
 
 
 def _job_to_json(j: PipelineJob) -> Dict[str, Any]:
@@ -260,9 +436,18 @@ def _job_to_json(j: PipelineJob) -> Dict[str, Any]:
     }
 
 
-def get_job(job_id: str) -> Optional[PipelineJob]:
+def get_job(job_id: str, results_root: Path) -> Optional[PipelineJob]:
     with _jobs_lock:
-        return _jobs.get(job_id)
+        cached = _jobs.get(job_id)
+        if cached is not None:
+            return cached
+    row = _fetch_job_row(results_root, job_id)
+    if row is None:
+        return None
+    job = _row_to_job(row)
+    with _jobs_lock:
+        _jobs[job_id] = job
+    return job
 
 
 def read_log_tail(results_root: Path, rel_log: str, *, max_bytes: int = 96_000) -> str:
@@ -380,8 +565,6 @@ def start_pipeline_job(
     results_root: Path, payload: Dict[str, Any]
 ) -> tuple[Optional[PipelineJob], Optional[str]]:
     """Start background pipeline; returns (job, error_code)."""
-    global _active_job_id
-
     if not pipeline_run_enabled():
         return None, "disabled"
 
@@ -398,12 +581,6 @@ def start_pipeline_job(
         project_root, norm["config_path"]
     ):
         return None, "config_not_found"
-
-    with _jobs_lock:
-        if _active_job_id is not None:
-            st = _jobs.get(_active_job_id)
-            if st and st.status == "running":
-                return None, "busy"
 
     logs_base = results_root.resolve() / "logs"
     strat_dir = "all" if norm["run_all"] else norm["strategy"]
@@ -460,10 +637,12 @@ def start_pipeline_job(
         encoding="utf-8",
     )
 
+    _persist_job_insert(results_root, job, cmd)
+
     def _worker() -> None:
-        global _active_job_id
         rc: Optional[int] = None
         err_msg: Optional[str] = None
+        final_status = "failed"
         try:
             with open(log_path, "w", encoding="utf-8") as lf:
                 lf.write(f"# {' '.join(cmd)}\n# cwd={project_root}\n\n")
@@ -487,21 +666,30 @@ def start_pipeline_job(
                 pass
         finally:
             ended = _utc_iso()
+            if rc == 0:
+                final_status = "done"
+                err_final: Optional[str] = None
+            else:
+                final_status = "failed"
+                err_final = err_msg or (f"exit {rc}" if rc is not None else "error")
             with _jobs_lock:
                 j = _jobs.get(job_id)
                 if j:
                     j.ended_at = ended
                     j.returncode = rc
-                    if rc == 0:
-                        j.status = "done"
-                    else:
-                        j.status = "failed"
-                        j.error = err_msg or f"exit {rc}"
-                _active_job_id = None
+                    j.status = final_status
+                    j.error = err_final
+            _persist_job_finalize(
+                results_root,
+                job_id,
+                status=final_status,
+                ended_at=ended,
+                returncode=rc,
+                error=err_final,
+            )
 
     with _jobs_lock:
         _jobs[job_id] = job
-        _active_job_id = job_id
 
     th = threading.Thread(target=_worker, name=f"pipeline-{job_id}", daemon=True)
     th.start()
@@ -510,7 +698,7 @@ def start_pipeline_job(
 
 
 def job_status_json(job_id: str, results_root: Path) -> Optional[Dict[str, Any]]:
-    j = get_job(job_id)
+    j = get_job(job_id, results_root)
     if not j:
         return None
     out = dict(_job_to_json(j))
@@ -522,4 +710,16 @@ def job_status_json(job_id: str, results_root: Path) -> Optional[Dict[str, Any]]
         run_all=j.run_all,
         ok=ok,
     )
+    return out
+
+
+def list_jobs_status_json(
+    results_root: Path, *, running_only: bool = False, limit: int = 100
+) -> List[Dict[str, Any]]:
+    jobs = list_trackable_jobs(results_root, running_only=running_only, limit=limit)
+    out: List[Dict[str, Any]] = []
+    for job in jobs:
+        payload = job_status_json(job.job_id, results_root)
+        if payload:
+            out.append(payload)
     return out

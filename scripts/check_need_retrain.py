@@ -6,7 +6,8 @@
 local_monitor_monthly / monitor_retrain / test_rolling_deploy_gate 五个工具。
 
 核心逻辑:
-  1. 自动扫描 results/research_history/、results/train_final_* 与 results/<策略>/train_final_*
+  1. 自动扫描 results/research_history/、results/train_final_* 、results/train_final/<策略>/train_final_*
+     与 results/<策略>/train_final_*，
      发现最近 N 次训练的 report.json + training_baseline.json
   2. 如果数据不足 (< --min-months), 自动调用 auto_research_pipeline 补训
   3. 逐月对比: 特征漂移 + L1-L4 健康 + Sharpe/Trades 趋势
@@ -109,7 +110,8 @@ def discover_research_runs(
     来源 (按优先级):
       1. results/research_history/{strategy}/*/report.json
       2. results/rolling_deploy_test/{strategy}/month_*/report.json
-      3. results/train_final_*/{strategy}/training_baseline.json
+      3. results/train_final/<strategy>/train_final_*、results/train_final_*/{strategy}、
+         results/<strategy>/train_final_* 下的 training_baseline.json
     """
     history_dir = PROJECT_ROOT / cfg["output"]["history_dir"]
     runs: Dict[str, Dict[str, Any]] = {}  # end_date → run_info
@@ -177,7 +179,8 @@ def discover_research_runs(
                 }
 
     # ── 来源 3: train_final_* (仅补充 baseline, 从 training_baseline.json 提取) ──
-    # 新布局: results/<strategy>/train_final_* ; 旧布局: results/train_final_*
+    # 现行: results/train_final/<strategy>/train_final_* ;
+    # 仍兼容: results/<strategy>/train_final_* ; 旧: results/train_final_*
     _tf_roots: List[Path] = []
     for tf_dir in sorted(PROJECT_ROOT.glob("results/train_final_*")):
         if tf_dir.is_dir():
@@ -185,6 +188,11 @@ def discover_research_runs(
     _strat_rf = PROJECT_ROOT / "results" / strategy
     if _strat_rf.is_dir():
         for tf_dir in sorted(_strat_rf.glob("train_final_*")):
+            if tf_dir.is_dir():
+                _tf_roots.append(tf_dir)
+    _bucket = PROJECT_ROOT / "results" / "train_final" / strategy
+    if _bucket.is_dir():
+        for tf_dir in sorted(_bucket.glob("train_final_*")):
             if tf_dir.is_dir():
                 _tf_roots.append(tf_dir)
 
@@ -246,13 +254,16 @@ def find_baseline_for_run(run: Dict[str, Any], strategy: str) -> Optional[Path]:
     if bl.exists():
         return bl
 
-    # 2. 对应的 train_final 目录 (新/旧布局)
+    # 2. 对应的 train_final 目录 (现行/兼容/旧布局)
     _bl_roots: List[Path] = [
         p for p in PROJECT_ROOT.glob("results/train_final_*") if p.is_dir()
     ]
     _sroot = PROJECT_ROOT / "results" / strategy
     if _sroot.is_dir():
         _bl_roots.extend(p for p in _sroot.glob("train_final_*") if p.is_dir())
+    _bucket_bl = PROJECT_ROOT / "results" / "train_final" / strategy
+    if _bucket_bl.is_dir():
+        _bl_roots.extend(p for p in _bucket_bl.glob("train_final_*") if p.is_dir())
     for tf_dir in sorted(_bl_roots, key=lambda p: p.name, reverse=True):
         strat_bl = tf_dir / strategy / "training_baseline.json"
         if strat_bl.exists():
@@ -288,6 +299,9 @@ def find_predictions_for_run(run: Dict[str, Any], strategy: str) -> Optional[Pat
     _sroot2 = PROJECT_ROOT / "results" / strategy
     if _sroot2.is_dir():
         _pred_roots.extend(p for p in _sroot2.glob("train_final_*") if p.is_dir())
+    _bucket_pr = PROJECT_ROOT / "results" / "train_final" / strategy
+    if _bucket_pr.is_dir():
+        _pred_roots.extend(p for p in _bucket_pr.glob("train_final_*") if p.is_dir())
     for tf_dir in sorted(_pred_roots, key=lambda p: p.name, reverse=True):
         p = tf_dir / strategy / "predictions.parquet"
         if p.exists():

@@ -65,12 +65,14 @@ def run_step(
 def find_output_dir(output: str, strategy: str) -> Optional[str]:
     """从 stdout 或磁盘解析 Gate Train 产物目录 ``.../<strategy>``。
 
-    支持两种布局：
-    - 新: ``results/<strategy>/train_final_* /<strategy>``
-    - 旧: ``results/train_final_* /<strategy>``
+    支持三种布局（stdout 匹配顺序即优先级）：
+    - 现行: ``results/train_final/<strategy>/train_final_*/<strategy>``
+    - 仍兼容: ``results/<strategy>/train_final_*/<strategy>``
+    - 旧: ``results/train_final_*/<strategy>``
     """
     esc = re.escape(strategy)
     for pat in (
+        rf"(results/train_final/{esc}/train_final_\S+/{esc})",
         rf"(results/{esc}/train_final_\S+/{esc})",
         rf"(results/train_final_\S+/{esc})",
     ):
@@ -78,19 +80,14 @@ def find_output_dir(output: str, strategy: str) -> Optional[str]:
         if m:
             return m.group(1)
     results_dir = PROJECT_ROOT / "results"
-    candidates = sorted(
-        results_dir.glob(f"{strategy}/train_final_*/{strategy}"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    if not candidates:
-        candidates = sorted(
-            results_dir.glob(f"train_final_*/{strategy}"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
+    candidates: List[Path] = [
+        *results_dir.glob(f"train_final/{strategy}/train_final_*/{strategy}"),
+        *results_dir.glob(f"{strategy}/train_final_*/{strategy}"),
+        *results_dir.glob(f"train_final_*/{strategy}"),
+    ]
     if candidates:
-        return str(candidates[0].relative_to(PROJECT_ROOT))
+        best = max(candidates, key=lambda p: p.stat().st_mtime)
+        return str(best.relative_to(PROJECT_ROOT))
     return None
 
 

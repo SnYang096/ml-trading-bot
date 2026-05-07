@@ -99,6 +99,11 @@ def find_latest_logs_gated(strategy: str) -> Path | None:
             results.glob(
                 f"{strategy}/train_final_*_rr_extreme/{strategy}/logs_gated.parquet"
             )
+        )
+        + list(
+            results.glob(
+                f"train_final/{strategy}/train_final_*_rr_extreme/{strategy}/logs_gated.parquet"
+            )
         ),
         key=lambda p: p.stat().st_mtime,
     )

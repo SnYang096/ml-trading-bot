@@ -2529,7 +2529,9 @@ def run_strategy_pipeline(
     prepare_dir = find_output_dir(out, strategy)
     if not prepare_dir and not dry_run:
         return {"error": "prepare_dir_not_found"}
-    prepare_dir = prepare_dir or f"results/{strategy}/train_final_DRYRUN/{strategy}"
+    prepare_dir = (
+        prepare_dir or f"results/train_final/{strategy}/train_final_DRYRUN/{strategy}"
+    )
 
     # ── Step 2.5: SHAP Feature Selection (可选, 默认开启) ──
     # SHAP --promote 输出 <prepare_basename>_shap.yaml（基名来自 prepare_features）
