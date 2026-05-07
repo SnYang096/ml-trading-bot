@@ -206,7 +206,7 @@ mlbot data download-open-interest \
 | `config/strategies/bad-candidates/*/research/*.yaml`                            | 其它历史实验（FBF / FER / MSR 等） | （见各文件）           |
 
 > `turbo_fixed_features`：特征集固定，只做阈值链 / execution 优化 / 月度滚动 → **快**。  
-> `slow_realistic`：每季度重做结构快照（prefilter/gate 元算法），月度 fast_loop 调阈值 → **稳**。
+> `slow_realistic`：每季度重做结构快照（prefilter/gate 元算法），月度 rolling_calibration 调阈值 → **稳**。
 
 ### 0) 质量闸门（推荐）
 

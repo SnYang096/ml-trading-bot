@@ -8,6 +8,9 @@
 #   - 适合：线上例行轻量重校准、rolling_sim 或 fast_month 按月推进。
 # 建议节奏
 #   - 约每月：rolling_sim 在 holdout 内逐日历月重放（详见 docs/workflow/ROLLING_SIM_TIME_WINDOWS_CN.md）。
+# 术语说明
+#   - turbo = fixed features + rolling calibration：固定生产特征/结构，只做月度阈值与执行层标定。
+#   - slow = structural refresh / feature search + rolling calibration：定期刷新结构与特征搜索，再接月度标定。
 # 何时不要用 turbo
 #   - 需要改特征定义 / archetype 结构、或 slow 显示特征层漂移很大 → 改用 slow 或 non_rolling。
 # -----------------------------------------------------------------------------
@@ -28,7 +31,8 @@ rolling:
     fixed_strategies_root: config/strategies
 
 threshold_calibration:
-  # 标定链不做树模型训练 → 不触发 meta 特征发现 / SHAP 搜特征；与 turbo 固定列一致，仅此一处开关即可。
+  # enable_model_training: false → 阈值-only（不做 prefilter/gate 树模型训练与 SHAP/分裂点特征发现）。
+  # 权威口径：本段 threshold_calibration.*；load_pipeline_config 再汇总成 rolling_calibration.* 供月度 replay；可选顶层 rolling_calibration 做小范围覆写（如 step_months）。
   enable_model_training: false
   prefilter:
     optimize: true

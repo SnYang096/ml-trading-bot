@@ -22,6 +22,8 @@ rolling:
     fixed_strategies_root: config/strategies
 
 threshold_calibration:
+  # enable_model_training: false → 阈值-only（不做 prefilter/gate 树模型训练与 SHAP/分裂点特征发现）。
+  # 权威口径：本段 threshold_calibration.*；load_pipeline_config 再汇总成 rolling_calibration.* 供月度 replay；可选顶层 rolling_calibration 做小范围覆写（如 step_months）。
   enable_model_training: false
   prefilter:
     optimize: true

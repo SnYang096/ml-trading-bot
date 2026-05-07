@@ -83,11 +83,11 @@ STAGE=fast_month MONTH=2024-09 ./scripts/run_turbo_rolling_sim_batch.sh
 
 ## 6. 管线仍会把手写语义洗回去（本 lab 的对策）
 
-在 **`fast_loop` + 月度阈值校准** 下，仅改 archetypes 不够，除非与 promote / 输入路径对齐：
+在 **`rolling_calibration` + 月度阈值校准** 下，仅改 archetypes 不够，除非与 promote / 输入路径对齐：
 
 1. **Entry**：`archetype_plateau` 会扫 **locked** filter；`promote_never_disable: true` 会把臂 **强制写回 enabled**。极致 lab 里新臂使用 **`promote_never_disable: false` + `skip_plateau: true`**（见 `entry_filters.yaml`）。
 2. **Gate**：优化成功时仍会改阈值；死区类规则需 **`frozen: true`**，且 promote 合并需识别 **`status: frozen`**（见 `optimize_gate_unified` 历史修复）。
-3. **Prefilter**：`disable_model_training` 时可能 **locked prefilter 重锚定**，抹平手写 recovery。本 pipeline 设 **`skip_locked_prefilter_reanchor: true`**。
+3. **Prefilter**：`enable_model_training: false`（turbo 阈值-only）时可能触发 **locked prefilter 重锚定**，抹平手写 recovery。本 pipeline 设 **`skip_locked_prefilter_reanchor: true`**。
 4. **Gate 草稿**：若 `gate_draft.yaml` symlink 到主线树草稿，月度 gate 与手写 `archetypes/gate.yaml` **脱钩**。repair 脚本用 **`archetypes/gate.yaml` → 实体 `gate_draft.yaml`**。
 
 验收以各月 `strategies_calibrated/bpc/archetypes/` 实参为准。

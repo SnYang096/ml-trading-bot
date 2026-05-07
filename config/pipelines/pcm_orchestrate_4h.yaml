@@ -39,7 +39,7 @@ slow_loop:
   freeze_outputs:
     enabled: true
     keep_latest: 3
-fast_loop:
+rolling_calibration:
   step_months: 1
   threshold_calibration:
     enabled: true

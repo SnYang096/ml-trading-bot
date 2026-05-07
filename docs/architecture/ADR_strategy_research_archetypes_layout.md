@@ -313,7 +313,7 @@ Review 通过后，可将本文档重命名为带日期的 ADR 编号（例如 `
 ### 11.1 方向判断（与用户表述对齐）
 
 - **快 / 慢在多腿都应存在**：与 §10.3 一致——**turbo** 侧重固定特征集下的 **阈值链 + execution 类搜索 + 月度滚动**；**slow** 侧重更长窗、结构/元算法与更保守的标定。多腿可以 **诚实差异**（层名、月数不必与 BPC 同构），但 **宏观序位** 应对齐。
-- **「慢线特征挑选与快线合并」作为默认**：可接受——即 **默认不在 rolling 内开 Pool-B 式特征搜索**，而以各策略根目录 **`features.yaml` + `feature_dependencies`** 定稿（例如 dual_add 侧 `trend_confidence_f`、chop 侧由网格/诊断路径锁定的 chop 语义）。这与 `turbo_fixed_features.disable_feature_search: true` 的 prod 形态一致；**缺口**在于：若产品仍要求「快线显式可调阈值 YAML + execution 网格块」，应与 **slow 管线 yaml 中的 `fast_loop:`** 对照（见下表）。
+- **「慢线特征挑选与快线合并」作为默认**：可接受——即 **默认不在 rolling 内开 Pool-B 式特征搜索**，而以各策略根目录 **`features.yaml` + `feature_dependencies`** 定稿（例如 dual_add 侧 `trend_confidence_f`、chop 侧由网格/诊断路径锁定的 chop 语义）。这与 `turbo_fixed_features.disable_feature_search: true` 的 prod 形态一致；**缺口**在于：若产品仍要求「快线显式可调阈值 YAML + execution 网格块」，应与 **slow 管线 yaml 中的 `rolling_calibration:`** 对照（见下表）。
 - **`pipeline list` 只扫一个 `output.history_dir`**：实现上 `_cmd_list_experiments(history_dir, strategy)` 只读 **当前加载 pipeline 配置里的** `history_dir / <strategy>`（见 `scripts/auto_research_pipeline.py`）。因此 **换一份 `--config`（例如默认 `research_pipeline.yaml` vs `config/strategies/chop_grid/research/turbo.yaml`）就会「看不到」** `results/chop_grid/turbo-rolling-sim`、`results/dual_add_trend/turbo-rolling-sim` 等目录下的时间戳——**不是 bug，而是单根设计**。要「看到所有研究成果」，需要 **新命令或索引层**（见 §11.4），静态站点是合理延伸（扫描多根下的 `report.json` / `report.html` / `trading_map*.html` / `stitched_summary.json` 等）。
 
 ### 11.2 事实核对：`prod_train_pipeline_2h_turbo_*_only.yaml` vs `slow_*_only.yaml`
@@ -321,14 +321,14 @@ Review 通过后，可将本文档重命名为带日期的 ADR 编号（例如 `
 | 能力 | `config/strategies/chop_grid/research/turbo.yaml` | `config/strategies/dual_add_trend/research/turbo.yaml` | `config/strategies/*/research/slow.yaml`（对照） |
 |------|-----------------------------------------------------|-----------------------------------------------------------|-----------------------------------------------------|
 | Rolling 模式 | `rolling.mode: turbo_fixed_features`，`disable_feature_search: true` | 同上 | `slow_realistic`；仍可带 `turbo_fixed_features` 子块 |
-| **YAML 顶层 `fast_loop:`**（`threshold_calibration` / `execution_opt` 等） | **无** | **无** | **有**（例如 `config/strategies/dual_add_trend/research/slow.yaml` 中 `threshold_calibration` + `execution_opt` 均为 `enabled: true`） |
+| **YAML 顶层 `rolling_calibration:`**（`threshold_calibration` / `execution_opt` 等） | **无** | **无** | **有**（例如 `config/strategies/dual_add_trend/research/slow.yaml` 中 `threshold_calibration` + `execution_opt` 均为 `enabled: true`） |
 | 全窗 backtest + 地图类配置 | `grid_backtest.enabled: true`，含 `map_*` / `continuous_map_*` | `dual_add_backtest.enabled: true`，含 `map_*` / `continuous_map_*` | slow chop 侧同样有 `grid_backtest` 等（以各文件为准） |
 | 产物根目录 | `output.history_dir: results/chop_grid/turbo-rolling-sim` | `results/dual_add_trend/turbo-rolling-sim` | 一般为 `results/.../slow-rolling-sim` 等（以各文件为准） |
 
 **结论（精炼）**：
 
 1. **两份 turbo-only yaml 已支持**：独立策略管线、`turbo_fixed_features`、**全窗** `grid_backtest` / `dual_add_backtest` 及其 **交易地图相关字段**；rolling 运行中仍由各策略的 **月度多腿回测** 产出 `report` / stitched / continuous 类产物（具体文件名以运行日志与 `_rolling_sim` 目录为准）。
-2. **与「慢管线 yaml 上显式声明的 fast_loop」相比**：turbo-only **未在 yaml 顶层挂载** `fast_loop.threshold_calibration` / `execution_opt`。若团队将「执行网格搜索」**严格等同于** 该块在 slow 中的开关语义，则应把 **「turbo-only = rolling 内建标定路径；显式 execution 网格以 slow yaml 为准」** 写进 runbook，或 **后续在 turbo prod 上补同源 `fast_loop` 块** 以消除歧义（需代码路径确认 rolling 是否无条件消费 `fast_loop`）。
+2. **与「慢管线 yaml 上显式声明的 rolling_calibration」相比**：turbo-only **未在 yaml 顶层挂载** `rolling_calibration.threshold_calibration` / `execution_opt`。若团队将「执行网格搜索」**严格等同于** 该块在 slow 中的开关语义，则应把 **「turbo-only = rolling 内建标定路径；显式 execution 网格以 slow yaml 为准」** 写进 runbook，或 **后续在 turbo prod 上补同源 `rolling_calibration` 块** 以消除歧义（需代码路径确认 rolling 是否无条件消费 `rolling_calibration`）。
 
 ### 11.3 与 README / 快速命令的交叉引用
 
@@ -352,7 +352,7 @@ Review 通过后，可将本文档重命名为带日期的 ADR 编号（例如 `
 
 **合并审阅**：分主题 checkbox 见下；**一张表总览（T01–T33 + P0–P3）** 见 **§13**。
 
-> **用语**：**SRB** 与 **BPC、ME、TPC** 一样，是 **独立策略 slug**（见仓库 `bad-candidates/srb` 等路径），**不是** BPC+ME+TPC 的统称。本节「与经典对齐」指 **以 Prefilter→Gate→Entry→Execution + `fast_loop` + 事件回测为主线的这类策略**（文档里以 **bpc / tpc / me** 为主例）；多腿 parity 是与 **这条主线** 对齐，而非与「SRB」这一策略名混写。
+> **用语**：**SRB** 与 **BPC、ME、TPC** 一样，是 **独立策略 slug**（见仓库 `bad-candidates/srb` 等路径），**不是** BPC+ME+TPC 的统称。本节「与经典对齐」指 **以 Prefilter→Gate→Entry→Execution + `rolling_calibration` + 事件回测为主线的这类策略**（文档里以 **bpc / tpc / me** 为主例）；多腿 parity 是与 **这条主线** 对齐，而非与「SRB」这一策略名混写。
 
 本节把 **§2–§8、§10–§11** 里分散的勾选项 **按「稳定流水线」维度重排**，便于你逐项对照「是否符合可运维、可复盘、可收窄 adopt」的标准。  
 **共识（多腿）**：多腿 **同样有第一环「体制 / 特征 mask」**——在范式上与经典 **Prefilter** 对齐即可命名为 **Regime**（见 §10.2）；**特征列数通常少于 BPC**，但不等于「不能挑特征 / 不能调参」：仍可在 **`features.yaml` + `feature_dependencies`** 内演进列，并在 **`threshold_search`（或等价块）** 中对 **regime 阈值、网格/执行旋钮** 做 sweep；与经典差异主要在 **统计量是否够开 Pool-B 式宽搜索**，而非能力上禁止。
@@ -400,9 +400,9 @@ Review 通过后，可将本文档重命名为带日期的 ADR 编号（例如 `
   - [ ] **样本量闸门**：多腿每层 sweep 前 **最小行数 / 最小成交** 不满足则 **skip 并写报告**，避免 silent 过拟合。
 - [ ] **`fast_month` 与 BPC/TPC/ME 主线路径对齐（代码或文档二选一必须拍板）**  
   - [ ] **现状文档化**：多腿在 `_run_fast_month_stage` 中 **跳过** `run_strategy_pipeline` 式全层标定、走 `_run_multileg_month_strategy` 的行为，写入 runbook（避免误以为「多腿偷工」）。  
-  - [ ] **若要靠拢**：定义多腿版 **「轻量 fast_loop」**（例：regime/execution 候选网格 + 全窗校验），**禁止**无映射地打开 BPC 的 `prefilter.optimize` / `entry_filter` 链；实现单独 PR。  
+  - [ ] **若要靠拢**：定义多腿版 **「轻量 rolling_calibration」**（例：regime/execution 候选网格 + 全窗校验），**禁止**无映射地打开 BPC 的 `prefilter.optimize` / `entry_filter` 链；实现单独 PR。  
   - [ ] **slow 多腿**：`research/slow.yaml` 存在时的 **额外结构快照 / 保守 KPI** 是否跑、哪几个月跑，写进 prod yaml 与文档。
-- [ ] **turbo-only 多腿 yaml 与 `fast_loop:`**：§11.2 缺口是否通过 **补 yaml 块** 或 **仅文档解释「内建标定」** 关闭；与团队对「执行网格」定义对齐。
+- [ ] **turbo-only 多腿 yaml 与 `rolling_calibration:`**：§11.2 缺口是否通过 **补 yaml 块** 或 **仅文档解释「内建标定」** 关闭；与团队对「执行网格」定义对齐。
 
 ### 12.4 产物、list/adopt、跨根发现
 
@@ -459,9 +459,9 @@ Review 通过后，可将本文档重命名为带日期的 ADR 编号（例如 `
 | T20 | `chop_grid` / `dual_add_trend`：**`archetypes/README.md`** 文件名 ↔ stage 映射 + 链到 z实验文档 | §12.3、§8 |
 | T21 | **Regime = Prefilter 位** 在 rolling / adopt / 文档三处一致 | §12.3 |
 | T22 | 多腿特征：**列演进责任**、**threshold_search 空间**、**样本量闸门**（三子项） | §12.3 |
-| T23 | **fast_month**：多腿 vs BPC/TPC/ME — **文档化现状** 或 **轻量 fast_loop 设计**（二选一拍板 + PR 边界） | §12.3 |
+| T23 | **fast_month**：多腿 vs BPC/TPC/ME — **文档化现状** 或 **轻量 rolling_calibration 设计**（二选一拍板 + PR 边界） | §12.3 |
 | T24 | **slow 多腿**：是否有额外快照/KPI、写进 prod yaml | §12.3 |
-| T25 | turbo-only 多腿 **与 `fast_loop:` 缺口**：补 yaml 或 **仅文档关闭** — 与「执行网格」定义对齐 | §12.3、§11.2 |
+| T25 | turbo-only 多腿 **与 `rolling_calibration:` 缺口**：补 yaml 或 **仅文档关闭** — 与「执行网格」定义对齐 | §12.3、§11.2 |
 
 ### P3 — 观测、roadmap、卫生
 
@@ -489,7 +489,7 @@ Review 通过后，可将本文档重命名为带日期的 ADR 编号（例如 `
 
 | 入口 | 时间语义 | 用途 |
 |------|-----------|------|
-| **`research/turbo.yaml` / `research/slow.yaml`** | **Walk-forward**：自然月（或 `fast_loop.step_months`）为步长推进；标定窗由 `rolling.windows.calibration_months` 等定义 **每个目标月 M** 的 `[M−K, M−1]`（与 `_calib_and_test_windows` 一致）。 | 主研究、rolling_sim / fast_month。 |
+| **`research/turbo.yaml` / `research/slow.yaml`** | **Walk-forward**：自然月（或 `rolling_calibration.step_months`）为步长推进；标定窗由 `rolling.windows.calibration_months` 等定义 **每个目标月 M** 的 `[M−K, M−1]`（与 `_calib_and_test_windows` 一致）。 | 主研究、rolling_sim / fast_month。 |
 | **`research/non_rolling.yaml`（新增）** | **一次性划分**：`Train [start, holdout_start)` → `Val [holdout_start, test_start)` → `Test [test_start, end]`，由顶层 **`dates` + `holdout_months` + `validation_months`** 固定算出 `test_start`（与 `resolve_strategy_dates` 一致）；**不**跑按月 rolling 或仅跑等价 minimal stage。 | idea 验证、黄金回归、上线前「最后一窗」类短实验；**不**替代 turbo/slow。 |
 
 **`rolling.mode` 建议**：为 `non_rolling` 增加显式枚举（**勿**将「simple」与现有 `legacy` 混用——`legacy` 在 fast_month 路径上另有「不跑逐层标定」等语义，见代码注释）。
@@ -499,7 +499,7 @@ Review 通过后，可将本文档重命名为带日期的 ADR 编号（例如 `
 | 层 / 能力 | 触发节奏 | 说明 |
 |-----------|-----------|------|
 | **特征筛选、结构类重活**（含 SHAP / 宽特征搜索等，依策略是否启用） | **`slow_realistic.cadence_months`**（或等价「结构月」合同） | **非**每个自然月必跑；与「季结构 + 月快变量」设计一致。 |
-| **阈值链 / fast_loop 内各标定**（threshold、prefilter、execution 等开关允许的组合） | **`fast_loop.step_months`**（通常为 **1**） | 按 **每个 rolling 月 M** 推进，与 `calibration_months` 定义的拟合窗配合。 |
+| **阈值链 / rolling_calibration 内各标定**（threshold、prefilter、execution 等开关允许的组合） | **`rolling_calibration.step_months`**（通常为 **1**） | 按 **每个 rolling 月 M** 推进，与 `calibration_months` 定义的拟合窗配合。 |
 
 多腿（chop_grid / dual_add_trend）在 **无 SHAP 式特征搜索** 时，仍以 **`rolling.mode`** + **`cadence_months`（slow）** vs **turbo 月度节奏** 区分快慢；阈值/regime 类调整仍跟 **step_month** 叙事对齐（见 §10.3、§11.2）。
 
@@ -533,7 +533,7 @@ Review 通过后，可将本文档重命名为带日期的 ADR 编号（例如 `
 
 | 日期 | 决议 | 说明 |
 |------|------|------|
-| **2026-04-28** | **§14 时间合同与 `non_rolling`（讨论定稿，待实现 PR）** | （1）新增 **`research/non_rolling.yaml`** 与显式 **`rolling.mode: non_rolling`**（勿与 `legacy` 混用）。（2）**跑频**：特征筛选 / 结构类重活按 **`cadence_months`**；阈值链 / fast_loop 按 **`step_months`**。（3）**cutoff**：Prefilter / Gate / EntryFilter **同一规则**；rolling 下与 **`calibration_months`** 推导的窗对齐；特征筛选用 **start→val** 与 train 合同一致；阈值拟合用 **Val**，**允许 pre-holdout**。（4）**full_cycle** 可含 warmup，**竖线**标 `holdout_start` / `test_start`。详见 **§14**。 |
+| **2026-04-28** | **§14 时间合同与 `non_rolling`（讨论定稿，待实现 PR）** | （1）新增 **`research/non_rolling.yaml`** 与显式 **`rolling.mode: non_rolling`**（勿与 `legacy` 混用）。（2）**跑频**：特征筛选 / 结构类重活按 **`cadence_months`**；阈值链 / rolling_calibration 按 **`step_months`**。（3）**cutoff**：Prefilter / Gate / EntryFilter **同一规则**；rolling 下与 **`calibration_months`** 推导的窗对齐；特征筛选用 **start→val** 与 train 合同一致；阈值拟合用 **Val**，**允许 pre-holdout**。（4）**full_cycle** 可含 warmup，**竖线**标 `holdout_start` / `test_start`。详见 **§14**。 |
 | **2026-04-28** | **§14.3 第一步：`rolling.time_split_policy` + `pcm_cutoff`（已落地）** | `load_pipeline_config` 写入 **`time_split_policy`**（默认 `static_holdout`；可选 `walk_forward_monthly`）。**`scripts/pipeline/calibration_window.py`** + **`pcm_cutoff.py`**；**`run_strategy_pipeline`** 中 SHAP / Gate / EntryFilter 的 **`--cutoff-date`** 与 **`validation_end`** 元数据统一经 **`resolve_pcm_cutoff_date`**；**`fast_month`** 嵌套标定传入 **`month_token`** + **`pcm_rolling_calibration_months`**。单测：`tests/unit/test_pcm_cutoff.py`、`test_pipeline_config_extends`。后续：`non_rolling.yaml`、`filter_stages` 等余下调用点。 |
 | **2026-04-28** | **§14.3 第二步：对齐续** | **`research/non_rolling.yaml`**（`extends: turbo.yaml`，`rolling.mode: non_rolling`，`results/bpc/non-rolling-sim`）；**`load_pipeline_config`** 允许 **`non_rolling`**；**`rolling_sim` / `fast_month`** 遇 **`non_rolling`** 显式 **`p.error`**；**`fast_month`** 内 **`_run_fast_month_stage`** 双保险 **`ValueError`**；**多腿** `grid_backtest` / `dual_add_backtest` 与顶层 **`dates` 不一致则报错**，YAML 已删重复日期；**`run_strategy_pipeline`** 内 Prefilter 对比向量回测与 EF mini-backtest 的 **`--test-end`** 统一为 **`_val_segment_end`**（与 `pcm_cutoff` 一致）；**`filter_stages.run_entry_filter_stage`** 增加 **`pcm_cutoff_date`** 与 **`_pcm_ef_*`** 辅助；**`_resolve_stage_strategies_root`** 将 **`non_rolling`** 与 turbo 同根。单测：`test_filter_stages_pcm_cutoff.py`、`test_load_bpc_non_rolling_extends_turbo`、`test_multileg_backtest_dates_mismatch_raises`。 |
 | **2026-04-30** | **§3.3 采用变体 A（首段交付）** | 研究声明与搜索空间以 **并列文件** 落在 `config/strategies/<slug>/research/`（`research.yaml`、`threshold_search.yaml` 文件名可保留）；**不**在首段交付内把 prod_train 顶层包进单文件 `turbo.yaml` 的 `pipeline:` 块（变体 B 待另开设计 PR + loader 改造）。 |

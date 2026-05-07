@@ -15,6 +15,8 @@ rolling:
     fixed_strategies_root: config/strategies
 
 threshold_calibration:
+  # enable_model_training: false → 阈值-only（与 BPC turbo 语义一致）。
+  # 权威口径：本段 threshold_calibration；月度 replay 由 load_pipeline_config 汇总为 rolling_calibration.*（可读顶层 rolling_calibration 覆写节奏等）。
   enable_model_training: false
 
 universe_group:

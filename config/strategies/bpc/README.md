@@ -99,7 +99,7 @@ mlbot train final --no-docker --prepare-only --config config/strategies/bpc \
 
 ### 自动化研究流水线在干什么（`scripts/auto_research_pipeline.py`）
 
-以下对应 **按月 / 按策略滚动** 时内部串起来的主要步骤（具体是否执行受 `fast_loop`、`kpi_gates`、策略块里 `has_prefilter` / `has_direction` 等开关影响；Step 8 在代码里默认跳过）。**Step 2.5（Walk-forward SHAP 裁剪）在仓库默认配置中为关闭**（`config/research_pipeline.yaml` 的 `shap_feature_selection.enabled: false`；`auto_research_pipeline` 中未显式开启也视为关）；Gate 始终用 **`features_gate.yaml`** 白名单，除非你在实验配置里显式打开并生成 `features_gate_shap.yaml`。
+以下对应 **按月 / 按策略滚动** 时内部串起来的主要步骤（具体是否执行受 `rolling_calibration`、`kpi_gates`、策略块里 `has_prefilter` / `has_direction` 等开关影响；Step 8 在代码里默认跳过）。**Step 2.5（Walk-forward SHAP 裁剪）在仓库默认配置中为关闭**（`config/research_pipeline.yaml` 的 `shap_feature_selection.enabled: false`；`auto_research_pipeline` 中未显式开启也视为关）；Gate 始终用 **`features_gate.yaml`** 白名单，除非你在实验配置里显式打开并生成 `features_gate_shap.yaml`。
 
 | 步骤 | 名称（日志里常见） | 在做什么 |
 |------|-------------------|----------|

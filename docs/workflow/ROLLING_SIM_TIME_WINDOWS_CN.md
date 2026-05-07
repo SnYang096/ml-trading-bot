@@ -84,15 +84,15 @@ month_tokens = _iter_month_tokens(_display_holdout_start, _display_end)
 
 ---
 
-## 6. 方向调优节奏：`fast_loop.direction_tuning.cadence_months`
+## 6. 方向调优节奏：`rolling_calibration.direction_tuning.cadence_months`
 
 若配置该项：表示 **每 N 个滚动月** 才执行一次方向相关步骤（与 `rolling.windows.calibration_months` **勿混用**：后者是「标定窗长度（月）」，不是「隔几月跑一次方向」）。
 
 ---
 
-## 7. `fast_loop.step_months`
+## 7. `rolling_calibration.step_months`
 
-`load_pipeline_config` 会校验 `fast_loop.step_months > 0` 并写入归一化后的 `fast_loop`。  
+`load_pipeline_config` 会校验 `rolling_calibration.step_months > 0` 并写入归一化后的 `rolling_calibration`。  
 当前 **`rolling_sim` 主循环**使用 `iter_month_tokens(holdout_start, end)` **逐自然月**推进，**未**按 `step_months` 做「隔 N 月一步」的稀疏枚举；若将来要实现「两月一步」等节奏，需在 `auto_research_pipeline` 侧显式接入该字段。
 
 ---

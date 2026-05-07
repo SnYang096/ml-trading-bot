@@ -5,7 +5,7 @@
 #
 # 与 turbo 差异:
 #   - rolling.mode: slow_realistic，cadence 月重跑结构快照，rolling_sim 内 feature_search_enabled=true
-#   - 不设 fast_loop.disable_model_training（与 slow_bpc 一致，走完整训练/SHAP 路径）
+#   - 不设 rolling_calibration.enable_model_training（不设即默认开启树训练）（与 slow_bpc 一致，走完整训练/SHAP 路径）
 #   - direction_tuning: compare_features + promote_after_validate 开启
 #
 # 示例:
@@ -45,7 +45,7 @@ rolling:
     fixed_strategies_root: config/strategies
     disable_feature_search: true
 
-fast_loop:
+rolling_calibration:
   step_months: 1
   threshold_calibration:
     enabled: false

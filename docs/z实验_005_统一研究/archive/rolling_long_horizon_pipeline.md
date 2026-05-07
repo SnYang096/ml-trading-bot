@@ -114,10 +114,10 @@
 | `freeze_outputs.enabled` | 是否对慢变量产出做冻结/归档。 |
 | `freeze_outputs.keep_latest` | 冻结物最多保留份数。 |
 
-#### `fast_loop`
+#### `rolling_calibration`
 
-`fast_loop` 由 `load_pipeline_config()` 规范化后供 `fast_month` / `rolling_sim` 使用。  
-兼容优先级：`rolling.mode=legacy` 时保持旧行为（忽略 `fast_loop` 分支开关）。
+`rolling_calibration` 由 `load_pipeline_config()` 规范化后供 `fast_month` / `rolling_sim` 使用。  
+兼容优先级：`rolling.mode=legacy` 时保持旧行为（忽略 `rolling_calibration` 分支开关）。
 
 | 字段 | 说明 |
 |------|------|
@@ -221,7 +221,7 @@
 | 全量特征构建 | `start_date ~ calib_end` |
 | 模型训练集（Train） | `start_date ~ calib_start`（不含 holdout） |
 | 阈值校准（Prefilter/Gate/Entry） | `calib_start ~ calib_end` |
-| Execution 网格优化 | `calib_start ~ calib_end`（可由 `fast_loop.execution_opt.enabled` 关闭） |
+| Execution 网格优化 | `calib_start ~ calib_end`（可由 `rolling_calibration.execution_opt.enabled` 关闭） |
 | 当月事件回测（OOS） | `test_start ~ test_end`（可由 `event_backtest.enabled` 关闭） |
 
 其中 `calib_start/calib_end/test_start/test_end` 由 `rolling.windows.calibration_months` 与目标月份共同决定；`test` 为目标自然月，`calib` 为其之前 N 个月。

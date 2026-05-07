@@ -20,13 +20,13 @@ rolling:
     fixed_strategies_root: config/strategies
     disable_feature_search: true
 
-fast_loop:
-  threshold_calibration:
-    enabled: true
-  execution_opt:
-    enabled: true
+threshold_calibration:
   pcm_eval:
     enabled: false
+
+rolling_calibration:
+  threshold_calibration:
+    enabled: true
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml

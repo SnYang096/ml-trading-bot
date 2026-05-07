@@ -238,25 +238,49 @@ def load_pipeline_config(path: Path) -> dict:
     event_cfg["enabled"] = bool(event_cfg.get("enabled", True))
     cfg["event_backtest"] = event_cfg
 
-    fast_loop = cfg.get("fast_loop", {}) or {}
-    if not isinstance(fast_loop, dict):
-        fast_loop = {}
-    step_months = int(fast_loop.get("step_months", 1) or 1)
+    # rolling_calibration: 月度 replay（fast_month / rolling_sim）归一化开关；业务口径以
+    # threshold_calibration 与各根键为准，本函数把默认与显式覆写对齐到统一 dict。
+    rolling_calibration = cfg.get("rolling_calibration", {}) or {}
+    if not isinstance(rolling_calibration, dict):
+        rolling_calibration = {}
+    threshold_cfg = cfg.get("threshold_calibration", {}) or {}
+    if not isinstance(threshold_cfg, dict):
+        threshold_cfg = {}
+    step_months = int(rolling_calibration.get("step_months", 1) or 1)
     if step_months <= 0:
-        raise ValueError("fast_loop.step_months 必须 > 0")
+        raise ValueError("rolling_calibration.step_months 必须 > 0")
 
     def _enabled(section_name: str, default: bool = True) -> bool:
-        sec = fast_loop.get(section_name, {}) or {}
+        sec = rolling_calibration.get(section_name, {}) or {}
         if isinstance(sec, dict):
             return bool(sec.get("enabled", default))
+        root_sec = threshold_cfg.get(section_name, {}) or {}
+        if isinstance(root_sec, dict):
+            return bool(root_sec.get("enabled", default))
         return bool(default)
 
-    prefilter_cfg = fast_loop.get("prefilter", {}) or {}
+    prefilter_cfg = rolling_calibration.get("prefilter", {}) or {}
     if not isinstance(prefilter_cfg, dict):
         prefilter_cfg = {}
-    prefilter_optimize = bool(prefilter_cfg.get("optimize", True))
+    root_prefilter_cfg = threshold_cfg.get("prefilter", {}) or {}
+    if not isinstance(root_prefilter_cfg, dict):
+        root_prefilter_cfg = {}
+    prefilter_optimize = bool(
+        prefilter_cfg.get("optimize", root_prefilter_cfg.get("optimize", True))
+    )
 
-    cfg["fast_loop"] = {
+    threshold_fast_cfg = rolling_calibration.get("threshold_calibration", {}) or {}
+    if not isinstance(threshold_fast_cfg, dict):
+        threshold_fast_cfg = {}
+    enable_mt = rolling_calibration.get("enable_model_training", None)
+    if enable_mt is None:
+        enable_mt = threshold_fast_cfg.get("enable_model_training", None)
+    if enable_mt is None:
+        enable_mt = threshold_cfg.get("enable_model_training", None)
+    if enable_mt is None:
+        enable_mt = True
+
+    cfg["rolling_calibration"] = {
         "step_months": step_months,
         "threshold_calibration": {"enabled": _enabled("threshold_calibration", True)},
         "prefilter": {"optimize": prefilter_optimize},
@@ -265,10 +289,11 @@ def load_pipeline_config(path: Path) -> dict:
         },
         "execution_opt": {"enabled": _enabled("execution_opt", True)},
         "pcm_eval": {"enabled": _enabled("pcm_eval", True)},
+        "enable_model_training": bool(enable_mt),
     }
-    for _fk, _fv in fast_loop.items():
-        if _fk not in cfg["fast_loop"]:
-            cfg["fast_loop"][_fk] = _fv
+    for _fk, _fv in rolling_calibration.items():
+        if _fk not in cfg["rolling_calibration"]:
+            cfg["rolling_calibration"][_fk] = _fv
     return cfg
 
 

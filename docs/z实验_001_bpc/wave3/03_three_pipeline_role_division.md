@@ -12,7 +12,7 @@ flowchart TB
         oldRole["定位: 骨架 (regime-invariant)"]
     end
 
-    subgraph FastPipe [快管线 fast_loop]
+    subgraph FastPipe [快管线 rolling_calibration]
         direction TB
         fastFreq["触发: 每月"]
         fastWin["数据: rolling, 3mo 校准 + 1mo test"]
@@ -39,7 +39,7 @@ flowchart TB
 
 | 维度 | 老管线 | 快管线 | 慢管线 |
 |---|---|---|---|
-| 配置文件 | [`prod_train_pipeline_2h.yaml`](../../config/prod_train_pipeline_2h.yaml) | fast_loop 内嵌 | [`prod_train_pipeline_2h_slow_*.yaml`](../../config/) |
+| 配置文件 | [`prod_train_pipeline_2h.yaml`](../../config/prod_train_pipeline_2h.yaml) | rolling_calibration 内嵌 | [`prod_train_pipeline_2h_slow_*.yaml`](../../config/) |
 | 触发频率 | 季度 / 半年 | 每月 | 每 3 月 |
 | Train 窗口 | 全量历史 | 3mo 校准 | 12mo |
 | Val 窗口 | **9mo** | 1mo test | 3mo |
@@ -99,7 +99,7 @@ Branch A (baseline):  当前 locked 特征集
 Branch B (candidate): Branch A + 一个新候选特征
 ```
 
-两边用相同 fast_loop 配置、相同 execution 参数、相同 data window，只差在特征集。
+两边用相同 rolling_calibration 配置、相同 execution 参数、相同 data window，只差在特征集。
 
 ### 执行命令
 ```bash

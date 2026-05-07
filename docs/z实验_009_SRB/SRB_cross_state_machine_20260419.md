@@ -16,7 +16,7 @@
    - `config/strategies/srb/features.yaml`：增加 `forbidden_prefilter_meta_columns`
      把 `bb_width_normalized_pct` 和 `trend_r2_20` 精确剔除 meta-prefilter 候选
    - `config/strategies/srb/archetypes/execution.yaml`：`confirm_k: 3 → 2`
-   - `config/prod_train_pipeline_2h_slow_srb_only.yaml`：`fast_loop.prefilter.optimize: true → false`
+   - `config/prod_train_pipeline_2h_slow_srb_only.yaml`：`rolling_calibration.prefilter.optimize: true → false`
      —— meta-algorithm 在多个月 holdout 上系统性地生成"窄 range"（如 `bpc_impulse_return_atr ∈ [-0.94, -0.60]`）
      这类规则和 SRB 的"突破 = impulse extreme"语义直接冲突，是之前大趋势月被砍掉 90%+ cross 的元凶。
 

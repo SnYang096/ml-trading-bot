@@ -77,7 +77,7 @@
 需关注：
 - **月度 KPI plateau 可能失败**（已把 `target_trades_min=4`, `min_trades=8`）；
 - **模型训练样本稀疏**（但 turbo_fixed_features 已禁 feature 搜索，直接用 prefilter/entry_filters locked 规则）；
-- 对 `fer_efficiency_flip_strength`, `fer_aggressor_absorption` 的 `0.80 / 0.76` 阈值做稳健性扫：后续可在 `fast_loop.prefilter.optimize` 产物里看是否被 optimizer 改动（locked 已固化）。
+- 对 `fer_efficiency_flip_strength`, `fer_aggressor_absorption` 的 `0.80 / 0.76` 阈值做稳健性扫：后续可在 `rolling_calibration.prefilter.optimize` 产物里看是否被 optimizer 改动（locked 已固化）。
 
 ## 下一步
 

@@ -5,7 +5,7 @@
 # 本版相对「宽区间」turbo 的调整（压信号密度、打开执行层 R 网格）：
 # - prefilter / entry_filter：收窄 target_trades_max，略抬高 trade_penalty，与 prod FER 对齐 min_rows
 # - gate：提高 min_combined_pass_rate，并启用 prod FER 的 stat_fallback 门控
-# - fast_loop.execution_opt：true → 月度对称 R 网格（依赖下方 event_backtest.sym_r_by_family.fer）
+# - rolling_calibration.execution_opt：true → 月度对称 R 网格（依赖下方 event_backtest.sym_r_by_family.fer）
 # - 周期：仅以 config/strategies/fer/meta.yaml 为准（此处不写 timeframe）
 #
 # 加仓：FER archetypes/execution 已为 allow_add_on: false；若 PCM 仍出现 add 意图，查 constitution /
@@ -29,8 +29,8 @@ rolling:
     fixed_strategies_root: config/strategies
     disable_feature_search: true
 
-fast_loop:
-  disable_model_training: true
+rolling_calibration:
+  enable_model_training: false
   step_months: 1
   threshold_calibration:
     enabled: true

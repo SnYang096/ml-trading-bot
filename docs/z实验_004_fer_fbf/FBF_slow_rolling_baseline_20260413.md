@@ -21,7 +21,7 @@
 ## 配置要点（与本次 run 对齐）
 
 - **流水线**：`config/prod_train_pipeline_2h_slow_fbf_only.yaml`
-  - `fast_loop.execution_opt.enabled: false`（避免月度 sym_r 覆盖 archetype 固定 SL/TP）
+  - `rolling_calibration.execution_opt.enabled: false`（避免月度 sym_r 覆盖 archetype 固定 SL/TP）
   - `strategies.fbf.simple_execution`：`sl_r: 1.0`，`tp_r: 2.0`，`timeout_bars: 108`（与事件层语义对齐）
 - **执行 archetype**：`config/strategies/fbf/archetypes/execution.yaml`
   - `stop_loss.type: fixed`，`initial_r: 1.0`，`take_profit.target_r: 2.0`（约 **RR 2:1**）

@@ -3,7 +3,7 @@
 # 策略根：config/strategies_pullback_lab_extreme_pullback/bpc
 # 在仓库根执行: ./scripts/repair_bpc_pullback_lab_symlinks.sh
 #
-# 勿把 gate_draft.yaml symlink 到主线 strategies/bpc：turbo + disable_model_training 下
+# 勿把 gate_draft.yaml symlink 到主线 strategies/bpc：turbo + enable_model_training: false 阈值-only 下
 # optimize 读实验目录 gate_draft；若指向树模型草稿，hard_gates 会与 archetypes 脱钩。
 # 本脚本从 archetypes/gate.yaml（解引用）复制为实体 gate_draft.yaml。
 set -euo pipefail

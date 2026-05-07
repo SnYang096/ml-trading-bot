@@ -6,7 +6,7 @@ import scripts.auto_research_pipeline as arp
 from scripts.capital_report import write_capital_report_from_trades
 
 
-def test_load_pipeline_config_normalizes_fast_loop_defaults(tmp_path):
+def test_load_pipeline_config_normalizes_rolling_calibration_defaults(tmp_path):
     cfg_path = tmp_path / "cfg.yaml"
     cfg_path.write_text(
         "\n".join(
@@ -26,7 +26,7 @@ def test_load_pipeline_config_normalizes_fast_loop_defaults(tmp_path):
     )
 
     cfg = arp.load_pipeline_config(cfg_path)
-    fast = cfg["fast_loop"]
+    fast = cfg["rolling_calibration"]
     assert fast["step_months"] == 1
     assert fast["threshold_calibration"]["enabled"] is True
     assert fast["prefilter"]["optimize"] is True
@@ -35,9 +35,9 @@ def test_load_pipeline_config_normalizes_fast_loop_defaults(tmp_path):
     assert fast["pcm_eval"]["enabled"] is True
 
 
-def test_load_pipeline_config_preserves_fast_loop_extras(tmp_path):
-    """Normalized fast_loop must not strip direction_tuning / disable_model_training."""
-    cfg_path = tmp_path / "extra_fast_loop.yaml"
+def test_load_pipeline_config_preserves_rolling_calibration_extras(tmp_path):
+    """Normalized rolling_calibration must not strip direction_tuning / enable_model_training overrides."""
+    cfg_path = tmp_path / "extra_rolling_calibration.yaml"
     cfg_path.write_text(
         "\n".join(
             [
@@ -65,8 +65,8 @@ def test_load_pipeline_config_preserves_fast_loop_extras(tmp_path):
                 "  turbo_fixed_features:",
                 "    fixed_strategies_root: config/strategies",
                 "    disable_feature_search: true",
-                "fast_loop:",
-                "  disable_model_training: true",
+                "rolling_calibration:",
+                "  enable_model_training: false",
                 "  direction_tuning:",
                 "    enabled: true",
                 "    compare_features: false",
@@ -76,13 +76,13 @@ def test_load_pipeline_config_preserves_fast_loop_extras(tmp_path):
         encoding="utf-8",
     )
     cfg = arp.load_pipeline_config(cfg_path)
-    fl = cfg["fast_loop"]
-    assert fl["disable_model_training"] is True
+    fl = cfg["rolling_calibration"]
+    assert fl["enable_model_training"] is False
     assert fl["direction_tuning"]["enabled"] is True
     assert fl["direction_tuning"]["compare_features"] is False
 
 
-def test_fast_month_stage_uses_fast_loop_switches(tmp_path, monkeypatch):
+def test_fast_month_stage_respects_rolling_calibration_switches(tmp_path, monkeypatch):
     captured = {"rs_calls": [], "exec_opt_calls": 0, "event_calls": 0, "pcm_calls": 0}
 
     def _fake_run_strategy_pipeline(strategy, cfg, **kwargs):
@@ -121,7 +121,7 @@ def test_fast_month_stage_uses_fast_loop_switches(tmp_path, monkeypatch):
             "max_symbols_per_side": 2,
             "quality_score_weights": {"history_edge": 0.55, "now_strength": 0.45},
         },
-        "fast_loop": {
+        "rolling_calibration": {
             "step_months": 1,
             "threshold_calibration": {"enabled": True},
             "prefilter": {"optimize": False},
@@ -129,6 +129,7 @@ def test_fast_month_stage_uses_fast_loop_switches(tmp_path, monkeypatch):
             "execution_opt": {"enabled": False},
             "pcm_eval": {"enabled": False},
         },
+        "threshold_calibration": {"enable_model_training": False},
         "event_backtest": {"enabled": False},
     }
 
@@ -153,6 +154,7 @@ def test_fast_month_stage_uses_fast_loop_switches(tmp_path, monkeypatch):
 
     assert len(captured["rs_calls"]) == 1
     assert captured["rs_calls"][0]["threshold_calibration_enabled"] is True
+    assert captured["rs_calls"][0]["enable_model_training"] is False
     assert captured["rs_calls"][0]["prefilter_optimization_enabled"] is False
     assert captured["exec_opt_calls"] == 0
     assert captured["event_calls"] == 0
@@ -196,7 +198,7 @@ def test_fast_month_direction_runs_every_month_by_default(tmp_path, monkeypatch)
             "max_symbols_per_side": 2,
             "quality_score_weights": {"history_edge": 0.55, "now_strength": 0.45},
         },
-        "fast_loop": {
+        "rolling_calibration": {
             "step_months": 1,
             "threshold_calibration": {"enabled": True},
             "prefilter": {"optimize": False},
@@ -267,7 +269,7 @@ def test_fast_month_direction_cadence_stride(tmp_path, monkeypatch):
             "max_symbols_per_side": 2,
             "quality_score_weights": {"history_edge": 0.55, "now_strength": 0.45},
         },
-        "fast_loop": {
+        "rolling_calibration": {
             "step_months": 1,
             "threshold_calibration": {"enabled": True},
             "prefilter": {"optimize": False},
@@ -543,7 +545,7 @@ def test_fast_month_multileg_uses_backtest_adapter(tmp_path, monkeypatch):
             "max_symbols_per_side": 2,
             "quality_score_weights": {"history_edge": 0.55, "now_strength": 0.45},
         },
-        "fast_loop": {
+        "rolling_calibration": {
             "threshold_calibration": {"enabled": True},
             "execution_opt": {"enabled": True},
             "pcm_eval": {"enabled": True},

@@ -1,4 +1,4 @@
-# EML — 与 TPC 同构的轻量 gate 模型（turbo 下 disable_model_training 时占位）
+# EML — 与 TPC 同构的轻量 gate 模型（turbo / enable_model_training: false 阈值-only 时占位）
 
 name: eml
 

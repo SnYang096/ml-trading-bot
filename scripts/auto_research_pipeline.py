@@ -2269,7 +2269,7 @@ def run_strategy_pipeline(
     locked_prefilter_override: str = "",
     disable_auto_locked_tuning: bool = False,
     stage_stop: str = "full",
-    disable_model_training: bool = False,
+    enable_model_training: bool = True,
     skip_direction_tuning: bool = False,
 ) -> Dict[str, Any]:
     """执行单个策略训练链，可在指定 stage 提前停止."""
@@ -2317,8 +2317,8 @@ def run_strategy_pipeline(
             )
         print(f"   🧭 Direction source: {_dir_path}")
     stage_stop = str(stage_stop or "full").strip().lower()
-    disable_model_training = bool(disable_model_training)
-    if disable_model_training:
+    enable_model_training = bool(enable_model_training)
+    if not enable_model_training:
         print("⚡ Threshold-only calibration mode: skip model training")
         print("   NO_MODEL_TUNING: prefilter/gate/entry_filter")
 
@@ -2615,9 +2615,9 @@ def run_strategy_pipeline(
         )
 
     # ── Step 3: Direction (--promote) ── (前置于 Prefilter, 使 meta-algorithm 能在方向已知的子集上学习)
-    _fast_loop_cfg = cfg.get("fast_loop") or {}
+    _rolling_calibration_cfg = cfg.get("rolling_calibration") or {}
     if scfg.get("has_direction") and not skip_direction_tuning:
-        _dir_tune_cmd = _fast_loop_cfg.get("direction_tuning") or {}
+        _dir_tune_cmd = _rolling_calibration_cfg.get("direction_tuning") or {}
         _compare_feats = _dir_tune_cmd.get("compare_features")
         if _compare_feats is None:
             _compare_feats = True
@@ -2643,7 +2643,7 @@ def run_strategy_pipeline(
         run_step("Direction Validate", _dir_argv, log, dry_run=dry_run)
     elif scfg.get("has_direction") and skip_direction_tuning:
         print(
-            "⏭️  Direction 调优跳过: fast_loop.direction_tuning 关闭或未到 cadence 月份"
+            "⏭️  Direction 调优跳过: rolling_calibration.direction_tuning 关闭或未到 cadence 月份"
         )
 
     if not threshold_calibration_enabled:
@@ -2687,7 +2687,7 @@ def run_strategy_pipeline(
                 f"(source={_locked_prefilter_source})"
             )
     if scfg.get("has_prefilter") and prefilter_optimization_enabled:
-        if disable_model_training:
+        if not enable_model_training:
             _calibrate_locked_prefilter_thresholds_no_model()
         else:
             _features_prefilter_path = Path(config_dir) / "features_prefilter.yaml"
@@ -2899,7 +2899,7 @@ def run_strategy_pipeline(
     )
     if (
         not dry_run
-        and (not disable_model_training)
+        and enable_model_training
         and _pf_results  # 确认多算法分析已运行且有结果
         and _pf_yaml is not None
     ):
@@ -3166,7 +3166,7 @@ def run_strategy_pipeline(
             "validation_end": test_start,
         }
 
-    if disable_model_training:
+    if not enable_model_training:
         rc, out = 0, ""
         gate_dir = prepare_dir
         gate_pred = Path(f"{gate_dir}/predictions.parquet")
@@ -3180,7 +3180,7 @@ def run_strategy_pipeline(
                 gate_train_ok = True
                 gate_stat_fallback_used = True
                 print(
-                    "   ⏭️  Gate Train skipped (disable_model_training=true), "
+                    "   ⏭️  Gate Train skipped (enable_model_training=false), "
                     "using features_labeled as gate input"
                 )
         exp_gate_draft = Path(f"{config_dir}/gate_draft.yaml")
@@ -6073,6 +6073,31 @@ def _build_multileg_rolling_continuous_map(
     return str(output_path) if output_path.exists() else ""
 
 
+def _resolved_enable_model_training_for_rolling_month(
+    rolling_calibration_cfg: Dict[str, Any],
+    threshold_root_cfg: Dict[str, Any],
+) -> bool:
+    """Prefer rolling_calibration → nested rolling_calibration.threshold_calibration → root.
+
+    Root key is threshold_calibration.enable_model_training; rolling_calibration repeats
+    resolved defaults and allows overrides (see load_pipeline_config).
+
+    Default True when unspecified (full prefilter/gate model training).
+    """
+    v = rolling_calibration_cfg.get("enable_model_training")
+    if v is not None:
+        return bool(v)
+    _nested_tc = rolling_calibration_cfg.get("threshold_calibration") or {}
+    if isinstance(_nested_tc, dict):
+        nv = _nested_tc.get("enable_model_training")
+        if nv is not None:
+            return bool(nv)
+    rv = threshold_root_cfg.get("enable_model_training")
+    if rv is not None:
+        return bool(rv)
+    return True
+
+
 def _run_fast_month_stage(
     *,
     cfg: Dict[str, Any],
@@ -6108,36 +6133,42 @@ def _run_fast_month_stage(
     if not calibrate_all_layers:
         # Legacy-compatible behavior: optimize and backtest in the same month window.
         calib_start, calib_end = test_start, test_end
-    fast_loop_cfg = cfg.get("fast_loop", {}) or {}
+    rolling_calibration_cfg = cfg.get("rolling_calibration", {}) or {}
+    threshold_root_cfg = cfg.get("threshold_calibration", {}) or {}
+    if not isinstance(threshold_root_cfg, dict):
+        threshold_root_cfg = {}
     event_cfg = cfg.get("event_backtest", {}) or {}
     if isinstance(event_cfg, dict) and "enabled" not in event_cfg:
         print(
             "⚠️  event_backtest.enabled 未显式设置；当前按默认 true 处理。"
             "建议在配置中明确声明。"
         )
-    # Keep legacy path backward compatible: ignore fast_loop toggles there.
-    _fast_loop_active = rolling_mode != "legacy"
+    # rolling.mode == legacy：保持旧路径，不按月度 rolling_calibration 开关裁剪行为。
+    _monthly_calibration_switches_active = rolling_mode != "legacy"
 
     def _section_enabled(name: str, default: bool = True) -> bool:
-        sec = fast_loop_cfg.get(name, {}) or {}
+        sec = rolling_calibration_cfg.get(name, {}) or {}
         if isinstance(sec, dict):
             return bool(sec.get("enabled", default))
+        root_sec = threshold_root_cfg.get(name, {}) or {}
+        if isinstance(root_sec, dict):
+            return bool(root_sec.get("enabled", default))
         return bool(default)
 
     threshold_calibration_enabled = _section_enabled("threshold_calibration", True)
-    _threshold_cfg = fast_loop_cfg.get("threshold_calibration", {}) or {}
-    _fast_disable_train_raw = fast_loop_cfg.get("disable_model_training", None)
-    if _fast_disable_train_raw is None:
-        threshold_calibration_disable_model_training = (
-            bool(_threshold_cfg.get("disable_model_training", False))
-            if isinstance(_threshold_cfg, dict)
-            else False
+    _threshold_cfg = rolling_calibration_cfg.get("threshold_calibration", {}) or {}
+    threshold_calibration_enable_model_training = (
+        _resolved_enable_model_training_for_rolling_month(
+            rolling_calibration_cfg,
+            threshold_root_cfg,
         )
-    else:
-        threshold_calibration_disable_model_training = bool(_fast_disable_train_raw)
-    prefilter_cfg = fast_loop_cfg.get("prefilter", {}) or {}
+    )
+    prefilter_cfg = rolling_calibration_cfg.get("prefilter", {}) or {}
+    root_prefilter_cfg = threshold_root_cfg.get("prefilter", {}) or {}
+    if not isinstance(root_prefilter_cfg, dict):
+        root_prefilter_cfg = {}
     prefilter_optimize_enabled = (
-        bool(prefilter_cfg.get("optimize", True))
+        bool(prefilter_cfg.get("optimize", root_prefilter_cfg.get("optimize", True)))
         if isinstance(prefilter_cfg, dict)
         else True
     )
@@ -6146,7 +6177,11 @@ def _run_fast_month_stage(
     direction_tuning_enabled = _section_enabled("direction_tuning", True)
     # rolling.windows.calibration_months = 标定窗口长度 (见 _calib_and_test_windows)，
     # 与「多久跑一次方向调优」无关。方向节奏单独用 direction_tuning.cadence_months，默认 1=每月。
-    _dir_tune_sec = fast_loop_cfg.get("direction_tuning") or {}
+    _dir_tune_sec = rolling_calibration_cfg.get("direction_tuning") or {}
+    if not isinstance(_dir_tune_sec, dict):
+        _dir_tune_sec = {}
+    if not _dir_tune_sec:
+        _dir_tune_sec = threshold_root_cfg.get("direction_tuning") or {}
     _direction_cadence_raw = (
         _dir_tune_sec.get("cadence_months", 1) if isinstance(_dir_tune_sec, dict) else 1
     )
@@ -6158,9 +6193,9 @@ def _run_fast_month_stage(
         month_index % _direction_cadence != 0
     )
     event_backtest_enabled = bool(event_cfg.get("enabled", True))
-    if not _fast_loop_active:
+    if not _monthly_calibration_switches_active:
         threshold_calibration_enabled = True
-        threshold_calibration_disable_model_training = False
+        threshold_calibration_enable_model_training = True
         prefilter_optimize_enabled = True
         execution_opt_enabled = True
         pcm_eval_enabled = True
@@ -6212,9 +6247,9 @@ def _run_fast_month_stage(
     )
     print(f"   base_strategies_root={_base_strategies_root}")
     print(
-        "   fast_loop: "
+        "   rolling_calibration: "
         f"threshold_calibration={threshold_calibration_enabled}, "
-        f"disable_model_training={threshold_calibration_disable_model_training}, "
+        f"enable_model_training={threshold_calibration_enable_model_training}, "
         f"prefilter_optimize={prefilter_optimize_enabled}, "
         f"execution_opt={execution_opt_enabled}, "
         f"pcm_eval={pcm_eval_enabled}, "
@@ -6223,7 +6258,10 @@ def _run_fast_month_stage(
         f"run_this_month={not skip_direction_for_month}), "
         f"event_backtest={event_backtest_enabled}"
     )
-    if threshold_calibration_enabled and threshold_calibration_disable_model_training:
+    if (
+        threshold_calibration_enabled
+        and not threshold_calibration_enable_model_training
+    ):
         print("   NO_MODEL_TUNING: prefilter/gate/entry_filter")
     print(f"{'='*70}")
 
@@ -6269,7 +6307,7 @@ def _run_fast_month_stage(
                 source_strategies_root=str(_base_strategies_root),
                 config_path=(config_path or str(DEFAULT_CONFIG)),
                 stage_stop="entry_filter",
-                disable_model_training=threshold_calibration_disable_model_training,
+                enable_model_training=threshold_calibration_enable_model_training,
                 skip_direction_tuning=skip_direction_for_month,
             )
             exp_cfg_dir = Path(str(_res.get("exp_config_dir", "") or ""))
@@ -6515,7 +6553,7 @@ def _run_fast_month_stage(
             step_name=f"PCM Joint Event Backtest (fast_month {month_token})",
         )
     elif not pcm_eval_enabled:
-        print("   ⏭️  跳过 PCM 联合回测: fast_loop.pcm_eval.enabled=false")
+        print("   ⏭️  跳过 PCM 联合回测: rolling_calibration.pcm_eval.enabled=false")
 
     summary = {
         "month": month_token,

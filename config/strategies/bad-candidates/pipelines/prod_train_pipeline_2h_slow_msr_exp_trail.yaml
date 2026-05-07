@@ -44,7 +44,7 @@ rolling:
     fixed_strategies_root: config/strategies
     disable_feature_search: true
 
-fast_loop:
+rolling_calibration:
   step_months: 1
   threshold_calibration:
     enabled: true

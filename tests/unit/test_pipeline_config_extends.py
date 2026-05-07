@@ -18,6 +18,8 @@ def test_load_bpc_turbo_from_strategy_research():
     assert cfg.get("rolling", {}).get("time_split_policy") == "static_holdout"
     assert cfg["rolling"]["windows"]["calibration_months"] == 6
     assert cfg["rolling"]["windows"]["structure_train_window"] == "rolling_window"
+    assert cfg["threshold_calibration"]["enable_model_training"] is False
+    assert cfg["rolling_calibration"]["enable_model_training"] is False
     assert "validation_months" not in cfg["dates"]
 
 
@@ -71,6 +73,8 @@ def test_load_me_slow_full_history_from_strategy_research():
     assert w["structure_train_window"] == "full_history"
     assert w["structure_lookback_months"] == 24
     assert (cfg.get("dates") or {}).get("start_date") == "2022-01-01"
+    assert cfg["threshold_calibration"]["enable_model_training"] is True
+    assert cfg["rolling_calibration"]["enable_model_training"] is True
 
 
 def test_load_tpc_slow_full_history_from_strategy_research():
@@ -80,6 +84,8 @@ def test_load_tpc_slow_full_history_from_strategy_research():
     assert w["structure_train_window"] == "full_history"
     assert w["structure_lookback_months"] == 24
     assert (cfg.get("dates") or {}).get("start_date") == "2022-01-01"
+    assert cfg["threshold_calibration"]["enable_model_training"] is True
+    assert cfg["rolling_calibration"]["enable_model_training"] is True
 
 
 @pytest.mark.parametrize(
@@ -245,7 +251,8 @@ def test_bpc_slow_overrides_locked_enabled_true():
     assert kg["entry_filter"]["archetype_plateau"] is True
     assert kg["gate"]["max_hard_gates"] == 4
     assert kg["prefilter"]["locked_threshold_tuning"]["enabled"] is True
-    assert cfg["threshold_calibration"]["enable_model_training"] is False
+    assert cfg["threshold_calibration"]["enable_model_training"] is True
+    assert cfg["rolling_calibration"]["enable_model_training"] is True
     assert cfg["threshold_calibration"]["prefilter"]["optimize"] is True
 
 

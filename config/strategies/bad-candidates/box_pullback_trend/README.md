@@ -30,7 +30,7 @@
 
 ### 3. Gate 在稀疏腿上的边际贡献有限
 
-在 `disable_model_training` 的 turbo 快环里，Gate 优化常见结局是：**hard gate 难稳定产出**，re-apply 后决策接近「全放行」或仅 guardrail。对 BPT 这类**方向行本身就是稀有事件**的策略，门控很难在保持频率的同时再切一刀；**质量压力主要集中在 prefilter + direction**，与「独立可交易产品」的期望不匹配。
+在 **`enable_model_training: false`** 的 turbo 快环（阈值-only、不做 gate 树训练）里，Gate 优化常见结局是：**hard gate 难稳定产出**，re-apply 后决策接近「全放行」或仅 guardrail。对 BPT 这类**方向行本身就是稀有事件**的策略，门控很难在保持频率的同时再切一刀；**质量压力主要集中在 prefilter + direction**，与「独立可交易产品」的期望不匹配。
 
 ### 4. 与 TPC / 其它趋势族的关系
 

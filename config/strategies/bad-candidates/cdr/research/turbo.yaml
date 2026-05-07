@@ -23,8 +23,8 @@ rolling:
     fixed_strategies_root: config/strategies
     disable_feature_search: true
 
-fast_loop:
-  disable_model_training: true
+rolling_calibration:
+  enable_model_training: false
   step_months: 1
   threshold_calibration:
     enabled: true
