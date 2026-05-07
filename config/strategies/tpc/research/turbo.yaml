@@ -4,7 +4,7 @@
 # 目的
 #   - 生产特征集固定；主要做「阈值漂移」与执行层标定；标定链关闭树模型训练。
 # 建议节奏
-#   - 约每月（threshold_calibration.step_months: 1）。
+#   - 约每月：rolling_sim 在 holdout 内逐日历月重放（详见 docs/workflow/ROLLING_SIM_TIME_WINDOWS_CN.md）。
 # 何时不要用 turbo
 #   - 需改特征 / archetype、或 slow 显示漂移大 → slow / non_rolling。
 # -----------------------------------------------------------------------------
@@ -23,7 +23,6 @@ rolling:
 
 threshold_calibration:
   enable_model_training: false
-  step_months: 1
   prefilter:
     optimize: true
   gate:

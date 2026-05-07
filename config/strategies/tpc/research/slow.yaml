@@ -36,7 +36,6 @@ rolling:
     triggered_retrain_enabled: true
 
 threshold_calibration:
-  step_months: 1
   execution_opt:
     enabled: true
   pcm_eval:

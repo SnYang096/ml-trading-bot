@@ -38,11 +38,11 @@ rolling:
     structure_train_window: full_history
     structure_lookback_months: 24
   slow_realistic:
+    # 在 rolling_sim 且 rolling.mode == slow_realistic 时，会用 cadence_months 决定 隔几个月跑一次慢结构快照
     cadence_months: 3
     triggered_retrain_enabled: true
 
 threshold_calibration:
-  step_months: 1
   execution_opt:
     enabled: true
   pcm_eval:
