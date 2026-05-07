@@ -73,10 +73,6 @@ rolling_calibration:
     compare_features: true
     promote_after_validate: true
 
-stitching:
-  enabled: true
-  metrics: [sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate]
-  export_trade_map_html: true
 
 event_backtest:
   enabled: true

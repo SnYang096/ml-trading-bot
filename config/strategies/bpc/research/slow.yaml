@@ -72,10 +72,6 @@ threshold_calibration:
   enable_model_training: true
   # execution_opt / pcm_eval / direction_tuning 与 extends 的 turbo 一致，不写则继承。
 
-stitching:
-  enabled: true
-  metrics: [ sharpe, max_drawdown, total_r, near_stop_rate, slot_full_rate ]
-  export_trade_map_html: true
 
 pcm_slot_grid:
   enabled: false

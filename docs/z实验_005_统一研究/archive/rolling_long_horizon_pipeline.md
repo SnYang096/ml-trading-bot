@@ -135,13 +135,9 @@
 |------|------|
 | PCM 选人（当前行为） | 本月 `fast_month` 中配置并跑完的策略分两池：`trend_pcm_candidates` 全量进入趋势账户联合事件回测（`pcm_eval.enabled` 且条数 ≥2）；`multi_leg_pcm_candidates` 进入独立 multi-leg 池。二者不竞争 slot。 |
 
-#### `stitching`
+#### 滚测末尾汇总（无 YAML 开关）
 
-| 字段 | 说明 |
-|------|------|
-| `enabled` | 是否在 `rolling_sim` 末尾拼接多月指标。 |
-| `metrics` | 写入 `stitched_summary` 的指标名列表。 |
-| `export_trade_map_html` | 是否导出拼接交易地图索引 HTML。 |
+每跑完一次 **`rolling_sim`**，代码在批次根目录**固定**写入 `monthly_ledger.jsonl`、`stitched_summary.json`、`trading_map_stitched.html`、连续交易地图等；**不靠**管线里的 `stitching` 配置块（已从 YAML 删除以免误解）。
 
 #### `event_backtest`
 
