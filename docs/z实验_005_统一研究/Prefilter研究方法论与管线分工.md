@@ -1,7 +1,7 @@
 # Prefilter 研究方法论与管线分工（正式结论）
 
 > **状态**：制度化结论；与 `slow_realistic` 的 adoption 护栏（语义修复、prefilter drift、`adoption_gate`）互补。  
-> **维护**：若未来在仓库内增加「专用 prefilter 研究子流程 / 报告物 / CI 闸门」，请同步更新本文 **§4 缺口** 与 [INDEX](./INDEX_管线与文档导航.md) 导航。
+> **维护**：若未来在仓库内增加「专用 prefilter 研究子流程 / 报告物 / CI 闸门」，请同步更新本文 **§5 缺口** 与 [INDEX](./INDEX_管线与文档导航.md) 导航。
 
 ---
 
@@ -32,7 +32,33 @@
 
 ---
 
-## 3. 与代码中已实现能力的关系（简述）
+## 3. 推荐日常工作流与 `slow_realistic` 的定位（制度化）
+
+以下作为**仓库内默认运维与发布心智模型**（与具体排期无关；工程上仍保留 `slow_realistic` 能力）。
+
+### 3.1 主路径（建议默认）
+
+| 步骤 | 做什么 | 说明 |
+|------|--------|------|
+| 1 | **前置研究管线**（全量 `pipeline run`、树模型、SHAP、消融与 OOS 等） | 完成 §1 所需证据链；产出或更新 `config/strategies/<slug>/archetypes/*.yaml` 中的 **语义合约**（`locked` / `skip_parquet_tune`）与可漂移 prior。 |
+| 2 | **`turbo_fixed_features` + rolling** | 冻结生产语义与特征契约，只做 **阈值与下游标定**；模拟更接近实盘的按月推进。 |
+| 3 | **nonrolling / 上线前验收**（如实施文档 03、整窗 `full` 等） | 跨窗、高原与发布 checklist；**不因单次 slow 滚动结果直接等同可上线**。 |
+
+### 3.2 为何不默认依赖 `slow_realistic`
+
+- **成本**：全开结构搜索 + SHAP + 校准链非常耗时，不适合作为月度主循环。
+- **职责边界**：真正有说服力的特征发现与安全边际证明应在 **前置研究** 落地；仅靠 slow 易出现「跑得动但证据不足」的中间态。
+- **护栏后的行为**：`adoption_gate` + semantic + prefilter drift 使 slow 更接近「可控体检」；语义若大量锁定、漂移严时，slow 往往在采纳上接近 **turbo**，但 **跑得仍慢**——主路径上用 turbo 更直接。
+- **采纳粒度**：门禁为 **整条策略快照** 采纳或不采纳，不提供「仅换 gate / entry 不换 prefilter」的按层分拆（见 `_run_slow_snapshot_adoption_gate` 的目录级 `copytree`）。
+
+### 3.3 `slow_realistic` 建议用途（可选、低频）
+
+保留为：**季度 / 发版前 / 可疑漂移时** 的对照运行：观察结构刷新会否带来新候选、护栏是否触发、与 turbo 的长期差异。  
+**不设为**日常发布或大改策略的必经之路；主干仍是 **前置研究定稿 → turbo rolling → nonrolling**。
+
+---
+
+## 4. 与代码中已实现能力的关系（简述）
 
 - 树模型、SHAP、`enable_model_training` 等能力与 **研究 / `slow` yaml** 可组合使用，语义上服务于 §2 表格第一行。
 - **`rolling.slow_realistic.adoption_gate` 内的 prefilter drift guard** 服务于**阈值/数值漂移门禁**与采纳回退，**不替代** §1 中整条「发现 + 多维验证」研究流程。
@@ -40,7 +66,7 @@
 
 ---
 
-## 4. 当前框架缺口与后续加强方向（记录）
+## 5. 当前框架缺口与后续加强方向（记录）
 
 以下内容承认现状，便于排期：**不阻塞** §1 结论生效，但需在后续迭代中加强。
 
@@ -53,7 +79,7 @@
 
 ---
 
-## 5. 相关文档与配置入口
+## 6. 相关文档与配置入口
 
 - 管线总索引：[INDEX_管线与文档导航.md](./INDEX_管线与文档导航.md)
 - 长窗滚动设计（模式对照）：[archive/rolling_long_horizon_pipeline.md](./archive/rolling_long_horizon_pipeline.md)
