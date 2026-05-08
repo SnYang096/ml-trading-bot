@@ -17,5 +17,11 @@ rolling:
   mode: non_rolling
   time_split_policy: static_holdout
 
+# 单次全周期结束后的 compare_runs vs 上期 history（rolling 快照不在此语义下使用）。
+comparison:
+  min_trades: 30
+  sharpe_adopt_ratio: 0.7
+  sharpe_reject_floor: 0.0
+
 output:
   history_dir: results/tpc/non-rolling-sim

@@ -186,8 +186,6 @@ comparison:
   min_trades: 10
   sharpe_adopt_ratio: 0.7
   sharpe_reject_floor: 0.0
-  threshold_drift_warn: 1.0
-
 retrain_triggers:
   schedule_days: 90
   sharpe_decay_ratio: 0.5
