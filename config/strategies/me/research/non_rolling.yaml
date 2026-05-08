@@ -9,6 +9,7 @@
 #   - extends slow：与 slow 相同 entry meta、阈值 optimize、SHAP；仅 rolling / output 独立。
 # -----------------------------------------------------------------------------
 # 覆写 dates / rolling / output；其余与同目录 slow.yaml 一致。
+# 全周期 run 的 report.json 含 comparison / deploy_gate。
 
 extends: slow.yaml
 
@@ -24,6 +25,14 @@ comparison:
   min_trades: 30
   sharpe_adopt_ratio: 0.7
   sharpe_reject_floor: 0.0
+
+deploy_gate:
+  trigger_sharpe_improve: 0.05
+  trigger_drift_level: HIGH
+  min_sharpe_change: 0.03
+  require_adopt: true
+  min_trades: 50
+  require_human_confirm: true
 
 output:
   history_dir: results/me/non-rolling-sim

@@ -140,14 +140,6 @@ shap_feature_selection:
   apply_to:
     - features.yaml
 
-deploy_gate:
-  trigger_sharpe_improve: 0.05
-  trigger_drift_level: HIGH
-  min_sharpe_change: 0.03
-  require_adopt: true
-  min_trades: 50
-  require_human_confirm: true
-
 data_flow:
   model_predictions: predictions.parquet
   gated_logs: logs_gated.parquet

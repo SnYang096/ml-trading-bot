@@ -11,6 +11,7 @@
 # 执行注意
 #   - extends slow：与 slow 相同地开启 entry meta、各层阈值 optimize、SHAP 特征筛选；
 #     仅 rolling 改为 non_rolling + static_holdout，output 单独目录。
+#   - 全周期 run 的对比与上线建议写在 report.json（comparison / deploy_gate），无单独 HTML。
 # -----------------------------------------------------------------------------
 # 覆写 dates / rolling / output；其余与同目录 slow.yaml 一致。
 
@@ -28,6 +29,15 @@ comparison:
   min_trades: 30
   sharpe_adopt_ratio: 0.7
   sharpe_reject_floor: 0.0
+
+# 与 compare_runs 输出配合；结果写入该次 run 的 report.json → deploy_gate（终端亦打印）。
+deploy_gate:
+  trigger_sharpe_improve: 0.05
+  trigger_drift_level: HIGH
+  min_sharpe_change: 0.03
+  require_adopt: true
+  min_trades: 50
+  require_human_confirm: true
 
 output:
   history_dir: results/bpc/non-rolling-sim
