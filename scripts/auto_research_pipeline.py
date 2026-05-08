@@ -6533,6 +6533,12 @@ def _resolve_slow_adoption_gate_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     This gate decides whether a newly generated slow snapshot should replace the
     currently active strategy root for future rolling months.
+
+    **Runtime precedence** (see `_run_slow_snapshot_adoption_gate` /
+    `_decide_slow_adoption_for_strategy`): semantic_guard → prefilter drift red
+    veto → composite score knobs → ``hard_reject`` on NEW → ``adopt_ratio`` /
+    ``min_improvement``. Strategy `research/slow.yaml` keeps keys in this order for readability
+    (YAML mapping order does not affect parsing).
     """
     slow_cfg = (cfg.get("rolling") or {}).get("slow_realistic") or {}
     gate = (slow_cfg.get("adoption_gate") or {}) if isinstance(slow_cfg, dict) else {}

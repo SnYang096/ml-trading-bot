@@ -45,36 +45,52 @@ rolling:
     cadence_months: 3
     # triggered_retrain_enabled：为 true 时按 cadence_months 执行慢结构快照并刷新滚动使用的 strategies_root；为 false 时整段 rolling 不跑快照、始终用仓库 config/strategies。每月阈值标定与当月 test 仍照常进行，与该项无关。
     triggered_retrain_enabled: true
-    # adoption_gate：慢快照的“新旧结构切换门禁”。
-    # 不再机械地 cadence 到就替换：会用最近已完成窗口（validation_months）比较
-    # candidate(新结构) vs current(旧结构) 的风险调整分，只有更优才切换。
+    # adoption_gate：慢快照新旧结构采纳门禁。「下面键顺序 = 运行时优先级」（早判定的块写在上面；YAML 解析不依赖书写顺序，但人读配置时应按此顺序理解）。
+    #   P1 契约：semantic_guard（locked prefilter merge + locked gate 缺失/禁用 → 可不采纳）。
+    #   P2 prefilter：prefilter_drift_guard（非 locked 数值阈值相对漂移 red → 不采纳候选快照）。
+    #   P3 业绩分：先用 score_weights + undertrade + cash_score_when_no_trades 得 old/new 综合分；
+    #   P4 硬砍：hard_reject 检查 new 的原始 Sharpe / max_dd；
+    #   P5 比较：adopt_ratio + min_improvement 决定 new 分是否压倒 old。
     adoption_gate:
       enabled: true
       validation_months: 1
-      adopt_ratio: 1.0
-      min_improvement: 0.0
-      score_weights:
-        sharpe_r: 1.0
-        max_drawdown_r: 0.15
-        near_stop_rate: 0.5
-      # 交易数用软惩罚（不是硬门槛）：趋势策略允许某些月份“不交易更好”。
-      undertrade:
-        target_trades_soft: 10
-        penalty: 0.15
-      # n_trades=0 视作现金基准分（可赢过亏损结构）。
-      cash_score_when_no_trades: 0.0
-      # 极端坏表现的硬拒绝（可按策略风险偏好调节）。
-      hard_reject:
-        sharpe_floor: -0.5
+      # ── P1 契约 veto（先于业绩比较；见 _evaluate_semantic_contract_for_strategy）。
       semantic_guard:
         enabled: true
         on_prefilter_locked_missing: repair_and_continue
         on_gate_locked_violation: red_no_adopt
+      # ── P2 prefilter 数值漂移 veto（在 repaired candidate 上；见 _evaluate_prefilter_drift_for_strategy）。
       prefilter_drift_guard:
         enabled: true
         on_red_drift: previous_accepted
         warn_relative_change: 0.20
         max_relative_change: 0.35
+      # ── P3 业绩综合分项（仅在未被 P1/P2 强制否决后继续；见 _score_slow_adoption_candidate）。
+      score_weights:
+        sharpe_r: 1.0
+        max_drawdown_r: 0.15
+        near_stop_rate: 0.5
+      undertrade:
+        target_trades_soft: 10
+        penalty: 0.15
+      cash_score_when_no_trades: 0.0
+      # ── P4 对 new 侧的硬否决（在用 P3 算分之后、P5 之前；见 _decide_slow_adoption_for_strategy）。
+      hard_reject:
+        sharpe_floor: -0.5
+      # ── P5 old vs new 采纳门槛。
+      adopt_ratio: 1.0
+      min_improvement: 0.0
+
+      # === 分项说明（与上面对应）===
+      # enabled：false → 不设门禁，慢快照候选 root 直接使用。
+      # validation_months：eval 月为当前 rolling 月 M 往前移 K 个月，仅用该月 old/candidate 各跑的快月产物做判别（因果）。
+      # semantic_guard：先 merge locked prefilter；on_gate_locked_violation=red_no_adopt 时 gate locked 缺失/disabled→不采纳；
+      #   on_prefilter_locked_missing：merge 后仍缺 locked 时 repair_and_continue 不单独升 red，red_no_adopt 则语义红。
+      # prefilter_drift_guard：可选 watched_features / max_absolute_change_by_feature（见源码）；不参与 drift：locked / skip_parquet_tune。
+      # score_weights / undertrade：Sharpe − 加权 dd/stop − 低交易软罚。
+      # cash_score_when_no_trades：eval 月 n_trades=0 时该侧用这种「现金基准分」占位。
+      # hard_reject：new 的 Sharpe ≤ floor（或可选 max_dd 超限）直接不采纳；与 adopt_ratio 无先后语义冲突——实现上先打分再硬砍再比 P5。
+      # adopt_ratio / min_improvement：new_score 须不低于 old 经 adopt_ratio/min 抬升后的门槛。
 
 threshold_calibration:
   # slow 要跑完整特征寻找链：允许 prefilter/gate 树模型训练、SHAP/分裂点打分，再叠加阈值调整。

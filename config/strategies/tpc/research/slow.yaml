@@ -37,11 +37,19 @@ rolling:
   slow_realistic:
     cadence_months: 3
     triggered_retrain_enabled: true
+    # adoption_gate：键顺序 ≡ 运行时优先级（P1 契约 → P2 prefilter 漂移 → P3 业绩分参数 → P4 new 硬否决 → P5 adopt 门槛）。
     adoption_gate:
       enabled: true
       validation_months: 1
-      adopt_ratio: 1.0
-      min_improvement: 0.0
+      semantic_guard:
+        enabled: true
+        on_prefilter_locked_missing: repair_and_continue
+        on_gate_locked_violation: red_no_adopt
+      prefilter_drift_guard:
+        enabled: true
+        on_red_drift: previous_accepted
+        warn_relative_change: 0.20
+        max_relative_change: 0.35
       score_weights:
         sharpe_r: 1.0
         max_drawdown_r: 0.15
@@ -52,15 +60,8 @@ rolling:
       cash_score_when_no_trades: 0.0
       hard_reject:
         sharpe_floor: -0.5
-      semantic_guard:
-        enabled: true
-        on_prefilter_locked_missing: repair_and_continue
-        on_gate_locked_violation: red_no_adopt
-      prefilter_drift_guard:
-        enabled: true
-        on_red_drift: previous_accepted
-        warn_relative_change: 0.20
-        max_relative_change: 0.35
+      adopt_ratio: 1.0
+      min_improvement: 0.0
 
 threshold_calibration:
   # slow 要跑完整特征寻找链：允许 prefilter/gate 树模型训练、SHAP/分裂点打分，再叠加阈值调整。
