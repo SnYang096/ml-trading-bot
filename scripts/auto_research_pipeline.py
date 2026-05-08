@@ -8,7 +8,7 @@
   3. 按策略执行完整训练链: DataDownload → FeatureStore → Prepare
      → Prefilter → Direction → Gate → Execution → Backtest
   4. 所有阈值优化步骤带 --promote, 写入实验目录 (不覆盖生产 config)
-  5. 保存结构化 report.json 到 results/research_history/{strategy}/{timestamp}/
+  5. 保存结构化 report.json（及同目录可读的 report.html）到 history/{strategy}/{timestamp}/
   6. 与上次研究结果对比, 输出确定性决策: ADOPT / KEEP / ALERT
   7. ADOPT 时自动将实验 archetypes 复制回生产 config
 
@@ -46,6 +46,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import html
 import json
 import os
 import re
@@ -3912,6 +3913,214 @@ def run_strategy_pipeline(
 # Save report
 # ====================================================================
 
+_RESEARCH_REPORT_HTML_STYLE = """
+<style>
+  body { font-family: system-ui, Segoe UI, Roboto, sans-serif; margin: 1.5rem 2rem; color: #1a1a1a; max-width: 960px; }
+  h1 { font-size: 1.35rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.1rem; margin-top: 1.5rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }
+  h3 { font-size: 0.95rem; margin-top: 1rem; }
+  .muted { color: #666; font-size: 0.9rem; }
+  table.kv { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  table.kv th { text-align: left; padding: 0.35rem 0.75rem 0.35rem 0; vertical-align: top; width: 12rem; color: #444; }
+  table.kv td { padding: 0.35rem 0; word-break: break-word; }
+  table.dense { border-collapse: collapse; width: 100%; font-size: 0.85rem; margin-top: 0.5rem; }
+  table.dense th, table.dense td { border: 1px solid #e0e0e0; padding: 0.35rem 0.5rem; text-align: left; }
+  table.dense thead th { background: #f5f5f5; }
+  pre.json { background: #f8f8f8; border: 1px solid #e8e8e8; padding: 0.75rem; overflow: auto; font-size: 0.82rem; line-height: 1.35; }
+  details { margin-top: 1rem; }
+  summary { cursor: pointer; font-weight: 600; }
+  .tag-ok { color: #0a7a0a; font-weight: 600; }
+  .tag-no { color: #a60a0a; font-weight: 600; }
+  code { font-size: 0.88em; background: #f0f0f0; padding: 0.1rem 0.35rem; border-radius: 3px; }
+</style>
+""".strip()
+
+
+def write_research_run_report_html(report_path: Path) -> None:
+    """在 ``report.json`` 旁写入 ``report.html``（可读摘要 + 可选完整 JSON）。
+
+    失败时静默忽略，不影响流水线。仅在 JSON 含 strategy/timestamp（研究 run 快照）时生成。"""
+    try:
+        if report_path.name != "report.json" or not report_path.is_file():
+            return
+        data = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(data, dict):
+        return
+    if "strategy" not in data or "timestamp" not in data:
+        return
+
+    def esc(x: Any) -> str:
+        if x is None:
+            return "—"
+        if isinstance(x, (dict, list)):
+            return html.escape(
+                json.dumps(x, ensure_ascii=False, indent=2, default=str),
+                quote=False,
+            )
+        return html.escape(str(x), quote=False)
+
+    def table_from_dict(d: Dict[str, Any]) -> str:
+        if not d:
+            return '<p class="muted">(empty)</p>'
+        rows: List[str] = []
+        for k, v in sorted(d.items(), key=lambda kv: str(kv[0])):
+            if isinstance(v, (dict, list)):
+                cell = f'<pre class="json">{esc(v)}</pre>'
+            else:
+                cell = esc(v)
+            rows.append(f"<tr><th>{esc(str(k))}</th><td>{cell}</td></tr>")
+        return '<table class="kv">' + "".join(rows) + "</table>"
+
+    def list_dict_table(rows: List[Dict[str, Any]], title: str) -> str:
+        if not rows:
+            return ""
+        keys = sorted({sk for row in rows for sk in row.keys()})
+        out: List[str] = [f"<h3>{html.escape(title, quote=False)}</h3>"]
+        out.append('<table class="dense"><thead><tr>')
+        out.extend(f"<th>{esc(k)}</th>" for k in keys)
+        out.append("</tr></thead><tbody>")
+        for row in rows:
+            out.append("<tr>")
+            for k in keys:
+                v = row.get(k)
+                if isinstance(v, (dict, list)):
+                    out.append(f'<td><pre class="json">{esc(v)}</pre></td>')
+                else:
+                    out.append(f"<td>{esc(v)}</td>")
+            out.append("</tr>")
+        out.append("</tbody></table>")
+        return "".join(out)
+
+    strategy = str(data.get("strategy", ""))
+    ts = str(data.get("timestamp", ""))
+    title = f"Research · {strategy} · {ts}"
+
+    body: List[str] = [
+        "<!DOCTYPE html>",
+        '<html lang="zh-CN"><head><meta charset="utf-8">',
+        f"<title>{esc(title)}</title>",
+        _RESEARCH_REPORT_HTML_STYLE,
+        "</head><body>",
+        "<header>",
+        f"<h1>{esc(title)}</h1>",
+        '<p class="muted">与 <code>report.json</code> 同步；管线更新 JSON 后会重写本页。</p>',
+        "</header>",
+    ]
+
+    dr = data.get("data_range")
+    if isinstance(dr, dict):
+        body.append("<section><h2>数据窗口</h2>")
+        body.append(table_from_dict(dr))
+        body.append("</section>")
+
+    bt = data.get("backtest_metrics")
+    if isinstance(bt, dict):
+        body.append("<section><h2>回测指标</h2>")
+        body.append(table_from_dict(bt))
+        body.append("</section>")
+
+    comp = data.get("comparison")
+    if isinstance(comp, dict):
+        body.append("<section><h2>对比决策（compare_runs）</h2>")
+        dec = comp.get("decision")
+        if isinstance(dec, str):
+            cls = "tag-ok" if dec == "ADOPT" else "tag-no"
+            body.append(f'<p>决策：<span class="{cls}">{esc(dec)}</span></p>')
+        body.append(table_from_dict(comp))
+        body.append("</section>")
+
+    dg = data.get("deploy_gate")
+    if isinstance(dg, dict):
+        body.append("<section><h2>Deploy 门禁</h2>")
+        ready = dg.get("deploy_ready")
+        if isinstance(ready, bool):
+            cls = "tag-ok" if ready else "tag-no"
+            body.append(
+                f'<p><span class="{cls}">deploy_ready={esc(str(ready))}</span></p>'
+            )
+        skim = {}
+        for k, v in dg.items():
+            if k in ("triggers", "safety"):
+                continue
+            if isinstance(v, (dict, list)):
+                skim[k] = json.dumps(v, ensure_ascii=False, default=str)
+            else:
+                skim[k] = v
+        if skim:
+            body.append(table_from_dict(skim))
+        trig = dg.get("triggers")
+        if isinstance(trig, list) and trig:
+            trig_rows = [r for r in trig if isinstance(r, dict)]
+            if trig_rows:
+                body.append(
+                    list_dict_table(
+                        [dict(r) for r in trig_rows],
+                        "触发条件",
+                    )
+                )
+        safety = dg.get("safety")
+        if isinstance(safety, list) and safety:
+            safety_rows = [r for r in safety if isinstance(r, dict)]
+            if safety_rows:
+                body.append(
+                    list_dict_table(
+                        [dict(r) for r in safety_rows],
+                        "安全门禁",
+                    )
+                )
+        body.append("</section>")
+
+    ev = data.get("event_backtest")
+    if ev is not None:
+        body.append("<section><h2>Event backtest</h2>")
+        if isinstance(ev, dict):
+            body.append(table_from_dict(ev))
+        else:
+            body.append(f'<pre class="json">{esc(ev)}</pre>')
+        body.append("</section>")
+
+    for key, sec_title in (
+        ("pcm_joint", "PCM joint"),
+        ("pcm_slot_grid", "PCM slot grid"),
+    ):
+        blk = data.get(key)
+        if blk is not None:
+            body.append(f"<section><h2>{html.escape(sec_title, quote=False)}</h2>")
+            if isinstance(blk, dict):
+                body.append(table_from_dict(blk))
+            else:
+                body.append(f'<pre class="json">{esc(blk)}</pre>')
+            body.append("</section>")
+
+    th = data.get("thresholds")
+    if isinstance(th, dict) and th:
+        body.append("<section><details open><summary>阈值快照 thresholds</summary>")
+        body.append(f'<pre class="json">{esc(th)}</pre>')
+        body.append("</details></section>")
+
+    art = data.get("artifacts")
+    if isinstance(art, dict) and art:
+        body.append("<section><h2>产物路径</h2>")
+        body.append(table_from_dict(art))
+        body.append("</section>")
+
+    raw = html.escape(
+        json.dumps(data, indent=2, ensure_ascii=False, default=str),
+        quote=False,
+    )
+    body.append("<section><details><summary>完整 JSON</summary>")
+    body.append(f'<pre class="json">{raw}</pre>')
+    body.append("</details></section>")
+    body.append("</body></html>")
+
+    out_path = report_path.parent / "report.html"
+    try:
+        out_path.write_text("\n".join(body), encoding="utf-8")
+    except Exception:
+        pass
+
 
 def save_report(
     strategy: str,
@@ -4015,6 +4224,8 @@ def save_report(
             except Exception as _e:
                 print(f"   ⚠️  产物整合失败 (non-critical): {_e}")
 
+    write_research_run_report_html(report_path)
+
     return report_path
 
 
@@ -4034,6 +4245,7 @@ def _patch_report_deploy(report_path: Path, deploy_result: Dict[str, Any]):
             json.dumps(report, indent=2, default=str, ensure_ascii=False),
             encoding="utf-8",
         )
+        write_research_run_report_html(report_path)
     except Exception:
         pass  # 非关键路径, 不影响主流程
 
@@ -4047,6 +4259,7 @@ def _patch_report_event(report_path: Path, event_result: Dict[str, Any]):
             json.dumps(report, indent=2, default=str, ensure_ascii=False),
             encoding="utf-8",
         )
+        write_research_run_report_html(report_path)
     except Exception:
         pass
 
@@ -4493,6 +4706,7 @@ def _patch_report_pcm(report_path: Path, pcm_result: Dict[str, Any]):
             json.dumps(report, indent=2, default=str, ensure_ascii=False),
             encoding="utf-8",
         )
+        write_research_run_report_html(report_path)
     except Exception:
         pass
 
@@ -4506,6 +4720,7 @@ def _patch_report_pcm_slot_grid(report_path: Path, slot_grid_result: Dict[str, A
             json.dumps(report, indent=2, default=str, ensure_ascii=False),
             encoding="utf-8",
         )
+        write_research_run_report_html(report_path)
     except Exception:
         pass
 
@@ -9001,6 +9216,7 @@ def main():
         for r in comparison.get("reasons", []):
             print(f"      → {r}")
         print(f"   📁 Report: {report_path}")
+        print(f"   📄 Human: {report_path.parent / 'report.html'}")
         print(f"   📦 实验配置: {run_dir}/strategies/{strategy}/archetypes/")
 
         # ── 漂移报告 (当存在上次实验时自动输出) ──
