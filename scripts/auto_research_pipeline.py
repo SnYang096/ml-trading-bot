@@ -6179,6 +6179,355 @@ def _resolved_enable_model_training_for_rolling_month(
     return True
 
 
+def _safe_load_yaml_obj(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        obj = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def _prefilter_rule_signature(rule: Dict[str, Any]) -> Tuple[Any, ...]:
+    if not isinstance(rule, dict):
+        return ("raw", json.dumps(rule, sort_keys=True, ensure_ascii=False))
+    if "feature" in rule:
+        return (
+            "simple",
+            rule.get("feature"),
+            rule.get("operator"),
+            json.dumps(rule.get("value"), sort_keys=True, ensure_ascii=False),
+        )
+    if "any_of" in rule and isinstance(rule.get("any_of"), list):
+        sub_sigs: List[Tuple[Any, ...]] = []
+        for sub in rule.get("any_of", []):
+            if not isinstance(sub, dict):
+                continue
+            sub_sigs.append(
+                (
+                    sub.get("feature"),
+                    sub.get("operator"),
+                    json.dumps(sub.get("value"), sort_keys=True, ensure_ascii=False),
+                )
+            )
+        return ("any_of", tuple(sorted(sub_sigs)))
+    return ("raw", json.dumps(rule, sort_keys=True, ensure_ascii=False))
+
+
+def _prefilter_rule_clauses(path: Path) -> List[Dict[str, Any]]:
+    obj = _safe_load_yaml_obj(path)
+    rules = obj.get("rules") or []
+    if not isinstance(rules, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for ri, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            continue
+        parent_locked = bool(rule.get("locked", False))
+        parent_skip_tune = bool(rule.get("skip_parquet_tune", False))
+        parent_enabled = bool(rule.get("enabled", True))
+        rid = str(rule.get("id", f"rule_{ri}") or f"rule_{ri}")
+        if "any_of" in rule and isinstance(rule.get("any_of"), list):
+            for si, sub in enumerate(rule.get("any_of") or []):
+                if not isinstance(sub, dict):
+                    continue
+                feat = str(sub.get("feature", "") or "").strip()
+                op = str(sub.get("operator", "") or "").strip()
+                out.append(
+                    {
+                        "key": f"any_of:{ri}:{si}:{feat}:{op}",
+                        "feature": feat,
+                        "operator": op,
+                        "value": sub.get("value"),
+                        "rule_id": rid,
+                        "locked": parent_locked,
+                        "skip_parquet_tune": parent_skip_tune,
+                        "enabled": parent_enabled,
+                    }
+                )
+            continue
+        feat = str(rule.get("feature", "") or "").strip()
+        op = str(rule.get("operator", "") or "").strip()
+        out.append(
+            {
+                "key": f"rule:{ri}:{feat}:{op}",
+                "feature": feat,
+                "operator": op,
+                "value": rule.get("value"),
+                "rule_id": rid,
+                "locked": parent_locked,
+                "skip_parquet_tune": parent_skip_tune,
+                "enabled": parent_enabled,
+            }
+        )
+    return out
+
+
+def _gate_locked_issues(current_gate: Path, candidate_gate: Path) -> Dict[str, Any]:
+    locked_rules = load_locked_gate_rules(current_gate)
+    if not locked_rules:
+        return {"missing": [], "disabled": []}
+    cand_obj = _safe_load_yaml_obj(candidate_gate)
+    cand_rules: Dict[str, Dict[str, Any]] = {}
+    for section in ("hard_gates", "system_safety", "guardrails"):
+        raw = cand_obj.get(section) or []
+        if not isinstance(raw, list):
+            continue
+        for rule in raw:
+            if not isinstance(rule, dict):
+                continue
+            rid = str(rule.get("id", "") or "").strip()
+            if not rid:
+                rid = json.dumps(
+                    rule.get("when", {}), sort_keys=True, ensure_ascii=False
+                )
+            cand_rules[rid] = rule
+
+    missing: List[str] = []
+    disabled: List[str] = []
+    for rule in locked_rules:
+        rid = str(rule.get("id", "") or "").strip()
+        if not rid:
+            rid = json.dumps(rule.get("when", {}), sort_keys=True, ensure_ascii=False)
+        got = cand_rules.get(rid)
+        if got is None:
+            missing.append(rid)
+            continue
+        if bool(got.get("disabled", False)) or not bool(got.get("enabled", True)):
+            disabled.append(rid)
+    return {"missing": sorted(missing), "disabled": sorted(disabled)}
+
+
+def _to_float_or_none(v: Any) -> Optional[float]:
+    try:
+        if v is None or v == "":
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _drift_level_rank(level: str) -> int:
+    return {"none": 0, "green": 1, "yellow": 2, "red": 3}.get(
+        str(level).strip().lower(), 0
+    )
+
+
+def _evaluate_prefilter_drift_for_strategy(
+    *,
+    strategy: str,
+    current_prefilter: Path,
+    candidate_prefilter: Path,
+    drift_cfg: Dict[str, Any],
+    report_path: Path,
+) -> Dict[str, Any]:
+    if not bool(drift_cfg.get("enabled", False)):
+        report = {
+            "strategy": strategy,
+            "enabled": False,
+            "level": "none",
+            "rows": [],
+            "red_rules": [],
+            "yellow_rules": [],
+        }
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        report["report_path"] = str(report_path)
+        return report
+
+    current_rules = {
+        str(r.get("key", "")): r for r in _prefilter_rule_clauses(current_prefilter)
+    }
+    candidate_rules = {
+        str(r.get("key", "")): r for r in _prefilter_rule_clauses(candidate_prefilter)
+    }
+    watched = {
+        str(x).strip()
+        for x in (drift_cfg.get("watched_features") or [])
+        if str(x).strip()
+    }
+    max_rel = float(drift_cfg.get("max_relative_change", 0.35) or 0.35)
+    warn_rel = float(
+        drift_cfg.get("warn_relative_change", max_rel * 0.5) or max_rel * 0.5
+    )
+    max_abs_by_feature = drift_cfg.get("max_absolute_change_by_feature") or {}
+    if not isinstance(max_abs_by_feature, dict):
+        max_abs_by_feature = {}
+
+    rows: List[Dict[str, Any]] = []
+    red_rules: List[str] = []
+    yellow_rules: List[str] = []
+    eps = 1e-9
+    for key, new_rule in candidate_rules.items():
+        old_rule = current_rules.get(key)
+        if old_rule is None:
+            continue
+        feat = str(new_rule.get("feature", "") or "")
+        if watched and feat not in watched:
+            continue
+        if bool(new_rule.get("locked")) or bool(old_rule.get("locked")):
+            continue
+        if bool(new_rule.get("skip_parquet_tune")) or bool(
+            old_rule.get("skip_parquet_tune")
+        ):
+            continue
+        old_v = _to_float_or_none(old_rule.get("value"))
+        new_v = _to_float_or_none(new_rule.get("value"))
+        if old_v is None or new_v is None:
+            continue
+        abs_change = abs(new_v - old_v)
+        rel_change = abs_change / max(abs(old_v), eps)
+        feature_abs_cap = _to_float_or_none(max_abs_by_feature.get(feat))
+        level = "green"
+        if rel_change >= max_rel or (
+            feature_abs_cap is not None and abs_change >= feature_abs_cap
+        ):
+            level = "red"
+            red_rules.append(str(new_rule.get("rule_id", key)))
+        elif rel_change >= warn_rel:
+            level = "yellow"
+            yellow_rules.append(str(new_rule.get("rule_id", key)))
+
+        rows.append(
+            {
+                "strategy": strategy,
+                "key": key,
+                "rule_id": str(new_rule.get("rule_id", key)),
+                "feature": feat,
+                "operator": str(new_rule.get("operator", "")),
+                "old_value": old_v,
+                "new_value": new_v,
+                "abs_change": abs_change,
+                "relative_change": rel_change,
+                "level": level,
+            }
+        )
+
+    level = "green"
+    if red_rules:
+        level = "red"
+    elif yellow_rules:
+        level = "yellow"
+    report = {
+        "strategy": strategy,
+        "enabled": True,
+        "level": level,
+        "rows": rows,
+        "red_rules": sorted(set(red_rules)),
+        "yellow_rules": sorted(set(yellow_rules)),
+    }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    report["report_path"] = str(report_path)
+    return report
+
+
+def _evaluate_semantic_contract_for_strategy(
+    *,
+    strategy: str,
+    current_root: Path,
+    candidate_root: Path,
+    semantic_cfg: Dict[str, Any],
+    report_path: Path,
+) -> Dict[str, Any]:
+    if not bool(semantic_cfg.get("enabled", True)):
+        report = {
+            "strategy": strategy,
+            "level": "none",
+            "prefilter_locked_total": 0,
+            "prefilter_locked_repaired": 0,
+            "prefilter_locked_missing_after_repair": [],
+            "gate_locked_missing": [],
+            "gate_locked_disabled": [],
+            "reasons": [],
+            "enabled": False,
+        }
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        report["report_path"] = str(report_path)
+        return report
+    current_arch = current_root / strategy / "archetypes"
+    candidate_arch = candidate_root / strategy / "archetypes"
+    current_prefilter = current_arch / "prefilter.yaml"
+    candidate_prefilter = candidate_arch / "prefilter.yaml"
+    current_gate = current_arch / "gate.yaml"
+    candidate_gate = candidate_arch / "gate.yaml"
+
+    prefilter_locked = load_locked_prefilter_rules(current_prefilter)
+    pre_merge = {
+        _prefilter_rule_signature(r)
+        for r in _safe_load_yaml_obj(candidate_prefilter).get("rules", []) or []
+        if isinstance(r, dict)
+    }
+    merge_result = {"added": 0, "total": 0}
+    if prefilter_locked:
+        merge_result = merge_locked_prefilter_rules(
+            candidate_prefilter, prefilter_locked
+        )
+    post_merge = {
+        _prefilter_rule_signature(r)
+        for r in _safe_load_yaml_obj(candidate_prefilter).get("rules", []) or []
+        if isinstance(r, dict)
+    }
+    locked_sigs = {_prefilter_rule_signature(r) for r in prefilter_locked}
+    missing_prefilter_locked = sorted(
+        [str(sig) for sig in locked_sigs if sig not in post_merge]
+    )
+
+    gate_issues = _gate_locked_issues(current_gate, candidate_gate)
+    level = "green"
+    reasons: List[str] = []
+    if missing_prefilter_locked:
+        if (
+            str(semantic_cfg.get("on_prefilter_locked_missing", "repair_and_continue"))
+            == "red_no_adopt"
+        ):
+            level = "red"
+            reasons.append(f"missing_prefilter_locked={len(missing_prefilter_locked)}")
+        else:
+            reasons.append(f"prefilter_locked_repaired={merge_result.get('added', 0)}")
+    if gate_issues.get("missing") or gate_issues.get("disabled"):
+        if (
+            str(semantic_cfg.get("on_gate_locked_violation", "red_no_adopt"))
+            == "red_no_adopt"
+        ):
+            level = "red"
+        if gate_issues.get("missing"):
+            reasons.append(f"missing_gate_locked={len(gate_issues['missing'])}")
+        if gate_issues.get("disabled"):
+            reasons.append(f"disabled_gate_locked={len(gate_issues['disabled'])}")
+
+    report = {
+        "strategy": strategy,
+        "level": level,
+        "prefilter_locked_total": len(prefilter_locked),
+        "prefilter_locked_repaired": int(merge_result.get("added", 0) or 0),
+        "prefilter_locked_missing_after_repair": missing_prefilter_locked,
+        "gate_locked_missing": gate_issues.get("missing", []),
+        "gate_locked_disabled": gate_issues.get("disabled", []),
+        "reasons": reasons,
+        "candidate_prefilter_rules_before": len(pre_merge),
+        "candidate_prefilter_rules_after": len(post_merge),
+    }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    report["report_path"] = str(report_path)
+    return report
+
+
 def _resolve_slow_adoption_gate_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Resolve slow snapshot adoption gate config from rolling.slow_realistic.adoption_gate.
 
@@ -6195,6 +6544,12 @@ def _resolve_slow_adoption_gate_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     hard_reject = gate.get("hard_reject") or {}
     if not isinstance(hard_reject, dict):
         hard_reject = {}
+    semantic_guard = gate.get("semantic_guard") or {}
+    if not isinstance(semantic_guard, dict):
+        semantic_guard = {}
+    drift_guard = gate.get("prefilter_drift_guard") or {}
+    if not isinstance(drift_guard, dict):
+        drift_guard = {}
     return {
         "enabled": bool(gate.get("enabled", False)),
         "validation_months": max(int(gate.get("validation_months", 1) or 1), 1),
@@ -6228,6 +6583,40 @@ def _resolve_slow_adoption_gate_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
                 float(hard_reject.get("max_drawdown_r"))
                 if hard_reject.get("max_drawdown_r") is not None
                 else None
+            ),
+        },
+        "semantic_guard": {
+            "enabled": bool(semantic_guard.get("enabled", True)),
+            "on_prefilter_locked_missing": str(
+                semantic_guard.get("on_prefilter_locked_missing", "repair_and_continue")
+                or "repair_and_continue"
+            ),
+            "on_gate_locked_violation": str(
+                semantic_guard.get("on_gate_locked_violation", "red_no_adopt")
+                or "red_no_adopt"
+            ),
+        },
+        "prefilter_drift_guard": {
+            "enabled": bool(drift_guard.get("enabled", False)),
+            "warn_relative_change": float(
+                drift_guard.get("warn_relative_change", 0.20) or 0.20
+            ),
+            "max_relative_change": float(
+                drift_guard.get("max_relative_change", 0.35) or 0.35
+            ),
+            "max_absolute_change_by_feature": (
+                drift_guard.get("max_absolute_change_by_feature")
+                if isinstance(drift_guard.get("max_absolute_change_by_feature"), dict)
+                else {}
+            ),
+            "watched_features": (
+                drift_guard.get("watched_features")
+                if isinstance(drift_guard.get("watched_features"), list)
+                else []
+            ),
+            "on_red_drift": str(
+                drift_guard.get("on_red_drift", "previous_accepted")
+                or "previous_accepted"
             ),
         },
     }
@@ -6460,13 +6849,85 @@ def _run_slow_snapshot_adoption_gate(
     adopted_root = gate_root / "adopted_strategies"
     adopted_root.mkdir(parents=True, exist_ok=True)
     decisions: Dict[str, Any] = {}
+    strategy_status: Dict[str, Any] = {}
+    guard_summary = {"green": 0, "yellow": 0, "red": 0, "none": 0}
     for strat in strategies:
+        current_root = Path(current_strategies_root)
+        candidate_root = Path(candidate_strategies_root)
+        semantic_report_path = gate_root / f"semantic_guard_{strat}.json"
+        drift_report_path = gate_root / f"prefilter_drift_{strat}.json"
+        semantic = _evaluate_semantic_contract_for_strategy(
+            strategy=strat,
+            current_root=current_root,
+            candidate_root=candidate_root,
+            semantic_cfg=gate_cfg.get("semantic_guard", {}) or {},
+            report_path=semantic_report_path,
+        )
+        drift = _evaluate_prefilter_drift_for_strategy(
+            strategy=strat,
+            current_prefilter=current_root / strat / "archetypes" / "prefilter.yaml",
+            candidate_prefilter=candidate_root
+            / strat
+            / "archetypes"
+            / "prefilter.yaml",
+            drift_cfg=gate_cfg.get("prefilter_drift_guard", {}) or {},
+            report_path=drift_report_path,
+        )
+        guard_level = "green"
+        if _drift_level_rank(str(semantic.get("level", "green"))) > _drift_level_rank(
+            guard_level
+        ):
+            guard_level = str(semantic.get("level", "green"))
+        if _drift_level_rank(str(drift.get("level", "none"))) > _drift_level_rank(
+            guard_level
+        ):
+            guard_level = str(drift.get("level", "none"))
+
+        force_reject_reason = ""
+        if str(semantic.get("level", "green")) == "red":
+            force_reject_reason = "semantic_violation"
+        elif str(drift.get("level", "none")) == "red":
+            force_reject_reason = "red_prefilter_drift"
+
         d = _decide_slow_adoption_for_strategy(
             old_metrics.get(strat, {}),
             new_metrics.get(strat, {}),
             gate_cfg,
         )
+        if force_reject_reason:
+            d["adopt"] = False
+            d["reason"] = f"{force_reject_reason}; {d.get('reason', '')}".strip(
+                "; "
+            ).strip()
+            d["forced_reject"] = True
+        else:
+            d["forced_reject"] = False
+        d["semantic_guard"] = semantic
+        d["prefilter_drift"] = drift
+        d["guard_level"] = guard_level
+        if bool(d.get("adopt")):
+            d["adoption_status"] = "adopted"
+            d["fallback_used"] = False
+        elif force_reject_reason:
+            d["adoption_status"] = "fallback_previous"
+            d["fallback_used"] = True
+        else:
+            d["adoption_status"] = "unchanged"
+            d["fallback_used"] = False
         decisions[strat] = d
+        strategy_status[strat] = {
+            "guard_level": guard_level,
+            "adoption_status": str(d.get("adoption_status", "fallback_previous")),
+            "fallback_used": bool(d.get("fallback_used", False)),
+            "reason": str(d.get("reason", "")),
+            "semantic_report_path": str(semantic.get("report_path", "")),
+            "prefilter_drift_report_path": str(drift.get("report_path", "")),
+            "red_rules": list(drift.get("red_rules", []) or []),
+            "yellow_rules": list(drift.get("yellow_rules", []) or []),
+        }
+        guard_summary[str(guard_level)] = (
+            int(guard_summary.get(str(guard_level), 0)) + 1
+        )
         src = (
             Path(candidate_strategies_root) / strat
             if bool(d.get("adopt"))
@@ -6486,6 +6947,8 @@ def _run_slow_snapshot_adoption_gate(
         "candidate_strategies_root": str(candidate_strategies_root),
         "adopted_strategies_root": str(adopted_root),
         "decisions": decisions,
+        "strategy_status": strategy_status,
+        "guard_summary": guard_summary,
         "old_pcm_candidates_path": str(old_summary.get("pcm_candidates_path", "")),
         "new_pcm_candidates_path": str(new_summary.get("pcm_candidates_path", "")),
     }
@@ -6499,6 +6962,8 @@ def _run_slow_snapshot_adoption_gate(
         "adopted_root": str(adopted_root),
         "report_path": str(report_path),
         "evaluation_month": eval_token,
+        "strategy_status": strategy_status,
+        "guard_summary": guard_summary,
     }
 
 
@@ -7707,6 +8172,19 @@ def main():
         active_strategies_root = str(PROJECT_ROOT / "config" / "strategies")
         active_slow_manifest = ""
         active_slow_adoption_report = ""
+        active_slow_guard_by_strategy: Dict[str, Dict[str, Any]] = {
+            str(s): {
+                "guard_level": "none",
+                "adoption_status": "unchanged",
+                "fallback_used": False,
+                "reason": "",
+                "semantic_report_path": "",
+                "prefilter_drift_report_path": "",
+                "red_rules": [],
+                "yellow_rules": [],
+            }
+            for s in strategies
+        }
         last_scheduled_token = rolling_month_iter[-1][1] if rolling_month_iter else ""
         for month_idx, mt in rolling_month_iter:
             if rolling_mode == "slow_realistic":
@@ -7755,6 +8233,14 @@ def main():
                     )
                     active_slow_manifest = str(slow_snapshot.get("manifest_path", ""))
                     active_slow_adoption_report = str(adoption.get("report_path", ""))
+                    if isinstance(adoption.get("strategy_status"), dict):
+                        for _st, _st_status in (
+                            adoption.get("strategy_status", {}) or {}
+                        ).items():
+                            if isinstance(_st_status, dict):
+                                active_slow_guard_by_strategy[str(_st)] = dict(
+                                    _st_status
+                                )
             elif rolling_mode == "turbo_fixed_features":
                 active_strategies_root = turbo_root
             else:
@@ -7786,6 +8272,14 @@ def main():
             _summary["slow_manifest"] = active_slow_manifest
             _summary["slow_adoption_report"] = active_slow_adoption_report
             _summary["active_strategies_root"] = active_strategies_root
+            _summary["slow_guard_by_strategy"] = copy.deepcopy(
+                active_slow_guard_by_strategy
+            )
+            if len(strategies) == 1:
+                _solo = str(strategies[0])
+                _summary["slow_guard_status"] = dict(
+                    active_slow_guard_by_strategy.get(_solo, {})
+                )
             ledger.append(_summary)
             resume_state_cursor = dict(_summary.get("end_state_paths", {}) or {})
         ledger_path = roll_root / "monthly_ledger.jsonl"
@@ -7863,14 +8357,71 @@ def main():
                 if continuous_map
                 else ""
             ),
-            "<ul>",
+            "<table border='1' cellspacing='0' cellpadding='6'>",
+            "<tr><th>month</th><th>mode</th><th>adoption</th><th>guard</th><th>drift</th><th>links</th></tr>",
         ]
+        stitched_guard_summary: Dict[str, Any] = {
+            "green_months": 0,
+            "yellow_months": 0,
+            "red_months": 0,
+            "none_months": 0,
+            "red_month_list": [],
+            "fallback_month_list": [],
+        }
         for r in ledger:
             m = str(r.get("month", ""))
             mp = str((r.get("pcm") or {}).get("trading_map", "") or "")
+            row_guard = r.get("slow_guard_by_strategy") or {}
+            strategy_guard = {}
+            if isinstance(row_guard, dict) and row_guard:
+                strategy_guard = next(iter(row_guard.values()))
+            if not isinstance(strategy_guard, dict):
+                strategy_guard = {}
+            guard_level = str(strategy_guard.get("guard_level", "none") or "none")
+            adoption_status = str(
+                strategy_guard.get("adoption_status", "unchanged") or "unchanged"
+            )
+            red_cnt = len(strategy_guard.get("red_rules", []) or [])
+            yellow_cnt = len(strategy_guard.get("yellow_rules", []) or [])
+            drift_summary = f"red={red_cnt}, yellow={yellow_cnt}"
+            links: List[str] = []
             if mp:
-                stitch_lines.append(f"<li>{m}: <a href='{mp}'>{mp}</a></li>")
-        stitch_lines.extend(["</ul>", "</body></html>"])
+                links.append(f"<a href='{mp}'>monthly_map</a>")
+            _adopt = str(r.get("slow_adoption_report", "") or "")
+            if _adopt:
+                links.append(f"<a href='{_adopt}'>adoption_report</a>")
+            _sem = str(strategy_guard.get("semantic_report_path", "") or "")
+            if _sem:
+                links.append(f"<a href='{_sem}'>semantic_guard</a>")
+            _dr = str(strategy_guard.get("prefilter_drift_report_path", "") or "")
+            if _dr:
+                links.append(f"<a href='{_dr}'>prefilter_drift</a>")
+            for _st in strategies:
+                _th = str(
+                    roll_root
+                    / "threshold_tracking"
+                    / str(_st)
+                    / "threshold_timeseries.html"
+                )
+                links.append(f"<a href='{_th}'>threshold_{_st}</a>")
+            stitch_lines.append(
+                "<tr>"
+                f"<td>{m}</td>"
+                f"<td>{rolling_mode}</td>"
+                f"<td>{adoption_status}</td>"
+                f"<td>{guard_level}</td>"
+                f"<td>{drift_summary}</td>"
+                f"<td>{' | '.join(links)}</td>"
+                "</tr>"
+            )
+            stitched_guard_summary[f"{guard_level}_months"] = (
+                int(stitched_guard_summary.get(f"{guard_level}_months", 0)) + 1
+            )
+            if guard_level == "red":
+                stitched_guard_summary["red_month_list"].append(m)
+            if bool(strategy_guard.get("fallback_used", False)):
+                stitched_guard_summary["fallback_month_list"].append(m)
+        stitch_lines.extend(["</table>", "</body></html>"])
         stitch_map.write_text("\n".join(stitch_lines), encoding="utf-8")
         stitched = {
             "run_id": timestamp,
@@ -7888,6 +8439,7 @@ def main():
             "month_pcm_maps": month_maps,
             "continuous_map": continuous_map,
             "multi_leg_continuous_map": multi_leg_continuous_map,
+            "guard_summary": stitched_guard_summary,
             "capital_report": (
                 str(roll_root / "capital_report.json")
                 if (roll_root / "capital_report.json").exists()
@@ -7910,6 +8462,8 @@ def main():
             print("   ⏭️  ThresholdDrift: skipped (dry-run)")
         else:
             print("\n📈 ThresholdDrift 报告生成...")
+            _adoption_gate_cfg = _resolve_slow_adoption_gate_cfg(cfg)
+            _drift_cfg = _adoption_gate_cfg.get("prefilter_drift_guard", {}) or {}
             for _st in strategies:
                 _cmd = [
                     sys.executable,
@@ -7918,6 +8472,10 @@ def main():
                     str(roll_root),
                     "--strategy",
                     str(_st),
+                    "--yellow-rel",
+                    str(float(_drift_cfg.get("warn_relative_change", 0.20) or 0.20)),
+                    "--red-rel",
+                    str(float(_drift_cfg.get("max_relative_change", 0.35) or 0.35)),
                 ]
                 try:
                     _p = subprocess.run(
@@ -7948,8 +8506,28 @@ def main():
                             ),
                             "",
                         )
+                        _drift_csv = next(
+                            (
+                                ln.replace("drift_csv=", "")
+                                for ln in _lines
+                                if ln.startswith("drift_csv=")
+                            ),
+                            "",
+                        )
+                        _drift_json = next(
+                            (
+                                ln.replace("drift_json=", "")
+                                for ln in _lines
+                                if ln.startswith("drift_json=")
+                            ),
+                            "",
+                        )
                         print(f"   ✅ {_st}: csv={_csv}")
                         print(f"      html={_html}")
+                        if _drift_csv:
+                            print(f"      drift_csv={_drift_csv}")
+                        if _drift_json:
+                            print(f"      drift_json={_drift_json}")
                     else:
                         _err = (str(_p.stderr or "") or str(_p.stdout or "")).strip()
                         _tail = _err[-400:] if _err else "unknown error"

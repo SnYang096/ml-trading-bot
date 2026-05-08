@@ -22,43 +22,10 @@ schema:
 #       / gate_macro_tp_vwap_1200_deadzone / gate_evt_* 等，全样本 KS 看似合理，
 #       但在 BPC 肥尾子集上会批量挡掉真信号。
 # 设计约束（用户 2026-04-22）：system_safety 最多 2 条。
-# hard_gate：语义 chop + VPIN +（由原 prefilter 迁入的）箱体/压缩结构拦截。
+# hard_gate：语义 chop + VPIN；box 形态锚点在 prefilter 锁定，不在 gate 重复表达。
 # ==========================================================================
 
 hard_gates:
-- id: gate_bpc_inside_box_no_breakout
-  tag: HARD_BPC_INSIDE_BOX_NO_BREAKOUT
-  phase: hard_gate
-  priority: 8
-  reason: box 中部且上下均未确认突破 → 拒开仓（原 prefilter any_of，语义属于 gate）
-  when:
-    all_of:
-    - box_pos_120:
-        value_gt: 0.15
-    - box_pos_120:
-        value_lt: 0.85
-    - box_breakout_up:
-        value_lt: 0.5
-    - box_breakout_down:
-        value_lt: 0.5
-  then:
-    action: deny
-  comment: "等价原 prefilter：仅在 box 中部且无任一侧 breakout≥0.5 时拦截"
-  locked: true
-  lock_reason: BPC 只做突破后的边缘回踩，不在箱体中部来回扫区开仓
-- id: gate_bpc_box_compression_runaway
-  tag: HARD_BPC_BOX_COMPRESSION_RUNAWAY
-  phase: hard_gate
-  priority: 7
-  reason: 短期波动窗显著宽于长期窗 → 扩张期回踩，非 consolidation→breakout→pullback 语义
-  when:
-    box_compression_score:
-      value_gt: 1.50
-  then:
-    action: deny
-  comment: "原 prefilter box_compression_score<=1.50；此处 deny 当值>1.50"
-  locked: true
-  lock_reason: Box-structure gate（扩张期过滤）；须 locked 以免 gate promote 在 max_hard_gates 较小时裁掉本规则
 - id: gate_bpc_semantic_chop_high
   tag: HARD_BPC_SEMANTIC_CHOP
   phase: hard_gate
