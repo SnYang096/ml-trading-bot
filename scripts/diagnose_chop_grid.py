@@ -40,11 +40,14 @@ from scripts.diagnose_crf_edge import (  # noqa: E402
     build_symbol_dataset,
 )
 from src.config.multileg_config import load_multileg_effective_config  # noqa: E402
+from src.config.strategy_layout import resolve_strategy_config_input  # noqa: E402
 from src.features.time_series.semantic_chop_ts_quantile import (  # noqa: E402
     semantic_chop_ts_quantile,
 )
 
-DEFAULT_CHOP_GRID_YAML = PROJECT_ROOT / "config/strategies/chop_grid/grid.yaml"
+DEFAULT_CHOP_GRID_YAML = (
+    PROJECT_ROOT / "config/strategies/chop_grid/research/turbo.yaml"
+)
 
 
 def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
@@ -55,8 +58,12 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
     """
     if not path.exists():
         return {}
+    cfg_dir, profile_path, engine_path = resolve_strategy_config_input(path)
     cfg = load_multileg_effective_config(
-        config_dir=path.parent, strategy_type="grid", engine_path=path
+        config_dir=cfg_dir,
+        strategy_type="grid",
+        profile_path=profile_path,
+        engine_path=engine_path,
     )
     regime = cfg.get("regime", {}) or {}
     grid = cfg.get("grid", {}) or {}

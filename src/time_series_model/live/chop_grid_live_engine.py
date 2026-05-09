@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.config.multileg_config import load_multileg_effective_config
+from src.config.strategy_layout import resolve_strategy_config_input
 from src.order_management.grid_execution_adapter import GridExecutionResult
 from src.order_management.multi_leg_reconciliation import (
     LocalOrderSnapshot,
@@ -74,8 +75,12 @@ def _as_float(value: Any, default: float = 0.0) -> float:
 
 def _load_grid_config(path: str | Path) -> GridEngineConfig:
     cfg_path = Path(path)
+    config_dir, profile_path, engine_path = resolve_strategy_config_input(cfg_path)
     obj = load_multileg_effective_config(
-        config_dir=cfg_path.parent, strategy_type="grid", engine_path=cfg_path
+        config_dir=config_dir,
+        strategy_type="grid",
+        profile_path=profile_path,
+        engine_path=engine_path,
     )
     regime = obj.get("regime", {}) or {}
     grid = obj.get("grid", {}) or {}
@@ -106,7 +111,7 @@ class ChopGridLiveEngine:
     def __init__(
         self,
         *,
-        config_path: str | Path = "config/strategies/chop_grid/grid.yaml",
+        config_path: str | Path = "config/strategies/chop_grid/research/turbo.yaml",
         state_path: str | Path = "results/chop_grid/live_state.json",
         level_notional: float = 1.0,
     ) -> None:

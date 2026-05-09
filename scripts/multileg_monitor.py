@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 from pathlib import Path
@@ -70,6 +71,64 @@ def _feature_hash(run_root: Path, strategy: str) -> str:
         return ""
     raw = p.read_bytes()
     return hashlib.sha1(raw).hexdigest()
+
+
+def _load_monthly_regime_rows(
+    run_root: Path,
+    strategy_types: Dict[str, str],
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    ledger_path = run_root / "monthly_ledger.jsonl"
+    if not ledger_path.exists():
+        return rows
+    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        month = str(row.get("month", "") or "")
+        run_month_root = Path(str(row.get("run_root", "") or ""))
+        if not month or not run_month_root.exists():
+            continue
+        for strategy, stype in strategy_types.items():
+            if stype == "grid":
+                seg_path = run_month_root / strategy / "grid_segments.csv"
+            else:
+                seg_path = run_month_root / strategy / "dual_add_segments.csv"
+            if not seg_path.exists():
+                continue
+            entry_chop: List[float] = []
+            median_chop: List[float] = []
+            trend_flips: List[float] = []
+            try:
+                with seg_path.open("r", encoding="utf-8", newline="") as fh:
+                    for seg in csv.DictReader(fh):
+                        if "entry_chop" in seg:
+                            entry_chop.append(float(seg.get("entry_chop", 0.0) or 0.0))
+                        if "median_chop" in seg:
+                            median_chop.append(
+                                float(seg.get("median_chop", 0.0) or 0.0)
+                            )
+                        if "trend_flips" in seg:
+                            trend_flips.append(
+                                float(seg.get("trend_flips", 0.0) or 0.0)
+                            )
+            except Exception:
+                continue
+            rows.append(
+                {
+                    "month": month,
+                    "strategy": strategy,
+                    "entry_chop": _mean(entry_chop),
+                    "median_chop": _mean(median_chop),
+                    "trend_flips": _mean(trend_flips),
+                }
+            )
+    rows.sort(key=lambda r: (str(r.get("month", "")), str(r.get("strategy", ""))))
+    return rows
 
 
 def _split_baseline_recent(vals: List[float]) -> Tuple[List[float], List[float]]:
@@ -144,10 +203,12 @@ def main() -> int:
         raise FileNotFoundError(f"run root not found: {run_root}")
 
     strategies = []
+    strategy_types: Dict[str, str] = {}
     for name, scfg in (cfg.get("strategies") or {}).items():
         st = str((scfg or {}).get("strategy_type", "") or "").strip().lower()
         if st in {"grid", "dual_add_trend"}:
             strategies.append(name)
+            strategy_types[name] = st
 
     rows = _load_monthly_strategy_rows(run_root, strategies)
     if int(args.lookback_months) > 0 and len(rows) > int(args.lookback_months) * max(
@@ -160,6 +221,14 @@ def main() -> int:
     forced_delta = float(monitor_cfg.get("drift_forced_rate_delta", 0.10) or 0.10)
     trade_ratio_floor = float(monitor_cfg.get("drift_trade_ratio_floor", 0.60) or 0.60)
     total_r_floor = float(monitor_cfg.get("threshold_total_r_floor", -0.10) or -0.10)
+    risk_stop_delta = float(monitor_cfg.get("drift_risk_stop_rate_delta", 0.05) or 0.05)
+    seg_win_delta = float(monitor_cfg.get("drift_segment_win_rate_delta", 0.08) or 0.08)
+    regime_trend_shift_max = float(
+        monitor_cfg.get("regime_trend_shift_max", 0.15) or 0.15
+    )
+    regime_chop_shift_max = float(
+        monitor_cfg.get("regime_chop_shift_max", 0.15) or 0.15
+    )
 
     forced_vals = [
         float((r.get("metrics") or {}).get("forced_rate", 0.0) or 0.0) for r in rows
@@ -171,16 +240,55 @@ def main() -> int:
     dd_vals = [
         float((r.get("metrics") or {}).get("max_drawdown_r", 0.0) or 0.0) for r in rows
     ]
+    risk_stop_vals = [
+        float(
+            (r.get("metrics") or {}).get(
+                "risk_stop_rate",
+                (r.get("metrics") or {}).get("near_stop_rate", 0.0),
+            )
+            or 0.0
+        )
+        for r in rows
+    ]
+    segment_win_vals = [
+        float((r.get("metrics") or {}).get("segment_win_rate", 0.0) or 0.0)
+        for r in rows
+    ]
 
     b_forced, r_forced = _split_baseline_recent(forced_vals)
     b_trades, r_trades = _split_baseline_recent(trade_vals)
     b_r, r_r = _split_baseline_recent(r_vals)
+    b_risk_stop, r_risk_stop = _split_baseline_recent(risk_stop_vals)
+    b_seg_win, r_seg_win = _split_baseline_recent(segment_win_vals)
+
+    regime_rows = _load_monthly_regime_rows(run_root, strategy_types)
+    if int(args.lookback_months) > 0 and len(regime_rows) > int(
+        args.lookback_months
+    ) * max(len(strategies), 1):
+        regime_rows = regime_rows[
+            -int(args.lookback_months) * max(len(strategies), 1) :
+        ]
+    entry_chop_vals = [float(r.get("entry_chop", 0.0) or 0.0) for r in regime_rows]
+    median_chop_vals = [float(r.get("median_chop", 0.0) or 0.0) for r in regime_rows]
+    trend_flip_vals = [float(r.get("trend_flips", 0.0) or 0.0) for r in regime_rows]
+    b_entry_chop, r_entry_chop = _split_baseline_recent(entry_chop_vals)
+    b_median_chop, r_median_chop = _split_baseline_recent(median_chop_vals)
+    b_trend_flip, r_trend_flip = _split_baseline_recent(trend_flip_vals)
 
     forced_shift = (_mean(r_forced) - _mean(b_forced)) > forced_delta
     trade_shift = _mean(r_trades) < (
         _mean(b_trades) * trade_ratio_floor if _mean(b_trades) > 0 else 0.0
     )
     threshold_shift = _mean(r_r) < total_r_floor
+    risk_stop_shift = (_mean(r_risk_stop) - _mean(b_risk_stop)) > risk_stop_delta
+    seg_win_shift = (_mean(b_seg_win) - _mean(r_seg_win)) > seg_win_delta
+    trend_regime_shift = (
+        _mean(r_trend_flip) - _mean(b_trend_flip)
+    ) > regime_trend_shift_max
+    chop_regime_shift = (
+        abs(_mean(r_entry_chop) - _mean(b_entry_chop)) > regime_chop_shift_max
+        or abs(_mean(r_median_chop) - _mean(b_median_chop)) > regime_chop_shift_max
+    )
     risk_offline = (min(dd_vals) if dd_vals else 0.0) < -max_drawdown_r
 
     # Feature shift proxy: features.yaml hash changed between first/last month snapshots.
@@ -201,9 +309,9 @@ def main() -> int:
         decision = "OFFLINE"
     elif feature_shift:
         decision = "FEATURE_REVIEW"
-    elif threshold_shift:
+    elif threshold_shift or risk_stop_shift or seg_win_shift:
         decision = "RETUNE_THRESHOLDS"
-    elif forced_shift or trade_shift:
+    elif forced_shift or trade_shift or trend_regime_shift or chop_regime_shift:
         decision = "WATCH"
     else:
         decision = "OK"
@@ -216,6 +324,10 @@ def main() -> int:
             "forced_shift": forced_shift,
             "trade_shift": trade_shift,
             "threshold_shift": threshold_shift,
+            "risk_stop_shift": risk_stop_shift,
+            "segment_win_shift": seg_win_shift,
+            "trend_regime_shift": trend_regime_shift,
+            "chop_regime_shift": chop_regime_shift,
             "feature_shift": feature_shift,
             "risk_offline": risk_offline,
         },
@@ -226,9 +338,20 @@ def main() -> int:
             "recent_trades": _mean(r_trades),
             "baseline_total_r": _mean(b_r),
             "recent_total_r": _mean(r_r),
+            "baseline_risk_stop_rate": _mean(b_risk_stop),
+            "recent_risk_stop_rate": _mean(r_risk_stop),
+            "baseline_segment_win_rate": _mean(b_seg_win),
+            "recent_segment_win_rate": _mean(r_seg_win),
+            "baseline_entry_chop": _mean(b_entry_chop),
+            "recent_entry_chop": _mean(r_entry_chop),
+            "baseline_median_chop": _mean(b_median_chop),
+            "recent_median_chop": _mean(r_median_chop),
+            "baseline_trend_flips": _mean(b_trend_flip),
+            "recent_trend_flips": _mean(r_trend_flip),
             "worst_drawdown_r": min(dd_vals) if dd_vals else 0.0,
         },
         "strategy_rows": rows,
+        "regime_rows": regime_rows,
     }
 
     out_json = (

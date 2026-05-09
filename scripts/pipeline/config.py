@@ -6,39 +6,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
-from src.config.strategy_layout import deep_merge_dicts
+from src.config.strategy_layout import load_yaml_extends_chain
 
 from .context import PROJECT_ROOT
 
 
-def _load_yaml_extends_chain(path: Path) -> Dict[str, Any]:
-    """Load YAML following ``extends`` (child overlays parent). Paths are relative to each file."""
-    chain: List[Dict[str, Any]] = []
-    cur = path.resolve()
-    visited: set[Path] = set()
-    for _ in range(64):
-        if cur in visited:
-            raise ValueError(f"extends 循环引用: {cur}")
-        visited.add(cur)
-        raw = yaml.safe_load(cur.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            raise ValueError(f"配置文件格式错误: {cur}")
-        ext = raw.pop("extends", None)
-        chain.append(raw)
-        if not ext:
-            break
-        nxt = (cur.parent / str(ext).strip()).resolve()
-        if not nxt.is_file():
-            raise ValueError(f"extends 指向的文件不存在: {ext!r}（自 {cur}）")
-        cur = nxt
-    merged: Dict[str, Any] = {}
-    for layer in reversed(chain):
-        merged = deep_merge_dicts(merged, layer)
-    return merged
-
-
 def load_pipeline_config(path: Path) -> dict:
-    cfg = _load_yaml_extends_chain(path)
+    cfg = load_yaml_extends_chain(path, strict=True)
     if not isinstance(cfg, dict):
         raise ValueError(f"配置文件格式错误: {path}")
 

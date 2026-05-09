@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 
@@ -11,6 +11,84 @@ import yaml
 DEFAULT_PCM_ORCHESTRATE_REL = Path("config/pipelines/pcm_orchestrate_2h.yaml")
 LEGACY_RESEARCH_PIPELINE_REL = Path("config/pipelines/research_pipeline.yaml")
 RESEARCH_PIPELINE_PROBE_NAMES = ("turbo.yaml", "slow.yaml", "pipeline.yaml")
+LEGACY_MULTILEG_ENGINE_NAMES = frozenset({"grid.yaml", "dual_add.yaml"})
+
+
+def load_yaml_dict(path: Path, *, strict: bool = True) -> Dict[str, Any]:
+    """Load a YAML dict from disk.
+
+    - ``strict=True``: missing file / parse errors raise ``ValueError``.
+    - ``strict=False``: returns ``{}`` on missing file / parse errors.
+    """
+    if not path.exists():
+        if strict:
+            raise ValueError(f"配置文件不存在: {path}")
+        return {}
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        if strict:
+            raise ValueError(f"读取配置失败: {path}") from exc
+        return {}
+    if not isinstance(raw, dict):
+        if strict:
+            raise ValueError(f"配置文件格式错误(期望 dict): {path}")
+        return {}
+    return raw
+
+
+def load_yaml_extends_chain(path: Path, *, strict: bool = True) -> Dict[str, Any]:
+    """Load YAML with ``extends`` chain (child overlays parent)."""
+    if not path.exists() and not strict:
+        return {}
+    chain: List[Dict[str, Any]] = []
+    cur = path.resolve()
+    visited: Set[Path] = set()
+    for _ in range(64):
+        if cur in visited:
+            raise ValueError(f"extends 循环引用: {cur}")
+        visited.add(cur)
+        raw = load_yaml_dict(cur, strict=strict)
+        ext = raw.pop("extends", None)
+        chain.append(raw)
+        if not ext:
+            break
+        nxt = (cur.parent / str(ext).strip()).resolve()
+        if not nxt.is_file():
+            raise ValueError(f"extends 指向的文件不存在: {ext!r}（自 {cur}）")
+        cur = nxt
+    merged: Dict[str, Any] = {}
+    for layer in reversed(chain):
+        merged = deep_merge_dicts(merged, layer)
+    return merged
+
+
+def resolve_strategy_profile_path(config_dir: Path, profile: str = "turbo") -> Path:
+    p = str(profile or "turbo").strip().lower().replace("-", "_")
+    if not p:
+        p = "turbo"
+    return config_dir / "research" / f"{p}.yaml"
+
+
+def resolve_strategy_config_input(
+    path: Path, *, default_profile: str = "turbo"
+) -> Tuple[Path, Optional[Path], Optional[Path]]:
+    """Resolve ``config_dir/profile_path/engine_path`` from a user input path.
+
+    Supports:
+    - strategy directory
+    - research profile yaml (``.../research/*.yaml``)
+    - legacy engine yaml (``grid.yaml`` / ``dual_add.yaml``)
+    - generic yaml file path (treated as profile-like root layer)
+    """
+    if path.is_dir():
+        cfg_dir = path
+        return cfg_dir, resolve_strategy_profile_path(cfg_dir, default_profile), None
+    if path.name in LEGACY_MULTILEG_ENGINE_NAMES:
+        return path.parent, None, path
+    if path.parent.name == "research":
+        return path.parent.parent, path, None
+    return path.parent, path, None
 
 
 def strategy_packaged_root(project_root: Path, strategy_slug: str) -> Path:
@@ -63,7 +141,7 @@ def resolve_default_pipeline_config(
 def _resolve_research_pipeline_marker(
     marker: Path, project_root: Path
 ) -> Tuple[Path, List[str]]:
-    raw = yaml.safe_load(marker.read_text(encoding="utf-8")) or {}
+    raw = load_yaml_dict(marker, strict=False)
     ext = raw.get("extends")
     if isinstance(ext, str) and ext.strip():
         target = (marker.parent / ext.strip()).resolve()

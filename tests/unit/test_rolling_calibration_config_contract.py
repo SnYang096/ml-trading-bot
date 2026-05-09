@@ -417,10 +417,11 @@ def test_capital_report_empty_trades_file_is_zero_trade_run(tmp_path):
 def _write_dual_add_strategy(root: Path) -> None:
     strat = root / "dual_add_trend"
     strat.mkdir(parents=True, exist_ok=True)
+    (strat / "research").mkdir(parents=True, exist_ok=True)
     (strat / "meta.yaml").write_text(
         "strategy:\n  timeframe: '120T'\n  bidirectional: true\n", encoding="utf-8"
     )
-    (strat / "dual_add.yaml").write_text(
+    (strat / "research" / "turbo.yaml").write_text(
         "\n".join(
             [
                 "strategy_type: dual_add_trend",
@@ -451,6 +452,14 @@ def _write_dual_add_strategy(root: Path) -> None:
             ]
         )
         + "\n",
+        encoding="utf-8",
+    )
+    (strat / "archetypes").mkdir(parents=True, exist_ok=True)
+    (strat / "archetypes" / "prefilter.yaml").write_text(
+        "regime: {}\n", encoding="utf-8"
+    )
+    (strat / "archetypes" / "execution.yaml").write_text(
+        "inventory: {}\nadd_spacing: {}\ntake_profit: {}\nrisk: {}\n",
         encoding="utf-8",
     )
 
@@ -542,7 +551,9 @@ def test_fast_month_multileg_uses_backtest_adapter(tmp_path, monkeypatch):
     assert captured["strategy_calls"] == 0
     assert captured["event_calls"] == 0
     assert captured["commands"]
-    assert (run_root / "strategies_calibrated/dual_add_trend/dual_add.yaml").exists()
+    assert (
+        run_root / "strategies_calibrated/dual_add_trend/research/turbo.yaml"
+    ).exists()
     assert (run_root / "dual_add_trend/multileg_summary.json").exists()
     assert summary["trend_pcm_candidates"] == []
     assert summary["multi_leg_pcm_candidates"] == ["dual_add_trend"]
@@ -583,7 +594,7 @@ def test_slow_snapshot_multileg_writes_snapshot_config(tmp_path, monkeypatch):
     )
 
     snap_root = Path(result["snapshot_root"])
-    assert (snap_root / "strategies/dual_add_trend/dual_add.yaml").exists()
+    assert (snap_root / "strategies/dual_add_trend/research/turbo.yaml").exists()
     assert (snap_root / "slow_snapshot_manifest.json").exists()
 
 

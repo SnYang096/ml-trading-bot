@@ -1,5 +1,17 @@
 # dual_add_trend · turbo_fixed_features — 执行参数在下列键；[INDEX] dates→rolling→tc→data→strategies→event→dual_add_backtest→study→threshold_search→output
 
+status: research
+
+chop_series:
+  chop_signal: raw
+  chop_ts_window: 1200
+  chop_ts_min_periods: 150
+
+validation:
+  script: scripts/diagnose_dual_add_trend.py
+  baseline_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+  baseline_periods: [2022, 2023, 2024, 2025, 2026Q1]
+
 dates:
   start_date: "2022-01-01"
   end_date: "2026-03-31"

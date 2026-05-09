@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.config.multileg_config import load_multileg_effective_config
+from src.config.strategy_layout import resolve_strategy_config_input
 from src.order_management.grid_execution_adapter import GridExecutionResult
 from src.order_management.multi_leg_reconciliation import (
     LocalOrderSnapshot,
@@ -95,10 +96,12 @@ class DualAddTrendState:
 
 def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
     cfg_path = Path(path)
+    config_dir, profile_path, engine_path = resolve_strategy_config_input(cfg_path)
     obj = load_multileg_effective_config(
-        config_dir=cfg_path.parent,
+        config_dir=config_dir,
         strategy_type="dual_add_trend",
-        engine_path=cfg_path,
+        profile_path=profile_path,
+        engine_path=engine_path,
     )
     regime = obj.get("regime", {}) or {}
     inv = obj.get("inventory", {}) or {}
@@ -136,7 +139,9 @@ class DualAddTrendLiveEngine:
     def __init__(
         self,
         *,
-        config_path: str | Path = "config/strategies/dual_add_trend/dual_add.yaml",
+        config_path: (
+            str | Path
+        ) = "config/strategies/dual_add_trend/research/turbo.yaml",
         state_path: str | Path = "results/dual_add_trend/live_state.json",
         unit_notional: float = 1.0,
     ) -> None:

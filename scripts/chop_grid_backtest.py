@@ -54,7 +54,7 @@ from src.time_series_model.grid.subbar_replay import (  # noqa: E402
 )
 
 
-DEFAULT_GRID_CONFIG = PROJECT_ROOT / "config/strategies/chop_grid/grid.yaml"
+DEFAULT_GRID_CONFIG = PROJECT_ROOT / "config/strategies/chop_grid/research/turbo.yaml"
 
 
 def _load_grid_defaults(path: Path) -> dict:

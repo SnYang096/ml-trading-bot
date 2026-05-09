@@ -5,49 +5,47 @@ from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
-from src.config.strategy_layout import deep_merge_dicts
-
-
-_ENGINE_FILES: Dict[str, str] = {
-    "grid": "grid.yaml",
-    "dual_add_trend": "dual_add.yaml",
-}
-
-
-def _read_yaml_dict(path: Path) -> Dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
-    return raw if isinstance(raw, dict) else {}
+from src.config.strategy_layout import (
+    deep_merge_dicts,
+    load_yaml_dict,
+    load_yaml_extends_chain,
+    resolve_strategy_profile_path,
+)
 
 
 def _write_yaml_dict(path: Path, obj: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(obj, sort_keys=False), encoding="utf-8")
 
-
-def resolve_engine_path(config_dir: Path, strategy_type: str) -> Path:
-    key = str(strategy_type or "").strip().lower()
-    name = _ENGINE_FILES.get(key)
-    if not name:
-        raise ValueError(f"unsupported multi-leg strategy_type={strategy_type!r}")
-    return config_dir / name
-
-
 def load_multileg_layers(
     *,
     config_dir: Path,
     strategy_type: str,
+    profile: str = "turbo",
+    profile_path: Optional[Path] = None,
     engine_path: Optional[Path] = None,
 ) -> Tuple[Path, Dict[str, Any], Path, Dict[str, Any], Path, Dict[str, Any]]:
-    """Load root engine YAML + optional archetype layers."""
-    engine_path = engine_path or resolve_engine_path(config_dir, strategy_type)
-    if not engine_path.is_absolute():
-        engine_path = config_dir / engine_path
-    root = _read_yaml_dict(engine_path)
+    """Load profile YAML + optional legacy engine YAML + archetype layers."""
+    root: Dict[str, Any] = {
+        "strategy_type": str(strategy_type).strip().lower(),
+        "status": "research",
+    }
+    prof_path = profile_path or resolve_strategy_profile_path(config_dir, profile)
+    if not prof_path.is_absolute():
+        prof_path = config_dir / prof_path
+    if prof_path.exists():
+        root = deep_merge_dicts(root, load_yaml_extends_chain(prof_path, strict=True))
+    elif engine_path is None or profile_path is not None:
+        raise ValueError(f"missing multileg profile yaml: {prof_path}")
+
+    # Backward compatibility: allow passing a legacy engine YAML path.
+    if engine_path is not None:
+        if not engine_path.is_absolute():
+            engine_path = config_dir / engine_path
+        if engine_path.exists():
+            root = deep_merge_dicts(root, load_yaml_dict(engine_path, strict=True))
+    else:
+        engine_path = prof_path
 
     arch = root.get("archetypes", {}) or {}
     prefilter_rel = str(arch.get("prefilter", "archetypes/prefilter.yaml") or "").strip()
@@ -62,8 +60,8 @@ def load_multileg_layers(
         if execution_rel
         else config_dir / "archetypes/execution.yaml"
     )
-    prefilter = _read_yaml_dict(prefilter_path)
-    execution = _read_yaml_dict(execution_path)
+    prefilter = load_yaml_dict(prefilter_path, strict=False)
+    execution = load_yaml_dict(execution_path, strict=False)
     return engine_path, root, prefilter_path, prefilter, execution_path, execution
 
 
@@ -71,11 +69,17 @@ def load_multileg_effective_config(
     *,
     config_dir: Path,
     strategy_type: str,
+    profile: str = "turbo",
+    profile_path: Optional[Path] = None,
     engine_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Build effective runtime config from root + archetype overlays."""
+    """Build effective runtime config from research profile + archetype overlays."""
     _, root, _, prefilter, _, execution = load_multileg_layers(
-        config_dir=config_dir, strategy_type=strategy_type, engine_path=engine_path
+        config_dir=config_dir,
+        strategy_type=strategy_type,
+        profile=profile,
+        profile_path=profile_path,
+        engine_path=engine_path,
     )
     merged = dict(root)
     if prefilter:
@@ -90,6 +94,8 @@ def update_multileg_calibration_candidate(
     config_dir: Path,
     strategy_type: str,
     candidate: Dict[str, Any],
+    profile: str = "turbo",
+    profile_path: Optional[Path] = None,
     engine_path: Optional[Path] = None,
 ) -> None:
     """Apply calibration candidate to layer files (prefer archetype overlays)."""
@@ -101,7 +107,11 @@ def update_multileg_calibration_candidate(
         execution_path,
         execution,
     ) = load_multileg_layers(
-        config_dir=config_dir, strategy_type=strategy_type, engine_path=engine_path
+        config_dir=config_dir,
+        strategy_type=strategy_type,
+        profile=profile,
+        profile_path=profile_path,
+        engine_path=engine_path,
     )
     pre = prefilter if prefilter else root
     exe = execution if execution else root
@@ -156,5 +166,3 @@ def update_multileg_calibration_candidate(
         _write_yaml_dict(prefilter_path, pre)
     if execution:
         _write_yaml_dict(execution_path, exe)
-    if not prefilter or not execution:
-        _write_yaml_dict(engine_path, root)

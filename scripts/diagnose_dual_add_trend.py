@@ -40,20 +40,25 @@ from src.time_series_model.grid.subbar_replay import (
 )
 from scripts.multi_leg_trading_map import write_continuous_trading_map
 from src.config.multileg_config import load_multileg_effective_config
+from src.config.strategy_layout import resolve_strategy_config_input
 from src.features.time_series.baseline_features import (  # noqa: E402
     compute_trend_confidence_from_series,
 )
 
 DEFAULT_DUAL_ADD_CONFIG = (
-    PROJECT_ROOT / "config/strategies/dual_add_trend/dual_add.yaml"
+    PROJECT_ROOT / "config/strategies/dual_add_trend/research/turbo.yaml"
 )
 
 
 def _load_dual_add_defaults(path: Path) -> dict:
     if not path.exists():
         return {}
+    cfg_dir, profile_path, engine_path = resolve_strategy_config_input(path)
     cfg = load_multileg_effective_config(
-        config_dir=path.parent, strategy_type="dual_add_trend", engine_path=path
+        config_dir=cfg_dir,
+        strategy_type="dual_add_trend",
+        profile_path=profile_path,
+        engine_path=engine_path,
     )
     regime = cfg.get("regime", {}) or {}
     inv = cfg.get("inventory", {}) or {}

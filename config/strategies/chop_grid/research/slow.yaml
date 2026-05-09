@@ -18,6 +18,21 @@ rolling:
   slow_realistic:
     cadence_months: 3
     triggered_retrain_enabled: true
+    adoption_gate:
+      enabled: true
+      validation_months: 1
+      adopt_ratio: 1.0
+      min_improvement: 0.0
+      score_weights:
+        sharpe_r: 1.0
+        max_drawdown_r: 0.15
+        near_stop_rate: 0.5
+      undertrade:
+        target_trades_soft: 10
+        penalty: 0.15
+      cash_score_when_no_trades: 0.0
+      hard_reject:
+        sharpe_floor: -0.5
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
     disable_feature_search: true

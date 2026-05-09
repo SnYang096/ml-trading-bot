@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from scripts.pipeline.config import load_pipeline_config
+from src.config.multileg_config import load_multileg_effective_config
 
 
 def _root() -> Path:
@@ -418,3 +419,87 @@ def test_time_split_policy_invalid_raises(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="time_split_policy"):
         load_pipeline_config(bad)
+
+
+def test_trend_and_multileg_share_extends_loader_semantics(tmp_path: Path):
+    trend_parent = tmp_path / "trend_parent.yaml"
+    trend_child = tmp_path / "trend_child.yaml"
+    trend_parent.write_text(
+        "\n".join(
+            [
+                "dates:",
+                '  start_date: "2022-01-01"',
+                '  end_date: "2026-03-31"',
+                "  holdout_months: 26",
+                "rolling:",
+                "  mode: turbo_fixed_features",
+                "  windows:",
+                "    calibration_months: 3",
+                "    structure_lookback_months: 12",
+                "  turbo_fixed_features:",
+                "    fixed_strategies_root: config/strategies",
+                "threshold_calibration:",
+                "  enable_model_training: true",
+                "strategies:",
+                "  x:",
+                "    config: config/strategies/bpc",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    trend_child.write_text(
+        "\n".join(
+            [
+                f"extends: {trend_parent.name}",
+                "rolling:",
+                "  mode: non_rolling",
+                "threshold_calibration:",
+                "  enable_model_training: false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    trend_cfg = load_pipeline_config(trend_child)
+    assert trend_cfg["rolling"]["mode"] == "non_rolling"
+    assert trend_cfg["threshold_calibration"]["enable_model_training"] is False
+
+    strat_dir = tmp_path / "config/strategies/chop_grid"
+    (strat_dir / "research").mkdir(parents=True, exist_ok=True)
+    (strat_dir / "archetypes").mkdir(parents=True, exist_ok=True)
+    (strat_dir / "research/base.yaml").write_text(
+        "\n".join(
+            [
+                "strategy_type: grid",
+                "status: research",
+                "live:",
+                "  mode: shadow",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (strat_dir / "research/turbo.yaml").write_text(
+        "\n".join(
+            [
+                "extends: base.yaml",
+                "status: candidate",
+                "live:",
+                "  mode: dry_run",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (strat_dir / "archetypes/prefilter.yaml").write_text(
+        "regime:\n  entry_chop_min: 0.41\n",
+        encoding="utf-8",
+    )
+    (strat_dir / "archetypes/execution.yaml").write_text(
+        "grid:\n  spacing:\n    atr_mult: 0.55\n",
+        encoding="utf-8",
+    )
+    multileg_cfg = load_multileg_effective_config(
+        config_dir=strat_dir,
+        strategy_type="grid",
+    )
+    assert multileg_cfg["status"] == "candidate"
+    assert multileg_cfg["live"]["mode"] == "dry_run"
+    assert multileg_cfg["regime"]["entry_chop_min"] == 0.41

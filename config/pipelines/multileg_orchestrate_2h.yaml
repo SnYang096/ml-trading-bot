@@ -80,10 +80,11 @@ dual_add_backtest:
   add_mode: trend
   flip_action: close_offside_all
   exclude_box: true
-  step_atr_mult: 0.50
-  tp_atr_mult: 0.25
-  tp_pct: 0.0005
-  max_loss_per_segment: 0.01
+  step_atr_mult: 1.00
+  tp_atr_mult: 0.75
+  tp_pct: 0.0015
+  max_loss_per_segment: 0.02
+  risk_stop_mode: regime_only
   max_gross_exposure: 4
   max_net_exposure: 2
   max_adds_per_side: 3
@@ -106,6 +107,10 @@ multi_leg_monitor:
   drift_forced_rate_delta: 0.10
   drift_trade_ratio_floor: 0.60
   threshold_total_r_floor: -0.10
+  drift_risk_stop_rate_delta: 0.05
+  drift_segment_win_rate_delta: 0.08
+  regime_trend_shift_max: 0.15
+  regime_chop_shift_max: 0.15
 
 output:
   history_dir: results/multi_leg/rolling-sim

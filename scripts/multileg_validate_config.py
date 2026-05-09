@@ -6,9 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from scripts.pipeline.config import load_pipeline_config
+from src.config.strategy_validation import validate_pipeline_strategy_packages
 from src.live_data_stream.constitution_config import (
     load_constitution_dict,
     resolve_multi_leg_risk_limits_from_constitution,
@@ -16,12 +17,6 @@ from src.live_data_stream.constitution_config import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _strategy_type(entry: Any) -> str:
-    if not isinstance(entry, dict):
-        return ""
-    return str(entry.get("strategy_type", "") or "").strip().lower()
 
 
 def _resolve_constitution_path(cfg: Dict[str, Any], override: str) -> Path:
@@ -32,35 +27,6 @@ def _resolve_constitution_path(cfg: Dict[str, Any], override: str) -> Path:
         if not str(p).strip():
             p = Path("config/constitution/constitution.yaml")
     return p if p.is_absolute() else (PROJECT_ROOT / p)
-
-
-def _ensure_strategy_files(cfg: Dict[str, Any]) -> List[str]:
-    errs: List[str] = []
-    for name, scfg in (cfg.get("strategies") or {}).items():
-        st = _strategy_type(scfg)
-        if st not in {"grid", "dual_add_trend"}:
-            errs.append(
-                f"strategies.{name}: unsupported strategy_type={st!r} for multileg"
-            )
-            continue
-        cfg_dir = str((scfg or {}).get("config", "") or "").strip()
-        if not cfg_dir:
-            errs.append(f"strategies.{name}: missing config directory")
-            continue
-        root = Path(cfg_dir)
-        if not root.is_absolute():
-            root = PROJECT_ROOT / root
-        req_file = "grid.yaml" if st == "grid" else "dual_add.yaml"
-        for rel in (
-            req_file,
-            "features.yaml",
-            "research/turbo.yaml",
-            "archetypes/prefilter.yaml",
-            "archetypes/execution.yaml",
-        ):
-            if not (root / rel).exists():
-                errs.append(f"strategies.{name}: missing {(root / rel)}")
-    return errs
 
 
 def _ensure_risk_limits(limits: Dict[str, Any]) -> List[str]:
@@ -113,7 +79,14 @@ def main() -> int:
     limits = resolve_multi_leg_risk_limits_from_constitution(constitution)
 
     errors = []
-    errors.extend(_ensure_strategy_files(cfg))
+    strategy_issues = validate_pipeline_strategy_packages(
+        pipeline_cfg=cfg,
+        project_root=PROJECT_ROOT,
+        allow_strategy_types={"grid", "dual_add_trend"},
+    )
+    errors.extend(
+        [f"strategies.{it.strategy_name}: {it.message}" for it in strategy_issues]
+    )
     errors.extend(_ensure_risk_limits(limits))
 
     if errors:

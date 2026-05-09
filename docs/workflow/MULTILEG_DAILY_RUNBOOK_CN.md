@@ -2,6 +2,45 @@
 
 适用范围：`chop_grid`、`dual_add_trend` 多腿专用管线（`mlbot multileg` + `run_multi_leg_live.py`）。
 
+配置约定：多腿运行时入口统一使用 `config/strategies/<strategy>/research/turbo.yaml`
+（`slow/non_rolling` 通过 `extends` 继承），并叠加 `archetypes/prefilter.yaml` +
+`archetypes/execution.yaml` 形成 effective config。
+
+“模拟未来”口径：采用无前视 `rolling_sim`（过去窗口校准，下一窗口测试），不额外引入
+预测式 forward simulator。
+
+## 0. 配置解析时序（输入路径 → effective config）
+
+下面这张图对应日常最常见入口：`research` / `validate-config` / `shadow|live`。
+
+```mermaid
+sequenceDiagram
+    participant U as User CLI
+    participant C as Command Entry
+    participant SL as strategy_layout
+    participant ML as multileg_config
+    participant SV as strategy_validation
+    participant E as Engine/Script
+
+    Note over U,C: 例1: mlbot multileg shadow --config <path>
+    U->>C: 传入 --config path (目录/research yaml/legacy yaml)
+    C->>SL: resolve_strategy_config_input(path)
+    SL-->>C: config_dir, profile_path, engine_path
+    C->>ML: load_multileg_effective_config(...)
+    ML->>SL: load_yaml_extends_chain(profile_path)
+    ML->>SL: load_yaml_dict(archetypes/prefilter.yaml)
+    ML->>SL: load_yaml_dict(archetypes/execution.yaml)
+    ML-->>C: effective config = profile -> prefilter -> execution
+    C->>E: 用 effective config 驱动回放/诊断/实盘引擎
+
+    Note over U,C: 例2: mlbot multileg validate-config --config <pipeline>
+    U->>C: 传入 multi-leg pipeline yaml
+    C->>SL: load_yaml_extends_chain(pipeline yaml) via load_pipeline_config
+    C->>SV: validate_pipeline_strategy_packages(...)
+    SV-->>C: 结构化校验结果（缺文件/类型不匹配等）
+    C->>E: 叠加 constitution 对齐检查并输出报告
+```
+
 ## 1. 每日巡检（10-15 分钟）
 
 1) 检查最新多腿 rolling 结果是否完整

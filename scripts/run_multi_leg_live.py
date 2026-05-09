@@ -431,10 +431,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--chop-grid-config", default="config/strategies/chop_grid/grid.yaml"
+        "--chop-grid-config",
+        default="config/strategies/chop_grid/research/turbo.yaml",
     )
     p.add_argument(
-        "--dual-add-config", default="config/strategies/dual_add_trend/dual_add.yaml"
+        "--dual-add-config",
+        default="config/strategies/dual_add_trend/research/turbo.yaml",
     )
     return p.parse_args()
 

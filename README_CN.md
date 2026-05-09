@@ -147,8 +147,8 @@ mlbot data download-open-interest \
 | `bpc`            | Breakout → Pullback → Continuation（趋势延续）                       | `120T`                     |
 | `tpc`            | Trend → Pullback → Continuation（趋势回踩）                          | `120T`                     |
 | `me`             | Momentum Expansion（动量扩张）                                       | `120T`                     |
-| `chop_grid`      | 语义 chop + 盒过滤下的小网格段（**多腿**；根配置 `grid.yaml`）       | `120T`                     |
-| `dual_add_trend` | 趋势置信 + chop/盒过滤下双腿加仓（**多腿**；根配置 `dual_add.yaml`） | `120T`                     |
+| `chop_grid`      | 语义 chop + 盒过滤下的小网格段（**多腿**；`research/turbo.yaml` + archetypes）       | `120T`                     |
+| `dual_add_trend` | 趋势置信 + chop/盒过滤下双腿加仓（**多腿**；`research/turbo.yaml` + archetypes） | `120T`                     |
 
 **常用 pipeline YAML**：研究入口按策略包放在 **`config/strategies/<slug>/research/`**（`turbo.yaml` → `slow.yaml` → `pipeline.yaml` 探测顺序；可通过顶层 `extends:` 指向共享片段）。**`mlbot pipeline`** 省略 `--config` 且带 `--strategy <slug>` 时按上述顺序解析；既无 `--strategy` 也无 `--config` 时默认 **`config/pipelines/pcm_orchestrate_2h.yaml`**（PCM 多策略编排）。仓库级统一模板（显式引用或工具默认）为 **`config/pipelines/research_pipeline.yaml`**。
 
@@ -533,17 +533,17 @@ curl -s http://127.0.0.1:8008/api/rolling-ledgers.json | head
 
 ### 6.1) 多腿策略（`chop_grid` / `dual_add_trend`）：配置、研究 adopt、同步实盘、多腿进程
 
-与 BPC 同一套心智：**研究配置**在 `config/strategies/<策略名>/`，根目录 **`grid.yaml`**（chop_grid）或 **`dual_add.yaml`**（dual_add_trend）为**主配置**；**`archetypes/*.yaml`** 为可推广 / 可 adopt 的薄层；**实盘镜像**在 `live/highcap/config/strategies/<策略名>/`（用下方 deploy 同步）。
+与 BPC 同一套心智：**研究配置**在 `config/strategies/<策略名>/research/{turbo,slow,non_rolling}.yaml`；**`archetypes/*.yaml`** 为可推广 / 可 adopt 的薄层；**实盘镜像**在 `live/highcap/config/strategies/<策略名>/`（用下方 deploy 同步）。
 
 **1）离线诊断（不跑 pipeline）**
 
 ```bash
-# chop_grid：语义 chop + 盒过滤 + 网格段回测（读 grid.yaml）
+# chop_grid：语义 chop + 盒过滤 + 网格段回测（读 research/turbo.yaml + archetypes）
 python scripts/diagnose_chop_grid.py \
   --start 2024-01-01 --end 2024-12-31 \
   --symbols BTCUSDT,ETHUSDT --timeframe 2h
 
-# dual_add_trend：趋势段 + 双腿加仓仿真（读 dual_add.yaml；trend 列来自注册特征同一公式）
+# dual_add_trend：趋势段 + 双腿加仓仿真（读 research/turbo.yaml + archetypes；trend 列来自注册特征同一公式）
 python scripts/diagnose_dual_add_trend.py \
   --start 2024-01-01 --end 2024-12-31 \
   --symbols BTCUSDT,ETHUSDT --timeframe 2h
@@ -599,7 +599,7 @@ python scripts/run_multi_leg_live.py --mode shadow --bar-source parquet --once
 # 指定策略与策略 yaml（默认已指向 config/strategies/...）
 python scripts/run_multi_leg_live.py \
   --strategies chop_grid \
-  --chop-grid-config config/strategies/chop_grid/grid.yaml \
+  --chop-grid-config config/strategies/chop_grid/research/turbo.yaml \
   --once
 ```
 
@@ -613,7 +613,7 @@ python scripts/run_multi_leg_live.py \
 
 阶段映射：
 
-- BPC `turbo`：固定生产特征/archetypes，只做月度阈值重标定；多腿 `turbo`：固定 `features.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`（根 `grid.yaml`/`dual_add.yaml` 仅作为稳定入口），做 regime/profile/执行参数校准。
+- BPC `turbo`：固定生产特征/archetypes，只做月度阈值重标定；多腿 `turbo`：固定 `features.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`，做 regime/profile/执行参数校准。
 - BPC `slow`：季度慢快照，允许结构/特征搜索，再接月度滚动；多腿 `slow`：季度检查 regime/engine/profile 是否需要刷新，再接月度 profile 校准，但不走 BPC 的 prefilter/gate adoption 链。
 - BPC `non_rolling`：整段静态 holdout 单次验收，用 `comparison/deploy_gate` 看是否可上线；多腿 `non_rolling`：整段静态 holdout 跑 `grid_backtest`/`dual_add_backtest`，上线结论交给 `mlbot multileg gate`。
 - BPC `event_backtest`：单仓入场事件回测；多腿 `grid_backtest`/`dual_add_backtest`：持仓库存、加仓、强平、gross/net exposure 的专用回测。
@@ -625,8 +625,9 @@ python scripts/run_multi_leg_live.py \
 - BPC 管线入口：`config/strategies/bpc/research/{turbo,slow,non_rolling}.yaml`
 - 多腿管线入口：`config/strategies/chop_grid/research/{turbo,slow,non_rolling}.yaml` 与 `config/strategies/dual_add_trend/research/{turbo,slow,non_rolling}.yaml`
 - BPC 策略结构：`features.yaml`、`archetypes/*`、`labels_*`、prefilter/gate/entry 配置
-- 多腿策略结构：`features.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`、`archetypes/regime_thresholds.yaml`、`grid.yaml` 或 `dual_add.yaml`
+- 多腿策略结构：`features.yaml`、`research/{turbo,slow,non_rolling}.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`、`archetypes/regime_thresholds.yaml`
 - 多腿 `calibration_profiles` 放在 `research/turbo.yaml`（`slow/non_rolling` 通过 `extends` 继承），不再使用根目录 `research.yaml`。
+- `scripts/pipeline/config.py` 与 `src/config/multileg_config.py` 现共享 `src/config/strategy_layout.py` 的 YAML/`extends` 解析；`mlbot multileg validate-config` 复用 `src/config/strategy_validation.py` 的策略包校验。
 
 ```bash
 # 1) 校验多腿编排 + 宪法对齐
@@ -726,7 +727,7 @@ python -m pytest tests/unit/test_multileg_profile_loading.py -q
 # 多腿 non_rolling 配置继承与阶段对齐
 python -m pytest tests/unit/test_pipeline_config_extends.py -q
 
-# 多腿 effective config 合并（engine manifest + archetypes 分层）
+# 多腿 effective config 合并（research profile + archetypes 分层）
 python -m pytest tests/unit/test_multileg_config_loader.py -q
 ```
 

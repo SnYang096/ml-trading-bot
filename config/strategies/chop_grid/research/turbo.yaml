@@ -1,5 +1,25 @@
 # chop_grid · turbo_fixed_features + grid_backtest — 执行参数在下列键；[INDEX] dates→rolling→tc→data→strategies→event/grid→study→threshold_search→output
 
+status: research
+
+# Shared chop regime series semantics for diagnostics/live.
+chop_series:
+  chop_signal: raw
+  chop_ts_window: 1200
+  chop_ts_min_periods: 150
+
+live:
+  mode: dry_run
+  state_path: results/chop_grid/live_state.json
+  order_adapter: dry_run
+  cancel_orders_on_exit: true
+  market_exit_on_regime_loss: true
+
+validation:
+  script: scripts/diagnose_chop_grid.py
+  baseline_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+  baseline_periods: [2022, 2023, 2024, 2025, 2026Q1]
+
 dates:
   start_date: "2022-01-01"
   end_date: "2026-03-31"

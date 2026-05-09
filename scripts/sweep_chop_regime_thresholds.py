@@ -56,7 +56,7 @@ from src.time_series_model.grid.subbar_replay import (  # noqa: E402
     timeframe_to_timedelta,
 )
 
-DEFAULT_GRID_CONFIG = PROJECT_ROOT / "config/strategies/chop_grid/grid.yaml"
+DEFAULT_GRID_CONFIG = PROJECT_ROOT / "config/strategies/chop_grid/research/turbo.yaml"
 
 
 def _parse_csv_floats(s: str) -> List[float]:

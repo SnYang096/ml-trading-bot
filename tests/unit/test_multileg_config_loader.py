@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
 from src.config.multileg_config import (
@@ -16,13 +17,10 @@ def _write_yaml(path: Path, obj: dict) -> None:
 def test_load_multileg_effective_config_merges_archetype_layers(tmp_path: Path) -> None:
     cfg_dir = tmp_path / "chop_grid"
     _write_yaml(
-        cfg_dir / "grid.yaml",
+        cfg_dir / "research/turbo.yaml",
         {
             "strategy_type": "grid",
-            "archetypes": {
-                "prefilter": "archetypes/prefilter.yaml",
-                "execution": "archetypes/execution.yaml",
-            },
+            "status": "research",
             "live": {"mode": "dry_run"},
         },
     )
@@ -46,7 +44,7 @@ def test_load_multileg_effective_config_respects_custom_engine_path(
     tmp_path: Path,
 ) -> None:
     cfg_dir = tmp_path / "custom_pack"
-    _write_yaml(cfg_dir / "grid.yaml", {"strategy_type": "grid"})
+    _write_yaml(cfg_dir / "research/turbo.yaml", {"strategy_type": "grid"})
     _write_yaml(
         cfg_dir / "custom_grid.yaml",
         {
@@ -70,13 +68,9 @@ def test_load_multileg_effective_config_respects_custom_engine_path(
 def test_update_multileg_candidate_writes_archetype_layers(tmp_path: Path) -> None:
     cfg_dir = tmp_path / "dual_add_trend"
     _write_yaml(
-        cfg_dir / "dual_add.yaml",
+        cfg_dir / "research/turbo.yaml",
         {
             "strategy_type": "dual_add_trend",
-            "archetypes": {
-                "prefilter": "archetypes/prefilter.yaml",
-                "execution": "archetypes/execution.yaml",
-            },
         },
     )
     _write_yaml(cfg_dir / "archetypes/prefilter.yaml", {"regime": {}})
@@ -101,3 +95,15 @@ def test_update_multileg_candidate_writes_archetype_layers(tmp_path: Path) -> No
     assert exe["add_spacing"]["atr_mult"] == 0.65
     assert exe["take_profit"]["min_pct"] == 0.001
     assert exe["inventory"]["flip_action"] == "close_offside_all"
+
+
+def test_load_multileg_effective_config_missing_profile_raises(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "missing_profile_pack"
+    _write_yaml(
+        cfg_dir / "archetypes/prefilter.yaml", {"regime": {"entry_chop_min": 0.4}}
+    )
+    _write_yaml(
+        cfg_dir / "archetypes/execution.yaml", {"grid": {"spacing": {"atr_mult": 0.5}}}
+    )
+    with pytest.raises(ValueError, match="missing multileg profile yaml"):
+        load_multileg_effective_config(config_dir=cfg_dir, strategy_type="grid")

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -63,7 +64,7 @@ def _dual_add_metrics_from_standalone(path: Path) -> Dict[str, Any]:
     forced = float(row.get("forced_rate", 0.0) or 0.0)
     return {
         "n_trades": n_trades,
-        "sharpe_r": float(row.get("segment_win_rate", 0.0) or 0.0),
+        "sharpe_r": 0.0,
         "mean_r": float(pnl / max(n_trades, 1)),
         "total_r": pnl,
         "win_rate": float(row.get("trade_win_rate", 0.0) or 0.0),
@@ -76,6 +77,27 @@ def _dual_add_metrics_from_standalone(path: Path) -> Dict[str, Any]:
     }
 
 
+def _trade_sharpe_from_csv(path: Path) -> float:
+    if not path.exists():
+        return 0.0
+    vals: List[float] = []
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                vals.append(float(row.get("pnl_per_capital", 0.0) or 0.0))
+    except Exception:
+        return 0.0
+    n = len(vals)
+    if n < 2:
+        return 0.0
+    mean = sum(vals) / n
+    var = sum((x - mean) ** 2 for x in vals) / max(1, n - 1)
+    std = math.sqrt(var)
+    if std <= 0:
+        return 0.0
+    return float(mean / std)
+
+
 def _load_strategy_gate_metrics(
     *, run_dir: Path, strategy: str, strategy_type: str
 ) -> Dict[str, Any]:
@@ -86,7 +108,12 @@ def _load_strategy_gate_metrics(
     if strategy_type == "grid":
         return _grid_metrics_from_standalone(run_dir / strategy / "metrics.json")
     if strategy_type == "dual_add_trend":
-        return _dual_add_metrics_from_standalone(run_dir / strategy / "summary.csv")
+        out = _dual_add_metrics_from_standalone(run_dir / strategy / "summary.csv")
+        if out:
+            out["sharpe_r"] = _trade_sharpe_from_csv(
+                run_dir / strategy / "dual_add_trades.csv"
+            )
+        return out
     return {}
 
 

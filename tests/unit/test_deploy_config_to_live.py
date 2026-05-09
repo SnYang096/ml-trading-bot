@@ -20,14 +20,14 @@ def test_deploy_root_denylist_blocks_research_filenames():
 def test_multileg_profile_all_archetypes():
     prof = get_strategy_deploy_profile("chop_grid")
     assert prof.archetypes_mode == "all"
-    assert prof.engine_yaml == "grid.yaml"
+    assert prof.runtime_yaml == "research/turbo.yaml"
 
 
 def test_classic_profile_whitelist():
     prof = get_strategy_deploy_profile("bpc")
     assert prof.archetypes_mode == "whitelist"
     assert "prefilter.yaml" in prof.archetype_whitelist
-    assert prof.engine_yaml is None
+    assert prof.runtime_yaml is None
 
 
 def test_iter_deploy_archetype_basenames_respects_whitelist(tmp_path):

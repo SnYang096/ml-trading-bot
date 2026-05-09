@@ -72,9 +72,12 @@ def research_strategy_dir(strat: str) -> Path:
     return RESEARCH_STRATEGIES / s
 
 
-# Multi-leg strategies: archetypes/*.yaml (any name) + canonical engine yaml at root.
+# Multi-leg strategies: archetypes/*.yaml (any name) + runtime profile yaml.
 MULTI_LEG_STRATEGIES = frozenset({"chop_grid", "dual_add_trend"})
-MULTI_LEG_ENGINE_YAML = {"chop_grid": "grid.yaml", "dual_add_trend": "dual_add.yaml"}
+MULTI_LEG_RUNTIME_YAML = {
+    "chop_grid": "research/turbo.yaml",
+    "dual_add_trend": "research/turbo.yaml",
+}
 
 
 def _is_multi_leg_deploy(strat: str) -> bool:
@@ -124,7 +127,7 @@ GLOBAL_CONFIGS = [
 class StrategyDeployProfile:
     archetypes_mode: str
     archetype_whitelist: Tuple[str, ...] = ()
-    engine_yaml: Optional[str] = None
+    runtime_yaml: Optional[str] = None
 
 
 def _skip_root_deploy_file(filename: str) -> bool:
@@ -136,7 +139,7 @@ def get_strategy_deploy_profile(strategy: str) -> StrategyDeployProfile:
     if s in MULTI_LEG_STRATEGIES:
         return StrategyDeployProfile(
             archetypes_mode="all",
-            engine_yaml=MULTI_LEG_ENGINE_YAML.get(s),
+            runtime_yaml=MULTI_LEG_RUNTIME_YAML.get(s),
         )
     return StrategyDeployProfile(
         archetypes_mode="whitelist",
@@ -271,9 +274,9 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
                     if len(diff_lines) > 10:
                         print(f"    ... 还有 {len(diff_lines) - 10} 行差异")
 
-        # multi-leg canonical engine yaml (grid.yaml / dual_add.yaml)
-        if profile.engine_yaml:
-            eng = profile.engine_yaml
+        # multi-leg runtime profile yaml
+        if profile.runtime_yaml:
+            eng = profile.runtime_yaml
             if not _skip_root_deploy_file(eng):
                 src_eng = src_dir / eng
                 dst_eng = dst_dir / eng
@@ -397,8 +400,8 @@ def deploy_strategy(strat: str) -> int:
             shutil.copy2(src_file, dst_dir / fname)
             copied += 1
 
-    if profile.engine_yaml:
-        eng = profile.engine_yaml
+    if profile.runtime_yaml:
+        eng = profile.runtime_yaml
         if not _skip_root_deploy_file(eng):
             src_eng = src_dir / eng
             if src_eng.exists():

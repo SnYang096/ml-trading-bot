@@ -5034,16 +5034,16 @@ def _run_grid_backtest_stage(
         strat_cfg_dir = PROJECT_ROOT / str(
             scfg.get("config", f"config/strategies/{strat}")
         )
-        grid_yaml = strat_cfg_dir / "grid.yaml"
-        if not grid_yaml.exists():
-            raise FileNotFoundError(f"grid strategy config missing: {grid_yaml}")
+        grid_cfg_path = _resolve_multileg_runtime_config_path(
+            config_dir=strat_cfg_dir, strategy_type=strategy_type
+        )
 
         out_dir = out_root / strat
         cmd = [
             sys.executable,
             "scripts/chop_grid_backtest.py",
             "--config",
-            str(grid_yaml),
+            str(grid_cfg_path),
             "--data-dir",
             data_path,
             "--symbols",
@@ -5147,16 +5147,16 @@ def _run_dual_add_backtest_stage(
         strat_cfg_dir = PROJECT_ROOT / str(
             scfg.get("config", f"config/strategies/{strat}")
         )
-        dual_yaml = strat_cfg_dir / "dual_add.yaml"
-        if not dual_yaml.exists():
-            raise FileNotFoundError(f"dual_add strategy config missing: {dual_yaml}")
+        dual_cfg_path = _resolve_multileg_runtime_config_path(
+            config_dir=strat_cfg_dir, strategy_type=strategy_type
+        )
 
         out_dir = out_root / strat
         cmd = [
             sys.executable,
             "scripts/diagnose_dual_add_trend.py",
             "--config",
-            str(dual_yaml),
+            str(dual_cfg_path),
             "--data-dir",
             data_path,
             "--symbols",
@@ -5771,6 +5771,21 @@ def _apply_multileg_candidate(
     )
 
 
+def _resolve_multileg_runtime_config_path(
+    *, config_dir: Path, strategy_type: str
+) -> Path:
+    preferred = config_dir / "research" / "turbo.yaml"
+    if preferred.exists():
+        return preferred
+    legacy = config_dir / ("grid.yaml" if strategy_type == "grid" else "dual_add.yaml")
+    if legacy.exists():
+        return legacy
+    raise FileNotFoundError(
+        f"missing multi-leg runtime config under {config_dir} "
+        f"(expected {preferred.name} or legacy root yaml)"
+    )
+
+
 def _run_multileg_backtest_command(
     *,
     cfg: Dict[str, Any],
@@ -5792,11 +5807,14 @@ def _run_multileg_backtest_command(
 
     if strategy_type == "grid":
         grid_cfg = cfg.get("grid_backtest", {}) or {}
+        runtime_cfg = _resolve_multileg_runtime_config_path(
+            config_dir=config_dir, strategy_type=strategy_type
+        )
         cmd = [
             sys.executable,
             "scripts/chop_grid_backtest.py",
             "--config",
-            str(config_dir / "grid.yaml"),
+            str(runtime_cfg),
             "--data-dir",
             data_path,
             "--symbols",
@@ -5829,11 +5847,14 @@ def _run_multileg_backtest_command(
 
     if strategy_type == "dual_add_trend":
         dual_cfg = cfg.get("dual_add_backtest", {}) or {}
+        runtime_cfg = _resolve_multileg_runtime_config_path(
+            config_dir=config_dir, strategy_type=strategy_type
+        )
         cmd = [
             sys.executable,
             "scripts/diagnose_dual_add_trend.py",
             "--config",
-            str(config_dir / "dual_add.yaml"),
+            str(runtime_cfg),
             "--data-dir",
             data_path,
             "--symbols",
@@ -5910,9 +5931,20 @@ def _parse_multileg_metrics(strategy_type: str, out_dir: Path) -> Dict[str, Any]
     pnl = float(row.get("sum_pnl_per_capital", 0.0) or 0.0)
     risk_stop = float(row.get("risk_stop_rate", 0.0) or 0.0)
     forced = float(row.get("forced_rate", 0.0) or 0.0)
+    trade_sharpe = 0.0
+    trades_path = out_dir / "dual_add_trades.csv"
+    if trades_path.exists():
+        try:
+            tdf = pd.read_csv(trades_path)
+            if "pnl_per_capital" in tdf.columns:
+                s = pd.to_numeric(tdf["pnl_per_capital"], errors="coerce").dropna()
+                if len(s) >= 2 and float(s.std(ddof=1)) > 0.0:
+                    trade_sharpe = float(s.mean() / s.std(ddof=1))
+        except Exception:
+            trade_sharpe = 0.0
     return {
         "n_trades": n_trades,
-        "sharpe_r": float(row.get("segment_win_rate", 0.0) or 0.0),
+        "sharpe_r": trade_sharpe,
         "mean_r": float(pnl / max(n_trades, 1)),
         "total_r": pnl,
         "win_rate": float(row.get("trade_win_rate", 0.0) or 0.0),
@@ -9482,7 +9514,7 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
         for f in exp_arch.iterdir():
             if f.is_file():
                 shutil.copy2(f, prod_arch / f.name)
-        eng = "grid.yaml" if prod_slug == "chop_grid" else "dual_add.yaml"
+        eng = Path("research/turbo.yaml")
         exp_eng = exp_config_dir / eng
         prod_eng = PROJECT_ROOT / prod_config_dir / eng
         if exp_eng.exists():
