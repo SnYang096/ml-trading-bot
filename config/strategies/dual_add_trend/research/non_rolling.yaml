@@ -1,0 +1,20 @@
+# =============================================================================
+# Dual Add Trend · non_rolling — full-window dual-add validation
+# -----------------------------------------------------------------------------
+# 与 BPC non_rolling 对齐：整段静态 holdout 上做一次全周期验收/上线候选评估。
+# 多腿不走 BPC compare_runs/deploy_gate；上线判断由 mlbot multileg gate 读取
+# dual-add metrics / segment 风险 / constitution.multi_leg 风控后给出结论。
+# -----------------------------------------------------------------------------
+
+extends: turbo.yaml
+
+rolling:
+  mode: non_rolling
+  time_split_policy: static_holdout
+
+dual_add_backtest:
+  output_dir: results/dual_add_trend/non-rolling-full-cycle
+
+output:
+  history_dir: results/dual_add_trend/non-rolling-sim
+  latest_dir: results/dual_add_trend/latest

@@ -113,6 +113,29 @@ threshold_search:
       - ["2026-01-01", "2026-03-31"]
     symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
 
+calibration_profiles:
+  - name: chop_balanced_fast
+    box_window: 60
+    entry_chop_min: 0.35
+    exit_chop_below: 0.22
+    atr_mult: 0.50
+    min_pct: 0.004
+    exclude_box_prefilter: true
+  - name: chop_balanced_default
+    box_window: 120
+    entry_chop_min: 0.40
+    exit_chop_below: 0.25
+    atr_mult: 0.50
+    min_pct: 0.004
+    exclude_box_prefilter: true
+  - name: chop_wide_conservative
+    box_window: 240
+    entry_chop_min: 0.45
+    exit_chop_below: 0.30
+    atr_mult: 0.65
+    min_pct: 0.006
+    exclude_box_prefilter: false
+
 output:
   history_dir: results/chop_grid/turbo-rolling-sim
   latest_dir: results/chop_grid/latest

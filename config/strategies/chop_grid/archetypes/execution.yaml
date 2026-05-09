@@ -1,0 +1,23 @@
+# Multi-leg execution layer: inventory spacing and risk controls.
+grid:
+  spacing:
+    primary: atr
+    atr_mult: 0.50
+    min_pct: 0.004
+  max_levels_per_side: 3
+  level_notional_mode: equal
+  same_bar_entry_exit: false
+  order_type: limit
+
+risk:
+  min_segment_bars: 6
+  max_segment_bars: 120
+  force_exit_on_regime_loss: true
+  max_loss_per_grid: 0.03
+  max_open_levels_total: 6
+  # Legacy fallback for old reports. New accounting uses split maker/taker costs.
+  fee_bps: 4.0
+  maker_fee_bps: 2.0
+  taker_fee_bps: 5.0
+  forced_exit_slippage_bps: 5.0
+  funding_cost_bps_per_8h: 1.0

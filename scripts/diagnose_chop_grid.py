@@ -25,7 +25,6 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 import numpy as np
 import pandas as pd
-import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -40,6 +39,7 @@ from scripts.diagnose_crf_edge import (  # noqa: E402
     _semantic_chop,
     build_symbol_dataset,
 )
+from src.config.multileg_config import load_multileg_effective_config  # noqa: E402
 from src.features.time_series.semantic_chop_ts_quantile import (  # noqa: E402
     semantic_chop_ts_quantile,
 )
@@ -55,7 +55,9 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
     """
     if not path.exists():
         return {}
-    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    cfg = load_multileg_effective_config(
+        config_dir=path.parent, strategy_type="grid", engine_path=path
+    )
     regime = cfg.get("regime", {}) or {}
     grid = cfg.get("grid", {}) or {}
     spacing = grid.get("spacing", {}) or {}
@@ -188,8 +190,10 @@ def simulate_fixed_grid(
       - buy levels below center; each long takes profit one spacing higher
       - sell levels above center; each short takes profit one spacing lower
 
-    If a level fills, its target is only eligible from the next bar onward. This
-    avoids over-crediting same-bar entry+exit when OHLC ordering is unknown.
+    The first bar confirms the regime and anchors the grid; orders become
+    eligible from the next bar. If a level fills, its target is only eligible
+    from the next bar onward. This avoids using the signal bar's intrabar
+    high/low after a close-confirmed signal.
     At segment exit, all open inventory is marked to the final close.
     """
     if seg.empty:
@@ -233,15 +237,16 @@ def simulate_fixed_grid(
                 cycles += 1
                 del open_shorts[level_i]
 
-        # Fill inactive levels.
-        for level_i, px in enumerate(long_levels):
-            if level_i not in open_longs and low <= px:
-                open_longs[level_i] = (px, bar_i)
-                fills += 1
-        for level_i, px in enumerate(short_levels):
-            if level_i not in open_shorts and high >= px:
-                open_shorts[level_i] = (px, bar_i)
-                fills += 1
+        # Fill inactive levels only after the signal bar has closed.
+        if bar_i > 0:
+            for level_i, px in enumerate(long_levels):
+                if level_i not in open_longs and low <= px:
+                    open_longs[level_i] = (px, bar_i)
+                    fills += 1
+            for level_i, px in enumerate(short_levels):
+                if level_i not in open_shorts and high >= px:
+                    open_shorts[level_i] = (px, bar_i)
+                    fills += 1
 
         mtm = realized
         for entry, _ in open_longs.values():

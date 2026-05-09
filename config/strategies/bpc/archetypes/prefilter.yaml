@@ -1,11 +1,12 @@
-# BPC prefilter — 形态语义锚点：box 结构 + Breakout → Pullback → Continuation
-# 全部使用原子特征，不依赖 bpc_score_* 组合分数。
-# chop 见 gate_bpc_semantic_chop_high。
-# box 语义（中部未突破、短窗过度扩张）在 prefilter 锁定，避免在 slow gate promote 中被静默禁用。
-# - bpc_volume_compression_pct: 非锁定 prior（突破前蓄势），允许 pipeline 调阈值/移除
-# - bpc_recent_breakout_strength: 锚点 1/3，确认最近确实出现过 Donchian 突破
-# - bpc_pullback_depth: 锚点 2/3，回撤受控、未破结构
-# - bpc_recovery_strength: 锚点 3/3，回撤后恢复力度到位（Continuation 可执行）
+last_evaluation:
+  timestamp: '2026-05-08'
+  data_source: features_labeled.parquet
+  n_rows: 92571
+  baseline_bad_rate: 0.0
+  baseline_median_rr: 0.0612
+  positive_signals: []
+  anti_signals: []
+  absence_signals: []
 rules:
 - any_of:
   - feature: ema_1200_position
@@ -18,13 +19,9 @@ rules:
   locked: true
   skip_parquet_tune: true
   lock_reason: BPC 必须离开 EMA1200 噪声中轴后才允许 breakout-pullback-continuation
-- feature: bpc_volume_compression_pct
-  operator: '>='
-  value: 0.8905
-  rationale: meta-algorithm, KS=0.1325, return_uplift=+1.2660, robustness=100%（非锁定，作为 prior 保留，可被 pipeline 调）
 - feature: box_compression_score
   operator: <=
-  value: 1.50
+  value: 1.5
   rationale: 短期波动窗不应显著宽于长期窗；过度扩张不符合 consolidation→breakout→pullback 语义
   locked: true
   skip_parquet_tune: true
@@ -49,7 +46,8 @@ rules:
 - feature: bpc_recent_breakout_strength
   operator: '>='
   value: 0.25
-  rationale: 语义锁定：近 lookback_breakout 根内确实出现过突破（bpc_score_breakout rolling max），排除纯横盘里的 pullback
+  rationale: 语义锁定：近 lookback_breakout 根内确实出现过突破（bpc_score_breakout rolling max），排除纯横盘里的
+    pullback
   locked: true
   lock_reason: BPC 语义锚点 1/3：Breakout 成立
 - feature: bpc_pullback_depth
@@ -64,12 +62,3 @@ rules:
   rationale: 语义锁定：回踩后必须有恢复力度，确认 continuation 的可执行性
   locked: true
   lock_reason: BPC 语义锚点 3/3：Continuation 确认
-last_evaluation:
-  timestamp: '2026-04-20'
-  data_source: features_labeled.parquet
-  n_rows: 53486
-  baseline_bad_rate: 0.0
-  baseline_median_rr: -0.0486
-  positive_signals: []
-  anti_signals: []
-  absence_signals: []

@@ -16,6 +16,8 @@ def test_pipeline_help_includes_new_commands_and_stages():
     assert "slow_snapshot" in result_run.output
     assert "fast_month" in result_run.output
     assert "rolling_sim" in result_run.output
+    assert "grid_backtest" in result_run.output
+    assert "dual_add_backtest" in result_run.output
     assert "--month" in result_run.output
 
     result_list = runner.invoke(cli, ["pipeline", "list", "--help"])
@@ -170,3 +172,79 @@ def test_pipeline_list_forwards_list_all_profiles(monkeypatch):
     assert result.exit_code == 0
     assert called["script_path"] == "scripts/auto_research_pipeline.py"
     assert called["args"] == ["--list", "--all", "--list-all-profiles"]
+
+
+def test_multileg_help_and_research_forward(monkeypatch):
+    runner = CliRunner()
+    h = runner.invoke(cli, ["multileg", "--help"])
+    assert h.exit_code == 0
+    assert "validate-config" in h.output
+    assert "research" in h.output
+    assert "replay" in h.output
+    assert "gate" in h.output
+    assert "monitor" in h.output
+    assert "shadow" in h.output
+    assert "live" in h.output
+
+    called = {}
+
+    def _fake_run_script(script_path, args, docker=False, **kwargs):
+        called["script_path"] = script_path
+        called["args"] = list(args)
+        return 0
+
+    monkeypatch.setattr(cli_main, "run_script", _fake_run_script)
+    r = runner.invoke(
+        cli,
+        [
+            "multileg",
+            "research",
+            "--strategy",
+            "chop_grid",
+            "--stage",
+            "auto",
+            "--dry-run",
+        ],
+    )
+    assert r.exit_code == 0
+    assert called["script_path"] == "scripts/auto_research_pipeline.py"
+    cfg_idx = called["args"].index("--config")
+    assert (
+        called["args"][cfg_idx + 1] == "config/strategies/chop_grid/research/turbo.yaml"
+    )
+    assert "--stage" in called["args"]
+    assert "rolling_sim" in called["args"]
+
+
+def test_multileg_research_profile_non_rolling_uses_strategy_config(monkeypatch):
+    runner = CliRunner()
+    called = {}
+
+    def _fake_run_script(script_path, args, docker=False, **kwargs):
+        called["script_path"] = script_path
+        called["args"] = list(args)
+        return 0
+
+    monkeypatch.setattr(cli_main, "run_script", _fake_run_script)
+    r = runner.invoke(
+        cli,
+        [
+            "multileg",
+            "research",
+            "--strategy",
+            "chop_grid",
+            "--profile",
+            "non_rolling",
+            "--stage",
+            "auto",
+            "--dry-run",
+        ],
+    )
+    assert r.exit_code == 0
+    assert called["script_path"] == "scripts/auto_research_pipeline.py"
+    cfg_idx = called["args"].index("--config")
+    assert (
+        called["args"][cfg_idx + 1]
+        == "config/strategies/chop_grid/research/non_rolling.yaml"
+    )
+    assert "grid_backtest" in called["args"]

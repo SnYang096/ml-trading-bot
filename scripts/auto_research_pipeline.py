@@ -72,6 +72,7 @@ from src.config.strategy_layout import (
     strategy_packaged_root,
     is_research_turbo_or_slow_yaml,
 )
+from src.config.multileg_config import update_multileg_calibration_candidate
 
 
 def _strategy_prepare_features_yaml(scfg: Dict[str, Any]) -> str:
@@ -5667,7 +5668,40 @@ def _resolve_strategy_config_dir(
     return default_dir.resolve()
 
 
-def _multileg_calibration_candidates(strategy_type: str) -> List[Dict[str, Any]]:
+def _load_multileg_calibration_profiles(config_dir: Path) -> List[Dict[str, Any]]:
+    """Load strategy-owned multi-leg calibration profiles from ``research/turbo.yaml``.
+
+    This keeps candidate grids in config rather than pipeline code so runs are traceable.
+    """
+    path = config_dir / "research" / "turbo.yaml"
+    legacy_path = config_dir / "research.yaml"
+    if not path.exists() and legacy_path.exists():
+        path = legacy_path
+    if not path.exists():
+        return []
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    if not isinstance(raw, dict):
+        return []
+    profiles = raw.get("calibration_profiles") or []
+    if not isinstance(profiles, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for row in profiles:
+        if isinstance(row, dict):
+            out.append(dict(row))
+    return out
+
+
+def _multileg_calibration_candidates(
+    strategy_type: str, *, config_dir: Optional[Path] = None
+) -> List[Dict[str, Any]]:
+    if config_dir is not None:
+        from_yaml = _load_multileg_calibration_profiles(config_dir)
+        if from_yaml:
+            return from_yaml
     if strategy_type == "grid":
         return [
             {
@@ -5730,57 +5764,11 @@ def _apply_multileg_candidate(
     config_dir: Path,
     candidate: Dict[str, Any],
 ) -> None:
-    if strategy_type == "grid":
-        path = config_dir / "grid.yaml"
-        obj = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        regime = obj.setdefault("regime", {})
-        grid = obj.setdefault("grid", {})
-        spacing = grid.setdefault("spacing", {})
-        if "box_window" in candidate:
-            regime["box_window"] = int(candidate["box_window"])
-        if "entry_chop_min" in candidate:
-            regime["entry_chop_min"] = float(candidate["entry_chop_min"])
-        if "exit_chop_below" in candidate:
-            regime["exit_chop_below"] = float(candidate["exit_chop_below"])
-        if "exclude_box_prefilter" in candidate:
-            regime["exclude_box_prefilter"] = bool(candidate["exclude_box_prefilter"])
-        if "atr_mult" in candidate:
-            spacing["atr_mult"] = float(candidate["atr_mult"])
-        if "min_pct" in candidate:
-            spacing["min_pct"] = float(candidate["min_pct"])
-        path.write_text(yaml.safe_dump(obj, sort_keys=False), encoding="utf-8")
-        return
-
-    if strategy_type == "dual_add_trend":
-        path = config_dir / "dual_add.yaml"
-        obj = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        regime = obj.setdefault("regime", {})
-        inv = obj.setdefault("inventory", {})
-        spacing = obj.setdefault("add_spacing", {})
-        tp = obj.setdefault("take_profit", {})
-        if "box_window" in candidate:
-            regime["box_window"] = int(candidate["box_window"])
-        if "entry_min" in candidate:
-            regime["entry_min"] = float(candidate["entry_min"])
-        if "exit_below" in candidate:
-            regime["exit_below"] = float(candidate["exit_below"])
-        if "max_semantic_chop_entry" in candidate:
-            regime["max_semantic_chop_entry"] = float(
-                candidate["max_semantic_chop_entry"]
-            )
-        if "max_semantic_chop_hold" in candidate:
-            regime["max_semantic_chop_hold"] = float(
-                candidate["max_semantic_chop_hold"]
-            )
-        if "step_atr_mult" in candidate:
-            spacing["atr_mult"] = float(candidate["step_atr_mult"])
-        if "tp_atr_mult" in candidate:
-            tp["atr_mult"] = float(candidate["tp_atr_mult"])
-        if "tp_pct" in candidate:
-            tp["min_pct"] = float(candidate["tp_pct"])
-        if "flip_action" in candidate:
-            inv["flip_action"] = str(candidate["flip_action"])
-        path.write_text(yaml.safe_dump(obj, sort_keys=False), encoding="utf-8")
+    update_multileg_calibration_candidate(
+        config_dir=config_dir,
+        strategy_type=strategy_type,
+        candidate=candidate,
+    )
 
 
 def _run_multileg_backtest_command(
@@ -5910,7 +5898,11 @@ def _parse_multileg_metrics(strategy_type: str, out_dir: Path) -> Dict[str, Any]
         return {"n_trades": 0, "sharpe_r": 0.0}
     import pandas as pd
 
-    df = pd.read_csv(summary_path)
+    try:
+        df = pd.read_csv(summary_path)
+    except pd.errors.EmptyDataError:
+        # no-trade months may write an empty summary.csv
+        return {"n_trades": 0, "sharpe_r": 0.0}
     if df.empty:
         return {"n_trades": 0, "sharpe_r": 0.0}
     row = df.iloc[0].to_dict()
@@ -5971,7 +5963,9 @@ def _run_multileg_month_strategy(
     calib_dir = run_root / strategy / "multileg_calibration"
     if calibrate and not dry_run:
         calib_dir.mkdir(parents=True, exist_ok=True)
-        candidates = _multileg_calibration_candidates(strategy_type)
+        candidates = _multileg_calibration_candidates(
+            strategy_type, config_dir=source_dir
+        )
         rows = []
         for idx, candidate in enumerate(candidates, start=1):
             cand_cfg_dir = calib_dir / f"candidate_{idx:02d}" / "config"

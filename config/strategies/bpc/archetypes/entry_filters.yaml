@@ -1,16 +1,50 @@
-# BPC entry filter — 突破回踩后：CVD 吸收 + 恢复力度（多空共用同一阈值；方向由上游 entry_direction 决定）
-filters:
-  - id: bpc_orderflow_continuation
-    enabled: true
-    locked: true
-    promote_never_disable: true
-    description: "回踩后 CVD 吸收 + 恢复力度（BPC 订单流确认），适用于 long/short"
-    conditions:
-      - feature: bpc_cvd_absorption
-        operator: ">="
-        value: 1.0
-      - feature: bpc_recovery_strength
-        operator: ">="
-        value: 0.25
+# BPC Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
+# Date: 2026-05-08 13:36
+# Promoted: 3 filters (method=mean_effect)
+# Locked pool: 1 filters (missing ones auto-disabled)
+# Significance: 统计验证 + robustness ≥ 0.5
+#
+# 职责: "现在该入场吗?" → 硬二值控制
+# 多个 filter 之间是 OR 关系
 
+filters:
+- id: ef_bars_since_local_high_0.75
+  enabled: true
+  description: 'auto: bars_since_local_high >= 0.36'
+  conditions:
+  - feature: bars_since_local_high
+    operator: '>='
+    value: 0.36
+  notes: method=mean_effect, effect=+1.7416, rob=1.00, pass=25.3%
+- id: ef_bars_since_local_high_0.85
+  enabled: true
+  description: 'auto: bars_since_local_high >= 0.38'
+  conditions:
+  - feature: bars_since_local_high
+    operator: '>='
+    value: 0.38
+  notes: method=mean_effect, effect=+1.7149, rob=1.00, pass=17.4%
+- id: ef_cvd_divergence_score_0.85
+  enabled: true
+  description: 'auto: cvd_divergence_score >= 0.326531'
+  conditions:
+  - feature: cvd_divergence_score
+    operator: '>='
+    value: 0.326531
+  notes: method=mean_effect, effect=+1.6407, rob=0.67, pass=15.0%
+- id: bpc_orderflow_continuation
+  enabled: false
+  locked: true
+  promote_never_disable: true
+  description: 回踩后 CVD 吸收 + 恢复力度（BPC 订单流确认），适用于 long/short
+  conditions:
+  - feature: bpc_cvd_absorption
+    operator: '>='
+    value: 1.0
+  - feature: bpc_recovery_strength
+    operator: '>='
+    value: 0.25
+  lock_reason: null
+  notes: 'promote_never_disable: z-test未过，保留磁盘历史阈值, auto-disabled(no passing threshold), auto-disabled(no passing threshold)'
 combination_mode: or

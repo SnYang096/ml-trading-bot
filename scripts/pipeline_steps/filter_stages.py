@@ -8,6 +8,27 @@ from typing import Any, Callable, Dict, List, Optional
 import yaml
 
 
+def _pcm_ef_cutoff(
+    *,
+    pcm_cutoff_date: Optional[str],
+    test_start: str,
+    holdout_start: str,
+) -> str:
+    """Entry-filter cutoff used by PCM validation windows."""
+    return str(pcm_cutoff_date or test_start or holdout_start)
+
+
+def _pcm_ef_val_segment_end(
+    *,
+    pcm_cutoff_date: Optional[str],
+    test_start: str,
+    holdout_start: str,
+    end_date: str,
+) -> str:
+    """Validation segment end for PCM entry-filter scans."""
+    return str(pcm_cutoff_date or test_start or holdout_start or end_date)
+
+
 def run_prefilter_scan_stage(
     *,
     strategy: str,

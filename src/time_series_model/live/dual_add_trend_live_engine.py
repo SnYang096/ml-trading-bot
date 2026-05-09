@@ -12,8 +12,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-import yaml
-
+from src.config.multileg_config import load_multileg_effective_config
 from src.order_management.grid_execution_adapter import GridExecutionResult
 from src.order_management.multi_leg_reconciliation import (
     LocalOrderSnapshot,
@@ -33,12 +32,17 @@ class DualAddEngineConfig:
     tp_atr_mult: float = 0.25
     tp_pct: float = 0.0005
     tp_abs: float = 0.0
+    take_profit_mode: str = "basket"
     fee_bps: float = 4.0
     max_adds_per_side: int = 3
     max_gross_units: int = 4
     max_net_units: int = 2
     max_loss_per_segment: float = 0.01
+    protection_stop_mode: str = "catastrophic"
+    catastrophic_stop_atr_mult: float = 8.0
+    catastrophic_stop_tp_mult: float = 8.0
     flip_action: str = "close_offside_all"
+    initial_hedge: bool = True
 
 
 @dataclass
@@ -90,7 +94,12 @@ class DualAddTrendState:
 
 
 def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
-    obj = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    cfg_path = Path(path)
+    obj = load_multileg_effective_config(
+        config_dir=cfg_path.parent,
+        strategy_type="dual_add_trend",
+        engine_path=cfg_path,
+    )
     regime = obj.get("regime", {}) or {}
     inv = obj.get("inventory", {}) or {}
     spacing = obj.get("add_spacing", {}) or {}
@@ -106,12 +115,18 @@ def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
         tp_atr_mult=float(tp.get("atr_mult", 0.25)),
         tp_pct=float(tp.get("min_pct", 0.0005)),
         tp_abs=float(tp.get("min_abs", 0.0)),
+        take_profit_mode=str(tp.get("mode", "basket")),
         fee_bps=float(risk.get("diagnostic_fee_bps", risk.get("fee_bps", 4.0))),
         max_adds_per_side=int(inv.get("max_adds_per_side", 3)),
         max_gross_units=int(inv.get("max_gross_exposure_units", 4)),
         max_net_units=int(inv.get("max_net_exposure_units", 2)),
         max_loss_per_segment=float(risk.get("max_loss_per_segment", 0.01)),
+        protection_stop_mode=str(risk.get("protection_stop_mode", "catastrophic")),
+        catastrophic_stop_atr_mult=float(risk.get("catastrophic_stop_atr_mult", 8.0)),
+        catastrophic_stop_tp_mult=float(risk.get("catastrophic_stop_tp_mult", 8.0)),
         flip_action=str(inv.get("flip_action", "close_offside_all")),
+        initial_hedge=set(inv.get("initial_legs", ["LONG", "SHORT"]))
+        == {"LONG", "SHORT"},
     )
 
 
@@ -206,7 +221,16 @@ class DualAddTrendLiveEngine:
                     actions.extend(
                         self._handle_trend_flip(close, timestamp, trend_side)
                     )
-                actions.extend(self._target_exits(high, low, timestamp))
+                if not self.state.inventory and not self.state.pending_orders:
+                    actions.extend(
+                        self._seed_inventory_orders(close, timestamp, trend_side)
+                    )
+                    self.save_state()
+                    return actions
+                actions.extend(self._target_exits(high, low, close, timestamp))
+                if not self.state.active:
+                    self.save_state()
+                    return actions
                 actions.extend(self._trend_adds(high, low, timestamp, trend_side))
 
         self.save_state()
@@ -343,10 +367,20 @@ class DualAddTrendLiveEngine:
             trend_side=trend_side,
             last_timestamp=timestamp,
         )
-        return [
-            self._place_order("BUY", close, timestamp, "initial_long", seq=0),
-            self._place_order("SELL", close, timestamp, "initial_short", seq=0),
-        ]
+        return self._seed_inventory_orders(close, timestamp, trend_side)
+
+    def _seed_inventory_orders(
+        self, close: float, timestamp: str, trend_side: str
+    ) -> List[Dict[str, Any]]:
+        self.state.last_add_long = close
+        self.state.last_add_short = close
+        if self.cfg.initial_hedge:
+            return [
+                self._place_order("BUY", close, timestamp, "initial_long", seq=0),
+                self._place_order("SELL", close, timestamp, "initial_short", seq=0),
+            ]
+        side = "BUY" if trend_side == "LONG" else "SELL"
+        return [self._place_order(side, close, timestamp, "initial_trend", seq=0)]
 
     def _handle_trend_flip(
         self, close: float, timestamp: str, trend_side: str
@@ -369,9 +403,15 @@ class DualAddTrendLiveEngine:
         return actions
 
     def _target_exits(
-        self, high: float, low: float, timestamp: str
+        self, high: float, low: float, close: float, timestamp: str
     ) -> List[Dict[str, Any]]:
         actions: List[Dict[str, Any]] = []
+        if self.cfg.take_profit_mode == "basket":
+            if self.state.inventory and self._basket_pnl_per_capital(
+                close
+            ) >= self._basket_target_per_capital(close):
+                actions.extend(self._exit_all(close, timestamp, reason="basket_tp"))
+            return actions
         remaining: List[DualAddPosition] = []
         for pos in self.state.inventory:
             tp = self._tp_distance(pos.entry_price)
@@ -487,27 +527,36 @@ class DualAddTrendLiveEngine:
     def _protection_actions(
         self, *, pos: DualAddPosition, timestamp: str
     ) -> List[Dict[str, Any]]:
+        if self.cfg.protection_stop_mode == "none":
+            return []
         tp_dist = self._tp_distance(pos.entry_price)
         # Catastrophic exchange-side stop. Strategy exits can still be faster.
-        sl_dist = max(tp_dist * 4.0, self.state.atr * max(self.cfg.step_atr_mult, 1.0))
+        sl_dist = max(
+            tp_dist * self.cfg.catastrophic_stop_tp_mult,
+            self.state.atr * max(self.cfg.catastrophic_stop_atr_mult, 1.0),
+        )
         if pos.side == "LONG":
             tp = pos.entry_price + tp_dist
             sl = pos.entry_price - sl_dist
         else:
             tp = pos.entry_price - tp_dist
             sl = pos.entry_price + sl_dist
-        return [
-            {
-                "action": "place_protection",
-                "order_id": f"{pos.leg_id}_tp",
-                "leg_id": pos.leg_id,
-                "symbol": pos.symbol,
-                "side": pos.side,
-                "quantity": pos.quantity,
-                "trigger_price": tp,
-                "protection_type": "take_profit",
-                "timestamp": timestamp,
-            },
+        actions = []
+        if self.cfg.take_profit_mode != "basket":
+            actions.append(
+                {
+                    "action": "place_protection",
+                    "order_id": f"{pos.leg_id}_tp",
+                    "leg_id": pos.leg_id,
+                    "symbol": pos.symbol,
+                    "side": pos.side,
+                    "quantity": pos.quantity,
+                    "trigger_price": tp,
+                    "protection_type": "take_profit",
+                    "timestamp": timestamp,
+                }
+            )
+        actions.append(
             {
                 "action": "place_protection",
                 "order_id": f"{pos.leg_id}_sl",
@@ -518,8 +567,9 @@ class DualAddTrendLiveEngine:
                 "trigger_price": sl,
                 "protection_type": "stop_loss",
                 "timestamp": timestamp,
-            },
-        ]
+            }
+        )
+        return actions
 
     def _tp_distance(self, entry: float) -> float:
         fee_buffer = 2.0 * (self.cfg.fee_bps / 10000.0) * entry
@@ -529,6 +579,23 @@ class DualAddTrendLiveEngine:
             self.cfg.tp_pct * entry,
         )
         return fee_buffer + net_target
+
+    def _position_pnl_pct(self, pos: DualAddPosition, px: float) -> float:
+        fee = self.cfg.fee_bps / 10000.0
+        if pos.side == "LONG":
+            return (px - pos.entry_price) / pos.entry_price - 2.0 * fee
+        return (pos.entry_price - px) / pos.entry_price - 2.0 * fee
+
+    def _basket_pnl_per_capital(self, px: float) -> float:
+        capital_units = max(2, self.cfg.max_gross_units)
+        return (
+            sum(self._position_pnl_pct(pos, px) for pos in self.state.inventory)
+            / capital_units
+        )
+
+    def _basket_target_per_capital(self, px: float) -> float:
+        capital_units = max(2, self.cfg.max_gross_units)
+        return (self._tp_distance(px) / max(px, 1e-12)) / capital_units
 
     def _can_add(self, side: str) -> bool:
         long_units = sum(1 for p in self.state.inventory if p.side == "LONG")

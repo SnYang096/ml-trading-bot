@@ -119,8 +119,48 @@ def test_dual_add_maps_execution_result_and_fill_to_position(tmp_path: Path) -> 
     assert len(positions) == 1
     assert positions[0].side == "LONG"
     follow_ups = engine.pop_pending_actions()
-    assert [a["protection_type"] for a in follow_ups] == ["take_profit", "stop_loss"]
+    assert [a["protection_type"] for a in follow_ups] == ["stop_loss"]
     assert all(a["action"] == "place_protection" for a in follow_ups)
+
+
+def test_dual_add_basket_tp_exits_inventory_together(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BTCUSDT"
+    engine.state.segment_id = "seg"
+    engine.state.center = 100.0
+    engine.state.atr = 1.0
+    engine.state.trend_side = "LONG"
+    engine.state.inventory = [
+        DualAddPosition("long_0", "BTCUSDT", "LONG", 100.0, 1.0, 0, "t0"),
+        DualAddPosition("short_0", "BTCUSDT", "SHORT", 100.0, 1.0, 0, "t0"),
+        DualAddPosition("long_1", "BTCUSDT", "LONG", 100.5, 1.0, 1, "t1"),
+    ]
+
+    actions = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T02:00:00Z",
+        high=102.0,
+        low=101.0,
+        close=102.0,
+        atr=1.0,
+        features={
+            "trend_confidence": 1.0,
+            "trend_direction": "UP",
+            "semantic_chop": 0.0,
+            "box_prefilter": False,
+        },
+    )
+
+    exit_actions = [a for a in actions if a["action"] == "market_exit"]
+    assert len(exit_actions) == 3
+    assert {a["reason"] for a in exit_actions} == {"basket_tp"}
+    assert engine.state.inventory == []
+    assert engine.state.active is False
 
 
 def test_dual_add_trend_flip_exits_offside_inventory(tmp_path: Path) -> None:

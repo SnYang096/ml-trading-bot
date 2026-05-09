@@ -60,10 +60,10 @@ BPC 慢管线的主要职责是：特征构建、标签生成、prefilter/gate/e
 
 当前 multi-leg 候选参数写在 `scripts/auto_research_pipeline.py` 的 `_multileg_calibration_candidates()` 里。长期看这不利于追踪实验，也不利于比较 slow/turbo 配置差异。
 
-建议后续迁移到：
+建议后续迁移到（现已采用）：
 
-- `config/strategies/chop_grid/research.yaml`
-- `config/strategies/dual_add_trend/research.yaml`
+- `config/strategies/chop_grid/research/turbo.yaml`
+- `config/strategies/dual_add_trend/research/turbo.yaml`
 
 目标是让候选 profile 成为策略配置的一部分，例如：
 

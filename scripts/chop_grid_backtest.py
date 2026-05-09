@@ -375,8 +375,10 @@ def run_backtest(
         exec_tf = args.execution_timeframe or args.timeframe
         if exec_tf != args.timeframe:
             bars_exec = _resample_ohlcv(raw, exec_tf)
-            df_exec = merge_signal_features_onto_execution_bars(bars_exec, df)
             sig_delta = timeframe_to_timedelta(args.timeframe)
+            df_exec = merge_signal_features_onto_execution_bars(
+                bars_exec, df, signal_bar_delta=sig_delta
+            )
         else:
             df_exec = None
             sig_delta = None

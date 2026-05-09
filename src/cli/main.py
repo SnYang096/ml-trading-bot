@@ -3322,6 +3322,8 @@ def pipeline():
             "event_backtest",
             "fast_month",
             "rolling_sim",
+            "grid_backtest",
+            "dual_add_backtest",
             "pcm_joint",
             "pcm_slot_grid",
         ]
@@ -3330,7 +3332,8 @@ def pipeline():
     show_default=True,
     help=(
         "运行阶段: full/prefilter/gate/entry_filter/slow_snapshot/"
-        "execution_opt/event_backtest/fast_month/rolling_sim/pcm_joint/pcm_slot_grid"
+        "execution_opt/event_backtest/fast_month/rolling_sim/grid_backtest/"
+        "dual_add_backtest/pcm_joint/pcm_slot_grid"
     ),
 )
 @click.option(
@@ -3743,6 +3746,272 @@ def pipeline_debug_pcm_candidates(run_id, month, config_path):
     if config_path:
         args.extend(["--config", config_path])
     sys.exit(run_script("scripts/pipeline_debug_pcm_candidates.py", args))
+
+
+@cli.group()
+def multileg():
+    """多腿管线: 研究、回放、门禁、监控、影子/测试实盘."""
+    pass
+
+
+def _multileg_default_config(profile: str, strategy: str = "") -> str:
+    p = str(profile or "").strip().lower().replace("-", "_")
+    if p not in {"turbo", "slow", "non_rolling"}:
+        p = "turbo"
+    s = str(strategy or "").strip()
+    if s:
+        return f"config/strategies/{s}/research/{p}.yaml"
+    return "config/pipelines/multileg_orchestrate_2h.yaml"
+
+
+def _multileg_stage_for_strategy(strategy: str) -> str:
+    s = str(strategy or "").strip().lower()
+    if s == "chop_grid":
+        return "grid_backtest"
+    if s == "dual_add_trend":
+        return "dual_add_backtest"
+    return "rolling_sim"
+
+
+def _multileg_auto_stage(profile: str, strategy: str, run_all: bool) -> str:
+    if run_all or not str(strategy).strip():
+        return "rolling_sim"
+    p = str(profile or "").strip().lower().replace("-", "_")
+    if p == "non_rolling":
+        return _multileg_stage_for_strategy(strategy)
+    return "rolling_sim"
+
+
+@multileg.command("validate-config")
+@click.option(
+    "--config",
+    "config_path",
+    default="config/pipelines/multileg_orchestrate_2h.yaml",
+    show_default=True,
+)
+@click.option("--constitution-yaml", default="", help="可选：覆盖宪法 YAML 路径")
+def multileg_validate_config(config_path: str, constitution_yaml: str):
+    """校验多腿 pipeline + constitution 对齐与风险字段完整性."""
+    args = ["--config", config_path]
+    if str(constitution_yaml).strip():
+        args.extend(["--constitution-yaml", str(constitution_yaml).strip()])
+    sys.exit(run_script("scripts/multileg_validate_config.py", args))
+
+
+@multileg.command("research")
+@click.option("--strategy", default="", help="单策略 (chop_grid/dual_add_trend)")
+@click.option("--all", "run_all", is_flag=True, help="跑 config 里的全部多腿策略")
+@click.option(
+    "--profile",
+    default="turbo",
+    show_default=True,
+    type=click.Choice(["turbo", "slow", "non_rolling"]),
+)
+@click.option("--config", "config_path", default="", help="可选：指定 pipeline YAML")
+@click.option("--stage", default="auto", help="auto|rolling_sim|grid_backtest|dual_add_backtest")
+@click.option("--month", default="", help="可选：YYYY-MM 或逗号分隔多个月")
+@click.option("--end-date", default="", help="可选：截止日期")
+@click.option("--dry-run", is_flag=True, help="打印命令不执行")
+@click.option("--no-adopt", is_flag=True, help="禁止自动采纳")
+@click.option("--use-1min", is_flag=True, help="使用 1min bar 精细模拟")
+@click.option("--live-root", default="live/highcap", show_default=True)
+def multileg_research(
+    strategy: str,
+    run_all: bool,
+    profile: str,
+    config_path: str,
+    stage: str,
+    month: str,
+    end_date: str,
+    dry_run: bool,
+    no_adopt: bool,
+    use_1min: bool,
+    live_root: str,
+):
+    """运行多腿研究阶段（复用 auto_research_pipeline stage）。"""
+    cfg = str(config_path).strip() or _multileg_default_config(profile, strategy)
+    args: List[str] = ["--config", cfg]
+    if run_all:
+        args.append("--all")
+    elif str(strategy).strip():
+        args.extend(["--strategy", str(strategy).strip()])
+    else:
+        args.append("--all")
+    stg = str(stage).strip().lower()
+    if stg == "auto":
+        stg = _multileg_auto_stage(profile, strategy, run_all)
+    if stg != "full":
+        args.extend(["--stage", stg])
+    if str(month).strip():
+        args.extend(["--month", str(month).strip()])
+    if str(end_date).strip():
+        args.extend(["--end-date", str(end_date).strip()])
+    if dry_run:
+        args.append("--dry-run")
+    if no_adopt:
+        args.append("--no-adopt")
+    if use_1min:
+        args.append("--use-1min")
+    if str(live_root).strip() and str(live_root).strip() != "live/highcap":
+        args.extend(["--live-root", str(live_root).strip()])
+    sys.exit(run_script("scripts/auto_research_pipeline.py", args))
+
+
+@multileg.command("replay")
+@click.option(
+    "--config",
+    "config_path",
+    default="config/pipelines/multileg_orchestrate_2h.yaml",
+    show_default=True,
+)
+@click.option("--months", default="", help="YYYY-MM,YYYY-MM 或 YYYY-MM:YYYY-MM")
+@click.option("--strategy", default="", help="单策略（可选）")
+@click.option("--all", "run_all", is_flag=True, help="跑配置中的全部策略")
+@click.option("--end-date", default="", help="可选截止日期")
+@click.option("--dry-run", is_flag=True)
+@click.option("--use-1min", is_flag=True)
+@click.option("--live-root", default="live/highcap", show_default=True)
+def multileg_replay(
+    config_path: str,
+    months: str,
+    strategy: str,
+    run_all: bool,
+    end_date: str,
+    dry_run: bool,
+    use_1min: bool,
+    live_root: str,
+):
+    """无前视多腿回放（rolling_sim 封装 + 汇总报告）。"""
+    args = ["--config", config_path]
+    if str(months).strip():
+        args.extend(["--months", str(months).strip()])
+    if str(strategy).strip():
+        args.extend(["--strategy", str(strategy).strip()])
+    if run_all:
+        args.append("--all")
+    if str(end_date).strip():
+        args.extend(["--end-date", str(end_date).strip()])
+    if dry_run:
+        args.append("--dry-run")
+    if use_1min:
+        args.append("--use-1min")
+    if str(live_root).strip() and str(live_root).strip() != "live/highcap":
+        args.extend(["--live-root", str(live_root).strip()])
+    sys.exit(run_script("scripts/multileg_replay.py", args))
+
+
+@multileg.command("gate")
+@click.option("--run-dir", required=True, help="rolling run root: .../_rolling_sim/<run_id>")
+@click.option(
+    "--config",
+    "config_path",
+    default="config/pipelines/multileg_orchestrate_2h.yaml",
+    show_default=True,
+)
+@click.option("--out-json", default="", help="可选输出 JSON")
+@click.option("--out-html", default="", help="可选输出 HTML")
+def multileg_gate(run_dir: str, config_path: str, out_json: str, out_html: str):
+    """多腿上线门禁评估（READY_SHADOW/RESEARCH_ONLY/RETUNE_THRESHOLDS/OFFLINE）。"""
+    args = ["--run-dir", run_dir, "--config", config_path]
+    if str(out_json).strip():
+        args.extend(["--out-json", str(out_json).strip()])
+    if str(out_html).strip():
+        args.extend(["--out-html", str(out_html).strip()])
+    sys.exit(run_script("scripts/multileg_gate.py", args))
+
+
+@multileg.command("monitor")
+@click.option(
+    "--config",
+    "config_path",
+    default="config/pipelines/multileg_orchestrate_2h.yaml",
+    show_default=True,
+)
+@click.option("--run-id", default="", help="可选 rolling_sim run id")
+@click.option("--lookback-months", type=int, default=6, show_default=True)
+@click.option("--out-json", default="", help="可选输出 JSON")
+@click.option("--out-html", default="", help="可选输出 HTML")
+def multileg_monitor(
+    config_path: str, run_id: str, lookback_months: int, out_json: str, out_html: str
+):
+    """多腿健康监控（regime/feature/threshold/risk 信号）。"""
+    args = ["--config", config_path, "--lookback-months", str(int(lookback_months))]
+    if str(run_id).strip():
+        args.extend(["--run-id", str(run_id).strip()])
+    if str(out_json).strip():
+        args.extend(["--out-json", str(out_json).strip()])
+    if str(out_html).strip():
+        args.extend(["--out-html", str(out_html).strip()])
+    sys.exit(run_script("scripts/multileg_monitor.py", args))
+
+
+@multileg.command("shadow")
+@click.option("--strategies", default="chop_grid,dual_add_trend", show_default=True)
+@click.option("--bar-source", default="feature-store", show_default=True)
+@click.option("--once", is_flag=True, help="仅跑一次")
+@click.option("--poll-seconds", type=float, default=60.0, show_default=True)
+@click.option("--config", "constitution_yaml", default="", help="可选：宪法路径覆盖")
+def multileg_shadow(
+    strategies: str,
+    bar_source: str,
+    once: bool,
+    poll_seconds: float,
+    constitution_yaml: str,
+):
+    """启动多腿影子运行（run_multi_leg_live.py --mode shadow）。"""
+    args = [
+        "--mode",
+        "shadow",
+        "--strategies",
+        strategies,
+        "--bar-source",
+        bar_source,
+        "--poll-seconds",
+        str(float(poll_seconds)),
+    ]
+    if once:
+        args.append("--once")
+    if str(constitution_yaml).strip():
+        args.extend(["--constitution-yaml", str(constitution_yaml).strip()])
+    sys.exit(run_script("scripts/run_multi_leg_live.py", args))
+
+
+@multileg.command("live")
+@click.option(
+    "--mode",
+    default="testnet",
+    show_default=True,
+    type=click.Choice(["testnet", "mainnet"]),
+)
+@click.option("--strategies", default="chop_grid,dual_add_trend", show_default=True)
+@click.option("--bar-source", default="feature-store", show_default=True)
+@click.option("--poll-seconds", type=float, default=60.0, show_default=True)
+@click.option("--allow-shared-account", is_flag=True)
+@click.option("--config", "constitution_yaml", default="", help="可选：宪法路径覆盖")
+def multileg_live(
+    mode: str,
+    strategies: str,
+    bar_source: str,
+    poll_seconds: float,
+    allow_shared_account: bool,
+    constitution_yaml: str,
+):
+    """启动多腿测试网/主网运行（run_multi_leg_live.py）。"""
+    args = [
+        "--mode",
+        str(mode),
+        "--strategies",
+        strategies,
+        "--bar-source",
+        bar_source,
+        "--poll-seconds",
+        str(float(poll_seconds)),
+    ]
+    if allow_shared_account:
+        args.append("--allow-shared-account")
+    if str(constitution_yaml).strip():
+        args.extend(["--constitution-yaml", str(constitution_yaml).strip()])
+    sys.exit(run_script("scripts/run_multi_leg_live.py", args))
 
 
 @experiment.command("regime-gate")

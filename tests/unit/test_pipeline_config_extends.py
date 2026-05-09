@@ -313,6 +313,50 @@ def test_load_tpc_non_rolling_extends_slow():
     assert (cfg.get("shap_feature_selection") or {}).get("enabled") is True
 
 
+def test_load_chop_grid_non_rolling_extends_turbo():
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/chop_grid/research/non_rolling.yaml"
+    )
+    assert "chop_grid" in (cfg.get("strategies") or {})
+    assert cfg.get("rolling", {}).get("mode") == "non_rolling"
+    assert cfg.get("rolling", {}).get("time_split_policy") == "static_holdout"
+    assert "results/chop_grid/non-rolling-sim" in str(
+        cfg.get("output", {}).get("history_dir", "")
+    )
+    assert cfg["grid_backtest"]["enabled"] is True
+    assert "non-rolling-full-cycle" in cfg["grid_backtest"]["output_dir"]
+
+
+def test_load_dual_add_non_rolling_extends_turbo():
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/dual_add_trend/research/non_rolling.yaml"
+    )
+    assert "dual_add_trend" in (cfg.get("strategies") or {})
+    assert cfg.get("rolling", {}).get("mode") == "non_rolling"
+    assert cfg.get("rolling", {}).get("time_split_policy") == "static_holdout"
+    assert "results/dual_add_trend/non-rolling-sim" in str(
+        cfg.get("output", {}).get("history_dir", "")
+    )
+    assert cfg["dual_add_backtest"]["enabled"] is True
+    assert "non-rolling-full-cycle" in cfg["dual_add_backtest"]["output_dir"]
+
+
+def test_load_multileg_slow_profiles_extend_turbo_metadata():
+    chop_cfg = load_pipeline_config(
+        _root() / "config/strategies/chop_grid/research/slow.yaml"
+    )
+    dual_cfg = load_pipeline_config(
+        _root() / "config/strategies/dual_add_trend/research/slow.yaml"
+    )
+
+    assert chop_cfg.get("rolling", {}).get("mode") == "slow_realistic"
+    assert "study" in chop_cfg
+    assert "threshold_search" in chop_cfg
+    assert dual_cfg.get("rolling", {}).get("mode") == "slow_realistic"
+    assert "study" in dual_cfg
+    assert "threshold_search" in dual_cfg
+
+
 def test_multileg_backtest_dates_mismatch_raises(tmp_path: Path):
     bad = tmp_path / "bad_chop.yaml"
     bad.write_text(

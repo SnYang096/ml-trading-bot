@@ -35,6 +35,7 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -97,6 +98,8 @@ ARCHETYPE_FILES = [
     "holding.yaml",
 ]
 
+DEPLOY_ROOT_DENYLIST = frozenset({"research.yaml", "threshold_search.yaml"})
+
 TOP_LEVEL_CONFIGS = [
     "meta.yaml",
     "model.yaml",
@@ -115,6 +118,44 @@ TOP_LEVEL_CONFIGS = [
 GLOBAL_CONFIGS = [
     "constitution/constitution.yaml",
 ]
+
+
+@dataclass(frozen=True)
+class StrategyDeployProfile:
+    archetypes_mode: str
+    archetype_whitelist: Tuple[str, ...] = ()
+    engine_yaml: Optional[str] = None
+
+
+def _skip_root_deploy_file(filename: str) -> bool:
+    return Path(str(filename)).name in DEPLOY_ROOT_DENYLIST
+
+
+def get_strategy_deploy_profile(strategy: str) -> StrategyDeployProfile:
+    s = _normalize_deploy_strategy(strategy)
+    if s in MULTI_LEG_STRATEGIES:
+        return StrategyDeployProfile(
+            archetypes_mode="all",
+            engine_yaml=MULTI_LEG_ENGINE_YAML.get(s),
+        )
+    return StrategyDeployProfile(
+        archetypes_mode="whitelist",
+        archetype_whitelist=tuple(ARCHETYPE_FILES),
+    )
+
+
+def iter_deploy_archetype_basenames(
+    profile: StrategyDeployProfile, archetypes_dir: Path
+) -> List[str]:
+    if not archetypes_dir.exists():
+        return []
+    if profile.archetypes_mode == "all":
+        return sorted(p.name for p in archetypes_dir.iterdir() if p.is_file())
+    return [
+        name
+        for name in profile.archetype_whitelist
+        if (archetypes_dir / name).is_file()
+    ]
 
 
 # ====================================================================
@@ -190,6 +231,7 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
     for strat in strategies:
         src_dir = research_strategy_dir(strat)
         dst_dir = LIVE_STRATEGIES / strat
+        profile = get_strategy_deploy_profile(strat)
 
         if not src_dir.exists():
             print(f"\n⚠️  {strat.upper()}: 研究 config 不存在 ({src_dir})")
@@ -208,12 +250,7 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
         dst_arch = dst_dir / "archetypes"
 
         if src_arch.exists():
-            if _is_multi_leg_deploy(strat):
-                arch_files = sorted(p.name for p in src_arch.iterdir() if p.is_file())
-            else:
-                arch_files = [f for f in ARCHETYPE_FILES if (src_arch / f).exists()]
-
-            for fname in arch_files:
+            for fname in iter_deploy_archetype_basenames(profile, src_arch):
                 src_file = src_arch / fname
                 dst_file = dst_arch / fname
                 if not src_file.exists():
@@ -235,9 +272,9 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
                         print(f"    ... 还有 {len(diff_lines) - 10} 行差异")
 
         # multi-leg canonical engine yaml (grid.yaml / dual_add.yaml)
-        if _is_multi_leg_deploy(strat):
-            eng = MULTI_LEG_ENGINE_YAML.get(strat, "")
-            if eng:
+        if profile.engine_yaml:
+            eng = profile.engine_yaml
+            if not _skip_root_deploy_file(eng):
                 src_eng = src_dir / eng
                 dst_eng = dst_dir / eng
                 if src_eng.exists():
@@ -339,23 +376,18 @@ def deploy_strategy(strat: str) -> int:
         return 0
 
     copied = 0
+    profile = get_strategy_deploy_profile(strat)
 
     # archetypes
     src_arch = src_dir / "archetypes"
     dst_arch = dst_dir / "archetypes"
     if src_arch.exists():
         dst_arch.mkdir(parents=True, exist_ok=True)
-        if _is_multi_leg_deploy(strat):
-            for src_file in sorted(src_arch.iterdir()):
-                if src_file.is_file():
-                    shutil.copy2(src_file, dst_arch / src_file.name)
-                    copied += 1
-        else:
-            for fname in ARCHETYPE_FILES:
-                src_file = src_arch / fname
-                if src_file.exists():
-                    shutil.copy2(src_file, dst_arch / fname)
-                    copied += 1
+        for fname in iter_deploy_archetype_basenames(profile, src_arch):
+            src_file = src_arch / fname
+            if src_file.exists():
+                shutil.copy2(src_file, dst_arch / fname)
+                copied += 1
 
     # top-level configs
     dst_dir.mkdir(parents=True, exist_ok=True)
@@ -365,9 +397,9 @@ def deploy_strategy(strat: str) -> int:
             shutil.copy2(src_file, dst_dir / fname)
             copied += 1
 
-    if _is_multi_leg_deploy(strat):
-        eng = MULTI_LEG_ENGINE_YAML.get(strat, "")
-        if eng:
+    if profile.engine_yaml:
+        eng = profile.engine_yaml
+        if not _skip_root_deploy_file(eng):
             src_eng = src_dir / eng
             if src_eng.exists():
                 shutil.copy2(src_eng, dst_dir / eng)

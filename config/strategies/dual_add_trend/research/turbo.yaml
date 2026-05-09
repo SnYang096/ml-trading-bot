@@ -52,10 +52,11 @@ dual_add_backtest:
   add_mode: trend
   flip_action: close_offside_all
   exclude_box: true
-  step_atr_mult: 0.50
-  tp_atr_mult: 0.25
-  tp_pct: 0.0005
-  max_loss_per_segment: 0.01
+  step_atr_mult: 1.00
+  tp_atr_mult: 0.75
+  tp_pct: 0.0015
+  max_loss_per_segment: 0.02
+  risk_stop_mode: regime_only
   max_gross_exposure: 4
   max_net_exposure: 2
   max_adds_per_side: 3
@@ -80,7 +81,7 @@ study:
     exclude_box_prefilter: true
 
   inventory:
-    initial_legs: [LONG, SHORT]
+    initial_legs: [TREND]
     add_mode: dynamic_trend_side_only
     flip_action: close_offside_all
     max_adds_per_side: 3
@@ -88,12 +89,17 @@ study:
     max_net_exposure_units: 2
 
   take_profit:
+    mode: basket
     fee_aware: true
     formula: "fee_buffer + max(0.25 * ATR14, 0.05% * entry_price)"
     note: "A position only exits at TP if the modeled round-trip fee is covered and net profit remains positive."
 
   risk:
-    max_loss_per_segment: 0.01
+    max_loss_per_segment: 0.02
+    risk_stop_mode: regime_only
+    protection_stop_mode: catastrophic
+    catastrophic_stop_atr_mult: 8.0
+    catastrophic_stop_tp_mult: 8.0
     min_segment_bars: 6
     max_segment_bars: 120
     force_exit_on_regime_loss: true
@@ -122,12 +128,35 @@ threshold_search:
   search_space:
     trend_min: [0.70, 0.80, 0.90]
     trend_exit_min: [0.40, 0.50, 0.60]
-    tp_atr_mult: [0.20, 0.25, 0.35, 0.50]
-    tp_pct: [0.0004, 0.0005, 0.0007, 0.0010]
+    tp_atr_mult: [0.50, 0.75, 1.00]
+    tp_pct: [0.0010, 0.0015, 0.0020]
     max_gross_exposure: [3, 4, 5]
     max_net_exposure: [1, 2, 3]
-    max_loss_per_segment: [0.005, 0.01, 0.02]
+    max_loss_per_segment: [0.01, 0.02, 0.03]
     flip_action: [close_offside_adds, close_offside_all]
+
+calibration_profiles:
+  - name: trend_fast_lean
+    box_window: 60
+    entry_min: 0.75
+    exit_below: 0.45
+    max_semantic_chop_entry: 0.20
+    max_semantic_chop_hold: 0.35
+    step_atr_mult: 0.75
+  - name: trend_balanced_default
+    box_window: 120
+    entry_min: 0.80
+    exit_below: 0.50
+    max_semantic_chop_entry: 0.25
+    max_semantic_chop_hold: 0.40
+    step_atr_mult: 1.00
+  - name: trend_conservative_wide
+    box_window: 240
+    entry_min: 0.85
+    exit_below: 0.55
+    max_semantic_chop_entry: 0.30
+    max_semantic_chop_hold: 0.45
+    step_atr_mult: 1.25
 
 output:
   history_dir: results/dual_add_trend/turbo-rolling-sim

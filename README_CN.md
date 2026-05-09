@@ -605,7 +605,137 @@ python scripts/run_multi_leg_live.py \
 
 密钥与账户隔离见脚本首屏 docstring（推荐 `MULTI_LEG_BINANCE_FUTURES_*`）；更完整的 live 事件流说明见 `docs/architecture/live_stream/README.md`。
 
-### 7) （可选）最终验收 & 最终训练模型
+**5）推荐：`mlbot multileg` 一站式命令（新增）**
+
+> 说明：多腿研究/回放/门禁/监控现在有独立命令组，但阶段语义尽量和 BPC 单腿对齐。
+> 多腿没有 BPC 的 `prefilter → gate → direction → entry_filter → event_backtest` 单仓信号链，
+> 对应位置由 `regime/profile calibration → grid_backtest/dual_add_backtest → multi_leg_gate` 替代。
+
+阶段映射：
+
+- BPC `turbo`：固定生产特征/archetypes，只做月度阈值重标定；多腿 `turbo`：固定 `features.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`（根 `grid.yaml`/`dual_add.yaml` 仅作为稳定入口），做 regime/profile/执行参数校准。
+- BPC `slow`：季度慢快照，允许结构/特征搜索，再接月度滚动；多腿 `slow`：季度检查 regime/engine/profile 是否需要刷新，再接月度 profile 校准，但不走 BPC 的 prefilter/gate adoption 链。
+- BPC `non_rolling`：整段静态 holdout 单次验收，用 `comparison/deploy_gate` 看是否可上线；多腿 `non_rolling`：整段静态 holdout 跑 `grid_backtest`/`dual_add_backtest`，上线结论交给 `mlbot multileg gate`。
+- BPC `event_backtest`：单仓入场事件回测；多腿 `grid_backtest`/`dual_add_backtest`：持仓库存、加仓、强平、gross/net exposure 的专用回测。
+- BPC `deploy_gate` / `report.html`：单腿上线候选报告；多腿 `multi_leg_gate_report.html`：多腿上线门禁，额外看 forced/risk stop/segment 稳定性。
+- BPC 漂移体检：`turbo/slow` 结果 + retrain triggers；多腿漂移体检：`mlbot multileg monitor`，分 regime/feature/profile/risk 四类判断是调阈值、看特征，还是下线。
+
+目录映射：
+
+- BPC 管线入口：`config/strategies/bpc/research/{turbo,slow,non_rolling}.yaml`
+- 多腿管线入口：`config/strategies/chop_grid/research/{turbo,slow,non_rolling}.yaml` 与 `config/strategies/dual_add_trend/research/{turbo,slow,non_rolling}.yaml`
+- BPC 策略结构：`features.yaml`、`archetypes/*`、`labels_*`、prefilter/gate/entry 配置
+- 多腿策略结构：`features.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`、`archetypes/regime_thresholds.yaml`、`grid.yaml` 或 `dual_add.yaml`
+- 多腿 `calibration_profiles` 放在 `research/turbo.yaml`（`slow/non_rolling` 通过 `extends` 继承），不再使用根目录 `research.yaml`。
+
+```bash
+# 1) 校验多腿编排 + 宪法对齐
+mlbot multileg validate-config \
+  --config config/pipelines/multileg_orchestrate_2h.yaml
+
+# 2) 单策略研究：profile 与 BPC 同名（turbo/slow/non_rolling）
+mlbot multileg research \
+  --strategy chop_grid \
+  --profile turbo \
+  --stage auto \
+  --dry-run
+
+mlbot multileg research \
+  --strategy chop_grid \
+  --profile non_rolling \
+  --stage auto
+
+# 2a) turbo 日常：固定特征/结构，滚动校准 profile/execution
+mlbot multileg research \
+  --strategy chop_grid \
+  --profile turbo \
+  --stage auto
+mlbot multileg replay \
+  --config config/pipelines/multileg_orchestrate_2h.yaml \
+  --strategy chop_grid \
+  --months 2025-01:2025-12
+mlbot multileg gate \
+  --config config/pipelines/multileg_orchestrate_2h.yaml \
+  --run-dir results/multi_leg/rolling-sim/_rolling_sim/<run_id>
+mlbot multileg monitor \
+  --config config/pipelines/multileg_orchestrate_2h.yaml \
+  --run-id <run_id> \
+  --lookback-months 6
+
+# 2b) slow 体检：慢结构/特征体检 + 滚动校准
+mlbot multileg research \
+  --strategy chop_grid \
+  --profile slow \
+  --stage auto
+mlbot multileg replay \
+  --config config/strategies/chop_grid/research/slow.yaml \
+  --strategy chop_grid \
+  --months 2025-01:2025-12
+mlbot multileg gate \
+  --config config/strategies/chop_grid/research/slow.yaml \
+  --run-dir results/chop_grid/slow-rolling-sim/_rolling_sim/<run_id>
+mlbot multileg monitor \
+  --config config/strategies/chop_grid/research/slow.yaml \
+  --run-id <run_id> \
+  --lookback-months 6
+
+# 2c) non_rolling 上线验收：整段静态 holdout，跑专用 engine backtest
+mlbot multileg research \
+  --strategy chop_grid \
+  --profile non_rolling \
+  --stage auto
+mlbot multileg gate \
+  --config config/strategies/chop_grid/research/non_rolling.yaml \
+  --run-dir results/chop_grid/non-rolling-full-cycle
+# non_rolling 是单次静态验收，不做漂移 monitor；漂移监控用 turbo/slow rolling run。
+
+# 3) 全量 rolling 回放（无前视，类似把过去按月当成真实上线）
+mlbot multileg replay \
+  --config config/pipelines/multileg_orchestrate_2h.yaml \
+  --all \
+  --months 2024-01:2025-12
+
+# 4) 上线门禁（基于某次 rolling run）
+mlbot multileg gate \
+  --config config/pipelines/multileg_orchestrate_2h.yaml \
+  --run-dir results/multi_leg/rolling-sim/_rolling_sim/<run_id>
+
+# 5) 健康监控（regime/feature/threshold/risk）
+mlbot multileg monitor \
+  --config config/pipelines/multileg_orchestrate_2h.yaml \
+  --run-id <run_id> \
+  --lookback-months 6
+
+# 6) 影子 / 测试网运行
+mlbot multileg shadow --bar-source feature-store --once
+mlbot multileg live --mode testnet --bar-source feature-store
+```
+
+**6）开发回归测试命令（新增代码对应）**
+
+```bash
+# CLI 命令转发 + stage 暴露 + multileg 子命令
+python -m pytest tests/unit/test_pipeline_new_commands.py -q
+
+# 多腿命令组参数转发（validate/replay/gate/monitor/shadow/live）
+python -m pytest tests/unit/test_multileg_cli_commands.py -q
+
+# 多腿 calibration profiles 配置化加载（research/turbo.yaml -> pipeline）
+python -m pytest tests/unit/test_multileg_profile_loading.py -q
+
+# 多腿 non_rolling 配置继承与阶段对齐
+python -m pytest tests/unit/test_pipeline_config_extends.py -q
+
+# 多腿 effective config 合并（engine manifest + archetypes 分层）
+python -m pytest tests/unit/test_multileg_config_loader.py -q
+```
+
+**7）多腿上线日常操作手册（新增）**
+
+- 文档：`docs/workflow/MULTILEG_DAILY_RUNBOOK_CN.md`
+- 内容覆盖：日常巡检、周度重评估、上线门禁、影子/测试网切换、回滚与故障处置。
+
+### 8) （可选）最终验收 & 最终训练模型
 
 > 这两条命令对应 **nnmultihead / 传统 tree 最终模型的单次一致性验收**，**不是日常 rolling_sim 的替代**；日常研究用 §2-§5 的 rolling 工作流即可。
 
@@ -627,9 +757,9 @@ mlbot train final \
   --output-root models --deterministic --no-docker
 ```
 
-### 8) 近期实验 & 分支路径（可选；不含 Nautilus — 已弃用）
+### 9) 近期实验 & 分支路径（可选；不含 Nautilus — 已弃用）
 
-#### 8.1 盒子特征（`box_structure_f`）+ CRF 立项
+#### 9.1 盒子特征（`box_structure_f`）+ CRF 立项
 
 > 基础设施：`src/features/time_series/box_structure_features.py`（因果、滚动，26 列 `box_*`）  
 > 诊断脚本（oracle vs causal 对照）：`scripts/diag_consolidation_structure.py --mode {oracle,causal}`  
@@ -654,7 +784,7 @@ mlbot pipeline run --all \
 
 SRB / BPC / ME 已把 `box_*` 作为 prefilter 草稿（`locked: false`），跑现有 turbo 管线即可生效。
 
-#### 8.2 Pool-B + 语义组特征搜索（分支，非主线）
+#### 9.2 Pool-B + 语义组特征搜索（分支，非主线）
 
 > **为什么树模型没有「原样上线」，主线改成「分层规则 + SRB / nnmultihead」？**  
 > 不是否认树的研究价值，而是 **生产约束** 与 **架构选型** 不同：  
@@ -714,7 +844,7 @@ mlbot diagnose poolb-semantic-search \
 > - **实验分支**：个别「单策略直树」实验曾到 **Sharpe≈2** 量级，但 **并行分支过多** 会拖累复现与运维。  
 > - **近期主线**：**先把分层规则路径跑通**（adopt / rolling / 上线闸门）；高 Sharpe 分支 **另册登记**，再决定是否 **只吸收特征或阈值进 `archetypes/`**，不与主线同等摊平。
 
-#### 8.3 Locked 阈值调参（分支工具）
+#### 9.3 Locked 阈值调参（分支工具）
 
 > 保持 locked 语义特征不变，只扫阈值；多窗口滚动评分。
 
@@ -727,7 +857,7 @@ python scripts/tune_locked_prefilter_thresholds.py \
 
 > 当 `prefilter.yaml` 有 `locked: true` 规则时，`mlbot pipeline run` 会自动触发；缓存在 `results/locked_tuning/cache/`，加 `--disable-auto-locked-tuning` 可关闭。
 
-#### 8.4 TaskSpec 驱动的 Tier0/Tier1 对比（nnmultihead，分支）
+#### 9.4 TaskSpec 驱动的 Tier0/Tier1 对比（nnmultihead，分支）
 
 你问的“Tier0/Tier1 会如何影响训练？是不是跑两次看报告？”——**是的**，但需要做到两点才能可复盘：  
 1) 每个 Tier 生成一个**具体可执行的 config 目录**（不直接靠“标签”）  

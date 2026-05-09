@@ -1,0 +1,15 @@
+# Multi-leg prefilter equivalent: define trend regime entry/exit gates.
+regime:
+  # Trade only when trend confidence is high and semantic chop is low.
+  entry_feature: trend_confidence
+  entry_min: 0.80
+  exit_below: 0.50
+  max_semantic_chop_entry: 0.25
+  max_semantic_chop_hold: 0.40
+  exclude_box_prefilter: true
+  box_window: 120
+  box_prefilter:
+    stability_min: 0.85
+    width_min: 0.04
+    width_max: 0.30
+    touches_min: 5

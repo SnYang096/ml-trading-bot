@@ -2,6 +2,8 @@
 # Chop Grid standalone pipeline (2H, slow_realistic rolling)
 # ============================================================
 
+extends: turbo.yaml
+
 dates:
   start_date: "2022-01-01"
   end_date: "2026-03-31"

@@ -1,3 +1,8 @@
+# BPC Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/bpc/non-rolling-sim/bpc/20260508_133024/strategies/bpc/gate_draft.yaml
+# 优化规则: 0/2 条通过优化
+# Phase split: system_safety=2, hard_gate=2
+
 schema:
   phases:
   - system_safety
@@ -8,23 +13,6 @@ schema:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
-
-# ==========================================================================
-# BPC gate.yaml —— 2026-04-22 "回归早期" 精简版
-# --------------------------------------------------------------------------
-# 历史教训（诊断 2024-04~06 崩盘的回溯）：
-#   早期 BPC (20260413_144115) run 2024-04~06 累计 +1086R，hard_gates = []。
-#   之后的 "chop-gate hardening" 引入了 9 条 locked hard_gates，结果同期变 -157R。
-#   元凶 gate：
-#     - gate_bpc_late_long_above_ema1200 (ema_1200_position > 0.10 deny)
-#       → 强势牛市期价远高于 EMA1200，等于把所有肥尾月多头入场一票否决
-#     - gate_ema_1200_position_* / gate_bpc_late_short_below_ema1200 / gate_fer_ols_pos_*
-#       / gate_macro_tp_vwap_1200_deadzone / gate_evt_* 等，全样本 KS 看似合理，
-#       但在 BPC 肥尾子集上会批量挡掉真信号。
-# 设计约束（用户 2026-04-22）：system_safety 最多 2 条。
-# hard_gate：语义 chop + VPIN；box 形态锚点在 prefilter 锁定，不在 gate 重复表达。
-# ==========================================================================
-
 hard_gates:
 - id: gate_bpc_semantic_chop_high
   tag: HARD_BPC_SEMANTIC_CHOP
@@ -33,10 +21,10 @@ hard_gates:
   reason: BPC 专用：同品种 semantic_chop_ts_q 过高 → 拒开仓；低分位放行（与 TPC/ME 同构）
   when:
     bpc_semantic_chop_ts_q:
-      value_gte: 0.40
+      value_gte: 0.4
   then:
     action: deny
-  comment: "deny iff ts_q>=0.40（放行 ts_q<0.40）。上阈可扫 0.25/0.30/0.35/0.40（改 value_gte）"
+  comment: deny iff ts_q>=0.40（放行 ts_q<0.40）。上阈可扫 0.25/0.30/0.35/0.40（改 value_gte）
   locked: true
   frozen: true
   promote_never_disable: true
@@ -54,9 +42,9 @@ hard_gates:
   comment: 'optimizer: no_stable_plateau, threshold=0.2959, lift=0.287'
   locked: true
   lock_reason: VPIN 知情交易活跃度：信息不对称过高时入场胜率下降
-
+  disabled: true
+  disabled_reason: 'optimization_no_valid_threshold: No threshold meets basic lift/pass_rate requirements'
 guardrails: []
-
 system_safety:
 - id: gate_vol_persistence_vol_persistence
   tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE

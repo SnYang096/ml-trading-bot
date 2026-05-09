@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -40,6 +39,7 @@ from src.time_series_model.grid.subbar_replay import (
     timeframe_to_timedelta,
 )
 from scripts.multi_leg_trading_map import write_continuous_trading_map
+from src.config.multileg_config import load_multileg_effective_config
 from src.features.time_series.baseline_features import (  # noqa: E402
     compute_trend_confidence_from_series,
 )
@@ -52,7 +52,9 @@ DEFAULT_DUAL_ADD_CONFIG = (
 def _load_dual_add_defaults(path: Path) -> dict:
     if not path.exists():
         return {}
-    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    cfg = load_multileg_effective_config(
+        config_dir=path.parent, strategy_type="dual_add_trend", engine_path=path
+    )
     regime = cfg.get("regime", {}) or {}
     inv = cfg.get("inventory", {}) or {}
     spacing = cfg.get("add_spacing", {}) or {}
@@ -70,6 +72,7 @@ def _load_dual_add_defaults(path: Path) -> dict:
         "trend_exit_min": float(regime.get("exit_below", 0.50)),
         "box_window": int(regime.get("box_window", 120)),
         "step_atr_mult": float(spacing.get("atr_mult", 0.50)),
+        "take_profit_mode": str(tp.get("mode", "basket")),
         "tp_atr_mult": float(tp.get("atr_mult", 0.25)),
         "tp_abs": float(tp.get("min_abs", 0.0)),
         "tp_pct": float(tp.get("min_pct", 0.0005)),
@@ -78,9 +81,12 @@ def _load_dual_add_defaults(path: Path) -> dict:
         "max_gross_exposure": int(inv.get("max_gross_exposure_units", 4)),
         "max_loser_hold_bars": int(inv.get("max_loser_hold_bars", 24)),
         "max_loss_per_segment": float(risk.get("max_loss_per_segment", 0.01)),
+        "risk_stop_mode": str(risk.get("risk_stop_mode", "mtm")),
         "min_segment_bars": int(risk.get("min_segment_bars", 6)),
         "max_segment_bars": int(risk.get("max_segment_bars", 120)),
         "fee_bps": float(risk.get("diagnostic_fee_bps", risk.get("fee_bps", 4.0))),
+        "initial_hedge": set(inv.get("initial_legs", ["LONG", "SHORT"]))
+        == {"LONG", "SHORT"},
         "exclude_box": bool(regime.get("exclude_box_prefilter", True)),
         "stability_min": float(box_pf.get("stability_min", 0.85)),
         "width_min": float(box_pf.get("width_min", 0.04)),
@@ -115,6 +121,7 @@ class DualAddConfig:
     trend_exit_min: float = 0.50
     box_window: int = 120
     step_atr_mult: float = 0.50
+    take_profit_mode: str = "basket"
     tp_atr_mult: float = 0.50
     tp_abs: float = 0.0
     tp_pct: float = 0.0
@@ -126,6 +133,7 @@ class DualAddConfig:
     min_segment_bars: int = 6
     fee_bps: float = 4.0
     max_loss_per_segment: float = 0.01
+    risk_stop_mode: str = "mtm"
     initial_hedge: bool = True
 
 
@@ -191,34 +199,7 @@ def simulate_dual_add_segment(
 
     # Capital units are the maximum gross inventory this experiment allows.
     capital_units = max(2, cfg.max_gross_exposure)
-    if cfg.initial_hedge:
-        positions = [
-            {
-                "side": "LONG",
-                "entry": center,
-                "entry_time": seg.index[0],
-                "entry_bar": 0,
-                "seq": 0,
-            },
-            {
-                "side": "SHORT",
-                "entry": center,
-                "entry_time": seg.index[0],
-                "entry_bar": 0,
-                "seq": 0,
-            },
-        ]
-    else:
-        open_side = "LONG" if direction == "UP" else "SHORT"
-        positions = [
-            {
-                "side": open_side,
-                "entry": center,
-                "entry_time": seg.index[0],
-                "entry_bar": 0,
-                "seq": 0,
-            },
-        ]
+    positions: List[dict] = []
     trades: List[dict] = []
     last_add_long = center
     last_add_short = center
@@ -232,6 +213,26 @@ def simulate_dual_add_segment(
     last_trend_side = trend_side
     trend_flips = 0
     flip_forced = 0
+    last_flat_bar = -1
+
+    def seed_positions(px: float, ts: pd.Timestamp, bar_i: int) -> None:
+        nonlocal last_add_long, last_add_short
+        sides = ["LONG", "SHORT"] if cfg.initial_hedge else [trend_side]
+        for side in sides:
+            positions.append(
+                {
+                    "side": side,
+                    "entry": px,
+                    "entry_time": ts,
+                    "entry_bar": bar_i,
+                    "seq": 0,
+                }
+            )
+        last_add_long = px
+        last_add_short = px
+
+    seed_positions(center, seg.index[0], 0)
+    max_gross_units = len(positions)
 
     def record(pos: dict, exit_px: float, exit_ts: pd.Timestamp, reason: str) -> None:
         pnl_pct = _position_pnl(pos["side"], float(pos["entry"]), exit_px, fee)
@@ -276,6 +277,7 @@ def simulate_dual_add_segment(
             _, _, net_units = _exposure_units(positions)
 
     def close_offside_positions(px: float, ts: pd.Timestamp, side: str) -> int:
+        nonlocal last_flat_bar
         if cfg.flip_action == "keep":
             return 0
         closed = 0
@@ -287,86 +289,135 @@ def simulate_dual_add_segment(
             record(pos, px, ts, "trend_flip")
             positions.remove(pos)
             closed += 1
+        if not positions:
+            last_flat_bar = bar_i
         return closed
+
+    def open_pnl_per_capital(px: float) -> float:
+        return (
+            sum(_position_pnl(p["side"], float(p["entry"]), px, fee) for p in positions)
+            / capital_units
+        )
+
+    def basket_target_per_capital(px: float) -> float:
+        fee_buffer = 2.0 * fee * px
+        target = max(cfg.tp_abs, cfg.tp_atr_mult * atr, cfg.tp_pct * px)
+        return ((fee_buffer + target) / px) / capital_units
+
+    def close_all_open(px: float, ts: pd.Timestamp, reason: str) -> None:
+        nonlocal last_flat_bar
+        for pos in list(positions):
+            record(pos, px, ts, reason)
+            positions.remove(pos)
+        last_flat_bar = bar_i
 
     for bar_i, (ts, row) in enumerate(seg.iterrows()):
         high = float(row["high"])
         low = float(row["low"])
         close = float(row["close"])
-        if cfg.add_mode == "trend":
+        actionable = bar_i > 0
+        if cfg.add_mode == "trend" and actionable:
+            signal_row = seg.iloc[bar_i - 1]
             trend_side = (
                 "LONG"
-                if str(row.get("trend_direction", direction)) == "UP"
+                if str(signal_row.get("trend_direction", direction)) == "UP"
                 else "SHORT"
             )
 
-        # Close only after the target covers the modeled round-trip fee.
-        for pos in list(positions):
-            entry = float(pos["entry"])
-            fee_buffer = 2.0 * fee * entry
-            if pos["side"] == "LONG" and high >= entry + tp + fee_buffer:
-                record(pos, entry + tp + fee_buffer, ts, "tp")
-                positions.remove(pos)
-            elif pos["side"] == "SHORT" and low <= entry - tp - fee_buffer:
-                record(pos, entry - tp - fee_buffer, ts, "tp")
-                positions.remove(pos)
-        enforce_net_cap(close, ts)
+        seeded_this_bar = False
+        if actionable and not positions and bar_i > last_flat_bar:
+            seed_positions(close, ts, bar_i)
+            seeded_this_bar = True
 
-        if cfg.add_mode == "trend" and trend_side != last_trend_side:
-            trend_flips += 1
-            flip_forced += close_offside_positions(close, ts, trend_side)
-            last_trend_side = trend_side
+        if actionable and not seeded_this_bar:
+            # Basket mode closes the current inventory together once aggregate
+            # net PnL clears the target. This prevents an initial hedge leg from
+            # being stranded as a loss anchor after the other leg takes profit.
+            closed_basket = False
+            if cfg.take_profit_mode == "basket":
+                if positions and open_pnl_per_capital(
+                    close
+                ) >= basket_target_per_capital(close):
+                    close_all_open(close, ts, "basket_tp")
+                    closed_basket = True
+            else:
+                # Close only after the target covers the modeled round-trip fee.
+                for pos in list(positions):
+                    entry = float(pos["entry"])
+                    fee_buffer = 2.0 * fee * entry
+                    if pos["side"] == "LONG" and high >= entry + tp + fee_buffer:
+                        record(pos, entry + tp + fee_buffer, ts, "tp")
+                        positions.remove(pos)
+                    elif pos["side"] == "SHORT" and low <= entry - tp - fee_buffer:
+                        record(pos, entry - tp - fee_buffer, ts, "tp")
+                        positions.remove(pos)
             enforce_net_cap(close, ts)
-
-        # Do not let the initial hedge's losing leg become an unbounded anchor.
-        for pos in list(positions):
-            held_bars = bar_i - int(pos.get("entry_bar", 0))
-            if held_bars < cfg.max_loser_hold_bars:
+            if closed_basket:
+                _, _, net_units = _exposure_units(positions)
+                max_gross_units = max(max_gross_units, len(positions))
+                max_abs_net_units = max(max_abs_net_units, abs(net_units))
+                realized = sum(
+                    t["pnl_pct"] for t in trades if t["segment_id"] == segment_id
+                )
+                pnl_path.append(realized / capital_units)
                 continue
-            if _position_pnl(pos["side"], float(pos["entry"]), close, fee) < 0:
-                record(pos, close, ts, "loser_timeout")
-                positions.remove(pos)
-        enforce_net_cap(close, ts)
+
+            if cfg.add_mode == "trend" and trend_side != last_trend_side:
+                trend_flips += 1
+                flip_forced += close_offside_positions(close, ts, trend_side)
+                last_trend_side = trend_side
+                enforce_net_cap(close, ts)
+
+            # Do not let the initial hedge's losing leg become an unbounded anchor.
+            for pos in list(positions):
+                held_bars = bar_i - int(pos.get("entry_bar", 0))
+                if held_bars < cfg.max_loser_hold_bars:
+                    continue
+                if _position_pnl(pos["side"], float(pos["entry"]), close, fee) < 0:
+                    record(pos, close, ts, "loser_timeout")
+                    positions.remove(pos)
+            enforce_net_cap(close, ts)
 
         # In both-side mode, price extension may add on either side. Strict
         # gross/net caps and segment loss stops keep inventory bounded.
-        while (
-            cfg.add_mode in {"both", "trend"}
-            and (cfg.add_mode == "both" or trend_side == "LONG")
-            and high >= last_add_long + step
-            and add_long_count < cfg.max_adds_per_side
-            and can_add("LONG")
-        ):
-            last_add_long += step
-            add_long_count += 1
-            positions.append(
-                {
-                    "side": "LONG",
-                    "entry": last_add_long,
-                    "entry_time": ts,
-                    "entry_bar": bar_i,
-                    "seq": add_long_count,
-                }
-            )
-        while (
-            cfg.add_mode in {"both", "trend"}
-            and (cfg.add_mode == "both" or trend_side == "SHORT")
-            and low <= last_add_short - step
-            and add_short_count < cfg.max_adds_per_side
-            and can_add("SHORT")
-        ):
-            last_add_short -= step
-            add_short_count += 1
-            positions.append(
-                {
-                    "side": "SHORT",
-                    "entry": last_add_short,
-                    "entry_time": ts,
-                    "entry_bar": bar_i,
-                    "seq": add_short_count,
-                }
-            )
-        enforce_net_cap(close, ts)
+        if actionable:
+            while (
+                cfg.add_mode in {"both", "trend"}
+                and (cfg.add_mode == "both" or trend_side == "LONG")
+                and high >= last_add_long + step
+                and add_long_count < cfg.max_adds_per_side
+                and can_add("LONG")
+            ):
+                last_add_long += step
+                add_long_count += 1
+                positions.append(
+                    {
+                        "side": "LONG",
+                        "entry": last_add_long,
+                        "entry_time": ts,
+                        "entry_bar": bar_i,
+                        "seq": add_long_count,
+                    }
+                )
+            while (
+                cfg.add_mode in {"both", "trend"}
+                and (cfg.add_mode == "both" or trend_side == "SHORT")
+                and low <= last_add_short - step
+                and add_short_count < cfg.max_adds_per_side
+                and can_add("SHORT")
+            ):
+                last_add_short -= step
+                add_short_count += 1
+                positions.append(
+                    {
+                        "side": "SHORT",
+                        "entry": last_add_short,
+                        "entry_time": ts,
+                        "entry_bar": bar_i,
+                        "seq": add_short_count,
+                    }
+                )
+            enforce_net_cap(close, ts)
 
         _, _, net_units = _exposure_units(positions)
         max_gross_units = max(max_gross_units, len(positions))
@@ -377,7 +428,7 @@ def simulate_dual_add_segment(
         )
         mtm_per_capital = mtm / capital_units
         pnl_path.append(mtm_per_capital)
-        if mtm_per_capital <= -cfg.max_loss_per_segment:
+        if cfg.risk_stop_mode == "mtm" and mtm_per_capital <= -cfg.max_loss_per_segment:
             stop_reason = "risk_stop"
             break
 
@@ -398,7 +449,7 @@ def simulate_dual_add_segment(
         "tp": sum(
             1
             for t in trades
-            if t["segment_id"] == segment_id and t["exit_reason"] == "tp"
+            if t["segment_id"] == segment_id and t["exit_reason"] in {"tp", "basket_tp"}
         ),
         "forced": forced,
         "risk_stop": int(stop_reason == "risk_stop"),
@@ -459,6 +510,7 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         trend_exit_min=args.trend_exit_min,
         box_window=args.box_window,
         step_atr_mult=args.step_atr_mult,
+        take_profit_mode=args.take_profit_mode,
         tp_atr_mult=args.tp_atr_mult,
         tp_abs=args.tp_abs,
         tp_pct=args.tp_pct,
@@ -470,6 +522,7 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         min_segment_bars=args.min_segment_bars,
         fee_bps=args.fee_bps,
         max_loss_per_segment=args.max_loss_per_segment,
+        risk_stop_mode=args.risk_stop_mode,
         initial_hedge=args.initial_hedge,
     )
     grid_cfg = GridConfig(
@@ -503,8 +556,10 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         exec_tf = args.execution_timeframe or args.timeframe
         if exec_tf != args.timeframe:
             bars_exec = _resample_ohlcv(raw, exec_tf)
-            df_exec = merge_signal_features_onto_execution_bars(bars_exec, df)
             sig_delta = timeframe_to_timedelta(args.timeframe)
+            df_exec = merge_signal_features_onto_execution_bars(
+                bars_exec, df, signal_bar_delta=sig_delta
+            )
         else:
             df_exec = None
             sig_delta = None
@@ -582,8 +637,10 @@ def summarize(trades: pd.DataFrame, segments: pd.DataFrame) -> pd.DataFrame:
                 "max_gross_units": segments["max_gross_units"].max(),
                 "max_abs_net_units": segments["max_abs_net_units"].max(),
                 "loser_timeout_rate": (trades["exit_reason"] == "loser_timeout").mean(),
-                "tp_rate": (trades["exit_reason"] == "tp").mean(),
-                "forced_rate": (trades["exit_reason"] != "tp").mean(),
+                "tp_rate": trades["exit_reason"].isin(["tp", "basket_tp"]).mean(),
+                "forced_rate": (
+                    ~trades["exit_reason"].isin(["tp", "basket_tp"])
+                ).mean(),
             }
         ]
     )
@@ -859,6 +916,15 @@ def main() -> None:
     ap.add_argument(
         "--tp-atr-mult", type=float, default=defaults.get("tp_atr_mult", 0.25)
     )
+    ap.add_argument(
+        "--take-profit-mode",
+        choices=["basket", "per_leg"],
+        default=defaults.get("take_profit_mode", "basket"),
+        help=(
+            "basket closes current inventory together on aggregate net profit; "
+            "per_leg is the legacy independent leg TP."
+        ),
+    )
     ap.add_argument("--tp-abs", type=float, default=defaults.get("tp_abs", 0.0))
     ap.add_argument("--tp-pct", type=float, default=defaults.get("tp_pct", 0.0005))
     ap.add_argument(
@@ -892,7 +958,7 @@ def main() -> None:
     ap.add_argument(
         "--initial-hedge",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=defaults.get("initial_hedge", True),
         help=(
             "If disabled, open only the trend-direction leg at segment start "
             "(no opening long+short straddle). For research on directional "
@@ -903,6 +969,16 @@ def main() -> None:
         "--max-loss-per-segment",
         type=float,
         default=defaults.get("max_loss_per_segment", 0.01),
+    )
+    ap.add_argument(
+        "--risk-stop-mode",
+        choices=["mtm", "regime_only"],
+        default=defaults.get("risk_stop_mode", "mtm"),
+        help=(
+            "mtm applies max_loss_per_segment inside a segment; regime_only lets "
+            "trend/chop segment loss end the position and treats max loss as an "
+            "external/deployment gate."
+        ),
     )
     ap.add_argument(
         "--min-segment-bars", type=int, default=defaults.get("min_segment_bars", 6)

@@ -98,7 +98,8 @@ def write_capital_report_from_trades(
         returns = pd.to_numeric(trades[pnl_col], errors="coerce").fillna(0.0)
         unit_explanation = (
             "total_r equals sum(pnl_per_capital): capital-bucket-normalized net "
-            "return. 1.0 means +100% on the strategy capital bucket."
+            "return, not classic per-trade R. 1.0 means +100% on the strategy "
+            "capital bucket; 1.1355 means about +113.55%."
         )
         effective_total_r = float(returns.sum())
         dollars = initial_capital * returns
@@ -148,6 +149,7 @@ def write_capital_report_from_trades(
     df["peak"] = df["equity"].cummax()
     df["drawdown_usd"] = df["equity"] - df["peak"]
     df["drawdown_pct"] = df["drawdown_usd"] / df["peak"].replace(0.0, pd.NA)
+    equity_curve = _sample_equity_curve(df)
 
     start_ts = (
         pd.Timestamp(start_date, tz="UTC") if start_date else df["exit_time"].min()
@@ -190,6 +192,14 @@ def write_capital_report_from_trades(
             "excluded": "Funding/liquidation/margin usage beyond modeled trade PnL unless present in the backtest trades.",
         },
         "trades_path": str(trades_path),
+        "equity_curve_explanation": (
+            "Equity curve applies each trade's modeled PnL to a fixed initial "
+            "capital base. For capital_normalized multi-leg reports, each "
+            "pnl_per_capital increment is added as initial_capital * "
+            "pnl_per_capital; for r_multiple reports, pnl_r is converted through "
+            "risk_per_r."
+        ),
+        "equity_curve": equity_curve,
         "equity_tail": [
             {
                 "exit_time": str(row.exit_time),
@@ -248,6 +258,78 @@ def _money(value: Any) -> str:
         return "N/A"
 
 
+def _sample_equity_curve(
+    df: pd.DataFrame, *, max_points: int = 240
+) -> list[dict[str, Any]]:
+    if df.empty:
+        return []
+    if len(df) <= max_points:
+        sampled = df
+    else:
+        step = max(1, len(df) // max_points)
+        sampled = df.iloc[::step].copy()
+        if sampled.index[-1] != df.index[-1]:
+            sampled = pd.concat([sampled, df.tail(1)], axis=0)
+    return [
+        {
+            "exit_time": str(row.exit_time),
+            "equity": float(row.equity),
+            "drawdown_pct": float(row.drawdown_pct),
+        }
+        for row in sampled.itertuples(index=False)
+    ]
+
+
+def _render_equity_svg(report: Dict[str, Any]) -> str:
+    curve = report.get("equity_curve") or []
+    if len(curve) < 2:
+        return '<p class="note">Equity curve unavailable: not enough points.</p>'
+
+    width = 920
+    height = 280
+    pad_l = 64
+    pad_r = 24
+    pad_t = 24
+    pad_b = 42
+    plot_w = width - pad_l - pad_r
+    plot_h = height - pad_t - pad_b
+    values = [float(p.get("equity", 0.0) or 0.0) for p in curve]
+    ymin = min(values)
+    ymax = max(values)
+    if abs(ymax - ymin) < 1e-9:
+        ymax = ymin + 1.0
+
+    def _xy(i: int, v: float) -> tuple[float, float]:
+        x = pad_l + plot_w * (i / max(1, len(values) - 1))
+        y = pad_t + plot_h * (1.0 - ((v - ymin) / (ymax - ymin)))
+        return x, y
+
+    points = " ".join(
+        f"{x:.1f},{y:.1f}" for i, v in enumerate(values) for x, y in [_xy(i, v)]
+    )
+    start_label = _money(values[0])
+    end_label = _money(values[-1])
+    low_label = _money(ymin)
+    high_label = _money(ymax)
+    first_time = str(curve[0].get("exit_time", ""))
+    last_time = str(curve[-1].get("exit_time", ""))
+    return f"""
+  <svg class="equity-chart" viewBox="0 0 {width} {height}" role="img" aria-label="Equity curve">
+    <line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{height - pad_b}" stroke="#d0d7de"/>
+    <line x1="{pad_l}" y1="{height - pad_b}" x2="{width - pad_r}" y2="{height - pad_b}" stroke="#d0d7de"/>
+    <text x="8" y="{pad_t + 5}" class="axis-label">{high_label}</text>
+    <text x="8" y="{height - pad_b}" class="axis-label">{low_label}</text>
+    <polyline fill="none" stroke="#0969da" stroke-width="2.5" points="{points}"/>
+    <circle cx="{_xy(0, values[0])[0]:.1f}" cy="{_xy(0, values[0])[1]:.1f}" r="3" fill="#0969da"/>
+    <circle cx="{_xy(len(values) - 1, values[-1])[0]:.1f}" cy="{_xy(len(values) - 1, values[-1])[1]:.1f}" r="3" fill="#1a7f37"/>
+    <text x="{pad_l}" y="{height - 12}" class="axis-label">{first_time}</text>
+    <text x="{width - pad_r}" y="{height - 12}" text-anchor="end" class="axis-label">{last_time}</text>
+    <text x="{pad_l + 8}" y="{pad_t + 18}" class="chart-note">start {start_label}</text>
+    <text x="{width - pad_r - 8}" y="{pad_t + 18}" text-anchor="end" class="chart-note">end {end_label}</text>
+  </svg>
+"""
+
+
 def _render_html(report: Dict[str, Any]) -> str:
     return f"""<!doctype html>
 <html>
@@ -260,6 +342,9 @@ def _render_html(report: Dict[str, Any]) -> str:
     th, td {{ border: 1px solid #ddd; padding: 8px 10px; text-align: left; }}
     th {{ background: #f6f8fa; }}
     .note {{ color: #555; max-width: 980px; line-height: 1.45; }}
+    .equity-chart {{ width: 100%; max-width: 980px; height: auto; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }}
+    .axis-label {{ font-size: 12px; fill: #57606a; }}
+    .chart-note {{ font-size: 12px; fill: #24292f; font-weight: 600; }}
   </style>
 </head>
 <body>
@@ -274,6 +359,9 @@ def _render_html(report: Dict[str, Any]) -> str:
     <tr><th>Trades</th><td>{report.get('trades')}</td></tr>
     <tr><th>Total R</th><td>{float(report.get('total_r', 0.0) or 0.0):.6f}</td></tr>
   </table>
+  <h2>Equity Curve</h2>
+  {_render_equity_svg(report)}
+  <p class="note"><b>Equity curve:</b> {report.get('equity_curve_explanation', '')}</p>
   <h2>Definitions</h2>
   <p class="note"><b>CAGR:</b> {report.get('cagr_explanation', '')}</p>
   <p class="note"><b>Total R unit:</b> {report.get('unit_explanation', '')}</p>

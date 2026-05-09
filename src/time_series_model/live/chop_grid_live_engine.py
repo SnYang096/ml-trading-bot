@@ -12,8 +12,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-import yaml
-
+from src.config.multileg_config import load_multileg_effective_config
 from src.order_management.grid_execution_adapter import GridExecutionResult
 from src.order_management.multi_leg_reconciliation import (
     LocalOrderSnapshot,
@@ -74,7 +73,10 @@ def _as_float(value: Any, default: float = 0.0) -> float:
 
 
 def _load_grid_config(path: str | Path) -> GridEngineConfig:
-    obj = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    cfg_path = Path(path)
+    obj = load_multileg_effective_config(
+        config_dir=cfg_path.parent, strategy_type="grid", engine_path=cfg_path
+    )
     regime = obj.get("regime", {}) or {}
     grid = obj.get("grid", {}) or {}
     spacing = grid.get("spacing", {}) or {}
