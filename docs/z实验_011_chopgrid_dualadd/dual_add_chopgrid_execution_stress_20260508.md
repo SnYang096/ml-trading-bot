@@ -353,3 +353,75 @@ results/dual_add_trend/compare_precision_btc_2024_agg100ms_improved_fee_stress_2
 3. 用 `100ms` 做候选参数复核；
 4. 若 `2h / 1min / 100ms` 三者收益同量级，才允许进入 dry-run；
 5. 若 100ms 明显低于 1min 或转负，淘汰该 profile。
+
+## Chop Grid：chop / box / chop OR box 对比
+
+目的：验证网格是否应该在 `semantic_chop` 或 `box_prefilter` 任一条件成立时开仓，而不是只在 chop regime 中开仓。
+
+口径：
+
+```text
+symbols=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+period=2024-01-01 ~ 2024-12-31
+signal_timeframe=2h
+execution_timeframe=1min
+maker_fee_bps=12
+taker_fee_bps=12
+forced_exit_slippage_bps=10
+funding_cost_bps_per_8h=1
+max_loss_per_grid=0.03
+```
+
+输出路径：
+
+```text
+results/chop_grid/highcap_2024_1min_chop_or_box_compare_fee12_slip10/
+```
+
+### 汇总结果
+
+| variant | 含义 | segments | trades | return_pct | win_rate | segment_win_rate | worst_segment | forced_rate |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `semantic_chop` | 光 chop | 177 | 581 | +16.66% | 77.62% | 71.19% | -0.78% | 26.33% |
+| `chop_not_box` | chop 且排除 box | 169 | 542 | +15.51% | 77.12% | 69.82% | -0.78% | 26.57% |
+| `chop_or_box` | chop 或 box 任一成立 | 259 | 1294 | -69.00% | 74.81% | 56.37% | -3.98% | 22.80% |
+| `box_only` | 只要 box 就开仓 | 88 | 699 | -78.04% | 72.25% | 34.09% | -3.98% | 20.89% |
+
+### 单币表现
+
+`semantic_chop` 单币：
+
+| symbol | return_pct | trades | segment_win_rate |
+|---|---:|---:|---:|
+| SOLUSDT | +4.03% | 77 | 79.17% |
+| ADAUSDT | +3.69% | 114 | 80.00% |
+| ETHUSDT | +3.39% | 108 | 72.41% |
+| XRPUSDT | +2.57% | 86 | 67.86% |
+| BTCUSDT | +1.65% | 90 | 61.11% |
+| BNBUSDT | +1.33% | 106 | 70.00% |
+
+`box_only` 单币全部为负：
+
+| symbol | return_pct | trades | segment_win_rate |
+|---|---:|---:|---:|
+| BTCUSDT | -6.73% | 179 | 52.94% |
+| ADAUSDT | -10.25% | 115 | 35.71% |
+| BNBUSDT | -12.97% | 140 | 35.29% |
+| XRPUSDT | -14.07% | 79 | 36.36% |
+| ETHUSDT | -16.03% | 80 | 15.38% |
+| SOLUSDT | -18.00% | 106 | 25.00% |
+
+### 判断
+
+`chop OR box` 不适合作为当前 `chop_grid` 的开仓条件。它扩大了覆盖和交易数，但新增的 box 交易质量很差：
+
+- `semantic_chop` 从 581 笔、`+16.66%`；
+- 扩到 `chop_or_box` 后变成 1294 笔、`-69.00%`；
+- `box_only` 全币种为负，说明 box 在当前定义下更像“压缩后等待突破”的结构，而不是天然适合网格的安全震荡。
+
+当前建议：
+
+1. `chop_grid` 主入口保持 `semantic_chop` 或 `chop_not_box`；
+2. 不使用 `chop OR box`；
+3. `box_prefilter` 更适合作为风险过滤、降杠杆、放宽 grid spacing 或减少层数的信号；
+4. 若要单独做 box-grid，需要另一套参数和突破退出逻辑，不能复用当前 chop_grid 默认参数。
