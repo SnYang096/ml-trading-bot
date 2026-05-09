@@ -24,6 +24,17 @@ def test_load_bpc_turbo_from_strategy_research():
     assert "validation_months" not in cfg["dates"]
 
 
+def test_chop_grid_spacing_candidates_are_config_driven():
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/chop_grid/research/turbo.yaml"
+    )
+    chop_cfg = cfg["strategies"]["chop_grid"]
+    candidates = chop_cfg["multileg_calibration"]["candidates"]
+    assert cfg["grid_backtest"]["calibrate_execution"] is True
+    assert max(float(c["min_pct"]) for c in candidates) >= 0.012
+    assert max(float(c["atr_mult"]) for c in candidates) >= 1.25
+
+
 def test_dates_calibration_hoist_conflict_raises(tmp_path: Path):
     p = tmp_path / "x.yaml"
     p.write_text(

@@ -43,6 +43,9 @@ from scripts.diagnose_crf_edge import (  # noqa: E402
     _resample_ohlcv,
 )
 from scripts.multi_leg_trading_map import write_continuous_trading_map  # noqa: E402
+from scripts.pipeline.multileg_prefilter_rules import (  # noqa: E402
+    apply_prefilter_rules,
+)
 from src.time_series_model.grid.chop_grid_engine import (  # noqa: E402
     ChopGridEngine,
     GridEngineConfig,
@@ -270,6 +273,17 @@ def collect_chop_grid_trades_for_symbol(
     chop_col = regime_chop_column(cfg)
     entry_mask = chop_s >= cfg.chop_min
     hold_mask = chop_s >= cfg.exit_chop_min
+    rule_mask = apply_prefilter_rules(
+        df,
+        list(cfg.prefilter_rules),
+        feature_aliases={
+            "atr": "atr14",
+            "bpc_semantic_chop": "semantic_chop",
+            "bpc_semantic_chop_ts_q": "semantic_chop_ts_q",
+        },
+    )
+    entry_mask &= rule_mask
+    hold_mask &= rule_mask
     if exclude_box:
         entry_mask &= ~df["box_prefilter"]
         hold_mask &= ~df["box_prefilter"]
@@ -316,6 +330,10 @@ def collect_chop_grid_trades_for_symbol(
 def run_backtest(
     args: argparse.Namespace,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    cfg_path = Path(str(args.config))
+    if not cfg_path.is_absolute():
+        cfg_path = PROJECT_ROOT / cfg_path
+    defaults = _load_grid_defaults(cfg_path)
     cfg = GridConfig(
         box_window=args.box_window,
         chop_min=args.chop_min,
@@ -349,6 +367,11 @@ def run_backtest(
             else None
         )
         or None,
+        prefilter_rules=tuple(
+            x
+            for x in (defaults.get("prefilter_rules", []) or [])
+            if isinstance(x, dict)
+        ),
     )
     engine_cfg = GridEngineConfig(
         box_window=args.box_window,
@@ -498,6 +521,32 @@ def _summary_tables(
                     "median_bars": segments["bars"].median(),
                     "median_trades_per_segment": segments["trades"].median(),
                     "median_forced_exits": segments["forced_exits"].median(),
+                    "median_spacing_pct": segments["spacing_pct"].median(),
+                    "median_grid_full_span_pct": (
+                        segments["grid_full_span_pct"].median()
+                        if "grid_full_span_pct" in segments
+                        else np.nan
+                    ),
+                    "median_segment_range_pct": (
+                        segments["segment_range_pct"].median()
+                        if "segment_range_pct" in segments
+                        else np.nan
+                    ),
+                    "median_close_std_pct": (
+                        segments["close_std_pct"].median()
+                        if "close_std_pct" in segments
+                        else np.nan
+                    ),
+                    "median_grid_full_span_to_range": (
+                        segments["grid_full_span_to_range"].median()
+                        if "grid_full_span_to_range" in segments
+                        else np.nan
+                    ),
+                    "median_grid_per_side_span_to_1std": (
+                        segments["grid_per_side_span_to_1std"].median()
+                        if "grid_per_side_span_to_1std" in segments
+                        else np.nan
+                    ),
                 }
             ]
         )
@@ -718,6 +767,50 @@ def write_report(
         if not trade_summary.empty
         else pd.DataFrame()
     )
+    cost_cols = [
+        c
+        for c in [
+            "fee_bps_charged",
+            "slippage_bps_charged",
+            "funding_bps_charged",
+        ]
+        if c in trades.columns
+    ]
+    if not trades.empty and "gross_pnl_pct" in trades.columns:
+        gross_pnl_pct_sum = float(trades["gross_pnl_pct"].sum())
+        net_pnl_pct_sum = float(trades["pnl_pct"].sum())
+        total_cost_pct_sum = (
+            float(trades[cost_cols].sum(axis=1).sum()) / 10_000.0 if cost_cols else 0.0
+        )
+        break_even_cost_bps_per_trade = (
+            gross_pnl_pct_sum * 10_000.0 / len(trades) if len(trades) else 0.0
+        )
+        alpha_cost_note = (
+            "Gross grid alpha is positive, but conservative transaction costs consume it."
+            if gross_pnl_pct_sum > 0 and net_pnl_pct_sum < 0
+            else (
+                "Net PnL remains positive after the configured transaction costs."
+                if net_pnl_pct_sum >= 0
+                else "Gross grid alpha is not positive in this window."
+            )
+        )
+        cost_diagnostics = pd.DataFrame(
+            [
+                {
+                    "gross_pnl_pct_sum": gross_pnl_pct_sum,
+                    "net_pnl_pct_sum": net_pnl_pct_sum,
+                    "total_cost_pct_sum": total_cost_pct_sum,
+                    "cost_drag_pct_sum": gross_pnl_pct_sum - net_pnl_pct_sum,
+                    "break_even_cost_bps_per_trade": break_even_cost_bps_per_trade,
+                    "configured_fee_bps": args.fee_bps,
+                    "configured_forced_exit_slippage_bps": args.forced_exit_slippage_bps,
+                    "configured_funding_bps_per_8h": args.funding_cost_bps_per_8h,
+                    "interpretation": alpha_cost_note,
+                }
+            ]
+        )
+    else:
+        cost_diagnostics = pd.DataFrame()
 
     html = f"""
 <html>
@@ -744,6 +837,8 @@ def write_report(
     forced-exit slippage={args.forced_exit_slippage_bps} bps,
     funding cost={args.funding_cost_bps_per_8h} bps/8h.
   </p>
+  <h2>Alpha / Cost Diagnostics</h2>
+  {cost_diagnostics.to_html(index=False, float_format=lambda x: _fmt(x, 6))}
   <h2>Risk Metrics</h2>
   {risk_table.to_html(index=False, float_format=lambda x: _fmt(x, 6))}
   <h2>Trade Summary</h2>

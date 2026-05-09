@@ -19,7 +19,13 @@ _PREFILTER_KEYS_BY_TYPE = {
 }
 
 _EXECUTION_KEYS_BY_TYPE = {
-    "grid": {"atr_mult", "min_pct", "max_levels_per_side", "max_segment_bars"},
+    "grid": {
+        "atr_mult",
+        "min_pct",
+        "max_levels_per_side",
+        "max_open_levels_total",
+        "max_segment_bars",
+    },
     "dual_add_trend": {
         "step_atr_mult",
         "tp_atr_mult",
@@ -130,6 +136,11 @@ def score_candidate_with_constraints(
     forced = float(m.get("forced_rate", 0.0) or 0.0)
     risk_stop = float(m.get("risk_stop_rate", m.get("near_stop_rate", 0.0)) or 0.0)
     score = total + 5.0 * worst - 0.25 * forced - 0.50 * risk_stop
+    if m.get("cost_coverage_ratio") is not None:
+        coverage = float(m.get("cost_coverage_ratio", 0.0) or 0.0)
+        # For high-turnover grid engines, prefer spacing profiles whose gross edge
+        # clears configured all-in costs instead of merely increasing trade count.
+        score += max(min(coverage - 1.0, 2.0), -2.0) * 0.02
     gates = kpi_backtest or {}
     min_trades = int(gates.get("min_trades", gates.get("target_trades_min", 0)) or 0)
     if min_trades > 0 and int(m.get("n_trades", 0) or 0) < min_trades:

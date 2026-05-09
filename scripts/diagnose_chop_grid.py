@@ -40,6 +40,9 @@ from scripts.diagnose_crf_edge import (  # noqa: E402
     _semantic_chop,
     build_symbol_dataset,
 )
+from scripts.pipeline.multileg_prefilter_rules import (  # noqa: E402
+    apply_prefilter_rules,
+)
 from src.config.multileg_config import load_multileg_effective_config  # noqa: E402
 from src.config.strategy_layout import resolve_strategy_config_input  # noqa: E402
 from src.features.time_series.semantic_chop_ts_quantile import (  # noqa: E402
@@ -131,6 +134,7 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
         ),
         "feature_store_layer": grid_bt.get("feature_store_layer"),
         "feature_store_timeframe": grid_bt.get("feature_store_timeframe"),
+        "prefilter_rules": cfg.get("rules", []) or [],
     }
     if "compute_semantic_chop_ts_q" in chop_series:
         out["compute_chop_ts_q"] = chop_series.get("compute_semantic_chop_ts_q")
@@ -166,6 +170,8 @@ class GridConfig:
     feature_store_layer: str | None = None
     # If set, overrides bars timeframe when reading the store (e.g. store "120T" vs CLI "2h").
     feature_store_timeframe: str | None = None
+    # Optional generic prefilter rules from archetypes/prefilter.yaml.
+    prefilter_rules: Tuple[Dict[str, Any], ...] = ()
     # Box prefilter column (StudyConfig / build_symbol_dataset); must match grid.yaml.
     stability_min: float = 0.85
     width_min: float = 0.04
@@ -541,6 +547,17 @@ def run_one_period(
         chop_s = regime_chop_series(df, cfg)
         chop = chop_s >= cfg.chop_min
         chop_hold = chop_s >= cfg.exit_chop_min
+        rule_mask = apply_prefilter_rules(
+            df,
+            list(cfg.prefilter_rules),
+            feature_aliases={
+                "atr": "atr14",
+                "bpc_semantic_chop": "semantic_chop",
+                "bpc_semantic_chop_ts_q": "semantic_chop_ts_q",
+            },
+        )
+        chop &= rule_mask
+        chop_hold &= rule_mask
         box = df["box_prefilter"]
         chop_not_box = chop & ~box
         regimes = {
@@ -759,6 +776,9 @@ def main() -> None:
             else None
         )
         or None,
+        prefilter_rules=tuple(
+            x for x in (yd.get("prefilter_rules", []) or []) if isinstance(x, dict)
+        ),
     )
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     start = pd.Timestamp(args.start, tz="UTC")

@@ -40,6 +40,7 @@ from src.time_series_model.grid.subbar_replay import (
     timeframe_to_timedelta,
 )
 from scripts.multi_leg_trading_map import write_continuous_trading_map
+from scripts.pipeline.multileg_prefilter_rules import apply_prefilter_rules
 from src.config.multileg_config import load_multileg_effective_config
 from src.config.strategy_layout import resolve_strategy_config_input
 from src.features.time_series.baseline_features import (  # noqa: E402
@@ -118,6 +119,7 @@ def _load_dual_add_defaults(path: Path) -> dict:
     )
     out["feature_store_layer"] = dual_bt.get("feature_store_layer")
     out["feature_store_timeframe"] = dual_bt.get("feature_store_timeframe")
+    out["prefilter_rules"] = cfg.get("rules", []) or []
     if out["feature_store_layer"] is not None:
         out["feature_store_layer"] = str(out["feature_store_layer"]).strip() or None
     if out["feature_store_timeframe"] is not None:
@@ -161,6 +163,7 @@ class DualAddConfig:
     max_loss_per_segment: float = 0.01
     risk_stop_mode: str = "mtm"
     initial_hedge: bool = True
+    prefilter_rules: Tuple[Dict[str, Any], ...] = ()
 
 
 def _max_drawdown(values: List[float]) -> float:
@@ -507,6 +510,10 @@ def _effective_max_loser_hold_bars(args: argparse.Namespace) -> int:
 
 
 def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    cfg_path = Path(str(args.config))
+    if not cfg_path.is_absolute():
+        cfg_path = PROJECT_ROOT / cfg_path
+    defaults = _load_dual_add_defaults(cfg_path)
     eff_hold = _effective_max_loser_hold_bars(args)
     if eff_hold != int(args.max_loser_hold_bars):
         print(
@@ -550,6 +557,11 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         max_loss_per_segment=args.max_loss_per_segment,
         risk_stop_mode=args.risk_stop_mode,
         initial_hedge=args.initial_hedge,
+        prefilter_rules=tuple(
+            x
+            for x in (defaults.get("prefilter_rules", []) or [])
+            if isinstance(x, dict)
+        ),
     )
     grid_cfg = GridConfig(
         box_window=cfg.box_window,
@@ -613,6 +625,17 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         else:
             entry = chop_s >= cfg.chop_min
             hold = chop_s >= cfg.exit_chop_min
+        rule_mask = apply_prefilter_rules(
+            df,
+            list(cfg.prefilter_rules),
+            feature_aliases={
+                "atr": "atr14",
+                "bpc_semantic_chop": "semantic_chop",
+                "bpc_semantic_chop_ts_q": "semantic_chop_ts_q",
+            },
+        )
+        entry &= rule_mask
+        hold &= rule_mask
         if args.exclude_box:
             entry &= ~df["box_prefilter"]
             hold &= ~df["box_prefilter"]

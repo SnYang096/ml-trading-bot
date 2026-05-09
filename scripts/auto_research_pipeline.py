@@ -5062,9 +5062,101 @@ def _run_grid_backtest_stage(
         strat_cfg_dir = PROJECT_ROOT / str(
             scfg.get("config", f"config/strategies/{strat}")
         )
+        runtime_cfg_dir = strat_cfg_dir
         grid_cfg_path = _resolve_multileg_runtime_config_path(
             config_dir=strat_cfg_dir, strategy_type=strategy_type
         )
+        calibration_report: Dict[str, Any] = {}
+        if bool(grid_cfg.get("calibrate_execution", False)) and not dry_run:
+            calib_root = out_root / "_execution_calibration" / strat
+            calib_root.mkdir(parents=True, exist_ok=True)
+            candidates = _multileg_calibration_candidates(
+                strategy_type,
+                strategy_cfg=scfg,
+                config_dir=strat_cfg_dir,
+            )
+            kpi_backtest = (scfg.get("kpi_gates", {}) or {}).get("backtest", {}) or {}
+            if not isinstance(kpi_backtest, dict):
+                kpi_backtest = {}
+            best_row: Dict[str, Any] = {}
+            rows: List[Dict[str, Any]] = []
+            calib_start = str(grid_cfg.get("calibration_start") or start_date)
+            calib_end = str(grid_cfg.get("calibration_end") or end_date)
+            for idx, candidate in enumerate(candidates, start=1):
+                tuned_candidate = pipeline_multileg_layers.candidate_for_enabled_layers(
+                    strategy_type=strategy_type,
+                    candidate=candidate,
+                    settings=pipeline_multileg_layers.MultilegLayerSettings(
+                        strategy_type=strategy_type,
+                        has_prefilter=bool(scfg.get("has_prefilter", False)),
+                        has_gate=False,
+                        has_entry_filter=False,
+                        prefilter_optimize=False,
+                        gate_optimize=False,
+                        entry_filter_optimize=False,
+                        execution_optimize=True,
+                    ),
+                )
+                cand_cfg_dir = calib_root / f"candidate_{idx:02d}" / "config"
+                cand_out_dir = calib_root / f"candidate_{idx:02d}" / "results"
+                shutil.rmtree(cand_cfg_dir, ignore_errors=True)
+                shutil.copytree(strat_cfg_dir, cand_cfg_dir, dirs_exist_ok=True)
+                _apply_multileg_candidate(strategy_type, cand_cfg_dir, tuned_candidate)
+                cmd, _ = _run_multileg_backtest_command(
+                    cfg=cfg,
+                    strategy=strat,
+                    config_dir=cand_cfg_dir,
+                    data_path=data_path,
+                    symbols=symbols,
+                    start_date=calib_start,
+                    end_date=calib_end,
+                    out_dir=cand_out_dir,
+                    with_maps=False,
+                )
+                proc = subprocess.run(
+                    cmd, cwd=PROJECT_ROOT, capture_output=True, text=True
+                )
+                if proc.returncode != 0:
+                    row = {
+                        "candidate": candidate,
+                        "tuned_candidate": tuned_candidate,
+                        "error": (proc.stderr or proc.stdout or "")[-1000:],
+                    }
+                    rows.append(row)
+                    continue
+                metrics = _parse_multileg_metrics(strategy_type, cand_out_dir)
+                score = pipeline_multileg_layers.score_candidate_with_constraints(
+                    metrics=metrics,
+                    kpi_backtest=kpi_backtest,
+                )
+                row = {
+                    "candidate": candidate,
+                    "tuned_candidate": tuned_candidate,
+                    "metrics": metrics,
+                    "score": score,
+                    "config_dir": str(cand_cfg_dir),
+                }
+                rows.append(row)
+                if not best_row or score > float(best_row.get("score", -1e18)):
+                    best_row = row
+            calibration_report = {
+                "calibration_start": calib_start,
+                "calibration_end": calib_end,
+                "candidates": rows,
+                "best": best_row,
+            }
+            (calib_root / "calibration_results.json").write_text(
+                json.dumps(
+                    calibration_report, ensure_ascii=False, indent=2, default=str
+                ),
+                encoding="utf-8",
+            )
+            best_cfg_dir = Path(str(best_row.get("config_dir", "") or ""))
+            if best_cfg_dir.exists():
+                runtime_cfg_dir = best_cfg_dir
+                grid_cfg_path = _resolve_multileg_runtime_config_path(
+                    config_dir=runtime_cfg_dir, strategy_type=strategy_type
+                )
 
         out_dir = out_root / strat
         cmd = [
@@ -5122,6 +5214,7 @@ def _run_grid_backtest_stage(
                 "out_dir": str(out_dir),
                 "report": str(out_dir / "report.html"),
                 "metrics": metrics.get("metrics", {}),
+                "calibration": calibration_report,
             }
         )
     (out_root / "grid_backtest_summary.json").write_text(
@@ -5694,8 +5787,21 @@ def _resolve_strategy_config_dir(
 
 
 def _multileg_calibration_candidates(
-    strategy_type: str, *, config_dir: Optional[Path] = None
+    strategy_type: str,
+    *,
+    strategy_cfg: Optional[Dict[str, Any]] = None,
+    config_dir: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
+    scfg = strategy_cfg or {}
+    configured = scfg.get("multileg_calibration", {})
+    if isinstance(configured, dict):
+        configured_candidates = configured.get("candidates")
+        if isinstance(configured_candidates, list) and configured_candidates:
+            return [
+                dict(row)
+                for row in configured_candidates
+                if isinstance(row, dict) and row
+            ]
     if strategy_type == "grid":
         return [
             {
@@ -5889,6 +5995,13 @@ def _parse_multileg_metrics(strategy_type: str, out_dir: Path) -> Dict[str, Any]
         segment = metrics.get("segment_summary", {}) or {}
         n_trades = int(trade.get("trades", 0) or 0)
         pnl = float(trade.get("sum_pnl_per_capital", 0.0) or 0.0)
+        gross_pnl_pct_sum = float(trade.get("gross_pnl_pct_sum", 0.0) or 0.0)
+        fee_bps = float(trade.get("fee_bps_charged_sum", 0.0) or 0.0)
+        slippage_bps = float(trade.get("slippage_bps_charged_sum", 0.0) or 0.0)
+        funding_bps = float(trade.get("funding_bps_charged_sum", 0.0) or 0.0)
+        cost_bps_sum = fee_bps + slippage_bps + funding_bps
+        gross_bps_per_trade = gross_pnl_pct_sum * 10_000.0 / max(n_trades, 1)
+        cost_bps_per_trade = cost_bps_sum / max(n_trades, 1)
         return {
             "n_trades": n_trades,
             "sharpe_r": float(trade.get("trade_sharpe", 0.0) or 0.0),
@@ -5900,6 +6013,27 @@ def _parse_multileg_metrics(strategy_type: str, out_dir: Path) -> Dict[str, Any]
             "worst_segment": float(segment.get("worst_segment", 0.0) or 0.0),
             "segment_win_rate": float(segment.get("segment_win_rate", 0.0) or 0.0),
             "forced_rate": float(trade.get("forced_rate", 0.0) or 0.0),
+            "gross_pnl_pct_sum": gross_pnl_pct_sum,
+            "cost_bps_sum": cost_bps_sum,
+            "gross_bps_per_trade": gross_bps_per_trade,
+            "cost_bps_per_trade": cost_bps_per_trade,
+            "cost_coverage_ratio": gross_bps_per_trade / max(cost_bps_per_trade, 1e-9),
+            "median_spacing_pct": float(segment.get("median_spacing_pct", 0.0) or 0.0),
+            "median_grid_full_span_pct": float(
+                segment.get("median_grid_full_span_pct", 0.0) or 0.0
+            ),
+            "median_segment_range_pct": float(
+                segment.get("median_segment_range_pct", 0.0) or 0.0
+            ),
+            "median_close_std_pct": float(
+                segment.get("median_close_std_pct", 0.0) or 0.0
+            ),
+            "median_grid_full_span_to_range": float(
+                segment.get("median_grid_full_span_to_range", 0.0) or 0.0
+            ),
+            "median_grid_per_side_span_to_1std": float(
+                segment.get("median_grid_per_side_span_to_1std", 0.0) or 0.0
+            ),
         }
 
     summary_path = out_dir / "summary.csv"
@@ -5970,6 +6104,7 @@ def _run_multileg_month_strategy(
     dry_run: bool,
     calibrate: bool,
     layer_switches: Optional[Dict[str, bool]] = None,
+    source_config_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     strategy_type = _strategy_type(cfg, strategy)
     scfg = (cfg.get("strategies", {}) or {}).get(strategy, {}) or {}
@@ -6009,7 +6144,11 @@ def _run_multileg_month_strategy(
     kpi_backtest = (scfg.get("kpi_gates", {}) or {}).get("backtest", {}) or {}
     if not isinstance(kpi_backtest, dict):
         kpi_backtest = {}
-    source_dir = _resolve_strategy_config_dir(cfg, strategy, base_strategies_root)
+    source_dir = (
+        source_config_dir.resolve()
+        if source_config_dir is not None
+        else _resolve_strategy_config_dir(cfg, strategy, base_strategies_root)
+    )
     calibrated_dir = month_strategies_root / strategy
     shutil.rmtree(calibrated_dir, ignore_errors=True)
     shutil.copytree(source_dir, calibrated_dir, dirs_exist_ok=True)
@@ -6019,7 +6158,7 @@ def _run_multileg_month_strategy(
     if calibrate and settings.calibrate_any and not dry_run:
         calib_dir.mkdir(parents=True, exist_ok=True)
         candidates = _multileg_calibration_candidates(
-            strategy_type, config_dir=source_dir
+            strategy_type, strategy_cfg=scfg, config_dir=source_dir
         )
         rows = []
         for idx, candidate in enumerate(candidates, start=1):
@@ -7782,41 +7921,97 @@ def _run_slow_structure_snapshot_for_month(
             base_root = Path(source_strategies_root)
             if not base_root.is_absolute():
                 base_root = PROJECT_ROOT / base_root
-            result = _run_multileg_month_strategy(
-                cfg=cfg,
-                strategy=strategy,
-                run_root=snap_root,
-                month_strategies_root=snap_strategies_root,
-                base_strategies_root=base_root,
-                data_path=data_path,
-                symbols=resolve_symbols_from_config(cfg),
-                calib_start=struct_start,
-                calib_end=struct_end,
-                test_start=struct_start,
-                test_end=struct_end,
-                dry_run=dry_run,
-                calibrate=True,
-            )
-            summary = result.get("summary", {}) if isinstance(result, dict) else {}
+            source_dir = _resolve_strategy_config_dir(cfg, strategy, base_root)
+            snap_cfg_dir = snap_strategies_root / strategy
+            shutil.rmtree(snap_cfg_dir, ignore_errors=True)
+            shutil.copytree(source_dir, snap_cfg_dir, dirs_exist_ok=True)
+            strategy_type = _strategy_type(cfg, strategy)
+            scfg = (cfg.get("strategies", {}) or {}).get(strategy, {}) or {}
+            kpi_backtest = (scfg.get("kpi_gates", {}) or {}).get("backtest", {}) or {}
+            if not isinstance(kpi_backtest, dict):
+                kpi_backtest = {}
+
+            def _evaluate_subset(
+                candidate_name: str,
+                candidate_cfg_dir: Path,
+                _selected_nodes: set[str],
+            ) -> Dict[str, Any]:
+                eval_root = strat_dir / "_feature_ablation" / candidate_name
+                eval_run_root = eval_root / "run"
+                eval_month_root = eval_root / "strategies"
+                eval_result = _run_multileg_month_strategy(
+                    cfg=cfg,
+                    strategy=strategy,
+                    run_root=eval_run_root,
+                    month_strategies_root=eval_month_root,
+                    base_strategies_root=base_root,
+                    data_path=data_path,
+                    symbols=resolve_symbols_from_config(cfg),
+                    calib_start=struct_start,
+                    calib_end=struct_end,
+                    test_start=struct_start,
+                    test_end=struct_end,
+                    dry_run=dry_run,
+                    calibrate=True,
+                    source_config_dir=candidate_cfg_dir,
+                )
+                eval_summary = (
+                    eval_result.get("summary", {})
+                    if isinstance(eval_result, dict)
+                    else {}
+                )
+                eval_metrics = (
+                    eval_summary.get("metrics", {})
+                    if isinstance(eval_summary, dict)
+                    else {}
+                )
+                score = pipeline_multileg_layers.score_candidate_with_constraints(
+                    metrics=eval_metrics,
+                    kpi_backtest=kpi_backtest,
+                )
+                return {
+                    "score": score,
+                    "summary": eval_summary,
+                    "metrics": eval_metrics,
+                    "run_dir": str(eval_run_root / strategy),
+                }
+
             selected = (
                 pipeline_multileg_feature_selection.select_multileg_feature_subset(
                     strategy=strategy,
-                    strategy_type=_strategy_type(cfg, strategy),
-                    config_dir=snap_strategies_root / strategy,
-                    output_dir=snap_root / strategy,
-                    strategy_cfg=(cfg.get("strategies", {}) or {}).get(strategy, {})
-                    or {},
-                    best_calibration=summary.get("best_calibration", {}),
-                    metrics=summary.get("metrics", {}),
+                    strategy_type=strategy_type,
+                    config_dir=snap_cfg_dir,
+                    output_dir=strat_dir,
+                    strategy_cfg=scfg,
+                    best_calibration={},
+                    metrics={},
+                    evaluate_candidate=_evaluate_subset,
                 )
             )
-            if isinstance(summary, dict) and summary:
-                summary["feature_selection"] = selected
-                summary_path = snap_root / strategy / "multileg_summary.json"
-                summary_path.write_text(
-                    json.dumps(summary, indent=2, ensure_ascii=False, default=str),
-                    encoding="utf-8",
-                )
+            winner = selected.get("winner") if isinstance(selected, dict) else {}
+            winner_eval = (
+                winner.get("evaluation", {}) if isinstance(winner, dict) else {}
+            )
+            run_dir = Path(str(winner_eval.get("run_dir", "") or ""))
+            if run_dir.exists():
+                for child in run_dir.iterdir():
+                    dst = strat_dir / child.name
+                    if child.is_dir():
+                        shutil.rmtree(dst, ignore_errors=True)
+                        shutil.copytree(child, dst, dirs_exist_ok=True)
+                    else:
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(child, dst)
+            raw_summary = (
+                winner_eval.get("summary", {}) if isinstance(winner_eval, dict) else {}
+            )
+            summary = dict(raw_summary) if isinstance(raw_summary, dict) else {}
+            summary["feature_selection"] = selected
+            summary_path = snap_root / strategy / "multileg_summary.json"
+            summary_path.write_text(
+                json.dumps(summary, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
             continue
         _shm = max(int(structure_holdout_months), 1)
         res = pipeline_strategy.run_strategy_pipeline(

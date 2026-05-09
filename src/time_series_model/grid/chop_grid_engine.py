@@ -328,6 +328,18 @@ class ChopGridEngine:
         if _chop_col not in seg.columns:
             _chop_col = "semantic_chop"
         _chop_series = pd.to_numeric(seg[_chop_col], errors="coerce")
+        segment_high = float(pd.to_numeric(seg["high"], errors="coerce").max())
+        segment_low = float(pd.to_numeric(seg["low"], errors="coerce").min())
+        segment_range_pct = (
+            (segment_high - segment_low) / center
+            if np.isfinite(segment_high + segment_low) and center > 0
+            else 0.0
+        )
+        close_std_pct = float(
+            pd.to_numeric(seg["close"], errors="coerce").std(ddof=0) / center
+        )
+        per_side_span_pct = spacing * int(self.cfg.max_levels_per_side) / center
+        full_span_pct = 2.0 * per_side_span_pct
         summary = {
             "status": "ok",
             "symbol": symbol,
@@ -344,6 +356,13 @@ class ChopGridEngine:
             "center": center,
             "spacing_pct": spacing / center,
             "spacing_atr": spacing / atr,
+            "max_levels_per_side": int(self.cfg.max_levels_per_side),
+            "grid_per_side_span_pct": per_side_span_pct,
+            "grid_full_span_pct": full_span_pct,
+            "segment_range_pct": segment_range_pct,
+            "close_std_pct": close_std_pct,
+            "grid_full_span_to_range": full_span_pct / max(segment_range_pct, 1e-12),
+            "grid_per_side_span_to_1std": per_side_span_pct / max(close_std_pct, 1e-12),
             "trades": len(trades),
             "grid_tp": sum(1 for t in trades if t.exit_reason == "grid_tp"),
             "forced_exits": forced,

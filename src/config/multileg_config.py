@@ -17,6 +17,7 @@ def _write_yaml_dict(path: Path, obj: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(obj, sort_keys=False), encoding="utf-8")
 
+
 def load_multileg_layers(
     *,
     config_dir: Path,
@@ -48,8 +49,12 @@ def load_multileg_layers(
         engine_path = prof_path
 
     arch = root.get("archetypes", {}) or {}
-    prefilter_rel = str(arch.get("prefilter", "archetypes/prefilter.yaml") or "").strip()
-    execution_rel = str(arch.get("execution", "archetypes/execution.yaml") or "").strip()
+    prefilter_rel = str(
+        arch.get("prefilter", "archetypes/prefilter.yaml") or ""
+    ).strip()
+    execution_rel = str(
+        arch.get("execution", "archetypes/execution.yaml") or ""
+    ).strip()
     prefilter_path = (
         config_dir / prefilter_rel
         if prefilter_rel
@@ -130,6 +135,11 @@ def update_multileg_calibration_candidate(
             spacing["atr_mult"] = float(candidate["atr_mult"])
         if "min_pct" in candidate:
             spacing["min_pct"] = float(candidate["min_pct"])
+        if "max_levels_per_side" in candidate:
+            inv["max_levels_per_side"] = int(candidate["max_levels_per_side"])
+        if "max_open_levels_total" in candidate:
+            risk = exe.setdefault("risk", {})
+            risk["max_open_levels_total"] = int(candidate["max_open_levels_total"])
     elif strategy_type == "dual_add_trend":
         regime = pre.setdefault("regime", {})
         inv = exe.setdefault("inventory", {})

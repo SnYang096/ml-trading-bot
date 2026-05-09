@@ -53,12 +53,83 @@ strategies:
         min_trades: 100
         max_forced_exit_rate: 0.35
         max_drawdown_floor: -0.08
+    multileg_calibration:
+      # Execution candidates intentionally include wider grid spacing for 20bps
+      # stress costs. Slow/non_rolling inherit this list from turbo.yaml.
+      candidates:
+        - entry_chop_min: 0.35
+          exit_chop_below: 0.22
+          atr_mult: 0.50
+          min_pct: 0.004
+          exclude_box_prefilter: true
+        - entry_chop_min: 0.40
+          exit_chop_below: 0.25
+          atr_mult: 0.50
+          min_pct: 0.004
+          exclude_box_prefilter: true
+        - entry_chop_min: 0.45
+          exit_chop_below: 0.30
+          atr_mult: 0.65
+          min_pct: 0.006
+          max_levels_per_side: 3
+          max_open_levels_total: 6
+          exclude_box_prefilter: false
+        - entry_chop_min: 0.45
+          exit_chop_below: 0.30
+          atr_mult: 0.80
+          min_pct: 0.008
+          max_levels_per_side: 3
+          max_open_levels_total: 6
+          exclude_box_prefilter: false
+        - entry_chop_min: 0.50
+          exit_chop_below: 0.32
+          atr_mult: 1.00
+          min_pct: 0.010
+          max_levels_per_side: 2
+          max_open_levels_total: 4
+          exclude_box_prefilter: false
+        - entry_chop_min: 0.50
+          exit_chop_below: 0.32
+          atr_mult: 1.00
+          min_pct: 0.010
+          max_levels_per_side: 3
+          max_open_levels_total: 6
+          exclude_box_prefilter: false
+        - entry_chop_min: 0.55
+          exit_chop_below: 0.35
+          atr_mult: 1.25
+          min_pct: 0.012
+          max_levels_per_side: 2
+          max_open_levels_total: 4
+          exclude_box_prefilter: false
+        - entry_chop_min: 0.55
+          exit_chop_below: 0.35
+          atr_mult: 1.25
+          min_pct: 0.012
+          max_levels_per_side: 3
+          max_open_levels_total: 6
+          exclude_box_prefilter: false
+        - entry_chop_min: 0.55
+          exit_chop_below: 0.35
+          atr_mult: 1.50
+          min_pct: 0.015
+          max_levels_per_side: 2
+          max_open_levels_total: 4
+          exclude_box_prefilter: false
+        - entry_chop_min: 0.55
+          exit_chop_below: 0.35
+          atr_mult: 1.50
+          min_pct: 0.015
+          max_levels_per_side: 3
+          max_open_levels_total: 6
+          exclude_box_prefilter: false
 
 event_backtest:
   enabled: false
 
 grid_backtest:
   enabled: true
+  calibrate_execution: true
   # output_dir intentionally omitted: auto_research_pipeline writes this stage under
   # output.history_dir/_rolling_sim/<timestamp>/grid_full_window, aligned with the
   # turbo rolling tree used by event_backtest-style artifacts.
