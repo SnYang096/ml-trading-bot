@@ -99,8 +99,10 @@ def test_update_multileg_candidate_writes_archetype_layers(tmp_path: Path) -> No
     assert exe["inventory"]["flip_action"] == "close_offside_all"
 
 
-def test_load_multileg_effective_config_missing_profile_raises(tmp_path: Path) -> None:
-    cfg_dir = tmp_path / "missing_profile_pack"
+def test_load_multileg_effective_config_supports_archetype_only_package(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "archetype_only_pack"
     _write_yaml(
         cfg_dir / "archetypes/prefilter.yaml", {"regime": {"entry_chop_min": 0.4}}
     )
@@ -108,8 +110,24 @@ def test_load_multileg_effective_config_missing_profile_raises(tmp_path: Path) -
         cfg_dir / "archetypes/execution.yaml",
         {"inventory": {"spacing": {"atr_mult": 0.5}}},
     )
+    got = load_multileg_effective_config(config_dir=cfg_dir, strategy_type="grid")
+    assert got["strategy_type"] == "grid"
+    assert got["status"] == "research"
+    assert got["regime"]["entry_chop_min"] == 0.4
+    assert got["inventory"]["spacing"]["atr_mult"] == 0.5
+
+
+def test_load_multileg_effective_config_explicit_missing_profile_raises(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "missing_profile_pack"
+    missing = cfg_dir / "research/turbo.yaml"
     with pytest.raises(ValueError, match="missing multileg profile yaml"):
-        load_multileg_effective_config(config_dir=cfg_dir, strategy_type="grid")
+        load_multileg_effective_config(
+            config_dir=cfg_dir,
+            strategy_type="grid",
+            profile_path=missing,
+        )
 
 
 def test_chop_grid_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> None:

@@ -128,12 +128,17 @@ def _load_grid_config(path: str | Path) -> GridEngineConfig:
 
 
 class ChopGridLiveEngine:
-    """Dry-run grid engine that produces place/cancel/market_exit actions."""
+    """Dry-run grid engine that produces place/cancel/market_exit actions.
+
+    Deployment packages under ``live/highcap/config/strategies`` intentionally keep
+    only ``meta.yaml`` plus ``archetypes/``. Runtime mode, state paths and adapters
+    come from the live runner CLI/env, not from research YAML.
+    """
 
     def __init__(
         self,
         *,
-        config_path: str | Path = "config/strategies/chop_grid/research/turbo.yaml",
+        config_path: str | Path = "live/highcap/config/strategies/chop_grid",
         state_path: str | Path = "results/chop_grid/live_state.json",
         level_notional: float = 1.0,
     ) -> None:

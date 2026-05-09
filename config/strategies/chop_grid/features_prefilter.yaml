@@ -1,0 +1,17 @@
+name: chop_grid_prefilter
+description: |
+  Candidate features for chop_grid regime eligibility tuning.
+  This file aligns with the unified prefilter stage contract, while
+  output is still written to archetypes/prefilter.yaml as regime fields.
+
+feature_pipeline:
+  requested_features:
+    - bpc_soft_phase_f
+    # Shared box function; price-unit hi/lo outputs are globally excluded via raw_scale_columns.
+    - box_structure_f
+    - atr_f
+    - atr_percentile_f
+    - volatility_regime_f
+    - bb_width_normalized_pct_f
+    - ema_1200_position_f
+    - ema_1200_slope_f

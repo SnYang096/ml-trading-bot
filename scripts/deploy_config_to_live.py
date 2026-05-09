@@ -72,12 +72,10 @@ def research_strategy_dir(strat: str) -> Path:
     return RESEARCH_STRATEGIES / s
 
 
-# Multi-leg strategies: archetypes/*.yaml (any name) + runtime profile yaml.
+# Multi-leg strategies: archetypes/*.yaml (any name). Runtime/research profiles are
+# intentionally not deployed to live/highcap; live packages contain only
+# ``meta.yaml`` plus ``archetypes/``.
 MULTI_LEG_STRATEGIES = frozenset({"chop_grid", "dual_add_trend"})
-MULTI_LEG_RUNTIME_YAML = {
-    "chop_grid": "research/turbo.yaml",
-    "dual_add_trend": "research/turbo.yaml",
-}
 
 
 def _is_multi_leg_deploy(strat: str) -> bool:
@@ -90,7 +88,8 @@ def _normalize_deploy_strategy(slug: str) -> str:
     return "me" if s == "me-long" else s
 
 
-# 需要同步的文件 (archetypes 目录 + 顶层配置)
+# 需要同步的 archetypes 文件。Classic 单仓策略按白名单；multi-leg 策略部署
+# archetypes 下全部 yaml/json 等文件。
 ARCHETYPE_FILES = [
     "gate.yaml",
     "evidence.yaml",
@@ -101,20 +100,26 @@ ARCHETYPE_FILES = [
     "holding.yaml",
 ]
 
-DEPLOY_ROOT_DENYLIST = frozenset({"research.yaml", "threshold_search.yaml"})
+DEPLOY_ROOT_DENYLIST = frozenset(
+    {
+        "research.yaml",
+        "threshold_search.yaml",
+        "model.yaml",
+        "labels.yaml",
+        "labels_return_tree.yaml",
+        "labels_rr_extreme.yaml",
+        "backtest.yaml",
+        "features.yaml",
+        "features_gate.yaml",
+        "features_evidence.yaml",
+        "training_baseline.json",
+    }
+)
 
-TOP_LEVEL_CONFIGS = [
-    "meta.yaml",
-    "model.yaml",
-    "labels.yaml",
-    "labels_return_tree.yaml",
-    "labels_rr_extreme.yaml",
-    "backtest.yaml",
-    "features.yaml",
-    "features_gate.yaml",
-    "features_evidence.yaml",
-    "training_baseline.json",  # P5: OOD baseline (feature distributions q05/q95)
-]
+# Live strategy package root is deliberately minimal. Research/training inputs stay
+# in config/strategies and results/, not in live/highcap.
+TOP_LEVEL_CONFIGS = ["meta.yaml"]
+LIVE_STRATEGY_ROOT_ALLOWED = frozenset({"meta.yaml", "archetypes"})
 
 # 全局配置: config/ 下的非策略配置 → live/highcap/config/
 # (相对路径, 相对于 config/ 根目录)
@@ -139,7 +144,6 @@ def get_strategy_deploy_profile(strategy: str) -> StrategyDeployProfile:
     if s in MULTI_LEG_STRATEGIES:
         return StrategyDeployProfile(
             archetypes_mode="all",
-            runtime_yaml=MULTI_LEG_RUNTIME_YAML.get(s),
         )
     return StrategyDeployProfile(
         archetypes_mode="whitelist",
@@ -159,6 +163,20 @@ def iter_deploy_archetype_basenames(
         for name in profile.archetype_whitelist
         if (archetypes_dir / name).is_file()
     ]
+
+
+def iter_deploy_root_basenames(src_dir: Path) -> List[str]:
+    """Root-level files allowed in live strategy packages."""
+    return [name for name in TOP_LEVEL_CONFIGS if (src_dir / name).is_file()]
+
+
+def iter_stale_live_root_entries(dst_dir: Path) -> List[Path]:
+    """Root entries deploy should remove from live strategy packages."""
+    if not dst_dir.exists():
+        return []
+    return sorted(
+        p for p in dst_dir.iterdir() if p.name not in LIVE_STRATEGY_ROOT_ALLOWED
+    )
 
 
 # ====================================================================
@@ -274,32 +292,10 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
                     if len(diff_lines) > 10:
                         print(f"    ... 还有 {len(diff_lines) - 10} 行差异")
 
-        # multi-leg runtime profile yaml
-        if profile.runtime_yaml:
-            eng = profile.runtime_yaml
-            if not _skip_root_deploy_file(eng):
-                src_eng = src_dir / eng
-                dst_eng = dst_dir / eng
-                if src_eng.exists():
-                    status, diff_lines = compare_file(src_eng, dst_eng)
-                    strat_summary[status] = strat_summary.get(status, 0) + 1
-                    strat_summary["files"][eng] = status
-                    label = eng
-                    if status == "identical":
-                        print(f"  ✅ {label}: 无变化")
-                    elif status == "new":
-                        print(f"  🆕 {label}: 新文件")
-                    elif status == "modified":
-                        print(f"  ⚡ {label}: 有差异")
-                        for line in diff_lines[:8]:
-                            print(f"    {line}")
-
         # top-level configs
-        for fname in TOP_LEVEL_CONFIGS:
+        for fname in iter_deploy_root_basenames(src_dir):
             src_file = src_dir / fname
             dst_file = dst_dir / fname
-            if not src_file.exists():
-                continue
 
             status, diff_lines = compare_file(src_file, dst_file)
             strat_summary[status] = strat_summary.get(status, 0) + 1
@@ -313,6 +309,12 @@ def cmd_diff(strategies: List[str], include_global: bool = True) -> Dict[str, di
                 print(f"  ⚡ {fname}: 有差异")
                 for line in diff_lines[:5]:
                     print(f"    {line}")
+
+        for stale in iter_stale_live_root_entries(dst_dir):
+            rel = stale.relative_to(dst_dir)
+            strat_summary["modified"] = strat_summary.get("modified", 0) + 1
+            strat_summary["files"][str(rel)] = "stale_live_only"
+            print(f"  🧹 {rel}: live-only stale entry (deploy will remove)")
 
         # Summary for this strategy
         total_changes = strat_summary["new"] + strat_summary["modified"]
@@ -380,6 +382,7 @@ def deploy_strategy(strat: str) -> int:
 
     copied = 0
     profile = get_strategy_deploy_profile(strat)
+    removed = 0
 
     # archetypes
     src_arch = src_dir / "archetypes"
@@ -394,21 +397,19 @@ def deploy_strategy(strat: str) -> int:
 
     # top-level configs
     dst_dir.mkdir(parents=True, exist_ok=True)
-    for fname in TOP_LEVEL_CONFIGS:
+    for fname in iter_deploy_root_basenames(src_dir):
         src_file = src_dir / fname
-        if src_file.exists():
-            shutil.copy2(src_file, dst_dir / fname)
-            copied += 1
+        shutil.copy2(src_file, dst_dir / fname)
+        copied += 1
 
-    if profile.runtime_yaml:
-        eng = profile.runtime_yaml
-        if not _skip_root_deploy_file(eng):
-            src_eng = src_dir / eng
-            if src_eng.exists():
-                shutil.copy2(src_eng, dst_dir / eng)
-                copied += 1
+    for stale in iter_stale_live_root_entries(dst_dir):
+        if stale.is_dir():
+            shutil.rmtree(stale)
+        else:
+            stale.unlink()
+        removed += 1
 
-    return copied
+    return copied + removed
 
 
 def deploy_global_configs() -> int:

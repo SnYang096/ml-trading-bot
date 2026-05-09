@@ -35,6 +35,7 @@ from scripts.diagnose_chop_grid import (  # noqa: E402
     merge_chop_grid_yaml,
     regime_chop_column,
     regime_chop_series,
+    resolve_optional_repo_path,
 )
 from scripts.capital_report import write_capital_report_from_trades  # noqa: E402
 from scripts.diagnose_crf_edge import (  # noqa: E402
@@ -333,6 +334,21 @@ def run_backtest(
         width_min=args.width_min,
         width_max=args.width_max,
         touches_min=args.touches_min,
+        feature_store_dir=resolve_optional_repo_path(
+            getattr(args, "feature_store_dir", None)
+        ),
+        feature_store_layer=(
+            str(args.feature_store_layer).strip()
+            if getattr(args, "feature_store_layer", None)
+            else None
+        )
+        or None,
+        feature_store_timeframe=(
+            str(args.feature_store_timeframe).strip()
+            if getattr(args, "feature_store_timeframe", None)
+            else None
+        )
+        or None,
     )
     engine_cfg = GridEngineConfig(
         box_window=args.box_window,
@@ -368,7 +384,7 @@ def run_backtest(
             print(f"skip {symbol}: no data")
             continue
         bars_signal = _resample_ohlcv(raw, args.timeframe)
-        df = build_features(symbol, bars_signal, cfg)
+        df = build_features(symbol, bars_signal, cfg, bars_timeframe=args.timeframe)
         df = df[(df.index >= start) & (df.index <= end)].copy()
         if df.empty:
             continue
@@ -772,8 +788,6 @@ def write_trading_maps(
         symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()][:1]
     start = pd.Timestamp(args.start, tz="UTC")
     end = pd.Timestamp(args.end, tz="UTC")
-    if args.map_months > 0:
-        start = max(start, end - pd.DateOffset(months=int(args.map_months)))
     warmup_start = start - pd.Timedelta(days=args.warmup_days)
     data_dir = Path(args.data_dir)
     bar_width_ms = pd.Timedelta(args.timeframe).total_seconds() * 1000 * 0.72
@@ -1062,11 +1076,22 @@ def main() -> None:
         default=int(defaults.get("touches_min", 5)),
         help="Box prefilter minimum boundary touches (StudyConfig).",
     )
+    parser.add_argument(
+        "--feature-store-dir",
+        default=defaults.get("feature_store_dir"),
+        help="FeatureStore root (defaults from grid_backtest.feature_store_dir in YAML).",
+    )
+    parser.add_argument(
+        "--feature-store-layer",
+        default=defaults.get("feature_store_layer"),
+    )
+    parser.add_argument(
+        "--feature-store-timeframe",
+        default=defaults.get("feature_store_timeframe"),
+    )
     parser.add_argument("--out-dir", default="results/chop_grid/backtest")
     parser.add_argument("--map-symbols", default="BTCUSDT")
-    parser.add_argument("--map-months", type=int, default=12)
     parser.add_argument("--continuous-map-symbols", default="")
-    parser.add_argument("--continuous-map-months", type=int, default=0)
     parser.add_argument("--no-maps", action="store_true")
     args = parser.parse_args()
 
@@ -1105,7 +1130,6 @@ def main() -> None:
             start=args.start,
             end=args.end,
             warmup_days=args.warmup_days,
-            map_months=args.continuous_map_months,
             trades=trades,
             segments=segments,
             title="Chop Grid Continuous Trading Map",

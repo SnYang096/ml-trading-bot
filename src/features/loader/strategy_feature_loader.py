@@ -341,6 +341,7 @@ class StrategyFeatureLoader:
         feature_store_layer: Optional[str] = None,
         feature_store_symbol: Optional[str] = None,
         feature_store_timeframe: Optional[str] = None,
+        feature_store_strict: bool = False,
     ) -> pd.DataFrame:
         """
         直接根据请求的特征列表加载特征。
@@ -349,11 +350,29 @@ class StrategyFeatureLoader:
             df: 输入 DataFrame
             requested_features: 特征列表
             fit: 是否拟合（研究阶段=True，实盘阶段=False）
+            feature_store_strict: 为 True 时，只要提供了四个 FeatureStore 参数就**必须**从
+                FeatureStore 命中全部请求输出列；否则抛错，且绝不回退到本地计算。
         """
         result_df = df.copy()
         requested_features = requested_features or []
         if not requested_features:
             return result_df
+
+        if feature_store_strict:
+            if not (
+                feature_store_dir
+                and feature_store_layer
+                and feature_store_symbol
+                and feature_store_timeframe
+            ):
+                raise ValueError(
+                    "feature_store_strict=True requires feature_store_dir, "
+                    "feature_store_layer, feature_store_symbol, feature_store_timeframe"
+                )
+            if not isinstance(result_df.index, pd.DatetimeIndex) or len(result_df) == 0:
+                raise ValueError(
+                    "feature_store_strict=True requires a non-empty DataFrame with DatetimeIndex"
+                )
 
         # Optional (Plan B): load from FeatureStore if available.
         # This is best-effort and opt-in; fallback to compute if anything is missing.
@@ -423,6 +442,11 @@ class StrategyFeatureLoader:
                         df_store.index = df_store.index.tz_convert(result_tz)
                     df_store = df_store.reindex(result_df.index)
                     features_cfg = self.feature_deps.get("features", {})
+                    declared_output_cols = {
+                        col
+                        for feat_info in features_cfg.values()
+                        for col in feat_info.get("output_columns", [])
+                    }
                     output_cols: List[str] = []
                     for feature_name in requested_features:
                         if feature_name in features_cfg:
@@ -431,6 +455,8 @@ class StrategyFeatureLoader:
                                     "output_columns", [feature_name]
                                 )
                             )
+                        elif feature_name in declared_output_cols:
+                            output_cols.append(feature_name)
 
                     # Deduplicate output_cols (two features may declare the same output column)
                     _seen_oc: set = set()
@@ -441,8 +467,14 @@ class StrategyFeatureLoader:
                             _dedup_oc.append(_c)
                     output_cols = _dedup_oc
 
+                    if not output_cols:
+                        if feature_store_strict:
+                            raise ValueError(
+                                "FeatureStore strict read: requested_features did not resolve to any "
+                                "output columns declared in feature_dependencies.yaml"
+                            )
                     # if store already has all needed outputs, return joined frame
-                    if output_cols and all(c in df_store.columns for c in output_cols):
+                    elif all(c in df_store.columns for c in output_cols):
                         # Only concat columns NOT already present in result_df
                         # to avoid duplicate column names (e.g. cvd_change_features_f
                         # declares output_columns that overlap with raw data columns).
@@ -459,17 +491,30 @@ class StrategyFeatureLoader:
                         return merged
                     else:
                         _missing = [c for c in output_cols if c not in df_store.columns]
+                        if feature_store_strict:
+                            raise KeyError(
+                                f"FeatureStore strict read: missing columns {_missing} "
+                                f"for {feature_store_symbol}/{feature_store_timeframe} "
+                                f"(layer={feature_store_layer}); resolved output_cols={len(output_cols)}"
+                            )
                         print(
                             f"   ⚠️  FeatureStore partial: {feature_store_symbol}/{feature_store_timeframe} "
                             f"missing {len(_missing)} cols: {_missing[:5]}{'...' if len(_missing)>5 else ''}. "
                             f"Falling back to compute."
                         )
                 else:
+                    if feature_store_strict:
+                        raise FileNotFoundError(
+                            f"FeatureStore strict read: no rows in range for "
+                            f"{feature_store_symbol}/{feature_store_timeframe} (layer={feature_store_layer})"
+                        )
                     print(
                         f"   ⚠️  FeatureStore empty: {feature_store_symbol}/{feature_store_timeframe} "
                         f"(layer={feature_store_layer}). Falling back to compute."
                     )
             except Exception as _fs_err:
+                if feature_store_strict:
+                    raise
                 import sys as _sys
                 print(
                     f"⚠️  FeatureStore read failed for "
@@ -480,6 +525,11 @@ class StrategyFeatureLoader:
                     file=_sys.stderr,
                     flush=True,
                 )
+
+        if feature_store_strict:
+            raise RuntimeError(
+                "feature_store_strict=True but FeatureStore path did not return merged features"
+            )
 
         features = self.feature_deps.get("features", {})
 

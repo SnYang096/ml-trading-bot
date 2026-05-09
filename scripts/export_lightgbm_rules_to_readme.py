@@ -13,6 +13,11 @@ from collections import defaultdict
 COLUMN_INDEX_RE = re.compile(r"^Column_(\d+)$", re.IGNORECASE)
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.features.normalization.raw_scale_columns import load_raw_scale_columns
+
 STRATEGIES = [
     "sr_reversal_rr_reg_long",
     "compression_breakout",
@@ -27,7 +32,7 @@ def _load_raw_scale_columns_for_gate(
     """Load columns that must be excluded from gate rule generation.
 
     Includes:
-      1) legacy raw_scale_columns list
+      1) standalone raw_scale_columns config
       2) output_normalization_map marked as price_unit/raw/usd/identity/passthrough
       3) conservative fallback for log1p_robust_rolling scale
     """
@@ -40,11 +45,8 @@ def _load_raw_scale_columns_for_gate(
         cfg = _yaml_rs.safe_load(f) or {}
     cols: set = set()
 
-    # 1) legacy explicit list
-    raw = cfg.get("raw_scale_columns", {})
-    for category_list in raw.values():
-        if isinstance(category_list, list):
-            cols.update(str(c) for c in category_list)
+    # 1) standalone explicit list
+    cols.update(load_raw_scale_columns())
 
     # 2) normalization-map based exclusion
     disallow_norm_types = {

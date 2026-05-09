@@ -432,7 +432,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--chop-grid-config",
-        default="config/strategies/chop_grid/research/turbo.yaml",
+        default="live/highcap/config/strategies/chop_grid",
     )
     p.add_argument(
         "--dual-add-config",

@@ -652,6 +652,11 @@ def test_multileg_rolling_continuous_map_collects_monthly_artifacts(
     run_root = tmp_path / "roll/fast_month_2024-04"
     strat_dir = run_root / "dual_add_trend"
     strat_dir.mkdir(parents=True)
+    empty_root = tmp_path / "roll/fast_month_2024-05"
+    empty_strat_dir = empty_root / "dual_add_trend"
+    empty_strat_dir.mkdir(parents=True)
+    (empty_strat_dir / "dual_add_trades.csv").write_text("", encoding="utf-8")
+    (empty_strat_dir / "dual_add_segments.csv").write_text("", encoding="utf-8")
     (strat_dir / "dual_add_trades.csv").write_text(
         "symbol,side,entry_time,exit_time,entry_price,exit_price,pnl_pct,exit_reason\n"
         "BTCUSDT,LONG,2024-04-01 00:00:00+00:00,2024-04-01 02:00:00+00:00,1,2,1,tp\n",
@@ -676,7 +681,7 @@ def test_multileg_rolling_continuous_map_collects_monthly_artifacts(
 
     got = arp._build_multileg_rolling_continuous_map(
         cfg=cfg,
-        ledger=[{"run_root": str(run_root)}],
+        ledger=[{"run_root": str(run_root)}, {"run_root": str(empty_root)}],
         strategies=["dual_add_trend"],
         roll_root=tmp_path / "roll",
         data_path="data/parquet_data",

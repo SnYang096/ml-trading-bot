@@ -25,7 +25,6 @@ def write_continuous_trading_map(
     start: str,
     end: str,
     warmup_days: int,
-    map_months: int,
     trades: pd.DataFrame,
     segments: pd.DataFrame,
     title: str,
@@ -48,8 +47,6 @@ def write_continuous_trading_map(
 
     x_start = pd.Timestamp(start, tz="UTC")
     x_end = pd.Timestamp(end, tz="UTC")
-    if map_months > 0:
-        x_start = max(x_start, x_end - pd.DateOffset(months=int(map_months)))
     warmup_start = x_start - pd.Timedelta(days=warmup_days)
     bar_width_ms = pd.Timedelta(timeframe).total_seconds() * 1000 * 0.72
     summary_html = _summary_html(

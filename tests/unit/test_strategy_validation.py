@@ -45,3 +45,29 @@ def test_validate_pipeline_trend_does_not_require_multileg_archetypes(
         project_root=tmp_path,
     )
     assert issues == []
+
+
+def test_validate_multileg_prefilter_feature_file_when_enabled(tmp_path: Path) -> None:
+    strategy_dir = tmp_path / "strategies/chop_grid"
+    _mk(strategy_dir / "features.yaml", "features: []\n")
+    _mk(strategy_dir / "research/turbo.yaml", "strategy_type: grid\n")
+    _mk(strategy_dir / "research/slow.yaml", "strategy_type: grid\n")
+    _mk(strategy_dir / "research/non_rolling.yaml", "strategy_type: grid\n")
+    _mk(strategy_dir / "archetypes/prefilter.yaml", "regime: {}\n")
+    _mk(strategy_dir / "archetypes/execution.yaml", "inventory: {}\n")
+    cfg = {
+        "strategies": {
+            "chop_grid": {
+                "strategy_type": "grid",
+                "config": str(strategy_dir),
+                "has_prefilter": True,
+            }
+        }
+    }
+    issues = validate_pipeline_strategy_packages(
+        pipeline_cfg=cfg,
+        project_root=tmp_path,
+        allow_strategy_types={"grid", "dual_add_trend"},
+    )
+    missing = [it.path for it in issues if it.code == "missing_required_file"]
+    assert str(strategy_dir / "features_prefilter.yaml") in missing

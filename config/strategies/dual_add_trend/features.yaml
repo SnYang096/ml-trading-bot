@@ -19,7 +19,7 @@ feature_pipeline:
     # semantic_chop source: avoid broad no-trend regimes.
     - bpc_soft_phase_f
 
-    # Exclude stable CRF-style boxes; this strategy is for directional regimes.
+    # Shared box function; price-unit hi/lo outputs are globally excluded via raw_scale_columns.
     - box_structure_f
 
     # Trend context for add direction and flip detection.

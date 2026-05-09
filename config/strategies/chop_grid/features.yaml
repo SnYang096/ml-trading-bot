@@ -19,7 +19,7 @@ feature_pipeline:
     # semantic_chop source: bpc_soft_phase_f outputs bpc_semantic_chop
     - bpc_soft_phase_f
 
-    # Used only to optionally exclude stable CRF-style boxes.
+    # Shared box function; price-unit hi/lo outputs are globally excluded via raw_scale_columns.
     - box_structure_f
 
     # Risk context / future filtering candidates.

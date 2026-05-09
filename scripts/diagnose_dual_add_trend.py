@@ -30,6 +30,7 @@ from scripts.diagnose_chop_grid import (
     _hysteresis_segments,
     build_features,
     regime_chop_series,
+    resolve_optional_repo_path,
 )
 from scripts.capital_report import write_capital_report_from_trades
 from scripts.diagnose_crf_edge import _load_symbol_1m, _resample_ohlcv
@@ -112,6 +113,17 @@ def _load_dual_add_defaults(path: Path) -> dict:
     }
     if "compute_semantic_chop_ts_q" in chop_series:
         out["compute_chop_ts_q"] = chop_series.get("compute_semantic_chop_ts_q")
+    out["feature_store_dir"] = resolve_optional_repo_path(
+        dual_bt.get("feature_store_dir")
+    )
+    out["feature_store_layer"] = dual_bt.get("feature_store_layer")
+    out["feature_store_timeframe"] = dual_bt.get("feature_store_timeframe")
+    if out["feature_store_layer"] is not None:
+        out["feature_store_layer"] = str(out["feature_store_layer"]).strip() or None
+    if out["feature_store_timeframe"] is not None:
+        out["feature_store_timeframe"] = (
+            str(out["feature_store_timeframe"]).strip() or None
+        )
     return out
 
 
@@ -551,6 +563,17 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         width_min=cfg.width_min,
         width_max=cfg.width_max,
         touches_min=cfg.touches_min,
+        feature_store_dir=resolve_optional_repo_path(args.feature_store_dir),
+        feature_store_layer=(
+            str(args.feature_store_layer).strip() if args.feature_store_layer else None
+        )
+        or None,
+        feature_store_timeframe=(
+            str(args.feature_store_timeframe).strip()
+            if args.feature_store_timeframe
+            else None
+        )
+        or None,
     )
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     start = pd.Timestamp(args.start, tz="UTC")
@@ -564,7 +587,9 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         if raw.empty:
             continue
         bars_signal = _resample_ohlcv(raw, args.timeframe)
-        df = build_features(symbol, bars_signal, grid_cfg)
+        df = build_features(
+            symbol, bars_signal, grid_cfg, bars_timeframe=args.timeframe
+        )
         df = _add_trend_features(df, cfg.trend_return_horizons)
         df = df[(df.index >= start) & (df.index <= end)].copy()
         exec_tf = args.execution_timeframe or args.timeframe
@@ -682,8 +707,6 @@ def write_trading_maps(
         symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()][:1]
     start = pd.Timestamp(args.start, tz="UTC")
     end = pd.Timestamp(args.end, tz="UTC")
-    if args.map_months > 0:
-        start = max(start, end - pd.DateOffset(months=int(args.map_months)))
     warmup_start = start - pd.Timedelta(days=args.warmup_days)
     data_dir = Path(args.data_dir)
     bar_width_ms = pd.Timedelta(args.timeframe).total_seconds() * 1000 * 0.72
@@ -891,6 +914,19 @@ def main() -> None:
             "Default: dual_add.yaml chop_series if set, else only when --chop-signal ts_quantile."
         ),
     )
+    ap.add_argument(
+        "--feature-store-dir",
+        default=defaults.get("feature_store_dir"),
+        help="FeatureStore root (dual_add_backtest.feature_store_dir in YAML).",
+    )
+    ap.add_argument(
+        "--feature-store-layer",
+        default=defaults.get("feature_store_layer"),
+    )
+    ap.add_argument(
+        "--feature-store-timeframe",
+        default=defaults.get("feature_store_timeframe"),
+    )
     _hdef = defaults.get("trend_return_horizons", (3, 5, 10))
     ap.add_argument(
         "--trend-return-horizons",
@@ -1008,9 +1044,7 @@ def main() -> None:
     )
     ap.add_argument("--out-dir", default="results/dual_add_trend_diagnostic")
     ap.add_argument("--map-symbols", default="BTCUSDT")
-    ap.add_argument("--map-months", type=int, default=12)
     ap.add_argument("--continuous-map-symbols", default="")
-    ap.add_argument("--continuous-map-months", type=int, default=0)
     ap.add_argument("--no-maps", action="store_true")
     args = ap.parse_args()
 
@@ -1041,7 +1075,6 @@ def main() -> None:
             start=args.start,
             end=args.end,
             warmup_days=args.warmup_days,
-            map_months=args.continuous_map_months,
             trades=trades,
             segments=segments,
             title="Dual Add Trend Continuous Trading Map",

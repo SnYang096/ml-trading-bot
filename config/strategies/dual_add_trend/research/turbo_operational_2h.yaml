@@ -36,7 +36,6 @@ strategies:
     timeframe: 120T
     features_gate: features.yaml
     has_prefilter: false
-    has_direction: false
 
 event_backtest:
   enabled: false
@@ -45,7 +44,7 @@ dual_add_backtest:
   enabled: true
   # output_dir: omit to write under output.history_dir / _rolling_sim/<run_id>/dual_add_full_window/
   costs:
-    fee_bps: 4.0
+    fee_bps: 20.0
   start_date: "2022-01-01"
   end_date: "2026-03-31"
   symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
@@ -63,9 +62,7 @@ dual_add_backtest:
   max_net_exposure: 2
   max_adds_per_side: 3
   map_symbols: BTCUSDT
-  map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  continuous_map_months: 0
 
 output:
   history_dir: results/dual_add_trend/turbo-rolling-sim

@@ -1,36 +1,19 @@
-# chop_grid · turbo_fixed_features + grid_backtest — 执行参数在下列键；[INDEX] dates→rolling→tc→data→strategies→event/grid→study→threshold_search→output
+# chop_grid · turbo_fixed_features + grid_backtest — [INDEX] dates→rolling→tc→data→strategies→event/grid→output
 
 status: research
-
-# Shared chop regime series semantics for diagnostics/live.
-chop_series:
-  chop_signal: raw
-  chop_ts_window: 1200
-  chop_ts_min_periods: 150
-
-live:
-  mode: dry_run
-  state_path: results/chop_grid/live_state.json
-  order_adapter: dry_run
-  cancel_orders_on_exit: true
-  market_exit_on_regime_loss: true
-
-validation:
-  script: scripts/diagnose_chop_grid.py
-  baseline_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
-  baseline_periods: [2022, 2023, 2024, 2025, 2026Q1]
+# Live/dry-run adapter knobs (mode, order_adapter, state_path, YAML expected_costs) belong
+# in a deployment strategy package, e.g. ``live/highcap/config/strategies/chop_grid/``.
+# Pipeline/research merges should not duplicate them here.
 
 dates:
+  # Align with BPC turbo: fixed features, same highcap universe, same rolling window.
   start_date: "2022-01-01"
-  end_date: "2026-03-31"
+  end_date: "2026-05-01"
   holdout_months: 26
-  validation_months: 3
+  calibration_months: 6
 
 rolling:
   mode: turbo_fixed_features
-  windows:
-    calibration_months: 6
-    structure_lookback_months: 12
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
 
@@ -38,6 +21,10 @@ threshold_calibration:
   # enable_model_training: false → 阈值-only（与 BPC turbo 语义一致）。
   # 权威口径：本段 threshold_calibration；月度 replay 由 load_pipeline_config 汇总为 rolling_calibration.*（可读顶层 rolling_calibration 覆写节奏等）。
   enable_model_training: false
+  prefilter:
+    optimize: true
+  execution_opt:
+    enabled: true
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
@@ -57,112 +44,36 @@ strategies:
     config: config/strategies/chop_grid
     timeframe: 120T
     prepare_features: features.yaml
-    has_prefilter: false
-    has_direction: false
+    has_prefilter: true
+    kpi_gates:
+      prefilter:
+        min_rows: 10
+      backtest:
+        min_segments: 30
+        min_trades: 100
+        max_forced_exit_rate: 0.35
+        max_drawdown_floor: -0.08
 
 event_backtest:
   enabled: false
 
 grid_backtest:
   enabled: true
-  output_dir: results/chop_grid/turbo-full-cycle
+  # output_dir intentionally omitted: auto_research_pipeline writes this stage under
+  # output.history_dir/_rolling_sim/<timestamp>/grid_full_window, aligned with the
+  # turbo rolling tree used by event_backtest-style artifacts.
   # Conservative intrabar path assumption for research/reports only.
   # Live execution exits when real fills/TP orders happen.
   same_bar_entry_exit: false
-  # Research/report cost assumptions. Live execution should use exchange
-  # fills/fees from the adapter, not these static backtest assumptions.
+  # Research/report all-in cost assumptions. Binance round-trip/slippage/funding
+  # drag is treated as ~10bps baseline; turbo stress tests use 2x (~20bps).
+  # Live execution should use exchange fills/fees from the adapter.
   costs:
-    fee_bps: 4.0
-    maker_fee_bps: 2.0
-    taker_fee_bps: 5.0
-    forced_exit_slippage_bps: 5.0
-    funding_cost_bps_per_8h: 1.0
-  map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  map_months: 12
-  continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  continuous_map_months: 0
-
-study:
-  name: chop_grid
-  status: research_only
-  description: "Neutral grid inside semantic_chop; close all inventory when trend returns."
-
-  regime:
-    entry_feature: semantic_chop
-    entry_min: 0.40
-    exit_below: 0.25
-    prefer_chop_not_box: true
-
-  inventory:
-    spacing:
-      primary: atr
-      atr_mult: 0.50
-      min_pct: 0.004
-    max_levels_per_side: 3
-
-  risk:
-    max_segment_bars: 120
-    min_segment_bars: 6
-    force_exit_on_regime_loss: true
-
-  validation:
-    script: scripts/diagnose_chop_grid.py
-    baseline_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
-    baseline_periods: [2022, 2023, 2024, 2025, 2026Q1]
-    notes: |
-      Evidence supports broad semantic_chop / chop_not_box grid more than CRF-style
-      stable box boundary fading. Keep this strategy separate from the generic
-      single-position event_backtest until grid inventory is implemented.
-
-threshold_search:
-  objective:
-    metric: return_with_drawdown_penalty
-    maximize: true
-    min_segments: 30
-    min_trades: 100
-    max_forced_exit_rate: 0.35
-    max_drawdown_floor: -0.08
-
-  search_space:
-    entry_chop_min: [0.35, 0.40, 0.45, 0.50]
-    exit_chop_below: [0.20, 0.25, 0.30]
-    exclude_box_prefilter: [true, false]
-    grid_atr_mult: [0.50, 0.75, 1.00]
-    grid_min_pct: [0.003, 0.004, 0.006]
-    max_levels_per_side: [2, 3, 4]
-    max_segment_bars: [60, 120]
-
-  validation:
-    periods:
-      - ["2022-01-01", "2022-12-31"]
-      - ["2023-01-01", "2023-12-31"]
-      - ["2024-01-01", "2024-12-31"]
-      - ["2025-01-01", "2025-12-31"]
-      - ["2026-01-01", "2026-03-31"]
-    symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
-
-calibration_profiles:
-  - name: chop_balanced_fast
-    box_window: 60
-    entry_chop_min: 0.35
-    exit_chop_below: 0.22
-    atr_mult: 0.50
-    min_pct: 0.004
-    exclude_box_prefilter: true
-  - name: chop_balanced_default
-    box_window: 120
-    entry_chop_min: 0.40
-    exit_chop_below: 0.25
-    atr_mult: 0.50
-    min_pct: 0.004
-    exclude_box_prefilter: true
-  - name: chop_wide_conservative
-    box_window: 240
-    entry_chop_min: 0.45
-    exit_chop_below: 0.30
-    atr_mult: 0.65
-    min_pct: 0.006
-    exclude_box_prefilter: false
+    fee_bps: 20.0
+    maker_fee_bps: 20.0
+    taker_fee_bps: 20.0
+    forced_exit_slippage_bps: 20.0
+    funding_cost_bps_per_8h: 20.0
 
 output:
   history_dir: results/chop_grid/turbo-rolling-sim

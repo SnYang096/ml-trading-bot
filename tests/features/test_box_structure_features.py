@@ -15,8 +15,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 
 from src.features.registry import ensure_features_registered, get_feature_func
+from src.features.normalization.raw_scale_columns import load_raw_scale_columns
 from src.features.time_series.box_structure_features import (
     BOX_WINDOWS,
     compute_box_structure_from_series,
@@ -45,13 +47,28 @@ def test_registry_lookup():
     assert fn is compute_box_structure_from_series
 
 
+def test_raw_scale_columns_exclude_price_unit_box_edges():
+    expected = {
+        f"box_{edge}_{window}"
+        for edge in ("hi", "lo")
+        for window in (60, 120, 240, 480, 1200)
+    }
+    cfg = yaml.safe_load(open("config/raw_scale_columns.yaml", encoding="utf-8"))
+    raw_scale = set(cfg["raw_scale_columns"]["price_unit"])
+    assert expected.issubset(raw_scale)
+    assert expected.issubset(load_raw_scale_columns())
+
+    deps = yaml.safe_load(open("config/feature_dependencies.yaml", encoding="utf-8"))
+    assert "raw_scale_columns" not in deps
+
+
 # ---------------------------------------------------------------------------
 # 2. Causality (no look-ahead)
 # ---------------------------------------------------------------------------
 
 
 def test_no_lookahead():
-    n = 400
+    n = 1500
     rng = np.random.RandomState(123)
     base = 100 + np.cumsum(rng.randn(n) * 0.5)
     close, high, low = _make_ohlc(base, amp=0.3)

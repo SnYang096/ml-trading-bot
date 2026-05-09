@@ -38,8 +38,10 @@ BPC 慢管线的主要职责是：特征构建、标签生成、prefilter/gate/e
 
 也就是说，multi-leg 里的 `threshold_calibration` 应理解为：
 
-- `chop_grid`：在 `box_window`、`entry_chop_min`、`exit_chop_below`、`atr_mult`、`min_pct`、`exclude_box_prefilter` 等候选之间择优。
-- `dual_add_trend`：在 `box_window`、`entry_min`、`exit_below`、`max_semantic_chop_entry`、`max_semantic_chop_hold`、`step_atr_mult` 等候选之间择优。
+- `chop_grid`：在 `entry_chop_min`、`exit_chop_below`、`atr_mult`、`min_pct`、`exclude_box_prefilter` 等候选之间择优。
+- `dual_add_trend`：在 `entry_min`、`exit_below`、`max_semantic_chop_entry`、`max_semantic_chop_hold`、`step_atr_mult` 等候选之间择优。
+
+`box_*` 周期属于特征层自由度，必须在 `features.yaml` / `features_prefilter.yaml` 里显式列出列名，不进入 profile calibration 搜索。
 
 这不是“特征筛选”，而是 **规则型 multi-leg 策略的 profile calibration**。
 
@@ -56,28 +58,17 @@ BPC 慢管线的主要职责是：特征构建、标签生成、prefilter/gate/e
 
 这样可以避免后续把 `chop_grid` / `dual_add_trend` 和 BPC 慢管线混为一谈。
 
-### 2. 把 candidate grid 从代码搬到 YAML
+### 2. Candidate grid 由策略代码分发
 
-当前 multi-leg 候选参数写在 `scripts/auto_research_pipeline.py` 的 `_multileg_calibration_candidates()` 里。长期看这不利于追踪实验，也不利于比较 slow/turbo 配置差异。
+multi-leg 候选参数保留在 `scripts/auto_research_pipeline.py` 的 `_multileg_calibration_candidates()` 分发层，并按 `strategy_type` 进入各自策略候选实现。
 
-建议后续迁移到（现已采用）：
+研究 YAML 与 BPC 对齐，只表达通用流程语言：
 
-- `config/strategies/chop_grid/research/turbo.yaml`
-- `config/strategies/dual_add_trend/research/turbo.yaml`
+- `threshold_calibration`：哪些层参与 calibration。
+- `strategies.<name>.kpi_gates`：prefilter/backtest/deploy 等 KPI 门槛。
+- `grid_backtest` / `dual_add_backtest`：策略自己的执行与报告参数。
 
-目标是让候选 profile 成为策略配置的一部分，例如：
-
-```yaml
-calibration_profiles:
-  - name: balanced
-    box_window: 120
-    entry_chop_min: 0.40
-    exit_chop_below: 0.25
-    atr_mult: 0.50
-    min_pct: 0.004
-```
-
-这样 slow/turbo 的每次选择都能追溯到配置版本，而不是隐藏在 pipeline 代码里。
+这样 `chop_grid` / `dual_add_trend` 与 BPC 使用同一条 pipeline 语义，策略差异由类似多态的代码分发承担。
 
 ### 3. 补统一 KPI gate / deploy gate
 

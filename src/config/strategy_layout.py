@@ -83,7 +83,8 @@ def resolve_strategy_config_input(
     """
     if path.is_dir():
         cfg_dir = path
-        return cfg_dir, resolve_strategy_profile_path(cfg_dir, default_profile), None
+        prof_path = resolve_strategy_profile_path(cfg_dir, default_profile)
+        return cfg_dir, prof_path if prof_path.exists() else None, None
     if path.name in LEGACY_MULTILEG_ENGINE_NAMES:
         return path.parent, None, path
     if path.parent.name == "research":
@@ -178,19 +179,3 @@ def deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str
             out[k] = v
     return out
 
-
-def load_strategy_study_and_threshold_search(
-    project_root: Path, strategy_slug: str
-) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    """Return ``(study_dict, threshold_search_dict)`` from ``research/turbo.yaml`` if present."""
-    turbo = strategy_packaged_root(project_root, strategy_slug) / "research" / "turbo.yaml"
-    if not turbo.is_file():
-        return None, None
-    raw = yaml.safe_load(turbo.read_text(encoding="utf-8")) or {}
-    if not isinstance(raw, dict):
-        return None, None
-    study = raw.get("study")
-    th = raw.get("threshold_search")
-    out_s = study if isinstance(study, dict) else None
-    out_t = th if isinstance(th, dict) else None
-    return out_s, out_t

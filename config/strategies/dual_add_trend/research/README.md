@@ -6,9 +6,11 @@ This directory mirrors the BPC profile naming:
 - `slow.yaml`: slower structural health check plus monthly profile calibration.
 - `non_rolling.yaml`: full-window static holdout validation before gate/review.
 
-Strategy research metadata and profile candidates now live in:
+The profile YAMLs use the same pipeline language as BPC:
 
-- `turbo.yaml`: `study`, `threshold_search`, `calibration_profiles`.
-- `slow.yaml` / `non_rolling.yaml`: stage-specific overrides via `extends`.
+- `threshold_calibration` controls which layers calibrate.
+- `strategies.dual_add_trend.kpi_gates` holds KPI constraints.
+- `dual_add_backtest` holds execution/report parameters.
+- Strategy-owned calibration candidates are selected by the multi-leg dispatcher in code.
 
 Rolling exports adoptable bundles under `results/dual_add_trend/<history>/dual_add_trend/<timestamp>/strategies/dual_add_trend/` (see `auto_research_pipeline` multileg export).

@@ -12,7 +12,6 @@ regime:
   max_semantic_chop_entry: 0.25
   max_semantic_chop_hold: 0.40
   exclude_box_prefilter: true
-  box_window: 120
   box_prefilter:
     stability_min: 0.85
     width_min: 0.04
@@ -46,13 +45,13 @@ risk:
   max_segment_bars: 120
   force_exit_on_regime_loss: true
   max_loss_per_segment: 0.01
-  maker_fee_bps: 2.0
-  taker_fee_bps: 5.0
-  diagnostic_fee_bps: 4.0
-  forced_exit_slippage_bps: 0.0
-  funding_cost_bps_per_8h: 0.0
+  maker_fee_bps: 20.0
+  taker_fee_bps: 20.0
+  diagnostic_fee_bps: 20.0
+  forced_exit_slippage_bps: 20.0
+  funding_cost_bps_per_8h: 20.0
 
-# Same semantics as chop_grid/grid.yaml chop_series (build_features / regime masks).
+# Same semantics as chop_grid chop_series (build_features / regime masks).
 chop_series:
   chop_signal: raw
   chop_ts_window: 1200

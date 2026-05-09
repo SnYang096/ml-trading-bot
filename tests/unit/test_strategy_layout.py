@@ -6,7 +6,6 @@ import pytest
 
 from src.config.strategy_layout import (
     deep_merge_dicts,
-    load_strategy_study_and_threshold_search,
     resolve_default_pipeline_config,
     strategy_packaged_root,
 )
@@ -52,13 +51,6 @@ def test_resolve_unknown_strategy_fallback():
     )
     assert p == (root / "config" / "pipelines" / "pcm_orchestrate_2h.yaml").resolve()
     assert warns and "falling back" in warns[0]
-
-
-def test_load_strategy_study_from_turbo():
-    root = _repo_root()
-    study, th = load_strategy_study_and_threshold_search(root, "chop_grid")
-    assert study is not None and study.get("name") == "chop_grid"
-    assert th is not None and "search_space" in th
 
 
 def test_deep_merge_golden():

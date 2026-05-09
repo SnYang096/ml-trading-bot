@@ -1,28 +1,16 @@
-# dual_add_trend · turbo_fixed_features — 执行参数在下列键；[INDEX] dates→rolling→tc→data→strategies→event→dual_add_backtest→study→threshold_search→output
+# dual_add_trend · turbo_fixed_features — [INDEX] dates→rolling→tc→data→strategies→event→dual_add_backtest→output
 
 status: research
 
-chop_series:
-  chop_signal: raw
-  chop_ts_window: 1200
-  chop_ts_min_periods: 150
-
-validation:
-  script: scripts/diagnose_dual_add_trend.py
-  baseline_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
-  baseline_periods: [2022, 2023, 2024, 2025, 2026Q1]
-
 dates:
+  # Align with BPC turbo: fixed features, same highcap universe, same rolling window.
   start_date: "2022-01-01"
-  end_date: "2026-03-31"
+  end_date: "2026-05-01"
   holdout_months: 26
-  validation_months: 3
+  calibration_months: 6
 
 rolling:
   mode: turbo_fixed_features
-  windows:
-    calibration_months: 6
-    structure_lookback_months: 12
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
 
@@ -30,6 +18,10 @@ threshold_calibration:
   # enable_model_training: false → 阈值-only（与 BPC turbo 语义一致）。
   # 权威口径：本段 threshold_calibration；月度 replay 由 load_pipeline_config 汇总为 rolling_calibration.*（可读顶层 rolling_calibration 覆写节奏等）。
   enable_model_training: false
+  prefilter:
+    optimize: true
+  execution_opt:
+    enabled: true
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
@@ -39,7 +31,7 @@ universe_group:
 data_path: data/parquet_data
 
 download:
-  enabled: false
+  enabled: true
   data_dir: data/agg_data
   parquet_dir: data/parquet_data
 
@@ -49,8 +41,14 @@ strategies:
     config: config/strategies/dual_add_trend
     timeframe: 120T
     prepare_features: features.yaml
-    has_prefilter: false
-    has_direction: false
+    has_prefilter: true
+    kpi_gates:
+      prefilter:
+        min_rows: 10
+      backtest:
+        min_trades: 60
+        max_forced_exit_rate: 0.05
+        max_drawdown_floor: -0.08
 
 event_backtest:
   enabled: false
@@ -61,8 +59,7 @@ dual_add_backtest:
   # Research/report cost assumption. Live execution should use exchange fills
   # and fees from the adapter, not this static diagnostic default.
   costs:
-    fee_bps: 4.0
-  symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    fee_bps: 20.0
   timeframe: 2h
   regime: trend
   add_mode: trend
@@ -76,102 +73,6 @@ dual_add_backtest:
   max_gross_exposure: 4
   max_net_exposure: 2
   max_adds_per_side: 3
-  map_symbols: BTCUSDT
-  map_months: 12
-  continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  continuous_map_months: 0
-
-study:
-  name: dual_add_trend
-  status: research_only
-  description: "Trend-only multi-leg inventory with basket take profit, regime exits, and flip-time offside cleanup."
-
-  regime:
-    entry_feature: trend_confidence
-    entry_min: 0.80
-    exit_below: 0.50
-    exclude_chop: true
-    max_entry_semantic_chop: 0.25
-    max_hold_semantic_chop: 0.40
-    exclude_box_prefilter: true
-
-  inventory:
-    initial_legs: [TREND]
-    add_mode: dynamic_trend_side_only
-    flip_action: close_offside_all
-    max_adds_per_side: 3
-    max_gross_exposure_units: 4
-    max_net_exposure_units: 2
-
-  take_profit:
-    mode: basket
-    fee_aware: true
-    formula: "fee_buffer + max(0.75 * ATR14, 0.15% * entry_price)"
-    note: "A position only exits at TP if the modeled round-trip fee is covered and net profit remains positive."
-
-  risk:
-    max_loss_per_segment: 0.02
-    risk_stop_mode: regime_only
-    protection_stop_mode: catastrophic
-    catastrophic_stop_atr_mult: 8.0
-    catastrophic_stop_tp_mult: 8.0
-    min_segment_bars: 6
-    max_segment_bars: 120
-    force_exit_on_regime_loss: true
-    no_unbounded_adds: true
-
-  validation:
-    script: scripts/diagnose_dual_add_trend.py
-    output_dir: results/dual_add_trend/turbo-full-cycle
-    baseline_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
-    baseline_periods: [2022, 2023, 2024, 2025, 2026Q1]
-    notes: |
-      Keep this strategy outside the generic single-position event_backtest until
-      multi-leg inventory, flip-time exits, and gross/net exposure accounting are
-      first-class execution concepts.
-
-threshold_search:
-  objective:
-    primary: equal_weight_cagr_after_fees
-    constraints:
-      min_positive_periods: 5
-      max_worst_segment: -0.03
-      max_risk_stop_rate: 0.05
-      max_gross_exposure: 4
-      max_net_exposure: 2
-
-  search_space:
-    trend_min: [0.70, 0.80, 0.90]
-    trend_exit_min: [0.40, 0.50, 0.60]
-    tp_atr_mult: [0.50, 0.75, 1.00]
-    tp_pct: [0.0010, 0.0015, 0.0020]
-    max_gross_exposure: [3, 4, 5]
-    max_net_exposure: [1, 2, 3]
-    max_loss_per_segment: [0.01, 0.02, 0.03]
-    flip_action: [close_offside_adds, close_offside_all]
-
-calibration_profiles:
-  - name: trend_fast_lean
-    box_window: 60
-    entry_min: 0.75
-    exit_below: 0.45
-    max_semantic_chop_entry: 0.20
-    max_semantic_chop_hold: 0.35
-    step_atr_mult: 0.75
-  - name: trend_balanced_default
-    box_window: 120
-    entry_min: 0.80
-    exit_below: 0.50
-    max_semantic_chop_entry: 0.25
-    max_semantic_chop_hold: 0.40
-    step_atr_mult: 1.00
-  - name: trend_conservative_wide
-    box_window: 240
-    entry_min: 0.85
-    exit_below: 0.55
-    max_semantic_chop_entry: 0.30
-    max_semantic_chop_hold: 0.45
-    step_atr_mult: 1.25
 
 output:
   history_dir: results/dual_add_trend/turbo-rolling-sim

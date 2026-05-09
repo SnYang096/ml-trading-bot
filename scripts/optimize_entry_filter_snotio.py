@@ -36,10 +36,10 @@ from typing import Any, Dict, List, Set
 
 import numpy as np
 import pandas as pd
-import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from src.features.normalization.raw_scale_columns import load_raw_scale_columns
 from src.time_series_model.execution.entry_filter import (
     _build_mask_from_conditions,
     compute_derived_entry_features,
@@ -153,24 +153,14 @@ _SCAN_EXCLUDE_COLS = {
 
 
 def _load_raw_scale_columns(
-    config_path: str = "config/feature_dependencies.yaml",
+    config_path: str = "config/raw_scale_columns.yaml",
 ) -> Set[str]:
-    """Load raw_scale_columns from feature_dependencies.yaml.
+    """Load raw_scale_columns from the standalone exclusion config.
 
     Returns flat set of column names that should be excluded from
     cross-asset scans (unnormalized price/flow/energy columns).
     """
-    p = Path(config_path)
-    if not p.exists():
-        return set()
-    with open(p, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f) or {}
-    raw = cfg.get("raw_scale_columns", {})
-    cols: Set[str] = set()
-    for category_list in raw.values():
-        if isinstance(category_list, list):
-            cols.update(str(c) for c in category_list)
-    return cols
+    return load_raw_scale_columns(config_path)
 
 
 def run_feature_scan(
@@ -192,7 +182,7 @@ def run_feature_scan(
     raw_scale = _load_raw_scale_columns()
     if not silent and raw_scale:
         print(
-            f"   Excluding {len(raw_scale)} raw-scale columns from feature_dependencies.yaml"
+            f"   Excluding {len(raw_scale)} raw-scale columns from config/raw_scale_columns.yaml"
         )
     numeric_cols = []
     for c in merged.columns:

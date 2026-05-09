@@ -53,6 +53,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.stat_method_registry import canonicalize_method_name, get_canonical_methods
+from src.features.normalization.raw_scale_columns import load_raw_scale_columns
 
 # ── 默认百分位 ────────────────────────────────────────────────
 DEFAULT_PERCENTILES = [5, 10, 20, 80, 90, 95]
@@ -204,14 +205,7 @@ def _resolve_features_from_config(
         deps_cfg = yaml.safe_load(f)
 
     all_features_def = deps_cfg.get("features", {})
-    raw_scale_columns: set[str] = set()
-    raw_scale_cfg = deps_cfg.get("raw_scale_columns", {}) or {}
-    if isinstance(raw_scale_cfg, dict):
-        for vals in raw_scale_cfg.values():
-            if isinstance(vals, (list, tuple, set)):
-                raw_scale_columns.update(str(v) for v in vals if str(v).strip())
-    elif isinstance(raw_scale_cfg, (list, tuple, set)):
-        raw_scale_columns.update(str(v) for v in raw_scale_cfg if str(v).strip())
+    raw_scale_columns = load_raw_scale_columns()
 
     # 3. 解析 _f → output_columns
     resolved_columns = []
@@ -2252,14 +2246,7 @@ def _resolve_features_from_prefilter_yaml(
         deps_cfg = yaml.safe_load(f)
 
     all_features_def = deps_cfg.get("features", {})
-    raw_scale_columns: set[str] = set()
-    raw_scale_cfg = deps_cfg.get("raw_scale_columns", {}) or {}
-    if isinstance(raw_scale_cfg, dict):
-        for vals in raw_scale_cfg.values():
-            if isinstance(vals, (list, tuple, set)):
-                raw_scale_columns.update(str(v) for v in vals if str(v).strip())
-    elif isinstance(raw_scale_cfg, (list, tuple, set)):
-        raw_scale_columns.update(str(v) for v in raw_scale_cfg if str(v).strip())
+    raw_scale_columns = load_raw_scale_columns()
     available_set = set(available_columns)
     resolved_columns: List[str] = []
 

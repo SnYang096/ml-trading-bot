@@ -119,7 +119,7 @@ def _build_signal_segments(
     if raw.empty:
         return pd.DataFrame(), []
     signal_bars = _resample_ohlcv(raw, args.timeframe)
-    df = build_features(symbol, signal_bars, grid_cfg)
+    df = build_features(symbol, signal_bars, grid_cfg, bars_timeframe=args.timeframe)
     df = _add_trend_features(df, cfg.trend_return_horizons)
     df = df[(df.index >= start) & (df.index <= end)].copy()
     if df.empty:

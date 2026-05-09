@@ -351,13 +351,21 @@ def test_load_multileg_slow_profiles_extend_turbo_metadata():
     )
 
     assert chop_cfg.get("rolling", {}).get("mode") == "slow_realistic"
-    assert "study" in chop_cfg
-    assert "threshold_search" in chop_cfg
-    assert chop_cfg["grid_backtest"]["costs"]["maker_fee_bps"] == 2.0
+    assert "study" not in chop_cfg
+    assert "threshold_search" not in chop_cfg
+    assert (
+        chop_cfg["strategies"]["chop_grid"]["kpi_gates"]["backtest"]["min_trades"]
+        == 100
+    )
+    assert chop_cfg["grid_backtest"]["costs"]["maker_fee_bps"] == 20.0
     assert dual_cfg.get("rolling", {}).get("mode") == "slow_realistic"
-    assert "study" in dual_cfg
-    assert "threshold_search" in dual_cfg
-    assert dual_cfg["dual_add_backtest"]["costs"]["fee_bps"] == 4.0
+    assert "study" not in dual_cfg
+    assert "threshold_search" not in dual_cfg
+    assert (
+        dual_cfg["strategies"]["dual_add_trend"]["kpi_gates"]["backtest"]["min_trades"]
+        == 60
+    )
+    assert dual_cfg["dual_add_backtest"]["costs"]["fee_bps"] == 20.0
 
 
 def test_multileg_backtest_dates_mismatch_raises(tmp_path: Path):
@@ -391,13 +399,16 @@ def test_multileg_backtest_dates_mismatch_raises(tmp_path: Path):
         load_pipeline_config(bad)
 
 
-def test_load_dual_turbo_contains_study_blocks():
+def test_load_dual_turbo_uses_bpc_style_strategy_blocks():
     cfg = load_pipeline_config(
         _root() / "config/strategies/dual_add_trend/research/turbo.yaml"
     )
     assert "dual_add_trend" in (cfg.get("strategies") or {})
-    assert isinstance(cfg.get("study"), dict)
-    assert isinstance(cfg.get("threshold_search"), dict)
+    assert "study" not in cfg
+    assert "threshold_search" not in cfg
+    assert isinstance(
+        cfg["strategies"]["dual_add_trend"]["kpi_gates"]["backtest"], dict
+    )
 
 
 def test_time_split_policy_invalid_raises(tmp_path: Path):

@@ -1,0 +1,16 @@
+# Live/highcap execution layer for inventory spacing and risk controls.
+
+inventory:
+  spacing:
+    primary: atr
+    atr_mult: 0.50
+    min_pct: 0.004
+  max_levels_per_side: 3
+  order_type: limit
+
+risk:
+  min_segment_bars: 6
+  max_segment_bars: 120
+  force_exit_on_regime_loss: true
+  max_loss_per_grid: 0.03
+  max_open_levels_total: 6

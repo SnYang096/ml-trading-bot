@@ -1,0 +1,12 @@
+# Live/highcap regime layer for the chop-grid inventory engine.
+
+regime:
+  entry_feature: bpc_semantic_chop
+  entry_chop_min: 0.40
+  exit_chop_below: 0.25
+  exclude_box_prefilter: true
+  box_prefilter:
+    stability_min: 0.85
+    width_min: 0.04
+    width_max: 0.30
+    touches_min: 5

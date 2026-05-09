@@ -626,7 +626,7 @@ python scripts/run_multi_leg_live.py \
 - 多腿管线入口：`config/strategies/chop_grid/research/{turbo,slow,non_rolling}.yaml` 与 `config/strategies/dual_add_trend/research/{turbo,slow,non_rolling}.yaml`
 - BPC 策略结构：`features.yaml`、`archetypes/*`、`labels_*`、prefilter/gate/entry 配置
 - 多腿策略结构：`features.yaml`、`research/{turbo,slow,non_rolling}.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`、`archetypes/regime_thresholds.yaml`
-- 多腿 `calibration_profiles` 放在 `research/turbo.yaml`（`slow/non_rolling` 通过 `extends` 继承），不再使用根目录 `research.yaml`。
+- 多腿研究入口与 BPC 对齐：`threshold_calibration` 控流程，`strategies.<name>.kpi_gates` 控 KPI，候选阈值/执行组合由策略类型分发到对应代码实现。
 - `scripts/pipeline/config.py` 与 `src/config/multileg_config.py` 现共享 `src/config/strategy_layout.py` 的 YAML/`extends` 解析；`mlbot multileg validate-config` 复用 `src/config/strategy_validation.py` 的策略包校验。
 
 ```bash

@@ -105,6 +105,7 @@ from scripts.locked_entry_filter_utils import (
 from scripts.pipeline import config as pipeline_config
 from scripts.pipeline import cli as pipeline_cli
 from scripts.pipeline import events as pipeline_events
+from scripts.pipeline import multileg_layers as pipeline_multileg_layers
 from scripts.pipeline import strategy_pipeline as pipeline_strategy
 from scripts.pipeline import steps as pipeline_steps
 from scripts.capital_report import write_capital_report_from_trades
@@ -5081,23 +5082,14 @@ def _run_grid_backtest_stage(
             "--out-dir",
             str(out_dir),
         ]
-        map_symbols = str(grid_cfg.get("map_symbols", "") or "").strip()
+        map_symbols = str(grid_cfg.get("map_symbols", symbols) or symbols).strip()
         if map_symbols:
             cmd.extend(["--map-symbols", map_symbols])
-        if "map_months" in grid_cfg:
-            cmd.extend(["--map-months", str(int(grid_cfg.get("map_months", 12) or 12))])
         continuous_map_symbols = str(
-            grid_cfg.get("continuous_map_symbols", "") or ""
+            grid_cfg.get("continuous_map_symbols", symbols) or symbols
         ).strip()
         if continuous_map_symbols:
             cmd.extend(["--continuous-map-symbols", continuous_map_symbols])
-        if "continuous_map_months" in grid_cfg:
-            cmd.extend(
-                [
-                    "--continuous-map-months",
-                    str(int(grid_cfg.get("continuous_map_months", 0) or 0)),
-                ]
-            )
         if "same_bar_entry_exit" in grid_cfg:
             cmd.append(
                 "--same-bar-entry-exit"
@@ -5224,13 +5216,9 @@ def _run_dual_add_backtest_stage(
             "--fee-bps",
             str(float(dual_costs.get("fee_bps", dual_cfg.get("fee_bps", 4.0)))),
             "--map-symbols",
-            str(dual_cfg.get("map_symbols", "BTCUSDT")),
-            "--map-months",
-            str(int(dual_cfg.get("map_months", 12))),
+            str(dual_cfg.get("map_symbols", symbols) or symbols),
             "--continuous-map-symbols",
-            str(dual_cfg.get("continuous_map_symbols", "")),
-            "--continuous-map-months",
-            str(int(dual_cfg.get("continuous_map_months", 0))),
+            str(dual_cfg.get("continuous_map_symbols", symbols) or symbols),
             "--out-dir",
             str(out_dir),
         ]
@@ -5702,44 +5690,12 @@ def _resolve_strategy_config_dir(
     return default_dir.resolve()
 
 
-def _load_multileg_calibration_profiles(config_dir: Path) -> List[Dict[str, Any]]:
-    """Load strategy-owned multi-leg calibration profiles from ``research/turbo.yaml``.
-
-    This keeps candidate grids in config rather than pipeline code so runs are traceable.
-    """
-    path = config_dir / "research" / "turbo.yaml"
-    legacy_path = config_dir / "research.yaml"
-    if not path.exists() and legacy_path.exists():
-        path = legacy_path
-    if not path.exists():
-        return []
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return []
-    if not isinstance(raw, dict):
-        return []
-    profiles = raw.get("calibration_profiles") or []
-    if not isinstance(profiles, list):
-        return []
-    out: List[Dict[str, Any]] = []
-    for row in profiles:
-        if isinstance(row, dict):
-            out.append(dict(row))
-    return out
-
-
 def _multileg_calibration_candidates(
     strategy_type: str, *, config_dir: Optional[Path] = None
 ) -> List[Dict[str, Any]]:
-    if config_dir is not None:
-        from_yaml = _load_multileg_calibration_profiles(config_dir)
-        if from_yaml:
-            return from_yaml
     if strategy_type == "grid":
         return [
             {
-                "box_window": 60,
                 "entry_chop_min": 0.35,
                 "exit_chop_below": 0.22,
                 "atr_mult": 0.50,
@@ -5747,7 +5703,6 @@ def _multileg_calibration_candidates(
                 "exclude_box_prefilter": True,
             },
             {
-                "box_window": 120,
                 "entry_chop_min": 0.40,
                 "exit_chop_below": 0.25,
                 "atr_mult": 0.50,
@@ -5755,7 +5710,6 @@ def _multileg_calibration_candidates(
                 "exclude_box_prefilter": True,
             },
             {
-                "box_window": 240,
                 "entry_chop_min": 0.45,
                 "exit_chop_below": 0.30,
                 "atr_mult": 0.65,
@@ -5766,28 +5720,25 @@ def _multileg_calibration_candidates(
     if strategy_type == "dual_add_trend":
         return [
             {
-                "box_window": 60,
                 "entry_min": 0.75,
                 "exit_below": 0.45,
                 "max_semantic_chop_entry": 0.20,
                 "max_semantic_chop_hold": 0.35,
-                "step_atr_mult": 0.50,
+                "step_atr_mult": 0.75,
             },
             {
-                "box_window": 120,
                 "entry_min": 0.80,
                 "exit_below": 0.50,
                 "max_semantic_chop_entry": 0.25,
                 "max_semantic_chop_hold": 0.40,
-                "step_atr_mult": 0.50,
+                "step_atr_mult": 1.00,
             },
             {
-                "box_window": 240,
                 "entry_min": 0.85,
                 "exit_below": 0.55,
                 "max_semantic_chop_entry": 0.30,
                 "max_semantic_chop_hold": 0.45,
-                "step_atr_mult": 0.65,
+                "step_atr_mult": 1.25,
             },
         ]
     return [{}]
@@ -5867,12 +5818,8 @@ def _run_multileg_backtest_command(
                 [
                     "--map-symbols",
                     str(grid_cfg.get("map_symbols", symbols) or symbols),
-                    "--map-months",
-                    str(int(grid_cfg.get("map_months", 12) or 12)),
                     "--continuous-map-symbols",
                     str(grid_cfg.get("continuous_map_symbols", symbols) or symbols),
-                    "--continuous-map-months",
-                    str(int(grid_cfg.get("continuous_map_months", 0) or 0)),
                 ]
             )
         else:
@@ -5916,12 +5863,8 @@ def _run_multileg_backtest_command(
                 [
                     "--map-symbols",
                     str(dual_cfg.get("map_symbols", "BTCUSDT")),
-                    "--map-months",
-                    str(int(dual_cfg.get("map_months", 12))),
                     "--continuous-map-symbols",
                     str(dual_cfg.get("continuous_map_symbols", symbols) or symbols),
-                    "--continuous-map-months",
-                    str(int(dual_cfg.get("continuous_map_months", 0))),
                 ]
             )
         else:
@@ -6002,13 +5945,10 @@ def _parse_multileg_metrics(strategy_type: str, out_dir: Path) -> Dict[str, Any]
 
 
 def _score_multileg_candidate(metrics: Dict[str, Any]) -> float:
-    total = float(metrics.get("total_r", 0.0) or 0.0)
-    worst = float(metrics.get("worst_segment", 0.0) or 0.0)
-    forced = float(metrics.get("forced_rate", 0.0) or 0.0)
-    risk_stop = float(
-        metrics.get("risk_stop_rate", metrics.get("near_stop_rate", 0.0)) or 0.0
+    return pipeline_multileg_layers.score_candidate_with_constraints(
+        metrics=metrics,
+        kpi_backtest={},
     )
-    return total + 5.0 * worst - 0.25 * forced - 0.50 * risk_stop
 
 
 def _run_multileg_month_strategy(
@@ -6026,8 +5966,46 @@ def _run_multileg_month_strategy(
     test_end: str,
     dry_run: bool,
     calibrate: bool,
+    layer_switches: Optional[Dict[str, bool]] = None,
 ) -> Dict[str, Any]:
     strategy_type = _strategy_type(cfg, strategy)
+    scfg = (cfg.get("strategies", {}) or {}).get(strategy, {}) or {}
+    threshold_cfg = cfg.get("threshold_calibration", {}) or {}
+    if not isinstance(threshold_cfg, dict):
+        threshold_cfg = {}
+    _sw = layer_switches or {}
+    settings = pipeline_multileg_layers.resolve_multileg_layer_settings(
+        strategy_type=strategy_type,
+        strategy_cfg=scfg,
+        threshold_cfg=threshold_cfg,
+        default_prefilter_optimize=bool(
+            _sw.get(
+                "prefilter_optimize",
+                ((threshold_cfg.get("prefilter", {}) or {}).get("optimize", True)),
+            )
+        ),
+        default_gate_optimize=bool(
+            _sw.get(
+                "gate_optimize",
+                ((threshold_cfg.get("gate", {}) or {}).get("optimize", False)),
+            )
+        ),
+        default_entry_filter_optimize=bool(
+            _sw.get(
+                "entry_filter_optimize",
+                ((threshold_cfg.get("entry_filter", {}) or {}).get("optimize", False)),
+            )
+        ),
+        default_execution_optimize=bool(
+            _sw.get(
+                "execution_optimize",
+                ((threshold_cfg.get("execution_opt", {}) or {}).get("enabled", True)),
+            )
+        ),
+    )
+    kpi_backtest = (scfg.get("kpi_gates", {}) or {}).get("backtest", {}) or {}
+    if not isinstance(kpi_backtest, dict):
+        kpi_backtest = {}
     source_dir = _resolve_strategy_config_dir(cfg, strategy, base_strategies_root)
     calibrated_dir = month_strategies_root / strategy
     shutil.rmtree(calibrated_dir, ignore_errors=True)
@@ -6035,17 +6013,22 @@ def _run_multileg_month_strategy(
 
     best: Dict[str, Any] = {"candidate": {}, "metrics": {}, "score": 0.0}
     calib_dir = run_root / strategy / "multileg_calibration"
-    if calibrate and not dry_run:
+    if calibrate and settings.calibrate_any and not dry_run:
         calib_dir.mkdir(parents=True, exist_ok=True)
         candidates = _multileg_calibration_candidates(
             strategy_type, config_dir=source_dir
         )
         rows = []
         for idx, candidate in enumerate(candidates, start=1):
+            tuned_candidate = pipeline_multileg_layers.candidate_for_enabled_layers(
+                strategy_type=strategy_type,
+                candidate=candidate,
+                settings=settings,
+            )
             cand_cfg_dir = calib_dir / f"candidate_{idx:02d}" / "config"
             cand_out_dir = calib_dir / f"candidate_{idx:02d}" / "results"
             shutil.copytree(source_dir, cand_cfg_dir, dirs_exist_ok=True)
-            _apply_multileg_candidate(strategy_type, cand_cfg_dir, candidate)
+            _apply_multileg_candidate(strategy_type, cand_cfg_dir, tuned_candidate)
             cmd, _ = _run_multileg_backtest_command(
                 cfg=cfg,
                 strategy=strategy,
@@ -6062,15 +6045,31 @@ def _run_multileg_month_strategy(
                 rows.append(
                     {
                         "candidate": candidate,
+                        "tuned_candidate": tuned_candidate,
                         "error": (proc.stderr or proc.stdout or "")[-1000:],
                     }
                 )
                 continue
             metrics = _parse_multileg_metrics(strategy_type, cand_out_dir)
-            score = _score_multileg_candidate(metrics)
-            rows.append({"candidate": candidate, "metrics": metrics, "score": score})
+            score = pipeline_multileg_layers.score_candidate_with_constraints(
+                metrics=metrics,
+                kpi_backtest=kpi_backtest,
+            )
+            rows.append(
+                {
+                    "candidate": candidate,
+                    "tuned_candidate": tuned_candidate,
+                    "metrics": metrics,
+                    "score": score,
+                }
+            )
             if not best["metrics"] or score > float(best["score"]):
-                best = {"candidate": candidate, "metrics": metrics, "score": score}
+                best = {
+                    "candidate": candidate,
+                    "tuned_candidate": tuned_candidate,
+                    "metrics": metrics,
+                    "score": score,
+                }
         (calib_dir / "calibration_results.json").write_text(
             json.dumps(rows, indent=2, ensure_ascii=False, default=str),
             encoding="utf-8",
@@ -6078,7 +6077,11 @@ def _run_multileg_month_strategy(
         if best["metrics"]:
             shutil.rmtree(calibrated_dir, ignore_errors=True)
             shutil.copytree(source_dir, calibrated_dir, dirs_exist_ok=True)
-            _apply_multileg_candidate(strategy_type, calibrated_dir, best["candidate"])
+            _apply_multileg_candidate(
+                strategy_type,
+                calibrated_dir,
+                best.get("tuned_candidate", best["candidate"]),
+            )
 
     strat_dir = run_root / strategy
     strat_dir.mkdir(parents=True, exist_ok=True)
@@ -6115,6 +6118,15 @@ def _run_multileg_month_strategy(
     summary = {
         "strategy": strategy,
         "strategy_type": strategy_type,
+        "layer_settings": {
+            "has_prefilter": settings.has_prefilter,
+            "has_gate": settings.has_gate,
+            "has_entry_filter": settings.has_entry_filter,
+            "prefilter_optimize": settings.prefilter_optimize,
+            "gate_optimize": settings.gate_optimize,
+            "entry_filter_optimize": settings.entry_filter_optimize,
+            "execution_optimize": settings.execution_optimize,
+        },
         "calibration_window": {"start": calib_start, "end": calib_end},
         "test_window": {"start": test_start, "end": test_end},
         "calibrated_config_dir": str(calibrated_dir),
@@ -6358,6 +6370,7 @@ def _build_multileg_rolling_continuous_map(
     output_path: Path,
 ) -> str:
     import pandas as pd
+    from pandas.errors import EmptyDataError
 
     trade_frames = []
     segment_frames = []
@@ -6376,12 +6389,18 @@ def _build_multileg_rolling_continuous_map(
                 trade_path = strat_dir / "dual_add_trades.csv"
                 segment_path = strat_dir / "dual_add_segments.csv"
             if trade_path.exists():
-                df = pd.read_csv(trade_path)
+                try:
+                    df = pd.read_csv(trade_path)
+                except EmptyDataError:
+                    df = pd.DataFrame()
                 if not df.empty:
                     df["strategy"] = strategy
                     trade_frames.append(df)
             if segment_path.exists():
-                df = pd.read_csv(segment_path)
+                try:
+                    df = pd.read_csv(segment_path)
+                except EmptyDataError:
+                    df = pd.DataFrame()
                 if not df.empty:
                     df["strategy"] = strategy
                     segment_frames.append(df)
@@ -6429,7 +6448,6 @@ def _build_multileg_rolling_continuous_map(
         start=str(dates.get("start_date") or "2022-01-01"),
         end=str(dates.get("end_date") or ""),
         warmup_days=120,
-        map_months=0,
         trades=trades,
         segments=segments,
         title="Multi-Leg Rolling Continuous Trading Map",
@@ -7332,6 +7350,27 @@ def _run_fast_month_stage(
     execution_opt_enabled = _section_enabled("execution_opt", True)
     pcm_eval_enabled = _section_enabled("pcm_eval", True)
     direction_tuning_enabled = _section_enabled("direction_tuning", True)
+    gate_cfg = rolling_calibration_cfg.get("gate", {}) or {}
+    if not isinstance(gate_cfg, dict):
+        gate_cfg = {}
+    root_gate_cfg = threshold_root_cfg.get("gate", {}) or {}
+    if not isinstance(root_gate_cfg, dict):
+        root_gate_cfg = {}
+    gate_optimize_enabled = bool(
+        gate_cfg.get("optimize", root_gate_cfg.get("optimize", False))
+    )
+    entry_filter_cfg = rolling_calibration_cfg.get("entry_filter", {}) or {}
+    if not isinstance(entry_filter_cfg, dict):
+        entry_filter_cfg = {}
+    root_entry_filter_cfg = threshold_root_cfg.get("entry_filter", {}) or {}
+    if not isinstance(root_entry_filter_cfg, dict):
+        root_entry_filter_cfg = {}
+    entry_filter_optimize_enabled = bool(
+        entry_filter_cfg.get(
+            "optimize",
+            root_entry_filter_cfg.get("optimize", False),
+        )
+    )
     # rolling.windows.calibration_months = 标定窗口长度 (见 _calib_and_test_windows)，
     # 与「多久跑一次方向调优」无关。方向节奏单独用 direction_tuning.cadence_months，默认 1=每月。
     _dir_tune_sec = rolling_calibration_cfg.get("direction_tuning") or {}
@@ -7530,6 +7569,12 @@ def _run_fast_month_stage(
                 test_end=test_end,
                 dry_run=dry_run,
                 calibrate=_calibrate_threshold_layers,
+                layer_switches={
+                    "prefilter_optimize": prefilter_optimize_enabled,
+                    "gate_optimize": gate_optimize_enabled,
+                    "entry_filter_optimize": entry_filter_optimize_enabled,
+                    "execution_optimize": execution_opt_enabled,
+                },
             )
         elif event_backtest_enabled:
             obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)

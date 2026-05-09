@@ -46,6 +46,7 @@ from src.time_series_model.execution.entry_filter import (
     load_entry_filters_config,
     _build_mask_from_conditions,
 )
+from src.features.normalization.raw_scale_columns import load_raw_scale_columns
 from scripts.backtest_execution_layer import (
     compute_sharpe,
     load_execution_config,
@@ -1403,14 +1404,8 @@ def _resolve_features_for_entry_filter(
         "cvd_change_20",
         "fp_delta_poc",
     }
-    # 读取 feature_dependencies.yaml 中维护的 raw_scale_columns 黑名单
-    raw_scale_cfg = deps_cfg.get("raw_scale_columns", {}) or {}
-    if isinstance(raw_scale_cfg, dict):
-        for vals in raw_scale_cfg.values():
-            if isinstance(vals, (list, tuple, set)):
-                raw_exact.update(str(v) for v in vals if str(v).strip())
-    elif isinstance(raw_scale_cfg, (list, tuple, set)):
-        raw_exact.update(str(v) for v in raw_scale_cfg if str(v).strip())
+    # 读取独立 raw_scale_columns 黑名单
+    raw_exact.update(load_raw_scale_columns())
     raw_prefixes = ("cvd_change_",)
 
     def _looks_normalized(col: str) -> bool:

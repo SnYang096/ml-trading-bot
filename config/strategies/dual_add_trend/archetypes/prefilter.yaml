@@ -9,7 +9,6 @@ regime: # Regime-level eligibility gate for starting/holding a trend inventory s
   max_semantic_chop_entry: 0.25 # Do not enter trend inventory in high-chop conditions.
   max_semantic_chop_hold: 0.40 # Exit/stop holding if chop rises above this level.
   exclude_box_prefilter: true # Avoid stable box regimes; trend-only adds need movement.
-  box_window: 120 # Lookback bars used by the auxiliary box structure detector.
   box_prefilter: # Optional box-quality thresholds used only when box filtering is evaluated.
     stability_min: 0.85 # Minimum range stability score for a detected box.
     width_min: 0.04 # Minimum normalized box width to avoid micro ranges.

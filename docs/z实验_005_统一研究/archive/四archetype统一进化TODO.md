@@ -644,7 +644,7 @@ feature_pipeline:
   - good_rate 从 ~60% 改善为 ~50% (完美平衡)
   - 语义: "比中位数更好的入场" 而非 "不亏"
 - [x] **改进 B**: 删除三个 archetype 手工研究文件 (bpc/me/fer entry_filters.yaml → meta-algorithm 已完全替代)
-- [x] **改进 C**: 原始特征排除改用 feature_dependencies.yaml raw_scale_columns
+- [x] **改进 C**: 原始特征排除改用 config/raw_scale_columns.yaml
   - 单一数据源: 不再硬编码前缀, 从 YAML 读取 35 列原始特征定义
   - 新增 raw_orderflow/raw_indicator/raw_oi/model_output 分类
   - 值域护栏仅报警不排除 (rsi/zscore 等有界特征 >1 是正常的)

@@ -986,6 +986,8 @@ features:
       L1 (~1-2 day, narrow swing) and L2 (~2 week, POC/HAL) SR remain provided
       by `srb_regime.swing_sr_levels(20)` and `poc_hal_features_*_f` respectively.
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       wide_window: 240
       anchor_shift: 12
     pass_full_df: false
@@ -8043,6 +8045,8 @@ features:
     description: SRB L3 wide-SR breakout side/window decay and EMA1200 2b alignment.
     pass_full_df: false
     compute_params:
+      input_normalization_map:
+        atr: price_unit
       max_age_bars: 24
       cross_buffer_atr: 0.0
       hold_buffer_atr: 0.0
@@ -8099,6 +8103,20 @@ features:
     - box_stability_240
     - box_touches_hi_240
     - box_touches_lo_240
+    - box_hi_480
+    - box_lo_480
+    - box_width_pct_480
+    - box_pos_480
+    - box_stability_480
+    - box_touches_hi_480
+    - box_touches_lo_480
+    - box_hi_1200
+    - box_lo_1200
+    - box_width_pct_1200
+    - box_pos_1200
+    - box_stability_1200
+    - box_touches_hi_1200
+    - box_touches_lo_1200
     - box_compression_score
     - box_regime_label
     - box_breakout_up
@@ -8106,7 +8124,7 @@ features:
     - box_prior_trend_sign
     category: box_structure
     description: >-
-      Causal consolidation-box detector on three windows (60/120/240 2H bars):
+      Causal consolidation-box detector on fixed windows (60/120/240/480/1200 2H bars):
       rolling hi/lo, width, position, stability, edge touches, plus compression
       score, regime label (small/mid/big/none), breakout flags (from the 120
       window), and prior-trend sign. Shared feature feeding CRF and the
@@ -8122,21 +8140,35 @@ features:
         box_lo_120: price_unit
         box_hi_240: price_unit
         box_lo_240: price_unit
+        box_hi_480: price_unit
+        box_lo_480: price_unit
+        box_hi_1200: price_unit
+        box_lo_1200: price_unit
         box_width_pct_60: bounded_0_1
         box_width_pct_120: bounded_0_1
         box_width_pct_240: bounded_0_1
+        box_width_pct_480: bounded_0_1
+        box_width_pct_1200: bounded_0_1
         box_pos_60: bounded_0_1
         box_pos_120: bounded_0_1
         box_pos_240: bounded_0_1
+        box_pos_480: bounded_0_1
+        box_pos_1200: bounded_0_1
         box_stability_60: bounded_0_1
         box_stability_120: bounded_0_1
         box_stability_240: bounded_0_1
+        box_stability_480: bounded_0_1
+        box_stability_1200: bounded_0_1
         box_touches_hi_60: count
         box_touches_lo_60: count
         box_touches_hi_120: count
         box_touches_lo_120: count
         box_touches_hi_240: count
         box_touches_lo_240: count
+        box_touches_hi_480: count
+        box_touches_lo_480: count
+        box_touches_hi_1200: count
+        box_touches_lo_1200: count
         box_compression_score: bounded_0_10
         box_regime_label: categorical
         box_breakout_up: bounded_0_1
@@ -8502,88 +8534,3 @@ features:
         bars_since_local_high: bounded_0_1
         bars_since_local_low: bounded_0_1
 
-# ================================================================
-# 未归一化 / 尺度依赖的输出列 (cross-asset scan 时必须排除)
-# ================================================================
-# 以下列的值域随币种/时间尺度剧烈变化，作为 entry filter 或模型特征
-# 会产生资产选择泄露 (低价币波动大 → 假信号)。
-# 用途:
-#   1. optimize_entry_filter_snotio.py --scan 自动排除
-#   2. 特征审计脚本检查
-#   3. 其他需要跨币种可比性的工具
-#
-# 分类依据:
-#   price_unit:          原始价格 (与 close 同尺度)
-#   raw_flow:            原始资金流 / delta (与 volume 同尺度)
-#   raw_energy:          未归一化的小波/频谱能量 (值域 ~10^18)
-#   near_degenerate:     比例值几乎恒为 0 或 1，无区分度
-#
-# 维护规则: 新增特征函数时，若 output_normalization_map 标注为
-# price_unit / log1p_robust_rolling 且未做跨币种归一化，
-# 应同时在此处登记对应的 output_columns。
-raw_scale_columns:
-  # --- footprint 原始价格 (atr_distance 归一化后仍可能随币种漂移) ---
-  price_unit:
-    - fp_poc
-    - fp_hvn
-    - fp_lvn
-    - fp_vah
-    - fp_val
-    - fp_max_imbalance_price
-    - fp_exhaustion_price
-    # WPT 绝对价格/重构
-    - wpt_price_trend
-    - wpt_price_fluctuation
-    - wpt_price_reconstructed
-    # Box-structure rolling hi/lo (raw price levels)
-    - box_hi_60
-    - box_lo_60
-    - box_hi_120
-    - box_lo_120
-    - box_hi_240
-    - box_lo_240
-
-  # --- 原始资金流 / delta ---
-  raw_flow:
-    - fp_delta_poc
-    - wpt_cvd_fluctuation
-
-  # --- 小波能量 (值域 ~10^18, 未归一化) ---
-  raw_energy:
-    - wpt_vper_low
-    - wpt_vper_mid
-    - wpt_vper_high
-    - wpt_vper            # 未拆分版本
-
-  # --- 接近退化的比例列 (几乎恒 0 或恒 1) ---
-  near_degenerate:
-    - wpt_price_energy_low_ratio    # 几乎恒 1.0
-    - wpt_price_energy_mid_ratio    # 几乎恒 0.0
-    - wpt_price_energy_high_ratio   # 几乎恒 0.0
-
-  # --- 原始订单流 / CVD (跨币种值域差异巨大) ---
-  raw_orderflow:
-    - buy_qty
-    - sell_qty
-    - trade_count
-    - cvd
-    - cvd_change_1
-    - cvd_change_5
-    - cvd_change_20
-    - cvd_roll20
-    - cvd_roll60
-    - cvd_roll288
-
-  # --- 原始指标 (价格尺度, 未归一化) ---
-  raw_indicator:
-    - macd
-    - macd_signal
-    - macd_histogram
-
-  # --- 原始持仓量 ---
-  raw_oi:
-    - oi_usd
-
-  # --- 模型输出 (非特征) ---
-  model_output:
-    - pred

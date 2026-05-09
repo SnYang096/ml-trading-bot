@@ -35,11 +35,10 @@ rolling:
         sharpe_floor: -0.5
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
-    disable_feature_search: true
+    disable_feature_search: false
 
 threshold_calibration:
-  pcm_eval:
-    enabled: false
+  enable_model_training: true
 
 rolling_calibration:
   threshold_calibration:
@@ -63,8 +62,7 @@ strategies:
     config: config/strategies/chop_grid
     timeframe: 120T
     prepare_features: features.yaml
-    has_prefilter: false
-    has_direction: false
+    has_prefilter: true
 
 event_backtest:
   enabled: false
@@ -75,9 +73,7 @@ grid_backtest:
   start_date: "2022-01-01"
   end_date: "2026-03-31"
   map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  continuous_map_months: 0
 
 output:
   history_dir: results/chop_grid/slow-rolling-sim

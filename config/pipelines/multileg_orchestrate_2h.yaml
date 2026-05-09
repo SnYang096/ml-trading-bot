@@ -36,18 +36,30 @@ strategies:
     config: config/strategies/chop_grid
     timeframe: 120T
     prepare_features: features.yaml
-    has_prefilter: false
-    has_direction: false
+    has_prefilter: true
+    kpi_gates:
+      backtest:
+        min_trades: 100
+        max_forced_exit_rate: 0.35
+        max_drawdown_floor: -0.08
   dual_add_trend:
     strategy_type: dual_add_trend
     config: config/strategies/dual_add_trend
     timeframe: 120T
     prepare_features: features.yaml
-    has_prefilter: false
-    has_direction: false
+    has_prefilter: true
+    kpi_gates:
+      backtest:
+        min_trades: 60
+        max_forced_exit_rate: 0.05
+        max_drawdown_floor: -0.08
 
 threshold_calibration:
   enable_model_training: false
+  prefilter:
+    optimize: true
+  execution_opt:
+    enabled: false
 
 rolling_calibration:
   step_months: 1
@@ -67,15 +79,13 @@ grid_backtest:
   end_date: "2026-03-31"
   same_bar_entry_exit: false
   costs:
-    fee_bps: 4.0
-    maker_fee_bps: 2.0
-    taker_fee_bps: 5.0
-    forced_exit_slippage_bps: 5.0
-    funding_cost_bps_per_8h: 1.0
+    fee_bps: 20.0
+    maker_fee_bps: 20.0
+    taker_fee_bps: 20.0
+    forced_exit_slippage_bps: 20.0
+    funding_cost_bps_per_8h: 20.0
   map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  continuous_map_months: 0
 
 dual_add_backtest:
   enabled: true
@@ -96,11 +106,9 @@ dual_add_backtest:
   max_net_exposure: 2
   max_adds_per_side: 3
   costs:
-    fee_bps: 4.0
+    fee_bps: 20.0
   map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  continuous_map_months: 0
 
 multi_leg_gate:
   min_total_trades: 120

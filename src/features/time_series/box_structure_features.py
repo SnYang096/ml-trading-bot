@@ -3,7 +3,7 @@ Box Structure Features - causal consolidation-box detection.
 
 设计理念（与既往 archetype features 风格对齐，不看未来）：
 
-- 在三个档位上维护滚动 hi/lo（small=60, mid=120, big=240 根）。
+- 在固定特征档位上维护滚动 hi/lo（60/120/240/480/1200 根）。
 - 输出以下原子信号，供多个策略按需消费（srb/bpc/me prefilter 升级、CRF 策略入场）：
     * ``box_hi_{N}``, ``box_lo_{N}`` - 过去 N 根（含当前）最高 high / 最低 low。
     * ``box_width_pct_{N}`` - ``(hi - lo) / mid``。
@@ -32,8 +32,8 @@ from src.features.registry import register_feature
 
 FEATURE_VERSION = "1.0"
 
-# 档位窗口
-BOX_WINDOWS = (60, 120, 240)
+# 档位窗口。策略通过 features.yaml 显式请求 box_*_{N} 列来锁定周期。
+BOX_WINDOWS = (60, 120, 240, 480, 1200)
 
 # tol 计算参数：tol = max(TOL_ATR_MULT * atr, TOL_PCT * mid)
 TOL_ATR_MULT = 1.0
@@ -169,8 +169,8 @@ def _compute_one_window(
     "compute_box_structure_from_series",
     category="box_structure",
     description=(
-        "Causal consolidation-box detector: rolling hi/lo + stability/touches on three "
-        "scales (60/120/240 2H bars), plus compression score, regime label, and "
+        "Causal consolidation-box detector: rolling hi/lo + stability/touches on fixed "
+        "scales (60/120/240/480/1200 2H bars), plus compression score, regime label, and "
         "breakout / prior-trend-direction signals."
     ),
     outputs=[
@@ -198,6 +198,22 @@ def _compute_one_window(
         "box_stability_240",
         "box_touches_hi_240",
         "box_touches_lo_240",
+        # 480
+        "box_hi_480",
+        "box_lo_480",
+        "box_width_pct_480",
+        "box_pos_480",
+        "box_stability_480",
+        "box_touches_hi_480",
+        "box_touches_lo_480",
+        # 1200
+        "box_hi_1200",
+        "box_lo_1200",
+        "box_width_pct_1200",
+        "box_pos_1200",
+        "box_stability_1200",
+        "box_touches_hi_1200",
+        "box_touches_lo_1200",
         # derived
         "box_compression_score",
         "box_regime_label",

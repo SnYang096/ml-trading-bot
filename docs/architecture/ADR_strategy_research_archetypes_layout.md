@@ -121,36 +121,28 @@ mlbot pipeline run --strategy bpc \
 
 **运维注意**：CI 与生产手册建议 **至少一条 job 写显式 `--config`**，避免「默认文件被误删仍 green」；本地日常可用约定名提速。
 
-### 3.3 `research.yaml` / `threshold_search.yaml` 与 `turbo.yaml` / `slow.yaml` 的对齐（合并优先）
+### 3.3 `research/turbo.yaml` / `slow.yaml` 与 BPC 管线语言对齐
 
-**现状**：`chop_grid`、`dual_add_trend` 等策略在**根目录**常有 `research.yaml`（研究声明、验证脚本、默认 regime/grid 片段）与 `threshold_search.yaml`（阈值/网格 **搜索空间**）。它们**不是** `mlbot pipeline --config` 用的 prod_train 编排文件；**BPC** 当前根下可无这两份，但语义上同属「研究侧」。
+**结论**：`research/turbo.yaml` / `slow.yaml` 就是管线入口，顶层使用 BPC 已有语言，不再混入 `study` / `threshold_search` / `calibration_profiles` 这类额外 DSL。
 
-**结论（推荐契约，与「拆成多文件」二选一）**
-
-**变体 B（合并优先，推荐）**：按 **节奏** 只保留 **`research/turbo.yaml`** 与可选 **`research/slow.yaml`**；每文件内用 **显式分块** 收纳三件事（实现上由 loader 取 `pipeline` 段交给现有 `auto_research_pipeline`，`study` / `threshold_search` 段给研究工具），例如根结构示意：
+多腿策略差异由 `strategy_type` 分发到各自代码实现；YAML 只表达通用编排和 KPI 契约：
 
 ```yaml
-# research/turbo.yaml（示意；键名可在 review 定稿，但必须「有块」避免平铺冲突）
-pipeline:        # 即今日 prod_train 顶层语义：dates / rolling / strategies / output / ...
-  rolling: ...
-  output: ...
-  strategies: ...
-study:           # 原 research.yaml 主体；无则省略或 {}
-threshold_search: {}   # 原 threshold_search.yaml；无则省略
+# research/turbo.yaml（示意）
+dates: ...
+rolling: ...
+threshold_calibration: ...
+strategies:
+  chop_grid:
+    strategy_type: grid
+    kpi_gates:
+      prefilter: ...
+      backtest: ...
+grid_backtest: ...
+output: ...
 ```
 
-- **优点**：新人只记 **`turbo` / `slow` 两个入口**；快/慢各一套搜索空间、各一套研究声明，**天然与节奏对齐**；不必维护 `study.yaml` 与 `turbo.yaml` 谁绑定谁的心智负担。  
-- **实现要求**：pipeline 加载器 **不得**把整个文件当旧式 prod_train 顶层解析；须 **只读 `pipeline` 键**（或等价约定），否则与 `study` 键并列时会键冲突。
-
-**变体 A（拆文件，仍允许）**：`study.yaml`、`threshold_search.yaml`（或 `threshold_search.turbo.yaml` / `threshold_search.slow.yaml`）与 `turbo.yaml` **并列**，用于 **希望 PR 只改搜索空间不动 pipeline** 或历史迁移过渡期；解析时 **turbo.yaml 可通过 `!!include` 拉入** 并列文件，或 loader 合并多路径——二选一在实现里固定一种。
-
-| 关注点 | 变体 B（合并） | 变体 A（并列） |
-|--------|----------------|----------------|
-| 与 list/adopt 绑定的编排 | 仅在 `turbo.yaml`→`pipeline` / `slow.yaml`→`pipeline` | 仅在 `turbo.yaml` / `slow.yaml` 顶层（或 include 后的等效树） |
-| 研究声明 | `study` 块或缺省 | `study.yaml` 或 `research/turbo.yaml` 顶层 ``study`` |
-| 阈值搜索空间 | `threshold_search` 块或缺省 | `threshold_search*.yaml` |
-
-**禁止**：把原 `research.yaml` **仅改文件名为** `turbo.yaml`，但 **内部仍是旧结构、没有 `pipeline` 包装层**——会与 §3.2「`turbo.yaml` = 管线入口」**语义撞车**；迁移时应 **迁入内容到 `study` 块** 并把现有 prod_train 包进 **`pipeline` 块**（或保留变体 A 并列文件）。
+**禁止**：在多腿研究入口重新发明独立搜索语言。候选阈值、网格 spacing、TP、腿数上限等由多腿 calibration dispatcher 根据 `strategy_type` 生成并写入对应 archetype。
 
 **迁移 grep 点**：凡引用 `config/strategies/<slug>/research.yaml` 或 `threshold_search.yaml` 的脚本/文档，随目录迁入 `research/` 后更新路径；loader 须同时支持 **变体 B 的切块解析** 与（若保留）**变体 A 的多文件合并**。
 

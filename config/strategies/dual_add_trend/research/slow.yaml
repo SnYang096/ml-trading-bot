@@ -35,11 +35,10 @@ rolling:
         sharpe_floor: -0.5
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
-    disable_feature_search: true
+    disable_feature_search: false
 
 threshold_calibration:
-  pcm_eval:
-    enabled: false
+  enable_model_training: true
 
 rolling_calibration:
   threshold_calibration:
@@ -63,8 +62,7 @@ strategies:
     config: config/strategies/dual_add_trend
     timeframe: 120T
     prepare_features: features.yaml
-    has_prefilter: false
-    has_direction: false
+    has_prefilter: true
 
 event_backtest:
   enabled: false
@@ -72,6 +70,8 @@ event_backtest:
 dual_add_backtest:
   enabled: true
   output_dir: results/dual_add_trend/slow-full-cycle
+  costs:
+    fee_bps: 20.0
   start_date: "2022-01-01"
   end_date: "2026-03-31"
   symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
@@ -89,9 +89,7 @@ dual_add_backtest:
   max_net_exposure: 2
   max_adds_per_side: 3
   map_symbols: BTCUSDT
-  map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  continuous_map_months: 0
 
 output:
   history_dir: results/dual_add_trend/slow-rolling-sim

@@ -36,6 +36,7 @@ def validate_strategy_package(
     *,
     strategy_name: str,
     strategy_type: str,
+    strategy_cfg: Optional[Dict[str, Any]] = None,
     config_dir: Optional[Path],
     required_profiles: Sequence[str] = ("turbo", "slow", "non_rolling"),
 ) -> List[StrategyValidationIssue]:
@@ -66,6 +67,9 @@ def validate_strategy_package(
     required_files.extend([f"research/{p}.yaml" for p in required_profiles])
     if st in _MULTILEG_TYPES:
         required_files.extend(["archetypes/prefilter.yaml", "archetypes/execution.yaml"])
+        scfg = strategy_cfg or {}
+        if bool(scfg.get("has_prefilter", False)):
+            required_files.append("features_prefilter.yaml")
 
     for rel in required_files:
         target = config_dir / rel
@@ -106,6 +110,7 @@ def validate_pipeline_strategy_packages(
             validate_strategy_package(
                 strategy_name=str(name),
                 strategy_type=st,
+                strategy_cfg=scfg if isinstance(scfg, dict) else {},
                 config_dir=config_dir,
                 required_profiles=required_profiles,
             )

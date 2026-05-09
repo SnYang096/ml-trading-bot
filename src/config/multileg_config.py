@@ -35,7 +35,7 @@ def load_multileg_layers(
         prof_path = config_dir / prof_path
     if prof_path.exists():
         root = deep_merge_dicts(root, load_yaml_extends_chain(prof_path, strict=True))
-    elif engine_path is None or profile_path is not None:
+    elif profile_path is not None:
         raise ValueError(f"missing multileg profile yaml: {prof_path}")
 
     # Backward compatibility: allow passing a legacy engine YAML path.
@@ -120,8 +120,6 @@ def update_multileg_calibration_candidate(
         regime = pre.setdefault("regime", {})
         inv = exe.setdefault("inventory", {})
         spacing = inv.setdefault("spacing", {})
-        if "box_window" in candidate:
-            regime["box_window"] = int(candidate["box_window"])
         if "entry_chop_min" in candidate:
             regime["entry_chop_min"] = float(candidate["entry_chop_min"])
         if "exit_chop_below" in candidate:
@@ -137,8 +135,6 @@ def update_multileg_calibration_candidate(
         inv = exe.setdefault("inventory", {})
         spacing = exe.setdefault("add_spacing", {})
         tp = exe.setdefault("take_profit", {})
-        if "box_window" in candidate:
-            regime["box_window"] = int(candidate["box_window"])
         if "entry_min" in candidate:
             regime["entry_min"] = float(candidate["entry_min"])
         if "exit_below" in candidate:
