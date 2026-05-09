@@ -425,3 +425,193 @@ results/chop_grid/highcap_2024_1min_chop_or_box_compare_fee12_slip10/
 2. 不使用 `chop OR box`；
 3. `box_prefilter` 更适合作为风险过滤、降杠杆、放宽 grid spacing 或减少层数的信号；
 4. 若要单独做 box-grid，需要另一套参数和突破退出逻辑，不能复用当前 chop_grid 默认参数。
+
+## 策略族差异：趋势肥尾 vs 多腿短周期 vs 清算逻辑
+
+本节用于统一理解：`chop_grid` / `dual_add_trend` 与此前 BPC/ME/TPC/SRB 等趋势/肥尾策略为什么表现形态完全不同，以及未来“清算合约逻辑”更接近哪一类。
+
+### 一句话结论
+
+- **趋势 / 肥尾策略**：主要吃“方向 + 持有 + 右尾”，是 `beta + alpha + execution` 的组合。
+- **`dual_add_trend`**：吃“已确认 regime 内的短期趋势脉冲 + basket 库存管理”，偏纯 alpha，但仍有方向暴露。
+- **`chop_grid`**：吃“非趋势环境中的均值回归 / 波动收割”，几乎不吃 beta，主要是库存 alpha。
+- **清算合约逻辑**：更像 **LV / FER / 短周期事件驱动策略**，不是 `chop_grid`；若做顺清算方向，接近 `dual_add_trend` / ME；若做清算后反转，接近 FER / mean reversion。
+
+### 关键差异表
+
+| 维度 | 趋势 / 肥尾策略 | `dual_add_trend` | `chop_grid` | 清算合约逻辑 |
+|---|---|---|---|---|
+| 核心收益来源 | 大趋势右尾、低频大单贡献 | trend regime 内短期脉冲，顺势加仓后 basket TP | chop regime 内价格来回穿网格 | 强平引发的被迫成交、流动性真空、overshoot / cascade |
+| Alpha 语义 | 方向判断 + 让利润奔跑 | regime 过滤 + 顺动量库存管理 | regime 过滤 + 均值回归库存管理 | 杠杆脆弱性、清算燃料、订单簿/流动性错位 |
+| Beta 暴露 | 明显，尤其多头趋势策略 | 中等，trend-only 有短期方向暴露 | 低，理想状态接近 market neutral | 取决于方向：顺清算方向有短 beta/alpha；反转型更接近 alpha |
+| 持仓时间 | 长，数小时到数天甚至更长 | 短到中，通常在趋势 segment 内多次进出 | 短，网格 TP / regime exit | 很短，分钟到数小时，alpha 半衰期短 |
+| 胜率形态 | 低胜率或中胜率，高盈亏比 | 中高胜率，中等盈亏比 | 高胜率，低单笔收益 | 不固定：顺 cascade 胜率可能低但尾部大；反转型胜率可高但止损敏感 |
+| 收益分布 | 右偏肥尾，少数单贡献大 | 更平滑，但仍依赖趋势段质量 | 多小赢 + 少数突破亏损 | 极端事件驱动，厚尾但非平稳 |
+| 主要风险 | 过早止盈、错过肥尾、趋势反转 | 执行成本、假趋势、反向后库存处理 | 单边突破、regime exit 滞后 | 清算假信号、流动性消失、滑点、交易所延迟 |
+| 对执行精度敏感度 | 中等，入场可粗，出场/追踪重要 | 高，TP/step 与成本接近时尤其高 | 中高，网格层距越窄越敏感 | 极高，清算事件本身发生很快 |
+| 适合指标 | MFE/MAE、尾部收益、持仓分布、趋势后续 | 1min/100ms 稳定性、fee stress、risk_stop/forced_rate | forced_rate、突破亏损、库存层数、chop coverage | liquidation volume、OI/FR、orderbook imbalance、post-liquidation path |
+| 是否能只看 2h 回测 | 不能，但粗筛可用 | 不能，必须 1min/100ms 复核 | 不能，至少 1min | 更不能，必须 tick/秒级或事件流 |
+
+### Alpha 到底来自哪里
+
+#### 趋势 / 肥尾策略
+
+趋势策略的收益不是单纯来自“预测下一根 K 线涨跌”，而是来自：
+
+1. **regime / prefilter 找到右尾可能性更高的环境**；
+2. **方向规则或模型给出正期望入场**；
+3. **holding / trailing 允许少数大单贡献大部分收益**；
+4. **组合层面用小亏损换大行情**。
+
+所以它常常是：
+
+```text
+市场 beta（长期方向/资产趋势）
++ 策略 alpha（更好的入场和过滤）
++ execution alpha（不太早卖掉肥尾）
+```
+
+这类策略天然低胜率或中胜率，不应该用高胜率标准评价。它要看右尾、MFE 捕捉、回撤后的继续持有能力。
+
+#### `dual_add_trend`
+
+`dual_add_trend` 的 alpha 来自：
+
+1. `trend_confidence` 确认非 chop 的方向 regime；
+2. 只在趋势方向开第一腿，避免初始反向腿拖累；
+3. 价格继续沿趋势走时加仓；
+4. basket 达到净盈利目标后统一退出；
+5. regime 失效时退出，而不是用很近的 per-leg stop 打掉。
+
+它不像长趋势策略那样等待几天的大肥尾，而是吃趋势段里较短的脉冲。它的收益更像：
+
+```text
+短周期 regime alpha
++ 库存/加仓 execution alpha
+- 成本/滑点/假趋势损耗
+```
+
+因此它比长趋势更高胜率、更短持仓，但也更怕成本和执行误差。
+
+#### `chop_grid`
+
+`chop_grid` 的 alpha 来自：
+
+1. 正确识别“价格没有明确方向、容易来回穿越”的 chop regime；
+2. 网格层距足够宽，能覆盖手续费、点差、滑点；
+3. regime exit 足够及时，避免突破时库存单边累积；
+4. forced exit 不频繁，否则小 TP 会被少数突破亏损吃掉。
+
+它不是方向 alpha，而是：
+
+```text
+regime classification alpha
++ mean reversion / volatility harvesting
++ inventory management
+- breakout tail risk
+```
+
+所以它高胜率、短持仓、小收益，但最怕“看起来像震荡、实际马上突破”的结构。前面的测试显示 `box_only` 和 `chop OR box` 很差，说明当前 `box_prefilter` 捕捉到的更像“压缩后等待突破”，不是安全网格环境。
+
+### 清算合约逻辑更像哪一种
+
+“清算合约逻辑”不应该归到 `chop_grid`。清算不是普通震荡，它是被迫成交、保证金约束和流动性缺口共同导致的事件。它更像一个独立 archetype：**Leverage Vulnerability / Liquidation Event**。
+
+它可以分成两种玩法。
+
+#### 1. 顺清算方向：cascade continuation
+
+逻辑：
+
+```text
+高杠杆脆弱性
++ 价格击穿关键区
++ 清算触发
++ 流动性真空
+=> 顺清算方向追随短期 cascade
+```
+
+它更像：
+
+- `dual_add_trend`：顺动量加仓，快进快出；
+- ME：吃动量加速；
+- 但比它们更短周期、更依赖订单流/清算数据。
+
+关键不是 chop，而是“谁被迫平仓、平仓是否会推动下一段价格”。
+
+#### 2. 清算后反转：liquidation exhaustion reversal
+
+逻辑：
+
+```text
+单边清算已经发生
++ OI 快速下降
++ 成交放量但价格不再延续
++ 盘口吸收 / wick 失败
+=> 反向做 overshoot 回归
+```
+
+它更像：
+
+- FER：失败衰竭反转；
+- FBF/SRB 的某些反转语义；
+- 短周期 mean reversion，但不是普通网格。
+
+这类策略可以高胜率，但止损和执行要求很高，因为你是在接极端事件后的刀口。
+
+### 和现有三类策略的关系
+
+| 新策略方向 | 更接近谁 | 不像谁 | 原因 |
+|---|---|---|---|
+| 顺清算 cascade | `dual_add_trend` / ME | `chop_grid` | 它吃被迫成交导致的方向延续，不是均值回归 |
+| 清算后反转 | FER / FBF / 事件反转 | 长趋势策略 | 它吃过度清算后的回补，不是长期 beta |
+| 清算区间网格 | 需要新设计 | 当前 `chop_grid` | 清算前后突破风险极高，普通 grid 容易吃单边库存 |
+
+### 如果要新增清算合约策略，建议定位
+
+建议不要把它并入 `chop_grid` 或 `dual_add_trend`，而是新建一个独立策略族，例如：
+
+```text
+lv_liquidation_cascade
+lv_liquidation_reversal
+```
+
+初始版本可以做两个 profile：
+
+1. **Cascade profile**
+   - 方向：顺清算方向；
+   - 持仓：极短；
+   - 退出：固定时间 / 动量衰减 / 清算量衰减；
+   - 风险：滑点和追高，必须有硬止损。
+
+2. **Exhaustion reversal profile**
+   - 方向：逆最后一段清算 impulse；
+   - 触发：清算放量后价格不能继续推进；
+   - 退出：快速均值回归 TP；
+   - 风险：cascade 二段延续，必须小仓位和快速止损。
+
+### 对组合架构的意义
+
+如果把当前策略放进组合层，可以这样理解：
+
+```text
+长期 / 中期趋势策略：负责 beta + 肥尾 alpha
+dual_add_trend：负责趋势 regime 内的短周期 alpha
+chop_grid：负责非趋势 regime 内的波动收割 alpha
+liquidation strategy：负责杠杆脆弱事件 alpha
+```
+
+这四类不是互相替代，而是覆盖不同市场状态：
+
+- 趋势策略：行情走出来后拿住；
+- `dual_add_trend`：趋势段内短线收割；
+- `chop_grid`：无趋势时收割来回波动；
+- 清算策略：极端杠杆事件时吃强制流动。
+
+关键上线原则：
+
+1. 不要用同一套胜率标准评价所有策略；
+2. 趋势策略看右尾和持仓质量；
+3. 多腿短周期看执行精度和成本压力；
+4. 清算策略看事件后路径、滑点、延迟和成交质量；
+5. 清算策略必须用更细数据，不应只用 2h/1min OHLC 验证。
