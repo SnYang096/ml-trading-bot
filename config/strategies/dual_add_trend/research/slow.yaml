@@ -63,6 +63,10 @@ strategies:
     timeframe: 120T
     prepare_features: features.yaml
     has_prefilter: true
+    multileg_feature_selection:
+      enabled: true
+      protected_nodes:
+        - atr_f
 
 event_backtest:
   enabled: false

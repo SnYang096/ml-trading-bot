@@ -105,6 +105,9 @@ from scripts.locked_entry_filter_utils import (
 from scripts.pipeline import config as pipeline_config
 from scripts.pipeline import cli as pipeline_cli
 from scripts.pipeline import events as pipeline_events
+from scripts.pipeline import (
+    multileg_feature_selection as pipeline_multileg_feature_selection,
+)
 from scripts.pipeline import multileg_layers as pipeline_multileg_layers
 from scripts.pipeline import strategy_pipeline as pipeline_strategy
 from scripts.pipeline import steps as pipeline_steps
@@ -6135,6 +6138,7 @@ def _run_multileg_month_strategy(
         "map_path": result["map_path"],
         "capital_report": result.get("capital_report", ""),
     }
+    result["summary"] = summary
     (strat_dir / "multileg_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False, default=str),
         encoding="utf-8",
@@ -7778,7 +7782,7 @@ def _run_slow_structure_snapshot_for_month(
             base_root = Path(source_strategies_root)
             if not base_root.is_absolute():
                 base_root = PROJECT_ROOT / base_root
-            _run_multileg_month_strategy(
+            result = _run_multileg_month_strategy(
                 cfg=cfg,
                 strategy=strategy,
                 run_root=snap_root,
@@ -7793,6 +7797,26 @@ def _run_slow_structure_snapshot_for_month(
                 dry_run=dry_run,
                 calibrate=True,
             )
+            summary = result.get("summary", {}) if isinstance(result, dict) else {}
+            selected = (
+                pipeline_multileg_feature_selection.select_multileg_feature_subset(
+                    strategy=strategy,
+                    strategy_type=_strategy_type(cfg, strategy),
+                    config_dir=snap_strategies_root / strategy,
+                    output_dir=snap_root / strategy,
+                    strategy_cfg=(cfg.get("strategies", {}) or {}).get(strategy, {})
+                    or {},
+                    best_calibration=summary.get("best_calibration", {}),
+                    metrics=summary.get("metrics", {}),
+                )
+            )
+            if isinstance(summary, dict) and summary:
+                summary["feature_selection"] = selected
+                summary_path = snap_root / strategy / "multileg_summary.json"
+                summary_path.write_text(
+                    json.dumps(summary, indent=2, ensure_ascii=False, default=str),
+                    encoding="utf-8",
+                )
             continue
         _shm = max(int(structure_holdout_months), 1)
         res = pipeline_strategy.run_strategy_pipeline(
