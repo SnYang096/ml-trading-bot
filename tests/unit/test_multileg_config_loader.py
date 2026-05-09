@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from scripts.diagnose_chop_grid import merge_chop_grid_yaml
+from scripts.diagnose_dual_add_trend import _load_dual_add_defaults
 from src.config.multileg_config import (
     load_multileg_effective_config,
     update_multileg_calibration_candidate,
@@ -30,13 +32,13 @@ def test_load_multileg_effective_config_merges_archetype_layers(tmp_path: Path) 
     )
     _write_yaml(
         cfg_dir / "archetypes/execution.yaml",
-        {"grid": {"spacing": {"atr_mult": 0.5, "min_pct": 0.004}}},
+        {"inventory": {"spacing": {"atr_mult": 0.5, "min_pct": 0.004}}},
     )
 
     got = load_multileg_effective_config(config_dir=cfg_dir, strategy_type="grid")
     assert got["strategy_type"] == "grid"
     assert got["regime"]["entry_chop_min"] == 0.4
-    assert got["grid"]["spacing"]["min_pct"] == 0.004
+    assert got["inventory"]["spacing"]["min_pct"] == 0.004
     assert got["live"]["mode"] == "dry_run"
 
 
@@ -103,7 +105,74 @@ def test_load_multileg_effective_config_missing_profile_raises(tmp_path: Path) -
         cfg_dir / "archetypes/prefilter.yaml", {"regime": {"entry_chop_min": 0.4}}
     )
     _write_yaml(
-        cfg_dir / "archetypes/execution.yaml", {"grid": {"spacing": {"atr_mult": 0.5}}}
+        cfg_dir / "archetypes/execution.yaml",
+        {"inventory": {"spacing": {"atr_mult": 0.5}}},
     )
     with pytest.raises(ValueError, match="missing multileg profile yaml"):
         load_multileg_effective_config(config_dir=cfg_dir, strategy_type="grid")
+
+
+def test_chop_grid_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "chop_grid"
+    _write_yaml(
+        cfg_dir / "research/turbo.yaml",
+        {
+            "strategy_type": "grid",
+            "grid_backtest": {
+                "same_bar_entry_exit": True,
+                "costs": {
+                    "fee_bps": 7.0,
+                    "maker_fee_bps": 2.0,
+                    "taker_fee_bps": 9.0,
+                    "forced_exit_slippage_bps": 11.0,
+                    "funding_cost_bps_per_8h": 1.5,
+                },
+            },
+        },
+    )
+    _write_yaml(
+        cfg_dir / "archetypes/prefilter.yaml",
+        {"regime": {"entry_chop_min": 0.4, "exit_chop_below": 0.25}},
+    )
+    _write_yaml(
+        cfg_dir / "archetypes/execution.yaml",
+        {
+            "inventory": {"spacing": {"atr_mult": 0.5, "min_pct": 0.004}},
+            "risk": {"fee_bps": 99.0},
+        },
+    )
+
+    got = merge_chop_grid_yaml(cfg_dir / "research/turbo.yaml")
+    assert got["same_bar_entry_exit"] is True
+    assert got["fee_bps"] == 7.0
+    assert got["maker_fee_bps"] == 2.0
+    assert got["taker_fee_bps"] == 9.0
+    assert got["forced_exit_slippage_bps"] == 11.0
+    assert got["funding_cost_bps_per_8h"] == 1.5
+
+
+def test_dual_add_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "dual_add_trend"
+    _write_yaml(
+        cfg_dir / "research/turbo.yaml",
+        {
+            "strategy_type": "dual_add_trend",
+            "dual_add_backtest": {"costs": {"fee_bps": 12.0}},
+        },
+    )
+    _write_yaml(
+        cfg_dir / "archetypes/prefilter.yaml",
+        {"regime": {"entry_min": 0.8, "exit_below": 0.5}},
+    )
+    _write_yaml(
+        cfg_dir / "archetypes/execution.yaml",
+        {
+            "inventory": {"initial_legs": ["TREND"]},
+            "add_spacing": {"atr_mult": 1.0},
+            "take_profit": {"mode": "basket"},
+            "risk": {"diagnostic_fee_bps": 99.0},
+        },
+    )
+
+    got = _load_dual_add_defaults(cfg_dir / "research/turbo.yaml")
+    assert got["fee_bps"] == 12.0

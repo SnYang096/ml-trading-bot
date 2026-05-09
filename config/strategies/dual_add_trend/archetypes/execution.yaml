@@ -1,45 +1,40 @@
-# Multi-leg execution layer: inventory/add/tp and risk controls.
-inventory:
-  # Trend-only seeding avoids paying for an initial offside anchor. Basket TP
-  # still exits the full inventory together after trend adds.
-  initial_legs: [TREND]
-  add_mode: trend
-  trend_direction_source: dynamic_bar
-  flip_action: close_offside_all
-  max_adds_per_side: 3
-  max_gross_exposure_units: 4
-  max_net_exposure_units: 2
-  max_loser_hold_bars: 24
+# Multi-leg execution layer: inventory spacing, basket TP, and risk controls.
+# Backtest/report cost assumptions live in dual_add_backtest.costs, not here.
+inventory: # Trend inventory construction and add/flip semantics.
+  # Trend-only seeding avoids paying for an initial offside anchor.
+  initial_legs: [TREND] # Open only the current trend side, not an initial long+short hedge.
+  add_mode: trend # Add only in the active trend direction.
+  trend_direction_source: dynamic_bar # Resolve trend side from each bar's trend_direction.
+  flip_action: close_offside_all # On trend flip, close stale/offside inventory.
+  max_adds_per_side: 3 # Maximum adds allowed on one side within a segment.
+  max_gross_exposure_units: 4 # Maximum total inventory units across both sides.
+  max_net_exposure_units: 2 # Maximum directional net inventory units.
+  max_loser_hold_bars: 24 # Legacy guard for stale loser legs in diagnostic paths.
 
-add_spacing:
-  primary: atr
-  atr_mult: 1.00
+add_spacing: # Distance required before adding another trend-side unit.
+  primary: atr # Use ATR as the primary spacing unit.
+  atr_mult: 1.00 # Add spacing = ATR * this multiplier.
 
-take_profit:
+take_profit: # Basket-level profit-taking, not per-leg TP.
   # Basket mode exits current inventory together once aggregate net PnL covers
   # fees and target distance. This avoids one initial leg taking profit while
   # the other remains as an unbounded loss anchor.
-  mode: basket
+  mode: basket # Exit the full active basket together.
   # Exit only after round-trip fee is covered and this net-profit distance is hit.
-  fee_aware: true
-  distance: max
-  atr_mult: 0.75
-  min_pct: 0.0015
-  min_abs: 0.0
+  fee_aware: true # Require modeled round-trip fee coverage before TP.
+  distance: max # Use max(ATR target, pct target, absolute target).
+  atr_mult: 0.75 # Basket TP distance includes ATR * this multiplier.
+  min_pct: 0.0015 # Minimum basket TP distance as a fraction of entry price.
+  min_abs: 0.0 # Optional absolute-price TP floor; zero disables it.
 
-risk:
-  min_segment_bars: 6
-  max_segment_bars: 120
-  force_exit_on_regime_loss: true
+risk: # Runtime inventory limits and forced-exit rules, not report cost assumptions.
+  min_segment_bars: 6 # Ignore very short trend segments below this length.
+  max_segment_bars: 120 # Force segment end after this many signal bars.
+  force_exit_on_regime_loss: true # Market-exit all inventory when trend regime is lost.
   # Main exits are semantic (trend/chop regime loss) plus basket TP. Segment
   # loss is a deployment gate / optional research guard, not the daily stop.
-  risk_stop_mode: regime_only
-  max_loss_per_segment: 0.02
-  protection_stop_mode: catastrophic
-  catastrophic_stop_atr_mult: 8.0
-  catastrophic_stop_tp_mult: 8.0
-  maker_fee_bps: 2.0
-  taker_fee_bps: 5.0
-  diagnostic_fee_bps: 4.0
-  forced_exit_slippage_bps: 0.0
-  funding_cost_bps_per_8h: 0.0
+  risk_stop_mode: regime_only # Do not use tight MTM stops in normal strategy logic.
+  max_loss_per_segment: 0.02 # Segment-level research/deployment loss guard.
+  protection_stop_mode: catastrophic # Exchange-side protection is disaster-only.
+  catastrophic_stop_atr_mult: 8.0 # Minimum disaster stop distance in ATR units.
+  catastrophic_stop_tp_mult: 8.0 # Minimum disaster stop distance vs TP distance.

@@ -1,23 +1,24 @@
 # Multi-leg execution layer: inventory spacing and risk controls.
-grid:
-  spacing:
-    primary: atr
-    atr_mult: 0.50
-    min_pct: 0.004
-  max_levels_per_side: 3
-  level_notional_mode: equal
-  same_bar_entry_exit: false
-  order_type: limit
+# Backtest/report cost assumptions live in grid_backtest.costs, not here.
+#
+# Unlike dual_add_trend, there is no add_spacing: levels are symmetric around a
+# center and capped by max_levels_per_side, not pyramid adds on trend drift.
+#
+# There is no take_profit block: engine semantics exit each filled cell toward
+# the next grid step (effective per-cell TP distance is the same as spacing).
+# Basket-style TP does not apply. Flattening still uses regime loss and caps
+# under risk below.
+inventory: # Inventory construction and order placement semantics.
+  spacing: # Distance between adjacent grid prices; doubles as cell TP distance.
+    primary: atr # Use ATR as the primary spacing unit.
+    atr_mult: 0.50 # Grid spacing = ATR * this multiplier, subject to min_pct.
+    min_pct: 0.004 # Minimum spacing as a fraction of price.
+  max_levels_per_side: 3 # Maximum long levels and maximum short levels around center.
+  order_type: limit # Intended order type for resting grid entries.
 
-risk:
-  min_segment_bars: 6
-  max_segment_bars: 120
-  force_exit_on_regime_loss: true
-  max_loss_per_grid: 0.03
-  max_open_levels_total: 6
-  # Legacy fallback for old reports. New accounting uses split maker/taker costs.
-  fee_bps: 4.0
-  maker_fee_bps: 2.0
-  taker_fee_bps: 5.0
-  forced_exit_slippage_bps: 5.0
-  funding_cost_bps_per_8h: 1.0
+risk: # Runtime inventory limits and forced-exit rules, not report cost assumptions.
+  min_segment_bars: 6 # Ignore very short chop segments below this length.
+  max_segment_bars: 120 # Force segment end after this many signal bars.
+  force_exit_on_regime_loss: true # Market-exit all inventory when chop regime is lost.
+  max_loss_per_grid: 0.03 # Grid-level catastrophic loss cap, normalized by level notional.
+  max_open_levels_total: 6 # Maximum total filled inventory levels across both sides.

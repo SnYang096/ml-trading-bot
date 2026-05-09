@@ -66,6 +66,17 @@ event_backtest:
 grid_backtest:
   enabled: true
   output_dir: results/chop_grid/turbo-full-cycle
+  # Conservative intrabar path assumption for research/reports only.
+  # Live execution exits when real fills/TP orders happen.
+  same_bar_entry_exit: false
+  # Research/report cost assumptions. Live execution should use exchange
+  # fills/fees from the adapter, not these static backtest assumptions.
+  costs:
+    fee_bps: 4.0
+    maker_fee_bps: 2.0
+    taker_fee_bps: 5.0
+    forced_exit_slippage_bps: 5.0
+    funding_cost_bps_per_8h: 1.0
   map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
   map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
@@ -82,20 +93,17 @@ study:
     exit_below: 0.25
     prefer_chop_not_box: true
 
-  grid:
+  inventory:
     spacing:
       primary: atr
       atr_mult: 0.50
       min_pct: 0.004
     max_levels_per_side: 3
-    level_notional_mode: equal
-    same_bar_entry_exit: false
 
   risk:
     max_segment_bars: 120
     min_segment_bars: 6
     force_exit_on_regime_loss: true
-    fee_bps: 4.0
 
   validation:
     script: scripts/diagnose_chop_grid.py

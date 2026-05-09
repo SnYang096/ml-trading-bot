@@ -44,6 +44,8 @@ event_backtest:
 dual_add_backtest:
   enabled: true
   # output_dir: omit to write under output.history_dir / _rolling_sim/<run_id>/dual_add_full_window/
+  costs:
+    fee_bps: 4.0
   start_date: "2022-01-01"
   end_date: "2026-03-31"
   symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
@@ -52,14 +54,14 @@ dual_add_backtest:
   add_mode: trend
   flip_action: close_offside_all
   exclude_box: true
-  step_atr_mult: 0.50
-  tp_atr_mult: 0.25
-  tp_pct: 0.0005
-  max_loss_per_segment: 0.01
+  step_atr_mult: 1.00
+  tp_atr_mult: 0.75
+  tp_pct: 0.0015
+  max_loss_per_segment: 0.02
+  risk_stop_mode: regime_only
   max_gross_exposure: 4
   max_net_exposure: 2
   max_adds_per_side: 3
-  fee_bps: 4.0
   map_symbols: BTCUSDT
   map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT

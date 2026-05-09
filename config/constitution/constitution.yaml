@@ -194,14 +194,6 @@ resource_allocation:
       allow_add_position: true
       max_add_times: 3
 
-    # ── SRB（Structural Range Breakout，成功突破延续 MVP）──
-    # 6-symbol rolling 中 4/5 slots 会在突破簇时过早饿死后到的同质有效信号（如 ADA 2024-11）；
-    # SRB 无 evidence 排名时不应靠 symbol 时间顺序做隐式择优，允许 6 币宇宙全覆盖。
-    # srb:
-    #   max_slots: 6
-    #   max_risk_per_trade: 0.01
-    #   allow_add_position: true
-    #   max_add_times: 3
 
     # ── ME 方向拆分 ──
     me:
@@ -223,13 +215,33 @@ multi_leg:
   strategies:
     - chop_grid
     - dual_add_trend
+  # Per-order / per-leg USDT notional used by multi-leg engines.
+  # - chop_grid: each grid level places qty = unit_notional / current_price.
+  # - dual_add_trend: each seed/add leg places qty = unit_notional / order_price.
+  # Portfolio/symbol caps below can still reject orders after this sizing step.
+  #
+  # Default 100.0 is a conservative live starting point, not a tuned strategy knob.
+  # With account.equity_usdt: 10000, one leg is ~1% of notional anchor; together
+  # with max_symbol_gross_notional_pct / max_gross_notional_pct caps, inventory
+  # can grow in layers without immediately hitting account ceilings (e.g.
+  # chop_grid max_open_levels_total=6 -> ~600 USDT/symbol vs 8% -> ~800 USDT;
+  # dual_add max_gross_exposure_units=4 -> ~400 USDT gross footprint before caps).
+  # Scale unit_notional when equity changes (e.g. 2000 -> ~20, 5000 -> ~50);
+  # rule of thumb: start around 0.5%–1.0% equity per leg and keep hard limits below.
   unit_notional: 100.0
   account:
+    # Offline budget anchor for pct-based risk_limits and validation reports.
+    # In live trading, actual equity/drawdown should come from account sync / exchange
+    # state; this value is not a replacement for real account balance.
     equity_usdt: 10000
+    # Live/shadow kill-switch threshold; checked against synced or supplied drawdown.
     max_drawdown_pct: 0.12
   risk_limits:
+    # Pct limits are resolved against account.equity_usdt unless absolute notional
+    # limits are supplied. Example: 0.20 * 10000 = 2000 USDT max gross exposure.
     max_gross_notional_pct: 0.20
     max_net_notional_pct: 0.10
     max_symbol_gross_notional_pct: 0.08
     max_symbol_net_notional_pct: 0.04
+    # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60

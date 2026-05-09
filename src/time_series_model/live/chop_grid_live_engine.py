@@ -83,9 +83,13 @@ def _load_grid_config(path: str | Path) -> GridEngineConfig:
         engine_path=engine_path,
     )
     regime = obj.get("regime", {}) or {}
-    grid = obj.get("grid", {}) or {}
-    spacing = grid.get("spacing", {}) or {}
+    inv = obj.get("inventory", {}) or {}
+    spacing = inv.get("spacing", {}) or {}
     risk = obj.get("risk", {}) or {}
+    live = obj.get("live", {}) or {}
+    expected_costs = live.get("expected_costs", {}) if isinstance(live, dict) else {}
+    if not isinstance(expected_costs, dict):
+        expected_costs = {}
     return GridEngineConfig(
         box_window=int(regime.get("box_window", 120)),
         entry_chop_min=float(regime.get("entry_chop_min", 0.40)),
@@ -94,12 +98,30 @@ def _load_grid_config(path: str | Path) -> GridEngineConfig:
         max_segment_bars=int(risk.get("max_segment_bars", 120)),
         grid_atr_mult=float(spacing.get("atr_mult", 0.50)),
         grid_min_pct=float(spacing.get("min_pct", 0.004)),
-        max_levels_per_side=int(grid.get("max_levels_per_side", 3)),
-        fee_bps=float(risk.get("fee_bps", 4.0)),
-        maker_fee_bps=float(risk.get("maker_fee_bps", risk.get("fee_bps", 4.0))),
-        taker_fee_bps=float(risk.get("taker_fee_bps", risk.get("fee_bps", 4.0))),
-        forced_exit_slippage_bps=float(risk.get("forced_exit_slippage_bps", 0.0)),
-        funding_cost_bps_per_8h=float(risk.get("funding_cost_bps_per_8h", 0.0)),
+        max_levels_per_side=int(inv.get("max_levels_per_side", 3)),
+        fee_bps=float(expected_costs.get("fee_bps", risk.get("fee_bps", 4.0))),
+        maker_fee_bps=float(
+            expected_costs.get(
+                "maker_fee_bps", risk.get("maker_fee_bps", risk.get("fee_bps", 4.0))
+            )
+        ),
+        taker_fee_bps=float(
+            expected_costs.get(
+                "taker_fee_bps", risk.get("taker_fee_bps", risk.get("fee_bps", 4.0))
+            )
+        ),
+        forced_exit_slippage_bps=float(
+            expected_costs.get(
+                "forced_exit_slippage_bps",
+                risk.get("forced_exit_slippage_bps", 0.0),
+            )
+        ),
+        funding_cost_bps_per_8h=float(
+            expected_costs.get(
+                "funding_cost_bps_per_8h",
+                risk.get("funding_cost_bps_per_8h", 0.0),
+            )
+        ),
         max_loss_per_grid=risk.get("max_loss_per_grid", 0.03),
         max_open_levels_total=risk.get("max_open_levels_total", 6),
     )

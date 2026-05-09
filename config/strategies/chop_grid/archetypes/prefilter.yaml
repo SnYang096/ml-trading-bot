@@ -1,12 +1,25 @@
-# Multi-leg prefilter equivalent: define when grid regime is tradable.
-regime:
-  entry_feature: bpc_semantic_chop
-  entry_chop_min: 0.40
-  exit_chop_below: 0.25
-  exclude_box_prefilter: true
-  box_window: 120
-  box_prefilter:
-    stability_min: 0.85
-    width_min: 0.04
-    width_max: 0.30
-    touches_min: 5
+# Multi-leg prefilter: defines regime eligibility for inventory-style engines.
+#
+# Why this is not the same shape as BPC prefilter:
+# - BPC prefilter belongs to a single-position signal pipeline (prefilter -> gate ->
+#   direction -> entry), and is designed around score/ranking contracts.
+# - chop_grid prefilter belongs to a multi-leg inventory engine and only decides
+#   whether "chop regime is tradable"; execution sizing/ladders are in execution.yaml.
+#
+# Should we force it into the same YAML format as BPC?
+# - Not recommended. A strict schema unification would couple two different runtime
+#   contracts and add adapter complexity without improving behavior.
+# - Better approach: keep internal schemas strategy-specific, but share the external
+#   loader/validation contract (already unified in src/config/strategy_layout.py and
+#   src/config/strategy_validation.py).
+regime: # Regime-level eligibility gate for starting/holding a grid segment.
+  entry_feature: bpc_semantic_chop # Feature column used as the primary chop signal.
+  entry_chop_min: 0.40 # Enter grid only when chop score is at or above this level.
+  exit_chop_below: 0.25 # Exit/stop opening grids when chop score falls below this level.
+  exclude_box_prefilter: true # Avoid box-prefilter regimes; broad semantic chop worked better.
+  box_window: 120 # Lookback bars used by the auxiliary box structure detector.
+  box_prefilter: # Optional box-quality thresholds used only when box filtering is evaluated.
+    stability_min: 0.85 # Minimum range stability score for a detected box.
+    width_min: 0.04 # Minimum normalized box width to avoid micro ranges.
+    width_max: 0.30 # Maximum normalized box width to avoid loose/noisy ranges.
+    touches_min: 5 # Minimum boundary touches required for a credible box.

@@ -65,6 +65,10 @@ def _load_dual_add_defaults(path: Path) -> dict:
     spacing = cfg.get("add_spacing", {}) or {}
     tp = cfg.get("take_profit", {}) or {}
     risk = cfg.get("risk", {}) or {}
+    dual_bt = cfg.get("dual_add_backtest", {}) or {}
+    costs = dual_bt.get("costs", {}) if isinstance(dual_bt, dict) else {}
+    if not isinstance(costs, dict):
+        costs = {}
     box_pf = regime.get("box_prefilter") or {}
     chop_series = cfg.get("chop_series", {}) or {}
     out: Dict[str, Any] = {
@@ -89,7 +93,12 @@ def _load_dual_add_defaults(path: Path) -> dict:
         "risk_stop_mode": str(risk.get("risk_stop_mode", "mtm")),
         "min_segment_bars": int(risk.get("min_segment_bars", 6)),
         "max_segment_bars": int(risk.get("max_segment_bars", 120)),
-        "fee_bps": float(risk.get("diagnostic_fee_bps", risk.get("fee_bps", 4.0))),
+        "fee_bps": float(
+            costs.get(
+                "fee_bps",
+                risk.get("diagnostic_fee_bps", risk.get("fee_bps", 4.0)),
+            )
+        ),
         "initial_hedge": set(inv.get("initial_legs", ["LONG", "SHORT"]))
         == {"LONG", "SHORT"},
         "exclude_box": bool(regime.get("exclude_box_prefilter", True)),

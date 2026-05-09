@@ -4992,6 +4992,30 @@ def _multileg_standalone_backtest_out_root(
     return out
 
 
+def _append_chop_grid_cost_args(cmd: List[str], grid_cfg: Dict[str, Any]) -> None:
+    costs = grid_cfg.get("costs", {}) if isinstance(grid_cfg, dict) else {}
+    if not isinstance(costs, dict):
+        return
+    cost_arg_names = {
+        "fee_bps": "--fee-bps",
+        "maker_fee_bps": "--maker-fee-bps",
+        "taker_fee_bps": "--taker-fee-bps",
+        "forced_exit_slippage_bps": "--forced-exit-slippage-bps",
+        "funding_cost_bps_per_8h": "--funding-cost-bps-per-8h",
+    }
+    for key, arg_name in cost_arg_names.items():
+        if key in costs:
+            cmd.extend([arg_name, str(costs[key])])
+
+
+def _append_dual_add_cost_args(cmd: List[str], dual_cfg: Dict[str, Any]) -> None:
+    costs = dual_cfg.get("costs", {}) if isinstance(dual_cfg, dict) else {}
+    if not isinstance(costs, dict):
+        return
+    if "fee_bps" in costs:
+        cmd.extend(["--fee-bps", str(costs["fee_bps"])])
+
+
 def _run_grid_backtest_stage(
     *,
     cfg: Dict[str, Any],
@@ -5074,6 +5098,13 @@ def _run_grid_backtest_stage(
                     str(int(grid_cfg.get("continuous_map_months", 0) or 0)),
                 ]
             )
+        if "same_bar_entry_exit" in grid_cfg:
+            cmd.append(
+                "--same-bar-entry-exit"
+                if bool(grid_cfg.get("same_bar_entry_exit"))
+                else "--no-same-bar-entry-exit"
+            )
+        _append_chop_grid_cost_args(cmd, grid_cfg)
         print(f"\n   ▶️  {strat}: {' '.join(cmd)}")
         if dry_run:
             summaries.append(
@@ -5150,6 +5181,9 @@ def _run_dual_add_backtest_stage(
         dual_cfg_path = _resolve_multileg_runtime_config_path(
             config_dir=strat_cfg_dir, strategy_type=strategy_type
         )
+        dual_costs = dual_cfg.get("costs", {}) if isinstance(dual_cfg, dict) else {}
+        if not isinstance(dual_costs, dict):
+            dual_costs = {}
 
         out_dir = out_root / strat
         cmd = [
@@ -5188,7 +5222,7 @@ def _run_dual_add_backtest_stage(
             "--max-adds-per-side",
             str(int(dual_cfg.get("max_adds_per_side", 3))),
             "--fee-bps",
-            str(float(dual_cfg.get("fee_bps", 4.0))),
+            str(float(dual_costs.get("fee_bps", dual_cfg.get("fee_bps", 4.0)))),
             "--map-symbols",
             str(dual_cfg.get("map_symbols", "BTCUSDT")),
             "--map-months",
@@ -5843,6 +5877,13 @@ def _run_multileg_backtest_command(
             )
         else:
             cmd.append("--no-maps")
+        if "same_bar_entry_exit" in grid_cfg:
+            cmd.append(
+                "--same-bar-entry-exit"
+                if bool(grid_cfg.get("same_bar_entry_exit"))
+                else "--no-same-bar-entry-exit"
+            )
+        _append_chop_grid_cost_args(cmd, grid_cfg)
         return cmd, {"metrics_path": str(out_dir / "metrics.json")}
 
     if strategy_type == "dual_add_trend":
@@ -5885,6 +5926,7 @@ def _run_multileg_backtest_command(
             )
         else:
             cmd.append("--no-maps")
+        _append_dual_add_cost_args(cmd, dual_cfg)
         return cmd, {"summary_path": str(out_dir / "summary.csv")}
 
     raise ValueError(f"unsupported multi-leg strategy_type={strategy_type}")

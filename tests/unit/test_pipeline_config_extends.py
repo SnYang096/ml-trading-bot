@@ -353,9 +353,11 @@ def test_load_multileg_slow_profiles_extend_turbo_metadata():
     assert chop_cfg.get("rolling", {}).get("mode") == "slow_realistic"
     assert "study" in chop_cfg
     assert "threshold_search" in chop_cfg
+    assert chop_cfg["grid_backtest"]["costs"]["maker_fee_bps"] == 2.0
     assert dual_cfg.get("rolling", {}).get("mode") == "slow_realistic"
     assert "study" in dual_cfg
     assert "threshold_search" in dual_cfg
+    assert dual_cfg["dual_add_backtest"]["costs"]["fee_bps"] == 4.0
 
 
 def test_multileg_backtest_dates_mismatch_raises(tmp_path: Path):
@@ -493,7 +495,7 @@ def test_trend_and_multileg_share_extends_loader_semantics(tmp_path: Path):
         encoding="utf-8",
     )
     (strat_dir / "archetypes/execution.yaml").write_text(
-        "grid:\n  spacing:\n    atr_mult: 0.55\n",
+        "inventory:\n  spacing:\n    atr_mult: 0.55\n",
         encoding="utf-8",
     )
     multileg_cfg = load_multileg_effective_config(

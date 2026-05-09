@@ -350,6 +350,7 @@ def run_backtest(
         funding_cost_bps_per_8h=args.funding_cost_bps_per_8h,
         max_loss_per_grid=args.max_loss_per_grid,
         max_open_levels_total=args.max_open_levels_total,
+        same_bar_entry_exit=bool(args.same_bar_entry_exit),
     )
     engine = ChopGridEngine(engine_cfg)
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
@@ -957,6 +958,15 @@ def main() -> None:
         "--grid-pct", type=float, default=defaults.get("grid_pct", 0.004)
     )
     parser.add_argument("--max-levels", type=int, default=defaults.get("max_levels", 3))
+    parser.add_argument(
+        "--same-bar-entry-exit",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.get("same_bar_entry_exit", False),
+        help=(
+            "Research/backtest intrabar assumption. False disallows taking profit "
+            "on the same bar that filled a grid level."
+        ),
+    )
     parser.add_argument(
         "--min-segment-bars", type=int, default=defaults.get("min_segment_bars", 6)
     )

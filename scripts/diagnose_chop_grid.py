@@ -66,9 +66,13 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
         engine_path=engine_path,
     )
     regime = cfg.get("regime", {}) or {}
-    grid = cfg.get("grid", {}) or {}
-    spacing = grid.get("spacing", {}) or {}
+    inv = cfg.get("inventory", {}) or {}
+    spacing = inv.get("spacing", {}) or {}
     risk = cfg.get("risk", {}) or {}
+    grid_bt = cfg.get("grid_backtest", {}) or {}
+    costs = grid_bt.get("costs", {}) if isinstance(grid_bt, dict) else {}
+    if not isinstance(costs, dict):
+        costs = {}
     box_pf = regime.get("box_prefilter") or {}
     chop_series = cfg.get("chop_series", {}) or {}
     out: Dict[str, Any] = {
@@ -77,14 +81,31 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
         "exit_chop_min": float(regime.get("exit_chop_below", 0.25)),
         "grid_atr_mult": float(spacing.get("atr_mult", 0.50)),
         "grid_pct": float(spacing.get("min_pct", 0.004)),
-        "max_levels": int(grid.get("max_levels_per_side", 3)),
+        "max_levels": int(inv.get("max_levels_per_side", 3)),
+        "same_bar_entry_exit": bool(grid_bt.get("same_bar_entry_exit", False)),
         "min_segment_bars": int(risk.get("min_segment_bars", 6)),
         "max_segment_bars": int(risk.get("max_segment_bars", 120)),
-        "fee_bps": float(risk.get("fee_bps", 4.0)),
-        "maker_fee_bps": float(risk.get("maker_fee_bps", risk.get("fee_bps", 4.0))),
-        "taker_fee_bps": float(risk.get("taker_fee_bps", risk.get("fee_bps", 4.0))),
-        "forced_exit_slippage_bps": float(risk.get("forced_exit_slippage_bps", 0.0)),
-        "funding_cost_bps_per_8h": float(risk.get("funding_cost_bps_per_8h", 0.0)),
+        "fee_bps": float(costs.get("fee_bps", risk.get("fee_bps", 4.0))),
+        "maker_fee_bps": float(
+            costs.get(
+                "maker_fee_bps", risk.get("maker_fee_bps", risk.get("fee_bps", 4.0))
+            )
+        ),
+        "taker_fee_bps": float(
+            costs.get(
+                "taker_fee_bps", risk.get("taker_fee_bps", risk.get("fee_bps", 4.0))
+            )
+        ),
+        "forced_exit_slippage_bps": float(
+            costs.get(
+                "forced_exit_slippage_bps", risk.get("forced_exit_slippage_bps", 0.0)
+            )
+        ),
+        "funding_cost_bps_per_8h": float(
+            costs.get(
+                "funding_cost_bps_per_8h", risk.get("funding_cost_bps_per_8h", 0.0)
+            )
+        ),
         "exclude_box": bool(regime.get("exclude_box_prefilter", True)),
         "max_loss_per_grid": float(risk.get("max_loss_per_grid", 0.03)),
         "max_open_levels_total": int(risk.get("max_open_levels_total", 6)),

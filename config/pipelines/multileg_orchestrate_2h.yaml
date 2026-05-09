@@ -65,6 +65,13 @@ grid_backtest:
   enabled: true
   start_date: "2022-01-01"
   end_date: "2026-03-31"
+  same_bar_entry_exit: false
+  costs:
+    fee_bps: 4.0
+    maker_fee_bps: 2.0
+    taker_fee_bps: 5.0
+    forced_exit_slippage_bps: 5.0
+    funding_cost_bps_per_8h: 1.0
   map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
   map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
@@ -88,7 +95,8 @@ dual_add_backtest:
   max_gross_exposure: 4
   max_net_exposure: 2
   max_adds_per_side: 3
-  fee_bps: 4.0
+  costs:
+    fee_bps: 4.0
   map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
   map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT

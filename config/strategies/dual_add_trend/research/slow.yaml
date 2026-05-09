@@ -88,7 +88,6 @@ dual_add_backtest:
   max_gross_exposure: 4
   max_net_exposure: 2
   max_adds_per_side: 3
-  fee_bps: 4.0
   map_symbols: BTCUSDT
   map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT

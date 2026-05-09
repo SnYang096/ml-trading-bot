@@ -118,8 +118,8 @@ def update_multileg_calibration_candidate(
 
     if strategy_type == "grid":
         regime = pre.setdefault("regime", {})
-        grid = exe.setdefault("grid", {})
-        spacing = grid.setdefault("spacing", {})
+        inv = exe.setdefault("inventory", {})
+        spacing = inv.setdefault("spacing", {})
         if "box_window" in candidate:
             regime["box_window"] = int(candidate["box_window"])
         if "entry_chop_min" in candidate:

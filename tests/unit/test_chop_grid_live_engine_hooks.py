@@ -17,7 +17,7 @@ def _config(tmp_path: Path) -> Path:
 regime:
   entry_chop_min: 0.40
   exit_chop_below: 0.25
-grid:
+inventory:
   spacing:
     atr_mult: 0.50
     min_pct: 0.004

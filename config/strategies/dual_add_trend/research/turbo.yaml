@@ -58,6 +58,10 @@ event_backtest:
 dual_add_backtest:
   enabled: true
   output_dir: results/dual_add_trend/turbo-full-cycle
+  # Research/report cost assumption. Live execution should use exchange fills
+  # and fees from the adapter, not this static diagnostic default.
+  costs:
+    fee_bps: 4.0
   symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
   timeframe: 2h
   regime: trend
@@ -72,7 +76,6 @@ dual_add_backtest:
   max_gross_exposure: 4
   max_net_exposure: 2
   max_adds_per_side: 3
-  fee_bps: 4.0
   map_symbols: BTCUSDT
   map_months: 12
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
@@ -81,7 +84,7 @@ dual_add_backtest:
 study:
   name: dual_add_trend
   status: research_only
-  description: "Initial dual-open trend inventory with fee-aware dynamic take profit and flip-time offside exits."
+  description: "Trend-only multi-leg inventory with basket take profit, regime exits, and flip-time offside cleanup."
 
   regime:
     entry_feature: trend_confidence
@@ -103,7 +106,7 @@ study:
   take_profit:
     mode: basket
     fee_aware: true
-    formula: "fee_buffer + max(0.25 * ATR14, 0.05% * entry_price)"
+    formula: "fee_buffer + max(0.75 * ATR14, 0.15% * entry_price)"
     note: "A position only exits at TP if the modeled round-trip fee is covered and net profit remains positive."
 
   risk:

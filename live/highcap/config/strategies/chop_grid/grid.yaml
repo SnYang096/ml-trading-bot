@@ -16,14 +16,12 @@ regime:
     width_max: 0.30
     touches_min: 5
 
-grid:
+inventory:
   spacing:
     primary: atr
     atr_mult: 0.50
     min_pct: 0.004
   max_levels_per_side: 3
-  level_notional_mode: equal
-  same_bar_entry_exit: false
   order_type: limit
 
 risk:
@@ -32,13 +30,6 @@ risk:
   force_exit_on_regime_loss: true
   max_loss_per_grid: 0.03
   max_open_levels_total: 6
-  # Legacy fallback for old reports. New accounting uses split maker/taker costs.
-  fee_bps: 4.0
-  maker_fee_bps: 2.0
-  taker_fee_bps: 5.0
-  forced_exit_slippage_bps: 5.0
-  funding_cost_bps_per_8h: 1.0
-
 # Regime chop series + ts-quantile window (read by merge_chop_grid_yaml / CLIs).
 chop_series:
   chop_signal: raw
@@ -52,3 +43,12 @@ live:
   order_adapter: dry_run
   cancel_orders_on_exit: true
   market_exit_on_regime_loss: true
+
+grid_backtest:
+  same_bar_entry_exit: false
+  costs:
+    fee_bps: 4.0
+    maker_fee_bps: 2.0
+    taker_fee_bps: 5.0
+    forced_exit_slippage_bps: 5.0
+    funding_cost_bps_per_8h: 1.0
