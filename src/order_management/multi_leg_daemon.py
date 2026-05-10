@@ -28,7 +28,7 @@ class MultiLegBarProvider(Protocol):
     """Source of completed bars plus features for the multi-leg daemon."""
 
     def latest_closed_bars(self, symbols: Iterable[str]) -> List[MultiLegBarEvent]:
-        """Return at most one latest completed bar per symbol."""
+        """Return newly completed bars in processing order."""
 
 
 @dataclass(frozen=True)
@@ -67,7 +67,6 @@ class MultiLegLiveDaemon:
     def run_once(self) -> MultiLegDaemonReport:
         symbols = sorted({rt.symbol for rt in self.runtimes})
         bars = self.bar_provider.latest_closed_bars(symbols)
-        bars_by_symbol = {bar.symbol: bar for bar in bars}
         # Contract: at most one multi-leg strategy may hold/open on one symbol.
         symbol_owner: Dict[str, str] = {}
         for rt in self.runtimes:
@@ -85,80 +84,85 @@ class MultiLegLiveDaemon:
         reconciliation_issue_count = 0
         bars_seen = 0
 
-        for rt in self.runtimes:
-            bar = bars_by_symbol.get(rt.symbol)
-            if bar is None:
-                continue
-            key = (rt.name, rt.symbol, bar.timestamp)
-            if key in self._last_processed:
-                continue
-            self._last_processed.add(key)
-            bars_seen += 1
-            actions = rt.engine.on_bar(
-                symbol=bar.symbol,
-                timestamp=bar.timestamp,
-                high=bar.high,
-                low=bar.low,
-                close=bar.close,
-                atr=bar.atr,
-                features=bar.features,
-            )
-            sym = str(rt.symbol or "").upper().strip()
-            owner = symbol_owner.get(sym, "")
-            if owner and owner != str(rt.name or ""):
-                dropped = [
-                    a
-                    for a in actions
-                    if str((a or {}).get("action", "") or "").lower() == "place"
-                ]
-                if dropped:
-                    actions = [
+        for bar in bars:
+            for rt in self.runtimes:
+                if str(rt.symbol).upper() != str(bar.symbol).upper():
+                    continue
+                key = (rt.name, rt.symbol, bar.timestamp)
+                if key in self._last_processed:
+                    continue
+                self._last_processed.add(key)
+                bars_seen += 1
+                actions = rt.engine.on_bar(
+                    symbol=bar.symbol,
+                    timestamp=bar.timestamp,
+                    high=bar.high,
+                    low=bar.low,
+                    close=bar.close,
+                    atr=bar.atr,
+                    features=bar.features,
+                )
+                sym = str(rt.symbol or "").upper().strip()
+                owner = symbol_owner.get(sym, "")
+                if owner and owner != str(rt.name or ""):
+                    dropped = [
                         a
                         for a in actions
-                        if str((a or {}).get("action", "") or "").lower() != "place"
+                        if str((a or {}).get("action", "") or "").lower() == "place"
                     ]
-                    rejected_count += len(dropped)
-                    logger.info(
-                        "multi-leg symbol conflict: reject %d opening actions for %s (%s owned by %s)",
-                        len(dropped),
-                        sym,
-                        rt.name,
-                        owner,
-                    )
-            action_count += len(actions)
-            report = rt.orchestrator.run_actions(actions)
-            rejected_count += len(report.risk.rejected)
-            if any(
-                str((a or {}).get("action", "") or "").lower() == "place"
-                for a in (report.risk.approved_actions or [])
-            ):
-                symbol_owner[sym] = str(rt.name or "")
-            execution_count += len(report.execution_results) + len(
-                report.reconciliation_results
-            )
-            if report.reconciliation is not None and not report.reconciliation.ok:
-                reconciliation_issue_count += 1
-            try:
-                METRICS.multi_leg_bars_processed.labels(
-                    strategy=rt.name, symbol=rt.symbol
-                ).inc(1)
-                METRICS.multi_leg_actions_total.labels(
-                    strategy=rt.name, symbol=rt.symbol
-                ).inc(len(actions))
-                METRICS.multi_leg_risk_rejected_total.labels(
-                    strategy=rt.name, symbol=rt.symbol
-                ).inc(len(report.risk.rejected))
-                METRICS.multi_leg_execution_results_total.labels(
-                    strategy=rt.name, symbol=rt.symbol
-                ).inc(
-                    len(report.execution_results) + len(report.reconciliation_results)
+                    if dropped:
+                        actions = [
+                            a
+                            for a in actions
+                            if str((a or {}).get("action", "") or "").lower()
+                            != "place"
+                        ]
+                        rejected_count += len(dropped)
+                        logger.info(
+                            "multi-leg symbol conflict: reject %d opening actions for %s (%s owned by %s)",
+                            len(dropped),
+                            sym,
+                            rt.name,
+                            owner,
+                        )
+                action_count += len(actions)
+                report = rt.orchestrator.run_actions(actions)
+                rejected_count += len(report.risk.rejected)
+                if any(
+                    str((a or {}).get("action", "") or "").lower() == "place"
+                    for a in (report.risk.approved_actions or [])
+                ):
+                    symbol_owner[sym] = str(rt.name or "")
+                execution_count += len(report.execution_results) + len(
+                    report.reconciliation_results
                 )
                 if report.reconciliation is not None and not report.reconciliation.ok:
-                    METRICS.multi_leg_reconciliation_issues_total.labels(
-                        strategy=rt.name
+                    reconciliation_issue_count += 1
+                try:
+                    METRICS.multi_leg_bars_processed.labels(
+                        strategy=rt.name, symbol=rt.symbol
                     ).inc(1)
-            except Exception:
-                logger.debug("multi-leg metrics update skipped", exc_info=True)
+                    METRICS.multi_leg_actions_total.labels(
+                        strategy=rt.name, symbol=rt.symbol
+                    ).inc(len(actions))
+                    METRICS.multi_leg_risk_rejected_total.labels(
+                        strategy=rt.name, symbol=rt.symbol
+                    ).inc(len(report.risk.rejected))
+                    METRICS.multi_leg_execution_results_total.labels(
+                        strategy=rt.name, symbol=rt.symbol
+                    ).inc(
+                        len(report.execution_results)
+                        + len(report.reconciliation_results)
+                    )
+                    if (
+                        report.reconciliation is not None
+                        and not report.reconciliation.ok
+                    ):
+                        METRICS.multi_leg_reconciliation_issues_total.labels(
+                            strategy=rt.name
+                        ).inc(1)
+                except Exception:
+                    logger.debug("multi-leg metrics update skipped", exc_info=True)
 
         return MultiLegDaemonReport(
             bars_seen=bars_seen,

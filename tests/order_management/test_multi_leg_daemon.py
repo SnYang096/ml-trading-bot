@@ -35,11 +35,13 @@ class FakeProvider:
 class FakeEngine:
     action_price: float = 50_000.0
     calls: int = 0
+    timestamps: list[str] = field(default_factory=list)
     results: list[list[GridExecutionResult]] = field(default_factory=list)
     reports: list[object] = field(default_factory=list)
 
     def on_bar(self, **kwargs):
         self.calls += 1
+        self.timestamps.append(str(kwargs["timestamp"]))
         return [
             {
                 "action": "place",
@@ -118,6 +120,47 @@ def test_daemon_processes_each_runtime_once_per_new_bar() -> None:
     assert first.execution_count == 1
     assert second.bars_seen == 0
     assert engine.calls == 1
+
+
+def test_daemon_processes_multiple_new_bars_for_same_symbol_in_order() -> None:
+    bars = [
+        MultiLegBarEvent(
+            symbol="BTCUSDT",
+            timestamp="2026-01-01 00:01:00+00:00",
+            high=101.0,
+            low=99.0,
+            close=100.0,
+            atr=2.0,
+            features={},
+        ),
+        MultiLegBarEvent(
+            symbol="BTCUSDT",
+            timestamp="2026-01-01 00:02:00+00:00",
+            high=102.0,
+            low=100.0,
+            close=101.0,
+            atr=2.0,
+            features={},
+        ),
+    ]
+    engine = FakeEngine()
+    adapter = _adapter()
+    daemon = MultiLegLiveDaemon(
+        bar_provider=FakeProvider(bars),
+        runtimes=[_runtime("dual_add_trend", "BTCUSDT", engine, adapter)],
+    )
+
+    first = daemon.run_once()
+    second = daemon.run_once()
+
+    assert first.bars_seen == 2
+    assert first.action_count == 2
+    assert first.execution_count == 2
+    assert second.bars_seen == 0
+    assert engine.timestamps == [
+        "2026-01-01 00:01:00+00:00",
+        "2026-01-01 00:02:00+00:00",
+    ]
 
 
 def test_daemon_reports_rejections_from_governor() -> None:
