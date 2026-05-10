@@ -640,6 +640,8 @@ class BinanceAPI:
         position_side: Optional[str] = None,
         working_type: Optional[str] = None,
         price_protect: Optional[bool] = None,
+        post_only: bool = False,
+        time_in_force: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         下单
@@ -656,6 +658,8 @@ class BinanceAPI:
             position_side: Hedge Mode 持仓方向（LONG/SHORT），None 表示自动推断
             working_type: 条件单触发价格类型（如 MARK_PRICE 或 CONTRACT_PRICE）
             price_protect: Binance Futures priceProtect 参数
+            post_only: 是否作为 post-only 限价单提交
+            time_in_force: Binance Futures timeInForce（post-only 使用 GTX）
 
         Returns:
             订单信息
@@ -708,6 +712,13 @@ class BinanceAPI:
                 params["workingType"] = wt
             if price_protect is not None:
                 params["priceProtect"] = "TRUE" if price_protect else "FALSE"
+            tif = str(time_in_force or "").strip().upper()
+            if post_only:
+                tif = tif or "GTX"
+            if tif:
+                if tif not in {"GTC", "IOC", "FOK", "GTX"}:
+                    raise ValueError(f"time_in_force must be GTC/IOC/FOK/GTX: {tif}")
+                params["timeInForce"] = tif
 
             if order_type == OrderType.MARKET:
                 order = self.exchange.create_market_order(

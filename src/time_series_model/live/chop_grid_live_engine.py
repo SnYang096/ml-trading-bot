@@ -549,8 +549,13 @@ class ChopGridLiveEngine:
                 "symbol": pos.symbol,
                 "side": pos.side,
                 "quantity": pos.quantity,
+                "price": tp,
                 "trigger_price": tp,
+                "order_type": "limit",
                 "protection_type": "take_profit",
+                "reduce_only": True,
+                "post_only": True,
+                "time_in_force": "GTX",
                 "timestamp": timestamp,
             },
             {

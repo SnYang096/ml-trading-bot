@@ -132,7 +132,7 @@ def test_place_stop_loss_protection_uses_explicit_position_side() -> None:
     assert result.action == "place_protection"
 
 
-def test_place_take_profit_protection_for_short_uses_buy() -> None:
+def test_place_take_profit_protection_for_short_uses_post_only_limit_buy() -> None:
     api = _api()
     adapter = MultiLegExecutionAdapter(api)
 
@@ -142,20 +142,27 @@ def test_place_take_profit_protection_for_short_uses_buy() -> None:
             "symbol": "BTCUSDT",
             "side": "SHORT",
             "quantity": 0.02,
-            "stop_price": 95000.0,
+            "price": 95000.0,
+            "trigger_price": 95000.0,
+            "order_type": "limit",
             "protection_type": "take_profit",
+            "post_only": True,
+            "time_in_force": "GTX",
             "order_id": "leg_s1_tp",
-            "working_type": "CONTRACT_PRICE",
-            "price_protect": False,
         }
     )
 
     kwargs = api.place_order.call_args.kwargs
     assert kwargs["side"] == OrderSide.BUY
-    assert kwargs["order_type"] == OrderType.TAKE_PROFIT_MARKET
+    assert kwargs["order_type"] == OrderType.LIMIT
+    assert kwargs["price"] == 95000.0
+    assert kwargs["stop_price"] is None
+    assert kwargs["reduce_only"] is True
     assert kwargs["position_side"] == "SHORT"
-    assert kwargs["working_type"] == "CONTRACT_PRICE"
-    assert kwargs["price_protect"] is False
+    assert kwargs["working_type"] is None
+    assert kwargs["price_protect"] is None
+    assert kwargs["post_only"] is True
+    assert kwargs["time_in_force"] == "GTX"
 
 
 def test_cancel_requires_symbol_and_calls_exchange() -> None:

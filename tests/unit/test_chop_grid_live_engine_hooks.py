@@ -120,6 +120,12 @@ def test_chop_grid_execution_report_moves_filled_order_to_inventory(
     follow_ups = engine.pop_pending_actions()
     assert [a["protection_type"] for a in follow_ups] == ["take_profit", "stop_loss"]
     assert all(a["action"] == "place_protection" for a in follow_ups)
+    tp_action = follow_ups[0]
+    assert tp_action["order_type"] == "limit"
+    assert tp_action["reduce_only"] is True
+    assert tp_action["post_only"] is True
+    assert tp_action["time_in_force"] == "GTX"
+    assert tp_action["price"] == tp_action["trigger_price"]
 
 
 def test_chop_grid_records_reconciliation_issues(tmp_path: Path) -> None:

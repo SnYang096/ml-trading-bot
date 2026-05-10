@@ -381,6 +381,23 @@ def test_place_limit_order(binance_api):
     binance_api.exchange.create_limit_order.assert_called_once()
 
 
+def test_place_post_only_limit_order_uses_gtx(binance_api):
+    """测试 Binance Futures post-only 限价单参数。"""
+    binance_api.place_order(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        quantity=0.1,
+        price=51000.0,
+        post_only=True,
+        client_order_id="cg_tp_1",
+    )
+
+    params = binance_api.exchange.create_limit_order.call_args.kwargs["params"]
+    assert params["timeInForce"] == "GTX"
+    assert params["newClientOrderId"] == "cg_tp_1"
+
+
 def test_place_limit_order_no_price(binance_api):
     """测试下限价单未指定价格"""
     with pytest.raises(ValueError, match="限价单需要指定价格"):

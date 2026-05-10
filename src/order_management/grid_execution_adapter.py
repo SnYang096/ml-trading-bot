@@ -250,7 +250,7 @@ class MultiLegExecutionAdapter:
                 f"place_protection side must be LONG/SHORT: {pos_side}"
             )
         quantity = _required_positive_float(action, "quantity")
-        stop_price = _required_positive_float(
+        protection_price = _required_positive_float(
             action,
             "stop_price" if "stop_price" in action else "trigger_price",
         )
@@ -264,7 +264,13 @@ class MultiLegExecutionAdapter:
             order_type = OrderType.STOP_MARKET
             purpose = "stop_loss"
         elif raw_kind in {"take_profit", "tp", "take_profit_market"}:
-            order_type = OrderType.TAKE_PROFIT_MARKET
+            tp_order_type = str(action.get("order_type") or "").strip().lower()
+            order_type = (
+                OrderType.LIMIT
+                if tp_order_type in {"limit", "post_only_limit"}
+                or bool(action.get("post_only"))
+                else OrderType.TAKE_PROFIT_MARKET
+            )
             purpose = "take_profit"
         else:
             raise MultiLegExecutionError(
@@ -273,13 +279,18 @@ class MultiLegExecutionAdapter:
 
         side = OrderSide.SELL if pos_side == "LONG" else OrderSide.BUY
         client_order_id = self._client_order_id({**action, "purpose": purpose})
+        order_price = (
+            _required_positive_float(action, "price")
+            if order_type == OrderType.LIMIT
+            else None
+        )
         if self.shadow:
             result = MultiLegExecutionResult(
                 action="place_protection",
                 status="shadow",
                 symbol=symbol,
                 client_order_id=client_order_id,
-                raw={**dict(action), "purpose": purpose},
+                raw={**dict(action), "purpose": purpose, "order_type": order_type.value},
             )
             self._persist_order_result(action, result, purpose=purpose)
             return result
@@ -289,13 +300,25 @@ class MultiLegExecutionAdapter:
             side=side,
             order_type=order_type,
             quantity=quantity,
-            stop_price=stop_price,
+            price=order_price,
+            stop_price=None if order_type == OrderType.LIMIT else protection_price,
             reduce_only=True,
             close_position=False,
             client_order_id=client_order_id,
             position_side=pos_side,
-            working_type=str(action.get("working_type") or "MARK_PRICE"),
-            price_protect=bool(action.get("price_protect", True)),
+            working_type=(
+                None
+                if order_type == OrderType.LIMIT
+                else str(action.get("working_type") or "MARK_PRICE")
+            ),
+            price_protect=(
+                None
+                if order_type == OrderType.LIMIT
+                else bool(action.get("price_protect", True))
+            ),
+            post_only=bool(action.get("post_only")),
+            time_in_force=str(action.get("time_in_force") or "").strip().upper()
+            or None,
         )
         result = MultiLegExecutionResult(
             action="place_protection",
