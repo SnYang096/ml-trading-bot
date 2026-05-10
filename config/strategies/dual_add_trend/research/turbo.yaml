@@ -60,6 +60,9 @@ dual_add_backtest:
   # and fees from the adapter, not this static diagnostic default.
   costs:
     fee_bps: 20.0
+    # Conservative 2h-bar execution assumptions for momentum-style exits/fills.
+    market_exit_slippage_bps: 5.0
+    intrabar_touch_buffer_bps: 5.0
   timeframe: 2h
   regime: trend
   add_mode: trend

@@ -45,6 +45,8 @@ dual_add_backtest:
   # output_dir: omit to write under output.history_dir / _rolling_sim/<run_id>/dual_add_full_window/
   costs:
     fee_bps: 20.0
+    market_exit_slippage_bps: 5.0
+    intrabar_touch_buffer_bps: 5.0
   start_date: "2022-01-01"
   end_date: "2026-03-31"
   symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT

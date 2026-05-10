@@ -8,6 +8,11 @@
 
 extends: turbo.yaml
 
+dates:
+  # Align with BPC non_rolling: first holdout slice is validation/calibration,
+  # final report/backtest is pure OOS test after this split.
+  validation_months: 3
+
 rolling:
   mode: non_rolling
   time_split_policy: static_holdout

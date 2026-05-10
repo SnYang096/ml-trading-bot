@@ -101,6 +101,18 @@ def _load_dual_add_defaults(path: Path) -> dict:
                 risk.get("diagnostic_fee_bps", risk.get("fee_bps", 4.0)),
             )
         ),
+        "market_exit_slippage_bps": float(
+            costs.get(
+                "market_exit_slippage_bps",
+                risk.get("market_exit_slippage_bps", 0.0),
+            )
+        ),
+        "intrabar_touch_buffer_bps": float(
+            costs.get(
+                "intrabar_touch_buffer_bps",
+                risk.get("intrabar_touch_buffer_bps", 0.0),
+            )
+        ),
         "initial_hedge": set(inv.get("initial_legs", ["LONG", "SHORT"]))
         == {"LONG", "SHORT"},
         "exclude_box": bool(regime.get("exclude_box_prefilter", True)),
@@ -160,6 +172,8 @@ class DualAddConfig:
     max_segment_bars: int = 120
     min_segment_bars: int = 6
     fee_bps: float = 4.0
+    market_exit_slippage_bps: float = 0.0
+    intrabar_touch_buffer_bps: float = 0.0
     max_loss_per_segment: float = 0.01
     risk_stop_mode: str = "mtm"
     initial_hedge: bool = True
@@ -177,6 +191,13 @@ def _position_pnl(side: str, entry: float, px: float, fee: float) -> float:
     if side == "LONG":
         return (px - entry) / entry - 2.0 * fee
     return (entry - px) / entry - 2.0 * fee
+
+
+def _exit_price_with_slippage(side: str, px: float, slippage_bps: float) -> float:
+    slip = max(float(slippage_bps), 0.0) / 10000.0
+    if slip <= 0:
+        return px
+    return px * (1.0 - slip) if side == "LONG" else px * (1.0 + slip)
 
 
 def _add_trend_features(
@@ -225,6 +246,13 @@ def simulate_dual_add_segment(
     tp = max(cfg.tp_abs, cfg.tp_atr_mult * atr, cfg.tp_pct * center)
     if step <= 0 or tp <= 0:
         return [], {}
+    touch_buffer = max(float(cfg.intrabar_touch_buffer_bps), 0.0) / 10000.0
+
+    def hit_up(level: float) -> bool:
+        return high >= level * (1.0 + touch_buffer)
+
+    def hit_down(level: float) -> bool:
+        return low <= level * (1.0 - touch_buffer)
 
     # Capital units are the maximum gross inventory this experiment allows.
     capital_units = max(2, cfg.max_gross_exposure)
@@ -264,7 +292,13 @@ def simulate_dual_add_segment(
     max_gross_units = len(positions)
 
     def record(pos: dict, exit_px: float, exit_ts: pd.Timestamp, reason: str) -> None:
-        pnl_pct = _position_pnl(pos["side"], float(pos["entry"]), exit_px, fee)
+        slippage_bps = (
+            0.0 if reason == "tp" else max(float(cfg.market_exit_slippage_bps), 0.0)
+        )
+        filled_exit_px = _exit_price_with_slippage(
+            str(pos["side"]), float(exit_px), slippage_bps
+        )
+        pnl_pct = _position_pnl(pos["side"], float(pos["entry"]), filled_exit_px, fee)
         trades.append(
             {
                 "symbol": symbol,
@@ -275,10 +309,13 @@ def simulate_dual_add_segment(
                 "entry_time": pos["entry_time"],
                 "exit_time": exit_ts,
                 "entry_price": pos["entry"],
-                "exit_price": exit_px,
+                "exit_price": filled_exit_px,
+                "signal_exit_price": exit_px,
                 "exit_reason": reason,
                 "pnl_pct": pnl_pct,
                 "pnl_per_capital": pnl_pct / capital_units,
+                "fee_bps_charged": 2.0 * cfg.fee_bps,
+                "slippage_bps_charged": slippage_bps,
             }
         )
 
@@ -330,8 +367,9 @@ def simulate_dual_add_segment(
 
     def basket_target_per_capital(px: float) -> float:
         fee_buffer = 2.0 * fee * px
+        slippage_buffer = max(float(cfg.market_exit_slippage_bps), 0.0) / 10000.0 * px
         target = max(cfg.tp_abs, cfg.tp_atr_mult * atr, cfg.tp_pct * px)
-        return ((fee_buffer + target) / px) / capital_units
+        return ((fee_buffer + slippage_buffer + target) / px) / capital_units
 
     def close_all_open(px: float, ts: pd.Timestamp, reason: str) -> None:
         nonlocal last_flat_bar
@@ -374,10 +412,10 @@ def simulate_dual_add_segment(
                 for pos in list(positions):
                     entry = float(pos["entry"])
                     fee_buffer = 2.0 * fee * entry
-                    if pos["side"] == "LONG" and high >= entry + tp + fee_buffer:
+                    if pos["side"] == "LONG" and hit_up(entry + tp + fee_buffer):
                         record(pos, entry + tp + fee_buffer, ts, "tp")
                         positions.remove(pos)
-                    elif pos["side"] == "SHORT" and low <= entry - tp - fee_buffer:
+                    elif pos["side"] == "SHORT" and hit_down(entry - tp - fee_buffer):
                         record(pos, entry - tp - fee_buffer, ts, "tp")
                         positions.remove(pos)
             enforce_net_cap(close, ts)
@@ -413,7 +451,7 @@ def simulate_dual_add_segment(
             while (
                 cfg.add_mode in {"both", "trend"}
                 and (cfg.add_mode == "both" or trend_side == "LONG")
-                and high >= last_add_long + step
+                and hit_up(last_add_long + step)
                 and add_long_count < cfg.max_adds_per_side
                 and can_add("LONG")
             ):
@@ -431,7 +469,7 @@ def simulate_dual_add_segment(
             while (
                 cfg.add_mode in {"both", "trend"}
                 and (cfg.add_mode == "both" or trend_side == "SHORT")
-                and low <= last_add_short - step
+                and hit_down(last_add_short - step)
                 and add_short_count < cfg.max_adds_per_side
                 and can_add("SHORT")
             ):
@@ -554,6 +592,8 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         max_segment_bars=args.max_segment_bars,
         min_segment_bars=args.min_segment_bars,
         fee_bps=args.fee_bps,
+        market_exit_slippage_bps=args.market_exit_slippage_bps,
+        intrabar_touch_buffer_bps=args.intrabar_touch_buffer_bps,
         max_loss_per_segment=args.max_loss_per_segment,
         risk_stop_mode=args.risk_stop_mode,
         initial_hedge=args.initial_hedge,
@@ -691,6 +731,12 @@ def summarize(trades: pd.DataFrame, segments: pd.DataFrame) -> pd.DataFrame:
                 # Same convention as chop_grid_backtest trade summary: sum of per-trade
                 # capital-normalized PnL, expressed as percentage points.
                 "return_pct": sum_pc * 100.0,
+                "fee_bps_charged_sum": float(
+                    trades.get("fee_bps_charged", pd.Series(dtype=float)).sum()
+                ),
+                "slippage_bps_charged_sum": float(
+                    trades.get("slippage_bps_charged", pd.Series(dtype=float)).sum()
+                ),
                 "worst_segment": segments["pnl_per_capital"].min(),
                 "median_drawdown": segments["max_drawdown"].median(),
                 # Fraction of segments that hit max_loss_per_segment (mtm stop) before
@@ -1060,6 +1106,18 @@ def main() -> None:
         "--max-segment-bars", type=int, default=defaults.get("max_segment_bars", 120)
     )
     ap.add_argument("--fee-bps", type=float, default=defaults.get("fee_bps", 4.0))
+    ap.add_argument(
+        "--market-exit-slippage-bps",
+        type=float,
+        default=defaults.get("market_exit_slippage_bps", 0.0),
+        help="Adverse slippage applied to basket/forced market-style exits.",
+    )
+    ap.add_argument(
+        "--intrabar-touch-buffer-bps",
+        type=float,
+        default=defaults.get("intrabar_touch_buffer_bps", 0.0),
+        help="Extra high/low penetration required before intrabar add/TP fills.",
+    )
     ap.add_argument(
         "--exclude-box",
         action=argparse.BooleanOptionalAction,

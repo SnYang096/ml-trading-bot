@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.pipeline.config import load_pipeline_config
+from scripts.pipeline.config import load_pipeline_config, resolve_strategy_dates
 from src.config.multileg_config import load_multileg_effective_config
 
 
@@ -337,6 +337,14 @@ def test_load_chop_grid_non_rolling_extends_turbo():
     )
     assert cfg["grid_backtest"]["enabled"] is True
     assert "non-rolling-full-cycle" in cfg["grid_backtest"]["output_dir"]
+    dates = resolve_strategy_dates(
+        cfg,
+        strategy="chop_grid",
+        default_end_date=cfg["dates"]["end_date"],
+    )
+    assert dates["holdout_start"] == "2024-03-01"
+    assert dates["validation_months"] == 3
+    assert dates["test_start"] == "2024-06-01"
 
 
 def test_load_dual_add_non_rolling_extends_turbo():
@@ -351,6 +359,14 @@ def test_load_dual_add_non_rolling_extends_turbo():
     )
     assert cfg["dual_add_backtest"]["enabled"] is True
     assert "non-rolling-full-cycle" in cfg["dual_add_backtest"]["output_dir"]
+    dates = resolve_strategy_dates(
+        cfg,
+        strategy="dual_add_trend",
+        default_end_date=cfg["dates"]["end_date"],
+    )
+    assert dates["holdout_start"] == "2024-03-01"
+    assert dates["validation_months"] == 3
+    assert dates["test_start"] == "2024-06-01"
 
 
 def test_load_multileg_slow_profiles_extend_turbo_metadata():
@@ -362,6 +378,8 @@ def test_load_multileg_slow_profiles_extend_turbo_metadata():
     )
 
     assert chop_cfg.get("rolling", {}).get("mode") == "slow_realistic"
+    assert chop_cfg["dates"]["end_date"] == "2026-05-01"
+    assert "validation_months" not in chop_cfg["dates"]
     assert "study" not in chop_cfg
     assert "threshold_search" not in chop_cfg
     assert (
@@ -370,6 +388,8 @@ def test_load_multileg_slow_profiles_extend_turbo_metadata():
     )
     assert chop_cfg["grid_backtest"]["costs"]["maker_fee_bps"] == 20.0
     assert dual_cfg.get("rolling", {}).get("mode") == "slow_realistic"
+    assert dual_cfg["dates"]["end_date"] == "2026-05-01"
+    assert "validation_months" not in dual_cfg["dates"]
     assert "study" not in dual_cfg
     assert "threshold_search" not in dual_cfg
     assert (
@@ -377,6 +397,8 @@ def test_load_multileg_slow_profiles_extend_turbo_metadata():
         == 60
     )
     assert dual_cfg["dual_add_backtest"]["costs"]["fee_bps"] == 20.0
+    assert dual_cfg["dual_add_backtest"]["costs"]["market_exit_slippage_bps"] == 5.0
+    assert dual_cfg["dual_add_backtest"]["costs"]["intrabar_touch_buffer_bps"] == 5.0
 
 
 def test_multileg_backtest_dates_mismatch_raises(tmp_path: Path):

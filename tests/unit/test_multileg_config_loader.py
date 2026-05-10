@@ -175,7 +175,13 @@ def test_dual_add_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> None
         cfg_dir / "research/turbo.yaml",
         {
             "strategy_type": "dual_add_trend",
-            "dual_add_backtest": {"costs": {"fee_bps": 12.0}},
+            "dual_add_backtest": {
+                "costs": {
+                    "fee_bps": 12.0,
+                    "market_exit_slippage_bps": 6.0,
+                    "intrabar_touch_buffer_bps": 4.0,
+                }
+            },
         },
     )
     _write_yaml(
@@ -194,3 +200,5 @@ def test_dual_add_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> None
 
     got = _load_dual_add_defaults(cfg_dir / "research/turbo.yaml")
     assert got["fee_bps"] == 12.0
+    assert got["market_exit_slippage_bps"] == 6.0
+    assert got["intrabar_touch_buffer_bps"] == 4.0

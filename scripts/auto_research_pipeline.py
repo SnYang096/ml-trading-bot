@@ -5031,6 +5031,8 @@ def _run_grid_backtest_stage(
     symbols: str,
     start_date: str,
     end_date: str,
+    calibration_start: str = "",
+    calibration_end: str = "",
 ) -> List[Dict[str, Any]]:
     """Run standalone grid strategies without the single-position event path."""
     grid_cfg = cfg.get("grid_backtest", {}) or {}
@@ -5080,8 +5082,12 @@ def _run_grid_backtest_stage(
                 kpi_backtest = {}
             best_row: Dict[str, Any] = {}
             rows: List[Dict[str, Any]] = []
-            calib_start = str(grid_cfg.get("calibration_start") or start_date)
-            calib_end = str(grid_cfg.get("calibration_end") or end_date)
+            calib_start = str(
+                grid_cfg.get("calibration_start") or calibration_start or start_date
+            )
+            calib_end = str(
+                grid_cfg.get("calibration_end") or calibration_end or end_date
+            )
             for idx, candidate in enumerate(candidates, start=1):
                 tuned_candidate = pipeline_multileg_layers.candidate_for_enabled_layers(
                     strategy_type=strategy_type,
@@ -5311,6 +5317,10 @@ def _run_dual_add_backtest_stage(
             str(int(dual_cfg.get("max_adds_per_side", 3))),
             "--fee-bps",
             str(float(dual_costs.get("fee_bps", dual_cfg.get("fee_bps", 4.0)))),
+            "--market-exit-slippage-bps",
+            str(float(dual_costs.get("market_exit_slippage_bps", 0.0))),
+            "--intrabar-touch-buffer-bps",
+            str(float(dual_costs.get("intrabar_touch_buffer_bps", 0.0))),
             "--map-symbols",
             str(dual_cfg.get("map_symbols", symbols) or symbols),
             "--continuous-map-symbols",
@@ -8549,14 +8559,52 @@ def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_summary = []
 
+    def _prev_day(date_str: str) -> str:
+        return (datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=1)).strftime(
+            "%Y-%m-%d"
+        )
+
+    def _standalone_stage_dates(section_name: str) -> Dict[str, str]:
+        section = cfg.get(section_name, {}) or {}
+        stage_end = str(section.get("end_date") or default_end_date)
+        explicit_start = section.get("start_date")
+        if explicit_start:
+            return {
+                "calibration_start": str(explicit_start),
+                "calibration_end": stage_end,
+                "test_start": str(explicit_start),
+                "test_end": stage_end,
+            }
+        rolling_cfg = cfg.get("rolling", {}) or {}
+        if str(rolling_cfg.get("time_split_policy", "") or "") == "static_holdout":
+            holdout_months = int(dates["holdout_months"])
+            validation_months = int(dates.get("validation_months", 0) or 0)
+            holdout_start = compute_holdout_start(stage_end, holdout_months)
+            if 0 < validation_months < holdout_months:
+                test_start = compute_holdout_start(
+                    stage_end, holdout_months - validation_months
+                )
+                return {
+                    "calibration_start": holdout_start,
+                    "calibration_end": _prev_day(test_start),
+                    "test_start": test_start,
+                    "test_end": stage_end,
+                }
+            return {
+                "calibration_start": holdout_start,
+                "calibration_end": stage_end,
+                "test_start": holdout_start,
+                "test_end": stage_end,
+            }
+        return {
+            "calibration_start": str(dates["start_date"]),
+            "calibration_end": stage_end,
+            "test_start": str(dates["start_date"]),
+            "test_end": stage_end,
+        }
+
     if args.stage == "grid_backtest":
-        grid_start = str(
-            (cfg.get("grid_backtest", {}) or {}).get("start_date")
-            or dates["start_date"]
-        )
-        grid_end = str(
-            (cfg.get("grid_backtest", {}) or {}).get("end_date") or default_end_date
-        )
+        grid_dates = _standalone_stage_dates("grid_backtest")
         summaries = _run_grid_backtest_stage(
             cfg=cfg,
             strategies=strategies,
@@ -8565,8 +8613,10 @@ def main():
             dry_run=args.dry_run,
             data_path=cfg["data_path"],
             symbols=symbols,
-            start_date=grid_start,
-            end_date=grid_end,
+            start_date=grid_dates["test_start"],
+            end_date=grid_dates["test_end"],
+            calibration_start=grid_dates["calibration_start"],
+            calibration_end=grid_dates["calibration_end"],
         )
         print(f"\n{'='*70}")
         print("📋 Grid Backtest 汇总")
@@ -8578,13 +8628,7 @@ def main():
         return
 
     if args.stage == "dual_add_backtest":
-        dual_start = str(
-            (cfg.get("dual_add_backtest", {}) or {}).get("start_date")
-            or dates["start_date"]
-        )
-        dual_end = str(
-            (cfg.get("dual_add_backtest", {}) or {}).get("end_date") or default_end_date
-        )
+        dual_dates = _standalone_stage_dates("dual_add_backtest")
         summaries = _run_dual_add_backtest_stage(
             cfg=cfg,
             strategies=strategies,
@@ -8593,8 +8637,8 @@ def main():
             dry_run=args.dry_run,
             data_path=cfg["data_path"],
             symbols=symbols,
-            start_date=dual_start,
-            end_date=dual_end,
+            start_date=dual_dates["test_start"],
+            end_date=dual_dates["test_end"],
         )
         print(f"\n{'='*70}")
         print("📋 Dual Add Backtest 汇总")
