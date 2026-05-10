@@ -64,6 +64,8 @@ dual_add_backtest:
     market_exit_slippage_bps: 5.0
     intrabar_touch_buffer_bps: 5.0
   timeframe: 2h
+  execution_timeframe: 1min
+  scale_max_loser_hold_to_signal: true
   regime: trend
   add_mode: trend
   flip_action: close_offside_all

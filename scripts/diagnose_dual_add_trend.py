@@ -123,6 +123,10 @@ def _load_dual_add_defaults(path: Path) -> dict:
         "chop_signal": str(chop_series.get("chop_signal", "raw")),
         "chop_ts_window": int(chop_series.get("chop_ts_window", 1200)),
         "chop_ts_min_periods": int(chop_series.get("chop_ts_min_periods", 150)),
+        "execution_timeframe": dual_bt.get("execution_timeframe"),
+        "scale_max_loser_hold_to_signal": bool(
+            dual_bt.get("scale_max_loser_hold_to_signal", False)
+        ),
     }
     if "compute_semantic_chop_ts_q" in chop_series:
         out["compute_chop_ts_q"] = chop_series.get("compute_semantic_chop_ts_q")
@@ -932,7 +936,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--execution-timeframe",
-        default=None,
+        default=defaults.get("execution_timeframe"),
         help=(
             "Optional finer resample for inventory simulation (e.g. 1min). When set and "
             "different from --timeframe, segment boundaries follow the signal grid but "
@@ -1065,7 +1069,7 @@ def main() -> None:
     ap.add_argument(
         "--scale-max-loser-hold-to-signal",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=bool(defaults.get("scale_max_loser_hold_to_signal", False)),
         help=(
             "When --execution-timeframe is finer than --timeframe, scale "
             "max_loser_hold_bars by (signal bar length / exec bar length) so one "
@@ -1133,6 +1137,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     trades, segments = run(args)
     summary = summarize(trades, segments)
+    resolved_hold = _effective_max_loser_hold_bars(args)
+    if not summary.empty:
+        summary["signal_timeframe"] = str(args.timeframe)
+        summary["execution_timeframe"] = str(args.execution_timeframe or args.timeframe)
+        summary["execution_replay_enabled"] = bool(
+            str(args.execution_timeframe or args.timeframe) != str(args.timeframe)
+        )
+        summary["resolved_max_loser_hold_bars"] = int(resolved_hold)
     trades.to_csv(out_dir / "dual_add_trades.csv", index=False)
     segments.to_csv(out_dir / "dual_add_segments.csv", index=False)
     summary.to_csv(out_dir / "summary.csv", index=False)
@@ -1161,7 +1173,7 @@ def main() -> None:
             title="Dual Add Trend Continuous Trading Map",
         )
     cfg_dump = dict(vars(args))
-    cfg_dump["_resolved_max_loser_hold_bars"] = _effective_max_loser_hold_bars(args)
+    cfg_dump["_resolved_max_loser_hold_bars"] = resolved_hold
     (out_dir / "config.json").write_text(
         json.dumps(cfg_dump, indent=2, default=str), encoding="utf-8"
     )

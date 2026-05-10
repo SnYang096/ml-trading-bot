@@ -180,7 +180,9 @@ def test_dual_add_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> None
                     "fee_bps": 12.0,
                     "market_exit_slippage_bps": 6.0,
                     "intrabar_touch_buffer_bps": 4.0,
-                }
+                },
+                "execution_timeframe": "1min",
+                "scale_max_loser_hold_to_signal": True,
             },
         },
     )
@@ -202,3 +204,5 @@ def test_dual_add_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> None
     assert got["fee_bps"] == 12.0
     assert got["market_exit_slippage_bps"] == 6.0
     assert got["intrabar_touch_buffer_bps"] == 4.0
+    assert got["execution_timeframe"] == "1min"
+    assert got["scale_max_loser_hold_to_signal"] is True

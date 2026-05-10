@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import argparse
+
 import pandas as pd
 
 from scripts.diagnose_chop_grid import GridConfig, simulate_fixed_grid
-from scripts.diagnose_dual_add_trend import DualAddConfig, simulate_dual_add_segment
+from scripts.diagnose_dual_add_trend import (
+    DualAddConfig,
+    _effective_max_loser_hold_bars,
+    simulate_dual_add_segment,
+)
 
 
 def test_chop_grid_signal_bar_does_not_fill_levels() -> None:
@@ -181,3 +187,23 @@ def test_dual_add_intrabar_touch_buffer_requires_extra_penetration() -> None:
 
     assert summary["max_add_long"] == 0
     assert len(trades) == 1
+
+
+def test_dual_add_effective_hold_scales_to_execution_timeframe() -> None:
+    args = argparse.Namespace(
+        max_loser_hold_bars=24,
+        timeframe="2h",
+        execution_timeframe="1min",
+        scale_max_loser_hold_to_signal=True,
+    )
+    assert _effective_max_loser_hold_bars(args) == 2880
+
+
+def test_dual_add_effective_hold_unscaled_by_default() -> None:
+    args = argparse.Namespace(
+        max_loser_hold_bars=24,
+        timeframe="2h",
+        execution_timeframe="1min",
+        scale_max_loser_hold_to_signal=False,
+    )
+    assert _effective_max_loser_hold_bars(args) == 24

@@ -5295,6 +5295,13 @@ def _run_dual_add_backtest_stage(
             end_date,
             "--timeframe",
             str(dual_cfg.get("timeframe", scfg.get("timeframe", "2h"))),
+            "--execution-timeframe",
+            str(
+                dual_cfg.get(
+                    "execution_timeframe",
+                    dual_cfg.get("timeframe", scfg.get("timeframe", "2h")),
+                )
+            ),
             "--regime",
             str(dual_cfg.get("regime", "trend")),
             "--add-mode",
@@ -5328,6 +5335,8 @@ def _run_dual_add_backtest_stage(
             "--out-dir",
             str(out_dir),
         ]
+        if bool(dual_cfg.get("scale_max_loser_hold_to_signal", False)):
+            cmd.append("--scale-max-loser-hold-to-signal")
         if bool(dual_cfg.get("exclude_box", True)):
             cmd.append("--exclude-box")
         print(f"\n   ▶️  {strat}: {' '.join(cmd)}")

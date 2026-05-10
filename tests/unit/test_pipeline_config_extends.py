@@ -359,6 +359,8 @@ def test_load_dual_add_non_rolling_extends_turbo():
     )
     assert cfg["dual_add_backtest"]["enabled"] is True
     assert "non-rolling-full-cycle" in cfg["dual_add_backtest"]["output_dir"]
+    assert cfg["dual_add_backtest"]["execution_timeframe"] == "1min"
+    assert cfg["dual_add_backtest"]["scale_max_loser_hold_to_signal"] is True
     dates = resolve_strategy_dates(
         cfg,
         strategy="dual_add_trend",
@@ -399,6 +401,8 @@ def test_load_multileg_slow_profiles_extend_turbo_metadata():
     assert dual_cfg["dual_add_backtest"]["costs"]["fee_bps"] == 20.0
     assert dual_cfg["dual_add_backtest"]["costs"]["market_exit_slippage_bps"] == 5.0
     assert dual_cfg["dual_add_backtest"]["costs"]["intrabar_touch_buffer_bps"] == 5.0
+    assert dual_cfg["dual_add_backtest"]["execution_timeframe"] == "1min"
+    assert dual_cfg["dual_add_backtest"]["scale_max_loser_hold_to_signal"] is True
 
 
 def test_multileg_backtest_dates_mismatch_raises(tmp_path: Path):

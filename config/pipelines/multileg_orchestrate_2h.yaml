@@ -93,6 +93,9 @@ dual_add_backtest:
   end_date: "2026-03-31"
   symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
   timeframe: 2h
+  # Default multi-leg execution replay: signal on timeframe above, inventory on 1m OHLC.
+  execution_timeframe: 1min
+  scale_max_loser_hold_to_signal: true
   regime: trend
   add_mode: trend
   flip_action: close_offside_all
@@ -107,6 +110,8 @@ dual_add_backtest:
   max_adds_per_side: 3
   costs:
     fee_bps: 20.0
+    market_exit_slippage_bps: 5.0
+    intrabar_touch_buffer_bps: 5.0
   map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
 

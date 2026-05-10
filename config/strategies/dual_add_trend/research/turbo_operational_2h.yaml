@@ -47,6 +47,8 @@ dual_add_backtest:
     fee_bps: 20.0
     market_exit_slippage_bps: 5.0
     intrabar_touch_buffer_bps: 5.0
+  execution_timeframe: 1min
+  scale_max_loser_hold_to_signal: true
   start_date: "2022-01-01"
   end_date: "2026-03-31"
   symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
