@@ -48,6 +48,8 @@ PROJECT_ROOT = get_project_root()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.config.strategy_layout import PACKAGED_PROFILE_DEFAULT_STEM
+
 
 def _is_in_docker() -> bool:
     """Check if running inside a Docker container."""
@@ -3782,12 +3784,13 @@ def multileg():
 
 
 def _multileg_default_config(profile: str, strategy: str = "") -> str:
-    p = str(profile or "").strip().lower().replace("-", "_")
-    if p not in {"turbo", "slow", "non_rolling"}:
-        p = "turbo"
+    """Packaged research profile stem/filename → path under ``config/strategies/<slug>/research/``."""
+    from src.config.strategy_layout import packaged_research_yaml_name
+
+    fname = packaged_research_yaml_name(str(profile).strip() or None)
     s = str(strategy or "").strip()
     if s:
-        return f"config/strategies/{s}/research/{p}.yaml"
+        return f"config/strategies/{s}/research/{fname}"
     return "config/pipelines/multileg_orchestrate_2h.yaml"
 
 
@@ -3803,8 +3806,13 @@ def _multileg_stage_for_strategy(strategy: str) -> str:
 def _multileg_auto_stage(profile: str, strategy: str, run_all: bool) -> str:
     if run_all or not str(strategy).strip():
         return "rolling_sim"
-    p = str(profile or "").strip().lower().replace("-", "_")
-    if p == "non_rolling":
+    from src.config.strategy_layout import (
+        packaged_profile_yaml_is_validate_static,
+        packaged_research_yaml_name,
+    )
+
+    fname = packaged_research_yaml_name(str(profile).strip() or None)
+    if packaged_profile_yaml_is_validate_static(fname):
         return _multileg_stage_for_strategy(strategy)
     return "rolling_sim"
 
@@ -3830,9 +3838,16 @@ def multileg_validate_config(config_path: str, constitution_yaml: str):
 @click.option("--all", "run_all", is_flag=True, help="跑 config 里的全部多腿策略")
 @click.option(
     "--profile",
-    default="turbo",
+    default=PACKAGED_PROFILE_DEFAULT_STEM,
     show_default=True,
-    type=click.Choice(["turbo", "slow", "non_rolling"]),
+    type=click.Choice(
+        [
+            "calibrate_roll.default",
+            "research_roll.features_on",
+            "validate_static.full_study",
+            "validate_static.constrained",
+        ]
+    ),
 )
 @click.option("--config", "config_path", default="", help="可选：指定 pipeline YAML")
 @click.option("--stage", default="auto", help="auto|rolling_sim|grid_backtest|dual_add_backtest")

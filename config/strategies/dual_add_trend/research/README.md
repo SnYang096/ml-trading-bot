@@ -2,9 +2,9 @@
 
 This directory mirrors the BPC profile naming:
 
-- `turbo.yaml`: fixed features/regime thresholds, monthly profile calibration.
-- `slow.yaml`: slower structural health check plus monthly profile calibration.
-- `non_rolling.yaml`: full-window static holdout validation before gate/review.
+- `calibrate_roll.default.yaml`: rolling calibration profile (formerly `turbo.yaml`).
+- `research_roll.features_on.yaml`: structural refresh rolling profile (formerly `slow.yaml`).
+- `validate_static.full_study.yaml`: single static holdout run (formerly `non_rolling.yaml`).
 
 The profile YAMLs use the same pipeline language as BPC:
 

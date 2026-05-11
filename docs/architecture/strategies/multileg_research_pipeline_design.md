@@ -114,7 +114,7 @@ BPC currently includes fallback scoring methods such as:
 - `tail_bad_rate_ratio`
 - `upside_positive_rate_ratio`
 
-(see `config/strategies/bpc/research/slow.yaml`)
+(see `config/strategies/bpc/research/research_roll.features_on.yaml`)
 
 For multi-leg, default to:
 
@@ -138,9 +138,11 @@ Design principles:
 
 ## Stage Mapping
 
-- `turbo`: fast threshold/rule exploration.
-- `slow`: rolling stability and cadence validation.
-- `non_rolling`: full-window static OOS acceptance.
+CLI / `--profile` stems match packaged filenames under `research/` (no turbo/slow short keys):
+
+- `calibrate_roll.default`: fast threshold/rule exploration (`rolling.mode: turbo_fixed_features` when configured).
+- `research_roll.features_on`: rolling stability and heavier feature cadence (`rolling.mode: slow_realistic`).
+- `validate_static.*`: full-window static OOS acceptance (`rolling.mode: non_rolling`).
 
 Multi-leg does not require vector backtest, but replay/backtest must remain
 FeatureStore-backed.
@@ -165,8 +167,8 @@ Decision from the reviewed non-rolling output:
 
 - Treat this run as execution-path validation only.
 - Do not infer prefilter winner features from this artifact.
-- Next comparison step should run selector-producing shape (`turbo` or
-  selector-enabled `slow`) and then inspect generated
+- Next comparison step should run selector-producing shape (`calibrate_roll.default` or
+  selector-enabled `research_roll.features_on`) and then inspect generated
   `multileg_feature_selection*.json` artifacts before adoption.
 
 ## Recommended Defaults (First Iteration)
@@ -176,7 +178,7 @@ Decision from the reviewed non-rolling output:
    `semantic_polarity.yaml` + dependency outputs).
 3. Use replay score as primary optimizer objective.
 4. Limit auxiliary statistical methods to diagnostics.
-5. Promote only after slow + non-rolling consistency checks.
+5. Promote only after `research_roll.features_on` + static `validate_static` consistency checks.
 
 ## Non-Goals (Current Iteration)
 

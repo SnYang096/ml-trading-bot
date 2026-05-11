@@ -618,9 +618,9 @@ liquidation strategy：负责杠杆脆弱事件 alpha
 
 ## 2026-05-09 管线对齐补充
 
-本次已把多腿配置入口统一到 `research/{turbo,slow,non_rolling}.yaml` + `archetypes/*`：
+本次已把多腿配置入口统一到 `research/calibrate_roll.default.yaml` / `research_roll.features_on.yaml` / `validate_static.*.yaml` + `archetypes/*`：
 
 - 删除 `config/strategies/chop_grid/grid.yaml` 与 `config/strategies/dual_add_trend/dual_add.yaml`；
-- 运行时默认入口改为 `research/turbo.yaml`，`slow/non_rolling` 继续通过 `extends` 继承；
-- `turbo/slow` 的无前视 rolling replay 作为“模拟未来”标准口径（过去校准、下一窗验证）；
+- 运行时默认入口为 `research/calibrate_roll.default.yaml`，research_roll / validate_static 继续通过 `extends` 继承；
+- calibrate_roll / research_roll 的无前视 rolling replay 作为“模拟未来”标准口径（过去校准、下一窗验证）；
 - `multileg monitor` 增加 regime 相关漂移信号（chop / trend-flip）并与 risk/feature 漂移联合决策。

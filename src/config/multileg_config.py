@@ -22,11 +22,11 @@ def load_multileg_layers(
     *,
     config_dir: Path,
     strategy_type: str,
-    profile: str = "turbo",
+    profile: str = "calibrate_roll.default",
     profile_path: Optional[Path] = None,
     engine_path: Optional[Path] = None,
 ) -> Tuple[Path, Dict[str, Any], Path, Dict[str, Any], Path, Dict[str, Any]]:
-    """Load profile YAML + optional legacy engine YAML + archetype layers."""
+    """Load profile YAML + optional extra engine YAML + archetype layers."""
     root: Dict[str, Any] = {
         "strategy_type": str(strategy_type).strip().lower(),
         "status": "research",
@@ -39,8 +39,8 @@ def load_multileg_layers(
     elif profile_path is not None:
         raise ValueError(f"missing multileg profile yaml: {prof_path}")
 
-    # Backward compatibility: allow passing a legacy engine YAML path.
     if engine_path is not None:
+        # Explicit overlay merges after the packaged profile (`extends` chain).
         if not engine_path.is_absolute():
             engine_path = config_dir / engine_path
         if engine_path.exists():
@@ -74,7 +74,7 @@ def load_multileg_effective_config(
     *,
     config_dir: Path,
     strategy_type: str,
-    profile: str = "turbo",
+    profile: str = "calibrate_roll.default",
     profile_path: Optional[Path] = None,
     engine_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
@@ -99,7 +99,7 @@ def update_multileg_calibration_candidate(
     config_dir: Path,
     strategy_type: str,
     candidate: Dict[str, Any],
-    profile: str = "turbo",
+    profile: str = "calibrate_roll.default",
     profile_path: Optional[Path] = None,
     engine_path: Optional[Path] = None,
 ) -> None:

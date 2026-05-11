@@ -477,7 +477,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--dual-add-config",
-        default="config/strategies/dual_add_trend/research/turbo.yaml",
+        default="config/strategies/dual_add_trend/research/calibrate_roll.default.yaml",
     )
     return p.parse_args()
 

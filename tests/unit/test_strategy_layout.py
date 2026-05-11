@@ -23,7 +23,7 @@ def test_strategy_packaged_root():
 def test_resolve_chop_grid_turbo_is_single_file():
     root = _repo_root()
     p, warns = resolve_default_pipeline_config(root, "chop_grid", None)
-    assert p.name == "turbo.yaml"
+    assert p.name == "calibrate_roll.default.yaml"
     assert p.parent.name == "research"
     assert not any("Resolved pipeline" in w for w in warns)
 
@@ -31,7 +31,7 @@ def test_resolve_chop_grid_turbo_is_single_file():
 def test_resolve_bpc_turbo_single_file():
     root = _repo_root()
     p, warns = resolve_default_pipeline_config(root, "bpc", None)
-    assert p.name == "turbo.yaml"
+    assert p.name == "calibrate_roll.default.yaml"
     assert p.parts[-3:-1] == ("bpc", "research")
     assert not warns
 

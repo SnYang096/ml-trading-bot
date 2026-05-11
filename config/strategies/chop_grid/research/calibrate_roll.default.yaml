@@ -55,7 +55,7 @@ strategies:
         max_drawdown_floor: -0.08
     multileg_calibration:
       # Execution candidates intentionally include wider grid spacing for 20bps
-      # stress costs. Slow/non_rolling inherit this list from turbo.yaml.
+      # stress costs. research_roll / validate_static inherit this list from calibrate_roll.default.yaml.
       candidates:
         - entry_chop_min: 0.35
           exit_chop_below: 0.22

@@ -1,20 +1,16 @@
 # =============================================================================
-# ME · turbo（turbo_fixed_features）— 目的与节奏
+# TPC · turbo（turbo_fixed_features）— 目的与节奏
 # -----------------------------------------------------------------------------
 # 目的
-#   - 生产特征集固定（fixed_strategies_root → 与线上一致的 archetypes / features）。
-#   - 主要做「阈值漂移」：locked 规则 + parquet_plateau 等重标定各层；标定链关闭树模型训练。
-#   - 适合：线上例行轻量重校准、rolling_sim / fast_month 按月推进。
+#   - 生产特征集固定；主要做「阈值漂移」与执行层标定；标定链关闭树模型训练。
 # 建议节奏
 #   - 约每月：rolling_sim 在 holdout 内逐日历月重放（详见 docs/workflow/ROLLING_SIM_TIME_WINDOWS_CN.md）。
 # 何时不要用 turbo
-#   - 需改特征 / archetype 结构、或 slow 显示特征漂移大 → 用 slow 或 non_rolling。
+#   - 需改特征 / archetype、或 slow 显示漂移大 → slow / non_rolling。
 # -----------------------------------------------------------------------------
-# [INDEX] dates → rolling → threshold_calibration → data → strategies.me → event_backtest → output
-# slow / non_rolling：extends 本文件并覆写差量（见各自文件）。
+# [INDEX] dates → rolling → threshold_calibration → data → strategies.tpc → event_backtest → output
 
 dates:
-  # 与 slow（structure_train_window: full_history）struct_start = start_date 对齐；略早以留 feature warmup。
   start_date: "2022-01-01"
   end_date: "2026-05-01"
   holdout_months: 26
@@ -55,8 +51,8 @@ download:
   parquet_dir: data/parquet_data
 
 strategies:
-  me:
-    config: config/strategies/me
+  tpc:
+    config: config/strategies/tpc
     timeframe: 120T
     prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
@@ -111,15 +107,15 @@ strategies:
         trade_penalty_high: 0.0
         stability_penalty: 0.0
       backtest:
-        min_trades: 10
+        min_trades: 0
       deploy:
-        min_trades: 10
+        min_trades: 0
 
 event_backtest:
   enabled: true
   map_extra_months: 4
   exec_grid_by_family:
-    me:
+    tpc:
       initial_r: "4.0:0.5:7.0"
       activation_r: "3.5:0.5:6.0"
       trail_r: "6.0:1.0:15.0"
@@ -132,4 +128,4 @@ event_backtest:
     undertrade_penalty: 0.0
 
 output:
-  history_dir: results/me/turbo-rolling-sim
+  history_dir: results/tpc/turbo-rolling-sim

@@ -35,7 +35,7 @@ specific reason not to compare that feature.
 different direction in different strategies. For example, `bpc_semantic_chop` is
 risk for BPC-style breakout continuation, but eligibility for `chop_grid`.
 
-`research/turbo.yaml`, `research/slow.yaml`, and `research/non_rolling.yaml`
+`research/calibrate_roll.default.yaml`, `research/research_roll.features_on.yaml`, and `research/validate_static.full_study.yaml`
 describe how to run experiments. They should point back to the strategy config
 directory and, for FeatureStore-backed strategies, set `feature_store_dir` and
 `feature_store_timeframe` in the strategy-specific backtest section.
@@ -64,7 +64,7 @@ Hilbert columns are available for prefilter rules.
    materialization pool.
 2. Create strategy archetypes under `archetypes/` for runtime rules and execution
    knobs.
-3. Add `research/turbo.yaml`; add `slow.yaml` and `non_rolling.yaml` when the
+3. Add `research/calibrate_roll.default.yaml`; add `research_roll.features_on.yaml` and `validate_static.*.yaml` when the
    strategy needs rolling validation or static holdout validation.
 4. Ensure the research YAML runs FeatureStore build before any selector/backtest
    that depends on feature columns.

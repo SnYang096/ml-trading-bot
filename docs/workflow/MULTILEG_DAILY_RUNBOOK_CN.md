@@ -2,8 +2,8 @@
 
 适用范围：`chop_grid`、`dual_add_trend` 多腿专用管线（`mlbot multileg` + `run_multi_leg_live.py`）。
 
-配置约定：多腿运行时入口统一使用 `config/strategies/<strategy>/research/turbo.yaml`
-（`slow/non_rolling` 通过 `extends` 继承），并叠加 `archetypes/prefilter.yaml` +
+配置约定：多腿运行时入口统一使用 `config/strategies/<strategy>/research/calibrate_roll.default.yaml`
+（`research_roll.features_on` / `validate_static.full_study` 等通过 `extends` 继承），并叠加 `archetypes/prefilter.yaml` +
 `archetypes/execution.yaml` 形成 effective config。
 
 “模拟未来”口径：采用无前视 `rolling_sim`（过去窗口校准，下一窗口测试），不额外引入
@@ -142,7 +142,7 @@ mlbot multileg live --mode testnet --bar-source feature-store
 每次多腿参数更新建议记录：
 
 - `run_id`
-- 使用配置（`multileg_orchestrate_2h.yaml` + strategy `research/{turbo|slow|non_rolling}.yaml` 版本）
+- 使用配置（`multileg_orchestrate_2h.yaml` + strategy `research/calibrate_roll.default.yaml` / `research_roll.features_on.yaml` / `validate_static.*.yaml` 版本）
 - gate 决策
 - monitor 决策
 - 是否进入 shadow / testnet / offline

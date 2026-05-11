@@ -10,7 +10,7 @@ def test_dual_add_backtest_stage_respects_strategy_symbol_filters(
 ) -> None:
     strat_dir = tmp_path / "dual_add_trend"
     (strat_dir / "research").mkdir(parents=True)
-    (strat_dir / "research" / "turbo.yaml").write_text(
+    (strat_dir / "research" / "calibrate_roll.default.yaml").write_text(
         "strategy_type: dual_add_trend\n", encoding="utf-8"
     )
     (strat_dir / "meta.yaml").write_text(

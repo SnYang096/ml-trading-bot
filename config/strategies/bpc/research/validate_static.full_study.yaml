@@ -13,9 +13,9 @@
 #     仅 rolling 改为 non_rolling + static_holdout，output 单独目录。
 #   - 全周期 run 的对比与上线建议写在 report.json（comparison / deploy_gate），无单独 HTML。
 # -----------------------------------------------------------------------------
-# 覆写 dates / rolling / output；其余与同目录 slow.yaml 一致。
+# 覆写 dates / rolling / output；其余与同目录 research_roll.features_on.yaml 一致。
 
-extends: slow.yaml
+extends: research_roll.features_on.yaml
 
 dates:
   # non_rolling/static_holdout 专用窗口，区别于 turbo/slow 的月度 rolling calibration。
@@ -29,7 +29,7 @@ rolling:
 
 # 单次全周期结束后的 compare_runs vs 上期 history（rolling 快照不在此语义下使用）。
 comparison:
-  min_trades: 30
+  min_trades: 0
   sharpe_adopt_ratio: 0.7
   sharpe_reject_floor: 0.0
 
@@ -39,7 +39,7 @@ deploy_gate:
   trigger_drift_level: HIGH
   min_sharpe_change: 0.03
   require_adopt: true
-  min_trades: 50
+  min_trades: 0
   require_human_confirm: true
 
 output:

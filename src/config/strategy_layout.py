@@ -10,9 +10,50 @@ import yaml
 # 全局默认（无 --strategy）：多策略 PCM 编排；历史遗留单体研究包仍可用 ``pipelines/research_pipeline.yaml`` 显式传入。
 DEFAULT_PCM_ORCHESTRATE_REL = Path("config/pipelines/pcm_orchestrate_2h.yaml")
 LEGACY_RESEARCH_PIPELINE_REL = Path("config/pipelines/research_pipeline.yaml")
-RESEARCH_PIPELINE_PROBE_NAMES = ("turbo.yaml", "slow.yaml", "pipeline.yaml")
-LEGACY_MULTILEG_ENGINE_NAMES = frozenset({"grid.yaml", "dual_add.yaml"})
 
+# Canonical packaged research filenames (purpose-first stem + dotted suffix).
+PIPELINE_CALIBRATE_ROLL_MARKER = "calibrate_roll.default.yaml"
+PIPELINE_RESEARCH_ROLL_MARKER = "research_roll.features_on.yaml"
+PIPELINE_VALIDATE_STATIC_MARKER = "validate_static.full_study.yaml"
+
+RESEARCH_PIPELINE_PROBE_NAMES = (
+    PIPELINE_CALIBRATE_ROLL_MARKER,
+    PIPELINE_RESEARCH_ROLL_MARKER,
+    "pipeline.yaml",
+)
+
+# Default ``research/<stem>.yaml`` when resolving a bare strategy directory (CLI / multileg).
+PACKAGED_PROFILE_DEFAULT_STEM = "calibrate_roll.default"
+
+# Required packaged policy files checked by ``validate_strategy_package``.
+PACKAGED_POLICY_REQUIRED_PROFILE_STEMS: Tuple[str, ...] = (
+    PACKAGED_PROFILE_DEFAULT_STEM,
+    "research_roll.features_on",
+    "validate_static.full_study",
+)
+
+
+def packaged_research_yaml_name(profile: str | None = None) -> str:
+    """Return basename ``*.yaml`` under ``research/`` for a dotted stem or full filename."""
+    raw = str(profile).strip() if profile is not None else ""
+    stem = Path(raw.replace("-", "_")).name if raw else ""
+    if not stem:
+        return PIPELINE_CALIBRATE_ROLL_MARKER
+    return stem if stem.endswith(".yaml") else f"{stem}.yaml"
+
+
+def packaged_profile_yaml_is_validate_static(fname: str) -> bool:
+    """True when ``research/<fname>`` is a static validation pack (runs default ``full``)."""
+    s = str(fname or "").strip()
+    return s.startswith("validate_static.") and s.endswith(".yaml")
+
+# Filenames treated as rolling-style profiles (these forbid naive ``full`` unless overridden).
+RESEARCH_STAGE_FULL_BLOCKED_LEAVES = frozenset(
+    {
+        PIPELINE_CALIBRATE_ROLL_MARKER,
+        PIPELINE_RESEARCH_ROLL_MARKER,
+    }
+)
 
 def load_yaml_dict(path: Path, *, strict: bool = True) -> Dict[str, Any]:
     """Load a YAML dict from disk.
@@ -63,30 +104,28 @@ def load_yaml_extends_chain(path: Path, *, strict: bool = True) -> Dict[str, Any
     return merged
 
 
-def resolve_strategy_profile_path(config_dir: Path, profile: str = "turbo") -> Path:
-    p = str(profile or "turbo").strip().lower().replace("-", "_")
-    if not p:
-        p = "turbo"
-    return config_dir / "research" / f"{p}.yaml"
+def resolve_strategy_profile_path(
+    config_dir: Path, profile: str | None = None
+) -> Path:
+    """Resolve ``config_dir/research/<packaged profile>.yaml`` (dotted stems allowed)."""
+    return config_dir / "research" / packaged_research_yaml_name(profile)
 
 
 def resolve_strategy_config_input(
-    path: Path, *, default_profile: str = "turbo"
+    path: Path, *, default_profile: str | None = None
 ) -> Tuple[Path, Optional[Path], Optional[Path]]:
     """Resolve ``config_dir/profile_path/engine_path`` from a user input path.
 
     Supports:
     - strategy directory
     - research profile yaml (``.../research/*.yaml``)
-    - legacy engine yaml (``grid.yaml`` / ``dual_add.yaml``)
-    - generic yaml file path (treated as profile-like root layer)
+    - other yaml paths under the strategy tree (treated as profile-like for loaders)
     """
     if path.is_dir():
         cfg_dir = path
-        prof_path = resolve_strategy_profile_path(cfg_dir, default_profile)
+        dp = PACKAGED_PROFILE_DEFAULT_STEM if default_profile is None else default_profile
+        prof_path = resolve_strategy_profile_path(cfg_dir, dp)
         return cfg_dir, prof_path if prof_path.exists() else None, None
-    if path.name in LEGACY_MULTILEG_ENGINE_NAMES:
-        return path.parent, None, path
     if path.parent.name == "research":
         return path.parent.parent, path, None
     return path.parent, path, None
@@ -104,8 +143,9 @@ def resolve_default_pipeline_config(
 ) -> Tuple[Path, List[str]]:
     """Resolve pipeline YAML path for ``mlbot pipeline`` when ``--config`` is omitted.
 
-    Order (per ADR §3.2): ``research/turbo.yaml`` → ``research/slow.yaml`` →
-    ``research/pipeline.yaml``; each may be a thin pointer via top-level ``extends: <relative path>``.
+    Order (per ADR §3.2): ``research/calibrate_roll.default.yaml`` →
+    ``research/research_roll.features_on.yaml`` → ``research/pipeline.yaml``;
+    each may be a thin pointer via top-level ``extends: <relative path>``.
 
     Returns ``(absolute_path, warning_messages)``.
     """
@@ -159,14 +199,15 @@ def _resolve_research_pipeline_marker(
 
 
 def is_research_turbo_or_slow_yaml(config_path: Path) -> bool:
-    """True for ``config/strategies/*/research/turbo.yaml`` or ``slow.yaml``."""
+    """True for rolling packaged profiles whose default CLI stage is never ``full``."""
     try:
         parts = config_path.resolve().parts
     except Exception:
         parts = config_path.parts
-    if len(parts) < 2:
+    if len(parts) < 2 or parts[-2] != "research":
         return False
-    return parts[-1] in ("turbo.yaml", "slow.yaml") and parts[-2] == "research"
+    leaf = parts[-1]
+    return leaf in RESEARCH_STAGE_FULL_BLOCKED_LEAVES
 
 
 def deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:

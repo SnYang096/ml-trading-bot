@@ -19,7 +19,7 @@ def _write_yaml(path: Path, obj: dict) -> None:
 def test_load_multileg_effective_config_merges_archetype_layers(tmp_path: Path) -> None:
     cfg_dir = tmp_path / "chop_grid"
     _write_yaml(
-        cfg_dir / "research/turbo.yaml",
+        cfg_dir / "research/calibrate_roll.default.yaml",
         {
             "strategy_type": "grid",
             "status": "research",
@@ -46,7 +46,9 @@ def test_load_multileg_effective_config_respects_custom_engine_path(
     tmp_path: Path,
 ) -> None:
     cfg_dir = tmp_path / "custom_pack"
-    _write_yaml(cfg_dir / "research/turbo.yaml", {"strategy_type": "grid"})
+    _write_yaml(
+        cfg_dir / "research/calibrate_roll.default.yaml", {"strategy_type": "grid"}
+    )
     _write_yaml(
         cfg_dir / "custom_grid.yaml",
         {
@@ -70,7 +72,7 @@ def test_load_multileg_effective_config_respects_custom_engine_path(
 def test_update_multileg_candidate_writes_archetype_layers(tmp_path: Path) -> None:
     cfg_dir = tmp_path / "dual_add_trend"
     _write_yaml(
-        cfg_dir / "research/turbo.yaml",
+        cfg_dir / "research/calibrate_roll.default.yaml",
         {
             "strategy_type": "dual_add_trend",
         },
@@ -121,7 +123,7 @@ def test_load_multileg_effective_config_explicit_missing_profile_raises(
     tmp_path: Path,
 ) -> None:
     cfg_dir = tmp_path / "missing_profile_pack"
-    missing = cfg_dir / "research/turbo.yaml"
+    missing = cfg_dir / "research/calibrate_roll.default.yaml"
     with pytest.raises(ValueError, match="missing multileg profile yaml"):
         load_multileg_effective_config(
             config_dir=cfg_dir,
@@ -133,7 +135,7 @@ def test_load_multileg_effective_config_explicit_missing_profile_raises(
 def test_chop_grid_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> None:
     cfg_dir = tmp_path / "chop_grid"
     _write_yaml(
-        cfg_dir / "research/turbo.yaml",
+        cfg_dir / "research/calibrate_roll.default.yaml",
         {
             "strategy_type": "grid",
             "grid_backtest": {
@@ -160,7 +162,7 @@ def test_chop_grid_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> Non
         },
     )
 
-    got = merge_chop_grid_yaml(cfg_dir / "research/turbo.yaml")
+    got = merge_chop_grid_yaml(cfg_dir / "research/calibrate_roll.default.yaml")
     assert got["same_bar_entry_exit"] is True
     assert got["fee_bps"] == 7.0
     assert got["maker_fee_bps"] == 2.0
@@ -172,7 +174,7 @@ def test_chop_grid_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> Non
 def test_dual_add_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> None:
     cfg_dir = tmp_path / "dual_add_trend"
     _write_yaml(
-        cfg_dir / "research/turbo.yaml",
+        cfg_dir / "research/calibrate_roll.default.yaml",
         {
             "strategy_type": "dual_add_trend",
             "dual_add_backtest": {
@@ -200,7 +202,7 @@ def test_dual_add_cost_defaults_come_from_backtest_costs(tmp_path: Path) -> None
         },
     )
 
-    got = _load_dual_add_defaults(cfg_dir / "research/turbo.yaml")
+    got = _load_dual_add_defaults(cfg_dir / "research/calibrate_roll.default.yaml")
     assert got["fee_bps"] == 12.0
     assert got["market_exit_slippage_bps"] == 6.0
     assert got["intrabar_touch_buffer_bps"] == 4.0

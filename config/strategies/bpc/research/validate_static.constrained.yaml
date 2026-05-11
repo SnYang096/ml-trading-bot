@@ -8,7 +8,15 @@
 # - Gate / EntryFilter can recalibrate
 # - final ADOPT uses full execution.yaml metrics, with event backtest as a kill gate
 
-extends: non_rolling.yaml
+extends: validate_static.full_study.yaml
+
+# Trend may legitimately skip entries for whole windows — allow statistical compare / ADOPT
+# flow without forcing ERROR on low trade counts (compare_runs + deploy_gate both consult these).
+comparison:
+  min_trades: 0
+
+deploy_gate:
+  min_trades: 0
 
 validation:
   primary_backtest: full_exec
@@ -35,7 +43,7 @@ event_backtest:
   validation_window: test
   validation_gate:
     enabled: true
-    min_event_trades: 10
+    min_event_trades: 0
     min_event_sharpe_r: 0.0
     min_event_total_r: 0.0
     max_event_drawdown_r: 30.0

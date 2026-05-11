@@ -336,7 +336,9 @@ def test_materialize_chop_grid_from_store_prefilter_respects_stability():
 
 
 def test_repo_chop_grid_research_turbo_yaml_multileg_no_live_section():
-    prof = REPO_ROOT / "config/strategies/chop_grid/research/turbo.yaml"
+    prof = (
+        REPO_ROOT / "config/strategies/chop_grid/research/calibrate_roll.default.yaml"
+    )
     assert prof.exists()
     eff = load_multileg_effective_config(
         config_dir=REPO_ROOT / "config/strategies/chop_grid",
@@ -348,7 +350,7 @@ def test_repo_chop_grid_research_turbo_yaml_multileg_no_live_section():
 
 def test_merge_chop_grid_yaml_repo_profile_grid_backtest_store_baselines():
     merged = merge_chop_grid_yaml(
-        REPO_ROOT / "config/strategies/chop_grid/research/turbo.yaml",
+        REPO_ROOT / "config/strategies/chop_grid/research/calibrate_roll.default.yaml",
     )
     assert Path(str(merged.get("feature_store_dir"))).name == "feature_store"
     assert merged.get("feature_store_timeframe") == "120T"
@@ -358,9 +360,10 @@ def test_repo_chop_grid_turbo_grid_backtest_rolling_aligned_costs_and_maps():
     import yaml
 
     raw = yaml.safe_load(
-        (REPO_ROOT / "config/strategies/chop_grid/research/turbo.yaml").read_text(
-            encoding="utf-8"
-        )
+        (
+            REPO_ROOT
+            / "config/strategies/chop_grid/research/calibrate_roll.default.yaml"
+        ).read_text(encoding="utf-8")
     )
     grid_bt = raw["grid_backtest"]
     assert "output_dir" not in grid_bt
@@ -378,7 +381,7 @@ def test_repo_chop_grid_turbo_grid_backtest_rolling_aligned_costs_and_maps():
 def test_live_highcap_chop_grid_uses_strategy_package_layers():
     pkg = REPO_ROOT / "live/highcap/config/strategies/chop_grid"
     assert not (pkg / "grid.yaml").exists()
-    assert not (pkg / "research/turbo.yaml").exists()
+    assert not (pkg / "research/calibrate_roll.default.yaml").exists()
     assert not (pkg / "features.yaml").exists()
     assert (pkg / "archetypes/prefilter.yaml").exists()
     assert (pkg / "archetypes/execution.yaml").exists()
@@ -388,8 +391,8 @@ def test_live_highcap_chop_grid_uses_strategy_package_layers():
         strategy_type="grid",
     )
     assert eff["regime"]["entry_feature"] == "bpc_semantic_chop"
-    assert eff["inventory"]["spacing"]["atr_mult"] == pytest.approx(0.50)
-    assert eff["risk"]["max_open_levels_total"] == 6
+    assert eff["inventory"]["spacing"]["atr_mult"] == pytest.approx(1.00)
+    assert eff["risk"]["max_open_levels_total"] == 4
 
 
 def test_merge_chop_grid_yaml_loads_live_highcap_package_dir():
@@ -397,7 +400,7 @@ def test_merge_chop_grid_yaml_loads_live_highcap_package_dir():
         REPO_ROOT / "live/highcap/config/strategies/chop_grid",
     )
     assert merged["chop_signal"] == "raw"
-    assert merged["grid_atr_mult"] == pytest.approx(0.50)
+    assert merged["grid_atr_mult"] == pytest.approx(1.00)
     assert merged["fee_bps"] == pytest.approx(4.0)
 
 

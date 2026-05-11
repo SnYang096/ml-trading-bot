@@ -48,7 +48,8 @@ from src.features.time_series.baseline_features import (  # noqa: E402
 )
 
 DEFAULT_DUAL_ADD_CONFIG = (
-    PROJECT_ROOT / "config/strategies/dual_add_trend/research/turbo.yaml"
+    PROJECT_ROOT
+    / "config/strategies/dual_add_trend/research/calibrate_roll.default.yaml"
 )
 
 

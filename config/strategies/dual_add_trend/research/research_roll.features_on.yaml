@@ -2,7 +2,7 @@
 # Dual Add Trend standalone pipeline (2H, slow_realistic rolling)
 # ============================================================
 
-extends: turbo.yaml
+extends: calibrate_roll.default.yaml
 
 dates:
   start_date: "2022-01-01"

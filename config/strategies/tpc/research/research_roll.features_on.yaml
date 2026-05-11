@@ -15,7 +15,7 @@
 # -----------------------------------------------------------------------------
 # 下列仅慢管线相对 turbo 的差量。
 
-extends: turbo.yaml
+extends: calibrate_roll.default.yaml
 
 dates:
   calibration_months: 6

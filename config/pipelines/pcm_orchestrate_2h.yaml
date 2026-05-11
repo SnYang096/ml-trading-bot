@@ -1,5 +1,5 @@
 # PCM 多策略编排（2H）：联合 PCM / slot / 多 legs；后续可拆成 YAML fragments 并引用各策略包内片段。
-# 单策略训练/rolling 请用 config/strategies/<slug>/research/{turbo,slow,non_rolling}.yaml。
+# 单策略训练/rolling 请用 config/strategies/<slug>/research/calibrate_roll.default.yaml · research_roll.features_on.yaml · validate_static.*.yaml。
 # ============================================================
 # 上线前训练流水线 (2H only)
 # 目标: 稳健优先, 平坦高原阈值搜索, 生产候选版本训练

@@ -80,8 +80,12 @@ def test_build_daemon_applies_per_strategy_symbol_filters(tmp_path: Path, monkey
     dual_dir = tmp_path / "dual_add_trend"
     (chop_dir / "research").mkdir(parents=True)
     (dual_dir / "research").mkdir(parents=True)
-    (chop_dir / "research" / "turbo.yaml").write_text("", encoding="utf-8")
-    (dual_dir / "research" / "turbo.yaml").write_text("", encoding="utf-8")
+    (chop_dir / "research" / "calibrate_roll.default.yaml").write_text(
+        "", encoding="utf-8"
+    )
+    (dual_dir / "research" / "calibrate_roll.default.yaml").write_text(
+        "", encoding="utf-8"
+    )
     (chop_dir / "meta.yaml").write_text(
         """
 strategy:
@@ -135,8 +139,8 @@ strategy:
         poll_seconds=60.0,
         unit_notional=100.0,
         state_dir=str(tmp_path / "state"),
-        chop_grid_config=str(chop_dir / "research" / "turbo.yaml"),
-        dual_add_config=str(dual_dir / "research" / "turbo.yaml"),
+        chop_grid_config=str(chop_dir / "research" / "calibrate_roll.default.yaml"),
+        dual_add_config=str(dual_dir / "research" / "calibrate_roll.default.yaml"),
     )
 
     daemon, _api, _storage, _run_id = m.build_daemon(args)

@@ -238,13 +238,14 @@ def test_multileg_help_and_research_forward(monkeypatch):
     assert called["script_path"] == "scripts/auto_research_pipeline.py"
     cfg_idx = called["args"].index("--config")
     assert (
-        called["args"][cfg_idx + 1] == "config/strategies/chop_grid/research/turbo.yaml"
+        called["args"][cfg_idx + 1]
+        == "config/strategies/chop_grid/research/calibrate_roll.default.yaml"
     )
     assert "--stage" in called["args"]
     assert "rolling_sim" in called["args"]
 
 
-def test_multileg_research_profile_non_rolling_uses_strategy_config(monkeypatch):
+def test_multileg_research_validate_static_profile_uses_strategy_config(monkeypatch):
     runner = CliRunner()
     called = {}
 
@@ -262,7 +263,7 @@ def test_multileg_research_profile_non_rolling_uses_strategy_config(monkeypatch)
             "--strategy",
             "chop_grid",
             "--profile",
-            "non_rolling",
+            "validate_static.full_study",
             "--stage",
             "auto",
             "--dry-run",
@@ -273,6 +274,6 @@ def test_multileg_research_profile_non_rolling_uses_strategy_config(monkeypatch)
     cfg_idx = called["args"].index("--config")
     assert (
         called["args"][cfg_idx + 1]
-        == "config/strategies/chop_grid/research/non_rolling.yaml"
+        == "config/strategies/chop_grid/research/validate_static.full_study.yaml"
     )
     assert "grid_backtest" in called["args"]

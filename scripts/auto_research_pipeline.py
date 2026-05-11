@@ -67,10 +67,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config.strategy_layout import (
+    PIPELINE_CALIBRATE_ROLL_MARKER,
+    PIPELINE_RESEARCH_ROLL_MARKER,
     RESEARCH_PIPELINE_PROBE_NAMES,
+    is_research_turbo_or_slow_yaml,
+    resolve_strategy_profile_path,
     resolve_default_pipeline_config,
     strategy_packaged_root,
-    is_research_turbo_or_slow_yaml,
 )
 from src.config.multileg_config import update_multileg_calibration_candidate
 
@@ -137,7 +140,7 @@ def load_pipeline_config(path: Path) -> dict:
 
 
 def _resolve_cli_pipeline_config_path(args: argparse.Namespace) -> Path:
-    """``--config`` 省略时：有 ``--strategy`` → 策略包 ``research/turbo|slow|pipeline``；否则 PCM 编排。"""
+    """``--config`` 省略时：有 ``--strategy`` → 策略包 packaged research markers；否则 PCM 编排。"""
     strat = getattr(args, "strategy", None)
     if strat and str(strat).strip():
         p, _ = resolve_default_pipeline_config(PROJECT_ROOT, str(strat).strip(), None)
@@ -5375,6 +5378,7 @@ def _run_grid_backtest_stage(
     *,
     cfg: Dict[str, Any],
     strategies: List[str],
+    pipeline_config_path: str = "",
     history_dir: Path,
     timestamp: str,
     dry_run: bool,
@@ -5421,7 +5425,10 @@ def _run_grid_backtest_stage(
             continue
         runtime_cfg_dir = strat_cfg_dir
         grid_cfg_path = _resolve_multileg_runtime_config_path(
-            config_dir=strat_cfg_dir, strategy_type=strategy_type
+            config_dir=strat_cfg_dir,
+            cfg=cfg,
+            strategy=strat,
+            pipeline_config_path=pipeline_config_path,
         )
         calibration_report: Dict[str, Any] = {}
         if bool(grid_cfg.get("calibrate_execution", False)) and not dry_run:
@@ -5467,6 +5474,7 @@ def _run_grid_backtest_stage(
                     cfg=cfg,
                     strategy=strat,
                     config_dir=cand_cfg_dir,
+                    pipeline_config_path=pipeline_config_path,
                     data_path=data_path,
                     symbols=symbols,
                     start_date=calib_start,
@@ -5516,7 +5524,10 @@ def _run_grid_backtest_stage(
             if best_cfg_dir.exists():
                 runtime_cfg_dir = best_cfg_dir
                 grid_cfg_path = _resolve_multileg_runtime_config_path(
-                    config_dir=runtime_cfg_dir, strategy_type=strategy_type
+                    config_dir=runtime_cfg_dir,
+                    cfg=cfg,
+                    strategy=strat,
+                    pipeline_config_path=pipeline_config_path,
                 )
 
         out_dir = out_root / strat
@@ -5595,6 +5606,7 @@ def _run_dual_add_backtest_stage(
     *,
     cfg: Dict[str, Any],
     strategies: List[str],
+    pipeline_config_path: str = "",
     history_dir: Path,
     timestamp: str,
     dry_run: bool,
@@ -5639,7 +5651,10 @@ def _run_dual_add_backtest_stage(
             print(f"   ⏭️  skip {strat}: no symbols after meta symbol filter")
             continue
         dual_cfg_path = _resolve_multileg_runtime_config_path(
-            config_dir=strat_cfg_dir, strategy_type=strategy_type
+            config_dir=strat_cfg_dir,
+            cfg=cfg,
+            strategy=strat,
+            pipeline_config_path=pipeline_config_path,
         )
         dual_costs = dual_cfg.get("costs", {}) if isinstance(dual_cfg, dict) else {}
         if not isinstance(dual_costs, dict):
@@ -6268,17 +6283,61 @@ def _apply_multileg_candidate(
 
 
 def _resolve_multileg_runtime_config_path(
-    *, config_dir: Path, strategy_type: str
+    *,
+    config_dir: Path,
+    cfg: Optional[Dict[str, Any]] = None,
+    strategy: str = "",
+    pipeline_config_path: str | Path | None = None,
 ) -> Path:
-    preferred = config_dir / "research" / "turbo.yaml"
-    if preferred.exists():
-        return preferred
-    legacy = config_dir / ("grid.yaml" if strategy_type == "grid" else "dual_add.yaml")
-    if legacy.exists():
-        return legacy
+    """Resolve the strategy profile passed to standalone multi-leg engines.
+
+    Single-strategy research should use the same ``--config`` that loaded the
+    pipeline. Portfolio-level orchestrations may optionally pin a per-strategy
+    profile via ``strategies.<name>.research_config`` or ``research_profile``.
+    """
+    scfg = ((cfg or {}).get("strategies", {}) or {}).get(strategy, {}) or {}
+
+    explicit_config = str(
+        scfg.get("research_config")
+        or scfg.get("runtime_config")
+        or scfg.get("profile_config")
+        or ""
+    ).strip()
+    if explicit_config:
+        raw = Path(explicit_config)
+        candidates = [raw if raw.is_absolute() else PROJECT_ROOT / raw]
+        if not raw.is_absolute():
+            candidates.append(config_dir / raw)
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        raise FileNotFoundError(
+            f"{strategy}: configured research_config not found: {explicit_config}"
+        )
+
+    explicit_profile = str(scfg.get("research_profile") or "").strip()
+    if explicit_profile:
+        prof = resolve_strategy_profile_path(config_dir, explicit_profile)
+        if prof.is_file():
+            return prof
+        raise FileNotFoundError(
+            f"{strategy}: configured research_profile not found: {prof}"
+        )
+
+    if pipeline_config_path:
+        p = Path(pipeline_config_path)
+        if p.is_file() and p.parent.name == "research":
+            candidate = config_dir / "research" / p.name
+            if candidate.is_file():
+                return candidate
+
+    packaged = config_dir / "research" / PIPELINE_CALIBRATE_ROLL_MARKER
+    if packaged.is_file():
+        return packaged
     raise FileNotFoundError(
-        f"missing multi-leg runtime config under {config_dir} "
-        f"(expected {preferred.name} or legacy root yaml)"
+        f"missing multi-leg runtime profile under {config_dir}: "
+        f"expected explicit strategies.{strategy}.research_config/research_profile "
+        f"or research/{PIPELINE_CALIBRATE_ROLL_MARKER}"
     )
 
 
@@ -6287,6 +6346,7 @@ def _run_multileg_backtest_command(
     cfg: Dict[str, Any],
     strategy: str,
     config_dir: Path,
+    pipeline_config_path: str = "",
     data_path: str,
     symbols: str,
     start_date: str,
@@ -6309,7 +6369,10 @@ def _run_multileg_backtest_command(
     if strategy_type == "grid":
         grid_cfg = cfg.get("grid_backtest", {}) or {}
         runtime_cfg = _resolve_multileg_runtime_config_path(
-            config_dir=config_dir, strategy_type=strategy_type
+            config_dir=config_dir,
+            cfg=cfg,
+            strategy=strategy,
+            pipeline_config_path=pipeline_config_path,
         )
         cmd = [
             sys.executable,
@@ -6362,7 +6425,10 @@ def _run_multileg_backtest_command(
     if strategy_type == "dual_add_trend":
         dual_cfg = cfg.get("dual_add_backtest", {}) or {}
         runtime_cfg = _resolve_multileg_runtime_config_path(
-            config_dir=config_dir, strategy_type=strategy_type
+            config_dir=config_dir,
+            cfg=cfg,
+            strategy=strategy,
+            pipeline_config_path=pipeline_config_path,
         )
         cmd = [
             sys.executable,
@@ -6537,6 +6603,7 @@ def _run_multileg_month_strategy(
     calibrate: bool,
     layer_switches: Optional[Dict[str, bool]] = None,
     source_config_dir: Optional[Path] = None,
+    pipeline_config_path: str = "",
 ) -> Dict[str, Any]:
     strategy_type = _strategy_type(cfg, strategy)
     scfg = (cfg.get("strategies", {}) or {}).get(strategy, {}) or {}
@@ -6607,6 +6674,7 @@ def _run_multileg_month_strategy(
                 cfg=cfg,
                 strategy=strategy,
                 config_dir=cand_cfg_dir,
+                pipeline_config_path=pipeline_config_path,
                 data_path=data_path,
                 symbols=symbols,
                 start_date=calib_start,
@@ -6667,6 +6735,7 @@ def _run_multileg_month_strategy(
             cfg=cfg,
             strategy=strategy,
             config_dir=calibrated_dir,
+            pipeline_config_path=pipeline_config_path,
             data_path=data_path,
             symbols=symbols,
             start_date=test_start,
@@ -7413,7 +7482,7 @@ def _resolve_slow_adoption_gate_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     **Runtime precedence** (see `_run_slow_snapshot_adoption_gate` /
     `_decide_slow_adoption_for_strategy`): semantic_guard → prefilter drift red
     veto → composite score knobs → ``hard_reject`` on NEW → ``adopt_ratio`` /
-    ``min_improvement``. Strategy `research/slow.yaml` keeps keys in this order for readability
+    ``min_improvement``. Strategy `research/research_roll.features_on.yaml` keeps keys in this order for readability
     (YAML mapping order does not affect parsing).
     """
     slow_cfg = (cfg.get("rolling") or {}).get("slow_realistic") or {}
@@ -8150,6 +8219,7 @@ def _run_fast_month_stage(
                     "entry_filter_optimize": entry_filter_optimize_enabled,
                     "execution_optimize": execution_opt_enabled,
                 },
+                pipeline_config_path=config_path,
             )
         elif event_backtest_enabled:
             obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)
@@ -8386,6 +8456,7 @@ def _run_slow_structure_snapshot_for_month(
                     dry_run=dry_run,
                     calibrate=True,
                     source_config_dir=candidate_cfg_dir,
+                    pipeline_config_path=config_path,
                 )
                 eval_summary = (
                     eval_result.get("summary", {})
@@ -8555,11 +8626,11 @@ def _print_list_config_summary(cfg_path: Path, cfg: dict, project_root: Path) ->
 def _iter_packaged_research_entry_files(
     project_root: Path, slug: str
 ) -> List[Tuple[str, Path]]:
-    """(label, path) for each of turbo/slow/pipeline that exists on disk (scan order)."""
+    """(label, path) for each packaged research marker that exists (scan order)."""
     research = strategy_packaged_root(project_root, slug) / "research"
     pairs: List[Tuple[str, str]] = [
-        ("turbo", "turbo.yaml"),
-        ("slow", "slow.yaml"),
+        ("calibrate_roll", PIPELINE_CALIBRATE_ROLL_MARKER),
+        ("research_roll", PIPELINE_RESEARCH_ROLL_MARKER),
         ("pipeline", "pipeline.yaml"),
     ]
     out: List[Tuple[str, Path]] = []
@@ -8571,7 +8642,7 @@ def _iter_packaged_research_entry_files(
 
 
 def _slug_has_packaged_research_marker(project_root: Path, slug: str) -> bool:
-    """True if config/strategies/<slug>/research has turbo|slow|pipeline marker."""
+    """True if config/strategies/<slug>/research has calibrate_roll|research_roll|pipeline markers."""
     research = strategy_packaged_root(project_root, slug) / "research"
     if not research.is_dir():
         return False
@@ -8632,16 +8703,17 @@ def _cmd_list_experiments_all_strategy_packages(
     print("=" * 70)
     if all_profiles:
         print(
-            "   模式: 每个策略包内存在的 research/{turbo,slow,pipeline}.yaml "
-            "各加载一次（含 extends 合并），分别按其 output.history_dir 列实验。"
+            "   模式: 每个策略包内存在的 packaged research YAML（校准/滚动/结构三档）"
+            " 各加载一次（含 extends 合并），分别按其 output.history_dir 列实验。"
         )
     else:
         print(
             "   模式: 每个策略包只解析 **默认入口**：research/"
-            "turbo.yaml → slow.yaml → pipeline.yaml（首个存在的文件）。"
+            f"{PIPELINE_CALIBRATE_ROLL_MARKER} → {PIPELINE_RESEARCH_ROLL_MARKER} "
+            "→ pipeline.yaml（首个存在的文件）。"
         )
         print(
-            "   因此默认看到的是 **turbo** 历史目录（若存在 turbo.yaml）；"
+            f"   因此默认看到的是 **calibrate_roll** 历史目录（若存在 {PIPELINE_CALIBRATE_ROLL_MARKER}）；"
             "要看 slow 与 turbo 两套结果请加 **--list-all-profiles**。"
         )
     print(
@@ -8715,7 +8787,7 @@ def main():
         default=None,
         help=(
             "pipeline 配置文件；省略时若提供 --strategy 则解析为该策略 "
-            "config/strategies/<slug>/research/turbo|slow|pipeline，否则使用 "
+            "config/strategies/<slug>/research（packaged calibration/roll markers），否则使用 "
             "config/pipelines/pcm_orchestrate_2h.yaml"
         ),
     )
@@ -8740,7 +8812,8 @@ def main():
         action="store_true",
         help=(
             "与 --list --all 且未指定 --config 时联用：对每个策略包分别列出 "
-            "research/turbo.yaml、slow.yaml、pipeline.yaml（若存在）各自的 history_dir"
+            "research/calibrate_roll.default.yaml、research_roll.features_on.yaml、"
+            "pipeline.yaml（若存在）各自的 history_dir"
         ),
     )
     p.add_argument(
@@ -8850,10 +8923,11 @@ def main():
         and not str(args.locked_prefilter_override or "").strip()
     ):
         p.error(
-            "research turbo.yaml / slow.yaml 已禁用 --stage full（整段 holdout 一次跑完）。\n"
+            "research rolling profiles（calibrate_roll / research_roll）已禁用 --stage full"
+            "（整段 holdout 一次跑完）。\n"
             "请改用:\n"
             "  • 月滚动与 continuous 交易图: --stage rolling_sim\n"
-            "  • 整段静态 holdout 全量研究: config/strategies/<slug>/research/non_rolling.yaml "
+            "  • 整段静态 holdout 全量研究: config/strategies/<slug>/research/validate_static.full_study.yaml "
             "+ 默认 full\n"
             "  • 只做 drift 对比: --compare-only\n"
             "  • locked 预过滤调参子进程: 保留 --locked-prefilter-override"
@@ -9106,6 +9180,7 @@ def main():
         summaries = _run_grid_backtest_stage(
             cfg=cfg,
             strategies=strategies,
+            pipeline_config_path=args.config,
             history_dir=history_dir,
             timestamp=timestamp,
             dry_run=args.dry_run,
@@ -9130,6 +9205,7 @@ def main():
         summaries = _run_dual_add_backtest_stage(
             cfg=cfg,
             strategies=strategies,
+            pipeline_config_path=args.config,
             history_dir=history_dir,
             timestamp=timestamp,
             dry_run=args.dry_run,
@@ -10417,12 +10493,14 @@ def _adopt_experiment_config(
         for f in exp_arch.iterdir():
             if f.is_file():
                 shutil.copy2(f, prod_arch / f.name)
-        eng = Path("research/turbo.yaml")
-        exp_eng = exp_config_dir / eng
-        prod_eng = PROJECT_ROOT / prod_config_dir / eng
-        if exp_eng.exists():
+        canonical = Path("research") / PIPELINE_CALIBRATE_ROLL_MARKER
+        prod_eng = PROJECT_ROOT / prod_config_dir / canonical
+        exp_eng = exp_config_dir / canonical
+        copied_eng: Optional[str] = None
+        if exp_eng.is_file():
             prod_eng.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(exp_eng, prod_eng)
+            copied_eng = exp_eng.name
         write_archetype_provenance_readme(
             prod_arch,
             strategy=strategy_slug,
@@ -10430,7 +10508,10 @@ def _adopt_experiment_config(
             source_config_path=source_config_path,
             target="research",
         )
-        print(f"   ✅ multileg adopt → {prod_arch} (+ {eng} if present)")
+        _eng_note = (
+            f" (+ {canonical.as_posix()}, from {copied_eng})" if copied_eng else ""
+        )
+        print(f"   ✅ multileg adopt → {prod_arch}{_eng_note}")
         return True
 
     # ── 语义锁定: 读取生产 prefilter.yaml 中的 locked 规则, 检查实验版本是否保留 ──

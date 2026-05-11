@@ -154,7 +154,7 @@ class DualAddTrendLiveEngine:
         *,
         config_path: (
             str | Path
-        ) = "config/strategies/dual_add_trend/research/turbo.yaml",
+        ) = "config/strategies/dual_add_trend/research/calibrate_roll.default.yaml",
         state_path: str | Path = "results/dual_add_trend/live_state.json",
         unit_notional: float = 1.0,
     ) -> None:

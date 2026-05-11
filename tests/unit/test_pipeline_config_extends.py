@@ -13,7 +13,9 @@ def _root() -> Path:
 
 
 def test_load_bpc_turbo_from_strategy_research():
-    cfg = load_pipeline_config(_root() / "config/strategies/bpc/research/turbo.yaml")
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/bpc/research/calibrate_roll.default.yaml"
+    )
     assert "bpc" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "turbo_fixed_features"
     assert cfg.get("rolling", {}).get("time_split_policy") == "static_holdout"
@@ -26,7 +28,7 @@ def test_load_bpc_turbo_from_strategy_research():
 
 def test_chop_grid_spacing_candidates_are_config_driven():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/chop_grid/research/turbo.yaml"
+        _root() / "config/strategies/chop_grid/research/calibrate_roll.default.yaml"
     )
     chop_cfg = cfg["strategies"]["chop_grid"]
     candidates = chop_cfg["multileg_calibration"]["candidates"]
@@ -67,7 +69,9 @@ def test_dates_calibration_hoist_conflict_raises(tmp_path: Path):
 
 
 def test_load_bpc_slow_from_strategy_research():
-    cfg = load_pipeline_config(_root() / "config/strategies/bpc/research/slow.yaml")
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/bpc/research/research_roll.features_on.yaml"
+    )
     assert "bpc" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "slow_realistic"
     assert cfg["rolling"]["windows"]["calibration_months"] == 6
@@ -79,7 +83,9 @@ def test_load_bpc_slow_from_strategy_research():
 
 
 def test_load_me_slow_full_history_from_strategy_research():
-    cfg = load_pipeline_config(_root() / "config/strategies/me/research/slow.yaml")
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/me/research/research_roll.features_on.yaml"
+    )
     assert "me" in (cfg.get("strategies") or {})
     w = cfg["rolling"]["windows"]
     assert w["structure_train_window"] == "full_history"
@@ -90,7 +96,9 @@ def test_load_me_slow_full_history_from_strategy_research():
 
 
 def test_load_tpc_slow_full_history_from_strategy_research():
-    cfg = load_pipeline_config(_root() / "config/strategies/tpc/research/slow.yaml")
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/tpc/research/research_roll.features_on.yaml"
+    )
     assert "tpc" in (cfg.get("strategies") or {})
     w = cfg["rolling"]["windows"]
     assert w["structure_train_window"] == "full_history"
@@ -103,9 +111,9 @@ def test_load_tpc_slow_full_history_from_strategy_research():
 @pytest.mark.parametrize(
     "research_yaml, strategy_key",
     [
-        ("bpc/research/slow_recent_24.yaml", "bpc"),
-        ("me/research/slow_recent_24.yaml", "me"),
-        ("tpc/research/slow_recent_24.yaml", "tpc"),
+        ("bpc/research/research_roll.features_on_recent24m.yaml", "bpc"),
+        ("me/research/research_roll.features_on_recent24m.yaml", "me"),
+        ("tpc/research/research_roll.features_on_recent24m.yaml", "tpc"),
     ],
 )
 def test_load_slow_recent_24_backup_uses_rolling_window(
@@ -221,7 +229,9 @@ def test_structure_train_window_invalid_raises(tmp_path: Path):
 
 def test_bpc_turbo_prefilter_locked_fields_are_explicit():
     """turbo：locked_threshold + 多打分方法；entry_filter 关闭 meta_algorithm（slow 覆写为 true）。"""
-    cfg = load_pipeline_config(_root() / "config/strategies/bpc/research/turbo.yaml")
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/bpc/research/calibrate_roll.default.yaml"
+    )
     pf = cfg["strategies"]["bpc"]["kpi_gates"]["prefilter"]
     assert pf["locked_threshold_tuning"]["enabled"] is True
     fb = pf.get("scoring_method_fallbacks") or []
@@ -233,7 +243,7 @@ def test_bpc_turbo_prefilter_locked_fields_are_explicit():
 
 def test_bpc_non_rolling_inherits_locked_tune_from_turbo():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/bpc/research/non_rolling.yaml"
+        _root() / "config/strategies/bpc/research/validate_static.full_study.yaml"
     )
     assert (
         cfg["strategies"]["bpc"]["kpi_gates"]["prefilter"]["locked_threshold_tuning"][
@@ -245,7 +255,8 @@ def test_bpc_non_rolling_inherits_locked_tune_from_turbo():
 
 def test_bpc_turbo_prefilter_lock_fixed_disables_locked_threshold_tuning():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/bpc/research/turbo_prefilter_lock_fixed.yaml"
+        _root()
+        / "config/strategies/bpc/research/calibrate_roll.no_prefilter_threshold_search.yaml"
     )
     assert (
         cfg["strategies"]["bpc"]["kpi_gates"]["prefilter"]["locked_threshold_tuning"][
@@ -257,7 +268,9 @@ def test_bpc_turbo_prefilter_lock_fixed_disables_locked_threshold_tuning():
 
 def test_bpc_slow_overrides_locked_enabled_true():
     """slow.yaml extends turbo — strategies / threshold_calibration / rolling 深度合并。"""
-    cfg = load_pipeline_config(_root() / "config/strategies/bpc/research/slow.yaml")
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/bpc/research/research_roll.features_on.yaml"
+    )
     kg = cfg["strategies"]["bpc"]["kpi_gates"]
     assert kg["entry_filter"]["meta_algorithm"] is True
     assert kg["entry_filter"]["archetype_plateau"] is True
@@ -270,7 +283,7 @@ def test_bpc_slow_overrides_locked_enabled_true():
 
 def test_load_bpc_non_rolling_extends_slow():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/bpc/research/non_rolling.yaml"
+        _root() / "config/strategies/bpc/research/validate_static.full_study.yaml"
     )
     assert "bpc" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
@@ -299,7 +312,7 @@ def test_load_bpc_non_rolling_extends_slow():
 
 def test_load_me_non_rolling_extends_slow():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/me/research/non_rolling.yaml"
+        _root() / "config/strategies/me/research/validate_static.full_study.yaml"
     )
     assert "me" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
@@ -320,7 +333,7 @@ def test_load_me_non_rolling_extends_slow():
 
 def test_load_tpc_non_rolling_extends_slow():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/tpc/research/non_rolling.yaml"
+        _root() / "config/strategies/tpc/research/validate_static.full_study.yaml"
     )
     assert "tpc" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
@@ -341,7 +354,7 @@ def test_load_tpc_non_rolling_extends_slow():
 
 def test_load_chop_grid_non_rolling_extends_turbo():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/chop_grid/research/non_rolling.yaml"
+        _root() / "config/strategies/chop_grid/research/validate_static.full_study.yaml"
     )
     assert "chop_grid" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
@@ -363,7 +376,8 @@ def test_load_chop_grid_non_rolling_extends_turbo():
 
 def test_load_dual_add_non_rolling_extends_turbo():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/dual_add_trend/research/non_rolling.yaml"
+        _root()
+        / "config/strategies/dual_add_trend/research/validate_static.full_study.yaml"
     )
     assert "dual_add_trend" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
@@ -387,10 +401,11 @@ def test_load_dual_add_non_rolling_extends_turbo():
 
 def test_load_multileg_slow_profiles_extend_turbo_metadata():
     chop_cfg = load_pipeline_config(
-        _root() / "config/strategies/chop_grid/research/slow.yaml"
+        _root() / "config/strategies/chop_grid/research/research_roll.features_on.yaml"
     )
     dual_cfg = load_pipeline_config(
-        _root() / "config/strategies/dual_add_trend/research/slow.yaml"
+        _root()
+        / "config/strategies/dual_add_trend/research/research_roll.features_on.yaml"
     )
 
     assert chop_cfg.get("rolling", {}).get("mode") == "slow_realistic"
@@ -452,7 +467,8 @@ def test_multileg_backtest_dates_mismatch_raises(tmp_path: Path):
 
 def test_load_dual_turbo_uses_bpc_style_strategy_blocks():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/dual_add_trend/research/turbo.yaml"
+        _root()
+        / "config/strategies/dual_add_trend/research/calibrate_roll.default.yaml"
     )
     assert "dual_add_trend" in (cfg.get("strategies") or {})
     assert "study" not in cfg
@@ -541,7 +557,7 @@ def test_trend_and_multileg_share_extends_loader_semantics(tmp_path: Path):
         ),
         encoding="utf-8",
     )
-    (strat_dir / "research/turbo.yaml").write_text(
+    (strat_dir / "research/calibrate_roll.default.yaml").write_text(
         "\n".join(
             [
                 "extends: base.yaml",

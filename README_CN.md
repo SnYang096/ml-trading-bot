@@ -147,10 +147,10 @@ mlbot data download-open-interest \
 | `bpc`            | Breakout → Pullback → Continuation（趋势延续）                       | `120T`                     |
 | `tpc`            | Trend → Pullback → Continuation（趋势回踩）                          | `120T`                     |
 | `me`             | Momentum Expansion（动量扩张）                                       | `120T`                     |
-| `chop_grid`      | 语义 chop + 盒过滤下的小网格段（**多腿**；`research/turbo.yaml` + archetypes）       | `120T`                     |
-| `dual_add_trend` | 趋势置信 + chop/盒过滤下双腿加仓（**多腿**；`research/turbo.yaml` + archetypes） | `120T`                     |
+| `chop_grid`      | 语义 chop + 盒过滤下的小网格段（**多腿**；`research/calibrate_roll.default.yaml` + archetypes）       | `120T`                     |
+| `dual_add_trend` | 趋势置信 + chop/盒过滤下双腿加仓（**多腿**；`research/calibrate_roll.default.yaml` + archetypes） | `120T`                     |
 
-**常用 pipeline YAML**：研究入口按策略包放在 **`config/strategies/<slug>/research/`**（`turbo.yaml` → `slow.yaml` → `pipeline.yaml` 探测顺序；可通过顶层 `extends:` 指向共享片段）。**`mlbot pipeline`** 省略 `--config` 且带 `--strategy <slug>` 时按上述顺序解析；既无 `--strategy` 也无 `--config` 时默认 **`config/pipelines/pcm_orchestrate_2h.yaml`**（PCM 多策略编排）。仓库级统一模板（显式引用或工具默认）为 **`config/pipelines/research_pipeline.yaml`**。
+**常用 pipeline YAML**：研究入口按策略包放在 **`config/strategies/<slug>/research/`**（`calibrate_roll.default.yaml` → `research_roll.features_on.yaml` → `pipeline.yaml` 探测顺序；可通过顶层 `extends:` 指向共享片段）。**`mlbot pipeline`** 省略 `--config` 且带 `--strategy <slug>` 时按上述顺序解析；既无 `--strategy` 也无 `--config` 时默认 **`config/pipelines/pcm_orchestrate_2h.yaml`**（PCM 多策略编排）。仓库级统一模板（显式引用或工具默认）为 **`config/pipelines/research_pipeline.yaml`**。
 
 > **与 `live/highcap/config/strategies/` 的分工**：实盘镜像里是同名的 **`meta.yaml` / `features.yaml` / `archetypes/` / 根引擎 yaml**（由 `scripts/deploy_config_to_live.py` 同步）；**不会**把 `research/*.yaml` 管线入口拷到 `live/…`——那些文件留在 **`config/strategies/<slug>/research/`** 供研究与脚本引用。
 
@@ -164,45 +164,45 @@ mlbot data download-open-interest \
 
 | YAML                                        | 用途                                           | `rolling.mode`         |
 | ------------------------------------------- | ---------------------------------------------- | ---------------------- |
-| `config/strategies/bpc/research/turbo.yaml` | turbo：阈值链 + execution 优化（默认探测首项） | `turbo_fixed_features` |
-| `config/strategies/bpc/research/slow.yaml`  | 慢模式：季度结构 + 月度快变量                  | `slow_realistic`       |
+| `config/strategies/bpc/research/calibrate_roll.default.yaml` | calibrate_roll：阈值链 + execution 优化（默认探测首项） | `turbo_fixed_features` |
+| `config/strategies/bpc/research/research_roll.features_on.yaml`  | research_roll：季度结构 + 月度快变量                  | `slow_realistic`       |
 
 #### `tpc` — `config/strategies/tpc/`（镜像：`live/highcap/config/strategies/tpc/`）
 
 | YAML                                        | 用途   | `rolling.mode`         |
 | ------------------------------------------- | ------ | ---------------------- |
-| `config/strategies/tpc/research/turbo.yaml` | turbo  | `turbo_fixed_features` |
-| `config/strategies/tpc/research/slow.yaml`  | 慢模式 | `slow_realistic`       |
+| `config/strategies/tpc/research/calibrate_roll.default.yaml` | calibrate_roll  | `turbo_fixed_features` |
+| `config/strategies/tpc/research/research_roll.features_on.yaml`  | research_roll | `slow_realistic`       |
 
 #### `me` — `config/strategies/me/`（镜像：`live/highcap/config/strategies/me/`）
 
 | YAML                                       | 用途   | `rolling.mode`         |
 | ------------------------------------------ | ------ | ---------------------- |
-| `config/strategies/me/research/turbo.yaml` | turbo  | `turbo_fixed_features` |
-| `config/strategies/me/research/slow.yaml`  | 慢模式 | `slow_realistic`       |
+| `config/strategies/me/research/calibrate_roll.default.yaml` | calibrate_roll  | `turbo_fixed_features` |
+| `config/strategies/me/research/research_roll.features_on.yaml`  | research_roll | `slow_realistic`       |
 
 #### `chop_grid` — `config/strategies/chop_grid/`（镜像：`live/highcap/config/strategies/chop_grid/`）
 
 | YAML                                              | 用途                      | `rolling.mode`         |
 | ------------------------------------------------- | ------------------------- | ---------------------- |
-| `config/strategies/chop_grid/research/turbo.yaml` | 多腿网格 rolling（turbo） | `turbo_fixed_features` |
-| `config/strategies/chop_grid/research/slow.yaml`  | 多腿慢模式                | `slow_realistic`       |
+| `config/strategies/chop_grid/research/calibrate_roll.default.yaml` | 多腿网格 rolling（calibrate_roll） | `turbo_fixed_features` |
+| `config/strategies/chop_grid/research/research_roll.features_on.yaml`  | 多腿 research_roll                | `slow_realistic`       |
 
 #### `dual_add_trend` — `config/strategies/dual_add_trend/`（镜像：`live/highcap/config/strategies/dual_add_trend/`）
 
 | YAML                                                   | 用途                          | `rolling.mode`         |
 | ------------------------------------------------------ | ----------------------------- | ---------------------- |
-| `config/strategies/dual_add_trend/research/turbo.yaml` | 多腿双腿策略 rolling（turbo） | `turbo_fixed_features` |
-| `config/strategies/dual_add_trend/research/slow.yaml`  | 多腿慢模式                    | `slow_realistic`       |
+| `config/strategies/dual_add_trend/research/calibrate_roll.default.yaml` | 多腿双腿策略 rolling（calibrate_roll） | `turbo_fixed_features` |
+| `config/strategies/dual_add_trend/research/research_roll.features_on.yaml`  | 多腿 research_roll                    | `slow_realistic`       |
 
 #### `bad-candidates/`（策略树 + 专用管线；非顶层主线）
 
 | YAML                                                                            | 用途                               | `rolling.mode`         |
 | ------------------------------------------------------------------------------- | ---------------------------------- | ---------------------- |
-| `config/strategies/bad-candidates/crf/research/turbo.yaml`                      | CRF / turbo（`box_structure_f`）   | `turbo_fixed_features` |
+| `config/strategies/bad-candidates/crf/research/calibrate_roll.default.yaml`                      | CRF / calibrate_roll（`box_structure_f`）   | `turbo_fixed_features` |
 | `config/strategies/bad-candidates/srb/research/turbo_2024bull_thresholds.yaml`  | SRB / turbo                        | `turbo_fixed_features` |
 | `config/strategies/bad-candidates/srb/research/turbo_2024bull_quickstrike.yaml` | SRB quickstrike / turbo            | `turbo_fixed_features` |
-| `config/strategies/bad-candidates/srb/research/slow.yaml`                       | SRB 慢模式                         | `slow_realistic`       |
+| `config/strategies/bad-candidates/srb/research/research_roll.features_on.yaml`                       | SRB 慢模式                         | `slow_realistic`       |
 | `config/strategies/bad-candidates/*/research/*.yaml`                            | 其它历史实验（FBF / FER / MSR 等） | （见各文件）           |
 
 > `turbo_fixed_features`：特征集固定，只做阈值链 / execution 优化 / 月度滚动 → **快**。  
@@ -254,27 +254,27 @@ mlbot feature-store build --no-docker \
 
 > 同一 feature layer（hash 相同）会跨策略复用；新增/改特征代码或 `config/feature_dependencies.yaml` 后需要对相关策略重跑 `feature-store build`。
 
-### 2) 研究管线（turbo 快模式：只调阈值，不搜特征）
+### 2) 研究管线（calibrate_roll 快路径：只调阈值，不搜特征）
 
 ```bash
-# BPC turbo（推荐先跑单月验证，再开全 rolling；也可省略 --config 与 --strategy bpc 配对使用）
+# BPC calibrate_roll（推荐先跑单月验证，再开全 rolling；也可省略 --config 与 --strategy bpc 配对使用）
 mlbot pipeline run --all \
-  --config config/strategies/bpc/research/turbo.yaml \
+  --config config/strategies/bpc/research/calibrate_roll.default.yaml \
   --stage fast_month --month 2024-09 --skip-shap 2>&1 | tee log.bpc.txt
 
 # 全量 rolling_sim（从 holdout_start 到 end_date 自动逐月）
 mlbot pipeline run --all \
-  --config config/strategies/bpc/research/turbo.yaml \
+  --config config/strategies/bpc/research/calibrate_roll.default.yaml \
   --stage rolling_sim --skip-shap 2>&1 | tee log.bpc.txt
 
-# ME / TPC 同理：换成对应 research/turbo.yaml
+# ME / TPC 同理：换成对应 research/calibrate_roll.default.yaml
 mlbot pipeline run --all \
-  --config config/strategies/me/research/turbo.yaml \
+  --config config/strategies/me/research/calibrate_roll.default.yaml \
   --stage rolling_sim --skip-shap
 
 # CRF（bad-candidates）
 mlbot pipeline run --all \
-  --config config/strategies/bad-candidates/crf/research/turbo.yaml \
+  --config config/strategies/bad-candidates/crf/research/calibrate_roll.default.yaml \
   --stage rolling_sim --skip-shap
 ```
 
@@ -292,12 +292,12 @@ pcm_slot_grid  # Slot 网格（替代手动改 constitution.yaml）
 
 ```bash
 mlbot pipeline run --all \
-  --config config/strategies/bpc/research/slow.yaml \
+  --config config/strategies/bpc/research/research_roll.features_on.yaml \
   --stage rolling_sim 2>&1 | tee log.bpc.slow.txt
 
 # 单月复盘（调试用）
 mlbot pipeline run --all \
-  --config config/strategies/bpc/research/slow.yaml \
+  --config config/strategies/bpc/research/research_roll.features_on.yaml \
   --stage fast_month --month 2024-09
 ```
 
@@ -308,7 +308,7 @@ mlbot pipeline run --all \
 ```bash
 # A. 走 pipeline（最省事，会自动跑 execution 优化并写回 archetypes/execution.yaml）
 mlbot pipeline run --all \
-  --config config/strategies/bpc/research/turbo.yaml \
+  --config config/strategies/bpc/research/calibrate_roll.default.yaml \
   --stage event_backtest --skip-shap
 
 # B. 直接跑单次 event_backtest（最快）
@@ -327,11 +327,11 @@ mlbot pipeline event-backtest \
 
 ### 5) 慢管线产物对比（`slow_candidate_report.py`）
 
-> 当 slow pipeline 跑完后，用这组命令把「每月 Prefilter/Gate/EF 选了什么 / 和 turbo 基线的差异 / 月度 R delta」一张表产出来，**无需重跑**。
+> 当 **`research_roll.features_on`** 管线跑完后，用这组命令把「每月 Prefilter/Gate/EF 选了什么 / 和 **`calibrate_roll.default`** 基线的差异 / 月度 R delta」一张表产出来，**无需重跑**。
 
 ```bash
 RUN=results/bpc/slow-rolling-sim/_rolling_sim/20260423_223716
-BASE=results/bpc/turbo-rolling-sim/_rolling_sim/<turbo_ts>
+BASE=results/bpc/<calibrate_roll-history-dir>/_rolling_sim/<baseline_ts>
 OUT=results/bpc/slow_candidate_reports/${RUN##*/}
 mkdir -p "$OUT"
 
@@ -345,9 +345,9 @@ PYTHONPATH=. python3 scripts/slow_candidate_report.py review \
 ### 6) Adopt & Deploy（研究 → 实盘）
 
 ```bash
-# 列出历史实验：扫描 config/strategies/*；默认每个包只解析 turbo→slow→pipeline 首个存在的入口（多为 turbo 的 history_dir）
+# 列出历史实验：扫描 config/strategies/*；默认每个包按 calibrate_roll → research_roll → pipeline 探测顺序取首个入口
 mlbot pipeline list --all
-# 各包内 turbo / slow / pipeline 入口各列一遍（可看 turbo 与 slow 两套 results）
+# 列齐包内每一份 research 管线入口（便于对比 calibrate_roll 与 research_roll 两套 results）
 mlbot pipeline list --all --list-all-profiles
 # 同上，并包含 bad-candidates/<pkg>/ 子包
 mlbot pipeline list --all --include-bad-candidates
@@ -360,8 +360,8 @@ mlbot pipeline list --strategy bpc
 mlbot pipeline adopt 20260313_234448 --strategy bpc
 
 # 删除实验（须与 list 使用同一套 history_dir；推荐显式 --config）
-# mlbot pipeline delete --strategy bpc --status error --config config/strategies/bpc/research/slow.yaml --dry-run
-# mlbot pipeline delete --strategy bpc --timestamp 20260501_012111 --config config/strategies/bpc/research/turbo.yaml
+# mlbot pipeline delete --strategy bpc --status error --config config/strategies/bpc/research/research_roll.features_on.yaml --dry-run
+# mlbot pipeline delete --strategy bpc --timestamp 20260501_012111 --config config/strategies/bpc/research/calibrate_roll.default.yaml
 
 # 研究仓 → 实盘 highcap
 mlbot pipeline deploy --diff --strategy bpc
@@ -370,24 +370,24 @@ mlbot pipeline deploy --deploy --strategy bpc --git-commit
 
 #### Turbo / Slow / Non_rolling：分工与流程图
 
-以下为 **BPC 研究管线**（`config/strategies/bpc/research/*.yaml`）的推荐阅读顺序；ME / TPC 等策略包结构相同。CLI 约定：**`turbo.yaml` / `slow.yaml` 日常用 `--stage rolling_sim`**；**`non_rolling.yaml` 用默认 `--stage full`**（整段静态 holdout）。`mlbot pipeline run` 与 `python scripts/auto_research_pipeline.py` 等价时需带齐同一套参数。
+以下为 **BPC 研究管线**（`config/strategies/bpc/research/*.yaml`）的推荐阅读顺序；ME / TPC 等策略包结构相同。CLI 约定：**`calibrate_roll.default.yaml` / `research_roll.features_on.yaml` 日常用 `--stage rolling_sim`**；**`validate_static.full_study.yaml` 用默认 `--stage full`**（整段静态 holdout）。`mlbot pipeline run` 与 `python scripts/auto_research_pipeline.py` 等价时需带齐同一套参数。
 
 **图 1 — 总览：三条管线如何接到一起**
 
 ```mermaid
 flowchart TB
   subgraph routine["例行（高频）"]
-    T["Turbo + research/turbo.yaml\n--stage rolling_sim"]
+    T["Turbo + research/calibrate_roll.default.yaml\n--stage rolling_sim"]
     T --> TR["_rolling_sim / 批次根\nstitched_summary · trading_map_continuous"]
   end
 
   subgraph periodic["定期体检（中频）"]
-    S["Slow + research/slow.yaml\n--stage rolling_sim"]
+    S["Slow + research/research_roll.features_on.yaml\n--stage rolling_sim"]
     S --> SR["同上 history_dir\nSHAP · meta entry · 结构 lookback"]
   end
 
   subgraph heavy["按需大修（低频）"]
-    N["Non_rolling + research/non_rolling.yaml\n--stage full"]
+    N["Non_rolling + research/validate_static.full_study.yaml\n--stage full"]
     N --> NR["non-rolling-sim / … / bpc / 时间戳\n整段静态 holdout 对齐"]
   end
 
@@ -404,14 +404,14 @@ flowchart TB
 flowchart LR
   A[准备数据 / end_date] --> B{这轮要动什么？}
 
-  B -->|只跟进阈值与执行| C["turbo.yaml\nrolling_sim"]
-  B -->|查特征与规则是否还成立| D["slow.yaml\nrolling_sim"]
+  B -->|只跟进阈值与执行| C["calibrate_roll.default.yaml\nrolling_sim"]
+  B -->|查特征与规则是否还成立| D["research_roll.features_on.yaml\nrolling_sim"]
 
   C --> E{指标与 drift\n可接受？}
   D --> E
 
   E -->|是| F[按需 adopt / deploy]
-  E -->|否，结构层要动| G["non_rolling.yaml\nfull"]
+  E -->|否，结构层要动| G["validate_static.full_study.yaml\nfull"]
 
   G --> H{ADOPT / ALERT？}
   H -->|ADOPT| F
@@ -422,22 +422,22 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  subgraph turbo_slow["Turbo / Slow 共用 history_dir（如 turbo-rolling-sim）"]
-    H1["results/.../turbo-rolling-sim"]
+  subgraph turbo_slow["同一 rolling 配置的 history_dir（目录名常为 *-rolling-sim，由 YAML 决定）"]
+    H1["results/.../*-rolling-sim"]
     H1 --> RS["_rolling_sim / 本批时间戳 /\nstitched_summary · trading_map_continuous"]
     RS --> FM["fast_month_YYYY-MM /\n该月「全窗口」管线产物\nstrategies_calibrated · report · …"]
-    H1 --> LEG["bpc me tpc / 时间戳 /\n顶层快照：turbo·slow 默认 full 已禁用\n可能为空；non_rolling 不在此树"]
+    H1 --> LEG["bpc me tpc / 时间戳 /\n顶层快照：rolling 配置默认禁用 naive full\n可能为空；validate_static（non-rolling-sim）不在此树"]
   end
 
-  subgraph nr["Non_rolling"]
+  subgraph nr["validate_static（rolling.mode non_rolling）"]
     H2["results/.../non-rolling-sim"]
-    H2 --> BPC["bpc / 时间戳\nlist · adopt 对齐 non_rolling 的 history_dir"]
+    H2 --> BPC["bpc / 时间戳\nlist · adopt 对齐 validate_static 的 history_dir"]
   end
 ```
 
 #### 首次上线、例行迭代与 Regime shift（图 4）
 
-**算力体感**：一次 **`slow` + `rolling_sim`** 通常要跑 **多个月 × 每层阶段（含 SHAP / meta 等）**，Wall time 上往往比**单轮** **`non_rolling` + `full`** 更「重」；**`non_rolling`** 则是 **整段静态 holdout 上的一口气大跑**，更适合 **首版基线 / 结构重挂后的整段对齐**。两者**谁更吃机器**与月份数、数据量有关；**分工**仍以前文 **图 1–2**（slow 体检特征与规则、non_rolling 整段重对齐）为准，不矛盾。
+**算力体感**：一次 **`research_roll.features_on` + `rolling_sim`** 通常要跑 **多个月 × 每层阶段（含 SHAP / meta 等）**，Wall time 上往往比**单轮** **`validate_static.full_study` + `full`**（`rolling.mode: non_rolling`）更「重」；后者则是 **整段静态 holdout 上的一口气大跑**，更适合 **首版基线 / 结构重挂后的整段对齐**。两者**谁更吃机器**与月份数、数据量有关；**分工**仍以前文 **图 1–2**（research_roll 体检特征与规则、validate_static 整段重对齐）为准，不矛盾。
 
 **图 4 — 首次上线、例行迭代、Regime shift**
 
@@ -445,14 +445,14 @@ flowchart TB
 flowchart TB
   start([首次上线 或\n结构重挂后大盘])
 
-  start --> nr["non_rolling + full\n（整段静态 holdout）"]
+  start --> nr["validate_static + full\n（整段静态 holdout）"]
   nr --> c1{ADOPT?}
   c1 -->|否| nr
   c1 -->|是| ad1["pipeline adopt\n→ deploy live\n刷新监控基线"]
   ad1 --> routine[例行迭代循环]
 
-  routine --> turbo["turbo + rolling_sim\n约月度 · 阈值/执行"]
-  routine --> slow["slow + rolling_sim\n约季度 · SHAP/meta/规则体检"]
+  routine --> turbo["calibrate_roll + rolling_sim\n约月度 · 阈值/执行"]
+  routine --> slow["research_roll + rolling_sim\n约季度 · SHAP/meta/规则体检"]
   turbo --> gate{ADOPT 且过\ndeploy 门禁?}
   slow --> gate
   gate -->|是| ad2["adopt → deploy"]
@@ -468,19 +468,19 @@ flowchart TB
   mon -->|L3 重挂结构| nr
 ```
 
-- **首次**：冷启动或 regime 后「新版」首次落盘，多半走 **`non_rolling` → adopt → deploy**（与 **图 2** 中「结构层要动」一致）。  
-- **例行**：**turbo** 跟刻度，**slow** 做体检；过关再 **deploy**。  
-- **Regime shift**：先 **L1 加密/加强 turbo**，仍不对再 **L2 slow**，仍要改结构再 **L3 non_rolling** 回到左侧大环。
+- **首次**：冷启动或 regime 后「新版」首次落盘，多半走 **`validate_static.full_study` → adopt → deploy**（与 **图 2** 中「结构层要动」一致）。
+- **例行**：**calibrate_roll** 跟刻度，**research_roll** 做体检；过关再 **deploy**。
+- **Regime shift**：先 **L1 加密/加强 calibrate_roll**，仍不对再 **L2 research_roll**，仍要改结构再 **L3 validate_static** 回到左侧大环。
 
 #### 实验目录 vs `rolling_sim` 批次根（怎么用）
 
-同一份 **`turbo` / `slow` YAML** 的 `output.history_dir` 下，产物分三层心智，**不要混读**：
+同一份 **`calibrate_roll.default` / `research_roll.features_on`** YAML 的 `output.history_dir` 下，产物分三层心智，**不要混读**：
 
 | 层级                           | 路径模式                                                                                               | 用途                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **rolling_sim 批次根**         | `{history_dir}/_rolling_sim/<本批YYYYMMDD_HHMMSS>/`                                                    | **`--stage rolling_sim` 一次 invocation 的批次根**：`monthly_ledger.jsonl`、`stitched_summary.json`、`trading_map_continuous.html`、跨月拼接索引等。                                                                                                                                                                                                                                                                                                                |
 | **批次内的「月度全窗口」子树** | `{history_dir}/_rolling_sim/<本批>/<fast_month_YYYY-MM>/`（及 slow 模式下可能的 `slow_snapshot_*` 等） | 每个月 rolling 推进时，在该目录下跑完**当月标定窗内整套阶段**（等价于嵌在滚动里的一棵「月粒度 full 产物」：`strategies_calibrated/`、各层 plateau、事件回测、实验配置副本等），**不是** CLI 顶层 `--stage full`。                                                                                                                                                                                                                                                   |
-| **顶层策略快照目录**           | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/`                                                            | **单机全段 `full` 的典型落点**（`report.json` 等）。当前 **`research/turbo.yaml` / `slow.yaml` 已禁止默认 `full`**，该路径常为空或仅出现在例外（如 `--locked-prefilter-override` 子进程、历史遗留）。**整段静态 holdout** 用 **`non_rolling.yaml`**，目录在 **`non-rolling-sim`**。**多腿策略**在 `rolling_sim` 收尾时可能把最后一月的 `strategies_calibrated` **拷贝**到 `{history_dir}/<策略>/<本批时间戳>/strategies/<策略>/` 供 `pipeline adopt`，见下文 §6.1。 |
+| **顶层策略快照目录**           | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/`                                                            | **单机全段 `full` 的典型落点**（`report.json` 等）。当前 **`calibrate_roll.default.yaml` / `research_roll.features_on.yaml` 已禁止默认 `full`**，该路径常为空或仅出现在例外（如 `--locked-prefilter-override` 子进程、历史遗留）。**整段静态 holdout** 用 **`validate_static.full_study.yaml`**，目录在 **`non-rolling-sim`**。**多腿策略**在 `rolling_sim` 收尾时可能把最后一月的 `strategies_calibrated` **拷贝**到 `{history_dir}/<策略>/<本批时间戳>/strategies/<策略>/` 供 `pipeline adopt`，见下文 §6.1。 |
 
 **命令行为**：当你执行带 `--config` 的 `mlbot pipeline list …`（或对某策略包扫描到的等价入口），脚本在打印完上述「快照」表格后，若磁盘上存在 `_rolling_sim`，会在末尾多一行类似：
 
@@ -491,11 +491,11 @@ flowchart TB
 **日常怎么用**：
 
 1. **看滚动结果 / 连续交易图**：进 `{history_dir}/_rolling_sim/<本批>/`，读 `stitched_summary.json`、打开 `trading_map_continuous.html`；需排查单月细节时进对应 **`fast_month_<YYYY-MM>/`**。  
-2. **认 adopt / 删快照（顶层 `list` 表）**：对 **`non_rolling`** 仍看 `{non-rolling-sim}/<策略>/<ts>/`；对 **BPC 类 turbo/slow** 若顶层无新快照， adopt 流程以你们当前脚本约定为准（多腿见 §6.1）。  
+2. **认 adopt / 删快照（顶层 `list` 表）**：对 **`validate_static`（non-rolling-sim）** 仍看 `{non-rolling-sim}/<策略>/<ts>/`；对 **BPC 类 calibrate_roll / research_roll** 若顶层无新快照， adopt 流程以你们当前脚本约定为准（多腿见 §6.1）。  
 3. **查 rolling 跑完了哪几次批次**：对 `list` 末尾 ℹ️ 路径 `ls` 各批次根即可。
 
 ```bash
-# 将路径换成你 list 末尾 ℹ️ 里那一行（或 slow.yaml 里 history_dir + /_rolling_sim）
+# 将路径换成你 list 末尾 ℹ️ 里那一行（或 research_roll.features_on.yaml 里 history_dir + /_rolling_sim）
 ROLL_ROOT=results/bpc/slow-rolling-sim/_rolling_sim
 ls -la "$ROLL_ROOT"
 # 只看批次名与时间排序
@@ -533,17 +533,17 @@ curl -s http://127.0.0.1:8008/api/rolling-ledgers.json | head
 
 ### 6.1) 多腿策略（`chop_grid` / `dual_add_trend`）：配置、研究 adopt、同步实盘、多腿进程
 
-与 BPC 同一套心智：**研究配置**在 `config/strategies/<策略名>/research/{turbo,slow,non_rolling}.yaml`；**`archetypes/*.yaml`** 为可推广 / 可 adopt 的薄层；**实盘镜像**在 `live/highcap/config/strategies/<策略名>/`（用下方 deploy 同步）。
+与 BPC 同一套心智：**研究配置**在 `config/strategies/<策略名>/research/calibrate_roll.default.yaml`、`research_roll.features_on.yaml`、`validate_static.*.yaml`；**`archetypes/*.yaml`** 为可推广 / 可 adopt 的薄层；**实盘镜像**在 `live/highcap/config/strategies/<策略名>/`（用下方 deploy 同步）。
 
 **1）离线诊断（不跑 pipeline）**
 
 ```bash
-# chop_grid：语义 chop + 盒过滤 + 网格段回测（读 research/turbo.yaml + archetypes）
+# chop_grid：语义 chop + 盒过滤 + 网格段回测（读 research/calibrate_roll.default.yaml + archetypes）
 python scripts/diagnose_chop_grid.py \
   --start 2024-01-01 --end 2024-12-31 \
   --symbols BTCUSDT,ETHUSDT --timeframe 2h
 
-# dual_add_trend：趋势段 + 双腿加仓仿真（读 research/turbo.yaml + archetypes；trend 列来自注册特征同一公式）
+# dual_add_trend：趋势段 + 双腿加仓仿真（读 research/calibrate_roll.default.yaml + archetypes；trend 列来自注册特征同一公式）
 python scripts/diagnose_dual_add_trend.py \
   --start 2024-01-01 --end 2024-12-31 \
   --symbols BTCUSDT,ETHUSDT --timeframe 2h
@@ -553,18 +553,18 @@ python scripts/diagnose_dual_add_trend.py \
 
 **2）研究管线 + rolling 产物（便于 adopt）**
 
-多腿 turbo 示例配置：`config/strategies/chop_grid/research/turbo.yaml`（其中 `output.history_dir` 决定结果根目录）。跑完 **`rolling_sim`** 后，流水线会把**最后一月**的 `strategies_calibrated/<策略>/` 拷到：
+多腿 calibrate_roll 示例配置：`config/strategies/chop_grid/research/calibrate_roll.default.yaml`（其中 `output.history_dir` 决定结果根目录）。跑完 **`rolling_sim`** 后，流水线会把**最后一月**的 `strategies_calibrated/<策略>/` 拷到：
 
 `{history_dir}/<策略名>/<本次 run 时间戳>/strategies/<策略名>/`
 
 这样 **`mlbot pipeline adopt`** 能按与 BPC 相同的目录约定找到 `strategies/<策略>/archetypes`（多腿 adopt **不**走 BPC 的 locked prefilter/gate 校验，以复制为主）。
 
 **重要：`list` / `adopt` / `diff` 的实验根目录 = 当前 `--config` 里的 `output.history_dir`。**  
-若 rolling 用的是 `config/strategies/chop_grid/research/turbo.yaml`（`history_dir` 在 `results/chop_grid/...`），则 **`mlbot pipeline adopt` 必须带同一 `--config`**；若省略 `--config` 且带了 `--strategy chop_grid`，CLI 会解析到该策略 `research/turbo.yaml`；若既未指定 `--strategy` 也未指定 `--config`，默认读 `config/pipelines/pcm_orchestrate_2h.yaml`（勿混用其它根的 `history_dir`，否则会报「实验不存在」）。
+若 rolling 用的是 `config/strategies/chop_grid/research/calibrate_roll.default.yaml`（`history_dir` 在 `results/chop_grid/...`），则 **`mlbot pipeline adopt` 必须带同一 `--config`**；若省略 `--config` 且带了 `--strategy chop_grid`，CLI 会解析到该策略 `research/calibrate_roll.default.yaml`；若既未指定 `--strategy` 也未指定 `--config`，默认读 `config/pipelines/pcm_orchestrate_2h.yaml`（勿混用其它根的 `history_dir`，否则会报「实验不存在」）。
 
 ```bash
-CHOP_CFG=config/strategies/chop_grid/research/turbo.yaml
-DUAL_CFG=config/strategies/dual_add_trend/research/turbo.yaml
+CHOP_CFG=config/strategies/chop_grid/research/calibrate_roll.default.yaml
+DUAL_CFG=config/strategies/dual_add_trend/research/calibrate_roll.default.yaml
 
 mlbot pipeline run --strategy chop_grid --config "$CHOP_CFG" \
   --stage rolling_sim --skip-shap
@@ -599,7 +599,7 @@ python scripts/run_multi_leg_live.py --mode shadow --bar-source parquet --once
 # 指定策略与策略 yaml（默认已指向 config/strategies/...）
 python scripts/run_multi_leg_live.py \
   --strategies chop_grid \
-  --chop-grid-config config/strategies/chop_grid/research/turbo.yaml \
+  --chop-grid-config config/strategies/chop_grid/research/calibrate_roll.default.yaml \
   --once
 ```
 
@@ -613,19 +613,19 @@ python scripts/run_multi_leg_live.py \
 
 阶段映射：
 
-- BPC `turbo`：固定生产特征/archetypes，只做月度阈值重标定；多腿 `turbo`：固定 `features.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`，做 regime/profile/执行参数校准。
-- BPC `slow`：季度慢快照，允许结构/特征搜索，再接月度滚动；多腿 `slow`：季度检查 regime/engine/profile 是否需要刷新，再接月度 profile 校准，但不走 BPC 的 prefilter/gate adoption 链。
-- BPC `non_rolling`：整段静态 holdout 单次验收，用 `comparison/deploy_gate` 看是否可上线；多腿 `non_rolling`：整段静态 holdout 跑 `grid_backtest`/`dual_add_backtest`，上线结论交给 `mlbot multileg gate`。
+- BPC **`calibrate_roll.default`**：固定生产特征/archetypes，只做月度阈值重标定；多腿同 profile：固定 `features.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`，做 regime/profile/执行参数校准。
+- BPC **`research_roll.features_on`**：季度慢快照，允许结构/特征搜索，再接月度滚动；多腿：**`research_roll.features_on`** — 季度检查 regime/engine/profile 是否需要刷新，再接月度 profile 校准，但不走 BPC 的 prefilter/gate adoption 链。
+- BPC **`validate_static.*`**：整段静态 holdout 单次验收，用 `comparison/deploy_gate` 看是否可上线；多腿：整段静态 holdout（`rolling.mode: non_rolling`）跑 `grid_backtest`/`dual_add_backtest`，上线结论交给 `mlbot multileg gate`。
 - BPC `event_backtest`：单仓入场事件回测；多腿 `grid_backtest`/`dual_add_backtest`：持仓库存、加仓、强平、gross/net exposure 的专用回测。
 - BPC `deploy_gate` / `report.html`：单腿上线候选报告；多腿 `multi_leg_gate_report.html`：多腿上线门禁，额外看 forced/risk stop/segment 稳定性。
-- BPC 漂移体检：`turbo/slow` 结果 + retrain triggers；多腿漂移体检：`mlbot multileg monitor`，分 regime/feature/profile/risk 四类判断是调阈值、看特征，还是下线。
+- BPC 漂移体检：**calibrate_roll / research_roll** 结果 + retrain triggers；多腿漂移体检：`mlbot multileg monitor`，分 regime/feature/profile/risk 四类判断是调阈值、看特征，还是下线。
 
 目录映射：
 
-- BPC 管线入口：`config/strategies/bpc/research/{turbo,slow,non_rolling}.yaml`
-- 多腿管线入口：`config/strategies/chop_grid/research/{turbo,slow,non_rolling}.yaml` 与 `config/strategies/dual_add_trend/research/{turbo,slow,non_rolling}.yaml`
+- BPC 管线入口：`calibrate_roll.default.yaml`、`research_roll.features_on.yaml`、`validate_static.*.yaml`（`config/strategies/bpc/research/`）
+- 多腿管线入口：`config/strategies/chop_grid/research/` 与 `config/strategies/dual_add_trend/research/` 下同名三类 profile
 - BPC 策略结构：`features.yaml`、`archetypes/*`、`labels_*`、prefilter/gate/entry 配置
-- 多腿策略结构：`features.yaml`、`research/{turbo,slow,non_rolling}.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`、`archetypes/regime_thresholds.yaml`
+- 多腿策略结构：`features.yaml`、上述 `research/*.yaml`、`archetypes/prefilter.yaml`、`archetypes/execution.yaml`、`archetypes/regime_thresholds.yaml`
 - 多腿研究入口与 BPC 对齐：`threshold_calibration` 控流程，`strategies.<name>.kpi_gates` 控 KPI，候选阈值/执行组合由策略类型分发到对应代码实现。
 - `scripts/pipeline/config.py` 与 `src/config/multileg_config.py` 现共享 `src/config/strategy_layout.py` 的 YAML/`extends` 解析；`mlbot multileg validate-config` 复用 `src/config/strategy_validation.py` 的策略包校验。
 
@@ -634,22 +634,22 @@ python scripts/run_multi_leg_live.py \
 mlbot multileg validate-config \
   --config config/pipelines/multileg_orchestrate_2h.yaml
 
-# 2) 单策略研究：profile 与 BPC 同名（turbo/slow/non_rolling）
+# 2) 单策略研究：--profile 与 research 文件名一致（dotted stem，无 turbo/slow 缩写）
 mlbot multileg research \
   --strategy chop_grid \
-  --profile turbo \
+  --profile calibrate_roll.default \
   --stage auto \
   --dry-run
 
 mlbot multileg research \
   --strategy chop_grid \
-  --profile non_rolling \
+  --profile validate_static.full_study \
   --stage auto
 
-# 2a) turbo 日常：固定特征/结构，滚动校准 profile/execution
+# 2a) calibrate_roll 日常：固定特征/结构，滚动校准 profile/execution
 mlbot multileg research \
   --strategy chop_grid \
-  --profile turbo \
+  --profile calibrate_roll.default \
   --stage auto
 mlbot multileg replay \
   --config config/pipelines/multileg_orchestrate_2h.yaml \
@@ -663,32 +663,32 @@ mlbot multileg monitor \
   --run-id <run_id> \
   --lookback-months 6
 
-# 2b) slow 体检：慢结构/特征体检 + 滚动校准
+# 2b) research_roll 体检：慢结构/特征体检 + 滚动校准
 mlbot multileg research \
   --strategy chop_grid \
-  --profile slow \
+  --profile research_roll.features_on \
   --stage auto
 mlbot multileg replay \
-  --config config/strategies/chop_grid/research/slow.yaml \
+  --config config/strategies/chop_grid/research/research_roll.features_on.yaml \
   --strategy chop_grid \
   --months 2025-01:2025-12
 mlbot multileg gate \
-  --config config/strategies/chop_grid/research/slow.yaml \
+  --config config/strategies/chop_grid/research/research_roll.features_on.yaml \
   --run-dir results/chop_grid/slow-rolling-sim/_rolling_sim/<run_id>
 mlbot multileg monitor \
-  --config config/strategies/chop_grid/research/slow.yaml \
+  --config config/strategies/chop_grid/research/research_roll.features_on.yaml \
   --run-id <run_id> \
   --lookback-months 6
 
-# 2c) non_rolling 上线验收：整段静态 holdout，跑专用 engine backtest
+# 2c) validate_static 上线验收：整段静态 holdout，跑专用 engine backtest
 mlbot multileg research \
   --strategy chop_grid \
-  --profile non_rolling \
+  --profile validate_static.full_study \
   --stage auto
 mlbot multileg gate \
-  --config config/strategies/chop_grid/research/non_rolling.yaml \
+  --config config/strategies/chop_grid/research/validate_static.full_study.yaml \
   --run-dir results/chop_grid/non-rolling-full-cycle
-# non_rolling 是单次静态验收，不做漂移 monitor；漂移监控用 turbo/slow rolling run。
+# validate_static 单次静态验收可不做漂移 monitor；漂移监控靠 calibrate_roll / research_roll 的 rolling run。
 
 # 3) 全量 rolling 回放（无前视，类似把过去按月当成真实上线）
 mlbot multileg replay \
@@ -721,10 +721,10 @@ python -m pytest tests/unit/test_pipeline_new_commands.py -q
 # 多腿命令组参数转发（validate/replay/gate/monitor/shadow/live）
 python -m pytest tests/unit/test_multileg_cli_commands.py -q
 
-# 多腿 calibration profiles 配置化加载（research/turbo.yaml -> pipeline）
+# 多腿 calibration profiles 配置化加载（research/calibrate_roll.default.yaml -> pipeline）
 python -m pytest tests/unit/test_multileg_profile_loading.py -q
 
-# 多腿 non_rolling 配置继承与阶段对齐
+# validate_static YAML 的配置继承与阶段对齐（rolling.mode non_rolling）
 python -m pytest tests/unit/test_pipeline_config_extends.py -q
 
 # 多腿 effective config 合并（research profile + archetypes 分层）
@@ -779,11 +779,11 @@ mlbot feature-store build --no-docker \
   --start-date 2023-01-01 --end-date 2026-03-01 --warmup-months 6
 
 mlbot pipeline run --all \
-  --config config/strategies/bad-candidates/crf/research/turbo.yaml \
+  --config config/strategies/bad-candidates/crf/research/calibrate_roll.default.yaml \
   --stage rolling_sim --skip-shap 2>&1 | tee log.crf.txt
 ```
 
-SRB / BPC / ME 已把 `box_*` 作为 prefilter 草稿（`locked: false`），跑现有 turbo 管线即可生效。
+SRB / BPC / ME 已把 `box_*` 作为 prefilter 草稿（`locked: false`），跑现有 **`calibrate_roll.default`** 管线即可生效。
 
 #### 9.2 Pool-B + 语义组特征搜索（分支，非主线）
 

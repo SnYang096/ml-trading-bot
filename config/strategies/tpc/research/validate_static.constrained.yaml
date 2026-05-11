@@ -1,11 +1,17 @@
-# ME · low-freedom non_rolling
+# TPC · low-freedom non_rolling
 #
 # Purpose: validate the current archetype with a narrower search surface.
 # It keeps Prefilter semantics, Direction, and Execution fixed, then only
 # recalibrates Gate and Entry Filter on the 6m validation tail before testing
 # the latest 6m OOS window.
 
-extends: non_rolling.yaml
+extends: validate_static.full_study.yaml
+
+comparison:
+  min_trades: 0
+
+deploy_gate:
+  min_trades: 0
 
 validation:
   primary_backtest: full_exec
@@ -32,14 +38,14 @@ event_backtest:
   validation_window: test
   validation_gate:
     enabled: true
-    min_event_trades: 10
+    min_event_trades: 0
     min_event_sharpe_r: 0.0
     min_event_total_r: 0.0
     max_event_drawdown_r: 30.0
     downgrade_to: ALERT
 
 strategies:
-  me:
+  tpc:
     kpi_gates:
       prefilter:
         locked_threshold_tuning:

@@ -51,7 +51,7 @@ from src.features.time_series.semantic_chop_ts_quantile import (  # noqa: E402
 from src.feature_store.layer_naming import detect_layer_for_strategy  # noqa: E402
 
 DEFAULT_CHOP_GRID_YAML = (
-    PROJECT_ROOT / "config/strategies/chop_grid/research/turbo.yaml"
+    PROJECT_ROOT / "config/strategies/chop_grid/research/calibrate_roll.default.yaml"
 )
 
 

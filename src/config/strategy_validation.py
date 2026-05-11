@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from src.config.strategy_layout import (
+    PACKAGED_POLICY_REQUIRED_PROFILE_STEMS,
+    resolve_strategy_profile_path,
+)
+
 
 @dataclass(frozen=True)
 class StrategyValidationIssue:
@@ -38,7 +43,7 @@ def validate_strategy_package(
     strategy_type: str,
     strategy_cfg: Optional[Dict[str, Any]] = None,
     config_dir: Optional[Path],
-    required_profiles: Sequence[str] = ("turbo", "slow", "non_rolling"),
+    required_profiles: Sequence[str] = PACKAGED_POLICY_REQUIRED_PROFILE_STEMS,
 ) -> List[StrategyValidationIssue]:
     issues: List[StrategyValidationIssue] = []
     st = str(strategy_type or "").strip().lower()
@@ -64,7 +69,10 @@ def validate_strategy_package(
         return issues
 
     required_files = ["features.yaml"]
-    required_files.extend([f"research/{p}.yaml" for p in required_profiles])
+    required_files.extend(
+        resolve_strategy_profile_path(config_dir, p).relative_to(config_dir).as_posix()
+        for p in required_profiles
+    )
     if st in _MULTILEG_TYPES:
         required_files.extend(["archetypes/prefilter.yaml", "archetypes/execution.yaml"])
         scfg = strategy_cfg or {}
@@ -90,7 +98,7 @@ def validate_pipeline_strategy_packages(
     pipeline_cfg: Dict[str, Any],
     project_root: Path,
     allow_strategy_types: Optional[Iterable[str]] = None,
-    required_profiles: Sequence[str] = ("turbo", "slow", "non_rolling"),
+    required_profiles: Sequence[str] = PACKAGED_POLICY_REQUIRED_PROFILE_STEMS,
 ) -> List[StrategyValidationIssue]:
     issues: List[StrategyValidationIssue] = []
     allowed = {str(t).strip().lower() for t in (allow_strategy_types or []) if str(t).strip()}

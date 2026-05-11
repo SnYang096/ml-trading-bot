@@ -83,4 +83,4 @@
 
 - 管线总索引：[INDEX_管线与文档导航.md](./INDEX_管线与文档导航.md)
 - 长窗滚动设计（模式对照）：[archive/rolling_long_horizon_pipeline.md](./archive/rolling_long_horizon_pipeline.md)
-- 策略侧 slow 示例（adoption 与 drift 配置）：`config/strategies/bpc/research/slow.yaml` 内 `rolling.slow_realistic.adoption_gate`
+- 策略侧 slow 示例（adoption 与 drift 配置）：`config/strategies/bpc/research/research_roll.features_on.yaml` 内 `rolling.slow_realistic.adoption_gate`
