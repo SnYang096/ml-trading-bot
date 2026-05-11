@@ -12,6 +12,9 @@ strategy:
   # 默认时间粒度（研发 + 实盘统一）
   timeframe: "120T" # 2小时
 
+  # 可选白名单：空列表表示沿用全局 universe。
+  symbol_include: []
+
   # 从 BPC 宇宙中排除的 symbol（数据: XRP 39笔交易 0%胜率 -305R）
   symbol_exclude:
     - XRPUSDT

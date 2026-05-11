@@ -10,4 +10,10 @@ strategy:
   archetype: DualAddTrend
   timeframe: "120T"
   bidirectional: true
+  symbol_include:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
   symbol_exclude: []

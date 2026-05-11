@@ -9,4 +9,5 @@ strategy:
   archetype: ChopGrid
   timeframe: "120T"
   bidirectional: true
+  symbol_include: []
   symbol_exclude: []

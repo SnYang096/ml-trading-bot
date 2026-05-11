@@ -46,6 +46,10 @@ from scripts.diagnose_crf_edge import _load_symbol_1m, _resample_ohlcv  # noqa: 
 from src.features.time_series.baseline_features import (  # noqa: E402
     compute_trend_confidence_from_series,
 )
+from src.config.strategy_layout import resolve_strategy_config_input  # noqa: E402
+from scripts.pipeline.strategy_symbols import (  # noqa: E402
+    resolve_strategy_symbols,
+)
 from src.order_management.binance_api import BinanceAPI  # noqa: E402
 from src.order_management.binance_user_stream import BinanceUserStream  # noqa: E402
 from src.order_management.grid_execution_adapter import (
@@ -237,6 +241,25 @@ def build_daemon(
     apply_multi_leg_args_from_constitution(args)
     symbols = _parse_symbols(args.symbols)
     strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
+    strategy_symbols: Dict[str, List[str]] = {}
+    active_symbol_set = set()
+    for strategy in strategies:
+        selected = _resolve_live_strategy_symbols(
+            strategy=strategy, args=args, base_symbols=symbols
+        )
+        if selected:
+            strategy_symbols[strategy] = selected
+            active_symbol_set.update(selected)
+            if selected != symbols:
+                print(
+                    f"[multi-leg symbols] {strategy}: {selected} "
+                    f"(base={len(symbols)} -> selected={len(selected)})"
+                )
+        else:
+            print(f"[multi-leg symbols] {strategy}: no symbols after meta filter, skip")
+    if not strategy_symbols:
+        raise RuntimeError("No active strategy symbols after meta symbol filters")
+    symbols = sorted(active_symbol_set)
     api = _make_api(args.mode, allow_shared_account=args.allow_shared_account)
     storage: MultiLegStorage | None = None
     run_id: str | None = None
@@ -296,8 +319,9 @@ def build_daemon(
             lookback_days=args.lookback_days,
         )
     runtimes: List[StrategyRuntime] = []
-    for symbol in symbols:
-        for strategy in strategies:
+    for strategy in strategies:
+        strat_symbols = strategy_symbols.get(strategy, [])
+        for symbol in strat_symbols:
             prefix = "cg" if strategy == "chop_grid" else "dat"
             adapter = MultiLegExecutionAdapter(
                 api,
@@ -344,6 +368,23 @@ def build_daemon(
         storage,
         run_id,
     )
+
+
+def _resolve_live_strategy_symbols(
+    *, strategy: str, args: argparse.Namespace, base_symbols: List[str]
+) -> List[str]:
+    cfg_path = ""
+    if strategy == "chop_grid":
+        cfg_path = str(getattr(args, "chop_grid_config", "") or "").strip()
+    elif strategy == "dual_add_trend":
+        cfg_path = str(getattr(args, "dual_add_config", "") or "").strip()
+    if not cfg_path:
+        return list(base_symbols)
+    cfg_dir, _profile_path, _engine_path = resolve_strategy_config_input(Path(cfg_path))
+    sel = resolve_strategy_symbols(
+        strategy=strategy, base_symbols=base_symbols, strategy_config_dir=cfg_dir
+    )
+    return list(sel.resolved_symbols)
 
 
 def _make_engine(strategy: str, *, symbol: str, args: argparse.Namespace) -> Any:

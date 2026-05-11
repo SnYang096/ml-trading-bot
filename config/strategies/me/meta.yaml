@@ -10,6 +10,8 @@ strategy:
 
   # 默认时间粒度（研发 + 实盘统一）
   timeframe: "120T"
+  symbol_include: []
+  symbol_exclude: []
 
   # false：macro_tp_vwap_1200_position 用各 symbol 自身 K 线算 VWAP（默认，更贴品种节奏）。
   # true：改为锚定 symbol（如 BTCUSDT）的宏观位置，与部分 BPC 文档表述一致；按需打开。

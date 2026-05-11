@@ -110,6 +110,11 @@ from scripts.pipeline import (
 )
 from scripts.pipeline import multileg_layers as pipeline_multileg_layers
 from scripts.pipeline import strategy_pipeline as pipeline_strategy
+from scripts.pipeline.strategy_symbols import (
+    format_symbol_csv,
+    parse_symbol_csv,
+    resolve_strategy_symbols,
+)
 from scripts.pipeline import steps as pipeline_steps
 from scripts.capital_report import write_capital_report_from_trades
 from scripts.multi_leg_trading_map import write_continuous_trading_map
@@ -2163,32 +2168,33 @@ def _yaml_rolling_feature_search_enabled(cfg: dict) -> bool:
     return not bool(turbo.get("disable_feature_search", True))
 
 
-def _apply_symbol_exclude(strategy: str, scfg: dict, symbols: str) -> str:
-    """Filter out symbols listed in meta.yaml strategy.symbol_exclude."""
+def _resolve_strategy_symbols_from_meta(
+    strategy: str, scfg: dict, symbols: str, *, emit_log: bool = True
+) -> str:
+    """Resolve per-strategy symbols using meta.yaml include/exclude policies."""
     prod_rel = str(scfg.get("config", "") or "").strip()
     if not prod_rel:
-        return symbols
-    meta_path = (PROJECT_ROOT / prod_rel / "meta.yaml").resolve()
-    if not meta_path.is_file():
-        return symbols
-    try:
-        meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return symbols
-    strat_block = meta.get("strategy") or meta
-    exclude = strat_block.get("symbol_exclude") or []
-    if not exclude:
-        return symbols
-    exclude_set = {s.strip().upper() for s in exclude if s}
-    filtered = [s for s in symbols.split(",") if s.strip().upper() not in exclude_set]
-    if exclude_set:
-        removed = [s for s in symbols.split(",") if s.strip().upper() in exclude_set]
+        return format_symbol_csv(parse_symbol_csv(symbols))
+    config_dir = (PROJECT_ROOT / prod_rel).resolve()
+    sel = resolve_strategy_symbols(
+        strategy=strategy,
+        base_symbols=parse_symbol_csv(symbols),
+        strategy_config_dir=config_dir,
+    )
+    resolved = format_symbol_csv(sel.resolved_symbols)
+    if emit_log:
+        removed = [s for s in sel.base_symbols if s not in sel.resolved_symbols]
+        if sel.include_symbols:
+            print(
+                f"   ✅ symbol_include[{strategy}]: {sel.include_symbols} "
+                f"(meta.yaml), 保留 {len(sel.resolved_symbols)} symbols"
+            )
         if removed:
             print(
-                f"   🚫 symbol_exclude[{strategy}]: 移除 {removed} "
-                f"(meta.yaml), 保留 {len(filtered)} symbols"
+                f"   🚫 symbol_filter[{strategy}]: 移除 {removed} "
+                f"(meta.yaml), 保留 {len(sel.resolved_symbols)} symbols"
             )
-    return ",".join(filtered)
+    return resolved
 
 
 def _resolve_pipeline_strategy_timeframe(strategy: str, scfg: dict) -> str:
@@ -2410,7 +2416,7 @@ def run_strategy_pipeline(
     else:
         test_start = holdout_start  # 不分离, 兼容旧行为
 
-    symbols = _apply_symbol_exclude(strategy, scfg, symbols)
+    symbols = _resolve_strategy_symbols_from_meta(strategy, scfg, symbols)
 
     common_train_args = [
         "--symbol",
@@ -5064,6 +5070,10 @@ def _run_grid_backtest_stage(
         strat_cfg_dir = PROJECT_ROOT / str(
             scfg.get("config", f"config/strategies/{strat}")
         )
+        strat_symbols = _resolve_strategy_symbols_from_meta(strat, scfg, symbols)
+        if not strat_symbols:
+            print(f"   ⏭️  skip {strat}: no symbols after meta symbol filter")
+            continue
         runtime_cfg_dir = strat_cfg_dir
         grid_cfg_path = _resolve_multileg_runtime_config_path(
             config_dir=strat_cfg_dir, strategy_type=strategy_type
@@ -5173,7 +5183,7 @@ def _run_grid_backtest_stage(
             "--data-dir",
             data_path,
             "--symbols",
-            symbols,
+            strat_symbols,
             "--start",
             start_date,
             "--end",
@@ -5184,11 +5194,17 @@ def _run_grid_backtest_stage(
             str(out_dir),
         ]
         map_symbols = str(grid_cfg.get("map_symbols", symbols) or symbols).strip()
+        map_symbols = _resolve_strategy_symbols_from_meta(
+            strat, scfg, map_symbols, emit_log=False
+        )
         if map_symbols:
             cmd.extend(["--map-symbols", map_symbols])
         continuous_map_symbols = str(
-            grid_cfg.get("continuous_map_symbols", symbols) or symbols
+            grid_cfg.get("continuous_map_symbols", strat_symbols) or strat_symbols
         ).strip()
+        continuous_map_symbols = _resolve_strategy_symbols_from_meta(
+            strat, scfg, continuous_map_symbols, emit_log=False
+        )
         if continuous_map_symbols:
             cmd.extend(["--continuous-map-symbols", continuous_map_symbols])
         if "same_bar_entry_exit" in grid_cfg:
@@ -5272,6 +5288,11 @@ def _run_dual_add_backtest_stage(
         strat_cfg_dir = PROJECT_ROOT / str(
             scfg.get("config", f"config/strategies/{strat}")
         )
+        base_symbols = str(dual_cfg.get("symbols", symbols) or symbols)
+        strat_symbols = _resolve_strategy_symbols_from_meta(strat, scfg, base_symbols)
+        if not strat_symbols:
+            print(f"   ⏭️  skip {strat}: no symbols after meta symbol filter")
+            continue
         dual_cfg_path = _resolve_multileg_runtime_config_path(
             config_dir=strat_cfg_dir, strategy_type=strategy_type
         )
@@ -5288,7 +5309,7 @@ def _run_dual_add_backtest_stage(
             "--data-dir",
             data_path,
             "--symbols",
-            str(dual_cfg.get("symbols", symbols) or symbols),
+            strat_symbols,
             "--start",
             start_date,
             "--end",
@@ -5329,12 +5350,29 @@ def _run_dual_add_backtest_stage(
             "--intrabar-touch-buffer-bps",
             str(float(dual_costs.get("intrabar_touch_buffer_bps", 0.0))),
             "--map-symbols",
-            str(dual_cfg.get("map_symbols", symbols) or symbols),
+            _resolve_strategy_symbols_from_meta(
+                strat,
+                scfg,
+                str(dual_cfg.get("map_symbols", strat_symbols) or strat_symbols),
+                emit_log=False,
+            ),
             "--continuous-map-symbols",
-            str(dual_cfg.get("continuous_map_symbols", symbols) or symbols),
+            _resolve_strategy_symbols_from_meta(
+                strat,
+                scfg,
+                str(
+                    dual_cfg.get("continuous_map_symbols", strat_symbols)
+                    or strat_symbols
+                ),
+                emit_log=False,
+            ),
             "--out-dir",
             str(out_dir),
         ]
+        if "entry_slippage_bps" in dual_costs:
+            cmd.extend(["--entry-slippage-bps", str(dual_costs["entry_slippage_bps"])])
+        if "add_slippage_bps" in dual_costs:
+            cmd.extend(["--add-slippage-bps", str(dual_costs["add_slippage_bps"])])
         if bool(dual_cfg.get("scale_max_loser_hold_to_signal", False)):
             cmd.append("--scale-max-loser-hold-to-signal")
         if bool(dual_cfg.get("exclude_box", True)):
@@ -5917,6 +5955,11 @@ def _run_multileg_backtest_command(
     timeframe = str(scfg.get("timeframe", "2h"))
     if timeframe == "120T":
         timeframe = "2h"
+    symbols = _resolve_strategy_symbols_from_meta(
+        strategy, scfg, symbols, emit_log=False
+    )
+    if not symbols:
+        raise ValueError(f"{strategy}: no symbols after meta symbol filter")
 
     if strategy_type == "grid":
         grid_cfg = cfg.get("grid_backtest", {}) or {}
@@ -5945,9 +5988,19 @@ def _run_multileg_backtest_command(
             cmd.extend(
                 [
                     "--map-symbols",
-                    str(grid_cfg.get("map_symbols", symbols) or symbols),
+                    _resolve_strategy_symbols_from_meta(
+                        strategy,
+                        scfg,
+                        str(grid_cfg.get("map_symbols", symbols) or symbols),
+                        emit_log=False,
+                    ),
                     "--continuous-map-symbols",
-                    str(grid_cfg.get("continuous_map_symbols", symbols) or symbols),
+                    _resolve_strategy_symbols_from_meta(
+                        strategy,
+                        scfg,
+                        str(grid_cfg.get("continuous_map_symbols", symbols) or symbols),
+                        emit_log=False,
+                    ),
                 ]
             )
         else:
@@ -5974,7 +6027,12 @@ def _run_multileg_backtest_command(
             "--data-dir",
             data_path,
             "--symbols",
-            str(dual_cfg.get("symbols", symbols) or symbols),
+            _resolve_strategy_symbols_from_meta(
+                strategy,
+                scfg,
+                str(dual_cfg.get("symbols", symbols) or symbols),
+                emit_log=False,
+            ),
             "--start",
             start_date,
             "--end",
@@ -5990,9 +6048,19 @@ def _run_multileg_backtest_command(
             cmd.extend(
                 [
                     "--map-symbols",
-                    str(dual_cfg.get("map_symbols", "BTCUSDT")),
+                    _resolve_strategy_symbols_from_meta(
+                        strategy,
+                        scfg,
+                        str(dual_cfg.get("map_symbols", "BTCUSDT")),
+                        emit_log=False,
+                    ),
                     "--continuous-map-symbols",
-                    str(dual_cfg.get("continuous_map_symbols", symbols) or symbols),
+                    _resolve_strategy_symbols_from_meta(
+                        strategy,
+                        scfg,
+                        str(dual_cfg.get("continuous_map_symbols", symbols) or symbols),
+                        emit_log=False,
+                    ),
                 ]
             )
         else:
