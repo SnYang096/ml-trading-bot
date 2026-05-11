@@ -1,3 +1,8 @@
+# BPC Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/bpc/non-rolling-sim/bpc/20260511_162324/strategies/bpc/gate_draft.yaml
+# 优化规则: 0/8 条通过优化, 4 条已移除
+# Phase split: system_safety=2, hard_gate=2
+
 schema:
   phases:
   - system_safety
@@ -9,123 +14,36 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-# --- BPC 语义门控（与 TPC 对齐）：压波动区、压 EMA1200 过度拉伸追涨杀跌 ---
+- id: gate_vpin_ma20
+  tag: HARD_VPIN_MA20
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.27)
+  when:
+    vpin_ma20:
+      value_gt: 0.3044
+  then:
+    action: deny
+  comment: 'statistical(lift=1.27): vpin_ma20 > 0.3044'
+  locked: true
+  disabled: true
+  disabled_reason: 'optimization_no_valid_threshold: No threshold meets basic lift/pass_rate requirements'
+  lock_reason: VPIN 知情交易活跃度：信息不对称过高时入场胜率下降
 - id: gate_bpc_semantic_chop_high
   tag: HARD_BPC_SEMANTIC_CHOP
   phase: hard_gate
   priority: 6
-  reason: BPC 专用：BB 偏窄且方向置信低 → 典型震荡来回扫区
+  reason: BPC 专用：同品种 semantic_chop_ts_q 过高 → 拒开仓；低分位放行（与 TPC/ME 同构）
   when:
-    bpc_semantic_chop:
-      value_gt: 0.62
+    bpc_semantic_chop_ts_q:
+      value_gte: 0.4
   then:
     action: deny
-  comment: 'semantic: same construction as tpc_semantic_chop'
+  comment: deny iff ts_q>=0.40（放行 ts_q<0.40）。上阈可扫 0.25/0.30/0.35/0.40（改 value_gte）
   locked: true
-  lock_reason: 波动区过滤：减少横盘噪声中的试探单
-- id: gate_bpc_late_long_above_ema1200
-  tag: HARD_BPC_LATE_LONG_EMA1200
-  phase: hard_gate
-  priority: 7
-  reason: BPC 专用：价远高于 EMA1200（动量末端追涨）
-  when:
-    ema_1200_position:
-      value_gt: 0.10
-  then:
-    action: deny
-  comment: 'semantic: aligned with TPC late-long EMA stretch gate'
-  locked: true
-  lock_reason: 弱化延续语义：高位远离 EMA1200 时不追多
-- id: gate_bpc_late_short_below_ema1200
-  tag: HARD_BPC_LATE_SHORT_EMA1200
-  phase: hard_gate
-  priority: 7
-  reason: BPC 专用：价远低于 EMA1200（动量末端追空）
-  when:
-    ema_1200_position:
-      value_lt: -0.10
-  then:
-    action: deny
-  comment: 'semantic: symmetric late chase on ema_1200_position'
-  locked: true
-  lock_reason: 弱化延续语义：低位远离 EMA1200 时不追空
-- id: gate_evt_var_99_evt_var_99
-  tag: HARD_EVT_VAR_99_EVT_VAR_99
-  phase: hard_gate
-  priority: 10
-  reason: 统计验证规则 (lift=1.54)
-  when:
-    all_of:
-    - evt_var_99:
-        value_gt: 0.6706
-    - evt_var_99:
-        value_lt: 0.7976
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.4698, lift=0.230'
-  locked: true
-  lock_reason: EVT 左尾风险强度：中高风险拖泥带水区间对趋势策略表现最差
-- id: gate_evt_tail_shape_right_evt_tail_shape_right
-  tag: HARD_EVT_TAIL_SHAPE_RIGHT_EVT_TAIL_SHAPE_RIGHT
-  phase: hard_gate
-  priority: 12
-  reason: 统计验证规则 (lift=1.33)
-  when:
-    all_of:
-    - evt_tail_shape_right:
-        value_gt: 0.3373
-    - evt_tail_shape_right:
-        value_lt: 0.5317
-  then:
-    action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.2290, lift=0.582'
-  locked: true
-  lock_reason: EVT 右尾形状：假强势/上冲下砸结构对趋势策略不利
-- id: gate_vpin_ma20
-  tag: HARD_VPIN_MA20
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.15)
-  when:
-    vpin_quantile_rank_20:
-      value_gt: 0.8
-  then:
-    action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=0.2959, lift=0.287'
-  locked: true
-  lock_reason: VPIN 知情交易活跃度：信息不对称过高时入场胜率下降
-- id: gate_macro_tp_vwap_1200_deadzone
-  tag: HARD_MACRO_TP_VWAP_1200_DEADZONE
-  phase: hard_gate
-  priority: 13
-  reason: 语义锚点规则（VWAP 近场死区）
-  when:
-    all_of:
-    - macro_tp_vwap_1200_position:
-        value_gt: -0.005
-    - macro_tp_vwap_1200_position:
-        value_lt: 0.005
-  then:
-    action: deny
-  comment: 'semantic_anchor: deny near VWAP where trend edge is weak'
-  locked: true
-  lock_reason: VWAP1200 近场噪声区（方向不稳定）先过滤
-- id: gate_stat_vol_persistence_vol_persistence
-  tag: HARD_STAT_3
-  phase: system_safety
-  priority: 22
-  reason: 统计法兜底规则（tree gate 为空）
-  when:
-    all_of:
-    - vol_persistence:
-        value_gt: 0.0275
-    - vol_persistence:
-        value_lt: 0.0616
-  then:
-    action: deny
-  comment: stat_fallback gate_score=0.051, tail_capture=0.136, good_deny=0.085
-  locked: true
-  lock_reason: 波动率持久性：噪声切换/拖泥带水期对短线策略不利
+  frozen: true
+  promote_never_disable: true
+  lock_reason: 高 chop 分位拒单；低分位放行；与 TPC/ME 对齐
 guardrails: []
 system_safety:
 - id: gate_vol_persistence_vol_persistence
@@ -138,10 +56,12 @@ system_safety:
     - vol_persistence:
         value_gt: 0.0029
     - vol_persistence:
-        value_lt: 0.0299
+        value_lt: 0.0616
   then:
     action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=0.1500, lift=0.118'
+  comment: 'optimizer: no_stable_plateau, threshold=0.1500, lift=0.133'
+  locked: true
+  lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利
 - id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
   tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
   phase: system_safety
@@ -155,4 +75,6 @@ system_safety:
         value_lt: 0.1482
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.1259, lift=0.119'
+  comment: 'optimizer: stable_plateau_found, threshold=0.2095, lift=0.983'
+  locked: true
+  lock_reason: 波动杠杆非对称：α/γ 严重失衡期趋势容易被拖垮

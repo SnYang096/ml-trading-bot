@@ -659,6 +659,7 @@ def simulate_rr_execution(
     add_position_profiles: Optional[Dict[str, Any]] = None,
     evidence_min_score: float = 0.0,  # [DEPRECATED] 不再使用, 保留参数避免调用方报错
     per_strategy_ev_min: Optional[Dict[str, float]] = None,  # [DEPRECATED]
+    risk_per_slot: float = 0.01,
 ) -> pd.Series:
     """
     逐K线路径模拟 (Bar-by-Bar Execution Simulation)

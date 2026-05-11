@@ -409,14 +409,23 @@ class PrefilterConfig:
             # ── any_of OR 组: 任一子规则满足即通过 ──
             if "any_of" in rule:
                 sub_rules = rule["any_of"]
+                available_sub_rules = [
+                    sub
+                    for sub in sub_rules
+                    if isinstance(sub, dict)
+                    and sub.get("feature") in features
+                    and features.get(sub.get("feature")) is not None
+                ]
+                if not available_sub_rules:
+                    continue
                 any_pass = False
-                for sub in sub_rules:
+                for sub in available_sub_rules:
                     if self._check_single(sub, features):
                         any_pass = True
                         break
                 if not any_pass:
                     descs = []
-                    for s in sub_rules:
+                    for s in available_sub_rules:
                         if not isinstance(s, dict):
                             continue
                         fn = s.get("feature", "?")

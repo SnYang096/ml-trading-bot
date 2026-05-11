@@ -1,7 +1,7 @@
 # BPC Entry Filter Archetype
 # Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
-# Date: 2026-05-08 13:36
-# Promoted: 3 filters (method=mean_effect)
+# Date: 2026-05-11 16:29
+# Promoted: 3 filters (method=tail_bad_rate_ratio)
 # Locked pool: 1 filters (missing ones auto-disabled)
 # Significance: 统计验证 + robustness ≥ 0.5
 #
@@ -9,30 +9,30 @@
 # 多个 filter 之间是 OR 关系
 
 filters:
-- id: ef_bars_since_local_high_0.75
+- id: ef_bars_since_local_low_0.7
   enabled: true
-  description: 'auto: bars_since_local_high >= 0.36'
+  description: 'auto: bars_since_local_low >= 0.34'
   conditions:
-  - feature: bars_since_local_high
+  - feature: bars_since_local_low
     operator: '>='
-    value: 0.36
-  notes: method=mean_effect, effect=+1.7416, rob=1.00, pass=25.3%
-- id: ef_bars_since_local_high_0.85
+    value: 0.34
+  notes: method=tail_bad_rate_ratio, effect=+4.1254, rob=0.67, pass=35.9%
+- id: ef_bpc_semantic_extension_0.15
   enabled: true
-  description: 'auto: bars_since_local_high >= 0.38'
+  description: 'auto: bpc_semantic_extension <= 0.0'
   conditions:
-  - feature: bars_since_local_high
-    operator: '>='
-    value: 0.38
-  notes: method=mean_effect, effect=+1.7149, rob=1.00, pass=17.4%
-- id: ef_cvd_divergence_score_0.85
+  - feature: bpc_semantic_extension
+    operator: <=
+    value: 0.0
+  notes: method=tail_bad_rate_ratio, effect=+1.4474, rob=0.67, pass=45.6%
+- id: ef_trade_cluster_net_runs_zscore_20_0.25
   enabled: true
-  description: 'auto: cvd_divergence_score >= 0.326531'
+  description: 'auto: trade_cluster_net_runs_zscore_20 <= -0.126892'
   conditions:
-  - feature: cvd_divergence_score
-    operator: '>='
-    value: 0.326531
-  notes: method=mean_effect, effect=+1.6407, rob=0.67, pass=15.0%
+  - feature: trade_cluster_net_runs_zscore_20
+    operator: <=
+    value: -0.126892
+  notes: method=tail_bad_rate_ratio, effect=+1.6362, rob=0.67, pass=33.7%
 - id: bpc_orderflow_continuation
   enabled: false
   locked: true
@@ -46,5 +46,6 @@ filters:
     operator: '>='
     value: 0.25
   lock_reason: null
-  notes: 'promote_never_disable: z-test未过，保留磁盘历史阈值, auto-disabled(no passing threshold), auto-disabled(no passing threshold)'
+  notes: 'promote_never_disable: z-test未过，保留磁盘历史阈值, auto-disabled(no passing threshold), auto-disabled(no passing threshold),
+    auto-disabled(no passing threshold), auto-disabled(no passing threshold), auto-disabled(no passing threshold)'
 combination_mode: or

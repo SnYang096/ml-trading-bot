@@ -296,6 +296,15 @@ def compute_holdout_start(end_date: str, holdout_months: int) -> str:
     return f"{y:04d}-{m:02d}-01"
 
 
+def _static_holdout_uses_nonrolling_tail_windows(cfg: Dict[str, Any]) -> bool:
+    rolling = cfg.get("rolling", {}) or {}
+    if not isinstance(rolling, dict):
+        return False
+    mode = str(rolling.get("mode", "") or "").strip().lower()
+    split = str(rolling.get("time_split_policy", "") or "").strip().lower()
+    return mode == "non_rolling" and split == "static_holdout"
+
+
 def resolve_strategy_dates(
     cfg: Dict[str, Any],
     *,
@@ -317,6 +326,30 @@ def resolve_strategy_dates(
     validation_months = int(
         strat_dates.get("validation_months", global_dates.get("validation_months", 0))
     )
+
+    if _static_holdout_uses_nonrolling_tail_windows(cfg):
+        nv_raw = strat_dates.get(
+            "nonrolling_validation_months",
+            global_dates.get("nonrolling_validation_months"),
+        )
+        nt_raw = strat_dates.get(
+            "nonrolling_test_months",
+            global_dates.get("nonrolling_test_months"),
+        )
+        if nv_raw is not None or nt_raw is not None:
+            if nv_raw is None or nt_raw is None:
+                raise ValueError(
+                    "non_rolling/static_holdout 需要同时设置 "
+                    "dates.nonrolling_validation_months 与 dates.nonrolling_test_months"
+                )
+            nonrolling_validation_months = int(nv_raw)
+            nonrolling_test_months = int(nt_raw)
+            if nonrolling_validation_months <= 0 or nonrolling_test_months <= 0:
+                raise ValueError(
+                    "dates.nonrolling_validation_months / nonrolling_test_months 必须 > 0"
+                )
+            holdout_months = nonrolling_validation_months + nonrolling_test_months
+            validation_months = nonrolling_validation_months
 
     holdout_start = compute_holdout_start(end_date, holdout_months)
     if validation_months > 0 and validation_months < holdout_months:

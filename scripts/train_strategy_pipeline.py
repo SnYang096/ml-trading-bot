@@ -2888,6 +2888,7 @@ def train_strategy(
                     or_pass_train = pd.Series(False, index=df_train_filtered.index)
                     or_pass_test = pd.Series(False, index=df_test_filtered.index)
                     sub_descs = []
+                    valid_sub_rules = 0
                     for sub in sub_rules:
                         sf, sop, sv = sub["feature"], sub["operator"], sub["value"]
                         pass_tr, ok_tr = _apply_single_rule(
@@ -2898,9 +2899,15 @@ def train_strategy(
                         )
                         if ok_tr and pass_tr is not None:
                             or_pass_train |= pass_tr  # PASS 条件直接 OR
+                            valid_sub_rules += 1
                         if ok_te and pass_te is not None:
                             or_pass_test |= pass_te
                         sub_descs.append(f"{sf}{sop}{sv}")
+
+                    if valid_sub_rules == 0:
+                        desc = " OR ".join(sub_descs)
+                        print(f"   ⚠️  any_of({desc}): 所有子特征缺失，跳过该 OR 规则")
+                        continue
 
                     df_train_filtered = df_train_filtered[or_pass_train].copy()
                     df_test_filtered = df_test_filtered[or_pass_test].copy()

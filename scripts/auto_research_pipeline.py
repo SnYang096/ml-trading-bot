@@ -8559,6 +8559,21 @@ def main():
     _display_end = default_end_date
     _display_holdout_months = int(dates["holdout_months"])
     _display_validation_months = int(dates.get("validation_months", 0))
+    _display_nonrolling_tail = False
+    _rolling_cfg = cfg.get("rolling", {}) or {}
+    if (
+        str(_rolling_cfg.get("mode", "") or "").strip().lower() == "non_rolling"
+        and str(_rolling_cfg.get("time_split_policy", "") or "").strip().lower()
+        == "static_holdout"
+        and dates.get("nonrolling_validation_months") is not None
+        and dates.get("nonrolling_test_months") is not None
+    ):
+        _display_validation_months = int(dates["nonrolling_validation_months"])
+        _display_test_months = int(dates["nonrolling_test_months"])
+        _display_holdout_months = _display_validation_months + _display_test_months
+        _display_nonrolling_tail = True
+    else:
+        _display_test_months = _display_holdout_months - _display_validation_months
     _display_holdout_start = compute_holdout_start(
         _display_end, _display_holdout_months
     )
@@ -8575,6 +8590,11 @@ def main():
     print(f"   数据范围:    {_display_start} ~ {_display_end}")
     print(f"   Train:       {_display_start} ~ {_display_holdout_start}")
     if _test_start_display != _display_holdout_start:
+        if _display_nonrolling_tail:
+            print(
+                "   Split:       non_rolling tail "
+                f"validation={_display_validation_months}m, test={_display_test_months}m"
+            )
         print(
             f"   Val:         {_display_holdout_start} ~ {_test_start_display} ({_display_validation_months} 个月, Gate 调阈值)"
         )
@@ -8656,6 +8676,15 @@ def main():
         if str(rolling_cfg.get("time_split_policy", "") or "") == "static_holdout":
             holdout_months = int(dates["holdout_months"])
             validation_months = int(dates.get("validation_months", 0) or 0)
+            if (
+                str(rolling_cfg.get("mode", "") or "").strip().lower() == "non_rolling"
+                and dates.get("nonrolling_validation_months") is not None
+                and dates.get("nonrolling_test_months") is not None
+            ):
+                validation_months = int(dates["nonrolling_validation_months"])
+                holdout_months = validation_months + int(
+                    dates["nonrolling_test_months"]
+                )
             holdout_start = compute_holdout_start(stage_end, holdout_months)
             if 0 < validation_months < holdout_months:
                 test_start = compute_holdout_start(

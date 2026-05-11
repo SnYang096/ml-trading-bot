@@ -1,48 +1,8 @@
-last_evaluation:
-  timestamp: '2026-05-08'
-  data_source: features_labeled.parquet
-  n_rows: 92571
-  baseline_bad_rate: 0.0
-  baseline_median_rr: 0.0612
-  positive_signals: []
-  anti_signals: []
-  absence_signals: []
 rules:
-- any_of:
-  - feature: ema_1200_position
-    operator: <=
-    value: -0.03
-  - feature: ema_1200_position
-    operator: '>='
-    value: 0.03
-  rationale: 近 EMA1200 中轴无趋势优势：20260425 BPC |ema_1200_position|<0.05 的交易 n=11, R=-41
-  locked: true
-  skip_parquet_tune: true
-  lock_reason: BPC 必须离开 EMA1200 噪声中轴后才允许 breakout-pullback-continuation
-- feature: box_compression_score
-  operator: <=
-  value: 1.5
-  rationale: 短期波动窗不应显著宽于长期窗；过度扩张不符合 consolidation→breakout→pullback 语义
-  locked: true
-  skip_parquet_tune: true
-  lock_reason: BPC 形态锚点（box 结构）：扩张期回踩噪声高，拒绝非压缩段触发
-- any_of:
-  - feature: box_pos_120
-    operator: <=
-    value: 0.15
-  - feature: box_pos_120
-    operator: '>='
-    value: 0.85
-  - feature: box_breakout_up
-    operator: '>='
-    value: 0.5
-  - feature: box_breakout_down
-    operator: '>='
-    value: 0.5
-  rationale: box 中部且未突破不开仓，仅保留边缘或已确认突破区
-  locked: true
-  skip_parquet_tune: true
-  lock_reason: BPC 形态锚点（突破后边缘回踩），不在箱体中部来回扫区开仓
+- feature: bpc_volume_compression_pct
+  operator: '>='
+  value: 0.9295
+  rationale: meta-algorithm, KS=0.1055, return_uplift=+1.6074, robustness=100%, holdout验证通过
 - feature: bpc_recent_breakout_strength
   operator: '>='
   value: 0.25
@@ -62,3 +22,12 @@ rules:
   rationale: 语义锁定：回踩后必须有恢复力度，确认 continuation 的可执行性
   locked: true
   lock_reason: BPC 语义锚点 3/3：Continuation 确认
+last_evaluation:
+  timestamp: '2026-05-11'
+  data_source: features_labeled.parquet
+  n_rows: 93121
+  baseline_bad_rate: 0.0
+  baseline_median_rr: 0.034
+  positive_signals: []
+  anti_signals: []
+  absence_signals: []

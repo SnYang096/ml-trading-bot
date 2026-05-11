@@ -723,8 +723,17 @@ def run_shap_selection(
     # ── 可选 Val/Test 切分: 防止 Test 段泄漏进 SHAP 稳定性评估 ──
     if cutoff_date:
         _n_before = len(df)
-        _cut_ts = pd.to_datetime(cutoff_date, utc=True)
-        df = df[df["timestamp"] < _cut_ts].reset_index(drop=True)
+        _ts = pd.to_datetime(df["timestamp"], errors="coerce")
+        _cut_ts = pd.to_datetime(cutoff_date)
+        if _ts.dt.tz is None and getattr(_cut_ts, "tzinfo", None) is not None:
+            _cut_ts = _cut_ts.tz_localize(None)
+        elif _ts.dt.tz is not None:
+            _cut_ts = (
+                _cut_ts.tz_localize(_ts.dt.tz)
+                if getattr(_cut_ts, "tzinfo", None) is None
+                else _cut_ts.tz_convert(_ts.dt.tz)
+            )
+        df = df[_ts < _cut_ts].reset_index(drop=True)
         print(
             f"   🛡️  Val-only cutoff {cutoff_date}: {_n_before:,} → {len(df):,} rows "
             f"({len(df)/max(_n_before,1):.1%} retained)"

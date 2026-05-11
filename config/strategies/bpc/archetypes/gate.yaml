@@ -1,6 +1,6 @@
 # BPC Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/bpc/non-rolling-sim/bpc/20260508_133024/strategies/bpc/gate_draft.yaml
-# 优化规则: 0/2 条通过优化
+# 来源: /home/yin/trading/ml_trading_bot/results/bpc/non-rolling-sim/bpc/20260511_162324/strategies/bpc/gate_draft.yaml
+# 优化规则: 0/8 条通过优化, 4 条已移除
 # Phase split: system_safety=2, hard_gate=2
 
 schema:
@@ -14,6 +14,21 @@ schema:
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
+- id: gate_vpin_ma20
+  tag: HARD_VPIN_MA20
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.27)
+  when:
+    vpin_ma20:
+      value_gt: 0.3044
+  then:
+    action: deny
+  comment: 'statistical(lift=1.27): vpin_ma20 > 0.3044'
+  locked: true
+  disabled: true
+  disabled_reason: 'optimization_no_valid_threshold: No threshold meets basic lift/pass_rate requirements'
+  lock_reason: VPIN 知情交易活跃度：信息不对称过高时入场胜率下降
 - id: gate_bpc_semantic_chop_high
   tag: HARD_BPC_SEMANTIC_CHOP
   phase: hard_gate
@@ -29,21 +44,6 @@ hard_gates:
   frozen: true
   promote_never_disable: true
   lock_reason: 高 chop 分位拒单；低分位放行；与 TPC/ME 对齐
-- id: gate_vpin_ma20
-  tag: HARD_VPIN_MA20
-  phase: hard_gate
-  priority: 11
-  reason: 统计验证规则 (lift=1.15)
-  when:
-    vpin_quantile_rank_20:
-      value_gt: 0.8
-  then:
-    action: deny
-  comment: 'optimizer: no_stable_plateau, threshold=0.2959, lift=0.287'
-  locked: true
-  lock_reason: VPIN 知情交易活跃度：信息不对称过高时入场胜率下降
-  disabled: true
-  disabled_reason: 'optimization_no_valid_threshold: No threshold meets basic lift/pass_rate requirements'
 guardrails: []
 system_safety:
 - id: gate_vol_persistence_vol_persistence
@@ -59,7 +59,7 @@ system_safety:
         value_lt: 0.0616
   then:
     action: deny
-  comment: 'merged: (0.0029,0.0299) + stat_fallback (0.0275,0.0616) → full deny zone. MeanRR=-0.60, BadRate=51.8%'
+  comment: 'optimizer: no_stable_plateau, threshold=0.1500, lift=0.133'
   locked: true
   lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利
 - id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
@@ -75,6 +75,6 @@ system_safety:
         value_lt: 0.1482
   then:
     action: deny
-  comment: 'optimizer: stable_plateau_found, threshold=0.1259, lift=0.119'
+  comment: 'optimizer: stable_plateau_found, threshold=0.2095, lift=0.983'
   locked: true
   lock_reason: 波动杠杆非对称：α/γ 严重失衡期趋势容易被拖垮

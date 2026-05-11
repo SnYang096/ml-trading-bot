@@ -4,13 +4,20 @@ strategy:
   name: bpc-long-120T
   description: |
     BreakoutPullbackContinuation Long archetype: 趋势中回踩后延续（做多方向）。
-    在已确认的下降趋势中，识别健康的回踩并在回踩位置做空入场。
+    在已确认的上升趋势中，识别健康的回踩并在回踩位置做多入场。
 
   owner: quant_team
   archetype: BreakoutPullbackContinuationLong
 
   # 默认时间粒度（研发 + 实盘统一）
   timeframe: "120T" # 2小时
+
+  # 可选白名单：空列表表示沿用全局 universe。
+  symbol_include: []
+
+  # 从 BPC 宇宙中排除的 symbol（数据: XRP 39笔交易 0%胜率 -305R）
+  symbol_exclude:
+    - XRPUSDT
 
   # Altc 使用锚定交易对的 macro_tp_vwap_1200_position（gate / direction / 结构性出场），与训练/事件回测/实盘一致。
   # 默认等价于 enabled: true, symbol: BTCUSDT；若要恢复「各 symbol 自有 VWAP」可设 enabled: false。

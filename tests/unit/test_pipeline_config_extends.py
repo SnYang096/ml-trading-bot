@@ -278,9 +278,19 @@ def test_load_bpc_non_rolling_extends_slow():
         cfg.get("output", {}).get("history_dir", "")
     )
     d = cfg.get("dates") or {}
-    assert d.get("validation_months") == 3
+    assert "validation_months" not in d
+    assert d.get("nonrolling_validation_months") == 6
+    assert d.get("nonrolling_test_months") == 6
     assert d.get("holdout_months") == 26
     assert d.get("start_date") == "2022-01-01"
+    dates = resolve_strategy_dates(
+        cfg,
+        strategy="bpc",
+        default_end_date=cfg["dates"]["end_date"],
+    )
+    assert dates["holdout_start"] == "2025-05-01"
+    assert dates["validation_months"] == 6
+    assert dates["test_start"] == "2025-11-01"
     assert (
         cfg["strategies"]["bpc"]["kpi_gates"]["entry_filter"]["meta_algorithm"] is True
     )
@@ -297,7 +307,9 @@ def test_load_me_non_rolling_extends_slow():
         cfg.get("output", {}).get("history_dir", "")
     )
     d = cfg.get("dates") or {}
-    assert d.get("validation_months") == 3
+    assert "validation_months" not in d
+    assert d.get("nonrolling_validation_months") == 6
+    assert d.get("nonrolling_test_months") == 6
     assert d.get("holdout_months") == 26
     assert d.get("start_date") == "2022-01-01"
     assert (
@@ -316,7 +328,9 @@ def test_load_tpc_non_rolling_extends_slow():
         cfg.get("output", {}).get("history_dir", "")
     )
     d = cfg.get("dates") or {}
-    assert d.get("validation_months") == 3
+    assert "validation_months" not in d
+    assert d.get("nonrolling_validation_months") == 6
+    assert d.get("nonrolling_test_months") == 6
     assert d.get("holdout_months") == 26
     assert d.get("start_date") == "2022-01-01"
     assert (
@@ -342,9 +356,9 @@ def test_load_chop_grid_non_rolling_extends_turbo():
         strategy="chop_grid",
         default_end_date=cfg["dates"]["end_date"],
     )
-    assert dates["holdout_start"] == "2024-03-01"
-    assert dates["validation_months"] == 3
-    assert dates["test_start"] == "2024-06-01"
+    assert dates["holdout_start"] == "2025-05-01"
+    assert dates["validation_months"] == 6
+    assert dates["test_start"] == "2025-11-01"
 
 
 def test_load_dual_add_non_rolling_extends_turbo():
@@ -366,9 +380,9 @@ def test_load_dual_add_non_rolling_extends_turbo():
         strategy="dual_add_trend",
         default_end_date=cfg["dates"]["end_date"],
     )
-    assert dates["holdout_start"] == "2024-03-01"
-    assert dates["validation_months"] == 3
-    assert dates["test_start"] == "2024-06-01"
+    assert dates["holdout_start"] == "2025-05-01"
+    assert dates["validation_months"] == 6
+    assert dates["test_start"] == "2025-11-01"
 
 
 def test_load_multileg_slow_profiles_extend_turbo_metadata():

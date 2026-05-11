@@ -9,9 +9,10 @@
 extends: turbo.yaml
 
 dates:
-  # Align with BPC non_rolling: first holdout slice is validation/calibration,
-  # final report/backtest is pure OOS test after this split.
-  validation_months: 3
+  # non_rolling/static_holdout 专用窗口，区别于 turbo/slow 的月度 rolling calibration。
+  # Train: 更早历史；Val: 最近测试窗之前 6 个月调阈值；Test: 最近 6 个月纯 OOS 验收。
+  nonrolling_validation_months: 6
+  nonrolling_test_months: 6
 
 rolling:
   mode: non_rolling
