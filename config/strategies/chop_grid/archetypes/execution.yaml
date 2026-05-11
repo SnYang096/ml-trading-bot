@@ -11,9 +11,9 @@
 inventory: # Inventory construction and order placement semantics.
   spacing: # Distance between adjacent grid prices; doubles as cell TP distance.
     primary: atr # Use ATR as the primary spacing unit.
-    atr_mult: 0.50 # Grid spacing = ATR * this multiplier, subject to min_pct.
-    min_pct: 0.004 # Minimum spacing as a fraction of price.
-  max_levels_per_side: 3 # Maximum long levels and maximum short levels around center.
+    atr_mult: 1.00 # Grid spacing = ATR * this multiplier, subject to min_pct.
+    min_pct: 0.010 # Minimum spacing as a fraction of price.
+  max_levels_per_side: 2 # Maximum long levels and maximum short levels around center.
   order_type: limit # Intended order type for resting grid entries.
 
 risk: # Runtime inventory limits and forced-exit rules, not report cost assumptions.
@@ -21,4 +21,4 @@ risk: # Runtime inventory limits and forced-exit rules, not report cost assumpti
   max_segment_bars: 120 # Force segment end after this many signal bars.
   force_exit_on_regime_loss: true # Market-exit all inventory when chop regime is lost.
   max_loss_per_grid: 0.03 # Grid-level catastrophic loss cap, normalized by level notional.
-  max_open_levels_total: 6 # Maximum total filled inventory levels across both sides.
+  max_open_levels_total: 4 # Maximum total filled inventory levels across both sides.

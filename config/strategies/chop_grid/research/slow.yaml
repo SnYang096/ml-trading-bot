@@ -43,11 +43,6 @@ rolling_calibration:
   threshold_calibration:
     enabled: true
 
-universe_group:
-  file: config/download/crypto_4h_token_universe_groups.yaml
-  universe_set: starter_a
-  group: highcap
-
 data_path: data/parquet_data
 
 download:
@@ -75,9 +70,6 @@ grid_backtest:
   output_dir: results/chop_grid/slow-full-cycle
   start_date: "2022-01-01"
   end_date: "2026-03-31"
-  map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
-  continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
 
 output:
   history_dir: results/chop_grid/slow-rolling-sim
-  latest_dir: results/chop_grid/latest

@@ -13,5 +13,12 @@ feature_pipeline:
     - atr_percentile_f
     - volatility_regime_f
     - bb_width_normalized_pct_f
-    - ema_1200_position_f
-    - ema_1200_slope_f
+
+    # Math/regime candidates for chop eligibility:
+    # WPT scene scores capture compression / ignition / absorption / exhaustion.
+    # Hurst separates mean-reverting chop from persistent trend.
+    # Hilbert envelopes expose cyclic amplitude without using raw price scale.
+    - wpt_scene_semantic_scores_f
+    - hurst_price_f
+    - hurst_cvd_f
+    - hilbert_phase_f

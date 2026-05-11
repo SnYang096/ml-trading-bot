@@ -9,6 +9,10 @@ from typing import Any, Callable, Mapping
 
 import yaml
 
+from src.features.normalization.raw_scale_columns import load_raw_scale_columns
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 _DEFAULT_REQUIRED_NODES_BY_TYPE = {
     "grid": {"bpc_soft_phase_f", "atr_f"},
@@ -95,6 +99,212 @@ def _load_prefilter_yaml(config_dir: Path) -> dict[str, Any]:
     return raw
 
 
+def _load_feature_dependencies() -> dict[str, Any]:
+    path = PROJECT_ROOT / "config" / "feature_dependencies.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    features = raw.get("features", {}) if isinstance(raw, Mapping) else {}
+    return features if isinstance(features, dict) else {}
+
+
+def _load_semantic_polarity(config_dir: Path, strategy: str) -> dict[str, str]:
+    paths = [config_dir / "semantic_polarity.yaml"]
+    if strategy:
+        paths.append(
+            PROJECT_ROOT
+            / "config"
+            / "strategies"
+            / str(strategy)
+            / "semantic_polarity.yaml"
+        )
+    for path in paths:
+        if not path.exists():
+            continue
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        polarity = raw.get("polarity", {}) if isinstance(raw, Mapping) else {}
+        if not isinstance(polarity, Mapping):
+            continue
+        return {
+            str(k).strip(): str(v).strip().lower()
+            for k, v in polarity.items()
+            if str(k).strip()
+            and str(v).strip().lower()
+            in {"higher_is_better", "lower_is_better", "unknown"}
+        }
+    return {}
+
+
+def _as_float_list(value: Any, default: list[float]) -> list[float]:
+    if not isinstance(value, list):
+        return list(default)
+    out: list[float] = []
+    for item in value:
+        try:
+            out.append(float(item))
+        except (TypeError, ValueError):
+            continue
+    return out or list(default)
+
+
+def _as_float_pair_list(
+    value: Any, default: list[tuple[float, float]]
+) -> list[tuple[float, float]]:
+    if not isinstance(value, list):
+        return list(default)
+    out: list[tuple[float, float]] = []
+    for item in value:
+        if not isinstance(item, list | tuple) or len(item) != 2:
+            continue
+        try:
+            lo = float(item[0])
+            hi = float(item[1])
+        except (TypeError, ValueError):
+            continue
+        if lo <= hi:
+            out.append((lo, hi))
+    return out or list(default)
+
+
+def _threshold_token(value: float) -> str:
+    return str(float(value)).rstrip("0").rstrip(".").replace("-", "m").replace(".", "p")
+
+
+def _default_unknown_ranges_for_column(
+    col: str, output_normalization_map: Mapping[str, Any]
+) -> list[tuple[float, float]]:
+    norm = str(output_normalization_map.get(col, "") or "").strip().lower()
+    if norm == "bounded_-1_1":
+        return [(-0.50, 0.50), (-0.25, 0.25)]
+    return [(0.25, 0.75), (0.35, 0.65)]
+
+
+def _polarity_for_column(col: str, polarity: Mapping[str, str]) -> str:
+    if col in polarity:
+        return str(polarity[col])
+    base = str(col).rsplit("_", 1)[0] if str(col).rsplit("_", 1)[-1].isdigit() else col
+    return str(polarity.get(base, "unknown"))
+
+
+def _is_auto_rule_column_allowed(
+    col: str,
+    norm_type: str,
+    raw_scale_columns: set[str],
+) -> bool:
+    c = str(col or "").strip()
+    nt = str(norm_type or "").strip().lower()
+    if not c:
+        return False
+    if c in raw_scale_columns:
+        return False
+    if nt in {
+        "price_unit",
+        "raw",
+        "usd",
+        "identity",
+        "passthrough",
+        "log1p_robust_rolling",
+        "categorical",
+        "count",
+    }:
+        return False
+    return True
+
+
+def _generic_threshold_variants_for_node(
+    *,
+    node: str,
+    strategy: str,
+    config_dir: Path,
+    fs_cfg: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    deps = _load_feature_dependencies()
+    node_def = deps.get(str(node), {}) or {}
+    output_columns = node_def.get("output_columns", []) or []
+    if not isinstance(output_columns, list):
+        return []
+    polarity = _load_semantic_polarity(config_dir, strategy)
+    compute_params = node_def.get("compute_params", {}) or {}
+    output_normalization_map = (
+        compute_params.get("output_normalization_map", {})
+        if isinstance(compute_params, Mapping)
+        else {}
+    )
+    if not isinstance(output_normalization_map, Mapping):
+        output_normalization_map = {}
+    threshold_cfg = fs_cfg.get("auto_rule_thresholds", {})
+    if not isinstance(threshold_cfg, Mapping):
+        threshold_cfg = {}
+    higher_values = _as_float_list(
+        threshold_cfg.get("higher_is_better"), [0.55, 0.65, 0.75]
+    )
+    lower_values = _as_float_list(
+        threshold_cfg.get("lower_is_better"), [0.45, 0.35, 0.25]
+    )
+    unknown_ranges = _as_float_pair_list(threshold_cfg.get("unknown_range"), [])
+    max_variants = int(fs_cfg.get("max_auto_rule_variants_per_node", 8) or 8)
+    raw_scale_columns = load_raw_scale_columns()
+
+    variants: list[dict[str, Any]] = []
+    for col_raw in output_columns:
+        col = str(col_raw).strip()
+        norm_type = str(output_normalization_map.get(col, "") or "")
+        if not _is_auto_rule_column_allowed(col, norm_type, raw_scale_columns):
+            continue
+        pol = _polarity_for_column(col, polarity)
+        if pol == "higher_is_better":
+            for value in higher_values:
+                variants.append(
+                    {
+                        "suffix": f"{_safe_name(col)}_gte_{_threshold_token(value)}",
+                        "rules": [
+                            {"feature": col, "operator": ">=", "value": float(value)}
+                        ],
+                        "source": "semantic_polarity_threshold_scan",
+                    }
+                )
+        elif pol == "lower_is_better":
+            for value in lower_values:
+                variants.append(
+                    {
+                        "suffix": f"{_safe_name(col)}_lte_{_threshold_token(value)}",
+                        "rules": [
+                            {"feature": col, "operator": "<=", "value": float(value)}
+                        ],
+                        "source": "semantic_polarity_threshold_scan",
+                    }
+                )
+        elif pol == "unknown":
+            ranges = unknown_ranges or _default_unknown_ranges_for_column(
+                col, output_normalization_map
+            )
+            for lo, hi in ranges:
+                variants.append(
+                    {
+                        "suffix": (
+                            f"{_safe_name(col)}_range_"
+                            f"{_threshold_token(lo)}_{_threshold_token(hi)}"
+                        ),
+                        "rules": [
+                            {
+                                "all_of": [
+                                    {
+                                        "feature": col,
+                                        "operator": ">=",
+                                        "value": float(lo),
+                                    },
+                                    {
+                                        "feature": col,
+                                        "operator": "<=",
+                                        "value": float(hi),
+                                    },
+                                ]
+                            }
+                        ],
+                        "source": "semantic_polarity_range_scan",
+                    }
+                )
+    return variants[:max_variants]
+
+
 def _write_prefilter_yaml(
     *,
     candidate_cfg_dir: Path,
@@ -121,53 +331,20 @@ def _write_prefilter_yaml(
     )
 
 
-def _rule_templates_for_node(node: str, strategy_type: str) -> list[dict[str, Any]]:
-    n = str(node or "").strip()
-    st = str(strategy_type or "").strip().lower()
-    if n == "atr_percentile_f":
-        return [{"feature": "atr_percentile", "operator": "<=", "value": 0.85}]
-    if n == "volatility_regime_f":
-        return [
-            {
-                "all_of": [
-                    {"feature": "volatility_regime", "operator": ">=", "value": 0.60},
-                    {"feature": "volatility_regime", "operator": "<=", "value": 1.60},
-                ]
-            }
-        ]
-    if n == "bb_width_normalized_pct_f":
-        return [{"feature": "bb_width_normalized_pct", "operator": "<=", "value": 0.80}]
-    if n == "ema_1200_position_f":
-        return [
-            {
-                "any_of": [
-                    {"feature": "ema_1200_position", "operator": "<=", "value": -0.03},
-                    {"feature": "ema_1200_position", "operator": ">=", "value": 0.03},
-                ]
-            }
-        ]
-    if n == "ema_1200_slope_f":
-        return [
-            {
-                "any_of": [
-                    {"feature": "ema_1200_slope", "operator": "<=", "value": -0.0002},
-                    {"feature": "ema_1200_slope", "operator": ">=", "value": 0.0002},
-                ]
-            }
-        ]
-    if n == "box_structure_f":
-        return [
-            {
-                "all_of": [
-                    {"feature": "box_stability", "operator": ">=", "value": 0.85},
-                    {"feature": "box_width_pct", "operator": ">=", "value": 0.04},
-                    {"feature": "box_width_pct", "operator": "<=", "value": 0.30},
-                ]
-            }
-        ]
-    if st == "dual_add_trend" and n == "trend_confidence_f":
-        return [{"feature": "trend_confidence", "operator": ">=", "value": 0.75}]
-    return []
+def _rule_variants_for_node(
+    *,
+    node: str,
+    strategy: str,
+    strategy_type: str,
+    config_dir: Path,
+    fs_cfg: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    generic = _generic_threshold_variants_for_node(
+        node=node, strategy=strategy, config_dir=config_dir, fs_cfg=fs_cfg
+    )
+    if generic:
+        return generic
+    return [{"suffix": "", "rules": [], "source": "no_semantic_rule"}]
 
 
 def _build_candidate_sets(
@@ -561,101 +738,123 @@ def select_multileg_feature_subset(
     winner_rule_count: int | None = None
 
     for idx, cset in enumerate(candidate_sets):
-        name = str(cset.get("name", f"candidate_{idx+1:02d}"))
+        base_name = str(cset.get("name", f"candidate_{idx+1:02d}"))
         selected_node_list = [str(n) for n in (cset.get("nodes") or [])]
         selected_nodes = set(selected_node_list)
         focus_node = str(cset.get("focus_node", "") or "").strip()
-        candidate_rules = list(base_rules)
-        if focus_node:
-            candidate_rules.extend(_rule_templates_for_node(focus_node, strategy_type))
-        candidate_cfg_dir = candidates_root / name / "strategy_config"
-        shutil.rmtree(candidate_cfg_dir, ignore_errors=True)
-        shutil.copytree(config_dir, candidate_cfg_dir, dirs_exist_ok=True)
-        _write_prefilter_yaml(
-            candidate_cfg_dir=candidate_cfg_dir,
-            base_prefilter=base_prefilter,
-            rules=[dict(r) for r in candidate_rules if isinstance(r, Mapping)],
-            strategy_type=strategy_type,
-            candidate_name=name,
+        rule_variants = (
+            _rule_variants_for_node(
+                node=focus_node,
+                strategy=strategy,
+                strategy_type=strategy_type,
+                config_dir=config_dir,
+                fs_cfg=fs_cfg,
+            )
+            if focus_node
+            else [{"suffix": "", "rules": [], "source": "baseline"}]
         )
 
-        file_rows: list[dict[str, Any]] = []
-        invalid = False
-        for yaml_name, original in requested_by_file.items():
-            selected = _selected_in_original_order(original, selected_nodes)
-            if not selected:
-                invalid = True
-            removed = [n for n in original if n not in selected]
-            file_rows.append(
-                {
-                    "file": yaml_name,
-                    "original": list(original),
-                    "selected": list(selected),
-                    "removed": list(removed),
-                }
+        for variant in rule_variants:
+            suffix = str(variant.get("suffix", "") or "").strip()
+            name = base_name if not suffix else f"{base_name}__{suffix}"
+            candidate_rules = list(base_rules)
+            candidate_rules.extend(
+                [
+                    dict(r)
+                    for r in (variant.get("rules") or [])
+                    if isinstance(r, Mapping)
+                ]
             )
-            if selected:
-                _write_feature_subset_yaml(
-                    path=candidate_cfg_dir / yaml_name,
-                    data=originals[yaml_name],
-                    selected=selected,
-                    removed=removed,
-                    strategy_type=strategy_type,
-                    candidate_name=name,
-                    tuned_candidate=tuned_candidate,
-                )
+            candidate_cfg_dir = candidates_root / name / "strategy_config"
+            shutil.rmtree(candidate_cfg_dir, ignore_errors=True)
+            shutil.copytree(config_dir, candidate_cfg_dir, dirs_exist_ok=True)
+            _write_prefilter_yaml(
+                candidate_cfg_dir=candidate_cfg_dir,
+                base_prefilter=base_prefilter,
+                rules=[dict(r) for r in candidate_rules if isinstance(r, Mapping)],
+                strategy_type=strategy_type,
+                candidate_name=name,
+            )
 
-        row: dict[str, Any] = {
-            "name": name,
-            "mode": cset.get("mode", "explicit"),
-            "nodes": selected_node_list,
-            "focus_node": focus_node or None,
-            "rule_count": len(candidate_rules),
-            "prefilter_rules": [
-                dict(r) for r in candidate_rules if isinstance(r, Mapping)
-            ],
-            "files": file_rows,
-            "config_dir": str(candidate_cfg_dir),
-        }
-        if invalid:
-            row["valid"] = False
-            row["skipped"] = "empty_selection_in_file"
-            candidate_rows.append(row)
-            continue
-
-        row["valid"] = True
-        if evaluate_candidate is not None:
-            try:
-                ev = dict(
-                    evaluate_candidate(name, candidate_cfg_dir, selected_nodes) or {}
+            file_rows: list[dict[str, Any]] = []
+            invalid = False
+            for yaml_name, original in requested_by_file.items():
+                selected = _selected_in_original_order(original, selected_nodes)
+                if not selected:
+                    invalid = True
+                removed = [n for n in original if n not in selected]
+                file_rows.append(
+                    {
+                        "file": yaml_name,
+                        "original": list(original),
+                        "selected": list(selected),
+                        "removed": list(removed),
+                    }
                 )
-                row["evaluation"] = ev
-                if ev.get("score") is not None:
-                    score = float(ev.get("score") or 0.0)
-                    row["score"] = score
-                    if _is_better_candidate(
-                        score=score,
-                        node_count=len(selected_nodes),
-                        rule_count=len(candidate_rules),
-                        best_score=winner_score,
-                        best_node_count=winner_node_count,
-                        best_rule_count=winner_rule_count,
-                    ):
-                        winner_score = score
-                        winner_node_count = len(selected_nodes)
-                        winner_rule_count = len(candidate_rules)
-                        winner_idx = len(candidate_rows)
-            except Exception as exc:  # pragma: no cover - runtime guard
+                if selected:
+                    _write_feature_subset_yaml(
+                        path=candidate_cfg_dir / yaml_name,
+                        data=originals[yaml_name],
+                        selected=selected,
+                        removed=removed,
+                        strategy_type=strategy_type,
+                        candidate_name=name,
+                        tuned_candidate=tuned_candidate,
+                    )
+
+            row: dict[str, Any] = {
+                "name": name,
+                "mode": cset.get("mode", "explicit"),
+                "nodes": selected_node_list,
+                "focus_node": focus_node or None,
+                "rule_source": str(variant.get("source", "") or ""),
+                "rule_count": len(candidate_rules),
+                "prefilter_rules": [
+                    dict(r) for r in candidate_rules if isinstance(r, Mapping)
+                ],
+                "files": file_rows,
+                "config_dir": str(candidate_cfg_dir),
+            }
+            if invalid:
                 row["valid"] = False
-                row["error"] = str(exc)
-        else:
-            row["score"] = 0.0
-            if winner_idx is None:
-                winner_idx = len(candidate_rows)
-                winner_score = 0.0
-                winner_node_count = len(selected_nodes)
-                winner_rule_count = len(candidate_rules)
-        candidate_rows.append(row)
+                row["skipped"] = "empty_selection_in_file"
+                candidate_rows.append(row)
+                continue
+
+            row["valid"] = True
+            if evaluate_candidate is not None:
+                try:
+                    ev = dict(
+                        evaluate_candidate(name, candidate_cfg_dir, selected_nodes)
+                        or {}
+                    )
+                    row["evaluation"] = ev
+                    if ev.get("score") is not None:
+                        score = float(ev.get("score") or 0.0)
+                        row["score"] = score
+                        if _is_better_candidate(
+                            score=score,
+                            node_count=len(selected_nodes),
+                            rule_count=len(candidate_rules),
+                            best_score=winner_score,
+                            best_node_count=winner_node_count,
+                            best_rule_count=winner_rule_count,
+                        ):
+                            winner_score = score
+                            winner_node_count = len(selected_nodes)
+                            winner_rule_count = len(candidate_rules)
+                            winner_idx = len(candidate_rows)
+                except Exception as exc:  # pragma: no cover - runtime guard
+                    row["valid"] = False
+                    row["error"] = str(exc)
+            else:
+                row["score"] = 0.0
+                if winner_idx is None:
+                    winner_idx = len(candidate_rows)
+                    winner_score = 0.0
+                    winner_node_count = len(selected_nodes)
+                    winner_rule_count = len(candidate_rules)
+            candidate_rows.append(row)
 
     if winner_idx is None:
         for i, row in enumerate(candidate_rows):

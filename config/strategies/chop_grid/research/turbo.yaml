@@ -130,6 +130,11 @@ event_backtest:
 grid_backtest:
   enabled: true
   calibrate_execution: true
+  # Keep research backtests on the same feature surface as the pipeline:
+  # build FeatureStore from features.yaml first, then auto-detect the matching
+  # latest chop_grid layer for raw/ts_quantile regime evaluation.
+  feature_store_dir: feature_store
+  feature_store_timeframe: 120T
   # output_dir intentionally omitted: auto_research_pipeline writes this stage under
   # output.history_dir/_rolling_sim/<timestamp>/grid_full_window, aligned with the
   # turbo rolling tree used by event_backtest-style artifacts.
@@ -148,4 +153,3 @@ grid_backtest:
 
 output:
   history_dir: results/chop_grid/turbo-rolling-sim
-  latest_dir: results/chop_grid/latest

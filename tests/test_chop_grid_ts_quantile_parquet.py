@@ -104,6 +104,79 @@ def test_ts_quantile_maps_parquet_columns(monkeypatch: pytest.MonkeyPatch) -> No
     assert bool(merged["box_prefilter"].iloc[0])
 
 
+def test_raw_chop_path_uses_feature_store_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw chop signal should still load FeatureStore columns for prefilter rules."""
+
+    captured: dict[str, object] = {}
+
+    def _fake_load(
+        self,
+        df: pd.DataFrame,
+        requested,
+        fit: bool = True,
+        *,
+        feature_store_strict: bool = False,
+        **kwargs: object,
+    ) -> pd.DataFrame:
+        captured["strict"] = feature_store_strict
+        captured["requested"] = list(requested or [])
+        captured["kwargs"] = kwargs
+        out = df.copy()
+        out["atr"] = 0.12
+        out["bpc_semantic_chop"] = 0.55
+        out["wpt_compression_score"] = 0.72
+        out["hurst_price_rolling"] = 0.38
+        out["hilbert_price_env"] = 0.50
+        w = 120
+        suf = f"_{w}"
+        out[f"box_hi{suf}"] = 51000.0
+        out[f"box_lo{suf}"] = 49000.0
+        out[f"box_width_pct{suf}"] = 0.08
+        out[f"box_pos{suf}"] = 0.5
+        out[f"box_stability{suf}"] = 0.9
+        out[f"box_touches_hi{suf}"] = 7.0
+        out[f"box_touches_lo{suf}"] = 8.0
+        return out
+
+    monkeypatch.setattr(
+        StrategyFeatureLoader,
+        "load_features_from_requested",
+        _fake_load,
+    )
+
+    cfg = GridConfig(
+        chop_signal="raw",
+        box_window=120,
+        feature_store_dir="/tmp/fs-does-not-need-exist-with-fake-load",
+        feature_store_layer="test_layer",
+    )
+    bars = pd.DataFrame(
+        {
+            "open": [50000.0],
+            "high": [50100.0],
+            "low": [49900.0],
+            "close": [50000.0],
+            "volume": [1e6],
+        },
+        index=pd.DatetimeIndex([pd.Timestamp("2024-06-01")]),
+    )
+    merged = build_features("BTCUSDT", bars, cfg, bars_timeframe="2h")
+
+    assert captured.get("strict") is True
+    kwargs = captured.get("kwargs")
+    assert isinstance(kwargs, dict)
+    assert kwargs.get("feature_store_symbol") == "BTCUSDT"
+    assert "wpt_scene_semantic_scores_f" in captured["requested"]
+
+    assert float(merged["semantic_chop"].iloc[0]) == pytest.approx(0.55)
+    assert "semantic_chop_ts_q" not in merged.columns
+    assert float(merged["wpt_compression_score"].iloc[0]) == pytest.approx(0.72)
+    assert float(merged["hurst_price_rolling"].iloc[0]) == pytest.approx(0.38)
+    assert float(merged["hilbert_price_env"].iloc[0]) == pytest.approx(0.50)
+
+
 def test_feature_store_strict_empty_month_range_raises(tmp_path: Path) -> None:
     pytest.importorskip("pyarrow")
 
@@ -273,12 +346,12 @@ def test_repo_chop_grid_research_turbo_yaml_multileg_no_live_section():
     assert "live" not in eff
 
 
-def test_merge_chop_grid_yaml_repo_profile_grid_backtest_store_baselines_none():
+def test_merge_chop_grid_yaml_repo_profile_grid_backtest_store_baselines():
     merged = merge_chop_grid_yaml(
         REPO_ROOT / "config/strategies/chop_grid/research/turbo.yaml",
     )
-    assert merged.get("feature_store_dir") is None
-    assert merged.get("feature_store_layer") is None
+    assert Path(str(merged.get("feature_store_dir"))).name == "feature_store"
+    assert merged.get("feature_store_timeframe") == "120T"
 
 
 def test_repo_chop_grid_turbo_grid_backtest_rolling_aligned_costs_and_maps():

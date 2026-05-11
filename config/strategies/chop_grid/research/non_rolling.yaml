@@ -22,4 +22,3 @@ grid_backtest:
 
 output:
   history_dir: results/chop_grid/non-rolling-sim
-  latest_dir: results/chop_grid/latest

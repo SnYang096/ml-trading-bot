@@ -1,0 +1,35 @@
+# ==========================================================================
+# Chop Grid — Semantic Polarity
+# ==========================================================================
+# 作用: meta-algorithm sweep 只扫描与 chop_grid 语义一致的方向。
+# 加载: scripts/meta_algorithm_unified.py / analyze_archetype_feature_stratification.py
+#       按策略名加载 config/strategies/{strategy}/semantic_polarity.yaml。
+# --------------------------------------------------------------------------
+
+polarity:
+  # ── Chop / range eligibility ──
+  # 与 BPC 相反：BPC 里 chop 是风险，chop_grid 里 chop 是入场前提。
+  bpc_semantic_chop:      higher_is_better
+  bpc_semantic_chop_ts_q: higher_is_better
+
+  # ── Volatility / compression context ──
+  # 低/中波动和窄带更适合网格；过宽/趋势扩张更容易打穿。
+  atr_percentile:          lower_is_better
+  bb_width_normalized_pct: lower_is_better
+  wpt_compression_score:   higher_is_better
+  wpt_ignition_score:      lower_is_better
+
+  # ── Mean reversion / non-trending memory ──
+  # Hurst 越低越偏均值回复；越高越偏持续趋势。
+  hurst_price_rolling: lower_is_better
+  hurst_cvd_rolling:   lower_is_better
+
+  # ── Box stability ──
+  box_stability: higher_is_better
+
+  # ── 未声明（保持 unknown，允许 meta sweep range 规则）──
+  # volatility_regime         — 中间区间最好，不适合单调 polarity。
+  # box_width_pct             — 需要落在区间，不是单调。
+  # wpt_absorption_score      — 语义可能随阶段变化，先交给 range/统计验证。
+  # wpt_exhaustion_score      — 可作为趋势衰竭候选，但方向需数据确认。
+  # hilbert_*                 — 包络/斜率多为形态或区间语义，先保持 unknown。

@@ -13,9 +13,11 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import List
 
 import pandas as pd
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -29,6 +31,47 @@ from src.features.loader.strategy_feature_loader import (
     StrategyFeatureLoader,
 )  # noqa: E402
 from src.time_series_model.strategy_config import StrategyConfigLoader  # noqa: E402
+
+
+def _load_feature_store_build_config(cfg_dir: Path):
+    """Load enough strategy config for FeatureStore builds.
+
+    Tree strategies have the full ``features.yaml`` + ``labels.yaml`` +
+    ``model.yaml`` package and can use ``StrategyConfigLoader``. Multi-leg
+    strategies are feature-only at this layer, so they only need
+    ``features.yaml`` and optional ``meta.yaml`` to materialize FeatureStore.
+    """
+    try:
+        return StrategyConfigLoader(cfg_dir).load()
+    except FileNotFoundError as exc:
+        features_path = cfg_dir / "features.yaml"
+        if not features_path.exists():
+            raise
+        missing_text = str(exc)
+        if "labels.yaml" not in missing_text and "model.yaml" not in missing_text:
+            raise
+        features_raw = yaml.safe_load(features_path.read_text(encoding="utf-8")) or {}
+        fp = features_raw.get("feature_pipeline", {})
+        requested = fp.get("requested_features", []) if isinstance(fp, dict) else []
+        if not isinstance(requested, list) or not requested:
+            raise ValueError(
+                f"{features_path} must define feature_pipeline.requested_features"
+            ) from exc
+        meta_path = cfg_dir / "meta.yaml"
+        meta_raw = (
+            yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+            if meta_path.exists()
+            else {}
+        )
+        meta = meta_raw.get("strategy", meta_raw) if isinstance(meta_raw, dict) else {}
+        print(
+            "   ℹ️  Feature-only config detected; building FeatureStore from "
+            f"{features_path}"
+        )
+        return SimpleNamespace(
+            features=SimpleNamespace(requested_features=[str(x) for x in requested]),
+            meta=meta if isinstance(meta, dict) else {},
+        )
 
 
 def _get_expected_output_columns(features_cfg: dict, requested_features: list) -> set:
@@ -161,8 +204,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     cfg_dir = Path(args.config).resolve()
-    loader = StrategyConfigLoader(cfg_dir)
-    cfg = loader.load()
+    cfg = _load_feature_store_build_config(cfg_dir)
 
     # Resolve symbols: from --symbols or --universe-config
     if args.symbols:

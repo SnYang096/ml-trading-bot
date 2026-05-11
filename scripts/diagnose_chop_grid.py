@@ -48,6 +48,7 @@ from src.config.strategy_layout import resolve_strategy_config_input  # noqa: E4
 from src.features.time_series.semantic_chop_ts_quantile import (  # noqa: E402
     semantic_chop_ts_quantile,
 )
+from src.feature_store.layer_naming import detect_layer_for_strategy  # noqa: E402
 
 DEFAULT_CHOP_GRID_YAML = (
     PROJECT_ROOT / "config/strategies/chop_grid/research/turbo.yaml"
@@ -88,6 +89,20 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
         costs = {}
     box_pf = regime.get("box_prefilter") or {}
     chop_series = cfg.get("chop_series", {}) or {}
+    feature_store_dir = resolve_optional_repo_path(grid_bt.get("feature_store_dir"))
+    feature_store_layer = grid_bt.get("feature_store_layer")
+    feature_store_timeframe = grid_bt.get("feature_store_timeframe")
+    if feature_store_layer is not None:
+        feature_store_layer = str(feature_store_layer).strip() or None
+    if feature_store_timeframe is not None:
+        feature_store_timeframe = str(feature_store_timeframe).strip() or None
+    if feature_store_dir and not feature_store_layer:
+        feature_store_layer = detect_layer_for_strategy(
+            strategy="chop_grid",
+            features_store_root=str(feature_store_dir),
+            timeframe=feature_store_timeframe,
+        )
+
     out: Dict[str, Any] = {
         "box_window": int(regime.get("box_window", 120)),
         "chop_min": float(regime.get("entry_chop_min", 0.40)),
@@ -129,21 +144,13 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
         "chop_signal": str(chop_series.get("chop_signal", "raw")),
         "chop_ts_window": int(chop_series.get("chop_ts_window", 1200)),
         "chop_ts_min_periods": int(chop_series.get("chop_ts_min_periods", 150)),
-        "feature_store_dir": resolve_optional_repo_path(
-            grid_bt.get("feature_store_dir")
-        ),
-        "feature_store_layer": grid_bt.get("feature_store_layer"),
-        "feature_store_timeframe": grid_bt.get("feature_store_timeframe"),
+        "feature_store_dir": feature_store_dir,
+        "feature_store_layer": feature_store_layer,
+        "feature_store_timeframe": feature_store_timeframe,
         "prefilter_rules": cfg.get("rules", []) or [],
     }
     if "compute_semantic_chop_ts_q" in chop_series:
         out["compute_chop_ts_q"] = chop_series.get("compute_semantic_chop_ts_q")
-    if out["feature_store_layer"] is not None:
-        out["feature_store_layer"] = str(out["feature_store_layer"]).strip() or None
-    if out["feature_store_timeframe"] is not None:
-        out["feature_store_timeframe"] = (
-            str(out["feature_store_timeframe"]).strip() or None
-        )
     return out
 
 
@@ -241,13 +248,21 @@ def _materialize_chop_grid_from_store_columns(
         )
     out["semantic_chop"] = pd.to_numeric(out["bpc_semantic_chop"], errors="coerce")
 
-    if "bpc_semantic_chop_ts_q" not in out.columns:
-        raise KeyError(
-            "FeatureStore missing bpc_semantic_chop_ts_q (required for chop_signal=ts_quantile)"
+    if cfg.chop_signal == "ts_quantile":
+        if "bpc_semantic_chop_ts_q" not in out.columns:
+            raise KeyError(
+                "FeatureStore missing bpc_semantic_chop_ts_q "
+                "(required for chop_signal=ts_quantile)"
+            )
+        out["semantic_chop_ts_q"] = pd.to_numeric(
+            out["bpc_semantic_chop_ts_q"], errors="coerce"
         )
-    out["semantic_chop_ts_q"] = pd.to_numeric(
-        out["bpc_semantic_chop_ts_q"], errors="coerce"
-    )
+    elif "bpc_semantic_chop_ts_q" in out.columns and should_compute_semantic_chop_ts_q(
+        cfg
+    ):
+        out["semantic_chop_ts_q"] = pd.to_numeric(
+            out["bpc_semantic_chop_ts_q"], errors="coerce"
+        )
 
     if "atr" in out.columns:
         out["atr14"] = pd.to_numeric(out["atr"], errors="coerce")
@@ -272,7 +287,7 @@ def _materialize_chop_grid_from_store_columns(
     return out
 
 
-def _build_ts_quantile_features_from_feature_store(
+def _build_features_from_feature_store(
     symbol: str,
     bars: pd.DataFrame,
     cfg: GridConfig,
@@ -281,7 +296,7 @@ def _build_ts_quantile_features_from_feature_store(
 ) -> pd.DataFrame:
     if not cfg.feature_store_dir or not str(cfg.feature_store_layer or "").strip():
         raise ValueError(
-            "chop_signal='ts_quantile' requires FeatureStore settings: "
+            "FeatureStore-backed chop_grid backtest requires FeatureStore settings: "
             "set grid_backtest.feature_store_dir and grid_backtest.feature_store_layer "
             "in the strategy YAML (or CLI overrides)."
         )
@@ -323,6 +338,21 @@ def _build_ts_quantile_features_from_feature_store(
         touches_min=int(cfg.touches_min),
     )
     return _materialize_chop_grid_from_store_columns(merged, cfg, study_cfg)
+
+
+def _build_ts_quantile_features_from_feature_store(
+    symbol: str,
+    bars: pd.DataFrame,
+    cfg: GridConfig,
+    *,
+    bars_timeframe: str,
+) -> pd.DataFrame:
+    return _build_features_from_feature_store(
+        symbol,
+        bars,
+        cfg,
+        bars_timeframe=bars_timeframe,
+    )
 
 
 def _segments(mask: pd.Series, *, min_len: int, max_len: int) -> List[Tuple[int, int]]:
@@ -481,6 +511,13 @@ def build_features(
     *,
     bars_timeframe: str | None = None,
 ) -> pd.DataFrame:
+    if cfg.feature_store_dir and str(cfg.feature_store_layer or "").strip():
+        return _build_features_from_feature_store(
+            symbol,
+            bars,
+            cfg,
+            bars_timeframe=bars_timeframe or "",
+        )
     if cfg.chop_signal == "ts_quantile":
         return _build_ts_quantile_features_from_feature_store(
             symbol,
