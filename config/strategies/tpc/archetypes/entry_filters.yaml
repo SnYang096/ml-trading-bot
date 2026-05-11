@@ -1,29 +1,42 @@
-# TPC entry filters: 订单流驱动入场时机（吸收后顺势）
+# TPC Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py
+# Date: 2026-04-26 06:34
+# Promoted: 2 filters (0 plateau + 0 snotio-only)
+# Locked pool kept: 2 (missing -> disabled)
+# Baseline snotio: 0.2414, σ=1.478
+# Significance: z-test one-sided p<0.1, min_trades=4
+#
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
+
 filters:
-  - id: tpc_long_absorption_follow_trend
-    enabled: true
-    locked: true
-    promote_never_disable: true
-    description: "做多：大级别偏多 + 回调吸收成立后顺势入场"
-    conditions:
-      - feature: tpc_cvd_absorption
-        operator: ">="
-        value: 1.0
-      - feature: tpc_recovery_strength
-        operator: ">="
-        value: 0.15
-
-  - id: tpc_short_absorption_follow_trend
-    enabled: true
-    locked: true
-    promote_never_disable: true
-    description: "做空：大级别偏空 + 回调吸收成立后顺势入场"
-    conditions:
-      - feature: tpc_cvd_absorption
-        operator: ">="
-        value: 1.0
-      - feature: tpc_recovery_strength
-        operator: ">="
-        value: 0.15
-
+- id: tpc_short_absorption_follow_trend
+  enabled: true
+  locked: true
+  promote_never_disable: true
+  description: 做空：大级别偏空 + 回调吸收成立后顺势入场
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 1.0
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.15
+  notes: 'promote_never_disable: 本轮未扫描，保持启用, promote_never_disable: z-test未过，保留磁盘历史阈值'
+  lock_reason: null
+- id: tpc_long_absorption_follow_trend
+  enabled: true
+  locked: true
+  promote_never_disable: true
+  description: 做多：大级别偏多 + 回调吸收成立后顺势入场
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 1.0
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.15
+  lock_reason: null
+  notes: 'promote_never_disable: z-test未过，保留磁盘历史阈值, promote_never_disable: 本轮未扫描，保持启用'
 combination_mode: or
