@@ -2584,6 +2584,16 @@ def run_strategy_pipeline(
             end_date=end_date,
             disable_auto_locked_tuning=disable_auto_locked_tuning,
         )
+        if auto_locked_override and not prefilter_optimization_enabled:
+            override_path = Path(auto_locked_override)
+            target_pf = Path(config_dir) / "archetypes" / "prefilter.yaml"
+            if override_path.exists():
+                target_pf.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(override_path, target_pf)
+                print(
+                    "  ✅ Prefilter 搜索关闭: 使用 locked threshold tuning override "
+                    f"→ {target_pf}"
+                )
 
     # ── Step 3: Direction (--promote) ── (前置于 Prefilter, 使 meta-algorithm 能在方向已知的子集上学习)
     _rolling_calibration_cfg = cfg.get("rolling_calibration") or {}
@@ -3864,7 +3874,7 @@ def run_strategy_pipeline(
         "--output",
         f"{evidence_dir}/trading_map_{strategy}_exec.html",
     ]
-    run_step(
+    rc_full, full_out = run_step(
         "Trading Map (Full Exec)",
         map_cmd,
         log,
@@ -3872,7 +3882,7 @@ def run_strategy_pipeline(
     )
 
     # ── 收集指标 ──
-    backtest_metrics = (
+    simple_backtest_metrics = (
         parse_backtest_stdout(bt_out)
         if not dry_run
         else {
@@ -3882,6 +3892,29 @@ def run_strategy_pipeline(
             "sharpe_per_trade": 0,
         }
     )
+    full_exec_metrics = (
+        parse_backtest_stdout(full_out)
+        if not dry_run and rc_full == 0
+        else {
+            "total_trades": 0,
+            "mean_r": 0,
+            "win_rate": 0,
+            "sharpe_per_trade": 0,
+        }
+    )
+    validation_cfg = cfg.get("validation", {}) or {}
+    strategy_validation_cfg = scfg.get("validation", {}) or {}
+    if isinstance(validation_cfg, dict) and isinstance(strategy_validation_cfg, dict):
+        validation_cfg = {**validation_cfg, **strategy_validation_cfg}
+    primary_backtest = (
+        str(validation_cfg.get("primary_backtest", "simple_execution")).strip().lower()
+    )
+    if primary_backtest in {"full", "full_exec", "execution", "execution_yaml"}:
+        backtest_metrics = full_exec_metrics
+        print("   ✅ 主验收指标: full_exec (execution.yaml)")
+    else:
+        backtest_metrics = simple_backtest_metrics
+        print("   ℹ️  主验收指标: simple_execution")
 
     # ── Step 10: 导出训练基线 JSON ──
     if not dry_run:
@@ -3913,6 +3946,9 @@ def run_strategy_pipeline(
         "gate_dir": gate_dir,
         "evidence_dir": evidence_dir,
         "backtest_metrics": backtest_metrics,
+        "simple_backtest_metrics": simple_backtest_metrics,
+        "full_exec_metrics": full_exec_metrics,
+        "primary_backtest": primary_backtest,
         "exp_config_dir": str(exp_config_dir),
         "prod_config_dir": prod_config_dir,
         "prefilter_comparison": _pf_comparison,
@@ -4181,6 +4217,11 @@ def save_report(
             "validation_months": validation_months,
         },
         "backtest_metrics": pipeline_result.get("backtest_metrics", {}),
+        "validation_metrics": {
+            "primary_backtest": pipeline_result.get("primary_backtest"),
+            "simple_execution": pipeline_result.get("simple_backtest_metrics", {}),
+            "full_exec": pipeline_result.get("full_exec_metrics", {}),
+        },
         "thresholds": thresholds,
         "comparison": comparison,
         "artifacts": {
@@ -4273,6 +4314,310 @@ def _patch_report_event(report_path: Path, event_result: Dict[str, Any]):
         write_research_run_report_html(report_path)
     except Exception:
         pass
+
+
+def _event_validation_gate(
+    event_metrics: Dict[str, Any],
+    event_cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Validate live-style event backtest before adopting a research run."""
+    gate_cfg = event_cfg.get("validation_gate", {}) or {}
+    if not bool(gate_cfg.get("enabled", False)):
+        return {"enabled": False, "passed": True, "blocked_by": []}
+
+    blocked: List[str] = []
+    checks: List[Dict[str, Any]] = []
+
+    def _num(name: str, default: float = 0.0) -> float:
+        raw = event_metrics.get(name, default)
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return float(default)
+
+    min_trades = gate_cfg.get("min_event_trades")
+    if min_trades is not None:
+        value = int(_num("n_trades", 0.0))
+        threshold = int(min_trades)
+        ok = value >= threshold
+        checks.append(
+            {
+                "rule": "min_event_trades",
+                "value": value,
+                "threshold": threshold,
+                "pass": ok,
+            }
+        )
+        if not ok:
+            blocked.append(f"event_trades={value} < {threshold}")
+
+    min_sharpe = gate_cfg.get("min_event_sharpe_r")
+    if min_sharpe is not None:
+        value = _num("sharpe_r", 0.0)
+        threshold = float(min_sharpe)
+        ok = value >= threshold
+        checks.append(
+            {
+                "rule": "min_event_sharpe_r",
+                "value": value,
+                "threshold": threshold,
+                "pass": ok,
+            }
+        )
+        if not ok:
+            blocked.append(f"event_sharpe_r={value:.4f} < {threshold:.4f}")
+
+    min_total_r = gate_cfg.get("min_event_total_r")
+    if min_total_r is not None:
+        value = _num("total_r", 0.0)
+        threshold = float(min_total_r)
+        ok = value >= threshold
+        checks.append(
+            {
+                "rule": "min_event_total_r",
+                "value": value,
+                "threshold": threshold,
+                "pass": ok,
+            }
+        )
+        if not ok:
+            blocked.append(f"event_total_r={value:.4f} < {threshold:.4f}")
+
+    max_dd = gate_cfg.get("max_event_drawdown_r")
+    if max_dd is not None:
+        value = _num("max_drawdown_r", 0.0)
+        threshold = float(max_dd)
+        ok = value <= threshold
+        checks.append(
+            {
+                "rule": "max_event_drawdown_r",
+                "value": value,
+                "threshold": threshold,
+                "pass": ok,
+            }
+        )
+        if not ok:
+            blocked.append(f"event_max_drawdown_r={value:.4f} > {threshold:.4f}")
+
+    return {
+        "enabled": True,
+        "passed": not blocked,
+        "checks": checks,
+        "blocked_by": blocked,
+        "downgrade_to": str(gate_cfg.get("downgrade_to", "ALERT") or "ALERT"),
+    }
+
+
+def _patch_report_event_validation(
+    report_path: Path,
+    event_validation: Dict[str, Any],
+    *,
+    final_decision: str,
+) -> None:
+    """Patch event validation and final decision into ``report.json``."""
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["event_validation"] = event_validation
+        report["final_decision"] = final_decision
+        comp = report.get("comparison")
+        if isinstance(comp, dict):
+            comp["final_decision"] = final_decision
+            if event_validation.get("enabled") and not event_validation.get(
+                "passed", True
+            ):
+                comp["event_validation_blocked_by"] = event_validation.get(
+                    "blocked_by", []
+                )
+        deploy_gate = report.get("deploy_gate")
+        if (
+            isinstance(deploy_gate, dict)
+            and event_validation.get("enabled")
+            and not event_validation.get("passed", True)
+        ):
+            deploy_gate["deploy_ready"] = False
+            blocked = list(deploy_gate.get("blocked_by") or [])
+            for reason in event_validation.get("blocked_by", []) or []:
+                msg = f"event_validation: {reason}"
+                if msg not in blocked:
+                    blocked.append(msg)
+            deploy_gate["blocked_by"] = blocked
+        report_path.write_text(
+            json.dumps(report, indent=2, default=str, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        write_research_run_report_html(report_path)
+    except Exception:
+        pass
+
+
+def _fmt_report_metric(value: Any, digits: int = 4) -> str:
+    try:
+        if value is None:
+            return "N/A"
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _metric_total_r(metrics: Dict[str, Any]) -> Tuple[Any, bool]:
+    """Return total_r, estimating from mean_r * trades when older reports lack it."""
+    total = metrics.get("total_r")
+    if total is not None:
+        return total, False
+    try:
+        mean_r = float(metrics.get("mean_r"))
+        trades = int(metrics.get("total_trades", metrics.get("n_trades")))
+        return mean_r * trades, True
+    except (TypeError, ValueError):
+        return None, False
+
+
+def _archetype_readme_from_report(
+    *,
+    strategy: str,
+    report: Dict[str, Any],
+    source_config_path: str = "",
+    source_report_path: str = "",
+    target: str = "research",
+) -> str:
+    """Build provenance README text for an adopted archetype bundle."""
+    metrics = report.get("backtest_metrics", {}) or {}
+    validation_metrics = report.get("validation_metrics", {}) or {}
+    comparison = report.get("comparison", {}) or {}
+    deploy_gate = report.get("deploy_gate", {}) or {}
+    event_metrics = report.get("event_backtest", {}) or {}
+    event_validation = report.get("event_validation", {}) or {}
+    data_range = report.get("data_range", {}) or {}
+    artifacts = report.get("artifacts", {}) or {}
+    total_r, total_r_estimated = _metric_total_r(metrics)
+    timestamp = str(report.get("timestamp", "") or "")
+    decision = str(
+        report.get("final_decision")
+        or comparison.get("final_decision")
+        or comparison.get("decision")
+        or ""
+    )
+    primary = validation_metrics.get("primary_backtest") or report.get(
+        "primary_backtest", ""
+    )
+
+    lines = [
+        f"# {strategy.upper()} Archetype Provenance",
+        "",
+        "This file is generated by the research adopt/deploy tooling.",
+        "It records where the currently adopted archetype bundle came from.",
+        "",
+        "## Source",
+        f"- Strategy: `{strategy}`",
+        f"- Target: `{target}`",
+        f"- Run ID: `{timestamp or 'N/A'}`",
+        f"- Pipeline config: `{source_config_path or 'N/A'}`",
+        f"- Report: `{source_report_path or 'N/A'}`",
+        f"- Experiment config: `{artifacts.get('exp_config_dir', 'N/A')}`",
+        "",
+        "## Decision",
+        f"- Decision: `{decision or 'N/A'}`",
+        f"- Primary backtest: `{primary or 'backtest_metrics'}`",
+        f"- Deploy ready: `{deploy_gate.get('deploy_ready', 'N/A')}`",
+    ]
+    reasons = comparison.get("reasons") or []
+    if reasons:
+        lines.append(f"- Reasons: {'; '.join(str(r) for r in reasons)}")
+    blocked = deploy_gate.get("blocked_by") or []
+    if blocked:
+        lines.append(f"- Deploy blocked by: {'; '.join(str(b) for b in blocked)}")
+
+    lines.extend(
+        [
+            "",
+            "## Data Window",
+            f"- Train start: `{data_range.get('start_date', 'N/A')}`",
+            f"- Holdout start: `{data_range.get('holdout_start', 'N/A')}`",
+            f"- Validation end / test start: `{data_range.get('validation_end', 'N/A')}`",
+            f"- End date: `{data_range.get('end_date', 'N/A')}`",
+            "",
+            "## Primary Metrics",
+            f"- Sharpe: `{_fmt_report_metric(metrics.get('sharpe_per_trade'))}`",
+            f"- Total R: `{_fmt_report_metric(total_r)}`"
+            + (" (estimated as mean R × trades)" if total_r_estimated else ""),
+            f"- Mean R: `{_fmt_report_metric(metrics.get('mean_r'))}`",
+            f"- Max DD: `{_fmt_report_metric(metrics.get('max_drawdown_r', metrics.get('max_drawdown_pct')))}`",
+            f"- Trades: `{metrics.get('total_trades', metrics.get('n_trades', 'N/A'))}`",
+            f"- Win rate: `{_fmt_report_metric(metrics.get('win_rate'))}`",
+        ]
+    )
+
+    simple = validation_metrics.get("simple_execution")
+    full_exec = validation_metrics.get("full_exec")
+    if isinstance(simple, dict) or isinstance(full_exec, dict):
+        lines.extend(["", "## Validation Metrics"])
+        for label, payload in (("simple_execution", simple), ("full_exec", full_exec)):
+            if not isinstance(payload, dict):
+                continue
+            lines.append(
+                "- "
+                f"{label}: sharpe=`{_fmt_report_metric(payload.get('sharpe_per_trade'))}`, "
+                f"trades=`{payload.get('total_trades', 'N/A')}`, "
+                f"mean_r=`{_fmt_report_metric(payload.get('mean_r'))}`, "
+                f"max_dd=`{_fmt_report_metric(payload.get('max_drawdown_r', payload.get('max_drawdown_pct')))}`"
+            )
+
+    if isinstance(event_metrics, dict) and event_metrics:
+        lines.extend(
+            [
+                "",
+                "## Event Backtest",
+                f"- Sharpe R: `{_fmt_report_metric(event_metrics.get('sharpe_r'))}`",
+                f"- Total R / mean R: `{_fmt_report_metric(event_metrics.get('total_r'))}` / `{_fmt_report_metric(event_metrics.get('mean_r'))}`",
+                f"- Max DD R: `{_fmt_report_metric(event_metrics.get('max_drawdown_r'))}`",
+                f"- Trades: `{event_metrics.get('n_trades', 'N/A')}`",
+                f"- Event validation passed: `{event_validation.get('passed', 'N/A')}`",
+            ]
+        )
+        ev_blocked = event_validation.get("blocked_by") or []
+        if ev_blocked:
+            lines.append(
+                f"- Event validation blocked by: {'; '.join(str(b) for b in ev_blocked)}"
+            )
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_archetype_provenance_readme(
+    arch_dir: Path,
+    *,
+    strategy: str,
+    report_path: Optional[Path] = None,
+    source_config_path: str = "",
+    target: str = "research",
+) -> Optional[Path]:
+    """Write ``archetypes/README.md`` from a research report when available."""
+    if report_path is None or not report_path.exists():
+        return None
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"   ⚠️ archetype provenance: report 读取失败: {exc}")
+        return None
+    arch_dir.mkdir(parents=True, exist_ok=True)
+    readme_path = arch_dir / "README.md"
+    readme_path.write_text(
+        _archetype_readme_from_report(
+            strategy=strategy,
+            report=report,
+            source_config_path=source_config_path,
+            source_report_path=(
+                str(report_path.relative_to(PROJECT_ROOT))
+                if report_path.is_relative_to(PROJECT_ROOT)
+                else str(report_path)
+            ),
+            target=target,
+        ),
+        encoding="utf-8",
+    )
+    print(f"   🧾 Archetype provenance: {readme_path}")
+    return readme_path
 
 
 def _parse_event_stdout(output: str) -> Dict[str, Any]:
@@ -8529,7 +8874,13 @@ def main():
     if args.adopt:
         if not args.strategy:
             p.error("--adopt 需要指定 --strategy")
-        _cmd_adopt_experiment(history_dir, cfg, args.strategy, args.adopt)
+        _cmd_adopt_experiment(
+            history_dir,
+            cfg,
+            args.strategy,
+            args.adopt,
+            config_path=str(args.config),
+        )
         return
 
     # ── 子命令: 对比两次实验 ──
@@ -8576,6 +8927,16 @@ def main():
         isinstance(threshold_shap_cfg, dict)
         and threshold_shap_cfg.get("enabled") is False
     )
+    event_cfg = cfg.get("event_backtest", {}) or {}
+    if not isinstance(event_cfg, dict):
+        event_cfg = {}
+    event_enabled = bool(getattr(args, "event_backtest", False)) or bool(
+        event_cfg.get("enabled", False)
+    )
+    event_promote = bool(event_cfg.get("promote", True))
+    event_window = str(
+        event_cfg.get("validation_window", "holdout") or "holdout"
+    ).lower()
 
     # ── 自动检测日期 ──
     if args.end_date:
@@ -9786,16 +10147,11 @@ def main():
         # 写入 report.json
         _patch_report_deploy(report_path, deploy_result)
 
-        # ── 自动采纳 ──
+        # ── 自动采纳: 延后到 event validation 后统一执行 ──
         prod_config_dir = pipeline_result.get("prod_config_dir")
         exp_cfg_dir = pipeline_result.get("exp_config_dir")
-        if (
-            decision == "ADOPT"
-            and not args.no_adopt
-            and prod_config_dir
-            and exp_cfg_dir
-        ):
-            _adopt_experiment_config(Path(exp_cfg_dir), prod_config_dir)
+        if decision == "ADOPT" and event_enabled:
+            print("\n   ⏳ Adopt: 等待 event validation 后再决定是否采纳")
         elif decision == "ADOPT" and args.no_adopt:
             print(f"\n   ⏭️  --no-adopt: 跳过自动采纳, 可后续手动:")
             print(
@@ -9806,21 +10162,20 @@ def main():
             {
                 "strategy": strategy,
                 "decision": decision,
+                "original_decision": decision,
                 "sharpe": bt.get("sharpe_per_trade"),
                 "trades": bt.get("total_trades"),
                 "evidence_dir": pipeline_result.get("evidence_dir"),
                 "run_dir_name": run_dir.name,
                 "seed": best["seed"] if multi_seed else seeds[0],
                 "prefilter_comparison": pipeline_result.get("prefilter_comparison"),
+                "prod_config_dir": prod_config_dir,
+                "exp_config_dir": exp_cfg_dir,
+                "report_path": str(report_path),
             }
         )
 
     # ── Event Backtest Execution 优化 (可选, --event-backtest 或 config 开启) ──
-    event_cfg = cfg.get("event_backtest", {}) or {}
-    event_enabled = bool(getattr(args, "event_backtest", False)) or bool(
-        event_cfg.get("enabled", False)
-    )
-    event_promote = bool(event_cfg.get("promote", True))
     if event_enabled and not args.compare_only:
         print(f"\n\n{'='*70}")
         print("🎓 Event Backtest Execution 优化 (CLI/Config)")
@@ -9840,8 +10195,12 @@ def main():
                 cfg, strat, args.event_sym_r
             )
             obj_cfg = _resolve_event_exec_objective_for_strategy(cfg, strat)
+            event_start = strat_dates["holdout_start"]
+            if event_window in {"test", "oos", "pure_oos"}:
+                event_start = strat_dates.get("test_start") or event_start
             print(
-                f"   🔧 {strat}: event sym-r = {event_sym_r} | objective={obj_cfg['objective']}"
+                f"   🔧 {strat}: event sym-r = {event_sym_r} | "
+                f"objective={obj_cfg['objective']} | window={event_start}~{strat_dates['end_date']}"
             )
             rdn = r.get("run_dir_name", timestamp)
             strat_run_dir = history_dir / strat / rdn
@@ -9851,7 +10210,7 @@ def main():
                 strat,
                 r["evidence_dir"],
                 strat_run_dir,
-                holdout_start=strat_dates["holdout_start"],
+                holdout_start=event_start,
                 end_date=strat_dates["end_date"],
                 strategies_root=ev_strategies_root,
                 data_path=data_path,
@@ -9882,6 +10241,48 @@ def main():
             rp = strat_run_dir / "report.json"
             if rp.exists():
                 _patch_report_event(rp, ev_m)
+            event_validation = _event_validation_gate(ev_m, event_cfg)
+            r["event_validation"] = event_validation
+            if event_validation.get("enabled"):
+                if event_validation.get("passed", True):
+                    print("   ✅ Event validation gate passed")
+                else:
+                    downgraded = str(event_validation.get("downgrade_to") or "ALERT")
+                    print("   🚫 Event validation gate failed")
+                    for b in event_validation.get("blocked_by", []):
+                        print(f"      ❌ {b}")
+                    r["decision"] = downgraded
+            if rp.exists():
+                _patch_report_event_validation(
+                    rp,
+                    event_validation,
+                    final_decision=str(r.get("decision", "ERROR")),
+                )
+
+    # ── Final adoption after optional event validation ──
+    if not args.compare_only:
+        for r in results_summary:
+            if r.get("decision") != "ADOPT":
+                continue
+            prod_config_dir = r.get("prod_config_dir")
+            exp_cfg_dir = r.get("exp_config_dir")
+            if args.no_adopt:
+                print(
+                    f"\n   ⏭️  {r.get('strategy')} --no-adopt: 跳过自动采纳, 可后续手动:"
+                )
+                print(
+                    "      python scripts/auto_research_pipeline.py "
+                    f"--strategy {r.get('strategy')} --adopt {r.get('run_dir_name')}"
+                )
+                continue
+            if prod_config_dir and exp_cfg_dir:
+                report_raw = r.get("report_path")
+                _adopt_experiment_config(
+                    Path(str(exp_cfg_dir)),
+                    str(prod_config_dir),
+                    source_report_path=Path(str(report_raw)) if report_raw else None,
+                    source_config_path=str(args.config),
+                )
 
     # ── Step 9.5: PCM 联合回测 (在 execution 优化之后执行) ──
     pcm_result = None
@@ -9989,7 +10390,13 @@ def main():
 # ====================================================================
 
 
-def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool:
+def _adopt_experiment_config(
+    exp_config_dir: Path,
+    prod_config_dir: str,
+    *,
+    source_report_path: Optional[Path] = None,
+    source_config_path: str = "",
+) -> bool:
     """将实验 archetypes 复制回生产 config.
 
     语义锁定: 采纳前校验生产 prefilter.yaml 和 gate.yaml 中的 locked 规则
@@ -9999,13 +10406,13 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
 
     exp_arch = exp_config_dir / "archetypes"
     prod_arch = PROJECT_ROOT / prod_config_dir / "archetypes"
+    strategy_slug = Path(str(prod_config_dir).strip()).name
 
     if not exp_arch.exists():
         print(f"   ❌ 实验 archetypes 不存在: {exp_arch}")
         return False
 
-    prod_slug = Path(str(prod_config_dir).strip()).name
-    if prod_slug in _MULTILEG_PROD_SLUGS:
+    if strategy_slug in _MULTILEG_PROD_SLUGS:
         prod_arch.mkdir(parents=True, exist_ok=True)
         for f in exp_arch.iterdir():
             if f.is_file():
@@ -10016,6 +10423,13 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
         if exp_eng.exists():
             prod_eng.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(exp_eng, prod_eng)
+        write_archetype_provenance_readme(
+            prod_arch,
+            strategy=strategy_slug,
+            report_path=source_report_path,
+            source_config_path=source_config_path,
+            target="research",
+        )
         print(f"   ✅ multileg adopt → {prod_arch} (+ {eng} if present)")
         return True
 
@@ -10142,6 +10556,15 @@ def _adopt_experiment_config(exp_config_dir: Path, prod_config_dir: str) -> bool
             copied += 1
 
     # gate_draft.yaml 仅保留在实验/rolling 输出目录，不 adopt 到 config/strategies（与模板分离）
+    readme = write_archetype_provenance_readme(
+        prod_arch,
+        strategy=strategy_slug,
+        report_path=source_report_path,
+        source_config_path=source_config_path,
+        target="research",
+    )
+    if readme is not None:
+        copied += 1
 
     print(f"   ✅ Adopted: {copied} files → {prod_arch}")
     return True
@@ -10294,7 +10717,14 @@ def _format_experiment_line(run_dir: Path) -> list:
     return lines
 
 
-def _cmd_adopt_experiment(history_dir: Path, cfg: dict, strategy: str, timestamp: str):
+def _cmd_adopt_experiment(
+    history_dir: Path,
+    cfg: dict,
+    strategy: str,
+    timestamp: str,
+    *,
+    config_path: str = "",
+):
     """手动采纳指定实验."""
     run_dir = history_dir / strategy / timestamp
     if not run_dir.exists():
@@ -10322,7 +10752,12 @@ def _cmd_adopt_experiment(history_dir: Path, cfg: dict, strategy: str, timestamp
             print(f"❌ 实验目录中找不到 strategies/ 或 archetypes/ 快照")
         return
 
-    _adopt_experiment_config(exp_config_dir, scfg["config"])
+    _adopt_experiment_config(
+        exp_config_dir,
+        scfg["config"],
+        source_report_path=run_dir / "report.json",
+        source_config_path=config_path,
+    )
 
 
 def _cmd_diff_experiments(history_dir: Path, strategy: str, ts1: str, ts2: str):

@@ -1,9 +1,12 @@
-# TPC · low-freedom non_rolling
+# BPC · low-freedom non_rolling
 #
-# Purpose: validate the current archetype with a narrower search surface.
-# It keeps Prefilter semantics, Direction, and Execution fixed, then only
-# recalibrates Gate and Entry Filter on the 6m validation tail before testing
-# the latest 6m OOS window.
+# Keep the strategy structure fixed while validating the latest tail window:
+# - no SHAP / feature discovery
+# - no Direction refresh
+# - no Prefilter feature search
+# - locked Prefilter thresholds may move through plateau tuning only
+# - Gate / EntryFilter can recalibrate
+# - final ADOPT uses full execution.yaml metrics, with event backtest as a kill gate
 
 extends: non_rolling.yaml
 
@@ -39,7 +42,7 @@ event_backtest:
     downgrade_to: ALERT
 
 strategies:
-  tpc:
+  bpc:
     kpi_gates:
       prefilter:
         locked_threshold_tuning:

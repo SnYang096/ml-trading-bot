@@ -53,6 +53,7 @@ from scripts.locked_prefilter_utils import (
     build_override_prefilter as build_override_prefilter_base,
     infer_writeback_bindings_from_prefilter,
 )
+from scripts.pipeline.config import load_pipeline_config
 
 
 @dataclass
@@ -335,7 +336,10 @@ def main() -> int:
     args = p.parse_args()
 
     cfg_path = Path(args.config)
-    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    # Research configs commonly use ``extends``; use the same loader as the
+    # main pipeline so low-freedom overlays still expose inherited strategy
+    # fields such as ``strategies.<name>.config``.
+    cfg = load_pipeline_config(cfg_path)
     scfg = (cfg.get("strategies", {}) or {}).get(args.strategy, {})
     if not scfg:
         raise SystemExit(f"unknown strategy: {args.strategy}")

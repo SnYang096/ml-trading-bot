@@ -91,6 +91,7 @@ def _normalize_deploy_strategy(slug: str) -> str:
 # 需要同步的 archetypes 文件。Classic 单仓策略按白名单；multi-leg 策略部署
 # archetypes 下全部 yaml/json 等文件。
 ARCHETYPE_FILES = [
+    "README.md",
     "gate.yaml",
     "evidence.yaml",
     "entry_filters.yaml",
@@ -179,6 +180,23 @@ def iter_stale_live_root_entries(dst_dir: Path) -> List[Path]:
     )
 
 
+def copy_deploy_file(src_file: Path, dst_file: Path) -> None:
+    """Copy a file to live, adjusting generated provenance README target."""
+    dst_file.parent.mkdir(parents=True, exist_ok=True)
+    if src_file.name == "README.md":
+        dst_file.write_text(deploy_file_text(src_file), encoding="utf-8")
+        return
+    shutil.copy2(src_file, dst_file)
+
+
+def deploy_file_text(src_file: Path) -> str:
+    """Return file text as it should appear in live."""
+    text = src_file.read_text(encoding="utf-8")
+    if src_file.name == "README.md":
+        return text.replace("- Target: `research`", "- Target: `live/highcap`")
+    return text
+
+
 # ====================================================================
 # YAML Diff
 # ====================================================================
@@ -224,7 +242,7 @@ def compare_file(src: Path, dst: Path) -> Tuple[str, List[str]]:
     if not dst.exists():
         return "new", [f"  (新文件, live 中不存在)"]
 
-    src_text = src.read_text(encoding="utf-8")
+    src_text = deploy_file_text(src)
     dst_text = dst.read_text(encoding="utf-8")
 
     if src_text == dst_text:
@@ -392,14 +410,14 @@ def deploy_strategy(strat: str) -> int:
         for fname in iter_deploy_archetype_basenames(profile, src_arch):
             src_file = src_arch / fname
             if src_file.exists():
-                shutil.copy2(src_file, dst_arch / fname)
+                copy_deploy_file(src_file, dst_arch / fname)
                 copied += 1
 
     # top-level configs
     dst_dir.mkdir(parents=True, exist_ok=True)
     for fname in iter_deploy_root_basenames(src_dir):
         src_file = src_dir / fname
-        shutil.copy2(src_file, dst_dir / fname)
+        copy_deploy_file(src_file, dst_dir / fname)
         copied += 1
 
     for stale in iter_stale_live_root_entries(dst_dir):
