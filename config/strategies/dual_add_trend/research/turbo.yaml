@@ -49,6 +49,34 @@ strategies:
         min_trades: 60
         max_forced_exit_rate: 0.05
         max_drawdown_floor: -0.08
+    multileg_calibration:
+      # Keep explicit 3-tier candidates in YAML (instead of implicit fallback in code),
+      # so risk tiers are auditable and easy to tune during non_rolling / slow_snapshot.
+      candidates:
+        # Conservative: stricter trend entry + wider add spacing + slightly larger TP.
+        - entry_min: 0.85
+          exit_below: 0.55
+          max_semantic_chop_entry: 0.20
+          max_semantic_chop_hold: 0.35
+          step_atr_mult: 1.25
+          tp_atr_mult: 0.90
+          tp_pct: 0.0018
+        # Baseline: moderate thresholds and spacing.
+        - entry_min: 0.75
+          exit_below: 0.45
+          max_semantic_chop_entry: 0.20
+          max_semantic_chop_hold: 0.35
+          step_atr_mult: 1.00
+          tp_atr_mult: 0.75
+          tp_pct: 0.0015
+        # Aggressive: looser entry and tighter add spacing, higher turnover.
+        - entry_min: 0.70
+          exit_below: 0.40
+          max_semantic_chop_entry: 0.25
+          max_semantic_chop_hold: 0.40
+          step_atr_mult: 0.75
+          tp_atr_mult: 0.60
+          tp_pct: 0.0012
 
 event_backtest:
   enabled: false
@@ -70,9 +98,9 @@ dual_add_backtest:
   add_mode: trend
   flip_action: close_offside_all
   exclude_box: true
-  step_atr_mult: 1.00
-  tp_atr_mult: 0.75
-  tp_pct: 0.0015
+  step_atr_mult: 0.75
+  tp_atr_mult: 0.60
+  tp_pct: 0.0012
   max_loss_per_segment: 0.02
   risk_stop_mode: regime_only
   max_gross_exposure: 4

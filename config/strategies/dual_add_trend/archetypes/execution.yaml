@@ -29,9 +29,9 @@ take_profit:
   # 止盈距离取 max(ATR 距离、百分比距离、绝对距离)。
   distance: max
   # ATR 止盈距离 = atr_mult * ATR。
-  atr_mult: 0.75
-  # 最小百分比止盈距离；0.0015 = 0.15%。
-  min_pct: 0.0015
+  atr_mult: 0.6
+  # 最小百分比止盈距离；0.0012 = 0.12%。
+  min_pct: 0.0012
   # 最小绝对价格距离；0 表示不启用绝对下限。
   min_abs: 0.0
 order_model:

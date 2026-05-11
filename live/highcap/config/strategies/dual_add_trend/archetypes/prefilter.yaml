@@ -1,10 +1,10 @@
 regime:
   lock: true
   entry_feature: trend_confidence
-  entry_min: 0.75
-  exit_below: 0.45
-  max_semantic_chop_entry: 0.2
-  max_semantic_chop_hold: 0.35
+  entry_min: 0.7
+  exit_below: 0.4
+  max_semantic_chop_entry: 0.25
+  max_semantic_chop_hold: 0.4
   exclude_box_prefilter: true
   box_prefilter:
     stability_min: 0.85
