@@ -8545,6 +8545,37 @@ def main():
     dates = cfg["dates"]
     symbols = resolve_symbols_from_config(cfg)
     data_path = cfg["data_path"]
+    threshold_root_cfg = cfg.get("threshold_calibration", {}) or {}
+    if not isinstance(threshold_root_cfg, dict):
+        threshold_root_cfg = {}
+
+    def _threshold_section_enabled(name: str, default: bool = True) -> bool:
+        section = threshold_root_cfg.get(name, {}) or {}
+        if isinstance(section, dict):
+            return bool(section.get("enabled", default))
+        return bool(default)
+
+    threshold_calibration_enabled = _threshold_section_enabled(
+        "threshold_calibration", True
+    )
+    threshold_enable_model_training = bool(
+        threshold_root_cfg.get("enable_model_training", True)
+    )
+    threshold_prefilter_cfg = threshold_root_cfg.get("prefilter", {}) or {}
+    threshold_prefilter_optimize = (
+        bool(threshold_prefilter_cfg.get("optimize", True))
+        if isinstance(threshold_prefilter_cfg, dict)
+        else True
+    )
+    threshold_execution_opt_enabled = _threshold_section_enabled("execution_opt", True)
+    threshold_direction_tuning_enabled = _threshold_section_enabled(
+        "direction_tuning", True
+    )
+    threshold_shap_cfg = cfg.get("shap_feature_selection", {}) or {}
+    threshold_skip_shap = args.skip_shap or (
+        isinstance(threshold_shap_cfg, dict)
+        and threshold_shap_cfg.get("enabled") is False
+    )
 
     # ── 自动检测日期 ──
     if args.end_date:
@@ -9499,10 +9530,14 @@ def main():
                 dry_run=args.dry_run,
                 use_1min=args.use_1min,
                 live_root=args.live_root,
-                skip_shap=args.skip_shap,
+                skip_shap=threshold_skip_shap,
                 config_path=args.config,
                 locked_prefilter_override=args.locked_prefilter_override,
                 disable_auto_locked_tuning=args.disable_auto_locked_tuning,
+                threshold_calibration_enabled=threshold_calibration_enabled,
+                prefilter_optimization_enabled=threshold_prefilter_optimize,
+                enable_model_training=threshold_enable_model_training,
+                skip_direction_tuning=not threshold_direction_tuning_enabled,
                 stage_stop=_stage_label,
             )
             if "error" in result:
@@ -9599,10 +9634,14 @@ def main():
                 dry_run=args.dry_run,
                 use_1min=args.use_1min,
                 live_root=args.live_root,
-                skip_shap=args.skip_shap,
+                skip_shap=threshold_skip_shap,
                 config_path=args.config,
                 locked_prefilter_override=args.locked_prefilter_override,
                 disable_auto_locked_tuning=args.disable_auto_locked_tuning,
+                threshold_calibration_enabled=threshold_calibration_enabled,
+                prefilter_optimization_enabled=threshold_prefilter_optimize,
+                enable_model_training=threshold_enable_model_training,
+                skip_direction_tuning=not threshold_direction_tuning_enabled,
             )
 
             metrics = result.get("backtest_metrics", {})
@@ -9819,6 +9858,7 @@ def main():
                 dry_run=args.dry_run,
                 sym_r=event_sym_r,
                 promote=event_promote,
+                run_execution_opt=threshold_execution_opt_enabled,
                 objective=str(obj_cfg["objective"]),
                 near_stop_threshold_r=float(obj_cfg["near_stop_threshold_r"]),
                 near_stop_penalty=float(obj_cfg["near_stop_penalty"]),

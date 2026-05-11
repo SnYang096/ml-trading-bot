@@ -39,3 +39,14 @@ _multileg_feature_selection:
   source: slow_snapshot
   candidate_name: core_plus_box_structure_f__box_pos_60_range_0p35_0p65
   rule_count: 1
+
+last_multileg_evaluation:
+  run_id: "20260510_232349"
+  mode: "slow_snapshot"
+  candidate: "core_plus_box_structure_f__box_pos_60_range_0p35_0p65"
+  key_metrics:
+    sharpe_r: 0.33664240643701326
+    total_r: 0.7464948765447248
+    n_trades: 699
+    max_drawdown_r: -0.030099917479698646
+  source_path: "results/chop_grid/slow-rolling-sim/_rolling_sim/20260510_232349/slow_snapshot_2024-05/chop_grid/multileg_feature_selection.json"

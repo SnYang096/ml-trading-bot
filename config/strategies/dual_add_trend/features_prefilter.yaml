@@ -16,3 +16,15 @@ feature_pipeline:
     - atr_percentile_f
     - volatility_regime_f
     - bb_width_normalized_pct_f
+
+    # Experimental confirmation features for trend inventory eligibility.
+    - wpt_scene_semantic_scores_f
+    - hurst_price_f
+    - hurst_cvd_f
+    - hilbert_phase_f
+    - vpin_scene_semantic_scores_f
+    - cvd_change_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f

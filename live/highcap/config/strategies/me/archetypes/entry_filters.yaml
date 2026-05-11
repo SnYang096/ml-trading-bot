@@ -1,35 +1,56 @@
-# ME Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)
-# Date: 2026-03-08 20:36
-# Promoted: 3 filters (evidence Spearman bins)
-# Significance: forward_rr t-test p<0.05 required
-#
+# ME Entry Filters (seeded)
 # 职责: "现在该入场吗?" → 硬二值控制
-# 多个 filter 之间是 OR 关系
+# 语义: ME = 动量扩张直接入场（不要求 pullback）
+#   - 候选池以 OR 组合
+#   - 不再使用 locked/promote_never_disable: plateau 自己根据统计显著性决定保留/禁用
+#   - 原来锁定的「压缩→点火+订单流」三重 AND 拆成 3 条独立 OR 候选，避免 prefilter 过滤后的样本空间里几乎不可能同时命中 3 个阈值
 
 filters:
-- id: ev_pred
-  enabled: true
-  description: 'Evidence bin: pred >= 0.527727'
-  conditions:
-  - feature: pred
-    operator: '>='
-    value: 0.527727
-  notes: Δrr=+1.4426, t=8.93, p=0.0000, pass=80.0%
-- id: ev_price_accel_pct
-  enabled: true
-  description: 'Evidence bin: price_accel_pct >= 0.202226'
-  conditions:
-  - feature: price_accel_pct
-    operator: '>='
-    value: 0.202226
-  notes: Δrr=+0.8727, t=5.46, p=0.0000, pass=80.0%
-- id: ev_bpc_dir_consistency_long
-  enabled: true
-  description: 'Evidence bin: bpc_dir_consistency_long <= 0.56'
-  conditions:
-  - feature: bpc_dir_consistency_long
-    operator: <=
-    value: 0.56
-  notes: Δrr=+0.7684, t=4.25, p=0.0000, pass=84.0%
+  # === 压缩→点火语义拆解：独立 OR 候选 ===
+  - id: ef_me_dual_compression
+    enabled: true
+    description: "ME 语义：刚从压缩区被点燃（funding × vpin 压缩）"
+    conditions:
+      - feature: dual_compression_score
+        operator: ">="
+        value: 0.45
+    notes: "semantic: compression context (funding + vpin compression)"
+
+  - id: ef_me_dual_ignition
+    enabled: true
+    description: "ME 语义：funding × footprint 双路点火触发"
+    conditions:
+      - feature: dual_ignition_score
+        operator: ">="
+        value: 0.45
+    notes: "semantic: ignition trigger (funding + footprint imbalance)"
+
+  - id: ef_me_cvd_strength
+    enabled: true
+    description: "ME 语义：CVD 订单流方向确认"
+    conditions:
+      - feature: me_cvd_strength
+        operator: ">="
+        value: 0.55
+    notes: "semantic: orderflow directional confirmation"
+
+  # === 单维订单流 / 拥挤 / VPIN / trade_cluster 维持原候选池 ===
+  - id: ef_vpin_zscore_20_high
+    enabled: true
+    description: "normalized: vpin_zscore_20 >= 0.60"
+    conditions:
+      - feature: vpin_zscore_20
+        operator: ">="
+        value: 0.60
+    notes: "VPIN stress zscore"
+
+  - id: ef_trade_cluster_net_runs_z20
+    enabled: true
+    description: "normalized: trade_cluster_net_runs_zscore_20 >= 0.30"
+    conditions:
+      - feature: trade_cluster_net_runs_zscore_20
+        operator: ">="
+        value: 0.30
+    notes: "trade clustering directional persistence zscore"
+
 combination_mode: or

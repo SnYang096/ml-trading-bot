@@ -152,6 +152,57 @@ def test_dual_add_basket_exit_slippage_makes_backtest_conservative() -> None:
     assert all(trade["slippage_bps_charged"] == 5.0 for trade in trades)
 
 
+def test_dual_add_entry_slippage_makes_backtest_conservative() -> None:
+    idx = pd.date_range("2026-01-01", periods=3, freq="2h")
+    seg = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 102.0],
+            "high": [100.2, 101.0, 103.0],
+            "low": [99.8, 100.0, 101.5],
+            "close": [100.0, 101.0, 102.0],
+            "atr14": [1.0, 1.0, 1.0],
+            "trend_direction": ["UP", "UP", "UP"],
+        },
+        index=idx,
+    )
+    base_cfg = DualAddConfig(
+        add_mode="trend",
+        take_profit_mode="basket",
+        tp_atr_mult=0.25,
+        fee_bps=0.0,
+        max_adds_per_side=1,
+        max_loss_per_segment=1.0,
+    )
+    conservative_cfg = DualAddConfig(
+        add_mode="trend",
+        take_profit_mode="basket",
+        tp_atr_mult=0.25,
+        fee_bps=0.0,
+        entry_slippage_bps=5.0,
+        add_slippage_bps=5.0,
+        max_adds_per_side=1,
+        max_loss_per_segment=1.0,
+    )
+
+    _, base_summary = simulate_dual_add_segment(
+        seg,
+        cfg=base_cfg,
+        symbol="BTCUSDT",
+        segment_id="base",
+        direction="UP",
+    )
+    trades, conservative_summary = simulate_dual_add_segment(
+        seg,
+        cfg=conservative_cfg,
+        symbol="BTCUSDT",
+        segment_id="conservative",
+        direction="UP",
+    )
+
+    assert conservative_summary["pnl_per_capital"] < base_summary["pnl_per_capital"]
+    assert all(trade["entry_slippage_bps_charged"] == 5.0 for trade in trades)
+
+
 def test_dual_add_intrabar_touch_buffer_requires_extra_penetration() -> None:
     idx = pd.date_range("2026-01-01", periods=2, freq="2h")
     seg = pd.DataFrame(

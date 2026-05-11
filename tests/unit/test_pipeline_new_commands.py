@@ -10,6 +10,7 @@ def test_pipeline_help_includes_new_commands_and_stages():
     assert result.exit_code == 0
     assert "report-side-state" in result.output
     assert "debug-pcm-candidates" in result.output
+    assert "deploy" in result.output
 
     result_run = runner.invoke(cli, ["pipeline", "run", "--help"])
     assert result_run.exit_code == 0
@@ -172,6 +173,33 @@ def test_pipeline_list_forwards_list_all_profiles(monkeypatch):
     assert result.exit_code == 0
     assert called["script_path"] == "scripts/auto_research_pipeline.py"
     assert called["args"] == ["--list", "--all", "--list-all-profiles"]
+
+
+def test_pipeline_deploy_forwards_to_live_deploy_script(monkeypatch):
+    runner = CliRunner()
+    called = {}
+
+    def _fake_run_script(script_path, args, docker=False, **kwargs):
+        called["script_path"] = script_path
+        called["args"] = list(args)
+        return 0
+
+    monkeypatch.setattr(cli_main, "run_script", _fake_run_script)
+
+    result = runner.invoke(
+        cli,
+        [
+            "pipeline",
+            "deploy",
+            "--deploy",
+            "--strategy",
+            "bpc",
+            "--git-commit",
+        ],
+    )
+    assert result.exit_code == 0
+    assert called["script_path"] == "scripts/deploy_config_to_live.py"
+    assert called["args"] == ["--deploy", "--strategy", "bpc", "--git-commit"]
 
 
 def test_multileg_help_and_research_forward(monkeypatch):

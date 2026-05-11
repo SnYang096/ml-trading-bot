@@ -78,6 +78,51 @@ def test_place_limit_translates_grid_place_action() -> None:
     assert result.status == "open"
 
 
+def test_place_marketable_limit_uses_ioc_limit_order() -> None:
+    api = _api()
+    adapter = GridExecutionAdapter(api)
+
+    adapter.execute_action(
+        {
+            "action": "place",
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "quantity": 0.02,
+            "price": 101050.0,
+            "order_type": "marketable_limit",
+            "time_in_force": "IOC",
+            "order_id": "dat_l1",
+        }
+    )
+
+    kwargs = api.place_order.call_args.kwargs
+    assert kwargs["side"] == OrderSide.BUY
+    assert kwargs["order_type"] == OrderType.LIMIT
+    assert kwargs["price"] == 101050.0
+    assert kwargs["time_in_force"] == "IOC"
+
+
+def test_place_market_entry_uses_market_order() -> None:
+    api = _api()
+    adapter = GridExecutionAdapter(api)
+
+    adapter.execute_action(
+        {
+            "action": "place",
+            "symbol": "BTCUSDT",
+            "side": "SELL",
+            "quantity": 0.02,
+            "order_type": "market",
+            "order_id": "dat_s1",
+        }
+    )
+
+    kwargs = api.place_order.call_args.kwargs
+    assert kwargs["side"] == OrderSide.SELL
+    assert kwargs["order_type"] == OrderType.MARKET
+    assert kwargs["price"] is None
+
+
 def test_multi_leg_adapter_name_is_primary_alias() -> None:
     assert MultiLegExecutionAdapter is GridExecutionAdapter
 

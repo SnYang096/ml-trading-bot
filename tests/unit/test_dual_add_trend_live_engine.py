@@ -37,6 +37,11 @@ take_profit:
 risk:
   diagnostic_fee_bps: 4.0
   max_loss_per_segment: 0.01
+order_model:
+  entry_order_type: marketable_limit
+  add_order_type: marketable_limit
+  max_slippage_bps: 5.0
+  pending_timeout_bars: 1
 """,
         encoding="utf-8",
     )
@@ -66,6 +71,14 @@ def test_dual_add_enters_with_initial_long_and_short_orders(tmp_path: Path) -> N
     )
 
     assert [a["side"] for a in actions] == ["BUY", "SELL"]
+    assert [a["order_type"] for a in actions] == [
+        "marketable_limit",
+        "marketable_limit",
+    ]
+    assert actions[0]["time_in_force"] == "IOC"
+    assert actions[0]["reference_price"] == 100.0
+    assert actions[0]["price"] == 100.05
+    assert actions[1]["price"] == 99.95
     assert len(engine.local_order_snapshots()) == 2
     assert engine.state.active is True
 
@@ -103,24 +116,69 @@ def test_dual_add_maps_execution_result_and_fill_to_position(tmp_path: Path) -> 
         ]
     )
 
-    engine.on_execution_report(
-        {
-            "order_id": "ex_1",
-            "client_order_id": "dat_abc",
-            "status": "FILLED",
-            "filled_qty": 1.0,
-            "last_filled_price": 100.0,
-            "trade_time": "2026-01-01T00:02:00Z",
-        }
-    )
+    report = {
+        "order_id": "ex_1",
+        "client_order_id": "dat_abc",
+        "status": "FILLED",
+        "filled_qty": 1.0,
+        "last_filled_price": 100.02,
+        "commission": 0.004,
+        "commission_asset": "USDT",
+        "trade_time": "2026-01-01T00:02:00Z",
+    }
+    engine.on_execution_report(report)
 
     assert len(engine.local_order_snapshots()) == 1
     positions = engine.local_position_snapshots()
     assert len(positions) == 1
     assert positions[0].side == "LONG"
+    assert report["reference_price"] == 100.0
+    assert round(report["fill_slippage_bps"], 6) == 2.0
+    assert report["max_slippage_bps"] == 5.0
     follow_ups = engine.pop_pending_actions()
     assert [a["protection_type"] for a in follow_ups] == ["stop_loss"]
     assert all(a["action"] == "place_protection" for a in follow_ups)
+
+
+def test_dual_add_cancels_stale_pending_orders(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={
+            "trend_confidence": 1.0,
+            "trend_direction": "UP",
+            "semantic_chop": 0.0,
+            "box_prefilter": False,
+        },
+    )
+
+    actions = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T02:00:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={
+            "trend_confidence": 1.0,
+            "trend_direction": "UP",
+            "semantic_chop": 0.0,
+            "box_prefilter": False,
+        },
+    )
+
+    assert any(
+        a["action"] == "cancel" and a["reason"] == "pending_timeout" for a in actions
+    )
 
 
 def test_dual_add_basket_tp_exits_inventory_together(tmp_path: Path) -> None:

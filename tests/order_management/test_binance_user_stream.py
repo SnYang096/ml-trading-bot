@@ -66,3 +66,37 @@ def test_normalize_account_update_sums_unrealized_pnl():
     assert out["wallet_balance"] == 1000.0
     assert out["available_balance"] == 900.0
     assert out["unrealized_pnl_total"] == 2.3
+
+
+def test_normalize_futures_execution_report_includes_fee_and_realized_pnl():
+    stream = _make_stream()
+    data = {
+        "e": "ORDER_TRADE_UPDATE",
+        "E": 1710000000000,
+        "o": {
+            "s": "BTCUSDT",
+            "i": 123,
+            "c": "dat_abc",
+            "S": "BUY",
+            "o": "LIMIT",
+            "X": "FILLED",
+            "x": "TRADE",
+            "l": "0.01",
+            "z": "0.01",
+            "L": "50000.5",
+            "ap": "50000.5",
+            "n": "0.02",
+            "N": "USDT",
+            "rp": "1.25",
+            "m": True,
+            "T": 1710000000123,
+        },
+    }
+
+    out = stream._normalize_execution_report(data)
+
+    assert out is not None
+    assert out["commission"] == 0.02
+    assert out["commission_asset"] == "USDT"
+    assert out["realized_pnl"] == 1.25
+    assert out["is_maker"] is True

@@ -3462,6 +3462,33 @@ def diff(strategy, ts1, ts2, config_path):
     sys.exit(run_script("scripts/auto_research_pipeline.py", args))
 
 
+@pipeline.command("deploy")
+@click.option("--diff", "show_diff", is_flag=True, help="只查看研究仓与 live/highcap 差异")
+@click.option("--deploy", "do_deploy", is_flag=True, help="执行部署 (对比 + 复制)")
+@click.option("--rollback", is_flag=True, help="显示 live/highcap 回滚指引")
+@click.option("--strategy", multiple=True, help="指定策略 (可重复；默认脚本内置策略集)")
+@click.option("--yes", "-y", is_flag=True, help="非交互模式, 跳过部署确认")
+@click.option("--git-commit", is_flag=True, help="部署后自动 git commit live/ 变更")
+def pipeline_deploy(show_diff, do_deploy, rollback, strategy, yes, git_commit):
+    """研究仓配置同步到 live/highcap."""
+    args = []
+    if show_diff:
+        args.append("--diff")
+    if do_deploy:
+        args.append("--deploy")
+    if rollback:
+        args.append("--rollback")
+    if strategy:
+        args.append("--strategy")
+        args.extend(strategy)
+    if yes:
+        args.append("--yes")
+    if git_commit:
+        args.append("--git-commit")
+
+    sys.exit(run_script("scripts/deploy_config_to_live.py", args))
+
+
 @pipeline.command()
 @click.option("--strategy", required=True, help="策略名")
 @click.option("--timestamp", multiple=True, help="指定时间戳 (可多次)")

@@ -147,11 +147,11 @@ slots:
 # 权威层级:
 #   Layer 0: slots.slot_count = 全局绝对上限
 #   Layer 0: slots.risk_per_slot = 每 slot 最大风险 (宪法硬上限)
-#   Layer 1: per_strategy_limits = 每策略资源上限 (max_risk_per_trade ≤ risk_per_slot)
+#   Layer 1: slot_policy = classic/trend 账户池的 symbol 级 slot 规则
+#   Layer 1: per_strategy_limits = 每策略风险/加仓/日内节流上限 (max_risk_per_trade ≤ risk_per_slot)
 #   Layer 2: pcm_regime.yaml 的仲裁策略在这些限制内运行
 #
 # 约束规则:
-#   per_strategy_limits.*.max_slots ≤ slots.slot_count
 #   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
@@ -161,15 +161,27 @@ resource_allocation:
     # 牛市 5x / 长侧实验需启用 long；短侧保持并列以便联合 PCM
     - bpc
     - tpc
-    - srb
+    # - srb
     - me
-    - fbf
-    - msr
+    # - fbf
+    # - msr
+
+  # classic/trend 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
+  # trend 集合只在 archetype_groups.trend 定义一次，避免 slot_policy 重复维护名单。
+  slot_policy:
+    trend_group: trend
+    min_trend_slots_per_symbol: 1
+    max_trend_slots_per_symbol: 1
+
+  archetype_groups:
+    trend:
+      - bpc
+      - tpc
+      - me
 
   per_strategy_limits:
-    # ── BPC：PCM 侧每 archetype 最多同时占用的 slot 数（跨 symbol 合计）
+    # ── BPC：策略级风险/加仓约束；slot 数由 resource_allocation.slot_policy 按 symbol 管理。
     bpc:
-      max_slots: 5 # 调大可让多 symbol 同时有机会开仓（仍受全局 slots.slot_count 等约束）
       max_risk_per_trade: 0.01 # 肥尾主仓: 首枪 2.00% 风险；加仓次数与 execution.add_position 对齐
       allow_add_position: true # BPC 趋势延续允许加仓
       max_add_times: 3 # 宪法上限；触发与梯度见 archetypes/execution.yaml
@@ -178,61 +190,58 @@ resource_allocation:
     # 未配置时 ConstitutionExecutor.validate_add_position 对未知策略将 max_add_times 默认=1，
     # 会导致「每母仓只能加仓一次」，事件回测里表现为加仓笔数远少于 BPC。须与 execution.add_position.max_add_times 对齐。
     tpc:
-      max_slots: 5
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 3
 
-    # ── SRB（Structural Range Breakout，成功突破延续 MVP）──
-    # 6-symbol rolling 中 4/5 slots 会在突破簇时过早饿死后到的同质有效信号（如 ADA 2024-11）；
-    # SRB 无 evidence 排名时不应靠 symbol 时间顺序做隐式择优，允许 6 币宇宙全覆盖。
-    srb:
-      max_slots: 6
-      max_risk_per_trade: 0.01
-      allow_add_position: true
-      max_add_times: 3
 
     # ── ME 方向拆分 ──
     me:
-      max_slots: 5
       max_risk_per_trade: 0.01 # 动量扩散只做加速段, 首枪更轻
       allow_add_position: true # ME 动能扩张允许加仓
       max_add_times: 3 # 与 execution.add_position.max_add_times 对齐；≥3 便于骑乘实验
       max_new_entries_per_day: 3 # 日内新开仓上限（不含加仓），3 x 1% = 3% < daily_loss_limit
 
-    # ── FBF (L2 POC/HAL 盒子边沿失败突破反转，方向双向) ──
-    # 独立于 FER：FER 是单边耗竭反转，FBF 是结构性盒子边沿假破。
-    fbf:
-      max_slots: 3
-      max_risk_per_trade: 0.01
-      allow_add_position: false
-
-    # ── MSR (L3 大级别 swing SR 假破反转) ──
-    # 稀疏高置信：预期 1-2 单/币/月，max_slots 低，不加仓
-    msr:
-      max_slots: 2
-      max_risk_per_trade: 0.01
-      allow_add_position: false
-
-    # ── LV (方向中性, 不拆分) ──
-    lv:
-      max_slots: 0 # LV 快进快出，最多 1 个
-      max_risk_per_trade: 0.0025 # LV 极端波动反噬快, 预算进一步下调到 0.25%
-      allow_add_position: false # LV 不加仓
-
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。
+  # 若要在 PCM 层用 BTC close vs ema_200 再挡逆势单，可恢复 resource_allocation.direction_policy.enabled
 
 # -----------------------------------------------------------------------------
 # 4) Multi-leg account (separate Binance API keys; run_multi_leg_live.py)
 # -----------------------------------------------------------------------------
+# Classic live uses slots/per_strategy_limits above; multi-leg uses a separate account budget here.
+# Notional caps are exposure ceilings for the dedicated multi-leg account, not classic trend risk slots.
+# multi-leg 合约约束：同一 symbol 同时最多 1 个 multi-leg 策略占用（chop_grid / dual_add_trend 互斥）。
 multi_leg:
   strategies:
     - chop_grid
     - dual_add_trend
-  unit_notional: 100.0
+  # Per-order / per-leg USDT notional used by multi-leg engines.
+  # - chop_grid: each grid level places qty = unit_notional / current_price.
+  # - dual_add_trend: each seed/add leg places qty = unit_notional / order_price.
+  # Portfolio/symbol caps below can still reject orders after this sizing step.
+  #
+  # Default 100.0 is a conservative live starting point, not a tuned strategy knob.
+  # With account.equity_usdt: 10000, one leg is ~1% of notional anchor; together
+  # with max_symbol_gross_notional_pct / max_gross_notional_pct caps, inventory
+  # can grow in layers without immediately hitting account ceilings (e.g.
+  # chop_grid max_open_levels_total=6 -> ~600 USDT/symbol vs 8% -> ~800 USDT;
+  # dual_add max_gross_exposure_units=4 -> ~400 USDT gross footprint before caps).
+  # Scale unit_notional when equity changes (e.g. 2000 -> ~20, 5000 -> ~50);
+  # rule of thumb: start around 0.5%–1.0% equity per leg and keep hard limits below.
+  unit_notional: 200.0
+  account:
+    # Offline budget anchor for pct-based risk_limits and validation reports.
+    # In live trading, actual equity/drawdown should come from account sync / exchange
+    # state; this value is not a replacement for real account balance.
+    equity_usdt: 10000
+    # Live/shadow kill-switch threshold; checked against synced or supplied drawdown.
+    max_drawdown_pct: 0.12
   risk_limits:
-    max_gross_notional: 2000
-    max_net_notional: 1000
-    max_symbol_gross_notional: 800
-    max_symbol_net_notional: 400
+    # Pct limits are resolved against account.equity_usdt unless absolute notional
+    # limits are supplied. Example: 0.20 * 10000 = 2000 USDT max gross exposure.
+    max_gross_notional_pct: 0.20
+    max_net_notional_pct: 0.10
+    max_symbol_gross_notional_pct: 0.08
+    max_symbol_net_notional_pct: 0.04
+    # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60

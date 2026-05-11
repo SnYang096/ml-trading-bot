@@ -153,6 +153,12 @@ class BinanceUserStream:
             "filled_qty": float(payload.get("z") or 0),
             "last_filled_price": float(payload.get("L") or 0),
             "avg_price": float(payload.get("ap") or payload.get("avgPrice") or 0),
+            "commission": float(payload.get("n") or payload.get("commission") or 0),
+            "commission_asset": payload.get("N") or payload.get("commissionAsset"),
+            "realized_pnl": float(
+                payload.get("rp") or payload.get("realizedPnl") or 0
+            ),
+            "is_maker": bool(payload.get("m", False)),
             "event_time": _ms_to_s(data.get("E")),
             "trade_time": _ms_to_s(payload.get("T") or payload.get("tradeTime")),
         }

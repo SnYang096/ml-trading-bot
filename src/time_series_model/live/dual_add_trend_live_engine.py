@@ -44,6 +44,10 @@ class DualAddEngineConfig:
     catastrophic_stop_tp_mult: float = 8.0
     flip_action: str = "close_offside_all"
     initial_hedge: bool = True
+    entry_order_type: str = "marketable_limit"
+    add_order_type: str = "marketable_limit"
+    max_slippage_bps: float = 5.0
+    pending_timeout_bars: int = 1
 
 
 @dataclass
@@ -60,6 +64,9 @@ class DualAddOrder:
     exchange_order_id: str = ""
     client_order_id: str = ""
     filled_quantity: float = 0.0
+    created_bar: int = 0
+    reference_price: float = 0.0
+    max_slippage_bps: float = 0.0
 
 
 @dataclass
@@ -90,6 +97,7 @@ class DualAddTrendState:
     pending_orders: List[DualAddOrder] = field(default_factory=list)
     inventory: List[DualAddPosition] = field(default_factory=list)
     last_timestamp: str = ""
+    bar_index: int = 0
     last_reconciliation_ok: bool = True
     last_reconciliation_issues: List[str] = field(default_factory=list)
 
@@ -108,6 +116,7 @@ def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
     spacing = obj.get("add_spacing", {}) or {}
     tp = obj.get("take_profit", {}) or {}
     risk = obj.get("risk", {}) or {}
+    order_model = obj.get("order_model", {}) or {}
     return DualAddEngineConfig(
         entry_trend_min=float(regime.get("entry_min", 0.80)),
         exit_trend_below=float(regime.get("exit_below", 0.50)),
@@ -130,6 +139,10 @@ def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
         flip_action=str(inv.get("flip_action", "close_offside_all")),
         initial_hedge=set(inv.get("initial_legs", ["LONG", "SHORT"]))
         == {"LONG", "SHORT"},
+        entry_order_type=str(order_model.get("entry_order_type", "marketable_limit")),
+        add_order_type=str(order_model.get("add_order_type", "marketable_limit")),
+        max_slippage_bps=float(order_model.get("max_slippage_bps", 5.0)),
+        pending_timeout_bars=int(order_model.get("pending_timeout_bars", 1)),
     )
 
 
@@ -171,6 +184,7 @@ class DualAddTrendLiveEngine:
             pending_orders=[DualAddOrder(**o) for o in raw.get("pending_orders", [])],
             inventory=[DualAddPosition(**p) for p in raw.get("inventory", [])],
             last_timestamp=str(raw.get("last_timestamp", "")),
+            bar_index=int(raw.get("bar_index", 0) or 0),
             last_reconciliation_ok=bool(raw.get("last_reconciliation_ok", True)),
             last_reconciliation_issues=[
                 str(x) for x in raw.get("last_reconciliation_issues", [])
@@ -204,6 +218,8 @@ class DualAddTrendLiveEngine:
             "LONG" if str(features.get("trend_direction", "UP")) == "UP" else "SHORT"
         )
         self.state.last_timestamp = timestamp
+        if self.state.active and self.state.symbol == symbol:
+            self.state.bar_index += 1
 
         should_enter = (
             not self.state.active
@@ -219,6 +235,7 @@ class DualAddTrendLiveEngine:
             return actions
 
         if self.state.active and self.state.symbol == symbol:
+            actions.extend(self._cancel_stale_pending_orders(timestamp))
             if trend_conf < self.cfg.exit_trend_below or chop > self.cfg.max_hold_chop:
                 actions.extend(self._exit_all(close, timestamp, reason="regime_exit"))
             else:
@@ -274,6 +291,8 @@ class DualAddTrendLiveEngine:
                     order.exchange_order_id = result.order_id
                     order.client_order_id = result.client_order_id
                     order.status = str(result.status or "submitted")
+                    if order.status.lower() in {"canceled", "expired", "rejected"}:
+                        order.status = "canceled"
             elif result.action == "cancel":
                 order = self._find_order(
                     local_id=local_id,
@@ -321,33 +340,43 @@ class DualAddTrendLiveEngine:
         status = str(report.get("status") or "").upper()
         filled_qty = _as_float(report.get("filled_qty"), order.filled_quantity)
         last_px = _as_float(report.get("last_filled_price"), order.price)
-        order.filled_quantity = max(
-            order.filled_quantity, min(filled_qty, order.quantity)
-        )
+        if last_px > 0 and order.reference_price > 0:
+            if order.side == "BUY":
+                slippage_bps = (last_px - order.reference_price) / order.reference_price
+            else:
+                slippage_bps = (order.reference_price - last_px) / order.reference_price
+            report["reference_price"] = order.reference_price
+            report["fill_slippage_bps"] = slippage_bps * 10000.0
+            report["max_slippage_bps"] = order.max_slippage_bps
+        old_filled = float(order.filled_quantity)
+        new_filled = max(old_filled, min(filled_qty, order.quantity))
+        fill_delta = max(0.0, new_filled - old_filled)
+        order.filled_quantity = new_filled
         order.status = status.lower() if status else order.status
-        if status == "FILLED" or order.filled_quantity >= order.quantity:
+        new_position: DualAddPosition | None = None
+        if fill_delta > 0:
             pos_side = "LONG" if order.side == "BUY" else "SHORT"
-            self.state.inventory.append(
-                DualAddPosition(
-                    leg_id=order.order_id,
-                    symbol=order.symbol,
-                    side=pos_side,
-                    entry_price=last_px if last_px > 0 else order.price,
-                    quantity=order.filled_quantity or order.quantity,
-                    seq=order.seq,
-                    entry_time=str(
-                        report.get("trade_time") or self.state.last_timestamp
-                    ),
-                )
+            new_position = DualAddPosition(
+                leg_id=f"{order.order_id}_fill{len(self.state.inventory)}",
+                symbol=order.symbol,
+                side=pos_side,
+                entry_price=last_px if last_px > 0 else order.price,
+                quantity=fill_delta,
+                seq=order.seq,
+                entry_time=str(report.get("trade_time") or self.state.last_timestamp),
             )
+            self.state.inventory.append(new_position)
+        terminal = status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}
+        if new_position is not None:
             self._pending_actions.extend(
                 self._protection_actions(
-                    pos=self.state.inventory[-1],
+                    pos=new_position,
                     timestamp=str(
                         report.get("trade_time") or self.state.last_timestamp
                     ),
                 )
             )
+        if terminal or order.filled_quantity >= order.quantity:
             self.state.pending_orders = [
                 o for o in self.state.pending_orders if o.order_id != order.order_id
             ]
@@ -371,6 +400,7 @@ class DualAddTrendLiveEngine:
             last_add_short=close,
             trend_side=trend_side,
             last_timestamp=timestamp,
+            bar_index=0,
         )
         return self._seed_inventory_orders(close, timestamp, trend_side)
 
@@ -502,18 +532,68 @@ class DualAddTrendLiveEngine:
         self, side: str, price: float, timestamp: str, reason: str, *, seq: int
     ) -> Dict[str, Any]:
         qty = self.unit_notional / max(price, 1e-12)
+        raw_order_type = (
+            self.cfg.add_order_type
+            if reason == "trend_add"
+            else self.cfg.entry_order_type
+        )
+        order_type = _normalize_order_type(raw_order_type)
+        max_slippage_bps = max(float(self.cfg.max_slippage_bps), 0.0)
+        submit_price = float(price)
+        time_in_force = None
+        if order_type == "marketable_limit":
+            slip = max_slippage_bps / 10000.0
+            submit_price = (
+                price * (1.0 + slip) if side == "BUY" else price * (1.0 - slip)
+            )
+            time_in_force = "IOC"
+        elif order_type == "market":
+            submit_price = price
+        else:
+            order_type = "limit"
         order = DualAddOrder(
             order_id=f"{self.state.segment_id}_{reason}_{side}_{seq}_{len(self.state.pending_orders)}",
             symbol=self.state.symbol,
             side=side,
-            price=price,
+            price=submit_price,
             quantity=qty,
             reason=reason,
             seq=seq,
             created_at=timestamp,
+            created_bar=int(self.state.bar_index),
+            reference_price=float(price),
+            max_slippage_bps=max_slippage_bps,
         )
         self.state.pending_orders.append(order)
-        return {"action": "place", "order_type": "limit", **asdict(order)}
+        action = {"action": "place", "order_type": order_type, **asdict(order)}
+        if time_in_force:
+            action["time_in_force"] = time_in_force
+        return action
+
+    def _cancel_stale_pending_orders(self, timestamp: str) -> List[Dict[str, Any]]:
+        timeout = int(self.cfg.pending_timeout_bars)
+        if timeout <= 0:
+            return []
+        actions: List[Dict[str, Any]] = []
+        kept: List[DualAddOrder] = []
+        for order in self.state.pending_orders:
+            age = int(self.state.bar_index) - int(order.created_bar)
+            if age >= timeout and order.status not in {"filled", "canceled"}:
+                order.status = "canceled"
+                actions.append(
+                    {
+                        "action": "cancel",
+                        "order_id": order.order_id,
+                        "symbol": order.symbol,
+                        "exchange_order_id": order.exchange_order_id,
+                        "reason": "pending_timeout",
+                        "timestamp": timestamp,
+                    }
+                )
+            else:
+                kept.append(order)
+        self.state.pending_orders = kept
+        return actions
 
     def _market_exit(
         self, pos: DualAddPosition, price: float, timestamp: str, reason: str
@@ -644,3 +724,10 @@ def _as_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_order_type(raw: str) -> str:
+    value = str(raw or "limit").strip().lower().replace("-", "_")
+    if value in {"market", "limit", "marketable_limit"}:
+        return value
+    return "limit"

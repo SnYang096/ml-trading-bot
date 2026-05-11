@@ -95,6 +95,44 @@ def _runtime(
     )
 
 
+def test_orchestrator_persists_execution_report_with_raw_fill_fields() -> None:
+    engine = FakeEngine()
+    adapter = _adapter()
+    storage = MagicMock()
+    orchestrator = MultiLegLiveOrchestrator(
+        engine=engine,
+        governor=MultiLegPortfolioRiskGovernor(
+            MultiLegRiskLimits(max_gross_notional=1_000.0, max_net_notional=1_000.0)
+        ),
+        adapter=adapter,
+        reconciler=MultiLegReconciler(),
+        storage=storage,
+        run_id="run_1",
+        strategy_name="dual_add_trend",
+        symbol="BTCUSDT",
+    )
+
+    orchestrator.on_execution_report(
+        {
+            "symbol": "BTCUSDT",
+            "order_id": "ex_1",
+            "client_order_id": "dat_abc",
+            "status": "FILLED",
+            "execution_type": "TRADE",
+            "commission": 0.02,
+            "commission_asset": "USDT",
+            "fill_slippage_bps": 2.0,
+        }
+    )
+
+    storage.record_execution_report.assert_called_once()
+    payload = storage.record_execution_report.call_args.args[0]
+    assert payload["run_id"] == "run_1"
+    assert payload["strategy"] == "dual_add_trend"
+    assert payload["raw"]["commission"] == 0.02
+    assert payload["raw"]["fill_slippage_bps"] == 2.0
+
+
 def test_daemon_processes_each_runtime_once_per_new_bar() -> None:
     bar = MultiLegBarEvent(
         symbol="BTCUSDT",

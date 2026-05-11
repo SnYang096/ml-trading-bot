@@ -228,7 +228,7 @@ multi_leg:
   # dual_add max_gross_exposure_units=4 -> ~400 USDT gross footprint before caps).
   # Scale unit_notional when equity changes (e.g. 2000 -> ~20, 5000 -> ~50);
   # rule of thumb: start around 0.5%–1.0% equity per leg and keep hard limits below.
-  unit_notional: 100.0
+  unit_notional: 200.0
   account:
     # Offline budget anchor for pct-based risk_limits and validation reports.
     # In live trading, actual equity/drawdown should come from account sync / exchange

@@ -1,5 +1,6 @@
-# TPC — 趋势回调延续；执行档与 ME 对齐为宽止损/宽 trailing，仓位 sizing 吸收更宽风险；
-# EMA1200 结构保底，不设 breakeven。
+# TPC — 趋势回调延续；执行档与 ME/BPC 对齐（同一套 initial_r / trailing / 加仓阶梯）。
+# 原则：三策略情愿共用一个偏宽的止损带，用初始仓位与 sizing 收风险，也不把 SL/trailing 拧得过紧
+# 以免噪声扫损；EMA1200 结构保底；不设 breakeven。
 
 add_position:
   add_size_multipliers:
@@ -20,8 +21,8 @@ execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
 holding:
-  max_holding_bars: 360
-  time_stop_bars: 0
+  # 仅 max_holding_bars；0 = 无墙钟时间强平（与 ME/BPC 对齐）。
+  max_holding_bars: 0
 stop_loss:
   # 2026-04-22 统一 breakeven 口径（见 position_logic.py）：
   # measure=atr 保持历史语义；lock_level_r 等价于旧 lock_profit_atr（ATR 单位）。
@@ -33,6 +34,7 @@ stop_loss:
   guardrails:
     max_stop_pct: 0.1
     min_stop_pct: 0.01
+  # initial_r 与 ME/BPC 一致；宽止损防震扫，仓位由上游 sizing 收。
   initial_r: 4.0
   structural_exit: ema1200
   trailing:

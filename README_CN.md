@@ -364,8 +364,8 @@ mlbot pipeline adopt 20260313_234448 --strategy bpc
 # mlbot pipeline delete --strategy bpc --timestamp 20260501_012111 --config config/strategies/bpc/research/turbo.yaml
 
 # 研究仓 → 实盘 highcap
-python scripts/deploy_config_to_live.py --diff --strategy bpc
-python scripts/deploy_config_to_live.py --deploy --strategy bpc --git-commit
+mlbot pipeline deploy --diff --strategy bpc
+mlbot pipeline deploy --deploy --strategy bpc --git-commit
 ```
 
 #### Turbo / Slow / Non_rolling：分工与流程图
@@ -583,11 +583,11 @@ mlbot pipeline adopt <时间戳> --strategy dual_add_trend --config "$DUAL_CFG"
 **3）研究仓 → 实盘 highcap（多腿会 diff/deploy 全部 archetypes + 根 engine yaml）**
 
 ```bash
-python scripts/deploy_config_to_live.py --diff --strategy chop_grid
-python scripts/deploy_config_to_live.py --deploy --strategy chop_grid --git-commit
+mlbot pipeline deploy --diff --strategy chop_grid
+mlbot pipeline deploy --deploy --strategy chop_grid --git-commit
 
-python scripts/deploy_config_to_live.py --diff --strategy dual_add_trend
-python scripts/deploy_config_to_live.py --deploy --strategy dual_add_trend --git-commit
+mlbot pipeline deploy --diff --strategy dual_add_trend
+mlbot pipeline deploy --deploy --strategy dual_add_trend --git-commit
 ```
 
 **4）多腿实盘 / 影子进程（与 `scripts/run_live.py` 分离）**

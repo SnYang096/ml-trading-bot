@@ -172,7 +172,9 @@ class MultiLegLiveOrchestrator:
     def on_execution_report(self, report: Mapping[str, Any]) -> None:
         """Forward user-stream execution updates and execute follow-up actions."""
 
-        _call_optional(self.engine, "on_execution_report", dict(report))
+        report_dict = dict(report)
+        _call_optional(self.engine, "on_execution_report", report_dict)
+        self._persist_execution_report(report_dict)
         follow_ups = _call_snapshot(self.engine, "pop_pending_actions")
         if follow_ups:
             results = self.adapter.execute_actions(follow_ups)
@@ -199,6 +201,23 @@ class MultiLegLiveOrchestrator:
                 "symbol": self.symbol,
                 "ok": report.ok,
                 "raw": raw,
+            }
+        )
+
+    def _persist_execution_report(self, report: Mapping[str, Any]) -> None:
+        if self.storage is None:
+            return
+        self.storage.record_execution_report(
+            {
+                "run_id": self.run_id,
+                "strategy": self.strategy_name,
+                "symbol": report.get("symbol") or self.symbol,
+                "order_id": report.get("order_id"),
+                "client_order_id": report.get("client_order_id"),
+                "status": report.get("status"),
+                "execution_type": report.get("execution_type"),
+                "event_time": report.get("event_time") or report.get("trade_time"),
+                "raw": dict(report),
             }
         )
 

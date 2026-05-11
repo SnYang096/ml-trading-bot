@@ -26,3 +26,16 @@ feature_pipeline:
     - ema_1200_position_f
     - ema_1200_slope_f
     - trend_confidence_f
+
+    # Experimental trend/order-flow confirmation candidates. These are consumed
+    # by research selectors only; archetypes keep the locked trend anchor.
+    - wpt_scene_semantic_scores_f
+    - hurst_price_f
+    - hurst_cvd_f
+    - hilbert_phase_f
+    - vpin_scene_semantic_scores_f
+    - cvd_change_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f

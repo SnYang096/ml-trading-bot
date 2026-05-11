@@ -1,0 +1,35 @@
+# ME · low-freedom non_rolling
+#
+# Purpose: validate the current archetype with a narrower search surface.
+# It keeps Prefilter semantics, Direction, and Execution fixed, then only
+# recalibrates Gate and Entry Filter on the 6m validation tail before testing
+# the latest 6m OOS window.
+
+extends: non_rolling.yaml
+
+threshold_calibration:
+  enable_model_training: false
+  prefilter:
+    optimize: false
+  gate:
+    optimize: true
+  entry_filter:
+    optimize: true
+  execution_opt:
+    enabled: false
+  direction_tuning:
+    enabled: false
+
+shap_feature_selection:
+  enabled: false
+
+event_backtest:
+  promote: false
+
+strategies:
+  me:
+    skip_locked_prefilter_reanchor: true
+    kpi_gates:
+      prefilter:
+        locked_threshold_tuning:
+          enabled: false

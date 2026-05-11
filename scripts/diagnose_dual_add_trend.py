@@ -67,6 +67,7 @@ def _load_dual_add_defaults(path: Path) -> dict:
     spacing = cfg.get("add_spacing", {}) or {}
     tp = cfg.get("take_profit", {}) or {}
     risk = cfg.get("risk", {}) or {}
+    order_model = cfg.get("order_model", {}) or {}
     dual_bt = cfg.get("dual_add_backtest", {}) or {}
     costs = dual_bt.get("costs", {}) if isinstance(dual_bt, dict) else {}
     if not isinstance(costs, dict):
@@ -111,6 +112,18 @@ def _load_dual_add_defaults(path: Path) -> dict:
             costs.get(
                 "intrabar_touch_buffer_bps",
                 risk.get("intrabar_touch_buffer_bps", 0.0),
+            )
+        ),
+        "entry_slippage_bps": float(
+            costs.get(
+                "entry_slippage_bps",
+                order_model.get("simulated_entry_slippage_bps", 0.0),
+            )
+        ),
+        "add_slippage_bps": float(
+            costs.get(
+                "add_slippage_bps",
+                order_model.get("simulated_add_slippage_bps", 0.0),
             )
         ),
         "initial_hedge": set(inv.get("initial_legs", ["LONG", "SHORT"]))
@@ -178,6 +191,8 @@ class DualAddConfig:
     fee_bps: float = 4.0
     market_exit_slippage_bps: float = 0.0
     intrabar_touch_buffer_bps: float = 0.0
+    entry_slippage_bps: float = 0.0
+    add_slippage_bps: float = 0.0
     max_loss_per_segment: float = 0.01
     risk_stop_mode: str = "mtm"
     initial_hedge: bool = True
@@ -202,6 +217,13 @@ def _exit_price_with_slippage(side: str, px: float, slippage_bps: float) -> floa
     if slip <= 0:
         return px
     return px * (1.0 - slip) if side == "LONG" else px * (1.0 + slip)
+
+
+def _entry_price_with_slippage(side: str, px: float, slippage_bps: float) -> float:
+    slip = max(float(slippage_bps), 0.0) / 10000.0
+    if slip <= 0:
+        return px
+    return px * (1.0 + slip) if side == "LONG" else px * (1.0 - slip)
 
 
 def _add_trend_features(
@@ -280,13 +302,16 @@ def simulate_dual_add_segment(
         nonlocal last_add_long, last_add_short
         sides = ["LONG", "SHORT"] if cfg.initial_hedge else [trend_side]
         for side in sides:
+            entry_px = _entry_price_with_slippage(side, px, cfg.entry_slippage_bps)
             positions.append(
                 {
                     "side": side,
-                    "entry": px,
+                    "entry": entry_px,
+                    "signal_entry": px,
                     "entry_time": ts,
                     "entry_bar": bar_i,
                     "seq": 0,
+                    "entry_slippage_bps": cfg.entry_slippage_bps,
                 }
             )
         last_add_long = px
@@ -313,12 +338,16 @@ def simulate_dual_add_segment(
                 "entry_time": pos["entry_time"],
                 "exit_time": exit_ts,
                 "entry_price": pos["entry"],
+                "signal_entry_price": pos.get("signal_entry", pos["entry"]),
                 "exit_price": filled_exit_px,
                 "signal_exit_price": exit_px,
                 "exit_reason": reason,
                 "pnl_pct": pnl_pct,
                 "pnl_per_capital": pnl_pct / capital_units,
                 "fee_bps_charged": 2.0 * cfg.fee_bps,
+                "entry_slippage_bps_charged": float(
+                    pos.get("entry_slippage_bps", 0.0) or 0.0
+                ),
                 "slippage_bps_charged": slippage_bps,
             }
         )
@@ -464,10 +493,14 @@ def simulate_dual_add_segment(
                 positions.append(
                     {
                         "side": "LONG",
-                        "entry": last_add_long,
+                        "entry": _entry_price_with_slippage(
+                            "LONG", last_add_long, cfg.add_slippage_bps
+                        ),
+                        "signal_entry": last_add_long,
                         "entry_time": ts,
                         "entry_bar": bar_i,
                         "seq": add_long_count,
+                        "entry_slippage_bps": cfg.add_slippage_bps,
                     }
                 )
             while (
@@ -482,10 +515,14 @@ def simulate_dual_add_segment(
                 positions.append(
                     {
                         "side": "SHORT",
-                        "entry": last_add_short,
+                        "entry": _entry_price_with_slippage(
+                            "SHORT", last_add_short, cfg.add_slippage_bps
+                        ),
+                        "signal_entry": last_add_short,
                         "entry_time": ts,
                         "entry_bar": bar_i,
                         "seq": add_short_count,
+                        "entry_slippage_bps": cfg.add_slippage_bps,
                     }
                 )
             enforce_net_cap(close, ts)
@@ -598,6 +635,8 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         fee_bps=args.fee_bps,
         market_exit_slippage_bps=args.market_exit_slippage_bps,
         intrabar_touch_buffer_bps=args.intrabar_touch_buffer_bps,
+        entry_slippage_bps=args.entry_slippage_bps,
+        add_slippage_bps=args.add_slippage_bps,
         max_loss_per_segment=args.max_loss_per_segment,
         risk_stop_mode=args.risk_stop_mode,
         initial_hedge=args.initial_hedge,
@@ -1121,6 +1160,18 @@ def main() -> None:
         type=float,
         default=defaults.get("intrabar_touch_buffer_bps", 0.0),
         help="Extra high/low penetration required before intrabar add/TP fills.",
+    )
+    ap.add_argument(
+        "--entry-slippage-bps",
+        type=float,
+        default=defaults.get("entry_slippage_bps", 0.0),
+        help="Adverse slippage applied to initial entry fills in the diagnostic backtest.",
+    )
+    ap.add_argument(
+        "--add-slippage-bps",
+        type=float,
+        default=defaults.get("add_slippage_bps", 0.0),
+        help="Adverse slippage applied to trend-add fills in the diagnostic backtest.",
     )
     ap.add_argument(
         "--exclude-box",

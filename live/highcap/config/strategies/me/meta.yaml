@@ -1,22 +1,18 @@
-# ME (MomentumExpansion) 策略元信息
+# ME（MomentumExpansion）策略元信息 — 配置目录 config/strategies/me
 
 strategy:
   name: me
   description: |
-    MomentumExpansion archetype: 流动性加速 + 波动扩张驱动。
-    识别市场流动性加速和波动扩张的机会，而非压缩突破。
-  tags:
-    - momentum
-    - expansion
-    - breakout
+    MomentumExpansion：流动性加速 + 波动扩张；双向由 direction 规则决定。
 
   owner: quant_team
   archetype: MomentumExpansion
-  
-  # 默认时间粒度（研发 + 实盘统一）
-  timeframe: "60T"  # 1小时，ME 动量扩张适合更快的时间粒度
 
-  # false：gate / direction / structural_exit 用的 macro_tp_vwap_1200_position 按各 symbol 自身 VWAP。
+  # 默认时间粒度（研发 + 实盘统一）
+  timeframe: "120T"
+
+  # false：macro_tp_vwap_1200_position 用各 symbol 自身 K 线算 VWAP（默认，更贴品种节奏）。
+  # true：改为锚定 symbol（如 BTCUSDT）的宏观位置，与部分 BPC 文档表述一致；按需打开。
   macro_tp_vwap_anchor:
     enabled: false
     symbol: BTCUSDT

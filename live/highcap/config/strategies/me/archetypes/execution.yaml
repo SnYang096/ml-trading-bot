@@ -1,55 +1,48 @@
+# ME — 动量扩张 / 冲段（ATR 大、假突破多）；执行档与 TPC/BPC 数值对齐。
+# 原则：宁可共宽止损、用仓位与 sizing 控暴露，也不单独把 ME 拧得更紧以免被洗出场；
+# 同一套 initial_r / trailing / 加仓阶梯；EMA1200 结构保底 + trailing；不设 breakeven。
+
+add_position:
+  add_size_multipliers:
+    # 这里越加越多是因为根据数据统计，越后面成功率越高
+    - 1
+    - 2
+    - 3
+  inherit_parent_stop: true
+  max_add_times: 3
+  min_current_r_by_add:
+    - 1
+    - 2
+    - 3
+  min_current_r_unit: atr
+  sizing_mode: fixed_multiplier
+  trigger:
+    # float_r_ladder_only = 浮盈 R 阶梯（事件回测）；bpc_follow_signal = 仅 PCM 再次意图时加仓
+    type: float_r_ladder_only
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15
 holding:
-  max_holding_bars: null
-  time_stop_bars: 72 # ME 负责吃扩散加速段, 默认 3 天内兑现
-optimization:
-  enabled: true
-  params:
-    stop_loss.initial_r:
-      range:
-        - 1.0
-        - 4.0
-      step: 0.5
-    stop_loss.trailing.activation_r:
-      range:
-        - 0.5
-        - 5.0
-      step: 0.5
-    stop_loss.trailing.trail_r:
-      range:
-        - 0.5
-        - 3.0
-      step: 0.5
+  # 时间强平只认 max_holding_bars（与 ExecutionParamGenerator 一致）。0 = 禁用，由 SL / trailing / 结构出场决定持仓长度。
+  max_holding_bars: 0
 stop_loss:
   breakeven:
-    enabled: true
-    trigger_r: 2.5
-    lock_level_r: 0.75
+    enabled: false
+    trigger_r: 9
+    lock_level_r: 1.0
     measure: atr
-  initial_r: 3.0
   guardrails:
-    min_stop_pct: 0.006
-    max_stop_pct: 0.10
-  structural_exit: vwap1200
+    max_stop_pct: 0.1
+    min_stop_pct: 0.01
+  # initial_r 与 TPC/BPC 一致；宁可宽止损共口径，暴露用仓位与 sizing 收。
+  initial_r: 4.0
+  structural_exit: ema1200
   trailing:
     enabled: true
-    activation_r: 2.0
-    trail_r: 2.5
+    expand_with_primary_atr: true
+    activation_r: 4.0
+    trail_r: 12.0
   type: trailing
 take_profit:
   enabled: false
-add_position:
-  max_add_times: 2
-  sizing_mode: fixed_multiplier
-  add_size_multipliers: [0.4, 0.25]
-  target_leverage_by_add: [3.8, 5.0]
-  max_total_leverage: 5.0
-  max_add_notional_frac: 0.30
-  min_add_notional_usd: 50.0
-  max_add_leverage_step: [0.9, 0.7]
-  min_current_r_by_add: [1.0, 2.0]
-  trigger:
-    type: float_r_ladder_only
-version: 34
+version: 61

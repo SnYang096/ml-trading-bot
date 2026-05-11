@@ -84,7 +84,7 @@ class MultiLegExecutionAdapter:
     def execute_action(self, action: Dict[str, Any]) -> MultiLegExecutionResult:
         kind = str(action.get("action", "") or "").strip().lower()
         if kind == "place":
-            return self._place_limit(action)
+            return self._place_entry(action)
         if kind == "cancel":
             return self._cancel(action)
         if kind == "cancel_protection":
@@ -117,20 +117,29 @@ class MultiLegExecutionAdapter:
         sym = symbol or self.default_symbol
         return self.binance_api.get_positions(sym)
 
-    def _place_limit(self, action: Dict[str, Any]) -> MultiLegExecutionResult:
+    def _place_entry(self, action: Dict[str, Any]) -> MultiLegExecutionResult:
         symbol = _required_str(action, "symbol")
         side = _order_side(_required_str(action, "side"))
         quantity = _required_positive_float(action, "quantity")
-        price = _required_positive_float(action, "price")
+        raw_order_type = str(action.get("order_type") or "limit").strip().lower()
+        order_type = OrderType.MARKET if raw_order_type == "market" else OrderType.LIMIT
+        price = (
+            None
+            if order_type == OrderType.MARKET
+            else _required_positive_float(action, "price")
+        )
         client_order_id = self._client_order_id(action)
+        time_in_force = str(action.get("time_in_force") or "").strip().upper() or None
 
         if self.shadow:
             logger.info(
-                "shadow grid place: %s %s qty=%s price=%s cid=%s",
+                "shadow grid place: %s %s %s qty=%s price=%s tif=%s cid=%s",
                 symbol,
                 side.value,
+                order_type.value,
                 quantity,
                 price,
+                time_in_force,
                 client_order_id,
             )
             result = MultiLegExecutionResult(
@@ -146,10 +155,11 @@ class MultiLegExecutionAdapter:
         order = self.binance_api.place_order(
             symbol=symbol,
             side=side,
-            order_type=OrderType.LIMIT,
+            order_type=order_type,
             quantity=quantity,
             price=price,
             client_order_id=client_order_id,
+            time_in_force=time_in_force,
         )
         result = MultiLegExecutionResult(
             action="place",
