@@ -23,6 +23,11 @@ DATA_DIR ?= data/parquet_data
 MODEL_DIR ?= models
 RESULTS_DIR ?= results
 
+# Remote SSH (Tencent / quant-engine VPS; aligns with `.github/workflows/deploy.yml` DEPLOY_* secrets)
+TENCENT_SSH_HOST ?=
+TENCENT_SSH_USER ?= ubuntu
+TENCENT_SSH_KEY ?= $(HOME)/.ssh/id_tencent_cloud_ssh
+
 SYMBOL ?= BTCUSDT
 # SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT
 SYMBOLS ?= BTCUSDT,ETHUSDT
@@ -90,7 +95,7 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 endif
 
 
-.PHONY: help clean format lint fix-permissions fix-ownership dev-install install-hooks docker-build docker-install builder-shell \
+.PHONY: help clean format lint fix-permissions fix-ownership dev-install install-hooks docker-build docker-install ssh-tencent builder-shell \
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only \
 	ts-vectorbot-backtest ts-nautilus-backtest \
@@ -105,6 +110,13 @@ endif
 start-docker:
 	@bash scripts/start_docker.sh
 
+ssh-tencent:
+	@test -n "$(strip $(TENCENT_SSH_HOST))" \
+		|| (echo >&2 'Set TENCENT_SSH_HOST (e.g. value of GitHub secret DEPLOY_HOST). Example: make ssh-tencent TENCENT_SSH_HOST=1.2.3.4'; exit 1)
+	@test -r "$(TENCENT_SSH_KEY)" \
+		|| (echo >&2 'SSH key not readable: $(TENCENT_SSH_KEY)'; exit 1)
+	ssh -i "$(TENCENT_SSH_KEY)" -o StrictHostKeyChecking=accept-new "$(TENCENT_SSH_USER)@$(TENCENT_SSH_HOST)"
+
 help:
 	@echo "ML Trading Project"
 	@echo "===================="
@@ -114,6 +126,9 @@ help:
 	@echo "  make format               # Format code with black"
 	@echo "  make lint                 # Lint code with flake8"
 	@echo "  make list-features        # List all registered feature functions (199 features)"
+	@echo ""
+	@echo "Remote (production VPS):"
+	@echo "  make ssh-tencent TENCENT_SSH_HOST=<ip-or-dns>  # SSH (key: $(TENCENT_SSH_KEY), user: $(TENCENT_SSH_USER); same host as DEPLOY_HOST)"
 	@echo ""
 	@echo "Testing commands (run in Docker):"
 	@echo "  make test-wpt-volume-profile        # Test WPT volume profile improvements (pytest format)"
