@@ -2334,7 +2334,9 @@ def _load_full_ohlc_for_map(
     start: Optional[pd.Timestamp] = None,
     end: Optional[pd.Timestamp] = None,
 ) -> Optional[pd.DataFrame]:
-    """从 FeatureStore 加载全量连续 OHLC (用于 trading map K线背景).
+    """从 FeatureStore 加载全量连续 OHLC（及 ``ema_1200`` 若存在），用于 trading map K 线背景。
+
+    ``ema_1200`` 与特征管线中 macro 慢均线一致，可作为图上牛熊分界参考。
 
     Returns None if FeatureStore unavailable or load fails.
     """
@@ -2368,11 +2370,13 @@ def _load_full_ohlc_for_map(
             elif isinstance(df_sym.index, pd.DatetimeIndex):
                 df_sym["timestamp"] = df_sym.index
                 df_sym = df_sym.reset_index(drop=True)
-            # 只保留 K线必需列
+            # K 线列 + 宏观 EMA1200（与特征管线 ema_1200_value_f / direction 对齐，供图上牛熊分界）
             keep = ["timestamp", "symbol"]
             for c in ["open", "high", "low", "close"]:
                 if c in df_sym.columns:
                     keep.append(c)
+            if "ema_1200" in df_sym.columns:
+                keep.append("ema_1200")
             parts.append(df_sym[keep])
         except Exception as e:
             print(f"   \u26a0\ufe0f  Full OHLC load failed for {sym}: {e}")
@@ -2405,6 +2409,7 @@ def _generate_trading_map_html(
         timeframe: K线聚合周期 (如 '240T'), None 则不聚合
         arch_timeframes: per-archetype 时间粒度 (如 {'bpc':'240T','me-long':'60T'})
                          提供时每个 archetype 独立分区显示
+        full_ohlc: 可选连续 OHLC（通常由 ``_load_full_ohlc_for_map`` 提供）；若含 ``ema_1200`` 列则叠画宏观牛熊线
 
     Returns:
         完整 HTML 字符串
@@ -2519,14 +2524,16 @@ def _generate_trading_map_html(
                 if "open" not in sym_df.columns:
                     sym_df["open"] = sym_df["close"].shift(1).fillna(sym_df["close"])
                 sym_df = sym_df.set_index(ts_col)
-                ohlc = (
-                    sym_df[["open", "high", "low", "close"]]
-                    .resample(tf_for_chart)
-                    .agg(
-                        {"open": "first", "high": "max", "low": "min", "close": "last"}
-                    )
-                    .dropna()
-                )
+                _agg = {"open": "first", "high": "max", "low": "min", "close": "last"}
+                _cols = ["open", "high", "low", "close"]
+                if "ema_1200" in sym_df.columns:
+                    _cols.append("ema_1200")
+                    _agg["ema_1200"] = "last"
+                ohlc = sym_df[_cols].resample(tf_for_chart).agg(_agg)
+                _req_ohlc = [
+                    c for c in ("open", "high", "low", "close") if c in ohlc.columns
+                ]
+                ohlc = ohlc.dropna(subset=_req_ohlc)
                 ohlc = ohlc.reset_index()
                 sym_df = ohlc
                 ts_col_local = sym_df.columns[0]  # resample 后第一列是时间
@@ -2650,6 +2657,19 @@ def _generate_trading_map_html(
                     fill_color="#ef5350",
                     line_color="#ef5350",
                 )
+
+            # 宏观 EMA1200（FeatureStore 列 ema_1200；与 ema_1200_position / direction 同源慢窗）
+            if "ema_1200" in sym_df.columns:
+                _ema_s = pd.to_numeric(sym_df["ema_1200"], errors="coerce")
+                if _ema_s.notna().any():
+                    p.line(
+                        sym_df["_seq"].values,
+                        _ema_s.values,
+                        line_color="#f59e0b",
+                        line_width=1.45,
+                        line_alpha=0.92,
+                        legend_label="EMA1200 (FeatureStore)",
+                    )
 
             # ---- 交易标记 ----
             # 入场: 箭头方向 = 交易方向 (long=▲, short=▼)

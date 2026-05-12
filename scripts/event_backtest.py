@@ -3541,9 +3541,11 @@ def generate_trading_map_html(
 ) -> str:
     """生成 K线 + 交易标记 HTML 交易地图 (多策略分 Tab)。
 
-    可选从 ``data_path`` 向前多取 ``map_extra_months`` 月 1m 数据，仅在 **计算** VWAP 时使用；
+    可选从 ``data_path`` 向前多取 ``map_extra_months`` 月 1m 数据，仅在 **计算** VWAP / **长窗 EMA** 时使用；
     **图上 X 轴只覆盖本次回测窗口**（``result.bars_1min`` 对应区间），不把向前扩展的历史整段画出来。
-    主图价格轴叠画滚动典型价 VWAP（``map_long_ema_span`` 仅保留 CLI/API 兼容，不再绘制 EMA）。
+    主图叠画滚动典型价 VWAP，以及 ``close`` 上 span=``map_long_ema_span`` 的 EMA 价格线。
+    （地图 K 线由 1m 按策略主周期重采样，如 120T→2h；EMA 与该重采样后的 ``close`` 同源。若需与
+    FeatureStore **同一张 120T 表**的 ``ema_1200`` 像素级对齐，请用向量回测生成的 ``trading_map_<strategy>.html``。）
 
     可视化规则:
       入场填充色   = 方向 (多=绿 / 空=红), 描边色 = 策略 (BPC=蓝 / FER=紫 / ME=橙)
@@ -3864,8 +3866,9 @@ def generate_trading_map_html(
 
         # 全量 df 上算指标（含 map_extra_months 向前扩展），图上只画回测窗
         vw_n = int(map_vwap_window_bars)
-        _ = map_long_ema_span  # CLI compat; EMA overlay removed
+        _span = max(1, int(map_long_ema_span))
         vwap_price = _rolling_tp_vwap(df, vw_n)
+        ema_long_price = df["close"].ewm(span=_span, adjust=False).mean()
 
         view_start = pd.Timestamp(bars_1min.index.min())
         view_end = pd.Timestamp(bars_1min.index.max())
@@ -3952,6 +3955,15 @@ def generate_trading_map_html(
             line_width=1.35,
             line_alpha=0.78,
             legend_label=f"Rolling TP-VWAP ({vw_n} bars, price)",
+        )
+        ep = ema_long_price.reindex(df_plot.index)
+        p.line(
+            df_plot.index,
+            ep,
+            line_color="#f59e0b",
+            line_width=1.35,
+            line_alpha=0.88,
+            legend_label=f"EMA({_span}) on {bar_freq} close (macro)",
         )
 
         # ── CRF: rolling 120 lo/hi band（仅 CRF 语义；勿在「All」Tab 叠到 SRB/BPC 等图上）
@@ -4271,7 +4283,7 @@ def main():
         type=int,
         default=12,
         help=(
-            "交易地图: 从 --data-path 向前多加载 1m 月数，仅用于 VWAP 计算；"
+            "交易地图: 从 --data-path 向前多加载 1m 月数，仅用于 VWAP / 长窗 EMA warm-up；"
             "K 线横轴仍为回测窗。0=不向前扩展"
         ),
     )
@@ -4285,7 +4297,7 @@ def main():
         "--map-long-ema-span",
         type=int,
         default=1200,
-        help="交易地图: 已废弃（不再绘制 EMA），保留参数以兼容旧脚本",
+        help="交易地图: 主图叠画的 EMA(close) 周期（与策略主周期 K 线上 span 语义一致，默认 1200）",
     )
     parser.add_argument(
         "--compare-trades",
