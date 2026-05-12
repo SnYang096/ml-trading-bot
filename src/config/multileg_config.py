@@ -32,8 +32,10 @@ def load_multileg_layers(
         "status": "research",
     }
     prof_path = profile_path or resolve_strategy_profile_path(config_dir, profile)
-    if not prof_path.is_absolute():
-        prof_path = config_dir / prof_path
+    if not prof_path.is_absolute() and not prof_path.exists():
+        candidate = config_dir / prof_path
+        if candidate.exists():
+            prof_path = candidate
     if prof_path.exists():
         root = deep_merge_dicts(root, load_yaml_extends_chain(prof_path, strict=True))
     elif profile_path is not None:
@@ -41,8 +43,10 @@ def load_multileg_layers(
 
     if engine_path is not None:
         # Explicit overlay merges after the packaged profile (`extends` chain).
-        if not engine_path.is_absolute():
-            engine_path = config_dir / engine_path
+        if not engine_path.is_absolute() and not engine_path.exists():
+            candidate = config_dir / engine_path
+            if candidate.exists():
+                engine_path = candidate
         if engine_path.exists():
             root = deep_merge_dicts(root, load_yaml_dict(engine_path, strict=True))
     else:

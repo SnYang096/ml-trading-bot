@@ -89,25 +89,34 @@ class LiveDependencyChecker:
         else:
             logger.info(f"   ✅ Constitution: {constitution_dir}")
         
-        # 检查strategies/bpc
+        # 检查 strategies/bpc：现行布局是 meta.yaml + archetypes/<layer>.yaml
+        # （`holding` 不是单独文件，而是 archetype yaml 内部的 section）
         bpc_dir = self.config_dir / "strategies" / "bpc"
         if not bpc_dir.exists():
             self.errors.append(f"BPC策略配置缺失: {bpc_dir}")
         else:
-            # 检查必需的BPC配置文件
-            required_files = ["gate.yaml", "evidence.yaml", "execution.yaml", "holding.yaml"]
+            arch_dir = bpc_dir / "archetypes"
+            required_archetypes = ["gate.yaml", "evidence.yaml", "execution.yaml", "prefilter.yaml"]
             missing_files = []
-            
-            for filename in required_files:
-                filepath = bpc_dir / filename
-                if not filepath.exists():
-                    missing_files.append(filename)
-            
+
+            if not (bpc_dir / "meta.yaml").exists():
+                missing_files.append("meta.yaml")
+            if not arch_dir.exists():
+                missing_files.append("archetypes/")
+            else:
+                for filename in required_archetypes:
+                    if not (arch_dir / filename).exists():
+                        missing_files.append(f"archetypes/{filename}")
+
             if missing_files:
-                self.errors.append(f"BPC配置文件缺失: {', '.join(missing_files)} (路径: {bpc_dir})")
+                self.errors.append(
+                    f"BPC配置文件缺失: {', '.join(missing_files)} (路径: {bpc_dir})"
+                )
             else:
                 logger.info(f"   ✅ BPC Config: {bpc_dir}")
-                logger.info(f"      - {', '.join(required_files)}")
+                logger.info(
+                    "      - meta.yaml, " + ", ".join(f"archetypes/{f}" for f in required_archetypes)
+                )
     
     def _check_warmup_ticks(self, symbols: List[str]) -> None:
         """检查 warmup ticks 数据（策略B：基于历史 ticks 重算特征）"""
