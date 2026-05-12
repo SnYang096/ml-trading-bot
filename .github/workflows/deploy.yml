@@ -22,6 +22,12 @@
 #     各策略 live/highcap/.../meta.yaml 的 symbol_include/exclude 与基底求交；
 #     chop_grid 含 include 为空则跑满基底；dual_add_trend 仅允许 meta 中 5 个 U 本位（无 ADA）。
 #     --bar-source feature-store 从 shared_feature_bus  parquet 读已解析 symbol 的数据。
+# Bind mount 约定（重要）：仅持久化 runtime 数据，config/scripts 必须来自镜像。
+#   /opt/quant-engine/live/shared_feature_bus → /app/live/shared_feature_bus  (feature bus parquet)
+#   /opt/quant-engine/live/highcap/data       → /app/live/highcap/data       (live storage / state / logs)
+#   /opt/quant-engine/data                    → /app/data                    (parquet_data 等)
+#   /opt/quant-engine/live/binance_mainnet.env → 通过 --env-file 注入环境变量
+#   切勿挂 /opt/quant-engine/live → /app/live，会顶掉镜像内 highcap/config 与 scripts。
 # =============================================================
 
 name: 🚀 Build & Deploy
@@ -202,6 +208,11 @@ jobs:
             fi
             # 主网部署：不写入 testnet env；清理历史文件以免误用旧密钥
             sudo rm -f /opt/quant-engine/live/binance_multi_leg_testnet.env
+            # 仅持久化 runtime 数据目录；config/scripts 来自镜像（避免 bind mount 顶替 image 内容）
+            sudo mkdir -p /opt/quant-engine/live/shared_feature_bus
+            sudo mkdir -p /opt/quant-engine/live/highcap/data
+            sudo mkdir -p /opt/quant-engine/data
+            echo "✅ Runtime mount 目录就绪"
 
       - name: 🚀 Pull image & restart service
         uses: appleboy/ssh-action@v1
@@ -246,7 +257,8 @@ jobs:
             ExecStart=/usr/bin/docker run --rm --name quant-feature-bus \
               --memory=1280m --memory-swap=1280m \
               -e MLBOT_LIVE_SYMBOLS \
-              -v /opt/quant-engine/live:/app/live \
+              -v /opt/quant-engine/live/shared_feature_bus:/app/live/shared_feature_bus \
+              -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
               -v /opt/quant-engine/data:/app/data \
               quant-engine:latest \
               bash -lc 'python scripts/run_market_feature_publisher.py \
@@ -290,7 +302,8 @@ jobs:
               -e MLBOT_FEATURE_BUS_MAX_STALENESS_SECONDS \
               -e MLBOT_FEATURE_BUS_BARS_LOOKBACK \
               -e MLBOT_LIVE_WARMUP_DAYS \
-              -v /opt/quant-engine/live:/app/live \
+              -v /opt/quant-engine/live/shared_feature_bus:/app/live/shared_feature_bus \
+              -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
               -v /opt/quant-engine/data:/app/data \
               quant-engine:latest \
               bash live/scripts/start_live.sh highcap
@@ -316,7 +329,8 @@ jobs:
               --memory=512m --memory-swap=512m \
               --env-file /opt/quant-engine/live/binance_mainnet.env \
               -e MLBOT_MULTI_LEG_SYMBOLS \
-              -v /opt/quant-engine/live:/app/live \
+              -v /opt/quant-engine/live/shared_feature_bus:/app/live/shared_feature_bus \
+              -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
               -v /opt/quant-engine/data:/app/data \
               quant-engine:latest \
               bash -lc 'python scripts/run_multi_leg_live.py \
