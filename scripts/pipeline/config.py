@@ -344,9 +344,11 @@ def resolve_strategy_dates(
                 )
             nonrolling_validation_months = int(nv_raw)
             nonrolling_test_months = int(nt_raw)
-            if nonrolling_validation_months <= 0 or nonrolling_test_months <= 0:
+            if nonrolling_validation_months <= 0 or nonrolling_test_months < 0:
                 raise ValueError(
-                    "dates.nonrolling_validation_months / nonrolling_test_months 必须 > 0"
+                    "dates.nonrolling_validation_months 必须 > 0，"
+                    "dates.nonrolling_test_months 必须 >= 0（0 表示不设独立 OOS 尾窗，"
+                    "阈值调参与主回测共用 validation 尾窗）"
                 )
             holdout_months = nonrolling_validation_months + nonrolling_test_months
             validation_months = nonrolling_validation_months

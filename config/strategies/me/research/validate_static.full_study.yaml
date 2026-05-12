@@ -14,10 +14,9 @@
 extends: research_roll.features_on.yaml
 
 dates:
-  # non_rolling/static_holdout 专用窗口，区别于 turbo/slow 的月度 rolling calibration。
-  # Train: 更早历史；Val: 最近测试窗之前 6 个月调阈值；Test: 最近 6 个月纯 OOS 验收。
-  nonrolling_validation_months: 6
-  nonrolling_test_months: 6
+  # 全量 train + 单尾窗；test_months=0 时不二切 OOS，阈值与主回测同窗（见 BPC validate_static.full_study 注释）。
+  nonrolling_validation_months: 12
+  nonrolling_test_months: 0
 
 rolling:
   mode: non_rolling

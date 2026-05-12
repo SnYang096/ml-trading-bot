@@ -1,6 +1,6 @@
 # BPC · low-freedom non_rolling
 #
-# Keep the strategy structure fixed while validating the latest tail window:
+# Keep the strategy structure fixed while validating a single 12m tail (no extra OOS split):
 # - no SHAP / feature discovery
 # - no Direction refresh
 # - no Prefilter feature search

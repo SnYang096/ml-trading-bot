@@ -292,8 +292,8 @@ def test_load_bpc_non_rolling_extends_slow():
     )
     d = cfg.get("dates") or {}
     assert "validation_months" not in d
-    assert d.get("nonrolling_validation_months") == 6
-    assert d.get("nonrolling_test_months") == 6
+    assert d.get("nonrolling_validation_months") == 12
+    assert d.get("nonrolling_test_months") == 0
     assert d.get("holdout_months") == 26
     assert d.get("start_date") == "2022-01-01"
     dates = resolve_strategy_dates(
@@ -302,8 +302,8 @@ def test_load_bpc_non_rolling_extends_slow():
         default_end_date=cfg["dates"]["end_date"],
     )
     assert dates["holdout_start"] == "2025-05-01"
-    assert dates["validation_months"] == 6
-    assert dates["test_start"] == "2025-11-01"
+    assert dates["validation_months"] == 12
+    assert dates["test_start"] == "2025-05-01"
     assert (
         cfg["strategies"]["bpc"]["kpi_gates"]["entry_filter"]["meta_algorithm"] is True
     )
@@ -321,8 +321,8 @@ def test_load_me_non_rolling_extends_slow():
     )
     d = cfg.get("dates") or {}
     assert "validation_months" not in d
-    assert d.get("nonrolling_validation_months") == 6
-    assert d.get("nonrolling_test_months") == 6
+    assert d.get("nonrolling_validation_months") == 12
+    assert d.get("nonrolling_test_months") == 0
     assert d.get("holdout_months") == 26
     assert d.get("start_date") == "2022-01-01"
     assert (
@@ -342,8 +342,8 @@ def test_load_tpc_non_rolling_extends_slow():
     )
     d = cfg.get("dates") or {}
     assert "validation_months" not in d
-    assert d.get("nonrolling_validation_months") == 6
-    assert d.get("nonrolling_test_months") == 6
+    assert d.get("nonrolling_validation_months") == 12
+    assert d.get("nonrolling_test_months") == 0
     assert d.get("holdout_months") == 26
     assert d.get("start_date") == "2022-01-01"
     assert (

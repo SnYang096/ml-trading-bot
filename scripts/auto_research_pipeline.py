@@ -9068,8 +9068,12 @@ def main():
             f"   Test:        {_test_start_display} ~ {_display_end} ({_display_holdout_months - _display_validation_months} 个月, 纯 OOS)"
         )
     else:
+        _hold_note = ""
+        if _display_nonrolling_tail and _display_test_months == 0:
+            _hold_note = "（阈值调参与向量/事件主回测同窗，无二切 OOS）"
         print(
-            f"   Holdout:     {_display_holdout_start} ~ {_display_end} ({dates['holdout_months']} 个月)"
+            f"   Holdout:     {_display_holdout_start} ~ {_display_end} "
+            f"({_display_holdout_months} 个月){_hold_note}"
         )
     print(f"   Symbols:     {symbols}")
     print(f"   History:     {history_dir}")

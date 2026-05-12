@@ -2,8 +2,7 @@
 #
 # Purpose: validate the current archetype with a narrower search surface.
 # It keeps Prefilter semantics, Direction, and Execution fixed, then only
-# recalibrates Gate and Entry Filter on the 6m validation tail before testing
-# the latest 6m OOS window.
+# recalibrates Gate and Entry Filter on that same tail (no separate pre-OOS trim).
 
 extends: validate_static.full_study.yaml
 

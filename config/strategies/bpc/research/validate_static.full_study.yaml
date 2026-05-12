@@ -18,10 +18,11 @@
 extends: research_roll.features_on.yaml
 
 dates:
-  # non_rolling/static_holdout 专用窗口，区别于 turbo/slow 的月度 rolling calibration。
-  # Train: 更早历史；Val: 最近测试窗之前 6 个月调阈值；Test: 最近 6 个月纯 OOS 验收。
-  nonrolling_validation_months: 6
-  nonrolling_test_months: 6
+  # non_rolling/static_holdout：训练 = start_date〜holdout 前全部为「全量」。尾窗语义：
+  # - nonrolling_validation_months：紧挨 end_date 的最后一截（月数），Gate/EF 等与主向量回测共用此窗；
+  # - nonrolling_test_months：再加一段「纯 OOS」月数。**0** = 不设第二段尾窗（上线常用：阈值与 KPI 同窗）。
+  nonrolling_validation_months: 12
+  nonrolling_test_months: 0
 
 rolling:
   mode: non_rolling
