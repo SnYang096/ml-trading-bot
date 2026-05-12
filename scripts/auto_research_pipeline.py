@@ -2218,6 +2218,134 @@ def _resolve_pipeline_strategy_timeframe(strategy: str, scfg: dict) -> str:
     return tf
 
 
+def _extract_gate_when_features(when: Dict[str, Any]) -> Set[str]:
+    """Collect feature names referenced by a gate rule ``when`` clause."""
+    out: Set[str] = set()
+    if not isinstance(when, dict):
+        return out
+    if "all_of" in when and isinstance(when["all_of"], list):
+        for sub in when["all_of"]:
+            out.update(_extract_gate_when_features(sub))
+        return out
+    if "any_of" in when and isinstance(when["any_of"], list):
+        for sub in when["any_of"]:
+            out.update(_extract_gate_when_features(sub))
+        return out
+    for key, value in when.items():
+        if key in {"all_of", "any_of", "min_matches"}:
+            continue
+        if isinstance(value, dict):
+            out.add(str(key))
+    return out
+
+
+def _collect_gate_feature_columns(gate_path: Path) -> Set[str]:
+    """Extract all feature columns referenced by gate yaml."""
+    if not gate_path.exists():
+        return set()
+    raw = yaml.safe_load(gate_path.read_text(encoding="utf-8")) or {}
+    out: Set[str] = set()
+    for section in ("hard_gates", "system_safety", "guardrails"):
+        for rule in raw.get(section) or []:
+            if isinstance(rule, dict):
+                out.update(_extract_gate_when_features(rule.get("when", {})))
+    return out
+
+
+def _select_gate_fallback_columns(src_path: Path, gate_path: Path) -> List[str]:
+    """Pick a compact but safe column subset for gate fallback parquet."""
+    import pyarrow.parquet as pq
+
+    names = pq.ParquetFile(src_path).schema.names
+    name_set = set(names)
+    keep: List[str] = []
+
+    def _add(col: str) -> None:
+        if col in name_set and col not in keep:
+            keep.append(col)
+
+    # Core market + metadata columns frequently used by gate/ef/backtest.
+    for col in (
+        "timestamp",
+        "datetime",
+        "date",
+        "symbol",
+        "_symbol",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "atr",
+        "split",
+        "pred",
+        "forward_rr",
+        "ret_mean",
+    ):
+        _add(col)
+
+    # Keep all label-like columns.
+    for col in names:
+        lc = str(col).lower()
+        if lc.startswith("success_") or lc in {"label", "target"}:
+            _add(col)
+
+    # Keep features explicitly referenced by gate rules.
+    for col in sorted(_collect_gate_feature_columns(gate_path)):
+        _add(col)
+
+    # Fallback: never emit an empty parquet.
+    if not keep:
+        keep = list(names)
+    return keep
+
+
+def _materialize_gate_fallback_predictions(
+    *,
+    fallback_src: Path,
+    gate_pred: Path,
+    gate_path: Path,
+) -> str:
+    """Create gate fallback input with minimal disk overhead.
+
+    Order:
+      1) hard link
+      2) symlink
+      3) compact parquet copy (selected columns)
+      4) full file copy
+    """
+    gate_pred.parent.mkdir(parents=True, exist_ok=True)
+    if gate_pred.exists() or gate_pred.is_symlink():
+        gate_pred.unlink()
+
+    try:
+        os.link(fallback_src, gate_pred)
+        return "hardlink"
+    except OSError:
+        pass
+
+    try:
+        rel_src = os.path.relpath(str(fallback_src), start=str(gate_pred.parent))
+        os.symlink(rel_src, gate_pred)
+        return "symlink"
+    except OSError:
+        pass
+
+    try:
+        import pyarrow.parquet as pq
+
+        keep_cols = _select_gate_fallback_columns(fallback_src, gate_path)
+        table = pq.read_table(fallback_src, columns=keep_cols)
+        # zstd helps reduce disk pressure on fallback path.
+        pq.write_table(table, gate_pred, compression="zstd")
+        return f"compact_copy[{len(keep_cols)} cols]"
+    except Exception:
+        pass
+
+    shutil.copy2(fallback_src, gate_pred)
+    return "full_copy"
+
+
 def run_strategy_pipeline(
     strategy: str,
     cfg: dict,
@@ -3156,22 +3284,26 @@ def run_strategy_pipeline(
         gate_pred = Path(f"{gate_dir}/predictions.parquet")
         gate_train_ok = False
         gate_stat_fallback_used = False
-        if not dry_run:
-            fallback_src = Path(f"{prepare_dir}/features_labeled.parquet")
-            if fallback_src.exists():
-                gate_pred.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(fallback_src, gate_pred)
-                gate_train_ok = True
-                gate_stat_fallback_used = True
-                print(
-                    "   ⏭️  Gate Train skipped (enable_model_training=false), "
-                    "using features_labeled as gate input"
-                )
         exp_gate_draft = Path(f"{config_dir}/gate_draft.yaml")
         if not dry_run and not exp_gate_draft.exists():
             archetype_gate = Path(f"{config_dir}/archetypes/gate.yaml")
             if archetype_gate.exists():
                 shutil.copy2(archetype_gate, exp_gate_draft)
+        if not dry_run:
+            fallback_src = Path(f"{prepare_dir}/features_labeled.parquet")
+            if fallback_src.exists():
+                gate_link_mode = _materialize_gate_fallback_predictions(
+                    fallback_src=fallback_src,
+                    gate_pred=gate_pred,
+                    gate_path=exp_gate_draft,
+                )
+                gate_train_ok = True
+                gate_stat_fallback_used = True
+                print(
+                    "   ⏭️  Gate Train skipped (enable_model_training=false), "
+                    "using features_labeled as gate input "
+                    f"({gate_link_mode})"
+                )
     else:
         rc, out = run_step("Gate Train", gate_train_args, log, dry_run=dry_run)
         gate_dir = find_output_dir(out, strategy) or prepare_dir
@@ -3189,15 +3321,18 @@ def run_strategy_pipeline(
                 "\n⚠️  Gate Train 样本不足，触发统计法 fallback: "
                 "使用 features_labeled 继续生成 gate。"
             )
-            gate_pred.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(fallback_src, gate_pred)
-
             gate_draft = f"{config_dir}/gate_draft.yaml"
             gate_draft_path = Path(gate_draft)
             if not gate_draft_path.exists():
                 archetype_gate = Path(f"{config_dir}/archetypes/gate.yaml")
                 if archetype_gate.exists():
                     shutil.copy2(archetype_gate, gate_draft_path)
+            gate_link_mode = _materialize_gate_fallback_predictions(
+                fallback_src=fallback_src,
+                gate_pred=gate_pred,
+                gate_path=gate_draft_path,
+            )
+            print(f"   📦 Gate fallback input prepared via {gate_link_mode}")
             gate_opt_fallback_cmd = [
                 "python",
                 "scripts/optimize_gate_unified.py",
