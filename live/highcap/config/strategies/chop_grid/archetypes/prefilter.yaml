@@ -49,4 +49,4 @@ last_multileg_evaluation:
     total_r: 0.7464948765447248
     n_trades: 699
     max_drawdown_r: -0.030099917479698646
-  source_path: "results/chop_grid/slow-rolling-sim/_rolling_sim/20260510_232349/slow_snapshot_2024-05/chop_grid/multileg_feature_selection.json"
+  source_path: "results/chop_grid/research_roll.features_on/_rolling_sim/20260510_232349/slow_snapshot_2024-05/chop_grid/multileg_feature_selection.json"

@@ -188,7 +188,7 @@ def scan_flat_runs(
     """单次实验：``output.history_dir`` 下 ``…/<策略>/<YYYYMMDD_HHMMSS>/``（路径中无 ``_rolling_sim``）。
 
     与 ``research_pipeline.yaml`` 一致：``results/research_history/<策略>/<时间戳>/``；
-    亦匹配 ``…/turbo-rolling-sim/<策略>/<时间戳>/``、``…/prod_train_history/<策略>/<ts>/`` 等。
+    亦匹配 ``…/calibrate_roll.default/<策略>/<时间戳>/``、``…/prod_train_history/<策略>/<ts>/`` 等。
     """
     results_root = results_root.resolve()
     rows: List[Dict[str, Any]] = []

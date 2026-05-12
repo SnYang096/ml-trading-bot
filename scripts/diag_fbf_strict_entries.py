@@ -9,7 +9,7 @@ For each trade in the rolling-sim output:
 
 Usage:
     python scripts/diag_fbf_strict_entries.py \\
-        --run-dir results/fbf/turbo-rolling-sim-strict/_rolling_sim/20260423_154304 \\
+        --run-dir results/fbf/calibrate_roll.default-strict/_rolling_sim/20260423_154304 \\
         --strategy fbf \\
         --out reports/fbf_strict_entry_diag.csv
 """
@@ -135,7 +135,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--run-dir",
-        default="results/fbf/turbo-rolling-sim-strict/_rolling_sim/20260423_154304",
+        default="results/fbf/calibrate_roll.default-strict/_rolling_sim/20260423_154304",
     )
     ap.add_argument("--strategy", default="fbf")
     ap.add_argument("--out", default="reports/fbf_strict_entry_diag.csv")

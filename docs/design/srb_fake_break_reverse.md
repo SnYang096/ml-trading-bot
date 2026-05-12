@@ -57,7 +57,7 @@
 
 ## 0.1 Shadow Report Findings（run `20260416_145229`）
 
-基于 `results/srb/slow-rolling-sim/_rolling_sim/20260416_145229/srb_reverse_shadow_candidates.csv`
+基于 `results/srb/research_roll.features_on/_rolling_sim/20260416_145229/srb_reverse_shadow_candidates.csv`
 对 63 个 `srb_reverse_expired` 候选做了 10-bar / `confirm_k=3` 的只读回放：
 
 | 语义锚点 | would_trigger |

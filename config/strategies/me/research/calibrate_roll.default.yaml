@@ -132,4 +132,4 @@ event_backtest:
     undertrade_penalty: 0.0
 
 output:
-  history_dir: results/me/turbo-rolling-sim
+  history_dir: results/me/calibrate_roll.default

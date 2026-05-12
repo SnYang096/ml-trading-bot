@@ -1,7 +1,7 @@
 # SRB：宽窗 SR 与 trailing 动态化 — 数据诊断与验证计划
 
 - 日期：2026-04-18
-- Baseline run：`results/srb/slow-rolling-sim/_rolling_sim/20260417_163432`（修完 ReverseIntent bug 后的 16-month rolling，192 笔 / +161.24 R / 52 trailing_sl / 23 reverse）
+- Baseline run：`results/srb/research_roll.features_on/_rolling_sim/20260417_163432`（修完 ReverseIntent bug 后的 16-month rolling，192 笔 / +161.24 R / 52 trailing_sl / 23 reverse）
 - 诊断脚本：`scripts/srb_diag/wide_sr_and_trailing_diag.py`
 - 诊断产物：`results/srb/diag/wide_sr_trailing_20260418/`
 - Ablation 驱动：`scripts/srb_diag/run_ablation.sh`（full rolling_sim，每 exp ~4.5h）

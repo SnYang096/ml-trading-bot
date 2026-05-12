@@ -22,4 +22,4 @@ grid_backtest:
   output_dir: results/chop_grid/non-rolling-full-cycle
 
 output:
-  history_dir: results/chop_grid/non-rolling-sim
+  history_dir: results/chop_grid/validate_static.full_study

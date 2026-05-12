@@ -29,5 +29,5 @@ dual_add_backtest:
   output_dir: results/dual_add_trend/non-rolling-full-cycle
 
 output:
-  history_dir: results/dual_add_trend/non-rolling-sim
+  history_dir: results/dual_add_trend/validate_static.full_study
   latest_dir: results/dual_add_trend/latest

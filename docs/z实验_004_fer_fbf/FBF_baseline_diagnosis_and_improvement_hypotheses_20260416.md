@@ -10,8 +10,8 @@
 
 - pipeline: `config/prod_train_pipeline_2h_slow_fbf_only.yaml`
 - strategy root: `config/strategies/fbf`
-- baseline run: `results/fbf/slow-rolling-sim/_rolling_sim/20260413_162634`
-- stitched summary: `results/fbf/slow-rolling-sim/_rolling_sim/20260413_162634/stitched_summary.json`
+- baseline run: `results/fbf/research_roll.features_on/_rolling_sim/20260413_162634`
+- stitched summary: `results/fbf/research_roll.features_on/_rolling_sim/20260413_162634/stitched_summary.json`
 
 ## 当前基线结果
 
@@ -187,7 +187,7 @@ SHORT 当前是负贡献，因此:
 
 与 `docs/z实验_005_统一研究/FBF_ema1200_slow_pipeline_regime_dualtrack_20260417.md` 中的收口结论对齐：
 
-- **主版本（stitched 验收口径）**：继续以本文基线为准 — run `20260413_162634`（`stitched_total_r` **+36.7554**，**240** 笔；见 `results/fbf/slow-rolling-sim/_rolling_sim/20260413_162634/stitched_summary.json`）。
+- **主版本（stitched 验收口径）**：继续以本文基线为准 — run `20260413_162634`（`stitched_total_r` **+36.7554**，**240** 笔；见 `results/fbf/research_roll.features_on/_rolling_sim/20260413_162634/stitched_summary.json`）。
 - **近期结构实验**：`EMA1200` 方向入场（Stage A/B）与 **no-EMA + mild AB-B + gate**（run `20260418_095724`，`stitched_total_r` **+18.8362**，**300** 笔）均未超过上述基线；**不再推进为新的默认配置**。
 - **上文「本轮实验优先级」**：在出现新的硬需求或明确假设前 **暂停按该顺序批量开实验**；若仅做定点验证，须以「不慢于 `20260413` stitched」为门槛。
 

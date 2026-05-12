@@ -1,56 +1,20 @@
-# ME Entry Filters (seeded)
+# ME Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
+# Date: 2026-05-12 08:28
+# Promoted: 1 filters (method=upside_positive_rate_ratio)
+# Locked pool: 0 filters (missing ones auto-disabled)
+# Significance: 统计验证 + robustness ≥ 0.5
+#
 # 职责: "现在该入场吗?" → 硬二值控制
-# 语义: ME = 动量扩张直接入场（不要求 pullback）
-#   - 候选池以 OR 组合
-#   - 不再使用 locked/promote_never_disable: plateau 自己根据统计显著性决定保留/禁用
-#   - 原来锁定的「压缩→点火+订单流」三重 AND 拆成 3 条独立 OR 候选，避免 prefilter 过滤后的样本空间里几乎不可能同时命中 3 个阈值
+# 多个 filter 之间是 OR 关系
 
 filters:
-  # === 压缩→点火语义拆解：独立 OR 候选 ===
-  - id: ef_me_dual_compression
-    enabled: true
-    description: "ME 语义：刚从压缩区被点燃（funding × vpin 压缩）"
-    conditions:
-      - feature: dual_compression_score
-        operator: ">="
-        value: 0.45
-    notes: "semantic: compression context (funding + vpin compression)"
-
-  - id: ef_me_dual_ignition
-    enabled: true
-    description: "ME 语义：funding × footprint 双路点火触发"
-    conditions:
-      - feature: dual_ignition_score
-        operator: ">="
-        value: 0.45
-    notes: "semantic: ignition trigger (funding + footprint imbalance)"
-
-  - id: ef_me_cvd_strength
-    enabled: true
-    description: "ME 语义：CVD 订单流方向确认"
-    conditions:
-      - feature: me_cvd_strength
-        operator: ">="
-        value: 0.55
-    notes: "semantic: orderflow directional confirmation"
-
-  # === 单维订单流 / 拥挤 / VPIN / trade_cluster 维持原候选池 ===
-  - id: ef_vpin_zscore_20_high
-    enabled: true
-    description: "normalized: vpin_zscore_20 >= 0.60"
-    conditions:
-      - feature: vpin_zscore_20
-        operator: ">="
-        value: 0.60
-    notes: "VPIN stress zscore"
-
-  - id: ef_trade_cluster_net_runs_z20
-    enabled: true
-    description: "normalized: trade_cluster_net_runs_zscore_20 >= 0.30"
-    conditions:
-      - feature: trade_cluster_net_runs_zscore_20
-        operator: ">="
-        value: 0.30
-    notes: "trade clustering directional persistence zscore"
-
+- id: ef_cvd_divergence_score_pct_0.8
+  enabled: true
+  description: 'auto: cvd_divergence_score_pct >= 0.821892'
+  conditions:
+  - feature: cvd_divergence_score_pct
+    operator: '>='
+    value: 0.821892
+  notes: method=upside_positive_rate_ratio, effect=+1.8440, rob=1.00, pass=20.2%
 combination_mode: or

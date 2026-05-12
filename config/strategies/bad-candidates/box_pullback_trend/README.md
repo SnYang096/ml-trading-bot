@@ -10,7 +10,7 @@
 
 ### 1. OOS 成交密度过低，无法支撑统计与容量
 
-一次代表性跑法（与本仓库管线一致：`prod_train_pipeline_2h_turbo_box_pullback_trend_only.yaml`，`rolling_sim`，`turbo_fixed_features`，事件回测拼接，`starter_a` / `highcap` 多币）产出量级如下（run_id `20260426_212621`，结果见 `results/box_pullback_trend/turbo-rolling-sim/_rolling_sim/20260426_212621/`）：
+一次代表性跑法（与本仓库管线一致：`prod_train_pipeline_2h_turbo_box_pullback_trend_only.yaml`，`rolling_sim`，`turbo_fixed_features`，事件回测拼接，`starter_a` / `highcap` 多币）产出量级如下（run_id `20260426_212621`，结果见 `results/box_pullback_trend/calibrate_roll.default/_rolling_sim/20260426_212621/`）：
 
 | 指标 | 数值 |
 |------|------|

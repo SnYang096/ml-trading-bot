@@ -15,7 +15,7 @@ SRB sr_wide_entry_guard 审计
         --min-distance-atr 2.0 \
         --out reports/srb_wide_guard_audit.md
 
-若 `--trades` 不存在，回退到 results/srb/slow-rolling-sim/_rolling_sim/<latest>/fast_month_*/srb/event_trades_srb.csv 汇总。
+若 `--trades` 不存在，回退到 results/srb/research_roll.features_on/_rolling_sim/<latest>/fast_month_*/srb/event_trades_srb.csv 汇总。
 """
 
 from __future__ import annotations
@@ -302,7 +302,9 @@ def main():
         root = args.rolling_sim_root
         if root is None:
             # 取最新 rolling_sim run
-            cand = sorted(glob.glob("results/srb/slow-rolling-sim/_rolling_sim/20*_*"))
+            cand = sorted(
+                glob.glob("results/srb/research_roll.features_on/_rolling_sim/20*_*")
+            )
             root = cand[-1] if cand else ""
         if not root or not os.path.isdir(root):
             raise SystemExit(f"no trades parquet and no rolling_sim root: {root}")

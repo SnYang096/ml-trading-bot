@@ -108,5 +108,5 @@ dual_add_backtest:
   max_adds_per_side: 3
 
 output:
-  history_dir: results/dual_add_trend/turbo-rolling-sim
+  history_dir: results/dual_add_trend/calibrate_roll.default
   latest_dir: results/dual_add_trend/latest

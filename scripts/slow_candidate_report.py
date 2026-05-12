@@ -12,7 +12,7 @@
               每个方法的候选 (见 auto_research_pipeline 的 _candidates/method=* 逻辑).
 
 Slow run 目录布局 (典型):
-  results/<strategy>/slow-rolling-sim/_rolling_sim/<timestamp>/
+  results/<strategy>/research_roll.features_on/_rolling_sim/<timestamp>/
     slow_snapshot_<YYYY-MM>/
       strategies/<strategy>/
         archetypes/{prefilter,gate,entry_filters}.yaml
@@ -24,34 +24,34 @@ Slow run 目录布局 (典型):
           entry_filters.yaml
 
 Turbo baseline 目录布局:
-  results/<strategy>/turbo-rolling-sim/_rolling_sim/<timestamp>/
+  results/<strategy>/calibrate_roll.default/_rolling_sim/<timestamp>/
     fast_month_<YYYY-MM>/strategies_calibrated/<strategy>/
       (同 slow_snapshot 下的 strategies/<strategy>/ 结构)
 
 示例:
   # 1) 仅看慢管线每月挑了什么
   python scripts/slow_candidate_report.py manifest \
-      --run-dir results/bpc/slow-rolling-sim/_rolling_sim/20260421_174335 \
+      --run-dir results/bpc/research_roll.features_on/_rolling_sim/20260421_174335 \
       --strategy bpc \
       --output results/bpc/slow_candidate_reports/manifest.md
 
   # 2) 对比锁定基线 (turbo run) 每月特征/规则的增减
   python scripts/slow_candidate_report.py drift \
-      --slow-run-dir results/bpc/slow-rolling-sim/_rolling_sim/20260421_174335 \
-      --baseline-run-dir results/bpc/turbo-rolling-sim/_rolling_sim/20260409_171133 \
+      --slow-run-dir results/bpc/research_roll.features_on/_rolling_sim/20260421_174335 \
+      --baseline-run-dir results/bpc/calibrate_roll.default/_rolling_sim/20260409_171133 \
       --strategy bpc \
       --output results/bpc/slow_candidate_reports/drift.md
 
   # 3) 组合 manifest + drift + monthly R delta
   python scripts/slow_candidate_report.py digest \
-      --slow-run-dir results/bpc/slow-rolling-sim/_rolling_sim/20260421_174335 \
-      --baseline-run-dir results/bpc/turbo-rolling-sim/_rolling_sim/20260409_171133 \
+      --slow-run-dir results/bpc/research_roll.features_on/_rolling_sim/20260421_174335 \
+      --baseline-run-dir results/bpc/calibrate_roll.default/_rolling_sim/20260409_171133 \
       --strategy bpc \
       --output results/bpc/slow_candidate_reports/digest.md
 
   # 4) Multi-method consensus matrix (需要 slow run 已 dump _candidates/)
   python scripts/slow_candidate_report.py consensus \
-      --run-dir results/bpc/slow-rolling-sim/_rolling_sim/<ts> \
+      --run-dir results/bpc/research_roll.features_on/_rolling_sim/<ts> \
       --strategy bpc \
       --output results/bpc/slow_candidate_reports/consensus.md
 """
@@ -708,8 +708,8 @@ def _load_monthly_r(
     """Return {month: (n_trades, total_r)} for a rolling_sim run.
 
     Reuses compare_monthly_pnl helpers (same dedup + attribution logic) but
-    accepts an arbitrary run_dir path (works for both slow-rolling-sim and
-    turbo-rolling-sim subtrees).
+    accepts an arbitrary run_dir path (works for both research_roll.features_on and
+    calibrate_roll.default subtrees).
 
     run_dir layout: results/<strat>/<pipeline-dir>/_rolling_sim/<ts>/
     """

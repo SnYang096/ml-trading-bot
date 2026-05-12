@@ -90,9 +90,6 @@ event_backtest:
     min_trades_soft: 0
     undertrade_penalty: 0.0
 
-pcm_slot_grid:
-  enabled: false
-
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a
@@ -216,4 +213,4 @@ data_flow:
     backtest: logs_gated.parquet
 
 output:
-  history_dir: results/srb/slow-rolling-sim
+  history_dir: results/srb/research_roll.features_on

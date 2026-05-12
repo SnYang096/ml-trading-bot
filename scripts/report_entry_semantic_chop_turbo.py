@@ -8,7 +8,7 @@ Uses the same causal chop + rolling quantile definitions as research CLIs:
   - ME: ``compute_momentum_expansion_soft_phase_from_series`` with
         ``bb_width_normalized`` from ``_bb_width_pctile(close)`` (matches narrow-band intent).
 
-Example (auto-pick two newest runs per strategy under results/<strat>/turbo-rolling-sim/_rolling_sim):
+Example (auto-pick two newest runs per strategy under results/<strat>/calibrate_roll.default/_rolling_sim):
 
   python scripts/report_entry_semantic_chop_turbo.py \\
     --data-path data/parquet_data \\
@@ -53,7 +53,7 @@ from src.features.time_series.semantic_chop_ts_quantile import (  # noqa: E402
 
 
 def _discover_latest_runs(strat: str, root: Path, k: int = 2) -> List[Path]:
-    base = root / "results" / strat / "turbo-rolling-sim" / "_rolling_sim"
+    base = root / "results" / strat / "calibrate_roll.default" / "_rolling_sim"
     if not base.is_dir():
         return []
     cands = [

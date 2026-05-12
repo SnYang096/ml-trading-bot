@@ -27,7 +27,7 @@
 
 - **代号**：SRB（Structural Range Breakout）。
 - **慢滚管线**：[config/prod_train_pipeline_2h_slow_srb_only.yaml](../config/prod_train_pipeline_2h_slow_srb_only.yaml)  
-- **结果目录**：`results/srb/slow-rolling-sim/`（与 TPC/FBF 并列）。
+- **结果目录**：`results/srb/research_roll.features_on/`（与 TPC/FBF 并列）。
 
 ## 实验：FBF 单笔更「肥」（只抬止盈 R）
 
@@ -37,12 +37,12 @@
 
 ```bash
 # 基线
-git show fbf-slow-baseline-20260413-36R-240t:results/fbf/slow-rolling-sim/_rolling_sim/20260413_162634/stitched_summary.json
+git show fbf-slow-baseline-20260413-36R-240t:results/fbf/research_roll.features_on/_rolling_sim/20260413_162634/stitched_summary.json
 # 或本地若仍保留：
-cat results/fbf/slow-rolling-sim/_rolling_sim/<baseline_run_id>/stitched_summary.json
+cat results/fbf/research_roll.features_on/_rolling_sim/<baseline_run_id>/stitched_summary.json
 
 # 肥 TP 实验
-cat results/fbf/slow-rolling-sim-exp-fatter-tp/_rolling_sim/<run_id>/stitched_summary.json
+cat results/fbf/research_roll.features_on-exp-fatter-tp/_rolling_sim/<run_id>/stitched_summary.json
 ```
 
 ```bash
@@ -61,13 +61,13 @@ FBF 仍为研究单策略管线，未写入宪法白名单。
 
 - **代号**：RMR（RangeMeanRevert）。
 - **慢滚管线**：[config/prod_train_pipeline_2h_slow_rmr_only.yaml](../config/prod_train_pipeline_2h_slow_rmr_only.yaml)
-- **结果目录**：`results/rmr/slow-rolling-sim/`（与 SRB/TPC/FBF 并列）。
+- **结果目录**：`results/rmr/research_roll.features_on/`（与 SRB/TPC/FBF 并列）。
 - **MVP 风险**：direction 用 `negate_sign(macd_atr)`，可能在局部强趋势回调里仍触发——由 prefilter 的 `trend_r2_20 ≤ 0.30` 过滤。若首轮漂移严重，下一步是新增 `rmr_mean_revert_direction_signed` 专用 signed 特征（`sign(0.5 - fer_range_pos_20) × 衰竭门限`）。
 
 ## SRB 冒烟验证
 
 - **配置校验（推荐）**：`mlbot pipeline run --config config/prod_train_pipeline_2h_slow_srb_only.yaml --strategy srb --stage prefilter --dry-run`（exit 0，已验证）。
-- **实跑 prefilter（较长）**：同上去掉 `--dry-run`，可加 `--skip-shap`；产物在 `results/srb/slow-rolling-sim/srb/<timestamp>/`。
+- **实跑 prefilter（较长）**：同上去掉 `--dry-run`，可加 `--skip-shap`；产物在 `results/srb/research_roll.features_on/srb/<timestamp>/`。
 
 ## MVP 风险（SRB）
 

@@ -57,7 +57,7 @@
 | 策略根 | `config/strategies_pullback_lab_extreme_pullback/bpc/` |
 | 实体文件 | `archetypes/entry_filters.yaml`、`gate.yaml`、`prefilter.yaml`、`direction.yaml`、`execution.yaml`；根目录 `features_entry_filter.yaml`（含 `macro_tp_vwap_1200_position_f`） |
 | Pipeline | `config/prod_train_pipeline_2h_turbo_2024bull_bpc_pullback_lab_extreme_pullback.yaml` |
-| 结果目录 | `results/bpc/turbo-rolling-sim-pullback-lab-extreme-pullback` |
+| 结果目录 | `results/bpc/calibrate_roll.default-pullback-lab-extreme-pullback` |
 
 **语义摘要（breakout → pullback → 次级别吸收 → 弱化 continue）**：**prefilter** 用 `bpc_is_after_breakout`、`bpc_score_pullback`/`bpc_pullback_depth`、`bpc_score_continuation` 上限与 `bpc_recovery_strength` 下限做粗链；**direction** 用 `bpc_breakout_direction`+MACD 与 `macro_tp_vwap_1200_position` 带通同号；**entry** 在各 OR 臂上再收紧并叠加 `bpc_pullback_delta_absorption`、`bpc_cvd_absorption`、`fp_imbalance_absorption_score` 或 `vpin_absorption_score`；**gate** 仅风控 + VWAP 死区 **±0.001**；**execution** 仍为 `vwap1200` 结构出场，与宏观标尺一致。
 

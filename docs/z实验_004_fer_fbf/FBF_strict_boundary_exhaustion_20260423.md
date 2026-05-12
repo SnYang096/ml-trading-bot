@@ -29,7 +29,7 @@
 
 ## 离线 filter_then_resim 结果
 
-`scripts/filter_then_resim_fbf.py` 对同一批 173 笔基线（生产 `slow-rolling-sim-exp-trail/20260422_202736`）按新 prefilter 过滤后用同一执行 (`trail_r=0.5 / BE 1R / time_stop 48`) 在 2H 上重放：
+`scripts/filter_then_resim_fbf.py` 对同一批 173 笔基线（生产 `research_roll.features_on-exp-trail/20260422_202736`）按新 prefilter 过滤后用同一执行 (`trail_r=0.5 / BE 1R / time_stop 48`) 在 2H 上重放：
 
 | 方案 | n | totalR | meanR | win% | Sharpe | maxDD | maxWin |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -62,7 +62,7 @@
   - `archetypes/prefilter.yaml`：原 4 条 + 新增 `any_of(fer_ols_pos≥0.9 OR ≤0.1)`
   - `archetypes/entry_filters.yaml`：每向 2 filter（flip OR absorption），共 4 filter，OR 组合
   - 其他文件与 `fbf_exp_trail` 一致（execution.yaml = pure trail `trail_r=0.5`）
-- `config/prod_train_pipeline_2h_slow_fbf_strict.yaml`（指向 `fbf_strict`，output 到 `results/fbf/slow-rolling-sim-strict`）
+- `config/prod_train_pipeline_2h_slow_fbf_strict.yaml`（指向 `fbf_strict`，output 到 `results/fbf/research_roll.features_on-strict`）
 
 ### 实验工具（本次新增）
 
@@ -99,8 +99,8 @@ mlbot pipeline run --all \
   --stage rolling_sim --skip-shap
 ```
 
-完成后对比 `results/fbf/slow-rolling-sim-strict/_rolling_sim/<ts>/...` 与
-`results/fbf/slow-rolling-sim-exp-trail/_rolling_sim/20260422_202736/...`，关注：
+完成后对比 `results/fbf/research_roll.features_on-strict/_rolling_sim/<ts>/...` 与
+`results/fbf/research_roll.features_on-exp-trail/_rolling_sim/20260422_202736/...`，关注：
 
 1. 端到端 trade 数（应在 40–90 间；离线 D80 预期 53）
 2. totalR、Sharpe、maxDD（应与离线 D80 量级接近）

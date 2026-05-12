@@ -285,7 +285,7 @@ prefilter 同步调整（`config/strategies/srb/archetypes/prefilter.yaml`）：
   structural exit 等）保留并通过。
 - **Rolling 回测**：`scripts/auto_research_pipeline.py --config
   config/prod_train_pipeline_2h_slow_srb_only.yaml` 跑 16 个月全量 rolling，
-  产物落 `results/srb/slow-rolling-sim/_rolling_sim/<ts>`；对比维度：
+  产物落 `results/srb/research_roll.features_on/_rolling_sim/<ts>`；对比维度：
   `symbol × side × exit_reason × is_reverse` 的 trade count / meanR /
   hit_rate，重点看 SOL/XRP 的 reverse meanR 是否从 -1.0 抬起。
 - **实验报告**：`docs/z实验_005_统一研究/SRB_cross_state_machine_20260419.md`。

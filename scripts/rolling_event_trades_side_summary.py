@@ -17,7 +17,7 @@ Investigation when a month has **zero trades** and "no short" in recent windows:
 
 Usage:
   python scripts/rolling_event_trades_side_summary.py --run-root \\
-    results/tpc/turbo-rolling-sim/_rolling_sim/20260424_191639 --strategy tpc
+    results/tpc/calibrate_roll.default/_rolling_sim/20260424_191639 --strategy tpc
 """
 from __future__ import annotations
 

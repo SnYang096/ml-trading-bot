@@ -5,9 +5,9 @@ baseline:
   rolling_config: config/strategies/bad-candidates/srb/research/research_roll.features_on.yaml
 
 paths:
-  stitched_summary: results/srb/slow-rolling-sim/_rolling_sim/20260414_220229/stitched_summary.json
-  monthly_ledger: results/srb/slow-rolling-sim/_rolling_sim/20260414_220229/monthly_ledger.jsonl
-  event_trades_glob: results/srb/slow-rolling-sim/_rolling_sim/20260414_220229/fast_month_*/srb/event_trades_srb.csv
+  stitched_summary: results/srb/research_roll.features_on/_rolling_sim/20260414_220229/stitched_summary.json
+  monthly_ledger: results/srb/research_roll.features_on/_rolling_sim/20260414_220229/monthly_ledger.jsonl
+  event_trades_glob: results/srb/research_roll.features_on/_rolling_sim/20260414_220229/fast_month_*/srb/event_trades_srb.csv
 
 metrics:
   stitched_total_r: 46.9801

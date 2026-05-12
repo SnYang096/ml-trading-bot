@@ -185,8 +185,8 @@ Phase D: Add 形态筛选（新）—— retrace_guard / recent_momentum / r2_ga
 
 ## Rolling_sim 终审（2026-04-22，16 月全量）
 
-Run: `results/srb/slow-rolling-sim/_rolling_sim/20260422_143930`（NEW = Phase A+B+D momentum enabled）
-Baseline: `results/srb/slow-rolling-sim/_rolling_sim/20260421_222624`（OLD = 改动前）
+Run: `results/srb/research_roll.features_on/_rolling_sim/20260422_143930`（NEW = Phase A+B+D momentum enabled）
+Baseline: `results/srb/research_roll.features_on/_rolling_sim/20260421_222624`（OLD = 改动前）
 
 | 指标 | NEW | OLD | Δ |
 |---|---:|---:|---:|

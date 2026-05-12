@@ -80,8 +80,8 @@ add_position_ok: 6
 ## 归档
 
 - 改动 commit / 快照：当前 working tree（见 git status）
-- 结果目录：`results/srb/slow-rolling-sim/_rolling_sim/20260419_203407/`
-- 对比基线：`results/srb/slow-rolling-sim/_rolling_sim/20260419_153737/`
+- 结果目录：`results/srb/research_roll.features_on/_rolling_sim/20260419_203407/`
+- 对比基线：`results/srb/research_roll.features_on/_rolling_sim/20260419_153737/`
 - 设计初衷锚点：`config/strategies/srb/meta.yaml::design_intent`
 
 ## 与 meta.yaml::anti_patterns 的对照

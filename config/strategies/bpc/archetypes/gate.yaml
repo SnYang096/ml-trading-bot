@@ -1,6 +1,6 @@
 # BPC Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/bpc/non-rolling-sim/bpc/20260511_162324/strategies/bpc/gate_draft.yaml
-# 优化规则: 0/8 条通过优化, 4 条已移除
+# 来源: /home/yin/trading/ml_trading_bot/results/bpc/validate_static.full_study/bpc/20260512_061250/strategies/bpc/gate_draft.yaml
+# 优化规则: 0/2 条通过优化
 # Phase split: system_safety=2, hard_gate=2
 
 schema:

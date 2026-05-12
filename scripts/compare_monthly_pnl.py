@@ -110,7 +110,7 @@ def _load_fast_month_trades(
 
     run_timestamps: list of rolling_sim timestamps (dir names under _rolling_sim/).
     """
-    root = results_root / strat / "slow-rolling-sim" / "_rolling_sim"
+    root = results_root / strat / "research_roll.features_on" / "_rolling_sim"
     if not root.exists():
         return []
     seen: set = set()

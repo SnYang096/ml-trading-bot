@@ -10,7 +10,7 @@
 > 对齐验证：用 `baseline` 配置 replay 2023-09 → 5 笔 / −10.823 R，与 rolling 原始 5 笔 / −10.82 R 完全一致（误差 < 1e-3）。
 
 ## Baseline run
-`results/srb/slow-rolling-sim/_rolling_sim/20260417_163432`（合并态，包含两阶段反手 + fake_break_reverse 修复）。
+`results/srb/research_roll.features_on/_rolling_sim/20260417_163432`（合并态，包含两阶段反手 + fake_break_reverse 修复）。
 
 ## 实验矩阵
 

@@ -8,8 +8,8 @@ It records where the currently adopted archetype bundle came from.
 - Target: `live/highcap`
 - Run ID: `20260511_162324`
 - Pipeline config: `/home/yin/trading/ml_trading_bot/config/strategies/bpc/research/validate_static.full_study.yaml`
-- Report: `results/bpc/non-rolling-sim/bpc/20260511_162324/report.json`
-- Experiment config: `/home/yin/trading/ml_trading_bot/results/bpc/non-rolling-sim/bpc/20260511_162324/strategies/bpc`
+- Report: `results/bpc/validate_static.full_study/bpc/20260511_162324/report.json`
+- Experiment config: `/home/yin/trading/ml_trading_bot/results/bpc/validate_static.full_study/bpc/20260511_162324/strategies/bpc`
 
 ## Decision
 - Decision: `ADOPT`

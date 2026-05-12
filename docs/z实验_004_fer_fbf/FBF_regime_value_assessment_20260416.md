@@ -8,12 +8,12 @@
 
 ## 对比对象
 
-- 基线 FBF：`results/fbf/slow-rolling-sim/_rolling_sim/20260413_162634/stitched_summary.json`
-- 肥 TP 实验：`results/fbf/slow-rolling-sim-exp-fatter-tp/_rolling_sim/20260416_153251/stitched_summary.json`
+- 基线 FBF：`results/fbf/research_roll.features_on/_rolling_sim/20260413_162634/stitched_summary.json`
+- 肥 TP 实验：`results/fbf/research_roll.features_on-exp-fatter-tp/_rolling_sim/20260416_153251/stitched_summary.json`
 - 趋势对照：
-  - BPC：`results/bpc/slow-rolling-sim/_rolling_sim/20260413_144115/stitched_summary.json`
-  - TPC：`results/tpc/slow-rolling-sim/_rolling_sim/20260416_104125/stitched_summary.json`
-  - ME：`results/me/slow-rolling-sim/_rolling_sim/20260416_090720/stitched_summary.json`
+  - BPC：`results/bpc/research_roll.features_on/_rolling_sim/20260413_144115/stitched_summary.json`
+  - TPC：`results/tpc/research_roll.features_on/_rolling_sim/20260416_104125/stitched_summary.json`
+  - ME：`results/me/research_roll.features_on/_rolling_sim/20260416_090720/stitched_summary.json`
 
 ## stitched 总览
 
@@ -35,7 +35,7 @@
 
 ### 2. FBF 不是只在极少数月份偶发有效
 
-按 `results/fbf/slow-rolling-sim/_rolling_sim/20260413_162634/fast_month_*/fbf/event_backtest_fbf.json`
+按 `results/fbf/research_roll.features_on/_rolling_sim/20260413_162634/fast_month_*/fbf/event_backtest_fbf.json`
 统计：
 
 - **正收益月份**：10

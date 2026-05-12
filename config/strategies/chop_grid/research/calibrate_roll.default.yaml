@@ -152,4 +152,4 @@ grid_backtest:
     funding_cost_bps_per_8h: 20.0
 
 output:
-  history_dir: results/chop_grid/turbo-rolling-sim
+  history_dir: results/chop_grid/calibrate_roll.default

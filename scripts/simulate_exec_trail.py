@@ -14,7 +14,7 @@ Offline re-simulator: replay baseline trades under a new execution.yaml.
 
 用法：
   python scripts/simulate_exec_trail.py \
-    --trades results/fbf/slow-rolling-sim-exp-fatter-tp/_rolling_sim/20260416_153251/fast_month_*/fbf/event_trades_fbf.csv \
+    --trades results/fbf/research_roll.features_on-exp-fatter-tp/_rolling_sim/20260416_153251/fast_month_*/fbf/event_trades_fbf.csv \
     --feature-store feature_store/features_fbf_120T_06702ab6f8 \
     --exec-config config/strategies/fbf_exp_trail/archetypes/execution.yaml \
     --out reports/fbf_trail_resim.csv

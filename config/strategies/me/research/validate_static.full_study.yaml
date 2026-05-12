@@ -38,4 +38,4 @@ deploy_gate:
   require_human_confirm: true
 
 output:
-  history_dir: results/me/non-rolling-sim
+  history_dir: results/me/validate_static.full_study

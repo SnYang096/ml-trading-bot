@@ -70,7 +70,7 @@
 | 路径含义 | 典型位置 | 用途 |
 |----------|----------|------|
 | **仓库冻结配置** | `config/strategies/<strategy>/archetypes/*.yaml` | Git 版本化、实盘/CI 默认可指向 |
-| **单次滚动实验产出** | `results/.../turbo-rolling-sim/_rolling_sim/<run_id>/fast_month_*/strategies_calibrated/` | 该月/该次模拟的标定结果 |
+| **单次滚动实验产出** | `results/.../calibrate_roll.default/_rolling_sim/<run_id>/fast_month_*/strategies_calibrated/` | 该月/该次模拟的标定结果 |
 
 **原则**：快管线 **`rolling_sim` / `fast_month` 默认不把 archetypes 写进仓库**（除非你有单独 adopt/拷贝流程）。上线前必须明确：**采纳哪一次 run 的哪几个文件**。
 

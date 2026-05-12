@@ -118,5 +118,5 @@ event_backtest:
   map_extra_months: 4
 
 output:
-  history_dir: results/cdr/turbo-rolling-sim
+  history_dir: results/cdr/calibrate_roll.default
   latest_dir: results/cdr/turbo-latest

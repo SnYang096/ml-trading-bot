@@ -6,9 +6,9 @@
 #       (archetypes/prefilter.yaml: 新增 any_of(fer_ols_pos ≥0.9 或 ≤0.1)
 #        archetypes/entry_filters.yaml: 每向 2 filter（flip OR absorption）
 #        archetypes/execution.yaml: 与 fbf_exp_trail 相同，Pure Trailing)
-#   - output.history_dir → results/fbf/slow-rolling-sim-strict
+#   - output.history_dir → results/fbf/research_roll.features_on-strict
 #
-# 对比基线：results/fbf/slow-rolling-sim-exp-trail/_rolling_sim/20260422_202736
+# 对比基线：results/fbf/research_roll.features_on-exp-trail/_rolling_sim/20260422_202736
 #
 # 预期（基于 173 笔离线 filter_then_resim，见
 #   docs/z实验_005_统一研究/FBF_strict_boundary_exhaustion_20260423.md）：
@@ -84,16 +84,6 @@ event_backtest:
     max_dd_penalty: 0.0
     min_trades_soft: 0
     undertrade_penalty: 0.0
-
-pcm_slot_grid:
-  enabled: false
-  plateau_delta: 0.03
-  min_trades_soft: 80
-  penalties:
-    max_dd_penalty: 0.02
-    slot_full_rate_penalty: 0.20
-    undertrade_penalty: 0.001
-  cases: []
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
@@ -213,4 +203,4 @@ data_flow:
     backtest: logs_gated.parquet
 
 output:
-  history_dir: results/fbf/slow-rolling-sim-strict
+  history_dir: results/fbf/research_roll.features_on-strict

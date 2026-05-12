@@ -46,7 +46,7 @@ def run_server(
     print(f"   上线管线: http://{bind}:{port}/dashboard/prod")
     print(f"   浏览目录: http://{bind}:{port}/browse")
     print(
-        f"   示例:    http://{bind}:{port}/me/turbo-rolling-sim/_rolling_sim/…/trading_map_continuous.html"
+        f"   示例:    http://{bind}:{port}/me/calibrate_roll.default/_rolling_sim/…/trading_map_continuous.html"
     )
     print("   Ctrl+C 停止")
     try:

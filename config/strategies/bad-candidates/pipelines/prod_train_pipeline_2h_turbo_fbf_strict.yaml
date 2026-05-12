@@ -6,7 +6,7 @@
 #     (新 prefilter: any_of fer_ols_pos ≤0.10 / ≥0.90
 #      新 entry_filters: 4 filter (_flip 或 _absorp, OR)
 #      execution: 与 fbf_exp_trail 相同 Pure Trailing)
-#   * output.history_dir → results/fbf/turbo-rolling-sim-strict
+#   * output.history_dir → results/fbf/calibrate_roll.default-strict
 #   * 全部关闭自动 tune / promote：strict 的 filter/prefilter 必须保持
 #     locked-as-is，不能被 optimize_entry_filter_plateau / prefilter.optimize
 #     覆盖成 baseline（慢管线的那次已出现过这问题）。
@@ -140,4 +140,4 @@ event_backtest:
     undertrade_penalty: 0.0
 
 output:
-  history_dir: results/fbf/turbo-rolling-sim-strict
+  history_dir: results/fbf/calibrate_roll.default-strict

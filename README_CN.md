@@ -330,7 +330,7 @@ mlbot pipeline event-backtest \
 > 当 **`research_roll.features_on`** 管线跑完后，用这组命令把「每月 Prefilter/Gate/EF 选了什么 / 和 **`calibrate_roll.default`** 基线的差异 / 月度 R delta」一张表产出来，**无需重跑**。
 
 ```bash
-RUN=results/bpc/slow-rolling-sim/_rolling_sim/20260423_223716
+RUN=results/bpc/research_roll.features_on/_rolling_sim/20260423_223716
 BASE=results/bpc/<calibrate_roll-history-dir>/_rolling_sim/<baseline_ts>
 OUT=results/bpc/slow_candidate_reports/${RUN##*/}
 mkdir -p "$OUT"
@@ -388,7 +388,7 @@ flowchart TB
 
   subgraph heavy["按需大修（低频）"]
     N["Non_rolling + research/validate_static.full_study.yaml\n--stage full"]
-    N --> NR["non-rolling-sim / … / bpc / 时间戳\n整段静态 holdout 对齐"]
+    N --> NR["validate_static.full_study / … / bpc / 时间戳\n整段静态 holdout 对齐"]
   end
 
   TR --> Q{"Slow 体检：\n特征/规则层漂移大？"}
@@ -426,11 +426,11 @@ flowchart TB
     H1["results/.../*-rolling-sim"]
     H1 --> RS["_rolling_sim / 本批时间戳 /\nstitched_summary · trading_map_continuous"]
     RS --> FM["fast_month_YYYY-MM /\n该月「全窗口」管线产物\nstrategies_calibrated · report · …"]
-    H1 --> LEG["bpc me tpc / 时间戳 /\n顶层快照：rolling 配置默认禁用 naive full\n可能为空；validate_static（non-rolling-sim）不在此树"]
+    H1 --> LEG["bpc me tpc / 时间戳 /\n顶层快照：rolling 配置默认禁用 naive full\n可能为空；validate_static（validate_static.full_study）不在此树"]
   end
 
   subgraph nr["validate_static（rolling.mode non_rolling）"]
-    H2["results/.../non-rolling-sim"]
+    H2["results/.../validate_static.full_study"]
     H2 --> BPC["bpc / 时间戳\nlist · adopt 对齐 validate_static 的 history_dir"]
   end
 ```
@@ -480,7 +480,7 @@ flowchart TB
 | ------------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **rolling_sim 批次根**         | `{history_dir}/_rolling_sim/<本批YYYYMMDD_HHMMSS>/`                                                    | **`--stage rolling_sim` 一次 invocation 的批次根**：`monthly_ledger.jsonl`、`stitched_summary.json`、`trading_map_continuous.html`、跨月拼接索引等。                                                                                                                                                                                                                                                                                                                |
 | **批次内的「月度全窗口」子树** | `{history_dir}/_rolling_sim/<本批>/<fast_month_YYYY-MM>/`（及 slow 模式下可能的 `slow_snapshot_*` 等） | 每个月 rolling 推进时，在该目录下跑完**当月标定窗内整套阶段**（等价于嵌在滚动里的一棵「月粒度 full 产物」：`strategies_calibrated/`、各层 plateau、事件回测、实验配置副本等），**不是** CLI 顶层 `--stage full`。                                                                                                                                                                                                                                                   |
-| **顶层策略快照目录**           | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/`                                                            | **单机全段 `full` 的典型落点**（`report.json` 等）。当前 **`calibrate_roll.default.yaml` / `research_roll.features_on.yaml` 已禁止默认 `full`**，该路径常为空或仅出现在例外（如 `--locked-prefilter-override` 子进程、历史遗留）。**整段静态 holdout** 用 **`validate_static.full_study.yaml`**，目录在 **`non-rolling-sim`**。**多腿策略**在 `rolling_sim` 收尾时可能把最后一月的 `strategies_calibrated` **拷贝**到 `{history_dir}/<策略>/<本批时间戳>/strategies/<策略>/` 供 `pipeline adopt`，见下文 §6.1。 |
+| **顶层策略快照目录**           | `{history_dir}/<策略键>/<YYYYMMDD_HHMMSS>/`                                                            | **单机全段 `full` 的典型落点**（`report.json` 等）。当前 **`calibrate_roll.default.yaml` / `research_roll.features_on.yaml` 已禁止默认 `full`**，该路径常为空或仅出现在例外（如 `--locked-prefilter-override` 子进程、历史遗留）。**整段静态 holdout** 用 **`validate_static.full_study.yaml`**，目录在 **`validate_static.full_study`**。**多腿策略**在 `rolling_sim` 收尾时可能把最后一月的 `strategies_calibrated` **拷贝**到 `{history_dir}/<策略>/<本批时间戳>/strategies/<策略>/` 供 `pipeline adopt`，见下文 §6.1。 |
 
 **命令行为**：当你执行带 `--config` 的 `mlbot pipeline list …`（或对某策略包扫描到的等价入口），脚本在打印完上述「快照」表格后，若磁盘上存在 `_rolling_sim`，会在末尾多一行类似：
 
@@ -491,12 +491,12 @@ flowchart TB
 **日常怎么用**：
 
 1. **看滚动结果 / 连续交易图**：进 `{history_dir}/_rolling_sim/<本批>/`，读 `stitched_summary.json`、打开 `trading_map_continuous.html`；需排查单月细节时进对应 **`fast_month_<YYYY-MM>/`**。  
-2. **认 adopt / 删快照（顶层 `list` 表）**：对 **`validate_static`（non-rolling-sim）** 仍看 `{non-rolling-sim}/<策略>/<ts>/`；对 **BPC 类 calibrate_roll / research_roll** 若顶层无新快照， adopt 流程以你们当前脚本约定为准（多腿见 §6.1）。  
+2. **认 adopt / 删快照（顶层 `list` 表）**：对 **`validate_static`（validate_static.full_study）** 仍看 `{validate_static.full_study}/<策略>/<ts>/`；对 **BPC 类 calibrate_roll / research_roll** 若顶层无新快照， adopt 流程以你们当前脚本约定为准（多腿见 §6.1）。  
 3. **查 rolling 跑完了哪几次批次**：对 `list` 末尾 ℹ️ 路径 `ls` 各批次根即可。
 
 ```bash
 # 将路径换成你 list 末尾 ℹ️ 里那一行（或 research_roll.features_on.yaml 里 history_dir + /_rolling_sim）
-ROLL_ROOT=results/bpc/slow-rolling-sim/_rolling_sim
+ROLL_ROOT=results/bpc/research_roll.features_on/_rolling_sim
 ls -la "$ROLL_ROOT"
 # 只看批次名与时间排序
 ls -1 "$ROLL_ROOT" | tail
@@ -510,7 +510,7 @@ find "$ROLL_ROOT/$LEDGER_TS" -maxdepth 3 -type d | head -40
 
 **与 `mlbot server` 的关系**：`rolling-dashboard` 在根路径上**已经**按 `results/` 提供静态文件，和 `mlbot server --dir results` 是同一类服务，并多了 `/dashboard` 汇总页。**同一端口不要同时开两个**；日常直接开 `rolling-dashboard` 即可，不必再开 `server`。
 
-**浏览器汇总看板（已实现）**：本地扫描全部 `results/**/_rolling_sim/<批次>/`，表格展示 `stitched_summary.json` 中的月数 / stitched R / trades，并链到 `trading_map_continuous.html`、`trading_map_stitched.html` 等；**其它 URL 与单独开 `mlbot server --dir results` 完全一致**（例如 `/me/turbo-rolling-sim/_rolling_sim/<批次>/trading_map_continuous.html`）。
+**浏览器汇总看板（已实现）**：本地扫描全部 `results/**/_rolling_sim/<批次>/`，表格展示 `stitched_summary.json` 中的月数 / stitched R / trades，并链到 `trading_map_continuous.html`、`trading_map_stitched.html` 等；**其它 URL 与单独开 `mlbot server --dir results` 完全一致**（例如 `/me/calibrate_roll.default/_rolling_sim/<批次>/trading_map_continuous.html`）。
 
 ```bash
 # 默认 http://127.0.0.1:8008/dashboard ，静态根为仓库下 results/
@@ -521,7 +521,7 @@ PYTHONPATH=. python scripts/rolling_dashboard_server.py --port 8008 --root resul
 # 只看某一策略顶层目录（路径第一段），例如 me、bpc
 # 浏览器打开 http://127.0.0.1:8008/dashboard?strategy=me
 # 路径子串筛选（大小写不敏感）
-# http://127.0.0.1:8008/dashboard?q=turbo-rolling-sim
+# http://127.0.0.1:8008/dashboard?q=calibrate_roll.default
 
 # 机器可读索引
 curl -s http://127.0.0.1:8008/api/rolling-ledgers.json | head
@@ -674,7 +674,7 @@ mlbot multileg replay \
   --months 2025-01:2025-12
 mlbot multileg gate \
   --config config/strategies/chop_grid/research/research_roll.features_on.yaml \
-  --run-dir results/chop_grid/slow-rolling-sim/_rolling_sim/<run_id>
+  --run-dir results/chop_grid/research_roll.features_on/_rolling_sim/<run_id>
 mlbot multileg monitor \
   --config config/strategies/chop_grid/research/research_roll.features_on.yaml \
   --run-id <run_id> \

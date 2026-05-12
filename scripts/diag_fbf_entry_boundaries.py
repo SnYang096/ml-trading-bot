@@ -13,7 +13,7 @@ For every trade in event_trades_*.csv we output, at entry time:
 
 使用:
   python scripts/diag_fbf_entry_boundaries.py \
-    --trades 'results/fbf/slow-rolling-sim-exp-trail/_rolling_sim/20260422_202736/fast_month_*/fbf/event_trades_fbf.csv' \
+    --trades 'results/fbf/research_roll.features_on-exp-trail/_rolling_sim/20260422_202736/fast_month_*/fbf/event_trades_fbf.csv' \
     --feature-store feature_store/features_fbf_120T_06702ab6f8 \
     --out reports/fbf_entry_boundary_diag.csv
 """

@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TAG="${1:-staged_2b}"
-BASELINE_RUN="${BASELINE_RUN:-results/srb/slow-rolling-sim/_rolling_sim/20260422_212338}"
+BASELINE_RUN="${BASELINE_RUN:-results/srb/research_roll.features_on/_rolling_sim/20260422_212338}"
 OUT_ROOT="results/reports/srb_fast_ab_${TAG}"
 mkdir -p "${OUT_ROOT}"
 

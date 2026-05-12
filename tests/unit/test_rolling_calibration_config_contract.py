@@ -727,7 +727,7 @@ def test_build_multi_leg_pcm_artifact_rejects_same_symbol_overlap(tmp_path):
 
 
 def test_multileg_standalone_backtest_out_root_defaults_under_history_dir(tmp_path):
-    history = tmp_path / "results/chop_grid/turbo-rolling-sim"
+    history = tmp_path / "results/chop_grid/calibrate_roll.default"
     history.mkdir(parents=True)
     got = arp._multileg_standalone_backtest_out_root(
         history_dir=history,

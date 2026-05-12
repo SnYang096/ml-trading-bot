@@ -10,19 +10,19 @@
 ### 阶段 A（EMA1200 + gate，不加 AB-B）
 
 - run_id: `20260417_184110`
-- 摘要: `results/fbf/slow-rolling-sim/_rolling_sim/20260417_184110/stitched_summary.json`
-- 日志: `results/fbf/slow-rolling-sim/_logs/fbf_stageA_ema_gate_20260417_184109.log`
+- 摘要: `results/fbf/research_roll.features_on/_rolling_sim/20260417_184110/stitched_summary.json`
+- 日志: `results/fbf/research_roll.features_on/_logs/fbf_stageA_ema_gate_20260417_184109.log`
 
 ### 阶段 B（EMA1200 + AB-B 放宽 + gate）
 
 - run_id: `20260417_191527`
-- 摘要: `results/fbf/slow-rolling-sim/_rolling_sim/20260417_191527/stitched_summary.json`
-- 日志: `results/fbf/slow-rolling-sim/_logs/fbf_stageB_ema_abb_loosen_gate_20260417_191527.log`
+- 摘要: `results/fbf/research_roll.features_on/_rolling_sim/20260417_191527/stitched_summary.json`
+- 日志: `results/fbf/research_roll.features_on/_logs/fbf_stageB_ema_abb_loosen_gate_20260417_191527.log`
 
 ### 对照基线（生产版 FBF）
 
 - run_id: `20260413_162634`
-- 摘要: `results/fbf/slow-rolling-sim/_rolling_sim/20260413_162634/stitched_summary.json`
+- 摘要: `results/fbf/research_roll.features_on/_rolling_sim/20260413_162634/stitched_summary.json`
 
 ## 慢管线 stitched 结果
 
@@ -109,8 +109,8 @@
 
 - run_id: `20260418_095724`
 - pipeline: `config/prod_train_pipeline_2h_slow_fbf_noema_mildabb_gate.yaml`
-- 摘要: `results/fbf/slow-rolling-sim-noema-mildabb/_rolling_sim/20260418_095724/stitched_summary.json`
-- 对照基线: `results/fbf/slow-rolling-sim/_rolling_sim/20260413_162634/stitched_summary.json`
+- 摘要: `results/fbf/research_roll.features_on-noema-mildabb/_rolling_sim/20260418_095724/stitched_summary.json`
+- 对照基线: `results/fbf/research_roll.features_on/_rolling_sim/20260413_162634/stitched_summary.json`
 
 ### stitched 对比
 

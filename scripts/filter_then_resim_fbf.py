@@ -17,7 +17,7 @@ Scenarios (kept deliberately simple):
 
 Usage:
   python scripts/filter_then_resim_fbf.py \
-    --trades 'results/fbf/slow-rolling-sim-exp-trail/_rolling_sim/20260422_202736/fast_month_*/fbf/event_trades_fbf.csv' \
+    --trades 'results/fbf/research_roll.features_on-exp-trail/_rolling_sim/20260422_202736/fast_month_*/fbf/event_trades_fbf.csv' \
     --feature-store feature_store/features_fbf_120T_06702ab6f8 \
     --exec-config config/strategies/fbf/archetypes/execution.yaml \
     --out-dir reports/fbf_prefilter_variant

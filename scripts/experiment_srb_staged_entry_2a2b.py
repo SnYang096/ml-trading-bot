@@ -19,7 +19,7 @@ SR 窄窗：与 event 一致，用 ``swing_sr_levels(df, ts, lookback=20)`` 的 
 用法示例：
   python scripts/experiment_srb_staged_entry_2a2b.py \\
     --feature-store feature_store/features_srb_120T_5643a66b47 \\
-    --trades-root results/srb/slow-rolling-sim/_rolling_sim/20260422_212338
+    --trades-root results/srb/research_roll.features_on/_rolling_sim/20260422_212338
 """
 from __future__ import annotations
 

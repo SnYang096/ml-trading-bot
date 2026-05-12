@@ -30,8 +30,8 @@ mlbot pipeline run --all --no-adopt \
 python - <<'PY'
 import json
 from pathlib import Path
-new = Path("results/srb_quickstrike/turbo-rolling-sim/_rolling_sim/<NEW_TS>/stitched_summary.json")
-old = Path("results/srb/turbo-rolling-sim/_rolling_sim/<OLD_TS>/stitched_summary.json")
+new = Path("results/srb_quickstrike/calibrate_roll.default/_rolling_sim/<NEW_TS>/stitched_summary.json")
+old = Path("results/srb/calibrate_roll.default/_rolling_sim/<OLD_TS>/stitched_summary.json")
 for p in (old, new):
     d = json.loads(p.read_text())
     print(p.parent.name, "total_r=", round(d["stitched_total_r"], 2), "trades=", d["stitched_total_trades"])

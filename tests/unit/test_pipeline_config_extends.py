@@ -287,7 +287,7 @@ def test_load_bpc_non_rolling_extends_slow():
     )
     assert "bpc" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
-    assert "results/bpc/non-rolling-sim" in str(
+    assert "results/bpc/validate_static.full_study" in str(
         cfg.get("output", {}).get("history_dir", "")
     )
     d = cfg.get("dates") or {}
@@ -316,7 +316,7 @@ def test_load_me_non_rolling_extends_slow():
     )
     assert "me" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
-    assert "results/me/non-rolling-sim" in str(
+    assert "results/me/validate_static.full_study" in str(
         cfg.get("output", {}).get("history_dir", "")
     )
     d = cfg.get("dates") or {}
@@ -337,7 +337,7 @@ def test_load_tpc_non_rolling_extends_slow():
     )
     assert "tpc" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
-    assert "results/tpc/non-rolling-sim" in str(
+    assert "results/tpc/validate_static.full_study" in str(
         cfg.get("output", {}).get("history_dir", "")
     )
     d = cfg.get("dates") or {}
@@ -352,6 +352,36 @@ def test_load_tpc_non_rolling_extends_slow():
     assert (cfg.get("shap_feature_selection") or {}).get("enabled") is True
 
 
+def test_load_bpc_validate_static_constrained_history_dir():
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/bpc/research/validate_static.constrained.yaml"
+    )
+    assert (
+        cfg.get("output", {}).get("history_dir")
+        == "results/bpc/validate_static.constrained"
+    )
+
+
+def test_load_me_validate_static_constrained_history_dir():
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/me/research/validate_static.constrained.yaml"
+    )
+    assert (
+        cfg.get("output", {}).get("history_dir")
+        == "results/me/validate_static.constrained"
+    )
+
+
+def test_load_tpc_validate_static_constrained_history_dir():
+    cfg = load_pipeline_config(
+        _root() / "config/strategies/tpc/research/validate_static.constrained.yaml"
+    )
+    assert (
+        cfg.get("output", {}).get("history_dir")
+        == "results/tpc/validate_static.constrained"
+    )
+
+
 def test_load_chop_grid_non_rolling_extends_turbo():
     cfg = load_pipeline_config(
         _root() / "config/strategies/chop_grid/research/validate_static.full_study.yaml"
@@ -359,7 +389,7 @@ def test_load_chop_grid_non_rolling_extends_turbo():
     assert "chop_grid" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
     assert cfg.get("rolling", {}).get("time_split_policy") == "static_holdout"
-    assert "results/chop_grid/non-rolling-sim" in str(
+    assert "results/chop_grid/validate_static.full_study" in str(
         cfg.get("output", {}).get("history_dir", "")
     )
     assert cfg["grid_backtest"]["enabled"] is True
@@ -382,7 +412,7 @@ def test_load_dual_add_non_rolling_extends_turbo():
     assert "dual_add_trend" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
     assert cfg.get("rolling", {}).get("time_split_policy") == "static_holdout"
-    assert "results/dual_add_trend/non-rolling-sim" in str(
+    assert "results/dual_add_trend/validate_static.full_study" in str(
         cfg.get("output", {}).get("history_dir", "")
     )
     assert cfg["dual_add_backtest"]["enabled"] is True

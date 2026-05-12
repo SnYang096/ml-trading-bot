@@ -4,7 +4,7 @@
 >
 > 脚本：`scripts/analyze_srb_break_levels.py`
 >
-> 数据：`results/srb/slow-rolling-sim/_rolling_sim/20260421_222624/`（rolling_sim 运行中，当前覆盖 2023-09 → 2024-09）
+> 数据：`results/srb/research_roll.features_on/_rolling_sim/20260421_222624/`（rolling_sim 运行中，当前覆盖 2023-09 → 2024-09）
 >
 > Feature store：`feature_store/features_srb_120T_5643a66b47`（含新 `wide_sr_upper_px` / `wide_sr_lower_px`）
 
@@ -95,7 +95,7 @@ Triple-confluence meanR 高全来自"活下来 + 加仓多 + 复利"，不是入
 
 ```bash
 python scripts/analyze_srb_break_levels.py \
-  --run-dir results/srb/slow-rolling-sim/_rolling_sim/20260421_222624 \
+  --run-dir results/srb/research_roll.features_on/_rolling_sim/20260421_222624 \
   --feature-store feature_store/features_srb_120T_5643a66b47 \
   --out reports/srb_break_level_attribution_firstentry_v2.json \
   --filter-add-reverse

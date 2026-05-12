@@ -152,7 +152,7 @@ FeatureStore-backed.
 Recent `chop_grid` non-rolling run:
 
 - Run root:
-  `results/chop_grid/non-rolling-sim/_rolling_sim/20260510_203804`
+  `results/chop_grid/validate_static.full_study/_rolling_sim/20260510_203804`
 - Full-month replay completed over 27 months.
 - FeatureStore-backed replay was active: monthly `metrics.json` files record
   `feature_store_dir`, `feature_store_layer`, and `feature_store_timeframe`.

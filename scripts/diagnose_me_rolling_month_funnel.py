@@ -5,7 +5,7 @@
 典型用法（与一次 slow rolling 输出对齐）:
   python scripts/diagnose_me_rolling_month_funnel.py \\
     --parquet results/train_final_*_rr_extreme/me/features_labeled.parquet \\
-    --rolling-root results/me/slow-rolling-sim/_rolling_sim/20260411_150326 \\
+    --rolling-root results/me/research_roll.features_on/_rolling_sim/20260411_150326 \\
     --start 2024-11-01 --end 2024-12-31
 
 对 2024-11 行读 fast_month_2024-11/strategies_calibrated/me/archetypes/prefilter.yaml，

@@ -116,5 +116,5 @@ event_backtest:
   map_extra_months: 4
 
 output:
-  history_dir: results/box_pullback_trend/turbo-rolling-sim
+  history_dir: results/box_pullback_trend/calibrate_roll.default
   latest_dir: results/box_pullback_trend/turbo-latest

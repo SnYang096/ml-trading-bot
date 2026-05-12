@@ -72,4 +72,4 @@ grid_backtest:
   end_date: "2026-03-31"
 
 output:
-  history_dir: results/chop_grid/slow-rolling-sim
+  history_dir: results/chop_grid/research_roll.features_on

@@ -81,16 +81,6 @@ event_backtest:
     min_trades_soft: 0
     undertrade_penalty: 0.0
 
-pcm_slot_grid:
-  enabled: false
-  plateau_delta: 0.03
-  min_trades_soft: 80
-  penalties:
-    max_dd_penalty: 0.02
-    slot_full_rate_penalty: 0.20
-    undertrade_penalty: 0.001
-  cases: []
-
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a

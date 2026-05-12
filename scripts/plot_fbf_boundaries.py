@@ -13,7 +13,7 @@ Plot BTC (or any symbol) 2H candles with the FBF boundary family + trade dots.
 用法:
   python scripts/plot_fbf_boundaries.py \
       --symbol BTCUSDT \
-      --trades 'results/fbf/slow-rolling-sim-exp-trail/_rolling_sim/20260422_202736/fast_month_*/fbf/event_trades_fbf.csv' \
+      --trades 'results/fbf/research_roll.features_on-exp-trail/_rolling_sim/20260422_202736/fast_month_*/fbf/event_trades_fbf.csv' \
       --feature-store feature_store/features_fbf_120T_06702ab6f8 \
       --start 2024-01-01 --end 2024-12-31 \
       --out reports/fbf_boundaries_BTC.html

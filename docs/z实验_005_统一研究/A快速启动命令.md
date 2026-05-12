@@ -183,22 +183,22 @@ mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage fas
 mlbot pipeline run --all --config config/prod_train_pipeline_2h.yaml --stage rolling_sim
 
 # ── 常用专用管线（output.history_dir 互不覆盖）──
-# FER-only / turbo / 阈值链 + 事件回测 R 网格（历史目录 results/fer/turbo-rolling-sim）
+# FER-only / turbo / 阈值链 + 事件回测 R 网格（历史目录 results/fer/calibrate_roll.default）
 mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_fer_only.yaml --stage rolling_sim
 
 # 同上：只复盘 2024-07～09（快变量月，适合调 prefilter/entry/gate）
 mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_fer_only.yaml --stage fast_month --month 2024-07,2024-08,2024-09 --skip-shap 2>&1 | tee log.fer.txt
 
-# BPC-only / turbo（results/bpc/turbo-rolling-sim）
+# BPC-only / turbo（results/bpc/calibrate_roll.default）
 mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml --stage rolling_sim
 
-# ME-only / turbo（results/me/turbo-rolling-sim）
+# ME-only / turbo（results/me/calibrate_roll.default）
 mlbot pipeline run --all --config config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_me_only.yaml --stage rolling_sim
 
-# BPC-only / 慢模式 / 近似季度结构 + 月度快变量（results/bpc/slow-rolling-sim）
+# BPC-only / 慢模式 / 近似季度结构 + 月度快变量（results/bpc/research_roll.features_on）
 mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_bpc_only.yaml --stage rolling_sim
 
-# ME-only / 慢模式（results/me/slow-rolling-sim）
+# ME-only / 慢模式（results/me/research_roll.features_on）
 mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_me_only.yaml --stage rolling_sim
 
 # rolling_sim 现支持跨月仓位续跑：
@@ -241,11 +241,11 @@ rolling:
 | 文件                                                                         | 用途                                             | `rolling.mode`         | `output.history_dir`（滚动/快月输出根） |
 | ---------------------------------------------------------------------------- | ------------------------------------------------ | ---------------------- | --------------------------------------- |
 | `config/prod_train_pipeline_2h.yaml`                                         | 主生产向：多策略 + PCM                           | `slow_realistic`       | `results/120T/prod_train_history`       |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_fer_only.yaml` | FER-only，阈值链 + `execution_opt`，不做特征搜索 | `turbo_fixed_features` | `results/fer/turbo-rolling-sim`         |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml` | BPC-only turbo                                   | `turbo_fixed_features` | `results/bpc/turbo-rolling-sim`         |
-| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_me_only.yaml`  | ME-only turbo                                    | `turbo_fixed_features` | `results/me/turbo-rolling-sim`          |
-| `config/prod_train_pipeline_2h_slow_bpc_only.yaml`                           | BPC-only 慢模式（约季度结构 + 月度快变量）       | `slow_realistic`       | `results/bpc/slow-rolling-sim`          |
-| `config/prod_train_pipeline_2h_slow_me_only.yaml`                            | ME-only 慢模式                                   | `slow_realistic`       | `results/me/slow-rolling-sim`           |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_fer_only.yaml` | FER-only，阈值链 + `execution_opt`，不做特征搜索 | `turbo_fixed_features` | `results/fer/calibrate_roll.default`         |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_bpc_only.yaml` | BPC-only turbo                                   | `turbo_fixed_features` | `results/bpc/calibrate_roll.default`         |
+| `config/prod_train_pipeline_2h_turbo_2024bull_thresholds_only_me_only.yaml`  | ME-only turbo                                    | `turbo_fixed_features` | `results/me/calibrate_roll.default`          |
+| `config/prod_train_pipeline_2h_slow_bpc_only.yaml`                           | BPC-only 慢模式（约季度结构 + 月度快变量）       | `slow_realistic`       | `results/bpc/research_roll.features_on`          |
+| `config/prod_train_pipeline_2h_slow_me_only.yaml`                            | ME-only 慢模式                                   | `slow_realistic`       | `results/me/research_roll.features_on`           |
 
 > `fast_month` / `rolling_sim` 的逐月目录在 `history_dir` 下的 `_rolling_sim/<run_ts>/fast_month_YYYY-MM/...`。事件回测产物多为各月 `.../<strategy>/event_backtest_*.json` 与 `event_trades_*.csv`。
 
@@ -275,7 +275,7 @@ results/120T/prod_train_history/me/20260313_234448/
     └── shap/                            # SHAP 特征分析（未 --skip-shap 时）
 ```
 
-**专用管线**（FER/BPC/ME-only）以各自 YAML 的 `output.history_dir` 为准，例如 FER turbo：`results/fer/turbo-rolling-sim/`。若仍存在旧路径 `results/research_history/...`，为历史实验遗留，新跑以当前 `history_dir` 为准。
+**专用管线**（FER/BPC/ME-only）以各自 YAML 的 `output.history_dir` 为准，例如 FER turbo：`results/fer/calibrate_roll.default/`。若仍存在旧路径 `results/research_history/...`，为历史实验遗留，新跑以当前 `history_dir` 为准。
 
 ---
 
@@ -649,7 +649,7 @@ results/120T/prod_train_history/
             └── shap/   # 未 skip 时
 ```
 
-专用管线见 **§4.2.2** 的 `output.history_dir`（如 `results/fer/turbo-rolling-sim`）。
+专用管线见 **§4.2.2** 的 `output.history_dir`（如 `results/fer/calibrate_roll.default`）。
 
 ---
 

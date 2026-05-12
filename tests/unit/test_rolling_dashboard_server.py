@@ -67,7 +67,7 @@ def test_dashboard_hub_includes_scope_links(tmp_path: Path) -> None:
 
 
 def test_flat_cards_include_adopt_buttons_when_flag(tmp_path: Path) -> None:
-    d = tmp_path / "bpc" / "turbo-rolling-sim" / "me" / "20260101_120000"
+    d = tmp_path / "bpc" / "calibrate_roll.default" / "me" / "20260101_120000"
     d.mkdir(parents=True)
     (d / "report.json").write_text("{}", encoding="utf-8")
     frag, _, _ = build_dashboard_cards_slice_html(
@@ -84,7 +84,7 @@ def test_flat_cards_include_adopt_buttons_when_flag(tmp_path: Path) -> None:
 
 def test_dashboard_card_quick_links_include_trading_maps(tmp_path: Path) -> None:
     """快捷链接行含 stitched / continuous 等，无需重复大绿钮。"""
-    d = tmp_path / "bpc" / "turbo-rolling-sim" / "_rolling_sim" / "20260101_120000"
+    d = tmp_path / "bpc" / "calibrate_roll.default" / "_rolling_sim" / "20260101_120000"
     d.mkdir(parents=True)
     (d / "trading_map_stitched.html").write_text("<html/>", encoding="utf-8")
     (d / "stitched_summary.json").write_text("{}", encoding="utf-8")
@@ -100,7 +100,7 @@ def test_dashboard_card_quick_links_include_trading_maps(tmp_path: Path) -> None
     assert "btn-map" not in frag
     assert "打开交易地图" not in frag
     assert (
-        'href="/bpc/turbo-rolling-sim/_rolling_sim/20260101_120000/trading_map_stitched.html"'
+        'href="/bpc/calibrate_roll.default/_rolling_sim/20260101_120000/trading_map_stitched.html"'
         in frag
         and ">stitched</a>" in frag
     )
@@ -123,7 +123,7 @@ def test_research_dashboard_has_no_embedded_pipeline_runner(tmp_path: Path) -> N
 
 def test_pipeline_run_page_includes_config_ui(tmp_path: Path) -> None:
     html = render_pipeline_run_page(tmp_path)
-    assert "bpc-config-select" in html
+    assert 'id="strategy-run-cards"' in html
     assert "/dashboard/research/pipeline" in html
     assert "/api/bpc-research-configs.json" in (
         PACKAGE_DIR / "static" / "pipeline_run.js"
@@ -140,7 +140,7 @@ def test_estimate_progress_failed_not_full_bar() -> None:
 
 
 def test_ledger_detail_quick_links(tmp_path: Path) -> None:
-    rel = "me/turbo-rolling-sim/_rolling_sim/20260202_101010"
+    rel = "me/calibrate_roll.default/_rolling_sim/20260202_101010"
     d = tmp_path / rel
     d.mkdir(parents=True)
     (d / "trading_map_stitched.html").write_text("<html/>", encoding="utf-8")
@@ -154,7 +154,7 @@ def test_ledger_detail_quick_links(tmp_path: Path) -> None:
 
 def test_incomplete_rolling_includes_corrupt_stitched_summary(tmp_path: Path) -> None:
     """损坏或空的 stitched_summary 也应进入一键删除列表。"""
-    roll_parent = tmp_path / "bpc" / "turbo-rolling-sim" / "_rolling_sim"
+    roll_parent = tmp_path / "bpc" / "calibrate_roll.default" / "_rolling_sim"
     roll_parent.mkdir(parents=True)
     ld = roll_parent / "20260707_101010"
     ld.mkdir()
@@ -179,7 +179,7 @@ def test_list_flat_and_incomplete(tmp_path: Path) -> None:
     flat.mkdir(parents=True)
     (flat / "report.json").write_text("{}", encoding="utf-8")
 
-    roll_parent = tmp_path / "bpc" / "turbo-rolling-sim" / "_rolling_sim"
+    roll_parent = tmp_path / "bpc" / "calibrate_roll.default" / "_rolling_sim"
     roll_parent.mkdir(parents=True)
     bad_roll = roll_parent / "20260404_131313"
     bad_roll.mkdir()

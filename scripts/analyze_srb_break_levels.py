@@ -19,7 +19,7 @@ SRB 破位级别归因诊断（一次性研究用）
 
 用法：
     python scripts/analyze_srb_break_levels.py \
-        --run-dir results/srb/slow-rolling-sim/_rolling_sim/20260421_222624 \
+        --run-dir results/srb/research_roll.features_on/_rolling_sim/20260421_222624 \
         --feature-store feature_store/features_srb_120T_5643a66b47 \
         --out reports/srb_break_level_attribution.json
 """
@@ -357,7 +357,7 @@ def main():
     ap.add_argument(
         "--run-dir",
         required=True,
-        help="rolling_sim run dir, e.g. results/srb/slow-rolling-sim/_rolling_sim/20260421_222624",
+        help="rolling_sim run dir, e.g. results/srb/research_roll.features_on/_rolling_sim/20260421_222624",
     )
     ap.add_argument(
         "--feature-store",

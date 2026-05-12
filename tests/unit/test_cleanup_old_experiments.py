@@ -7,7 +7,7 @@ from scripts.cleanup_old_experiments import get_experiment_dirs
 
 def test_get_experiment_dirs_uses_history_root(tmp_path: Path) -> None:
     pr = tmp_path
-    hist = pr / "results" / "demo" / "slow-rolling-sim"
+    hist = pr / "results" / "demo" / "research_roll.features_on"
     (hist / "bpc" / "20250101_120000").mkdir(parents=True)
     (hist / "bpc" / "20250102_030000").mkdir(parents=True)
     got = get_experiment_dirs("bpc", history_root=hist, project_root=pr)

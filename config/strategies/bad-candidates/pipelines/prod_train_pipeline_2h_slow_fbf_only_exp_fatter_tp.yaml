@@ -4,7 +4,7 @@
 # 与 prod_train_pipeline_2h_slow_fbf_only.yaml 唯一实质差异：
 #   - strategies.fbf.config → config/strategies/fbf_exp_fatter_tp
 #   - simple_execution: tp_r 3.0, timeout_bars 144（与 archetype time_stop 48 bar × 2h 对齐量级）
-#   - output.history_dir → results/fbf/slow-rolling-sim-exp-fatter-tp
+#   - output.history_dir → results/fbf/research_roll.features_on-exp-fatter-tp
 #
 # 对比基线 tag: fbf-slow-baseline-20260413-36R-240t
 #   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_fbf_only_exp_fatter_tp.yaml --stage rolling_sim
@@ -72,16 +72,6 @@ event_backtest:
     max_dd_penalty: 0.0
     min_trades_soft: 0
     undertrade_penalty: 0.0
-
-pcm_slot_grid:
-  enabled: false
-  plateau_delta: 0.03
-  min_trades_soft: 80
-  penalties:
-    max_dd_penalty: 0.02
-    slot_full_rate_penalty: 0.20
-    undertrade_penalty: 0.001
-  cases: []
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
@@ -200,4 +190,4 @@ data_flow:
     backtest: logs_gated.parquet
 
 output:
-  history_dir: results/fbf/slow-rolling-sim-exp-fatter-tp
+  history_dir: results/fbf/research_roll.features_on-exp-fatter-tp

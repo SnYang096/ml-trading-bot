@@ -1,7 +1,7 @@
 # BPC 阈值调优失效诊断（仅分析）
 
 - Run: `20260416_203826`
-- Source: `/home/yin/trading/ml_trading_bot/results/bpc/slow-rolling-sim/_rolling_sim/20260416_203826`
+- Source: `/home/yin/trading/ml_trading_bot/results/bpc/research_roll.features_on/_rolling_sim/20260416_203826`
 - 生成时间: `2026-04-17 15:09:35`
 
 ## 结论（为什么阈值没有“调好”）

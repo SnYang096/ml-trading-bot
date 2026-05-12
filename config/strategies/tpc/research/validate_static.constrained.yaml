@@ -55,3 +55,6 @@ strategies:
           plateau_scan_points: 25
           plateau_coord_rounds: 3
           max_cases: 12
+
+output:
+  history_dir: results/tpc/validate_static.constrained

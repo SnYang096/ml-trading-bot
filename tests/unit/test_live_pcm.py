@@ -148,7 +148,7 @@ class TestLivePCMBacktestParity:
         root = Path(__file__).resolve().parents[2]
         p = (
             root
-            / "results/me/slow-rolling-sim/_rolling_sim/20260413_130313/fast_month_2024-11/me"
+            / "results/me/research_roll.features_on/_rolling_sim/20260413_130313/fast_month_2024-11/me"
             / "event_backtest_me_pcm_trace.json"
         )
         if not p.is_file():

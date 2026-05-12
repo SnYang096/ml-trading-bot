@@ -119,4 +119,4 @@ event_backtest:
   map_extra_months: 4
 
 output:
-  history_dir: results/fbf/turbo-rolling-sim
+  history_dir: results/fbf/calibrate_roll.default

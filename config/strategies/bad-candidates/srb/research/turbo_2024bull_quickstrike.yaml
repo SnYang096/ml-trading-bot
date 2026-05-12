@@ -118,4 +118,4 @@ event_backtest:
   map_extra_months: 4
 
 output:
-  history_dir: results/srb_quickstrike/turbo-rolling-sim
+  history_dir: results/srb_quickstrike/turbo_2024bull_quickstrike

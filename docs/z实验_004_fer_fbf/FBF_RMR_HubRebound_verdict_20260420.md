@@ -1,10 +1,10 @@
 # FBF / RMR / Hub-Rebound 去留裁决报告
 
 > **日期**：2026-04-20
-> **样本**：`slow-rolling-sim` 16 个月 × 6 品种（BTC/ETH/SOL/BNB/XRP/ADA），`120T` K 线
+> **样本**：`research_roll.features_on` 16 个月 × 6 品种（BTC/ETH/SOL/BNB/XRP/ADA），`120T` K 线
 > **数据来源**：
-> - FBF 交易：`results/fbf/slow-rolling-sim/_rolling_sim/20260417_191527/` (213 笔)
-> - RMR 交易：`results/rmr/slow-rolling-sim/_rolling_sim/20260420_204142/` (312 笔)
+> - FBF 交易：`results/fbf/research_roll.features_on/_rolling_sim/20260417_191527/` (213 笔)
+> - RMR 交易：`results/rmr/research_roll.features_on/_rolling_sim/20260420_204142/` (312 笔)
 > - 特征商店：`feature_store/features_rmr_120T_e4cc44a22b/`
 > - 分析脚本：`scripts/analyze_wide_sr_and_hub_rebound.py`
 > - 原始报告：`/tmp/wide_sr_hub_rebound_report.json`

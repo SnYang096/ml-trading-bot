@@ -99,5 +99,5 @@ dual_add_backtest:
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
 
 output:
-  history_dir: results/dual_add_trend/slow-rolling-sim
+  history_dir: results/dual_add_trend/research_roll.features_on
   latest_dir: results/dual_add_trend/latest

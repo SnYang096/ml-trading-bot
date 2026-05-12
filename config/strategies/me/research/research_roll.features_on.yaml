@@ -69,9 +69,6 @@ threshold_calibration:
   # execution_opt / pcm_eval / direction_tuning 与 extends 的 turbo 一致，不写则继承。
 
 
-pcm_slot_grid:
-  enabled: false
-
 strategies:
   me:
     kpi_gates:
@@ -145,4 +142,4 @@ event_backtest:
     undertrade_penalty: 0.0
 
 output:
-  history_dir: results/me/slow-rolling-sim
+  history_dir: results/me/research_roll.features_on

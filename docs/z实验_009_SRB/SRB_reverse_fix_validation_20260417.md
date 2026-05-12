@@ -5,14 +5,14 @@
 - Confirm reverse path can open positions and complete event backtest without crash.
 
 ## Baseline (broken run)
-- Run: `results/srb/slow-rolling-sim/_rolling_sim/20260416_220110`
+- Run: `results/srb/research_roll.features_on/_rolling_sim/20260416_220110`
 - Previously failed months included: `2023-09`, `2023-11`, `2023-12`, `2024-02`, `2024-03`, `2024-04`, `2024-06`, `2024-07`, `2024-08`, `2024-09`, `2024-10`, `2024-12`.
 - Error signature in logs:
   - `AttributeError: 'ReverseIntent' object has no attribute 'execution_profile'`
 
 ## Validation reruns (after fix)
 - Validation output root:
-  - `results/srb/slow-rolling-sim/_rolling_sim/20260417_reverse_fix_check`
+  - `results/srb/research_roll.features_on/_rolling_sim/20260417_reverse_fix_check`
 
 ### Case A: 2023-09 (previously crashed)
 - Command:

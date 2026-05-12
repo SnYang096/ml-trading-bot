@@ -7,7 +7,7 @@
 
 用法示例：
   python scripts/diagnose_pcm_funnel_bars.py \\
-    results/me/slow-rolling-sim/_rolling_sim/<run>/fast_month_2024-11/me/event_backtest_me.json \\
+    results/me/research_roll.features_on/_rolling_sim/<run>/fast_month_2024-11/me/event_backtest_me.json \\
     --symbol ADAUSDT --strategy me --month 2024-11 --structural-only
 
   # 仅列出「结构全过」的 bar（prefilter∧gate∧entry∧direction，且 pcm_direction_filter 未显式 False）

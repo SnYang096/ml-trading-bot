@@ -13,7 +13,7 @@
 
 ## 结果路径
 
-- 汇总：`results/fbf/slow-rolling-sim/_rolling_sim/20260413_162634/stitched_summary.json`
+- 汇总：`results/fbf/research_roll.features_on/_rolling_sim/20260413_162634/stitched_summary.json`
 - 交易地图（拼接）：`.../20260413_162634/trading_map_stitched.html`
 - 连续图：`.../20260413_162634/trading_map_continuous.html`
 - 分月 ledger：`.../20260413_162634/monthly_ledger.jsonl`

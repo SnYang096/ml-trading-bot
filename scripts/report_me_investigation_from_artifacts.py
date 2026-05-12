@@ -3,11 +3,11 @@
 ME 大波动 / fast_month 漏斗调研：从 event JSON + parquet + rolling calibrated YAML 汇总一页表。
 
 默认对齐 run:
-  results/me/slow-rolling-sim/_rolling_sim/20260411_195721/fast_month_2024-11/me/event_backtest_me.json
+  results/me/research_roll.features_on/_rolling_sim/20260411_195721/fast_month_2024-11/me/event_backtest_me.json
 
 示例:
   python scripts/report_me_investigation_from_artifacts.py \\
-    --out results/me/slow-rolling-sim/_rolling_sim/20260411_195721/fast_month_2024-11/me/investigation_me_202411_big_move.txt
+    --out results/me/research_roll.features_on/_rolling_sim/20260411_195721/fast_month_2024-11/me/investigation_me_202411_big_move.txt
 """
 from __future__ import annotations
 
@@ -192,7 +192,7 @@ def main() -> int:
         "--event-json",
         type=Path,
         default=_ROOT
-        / "results/me/slow-rolling-sim/_rolling_sim/20260411_195721/fast_month_2024-11/me/event_backtest_me.json",
+        / "results/me/research_roll.features_on/_rolling_sim/20260411_195721/fast_month_2024-11/me/event_backtest_me.json",
     )
     p.add_argument(
         "--parquet",
@@ -204,7 +204,8 @@ def main() -> int:
     p.add_argument(
         "--rolling-root",
         type=Path,
-        default=_ROOT / "results/me/slow-rolling-sim/_rolling_sim/20260411_195721",
+        default=_ROOT
+        / "results/me/research_roll.features_on/_rolling_sim/20260411_195721",
     )
     p.add_argument("--start", default="2024-11-01")
     p.add_argument("--end", default="2024-11-30")

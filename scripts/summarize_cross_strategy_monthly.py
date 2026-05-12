@@ -76,7 +76,7 @@ def _iter_months(start: str, end: str) -> List[str]:
 
 
 def _load_deduped_trades(strat: str, results_root: Path) -> List[Dict]:
-    root = results_root / strat / "slow-rolling-sim" / "_rolling_sim"
+    root = results_root / strat / "research_roll.features_on" / "_rolling_sim"
     if not root.exists():
         return []
     paths = sorted(
@@ -308,7 +308,7 @@ def main():
     ap.add_argument(
         "--results-root",
         default=str(REPO / "results"),
-        help="dir containing <strategy>/slow-rolling-sim/_rolling_sim",
+        help="dir containing <strategy>/research_roll.features_on/_rolling_sim",
     )
     ap.add_argument("--output", default=None, help="markdown output path")
     args = ap.parse_args()

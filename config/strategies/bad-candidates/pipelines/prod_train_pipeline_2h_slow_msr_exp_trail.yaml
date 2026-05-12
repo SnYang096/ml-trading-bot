@@ -6,7 +6,7 @@
 #     （archetypes/execution.yaml: take_profit.enabled=false, trailing.enabled=true,
 #      activation_r=2.0, trail_r=1.0, breakeven.enabled=true@1.5R, initial_r=1.2, time_stop=60）
 #   - sym_r_default / sym_r_by_family: 1.2:1:5.0（向量预筛留尾部空间；实际由 archetype 控制）
-#   - output.history_dir → results/msr/slow-rolling-sim-exp-trail
+#   - output.history_dir → results/msr/research_roll.features_on-exp-trail
 #
 # 对比基线：config/prod_train_pipeline_2h_slow_msr_only.yaml (target_r=3.0 封顶 → 2.48R cap)
 # 动机文档：docs/z实验_005_统一研究/FBF_vs_MSR_verdict_20260422.md
@@ -76,16 +76,6 @@ event_backtest:
     max_dd_penalty: 0.0
     min_trades_soft: 0
     undertrade_penalty: 0.0
-
-pcm_slot_grid:
-  enabled: false
-  plateau_delta: 0.03
-  min_trades_soft: 30
-  penalties:
-    max_dd_penalty: 0.02
-    slot_full_rate_penalty: 0.20
-    undertrade_penalty: 0.001
-  cases: []
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
@@ -208,4 +198,4 @@ data_flow:
     backtest: logs_gated.parquet
 
 output:
-  history_dir: results/msr/slow-rolling-sim-exp-trail
+  history_dir: results/msr/research_roll.features_on-exp-trail
