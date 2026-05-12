@@ -449,6 +449,9 @@ nvidia_cublas_cu12-12.8.4.1-py3-none-manylinux_2_27_x86_64.whl
 catboost-1.2.8-cp312-cp312-manylinux2014_x86_64.whl
 xgboost-3.1.2-py3-none-manylinux_2_28_x86_64.whl
 feature_store/
+!src/feature_store/
+!src/feature_store/**
+src/feature_store/__pycache__/
 .qoder/
 # Live API keys (binance)
 live/binance_mainnet.env

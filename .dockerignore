@@ -11,6 +11,9 @@ data/
 results/
 models/
 feature_store/
+!src/feature_store/
+!src/feature_store/**
+src/feature_store/__pycache__/
 
 # ---- API 密钥 ----
 .env
