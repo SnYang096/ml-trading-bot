@@ -95,7 +95,7 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 endif
 
 
-.PHONY: help clean format lint fix-permissions fix-ownership dev-install install-hooks docker-build docker-install ssh-tencent builder-shell \
+.PHONY: help clean clean-results-labeled-parquet format lint fix-permissions fix-ownership dev-install install-hooks docker-build docker-install ssh-tencent builder-shell \
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only \
 	ts-vectorbot-backtest ts-nautilus-backtest \
@@ -200,6 +200,13 @@ clean:
 	rm -rf *.egg-info/
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name "__pycache__" -delete
+
+# Remove features_labeled.parquet, predictions.parquet, logs_gated.parquet under $(RESULTS_DIR) (recursive).
+# Dry-run: make clean-results-labeled-parquet DRY_RUN=1
+clean-results-labeled-parquet:
+	@$(PYTHON) scripts/results_housekeeping.py delete-labeled-parquets \
+		--results-root $(RESULTS_DIR) \
+		$(if $(filter 1 true yes,$(DRY_RUN)),--dry-run,)
 
 format:
 	PYTHONPATH=src $(PYTHON) -m black src/time_series_model/ src/data_tools/ tests/ scripts/
