@@ -8,8 +8,10 @@
 #   服务器无需 GitHub 密钥，无需 Python/pip 环境
 #
 # GitHub Secrets — 首个 Job 会校验「必填」非空，缺失则整单失败（不打印密钥值）。
-#   必填: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, GHCR_TOKEN（远端 docker pull ghcr.io）,
+#   必填: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, GHCR_TOKEN（远端 docker login + pull ghcr.io）,
 #         BINANCE_API_KEY, BINANCE_API_SECRET
+#   可选: GHCR_USERNAME — 与 GHCR_TOKEN 同属的 GitHub 用户名（生成 PAT 的账号）。
+#         不设则用 github.actor；别人/Robot 点 Run 时 actor≠PAT 账号会导致拉包 403，建议设此项。
 #   可选（成对）: MULTI_LEG_BINANCE_FUTURES_API_KEY / MULTI_LEG_BINANCE_FUTURES_API_SECRET
 # 注意: TENCENTCLOUD_SECRET_ID/KEY 等若存在但本 workflow 未引用，不会触发校验（与 CD 无关则属正常）。
 # 单机约 4G RAM: 三容器 cgroup 上限合计约 2.8G（余量给内核/Docker/本机监控）。
@@ -205,7 +207,8 @@ jobs:
         uses: appleboy/ssh-action@v1
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
+          # PAT 与登录名必须同属一个 GitHub 账号；fine-grained PAT 仍以 github_pat_ 开头为正常。
+          GHCR_USER: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
           IMAGE_FULL: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           IMAGE_SHA: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
         with:
