@@ -12,7 +12,11 @@
 #         BINANCE_API_KEY, BINANCE_API_SECRET
 #   可选（成对）: MULTI_LEG_BINANCE_FUTURES_API_KEY / MULTI_LEG_BINANCE_FUTURES_API_SECRET
 # 注意: TENCENTCLOUD_SECRET_ID/KEY 等若存在但本 workflow 未引用，不会触发校验（与 CD 无关则属正常）。
-# 单机约 4G RAM 时: 三容器内存上限见各 ExecStart（之和约 2.75G，预留内核/Docker/监控）。
+# 单机约 4G RAM: 三容器 cgroup 上限合计约 2.8G（余量给内核/Docker/本机监控）。
+# 角色预估（见 scripts/run_market_feature_publisher.py / live/scripts/start_live.sh / run_multi_leg_live.py）:
+#   quant-feature-bus — WS 全市场行情 + 多周期特征计算 + 4h memory window + FeatureBus parquet(max-rows≈3k) → 最重，给最大份额
+#   quant-engine — 读 bus、策略与下单主循环，中等
+#   quant-multi-leg — 部署里单 symbol + feature-store 拉 bar，相对轻
 # =============================================================
 
 name: 🚀 Build & Deploy
@@ -234,7 +238,7 @@ jobs:
             Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
             ExecStartPre=-/usr/bin/docker rm -f quant-feature-bus
             ExecStart=/usr/bin/docker run --rm --name quant-feature-bus \
-              --memory=512m --memory-swap=512m \
+              --memory=1280m --memory-swap=1280m \
               -e MLBOT_LIVE_SYMBOLS \
               -v /opt/quant-engine/live:/app/live \
               -v /opt/quant-engine/data:/app/data \
@@ -272,7 +276,7 @@ jobs:
             Environment=MLBOT_LIVE_WARMUP_DAYS=0
             ExecStartPre=-/usr/bin/docker rm -f quant-engine
             ExecStart=/usr/bin/docker run --rm --name quant-engine \
-              --memory=1536m --memory-swap=1536m \
+              --memory=1024m --memory-swap=1024m \
               --env-file /opt/quant-engine/live/binance_mainnet.env \
               -e MLBOT_FEATURE_SOURCE \
               -e MLBOT_FEATURE_BUS_ROOT \
@@ -303,7 +307,7 @@ jobs:
             Environment=MLBOT_MULTI_LEG_SYMBOLS=BTCUSDT
             ExecStartPre=-/usr/bin/docker rm -f quant-multi-leg
             ExecStart=/usr/bin/docker run --rm --name quant-multi-leg \
-              --memory=768m --memory-swap=768m \
+              --memory=512m --memory-swap=512m \
               --env-file /opt/quant-engine/live/binance_mainnet.env \
               -e MLBOT_MULTI_LEG_SYMBOLS \
               -v /opt/quant-engine/live:/app/live \
