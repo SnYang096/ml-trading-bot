@@ -2,7 +2,7 @@
 """Generate Grafana Market Heat dashboard JSON.
 
 Follows the same pattern as generate_strategy_dashboards.py.
-Output: terraform/monitoring/grafana-provisioning/dashboards/market_heat.json
+Output: deploy/monitoring/grafana-provisioning/dashboards/market_heat.json
 """
 
 import json
@@ -531,7 +531,7 @@ def main():
     out_dir = os.path.join(
         os.path.dirname(__file__),
         "..",
-        "terraform",
+        "deploy",
         "monitoring",
         "grafana-provisioning",
         "dashboards",

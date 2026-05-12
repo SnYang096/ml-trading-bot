@@ -263,7 +263,7 @@ MLBOT_LIVE_SYMBOLS=BTCUSDT python scripts/run_live.py
 | 树模型策略报告 | [docs/architecture/树模型策略report/](architecture/树模型策略report/) | 特征筛选索引、归一化/订单流审计；中间结果见 [docs/archive/reports/](archive/reports/) |
 | 实盘数据流 | [docs/architecture/live_stream/](architecture/live_stream/) | 契约、事件流、补全与对账；legacy 见 [docs/archive/live_stream/legacy/](archive/live_stream/legacy/) |
 | 指标与评估 | [docs/architecture/metrics/](architecture/metrics/) | Sharpe、泄漏鉴别等 |
-| 部署 | [docs/architecture/terraform部署方案对比.md](architecture/terraform部署方案对比.md) | Docker vs 裸机 |
+| 部署 | [.github/workflows/deploy.yml](../../.github/workflows/deploy.yml)（镜像构建 + 三 systemd 服务 + Grafana 同步） | 生产路径 |
 | 总归档 | [docs/archive/](archive/) | NN 多头、旧架构长文、随笔等 |
 
 占位目录（`docs/guides/`、`docs/live_stream/`、`docs/strategies/` 等）仅指向 **architecture/** 或 **archive/** 正文，见各目录下 `README.md`。
@@ -306,7 +306,7 @@ MLBOT_LIVE_SYMBOLS=BTCUSDT python scripts/run_live.py
 ### 实盘、仓位与执行语义
 
 - **Live Stream（契约与数据流）**：`docs/architecture/live_stream/README.md`
-- **Terraform 部署对比（Docker vs 裸机）**：`docs/architecture/terraform部署方案对比.md`
+- **生产部署**：`docs/deployment/LIVE_PRODUCTION_RUNBOOK_CN.md`、仓库根目录 `.github/workflows/deploy.yml`
 - **仓位与 PCM**：`docs/architecture/仓位管理办法.md`、`docs/architecture/LivePCM_多archetype信号仲裁.md`
 - **回测与实盘对比**：`docs/architecture/backtest_vs_live_execution.md`
 - **数学特征分层（path2.5）**：`docs/architecture/path2.5_math_features.md`

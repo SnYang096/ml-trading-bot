@@ -5,7 +5,7 @@
 # 用法（两步）:
 #   1. 同步配置文件到服务器:
 #      rsync -avz -e "ssh -i ~/.ssh/id_tencent_cloud_ssh" \
-#        terraform/monitoring/ ubuntu@43.135.44.160:/opt/monitoring/
+#        deploy/monitoring/ ubuntu@43.135.44.160:/opt/monitoring/
 #
 #   2. 执行此脚本:
 #      ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 \
@@ -54,7 +54,7 @@ if [ "$MISSING" -eq 1 ]; then
     echo ""
     echo "   请先同步配置文件:"
     echo "   rsync -avz -e 'ssh -i ~/.ssh/id_tencent_cloud_ssh' \\"
-    echo "     terraform/monitoring/ ubuntu@<IP>:$MONITORING_PATH/"
+    echo "     deploy/monitoring/ ubuntu@<IP>:$MONITORING_PATH/"
     exit 1
 fi
 echo "   ✅ 配置文件就绪"

@@ -18,7 +18,7 @@
 | `src/market_heat/` | 拉数、算分、聚合、Prometheus 指标、策略 prefilter、CoinGecko 同步脚本 |
 | `scripts/run_heat_update.py` | 定时任务入口：拉数、写指标；可 `--loop` 常驻 |
 | `scripts/generate_heat_dashboard.py` | 生成 Grafana 面板 JSON |
-| `terraform/monitoring/grafana-provisioning/dashboards/market_heat.json` | 由脚本生成的面板（勿手改，改脚本后重跑） |
+| `deploy/monitoring/grafana-provisioning/dashboards/market_heat.json` | 由脚本生成的面板（勿手改，改脚本后重跑） |
 | `data/market_heat/weekly_ohlcv.parquet` | 运行后自动生成的周线缓存（可删以强制全量重拉） |
 
 ## 命令行快速查看
@@ -75,7 +75,7 @@ python scripts/run_heat_update.py --loop 3600 --metrics-port 9091
 python scripts/generate_heat_dashboard.py
 ```
 
-将更新 `terraform/monitoring/grafana-provisioning/dashboards/market_heat.json`。Grafana 通过既有 provisioning 加载该目录即可。
+将更新 `deploy/monitoring/grafana-provisioning/dashboards/market_heat.json`。Grafana 通过既有 provisioning 加载该目录即可。
 
 ## 板块数据与同步
 

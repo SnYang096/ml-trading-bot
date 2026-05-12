@@ -1,5 +1,5 @@
 # 监控栈: Prometheus + Grafana
-# 用法: cd terraform/monitoring && docker compose -f docker-compose.monitoring.yml up -d
+# 用法: cd deploy/monitoring && docker compose -f docker-compose.monitoring.yml up -d
 #
 # Prometheus: http://localhost:9091
 # Grafana:    http://localhost:3000  (admin / admin)

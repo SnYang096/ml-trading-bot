@@ -35,8 +35,8 @@ config/local/
 .github/
 .gitignore
 
-# ---- Terraform（基础设施代码，不需要在镜像中） ----
-terraform/
+# ---- deploy/（Grafana 等，不打进交易镜像）----
+deploy/
 
 # ---- 实验文档 + 文档 ----
 z实验_*/

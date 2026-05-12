@@ -25,14 +25,7 @@ __pycache__/
 .git/
 .github/
 
-# ---- Terraform 状态 (本地管理) ----
-terraform/terraform.tfstate
-terraform/terraform.tfstate.backup
-terraform/.terraform/
-terraform/.terraform.lock.hcl
-terraform/.terraform-config.zip
-terraform/*.tfvars
-
+# (.rsync-exclude) Terraform state paths removed — infra now GitHub Actions only
 # ---- 实验文档 (不需要在服务器上) ----
 z实验_*/
 docs/

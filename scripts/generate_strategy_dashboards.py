@@ -828,7 +828,7 @@ def main():
     out_dir = os.path.join(
         os.path.dirname(__file__),
         "..",
-        "terraform",
+        "deploy",
         "monitoring",
         "grafana-provisioning",
         "dashboards",

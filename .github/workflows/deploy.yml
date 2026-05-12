@@ -43,7 +43,7 @@ on:
       - 'docker/Dockerfile.live'
       - 'requirements.txt'
       - '.github/workflows/deploy.yml'
-      - 'terraform/monitoring/grafana-provisioning/**'
+      - 'deploy/monitoring/grafana-provisioning/**'
 
 # 同一时间只允许一个部署
 concurrency:
@@ -327,7 +327,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          source: "terraform/monitoring/grafana-provisioning/dashboards/*.json,terraform/monitoring/grafana-provisioning/dashboards/*.yml"
+          source: "deploy/monitoring/grafana-provisioning/dashboards/*.json,deploy/monitoring/grafana-provisioning/dashboards/*.yml"
           target: "/tmp/grafana-sync"
           strip_components: 4
 

@@ -360,7 +360,7 @@ ssh root@<SERVER_IP> "sudo systemctl restart quant-engine"
 - [x] 本地执行:
   ```bash
   rsync -avz -e "ssh -i ~/.ssh/id_tencent_cloud_ssh" \
-    terraform/monitoring/ ubuntu@43.135.44.160:/opt/monitoring/
+    deploy/monitoring/ ubuntu@43.135.44.160:/opt/monitoring/
   ```
 - [x] 确认文件同步: prometheus.yml + docker-compose + 3 个 dashboard JSON
 
@@ -645,7 +645,7 @@ ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 \
 ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 'sudo systemctl restart quant-engine'
 
 # 监控部署
-rsync -avz -e "ssh -i ~/.ssh/id_tencent_cloud_ssh" terraform/monitoring/ ubuntu@43.135.44.160:/opt/monitoring/
+rsync -avz -e "ssh -i ~/.ssh/id_tencent_cloud_ssh" deploy/monitoring/ ubuntu@43.135.44.160:/opt/monitoring/
 ssh -i ~/.ssh/id_tencent_cloud_ssh ubuntu@43.135.44.160 'sudo bash -s' < scripts/monitoring_bootstrap.sh
 
 # 日常迭代
@@ -678,9 +678,9 @@ git push origin main  # 自动触发: build → push → deploy → restart
 | `docker/Dockerfile.live`                 | 生产 Docker 镜像定义                                   |
 | `.github/workflows/deploy.yml`           | CI/CD 流水线                                           |
 | `scripts/server_bootstrap.sh`            | 服务器初始化脚本                                       |
-| `terraform/systemd/quant-engine.service` | systemd 服务定义 (Docker 模式)                         |
+| `.github/workflows/deploy.yml`（Systemd 单元内联） | 生产部署与三容器启动 |
 | `scripts/monitoring_bootstrap.sh`        | 监控初始化脚本 (Prometheus + Grafana)                  |
-| `terraform/monitoring/`                  | 监控配置 (prometheus.yml + docker-compose + dashboard) |
+| `deploy/monitoring/`                  | 监控配置 (prometheus.yml + docker-compose + dashboard) |
 | `live/highcap/config/strategies/`        | 生产策略配置 (53 个 YAML)                              |
 | `scripts/deploy_config_to_live.py`       | 研究→生产配置部署                                      |
 | `scripts/refresh_funding_oi_data.py`     | Funding Rate / OI 增量刷新 (Binance 公开 API)          |

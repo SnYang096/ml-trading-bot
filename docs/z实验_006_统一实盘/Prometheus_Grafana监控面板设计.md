@@ -97,15 +97,15 @@ Trading Bot (run_live.py)
 | `src/time_series_model/live/metrics_exporter.py` | Prometheus 指标定义 + HTTP server |
 | `stats_collector.py` (修改) | flush() 时同步更新 Prometheus 指标 |
 | `run_live.py` (修改) | 启动 metrics HTTP server |
-| `terraform/monitoring/prometheus.yml` | Prometheus 抓取配置 |
-| `terraform/monitoring/grafana-provisioning/dashboards/quant.json` | Grafana 面板 |
-| `terraform/monitoring/docker-compose.monitoring.yml` | 本地 Prometheus+Grafana |
+| `deploy/monitoring/prometheus.yml` | Prometheus 抓取配置 |
+| `deploy/monitoring/grafana-provisioning/dashboards/quant.json` | Grafana 面板 |
+| `deploy/monitoring/docker-compose.monitoring.yml` | 本地 Prometheus+Grafana |
 
 ## 本地启动命令
 
 ```bash
 # 1. 启动 Prometheus + Grafana
-cd terraform/monitoring && docker compose -f docker-compose.monitoring.yml up -d
+cd deploy/monitoring && docker compose -f docker-compose.monitoring.yml up -d
 
 # 2. 启动交易机器人 (自带 /metrics 端口 9090)
 bash live/scripts/start_live.sh

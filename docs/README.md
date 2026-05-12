@@ -81,7 +81,7 @@
 
 - **[实盘 / 多腿上线路径说明](deployment/LIVE_PRODUCTION_RUNBOOK_CN.md)** — GitHub Secrets、经典 vs 多腿双进程、与 `deploy.yml` 对齐
 - **[实时流计算（占位索引）](live_stream/README.md)** → 正文 **[architecture/live_stream/README.md](architecture/live_stream/README.md)**
-- **[Terraform 部署方案对比（Docker vs 裸机）](architecture/terraform部署方案对比.md)**
+- **生产部署**：`docs/deployment/LIVE_PRODUCTION_RUNBOOK_CN.md`、`.github/workflows/deploy.yml`
 
 ### 📐 指标与评估
 
