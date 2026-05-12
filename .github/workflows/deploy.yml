@@ -16,7 +16,10 @@
 # 角色预估（见 scripts/run_market_feature_publisher.py / live/scripts/start_live.sh / run_multi_leg_live.py）:
 #   quant-feature-bus — WS 全市场行情 + 多周期特征计算 + 4h memory window + FeatureBus parquet(max-rows≈3k) → 最重，给最大份额
 #   quant-engine — 读 bus、策略与下单主循环，中等
-#   quant-multi-leg — 部署里单 symbol + feature-store 拉 bar，相对轻
+#   quant-multi-leg — systemd 里 MLBOT_MULTI_LEG_SYMBOLS 为基底列表（当前仅 BTCUSDT）；
+#     各策略 live/highcap/.../meta.yaml 的 symbol_include/exclude 与基底求交；
+#     chop_grid 含 include 为空则跑满基底；dual_add_trend 仅允许 meta 中 5 个 U 本位（无 ADA）。
+#     --bar-source feature-store 从 shared_feature_bus  parquet 读已解析 symbol 的数据。
 # =============================================================
 
 name: 🚀 Build & Deploy
