@@ -12,6 +12,7 @@
 #         BINANCE_API_KEY, BINANCE_API_SECRET
 #   可选（成对）: MULTI_LEG_BINANCE_FUTURES_API_KEY / MULTI_LEG_BINANCE_FUTURES_API_SECRET
 # 注意: TENCENTCLOUD_SECRET_ID/KEY 等若存在但本 workflow 未引用，不会触发校验（与 CD 无关则属正常）。
+# 单机约 4G RAM 时: 三容器内存上限见各 ExecStart（之和约 2.75G，预留内核/Docker/监控）。
 # =============================================================
 
 name: 🚀 Build & Deploy
@@ -233,6 +234,7 @@ jobs:
             Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
             ExecStartPre=-/usr/bin/docker rm -f quant-feature-bus
             ExecStart=/usr/bin/docker run --rm --name quant-feature-bus \
+              --memory=512m --memory-swap=512m \
               -e MLBOT_LIVE_SYMBOLS \
               -v /opt/quant-engine/live:/app/live \
               -v /opt/quant-engine/data:/app/data \
@@ -270,6 +272,7 @@ jobs:
             Environment=MLBOT_LIVE_WARMUP_DAYS=0
             ExecStartPre=-/usr/bin/docker rm -f quant-engine
             ExecStart=/usr/bin/docker run --rm --name quant-engine \
+              --memory=1536m --memory-swap=1536m \
               --env-file /opt/quant-engine/live/binance_mainnet.env \
               -e MLBOT_FEATURE_SOURCE \
               -e MLBOT_FEATURE_BUS_ROOT \
@@ -300,6 +303,7 @@ jobs:
             Environment=MLBOT_MULTI_LEG_SYMBOLS=BTCUSDT
             ExecStartPre=-/usr/bin/docker rm -f quant-multi-leg
             ExecStart=/usr/bin/docker run --rm --name quant-multi-leg \
+              --memory=768m --memory-swap=768m \
               --env-file /opt/quant-engine/live/binance_mainnet.env \
               -e MLBOT_MULTI_LEG_SYMBOLS \
               -v /opt/quant-engine/live:/app/live \
@@ -332,22 +336,33 @@ jobs:
             sudo systemctl restart quant-multi-leg
             sleep 8
 
-            for svc in quant-feature-bus quant-engine; do
+            failed=0
+            for svc in quant-feature-bus quant-engine quant-multi-leg; do
               if sudo systemctl is-active --quiet "$svc"; then
                 echo "✅ $svc 运行中"
                 sudo systemctl status "$svc" --no-pager | head -15
               else
+                echo "::error::systemd 服务未处于 active: $svc"
                 echo "❌ $svc 启动失败"
-                sudo journalctl -u "$svc" --no-pager -n 30
-                exit 1
+                sudo journalctl -u "$svc" --no-pager -n 40
+                failed=1
               fi
             done
-            if sudo systemctl is-active --quiet quant-multi-leg; then
-              echo "✅ quant-multi-leg 运行中"
-              sudo systemctl status quant-multi-leg --no-pager | head -15
-            else
-              echo "❌ quant-multi-leg 启动失败"
-              sudo journalctl -u quant-multi-leg --no-pager -n 30
+
+            echo ""
+            echo "=== 🐳 校验 Docker 容器已起（与 systemd 一致）==="
+            for c in quant-feature-bus quant-engine quant-multi-leg; do
+              if ! docker ps --format '{{.Names}}' | grep -qx "$c"; then
+                echo "::error::容器未运行: $c"
+                docker ps -a --filter "name=$c" --no-trunc
+                failed=1
+              else
+                echo "✅ 容器 $c: $(docker ps --filter "name=$c" --format '{{.Status}}')"
+              fi
+            done
+
+            if [ "$failed" -ne 0 ]; then
+              echo "::error::部署后服务或容器未全部就绪，请检查 journalctl / docker logs。本次步骤返回失败。"
               exit 1
             fi
 
