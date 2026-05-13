@@ -8,13 +8,15 @@ from src.order_management.grid_execution_adapter import (
     GridExecutionAdapter,
     GridExecutionError,
     MultiLegExecutionAdapter,
+    MultiLegExecutionError,
 )
 from src.order_management.models import OrderSide, OrderType
 
 
-def _api(*, hedge_mode: bool = True) -> MagicMock:
+def _api(*, hedge_mode: bool = True, hedge_mode_probe_error=None) -> MagicMock:
     api = MagicMock()
     api.hedge_mode = hedge_mode
+    api.hedge_mode_probe_error = hedge_mode_probe_error
     api.place_order.return_value = {
         "order_id": "ex_1",
         "client_order_id": "cg_abc",
@@ -28,8 +30,20 @@ def _api(*, hedge_mode: bool = True) -> MagicMock:
 
 
 def test_requires_hedge_mode_for_real_execution() -> None:
-    with pytest.raises(GridExecutionError, match="requires Binance Hedge Mode"):
+    with pytest.raises(MultiLegExecutionError, match="requires Binance Hedge Mode"):
         GridExecutionAdapter(_api(hedge_mode=False))
+
+
+def test_probe_failure_is_not_misreported_as_missing_hedge() -> None:
+    with pytest.raises(
+        MultiLegExecutionError, match="cannot verify Binance USDM hedge mode"
+    ):
+        GridExecutionAdapter(
+            _api(
+                hedge_mode=False,
+                hedge_mode_probe_error="HTTP 401 ...",
+            ),
+        )
 
 
 def test_shadow_can_run_without_hedge_mode_when_explicitly_allowed() -> None:

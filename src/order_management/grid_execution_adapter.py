@@ -65,13 +65,22 @@ class MultiLegExecutionAdapter:
         self.strategy_name = str(strategy_name or self.client_id_prefix)
         ds = str(default_symbol or "").strip().upper()
         self.default_symbol: Optional[str] = ds or None
-        if self.require_hedge_mode and not bool(
-            getattr(self.binance_api, "hedge_mode", False)
-        ):
-            raise MultiLegExecutionError(
-                "multi-leg real execution requires Binance Hedge Mode "
-                "(dualSidePosition=true)"
-            )
+        probe_err: Optional[str] = getattr(binance_api, "hedge_mode_probe_error", None)
+        hm = bool(getattr(self.binance_api, "hedge_mode", False))
+        if self.require_hedge_mode and not bool(self.shadow):
+            if probe_err:
+                raise MultiLegExecutionError(
+                    "cannot verify Binance USDM hedge mode (/fapi/v1/positionSide/dual "
+                    "failed). Check Futures API permission on this key, IP whitelist "
+                    "for your server egress, or use MULTI_LEG_BINANCE_* keys if "
+                    f"distinct from BINANCE_* . Detail: {probe_err}"
+                )
+            if not hm:
+                raise MultiLegExecutionError(
+                    "multi-leg real execution requires Binance Hedge Mode "
+                    "(dualSidePosition=true). Enable Hedge Mode under Binance Futures "
+                    "preferences for this account."
+                )
 
     def execute_actions(
         self, actions: Iterable[Dict[str, Any]]

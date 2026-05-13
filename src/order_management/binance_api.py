@@ -262,7 +262,7 @@ class BinanceAPI:
         self._check_time_sync()
 
         # 检测账户是否开启 Hedge Mode（双向持仓）
-        self.hedge_mode = self._detect_hedge_mode()
+        self.hedge_mode, self.hedge_mode_probe_error = self._detect_hedge_mode()
 
         # 如果是测试网，确保URLs正确设置（在创建后手动设置）
         if self.testnet:
@@ -277,12 +277,12 @@ class BinanceAPI:
                     "private": "https://testnet.binancefuture.com",
                 }
 
-    def _detect_hedge_mode(self) -> bool:
-        """
-        检测 Binance 账户是否开启了 Hedge Mode（双向持仓模式）
+    def _detect_hedge_mode(self) -> tuple[bool, Optional[str]]:
+        """检测 Binance 账户 Hedge Mode。
 
         Returns:
-            True 表示 Hedge Mode，False 表示 One-way Mode
+            (dual_side_enabled, probe_error). ``probe_error`` 非 None 表示
+            REST 探测失败（鉴权/IP/权限等），不应与「确认为 One-way」混淆。
         """
         try:
             url = f"{self._get_futures_base_url()}/fapi/v1/positionSide/dual"
@@ -304,20 +304,51 @@ class BinanceAPI:
                 timeout=10,
                 proxies=self._get_requests_proxies(),
             )
-            resp.raise_for_status()
-            data = resp.json()
-            # dualSidePosition=true 表示开启了 Hedge Mode
-            is_hedge = data.get("dualSidePosition", False)
-            if is_hedge:
-                logger.info(
-                    "✅ 检测到账户开启了 Hedge Mode（双向持仓），将自动注入 positionSide 参数"
-                )
-            else:
-                logger.info("✅ 账户为 One-way Mode（单向持仓）")
-            return bool(is_hedge)
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {}
+
+            # Binance 可能在 HTTP 401/418 等状态体中返回 JSON {code,msg}
+            if isinstance(data, dict):
+                bc = data.get("code")
+                if bc is not None and bc != 200:
+                    try:
+                        if int(bc) < 0:
+                            return False, f"Binance error {bc}: {data.get('msg')}"
+                    except (TypeError, ValueError):
+                        pass
+
+            # 典型成功体: {"dualSidePosition": true/false}
+            if isinstance(data, dict) and "dualSidePosition" in data:
+                is_hedge = bool(data.get("dualSidePosition", False))
+                if is_hedge:
+                    logger.info(
+                        "✅ 检测到账户开启了 Hedge Mode（双向持仓），将自动注入 positionSide 参数"
+                    )
+                else:
+                    logger.info("✅ 账户为 One-way Mode（单向持仓）")
+                return is_hedge, None
+
+            # 错误响应（常为 HTTP200 + Binance JSON code，也可能是 4xx）
+            err_snip = ""
+            if isinstance(data, dict) and data.get("code") is not None:
+                err_snip = f" Binance code={data.get('code')} msg={data.get('msg')}"
+            if resp.status_code >= 400:
+                body = ""
+                try:
+                    body = (resp.text or "")[:400]
+                except Exception:
+                    pass
+                return False, f"HTTP {resp.status_code}{err_snip} body={body!r}"
+
+            if isinstance(data, dict):
+                return False, f"unexpected hedge probe JSON:{err_snip} keys={list(data.keys())}"
+
+            return False, f"unexpected hedge probe response ({resp.status_code}): {data!r}"[:400]
         except Exception as e:
-            logger.warning(f"⚠️ 无法检测持仓模式，默认为 One-way Mode: {e}")
-            return False
+            logger.warning("⚠️ 无法检测持仓模式（网络/签名等）: %s", e)
+            return False, f"{type(e).__name__}: {e}"
 
     def _get_futures_base_url(self) -> str:
         """获取期货REST基础URL"""

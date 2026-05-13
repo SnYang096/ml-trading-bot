@@ -34,6 +34,7 @@ class MockBinanceAPI:
         # Multi-leg live (`GridExecutionAdapter.sync_positions`) expects this flag;
         # `scripts/run_multi_leg_live.py` sets hedge_mode=True for shadow runs.
         self.hedge_mode: bool = False
+        self.hedge_mode_probe_error: Optional[str] = None
 
     # ─── Price feed (called by backtest to update current prices) ───
 
