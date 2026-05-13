@@ -24,7 +24,7 @@ MODEL_DIR ?= models
 RESULTS_DIR ?= results
 
 # Remote SSH (AWS deploy host; override when needed)
-REMOTE_SSH_HOST ?= 54.65.63.146
+REMOTE_SSH_HOST ?= 13.113.18.30
 REMOTE_SSH_USER ?= ubuntu
 REMOTE_SSH_KEY ?= $(HOME)/.ssh/awskeypair.pem
 # Back-compat aliases for recipes / overrides
@@ -105,7 +105,7 @@ endif
 
 .PHONY: help clean clean-results-labeled-parquet format lint fix-permissions fix-ownership dev-install install-hooks docker-build docker-install \
 	ssh-remote ssh-aws ssh-tencent swapfile-status swapfile-setup \
-	remote-docker-install remote-binance-ws-probe remote-setup-binance-probe builder-shell \
+	remote-docker-install remote-binance-ws-probe remote-binance-aggtrade-probe remote-setup-binance-probe builder-shell \
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only \
 	ts-vectorbot-backtest ts-nautilus-backtest \
@@ -144,6 +144,15 @@ remote-binance-ws-probe:
 	cat "$(PWD)/scripts/binance_ws_trade_probe.py" | ssh -i "$(REMOTE_SSH_KEY)" -o StrictHostKeyChecking=accept-new "$(REMOTE_SSH_USER)@$(REMOTE_SSH_HOST)" \
 		'docker run --rm -i python:3.12-slim bash -lc '"'"'pip -q install websockets >/dev/null 2>&1 && python -'"'"''
 
+# USDM @aggTrade WebSocket probe (optional --bandwidth vs @trade). Override: AGGTRADE_PROBE_ARGS='--bandwidth'
+AGGTRADE_PROBE_ARGS ?=
+
+remote-binance-aggtrade-probe:
+	@test -r "$(REMOTE_SSH_KEY)" \
+		|| (echo >&2 'SSH key not readable: $(REMOTE_SSH_KEY)'; exit 1)
+	cat "$(PWD)/scripts/binance_ws_aggtrade_probe.py" | ssh -i "$(REMOTE_SSH_KEY)" -o StrictHostKeyChecking=accept-new "$(REMOTE_SSH_USER)@$(REMOTE_SSH_HOST)" \
+		"docker run --rm -i python:3.12-slim bash -lc 'pip -q install websockets >/dev/null 2>&1 && python - $(AGGTRADE_PROBE_ARGS)'"
+
 remote-setup-binance-probe: remote-docker-install remote-binance-ws-probe
 
 # 在 Ubuntu 实盘主机上执行（需 sudo）。会 swapoff、删除已有 $(SWAPFILE) 并重建（破坏性）。例：make swapfile-setup SWAP_SIZE_G=8
@@ -179,7 +188,8 @@ help:
 	@echo "Remote (production VPS):"
 	@echo "  make ssh-remote                  # SSH (defaults: $(REMOTE_SSH_USER)@$(REMOTE_SSH_HOST), key $(REMOTE_SSH_KEY))"
 	@echo "  make remote-docker-install       # Install Docker on remote (get.docker.com)"
-	@echo "  make remote-binance-ws-probe     # Binance USDM + spot @trade WS test via Docker on remote"
+	@echo "  make remote-binance-ws-probe      # Binance USDM + spot @trade WS test via Docker on remote"
+	@echo "  make remote-binance-aggtrade-probe # Binance USDM @aggTrade (+ optional AGGTRADE_PROBE_ARGS='--bandwidth')"
 	@echo "  make remote-setup-binance-probe  # install Docker + run probe"
 	@echo "  make swapfile-setup              # On VPS: create/replace swapfile ($(SWAPFILE), default $(SWAP_SIZE_G)GiB, needs sudo)"
 	@echo "  make swapfile-status             # On VPS: show free/swap/swapon ($(SWAPFILE))"
