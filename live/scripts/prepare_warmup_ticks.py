@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def read_universe_symbols(universe: str) -> List[str]:
     """从 live/{universe}/universe.yaml 读取 symbols 列表"""
     import yaml
@@ -54,6 +55,50 @@ def read_universe_symbols(universe: str) -> List[str]:
     return sorted((cfg.get("symbols") or {}).keys())
 
 
+def _iter_symbol_dates(ticks_dir: Path, symbol: str) -> List[str]:
+    sym_dir = ticks_dir / symbol
+    if not sym_dir.exists():
+        return []
+    return sorted(f.stem for f in sym_dir.glob("*.parquet") if f.stat().st_size > 0)
+
+
+def required_warmup_bounds(months: int) -> tuple[str, str]:
+    """Return the date bounds produced by the monthly+daily warmup pipeline."""
+    (
+        monthly_start_year,
+        monthly_start_month,
+        _monthly_end_year,
+        _monthly_end_month,
+        _daily_start_date,
+        daily_end_date,
+    ) = compute_date_ranges(months)
+    return f"{monthly_start_year}-{monthly_start_month:02d}-01", daily_end_date
+
+
+def has_required_warmup_coverage(
+    ticks_dir: Path,
+    symbols: List[str],
+    months: int,
+) -> bool:
+    """Check that each symbol has the full date span expected by warmup prepare."""
+    required_start, required_end = required_warmup_bounds(months)
+    start_dt = datetime.strptime(required_start, "%Y-%m-%d")
+    end_dt = datetime.strptime(required_end, "%Y-%m-%d")
+    expected_dates = set()
+    current = start_dt
+    while current <= end_dt:
+        expected_dates.add(current.strftime("%Y-%m-%d"))
+        current += timedelta(days=1)
+
+    for symbol in symbols:
+        dates = set(_iter_symbol_dates(ticks_dir, symbol))
+        if not dates:
+            return False
+        if not expected_dates.issubset(dates):
+            return False
+    return True
+
+
 def ticks_to_bars(ticks_df: pd.DataFrame) -> pd.DataFrame:
     """将 1min 聚合 ticks（买卖分离）转为 1min OHLCV bars
 
@@ -62,8 +107,16 @@ def ticks_to_bars(ticks_df: pd.DataFrame) -> pd.DataFrame:
     """
     if ticks_df.empty:
         return pd.DataFrame(
-            columns=["timestamp", "open", "high", "low", "close", "volume",
-                      "buy_volume", "sell_volume"]
+            columns=[
+                "timestamp",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "buy_volume",
+                "sell_volume",
+            ]
         )
 
     df = ticks_df.copy()
@@ -71,28 +124,46 @@ def ticks_to_bars(ticks_df: pd.DataFrame) -> pd.DataFrame:
     df["sell_volume"] = np.where(df["side"] == -1, df["volume"], 0.0)
 
     # 按 timestamp 聚合（同一分钟的 buy/sell 合并为一条 bar）
-    agg = df.groupby("timestamp").agg(
-        price_first=("price", "first"),
-        price_max=("price", "max"),
-        price_min=("price", "min"),
-        price_last=("price", "last"),
-        volume=("volume", "sum"),
-        buy_volume=("buy_volume", "sum"),
-        sell_volume=("sell_volume", "sum"),
-    ).reset_index()
+    agg = (
+        df.groupby("timestamp")
+        .agg(
+            price_first=("price", "first"),
+            price_max=("price", "max"),
+            price_min=("price", "min"),
+            price_last=("price", "last"),
+            volume=("volume", "sum"),
+            buy_volume=("buy_volume", "sum"),
+            sell_volume=("sell_volume", "sum"),
+        )
+        .reset_index()
+    )
 
-    agg = agg.rename(columns={
-        "price_first": "open",
-        "price_max": "high",
-        "price_min": "low",
-        "price_last": "close",
-    })
+    agg = agg.rename(
+        columns={
+            "price_first": "open",
+            "price_max": "high",
+            "price_min": "low",
+            "price_last": "close",
+        }
+    )
     agg = agg.sort_values("timestamp").reset_index(drop=True)
-    return agg[["timestamp", "open", "high", "low", "close", "volume",
-                 "buy_volume", "sell_volume"]]
+    return agg[
+        [
+            "timestamp",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "buy_volume",
+            "sell_volume",
+        ]
+    ]
 
 
-def split_by_date(df: pd.DataFrame, ts_col: str = "timestamp") -> Dict[str, pd.DataFrame]:
+def split_by_date(
+    df: pd.DataFrame, ts_col: str = "timestamp"
+) -> Dict[str, pd.DataFrame]:
     """将 DataFrame 按日期拆分为 {YYYY-MM-DD: sub_df}"""
     df = df.copy()
     ts = pd.to_datetime(df[ts_col])
@@ -127,6 +198,7 @@ def write_daily_parquets(
 # ---------------------------------------------------------------------------
 # Local parquet_data source (--from-local)
 # ---------------------------------------------------------------------------
+
 
 def load_from_local_parquet(
     symbols: List[str],
@@ -192,12 +264,12 @@ def load_from_local_parquet(
         all_ticks = all_ticks.sort_values("timestamp").reset_index(drop=True)
 
         # 去重
-        all_ticks = all_ticks.drop_duplicates(
-            subset=["timestamp", "side"], keep="last"
-        )
+        all_ticks = all_ticks.drop_duplicates(subset=["timestamp", "side"], keep="last")
 
         print(f"      总记录: {len(all_ticks):,} 条")
-        print(f"      时间范围: {all_ticks['timestamp'].min()} ~ {all_ticks['timestamp'].max()}")
+        print(
+            f"      时间范围: {all_ticks['timestamp'].min()} ~ {all_ticks['timestamp'].max()}"
+        )
 
         # 写 ticks（按日期拆分）
         daily_ticks = split_by_date(all_ticks)
@@ -217,6 +289,7 @@ def load_from_local_parquet(
 # ---------------------------------------------------------------------------
 # Core Pipeline (download mode)
 # ---------------------------------------------------------------------------
+
 
 def compute_date_ranges(months: int):
     """计算 monthly 和 daily 的日期范围
@@ -247,9 +320,12 @@ def compute_date_ranges(months: int):
     daily_end = (today - timedelta(days=1)).strftime("%Y-%m-%d")
 
     return (
-        monthly_start_year, monthly_start_month,
-        monthly_end_year, monthly_end_month,
-        daily_start, daily_end,
+        monthly_start_year,
+        monthly_start_month,
+        monthly_end_year,
+        monthly_end_month,
+        daily_start,
+        daily_end,
     )
 
 
@@ -263,7 +339,9 @@ def download_monthly(
 ) -> None:
     """下载 monthly aggTrades ZIPs"""
     print(f"\n{'='*60}")
-    print(f"📥 下载 monthly aggTrades: {start_year}-{start_month:02d} ~ {end_year}-{end_month:02d}")
+    print(
+        f"📥 下载 monthly aggTrades: {start_year}-{start_month:02d} ~ {end_year}-{end_month:02d}"
+    )
     print(f"{'='*60}")
 
     downloader = BinanceMultiSymbolDownloader(
@@ -371,12 +449,12 @@ def convert_and_split(
         all_ticks = all_ticks.sort_values("timestamp").reset_index(drop=True)
 
         # 去重
-        all_ticks = all_ticks.drop_duplicates(
-            subset=["timestamp", "side"], keep="last"
-        )
+        all_ticks = all_ticks.drop_duplicates(subset=["timestamp", "side"], keep="last")
 
         print(f"      总记录: {len(all_ticks):,} 条")
-        print(f"      时间范围: {all_ticks['timestamp'].min()} ~ {all_ticks['timestamp'].max()}")
+        print(
+            f"      时间范围: {all_ticks['timestamp'].min()} ~ {all_ticks['timestamp'].max()}"
+        )
 
         # 写 ticks（按日期拆分）
         daily_ticks = split_by_date(all_ticks)
@@ -397,6 +475,7 @@ def convert_and_split(
 # Fill-gap mode (--fill-gap)
 # ---------------------------------------------------------------------------
 
+
 def detect_last_date(ticks_dir: Path, symbols: List[str]) -> Optional[str]:
     """检测 live/data/ticks/ 中已有数据的最后日期
 
@@ -415,21 +494,24 @@ def detect_last_date(ticks_dir: Path, symbols: List[str]) -> Optional[str]:
     return latest
 
 
-def detect_gaps(ticks_dir: Path, symbols: List[str], max_lookback_days: int = 100) -> List[str]:
+def detect_gaps(
+    ticks_dir: Path, symbols: List[str], max_lookback_days: int = 100
+) -> List[str]:
     """检测数据中间缺口
-    
+
     Args:
         ticks_dir: ticks数据目录
         symbols: 币种列表
         max_lookback_days: 最多向前检查多少天
-    
+
     Returns:
         缺失的日期列表 ['YYYY-MM-DD', ...]
     """
     from datetime import timezone
+
     today = datetime.now(timezone.utc)
     yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
-    
+
     # 收集所有币种的已有日期
     all_dates = set()
     for symbol in symbols:
@@ -438,18 +520,18 @@ def detect_gaps(ticks_dir: Path, symbols: List[str], max_lookback_days: int = 10
             continue
         for f in sym_dir.glob("*.parquet"):
             all_dates.add(f.stem)
-    
+
     if not all_dates:
         return []
-    
+
     # 找到最早和最晚日期
     min_date = min(all_dates)
     max_date = max(all_dates)
-    
+
     # 检查范围：从最早日期到昨天
     start_dt = datetime.strptime(min_date, "%Y-%m-%d")
     end_dt = datetime.strptime(yesterday, "%Y-%m-%d")
-    
+
     # 生成应有的日期序列
     missing = []
     current = start_dt
@@ -458,7 +540,7 @@ def detect_gaps(ticks_dir: Path, symbols: List[str], max_lookback_days: int = 10
         if date_str not in all_dates:
             missing.append(date_str)
         current += timedelta(days=1)
-    
+
     return missing
 
 
@@ -473,6 +555,7 @@ def fill_gap(
     检测已有数据的日期范围，找出所有缺失的日期，下载并补全。
     """
     from datetime import timezone
+
     today = datetime.now(timezone.utc)
     yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -483,7 +566,7 @@ def fill_gap(
 
     # 检测中间缺口
     missing_dates = detect_gaps(ticks_dir, symbols)
-    
+
     # 检测尾部缺口（最后日期到昨天）
     gap_start_dt = datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)
     gap_start = gap_start_dt.strftime("%Y-%m-%d")
@@ -496,12 +579,14 @@ def fill_gap(
             if date_str not in missing_dates:
                 missing_dates.append(date_str)
             current += timedelta(days=1)
-    
+
     # 去重并排序
     missing_dates = sorted(set(missing_dates))
-    
+
     if not missing_dates:
-        print(f"\n✅ 数据已是最新（最后日期: {last_date}，昨天: {yesterday}），无需补全")
+        print(
+            f"\n✅ 数据已是最新（最后日期: {last_date}，昨天: {yesterday}），无需补全"
+        )
         return {}
 
     print(f"\n{'='*60}")
@@ -511,58 +596,128 @@ def fill_gap(
     if len(missing_dates) <= 10:
         print(f"   缺失日期: {', '.join(missing_dates)}")
     else:
-        print(f"   缺失日期: {', '.join(missing_dates[:5])} ... {', '.join(missing_dates[-3:])}")
-    
+        print(
+            f"   缺失日期: {', '.join(missing_dates[:5])} ... {', '.join(missing_dates[-3:])}"
+        )
+
     # 按日期范围分组下载（连续的日期一起下载）
     if missing_dates:
         start_date = missing_dates[0]
         end_date = missing_dates[-1]
         print(f"   下载范围: {start_date} ~ {end_date}")
-        
+
         # 下载 daily
         download_daily(symbols, start_date, end_date, zip_dir)
-        
+
         # 转换并写入
         stats = convert_and_split(zip_dir, symbols, ticks_dir, bars_dir)
         return stats
-    
+
     return {}
+
+
+def prepare_warmup_dataset(
+    *,
+    symbols: List[str],
+    months: int,
+    ticks_dir: Path,
+    bars_dir: Path,
+    zip_dir: Path,
+    force_full: bool = False,
+    skip_download: bool = False,
+) -> Dict[str, int]:
+    """Prepare live warmup ticks/bars using the same monthly+daily pipeline.
+
+    If every symbol already covers the expected warmup span, only daily gaps up
+    to yesterday are filled. Otherwise the full monthly+daily download/convert
+    path is run so cold starts do not begin with only same-day WebSocket data.
+    """
+    ticks_dir.mkdir(parents=True, exist_ok=True)
+    bars_dir.mkdir(parents=True, exist_ok=True)
+    zip_dir.mkdir(parents=True, exist_ok=True)
+
+    if not force_full and has_required_warmup_coverage(ticks_dir, symbols, months):
+        print("\n✅ warmup 覆盖范围充足，仅检查/补全 daily gap")
+        return fill_gap(
+            symbols=symbols,
+            ticks_dir=ticks_dir,
+            bars_dir=bars_dir,
+            zip_dir=zip_dir,
+        )
+
+    required_start, required_end = required_warmup_bounds(months)
+    print("\n" + "=" * 60)
+    print("📦 warmup 覆盖不足，执行 monthly + daily 完整准备")
+    print("=" * 60)
+    print(f"   Required ticks: {required_start} ~ {required_end}")
+    print(f"   Ticks dir:      {ticks_dir}")
+    print(f"   Bars dir:       {bars_dir}")
+    print(f"   ZIP dir:        {zip_dir}")
+
+    (
+        m_start_y,
+        m_start_m,
+        m_end_y,
+        m_end_m,
+        d_start,
+        d_end,
+    ) = compute_date_ranges(months)
+
+    print(f"\n   Monthly 范围: {m_start_y}-{m_start_m:02d} ~ {m_end_y}-{m_end_m:02d}")
+    print(f"   Daily 范围:   {d_start} ~ {d_end}")
+
+    if not skip_download:
+        download_monthly(symbols, m_start_y, m_start_m, m_end_y, m_end_m, zip_dir)
+        download_daily(symbols, d_start, d_end, zip_dir)
+    else:
+        print("\n⏭️  跳过下载步骤")
+
+    return convert_and_split(zip_dir, symbols, ticks_dir, bars_dir)
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="准备实盘 warmup ticks 数据（下载 + 转换 + 拆分到 live 目录）"
     )
     parser.add_argument(
-        "--universe", default="highcap",
+        "--universe",
+        default="highcap",
         help="Universe 名称（默认: highcap）",
     )
     parser.add_argument(
-        "--months", type=int, default=6,
+        "--months",
+        type=int,
+        default=6,
         help="下载最近 N 个月的 monthly aggTrades（默认: 6）",
     )
     parser.add_argument(
-        "--symbols", default=None,
+        "--symbols",
+        default=None,
         help="逗号分隔的 symbols（默认从 universe.yaml 读取）",
     )
     parser.add_argument(
-        "--from-local", action="store_true",
+        "--from-local",
+        action="store_true",
         help="从 data/parquet_data/ 读取已有 1min 聚合数据（跳过下载和转换）",
     )
     parser.add_argument(
-        "--fill-gap", action="store_true",
+        "--fill-gap",
+        action="store_true",
         help="只补全缺失的 daily 数据（检测已有数据最后日期，仅下载此后到昨天）",
     )
     parser.add_argument(
-        "--skip-download", action="store_true",
+        "--skip-download",
+        action="store_true",
         help="跳过下载步骤（仅转换已有的 ZIP 文件）",
     )
     parser.add_argument(
-        "--data-dir", default=None,
+        "--data-dir",
+        default=None,
         help="ZIP 文件目录（默认: data/warmup_raw/{universe}）",
     )
     args = parser.parse_args()
@@ -598,7 +753,9 @@ def main():
     print(f"   Universe:   {args.universe}")
     print(f"   Symbols:    {', '.join(symbols)}")
     print(f"   Months:     {args.months}")
-    print(f"   Mode:       {'from-local (parquet_data)' if args.from_local else 'fill-gap (daily only)' if args.fill_gap else 'download + convert'}")
+    print(
+        f"   Mode:       {'from-local (parquet_data)' if args.from_local else 'fill-gap (daily only)' if args.fill_gap else 'download + convert'}"
+    )
     print(f"   Ticks dir:  {ticks_dir}")
     print(f"   Bars dir:   {bars_dir}")
 
@@ -612,11 +769,6 @@ def main():
         )
     elif args.fill_gap:
         # --fill-gap: 只补全缺失的 daily 数据
-        if args.data_dir:
-            zip_dir = Path(args.data_dir)
-        else:
-            zip_dir = PROJECT_ROOT / "data" / "warmup_raw" / args.universe
-        zip_dir.mkdir(parents=True, exist_ok=True)
         stats = fill_gap(
             symbols=symbols,
             ticks_dir=ticks_dir,
@@ -624,34 +776,15 @@ def main():
             zip_dir=zip_dir,
         )
     else:
-        # 默认模式: 下载 + 转换
-        # ZIP 下载目录
-        if args.data_dir:
-            zip_dir = Path(args.data_dir)
-        else:
-            zip_dir = PROJECT_ROOT / "data" / "warmup_raw" / args.universe
-        zip_dir.mkdir(parents=True, exist_ok=True)
-        print(f"   ZIP dir:    {zip_dir}")
-
-        # 计算日期范围
-        (
-            m_start_y, m_start_m,
-            m_end_y, m_end_m,
-            d_start, d_end,
-        ) = compute_date_ranges(args.months)
-
-        print(f"\n   Monthly 范围: {m_start_y}-{m_start_m:02d} ~ {m_end_y}-{m_end_m:02d}")
-        print(f"   Daily 范围:   {d_start} ~ {d_end}")
-
-        # Step 1: 下载
-        if not args.skip_download:
-            download_monthly(symbols, m_start_y, m_start_m, m_end_y, m_end_m, zip_dir)
-            download_daily(symbols, d_start, d_end, zip_dir)
-        else:
-            print("\n⏭️  跳过下载步骤")
-
-        # Step 2: 转换 + 拆分 + 写入
-        stats = convert_and_split(zip_dir, symbols, ticks_dir, bars_dir)
+        stats = prepare_warmup_dataset(
+            symbols=symbols,
+            months=args.months,
+            ticks_dir=ticks_dir,
+            bars_dir=bars_dir,
+            zip_dir=zip_dir,
+            force_full=True,
+            skip_download=args.skip_download,
+        )
 
     # 汇总
     print(f"\n{'='*60}")

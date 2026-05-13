@@ -31,6 +31,7 @@ from src.live_data_stream.websocket_client import (  # noqa: E402
     BinanceTick,
     BinanceWebSocketClient,
 )
+from live.scripts.prepare_warmup_ticks import prepare_warmup_dataset  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,13 @@ def _parse_symbols(raw: str) -> List[str]:
     return [s.strip().upper() for s in raw.split(",") if s.strip()]
 
 
+def _resolve_project_path(raw: str) -> Path:
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
 def _tf_to_minutes(tf: str) -> int:
     tf_norm = str(tf).strip().lower()
     if tf_norm.endswith("min"):
@@ -161,6 +169,26 @@ def parse_args() -> argparse.Namespace:
         help="Override constitution path (default: next to strategies_root / constitution/).",
     )
     p.add_argument("--warmup-days", type=int, default=0)
+    p.add_argument(
+        "--warmup-months",
+        type=int,
+        default=6,
+        help=(
+            "Prepare live warmup ticks/bars using prepare_warmup_ticks.py's "
+            "monthly+daily Binance Vision pipeline before starting WebSocket. "
+            "Set 0 to skip."
+        ),
+    )
+    p.add_argument(
+        "--warmup-raw-dir",
+        default="data/warmup_raw/highcap",
+        help="Directory for Binance Vision warmup ZIPs.",
+    )
+    p.add_argument(
+        "--skip-warmup-prepare",
+        action="store_true",
+        help="Skip monthly+daily warmup preparation and only load existing disk data.",
+    )
     p.add_argument("--memory-window-hours", type=float, default=4.0)
     p.add_argument("--feature-compute-interval-minutes", type=int, default=15)
     p.add_argument("--orderflow-window-minutes", type=int, default=None)
@@ -172,12 +200,30 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _prepare_live_warmup(args: argparse.Namespace) -> None:
+    if args.skip_warmup_prepare or int(args.warmup_months) <= 0:
+        logger.warning("quant-feature-bus: warmup prepare skipped by config")
+        return
+
+    live_storage_base = _resolve_project_path(args.live_storage_base)
+    prepare_warmup_dataset(
+        symbols=_parse_symbols(args.symbols),
+        months=int(args.warmup_months),
+        ticks_dir=live_storage_base / "ticks",
+        bars_dir=live_storage_base / "bars",
+        zip_dir=_resolve_project_path(args.warmup_raw_dir),
+        force_full=False,
+        skip_download=False,
+    )
+
+
 async def async_main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     args = parse_args()
+    _prepare_live_warmup(args)
     writer = FeatureBusWriter(args.feature_bus_root, max_rows=args.max_rows)
     manager = build_feature_bus_manager(args, writer)
     fast_emitter = FastMoveBarEmitter(

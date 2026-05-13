@@ -263,6 +263,8 @@ jobs:
                 --feature-bus-root live/shared_feature_bus \
                 --live-storage-base live/highcap/data \
                 --strategies-root live/highcap/config/strategies \
+                --warmup-months 6 \
+                --warmup-raw-dir data/warmup_raw/highcap \
                 --warmup-days 180 \
                 --max-rows 3000 \
                 --fast-bar-threshold-pct 0.03 \
