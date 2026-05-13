@@ -260,12 +260,12 @@ jobs:
               -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
               -v /opt/quant-engine/data:/app/data \
               quant-engine:latest \
-              bash -lc 'python live/scripts/prepare_warmup_ticks.py \
+              python live/scripts/prepare_warmup_ticks.py \
                 --universe highcap \
                 --months 6 \
-                --symbols "$MLBOT_LIVE_SYMBOLS" \
+                --symbols ${MLBOT_LIVE_SYMBOLS} \
                 --data-dir data/warmup_raw/highcap \
-                --incremental'
+                --incremental
 
             [Install]
             WantedBy=multi-user.target
@@ -289,8 +289,8 @@ jobs:
               -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
               -v /opt/quant-engine/data:/app/data \
               quant-engine:latest \
-              bash -lc 'python scripts/run_market_feature_publisher.py \
-                --symbols "$MLBOT_LIVE_SYMBOLS" \
+              python scripts/run_market_feature_publisher.py \
+                --symbols ${MLBOT_LIVE_SYMBOLS} \
                 --feature-bus-root live/shared_feature_bus \
                 --live-storage-base live/highcap/data \
                 --strategies-root live/highcap/config/strategies \
@@ -300,7 +300,7 @@ jobs:
                 --warmup-days 180 \
                 --max-rows 3000 \
                 --fast-bar-threshold-pct 0.03 \
-                --fast-bar-bucket-seconds 10'
+                --fast-bar-bucket-seconds 10
             ExecStop=/usr/bin/docker stop quant-feature-bus
 
             [Install]
