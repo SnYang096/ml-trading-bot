@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
@@ -36,6 +37,42 @@ from .connection_monitor import ConnectionMonitor, HealthStatus
 logger = logging.getLogger(__name__)
 
 FUTURES_WS_BASE = "wss://fstream.binance.com"
+
+
+@contextlib.contextmanager
+def _binance_sock_subscribe_uses_twm_loop(loop: asyncio.AbstractEventLoop):
+    """Force python-binance socket objects onto the TWM worker loop.
+
+    ``ThreadedWebsocketManager.start_*`` runs on the **caller's** thread. Package
+    code then builds ``ReconnectingWebsocket`` in ``streams.BinanceSocketManager``,
+    whose ``__init__`` calls ``get_loop()`` — under a running asyncio app that
+    returns the **main** loop while ``AsyncClient`` lives on ``loop``. That
+    cross-loop mismatch yields Futures attached to the wrong loop.
+
+    Patch the module-level ``get_loop`` bindings only around subscription setup.
+    """
+
+    import binance.helpers as binance_helpers
+    import binance.ws.reconnecting_websocket as binance_reconnecting_ws
+    import binance.ws.streams as binance_streams
+
+    def get_twm_loop():
+        return loop
+
+    saved = (
+        binance_helpers.get_loop,
+        binance_reconnecting_ws.get_loop,
+        binance_streams.get_loop,
+    )
+    binance_helpers.get_loop = get_twm_loop
+    binance_reconnecting_ws.get_loop = get_twm_loop
+    binance_streams.get_loop = get_twm_loop
+    try:
+        yield
+    finally:
+        binance_helpers.get_loop = saved[0]
+        binance_reconnecting_ws.get_loop = saved[1]
+        binance_streams.get_loop = saved[2]
 
 
 @dataclass
@@ -325,12 +362,13 @@ class BinanceWebSocketClient:
             self._twm = twm
             twm.start()
 
-            for symbol in self.symbols:
-                twm.start_aggtrade_futures_socket(
-                    callback=_handle_message,
-                    symbol=symbol,
-                    futures_type=FuturesType.USD_M,
-                )
+            with _binance_sock_subscribe_uses_twm_loop(twm_loop):
+                for symbol in self.symbols:
+                    twm.start_aggtrade_futures_socket(
+                        callback=_handle_message,
+                        symbol=symbol,
+                        futures_type=FuturesType.USD_M,
+                    )
 
             self.reconnect_manager.on_connection_success()
             self.connection_monitor.record_heartbeat()
