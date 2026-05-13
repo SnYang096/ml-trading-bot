@@ -9,23 +9,27 @@ def _touch(path: Path) -> None:
     path.write_text("x", encoding="utf-8")
 
 
-def test_prepare_warmup_dataset_full_when_coverage_missing(
+def test_prepare_warmup_dataset_full_daily_zip_when_coverage_missing(
     tmp_path: Path, monkeypatch
 ) -> None:
     import live.scripts.prepare_warmup_ticks as prep
 
-    calls: list[str] = []
+    calls: list[object] = []
 
     monkeypatch.setattr(
         prep,
         "compute_date_ranges",
         lambda months: (2025, 11, 2026, 4, "2026-05-01", "2026-05-12"),
     )
+
+    def _reject_monthly(*args: object, **kwargs: object) -> None:
+        raise AssertionError("unexpected monthly zip download (default is daily)")
+
+    monkeypatch.setattr(prep, "download_monthly", _reject_monthly)
     monkeypatch.setattr(
-        prep, "download_monthly", lambda *args, **kwargs: calls.append("monthly")
-    )
-    monkeypatch.setattr(
-        prep, "download_daily", lambda *args, **kwargs: calls.append("daily")
+        prep,
+        "download_daily",
+        lambda *args, **kwargs: calls.append(("daily", args[1], args[2])),
     )
     monkeypatch.setattr(
         prep,
@@ -42,7 +46,47 @@ def test_prepare_warmup_dataset_full_when_coverage_missing(
     )
 
     assert stats == {"BTCUSDT": 1}
-    assert calls == ["monthly", "daily", "convert"]
+    assert calls[:-1] == [
+        ("daily", "2025-11-01", "2026-05-12"),
+    ]
+    assert calls[-1] == "convert"
+
+
+def test_prepare_warmup_dataset_monthly_zip_legacy_chain(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import live.scripts.prepare_warmup_ticks as prep
+
+    seq: list[str] = []
+
+    monkeypatch.setattr(
+        prep,
+        "compute_date_ranges",
+        lambda months: (2025, 11, 2026, 4, "2026-05-01", "2026-05-12"),
+    )
+    monkeypatch.setattr(
+        prep, "download_monthly", lambda *args, **kwargs: seq.append("monthly")
+    )
+    monkeypatch.setattr(
+        prep, "download_daily", lambda *args, **kwargs: seq.append("daily")
+    )
+    monkeypatch.setattr(
+        prep,
+        "convert_and_split",
+        lambda *args, **kwargs: seq.append("convert") or {"BTCUSDT": 1},
+    )
+
+    stats = prep.prepare_warmup_dataset(
+        symbols=["BTCUSDT"],
+        months=6,
+        ticks_dir=tmp_path / "ticks",
+        bars_dir=tmp_path / "bars",
+        zip_dir=tmp_path / "raw",
+        use_monthly_zip=True,
+    )
+
+    assert stats == {"BTCUSDT": 1}
+    assert seq == ["monthly", "daily", "convert"]
 
 
 def test_prepare_warmup_dataset_gap_only_when_coverage_sufficient(

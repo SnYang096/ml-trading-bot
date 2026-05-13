@@ -174,8 +174,8 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=6,
         help=(
-            "Prepare live warmup ticks/bars using prepare_warmup_ticks.py's "
-            "monthly+daily Binance Vision pipeline before starting WebSocket. "
+            "Prepare live warmup ticks/bars via prepare_warmup_ticks.py (default: "
+            "daily Binance Vision aggTrades ZIPs for the warmup window). "
             "Set 0 to skip."
         ),
     )
@@ -187,7 +187,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--skip-warmup-prepare",
         action="store_true",
-        help="Skip monthly+daily warmup preparation and only load existing disk data.",
+        help=(
+            "Skip Vision warmup ZIP download/prepare and only load existing disk data."
+        ),
     )
     p.add_argument("--memory-window-hours", type=float, default=4.0)
     p.add_argument("--feature-compute-interval-minutes", type=int, default=15)

@@ -18,8 +18,9 @@
 #   --from-local 模式:
 #     直接从 data/parquet_data/ 读取已有 1min 聚合数据（快速）
 #   默认模式:
-#     1. 下载最近 N 个月 monthly aggTrades（Binance UM 期货）
-#     2. 下载最近 1 个月 daily aggTrades（补齐到昨天）
+#     1. 在 warmup 日历窗口内逐日下载 Binance UM daily aggTrades（Vision
+#        data/futures/um/daily/aggTrades/），避免单月整 ZIP 解压的内存峰值
+#     2. 可选第四个参数传入 --monthly-zip：改回按月 ZIP + trailing daily（HTTP 少，峰值内存高）
 #     3. 转换为 1min 聚合 ticks + bars
 #   共同:
 #     4. 按日期拆分写入 live/{universe}/data/ticks/ 和 bars/

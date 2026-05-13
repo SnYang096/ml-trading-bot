@@ -254,7 +254,7 @@ jobs:
             RemainAfterExit=yes
             Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
             # Docker：--memory-swap 为「内存+swap」合计上限（MiB），且须 > --memory 才允许用 swap。
-            # 实际能换出的量还受主机 swap/swapfile 大小限制；磁盘富余时可酌情调大以扛月度 ZIP 峰值。
+            # 实际能换出的量还受主机 swap/swapfile 大小限制；warmup 默认按日 Vision ZIP，峰值通常低于单月整包。
             ExecStartPre=-/usr/bin/docker rm -f quant-warmup-prepare
             ExecStart=/usr/bin/docker run --rm --name quant-warmup-prepare \
               --memory=3072m --memory-swap=32768m \

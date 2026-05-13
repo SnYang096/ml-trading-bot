@@ -3,9 +3,11 @@
 准备实盘 warmup ticks 数据
 =========================
 
-功能：
-1. 下载最近 N 个月的 monthly aggTrades（Binance UM 期货）
-2. 下载最近 1 个月的 daily aggTrades（补齐到昨天）
+功能（默认）：
+1. 在所需 warmup 日历窗口内下载 Binance UM **daily** aggTrades（Vision:
+   ``data/futures/um/daily/aggTrades/``）。按日 ZIP 解压压力远小于单月整包。
+2. 可选 ``--monthly-zip``：沿用旧路径（按月 ZIP + 其后一段 daily），HTTP 更少但大月
+   ZIP 峰值内存更高。
 3. 转换为 1min 聚合 ticks（格式: [timestamp, price, volume, side]）
 4. 按日期拆分写入 live/{universe}/data/ticks/{SYMBOL}/{YYYY-MM-DD}.parquet
 5. 同时生成 1min OHLCV bars 写入 live/{universe}/data/bars/{SYMBOL}/{YYYY-MM-DD}.parquet
@@ -63,7 +65,7 @@ def _iter_symbol_dates(ticks_dir: Path, symbol: str) -> List[str]:
 
 
 def required_warmup_bounds(months: int) -> tuple[str, str]:
-    """Return the date bounds produced by the monthly+daily warmup pipeline."""
+    """Return the contiguous calendar bounds for warmup (first day … Vision daily_end)."""
     (
         monthly_start_year,
         monthly_start_month,
@@ -292,7 +294,10 @@ def load_from_local_parquet(
 
 
 def compute_date_ranges(months: int):
-    """计算 monthly 和 daily 的日期范围。
+    """Warmup 用的月份边界与 trailing daily 段的日期字符串。
+
+    用于 ``required_warmup_bounds``（默认整段改成 daily ZIP）以及
+    ``--monthly-zip``（按月下载 + trailing daily）。
 
     Daily 上限为 UTC「前天」，以减少 Binance Vision 日线 ZIP 尚未发布的 404。
 
@@ -633,12 +638,20 @@ def prepare_warmup_dataset(
     zip_dir: Path,
     force_full: bool = False,
     skip_download: bool = False,
+    use_monthly_zip: bool = False,
 ) -> Dict[str, int]:
-    """Prepare live warmup ticks/bars using the same monthly+daily pipeline.
+    """Prepare live warmup ticks/bars from Binance Vision aggTrades.
 
-    If every symbol already covers the expected warmup span, only daily gaps up
-    to yesterday are filled. Otherwise the full monthly+daily download/convert
-    path is run so cold starts do not begin with only same-day WebSocket data.
+    Default downloads **daily** ZIPs for the full contiguous warmup window
+    (memory-friendly versus large monthly ZIPs).
+
+    If every symbol already covers the expected warmup span, only gaps up to
+    yesterday are filled. Otherwise the full download/convert path runs so cold
+    starts do not begin with only same-day WebSocket data.
+
+    Args:
+        use_monthly_zip: If True, use legacy monthly ZIPs plus a trailing daily
+            segment (fewer HTTP requests, higher peak RAM per convert).
     """
     ticks_dir.mkdir(parents=True, exist_ok=True)
     bars_dir.mkdir(parents=True, exist_ok=True)
@@ -655,7 +668,10 @@ def prepare_warmup_dataset(
 
     required_start, required_end = required_warmup_bounds(months)
     print("\n" + "=" * 60)
-    print("📦 warmup 覆盖不足，执行 monthly + daily 完整准备")
+    if use_monthly_zip:
+        print("📦 warmup 覆盖不足（monthly ZIP + trailing daily）")
+    else:
+        print("📦 warmup 覆盖不足（daily aggTrades ZIP 全覆盖，默认）")
     print("=" * 60)
     print(f"   Required ticks: {required_start} ~ {required_end}")
     print(f"   Ticks dir:      {ticks_dir}")
@@ -671,12 +687,18 @@ def prepare_warmup_dataset(
         d_end,
     ) = compute_date_ranges(months)
 
-    print(f"\n   Monthly 范围: {m_start_y}-{m_start_m:02d} ~ {m_end_y}-{m_end_m:02d}")
-    print(f"   Daily 范围:   {d_start} ~ {d_end}")
+    print(f"\n   回溯月数锚点: {m_start_y}-{m_start_m:02d} ~ {m_end_y}-{m_end_m:02d}（日历窗口）")
 
     if not skip_download:
-        download_monthly(symbols, m_start_y, m_start_m, m_end_y, m_end_m, zip_dir)
-        download_daily(symbols, d_start, d_end, zip_dir)
+        if use_monthly_zip:
+            print(f"   Trailing daily（monthly 之后）: {d_start} ~ {d_end}")
+            download_monthly(
+                symbols, m_start_y, m_start_m, m_end_y, m_end_m, zip_dir
+            )
+            download_daily(symbols, d_start, d_end, zip_dir)
+        else:
+            print(f"   Daily Vision 下载: {required_start} ~ {required_end}")
+            download_daily(symbols, required_start, required_end, zip_dir)
     else:
         print("\n⏭️  跳过下载步骤")
 
@@ -701,7 +723,10 @@ def main():
         "--months",
         type=int,
         default=6,
-        help="下载最近 N 个月的 monthly aggTrades（默认: 6）",
+        help=(
+            "warmup 日历窗口按月回溯 N 个月（边界见脚本内 compute_date_ranges）"
+            "；默认对该窗口内每一天下载 UM daily aggTrades ZIP。"
+        ),
     )
     parser.add_argument(
         "--symbols",
@@ -722,6 +747,14 @@ def main():
         "--skip-download",
         action="store_true",
         help="跳过下载步骤（仅转换已有的 ZIP 文件）",
+    )
+    parser.add_argument(
+        "--monthly-zip",
+        action="store_true",
+        help=(
+            "使用 Binance Vision 按月 aggTrades ZIP + trailing daily（HTTP 更少，"
+            "但单月 CSV 解压内存峰值更高；默认不推荐在内存紧张主机上使用）"
+        ),
     )
     parser.add_argument(
         "--incremental",
@@ -769,9 +802,15 @@ def main():
     print(f"   Universe:   {args.universe}")
     print(f"   Symbols:    {', '.join(symbols)}")
     print(f"   Months:     {args.months}")
-    print(
-        f"   Mode:       {'from-local (parquet_data)' if args.from_local else 'fill-gap (daily only)' if args.fill_gap else 'download + convert'}"
-    )
+    if args.from_local:
+        mode_note = "from-local (parquet_data)"
+    elif args.fill_gap:
+        mode_note = "fill-gap (daily only)"
+    elif args.monthly_zip:
+        mode_note = "download + convert (monthly + trailing daily ZIP)"
+    else:
+        mode_note = "download + convert (daily Vision ZIP, default)"
+    print(f"   Mode:       {mode_note}")
     print(f"   Ticks dir:  {ticks_dir}")
     print(f"   Bars dir:   {bars_dir}")
 
@@ -800,6 +839,7 @@ def main():
             zip_dir=zip_dir,
             force_full=not args.incremental,
             skip_download=args.skip_download,
+            use_monthly_zip=args.monthly_zip,
         )
 
     # 汇总
