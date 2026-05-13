@@ -15,6 +15,8 @@
 #   可选（成对）: MULTI_LEG_BINANCE_FUTURES_API_KEY / MULTI_LEG_BINANCE_FUTURES_API_SECRET
 # 注意: TENCENTCLOUD_SECRET_ID/KEY 等若存在但本 workflow 未引用，不会触发校验（与 CD 无关则属正常）。
 # 单机约 4G RAM: 三容器 cgroup 上限合计约 3.5G（余量给内核/Docker）；首启 feature-bus 做大窗 warmup 可能吃满一段时间。
+# 「不重跑 warmup prepare」（Actions 勾选 skip_warmup_prepare）只适合 quant-warmup-prepare.service 已经成功跑过一次，
+#     即 systemctl is-active quant-warmup-prepare == active（Type=oneshot RemainAfterExit）；全新宿主勿勾选，否则 Requires 链会卡住。
 #   quant-feature-bus — WS 全市场行情 + warmup(≈180d)+GapFiller 补数 + 特征 + FeatureBus；`docker logs quant-feature-bus` 可看 WS/重连
 #   quant-engine — 读 bus；`MLBOT_FEATURE_SOURCE=bus` 时跳过 start_live.sh 的本机 ticks/bars 强校验
 #   quant-multi-leg — 默认 Hedge；`MLBOT_MULTI_LEG_SKIP_HEDGE_ON_START=1` 可临时跳过。systemd 里 MLBOT_MULTI_LEG_SYMBOLS
@@ -39,6 +41,10 @@ on:
         default: true
       skip_build:
         description: '跳过构建，只重启服务（用于配置变更）'
+        type: boolean
+        default: false
+      skip_warmup_prepare:
+        description: '不重跑 Vision prepare（宿主 ticks/bars 已就绪 / prepare 已 active exited）。仍会 pull + 重启 bus 与 consumers。'
         type: boolean
         default: false
 
@@ -220,11 +226,12 @@ jobs:
           GHCR_USER: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
           IMAGE_FULL: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           IMAGE_SHA: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          SKIP_WARMUP_PREPARE: ${{ github.event.inputs.skip_warmup_prepare == true && 'yes' || 'no' }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: GHCR_TOKEN,GHCR_USER,IMAGE_FULL,IMAGE_SHA
+          envs: GHCR_TOKEN,GHCR_USER,IMAGE_FULL,IMAGE_SHA,SKIP_WARMUP_PREPARE
           command_timeout: 20m
           script: |
             set -e
@@ -392,11 +399,17 @@ jobs:
             # 部署时先停三容器再排队 warmup；warmup 可能数十分钟，勿在 CI 内同步等待（占用 Actions/Runner）。
             # --no-block：仅保证任务提交成功；失败需在主机 journalctl 查看。
             sudo systemctl stop quant-engine quant-multi-leg quant-feature-bus || true
-            if ! sudo systemctl start --no-block quant-warmup-prepare; then
-              echo "::error::quant-warmup-prepare 未能排队启动"
-              sudo systemctl status quant-warmup-prepare --no-pager || true
-              sudo journalctl -u quant-warmup-prepare --no-pager -n 80 || true
-              exit 1
+            if printf '%s' "${SKIP_WARMUP_PREPARE:-no}" | grep -qi '^yes$\|^true$\|^1$'; then
+              echo "=== ⏭️ 跳过 quant-warmup-prepare — skip_warmup_prepare 已勾选 ==="
+              st=$(sudo systemctl is-active quant-warmup-prepare 2>/dev/null || true)
+              echo "quant-warmup-prepare systemd: ${st:-unknown}（需为 active：此前须成功跑一次 prepare）"
+            else
+              if ! sudo systemctl start --no-block quant-warmup-prepare; then
+                echo "::error::quant-warmup-prepare 未能排队启动"
+                sudo systemctl status quant-warmup-prepare --no-pager || true
+                sudo journalctl -u quant-warmup-prepare --no-pager -n 80 || true
+                exit 1
+              fi
             fi
             # Requires=warmup：bus/engine restart  jobs 会在 warmup 成功完成后才实际拉起容器。
             sudo systemctl restart --no-block quant-feature-bus || true
