@@ -145,6 +145,12 @@ class DataConverter:
                     )
 
                 try:
+                    logger.info(
+                        "Reading aggTrades CSV from zip into memory (%s); "
+                        "monthly files are large — this step can take many minutes "
+                        "(high swap use looks like \"stuck\"; next log is row count).",
+                        zip_basename,
+                    )
                     with zip_ref.open(csv_file) as csv_handle:
                         df = pd.read_csv(csv_handle, **read_params)
                 except Exception as read_error:
