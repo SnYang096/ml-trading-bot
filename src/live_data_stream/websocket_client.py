@@ -71,7 +71,7 @@ class BinanceTick:
         price = float(payload.get("p") or payload.get("price") or 0)
         qty = float(payload.get("q") or payload.get("qty") or 0)
         ts_ms = int(payload.get("T") or payload.get("E") or time.time() * 1000)
-        trade_id = payload.get("a") or payload.get("t")  # aggTrade用a, trade用t
+        trade_id = payload.get("t") or payload.get("a")  # trade 用 t；遗留 aggTrade 解析用 a
         
         # Binance: m=True 表示买方是 maker => 卖方是 taker（主动卖出）
         is_buyer_maker = payload.get("m", False)
@@ -180,7 +180,8 @@ class BinanceWebSocketClient:
     def _ws_url(self) -> str:
         """构建 WebSocket URL"""
         base = FUTURES_WS_BASE if self.use_futures else SPOT_WS_BASE
-        streams = "/".join(f"{sym.lower()}@aggTrade" for sym in self.symbols)
+        # 仅订阅逐笔成交 @trade；1min OHLCV 由 OrderFlowListener 本地聚合。
+        streams = "/".join(f"{sym.lower()}@trade" for sym in self.symbols)
         return f"{base}/stream?streams={streams}"
     
     def add_callback(self, callback: Callable[[BinanceTick], None]) -> None:
@@ -262,8 +263,8 @@ class BinanceWebSocketClient:
             proxy URL 或 None
         """
         base = FUTURES_WS_BASE if self.use_futures else SPOT_WS_BASE
-        # 用单个轻量流做探测，避免组合流 URL 太长
-        probe_url = f"{base}/ws/btcusdt@aggTrade"
+        # 与 _ws_url 一致：只用 trade 流探测
+        probe_url = f"{base}/ws/btcusdt@trade"
         
         async def _try_connect(px: Optional[str]) -> bool:
             """尝试连接并接收 1 条消息，成功返回 True。"""
@@ -379,9 +380,8 @@ class BinanceWebSocketClient:
                                     if not isinstance(payload, dict):
                                         continue
                                     
-                                    # 只处理 trade / aggTrade 事件
-                                    event_type = payload.get("e", "")
-                                    if event_type not in ("trade", "aggTrade"):
+                                    # 仅处理逐笔成交（不订阅 Binance aggTrade 流）
+                                    if payload.get("e") != "trade":
                                         continue
                                     
                                     try:

@@ -215,8 +215,13 @@ def test_binance_websocket_client_creation():
     assert client.reconnect_manager.config.initial_delay == 5.0
 
     url = client._ws_url()
-    assert "fstream.binance.com" in url or "stream.binance.com" in url
-    assert "btcusdt@aggtrade" in url.lower()
+    assert "fstream.binance.com" in url
+    assert "btcusdt@trade" in url.lower()
+
+    spot_client = BinanceWebSocketClient(symbols=symbols, use_futures=False)
+    spot_url = spot_client._ws_url()
+    assert "stream.binance.com" in spot_url
+    assert "btcusdt@trade" in spot_url.lower()
 
 
 if __name__ == "__main__":
