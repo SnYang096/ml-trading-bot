@@ -315,7 +315,13 @@ class BinanceWebSocketClient:
 
         try:
             self.reconnect_manager._set_state(ConnectionState.CONNECTING)
-            twm = ThreadedWebsocketManager()
+            # python-binance defaults to ``get_loop()`` → in an *already running* asyncio loop
+            # (e.g. ``stream_ticks`` called from ``asyncio.run``) that same loop is handed to
+            # ``ThreadedApiManager``'s worker thread, which then calls
+            # ``run_until_complete`` on it → ``RuntimeError: This event loop is already running``.
+            # A dedicated loop driven only from the TWM thread fixes WS on Py3.12+.
+            twm_loop = asyncio.new_event_loop()
+            twm = ThreadedWebsocketManager(loop=twm_loop)
             self._twm = twm
             twm.start()
 
