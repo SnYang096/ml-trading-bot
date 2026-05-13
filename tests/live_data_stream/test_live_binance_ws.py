@@ -71,7 +71,7 @@ async def _stream_ticks_until(
 @live_ws
 @pytest.mark.asyncio
 async def test_binance_websocket_connection():
-    """连接币安 futures trade 流，收到若干条 tick 即通过。"""
+    """连接币安 futures aggTrade 流，收到若干条 tick 即通过。"""
     _require_live_ws()
     symbols = ["BTCUSDT", "ETHUSDT"]
     use_futures = True
@@ -216,12 +216,12 @@ def test_binance_websocket_client_creation():
 
     url = client._ws_url()
     assert "fstream.binance.com" in url
-    assert "btcusdt@trade" in url.lower()
+    assert "btcusdt@aggtrade" in url.lower()
 
     spot_client = BinanceWebSocketClient(symbols=symbols, use_futures=False)
     spot_url = spot_client._ws_url()
-    assert "stream.binance.com" in spot_url
-    assert "btcusdt@trade" in spot_url.lower()
+    assert "fstream.binance.com" in spot_url
+    assert "btcusdt@aggtrade" in spot_url.lower()
 
 
 if __name__ == "__main__":

@@ -178,7 +178,8 @@ RUN echo "📦 Installing additional live trading dependencies..." && \
     llvmlite>=0.43.0 \
     dtaidistance>=2.3.0 \
     websocket-client>=1.6.0 \
-    && python3 -c "import prometheus_client, cloudpickle, numba; print('✅ Additional dependencies installed')"
+    python-binance>=1.0.19 \
+    && python3 -c "import prometheus_client, cloudpickle, numba, binance; print('✅ Additional dependencies installed')"
 
 # =========================================================================
 # 应用代码打包（每次 push 重建此层，秒级）

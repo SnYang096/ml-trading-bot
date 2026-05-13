@@ -1,139 +1,69 @@
-"""Probe Binance USDⓈ-M Futures @aggTrade WebSocket (and optional vs @trade bandwidth).
+"""Probe Binance USD-M futures aggTrade via python-binance.
 
-Docs: Aggregate Trade Streams push fills aggregated every 100ms (same price & taker side).
-URL: wss://fstream.binance.com/ws/<symbol>@aggTrade
-Combined: wss://fstream.binance.com/stream?streams=btcusdt@aggTrade/ethusdt@aggTrade
+This intentionally uses ``ThreadedWebsocketManager.start_aggtrade_futures_socket``,
+matching the live listener. It does not open raw ``@trade`` or hand-rolled
+websocket subscriptions.
 """
 
 from __future__ import annotations
 
 import argparse
-import asyncio
-import json
 import sys
 import time
 from typing import Any, Dict
 
-try:
-    import websockets
-except ImportError:
-    print("Install websockets: pip install websockets", file=sys.stderr)
-    raise
+from binance import ThreadedWebsocketManager
 
 
-def _unwrap_payload(raw: str) -> Dict[str, Any]:
-    outer = json.loads(raw)
-    inner = outer.get("data", outer)
-    if not isinstance(inner, dict):
-        raise ValueError(f"unexpected payload shape: {type(inner)}")
-    return inner
+def _payload(message: Dict[str, Any]) -> Dict[str, Any]:
+    payload = message.get("data", message)
+    return payload if isinstance(payload, dict) else {}
 
 
-async def recv_first_aggtrade(url: str, wait: float) -> None:
-    print(f"=== First message ({url}) ===")
-    try:
-        async with websockets.connect(
-            url, ping_interval=15, open_timeout=30, close_timeout=5
-        ) as ws:
-            print("   connected, waiting for first frame...")
-            try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=wait)
-            except TimeoutError:
-                print(
-                    f"TIMEOUT: no message within {wait}s after connect "
-                    "(try larger --wait; check outbound WSS)"
-                )
-                raise RuntimeError("aggTrade first message timeout") from None
-
-            print("RAW:", raw[:240] + ("..." if len(raw) > 240 else ""))
-            try:
-                data = _unwrap_payload(raw)
-                print(
-                    "EVENT:",
-                    data.get("e"),
-                    "SYMBOL:",
-                    data.get("s"),
-                    "p:",
-                    data.get("p"),
-                    "q:",
-                    data.get("q"),
-                    "m:",
-                    data.get("m"),
-                )
-                if data.get("e") != "aggTrade":
-                    print("WARN: expected event type aggTrade")
-            except Exception as e:
-                print("PARSE ERROR:", type(e).__name__, e)
-    except TimeoutError:
-        print(
-            "TIMEOUT: WebSocket handshake failed (open_timeout). "
-            "Check firewall / routing to fstream.binance.com"
-        )
-        raise
-
-
-async def bandwidth_sample(url: str, label: str, seconds: float) -> None:
-    """Rough inbound bytes/sec over raw WS frames (UTF-8 length if str)."""
-    print(f"=== Bandwidth ~{seconds}s ({label}) ===")
-    print("URL:", url)
-    total_bytes = 0
-    n = 0
-    t0 = time.monotonic()
-    async with websockets.connect(
-        url, ping_interval=15, open_timeout=30, close_timeout=5
-    ) as ws:
-        while time.monotonic() - t0 < seconds:
-            remaining = seconds - (time.monotonic() - t0)
-            if remaining <= 0:
-                break
-            raw = await asyncio.wait_for(ws.recv(), timeout=min(60.0, remaining + 1.0))
-            total_bytes += len(raw) if isinstance(raw, bytes) else len(raw.encode("utf-8"))
-            n += 1
-    elapsed = time.monotonic() - t0
-    if elapsed <= 0:
-        elapsed = seconds
-    print(f"  messages={n} bytes={total_bytes} avg={total_bytes / elapsed:.0f} B/s")
-    print()
-
-
-async def main() -> None:
+def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument(
-        "--symbol",
-        default="BTCUSDT",
-        help="Uppercase futures symbol (default BTCUSDT)",
-    )
-    p.add_argument("--wait", type=float, default=30.0, help="Seconds to wait for first msg")
-    p.add_argument(
-        "--bandwidth",
-        action="store_true",
-        help="Also sample ~8s inbound bytes/sec for aggTrade vs trade (same symbol)",
-    )
-    p.add_argument(
-        "--bw-seconds",
-        type=float,
-        default=8.0,
-        help="Duration for --bandwidth samples",
-    )
+    p.add_argument("--symbol", default="BTCUSDT")
+    p.add_argument("--seconds", type=float, default=30.0)
+    p.add_argument("--max-messages", type=int, default=5)
     args = p.parse_args()
-    sym = args.symbol.strip().lower()
 
-    single_agg = f"wss://fstream.binance.com/ws/{sym}@aggTrade"
-    combined_agg = (
-        "wss://fstream.binance.com/stream?streams="
-        "btcusdt@aggTrade/ethusdt@aggTrade"
-    )
+    received = 0
 
-    await recv_first_aggtrade(single_agg, args.wait)
-    print()
-    await recv_first_aggtrade(combined_agg, args.wait)
+    def handle(message: Dict[str, Any]) -> None:
+        nonlocal received
+        payload = _payload(message)
+        if payload.get("e") != "aggTrade":
+            print("non-aggTrade:", str(message)[:180])
+            return
+        received += 1
+        if received <= args.max_messages:
+            print(
+                "aggTrade",
+                payload.get("s"),
+                "p=",
+                payload.get("p"),
+                "q=",
+                payload.get("q"),
+                "T=",
+                payload.get("T"),
+            )
+            sys.stdout.flush()
 
-    if args.bandwidth:
-        trade_url = f"wss://fstream.binance.com/ws/{sym}@trade"
-        await bandwidth_sample(single_agg, f"USDM {sym}@aggTrade", args.bw_seconds)
-        await bandwidth_sample(trade_url, f"USDM {sym}@trade", args.bw_seconds)
-        print("Note: aggTrade emits fewer rows than raw trade; lower B/s is expected in quiet periods.")
+    twm = ThreadedWebsocketManager()
+    twm.start()
+    twm.start_aggtrade_futures_socket(callback=handle, symbol=args.symbol.upper())
+
+    deadline = time.time() + args.seconds
+    try:
+        while time.time() < deadline and received < args.max_messages:
+            time.sleep(0.1)
+    finally:
+        twm.stop()
+
+    if received <= 0:
+        raise SystemExit(f"FAIL: no aggTrade message in {args.seconds}s")
+    print(f"OK: received {received} aggTrade messages")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

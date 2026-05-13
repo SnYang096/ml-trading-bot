@@ -21,13 +21,13 @@ class TestBinanceTick:
     def test_from_binance(self):
         """测试从 Binance 数据解析"""
         payload = {
-            "e": "trade",
+            "e": "aggTrade",
             "s": "BTCUSDT",
             "p": "50000.00",
             "q": "0.1",
             "T": 1234567890000,
             "m": False,  # 买方是 taker（主动买入）
-            "t": 12345,
+            "a": 12345,
         }
 
         tick = BinanceTick.from_binance(payload)
@@ -42,13 +42,13 @@ class TestBinanceTick:
     def test_from_binance_sell(self):
         """测试卖出 tick"""
         payload = {
-            "e": "trade",
+            "e": "aggTrade",
             "s": "BTCUSDT",
             "p": "50000.00",
             "q": "0.1",
             "T": 1234567890000,
             "m": True,  # 买方是 maker（主动卖出）
-            "t": 12345,
+            "a": 12345,
         }
 
         tick = BinanceTick.from_binance(payload)
@@ -96,15 +96,15 @@ class TestBinanceWebSocketClient:
             BinanceWebSocketClient(symbols=[])
 
     def test_ws_url_spot(self):
-        """测试现货 WebSocket URL"""
+        """use_futures=False 也走 USD-M aggTrade（兼容旧参数）。"""
         client = BinanceWebSocketClient(
             symbols=["BTCUSDT"],
             use_futures=False,
         )
 
         url = client._ws_url()
-        assert "stream.binance.com" in url
-        assert "btcusdt@trade" in url
+        assert "fstream.binance.com" in url
+        assert "btcusdt@aggTrade" in url
 
     def test_ws_url_futures(self):
         """测试期货 WebSocket URL"""
@@ -115,7 +115,7 @@ class TestBinanceWebSocketClient:
 
         url = client._ws_url()
         assert "fstream.binance.com" in url
-        assert "btcusdt@trade" in url
+        assert "btcusdt@aggTrade" in url
 
     def test_ws_url_multiple_symbols(self):
         """测试多币种 WebSocket URL"""
@@ -125,9 +125,9 @@ class TestBinanceWebSocketClient:
         )
 
         url = client._ws_url()
-        assert "btcusdt@trade" in url
-        assert "ethusdt@trade" in url
-        assert "solusdt@trade" in url
+        assert "btcusdt@aggTrade" in url
+        assert "ethusdt@aggTrade" in url
+        assert "solusdt@aggTrade" in url
 
     def test_add_callback(self):
         """测试添加回调"""
@@ -168,7 +168,7 @@ class TestBinanceWebSocketClient:
 
         # 测试 URL 生成
         url = client._ws_url()
-        assert "btcusdt@trade" in url
+        assert "btcusdt@aggTrade" in url
 
         # 测试基本功能（不测试实际 WebSocket 连接）
         assert client.symbols == ["BTCUSDT"]

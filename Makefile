@@ -144,14 +144,15 @@ remote-binance-ws-probe:
 	cat "$(PWD)/scripts/binance_ws_trade_probe.py" | ssh -i "$(REMOTE_SSH_KEY)" -o StrictHostKeyChecking=accept-new "$(REMOTE_SSH_USER)@$(REMOTE_SSH_HOST)" \
 		'docker run --rm -i python:3.12-slim bash -lc '"'"'pip -q install websockets >/dev/null 2>&1 && python -'"'"''
 
-# USDM @aggTrade WebSocket probe (optional --bandwidth vs @trade). Override: AGGTRADE_PROBE_ARGS='--bandwidth'
+# USDM @aggTrade probe via python-binance start_aggtrade_futures_socket.
+# Override: AGGTRADE_PROBE_ARGS='--seconds 60 --max-messages 10'
 AGGTRADE_PROBE_ARGS ?=
 
 remote-binance-aggtrade-probe:
 	@test -r "$(REMOTE_SSH_KEY)" \
 		|| (echo >&2 'SSH key not readable: $(REMOTE_SSH_KEY)'; exit 1)
 	cat "$(PWD)/scripts/binance_ws_aggtrade_probe.py" | ssh -i "$(REMOTE_SSH_KEY)" -o StrictHostKeyChecking=accept-new "$(REMOTE_SSH_USER)@$(REMOTE_SSH_HOST)" \
-		"docker run --rm -i python:3.12-slim bash -lc 'pip -q install websockets >/dev/null 2>&1 && python - $(AGGTRADE_PROBE_ARGS)'"
+		"docker run --rm -i python:3.12-slim bash -lc 'pip -q install python-binance >/dev/null 2>&1 && python - $(AGGTRADE_PROBE_ARGS)'"
 
 remote-setup-binance-probe: remote-docker-install remote-binance-ws-probe
 
@@ -189,7 +190,7 @@ help:
 	@echo "  make ssh-remote                  # SSH (defaults: $(REMOTE_SSH_USER)@$(REMOTE_SSH_HOST), key $(REMOTE_SSH_KEY))"
 	@echo "  make remote-docker-install       # Install Docker on remote (get.docker.com)"
 	@echo "  make remote-binance-ws-probe      # Binance USDM + spot @trade WS test via Docker on remote"
-	@echo "  make remote-binance-aggtrade-probe # Binance USDM @aggTrade (+ optional AGGTRADE_PROBE_ARGS='--bandwidth')"
+	@echo "  make remote-binance-aggtrade-probe # Binance USDM @aggTrade via python-binance (override AGGTRADE_PROBE_ARGS)"
 	@echo "  make remote-setup-binance-probe  # install Docker + run probe"
 	@echo "  make swapfile-setup              # On VPS: create/replace swapfile ($(SWAPFILE), default $(SWAP_SIZE_G)GiB, needs sudo)"
 	@echo "  make swapfile-status             # On VPS: show free/swap/swapon ($(SWAPFILE))"
