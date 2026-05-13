@@ -528,6 +528,11 @@ def parse_args() -> argparse.Namespace:
 
 
 async def async_main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
     args = parse_args()
     metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
     start_metrics_server(port=metrics_port)
