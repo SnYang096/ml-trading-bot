@@ -186,7 +186,7 @@ async def async_main() -> None:
         bucket_seconds=args.fast_bar_bucket_seconds,
     )
     if args.warmup_days > 0:
-        await manager.warmup_all(days=args.warmup_days, use_gap_filler=False)
+        await manager.warmup_all(days=args.warmup_days, use_gap_filler=True)
     else:
         now = pd.Timestamp.now(tz="UTC")
         for listener in manager.listeners.values():

@@ -275,24 +275,23 @@ def build_daemon(
     if (
         args.mode in ("mainnet", "testnet")
         and isinstance(api, BinanceAPI)
-        and _env_truthy("MLBOT_MULTI_LEG_SET_HEDGE_ON_START")
+        and not _env_truthy("MLBOT_MULTI_LEG_SKIP_HEDGE_ON_START")
     ):
         if api.hedge_mode_probe_error:
             logger.warning(
-                "MLBOT_MULTI_LEG_SET_HEDGE_ON_START ignored: hedge probe failed (%s)",
+                "multi-leg hedge: skipping API switch until probe succeeds (%s)",
                 api.hedge_mode_probe_error,
             )
         elif not api.hedge_mode:
             try:
                 api.set_dual_side_position(True)
                 logger.info(
-                    "MLBOT_MULTI_LEG_SET_HEDGE_ON_START: requested hedge "
-                    "(POST /fapi/v1/positionSide/dual)"
+                    "multi-leg hedge: POST /fapi/v1/positionSide/dual (dualSide=true)"
                 )
             except Exception as exc:
                 logger.warning(
-                    "MLBOT_MULTI_LEG_SET_HEDGE_ON_START failed (%s); close positions "
-                    "and cancel orders before switching position mode.",
+                    "multi-leg hedge: switch failed (%s); close positions and cancel "
+                    "orders before switching position mode.",
                     exc,
                 )
             api.refresh_hedge_mode()

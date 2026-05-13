@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from src.live_data_stream import MultiSymbolManager, StorageManager
+from src.live_data_stream.gap_filler import GapFiller
 from src.live_data_stream.constitution_config import (
     enabled_archetypes_from_constitution,
     load_constitution_dict,
@@ -32,7 +33,16 @@ from src.live_data_stream.strategy_runtime_config import (
 from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
-from src.time_series_model.live.live_feature_plan import extract_features_from_archetypes
+from src.time_series_model.live.live_feature_plan import (
+    extract_features_from_archetypes,
+)
+
+try:
+    import ccxt
+
+    CCXT_AVAILABLE = True
+except ImportError:
+    CCXT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +171,9 @@ def _collect_secondary_specs(
     return out
 
 
-def _pick_primary_archetype(enabled: List[str], strategies_root: str, me_pkg: str) -> str:
+def _pick_primary_archetype(
+    enabled: List[str], strategies_root: str, me_pkg: str
+) -> str:
     pref = os.getenv("MLBOT_PUBLISHER_PRIMARY_ARCHETYPE", "bpc").lower().strip()
     if pref in enabled:
         d = _disk_package(pref, strategies_root, me_pkg)
@@ -182,7 +194,9 @@ def _pick_primary_archetype(enabled: List[str], strategies_root: str, me_pkg: st
     )
 
 
-def build_feature_bus_manager(args: Namespace, writer: FeatureBusWriter) -> MultiSymbolManager:
+def build_feature_bus_manager(
+    args: Namespace, writer: FeatureBusWriter
+) -> MultiSymbolManager:
     """Constitution-driven feature stack for ``run_market_feature_publisher``."""
     symbols = [s.strip().upper() for s in str(args.symbols).split(",") if s.strip()]
     strategies_root = str(args.strategies_root)
@@ -254,10 +268,25 @@ def build_feature_bus_manager(args: Namespace, writer: FeatureBusWriter) -> Mult
         tf_groups.setdefault(spec.timeframe, []).append(spec)
 
     storage = StorageManager(args.live_storage_base)
+    gap_filler: Optional[GapFiller] = None
+    if CCXT_AVAILABLE:
+        try:
+            exchange = ccxt.binanceusdm({"enableRateLimit": True})
+            gap_filler = GapFiller(storage_manager=storage, exchange=exchange)
+            logger.info(
+                "quant-feature-bus: GapFiller on (public USD-M ccxt; ticks/bars gap fill)"
+            )
+        except Exception as exc:
+            logger.warning(
+                "quant-feature-bus: GapFiller disabled (%s); warmup uses disk only",
+                exc,
+            )
+
     manager = MultiSymbolManager(
         symbols=symbols,
         storage_manager=storage,
         feature_computer_factory=_primary_factory,
+        gap_filler=gap_filler,
         memory_window_hours=args.memory_window_hours,
         feature_compute_interval_minutes=args.feature_compute_interval_minutes,
         orderflow_window_minutes=args.orderflow_window_minutes,
