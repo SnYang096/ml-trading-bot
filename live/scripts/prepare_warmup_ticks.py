@@ -292,7 +292,9 @@ def load_from_local_parquet(
 
 
 def compute_date_ranges(months: int):
-    """计算 monthly 和 daily 的日期范围
+    """计算 monthly 和 daily 的日期范围。
+
+    Daily 上限为 UTC「前天」，以减少 Binance Vision 日线 ZIP 尚未发布的 404。
 
     Returns:
         monthly_start_year, monthly_start_month, monthly_end_year, monthly_end_month,
@@ -315,9 +317,15 @@ def compute_date_ranges(months: int):
     monthly_start_year = monthly_start.year
     monthly_start_month = monthly_start.month
 
-    # Daily: 从 monthly_end 的下一个月 1 号 到 昨天
-    daily_start = (monthly_end + timedelta(days=1)).strftime("%Y-%m-%d")
-    daily_end = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+    # Daily: 从 monthly_end 的下一个月 1 号起；截止到「前天」——Vision 日线常有 ~1 日公布延迟，
+    # 截止「昨天」会对当日 ZIP 反复 404。新月开头几天若前天早于月初，则钳制到月初（单日或空列表）。
+    daily_start_dt = monthly_end + timedelta(days=1)
+    daily_end_dt = today - timedelta(days=2)
+    effective_end_dt = (
+        daily_end_dt if daily_end_dt >= daily_start_dt else daily_start_dt
+    )
+    daily_start = daily_start_dt.strftime("%Y-%m-%d")
+    daily_end = effective_end_dt.strftime("%Y-%m-%d")
 
     return (
         monthly_start_year,
@@ -716,6 +724,14 @@ def main():
         help="跳过下载步骤（仅转换已有的 ZIP 文件）",
     )
     parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help=(
+            "若 ticks 已覆盖所需月份窗口则只做 gap fill（与 feature publisher 默认一致）；"
+            "默认仍为强制完整下载/转换。"
+        ),
+    )
+    parser.add_argument(
         "--data-dir",
         default=None,
         help="ZIP 文件目录（默认: data/warmup_raw/{universe}）",
@@ -782,7 +798,7 @@ def main():
             ticks_dir=ticks_dir,
             bars_dir=bars_dir,
             zip_dir=zip_dir,
-            force_full=True,
+            force_full=not args.incremental,
             skip_download=args.skip_download,
         )
 

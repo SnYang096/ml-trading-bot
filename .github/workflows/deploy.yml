@@ -240,12 +240,42 @@ jobs:
             docker tag "$IMAGE_FULL" quant-engine:latest
 
             echo ""
-            echo "=== 🧩 写入三进程 systemd units ==="
+            echo "=== 🧩 写入 systemd units（warmup oneshot → feature-bus → consumers）==="
+            # Vision ZIP→parquet 只在 quant-warmup-prepare 跑，可与 engine/multi-leg 错峰占内存；
+            # 小内存机器上避免三容器与转换同时进行。
+            sudo tee /etc/systemd/system/quant-warmup-prepare.service >/dev/null <<'EOF'
+            [Unit]
+            Description=Quant Binance Vision warmup (download ZIP + convert to ticks/bars)
+            After=docker.service network-online.target
+            Requires=docker.service
+
+            [Service]
+            Type=oneshot
+            RemainAfterExit=yes
+            Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+            ExecStartPre=-/usr/bin/docker rm -f quant-warmup-prepare
+            ExecStart=/usr/bin/docker run --rm --name quant-warmup-prepare \
+              --memory=3072m --memory-swap=3072m \
+              -e MLBOT_LIVE_SYMBOLS \
+              -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
+              -v /opt/quant-engine/data:/app/data \
+              quant-engine:latest \
+              bash -lc 'python live/scripts/prepare_warmup_ticks.py \
+                --universe highcap \
+                --months 6 \
+                --symbols "$MLBOT_LIVE_SYMBOLS" \
+                --data-dir data/warmup_raw/highcap \
+                --incremental'
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
             sudo tee /etc/systemd/system/quant-feature-bus.service >/dev/null <<'EOF'
             [Unit]
             Description=Quant market feature publisher
-            After=docker.service network-online.target
-            Requires=docker.service
+            After=docker.service network-online.target quant-warmup-prepare.service
+            Requires=docker.service quant-warmup-prepare.service
 
             [Service]
             Restart=always
@@ -266,6 +296,7 @@ jobs:
                 --strategies-root live/highcap/config/strategies \
                 --warmup-months 6 \
                 --warmup-raw-dir data/warmup_raw/highcap \
+                --skip-warmup-prepare \
                 --warmup-days 180 \
                 --max-rows 3000 \
                 --fast-bar-threshold-pct 0.03 \
@@ -349,12 +380,16 @@ jobs:
             WantedBy=multi-user.target
             EOF
 
-            sudo sed -i 's/^            //' /etc/systemd/system/quant-feature-bus.service /etc/systemd/system/quant-engine.service /etc/systemd/system/quant-multi-leg.service
+            sudo sed -i 's/^            //' /etc/systemd/system/quant-warmup-prepare.service /etc/systemd/system/quant-feature-bus.service /etc/systemd/system/quant-engine.service /etc/systemd/system/quant-multi-leg.service
             sudo systemctl daemon-reload
-            sudo systemctl enable quant-feature-bus quant-engine quant-multi-leg
+            sudo systemctl enable quant-warmup-prepare quant-feature-bus quant-engine quant-multi-leg
 
             echo ""
-            echo "=== 🔄 重启服务 ==="
+            echo "=== 🔄 拉起服务 ==="
+            # 开机顺序由 systemd：quant-warmup-prepare（oneshot）→ quant-feature-bus Requires 之 → consumers After bus。
+            # 这里对 warmup 用 start 而非 restart：已成功则单元保持 Active(exited)，start 几乎不耗时，避免每次部署都阻塞 GitHub Actions。
+            # 若要强制整段下载/转换重跑：在主机执行 sudo systemctl restart quant-warmup-prepare（再 restart bus）。
+            sudo systemctl start quant-warmup-prepare
             sudo systemctl restart quant-feature-bus
             sudo systemctl restart quant-engine
             sudo systemctl restart quant-multi-leg
@@ -390,7 +425,7 @@ jobs:
               failed=1
             fi
 
-            for svc in quant-feature-bus quant-engine quant-multi-leg; do
+            for svc in quant-warmup-prepare quant-feature-bus quant-engine quant-multi-leg; do
               if sudo systemctl is-active --quiet "$svc"; then
                 echo "✅ $svc 运行中"
                 sudo systemctl status "$svc" --no-pager | head -15
