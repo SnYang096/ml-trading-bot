@@ -35,30 +35,39 @@ async def recv_first_aggtrade(url: str, wait: float) -> None:
         async with websockets.connect(
             url, ping_interval=15, open_timeout=30, close_timeout=5
         ) as ws:
-            raw = await asyncio.wait_for(ws.recv(), timeout=wait)
-        print("RAW:", raw[:240] + ("..." if len(raw) > 240 else ""))
-        try:
-            data = _unwrap_payload(raw)
-            print(
-                "EVENT:",
-                data.get("e"),
-                "SYMBOL:",
-                data.get("s"),
-                "p:",
-                data.get("p"),
-                "q:",
-                data.get("q"),
-                "m:",
-                data.get("m"),
-            )
-            if data.get("e") != "aggTrade":
-                print("WARN: expected event type aggTrade")
-        except Exception as e:
-            print("PARSE ERROR:", type(e).__name__, e)
+            print("   connected, waiting for first frame...")
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=wait)
+            except TimeoutError:
+                print(
+                    f"TIMEOUT: no message within {wait}s after connect "
+                    "(try larger --wait; check outbound WSS)"
+                )
+                raise RuntimeError("aggTrade first message timeout") from None
+
+            print("RAW:", raw[:240] + ("..." if len(raw) > 240 else ""))
+            try:
+                data = _unwrap_payload(raw)
+                print(
+                    "EVENT:",
+                    data.get("e"),
+                    "SYMBOL:",
+                    data.get("s"),
+                    "p:",
+                    data.get("p"),
+                    "q:",
+                    data.get("q"),
+                    "m:",
+                    data.get("m"),
+                )
+                if data.get("e") != "aggTrade":
+                    print("WARN: expected event type aggTrade")
+            except Exception as e:
+                print("PARSE ERROR:", type(e).__name__, e)
     except TimeoutError:
         print(
-            "TIMEOUT: cannot open WebSocket or no first message — check network/firewall "
-            "or run on a host that can reach fstream.binance.com"
+            "TIMEOUT: WebSocket handshake failed (open_timeout). "
+            "Check firewall / routing to fstream.binance.com"
         )
         raise
 
