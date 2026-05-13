@@ -326,7 +326,7 @@ jobs:
             Environment=MLBOT_MULTI_LEG_SYMBOLS=BTCUSDT
             ExecStartPre=-/usr/bin/docker rm -f quant-multi-leg
             ExecStart=/usr/bin/docker run --rm --name quant-multi-leg \
-              --memory=512m --memory-swap=512m \
+              --memory=1024m --memory-swap=1024m \
               --env-file /opt/quant-engine/live/binance_mainnet.env \
               -e MLBOT_MULTI_LEG_SYMBOLS \
               -v /opt/quant-engine/live/shared_feature_bus:/app/live/shared_feature_bus \

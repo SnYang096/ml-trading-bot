@@ -41,15 +41,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.diagnose_chop_grid import GridConfig, build_features  # noqa: E402
-from scripts.diagnose_crf_edge import _load_symbol_1m, _resample_ohlcv  # noqa: E402
-from src.features.time_series.baseline_features import (  # noqa: E402
-    compute_trend_confidence_from_series,
-)
-from src.config.strategy_layout import resolve_strategy_config_input  # noqa: E402
 from scripts.pipeline.strategy_symbols import (  # noqa: E402
     resolve_strategy_symbols,
 )
+from src.config.strategy_layout import resolve_strategy_config_input  # noqa: E402
 from src.order_management.binance_api import BinanceAPI  # noqa: E402
 from src.order_management.binance_user_stream import BinanceUserStream  # noqa: E402
 from src.order_management.grid_execution_adapter import (
@@ -111,6 +106,13 @@ class ParquetFeatureBarProvider:
         self.now = now
 
     def latest_closed_bars(self, symbols: Iterable[str]) -> List[MultiLegBarEvent]:
+        # Lazy imports: diagnose_* pulls heavy stacks; unused when --bar-source feature-store.
+        from scripts.diagnose_chop_grid import GridConfig, build_features
+        from scripts.diagnose_crf_edge import _load_symbol_1m, _resample_ohlcv
+        from src.features.time_series.baseline_features import (
+            compute_trend_confidence_from_series,
+        )
+
         now = self.now or pd.Timestamp.utcnow()
         if now.tzinfo is None:
             now = now.tz_localize("UTC")
