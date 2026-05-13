@@ -236,6 +236,74 @@ def _get_num(signal: Mapping[str, Any], *names: str) -> float | None:
     return None
 
 
+def add_regime_gate_allows(
+    features: Mapping[str, Any] | None,
+    add_position_cfg: Mapping[str, Any] | None,
+) -> tuple[bool, str]:
+    """Optional post-trigger gate for add-on entries (event backtest / live alignment).
+
+    YAML (under ``add_position``):
+
+        add_regime_gate:
+          enabled: true
+          allow_if_all:
+            - feature: bpc_semantic_chop_ts_q
+              lte: 0.55
+            - feature: add_ml_score
+              gte: 0.52
+
+    Rules in ``allow_if_all`` are AND-ed. If a listed feature is missing or
+    non-finite on the current bar, that rule is skipped (pass-through).
+
+    Rule schema supports either:
+      - ``feature``: direct feature name
+      - ``feature_by_side``: dict {"long": "...", "short": "..."} selected by
+        signal field ``position_action`` (LONG/SHORT)
+    """
+    gate = _as_dict(_as_dict(add_position_cfg).get("add_regime_gate"))
+    if not gate or not bool(gate.get("enabled")):
+        return True, ""
+    rules = gate.get("allow_if_all")
+    if not isinstance(rules, list) or not rules:
+        return True, ""
+    feat_map: Dict[str, Any] = dict(features or {})
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        fname = str(rule.get("feature", "")).strip()
+        if not fname:
+            fbs = _as_dict(rule.get("feature_by_side"))
+            pos_action = str(feat_map.get("position_action", "")).strip().lower()
+            if pos_action in {"long", "buy"}:
+                fname = str(fbs.get("long", "")).strip()
+            elif pos_action in {"short", "sell"}:
+                fname = str(fbs.get("short", "")).strip()
+        if not fname:
+            continue
+        raw = feat_map.get(fname)
+        if raw is None:
+            continue
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if v != v:
+            continue
+        if bool(rule.get("align_with_side")):
+            pos_action = str(feat_map.get("position_action", "")).strip().lower()
+            if pos_action in {"short", "sell"}:
+                v = -v
+        if "lte" in rule:
+            lim = float(rule["lte"])
+            if v > lim + 1e-12:
+                return False, f"{fname}>{lim:g}"
+        if "gte" in rule:
+            lim = float(rule["gte"])
+            if v < lim - 1e-12:
+                return False, f"{fname}<{lim:g}"
+    return True, ""
+
+
 def validate_add_position_trigger(
     *,
     archetype: str,

@@ -76,6 +76,7 @@ from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
 )
 from src.time_series_model.core.constitution.add_position_rules import (
+    add_regime_gate_allows as _shared_add_regime_gate_allows,
     resolve_add_position_max_times as _shared_resolve_add_position_max_times,
     resolve_add_position_min_current_r,
     resolve_add_position_size_multiplier as _shared_resolve_add_position_size_multiplier,
@@ -436,6 +437,7 @@ class PositionSimulator:
         self.max_observed_notional_frac: float = 0.0
         # 记录最近一次加仓失败原因（供 funnel 细分统计）
         self.last_add_reject_reason: str = ""
+        self.last_add_attempt_signal: Dict[str, Any] = {}
         # SRB 加仓门控（由 EventBacktester 从 execution.yaml 注入）
         self._srb_add_policy: Optional[Dict[str, Any]] = None
         self._primary_bar_count: int = 0
@@ -954,6 +956,7 @@ class PositionSimulator:
             position_id if added, None if rejected
         """
         self.last_add_reject_reason = ""
+        self.last_add_attempt_signal = {}
         archetype = getattr(intent, "archetype", "").lower().strip()
         new_side = (
             "LONG"
@@ -1133,6 +1136,8 @@ class PositionSimulator:
             return None
         signal = dict(features or {})
         signal["add_position_seq"] = next_add_no
+        signal["current_r"] = float(current_r)
+        signal["position_action"] = str(new_side)
         signal.setdefault("close", current_price)
         _atr_parent = float(parent_pos.get("atr_at_entry", 0) or 0)
         _risk_parent = float(parent_pos.get("initial_risk_distance", 0) or 0)
@@ -1161,6 +1166,7 @@ class PositionSimulator:
         signal["base_notional_frac"] = float(_risk_frac)
         signal["current_notional_frac"] = float(_current_notional_frac)
         signal["equity_usd"] = float(features.get("equity", 0.0) or 0.0)
+        self.last_add_attempt_signal = dict(signal)
         if skip_signal_trigger:
             _thr = resolve_add_position_min_current_r(add_rules, next_add_no, signal)
             if current_r < _thr:
@@ -1183,6 +1189,10 @@ class PositionSimulator:
                     self.last_add_reject_reason = "add_bpc_breakout_mismatch"
                 else:
                     self.last_add_reject_reason = "add_trigger_feature_rules"
+            return None
+        _ok_gate, _gate_why = _shared_add_regime_gate_allows(signal, add_rules)
+        if not _ok_gate:
+            self.last_add_reject_reason = f"add_regime_gate:{_gate_why}"
             return None
         add_mult = _resolve_add_position_size_multiplier(add_rules, next_add_no, signal)
         parent_mult = float(parent_pos.get("_size_multiplier", 1.0) or 1.0)
@@ -1484,6 +1494,8 @@ class BacktestResult:
     add_trigger_types: Dict[str, str] = field(default_factory=dict)
     # 时间线上每次 PCM 评估后的策略漏斗快照（用于交易地图附图）
     funnel_per_bar: List[Dict[str, Any]] = field(default_factory=list)
+    # 每次加仓尝试的特征快照（可选 sidecar 导出，用于规则研究）
+    add_attempt_rows: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def n_trades(self) -> int:
@@ -1795,6 +1807,87 @@ def _extract_path_efficiency_pct(features: Mapping[str, Any]) -> Optional[float]
         except (TypeError, ValueError):
             continue
     return None
+
+
+_ADD_ATTEMPT_CORE_FEATURES: Tuple[str, ...] = (
+    "bpc_semantic_chop",
+    "bpc_semantic_chop_ts_q",
+    "tpc_semantic_chop",
+    "tpc_semantic_chop_ts_q",
+    "path_efficiency_pct",
+    "path_efficiency_pct_f",
+    "atr",
+    "atr_percentile",
+    "atr_percentile_f",
+    "volatility_regime_f",
+    "ema_200_position",
+    "ema_1200_position",
+    "macro_tp_vwap_1200_position",
+    "vpin_ma20",
+    "vpin_ma_max",
+    "oi_flow_zscore",
+    "oi_zscore",
+    "funding_rate",
+    "roc_5",
+    "roc_20",
+    "macd_atr",
+    "recent_compression_decay",
+    "compression_duration",
+    "oi_compression_score",
+    "dual_ignition_score",
+    "bars_since_local_high",
+    "bars_since_local_low",
+    "recent_net_move_atr",
+    "mfe_r",
+    "current_r",
+    "parent_initial_r",
+    "current_leverage",
+    "current_notional_frac",
+    "base_leverage_unit",
+    "base_notional_frac",
+    "add_ml_score",
+)
+
+
+def _safe_float_or_none(v: Any) -> Optional[float]:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if np.isfinite(x) else None
+
+
+def _add_attempt_snapshot(
+    *,
+    timestamp: Any,
+    symbol: str,
+    archetype: str,
+    side: str,
+    path_type: str,
+    features: Mapping[str, Any],
+    signal: Mapping[str, Any],
+    outcome: str,
+) -> Dict[str, Any]:
+    """Compact row for add-on rule research sidecars."""
+    row: Dict[str, Any] = {
+        "timestamp": str(timestamp),
+        "symbol": str(symbol),
+        "archetype": str(archetype),
+        "side": str(side),
+        "path_type": str(path_type),
+        "outcome": str(outcome or "other"),
+        "added": str(outcome or "") == "ok",
+    }
+    merged = dict(features or {})
+    merged.update(dict(signal or {}))
+    for key in _ADD_ATTEMPT_CORE_FEATURES:
+        val = _safe_float_or_none(merged.get(key))
+        if val is not None:
+            row[key] = val
+    pct = _extract_path_efficiency_pct(merged)
+    if pct is not None:
+        row["path_efficiency_pct"] = float(pct)
+    return row
 
 
 def _er_pct_numeric_summary(xs: List[float]) -> Dict[str, float]:
@@ -2175,6 +2268,7 @@ class EventBacktester:
         resume_state: Optional[Dict[str, Any]] = None,
         force_close_end: bool = True,
         no_kill_switch: bool = False,
+        inject_add_ml_scores_path: Optional[str] = None,
     ) -> BacktestResult:
         """
         运行事件驱动回测 — 多策略 + 多 timeframe + 跨 symbol 时间线交叉处理
@@ -2214,6 +2308,46 @@ class EventBacktester:
         warmup_start = (_start - timedelta(days=warmup_days)).strftime("%Y-%m-%d")
         test_start_ts = _start
         logger.info(f"Time range: test={_start} → {_end}, warmup_start={warmup_start}")
+
+        inject_scores_df: Optional[pd.DataFrame] = None
+        if inject_add_ml_scores_path:
+            _ip = Path(inject_add_ml_scores_path)
+            if _ip.is_file():
+                inject_scores_df = pd.read_parquet(_ip)
+                inject_scores_df = inject_scores_df.rename(
+                    columns={c: str(c).lower() for c in inject_scores_df.columns}
+                )
+                if "symbol" not in inject_scores_df.columns:
+                    logger.warning(
+                        "inject add_ml_scores parquet missing 'symbol' column: %s", _ip
+                    )
+                    inject_scores_df = None
+                elif "timestamp" not in inject_scores_df.columns:
+                    logger.warning(
+                        "inject add_ml_scores parquet missing 'timestamp' column: %s",
+                        _ip,
+                    )
+                    inject_scores_df = None
+                elif "add_ml_score" not in inject_scores_df.columns:
+                    logger.warning(
+                        "inject add_ml_scores parquet missing 'add_ml_score' column: %s",
+                        _ip,
+                    )
+                    inject_scores_df = None
+                else:
+                    inject_scores_df["symbol"] = (
+                        inject_scores_df["symbol"].astype(str).str.strip().str.upper()
+                    )
+                    inject_scores_df["timestamp"] = pd.to_datetime(
+                        inject_scores_df["timestamp"], utc=True
+                    )
+                    logger.info(
+                        "Loaded add_ml_score injections: %d rows from %s",
+                        len(inject_scores_df),
+                        _ip,
+                    )
+            else:
+                logger.warning("inject add_ml_scores path not found: %s", _ip)
 
         # 数据源: --data-path (研究数据) 或 StorageManager (实盘数据)
         use_research = self.data_path is not None
@@ -2362,6 +2496,24 @@ class EventBacktester:
                 features_df.index = pd.to_datetime(features_df.index, utc=True)
                 # Keep decision timestamp at bar close to avoid look-ahead leakage.
                 features_df = _align_feature_index_to_bar_close(features_df, tf)
+
+                if inject_scores_df is not None:
+                    sym_u = str(sym).strip().upper()
+                    sub = inject_scores_df[
+                        inject_scores_df["symbol"].astype(str).str.upper() == sym_u
+                    ]
+                    if not sub.empty:
+                        sub2 = sub.sort_values("timestamp").drop_duplicates(
+                            "timestamp", keep="last"
+                        )
+                        ser = pd.Series(
+                            sub2["add_ml_score"].astype(float).values,
+                            index=pd.DatetimeIndex(sub2["timestamp"], tz="UTC"),
+                        ).sort_index()
+                        aligned = ser.reindex(features_df.index).ffill()
+                        features_df["add_ml_score"] = aligned.to_numpy(
+                            dtype=float, copy=False
+                        )
 
                 if _anchor_en_ev and ANCHOR_COLUMN in features_df.columns:
                     if str(sym).strip().upper() == _anchor_u:
@@ -2640,6 +2792,7 @@ class EventBacktester:
         # path_efficiency_pct（类 ER 分位）在每次加仓尝试时的快照，供 er_gated_float_ladder 设计
         _er_rows_signal_add: List[Dict[str, Any]] = []
         _er_rows_float_ladder: List[Dict[str, Any]] = []
+        _add_attempt_rows: List[Dict[str, Any]] = []
         _funnel_per_bar_rows: List[Dict[str, Any]] = []
         _pcm_direction_ffill: Dict[Tuple[str, str], Dict[str, float]] = {}
 
@@ -3057,24 +3210,39 @@ class EventBacktester:
                                     runtime_state=_runtime_state,
                                     bar_minutes=winning_bm,
                                 )
+                                _add_outcome = (
+                                    "ok"
+                                    if added
+                                    else str(
+                                        getattr(
+                                            simulator,
+                                            "last_add_reject_reason",
+                                            "",
+                                        )
+                                    )
+                                    or "other"
+                                )
                                 _er_rows_signal_add.append(
                                     {
                                         "pct": _extract_path_efficiency_pct(
                                             entry_feats
                                         ),
-                                        "outcome": (
-                                            "ok"
-                                            if added
-                                            else str(
-                                                getattr(
-                                                    simulator,
-                                                    "last_add_reject_reason",
-                                                    "",
-                                                )
-                                            )
-                                            or "other"
-                                        ),
+                                        "outcome": _add_outcome,
                                     }
+                                )
+                                _add_attempt_rows.append(
+                                    _add_attempt_snapshot(
+                                        timestamp=ts,
+                                        symbol=sym,
+                                        archetype=winning_arch,
+                                        side=getattr(intent, "action", ""),
+                                        path_type="signal_add",
+                                        features=entry_feats,
+                                        signal=getattr(
+                                            simulator, "last_add_attempt_signal", {}
+                                        ),
+                                        outcome=_add_outcome,
+                                    )
                                 )
                             if added:
                                 _add_pos_count += 1
@@ -3282,22 +3450,37 @@ class EventBacktester:
                             bar_minutes=ladder_bm,
                             skip_signal_trigger=True,
                         )
+                        _add_fl_outcome = (
+                            "ok"
+                            if added_fl
+                            else str(
+                                getattr(
+                                    simulator,
+                                    "last_add_reject_reason",
+                                    "",
+                                )
+                            )
+                            or "other"
+                        )
                         _er_rows_float_ladder.append(
                             {
                                 "pct": _extract_path_efficiency_pct(pf),
-                                "outcome": (
-                                    "ok"
-                                    if added_fl
-                                    else str(
-                                        getattr(
-                                            simulator,
-                                            "last_add_reject_reason",
-                                            "",
-                                        )
-                                    )
-                                    or "other"
-                                ),
+                                "outcome": _add_fl_outcome,
                             }
+                        )
+                        _add_attempt_rows.append(
+                            _add_attempt_snapshot(
+                                timestamp=ts,
+                                symbol=sym,
+                                archetype=arch_disp,
+                                side=action,
+                                path_type="float_ladder",
+                                features=pf,
+                                signal=getattr(
+                                    simulator, "last_add_attempt_signal", {}
+                                ),
+                                outcome=_add_fl_outcome,
+                            )
                         )
                         if added_fl:
                             pos["_last_float_ladder_add_ts"] = ts
@@ -3386,6 +3569,7 @@ class EventBacktester:
         result.trades.sort(key=lambda t: t.entry_time)
         result.funnel = dict(funnel)
         result.funnel_per_bar = _funnel_per_bar_rows
+        result.add_attempt_rows = _add_attempt_rows
 
         # 保存 equity curve 和 kill switch 统计
         result.equity_curve = _equity_curve
@@ -4247,6 +4431,11 @@ def main():
         help="导出交易明细 CSV 路径",
     )
     parser.add_argument(
+        "--export-add-attempts",
+        default=None,
+        help="导出每次加仓尝试的特征快照 CSV 路径（用于规则研究）",
+    )
+    parser.add_argument(
         "--capital-report",
         default=None,
         help="输出 capital_report.json/html 的目录；默认跟 --export 同目录",
@@ -4346,6 +4535,14 @@ def main():
         default=False,
         help="禁用 constitution kill switch（用于诊断策略真实表现，不受亏损限额约束）",
     )
+    parser.add_argument(
+        "--inject-add-ml-scores",
+        default=None,
+        help=(
+            "Parquet with columns: symbol, timestamp (UTC), add_ml_score — "
+            "merged into primary features as 'add_ml_score' for add_regime_gate rules"
+        ),
+    )
     args = parser.parse_args()
 
     strategies = [s.strip() for s in args.strategy.split(",")]
@@ -4429,6 +4626,7 @@ def main():
         resume_state=resume_state_obj,
         force_close_end=not bool(args.keep_open_positions),
         no_kill_switch=args.no_kill_switch,
+        inject_add_ml_scores_path=args.inject_add_ml_scores,
     )
 
     result.print_report()
@@ -4454,6 +4652,16 @@ def main():
         print(
             f"  资金报告: {cap_dir / 'capital_report.html'} "
             f"(final=${cap.get('final_capital', 0.0):,.2f}, CAGR={cap.get('cagr', 0.0):.2%})"
+        )
+
+    if args.export_add_attempts:
+        add_attempt_path = Path(args.export_add_attempts)
+        add_attempt_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(result.add_attempt_rows or []).to_csv(
+            add_attempt_path, index=False
+        )
+        print(
+            f"  加仓尝试特征导出: {len(result.add_attempt_rows or [])} rows → {add_attempt_path}"
         )
 
     if args.output:
