@@ -253,9 +253,10 @@ jobs:
             Type=oneshot
             RemainAfterExit=yes
             Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+            # Docker：--memory-swap 必须大于 --memory 才会启用 swap；二者相等表示禁用 swap（易被月度 ZIP 峰值 OOM）。
             ExecStartPre=-/usr/bin/docker rm -f quant-warmup-prepare
             ExecStart=/usr/bin/docker run --rm --name quant-warmup-prepare \
-              --memory=3072m --memory-swap=3072m \
+              --memory=3072m --memory-swap=6144m \
               -e MLBOT_LIVE_SYMBOLS \
               -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
               -v /opt/quant-engine/data:/app/data \
@@ -387,6 +388,9 @@ jobs:
             echo ""
             echo "=== 🔄 拉起服务 ==="
             # 开机顺序由 systemd：quant-warmup-prepare（oneshot）→ quant-feature-bus Requires 之 → consumers After bus。
+            # 部署时旧版 engine/bus/multi-leg 可能仍在跑；与 warmup（月度 ZIP→parquet）并发易在小内存机上 cgroup OOM → exit 137，故先停再 warmup。
+            sudo systemctl stop quant-engine quant-multi-leg quant-feature-bus || true
+            # warmup：memory-swap > memory 才允许用 swap；二者相等时 Docker 禁用 swap，易被月度 aggTrades 峰值打死。
             # 这里对 warmup 用 start 而非 restart：已成功则单元保持 Active(exited)，start 几乎不耗时，避免每次部署都阻塞 GitHub Actions。
             # 若要强制整段下载/转换重跑：在主机执行 sudo systemctl restart quant-warmup-prepare（再 restart bus）。
             if ! sudo systemctl start quant-warmup-prepare; then
