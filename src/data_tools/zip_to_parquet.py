@@ -21,6 +21,20 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def is_binance_um_monthly_aggtrade_zip(filename: str) -> bool:
+    """True for UM Vision *monthly* aggTrades ``*-aggTrades-YYYY-MM.zip``.
+
+    Daily archives ``*-aggTrades-YYYY-MM-DD.zip`` return False.
+    """
+
+    u = os.path.basename(filename).upper()
+    if not u.endswith(".ZIP"):
+        return False
+    return bool(re.search(r"-AGGTRADES-\d{4}-\d{2}\.ZIP$", u)) and not bool(
+        re.search(r"-AGGTRADES-\d{4}-\d{2}-\d{2}\.ZIP$", u)
+    )
+
+
 class DataConverter:
     """数据转换器：将 Binance aggTrades ZIP → 原始 tick Parquet
 
@@ -145,12 +159,19 @@ class DataConverter:
                     )
 
                 try:
-                    logger.info(
-                        "Reading aggTrades CSV from zip into memory (%s); "
-                        "monthly files are large — this step can take many minutes "
-                        '(high swap use looks like "stuck"; next log is row count).',
-                        zip_basename,
-                    )
+                    if is_binance_um_monthly_aggtrade_zip(zip_basename):
+                        logger.info(
+                            "Reading aggTrades CSV from zip into memory (%s); "
+                            "MONTHLY Vision archives are very large — expect high RAM/swap "
+                            "and long runtime (small containers may OOM; prefer daily ZIPs).",
+                            zip_basename,
+                        )
+                    else:
+                        logger.info(
+                            "Reading aggTrades CSV from zip into memory (%s); "
+                            "next log line is row count.",
+                            zip_basename,
+                        )
                     with zip_ref.open(csv_file) as csv_handle:
                         df = pd.read_csv(csv_handle, **read_params)
                 except Exception as read_error:
@@ -320,7 +341,11 @@ class DataConverter:
         return os.path.join(self.output_dir, output_filename)
 
     def convert_all_files(
-        self, pattern: str = "*aggTrades-*.zip", symbols: Optional[List[str]] = None
+        self,
+        pattern: str = "*aggTrades-*.zip",
+        symbols: Optional[List[str]] = None,
+        *,
+        exclude_binance_monthly_aggtrade_zips: bool = False,
     ) -> Dict:
         """
         转换所有匹配的 ZIP 文件（支持多币种）
@@ -328,6 +353,8 @@ class DataConverter:
         Args:
             pattern: 文件匹配模式
             symbols: 可选的币种列表过滤（如 ["BTCUSDT", "ETHUSDT"]），None 表示不过滤
+            exclude_binance_monthly_aggtrade_zips: True 时跳过 UM **按月** Vision ZIP，
+                防止 broad glob 误选整月 raw agg 一次性读入内存触发 OOM。
 
         Returns:
             转换结果字典，包含成功和失败的文件列表
@@ -360,6 +387,21 @@ class DataConverter:
             logger.info(
                 f"Filtered to {len(zip_files)} files matching symbols: {symbols}"
             )
+
+        if exclude_binance_monthly_aggtrade_zips:
+            before_ct = len(zip_files)
+            zip_files = [
+                z
+                for z in zip_files
+                if not is_binance_um_monthly_aggtrade_zip(os.path.basename(z))
+            ]
+            skipped_m = before_ct - len(zip_files)
+            if skipped_m:
+                logger.warning(
+                    "Excluded %s Binance UM monthly aggTrades ZIP(s) "
+                    "(exclude_binance_monthly_aggtrade_zips=True).",
+                    skipped_m,
+                )
 
         logger.info(f"Found {len(zip_files)} files to convert")
 

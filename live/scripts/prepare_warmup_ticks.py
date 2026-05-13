@@ -454,7 +454,11 @@ def convert_and_split(
         output_dir=str(tmp_parquet_dir),
         aggregate_freq="1min",
     )
-    result = converter.convert_all_files(pattern=zip_pattern, symbols=symbols)
+    result = converter.convert_all_files(
+        pattern=zip_pattern,
+        symbols=symbols,
+        exclude_binance_monthly_aggtrade_zips=daily_zip_glob_only,
+    )
     print(f"   转换完成: {len(result.get('converted_files', []))} 个文件")
 
     # 读取所有 parquet，按 symbol 合并，按日期拆分，写入 live 目录

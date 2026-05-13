@@ -316,3 +316,36 @@ class TestZipToParquet:
 
         print("✅ 批量转换功能正常")
         print(f"   转换了 {results['total_files']} 个文件")
+
+
+def test_is_binance_um_monthly_aggtrade_zip():
+    from src.data_tools.zip_to_parquet import is_binance_um_monthly_aggtrade_zip
+
+    assert is_binance_um_monthly_aggtrade_zip("BTCUSDT-aggTrades-2026-02.zip")
+    assert is_binance_um_monthly_aggtrade_zip("/data/BTCUSDT-aggTrades-2026-02.zip")
+    assert not is_binance_um_monthly_aggtrade_zip("BTCUSDT-aggTrades-2026-02-01.zip")
+    assert not is_binance_um_monthly_aggtrade_zip("foo.csv")
+
+
+def test_convert_all_files_excludes_monthly_when_requested(temp_dirs):
+    from src.data_tools.zip_to_parquet import DataConverter
+
+    input_dir = Path(temp_dirs["input_dir"])
+    (input_dir / "BTCUSDT-aggTrades-2026-02.zip").write_bytes(b"")
+    (input_dir / "ETHUSDT-aggTrades-2026-02-03.zip").write_bytes(b"")
+
+    converter = DataConverter(
+        input_dir=str(input_dir),
+        output_dir=temp_dirs["output_dir"],
+    )
+    excluded = converter.convert_all_files(
+        pattern="*-aggTrades-*.zip",
+        exclude_binance_monthly_aggtrade_zips=True,
+    )
+    assert excluded["total_files"] == 1
+
+    inclusive = converter.convert_all_files(
+        pattern="*-aggTrades-*.zip",
+        exclude_binance_monthly_aggtrade_zips=False,
+    )
+    assert inclusive["total_files"] == 2
