@@ -32,6 +32,10 @@ TENCENT_SSH_HOST ?= $(REMOTE_SSH_HOST)
 TENCENT_SSH_USER ?= $(REMOTE_SSH_USER)
 TENCENT_SSH_KEY ?= $(REMOTE_SSH_KEY)
 
+# VPS swapfile（建在现有系统盘上；配合 Docker memory-swap，减轻 Vision warmup 月度 ZIP → parquet 的 OOM）
+SWAPFILE ?= /swapfile
+SWAP_SIZE_G ?= 16
+
 SYMBOL ?= BTCUSDT
 # SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT
 SYMBOLS ?= BTCUSDT,ETHUSDT
@@ -100,7 +104,8 @@ endif
 
 
 .PHONY: help clean clean-results-labeled-parquet format lint fix-permissions fix-ownership dev-install install-hooks docker-build docker-install \
-	ssh-remote ssh-aws ssh-tencent remote-docker-install remote-binance-ws-probe remote-setup-binance-probe builder-shell \
+	ssh-remote ssh-aws ssh-tencent swapfile-status swapfile-setup \
+	remote-docker-install remote-binance-ws-probe remote-setup-binance-probe builder-shell \
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only \
 	ts-vectorbot-backtest ts-nautilus-backtest \
@@ -141,6 +146,26 @@ remote-binance-ws-probe:
 
 remote-setup-binance-probe: remote-docker-install remote-binance-ws-probe
 
+# 在 Ubuntu 实盘主机上执行（需 sudo）。会 swapoff、删除已有 $(SWAPFILE) 并重建（破坏性）。例：make swapfile-setup SWAP_SIZE_G=8
+swapfile-setup:
+	@echo ">>> Replacing $(SWAPFILE) with $(SWAP_SIZE_G)GiB swap (requires sudo, destructive for existing file)"
+	sudo swapoff $(SWAPFILE) || true
+	sudo rm -f $(SWAPFILE)
+	sudo fallocate -l $(SWAP_SIZE_G)G $(SWAPFILE) || sudo dd if=/dev/zero of=$(SWAPFILE) bs=1M count=$$(($(SWAP_SIZE_G) * 1024)) status=progress
+	sudo chmod 600 $(SWAPFILE)
+	sudo mkswap $(SWAPFILE)
+	sudo swapon $(SWAPFILE)
+	grep -Fxq "$(SWAPFILE) none swap sw 0 0" /etc/fstab || echo "$(SWAPFILE) none swap sw 0 0" | sudo tee -a /etc/fstab
+	@echo ">>> Done. Current memory/swap:"
+	@free -h
+	@sudo swapon --show
+
+swapfile-status:
+	@free -h
+	@echo ""
+	@sudo swapon --show || true
+	@test -f $(SWAPFILE) && ls -lh $(SWAPFILE) || echo "No file $(SWAPFILE)"
+
 help:
 	@echo "ML Trading Project"
 	@echo "===================="
@@ -156,6 +181,8 @@ help:
 	@echo "  make remote-docker-install       # Install Docker on remote (get.docker.com)"
 	@echo "  make remote-binance-ws-probe     # Binance USDM + spot @trade WS test via Docker on remote"
 	@echo "  make remote-setup-binance-probe  # install Docker + run probe"
+	@echo "  make swapfile-setup              # On VPS: create/replace swapfile ($(SWAPFILE), default $(SWAP_SIZE_G)GiB, needs sudo)"
+	@echo "  make swapfile-status             # On VPS: show free/swap/swapon ($(SWAPFILE))"
 	@echo ""
 	@echo "Testing commands (run in Docker):"
 	@echo "  make test-wpt-volume-profile        # Test WPT volume profile improvements (pytest format)"
