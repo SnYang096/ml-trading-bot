@@ -250,53 +250,75 @@ class TestBinanceWebSocketClient:
 
     @pytest.mark.asyncio
     async def test_stream_ticks_reconnects_after_socket_error(self):
-        """TWM error payload should restart the session and keep yielding ticks."""
+        """Socket error payload should restart the session and keep yielding ticks."""
 
-        class FakeTwm:
+        class FakeAsyncClient:
+            created = []
+
+            @classmethod
+            async def create(cls):
+                client = cls()
+                client.closed = False
+                cls.created.append(client)
+                return client
+
+            async def close_connection(self):
+                self.closed = True
+
+        class FakeSocket:
             def __init__(self, messages):
-                self.messages = messages
-                self.stopped = False
+                self.messages = list(messages)
 
-            def start(self):
-                pass
+            async def __aenter__(self):
+                return self
 
-            def start_aggtrade_futures_socket(self, callback, symbol, futures_type):
-                for message in self.messages:
-                    callback(message)
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
 
-            def stop(self):
-                self.stopped = True
+            async def recv(self):
+                if not self.messages:
+                    await asyncio.sleep(3600)
+                return self.messages.pop(0)
 
-        first = FakeTwm([{"e": "error", "m": "socket closed"}])
-        second = FakeTwm(
-            [
-                {
-                    "e": "aggTrade",
-                    "s": "BTCUSDT",
-                    "p": "50000.00",
-                    "q": "0.1",
-                    "T": 1234567890000,
-                    "m": False,
-                    "a": 12345,
-                }
-            ]
-        )
+        class FakeBsm:
+            sessions = []
+
+            def __init__(self, client):
+                self.client = client
+
+            def futures_multiplex_socket(self, streams, futures_type):
+                messages = self.sessions.pop(0)
+                self.streams = streams
+                return FakeSocket(messages)
+
+        first = [{"e": "error", "m": "socket closed"}]
+        second = [
+            {
+                "e": "aggTrade",
+                "s": "BTCUSDT",
+                "p": "50000.00",
+                "q": "0.1",
+                "T": 1234567890000,
+                "m": False,
+                "a": 12345,
+            }
+        ]
 
         client = BinanceWebSocketClient(symbols=["BTCUSDT"])
         client.reconnect_manager.wait_before_reconnect = AsyncMock(return_value=True)
         stop_event = asyncio.Event()
 
         with patch(
-            "src.live_data_stream.websocket_client.ThreadedWebsocketManager",
-            side_effect=[first, second],
-        ):
+            "src.live_data_stream.websocket_client.AsyncClient", FakeAsyncClient
+        ), patch("src.live_data_stream.websocket_client.BinanceSocketManager", FakeBsm):
+            FakeBsm.sessions = [first, second]
             stream = client.stream_ticks(stop_event)
             tick = await stream.__anext__()
             stop_event.set()
             await stream.aclose()
 
-        assert first.stopped is True
-        assert second.stopped is True
+        assert len(FakeAsyncClient.created) == 2
+        assert all(c.closed for c in FakeAsyncClient.created)
         assert tick.symbol == "BTCUSDT"
         assert tick.trade_id == 12345
         client.reconnect_manager.wait_before_reconnect.assert_awaited_once()

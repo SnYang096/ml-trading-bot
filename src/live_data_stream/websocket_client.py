@@ -6,7 +6,7 @@
 3. 多币种订阅
 4. 数据回调接口
 
-底层使用 python-binance 的 ``ThreadedWebsocketManager``，不再维护自建
+底层使用 python-binance 的 ``AsyncClient`` + ``BinanceSocketManager``，不再维护自建
 ``aiohttp``/``@trade`` 直连监听。Binance ``aggTrade`` 会按约 100ms 聚合同价、
 同 taker side 的成交，能显著减少逐笔成交流量。
 """
@@ -14,17 +14,17 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 import logging
 
 try:
-    from binance import ThreadedWebsocketManager
+    from binance import AsyncClient, BinanceSocketManager
     from binance.enums import FuturesType
 except ImportError:
-    ThreadedWebsocketManager = None  # type: ignore
+    AsyncClient = None  # type: ignore
+    BinanceSocketManager = None  # type: ignore
     FuturesType = None  # type: ignore
 
 from .reconnection_manager import (
@@ -37,42 +37,6 @@ from .connection_monitor import ConnectionMonitor, HealthStatus
 logger = logging.getLogger(__name__)
 
 FUTURES_WS_BASE = "wss://fstream.binance.com"
-
-
-@contextlib.contextmanager
-def _binance_sock_subscribe_uses_twm_loop(loop: asyncio.AbstractEventLoop):
-    """Force python-binance socket objects onto the TWM worker loop.
-
-    ``ThreadedWebsocketManager.start_*`` runs on the **caller's** thread. Package
-    code then builds ``ReconnectingWebsocket`` in ``streams.BinanceSocketManager``,
-    whose ``__init__`` calls ``get_loop()`` — under a running asyncio app that
-    returns the **main** loop while ``AsyncClient`` lives on ``loop``. That
-    cross-loop mismatch yields Futures attached to the wrong loop.
-
-    Patch the module-level ``get_loop`` bindings only around subscription setup.
-    """
-
-    import binance.helpers as binance_helpers
-    import binance.ws.reconnecting_websocket as binance_reconnecting_ws
-    import binance.ws.streams as binance_streams
-
-    def get_twm_loop():
-        return loop
-
-    saved = (
-        binance_helpers.get_loop,
-        binance_reconnecting_ws.get_loop,
-        binance_streams.get_loop,
-    )
-    binance_helpers.get_loop = get_twm_loop
-    binance_reconnecting_ws.get_loop = get_twm_loop
-    binance_streams.get_loop = get_twm_loop
-    try:
-        yield
-    finally:
-        binance_helpers.get_loop = saved[0]
-        binance_reconnecting_ws.get_loop = saved[1]
-        binance_streams.get_loop = saved[2]
 
 
 @dataclass
@@ -130,7 +94,7 @@ class BinanceWebSocketClient:
     Binance WebSocket 客户端（改进版）
 
     特性：
-    - 自动重连（连接异常或长时间无真实消息时重建 TWM）
+    - 自动重连（连接异常或长时间无真实消息时重建 async socket）
     - 连接监控（心跳检测、健康状态评估）
     - 多币种订阅
     - 数据回调
@@ -154,14 +118,14 @@ class BinanceWebSocketClient:
             symbols: 交易对列表
             use_futures: 是否使用期货市场
             reconnect_delay: 初始重连延迟（秒）（已废弃，使用reconnect_config）
-            ping_interval: 兼容旧 aiohttp 参数；TWM 模式不直接使用
-            ping_timeout: 兼容旧 aiohttp 参数；TWM 模式不直接使用
+            ping_interval: 兼容旧 aiohttp 参数；BSM 模式不直接使用
+            ping_timeout: 兼容旧 aiohttp 参数；BSM 模式不直接使用
             reconnect_config: 重连配置（如果为None，使用默认配置）
             max_reconnect_retries: 最大重连次数（None=无限）
             heartbeat_timeout: 心跳超时时间（秒）
             health_check_interval: 健康检查间隔（秒）
         """
-        if ThreadedWebsocketManager is None:
+        if AsyncClient is None or BinanceSocketManager is None:
             raise ImportError(
                 "python-binance 模块未安装，请安装: pip install python-binance"
             )
@@ -208,7 +172,7 @@ class BinanceWebSocketClient:
         self._callbacks: List[Callable[[BinanceTick], None]] = []
         self._reconnect_callbacks: List[Callable[[], None]] = []
         self._health_callbacks: List[Callable[[HealthStatus], None]] = []
-        self._twm: Optional[ThreadedWebsocketManager] = None
+        self._binance_client: Optional[AsyncClient] = None
 
     def _ws_url(self) -> str:
         """Diagnostic URL equivalent to the python-binance aggTrade subscriptions."""
@@ -267,8 +231,8 @@ class BinanceWebSocketClient:
         """
         流式获取 USD-M futures aggTrade tick 数据。
 
-        ``python-binance`` 的 ``ThreadedWebsocketManager`` 在线程内回调，
-        这里通过 ``asyncio.Queue`` 桥接回现有 async API。每条 Binance
+        ``python-binance`` 的 ``BinanceSocketManager`` 原生运行在当前 async loop。
+        每条 Binance
         ``aggTrade`` 仍转换为 ``BinanceTick``，因此上层 order-flow 聚合逻辑
         不需要关心底层 stream 类型变化。
 
@@ -301,9 +265,7 @@ class BinanceWebSocketClient:
     async def _stream_ticks_once(
         self, stop_event: asyncio.Event
     ) -> AsyncIterator[BinanceTick]:
-        """Open one TWM session and yield ticks until it stops or becomes stale."""
-        loop = asyncio.get_running_loop()
-        message_queue: asyncio.Queue[BinanceTick | Exception] = asyncio.Queue()
+        """Open one async Binance socket session and yield ticks until stale."""
         last_message_monotonic = time.monotonic()
 
         # 启动连接监控
@@ -321,85 +283,65 @@ class BinanceWebSocketClient:
                     callback(tick)
                 except Exception as e:
                     logger.error("Callback error: %s", e)
-            message_queue.put_nowait(tick)
 
-        def _handle_message(message: Dict[str, Any]) -> None:
+        def _parse_message(message: Dict[str, Any]) -> Optional[BinanceTick]:
             payload = message.get("data", message) if isinstance(message, dict) else {}
             if not isinstance(payload, dict):
-                return
+                return None
             if payload.get("e") == "error":
-                err = ConnectionError(f"python-binance socket error: {payload}")
-                try:
-                    loop.call_soon_threadsafe(message_queue.put_nowait, err)
-                except RuntimeError:
-                    pass
-                return
+                raise ConnectionError(f"python-binance socket error: {payload}")
             if payload.get("e") != "aggTrade":
                 logger.debug("Ignoring non-aggTrade payload: %s", str(message)[:200])
-                return
+                return None
 
             try:
-                tick = BinanceTick.from_binance(payload)
+                return BinanceTick.from_binance(payload)
             except Exception as e:
                 logger.error("Error parsing aggTrade payload: %s", e)
-                return
-
-            try:
-                loop.call_soon_threadsafe(_dispatch_tick, tick)
-            except RuntimeError:
-                # Event loop is closing; the manager will be stopped in finally.
-                pass
+                return None
 
         try:
             self.reconnect_manager._set_state(ConnectionState.CONNECTING)
-            # python-binance defaults to ``get_loop()`` → in an *already running* asyncio loop
-            # (e.g. ``stream_ticks`` called from ``asyncio.run``) that same loop is handed to
-            # ``ThreadedApiManager``'s worker thread, which then calls
-            # ``run_until_complete`` on it → ``RuntimeError: This event loop is already running``.
-            # A dedicated loop driven only from the TWM thread fixes WS on Py3.12+.
-            twm_loop = asyncio.new_event_loop()
-            twm = ThreadedWebsocketManager(loop=twm_loop)
-            self._twm = twm
-            twm.start()
-
-            with _binance_sock_subscribe_uses_twm_loop(twm_loop):
-                for symbol in self.symbols:
-                    twm.start_aggtrade_futures_socket(
-                        callback=_handle_message,
-                        symbol=symbol,
-                        futures_type=FuturesType.USD_M,
-                    )
+            client = await AsyncClient.create()
+            self._binance_client = client
+            bsm = BinanceSocketManager(client)
+            streams = [f"{symbol.lower()}@aggTrade" for symbol in self.symbols]
 
             self.reconnect_manager.on_connection_success()
             self.connection_monitor.record_heartbeat()
             logger.info(
-                "✅ python-binance USD-M aggTrade sockets started: %s",
+                "✅ python-binance USD-M aggTrade stream started: %s",
                 ",".join(self.symbols),
             )
 
-            while not stop_event.is_set():
-                try:
-                    item = await asyncio.wait_for(message_queue.get(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    elapsed = time.monotonic() - last_message_monotonic
-                    if elapsed > self.connection_monitor.heartbeat_timeout:
-                        raise TimeoutError(
-                            "No aggTrade messages received for "
-                            f"{elapsed:.1f}s; restarting websocket session"
-                        )
-                    continue
-                if isinstance(item, Exception):
-                    raise item
-                tick = item
-                yield tick
+            async with bsm.futures_multiplex_socket(
+                streams=streams, futures_type=FuturesType.USD_M
+            ) as socket:
+                while not stop_event.is_set():
+                    try:
+                        message = await asyncio.wait_for(socket.recv(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        elapsed = time.monotonic() - last_message_monotonic
+                        if elapsed > self.connection_monitor.heartbeat_timeout:
+                            raise TimeoutError(
+                                "No aggTrade messages received for "
+                                f"{elapsed:.1f}s; restarting websocket session"
+                            )
+                        continue
+
+                    tick = _parse_message(message)
+                    if tick is None:
+                        continue
+                    _dispatch_tick(tick)
+                    yield tick
 
         finally:
-            if self._twm is not None:
+            if self._binance_client is not None:
                 try:
-                    self._twm.stop()
+                    await self._binance_client.close_connection()
                 except Exception as e:
-                    logger.warning("Error stopping ThreadedWebsocketManager: %s", e)
-                self._twm = None
+                    logger.warning("Error closing Binance AsyncClient: %s", e)
+                self._binance_client = None
             # 停止连接监控
             self.connection_monitor.stop_monitoring()
             self.reconnect_manager._set_state(ConnectionState.DISCONNECTED)
