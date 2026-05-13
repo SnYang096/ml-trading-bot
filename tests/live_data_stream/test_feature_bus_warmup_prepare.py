@@ -34,7 +34,10 @@ def test_prepare_warmup_dataset_full_daily_zip_when_coverage_missing(
     monkeypatch.setattr(
         prep,
         "convert_and_split",
-        lambda *args, **kwargs: calls.append("convert") or {"BTCUSDT": 1},
+        lambda *args, **kwargs: calls.append(
+            ("convert", kwargs.get("daily_zip_glob_only"))
+        )
+        or {"BTCUSDT": 1},
     )
 
     stats = prep.prepare_warmup_dataset(
@@ -49,7 +52,7 @@ def test_prepare_warmup_dataset_full_daily_zip_when_coverage_missing(
     assert calls[:-1] == [
         ("daily", "2025-11-01", "2026-05-12"),
     ]
-    assert calls[-1] == "convert"
+    assert calls[-1] == ("convert", True)
 
 
 def test_prepare_warmup_dataset_monthly_zip_legacy_chain(
@@ -57,7 +60,7 @@ def test_prepare_warmup_dataset_monthly_zip_legacy_chain(
 ) -> None:
     import live.scripts.prepare_warmup_ticks as prep
 
-    seq: list[str] = []
+    seq: list[object] = []
 
     monkeypatch.setattr(
         prep,
@@ -73,7 +76,10 @@ def test_prepare_warmup_dataset_monthly_zip_legacy_chain(
     monkeypatch.setattr(
         prep,
         "convert_and_split",
-        lambda *args, **kwargs: seq.append("convert") or {"BTCUSDT": 1},
+        lambda *args, **kwargs: seq.append(
+            ("convert", kwargs.get("daily_zip_glob_only"))
+        )
+        or {"BTCUSDT": 1},
     )
 
     stats = prep.prepare_warmup_dataset(
@@ -86,7 +92,7 @@ def test_prepare_warmup_dataset_monthly_zip_legacy_chain(
     )
 
     assert stats == {"BTCUSDT": 1}
-    assert seq == ["monthly", "daily", "convert"]
+    assert seq == ["monthly", "daily", ("convert", False)]
 
 
 def test_prepare_warmup_dataset_gap_only_when_coverage_sufficient(
@@ -125,6 +131,24 @@ def test_prepare_warmup_dataset_gap_only_when_coverage_sufficient(
     )
 
     assert stats == {"BTCUSDT": 0}
+
+
+def test_detect_gaps_union_per_symbol(tmp_path: Path) -> None:
+    import live.scripts.prepare_warmup_ticks as prep
+
+    ticks = tmp_path / "ticks"
+    (ticks / "BTCUSDT").mkdir(parents=True)
+    (ticks / "ETHUSDT").mkdir(parents=True)
+    (ticks / "BTCUSDT" / "2026-05-01.parquet").write_bytes(b"x")
+    (ticks / "BTCUSDT" / "2026-05-03.parquet").write_bytes(b"x")
+    (ticks / "ETHUSDT" / "2026-05-01.parquet").write_bytes(b"x")
+
+    gaps = prep.detect_gaps(
+        ticks_dir=ticks,
+        symbols=["BTCUSDT", "ETHUSDT"],
+        inclusive_end="2026-05-03",
+    )
+    assert gaps == ["2026-05-02", "2026-05-03"]
 
 
 def test_feature_bus_prepare_uses_live_storage_paths(

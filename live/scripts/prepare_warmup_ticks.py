@@ -23,9 +23,9 @@ import argparse
 import logging
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import numpy as np
 import pandas as pd
@@ -43,6 +43,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def vision_um_daily_zip_inclusive_end() -> str:
+    """UTC calendar day through which UM daily Vision ZIP is expected (inclusive).
+
+    Aligns with Binance Vision lag: using "yesterday" often causes repeated 404.
+    """
+    return (datetime.now(timezone.utc).date() - timedelta(days=2)).isoformat()
+
+
+VISION_UM_DAILY_ZIP_ONLY_GLOB = "*-aggTrades-????-??-??.zip"
 
 
 def read_universe_symbols(universe: str) -> List[str]:
@@ -305,12 +316,12 @@ def compute_date_ranges(months: int):
         monthly_start_year, monthly_start_month, monthly_end_year, monthly_end_month,
         daily_start_date, daily_end_date
     """
-    today = datetime.utcnow()
+    today_utc = datetime.now(timezone.utc).date()
 
     # Monthly: 最近 N 个月（到上个月）
     # Binance monthly 数据通常次月初即发布
     # 安全起见：monthly 到上个月（当月还没结束，不会有 monthly）
-    monthly_end = today.replace(day=1) - timedelta(days=1)  # 上个月最后一天
+    monthly_end = today_utc.replace(day=1) - timedelta(days=1)  # 上个月最后一天
 
     monthly_end_year = monthly_end.year
     monthly_end_month = monthly_end.month
@@ -322,15 +333,14 @@ def compute_date_ranges(months: int):
     monthly_start_year = monthly_start.year
     monthly_start_month = monthly_start.month
 
-    # Daily: 从 monthly_end 的下一个月 1 号起；截止到「前天」——Vision 日线常有 ~1 日公布延迟，
-    # 截止「昨天」会对当日 ZIP 反复 404。新月开头几天若前天早于月初，则钳制到月初（单日或空列表）。
+    # Daily trailing 段：截止到「前天」（与 fill_gap / Vision 下载一致）
     daily_start_dt = monthly_end + timedelta(days=1)
-    daily_end_dt = today - timedelta(days=2)
+    daily_end_dt = datetime.now(timezone.utc).date() - timedelta(days=2)
     effective_end_dt = (
         daily_end_dt if daily_end_dt >= daily_start_dt else daily_start_dt
     )
-    daily_start = daily_start_dt.strftime("%Y-%m-%d")
-    daily_end = effective_end_dt.strftime("%Y-%m-%d")
+    daily_start = daily_start_dt.isoformat()
+    daily_end = effective_end_dt.isoformat()
 
     return (
         monthly_start_year,
@@ -409,8 +419,14 @@ def convert_and_split(
     symbols: List[str],
     ticks_output_dir: Path,
     bars_output_dir: Path,
+    *,
+    daily_zip_glob_only: bool = True,
 ) -> Dict[str, int]:
     """转换 ZIP → 1min 聚合 → 按日期拆分 → 写入 live 目录
+
+    Args:
+        daily_zip_glob_only: True 时只匹配 UM daily Vision（``*-aggTrades-YYYY-MM-DD.zip``），
+            忽略目录内残留的按月 ZIP，避免单月解压峰值。
 
     Returns:
         每个 symbol 的写入天数统计
@@ -418,6 +434,16 @@ def convert_and_split(
     print(f"\n{'='*60}")
     print("🔄 转换 ZIP → 1min 聚合 ticks/bars")
     print(f"{'='*60}")
+
+    zip_pattern = (
+        VISION_UM_DAILY_ZIP_ONLY_GLOB if daily_zip_glob_only else "*aggTrades-*.zip"
+    )
+    print(
+        "   ZIP glob:    {} ({})".format(
+            zip_pattern,
+            "仅日级 Vision 文件" if daily_zip_glob_only else "日级+月级（兼容 legacy）",
+        )
+    )
 
     # 先用 DataConverter 将所有 ZIP 转为 1min 聚合 parquet
     tmp_parquet_dir = zip_dir / "_parquet_tmp"
@@ -428,7 +454,7 @@ def convert_and_split(
         output_dir=str(tmp_parquet_dir),
         aggregate_freq="1min",
     )
-    result = converter.convert_all_files(symbols=symbols)
+    result = converter.convert_all_files(pattern=zip_pattern, symbols=symbols)
     print(f"   转换完成: {len(result.get('converted_files', []))} 个文件")
 
     # 读取所有 parquet，按 symbol 合并，按日期拆分，写入 live 目录
@@ -508,53 +534,52 @@ def detect_last_date(ticks_dir: Path, symbols: List[str]) -> Optional[str]:
 
 
 def detect_gaps(
-    ticks_dir: Path, symbols: List[str], max_lookback_days: int = 100
+    ticks_dir: Path,
+    symbols: List[str],
+    *,
+    inclusive_end: Optional[str] = None,
 ) -> List[str]:
-    """检测数据中间缺口
+    """检测各 symbol 在中间与尾部的缺失日，并取并集。
+
+    从「所有已有数据 symbol 的最早日期」起，逐 symbol 检查到 Vision
+    ``inclusive_end``（默认可下载的 daily ZIP 截止日，UTC 前天），避免
+    “某币种有某日、另一币种没有”时漏补。
 
     Args:
-        ticks_dir: ticks数据目录
+        ticks_dir: ticks 数据目录
         symbols: 币种列表
-        max_lookback_days: 最多向前检查多少天
-
-    Returns:
-        缺失的日期列表 ['YYYY-MM-DD', ...]
+        inclusive_end: 缺口检查右端（含），默认 ``vision_um_daily_zip_inclusive_end()``
     """
-    from datetime import timezone
+    end_s = inclusive_end or vision_um_daily_zip_inclusive_end()
+    end_dt = datetime.strptime(end_s, "%Y-%m-%d").date()
 
-    today = datetime.now(timezone.utc)
-    yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+    symbol_dates: Dict[str, Set[str]] = {}
+    for sym in symbols:
+        stems: Set[str] = set()
+        sym_dir = ticks_dir / sym
+        if sym_dir.exists():
+            for f in sym_dir.glob("*.parquet"):
+                if f.stat().st_size > 0:
+                    stems.add(f.stem)
+        symbol_dates[sym] = stems
 
-    # 收集所有币种的已有日期
-    all_dates = set()
-    for symbol in symbols:
-        sym_dir = ticks_dir / symbol
-        if not sym_dir.exists():
-            continue
-        for f in sym_dir.glob("*.parquet"):
-            all_dates.add(f.stem)
-
-    if not all_dates:
+    nonempty = [s for s in symbols if symbol_dates[s]]
+    if not nonempty:
         return []
 
-    # 找到最早和最晚日期
-    min_date = min(all_dates)
-    max_date = max(all_dates)
+    global_min = min(min(symbol_dates[s]) for s in nonempty)
+    start_dt = datetime.strptime(global_min, "%Y-%m-%d").date()
 
-    # 检查范围：从最早日期到昨天
-    start_dt = datetime.strptime(min_date, "%Y-%m-%d")
-    end_dt = datetime.strptime(yesterday, "%Y-%m-%d")
+    missing: Set[str] = set()
+    cur = start_dt
+    while cur <= end_dt:
+        d = cur.isoformat()
+        for sym in symbols:
+            if d not in symbol_dates[sym]:
+                missing.add(d)
+        cur += timedelta(days=1)
 
-    # 生成应有的日期序列
-    missing = []
-    current = start_dt
-    while current <= end_dt:
-        date_str = current.strftime("%Y-%m-%d")
-        if date_str not in all_dates:
-            missing.append(date_str)
-        current += timedelta(days=1)
-
-    return missing
+    return sorted(missing)
 
 
 def fill_gap(
@@ -567,38 +592,20 @@ def fill_gap(
 
     检测已有数据的日期范围，找出所有缺失的日期，下载并补全。
     """
-    from datetime import timezone
-
-    today = datetime.now(timezone.utc)
-    yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+    inclusive_end = vision_um_daily_zip_inclusive_end()
 
     last_date = detect_last_date(ticks_dir, symbols)
     if last_date is None:
         print("\n⚠️  live/data/ticks/ 无已有数据，请先运行 --from-local 或默认模式")
         return {}
 
-    # 检测中间缺口
-    missing_dates = detect_gaps(ticks_dir, symbols)
-
-    # 检测尾部缺口（最后日期到昨天）
-    gap_start_dt = datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)
-    gap_start = gap_start_dt.strftime("%Y-%m-%d")
-    if gap_start <= yesterday:
-        # 添加尾部缺失的日期
-        current = gap_start_dt
-        end_dt = datetime.strptime(yesterday, "%Y-%m-%d")
-        while current <= end_dt:
-            date_str = current.strftime("%Y-%m-%d")
-            if date_str not in missing_dates:
-                missing_dates.append(date_str)
-            current += timedelta(days=1)
-
-    # 去重并排序
-    missing_dates = sorted(set(missing_dates))
+    missing_dates = sorted(
+        set(detect_gaps(ticks_dir, symbols, inclusive_end=inclusive_end))
+    )
 
     if not missing_dates:
         print(
-            f"\n✅ 数据已是最新（最后日期: {last_date}，昨天: {yesterday}），无需补全"
+            f"\n✅ 数据已是最新（ticks 最晚(max): {last_date}；Vision daily 截止 {inclusive_end}），无需补全"
         )
         return {}
 
@@ -623,7 +630,9 @@ def fill_gap(
         download_daily(symbols, start_date, end_date, zip_dir)
 
         # 转换并写入
-        stats = convert_and_split(zip_dir, symbols, ticks_dir, bars_dir)
+        stats = convert_and_split(
+            zip_dir, symbols, ticks_dir, bars_dir, daily_zip_glob_only=True
+        )
         return stats
 
     return {}
@@ -646,10 +655,9 @@ def prepare_warmup_dataset(
     (memory-friendly versus large monthly ZIPs).
 
     If every symbol already covers the expected warmup span, only gaps up to
-    yesterday are filled. Otherwise the full download/convert path runs so cold
-    starts do not begin with only same-day WebSocket data.
-
-    Args:
+    the Vision daily cutoff (UTC, inclusive “前天”) are filled. Otherwise the
+    full download/convert path runs so cold starts do not begin with only
+    same-day WebSocket data.
         use_monthly_zip: If True, use legacy monthly ZIPs plus a trailing daily
             segment (fewer HTTP requests, higher peak RAM per convert).
     """
@@ -687,14 +695,14 @@ def prepare_warmup_dataset(
         d_end,
     ) = compute_date_ranges(months)
 
-    print(f"\n   回溯月数锚点: {m_start_y}-{m_start_m:02d} ~ {m_end_y}-{m_end_m:02d}（日历窗口）")
+    print(
+        f"\n   回溯月数锚点: {m_start_y}-{m_start_m:02d} ~ {m_end_y}-{m_end_m:02d}（日历窗口）"
+    )
 
     if not skip_download:
         if use_monthly_zip:
             print(f"   Trailing daily（monthly 之后）: {d_start} ~ {d_end}")
-            download_monthly(
-                symbols, m_start_y, m_start_m, m_end_y, m_end_m, zip_dir
-            )
+            download_monthly(symbols, m_start_y, m_start_m, m_end_y, m_end_m, zip_dir)
             download_daily(symbols, d_start, d_end, zip_dir)
         else:
             print(f"   Daily Vision 下载: {required_start} ~ {required_end}")
@@ -702,7 +710,13 @@ def prepare_warmup_dataset(
     else:
         print("\n⏭️  跳过下载步骤")
 
-    return convert_and_split(zip_dir, symbols, ticks_dir, bars_dir)
+    return convert_and_split(
+        zip_dir,
+        symbols,
+        ticks_dir,
+        bars_dir,
+        daily_zip_glob_only=not use_monthly_zip,
+    )
 
 
 # ---------------------------------------------------------------------------
