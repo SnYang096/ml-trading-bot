@@ -33,6 +33,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
@@ -295,6 +296,16 @@ def build_daemon(
                     exc,
                 )
             api.refresh_hedge_mode()
+            if not api.hedge_mode_probe_error and not api.hedge_mode:
+                for settle_attempt in range(5):
+                    time.sleep(2.0)
+                    api.refresh_hedge_mode()
+                    if api.hedge_mode:
+                        logger.info(
+                            "multi-leg hedge: confirmed after settle (%s/5)",
+                            settle_attempt + 1,
+                        )
+                        break
     storage: MultiLegStorage | None = None
     run_id: str | None = None
     db_path = str(getattr(args, "multi_leg_db_path", "") or "").strip()

@@ -224,7 +224,7 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           envs: GHCR_TOKEN,GHCR_USER,IMAGE_FULL,IMAGE_SHA
-          command_timeout: 5m
+          command_timeout: 20m
           script: |
             set -e
 
@@ -321,7 +321,7 @@ jobs:
 
             [Service]
             Restart=always
-            RestartSec=10
+            RestartSec=5
             Environment=MLBOT_MULTI_LEG_SYMBOLS=BTCUSDT
             ExecStartPre=-/usr/bin/docker rm -f quant-multi-leg
             ExecStart=/usr/bin/docker run --rm --name quant-multi-leg \
@@ -357,9 +357,38 @@ jobs:
             sudo systemctl restart quant-feature-bus
             sudo systemctl restart quant-engine
             sudo systemctl restart quant-multi-leg
-            sleep 8
 
             failed=0
+
+            echo ""
+            echo "=== ⏳ 等待 Docker 容器就绪（含 systemd RestartSec 重试窗口）==="
+            max_wait=120
+            step=5
+            elapsed=0
+            containers_ready=0
+            while [ "$elapsed" -lt "$max_wait" ]; do
+              ok=1
+              for c in quant-feature-bus quant-engine quant-multi-leg; do
+                if ! docker ps --format '{{.Names}}' | grep -qx "$c"; then
+                  ok=0
+                  break
+                fi
+              done
+              if [ "$ok" -eq 1 ]; then
+                containers_ready=1
+                echo "✅ 三容器均已运行（等待 ${elapsed}s）"
+                break
+              fi
+              echo "   …容器未齐 (${elapsed}/${max_wait}s)，重试检测"
+              sleep "$step"
+              elapsed=$((elapsed + step))
+            done
+            if [ "$containers_ready" -ne 1 ]; then
+              echo "::error::${max_wait}s 内仍有容器未处于运行状态"
+              docker ps -a --filter name=quant --format 'table {{.Names}}\t{{.Status}}\t{{.State}}'
+              failed=1
+            fi
+
             for svc in quant-feature-bus quant-engine quant-multi-leg; do
               if sudo systemctl is-active --quiet "$svc"; then
                 echo "✅ $svc 运行中"
