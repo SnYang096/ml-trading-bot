@@ -387,82 +387,32 @@ jobs:
             sudo systemctl enable quant-warmup-prepare quant-feature-bus quant-engine quant-multi-leg
 
             echo ""
-            echo "=== 🔄 拉起服务 ==="
-            # 开机顺序由 systemd：quant-warmup-prepare（oneshot）→ quant-feature-bus Requires 之 → consumers After bus。
-            # 部署时旧版 engine/bus/multi-leg 可能仍在跑；与 warmup（月度 ZIP→parquet）并发易在小内存机上 cgroup OOM → exit 137，故先停再 warmup。
+            echo "=== 🔄 拉起服务（异步，SSH 立即返回）==="
+            # 开机顺序仍由 systemd：warmup oneshot → feature-bus Requires → consumers。
+            # 部署时先停三容器再排队 warmup；warmup 可能数十分钟，勿在 CI 内同步等待（占用 Actions/Runner）。
+            # --no-block：仅保证任务提交成功；失败需在主机 journalctl 查看。
             sudo systemctl stop quant-engine quant-multi-leg quant-feature-bus || true
-            # warmup：memory-swap > memory 才允许用 swap；二者相等时 Docker 禁用 swap，易被月度 aggTrades 峰值打死。
-            # 这里对 warmup 用 start 而非 restart：已成功则单元保持 Active(exited)，start 几乎不耗时，避免每次部署都阻塞 GitHub Actions。
-            # 若要强制整段下载/转换重跑：在主机执行 sudo systemctl restart quant-warmup-prepare（再 restart bus）。
-            if ! sudo systemctl start quant-warmup-prepare; then
-              echo "::error::quant-warmup-prepare 启动失败，输出最近日志"
+            if ! sudo systemctl start --no-block quant-warmup-prepare; then
+              echo "::error::quant-warmup-prepare 未能排队启动"
               sudo systemctl status quant-warmup-prepare --no-pager || true
-              sudo journalctl -u quant-warmup-prepare --no-pager -n 120 || true
+              sudo journalctl -u quant-warmup-prepare --no-pager -n 80 || true
               exit 1
             fi
-            sudo systemctl restart quant-feature-bus
-            sudo systemctl restart quant-engine
-            sudo systemctl restart quant-multi-leg
-
-            failed=0
+            # Requires=warmup：bus/engine restart  jobs 会在 warmup 成功完成后才实际拉起容器。
+            sudo systemctl restart --no-block quant-feature-bus || true
+            sudo systemctl restart --no-block quant-engine || true
+            sudo systemctl restart --no-block quant-multi-leg || true
 
             echo ""
-            echo "=== ⏳ 等待 Docker 容器就绪（含 systemd RestartSec 重试窗口）==="
-            max_wait=120
-            step=5
-            elapsed=0
-            containers_ready=0
-            while [ "$elapsed" -lt "$max_wait" ]; do
-              ok=1
-              for c in quant-feature-bus quant-engine quant-multi-leg; do
-                if ! docker ps --format '{{.Names}}' | grep -qx "$c"; then
-                  ok=0
-                  break
-                fi
-              done
-              if [ "$ok" -eq 1 ]; then
-                containers_ready=1
-                echo "✅ 三容器均已运行（等待 ${elapsed}s）"
-                break
-              fi
-              echo "   …容器未齐 (${elapsed}/${max_wait}s)，重试检测"
-              sleep "$step"
-              elapsed=$((elapsed + step))
-            done
-            if [ "$containers_ready" -ne 1 ]; then
-              echo "::error::${max_wait}s 内仍有容器未处于运行状态"
-              docker ps -a --filter name=quant --format 'table {{.Names}}\t{{.Status}}\t{{.State}}'
-              failed=1
-            fi
-
+            echo "=== 📋 快照（warmup 进行中时容器未起属正常）==="
+            sleep 5
+            sudo systemctl list-jobs --no-pager 2>/dev/null || true
+            docker ps -a --filter name=quant --format 'table {{.Names}}\t{{.Status}}\t{{.State}}' || true
             for svc in quant-warmup-prepare quant-feature-bus quant-engine quant-multi-leg; do
-              if sudo systemctl is-active --quiet "$svc"; then
-                echo "✅ $svc 运行中"
-                sudo systemctl status "$svc" --no-pager | head -15
-              else
-                echo "::error::systemd 服务未处于 active: $svc"
-                echo "❌ $svc 启动失败"
-                sudo journalctl -u "$svc" --no-pager -n 40
-                failed=1
-              fi
+              st=$(sudo systemctl is-active "$svc" 2>/dev/null || true)
+              echo "   $svc: ${st:-unknown}"
             done
-
-            echo ""
-            echo "=== 🐳 校验 Docker 容器已起（与 systemd 一致）==="
-            for c in quant-feature-bus quant-engine quant-multi-leg; do
-              if ! docker ps --format '{{.Names}}' | grep -qx "$c"; then
-                echo "::error::容器未运行: $c"
-                docker ps -a --filter "name=$c" --no-trunc
-                failed=1
-              else
-                echo "✅ 容器 $c: $(docker ps --filter "name=$c" --format '{{.Status}}')"
-              fi
-            done
-
-            if [ "$failed" -ne 0 ]; then
-              echo "::error::部署后服务或容器未全部就绪，请检查 journalctl / docker logs。本次步骤返回失败。"
-              exit 1
-            fi
+            echo "::notice::已异步提交 systemd 任务；warmup 完成后依赖服务会自动起。请在主机查看: journalctl -u quant-warmup-prepare -f  与  docker ps"
 
             echo ""
             echo "=== 🧹 清理旧镜像 ==="
