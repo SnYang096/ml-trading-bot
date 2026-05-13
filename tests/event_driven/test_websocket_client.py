@@ -247,3 +247,56 @@ class TestBinanceWebSocketClient:
 
         # 如果到这里没有异常，说明错误处理正常
         assert True
+
+    @pytest.mark.asyncio
+    async def test_stream_ticks_reconnects_after_socket_error(self):
+        """TWM error payload should restart the session and keep yielding ticks."""
+
+        class FakeTwm:
+            def __init__(self, messages):
+                self.messages = messages
+                self.stopped = False
+
+            def start(self):
+                pass
+
+            def start_aggtrade_futures_socket(self, callback, symbol, futures_type):
+                for message in self.messages:
+                    callback(message)
+
+            def stop(self):
+                self.stopped = True
+
+        first = FakeTwm([{"e": "error", "m": "socket closed"}])
+        second = FakeTwm(
+            [
+                {
+                    "e": "aggTrade",
+                    "s": "BTCUSDT",
+                    "p": "50000.00",
+                    "q": "0.1",
+                    "T": 1234567890000,
+                    "m": False,
+                    "a": 12345,
+                }
+            ]
+        )
+
+        client = BinanceWebSocketClient(symbols=["BTCUSDT"])
+        client.reconnect_manager.wait_before_reconnect = AsyncMock(return_value=True)
+        stop_event = asyncio.Event()
+
+        with patch(
+            "src.live_data_stream.websocket_client.ThreadedWebsocketManager",
+            side_effect=[first, second],
+        ):
+            stream = client.stream_ticks(stop_event)
+            tick = await stream.__anext__()
+            stop_event.set()
+            await stream.aclose()
+
+        assert first.stopped is True
+        assert second.stopped is True
+        assert tick.symbol == "BTCUSDT"
+        assert tick.trade_id == 12345
+        client.reconnect_manager.wait_before_reconnect.assert_awaited_once()

@@ -2,7 +2,7 @@
 
 支持：
 1. Binance USD-M futures ``@aggTrade`` real-time stream
-2. 连接监控（心跳检测、健康状态评估）
+2. 连接监控（基于真实消息的心跳检测、健康状态评估）
 3. 多币种订阅
 4. 数据回调接口
 
@@ -93,7 +93,7 @@ class BinanceWebSocketClient:
     Binance WebSocket 客户端（改进版）
 
     特性：
-    - 自动重连（指数退避、重连次数限制）
+    - 自动重连（连接异常或长时间无真实消息时重建 TWM）
     - 连接监控（心跳检测、健康状态评估）
     - 多币种订阅
     - 数据回调
@@ -117,8 +117,8 @@ class BinanceWebSocketClient:
             symbols: 交易对列表
             use_futures: 是否使用期货市场
             reconnect_delay: 初始重连延迟（秒）（已废弃，使用reconnect_config）
-            ping_interval: 心跳间隔（秒）
-            ping_timeout: 心跳超时（秒）
+            ping_interval: 兼容旧 aiohttp 参数；TWM 模式不直接使用
+            ping_timeout: 兼容旧 aiohttp 参数；TWM 模式不直接使用
             reconnect_config: 重连配置（如果为None，使用默认配置）
             max_reconnect_retries: 最大重连次数（None=无限）
             heartbeat_timeout: 心跳超时时间（秒）
@@ -222,9 +222,7 @@ class BinanceWebSocketClient:
 
     def _on_heartbeat_timeout(self) -> None:
         """心跳超时回调"""
-        logger.warning("Heartbeat timeout detected, will trigger reconnection")
-        # 触发重连（通过抛出异常）
-        # 注意：这会在stream_ticks的异常处理中被捕获
+        logger.warning("Heartbeat timeout detected by connection monitor")
 
     async def stream_ticks(
         self, stop_event: asyncio.Event
@@ -244,26 +242,60 @@ class BinanceWebSocketClient:
             BinanceTick 对象
         """
         self._stop_event = stop_event
+        while not stop_event.is_set():
+            stream = self._stream_ticks_once(stop_event)
+            try:
+                async for tick in stream:
+                    yield tick
+                break
+            except Exception as exc:
+                if stop_event.is_set():
+                    break
+                logger.error("python-binance aggTrade stream failed: %s", exc)
+                self.reconnect_manager.on_connection_failure(exc)
+                # ReconnectionManager updates stats in an async task.
+                await asyncio.sleep(0)
+                should_continue = await self.reconnect_manager.wait_before_reconnect()
+                if not should_continue:
+                    raise
+            finally:
+                await stream.aclose()
+
+    async def _stream_ticks_once(
+        self, stop_event: asyncio.Event
+    ) -> AsyncIterator[BinanceTick]:
+        """Open one TWM session and yield ticks until it stops or becomes stale."""
         loop = asyncio.get_running_loop()
-        tick_queue: asyncio.Queue[BinanceTick] = asyncio.Queue()
+        message_queue: asyncio.Queue[BinanceTick | Exception] = asyncio.Queue()
+        last_message_monotonic = time.monotonic()
 
         # 启动连接监控
         self.connection_monitor.start_monitoring()
 
         def _dispatch_tick(tick: BinanceTick) -> None:
+            nonlocal last_message_monotonic
             if stop_event.is_set():
                 return
+            last_message_monotonic = time.monotonic()
             self.connection_monitor.record_message()
+            self.connection_monitor.record_heartbeat()
             for callback in self._callbacks:
                 try:
                     callback(tick)
                 except Exception as e:
                     logger.error("Callback error: %s", e)
-            tick_queue.put_nowait(tick)
+            message_queue.put_nowait(tick)
 
         def _handle_message(message: Dict[str, Any]) -> None:
             payload = message.get("data", message) if isinstance(message, dict) else {}
             if not isinstance(payload, dict):
+                return
+            if payload.get("e") == "error":
+                err = ConnectionError(f"python-binance socket error: {payload}")
+                try:
+                    loop.call_soon_threadsafe(message_queue.put_nowait, err)
+                except RuntimeError:
+                    pass
                 return
             if payload.get("e") != "aggTrade":
                 logger.debug("Ignoring non-aggTrade payload: %s", str(message)[:200])
@@ -303,16 +335,19 @@ class BinanceWebSocketClient:
 
             while not stop_event.is_set():
                 try:
-                    tick = await asyncio.wait_for(tick_queue.get(), timeout=1.0)
+                    item = await asyncio.wait_for(message_queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
-                    self.connection_monitor.record_heartbeat()
+                    elapsed = time.monotonic() - last_message_monotonic
+                    if elapsed > self.connection_monitor.heartbeat_timeout:
+                        raise TimeoutError(
+                            "No aggTrade messages received for "
+                            f"{elapsed:.1f}s; restarting websocket session"
+                        )
                     continue
+                if isinstance(item, Exception):
+                    raise item
+                tick = item
                 yield tick
-
-        except Exception as exc:
-            logger.error("python-binance aggTrade stream failed: %s", exc)
-            self.reconnect_manager.on_connection_failure(exc)
-            raise
 
         finally:
             if self._twm is not None:
