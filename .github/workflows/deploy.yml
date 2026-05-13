@@ -26,7 +26,8 @@
 #   /opt/quant-engine/live/shared_feature_bus → /app/live/shared_feature_bus  (feature bus parquet)
 #   /opt/quant-engine/live/highcap/data       → /app/live/highcap/data       (live storage / state / logs)
 #   /opt/quant-engine/data                    → /app/data                    (parquet_data 等)
-#   /opt/quant-engine/live/binance_mainnet.env → 通过 --env-file 注入环境变量
+#   /opt/quant-engine/live/binance_mainnet.env → 通过 --env-file 注入环境变量；
+#     多腿可按需设置 MLBOT_MULTI_LEG_SET_HEDGE_ON_START=1（仅 quant-multi-leg 进程在启动时调 API 设为 Hedge）
 #   切勿挂 /opt/quant-engine/live → /app/live，会顶掉镜像内 highcap/config 与 scripts。
 # =============================================================
 

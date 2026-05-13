@@ -350,6 +350,10 @@ class BinanceAPI:
             logger.warning("⚠️ 无法检测持仓模式（网络/签名等）: %s", e)
             return False, f"{type(e).__name__}: {e}"
 
+    def refresh_hedge_mode(self) -> None:
+        """重新拉取 Hedge / One-way 状态（例如在 POST 切换持仓模式之后）。"""
+        self.hedge_mode, self.hedge_mode_probe_error = self._detect_hedge_mode()
+
     def _get_futures_base_url(self) -> str:
         """获取期货REST基础URL"""
         if self.testnet:
@@ -422,6 +426,82 @@ class BinanceAPI:
                 f"Binance futures API error {data.get('code')}: {data.get('msg')}"
             )
         return data
+
+    def _fapi_signed_post(self, path: str, params: Dict[str, Any]) -> Any:
+        """签名 POST ``/fapi/v1/...``（application/x-www-form-urlencoded body）。"""
+        p_flat: Dict[str, str] = {}
+        for k, v in params.items():
+            if v is None:
+                continue
+            if isinstance(v, bool):
+                p_flat[k] = "true" if v else "false"
+            else:
+                p_flat[k] = str(v)
+        if "timestamp" not in p_flat:
+            p_flat["timestamp"] = str(
+                int(time.time() * 1000) + getattr(self, "time_offset", 0)
+            )
+        query = urlencode(sorted(p_flat.items()))
+        sig = hmac.new(
+            self.api_secret.encode(),
+            query.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        body = query + "&signature=" + sig
+        url = f"{self._get_futures_base_url()}{path}"
+        resp = requests.post(
+            url,
+            headers={
+                "X-MBX-APIKEY": self.api_key,
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data=body,
+            timeout=30,
+            proxies=self._get_requests_proxies(),
+        )
+        try:
+            data = resp.json()
+        except ValueError:
+            resp.raise_for_status()
+            raise RuntimeError(
+                f"fapi POST {path}: non-JSON response {resp.status_code}: "
+                f"{(resp.text or '')[:240]!r}"
+            )
+        if isinstance(data, dict):
+            bc = data.get("code")
+            if bc is not None:
+                try:
+                    code_i = int(bc)
+                    if code_i == 200:
+                        return data
+                    if code_i < 0:
+                        raise RuntimeError(
+                            f"Binance futures API error {bc}: {data.get('msg')}"
+                        )
+                except (TypeError, ValueError):
+                    pass
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"fapi POST {path} HTTP {resp.status_code}: {(resp.text or '')[:400]!r}"
+            )
+        return data
+
+    def set_dual_side_position(self, enabled: bool) -> Dict[str, Any]:
+        """切换 USD-M 持仓模式：``True``=Hedge（双向），``False``=One-way。
+
+        调用 ``POST /fapi/v1/positionSide/dual``。若有未平仓位或未结订单，
+        Binance 会拒绝切换。
+
+        Raises:
+            RuntimeError: Binance 业务错误或 HTTP 失败。
+        """
+        result = self._fapi_signed_post(
+            "/fapi/v1/positionSide/dual",
+            {"dualSidePosition": "true" if enabled else "false"},
+        )
+        if not isinstance(result, dict):
+            return {}
+        return result
 
     def _open_order_from_binance_rest(self, o: Dict[str, Any]) -> Dict[str, Any]:
         """将 ``/fapi/v1/openOrders`` 单行转为与 ccxt 分支一致的 dict。"""

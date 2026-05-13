@@ -30,12 +30,21 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+def _env_truthy(name: str) -> bool:
+    v = os.environ.get(name, "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -263,6 +272,30 @@ def build_daemon(
         raise RuntimeError("No active strategy symbols after meta symbol filters")
     symbols = sorted(active_symbol_set)
     api = _make_api(args.mode, allow_shared_account=args.allow_shared_account)
+    if (
+        args.mode in ("mainnet", "testnet")
+        and isinstance(api, BinanceAPI)
+        and _env_truthy("MLBOT_MULTI_LEG_SET_HEDGE_ON_START")
+    ):
+        if api.hedge_mode_probe_error:
+            logger.warning(
+                "MLBOT_MULTI_LEG_SET_HEDGE_ON_START ignored: hedge probe failed (%s)",
+                api.hedge_mode_probe_error,
+            )
+        elif not api.hedge_mode:
+            try:
+                api.set_dual_side_position(True)
+                logger.info(
+                    "MLBOT_MULTI_LEG_SET_HEDGE_ON_START: requested hedge "
+                    "(POST /fapi/v1/positionSide/dual)"
+                )
+            except Exception as exc:
+                logger.warning(
+                    "MLBOT_MULTI_LEG_SET_HEDGE_ON_START failed (%s); close positions "
+                    "and cancel orders before switching position mode.",
+                    exc,
+                )
+            api.refresh_hedge_mode()
     storage: MultiLegStorage | None = None
     run_id: str | None = None
     db_path = str(getattr(args, "multi_leg_db_path", "") or "").strip()
