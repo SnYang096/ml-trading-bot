@@ -24,6 +24,7 @@
 #   /opt/quant-engine/live/highcap/data       → /app/live/highcap/data       (live storage / state / logs)
 #   /opt/quant-engine/data                    → /app/data                    (parquet_data 等)
 #   /opt/quant-engine/live/binance_mainnet.env → 通过 --env-file 注入（quant-engine / quant-multi-leg；feature-bus 无此文件）。
+#   /opt/quant-engine/monitoring → CI 解压 deploy/monitoring，docker compose 拉起 Grafana :3000、Prometheus :9091
 #   切勿挂 /opt/quant-engine/live → /app/live，会顶掉镜像内 highcap/config 与 scripts。
 # =============================================================
 
@@ -52,7 +53,7 @@ on:
       - 'docker/Dockerfile.live'
       - 'requirements.txt'
       - '.github/workflows/deploy.yml'
-      - 'deploy/monitoring/grafana-provisioning/**'
+      - 'deploy/monitoring/**'
 
 # 同一时间只允许一个部署
 concurrency:
@@ -170,7 +171,7 @@ jobs:
       needs.validate-secrets.result == 'success' &&
       (needs.build.result == 'success' ||
         (needs.build.result == 'skipped' && github.event.inputs.skip_build == 'true'))
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - name: 📥 Checkout code
@@ -431,35 +432,35 @@ jobs:
             echo "MultiLeg: $(docker ps --filter name=quant-multi-leg --format '{{.Status}}')"
             echo "Disk: $(df -h / | tail -1 | awk '{print $4}') free"
 
-      - name: 📊 Sync Grafana dashboards & restart
+      - name: 📦 Pack monitoring stack (Grafana + Prometheus)
+        run: tar czf mlbot-monitoring.tgz -C deploy monitoring
+
+      - name: 📤 Upload monitoring bundle
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          source: "deploy/monitoring/grafana-provisioning/dashboards/*.json,deploy/monitoring/grafana-provisioning/dashboards/*.yml"
-          target: "/tmp/grafana-sync"
-          strip_components: 4
+          source: "mlbot-monitoring.tgz"
+          target: "/tmp/"
 
-      - name: 🔄 Apply dashboards & restart Grafana
+      - name: 🔄 Install monitoring stack & start Grafana
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 10m
           script: |
-            DASH_DIR=/opt/quant-engine/monitoring/grafana-provisioning/dashboards
-            if [ -d "$DASH_DIR" ]; then
-              cp /tmp/grafana-sync/dashboards/*.json "$DASH_DIR/"
-              cp /tmp/grafana-sync/dashboards/*.yml  "$DASH_DIR/" 2>/dev/null || true
-              rm -rf /tmp/grafana-sync
-              if docker ps --format '{{.Names}}' | grep -q mlbot-grafana; then
-                docker restart mlbot-grafana
-                echo "✅ Grafana 已重启，面板已同步"
-              else
-                echo "⚠️ mlbot-grafana 容器未运行，跳过重启"
-              fi
-            else
-              echo "⚠️ $DASH_DIR 不存在，跳过面板同步"
-              rm -rf /tmp/grafana-sync
-            fi
+            set -euo pipefail
+            sudo mkdir -p /opt/quant-engine
+            sudo tar xzf /tmp/mlbot-monitoring.tgz -C /opt/quant-engine
+            rm -f /tmp/mlbot-monitoring.tgz
+            cd /opt/quant-engine/monitoring
+            docker compose -f docker-compose.monitoring.yml pull
+            docker compose -f docker-compose.monitoring.yml up -d --remove-orphans
+            echo ""
+            echo "=== 📊 Monitoring containers ==="
+            docker ps --filter name=mlbot --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+            echo ""
+            echo "Grafana 默认 http://<主机>:3000 （compose 内 admin/admin，上线后请改密）；Prometheus :9091。"
