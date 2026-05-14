@@ -266,6 +266,9 @@ class ConstitutionExecutor:
         return {
             "enabled": bool(strat_cfg.get("allow_add_position", True)),
             "max_add_times": int(strat_cfg.get("max_add_times", 1) or 1),
+            "require_locked_profit": bool(
+                strat_cfg.get("require_locked_profit", False)
+            ),
         }
 
     def resolve_risk_for_strategy(
@@ -503,6 +506,19 @@ class ConstitutionExecutor:
                 code="ADD_POSITION_MAX_TIMES",
                 message="max_add_times exceeded",
                 context={"position_id": pid, "add_count": add_count, **self.meta()},
+            )
+        if bool(strat_cfg.get("require_locked_profit", False)) and not bool(
+            locked_profit
+        ):
+            raise ConstitutionViolation(
+                code="ADD_POSITION_LOCKED_PROFIT_REQUIRED",
+                message="locked_profit is required before add_position",
+                context={
+                    "position_id": pid,
+                    "archetype": arch_key,
+                    "locked_profit": bool(locked_profit),
+                    **self.meta(),
+                },
             )
 
         # 全局 add_position_rules 已移除，仅保留 per_strategy_limits 约束。

@@ -702,6 +702,43 @@ resource_allocation:
             )
         assert exc_info.value.code == "ADD_POSITION_MAX_TIMES"
 
+    def test_validate_add_position_requires_locked_profit_when_enabled(self, tmp_path):
+        """require_locked_profit=true 且未锁盈时，拒绝加仓。"""
+        from src.time_series_model.core.constitution.runtime_state import (
+            ConstitutionRuntimeState,
+        )
+        from src.time_series_model.core.constitution.violation import (
+            ConstitutionViolation,
+        )
+
+        yaml_content = """\
+version: 1
+name: "C_LOCK"
+kill_switch:
+  enabled: false
+slots:
+  enabled: true
+  slot_count: 2
+  risk_per_slot: 0.01
+resource_allocation:
+  per_strategy_limits:
+    bpc:
+      allow_add_position: true
+      max_add_times: 3
+      require_locked_profit: true
+"""
+        ex = self._make_executor(tmp_path, yaml_content)
+        st = ConstitutionRuntimeState()
+        with pytest.raises(ConstitutionViolation) as exc_info:
+            ex.validate_add_position(
+                st=st,
+                position_id="p2",
+                archetype="bpc",
+                current_r=1.2,
+                locked_profit=False,
+            )
+        assert exc_info.value.code == "ADD_POSITION_LOCKED_PROFIT_REQUIRED"
+
     def test_validate_add_position_bare_bpc_matches_directional_limits(self, tmp_path):
         """constitution 仅有 bpc-long 时，家族名 bpc + LONG 应命中加仓上限（与实盘 intent 一致）。"""
         from src.time_series_model.core.constitution.runtime_state import (

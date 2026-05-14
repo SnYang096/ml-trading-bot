@@ -1111,8 +1111,13 @@ class PositionSimulator:
                 locked_profit=parent_pos.get("breakeven_locked", False),
                 position_action=new_side,
             )
-        except ConstitutionViolation:
-            self.last_add_reject_reason = "constitution_reject"
+        except ConstitutionViolation as exc:
+            if str(getattr(exc, "code", "")).strip().upper() == (
+                "ADD_POSITION_LOCKED_PROFIT_REQUIRED"
+            ):
+                self.last_add_reject_reason = "locked_profit_required"
+            else:
+                self.last_add_reject_reason = "constitution_reject"
             return None
 
         add_rules = dict(
@@ -1655,6 +1660,19 @@ class BacktestResult:
             ("total_signals_checked", "时间线检查次数"),
             ("signals_generated", "产生意图次数"),
             ("reject_pcm_slot_full", "PCM全局/策略槽满(drop_slot)"),
+            ("reject_pcm_trend_symbol_conflict", "PCM同symbol趋势位冲突"),
+            (
+                "reject_pcm_trend_pool_anchor_first",
+                "PCM趋势池锚点symbol首仓限制(trend_pool_guard)",
+            ),
+            (
+                "reject_pcm_trend_pool_unprotected_cap",
+                "PCM趋势池未保护symbol上限(trend_pool_guard)",
+            ),
+            (
+                "reject_pcm_trend_pool_post_unlock_cap",
+                "PCM趋势池解锁后symbol上限(trend_pool_guard)",
+            ),
             ("reject_pcm_direction_policy", "PCM宪法方向过滤(按候选intent计次)"),
             ("reject_pcm_family_conflict", "PCM同symbol家族反向冲突"),
             ("reject_pcm_daily_throttle", "PCM家族日内入场上限"),
@@ -1670,6 +1688,7 @@ class BacktestResult:
             ("reject_add_detail_me_features", "  └ ME/其它特征 trigger"),
             ("reject_add_no_parent", "无父仓(不应常见)"),
             ("reject_add_max_times", "超 max_add_times"),
+            ("reject_add_locked_profit_required", "未锁盈前禁止加仓"),
             ("reject_add_constitution", "constitution 拒"),
         ]
         for k, label in keys:
@@ -2065,6 +2084,7 @@ class EventBacktester:
         strategies: List[str],
         live_root: str = "live/highcap",
         strategies_root: Optional[str] = None,
+        constitution_yaml: Optional[str] = None,
         db_path: Optional[str] = None,
         data_path: Optional[str] = None,
         fee_rate: float = 0.0,
@@ -2075,6 +2095,9 @@ class EventBacktester:
         self.live_root = live_root
         self.data_path = data_path  # 研究数据目录 (e.g. data/parquet_data)
         self.strategies_root = strategies_root or "config/strategies"
+        self.constitution_yaml = constitution_yaml or str(
+            Path("config") / "constitution" / "constitution.yaml"
+        )
         self.fee_rate = fee_rate  # 单边手续费率
 
         # Per-strategy timeframe 映射
@@ -2103,15 +2126,15 @@ class EventBacktester:
             )
 
         # LivePCM 仲裁器 (同实盘: 读取 constitution slot 配置)
-        constitution_yaml = str(Path("config") / "constitution" / "constitution.yaml")
         pcm_regime_yaml = str(Path("config") / "pcm_regime.yaml")
         self._simulators: Dict[str, PositionSimulator] = {}
         self.pcm = LivePCM(
-            constitution_yaml=constitution_yaml,
+            constitution_yaml=self.constitution_yaml,
             regime_config_path=(
                 pcm_regime_yaml if Path(pcm_regime_yaml).exists() else None
             ),
             get_open_slot_count=self._global_open_count,
+            get_open_trend_positions=self._open_trend_positions_snapshot,
         )
         for s in self.strategy_names:
             self.pcm.register(s, self._strats[s], timeframe=self._tf_map[s])
@@ -2256,6 +2279,37 @@ class EventBacktester:
     def _global_open_count(self) -> int:
         """跨所有 symbol 的全局 slot 数（仅母仓，加仓不占全局 slot）。"""
         return sum(sim.slot_position_count for sim in self._simulators.values())
+
+    def _open_trend_positions_snapshot(self) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for sim in self._simulators.values():
+            for pos in sim._positions.values():
+                if not isinstance(pos, dict) or bool(
+                    pos.get("_is_add_position", False)
+                ):
+                    continue
+                side = str(pos.get("side", "")).upper()
+                entry_price = float(pos.get("entry_price", 0.0) or 0.0)
+                stop_price = pos.get("stop_loss_price")
+                stop_nonnegative = False
+                if stop_price is not None and entry_price > 0:
+                    try:
+                        stop_f = float(stop_price)
+                        if side in {"LONG", "BUY"}:
+                            stop_nonnegative = stop_f >= entry_price
+                        elif side in {"SHORT", "SELL"}:
+                            stop_nonnegative = stop_f <= entry_price
+                    except (TypeError, ValueError):
+                        stop_nonnegative = False
+                rows.append(
+                    {
+                        "symbol": str(pos.get("symbol", "")).upper().strip(),
+                        "archetype": str(pos.get("archetype", "")).lower().strip(),
+                        "breakeven_locked": bool(pos.get("breakeven_locked", False)),
+                        "stop_risk_nonnegative": bool(stop_nonnegative),
+                    }
+                )
+        return rows
 
     def run(
         self,
@@ -2681,7 +2735,7 @@ class EventBacktester:
             _prune_stale_add_position_records(_runtime_state, open_parent_ids)
             for _sim in self._simulators.values():
                 _merge_add_position_runtime_with_open_legs(_sim, _runtime_state)
-        constitution_path = str(Path("config") / "constitution" / "constitution.yaml")
+        constitution_path = str(self.constitution_yaml)
         try:
             _executor = ConstitutionExecutor(constitution_yaml=constitution_path)
             if no_kill_switch:
@@ -3062,6 +3116,9 @@ class EventBacktester:
                         _pcm_tr.get("drop_daily_limit", 0) or 0
                     ),
                     "pcm_drop_slot": int(_pcm_tr.get("drop_slot", 0) or 0),
+                    "pcm_drop_trend_pool_anchor_first": int(
+                        _pcm_tr.get("drop_trend_pool_anchor_first", 0) or 0
+                    ),
                 }
                 # 供离线统计「是 gate 挡还是 prefilter 挡、触发了哪条规则」
                 if lf.get("gate_reasons") is not None:
@@ -3261,6 +3318,11 @@ class EventBacktester:
                                 if _why == "max_add_times":
                                     funnel.setdefault("reject_add_max_times", 0)
                                     funnel["reject_add_max_times"] += 1
+                                elif _why == "locked_profit_required":
+                                    funnel.setdefault(
+                                        "reject_add_locked_profit_required", 0
+                                    )
+                                    funnel["reject_add_locked_profit_required"] += 1
                                 elif _why == "constitution_reject":
                                     funnel.setdefault("reject_add_constitution", 0)
                                     funnel["reject_add_constitution"] += 1
@@ -3320,6 +3382,18 @@ class EventBacktester:
                     funnel["reject_pcm_slot_full"] = int(
                         funnel.get("reject_pcm_slot_full", 0) or 0
                     ) + int(_pcm_tr.get("drop_slot", 0) or 0)
+                    funnel["reject_pcm_trend_symbol_conflict"] = int(
+                        funnel.get("reject_pcm_trend_symbol_conflict", 0) or 0
+                    ) + int(_pcm_tr.get("drop_trend_symbol_slot_conflict", 0) or 0)
+                    funnel["reject_pcm_trend_pool_anchor_first"] = int(
+                        funnel.get("reject_pcm_trend_pool_anchor_first", 0) or 0
+                    ) + int(_pcm_tr.get("drop_trend_pool_anchor_first", 0) or 0)
+                    funnel["reject_pcm_trend_pool_unprotected_cap"] = int(
+                        funnel.get("reject_pcm_trend_pool_unprotected_cap", 0) or 0
+                    ) + int(_pcm_tr.get("drop_trend_pool_unprotected_cap", 0) or 0)
+                    funnel["reject_pcm_trend_pool_post_unlock_cap"] = int(
+                        funnel.get("reject_pcm_trend_pool_post_unlock_cap", 0) or 0
+                    ) + int(_pcm_tr.get("drop_trend_pool_post_unlock_cap", 0) or 0)
                 # 诊断拒绝原因: 逐策略检查 _last_funnel 确定最深到达阶段
                 _had_signal = False
                 _deepest = "no_evaluable_signal"  # 最浅
@@ -3609,6 +3683,9 @@ class EventBacktester:
                 "add_mean_size": float(np.mean(add_mult)) if add_mult else 0.0,
                 "add_win_rate": (
                     float(np.mean([p > 0 for p in add_pnl])) if add_pnl else 0.0
+                ),
+                "reject_locked_profit_required": int(
+                    funnel.get("reject_add_locked_profit_required", 0) or 0
                 ),
                 "max_observed_leverage": float(max_observed_lev),
                 "max_observed_notional_frac": float(max_observed_notional),
@@ -4426,6 +4503,11 @@ def main():
         help="策略配置目录 (默认 config/strategies)",
     )
     parser.add_argument(
+        "--constitution-yaml",
+        default="config/constitution/constitution.yaml",
+        help="宪法配置路径 (默认 config/constitution/constitution.yaml)",
+    )
+    parser.add_argument(
         "--export",
         default=None,
         help="导出交易明细 CSV 路径",
@@ -4543,7 +4625,21 @@ def main():
             "merged into primary features as 'add_ml_score' for add_regime_gate rules"
         ),
     )
+    parser.add_argument(
+        "--quiet-signal-logs",
+        action="store_true",
+        default=False,
+        help="降低逐信号日志级别（不影响回测逻辑，仅减少 stdout IO）",
+    )
     args = parser.parse_args()
+
+    if args.quiet_signal_logs:
+        logging.getLogger("src.time_series_model.live.generic_live_strategy").setLevel(
+            logging.WARNING
+        )
+        logging.getLogger("src.time_series_model.portfolio.live_pcm").setLevel(
+            logging.WARNING
+        )
 
     strategies = [s.strip() for s in args.strategy.split(",")]
 
@@ -4612,6 +4708,7 @@ def main():
         strategies=strategies,
         live_root=args.live_root,
         strategies_root=args.strategies_root,
+        constitution_yaml=args.constitution_yaml,
         db_path=args.db,
         data_path=args.data_path,
         fee_rate=args.fee_rate,

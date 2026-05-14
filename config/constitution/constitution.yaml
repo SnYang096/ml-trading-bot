@@ -172,6 +172,14 @@ resource_allocation:
     trend_group: trend
     min_trend_slots_per_symbol: 1
     max_trend_slots_per_symbol: 1
+    # Optional tail-risk guard for trend/fattail pool:
+    # - Before any winner is protected, cap concurrent symbols across trend_group.
+    # - After unlock_on condition is met on an existing symbol, allow controlled expansion.
+    trend_pool_guard:
+      enabled: false
+      max_unprotected_symbols: 1
+      unlock_on: breakeven_locked # or: stop_risk_nonnegative
+      max_symbols_after_unlock: 0 # 0 = no extra cap after unlock (use slot_count/per-strategy limits)
 
   archetype_groups:
     trend:

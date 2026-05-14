@@ -1147,3 +1147,178 @@ def test_live_pcm_enforces_single_trend_per_symbol_when_enabled(tmp_path):
     assert (
         int(pcm._last_decide_trace.get("drop_trend_symbol_slot_conflict", 0) or 0) >= 1
     )
+
+
+def _write_trend_pool_guard_constitution(
+    tmp_path,
+    *,
+    max_after_unlock: int = 3,
+    anchor_symbol: str = "",
+    require_anchor_first: bool = False,
+) -> str:
+    constitution = tmp_path / "constitution_guard.yaml"
+    anchor_lines = []
+    if anchor_symbol:
+        anchor_lines = [
+            f"      anchor_symbol: {anchor_symbol}",
+            f"      require_anchor_first: {str(bool(require_anchor_first)).lower()}",
+        ]
+    constitution.write_text(
+        "\n".join(
+            [
+                "slots:",
+                "  slot_count: 10",
+                "  risk_per_slot: 0.01",
+                "resource_allocation:",
+                "  slot_policy:",
+                "    trend_group: trend",
+                "    min_trend_slots_per_symbol: 1",
+                "    max_trend_slots_per_symbol: 1",
+                "    trend_pool_guard:",
+                "      enabled: true",
+                "      max_unprotected_symbols: 1",
+                "      unlock_on: breakeven_locked",
+                f"      max_symbols_after_unlock: {int(max_after_unlock)}",
+                *anchor_lines,
+                "  archetype_groups:",
+                "    trend: [bpc, tpc, me]",
+                "  per_strategy_limits:",
+                "    bpc: { max_risk_per_trade: 0.01 }",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return str(constitution)
+
+
+def _intent_with_symbol(archetype: str, symbol: str) -> TradeIntent:
+    return TradeIntent(
+        action="LONG",
+        symbol=symbol,
+        archetype=archetype,
+        execution_strategy=archetype.lower(),
+        confidence=0.8,
+    )
+
+
+def test_trend_pool_guard_blocks_new_unprotected_symbol(tmp_path):
+    cy = _write_trend_pool_guard_constitution(tmp_path, max_after_unlock=3)
+
+    def _open_trend_positions():
+        return [
+            {
+                "symbol": "BTCUSDT",
+                "archetype": "bpc",
+                "breakeven_locked": False,
+                "stop_risk_nonnegative": False,
+            }
+        ]
+
+    pcm = LivePCM(
+        constitution_yaml=cy,
+        get_open_slot_count=lambda: 1,
+        get_open_trend_positions=_open_trend_positions,
+    )
+    pcm.register("bpc", FakeStrategy(intents=[_intent_with_symbol("BPC", "ETHUSDT")]))
+    got = pcm.decide(features=FEATURES, symbol="ETHUSDT")
+    assert got == []
+    assert (
+        int(pcm._last_decide_trace.get("drop_trend_pool_unprotected_cap", 0) or 0) >= 1
+    )
+
+
+def test_trend_pool_guard_unlocks_after_protected_winner(tmp_path):
+    cy = _write_trend_pool_guard_constitution(tmp_path, max_after_unlock=3)
+
+    def _open_trend_positions():
+        return [
+            {
+                "symbol": "BTCUSDT",
+                "archetype": "bpc",
+                "breakeven_locked": True,
+                "stop_risk_nonnegative": True,
+            }
+        ]
+
+    pcm = LivePCM(
+        constitution_yaml=cy,
+        get_open_slot_count=lambda: 1,
+        get_open_trend_positions=_open_trend_positions,
+    )
+    pcm.register("bpc", FakeStrategy(intents=[_intent_with_symbol("BPC", "ETHUSDT")]))
+    got = pcm.decide(features=FEATURES, symbol="ETHUSDT")
+    assert len(got) == 1
+
+
+def test_trend_pool_guard_respects_post_unlock_symbol_cap(tmp_path):
+    cy = _write_trend_pool_guard_constitution(tmp_path, max_after_unlock=1)
+
+    def _open_trend_positions():
+        return [
+            {
+                "symbol": "BTCUSDT",
+                "archetype": "bpc",
+                "breakeven_locked": True,
+                "stop_risk_nonnegative": True,
+            }
+        ]
+
+    pcm = LivePCM(
+        constitution_yaml=cy,
+        get_open_slot_count=lambda: 1,
+        get_open_trend_positions=_open_trend_positions,
+    )
+    pcm.register("bpc", FakeStrategy(intents=[_intent_with_symbol("BPC", "ETHUSDT")]))
+    got = pcm.decide(features=FEATURES, symbol="ETHUSDT")
+    assert got == []
+    assert (
+        int(pcm._last_decide_trace.get("drop_trend_pool_post_unlock_cap", 0) or 0) >= 1
+    )
+
+
+def test_trend_pool_guard_anchor_requires_btc_first(tmp_path):
+    cy = _write_trend_pool_guard_constitution(
+        tmp_path,
+        max_after_unlock=3,
+        anchor_symbol="BTCUSDT",
+        require_anchor_first=True,
+    )
+
+    pcm = LivePCM(
+        constitution_yaml=cy,
+        get_open_slot_count=lambda: 0,
+        get_open_trend_positions=lambda: [],
+    )
+    pcm.register("bpc", FakeStrategy(intents=[_intent_with_symbol("BPC", "ETHUSDT")]))
+    got = pcm.decide(features=FEATURES, symbol="ETHUSDT")
+    assert got == []
+    assert int(pcm._last_decide_trace.get("drop_trend_pool_anchor_first", 0) or 0) >= 1
+
+
+def test_trend_pool_guard_anchor_unlocks_after_btc_protected(tmp_path):
+    cy = _write_trend_pool_guard_constitution(
+        tmp_path,
+        max_after_unlock=3,
+        anchor_symbol="BTCUSDT",
+        require_anchor_first=True,
+    )
+
+    def _open_trend_positions():
+        return [
+            {
+                "symbol": "BTCUSDT",
+                "archetype": "bpc",
+                "breakeven_locked": True,
+                "stop_risk_nonnegative": True,
+            }
+        ]
+
+    pcm = LivePCM(
+        constitution_yaml=cy,
+        get_open_slot_count=lambda: 1,
+        get_open_trend_positions=_open_trend_positions,
+    )
+    pcm.register("bpc", FakeStrategy(intents=[_intent_with_symbol("BPC", "ETHUSDT")]))
+    got = pcm.decide(features=FEATURES, symbol="ETHUSDT")
+    assert len(got) == 1

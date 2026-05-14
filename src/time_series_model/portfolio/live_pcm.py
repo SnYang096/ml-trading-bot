@@ -407,6 +407,7 @@ class LivePCM:
         archetype_priority: Optional[List[str]] = None,
         max_slots: Optional[int] = None,
         get_open_slot_count: Optional[callable] = None,
+        get_open_trend_positions: Optional[callable] = None,
         regime_detector: Optional[RegimeDetector] = None,
         regime_config_path: Optional[str] = None,
         override_config: Optional[Dict[str, Any]] = None,
@@ -428,6 +429,7 @@ class LivePCM:
         self._strategies: Dict[str, DecisionHandler] = {}
         self._strategy_timeframes: Dict[str, str] = {}  # archetype → timeframe
         self._get_open_slot_count = get_open_slot_count
+        self._get_open_trend_positions = get_open_trend_positions
 
         # Slot 追踪: key = "{symbol}:{archetype}", value = True
         self._slot_evidence: Dict[str, float] = {}
@@ -519,6 +521,49 @@ class LivePCM:
             for x in (self._slot_policy.get("trend_archetypes") or [])
             if str(x).strip()
         }
+        _trend_pool_guard = self._slot_policy.get("trend_pool_guard") or {}
+        if not isinstance(_trend_pool_guard, dict):
+            _trend_pool_guard = {}
+        self._trend_pool_guard = dict(_trend_pool_guard)
+        self._trend_pool_guard_enabled = bool(
+            self._trend_pool_guard.get("enabled", False)
+        )
+        self._trend_pool_max_unprotected = int(
+            self._trend_pool_guard.get("max_unprotected_symbols", 0) or 0
+        )
+        self._trend_pool_unlock_on = (
+            str(
+                self._trend_pool_guard.get("unlock_on", "breakeven_locked")
+                or "breakeven_locked"
+            )
+            .strip()
+            .lower()
+        )
+        _after_unlock = self._trend_pool_guard.get("max_symbols_after_unlock")
+        if _after_unlock is None:
+            self._trend_pool_max_symbols_after_unlock = 0
+        else:
+            try:
+                self._trend_pool_max_symbols_after_unlock = int(_after_unlock)
+            except Exception:
+                self._trend_pool_max_symbols_after_unlock = 0
+        self._trend_pool_anchor_symbol = (
+            str(self._trend_pool_guard.get("anchor_symbol", "") or "").upper().strip()
+        )
+        self._trend_pool_require_anchor_first = bool(
+            self._trend_pool_guard.get("require_anchor_first", False)
+        )
+        if self._trend_pool_guard_enabled and self._trend_pool_max_unprotected > 0:
+            logger.info(
+                "PCM: trend_pool_guard enabled "
+                "(max_unprotected_symbols=%d, unlock_on=%s, max_symbols_after_unlock=%d, "
+                "anchor_symbol=%s, require_anchor_first=%s)",
+                self._trend_pool_max_unprotected,
+                self._trend_pool_unlock_on,
+                self._trend_pool_max_symbols_after_unlock,
+                self._trend_pool_anchor_symbol,
+                self._trend_pool_require_anchor_first,
+            )
 
         # 可选: 监控统计收集器
         self.stats_collector = None  # 通过外部注入 StatsCollector 实例
@@ -606,6 +651,103 @@ class LivePCM:
             if str(existing_arch).lower().strip() != target_arch:
                 return True
         return False
+
+    def _is_trend_slot_protected(self, slot: Dict[str, Any]) -> bool:
+        unlock_on = self._trend_pool_unlock_on
+        if unlock_on == "stop_risk_nonnegative":
+            return bool(slot.get("stop_risk_nonnegative")) or bool(
+                slot.get("breakeven_locked")
+            )
+        return bool(slot.get("breakeven_locked"))
+
+    def _open_trend_slots(self) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        if self._get_open_trend_positions is not None:
+            try:
+                rows = self._get_open_trend_positions() or []
+            except Exception:
+                rows = []
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    sym = str(row.get("symbol", "")).upper().strip()
+                    arch = str(row.get("archetype", "")).lower().strip()
+                    if not sym or not arch or not self._is_trend_archetype(arch):
+                        continue
+                    out.append(
+                        {
+                            "symbol": sym,
+                            "archetype": arch,
+                            "breakeven_locked": bool(row.get("breakeven_locked")),
+                            "stop_risk_nonnegative": bool(
+                                row.get("stop_risk_nonnegative")
+                            ),
+                        }
+                    )
+        if out:
+            return out
+        for key in self._slot_evidence.keys():
+            try:
+                sym, arch = key.split(":", 1)
+            except Exception:
+                continue
+            if not self._is_trend_archetype(arch):
+                continue
+            out.append(
+                {
+                    "symbol": str(sym).upper().strip(),
+                    "archetype": str(arch).lower().strip(),
+                    "breakeven_locked": False,
+                    "stop_risk_nonnegative": False,
+                }
+            )
+        return out
+
+    def _trend_pool_guard_reject_reason(self, intent: TradeIntent) -> str:
+        if (
+            not self._trend_pool_guard_enabled
+            or self._trend_pool_max_unprotected <= 0
+            or bool(intent.add_position)
+            or not self._is_trend_archetype(intent.archetype)
+        ):
+            return ""
+        slots = self._open_trend_slots()
+        sym = str(intent.symbol or "").upper().strip()
+        if (
+            self._trend_pool_require_anchor_first
+            and self._trend_pool_anchor_symbol
+            and sym != self._trend_pool_anchor_symbol
+        ):
+            anchor_slots = [
+                s
+                for s in slots
+                if str(s.get("symbol", "")).upper().strip()
+                == self._trend_pool_anchor_symbol
+            ]
+            if not anchor_slots or not any(
+                self._is_trend_slot_protected(s) for s in anchor_slots
+            ):
+                return "anchor_first"
+        if not slots:
+            return ""
+        open_symbols = {str(s.get("symbol", "")).upper().strip() for s in slots}
+        open_symbols.discard("")
+        if sym in open_symbols:
+            return ""
+        unprotected_symbols = {
+            str(s.get("symbol", "")).upper().strip()
+            for s in slots
+            if not self._is_trend_slot_protected(s)
+        }
+        unprotected_symbols.discard("")
+        if len(unprotected_symbols) >= self._trend_pool_max_unprotected:
+            return "unprotected_cap"
+        if self._trend_pool_max_symbols_after_unlock > 0 and len(open_symbols) >= int(
+            self._trend_pool_max_symbols_after_unlock
+        ):
+            return "post_unlock_cap"
+        return ""
 
     def _observed_market_side(
         self,
@@ -913,6 +1055,7 @@ class LivePCM:
             "drop_family_conflict": 0,
             "drop_daily_limit": 0,
             "drop_slot": 0,
+            "drop_trend_pool_anchor_first": 0,
         }
         if not self._strategies:
             return []
@@ -1186,6 +1329,24 @@ class LivePCM:
                     "PCM: trend symbol slot conflict reject %s %s",
                     intent.symbol,
                     intent.archetype,
+                )
+                continue
+            _pool_reject = self._trend_pool_guard_reject_reason(intent)
+            if _pool_reject:
+                if _pool_reject == "unprotected_cap":
+                    _trace_key = "drop_trend_pool_unprotected_cap"
+                elif _pool_reject == "anchor_first":
+                    _trace_key = "drop_trend_pool_anchor_first"
+                else:
+                    _trace_key = "drop_trend_pool_post_unlock_cap"
+                self._last_decide_trace[_trace_key] = (
+                    int(self._last_decide_trace.get(_trace_key, 0) or 0) + 1
+                )
+                logger.info(
+                    "PCM: trend pool guard reject %s %s (%s)",
+                    intent.symbol,
+                    intent.archetype,
+                    _pool_reject,
                 )
                 continue
 
@@ -1496,6 +1657,7 @@ class LivePCM:
                 "slot_count": self._constitution.get("slot_count"),
                 "risk_per_slot": self._constitution.get("risk_per_slot"),
                 "per_strategy_limits": self._constitution.get("per_strategy_limits"),
+                "slot_policy": self._constitution.get("slot_policy"),
             },
         }
         if self._regime_detector is not None:
@@ -1511,6 +1673,7 @@ def create_live_pcm(
     archetype_priority: Optional[List[str]] = None,
     max_slots: Optional[int] = None,
     get_open_slot_count: Optional[callable] = None,
+    get_open_trend_positions: Optional[callable] = None,
     regime_config_path: Optional[str] = None,
     override_config: Optional[Dict[str, Any]] = None,
     constitution_yaml: Optional[str] = None,
@@ -1533,6 +1696,7 @@ def create_live_pcm(
         archetype_priority=archetype_priority,
         max_slots=max_slots,
         get_open_slot_count=get_open_slot_count,
+        get_open_trend_positions=get_open_trend_positions,
         regime_config_path=regime_config_path,
         override_config=override_config,
         constitution_yaml=constitution_yaml,

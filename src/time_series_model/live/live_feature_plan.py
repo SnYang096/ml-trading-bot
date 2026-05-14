@@ -58,6 +58,15 @@ _DERIVED_FEATURE_SOURCE_DEPS: Dict[str, List[str]] = {
     # ef_consolidation_bars 依赖 bpc_was_in_pullback（已由 bpc_soft_phase_f 产出）
 }
 
+# Columns that may appear in research/evidence artifacts but are not produced by
+# the live FeatureComputer DAG. Keeping them in live_feature_set only creates
+# permanent health-check noise.
+_NON_COMPUTED_LIVE_COLUMNS = frozenset({"pred"})
+
+# Non-numeric DAG outputs that may be useful in research frames but are not part
+# of the numeric live feature dict consumed by decision rules.
+_NON_NUMERIC_LIVE_OUTPUT_COLUMNS = frozenset({"box_regime_label"})
+
 
 # ---------------------------------------------------------------------------
 # Archetypes auto-detect (no NN dependency)
@@ -243,6 +252,10 @@ def extract_features_from_archetypes(
     if not feature_columns:
         return set(), []
 
+    feature_columns -= _NON_COMPUTED_LIVE_COLUMNS
+    if not feature_columns:
+        return set(), []
+
     # Map columns → feature nodes (pick ONE per column — smallest output set)
     deps = _load_yaml(feature_deps_path)
     feats = deps.get("features") or {}
@@ -291,6 +304,7 @@ def extract_features_from_archetypes(
     # atr is needed by pick_atr() for stop loss distance calculation
     # bb_width_normalized_pct is an intermediate for bpc_bb_compression but useful for diagnostics
     live_feature_set |= {"open", "high", "low", "close", "volume", "atr"}
+    live_feature_set -= _NON_NUMERIC_LIVE_OUTPUT_COLUMNS
 
     # Ensure atr_f node is in selected_nodes — atr is always needed for
     # execution (stop-loss sizing) but load_features_from_requested only

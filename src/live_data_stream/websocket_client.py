@@ -252,7 +252,12 @@ class BinanceWebSocketClient:
             except Exception as exc:
                 if stop_event.is_set():
                     break
-                logger.error("python-binance aggTrade stream failed: %s", exc)
+                logger.error(
+                    "python-binance aggTrade stream failed: %s repr=%r",
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
+                )
                 self.reconnect_manager.on_connection_failure(exc)
                 # ReconnectionManager updates stats in an async task.
                 await asyncio.sleep(0)

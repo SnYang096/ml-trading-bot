@@ -679,6 +679,72 @@ class TestWhenClauseReservedKeys:
         feat_set, nodes = extract_features_from_archetypes(fer_dir)
         assert "all_of" not in feat_set
 
+    def test_pred_is_not_treated_as_live_computed_feature(self, tmp_path):
+        """pred 是离线预测列，不应进入 Feature Bus 的 live_feature_set。"""
+        from src.time_series_model.live.live_feature_plan import (
+            extract_features_from_archetypes,
+        )
+
+        archetypes_dir = tmp_path / "archetypes"
+        archetypes_dir.mkdir()
+        (archetypes_dir / "evidence.yaml").write_text(
+            """
+evidence:
+  - id: evidence_pred
+    feature: pred
+  - id: evidence_close
+    feature: close
+""",
+            encoding="utf-8",
+        )
+        deps_path = tmp_path / "feature_dependencies.yaml"
+        deps_path.write_text("features: {}\n", encoding="utf-8")
+
+        feat_set, _nodes = extract_features_from_archetypes(
+            archetypes_dir,
+            feature_deps_path=deps_path,
+        )
+        assert "pred" not in feat_set
+        assert "close" in feat_set
+
+    def test_categorical_outputs_are_not_live_health_expected(self, tmp_path):
+        """分类输出列不应进入数值 live_feature_set 的健康检查口径。"""
+        from src.time_series_model.live.live_feature_plan import (
+            extract_features_from_archetypes,
+        )
+
+        archetypes_dir = tmp_path / "archetypes"
+        archetypes_dir.mkdir()
+        (archetypes_dir / "gate.yaml").write_text(
+            """
+hard_gates:
+  - id: gate_box_score
+    enabled: true
+    when:
+      box_score:
+        value_gt: 0.5
+""",
+            encoding="utf-8",
+        )
+        deps_path = tmp_path / "feature_dependencies.yaml"
+        deps_path.write_text(
+            """
+features:
+  box_structure_f:
+    output_columns:
+      - box_score
+      - box_regime_label
+""",
+            encoding="utf-8",
+        )
+
+        feat_set, _nodes = extract_features_from_archetypes(
+            archetypes_dir,
+            feature_deps_path=deps_path,
+        )
+        assert "box_score" in feat_set
+        assert "box_regime_label" not in feat_set
+
 
 class TestAtrNodeAlwaysIncluded:
     """验证 extract_features_from_archetypes 始终包含 atr_f 节点。

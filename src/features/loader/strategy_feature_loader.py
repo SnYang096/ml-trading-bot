@@ -647,6 +647,7 @@ class StrategyFeatureLoader:
         allowed_object_columns = {
             "_symbol",  # 交易对标识符（带下划线）
             "symbol",  # 交易对标识符（不带下划线）
+            "box_regime_label",  # box 结构分类标签: small/mid/big/none
             "dtw_best_match_w15",  # DTW 特征：最佳匹配模式（可能是 "none"）
             "dtw_best_match_w20",
             "dtw_best_match_w25",

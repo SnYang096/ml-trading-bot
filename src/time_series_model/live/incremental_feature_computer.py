@@ -1284,6 +1284,22 @@ class IncrementalFeatureComputer:
                                 filtered.append(dep)
                                 filtered_set.add(dep)
 
+                def _collect_deferred_bar_nodes(node_name: str, out: list[str]) -> None:
+                    """Collect skipped DAG nodes that can run once bar columns exist."""
+                    if node_name in out or node_name in tick_dependent_nodes:
+                        return
+                    info = feats_cfg.get(node_name)
+                    if not isinstance(info, dict):
+                        return
+                    for dep in info.get("dependencies") or []:
+                        _collect_deferred_bar_nodes(str(dep), out)
+                    if node_name not in filtered_set:
+                        out.append(node_name)
+
+                deferred_second_pass: list[str] = []
+                for n in skipped:
+                    _collect_deferred_bar_nodes(str(n), deferred_second_pass)
+
                 bars_tf = self._feature_loader.load_features_from_requested(
                     bars_tf, requested_features=filtered, fit=False
                 )
@@ -1294,33 +1310,35 @@ class IncrementalFeatureComputer:
                     len(bars_tf.columns),
                 )
 
-                # ── 3b. Second pass ──
-                if skipped:
-                    bar_cols_updated = set(bars_tf.columns)
-                    second_pass = []
-                    for n in skipped:
-                        if n in tick_dependent_nodes:
-                            continue
-                        info = feats_cfg.get(n)
-                        if not isinstance(info, dict):
-                            continue
-                        req_cols = set(info.get("required_columns") or [])
-                        if req_cols.issubset(bar_cols_updated):
-                            second_pass.append(n)
+                # ── 3b. Iterative second pass ──
+                # Some requested nodes depend on tick-derived columns that were already
+                # materialized in step 2 (VPIN/footprint). Run deferred bar-only nodes
+                # as their required columns become available, e.g. vpin_scene -> dual_*.
+                if deferred_second_pass:
+                    from src.features.registry import get_compute_func
+                    from src.features.loader.feature_computer import (
+                        _build_call_args,
+                    )
+                    import inspect
 
-                    if second_pass:
-                        from src.features.registry import get_compute_func
-                        from src.features.loader.feature_computer import (
-                            _build_call_args,
-                        )
-                        import inspect
+                    pending = list(dict.fromkeys(deferred_second_pass))
+                    while pending:
+                        progressed = False
+                        for n in list(pending):
+                            info = feats_cfg.get(n)
+                            if not isinstance(info, dict):
+                                pending.remove(n)
+                                continue
+                            bar_cols_updated = set(bars_tf.columns)
+                            req_cols = set(info.get("required_columns") or [])
+                            if not req_cols.issubset(bar_cols_updated):
+                                continue
 
-                        for n in second_pass:
                             try:
-                                info = feats_cfg.get(n)
                                 compute_func_name = info.get("compute_func", n)
                                 cfn = get_compute_func(compute_func_name)
                                 if cfn is None:
+                                    pending.remove(n)
                                     continue
                                 info_filtered = dict(info)
                                 raw_mappings = info.get("column_mappings") or {}
@@ -1375,10 +1393,16 @@ class IncrementalFeatureComputer:
                                         bars_tf[result.name] = result.reindex(
                                             bars_tf.index
                                         )
+                                pending.remove(n)
+                                progressed = True
                                 _logger.info("  Second pass: %s → OK", n)
                             except Exception as e:
+                                pending.remove(n)
                                 _logger.warning("  Second pass failed for %s: %s", n, e)
                                 self._record_loader_error(n, ptf, e)
+
+                        if not progressed:
+                            break
             except Exception as e:
                 _logger.warning("⚠️ Loader failed: %s", e)
                 import traceback
