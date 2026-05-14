@@ -816,6 +816,9 @@ async def _run_external_feature_bus_mode(
         timeframes=timeframes,
         max_staleness_seconds=max_stale,
         bars_lookback=int(os.getenv("MLBOT_FEATURE_BUS_BARS_LOOKBACK", "240")),
+        initial_bars_lookback=int(
+            os.getenv("MLBOT_FEATURE_BUS_INITIAL_BARS_LOOKBACK", "1")
+        ),
     )
     latest_features: Dict[str, Dict[str, Any]] = {}
     logger.info(

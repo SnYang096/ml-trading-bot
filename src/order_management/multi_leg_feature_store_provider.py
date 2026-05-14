@@ -43,10 +43,12 @@ class FeatureStoreBarProvider:
         feature_bus_root: str | Path,
         timeframe: str = "2h",
         execution_timeframe: str = "1min",
+        initial_backfill_bars: int = 1,
     ) -> None:
         self.reader = FeatureBusReader(feature_bus_root)
         self.timeframe = str(timeframe)
         self.execution_timeframe = str(execution_timeframe)
+        self.initial_backfill_bars = max(0, int(initial_backfill_bars))
         self._last_seen_features: Dict[str, pd.Timestamp] = {}
         self._last_seen_bars: Dict[str, pd.Timestamp] = {}
 
@@ -66,7 +68,10 @@ class FeatureStoreBarProvider:
             )
             if not bars.empty:
                 bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True)
-                self._last_seen_bars[symbol] = bars["timestamp"].max()
+                latest_ts = bars["timestamp"].max()
+                if symbol not in self._last_seen_bars:
+                    bars = bars.tail(self.initial_backfill_bars)
+                self._last_seen_bars[symbol] = latest_ts
                 for _, bar in bars.iterrows():
                     out.append(self._event_from_signal_and_bar(symbol, signal, bar))
                 self._last_seen_features[symbol] = signal_ts

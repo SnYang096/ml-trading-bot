@@ -100,6 +100,21 @@ def test_run_actions_executes_approved_actions_and_notifies_engine() -> None:
     assert engine.reconciliation_reports[0].ok
 
 
+def test_run_actions_without_actions_can_skip_exchange_sync() -> None:
+    engine = FakeEngine()
+    adapter = _adapter()
+    orchestrator = _orchestrator(engine, adapter)
+
+    report = orchestrator.run_actions([], reconcile=False)
+
+    assert report.risk.ok
+    assert report.execution_results == []
+    assert report.reconciliation is None
+    adapter.sync_open_orders.assert_not_called()
+    adapter.sync_positions.assert_not_called()
+    adapter.execute_actions.assert_not_called()
+
+
 def test_run_actions_filters_rejected_opening_actions_before_adapter() -> None:
     engine = FakeEngine()
     adapter = _adapter()

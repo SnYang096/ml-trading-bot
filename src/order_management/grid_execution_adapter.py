@@ -11,16 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import logging
-import os
-import time
-from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar
+from typing import Any, Dict, Iterable, List, Optional
 
 from src.order_management.binance_api import BinanceAPI
 from src.order_management.models import OrderSide, OrderType
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 def _is_binance_rate_limit_detail(text: str) -> bool:
@@ -33,55 +29,6 @@ def _is_binance_rate_limit_detail(text: str) -> bool:
         or "too many requests" in lowered
         or "ddosprotection" in lowered.replace(" ", "")
     )
-
-
-def _max_rest_retries() -> int:
-    raw = os.getenv("MLBOT_BINANCE_REST_RETRY_MAX", "8")
-    try:
-        return max(1, min(20, int(raw)))
-    except ValueError:
-        return 8
-
-
-def _rest_retry_sleep_seconds(attempt: int) -> float:
-    try:
-        base = float(os.getenv("MLBOT_BINANCE_REST_RETRY_BASE_SECONDS", "3.0"))
-    except ValueError:
-        base = 3.0
-    try:
-        cap = float(os.getenv("MLBOT_BINANCE_REST_RETRY_MAX_SECONDS", "90.0"))
-    except ValueError:
-        cap = 90.0
-    delay = base * (2**attempt)
-    return min(delay, cap)
-
-
-def _call_exchange_read(op_name: str, fn: Callable[[], T]) -> T:
-    """Retry read-only Binance/ccxt calls under transient REST rate limits."""
-    retries = _max_rest_retries()
-    last_exc: Optional[BaseException] = None
-    for attempt in range(retries):
-        try:
-            return fn()
-        except BaseException as exc:
-            last_exc = exc
-            if (
-                attempt + 1 >= retries
-                or not _is_binance_rate_limit_detail(str(exc))
-            ):
-                raise
-            delay = _rest_retry_sleep_seconds(attempt)
-            logger.warning(
-                "multi-leg REST %s rate limited (%s); retry %s/%s in %.1fs",
-                op_name,
-                exc,
-                attempt + 1,
-                retries,
-                delay,
-            )
-            time.sleep(delay)
-    assert last_exc is not None  # pragma: no cover - loop always returns or raises
-    raise last_exc
 
 
 class MultiLegExecutionError(RuntimeError):
@@ -192,20 +139,12 @@ class MultiLegExecutionAdapter:
     def sync_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """Fetch open exchange orders for reconcile/reporting."""
         sym = symbol or self.default_symbol
-
-        def _pull() -> List[Dict[str, Any]]:
-            return self.binance_api.get_open_orders(sym)
-
-        return _call_exchange_read("get_open_orders", _pull)
+        return self.binance_api.get_open_orders(sym)
 
     def sync_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """Fetch exchange positions for reconcile/reporting."""
         sym = symbol or self.default_symbol
-
-        def _pull() -> List[Dict[str, Any]]:
-            return self.binance_api.get_positions(sym)
-
-        return _call_exchange_read("get_positions", _pull)
+        return self.binance_api.get_positions(sym)
 
     def _place_entry(self, action: Dict[str, Any]) -> MultiLegExecutionResult:
         symbol = _required_str(action, "symbol")

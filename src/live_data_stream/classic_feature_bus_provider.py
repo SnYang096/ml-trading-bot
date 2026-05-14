@@ -42,6 +42,7 @@ class ClassicFeatureBusProvider:
         timeframes: Iterable[str],
         max_staleness_seconds: float = 1800.0,
         bars_lookback: int = 240,
+        initial_bars_lookback: int = 1,
     ) -> None:
         self.reader = FeatureBusReader(feature_bus_root)
         self.symbols = [str(s).upper() for s in symbols]
@@ -51,6 +52,7 @@ class ClassicFeatureBusProvider:
         )
         self.max_staleness_seconds = float(max_staleness_seconds)
         self.bars_lookback = int(bars_lookback)
+        self.initial_bars_lookback = max(0, int(initial_bars_lookback))
         self._last_seen_features: Dict[str, pd.Timestamp] = {}
         self._last_seen_bars: Dict[str, pd.Timestamp] = {}
 
@@ -152,8 +154,16 @@ class ClassicFeatureBusProvider:
             return []
         if "timestamp" in bars.columns:
             bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True)
-            self._last_seen_bars[symbol] = bars["timestamp"].max()
-        return bars.tail(self.bars_lookback).to_dict("records")
+            latest_ts = bars["timestamp"].max()
+            limit = (
+                self.initial_bars_lookback
+                if symbol not in self._last_seen_bars
+                else self.bars_lookback
+            )
+            self._last_seen_bars[symbol] = latest_ts
+        else:
+            limit = self.bars_lookback
+        return bars.tail(limit).to_dict("records")
 
     def _is_stale(self, timestamp: pd.Timestamp) -> bool:
         if self.max_staleness_seconds <= 0:

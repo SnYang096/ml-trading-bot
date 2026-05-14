@@ -346,6 +346,7 @@ def build_daemon(
             feature_bus_root=args.feature_bus_root,
             timeframe=args.feature_store_timeframe,
             execution_timeframe=args.feature_store_execution_timeframe,
+            initial_backfill_bars=args.feature_store_initial_backfill_bars,
         )
     elif args.bar_source == "websocket":
         provider = MultiLegWebSocketBarProvider(
@@ -408,6 +409,7 @@ def build_daemon(
             bar_provider=provider,
             runtimes=runtimes,
             poll_seconds=args.poll_seconds,
+            reconcile_interval_seconds=args.reconcile_interval_seconds,
         ),
         api,
         storage,
@@ -476,6 +478,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--feature-bus-root", default="live/shared_feature_bus")
     p.add_argument("--feature-store-timeframe", default="2h")
     p.add_argument("--feature-store-execution-timeframe", default="1min")
+    p.add_argument("--feature-store-initial-backfill-bars", type=int, default=1)
     p.add_argument("--timeframe", default="2h")
     p.add_argument("--lookback-days", type=int, default=180)
     p.add_argument("--warmup-days", type=int, default=0)
@@ -490,6 +493,7 @@ def parse_args() -> argparse.Namespace:
         help="When --once and --bar-source=websocket, wait this many seconds before run_once.",
     )
     p.add_argument("--poll-seconds", type=float, default=60.0)
+    p.add_argument("--reconcile-interval-seconds", type=float, default=60.0)
     p.add_argument("--once", action="store_true")
     p.add_argument("--max-iterations", type=int, default=0)
     p.add_argument("--state-dir", default="results/multi_leg_live/state")

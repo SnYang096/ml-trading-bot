@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Protocol
 
@@ -57,11 +58,14 @@ class MultiLegLiveDaemon:
         bar_provider: MultiLegBarProvider,
         runtimes: Iterable[StrategyRuntime],
         poll_seconds: float = 30.0,
+        reconcile_interval_seconds: float = 60.0,
     ) -> None:
         self.bar_provider = bar_provider
         self.runtimes = list(runtimes)
         self.poll_seconds = float(poll_seconds)
+        self.reconcile_interval_seconds = max(0.0, float(reconcile_interval_seconds))
         self._last_processed: set[tuple[str, str, str]] = set()
+        self._last_reconciled_at: Dict[str, float] = {}
         self._running = False
 
     def run_once(self) -> MultiLegDaemonReport:
@@ -83,6 +87,8 @@ class MultiLegLiveDaemon:
         execution_count = 0
         reconciliation_issue_count = 0
         bars_seen = 0
+        reconcile_due_symbols = {str(sym).upper(): self._reconcile_due(sym) for sym in symbols}
+        exchange_snapshots: Dict[str, tuple[List[Dict[str, Any]], List[Dict[str, Any]]]] = {}
 
         for bar in bars:
             for rt in self.runtimes:
@@ -126,7 +132,20 @@ class MultiLegLiveDaemon:
                             owner,
                         )
                 action_count += len(actions)
-                report = rt.orchestrator.run_actions(actions)
+                should_reconcile = bool(actions) or bool(reconcile_due_symbols.get(sym))
+                exchange_orders = None
+                exchange_positions = None
+                if should_reconcile:
+                    exchange_orders, exchange_positions = self._exchange_snapshot(
+                        sym, rt, exchange_snapshots
+                    )
+                    self._last_reconciled_at[sym] = time.monotonic()
+                report = rt.orchestrator.run_actions(
+                    actions,
+                    exchange_orders=exchange_orders,
+                    exchange_positions=exchange_positions,
+                    reconcile=should_reconcile,
+                )
                 rejected_count += len(report.risk.rejected)
                 if any(
                     str((a or {}).get("action", "") or "").lower() == "place"
@@ -171,6 +190,29 @@ class MultiLegLiveDaemon:
             execution_count=execution_count,
             reconciliation_issue_count=reconciliation_issue_count,
         )
+
+    def _reconcile_due(self, symbol: str) -> bool:
+        if self.reconcile_interval_seconds <= 0:
+            return False
+        last = self._last_reconciled_at.get(symbol)
+        if last is None:
+            return True
+        return time.monotonic() - last >= self.reconcile_interval_seconds
+
+    def _exchange_snapshot(
+        self,
+        symbol: str,
+        runtime: StrategyRuntime,
+        cache: Dict[str, tuple[List[Dict[str, Any]], List[Dict[str, Any]]]],
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        sym = str(symbol or "").upper().strip()
+        if sym not in cache:
+            adapter = runtime.orchestrator.adapter
+            cache[sym] = (
+                list(adapter.sync_open_orders(sym)),
+                list(adapter.sync_positions(sym)),
+            )
+        return cache[sym]
 
     async def run_forever(self, *, max_iterations: Optional[int] = None) -> None:
         self._running = True

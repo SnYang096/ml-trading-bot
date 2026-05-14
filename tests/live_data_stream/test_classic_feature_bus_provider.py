@@ -84,6 +84,35 @@ def test_classic_feature_bus_provider_polls_execution_bars_without_features(tmp_
     assert second == {}
 
 
+def test_classic_feature_bus_provider_limits_initial_bar_backfill(tmp_path):
+    writer = FeatureBusWriter(tmp_path, max_rows=10)
+    for minute in range(5):
+        writer.append_bar_1m(
+            "BTCUSDT",
+            {
+                "timestamp": pd.Timestamp(f"2026-01-01T00:0{minute}:00Z"),
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0 + minute,
+            },
+        )
+    provider = ClassicFeatureBusProvider(
+        feature_bus_root=tmp_path,
+        symbols=["BTCUSDT"],
+        primary_timeframe="240T",
+        timeframes=["240T"],
+        max_staleness_seconds=0,
+        initial_bars_lookback=1,
+    )
+
+    first = provider.poll_bars()
+
+    assert [str(row["timestamp"]) for row in first["BTCUSDT"]] == [
+        "2026-01-01 00:04:00+00:00"
+    ]
+
+
 def test_classic_feature_bus_provider_skips_stale_rows(tmp_path):
     writer = FeatureBusWriter(tmp_path, max_rows=10)
     writer.append_features(

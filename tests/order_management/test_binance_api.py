@@ -13,6 +13,12 @@ from src.order_management.models import OrderSide, OrderType
 _CCXT_BTC_PERP = "BTC/USDT:USDT"
 
 
+@pytest.fixture(autouse=True)
+def _disable_rest_throttle_for_unit_tests(monkeypatch):
+    monkeypatch.setenv("MLBOT_BINANCE_REST_READ_MIN_INTERVAL_SECONDS", "0")
+    monkeypatch.setenv("MLBOT_BINANCE_REST_RETRY_BASE_SECONDS", "0")
+
+
 @pytest.fixture
 def mock_ccxt_exchange():
     """创建模拟的ccxt交易所对象"""
@@ -332,6 +338,23 @@ def test_get_positions_empty(binance_api):
 
     positions = binance_api.get_positions()
     assert len(positions) == 0
+
+
+@patch("src.order_management.binance_api.time.sleep", autospec=True)
+def test_get_positions_retries_on_binance_ip_rate_limit(mock_sleep, binance_api):
+    calls = []
+
+    def _rate_limited(*args, **kwargs):
+        calls.append((args, kwargs))
+        if len(calls) < 3:
+            raise RuntimeError("binance 429 Too Many Requests code -1003")
+        return []
+
+    binance_api.exchange.fetch_positions.side_effect = _rate_limited
+
+    assert binance_api.get_positions("BTCUSDT") == []
+    assert len(calls) == 3
+    assert mock_sleep.called
 
 
 def test_get_position(binance_api):

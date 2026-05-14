@@ -49,3 +49,38 @@ def test_feature_store_bar_provider_returns_new_events_once(tmp_path):
     assert first[0].features["semantic_chop"] == 0.55
     assert first[0].features["_signal_timestamp"] == "2024-01-01 00:00:00+00:00"
     assert second == []
+
+
+def test_feature_store_bar_provider_skips_historical_startup_bars(tmp_path):
+    writer = FeatureBusWriter(tmp_path)
+    for minute in range(1, 6):
+        writer.append_bar_1m(
+            "BTCUSDT",
+            {
+                "timestamp": pd.Timestamp(f"2024-01-01T00:0{minute}:00Z"),
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0 + minute,
+            },
+        )
+    writer.append_features(
+        symbol="BTCUSDT",
+        timeframe="2h",
+        timestamp=pd.Timestamp("2024-01-01T00:00:00Z"),
+        features={
+            "high": 105.0,
+            "low": 95.0,
+            "close": 100.0,
+            "atr14": 3.0,
+        },
+    )
+
+    provider = FeatureStoreBarProvider(
+        feature_bus_root=tmp_path,
+        timeframe="2h",
+        initial_backfill_bars=1,
+    )
+    first = provider.latest_closed_bars(["BTCUSDT"])
+
+    assert [bar.timestamp for bar in first] == ["2024-01-01 00:05:00+00:00"]

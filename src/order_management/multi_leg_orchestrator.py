@@ -90,16 +90,34 @@ class MultiLegLiveOrchestrator:
         self.symbol = symbol
         self.drawdown_pct_provider = drawdown_pct_provider
 
-    def run_actions(self, actions: Iterable[Action]) -> OrchestrationReport:
+    def run_actions(
+        self,
+        actions: Iterable[Action],
+        *,
+        exchange_orders: Optional[Iterable[Mapping[str, Any]]] = None,
+        exchange_positions: Optional[Iterable[Mapping[str, Any]]] = None,
+        reconcile: bool = True,
+    ) -> OrchestrationReport:
         """Risk-check, execute, reconcile, then notify engine."""
 
         action_list = [dict(a) for a in actions]
-        exchange_orders = self.adapter.sync_open_orders(None)
-        exchange_positions = self.adapter.sync_positions(None)
+        if not action_list and not reconcile:
+            return OrchestrationReport(risk=RiskCheckResult())
+
+        orders = (
+            [dict(o) for o in exchange_orders]
+            if exchange_orders is not None
+            else self.adapter.sync_open_orders(None)
+        )
+        positions = (
+            [dict(p) for p in exchange_positions]
+            if exchange_positions is not None
+            else self.adapter.sync_positions(None)
+        )
         risk = self.governor.check_actions(
             action_list,
-            positions=_exchange_positions_to_exposures(exchange_positions),
-            open_orders=exchange_orders,
+            positions=_exchange_positions_to_exposures(positions),
+            open_orders=orders,
             drawdown_pct=self._current_drawdown_pct(),
         )
         execution_results = (
@@ -108,10 +126,13 @@ class MultiLegLiveOrchestrator:
             else []
         )
         _call_optional(self.engine, "on_execution_results", execution_results)
-        reconciliation, reconciliation_results = self.reconcile(
-            exchange_orders=exchange_orders,
-            exchange_positions=exchange_positions,
-        )
+        reconciliation = None
+        reconciliation_results: List[MultiLegExecutionResult] = []
+        if reconcile:
+            reconciliation, reconciliation_results = self.reconcile(
+                exchange_orders=orders,
+                exchange_positions=positions,
+            )
         self._persist_positions()
         return OrchestrationReport(
             risk=risk,

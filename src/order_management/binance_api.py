@@ -6,11 +6,12 @@ Binance API封装
 
 import logging
 import os
+import threading
 import time
 import hmac
 import hashlib
 from urllib.parse import urlencode
-from typing import Optional, Dict, Any, List
+from typing import Callable, Optional, Dict, Any, List, TypeVar
 from datetime import datetime
 import ccxt
 import requests
@@ -18,6 +19,93 @@ import requests
 from .models import Order, OrderSide, OrderType, OrderStatus
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
+_BINANCE_READ_LOCK = threading.Lock()
+_BINANCE_READ_LAST_AT = 0.0
+
+
+def _is_binance_rate_limit_detail(text: str) -> bool:
+    """Recognize Binance / ccxt wording for REST rate limits (-1003, HTTP 429)."""
+    chunk = str(text or "")
+    lowered = chunk.lower()
+    return (
+        "-1003" in chunk
+        or "429" in chunk
+        or "too many requests" in lowered
+        or "ddosprotection" in lowered.replace(" ", "")
+    )
+
+
+def _binance_read_retry_max() -> int:
+    raw = os.getenv("MLBOT_BINANCE_REST_RETRY_MAX", "8")
+    try:
+        return max(1, min(20, int(raw)))
+    except ValueError:
+        return 8
+
+
+def _binance_read_retry_sleep_seconds(attempt: int) -> float:
+    try:
+        base = float(os.getenv("MLBOT_BINANCE_REST_RETRY_BASE_SECONDS", "3.0"))
+    except ValueError:
+        base = 3.0
+    try:
+        cap = float(os.getenv("MLBOT_BINANCE_REST_RETRY_MAX_SECONDS", "90.0"))
+    except ValueError:
+        cap = 90.0
+    return min(base * (2**attempt), cap)
+
+
+def _binance_read_min_interval_seconds() -> float:
+    raw = os.getenv("MLBOT_BINANCE_REST_READ_MIN_INTERVAL_SECONDS", "0.25")
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 0.25
+
+
+def _throttle_binance_read() -> None:
+    """Process-wide pacing for Binance read-only REST calls."""
+    global _BINANCE_READ_LAST_AT
+    min_interval = _binance_read_min_interval_seconds()
+    if min_interval <= 0:
+        return
+    with _BINANCE_READ_LOCK:
+        now = time.monotonic()
+        sleep_for = (_BINANCE_READ_LAST_AT + min_interval) - now
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+            now = time.monotonic()
+        _BINANCE_READ_LAST_AT = now
+
+
+def _call_binance_read(op_name: str, fn: Callable[[], T]) -> T:
+    """Throttle and retry read-only Binance/ccxt REST calls under IP limits."""
+    retries = _binance_read_retry_max()
+    last_exc: Optional[BaseException] = None
+    for attempt in range(retries):
+        try:
+            _throttle_binance_read()
+            return fn()
+        except BaseException as exc:
+            last_exc = exc
+            if (
+                attempt + 1 >= retries
+                or not _is_binance_rate_limit_detail(str(exc))
+            ):
+                raise
+            delay = _binance_read_retry_sleep_seconds(attempt)
+            logger.warning(
+                "Binance REST read %s rate limited (%s); retry %s/%s in %.1fs",
+                op_name,
+                exc,
+                attempt + 1,
+                retries,
+                delay,
+            )
+            time.sleep(delay)
+    assert last_exc is not None  # pragma: no cover - loop returns or raises
+    raise last_exc
 
 
 def _ccxt_linear_usdt_perp_symbol(symbol: Optional[str]) -> Optional[str]:
@@ -410,11 +498,14 @@ class BinanceAPI:
             hashlib.sha256,
         ).hexdigest()
         url = f"{self._get_futures_base_url()}{path}?{query}&signature={sig}"
-        resp = requests.get(
-            url,
-            headers={"X-MBX-APIKEY": self.api_key},
-            timeout=30,
-            proxies=self._get_requests_proxies(),
+        resp = _call_binance_read(
+            f"GET {path}",
+            lambda: requests.get(
+                url,
+                headers={"X-MBX-APIKEY": self.api_key},
+                timeout=30,
+                proxies=self._get_requests_proxies(),
+            ),
         )
         resp.raise_for_status()
         text = (resp.text or "").strip()
@@ -553,7 +644,12 @@ class BinanceAPI:
         """
         try:
             url = f"{self._get_futures_base_url()}/fapi/v1/time"
-            resp = requests.get(url, timeout=5, proxies=self._get_requests_proxies())
+            resp = _call_binance_read(
+                "GET /fapi/v1/time",
+                lambda: requests.get(
+                    url, timeout=5, proxies=self._get_requests_proxies()
+                ),
+            )
             resp.raise_for_status()
             server_time = resp.json()["serverTime"]
             local_time = int(datetime.now().timestamp() * 1000)
@@ -623,7 +719,9 @@ class BinanceAPI:
             账户余额信息
         """
         try:
-            balance = self.exchange.fetch_balance()
+            balance = _call_binance_read(
+                "fetch_balance", lambda: self.exchange.fetch_balance()
+            )
             return balance
         except Exception as e:
             logger.error(f"获取账户余额失败: {e}")
@@ -682,8 +780,11 @@ class BinanceAPI:
         """
         try:
             ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol)
-            positions = self.exchange.fetch_positions(
-                symbols=[ccxt_sym] if ccxt_sym else None
+            positions = _call_binance_read(
+                "fetch_positions",
+                lambda: self.exchange.fetch_positions(
+                    symbols=[ccxt_sym] if ccxt_sym else None
+                ),
             )
             result = []
             for pos in positions:
@@ -983,7 +1084,10 @@ class BinanceAPI:
             # testnet + ccxt：部分私有 fapi 响应在库内变成空字符串，parse_orders 会崩
             if self.testnet:
                 return self._get_open_orders_fapi_rest(symbol)
-            orders = self.exchange.fetch_open_orders(ccxt_sym)
+            orders = _call_binance_read(
+                "fetch_open_orders",
+                lambda: self.exchange.fetch_open_orders(ccxt_sym),
+            )
             result = []
             for order in orders:
                 result.append(
