@@ -178,6 +178,52 @@ def _parse_symbols(raw: str) -> List[str]:
     return [s.strip().upper() for s in raw.split(",") if s.strip()]
 
 
+_FALLBACK_MULTI_LEG_SYMBOLS = "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT"
+
+
+def _read_universe_yaml_symbols(universe: str) -> List[str]:
+    """Load symbol keys from ``live/{universe}/universe.yaml`` (same keys as ``start_live.sh``)."""
+
+    import yaml
+
+    path = PROJECT_ROOT / "live" / str(universe).strip() / "universe.yaml"
+    if not path.is_file():
+        raise FileNotFoundError(str(path))
+    with open(path, "r", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    symbols = sorted((cfg.get("symbols") or {}).keys())
+    out = [str(s).strip().upper() for s in symbols if str(s).strip()]
+    return out
+
+
+def resolve_multi_leg_base_symbols_csv(args: argparse.Namespace) -> str:
+    """Resolve comma-separated base symbols.
+
+    Mirrors ``live/scripts/start_live.sh`` defaults: optional explicit ``--symbols``,
+    else keys from ``live/{universe}/universe.yaml``.
+    """
+
+    cli = getattr(args, "symbols", None)
+    if cli is not None and str(cli).strip():
+        return str(cli).strip()
+
+    universe = (
+        str(getattr(args, "universe", "highcap") or "highcap").strip() or "highcap"
+    )
+    try:
+        uni = _read_universe_yaml_symbols(universe)
+    except FileNotFoundError:
+        uni = []
+    if uni:
+        return ",".join(uni)
+
+    env_syms = os.environ.get("MLBOT_MULTI_LEG_SYMBOLS", "").strip()
+    if env_syms:
+        return env_syms
+
+    return _FALLBACK_MULTI_LEG_SYMBOLS
+
+
 def _make_api(mode: str, *, allow_shared_account: bool = False) -> Any:
     if mode == "shadow":
         api = MockBinanceAPI()
@@ -250,7 +296,9 @@ def build_daemon(
     args: argparse.Namespace,
 ) -> Tuple[MultiLegLiveDaemon, Any, MultiLegStorage | None, str | None]:
     apply_multi_leg_args_from_constitution(args)
-    symbols = _parse_symbols(args.symbols)
+    resolved_csv = resolve_multi_leg_base_symbols_csv(args)
+    setattr(args, "symbols", resolved_csv)
+    symbols = _parse_symbols(resolved_csv)
     strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
     strategy_symbols: Dict[str, List[str]] = {}
     active_symbol_set = set()
@@ -457,7 +505,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mode", choices=["shadow", "testnet", "mainnet"], default="shadow")
     p.add_argument("--strategies", default="chop_grid,dual_add_trend")
     p.add_argument(
-        "--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT"
+        "--universe",
+        default="highcap",
+        help=(
+            "When --symbols is omitted: load sorted symbol keys from "
+            "live/{universe}/universe.yaml (matches start_live.sh with no argv2)."
+        ),
+    )
+    p.add_argument(
+        "--symbols",
+        default=None,
+        help=(
+            "Comma-separated base symbols. Default from universe.yaml, then optionally "
+            "MLBOT_MULTI_LEG_SYMBOLS env if YAML is missing; else baked fallback."
+        ),
     )
     p.add_argument("--data-dir", default="data/parquet_data")
     p.add_argument(

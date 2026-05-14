@@ -19,8 +19,9 @@
 #     即 systemctl is-active quant-warmup-prepare == active（Type=oneshot RemainAfterExit）；全新宿主勿勾选，否则 Requires 链会卡住。
 #   quant-feature-bus — 唯一行情 WS + warmup(≈180d)+GapFiller 补数 + 特征 + FeatureBus；`docker logs quant-feature-bus` 可看 WS/重连
 #   quant-trend-fattail — 方向性趋势 / fat-tail 账户，只读 bus。
-#   quant-hedge-multileg — Hedge 多腿账户；`MLBOT_MULTI_LEG_SKIP_HEDGE_ON_START=1` 可临时跳过。systemd 里 MLBOT_MULTI_LEG_SYMBOLS
-#     为基底列表；各策略 meta 与基底求交；`--bar-source feature-store` 读 shared_feature_bus parquet。
+#   quant-hedge-multileg — Hedge 多腿账户；`MLBOT_MULTI_LEG_SKIP_HEDGE_ON_START=1` 可临时跳过。
+#     symbols 基底默认与 trend 同源：`live/{universe}/universe.yaml` keys（runner 不传 `--symbols`）；
+#     可选 `MLBOT_MULTI_LEG_SYMBOLS` 仅在找不到 YAML 时兜底；各策略 meta 再与基底求交；`--bar-source feature-store` 读 shared_feature_bus parquet。
 # Bind mount 约定（重要）：仅持久化 runtime 数据，config/scripts 必须来自镜像。
 #   /opt/quant-engine/live/shared_feature_bus → /app/live/shared_feature_bus  (feature bus parquet)
 #   /opt/quant-engine/live/highcap/data       → /app/live/highcap/data       (live storage / state / logs)
@@ -367,16 +368,12 @@ jobs:
             [Service]
             Restart=always
             RestartSec=5
-            # 与 quant-feature-bus 的 MLBOT_LIVE_SYMBOLS / live/highcap/universe.yaml 主流名单对齐
-            #（trend：start_live.sh 无 argv2 时从 universe.yaml 取 keys； hedge 若不设会变成单 BTC）
-            Environment=MLBOT_MULTI_LEG_SYMBOLS=BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT
             Environment=MLBOT_ACCOUNT_SCOPE=multi_leg
             ExecStartPre=-/usr/bin/docker rm -f quant-hedge-multileg
             ExecStart=/usr/bin/docker run --rm --name quant-hedge-multileg \
               --memory=1024m --memory-swap=1024m \
               -p 9191:9090 \
               --env-file /opt/quant-engine/live/binance_mainnet.env \
-              -e MLBOT_MULTI_LEG_SYMBOLS \
               -e MLBOT_ACCOUNT_SCOPE \
               -v /opt/quant-engine/live/shared_feature_bus:/app/live/shared_feature_bus \
               -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
@@ -385,7 +382,7 @@ jobs:
               bash -lc 'python scripts/run_multi_leg_live.py \
                 --mode mainnet \
                 --strategies chop_grid,dual_add_trend \
-                --symbols "$MLBOT_MULTI_LEG_SYMBOLS" \
+                --universe highcap \
                 --bar-source feature-store \
                 --feature-bus-root live/shared_feature_bus \
                 --feature-store-timeframe primary \
