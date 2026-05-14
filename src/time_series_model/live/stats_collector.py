@@ -16,7 +16,7 @@ import logging
 import os
 import sqlite3
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -118,6 +118,12 @@ class StatsCollector:
         self._by_strategy: Dict[str, Dict[str, Any]] = defaultdict(
             lambda: defaultdict(int)
         )
+
+        # 漏斗 digest：跨多次 flush 累加，每 digest_interval_s 打一条 INFO
+        self.digest_interval_s = float(os.getenv("MLBOT_FUNNEL_DIGEST_SECONDS", "900"))
+        self._digest_last_mono: float = 0.0
+        self._digest_globals: Dict[str, int] = defaultdict(int)
+        self._digest_by_strategy: Dict[str, Dict[str, Any]] = {}
 
         # 初始化 DB
         self._ensure_db()
@@ -293,12 +299,144 @@ class StatsCollector:
         except Exception:
             pass  # Prometheus 更新失败不影响主流程
 
+        self._accumulate_funnel_digest(snapshot)
+        self._maybe_log_funnel_digest()
+
         # 重置计数器
         self._reset()
 
         return snapshot
 
     # ── 内部方法 ──
+
+    def _accumulate_funnel_digest(self, snapshot: Dict[str, Any]) -> None:
+        """把本窗口快照累加到 digest buffer（多条 flush / 多条 symbol 合一）"""
+        self._digest_globals["bars_processed"] += int(
+            snapshot.get("bars_processed", 0) or 0
+        )
+        self._digest_globals["direction_assigned"] += int(
+            snapshot.get("direction_assigned", 0) or 0
+        )
+        self._digest_globals["gate_passed"] += int(snapshot.get("gate_passed", 0) or 0)
+        self._digest_globals["entry_filter_passed"] += int(
+            snapshot.get("entry_filter_passed", 0) or 0
+        )
+        self._digest_globals["evidence_passed"] += int(
+            snapshot.get("evidence_passed", 0) or 0
+        )
+        self._digest_globals["pcm_selected"] += int(
+            snapshot.get("pcm_selected", 0) or 0
+        )
+        self._digest_globals["orders_placed"] += int(
+            snapshot.get("orders_placed", 0) or 0
+        )
+
+        bys = snapshot.get("by_strategy") or {}
+        for strat, raw in bys.items():
+            if not isinstance(raw, dict):
+                continue
+            tgt = self._digest_by_strategy.setdefault(str(strat), {})
+
+            cnt_keys = (
+                "evals",
+                "direction",
+                "long",
+                "short",
+                "gate_passed",
+                "gate_rejected",
+                "entry_filter_passed",
+                "signals",
+                "pcm_selected",
+                "orders",
+            )
+            for k in cnt_keys:
+                if k not in raw:
+                    continue
+                v = raw.get(k)
+                if isinstance(v, (int, float)):
+                    tgt[k] = int(tgt.get(k, 0)) + int(v)
+
+            greasons = raw.get("gate_reject_reasons") or {}
+            rc: Counter = tgt.setdefault("_reject_reasons", Counter())
+            if isinstance(greasons, dict):
+                for reason, cnt in greasons.items():
+                    if isinstance(cnt, (int, float)):
+                        rc[str(reason)[:80]] += int(cnt)
+
+    def _clear_funnel_digest(self) -> None:
+        self._digest_globals.clear()
+        self._digest_by_strategy.clear()
+
+    def _maybe_log_funnel_digest(self) -> None:
+        if self.digest_interval_s <= 0:
+            return
+        now_mono = time.monotonic()
+        if self._digest_last_mono <= 0:
+            self._digest_last_mono = now_mono
+            return
+        if now_mono - self._digest_last_mono < self.digest_interval_s:
+            return
+
+        dg = dict(self._digest_globals)
+        bys = sorted(self._digest_by_strategy.items(), key=lambda x: x[0])
+        chunks: List[str] = []
+        for strat, d in bys:
+            ev = int(d.get("evals", 0) or 0)
+            if ev == 0:
+                continue
+            dir_ok = int(d.get("direction", 0) or 0)
+            g_ok = int(d.get("gate_passed", 0) or 0)
+            g_bad = int(d.get("gate_rejected", 0) or 0)
+            ef_ok = int(d.get("entry_filter_passed", 0) or 0)
+            sig = int(d.get("signals", 0) or 0)
+            ord_c = int(d.get("orders", 0) or 0)
+            pcm_c = int(d.get("pcm_selected", 0) or 0)
+            no_dir = max(0, ev - dir_ok)
+
+            hint = ""
+            if no_dir >= max(ev * 50 // 100, g_bad + ef_ok):
+                hint = "hint: mostly direction (no side / no rule fit)"
+            elif g_bad >= max(ev * 30 // 100, 1):
+                hint = "hint: many gate vetoes (see reasons)"
+            elif g_ok > ef_ok and ef_ok < g_ok:
+                hint = "hint: past gate but entry_filter rarely passes"
+
+            rc = d.get("_reject_reasons") or Counter()
+            if isinstance(rc, Counter):
+                top = ",".join(f"{rr}:{cc}" for rr, cc in rc.most_common(4))
+            else:
+                top = ""
+
+            blk = f"{strat}[ev={ev} no_dir≈{no_dir} " f"gate✓{g_ok} gate✗{g_bad}" + (
+                f" reasons({top})" if top else ""
+            ) + f" ef✓{ef_ok} pcm={pcm_c} evid_sig≈{sig} ord={ord_c}" + (
+                f" | {hint}" if hint else ""
+            )
+            chunks.append(blk)
+
+        if chunks:
+            logger.info(
+                "📈 funnel digest（过去 ~%.0fs 累计｜每层：eval→dir→gate→ef→signal→PCM→order）："
+                " bars=%s | GLOBAL dir/gate+/ef/ev/pcm/order=%s/%s/%s/%s/%s/%s\n    %s",
+                self.digest_interval_s,
+                dg.get("bars_processed", 0),
+                dg.get("direction_assigned", 0),
+                dg.get("gate_passed", 0),
+                dg.get("entry_filter_passed", 0),
+                dg.get("evidence_passed", 0),
+                dg.get("pcm_selected", 0),
+                dg.get("orders_placed", 0),
+                "\n    ".join(chunks),
+            )
+        else:
+            logger.info(
+                "📈 funnel digest（过去 ~%.0fs）：无策略 evaluate 计数（或未触发 PCM 链路）｜GLOBAL bars=%s",
+                self.digest_interval_s,
+                dg.get("bars_processed", 0),
+            )
+
+        self._clear_funnel_digest()
+        self._digest_last_mono = now_mono
 
     def _reset(self) -> None:
         """重置所有计数器"""

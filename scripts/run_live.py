@@ -456,7 +456,12 @@ def _set_quantiles_per_symbol(
             all_quantiles.append({k: dict(v) for k, v in strategy._quantiles.items()})
 
     if not all_quantiles:
-        logger.warning("[quantiles] %s: 无有效 quantiles", arch_name)
+        logger.warning(
+            "[quantiles] %s: 各 symbol 融合后无任何 quantile 阈值（通常为 gate.yaml 里没有 "
+            "quantile_/quantile_* 条件，或对应列缺失/有效样本不足 10）；"
+            "若 gate 只用量级比较而不依赖样本分位数，此 WARNING 可忽略。",
+            arch_name,
+        )
         return
 
     # 3. 取中位数融合
