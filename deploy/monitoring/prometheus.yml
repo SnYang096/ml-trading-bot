@@ -23,6 +23,12 @@ scrape_configs:
         labels:
           instance: "live"
           workload: "multi_leg_consumer"
+    # multi-leg 进程的 /metrics 包含与 classic 同名的 mlbot_* 注册表副本；若全盘入库会导致
+    # Grafana Stat/单序列面板出现「多条时间序列」进而显示 No data。只保留多腿专用与 OHLC gauge。
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "^(mlbot_multi_leg_.+|mlbot_strategy_symbol_bar_ohlc)$"
+        action: keep
 
   # Prometheus 自身
   - job_name: "prometheus"
