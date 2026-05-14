@@ -5,73 +5,66 @@
   "id": null,
   "links": [
     { "title": "Home", "url": "/d/quant-home", "type": "link", "targetBlank": false },
-    { "title": "Trend strategy map", "url": "/d/quant-strategy-map-trend", "type": "link", "targetBlank": false },
-    { "title": "Strategy map hub", "url": "/d/quant-strategy-map", "type": "link", "targetBlank": false }
+    { "title": "Trend map", "url": "/d/quant-strategy-map-trend", "type": "link", "targetBlank": false },
+    { "title": "Hub", "url": "/d/quant-strategy-map", "type": "link", "targetBlank": false }
   ],
   "panels": [
     {
       "type": "text",
       "title": "",
       "id": 891,
-      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "**Multi-leg hedge only** — separate dashboard from Trend. Pipeline panel uses `mlbot_multi_leg_*`. OHLC/feature gauges appear when `run_multi_leg_live` publishes them. Symbol multi-select uses `${symbol:regex}`."
+        "content": "### Multi-leg hedge → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | **15s**（与 trend 共用 `prometheus.yml` global）|\n| **Daemon 主循环** | `MultiLegDaemon.poll_seconds`，默认 **30s**；有 bar/动作时 `run_once` 内更新 `mlbot_multi_leg_*`、事件与持仓 gauge |\n| **账户/健康** | `run_multi_leg_live` 里 `MLBOT_MARKET_DATA_INTERVAL`，默认 **30s**，刷新账户等 gauge |\n| **事件** | `record_strategy_event`：place / reject / execution 等在 **动作发生时** 写入；图上是 scrape 阶梯 |\n\n**「各层」**：以 **multi-leg 管道**（bars → actions → exec → risk_reject）为主；经典 `mlbot_funnel_total` 仅在该 job 也 flush 统计时才有数据。"
       },
       "transparent": false
     },
     {
       "type": "stat",
-      "title": "Hedge · OHLC series count",
+      "title": "Hedge · daemon poll 总次数（Counter）",
       "id": 890,
-      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 3 },
+      "gridPos": { "h": 3, "w": 8, "x": 0, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        {
-          "refId": "A",
-          "expr": "count(mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\",timeframe=~\"${timeframe:regex}\"})",
-          "legendFormat": "series"
-        }
+        { "refId": "A", "expr": "mlbot_multi_leg_daemon_polls_total{job=~\"$job\"}", "instant": true }
       ],
       "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "none" }
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
     },
     {
       "type": "stat",
-      "title": "Hedge · multi-leg bars rate (sum)",
+      "title": "Hedge · bars 处理 rate（sum）",
       "id": 893,
-      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 3 },
+      "gridPos": { "h": 3, "w": 8, "x": 8, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(mlbot_multi_leg_bars_processed_total{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[$__rate_interval]))",
-          "legendFormat": "ops"
+          "expr": "sum(rate(mlbot_multi_leg_bars_processed_total{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[5m]))",
+          "instant": true
         }
       ],
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
     },
     {
-      "type": "timeseries",
-      "title": "Hedge · OHLC",
-      "id": 311,
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 7 },
+      "type": "stat",
+      "title": "Hedge · CPU %",
+      "id": 894,
+      "gridPos": { "h": 3, "w": 8, "x": 16, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\",timeframe=~\"${timeframe:regex}\",field=\"open\"}", "legendFormat": "open" },
-        { "refId": "B", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\",timeframe=~\"${timeframe:regex}\",field=\"high\"}", "legendFormat": "high" },
-        { "refId": "C", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\",timeframe=~\"${timeframe:regex}\",field=\"low\"}", "legendFormat": "low" },
-        { "refId": "D", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\",timeframe=~\"${timeframe:regex}\",field=\"close\"}", "legendFormat": "close" }
+        { "refId": "A", "expr": "mlbot_cpu_percent{job=~\"$job\"}", "instant": true }
       ],
-      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
     },
     {
       "type": "timeseries",
-      "title": "Hedge · multi-leg pipeline",
+      "title": "Hedge · multi-leg 管道",
       "id": 312,
-      "gridPos": { "h": 8, "w": 14, "x": 0, "y": 16 },
+      "gridPos": { "h": 9, "w": 14, "x": 0, "y": 9 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -106,9 +99,9 @@
     },
     {
       "type": "timeseries",
-      "title": "Hedge · classic funnel / orders (if present on scrape)",
+      "title": "Hedge · 经典漏斗 / orders（若 job 产出）",
       "id": 313,
-      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 16 },
+      "gridPos": { "h": 9, "w": 10, "x": 14, "y": 9 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -130,25 +123,9 @@
     },
     {
       "type": "timeseries",
-      "title": "Hedge · features",
-      "id": 314,
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "mlbot_strategy_feature_value{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\",timeframe=~\"${timeframe:regex}\",layer=~\"${feature_layer:regex}\"}",
-          "legendFormat": "{{layer}} · {{feature}}"
-        }
-      ],
-      "fieldConfig": { "defaults": {}, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
-    },
-    {
-      "type": "timeseries",
-      "title": "Hedge · events",
+      "title": "Hedge · 事件（place / reject / execution …）",
       "id": 315,
-      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 32 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -162,9 +139,9 @@
     },
     {
       "type": "timeseries",
-      "title": "Hedge · last event price",
+      "title": "Hedge · 最近事件价",
       "id": 316,
-      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 32 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 26 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -173,18 +150,45 @@
           "legendFormat": "{{strategy}} {{event}} {{side}}"
         }
       ],
-      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
     },
     {
       "type": "table",
-      "title": "Hedge · positions",
+      "title": "Hedge · 持仓快照",
       "id": 317,
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 39 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"})", "format": "table", "instant": true },
-        { "refId": "B", "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"})", "format": "table", "instant": true }
+        {
+          "refId": "A",
+          "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"})",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"})",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "table",
+      "title": "Hedge · 事件计数（时间轴）",
+      "id": 318,
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, event, side) (increase(mlbot_strategy_event_total{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[$__range]))",
+          "format": "table",
+          "instant": true
+        }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "showHeader": true }
@@ -221,29 +225,6 @@
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
         "query": "label_values(mlbot_dashboard_catalog{job=~\"$job\",role=\"symbol\"}, name)",
-        "refresh": 1,
-        "multi": true,
-        "includeAll": true,
-        "allValue": ".+",
-        "current": { "text": "All", "value": "$__all", "selected": true }
-      },
-      {
-        "name": "timeframe",
-        "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values({__name__=~\"mlbot_strategy_symbol_bar_ohlc|mlbot_strategy_feature_value\",job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}, timeframe)",
-        "refresh": 1,
-        "multi": true,
-        "includeAll": true,
-        "allValue": ".+",
-        "current": { "text": "All", "value": "$__all", "selected": true }
-      },
-      {
-        "name": "feature_layer",
-        "label": "layer",
-        "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_strategy_feature_value{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}, layer)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
