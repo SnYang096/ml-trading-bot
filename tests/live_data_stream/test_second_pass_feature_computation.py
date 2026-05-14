@@ -869,6 +869,32 @@ class TestMetadataWarmupCheck:
         )
         fc._validate_warmup(bars_tf, features={"atr_percentile": 0.5})  # 不应报错
 
+    def test_validate_warmup_skips_non_numeric_objects_in_last_row(self):
+        """最后一行若有分类列 (如 box_regime_label=str)，不得以 float(str) 抛错。"""
+        from src.time_series_model.live.incremental_feature_computer import (
+            IncrementalFeatureComputer,
+        )
+
+        fc = IncrementalFeatureComputer.__new__(IncrementalFeatureComputer)
+        fc.live_feature_set = {"atr_percentile"}
+        fc._feature_deps = {
+            "features": {
+                "atr_percentile_f": {
+                    "compute_func": "compute_atr_percentile_from_series",
+                    "compute_params": {"window": 540},
+                    "output_columns": ["atr_percentile"],
+                },
+            }
+        }
+        bars_tf = pd.DataFrame(
+            {
+                "atr_percentile": [0.55],
+                "box_regime_label": ["mid"],
+            },
+            index=pd.date_range("2024-01-01", periods=1, freq="4h"),
+        )
+        fc._validate_warmup(bars_tf, features=None)
+
 
 class TestCodePathUnification:
     """compute_features_batch 和 compute_features_dataframe 共享 _compute_features_core。"""

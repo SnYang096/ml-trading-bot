@@ -1447,13 +1447,18 @@ class IncrementalFeatureComputer:
         # 如果没传 features dict，从 DataFrame 最后一行构建
         if features is None and len(bars_tf) > 0:
             last_row = bars_tf.iloc[-1]
-            features = {
-                str(k): float(v)
-                for k, v in last_row.items()
-                if v is not None
-                and np.isscalar(v)
-                and not (isinstance(v, float) and np.isnan(v))
-            }
+            features = {}
+            for k, v in last_row.items():
+                if v is None or not np.isscalar(v):
+                    continue
+                if isinstance(v, (str, bytes)):
+                    continue
+                if pd.isna(v):
+                    continue
+                try:
+                    features[str(k)] = float(v)
+                except (TypeError, ValueError):
+                    continue
         elif features is None:
             features = {}
 
