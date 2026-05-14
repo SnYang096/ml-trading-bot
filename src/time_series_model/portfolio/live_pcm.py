@@ -394,8 +394,8 @@ class LivePCM:
       3. 同 symbol 不同 archetype 同时触发 → 当前 regime 优先级选最高
       4. 同优先级比 Evidence Score（高的优先）
       5. 跨 symbol slot 控制（从 constitution 读 max_slots）
-      6. Regime 仓位缩放 + Evidence 仓位缩放 → size_multiplier 调整
-      7. Evidence 入场门槛（score < min_score → 拒绝开仓）
+      6. Regime 仓位缩放 → 乘到 intent.size_multiplier（来自 execution / regime_execution）
+      7. Evidence 入场门槛（score < min_score → 拒绝开仓）；evidence 不参与倍数缩放
 
     配置来源:
         constitution.yaml:  slot_count, risk_per_slot, per_strategy_limits
@@ -1510,8 +1510,6 @@ class LivePCM:
         # Regime 缩放
         regime_scale = self.get_archetype_scale(intent.archetype)
         new_mult = existing_mult * regime_scale
-
-        # Evidence 缩放已包含在 intent.size_multiplier 中 (GenericLiveStrategy.decide)
 
         if new_mult >= 1.0 and regime_scale >= 1.0:
             return intent

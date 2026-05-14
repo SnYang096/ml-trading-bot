@@ -5,7 +5,7 @@ GenericLiveStrategy 单元+集成测试
   1. DirectionEvaluator — 4 种 transform + 缺失特征 + 无效值 + 多规则优先
   2. GateEvaluator — hard deny / allow / 无 gate
   3. EntryFilterChecker — OR 组合通过 / 全拒 / 无配置默认通过
-  4. EvidenceScorer — 有/无 quantiles / 无 archetype 回退 0.5
+  4. Archetype EvidenceConfig — 可选；参与 confidence，不参与 size_multiplier
   5. ExecutionParamGenerator — 多 tier 选择 / 默认 tier / 无 tier
   6. GenericLiveStrategy 主类:
      - __init__ 自动 load_configs
@@ -17,7 +17,7 @@ GenericLiveStrategy 单元+集成测试
   7. 边界/异常:
      - 缺少 direction.yaml → 警告但不崩溃
      - 空 features → []
-     - gate_weight 对 evidence score 的调制
+     - Gate soft weight → 写入 funnel gate_weight（不调 confidence）
   8. 性能: 1000 次 decide < 10ms 均值
 """
 
@@ -31,7 +31,6 @@ import yaml
 from src.time_series_model.live.generic_live_strategy import (
     DirectionEvaluator,
     EntryFilterChecker,
-    EvidenceScorer,
     ExecutionParamGenerator,
     GateEvaluator,
     GenericLiveStrategy,
@@ -390,7 +389,8 @@ class TestGenericInit:
         assert s.archetype is not None
         assert s.direction_evaluator is not None
         assert s.gate_evaluator is not None
-        assert s.evidence_scorer is not None
+        assert s.archetype.evidence is not None
+        assert len(s.archetype.evidence.features) > 0
         assert s.execution_generator is not None
         assert s.entry_filter_checker is not None
 
@@ -490,6 +490,7 @@ class TestDecidePipeline:
         intents = s.decide(
             features={
                 "signal_score": 0.8,
+                "danger_flag": 0.1,
                 "bollinger_position": 0.5,  # < 0.8
                 "liq_silence": 0.3,  # < 0.5
             },
@@ -503,6 +504,7 @@ class TestDecidePipeline:
         intents = s.decide(
             features={
                 "signal_score": 0.8,
+                "danger_flag": 0.1,
                 "bollinger_position": 0.5,  # fail
                 "liq_silence": 0.7,  # pass
             },
@@ -514,7 +516,11 @@ class TestDecidePipeline:
         """验证 TradeIntent 的 execution_profile 结构"""
         s = GenericLiveStrategy(strategy_name="bpc", strategies_root=full_config)
         intents = s.decide(
-            features={"signal_score": 0.8, "bollinger_position": 0.9},
+            features={
+                "signal_score": 0.8,
+                "danger_flag": 0.1,
+                "bollinger_position": 0.9,
+            },
             symbol="BTCUSDT",
         )
         assert len(intents) == 1
@@ -529,7 +535,11 @@ class TestDecidePipeline:
     def test_confidence_between_0_and_1(self, full_config):
         s = GenericLiveStrategy(strategy_name="bpc", strategies_root=full_config)
         intents = s.decide(
-            features={"signal_score": 0.8, "bollinger_position": 0.9},
+            features={
+                "signal_score": 0.8,
+                "danger_flag": 0.1,
+                "bollinger_position": 0.9,
+            },
             symbol="X",
         )
         assert len(intents) == 1
@@ -544,9 +554,25 @@ class TestDecidePipeline:
     def test_last_tier_params_saved(self, full_config):
         s = GenericLiveStrategy(strategy_name="bpc", strategies_root=full_config)
         assert s._last_tier_params is None
-        s.decide(features={"signal_score": 0.8, "bollinger_position": 0.9}, symbol="X")
+        s.decide(
+            features={
+                "signal_score": 0.8,
+                "danger_flag": 0.1,
+                "bollinger_position": 0.9,
+            },
+            symbol="X",
+        )
         assert s._last_tier_params is not None
         assert "tier_name" in s._last_tier_params
+
+    def test_size_multiplier_ignores_evidence_score(self, base_config):
+        """仓位倍数仅来自 execution（默认 1.0），不因特征变化而按 evidence 缩放"""
+        s = GenericLiveStrategy(strategy_name="bpc", strategies_root=base_config)
+        low = {"signal_score": 0.8, "feat_a": 0.01, "feat_b": 0.01}
+        high = {"signal_score": 0.8, "feat_a": 0.99, "feat_b": 0.99}
+        a = s.decide(features=low, symbol="X")[0]
+        b = s.decide(features=high, symbol="X")[0]
+        assert a.size_multiplier == b.size_multiplier == 1.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -584,6 +610,7 @@ class TestEvaluateEntrySignal:
         ok, info = s._evaluate_entry_signal(
             {
                 "signal_score": 0.8,
+                "danger_flag": 0.1,
                 "bollinger_position": 0.5,
                 "liq_silence": 0.3,
             }
@@ -660,17 +687,19 @@ class TestMultiStrategy:
 
 
 class TestGateWeightModulation:
-    """Gate weight 调制 evidence score"""
+    """Gate soft weight 写入 funnel；confidence 仍为 evidence 综合分"""
 
-    def test_gate_weight_applied_to_confidence(self, full_config):
-        """当 gate 有 soft weight 时, confidence = evidence * gate_weight"""
+    def test_confidence_is_evidence_not_gate_weight(self, full_config):
         s = GenericLiveStrategy(strategy_name="bpc", strategies_root=full_config)
         intents = s.decide(
-            features={"signal_score": 0.8, "bollinger_position": 0.9},
+            features={
+                "signal_score": 0.8,
+                "danger_flag": 0.1,
+                "bollinger_position": 0.9,
+            },
             symbol="X",
         )
         assert len(intents) == 1
-        # confidence 应 <= 1.0 (gate_weight <= 1.0)
         assert intents[0].confidence <= 1.0
 
 
@@ -714,7 +743,7 @@ class TestRealConfigIntegration:
     def test_archetype_loaded(self, real_strategy):
         assert real_strategy.archetype is not None
         assert len(real_strategy.archetype.gate.all_rules) > 0
-        assert len(real_strategy.archetype.evidence.features) > 0
+        assert real_strategy.archetype.evidence is not None
 
     def test_direction_evaluator_loaded(self, real_strategy):
         assert real_strategy.direction_evaluator is not None

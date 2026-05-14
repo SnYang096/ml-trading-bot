@@ -8,8 +8,8 @@ GenericLiveStrategy - 配置驱动的通用策略解析引擎
 1. DirectionEvaluator: 解析 direction.yaml 规则
 2. GateEvaluator: 评估 gate.yaml 条件
 3. EntryFilterChecker: 检查 entry_filters.yaml
-4. EvidenceScorer: 计算 evidence.yaml 评分
-5. ExecutionParamGenerator: 生成 execution.yaml 参数
+4. Evidence（可选）: archetype.evidence 计算综合分，用于 PCM 仲裁/confidence；不调仓位倍数
+5. ExecutionParamGenerator: 生成 execution.yaml 参数（含 regime_execution.size_multiplier）
 """
 
 from __future__ import annotations
@@ -381,7 +381,10 @@ class EntryFilterChecker:
 
 
 class ExecutionParamGenerator:
-    """根据 evidence score 生成执行参数"""
+    """根据 execution.yaml（及可选 regime_execution 补丁）生成执行参数。
+
+    ``evidence_score`` 参数仅为历史 API 保留；当前实现不用它调 stop/TP 或 size。
+    """
 
     def __init__(self, execution_config: Dict[str, Any]):
         self.config = execution_config
@@ -806,8 +809,8 @@ class GenericLiveStrategy:
           1. Direction: 从 direction.yaml 确定方向
           2. Gate: 从 gate.yaml 进行结构性过滤
           3. Entry Filter: 从 entry_filters.yaml 检查入场时机
-          4. Evidence: 从 evidence.yaml 计算评分
-          5. Execution: 从 execution.yaml 生成执行参数
+          4. Evidence: 可选，从 archetype.evidence 计算综合分 → TradeIntent.confidence（不调仓位倍数）
+          5. Execution: 从 execution.yaml 生成参数；TradeIntent.size_multiplier 仅来自此处（含 regime_execution）
         """
         if not features:
             self._last_funnel = {}
@@ -1042,16 +1045,15 @@ class GenericLiveStrategy:
                     pass
 
         # ── 6. 构建 TradeIntent ──
-        # evidence 缩放: score 0→0.5x, 0.5→0.75x, 1→1.0x；可选 regime size_multiplier
-        _reg_sm = float(exec_params.get("size_multiplier", 1.0) or 1.0)
-        ev_size_multiplier = (0.5 + evidence_score) * _reg_sm
+        # 仓位倍数仅来自 execution（含 regime_execution 补丁）；evidence_score 不写进 size_multiplier
+        _exec_sm = float(exec_params.get("size_multiplier", 1.0) or 1.0)
         intent = TradeIntent(
             action=action,
             symbol=symbol,
             archetype=self.strategy_name,
             execution_strategy=self.strategy_name,
             confidence=evidence_score,
-            size_multiplier=ev_size_multiplier,
+            size_multiplier=_exec_sm,
             execution_tags=[self.strategy_name, side_str],
             execution_profile={
                 "rr_constraints": {
