@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import os
 import sqlite3
@@ -59,6 +60,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 os.chdir(PROJECT_ROOT)
 
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "pipelines" / "pcm_orchestrate_2h.yaml"
+
+logger = logging.getLogger(__name__)
 
 
 # ====================================================================
@@ -264,15 +267,28 @@ def load_live_trades(
     """加载实盘交易记录, DB 优先, JSONL fallback."""
     trades = load_live_trades_from_db(db_path, strategy=strategy, days=days)
     if trades:
-        print(f"  📊 从 DB 加载 {len(trades)} 笔交易 (近 {days} 天)")
+        logger.info(
+            "monitor_retrain: loaded %s closed trades from DB (past %d days)",
+            len(trades),
+            days,
+        )
         return trades
 
     trades = load_live_trades_from_jsonl(log_dir, strategy=strategy, days=days)
     if trades:
-        print(f"  📊 从 JSONL 加载 {len(trades)} 笔交易 (近 {days} 天)")
+        logger.info(
+            "monitor_retrain: loaded %s closed trades from JSONL (past %d days)",
+            len(trades),
+            days,
+        )
         return trades
 
-    print(f"  ⚠️  无实盘交易记录 (DB: {db_path}, JSONL: {log_dir})")
+    logger.info(
+        "monitor_retrain: no closed trades yet (normal for new/observe-only); "
+        "db=%s jsonl_root=%s",
+        db_path,
+        log_dir,
+    )
     return []
 
 
@@ -668,6 +684,11 @@ def main():
         help="打印重训命令但不执行",
     )
     args = p.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
     cfg = load_config(Path(args.config))
     triggers_cfg = cfg.get("retrain_triggers", {})
