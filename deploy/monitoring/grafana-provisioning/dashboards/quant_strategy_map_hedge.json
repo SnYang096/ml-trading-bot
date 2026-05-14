@@ -16,7 +16,7 @@
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "### Multi-leg hedge → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | **15s**（与 trend 共用 `prometheus.yml` global）|\n| **Daemon 主循环** | `MultiLegDaemon.poll_seconds`，默认 **30s**；有 bar/动作时 `run_once` 内更新 `mlbot_multi_leg_*`、事件与持仓 gauge |\n| **账户/健康** | `run_multi_leg_live` 里 `MLBOT_MARKET_DATA_INTERVAL`，默认 **30s**，刷新账户等 gauge |\n| **事件** | `record_strategy_event`：place / reject / execution 等在 **动作发生时** 写入；图上是 scrape 阶梯 |\n\n**「各层」**：以 **multi-leg 管道**（bars → actions → exec → risk_reject）为主；经典 `mlbot_funnel_total` 仅在该 job 也 flush 统计时才有数据。"
+        "content": "### Multi-leg hedge → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | **15s**（与 trend 共用 `prometheus.yml` global）|\n| **Daemon 主循环** | `MultiLegDaemon.poll_seconds`，默认 **30s**；每条 **已消费的 bar** 在 `run_once` 内更新 `mlbot_multi_leg_*`、事件与持仓 gauge |\n| **账户/健康** | `run_multi_leg_live` 里 `MLBOT_MARKET_DATA_INTERVAL`，默认 **30s**，刷新账户等 gauge |\n| **事件** | 每 bar **`bar_tick`**（heartbeat）；portfolio 否决 **`risk_reject`** + **`mlbot_multi_leg_risk_reject_codes_total{code}`**；同 symbol 多策略开仓冲突 **`symbol_conflict`**；approved **place / execution …** 在动作发生时写入；图上为 scrape 阶梯 |\n\n**「各层」**：以 **multi-leg 管道**（bars → actions → exec → risk_reject）为主；经典 `mlbot_funnel_total` 仅在该 job 也 flush 统计时才有数据。"
       },
       "transparent": false
     },
@@ -123,9 +123,25 @@
     },
     {
       "type": "timeseries",
-      "title": "Hedge · 事件（place / reject / execution …）",
+      "title": "Hedge · Risk veto by code（governor + symbol_conflict）",
+      "id": 319,
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, symbol, code) (rate(mlbot_multi_leg_risk_reject_codes_total{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[$__rate_interval]))",
+          "legendFormat": "{{strategy}} {{symbol}} {{code}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge · 事件（bar_tick / place / risk_reject / symbol_conflict / execution …）",
       "id": 315,
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -141,7 +157,7 @@
       "type": "timeseries",
       "title": "Hedge · 最近事件价",
       "id": 316,
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 26 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 33 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -157,7 +173,7 @@
       "type": "table",
       "title": "Hedge · 持仓快照",
       "id": 317,
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 39 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -180,7 +196,7 @@
       "type": "table",
       "title": "Hedge · 事件计数（时间轴）",
       "id": 318,
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 40 },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 47 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {

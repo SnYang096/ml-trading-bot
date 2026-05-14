@@ -9,9 +9,30 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Protocol
 
 from src.order_management.multi_leg_orchestrator import MultiLegLiveOrchestrator
+from src.order_management.multi_leg_risk_governor import RiskRejection
 from src.time_series_model.live.metrics_exporter import METRICS
 
 logger = logging.getLogger(__name__)
+
+
+def _risk_reject_metric_code(reason: str) -> str:
+    """Map portfolio governor prose to low-cardinality Prometheus label."""
+    r = (reason or "").lower()
+    if "max_drawdown" in r:
+        return "max_drawdown"
+    if "max_resting_orders" in r:
+        return "max_resting_orders"
+    if "unsupported place side" in r or "unsupported side" in r:
+        return "unsupported_side"
+    if "max_symbol_gross_notional" in r:
+        return "symbol_gross_limit"
+    if "max_symbol_net_notional" in r:
+        return "symbol_net_limit"
+    if "max_gross_notional" in r:
+        return "gross_limit"
+    if "max_net_notional" in r:
+        return "net_limit"
+    return "other"
 
 
 @dataclass(frozen=True)
@@ -131,6 +152,28 @@ class MultiLegLiveDaemon:
                             rt.name,
                             owner,
                         )
+                        try:
+                            for da in dropped:
+                                side_conflict = str(
+                                    (da or {}).get("side", "na") or "na"
+                                ).lower()
+                                METRICS.multi_leg_risk_reject_codes_total.labels(
+                                    strategy=rt.name,
+                                    symbol=rt.symbol,
+                                    code="symbol_conflict",
+                                ).inc(1)
+                                METRICS.record_strategy_event(
+                                    scope="hedge",
+                                    strategy=rt.name,
+                                    symbol=rt.symbol,
+                                    event="symbol_conflict",
+                                    side=side_conflict,
+                                )
+                        except Exception:
+                            logger.debug(
+                                "multi-leg symbol-conflict metrics skipped",
+                                exc_info=True,
+                            )
                 action_count += len(actions)
                 should_reconcile = bool(actions) or bool(reconcile_due_symbols.get(sym))
                 exchange_orders = None
@@ -210,16 +253,30 @@ class MultiLegLiveDaemon:
                             side=side,
                             price=price if isinstance(price, (int, float, str)) else None,
                         )
-                    for action in report.risk.rejected or []:
-                        if not isinstance(action, dict):
+                    for rej in report.risk.rejected or []:
+                        rejected_action: Dict[str, Any]
+                        reason_txt = ""
+                        if isinstance(rej, RiskRejection):
+                            rejected_action = rej.action or {}
+                            reason_txt = rej.reason or ""
+                        elif isinstance(rej, dict):
+                            rejected_action = rej
+                            reason_txt = str(rej.get("reason", "") or "")
+                        else:
                             continue
-                        side = str(action.get("side", "na") or "na").lower()
+                        code = _risk_reject_metric_code(reason_txt)
+                        side_r = str(
+                            (rejected_action or {}).get("side", "na") or "na"
+                        ).lower()
+                        METRICS.multi_leg_risk_reject_codes_total.labels(
+                            strategy=rt.name, symbol=rt.symbol, code=code
+                        ).inc(1)
                         METRICS.record_strategy_event(
                             scope="hedge",
                             strategy=rt.name,
                             symbol=rt.symbol,
-                            event="reject",
-                            side=side,
+                            event="risk_reject",
+                            side=side_r,
                         )
                     for result in report.execution_results or []:
                         evt = str(getattr(result, "action", "execution") or "execution")
@@ -243,6 +300,13 @@ class MultiLegLiveDaemon:
                             strategy=rt.name,
                             positions=exchange_positions,
                         )
+                    METRICS.record_strategy_event(
+                        scope="hedge",
+                        strategy=rt.name,
+                        symbol=rt.symbol,
+                        event="bar_tick",
+                        side="na",
+                    )
                 except Exception:
                     logger.debug("multi-leg metrics update skipped", exc_info=True)
 

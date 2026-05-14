@@ -128,6 +128,7 @@ class Metrics:
             self.multi_leg_reconciliation_issues_total = _NOOP
             self.multi_leg_user_stream_events_total = _NOOP
             self.multi_leg_daemon_polls_total = _NOOP
+            self.multi_leg_risk_reject_codes_total = _NOOP
             self.strategy_symbol_bar_ohlc = _NOOP
             self.account_update_success = _NOOP
             self.account_update_age_seconds = _NOOP
@@ -197,6 +198,11 @@ class Metrics:
         self.multi_leg_daemon_polls_total = Counter(
             "mlbot_multi_leg_daemon_polls_total",
             "Completed multi-leg daemon poll iterations (run_forever loop ticks)",
+        )
+        self.multi_leg_risk_reject_codes_total = Counter(
+            "mlbot_multi_leg_risk_reject_codes_total",
+            "Multi-leg portfolio risk vetoes by coarse reason bucket",
+            ["strategy", "symbol", "code"],
         )
 
         self.strategy_symbol_bar_ohlc = Gauge(

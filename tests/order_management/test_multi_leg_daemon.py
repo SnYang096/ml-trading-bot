@@ -204,6 +204,42 @@ def test_daemon_processes_multiple_new_bars_for_same_symbol_in_order() -> None:
     ]
 
 
+@patch(
+    "src.order_management.multi_leg_daemon.METRICS.multi_leg_risk_reject_codes_total"
+)
+@patch("src.order_management.multi_leg_daemon.METRICS.record_strategy_event")
+def test_daemon_emits_bar_tick_and_risk_reject_metrics_for_governor_veto(
+    record_evt: MagicMock, risk_codes: MagicMock
+) -> None:
+    bar = MultiLegBarEvent(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01 00:00:00+00:00",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={},
+    )
+    engine = FakeEngine(action_price=200_000.0)
+    adapter = _adapter()
+    daemon = MultiLegLiveDaemon(
+        bar_provider=FakeProvider([bar]),
+        runtimes=[_runtime("dual_add_trend", "BTCUSDT", engine, adapter)],
+    )
+    inc_mock = MagicMock()
+    risk_codes.labels.return_value = inc_mock
+
+    daemon.run_once()
+
+    events = [c.kwargs.get("event") for c in record_evt.call_args_list]
+    assert events.count("bar_tick") == 1
+    assert "risk_reject" in events
+    risk_codes.labels.assert_called_once_with(
+        strategy="dual_add_trend", symbol="BTCUSDT", code="gross_limit"
+    )
+    inc_mock.inc.assert_called_once_with(1)
+
+
 def test_daemon_reports_rejections_from_governor() -> None:
     bar = MultiLegBarEvent(
         symbol="BTCUSDT",

@@ -96,7 +96,8 @@ class LiveDependencyChecker:
             self.errors.append(f"BPC策略配置缺失: {bpc_dir}")
         else:
             arch_dir = bpc_dir / "archetypes"
-            required_archetypes = ["gate.yaml", "evidence.yaml", "execution.yaml", "prefilter.yaml"]
+            # evidence.yaml: optional at runtime (loader returns empty EvidenceConfig if absent)
+            required_archetypes = ["gate.yaml", "execution.yaml", "prefilter.yaml"]
             missing_files = []
 
             if not (bpc_dir / "meta.yaml").exists():
@@ -114,8 +115,16 @@ class LiveDependencyChecker:
                 )
             else:
                 logger.info(f"   ✅ BPC Config: {bpc_dir}")
+                present = list(required_archetypes)
+                evid = arch_dir / "evidence.yaml"
+                if evid.exists():
+                    present.append("evidence.yaml")
+                else:
+                    self.warnings.append(
+                        f"未找到 {arch_dir / 'evidence.yaml'}（可选；无则 Evidence 层为空配置）"
+                    )
                 logger.info(
-                    "      - meta.yaml, " + ", ".join(f"archetypes/{f}" for f in required_archetypes)
+                    "      - meta.yaml, " + ", ".join(f"archetypes/{f}" for f in present)
                 )
     
     def _check_warmup_ticks(self, symbols: List[str]) -> None:
