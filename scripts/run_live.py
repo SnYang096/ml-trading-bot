@@ -848,9 +848,25 @@ async def _run_external_feature_bus_mode(
         _mode_map = {"OFFLINE": 0, "DEGRADED": 1, "NORMAL": 2}
         loop = asyncio.get_running_loop()
         while True:
+            # Account gauges use separate try so a failing public market fetch
+            # cannot starve BINANCE-signed `update_account_data` for a whole backoff window.
+            try:
+                await loop.run_in_executor(None, METRICS.update_account_data)
+            except Exception:
+                logger.warning(
+                    "账户指标更新异常（仍为上次成功的余额或默认值）",
+                    exc_info=True,
+                )
+
             try:
                 await loop.run_in_executor(None, METRICS.update_market_data, symbols)
-                await loop.run_in_executor(None, METRICS.update_account_data)
+            except Exception:
+                logger.warning(
+                    "市场公开数据指标更新异常（premiumIndex/openInterest）",
+                    exc_info=True,
+                )
+
+            try:
                 cur_mode = manager.mode_manager.get_current_mode()
                 METRICS.system_mode.set(_mode_map.get(cur_mode.value, 0))
                 for sym in symbols:
@@ -882,7 +898,7 @@ async def _run_external_feature_bus_mode(
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.debug("市场数据更新异常: %s", exc)
+                logger.warning("运行时指标更新异常（模式/slot/bar age 等）: %s", exc)
                 await asyncio.sleep(60)
                 continue
             try:
