@@ -25,6 +25,22 @@ positions.
   ``BINANCE_FUTURES_TESTNET_*`` or ``BINANCE_API_KEY`` depending on config).
 - If the ``MULTI_LEG_*`` vars are unset, this script refuses to start unless
   ``--allow-shared-account`` is explicitly set.
+
+**Process output:** ``logging`` writes to **stderr** (captured by Docker/systemd).
+By default this runner **also** appends the same INFO lines to a **daily-rotated**
+file under ``{--state-dir}/logs/multi_leg_audit.log`` so restarts/crashes do not
+lose recent history as long as ``--state-dir`` points at a **mounted volume**
+(e.g. Docker ``-v /opt/quant-engine/data:/app/data`` and
+``--state-dir data/multi_leg_live/state``).
+
+**Environment (audit file):**
+
+- ``MLBOT_MULTI_LEG_AUDIT_LOG`` — override path (unset or ``default``: use
+  ``{state-dir}/logs/multi_leg_audit.log``). Set to ``0`` / ``off`` to disable file logging.
+- ``MLBOT_MULTI_LEG_AUDIT_DISABLE`` — if truthy, skip file handler (stderr only).
+- ``MLBOT_MULTI_LEG_AUDIT_RETENTION_DAYS`` — rotated files older than this many
+  days are deleted on startup (default ``30``). The active log uses
+  ``TimedRotatingFileHandler`` (midnight, keep about that many daily backups).
 """
 
 from __future__ import annotations
@@ -36,12 +52,16 @@ import logging
 import os
 import sys
 import time
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Prevent duplicate file handlers if ``async_main`` is re-entered in the same interpreter.
+_MULTI_LEG_AUDIT_HANDLER_ADDED: bool = False
 
 
 def _env_truthy(name: str) -> bool:
@@ -491,6 +511,86 @@ def _make_engine(strategy: str, *, symbol: str, args: argparse.Namespace) -> Any
     raise ValueError(f"unsupported strategy: {strategy}")
 
 
+def _audit_retention_days() -> int:
+    raw = os.getenv("MLBOT_MULTI_LEG_AUDIT_RETENTION_DAYS", "30").strip()
+    try:
+        v = int(raw)
+    except ValueError:
+        return 30
+    if v <= 0:
+        return 30
+    return min(v, 500)
+
+
+def _prune_old_multi_leg_audit_files(log_dir: Path, *, max_age_days: int) -> None:
+    """Delete rotated ``multi_leg_audit.log*`` files older than max_age_days (mtime)."""
+    if max_age_days <= 0 or not log_dir.is_dir():
+        return
+    cutoff = time.time() - float(max_age_days) * 86400.0
+    for path in log_dir.iterdir():
+        if not path.is_file():
+            continue
+        if not path.name.startswith("multi_leg_audit.log"):
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _configure_multi_leg_file_logging(args: argparse.Namespace) -> None:
+    """Default daily audit file + startup prune; stderr unchanged."""
+    global _MULTI_LEG_AUDIT_HANDLER_ADDED
+
+    if _MULTI_LEG_AUDIT_HANDLER_ADDED:
+        return
+
+    if _env_truthy("MLBOT_MULTI_LEG_AUDIT_DISABLE"):
+        logger.info(
+            "multi-leg audit file logging disabled (MLBOT_MULTI_LEG_AUDIT_DISABLE)"
+        )
+        return
+
+    raw = os.getenv("MLBOT_MULTI_LEG_AUDIT_LOG", "").strip()
+    if raw.lower() in ("0", "off", "false", "no"):
+        logger.info("multi-leg audit file logging disabled (MLBOT_MULTI_LEG_AUDIT_LOG)")
+        return
+
+    if not raw or raw.lower() == "default":
+        log_path = Path(args.state_dir) / "logs" / "multi_leg_audit.log"
+    else:
+        log_path = Path(raw)
+
+    retention = _audit_retention_days()
+    log_dir = log_path.parent
+    log_dir.mkdir(parents=True, exist_ok=True)
+    _prune_old_multi_leg_audit_files(log_dir, max_age_days=retention)
+
+    backup_count = max(1, retention)
+    fh = TimedRotatingFileHandler(
+        str(log_path),
+        when="midnight",
+        interval=1,
+        backupCount=backup_count,
+        encoding="utf-8",
+        utc=False,
+    )
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    logging.getLogger().addHandler(fh)
+    _MULTI_LEG_AUDIT_HANDLER_ADDED = True
+    logger.info(
+        "multi-leg audit file logging: path=%s rotation=daily backupCount=%d "
+        "startup_prune_days=%d",
+        log_path,
+        backup_count,
+        retention,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -536,7 +636,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--reconcile-interval-seconds", type=float, default=60.0)
     p.add_argument("--once", action="store_true")
     p.add_argument("--max-iterations", type=int, default=0)
-    p.add_argument("--state-dir", default="results/multi_leg_live/state")
+    p.add_argument("--state-dir", default="data/multi_leg_live/state")
     p.add_argument("--multi-leg-db-path", default="data/multi_leg_order_management.db")
     p.add_argument("--unit-notional", type=float, default=100.0)
     p.add_argument("--account-equity-usdt", type=float, default=10_000.0)
@@ -593,8 +693,9 @@ async def async_main() -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-
     args = parse_args()
+    _configure_multi_leg_file_logging(args)
+
     metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
     start_metrics_server(port=metrics_port)
     daemon, exchange_api, storage, run_id = build_daemon(args)

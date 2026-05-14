@@ -212,6 +212,16 @@ class MultiLegExecutionAdapter:
             raise MultiLegExecutionError(
                 "cancel action requires symbol for exchange cancel"
             )
+        reason = str(action.get("reason") or "").strip()
+        kind = "shadow" if self.shadow else "live"
+        logger.info(
+            "multi-leg cancel (%s): strategy=%s symbol=%s order_id=%s reason=%s",
+            kind,
+            self.strategy_name,
+            symbol,
+            order_id,
+            reason or "unspecified",
+        )
         if self.shadow:
             result = MultiLegExecutionResult(
                 action="cancel",

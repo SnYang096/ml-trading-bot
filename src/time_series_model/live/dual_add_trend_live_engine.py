@@ -8,6 +8,7 @@ dicts. Execution, portfolio risk, and reconciliation are handled by
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -20,6 +21,8 @@ from src.order_management.multi_leg_reconciliation import (
     LocalPositionSnapshot,
     ReconciliationReport,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -509,6 +512,14 @@ class DualAddTrendLiveEngine:
     def _exit_all(
         self, close: float, timestamp: str, *, reason: str
     ) -> List[Dict[str, Any]]:
+        logger.info(
+            "dual_add exit_all: symbol=%s reason=%s pending=%d inventory=%d close=%s",
+            getattr(self.state, "symbol", ""),
+            reason,
+            len(self.state.pending_orders),
+            len(self.state.inventory),
+            close,
+        )
         actions = [
             self._market_exit(pos, close, timestamp, reason)
             for pos in self.state.inventory
@@ -593,6 +604,14 @@ class DualAddTrendLiveEngine:
             else:
                 kept.append(order)
         self.state.pending_orders = kept
+        if actions:
+            logger.info(
+                "dual_add pending_timeout: symbol=%s canceled=%d timeout_bars=%s bar_index=%s",
+                getattr(self.state, "symbol", ""),
+                len(actions),
+                timeout,
+                self.state.bar_index,
+            )
         return actions
 
     def _market_exit(

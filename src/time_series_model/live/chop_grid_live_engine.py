@@ -8,6 +8,7 @@ It returns desired order actions and leaves exchange-specific adapters outside.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -21,6 +22,8 @@ from src.order_management.multi_leg_reconciliation import (
     ReconciliationReport,
 )
 from src.time_series_model.grid.chop_grid_engine import GridEngineConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -488,6 +491,14 @@ class ChopGridLiveEngine:
     def _exit_grid(
         self, timestamp: str, close: float, *, reason: str
     ) -> List[Dict[str, Any]]:
+        logger.info(
+            "chop_grid exit_grid: symbol=%s reason=%s pending_orders=%d inventory_levels=%d close=%s",
+            getattr(self.state, "symbol", ""),
+            reason,
+            len(self.state.pending_orders),
+            len(self.state.inventory),
+            close,
+        )
         actions: List[Dict[str, Any]] = []
         for order in self.state.pending_orders:
             actions.append(

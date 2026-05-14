@@ -9,6 +9,7 @@ It intentionally keeps exchange transport and strategy inventory logic separate.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, runtime_checkable
 
@@ -28,6 +29,8 @@ from src.order_management.multi_leg_risk_governor import (
     MultiLegPortfolioRiskGovernor,
     RiskCheckResult,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -179,11 +182,29 @@ class MultiLegLiveOrchestrator:
             local_positions=_call_snapshot(self.engine, "local_position_snapshots"),
             exchange_positions=positions,
         )
+        if not report.ok:
+            logger.warning(
+                "multi-leg reconcile not ok: strategy=%s symbol=%s "
+                "missing_exchange_orders=%d orphan_exchange_orders=%d "
+                "position_mismatches=%d",
+                self.strategy_name,
+                self.symbol,
+                len(report.missing_exchange_orders),
+                len(report.orphan_exchange_orders),
+                len(report.position_mismatches),
+            )
         _call_optional(self.engine, "on_reconciliation_report", report)
         self._persist_reconciliation(report)
 
         results: List[MultiLegExecutionResult] = []
         if self.execute_reconciliation_actions and report.suggested_actions:
+            logger.info(
+                "multi-leg reconcile cancels: strategy=%s symbol=%s count=%d "
+                "(orphan open orders on exchange not in engine state)",
+                self.strategy_name,
+                self.symbol,
+                len(report.suggested_actions),
+            )
             # Reconciliation actions are cancel-only by construction today. Route
             # them through the same adapter so client logging stays consistent.
             results = self.adapter.execute_actions(report.suggested_actions)

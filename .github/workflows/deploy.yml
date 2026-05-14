@@ -387,7 +387,8 @@ jobs:
                 --feature-bus-root live/shared_feature_bus \
                 --feature-store-timeframe primary \
                 --feature-store-execution-timeframe 1min \
-                --poll-seconds 5'
+                --poll-seconds 5 \
+                --state-dir data/multi_leg_live/state'
             ExecStop=/usr/bin/docker stop quant-hedge-multileg
 
             [Install]
