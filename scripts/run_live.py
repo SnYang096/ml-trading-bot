@@ -554,6 +554,68 @@ def _pcm_strategy_timeframes(pcm: Any, primary_timeframe: str) -> Dict[str, str]
     return out
 
 
+def _resolve_feature_bus_timeframes_for_disk(
+    *,
+    feature_bus_root: str,
+    manager_primary: str,
+    manager: MultiSymbolManager,
+    pcm: Any,
+) -> Tuple[str, List[str]]:
+    """Pick ``features/<tf>/`` keys present on disk (legacy ``primary`` vs meta tf)."""
+
+    from src.live_data_stream.feature_bus import normalize_timeframe
+
+    feat_root = _Path(feature_bus_root) / "features"
+    mp_n = normalize_timeframe(manager_primary)
+    preferred = feat_root / mp_n
+    legacy_primary = feat_root / "primary"
+    primary_tf: str
+    if preferred.is_dir() and any(preferred.glob("*.parquet")):
+        primary_tf = manager_primary
+    elif legacy_primary.is_dir() and any(legacy_primary.glob("*.parquet")):
+        primary_tf = "primary"
+        logger.warning(
+            "🚌 Reading Feature Bus primary rows from legacy features/primary/ "
+            "(strategy metadata timeframe is %s). Align publisher timeframe keys.",
+            manager_primary,
+        )
+    else:
+        primary_tf = manager_primary
+
+    requested = _manager_feature_timeframes(manager, pcm, manager_primary)
+    out: List[str] = []
+    seen: set[str] = set()
+
+    def _maybe_add_tf(tf_key: str) -> None:
+        kn = normalize_timeframe(tf_key)
+        if kn in seen:
+            return
+        dir_path = feat_root / kn
+        if dir_path.is_dir() and any(dir_path.glob("*.parquet")):
+            seen.add(kn)
+            out.append(tf_key)
+
+    for tf in requested:
+        if normalize_timeframe(tf) == mp_n:
+            _maybe_add_tf(primary_tf)
+        else:
+            _maybe_add_tf(tf)
+
+    if not out:
+        _maybe_add_tf(primary_tf)
+    if not out:
+        logger.warning(
+            "🚌 No feature-bus parquet snapshots under %s for requested keys %s; "
+            "provider references %s until data appears.",
+            feat_root,
+            requested,
+            primary_tf,
+        )
+        out = [primary_tf]
+
+    return primary_tf, out
+
+
 def _add_bus_bars_to_listener(listener: Any, bars: List[Dict[str, Any]]) -> None:
     if not bars:
         return
@@ -613,8 +675,13 @@ async def _run_external_feature_bus_mode(
     feature_bus_root = os.getenv("MLBOT_FEATURE_BUS_ROOT", "live/shared_feature_bus")
     poll_seconds = float(os.getenv("MLBOT_FEATURE_BUS_POLL_SECONDS", "5"))
     max_stale = float(os.getenv("MLBOT_FEATURE_BUS_MAX_STALENESS_SECONDS", "1800"))
-    primary_tf = _manager_primary_timeframe(manager)
-    timeframes = _manager_feature_timeframes(manager, pcm, primary_tf)
+    manager_primary = _manager_primary_timeframe(manager)
+    primary_tf, timeframes = _resolve_feature_bus_timeframes_for_disk(
+        feature_bus_root=feature_bus_root,
+        manager_primary=manager_primary,
+        manager=manager,
+        pcm=pcm,
+    )
     strategy_timeframes = _pcm_strategy_timeframes(pcm, primary_tf)
     provider = ClassicFeatureBusProvider(
         feature_bus_root=feature_bus_root,

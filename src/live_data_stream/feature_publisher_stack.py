@@ -54,8 +54,13 @@ class _DataOnlyOrderManager:
 class FeatureBusDecisionSink:
     """DecisionHandler-compatible sink that publishes every computed timeframe."""
 
-    def __init__(self, writer: FeatureBusWriter) -> None:
+    def __init__(
+        self, writer: FeatureBusWriter, *, default_timeframe_key: str = "primary"
+    ) -> None:
         self.writer = writer
+        self.default_timeframe_key = (
+            str(default_timeframe_key or "primary").strip() or "primary"
+        )
 
     def decide(
         self,
@@ -69,7 +74,7 @@ class FeatureBusDecisionSink:
         ts = decision_time or features.get("timestamp") or pd.Timestamp.now(tz="UTC")
         by_tf = features_by_timeframe or {}
         if not by_tf:
-            by_tf = {"primary": dict(features)}
+            by_tf = {self.default_timeframe_key: dict(features)}
         for tf, feat in by_tf.items():
             feat = dict(feat)
             feat["_feature_timeframe"] = str(tf)
@@ -293,7 +298,7 @@ def build_feature_bus_manager(
         feature_4h_interval_hours=args.feature_4h_interval_hours,
         order_manager=_DataOnlyOrderManager(),
     )
-    sink = FeatureBusDecisionSink(writer)
+    sink = FeatureBusDecisionSink(writer, default_timeframe_key=tf_primary)
 
     for symbol, listener in manager.listeners.items():
         listener.on_bar_callback = make_bar_write_callback(writer, symbol)
