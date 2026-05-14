@@ -538,6 +538,13 @@ async def async_main() -> None:
     start_metrics_server(port=metrics_port)
     daemon, exchange_api, storage, run_id = build_daemon(args)
     bar_provider = daemon.bar_provider
+    try:
+        METRICS.publish_dashboard_catalog(
+            strategies=sorted({str(rt.name).strip().lower() for rt in daemon.runtimes}),
+            symbols=sorted({str(rt.symbol).strip().upper() for rt in daemon.runtimes}),
+        )
+    except Exception:
+        logger.debug("dashboard catalog publish skipped", exc_info=True)
 
     user_stream: BinanceUserStream | None = None
     if isinstance(exchange_api, BinanceAPI):

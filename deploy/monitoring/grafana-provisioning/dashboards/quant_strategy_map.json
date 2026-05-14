@@ -9,106 +9,266 @@
   ],
   "panels": [
     {
-      "type": "candlestick",
-      "title": "OHLC Candles (selected strategy/symbol/timeframe)",
-      "id": 201,
-      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 0 },
+      "type": "row",
+      "title": "Trend stack ($trend_job)",
+      "id": 401,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Trend · OHLC",
+      "id": 301,
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 1 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"open\"}", "legendFormat": "open" },
-        { "refId": "B", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"high\"}", "legendFormat": "high" },
-        { "refId": "C", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"low\"}", "legendFormat": "low" },
-        { "refId": "D", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"close\"}", "legendFormat": "close" }
+        { "refId": "A", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$trend_job\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\",timeframe=~\"$trend_timeframe\",field=\"open\"}", "legendFormat": "open" },
+        { "refId": "B", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$trend_job\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\",timeframe=~\"$trend_timeframe\",field=\"high\"}", "legendFormat": "high" },
+        { "refId": "C", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$trend_job\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\",timeframe=~\"$trend_timeframe\",field=\"low\"}", "legendFormat": "low" },
+        { "refId": "D", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$trend_job\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\",timeframe=~\"$trend_timeframe\",field=\"close\"}", "legendFormat": "close" }
       ],
       "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
     },
     {
       "type": "timeseries",
-      "title": "Feature Layers (selected key features)",
-      "id": 202,
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 11 },
+      "title": "Trend · funnel (rate by stage × strategy)",
+      "id": 302,
+      "gridPos": { "h": 8, "w": 14, "x": 0, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_strategy_feature_value{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\"}", "legendFormat": "{{layer}} · {{feature}}" }
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, stage) (rate(mlbot_funnel_total{job=~\"$trend_job\",strategy=~\"$trend_strategy\"}[$__rate_interval]))",
+          "legendFormat": "{{strategy}} · {{stage}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "stacking": { "mode": "normal", "group": "A" } },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Trend · orders & signals (rate)",
+      "id": 303,
+      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (strategy) (rate(mlbot_orders_total{job=~\"$trend_job\",strategy=~\"$trend_strategy\"}[$__rate_interval]))", "legendFormat": "orders {{strategy}}" },
+        { "refId": "B", "expr": "sum by (strategy) (rate(mlbot_signals_total{job=~\"$trend_job\",strategy=~\"$trend_strategy\"}[$__rate_interval]))", "legendFormat": "signals {{strategy}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Trend · features (layer filter · legend = layer · feature)",
+      "id": 304,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_strategy_feature_value{job=~\"$trend_job\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\",timeframe=~\"$trend_timeframe\",layer=~\"$trend_feature_layer\"}",
+          "legendFormat": "{{layer}} · {{feature}}"
+        }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
     },
     {
       "type": "timeseries",
-      "title": "Entry/Exit/Signal Marker Flow (per minute)",
-      "id": 203,
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-      "targets": [
-        { "refId": "A", "expr": "sum by (event, side) (increase(mlbot_strategy_event_total{job=~\"$job\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "{{event}} {{side}}" }
-      ],
-      "fieldConfig": { "defaults": {}, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
-    },
-    {
-      "type": "timeseries",
-      "title": "Last Event Price Marker",
-      "id": 204,
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-      "targets": [
-        { "refId": "A", "expr": "mlbot_strategy_event_price{job=~\"$job\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"}", "legendFormat": "{{event}} {{side}}" }
-      ],
-      "fieldConfig": { "defaults": {}, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
-    },
-    {
-      "type": "timeseries",
-      "title": "Trend Funnel and Orders (selected strategy)",
-      "id": 205,
+      "title": "Trend · events (increase per $__rate_interval)",
+      "id": 305,
       "gridPos": { "h": 7, "w": 12, "x": 0, "y": 26 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "sum by (stage) (rate(mlbot_funnel_total{job=~\"$job\",strategy=~\"$strategy\"}[5m]))", "legendFormat": "funnel {{stage}}" },
-        { "refId": "B", "expr": "rate(mlbot_orders_total{job=~\"$job\",strategy=~\"$strategy\"}[5m])", "legendFormat": "orders {{strategy}}" }
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, event, side) (increase(mlbot_strategy_event_total{job=~\"$trend_job\",scope=\"trend\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\"}[$__rate_interval]))",
+          "legendFormat": "{{strategy}} {{event}} {{side}}"
+        }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
     },
     {
       "type": "timeseries",
-      "title": "Hedge Actions and Execution (selected strategy)",
-      "id": 206,
+      "title": "Trend · last event price",
+      "id": 306,
       "gridPos": { "h": 7, "w": 12, "x": 12, "y": 26 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "actions {{strategy}} {{symbol}}" },
-        { "refId": "B", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_execution_results_total{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "exec {{strategy}} {{symbol}}" }
+        {
+          "refId": "A",
+          "expr": "mlbot_strategy_event_price{job=~\"$trend_job\",scope=\"trend\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\"}",
+          "legendFormat": "{{strategy}} {{event}} {{side}}"
+        }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
     },
     {
       "type": "table",
-      "title": "Strategy View · Position Snapshot (all symbols)",
-      "id": 207,
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 33 },
+      "title": "Trend · positions (max by slot)",
+      "id": 307,
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 33 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$job\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"})", "legendFormat": "qty {{strategy}} {{symbol}} {{side}}" },
-        { "refId": "B", "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$job\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"})", "legendFormat": "notional {{strategy}} {{symbol}} {{side}}" }
+        { "refId": "A", "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$trend_job\",scope=\"trend\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\"})", "format": "table", "instant": true },
+        { "refId": "B", "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$trend_job\",scope=\"trend\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\"})", "format": "table", "instant": true }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "showHeader": true }
     },
     {
+      "type": "row",
+      "title": "Multi-leg hedge ($hedge_job)",
+      "id": 402,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "collapsed": false
+    },
+    {
       "type": "timeseries",
-      "title": "Symbol View · Event Flow by Strategy (5m)",
-      "id": 208,
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 40 },
+      "title": "Hedge · OHLC (shared gauges when published)",
+      "id": 311,
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 40 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "sum by (strategy, event, side) (increase(mlbot_strategy_event_total{job=~\"$job\",scope=~\"$scope\",symbol=~\"$symbol\",strategy=~\"$strategy\"}[5m]))", "legendFormat": "{{strategy}} {{event}} {{side}}" }
+        { "refId": "A", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\",timeframe=~\"$hedge_timeframe\",field=\"open\"}", "legendFormat": "open" },
+        { "refId": "B", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\",timeframe=~\"$hedge_timeframe\",field=\"high\"}", "legendFormat": "high" },
+        { "refId": "C", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\",timeframe=~\"$hedge_timeframe\",field=\"low\"}", "legendFormat": "low" },
+        { "refId": "D", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\",timeframe=~\"$hedge_timeframe\",field=\"close\"}", "legendFormat": "close" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge · multi-leg pipeline (bars / actions / exec / risk rejects)",
+      "id": 312,
+      "gridPos": { "h": 8, "w": 14, "x": 0, "y": 49 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_bars_processed_total{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\"}[$__rate_interval]))",
+          "legendFormat": "bars {{strategy}}/{{symbol}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\"}[$__rate_interval]))",
+          "legendFormat": "actions {{strategy}}/{{symbol}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_execution_results_total{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\"}[$__rate_interval]))",
+          "legendFormat": "exec {{strategy}}/{{symbol}}"
+        },
+        {
+          "refId": "D",
+          "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_risk_rejected_total{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\"}[$__rate_interval]))",
+          "legendFormat": "risk_reject {{strategy}}/{{symbol}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "stacking": { "mode": "normal", "group": "B" } },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge · classic funnel / orders (if exported by this job)",
+      "id": 313,
+      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 49 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, stage) (rate(mlbot_funnel_total{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\"}[$__rate_interval]))",
+          "legendFormat": "{{strategy}} · {{stage}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (strategy) (rate(mlbot_orders_total{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\"}[$__rate_interval]))",
+          "legendFormat": "orders {{strategy}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "stacking": { "mode": "normal", "group": "C" } } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge · features (layer filter · legend = layer · feature)",
+      "id": 314,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 57 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_strategy_feature_value{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\",timeframe=~\"$hedge_timeframe\",layer=~\"$hedge_feature_layer\"}",
+          "legendFormat": "{{layer}} · {{feature}}"
+        }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge · events (scope=hedge)",
+      "id": 315,
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 65 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, event, side) (increase(mlbot_strategy_event_total{job=~\"$hedge_job\",scope=\"hedge\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\"}[$__rate_interval]))",
+          "legendFormat": "{{strategy}} {{event}} {{side}}"
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge · last event price",
+      "id": 316,
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 65 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_strategy_event_price{job=~\"$hedge_job\",scope=\"hedge\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\"}",
+          "legendFormat": "{{strategy}} {{event}} {{side}}"
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "table",
+      "title": "Hedge · positions (max by slot)",
+      "id": 317,
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 72 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        { "refId": "A", "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$hedge_job\",scope=\"hedge\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\"})", "format": "table", "instant": true },
+        { "refId": "B", "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$hedge_job\",scope=\"hedge\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\"})", "format": "table", "instant": true }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true }
     }
   ],
   "schemaVersion": 39,
@@ -117,61 +277,121 @@
   "templating": {
     "list": [
       {
-        "name": "scope",
-        "type": "custom",
-        "query": "trend,hedge",
-        "current": { "text": "trend", "value": "trend" },
-        "multi": false,
-        "includeAll": false
-      },
-      {
-        "name": "job",
+        "name": "trend_job",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_cpu_percent{job=~\"quant-trend-fattail|quant-hedge-multileg\",job=~\"quant-$scope-.*\"}, job)",
+        "query": "label_values(mlbot_cpu_percent{job=~\"quant-trend-.+\"}, job)",
         "refresh": 1,
         "multi": false,
-        "includeAll": false
+        "includeAll": false,
+        "current": { "text": "quant-trend-fattail", "value": "quant-trend-fattail", "selected": true }
       },
       {
-        "name": "strategy",
+        "name": "hedge_job",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"$job\"}, strategy)",
+        "query": "label_values(mlbot_cpu_percent{job=~\"quant-hedge-.+\"}, job)",
+        "refresh": 1,
+        "multi": false,
+        "includeAll": false,
+        "current": { "text": "quant-hedge-multileg", "value": "quant-hedge-multileg", "selected": true }
+      },
+      {
+        "name": "trend_strategy",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "query": "label_values(mlbot_dashboard_catalog{job=~\"$trend_job\",role=\"strategy\"}, name)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
         "allValue": ".+",
-        "current": { "text": "All", "value": "$__all" }
+        "current": { "text": "All", "value": "$__all", "selected": true }
       },
       {
-        "name": "symbol",
+        "name": "trend_symbol",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\"}, symbol)",
+        "query": "label_values(mlbot_dashboard_catalog{job=~\"$trend_job\",role=\"symbol\"}, name)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
         "allValue": ".+",
-        "current": { "text": "All", "value": "$__all" }
+        "current": { "text": "All", "value": "$__all", "selected": true }
       },
       {
-        "name": "timeframe",
+        "name": "trend_timeframe",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\"}, timeframe)",
+        "query": "label_values({__name__=~\"mlbot_strategy_symbol_bar_ohlc|mlbot_strategy_feature_value\",job=~\"$trend_job\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\"}, timeframe)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
         "allValue": ".+",
-        "current": { "text": "All", "value": "$__all" }
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      },
+      {
+        "name": "trend_feature_layer",
+        "label": "trend_layer",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "query": "label_values(mlbot_strategy_feature_value{job=~\"$trend_job\",strategy=~\"$trend_strategy\",symbol=~\"$trend_symbol\"}, layer)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      },
+      {
+        "name": "hedge_strategy",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "query": "label_values(mlbot_dashboard_catalog{job=~\"$hedge_job\",role=\"strategy\"}, name)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      },
+      {
+        "name": "hedge_symbol",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "query": "label_values(mlbot_dashboard_catalog{job=~\"$hedge_job\",role=\"symbol\"}, name)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      },
+      {
+        "name": "hedge_timeframe",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "query": "label_values({__name__=~\"mlbot_strategy_symbol_bar_ohlc|mlbot_strategy_feature_value\",job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\"}, timeframe)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      },
+      {
+        "name": "hedge_feature_layer",
+        "label": "hedge_layer",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "query": "label_values(mlbot_strategy_feature_value{job=~\"$hedge_job\",strategy=~\"$hedge_strategy\",symbol=~\"$hedge_symbol\"}, layer)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": { "text": "All", "value": "$__all", "selected": true }
       }
     ]
   },
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "utc",
-  "title": "Strategy Map · Strategy-first and Symbol-first",
+  "title": "Strategy Map · Trend vs Multi-leg",
   "uid": "quant-strategy-map",
   "version": 1
 }

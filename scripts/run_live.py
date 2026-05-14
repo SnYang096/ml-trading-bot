@@ -1047,6 +1047,13 @@ async def main() -> None:
     manager, pcm = _setup_three_strategies(
         symbols, storage, gap_filler, trade_size, risk_per_trade
     )
+    try:
+        METRICS.publish_dashboard_catalog(
+            strategies=pcm.registered_archetypes,
+            symbols=symbols,
+        )
+    except Exception:
+        logger.debug("dashboard catalog publish skipped", exc_info=True)
     _METRIC_MODE_MAP = {"OFFLINE": 0, "DEGRADED": 1, "NORMAL": 2, "ABNORMAL": 0}
     try:
         METRICS.system_mode.set(

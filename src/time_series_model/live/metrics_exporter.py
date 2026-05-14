@@ -136,6 +136,7 @@ class Metrics:
             self.strategy_feature_value = _NOOP
             self.strategy_event_total = _NOOP
             self.strategy_event_price = _NOOP
+            self.dashboard_catalog = _NOOP
             return
 
         # ── Counters (累计值，只增不减) ──
@@ -217,6 +218,11 @@ class Metrics:
             "mlbot_strategy_event_price",
             "Last observed strategy event price (if available)",
             ["scope", "strategy", "symbol", "event", "side"],
+        )
+        self.dashboard_catalog = Gauge(
+            "mlbot_dashboard_catalog",
+            "Stable Strategy Map dropdown catalog (startup snapshot)",
+            ["role", "name"],
         )
 
         # ── Gauges (当前值，可升可降) ──
@@ -821,6 +827,30 @@ class Metrics:
                 ).set(float(price))
             except (TypeError, ValueError):
                 return
+
+    def publish_dashboard_catalog(
+        self,
+        *,
+        strategies: Iterable[str],
+        symbols: Iterable[str],
+    ) -> None:
+        """Expose low-cardinality strategy/symbol labels for Grafana template variables."""
+        if not _PROM_AVAILABLE:
+            return
+        seen_s: Set[str] = set()
+        for s in strategies:
+            key = str(s or "").strip().lower()
+            if not key or key in seen_s:
+                continue
+            seen_s.add(key)
+            self.dashboard_catalog.labels(role="strategy", name=key).set(1.0)
+        seen_sym: Set[str] = set()
+        for sym in symbols:
+            key = str(sym or "").strip().upper()
+            if not key or key in seen_sym:
+                continue
+            seen_sym.add(key)
+            self.dashboard_catalog.labels(role="symbol", name=key).set(1.0)
 
     def update_strategy_feature_values(
         self,
