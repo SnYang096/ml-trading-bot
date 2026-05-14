@@ -242,7 +242,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_kill_switch_halted or vector(0)",
+                    "expr": "sum(mlbot_kill_switch_halted) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -308,7 +308,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_system_mode or vector(0)",
+                    "expr": "sum(mlbot_system_mode) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -356,7 +356,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_pnl_realized_total or vector(0)",
+                    "expr": "sum(mlbot_pnl_realized_total) or vector(0)",
                     "legendFormat": "PnL"
                 }
             ],
@@ -405,7 +405,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_positions_active or vector(0)",
+                    "expr": "sum(mlbot_positions_active) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -454,7 +454,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_account_balance{type=\"total\"} or vector(0)",
+                    "expr": "sum(mlbot_account_balance{type=\"total\"}) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -503,7 +503,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_drawdown or vector(0)",
+                    "expr": "sum(mlbot_drawdown) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -543,7 +543,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_gate_reject_rate or vector(0)",
+                    "expr": "sum(mlbot_gate_reject_rate) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -597,7 +597,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_pnl_realized_total or vector(0)",
+                    "expr": "sum(mlbot_pnl_realized_total) or vector(0)",
                     "legendFormat": "PnL"
                 }
             ],
@@ -901,15 +901,15 @@
             "id": 121,
             "targets": [
                 {
-                    "expr": "mlbot_pcm_notional_total_frac or vector(0)",
+                    "expr": "sum(mlbot_pcm_notional_total_frac) or vector(0)",
                     "legendFormat": "Total"
                 },
                 {
-                    "expr": "mlbot_pcm_notional_soft_cap_frac or vector(0)",
+                    "expr": "sum(mlbot_pcm_notional_soft_cap_frac) or vector(0)",
                     "legendFormat": "Soft Cap"
                 },
                 {
-                    "expr": "mlbot_pcm_notional_hard_cap_frac or vector(0)",
+                    "expr": "sum(mlbot_pcm_notional_hard_cap_frac) or vector(0)",
                     "legendFormat": "Hard Cap"
                 }
             ],
