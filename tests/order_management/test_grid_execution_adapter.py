@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -44,6 +44,18 @@ def test_probe_failure_is_not_misreported_as_missing_hedge() -> None:
                 hedge_mode_probe_error="HTTP 401 ...",
             ),
         )
+
+
+def test_probe_binance_error_1003_does_not_block_adapter_init() -> None:
+    GridExecutionAdapter(
+        _api(
+            hedge_mode=False,
+            hedge_mode_probe_error=(
+                "Binance error -1003: Too many requests; current limit "
+                "of IP(1.2.3.4) is 2400 requests per minute."
+            ),
+        ),
+    )
 
 
 def test_shadow_can_run_without_hedge_mode_when_explicitly_allowed() -> None:
@@ -267,3 +279,26 @@ def test_sync_helpers_delegate_to_binance_api() -> None:
     assert adapter.sync_positions("BTCUSDT") == []
     api.get_open_orders.assert_called_once_with("BTCUSDT")
     api.get_positions.assert_called_once_with("BTCUSDT")
+
+
+@patch("src.order_management.grid_execution_adapter.time.sleep", autospec=True)
+def test_sync_positions_retries_on_binance_rate_limit(mock_sleep: MagicMock) -> None:
+    raises = []
+
+    class _RateLimit(RuntimeError):
+        pass
+
+    def _boom(sym):
+        raises.append(sym)
+        if len(raises) < 4:
+            raise _RateLimit("binance error -1003 Too many Requests")
+        return []
+
+    api = _api()
+    api.get_positions.side_effect = _boom
+    adapter = GridExecutionAdapter(api)
+
+    assert adapter.sync_positions("ETHUSDT") == []
+    assert len(raises) == 4
+    assert api.get_positions.call_args_list[-1][0][0] == "ETHUSDT"
+    mock_sleep.assert_called()

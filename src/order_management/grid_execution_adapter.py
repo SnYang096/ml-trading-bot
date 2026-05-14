@@ -11,12 +11,77 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import logging
-from typing import Any, Dict, Iterable, List, Optional
+import os
+import time
+from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar
 
 from src.order_management.binance_api import BinanceAPI
 from src.order_management.models import OrderSide, OrderType
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def _is_binance_rate_limit_detail(text: str) -> bool:
+    """Recognize Binance / ccxt wording for REST rate limits (-1003, HTTP 429)."""
+    chunk = str(text or "")
+    lowered = chunk.lower()
+    return (
+        "-1003" in chunk
+        or "429" in chunk
+        or "too many requests" in lowered
+        or "ddosprotection" in lowered.replace(" ", "")
+    )
+
+
+def _max_rest_retries() -> int:
+    raw = os.getenv("MLBOT_BINANCE_REST_RETRY_MAX", "8")
+    try:
+        return max(1, min(20, int(raw)))
+    except ValueError:
+        return 8
+
+
+def _rest_retry_sleep_seconds(attempt: int) -> float:
+    try:
+        base = float(os.getenv("MLBOT_BINANCE_REST_RETRY_BASE_SECONDS", "3.0"))
+    except ValueError:
+        base = 3.0
+    try:
+        cap = float(os.getenv("MLBOT_BINANCE_REST_RETRY_MAX_SECONDS", "90.0"))
+    except ValueError:
+        cap = 90.0
+    delay = base * (2**attempt)
+    return min(delay, cap)
+
+
+def _call_exchange_read(op_name: str, fn: Callable[[], T]) -> T:
+    """Retry read-only Binance/ccxt calls under transient REST rate limits."""
+    retries = _max_rest_retries()
+    last_exc: Optional[BaseException] = None
+    for attempt in range(retries):
+        try:
+            return fn()
+        except BaseException as exc:
+            last_exc = exc
+            if (
+                attempt + 1 >= retries
+                or not _is_binance_rate_limit_detail(str(exc))
+            ):
+                raise
+            delay = _rest_retry_sleep_seconds(attempt)
+            logger.warning(
+                "multi-leg REST %s rate limited (%s); retry %s/%s in %.1fs",
+                op_name,
+                exc,
+                attempt + 1,
+                retries,
+                delay,
+            )
+            time.sleep(delay)
+    assert last_exc is not None  # pragma: no cover - loop always returns or raises
+    raise last_exc
 
 
 class MultiLegExecutionError(RuntimeError):
@@ -68,14 +133,22 @@ class MultiLegExecutionAdapter:
         probe_err: Optional[str] = getattr(binance_api, "hedge_mode_probe_error", None)
         hm = bool(getattr(self.binance_api, "hedge_mode", False))
         if self.require_hedge_mode and not bool(self.shadow):
-            if probe_err:
+            rate_hit = probe_err and _is_binance_rate_limit_detail(probe_err)
+            if probe_err and not rate_hit:
                 raise MultiLegExecutionError(
                     "cannot verify Binance USDM hedge mode (/fapi/v1/positionSide/dual "
                     "failed). Check Futures API permission on this key, IP whitelist "
                     "for your server egress, or use MULTI_LEG_BINANCE_* keys if "
                     f"distinct from BINANCE_* . Detail: {probe_err}"
                 )
-            if not hm:
+            if rate_hit:
+                logger.warning(
+                    "multi-leg: Hedge Mode probe returned rate-limit error; "
+                    "continuing assuming the account stays in Hedge Mode (verify "
+                    "when Binance quota recovers): %s",
+                    probe_err,
+                )
+            elif not hm:
                 raise MultiLegExecutionError(
                     "multi-leg real execution requires Binance Hedge Mode "
                     "(dualSidePosition=true). Enable Hedge Mode under Binance Futures "
@@ -119,12 +192,20 @@ class MultiLegExecutionAdapter:
     def sync_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """Fetch open exchange orders for reconcile/reporting."""
         sym = symbol or self.default_symbol
-        return self.binance_api.get_open_orders(sym)
+
+        def _pull() -> List[Dict[str, Any]]:
+            return self.binance_api.get_open_orders(sym)
+
+        return _call_exchange_read("get_open_orders", _pull)
 
     def sync_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """Fetch exchange positions for reconcile/reporting."""
         sym = symbol or self.default_symbol
-        return self.binance_api.get_positions(sym)
+
+        def _pull() -> List[Dict[str, Any]]:
+            return self.binance_api.get_positions(sym)
+
+        return _call_exchange_read("get_positions", _pull)
 
     def _place_entry(self, action: Dict[str, Any]) -> MultiLegExecutionResult:
         symbol = _required_str(action, "symbol")
