@@ -528,11 +528,12 @@ class Metrics:
         try:
             import psutil
 
-            self.cpu_percent.set(psutil.cpu_percent(interval=0))
+            proc = psutil.Process(os.getpid())
+            # 必须使用本进程 cpu_percent：全局 psutil.cpu_percent 在容器内外常反映整台宿主，
+            # 三进程 Grafana 重叠时会误判「谁吃了 CPU」。
+            self.cpu_percent.set(proc.cpu_percent(interval=None))
             mem = psutil.virtual_memory()
             self.memory_mb.set(round(mem.used / 1024 / 1024, 1))
-            # 进程级 RSS
-            proc = psutil.Process(os.getpid())
             self.memory_rss_mb.set(round(proc.memory_info().rss / 1024 / 1024, 1))
         except Exception:
             pass

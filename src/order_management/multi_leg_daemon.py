@@ -286,14 +286,28 @@ class MultiLegLiveDaemon:
                 METRICS.multi_leg_daemon_polls_total.inc(1)
             except Exception:
                 logger.debug("multi-leg poll metric skipped", exc_info=True)
-            logger.info(
-                "multi-leg daemon tick: bars=%s actions=%s rejected=%s executed=%s reconcile_issues=%s",
+            idle = not (
+                report.bars_seen
+                or report.action_count
+                or report.rejected_count
+                or report.execution_count
+                or report.reconciliation_issue_count
+            )
+            fmt = (
+                "multi-leg daemon tick: bars=%s actions=%s rejected=%s "
+                "executed=%s reconcile_issues=%s"
+            )
+            args = (
                 report.bars_seen,
                 report.action_count,
                 report.rejected_count,
                 report.execution_count,
                 report.reconciliation_issue_count,
             )
+            if idle:
+                logger.debug(fmt, *args)
+            else:
+                logger.info(fmt, *args)
             iterations += 1
             if max_iterations is not None and iterations >= max_iterations:
                 break
