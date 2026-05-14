@@ -16,7 +16,7 @@
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "### Multi-leg hedge → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | **15s**（与 trend 共用 `prometheus.yml` global）|\n| **Daemon 主循环** | `MultiLegDaemon.poll_seconds`，默认 **30s**；每条 **已消费的 bar** 在 `run_once` 内更新 `mlbot_multi_leg_*`、事件与持仓 gauge |\n| **账户/健康** | `run_multi_leg_live` 里 `MLBOT_MARKET_DATA_INTERVAL`，默认 **30s**，刷新账户等 gauge |\n| **事件** | 每 bar **`bar_tick`**（heartbeat）；portfolio 否决 **`risk_reject`** + **`mlbot_multi_leg_risk_reject_codes_total{code}`**；同 symbol 多策略开仓冲突 **`symbol_conflict`**；approved **place / execution …** 在动作发生时写入；图上为 scrape 阶梯 |\n\n**「各层」**：以 **multi-leg 管道**（bars → actions → exec → risk_reject）为主；经典 `mlbot_funnel_total` 仅在该 job 也 flush 统计时才有数据。"
+        "content": "### Multi-leg hedge → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | **15s**（与 trend 共用 `prometheus.yml` global）|\n| **Daemon 主循环** | `MultiLegDaemon.poll_seconds`，默认 **30s**；每条 **已消费的 bar** 在 `run_once` 内更新 `mlbot_multi_leg_*`、事件与持仓 gauge |\n| **账户/健康** | `run_multi_leg_live` 里 `MLBOT_MARKET_DATA_INTERVAL`，默认 **30s**，刷新账户等 gauge |\n| **事件** | 每 bar **`bar_tick`**（heartbeat）；portfolio 否决 **`risk_reject`** + **`mlbot_multi_leg_risk_reject_codes_total{code}`**；同 symbol 多策略开仓冲突 **`symbol_conflict`**；approved **place / execution …** 在动作发生时写入；图上为 scrape 阶梯 |\n| **ops/s** | 本页 `rate(`…`)`/`ops` 单位表示 **计数器每秒平均增量**（例如「bar 计数/秒」「事件/秒」），不是单独的采样周期 |\n| **Trend 漏斗 / gate** | 多腿路径 **不写** `mlbot_funnel_total`；右上「经典漏斗」恒空属正常。**Prefilter proxy**可看下方 **layer=`hedge` 的 `strategy_feature_value`**（如 `box_prefilter`、`semantic_chop`） |\n\n**strategy / symbol 变量**：取自 **`mlbot_multi_leg_bars_processed_total`** 上已有的 label（只要有 bar 打点就有选项）；不需依赖 `dashboard_catalog`。**事件 / 事件价**：需进程版本含 **`bar_tick` / `risk_reject` 等指标**并完成一次 `/metrics` 抓取后才会有序列；仅在 `place` 等带子图价时 **`strategy_event_price` 才有数**。"
       },
       "transparent": false
     },
@@ -24,7 +24,7 @@
       "type": "stat",
       "title": "Hedge · daemon poll 总次数（Counter）",
       "id": 890,
-      "gridPos": { "h": 3, "w": 8, "x": 0, "y": 6 },
+      "gridPos": { "h": 3, "w": 6, "x": 0, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_multi_leg_daemon_polls_total{job=~\"$job\"}", "instant": true }
@@ -36,7 +36,7 @@
       "type": "stat",
       "title": "Hedge · bars 处理 rate（sum）",
       "id": 893,
-      "gridPos": { "h": 3, "w": 8, "x": 8, "y": 6 },
+      "gridPos": { "h": 3, "w": 6, "x": 6, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -52,12 +52,24 @@
       "type": "stat",
       "title": "Hedge · CPU %",
       "id": 894,
-      "gridPos": { "h": 3, "w": 8, "x": 16, "y": 6 },
+      "gridPos": { "h": 3, "w": 6, "x": 12, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_cpu_percent{job=~\"$job\"}", "instant": true }
       ],
       "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "Hedge · 进程 RSS（MB）",
+      "id": 895,
+      "gridPos": { "h": 3, "w": 6, "x": 18, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_memory_rss_mb{job=~\"$job\"}", "instant": true }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
     },
     {
@@ -99,7 +111,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Hedge · 经典漏斗 / orders（若 job 产出）",
+      "title": "Hedge · 经典漏斗 / orders（多腿不写 trend funnel → 多为 No data）",
       "id": 313,
       "gridPos": { "h": 9, "w": 10, "x": 14, "y": 9 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
@@ -123,9 +135,26 @@
     },
     {
       "type": "timeseries",
+      "title": "Hedge · Prefilter proxy：特征 gauge（layer=hedge）",
+      "description": "`mlbot_strategy_feature_value`：`semantic_chop`、`box_prefilter` 等。**无**独立的 trend `mlbot_funnel_total` gate 曲线。",
+      "id": 320,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_strategy_feature_value{job=~\"$job\",layer=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}",
+          "legendFormat": "{{strategy}}/{{symbol}} · {{feature}} ({{timeframe}})"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "sortBy": "Max", "sortDesc": true } }
+    },
+    {
+      "type": "timeseries",
       "title": "Hedge · Risk veto by code（governor + symbol_conflict）",
       "id": 319,
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 18 },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 26 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -141,23 +170,23 @@
       "type": "timeseries",
       "title": "Hedge · 事件（bar_tick / place / risk_reject / symbol_conflict / execution …）",
       "id": 315,
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 33 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (strategy, event, side) (increase(mlbot_strategy_event_total{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[$__rate_interval]))",
+          "expr": "sum by (strategy, event, side) (rate(mlbot_strategy_event_total{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[5m]))",
           "legendFormat": "{{strategy}} {{event}} {{side}}"
         }
       ],
-      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 3 }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
     },
     {
       "type": "timeseries",
-      "title": "Hedge · 最近事件价",
+      "title": "Hedge · 最近事件价（仅 place/exec 等写入了 price）",
       "id": 316,
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 33 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 41 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -173,7 +202,7 @@
       "type": "table",
       "title": "Hedge · 持仓快照",
       "id": 317,
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 39 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 47 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -196,7 +225,7 @@
       "type": "table",
       "title": "Hedge · 事件计数（时间轴）",
       "id": 318,
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 47 },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 55 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -219,7 +248,7 @@
         "name": "job",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_cpu_percent{job=~\"quant-hedge-.+\"}, job)",
+        "query": "label_values(mlbot_multi_leg_daemon_polls_total{job=~\"quant-hedge-.+\"}, job)",
         "refresh": 1,
         "multi": false,
         "includeAll": false,
@@ -229,7 +258,7 @@
         "name": "strategy",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_dashboard_catalog{job=~\"$job\",role=\"strategy\"}, name)",
+        "query": "label_values(mlbot_multi_leg_bars_processed_total{job=~\"$job\"}, strategy)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
@@ -240,7 +269,7 @@
         "name": "symbol",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_dashboard_catalog{job=~\"$job\",role=\"symbol\"}, name)",
+        "query": "label_values(mlbot_multi_leg_bars_processed_total{job=~\"$job\"}, symbol)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,

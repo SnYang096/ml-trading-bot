@@ -138,6 +138,7 @@ class Metrics:
             self.strategy_event_total = _NOOP
             self.strategy_event_price = _NOOP
             self.dashboard_catalog = _NOOP
+            self._cpu_percent_primed = False
             return
 
         # ── Counters (累计值，只增不减) ──
@@ -534,6 +535,7 @@ class Metrics:
         )
         self._account_last_success_ts: dict[str, float] = {}
         self._position_labelsets: Set[Tuple[str, str, str, str]] = set()
+        self._cpu_percent_primed: bool = False
 
     def update_system_health(self) -> None:
         """读取 psutil 更新 CPU / 内存 / uptime"""
@@ -543,6 +545,10 @@ class Metrics:
             proc = psutil.Process(os.getpid())
             # 必须使用本进程 cpu_percent：全局 psutil.cpu_percent 在容器内外常反映整台宿主，
             # 三进程 Grafana 重叠时会误判「谁吃了 CPU」。
+            # psutil 约定：对同一 Process 的首次 cpu_percent(interval=None) 常为 0，需先 prime 一次。
+            if not self._cpu_percent_primed:
+                proc.cpu_percent(interval=None)
+                self._cpu_percent_primed = True
             self.cpu_percent.set(proc.cpu_percent(interval=None))
             mem = psutil.virtual_memory()
             self.memory_mb.set(round(mem.used / 1024 / 1024, 1))
