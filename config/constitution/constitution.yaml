@@ -147,7 +147,7 @@ slots:
 # 权威层级:
 #   Layer 0: slots.slot_count = 全局绝对上限
 #   Layer 0: slots.risk_per_slot = 每 slot 最大风险 (宪法硬上限)
-#   Layer 1: slot_policy = classic/trend 账户池的 symbol 级 slot 规则
+#   Layer 1: slot_policy = trend/fat-tail 账户池的 symbol 级 slot 规则
 #   Layer 1: per_strategy_limits = 每策略风险/加仓/日内节流上限 (max_risk_per_trade ≤ risk_per_slot)
 #   Layer 2: pcm_regime.yaml 的仲裁策略在这些限制内运行
 #
@@ -155,7 +155,7 @@ slots:
 #   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
-  # 经典 LivePCM 注册 + Step 9.5 PCM 联合回测白名单（与 pipeline strategy_scope 交集）唯一来源
+  # trend/fat-tail LivePCM 注册 + Step 9.5 PCM 联合回测白名单（与 pipeline strategy_scope 交集）唯一来源
   # 列表顺序 = 同 bar 多 archetype 时 PCM 仲裁优先级（除非另写 intent_selection_policy.archetype_priority）
   enabled_archetypes:
     # 牛市 5x / 长侧实验需启用 long；短侧保持并列以便联合 PCM
@@ -166,7 +166,7 @@ resource_allocation:
     # - fbf
     # - msr
 
-  # classic/trend 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
+  # trend/fat-tail 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
   # trend 集合只在 archetype_groups.trend 定义一次，避免 slot_policy 重复维护名单。
   slot_policy:
     trend_group: trend
@@ -216,9 +216,9 @@ resource_allocation:
 # -----------------------------------------------------------------------------
 # 4) Multi-leg account (separate Binance API keys; run_multi_leg_live.py)
 # -----------------------------------------------------------------------------
-# Classic live uses slots/per_strategy_limits above; multi-leg uses a separate account budget here.
-# Notional caps are exposure ceilings for the dedicated multi-leg account, not classic trend risk slots.
-# multi-leg 合约约束：同一 symbol 同时最多 1 个 multi-leg 策略占用（chop_grid / dual_add_trend 互斥）。
+# Trend/fat-tail live uses slots/per_strategy_limits above; hedge multi-leg uses a separate account budget here.
+# Notional caps are exposure ceilings for the dedicated multi-leg account, not trend/fat-tail risk slots.
+# hedge multi-leg 合约约束：同一 symbol 同时最多 1 个 multi-leg 策略占用（chop_grid / dual_add_trend 互斥）。
 multi_leg:
   strategies:
     - chop_grid

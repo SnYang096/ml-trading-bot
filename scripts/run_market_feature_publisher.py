@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
 import sys
@@ -30,6 +31,10 @@ from src.live_data_stream.feature_bus import FeatureBusWriter  # noqa: E402
 from src.live_data_stream.websocket_client import (  # noqa: E402
     BinanceTick,
     BinanceWebSocketClient,
+)
+from src.time_series_model.live.metrics_exporter import (  # noqa: E402
+    METRICS,
+    start_metrics_server,
 )
 from live.scripts.prepare_warmup_ticks import prepare_warmup_dataset  # noqa: E402
 
@@ -219,12 +224,30 @@ def _prepare_live_warmup(args: argparse.Namespace) -> None:
     )
 
 
+async def _periodic_process_metrics() -> None:
+    interval = int(os.getenv("MLBOT_MARKET_DATA_INTERVAL", "30"))
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            await loop.run_in_executor(None, METRICS.update_system_health)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.debug("feature-bus process metrics update skipped: %s", exc)
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            break
+
+
 async def async_main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     args = parse_args()
+    metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
+    start_metrics_server(port=metrics_port)
     _prepare_live_warmup(args)
     writer = FeatureBusWriter(args.feature_bus_root, max_rows=args.max_rows)
     manager = build_feature_bus_manager(args, writer)
@@ -244,16 +267,33 @@ async def async_main() -> None:
     ws_client = BinanceWebSocketClient(
         symbols=_parse_symbols(args.symbols), use_futures=args.use_futures
     )
+    symbols = _parse_symbols(args.symbols)
+
+    def _set_ws_connected(value: int) -> None:
+        for symbol in symbols:
+            METRICS.ws_connected.labels(symbol=symbol).set(value)
+
+    def _on_ws_health(status: Any) -> None:
+        status_value = getattr(status, "value", str(status))
+        _set_ws_connected(0 if status_value in {"unhealthy", "dead"} else 1)
 
     def _handle_tick(tick: BinanceTick) -> None:
         fast_emitter.on_tick(tick)
         manager.on_trade_tick(tick.symbol, _tick_to_listener_tick(tick))
 
     ws_client.add_callback(_handle_tick)
+    ws_client.add_health_callback(_on_ws_health)
+    ws_client.add_reconnect_callback(lambda: _set_ws_connected(1))
     stop_event = asyncio.Event()
+    metrics_task = asyncio.create_task(_periodic_process_metrics())
     try:
+        _set_ws_connected(1)
         await ws_client.run(stop_event)
     finally:
+        metrics_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await metrics_task
+        _set_ws_connected(0)
         stop_event.set()
         await manager.stop_all()
 

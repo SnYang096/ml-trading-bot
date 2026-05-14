@@ -1,6 +1,6 @@
 """Build MultiSymbolManager for quant-feature-bus (ticks → features → disk).
 
-Uses the same ``resource_allocation.enabled_archetypes`` as classic live, plus
+Uses the same ``resource_allocation.enabled_archetypes`` as trend/fat-tail live, plus
 ``MLBOT_PUBLISHER_PRIMARY_ARCHETYPE`` (default ``bpc``) to pick the primary
 ``IncrementalFeatureComputer`` timeframe. Extra timeframes are merged per
 ``meta.yaml`` timeframe key (multiple strategies on the same bar clock share one FC).
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 class _DataOnlyOrderManager:
-    """Sentinel so the publisher never initializes classic trading."""
+    """Sentinel so the publisher never initializes consumer-side trading."""
 
 
 class FeatureBusDecisionSink:

@@ -6,7 +6,7 @@
 #   - Python: 3.12 (Ubuntu 24.04 默认)
 # 
 # 核心功能:
-#   - WebSocket 实时数据接收（websockets, ccxt）
+#   - 行情 WebSocket publisher（仅 quant-feature-bus 进程监听 market WS）
 #   - HTTP API 调用（requests, aiohttp, httpx）
 #   - 特征计算（numpy, pandas, scipy, scikit-learn, TA-Lib, PyWavelets, statsmodels）
 #   - 数据存储（pyarrow, parquet, polars）

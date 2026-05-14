@@ -8,7 +8,7 @@
     "links": [
         {
             "title": "📊 Overview",
-            "url": "/d/quant-engine-main",
+            "url": "/d/quant-live-overview",
             "type": "link",
             "icon": "apps",
             "targetBlank": false
@@ -148,27 +148,27 @@
             "id": 201,
             "targets": [
                 {
-                    "expr": "rate(mlbot_funnel_total{stage=\"direction\"}[15m])*900",
+                    "expr": "rate(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"direction\"}[15m])*900",
                     "legendFormat": "direction"
                 },
                 {
-                    "expr": "rate(mlbot_funnel_total{stage=\"gate\"}[15m])*900",
+                    "expr": "rate(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"gate\"}[15m])*900",
                     "legendFormat": "gate"
                 },
                 {
-                    "expr": "rate(mlbot_funnel_total{stage=\"entry_filter\"}[15m])*900",
+                    "expr": "rate(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"entry_filter\"}[15m])*900",
                     "legendFormat": "entry_filter"
                 },
                 {
-                    "expr": "rate(mlbot_funnel_total{stage=\"evidence\"}[15m])*900",
+                    "expr": "rate(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"evidence\"}[15m])*900",
                     "legendFormat": "evidence"
                 },
                 {
-                    "expr": "rate(mlbot_funnel_total{stage=\"pcm\"}[15m])*900",
+                    "expr": "rate(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"pcm\"}[15m])*900",
                     "legendFormat": "pcm"
                 },
                 {
-                    "expr": "rate(mlbot_funnel_total{stage=\"order\"}[15m])*900",
+                    "expr": "rate(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"order\"}[15m])*900",
                     "legendFormat": "order"
                 }
             ],
@@ -203,7 +203,7 @@
             "id": 202,
             "targets": [
                 {
-                    "expr": "mlbot_gate_reject_rate",
+                    "expr": "mlbot_gate_reject_rate{job=\"quant-trend-fattail\"}",
                     "legendFormat": "Gate Reject Rate"
                 }
             ],
@@ -336,27 +336,27 @@
             "id": 211,
             "targets": [
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"direction\",strategy=\"bpc\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"direction\",strategy=\"bpc\"}[1h])",
                     "legendFormat": "direction"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"gate\",strategy=\"bpc\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"gate\",strategy=\"bpc\"}[1h])",
                     "legendFormat": "gate"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"entry_filter\",strategy=\"bpc\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"entry_filter\",strategy=\"bpc\"}[1h])",
                     "legendFormat": "entry_filter"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"evidence\",strategy=\"bpc\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"evidence\",strategy=\"bpc\"}[1h])",
                     "legendFormat": "evidence"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"pcm\",strategy=\"bpc\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"pcm\",strategy=\"bpc\"}[1h])",
                     "legendFormat": "pcm"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"order\",strategy=\"bpc\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"order\",strategy=\"bpc\"}[1h])",
                     "legendFormat": "order"
                 }
             ],
@@ -477,27 +477,27 @@
             "id": 212,
             "targets": [
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"direction\",strategy=\"me\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"direction\",strategy=\"me\"}[1h])",
                     "legendFormat": "direction"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"gate\",strategy=\"me\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"gate\",strategy=\"me\"}[1h])",
                     "legendFormat": "gate"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"entry_filter\",strategy=\"me\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"entry_filter\",strategy=\"me\"}[1h])",
                     "legendFormat": "entry_filter"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"evidence\",strategy=\"me\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"evidence\",strategy=\"me\"}[1h])",
                     "legendFormat": "evidence"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"pcm\",strategy=\"me\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"pcm\",strategy=\"me\"}[1h])",
                     "legendFormat": "pcm"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"order\",strategy=\"me\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"order\",strategy=\"me\"}[1h])",
                     "legendFormat": "order"
                 }
             ],
@@ -618,27 +618,27 @@
             "id": 213,
             "targets": [
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"direction\",strategy=\"fer\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"direction\",strategy=\"fer\"}[1h])",
                     "legendFormat": "direction"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"gate\",strategy=\"fer\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"gate\",strategy=\"fer\"}[1h])",
                     "legendFormat": "gate"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"entry_filter\",strategy=\"fer\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"entry_filter\",strategy=\"fer\"}[1h])",
                     "legendFormat": "entry_filter"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"evidence\",strategy=\"fer\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"evidence\",strategy=\"fer\"}[1h])",
                     "legendFormat": "evidence"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"pcm\",strategy=\"fer\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"pcm\",strategy=\"fer\"}[1h])",
                     "legendFormat": "pcm"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"order\",strategy=\"fer\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"order\",strategy=\"fer\"}[1h])",
                     "legendFormat": "order"
                 }
             ],
@@ -726,15 +726,15 @@
             "id": 221,
             "targets": [
                 {
-                    "expr": "increase(mlbot_gate_rejected_total{strategy=\"bpc\"}[1h])",
+                    "expr": "increase(mlbot_gate_rejected_total{job=\"quant-trend-fattail\",strategy=\"bpc\"}[1h])",
                     "legendFormat": "BPC"
                 },
                 {
-                    "expr": "increase(mlbot_gate_rejected_total{strategy=\"me\"}[1h])",
+                    "expr": "increase(mlbot_gate_rejected_total{job=\"quant-trend-fattail\",strategy=\"me\"}[1h])",
                     "legendFormat": "ME"
                 },
                 {
-                    "expr": "increase(mlbot_gate_rejected_total{strategy=\"fer\"}[1h])",
+                    "expr": "increase(mlbot_gate_rejected_total{job=\"quant-trend-fattail\",strategy=\"fer\"}[1h])",
                     "legendFormat": "FER"
                 }
             ],
@@ -763,7 +763,7 @@
             "id": 222,
             "targets": [
                 {
-                    "expr": "increase(mlbot_gate_reject_reasons_total[1h])",
+                    "expr": "increase(mlbot_gate_reject_reasons_total{job=\"quant-trend-fattail\"}[1h])",
                     "legendFormat": "{{strategy}}/{{reason}}"
                 }
             ],
@@ -824,11 +824,11 @@
             "id": 223,
             "targets": [
                 {
-                    "expr": "increase(mlbot_direction_total{side=\"long\"}[1h])",
+                    "expr": "increase(mlbot_direction_total{job=\"quant-trend-fattail\",side=\"long\"}[1h])",
                     "legendFormat": "{{strategy}} Long"
                 },
                 {
-                    "expr": "increase(mlbot_direction_total{side=\"short\"}[1h])",
+                    "expr": "increase(mlbot_direction_total{job=\"quant-trend-fattail\",side=\"short\"}[1h])",
                     "legendFormat": "{{strategy}} Short"
                 }
             ],
@@ -913,15 +913,15 @@
             "id": 231,
             "targets": [
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"evidence\",strategy=\"bpc\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"evidence\",strategy=\"bpc\"}[1h])",
                     "legendFormat": "BPC"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"evidence\",strategy=\"me\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"evidence\",strategy=\"me\"}[1h])",
                     "legendFormat": "ME"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"evidence\",strategy=\"fer\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"evidence\",strategy=\"fer\"}[1h])",
                     "legendFormat": "FER"
                 }
             ],
@@ -994,15 +994,15 @@
             "id": 232,
             "targets": [
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"entry_filter\",strategy=\"bpc\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"entry_filter\",strategy=\"bpc\"}[1h])",
                     "legendFormat": "BPC"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"entry_filter\",strategy=\"me\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"entry_filter\",strategy=\"me\"}[1h])",
                     "legendFormat": "ME"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"entry_filter\",strategy=\"fer\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"entry_filter\",strategy=\"fer\"}[1h])",
                     "legendFormat": "FER"
                 }
             ],
@@ -1075,15 +1075,15 @@
             "id": 233,
             "targets": [
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"pcm\",strategy=\"bpc\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"pcm\",strategy=\"bpc\"}[1h])",
                     "legendFormat": "BPC"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"pcm\",strategy=\"me\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"pcm\",strategy=\"me\"}[1h])",
                     "legendFormat": "ME"
                 },
                 {
-                    "expr": "increase(mlbot_funnel_total{stage=\"pcm\",strategy=\"fer\"}[1h])",
+                    "expr": "increase(mlbot_funnel_total{job=\"quant-trend-fattail\",stage=\"pcm\",strategy=\"fer\"}[1h])",
                     "legendFormat": "FER"
                 }
             ],

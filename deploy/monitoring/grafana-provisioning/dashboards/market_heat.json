@@ -85,7 +85,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_heat_market_score{market=\"crypto\"}",
+                    "expr": "mlbot_heat_market_score{job=\"quant-engine-classic\",market=\"crypto\"}",
                     "legendFormat": "Market Heat"
                 }
             ],
@@ -132,7 +132,7 @@
             },
             "targets": [
                 {
-                    "expr": "count(mlbot_heat_sector_score >= 0.5)",
+                    "expr": "count(mlbot_heat_sector_score{job=\"quant-engine-classic\"} >= 0.5)",
                     "legendFormat": ""
                 }
             ],
@@ -179,7 +179,7 @@
             },
             "targets": [
                 {
-                    "expr": "count(mlbot_heat_sector_score < 0.2)",
+                    "expr": "count(mlbot_heat_sector_score{job=\"quant-engine-classic\"} < 0.2)",
                     "legendFormat": ""
                 }
             ],
@@ -230,7 +230,7 @@
             "id": 5,
             "targets": [
                 {
-                    "expr": "mlbot_heat_market_score{market=\"crypto\"}",
+                    "expr": "mlbot_heat_market_score{job=\"quant-engine-classic\",market=\"crypto\"}",
                     "legendFormat": "Market"
                 }
             ],
@@ -293,7 +293,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_heat_sector_score",
+                    "expr": "mlbot_heat_sector_score{job=\"quant-engine-classic\"}",
                     "legendFormat": "{{sector}}"
                 }
             ],
@@ -380,7 +380,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_heat_sector_score",
+                    "expr": "mlbot_heat_sector_score{job=\"quant-engine-classic\"}",
                     "legendFormat": "",
                     "format": "table",
                     "instant": true
@@ -426,7 +426,7 @@
             "id": 9,
             "targets": [
                 {
-                    "expr": "mlbot_heat_sector_score",
+                    "expr": "mlbot_heat_sector_score{job=\"quant-engine-classic\"}",
                     "legendFormat": "{{sector}}"
                 }
             ],
@@ -525,7 +525,7 @@
                     },
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"AI\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"AI\"}",
                             "legendFormat": "",
                             "format": "table",
                             "instant": true
@@ -572,7 +572,7 @@
                     "id": 11,
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"AI\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"AI\"}",
                             "legendFormat": "{{symbol}}"
                         }
                     ],
@@ -673,7 +673,7 @@
                     },
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"DeFi\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"DeFi\"}",
                             "legendFormat": "",
                             "format": "table",
                             "instant": true
@@ -720,7 +720,7 @@
                     "id": 14,
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"DeFi\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"DeFi\"}",
                             "legendFormat": "{{symbol}}"
                         }
                     ],
@@ -821,7 +821,7 @@
                     },
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"GameFi\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"GameFi\"}",
                             "legendFormat": "",
                             "format": "table",
                             "instant": true
@@ -868,7 +868,7 @@
                     "id": 17,
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"GameFi\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"GameFi\"}",
                             "legendFormat": "{{symbol}}"
                         }
                     ],
@@ -969,7 +969,7 @@
                     },
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"L1\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"L1\"}",
                             "legendFormat": "",
                             "format": "table",
                             "instant": true
@@ -1016,7 +1016,7 @@
                     "id": 20,
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"L1\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"L1\"}",
                             "legendFormat": "{{symbol}}"
                         }
                     ],
@@ -1117,7 +1117,7 @@
                     },
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"L2\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"L2\"}",
                             "legendFormat": "",
                             "format": "table",
                             "instant": true
@@ -1164,7 +1164,7 @@
                     "id": 23,
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"L2\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"L2\"}",
                             "legendFormat": "{{symbol}}"
                         }
                     ],
@@ -1265,7 +1265,7 @@
                     },
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"Meme\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"Meme\"}",
                             "legendFormat": "",
                             "format": "table",
                             "instant": true
@@ -1312,7 +1312,7 @@
                     "id": 26,
                     "targets": [
                         {
-                            "expr": "mlbot_heat_score{sector=\"Meme\"}",
+                            "expr": "mlbot_heat_score{job=\"quant-engine-classic\",sector=\"Meme\"}",
                             "legendFormat": "{{symbol}}"
                         }
                     ],
@@ -1341,13 +1341,13 @@
                     "type": "prometheus",
                     "uid": "${DS_PROMETHEUS}"
                 },
-                "definition": "label_values(mlbot_heat_score, sector)",
+                "definition": "label_values(mlbot_heat_score{job=\"quant-engine-classic\"}, sector)",
                 "hide": 0,
                 "includeAll": true,
                 "label": "Sector",
                 "multi": true,
                 "name": "sector",
-                "query": "label_values(mlbot_heat_score, sector)",
+                "query": "label_values(mlbot_heat_score{job=\"quant-engine-classic\"}, sector)",
                 "refresh": 1,
                 "regex": "",
                 "type": "query"

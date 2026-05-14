@@ -4,17 +4,17 @@
 Does not print secrets. Typical usage on the server::
 
     PYTHONPATH=src python scripts/binance_probe_hedge_mode.py \\
-      --env-file /opt/quant-engine/live/binance_mainnet.env --profile multi-leg
+      --env-file /opt/quant-engine/live/binance_mainnet.env --profile hedge-multileg
 
-Classic stack keys (quant-engine)::
+Trend/fat-tail stack keys::
 
     PYTHONPATH=src python scripts/binance_probe_hedge_mode.py \\
-      --env-file /opt/quant-engine/live/binance_mainnet.env --profile classic
+      --env-file /opt/quant-engine/live/binance_mainnet.env --profile trend-fattail
 
 Optional: after a successful probe (no HTTP/auth error), try switching to hedge::
 
     PYTHONPATH=src python scripts/binance_probe_hedge_mode.py ... \\
-      --profile multi-leg --try-enable-hedge
+      --profile hedge-multileg --try-enable-hedge
 
 Closing positions / cancelling orders may be required before Binance accepts mode switch.
 """
@@ -62,12 +62,12 @@ def _mask(s: str) -> str:
 
 
 def _resolve_keys(profile: str, allow_shared: bool) -> tuple[str, str]:
-    if profile == "classic":
+    if profile == "trend-fattail":
         k = os.getenv("BINANCE_API_KEY", "").strip()
         s = os.getenv("BINANCE_API_SECRET", "").strip()
         if not k or not s:
             raise SystemExit(
-                "classic profile needs BINANCE_API_KEY and BINANCE_API_SECRET "
+                "trend-fattail profile needs BINANCE_API_KEY and BINANCE_API_SECRET "
                 "(after --env-file if used)."
             )
         return k, s
@@ -79,7 +79,7 @@ def _resolve_keys(profile: str, allow_shared: bool) -> tuple[str, str]:
         s = os.getenv("BINANCE_API_SECRET", "").strip()
     if not k or not s:
         raise SystemExit(
-            "multi-leg profile needs MULTI_LEG_BINANCE_FUTURES_API_KEY/SECRET "
+            "hedge-multileg profile needs MULTI_LEG_BINANCE_FUTURES_API_KEY/SECRET "
             "or pass --allow-shared-account with BINANCE_* set."
         )
     return k, s
@@ -99,14 +99,14 @@ def main() -> None:
     )
     p.add_argument(
         "--profile",
-        choices=("classic", "multi-leg"),
-        default="classic",
-        help="classic = BINANCE_* (trend/engine); multi-leg = MULTI_LEG_* (+optional shared).",
+        choices=("trend-fattail", "hedge-multileg"),
+        default="trend-fattail",
+        help="trend-fattail = BINANCE_*; hedge-multileg = MULTI_LEG_* (+optional shared).",
     )
     p.add_argument(
         "--allow-shared-account",
         action="store_true",
-        help="multi-leg profile only: fallback to BINANCE_* if MULTI_LEG_* missing.",
+        help="hedge-multileg profile only: fallback to BINANCE_* if MULTI_LEG_* missing.",
     )
     p.add_argument(
         "--testnet",
@@ -126,7 +126,7 @@ def main() -> None:
         _apply_env_file(args.env_file, override=True)
 
     api_key, api_secret = _resolve_keys(args.profile, args.allow_shared_account)
-    label = "MULTI_LEG_*" if args.profile == "multi-leg" else "BINANCE_*"
+    label = "MULTI_LEG_*" if args.profile == "hedge-multileg" else "BINANCE_*"
     print(f"Using profile={args.profile} key_source≈{label} api_key={_mask(api_key)}")
 
     api = BinanceAPI(

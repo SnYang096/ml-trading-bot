@@ -8,7 +8,7 @@
     "links": [
         {
             "title": "📊 Overview",
-            "url": "/d/quant-engine-main",
+            "url": "/d/quant-live-overview",
             "type": "link",
             "icon": "apps",
             "targetBlank": false
@@ -35,7 +35,7 @@
             "type": "row"
         },
         {
-            "description": "Binance Futures 总钱包余额 (USDT)",
+            "description": "Binance Futures 总钱包余额 (USDT)；按 Prometheus job 分开展示趋势账户与多腿账户。",
             "fieldConfig": {
                 "defaults": {
                     "unit": "currencyUSD",
@@ -76,15 +76,19 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_account_balance{type=\"total\"}",
-                    "legendFormat": ""
+                    "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"total\"}",
+                    "legendFormat": "Trend"
+                },
+                {
+                    "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"total\"}",
+                    "legendFormat": "Hedge Multi-leg"
                 }
             ],
-            "title": "总余额",
+            "title": "总余额 (趋势 / 多腿)",
             "type": "stat"
         },
         {
-            "description": "可用保证金 (USDT)",
+            "description": "可用保证金 (USDT)；按 Prometheus job 分开展示趋势账户与多腿账户。",
             "fieldConfig": {
                 "defaults": {
                     "unit": "currencyUSD",
@@ -125,15 +129,19 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_account_balance{type=\"available\"}",
-                    "legendFormat": ""
+                    "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"available\"}",
+                    "legendFormat": "Trend"
+                },
+                {
+                    "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"available\"}",
+                    "legendFormat": "Hedge Multi-leg"
                 }
             ],
-            "title": "可用余额",
+            "title": "可用余额 (趋势 / 多腿)",
             "type": "stat"
         },
         {
-            "description": "维持保证金率 (>1 = 爆仓, <0.5 安全)",
+            "description": "维持保证金率 (>1 = 爆仓, <0.5 安全)；按 Prometheus job 分开展示趋势账户与多腿账户。",
             "fieldConfig": {
                 "defaults": {
                     "unit": "percentunit",
@@ -174,15 +182,19 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_account_margin_ratio",
-                    "legendFormat": ""
+                    "expr": "mlbot_account_margin_ratio{job=\"quant-trend-fattail\"}",
+                    "legendFormat": "Trend"
+                },
+                {
+                    "expr": "mlbot_account_margin_ratio{job=\"quant-hedge-multileg\"}",
+                    "legendFormat": "Hedge Multi-leg"
                 }
             ],
-            "title": "保证金使用率",
+            "title": "保证金使用率 (趋势 / 多腿)",
             "type": "stat"
         },
         {
-            "description": "所有持仓未实现盈亏总和 (USDT)",
+            "description": "所有持仓未实现盈亏总和 (USDT)；按 Prometheus job 分开展示趋势账户与多腿账户。",
             "fieldConfig": {
                 "defaults": {
                     "unit": "currencyUSD",
@@ -223,11 +235,15 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_unrealized_pnl_total",
-                    "legendFormat": ""
+                    "expr": "mlbot_unrealized_pnl_total{job=\"quant-trend-fattail\"}",
+                    "legendFormat": "Trend"
+                },
+                {
+                    "expr": "mlbot_unrealized_pnl_total{job=\"quant-hedge-multileg\"}",
+                    "legendFormat": "Hedge Multi-leg"
                 }
             ],
-            "title": "未实现盈亏",
+            "title": "未实现盈亏 (趋势 / 多腿)",
             "type": "stat"
         },
         {
@@ -299,19 +315,31 @@
             "id": 305,
             "targets": [
                 {
-                    "expr": "mlbot_account_balance{type=\"total\"}",
-                    "legendFormat": "Total"
+                    "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"total\"}",
+                    "legendFormat": "Trend total"
                 },
                 {
-                    "expr": "mlbot_account_balance{type=\"available\"}",
-                    "legendFormat": "Available"
+                    "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"available\"}",
+                    "legendFormat": "Trend available"
                 },
                 {
-                    "expr": "mlbot_account_balance{type=\"margin\"}",
-                    "legendFormat": "Margin"
+                    "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"margin\"}",
+                    "legendFormat": "Trend margin"
+                },
+                {
+                    "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"total\"}",
+                    "legendFormat": "Hedge total"
+                },
+                {
+                    "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"available\"}",
+                    "legendFormat": "Hedge available"
+                },
+                {
+                    "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"margin\"}",
+                    "legendFormat": "Hedge margin"
                 }
             ],
-            "title": "余额历史趋势",
+            "title": "余额历史趋势 (趋势 / 多腿账户)",
             "type": "timeseries"
         },
         {
@@ -358,7 +386,7 @@
             "id": 311,
             "targets": [
                 {
-                    "expr": "mlbot_funding_rate",
+                    "expr": "mlbot_funding_rate{job=\"quant-trend-fattail\"}",
                     "legendFormat": "{{symbol}}"
                 }
             ],
@@ -388,7 +416,7 @@
             "id": 312,
             "targets": [
                 {
-                    "expr": "mlbot_mark_price",
+                    "expr": "mlbot_mark_price{job=\"quant-trend-fattail\"}",
                     "legendFormat": "{{symbol}}"
                 }
             ],
@@ -418,7 +446,7 @@
             "id": 313,
             "targets": [
                 {
-                    "expr": "mlbot_open_interest_usd",
+                    "expr": "mlbot_open_interest_usd{job=\"quant-trend-fattail\"}",
                     "legendFormat": "{{symbol}}"
                 }
             ],
@@ -463,11 +491,19 @@
             "id": 321,
             "targets": [
                 {
-                    "expr": "mlbot_cpu_percent",
-                    "legendFormat": "CPU"
+                    "expr": "mlbot_cpu_percent{job=\"quant-feature-bus\"}",
+                    "legendFormat": "Feature bus"
+                },
+                {
+                    "expr": "mlbot_cpu_percent{job=\"quant-trend-fattail\"}",
+                    "legendFormat": "Trend"
+                },
+                {
+                    "expr": "mlbot_cpu_percent{job=\"quant-hedge-multileg\"}",
+                    "legendFormat": "Hedge Multi-leg"
                 }
             ],
-            "title": "CPU 使用率",
+            "title": "CPU 使用率 (三进程)",
             "type": "timeseries"
         },
         {
@@ -496,11 +532,19 @@
             "id": 322,
             "targets": [
                 {
-                    "expr": "mlbot_memory_mb",
-                    "legendFormat": "System"
+                    "expr": "mlbot_memory_mb{job=\"quant-feature-bus\"}",
+                    "legendFormat": "Feature bus"
+                },
+                {
+                    "expr": "mlbot_memory_mb{job=\"quant-trend-fattail\"}",
+                    "legendFormat": "Trend"
+                },
+                {
+                    "expr": "mlbot_memory_mb{job=\"quant-hedge-multileg\"}",
+                    "legendFormat": "Hedge Multi-leg"
                 }
             ],
-            "title": "系统内存 (MB)",
+            "title": "系统内存 (MB) (三进程)",
             "type": "timeseries"
         },
         {
@@ -529,11 +573,19 @@
             "id": 323,
             "targets": [
                 {
-                    "expr": "mlbot_memory_rss_mb",
-                    "legendFormat": "Process RSS"
+                    "expr": "mlbot_memory_rss_mb{job=\"quant-feature-bus\"}",
+                    "legendFormat": "Feature bus"
+                },
+                {
+                    "expr": "mlbot_memory_rss_mb{job=\"quant-trend-fattail\"}",
+                    "legendFormat": "Trend"
+                },
+                {
+                    "expr": "mlbot_memory_rss_mb{job=\"quant-hedge-multileg\"}",
+                    "legendFormat": "Hedge Multi-leg"
                 }
             ],
-            "title": "进程 RSS 内存 (MB)",
+            "title": "进程 RSS 内存 (MB) (三进程)",
             "type": "timeseries"
         },
         {
@@ -569,11 +621,19 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_uptime_seconds",
-                    "legendFormat": ""
+                    "expr": "mlbot_uptime_seconds{job=\"quant-feature-bus\"}",
+                    "legendFormat": "Feature bus"
+                },
+                {
+                    "expr": "mlbot_uptime_seconds{job=\"quant-trend-fattail\"}",
+                    "legendFormat": "Trend"
+                },
+                {
+                    "expr": "mlbot_uptime_seconds{job=\"quant-hedge-multileg\"}",
+                    "legendFormat": "Hedge Multi-leg"
                 }
             ],
-            "title": "进程 Uptime",
+            "title": "进程 Uptime (三进程)",
             "type": "stat"
         }
     ],

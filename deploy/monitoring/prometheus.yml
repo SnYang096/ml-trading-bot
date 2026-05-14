@@ -1,7 +1,10 @@
 # Prometheus 配置 — 抓取交易机器人 /metrics
 #
-# 经典 quant-engine（趋势 / bus 消费者）与 quant-multi-leg 各监听器内监听 :9090；
-# systemd 需在宿主机映射（见 deploy.yml）：9190→classic，9191→multi-leg。
+# 三进程架构：
+#   quant-feature-bus 监听 Binance WebSocket 并写磁盘 Feature Bus；
+#   quant-trend-fattail 与 quant-hedge-multileg 分别消费磁盘 bus，且各自使用独立账户。
+# systemd 需在宿主机映射（见 deploy.yml）：
+#   9192→feature-bus，9190→trend/fattail，9191→hedge multi-leg。
 # 注意：Prometheus 运行在 Docker 内，不能抓取只绑定宿主 127.0.0.1 的端口。
 # monitoring 栈通过 host.docker.internal 访问宿主（compose 已为 prometheus 配 extra_hosts）。
 
@@ -10,28 +13,39 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: "quant-engine-classic"
+  - job_name: "quant-feature-bus"
+    static_configs:
+      - targets: ["host.docker.internal:9192"]
+        labels:
+          instance: "live"
+          workload: "market_ws_publisher"
+    # publisher 只代表行情 WebSocket / 进程健康，不承载交易账户或策略决策指标。
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "^(mlbot_ws_connected|mlbot_cpu_percent|mlbot_memory_mb|mlbot_memory_rss_mb|mlbot_uptime_seconds)$"
+        action: keep
+
+  - job_name: "quant-trend-fattail"
     static_configs:
       - targets: ["host.docker.internal:9190"]
         labels:
           instance: "live"
-          workload: "trend_bus_consumer"
+          workload: "trend_fattail_consumer"
     metric_relabel_configs:
       - source_labels: [__name__]
         regex: "^mlbot_multi_leg_.+"
         action: drop
 
-  - job_name: "quant-multi-leg"
+  - job_name: "quant-hedge-multileg"
     static_configs:
       - targets: ["host.docker.internal:9191"]
         labels:
           instance: "live"
-          workload: "multi_leg_consumer"
-    # multi-leg 进程的 /metrics 包含与 classic 同名的 mlbot_* 注册表副本；若全盘入库会导致
-    # Grafana Stat/单序列面板出现「多条时间序列」进而显示 No data。只保留多腿专用与 OHLC gauge。
+          workload: "hedge_multileg_consumer"
+    # hedge multi-leg 使用独立账户：保留多腿专用、OHLC、账户和进程健康指标；其余趋势同名策略指标丢弃。
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: "^(mlbot_multi_leg_.+|mlbot_strategy_symbol_bar_ohlc)$"
+        regex: "^(mlbot_multi_leg_.+|mlbot_strategy_symbol_bar_ohlc|mlbot_account_balance|mlbot_account_margin_ratio|mlbot_unrealized_pnl_total|mlbot_cpu_percent|mlbot_memory_mb|mlbot_memory_rss_mb|mlbot_uptime_seconds)$"
         action: keep
 
   # Prometheus 自身

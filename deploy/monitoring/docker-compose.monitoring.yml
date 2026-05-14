@@ -4,7 +4,7 @@
 # Prometheus: http://localhost:9091
 # Grafana:    http://localhost:3000  (admin / admin)
 #
-# 指标：quant-engine classic → 宿主 9190；quant-multi-leg → 宿主 9191（见 prometheus.yml）。
+# 指标：quant-feature-bus → 宿主 9192；quant-trend-fattail → 宿主 9190；quant-hedge-multileg → 宿主 9191（见 prometheus.yml）。
 # 若 Grafana 面板无数据，检查 systemd docker run 是否已 -p 上述端口。
 
 services:

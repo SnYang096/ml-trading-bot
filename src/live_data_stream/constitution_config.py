@@ -1,4 +1,4 @@
-"""Read constitution YAML paths and shared sections (classic + multi-leg + publisher)."""
+"""Read constitution YAML paths and shared sections (trend/fat-tail + hedge multi-leg + publisher)."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def load_constitution_dict(path: str) -> Dict[str, Any]:
 
 
 def enabled_archetypes_from_constitution(cfg: Dict[str, Any]) -> List[str]:
-    """PCM 联合回测白名单 + 经典 LivePCM 注册候选（同一列表）。
+    """PCM 联合回测白名单 + trend/fat-tail LivePCM 注册候选（同一列表）。
 
     配置在 ``resource_allocation.enabled_archetypes``（或根级同名键）。
     推荐 YAML 显式 ``- bpc`` 列表；也接受逗号分隔字符串（与 ``multi_leg.strategies`` 一致）。

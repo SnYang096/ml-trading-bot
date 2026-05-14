@@ -15,25 +15,25 @@
 - `chop_grid`
 - `dual_add_trend`
 
-这些策略**有意**与经典单仓位 `TradeIntent` 实盘路径分离，因为它们同时持有 long/short 库存、存在挂单、需要 gross/net 敞口上限，以及**交易所真实状态**与**本地策略状态**的对账。
+这些策略**有意**与方向性单仓位 `TradeIntent` 实盘路径分离，因为它们同时持有 long/short 库存、存在挂单、需要 gross/net 敞口上限，以及**交易所真实状态**与**本地策略状态**的对账。
 
 ---
 
-## 与经典实盘流程对齐（双进程、双账户并行）
+## 与方向性实盘流程对齐（双进程、双账户并行）
 
-**经典实盘（未改）**：入口 `scripts/run_live.py`。数据与执行语义与原先一致：
+**方向性趋势 / fat-tail 实盘**：入口 `scripts/run_live.py`。数据来自 Feature Bus：
 
 ```text
-Binance WebSocket（行情 / 成交 tick）
-  → MultiSymbolManager → OrderFlowListener → IncrementalFeatureComputer
+quant-feature-bus（行情 WebSocket → 磁盘 Feature Bus）
+  → quant-trend-fattail / MultiSymbolManager → OrderFlowListener
   → GenericLiveStrategy（BPC / ME / SRB / TPC 等 TradeIntent 策略）
   → LivePCM / OrderManager → BinanceAPI
 ```
 
-**多腿进程（并行）**：入口 `scripts/run_multi_leg_live.py`。与经典路径**并存**，不替换 `run_live`：
+**Hedge 多腿进程（并行）**：入口 `scripts/run_multi_leg_live.py`。与方向性路径**并存**，不替换 `run_live`：
 
-- **驱动 bar**：仍为 **Parquet 已收盘 K 线 + 特征**（与经典「WS 推 tick → 增量特征」不同，这是多腿脚本的有意设计，便于离线一致的特征与慢周期 2H）。
-- **交易所推送**：在 `--mode testnet` 且使用真实 `BinanceAPI` 时，通过 **合约 User Data Stream（WebSocket，`BinanceUserStream`）** 接收订单/成交，经 `MultiLegLiveOrchestrator.on_execution_report` 进入引擎；语义上对齐「实盘靠 WS 拿交易所侧订单与成交更新」，**仅作用于多腿账户**，不接管经典路径的行情 WebSocket。
+- **驱动 bar**：来自 `quant-feature-bus` 写出的磁盘 Feature Bus；离线回放可用 parquet。
+- **交易所推送**：在 `--mode testnet/mainnet` 且使用真实 `BinanceAPI` 时，通过 **合约 User Data Stream（WebSocket，`BinanceUserStream`）** 接收订单/成交，经 `MultiLegLiveOrchestrator.on_execution_report` 进入引擎；它只作用于 hedge 多腿账户，不是行情 WebSocket。
 
 **推荐：chop_grid / dual_add 使用另一个币安子账户**
 
@@ -43,17 +43,18 @@ Binance WebSocket（行情 / 成交 tick）
   - `MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET`
 - 若未设置上述变量，脚本仍回落到 `BINANCE_FUTURES_TESTNET_API_KEY` / `SECRET`（兼容单账户、单进程）。
 
-同一台机器上并行跑两个进程时：经典进程加载主账户（或主 testnet）配置；多腿进程在**单独 shell / systemd 单元**中 `source` 仅含 `MULTI_LEG_*` 的 env 文件即可。
+同一台机器上并行跑两个进程时：`quant-trend-fattail` 加载方向性账户配置；`quant-hedge-multileg` 在独立 systemd 单元中使用 `MULTI_LEG_*` 专用密钥。
 
 ---
 
-## 经典 Live 路径（旧路径）
+## Directional Trend / Fat-tail 路径
 
 现有实盘主路径为：
 
 ```text
-BinanceWS
--> MultiSymbolManager
+quant-feature-bus
+-> disk Feature Bus
+-> quant-trend-fattail / MultiSymbolManager
 -> IncrementalFeatureComputer
 -> GenericLiveStrategy
 -> LivePCM
@@ -78,8 +79,8 @@ BinanceWS
 
 ```text
 慢信号：
-Binance Market WebSocket 或 Parquet 回放
--> MultiLegBarProvider
+disk Feature Bus（生产）或 Parquet 回放（离线）
+-> FeatureStoreBarProvider
 -> ChopGridLiveEngine / DualAddTrendLiveEngine
 -> MultiLegLiveOrchestrator（编排器）
 -> MultiLegPortfolioRiskGovernor（账户级风控）
@@ -96,7 +97,7 @@ Binance User Data Stream (WS)
 -> MultiLegExecutionAdapter
 ```
 
-`--bar-source parquet` 用于回放/影子；`--bar-source websocket` 复用经典 live 的底层行情栈（`BinanceWebSocketClient` / `MultiSymbolManager` / `OrderFlowListener` / `IncrementalFeatureComputer`），但不进入 `GenericLiveStrategy` / `LivePCM` / `OrderManager`。
+`--bar-source feature-store` 用于生产 Feature Bus 消费；`--bar-source parquet` 仅用于回放/影子。hedge 多腿生产入口不再打开 market WebSocket。
 
 ### 单行情源 Feature Bus 模式
 
@@ -111,23 +112,23 @@ run_market_feature_publisher.py
 随后两个消费者都读同一份已闭合快照：
 
 ```text
-经典 run_live.py
+quant-trend-fattail / run_live.py
   MLBOT_FEATURE_SOURCE=bus
   -> FeatureBusReader
   -> LivePCM / OrderManager
 
-多腿 run_multi_leg_live.py
+quant-hedge-multileg / run_multi_leg_live.py
   --bar-source feature-store
   -> FeatureBusReader
   -> MultiLegLiveOrchestrator
 ```
 
-此模式下，`run_live.py` 不再启动 market `BinanceWebSocketClient`，但仍保留 User Stream、PCM、`OrderManager` 与持仓管理；多腿继续使用独立账户/独立进程边界。
+此模式下，`run_live.py` 不再启动 market `BinanceWebSocketClient`，但仍保留 User Stream、PCM、`OrderManager` 与持仓管理；hedge 多腿继续使用独立账户/独立进程边界。
 
 执行时钟与信号时钟分离：
 
 - `features/{TIMEFRAME}` 是慢信号（如 `240T`、`120T`、`60T`、`2h`）。
-- `bars_1min` 是执行时钟。经典 bus 模式用它驱动软件止盈/止损检查；多腿 `feature-store` 用它驱动 grid fill、target exit、dual_add target/add 等执行动作。
+- `bars_1min` 是执行时钟。trend/fat-tail bus 模式用它驱动软件止盈/止损检查；hedge 多腿 `feature-store` 用它驱动 grid fill、target exit、dual_add target/add 等执行动作。
 - publisher 在任意 tick 到来时检测当前 10s 微窗口；只要价格相对该窗口 open 波动超过 3%，立即额外写一条 `_bar_kind=fast_intraminute` 的补充执行 bar。标准 1m bar 不被覆盖，后续仍正常写出。
 
 守护进程入口示例：
@@ -153,7 +154,7 @@ export MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET=...
 
 python scripts/run_multi_leg_live.py \
   --mode testnet \
-  --bar-source websocket \
+  --bar-source feature-store \
   --symbols BTCUSDT \
   --strategies chop_grid,dual_add_trend
 ```
@@ -237,7 +238,7 @@ on_execution_report(report)
 
 两条路径应 **并存、互补**，而不是互相替代。
 
-**用经典 Live** 当：
+**用 Directional Trend / Fat-tail Live** 当：
 
 - 单仓位 alpha 策略
 - `TradeIntent`
@@ -252,7 +253,7 @@ on_execution_report(report)
 - 策略自持「按腿」库存
 - 通过 client id 前缀区分策略（如 `cg_`、`dat_`）
 
-在真资金前，应在两条路径之上再加一层**账户总控**。当前多腿路径自带 governor；经典路径有 `LivePCM` / constitution 约束。未来可引入 **account master governor** 同时观测两条路径的总敞口。
+在真资金前，应在两条路径之上再加一层**账户总控**。当前 hedge 多腿路径自带 governor；trend/fat-tail 路径有 `LivePCM` / constitution 约束。未来可引入 **account master governor** 同时观测两条路径的总敞口。
 
 ---
 
@@ -281,12 +282,12 @@ on_execution_report(report)
 后续生产化工作包括但不限于：
 
 - 已完成：`BinanceUserStream` 在 `run_multi_leg_live.py` 的 testnet + `BinanceAPI` 下接入 `MultiLegLiveOrchestrator.on_execution_report`
-- 已完成：`--bar-source websocket` 复用经典 live 的行情/特征底层组件，作为多腿慢信号输入
+- 已完成：`--bar-source feature-store` 消费 quant-feature-bus 写出的磁盘 Feature Bus，作为 hedge 多腿慢信号输入
 - 已完成：per-leg reduce-only TP / SL 保护单动作与 `multi_leg_*` 独立持久化表
 - 主网多腿：与 `MULTI_LEG_*` 对称的专用主网 API 环境变量（若扩展 `--mode live`）
 - 进程重启后基于 `multi_leg_orders` / engine state 完整恢复保护单映射
 - 明确「持仓漂移」策略：仅告警 vs 自动减仓
-- 跨经典 Live 与多腿 Live 的 account master governor
+- 跨 trend/fat-tail Live 与 hedge multi-leg Live 的 account master governor
 - 对「被拒动作」「对账漂移」做指标与告警
 - 下单前按交易所规则做数量/价格步进与精度处理
 - funding、保证金与强平缓冲监控

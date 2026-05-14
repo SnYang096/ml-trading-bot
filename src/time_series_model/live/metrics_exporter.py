@@ -546,19 +546,31 @@ class Metrics:
     def update_account_data(self) -> None:
         """从 Binance Futures 私有 API 获取账户余额/保证金/未实现盈亏
 
-        需要 BINANCE_API_KEY + BINANCE_API_SECRET 环境变量。
+        默认读取趋势账户 BINANCE_*；多腿进程设置 MLBOT_ACCOUNT_SCOPE=multi_leg
+        后读取 MULTI_LEG_*，避免两个账户在看板上混用。
         如果未配置则静默跳过。
         """
-        api_key = os.getenv("BINANCE_API_KEY") or os.getenv(
-            "BINANCE_FUTURES_API_KEY", ""
-        )
-        api_secret = os.getenv("BINANCE_API_SECRET") or os.getenv(
-            "BINANCE_FUTURES_API_SECRET", ""
-        )
-        if not api_key or not api_secret:
-            logger.warning(
+        scope = os.getenv("MLBOT_ACCOUNT_SCOPE", "trend").strip().lower()
+        if scope in {"multi_leg", "multi-leg", "multileg"}:
+            api_key = os.getenv("MULTI_LEG_BINANCE_FUTURES_API_KEY") or os.getenv(
+                "MULTI_LEG_BINANCE_API_KEY", ""
+            )
+            api_secret = os.getenv("MULTI_LEG_BINANCE_FUTURES_API_SECRET") or os.getenv(
+                "MULTI_LEG_BINANCE_API_SECRET", ""
+            )
+            missing_msg = "account data 跳过: MULTI_LEG_BINANCE_* 未配置"
+        else:
+            api_key = os.getenv("BINANCE_API_KEY") or os.getenv(
+                "BINANCE_FUTURES_API_KEY", ""
+            )
+            api_secret = os.getenv("BINANCE_API_SECRET") or os.getenv(
+                "BINANCE_FUTURES_API_SECRET", ""
+            )
+            missing_msg = (
                 "account data 跳过: BINANCE_API_KEY / BINANCE_API_SECRET 未配置"
             )
+        if not api_key or not api_secret:
+            logger.warning(missing_msg)
             return
 
         try:
@@ -865,7 +877,7 @@ def _initialize_default_series() -> None:
         METRICS.pnl_realized_total.set(0)
         METRICS.drawdown.set(0)
         METRICS.gate_reject_rate.set(0)
-        METRICS.system_mode.set(0)
+        # system_mode：由 run_live 在启动时与 mode_manager 对齐，不设为 0 以免长期误显 OFFLINE。
         METRICS.account_margin_ratio.set(0)
         METRICS.unrealized_pnl_total.set(0)
         METRICS.pcm_notional_total.set(0)

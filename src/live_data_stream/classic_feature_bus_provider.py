@@ -1,4 +1,4 @@
-"""Feature Bus provider for classic live trading.
+"""Feature Bus provider for trend/fat-tail live trading.
 
 This adapter lets ``scripts/run_live.py`` keep its existing strategy/execution
 stack while replacing the market WebSocket feature source with rows produced by
@@ -31,7 +31,7 @@ class ClassicFeatureBusEvent:
 
 
 class ClassicFeatureBusProvider:
-    """Poll Feature Bus snapshots and build classic live decision events."""
+    """Poll Feature Bus snapshots and build trend/fat-tail decision events."""
 
     def __init__(
         self,

@@ -10,7 +10,7 @@ LIVE_ROOT="live/${UNIVERSE}"
 export LIVE_ROOT  # 提前导出，供后续 Python 脚本使用
 
 echo "============================================================"
-echo "🚀 实盘系统启动"
+echo "🚀 Directional Trend / Fat-tail consumer 启动"
 echo "============================================================"
 echo "Universe: $UNIVERSE"
 echo "Live Root: $LIVE_ROOT"
@@ -62,46 +62,20 @@ else
   SYMBOLS="$SYMBOLS_ARG"
 fi
 
-# 1. Warmup 数据检查（仅补充 daily 数据，不做完整下载）
-echo "📦 第1步：Warmup 数据检查..."
-TICKS_DIR="$LIVE_ROOT/data/ticks"
-BARS_DIR="$LIVE_ROOT/data/bars"
-FEATURE_SOURCE="${MLBOT_FEATURE_SOURCE:-websocket}"
-if [ "$FEATURE_SOURCE" = "bus" ] || [ "$FEATURE_SOURCE" = "feature-bus" ] || [ "$FEATURE_SOURCE" = "feature-store" ]; then
-  echo "   ✅ Feature Bus 模式：跳过本进程 warmup ticks/bars 强依赖"
-elif [ -d "$TICKS_DIR" ] && [ "$(ls -A $TICKS_DIR 2>/dev/null)" ]; then
-  echo "   ✅ 已有 ticks warmup 数据，补充缺失的 daily 数据..."
-  bash live/scripts/prepare_warmup_ticks.sh "$UNIVERSE" 6 --fill-gap
-else
-  echo "   ⚠️  未找到 warmup 数据！请先执行以下命令之一："
-  echo "      方式 A: 本地下载后 rsync 上传"
-  echo "        bash live/scripts/prepare_warmup_ticks.sh $UNIVERSE 6"
-  echo "        rsync -avz live/highcap/data/ ubuntu@SERVER:/opt/quant-engine/live/highcap/data/"
-  echo "      方式 B: 服务器上独立执行"
-  echo "        docker run --rm -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data quant-engine:latest bash live/scripts/prepare_warmup_ticks.sh highcap 6"
-  echo ""
-  echo "   ❌ Warmup 数据缺失，启动中止！"
+# 1. Feature Bus 数据路径检查：行情 WebSocket 只在 quant-feature-bus 进程内运行。
+echo "📦 第1步：Feature Bus 数据路径检查..."
+FEATURE_SOURCE="${MLBOT_FEATURE_SOURCE:-bus}"
+if [ "$FEATURE_SOURCE" != "bus" ] && [ "$FEATURE_SOURCE" != "feature-bus" ] && [ "$FEATURE_SOURCE" != "feature-store" ]; then
+  echo "   ❌ MLBOT_FEATURE_SOURCE=$FEATURE_SOURCE 已不支持；趋势消费者只允许 bus / feature-bus / feature-store"
   exit 1
 fi
-
-# 检查 bars 目录（bars 是特征计算的必要数据）
-if [ "$FEATURE_SOURCE" = "bus" ] || [ "$FEATURE_SOURCE" = "feature-bus" ] || [ "$FEATURE_SOURCE" = "feature-store" ]; then
-  echo "   ✅ Feature Bus 模式：bars 由 publisher/Feature Bus 提供"
-elif [ -d "$BARS_DIR" ]; then
-  BARS_FILES=$(find "$BARS_DIR" -name "*.parquet" 2>/dev/null | wc -l)
-  echo "   📊 bars 目录: $BARS_FILES 个 parquet 文件"
-  if [ "$BARS_FILES" -lt 100 ]; then
-    echo "   ⚠️  bars 数据不足 ($BARS_FILES 个文件，需要 100+)！"
-    echo "      特征计算需要 150+ 天 1min bars。请上传历史 bars 数据："
-    echo "      rsync -avz live/highcap/data/bars/ remote:$LIVE_ROOT/data/bars/"
-    echo "   ❌ bars warmup 数据不足，启动中止！"
-    exit 1
-  fi
-else
-  echo "   ❌ bars 目录不存在: $BARS_DIR"
-  echo "      请先运行 warmup 或上传 bars 数据"
+FEATURE_BUS_ROOT="${MLBOT_FEATURE_BUS_ROOT:-live/shared_feature_bus}"
+if [ ! -d "$FEATURE_BUS_ROOT" ]; then
+  echo "   ❌ Feature Bus 目录不存在: $FEATURE_BUS_ROOT"
+  echo "      请先启动 quant-feature-bus publisher。"
   exit 1
 fi
+echo "   ✅ Feature Bus: $FEATURE_BUS_ROOT"
 echo ""
 
 # 2. 依赖自检
@@ -124,11 +98,7 @@ echo "⚙️  第3步：配置环境变量..."
 
 export MLBOT_LIVE_SYMBOLS="$SYMBOLS"
 export MLBOT_LIVE_STORAGE_BASE="$LIVE_ROOT/data"
-if [ "$FEATURE_SOURCE" = "bus" ] || [ "$FEATURE_SOURCE" = "feature-bus" ] || [ "$FEATURE_SOURCE" = "feature-store" ]; then
-  export MLBOT_LIVE_WARMUP_DAYS="${MLBOT_LIVE_WARMUP_DAYS:-0}"
-else
-  export MLBOT_LIVE_WARMUP_DAYS="${MLBOT_LIVE_WARMUP_DAYS:-30}"
-fi
+export MLBOT_LIVE_WARMUP_DAYS="${MLBOT_LIVE_WARMUP_DAYS:-0}"
 export MLBOT_LIVE_TRADE_SIZE="0.001"  # 最小开仓量 fallback（风险反算 qty 太小时使用）
 # risk_per_slot 已经在 constitution.yaml 中配置 (slots.risk_per_slot = 0.01 = 1%)
 # MLBOT_RISK_PER_TRADE 作为备用 fallback（无 equity 时用固定美元）
@@ -145,10 +115,6 @@ export MLBOT_CONSTITUTION_YAML="$LIVE_ROOT/config/constitution/constitution.yaml
 
 # 唯一数据路径：quant-feature-bus 写盘，本进程只读 Feature Bus
 export MLBOT_FEATURE_SOURCE="${MLBOT_FEATURE_SOURCE:-bus}"
-
-# 策略B：live 不再依赖 Feature Store，所有特征基于 ticks/bars 实时重算
-# export MLBOT_FEATURE_STORE_DIR="$LIVE_ROOT/feature_store"  # 已废弃
-# export MLBOT_FEATURE_STORE_LAYER="bpc_live_240T"           # 已废弃
 
 # 订单管理器配置
 export MLBOT_ORDER_MODE="test"  # test/paper/live

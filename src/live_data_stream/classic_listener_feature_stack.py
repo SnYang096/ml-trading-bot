@@ -1,4 +1,4 @@
-"""Build OrderFlowListener primary + extra ``IncrementalFeatureComputer`` graphs for classic live.
+"""Build OrderFlowListener primary + extra ``IncrementalFeatureComputer`` graphs for trend/fat-tail live.
 
 Primary FC always uses ``strategies/bpc/archetypes`` at ``tf_bpc``. Any other **PCM-registered**
 strategy whose ``meta.yaml`` timeframe equals ``tf_bpc`` has its feature columns merged into the

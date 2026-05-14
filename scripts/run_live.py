@@ -1,11 +1,11 @@
-"""run_live.py — Live 实盘入口
+"""run_live.py — Directional trend/fat-tail live consumer
 
 GenericLiveStrategy → 配置驱动通用决策引擎
 支持 BPC/ME/SRB/TPC（及可选 LV）等 TradeIntent 策略；``resource_allocation.enabled_archetypes`` 决定参与集合。
 
 数据管线（唯一支持）:
   quant-feature-bus: BinanceWS → 特征 → 磁盘 shared_feature_bus
-  本进程: 磁盘 Feature Bus → MultiSymbolManager → PCM → OrderManager（+ 可选 User Stream）
+  quant-trend-fattail: 磁盘 Feature Bus → MultiSymbolManager → PCM → OrderManager（+ 可选 User Stream）
 """
 
 from __future__ import annotations
@@ -812,7 +812,7 @@ async def _run_external_feature_bus_mode(
     symbols: List[str],
     bg_gap_task: Optional[asyncio.Task],
 ) -> None:
-    """Run classic live decisions from disk Feature Bus instead of market WS."""
+    """Run trend/fat-tail decisions from disk Feature Bus instead of market WS."""
 
     feature_bus_root = os.getenv("MLBOT_FEATURE_BUS_ROOT", "live/shared_feature_bus")
     poll_seconds = float(os.getenv("MLBOT_FEATURE_BUS_POLL_SECONDS", "5"))
@@ -846,17 +846,15 @@ async def _run_external_feature_bus_mode(
     async def _periodic_market_update() -> None:
         interval = int(os.getenv("MLBOT_MARKET_DATA_INTERVAL", "30"))
         _mode_map = {"OFFLINE": 0, "DEGRADED": 1, "NORMAL": 2}
+        loop = asyncio.get_running_loop()
         while True:
             try:
-                await asyncio.sleep(interval)
-                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, METRICS.update_market_data, symbols)
                 await loop.run_in_executor(None, METRICS.update_account_data)
                 cur_mode = manager.mode_manager.get_current_mode()
                 METRICS.system_mode.set(_mode_map.get(cur_mode.value, 0))
                 for sym in symbols:
                     listener = manager.get_listener(sym)
-                    METRICS.ws_connected.labels(symbol=sym).set(1)
                     if listener and listener.last_feature_compute_time:
                         now = pd.Timestamp.now(tz="UTC")
                         age = (now - listener.last_feature_compute_time).total_seconds()
@@ -886,6 +884,11 @@ async def _run_external_feature_bus_mode(
             except Exception as exc:
                 logger.debug("市场数据更新异常: %s", exc)
                 await asyncio.sleep(60)
+                continue
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                break
 
     async def _daily_funding_oi_refresh() -> None:
         interval = 12 * 3600
@@ -1021,6 +1024,13 @@ async def main() -> None:
     manager, pcm = _setup_three_strategies(
         symbols, storage, gap_filler, trade_size, risk_per_trade
     )
+    _METRIC_MODE_MAP = {"OFFLINE": 0, "DEGRADED": 1, "NORMAL": 2, "ABNORMAL": 0}
+    try:
+        METRICS.system_mode.set(
+            _METRIC_MODE_MAP.get(manager.mode_manager.get_current_mode().value, 0)
+        )
+    except Exception:
+        logger.debug("initial system_mode gauge skipped", exc_info=True)
 
     # Warmup 与启动质量闸门
     if warmup_days > 0:

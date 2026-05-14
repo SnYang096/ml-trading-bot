@@ -37,7 +37,7 @@ def _nav_links(current_uid: str) -> list:
     links = [
         {
             "title": "📊 Overview",
-            "url": "/d/quant-engine-main",
+            "url": "/d/quant-live-overview",
             "type": "link",
             "icon": "apps",
             "targetBlank": False,

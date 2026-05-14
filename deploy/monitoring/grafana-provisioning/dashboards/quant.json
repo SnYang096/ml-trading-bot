@@ -242,7 +242,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(mlbot_kill_switch_halted) or vector(0)",
+                    "expr": "sum(mlbot_kill_switch_halted{job=\"quant-engine-classic\"}) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -308,7 +308,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(mlbot_system_mode) or vector(0)",
+                    "expr": "sum(mlbot_system_mode{job=\"quant-engine-classic\"}) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -356,7 +356,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(mlbot_pnl_realized_total) or vector(0)",
+                    "expr": "sum(mlbot_pnl_realized_total{job=\"quant-engine-classic\"}) or vector(0)",
                     "legendFormat": "PnL"
                 }
             ],
@@ -405,7 +405,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(mlbot_positions_active) or vector(0)",
+                    "expr": "sum(mlbot_positions_active{job=\"quant-engine-classic\"}) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -454,7 +454,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(mlbot_account_balance{type=\"total\"}) or vector(0)",
+                    "expr": "sum(mlbot_account_balance{job=\"quant-engine-classic\",type=\"total\"}) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -503,7 +503,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(mlbot_drawdown) or vector(0)",
+                    "expr": "sum(mlbot_drawdown{job=\"quant-engine-classic\"}) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -543,7 +543,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(mlbot_gate_reject_rate) or vector(0)",
+                    "expr": "sum(mlbot_gate_reject_rate{job=\"quant-engine-classic\"}) or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -597,7 +597,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(mlbot_pnl_realized_total) or vector(0)",
+                    "expr": "sum(mlbot_pnl_realized_total{job=\"quant-engine-classic\"}) or vector(0)",
                     "legendFormat": "PnL"
                 }
             ],
@@ -674,15 +674,15 @@
             "id": 11,
             "targets": [
                 {
-                    "expr": "rate(mlbot_orders_total{strategy=\"bpc\"}[1h])*3600",
+                    "expr": "rate(mlbot_orders_total{job=\"quant-engine-classic\",strategy=\"bpc\"}[1h])*3600",
                     "legendFormat": "BPC"
                 },
                 {
-                    "expr": "rate(mlbot_orders_total{strategy=\"me\"}[1h])*3600",
+                    "expr": "rate(mlbot_orders_total{job=\"quant-engine-classic\",strategy=\"me\"}[1h])*3600",
                     "legendFormat": "ME"
                 },
                 {
-                    "expr": "rate(mlbot_orders_total{strategy=\"fer\"}[1h])*3600",
+                    "expr": "rate(mlbot_orders_total{job=\"quant-engine-classic\",strategy=\"fer\"}[1h])*3600",
                     "legendFormat": "FER"
                 }
             ],
@@ -739,15 +739,15 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_loss{period=\"daily\"} or vector(0)",
+                    "expr": "mlbot_loss{job=\"quant-engine-classic\",period=\"daily\"} or vector(0)",
                     "legendFormat": "日亏损 (限4%)"
                 },
                 {
-                    "expr": "mlbot_loss{period=\"weekly\"} or vector(0)",
+                    "expr": "mlbot_loss{job=\"quant-engine-classic\",period=\"weekly\"} or vector(0)",
                     "legendFormat": "周亏损 (限8%)"
                 },
                 {
-                    "expr": "mlbot_loss{period=\"monthly\"} or vector(0)",
+                    "expr": "mlbot_loss{job=\"quant-engine-classic\",period=\"monthly\"} or vector(0)",
                     "legendFormat": "月亏损 (限12%)"
                 }
             ],
@@ -792,7 +792,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_last_bar_age_seconds or vector(0)",
+                    "expr": "mlbot_last_bar_age_seconds{job=\"quant-engine-classic\"} or vector(0)",
                     "legendFormat": "{{symbol}}"
                 }
             ],
@@ -800,18 +800,18 @@
             "type": "bargauge"
         },
         {
-            "description": "各 symbol WebSocket 连接状态",
+            "description": "classic 进程的「链路心跳」（非 Binance WS）。行情 WebSocket 在 quant-feature-bus；本值为 1 表示 engine 在正常消费磁盘 bus + 周期性刷新账户等指标。可看「📈 Trend / Symbols」dashboard 里的 snapshot age / last bar age 判断是否跟上市价。",
             "fieldConfig": {
                 "defaults": {
                     "mappings": [
                         {
                             "options": {
                                 "0": {
-                                    "text": "❌ 断开",
+                                    "text": "❌ 未上报 (0)",
                                     "color": "red"
                                 },
                                 "1": {
-                                    "text": "✅ 在线",
+                                    "text": "✅ 链路 OK",
                                     "color": "green"
                                 }
                             },
@@ -850,11 +850,11 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_ws_connected or vector(0)",
+                    "expr": "mlbot_ws_connected{job=\"quant-engine-classic\"} or vector(0)",
                     "legendFormat": "{{symbol}}"
                 }
             ],
-            "title": "WebSocket 连接状态",
+            "title": "行情链路心跳 (classic, 非 Binance WS)",
             "type": "stat"
         },
         {
@@ -901,15 +901,15 @@
             "id": 121,
             "targets": [
                 {
-                    "expr": "sum(mlbot_pcm_notional_total_frac) or vector(0)",
+                    "expr": "sum(mlbot_pcm_notional_total_frac{job=\"quant-engine-classic\"}) or vector(0)",
                     "legendFormat": "Total"
                 },
                 {
-                    "expr": "sum(mlbot_pcm_notional_soft_cap_frac) or vector(0)",
+                    "expr": "sum(mlbot_pcm_notional_soft_cap_frac{job=\"quant-engine-classic\"}) or vector(0)",
                     "legendFormat": "Soft Cap"
                 },
                 {
-                    "expr": "sum(mlbot_pcm_notional_hard_cap_frac) or vector(0)",
+                    "expr": "sum(mlbot_pcm_notional_hard_cap_frac{job=\"quant-engine-classic\"}) or vector(0)",
                     "legendFormat": "Hard Cap"
                 }
             ],
@@ -932,7 +932,7 @@
             "id": 122,
             "targets": [
                 {
-                    "expr": "mlbot_pcm_notional_symbol_frac or vector(0)",
+                    "expr": "mlbot_pcm_notional_symbol_frac{job=\"quant-engine-classic\"} or vector(0)",
                     "legendFormat": "{{symbol}}"
                 }
             ],
@@ -960,7 +960,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_pcm_notional_family_frac or vector(0)",
+                    "expr": "mlbot_pcm_notional_family_frac{job=\"quant-engine-classic\"} or vector(0)",
                     "legendFormat": "{{family}}"
                 }
             ],
@@ -978,7 +978,7 @@
             "id": 124,
             "targets": [
                 {
-                    "expr": "mlbot_pcm_notional_reject_count or vector(0)",
+                    "expr": "mlbot_pcm_notional_reject_count{job=\"quant-engine-classic\"} or vector(0)",
                     "legendFormat": "{{reason}}"
                 }
             ],
@@ -987,22 +987,37 @@
         },
         {
             "collapsed": false,
-            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 41},
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 41
+            },
             "id": 130,
             "title": "📈 策略流量 / 特征健康",
             "type": "row"
         },
         {
             "description": "各策略下单速率（quant-engine /metrics）",
-            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 42},
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 42
+            },
             "id": 131,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy) (rate(mlbot_orders_total[5m]))",
+                    "expr": "sum by (strategy) (rate(mlbot_orders_total{job=\"quant-engine-classic\"}[5m]))",
                     "legendFormat": "{{strategy}}"
                 }
             ],
@@ -1011,15 +1026,25 @@
         },
         {
             "description": "各策略信号（evidence 通过后）",
-            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 42},
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 42
+            },
             "id": 132,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy) (rate(mlbot_signals_total[5m]))",
+                    "expr": "sum by (strategy) (rate(mlbot_signals_total{job=\"quant-engine-classic\"}[5m]))",
                     "legendFormat": "{{strategy}}"
                 }
             ],
@@ -1036,22 +1061,41 @@
                     "thresholds": {
                         "mode": "absolute",
                         "steps": [
-                            {"color": "green", "value": null},
-                            {"color": "yellow", "value": 0.05},
-                            {"color": "red", "value": 0.15}
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.05
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.15
+                            }
                         ]
                     }
                 }
             },
-            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 50},
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 50
+            },
             "id": 133,
             "options": {
-                "legend": {"displayMode": "table", "placement": "right"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "right"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "mlbot_feature_nan_ratio",
+                    "expr": "mlbot_feature_nan_ratio{job=\"quant-engine-classic\"}",
                     "legendFormat": "{{symbol}} {{timeframe}}"
                 }
             ],
@@ -1060,15 +1104,25 @@
         },
         {
             "description": "漏斗 direction 阶段按策略",
-            "gridPos": {"h": 7, "w": 24, "x": 0, "y": 58},
+            "gridPos": {
+                "h": 7,
+                "w": 24,
+                "x": 0,
+                "y": 58
+            },
             "id": 134,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy) (rate(mlbot_funnel_total{stage=\"direction\"}[15m]))",
+                    "expr": "sum by (strategy) (rate(mlbot_funnel_total{job=\"quant-engine-classic\",stage=\"direction\"}[15m]))",
                     "legendFormat": "{{strategy}}"
                 }
             ],

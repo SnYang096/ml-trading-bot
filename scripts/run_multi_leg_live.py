@@ -5,14 +5,15 @@ This runner is separate from ``scripts/run_live.py`` because ``chop_grid`` and
 ``dual_add_trend`` own multi-leg inventory instead of single ``TradeIntent``
 positions.
 
-**Parallel with classic live (BPC / TPC / ME / SRB, etc.)**
+**Parallel with directional trend/fat-tail live (BPC / TPC / ME / SRB, etc.)**
 
-- Classic production: ``scripts/run_live.py`` — market data over **Binance
-  WebSocket** (ticks / bars) → ``MultiSymbolManager`` → ``GenericLiveStrategy`` →
-  ``OrderManager`` (see that file’s docstring).
-- Multi-leg: this script — ``--bar-source parquet`` for replay/shadow, or
-  ``--bar-source websocket`` to reuse the classic market-data WebSocket stack
-  for slow signal features. In   ``--mode testnet`` or ``--mode mainnet``, it also starts **Futures User
+- Feature-bus production: ``scripts/run_market_feature_publisher.py`` owns the
+  **Binance market WebSocket** and writes disk Feature Bus snapshots.
+- Classic production: ``scripts/run_live.py`` consumes that disk Feature Bus →
+  ``MultiSymbolManager`` → ``GenericLiveStrategy`` → ``OrderManager``.
+- Multi-leg: this script — ``--bar-source feature-store`` for production bus
+  consumption, or ``--bar-source parquet`` for offline replay/shadow. In
+  ``--mode testnet`` or ``--mode mainnet``, it also starts **Futures User
   Data Stream WebSocket** (``BinanceUserStream``) for fills/order updates into
   ``MultiLegLiveOrchestrator.on_execution_report``.
 
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
 import sys
@@ -64,9 +66,6 @@ from src.order_management.mock_binance_api import MockBinanceAPI  # noqa: E402
 from src.order_management.multi_leg_storage import MultiLegStorage  # noqa: E402
 from src.order_management.multi_leg_feature_store_provider import (  # noqa: E402
     FeatureStoreBarProvider,
-)
-from src.order_management.multi_leg_ws_provider import (  # noqa: E402
-    MultiLegWebSocketBarProvider,
 )
 from src.order_management.multi_leg_daemon import (  # noqa: E402
     MultiLegBarEvent,
@@ -234,7 +233,7 @@ def _make_api(mode: str, *, allow_shared_account: bool = False) -> Any:
             "testnet mode requires API keys: set "
             "MULTI_LEG_BINANCE_FUTURES_TESTNET_API_KEY/SECRET for the dedicated "
             "multi-leg account. To intentionally reuse BINANCE_FUTURES_TESTNET_* "
-            "from the classic live stack, pass --allow-shared-account."
+            "from the trend/fat-tail live stack, pass --allow-shared-account."
         )
     if using_shared:
         print(
@@ -348,16 +347,6 @@ def build_daemon(
             execution_timeframe=args.feature_store_execution_timeframe,
             initial_backfill_bars=args.feature_store_initial_backfill_bars,
         )
-    elif args.bar_source == "websocket":
-        provider = MultiLegWebSocketBarProvider(
-            symbols=symbols,
-            storage_base_path=args.live_storage_base,
-            feature_compute_interval_minutes=args.feature_compute_interval_minutes,
-            memory_window_hours=args.memory_window_hours,
-            orderflow_window_minutes=args.orderflow_window_minutes,
-            feature_4h_interval_hours=args.feature_4h_interval_hours,
-            warmup_days=args.warmup_days,
-        )
     else:
         provider = ParquetFeatureBarProvider(
             data_dir=args.data_dir,
@@ -409,7 +398,9 @@ def build_daemon(
             bar_provider=provider,
             runtimes=runtimes,
             poll_seconds=args.poll_seconds,
-            reconcile_interval_seconds=args.reconcile_interval_seconds,
+            reconcile_interval_seconds=getattr(
+                args, "reconcile_interval_seconds", 60.0
+            ),
         ),
         api,
         storage,
@@ -471,27 +462,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--data-dir", default="data/parquet_data")
     p.add_argument(
         "--bar-source",
-        choices=["parquet", "websocket", "feature-store"],
+        choices=["parquet", "feature-store"],
         default="parquet",
     )
-    p.add_argument("--live-storage-base", default="data/live_storage")
     p.add_argument("--feature-bus-root", default="live/shared_feature_bus")
     p.add_argument("--feature-store-timeframe", default="2h")
     p.add_argument("--feature-store-execution-timeframe", default="1min")
     p.add_argument("--feature-store-initial-backfill-bars", type=int, default=1)
     p.add_argument("--timeframe", default="2h")
     p.add_argument("--lookback-days", type=int, default=180)
-    p.add_argument("--warmup-days", type=int, default=0)
-    p.add_argument("--memory-window-hours", type=float, default=4.0)
-    p.add_argument("--feature-compute-interval-minutes", type=int, default=15)
-    p.add_argument("--orderflow-window-minutes", type=int, default=None)
-    p.add_argument("--feature-4h-interval-hours", type=int, default=4)
-    p.add_argument(
-        "--websocket-prime-seconds",
-        type=float,
-        default=0.0,
-        help="When --once and --bar-source=websocket, wait this many seconds before run_once.",
-    )
     p.add_argument("--poll-seconds", type=float, default=60.0)
     p.add_argument("--reconcile-interval-seconds", type=float, default=60.0)
     p.add_argument("--once", action="store_true")
@@ -529,6 +508,23 @@ def parse_args() -> argparse.Namespace:
         default="config/strategies/dual_add_trend/research/calibrate_roll.default.yaml",
     )
     return p.parse_args()
+
+
+async def _periodic_process_metrics() -> None:
+    interval = int(os.getenv("MLBOT_MARKET_DATA_INTERVAL", "30"))
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            await loop.run_in_executor(None, METRICS.update_system_health)
+            await loop.run_in_executor(None, METRICS.update_account_data)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.debug("multi-leg metrics update skipped: %s", exc)
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            break
 
 
 async def async_main() -> None:
@@ -572,19 +568,21 @@ async def async_main() -> None:
         user_stream = BinanceUserStream(exchange_api, on_execution_report)
         await user_stream.start()
 
+    metrics_task = asyncio.create_task(_periodic_process_metrics())
     try:
         start = getattr(bar_provider, "start", None)
         if callable(start):
             await start()
         if args.once:
-            if args.bar_source == "websocket" and args.websocket_prime_seconds > 0:
-                await asyncio.sleep(args.websocket_prime_seconds)
             report = daemon.run_once()
             print(report)
         else:
             max_iterations = args.max_iterations if args.max_iterations > 0 else None
             await daemon.run_forever(max_iterations=max_iterations)
     finally:
+        metrics_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await metrics_task
         stop = getattr(bar_provider, "stop", None)
         if callable(stop):
             await stop()

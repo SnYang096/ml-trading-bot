@@ -1,12 +1,14 @@
 {
-    "annotations": {"list": []},
+    "annotations": {
+        "list": []
+    },
     "editable": true,
     "graphTooltip": 1,
     "id": null,
     "links": [
         {
             "title": "📊 Overview",
-            "url": "/d/quant-engine-main",
+            "url": "/d/quant-live-overview",
             "type": "link",
             "icon": "apps",
             "targetBlank": false
@@ -26,8 +28,8 @@
             "targetBlank": false
         },
         {
-            "title": "🦵 Multi-leg",
-            "url": "/d/quant-multi-leg",
+            "title": "Hedge Multi-leg",
+            "url": "/d/quant-hedge-multileg",
             "type": "link",
             "icon": "dashboard",
             "targetBlank": false
@@ -36,22 +38,41 @@
     "panels": [
         {
             "collapsed": false,
-            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 0
+            },
             "id": 700,
             "title": "各策略 · 信号与下单",
             "type": "row"
         },
         {
-            "fieldConfig": {"defaults": {"unit": "ops"}},
-            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ops"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 1
+            },
             "id": 701,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy) (rate(mlbot_signals_total[5m]))",
+                    "expr": "sum by (strategy) (rate(mlbot_signals_total{job=\"quant-trend-fattail\"}[5m]))",
                     "legendFormat": "{{strategy}}"
                 }
             ],
@@ -59,16 +80,30 @@
             "type": "timeseries"
         },
         {
-            "fieldConfig": {"defaults": {"unit": "ops"}},
-            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 1},
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ops"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 1
+            },
             "id": 702,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy) (rate(mlbot_orders_total[5m]))",
+                    "expr": "sum by (strategy) (rate(mlbot_orders_total{job=\"quant-trend-fattail\"}[5m]))",
                     "legendFormat": "{{strategy}}"
                 }
             ],
@@ -76,16 +111,30 @@
             "type": "timeseries"
         },
         {
-            "fieldConfig": {"defaults": {"unit": "ops"}},
-            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 9},
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ops"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 9
+            },
             "id": 703,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "sum by (stage, strategy) (rate(mlbot_funnel_total[5m]))",
+                    "expr": "sum by (stage, strategy) (rate(mlbot_funnel_total{job=\"quant-trend-fattail\"}[5m]))",
                     "legendFormat": "{{strategy}} {{stage}}"
                 }
             ],
@@ -94,7 +143,12 @@
         },
         {
             "collapsed": false,
-            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 17},
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 17
+            },
             "id": 710,
             "title": "Slot · Gate",
             "type": "row"
@@ -105,22 +159,37 @@
                     "thresholds": {
                         "mode": "absolute",
                         "steps": [
-                            {"color": "green", "value": null},
-                            {"color": "yellow", "value": 1}
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 1
+                            }
                         ]
                     }
                 }
             },
-            "gridPos": {"h": 6, "w": 12, "x": 0, "y": 18},
+            "gridPos": {
+                "h": 6,
+                "w": 12,
+                "x": 0,
+                "y": 18
+            },
             "id": 711,
             "options": {
                 "displayMode": "gradient",
                 "orientation": "horizontal",
-                "reduceOptions": {"calcs": ["lastNotNull"]}
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy) (mlbot_strategy_slots_active)",
+                    "expr": "sum by (strategy) (mlbot_strategy_slots_active{job=\"quant-trend-fattail\"})",
                     "legendFormat": "{{strategy}}"
                 }
             ],
@@ -128,16 +197,30 @@
             "type": "bargauge"
         },
         {
-            "fieldConfig": {"defaults": {"unit": "ops"}},
-            "gridPos": {"h": 6, "w": 12, "x": 12, "y": 18},
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ops"
+                }
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 12,
+                "x": 12,
+                "y": 18
+            },
             "id": 712,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy) (rate(mlbot_gate_rejected_total[5m]))",
+                    "expr": "sum by (strategy) (rate(mlbot_gate_rejected_total{job=\"quant-trend-fattail\"}[5m]))",
                     "legendFormat": "{{strategy}}"
                 }
             ],
@@ -146,7 +229,12 @@
         },
         {
             "collapsed": false,
-            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24},
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 24
+            },
             "id": 720,
             "title": "特征健康（symbol · timeframe）",
             "type": "row"
@@ -160,22 +248,41 @@
                     "thresholds": {
                         "mode": "absolute",
                         "steps": [
-                            {"color": "green", "value": null},
-                            {"color": "yellow", "value": 0.05},
-                            {"color": "red", "value": 0.2}
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.05
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.2
+                            }
                         ]
                     }
                 }
             },
-            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 25},
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 25
+            },
             "id": 721,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "mlbot_feature_nan_ratio",
+                    "expr": "mlbot_feature_nan_ratio{job=\"quant-trend-fattail\"}",
                     "legendFormat": "{{symbol}} {{timeframe}}"
                 }
             ],
@@ -190,21 +297,37 @@
                     "thresholds": {
                         "mode": "absolute",
                         "steps": [
-                            {"color": "green", "value": null},
-                            {"color": "red", "value": 1}
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "red",
+                                "value": 1
+                            }
                         ]
                     }
                 }
             },
-            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 25},
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 25
+            },
             "id": 722,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "mlbot_feature_critical_nan",
+                    "expr": "mlbot_feature_critical_nan{job=\"quant-trend-fattail\"}",
                     "legendFormat": "{{symbol}} {{timeframe}}"
                 }
             ],
@@ -212,16 +335,30 @@
             "type": "timeseries"
         },
         {
-            "fieldConfig": {"defaults": {"unit": "ops"}},
-            "gridPos": {"h": 7, "w": 12, "x": 0, "y": 33},
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ops"
+                }
+            },
+            "gridPos": {
+                "h": 7,
+                "w": 12,
+                "x": 0,
+                "y": 33
+            },
             "id": 723,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "sum by (symbol, timeframe, node) (rate(mlbot_feature_loader_errors_total[15m]))",
+                    "expr": "sum by (symbol, timeframe, node) (rate(mlbot_feature_loader_errors_total{job=\"quant-trend-fattail\"}[15m]))",
                     "legendFormat": "{{symbol}} {{timeframe}} {{node}}"
                 }
             ],
@@ -229,28 +366,52 @@
             "type": "timeseries"
         },
         {
-            "fieldConfig": {"defaults": {"unit": "s"}},
-            "gridPos": {"h": 7, "w": 12, "x": 12, "y": 33},
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s"
+                }
+            },
+            "gridPos": {
+                "h": 7,
+                "w": 12,
+                "x": 12,
+                "y": 33
+            },
             "id": 724,
             "options": {
-                "legend": {"displayMode": "list", "placement": "bottom"},
-                "tooltip": {"mode": "multi"}
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
             },
             "targets": [
                 {
-                    "expr": "mlbot_last_bar_age_seconds",
+                    "expr": "mlbot_last_bar_age_seconds{job=\"quant-trend-fattail\"}",
                     "legendFormat": "{{symbol}}"
                 }
             ],
-            "title": "经典引擎 last bar 年龄",
+            "title": "Trend / Fat-tail last bar 年龄",
             "type": "timeseries"
         }
     ],
     "refresh": "15s",
     "schemaVersion": 39,
-    "tags": ["trading", "quant", "strategies", "features"],
-    "templating": {"list": []},
-    "time": {"from": "now-6h", "to": "now"},
+    "tags": [
+        "trading",
+        "quant",
+        "strategies",
+        "features"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-6h",
+        "to": "now"
+    },
     "timepicker": {},
     "timezone": "utc",
     "title": "📈 策略与特征",
