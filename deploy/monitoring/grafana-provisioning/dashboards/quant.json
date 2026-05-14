@@ -242,7 +242,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_kill_switch_halted",
+                    "expr": "mlbot_kill_switch_halted or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -308,7 +308,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_system_mode",
+                    "expr": "mlbot_system_mode or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -356,7 +356,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_pnl_realized_total",
+                    "expr": "mlbot_pnl_realized_total or vector(0)",
                     "legendFormat": "PnL"
                 }
             ],
@@ -405,7 +405,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_positions_active",
+                    "expr": "mlbot_positions_active or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -454,7 +454,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_account_balance{type=\"total\"}",
+                    "expr": "mlbot_account_balance{type=\"total\"} or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -503,7 +503,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_drawdown",
+                    "expr": "mlbot_drawdown or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -543,7 +543,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_gate_reject_rate",
+                    "expr": "mlbot_gate_reject_rate or vector(0)",
                     "legendFormat": ""
                 }
             ],
@@ -597,7 +597,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_pnl_realized_total",
+                    "expr": "mlbot_pnl_realized_total or vector(0)",
                     "legendFormat": "PnL"
                 }
             ],
@@ -739,15 +739,15 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_loss{period=\"daily\"}",
+                    "expr": "mlbot_loss{period=\"daily\"} or vector(0)",
                     "legendFormat": "日亏损 (限4%)"
                 },
                 {
-                    "expr": "mlbot_loss{period=\"weekly\"}",
+                    "expr": "mlbot_loss{period=\"weekly\"} or vector(0)",
                     "legendFormat": "周亏损 (限8%)"
                 },
                 {
-                    "expr": "mlbot_loss{period=\"monthly\"}",
+                    "expr": "mlbot_loss{period=\"monthly\"} or vector(0)",
                     "legendFormat": "月亏损 (限12%)"
                 }
             ],
@@ -792,7 +792,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_last_bar_age_seconds",
+                    "expr": "mlbot_last_bar_age_seconds or vector(0)",
                     "legendFormat": "{{symbol}}"
                 }
             ],
@@ -850,7 +850,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_ws_connected",
+                    "expr": "mlbot_ws_connected or vector(0)",
                     "legendFormat": "{{symbol}}"
                 }
             ],
@@ -901,15 +901,15 @@
             "id": 121,
             "targets": [
                 {
-                    "expr": "mlbot_pcm_notional_total_frac",
+                    "expr": "mlbot_pcm_notional_total_frac or vector(0)",
                     "legendFormat": "Total"
                 },
                 {
-                    "expr": "mlbot_pcm_notional_soft_cap_frac",
+                    "expr": "mlbot_pcm_notional_soft_cap_frac or vector(0)",
                     "legendFormat": "Soft Cap"
                 },
                 {
-                    "expr": "mlbot_pcm_notional_hard_cap_frac",
+                    "expr": "mlbot_pcm_notional_hard_cap_frac or vector(0)",
                     "legendFormat": "Hard Cap"
                 }
             ],
@@ -932,7 +932,7 @@
             "id": 122,
             "targets": [
                 {
-                    "expr": "mlbot_pcm_notional_symbol_frac",
+                    "expr": "mlbot_pcm_notional_symbol_frac or vector(0)",
                     "legendFormat": "{{symbol}}"
                 }
             ],
@@ -960,7 +960,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_pcm_notional_family_frac",
+                    "expr": "mlbot_pcm_notional_family_frac or vector(0)",
                     "legendFormat": "{{family}}"
                 }
             ],
@@ -978,7 +978,7 @@
             "id": 124,
             "targets": [
                 {
-                    "expr": "mlbot_pcm_notional_reject_count",
+                    "expr": "mlbot_pcm_notional_reject_count or vector(0)",
                     "legendFormat": "{{reason}}"
                 }
             ],
