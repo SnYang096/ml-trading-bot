@@ -13,7 +13,7 @@
       "title": "OHLC (selected strategy/symbol/timeframe)",
       "id": 201,
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"open\"}", "legendFormat": "open" },
         { "refId": "B", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"high\"}", "legendFormat": "high" },
@@ -28,7 +28,7 @@
       "title": "Feature Layers (selected key features)",
       "id": 202,
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 10 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_strategy_feature_value{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\"}", "legendFormat": "{{layer}} · {{feature}}" }
       ],
@@ -40,7 +40,7 @@
       "title": "Entry/Exit/Signal Marker Flow (per minute)",
       "id": 203,
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "sum by (event, side) (increase(mlbot_strategy_event_total{job=~\"quant-trend-fattail|quant-hedge-multileg\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[1m]))", "legendFormat": "{{event}} {{side}}" }
       ],
@@ -52,7 +52,7 @@
       "title": "Last Event Price Marker",
       "id": 204,
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_strategy_event_price{job=~\"quant-trend-fattail|quant-hedge-multileg\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"}", "legendFormat": "{{event}} {{side}}" }
       ],
@@ -64,7 +64,7 @@
       "title": "Trend Funnel and Orders (selected strategy)",
       "id": 205,
       "gridPos": { "h": 7, "w": 12, "x": 0, "y": 26 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "sum by (stage) (rate(mlbot_funnel_total{job=\"quant-trend-fattail\",strategy=~\"$strategy\"}[5m]))", "legendFormat": "funnel {{stage}}" },
         { "refId": "B", "expr": "rate(mlbot_orders_total{job=\"quant-trend-fattail\",strategy=~\"$strategy\"}[5m])", "legendFormat": "orders {{strategy}}" }
@@ -77,7 +77,7 @@
       "title": "Hedge Actions and Execution (selected strategy)",
       "id": 206,
       "gridPos": { "h": 7, "w": 12, "x": 12, "y": 26 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total{job=\"quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "actions {{strategy}} {{symbol}}" },
         { "refId": "B", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_execution_results_total{job=\"quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "exec {{strategy}} {{symbol}}" }
@@ -102,31 +102,34 @@
       {
         "name": "strategy",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
         "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\"}, strategy)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
+        "allValue": ".+",
         "current": { "text": "All", "value": "$__all" }
       },
       {
         "name": "symbol",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
         "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\"}, symbol)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
+        "allValue": ".+",
         "current": { "text": "All", "value": "$__all" }
       },
       {
         "name": "timeframe",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
         "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\"}, timeframe)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
+        "allValue": ".+",
         "current": { "text": "All", "value": "$__all" }
       }
     ]

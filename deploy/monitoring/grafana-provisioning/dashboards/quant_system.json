@@ -20,7 +20,7 @@
       "title": "Prometheus Target up",
       "id": 102,
       "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "up{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
       ],
@@ -31,7 +31,7 @@
       "title": "CPU % (3 processes)",
       "id": 103,
       "gridPos": { "h": 6, "w": 8, "x": 8, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_cpu_percent{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
       ],
@@ -42,7 +42,7 @@
       "title": "RSS MB (3 processes)",
       "id": 104,
       "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_memory_rss_mb{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
       ],
@@ -53,7 +53,7 @@
       "title": "Machine Memory MB",
       "id": 105,
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 7 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_memory_mb{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
       ],
@@ -64,7 +64,7 @@
       "title": "Uptime Seconds",
       "id": 106,
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 7 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_uptime_seconds{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
       ],
@@ -82,7 +82,7 @@
       "title": "WebSocket Connected (publisher)",
       "id": 108,
       "gridPos": { "h": 7, "w": 8, "x": 0, "y": 14 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_ws_connected{job=\"quant-feature-bus\"}", "legendFormat": "{{symbol}}" }
       ],
@@ -93,7 +93,7 @@
       "title": "Feature Bus Snapshot Age (trend consumer view)",
       "id": 109,
       "gridPos": { "h": 7, "w": 8, "x": 8, "y": 14 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_feature_bus_snapshot_age_seconds{job=\"quant-trend-fattail\"}", "legendFormat": "{{symbol}}" }
       ],
@@ -104,7 +104,7 @@
       "title": "Trend System Mode",
       "id": 110,
       "gridPos": { "h": 7, "w": 8, "x": 16, "y": 14 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_system_mode{job=\"quant-trend-fattail\"}", "legendFormat": "mode" }
       ],
@@ -115,7 +115,7 @@
       "title": "Bars Throughput",
       "id": 111,
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 21 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "rate(mlbot_bars_processed_total{job=\"quant-trend-fattail\"}[5m])", "legendFormat": "trend bars/s" },
         { "refId": "B", "expr": "sum(rate(mlbot_multi_leg_bars_processed_total{job=\"quant-hedge-multileg\"}[5m]))", "legendFormat": "hedge bars/s" }
@@ -127,7 +127,7 @@
       "title": "Daemon and Actions Throughput (hedge)",
       "id": 112,
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 21 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "rate(mlbot_multi_leg_daemon_polls_total{job=\"quant-hedge-multileg\"}[5m])", "legendFormat": "poll/s" },
         { "refId": "B", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total{job=\"quant-hedge-multileg\"}[5m]))", "legendFormat": "{{strategy}} {{symbol}}" }
@@ -139,7 +139,7 @@
       "title": "Account Update Age and Success",
       "id": 113,
       "gridPos": { "h": 7, "w": 24, "x": 0, "y": 27 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_update_age_seconds{job=~\"quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "age {{job}} {{scope}}" },
         { "refId": "B", "expr": "mlbot_account_update_success{job=~\"quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "ok {{job}} {{scope}}" }

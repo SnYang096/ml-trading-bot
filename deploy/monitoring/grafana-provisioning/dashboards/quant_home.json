@@ -32,7 +32,7 @@
       "title": "Trend Wallet",
       "id": 2,
       "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"total\"}" }
       ],
@@ -44,7 +44,7 @@
       "title": "Trend Available",
       "id": 3,
       "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"available\"}" }
       ],
@@ -56,7 +56,7 @@
       "title": "Trend Margin Ratio",
       "id": 4,
       "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_margin_ratio{job=\"quant-trend-fattail\"}" }
       ],
@@ -68,7 +68,7 @@
       "title": "Trend Unrealized PnL",
       "id": 5,
       "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_unrealized_pnl_total{job=\"quant-trend-fattail\"}" }
       ],
@@ -80,7 +80,7 @@
       "title": "Trend Account Update OK",
       "id": 6,
       "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_update_success{job=\"quant-trend-fattail\",scope=\"trend\"}" }
       ],
@@ -92,7 +92,7 @@
       "title": "Trend Account Age (s)",
       "id": 7,
       "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_update_age_seconds{job=\"quant-trend-fattail\",scope=\"trend\"}" }
       ],
@@ -104,7 +104,7 @@
       "title": "Trend Balance Timeline",
       "id": 8,
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 5 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"total\"}", "legendFormat": "wallet" },
         { "refId": "B", "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"available\"}", "legendFormat": "available" },
@@ -125,7 +125,7 @@
       "title": "Hedge Wallet",
       "id": 10,
       "gridPos": { "h": 4, "w": 4, "x": 0, "y": 12 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"total\"}" }
       ],
@@ -137,7 +137,7 @@
       "title": "Hedge Available",
       "id": 11,
       "gridPos": { "h": 4, "w": 4, "x": 4, "y": 12 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"available\"}" }
       ],
@@ -149,7 +149,7 @@
       "title": "Hedge Margin Ratio",
       "id": 12,
       "gridPos": { "h": 4, "w": 4, "x": 8, "y": 12 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_margin_ratio{job=\"quant-hedge-multileg\"}" }
       ],
@@ -161,7 +161,7 @@
       "title": "Hedge Unrealized PnL",
       "id": 13,
       "gridPos": { "h": 4, "w": 4, "x": 12, "y": 12 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_unrealized_pnl_total{job=\"quant-hedge-multileg\"}" }
       ],
@@ -173,7 +173,7 @@
       "title": "Hedge Account Update OK",
       "id": 14,
       "gridPos": { "h": 4, "w": 4, "x": 16, "y": 12 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_update_success{job=\"quant-hedge-multileg\",scope=\"hedge\"}" }
       ],
@@ -185,7 +185,7 @@
       "title": "Hedge Account Age (s)",
       "id": 15,
       "gridPos": { "h": 4, "w": 4, "x": 20, "y": 12 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_update_age_seconds{job=\"quant-hedge-multileg\",scope=\"hedge\"}" }
       ],
@@ -197,7 +197,7 @@
       "title": "Hedge Balance Timeline",
       "id": 16,
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"total\"}", "legendFormat": "wallet" },
         { "refId": "B", "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"available\"}", "legendFormat": "available" },
@@ -218,7 +218,7 @@
       "title": "Open Position Qty by Symbol (Trend/Hedge)",
       "id": 18,
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 23 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "sum by (scope, symbol, side) (mlbot_position_qty{job=~\"quant-trend-fattail|quant-hedge-multileg\"})", "legendFormat": "{{scope}} {{symbol}} {{side}}" }
       ],
@@ -230,7 +230,7 @@
       "title": "Open Position Notional USD by Symbol (Trend/Hedge)",
       "id": 19,
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 23 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "sum by (scope, symbol, side) (mlbot_position_notional_usdt{job=~\"quant-trend-fattail|quant-hedge-multileg\"})", "legendFormat": "{{scope}} {{symbol}} {{side}}" }
       ],
@@ -242,7 +242,7 @@
       "title": "Market Data Strip (mark/funding/OI)",
       "id": 20,
       "gridPos": { "h": 7, "w": 24, "x": 0, "y": 29 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "mlbot_mark_price{job=\"quant-trend-fattail\"}", "legendFormat": "mark {{symbol}}" },
         { "refId": "B", "expr": "mlbot_funding_rate{job=\"quant-trend-fattail\"}", "legendFormat": "funding {{symbol}}" },
