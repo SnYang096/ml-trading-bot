@@ -28,6 +28,7 @@ from src.time_series_model.core.constitution.violation import ConstitutionViolat
 from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.live.enforcement import enforce_before_order
 from src.time_series_model.live.execution_profile_apply import pick_atr
+from src.time_series_model.live.metrics_exporter import METRICS
 from src.time_series_model.live.position_logic import build_position_dict
 from src.time_series_model.portfolio.slot_sizing import compute_slot_size_from_risk
 
@@ -263,6 +264,23 @@ class TradeExecutor:
         if self.stats_collector is not None:
             arch = str(intent.archetype or "unknown").lower()
             self.stats_collector.record_order_placed(symbol=self.symbol, strategy=arch)
+        try:
+            arch = str(intent.archetype or "unknown").lower()
+            side = str(intent.action or "na").lower()
+            METRICS.record_strategy_event(
+                scope="trend",
+                strategy=arch,
+                symbol=self.symbol,
+                event="entry",
+                side=side,
+                price=float(entry_price) if entry_price is not None else None,
+            )
+        except Exception:
+            logger.debug(
+                "[%s] entry marker metrics update skipped",
+                self.symbol,
+                exc_info=True,
+            )
 
         # ── 8. 交给 PositionTracker ──
         pos["qty"] = float(qty)

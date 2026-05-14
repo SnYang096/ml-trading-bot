@@ -9,28 +9,28 @@
   ],
   "panels": [
     {
-      "type": "timeseries",
-      "title": "OHLC (selected strategy/symbol/timeframe)",
+      "type": "candlestick",
+      "title": "OHLC Candles (selected strategy/symbol/timeframe)",
       "id": 201,
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"open\"}", "legendFormat": "open" },
-        { "refId": "B", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"high\"}", "legendFormat": "high" },
-        { "refId": "C", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"low\"}", "legendFormat": "low" },
-        { "refId": "D", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"close\"}", "legendFormat": "close" }
+        { "refId": "A", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"open\"}", "legendFormat": "open" },
+        { "refId": "B", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"high\"}", "legendFormat": "high" },
+        { "refId": "C", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"low\"}", "legendFormat": "low" },
+        { "refId": "D", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"close\"}", "legendFormat": "close" }
       ],
-      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
     },
     {
       "type": "timeseries",
       "title": "Feature Layers (selected key features)",
       "id": 202,
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 10 },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 11 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_strategy_feature_value{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\"}", "legendFormat": "{{layer}} · {{feature}}" }
+        { "refId": "A", "expr": "mlbot_strategy_feature_value{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\"}", "legendFormat": "{{layer}} · {{feature}}" }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
@@ -42,7 +42,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "sum by (event, side) (increase(mlbot_strategy_event_total{job=~\"quant-trend-fattail|quant-hedge-multileg\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[1m]))", "legendFormat": "{{event}} {{side}}" }
+        { "refId": "A", "expr": "sum by (event, side) (increase(mlbot_strategy_event_total{job=~\"$job\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "{{event}} {{side}}" }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
@@ -54,7 +54,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_strategy_event_price{job=~\"quant-trend-fattail|quant-hedge-multileg\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"}", "legendFormat": "{{event}} {{side}}" }
+        { "refId": "A", "expr": "mlbot_strategy_event_price{job=~\"$job\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"}", "legendFormat": "{{event}} {{side}}" }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
@@ -66,8 +66,8 @@
       "gridPos": { "h": 7, "w": 12, "x": 0, "y": 26 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "sum by (stage) (rate(mlbot_funnel_total{job=\"quant-trend-fattail\",strategy=~\"$strategy\"}[5m]))", "legendFormat": "funnel {{stage}}" },
-        { "refId": "B", "expr": "rate(mlbot_orders_total{job=\"quant-trend-fattail\",strategy=~\"$strategy\"}[5m])", "legendFormat": "orders {{strategy}}" }
+        { "refId": "A", "expr": "sum by (stage) (rate(mlbot_funnel_total{job=~\"$job\",strategy=~\"$strategy\"}[5m]))", "legendFormat": "funnel {{stage}}" },
+        { "refId": "B", "expr": "rate(mlbot_orders_total{job=~\"$job\",strategy=~\"$strategy\"}[5m])", "legendFormat": "orders {{strategy}}" }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
@@ -79,8 +79,33 @@
       "gridPos": { "h": 7, "w": 12, "x": 12, "y": 26 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total{job=\"quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "actions {{strategy}} {{symbol}}" },
-        { "refId": "B", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_execution_results_total{job=\"quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "exec {{strategy}} {{symbol}}" }
+        { "refId": "A", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "actions {{strategy}} {{symbol}}" },
+        { "refId": "B", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_execution_results_total{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "exec {{strategy}} {{symbol}}" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "table",
+      "title": "Strategy View · Position Snapshot (all symbols)",
+      "id": 207,
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        { "refId": "A", "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$job\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"})", "legendFormat": "qty {{strategy}} {{symbol}} {{side}}" },
+        { "refId": "B", "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$job\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"})", "legendFormat": "notional {{strategy}} {{symbol}} {{side}}" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "timeseries",
+      "title": "Symbol View · Event Flow by Strategy (5m)",
+      "id": 208,
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (strategy, event, side) (increase(mlbot_strategy_event_total{job=~\"$job\",scope=~\"$scope\",symbol=~\"$symbol\",strategy=~\"$strategy\"}[5m]))", "legendFormat": "{{strategy}} {{event}} {{side}}" }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
@@ -100,10 +125,19 @@
         "includeAll": false
       },
       {
+        "name": "job",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "query": "label_values(mlbot_cpu_percent{job=~\"quant-trend-fattail|quant-hedge-multileg\",job=~\"quant-$scope-.*\"}, job)",
+        "refresh": 1,
+        "multi": false,
+        "includeAll": false
+      },
+      {
         "name": "strategy",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\"}, strategy)",
+        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"$job\"}, strategy)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
@@ -114,7 +148,7 @@
         "name": "symbol",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\"}, symbol)",
+        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\"}, symbol)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
@@ -125,7 +159,7 @@
         "name": "timeframe",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
-        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\"}, timeframe)",
+        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"$job\",strategy=~\"$strategy\",symbol=~\"$symbol\"}, timeframe)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
@@ -137,7 +171,7 @@
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "utc",
-  "title": "Strategy Map · Symbol / Features / Events",
+  "title": "Strategy Map · Strategy-first and Symbol-first",
   "uid": "quant-strategy-map",
   "version": 1
 }

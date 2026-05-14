@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.order_management.models import OrderSide, OrderType
+from src.time_series_model.live.metrics_exporter import METRICS
 from src.time_series_model.live.position_logic import enforce_position
 
 logger = logging.getLogger(__name__)
@@ -241,6 +242,20 @@ class PositionTracker:
                 reason,
                 qty,
             )
+            try:
+                METRICS.record_strategy_event(
+                    scope="trend",
+                    strategy=str(pos.get("archetype") or "unknown").lower(),
+                    symbol=self.symbol,
+                    event="exit",
+                    side=str(pos.get("side") or "na").lower(),
+                )
+            except Exception:
+                logger.debug(
+                    "[%s] exit marker metrics update skipped",
+                    self.symbol,
+                    exc_info=True,
+                )
         except Exception:
             logger.warning(
                 "[%s] 软件平仓失败 reason=%s，交易所挂单可能已触发",
@@ -270,6 +285,21 @@ class PositionTracker:
             reason,
             float(exit_price or 0.0),
         )
+        try:
+            METRICS.record_strategy_event(
+                scope="trend",
+                strategy=str(pos.get("archetype") or "unknown").lower(),
+                symbol=self.symbol,
+                event="exit",
+                side=str(pos.get("side") or "na").lower(),
+                price=exit_price,
+            )
+        except Exception:
+            logger.debug(
+                "[%s] exchange exit marker metrics update skipped",
+                self.symbol,
+                exc_info=True,
+            )
         return True
 
     def sync_exchange_sl(self, position_id: str) -> None:
