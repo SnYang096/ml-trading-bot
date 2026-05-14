@@ -313,19 +313,10 @@ def main():
             )
 
         # ── 3b. 信号级对比 ──
-        # 从实盘特征计算 evidence quantiles
-        bpc_live.set_quantiles_from_df(live_features_all[sym])
-        # 从研究特征计算 evidence quantiles (用重叠前的数据)
         research_full = research_df[research_df["symbol"] == sym].copy()
         research_full = research_full.set_index(
             pd.to_datetime(research_full["timestamp"], utc=True)
         ).sort_index()
-        calib_end = overlap_idx.min()
-        calib_data = research_full[research_full.index < calib_end]
-        if len(calib_data) >= 50:
-            bpc_research.set_quantiles_from_df(calib_data)
-        else:
-            bpc_research.set_quantiles_from_df(research_full)
 
         print(f"\n  {sym} 信号级对比:")
         print(f"  {'─'*86}")

@@ -1,85 +1,67 @@
-# TPC gate：主拦「窄+低置信=来回扫」的 chop；统计窄带/末端追涨杀跌另算，避免过杀大级别回调
-#
-# 设计意图（与 prefilter 大趋势锚点配合）:
-#   - 震荡/来回扫：靠 tpc_semantic_chop（BPC/ME 同构分位）+ 可选 vol_persistence
-#   - 大趋势里多空回调：不启用 ema_1200「末端追涨杀跌」类 hard rule；EVT 分位带易误杀，默认关闭
+# TPC Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/tpc/validate_static.full_study/tpc/20260511_235112/strategies/tpc/gate_draft.yaml
+# 优化规则: 0/1 条通过优化
+# Phase split: system_safety=2, hard_gate=1
+
 schema:
   phases:
-    - system_safety
-    - hard_gate
-    - guardrail
+  - system_safety
+  - hard_gate
+  - guardrail
   evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
 hard_gates:
-  # --- TPC 语义门控（非统计挖掘）：压波动区、压 EMA1200 过度拉伸追涨杀跌 ---
-  - id: gate_tpc_semantic_chop_high
-    tag: HARD_TPC_SEMANTIC_CHOP
-    phase: hard_gate
-    priority: 6
-    reason: TPC 专用：同品种 semantic_chop_ts_q 过高（相对近期更 chop）→ 拒开仓；低分位不拦
-    when:
-      tpc_semantic_chop_ts_q:
-        value_gte: 0.40
-    then:
-      action: deny
-    comment: "deny iff ts_q>=0.40（放行 ts_q<0.40）。上阈可扫 0.25/0.30/0.35/0.40（改 value_gte）；父单样本见 turbo CSV 对比"
-    locked: true
-    frozen: true
-    promote_never_disable: true
-    lock_reason: 高 chop 分位拒单；与 BPC/ME 同构；低分位放行
-  # - id: gate_tpc_late_short_below_ema1200
-  #   tag: HARD_TPC_LATE_SHORT_EMA1200
-  #   phase: hard_gate
-  #   priority: 7
-  #   reason: TPC 专用：价远低于 EMA1200（动量末端追空），与语义 extension 对齐
-  #   when:
-  #     ema_1200_position:
-  #       value_lt: -0.1
-  #   then:
-  #     action: deny
-  #   comment: "semantic: symmetric late chase on ema_1200_position"
-  #   locked: true
-  #   lock_reason: 弱化延续语义：低位远离 EMA1200 时不追空
-  - id: gate_evt_var_99_evt_var_99
-    tag: HARD_EVT_VAR_99_EVT_VAR_99
-    phase: hard_gate
-    priority: 10
-    reason: 统计验证规则 (lift=1.54)
-    when:
-      all_of:
-        - evt_var_99:
-            value_gt: 0.6706
-        - evt_var_99:
-            value_lt: 0.7976
-    then:
-      action: deny
-    comment: "窄 EVT 分位带易在趋势/回调段过杀；主风险由 semantic_chop + prefilter 承担时默认关闭"
-    locked: true
-    lock_reason: EVT 左尾风险强度：中高风险拖泥带水区间对趋势策略表现最差
-    disabled: true
-    disabled_reason: 放开大级别多空回调；需要尾部统计带时再打开并重跑优化
-# NOTE: gate_macro_tp_vwap_1200_deadzone / gate_ema_1200_position_ema_1200_position
-# 已按语义（prefilter=先划分数据）上提到 archetypes/prefilter.yaml 中
-# 以 any_of 形式表达（不在死区一侧），此处不再重复过滤。
+- id: gate_tpc_semantic_chop_high
+  tag: HARD_TPC_SEMANTIC_CHOP
+  phase: hard_gate
+  priority: 6
+  reason: TPC 专用：BB 偏窄且方向置信低 → 典型震荡来回扫区
+  when:
+    tpc_semantic_chop:
+      value_gt: 0.4
+  then:
+    action: deny
+  comment: '20260425 trade diagnostic: chop>=0.40 的 TPC 成交 n=234, R=-860；下调到 0.40 防止波动区来回扫开仓'
+  locked: true
+  frozen: true
+  promote_never_disable: true
+  lock_reason: 波动区过滤（标准）：与 BPC/ME 三策略同构，避免 chop bar 上的虚假回调
 guardrails: []
 system_safety:
-  - id: gate_vol_persistence_vol_persistence
-    tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
-    phase: system_safety
-    priority: 12
-    reason: 统计验证规则 (lift=1.24)
-    when:
-      all_of:
-        - vol_persistence:
-            value_gt: 0.0029
-        - vol_persistence:
-            value_lt: 0.0616
-    then:
-      action: deny
-    comment: "merged: (0.0029,0.0299) + stat_fallback (0.0275,0.0616) → full deny
-      zone. MeanRR=-0.60, BadRate=51.8%"
-    locked: true
-    lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利
+- id: gate_evt_var_99_evt_var_99
+  tag: HARD_EVT_VAR_99_EVT_VAR_99
+  phase: system_safety
+  priority: 10
+  reason: 统计验证规则 (lift=1.54)
+  when:
+    all_of:
+    - evt_var_99:
+        value_gt: 0.6706
+    - evt_var_99:
+        value_lt: 0.7976
+  then:
+    action: deny
+  comment: 窄 EVT 分位带易在趋势/回调段过杀；主风险由 semantic_chop + prefilter 承担时默认关闭
+  locked: true
+  lock_reason: EVT 左尾风险强度：中高风险拖泥带水区间对趋势策略表现最差
+  disabled: true
+  disabled_reason: 放开大级别多空回调；需要尾部统计带时再打开并重跑优化
+- id: gate_vol_persistence_vol_persistence
+  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
+  phase: system_safety
+  priority: 12
+  reason: 统计验证规则 (lift=1.24)
+  when:
+    all_of:
+    - vol_persistence:
+        value_gt: 0.0029
+    - vol_persistence:
+        value_lt: 0.0616
+  then:
+    action: deny
+  comment: 'merged: (0.0029,0.0299) + stat_fallback (0.0275,0.0616) → full deny zone. MeanRR=-0.60, BadRate=51.8%'
+  locked: true
+  lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利

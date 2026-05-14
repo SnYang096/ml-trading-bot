@@ -95,9 +95,6 @@ def layer1_gate_rate():
                 ],
                 bar_minutes={"bpc": 240, "fer": 240, "me-long": 60}[arch],
             )
-            # 需要 quantiles
-            strat.set_quantiles_from_df(df)
-
             event_allow = 0
             event_veto = 0
             event_no_dir = 0

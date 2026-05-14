@@ -287,13 +287,6 @@ def replay_event_funnel():
                 sym_features[(sym, tf)] = test_df
                 print(f"  Loaded {sym} {tf}: {len(test_df)} test bars")
 
-    # 设置 quantiles
-    for s_name, s_obj in strats.items():
-        tf = tf_map[s_name]
-        if tf in all_features_by_tf:
-            combined = pd.concat(all_features_by_tf[tf], axis=0)
-            s_obj.set_quantiles_from_df(combined)
-
     # 逐行 decide, 统计 per-archetype funnel
     results = {
         s: {

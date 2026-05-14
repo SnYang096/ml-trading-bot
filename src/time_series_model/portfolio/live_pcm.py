@@ -1602,31 +1602,6 @@ class LivePCM:
             for k in to_remove:
                 del self._slot_evidence[k]
 
-    # ── Quantiles 透传 ──
-
-    def set_quantiles(self, features_df) -> None:
-        """
-        将 quantiles 设置给所有注册的策略（如果策略支持）。
-        用于 warmup 后的 Gate quantile 规则计算。
-        """
-        for arch_name, strategy in self._strategies.items():
-            if hasattr(strategy, "set_quantiles"):
-                strategy.set_quantiles(features_df)
-                logger.info("PCM: 已设置 quantiles 给 %s", arch_name)
-
-    def set_quantiles_from_df(self, features_df) -> None:
-        """
-        透传给内部策略的 set_quantiles_from_df()。
-        兼容 GenericLiveStrategy 接口。
-        """
-        for arch_name, strategy in self._strategies.items():
-            if hasattr(strategy, "set_quantiles_from_df"):
-                strategy.set_quantiles_from_df(features_df)
-                logger.info("PCM: 已设置 quantiles_from_df 给 %s", arch_name)
-            elif hasattr(strategy, "set_quantiles"):
-                strategy.set_quantiles(features_df)
-                logger.info("PCM: 已设置 quantiles 给 %s", arch_name)
-
     # ── 配置加载 ──
 
     def load_all_configs(self) -> None:

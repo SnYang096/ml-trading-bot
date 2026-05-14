@@ -1,62 +1,45 @@
-# TPC prefilter — 「大趋势中回调不破」的语义锚点（先划分数据，再谈做不做）
-#
-# 锚点分工：
-#   1. 宏观结构（EMA1200 / macro VWAP1200）不能处在「噪声死区」
-#      —— 用 any_of 表达「只要不在死区一侧即可」，direction-agnostic。
-#      这两条原来在 gate.yaml（hard_gate）里做"事后过滤"，
-#      按 prefilter 语义应先划分数据，所以提到这里、并从 gate 删除避免双过滤。
-#   2. 回调受控（tpc_pullback_depth）：TPC 语义核心。
-#
-# 注：短期 EMA10/20/50 斜率一致性（slope_consistency_score）属于短线趋势，
-#     不符合 TPC「大趋势回调」语义，因此不放 prefilter。
-#     带方向的慢变量（ema_1200_position / sma_200_slope）用在 direction / entry_filter。
-# chop 见 gate_tpc_semantic_chop_high，不在此重复。
 rules:
-  - any_of:
-      - feature: ema_1200_position
-        operator: "<="
-        value: -0.03
-      - feature: ema_1200_position
-        operator: ">="
-        value: 0.03
-    rationale: "近 EMA1200 中轴无趋势优势：20260425 成交诊断 |ema_1200_position|<0.05 的 TPC 交易 n=129, R=-349"
-    locked: true
-    skip_parquet_tune: true
-    lock_reason: TPC 大趋势锚点 0/3：必须离开 EMA1200 噪声中轴后才允许谈回调
-
-  - any_of:
-      - feature: ema_1200_position
-        operator: "<="
-        value: 0.0996
-      - feature: ema_1200_position
-        operator: ">="
-        value: 0.1461
-    rationale: "宏观结构锚点 1/3：排除 EMA1200 浅上方 [0.0996, 0.1461] 的假突破带（from gate_draft 20260410_190624: medRR=-1.63, bad=59.3%, deny=10%）"
-    locked: true
-    skip_parquet_tune: true
-    lock_reason: TPC 大趋势锚点 1/3：EMA1200 浅上方死区（接近均线但不够强势 → 方向不稳定）
-
-  - feature: tpc_pullback_depth
+- any_of:
+  - feature: ema_1200_position
     operator: <=
+    value: -0.029996
+  - feature: ema_1200_position
+    operator: '>='
+    value: 0.030002
+  rationale: 近 EMA1200 中轴无趋势优势：20260425 成交诊断 |ema_1200_position|<0.05 的 TPC 交易 n=129,
+    R=-349
+  locked: true
+  lock_reason: TPC 大趋势锚点 0/3：必须离开 EMA1200 噪声中轴后才允许谈回调
+- any_of:
+  - feature: ema_1200_position
+    operator: <=
+    value: 0.099595
+  - feature: ema_1200_position
+    operator: '>='
+    value: 0.146094
+  rationale: '宏观结构锚点 1/3：排除 EMA1200 浅上方 [0.0996, 0.1461] 的假突破带（from gate_draft 20260410_190624:
+    medRR=-1.63, bad=59.3%, deny=10%）'
+  locked: true
+  lock_reason: TPC 大趋势锚点 1/3：EMA1200 浅上方死区（接近均线但不够强势 → 方向不稳定）
+- feature: tpc_pullback_depth
+  operator: <=
+  value: 0.849993
+  rationale: TPC 语义：大级别趋势内较深回调也允许，只要不破结构
+  locked: true
+  lock_reason: TPC 大趋势锚点 3/3：回调深度受控（略放宽，避免过浅带误杀实回调）
+- any_of:
+  - feature: box_pos_120
+    operator: <=
+    value: 0.15
+  - feature: box_pos_120
+    operator: '>='
     value: 0.85
-    rationale: TPC 语义：大级别趋势内较深回调也允许，只要不破结构
-    locked: true
-    lock_reason: TPC 大趋势锚点 3/3：回调深度受控（略放宽，避免过浅带误杀实回调）
-
-  - any_of:
-      - feature: box_pos_120
-        operator: "<="
-        value: 0.15
-      - feature: box_pos_120
-        operator: ">="
-        value: 0.85
-      - feature: box_breakout_up
-        operator: ">="
-        value: 0.5
-      - feature: box_breakout_down
-        operator: ">="
-        value: 0.5
-    rationale: "box 中部且未突破不开仓：20260425 TPC inside_box_no_breakout n=154, R=-425"
-    locked: true
-    skip_parquet_tune: true
-    lock_reason: TPC 只交易趋势回调/边缘突破，不在箱体中部来回扫区开仓
+  - feature: box_breakout_up
+    operator: '>='
+    value: 0.5
+  - feature: box_breakout_down
+    operator: '>='
+    value: 0.5
+  rationale: box 中部且未突破不开仓：20260425 TPC inside_box_no_breakout n=154, R=-425
+  locked: true
+  lock_reason: TPC 只交易趋势回调/边缘突破，不在箱体中部来回扫区开仓

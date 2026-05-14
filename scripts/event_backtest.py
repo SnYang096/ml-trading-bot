@@ -2625,28 +2625,8 @@ class EventBacktester:
             return result
 
         # 设置 per-strategy Evidence 分位数 (从对应 timeframe 特征)
-        # 注意: 只用 pre-test 数据校准 quantiles，避免 look-ahead bias
-        for s_name, s_obj in self._strats.items():
-            tf = self._tf_map[s_name]
-            if tf in quantile_dfs_by_tf and quantile_dfs_by_tf[tf]:
-                combined = pd.concat(quantile_dfs_by_tf[tf], axis=0)
-                # 只用 test_start 之前的数据校准 (与向量回测 warmup calibration 对齐)
-                calib_only = combined[combined.index < test_start_ts]
-                if len(calib_only) >= 50:
-                    s_obj.set_quantiles_from_df(calib_only)
-                    logger.info(
-                        f"  Quantiles: {s_name} from {tf} "
-                        f"({len(calib_only)} pre-test rows, "
-                        f"excluded {len(combined) - len(calib_only)} test rows)"
-                    )
-                else:
-                    # 校准数据不足，用全量数据 (回退到旧行为)
-                    s_obj.set_quantiles_from_df(combined)
-                    logger.warning(
-                        f"  Quantiles: {s_name} from {tf} "
-                        f"({len(combined)} rows, pre-test only {len(calib_only)} < 50, "
-                        f"using all data as fallback)"
-                    )
+        # Runtime quantile calibration was removed; strategies consume precomputed
+        # quantile/rank features directly from the feature pipeline.
 
         # ── Phase 2: 构建统一时间线 (多 timeframe union) ──
         timeline_events: List[Tuple[pd.Timestamp, str, Dict[str, pd.Series]]] = []

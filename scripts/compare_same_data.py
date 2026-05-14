@@ -607,24 +607,15 @@ def compare_one_symbol(args, archetypes_dir, live_feature_set, live_feature_node
         bar_minutes=240,
     )
 
-    # 用前 50% 数据校准 quantiles (避免 look-ahead)
+    # 用后半段做信号比较，避免把重叠区首段异常放大
     calib_cutoff = overlap_idx[len(overlap_idx) // 2]
-    calib_research = r_overlap.loc[r_overlap.index < calib_cutoff]
-    calib_live = l_overlap.loc[l_overlap.index < calib_cutoff]
-
-    if len(calib_research) < 50:
-        calib_research = r_overlap
-        calib_live = l_overlap
-
-    bpc_research.set_quantiles_from_df(calib_research)
-    bpc_live.set_quantiles_from_df(calib_live)
 
     # 只比较后半部分（校准之后）
     eval_idx = overlap_idx[overlap_idx >= calib_cutoff]
     if len(eval_idx) < 10:
         eval_idx = overlap_idx
 
-    print(f"\n  校准: {len(calib_research)} bars (< {calib_cutoff})")
+    print(f"\n  信号比较窗口: >= {calib_cutoff}")
     print(f"  评估: {len(eval_idx)} bars (>= {calib_cutoff})")
 
     print(

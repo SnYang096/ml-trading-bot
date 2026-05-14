@@ -8,7 +8,7 @@
 4. 同优先级比 Evidence Score
 5. slot 满时拒绝
 6. 策略异常不影响其他策略
-7. set_quantiles / load_all_configs 透传
+7. load_all_configs 透传
 8. RegimeDetector 防抖 + 切换
 9. LV override 逻辑
 """
@@ -40,17 +40,10 @@ class FakeStrategy:
 
     def __init__(self, intents: Optional[List[TradeIntent]] = None):
         self._intents = intents or []
-        self.quantiles_set = False
         self.configs_loaded = False
 
     def decide(self, *, features, symbol, bars=None) -> List[TradeIntent]:
         return list(self._intents)
-
-    def set_quantiles(self, features_df):
-        self.quantiles_set = True
-
-    def set_quantiles_from_df(self, features_df):
-        self.quantiles_set = True
 
     def load_configs(self):
         self.configs_loaded = True
@@ -459,21 +452,6 @@ class TestLivePCMManagement:
         assert set(pcm.registered_archetypes) == {"bpc", "me"}
         pcm.unregister("bpc")
         assert pcm.registered_archetypes == ["me"]
-
-    def test_set_quantiles_transparent(self):
-        bpc, me = FakeStrategy(), FakeStrategy()
-        pcm = LivePCM(max_slots=2)
-        pcm.register("bpc", bpc)
-        pcm.register("me", me)
-        pcm.set_quantiles(None)
-        assert bpc.quantiles_set and me.quantiles_set
-
-    def test_set_quantiles_from_df_transparent(self):
-        bpc = FakeStrategy()
-        pcm = LivePCM(max_slots=2)
-        pcm.register("bpc", bpc)
-        pcm.set_quantiles_from_df(None)
-        assert bpc.quantiles_set
 
     def test_load_all_configs(self):
         bpc, me = FakeStrategy(), FakeStrategy()

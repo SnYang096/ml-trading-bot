@@ -3,14 +3,13 @@ GenericLiveStrategy 单元+集成测试
 
 覆盖范围:
   1. DirectionEvaluator — 4 种 transform + 缺失特征 + 无效值 + 多规则优先
-  2. GateEvaluator — hard deny / allow / quantile gate / 无 gate
+  2. GateEvaluator — hard deny / allow / 无 gate
   3. EntryFilterChecker — OR 组合通过 / 全拒 / 无配置默认通过
   4. EvidenceScorer — 有/无 quantiles / 无 archetype 回退 0.5
   5. ExecutionParamGenerator — 多 tier 选择 / 默认 tier / 无 tier
   6. GenericLiveStrategy 主类:
      - __init__ 自动 load_configs
      - decide 完整管线 (LONG / SHORT / 各步骤拒绝)
-     - set_quantiles / set_quantiles_from_df
      - _evaluate_entry_signal 诊断接口
      - _archetype 兼容属性
      - reset 状态清理
@@ -26,8 +25,6 @@ import os
 import tempfile
 import time
 
-import numpy as np
-import pandas as pd
 import pytest
 import yaml
 
@@ -550,66 +547,6 @@ class TestDecidePipeline:
         s.decide(features={"signal_score": 0.8, "bollinger_position": 0.9}, symbol="X")
         assert s._last_tier_params is not None
         assert "tier_name" in s._last_tier_params
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 5. set_quantiles
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class TestSetQuantiles:
-    """分位数计算"""
-
-    def test_computes_evidence_quantiles(self, base_config):
-        s = GenericLiveStrategy(strategy_name="bpc", strategies_root=base_config)
-        df = pd.DataFrame(
-            {
-                "feat_a": np.random.randn(100),
-                "feat_b": np.random.randn(100),
-            }
-        )
-        s.set_quantiles(df)
-        assert "feat_a" in s._quantiles
-        assert "feat_b" in s._quantiles
-        # 默认 quantile_bins = [0.2, 0.4, 0.6, 0.8]
-        assert "0.2" in s._quantiles["feat_a"]
-
-    def test_alias_set_quantiles_from_df(self, base_config):
-        s = GenericLiveStrategy(strategy_name="bpc", strategies_root=base_config)
-        df = pd.DataFrame(
-            {"feat_a": np.random.randn(50), "feat_b": np.random.randn(50)}
-        )
-        s.set_quantiles_from_df(df)
-        assert len(s._quantiles) >= 1
-
-    def test_skips_missing_columns(self, base_config):
-        s = GenericLiveStrategy(strategy_name="bpc", strategies_root=base_config)
-        df = pd.DataFrame({"unrelated": np.random.randn(50)})
-        s.set_quantiles(df)
-        assert len(s._quantiles) == 0
-
-    def test_skips_too_few_rows(self, base_config):
-        s = GenericLiveStrategy(strategy_name="bpc", strategies_root=base_config)
-        df = pd.DataFrame({"feat_a": [1.0, 2.0]})  # < 10 rows
-        s.set_quantiles(df)
-        assert "feat_a" not in s._quantiles
-
-    def test_gate_quantiles_computed(self, tmp_path):
-        """gate 中引用 quantile_gt 的特征也应计算分位数"""
-        root = _make_strategy_configs(
-            str(tmp_path),
-            hard_gates=[
-                {
-                    "id": "q_gate",
-                    "when": {"gate_feat": {"quantile_gt": 0.85}},
-                    "then": {"action": "deny"},
-                }
-            ],
-        )
-        s = GenericLiveStrategy(strategy_name="bpc", strategies_root=root)
-        df = pd.DataFrame({"gate_feat": np.random.randn(100)})
-        s.set_quantiles(df)
-        assert "gate_feat" in s._quantiles
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

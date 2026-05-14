@@ -19,7 +19,6 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
-import pandas as pd
 import yaml
 
 from src.time_series_model.core.trade_intent import TradeIntent
@@ -791,68 +790,6 @@ class GenericLiveStrategy:
         if not q:
             return False
         return any(q)
-
-    def set_quantiles(self, features_df) -> None:
-        """设置分位数阈值（用于 Gate quantile 规则）"""
-        if self.archetype is None:
-            return
-
-        quantiles = {}
-        n_computed = 0
-
-        # Gate quantile 规则 — 扫描 gate 中引用 quantile_* 的特征
-        n_gate_quantiles = 0
-        for rule in self.archetype.gate.all_rules:
-            for feat_name, cond in rule.when.items():
-                if not isinstance(cond, dict):
-                    continue
-                has_q = any(
-                    k in cond
-                    for k in (
-                        "quantile_lt",
-                        "quantile_lte",
-                        "quantile_gt",
-                        "quantile_gte",
-                    )
-                )
-                if not has_q or feat_name in quantiles:
-                    continue
-                if feat_name not in features_df.columns:
-                    continue
-                values = pd.to_numeric(features_df[feat_name], errors="coerce").dropna()
-                if len(values) < 10:
-                    continue
-                feat_q = {}
-                for b in [
-                    0.05,
-                    0.1,
-                    0.15,
-                    0.2,
-                    0.25,
-                    0.3,
-                    0.5,
-                    0.7,
-                    0.75,
-                    0.8,
-                    0.85,
-                    0.9,
-                    0.95,
-                ]:
-                    q_val = float(values.quantile(b))
-                    q_key = f"{b:.2f}".rstrip("0").rstrip(".")
-                    feat_q[q_key] = q_val
-                quantiles[feat_name] = feat_q
-                n_gate_quantiles += 1
-
-        self._quantiles = quantiles
-        logger.info(
-            "Quantiles 已计算: gate=%d, 基于 %d 行数据",
-            n_gate_quantiles,
-            len(features_df),
-        )
-
-    # set_quantiles_from_df: 兼容别名
-    set_quantiles_from_df = set_quantiles
 
     def decide(
         self,

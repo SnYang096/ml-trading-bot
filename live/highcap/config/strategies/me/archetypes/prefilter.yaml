@@ -22,8 +22,8 @@ rules:
       - feature: ema_1200_position
         operator: ">="
         value: 0.03
-    locked: true
-    skip_parquet_tune: true
+    locked: false
+    skip_parquet_tune: false
     lock_reason: "近 EMA1200 中轴无趋势优势：20260425 ME |ema_1200_position|<0.05 的交易 n=44, R=-90"
 
   - feature: atr_percentile
@@ -36,13 +36,13 @@ rules:
   - feature: me_accel_persistence
     operator: ">="
     value: 0.4
-    locked: true
+    locked: false
     lock_reason: "动量语义：近 5 根至少 2 根在加速（有方向性动量）"
 
   - feature: me_multi_tf_alignment
     operator: ">="
     value: 0.5
-    locked: true
+    locked: false
     lock_reason: "动量语义：3/5/10 bar 至少 2 个周期方向一致（趋势明确）"
 
   # Box-structure prefilter upgrade for ME:

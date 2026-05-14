@@ -5,17 +5,18 @@ It records where the currently adopted archetype bundle came from.
 
 ## Source
 - Strategy: `bpc`
-- Target: `live/highcap`
-- Run ID: `20260511_162324`
+- Target: `research`
+- Run ID: `20260512_061250`
 - Pipeline config: `/home/yin/trading/ml_trading_bot/config/strategies/bpc/research/validate_static.full_study.yaml`
-- Report: `results/bpc/validate_static.full_study/bpc/20260511_162324/report.json`
-- Experiment config: `/home/yin/trading/ml_trading_bot/results/bpc/validate_static.full_study/bpc/20260511_162324/strategies/bpc`
+- Report: `results/bpc/validate_static.full_study/bpc/20260512_061250/report.json`
+- Experiment config: `/home/yin/trading/ml_trading_bot/results/bpc/validate_static.full_study/bpc/20260512_061250/strategies/bpc`
 
 ## Decision
-- Decision: `ADOPT`
-- Primary backtest: `backtest_metrics`
+- Decision: `ALERT`
+- Primary backtest: `full_exec`
 - Deploy ready: `False`
-- Reasons: sharpe_ratio=1.00 >= 0.7
+- Reasons: prev_sharpe=-0.1946 <= 0, 跳过比值
+- Deploy blocked by: event_validation: event_sharpe_r=-1.0284 < 0.0000; event_validation: event_total_r=-27.7661 < 0.0000
 
 ## Data Window
 - Train start: `2022-01-01`
@@ -24,9 +25,21 @@ It records where the currently adopted archetype bundle came from.
 - End date: `2026-05-01`
 
 ## Primary Metrics
-- Sharpe: `1.6979`
-- Total R: `95.7852` (estimated as mean R × trades)
-- Mean R: `1.5204`
+- Sharpe: `0.0681`
+- Total R: `0.5607` (estimated as mean R × trades)
+- Mean R: `0.0623`
 - Max DD: `0.0040`
-- Trades: `63`
-- Win rate: `0.9048`
+- Trades: `9`
+- Win rate: `0.6667`
+
+## Validation Metrics
+- simple_execution: sharpe=`0.7315`, trades=`18`, mean_r=`0.9448`, max_dd=`0.0070`
+- full_exec: sharpe=`0.0681`, trades=`9`, mean_r=`0.0623`, max_dd=`0.0040`
+
+## Event Backtest
+- Sharpe R: `-1.0284`
+- Total R / mean R: `-27.7661` / `-9.2554`
+- Max DD R: `26.7577`
+- Trades: `3`
+- Event validation passed: `False`
+- Event validation blocked by: event_sharpe_r=-1.0284 < 0.0000; event_total_r=-27.7661 < 0.0000

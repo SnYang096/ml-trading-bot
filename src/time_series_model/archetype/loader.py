@@ -589,7 +589,7 @@ class StrategyArchetype:
 
         Args:
             features: 特征值字典
-            quantiles: 分位数查找表 (quantile_* 规则需要)
+            quantiles: 预留参数；live/research gate 不再支持运行时 quantile_* 条件
 
         Returns:
             (passed, deny_reasons, cumulative_weight)
@@ -645,7 +645,6 @@ def _evaluate_when_clause(
 
     支持的格式：
     - {feature: {value_lt: 0.5}}
-    - {feature: {quantile_gt: 0.7}}
     - {all_of: [...]}
     - {any_of: [...]}
     """
@@ -717,79 +716,7 @@ def _evaluate_when_clause(
             if not (value >= float(cond["value_ge"])):
                 return False
 
-        # 分位数比较
-        has_quantile_cond = any(
-            k in cond
-            for k in ("quantile_lt", "quantile_lte", "quantile_gt", "quantile_gte")
-        )
-        if has_quantile_cond:
-            if not quantiles:
-                raise ValueError(
-                    f"Gate rule requires quantiles for '{key}' but quantiles=None. "
-                    f"Ensure set_quantiles_from_df() is called before apply_gate()."
-                )
-            feat_q = quantiles.get(key, {})
-            if not feat_q:
-                raise ValueError(
-                    f"Gate rule requires quantile for '{key}' but it is missing from quantiles dict. "
-                    f"Available keys: {list(quantiles.keys())}"
-                )
-
-            if "quantile_lt" in cond:
-                q = float(cond["quantile_lt"])
-                thresh = _get_quantile_threshold(feat_q, q)
-                if thresh is None:
-                    return False  # 无法获取阈值 → 不匹配
-                if not (value < thresh):
-                    return False
-
-            if "quantile_lte" in cond:
-                q = float(cond["quantile_lte"])
-                thresh = _get_quantile_threshold(feat_q, q)
-                if thresh is None:
-                    return False
-                if not (value <= thresh):
-                    return False
-
-            if "quantile_gt" in cond:
-                q = float(cond["quantile_gt"])
-                thresh = _get_quantile_threshold(feat_q, q)
-                if thresh is None:
-                    return False
-                if not (value > thresh):
-                    return False
-
-            if "quantile_gte" in cond:
-                q = float(cond["quantile_gte"])
-                thresh = _get_quantile_threshold(feat_q, q)
-                if thresh is None:
-                    return False
-                if not (value >= thresh):
-                    return False
-
     return True
-
-
-def _get_quantile_threshold(feat_q: Dict[str, Any], q: float) -> Optional[float]:
-    """获取分位数阈值"""
-    if not feat_q:
-        return None
-
-    # 尝试多种 key 格式
-    q_keys = [
-        f"{q:.2f}".rstrip("0").rstrip("."),
-        str(q),
-        f"q{int(q * 100)}",
-    ]
-
-    for k in q_keys:
-        if k in feat_q:
-            try:
-                return float(feat_q[k])
-            except (TypeError, ValueError):
-                pass
-
-    return None
 
 
 # =============================================================================

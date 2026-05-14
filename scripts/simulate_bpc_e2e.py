@@ -135,9 +135,6 @@ def main():
         print("  特征为空，退出")
         return 1
 
-    # ── 3b. 计算 Evidence 分位数阈值（从历史数据）──
-    bpc.set_quantiles_from_df(features_df)
-
     # ── 4. 确定测试范围 ──
     features_df.index = pd.to_datetime(features_df.index, utc=True)
     data_end = features_df.index.max()

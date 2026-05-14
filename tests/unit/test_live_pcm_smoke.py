@@ -28,18 +28,6 @@ def test_run_live_pcm_registration_uses_enabled_archetypes_only() -> None:
     assert "get_open_slot_count=lambda: runtime_st.slots.active_count()" in text
 
 
-def test_live_pcm_quantiles_passthrough() -> None:
-    """quantiles 可以透传到内部策略"""
-    mock_bpc = MagicMock()
-    mock_bpc.decide.return_value = []
-
-    pcm = LivePCM(max_slots=2)
-    pcm.register("bpc", mock_bpc)
-
-    pcm.set_quantiles_from_df("fake_df")
-    mock_bpc.set_quantiles_from_df.assert_called_once_with("fake_df")
-
-
 def test_live_pcm_decide_delegates_to_bpc() -> None:
     """PCM.decide() 正确委托给注册的 BPC 策略"""
     intent = TradeIntent(

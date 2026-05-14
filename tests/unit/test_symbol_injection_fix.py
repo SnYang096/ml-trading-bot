@@ -1,16 +1,4 @@
-"""
-Bug fix 测试: _symbol 列注入 quantile 启动路径
-
-修复背景:
-    _compute_initial_quantiles() 从磁盘加载 bars_disk 后直接传入 feature_computer，
-    但 funding_rate_features_f 需要 _symbol 列做 join，导致 KeyError:
-    "df must contain '_symbol' (preferred) or 'symbol' for funding-rate join"
-
-修复内容:
-    在 bars_disk 加载后注入 _symbol 列:
-        if "_symbol" not in bars_disk.columns:
-            bars_disk["_symbol"] = symbol
-"""
+"""验证磁盘 bars 进入 feature computation 前具有 _symbol 列。"""
 
 import pytest
 import pandas as pd

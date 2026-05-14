@@ -432,16 +432,8 @@ def _prepare_data(
                 f"  Test [{tf}]: {tdf.index.min()} → {tdf.index.max()}, {len(tdf)} bars"
             )
 
-    # 设置 quantiles (只做一次)
-    for s_name, s_obj in bt._strats.items():
-        tf = bt._tf_map[s_name]
-        if tf in quantile_dfs_by_tf and quantile_dfs_by_tf[tf]:
-            combined = pd.concat(quantile_dfs_by_tf[tf], axis=0)
-            calib_only = combined[combined.index < test_start_ts]
-            if len(calib_only) >= 50:
-                s_obj.set_quantiles_from_df(calib_only)
-            else:
-                s_obj.set_quantiles_from_df(combined)
+    # Runtime quantile calibration was removed; precomputed quantile/rank
+    # features from the feature pipeline are used directly.
 
     # 构建时间线
     timeline_events = []

@@ -13,6 +13,11 @@ add_position:
   sizing_mode: fixed_multiplier
   trigger:
     type: float_r_ladder_only
+  add_regime_gate:
+    enabled: true
+    allow_if_all:
+    - feature: bpc_semantic_chop_ts_q
+      lte: 0.55
 execution_constraints:
   allow_add_on: true
   min_order_interval_minutes: 15

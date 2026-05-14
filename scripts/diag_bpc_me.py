@@ -110,8 +110,6 @@ for strat_name, feat_df, tf in [
         primary_timeframe=tf,
         bar_minutes=int(tf.replace("T", "")),
     )
-    strat.set_quantiles(feat_df)
-
     test = feat_df[feat_df.index >= "2025-08-01"]
     dir0 = 0
     dirP = 0
