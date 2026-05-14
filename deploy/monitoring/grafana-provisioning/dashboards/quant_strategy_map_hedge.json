@@ -16,7 +16,7 @@
       "gridPos": { "h": 11, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "### Multi-leg hedge → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | **15s** |\n| **首行 Stat** | `bars/min` / `uptime` / poll 次数见各自说明 |\n| **上半：管道三条** | `bars`/`actions`/`exec`：**Counter 每秒增量** ≠ trend 漏斗。右上「经典 funnel」仍为 **Trend 独占指标**，与本页下部 **不相交**。 |\n| **下半常为 No data** | 多数是 **正常现象**（无否决、无量、无持仓），详见下表 |\n\n| 下面板 | 指标 | **No data / 平胸**常见原因 |\n|--------|------|---------------------------|\n| **Risk veto by code** | `mlbot_multi_leg_risk_reject_codes_total` | **veto**：**组合风控州长**否决下单（爆仓/限额等）或 **symbol 抢仓**；**整场无 veto → 整块空** ✅ |\n| **事件 …** | `mlbot_strategy_event_total{scope=\"hedge\"}` | **`bar_tick`**=每 bar 心跳；`place`/执行类事件。**与漏斗不重复**。若时间轴前半段平胸：常为 **那会尚未部署打点 / 计数器尚无样本**。 |\n| **最近事件价** | `mlbot_strategy_event_price` | **给策略地图打点价**：仅在 **`record_strategy_event` 传了 price**（如获批 `place`、`execution`）。**只做观察、不参与决策**。**无挂单/未成序列 → 必空**。 |\n| **持仓快照** | `mlbot_position_*{scope=\"hedge\"}` | 来自 **exchange 持仓 reconcile**。**空仓或从未写出非零仓位**→ Prometheus 可能没有该标签序列 ⇒ **表格空**。 |\n| **事件计数表** | 同上 counter 在 **所选时间跨度**汇总 | **与事件折线同源**；表 = 区间内总次数；线 = 每 5m 速率。 |\n\n**strategy / symbol 变量**：`mlbot_multi_leg_bars_processed_total`。"
+        "content": "### Multi-leg hedge → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | **15s** |\n| **首行 Stat** | `bars/min` / `uptime` / poll 次数见各自说明 |\n| **上半：管道三条** | `bars`/`actions`/`exec`：**Counter 每秒增量** ≠ trend 漏斗。右上「经典 funnel」仍为 **Trend 独占指标**，与本页下部 **不相交**。 |\n| **下半常为 No data** | 多数是 **正常现象**（无否决、无量、无持仓），详见下表 |\n\n| 下面板 | 指标 | **No data / 平胸**常见原因 |\n|--------|------|---------------------------|\n| **Risk veto by code** | `mlbot_multi_leg_risk_reject_codes_total` | **veto**：**组合风控州长**否决下单（爆仓/限额等）或 **symbol 抢仓**；**整场无 veto → 整块空** ✅ |\n| **事件 …** | `mlbot_strategy_event_total{scope=\"hedge\"}` | **`bar_tick`**=每 bar 心跳；`place`/执行类事件。**与漏斗不重复**。若时间轴前半段平胸：常为 **那会尚未部署打点 / 计数器尚无样本**。 |\n| **最近事件价** | `mlbot_strategy_event_price` | **给策略地图打点价**：仅在 **`record_strategy_event` 传了 price**（如获批 `place`、`execution`）。**只做观察、不参与决策**。**无挂单/未成序列 → 必空**。 |\n| **持仓快照** | `mlbot_position_*{scope=\"hedge\"}` | 来自 **exchange 持仓 reconcile**。**空仓或从未写出非零仓位**→ Prometheus 可能没有该标签序列 ⇒ **表格空**。 |\n| **事件计数表** | `sum by(strategy,symbol,event,side)` | `place`=州长批准挂单；仅 `bar_tick` 常为未挂单；表含交易对列。 |\n\n**strategy / symbol 变量**：`mlbot_multi_leg_bars_processed_total`。"
       },
       "transparent": false
     },
@@ -269,15 +269,15 @@
     {
       "type": "timeseries",
       "title": "Hedge · 策略事件（Counter，≠ trend 漏斗）：bar_tick / place / …",
-      "description": "**不是**上方的 `mlbot_funnel_*`。**本图**=`mlbot_strategy_event_total{scope=\"hedge\"}`：业务事件计数（心跳、挂单、否决等）。\n`trend`/经典漏斗与该 scope **无关**，故不会「重复」，数据源不同。\n前半段平胸：常为 **那会尚未有这些 label 样本**（升级/重启前或未 emit）。",
+      "description": "**不是** trend 漏斗。此处 `mlbot_strategy_event_total{scope=\"hedge\"}`：`bar_tick`=每条 bar；`place`=州长批准后挂单；按 **symbol** 分线。\n前半段平胸多为升级/重启前。",
       "id": 315,
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 49 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (strategy, event, side) (rate(mlbot_strategy_event_total{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[5m]))",
-          "legendFormat": "{{strategy}} {{event}} {{side}}"
+          "expr": "sum by (strategy, symbol, event, side) (rate(mlbot_strategy_event_total{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[5m]))",
+          "legendFormat": "{{strategy}}/{{symbol}} {{event}}/{{side}}"
         }
       ],
       "fieldConfig": { "defaults": { "unit": "short", "decimals": 3 }, "overrides": [] },
@@ -327,14 +327,14 @@
     {
       "type": "table",
       "title": "Hedge · 事件计数（区间内合计，同源 counter）",
-      "description": "与上图 **同一 `mlbot_strategy_event_total`**，按 **所选时间跨度**做一次 `increase` 汇总。不是漏斗。",
+      "description": "同上 counter：`increase` 按 strategy、symbol、event、side 分列；`place` 为 0 常为无获批挂单；`bar_tick` 仍可大于 0。",
       "id": 318,
       "gridPos": { "h": 7, "w": 24, "x": 0, "y": 71 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (strategy, event, side) (increase(mlbot_strategy_event_total{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[$__range]))",
+          "expr": "sum by (strategy, symbol, event, side) (increase(mlbot_strategy_event_total{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[$__range]))",
           "format": "table",
           "instant": true
         }
