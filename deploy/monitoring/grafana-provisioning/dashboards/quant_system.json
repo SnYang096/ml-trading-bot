@@ -1,0 +1,160 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    { "title": "Home", "url": "/d/quant-home", "type": "link", "targetBlank": false },
+    { "title": "Strategy Map", "url": "/d/quant-strategy-map", "type": "link", "targetBlank": false }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Target and Process Health",
+      "id": 101,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Prometheus Target up",
+      "id": 102,
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "up{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
+      ],
+      "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU % (3 processes)",
+      "id": 103,
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_cpu_percent{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "RSS MB (3 processes)",
+      "id": 104,
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_memory_rss_mb{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "decmbytes" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Machine Memory MB",
+      "id": 105,
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_memory_mb{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "decmbytes" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Uptime Seconds",
+      "id": 106,
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_uptime_seconds{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "row",
+      "title": "Feature Bus and Runtime Health",
+      "id": 107,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "WebSocket Connected (publisher)",
+      "id": 108,
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_ws_connected{job=\"quant-feature-bus\"}", "legendFormat": "{{symbol}}" }
+      ],
+      "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Feature Bus Snapshot Age (trend consumer view)",
+      "id": 109,
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_feature_bus_snapshot_age_seconds{job=\"quant-trend-fattail\"}", "legendFormat": "{{symbol}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Trend System Mode",
+      "id": 110,
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_system_mode{job=\"quant-trend-fattail\"}", "legendFormat": "mode" }
+      ],
+      "fieldConfig": { "defaults": { "min": 0, "max": 2 }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Bars Throughput",
+      "id": 111,
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "rate(mlbot_bars_processed_total{job=\"quant-trend-fattail\"}[5m])", "legendFormat": "trend bars/s" },
+        { "refId": "B", "expr": "sum(rate(mlbot_multi_leg_bars_processed_total{job=\"quant-hedge-multileg\"}[5m]))", "legendFormat": "hedge bars/s" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Daemon and Actions Throughput (hedge)",
+      "id": 112,
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "rate(mlbot_multi_leg_daemon_polls_total{job=\"quant-hedge-multileg\"}[5m])", "legendFormat": "poll/s" },
+        { "refId": "B", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total{job=\"quant-hedge-multileg\"}[5m]))", "legendFormat": "{{strategy}} {{symbol}}" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Account Update Age and Success",
+      "id": 113,
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_account_update_age_seconds{job=~\"quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "age {{job}} {{scope}}" },
+        { "refId": "B", "expr": "mlbot_account_update_success{job=~\"quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "ok {{job}} {{scope}}" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    }
+  ],
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["quant", "system", "core"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "System · Process / Machine / Bus",
+  "uid": "quant-system",
+  "version": 1
+}

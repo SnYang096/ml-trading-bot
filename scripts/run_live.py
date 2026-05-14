@@ -967,6 +967,13 @@ async def _run_external_feature_bus_mode(
                         timeframe=tf,
                         values=row,
                     )
+                    METRICS.update_strategy_feature_values(
+                        strategy=strategy,
+                        symbol=event.symbol,
+                        timeframe=tf,
+                        values=row,
+                        layer="trend",
+                    )
                 listener._handle_features(
                     dict(event.features),
                     features_by_timeframe=(

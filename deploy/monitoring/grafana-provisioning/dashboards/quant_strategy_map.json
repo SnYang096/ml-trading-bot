@@ -1,0 +1,140 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    { "title": "Home", "url": "/d/quant-home", "type": "link", "targetBlank": false },
+    { "title": "System", "url": "/d/quant-system", "type": "link", "targetBlank": false }
+  ],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "OHLC (selected strategy/symbol/timeframe)",
+      "id": 201,
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"open\"}", "legendFormat": "open" },
+        { "refId": "B", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"high\"}", "legendFormat": "high" },
+        { "refId": "C", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"low\"}", "legendFormat": "low" },
+        { "refId": "D", "expr": "mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\",field=\"close\"}", "legendFormat": "close" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Feature Layers (selected key features)",
+      "id": 202,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_strategy_feature_value{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\",timeframe=~\"$timeframe\"}", "legendFormat": "{{layer}} · {{feature}}" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Entry/Exit/Signal Marker Flow (per minute)",
+      "id": 203,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (event, side) (increase(mlbot_strategy_event_total{job=~\"quant-trend-fattail|quant-hedge-multileg\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[1m]))", "legendFormat": "{{event}} {{side}}" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Last Event Price Marker",
+      "id": 204,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_strategy_event_price{job=~\"quant-trend-fattail|quant-hedge-multileg\",scope=~\"$scope\",strategy=~\"$strategy\",symbol=~\"$symbol\"}", "legendFormat": "{{event}} {{side}}" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Trend Funnel and Orders (selected strategy)",
+      "id": 205,
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (stage) (rate(mlbot_funnel_total{job=\"quant-trend-fattail\",strategy=~\"$strategy\"}[5m]))", "legendFormat": "funnel {{stage}}" },
+        { "refId": "B", "expr": "rate(mlbot_orders_total{job=\"quant-trend-fattail\",strategy=~\"$strategy\"}[5m])", "legendFormat": "orders {{strategy}}" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge Actions and Execution (selected strategy)",
+      "id": 206,
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total{job=\"quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "actions {{strategy}} {{symbol}}" },
+        { "refId": "B", "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_execution_results_total{job=\"quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\"}[5m]))", "legendFormat": "exec {{strategy}} {{symbol}}" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    }
+  ],
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["quant", "strategy", "core"],
+  "templating": {
+    "list": [
+      {
+        "name": "scope",
+        "type": "custom",
+        "query": "trend,hedge",
+        "current": { "text": "trend", "value": "trend" },
+        "multi": false,
+        "includeAll": false
+      },
+      {
+        "name": "strategy",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\"}, strategy)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "symbol",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\"}, symbol)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "timeframe",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(mlbot_strategy_symbol_bar_ohlc{job=~\"quant-trend-fattail|quant-hedge-multileg\",strategy=~\"$strategy\",symbol=~\"$symbol\"}, timeframe)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "Strategy Map · Symbol / Features / Events",
+  "uid": "quant-strategy-map",
+  "version": 1
+}

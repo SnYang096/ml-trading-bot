@@ -286,6 +286,8 @@ class StatsCollector:
                 orders=self._orders_placed,
                 by_strategy=by_strategy_serializable,
                 positions_count=len(positions or {}),
+                symbol=symbol,
+                scope="trend",
             )
             METRICS.update_system_health()
         except Exception:

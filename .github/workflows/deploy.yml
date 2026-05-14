@@ -486,7 +486,25 @@ jobs:
                 fi
                 sleep 2
               done
-              for uid in quant-engine-main quant-multi-leg quant-multi-leg-symbol quant-trend-strategy-symbol; do
+              for uid in \
+                quant-engine-main \
+                quant-multi-leg \
+                quant-multi-leg-symbol \
+                quant-trend-strategy-symbol \
+                quant-live-overview \
+                quant-market-heat \
+                quant-account-market \
+                quant-feature-bus \
+                quant-live-architecture \
+                quant-trend-fattail-symbol \
+                quant-hedge-multileg-symbol \
+                quant-hedge-multileg \
+                quant-strategy-explorer \
+                quant-strategies-features \
+                quant-signal-pipeline \
+                quant-strategy-bpc \
+                quant-strategy-me \
+                quant-strategy-fer; do
                 code="$(curl -sS -o "/tmp/grafana-delete-${uid}.json" -w '%{http_code}' -u admin:admin -X DELETE "http://localhost:3000/api/dashboards/uid/${uid}" || true)"
                 case "$code" in
                   200|404)

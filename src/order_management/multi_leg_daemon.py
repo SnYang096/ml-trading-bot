@@ -158,6 +158,9 @@ class MultiLegLiveDaemon:
                 if report.reconciliation is not None and not report.reconciliation.ok:
                     reconciliation_issue_count += 1
                 try:
+                    timeframe = str(
+                        (bar.features or {}).get("_signal_timeframe") or "primary"
+                    )
                     METRICS.multi_leg_bars_processed.labels(
                         strategy=rt.name, symbol=rt.symbol
                     ).inc(1)
@@ -183,11 +186,63 @@ class MultiLegLiveDaemon:
                     METRICS.update_strategy_symbol_ohlc(
                         strategy=rt.name,
                         symbol=rt.symbol,
-                        timeframe=str(
-                            (bar.features or {}).get("_signal_timeframe") or "primary"
-                        ),
+                        timeframe=timeframe,
                         values=bar.features or {},
                     )
+                    METRICS.update_strategy_feature_values(
+                        strategy=rt.name,
+                        symbol=rt.symbol,
+                        timeframe=timeframe,
+                        values=bar.features or {},
+                        layer="hedge",
+                    )
+                    for action in report.risk.approved_actions or []:
+                        if not isinstance(action, dict):
+                            continue
+                        evt = str(action.get("action", "action") or "action").lower()
+                        side = str(action.get("side", "na") or "na").lower()
+                        price = action.get("price")
+                        METRICS.record_strategy_event(
+                            scope="hedge",
+                            strategy=rt.name,
+                            symbol=rt.symbol,
+                            event=evt,
+                            side=side,
+                            price=price if isinstance(price, (int, float, str)) else None,
+                        )
+                    for action in report.risk.rejected or []:
+                        if not isinstance(action, dict):
+                            continue
+                        side = str(action.get("side", "na") or "na").lower()
+                        METRICS.record_strategy_event(
+                            scope="hedge",
+                            strategy=rt.name,
+                            symbol=rt.symbol,
+                            event="reject",
+                            side=side,
+                        )
+                    for result in report.execution_results or []:
+                        evt = str(getattr(result, "action", "execution") or "execution")
+                        side = "na"
+                        price = None
+                        raw = getattr(result, "raw", None)
+                        if isinstance(raw, dict):
+                            side = str(raw.get("side", side) or side).lower()
+                            price = raw.get("price")
+                        METRICS.record_strategy_event(
+                            scope="hedge",
+                            strategy=rt.name,
+                            symbol=rt.symbol,
+                            event=evt.lower(),
+                            side=side,
+                            price=price if isinstance(price, (int, float, str)) else None,
+                        )
+                    if exchange_positions is not None:
+                        METRICS.update_position_metrics(
+                            scope="hedge",
+                            strategy=rt.name,
+                            positions=exchange_positions,
+                        )
                 except Exception:
                     logger.debug("multi-leg metrics update skipped", exc_info=True)
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, Mapping, List, Optional
+from typing import Any, Iterable, Mapping, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,13 @@ class Metrics:
             self.multi_leg_user_stream_events_total = _NOOP
             self.multi_leg_daemon_polls_total = _NOOP
             self.strategy_symbol_bar_ohlc = _NOOP
+            self.account_update_success = _NOOP
+            self.account_update_age_seconds = _NOOP
+            self.position_notional_usdt = _NOOP
+            self.position_qty = _NOOP
+            self.strategy_feature_value = _NOOP
+            self.strategy_event_total = _NOOP
+            self.strategy_event_price = _NOOP
             return
 
         # ── Counters (累计值，只增不减) ──
@@ -195,6 +202,21 @@ class Metrics:
             "mlbot_strategy_symbol_bar_ohlc",
             "Latest strategy/symbol OHLC value for the configured feature timeframe",
             ["strategy", "symbol", "timeframe", "field"],
+        )
+        self.strategy_feature_value = Gauge(
+            "mlbot_strategy_feature_value",
+            "Selected strategy/symbol feature values for dashboard overlays",
+            ["strategy", "symbol", "timeframe", "layer", "feature"],
+        )
+        self.strategy_event_total = Counter(
+            "mlbot_strategy_event_total",
+            "Strategy events for trade-map markers",
+            ["scope", "strategy", "symbol", "event", "side"],
+        )
+        self.strategy_event_price = Gauge(
+            "mlbot_strategy_event_price",
+            "Last observed strategy event price (if available)",
+            ["scope", "strategy", "symbol", "event", "side"],
         )
 
         # ── Gauges (当前值，可升可降) ──
@@ -318,6 +340,26 @@ class Metrics:
         self.unrealized_pnl_total = Gauge(
             "mlbot_unrealized_pnl_total",
             "Total unrealized PnL in USDT",
+        )
+        self.account_update_success = Gauge(
+            "mlbot_account_update_success",
+            "Account update state per scope: 1=ok, 0=error/missing config",
+            ["scope"],
+        )
+        self.account_update_age_seconds = Gauge(
+            "mlbot_account_update_age_seconds",
+            "Seconds since last successful account update per scope (-1 if never)",
+            ["scope"],
+        )
+        self.position_notional_usdt = Gauge(
+            "mlbot_position_notional_usdt",
+            "Open position notional in USDT by scope/strategy/symbol/side",
+            ["scope", "strategy", "symbol", "side"],
+        )
+        self.position_qty = Gauge(
+            "mlbot_position_qty",
+            "Open position quantity by scope/strategy/symbol/side",
+            ["scope", "strategy", "symbol", "side"],
         )
 
         # ── System Mode ──
@@ -478,6 +520,8 @@ class Metrics:
             "mlbot",
             "Trading bot metadata",
         )
+        self._account_last_success_ts: dict[str, float] = {}
+        self._position_labelsets: Set[Tuple[str, str, str, str]] = set()
 
     def update_system_health(self) -> None:
         """读取 psutil 更新 CPU / 内存 / uptime"""
@@ -550,8 +594,9 @@ class Metrics:
         后读取 MULTI_LEG_*，避免两个账户在看板上混用。
         如果未配置则静默跳过。
         """
-        scope = os.getenv("MLBOT_ACCOUNT_SCOPE", "trend").strip().lower()
-        if scope in {"multi_leg", "multi-leg", "multileg"}:
+        raw_scope = os.getenv("MLBOT_ACCOUNT_SCOPE", "trend").strip().lower()
+        scope = self._normalize_scope(raw_scope)
+        if scope == "hedge":
             api_key = os.getenv("MULTI_LEG_BINANCE_FUTURES_API_KEY") or os.getenv(
                 "MULTI_LEG_BINANCE_API_KEY", ""
             )
@@ -571,6 +616,7 @@ class Metrics:
             )
         if not api_key or not api_secret:
             logger.warning(missing_msg)
+            self._mark_account_update(scope=scope, success=False)
             return
 
         try:
@@ -578,6 +624,7 @@ class Metrics:
             import hmac
             import requests  # noqa: F811
         except ImportError:
+            self._mark_account_update(scope=scope, success=False)
             return
 
         session = self._get_http_session()
@@ -604,6 +651,7 @@ class Metrics:
             )
             if not resp.ok:
                 logger.warning("account API %d: %s", resp.status_code, resp.text[:200])
+                self._mark_account_update(scope=scope, success=False)
                 return
 
             data = resp.json()
@@ -623,8 +671,15 @@ class Metrics:
                 self.account_margin_ratio.set(round(maint_margin / margin_bal, 6))
 
             self.unrealized_pnl_total.set(float(data.get("totalUnrealizedProfit", 0)))
+            self._mark_account_update(scope=scope, success=True)
+            self.update_position_metrics(
+                scope=scope,
+                strategy="all",
+                positions=data.get("positions"),
+            )
         except Exception as exc:
             logger.warning("account data 获取失败: %s", exc)
+            self._mark_account_update(scope=scope, success=False)
 
     @staticmethod
     def _get_http_session():
@@ -639,6 +694,188 @@ class Metrics:
             session.proxies = {"http": proxy, "https": proxy}
         return session
 
+    @staticmethod
+    def _normalize_scope(scope: str) -> str:
+        raw = str(scope or "").strip().lower()
+        if raw in {"multi_leg", "multi-leg", "multileg", "hedge"}:
+            return "hedge"
+        return "trend"
+
+    def _mark_account_update(self, *, scope: str, success: bool) -> None:
+        now = time.time()
+        scope_label = self._normalize_scope(scope)
+        if success:
+            self._account_last_success_ts[scope_label] = now
+            self.account_update_success.labels(scope=scope_label).set(1)
+            self.account_update_age_seconds.labels(scope=scope_label).set(0)
+            return
+        self.account_update_success.labels(scope=scope_label).set(0)
+        last = self._account_last_success_ts.get(scope_label)
+        age = -1 if last is None else max(0.0, now - last)
+        self.account_update_age_seconds.labels(scope=scope_label).set(age)
+
+    def update_position_metrics(
+        self,
+        *,
+        scope: str,
+        strategy: str,
+        positions: Optional[Iterable[Mapping[str, Any]]],
+    ) -> None:
+        """Update per-position gauges from exchange/account payloads."""
+        scope_label = self._normalize_scope(scope)
+        strategy_label = str(strategy or "all")
+        seen: Set[Tuple[str, str, str, str]] = set()
+        for rec in list(positions or []):
+            if not isinstance(rec, Mapping):
+                continue
+            symbol = str(rec.get("symbol", "") or "").upper()
+            if not symbol:
+                continue
+            qty_raw = rec.get("positionAmt", rec.get("qty", rec.get("quantity", 0)))
+            notional_raw = rec.get("notional", rec.get("notional_usdt", 0))
+            try:
+                qty_signed = float(qty_raw or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if abs(qty_signed) <= 1e-12:
+                continue
+            side = str(rec.get("side", "") or "").strip().lower()
+            if side not in {"long", "short"}:
+                side = "long" if qty_signed > 0 else "short"
+            qty = abs(qty_signed)
+            try:
+                notional = abs(float(notional_raw or 0.0))
+            except (TypeError, ValueError):
+                notional = 0.0
+            key = (scope_label, strategy_label, symbol, side)
+            seen.add(key)
+            self.position_qty.labels(
+                scope=scope_label,
+                strategy=strategy_label,
+                symbol=symbol,
+                side=side,
+            ).set(qty)
+            self.position_notional_usdt.labels(
+                scope=scope_label,
+                strategy=strategy_label,
+                symbol=symbol,
+                side=side,
+            ).set(notional)
+
+        stale = {
+            key
+            for key in self._position_labelsets
+            if key[0] == scope_label and key[1] == strategy_label and key not in seen
+        }
+        for scope_l, strategy_l, symbol_l, side_l in stale:
+            self.position_qty.labels(
+                scope=scope_l,
+                strategy=strategy_l,
+                symbol=symbol_l,
+                side=side_l,
+            ).set(0)
+            self.position_notional_usdt.labels(
+                scope=scope_l,
+                strategy=strategy_l,
+                symbol=symbol_l,
+                side=side_l,
+            ).set(0)
+        self._position_labelsets.difference_update(stale)
+        self._position_labelsets.update(seen)
+
+    def record_strategy_event(
+        self,
+        *,
+        scope: str,
+        strategy: str,
+        symbol: str,
+        event: str,
+        count: float = 1.0,
+        side: str = "na",
+        price: Optional[float] = None,
+    ) -> None:
+        """Record counter/gauge pair used by strategy-map marker panels."""
+        if count <= 0:
+            return
+        scope_label = self._normalize_scope(scope)
+        strategy_label = str(strategy or "unknown")
+        symbol_label = str(symbol or "unknown").upper()
+        event_label = str(event or "event").lower()
+        side_label = str(side or "na").lower()
+        self.strategy_event_total.labels(
+            scope=scope_label,
+            strategy=strategy_label,
+            symbol=symbol_label,
+            event=event_label,
+            side=side_label,
+        ).inc(float(count))
+        if price is not None:
+            try:
+                self.strategy_event_price.labels(
+                    scope=scope_label,
+                    strategy=strategy_label,
+                    symbol=symbol_label,
+                    event=event_label,
+                    side=side_label,
+                ).set(float(price))
+            except (TypeError, ValueError):
+                return
+
+    def update_strategy_feature_values(
+        self,
+        *,
+        strategy: str,
+        symbol: str,
+        timeframe: str,
+        values: Mapping[str, Any],
+        layer: str = "signal",
+        feature_keys: Optional[Iterable[str]] = None,
+    ) -> None:
+        """Publish selected feature values to avoid unbounded metric cardinality."""
+        if feature_keys is None:
+            feature_keys = (
+                "close",
+                "atr",
+                "atr14",
+                "trend_confidence",
+                "trend_direction",
+                "semantic_chop",
+                "bpc_semantic_chop",
+                "box_prefilter",
+                "regime_state",
+                "ood_score",
+            )
+        strategy_label = str(strategy or "unknown")
+        symbol_label = str(symbol or "unknown").upper()
+        timeframe_label = str(timeframe or "unknown")
+        layer_label = str(layer or "signal")
+        for key in feature_keys:
+            raw = values.get(key)
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                if isinstance(raw, str):
+                    low = raw.strip().lower()
+                    if low in {"up", "long", "true"}:
+                        value = 1.0
+                    elif low in {"down", "short", "false"}:
+                        value = -1.0 if low in {"down", "short"} else 0.0
+                    else:
+                        continue
+                elif isinstance(raw, bool):
+                    value = 1.0 if raw else 0.0
+                else:
+                    continue
+            self.strategy_feature_value.labels(
+                strategy=strategy_label,
+                symbol=symbol_label,
+                timeframe=timeframe_label,
+                layer=layer_label,
+                feature=str(key),
+            ).set(value)
+
     def update_from_flush(
         self,
         bars: int,
@@ -650,6 +887,8 @@ class Metrics:
         orders: int,
         by_strategy: dict,
         positions_count: int,
+        symbol: str = "",
+        scope: str = "trend",
     ) -> None:
         """StatsCollector.flush() 调用此方法同步更新 Prometheus 指标"""
         self.bars_processed.inc(bars)
@@ -698,6 +937,13 @@ class Metrics:
                     stats["signals"]
                 )
                 self.signals_total.labels(strategy=s).inc(stats["signals"])
+                self.record_strategy_event(
+                    scope=scope,
+                    strategy=s,
+                    symbol=symbol,
+                    event="signal",
+                    count=float(stats["signals"]),
+                )
             if stats.get("pcm_selected", 0):
                 self.funnel_stage.labels(stage="pcm", strategy=s).inc(
                     stats["pcm_selected"]
@@ -705,6 +951,21 @@ class Metrics:
             if stats.get("orders", 0):
                 self.funnel_stage.labels(stage="order", strategy=s).inc(stats["orders"])
                 self.orders_total.labels(strategy=s).inc(stats["orders"])
+                self.record_strategy_event(
+                    scope=scope,
+                    strategy=s,
+                    symbol=symbol,
+                    event="order",
+                    count=float(stats["orders"]),
+                )
+            if stats.get("gate_rejected", 0):
+                self.record_strategy_event(
+                    scope=scope,
+                    strategy=s,
+                    symbol=symbol,
+                    event="reject",
+                    count=float(stats["gate_rejected"]),
+                )
 
     def update_slot_metrics(
         self,
@@ -883,6 +1144,9 @@ def _initialize_default_series() -> None:
         METRICS.pcm_notional_total.set(0)
         METRICS.pcm_notional_soft_cap.set(0)
         METRICS.pcm_notional_hard_cap.set(0)
+        for scope in ("trend", "hedge"):
+            METRICS.account_update_success.labels(scope=scope).set(0)
+            METRICS.account_update_age_seconds.labels(scope=scope).set(-1)
         for period in ("daily", "weekly", "monthly"):
             METRICS.loss.labels(period=period).set(0)
         for balance_type in ("total", "available", "margin"):
