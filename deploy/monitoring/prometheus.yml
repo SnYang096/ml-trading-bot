@@ -16,6 +16,10 @@ scrape_configs:
         labels:
           instance: "live"
           workload: "trend_bus_consumer"
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "^mlbot_multi_leg_.+"
+        action: drop
 
   - job_name: "quant-multi-leg"
     static_configs:

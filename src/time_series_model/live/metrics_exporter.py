@@ -837,6 +837,7 @@ def start_metrics_server(port: int = 9090) -> bool:
             "strategies": "bpc,me,fer",
         }
     )
+    _initialize_default_series()
 
     # 注册 uptime callback
     if hasattr(METRICS.uptime_seconds, "set_function"):
@@ -853,3 +854,29 @@ def start_metrics_server(port: int = 9090) -> bool:
     except OSError as e:
         logger.error("❌ Prometheus metrics server 启动失败 (端口 %d): %s", port, e)
         return False
+
+
+def _initialize_default_series() -> None:
+    """Expose baseline series so Grafana overview panels do not start empty."""
+
+    try:
+        METRICS.kill_switch_halted.set(0)
+        METRICS.positions_active.set(0)
+        METRICS.pnl_realized_total.set(0)
+        METRICS.drawdown.set(0)
+        METRICS.gate_reject_rate.set(0)
+        METRICS.system_mode.set(0)
+        METRICS.account_margin_ratio.set(0)
+        METRICS.unrealized_pnl_total.set(0)
+        METRICS.pcm_notional_total.set(0)
+        METRICS.pcm_notional_soft_cap.set(0)
+        METRICS.pcm_notional_hard_cap.set(0)
+        for period in ("daily", "weekly", "monthly"):
+            METRICS.loss.labels(period=period).set(0)
+        for balance_type in ("total", "available", "margin"):
+            METRICS.account_balance.labels(type=balance_type).set(0)
+        for strategy in ("bpc", "fer", "me", "chop_grid", "dual_add_trend"):
+            METRICS.strategy_slots_active.labels(strategy=strategy).set(0)
+            METRICS.strategy_slots_max.labels(strategy=strategy).set(0)
+    except Exception:
+        logger.debug("default metrics initialization skipped", exc_info=True)
