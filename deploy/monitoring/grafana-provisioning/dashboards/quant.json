@@ -21,15 +21,15 @@
             "targetBlank": false
         },
         {
-            "title": "🔗 Multi-leg 按 Strategy×Symbol",
-            "url": "/d/quant-multi-leg-symbol",
+            "title": "🔗 Hedge Multi-leg · Strategy×Symbol",
+            "url": "/d/quant-hedge-multileg-symbol",
             "type": "link",
             "icon": "link",
             "targetBlank": false
         },
         {
-            "title": "📈 Trend 策略×Symbol",
-            "url": "/d/quant-trend-strategy-symbol",
+            "title": "📈 Trend/Fat-tail 策略×Symbol",
+            "url": "/d/quant-trend-fattail-symbol",
             "type": "link",
             "icon": "chart-line",
             "targetBlank": false
@@ -84,8 +84,8 @@
             "targetBlank": false
         },
         {
-            "title": "🦵 Multi-leg",
-            "url": "/d/quant-multi-leg",
+            "title": "🦵 Hedge Multi-leg",
+            "url": "/d/quant-hedge-multileg",
             "type": "link",
             "icon": "dashboard",
             "targetBlank": false
@@ -114,7 +114,7 @@
             "id": 51,
             "options": {
                 "mode": "html",
-                "content": "<div style='text-align:center; padding:12px 0'><a href='/d/quant-engine-main' style='font-size:22px; text-decoration:none; color:#73BF69'>📊 Overview</a><br/><span style='color:#aaa; font-size:13px'>状态总览 · KPI · PnL · 风控</span></div>"
+                "content": "<div style='text-align:center; padding:12px 0'><a href='/d/quant-live-overview' style='font-size:22px; text-decoration:none; color:#73BF69'>📊 Overview</a><br/><span style='color:#aaa; font-size:13px'>状态总览 · KPI · PnL · 风控</span></div>"
             },
             "type": "text",
             "transparent": false
@@ -1146,6 +1146,6 @@
     "timepicker": {},
     "timezone": "utc",
     "title": "📊 Overview",
-    "uid": "quant-engine-main",
+    "uid": "quant-live-overview",
     "version": 1
 }
