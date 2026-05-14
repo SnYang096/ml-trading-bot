@@ -367,7 +367,9 @@ jobs:
             [Service]
             Restart=always
             RestartSec=5
-            Environment=MLBOT_MULTI_LEG_SYMBOLS=BTCUSDT
+            # 与 quant-feature-bus 的 MLBOT_LIVE_SYMBOLS / live/highcap/universe.yaml 主流名单对齐
+            #（trend：start_live.sh 无 argv2 时从 universe.yaml 取 keys； hedge 若不设会变成单 BTC）
+            Environment=MLBOT_MULTI_LEG_SYMBOLS=BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT
             Environment=MLBOT_ACCOUNT_SCOPE=multi_leg
             ExecStartPre=-/usr/bin/docker rm -f quant-hedge-multileg
             ExecStart=/usr/bin/docker run --rm --name quant-hedge-multileg \
