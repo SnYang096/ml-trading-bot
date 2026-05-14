@@ -1,15 +1,28 @@
 # Prometheus 配置 — 抓取交易机器人 /metrics
+#
+# 经典 quant-engine（趋势 / bus 消费者）与 quant-multi-leg 各监听器内监听 :9090；
+# systemd 需在宿主机映射（见 deploy.yml）：9190→classic，9191→multi-leg。
+# 注意：Prometheus 运行在 Docker 内，不能抓取只绑定宿主 127.0.0.1 的端口。
+# monitoring 栈通过 host.docker.internal 访问宿主（compose 已为 prometheus 配 extra_hosts）。
+
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
 scrape_configs:
-  # 交易机器人 (运行在 host 上，不在 Docker 中)
-  - job_name: "quant-engine"
+  - job_name: "quant-engine-classic"
     static_configs:
-      - targets: ["host.docker.internal:9090"]
+      - targets: ["host.docker.internal:9190"]
         labels:
           instance: "live"
+          workload: "trend_bus_consumer"
+
+  - job_name: "quant-multi-leg"
+    static_configs:
+      - targets: ["host.docker.internal:9191"]
+        labels:
+          instance: "live"
+          workload: "multi_leg_consumer"
 
   # Prometheus 自身
   - job_name: "prometheus"

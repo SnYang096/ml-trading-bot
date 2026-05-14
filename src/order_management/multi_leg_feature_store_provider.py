@@ -91,7 +91,10 @@ class FeatureStoreBarProvider:
                     atr=_as_float(
                         signal, ["atr14", "atr", "ATR", "volatility_atr"], 0.0
                     ),
-                    features=_features_from_row(signal),
+                    features={
+                        **_features_from_row(signal),
+                        "_signal_timeframe": self.timeframe,
+                    },
                 )
             )
         return out
@@ -104,6 +107,7 @@ class FeatureStoreBarProvider:
         features.update(
             {
                 "_signal_timestamp": str(pd.Timestamp(signal["timestamp"])),
+                "_signal_timeframe": self.timeframe,
                 "_execution_timeframe": self.execution_timeframe,
                 "_execution_bar_kind": str(bar.get("_bar_kind", "1min")),
             }

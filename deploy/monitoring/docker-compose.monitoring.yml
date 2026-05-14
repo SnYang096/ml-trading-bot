@@ -4,7 +4,8 @@
 # Prometheus: http://localhost:9091
 # Grafana:    http://localhost:3000  (admin / admin)
 #
-# 交易机器人在 host 上运行，暴露 :9090/metrics → Prometheus 抓取
+# 指标：quant-engine classic → 宿主 9190；quant-multi-leg → 宿主 9191（见 prometheus.yml）。
+# 若 Grafana 面板无数据，检查 systemd docker run 是否已 -p 上述端口。
 
 services:
   prometheus:

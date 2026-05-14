@@ -35,7 +35,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_feature_bus_snapshot_age_seconds",
+                    "expr": "mlbot_feature_bus_snapshot_age_seconds{job=\"quant-engine-classic\"}",
                     "legendFormat": "{{symbol}}"
                 }
             ],
@@ -65,7 +65,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_feature_bus_snapshot_age_seconds",
+                    "expr": "mlbot_feature_bus_snapshot_age_seconds{job=\"quant-engine-classic\"}",
                     "legendFormat": "{{symbol}}"
                 }
             ],
@@ -83,7 +83,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_last_bar_age_seconds",
+                    "expr": "mlbot_last_bar_age_seconds{job=\"quant-engine-classic\"}",
                     "legendFormat": "{{symbol}}"
                 }
             ],

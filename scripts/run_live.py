@@ -748,6 +748,16 @@ def _manager_feature_timeframes(
     return tfs
 
 
+def _pcm_strategy_timeframes(pcm: Any, primary_timeframe: str) -> Dict[str, str]:
+    """Return strategy -> feature timeframe labels for dashboard metrics."""
+    strategies = getattr(pcm, "_strategies", {}) or {}
+    raw_tfs = getattr(pcm, "_strategy_timeframes", {}) or {}
+    out: Dict[str, str] = {}
+    for name in strategies.keys():
+        out[str(name)] = str(raw_tfs.get(name) or primary_timeframe)
+    return out
+
+
 def _add_bus_bars_to_listener(listener: Any, bars: List[Dict[str, Any]]) -> None:
     if not bars:
         return
@@ -809,6 +819,7 @@ async def _run_external_feature_bus_mode(
     max_stale = float(os.getenv("MLBOT_FEATURE_BUS_MAX_STALENESS_SECONDS", "1800"))
     primary_tf = _manager_primary_timeframe(manager)
     timeframes = _manager_feature_timeframes(manager, pcm, primary_tf)
+    strategy_timeframes = _pcm_strategy_timeframes(pcm, primary_tf)
     provider = ClassicFeatureBusProvider(
         feature_bus_root=feature_bus_root,
         symbols=symbols,
@@ -945,6 +956,14 @@ async def _run_external_feature_bus_mode(
                 _enforce_bus_execution_bars(listener, event.bars, event.features)
                 latest_features[event.symbol] = dict(event.features)
                 listener.last_feature_compute_time = event.timestamp
+                for strategy, tf in strategy_timeframes.items():
+                    row = event.features_by_timeframe.get(tf) or event.features
+                    METRICS.update_strategy_symbol_ohlc(
+                        strategy=strategy,
+                        symbol=event.symbol,
+                        timeframe=tf,
+                        values=row,
+                    )
                 listener._handle_features(
                     dict(event.features),
                     features_by_timeframe=(

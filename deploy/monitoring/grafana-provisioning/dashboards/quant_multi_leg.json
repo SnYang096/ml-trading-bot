@@ -5,6 +5,20 @@
     "id": null,
     "links": [
         {
+            "title": "🏗️ Architecture",
+            "url": "/d/quant-live-architecture",
+            "type": "link",
+            "icon": "apps",
+            "targetBlank": false
+        },
+        {
+            "title": "🔗 Multi-leg × Symbol",
+            "url": "/d/quant-multi-leg-symbol",
+            "type": "link",
+            "icon": "link",
+            "targetBlank": false
+        },
+        {
             "title": "📊 Overview",
             "url": "/d/quant-engine-main",
             "type": "link",
@@ -45,7 +59,7 @@
             },
             "targets": [
                 {
-                    "expr": "rate(mlbot_multi_leg_daemon_polls_total[5m])",
+                    "expr": "rate(mlbot_multi_leg_daemon_polls_total{job=\"quant-multi-leg\"}[5m])",
                     "legendFormat": "polls/s"
                 }
             ],
@@ -63,7 +77,7 @@
             },
             "targets": [
                 {
-                    "expr": "mlbot_multi_leg_daemon_polls_total",
+                    "expr": "mlbot_multi_leg_daemon_polls_total{job=\"quant-multi-leg\"}",
                     "legendFormat": "total polls"
                 }
             ],
@@ -87,7 +101,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_bars_processed_total[5m]))",
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_bars_processed_total{job=\"quant-multi-leg\"}[5m]))",
                     "legendFormat": "{{strategy}} {{symbol}}"
                 }
             ],
@@ -104,7 +118,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total[5m]))",
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total{job=\"quant-multi-leg\"}[5m]))",
                     "legendFormat": "actions {{strategy}} {{symbol}}"
                 }
             ],
@@ -121,7 +135,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_risk_rejected_total[5m]))",
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_risk_rejected_total{job=\"quant-multi-leg\"}[5m]))",
                     "legendFormat": "rejected {{strategy}} {{symbol}}"
                 }
             ],
@@ -145,7 +159,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_risk_rejected_total[5m])) / (sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total[5m])) + 1e-9)",
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_risk_rejected_total{job=\"quant-multi-leg\"}[5m])) / (sum by (strategy, symbol) (rate(mlbot_multi_leg_actions_total{job=\"quant-multi-leg\"}[5m])) + 1e-9)",
                     "legendFormat": "reject ratio {{strategy}} {{symbol}}"
                 }
             ],
@@ -169,7 +183,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_execution_results_total[5m]))",
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_execution_results_total{job=\"quant-multi-leg\"}[5m]))",
                     "legendFormat": "{{strategy}} {{symbol}}"
                 }
             ],
@@ -186,7 +200,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy) (rate(mlbot_multi_leg_reconciliation_issues_total[5m]))",
+                    "expr": "sum by (strategy) (rate(mlbot_multi_leg_reconciliation_issues_total{job=\"quant-multi-leg\"}[5m]))",
                     "legendFormat": "{{strategy}}"
                 }
             ],
@@ -203,7 +217,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_user_stream_events_total[5m]))",
+                    "expr": "sum by (strategy, symbol) (rate(mlbot_multi_leg_user_stream_events_total{job=\"quant-multi-leg\"}[5m]))",
                     "legendFormat": "{{strategy}} {{symbol}}"
                 }
             ],

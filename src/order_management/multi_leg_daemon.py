@@ -180,6 +180,14 @@ class MultiLegLiveDaemon:
                         METRICS.multi_leg_reconciliation_issues_total.labels(
                             strategy=rt.name
                         ).inc(1)
+                    METRICS.update_strategy_symbol_ohlc(
+                        strategy=rt.name,
+                        symbol=rt.symbol,
+                        timeframe=str(
+                            (bar.features or {}).get("_signal_timeframe") or "primary"
+                        ),
+                        values=bar.features or {},
+                    )
                 except Exception:
                     logger.debug("multi-leg metrics update skipped", exc_info=True)
 

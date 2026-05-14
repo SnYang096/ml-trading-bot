@@ -7,6 +7,34 @@
     "id": null,
     "links": [
         {
+            "title": "🏗️ 架构分层 (Trend + Multi-leg)",
+            "url": "/d/quant-live-architecture",
+            "type": "link",
+            "icon": "apps",
+            "targetBlank": false
+        },
+        {
+            "title": "📂 策略总览（按名称过滤）",
+            "url": "/d/quant-strategy-explorer",
+            "type": "link",
+            "icon": "filter",
+            "targetBlank": false
+        },
+        {
+            "title": "🔗 Multi-leg 按 Strategy×Symbol",
+            "url": "/d/quant-multi-leg-symbol",
+            "type": "link",
+            "icon": "link",
+            "targetBlank": false
+        },
+        {
+            "title": "📈 Trend 策略×Symbol",
+            "url": "/d/quant-trend-strategy-symbol",
+            "type": "link",
+            "icon": "chart-line",
+            "targetBlank": false
+        },
+        {
             "title": "📡 Signal Pipeline",
             "url": "/d/quant-signal-pipeline",
             "type": "link",

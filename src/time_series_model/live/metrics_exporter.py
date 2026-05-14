@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import List, Optional
+from typing import Any, Mapping, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +128,7 @@ class Metrics:
             self.multi_leg_reconciliation_issues_total = _NOOP
             self.multi_leg_user_stream_events_total = _NOOP
             self.multi_leg_daemon_polls_total = _NOOP
+            self.strategy_symbol_bar_ohlc = _NOOP
             return
 
         # ── Counters (累计值，只增不减) ──
@@ -188,6 +189,12 @@ class Metrics:
         self.multi_leg_daemon_polls_total = Counter(
             "mlbot_multi_leg_daemon_polls_total",
             "Completed multi-leg daemon poll iterations (run_forever loop ticks)",
+        )
+
+        self.strategy_symbol_bar_ohlc = Gauge(
+            "mlbot_strategy_symbol_bar_ohlc",
+            "Latest strategy/symbol OHLC value for the configured feature timeframe",
+            ["strategy", "symbol", "timeframe", "field"],
         )
 
         # ── Gauges (当前值，可升可降) ──
@@ -712,15 +719,58 @@ class Metrics:
         except Exception:
             return
 
-        all_strategies = {"bpc", "fer", "me"}
-        for s in all_strategies:
+        known = {"bpc", "fer", "me", "chop_grid", "dual_add_trend"}
+        all_strategy_keys = sorted(
+            known.union({str(k).lower() for k in archetype_counts.keys()})
+        )
+        for s in all_strategy_keys:
             self.strategy_slots_active.labels(strategy=s).set(
                 archetype_counts.get(s, 0)
             )
-            # max slots: per_strategy_limits > global
             limits = (per_strategy_limits or {}).get(s) or {}
             max_s = int(limits.get("max_slots", global_max_slots))
             self.strategy_slots_max.labels(strategy=s).set(max_s)
+
+    def update_strategy_symbol_ohlc(
+        self,
+        *,
+        strategy: str,
+        symbol: str,
+        timeframe: str,
+        values: Mapping[str, Any],
+    ) -> None:
+        """Publish the latest OHLC row for dashboard candlestick panels."""
+
+        def _value_for(field: str) -> Optional[float]:
+            candidates = {
+                "open": ("open", "Open", "o"),
+                "high": ("high", "High", "h"),
+                "low": ("low", "Low", "l"),
+                "close": ("close", "Close", "c", "price"),
+            }[field]
+            for key in candidates:
+                raw = values.get(key)
+                if raw is None:
+                    continue
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    continue
+            return None
+
+        strategy_label = str(strategy or "unknown")
+        symbol_label = str(symbol or "unknown").upper()
+        timeframe_label = str(timeframe or "unknown")
+        for field in ("open", "high", "low", "close"):
+            val = _value_for(field)
+            if val is None:
+                continue
+            self.strategy_symbol_bar_ohlc.labels(
+                strategy=strategy_label,
+                symbol=symbol_label,
+                timeframe=timeframe_label,
+                field=field,
+            ).set(val)
 
     def update_pcm_notional_metrics(
         self,
