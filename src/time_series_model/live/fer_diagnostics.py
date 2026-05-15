@@ -136,7 +136,6 @@ def record_fer_entry_eval(
         "gate_reasons": funnel.get("gate_reasons"),
         "entry_filter": funnel.get("entry_filter"),
         "gate_weight": funnel.get("gate_weight"),
-        "evidence_score": funnel.get("evidence_score"),
         "pcm_direction_filter": funnel.get("pcm_direction_filter"),
         "sr_snapshot": snapshot_sr_features(features),
     }

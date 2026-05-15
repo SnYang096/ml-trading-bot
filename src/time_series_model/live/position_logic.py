@@ -212,8 +212,6 @@ def build_position_dict(
         "atr_stop_pct": atr_stop_pct,
         "effective_stop_pct": effective_stop_pct,
         "sizing_stop_source": sizing_stop_source,
-        "tier_name": strategy_specific.get("tier_name", "default"),
-        "evidence_score": intent.confidence or 0.0,
         "bar_minutes": bar_minutes,
         "bars_counted": 0,
     }

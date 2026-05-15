@@ -383,7 +383,7 @@ class EntryFilterChecker:
 class ExecutionParamGenerator:
     """根据 execution.yaml（及可选 regime_execution 补丁）生成执行参数。
 
-    ``evidence_score`` 参数仅为历史 API 保留；当前实现不用它调 stop/TP 或 size。
+    ``evidence_score`` 参数为历史签名保留；当前不参与 stop/TP/size 的档位选择。
     """
 
     def __init__(self, execution_config: Dict[str, Any]):
@@ -501,7 +501,6 @@ class ExecutionParamGenerator:
             l3_structural_exit_buffer_atr = 0.25
 
         result: Dict[str, Any] = {
-            "tier_name": "global",
             "initial_r": float(sl_cfg.get("initial_r", 2.0)),
             "activation_r": activation_r,
             "trail_r": trail_r,
@@ -963,12 +962,9 @@ class GenericLiveStrategy:
                     )
                 )
                 logger.debug(
-                    f"📊 Evidence: score={evidence_score:.3f}, "
+                    f"📊 Composite confidence: score={evidence_score:.3f}, "
                     f"breakdown={evidence_breakdown}"
                 )
-
-        funnel["evidence"] = evidence_active
-        funnel["evidence_score"] = round(evidence_score, 4)
 
         # ── 5. 执行参数生成 ──
         exec_params = {}
@@ -1118,9 +1114,7 @@ class GenericLiveStrategy:
                 },
                 "strategy_specific": {
                     "direction_rule": rule_id,
-                    "evidence_score": evidence_score,
                     "gate_weight": gate_weight,
-                    "tier_name": exec_params.get("tier_name", "default"),
                     **(
                         {"srb_true_sr_level": float(_srb_true_sr)}
                         if _srb_true_sr is not None
@@ -1138,16 +1132,14 @@ class GenericLiveStrategy:
             },
         )
 
-        tier_name = exec_params.get("tier_name")
         if evidence_active:
             logger.info(
                 f"✅ Signal generated: {action} {symbol} "
-                f"(tier={tier_name}, evidence={evidence_score:.3f})"
+                f"(confidence={evidence_score:.3f})"
             )
         else:
             logger.info(
-                f"✅ Signal generated: {action} {symbol} "
-                f"(tier={tier_name}, evidence=off)"
+                f"✅ Signal generated: {action} {symbol} (confidence=inactive→neutral)"
             )
         self._last_funnel = funnel
         record_fer_entry_eval(
@@ -1252,10 +1244,10 @@ class GenericLiveStrategy:
                 f"{self.strategy_name.upper()}_{side_str} "
                 f"(gate_w={gate_weight:.2f})"
             ),
-            "evidence_score": adjusted_score,
+            "confidence": adjusted_score,
             "evidence_breakdown": evidence_breakdown,
             "gate_weight": gate_weight,
-            "tier": exec_params,
+            "execution_params": exec_params,
             "atr": features.get("atr", 0.0),
         }
 

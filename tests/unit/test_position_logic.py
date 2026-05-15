@@ -104,7 +104,6 @@ class TestBuildPositionDict:
         # TP = entry + 3.0 * atr = 50000 + 1500 = 51500
         assert pos["take_profit_price"] == pytest.approx(51500, abs=1)
         assert pos["max_holding_bars"] == 50
-        assert pos["evidence_score"] == 0.75
         assert pos["bars_counted"] == 0
 
     def test_basic_short(self):
@@ -211,12 +210,13 @@ class TestBuildPositionDict:
         assert pos["trail_r"] == 1.5
         assert pos["breakeven_enabled"] is False
 
-    def test_strategy_specific_tier(self):
-        intent = _make_intent(strategy_specific={"tier_name": "高证据"})
+    def test_strategy_specific_unknown_keys_are_not_promoted_to_top_level(self):
+        """strategy_specific 里除 SRB 等白名单字段外不会自动变成仓位顶层字段。"""
+        intent = _make_intent(strategy_specific={"legacy_tier_note": "x"})
         pos = build_position_dict(
             intent, entry_price=50000, atr=500, bar_minutes=240, entry_time=_now()
         )
-        assert pos["tier_name"] == "高证据"
+        assert "legacy_tier_note" not in pos
 
     def test_entry_time_preserved(self):
         t = datetime(2025, 1, 15, 8, 0, 0, tzinfo=timezone.utc)

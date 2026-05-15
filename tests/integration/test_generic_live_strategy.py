@@ -302,7 +302,7 @@ class TestDirectionEvaluator:
 
 
 class TestExecutionParamGenerator:
-    """执行参数生成器 — tier 选择逻辑"""
+    """执行参数生成器 — 统一全局参数（YAML 分档 tier 已不参与）。"""
 
     def _make(self, levels):
         return ExecutionParamGenerator(
@@ -338,7 +338,7 @@ class TestExecutionParamGenerator:
             ]
         )
         params = gen.generate_params(0.85)
-        assert params["tier_name"] == "global"
+        assert params["initial_r"] == 2.0
 
     def test_mid_evidence_selects_mid_tier(self):
         """Tier 系统已移除，任何 evidence 都返回 global。"""
@@ -349,7 +349,7 @@ class TestExecutionParamGenerator:
             ]
         )
         params = gen.generate_params(0.5)
-        assert params["tier_name"] == "global"
+        assert params["initial_r"] == 2.0
 
     def test_below_all_tiers_falls_to_default(self):
         """Tier 系统已移除，任何 evidence 都返回 global。"""
@@ -357,7 +357,7 @@ class TestExecutionParamGenerator:
             [{"name": "only", "evidence_min": 0.8, "size_multiplier": 2.0}]
         )
         params = gen.generate_params(0.1)
-        assert params["tier_name"] == "global"
+        assert params["initial_r"] == 2.0
 
     def test_no_tiers_uses_base_params(self):
         """Tier 系统已移除，统一返回 global + 全局参数。"""
@@ -372,7 +372,6 @@ class TestExecutionParamGenerator:
             }
         )
         params = gen.generate_params(0.9)
-        assert params["tier_name"] == "global"
         assert params["initial_r"] == 3.0
 
 
@@ -563,7 +562,7 @@ class TestDecidePipeline:
             symbol="X",
         )
         assert s._last_tier_params is not None
-        assert "tier_name" in s._last_tier_params
+        assert "initial_r" in s._last_tier_params
 
     def test_size_multiplier_ignores_evidence_score(self, base_config):
         """仓位倍数仅来自 execution（默认 1.0），不因特征变化而按 evidence 缩放"""
@@ -589,8 +588,8 @@ class TestEvaluateEntrySignal:
         assert ok is True
         assert info["side"] == "BUY"
         assert info["direction"] == 1
-        assert "evidence_score" in info
-        assert "tier" in info
+        assert "confidence" in info
+        assert "execution_params" in info
 
     def test_no_direction_returns_reject(self, base_config):
         s = GenericLiveStrategy(strategy_name="bpc", strategies_root=base_config)

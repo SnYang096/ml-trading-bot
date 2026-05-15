@@ -310,7 +310,6 @@ class TestAddPositionLivePath:
                 "entry_price": 50000.0,
                 "initial_risk_distance": 1000.0,
                 "atr_at_entry": 500.0,
-                "tier_name": "default",
             },
         )
         ex.runtime_state.slots.active[parent_pid] = MagicMock(archetype="bpc-long-120T")

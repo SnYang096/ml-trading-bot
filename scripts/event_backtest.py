@@ -25,8 +25,9 @@
     # 单策略回测
     python scripts/event_backtest.py --strategy fer --days 180
 
-    # 指定 symbol + 导出
-    python scripts/event_backtest.py --strategy bpc,fer,me-long --symbols BTCUSDT,ETHUSDT --days 90 --export trades.csv
+    # 默认在当前目录写 event_trades_<策略>.csv（含入场审计列）；仅改路径时用 --trades-csv
+    python scripts/event_backtest.py --strategy bpc,fer,me-long --symbols BTCUSDT,ETHUSDT --days 90
+    python scripts/event_backtest.py --strategy bpc --days 90 --trades-csv out/event_trades_bpc.csv
 """
 from __future__ import annotations
 
@@ -123,6 +124,9 @@ try:
         TabPanel,
         FixedTicker,
         ColumnDataSource,
+        Span,
+        Toggle,
+        CustomJS,
     )
     from bokeh.layouts import column as bk_column
     from bokeh.resources import INLINE as BK_RESOURCES
@@ -364,8 +368,6 @@ class ClosedTrade:
     pnl_usd: float  # notional PnL (per-unit)
     exit_reason: str
     archetype: str = ""
-    tier_name: str = ""
-    evidence_score: float = 0.5  # evidence composite score (0-1)
     bars_held: int = 0
     is_add_position: bool = False  # 加仓标记
     is_reverse: bool = False  # SRB 假突破反手标记
@@ -559,7 +561,7 @@ class PositionSimulator:
             entry_time=entry_time,
         )
         pos["archetype"] = getattr(intent, "archetype", "") or ""
-        # 存储 size_multiplier (LivePCM regime×evidence 缩放) — 与向量回测 _position_scale 对齐
+        # 存储 size_multiplier（PCM regime × 缩放）— 与向量回测 _position_scale 对齐
         pos["_size_multiplier"] = float(getattr(intent, "size_multiplier", 1.0) or 1.0)
         self._positions[pid] = pos
 
@@ -691,7 +693,7 @@ class PositionSimulator:
                 if self.fee_rate > 0 and risk > 0:
                     fee_r = (entry_price + exit_price) * self.fee_rate / risk
                     _raw_r -= fee_r
-                # 应用 position scale (regime × evidence) — 与向量回测 exec_returns *= _position_scale 对齐
+                # 应用 position scale — 与向量回测 exec_returns *= _position_scale 对齐
                 pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
 
                 # 归一化 exit_reason: 与向量回测对齐命名
@@ -717,8 +719,6 @@ class PositionSimulator:
                     pnl_usd=pnl_usd,
                     exit_reason=normalized_reason,
                     archetype=pos.get("archetype", ""),
-                    tier_name=pos.get("tier_name", ""),
-                    evidence_score=pos.get("evidence_score", 0),
                     bars_held=pos.get("bars_counted", 0),
                     is_add_position=pos.get("_is_add_position", False),
                     is_reverse=False,
@@ -807,8 +807,6 @@ class PositionSimulator:
                     pnl_usd=pnl_usd,
                     exit_reason=str(meta.get("normalized_reason", "sl")),
                     archetype=pos.get("archetype", ""),
-                    tier_name=pos.get("tier_name", ""),
-                    evidence_score=pos.get("evidence_score", 0),
                     bars_held=pos.get("bars_counted", 0),
                     is_add_position=True,
                     size_multiplier=pos.get("_size_multiplier", 1.0),
@@ -855,8 +853,6 @@ class PositionSimulator:
                 pnl_usd=pnl_usd,
                 exit_reason="end_of_backtest",
                 archetype=pos.get("archetype", ""),
-                tier_name=pos.get("tier_name", ""),
-                evidence_score=pos.get("evidence_score", 0),
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
                 is_reverse=False,
@@ -913,8 +909,6 @@ class PositionSimulator:
                 pnl_usd=pnl_usd,
                 exit_reason="evicted",
                 archetype=pos.get("archetype", ""),
-                tier_name=pos.get("tier_name", ""),
-                evidence_score=pos.get("evidence_score", 0),
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
                 is_reverse=False,
@@ -969,11 +963,10 @@ class PositionSimulator:
         parent_pos = None
         for pid, pos in self._positions.items():
             _pos_arch = str(pos.get("archetype", "") or "").lower().strip()
-            _pos_tier = str(pos.get("tier_name", "") or "").lower().strip()
             if (
                 pos.get("symbol", "") == intent.symbol
                 and pos["side"] == new_side
-                and (_pos_arch == archetype or _pos_tier == archetype)
+                and _pos_arch == archetype
             ):
                 parent_pid = pid
                 parent_pos = pos
@@ -1489,8 +1482,11 @@ class BacktestResult:
     bars_1min: Dict[str, pd.DataFrame] = field(default_factory=dict)
     # Kill switch 模拟统计
     kill_switch_stats: Optional[Dict[str, Any]] = None
-    # 风险 equity curve
+    # 风险 equity curve（与 equity_curve_ts 等长；时间戳 ISO8601 UTC）
     equity_curve: Optional[List[float]] = None
+    equity_curve_ts: Optional[List[str]] = None
+    # 宪法层摘要（供交易地图 HTML 展示；非完整 constitution dump）
+    constitution_execution_summary: Optional[Dict[str, Any]] = None
     # 加仓模拟统计
     add_position_stats: Optional[Dict[str, Any]] = None
     # 月末未平仓快照 (用于跨月续跑)
@@ -1501,6 +1497,8 @@ class BacktestResult:
     funnel_per_bar: List[Dict[str, Any]] = field(default_factory=list)
     # 每次加仓尝试的特征快照（可选 sidecar 导出，用于规则研究）
     add_attempt_rows: List[Dict[str, Any]] = field(default_factory=list)
+    # 每次实际成交的母仓/加仓时刻：特征 + 策略 _last_funnel 各层布尔与 reason（可与 trading map 对照）
+    trade_map_audit_rows: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def n_trades(self) -> int:
@@ -1737,40 +1735,24 @@ class BacktestResult:
             print(line)
         print("=" * 72)
 
-    def export_trades_csv(self, path: str):
-        """导出交易明细 CSV"""
+    def export_trades_csv(self, path: str) -> None:
+        """导出交易明细 CSV（合并成交列 + 入场审计：entry_source / feat_* / layer_* 等）。"""
         out_path = Path(path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        rows = []
-        for t in self.trades:
-            rows.append(
-                {
-                    "symbol": t.symbol,
-                    "side": t.side,
-                    "entry_price": t.entry_price,
-                    "exit_price": t.exit_price,
-                    "entry_time": t.entry_time.isoformat(),
-                    "exit_time": t.exit_time.isoformat(),
-                    "atr": t.atr_at_entry,
-                    "pnl_r": round(t.pnl_r, 4),
-                    "pnl_usd": round(t.pnl_usd, 4),
-                    "exit_reason": t.exit_reason,
-                    "archetype": t.archetype,
-                    "tier": t.tier_name,
-                    "evidence": round(t.evidence_score, 4),
-                    "bars_held": t.bars_held,
-                    "is_add_position": t.is_add_position,
-                    "is_reverse": t.is_reverse,
-                    "size_multiplier": round(t.size_multiplier, 4),
-                    "atr_stop_pct": round(t.atr_stop_pct, 6),
-                    "effective_stop_pct": round(t.effective_stop_pct, 6),
-                    "sizing_stop_source": t.sizing_stop_source,
-                    "breakeven_locked_at_exit": t.breakeven_locked_at_exit,
-                }
-            )
+        rows, orphan_n = merge_closed_trades_with_audit_rows(
+            self.trades,
+            self.trade_map_audit_rows,
+        )
         df = pd.DataFrame(rows)
         df.to_csv(out_path, index=False)
-        print(f"\n  📤 Trades exported: {len(df)} rows → {out_path}")
+        msg = (
+            f"\n  📤 Trades exported: {len(df)} rows → {out_path}"
+            f" ({len(self.trades)} closes"
+        )
+        if orphan_n:
+            msg += f", +{orphan_n} audit-only"
+        msg += ")"
+        print(msg)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1874,6 +1856,216 @@ def _safe_float_or_none(v: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return x if np.isfinite(x) else None
+
+
+def trade_audit_merge_key(
+    *,
+    symbol: str,
+    archetype: str,
+    entry_time: Any,
+    is_add: bool,
+) -> Tuple[str, str, int, bool]:
+    """撮合 audit 与 ClosedTrade：(symbol, archetype_ns, utc_ns_int, is_add)。"""
+    ct = pd.Timestamp(entry_time)
+    if ct.tzinfo is None:
+        ct = ct.tz_localize("UTC")
+    else:
+        ct = ct.tz_convert("UTC")
+    return (
+        str(symbol).upper().strip(),
+        str(archetype or "").strip().lower(),
+        int(ct.value),
+        bool(is_add),
+    )
+
+
+def closed_trade_to_csv_row(t: ClosedTrade) -> Dict[str, Any]:
+    """单行成交导出（不含审计列）。"""
+    return {
+        "symbol": t.symbol,
+        "side": t.side,
+        "entry_price": t.entry_price,
+        "exit_price": t.exit_price,
+        "entry_time": t.entry_time.isoformat(),
+        "exit_time": t.exit_time.isoformat(),
+        "atr": t.atr_at_entry,
+        "pnl_r": round(t.pnl_r, 4),
+        "pnl_usd": round(t.pnl_usd, 4),
+        "exit_reason": t.exit_reason,
+        "archetype": t.archetype,
+        "bars_held": t.bars_held,
+        "is_add_position": t.is_add_position,
+        "is_reverse": t.is_reverse,
+        "size_multiplier": round(t.size_multiplier, 4),
+        "atr_stop_pct": round(t.atr_stop_pct, 6),
+        "effective_stop_pct": round(t.effective_stop_pct, 6),
+        "sizing_stop_source": t.sizing_stop_source,
+        "breakeven_locked_at_exit": t.breakeven_locked_at_exit,
+    }
+
+
+def empty_closed_trade_csv_shell() -> Dict[str, Any]:
+    """用于仅有 audit 无主成交行时的占位列。"""
+    return {
+        "symbol": "",
+        "side": "",
+        "entry_price": float("nan"),
+        "exit_price": float("nan"),
+        "entry_time": "",
+        "exit_time": "",
+        "atr": float("nan"),
+        "pnl_r": float("nan"),
+        "pnl_usd": float("nan"),
+        "exit_reason": "",
+        "archetype": "",
+        "bars_held": 0,
+        "is_add_position": False,
+        "is_reverse": False,
+        "size_multiplier": float("nan"),
+        "atr_stop_pct": float("nan"),
+        "effective_stop_pct": float("nan"),
+        "sizing_stop_source": "",
+        "breakeven_locked_at_exit": False,
+    }
+
+
+def merge_closed_trades_with_audit_rows(
+    trades: List[ClosedTrade],
+    audits: Optional[List[Dict[str, Any]]],
+) -> Tuple[List[Dict[str, Any]], int]:
+    """将 ``trade_map_audit_rows`` 按成交键并入导出行（成交列优先，不覆盖同名基础列）。"""
+    audit_list = list(audits or [])
+    if not audit_list:
+        out = []
+        for t in sorted(trades, key=lambda x: (x.entry_time, x.symbol)):
+            row = closed_trade_to_csv_row(t)
+            row["audit_matched_to_trade"] = False
+            out.append(row)
+        return out, 0
+
+    bucket: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = defaultdict(list)
+    for a in audit_list:
+        k = trade_audit_merge_key(
+            symbol=str(a.get("symbol", "")),
+            archetype=str(a.get("archetype", "")),
+            entry_time=a.get("entry_timestamp"),
+            is_add=bool(a.get("is_add_position")),
+        )
+        bucket[k].append(dict(a))
+
+    out: List[Dict[str, Any]] = []
+    for t in sorted(trades, key=lambda x: (x.entry_time, x.symbol)):
+        base = closed_trade_to_csv_row(t)
+        tk = trade_audit_merge_key(
+            symbol=t.symbol,
+            archetype=t.archetype,
+            entry_time=t.entry_time,
+            is_add=t.is_add_position,
+        )
+        cand = bucket.get(tk, [])
+        audit_flat: Dict[str, Any] = {}
+        if cand:
+            audit_flat = dict(cand.pop(0))
+            if cand:
+                audit_flat["audit_remaining_same_key"] = len(cand)
+        for ak, av in audit_flat.items():
+            if ak in base:
+                continue
+            base[ak] = av
+        base["audit_matched_to_trade"] = bool(audit_flat)
+        out.append(base)
+
+    orphan_n = 0
+    for _k, lst in bucket.items():
+        for orphan in lst:
+            orphan_n += 1
+            shell = empty_closed_trade_csv_shell()
+            shell.update(orphan)
+            shell["audit_orphan_only"] = True
+            shell["audit_matched_to_trade"] = False
+            out.append(shell)
+    return out, orphan_n
+
+
+def _trade_audit_row_from_fill(
+    *,
+    strats: Mapping[str, Any],
+    symbol: str,
+    archetype: str,
+    ts: Any,
+    is_add_position: bool,
+    entry_source: str,
+    features: Mapping[str, Any],
+    kill_switch_blocked_at_eval: bool,
+    intent_action: str = "",
+) -> Dict[str, Any]:
+    """单次真实成交快照：时间点、入场源、核心特征列、`_last_funnel` 扁平为 layer_*。"""
+    ct = pd.Timestamp(ts)
+    if ct.tzinfo is None:
+        ct = ct.tz_localize("UTC")
+    else:
+        ct = ct.tz_convert("UTC")
+    arch_lc = str(archetype or "").strip().lower()
+    sym_u = str(symbol or "").strip().upper()
+    row: Dict[str, Any] = {
+        "entry_timestamp": ct.isoformat(),
+        "symbol": sym_u,
+        "archetype": arch_lc,
+        "is_add_position": bool(is_add_position),
+        "entry_source": str(entry_source),
+        "kill_switch_blocked_at_eval": bool(kill_switch_blocked_at_eval),
+    }
+    _ia = str(intent_action or "").strip()
+    if _ia:
+        row["intent_action"] = _ia
+
+    merged = dict(features or {})
+    for key in _ADD_ATTEMPT_CORE_FEATURES:
+        val = _safe_float_or_none(merged.get(key))
+        if val is not None:
+            row[f"feat_{key}"] = float(val)
+
+    pct = _extract_path_efficiency_pct(merged)
+    if pct is not None and "feat_path_efficiency_pct_f" not in row:
+        row["feat_path_efficiency_pct_roll"] = float(pct)
+
+    _extra_prefixes = ("bpc_", "tpc_", "me_", "srb_")
+    _budget = 40
+    _n = 0
+    for k in sorted(merged.keys(), key=str):
+        if _n >= _budget:
+            break
+        sk = str(k)
+        if sk in _ADD_ATTEMPT_CORE_FEATURES:
+            continue
+        if any(sk.startswith(p) for p in _extra_prefixes):
+            val = _safe_float_or_none(merged.get(k))
+            if val is not None:
+                row[f"feat_{sk}"] = float(val)
+                _n += 1
+
+    _ohlc_xy = ("close", "high", "low", "open", "volume")
+    for hk in _ohlc_xy:
+        if hk not in merged:
+            continue
+        val = _safe_float_or_none(merged.get(hk))
+        if val is not None:
+            row[f"feat_{hk}"] = float(val)
+
+    st = strats.get(arch_lc)
+    lf = getattr(st, "_last_funnel", None) if st is not None else None
+    if isinstance(lf, dict):
+        for fk, fv in lf.items():
+            col = f"layer_{fk}"
+            if fk == "gate_reasons" and isinstance(fv, (list, tuple)):
+                row[col] = ";".join(str(x) for x in fv)
+            elif isinstance(fv, (bool, str)) or fv is None:
+                row[col] = fv
+            elif isinstance(fv, (int, float)) and fv == fv:
+                row[col] = fv
+            else:
+                row[col] = json.dumps(fv, default=str)
+    return row
 
 
 def _add_attempt_snapshot(
@@ -2685,9 +2877,8 @@ class EventBacktester:
                         arch = str(pos.get("archetype", "") or "").strip()
                         if not arch:
                             continue
-                        ev = float(pos.get("evidence_score", 0.5) or 0.5)
                         try:
-                            self.pcm._record_slot(str(sym), arch, ev)
+                            self.pcm._record_slot(str(sym), arch, 0.5)
                         except Exception:
                             pass
             if loaded_total > 0:
@@ -2788,6 +2979,12 @@ class EventBacktester:
         _initial_cash = 1000.0
         _equity = _initial_cash
         _equity_curve = [_equity]
+        _t0_line = timeline_events[0][0] if timeline_events else None
+        _equity_curve_ts: List[pd.Timestamp] = (
+            [pd.Timestamp(_t0_line)] if _t0_line is not None else []
+        )
+        if _t0_line is None:
+            logger.warning("Empty timeline: equity curve timestamps disabled")
         if fast_mode:
             logger.info(
                 "Fast mode compatibility: using 1min-exact position updates "
@@ -2827,6 +3024,7 @@ class EventBacktester:
         _er_rows_signal_add: List[Dict[str, Any]] = []
         _er_rows_float_ladder: List[Dict[str, Any]] = []
         _add_attempt_rows: List[Dict[str, Any]] = []
+        _trade_map_audit_rows: List[Dict[str, Any]] = []
         _funnel_per_bar_rows: List[Dict[str, Any]] = []
         _pcm_direction_ffill: Dict[Tuple[str, str], Dict[str, float]] = {}
 
@@ -2891,6 +3089,7 @@ class EventBacktester:
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
+                        _equity_curve_ts.append(pd.Timestamp(bar_ts))
                         if _equity > _equity_peak:
                             _equity_peak = _equity
                 _pos_last_ts[upd_sym] = ts
@@ -3111,6 +3310,11 @@ class EventBacktester:
                     _frow["direction_reason"] = lf.get("direction_reason")
                 if lf.get("entry_filter_reason") is not None:
                     _frow["entry_filter_reason"] = lf.get("entry_filter_reason")
+                _frow["kill_switch_blocked"] = bool(
+                    _ks_blocked
+                    and _executor is not None
+                    and bool(_executor.cfg.kill_enabled)
+                )
                 _funnel_per_bar_rows.append(_frow)
 
             # NOTE: Evidence slot 竞争已移除 (改为入场门槛 + 仓位缩放)
@@ -3140,6 +3344,7 @@ class EventBacktester:
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
+                        _equity_curve_ts.append(pd.Timestamp(ts))
                         if _equity > _equity_peak:
                             _equity_peak = _equity
                     funnel.setdefault("evicted_by_evidence", 0)
@@ -3220,6 +3425,20 @@ class EventBacktester:
                     if opened is not None and _entry_limit is not None and _ts_date:
                         _dk2 = (_arch_lc, _ts_date)
                         _daily_entry_counts[_dk2] = _daily_entry_counts.get(_dk2, 0) + 1
+                    if opened is not None:
+                        _trade_map_audit_rows.append(
+                            _trade_audit_row_from_fill(
+                                strats=self._strats,
+                                symbol=str(sym),
+                                archetype=str(winning_arch or ""),
+                                ts=ts,
+                                is_add_position=False,
+                                entry_source="pcm_new",
+                                features=entry_feats,
+                                kill_switch_blocked_at_eval=bool(_ks_blocked),
+                                intent_action=str(getattr(intent, "action", "") or ""),
+                            )
+                        )
                     if opened is None:
                         _atr_open = float(entry_feats.get("atr", 0) or 0.0)
                         _dup_open = any(
@@ -3282,6 +3501,21 @@ class EventBacktester:
                                     )
                                 )
                             if added:
+                                _trade_map_audit_rows.append(
+                                    _trade_audit_row_from_fill(
+                                        strats=self._strats,
+                                        symbol=str(sym),
+                                        archetype=str(winning_arch or ""),
+                                        ts=ts,
+                                        is_add_position=True,
+                                        entry_source="pcm_signal_add",
+                                        features=entry_feats,
+                                        kill_switch_blocked_at_eval=bool(_ks_blocked),
+                                        intent_action=str(
+                                            getattr(intent, "action", "") or ""
+                                        ),
+                                    )
+                                )
                                 _add_pos_count += 1
                                 funnel.setdefault("add_position_ok", 0)
                                 funnel["add_position_ok"] += 1
@@ -3537,6 +3771,19 @@ class EventBacktester:
                             )
                         )
                         if added_fl:
+                            _trade_map_audit_rows.append(
+                                _trade_audit_row_from_fill(
+                                    strats=self._strats,
+                                    symbol=str(sym),
+                                    archetype=str(arch_disp or ""),
+                                    ts=ts,
+                                    is_add_position=True,
+                                    entry_source="float_ladder_add",
+                                    features=dict(pf),
+                                    kill_switch_blocked_at_eval=bool(_ks_blocked),
+                                    intent_action=str(action),
+                                )
+                            )
                             pos["_last_float_ladder_add_ts"] = ts
                             _add_pos_count += 1
                             funnel.setdefault("add_position_ok", 0)
@@ -3578,6 +3825,7 @@ class EventBacktester:
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
+                        _equity_curve_ts.append(pd.Timestamp(bar_ts))
                         if _equity > _equity_peak:
                             _equity_peak = _equity
 
@@ -3596,7 +3844,16 @@ class EventBacktester:
                             break
                     if last_time.tzinfo is None:
                         last_time = last_time.replace(tzinfo=timezone.utc)
-                    simulator.force_close_all(last_close, last_time)
+                    _fc_closed = simulator.force_close_all(last_close, last_time)
+                    _fc_ts = pd.Timestamp(last_time)
+                    for ct in _fc_closed:
+                        pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r
+                        _equity += pnl_usd
+                        _equity = max(_equity, 0.0)
+                        _equity_curve.append(_equity)
+                        _equity_curve_ts.append(_fc_ts)
+                        if _equity > _equity_peak:
+                            _equity_peak = _equity
                 else:
                     logger.info(
                         "%s: keep %d open positions for next run",
@@ -3624,9 +3881,45 @@ class EventBacktester:
         result.funnel = dict(funnel)
         result.funnel_per_bar = _funnel_per_bar_rows
         result.add_attempt_rows = _add_attempt_rows
+        result.trade_map_audit_rows = _trade_map_audit_rows
 
         # 保存 equity curve 和 kill switch 统计
         result.equity_curve = _equity_curve
+        _ts_iso: List[str] = []
+        for t in _equity_curve_ts:
+            ct = pd.Timestamp(t)
+            if ct.tzinfo is None:
+                ct = ct.tz_localize("UTC")
+            _ts_iso.append(ct.isoformat())
+        if _ts_iso and len(_ts_iso) == len(_equity_curve):
+            result.equity_curve_ts = _ts_iso
+        elif _ts_iso:
+            logger.warning(
+                "equity_curve_ts length %d != equity_curve %d; map will omit time axis",
+                len(_ts_iso),
+                len(_equity_curve),
+            )
+            result.equity_curve_ts = None
+        else:
+            result.equity_curve_ts = None
+
+        if _executor:
+            try:
+                _cfg = _executor.cfg
+                result.constitution_execution_summary = {
+                    "constitution_yaml": constitution_path,
+                    "risk_per_slot": _risk_per_slot,
+                    "kill_switch_enabled": bool(_cfg.kill_enabled),
+                    "max_dd_limit": float(_cfg.max_dd),
+                    "daily_loss_limit": float(_cfg.daily_loss_limit),
+                    "weekly_loss_limit": float(_cfg.weekly_loss_limit),
+                    "monthly_loss_limit": float(_cfg.monthly_loss_limit),
+                    "cooldown_minutes": int(_cfg.cooldown_minutes),
+                    "daily_reset_timezone": str(_cfg.daily_reset_timezone or "UTC"),
+                }
+            except Exception:
+                pass
+
         if _executor and _executor.cfg.kill_enabled:
             result.kill_switch_stats = {
                 "trigger_count": len(_ks_triggers),
@@ -3794,7 +4087,10 @@ def generate_trading_map_html(
       连接线颜色   = 盈亏 (绿=盈利, 红=亏损)
       出场标记颜色 = 盈亏 (绿=盈利, 红=亏损)
     面板布局:
-      Tabs: All | BPC | FER | ME (每个 Tab 内按 symbol 纵向堆叠)
+      顶部: 执行层(execution.yaml) vs 宪法层(constitution.yaml)说明、漏斗计数摘要、
+           仿真组合权益曲线+回撤（含 Kill Switch 触发竖线）；
+      Tabs: All | BPC | FER | ME (每个 Tab 内按 symbol 纵向堆叠；
+           漏斗附图中 KS 记号 = 当周期间隔内 constitutional kill 阻断新开仓)。
     """
     if not BOKEH_AVAILABLE:
         logger.warning("❌ Bokeh 未安装, 无法生成交易地图. pip install bokeh")
@@ -3804,6 +4100,199 @@ def generate_trading_map_html(
     if not symbols:
         logger.warning("❌ 无 symbol（无成交且无 bars_1min）, 无法生成交易地图")
         return ""
+
+    def _build_portfolio_overview_above_tabs(result: BacktestResult) -> list:
+        """资金曲线 / 回撤 + 宪法与 execution 语义说明（置于 Tabs 上方）。"""
+        blocks: list = []
+        exe_note = (
+            "<b>执行层</b>：<code>archetypes/execution.yaml</code> "
+            "由模拟器在每根 1m bar 上应用（初始止损倍数、追踪、保本、结构性出场等）；"
+            "决定<strong>开仓之后</strong>的价格路径与平仓，不改变宪法是否允许新开仓。"
+        )
+        leg_note = (
+            "<b>宪法层</b>：<code>constitution.yaml</code> "
+            "由 <code>ConstitutionExecutor</code> 在每根时间线上评估（回撤/日损等 → Kill Switch）；"
+            "若为「暂停」，PCM 虽已排序出 intent，<strong>新开仓会被跳过</strong>。"
+            "顶部权益图红虚竖线、各 symbol 漏斗图 y=KS 记号均表示该时间评估下 Kill 生效。"
+        )
+        axis_note = (
+            "<b>读图</b>：蓝线为<strong>仿真美元权益</strong>（起点 $1000×账户逻辑，只在<strong>平仓</strong>时阶跃）；"
+            "若全程未盈利超起点，则纵轴<strong>最高≈1000</strong>（峰值即初始现金），不是「被坐标轴挡住」。"
+            "Kill 生效后常见<strong>权益走平</strong>：无新仓、也无平仓结算，曲线不再变化，但时间线仍走到回测结束。"
+        )
+        lines = [exe_note, leg_note, axis_note]
+
+        ces = getattr(result, "constitution_execution_summary", None) or {}
+        if ces:
+            ks_on = ces.get("kill_switch_enabled")
+            lines.append(
+                "<b>本回测宪法阈值</b>："
+                f"Kill={'开' if ks_on else '关'} | "
+                f"risk/slot≤{float(ces.get('risk_per_slot', 0)):g} | "
+                f"max_dd≤{float(ces.get('max_dd_limit', 0)):g} "
+                f"daily≤{float(ces.get('daily_loss_limit', 0)):g} "
+                f"weekly≤{float(ces.get('weekly_loss_limit', 0)):g} "
+                f"monthly≤{float(ces.get('monthly_loss_limit', 0)):g} | "
+                f"cooldown={int(ces.get('cooldown_minutes') or 0)}min "
+                f"(tz={ces.get('daily_reset_timezone')!s}) "
+                f"<code>{Path(str(ces.get('constitution_yaml') or '')).name}</code>"
+            )
+
+        funnel = getattr(result, "funnel", None) or {}
+        top_lines: List[str] = []
+        try:
+            for k, v in sorted(
+                funnel.items(), key=lambda kv: (-abs(float(kv[1] or 0)), str(kv[0]))
+            ):
+                iv = float(v if v is not None else 0)
+                if abs(iv) < 1e-9:
+                    continue
+                if iv == int(iv):
+                    top_lines.append(f"{k}={int(iv)}")
+                else:
+                    top_lines.append(f"{k}={iv:.4g}")
+                if len(top_lines) >= 14:
+                    break
+        except (TypeError, ValueError):
+            top_lines = []
+        if top_lines:
+            lines.append("<b>漏斗计数（非零）</b>：" + "；".join(top_lines))
+
+        blocks.append(
+            Div(
+                text="<p style='max-width:1400px;font-size:13px;line-height:1.5'>"
+                + "<br/><br/>".join(lines)
+                + "</p>",
+                width=1400,
+            )
+        )
+
+        eq_series = getattr(result, "equity_curve", None) or []
+        ts_series = getattr(result, "equity_curve_ts", None) or []
+
+        if len(eq_series) >= 2 and len(ts_series) == len(eq_series):
+            t_ix = pd.to_datetime(ts_series, utc=True)
+            eq_arr = np.asarray(eq_series, dtype=float)
+            peak = np.maximum.accumulate(eq_arr)
+            dd_arr = np.where(peak > 0, (peak - eq_arr) / peak, 0.0)
+
+            p_eq = bk_figure(
+                title=(
+                    "组合权益曲线（仿真账户 $1000 起点 × risk_per_slot；"
+                    "每次平仓结算后更新。红虚竖线≈Kill Switch 触发时刻）"
+                ),
+                x_axis_type="datetime",
+                width=1400,
+                height=240,
+                tools="pan,wheel_zoom,box_zoom,reset,save",
+            )
+            src_eq = ColumnDataSource(
+                {
+                    "t": t_ix,
+                    "equity": eq_arr,
+                    "dd_pct": dd_arr * 100.0,
+                }
+            )
+            p_eq.line("t", "equity", source=src_eq, line_width=2, color="#2563eb")
+            p_eq.add_tools(
+                HoverTool(
+                    tooltips=[
+                        ("Time", "@t{%F %H:%M}"),
+                        ("Equity ($)", "@equity{0}"),
+                        ("Drawdown%", "@dd_pct{0.2f}"),
+                    ],
+                    formatters={"@t": "datetime"},
+                )
+            )
+            p_eq.grid.grid_line_alpha = 0.25
+            p_eq.yaxis.axis_label = "Equity ($)"
+
+            ks = getattr(result, "kill_switch_stats", None) or {}
+            for trig in ks.get("triggers", []) or []:
+                t_raw = trig.get("timestamp")
+                if not t_raw:
+                    continue
+                try:
+                    tx = pd.Timestamp(t_raw)
+                    if tx.tzinfo is None:
+                        tx = tx.tz_localize("UTC")
+                    x_ms = float(tx.value / 1e6)
+                except Exception:
+                    continue
+                p_eq.add_layout(
+                    Span(
+                        location=x_ms,
+                        dimension="height",
+                        line_color="#dc2626",
+                        line_width=2,
+                        line_alpha=0.55,
+                        line_dash="dashed",
+                    )
+                )
+
+            blocks.append(p_eq)
+
+            # ── 累计已实现 R（按平仓时刻阶跃，与美元权益同源不同单位）──
+            if getattr(result, "trades", None):
+                _tr_sorted = sorted(
+                    result.trades, key=lambda x: getattr(x, "exit_time", None) or ""
+                )
+                _rx: list = []
+                _ry: list = []
+                _cum_r = 0.0
+                for _ti, _trade in enumerate(_tr_sorted):
+                    _et = getattr(_trade, "exit_time", None)
+                    if _et is None:
+                        continue
+                    _tsx = pd.Timestamp(_et)
+                    if _tsx.tzinfo is None:
+                        _tsx = _tsx.tz_localize("UTC")
+                    _pr = float(getattr(_trade, "pnl_r", 0.0) or 0.0)
+                    # 平仓前水平线段 → 平仓后跳变（阶梯）
+                    if not _rx:
+                        _rx.extend([_tsx, _tsx])
+                        _ry.extend([0.0, _cum_r + _pr])
+                    else:
+                        _rx.append(_tsx)
+                        _ry.append(_cum_r)
+                        _rx.append(_tsx)
+                        _ry.append(_cum_r + _pr)
+                    _cum_r += _pr
+                if _rx:
+                    p_r = bk_figure(
+                        title="累计已实现 R（每笔平仓计入；与上图美元权益涨跌方向一致）",
+                        x_axis_type="datetime",
+                        width=1400,
+                        height=150,
+                        x_range=p_eq.x_range,
+                        tools="pan,wheel_zoom,box_zoom,reset,save",
+                    )
+                    p_r.line(_rx, _ry, line_width=1.8, color="#0d9488")
+                    p_r.yaxis.axis_label = "Σ R"
+                    p_r.grid.grid_line_alpha = 0.25
+                    blocks.append(p_r)
+
+            p_dd = bk_figure(
+                title="回撤（峰值权益口径，百分比）",
+                x_axis_type="datetime",
+                width=1400,
+                height=160,
+                x_range=p_eq.x_range,
+                tools="pan,wheel_zoom,box_zoom,reset,save",
+            )
+            p_dd.line(t_ix, dd_arr * 100.0, line_width=1.6, color="#b91c1c")
+            p_dd.yaxis.axis_label = "DD %"
+            p_dd.grid.grid_line_alpha = 0.25
+            blocks.append(p_dd)
+        elif len(eq_series) >= 2:
+            blocks.append(
+                Div(
+                    text="<p style='color:#92400e'>权益曲线时间点未对齐 equity_curve_ts，跳过资金图。</p>",
+                    width=1400,
+                )
+            )
+
+        return blocks
 
     # ── 颜色方案 ──
     _STRAT_COLORS: dict = {
@@ -3963,41 +4452,57 @@ def generate_trading_map_html(
                 "strategy": [],
                 "direction": [],
             }
+            _prev_kill = False
             for rec in sub_rows:
                 stage = ""
                 reason = ""
                 y = float("nan")
-                if rec.get("prefilter") is False:
+                if rec.get("kill_switch_blocked"):
+                    # 连续多根处于 Kill：仅在进入该状态的第一根打点，避免 Hover 洪流
+                    if _prev_kill:
+                        continue
+                    _prev_kill = True
+                    stage = "KillSwitch"
+                    reason = (
+                        "constitutional risk pause → new entries blocked "
+                        "(同段 Kill 仅在首根标点)"
+                    )
+                    y = 5.0
+                else:
+                    _prev_kill = False
+                if not stage and rec.get("prefilter") is False:
                     stage = "Prefilter"
                     reason = _compact_reason(rec.get("prefilter_reason"))
                     y = 1.0
-                elif rec.get("direction_value") == 0:
+                elif not stage and rec.get("direction_value") == 0:
                     stage = "Direction"
                     reason = _compact_reason(
                         rec.get("direction_reason") or rec.get("direction_rule")
                     )
                     y = 4.0
-                elif rec.get("gate") is False:
+                elif not stage and rec.get("gate") is False:
                     stage = "Gate"
                     reason = _compact_reason(rec.get("gate_reasons"))
                     y = 2.0
-                elif rec.get("entry_filter") is False:
+                elif not stage and rec.get("entry_filter") is False:
                     stage = "Entry"
                     reason = _compact_reason(rec.get("entry_filter_reason"))
                     y = 3.0
-                elif int(rec.get("pcm_drop_slot", 0) or 0) > 0:
+                elif not stage and int(rec.get("pcm_drop_slot", 0) or 0) > 0:
                     stage = "PCM"
                     reason = "slot_full"
                     y = 0.0
-                elif int(rec.get("pcm_drop_direction_policy", 0) or 0) > 0:
+                elif (
+                    not stage and int(rec.get("pcm_drop_direction_policy", 0) or 0) > 0
+                ):
                     stage = "PCM"
                     reason = "direction_policy"
                     y = 0.0
-                elif int(rec.get("pcm_drop_family_conflict", 0) or 0) > 0:
+                elif not stage and int(rec.get("pcm_drop_family_conflict", 0) or 0) > 0:
                     stage = "PCM"
                     reason = "family_conflict"
                     y = 0.0
-                elif int(rec.get("pcm_drop_daily_limit", 0) or 0) > 0:
+                elif not stage and int(rec.get("pcm_drop_daily_limit", 0) or 0) > 0:
                     stage = "PCM"
                     reason = "daily_limit"
                     y = 0.0
@@ -4025,21 +4530,22 @@ def generate_trading_map_html(
                     for x in ts
                 ]
             pf = bk_figure(
-                title=f"{sym} · {strat_name} — gate / prefilter / direction",
+                title=f"{sym} · {strat_name} — gate / prefilter / direction / kill",
                 x_axis_type="datetime",
                 width=1400,
                 height=200,
                 tools="pan,wheel_zoom,box_zoom,reset,save",
                 x_range=x_range,
-                y_range=(-0.15, 4.65),
+                y_range=(-0.15, 5.65),
             )
-            pf.yaxis.ticker = FixedTicker(ticks=[0, 1, 2, 3, 4])
+            pf.yaxis.ticker = FixedTicker(ticks=[0, 1, 2, 3, 4, 5])
             pf.yaxis.major_label_overrides = {
                 0: "PCM",
                 1: "Prefilter",
                 2: "Gate",
                 3: "EntryFlt",
                 4: "Dir",
+                5: "KS",
             }
             pf.grid.grid_line_alpha = 0.25
 
@@ -4079,13 +4585,6 @@ def generate_trading_map_html(
             pf.legend.click_policy = "hide"
             pf.legend.label_text_font_size = "8pt"
             pf.legend.location = "top_left"
-            pf.add_tools(
-                HoverTool(
-                    tooltips=[("Time", "@x{%F %H:%M}"), ("y", "@y{0.2f}")],
-                    formatters={"@x": "datetime"},
-                    mode="mouse",
-                )
-            )
             figs.append(pf)
         return figs
 
@@ -4346,8 +4845,17 @@ def generate_trading_map_html(
             )
         )
         p.legend.click_policy = "hide"
-        p.legend.location = "top_left"
+        p.legend.location = "top_right"
         p.legend.label_text_font_size = "9pt"
+        p.legend.background_fill_alpha = 0.92
+
+        legend_toggle = Toggle(label="显示图例", active=True, width=100)
+        legend_toggle.js_on_click(
+            CustomJS(
+                args=dict(lg=p.legend),
+                code="lg.visible = cb_obj.active;",
+            )
+        )
 
         funnel_figs = _build_funnel_figures_for_sym(
             sym,
@@ -4357,8 +4865,13 @@ def generate_trading_map_html(
             ref_index=df_plot.index,
         )
         if funnel_figs:
-            return bk_column(p, *funnel_figs, sizing_mode="stretch_width")
-        return p
+            return bk_column(
+                legend_toggle,
+                p,
+                *funnel_figs,
+                sizing_mode="stretch_width",
+            )
+        return bk_column(legend_toggle, p, sizing_mode="stretch_width")
 
     # ── 构建单个 Tab ──
     def _build_tab(
@@ -4417,7 +4930,8 @@ def generate_trading_map_html(
     for arch in all_archetypes:
         tabs_list.append(_build_tab(arch.upper(), arch))
 
-    layout = Tabs(tabs=tabs_list)
+    _above_tabs = _build_portfolio_overview_above_tabs(result)
+    layout = bk_column(*_above_tabs, Tabs(tabs=tabs_list), sizing_mode="stretch_width")
     html = bk_file_html(
         layout, resources=BK_RESOURCES, title=f"Trading Map: {result.strategy}"
     )
@@ -4488,9 +5002,21 @@ def main():
         help="宪法配置路径 (默认 config/constitution/constitution.yaml)",
     )
     parser.add_argument(
+        "--trades-csv",
+        default=None,
+        dest="trades_csv",
+        metavar="PATH",
+        help=(
+            "成交明细 CSV 路径（列含入场审计）；省略则写入当前目录 "
+            "event_trades_<策略列表>.csv"
+        ),
+    )
+    parser.add_argument(
         "--export",
         default=None,
-        help="导出交易明细 CSV 路径",
+        dest="trades_csv",
+        metavar="PATH",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--export-add-attempts",
@@ -4500,7 +5026,7 @@ def main():
     parser.add_argument(
         "--capital-report",
         default=None,
-        help="输出 capital_report.json/html 的目录；默认跟 --export 同目录",
+        help="输出 capital_report.json/html 的目录；默认与 trades CSV 输出目录一致",
     )
     parser.add_argument(
         "--initial-capital",
@@ -4512,7 +5038,7 @@ def main():
         "--risk-per-r",
         type=float,
         default=0.01,
-        help="event pnl_r 转美元时每 1R 占初始资金比例，默认 1%",
+        help="event pnl_r 转美元时每 1R 占初始资金比例，默认 1%%",
     )
     parser.add_argument(
         "--output",
@@ -4708,28 +5234,33 @@ def main():
 
     result.print_report()
 
-    if args.export:
-        result.export_trades_csv(args.export)
-        cap_dir = (
-            Path(args.capital_report)
-            if args.capital_report
-            else Path(args.export).parent
-        )
-        cap = write_capital_report_from_trades(
-            trades_path=args.export,
-            out_dir=cap_dir,
-            unit="r_multiple",
-            title=f"{','.join(strategies)} Capital Report",
-            initial_capital=float(args.initial_capital),
-            risk_per_r=float(args.risk_per_r),
-            start_date=args.start_date or "",
-            end_date=args.end_date or "",
-            total_r=float(sum(t.pnl_r for t in result.trades)),
-        )
-        print(
-            f"  资金报告: {cap_dir / 'capital_report.html'} "
-            f"(final=${cap.get('final_capital', 0.0):,.2f}, CAGR={cap.get('cagr', 0.0):.2%})"
-        )
+    _strat_tag = "_".join(strategies)
+    export_path = (
+        Path(args.trades_csv).expanduser()
+        if args.trades_csv
+        else (Path.cwd() / f"event_trades_{_strat_tag}.csv")
+    )
+    export_path = export_path.resolve()
+    if not args.trades_csv:
+        print(f"\n  默认成交 CSV: {export_path}")
+
+    result.export_trades_csv(str(export_path))
+    cap_dir = Path(args.capital_report) if args.capital_report else export_path.parent
+    cap = write_capital_report_from_trades(
+        trades_path=str(export_path),
+        out_dir=cap_dir,
+        unit="r_multiple",
+        title=f"{','.join(strategies)} Capital Report",
+        initial_capital=float(args.initial_capital),
+        risk_per_r=float(args.risk_per_r),
+        start_date=args.start_date or "",
+        end_date=args.end_date or "",
+        total_r=float(sum(t.pnl_r for t in result.trades)),
+    )
+    print(
+        f"  资金报告: {cap_dir / 'capital_report.html'} "
+        f"(final=${cap.get('final_capital', 0.0):,.2f}, CAGR={cap.get('cagr', 0.0):.2%})"
+    )
 
     if args.export_add_attempts:
         add_attempt_path = Path(args.export_add_attempts)
@@ -4794,7 +5325,7 @@ def main():
         print(f"\n  💾 订单数据已保存 → {args.db}")
 
     result.print_path_efficiency_footer()
-    _anchor = args.output or args.export or args.trading_map
+    _anchor = args.output or str(export_path) or args.trading_map
     _save_path_efficiency_sidecar(result, _anchor)
 
     return 0
@@ -4813,7 +5344,6 @@ def _trade_to_dict(t: ClosedTrade) -> dict:
         "pnl_r": round(t.pnl_r, 4),
         "exit_reason": t.exit_reason,
         "bars_held": t.bars_held,
-        "evidence_score": round(t.evidence_score, 4),
         "size_multiplier": round(t.size_multiplier, 4),
         "is_add_position": t.is_add_position,
         "is_reverse": t.is_reverse,
@@ -4882,6 +5412,12 @@ def _save_json(result: BacktestResult, path: str):
         "add_trigger_types": result.add_trigger_types,
         "open_positions_end": result.open_positions_end,
         "funnel_per_bar": _json_safe(result.funnel_per_bar or []),
+        "equity_curve": result.equity_curve,
+        "equity_curve_ts": result.equity_curve_ts,
+        "constitution_execution_summary": _json_safe(
+            result.constitution_execution_summary or {}
+        ),
+        "kill_switch_stats": _json_safe(result.kill_switch_stats or {}),
         "trades": [_trade_to_dict(t) for t in result.trades],
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)

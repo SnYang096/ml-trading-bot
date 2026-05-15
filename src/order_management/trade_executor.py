@@ -437,11 +437,10 @@ class TradeExecutor:
                 )
             except Exception:
                 slot_arch = ""
-            p_tier = str(pos.get("tier_name", "") or "").strip().lower()
-            cand = {p_arch, slot_arch, p_tier}
+            cand = {p_arch, slot_arch}
             if target_arch and target_arch in cand:
                 return str(pid), pos
-            fams = {_family_key(p_arch), _family_key(slot_arch), _family_key(p_tier)}
+            fams = {_family_key(p_arch), _family_key(slot_arch)}
             if target_family and target_family in fams:
                 return str(pid), pos
         return None, None

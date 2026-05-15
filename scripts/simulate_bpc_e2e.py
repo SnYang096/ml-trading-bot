@@ -210,11 +210,6 @@ def main():
                 "bpc_dir": features.get("bpc_breakout_direction", 0),
                 "bpc_score": features.get("bpc_score_breakout", 0),
                 "bpc_pullback_depth": features.get("bpc_pullback_depth", 0),
-                "tier": (
-                    bpc._last_tier_params.get("tier_name", "?")
-                    if bpc._last_tier_params
-                    else "?"
-                ),
             }
             stats["signals"].append(sig)
             evidence_scores_track.append(intent.confidence)
@@ -227,15 +222,13 @@ def main():
                         "symbol": args.symbol,
                         "direction": direction,
                         "entry_direction": 1 if intent.action == "BUY" else -1,
-                        "evidence_score": round(intent.confidence, 4),
-                        "tier": sig["tier"],
+                        "confidence": round(float(intent.confidence or 0.0), 4),
                     }
                 )
 
             logger.info(
                 f"  SIGNAL [{i+1}/{len(test_df)}] @ {ts}: "
-                f"{intent.action} conf={intent.confidence:.2f} "
-                f"tier={sig['tier']} "
+                f"{intent.action} conf={float(intent.confidence or 0.0):.2f} "
                 f"price={sig['price']:.2f} depth={sig['bpc_pullback_depth']:.2f}"
             )
         else:
@@ -252,8 +245,7 @@ def main():
                         "symbol": args.symbol,
                         "direction": direction,
                         "entry_direction": 0,
-                        "evidence_score": "",
-                        "tier": "",
+                        "confidence": "",
                     }
                 )
 
@@ -418,7 +410,6 @@ def main():
             print(
                 f"    {sig['time']}  {sig['action']}  "
                 f"conf={sig['confidence']:.2f}  "
-                f"tier={sig.get('tier', '?')}  "
                 f"price={sig['price']:.2f}  "
                 f"depth={sig['bpc_pullback_depth']:.2f}  "
                 f"bpc_dir={sig['bpc_dir']}  "
@@ -427,7 +418,7 @@ def main():
         if evidence_scores_track:
             ev_arr = np.array(evidence_scores_track)
             print(
-                f"\n  Evidence Score 分布 ({len(ev_arr)} signals):  "
+                f"\n  入场置信 conf 分布 ({len(ev_arr)} signals):  "
                 f"min={ev_arr.min():.3f}  median={np.median(ev_arr):.3f}  "
                 f"max={ev_arr.max():.3f}  mean={ev_arr.mean():.3f}"
             )
