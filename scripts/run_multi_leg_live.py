@@ -53,16 +53,12 @@ import os
 import sys
 import time
 from collections import Counter
-from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
-
-# Prevent duplicate file handlers if ``async_main`` is re-entered in the same interpreter.
-_MULTI_LEG_AUDIT_HANDLER_ADDED: bool = False
 
 
 def _env_truthy(name: str) -> bool:
@@ -117,6 +113,7 @@ from src.time_series_model.live.chop_grid_live_engine import (
 from src.time_series_model.live.dual_add_trend_live_engine import (  # noqa: E402
     DualAddTrendLiveEngine,
 )
+from scripts.live_audit_file import configure_audit_from_env_defaults  # noqa: E402
 
 
 class ParquetFeatureBarProvider:
@@ -525,83 +522,13 @@ def _make_engine(strategy: str, *, symbol: str, args: argparse.Namespace) -> Any
     raise ValueError(f"unsupported strategy: {strategy}")
 
 
-def _audit_retention_days() -> int:
-    raw = os.getenv("MLBOT_MULTI_LEG_AUDIT_RETENTION_DAYS", "30").strip()
-    try:
-        v = int(raw)
-    except ValueError:
-        return 30
-    if v <= 0:
-        return 30
-    return min(v, 500)
-
-
-def _prune_old_multi_leg_audit_files(log_dir: Path, *, max_age_days: int) -> None:
-    """Delete rotated ``multi_leg_audit.log*`` files older than max_age_days (mtime)."""
-    if max_age_days <= 0 or not log_dir.is_dir():
-        return
-    cutoff = time.time() - float(max_age_days) * 86400.0
-    for path in log_dir.iterdir():
-        if not path.is_file():
-            continue
-        if not path.name.startswith("multi_leg_audit.log"):
-            continue
-        try:
-            if path.stat().st_mtime < cutoff:
-                path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
 def _configure_multi_leg_file_logging(args: argparse.Namespace) -> None:
-    """Default daily audit file + startup prune; stderr unchanged."""
-    global _MULTI_LEG_AUDIT_HANDLER_ADDED
-
-    if _MULTI_LEG_AUDIT_HANDLER_ADDED:
-        return
-
-    if _env_truthy("MLBOT_MULTI_LEG_AUDIT_DISABLE"):
-        logger.info(
-            "multi-leg audit file logging disabled (MLBOT_MULTI_LEG_AUDIT_DISABLE)"
-        )
-        return
-
-    raw = os.getenv("MLBOT_MULTI_LEG_AUDIT_LOG", "").strip()
-    if raw.lower() in ("0", "off", "false", "no"):
-        logger.info("multi-leg audit file logging disabled (MLBOT_MULTI_LEG_AUDIT_LOG)")
-        return
-
-    if not raw or raw.lower() == "default":
-        log_path = Path(args.state_dir) / "logs" / "multi_leg_audit.log"
-    else:
-        log_path = Path(raw)
-
-    retention = _audit_retention_days()
-    log_dir = log_path.parent
-    log_dir.mkdir(parents=True, exist_ok=True)
-    _prune_old_multi_leg_audit_files(log_dir, max_age_days=retention)
-
-    backup_count = max(1, retention)
-    fh = TimedRotatingFileHandler(
-        str(log_path),
-        when="midnight",
-        interval=1,
-        backupCount=backup_count,
-        encoding="utf-8",
-        utc=False,
-    )
-    fh.setLevel(logging.INFO)
-    fh.setFormatter(
-        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    )
-    logging.getLogger().addHandler(fh)
-    _MULTI_LEG_AUDIT_HANDLER_ADDED = True
-    logger.info(
-        "multi-leg audit file logging: path=%s rotation=daily backupCount=%d "
-        "startup_prune_days=%d",
-        log_path,
-        backup_count,
-        retention,
+    configure_audit_from_env_defaults(
+        default_log_file=Path(args.state_dir) / "logs" / "multi_leg_audit.log",
+        disable_env="MLBOT_MULTI_LEG_AUDIT_DISABLE",
+        path_env="MLBOT_MULTI_LEG_AUDIT_LOG",
+        retention_env="MLBOT_MULTI_LEG_AUDIT_RETENTION_DAYS",
+        banner="multi-leg audit file",
     )
 
 

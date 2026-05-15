@@ -6,6 +6,13 @@ GenericLiveStrategy → 配置驱动通用决策引擎
 数据管线（唯一支持）:
   quant-feature-bus: BinanceWS → 特征 → 磁盘 shared_feature_bus
   quant-trend-fattail: 磁盘 Feature Bus → MultiSymbolManager → PCM → OrderManager（+ 可选 User Stream）
+
+审计日志文件（可选，默认开启）：
+  ``{MLBOT_LIVE_STORAGE_BASE}/logs/trend_live_audit.log`` — 按日切分并保留约
+  ``MLBOT_LIVE_AUDIT_RETENTION_DAYS``（默认 30）。环境变量：
+  ``MLBOT_LIVE_AUDIT_LOG``（路径或 ``default``）、``MLBOT_LIVE_AUDIT_DISABLE``、
+  ``MLBOT_LIVE_AUDIT_RETENTION_DAYS``。趋势单 ``clientOrderId`` 前缀：
+  ``MLBOT_LIVE_CLIENT_ORDER_PREFIX``（默认 ``tl``，需满足 Binance 长度限制）。
 """
 
 from __future__ import annotations
@@ -40,6 +47,8 @@ from src.live_data_stream.strategy_runtime_config import (
 from src.time_series_model.live.stats_collector import StatsCollector
 from src.time_series_model.live.metrics_exporter import start_metrics_server, METRICS
 from pathlib import Path as _Path
+from scripts.live_audit_file import configure_audit_from_env_defaults
+
 from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
 )
@@ -886,6 +895,13 @@ async def main() -> None:
         raise ValueError("No symbols provided. Set MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT")
 
     storage_base = os.getenv("MLBOT_LIVE_STORAGE_BASE", "data/live_storage")
+    configure_audit_from_env_defaults(
+        default_log_file=_Path(storage_base) / "logs" / "trend_live_audit.log",
+        disable_env="MLBOT_LIVE_AUDIT_DISABLE",
+        path_env="MLBOT_LIVE_AUDIT_LOG",
+        retention_env="MLBOT_LIVE_AUDIT_RETENTION_DAYS",
+        banner="trend/live audit file",
+    )
     # warmup 只需恢复 memory_window + 时间戳（7 天足够）
     # 特征计算通过 compute_features_batch() 从磁盘直接读取 90+ 天数据
     warmup_days = int(os.getenv("MLBOT_LIVE_WARMUP_DAYS", "7"))

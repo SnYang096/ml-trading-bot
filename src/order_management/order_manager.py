@@ -4,6 +4,7 @@
 """
 
 import logging
+import os
 import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -34,6 +35,16 @@ class OrderManager:
         self._lock = Lock()
         if shadow:
             logger.info("🔇 OrderManager: Shadow 模式启用 — 订单只记录不执行")
+
+    @staticmethod
+    def _binance_safe_client_order_id() -> str:
+        """Binance Futures ``newClientOrderId``: short prefix + uuid, capped at 36 chars."""
+        raw = (
+            os.getenv("MLBOT_LIVE_CLIENT_ORDER_PREFIX", "tl").strip() or "tl"
+        ).replace("-", "")
+        slug = "".join(c for c in raw if str(c).isalnum())
+        slug = slug[:12] if slug else "tl"
+        return (f"{slug}_{uuid.uuid4().hex}")[:36]
 
     def place_order(
         self,
@@ -66,7 +77,7 @@ class OrderManager:
         """
         with self._lock:
             order_id = f"order_{uuid.uuid4().hex}"
-            client_order_id = f"cid_{uuid.uuid4().hex}"
+            client_order_id = self._binance_safe_client_order_id()
 
             # Shadow 模式: 记录订单但不实际执行
             if self.shadow:
@@ -85,8 +96,20 @@ class OrderManager:
                 )
                 self.storage.create_order(order)
                 logger.info(
-                    f"🔇 Shadow 订单: {order_id}, {symbol}, {side.value}, "
-                    f"{order_type.value}, qty={quantity}, price={price}"
+                    "🔇 trend/shadow order: internal_id=%s symbol=%s side=%s type=%s "
+                    "qty=%s price=%s stop_price=%s client_order_id=%s position_id=%s "
+                    "reduce_only=%s close_position=%s",
+                    order_id,
+                    symbol,
+                    side.value,
+                    order_type.value,
+                    quantity,
+                    price,
+                    stop_price,
+                    client_order_id,
+                    position_id,
+                    reduce_only,
+                    close_position,
                 )
                 return order
 
@@ -161,7 +184,21 @@ class OrderManager:
             # 保存到数据库
             if self.storage.create_order(order):
                 logger.info(
-                    f"下单成功: {order_id}, {symbol}, {side.value}, {order_type.value}"
+                    "trend/live place OK: internal_id=%s symbol=%s side=%s type=%s "
+                    "qty=%s price=%s client_order_id=%s binance_order_id=%s "
+                    "position_id=%s reduce_only=%s close_position=%s filled=%s",
+                    order_id,
+                    symbol,
+                    side.value,
+                    order_type.value,
+                    quantity,
+                    price,
+                    order.client_order_id,
+                    order.binance_order_id,
+                    position_id,
+                    reduce_only,
+                    close_position,
+                    order.filled_quantity,
                 )
                 return order
             else:
@@ -182,12 +219,30 @@ class OrderManager:
             if not order:
                 raise ValueError(f"订单不存在: {order_id}")
 
+            logger.info(
+                "trend/live cancel requested: internal_id=%s symbol=%s side=%s type=%s "
+                "qty=%s client_order_id=%s binance_order_id=%s status=%s position_id=%s",
+                order_id,
+                order.symbol,
+                order.side.value,
+                order.order_type.value,
+                order.quantity,
+                order.client_order_id,
+                order.binance_order_id or "",
+                order.status.value,
+                getattr(order, "position_id", "") or "",
+            )
+
             # Shadow 订单直接标记取消
             if order.status == OrderStatus.SHADOW or self.shadow:
                 order.status = OrderStatus.CANCELED
                 order.canceled_at = datetime.now()
                 self.storage.update_order(order)
-                logger.info(f"🔇 Shadow 撤单: {order_id}")
+                logger.info(
+                    "trend/live cancel shadow: internal_id=%s client_order_id=%s",
+                    order_id,
+                    order.client_order_id,
+                )
                 return True
 
             if order.status != OrderStatus.PENDING:
@@ -212,7 +267,14 @@ class OrderManager:
                 order.status = OrderStatus.CANCELED
                 order.canceled_at = datetime.now()
                 self.storage.update_order(order)
-                logger.info(f"撤单成功: {order_id}")
+                logger.info(
+                    "trend/live cancel OK: internal_id=%s symbol=%s "
+                    "client_order_id=%s binance_order_id=%s",
+                    order_id,
+                    order.symbol,
+                    order.client_order_id,
+                    order.binance_order_id or "",
+                )
                 return True
             else:
                 return False
