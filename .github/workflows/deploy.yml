@@ -27,7 +27,7 @@
 #   /opt/quant-engine/live/highcap/data       → /app/live/highcap/data       (live storage / state / logs)
 #   /opt/quant-engine/data                    → /app/data                    (parquet_data 等)
 #   /opt/quant-engine/live/binance_mainnet.env → 通过 --env-file 注入（quant-trend-fattail / quant-hedge-multileg；feature-bus 无此文件）。
-#   /opt/quant-engine/monitoring → CI 解压 deploy/monitoring，docker compose 拉起 Grafana :3000、Prometheus :9091；
+#   /opt/quant-engine/monitoring → CI 解压 deploy/monitoring，docker compose 拉起 Grafana :3000、Prometheus :9091、sqlite-web :8871-8873；
 #   指标端口：quant-feature-bus 映射 9192→9090，quant-trend-fattail 映射 9190→9090，quant-hedge-multileg 映射 9191→9090（见 systemd unit 内 -p），供 Prometheus host.docker.internal 抓取。
 #   注意：Prometheus 运行在 Docker 内，不能抓取只绑定宿主 127.0.0.1 的端口；端口发布需对 docker bridge 可达。
 #   切勿挂 /opt/quant-engine/live → /app/live，会顶掉镜像内 highcap/config 与 scripts。
@@ -452,7 +452,7 @@ jobs:
             echo "HedgeMultileg: $(docker ps --filter name=quant-hedge-multileg --format '{{.Status}}')"
             echo "Disk: $(df -h / | tail -1 | awk '{print $4}') free"
 
-      - name: 📦 Pack monitoring stack (Grafana + Prometheus)
+      - name: 📦 Pack monitoring stack (Grafana + Prometheus + sqlite-web)
         run: tar czf mlbot-monitoring.tgz -C deploy monitoring
 
       - name: 📤 Upload monitoring bundle
@@ -478,7 +478,7 @@ jobs:
             rm -f /tmp/mlbot-monitoring.tgz
             cd /opt/quant-engine/monitoring
             docker compose -f docker-compose.monitoring.yml pull
-            docker compose -f docker-compose.monitoring.yml up -d --remove-orphans
+            docker compose -f docker-compose.monitoring.yml up -d --build --remove-orphans
             echo ""
             echo "=== 🧹 Cleanup old Grafana dashboard UIDs ==="
             if command -v curl >/dev/null 2>&1; then
@@ -528,4 +528,5 @@ jobs:
             docker ps --filter name=mlbot --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
             echo ""
             echo "Grafana 默认 http://<主机>:3000 （compose 内 admin/admin，上线后请改密）；Prometheus :9091。"
+            echo "SQLite 只读浏览器 sqlite-web：8871=live_monitor / 8872=order_management / 8873=multi_leg_order_management（无登录，勿对公网暴露）。"
             echo "Metrics: 宿主 9192=quant-feature-bus / 9190=quant-trend-fattail / 9191=quant-hedge-multileg（Prometheus 容器通过 host.docker.internal 抓取，见 deploy/monitoring/prometheus.yml）。"

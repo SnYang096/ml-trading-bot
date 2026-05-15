@@ -1,8 +1,14 @@
-# 监控栈: Prometheus + Grafana
+# 监控栈: Prometheus + Grafana + sqlite-web（只读 SQLite）
 # 用法: cd deploy/monitoring && docker compose -f docker-compose.monitoring.yml up -d
 #
 # Prometheus: http://localhost:9091
 # Grafana:    http://localhost:3000  (admin / admin)
+#
+# sqlite-web（只读挂载； coleifer/sqlite-web 一单库一进程）
+#   live_monitor.db        → http://<host>:8871  （stats_15min）
+#   order_management.db    → http://<host>:8872  （trend 宪法/订单台账等）
+#   multi_leg_order_management.db → http://<host>:8873
+# 无外置鉴权，勿对公网裸奔；建议安全组仅限内网或使用 SSH 隧道。
 #
 # 指标：quant-feature-bus → 宿主 9192；quant-trend-fattail → 宿主 9190；quant-hedge-multileg → 宿主 9191（见 prometheus.yml）。
 # 若 Grafana 面板无数据，检查 systemd docker run 是否已 -p 上述端口。
@@ -43,6 +49,67 @@ services:
       - grafana_data:/var/lib/grafana
     depends_on:
       - prometheus
+
+  sqlite-web-live-monitor:
+    build:
+      context: ./sqlite-web
+      dockerfile: Dockerfile
+    image: mlbot-sqlite-web:0.6.6
+    container_name: mlbot-sqlite-web-live-monitor
+    restart: unless-stopped
+    ports:
+      - "8871:8871"
+    volumes:
+      # 与 systemd quant-trend-fattail 挂载一致（宿主机）
+      - /opt/quant-engine/live/highcap/data/db:/db/trend:ro
+    command:
+      - "-H"
+      - "0.0.0.0"
+      - "-p"
+      - "8871"
+      - "-r"
+      - "-x"
+      - "/db/trend/live_monitor.db"
+
+  sqlite-web-order-mgmt:
+    image: mlbot-sqlite-web:0.6.6
+    build:
+      context: ./sqlite-web
+      dockerfile: Dockerfile
+    container_name: mlbot-sqlite-web-order-mgmt
+    restart: unless-stopped
+    ports:
+      - "8872:8872"
+    volumes:
+      - /opt/quant-engine/live/highcap/data/db:/db/trend:ro
+    command:
+      - "-H"
+      - "0.0.0.0"
+      - "-p"
+      - "8872"
+      - "-r"
+      - "-x"
+      - "/db/trend/order_management.db"
+
+  sqlite-web-multi-leg:
+    image: mlbot-sqlite-web:0.6.6
+    build:
+      context: ./sqlite-web
+      dockerfile: Dockerfile
+    container_name: mlbot-sqlite-web-multi-leg
+    restart: unless-stopped
+    ports:
+      - "8873:8873"
+    volumes:
+      - /opt/quant-engine/data:/db/engine_data:ro
+    command:
+      - "-H"
+      - "0.0.0.0"
+      - "-p"
+      - "8873"
+      - "-r"
+      - "-x"
+      - "/db/engine_data/multi_leg_order_management.db"
 
 volumes:
   prometheus_data:
