@@ -477,7 +477,8 @@ jobs:
             sudo tar xzf /tmp/mlbot-monitoring.tgz -C /opt/quant-engine
             rm -f /tmp/mlbot-monitoring.tgz
             cd /opt/quant-engine/monitoring
-            docker compose -f docker-compose.monitoring.yml pull
+            # sqlite-web 仅用本地 Dockerfile build，勿对 mlbot-sqlite-web:* 执行 pull（无远端仓库）
+            docker compose -f docker-compose.monitoring.yml pull prometheus grafana
             docker compose -f docker-compose.monitoring.yml up -d --build --remove-orphans
             echo ""
             echo "=== 🧹 Cleanup old Grafana dashboard UIDs ==="

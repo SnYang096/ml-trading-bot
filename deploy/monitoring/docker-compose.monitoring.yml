@@ -55,6 +55,7 @@ services:
       context: ./sqlite-web
       dockerfile: Dockerfile
     image: mlbot-sqlite-web:0.6.6
+    pull_policy: never # 仅存本地 build，compose pull 不要去 Docker Hub 拉此 tag
     container_name: mlbot-sqlite-web-live-monitor
     restart: unless-stopped
     ports:
@@ -76,6 +77,7 @@ services:
     build:
       context: ./sqlite-web
       dockerfile: Dockerfile
+    pull_policy: never
     container_name: mlbot-sqlite-web-order-mgmt
     restart: unless-stopped
     ports:
@@ -96,6 +98,7 @@ services:
     build:
       context: ./sqlite-web
       dockerfile: Dockerfile
+    pull_policy: never
     container_name: mlbot-sqlite-web-multi-leg
     restart: unless-stopped
     ports:
