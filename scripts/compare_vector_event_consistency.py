@@ -10,10 +10,10 @@
               me:results/.../logs_gated.parquet \
         --use-1min --export-trades /tmp/trades_vector.csv
 
-    # Step 2: 跑事件回测并导出交易明细
+    # Step 2: 跑事件回测（默认当前目录 event_trades_*.csv；定路径可加 --trades-csv）
     python scripts/event_backtest.py \
         --strategy bpc,fer,me --days 180 \
-        --export /tmp/trades_event.csv
+        --trades-csv /tmp/trades_event.csv
 
     # Step 3: 对比
     python scripts/compare_vector_event_consistency.py \
@@ -351,7 +351,7 @@ def main():
         "--event",
         "-e",
         required=True,
-        help="事件回测 trades CSV (event_backtest.py --export 输出)",
+        help="事件回测 trades CSV (event_backtest.py 输出的 event_trades_*.csv)",
     )
     parser.add_argument(
         "--trade-diff-pct",

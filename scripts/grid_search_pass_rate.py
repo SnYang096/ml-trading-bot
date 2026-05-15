@@ -154,7 +154,7 @@ def run_one(
             str(tmp_strategies),
             "--output",
             str(bt_json),
-            "--export",
+            "--trades-csv",
             str(bt_csv),
         ]
         r2 = subprocess.run(bt_cmd, capture_output=True, text=True, timeout=600)

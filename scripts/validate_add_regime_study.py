@@ -120,7 +120,7 @@ def _run_event_backtest(
         symbols_csv,
         "--output",
         str(out_json),
-        "--export",
+        "--trades-csv",
         str(out_csv),
         "--capital-report",
         str(cap_dir),

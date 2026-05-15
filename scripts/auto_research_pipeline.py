@@ -4950,7 +4950,7 @@ def _run_event_backtest_step(
         data_path,
         "--trading-map",
         map_path,
-        "--export",
+        "--trades-csv",
         export_path,
         "--output",
         event_json_path,
@@ -6079,7 +6079,7 @@ def _run_pcm_joint_backtest(
         data_path,
         "--output",
         pcm_json_path,
-        "--export",
+        "--trades-csv",
         pcm_export_path,
         "--trading-map",
         pcm_map_path,
@@ -10012,11 +10012,16 @@ def main():
                 )
                 print(f"      rc={_res.get('rc')} output={_res.get('output')}")
             else:
+                event_start_stage = strat_dates["holdout_start"]
+                if event_window in {"test", "oos", "pure_oos"}:
+                    event_start_stage = (
+                        strat_dates.get("test_start") or event_start_stage
+                    )
                 _ev = pipeline_events.run_event_backtest_step(
                     strat,
                     str(stage_run_dir),
                     stage_run_dir,
-                    holdout_start=strat_dates["holdout_start"],
+                    holdout_start=event_start_stage,
                     end_date=strat_dates["end_date"],
                     strategies_root=stage_strategies_root,
                     data_path=data_path,
@@ -10030,6 +10035,7 @@ def main():
                     max_dd_penalty=float(obj_cfg["max_dd_penalty"]),
                     min_trades_soft=int(obj_cfg["min_trades_soft"]),
                     undertrade_penalty=float(obj_cfg["undertrade_penalty"]),
+                    run_execution_opt=threshold_execution_opt_enabled,
                     map_extra_months=_event_trading_map_extra_months(cfg),
                     no_kill_switch=bool(
                         (cfg.get("event_backtest") or {}).get("no_kill_switch", False)

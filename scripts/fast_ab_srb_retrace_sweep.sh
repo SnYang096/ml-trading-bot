@@ -78,7 +78,7 @@ PYEOF
     --end-date "${m}-${last_day}" \
     --strategies-root "${strat_root_run}" \
     --data-path data/parquet_data \
-    --export "${out_dir}/trades.csv" \
+    --trades-csv "${out_dir}/trades.csv" \
     --output "${out_dir}/summary.json" \
     --fast \
     >"${out_dir}/run.log" 2>&1 &

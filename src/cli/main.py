@@ -3735,7 +3735,7 @@ def pipeline_event_backtest(
         data_path,
         "--trading-map",
         map_path,
-        "--export",
+        "--trades-csv",
         export_path,
     ]
     if fast:
