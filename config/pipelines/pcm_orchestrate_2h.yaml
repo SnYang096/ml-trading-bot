@@ -1,15 +1,18 @@
 # PCM 多策略编排（2H）：联合 PCM joint 等；每 symbol 单 owning 策略时不维护 pcm_slot_grid 扫描。
 # 多腿编排见 multileg_orchestrate_*.yaml。单策略研究入口见 config/strategies/<slug>/research/。
-# 单策略训练/rolling 请用 config/strategies/<slug>/research/calibrate_roll.default.yaml · research_roll.features_on.yaml · validate_static.*.yaml。
+# 校准节奏与研究侧 turbo 对齐：config/strategies/{bpc,tpc,me}/research/calibrate_roll.default.yaml
+# （与同结构的 chop_grid turbo 骨架一致：fixed features + parquet_plateau + static_holdout）。
 # ============================================================
-# 上线前训练流水线 (2H only)
-# 目标: 稳健优先, 平坦高原阈值搜索, 生产候选版本训练
+# PCM 联合训练流水线 (2H) — turbo_fixed_features（与月度 calibrate_roll 对齐）
 # ============================================================
 
 dates:
-  start_date: "2024-01-01"
-  holdout_months: 9
-  validation_months: 3
+  # 与 research calibrate_roll.default（bpc/tpc/me）、chop_grid turbo 对齐
+  start_date: "2022-01-01"
+  end_date: "2026-05-01"
+  holdout_months: 26
+  calibration_months: 6
+
 training:
   seeds:
     - 42
@@ -20,22 +23,28 @@ strategy_scope:
   # all | long | short
   # 控制 --all 时参与训练/回测的策略方向范围
   direction: all
+
+# 与 calibrate_roll 一致：阈值链关闭树模型训练；rolling_sim / load_pipeline_config 汇总到 rolling_calibration.*
+threshold_calibration:
+  enable_model_training: false
+  prefilter:
+    optimize: true
+  gate:
+    optimize: true
+  entry_filter:
+    optimize: true
+  execution_opt:
+    enabled: true
+  pcm_eval:
+    enabled: false
+  direction_tuning:
+    enabled: true
+
 rolling:
-  # slow_realistic | turbo_fixed_features | legacy
-  mode: slow_realistic
-  windows:
-    # 每月用过去 N 个月校准阈值, 再测试当月
-    calibration_months: 3
-    # 慢变量重训结构窗: 过去 N 个月
-    structure_lookback_months: 12
-  slow_realistic:
-    # 慢变量节奏仅此处生效（rolling_sim 只读本块，勿再配重复的 slow_loop）
-    cadence_months: 3
-    triggered_retrain_enabled: true
+  mode: turbo_fixed_features
   turbo_fixed_features:
-    # 极速模式: 固定特征来源
     fixed_strategies_root: config/strategies
-    # true 表示禁用 SHAP/特征搜索, 仅调阈值
+    # true 表示禁用 SHAP/特征搜索, 仅调阈值（亦为 turbo 默认语义）
     disable_feature_search: true
 
 rolling_calibration:
@@ -44,6 +53,12 @@ rolling_calibration:
     enabled: true
   symbol_threshold_calibration:
     enabled: true
+  prefilter:
+    optimize: true
+  gate:
+    optimize: true
+  entry_filter:
+    optimize: true
   execution_opt:
     enabled: true
   pcm_eval:
@@ -51,31 +66,30 @@ rolling_calibration:
 event_backtest:
   enabled: true
   promote: true
-  # execution 对称调优: initial_r=activation_r=trail_r
-  # bpc 趋势骑乘: 给更宽的止损/追踪空间; fer/me: 更紧止损
+  map_extra_months: 4
+  # Fallback when exec_grid_by_family 缺失某策略时使用
   sym_r_default: "1.0:1:6.0"
-  sym_r_by_family:
-    bpc: "2.0:1:6.0"
-    fer: "2:1:4"
-    me: "2:1:4"
-  # execution 参数选择目标:
-  # - 默认仍用 Sharpe
-  # - 对 me 家族启用 risk_aware，惩罚近-1R密集触发与过大回撤
-  exec_objective_default: sharpe
+  exec_grid_by_family:
+    # 与各策略 calibrate_roll.default.yaml 完全一致（trailing 三轴网格）
+    bpc:
+      initial_r: "4.0:0.5:7.0"
+      activation_r: "3.5:0.5:6.0"
+      trail_r: "6.0:1.0:15.0"
+    tpc:
+      initial_r: "4.0:0.5:7.0"
+      activation_r: "3.5:0.5:6.0"
+      trail_r: "6.0:1.0:15.0"
+    me:
+      initial_r: "4.0:0.5:7.0"
+      activation_r: "3.5:0.5:6.0"
+      trail_r: "6.0:1.0:15.0"
+  exec_objective_default: total_r_over_dd
   exec_objective_params:
     near_stop_threshold_r: -0.9
-    near_stop_penalty: 0.0
-    max_dd_penalty: 0.0
+    near_stop_penalty: 5.0
+    max_dd_penalty: 0.15
     min_trades_soft: 0
     undertrade_penalty: 0.0
-  exec_objective_by_family:
-    me:
-      objective: risk_aware
-      near_stop_threshold_r: -0.9
-      near_stop_penalty: 0.45
-      max_dd_penalty: 0.02
-      min_trades_soft: 60
-      undertrade_penalty: 0.002
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
   universe_set: starter_a
@@ -89,9 +103,6 @@ strategies:
   bpc:
     config: config/strategies/bpc
     timeframe: 120T
-    dates:
-      holdout_months: 9
-      validation_months: 4
     prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
@@ -109,169 +120,163 @@ strategies:
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
           enabled: true
-          mode: auto_if_locked
           skip_if_cached: false
-          max_cases: 12
-          min_trades_target: 60
-          trade_penalty: 0.0025
-          bpc_recent_breakout_strength_min_values: 0.40,0.45,0.50
-          bpc_pullback_depth_max_values: 0.55,0.60,0.65
-          bpc_recovery_strength_min_values: 0.50,0.55,0.60
-          target_trades_min: 10
-          target_trades_max: 50
-          trade_penalty_low: 0.002
-          trade_penalty_high: 0.0011
-          stability_penalty: 0.0
+          search_mode: parquet_plateau
+          plateau_scan_points: 25
+          plateau_coord_rounds: 3
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
       entry_filter:
+        meta_algorithm: false
+        archetype_plateau: true
+        significance_p: 0.10
+        significance_min_trades: 4
+        plateau_window: 4
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
         target_trades_min: 10
         target_trades_max: 50
         trade_penalty_low: 0.002
         trade_penalty_high: 0.0011
         stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
         min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.3
+        min_combined_pass_rate: 0.05
+        max_hard_gates: 4
+        max_system_safety: 2
+        target_trades_min: 0
+        trade_penalty_low: 0.0
+        trade_penalty_high: 0.0
+        stability_penalty: 0.0
       backtest:
-        min_trades: 50
+        min_trades: 0
       deploy:
-        min_trades: 50
-    simple_execution:
-      sl_r: 4.0
-      tp_r: 8.0
-      timeout_bars: 500
-  fer:
-    config: config/strategies/fer
+        min_trades: 0
+  tpc:
+    config: config/strategies/tpc
     timeframe: 120T
-    dates:
-      holdout_months: 9
-      validation_months: 3
     prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: false
+    has_direction: true
     kpi_gates:
       prefilter:
         min_pass_rate: 0.05
-        min_rows: 300
-        target_trades_min: 40
-        target_trades_max: 240
-        trade_penalty_low: 0.0021
-        trade_penalty_high: 0.0012
+        min_rows: 10
+        target_trades_min: 10
+        target_trades_max: 50
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0011
         stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
           enabled: true
-          mode: auto_if_locked
           skip_if_cached: false
-          max_cases: 12
-          min_trades_target: 70
-          trade_penalty: 0.0025
-          fer_eff_pct_lower_values: 0.0,0.05
-          fer_eff_pct_upper_values: 0.30,0.40
-          sr_strength_min_values: 0.45,0.55
-          dist_to_sr_atr_max_values: 0.8,1.0
-          sqs_quality_min_values: 0.50,0.60
-          target_trades_min: 40
-          target_trades_max: 240
-          trade_penalty_low: 0.0021
-          trade_penalty_high: 0.0012
-          stability_penalty: 0.0
+          search_mode: parquet_plateau
+          plateau_scan_points: 25
+          plateau_coord_rounds: 3
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
+      entry_filter:
+        meta_algorithm: false
+        archetype_plateau: true
+        significance_p: 0.10
+        significance_min_trades: 4
+        plateau_window: 4
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
+        target_trades_min: 10
+        target_trades_max: 50
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0011
+        stability_penalty: 0.0
+        min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.3
-        stat_fallback_on_empty: true
-        stat_fallback_max_rules: 3
-        stat_fallback_min_source_features: 2
-      entry_filter:
-        target_trades_min: 40
-        target_trades_max: 240
-        trade_penalty_low: 0.0021
-        trade_penalty_high: 0.0012
+        min_combined_pass_rate: 0.05
+        max_hard_gates: 4
+        max_system_safety: 2
+        target_trades_min: 0
+        trade_penalty_low: 0.0
+        trade_penalty_high: 0.0
         stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
-        min_score_improvement: 0.005
       backtest:
-        min_trades: 50
+        min_trades: 0
       deploy:
-        min_trades: 50
-    simple_execution:
-      sl_r: 3.0
-      tp_r: 6.0
-      timeout_bars: 120
+        min_trades: 0
   me:
     config: config/strategies/me
     timeframe: 120T
-    dates:
-      holdout_months: 9
-      validation_months: 3
     prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml
     has_prefilter: true
-    has_direction: false
+    has_direction: true
     kpi_gates:
       prefilter:
         min_pass_rate: 0.05
-        min_rows: 200
-        target_trades_min: 30
-        target_trades_max: 200
-        trade_penalty_low: 0.0022
-        trade_penalty_high: 0.0013
+        min_rows: 10
+        target_trades_min: 10
+        target_trades_max: 50
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0011
         stability_penalty: 0.0
         enforce_locked_rules_in_experiment: true
         locked_rules_source: production_prefilter
         locked_threshold_tuning:
           enabled: true
-          mode: auto_if_locked
           skip_if_cached: false
-          max_cases: 12
-          min_trades_target: 55
-          trade_penalty: 0.0025
-          atr_lower_values: 0.45,0.55
-          atr_upper_values: 0.88,0.92
-          me_accel_abs_min_values: 0.10,0.14
-          me_cvd_min_values: 0.55,0.65
-          target_trades_min: 30
-          target_trades_max: 200
-          trade_penalty_low: 0.0022
-          trade_penalty_high: 0.0013
-          stability_penalty: 0.0
+          search_mode: parquet_plateau
+          plateau_scan_points: 25
+          plateau_coord_rounds: 3
         scoring_method_fallbacks:
           - distribution_ks
           - mean_effect
-        deny_rate_max: 0.97
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
+      entry_filter:
+        meta_algorithm: false
+        archetype_plateau: true
+        significance_p: 0.10
+        significance_min_trades: 4
+        plateau_window: 4
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
+        target_trades_min: 10
+        target_trades_max: 50
+        trade_penalty_low: 0.002
+        trade_penalty_high: 0.0011
+        stability_penalty: 0.0
+        min_score_improvement: 0.005
       gate:
         require_positive_effect: true
-        min_combined_pass_rate: 0.2
-      entry_filter:
-        target_trades_min: 30
-        target_trades_max: 200
-        trade_penalty_low: 0.0022
-        trade_penalty_high: 0.0013
+        min_combined_pass_rate: 0.05
+        max_hard_gates: 4
+        max_system_safety: 2
+        target_trades_min: 0
+        trade_penalty_low: 0.0
+        trade_penalty_high: 0.0
         stability_penalty: 0.0
-        scoring_method_fallbacks:
-          - distribution_ks
-          - mean_effect
-        min_score_improvement: 0.005
       backtest:
-        min_trades: 50
+        min_trades: 0
       deploy:
-        min_trades: 50
-    shap_override:
-      stability_threshold: 0.5
-      top_k: 25
+        min_trades: 0
 shap_feature_selection:
   enabled: false
   n_folds: 8
