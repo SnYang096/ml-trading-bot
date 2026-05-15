@@ -302,21 +302,21 @@
     },
     {
       "type": "table",
-      "title": "Hedge · 持仓快照（exchange reconcile；空仓常无序列）",
-      "description": "来自 **`update_position_metrics`**，仅当 **拉到非零持仓**时才往 Prometheus 写出 `mlbot_position_qty`/`notional`。**空仓**或未跑 reconcile ⇒ **可能没有时间序列**，表格即为 No data。",
+      "title": "Hedge · 交易所持仓（按引擎 reconcile；同合约多引擎会重复一行）",
+      "description": "来自 **`MultiLegDaemon`** 每条 bar 后对 **`adapter.sync_positions(symbol)`** 的 **`METRICS.update_position_metrics(scope='hedge', strategy=运行时名)`**。\n\n**`strategy` 标签** = **进程内引擎名**，**不是 clientOrderId 级别的归因**。数据仍是 **交易所该 **`symbol` 合约的净持仓** —— 因而 **同一账户、同一 symbol、两个网格/多腿共存**时，两行 **数量通常相同**，都等于交易所净仓之和；**不能与「仅某引擎自认仓」逐项对齐**。\n\n**Stale 占位 0**：reconcile 对旧标签会 `set(0)`，instant 表里曾出现 qty=0 行。**已用 PromQL `> 0`** 仅在表上隐藏空仓占位。空仓且从未有过非零序列 ⇒ **仍 No data**（正常现象）。趋势侧另见账户级 `strategy=all` 面板。",
       "id": 317,
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 63 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"})",
+          "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}) > 0",
           "format": "table",
           "instant": true
         },
         {
           "refId": "B",
-          "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"})",
+          "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}) > 0",
           "format": "table",
           "instant": true
         }

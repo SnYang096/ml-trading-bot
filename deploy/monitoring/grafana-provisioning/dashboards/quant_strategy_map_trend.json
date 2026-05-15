@@ -184,20 +184,21 @@
     },
     {
       "type": "table",
-      "title": "Trend · 持仓快照",
+      "title": "Trend · 交易所持仓（账户 reconcile，`strategy` 固定为 `all`）",
+      "description": "**数据源**：`METRICS.update_account_data()` → Binance Futures `GET /fapi/v2/account` 的 **`positions`**，经 `update_position_metrics(..., strategy=\"all\")` 写入 Gauges。**不是** archetype/`PositionTracker` 内部台账。\n\n**为何和「入场价 / entry 打点」可对不上**：上图 **`mlbot_strategy_event_price`** 的 `strategy` = **archetype（如 tpc）**；本表 **`strategy`** 恒为 **`all`**（交易所在单账户上不区分内置策略）。`entry` 在 **挂单成功回路**打点，**不能保证**几秒后的 scrape 上仍有净仓（未成交、已平、被拒、或减少为 0）。\n\n**为何曾出现 qty=0 仍占一行**：Grafana **instant** 会合并曾为非零的标签组合；已对 PromQL **`> 0`** 过滤，空仓不再占行。**上方策略变量不参与本表**（避免误筛掉 `strategy=all` 序列）。`symbol` 变量仍生效。",
       "id": 307,
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 45 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$job\",scope=\"trend\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"})",
+          "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$job\",scope=\"trend\",strategy=\"all\",symbol=~\"${symbol:regex}\"}) > 0",
           "format": "table",
           "instant": true
         },
         {
           "refId": "B",
-          "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$job\",scope=\"trend\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"})",
+          "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$job\",scope=\"trend\",strategy=\"all\",symbol=~\"${symbol:regex}\"}) > 0",
           "format": "table",
           "instant": true
         }
