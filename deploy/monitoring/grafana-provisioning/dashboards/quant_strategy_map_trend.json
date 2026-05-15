@@ -16,7 +16,7 @@
       "gridPos": { "h": 7, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "### Trend → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | `global.scrape_interval` **15s**（`deploy/monitoring/prometheus.yml`）|\n| **Feature Bus 轮询** | `MLBOT_FEATURE_BUS_POLL_SECONDS`，默认 **5s**（`run_live` 外层 `asyncio.sleep`）|\n| **漏斗 `mlbot_funnel_total`** | `StatsCollector.flush` → `METRICS.update_from_flush`：在 **每次** `order_flow_listener._handle_features` 末尾 `_flush_stats()` 时，把**本窗口累计**写入 Counter 后重置；**External Bus 模式下通常每个新 bus 事件一轮**，不是固定 15 分钟一次（注释里的 15min 指 SQLite 快照语义）|\n| **开仓/平仓** | `record_strategy_event(event=entry|exit|…)`：**成交路径上即时**打 Counter；曲线粒度受 scrape 限制 |\n| **观测** | Grafana 只读 Prometheus；**不读 bus 磁盘**。|\n\n**若本页从上到下全是 No data**（含 **scrape 样本 CPU %**）：多为 **Prometheus 未取得** `job=\"quant-trend-fattail\"` 样本，或 Grafana 数据源指错。先查 Prometheus **Status → Targets**：`host.docker.internal:9190` **UP**；宿主机 `curl -sS http://127.0.0.1:9190/metrics | head`；`docker logs quant-trend-fattail` / `journalctl -u quant-trend-fattail`。**仅漏斗等策略曲线空、但 CPU/uptime 正常**：才是策略侧无流量/无 flush。\n\n**「各层」**：`mlbot_funnel_total` 的 `stage` = direction / gate / entry_filter / evidence / pcm / order。更细的拦下原因看 **gate 拒因**。**entry**、**exit**、**signal**、**order** 见事件面板。"
+        "content": "### Trend → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | `global.scrape_interval` **15s**（`deploy/monitoring/prometheus.yml`）|\n| **Feature Bus 轮询** | `MLBOT_FEATURE_BUS_POLL_SECONDS`，默认 **5s**（`run_live` 外层 `asyncio.sleep`）|\n| **漏斗 `mlbot_funnel_total`** | `StatsCollector.flush` → `METRICS.update_from_flush`：在 **每次** `order_flow_listener._handle_features` 末尾 `_flush_stats()` 时，把**本窗口累计**写入 Counter 后重置；**External Bus 模式下通常每个新 bus 事件一轮**，不是固定 15 分钟一次（注释里的 15min 指 SQLite 快照语义）|\n| **开仓/平仓** | `record_strategy_event(event=entry|exit|…)`：**成交路径上即时**打 Counter；曲线粒度受 scrape 限制 |\n| **观测** | Grafana 只读 Prometheus；**不读 bus 磁盘**。|\n| **CPU / RSS（线）** | **首行**右侧 Stat = scrape **瞬时 CPU%**；**紧接着一行**：`mlbot_cpu_percent` 与 `mlbot_memory_rss_mb` 的 **时间序列**（与 Multi-leg Hedge 页同一做法）。 |\n\n**若本页从上到下全是 No data**（含 **scrape 样本 CPU %**）：多为 **Prometheus 未取得** `job=\"quant-trend-fattail\"` 样本，或 Grafana 数据源指错。先查 Prometheus **Status → Targets**：`host.docker.internal:9190` **UP**；宿主机 `curl -sS http://127.0.0.1:9190/metrics | head`；`docker logs quant-trend-fattail` / `journalctl -u quant-trend-fattail`。**仅漏斗等策略曲线空、但 CPU/uptime 正常**：才是策略侧无流量/无 flush。\n\n**「各层」**：`mlbot_funnel_total` 的 `stage` = direction / gate / entry_filter / evidence / pcm / order。更细的拦下原因看 **gate 拒因**。**entry**、**exit**、**signal**、**order** 见事件面板。"
       },
       "transparent": false
     },
@@ -46,7 +46,8 @@
     },
     {
       "type": "stat",
-      "title": "Trend · scrape 样本 CPU %",
+      "title": "Trend · scrape 样本 CPU %（当前点）",
+      "description": "**瞬时值**（Prometheus scrape）；看趋势见下方 **CPU 时间序列**。asyncio 休眠多时常贴 0%。",
       "id": 803,
       "gridPos": { "h": 3, "w": 8, "x": 16, "y": 7 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
@@ -58,9 +59,35 @@
     },
     {
       "type": "timeseries",
+      "title": "Trend · CPU %（Prometheus scrape 历史）",
+      "description": "按抓取间隔连续打点；可看尖峰。**与上方 Stat 同一 `mlbot_cpu_percent`。与 Hedge 页「CPU %（历史）」一致。**",
+      "id": 814,
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_cpu_percent{job=~\"$job\"}", "legendFormat": "CPU %" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "custom": { "stacking": { "mode": "none" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Trend · 进程 RSS MB（历史）",
+      "description": "**与 Hedge 同源** `mlbot_memory_rss_mb`：RSS 按抓取间隔打点，可看内存爬坡/回收。上方首行暂未放 RSS Stat，仅用曲线。",
+      "id": 815,
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_memory_rss_mb{job=~\"$job\"}", "legendFormat": "RSS MB" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "stacking": { "mode": "none" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
       "title": "Trend · funnel（rate × strategy × stage）",
       "id": 302,
-      "gridPos": { "h": 8, "w": 14, "x": 0, "y": 10 },
+      "gridPos": { "h": 8, "w": 14, "x": 0, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -82,7 +109,7 @@
       "type": "timeseries",
       "title": "Trend · orders & signals（rate）",
       "id": 303,
-      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 10 },
+      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         { "refId": "A", "expr": "sum by (strategy) (rate(mlbot_orders_total{job=~\"$job\",strategy=~\"${strategy:regex}\"}[$__rate_interval]))", "legendFormat": "orders {{strategy}}" },
@@ -95,7 +122,7 @@
       "type": "timeseries",
       "title": "Trend · 方向派发 long / short（rate）",
       "id": 308,
-      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 18 },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 24 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -111,7 +138,7 @@
       "type": "timeseries",
       "title": "Trend · gate 拒因（rate × strategy × reason）",
       "id": 309,
-      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 18 },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 24 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -127,7 +154,7 @@
       "type": "timeseries",
       "title": "Trend · 事件流（entry / exit / signal / order / reject）",
       "id": 305,
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 31 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -143,7 +170,7 @@
       "type": "timeseries",
       "title": "Trend · 最近事件价（entry 等）",
       "id": 306,
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 33 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 39 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -159,7 +186,7 @@
       "type": "table",
       "title": "Trend · 持仓快照",
       "id": 307,
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 39 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 45 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
@@ -182,7 +209,7 @@
       "type": "table",
       "title": "Trend · 事件计数（所选范围末值 = increase 窗口可查 Explore）",
       "id": 310,
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 47 },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 53 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
         {
