@@ -192,6 +192,57 @@ def _sync_slots_with_exchange(
         )
 
 
+def _open_trend_positions_snapshot_from_manager(
+    manager: Optional[Any], symbols: List[str]
+) -> List[Dict[str, Any]]:
+    """Build open trend slot snapshot for LivePCM trend_pool_guard."""
+    if manager is None:
+        return []
+    rows: List[Dict[str, Any]] = []
+    for sym in symbols:
+        try:
+            listener = manager.get_listener(sym)
+        except Exception:
+            continue
+        if listener is None:
+            continue
+        tracker = getattr(listener, "_position_tracker", None)
+        if tracker is None:
+            continue
+        try:
+            pos_map = tracker.all_positions() or {}
+        except Exception:
+            continue
+        for pos in pos_map.values():
+            if not isinstance(pos, dict):
+                continue
+            archetype = str(pos.get("archetype", "") or "").strip().lower()
+            if not archetype:
+                continue
+            side = str(pos.get("side", "") or "").strip().lower()
+            entry_price = float(pos.get("entry_price") or 0.0)
+            stop_price = pos.get("stop_loss_price")
+            stop_nonnegative = False
+            if stop_price is not None and entry_price > 0:
+                try:
+                    stop_v = float(stop_price)
+                    if side == "long":
+                        stop_nonnegative = stop_v >= entry_price
+                    elif side == "short":
+                        stop_nonnegative = stop_v <= entry_price
+                except Exception:
+                    stop_nonnegative = False
+            rows.append(
+                {
+                    "symbol": str(pos.get("symbol", sym) or sym).upper().strip(),
+                    "archetype": archetype,
+                    "breakeven_locked": bool(pos.get("breakeven_locked", False)),
+                    "stop_risk_nonnegative": bool(stop_nonnegative),
+                }
+            )
+    return rows
+
+
 def _setup_three_strategies(
     symbols: List[str],
     storage: StorageManager,
@@ -302,52 +353,9 @@ def _setup_three_strategies(
     _manager_ref: Dict[str, Any] = {"manager": None}
 
     def _open_trend_positions_snapshot() -> List[Dict[str, Any]]:
-        mgr = _manager_ref.get("manager")
-        if mgr is None:
-            return []
-        rows: List[Dict[str, Any]] = []
-        for sym in symbols:
-            try:
-                listener = mgr.get_listener(sym)
-            except Exception:
-                continue
-            if listener is None:
-                continue
-            tracker = getattr(listener, "_position_tracker", None)
-            if tracker is None:
-                continue
-            try:
-                pos_map = tracker.all_positions() or {}
-            except Exception:
-                continue
-            for pos in pos_map.values():
-                if not isinstance(pos, dict):
-                    continue
-                archetype = str(pos.get("archetype", "") or "").strip().lower()
-                if not archetype:
-                    continue
-                side = str(pos.get("side", "") or "").strip().lower()
-                entry_price = float(pos.get("entry_price") or 0.0)
-                stop_price = pos.get("stop_loss_price")
-                stop_nonnegative = False
-                if stop_price is not None and entry_price > 0:
-                    try:
-                        stop_v = float(stop_price)
-                        if side == "long":
-                            stop_nonnegative = stop_v >= entry_price
-                        elif side == "short":
-                            stop_nonnegative = stop_v <= entry_price
-                    except Exception:
-                        stop_nonnegative = False
-                rows.append(
-                    {
-                        "symbol": str(pos.get("symbol", sym) or sym).upper().strip(),
-                        "archetype": archetype,
-                        "breakeven_locked": bool(pos.get("breakeven_locked", False)),
-                        "stop_risk_nonnegative": bool(stop_nonnegative),
-                    }
-                )
-        return rows
+        return _open_trend_positions_snapshot_from_manager(
+            _manager_ref.get("manager"), symbols
+        )
 
     pcm = LivePCM(
         archetype_priority=pcm_priority,

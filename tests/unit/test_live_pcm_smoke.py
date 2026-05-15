@@ -51,3 +51,88 @@ def test_live_pcm_decide_delegates_to_bpc() -> None:
     assert len(result) == 1
     assert result[0] is intent
     mock_bpc.decide.assert_called_once()
+
+
+class _FakeTracker:
+    def __init__(self, positions):
+        self._positions = positions
+
+    def all_positions(self):
+        return self._positions
+
+
+class _FakeListener:
+    def __init__(self, positions):
+        self._position_tracker = _FakeTracker(positions)
+
+
+class _FakeManager:
+    def __init__(self, by_symbol):
+        self._by_symbol = by_symbol
+
+    def get_listener(self, symbol):
+        return self._by_symbol.get(symbol)
+
+
+def test_run_live_open_trend_positions_snapshot_includes_breakeven_and_stop_flags() -> (
+    None
+):
+    from scripts import run_live
+
+    manager = _FakeManager(
+        {
+            "BTCUSDT": _FakeListener(
+                {
+                    "p1": {
+                        "symbol": "BTCUSDT",
+                        "archetype": "BPC",
+                        "side": "LONG",
+                        "entry_price": 100.0,
+                        "stop_loss_price": 101.0,
+                        "breakeven_locked": True,
+                    }
+                }
+            ),
+            "ETHUSDT": _FakeListener(
+                {
+                    "p2": {
+                        "symbol": "ETHUSDT",
+                        "archetype": "TPC",
+                        "side": "short",
+                        "entry_price": 200.0,
+                        "stop_loss_price": 199.0,
+                        "breakeven_locked": False,
+                    }
+                }
+            ),
+        }
+    )
+
+    rows = run_live._open_trend_positions_snapshot_from_manager(
+        manager, ["BTCUSDT", "ETHUSDT"]
+    )
+
+    assert len(rows) == 2
+    got = {(r["symbol"], r["archetype"]): r for r in rows}
+    assert got[("BTCUSDT", "bpc")]["breakeven_locked"] is True
+    assert got[("BTCUSDT", "bpc")]["stop_risk_nonnegative"] is True
+    assert got[("ETHUSDT", "tpc")]["breakeven_locked"] is False
+    assert got[("ETHUSDT", "tpc")]["stop_risk_nonnegative"] is True
+
+
+def test_run_live_open_trend_positions_snapshot_skips_invalid_rows() -> None:
+    from scripts import run_live
+
+    manager = _FakeManager(
+        {
+            "BTCUSDT": _FakeListener(
+                {
+                    "bad1": {"archetype": "", "symbol": "BTCUSDT"},
+                    "bad2": "not-a-dict",
+                }
+            )
+        }
+    )
+
+    rows = run_live._open_trend_positions_snapshot_from_manager(manager, ["BTCUSDT"])
+    assert rows == []

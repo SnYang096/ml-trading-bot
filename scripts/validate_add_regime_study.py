@@ -20,6 +20,30 @@ if str(_REPO) not in sys.path:
 
 logger = logging.getLogger("validate_add_regime_study")
 
+# 英文场景 id → 中文简述（写入 report.md；命名成分：trend_pool=趋势池 PCM 规则，unlockN=breakeven 后最多 N 个 symbol，be=开仓层 1ATR breakeven 锁，addK=最多 K 次加仓，locked=宪法 require_locked_profit）
+SCENARIO_LABEL_ZH: Dict[str, str] = {
+    "current_chop_055": "基线：chop 语义门控(≤0.55)+原 3 档加仓 1×/2×/3×；无趋势池、执行层无 breakeven",
+    "chop_055_add_1x_max1": "仅 chop 门控；最多 1 次加仓×1.0；加仓前须锁盈；无趋势池",
+    "chop_055_add_light_max2": "仅 chop 门控；最多 2 次轻仓加仓 0.5×/1.0×；加仓前须锁盈；无趋势池",
+    "trend_pool_one_symbol_be_noadd": "趋势池：全池同时最多 1 个 symbol 趋势仓；1ATR breakeven 锁后仍不扩 symbol；禁止加仓",
+    "trend_pool_unlock3_be_noadd": "趋势池：冷启动仅 1 个未保护 symbol；1ATR 锁盈后可扩至最多 3 个 symbol；禁止加仓",
+    "trend_pool_unlock3_be1_add3_current_locked": "趋势池 unlock3；1ATR 锁盈；3 档加仓与基线相同(倍率 1/2/3、阶梯 min R 1/2/3)；加仓须锁盈",
+    "trend_pool_unlock3_be1_add3_light_locked": "趋势池 unlock3；1ATR 锁盈；3 档轻仓(0.5/1/1.5)、阶梯 min R 同基线；加仓须锁盈",
+    "trend_pool_btc_anchor_unlock3_be1_add3_current_locked": "在 unlock3+满火力 3 档上加：须先出现 BTC 已锁盈趋势仓，非 BTC 才允许新开趋势仓；加仓须锁盈",
+    "trend_pool_unlock3_be_add1_locked": "趋势池 unlock3；1ATR 锁盈；每父仓仅 1 次加仓×0.5、min R=1；加仓须锁盈",
+    "trend_pool_unlock3_be_add2_locked": "趋势池 unlock3；1ATR 锁盈；最多 2 次加仓 0.5×/1.0×、min R 1/2；加仓须锁盈",
+    "trend_pool_unlock3_be_add2_loose": "同上一档加仓参数，但不要求锁盈即可加仓（constitutional 对照）",
+    "trend_pool_unlock6_be_add1_locked": "趋势池：1ATR 锁盈后可扩至最多 6 个 symbol；每父仓仅 1 次加仓×0.5、min R=1；加仓须锁盈",
+}
+
+
+def _scenario_line_zh_suffix(scenario_name: Optional[str]) -> str:
+    key = str(scenario_name or "").strip()
+    desc = SCENARIO_LABEL_ZH.get(key)
+    if not desc:
+        return ""
+    return f" — {desc}"
+
 
 def _copy_bpc_tree(dst_parent: Path) -> Path:
     src = _REPO / "config" / "strategies" / "bpc"
@@ -630,11 +654,31 @@ def main() -> int:
         f"- Window: `{start_date}` → `{end_date}`",
         f"- Symbols: `{','.join(symbols)}`",
         "",
-        "## Scenarios",
+        "## 场景 id 命名说明（中文）",
+        "",
+        "成分大致为：`trend_pool` → PCM 趋势池槽位守卫；`unlockN` → breakeven 锁盈后至多 **N 个不同 symbol** 可同时持趋势；"
+        "`be` / `be1` → 执行层开启 **1×ATR** 触发 breakeven 锁止损；`noadd` → 禁止加仓；"
+        "`add1` / `add2` / `add3` → 浮盈阶梯 **最多 1/2/3 次** 加仓；`current` → 倍率对齐当前基线(1,2,3)；`light` → 轻仓倍率；"
+        "`locked` → 宪法 **require_locked_profit**（锁盈后才允许加）；`loose` → 不加该限制的对照；"
+        "`btc_anchor` → 须先让 **BTC** 上出现已锁盈趋势仓，其它币才允许新开趋势仓。",
+        "",
+        "| 场景 id | 中文说明 |",
+        "| --- | --- |",
     ]
     for r in rows_out:
+        nm = str(r.get("scenario") or "")
+        zrow = SCENARIO_LABEL_ZH.get(nm, "（脚本中暂无中文条目的场景）")
+        lines.append(f"| `{nm}` | {zrow} |")
+    lines.extend(
+        [
+            "",
+            "## Scenarios",
+        ]
+    )
+    for r in rows_out:
+        sn = r.get("scenario")
         lines.append(
-            f"- `{r.get('scenario')}`: total_r={r.get('total_r'):.4f}, "
+            f"- `{sn}`{_scenario_line_zh_suffix(str(sn) if sn is not None else '')}: total_r={r.get('total_r'):.4f}, "
             f"max_drawdown_r={r.get('max_drawdown_r'):.4f}, n_trades={r.get('n_trades')}, "
             f"reject_kill_switch={r.get('reject_kill_switch')}, add_count={r.get('add_count')}, "
             f"reject_add_locked_profit_required={r.get('reject_add_locked_profit_required')}, "
@@ -652,8 +696,9 @@ def main() -> int:
         ),
         start=1,
     ):
+        sn = r.get("scenario")
         lines.append(
-            f"{i}. `{r.get('scenario')}`: max_drawdown_r={r.get('max_drawdown_r'):.4f}, "
+            f"{i}. `{sn}`{_scenario_line_zh_suffix(str(sn) if sn is not None else '')}: max_drawdown_r={r.get('max_drawdown_r'):.4f}, "
             f"total_r={r.get('total_r'):.4f}, add_count={r.get('add_count')}, "
             f"trend_pool_rejects="
             f"{int(r.get('reject_pcm_trend_pool_anchor_first', 0) or 0) + int(r.get('reject_pcm_trend_pool_unprotected_cap', 0) or 0) + int(r.get('reject_pcm_trend_pool_post_unlock_cap', 0) or 0)}"
@@ -669,8 +714,9 @@ def main() -> int:
         ),
         start=1,
     ):
+        sn = r.get("scenario")
         lines.append(
-            f"{i}. `{r.get('scenario')}`: total_r={r.get('total_r'):.4f}, "
+            f"{i}. `{sn}`{_scenario_line_zh_suffix(str(sn) if sn is not None else '')}: total_r={r.get('total_r'):.4f}, "
             f"max_drawdown_r={r.get('max_drawdown_r'):.4f}, add_count={r.get('add_count')}, "
             f"max_notional_frac={r.get('max_observed_notional_frac'):.4f}"
         )
