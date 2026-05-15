@@ -102,6 +102,7 @@ def test_place_limit_translates_grid_place_action() -> None:
     assert kwargs["price"] == 101000.0
     assert kwargs["client_order_id"].startswith("cg_")
     assert result.status == "open"
+    assert (result.raw or {}).get("local_order_id") == "grid_s1"
 
 
 def test_place_marketable_limit_uses_ioc_limit_order() -> None:
@@ -157,7 +158,7 @@ def test_market_exit_uses_reduce_only_opposite_side() -> None:
     api = _api()
     adapter = GridExecutionAdapter(api)
 
-    adapter.execute_action(
+    result = adapter.execute_action(
         {
             "action": "market_exit",
             "symbol": "BTCUSDT",
@@ -172,6 +173,7 @@ def test_market_exit_uses_reduce_only_opposite_side() -> None:
     assert kwargs["order_type"] == OrderType.MARKET
     assert kwargs["quantity"] == 0.03
     assert kwargs["reduce_only"] is True
+    assert (result.raw or {}).get("local_order_id") == "exit_l1"
 
 
 def test_place_stop_loss_protection_uses_explicit_position_side() -> None:

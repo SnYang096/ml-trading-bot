@@ -128,6 +128,64 @@ def test_chop_grid_execution_report_moves_filled_order_to_inventory(
     assert tp_action["price"] == tp_action["trigger_price"]
 
 
+def test_chop_grid_keeps_local_only_missing_pending_orders(tmp_path: Path) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        level_notional=100.0,
+    )
+    engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=100.0,
+        low=100.0,
+        close=100.0,
+        atr=2.0,
+        features={"semantic_chop": 0.8, "box_prefilter": False},
+    )
+    before_ids = [o.order_id for o in engine.state.pending_orders]
+
+    engine.on_reconciliation_report(
+        ReconciliationReport(
+            missing_exchange_orders=[
+                engine.local_order_snapshots()[0],
+            ]
+        )
+    )
+
+    after_ids = [o.order_id for o in engine.state.pending_orders]
+    assert before_ids == after_ids
+
+
+def test_chop_grid_prunes_mapped_missing_pending_orders(tmp_path: Path) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        level_notional=100.0,
+    )
+    engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=100.0,
+        low=100.0,
+        close=100.0,
+        atr=2.0,
+        features={"semantic_chop": 0.8, "box_prefilter": False},
+    )
+    target = engine.state.pending_orders[0]
+    target.exchange_order_id = "ex_1"
+
+    engine.on_reconciliation_report(
+        ReconciliationReport(
+            missing_exchange_orders=[
+                engine.local_order_snapshots()[0],
+            ]
+        )
+    )
+
+    assert all(o.order_id != target.order_id for o in engine.state.pending_orders)
+
+
 def test_chop_grid_records_reconciliation_issues(tmp_path: Path) -> None:
     engine = ChopGridLiveEngine(
         config_path=_config(tmp_path),

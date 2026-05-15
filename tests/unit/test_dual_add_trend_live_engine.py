@@ -258,6 +258,74 @@ def test_dual_add_trend_flip_exits_offside_inventory(tmp_path: Path) -> None:
     assert [p.side for p in engine.state.inventory] == ["SHORT"]
 
 
+def test_dual_add_keeps_local_only_missing_pending_orders(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={
+            "trend_confidence": 1.0,
+            "trend_direction": "UP",
+            "semantic_chop": 0.0,
+            "box_prefilter": False,
+        },
+    )
+    before_ids = [o.order_id for o in engine.state.pending_orders]
+
+    engine.on_reconciliation_report(
+        ReconciliationReport(
+            missing_exchange_orders=[
+                engine.local_order_snapshots()[0],
+            ]
+        )
+    )
+
+    after_ids = [o.order_id for o in engine.state.pending_orders]
+    assert before_ids == after_ids
+
+
+def test_dual_add_prunes_mapped_missing_pending_orders(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={
+            "trend_confidence": 1.0,
+            "trend_direction": "UP",
+            "semantic_chop": 0.0,
+            "box_prefilter": False,
+        },
+    )
+    target = engine.state.pending_orders[0]
+    target.exchange_order_id = "ex_1"
+
+    engine.on_reconciliation_report(
+        ReconciliationReport(
+            missing_exchange_orders=[
+                engine.local_order_snapshots()[0],
+            ]
+        )
+    )
+
+    assert all(o.order_id != target.order_id for o in engine.state.pending_orders)
+
+
 def test_dual_add_records_reconciliation_report(tmp_path: Path) -> None:
     engine = DualAddTrendLiveEngine(
         config_path=_config(tmp_path),

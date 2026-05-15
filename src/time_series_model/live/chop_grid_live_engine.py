@@ -211,7 +211,7 @@ class ChopGridLiveEngine:
         """Persist exchange/client ids returned by the execution adapter."""
         for result in results:
             raw = result.raw or {}
-            local_id = str(raw.get("order_id") or "")
+            local_id = str(raw.get("local_order_id") or raw.get("order_id") or "")
             if result.action == "place":
                 order = self._find_order(
                     local_id=local_id, client_id=result.client_order_id
@@ -241,20 +241,35 @@ class ChopGridLiveEngine:
     def on_reconciliation_report(self, report: ReconciliationReport) -> None:
         missing_ids = {str(o.order_id) for o in report.missing_exchange_orders}
         if missing_ids:
-            before = len(self.state.pending_orders)
-            self.state.pending_orders = [
-                o
+            prunable_ids = {
+                str(o.order_id)
                 for o in self.state.pending_orders
-                if str(o.order_id) not in missing_ids
-            ]
-            dropped = before - len(self.state.pending_orders)
-            if dropped:
-                logger.warning(
-                    "chop_grid: pruned %d pending order(s) not on exchange "
-                    "(reconcile): %s",
-                    dropped,
-                    sorted(missing_ids)[:12],
+                if str(o.order_id) in missing_ids
+                and bool(o.exchange_order_id or o.client_order_id)
+            }
+            skipped_ids = sorted(missing_ids - prunable_ids)
+            if skipped_ids:
+                logger.info(
+                    "chop_grid: keep %d local-only missing order(s) pending "
+                    "(no exchange/client id): %s",
+                    len(skipped_ids),
+                    skipped_ids[:12],
                 )
+            if prunable_ids:
+                before = len(self.state.pending_orders)
+                self.state.pending_orders = [
+                    o
+                    for o in self.state.pending_orders
+                    if str(o.order_id) not in prunable_ids
+                ]
+                dropped = before - len(self.state.pending_orders)
+                if dropped:
+                    logger.warning(
+                        "chop_grid: pruned %d mapped pending order(s) missing on exchange "
+                        "(reconcile): %s",
+                        dropped,
+                        sorted(prunable_ids)[:12],
+                    )
         issues: List[str] = []
         issues.extend(
             f"missing_exchange_order:{o.order_id}"

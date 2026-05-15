@@ -181,6 +181,17 @@ class MultiLegExecutionAdapter:
             self._persist_order_result(action, result, purpose="entry")
             return result
 
+        logger.info(
+            "multi-leg place requested: strategy=%s symbol=%s side=%s type=%s qty=%s price=%s tif=%s local_order_id=%s",
+            self.strategy_name,
+            symbol,
+            side.value,
+            order_type.value,
+            quantity,
+            price,
+            time_in_force,
+            str(action.get("order_id") or ""),
+        )
         order = self.binance_api.place_order(
             symbol=symbol,
             side=side,
@@ -196,7 +207,20 @@ class MultiLegExecutionAdapter:
             symbol=symbol,
             order_id=str(order.get("order_id", "")),
             client_order_id=str(order.get("client_order_id") or client_order_id),
-            raw=order,
+            raw={
+                **dict(order),
+                "local_order_id": action.get("order_id"),
+                "local_client_order_id": client_order_id,
+            },
+        )
+        logger.info(
+            "multi-leg place result: strategy=%s symbol=%s local_order_id=%s exchange_order_id=%s client_order_id=%s status=%s",
+            self.strategy_name,
+            symbol,
+            str(action.get("order_id") or ""),
+            result.order_id,
+            result.client_order_id,
+            result.status,
         )
         self._persist_order_result(action, result, purpose="entry")
         return result
@@ -254,6 +278,14 @@ class MultiLegExecutionAdapter:
             )
 
         client_order_id = self._client_order_id(action)
+        logger.info(
+            "multi-leg market_exit requested: strategy=%s symbol=%s position_side=%s qty=%s local_order_id=%s",
+            self.strategy_name,
+            symbol,
+            pos_side,
+            quantity,
+            str(action.get("order_id") or ""),
+        )
         if self.shadow:
             result = MultiLegExecutionResult(
                 action="market_exit",
@@ -279,7 +311,20 @@ class MultiLegExecutionAdapter:
             symbol=symbol,
             order_id=str(order.get("order_id", "")),
             client_order_id=str(order.get("client_order_id") or client_order_id),
-            raw=order,
+            raw={
+                **dict(order),
+                "local_order_id": action.get("order_id"),
+                "local_client_order_id": client_order_id,
+            },
+        )
+        logger.info(
+            "multi-leg market_exit result: strategy=%s symbol=%s local_order_id=%s exchange_order_id=%s client_order_id=%s status=%s",
+            self.strategy_name,
+            symbol,
+            str(action.get("order_id") or ""),
+            result.order_id,
+            result.client_order_id,
+            result.status,
         )
         self._persist_order_result(action, result, purpose="market_exit")
         return result
@@ -339,7 +384,11 @@ class MultiLegExecutionAdapter:
                 status="shadow",
                 symbol=symbol,
                 client_order_id=client_order_id,
-                raw={**dict(action), "purpose": purpose, "order_type": order_type.value},
+                raw={
+                    **dict(action),
+                    "purpose": purpose,
+                    "order_type": order_type.value,
+                },
             )
             self._persist_order_result(action, result, purpose=purpose)
             return result
@@ -437,7 +486,9 @@ class MultiLegExecutionAdapter:
                     "raw": result.raw or dict(action),
                 }
             )
-        except Exception as exc:  # pragma: no cover - persistence must not block trading
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - persistence must not block trading
             logger.warning("multi-leg order persistence failed: %s", exc)
 
 
