@@ -297,10 +297,63 @@ def _setup_three_strategies(
         me_pkg=me_pkg,
         me_enabled_in_allowlist_fn=me_enabled_in_allowlist,
     )
+    # 实盘 trend_pool_guard 需要读取「当前开仓是否已 breakeven 锁盈」；
+    # 通过 manager/listener 的 PositionTracker 快照回传给 LivePCM。
+    _manager_ref: Dict[str, Any] = {"manager": None}
+
+    def _open_trend_positions_snapshot() -> List[Dict[str, Any]]:
+        mgr = _manager_ref.get("manager")
+        if mgr is None:
+            return []
+        rows: List[Dict[str, Any]] = []
+        for sym in symbols:
+            try:
+                listener = mgr.get_listener(sym)
+            except Exception:
+                continue
+            if listener is None:
+                continue
+            tracker = getattr(listener, "_position_tracker", None)
+            if tracker is None:
+                continue
+            try:
+                pos_map = tracker.all_positions() or {}
+            except Exception:
+                continue
+            for pos in pos_map.values():
+                if not isinstance(pos, dict):
+                    continue
+                archetype = str(pos.get("archetype", "") or "").strip().lower()
+                if not archetype:
+                    continue
+                side = str(pos.get("side", "") or "").strip().lower()
+                entry_price = float(pos.get("entry_price") or 0.0)
+                stop_price = pos.get("stop_loss_price")
+                stop_nonnegative = False
+                if stop_price is not None and entry_price > 0:
+                    try:
+                        stop_v = float(stop_price)
+                        if side == "long":
+                            stop_nonnegative = stop_v >= entry_price
+                        elif side == "short":
+                            stop_nonnegative = stop_v <= entry_price
+                    except Exception:
+                        stop_nonnegative = False
+                rows.append(
+                    {
+                        "symbol": str(pos.get("symbol", sym) or sym).upper().strip(),
+                        "archetype": archetype,
+                        "breakeven_locked": bool(pos.get("breakeven_locked", False)),
+                        "stop_risk_nonnegative": bool(stop_nonnegative),
+                    }
+                )
+        return rows
+
     pcm = LivePCM(
         archetype_priority=pcm_priority,
         constitution_yaml=constitution_yaml_path,
         get_open_slot_count=lambda: runtime_st.slots.active_count(),
+        get_open_trend_positions=_open_trend_positions_snapshot,
     )
     for _name, _strat in _strategy_map.items():
         pcm.register(_name, _strat, timeframe=_tf_map[_name])
@@ -360,6 +413,7 @@ def _setup_three_strategies(
         orderflow_window_minutes=window_minutes,
         order_manager=order_manager,
     )
+    _manager_ref["manager"] = manager
 
     # ── 5. 注入 decision_handler + 额外 FC + stats_collector ──
     # 监控统计收集器 (始终启用，自动清理默认关闭)
