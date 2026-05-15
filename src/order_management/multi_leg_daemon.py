@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Protocol
@@ -13,6 +14,14 @@ from src.order_management.multi_leg_risk_governor import RiskRejection
 from src.time_series_model.live.metrics_exporter import METRICS
 
 logger = logging.getLogger(__name__)
+
+_MAX_RISK_LOG_REASON = 420
+
+
+def _env_record_hedge_bar_tick_metrics() -> bool:
+    """Heartbeat counters on mlbot_strategy_event_total; off by default (noisy)."""
+    v = os.environ.get("MLBOT_HEDGE_BAR_TICK_METRICS", "").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
 
 def _risk_reject_metric_code(reason: str) -> str:
@@ -268,6 +277,9 @@ class MultiLegLiveDaemon:
                         side_r = str(
                             (rejected_action or {}).get("side", "na") or "na"
                         ).lower()
+                        act_kind = str(
+                            (rejected_action or {}).get("action", "") or ""
+                        ).lower()
                         METRICS.multi_leg_risk_reject_codes_total.labels(
                             strategy=rt.name, symbol=rt.symbol, code=code
                         ).inc(1)
@@ -277,6 +289,16 @@ class MultiLegLiveDaemon:
                             symbol=rt.symbol,
                             event="risk_reject",
                             side=side_r,
+                        )
+                        logger.info(
+                            "multi-leg risk veto: strategy=%s symbol=%s "
+                            "code=%s action=%s side=%s reason=%s",
+                            rt.name,
+                            rt.symbol,
+                            code,
+                            act_kind or "na",
+                            side_r,
+                            (reason_txt or "")[:_MAX_RISK_LOG_REASON],
                         )
                     for result in report.execution_results or []:
                         evt = str(getattr(result, "action", "execution") or "execution")
@@ -300,13 +322,14 @@ class MultiLegLiveDaemon:
                             strategy=rt.name,
                             positions=exchange_positions,
                         )
-                    METRICS.record_strategy_event(
-                        scope="hedge",
-                        strategy=rt.name,
-                        symbol=rt.symbol,
-                        event="bar_tick",
-                        side="na",
-                    )
+                    if _env_record_hedge_bar_tick_metrics():
+                        METRICS.record_strategy_event(
+                            scope="hedge",
+                            strategy=rt.name,
+                            symbol=rt.symbol,
+                            event="bar_tick",
+                            side="na",
+                        )
                 except Exception:
                     logger.debug("multi-leg metrics update skipped", exc_info=True)
 
@@ -350,13 +373,6 @@ class MultiLegLiveDaemon:
                 METRICS.multi_leg_daemon_polls_total.inc(1)
             except Exception:
                 logger.debug("multi-leg poll metric skipped", exc_info=True)
-            idle = not (
-                report.bars_seen
-                or report.action_count
-                or report.rejected_count
-                or report.execution_count
-                or report.reconciliation_issue_count
-            )
             fmt = (
                 "multi-leg daemon tick: bars=%s actions=%s rejected=%s "
                 "executed=%s reconcile_issues=%s"
@@ -368,10 +384,9 @@ class MultiLegLiveDaemon:
                 report.execution_count,
                 report.reconciliation_issue_count,
             )
-            if idle:
-                logger.debug(fmt, *args)
-            else:
-                logger.info(fmt, *args)
+            # Poll loop line is extremely noisy at INFO; detail lives in orchestrator,
+            # adapter, and risk veto lines above.
+            logger.debug(fmt, *args)
             iterations += 1
             if max_iterations is not None and iterations >= max_iterations:
                 break

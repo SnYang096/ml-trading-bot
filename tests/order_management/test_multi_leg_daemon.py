@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass, field
 from typing import Iterable
 from unittest.mock import MagicMock, patch
@@ -204,6 +205,7 @@ def test_daemon_processes_multiple_new_bars_for_same_symbol_in_order() -> None:
     ]
 
 
+@patch.dict(os.environ, {"MLBOT_HEDGE_BAR_TICK_METRICS": "1"})
 @patch(
     "src.order_management.multi_leg_daemon.METRICS.multi_leg_risk_reject_codes_total"
 )

@@ -16,7 +16,7 @@
       "gridPos": { "h": 11, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "### Multi-leg hedge → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | **15s** |\n| **首行 Stat** | `bars/min` / `uptime` / poll 次数见各自说明 |\n| **上半：管道三条** | `bars`/`actions`/`exec`：**Counter 每秒增量** ≠ trend 漏斗。右上「经典 funnel」仍为 **Trend 独占指标**，与本页下部 **不相交**。 |\n| **下半常为 No data** | 多数是 **正常现象**（无否决、无量、无持仓），详见下表 |\n\n| 下面板 | 指标 | **No data / 平胸**常见原因 |\n|--------|------|---------------------------|\n| **Risk veto by code** | `mlbot_multi_leg_risk_reject_codes_total` | **veto**：**组合风控州长**否决下单（爆仓/限额等）或 **symbol 抢仓**；**整场无 veto → 整块空** ✅ |\n| **事件 …** | `mlbot_strategy_event_total{scope=\"hedge\"}` | **`bar_tick`**=每 bar 心跳；`place`/执行类事件。**与漏斗不重复**。若时间轴前半段平胸：常为 **那会尚未部署打点 / 计数器尚无样本**。 |\n| **最近事件价** | `mlbot_strategy_event_price` | **给策略地图打点价**：仅在 **`record_strategy_event` 传了 price**（如获批 `place`、`execution`）。**只做观察、不参与决策**。**无挂单/未成序列 → 必空**。 |\n| **持仓快照** | `mlbot_position_*{scope=\"hedge\"}` | 来自 **exchange 持仓 reconcile**。**空仓或从未写出非零仓位**→ Prometheus 可能没有该标签序列 ⇒ **表格空**。 |\n| **事件计数表** | `sum by(strategy,symbol,event,side)` | `place`=州长批准挂单；仅 `bar_tick` 常为未挂单；表含交易对列。 |\n\n**strategy / symbol 变量**：`mlbot_multi_leg_bars_processed_total`。"
+        "content": "### Multi-leg hedge → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | **15s** |\n| **首行 Stat** | `bars/min` / `uptime` / poll 次数见各自说明 |\n| **上半：管道三条** | `bars`/`actions`/`exec`：**Counter 每秒增量** ≠ trend 漏斗。右上「经典 funnel」仍为 **Trend 独占指标**，与本页下部 **不相交**。 |\n| **下半常为 No data** | 多数是 **正常现象**（无否决、无量、无持仓），详见下表 |\n\n| 下面板 | 指标 | **No data / 平胸**常见原因 |\n|--------|------|---------------------------|\n| **Risk veto by code** | `mlbot_multi_leg_risk_reject_codes_total` | **veto**：**组合风控州长**否决下单（爆仓/限额等）或 **symbol 抢仓**；`code` 为粗分桶。**中文/全文原因**：审计里搜 **`multi-leg risk veto:`**（每条约一次）。**整场无 veto → 本面板空** ✅ |\n| **Cancel 原因桶** | `mlbot_multi_leg_cancel_reason_bucket_total` | **撤单归因**：`reason_bucket`= `orphan_exchange` / `reconcile` / `unspecified` / `other`；**订单级原文**见日志 **`multi-leg cancel ... reason=`**。 |\n| **市价减仓（关仓）** | `mlbot_multi_leg_market_exit_total` + **`mlbot_multi_leg_market_exit_reason_bucket_total`** | 次数 + **`reason_bucket`**（`regime_exit`/`risk_stop`/…，来自引擎 `market_exit` 的 `reason=`）；原文仍见 **`multi-leg market_exit requested`** 日志。 |\n| **引擎 bar 归因（推荐）** | `mlbot_multi_leg_engine_bar_outcome_total` | **为何本轮不下单**：chop 的 `flat_blocked_box`、`flat_blocked_chop_low`；dual 的 `flat_blocked_trend_low`、`flat_blocked_chop_high`、`flat_blocked_box`。**开仓**：`open_grid_placed` / `segment_open_placed`。**运行中**：`active_holding` / `active_manage` / `active_seed_inventory`。**平仓类**：`exit_close`。与 **风控 veto**、**交易所撤单** 是不同层——需对照着看。 |\n| **事件 …** | `mlbot_strategy_event_total{scope=\"hedge\"}` | 默认 **关闭** `bar_tick` 事件计数（省 TSDB/表格噪点）；需要心跳时设 env **`MLBOT_HEDGE_BAR_TICK_METRICS=1`**。其余 `place`/`risk_reject`/`execution` 不变。 |\n| **最近事件价** | `mlbot_strategy_event_price` | **给策略地图打点价**：仅在 **`record_strategy_event` 传了 price**（如获批 `place`、`execution`）。**只做观察、不参与决策**。**无挂单/未成序列 → 必空**。 |\n| **持仓快照** | `mlbot_position_*{scope=\"hedge\"}` | 来自 **exchange 持仓 reconcile**。**空仓或从未写出非零仓位**→ Prometheus 可能没有该标签序列 ⇒ **表格空**。 |\n| **事件计数表** | `sum by(strategy,symbol,event,side)` | `place`=州长批准挂单；仅 `bar_tick` 常为未挂单；表含交易对列。 |\n\n**strategy / symbol 变量**：`mlbot_multi_leg_bars_processed_total`。"
       },
       "transparent": false
     },
@@ -366,6 +366,40 @@
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "showHeader": true }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge · 引擎 bar 归因（空仓/开仓/持仓/平仓意图）",
+      "description": "**`mlbot_multi_leg_engine_bar_outcome_total`**：每个 **闭合 bar** 至多 **一条** outcome（`engine`= chop_grid / dual_add_trend）。\n\n**与 `risk_reject` 区别**：这里是 **策略引擎门禁**（feature 与状态机）；`mlbot_multi_leg_risk_reject_codes_total` 是 **账户组合风控州长**。\n\n**与 cancel 指标区别**：`cancel_reason_bucket` 是 **交易所撤单**；本条不含对账孤儿撤单。",
+      "id": 322,
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 84 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, symbol, engine, outcome) (rate(mlbot_multi_leg_engine_bar_outcome_total{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[$__rate_interval]))",
+          "legendFormat": "{{strategy}}/{{symbol}} · {{engine}} · {{outcome}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge · market_exit 原因桶（引擎 reason=）",
+      "description": "**`mlbot_multi_leg_market_exit_reason_bucket_total`**：与 `mlbot_multi_leg_market_exit_total` 同源增量，多一维 **`reason_bucket`**（`regime_exit`/`risk_stop`/`trend_flip`/…）。\n细因仍以审计日志 **`multi-leg market_exit requested`** 为准。",
+      "id": 323,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 84 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, symbol, reason_bucket) (rate(mlbot_multi_leg_market_exit_reason_bucket_total{job=~\"$job\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[$__rate_interval]))",
+          "legendFormat": "{{strategy}} · {{reason_bucket}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
     }
   ],
   "schemaVersion": 39,

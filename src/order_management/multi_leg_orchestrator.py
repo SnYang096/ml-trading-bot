@@ -10,6 +10,8 @@ It intentionally keeps exchange transport and strategy inventory logic separate.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, runtime_checkable
 
@@ -31,6 +33,15 @@ from src.order_management.multi_leg_risk_governor import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _reconcile_not_ok_warn_cooldown_s() -> float:
+    raw = os.environ.get("MLBOT_MULTI_LEG_RECONCILE_WARN_COOLDOWN_SECONDS", "300")
+    try:
+        v = float(raw)
+        return v if v >= 0.0 else 300.0
+    except (TypeError, ValueError):
+        return 300.0
 
 
 @runtime_checkable
@@ -92,6 +103,7 @@ class MultiLegLiveOrchestrator:
         self.strategy_name = strategy_name
         self.symbol = symbol
         self.drawdown_pct_provider = drawdown_pct_provider
+        self._last_reconcile_not_ok_warn_at: float = 0.0
 
     def run_actions(
         self,
@@ -183,16 +195,32 @@ class MultiLegLiveOrchestrator:
             exchange_positions=positions,
         )
         if not report.ok:
-            logger.warning(
-                "multi-leg reconcile not ok: strategy=%s symbol=%s "
-                "missing_exchange_orders=%d orphan_exchange_orders=%d "
-                "position_mismatches=%d",
-                self.strategy_name,
-                self.symbol,
-                len(report.missing_exchange_orders),
-                len(report.orphan_exchange_orders),
-                len(report.position_mismatches),
-            )
+            cooldown = _reconcile_not_ok_warn_cooldown_s()
+            now = time.monotonic()
+            if cooldown <= 0.0 or (now - self._last_reconcile_not_ok_warn_at) >= cooldown:
+                logger.warning(
+                    "multi-leg reconcile not ok: strategy=%s symbol=%s "
+                    "missing_exchange_orders=%d orphan_exchange_orders=%d "
+                    "position_mismatches=%d",
+                    self.strategy_name,
+                    self.symbol,
+                    len(report.missing_exchange_orders),
+                    len(report.orphan_exchange_orders),
+                    len(report.position_mismatches),
+                )
+                self._last_reconcile_not_ok_warn_at = now
+            else:
+                logger.debug(
+                    "multi-leg reconcile not ok (suppressed, cooldown=%.0fs): "
+                    "strategy=%s symbol=%s missing_exchange_orders=%d "
+                    "orphan_exchange_orders=%d position_mismatches=%d",
+                    cooldown,
+                    self.strategy_name,
+                    self.symbol,
+                    len(report.missing_exchange_orders),
+                    len(report.orphan_exchange_orders),
+                    len(report.position_mismatches),
+                )
         _call_optional(self.engine, "on_reconciliation_report", report)
         self._persist_reconciliation(report)
 

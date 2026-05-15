@@ -19,6 +19,34 @@ from src.order_management.models import OrderSide, OrderType
 logger = logging.getLogger(__name__)
 
 
+def _cancel_reason_bucket(reason: str) -> str:
+    """Low-cardinality bucket for Prometheus; see audit logs for raw reason."""
+    r = (reason or "").strip().lower()
+    if not r or r == "unspecified":
+        return "unspecified"
+    if "orphan" in r:
+        return "orphan_exchange"
+    if "reconcile" in r or "mismatch" in r:
+        return "reconcile"
+    return "other"
+
+
+def _market_exit_reason_bucket(action: Dict[str, Any]) -> str:
+    """Coarse bucket from engine ``reason=`` field (full text still in audit logs)."""
+    r = str(action.get("reason") or "").strip().lower()
+    if not r:
+        return "unspecified"
+    if "regime" in r:
+        return "regime_exit"
+    if "risk" in r or "catastrophic" in r or "stop" in r:
+        return "risk_stop"
+    if "flip" in r:
+        return "trend_flip"
+    if "orphan" in r or "reconcile" in r:
+        return "reconcile"
+    return "other"
+
+
 def _is_binance_rate_limit_detail(text: str) -> bool:
     """Recognize Binance / ccxt wording for REST rate limits (-1003, HTTP 429)."""
     chunk = str(text or "")
@@ -101,6 +129,45 @@ class MultiLegExecutionAdapter:
                     "(dualSidePosition=true). Enable Hedge Mode under Binance Futures "
                     "preferences for this account."
                 )
+
+    def _record_cancel_reason_metric(self, symbol: str, reason: str) -> None:
+        try:
+            from src.time_series_model.live.metrics_exporter import METRICS
+
+            METRICS.multi_leg_cancel_reason_bucket_total.labels(
+                strategy=self.strategy_name,
+                symbol=str(symbol or "").strip().upper(),
+                reason_bucket=_cancel_reason_bucket(reason),
+            ).inc(1)
+        except Exception:
+            logger.debug("multi-leg cancel reason metric skipped", exc_info=True)
+
+    def _record_market_exit_metric(self, symbol: str) -> None:
+        try:
+            from src.time_series_model.live.metrics_exporter import METRICS
+
+            METRICS.multi_leg_market_exit_total.labels(
+                strategy=self.strategy_name,
+                symbol=str(symbol or "").strip().upper(),
+            ).inc(1)
+        except Exception:
+            logger.debug("multi-leg market_exit metric skipped", exc_info=True)
+
+    def _record_market_exit_reason_metric(
+        self, symbol: str, action: Dict[str, Any]
+    ) -> None:
+        try:
+            from src.time_series_model.live.metrics_exporter import METRICS
+
+            METRICS.multi_leg_market_exit_reason_bucket_total.labels(
+                strategy=self.strategy_name,
+                symbol=str(symbol or "").strip().upper(),
+                reason_bucket=_market_exit_reason_bucket(action),
+            ).inc(1)
+        except Exception:
+            logger.debug(
+                "multi-leg market_exit reason metric skipped", exc_info=True
+            )
 
     def execute_actions(
         self, actions: Iterable[Dict[str, Any]]
@@ -246,6 +313,7 @@ class MultiLegExecutionAdapter:
             order_id,
             reason or "unspecified",
         )
+        self._record_cancel_reason_metric(symbol, reason)
         if self.shadow:
             result = MultiLegExecutionResult(
                 action="cancel",
@@ -286,6 +354,8 @@ class MultiLegExecutionAdapter:
             quantity,
             str(action.get("order_id") or ""),
         )
+        self._record_market_exit_metric(symbol)
+        self._record_market_exit_reason_metric(symbol, action)
         if self.shadow:
             result = MultiLegExecutionResult(
                 action="market_exit",

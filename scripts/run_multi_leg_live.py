@@ -27,7 +27,7 @@ positions.
   ``--allow-shared-account`` is explicitly set.
 
 **Process output:** ``logging`` writes to **stderr** (captured by Docker/systemd).
-By default this runner **also** appends the same INFO lines to a **daily-rotated**
+By default this runner **also** appends the same INFO lines to a **hourly-rotated** (default)
 file under ``{--state-dir}/logs/multi_leg_audit.log`` so restarts/crashes do not
 lose recent history as long as ``--state-dir`` points at a **mounted volume**
 (e.g. Docker ``-v /opt/quant-engine/data:/app/data`` and
@@ -40,7 +40,14 @@ lose recent history as long as ``--state-dir`` points at a **mounted volume**
 - ``MLBOT_MULTI_LEG_AUDIT_DISABLE`` — if truthy, skip file handler (stderr only).
 - ``MLBOT_MULTI_LEG_AUDIT_RETENTION_DAYS`` — rotated files older than this many
   days are deleted on startup (default ``30``). The active log uses
-  ``TimedRotatingFileHandler`` (midnight, keep about that many daily backups).
+  ``TimedRotatingFileHandler`` (hourly by default, keep about that many hourly backups).
+- ``MLBOT_MULTI_LEG_AUDIT_ROTATION`` — ``hour`` / ``hourly`` (default, via
+  ``MLBOT_AUDIT_ROTATION``) or ``day`` / ``midnight`` for once-per-day rollover.
+- ``MLBOT_HEDGE_BAR_TICK_METRICS`` — if truthy, record ``bar_tick`` on
+  ``mlbot_strategy_event_total`` once per processed bar (default: **off**, less noise).
+- ``MLBOT_MULTI_LEG_RECONCILE_WARN_COOLDOWN_SECONDS`` — minimum seconds between
+  WARNING logs for repeated ``reconcile not ok`` (default ``300``; set ``0`` to log
+  every time at WARNING).
 """
 
 from __future__ import annotations
@@ -512,12 +519,14 @@ def _make_engine(strategy: str, *, symbol: str, args: argparse.Namespace) -> Any
             config_path=args.chop_grid_config,
             state_path=state_dir / f"chop_grid_{symbol}.json",
             level_notional=args.unit_notional,
+            metrics_strategy=strategy,
         )
     if strategy == "dual_add_trend":
         return DualAddTrendLiveEngine(
             config_path=args.dual_add_config,
             state_path=state_dir / f"dual_add_trend_{symbol}.json",
             unit_notional=args.unit_notional,
+            metrics_strategy=strategy,
         )
     raise ValueError(f"unsupported strategy: {strategy}")
 
@@ -528,6 +537,7 @@ def _configure_multi_leg_file_logging(args: argparse.Namespace) -> None:
         disable_env="MLBOT_MULTI_LEG_AUDIT_DISABLE",
         path_env="MLBOT_MULTI_LEG_AUDIT_LOG",
         retention_env="MLBOT_MULTI_LEG_AUDIT_RETENTION_DAYS",
+        rotation_env="MLBOT_MULTI_LEG_AUDIT_ROTATION",
         banner="multi-leg audit file",
     )
 

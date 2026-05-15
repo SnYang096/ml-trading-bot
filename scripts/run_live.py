@@ -8,10 +8,11 @@ GenericLiveStrategy → 配置驱动通用决策引擎
   quant-trend-fattail: 磁盘 Feature Bus → MultiSymbolManager → PCM → OrderManager（+ 可选 User Stream）
 
 审计日志文件（可选，默认开启）：
-  ``{MLBOT_LIVE_STORAGE_BASE}/logs/trend_live_audit.log`` — 按日切分并保留约
-  ``MLBOT_LIVE_AUDIT_RETENTION_DAYS``（默认 30）。环境变量：
+  ``{MLBOT_LIVE_STORAGE_BASE}/logs/trend_live_audit.log`` — 默认**按小时**切分并保留约
+  ``MLBOT_LIVE_AUDIT_RETENTION_DAYS``（默认 30 天，约 720 个按小时归档）。环境变量：
   ``MLBOT_LIVE_AUDIT_LOG``（路径或 ``default``）、``MLBOT_LIVE_AUDIT_DISABLE``、
-  ``MLBOT_LIVE_AUDIT_RETENTION_DAYS``。趋势单 ``clientOrderId`` 前缀：
+  ``MLBOT_LIVE_AUDIT_RETENTION_DAYS``、``MLBOT_LIVE_AUDIT_ROTATION``（或共享 ``MLBOT_AUDIT_ROTATION``：
+  ``hour``/``day``）。趋势单 ``clientOrderId`` 前缀：
   ``MLBOT_LIVE_CLIENT_ORDER_PREFIX``（默认 ``tl``，需满足 Binance 长度限制）。
 """
 
@@ -964,6 +965,7 @@ async def main() -> None:
         disable_env="MLBOT_LIVE_AUDIT_DISABLE",
         path_env="MLBOT_LIVE_AUDIT_LOG",
         retention_env="MLBOT_LIVE_AUDIT_RETENTION_DAYS",
+        rotation_env="MLBOT_LIVE_AUDIT_ROTATION",
         banner="trend/live audit file",
     )
     # warmup 只需恢复 memory_window + 时间戳（7 天足够）

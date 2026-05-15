@@ -129,6 +129,10 @@ class Metrics:
             self.multi_leg_user_stream_events_total = _NOOP
             self.multi_leg_daemon_polls_total = _NOOP
             self.multi_leg_risk_reject_codes_total = _NOOP
+            self.multi_leg_cancel_reason_bucket_total = _NOOP
+            self.multi_leg_market_exit_total = _NOOP
+            self.multi_leg_market_exit_reason_bucket_total = _NOOP
+            self.multi_leg_engine_bar_outcome_total = _NOOP
             self.strategy_symbol_bar_ohlc = _NOOP
             self.account_update_success = _NOOP
             self.account_update_age_seconds = _NOOP
@@ -204,6 +208,26 @@ class Metrics:
             "mlbot_multi_leg_risk_reject_codes_total",
             "Multi-leg portfolio risk vetoes by coarse reason bucket",
             ["strategy", "symbol", "code"],
+        )
+        self.multi_leg_cancel_reason_bucket_total = Counter(
+            "mlbot_multi_leg_cancel_reason_bucket_total",
+            "Multi-leg exchange cancel attempts grouped by coarse reason bucket",
+            ["strategy", "symbol", "reason_bucket"],
+        )
+        self.multi_leg_market_exit_total = Counter(
+            "mlbot_multi_leg_market_exit_total",
+            "Multi-leg reduce-only market exits requested (shadow or live submit path)",
+            ["strategy", "symbol"],
+        )
+        self.multi_leg_market_exit_reason_bucket_total = Counter(
+            "mlbot_multi_leg_market_exit_reason_bucket_total",
+            "market_exit intents by coarse reason label from action payload",
+            ["strategy", "symbol", "reason_bucket"],
+        )
+        self.multi_leg_engine_bar_outcome_total = Counter(
+            "mlbot_multi_leg_engine_bar_outcome_total",
+            "Per-bar engine classification (why flat / open / hold / exit) for hedge engines",
+            ["strategy", "symbol", "engine", "outcome"],
         )
 
         self.strategy_symbol_bar_ohlc = Gauge(
