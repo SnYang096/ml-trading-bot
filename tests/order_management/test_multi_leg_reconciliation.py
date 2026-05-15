@@ -103,6 +103,24 @@ def test_position_mismatch_respects_tolerance() -> None:
     assert report.position_mismatches == []
 
 
+def test_skips_position_check_when_policy_opted_out() -> None:
+    reconciler = MultiLegReconciler(
+        ReconciliationPolicy(skip_position_reconciliation=True)
+    )
+    report = reconciler.reconcile(
+        local_positions=[LocalPositionSnapshot("BTCUSDT", "LONG", 0.02)],
+        exchange_positions=[
+            {
+                "symbol": "BTCUSDT",
+                "position_side": "LONG",
+                "position_amount": 0.0,
+            }
+        ],
+    )
+    assert report.position_mismatches == []
+    assert report.ok
+
+
 def test_matching_client_order_id_is_clean() -> None:
     reconciler = MultiLegReconciler(ReconciliationPolicy(client_id_prefixes={"cg_"}))
 

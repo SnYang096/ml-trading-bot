@@ -315,6 +315,22 @@ class DualAddTrendLiveEngine:
         self.save_state()
 
     def on_reconciliation_report(self, report: ReconciliationReport) -> None:
+        missing_ids = {str(o.order_id) for o in report.missing_exchange_orders}
+        if missing_ids:
+            before = len(self.state.pending_orders)
+            self.state.pending_orders = [
+                o
+                for o in self.state.pending_orders
+                if str(o.order_id) not in missing_ids
+            ]
+            dropped = before - len(self.state.pending_orders)
+            if dropped:
+                logger.warning(
+                    "dual_add_trend: pruned %d pending order(s) not on exchange "
+                    "(reconcile): %s",
+                    dropped,
+                    sorted(missing_ids)[:12],
+                )
         issues: List[str] = []
         issues.extend(
             f"missing_exchange_order:{o.order_id}"

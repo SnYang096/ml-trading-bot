@@ -37,6 +37,9 @@ class ReconciliationPolicy:
     client_id_prefixes: Set[str] = field(default_factory=set)
     cancel_orphan_exchange_orders: bool = True
     quantity_tolerance: float = 1e-9
+    # When chop_grid + dual_add_trend run on the same symbol, comparing one
+    # engine's inventory to combined exchange qty is meaningless (false mismatch).
+    skip_position_reconciliation: bool = False
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,8 @@ class MultiLegReconciler:
         local_positions: Iterable[LocalPositionSnapshot],
         exchange_positions: Iterable[Mapping[str, Any]],
     ) -> List[PositionMismatch]:
+        if self.policy.skip_position_reconciliation:
+            return []
         local = _position_quantities(local_positions)
         exchange = _exchange_position_quantities(exchange_positions)
         keys = set(local) | set(exchange)

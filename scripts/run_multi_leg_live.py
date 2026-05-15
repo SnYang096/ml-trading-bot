@@ -52,6 +52,7 @@ import logging
 import os
 import sys
 import time
+from collections import Counter
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
@@ -422,6 +423,15 @@ def build_daemon(
             lookback_days=args.lookback_days,
         )
     runtimes: List[StrategyRuntime] = []
+    multi_engine_symbols = {
+        s
+        for s, n in Counter(
+            str(sym).strip().upper()
+            for _st in strategies
+            for sym in strategy_symbols.get(_st, [])
+        ).items()
+        if int(n or 0) >= 2
+    }
     for strategy in strategies:
         strat_symbols = strategy_symbols.get(strategy, [])
         for symbol in strat_symbols:
@@ -437,8 +447,12 @@ def build_daemon(
                 strategy_name=strategy,
             )
             governor = MultiLegPortfolioRiskGovernor(risk_limits)
+            sym_u = str(symbol).strip().upper()
             reconciler = MultiLegReconciler(
-                ReconciliationPolicy(client_id_prefixes={f"{prefix}_"})
+                ReconciliationPolicy(
+                    client_id_prefixes={f"{prefix}_"},
+                    skip_position_reconciliation=(sym_u in multi_engine_symbols),
+                )
             )
             engine = _make_engine(strategy, symbol=symbol, args=args)
             orchestrator = MultiLegLiveOrchestrator(
