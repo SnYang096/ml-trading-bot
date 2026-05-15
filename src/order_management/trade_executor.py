@@ -42,6 +42,34 @@ def _family_key(archetype: str) -> str:
     return s.split("-", 1)[0]
 
 
+def _minutes_since_iso_utc(iso_ref: Optional[str]) -> Optional[float]:
+    """Wall-clock minutes from ``iso_ref`` to now UTC. None if parsing fails."""
+    if not iso_ref:
+        return None
+    try:
+        t_ref = pd.Timestamp(iso_ref)
+        if t_ref.tzinfo is None:
+            t_ref = t_ref.tz_localize("UTC")
+        return (pd.Timestamp.now(tz=timezone.utc) - t_ref).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
+def _to_iso_utc(value: Any) -> Optional[str]:
+    """Best-effort conversion to UTC ISO string."""
+    if value is None:
+        return None
+    try:
+        ts = pd.Timestamp(value)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        else:
+            ts = ts.tz_convert("UTC")
+        return ts.isoformat()
+    except Exception:
+        return None
+
+
 class TradeExecutor:
     """交易执行器
 
@@ -347,6 +375,50 @@ class TradeExecutor:
             locked_profit=locked_profit,
             position_action=str(intent.action),
         )
+        exec_profile = dict(intent.execution_profile or {})
+        _ec_pre = dict(exec_profile.get("execution_constraints") or {})
+        try:
+            min_gap_m = float(_ec_pre.get("min_order_interval_minutes", 0) or 0)
+        except (TypeError, ValueError):
+            min_gap_m = 0.0
+        if min_gap_m > 0:
+            rec_pre = self.runtime_state.add_position.positions.get(parent_pid)
+            seen_add_count = int(rec_pre.add_count) if rec_pre is not None else 0
+            ref_iso = (
+                (getattr(rec_pre, "last_add_at", None) or rec_pre.updated_at)
+                if rec_pre is not None
+                else None
+            )
+            if not ref_iso:
+                ref_iso = self._infer_last_add_at(parent_pid)
+                if ref_iso:
+                    seen_add_count = max(seen_add_count, 1)
+                    if rec_pre is not None and not getattr(
+                        rec_pre, "last_add_at", None
+                    ):
+                        rec_pre.last_add_at = str(ref_iso)
+            if seen_add_count > 0 and ref_iso:
+                elapsed = _minutes_since_iso_utc(str(ref_iso))
+                if elapsed is None:
+                    logger.warning(
+                        "[%s] add min_order_interval skipped: unparsable last_add_at (%r)",
+                        self.symbol,
+                        ref_iso,
+                    )
+                elif elapsed < float(min_gap_m):
+                    raise ConstitutionViolation(
+                        code="ADD_POSITION_MIN_INTERVAL",
+                        message=(
+                            f"min_order_interval_minutes={min_gap_m:.0f}: "
+                            f"only {elapsed:.1f}m since last add"
+                        ),
+                        context={
+                            "parent_position_id": parent_pid,
+                            "elapsed_minutes": elapsed,
+                            "required_minutes": min_gap_m,
+                        },
+                    )
+
         add_rules = dict(
             self.constitution_executor.resolve_add_position_for_strategy(
                 str(intent.archetype), position_action=str(intent.action)
@@ -405,6 +477,45 @@ class TradeExecutor:
             "parent_stop_loss_price": parent_pos.get("stop_loss_price"),
             "parent_structural_exit": parent_pos.get("structural_exit"),
         }
+
+    def _infer_last_add_at(self, parent_position_id: str) -> Optional[str]:
+        """Infer last add-leg timestamp from live state, then storage fallback.
+
+        This is a lightweight restart fallback when ``add_position_state`` is absent.
+        """
+        parent_pid = str(parent_position_id or "").strip()
+        if not parent_pid:
+            return None
+
+        # 1) Open in-memory add legs under this parent.
+        latest_ts: Optional[pd.Timestamp] = None
+        for pos in self.position_tracker.all_positions().values():
+            if not bool(pos.get("_is_add_position", False)):
+                continue
+            if str(pos.get("_parent_pid", "") or "").strip() != parent_pid:
+                continue
+            et = _to_iso_utc(pos.get("entry_time"))
+            if not et:
+                continue
+            try:
+                ts = pd.Timestamp(et)
+            except Exception:
+                continue
+            latest_ts = ts if latest_ts is None or ts > latest_ts else latest_ts
+        if latest_ts is not None:
+            return latest_ts.isoformat()
+
+        # 2) SQLite storage fallback (historical add legs).
+        storage = getattr(self.order_manager, "storage", None)
+        if storage is not None and hasattr(storage, "get_latest_add_entry_time"):
+            try:
+                raw = storage.get_latest_add_entry_time(parent_position_id=parent_pid)
+            except Exception:
+                raw = None
+            iso = _to_iso_utc(raw)
+            if iso:
+                return iso
+        return None
 
     def _resolve_parent_position(
         self, intent: TradeIntent

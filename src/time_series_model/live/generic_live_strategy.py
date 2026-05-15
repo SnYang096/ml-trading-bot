@@ -1129,6 +1129,10 @@ class GenericLiveStrategy:
                 "add_position": (
                     (self.archetype.execution.raw or {}).get("add_position") or {}
                 ),
+                "execution_constraints": dict(
+                    (self.archetype.execution.raw or {}).get("execution_constraints")
+                    or {}
+                ),
             },
         )
 

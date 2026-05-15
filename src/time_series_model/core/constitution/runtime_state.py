@@ -42,6 +42,9 @@ class AddPositionRecord:
     locked_profit: bool = False
     current_r: Optional[float] = None
     updated_at: Optional[str] = None
+    #: ISO UTC timestamp of last successful add fill for this parent (live + persisted).
+    #: Used with ``execution_constraints.min_order_interval_minutes`` (between adds only).
+    last_add_at: Optional[str] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -50,6 +53,7 @@ class AddPositionRecord:
             "locked_profit": bool(self.locked_profit),
             "current_r": self.current_r,
             "updated_at": self.updated_at,
+            "last_add_at": self.last_add_at,
         }
 
 

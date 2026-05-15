@@ -18,6 +18,9 @@ import pytest
 from unittest.mock import MagicMock, patch, call
 from datetime import datetime, timezone
 
+import pandas as pd
+
+from src.time_series_model.core.constitution.runtime_state import AddPositionRecord
 from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.order_management.trade_executor import TradeExecutor
@@ -363,6 +366,112 @@ class TestAddPositionLivePath:
                 ),
                 features=_make_features(close=52000.0, atr=500.0, equity=10000.0),
             )
+        assert result is False
+        om.place_order.assert_not_called()
+
+    def test_add_position_min_interval_blocks_second_add_too_fast(self):
+        ex, om, ce, pt = _make_executor(trade_size=0.001)
+        parent_pid = "BTCUSDT:parent-2"
+        pt.add(
+            parent_pid,
+            {
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+                "entry_price": 50000.0,
+                "initial_risk_distance": 1000.0,
+                "atr_at_entry": 500.0,
+            },
+        )
+        ex.runtime_state.slots.active[parent_pid] = MagicMock(archetype="bpc")
+        ref = "2025-06-01T10:00:00+00:00"
+        ex.runtime_state.add_position.positions[parent_pid] = AddPositionRecord(
+            position_id=parent_pid,
+            add_count=1,
+            locked_profit=False,
+            updated_at=ref,
+            last_add_at=ref,
+        )
+        ce.resolve_add_position_for_strategy.return_value = {
+            "enabled": True,
+            "max_add_times": 3,
+            "require_locked_profit": False,
+            "trigger": {"enabled": False},
+            "add_size_multipliers": [1.0],
+        }
+        now = pd.Timestamp("2025-06-01T10:45:00+00:00", tz="UTC")
+        ep = {
+            "rr_constraints": {"stop_loss_r": 2.0},
+            "execution_constraints": {"min_order_interval_minutes": 60},
+        }
+        with patch(
+            "src.order_management.trade_executor.pd.Timestamp.now",
+            return_value=now,
+        ):
+            with patch(
+                "src.order_management.trade_executor.enforce_before_order",
+            ):
+                result = ex.execute(
+                    intent=TradeIntent(
+                        action="LONG",
+                        symbol="BTCUSDT",
+                        archetype="bpc",
+                        position_id="BTCUSDT:add-interval",
+                        add_position=True,
+                        execution_profile=ep,
+                    ),
+                    features=_make_features(close=52000.0, atr=500.0, equity=10000.0),
+                )
+        assert result is False
+        om.place_order.assert_not_called()
+
+    def test_add_position_min_interval_uses_storage_fallback_after_restart(self):
+        ex, om, ce, pt = _make_executor(trade_size=0.001)
+        parent_pid = "BTCUSDT:parent-3"
+        pt.add(
+            parent_pid,
+            {
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+                "entry_price": 50000.0,
+                "initial_risk_distance": 1000.0,
+                "atr_at_entry": 500.0,
+            },
+        )
+        ex.runtime_state.slots.active[parent_pid] = MagicMock(archetype="bpc")
+        # Simulate restart-like state: no add_position runtime record.
+        ex.runtime_state.add_position.positions = {}
+        ce.resolve_add_position_for_strategy.return_value = {
+            "enabled": True,
+            "max_add_times": 3,
+            "require_locked_profit": False,
+            "trigger": {"enabled": False},
+            "add_size_multipliers": [1.0],
+        }
+        om.storage = MagicMock()
+        om.storage.get_latest_add_entry_time.return_value = "2025-06-01T10:00:00+00:00"
+        now = pd.Timestamp("2025-06-01T10:45:00+00:00", tz="UTC")
+        ep = {
+            "rr_constraints": {"stop_loss_r": 2.0},
+            "execution_constraints": {"min_order_interval_minutes": 60},
+        }
+        with patch(
+            "src.order_management.trade_executor.pd.Timestamp.now",
+            return_value=now,
+        ):
+            with patch(
+                "src.order_management.trade_executor.enforce_before_order",
+            ):
+                result = ex.execute(
+                    intent=TradeIntent(
+                        action="LONG",
+                        symbol="BTCUSDT",
+                        archetype="bpc",
+                        position_id="BTCUSDT:add-interval-storage",
+                        add_position=True,
+                        execution_profile=ep,
+                    ),
+                    features=_make_features(close=52000.0, atr=500.0, equity=10000.0),
+                )
         assert result is False
         om.place_order.assert_not_called()
 

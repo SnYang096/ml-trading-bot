@@ -178,10 +178,29 @@ def resolve_add_position_size_multiplier(
 def resolve_add_position_max_times(
     add_position_cfg: Mapping[str, Any] | None,
 ) -> int:
+    """Maximum add-on rounds for ladder sizing / gating.
+
+    If ``add_size_multipliers`` or ``min_current_r_by_add`` is a non-empty list,
+    the maximum of their lengths drives the cap (same ladder semantics as
+    :func:`_value_by_add_number`). Otherwise ``max_add_times`` from merged
+    YAML is used (default 1).
+
+    Notes:
+      - Live ``validate_add_position`` still enforces constitution
+        ``per_strategy_limits.*.max_add_times`` independently; keep that in
+        sync with ladder vector lengths when omitting redundant scalars here.
+    """
     cfg = _as_dict(add_position_cfg)
+    inferred = 0
+    for key in ("add_size_multipliers", "min_current_r_by_add"):
+        raw_l = cfg.get(key)
+        if isinstance(raw_l, list) and len(raw_l) > 0:
+            inferred = max(inferred, len(raw_l))
+    if inferred > 0:
+        return inferred
     try:
-        return max(0, int(cfg.get("max_add_times", 1)))
-    except Exception:
+        return max(0, int(cfg.get("max_add_times", 1) or 1))
+    except (TypeError, ValueError):
         return 1
 
 

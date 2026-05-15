@@ -396,6 +396,11 @@ class ConstitutionExecutor:
                         if r.get("updated_at") is not None
                         else None
                     ),
+                    last_add_at=(
+                        str(r.get("last_add_at"))
+                        if r.get("last_add_at") is not None
+                        else None
+                    ),
                 )
 
         return st
@@ -537,12 +542,14 @@ class ConstitutionExecutor:
         inferred_locked = bool(locked_profit) if locked_profit is not None else False
         rec = st.add_position.positions.get(pid)
         add_count = int(rec.add_count) if rec is not None else 0
+        _now = _iso_now()
         st.add_position.positions[pid] = AddPositionRecord(
             position_id=pid,
             add_count=int(add_count + 1),
             locked_profit=inferred_locked,
             current_r=current_r,
-            updated_at=_iso_now(),
+            updated_at=_now,
+            last_add_at=_now,
         )
 
     def validate_drawdown(self, *, state: ConstitutionState) -> None:

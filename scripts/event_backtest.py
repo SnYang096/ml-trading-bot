@@ -1302,6 +1302,11 @@ def _load_add_position_runtime_from_resume(
                 if isinstance(row.get("updated_at"), str)
                 else None
             ),
+            last_add_at=(
+                str(row["last_add_at"])
+                if isinstance(row.get("last_add_at"), str)
+                else None
+            ),
         )
         n += 1
     return n

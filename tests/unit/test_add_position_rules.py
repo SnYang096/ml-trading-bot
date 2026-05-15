@@ -3,13 +3,30 @@ from __future__ import annotations
 import pytest
 
 from src.time_series_model.core.constitution.add_position_rules import (
+    resolve_add_position_max_times,
     resolve_add_position_size_multiplier,
     resolve_float_r_ladder_only,
     validate_add_position_trigger,
 )
 
 
-def test_target_leverage_gap_uses_gap_to_compute_multiplier():
+def test_resolve_add_position_max_times_infers_longest_non_empty_vector():
+    assert (
+        resolve_add_position_max_times(
+            {
+                "max_add_times": 7,
+                "add_size_multipliers": [1, 2],
+                "min_current_r_by_add": [2, 4],
+            }
+        )
+        == 2
+    )
+    assert resolve_add_position_max_times({"max_add_times": 3}) == 3
+
+
+def test_resolve_add_position_max_times_fallback_without_vectors():
+    assert resolve_add_position_max_times(None) == 1
+    assert resolve_add_position_max_times({}) == 1
     cfg = {
         "sizing_mode": "target_leverage_gap",
         "target_leverage_by_add": [3.0],
