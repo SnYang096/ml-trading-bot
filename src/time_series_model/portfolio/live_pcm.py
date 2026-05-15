@@ -1600,6 +1600,36 @@ class LivePCM:
             for k in to_remove:
                 del self._slot_evidence[k]
 
+    def hydrate_slot_evidence_from_constitution_slots(self, runtime_st: Any) -> None:
+        """After process restart, rebuild in-memory ``_slot_evidence`` from persisted slots.
+
+        Call **after** ``load_runtime_state`` and ``_sync_slots_with_exchange`` so the
+        snapshot only contains exchange-backed slots. Without this, ``_slot_evidence`` is
+        empty while constitution still tracks active slots → the next signal is treated
+        as a new entry (``add_position=False``) instead of an add.
+        """
+        if runtime_st is None:
+            return
+        slots = getattr(runtime_st, "slots", None)
+        active = getattr(slots, "active", None) if slots is not None else None
+        if not isinstance(active, dict) or not active:
+            return
+        n = 0
+        for rec in active.values():
+            if rec is None:
+                continue
+            sym = str(getattr(rec, "symbol", None) or "").upper().strip()
+            arch = str(getattr(rec, "archetype", None) or "").strip().lower()
+            if not sym or not arch:
+                continue
+            self._record_slot(sym, arch, 0.5)
+            n += 1
+        if n:
+            logger.info(
+                "PCM: hydrated %d slot(s) from constitution runtime (restart recovery)",
+                n,
+            )
+
     # ── 配置加载 ──
 
     def load_all_configs(self) -> None:

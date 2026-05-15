@@ -444,6 +444,8 @@ def _setup_three_strategies(
 
     # ── 启动时 slot 同步: 从 Binance 查真实持仓，清理残留 stale slot ──
     _sync_slots_with_exchange(order_manager, constitution_exec, runtime_st, symbols)
+    # 进程重启后 PCM 内存槽位为空；用持久化 constitution slot 回填，避免下一信号误当「新开」
+    pcm.hydrate_slot_evidence_from_constitution_slots(runtime_st)
 
     logged_extra_timeframes: Optional[List[str]] = None
     for sym in symbols:

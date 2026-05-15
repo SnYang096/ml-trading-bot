@@ -178,3 +178,59 @@ def test_account_update_injects_equity_features():
     assert features["account_available_balance"] == 2100.0
     assert features["account_unrealized_pnl"] == -15.2
     assert features["account_event_time"] == 1710001234
+
+
+def test_exchange_fill_notifies_pcm_slot_release_with_archetype():
+    listener, om, ce, rs, _ = _make_listener()
+    listener.decision_handler = MagicMock()
+    pid = "BTCUSDT:notify"
+    listener._position_tracker.add(
+        pid,
+        {
+            "symbol": "BTCUSDT",
+            "archetype": "bpc",
+            "side": "LONG",
+            "entry_time": datetime.now(timezone.utc) - timedelta(seconds=5),
+            "qty": 0.01,
+        },
+    )
+    rs.slots.active[pid] = SlotRecord(
+        position_id=pid, symbol="BTCUSDT", archetype="bpc"
+    )
+    om.handle_execution_report.return_value = Order(
+        order_id="o_notify",
+        position_id=pid,
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.STOP_MARKET,
+        status=OrderStatus.FILLED,
+    )
+
+    listener.on_execution_report({"symbol": "BTCUSDT"})
+
+    listener.decision_handler.notify_position_closed.assert_called_once_with(
+        "BTCUSDT", "bpc"
+    )
+    ce.release_slot.assert_called()
+
+
+def test_exchange_fill_notifies_pcm_slot_release_without_archetype():
+    listener, om, ce, rs, _ = _make_listener()
+    listener.decision_handler = MagicMock()
+    pid = "BTCUSDT:missing-pos"
+    rs.slots.active[pid] = SlotRecord(position_id=pid, symbol="BTCUSDT", archetype="me")
+    om.handle_execution_report.return_value = Order(
+        order_id="o_missing_pos",
+        position_id=pid,
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+    )
+
+    listener.on_execution_report({"symbol": "BTCUSDT"})
+
+    listener.decision_handler.notify_position_closed.assert_called_once_with(
+        "BTCUSDT", ""
+    )
+    ce.release_slot.assert_called()

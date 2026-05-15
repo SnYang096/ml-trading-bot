@@ -122,6 +122,26 @@ class TestLivePCMBacktestParity:
         )
         assert len(out4) == 1
 
+    def test_hydrate_slot_evidence_from_constitution_slots_restart_recovery(self):
+        """Persisted constitution slots refill PCM memory across fake 'restart'."""
+        from src.time_series_model.core.constitution.runtime_state import (
+            ConstitutionRuntimeState,
+            SlotRecord,
+        )
+
+        pcm = LivePCM(max_slots=10)
+        pcm.register("me", FakeStrategy(intents=[_make_intent("me")]))
+        st = ConstitutionRuntimeState()
+        st.slots.active["ETHUSDT:x1"] = SlotRecord(
+            position_id="ETHUSDT:x1",
+            symbol="ETHUSDT",
+            archetype="me",
+        )
+        assert pcm._count_archetype_slots("me") == 0
+        pcm.hydrate_slot_evidence_from_constitution_slots(st)
+        assert pcm._count_archetype_slots("me") == 1
+        assert "ETHUSDT:me" in pcm._slot_evidence
+
     def test_last_decide_trace_keys_after_decide(self):
         pcm = LivePCM(max_slots=2)
         pcm.register("bpc", FakeStrategy(intents=[_make_intent("bpc")]))

@@ -207,7 +207,12 @@ class OrderFlowListener:
             return
         pos = self._position_tracker.get(pid)
         if pos is None:
-            self._release_runtime_for_position(pid, reason="position_closed")
+            self._release_runtime_for_position(
+                pid,
+                reason="position_closed",
+                symbol=self.symbol,
+                archetype="",
+            )
             return
 
         otype = str(
@@ -236,7 +241,12 @@ class OrderFlowListener:
             exit_price=exit_price,
         )
         if closed:
-            self._release_runtime_for_position(pid, reason=reason)
+            self._release_runtime_for_position(
+                pid,
+                reason=reason,
+                symbol=str(pos.get("symbol") or self.symbol),
+                archetype=str(pos.get("archetype") or ""),
+            )
             if reason == "stop_loss_hit":
                 self._maybe_trigger_abnormal_on_quick_stop(pid, pos, report)
 
@@ -246,7 +256,14 @@ class OrderFlowListener:
             return
         self._latest_account_update = dict(update)
 
-    def _release_runtime_for_position(self, position_id: str, *, reason: str) -> None:
+    def _release_runtime_for_position(
+        self,
+        position_id: str,
+        *,
+        reason: str,
+        symbol: Optional[str] = None,
+        archetype: Optional[str] = None,
+    ) -> None:
         if self.constitution_executor is None or self.runtime_state is None:
             return
         try:
@@ -259,6 +276,30 @@ class OrderFlowListener:
             self.constitution_executor.save_runtime_state(self.runtime_state)
         except Exception:
             logger.exception("[%s] 释放 runtime 状态失败: %s", self.symbol, position_id)
+        else:
+            self._notify_pcm_slot_released(symbol=symbol, archetype=archetype)
+
+    def _notify_pcm_slot_released(
+        self,
+        *,
+        symbol: Optional[str],
+        archetype: Optional[str],
+    ) -> None:
+        dh = getattr(self, "decision_handler", None)
+        if dh is None or not hasattr(dh, "notify_position_closed"):
+            return
+        sym_u = str(symbol or self.symbol or "").upper().strip()
+        if not sym_u:
+            return
+        arch = str(archetype or "").strip().lower()
+        try:
+            dh.notify_position_closed(sym_u, arch)
+        except Exception:
+            logger.debug(
+                "[%s] PCM notify_position_closed failed",
+                self.symbol,
+                exc_info=True,
+            )
 
     def _reconcile_local_positions_on_exchange_flat(self) -> None:
         _api = getattr(self.order_manager, "binance_api", None)
@@ -283,12 +324,18 @@ class OrderFlowListener:
 
     def _close_all_local_positions(self, *, reason: str) -> None:
         for pid in list(self._position_tracker.all_positions().keys()):
+            pos = self._position_tracker.get(pid) or {}
             self._position_tracker.close_from_exchange(
                 pid,
                 reason=reason,
                 exit_price=None,
             )
-            self._release_runtime_for_position(pid, reason=reason)
+            self._release_runtime_for_position(
+                pid,
+                reason=reason,
+                symbol=str(pos.get("symbol") or self.symbol),
+                archetype=str(pos.get("archetype") or ""),
+            )
 
     def _maybe_trigger_abnormal_on_quick_stop(
         self,
