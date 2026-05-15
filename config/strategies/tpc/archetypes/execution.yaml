@@ -24,9 +24,9 @@ stop_loss:
   # 2026-04-22 统一 breakeven 口径（见 position_logic.py）：
   # measure=atr 保持历史语义；lock_level_r 等价于旧 lock_profit_atr（ATR 单位）。
   breakeven:
-    enabled: false
-    trigger_r: 9
-    lock_level_r: 1.0
+    enabled: true
+    trigger_r: 1.0
+    lock_level_r: 0.0
     measure: atr
   guardrails:
     max_stop_pct: 0.1

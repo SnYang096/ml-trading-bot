@@ -27,9 +27,9 @@ holding:
   max_holding_bars: 0
 stop_loss:
   breakeven:
-    enabled: false
-    trigger_r: 9
-    lock_level_r: 1.0
+    enabled: true
+    trigger_r: 1.0
+    lock_level_r: 0.0
     measure: atr
   guardrails:
     max_stop_pct: 0.1
