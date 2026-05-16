@@ -1144,3 +1144,64 @@ MLBOT_LIVE_USE_FUTURES=true \
 MLBOT_ORDER_MANAGEMENT_DB_PATH=data/order_management.db \
 python scripts/run_live.py
 ```
+
+### 连接订单 SQLite（trend vs 多腿）
+
+趋势 / PCM（`Storage`）与多腿（`MultiLegStorage`）使用 **两个独立的库文件**，不要混用同一个路径读写：
+
+| 用途 | 环境变量或参数 | 默认路径（仓库根 cwd） |
+| --- | --- | --- |
+| trend / PCM | `MLBOT_ORDER_MANAGEMENT_DB_PATH`（与 `live/highcap/config/constitution/constitution.yaml` 里 `persist_to` 应对齐） | `data/order_management.db` |
+| 多腿 | `run_multi_leg_live.py` 的 `--multi-leg-db-path` | `data/multi_leg_order_management.db` |
+
+DDL 拆分为 `src/order_management/database/schema_trend.sql`（trend）与 `schema_multi_leg.sql`（多腿）。
+
+**命令行查看（任意机器上装好 `sqlite3` 即可）：**
+
+```bash
+# trend 库（示例路径按你本地或服务器实际为准）
+sqlite3 /path/to/order_management.db "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+
+# 多腿库
+sqlite3 /path/to/multi_leg_order_management.db "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+```
+
+Docker 镜像内挂载常见为 `-v …/quant-engine/data:/app/data`，则在容器里是 `/app/data/order_management.db`、`/app/data/multi_leg_order_management.db`。  
+生产宿主机上一份典型绝对路径：`/opt/quant-engine/data/order_management.db`、`/opt/quant-engine/data/multi_leg_order_management.db`。  
+若需从历史污染库里迁出混入的表列，可使用仓库脚本：`scripts/split_order_management_db.py`（先备份，建议 `--dry-run`）。
+
+监控栈中带 **sqlite-web 只读 Web 界面**（无登录，`deploy.yml` 部署注释）：`8871`=live_monitor 统计库、`8872`=trend `order_management`、`8873`=多腿 `multi_leg_order_management`。监听在 **服务器本机**（`127.0.0.1`）时，需经 SSH 端口转发到笔记本再打开浏览器，且 **勿对公网裸暴露**。
+
+**Windows PowerShell（多端口一次转发，会话保持不要关窗口）：**
+
+```powershell
+ssh -i "C:\Users\hanse\.ssh\awskeypair.pem" `
+  -L 8871:127.0.0.1:8871 `
+  -L 8872:127.0.0.1:8872 `
+  -L 8873:127.0.0.1:8873 `
+  -N ubuntu@13.113.18.30
+```
+
+（将密钥路径、用户、IP 换成你自己的。Linux / macOS 同理，把多行 `` ` `` 改成行末 `\`。）
+
+**转发成功后，本机浏览器示例：**
+
+| 用途 | 示例 URL |
+| --- | --- |
+| 多腿订单表（只读查询页） | http://127.0.0.1:8873/multi_leg_orders/query/ |
+| trend 订单表 | http://127.0.0.1:8872/orders/query/ |
+| live_monitor | 视库内表而定，例如 `http://127.0.0.1:8871/<表名>/query/` |
+
+更细的存储语义见 `docs/deployment/LIVE_CADENCE_AND_STORAGE_CN.md`。
+
+### 打开 Grafana
+
+部署流水线里 Grafana 暴露在监控主机：**`http://<主机 IP>:3000`**（若只绑在服务器 `127.0.0.1`，同样要 SSH 转发）。Compose 初次默认 **`admin / admin`**，上线后请立即改密码。Prometheus 常见为 `:9091`（以你服务器 `docker compose` / `deploy/monitoring` 实际映射为准）。
+
+**只转 Grafana（Bash）：**
+
+```bash
+ssh -i ~/.ssh/your_key.pem -L 3000:127.0.0.1:3000 -N <用户>@<主机>
+```
+
+浏览器打开 `http://127.0.0.1:3000`。需要同时开 sqlite-web 时，可把上面的 PowerShell 例子里再加上一行 ``-L 3000:127.0.0.1:3000``（或单独再开一个 `ssh -L` 会话）。
