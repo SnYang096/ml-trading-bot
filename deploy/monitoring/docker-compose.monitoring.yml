@@ -4,7 +4,7 @@
 # Prometheus: http://localhost:9091
 # Grafana:    http://localhost:3000  (admin / admin)
 #
-# sqlite-web（只读挂载； coleifer/sqlite-web 一单库一进程）
+# sqlite-web（coleifer/sqlite-web 一单库一进程；order/multi_leg 目录需 RW 挂载，详见各 service 注释）
 #   live_monitor.db        → http://<host>:8871  （stats_15min）
 #   order_management.db    → http://<host>:8872  （trend 宪法/订单台账等）
 #   multi_leg_order_management.db → http://<host>:8873
@@ -83,7 +83,8 @@ services:
     ports:
       - "8872:8872"
     volumes:
-      - /opt/quant-engine/live/highcap/data/db:/db/trend:ro
+      # RW：`sqlite_web`/peewee 打开 WAL 库时无法在 :ro 卷旁创建 shm，会 OperationalError unable to open
+      - /opt/quant-engine/live/highcap/data/db:/db/trend
     command:
       - "-H"
       - "0.0.0.0"
@@ -104,7 +105,8 @@ services:
     ports:
       - "8873:8873"
     volumes:
-      - /opt/quant-engine/data:/db/engine_data:ro
+      # 同上：需 RW：`sqlite_web` 打开 WAL 库
+      - /opt/quant-engine/data:/db/engine_data
     command:
       - "-H"
       - "0.0.0.0"
