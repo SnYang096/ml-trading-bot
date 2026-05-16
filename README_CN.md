@@ -16,6 +16,8 @@
 [顶级量化团队.md](docs/archive/architecture/顶级量化团队.md)
 [一道一宿速正道](docs/archive/architecture/一道一宿速正道.md)
 
+[A/B/C 三层收益结构 · 战略框架](docs/strategy/ABC三层收益结构_战略框架_CN.md)
+
 **Alpha不是收集的，是雕刻的。**
 
 本仓库包含因子研究、模型训练、回测与数据管道的生产就绪组件。**本 README 保持尽量短**：只提供"命令 + 推荐流程 + 入口文档链接"。研究解释型内容已迁移到独立文档。

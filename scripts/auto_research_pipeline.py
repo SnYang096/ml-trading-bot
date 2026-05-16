@@ -9030,6 +9030,22 @@ def main():
             "多个月可用逗号或空格分隔, 例如 2024-07,2024-08,2024-09"
         ),
     )
+    p.add_argument(
+        "--pcm-window-start",
+        default="",
+        help=(
+            "仅 --stage pcm_joint：事件窗起始 YYYY-MM-DD，"
+            "未设置时用流水线展示的 holdout 起点。"
+        ),
+    )
+    p.add_argument(
+        "--pcm-window-end",
+        default="",
+        help=(
+            "仅 --stage pcm_joint：事件窗结束 YYYY-MM-DD，"
+            "未设置时用 dates.end_date。"
+        ),
+    )
     args = p.parse_args()
 
     if args.list_experiments and args.all and args.config is None:
@@ -9924,6 +9940,22 @@ def main():
         if len(pcm_strategies) < 2:
             p.error("可用于 PCM 的策略数 < 2，无法执行联合回测")
 
+        _pcm_hs = (
+            str(args.pcm_window_start).strip()
+            if str(args.pcm_window_start).strip()
+            else str(_display_holdout_start).strip()
+        )
+        _pcm_ed = (
+            str(args.pcm_window_end).strip()
+            if str(args.pcm_window_end).strip()
+            else str(_display_end).strip()
+        )
+        _stem = "pcm_event_backtest_stage"
+        if str(args.pcm_window_start).strip() or str(args.pcm_window_end).strip():
+            _ds = "".join(ch for ch in _pcm_hs if ch.isdigit())
+            _de = "".join(ch for ch in _pcm_ed if ch.isdigit())
+            _stem = f"pcm_event_backtest_wb_{_ds}_{_de}"
+
         for s in pcm_strategies:
             results_summary.append(
                 {
@@ -9934,6 +9966,7 @@ def main():
                     "exp_config_dir": str(PROJECT_ROOT / "config" / "strategies" / s),
                 }
             )
+        print(f"   PCM 事件窗: {_pcm_hs} ~ {_pcm_ed} (output_stem={_stem})")
         pcm_result = pipeline_events.run_pcm_joint_backtest(
             results_summary,
             history_dir,
@@ -9942,9 +9975,9 @@ def main():
             use_1min=args.use_1min,
             live_root=args.live_root,
             data_path=cfg["data_path"],
-            holdout_start=_display_holdout_start,
-            end_date=_display_end,
-            output_stem="pcm_event_backtest_stage",
+            holdout_start=_pcm_hs,
+            end_date=_pcm_ed,
+            output_stem=_stem,
             step_name="PCM Joint Event Backtest (stage)",
         )
         print(f"\n{'='*70}")
