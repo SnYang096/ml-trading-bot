@@ -134,7 +134,7 @@ def load_live_trades_from_db(
     """
     从 order_management.db positions 表加载已关仓交易.
 
-    Schema (src/order_management/database/schema.sql):
+    Schema (src/order_management/database/schema_trend.sql):
       positions: position_id, symbol, side, entry_time, exit_time,
                  entry_price, exit_price, realized_pnl, status,
                  strategy_id, archetype, ...

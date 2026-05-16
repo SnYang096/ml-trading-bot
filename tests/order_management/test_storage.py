@@ -181,3 +181,44 @@ def test_update_position(temp_db):
     retrieved = storage.get_position("test_pos_1")
     assert retrieved.current_size == 0.2
     assert retrieved.unrealized_pnl == 100.0
+
+
+def test_classic_storage_does_not_create_multi_leg_tables(tmp_path):
+    import sqlite3
+
+    p = tmp_path / "trend.db"
+    Storage(str(p))
+    conn = sqlite3.connect(str(p))
+    try:
+        names = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            if row[0] and not row[0].startswith("sqlite_")
+        ]
+    finally:
+        conn.close()
+    assert not any(str(n).startswith("multi_leg_") for n in names)
+
+
+def test_multi_leg_storage_does_not_create_classic_order_tables(tmp_path):
+    import sqlite3
+
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    p = tmp_path / "ml.db"
+    MultiLegStorage(str(p))
+    conn = sqlite3.connect(str(p))
+    try:
+        names = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            if row[0] and not row[0].startswith("sqlite_")
+        }
+    finally:
+        conn.close()
+    assert "positions" not in names
+    assert "orders" not in names

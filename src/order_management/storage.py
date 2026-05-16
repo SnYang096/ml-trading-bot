@@ -45,7 +45,7 @@ class Storage:
 
     def _init_schema(self):
         """初始化数据库schema"""
-        schema_file = Path(__file__).parent / "database" / "schema.sql"
+        schema_file = Path(__file__).parent / "database" / "schema_trend.sql"
         if schema_file.exists():
             with open(schema_file, "r", encoding="utf-8") as f:
                 schema_sql = f.read()

@@ -30,7 +30,7 @@ class MultiLegStorage:
         return conn
 
     def _init_schema(self) -> None:
-        schema_file = Path(__file__).parent / "database" / "schema.sql"
+        schema_file = Path(__file__).parent / "database" / "schema_multi_leg.sql"
         conn = self._connect()
         try:
             conn.executescript(schema_file.read_text(encoding="utf-8"))
