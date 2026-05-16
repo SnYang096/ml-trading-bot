@@ -1192,7 +1192,7 @@ ssh -i "C:\Users\hanse\.ssh\awskeypair.pem" `
 | trend 订单表 | http://127.0.0.1:8872/orders/query/ |
 | live_monitor | 视库内表而定，例如 `http://127.0.0.1:8871/<表名>/query/` |
 
-更细的存储语义见 `docs/deployment/LIVE_CADENCE_AND_STORAGE_CN.md`。
+更细的存储语义与各库主要表说明见 `docs/deployment/LIVE_CADENCE_AND_STORAGE_CN.md`；**字段与索引的 DDL** 以 `src/order_management/database/schema_trend.sql`、`schema_multi_leg.sql` 为准。
 
 ### 打开 Grafana
 

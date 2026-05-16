@@ -132,8 +132,9 @@ trend 使用两类 SQLite：
 
 2. 订单管理库：
    - 路径：`MLBOT_ORDER_MANAGEMENT_DB_PATH`，默认 `data/order_management.db`
-   - 主要表：`orders`、`positions`、`position_operations`、`stop_loss_trailing`、`safety_state`、`slots_state`、`add_position_state`
+   - 主要表：`orders`、`positions`、`position_operations`、`stop_loss_trailing`、`performance_metrics`、`safety_state`、`slots_state`、`add_position_state`
    - 写入点：`OrderManager.place_order()` / cancel / position manager / constitution runtime 等。
+   - **DDL 源码**：`src/order_management/database/schema_trend.sql`（由 `Storage`/`OrderManager` 侧初始化）；`database/schema.sql` 仅保留“勿再混写单体 DDL”的说明，不包含建表语句。
 
 `stats_15min` 是监控汇总；`orders` / `positions` 才是交易执行状态。
 
@@ -228,7 +229,7 @@ trend 使用两类 SQLite：
 - `multi_leg_execution_reports`：User Data Stream 的成交 / 订单事件审计
 - `multi_leg_reconciliation_snapshots`：定期对账快照与 drift 诊断
 
-多腿也会共享 schema 文件里的 classic 表定义，但业务上隔离使用 `multi_leg_*` 表。
+**DDL 源码**：`src/order_management/database/schema_multi_leg.sql`（仅由 `MultiLegStorage` 初始化）。趋势库与多腿库 **物理拆分**，不会在对方文件里创建另一套业务表（旧环境里若曾混在同一个 `.db`，可用仓库脚本 `scripts/split_order_management_db.py` 迁出，`README_CN.md` 实盘一节有简述）。
 
 ## “轮询频率”与“计算/下单频率”的区别
 
