@@ -21,6 +21,7 @@ def init_order_manager_from_env() -> Optional[Any]:
         "true",
         "yes",
     }
+    db_path = os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db")
     if testnet:
         api_key = os.getenv("BINANCE_FUTURES_TESTNET_API_KEY", "")
         api_secret = os.getenv("BINANCE_FUTURES_TESTNET_API_SECRET", "")
@@ -43,7 +44,6 @@ def init_order_manager_from_env() -> Optional[Any]:
             except Exception:
                 return None
         return None
-    db_path = os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db")
     try:
         from src.order_management.storage import Storage
         from src.order_management.binance_api import BinanceAPI

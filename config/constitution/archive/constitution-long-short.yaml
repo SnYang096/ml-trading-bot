@@ -114,7 +114,7 @@ kill_switch:
 # 1.1) Safety state persistence (for restart-safe halts)
 # -----------------------------------------------------------------------------
 safety_state:
-  persist_to: "data/db/order_management.db"
+  persist_to: "data/order_management.db"
 
 # -----------------------------------------------------------------------------
 # 2) Slots (low freedom position structure)
@@ -136,7 +136,7 @@ slots:
 
   # Slot state tracking (for live / restart safety).
   slot_state_tracking:
-    persist_to: "data/db/order_management.db"
+    persist_to: "data/order_management.db"
 
 # -----------------------------------------------------------------------------
 # 3) Resource Allocation — 唯一权威源

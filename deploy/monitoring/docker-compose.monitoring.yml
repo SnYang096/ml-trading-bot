@@ -6,7 +6,7 @@
 #
 # sqlite-web（coleifer/sqlite-web 一单库一进程；order/multi_leg 目录需 RW 挂载，详见各 service 注释）
 #   live_monitor.db        → http://<host>:8871  （stats_15min）
-#   order_management.db    → http://<host>:8872  （trend 宪法/订单台账等）
+#   order_management.db    → http://<host>:8872  （quant-trend-fattail：`MLBOT_ORDER_MANAGEMENT_DB_PATH` 默认对应宿主 ``/opt/quant-engine/data/order_management.db``，不是 highcap/data/db 下那份拷贝）
 #   multi_leg_order_management.db → http://<host>:8873
 # 无外置鉴权，勿对公网裸奔；建议安全组仅限内网或使用 SSH 隧道。
 #
@@ -83,8 +83,9 @@ services:
     ports:
       - "8872:8872"
     volumes:
-      # RW：`sqlite_web`/peewee 打开 WAL 库时无法在 :ro 卷旁创建 shm，会 OperationalError unable to open
-      - /opt/quant-engine/live/highcap/data/db:/db/trend
+      # 与容器内 cwd=/app、`init_order_manager_from_env` 默认 `data/order_management.db`
+      #（宿主 /opt/quant-engine/data/order_management.db）一致；不要用 highcap/data/db 里那份易空的库。
+      - /opt/quant-engine/data:/db/qe_data
     command:
       - "-H"
       - "0.0.0.0"
@@ -92,7 +93,7 @@ services:
       - "8872"
       - "-r"
       - "-x"
-      - "/db/trend/order_management.db"
+      - "/db/qe_data/order_management.db"
 
   sqlite-web-multi-leg:
     image: mlbot-sqlite-web:0.6.6

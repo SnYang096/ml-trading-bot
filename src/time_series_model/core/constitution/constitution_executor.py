@@ -107,7 +107,9 @@ def _infer_base_dir(constitution_yaml: str | Path) -> Path:
 
     这样 persist_to: 'data/order_management.db' 在两侧分别解析到:
       研究: <项目根>/data/order_management.db
-      实盘: live/highcap/data/order_management.db
+    实盘 (highcap bundle) 常与 OrderManager 共享 ``/app/data/order_management.db`` 挂载，
+    YAML 中用 ``../data/order_management.db``（相对本 base）与之对齐；
+    ``data/db/order_management.db`` 仅适合与 live_monitor 等同目录，勿与 MLBOT cwd 挂载混用。
     """
     # 1. 环境变量显式指定 (最高优先)
     env_base = os.getenv("MLBOT_LIVE_BASE_DIR")
@@ -128,6 +130,32 @@ def _infer_base_dir(constitution_yaml: str | Path) -> Path:
         return p.parents[2]
     except Exception:
         return p.parent
+
+
+def canonical_order_management_db_path(
+    *, constitution_base_dir: Path, raw_obj: Dict[str, Any]
+) -> Path:
+    """Single SQLite for orders + constitution safety/slots (.db persist targets).
+
+    Precedence matches ``init_order_manager_from_env`` relative-path semantics:
+
+    - If ``MLBOT_ORDER_MANAGEMENT_DB_PATH`` is set, resolve vs process cwd when relative.
+    - Else resolve ``safety_state.persist_to`` (or nested kill_switch.safety_state) vs
+      ``constitution_base_dir``, defaulting to ``data/order_management.db``.
+    """
+    env_p = (os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH") or "").strip()
+    if env_p:
+        p = Path(env_p)
+        return p.resolve() if p.is_absolute() else (Path.cwd() / p).resolve()
+
+    obj = raw_obj or {}
+    ks = obj.get("kill_switch") or {}
+    ss = obj.get("safety_state") or {}
+    ss_ks = ks.get("safety_state") or {}
+    raw = ss.get("persist_to") or ss_ks.get("persist_to") or "data/order_management.db"
+    p = Path(str(raw))
+    base = constitution_base_dir.resolve()
+    return p.resolve() if p.is_absolute() else (base / p).resolve()
 
 
 def _iso_now() -> str:
@@ -198,6 +226,10 @@ class ConstitutionExecutor:
         self._raw_obj = (
             yaml.safe_load(Path(constitution_yaml).read_text(encoding="utf-8")) or {}
         )
+        self._canonical_om_db = canonical_order_management_db_path(
+            constitution_base_dir=Path(self._base_dir),
+            raw_obj=self._raw_obj,
+        )
         self._paths = self._load_state_paths()
 
     def meta(self) -> Dict[str, Any]:
@@ -209,23 +241,7 @@ class ConstitutionExecutor:
         }
 
     def resolve_safety_db_path(self) -> Optional[Path]:
-        obj = self._raw_obj or {}
-        ks = obj.get("kill_switch") or {}
-        ss = obj.get("safety_state") or {}
-        ss_ks = ks.get("safety_state") or {}
-        db_path = (
-            ss.get("persist_to")
-            or ss_ks.get("persist_to")
-            or os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH")
-            or "data/order_management.db"
-        )
-        if not db_path:
-            return None
-        base = Path(self._base_dir).resolve()
-        p = Path(str(db_path))
-        if not p.is_absolute():
-            p = (base / p).resolve()
-        return p
+        return self._canonical_om_db
 
     def _resolve_per_strategy_limits(self) -> dict:
         """Return per_strategy_limits dict from resource_allocation."""
@@ -313,6 +329,8 @@ class ConstitutionExecutor:
             return tmp.resolve(raw), None
 
         slots_path, slots_db_path = _split_persist_target(slots_p)
+        if slots_db_path is not None:
+            slots_db_path = self._canonical_om_db
         return ConstitutionStatePaths(
             base_dir=base,
             slots_path=slots_path,
