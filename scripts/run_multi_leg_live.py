@@ -48,6 +48,10 @@ lose recent history as long as ``--state-dir`` points at a **mounted volume**
 - ``MLBOT_MULTI_LEG_RECONCILE_WARN_COOLDOWN_SECONDS`` — minimum seconds between
   WARNING logs for repeated ``reconcile not ok`` (default ``300``; set ``0`` to log
   every time at WARNING).
+- ``MLBOT_MULTI_LEG_ORDER_BACKFILL_INTERVAL_SECONDS`` — periodic REST backfill for
+  ``multi_leg_orders`` rows (default ``60`` when unset; ``0``/``off`` to disable).
+- ``MLBOT_MULTI_LEG_ORDER_BACKFILL_LOOKBACK_HOURS`` / ``..._LIMIT`` — backfill
+  candidate window + per-pass max rows (defaults ``168`` / ``200``).
 """
 
 from __future__ import annotations
@@ -99,6 +103,11 @@ from src.order_management.multi_leg_daemon import (  # noqa: E402
 from src.order_management.multi_leg_orchestrator import (
     MultiLegLiveOrchestrator,
 )  # noqa: E402
+from src.order_management.multi_leg_order_backfill import (  # noqa: E402
+    multi_leg_backfill_enabled,
+    multi_leg_backfill_interval_seconds,
+    periodic_multi_leg_order_backfill,
+)
 from src.order_management.multi_leg_reconciliation import (  # noqa: E402
     MultiLegReconciler,
     ReconciliationPolicy,
@@ -689,6 +698,17 @@ async def async_main() -> None:
         await user_stream.start()
 
     metrics_task = asyncio.create_task(_periodic_process_metrics())
+    backfill_task: asyncio.Task | None = None
+    if multi_leg_backfill_interval_seconds() > 0 and multi_leg_backfill_enabled(
+        exchange_api, storage
+    ):
+        backfill_task = asyncio.create_task(
+            periodic_multi_leg_order_backfill(
+                api=exchange_api,
+                storage=storage,
+                startup_delay_seconds=20.0,
+            )
+        )
     try:
         start = getattr(bar_provider, "start", None)
         if callable(start):
@@ -703,6 +723,10 @@ async def async_main() -> None:
         metrics_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await metrics_task
+        if backfill_task is not None:
+            backfill_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await backfill_task
         stop = getattr(bar_provider, "stop", None)
         if callable(stop):
             await stop()

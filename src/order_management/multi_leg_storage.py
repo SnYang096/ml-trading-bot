@@ -119,7 +119,8 @@ class MultiLegStorage:
             "symbol": payload.get("symbol") or "",
             "leg_id": payload.get("leg_id") or payload.get("position_id"),
             "side": payload.get("side") or "",
-            "position_side": payload.get("position_side") or payload.get("positionSide"),
+            "position_side": payload.get("position_side")
+            or payload.get("positionSide"),
             "order_type": payload.get("order_type") or payload.get("type") or "",
             "purpose": payload.get("purpose") or payload.get("action"),
             "quantity": float(payload.get("quantity") or payload.get("amount") or 0.0),
@@ -189,6 +190,67 @@ class MultiLegStorage:
         finally:
             conn.close()
 
+    def get_recent_orders_for_backfill(
+        self,
+        *,
+        lookback_hours: int = 168,
+        limit: int = 200,
+        strategy: Optional[str] = None,
+        symbol: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return recent multi-leg rows that likely need REST status refresh.
+
+        Candidates include:
+        - non-terminal rows with exchange ids (still expected to evolve),
+        - filled rows missing avg/filled_at,
+        - canceled/rejected/expired rows missing error_message.
+        """
+        conn = self._connect()
+        try:
+            where_extra = ""
+            params: list[Any] = [max(1, int(lookback_hours))]
+            if strategy:
+                where_extra += " AND strategy = ? "
+                params.append(str(strategy))
+            if symbol:
+                where_extra += " AND symbol = ? "
+                params.append(str(symbol).upper())
+            params.append(max(1, int(limit)))
+            cur = conn.execute(
+                f"""
+                SELECT
+                    local_order_id, run_id, strategy, symbol, status,
+                    exchange_order_id, client_order_id, filled_quantity,
+                    average_price, filled_at, canceled_at, error_message,
+                    created_at, updated_at
+                FROM multi_leg_orders
+                WHERE
+                    created_at >= datetime('now', '-' || ? || ' hours')
+                    AND exchange_order_id IS NOT NULL
+                    AND (
+                        LOWER(TRIM(COALESCE(status, ''))) IN (
+                            'submitted', 'open', 'pending',
+                            'partially_filled', 'unknown', 'new'
+                        )
+                        OR (
+                            LOWER(TRIM(COALESCE(status, ''))) = 'filled'
+                            AND (average_price IS NULL OR filled_at IS NULL)
+                        )
+                        OR (
+                            LOWER(TRIM(COALESCE(status, ''))) IN ('canceled', 'rejected', 'expired')
+                            AND error_message IS NULL
+                        )
+                    )
+                    {where_extra}
+                ORDER BY COALESCE(updated_at, created_at) ASC
+                LIMIT ?
+                """,
+                tuple(params),
+            )
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
     def apply_execution_report(self, payload: Dict[str, Any]) -> int:
         """Update multi_leg_orders status/fill fields from user-stream report."""
         exchange_order_id = _none_if_blank(payload.get("order_id"))
@@ -209,7 +271,9 @@ class MultiLegStorage:
         evt_time = payload.get("trade_time") or payload.get("event_time")
         is_terminal = status in {"filled", "canceled", "rejected", "expired"}
         filled_at = evt_time if status == "filled" else None
-        canceled_at = evt_time if status in {"canceled", "rejected", "expired"} else None
+        canceled_at = (
+            evt_time if status in {"canceled", "rejected", "expired"} else None
+        )
         error_message = _none_if_blank(
             payload.get("error_message") or payload.get("reject_reason")
         )

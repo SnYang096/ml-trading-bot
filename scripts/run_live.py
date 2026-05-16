@@ -14,6 +14,13 @@ GenericLiveStrategy → 配置驱动通用决策引擎
   ``MLBOT_LIVE_AUDIT_RETENTION_DAYS``、``MLBOT_LIVE_AUDIT_ROTATION``（或共享 ``MLBOT_AUDIT_ROTATION``：
   ``hour``/``day``）。趋势单 ``clientOrderId`` 前缀：
   ``MLBOT_LIVE_CLIENT_ORDER_PREFIX``（默认 ``tl``，需满足 Binance 长度限制）。
+
+终态订单 REST 回填（缺 ``average_price`` / ``filled_at`` / 驳回原因等，见
+``src/live_data_stream/terminal_order_backfill.py``）：
+
+  ``MLBOT_TERMINAL_ORDER_BACKFILL_INTERVAL_SECONDS``（未设置时默认 ``60``；``0``/``false``/``off`` 关闭）；
+  ``MLBOT_TERMINAL_ORDER_BACKFILL_LOOKBACK_HOURS``（默认 ``168``）；
+  ``MLBOT_TERMINAL_ORDER_BACKFILL_LIMIT``（默认 ``200``）。
 """
 
 from __future__ import annotations
@@ -49,6 +56,11 @@ from src.time_series_model.live.stats_collector import StatsCollector
 from src.time_series_model.live.metrics_exporter import start_metrics_server, METRICS
 from pathlib import Path as _Path
 from scripts.live_audit_file import configure_audit_from_env_defaults
+from src.live_data_stream.terminal_order_backfill import (
+    periodic_terminal_order_backfill,
+    terminal_order_backfill_enabled_interval_seconds,
+    terminal_order_backfill_should_run,
+)
 
 from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
@@ -882,6 +894,16 @@ async def _run_external_feature_bus_mode(
     funding_oi_task = asyncio.create_task(_daily_funding_oi_refresh())
     retrain_task = asyncio.create_task(_periodic_retrain_check())
 
+    terminal_backfill_task: Optional[asyncio.Task] = None
+    om = getattr(manager, "order_manager", None)
+    if (
+        terminal_order_backfill_enabled_interval_seconds() > 0
+        and terminal_order_backfill_should_run(om)
+    ):
+        terminal_backfill_task = asyncio.create_task(
+            periodic_terminal_order_backfill(om, startup_delay_seconds=20.0)
+        )
+
     try:
         while True:
             for sym in symbols:
@@ -943,6 +965,8 @@ async def _run_external_feature_bus_mode(
         market_task.cancel()
         funding_oi_task.cancel()
         retrain_task.cancel()
+        if terminal_backfill_task is not None:
+            terminal_backfill_task.cancel()
         if bg_gap_task:
             bg_gap_task.cancel()
         if manager.user_stream is not None:
