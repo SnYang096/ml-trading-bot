@@ -277,19 +277,29 @@ class MultiLegLiveOrchestrator:
     def _persist_execution_report(self, report: Mapping[str, Any]) -> None:
         if self.storage is None:
             return
-        self.storage.record_execution_report(
-            {
-                "run_id": self.run_id,
-                "strategy": self.strategy_name,
-                "symbol": report.get("symbol") or self.symbol,
-                "order_id": report.get("order_id"),
-                "client_order_id": report.get("client_order_id"),
-                "status": report.get("status"),
-                "execution_type": report.get("execution_type"),
-                "event_time": report.get("event_time") or report.get("trade_time"),
-                "raw": dict(report),
-            }
-        )
+        payload = {
+            "run_id": self.run_id,
+            "strategy": self.strategy_name,
+            "symbol": report.get("symbol") or self.symbol,
+            "order_id": report.get("order_id"),
+            "client_order_id": report.get("client_order_id"),
+            "status": report.get("status"),
+            "execution_type": report.get("execution_type"),
+            "event_time": report.get("event_time") or report.get("trade_time"),
+            "trade_time": report.get("trade_time"),
+            "filled_qty": report.get("filled_qty"),
+            "avg_price": report.get("avg_price"),
+            "last_filled_price": report.get("last_filled_price"),
+            "commission": report.get("commission"),
+            "commission_asset": report.get("commission_asset"),
+            "reject_reason": report.get("reject_reason"),
+            "error_message": report.get("error_message"),
+            "raw": dict(report),
+        }
+        self.storage.record_execution_report(payload)
+        apply_fn = getattr(self.storage, "apply_execution_report", None)
+        if callable(apply_fn):
+            apply_fn(payload)
 
     def _persist_positions(self) -> None:
         if self.storage is None:

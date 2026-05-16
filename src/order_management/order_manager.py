@@ -180,6 +180,25 @@ class OrderManager:
                 or binance_order.get("filled_quantity", 0),
                 created_at=datetime.now(),
             )
+            # REST place 回报常不含或不完整；能拿到则一并落下，避免单靠 WS 回填
+            _avg = binance_order.get("average_price")
+            if _avg is not None:
+                try:
+                    order.average_price = float(_avg)
+                except (TypeError, ValueError):
+                    pass
+            if order.status == OrderStatus.FILLED:
+                _ts_ms = binance_order.get("timestamp")
+                try:
+                    if _ts_ms is not None:
+                        ts = float(_ts_ms)
+                        if ts > 1e12:
+                            ts /= 1000.0
+                        order.filled_at = datetime.fromtimestamp(ts)
+                    else:
+                        order.filled_at = datetime.now()
+                except Exception:
+                    order.filled_at = datetime.now()
 
             # 保存到数据库
             if self.storage.create_order(order):
@@ -346,16 +365,8 @@ class OrderManager:
                 logger.warning(f"Binance订单不存在: {order.binance_order_id}")
                 return order
 
-            # 更新订单状态
-            order.status = self._convert_order_status(binance_order["status"])
-            order.filled_quantity = binance_order.get("filled", 0)
-            order.average_price = binance_order.get("average_price")
-
-            if order.status == OrderStatus.FILLED:
-                order.filled_at = datetime.fromtimestamp(
-                    binance_order.get("created_at", datetime.now().timestamp())
-                )
-
+            # 更新订单状态（REST 兜底：补齐 WS 可能漏掉的终态字段）
+            self._apply_binance_order_snapshot(order, binance_order)
             order.updated_at = datetime.now()
             self.storage.update_order(order)
 
@@ -421,11 +432,7 @@ class OrderManager:
                         order.binance_order_id, order.symbol
                     )
                     if binance_order:
-                        order.status = self._convert_order_status(
-                            binance_order.get("status")
-                        )
-                        order.filled_quantity = binance_order.get("filled", 0)
-                        order.average_price = binance_order.get("average_price")
+                        self._apply_binance_order_snapshot(order, binance_order)
                         order.updated_at = datetime.now()
                         self.storage.update_order(order)
                         updated_orders.append(order)
@@ -461,6 +468,104 @@ class OrderManager:
                 updated_orders.append(new_order)
 
             return updated_orders
+
+    def reconcile_recent_terminal_orders(
+        self,
+        *,
+        symbol: Optional[str] = None,
+        lookback_hours: int = 24,
+        limit: int = 200,
+    ) -> List[Order]:
+        """Backfill terminal orders with missing fields via REST fetch_order."""
+        candidates = self.storage.get_recent_orders_for_backfill(
+            symbol=symbol,
+            lookback_hours=int(lookback_hours),
+            limit=int(limit),
+        )
+        updated: List[Order] = []
+        for order in candidates:
+            if not order.binance_order_id:
+                continue
+            try:
+                snap = self.binance_api.get_order(order.binance_order_id, order.symbol)
+            except Exception as exc:
+                logger.debug(
+                    "recent terminal backfill get_order failed: %s (%s)",
+                    order.order_id,
+                    exc,
+                )
+                continue
+            if not snap:
+                continue
+            before = (
+                order.status,
+                order.filled_quantity,
+                order.average_price,
+                order.filled_at,
+                order.canceled_at,
+                order.error_message,
+            )
+            self._apply_binance_order_snapshot(order, snap)
+            after = (
+                order.status,
+                order.filled_quantity,
+                order.average_price,
+                order.filled_at,
+                order.canceled_at,
+                order.error_message,
+            )
+            if after != before:
+                order.updated_at = datetime.now()
+                self.storage.update_order(order)
+                updated.append(order)
+        return updated
+
+    def _apply_binance_order_snapshot(
+        self, order: Order, binance_order: Dict[str, Any]
+    ) -> None:
+        """Apply REST snapshot fields to a local order object."""
+        order.status = self._convert_order_status(binance_order.get("status"))
+        filled = binance_order.get("filled")
+        if filled is not None:
+            try:
+                order.filled_quantity = float(filled)
+            except (TypeError, ValueError):
+                pass
+        avg = binance_order.get("average_price")
+        if avg is not None:
+            try:
+                v = float(avg)
+                if v > 0:
+                    order.average_price = v
+            except (TypeError, ValueError):
+                pass
+
+        ts = (
+            binance_order.get("update_time")
+            or binance_order.get("timestamp")
+            or binance_order.get("created_at")
+        )
+        dt: Optional[datetime] = None
+        if ts is not None:
+            try:
+                raw = float(ts)
+                if raw > 1e12:
+                    raw /= 1000.0
+                dt = datetime.fromtimestamp(raw)
+            except (TypeError, ValueError, OSError):
+                dt = None
+
+        if order.status == OrderStatus.FILLED and order.filled_at is None:
+            order.filled_at = dt or datetime.now()
+        if order.status in (
+            OrderStatus.CANCELED,
+            OrderStatus.REJECTED,
+            OrderStatus.EXPIRED,
+        ):
+            order.canceled_at = order.canceled_at or dt or datetime.now()
+            err = binance_order.get("error_message") or binance_order.get("reject_reason")
+            if err:
+                order.error_message = str(err)
 
     def _convert_order_status(self, status: Optional[str]) -> OrderStatus:
         """转换订单状态"""
@@ -520,6 +625,25 @@ class OrderManager:
             if not order:
                 # 创建本地缺失订单（对账场景）
                 symbol = report.get("symbol") or ""
+                _av_miss: Optional[float] = None
+                for raw in (report.get("avg_price"), report.get("last_filled_price")):
+                    if raw is None:
+                        continue
+                    try:
+                        v = float(raw)
+                        if v > 0:
+                            _av_miss = v
+                            break
+                    except (TypeError, ValueError):
+                        pass
+                _st = self._convert_order_status(report.get("status"))
+                _fa_miss: Optional[datetime] = None
+                if _st == OrderStatus.FILLED:
+                    ts_miss = report.get("trade_time") or report.get("event_time")
+                    if ts_miss:
+                        _fa_miss = datetime.fromtimestamp(int(ts_miss))
+                    else:
+                        _fa_miss = datetime.now()
                 order = Order(
                     order_id=f"binance_{order_id}",
                     binance_order_id=str(order_id) if order_id else None,
@@ -528,9 +652,25 @@ class OrderManager:
                     side=self._parse_order_side(report.get("side")),
                     order_type=self._parse_order_type(report.get("order_type")),
                     quantity=report.get("filled_qty", 0) or 0,
-                    status=self._convert_order_status(report.get("status")),
+                    status=_st,
                     filled_quantity=report.get("filled_qty", 0) or 0,
-                    average_price=report.get("avg_price") or None,
+                    average_price=_av_miss,
+                    commission=_as_float(report.get("commission"), 0.0),
+                    commission_asset=(
+                        str(report["commission_asset"]).strip().upper()
+                        if report.get("commission_asset")
+                        else None
+                    ),
+                    filled_at=_fa_miss,
+                    canceled_at=(
+                        datetime.now()
+                        if _st in (OrderStatus.CANCELED, OrderStatus.REJECTED, OrderStatus.EXPIRED)
+                        else None
+                    ),
+                    error_message=(
+                        str(report.get("error_message") or report.get("reject_reason") or "")
+                        or None
+                    ),
                     created_at=datetime.now(),
                 )
                 self.storage.create_order(order)
@@ -546,14 +686,51 @@ class OrderManager:
             filled_qty = report.get("filled_qty")
             if filled_qty is not None:
                 order.filled_quantity = float(filled_qty)
-            avg_price = report.get("avg_price")
-            if avg_price:
-                order.average_price = float(avg_price)
+
+            _avg_px: Optional[float] = None
+            raw_avg = report.get("avg_price")
+            if raw_avg is not None:
+                try:
+                    v = float(raw_avg)
+                    if v > 0:
+                        _avg_px = v
+                except (TypeError, ValueError):
+                    pass
+            if _avg_px is None:
+                lf = report.get("last_filled_price")
+                if lf is not None:
+                    try:
+                        v = float(lf)
+                        if v > 0 and order.status in (
+                            OrderStatus.FILLED,
+                            OrderStatus.PARTIALLY_FILLED,
+                        ):
+                            _avg_px = v
+                    except (TypeError, ValueError):
+                        pass
+            if _avg_px is not None:
+                order.average_price = _avg_px
+
+            cass = report.get("commission_asset")
+            if cass:
+                order.commission_asset = str(cass).strip().upper()
+            raw_comm = report.get("commission")
+            if raw_comm is not None:
+                try:
+                    order.commission = float(order.commission or 0.0) + float(raw_comm)
+                except (TypeError, ValueError):
+                    pass
+
+            rej = report.get("error_message") or report.get("reject_reason")
+            if rej:
+                order.error_message = str(rej)
 
             if order.status == OrderStatus.FILLED:
                 ts = report.get("trade_time") or report.get("event_time")
                 if ts:
                     order.filled_at = datetime.fromtimestamp(int(ts))
+                elif order.filled_at is None:
+                    order.filled_at = datetime.now()
             elif order.status in (
                 OrderStatus.CANCELED,
                 OrderStatus.REJECTED,
@@ -564,3 +741,10 @@ class OrderManager:
             order.updated_at = datetime.now()
             self.storage.update_order(order)
             return order
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default

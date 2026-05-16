@@ -978,6 +978,9 @@ class BinanceAPI:
                 "price": order.get("price"),
                 "filled": order.get("filled", 0),
                 "remaining": order.get("remaining", 0),
+                # ccxt Unified: cumulative average fill price once available
+                "average_price": order.get("average"),
+                "timestamp": order.get("timestamp"),
                 "info": order.get("info", {}),
             }
         except Exception as e:
@@ -1049,10 +1052,11 @@ class BinanceAPI:
         try:
             ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol) or symbol
             order = self.exchange.fetch_order(order_id, ccxt_sym)
+            info = order.get("info", {}) or {}
             return {
                 "order_id": order["id"],
                 "client_order_id": order.get("clientOrderId")
-                or (order.get("info") or {}).get("clientOrderId"),
+                or info.get("clientOrderId"),
                 "symbol": order["symbol"],
                 "side": order["side"],
                 "type": order["type"],
@@ -1062,8 +1066,11 @@ class BinanceAPI:
                 "filled": order.get("filled", 0),
                 "remaining": order.get("remaining", 0),
                 "average_price": order.get("average"),
-                "created_at": self._normalize_timestamp(order.get("timestamp")),
-                "info": order.get("info", {}),
+                "timestamp": self._normalize_timestamp(order.get("timestamp")),
+                "update_time": self._normalize_timestamp(info.get("updateTime")),
+                "reject_reason": info.get("rejectReason") or info.get("r"),
+                "error_message": info.get("msg"),
+                "info": info,
             }
         except Exception as e:
             logger.error(f"查询订单失败: {e}")

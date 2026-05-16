@@ -684,6 +684,48 @@ class Storage:
         finally:
             conn.close()
 
+    def get_recent_orders_for_backfill(
+        self,
+        *,
+        symbol: Optional[str] = None,
+        lookback_hours: int = 24,
+        limit: int = 200,
+    ) -> List[Order]:
+        """Return recent terminal orders likely missing terminal details."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            params: list[Any] = [max(1, int(lookback_hours))]
+            where_symbol = ""
+            if symbol:
+                where_symbol = " AND symbol = ? "
+                params.append(symbol)
+            params.append(max(1, int(limit)))
+            cursor.execute(
+                f"""
+                SELECT * FROM orders
+                WHERE
+                    created_at >= datetime('now', '-' || ? || ' hours')
+                    AND status IN ('filled', 'canceled', 'rejected', 'expired')
+                    AND binance_order_id IS NOT NULL
+                    AND (
+                        (status = 'filled' AND (average_price IS NULL OR filled_at IS NULL))
+                        OR (
+                            status IN ('canceled', 'rejected', 'expired')
+                            AND error_message IS NULL
+                        )
+                    )
+                    {where_symbol}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_order(row) for row in rows]
+        finally:
+            conn.close()
+
     def update_order(self, order: Order) -> bool:
         """更新订单"""
         conn = self._get_connection()

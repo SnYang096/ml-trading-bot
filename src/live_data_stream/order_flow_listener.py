@@ -198,6 +198,26 @@ class OrderFlowListener:
         order = self.order_manager.handle_execution_report(report)
         if order is None:
             return
+        if order.status in (
+            OrderStatus.FILLED,
+            OrderStatus.CANCELED,
+            OrderStatus.REJECTED,
+            OrderStatus.EXPIRED,
+        ):
+            needs_rest_backfill = (
+                (order.status == OrderStatus.FILLED and order.average_price is None)
+                or (order.status != OrderStatus.FILLED and not order.error_message)
+            )
+            if needs_rest_backfill and order.binance_order_id:
+                try:
+                    self.order_manager.sync_order_status(order.order_id)
+                    order = self.order_manager.get_order(order.order_id) or order
+                except Exception:
+                    logger.debug(
+                        "execution-report rest backfill skipped: %s",
+                        order.order_id,
+                        exc_info=True,
+                    )
         if order.status != OrderStatus.FILLED:
             return
         pid = str(order.position_id or "").strip()

@@ -103,6 +103,11 @@ class MonitoringService:
         if self._last_reconcile_time is None or now - self._last_reconcile_time >= self._reconcile_interval:
             try:
                 self.order_manager.reconcile_open_orders()
+                backfill_fn = getattr(
+                    self.order_manager, "reconcile_recent_terminal_orders", None
+                )
+                if callable(backfill_fn):
+                    backfill_fn()
             except Exception as e:
                 logger.warning(f"定期对账失败: {e}")
             self._last_reconcile_time = now

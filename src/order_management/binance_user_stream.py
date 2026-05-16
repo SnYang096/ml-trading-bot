@@ -155,6 +155,7 @@ class BinanceUserStream:
             "avg_price": float(payload.get("ap") or payload.get("avgPrice") or 0),
             "commission": float(payload.get("n") or payload.get("commission") or 0),
             "commission_asset": payload.get("N") or payload.get("commissionAsset"),
+            "reject_reason": payload.get("r") or payload.get("rejectReason"),
             "realized_pnl": float(
                 payload.get("rp") or payload.get("realizedPnl") or 0
             ),

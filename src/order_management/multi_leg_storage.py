@@ -34,9 +34,27 @@ class MultiLegStorage:
         conn = self._connect()
         try:
             conn.executescript(schema_file.read_text(encoding="utf-8"))
+            self._ensure_multi_leg_order_columns(conn)
             conn.commit()
         finally:
             conn.close()
+
+    def _ensure_multi_leg_order_columns(self, conn: sqlite3.Connection) -> None:
+        """Backfill new multi_leg_orders columns for existing DB files."""
+        cursor = conn.execute("PRAGMA table_info(multi_leg_orders)")
+        existing = {str(row[1]) for row in cursor.fetchall()}
+        alters = [
+            ("filled_quantity", "REAL DEFAULT 0"),
+            ("average_price", "REAL"),
+            ("commission", "REAL DEFAULT 0"),
+            ("commission_asset", "TEXT"),
+            ("filled_at", "TIMESTAMP"),
+            ("canceled_at", "TIMESTAMP"),
+            ("error_message", "TEXT"),
+        ]
+        for col, ddl in alters:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE multi_leg_orders ADD COLUMN {col} {ddl}")
 
     def create_run(
         self,
@@ -112,6 +130,13 @@ class MultiLegStorage:
                 payload.get("exchange_order_id") or payload.get("binance_order_id")
             ),
             "status": payload.get("status") or "unknown",
+            "filled_quantity": float(payload.get("filled_quantity") or 0.0),
+            "average_price": _optional_float(payload.get("average_price")),
+            "commission": float(payload.get("commission") or 0.0),
+            "commission_asset": _none_if_blank(payload.get("commission_asset")),
+            "filled_at": payload.get("filled_at"),
+            "canceled_at": payload.get("canceled_at"),
+            "error_message": _none_if_blank(payload.get("error_message")),
             "raw_json": _json(payload.get("raw") or payload),
         }
         conn = self._connect()
@@ -121,13 +146,16 @@ class MultiLegStorage:
                 INSERT INTO multi_leg_orders (
                     local_order_id, run_id, strategy, symbol, leg_id, side,
                     position_side, order_type, purpose, quantity, price, stop_price,
-                    client_order_id, exchange_order_id, status, raw_json
+                    client_order_id, exchange_order_id, status,
+                    filled_quantity, average_price, commission, commission_asset,
+                    filled_at, canceled_at, error_message, raw_json
                 )
                 VALUES (
                     :local_order_id, :run_id, :strategy, :symbol, :leg_id, :side,
                     :position_side, :order_type, :purpose, :quantity, :price,
                     :stop_price, :client_order_id, :exchange_order_id, :status,
-                    :raw_json
+                    :filled_quantity, :average_price, :commission, :commission_asset,
+                    :filled_at, :canceled_at, :error_message, :raw_json
                 )
                 ON CONFLICT(local_order_id) DO UPDATE SET
                     run_id = excluded.run_id,
@@ -144,6 +172,13 @@ class MultiLegStorage:
                     client_order_id = excluded.client_order_id,
                     exchange_order_id = excluded.exchange_order_id,
                     status = excluded.status,
+                    filled_quantity = excluded.filled_quantity,
+                    average_price = excluded.average_price,
+                    commission = excluded.commission,
+                    commission_asset = excluded.commission_asset,
+                    filled_at = excluded.filled_at,
+                    canceled_at = excluded.canceled_at,
+                    error_message = excluded.error_message,
                     raw_json = excluded.raw_json,
                     updated_at = CURRENT_TIMESTAMP
                 """,
@@ -151,6 +186,114 @@ class MultiLegStorage:
             )
             conn.commit()
             return local_order_id
+        finally:
+            conn.close()
+
+    def apply_execution_report(self, payload: Dict[str, Any]) -> int:
+        """Update multi_leg_orders status/fill fields from user-stream report."""
+        exchange_order_id = _none_if_blank(payload.get("order_id"))
+        client_order_id = _none_if_blank(payload.get("client_order_id"))
+        if exchange_order_id is None and client_order_id is None:
+            return 0
+
+        status_raw = str(payload.get("status") or "").strip()
+        status = status_raw.lower() if status_raw else "unknown"
+        filled_qty = _optional_float(payload.get("filled_qty"))
+        avg_price = _optional_float(payload.get("avg_price"))
+        if avg_price is None:
+            lp = _optional_float(payload.get("last_filled_price"))
+            if lp is not None and lp > 0:
+                avg_price = lp
+        commission = _optional_float(payload.get("commission"))
+        commission_asset = _none_if_blank(payload.get("commission_asset"))
+        evt_time = payload.get("trade_time") or payload.get("event_time")
+        is_terminal = status in {"filled", "canceled", "rejected", "expired"}
+        filled_at = evt_time if status == "filled" else None
+        canceled_at = evt_time if status in {"canceled", "rejected", "expired"} else None
+        error_message = _none_if_blank(
+            payload.get("error_message") or payload.get("reject_reason")
+        )
+
+        conn = self._connect()
+        try:
+            clauses = []
+            params: list[Any] = []
+            if exchange_order_id is not None:
+                clauses.append("exchange_order_id = ?")
+                params.append(exchange_order_id)
+            if client_order_id is not None:
+                clauses.append("client_order_id = ?")
+                params.append(client_order_id)
+            where = " OR ".join(clauses)
+            cur = conn.execute(
+                f"""
+                UPDATE multi_leg_orders
+                SET status = ?,
+                    filled_quantity = COALESCE(?, filled_quantity),
+                    average_price = COALESCE(?, average_price),
+                    commission = COALESCE(?, commission),
+                    commission_asset = COALESCE(?, commission_asset),
+                    filled_at = CASE
+                        WHEN ? IS NOT NULL THEN ?
+                        ELSE filled_at
+                    END,
+                    canceled_at = CASE
+                        WHEN ? IS NOT NULL THEN ?
+                        ELSE canceled_at
+                    END,
+                    error_message = COALESCE(?, error_message),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE {where}
+                """,
+                [
+                    status,
+                    filled_qty,
+                    avg_price,
+                    commission,
+                    commission_asset,
+                    filled_at,
+                    filled_at,
+                    canceled_at if is_terminal else None,
+                    canceled_at,
+                    error_message,
+                    *params,
+                ],
+            )
+            conn.commit()
+            changed = int(cur.rowcount or 0)
+            if changed == 0:
+                # Ensure terminal events are not dropped even if place-result row
+                # was missed; use client/exchange id as deterministic local key.
+                local_key = (
+                    _none_if_blank(payload.get("client_order_id"))
+                    or _none_if_blank(payload.get("order_id"))
+                    or f"mlo_{uuid.uuid4().hex}"
+                )
+                self.upsert_order(
+                    {
+                        "local_order_id": local_key,
+                        "run_id": payload.get("run_id"),
+                        "strategy": payload.get("strategy") or "unknown",
+                        "symbol": payload.get("symbol") or "",
+                        "side": "",
+                        "order_type": "unknown",
+                        "purpose": "execution_report",
+                        "quantity": 0.0,
+                        "client_order_id": client_order_id,
+                        "exchange_order_id": exchange_order_id,
+                        "status": status,
+                        "filled_quantity": filled_qty or 0.0,
+                        "average_price": avg_price,
+                        "commission": commission or 0.0,
+                        "commission_asset": commission_asset,
+                        "filled_at": filled_at,
+                        "canceled_at": canceled_at,
+                        "error_message": error_message,
+                        "raw": payload.get("raw") or payload,
+                    }
+                )
+                return 1
+            return changed
         finally:
             conn.close()
 
