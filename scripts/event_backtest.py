@@ -931,6 +931,7 @@ class PositionSimulator:
                 except Exception:
                     gap_minutes = 1.0e9
                 if gap_minutes < min_gap_m:
+                    self.last_open_reject_reason = "spot_budget_min_interval"
                     return None
 
             yaml_ml = int((exec_cons or {}).get("max_deploy_legs", 0) or 0)
@@ -2355,7 +2356,15 @@ class BacktestResult:
             ("reject_open_duplicate_archetype", "同symbol同archetype已持仓拒新开"),
             (
                 "reject_spot_capital_budget",
-                "spot_accum 名义/日历 deploy 预算拒单或缩放用尽",
+                "spot_accum 名义/日额度 deploy 预算用尽",
+            ),
+            (
+                "reject_spot_tranches_full",
+                "spot_accum 该 symbol 已买满 tranches_per_symbol",
+            ),
+            (
+                "reject_spot_min_interval",
+                "spot_accum 距上次 deploy 未满 min_order_interval_minutes",
             ),
             ("add_position_ok", "加仓成功次数"),
             ("add_position_rejected", "加仓拒绝次数"),
@@ -4238,12 +4247,21 @@ class EventBacktester:
                             for p in simulator._positions.values()
                         )
                         if _spot_budget_rej:
-                            funnel.setdefault("reject_spot_capital_budget", 0)
-                            funnel["reject_spot_capital_budget"] += 1
+                            _rej_key = (
+                                "reject_spot_tranches_full"
+                                if "tranches" in _lor_open
+                                else (
+                                    "reject_spot_min_interval"
+                                    if "min_interval" in _lor_open
+                                    else "reject_spot_capital_budget"
+                                )
+                            )
+                            funnel.setdefault(_rej_key, 0)
+                            funnel[_rej_key] += 1
                         elif _atr_open <= 0.0:
                             funnel.setdefault("reject_open_atr_nonpositive", 0)
                             funnel["reject_open_atr_nonpositive"] += 1
-                        elif _dup_open:
+                        elif _dup_open and not _lor_open:
                             funnel.setdefault("reject_open_duplicate_archetype", 0)
                             funnel["reject_open_duplicate_archetype"] += 1
                         # 已有持仓，尝试加仓（trigger.type=float_r_ladder_only 时仅走下方阶梯逻辑）

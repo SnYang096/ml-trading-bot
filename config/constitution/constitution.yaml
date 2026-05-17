@@ -289,5 +289,5 @@ spot:
       max_new_entries_per_day: 2 # Max new deploy events per UTC day (mother positions + merges count toward funnel).
   risk_limits:
     max_gross_notional_pct: 1.00 # Portfolio-wide spot gross cap vs equity (1.0 = up to full anchor).
-    max_daily_deploy_pct: 0.25 # Max quote deployed per UTC day vs equity (0.25 × 10k = 2500 USDT/day).
+    max_daily_deploy_pct: 1.00 # Per-UTC-day deploy cap vs equity; 1.0 = may deploy full anchor in one day.
     max_resting_orders: 12 # Cap on open spot limit orders (live OMS; informational for research).

@@ -97,5 +97,5 @@ spot:
       max_new_entries_per_day: 2
   risk_limits:
     max_gross_notional_pct: 1.0
-    max_daily_deploy_pct: 0.25
+    max_daily_deploy_pct: 1.0
     max_resting_orders: 12
