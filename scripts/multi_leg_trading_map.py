@@ -149,6 +149,11 @@ def _summary_html(
     title: str,
 ) -> str:
     total_trades = int(len(trades)) if not trades.empty else 0
+    pnl_usd = 0.0
+    if total_trades > 0 and "pnl_usd_realized" in trades.columns:
+        pnl_usd = float(
+            pd.to_numeric(trades["pnl_usd_realized"], errors="coerce").fillna(0.0).sum()
+        )
     pnl_col = "pnl_per_capital" if "pnl_per_capital" in trades.columns else "pnl_r"
     total_r = (
         float(pd.to_numeric(trades[pnl_col], errors="coerce").fillna(0.0).sum())
@@ -171,7 +176,7 @@ def _summary_html(
     return (
         f"<h2>{title}</h2>"
         f"<p>months={months} | trades={total_trades} | total_r={total_r:.4f} "
-        f"| win_rate={win_rate:.2%} | source=({source})</p>"
+        f"| realized_pnl_usd={pnl_usd:,.2f} | win_rate={win_rate:.2%} | source=({source})</p>"
         f"<p style='font-size:13px;line-height:1.45;max-width:{width}px'>"
         "<b>图例（价格图）</b> 叠在图内左上角。品红实线 = 各 symbol <b>自身</b> 2H K 线上"
         "滚动典型价 VWAP（1200 根 bar，仅价格尺度展示）；橙线 = 同周期 <b>EMA(1200)</b> on close。"

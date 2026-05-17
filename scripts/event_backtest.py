@@ -54,6 +54,7 @@ if _repo_root_s not in sys.path:
     sys.path.insert(0, _repo_root_s)
 
 from scripts.capital_report import write_capital_report_from_trades
+from scripts.account_ledger import AccountLedger
 
 from src.live_data_stream.feature_storage import StorageManager
 from src.feature_store import FeatureStore, FeatureStoreSpec
@@ -367,6 +368,12 @@ class ClosedTrade:
     pnl_r: float  # PnL in R-multiples
     pnl_usd: float  # notional PnL (per-unit)
     exit_reason: str
+    pnl_usd_realized: float = 0.0  # realized PnL in USDT (qty/notional aware)
+    notional_usdt: float = 0.0  # entry quote notional
+    qty_base: float = 0.0  # base asset quantity
+    entry_fee_usdt: float = 0.0
+    exit_fee_usdt: float = 0.0
+    exit_notional_usdt: float = 0.0
     archetype: str = ""
     bars_held: int = 0
     is_add_position: bool = False  # 加仓标记
@@ -396,6 +403,234 @@ def _tail_contribution_rate(trades: List[ClosedTrade]) -> tuple[float, int, int]
     win_sum = float(np.sum(winners))
     top_sum = float(np.sum(winners[:top_n]))
     return (top_sum / win_sum) if win_sum > 1e-9 else 0.0, top_n, len(winners)
+
+
+def _clamp01(x: float) -> float:
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, v))
+
+
+def _build_spot_capital_budget_or_none(
+    *,
+    constitution_raw: Dict[str, Any],
+    strategy_names: List[str],
+    equity_anchor_usdt: Optional[float],
+) -> Optional[Dict[str, Any]]:
+    """从 constitution YAML 顶层 ``spot`` 域生成 ``spot_accum`` 事件回测资金预算."""
+    try:
+        eq = float(equity_anchor_usdt if equity_anchor_usdt is not None else 0.0)
+    except (TypeError, ValueError):
+        eq = 0.0
+    if eq <= 0:
+        return None
+    if not any(
+        str(x or "").strip().lower() == "spot_accum" for x in (strategy_names or [])
+    ):
+        return None
+    spot = constitution_raw.get("spot")
+    if not isinstance(spot, dict):
+        return None
+    acc = spot.get("accumulation") if isinstance(spot.get("accumulation"), dict) else {}
+    rl = spot.get("risk_limits") if isinstance(spot.get("risk_limits"), dict) else {}
+    target_deploy_pct = _clamp01(acc.get("target_deploy_pct", 1.0))
+    try:
+        unit_notional = float(acc.get("unit_notional", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        unit_notional = 0.0
+    try:
+        tranche_count = int(acc.get("tranche_count") or 0)
+    except (TypeError, ValueError):
+        tranche_count = 0
+    if unit_notional <= 0:
+        unit_notional = max(eq * target_deploy_pct / max(tranche_count, 1), 1.0)
+    if tranche_count <= 0:
+        tranche_count = max(1, int(round(eq * target_deploy_pct / unit_notional)))
+    max_gross = max(1e-9, float(rl.get("max_gross_notional_pct", 1.0) or 1.0))
+    max_symbol = max(1e-9, float(rl.get("max_symbol_gross_notional_pct", 1.0) or 1.0))
+    max_daily = max(0.0, float(rl.get("max_daily_deploy_pct", 1.0) or 1.0))
+    symbol_budgets_raw = acc.get("symbol_budgets_usdt")
+    symbol_budgets: Dict[str, float] = {}
+    if isinstance(symbol_budgets_raw, dict):
+        for k, v in symbol_budgets_raw.items():
+            try:
+                sv = float(v or 0.0)
+            except (TypeError, ValueError):
+                continue
+            kk = str(k or "").strip().upper()
+            if kk and sv > 0.0:
+                symbol_budgets[kk] = sv
+    tranches_per_symbol = 0
+    try:
+        tranches_per_symbol = int(acc.get("tranches_per_symbol") or 0)
+    except (TypeError, ValueError):
+        tranches_per_symbol = 0
+    symbol_unit_raw = acc.get("symbol_unit_notional_usdt")
+    symbol_unit: Dict[str, float] = {}
+    if isinstance(symbol_unit_raw, dict):
+        for k, v in symbol_unit_raw.items():
+            try:
+                sv = float(v or 0.0)
+            except (TypeError, ValueError):
+                continue
+            kk = str(k or "").strip().upper()
+            if kk and sv > 0.0:
+                symbol_unit[kk] = sv
+    if symbol_budgets and tranches_per_symbol > 0:
+        for sk, sb in symbol_budgets.items():
+            symbol_unit.setdefault(sk, max(1.0, sb / float(tranches_per_symbol)))
+
+    return {
+        "equity_usdt": eq,
+        "target_deploy_pct": float(target_deploy_pct),
+        "unit_notional_usdt": float(unit_notional),
+        "tranche_count": int(tranche_count),
+        "tranches_per_symbol": int(tranches_per_symbol),
+        "symbol_budgets_usdt": dict(symbol_budgets),
+        "symbol_unit_notional_usdt": dict(symbol_unit),
+        "max_gross_notional_pct": float(max_gross),
+        "max_symbol_gross_notional_pct": float(max_symbol),
+        "max_daily_deploy_pct": float(max_daily),
+        "dust_frac": 0.05,
+    }
+
+
+def _spot_peer_sims(sim: "PositionSimulator") -> List["PositionSimulator"]:
+    if sim._spot_peer_sims:
+        return list(sim._spot_peer_sims)
+    return [sim]
+
+
+def _portfolio_spot_accum_deployed_quote_usd(sim: "PositionSimulator") -> float:
+    tot = 0.0
+    for s in _spot_peer_sims(sim):
+        for pos in s._positions.values():
+            if bool(pos.get("_is_add_position", False)):
+                continue
+            if str(pos.get("archetype", "") or "").strip().lower() != "spot_accum":
+                continue
+            tot += float(pos.get("_spot_quote_deployed", 0.0) or 0.0)
+    return float(tot)
+
+
+def _mother_spot_deployed_usd_on_symbol(sim: "PositionSimulator", symbol: str) -> float:
+    tot = 0.0
+    for s in _spot_peer_sims(sim):
+        for pos in s._positions.values():
+            if bool(pos.get("_is_add_position", False)):
+                continue
+            if str(pos.get("archetype", "") or "").strip().lower() != "spot_accum":
+                continue
+            if str(pos.get("symbol", "") or "") != symbol:
+                continue
+            tot += float(pos.get("_spot_quote_deployed", 0.0) or 0.0)
+    return float(tot)
+
+
+def _allocate_spot_accum_leg(
+    sim: "PositionSimulator",
+    *,
+    archetype_lc: str,
+    symbol: str,
+    intent_base_add_m: float,
+    parent_pos_for_merge: Optional[Dict[str, Any]],
+    now_ts: datetime,
+) -> Tuple[bool, float, float, str, str]:
+    """在 ``spot`` 预算内确定缩放倍数 + 账本计价 USD。
+
+    Returns:
+        ok, scaled_add_m, planned_leg_quote_usdt, daily_key_or_empty, reason_suffix
+
+    Caller 仅在成功写入持仓后更新 ``daily_key`` 下的日预算。
+    """
+    b = getattr(sim, "_spot_capital_budget", None)
+    if not isinstance(b, dict):
+        bm = float(intent_base_add_m or 1.0)
+        return True, bm if bm > 0 else 1.0, 0.0, "", ""
+
+    if archetype_lc.strip().lower() != "spot_accum":
+        bm = float(intent_base_add_m or 1.0)
+        return True, bm if bm > 0 else 1.0, 0.0, "", ""
+
+    eq = float(b.get("equity_usdt", 0.0) or 0.0)
+    if eq <= 0.0:
+        return False, 0.0, 0.0, "", "spot_budget_no_equity"
+
+    unit_usd = float(b.get("unit_notional_usdt", 1.0) or 1.0)
+    if unit_usd <= 0:
+        unit_usd = 1.0
+
+    tg = max(1e-9, min(float(b.get("target_deploy_pct", 1.0) or 1.0), 1.0))
+    cap_g_pct = float(b.get("max_gross_notional_pct", 1.0) or 1.0)
+    cap_sy_pct = float(b.get("max_symbol_gross_notional_pct", 1.0) or 1.0)
+    cap_daily_pct = float(b.get("max_daily_deploy_pct", 1.0) or 1.0)
+    dust_frac = float(b.get("dust_frac", 0.05) or 0.05)
+
+    deployed_cap_tgt = eq * tg
+    cap_global = deployed_cap_tgt * cap_g_pct
+    cap_symbol = eq * cap_sy_pct
+    cap_daily = eq * max(0.0, cap_daily_pct)
+
+    deployed_global = _portfolio_spot_accum_deployed_quote_usd(sim)
+    if isinstance(parent_pos_for_merge, dict):
+        sym_deployed_mother = float(
+            parent_pos_for_merge.get("_spot_quote_deployed", 0.0) or 0.0
+        )
+    else:
+        sym_deployed_mother = float(_mother_spot_deployed_usd_on_symbol(sim, symbol))
+
+    symbol_budgets = (
+        b.get("symbol_budgets_usdt")
+        if isinstance(b.get("symbol_budgets_usdt"), dict)
+        else {}
+    )
+    symbol_units = (
+        b.get("symbol_unit_notional_usdt")
+        if isinstance(b.get("symbol_unit_notional_usdt"), dict)
+        else {}
+    )
+    if symbol_budgets:
+        sb = float(symbol_budgets.get(str(symbol).upper(), 0.0) or 0.0)
+        if sb <= 0.0:
+            return False, 0.0, 0.0, "", "spot_budget_symbol_missing"
+        cap_symbol = sb
+        su = float(symbol_units.get(str(symbol).upper(), 0.0) or 0.0)
+        if su > 0.0:
+            unit_usd = su
+        cap_global = max(cap_global, float(sum(symbol_budgets.values())))
+
+    remain_global = max(0.0, cap_global - deployed_global + 1e-12)
+    remain_symbol = max(0.0, cap_symbol - sym_deployed_mother)
+
+    planned = min(unit_usd, remain_global, remain_symbol)
+
+    dk = ""
+    dm = getattr(sim, "_spot_daily_deploy_totals", None)
+    if dm is not None:
+        tsu = pd.Timestamp(now_ts)
+        if tsu.tzinfo is None:
+            tsu = tsu.tz_localize("UTC")
+        else:
+            tsu = tsu.tz_convert("UTC")
+        dk = tsu.strftime("%Y-%m-%d")
+        spent = float(dm.get(dk, 0.0) or 0.0)
+        remain_daily = max(0.0, cap_daily - spent)
+        planned = min(planned, remain_daily)
+
+    if planned <= 0.0 or planned < dust_frac * unit_usd:
+        return False, 0.0, 0.0, "", "spot_budget_room"
+
+    base_m = float(intent_base_add_m or 1.0)
+    if base_m <= 0.0:
+        base_m = 1.0
+    frac = planned / unit_usd
+    if frac <= 0.0:
+        return False, 0.0, 0.0, "", "spot_budget_frac"
+
+    scaled = base_m * frac
+    return True, float(scaled), float(planned), dk, ""
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -442,6 +677,13 @@ class PositionSimulator:
         # 记录最近一次加仓失败原因（供 funnel 细分统计）
         self.last_add_reject_reason: str = ""
         self.last_add_attempt_signal: Dict[str, Any] = {}
+        self.last_open_reject_reason: str = ""
+        self._risk_per_slot_usdt: float = 0.0
+        self._account_ledger: Optional[AccountLedger] = None
+        # spot_accum constitution 记账：账户权益锚点 + peer simulators + UTC 日历 deploy
+        self._spot_capital_budget: Optional[Dict[str, Any]] = None
+        self._spot_peer_sims: Optional[List["PositionSimulator"]] = None
+        self._spot_daily_deploy_totals: Optional[Dict[str, float]] = None
         # SRB 加仓门控（由 EventBacktester 从 execution.yaml 注入）
         self._srb_add_policy: Optional[Dict[str, Any]] = None
         self._primary_bar_count: int = 0
@@ -512,6 +754,82 @@ class PositionSimulator:
                 pos["structural_exit"] = se
         return loaded
 
+    def _estimate_entry_notional_usdt(
+        self,
+        *,
+        pos: Dict[str, Any],
+        entry_price: float,
+        size_multiplier: float,
+    ) -> float:
+        """Estimate entry notional for non-spot positions.
+
+        Priority:
+        1) existing explicit notional in position
+        2) risk-per-slot cash with stop distance
+        3) conservative fallback from risk budget
+        """
+        n0 = float(pos.get("_entry_notional_usdt", 0.0) or 0.0)
+        if n0 > 0.0:
+            return n0
+        if entry_price <= 0.0:
+            return 0.0
+        stop_pct = float(pos.get("effective_stop_pct", 0.0) or 0.0)
+        rb = max(0.0, float(self._risk_per_slot_usdt or 0.0))
+        sm = max(0.0, float(size_multiplier or 0.0))
+        if rb > 0.0 and sm > 0.0 and stop_pct > 1e-9:
+            return (rb * sm) / stop_pct
+        if rb > 0.0 and sm > 0.0:
+            return rb * sm
+        return max(0.0, 100.0 * sm)
+
+    def _build_close_economics(
+        self,
+        *,
+        pos: Dict[str, Any],
+        exit_price: float,
+    ) -> Dict[str, float]:
+        entry_price = float(pos.get("entry_price", 0.0) or 0.0)
+        if entry_price <= 0.0 or exit_price <= 0.0:
+            return {
+                "notional_usdt": 0.0,
+                "qty_base": 0.0,
+                "entry_fee_usdt": 0.0,
+                "exit_fee_usdt": 0.0,
+                "exit_notional_usdt": 0.0,
+                "pnl_usd_realized": 0.0,
+            }
+        qty = float(pos.get("_qty_base", 0.0) or 0.0)
+        notional = float(pos.get("_entry_notional_usdt", 0.0) or 0.0)
+        if qty <= 0.0 and notional > 0.0:
+            qty = notional / entry_price
+        if qty <= 0.0:
+            sm = float(pos.get("_size_multiplier", 1.0) or 1.0)
+            notional = self._estimate_entry_notional_usdt(
+                pos=pos,
+                entry_price=entry_price,
+                size_multiplier=sm,
+            )
+            if notional > 0.0:
+                qty = notional / entry_price
+        if notional <= 0.0 and qty > 0.0:
+            notional = qty * entry_price
+        entry_fee = float(pos.get("_entry_fee_usdt", 0.0) or 0.0)
+        exit_notional = max(0.0, qty * float(exit_price))
+        exit_fee = exit_notional * max(0.0, float(self.fee_rate or 0.0))
+        is_long = str(pos.get("side", "")).upper() in {"LONG", "BUY"}
+        gross = (
+            (exit_price - entry_price) if is_long else (entry_price - exit_price)
+        ) * qty
+        realized = gross - entry_fee - exit_fee
+        return {
+            "notional_usdt": float(notional),
+            "qty_base": float(max(0.0, qty)),
+            "entry_fee_usdt": float(max(0.0, entry_fee)),
+            "exit_fee_usdt": float(max(0.0, exit_fee)),
+            "exit_notional_usdt": float(exit_notional),
+            "pnl_usd_realized": float(realized),
+        }
+
     def open_position(
         self,
         intent: Any,
@@ -520,14 +838,224 @@ class PositionSimulator:
         bar_minutes: Optional[int] = None,
     ) -> Optional[str]:
         """从 TradeIntent + 当前 bar 创建虚拟持仓 (调用共享 build_position_dict)"""
+        self.last_open_reject_reason = ""
         _arch = str(getattr(intent, "archetype", "") or "").lower().strip()
-        for pos in self._positions.values():
+        _sym = str(getattr(intent, "symbol", "") or "")
+        exec_prof = getattr(intent, "execution_profile", {}) or {}
+        exec_cons = (
+            exec_prof.get("execution_constraints")
+            if isinstance(exec_prof.get("execution_constraints"), dict)
+            else {}
+        )
+        _accum_into = bool((exec_cons or {}).get("accumulate_same_archetype", False))
+
+        _intent_side_raw = str(getattr(intent, "action", "") or "").strip().upper()
+        _intent_side_bucket = (
+            "LONG"
+            if _intent_side_raw in {"LONG", "BUY"}
+            else ("SHORT" if _intent_side_raw in {"SHORT", "SELL"} else "")
+        )
+
+        duplicate_pids: List[str] = []
+        for _pid0, _p0 in self._positions.items():
             if (
-                pos.get("symbol", "") == getattr(intent, "symbol", "")
-                and str(pos.get("archetype", "") or "").lower().strip() == _arch
+                _p0.get("symbol", "") == _sym
+                and str(_p0.get("archetype", "") or "").lower().strip() == _arch
             ):
-                # 同 symbol + 同 archetype 不允许开新 slot；必须走 try_add_position。
+                _ps = str(_p0.get("side", "") or "").strip().upper()
+                _pb = (
+                    "LONG"
+                    if _ps in {"LONG", "BUY"}
+                    else ("SHORT" if _ps in {"SHORT", "SELL"} else "")
+                )
+                if _intent_side_bucket and _pb == _intent_side_bucket:
+                    duplicate_pids.append(str(_pid0))
+
+        if duplicate_pids:
+            if not _accum_into:
+                # Same symbol/archetype: default path → caller may try_add_position().
                 return None
+            duplicate_pids.sort(
+                key=lambda pid: bool(
+                    self._positions.get(pid, {}).get("_is_add_position", False)
+                )
+            )
+            parent_pid0 = duplicate_pids[0]
+            parent_pos = self._positions.get(parent_pid0)
+            if not isinstance(parent_pos, dict):
+                return None
+
+            # If the matched row is a child add-leg, collapse to its parent book.
+            if bool(parent_pos.get("_is_add_position", False)):
+                pp = str(parent_pos.get("_parent_pid") or "").strip()
+                parent_pid0 = pp
+                parent_pos = self._positions.get(pp)
+                if not isinstance(parent_pos, dict):
+                    return None
+
+            entry_price_fill = float(entry_bar.get("close", 0) or 0.0)
+            atr_live = (
+                float(entry_bar.get("atr", 0) or 0.0)
+                or float(features.get("atr", 0) or 0.0)
+                or float(parent_pos.get("atr_at_entry", 0) or 0.0)
+                or 0.0
+            )
+            if entry_price_fill <= 0 or atr_live <= 0:
+                return None
+
+            bar_ts = entry_bar.get("timestamp")
+            if isinstance(bar_ts, str):
+                now_ts = pd.Timestamp(bar_ts).to_pydatetime()
+            elif isinstance(bar_ts, pd.Timestamp):
+                now_ts = bar_ts.to_pydatetime()
+            elif isinstance(bar_ts, datetime):
+                now_ts = bar_ts
+            else:
+                now_ts = datetime.now(timezone.utc)
+            if now_ts.tzinfo is None:
+                now_ts = now_ts.replace(tzinfo=timezone.utc)
+
+            min_gap_m = float(
+                (exec_cons or {}).get("min_order_interval_minutes", 0) or 0.0
+            )
+            last_dep = parent_pos.get("_last_deploy_ts")
+            if min_gap_m > 0 and last_dep is not None:
+                try:
+                    lt = pd.Timestamp(last_dep).to_pydatetime()
+                    gap_minutes = (
+                        pd.Timestamp(now_ts).to_pydatetime() - lt
+                    ).total_seconds() / 60.0
+                except Exception:
+                    gap_minutes = 1.0e9
+                if gap_minutes < min_gap_m:
+                    return None
+
+            yaml_ml = int((exec_cons or {}).get("max_deploy_legs", 0) or 0)
+            cur_legs = int(parent_pos.get("_deploy_leg_count", 1) or 1)
+            cap_list: List[int] = []
+            if yaml_ml > 0:
+                cap_list.append(yaml_ml)
+            if isinstance(self._spot_capital_budget, dict):
+                try:
+                    _tc = int(self._spot_capital_budget.get("tranche_count") or 0)
+                except (TypeError, ValueError):
+                    _tc = 0
+                if _tc > 0:
+                    cap_list.append(_tc)
+                try:
+                    _tps = int(
+                        self._spot_capital_budget.get("tranches_per_symbol") or 0
+                    )
+                except (TypeError, ValueError):
+                    _tps = 0
+                if _tps > 0:
+                    cap_list.append(_tps)
+            _max_le_eff = min(cap_list) if cap_list else (10**18)
+            if cur_legs >= _max_le_eff:
+                self.last_open_reject_reason = "spot_budget_tranches"
+                return None
+
+            ok_sz, scaled_add_m, leg_usdt, dk_slot, rej = _allocate_spot_accum_leg(
+                self,
+                archetype_lc=_arch,
+                symbol=_sym,
+                intent_base_add_m=float(getattr(intent, "size_multiplier", 1.0) or 1.0),
+                parent_pos_for_merge=parent_pos,
+                now_ts=now_ts,
+            )
+            if not ok_sz:
+                self.last_open_reject_reason = rej or "spot_budget_room"
+                return None
+            add_m = float(scaled_add_m)
+            leg_notional = float(max(0.0, leg_usdt))
+            leg_qty = (
+                float(leg_notional / entry_price_fill)
+                if leg_notional > 0.0 and entry_price_fill > 0.0
+                else 0.0
+            )
+            leg_entry_fee = leg_notional * max(0.0, float(self.fee_rate or 0.0))
+
+            if isinstance(self._account_ledger, AccountLedger) and leg_notional > 0.0:
+                try:
+                    self._account_ledger.merge_lot(
+                        lot_id=str(parent_pid0),
+                        add_notional_usdt=leg_notional,
+                        add_price=float(entry_price_fill),
+                        fee_rate=float(self.fee_rate or 0.0),
+                        allow_scale_down=False,
+                    )
+                except Exception:
+                    pass
+
+            old_m = float(parent_pos.get("_size_multiplier", 1.0) or 1.0)
+            ep_old = float(parent_pos.get("entry_price", entry_price_fill) or 0.0)
+            total_units = max(old_m + add_m, 1e-12)
+            if str(_arch) == "spot_accum" and leg_qty > 0.0:
+                old_qty = float(parent_pos.get("_qty_base", 0.0) or 0.0)
+                if old_qty <= 0.0:
+                    old_notional = float(
+                        parent_pos.get("_entry_notional_usdt", 0.0) or 0.0
+                    )
+                    if old_notional > 0.0 and ep_old > 0.0:
+                        old_qty = old_notional / ep_old
+                tot_qty = max(1e-12, old_qty + leg_qty)
+                parent_pos["entry_price"] = (
+                    ep_old * old_qty + entry_price_fill * leg_qty
+                ) / tot_qty
+                parent_pos["_qty_base"] = float(tot_qty)
+                parent_pos["_entry_notional_usdt"] = (
+                    float(parent_pos.get("_entry_notional_usdt", 0.0) or 0.0)
+                    + leg_notional
+                )
+                parent_pos["_entry_fee_usdt"] = (
+                    float(parent_pos.get("_entry_fee_usdt", 0.0) or 0.0) + leg_entry_fee
+                )
+            elif ep_old <= 0.0:
+                parent_pos["entry_price"] = entry_price_fill
+            else:
+                parent_pos["entry_price"] = (
+                    ep_old * old_m + entry_price_fill * add_m
+                ) / total_units
+            parent_pos["_size_multiplier"] = total_units
+            parent_pos["_deploy_leg_count"] = cur_legs + 1
+            parent_pos["_last_deploy_ts"] = now_ts
+
+            parent_pos["_last_deploy_price"] = float(entry_price_fill)
+            parent_pos["_accumulate_deploys"] = (
+                int(parent_pos.get("_accumulate_deploys", 0) or 0) + 1
+            )
+            parent_pos.setdefault(
+                "_first_entry_time",
+                parent_pos.get("entry_time", now_ts),
+            )
+
+            dm = getattr(self, "_spot_daily_deploy_totals", None)
+            if dm is not None and dk_slot and float(leg_usdt) > 0.0:
+                dm[str(dk_slot)] = float(dm.get(str(dk_slot), 0.0) or 0.0) + float(
+                    leg_usdt
+                )
+            parent_pos["_spot_quote_deployed"] = float(
+                parent_pos.get("_spot_quote_deployed", 0.0) or 0.0
+            ) + float(leg_usdt)
+
+            if self._om_bridge:
+                try:
+                    self._om_bridge.record_open(
+                        pid=str(parent_pid0),
+                        symbol=str(parent_pos.get("symbol", "")),
+                        side=parent_pos.get("side", ""),
+                        entry_price=float(entry_price_fill),
+                        size=add_m,
+                        atr=float(atr_live),
+                        stop_loss=None,
+                        take_profit=None,
+                        archetype=str(parent_pos.get("archetype", "")),
+                        entry_time=now_ts,
+                    )
+                except Exception:
+                    pass
+            return str(parent_pid0)
+
         if len(self._positions) >= self.max_positions:
             return None
 
@@ -554,6 +1082,21 @@ class PositionSimulator:
         if entry_time.tzinfo is None:
             entry_time = entry_time.replace(tzinfo=timezone.utc)
 
+        ok_sz, scaled_add_m, leg_usdt, dk_slot, rej = _allocate_spot_accum_leg(
+            self,
+            archetype_lc=_arch,
+            symbol=_sym,
+            intent_base_add_m=float(getattr(intent, "size_multiplier", 1.0) or 1.0),
+            parent_pos_for_merge=None,
+            now_ts=entry_time,
+        )
+        if not ok_sz:
+            self.last_open_reject_reason = rej or "spot_budget_room"
+            return None
+        scaled_m = float(scaled_add_m)
+        if scaled_m <= 0.0:
+            scaled_m = 1.0
+
         # 调用共享模块构建持仓 dict
         pos = build_position_dict(
             intent=intent,
@@ -563,8 +1106,53 @@ class PositionSimulator:
             entry_time=entry_time,
         )
         pos["archetype"] = getattr(intent, "archetype", "") or ""
-        # 存储 size_multiplier（PCM regime × 缩放）— 与向量回测 _position_scale 对齐
-        pos["_size_multiplier"] = float(getattr(intent, "size_multiplier", 1.0) or 1.0)
+        # 存储 size_multiplier（PCM regime × 缩放）；spot 预算下按 leg_usd / unit_notional 缩放
+        pos["_size_multiplier"] = scaled_m
+        pos["_deploy_leg_count"] = 1
+        pos["_last_deploy_ts"] = entry_time
+        _is_spot = str(_arch) == "spot_accum"
+        if _is_spot:
+            entry_notional = float(max(0.0, leg_usdt))
+        else:
+            entry_notional = self._estimate_entry_notional_usdt(
+                pos=pos,
+                entry_price=float(entry_price),
+                size_multiplier=float(scaled_m),
+            )
+        qty_base = (
+            float(entry_notional / entry_price)
+            if entry_notional > 0.0 and float(entry_price) > 0.0
+            else 0.0
+        )
+        entry_fee_usdt = entry_notional * max(0.0, float(self.fee_rate or 0.0))
+
+        pos["_spot_quote_deployed"] = float(leg_usdt)
+        pos["_entry_notional_usdt"] = float(entry_notional)
+        pos["_qty_base"] = float(qty_base)
+        pos["_entry_fee_usdt"] = float(entry_fee_usdt)
+        dm2 = getattr(self, "_spot_daily_deploy_totals", None)
+        if dm2 is not None and dk_slot and float(leg_usdt) > 0.0:
+            dm2[str(dk_slot)] = float(dm2.get(str(dk_slot), 0.0) or 0.0) + float(
+                leg_usdt
+            )
+
+        if isinstance(self._account_ledger, AccountLedger) and entry_notional > 0.0:
+            try:
+                self._account_ledger.open_lot(
+                    lot_id=str(pid),
+                    strategy=str(pos.get("archetype", "")),
+                    symbol=str(pos.get("symbol", "")),
+                    side=str(pos.get("side", "")),
+                    notional_usdt=float(entry_notional),
+                    entry_price=float(entry_price),
+                    fee_rate=float(self.fee_rate or 0.0),
+                    opened_at=entry_time,
+                    cash_mode=("cash_notional" if _is_spot else "fee_only"),
+                    allow_scale_down=False,
+                )
+            except Exception:
+                pass
+
         self._positions[pid] = pos
 
         # 写入 order_management DB
@@ -574,7 +1162,7 @@ class PositionSimulator:
                 symbol=pos.get("symbol", ""),
                 side=pos["side"],
                 entry_price=entry_price,
-                size=intent.size if hasattr(intent, "size") else 1.0,
+                size=scaled_m,
                 atr=atr,
                 stop_loss=pos.get("stop_loss"),
                 take_profit=pos.get("take_profit"),
@@ -709,6 +1297,10 @@ class PositionSimulator:
                     normalized_reason = "tp"
                 elif close_reason == "time_stop":
                     normalized_reason = "timeout"
+                econ = self._build_close_economics(
+                    pos=pos,
+                    exit_price=float(exit_price),
+                )
 
                 trade = ClosedTrade(
                     symbol=pos.get("symbol", ""),
@@ -721,6 +1313,12 @@ class PositionSimulator:
                     pnl_r=pnl_r,
                     pnl_usd=pnl_usd,
                     exit_reason=normalized_reason,
+                    pnl_usd_realized=float(econ.get("pnl_usd_realized", 0.0)),
+                    notional_usdt=float(econ.get("notional_usdt", 0.0)),
+                    qty_base=float(econ.get("qty_base", 0.0)),
+                    entry_fee_usdt=float(econ.get("entry_fee_usdt", 0.0)),
+                    exit_fee_usdt=float(econ.get("exit_fee_usdt", 0.0)),
+                    exit_notional_usdt=float(econ.get("exit_notional_usdt", 0.0)),
                     archetype=pos.get("archetype", ""),
                     bars_held=pos.get("bars_counted", 0),
                     is_add_position=pos.get("_is_add_position", False),
@@ -733,6 +1331,15 @@ class PositionSimulator:
                 )
                 closed.append(trade)
                 self.closed_trades.append(trade)
+                if isinstance(self._account_ledger, AccountLedger):
+                    try:
+                        self._account_ledger.close_lot(
+                            lot_id=str(pid),
+                            exit_price=float(exit_price),
+                            fee_rate=float(self.fee_rate or 0.0),
+                        )
+                    except Exception:
+                        pass
                 if str(pos.get("archetype", "") or "").lower() == "fer":
                     try:
                         from src.time_series_model.live.fer_diagnostics import (
@@ -798,6 +1405,10 @@ class PositionSimulator:
                     fee_r = (entry_price + forced_exit) * self.fee_rate / risk
                     _raw_r -= fee_r
                 pnl_r = _raw_r * float(pos.get("_size_multiplier", 1.0) or 1.0)
+                econ = self._build_close_economics(
+                    pos=pos,
+                    exit_price=float(forced_exit),
+                )
                 trade = ClosedTrade(
                     symbol=pos.get("symbol", ""),
                     side=pos["side"],
@@ -809,6 +1420,12 @@ class PositionSimulator:
                     pnl_r=pnl_r,
                     pnl_usd=pnl_usd,
                     exit_reason=str(meta.get("normalized_reason", "sl")),
+                    pnl_usd_realized=float(econ.get("pnl_usd_realized", 0.0)),
+                    notional_usdt=float(econ.get("notional_usdt", 0.0)),
+                    qty_base=float(econ.get("qty_base", 0.0)),
+                    entry_fee_usdt=float(econ.get("entry_fee_usdt", 0.0)),
+                    exit_fee_usdt=float(econ.get("exit_fee_usdt", 0.0)),
+                    exit_notional_usdt=float(econ.get("exit_notional_usdt", 0.0)),
                     archetype=pos.get("archetype", ""),
                     bars_held=pos.get("bars_counted", 0),
                     is_add_position=True,
@@ -820,6 +1437,15 @@ class PositionSimulator:
                 )
                 closed.append(trade)
                 self.closed_trades.append(trade)
+                if isinstance(self._account_ledger, AccountLedger):
+                    try:
+                        self._account_ledger.close_lot(
+                            lot_id=str(pid),
+                            exit_price=float(forced_exit),
+                            fee_rate=float(self.fee_rate or 0.0),
+                        )
+                    except Exception:
+                        pass
                 to_remove.append(pid)
 
         for pid in to_remove:
@@ -844,6 +1470,10 @@ class PositionSimulator:
                 fee_r = (entry_price + price) * self.fee_rate / risk
                 _raw_r -= fee_r
             pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
+            econ = self._build_close_economics(
+                pos=pos,
+                exit_price=float(price),
+            )
             trade = ClosedTrade(
                 symbol=pos.get("symbol", ""),
                 side=pos["side"],
@@ -855,6 +1485,12 @@ class PositionSimulator:
                 pnl_r=pnl_r,
                 pnl_usd=pnl_usd,
                 exit_reason="end_of_backtest",
+                pnl_usd_realized=float(econ.get("pnl_usd_realized", 0.0)),
+                notional_usdt=float(econ.get("notional_usdt", 0.0)),
+                qty_base=float(econ.get("qty_base", 0.0)),
+                entry_fee_usdt=float(econ.get("entry_fee_usdt", 0.0)),
+                exit_fee_usdt=float(econ.get("exit_fee_usdt", 0.0)),
+                exit_notional_usdt=float(econ.get("exit_notional_usdt", 0.0)),
                 archetype=pos.get("archetype", ""),
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
@@ -867,6 +1503,15 @@ class PositionSimulator:
             )
             closed.append(trade)
             self.closed_trades.append(trade)
+            if isinstance(self._account_ledger, AccountLedger):
+                try:
+                    self._account_ledger.close_lot(
+                        lot_id=str(pid),
+                        exit_price=float(price),
+                        fee_rate=float(self.fee_rate or 0.0),
+                    )
+                except Exception:
+                    pass
 
             # 写入 order_management DB
             if self._om_bridge:
@@ -900,6 +1545,10 @@ class PositionSimulator:
                 fee_r = (entry_price + close_price) * self.fee_rate / risk
                 _raw_r -= fee_r
             pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
+            econ = self._build_close_economics(
+                pos=pos,
+                exit_price=float(close_price),
+            )
             trade = ClosedTrade(
                 symbol=pos.get("symbol", ""),
                 side=pos["side"],
@@ -911,6 +1560,12 @@ class PositionSimulator:
                 pnl_r=pnl_r,
                 pnl_usd=pnl_usd,
                 exit_reason="evicted",
+                pnl_usd_realized=float(econ.get("pnl_usd_realized", 0.0)),
+                notional_usdt=float(econ.get("notional_usdt", 0.0)),
+                qty_base=float(econ.get("qty_base", 0.0)),
+                entry_fee_usdt=float(econ.get("entry_fee_usdt", 0.0)),
+                exit_fee_usdt=float(econ.get("exit_fee_usdt", 0.0)),
+                exit_notional_usdt=float(econ.get("exit_notional_usdt", 0.0)),
                 archetype=pos.get("archetype", ""),
                 bars_held=pos.get("bars_counted", 0),
                 is_add_position=pos.get("_is_add_position", False),
@@ -923,6 +1578,15 @@ class PositionSimulator:
             )
             closed.append(trade)
             self.closed_trades.append(trade)
+            if isinstance(self._account_ledger, AccountLedger):
+                try:
+                    self._account_ledger.close_lot(
+                        lot_id=str(pid),
+                        exit_price=float(close_price),
+                        fee_rate=float(self.fee_rate or 0.0),
+                    )
+                except Exception:
+                    pass
             to_remove.append(pid)
         for pid in to_remove:
             self._positions.pop(pid, None)
@@ -1685,6 +2349,10 @@ class BacktestResult:
             ("reject_pcm_struct_pass_no_intent", "结构全过但无候选intent(极少)"),
             ("reject_open_atr_nonpositive", "开仓时ATR≤0拒单"),
             ("reject_open_duplicate_archetype", "同symbol同archetype已持仓拒新开"),
+            (
+                "reject_spot_capital_budget",
+                "spot_accum 名义/日历 deploy 预算拒单或缩放用尽",
+            ),
             ("add_position_ok", "加仓成功次数"),
             ("add_position_rejected", "加仓拒绝次数"),
             ("float_ladder_add_ok", "浮盈阶梯成功"),
@@ -1899,6 +2567,12 @@ def closed_trade_to_csv_row(t: ClosedTrade) -> Dict[str, Any]:
         "atr": t.atr_at_entry,
         "pnl_r": round(t.pnl_r, 4),
         "pnl_usd": round(t.pnl_usd, 4),
+        "pnl_usd_realized": round(t.pnl_usd_realized, 4),
+        "notional_usdt": round(t.notional_usdt, 4),
+        "qty_base": round(t.qty_base, 10),
+        "entry_fee_usdt": round(t.entry_fee_usdt, 6),
+        "exit_fee_usdt": round(t.exit_fee_usdt, 6),
+        "exit_notional_usdt": round(t.exit_notional_usdt, 4),
         "exit_reason": t.exit_reason,
         "archetype": t.archetype,
         "bars_held": t.bars_held,
@@ -1924,6 +2598,12 @@ def empty_closed_trade_csv_shell() -> Dict[str, Any]:
         "atr": float("nan"),
         "pnl_r": float("nan"),
         "pnl_usd": float("nan"),
+        "pnl_usd_realized": float("nan"),
+        "notional_usdt": float("nan"),
+        "qty_base": float("nan"),
+        "entry_fee_usdt": float("nan"),
+        "exit_fee_usdt": float("nan"),
+        "exit_notional_usdt": float("nan"),
         "exit_reason": "",
         "archetype": "",
         "bars_held": 0,
@@ -2523,6 +3203,7 @@ class EventBacktester:
         force_close_end: bool = True,
         no_kill_switch: bool = False,
         inject_add_ml_scores_path: Optional[str] = None,
+        equity_anchor_usdt: Optional[float] = None,
     ) -> BacktestResult:
         """
         运行事件驱动回测 — 多策略 + 多 timeframe + 跨 symbol 时间线交叉处理
@@ -2530,6 +3211,10 @@ class EventBacktester:
         时间范围:
           - 默认: end_date=now(), test_start=end_date - days
           - 指定 --start-date / --end-date: 精确控制, 用于与向量回测对齐
+
+        equity_anchor_usdt:
+          若为 None则内部权益锚点仍为 1000；CLI 传入与 --initial-capital（及 constitution
+          spot.account.backtest_equity_usdt 默认覆盖）对齐，并与 spot_accum 名义 deploy 上限共用。
         """
         result = BacktestResult(strategy="+".join(self.strategy_names))
         funnel = defaultdict(int)
@@ -2856,6 +3541,13 @@ class EventBacktester:
                 sim._om_bridge = self._om_bridge
             self._simulators[sym] = sim
 
+        # spot_accum constitution: 同一批 symbol 仿真器互为 peer（共享全局/日.deploy 账本）
+        _plist_sims = list(self._simulators.values())
+        _spot_daily_deploy_totals: defaultdict[str, float] = defaultdict(float)
+        for _sim in _plist_sims:
+            _sim._spot_peer_sims = _plist_sims
+            _sim._spot_daily_deploy_totals = _spot_daily_deploy_totals
+
         _srb_hooks = SrbEventBacktestHooks.try_from_strategies(
             self.strategy_names, self._strats
         )
@@ -2984,7 +3676,33 @@ class EventBacktester:
             if hasattr(self.pcm, "_constitution") and self.pcm._constitution
             else 0.01
         )
-        _initial_cash = 1000.0
+        try:
+            _initial_cash = (
+                float(equity_anchor_usdt) if equity_anchor_usdt is not None else 1000.0
+            )
+        except (TypeError, ValueError):
+            _initial_cash = 1000.0
+        _shared_account_ledger = AccountLedger(
+            account="event_backtest",
+            initial_cash_usdt=_initial_cash,
+        )
+        _risk_usdt_per_unit = float(_initial_cash) * float(_risk_per_slot)
+        for _sim_acc in self._simulators.values():
+            _sim_acc._risk_per_slot_usdt = _risk_usdt_per_unit
+            _sim_acc._account_ledger = _shared_account_ledger
+
+        def _trade_realized_usdt(ct: ClosedTrade) -> float:
+            rv = float(getattr(ct, "pnl_usd_realized", 0.0) or 0.0)
+            has_real = (
+                float(getattr(ct, "notional_usdt", 0.0) or 0.0) > 0.0
+                or float(getattr(ct, "qty_base", 0.0) or 0.0) > 0.0
+                or float(getattr(ct, "entry_fee_usdt", 0.0) or 0.0) > 0.0
+                or float(getattr(ct, "exit_fee_usdt", 0.0) or 0.0) > 0.0
+            )
+            if rv == rv and has_real:
+                return rv
+            return float(_initial_cash) * float(_risk_per_slot) * float(ct.pnl_r)
+
         _equity = _initial_cash
         _equity_curve = [_equity]
         _t0_line = timeline_events[0][0] if timeline_events else None
@@ -3008,6 +3726,39 @@ class EventBacktester:
         _prev_day = None
         _prev_week = None
         _prev_month = None
+
+        _spot_raw_for_budget: Dict[str, Any] = {}
+        try:
+            _spot_raw_for_budget = (
+                yaml.safe_load(Path(constitution_path).read_text(encoding="utf-8"))
+                or {}
+            )
+        except Exception as _e_spbud:
+            logger.warning(
+                "Spot capital budget: constitution YAML read failed: %s", _e_spbud
+            )
+        _spot_cap_budget = _build_spot_capital_budget_or_none(
+            constitution_raw=_spot_raw_for_budget,
+            strategy_names=list(self.strategy_names),
+            equity_anchor_usdt=_initial_cash,
+        )
+        if _spot_cap_budget is not None:
+            logger.info(
+                "Spot capital budget (spot_accum): equity_usdt=%.2f deploy_pct=%.4f "
+                "unit_usdt=%.2f tranche_count=%d caps gross/symbol/daily pct=(%.4f,%.4f,%.4f)",
+                float(_spot_cap_budget["equity_usdt"]),
+                float(_spot_cap_budget["target_deploy_pct"]),
+                float(_spot_cap_budget["unit_notional_usdt"]),
+                int(_spot_cap_budget["tranche_count"]),
+                float(_spot_cap_budget["max_gross_notional_pct"]),
+                float(_spot_cap_budget["max_symbol_gross_notional_pct"]),
+                float(_spot_cap_budget["max_daily_deploy_pct"]),
+            )
+            for _sim_bb in self._simulators.values():
+                _sim_bb._spot_capital_budget = _spot_cap_budget
+        else:
+            for _sim_bb in self._simulators.values():
+                _sim_bb._spot_capital_budget = None
 
         # ── 每日入场节流 (max_new_entries_per_day) ──
         _daily_entry_limits: Dict[str, Optional[int]] = {}
@@ -3092,8 +3843,7 @@ class EventBacktester:
                     for ct in closed:
                         self.pcm.notify_position_closed(upd_sym, ct.archetype)
                     for ct in closed:
-                        sl_r_val = 1.0
-                        pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r / sl_r_val
+                        pnl_usd = _trade_realized_usdt(ct)
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
@@ -3358,7 +4108,7 @@ class EventBacktester:
                     )
                     for ct in ev_closed:
                         self.pcm.notify_position_closed(evicted_sym, ct.archetype)
-                        pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r
+                        pnl_usd = _trade_realized_usdt(ct)
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
@@ -3441,9 +4191,20 @@ class EventBacktester:
                             entry_bar=entry_bar,
                         )
                     if opened is not None and _entry_limit is not None and _ts_date:
-                        _dk2 = (_arch_lc, _ts_date)
-                        _daily_entry_counts[_dk2] = _daily_entry_counts.get(_dk2, 0) + 1
+                        _op = simulator._positions.get(opened) or {}
+                        _scale_in_evt = int(_op.get("_accumulate_deploys", 0) or 0) > 0
+                        if not _scale_in_evt:
+                            _dk2 = (_arch_lc, _ts_date)
+                            _daily_entry_counts[_dk2] = (
+                                _daily_entry_counts.get(_dk2, 0) + 1
+                            )
                     if opened is not None:
+                        _opened_pos = simulator._positions.get(opened) or {}
+                        _entry_src = (
+                            "pcm_scale_in"
+                            if int(_opened_pos.get("_accumulate_deploys", 0) or 0) > 0
+                            else "pcm_new"
+                        )
                         _trade_map_audit_rows.append(
                             _trade_audit_row_from_fill(
                                 strats=self._strats,
@@ -3451,20 +4212,27 @@ class EventBacktester:
                                 archetype=str(winning_arch or ""),
                                 ts=ts,
                                 is_add_position=False,
-                                entry_source="pcm_new",
+                                entry_source=_entry_src,
                                 features=entry_feats,
                                 kill_switch_blocked_at_eval=bool(_ks_blocked),
                                 intent_action=str(getattr(intent, "action", "") or ""),
                             )
                         )
                     if opened is None:
+                        _lor_open = str(
+                            getattr(simulator, "last_open_reject_reason", "") or ""
+                        )
+                        _spot_budget_rej = _lor_open.startswith("spot_budget")
                         _atr_open = float(entry_feats.get("atr", 0) or 0.0)
                         _dup_open = any(
                             p.get("symbol") == sym
                             and str(p.get("archetype", "")).lower().strip() == _arch_lc
                             for p in simulator._positions.values()
                         )
-                        if _atr_open <= 0.0:
+                        if _spot_budget_rej:
+                            funnel.setdefault("reject_spot_capital_budget", 0)
+                            funnel["reject_spot_capital_budget"] += 1
+                        elif _atr_open <= 0.0:
                             funnel.setdefault("reject_open_atr_nonpositive", 0)
                             funnel["reject_open_atr_nonpositive"] += 1
                         elif _dup_open:
@@ -3513,7 +4281,9 @@ class EventBacktester:
                                         path_type="signal_add",
                                         features=entry_feats,
                                         signal=getattr(
-                                            simulator, "last_add_attempt_signal", {}
+                                            simulator,
+                                            "last_add_attempt_signal",
+                                            {},
                                         ),
                                         outcome=_add_outcome,
                                     )
@@ -3543,7 +4313,11 @@ class EventBacktester:
                                 funnel["add_position_rejected"] += 1
                                 _why = (
                                     str(
-                                        getattr(simulator, "last_add_reject_reason", "")
+                                        getattr(
+                                            simulator,
+                                            "last_add_reject_reason",
+                                            "",
+                                        )
                                     )
                                     or "other"
                                 )
@@ -3576,7 +4350,8 @@ class EventBacktester:
                                         funnel["reject_add_detail_bpc_breakout"] += 1
                                     elif _why == "add_trigger_feature_rules":
                                         funnel.setdefault(
-                                            "reject_add_detail_me_features", 0
+                                            "reject_add_detail_me_features",
+                                            0,
                                         )
                                         funnel["reject_add_detail_me_features"] += 1
                                 elif _why == "no_parent_position":
@@ -3587,7 +4362,8 @@ class EventBacktester:
                                     funnel["reject_add_srb_regime_bucket"] += 1
                                 elif _why == "srb_policy_volume_compression":
                                     funnel.setdefault(
-                                        "reject_add_srb_volume_compression", 0
+                                        "reject_add_srb_volume_compression",
+                                        0,
                                     )
                                     funnel["reject_add_srb_volume_compression"] += 1
                                 elif _why.startswith("shape_gate_"):
@@ -3598,7 +4374,9 @@ class EventBacktester:
                                     funnel.setdefault("reject_add_other", 0)
                                     funnel["reject_add_other"] += 1
                         else:
+                            funnel.setdefault("reject_max_positions", 0)
                             funnel["reject_max_positions"] += 1
+
             else:
                 _pcm_cand = int(_pcm_tr.get("all_intents", 0) or 0)
                 if _pcm_cand > 0:
@@ -3839,7 +4617,7 @@ class EventBacktester:
                     closed = simulator.update(bar_dict)
                     for ct in closed:
                         self.pcm.notify_position_closed(sym, ct.archetype)
-                        pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r
+                        pnl_usd = _trade_realized_usdt(ct)
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
@@ -3865,7 +4643,7 @@ class EventBacktester:
                     _fc_closed = simulator.force_close_all(last_close, last_time)
                     _fc_ts = pd.Timestamp(last_time)
                     for ct in _fc_closed:
-                        pnl_usd = _initial_cash * _risk_per_slot * ct.pnl_r
+                        pnl_usd = _trade_realized_usdt(ct)
                         _equity += pnl_usd
                         _equity = max(_equity, 0.0)
                         _equity_curve.append(_equity)
@@ -4134,8 +4912,8 @@ def generate_trading_map_html(
             "顶部权益图红虚竖线、各 symbol 漏斗图 y=KS 记号均表示该时间评估下 Kill 生效。"
         )
         axis_note = (
-            "<b>读图</b>：蓝线为<strong>仿真美元权益</strong>（起点 $1000×账户逻辑，只在<strong>平仓</strong>时阶跃）；"
-            "若全程未盈利超起点，则纵轴<strong>最高≈1000</strong>（峰值即初始现金），不是「被坐标轴挡住」。"
+            "<b>读图</b>：蓝线为<strong>USDT权益</strong>（按成交已实现 PnL 更新，默认仅在<strong>平仓</strong>时阶跃）；"
+            "若全程未盈利超起点，则纵轴峰值接近初始现金锚点；不是「被坐标轴挡住」。"
             "Kill 生效后常见<strong>权益走平</strong>：无新仓、也无平仓结算，曲线不再变化，但时间线仍走到回测结束。"
         )
         lines = [exe_note, leg_note, axis_note]
@@ -4196,7 +4974,7 @@ def generate_trading_map_html(
 
             p_eq = bk_figure(
                 title=(
-                    "组合权益曲线（仿真账户 $1000 起点 × risk_per_slot；"
+                    "组合权益曲线（USDT 口径；优先使用成交已实现 PnL，"
                     "每次平仓结算后更新。红虚竖线≈Kill Switch 触发时刻）"
                 ),
                 x_axis_type="datetime",
@@ -5166,6 +5944,51 @@ def main():
         )
 
     strategies = [s.strip() for s in args.strategy.split(",")]
+    strategy_keys = {s.strip().lower() for s in strategies if s.strip()}
+
+    spot_cfg: Dict[str, Any] = {}
+    try:
+        const_obj = yaml.safe_load(
+            Path(args.constitution_yaml).read_text(encoding="utf-8")
+        )
+        if not isinstance(const_obj, dict):
+            const_obj = {}
+        spot_obj = const_obj.get("spot") or {}
+        if isinstance(spot_obj, dict):
+            raw_spot_strategies = spot_obj.get("strategies")
+            if isinstance(raw_spot_strategies, str):
+                spot_strategies = {
+                    p.strip().lower()
+                    for p in raw_spot_strategies.split(",")
+                    if p.strip()
+                }
+            elif isinstance(raw_spot_strategies, (list, tuple)):
+                spot_strategies = {
+                    str(x).strip().lower()
+                    for x in raw_spot_strategies
+                    if str(x).strip()
+                }
+            else:
+                spot_strategies = set()
+            if strategy_keys & spot_strategies:
+                spot_cfg = dict(spot_obj)
+    except Exception:
+        spot_cfg = {}
+
+    initial_capital = float(args.initial_capital)
+    if "--initial-capital" not in sys.argv and spot_cfg:
+        spot_account = spot_cfg.get("account") or {}
+        if isinstance(spot_account, dict):
+            try:
+                bt_anchor = float(spot_account.get("backtest_equity_usdt", 0.0) or 0.0)
+            except Exception:
+                bt_anchor = 0.0
+            if bt_anchor > 0:
+                initial_capital = bt_anchor
+                print(
+                    f"  资金锚点: spot.account.backtest_equity_usdt={initial_capital:.2f} "
+                    "(未显式传 --initial-capital)"
+                )
 
     # 解析 symbols：--universe-group 优先，其次 --symbols
     if args.universe_group:
@@ -5248,6 +6071,7 @@ def main():
         force_close_end=not bool(args.keep_open_positions),
         no_kill_switch=args.no_kill_switch,
         inject_add_ml_scores_path=args.inject_add_ml_scores,
+        equity_anchor_usdt=initial_capital,
     )
 
     result.print_report()
@@ -5269,7 +6093,7 @@ def main():
         out_dir=cap_dir,
         unit="r_multiple",
         title=f"{','.join(strategies)} Capital Report",
-        initial_capital=float(args.initial_capital),
+        initial_capital=initial_capital,
         risk_per_r=float(args.risk_per_r),
         start_date=args.start_date or "",
         end_date=args.end_date or "",
@@ -5360,6 +6184,13 @@ def _trade_to_dict(t: ClosedTrade) -> dict:
         "entry_time": t.entry_time.isoformat(),
         "exit_time": t.exit_time.isoformat(),
         "pnl_r": round(t.pnl_r, 4),
+        "pnl_usd": round(t.pnl_usd, 6),
+        "pnl_usd_realized": round(t.pnl_usd_realized, 6),
+        "notional_usdt": round(t.notional_usdt, 6),
+        "qty_base": round(t.qty_base, 10),
+        "entry_fee_usdt": round(t.entry_fee_usdt, 6),
+        "exit_fee_usdt": round(t.exit_fee_usdt, 6),
+        "exit_notional_usdt": round(t.exit_notional_usdt, 6),
         "exit_reason": t.exit_reason,
         "bars_held": t.bars_held,
         "size_multiplier": round(t.size_multiplier, 4),

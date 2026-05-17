@@ -1,5 +1,6 @@
 feature_groups:
   baseline:
+    - rsi_f
     - ema_1200_position_f
     - ema_1200_slope_f
     - atr_percentile_f

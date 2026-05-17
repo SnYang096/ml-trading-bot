@@ -9259,7 +9259,11 @@ def main():
         stage=str(args.stage or "full"),
         dry_run=bool(args.dry_run),
     )
-    constitution_alignment: Dict[str, List[str]] = {"classic": [], "multi_leg": []}
+    constitution_alignment: Dict[str, List[str]] = {
+        "classic": [],
+        "multi_leg": [],
+        "spot": [],
+    }
     if args.stage in {"fast_month", "rolling_sim", "pcm_slot_grid", "pcm_joint"} or (
         args.all and not args.compare_only
     ):
@@ -9271,7 +9275,8 @@ def main():
             p.error(
                 f"{exc}\n请确保 YAML 中的每个策略均在宪法 allowlist 内："
                 "经典策略 ∈ resource_allocation.enabled_archetypes；"
-                "multi-leg ∈ multi_leg.strategies（单策略跑滚测时宪法可为超集）。"
+                "multi-leg ∈ multi_leg.strategies；"
+                "spot ∈ spot.strategies（单策略跑滚测时宪法可为超集）。"
             )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

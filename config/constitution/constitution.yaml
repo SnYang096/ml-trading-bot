@@ -255,3 +255,37 @@ multi_leg:
     max_symbol_net_notional_pct: 0.04
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60
+
+# -----------------------------------------------------------------------------
+# 5) Spot accumulator account (separate spot account; not a classic PCM slot pool)
+# -----------------------------------------------------------------------------
+spot:
+  strategies:
+    - spot_accum
+  account:
+    account_label: spot_accum
+    equity_source: remote_live_account
+    # Offline anchor for backtests / reports only; live must sync from exchange.
+    backtest_equity_usdt: 10000
+  accumulation:
+    target_deploy_pct: 1.00
+    min_order_interval_minutes: 360
+    # Per-symbol hard budgets + fixed tranche size (recharge = raise budget, not unit size).
+    symbol_budgets_usdt:
+      BTCUSDT: 5000.0
+      BNBUSDT: 2500.0
+      SOLUSDT: 2500.0
+    tranches_per_symbol: 20
+    symbol_unit_notional_usdt:
+      BTCUSDT: 250.0
+      BNBUSDT: 125.0
+      SOLUSDT: 125.0
+  strategy_limits:
+    spot_accum:
+      allow_add_position: false
+      require_locked_profit: false
+      max_new_entries_per_day: 2
+  risk_limits:
+    max_gross_notional_pct: 1.00
+    max_daily_deploy_pct: 0.25
+    max_resting_orders: 12

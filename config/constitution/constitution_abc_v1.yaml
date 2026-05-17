@@ -1,24 +1,21 @@
 version: 1
-name: "Constitution_abc_v1"
-created_at: "2026-05-16"
-
+name: Constitution_abc_v1
+created_at: '2026-05-16'
 kill_switch:
   enabled: true
   daily_loss_limit: 0.06
   weekly_loss_limit: 0.08
   monthly_loss_limit: 0.12
   cooldown_minutes: 720
-  daily_reset_timezone: "UTC"
-  max_dd: 0.20
+  daily_reset_timezone: UTC
+  max_dd: 0.2
   max_turnover_mean: 0.35
-  max_turnover_p95: 1.00
+  max_turnover_p95: 1.0
   max_cost_mean: 0.002
-  max_cost_p95: 0.010
+  max_cost_p95: 0.01
   kill_on_any_hard_violation: true
-
 safety_state:
-  persist_to: "data/order_management.db"
-
+  persist_to: data/order_management.db
 slots:
   enabled: true
   slot_count: 10
@@ -27,16 +24,13 @@ slots:
   evidence_min_score: 0.0
   evidence_position_scale: true
   slot_state_tracking:
-    persist_to: "data/order_management.db"
-
+    persist_to: data/order_management.db
 resource_allocation:
   enabled_archetypes:
-    - tpc_swing
-    - bpc_swing
-    - me_swing
-    - spot_ft
-    - spot_accum
-
+  - tpc_swing
+  - bpc_swing
+  - me_swing
+  - spot_ft
   slot_policy:
     trend_group: trend
     min_trend_slots_per_symbol: 1
@@ -46,15 +40,12 @@ resource_allocation:
       max_unprotected_symbols: 1
       unlock_on: breakeven_locked
       max_symbols_after_unlock: 3
-
   archetype_groups:
     trend:
-      - bpc_swing
-      - tpc_swing
-      - me_swing
-      - spot_ft
-      - spot_accum
-
+    - bpc_swing
+    - tpc_swing
+    - me_swing
+    - spot_ft
   per_strategy_limits:
     bpc_swing:
       max_risk_per_trade: 0.007
@@ -80,9 +71,31 @@ resource_allocation:
       max_add_times: 0
       require_locked_profit: false
       max_new_entries_per_day: 2
+spot:
+  strategies:
+  - spot_accum
+  account:
+    account_label: spot_accum
+    equity_source: remote_live_account
+    backtest_equity_usdt: 10000
+  accumulation:
+    target_deploy_pct: 1.0
+    min_order_interval_minutes: 360
+    symbol_budgets_usdt:
+      BTCUSDT: 5000.0
+      BNBUSDT: 2500.0
+      SOLUSDT: 2500.0
+    tranches_per_symbol: 20
+    symbol_unit_notional_usdt:
+      BTCUSDT: 250.0
+      BNBUSDT: 125.0
+      SOLUSDT: 125.0
+  strategy_limits:
     spot_accum:
-      max_risk_per_trade: 0.0025
       allow_add_position: false
-      max_add_times: 0
       require_locked_profit: false
       max_new_entries_per_day: 2
+  risk_limits:
+    max_gross_notional_pct: 1.0
+    max_daily_deploy_pct: 0.25
+    max_resting_orders: 12

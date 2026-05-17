@@ -244,10 +244,16 @@ class ConstitutionExecutor:
         return self._canonical_om_db
 
     def _resolve_per_strategy_limits(self) -> dict:
-        """Return per_strategy_limits dict from resource_allocation."""
+        """Return merged per-strategy limits from classic + spot sections."""
         obj = self._raw_obj or {}
         ra = obj.get("resource_allocation") or {}
-        return dict(ra.get("per_strategy_limits") or {})
+        out = dict(ra.get("per_strategy_limits") or {})
+        spot = obj.get("spot") or {}
+        if isinstance(spot, dict):
+            sl = spot.get("strategy_limits") or {}
+            if isinstance(sl, dict):
+                out.update(dict(sl))
+        return out
 
     def resolve_max_new_entries_per_day(
         self, archetype: str, position_action: Optional[str] = None

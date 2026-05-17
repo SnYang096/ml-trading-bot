@@ -362,6 +362,7 @@ def _load_constitution_constraints(
 
     slots = obj.get("slots") or {}
     ra = obj.get("resource_allocation") or {}
+    spot = obj.get("spot") or {}
     add_rules = (
         ra.get("add_position_rules")
         or ra.get("add_position")
@@ -369,10 +370,15 @@ def _load_constitution_constraints(
         or {}
     )
     slot_policy = classic_slot_policy_from_constitution(obj)
+    per_strategy_limits = dict(ra.get("per_strategy_limits") or {})
+    if isinstance(spot, dict):
+        sl = spot.get("strategy_limits") or {}
+        if isinstance(sl, dict):
+            per_strategy_limits.update(dict(sl))
     return {
         "slot_count": int(slots.get("slot_count", 2)),
         "risk_per_slot": float(slots.get("risk_per_slot", 0.01)),
-        "per_strategy_limits": dict(ra.get("per_strategy_limits") or {}),
+        "per_strategy_limits": per_strategy_limits,
         "add_position_rules": dict(add_rules),
         "intent_selection_policy": dict(ra.get("intent_selection_policy") or {}),
         "direction_policy": dict(ra.get("direction_policy") or {}),

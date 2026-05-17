@@ -1,37 +1,41 @@
+# Swing：小止损档（4R）对比生产 10R；加仓块与生产 BPC 一致。
+
 add_position:
   add_size_multipliers:
-    - 0.5
+    - 1
+    - 2
   inherit_parent_stop: true
-  max_add_times: 1
   min_current_r_by_add:
-    - 1.4
+    - 2
+    - 4
   min_current_r_unit: atr
   sizing_mode: fixed_multiplier
   trigger:
     type: float_r_ladder_only
 execution_constraints:
   allow_add_on: true
-  min_order_interval_minutes: 120
+  min_order_interval_minutes: 60
 holding:
   max_holding_bars: 60
   time_stop_bars: 60
 stop_loss:
   breakeven:
     enabled: true
-    trigger_r: 1.4
-    lock_level_r: 0.2
+    trigger_r: 5.0
+    lock_level_r: 2.0
     measure: atr
   guardrails:
     max_stop_pct: 0.2
     min_stop_pct: 0.01
-  initial_r: 2.3
+  initial_r: 4.0
   structural_exit: ema1200
   trailing:
-    activation_r: 1.8
+    activation_r: 4.0
     enabled: true
-    trail_r: 2.2
+    expand_with_primary_atr: true
+    trail_r: 4.0
   type: trailing
 take_profit:
   enabled: true
   target_r: 2.8
-version: 1
+version: 2

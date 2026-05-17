@@ -1,46 +1,40 @@
-# ME — 动量扩张 / 冲段（ATR 大、假突破多）；执行档与 TPC/BPC 数值对齐。
-# 原则：宁可共宽止损、用仓位与 sizing 控暴露，也不单独把 ME 拧得更紧以免被洗出场；
-# 同一套 initial_r / trailing / 加仓阶梯；EMA1200 结构保底 + trailing；不设 breakeven。
+# ME — 动量扩张；执行止损/尾随与 BPC/TPC 生产档一致（10R），加仓与 BPC 相同。
+# 暴露由宪法 risk_per_trade / slot 控制。
 
 add_position:
   add_size_multipliers:
-    # 这里越加越多是因为根据数据统计，越后面成功率越高
     - 1
     - 2
   inherit_parent_stop: true
-  max_add_times: 2
   min_current_r_by_add:
-    - 1
     - 2
+    - 4
   min_current_r_unit: atr
   sizing_mode: fixed_multiplier
   trigger:
-    # float_r_ladder_only = 浮盈 R 阶梯（事件回测）；bpc_follow_signal = 仅 PCM 再次意图时加仓
     type: float_r_ladder_only
 execution_constraints:
   allow_add_on: true
-  min_order_interval_minutes: 5
+  min_order_interval_minutes: 60
 holding:
-  # 时间强平只认 max_holding_bars（与 ExecutionParamGenerator 一致）。0 = 禁用，由 SL / trailing / 结构出场决定持仓长度。
   max_holding_bars: 0
 stop_loss:
   breakeven:
     enabled: true
-    trigger_r: 5.0
-    lock_level_r: 2.0
+    lock_level_r: 2
     measure: atr
+    trigger_r: 10.0
   guardrails:
-    max_stop_pct: 0.1
+    max_stop_pct: 0.2
     min_stop_pct: 0.01
-  # initial_r 与 TPC/BPC 一致；宁可宽止损共口径，暴露用仓位与 sizing 收。
-  initial_r: 4.0
+  initial_r: 10.0
   structural_exit: ema1200
   trailing:
+    activation_r: 10.0
     enabled: true
     expand_with_primary_atr: true
-    activation_r: 4.0
-    trail_r: 4.0
+    trail_r: 10.0
   type: trailing
 take_profit:
   enabled: false
-version: 61
+version: 62

@@ -14,6 +14,7 @@ plain question: "if I start with 10,000 USD, what does this run imply?"
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -83,7 +84,29 @@ def write_capital_report_from_trades(
         _write_report(report, report_path, html_path)
         return report
 
-    if unit == "capital_normalized":
+    if "pnl_usd_realized" in trades.columns:
+        dollars = pd.to_numeric(trades["pnl_usd_realized"], errors="coerce").fillna(0.0)
+        returns = dollars / max(float(initial_capital), 1e-12)
+        unit_explanation = (
+            "equity is computed from trade-level realized USDT PnL exported by "
+            "the backtest; pnl_r / pnl_per_capital are kept as diagnostics."
+        )
+        if total_r is None:
+            if "pnl_r" in trades.columns:
+                effective_total_r = float(
+                    pd.to_numeric(trades["pnl_r"], errors="coerce").fillna(0.0).sum()
+                )
+            elif "pnl_per_capital" in trades.columns:
+                effective_total_r = float(
+                    pd.to_numeric(trades["pnl_per_capital"], errors="coerce")
+                    .fillna(0.0)
+                    .sum()
+                )
+            else:
+                effective_total_r = float(returns.sum())
+        else:
+            effective_total_r = float(total_r)
+    elif unit == "capital_normalized":
         pnl_col = "pnl_per_capital"
         if pnl_col not in trades.columns:
             report = _empty_report(
@@ -157,12 +180,15 @@ def write_capital_report_from_trades(
     end_ts = pd.Timestamp(end_date, tz="UTC") if end_date else df["exit_time"].max()
     years = max((end_ts - start_ts).days / 365.25, 1.0 / 365.25)
     final_capital = float(df["equity"].iloc[-1])
-    total_return = final_capital / float(initial_capital) - 1.0
-    cagr = (
-        (final_capital / float(initial_capital)) ** (1.0 / years) - 1.0
-        if final_capital > 0
-        else -1.0
-    )
+    ic = float(initial_capital)
+    total_return = final_capital / ic - 1.0
+    if final_capital > 0 and ic > 0:
+        try:
+            cagr = math.pow(final_capital / ic, 1.0 / years) - 1.0
+        except (OverflowError, ValueError):
+            cagr = float("inf")
+    else:
+        cagr = -1.0
 
     report = {
         "title": title,

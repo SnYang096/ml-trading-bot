@@ -33,6 +33,7 @@ stop_loss:
   trailing:
     activation_r: 10.0
     enabled: true
+    expand_with_primary_atr: true
     trail_r: 10.0
   type: trailing
 take_profit:

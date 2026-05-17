@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Union
 
 logger = logging.getLogger(__name__)
 MULTI_LEG_STRATEGY_TYPES = frozenset({"grid", "dual_add_trend"})
+SPOT_STRATEGY_TYPES = frozenset({"spot", "spot_accum"})
 
 
 def resolve_constitution_yaml(
@@ -93,6 +94,32 @@ def multi_leg_strategies_from_constitution(cfg: Dict[str, Any]) -> List[str]:
     if isinstance(raw, (list, tuple)):
         return [str(x).strip().lower() for x in raw if str(x).strip()]
     return []
+
+
+def spot_section(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    sec = cfg.get("spot")
+    return sec if isinstance(sec, dict) else {}
+
+
+def spot_strategies_from_constitution(cfg: Dict[str, Any]) -> List[str]:
+    raw = (spot_section(cfg) or {}).get("strategies")
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, str):
+        return [p.strip().lower() for p in raw.split(",") if p.strip()]
+    if isinstance(raw, (list, tuple)):
+        return [str(x).strip().lower() for x in raw if str(x).strip()]
+    return []
+
+
+def spot_account_from_constitution(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    account = (spot_section(cfg) or {}).get("account")
+    return dict(account) if isinstance(account, dict) else {}
+
+
+def spot_strategy_limits_from_constitution(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    raw = (spot_section(cfg) or {}).get("strategy_limits")
+    return dict(raw) if isinstance(raw, dict) else {}
 
 
 def archetype_groups_from_constitution(cfg: Dict[str, Any]) -> Dict[str, List[str]]:
@@ -199,9 +226,10 @@ def partition_pipeline_strategies_by_type(
 ) -> Dict[str, Set[str]]:
     raw = pipeline_cfg.get("strategies") or {}
     if not isinstance(raw, dict):
-        return {"classic": set(), "multi_leg": set()}
+        return {"classic": set(), "multi_leg": set(), "spot": set()}
     classic: Set[str] = set()
     multi_leg: Set[str] = set()
+    spot: Set[str] = set()
     for key, scfg in raw.items():
         name = str(key or "").strip().lower()
         if not name:
@@ -209,9 +237,11 @@ def partition_pipeline_strategies_by_type(
         stype = _strategy_type_from_pipeline_entry(scfg)
         if stype in MULTI_LEG_STRATEGY_TYPES:
             multi_leg.add(name)
+        elif stype in SPOT_STRATEGY_TYPES:
+            spot.add(name)
         else:
             classic.add(name)
-    return {"classic": classic, "multi_leg": multi_leg}
+    return {"classic": classic, "multi_leg": multi_leg, "spot": spot}
 
 
 def validate_pipeline_constitution_alignment(
@@ -222,21 +252,32 @@ def validate_pipeline_constitution_alignment(
 ) -> Dict[str, List[str]]:
     """Ensure every strategy in the pipeline YAML is authorized by the constitution.
 
-    Subset semantics (single-strategy research): ``enabled_archetypes`` / ``multi_leg``
-    may list more than the pipeline; only **pipeline ⊂ constitution** is required.
+    Subset semantics (single-strategy research): ``enabled_archetypes`` /
+    ``multi_leg`` / ``spot`` may list more than the pipeline; only
+    **pipeline ⊂ constitution** is required.
     Violations: a classic name not in ``enabled_archetypes``, or a multi-leg name not
-    in ``multi_leg.strategies``.
+    in ``multi_leg.strategies``, or a spot name not in ``spot.strategies``.
     """
     parts = partition_pipeline_strategies_by_type(pipeline_cfg)
     pipeline_classic = set(parts["classic"])
     pipeline_multi_leg = set(parts["multi_leg"])
+    pipeline_spot = set(parts.get("spot") or set())
     const_classic = set(enabled_archetypes_from_constitution(constitution_cfg))
     const_multi_leg = set(multi_leg_strategies_from_constitution(constitution_cfg))
+    const_spot = set(spot_strategies_from_constitution(constitution_cfg))
+
+    # Backward-compatible inference: if strategy_type is omitted in pipeline YAML,
+    # spot strategies can still be recognized by constitution spot allowlist.
+    inferred_spot = pipeline_classic & const_spot
+    if inferred_spot:
+        pipeline_spot |= inferred_spot
+        pipeline_classic -= inferred_spot
 
     classic_missing_in_const = sorted(pipeline_classic - const_classic)
     multi_missing_in_const = sorted(pipeline_multi_leg - const_multi_leg)
+    spot_missing_in_const = sorted(pipeline_spot - const_spot)
 
-    if classic_missing_in_const or multi_missing_in_const:
+    if classic_missing_in_const or multi_missing_in_const or spot_missing_in_const:
         msg_lines = [
             f"{context_label}: pipeline strategy not allowed by constitution "
             "(pipeline must be a subset of constitution lists)",
@@ -244,6 +285,8 @@ def validate_pipeline_constitution_alignment(
             f"  classic constitution={sorted(const_classic)}",
             f"  multi_leg pipeline={sorted(pipeline_multi_leg)}",
             f"  multi_leg constitution={sorted(const_multi_leg)}",
+            f"  spot pipeline={sorted(pipeline_spot)}",
+            f"  spot constitution={sorted(const_spot)}",
         ]
         if classic_missing_in_const:
             msg_lines.append(
@@ -255,11 +298,17 @@ def validate_pipeline_constitution_alignment(
                 "  not in constitution.multi_leg.strategies="
                 f"{multi_missing_in_const}"
             )
+        if spot_missing_in_const:
+            msg_lines.append(
+                "  not in constitution.spot.strategies="
+                f"{spot_missing_in_const}"
+            )
         raise ValueError("\n".join(msg_lines))
 
     return {
         "classic": sorted(pipeline_classic),
         "multi_leg": sorted(pipeline_multi_leg),
+        "spot": sorted(pipeline_spot),
     }
 
 

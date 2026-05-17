@@ -5,7 +5,7 @@ Entry Filter 公共模块 — backtest 和 live 共用。
   - 加载 entry_filters.yaml 配置
   - 计算衍生 entry filter 特征（批量 DataFrame / 单 bar dict）
   - 构建条件 mask / 检查单 bar 条件
-  - 应用 OR 组合过滤
+  - 并联组合：默认 OR；可选 ``combination_mode: and``（见 ``check_entry_filters_or_single``）
 
 数据流：
   backtest: DataFrame 批量 → compute_derived_entry_features() → apply_entry_filters_or()
@@ -299,10 +299,15 @@ def check_entry_filters_or_single(
     features: Dict[str, float],
     entry_cfg: Dict[str, Any],
 ) -> bool:
-    """Live 单 bar 入场过滤检查（OR 组合）。
+    """Live 单 bar entry_filters.yaml 顶层组合。
 
-    对所有 enabled=true 的 filter，任一通过即返回 True。
-    如果没有 enabled filter，返回 True（全部放行）。
+    每个 filter：其 ``conditions`` 始终 **内部 AND**（见 ``check_conditions_single``）。
+    **多个 filter**：由 ``combination_mode`` 控制并联语义（缺省 ``or``）：
+
+    - ``or`` — 任一 enabled filter（且含非空 conditions）通过 ⇒ 允许入场
+    - ``and`` — 所有这类 filter 均需通过 ⇒ 允许入场
+
+    若无 enabled filter、或均无有效 conditions ⇒ 放行（等价无门）。
 
     Args:
         features: 当前 bar 的特征字典（含 ef_* 衍生特征）
@@ -317,14 +322,23 @@ def check_entry_filters_or_single(
     if not enabled:
         return True  # no filters → all pass
 
+    mode = str(entry_cfg.get("combination_mode") or "or").strip().lower()
+    if mode not in {"or", "and"}:
+        mode = "or"
+
+    per_filter_ok: List[bool] = []
     for filt in enabled:
         conditions = filt.get("conditions", [])
         if not conditions:
             continue
-        if check_conditions_single(features, conditions):
-            return True  # any filter passes → allow entry
+        per_filter_ok.append(check_conditions_single(features, conditions))
 
-    return False  # none passed
+    if not per_filter_ok:
+        return True  # enabled filters exist but none had conditions → pass
+
+    if mode == "and":
+        return all(per_filter_ok)
+    return any(per_filter_ok)
 
 
 # ================================================================
@@ -395,10 +409,10 @@ def apply_entry_filters_or(
     silent: bool = False,
 ) -> int:
     """
-    对所有 enabled=true 的 entry filter 应用 OR 组合。
+    对所有 enabled=true 的 entry filter 并联应用顶层 ``combination_mode``。
 
-    每个 filter 内部的 conditions 是 AND 关系，
-    多个 filter 之间是 OR 关系（任一满足即可入场）。
+    - 每个 filter 内部的 conditions：**AND**
+    - 多个 filter：**OR（默认）** 或 **AND**（``combination_mode: and``）
 
     Returns:
         过滤后剩余的入场信号数
@@ -411,29 +425,44 @@ def apply_entry_filters_or(
             print("   ℹ️  No enabled entry filters, all entries pass")
         return int((df["entry_direction"] != 0).sum())
 
+    mode = str(entry_cfg.get("combination_mode") or "or").strip().lower()
+    if mode not in {"or", "and"}:
+        mode = "or"
+
     n_before = int((df["entry_direction"] != 0).sum())
 
-    # 构建 OR mask: 任一 enabled filter 通过 → 允许入场
-    or_mask = pd.Series(False, index=df.index)
+    filter_masks: List[pd.Series] = []
     filter_stats = []
     for filt in enabled:
         conditions = filt.get("conditions", [])
         if not conditions:
             continue
         filt_mask = _build_mask_from_conditions(df, conditions, silent=True)
-        # 只看有方向的 bar
         filt_pass = int((filt_mask & (df["entry_direction"] != 0)).sum())
         filter_stats.append((filt["id"], filt_pass))
-        or_mask = or_mask | filt_mask
+        filter_masks.append(filt_mask)
 
-    # 应用: 不满足任何 filter 的 bar → entry_direction = 0
-    df.loc[~or_mask, "entry_direction"] = 0.0
+    if not filter_masks:
+        return n_before
+
+    if mode == "and":
+        combo_mask = filter_masks[0]
+        for m in filter_masks[1:]:
+            combo_mask = combo_mask & m
+    else:
+        combo_mask = pd.Series(False, index=df.index)
+        for m in filter_masks:
+            combo_mask = combo_mask | m
+
+    # 应用: 不满足并联 mask 的 bar → entry_direction = 0
+    df.loc[~combo_mask, "entry_direction"] = 0.0
     n_after = int((df["entry_direction"] != 0).sum())
 
     if not silent:
         pct = n_after / n_before * 100 if n_before > 0 else 0
+        top = "AND" if mode == "and" else "OR"
         print(
-            f"   🔍 Entry Filter (OR, {len(enabled)} filters): "
+            f"   🔍 Entry Filter ({top}, {len(filter_masks)} filters): "
             f"{n_before} → {n_after} entries ({pct:.1f}% pass)"
         )
         for fid, fpass in filter_stats:

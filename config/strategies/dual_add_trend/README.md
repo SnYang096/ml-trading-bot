@@ -5,17 +5,17 @@ bounded multi-leg inventory.
 
 ## 策略说明
 
-`dual_add_trend` 的核心不是无限马丁，也不是普通网格。它先在趋势段开始时同时持有一份 `LONG` 和一份 `SHORT`，之后只允许沿当前趋势方向加仓。趋势方向每根 2H bar 动态更新；如果趋势掉头，策略会停止旧方向加仓，并强制处理旧方向库存，避免反向腿无限保留。
+`dual_add_trend` 的核心不是无限马丁，也不是普通网格。**当前 archetype 默认在趋势段开始时只开当前趋势方向一腿（`initial_legs: TREND`，研究脚本对应 `--no-initial-hedge`）**；仍可配置开局 `LONG`+`SHORT` 双开做对比，但需在费用与尾部风险上单独评估（参见执行压力测试文档）。开仓之后只允许沿当前趋势方向加仓（`add_mode: trend`）。趋势方向按信号周期 bar 动态更新；若趋势掉头，默认 `close_offside_all` 清掉逆势库存，避免反向腿无限保留。
 
-当前默认使用：
+当前 `archetypes/execution.yaml` 要点：
 
 ```text
-初始: 1 LONG + 1 SHORT
+初始: TREND（单腿顺势）
 加仓: 仅当前趋势方向
 趋势掉头: close_offside_all
 最大 gross exposure: 4 units
 最大 net exposure: 2 units
-段内最大亏损: 1%
+段内最大亏损: 见 risk.max_loss_per_segment（profile 可调）
 ```
 
 ## 适用阶段
@@ -78,6 +78,64 @@ fee_buffer = 2 * fee_bps * entry_price
 
 因此默认选择 `close_offside_all`。
 
+## `max_adds_per_side` 消融（加仓是否有用）
+
+在同一套信号分段与退场语义下，仅扫描 **`max_adds_per_side ∈ {0,1,2,3}`**，其余参数固定，可用：
+
+粗执行（`2h` 信号与执行一致，跑得最快）：
+
+```bash
+python scripts/experiment_dual_add_max_adds_ablation.py \
+  --out-root results/dual_add_ablation_max_adds_q1_2024_2h \
+  --max-adds-grid 0,1,2,3 \
+  -- \
+  --config config/strategies/dual_add_trend/research/calibrate_roll.default.yaml \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT \
+  --start 2024-01-01 --end 2024-03-31 \
+  --timeframe 2h --execution-timeframe 2h \
+  --take-profit-mode basket --no-initial-hedge \
+  --risk-stop-mode regime_only --fee-bps 8
+```
+
+`1min` 执行回放（`2h` 信号、`calibrate_roll.default.yaml` 默认会缩放 `max_loser_hold_bars`，等价日历耐心）：
+
+```bash
+python scripts/experiment_dual_add_max_adds_ablation.py \
+  --out-root results/dual_add_ablation_max_adds_q1_2024_1min_exec \
+  --max-adds-grid 0,1,2,3 \
+  -- \
+  --config config/strategies/dual_add_trend/research/calibrate_roll.default.yaml \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT \
+  --start 2024-01-01 --end 2024-03-31 \
+  --timeframe 2h --execution-timeframe 1min \
+  --take-profit-mode basket --no-initial-hedge \
+  --risk-stop-mode regime_only --fee-bps 8
+```
+
+**2024 Q1、三币、上述 profile、`fee_bps=8`、趋势单开、`basket`、`regime_only` 的一次结果如下（`sum_pnl_per_capital` 按脚本惯例 ×100 即为 `return_pct`；分段数均为 97）。**
+
+### 信号与执行同为 `2h`（无子周期回放）
+
+| max_adds | return_pct | worst_segment | portfolio_cum_dd* |
+| --- | ---: | ---: | ---: |
+| 0 | 27.70% | -4.72% | -4.72% |
+| 1 | 38.96% | -2.42% | -3.21% |
+| 2 | 40.30% | -2.23% | -3.37% |
+| 3 | 41.43% | -2.23% | -3.37% |
+
+### 信号 `2h` + 执行 `1min`（回放；profile 默认缩放 loser_hold → 2880 根 1m bar）
+
+| max_adds | return_pct | worst_segment | portfolio_cum_dd* |
+| --- | ---: | ---: | ---: |
+| 0 | 26.42% | -3.65% | -4.26% |
+| 1 | 38.62% | -1.14% | -1.76% |
+| 2 | 47.63% | -2.10% | -2.23% |
+| 3 | 48.37% | -2.10% | -2.17% |
+
+\* `portfolio_cum_dd`：所有分段按结束时间排序后对 `pnl_per_capital` 累加曲线的最大回撤（脚本 `experiment_dual_add_max_adds_ablation.py`）。原始汇总：`results/dual_add_ablation_max_adds_q1_2024_2h/ablation_summary.csv` 与 `results/dual_add_ablation_max_adds_q1_2024_1min_exec/ablation_summary.csv`。
+
+**解读（仅此样本）：** 相对 **`max_adds=0`**，允许 **`≥1` 次顺势加仓**在同一窗口内显著提升 **`return_pct`**，并常收窄 **`worst_segment`**；在本批参数下 **`2→3`** 边际变小。**换样本、换执行粒度或未缩放 `max_loser_hold_bars` 时结论可能不同**，应以本地复跑的 `ablation_summary.csv` 为准。
+
 ## Evidence Snapshot
 
 Script:
@@ -129,8 +187,8 @@ market-impact slippage.
 
 Do not wire into the generic single-position `TradeIntent` / `event_backtest`
 path yet. Like `chop_grid`, this strategy needs a dedicated multi-leg inventory
-simulator because it depends on simultaneous long/short legs, add-on inventory,
-trend-flip exits, gross exposure, net exposure, and segment-level forced exits.
+simulator because it depends on multi-leg inventory paths (optional hedge opens,
+add-on inventory, trend-flip exits, gross/net exposure caps, and segment-level forced exits).
 
 The config in this folder mirrors `chop_grid` for research organization. A
 production implementation would need first-class multi-leg execution accounting,

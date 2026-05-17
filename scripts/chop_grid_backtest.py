@@ -1187,6 +1187,12 @@ def main() -> None:
         default=defaults.get("feature_store_timeframe"),
     )
     parser.add_argument("--out-dir", default="results/chop_grid/backtest")
+    parser.add_argument(
+        "--initial-capital",
+        type=float,
+        default=10_000.0,
+        help="account initial capital (USDT) for realized PnL projection/reporting",
+    )
     parser.add_argument("--map-symbols", default="BTCUSDT")
     parser.add_argument("--continuous-map-symbols", default="")
     parser.add_argument("--no-maps", action="store_true")
@@ -1195,6 +1201,18 @@ def main() -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     trades, segments, equity = run_backtest(args)
+    if not trades.empty and "pnl_per_capital" in trades.columns:
+        trades["pnl_usd_realized"] = pd.to_numeric(
+            trades["pnl_per_capital"], errors="coerce"
+        ).fillna(0.0) * float(args.initial_capital)
+    if not equity.empty and "pnl_per_capital" in equity.columns:
+        equity["pnl_usd_realized"] = pd.to_numeric(
+            equity["pnl_per_capital"], errors="coerce"
+        ).fillna(0.0) * float(args.initial_capital)
+        if "cum_pnl_per_capital" in equity.columns:
+            equity["cum_pnl_usd_realized"] = pd.to_numeric(
+                equity["cum_pnl_per_capital"], errors="coerce"
+            ).fillna(0.0) * float(args.initial_capital)
     trades.to_csv(out_dir / "grid_trades.csv", index=False)
     segments.to_csv(out_dir / "grid_segments.csv", index=False)
     equity.to_csv(out_dir / "equity_curve.csv", index=False)
@@ -1212,6 +1230,7 @@ def main() -> None:
         out_dir=out_dir,
         unit="capital_normalized",
         title="Chop Grid Capital Report",
+        initial_capital=float(args.initial_capital),
         start_date=args.start,
         end_date=args.end,
         total_r=float(trades["pnl_per_capital"].sum()) if not trades.empty else 0.0,
