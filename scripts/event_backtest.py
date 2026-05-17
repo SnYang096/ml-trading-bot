@@ -444,13 +444,11 @@ def _build_spot_capital_budget_or_none(
         tranche_count = int(acc.get("tranche_count") or 0)
     except (TypeError, ValueError):
         tranche_count = 0
-    if unit_notional <= 0:
-        unit_notional = max(eq * target_deploy_pct / max(tranche_count, 1), 1.0)
-    if tranche_count <= 0:
-        tranche_count = max(1, int(round(eq * target_deploy_pct / unit_notional)))
-    max_gross = max(1e-9, float(rl.get("max_gross_notional_pct", 1.0) or 1.0))
-    max_symbol = max(1e-9, float(rl.get("max_symbol_gross_notional_pct", 1.0) or 1.0))
-    max_daily = max(0.0, float(rl.get("max_daily_deploy_pct", 1.0) or 1.0))
+    tranches_per_symbol = 0
+    try:
+        tranches_per_symbol = int(acc.get("tranches_per_symbol") or 0)
+    except (TypeError, ValueError):
+        tranches_per_symbol = 0
     symbol_budgets_raw = acc.get("symbol_budgets_usdt")
     symbol_budgets: Dict[str, float] = {}
     if isinstance(symbol_budgets_raw, dict):
@@ -462,11 +460,6 @@ def _build_spot_capital_budget_or_none(
             kk = str(k or "").strip().upper()
             if kk and sv > 0.0:
                 symbol_budgets[kk] = sv
-    tranches_per_symbol = 0
-    try:
-        tranches_per_symbol = int(acc.get("tranches_per_symbol") or 0)
-    except (TypeError, ValueError):
-        tranches_per_symbol = 0
     symbol_unit_raw = acc.get("symbol_unit_notional_usdt")
     symbol_unit: Dict[str, float] = {}
     if isinstance(symbol_unit_raw, dict):
@@ -481,6 +474,16 @@ def _build_spot_capital_budget_or_none(
     if symbol_budgets and tranches_per_symbol > 0:
         for sk, sb in symbol_budgets.items():
             symbol_unit.setdefault(sk, max(1.0, sb / float(tranches_per_symbol)))
+        tranche_count = tranches_per_symbol
+        if unit_notional <= 0.0 and symbol_unit:
+            unit_notional = float(min(symbol_unit.values()))
+    elif unit_notional <= 0:
+        unit_notional = max(eq * target_deploy_pct / max(tranche_count, 1), 1.0)
+    if tranche_count <= 0:
+        tranche_count = max(1, int(round(eq * target_deploy_pct / unit_notional)))
+    max_gross = max(1e-9, float(rl.get("max_gross_notional_pct", 1.0) or 1.0))
+    max_symbol = max(1e-9, float(rl.get("max_symbol_gross_notional_pct", 1.0) or 1.0))
+    max_daily = max(0.0, float(rl.get("max_daily_deploy_pct", 1.0) or 1.0))
 
     return {
         "equity_usdt": eq,
@@ -937,12 +940,6 @@ class PositionSimulator:
                 cap_list.append(yaml_ml)
             if isinstance(self._spot_capital_budget, dict):
                 try:
-                    _tc = int(self._spot_capital_budget.get("tranche_count") or 0)
-                except (TypeError, ValueError):
-                    _tc = 0
-                if _tc > 0:
-                    cap_list.append(_tc)
-                try:
                     _tps = int(
                         self._spot_capital_budget.get("tranches_per_symbol") or 0
                     )
@@ -950,6 +947,13 @@ class PositionSimulator:
                     _tps = 0
                 if _tps > 0:
                     cap_list.append(_tps)
+                else:
+                    try:
+                        _tc = int(self._spot_capital_budget.get("tranche_count") or 0)
+                    except (TypeError, ValueError):
+                        _tc = 0
+                    if _tc > 0:
+                        cap_list.append(_tc)
             _max_le_eff = min(cap_list) if cap_list else (10**18)
             if cur_legs >= _max_le_eff:
                 self.last_open_reject_reason = "spot_budget_tranches"
@@ -3743,15 +3747,19 @@ class EventBacktester:
             equity_anchor_usdt=_initial_cash,
         )
         if _spot_cap_budget is not None:
+            _sb = _spot_cap_budget.get("symbol_budgets_usdt") or {}
+            _su = _spot_cap_budget.get("symbol_unit_notional_usdt") or {}
             logger.info(
                 "Spot capital budget (spot_accum): equity_usdt=%.2f deploy_pct=%.4f "
-                "unit_usdt=%.2f tranche_count=%d caps gross/symbol/daily pct=(%.4f,%.4f,%.4f)",
+                "tranches_per_symbol=%d unit_usdt=%.2f symbol_budgets=%s symbol_units=%s "
+                "caps gross/daily pct=(%.4f,%.4f)",
                 float(_spot_cap_budget["equity_usdt"]),
                 float(_spot_cap_budget["target_deploy_pct"]),
+                int(_spot_cap_budget.get("tranches_per_symbol") or 0),
                 float(_spot_cap_budget["unit_notional_usdt"]),
-                int(_spot_cap_budget["tranche_count"]),
+                dict(_sb) if isinstance(_sb, dict) else {},
+                dict(_su) if isinstance(_su, dict) else {},
                 float(_spot_cap_budget["max_gross_notional_pct"]),
-                float(_spot_cap_budget["max_symbol_gross_notional_pct"]),
                 float(_spot_cap_budget["max_daily_deploy_pct"]),
             )
             for _sim_bb in self._simulators.values():
