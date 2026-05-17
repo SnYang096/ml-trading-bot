@@ -1,0 +1,6 @@
+rules:
+  - feature: abc_macro_regime_score
+    operator: "<"
+    value: 3.0
+    locked: true
+    lock_reason: spot_accum 仅在弱势/熊市 regime（score<3）下允许分批建仓

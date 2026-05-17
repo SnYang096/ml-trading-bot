@@ -129,19 +129,26 @@ def _extract_features_from_evidence(cfg: Dict[str, Any]) -> Set[str]:
 
 
 def _extract_features_from_entry_filters(cfg: Dict[str, Any]) -> Set[str]:
-    """Extract feature columns from *enabled* entry filters."""
+    """Extract feature columns from *enabled* entry filters.
+
+    Optionally merge ``prefetch_columns`` — columns needed by disabled experimental
+    filters so IncrementalFeatureComputer still resolves their feature nodes without
+    toggling ``enabled: true``.
+    """
     features: Set[str] = set()
     filters = cfg.get("filters")
-    if not isinstance(filters, list):
-        return features
-    for f in filters:
-        if not isinstance(f, dict):
-            continue
-        if not f.get("enabled", False):
-            continue
-        for cond in f.get("conditions") or []:
-            if isinstance(cond, dict) and cond.get("feature"):
-                features.add(str(cond["feature"]))
+    if isinstance(filters, list):
+        for f in filters:
+            if not isinstance(f, dict):
+                continue
+            if not f.get("enabled", False):
+                continue
+            for cond in f.get("conditions") or []:
+                if isinstance(cond, dict) and cond.get("feature"):
+                    features.add(str(cond["feature"]))
+    for col in cfg.get("prefetch_columns") or []:
+        if col:
+            features.add(str(col))
     return features
 
 

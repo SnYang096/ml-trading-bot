@@ -1,0 +1,6 @@
+rules:
+  - feature: abc_macro_regime_score
+    operator: ">="
+    value: 3.0
+    locked: true
+    lock_reason: A-layer 仅在 macro regime score 达到转换期/牛市时参与；避免熊市边界来回开仓

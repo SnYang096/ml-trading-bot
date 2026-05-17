@@ -1,0 +1,11 @@
+feature_groups:
+  baseline:
+    - ema_1200_position_f
+    - ema_1200_slope_f
+    - atr_percentile_f
+    - oi_features_f
+    - funding_rate_features_f
+    - funding_oi_crowding_f
+    - abc_macro_regime_score_f
+    - ema_200_position_f
+    - weekly_macro_cycle_exit_f

@@ -4400,6 +4400,148 @@ def compute_ma_slope_from_series(
     return pd.DataFrame({output_column: slope}, index=ma.index)
 
 
+@register_feature("compute_abc_macro_regime_score_from_series", category="baseline")
+def compute_abc_macro_regime_score_from_series(
+    *,
+    ema_1200_position: pd.Series,
+    ema_1200_slope_10: pd.Series,
+    atr_percentile: pd.Series,
+    oi_zscore: pd.Series | None = None,
+    funding_rate_zscore_50: pd.Series | None = None,
+    position_min: float = 0.02,
+    position_strong: float = 0.08,
+    atr_active: float = 0.35,
+    oi_expansion: float = 0.5,
+    funding_support: float = 0.0,
+    score_threshold_bull: float = 4.0,
+    score_threshold_transition: float = 3.0,
+) -> pd.DataFrame:
+    """A-layer macro regime score for spot/fat-tail participation.
+
+    This is a research proxy for "world state" rather than a trading signal:
+    slow trend location, slope, volatility activity, and liquidity/funding
+    support each contribute one point. Output state: 0=bear/avoid,
+    1=transition, 2=bull/risk-on.
+    """
+    idx = ema_1200_position.index
+    pos = pd.to_numeric(ema_1200_position, errors="coerce").reindex(idx).fillna(0.0)
+    slope = pd.to_numeric(ema_1200_slope_10, errors="coerce").reindex(idx).fillna(0.0)
+    atr = pd.to_numeric(atr_percentile, errors="coerce").reindex(idx).fillna(0.0)
+
+    if oi_zscore is None:
+        oi = pd.Series(0.0, index=idx)
+    else:
+        oi = pd.to_numeric(oi_zscore, errors="coerce").reindex(idx).fillna(0.0)
+    if funding_rate_zscore_50 is None:
+        funding = pd.Series(0.0, index=idx)
+    else:
+        funding = (
+            pd.to_numeric(funding_rate_zscore_50, errors="coerce")
+            .reindex(idx)
+            .fillna(0.0)
+        )
+
+    score = pd.Series(0.0, index=idx)
+    score += (pos >= float(position_min)).astype(float)
+    score += (slope >= 0.0).astype(float)
+    score += (pos >= float(position_strong)).astype(float)
+    score += (atr >= float(atr_active)).astype(float)
+    score += (
+        (oi >= float(oi_expansion)) | (funding >= float(funding_support))
+    ).astype(float)
+
+    state = pd.Series(0.0, index=idx)
+    state.loc[score >= float(score_threshold_transition)] = 1.0
+    state.loc[score >= float(score_threshold_bull)] = 2.0
+
+    return pd.DataFrame(
+        {
+            "abc_macro_regime_score": score,
+            "abc_macro_regime_state": state,
+        },
+        index=idx,
+    )
+
+
+@register_feature("compute_weekly_macro_cycle_exit_from_series", category="baseline")
+def compute_weekly_macro_cycle_exit_from_series(
+    *,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    ema_span_weeks: int = 50,
+    close_below_weeks: int = 2,
+    llhl_weeks: int = 2,
+) -> pd.DataFrame:
+    """Weekly macro-cycle exit proxy, projected back to base timeframe.
+
+    Outputs:
+    - weekly_close_below_ema50_2w: weekly close below weekly EMA50 for N weeks
+    - weekly_lower_high_lower_low_2w: consecutive weekly lower-high + lower-low
+    - weekly_macro_cycle_exit_signal: 1 when both conditions hold, else 0
+    """
+    idx = close.index
+    c = pd.to_numeric(close, errors="coerce").astype(float)
+    h = pd.to_numeric(high, errors="coerce").astype(float)
+    l = pd.to_numeric(low, errors="coerce").astype(float)
+
+    weekly = (
+        pd.DataFrame({"close": c, "high": h, "low": l}, index=idx)
+        .sort_index()
+        .resample("W-SUN", label="right", closed="right")
+        .agg({"close": "last", "high": "max", "low": "min"})
+    )
+    weekly = weekly.dropna(subset=["close", "high", "low"])
+    if weekly.empty:
+        z = pd.Series(0.0, index=idx)
+        return pd.DataFrame(
+            {
+                "weekly_close_below_ema50_2w": z,
+                "weekly_lower_high_lower_low_2w": z,
+                "weekly_macro_cycle_exit_signal": z,
+            },
+            index=idx,
+        )
+
+    wk_ema50 = weekly["close"].ewm(
+        span=int(ema_span_weeks),
+        adjust=False,
+        min_periods=max(2, int(ema_span_weeks)),
+    ).mean()
+    wk_below = weekly["close"] < wk_ema50
+    wk_below_n = (
+        wk_below.astype(float)
+        .rolling(window=max(1, int(close_below_weeks)), min_periods=max(1, int(close_below_weeks)))
+        .sum()
+        >= float(max(1, int(close_below_weeks)))
+    )
+
+    wk_lh = weekly["high"] < weekly["high"].shift(1)
+    wk_ll = weekly["low"] < weekly["low"].shift(1)
+    wk_llhl = wk_lh & wk_ll
+    wk_llhl_n = (
+        wk_llhl.astype(float)
+        .rolling(window=max(1, int(llhl_weeks)), min_periods=max(1, int(llhl_weeks)))
+        .sum()
+        >= float(max(1, int(llhl_weeks)))
+    )
+
+    wk_exit = (wk_below_n & wk_llhl_n).astype(float)
+    wk_below_n = wk_below_n.astype(float)
+    wk_llhl_n = wk_llhl_n.astype(float)
+
+    out = pd.DataFrame(
+        {
+            "weekly_close_below_ema50_2w": wk_below_n,
+            "weekly_lower_high_lower_low_2w": wk_llhl_n,
+            "weekly_macro_cycle_exit_signal": wk_exit,
+        },
+        index=weekly.index,
+    ).reindex(idx, method="ffill")
+    out = out.fillna(0.0)
+    return out
+
+
 @register_feature("compute_sma_position_from_series", category="baseline")
 def compute_sma_position_from_series(
     *,

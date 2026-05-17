@@ -433,6 +433,8 @@ class PositionSimulator:
         # 统计依据: EMA1200 零点穿越比 VWAP1200 更可靠 (分歧时 EMA 正确率显著更高)
         self._ema_1200_position: Optional[float] = None
         self._ema_1200_level: Optional[float] = None
+        # 周线宏观结构退出（weekly close<EMA50 连续 + LL/HL 结构）投影到 primary-TF 的信号
+        self._macro_cycle_exit_signal: Optional[float] = None
         # order_management 集成 (由 EventBacktester 注入)
         self._om_bridge: Optional["OMBridge"] = None
         self.max_observed_leverage: float = 0.0
@@ -669,6 +671,7 @@ class PositionSimulator:
                 structural_price=self._structural_price,
                 macro_tp_vwap_position=macro_pv,
                 ema_1200_position=ema_1200_pv,
+                macro_cycle_exit_signal=self._macro_cycle_exit_signal,
                 primary_tf_atr=self._primary_tf_atr,
                 wide_sr_upper_px=getattr(self, "_wide_sr_upper_px", None),
                 wide_sr_lower_px=getattr(self, "_wide_sr_lower_px", None),
@@ -3264,6 +3267,16 @@ class EventBacktester:
                         simulator._ema_1200_level = _c * (1.0 - _e)
             except (TypeError, ValueError):
                 pass
+
+            # weekly macro-cycle structural exit signal（投影到 primary-TF）
+            _mcs = primary_features.get("weekly_macro_cycle_exit_signal")
+            if _mcs is not None:
+                try:
+                    simulator._macro_cycle_exit_signal = float(_mcs)
+                except (TypeError, ValueError):
+                    pass
+            else:
+                simulator._macro_cycle_exit_signal = None
 
             # LivePCM.decide() — 多策略仲裁 + 全局 slot 控制
             intents = self.pcm.decide(

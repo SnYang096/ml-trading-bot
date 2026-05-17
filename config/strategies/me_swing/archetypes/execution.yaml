@@ -1,0 +1,38 @@
+add_position:
+  add_size_multipliers:
+    - 0.5
+  inherit_parent_stop: true
+  max_add_times: 1
+  min_current_r_by_add:
+    - 1.2
+  min_current_r_unit: atr
+  sizing_mode: fixed_multiplier
+  trigger:
+    type: float_r_ladder_only
+execution_constraints:
+  allow_add_on: true
+  min_order_interval_minutes: 60
+holding:
+  max_holding_bars: 36
+  time_stop_bars: 36
+stop_loss:
+  breakeven:
+    enabled: true
+    trigger_r: 1.2
+    lock_level_r: 0.15
+    measure: atr
+  guardrails:
+    max_stop_pct: 0.1
+    min_stop_pct: 0.01
+  initial_r: 2.0
+  structural_exit: ema1200
+  trailing:
+    enabled: true
+    expand_with_primary_atr: true
+    activation_r: 1.5
+    trail_r: 2.0
+  type: trailing
+take_profit:
+  enabled: true
+  target_r: 2.5
+version: 1

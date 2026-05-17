@@ -1,0 +1,12 @@
+filters:
+  - id: ef_spot_accum_weak_regime_reclaim_ema200
+    enabled: true
+    description: 弱势 regime 下仅在价格靠近并重回 EMA200 区域时分批入场
+    conditions:
+      - feature: ema_200_position
+        operator: ">="
+        value: -0.01
+      - feature: ema_200_position
+        operator: "<="
+        value: 0.03
+combination_mode: or

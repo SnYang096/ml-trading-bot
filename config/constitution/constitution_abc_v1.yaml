@@ -1,0 +1,88 @@
+version: 1
+name: "Constitution_abc_v1"
+created_at: "2026-05-16"
+
+kill_switch:
+  enabled: true
+  daily_loss_limit: 0.06
+  weekly_loss_limit: 0.08
+  monthly_loss_limit: 0.12
+  cooldown_minutes: 720
+  daily_reset_timezone: "UTC"
+  max_dd: 0.20
+  max_turnover_mean: 0.35
+  max_turnover_p95: 1.00
+  max_cost_mean: 0.002
+  max_cost_p95: 0.010
+  kill_on_any_hard_violation: true
+
+safety_state:
+  persist_to: "data/order_management.db"
+
+slots:
+  enabled: true
+  slot_count: 10
+  risk_per_slot: 0.01
+  allow_replacement: true
+  evidence_min_score: 0.0
+  evidence_position_scale: true
+  slot_state_tracking:
+    persist_to: "data/order_management.db"
+
+resource_allocation:
+  enabled_archetypes:
+    - tpc_swing
+    - bpc_swing
+    - me_swing
+    - spot_ft
+    - spot_accum
+
+  slot_policy:
+    trend_group: trend
+    min_trend_slots_per_symbol: 1
+    max_trend_slots_per_symbol: 1
+    trend_pool_guard:
+      enabled: true
+      max_unprotected_symbols: 1
+      unlock_on: breakeven_locked
+      max_symbols_after_unlock: 3
+
+  archetype_groups:
+    trend:
+      - bpc_swing
+      - tpc_swing
+      - me_swing
+      - spot_ft
+      - spot_accum
+
+  per_strategy_limits:
+    bpc_swing:
+      max_risk_per_trade: 0.007
+      allow_add_position: true
+      max_add_times: 1
+      require_locked_profit: false
+      max_new_entries_per_day: 3
+    tpc_swing:
+      max_risk_per_trade: 0.007
+      allow_add_position: true
+      max_add_times: 1
+      require_locked_profit: false
+      max_new_entries_per_day: 3
+    me_swing:
+      max_risk_per_trade: 0.005
+      allow_add_position: true
+      max_add_times: 1
+      require_locked_profit: false
+      max_new_entries_per_day: 4
+    spot_ft:
+      max_risk_per_trade: 0.004
+      allow_add_position: false
+      max_add_times: 0
+      require_locked_profit: false
+      max_new_entries_per_day: 2
+    spot_accum:
+      max_risk_per_trade: 0.0025
+      allow_add_position: false
+      max_add_times: 0
+      require_locked_profit: false
+      max_new_entries_per_day: 2

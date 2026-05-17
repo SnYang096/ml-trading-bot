@@ -1,0 +1,16 @@
+strategy:
+  name: spot-ft-120T
+  description: |
+    Spot fat-tail participation (research/backtest only).
+    Long-only, small trial risk, slow exit to retain regime participation.
+  owner: quant_team
+  archetype: SpotFatTailLong
+  timeframe: "120T"
+  symbol_include:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+  symbol_exclude: []
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

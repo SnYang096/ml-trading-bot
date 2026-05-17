@@ -1,0 +1,12 @@
+filters:
+  - id: ef_spot_ft_macro_regime_confirm
+    enabled: true
+    description: A-layer 只在 risk-on regime 且位于 EMA1200 上方时触发，减少边界噪声
+    conditions:
+      - feature: abc_macro_regime_score
+        operator: ">="
+        value: 3.0
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.02
+combination_mode: or

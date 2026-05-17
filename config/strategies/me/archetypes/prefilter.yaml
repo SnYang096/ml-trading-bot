@@ -60,23 +60,6 @@ rules:
     locked: false
     lock_reason: Box prefilter upgrade — compression-before-expansion prior (conservative draft; tighten via meta-algorithm)
 
-  - any_of:
-      - feature: box_pos_120
-        operator: "<="
-        value: 0.15
-      - feature: box_pos_120
-        operator: ">="
-        value: 0.85
-      - feature: box_breakout_up
-        operator: ">="
-        value: 0.5
-      - feature: box_breakout_down
-        operator: ">="
-        value: 0.5
-    locked: true
-    skip_parquet_tune: true
-    lock_reason: "ME 只做压缩后点火/边缘扩张，不在 box 中部未突破区域追假动量；20260425 inside_box_no_breakout R=-59"
-
 last_evaluation:
   timestamp: "2026-04-11"
   data_source: "features_labeled.parquet (train_final_20260411_173341)"

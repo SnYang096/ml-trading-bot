@@ -365,6 +365,7 @@ def enforce_position(
     structural_price: Optional[float] = None,
     macro_tp_vwap_position: Optional[float] = None,
     ema_1200_position: Optional[float] = None,
+    macro_cycle_exit_signal: Optional[float] = None,
     primary_tf_atr: Optional[float] = None,
     wide_sr_upper_px: Optional[float] = None,
     wide_sr_lower_px: Optional[float] = None,
@@ -379,6 +380,7 @@ def enforce_position(
       3c. Structural exit (VWAP1200)
       3d. Structural exit (EMA1200)
       3e. Structural exit (SR break level, SRB)
+      3f. Structural exit (weekly macro-cycle signal)
       4. Activation trailing
       5. SL hit (保守: SL 优先于 TP)
       6. TP hit
@@ -401,6 +403,7 @@ def enforce_position(
         structural_price: EMA200 当前值 (仅 structural_exit="ema200" 时使用)
         macro_tp_vwap_position: macro_tp_vwap_1200_position 当前值 (vwap1200 出场)
         ema_1200_position: ema_1200_position 当前值 (ema1200 出场)
+        macro_cycle_exit_signal: 周线宏观出场信号（1=触发 macro-cycle 退出）
         primary_tf_atr: 当前主周期（如 2H）ATR；若 pos.trail_expand_primary_atr 为 True，
             trailing 距离用 max(atr_at_entry, primary_tf_atr)，减轻趋势加速后被窄跟踪洗出。
 
@@ -602,6 +605,21 @@ def enforce_position(
                 if uv > 0 and uv == uv and price_close > uv + buf:
                     close_reason = "structural_exit_l3"
                     exit_price = price_close
+        except (TypeError, ValueError):
+            pass
+
+    # ── 3g. Structural exit (weekly macro-cycle signal) ──
+    if (
+        close_reason is None
+        and str(pos.get("structural_exit") or "").strip().lower()
+        == "weekly_macro_cycle"
+        and macro_cycle_exit_signal is not None
+    ):
+        try:
+            mcs = float(macro_cycle_exit_signal)
+            if mcs == mcs and mcs >= 0.5:
+                close_reason = "structural_exit_weekly_macro_cycle"
+                exit_price = price_close
         except (TypeError, ValueError):
             pass
 

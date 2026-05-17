@@ -6043,6 +6043,27 @@ features:
         ema_200: price_unit
     column_mappings:
       real: close
+  ema_200_position_f:
+    module: baseline
+    compute_func: compute_price_vs_ma_position_from_series
+    dependencies:
+    - ema_200_value_f
+    required_columns:
+    - close
+    - ema_200
+    output_columns:
+    - ema_200_position
+    category: trend
+    description: '(close - ema_200) / close; normalized macro anchor distance.'
+    pass_full_df: false
+    compute_params:
+      output_column: ema_200_position
+      normalized: true
+      output_normalization_map:
+        ema_200_position: bounded_-1_1
+    column_mappings:
+      close: close
+      ma: ema_200
   ema_1200_value_f:
     module: talib
     compute_func: compute_talib_indicator_from_series
@@ -6129,6 +6150,73 @@ features:
       normalized: true
       output_normalization_map:
         macro_tp_vwap_1200_position: bounded_-1_1
+  abc_macro_regime_score_f:
+    module: baseline
+    compute_func: compute_abc_macro_regime_score_from_series
+    dependencies:
+    - ema_1200_position_f
+    - ema_1200_slope_f
+    - atr_percentile_f
+    - oi_features_f
+    - funding_rate_features_f
+    required_columns:
+    - ema_1200_position
+    - ema_1200_slope_10
+    - atr_percentile
+    - oi_zscore
+    - funding_rate_zscore_50
+    output_columns:
+    - abc_macro_regime_score
+    - abc_macro_regime_state
+    category: trend
+    description: 'A-layer macro regime score: slow trend location + slope + volatility + liquidity/funding support.'
+    pass_full_df: false
+    compute_params:
+      position_min: 0.02
+      position_strong: 0.08
+      atr_active: 0.35
+      oi_expansion: 0.5
+      funding_support: 0.0
+      score_threshold_transition: 3.0
+      score_threshold_bull: 4.0
+      normalized: true
+      output_normalization_map:
+        abc_macro_regime_score: bounded_0_5
+        abc_macro_regime_state: ordinal_0_2
+    column_mappings:
+      ema_1200_position: ema_1200_position
+      ema_1200_slope_10: ema_1200_slope_10
+      atr_percentile: atr_percentile
+      oi_zscore: oi_zscore
+      funding_rate_zscore_50: funding_rate_zscore_50
+  weekly_macro_cycle_exit_f:
+    module: baseline
+    compute_func: compute_weekly_macro_cycle_exit_from_series
+    dependencies: []
+    required_columns:
+    - close
+    - high
+    - low
+    output_columns:
+    - weekly_close_below_ema50_2w
+    - weekly_lower_high_lower_low_2w
+    - weekly_macro_cycle_exit_signal
+    category: trend
+    description: 'Weekly macro-cycle exit proxy: two-week close below weekly EMA50 plus lower-high/lower-low structure.'
+    pass_full_df: false
+    compute_params:
+      ema_span_weeks: 50
+      close_below_weeks: 2
+      llhl_weeks: 2
+      normalized: true
+      output_normalization_map:
+        weekly_close_below_ema50_2w: bounded_0_1
+        weekly_lower_high_lower_low_2w: bounded_0_1
+        weekly_macro_cycle_exit_signal: bounded_0_1
+    column_mappings:
+      close: close
+      high: high
+      low: low
   vwap_position_f:
     module: baseline
     compute_func: compute_vwap_position_from_series
