@@ -1,0 +1,54 @@
+add_position:
+  trigger:
+    type: disabled
+execution_constraints:
+  accumulate_same_archetype: true
+  allow_add_on: false
+  max_deploy_legs_per_day: 1
+  min_order_interval_minutes: 1440
+  entry_order:
+    type: limit
+    limit_offset_bps: 25
+  regime_deploy_scale:
+    enabled: false
+deploy_decay:
+  enabled: true
+  tiers:
+    - max_deployed_pct_exclusive: 30.0
+      unit_multiplier: 1.0
+    - max_deployed_pct_exclusive: 60.0
+      unit_multiplier: 0.7
+    - max_deployed_pct_exclusive: 80.0
+      unit_multiplier: 0.4
+    - max_deployed_pct_exclusive: 999.0
+      unit_multiplier: 0.2
+simple_accumulation_policy:
+  enabled: true
+  regime_feature: weekly_ema_200_position
+  deep_bear_max_position: 0.0
+holding:
+  max_holding_bars: 0
+  time_stop_bars: 0
+stop_loss:
+  type: fixed
+  initial_r: 0.0
+  structural_exit: spot_simple_profit_ladder
+  profit_take_ladder:
+    enabled: true
+    min_profit_multiple: 5.0
+    per_symbol_min_profit_multiple:
+      BTCUSDT: 5.0
+      BNBUSDT: 5.0
+      SOLUSDT: 5.0
+    base_daily_sell_fraction: 0.05
+    acceleration:
+      type: power
+      exponent: 0.75
+      max_speed_multiplier: 4.0
+  breakeven:
+    enabled: false
+  trailing:
+    enabled: false
+take_profit:
+  enabled: false
+version: 1

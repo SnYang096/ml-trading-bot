@@ -2,15 +2,15 @@
 # This is a non-negotiable contract: the system must NEVER violate it.
 # It encodes the "freedom limits" and "survival + controlled escalation" philosophy.
 
-version: 1
-name: "Constitution_v1"
-created_at: "2026-01-12"
+version: 1 # Schema version; bump only when constitution semantics change incompatibly.
+name: "Constitution_v1" # Human-readable constitution id (logs, reports, audit).
+created_at: "2026-01-12" # Document creation date (informational; not used at runtime).
 
 # -----------------------------------------------------------------------------
 # 1) Kill-switch (hard stops)
 # -----------------------------------------------------------------------------
 kill_switch:
-  enabled: true
+  enabled: true # Master switch; false disables constitutional halt evaluation (not recommended live).
   # Account-level loss limits (fraction of equity).
   daily_loss_limit: 0.06 # -6% => stop new risk for the day (was 4%; raised to accommodate 5-slot ME)
   weekly_loss_limit: 0.08 # -8% => stop new risk for the week
@@ -18,18 +18,18 @@ kill_switch:
   # Cooldown after a hard stop (minutes). Recovery requires cooldown + metrics OK.
   cooldown_minutes: 720 # 12h = 6x 2h bars (was 240min; extended for ME 2h decision cycle)
   # Daily loss reset is evaluated in this timezone.
-  daily_reset_timezone: "UTC"
+  daily_reset_timezone: "UTC" # IANA timezone for daily_loss_limit day boundary reset.
 
   # Execution / data sanity caps (must match execution control checks when used)
   # Note: Currently only max_dd is enforced at runtime; others are checked in offline evaluation
   # See: src/time_series_model/core/constitution/constitution_executor.py:validate_drawdown() for max_dd
   # See: src/time_series_model/rl/exec_control.py for turnover/cost checks (offline only)
-  max_dd: 0.20
+  max_dd: 0.20 # Peak-to-trough drawdown hard stop (fraction of equity); enforced at runtime.
   # Max drawdown (peak-to-trough): 20% hard limit
   # - Runtime check: YES (in enforce_before_order() safety gate)
   # - Implementation: src/time_series_model/core/constitution/safety_runtime.py
   # - Live usage: src/time_series_model/live/enforcement.py
-  max_turnover_mean: 0.35
+  max_turnover_mean: 0.35 # Mean |Δexposure| per step cap (offline eval; see block comment below).
   # Mean turnover per step: 35% (fraction of equity)
   # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
   # - Implementation: src/time_series_model/rl/exec_control.py:121-128
@@ -39,14 +39,14 @@ kill_switch:
   # - Example: If prev_exposure=0.0 (flat), target=1.0 (100% long), then turnover = |1.0-0.0| = 1.0 (100%)
   # - Why check: High turnover = excessive trading = high transaction costs = poor execution
   # - Recommendation: Should add runtime check to prevent excessive position changes
-  max_turnover_p95: 1.00
+  max_turnover_p95: 1.00 # P95 |Δexposure| per step cap (offline eval).
   # 95th percentile turnover: 100% (fraction of equity)
   # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
   # - Implementation: src/time_series_model/rl/exec_control.py:122-129
   # - Definition: 95% of all steps have turnover <= 1.0 (100%)
   # - Example: If 95% of steps have turnover <= 1.0, but 5% exceed it, this is a violation
   # - Why check: Prevents extreme position swings that indicate unstable strategy
-  max_cost_mean: 0.002
+  max_cost_mean: 0.002 # Mean cost per step cap, fraction of equity (offline eval).
   # Mean cost per step: 0.2% (20 bps = 0.002)
   # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
   # - Implementation: src/time_series_model/rl/exec_control.py:123-130
@@ -85,7 +85,7 @@ kill_switch:
   #
   # - If using market orders (taker): 0.0004 * 0.5 = 0.0002 (2 bps) just for trading fee
   # - Total cost (taker): 0.0002 + 0.00005 + 0.00005 = 0.0003 (3 bps)
-  max_cost_p95: 0.010
+  max_cost_p95: 0.010 # P95 cost per step cap (offline eval).
   # 95th percentile cost: 1.0% (100 bps = 0.01)
   # - Runtime check: NO (offline evaluation only, but SHOULD be checked online)
   # - Implementation: src/time_series_model/rl/exec_control.py:124-131
@@ -108,35 +108,36 @@ kill_switch:
   # - Usage: Prevents system from continuing to trade when critical limits are breached
   # - Recommendation: Keep enabled for production (safety first)
   # - If false: Violations are logged but don't stop trading (dangerous, not recommended)
-  kill_on_any_hard_violation: true
+  kill_on_any_hard_violation: true # Any hard breach => global_pause (block all new entries).
 
 # -----------------------------------------------------------------------------
 # 1.1) Safety state persistence (for restart-safe halts)
 # -----------------------------------------------------------------------------
 safety_state:
-  persist_to: "../data/order_management.db"
+  # SQLite path for persisted halt / kill-switch / safety flags (survives process restarts).
+  persist_to: "data/order_management.db"
 
 # -----------------------------------------------------------------------------
 # 2) Slots (low freedom position structure)
 # -----------------------------------------------------------------------------
 slots:
-  enabled: true
-  slot_count: 10
+  enabled: true # Master switch for PCM slot pool (false => slot limits not applied).
+  slot_count: 10 # Max concurrent trend/fat-tail positions across all symbols (global hard cap).
   # Risk budget per slot (fraction of equity). This is NOT "cash allocation".
   # 每笔交易风险占 equity 的比例 (1% = 0.01)
   # 用于反算仓位: risk_usd = equity × risk_per_slot
   #              qty = risk_usd / (stop_loss_r × ATR)
-  risk_per_slot: 0.01
+  risk_per_slot: 0.01 # Max risk per PCM slot as fraction of equity (1% default).
   # If not enough margin/slots, replacement policy decides what to close/replace.
-  allow_replacement: true
+  allow_replacement: true # When slots full, PCM may evict weaker position for stronger intent.
 
   # Evidence 仓位缩放 (由 discover_evidence_candidates.py 自动生成 evidence.yaml)
-  evidence_min_score: 0.0
-  evidence_position_scale: true
+  evidence_min_score: 0.0 # Min evidence score [0,1] to apply scaling; 0 = no floor.
+  evidence_position_scale: true # Scale intent size by evidence score when evidence.yaml present.
 
   # Slot state tracking (for live / restart safety).
   slot_state_tracking:
-    persist_to: "../data/order_management.db"
+    persist_to: "data/order_management.db" # SQLite path for open-slot / PCM state snapshots.
 
 # -----------------------------------------------------------------------------
 # 3) Resource Allocation — 唯一权威源
@@ -158,19 +159,32 @@ resource_allocation:
   # trend/fat-tail LivePCM 注册 + Step 9.5 PCM 联合回测白名单（与 pipeline strategy_scope 交集）唯一来源
   # 列表顺序 = 同 bar 多 archetype 时 PCM 仲裁优先级（除非另写 intent_selection_policy.archetype_priority）
   enabled_archetypes:
-    # 主力趋势仓以 TPC 为主线；BPC/ME/SRB 保留在研究根目录，live 默认不启用。
-    - tpc
+    - tpc # Trend Pullback Continuation (primary production trend archetype).
+    - bpc # Breakout Pullback Continuation (research PCM candidate).
+    - me # Momentum Expansion (research PCM candidate).
+    - srb # Structural Range Breakout (research PCM candidate).
 
   # trend/fat-tail 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
   # trend 集合只在 archetype_groups.trend 定义一次，避免 slot_policy 重复维护名单。
   slot_policy:
-    trend_group: trend
-    min_trend_slots_per_symbol: 1
-    max_trend_slots_per_symbol: 1
+    trend_group: trend # Key into archetype_groups; names the slot-sharing pool.
+    min_trend_slots_per_symbol: 1 # At least one trend slot may target each symbol when signals compete.
+    max_trend_slots_per_symbol: 1 # At most one trend archetype position per symbol at a time.
+    # Optional tail-risk guard for trend/fattail pool:
+    # - Before any winner is protected, cap concurrent symbols across trend_group.
+    # - After unlock_on condition is met on an existing symbol, allow controlled expansion.
+    trend_pool_guard:
+      enabled: true # Cap concurrent symbols until at least one position is risk-reduced.
+      max_unprotected_symbols: 1 # Max symbols with open trend risk before any has breakeven/stop protection.
+      unlock_on: breakeven_locked # Condition to widen symbol cap: breakeven_locked | stop_risk_nonnegative.
+      max_symbols_after_unlock: 3 # Max concurrent trend symbols after unlock_on satisfied on one position.
 
   archetype_groups:
-    trend:
+    trend: # Named pool for slot_policy.trend_group; members share per-symbol slot rules.
       - tpc
+      - bpc
+      - me
+      - srb
 
   per_strategy_limits:
     # ── TPC（Trend Pullback Continuation）──
@@ -180,6 +194,21 @@ resource_allocation:
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 2
+      require_locked_profit: true
+    bpc:
+      max_risk_per_trade: 0.01
+      allow_add_position: true
+      max_add_times: 2
+      require_locked_profit: true
+    me:
+      max_risk_per_trade: 0.01
+      allow_add_position: true
+      max_add_times: 2
+      require_locked_profit: true
+    srb:
+      max_risk_per_trade: 0.01
+      allow_add_position: true
+      max_add_times: 3
       require_locked_profit: true
 
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。
@@ -193,8 +222,8 @@ resource_allocation:
 # hedge multi-leg 合约约束：同一 symbol 同时最多 1 个 multi-leg 策略占用（chop_grid / dual_add_trend 互斥）。
 multi_leg:
   strategies:
-    - chop_grid
-    - dual_add_trend
+    - chop_grid # C-layer chop grid (mean-reversion inventory); mutually exclusive per symbol with dual_add.
+    - dual_add_trend # C-layer dual-add trend legs; mutually exclusive per symbol with chop_grid.
   # Per-order / per-leg USDT notional used by multi-leg engines.
   # - chop_grid: each grid level places qty = unit_notional / current_price.
   # - dual_add_trend: each seed/add leg places qty = unit_notional / order_price.
@@ -208,20 +237,55 @@ multi_leg:
   # dual_add max_gross_exposure_units=4 -> ~400 USDT gross footprint before caps).
   # Scale unit_notional when equity changes (e.g. 2000 -> ~20, 5000 -> ~50);
   # rule of thumb: start around 0.5%–1.0% equity per leg and keep hard limits below.
-  unit_notional: 200.0
+  unit_notional: 200.0 # USDT quote per grid level / dual-add leg before portfolio caps (see block comment above).
   account:
     # Offline budget anchor for pct-based risk_limits and validation reports.
     # In live trading, actual equity/drawdown should come from account sync / exchange
     # state; this value is not a replacement for real account balance.
-    equity_usdt: 10000
+    equity_usdt: 10000 # Notional anchor for pct caps and backtest capital reports (multi-leg account).
     # Live/shadow kill-switch threshold; checked against synced or supplied drawdown.
-    max_drawdown_pct: 0.12
+    max_drawdown_pct: 0.12 # Halt new multi-leg risk if account drawdown from peak exceeds 12%.
   risk_limits:
     # Pct limits are resolved against account.equity_usdt unless absolute notional
     # limits are supplied. Example: 0.20 * 10000 = 2000 USDT max gross exposure.
-    max_gross_notional_pct: 0.20
-    max_net_notional_pct: 0.10
-    max_symbol_gross_notional_pct: 0.08
-    max_symbol_net_notional_pct: 0.04
+    max_gross_notional_pct: 0.20 # Sum |leg notionals| / equity_usdt ceiling (long+short legs).
+    max_net_notional_pct: 0.10 # |net long-short notional| / equity_usdt ceiling.
+    max_symbol_gross_notional_pct: 0.08 # Per-symbol gross notional / equity_usdt ceiling.
+    max_symbol_net_notional_pct: 0.04 # Per-symbol net notional / equity_usdt ceiling.
     # Maximum number of resting open orders across all multi-leg strategies.
-    max_resting_orders: 60
+    max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).
+
+# -----------------------------------------------------------------------------
+# 5) Spot accumulator account (separate spot account; not a classic PCM slot pool)
+# -----------------------------------------------------------------------------
+spot:
+  # Spot accumulator is a separate Binance spot account; not counted in PCM trend slots.
+  strategies:
+    - spot_accum_simple # Weekly EMA200 deep-bear DCA + profit-multiple ladder sell (A-layer).
+  account:
+    account_label: spot_accum # Label for logs, reports, and account routing (informational).
+    equity_source: remote_live_account # Live equity from exchange sync; backtest uses backtest_equity_usdt.
+    # Offline anchor for backtests / reports only; live must sync from exchange.
+    backtest_equity_usdt: 10000 # Starting cash (USDT) for spot event backtest and capital_report anchor.
+  accumulation:
+    target_deploy_pct: 1.00 # Fraction of equity_usdt intended for spot deploy cap (1.0 = full anchor).
+    min_order_interval_minutes: 360 # Min minutes between deploy legs on same symbol (6h on 120T ≈ 3 bars).
+    # Per-symbol hard budgets + fixed tranche size (recharge = raise budget, not unit size).
+    symbol_budgets_usdt:
+      BTCUSDT: 5000.0 # 50% of 10k deploy cap (20 × 250 USDT).
+      BNBUSDT: 2500.0 # 25%
+      SOLUSDT: 2500.0 # 25%
+    tranches_per_symbol: 20 # Planned slice count per symbol; used with budgets to derive unit size.
+    symbol_unit_notional_usdt:
+      BTCUSDT: 250.0
+      BNBUSDT: 125.0
+      SOLUSDT: 125.0
+  strategy_limits:
+    spot_accum_simple:
+      allow_add_position: false
+      require_locked_profit: false
+      max_new_entries_per_day: 1
+  risk_limits:
+    max_gross_notional_pct: 1.00 # Portfolio-wide spot gross cap vs equity (1.0 = up to full anchor).
+    max_daily_deploy_pct: 1.00 # Per-UTC-day deploy cap vs equity; 1.0 = may deploy full anchor in one day.
+    max_resting_orders: 12 # Cap on open spot limit orders (live OMS; informational for research).
