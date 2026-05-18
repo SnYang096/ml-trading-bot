@@ -1,7 +1,7 @@
 """run_live.py — Directional trend/fat-tail live consumer
 
 GenericLiveStrategy → 配置驱动通用决策引擎
-支持 BPC/ME/SRB/TPC（及可选 LV）等 TradeIntent 策略；``resource_allocation.enabled_archetypes`` 决定参与集合。
+支持 TPC/ME/SRB（及可选 LV）等 TradeIntent 策略；``resource_allocation.enabled_archetypes`` 决定参与集合。
 
 数据管线（唯一支持）:
   quant-feature-bus: BinanceWS → 特征 → 磁盘 shared_feature_bus
@@ -266,9 +266,7 @@ def _setup_three_strategies(
     """多策略实盘启动 (BPC + ME + SRB + TPC + 可选 LV) — 多时间框架
 
     时间框架 (默认来自各策略 meta.yaml):
-      BPC: 通常 240T
-      SRB / TPC: 通常 120T（若相同则共用一个增量 FC；不同则各 FC）
-      ME: 通常 60T
+      TPC: 通常 120T；ME: 通常 60T（若宪法启用且 live 目录存在则参与 PCM）
 
     数据管线（本进程不连行情 WS）:
       Feature Bus 磁盘 → listener 按各 timeframe 重放特征 → PCM
@@ -303,16 +301,11 @@ def _setup_three_strategies(
         "constitution" if _from_const else "default_all",
     )
 
-    # ── 1. BPC 主周期（主 FC 时钟）；其余 timeframe 来自各已注册策略 meta.yaml ──
-    tf_bpc = load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
-
     def _tf_to_bar_minutes(tf: str) -> int:
         """'240T' → 240, '60T' → 60"""
         return int(tf.replace("T", ""))
 
-    bar_minutes_bpc = _tf_to_bar_minutes(tf_bpc)
-
-    # ── 初始化 PCM 注册策略（与 Step 9.5 / feature-bus 同源：仅 ``enabled_archetypes``）──
+    # ── 1. PCM 策略注册（与 Step 9.5 / feature-bus 同源：仅 enabled_archetypes）──
     logger.info(
         "📋 LivePCM register candidates (enabled_archetypes)=%s", enabled_archetypes
     )
@@ -340,14 +333,32 @@ def _setup_three_strategies(
         )
         _tf_map[rk] = tf
 
-    if "bpc" not in _strategy_map:
+    if not _strategy_map:
         raise ValueError(
-            "constitution resource_allocation.enabled_archetypes must include `bpc` "
-            "and strategies/bpc must exist (primary feature computer uses "
-            "strategies/bpc/archetypes)."
+            "constitution enabled_archetypes produced no disk-backed strategies "
+            f"under strategies_root={strategies_root!r}"
         )
 
-    logger.info("✅ PCM 策略注册完成: %s", list(_strategy_map.keys()))
+    pcm_priority_preview = pcm_archetype_priority_for_registry(
+        _const_cfg,
+        registry_keys=set(_strategy_map.keys()),
+        me_pkg="me",
+        me_enabled_in_allowlist_fn=me_enabled_in_allowlist,
+    )
+    if not pcm_priority_preview:
+        raise ValueError(
+            "cannot derive PCM archetype ordering (empty registry ∩ priority ordering)"
+        )
+    primary_registry_key = pcm_priority_preview[0]
+    tf_primary = _tf_map[primary_registry_key]
+    bar_minutes_primary = _tf_to_bar_minutes(tf_primary)
+
+    logger.info(
+        "✅ PCM 策略注册完成: %s ; primary_fc=%s tf=%s",
+        list(_strategy_map.keys()),
+        primary_registry_key,
+        tf_primary,
+    )
 
     # 创建 ConstitutionExecutor + RuntimeState（与 enabled_archetypes 同源文件）
     constitution_exec = ConstitutionExecutor(constitution_yaml=constitution_yaml_path)
@@ -383,8 +394,12 @@ def _setup_three_strategies(
 
     order_manager = init_order_manager_from_env()
 
-    # ── 3. 特征计算器：主 BPC 时钟 + 与 BPC 同周期的已注册策略列合并进主 FC ──
-    bpc_archetypes = os.path.join(strategies_root, "bpc", "archetypes")
+    # ── 3. 特征计算器：PCM 顺位第一的 archetype 为主时钟；同周期的其它注册策略并入主 FC ──
+    _primary_pkg = resolve_strategy_package_under_root(
+        Path(strategies_root), primary_registry_key, allow_bad_candidates=False
+    )
+    primary_archetypes_dir = str(_primary_pkg / "archetypes")
+
     fer_archetypes = os.path.join(strategies_root, "fer", "archetypes")
     fer_extra_feat_set: set = set()
     fer_extra_feat_nodes: list = []
@@ -402,7 +417,7 @@ def _setup_three_strategies(
 
     same_tf_other_dirs: List[str] = []
     for rk, tf in _tf_map.items():
-        if rk == "bpc" or tf != tf_bpc:
+        if rk == primary_registry_key or tf != tf_primary:
             continue
         ad = (
             resolve_strategy_package_under_root(
@@ -414,21 +429,22 @@ def _setup_three_strategies(
             same_tf_other_dirs.append(str(ad))
     if same_tf_other_dirs:
         logger.info(
-            "  primary FC also merges archetypes dirs (same tf as BPC): %s",
+            "  primary FC also merges archetypes dirs (same tf as %s): %s",
+            primary_registry_key,
             same_tf_other_dirs,
         )
 
     primary_fc_factory = make_primary_feature_computer_factory(
         strategies_root=strategies_root,
-        tf_bpc=tf_bpc,
-        bar_minutes_bpc=bar_minutes_bpc,
-        bpc_archetypes_dir=bpc_archetypes,
+        tf_bpc=tf_primary,
+        bar_minutes_bpc=bar_minutes_primary,
+        bpc_archetypes_dir=primary_archetypes_dir,
         fer_feat=fer_extra_feat_set,
         fer_nodes=fer_extra_feat_nodes,
         same_tf_other_dirs=same_tf_other_dirs,
     )
 
-    # ── 4. MultiSymbolManager (primary FC = BPC 周期) ──
+    # ── 4. MultiSymbolManager (primary FC = PCM 首选 archetype 周期) ──
     manager = MultiSymbolManager(
         symbols=symbols,
         storage_manager=storage,
@@ -487,18 +503,20 @@ def _setup_three_strategies(
         _xf = build_extra_feature_computers_for_symbol(
             strategies_root=strategies_root,
             registry_tf_map=_tf_map,
-            tf_bpc=tf_bpc,
+            tf_bpc=tf_primary,
             fer_feat=fer_extra_feat_set,
             fer_nodes=fer_extra_feat_nodes,
+            primary_registry_key=primary_registry_key,
         )
         listener.extra_feature_computers = _xf
         if logged_extra_timeframes is None:
             logged_extra_timeframes = list(_xf.keys())
 
     logger.info(
-        "✅ 多策略实盘启动完成: %s symbols primary=%s extras_tf=%s window=%smin pcm=%s",
+        "✅ 多策略实盘启动完成: %s symbols primary=%s/%s extras_tf=%s window=%smin pcm=%s",
         len(symbols),
-        tf_bpc,
+        primary_registry_key,
+        tf_primary,
         logged_extra_timeframes or [],
         window_minutes,
         pcm.registered_archetypes,

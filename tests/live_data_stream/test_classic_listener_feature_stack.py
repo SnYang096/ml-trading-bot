@@ -24,16 +24,15 @@ def test_build_extra_groups_by_timeframe(tmp_path) -> None:
             f"strategy:\n  timeframe: {tf}\n", encoding="utf-8"
         )
     sr = str(strategies)
-    me_pkg = "me"
     tf_bpc = "120T"
     reg = {"bpc": tf_bpc, "me": "60T", "tpc": "120T"}
     extras = build_extra_feature_computers_for_symbol(
         strategies_root=sr,
         registry_tf_map=reg,
-        me_pkg=me_pkg,
         tf_bpc=tf_bpc,
         fer_feat=set(),
         fer_nodes=[],
+        primary_registry_key="bpc",
     )
     assert "60T" in extras
     assert "120T" not in extras

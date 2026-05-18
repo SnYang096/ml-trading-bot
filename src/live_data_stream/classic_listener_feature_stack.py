@@ -1,10 +1,9 @@
 """Build OrderFlowListener primary + extra ``IncrementalFeatureComputer`` graphs for trend/fat-tail live.
 
-Primary FC always uses ``strategies/bpc/archetypes`` at ``tf_bpc``. Any other **PCM-registered**
-strategy whose ``meta.yaml`` timeframe equals ``tf_bpc`` has its feature columns merged into the
-primary FC (no separate FC). Remaining registered strategies are grouped by timeframe; each
-group gets one FC merging all archetype dirs in that group. FER columns are merged into primary
-and into any group that includes the ME disk package.
+Primary FC uses the ``primary_registry_key`` archetype (default ``tpc``): ``…/<slug>/archetypes``.
+Any other PCM-registered strategy whose ``meta.yaml`` timeframe equals the primary TF merges into
+that primary FC. Remaining registry keys are grouped by timeframe; each group gets one merged FC.
+FER columns merge into primary and into any timeframe group that includes the ME disk package.
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ def make_primary_feature_computer_factory(
     fer_nodes: List[str],
     same_tf_other_dirs: List[str],
 ) -> Callable[[str], IncrementalFeatureComputer]:
-    """Factory for the primary (BPC clock) feature computer including same-TF merges."""
+    """Factory for the primary (PCM clock) feature computer including same-TF merges."""
     same_s, same_n = _merge_archetype_plans(same_tf_other_dirs)
 
     def _factory(_symbol: str) -> IncrementalFeatureComputer:
@@ -80,13 +79,14 @@ def build_extra_feature_computers_for_symbol(
     tf_bpc: str,
     fer_feat: Set[str],
     fer_nodes: List[str],
+    primary_registry_key: str = "tpc",
 ) -> Dict[str, IncrementalFeatureComputer]:
-    """One FC per distinct non-BPC timeframe, merging all registered strategies on that clock."""
+    """One FC per distinct non-primary timeframe, merging all registered strategies on that clock."""
     extras: Dict[str, IncrementalFeatureComputer] = {}
     # tf -> list of (registry_key, archetypes_dir)
     groups: Dict[str, List[Tuple[str, str]]] = {}
     for rk, tf in registry_tf_map.items():
-        if rk == "bpc" or tf == tf_bpc:
+        if rk == primary_registry_key or tf == tf_bpc:
             continue
         pkg = resolve_strategy_package_under_root(
             Path(strategies_root), rk, allow_bad_candidates=False

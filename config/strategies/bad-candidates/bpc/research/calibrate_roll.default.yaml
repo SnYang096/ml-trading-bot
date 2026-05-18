@@ -61,7 +61,7 @@ download:
 
 strategies:
   bpc:
-    config: config/strategies/bpc
+    config: config/strategies/bad-candidates/bpc
     timeframe: 120T
     prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml

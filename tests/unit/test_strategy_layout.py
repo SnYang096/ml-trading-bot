@@ -17,7 +17,8 @@ def _repo_root() -> Path:
 
 def test_strategy_packaged_root():
     root = _repo_root()
-    assert strategy_packaged_root(root, "bpc") == root / "config" / "strategies" / "bpc"
+    p = strategy_packaged_root(root, "bpc")
+    assert p == root / "config" / "strategies" / "bad-candidates" / "bpc"
 
 
 def test_strategy_packaged_root_me_via_bad_candidates():
@@ -46,7 +47,7 @@ def test_resolve_bpc_turbo_single_file():
     root = _repo_root()
     p, warns = resolve_default_pipeline_config(root, "bpc", None)
     assert p.name == "calibrate_roll.default.yaml"
-    assert p.parts[-3:-1] == ("bpc", "research")
+    assert p.parts[-4:-1] == ("bad-candidates", "bpc", "research")
     assert not warns
 
 

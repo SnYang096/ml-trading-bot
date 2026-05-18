@@ -52,7 +52,7 @@ def test_load_pipeline_config_preserves_rolling_calibration_extras(tmp_path):
                 "  group: highcap",
                 "strategies:",
                 "  bpc:",
-                "    config: config/strategies/bpc",
+                "    config: config/strategies/bad-candidates/bpc",
                 "    timeframe: 120T",
                 "    prepare_features: features.yaml",
                 "    labels_gate: labels.yaml",
@@ -141,7 +141,7 @@ def test_fast_month_stage_respects_rolling_calibration_switches(tmp_path, monkey
         calibrate_all_layers=True,
         feature_search_enabled=False,
         rolling_mode="turbo_fixed_features",
-        config_path="config/strategies/bpc/research/calibrate_roll.default.yaml",
+        config_path="config/strategies/bad-candidates/bpc/research/calibrate_roll.default.yaml",
     )
 
     assert len(captured["rs_calls"]) == 1
@@ -211,7 +211,7 @@ def test_fast_month_direction_runs_every_month_by_default(tmp_path, monkeypatch)
             calibrate_all_layers=True,
             feature_search_enabled=False,
             rolling_mode="turbo_fixed_features",
-            config_path="config/strategies/bpc/research/calibrate_roll.default.yaml",
+            config_path="config/strategies/bad-candidates/bpc/research/calibrate_roll.default.yaml",
             month_index=month_idx,
         )
         assert captured == [False], f"month_index={month_idx} should run direction"
@@ -273,7 +273,7 @@ def test_fast_month_direction_cadence_stride(tmp_path, monkeypatch):
             calibrate_all_layers=True,
             feature_search_enabled=False,
             rolling_mode="turbo_fixed_features",
-            config_path="config/strategies/bpc/research/calibrate_roll.default.yaml",
+            config_path="config/strategies/bad-candidates/bpc/research/calibrate_roll.default.yaml",
             month_index=month_idx,
         )
         assert captured == [

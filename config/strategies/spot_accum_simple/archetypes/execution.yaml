@@ -38,8 +38,11 @@ stop_loss:
     min_profit_multiple: 5.0
     per_symbol_min_profit_multiple:
       BTCUSDT: 5.0
+      ETHUSDT: 5.0
       BNBUSDT: 5.0
       SOLUSDT: 5.0
+      ADAUSDT: 5.0
+      XRPUSDT: 5.0
     base_daily_sell_fraction: 0.05
     acceleration:
       type: power

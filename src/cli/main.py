@@ -7325,7 +7325,7 @@ def _train_strategy_pipeline(
 @click.option(
     "--config",
     "-c",
-    default="config/strategies/bpc",
+    default="config/strategies/tpc",
     help="Strategy config directory",
 )
 @click.option("--initial-train-months", default="3", help="Initial training months")
@@ -7386,7 +7386,7 @@ def train_rolling(
 @click.option(
     "--config",
     "-c",
-    default="config/strategies/bpc",
+    default="config/strategies/tpc",
     show_default=True,
     help="Strategy config directory",
 )
@@ -7426,12 +7426,12 @@ def train_rolling(
 @click.option(
     "--labels",
     default=None,
-    help="Override labels config file (e.g. config/strategies/bpc/labels_rr_extreme.yaml)",
+    help="Override labels config file (e.g. config/strategies/tpc/labels_rr_extreme.yaml)",
 )
 @click.option(
     "--features",
     default=None,
-    help="Override features config file (e.g. config/strategies/bpc/features_gate.yaml)",
+    help="Override features config file (e.g. config/strategies/tpc/features_gate.yaml)",
 )
 @click.option(
     "--prepare-only",
@@ -7805,7 +7805,7 @@ def analyze_feature_eval(
 @click.option(
     "--strategy-config",
     "-c",
-    default="config/strategies/bpc",
+    default="config/strategies/tpc",
     help="Strategy config directory",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
@@ -7950,7 +7950,7 @@ def analyze_factor_eval(
 @click.option(
     "--strategy-config",
     "-c",
-    default="config/strategies/bpc",
+    default="config/strategies/tpc",
     help="Strategy config directory",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
@@ -9211,7 +9211,7 @@ def diagnose_ood_to_archetype_weights(logs, labels, out, config_yaml, docker):
 @click.option(
     "--strategy-config",
     "-c",
-    default="config/strategies/bpc",
+    default="config/strategies/tpc",
     help="Comma-separated strategy config directories (strategy-agnostic).",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
@@ -9874,7 +9874,7 @@ def diagnose_outcome_attribution(logs, baseline, output, docker):
     "--base-strategy-config",
     "-c",
     required=True,
-    help="Base strategy config directory (single strategy), e.g. config/strategies/bpc",
+    help="Base strategy config directory (single strategy), e.g. config/strategies/tpc",
 )
 @click.option(
     "--result-json",
@@ -9952,7 +9952,7 @@ def diagnose_export_fgs_shortlist(
 @click.option(
     "--config",
     "-c",
-    default="config/strategies/bpc",
+    default="config/strategies/tpc",
     show_default=True,
     help="Strategy config directory",
 )
@@ -10654,7 +10654,7 @@ def visualize():
 @click.option(
     "--strategy-config",
     default=None,
-    help="Strategy config dir (e.g. config/strategies/bpc). When set, run feature pipeline so Hurst/Hilbert/WPT/Spectral etc. appear in the report.",
+    help="Strategy config dir (e.g. config/strategies/tpc). When set, run feature pipeline so Hurst/Hilbert/WPT/Spectral etc. appear in the report.",
 )
 @click.option(
     "--feature-store-dir",

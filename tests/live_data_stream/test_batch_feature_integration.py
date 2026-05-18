@@ -25,7 +25,7 @@ class TestBatchFeatureIntegration:
 
             # 创建 feature computer
             computer = IncrementalFeatureComputer(
-                archetypes_dir="config/strategies/bpc/archetypes"
+                archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
             )
 
             # 创建 listener
@@ -107,7 +107,7 @@ class TestBatchFeatureIntegration:
 
             # 创建 feature computer
             computer = IncrementalFeatureComputer(
-                archetypes_dir="config/strategies/bpc/archetypes"
+                archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
             )
 
             # 创建 listener
@@ -175,7 +175,7 @@ class TestBatchFeatureIntegration:
     def test_batch_calculation_with_different_timeframes(self):
         """测试不同时间框架下的批量计算"""
         computer = IncrementalFeatureComputer(
-            archetypes_dir="config/strategies/bpc/archetypes"
+            archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
         )
 
         # 创建测试数据

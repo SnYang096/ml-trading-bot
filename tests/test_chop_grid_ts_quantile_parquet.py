@@ -404,7 +404,7 @@ def test_merge_chop_grid_yaml_loads_live_highcap_package_dir():
     assert merged["fee_bps"] == pytest.approx(4.0)
 
 
-def test_live_highcap_bpc_deploy_package_contains_only_meta_and_archetypes():
-    pkg = REPO_ROOT / "live/highcap/config/strategies/bpc"
+def test_live_highcap_tpc_deploy_package_contains_only_meta_and_archetypes():
+    pkg = REPO_ROOT / "live/highcap/config/strategies/tpc"
     allowed_roots = {"meta.yaml", "archetypes"}
     assert {p.name for p in pkg.iterdir()} == allowed_roots

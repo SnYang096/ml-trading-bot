@@ -182,14 +182,14 @@ def load_archetype_edges_from_config(config_path: str) -> Dict[str, float]:
 
     Args:
         config_path: 配置文件路径
-            研究: 'config/strategies/bpc/archetypes/archetype_edges.yaml'
-            实盘: 'live/highcap/config/strategies/bpc/archetypes/archetype_edges.yaml'
+            研究: 'config/strategies/bad-candidates/bpc/archetypes/archetype_edges.yaml'
+            实盘: 'live/highcap/config/strategies/bad-candidates/bpc/archetypes/archetype_edges.yaml'
 
     Returns:
         archetype edges 字典
 
     示例：
-        edges = load_archetype_edges_from_config('config/strategies/bpc/archetypes/archetype_edges.yaml')
+        edges = load_archetype_edges_from_config('config/strategies/bad-candidates/bpc/archetypes/archetype_edges.yaml')
         # {'BPC': 0.62, 'ME': 0.85, ...}
     """
     import yaml

@@ -2352,7 +2352,7 @@ def _meta_algorithm_prefilter(
     KPI: E[return|pass] - E[return|all] >= min_return_uplift
 
     Args:
-        config_path: 策略配置目录, e.g. config/strategies/bpc/
+        config_path: 策略配置目录, e.g. config/strategies/bad-candidates/bpc/
                      输出写入 config_path / archetypes / prefilter.yaml
 
     Pipeline:

@@ -289,13 +289,13 @@ def parse_args() -> argparse.Namespace:
         "--labels",
         type=str,
         default=None,
-        help="Override labels config file path (e.g. config/strategies/bpc/labels_rr_extreme.yaml)",
+        help="Override labels config file path (e.g. config/strategies/bad-candidates/bpc/labels_rr_extreme.yaml)",
     )
     parser.add_argument(
         "--features",
         type=str,
         default=None,
-        help="Override features config file path (e.g. config/strategies/bpc/features_gate.yaml)",
+        help="Override features config file path (e.g. config/strategies/bad-candidates/bpc/features_gate.yaml)",
     )
     parser.add_argument(
         "--prepare-only",

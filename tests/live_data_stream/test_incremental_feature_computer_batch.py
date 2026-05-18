@@ -16,7 +16,7 @@ class TestIncrementalFeatureComputerBatch:
         """测试基本的批量计算功能"""
         # 创建 feature computer
         computer = IncrementalFeatureComputer(
-            archetypes_dir="config/strategies/bpc/archetypes"
+            archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
         )
 
         # 创建测试数据：100天的1min bars
@@ -64,7 +64,7 @@ class TestIncrementalFeatureComputerBatch:
     def test_compute_features_batch_empty_data(self):
         """测试空数据的批量计算"""
         computer = IncrementalFeatureComputer(
-            archetypes_dir="config/strategies/bpc/archetypes"
+            archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
         )
 
         # 空的 bars 数据
@@ -82,7 +82,7 @@ class TestIncrementalFeatureComputerBatch:
     def test_compute_features_batch_minimal_data(self):
         """测试最小数据集的批量计算"""
         computer = IncrementalFeatureComputer(
-            archetypes_dir="config/strategies/bpc/archetypes"
+            archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
         )
 
         # 最小的 bars 数据集
@@ -122,7 +122,7 @@ class TestIncrementalFeatureComputerBatch:
     def test_compute_features_batch_with_get_features_compatibility(self):
         """测试批量计算结果与 get_features 接口的兼容性"""
         computer = IncrementalFeatureComputer(
-            archetypes_dir="config/strategies/bpc/archetypes"
+            archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
         )
 
         # 创建测试数据
@@ -215,7 +215,7 @@ class TestIncrementalFeatureComputerBatch:
     def test_compute_features_batch_with_realistic_data(self):
         """使用更真实的测试数据进行批量计算测试"""
         computer = IncrementalFeatureComputer(
-            archetypes_dir="config/strategies/bpc/archetypes"
+            archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
         )
 
         # 创建更真实的 OHLCV 数据（模拟价格走势）

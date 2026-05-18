@@ -32,7 +32,7 @@ def demo_signal_routing_and_execution(
     # 1. 从配置文件加载 archetype edges
     try:
         archetype_edges = load_archetype_edges_from_config(
-            'config/strategies/bpc/archetypes/archetype_edges.yaml'
+            'config/strategies/bad-candidates/bpc/archetypes/archetype_edges.yaml'
         )
         print(f"加载 archetype edges: {archetype_edges}")
     except FileNotFoundError:

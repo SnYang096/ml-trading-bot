@@ -206,9 +206,9 @@ class IncrementalFeatureComputer:
         """Inject training_baseline.json path into ood_score_f compute_params.
 
         Derives strategy config dir from archetypes_dir:
-          archetypes_dir = "config/strategies/bpc/archetypes"
-          → strategy_dir = "config/strategies/bpc/"
-          → baseline = "config/strategies/bpc/training_baseline.json"
+          archetypes_dir = "config/strategies/tpc/archetypes"
+          → strategy_dir = "config/strategies/tpc/"
+          → baseline = "config/strategies/tpc/training_baseline.json"
 
         If file doesn't exist, ood_score safely returns 0.
         """

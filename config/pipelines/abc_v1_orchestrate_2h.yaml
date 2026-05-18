@@ -40,11 +40,8 @@ event_backtest:
   promote: false
   map_extra_months: 4
   exec_grid_by_family:
-    bpc_swing:
-      initial_r: "2.0:0.5:4.0"
-      activation_r: "1.5:0.5:3.0"
-      trail_r: "2.0:0.5:4.0"
-    tpc_swing:
+    # 主力 swing 语义走 canonical ``tpc``（高置信延续）；旧 bpc_swing/tpc_swing 已归档。
+    tpc:
       initial_r: "2.0:0.5:4.0"
       activation_r: "1.5:0.5:3.0"
       trail_r: "2.0:0.5:4.0"
@@ -70,15 +67,8 @@ universe_group:
   group: highcap
 
 strategies:
-  bpc_swing:
-    config: config/strategies/bpc_swing
-    timeframe: 120T
-    prepare_features: features.yaml
-    labels_gate: labels.yaml
-    has_prefilter: true
-    has_direction: true
-  tpc_swing:
-    config: config/strategies/tpc_swing
+  tpc:
+    config: config/strategies/tpc
     timeframe: 120T
     prepare_features: features.yaml
     labels_gate: labels.yaml
@@ -99,7 +89,7 @@ strategies:
     has_prefilter: true
     has_direction: true
   spot_accum:
-    config: config/strategies/spot_accum
+    config: config/strategies/bad-candidates/spot_accum
     timeframe: 120T
     prepare_features: features.yaml
     labels_gate: labels.yaml

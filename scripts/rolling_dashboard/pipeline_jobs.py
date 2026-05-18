@@ -96,27 +96,38 @@ def _strategy_slug_from_strategies_rel(rel_posix: str) -> Optional[str]:
         return None
     if parts[0] != "config" or parts[1] != "strategies":
         return None
+    if parts[2] == "bad-candidates":
+        return parts[3] if len(parts) >= 6 else None
+    if parts[2] in _EXCLUDED_STRATEGY_SUBDIRS:
+        return None
     return parts[2]
 
 
 def _is_research_pipeline_yaml_rel(rel_posix: str) -> bool:
-    """Only ``config/strategies/<slug>/research/**/*.yaml`` (per-strategy research pipelines)."""
+    """Allowed packaged research YAMLs.
+
+    Canonical: ``config/strategies/<slug>/research/**/*.yaml``
+    Archived: ``config/strategies/bad-candidates/<slug>/research/**/*.yaml``
+    """
     parts = rel_posix.split("/")
     if len(parts) < 5:
         return False
     if parts[0] != "config" or parts[1] != "strategies":
         return False
-    slug = parts[2]
-    if slug in _EXCLUDED_STRATEGY_SUBDIRS:
+    if parts[2] == "bad-candidates":
+        return parts[4] == "research"
+    if parts[2] in _EXCLUDED_STRATEGY_SUBDIRS:
         return False
     return parts[3] == "research"
 
 
 def list_bpc_research_configs(project_root: Path) -> List[Dict[str, str]]:
-    """Research pipeline YAMLs: ``config/strategies/<slug>/research/**/*.yaml`` (and ``.yml``).
+    """Research pipeline YAMLs under ``research/`` only.
 
-    Omits ``archetypes/``, ``features/``, etc. — only the ``research/`` subtree.
-    Excludes strategy roots ``bad-candidates`` and ``tree_strategies``.
+    Includes ``config/strategies/<slug>/research/**`` and archived
+    ``config/strategies/bad-candidates/<slug>/research/**``.
+    Omits archetypes subtree; skips top-level excluded roots except the
+    structured ``bad-candidates/<slug>/`` layout (handled by `_is_*`).
     """
     root = project_root.resolve()
     d = (root / _STRATEGIES_ROOT).resolve()
@@ -512,7 +523,9 @@ def validate_payload(
             return None, "bpc_research_config_conflicts_run_all"
         if not _RE_SAFE_YAML_NAME.match(base):
             return None, "invalid_bpc_research_config"
-        derived = (_STRATEGIES_ROOT / "bpc" / "research" / base).as_posix()
+        derived = (
+            _STRATEGIES_ROOT / "bad-candidates" / "bpc" / "research" / base
+        ).as_posix()
         if config_path_s and config_path_s != derived:
             return None, "config_path_conflicts_bpc_research_config"
         config_path_s = derived

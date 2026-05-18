@@ -14,7 +14,8 @@ def _root() -> Path:
 
 def test_load_bpc_turbo_from_strategy_research():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/bpc/research/calibrate_roll.default.yaml"
+        _root()
+        / "config/strategies/bad-candidates/bpc/research/calibrate_roll.default.yaml"
     )
     assert "bpc" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "turbo_fixed_features"
@@ -59,7 +60,7 @@ def test_dates_calibration_hoist_conflict_raises(tmp_path: Path):
                 "  enable_model_training: false",
                 "strategies:",
                 "  x:",
-                "    config: config/strategies/bpc",
+                "    config: config/strategies/bad-candidates/bpc",
             ]
         ),
         encoding="utf-8",
@@ -70,7 +71,8 @@ def test_dates_calibration_hoist_conflict_raises(tmp_path: Path):
 
 def test_load_bpc_slow_from_strategy_research():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/bpc/research/research_roll.features_on.yaml"
+        _root()
+        / "config/strategies/bad-candidates/bpc/research/research_roll.features_on.yaml"
     )
     assert "bpc" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "slow_realistic"
@@ -112,8 +114,8 @@ def test_load_tpc_slow_full_history_from_strategy_research():
 @pytest.mark.parametrize(
     "research_yaml, strategy_key",
     [
-        ("bpc/research/research_roll.features_on_recent24m.yaml", "bpc"),
-        ("me/research/research_roll.features_on_recent24m.yaml", "me"),
+        ("bad-candidates/bpc/research/research_roll.features_on_recent24m.yaml", "bpc"),
+        ("bad-candidates/me/research/research_roll.features_on_recent24m.yaml", "me"),
         ("tpc/research/research_roll.features_on_recent24m.yaml", "tpc"),
     ],
 )
@@ -150,7 +152,7 @@ def test_slow_realistic_structure_lookback_must_exceed_calibration(tmp_path: Pat
                 "  enable_model_training: false",
                 "strategies:",
                 "  x:",
-                "    config: config/strategies/bpc",
+                "    config: config/strategies/bad-candidates/bpc",
             ]
         ),
         encoding="utf-8",
@@ -185,7 +187,7 @@ def test_slow_realistic_full_history_allows_equal_lookback_to_calibration(
                 "  enable_model_training: false",
                 "strategies:",
                 "  x:",
-                "    config: config/strategies/bpc",
+                "    config: config/strategies/bad-candidates/bpc",
             ]
         ),
         encoding="utf-8",
@@ -219,7 +221,7 @@ def test_structure_train_window_invalid_raises(tmp_path: Path):
                 "  enable_model_training: false",
                 "strategies:",
                 "  x:",
-                "    config: config/strategies/bpc",
+                "    config: config/strategies/bad-candidates/bpc",
             ]
         ),
         encoding="utf-8",
@@ -231,7 +233,8 @@ def test_structure_train_window_invalid_raises(tmp_path: Path):
 def test_bpc_turbo_prefilter_locked_fields_are_explicit():
     """turbo：locked_threshold + 多打分方法；entry_filter 关闭 meta_algorithm（slow 覆写为 true）。"""
     cfg = load_pipeline_config(
-        _root() / "config/strategies/bpc/research/calibrate_roll.default.yaml"
+        _root()
+        / "config/strategies/bad-candidates/bpc/research/calibrate_roll.default.yaml"
     )
     pf = cfg["strategies"]["bpc"]["kpi_gates"]["prefilter"]
     assert pf["locked_threshold_tuning"]["enabled"] is True
@@ -244,7 +247,8 @@ def test_bpc_turbo_prefilter_locked_fields_are_explicit():
 
 def test_bpc_non_rolling_inherits_locked_tune_from_turbo():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/bpc/research/validate_static.full_study.yaml"
+        _root()
+        / "config/strategies/bad-candidates/bpc/research/validate_static.full_study.yaml"
     )
     assert (
         cfg["strategies"]["bpc"]["kpi_gates"]["prefilter"]["locked_threshold_tuning"][
@@ -257,7 +261,7 @@ def test_bpc_non_rolling_inherits_locked_tune_from_turbo():
 def test_bpc_turbo_prefilter_lock_fixed_disables_locked_threshold_tuning():
     cfg = load_pipeline_config(
         _root()
-        / "config/strategies/bpc/research/calibrate_roll.no_prefilter_threshold_search.yaml"
+        / "config/strategies/bad-candidates/bpc/research/calibrate_roll.no_prefilter_threshold_search.yaml"
     )
     assert (
         cfg["strategies"]["bpc"]["kpi_gates"]["prefilter"]["locked_threshold_tuning"][
@@ -270,7 +274,8 @@ def test_bpc_turbo_prefilter_lock_fixed_disables_locked_threshold_tuning():
 def test_bpc_slow_overrides_locked_enabled_true():
     """slow.yaml extends turbo — strategies / threshold_calibration / rolling 深度合并。"""
     cfg = load_pipeline_config(
-        _root() / "config/strategies/bpc/research/research_roll.features_on.yaml"
+        _root()
+        / "config/strategies/bad-candidates/bpc/research/research_roll.features_on.yaml"
     )
     kg = cfg["strategies"]["bpc"]["kpi_gates"]
     assert kg["entry_filter"]["meta_algorithm"] is True
@@ -284,7 +289,8 @@ def test_bpc_slow_overrides_locked_enabled_true():
 
 def test_load_bpc_non_rolling_extends_slow():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/bpc/research/validate_static.full_study.yaml"
+        _root()
+        / "config/strategies/bad-candidates/bpc/research/validate_static.full_study.yaml"
     )
     assert "bpc" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
@@ -356,7 +362,8 @@ def test_load_tpc_non_rolling_extends_slow():
 
 def test_load_bpc_validate_static_constrained_history_dir():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/bpc/research/validate_static.constrained.yaml"
+        _root()
+        / "config/strategies/bad-candidates/bpc/research/validate_static.constrained.yaml"
     )
     assert (
         cfg.get("output", {}).get("history_dir")
@@ -555,7 +562,7 @@ def test_trend_and_multileg_share_extends_loader_semantics(tmp_path: Path):
                 "  enable_model_training: true",
                 "strategies:",
                 "  x:",
-                "    config: config/strategies/bpc",
+                "    config: config/strategies/bad-candidates/bpc",
             ]
         ),
         encoding="utf-8",

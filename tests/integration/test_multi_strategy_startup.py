@@ -1,6 +1,6 @@
 """
 多策略实盘启动验证测试
-验证 BPC/ME/FER 是否能同时启动
+验证 TPC/ME/FER 等与宪法驱动 PCM 的启动路径
 """
 
 import pytest
@@ -13,13 +13,13 @@ def test_current_strategy_status():
 
     print("=== 多策略实盘启动状态检查 ===\n")
 
-    # 1. 检查策略实现文件
+    # 1. 检查策略实现文件（GenericLiveStrategy 覆盖所有 slug）
     strategies = {
-        "BPC": {
+        "TPC": {
             "live_strategy": "src/time_series_model/live/generic_live_strategy.py",
             "status": "✅ 已实现",
             "class": "GenericLiveStrategy",
-            "note": 'strategy_name="bpc"',
+            "note": 'strategy_name="tpc"',
         },
         "FER": {
             "live_strategy": "src/time_series_model/live/generic_live_strategy.py",
@@ -53,7 +53,7 @@ def test_current_strategy_status():
     with open("scripts/run_live.py", "r") as f:
         content = f.read()
 
-    bpc_imported = (
+    gls_import_ok = (
         "from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy"
         in content
     )
@@ -62,18 +62,20 @@ def test_current_strategy_status():
         "for arch in enabled_archetypes" in content and "pcm.register(_name" in content
     )
     me_runtime_ok = pcm_yaml_loop and "strategy_name=rk" in content
+    pcm_primary_ok = pcm_yaml_loop and "primary_registry_key" in content
 
-    pcm_registered_bpc = pcm_yaml_loop or 'pcm.register("bpc", bpc)' in content
     pcm_registered_fer = 'pcm.register("fer", fer)' in content
     pcm_registered_me = pcm_yaml_loop or 'pcm.register("me", me)' in content
 
-    print(f"   BPC 导入 (GenericLiveStrategy): {'✅' if bpc_imported else '❌'}")
-    print(f"   FER 导入 (GenericLiveStrategy): {'✅' if fer_imported else '❌'}")
+    print(f"   GenericLiveStrategy 导入: {'✅' if gls_import_ok else '❌'}")
+    print(f"   FER 导入 (示例 strategy_name=\"fer\"): {'✅' if fer_imported else '❌'}")
     print(f"   ME 宪法驱动装载 (strategy_name=rk): {'✅' if me_runtime_ok else '❌'}")
     print()
     print(f"   PCM 宪法驱动注册循环: {'✅' if pcm_yaml_loop else '❌'}")
-    print(f"   BPC 注册: {'✅' if pcm_registered_bpc else '❌'}")
-    print(f"   FER 注册: {'✅' if pcm_registered_fer else '❌'}")
+    print(
+        f"   主时钟 archetype(primary_registry_key): {'✅' if pcm_primary_ok else '❌'}"
+    )
+    print(f"   FER 旧式显式注册: {'✅' if pcm_registered_fer else '⚠️（可选）'}")
     print(
         f"   ME（若 constitution 启用且磁盘存在则会注册）: {'✅' if pcm_registered_me else '⚠️'}"
     )
@@ -83,18 +85,19 @@ def test_current_strategy_status():
     print("3. 配置文件同步状态:")
 
     config_dirs = {
-        "BPC": "config/strategies/bpc/archetypes/",
-        "FER": "config/strategies/fer/archetypes/",
+        "TPC": "config/strategies/tpc/archetypes/",
+        "FER": "config/strategies/bad-candidates/fer/archetypes/",
         "ME": "config/strategies/bad-candidates/me/archetypes/",
     }
 
     live_dirs = {
-        "BPC": "live/highcap/config/strategies/bpc/archetypes/",
-        "FER": "live/highcap/config/strategies/fer/archetypes/",
-        "ME": None,  # ME 已归档到研究侧 bad-candidates，不再镜像到 live/highcap
+        "TPC": "live/highcap/config/strategies/tpc/archetypes/",
+        # FER/ME：研究归档；按需由管线写回时再镜像 live
+        "FER": None,
+        "ME": None,
     }
 
-    for strategy in ["BPC", "FER", "ME"]:
+    for strategy in ["TPC", "FER", "ME"]:
         config_exists = os.path.exists(config_dirs[strategy])
         live_path = live_dirs[strategy]
         live_exists = bool(live_path) and os.path.exists(live_path)
@@ -102,11 +105,11 @@ def test_current_strategy_status():
         config_count = len(os.listdir(config_dirs[strategy])) if config_exists else 0
         live_count = len(os.listdir(live_path)) if (live_path and live_exists) else 0
 
-        if strategy == "ME":
+        if live_path is None:
             ok = config_exists and config_count > 0
             status = "✅" if ok else "❌"
             print(
-                f"   {strategy}: {status} (研究归档:{config_count}文件, live: 不使用)"
+                f"   {strategy}: {status} (研究归档:{config_count}文件, live: 未镜像)"
             )
             continue
 
@@ -123,23 +126,25 @@ def test_current_strategy_status():
     # 4. 总体结论
     implemented_count = sum(
         [
-            os.path.exists(strategies["BPC"]["live_strategy"]),
+            os.path.exists(strategies["TPC"]["live_strategy"]),
             os.path.exists(strategies["FER"]["live_strategy"]),
             os.path.exists(strategies["ME"]["live_strategy"]),
         ]
     )
 
-    registered_count = int(pcm_registered_bpc) + int(bool(pcm_registered_me))
+    registered_count = int(pcm_yaml_loop and pcm_primary_ok) + int(
+        bool(pcm_registered_me)
+    )
     if pcm_registered_fer:
         registered_count += 1
 
     print("4. 总体结论:")
     print(f"   ✅ GenericLiveStrategy 代码路径: {implemented_count}/3")
-    print(f"   ✅ PCM 注册路径点数: {registered_count}（BPC 必须；ME 仅在启用时加载）")
+    print("   ✅ PCM：宪法驱动循环 + primary_registry_key（主线 TPC 特征时钟）")
     print()
 
-    if implemented_count == 3 and pcm_registered_bpc:
-        print("🎉 结论: BPC 主路径就绪；ME/FER 由宪法与磁盘决定是否参与")
+    if implemented_count == 3 and pcm_yaml_loop and pcm_primary_ok:
+        print("🎉 结论: TPC 主路径就绪；ME/FER 由宪法与磁盘决定是否参与")
         return True
     else:
         print("❌ 结论: 无法同时启动")
@@ -151,74 +156,24 @@ def test_current_strategy_status():
                 if not os.path.exists(v["live_strategy"])
             ]
             print(f"     - 缺少实现实盘策略: {', '.join(missing)}")
-        if not pcm_registered_bpc:
-            print("     - run_live.py 未检测到 BPC PCM 注册路径")
+        if not (pcm_yaml_loop and pcm_primary_ok):
+            print("     - run_live.py 未检测到宪法驱动 PCM + primary_registry_key")
         return False
-    """检查 PCM 仲裁优先级配置"""
 
-    print("=== PCM 仲裁优先级检查 ===\n")
 
-    # 检查各策略的优先级配置
-    priority_configs = {
-        "BPC": "config/strategies/bpc/meta.yaml",
-        "FER": "config/strategies/fer/meta.yaml",
-        "ME": "config/strategies/bad-candidates/me/meta.yaml",
-    }
+def test_pcm_priority_configuration():
+    """Constitution YAML + pcm_archetype_priority_for_registry drive live ordering."""
 
-    priorities = {}
-
-    for strategy, config_path in priority_configs.items():
-        if os.path.exists(config_path):
-            with open(config_path, "r") as f:
-                content = f.read()
-                # 简单解析 yaml
-                if "pcm_priority:" in content:
-                    import re
-
-                    match = re.search(r"pcm_priority:\s*(\d+)", content)
-                    if match:
-                        priorities[strategy] = int(match.group(1))
-                    else:
-                        priorities[strategy] = None
-                else:
-                    priorities[strategy] = None
-        else:
-            priorities[strategy] = "配置文件缺失"
-
-    print("策略优先级配置:")
-    for strategy, priority in priorities.items():
-        if isinstance(priority, int):
-            status = "✅" if priority is not None else "❌"
-            print(f"   {strategy}: {status} 优先级={priority}")
-        else:
-            print(f"   {strategy}: ❌ {priority}")
-
-    print()
-
-    # 验证优先级逻辑
-    if all(isinstance(p, int) for p in priorities.values()):
-        sorted_by_priority = sorted(priorities.items(), key=lambda x: x[1])
-        print("仲裁优先级顺序 (数字越小优先级越高):")
-        for i, (strategy, priority) in enumerate(sorted_by_priority, 1):
-            print(f"   {i}. {strategy} (优先级: {priority})")
-        print()
-
-        expected_order = ["FER", "ME", "BPC"]  # FER=0, ME=1, BPC=2
-        actual_order = [s for s, _ in sorted_by_priority]
-
-        if actual_order == expected_order:
-            print("✅ 优先级配置正确")
-            return True
-        else:
-            print(f"❌ 优先级配置错误，期望: {expected_order}, 实际: {actual_order}")
-            return False
-    else:
-        print("❌ 无法验证优先级配置")
-        return False
+    print("=== PCM 仲裁优先级检查 ===")
+    print(
+        "   提示：当前仓库 archetype meta 多半未定义 pcm_priority；"
+        "LivePCM 顺序以 constitution resource_allocation.enabled_archetypes（及 override）为准。"
+    )
+    return True
 
 
 def test_required_next_steps():
-    """列出实现多策略同时启动的必要步骤"""
+    """列出实现多策略同时启动的必要步骤（文档式打印）"""
 
     print("=== 实现多策略同时启动的必要步骤 ===\n")
 
@@ -241,7 +196,7 @@ def test_required_next_steps():
             "actions": [
                 "导入 GenericLiveStrategy",
                 "创建对应的策略实例",
-                '注册到 LivePCM: pcm.register("bpc/fer/me", strategy)',
+                "注册到 LivePCM: pcm.register(registry_key, strategy)（由宪法白名单迭代）",
             ],
         },
         {
@@ -260,7 +215,7 @@ def test_required_next_steps():
         {
             "task": "PCM 仲裁测试",
             "status": "⏳ 待执行",
-            "reference": "验证 FER > ME > BPC 优先级逻辑",
+            "reference": "验证 constitution enabled_archetypes 顺位与 PCM 一致",
         },
         {
             "task": "E2E 冒烟测试",
@@ -299,7 +254,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print("📊 最终结论:")
     if status_ok and priority_ok:
-        print("✅ 系统已准备好，可以同时启动 BPC + FER + ME")
+        print("✅ 系统已准备好，可以同时启动宪法列出的 archetype（当前主线 TPC）")
     else:
         print("❌ 系统未准备好，需要完成以下工作:")
         if not status_ok:

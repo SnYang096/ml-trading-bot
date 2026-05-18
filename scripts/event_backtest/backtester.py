@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from scripts.account_ledger import AccountLedger
 from scripts.capital_report import write_capital_report_from_trades
 from scripts.event_backtest._bootstrap import logger
 from scripts.event_backtest.features.timeline import (
@@ -29,13 +30,20 @@ from scripts.event_backtest.features.timeline import (
 from scripts.event_backtest.modes import BacktestMode, resolve_backtest_mode
 from scripts.event_backtest.reporting.audit import (
     _add_attempt_snapshot,
+    _apply_pcm_direction_ffill,
     _er_pct_attempt_stats,
     _extract_path_efficiency_pct,
     _trade_audit_row_from_fill,
 )
 from scripts.event_backtest.results import BacktestResult
 from scripts.event_backtest.simulator.om_bridge import OMBridge, OM_AVAILABLE
-from scripts.event_backtest.simulator.position import PositionSimulator
+from scripts.event_backtest.simulator.position import (
+    PositionSimulator,
+    _collect_open_parent_pids,
+    _load_add_position_runtime_from_resume,
+    _merge_add_position_runtime_with_open_legs,
+    _prune_stale_add_position_records,
+)
 from scripts.event_backtest.spot.budget import _build_spot_capital_budget_or_none
 from scripts.event_backtest.spot.metrics import (
     _compute_deploy_quote_pct_series,
@@ -48,6 +56,9 @@ from src.data_tools.data_handler import DataHandler
 from src.feature_store import FeatureStore, FeatureStoreSpec
 from src.feature_store.layer_naming import detect_layer_for_strategy
 from src.live_data_stream.feature_storage import StorageManager
+from src.time_series_model.core.constitution.add_position_rules import (
+    resolve_float_r_ladder_only as _shared_resolve_float_r_ladder_only,
+)
 from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
 )

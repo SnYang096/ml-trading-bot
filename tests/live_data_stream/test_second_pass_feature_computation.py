@@ -753,7 +753,7 @@ class TestSpotAccumStructuralExitFeatures:
         )
         from pathlib import Path
 
-        arch = Path("config/strategies/spot_accum/archetypes")
+        arch = Path("config/strategies/bad-candidates/spot_accum/archetypes")
         if not arch.exists():
             pytest.skip("spot_accum archetypes not found")
 
@@ -796,7 +796,7 @@ class TestAtrNodeAlwaysIncluded:
         )
         from pathlib import Path
 
-        bpc_dir = Path("config/strategies/bpc/archetypes")
+        bpc_dir = Path("config/strategies/bad-candidates/bpc/archetypes")
         if not bpc_dir.exists():
             pytest.skip("BPC archetypes not found")
 

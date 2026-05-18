@@ -58,7 +58,7 @@ echo "🔨 执行 feature-store build..."
 echo ""
 
 $ML_CMD feature-store build \
-    --config "config/strategies/bpc" \
+    --config "config/strategies/bad-candidates/bpc" \
     --symbols "$SYMBOLS" \
     --timeframe "240T" \
     --data-path "data/parquet_data" \

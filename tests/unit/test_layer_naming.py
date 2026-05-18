@@ -210,7 +210,7 @@ class TestArchetypeTimeframeNaming:
 
     def test_strategy_bpc_includes_archetype_and_timeframe(self):
         """BPC strategy should produce features_bpc_120T_{hash} (per meta.yaml)."""
-        layer = default_layer_from_config("config/strategies/bpc")
+        layer = default_layer_from_config("config/strategies/bad-candidates/bpc")
         assert layer.startswith(
             "features_bpc_120T_"
         ), f"Expected features_bpc_120T_*, got {layer}"
@@ -218,7 +218,7 @@ class TestArchetypeTimeframeNaming:
     def test_different_archetypes_different_layers(self):
         """ME and BPC should produce different layer names."""
         me = default_layer_from_config("config/strategies/bad-candidates/me")
-        bpc = default_layer_from_config("config/strategies/bpc")
+        bpc = default_layer_from_config("config/strategies/bad-candidates/bpc")
         assert me != bpc
         assert "_me_" in me
         assert "_bpc_" in bpc

@@ -13,7 +13,7 @@ import pandas as pd
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "config" / "strategies" / "spot_accum"
+SRC = ROOT / "config" / "strategies" / "bad-candidates" / "spot_accum"
 ABLATE_ROOT = ROOT / "config" / "strategies" / "_ablate_spot_accum"
 OUT_ROOT = ROOT / "results" / "120T" / "spot_accum" / "prebull_ablation"
 CUTOFF = pd.Timestamp("2023-01-01", tz="UTC")

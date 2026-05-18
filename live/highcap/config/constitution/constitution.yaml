@@ -158,13 +158,8 @@ resource_allocation:
   # trend/fat-tail LivePCM 注册 + Step 9.5 PCM 联合回测白名单（与 pipeline strategy_scope 交集）唯一来源
   # 列表顺序 = 同 bar 多 archetype 时 PCM 仲裁优先级（除非另写 intent_selection_policy.archetype_priority）
   enabled_archetypes:
-    # 牛市 5x / 长侧实验需启用 long；短侧保持并列以便联合 PCM
+    # 主力趋势仓以 TPC 为主线；BPC 已迁至 bad-candidates（研究侧可按 slug 加载）。
     - tpc
-    - bpc
-    # - srb
-    - me
-    # - fbf
-    # - msr
 
   # trend/fat-tail 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
   # trend 集合只在 archetype_groups.trend 定义一次，避免 slot_policy 重复维护名单。
@@ -175,31 +170,17 @@ resource_allocation:
 
   archetype_groups:
     trend:
-      - bpc
       - tpc
-      - me
 
   per_strategy_limits:
-    # ── BPC：策略级风险/加仓约束；slot 数由 resource_allocation.slot_policy 按 symbol 管理。
-    bpc:
-      max_risk_per_trade: 0.01 # 肥尾主仓: 首枪 2.00% 风险；加仓次数与 execution.add_position 对齐
-      allow_add_position: true # BPC 趋势延续允许加仓
-      max_add_times: 2 # 宪法上限（与 archetypes 中 ladder 向量长度一致；无冗余 max_add_times 时可由向量推断）
-
     # ── TPC（Trend Pullback Continuation）──
     # 未配置时 ConstitutionExecutor.validate_add_position 对未知策略将 max_add_times 默认=1，
-    # 会导致「每母仓只能加仓一次」，事件回测里表现为加仓笔数远少于 BPC。须与 execution.add_position.max_add_times 对齐。
+    # 会导致「每母仓只能加仓一次」。须与 execution.add_position.max_add_times 对齐。
     tpc:
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 2
-
-    # ── ME 方向拆分 ──
-    me:
-      max_risk_per_trade: 0.01 # 动量扩散只做加速段, 首枪更轻
-      allow_add_position: true # ME 动能扩张允许加仓
-      max_add_times: 2 # 与 execution.add_position.max_add_times 对齐（ME execution 仅 2 次加仓）
-      max_new_entries_per_day: 3 # 日内新开仓上限（不含加仓），3 x 1% = 3% < daily_loss_limit
+      require_locked_profit: true
 
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。
   # 若要在 PCM 层用 BTC close vs ema_200 再挡逆势单，可恢复 resource_allocation.direction_policy.enabled

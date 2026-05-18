@@ -21,7 +21,7 @@ class TestBatchCalculationArchitecture:
     def test_on_bar_does_not_trigger_streaming_computation(self):
         """测试 on_bar 不会触发流式特征计算"""
         computer = IncrementalFeatureComputer(
-            archetypes_dir="config/strategies/bpc/archetypes"
+            archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
         )
 
         # 模拟一个 bar 数据
@@ -50,7 +50,7 @@ class TestBatchCalculationArchitecture:
     def test_compute_features_batch_isolated_from_on_bar(self):
         """测试 compute_features_batch 与 on_bar 完全隔离"""
         computer = IncrementalFeatureComputer(
-            archetypes_dir="config/strategies/bpc/archetypes"
+            archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
         )
 
         # 先用 on_bar 添加一些数据到缓冲区
@@ -109,7 +109,7 @@ class TestBatchCalculationArchitecture:
 
             # 创建 feature computer 并监控其方法调用
             computer = IncrementalFeatureComputer(
-                archetypes_dir="config/strategies/bpc/archetypes"
+                archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
             )
 
             # 使用 Mock 来监控 on_bar 和 on_tick 方法是否被调用
@@ -182,7 +182,7 @@ class TestBatchCalculationArchitecture:
     def test_batch_computation_vs_streaming_comparison(self):
         """比较批量计算和流式计算的结果一致性"""
         computer = IncrementalFeatureComputer(
-            archetypes_dir="config/strategies/bpc/archetypes"
+            archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
         )
 
         # 创建测试数据

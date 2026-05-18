@@ -180,7 +180,7 @@ def _collect_secondary_specs(
 def _pick_primary_archetype(
     enabled: List[str], strategies_root: str
 ) -> str:
-    pref = os.getenv("MLBOT_PUBLISHER_PRIMARY_ARCHETYPE", "bpc").lower().strip()
+    pref = os.getenv("MLBOT_PUBLISHER_PRIMARY_ARCHETYPE", "tpc").lower().strip()
     if pref in enabled:
         d = _disk_package(pref, strategies_root)
         if d and (
@@ -201,7 +201,7 @@ def _pick_primary_archetype(
             / "archetypes"
         ).is_dir():
             logger.info(
-                "publisher: primary archetype fallback %s (wanted %s)", a, pref or "bpc"
+                "publisher: primary archetype fallback %s (wanted %s)", a, pref or "tpc"
             )
             return a
     raise FileNotFoundError(

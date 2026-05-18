@@ -469,7 +469,7 @@ def load_live_feature_plan(
             else Path(__file__).resolve().parents[3]
         )
         gate_features = extract_required_features_from_execution_archetypes(
-            project_root / "config/strategies/bpc/archetypes/gate.yaml"
+            project_root / "config/strategies/tpc/archetypes/gate.yaml"
         )
         if gate_features:
             base_features |= gate_features  # gate rule keys (e.g. bpc_dir_consistency_long) in case filled by IncrementalFeatureComputer
@@ -543,7 +543,7 @@ def load_live_feature_nodes(
 
         # 提取gate规则需要的特征列名
         gate_features = extract_required_features_from_execution_archetypes(
-            project_root / "config/strategies/bpc/archetypes/gate.yaml"
+            project_root / "config/strategies/tpc/archetypes/gate.yaml"
         )
 
         if gate_features:

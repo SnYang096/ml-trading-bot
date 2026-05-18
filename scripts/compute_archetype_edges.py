@@ -9,7 +9,7 @@ Usage:
     python scripts/compute_archetype_edges.py \
       --trades results/train_final_xxx/bpc/execution_backtest_trades.parquet \
       --lookback-months 3 \
-      --output config/strategies/bpc/archetypes/archetype_edges.yaml
+      --output config/strategies/bad-candidates/bpc/archetypes/archetype_edges.yaml
 """
 
 import argparse

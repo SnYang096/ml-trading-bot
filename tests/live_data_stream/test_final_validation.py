@@ -18,7 +18,7 @@ def test_final_architecture_validation():
 
     # 1. 验证 IncrementalFeatureComputer 的批量计算功能
     computer = IncrementalFeatureComputer(
-        archetypes_dir="config/strategies/bpc/archetypes"
+        archetypes_dir="config/strategies/bad-candidates/bpc/archetypes"
     )
 
     # 创建测试数据

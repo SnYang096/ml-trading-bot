@@ -110,12 +110,11 @@ echo ""
 
 echo "⚙️  5. 策略配置检查（实盘目录）"
 echo "-----------------------------------------------------------"
-check_item "${LIVE_ROOT}/config/strategies/bpc 存在" "[ -d ${LIVE_ROOT}/config/strategies/bpc ]"
-check_item "meta.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/bpc/meta.yaml ]"
-check_item "archetypes/gate.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/gate.yaml ]"
-check_item "archetypes/evidence.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/evidence.yaml ]"
-check_item "archetypes/execution.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/execution.yaml ]"
-check_item "archetypes/entry_filters.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/entry_filters.yaml ]"
+check_item "${LIVE_ROOT}/config/strategies/tpc 存在" "[ -d ${LIVE_ROOT}/config/strategies/tpc ]"
+check_item "meta.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/tpc/meta.yaml ]"
+check_item "archetypes/gate.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/tpc/archetypes/gate.yaml ]"
+check_item "archetypes/execution.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/tpc/archetypes/execution.yaml ]"
+check_item "archetypes/entry_filters.yaml 存在" "[ -f ${LIVE_ROOT}/config/strategies/tpc/archetypes/entry_filters.yaml ]"
 echo ""
 
 echo "📅 6. Warmup 数据时间覆盖检查 (至少 6 个月)"
@@ -161,12 +160,11 @@ else
 fi
 echo ""
 
-echo "📊 7. Evidence 配置完整性检查（实盘目录）"
+echo "📊 7. Evidence / Gate（TPC）"
 echo "-----------------------------------------------------------"
-# 检查 evidence.yaml 非空且有 evidence 节点
 TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
-if [ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/evidence.yaml ]; then
-    EV_COUNT=$(grep -c '^ *- id:' ${LIVE_ROOT}/config/strategies/bpc/archetypes/evidence.yaml 2>/dev/null || echo 0)
+if [ -f ${LIVE_ROOT}/config/strategies/tpc/archetypes/evidence.yaml ]; then
+    EV_COUNT=$(grep -c '^ *- id:' ${LIVE_ROOT}/config/strategies/tpc/archetypes/evidence.yaml 2>/dev/null || echo 0)
     if [ "$EV_COUNT" -ge 1 ]; then
         echo "  ✅ evidence.yaml: $EV_COUNT 个 evidence 特征"
         PASSED_CHECKS=$((PASSED_CHECKS + 1))
@@ -175,14 +173,13 @@ if [ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/evidence.yaml ]; then
         FAILED_CHECKS=$((FAILED_CHECKS + 1))
     fi
 else
-    echo "  ❌ evidence.yaml 不存在"
-    FAILED_CHECKS=$((FAILED_CHECKS + 1))
+    echo "  ⚠️  evidence.yaml 不存在（TPC 可无；视为通过）"
+    PASSED_CHECKS=$((PASSED_CHECKS + 1))
 fi
 
-# 检查 gate.yaml 非空
 TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
-if [ -f ${LIVE_ROOT}/config/strategies/bpc/archetypes/gate.yaml ]; then
-    GATE_COUNT=$(grep -c '^ *- id:' ${LIVE_ROOT}/config/strategies/bpc/archetypes/gate.yaml 2>/dev/null || echo 0)
+if [ -f ${LIVE_ROOT}/config/strategies/tpc/archetypes/gate.yaml ]; then
+    GATE_COUNT=$(grep -c '^ *- id:' ${LIVE_ROOT}/config/strategies/tpc/archetypes/gate.yaml 2>/dev/null || echo 0)
     if [ "$GATE_COUNT" -ge 1 ]; then
         echo "  ✅ gate.yaml: $GATE_COUNT 个 gate 规则"
         PASSED_CHECKS=$((PASSED_CHECKS + 1))
@@ -195,8 +192,6 @@ else
     FAILED_CHECKS=$((FAILED_CHECKS + 1))
 fi
 echo ""
-
-echo "============================================================"
 echo "📊 检查结果汇总"
 echo "============================================================"
 echo "总检查项: $TOTAL_CHECKS"

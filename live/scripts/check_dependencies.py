@@ -2,7 +2,7 @@
 """实盘启动依赖自检程序（策略B 版）
 
 检查项目：
-1. 配置文件（constitution, strategies/bpc）
+1. 配置文件（constitution, strategies/tpc）
 2. warmup ticks 数据（live/{universe}/data/ticks/）
 3. Binance API 密钥
 """
@@ -89,18 +89,18 @@ class LiveDependencyChecker:
         else:
             logger.info(f"   ✅ Constitution: {constitution_dir}")
         
-        # 检查 strategies/bpc：现行布局是 meta.yaml + archetypes/<layer>.yaml
+        # 检查 strategies/tpc：现行布局是 meta.yaml + archetypes/<layer>.yaml
         # （`holding` 不是单独文件，而是 archetype yaml 内部的 section）
-        bpc_dir = self.config_dir / "strategies" / "bpc"
-        if not bpc_dir.exists():
-            self.errors.append(f"BPC策略配置缺失: {bpc_dir}")
+        tpc_dir = self.config_dir / "strategies" / "tpc"
+        if not tpc_dir.exists():
+            self.errors.append(f"TPC策略配置缺失: {tpc_dir}")
         else:
-            arch_dir = bpc_dir / "archetypes"
+            arch_dir = tpc_dir / "archetypes"
             # evidence.yaml: optional at runtime (loader returns empty EvidenceConfig if absent)
             required_archetypes = ["gate.yaml", "execution.yaml", "prefilter.yaml"]
             missing_files = []
 
-            if not (bpc_dir / "meta.yaml").exists():
+            if not (tpc_dir / "meta.yaml").exists():
                 missing_files.append("meta.yaml")
             if not arch_dir.exists():
                 missing_files.append("archetypes/")
@@ -111,10 +111,10 @@ class LiveDependencyChecker:
 
             if missing_files:
                 self.errors.append(
-                    f"BPC配置文件缺失: {', '.join(missing_files)} (路径: {bpc_dir})"
+                    f"TPC配置文件缺失: {', '.join(missing_files)} (路径: {tpc_dir})"
                 )
             else:
-                logger.info(f"   ✅ BPC Config: {bpc_dir}")
+                logger.info(f"   ✅ TPC Config: {tpc_dir}")
                 present = list(required_archetypes)
                 evid = arch_dir / "evidence.yaml"
                 if evid.exists():

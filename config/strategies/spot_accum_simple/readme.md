@@ -1,6 +1,17 @@
 # spot_accum_simple
 
-简化版 A 层现货吸筹，用于与 `spot_accum`（score + prefilter）A/B 对比。
+简化版 A 层现货吸筹（生产默认）。原版 `spot_accum` 已归档至 `config/strategies/bad-candidates/spot_accum`。
+
+## 标的与预算（constitution `spot.accumulation`）
+
+| Symbol | Budget % | USDT @10k |
+| ------ | -------- | --------- |
+| BTC    | 40%      | 4,000     |
+| ETH    | 20%      | 2,000     |
+| BNB    | 15%      | 1,500     |
+| SOL    | 15%      | 1,500     |
+| ADA    | 5%       | 500       |
+| XRP    | 5%       | 500       |
 
 ## 买入
 
@@ -9,7 +20,7 @@
 - **Deploy decay**（相对该 symbol 预算已部署比例）：
 
 | deployed | speed |
-|----------|-------|
+| -------- | ----- |
 | 0–30%    | 1.0x  |
 | 30–60%   | 0.7x  |
 | 60–80%   | 0.4x  |
@@ -30,7 +41,7 @@ daily_sell_fraction = base_daily_sell_fraction * speed_mult
 示例（trigger=5x，base=5%，exponent=0.75，max=4x）：
 
 | 浮盈倍数 | speed | 当日卖出占剩余 |
-|----------|-------|----------------|
+| -------- | ----- | -------------- |
 | 5x       | 1.0   | 5%             |
 | 10x      | ~1.68 | ~8.4%          |
 | 20x      | ~2.83 | ~14%           |
@@ -44,3 +55,8 @@ python scripts/event_backtest.py --strategy spot_accum_simple --symbols BTCUSDT,
 ```
 
 需 constitution `spot.strategies` 包含 `spot_accum_simple`（与 `spot_accum` 共用 `accumulation` 预算块）。
+
+## Note
+
+1. 没钱了熊市还在只能充钱 
+2. 牛市卖出5倍可能低也可能高，这个只能人肉调，但总的来说比自动化买不满提早退达不到目标要好

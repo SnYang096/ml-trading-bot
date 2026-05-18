@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# 生产档（bpc,tpc,me / constitution.yaml，当前 archetype 为 10R 宽止损）
-# vs Swing 档（bpc_swing,tpc_swing,me_swing / constitution_abc_v1.yaml，4R 紧止损）
-# 三窗：bear / bull / transition。产出独立 JSON 便于对比 per_archetype。
+# Prod（tpc,me / constitution.yaml，10R archetypes）vs Swing ABC（tpc,me_swing… / constitution_abc_v1，4R）
+# Archived slugs bpc、bpc_swing、tpc_swing 仍可经 bad-candidates 由 CLI 加载，脚本默认不再使用。
 #
 # Usage（仓库根目录）:
 #   bash scripts/run_stop_profile_ab_matrix.sh [OUT_DIR]
@@ -19,7 +18,7 @@ echo "OUT=$OUT started=$(date -Iseconds)"
 
 run_prod() {
   local tag="$1" s="$2" e="$3"
-  python scripts/event_backtest.py --strategy bpc,tpc,me \
+  python scripts/event_backtest.py --strategy tpc,me \
     --start-date "$s" --end-date "$e" \
     --data-path data/parquet_data \
     --constitution-yaml config/constitution/constitution.yaml \
@@ -31,7 +30,7 @@ run_prod() {
 
 run_swing() {
   local tag="$1" s="$2" e="$3"
-  python scripts/event_backtest.py --strategy bpc_swing,tpc_swing,me_swing \
+  python scripts/event_backtest.py --strategy tpc,me_swing \
     --start-date "$s" --end-date "$e" \
     --data-path data/parquet_data \
     --constitution-yaml config/constitution/constitution_abc_v1.yaml \
@@ -50,7 +49,7 @@ for strat in bear bull transition; do
   tag="${strat}_${s}_${e}"
   echo ">>> PROD (10R archetypes) $tag"
   run_prod "$tag" "$s" "$e"
-  echo ">>> SWING (4R archetypes) $tag"
+  echo ">>> SWING ABC (4R archetypes) $tag"
   run_swing "$tag" "$s" "$e"
 done
 

@@ -45,7 +45,7 @@ mkdir -p "$OUTPUT_ROOT"
 echo ""
 echo "=== $(date) === Step 0a: Build Feature Store (4H) ==="
 mlbot feature-store build \
-  --config config/strategies/bpc \
+  --config config/strategies/bad-candidates/bpc \
   --universe-config "$UNIVERSE" \
   --universe-set starter_a \
   --timeframe "$TIMEFRAME_4H" \
@@ -59,7 +59,7 @@ mlbot feature-store build \
 echo ""
 echo "=== $(date) === Step 0b: Build Feature Store (1H) ==="
 mlbot feature-store build \
-  --config config/strategies/me \
+  --config config/strategies/bad-candidates/me \
   --universe-config "$UNIVERSE" \
   --universe-set starter_a \
   --timeframe "$TIMEFRAME_1H" \
@@ -89,7 +89,7 @@ echo "=== $(date) === Step 1: Train BPC (4H) ==="
 
 # 1a. Train with rr_extreme labels
 mlbot train final \
-  --config config/strategies/bpc \
+  --config config/strategies/bad-candidates/bpc \
   --symbol "$SYMBOLS" \
   --timeframe "$TIMEFRAME_4H" \
   --start-date "$START_DATE" \
@@ -97,7 +97,7 @@ mlbot train final \
   --holdout-start-date "$HOLDOUT_START" \
   --holdout-end-date "$HOLDOUT_END" \
   --output-root "$OUTPUT_ROOT/bpc" \
-  --labels config/strategies/bpc/labels_rr_extreme.yaml \
+  --labels config/strategies/bad-candidates/bpc/labels_rr_extreme.yaml \
   --deterministic \
   --no-docker \
   2>&1 | tee "$OUTPUT_ROOT/bpc/train.log"

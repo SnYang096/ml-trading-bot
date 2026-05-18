@@ -8,8 +8,11 @@ strategy:
   timeframe: "120T"
   symbol_include:
     - BTCUSDT
+    - ETHUSDT
     - BNBUSDT
     - SOLUSDT
+    - ADAUSDT
+    - XRPUSDT
   symbol_exclude: []
   macro_tp_vwap_anchor:
     enabled: false

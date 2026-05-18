@@ -730,14 +730,15 @@ class TestPerformance:
 
 
 class TestRealConfigIntegration:
-    """使用 config/strategies/bpc 真实配置加载"""
+    """使用 config/strategies/tpc 真实配置加载"""
 
     @pytest.fixture
     def real_strategy(self):
         root = "config/strategies"
-        if not os.path.isdir(os.path.join(root, "bpc", "archetypes")):
-            pytest.skip("真实 BPC 配置不存在")
-        return GenericLiveStrategy(strategy_name="bpc", strategies_root=root)
+        tpc_root = os.path.join(root, "tpc", "archetypes")
+        if not os.path.isdir(tpc_root):
+            pytest.skip("真实 TPC 配置不存在")
+        return GenericLiveStrategy(strategy_name="tpc", strategies_root=root)
 
     def test_archetype_loaded(self, real_strategy):
         assert real_strategy.archetype is not None
@@ -751,7 +752,7 @@ class TestRealConfigIntegration:
     def test_real_decide_no_crash(self, real_strategy):
         """用随机特征跑一次 decide，不崩溃即可"""
         feats = {
-            "bpc_score_breakout": 0.6,
+            "tpc_pullback_depth": 0.6,
             "close": 50000.0,
             "atr": 500.0,
             "volume": 100.0,

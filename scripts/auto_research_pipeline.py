@@ -514,7 +514,12 @@ def _ensure_timestamp_for_gate_input(parquet_path: Path) -> bool:
 
 def _read_bpc_vwap_band_abs(strategies_root: Path) -> Optional[Tuple[float, float]]:
     """``single_position_band`` + vwap1200 / macro_tp_vwap → (inner_abs, outer_abs)."""
-    path = strategies_root / "bpc" / "archetypes" / "direction.yaml"
+    from src.config.strategy_layout import resolve_strategy_package_under_root
+
+    pkg = resolve_strategy_package_under_root(
+        strategies_root, "bpc", allow_bad_candidates=True
+    )
+    path = pkg / "archetypes" / "direction.yaml"
     if not path.is_file():
         return None
     try:
