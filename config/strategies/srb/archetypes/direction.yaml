@@ -1,15 +1,18 @@
-# SRB 方向 — 复刻 20260422_212338：与 TPC 同 MACD + EMA1200 带通
+# SRB 方向 — MACD + EMA1200 带通（inner=0.03）+ 斜率同向
 
-description: "SRB 方向 — MACD sign 与 EMA1200 相对位置同号"
+description: "SRB 方向 — MACD sign 与 EMA1200 相对位置同号，且与 EMA1200 斜率同向"
 
 direction_rules:
   - id: srb_macd_ema1200_align
     method: signal_match_position_band
-    description: "MACD sign 作为方向信号；须落在 EMA1200 多/空带通内"
+    description: "MACD sign；须价在 EMA1200 单侧带（inner=0.03 离开中轴），且与斜率同向"
     signal_rules:
       - feature: macd_atr
         transform: sign
     position_band:
       feature: ema_1200_position
-      inner_abs: 0
+      inner_abs: 0.03
       outer_abs: 1
+    require_sign_agreement:
+      feature: ema_1200_slope_10
+      deadband: 0.0

@@ -84,9 +84,9 @@ event_backtest:
       activation_r: "3.5:0.5:6.0"
       trail_r: "6.0:1.0:15.0"
     srb:
-      initial_r: "2.5:0.5:4.5"
-      activation_r: "2.0:0.5:4.5"
-      trail_r: "2.0:0.5:6.0"
+      initial_r: "4.0:0.5:7.0"
+      activation_r: "3.5:0.5:6.0"
+      trail_r: "6.0:1.0:15.0"
   exec_objective_default: total_r_over_dd
   exec_objective_params:
     near_stop_threshold_r: -0.9

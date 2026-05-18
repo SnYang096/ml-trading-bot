@@ -1,14 +1,15 @@
 name: srb_prefilter
 description: |
-  SRB Prefilter：复刻 20260422_212338，使用结构强度 + 频谱 + TPC continuation。
+  SRB Prefilter：EMA1200 regime + L2/L3 结构突破，订单流确认放 entry_filter。
 
 feature_pipeline:
   requested_features:
     - market_cap_normalized_orderflow_f
+    - ema_1200_position_f
+    - ema_1200_slope_f
     - spectrum_features_sr_breakout_f
     - sr_strength_max_f
     - wide_sr_swing_f
-    - tpc_soft_phase_f
+    - srb_l3_breakout_window_f
     - volatility_regime_f
-    - bpc_impulse_return_atr_f
     - roc_20_f

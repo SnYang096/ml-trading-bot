@@ -1,71 +1,73 @@
-# ME Prefilter（双边动量扩张）— archetype 环境门槛，多空由 direction 决定
+# ME-SHORT Archetype Prefilter (auto-generated)
 # 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-#
-# 2026-04 全面修正：旧规则（me_atr_pct/me_vol_regime/me_cvd_alignment）描述的是
-# 「波动环境 + 单根订单流对齐」，不是「有没有动量」。持续趋势里 ATR 分位饱和、
-# CVD 单根二值跳、vol_regime 匀速归零，三条 AND 在主升段挡 70-80%。
-#
-# 新规则用动量语义特征：
-#   - atr_percentile >= 0.25（atr_percentile_f：默认 540 根 120T 窗上的 ATR 分位，shift=1；
-#     替代 me_atr_pct：后者是 pct_window=100 的短窗分位，容易在趋势里饱和/抖动）
-#   - me_accel_persistence >= 0.4（近 5 根至少 2 根在加速 = 有方向性动量）
-#   - me_multi_tf_alignment >= 0.5（3/5/10 bar 至少 2 个周期方向一致 = 趋势明确）
-#
-# 2024-11 主升段验证：SOL 通过率 44%（旧 21%），XRP 58%（旧 30%）。
-# chop 见 gate_me_semantic_chop_high，不在此重复。
+# 自动生成: 2026-03-13
+# 数据源: features_labeled.parquet, 112361 行
 
 rules:
-  - any_of:
-      - feature: ema_1200_position
-        operator: "<="
-        value: -0.03
-      - feature: ema_1200_position
-        operator: ">="
-        value: 0.03
-    locked: false
-    skip_parquet_tune: false
-    lock_reason: "近 EMA1200 中轴无趋势优势：20260425 ME |ema_1200_position|<0.05 的交易 n=44, R=-90"
-
   - feature: atr_percentile
     operator: ">="
-    tune_param: atr_lower
-    value: 0.25
+    value: 0.65
     locked: true
-    lock_reason: "极松：排除 ATR 在长窗（540 根 120T，见 atr_percentile_f）内处于底分位的死盘；比 me_atr_pct 的 100 根窗更贴近「环境波动」"
+    lock_reason: "ME-Short语义：仅在中高波扩张区做空，避免低波噪声"
 
-  - feature: me_accel_persistence
-    operator: ">="
-    value: 0.4
-    locked: false
-    lock_reason: "动量语义：近 5 根至少 2 根在加速（有方向性动量）"
-
-  - feature: me_multi_tf_alignment
-    operator: ">="
-    value: 0.5
-    locked: false
-    lock_reason: "动量语义：3/5/10 bar 至少 2 个周期方向一致（趋势明确）"
-
-  # Box-structure prefilter upgrade for ME:
-  # ME trades momentum expansion — ideally it should fire right after a
-  # compression phase. box_compression_score = width_60 / width_240:
-  #   * <= 1.0 means the last 60 bars are not wider than the last 240,
-  #     i.e. the short-term range has not exploded yet (we're at or near the
-  #     compression foot). Momentum expansion from a compressed base is the
-  #     textbook ME setup.
-  # We set 1.0 rather than 0.6 to avoid over-filtering in trending regimes;
-  # 0.6 can be explored via meta-algorithm if slow-pipeline promotes.
-  - feature: box_compression_score
+  - feature: atr_percentile
     operator: "<="
-    value: 1.00
-    locked: false
-    lock_reason: Box prefilter upgrade — compression-before-expansion prior (conservative draft; tighten via meta-algorithm)
+    value: 0.92
+    locked: true
+    lock_reason: "ME-Short语义：避免极端尾段过热后追空"
 
+  - feature: recent_compression_decay
+    operator: ">="
+    value: 0.02
+    locked: true
+    lock_reason: "ME-Short语义：要求近期确实经历压缩释放"
+
+  - feature: recent_compression_decay
+    operator: "<="
+    value: 0.20
+    locked: true
+    lock_reason: "ME-Short语义：限制在释放早段，避免中后段衰竭"
+
+  - feature: compression_duration
+    operator: ">="
+    value: 0.05
+    locked: true
+    lock_reason: "ME-Short语义：要求更充分压缩蓄势再扩张"
+
+  - feature: oi_compression_score
+    operator: ">="
+    value: 0.45
+    locked: true
+    lock_reason: "ME-Short语义：提升OI压缩/拥挤门槛，降低无效触发"
+  - any_of:
+      - feature: box_pos_120
+        operator: <=
+        value: 0.15
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.85
+      - feature: box_breakout_up
+        operator: ">="
+        value: 0.5
+      - feature: box_breakout_down
+        operator: ">="
+        value: 0.5
+    rationale: box 中部且未突破不开仓：20260425 TPC inside_box_no_breakout n=154, R=-425
+    locked: true
+    lock_reason: TPC 只交易趋势回调/边缘突破，不在箱体中部来回扫区开仓
 last_evaluation:
-  timestamp: "2026-04-11"
-  data_source: "features_labeled.parquet (train_final_20260411_173341)"
-  n_rows: 0
-  baseline_bad_rate: 0.0
-  baseline_median_rr: 0.0
+  # ── 自动生成 (2026-03-13) ──
+  timestamp: "2026-03-13"
+  data_source: "features_labeled.parquet"
+  n_rows: 112361
+  baseline_bad_rate: 0.0000
+  baseline_median_rr: +0.0276
+
+  # ── 正信号 (0 个) ──
   positive_signals: []
+
+  # ── 反信号 (0 个) ──
   anti_signals: []
+
+  # ── 低端信号 (0 个) ──
   absence_signals: []

@@ -132,6 +132,24 @@ class DirectionEvaluator:
                 )
                 if band_dir != candidate:
                     continue
+                rsa = compound.get("require_sign_agreement")
+                if rsa:
+                    rsa_feat = str(rsa.get("feature", "")).strip()
+                    try:
+                        rsa_dead = float(rsa.get("deadband", 0.0) or 0.0)
+                    except (TypeError, ValueError):
+                        rsa_dead = 0.0
+                    if not rsa_feat:
+                        continue
+                    raw_sv = features.get(rsa_feat)
+                    try:
+                        sv = float(raw_sv)
+                    except (TypeError, ValueError):
+                        continue
+                    if sv != sv or abs(sv) <= rsa_dead:
+                        continue
+                    if int(np.sign(sv)) != int(candidate):
+                        continue
                 logger.debug(
                     "方向匹配: rule=%s signal_match_position_band → direction=%s",
                     rule_id,

@@ -76,6 +76,8 @@ hard_gates:
   lock_reason: BPC 同款订单流风险门；用于压 ME 过度开仓与高噪声追入
   comment: 'promote_never_disable: optimizer no_valid_threshold, kept YAML threshold (No threshold meets basic lift/pass_rate
     requirements)'
+  disabled: true
+  disabled_reason: 2023-2026 全样本方向统计里 deny 子集未显示劣势，先关闭以减轻过筛
 guardrails: []
 system_safety:
 - id: gate_me_evt_var_99_mid_high
@@ -96,6 +98,8 @@ system_safety:
   lock_reason: TPC EVT 风险门实验版；ME 当前过度交易，先严格过滤再看 score
   comment: 'promote_never_disable: optimizer no_valid_threshold, kept YAML threshold (No threshold meets basic lift/pass_rate
     requirements)'
+  disabled: true
+  disabled_reason: 2023-2026 全样本方向统计里 deny 子集未显示劣势，先关闭以减轻过筛
 - id: gate_me_vol_persistence_mid
   tag: HARD_ME_VOL_PERSISTENCE
   phase: system_safety

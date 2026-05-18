@@ -296,6 +296,11 @@ def compute_direction_series_from_rules(df: pd.DataFrame, rules: list) -> pd.Ser
                 f2 = sr.get("feature")
                 if f2:
                     need.append(str(f2))
+            rsa_cmp = cmp.get("require_sign_agreement")
+            if isinstance(rsa_cmp, dict):
+                _rf = str(rsa_cmp.get("feature", "")).strip()
+                if _rf:
+                    need.append(_rf)
             if any(c not in df.columns for c in need):
                 continue
             vals = signal_match_position_band_series(
@@ -305,6 +310,7 @@ def compute_direction_series_from_rules(df: pd.DataFrame, rules: list) -> pd.Ser
                 inner_abs=float(cmp["inner_abs"]),
                 outer_abs=float(cmp["outer_abs"]),
                 consensus_mode=cmp.get("consensus_mode", "first"),
+                require_sign_agreement=cmp.get("require_sign_agreement"),
             )
             unassigned = ~assigned
             direction.loc[unassigned] = vals.loc[unassigned]

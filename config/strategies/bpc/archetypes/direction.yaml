@@ -1,5 +1,5 @@
-# 生产方向 — breakout→macd 候选方向须与 ema_1200_position 带通同号，
-# 与 execution structural_exit ema1200（多 pv<0 / 空 pv>0）对齐，避免价在 EMA 错误一侧仍开仓。
+# 生产方向 — breakout→macd 候选方向须与 ema_1200_position 带通同号（inner_abs=0.03：离开中轴死区），
+# 与 execution structural_exit ema1200（多 pv<0 / 空 pv>0）对齐。
 # 统计依据: VWAP vs EMA 方向分歧时 (6.4% bars), EMA 正确率显著优于 VWAP
 #   VWAP>0 & EMA<0 → medRR=-1.52 (VWAP 放行了坏交易)
 #   VWAP<0 & EMA>0 → medRR=+2.54 (VWAP 拦截了好交易)
@@ -9,7 +9,7 @@ description: "BPC 方向 — 语义信号与 EMA1200 相对位置同号（signal
 direction_rules:
   - id: bpc_breakout_macd_ema1200_align
     method: signal_match_position_band
-    description: "Donchian 突破优先，MACD 兜底；须落在 EMA1200 多/空带通内"
+    description: "Donchian→MACD；须价在 EMA1200 单侧带（|p|>inner 死区），且与斜率同向"
     signal_rules:
       - feature: bpc_breakout_direction
         transform: raw
@@ -17,5 +17,8 @@ direction_rules:
         transform: sign
     position_band:
       feature: ema_1200_position
-      inner_abs: 0
+      inner_abs: 0.03
       outer_abs: 1
+    require_sign_agreement:
+      feature: ema_1200_slope_10
+      deadband: 0.0

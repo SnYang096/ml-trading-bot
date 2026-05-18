@@ -28,13 +28,13 @@ stop_loss:
   guardrails:
     max_stop_pct: 0.2
     min_stop_pct: 0.01
-  initial_r: 10.0
+  initial_r: 4.0
   structural_exit: ema1200
   trailing:
-    activation_r: 10.0
+    activation_r: 3.5
     enabled: true
     expand_with_primary_atr: true
-    trail_r: 10.0
+    trail_r: 6.0
   type: trailing
 take_profit:
   enabled: false

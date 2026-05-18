@@ -78,11 +78,12 @@ event_backtest:
   enabled: true
   promote: true
   map_extra_months: 4
-  sym_r_default: "1.0:1:6.0"
-  sym_r_by_family:
-    # 与更宽的 archetype SL 对齐，事件优化网格略放大
-    srb: "4.0:1:9.0"
-  exec_objective_default: sharpe
+  exec_grid_by_family:
+    srb:
+      initial_r: "4.0:0.5:7.0"
+      activation_r: "3.5:0.5:6.0"
+      trail_r: "6.0:1.0:15.0"
+  exec_objective_default: total_r_over_dd
   exec_objective_params:
     near_stop_threshold_r: -0.9
     near_stop_penalty: 0.0
@@ -166,10 +167,10 @@ strategies:
       deploy:
         min_trades: 20
     simple_execution:
-      # 宽 SL / 远 TP，与 srb archetypes/execution 大带宽一致（2:1 RR）
-      sl_r: 6.0
-      tp_r: 12.0
-      timeout_bars: 600
+      # 与 BPC/ME/TPC 紧止损对照一致（2:1 RR）
+      sl_r: 4.0
+      tp_r: 8.0
+      timeout_bars: 500
 
 shap_feature_selection:
   enabled: false

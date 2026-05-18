@@ -90,6 +90,7 @@ feature_pipeline:
     # ========== 基础 ==========
     - sma_200_f
     - ema_1200_position_f
+    - ema_1200_slope_f
     - macro_tp_vwap_1200_position_f
     - jump_risk_pct_f
 

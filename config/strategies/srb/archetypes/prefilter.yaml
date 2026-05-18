@@ -1,4 +1,6 @@
-# SRB prefilter — 20260422_212338 slow-good 风格：结构强度 + 突破频谱能量 + continuation
+# SRB prefilter — 结构突破本体：
+# EMA1200 中轴/斜率 regime 在 direction（position_band.inner_abs + require_sign_agreement）。
+# SRB 结构用 L2 强度 + 突破频谱 + L3 新鲜突破窗口；订单流确认放 entry_filter。
 # tpc_semantic_chop_ts_q 仅在 gate（gate_srb_tpc_semantic_chop_high），避免与 gate 双拦。
 
 rules:
@@ -6,20 +8,32 @@ rules:
     operator: ">="
     value: 0.42
     locked: true
-    lock_reason: SRB 语义锚点：关键位需有足够结构强度
+    lock_reason: SRB 结构锚点：关键位需有足够 L2 结构强度
 
   - feature: spectrum_price_high_freq_ratio
     operator: ">="
     value: 0.22
     locked: true
-    lock_reason: SRB 占位：突破邻域频谱能量（复刻 20260422_212338）
-  - feature: tpc_score_continuation
-    operator: ">="
-    value: 0.2
-    locked: true
-    lock_reason: MVP：沿用 TPC continuation 分作为延续倾向占位
-  - feature: bpc_impulse_direction_match
+    lock_reason: SRB 结构锚点：突破邻域频谱能量
+
+  - feature: srb_l3_breakout_age_decay
     operator: ">="
     value: 0.35
     locked: true
-    lock_reason: anti-chop：突破后需要有同向 impulse，避免只在 SR 附近来回扫
+    lock_reason: SRB 结构锚点：只做 L3 真突破后的新鲜窗口，不追长趋势尾段
+  - any_of:
+      - feature: box_pos_120
+        operator: <=
+        value: 0.15
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.85
+      - feature: box_breakout_up
+        operator: ">="
+        value: 0.5
+      - feature: box_breakout_down
+        operator: ">="
+        value: 0.5
+    rationale: box 中部且未突破不开仓：20260425 TPC inside_box_no_breakout n=154, R=-425
+    locked: true
+    lock_reason: TPC 只交易趋势回调/边缘突破，不在箱体中部来回扫区开仓

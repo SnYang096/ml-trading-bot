@@ -185,6 +185,28 @@ def test_signal_match_position_band_series_aligns_long_short():
     assert s.iloc[3] == 0.0
 
 
+def test_signal_match_position_band_series_require_sign_agreement():
+    df = pd.DataFrame(
+        {
+            "macd_atr": [0.5, 0.5, 0.5, 0.5],
+            "ema_1200_position": [0.05, 0.05, 0.05, 0.05],
+            "ema_1200_slope_10": [0.001, -0.001, 0.0, float("nan")],
+        }
+    )
+    s = signal_match_position_band_series(
+        df,
+        signal_rules=[{"feature": "macd_atr", "transform": "sign"}],
+        band_feature="ema_1200_position",
+        inner_abs=0.0,
+        outer_abs=1.0,
+        require_sign_agreement={"feature": "ema_1200_slope_10", "deadband": 0.0},
+    )
+    assert s.iloc[0] == 1.0  # long MACD + band + slope>0
+    assert s.iloc[1] == 0.0  # slope<0 disagrees with long
+    assert s.iloc[2] == 0.0  # slope==0 within deadband → no direction
+    assert s.iloc[3] == 0.0  # NaN slope
+
+
 def test_signal_match_position_band_series_macd_fallback():
     df = pd.DataFrame(
         {

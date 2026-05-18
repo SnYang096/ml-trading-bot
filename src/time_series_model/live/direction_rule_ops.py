@@ -130,7 +130,7 @@ def single_position_band_series(
 
 
 def parse_signal_match_position_band_rule(rule: dict) -> Optional[Dict[str, Any]]:
-    """Compound rule: cascade signal_rules (first non-zero) must match VWAP band sign."""
+    """Compound rule: signal_rules + position_band same sign; optional require_sign_agreement."""
     if not isinstance(rule, dict):
         return None
     if str(rule.get("method", "")).strip().lower() != METHOD_SIGNAL_MATCH_POSITION_BAND:
@@ -150,12 +150,23 @@ def parse_signal_match_position_band_rule(rule: dict) -> Optional[Dict[str, Any]
     except (TypeError, ValueError):
         return None
     consensus = str(rule.get("consensus_mode", "first")).strip().lower()
+    rsa_raw = rule.get("require_sign_agreement")
+    rsa: Optional[Dict[str, Any]] = None
+    if isinstance(rsa_raw, dict):
+        rsa_feat = rsa_raw.get("feature")
+        if isinstance(rsa_feat, str) and rsa_feat.strip():
+            try:
+                dead = float(rsa_raw.get("deadband", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                dead = 0.0
+            rsa = {"feature": rsa_feat.strip(), "deadband": dead}
     return {
         "signal_rules": list(srs),
         "band_feature": feat.strip(),
         "inner_abs": inner,
         "outer_abs": outer,
         "consensus_mode": consensus,
+        "require_sign_agreement": rsa,
     }
 
 
@@ -167,12 +178,15 @@ def signal_match_position_band_series(
     inner_abs: float,
     outer_abs: float,
     consensus_mode: str = "first",
+    require_sign_agreement: Optional[Dict[str, Any]] = None,
 ) -> pd.Series:
     """Vectorized compound direction: signal cascade ∩ band same sign.
 
     consensus_mode:
         "first" (default) — first non-zero signal per row determines direction.
         "all" — ALL non-zero signals must agree; any disagreement → 0.
+    require_sign_agreement:
+        When set, cand must also satisfy sign(feature) == cand and |feature| > deadband.
     """
     all_signals: List[pd.Series] = []
     for sr in signal_rules:
@@ -241,7 +255,19 @@ def signal_match_position_band_series(
         return pd.Series(0.0, index=df.index, dtype=float)
     band_d = single_position_band_series(df, band_feature, inner_abs, outer_abs)
     mask = (cand != 0) & (cand == band_d)
-    return cand.where(mask, 0.0)
+    cand = cand.where(mask, 0.0)
+    if require_sign_agreement:
+        rsa_feat = str(require_sign_agreement.get("feature", "")).strip()
+        try:
+            dead = float(require_sign_agreement.get("deadband", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            dead = 0.0
+        if not rsa_feat or rsa_feat not in df.columns:
+            return pd.Series(0.0, index=df.index, dtype=float)
+        sser = pd.to_numeric(df[rsa_feat], errors="coerce")
+        slope_ok = sser.notna() & (sser.abs() > dead) & (np.sign(sser) == cand)
+        cand = cand.where(slope_ok, 0.0)
+    return cand
 
 
 def parse_single_position_band_rule(

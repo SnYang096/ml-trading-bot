@@ -200,6 +200,11 @@ def _extract_features_from_direction(cfg: Dict[str, Any]) -> Set[str]:
                 f2 = sr.get("feature")
                 if f2:
                     features.add(str(f2))
+            rsa = cmp.get("require_sign_agreement")
+            if isinstance(rsa, dict):
+                rf = rsa.get("feature")
+                if isinstance(rf, str) and rf.strip():
+                    features.add(rf.strip())
             continue
         if rule.get("method") == "dual_position_agree_deadband":
             raw = rule.get("features")
