@@ -455,6 +455,9 @@ def build_position_dict(
     _rlc = rr_constraints.get("regime_lifecycle_exit")
     if isinstance(_rlc, dict) and _rlc:
         pos["regime_lifecycle_exit"] = dict(_rlc)
+    _ptl = rr_constraints.get("profit_take_ladder")
+    if isinstance(_ptl, dict) and _ptl:
+        pos["profit_take_ladder"] = dict(_ptl)
     if str(pos.get("structural_exit") or "").strip().lower() in _REGIME_STATE_MODES:
         pos["_regime_peak_score"] = float(
             rr_constraints.get("entry_regime_score", 0.0) or 0.0

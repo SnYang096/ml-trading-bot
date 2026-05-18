@@ -1,0 +1,16 @@
+strategy:
+  name: spot-accum-simple-120T
+  description: |
+    Simplified spot accumulator: weekly EMA200 deep-bear DCA with deploy decay;
+    profit-multiple ladder sell (power-law acceleration). No score prefilter/entry filters.
+  owner: quant_team
+  archetype: SpotAccumSimpleLong
+  timeframe: "120T"
+  symbol_include:
+    - BTCUSDT
+    - BNBUSDT
+    - SOLUSDT
+  symbol_exclude: []
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

@@ -6043,6 +6043,28 @@ features:
         ema_200: price_unit
     column_mappings:
       real: close
+  weekly_ema_200_position_f:
+    module: baseline
+    compute_func: compute_weekly_ema_position_from_ohlc
+    dependencies: []
+    required_columns:
+    - close
+    - high
+    - low
+    output_columns:
+    - weekly_ema_200_position
+    category: trend
+    description: '(close - weekly_EMA200) / close on W-SUN bars, ffill to base TF.'
+    pass_full_df: true
+    compute_params:
+      ema_span_weeks: 200
+      output_column: weekly_ema_200_position
+      output_normalization_map:
+        weekly_ema_200_position: bounded_-1_1
+    column_mappings:
+      close: close
+      high: high
+      low: low
   ema_200_position_f:
     module: baseline
     compute_func: compute_price_vs_ma_position_from_series

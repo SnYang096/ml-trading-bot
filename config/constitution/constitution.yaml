@@ -264,6 +264,7 @@ spot:
   # Spot accumulator is a separate Binance spot account; not counted in PCM trend slots.
   strategies:
     - spot_accum # A-layer slow accumulation (120T); VWAP merge per symbol+archetype in event backtest.
+    - spot_accum_simple # Weekly EMA200 deep-bear DCA + profit-multiple ladder sell (A/B vs spot_accum).
   account:
     account_label: spot_accum # Label for logs, reports, and account routing (informational).
     equity_source: remote_live_account # Live equity from exchange sync; backtest uses backtest_equity_usdt.
@@ -287,6 +288,10 @@ spot:
       allow_add_position: false # No B/C-style child add legs; use accumulate_same_archetype in execution.yaml.
       require_locked_profit: false # Spot deploy does not require breakeven lock before next slice.
       max_new_entries_per_day: 1 # Max new PCM intents per UTC day (deploy legs also capped in execution.yaml).
+    spot_accum_simple:
+      allow_add_position: false
+      require_locked_profit: false
+      max_new_entries_per_day: 1
   risk_limits:
     max_gross_notional_pct: 1.00 # Portfolio-wide spot gross cap vs equity (1.0 = up to full anchor).
     max_daily_deploy_pct: 1.00 # Per-UTC-day deploy cap vs equity; 1.0 = may deploy full anchor in one day.

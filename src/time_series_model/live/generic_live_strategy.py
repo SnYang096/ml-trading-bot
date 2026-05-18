@@ -524,6 +524,7 @@ class ExecutionParamGenerator:
             "structural_exit": sl_cfg.get("structural_exit"),
             "regime_exit_min_score": sl_cfg.get("regime_exit_min_score"),
             "regime_lifecycle_exit": sl_cfg.get("regime_lifecycle_exit") or {},
+            "profit_take_ladder": sl_cfg.get("profit_take_ladder") or {},
             "min_stop_pct": guardrails.get("min_stop_pct"),
             "max_stop_pct": guardrails.get("max_stop_pct"),
             "breakeven_enabled": breakeven_enabled,
@@ -801,6 +802,11 @@ class GenericLiveStrategy:
         policy = raw.get("accumulation_policy") or {}
         return dict(policy) if isinstance(policy, dict) else {}
 
+    def _simple_accumulation_policy(self) -> Dict[str, Any]:
+        raw = (self.archetype.execution.raw or {}) if self.archetype else {}
+        policy = raw.get("simple_accumulation_policy") or {}
+        return dict(policy) if isinstance(policy, dict) else {}
+
     @staticmethod
     def _policy_float(policy: Dict[str, Any], key: str, default: float) -> float:
         try:
@@ -889,11 +895,32 @@ class GenericLiveStrategy:
         # 漏斗跟踪 (bool 标记 + 丰富元数据)
         funnel: Dict[str, Any] = {}
         _sig_ts = features.get("timestamp")
+        simple_policy = self._simple_accumulation_policy()
+        use_simple_accum = bool(simple_policy.get("enabled", False))
         accumulation_policy = self._accumulation_policy()
         accumulation_score = self._accumulation_policy_score(
             features, accumulation_policy
         )
-        if self._accumulation_policy_blocks_deploy(
+        if use_simple_accum:
+            from src.time_series_model.live.spot_accum_simple import (
+                deep_bear_allows_buy,
+            )
+
+            ok_buy, wk_pos = deep_bear_allows_buy(features, simple_policy)
+            funnel["simple_deep_bear"] = ok_buy
+            funnel["weekly_ema_200_position"] = wk_pos
+            if not ok_buy:
+                self._last_funnel = funnel
+                record_fer_entry_eval(
+                    strategy=self.strategy_name,
+                    symbol=symbol,
+                    signal_ts=_sig_ts,
+                    outcome="simple_not_deep_bear",
+                    funnel=funnel,
+                    features=features,
+                )
+                return []
+        elif self._accumulation_policy_blocks_deploy(
             symbol, accumulation_score, accumulation_policy
         ):
             funnel["accumulation_policy"] = "bull_exposure_stop_deploy"
@@ -1172,6 +1199,7 @@ class GenericLiveStrategy:
                     "structural_exit": exec_params.get("structural_exit"),
                     "regime_lifecycle_exit": exec_params.get("regime_lifecycle_exit")
                     or {},
+                    "profit_take_ladder": exec_params.get("profit_take_ladder") or {},
                     "sr_exit_price": exec_params.get("sr_exit_price"),
                     "sr_exit_buffer_atr": exec_params.get("sr_exit_buffer_atr"),
                     "min_stop_pct": exec_params.get("min_stop_pct"),

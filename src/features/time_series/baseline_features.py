@@ -4582,6 +4582,38 @@ def compute_sma_position_from_series(
     return pd.DataFrame({"sma_200_position": position}, index=close.index)
 
 
+@register_feature("compute_weekly_ema_position_from_ohlc", category="baseline")
+def compute_weekly_ema_position_from_ohlc(
+    *,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    ema_span_weeks: int = 200,
+    output_column: str = "weekly_ema_200_position",
+) -> pd.DataFrame:
+    """Weekly close vs weekly EMA, projected to base bar index (causal ffill)."""
+    idx = close.index
+    c = pd.to_numeric(close, errors="coerce").astype(float)
+    weekly = (
+        pd.DataFrame({"close": c}, index=idx)
+        .sort_index()
+        .resample("W-SUN", label="right", closed="right")
+        .agg({"close": "last"})
+    )
+    weekly = weekly.dropna(subset=["close"])
+    span = max(2, int(ema_span_weeks))
+    if weekly.empty:
+        z = pd.Series(0.0, index=idx)
+        return pd.DataFrame({output_column: z}, index=idx)
+    wk_ema = weekly["close"].ewm(span=span, adjust=False, min_periods=max(2, span // 5)).mean()
+    wk_close = weekly["close"]
+    wk_safe = wk_close.replace(0, np.nan)
+    wk_pos = ((wk_close - wk_ema) / wk_safe).replace([np.inf, -np.inf], np.nan)
+    wk_pos = wk_pos.clip(-1.0, 1.0).fillna(0.0)
+    out = wk_pos.reindex(idx, method="ffill").fillna(0.0)
+    return pd.DataFrame({output_column: out.astype(float)}, index=idx)
+
+
 @register_feature("compute_price_vs_ma_position_from_series", category="baseline")
 def compute_price_vs_ma_position_from_series(
     *,
