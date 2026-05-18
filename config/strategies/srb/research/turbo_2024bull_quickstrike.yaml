@@ -52,7 +52,7 @@ download:
 
 strategies:
   srb:
-    config: config/strategies/srb_quickstrike
+    config: config/strategies/bad-candidates/srb_quickstrike
     timeframe: 120T
     prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml

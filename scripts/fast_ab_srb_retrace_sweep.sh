@@ -44,7 +44,7 @@ run_month () {
   rm -rf "${strat_root_run}"
   cp -r "${strat_root_src}" "${strat_root_run}"
 
-  cp config/strategies/bad-candidates/srb/archetypes/execution.yaml \
+  cp config/strategies/srb/archetypes/execution.yaml \
      "${strat_root_run}/srb/archetypes/execution.yaml"
 
   python - <<PYEOF

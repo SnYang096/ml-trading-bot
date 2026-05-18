@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Phase 1 — 读取 config/strategies/bad-candidates/srb/experiment_matrices.yaml，列出执行参数扫描组合。
+Phase 1 — 读取 config/strategies/srb/experiment_matrices.yaml，列出执行参数扫描组合。
 
 用法:
   python scripts/srb_execution_grid.py
 
 流程（手工 / CI）:
-  1. 复制整份策略目录: cp -a config/strategies/bad-candidates/srb config/strategies/srb_exp_<label>
+  1. 复制整份策略目录: cp -a config/strategies/srb config/strategies/srb_exp_<label>
   2. 编辑副本内 archetypes/execution.yaml 中对应键
   3. 将 rolling / event_backtest 的 --strategies-root 指向该副本
   4. python scripts/srb_experiment_report.py --run-dir <rolling 输出根>
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import yaml
 
-SRB_STRATEGY_DIR = Path("config/strategies/bad-candidates/srb")
+SRB_STRATEGY_DIR = Path("config/strategies/srb")
 
 _YAML_PATH = {
     "initial_r": "stop_loss.initial_r",

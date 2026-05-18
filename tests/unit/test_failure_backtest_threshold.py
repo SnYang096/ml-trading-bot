@@ -150,7 +150,7 @@ if __name__ == "__main__":
     print("=" * 80)
 
     print("\n📝 修复方案：")
-    print("1. 修改 config/strategies/bad-candidates/bpc/backtest.yaml")
+    print("1. 修改 config/strategies/bpc/backtest.yaml")
     print("   - 将 long_entry_threshold 从 0.3 改为 0.7 或 0.8")
     print("   - 修正注释：说明这是 success_prob 的阈值")
     print("\n2. 或者在代码中添加自动反转逻辑")

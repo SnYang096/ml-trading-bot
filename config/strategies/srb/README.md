@@ -1,6 +1,6 @@
 # SRB（Structural Range Breakout）
 
-> **2026-04 归档**：本策略目录已迁至 `config/strategies/bad-candidates/srb`（rolling 效果未达主腿标准，仅供对照与复现实验）。生产部署默认不再同步至 `live/highcap`；跑管线请使用 `config/prod_train_pipeline_*_srb_only.yaml`（其中 `strategies.srb.config` 已指向本路径）。
+> **研究主线候选**：本策略目录位于 `config/strategies/srb`，可直接参与 PCM/constitution 回测。生产部署默认仍不自动同步至 `live/highcap`；跑管线请使用 `config/prod_train_pipeline_*_srb_only.yaml` 或策略包内 `research/*.yaml`。
 
 ## 与 BPC / ME / TPC 的分工（趋势家族互补）
 

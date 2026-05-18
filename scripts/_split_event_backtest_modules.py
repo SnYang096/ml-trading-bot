@@ -84,6 +84,7 @@ audit_body = (
     """from __future__ import annotations
 
 import re
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -182,6 +183,7 @@ from scripts.account_ledger import AccountLedger
 from scripts.event_backtest._bootstrap import logger
 from scripts.event_backtest.spot.budget import (
     _allocate_spot_accum_leg,
+    _record_spot_symbol_deploy_leg,
     _spot_entry_fill_price,
     _spot_peer_sims,
     _spot_regime_leg_kwargs,
@@ -197,7 +199,11 @@ from src.time_series_model.core.constitution.add_position_rules import (
     resolve_float_r_ladder_only as _shared_resolve_float_r_ladder_only,
     validate_add_position_trigger as _shared_validate_add_position_trigger,
 )
+from src.time_series_model.core.constitution.constitution_executor import (
+    ConstitutionExecutor,
+)
 from src.time_series_model.core.constitution.runtime_state import AddPositionRecord
+from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.live.position_logic import build_position_dict, enforce_position
 from src.time_series_model.live.spot_accum_simple import (
@@ -358,11 +364,22 @@ from scripts.event_backtest.features.timeline import (
     row_to_features,
 )
 from scripts.event_backtest.modes import BacktestMode, resolve_backtest_mode
+from scripts.account_ledger import AccountLedger
 from scripts.event_backtest.reporting.audit import (
     _add_attempt_snapshot,
+    _apply_pcm_direction_ffill,
     _er_pct_attempt_stats,
     _extract_path_efficiency_pct,
     _trade_audit_row_from_fill,
+)
+from scripts.event_backtest.simulator.position import (
+    _collect_open_parent_pids,
+    _load_add_position_runtime_from_resume,
+    _merge_add_position_runtime_with_open_legs,
+    _prune_stale_add_position_records,
+)
+from src.time_series_model.core.constitution.add_position_rules import (
+    resolve_float_r_ladder_only as _shared_resolve_float_r_ladder_only,
 )
 from scripts.event_backtest.results import BacktestResult
 from scripts.event_backtest.simulator.om_bridge import OMBridge, OM_AVAILABLE

@@ -22,6 +22,16 @@ try:
 except ImportError:
     OM_AVAILABLE = False
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_EVENT_BACKTEST_RESULTS = _REPO_ROOT / "results" / "event_backtest"
+
+
+def _default_trades_csv_path(strategy_tag: str) -> Path:
+    """Default trades + capital_report output under ``results/event_backtest/``."""
+    out_dir = _DEFAULT_EVENT_BACKTEST_RESULTS
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / f"event_trades_{strategy_tag}.csv"
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -81,8 +91,8 @@ def main():
         dest="trades_csv",
         metavar="PATH",
         help=(
-            "成交明细 CSV 路径（列含入场审计）；省略则写入当前目录 "
-            "event_trades_<策略列表>.csv"
+            "成交明细 CSV 路径（列含入场审计）；省略则写入 "
+            "results/event_backtest/event_trades_<策略列表>.csv"
         ),
     )
     parser.add_argument(
@@ -358,7 +368,7 @@ def main():
     export_path = (
         Path(args.trades_csv).expanduser()
         if args.trades_csv
-        else (Path.cwd() / f"event_trades_{_strat_tag}.csv")
+        else _default_trades_csv_path(_strat_tag)
     )
     export_path = export_path.resolve()
     if not args.trades_csv:

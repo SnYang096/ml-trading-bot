@@ -12,6 +12,7 @@ from scripts.account_ledger import AccountLedger
 from scripts.event_backtest._bootstrap import logger
 from scripts.event_backtest.spot.budget import (
     _allocate_spot_accum_leg,
+    _record_spot_symbol_deploy_leg,
     _spot_entry_fill_price,
     _spot_peer_sims,
     _spot_regime_leg_kwargs,
@@ -27,7 +28,11 @@ from src.time_series_model.core.constitution.add_position_rules import (
     resolve_float_r_ladder_only as _shared_resolve_float_r_ladder_only,
     validate_add_position_trigger as _shared_validate_add_position_trigger,
 )
+from src.time_series_model.core.constitution.constitution_executor import (
+    ConstitutionExecutor,
+)
 from src.time_series_model.core.constitution.runtime_state import AddPositionRecord
+from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.live.position_logic import (
     build_position_dict,

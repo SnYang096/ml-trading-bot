@@ -341,7 +341,7 @@ Review 通过后，可将本文档重命名为带日期的 ADR 编号（例如 `
 
 **合并审阅**：分主题 checkbox 见下；**一张表总览（T01–T33 + P0–P3）** 见 **§13**。
 
-> **用语**：**SRB** 与 **BPC、ME、TPC** 一样，是 **独立策略 slug**（见仓库 `bad-candidates/srb` 等路径），**不是** BPC+ME+TPC 的统称。本节「与经典对齐」指 **以 Prefilter→Gate→Entry→Execution + `rolling_calibration` + 事件回测为主线的这类策略**（文档里以 **bpc / tpc / me** 为主例）；多腿 parity 是与 **这条主线** 对齐，而非与「SRB」这一策略名混写。
+> **用语**：**SRB** 与 **BPC、ME、TPC** 一样，是 **独立策略 slug**（见仓库 `config/strategies/srb` 等路径），**不是** BPC+ME+TPC 的统称。本节「与经典对齐」指 **以 Prefilter→Gate→Entry→Execution + `rolling_calibration` + 事件回测为主线的这类策略**（文档里以 **bpc / tpc / me** 为主例）；多腿 parity 是与 **这条主线** 对齐，而非与「SRB」这一策略名混写。
 
 本节把 **§2–§8、§10–§11** 里分散的勾选项 **按「稳定流水线」维度重排**，便于你逐项对照「是否符合可运维、可复盘、可收窄 adopt」的标准。  
 **共识（多腿）**：多腿 **同样有第一环「体制 / 特征 mask」**——在范式上与经典 **Prefilter** 对齐即可命名为 **Regime**（见 §10.2）；**特征列数通常少于 BPC**，但不等于「不能挑特征 / 不能调参」：仍可在 **`features.yaml` + `feature_dependencies`** 内演进列，并在 **`threshold_search`（或等价块）** 中对 **regime 阈值、网格/执行旋钮** 做 sweep；与经典差异主要在 **统计量是否够开 Pool-B 式宽搜索**，而非能力上禁止。

@@ -3,7 +3,7 @@
 
 matrix_initial_r:
   description: "单因子 initial_r"
-  base_execution_yaml: config/strategies/bad-candidates/srb/archetypes/execution.yaml
+  base_execution_yaml: config/strategies/srb/archetypes/execution.yaml
   sweep:
     initial_r: [4.0, 5.0, 6.0, 7.0]
 

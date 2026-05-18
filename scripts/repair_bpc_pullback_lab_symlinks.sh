@@ -20,7 +20,7 @@ for _lab_real in direction.yaml execution.yaml; do
   [[ -L "$_p" ]] && rm -f "$_p"
 done
 
-for f in config/strategies/bad-candidates/bpc/*; do
+for f in config/strategies/bpc/*; do
   [ -f "$f" ] || continue
   name=$(basename "$f")
   [[ "$name" == gate_draft.yaml ]] && continue
@@ -28,7 +28,7 @@ for f in config/strategies/bad-candidates/bpc/*; do
   ln -sfn "../../strategies/bpc/$name" "$BPC/$name"
 done
 
-for f in config/strategies/bad-candidates/bpc/archetypes/*; do
+for f in config/strategies/bpc/archetypes/*; do
   [ -f "$f" ] || continue
   name=$(basename "$f")
   [[ "$name" == entry_filters.yaml || "$name" == gate.yaml || "$name" == prefilter.yaml || "$name" == direction.yaml || "$name" == execution.yaml ]] && continue

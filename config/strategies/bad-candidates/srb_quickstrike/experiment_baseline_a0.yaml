@@ -2,7 +2,7 @@
 baseline:
   label: A0
   description: "SRB slow rolling 示例基线（20260414_220229）；后续实验与此对比 Δstitched_total_r / 回撤"
-  rolling_config: config/strategies/bad-candidates/srb/research/research_roll.features_on.yaml
+  rolling_config: config/strategies/srb/research/research_roll.features_on.yaml
 
 paths:
   stitched_summary: results/srb/research_roll.features_on/_rolling_sim/20260414_220229/stitched_summary.json

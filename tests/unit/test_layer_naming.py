@@ -203,30 +203,30 @@ class TestArchetypeTimeframeNaming:
 
     def test_strategy_me_includes_archetype_and_timeframe(self):
         """ME strategy should produce features_me_120T_{hash} (per meta.yaml)."""
-        layer = default_layer_from_config("config/strategies/bad-candidates/me")
+        layer = default_layer_from_config("config/strategies/me")
         assert layer.startswith(
             "features_me_120T_"
         ), f"Expected features_me_120T_*, got {layer}"
 
     def test_strategy_bpc_includes_archetype_and_timeframe(self):
         """BPC strategy should produce features_bpc_120T_{hash} (per meta.yaml)."""
-        layer = default_layer_from_config("config/strategies/bad-candidates/bpc")
+        layer = default_layer_from_config("config/strategies/bpc")
         assert layer.startswith(
             "features_bpc_120T_"
         ), f"Expected features_bpc_120T_*, got {layer}"
 
     def test_different_archetypes_different_layers(self):
         """ME and BPC should produce different layer names."""
-        me = default_layer_from_config("config/strategies/bad-candidates/me")
-        bpc = default_layer_from_config("config/strategies/bad-candidates/bpc")
+        me = default_layer_from_config("config/strategies/me")
+        bpc = default_layer_from_config("config/strategies/bpc")
         assert me != bpc
         assert "_me_" in me
         assert "_bpc_" in bpc
 
     def test_hash_stable_across_calls(self):
         """Same config should produce identical layer name on repeated calls."""
-        l1 = default_layer_from_config("config/strategies/bad-candidates/me")
-        l2 = default_layer_from_config("config/strategies/bad-candidates/me")
+        l1 = default_layer_from_config("config/strategies/me")
+        l2 = default_layer_from_config("config/strategies/me")
         assert l1 == l2
 
     def test_no_meta_yaml_uses_dirname_only(self):

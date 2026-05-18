@@ -18,20 +18,20 @@ def _repo_root() -> Path:
 def test_strategy_packaged_root():
     root = _repo_root()
     p = strategy_packaged_root(root, "bpc")
-    assert p == root / "config" / "strategies" / "bad-candidates" / "bpc"
+    assert p == root / "config" / "strategies" / "bpc"
 
 
-def test_strategy_packaged_root_me_via_bad_candidates():
+def test_strategy_packaged_root_me_from_root():
     root = _repo_root()
     p = strategy_packaged_root(root, "me")
-    assert p == root / "config" / "strategies" / "bad-candidates" / "me"
+    assert p == root / "config" / "strategies" / "me"
 
 
-def test_resolve_me_turbo_single_file_via_bad_candidates():
+def test_resolve_me_turbo_single_file_from_root():
     root = _repo_root()
     p, warns = resolve_default_pipeline_config(root, "me", None)
     assert p.name == "calibrate_roll.default.yaml"
-    assert p.parts[-4:-1] == ("bad-candidates", "me", "research")
+    assert p.parts[-3:-1] == ("me", "research")
     assert not warns
 
 
@@ -47,7 +47,7 @@ def test_resolve_bpc_turbo_single_file():
     root = _repo_root()
     p, warns = resolve_default_pipeline_config(root, "bpc", None)
     assert p.name == "calibrate_roll.default.yaml"
-    assert p.parts[-4:-1] == ("bad-candidates", "bpc", "research")
+    assert p.parts[-3:-1] == ("bpc", "research")
     assert not warns
 
 

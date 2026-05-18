@@ -158,7 +158,7 @@ resource_allocation:
   # trend/fat-tail LivePCM 注册 + Step 9.5 PCM 联合回测白名单（与 pipeline strategy_scope 交集）唯一来源
   # 列表顺序 = 同 bar 多 archetype 时 PCM 仲裁优先级（除非另写 intent_selection_policy.archetype_priority）
   enabled_archetypes:
-    # 主力趋势仓以 TPC 为主线；BPC 已迁至 bad-candidates（研究侧可按 slug 加载）。
+    # 主力趋势仓以 TPC 为主线；BPC/ME/SRB 保留在研究根目录，live 默认不启用。
     - tpc
 
   # trend/fat-tail 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。

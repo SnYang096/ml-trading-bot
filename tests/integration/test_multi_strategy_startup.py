@@ -87,7 +87,7 @@ def test_current_strategy_status():
     config_dirs = {
         "TPC": "config/strategies/tpc/archetypes/",
         "FER": "config/strategies/bad-candidates/fer/archetypes/",
-        "ME": "config/strategies/bad-candidates/me/archetypes/",
+        "ME": "config/strategies/me/archetypes/",
     }
 
     live_dirs = {

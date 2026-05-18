@@ -523,9 +523,7 @@ def validate_payload(
             return None, "bpc_research_config_conflicts_run_all"
         if not _RE_SAFE_YAML_NAME.match(base):
             return None, "invalid_bpc_research_config"
-        derived = (
-            _STRATEGIES_ROOT / "bad-candidates" / "bpc" / "research" / base
-        ).as_posix()
+        derived = (_STRATEGIES_ROOT / "bpc" / "research" / base).as_posix()
         if config_path_s and config_path_s != derived:
             return None, "config_path_conflicts_bpc_research_config"
         config_path_s = derived

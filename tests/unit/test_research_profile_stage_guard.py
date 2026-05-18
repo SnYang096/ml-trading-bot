@@ -14,16 +14,13 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 def test_is_research_turbo_or_slow_yaml() -> None:
     assert is_research_turbo_or_slow_yaml(
-        _ROOT
-        / "config/strategies/bad-candidates/bpc/research/calibrate_roll.default.yaml"
+        _ROOT / "config/strategies/bpc/research/calibrate_roll.default.yaml"
     )
     assert is_research_turbo_or_slow_yaml(
-        _ROOT
-        / "config/strategies/bad-candidates/bpc/research/research_roll.features_on.yaml"
+        _ROOT / "config/strategies/bpc/research/research_roll.features_on.yaml"
     )
     assert not is_research_turbo_or_slow_yaml(
-        _ROOT
-        / "config/strategies/bad-candidates/bpc/research/validate_static.full_study.yaml"
+        _ROOT / "config/strategies/bpc/research/validate_static.full_study.yaml"
     )
 
 
@@ -31,7 +28,7 @@ def test_validate_payload_turbo_defaults_to_rolling_sim() -> None:
     norm, err = validate_payload(
         {
             "strategy": "bpc",
-            "config_path": "config/strategies/bad-candidates/bpc/research/calibrate_roll.default.yaml",
+            "config_path": "config/strategies/bpc/research/calibrate_roll.default.yaml",
         }
     )
     assert err is None
@@ -43,7 +40,7 @@ def test_validate_payload_non_rolling_stays_full() -> None:
     norm, err = validate_payload(
         {
             "strategy": "bpc",
-            "config_path": "config/strategies/bad-candidates/bpc/research/validate_static.full_study.yaml",
+            "config_path": "config/strategies/bpc/research/validate_static.full_study.yaml",
         }
     )
     assert err is None
@@ -55,7 +52,7 @@ def test_validate_payload_explicit_stage_preserved() -> None:
     norm, err = validate_payload(
         {
             "strategy": "bpc",
-            "config_path": "config/strategies/bad-candidates/bpc/research/calibrate_roll.default.yaml",
+            "config_path": "config/strategies/bpc/research/calibrate_roll.default.yaml",
             "stage": "prefilter",
         }
     )
@@ -77,10 +74,7 @@ def test_cli_rejects_full_on_turbo_yaml(monkeypatch: pytest.MonkeyPatch) -> None
             "--strategy",
             "bpc",
             "--config",
-            str(
-                _ROOT
-                / "config/strategies/bad-candidates/bpc/research/calibrate_roll.default.yaml"
-            ),
+            str(_ROOT / "config/strategies/bpc/research/calibrate_roll.default.yaml"),
             "--dry-run",
         ],
     )

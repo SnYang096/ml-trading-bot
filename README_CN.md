@@ -202,9 +202,9 @@ mlbot data download-open-interest \
 | YAML                                                                            | 用途                               | `rolling.mode`         |
 | ------------------------------------------------------------------------------- | ---------------------------------- | ---------------------- |
 | `config/strategies/bad-candidates/crf/research/calibrate_roll.default.yaml`                      | CRF / calibrate_roll（`box_structure_f`）   | `turbo_fixed_features` |
-| `config/strategies/bad-candidates/srb/research/turbo_2024bull_thresholds.yaml`  | SRB / turbo                        | `turbo_fixed_features` |
-| `config/strategies/bad-candidates/srb/research/turbo_2024bull_quickstrike.yaml` | SRB quickstrike / turbo            | `turbo_fixed_features` |
-| `config/strategies/bad-candidates/srb/research/research_roll.features_on.yaml`                       | SRB 慢模式                         | `slow_realistic`       |
+| `config/strategies/srb/research/turbo_2024bull_thresholds.yaml`  | SRB / turbo                        | `turbo_fixed_features` |
+| `config/strategies/srb/research/turbo_2024bull_quickstrike.yaml` | SRB quickstrike / turbo            | `turbo_fixed_features` |
+| `config/strategies/srb/research/research_roll.features_on.yaml`                       | SRB 慢模式                         | `slow_realistic`       |
 | `config/strategies/bad-candidates/*/research/*.yaml`                            | 其它历史实验（FBF / FER / MSR 等） | （见各文件）           |
 
 > `turbo_fixed_features`：特征集固定，只做阈值链 / execution 优化 / 月度滚动 → **快**。  

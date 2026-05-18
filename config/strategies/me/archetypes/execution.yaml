@@ -1,3 +1,4 @@
+# TPC execution: 与 BPC 相同（EMA1200 structural exit, 增量加仓）
 add_position:
   add_size_multipliers:
     - 1
@@ -15,12 +16,15 @@ execution_constraints:
   min_order_interval_minutes: 60
 holding:
   max_holding_bars: 0
+  time_stop_bars: 0
 stop_loss:
+  # 2026-04-22 统一 breakeven 口径（见 position_logic.py）：
+  # measure=atr 保持历史语义；lock_level_r 等价于旧 lock_profit_atr（ATR 单位）。
   breakeven:
     enabled: true
+    trigger_r: 10.0
     lock_level_r: 2
     measure: atr
-    trigger_r: 10.0
   guardrails:
     max_stop_pct: 0.2
     min_stop_pct: 0.01
@@ -34,4 +38,4 @@ stop_loss:
   type: trailing
 take_profit:
   enabled: false
-version: 61
+version: 1
