@@ -25,6 +25,7 @@ feature_pipeline:
 
     # ----- ME v3.0 三因子核心特征 -----
     - me_soft_phase_f
+    - tpc_soft_phase_f  # 统一 chop 口径：为 gate 提供 tpc_semantic_chop
     - me_accel_5k_split_f
     - me_failure_f
     - me_context_f

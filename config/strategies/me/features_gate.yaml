@@ -12,6 +12,8 @@ feature_pipeline:
     # ME 专属 chop 语义
     - "me_semantic_chop"
     - "me_semantic_chop_ts_q"
+    # 四策略统一 chop 口径（来自 tpc_soft_phase_f）
+    - "tpc_semantic_chop"
     # 订单流
     - "vpin_*"
     # 波动率稳定性 / 杠杆非对称

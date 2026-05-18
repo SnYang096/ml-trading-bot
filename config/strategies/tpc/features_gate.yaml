@@ -10,8 +10,9 @@ feature_pipeline:
     # TPC 专属 chop 语义
     - "tpc_semantic_chop"
     - "tpc_semantic_chop_ts_q"
-    # 波动率（与 gate: vol_persistence 对齐；已删除未实证命中的 vpin/杠杆对称 gate）
+    # 波动率（与 gate: vol_persistence / vol_leverage_asymmetry 对齐）
     - "vol_persistence"
+    - "vol_leverage_asymmetry"
     - "vol_regime_shift*"
     # EVT（与 gate: evt_var_99 列名一致；同时保留 stat_evt_* 兼容别名义）
     - "evt_var_99"

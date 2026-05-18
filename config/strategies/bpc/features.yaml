@@ -24,6 +24,7 @@ feature_pipeline:
 
     # ========== BPC 核心：软阶段分数 ==========
     - bpc_soft_phase_f  # 输出: bpc_score_breakout/pullback/continuation/neutral
+    - tpc_soft_phase_f  # 统一 chop 口径：为 gate 提供 tpc_semantic_chop
 
     # ========== BPC 结构特征 ==========
     - bpc_pullback_depth_pct_f    # 回踩深度 (side-aware)

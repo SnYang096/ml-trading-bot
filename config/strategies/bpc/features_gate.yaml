@@ -29,6 +29,8 @@ feature_pipeline:
     # BPC 专属 chop 语义 (BB 窄 + 方向置信低, 与 EMA 位置无关的震荡噪声)
     - "bpc_semantic_chop"
     - "bpc_semantic_chop_ts_q"
+    # 四策略统一 chop 口径（来自 tpc_soft_phase_f）
+    - "tpc_semantic_chop"
     # 纯 chop / 震荡噪声 (与策略结构无关的执行环境)
     - "bb_width_normalized_pct"
     - "range_compression_*"

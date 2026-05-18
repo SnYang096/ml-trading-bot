@@ -33,17 +33,17 @@ hard_gates:
   tag: HARD_BPC_SEMANTIC_CHOP
   phase: hard_gate
   priority: 6
-  reason: BPC 专用：同品种 semantic_chop_ts_q 过高 → 拒开仓；低分位放行（与 TPC/ME 同构）
+  reason: BPC 专用：同品种 tpc_semantic_chop 过高 → 拒开仓；低分位放行（与 TPC/ME/SRB 同构）
   when:
-    bpc_semantic_chop_ts_q:
-      value_gte: 0.4
+    tpc_semantic_chop:
+      value_gt: 0.4
   then:
     action: deny
-  comment: deny iff ts_q>=0.40（放行 ts_q<0.40）。上阈可扫 0.25/0.30/0.35/0.40（改 value_gte）
+  comment: deny iff tpc_semantic_chop>0.40（放行 <=0.40）。阈值可扫 0.25/0.30/0.35/0.40
   locked: true
   frozen: true
   promote_never_disable: true
-  lock_reason: 高 chop 分位拒单；低分位放行；与 TPC/ME 对齐
+  lock_reason: 高 chop 拒单；低 chop 放行；与 TPC/ME/SRB 对齐
 guardrails: []
 system_safety:
 - id: gate_vol_persistence_vol_persistence

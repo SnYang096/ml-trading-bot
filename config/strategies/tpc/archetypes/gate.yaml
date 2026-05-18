@@ -65,3 +65,19 @@ system_safety:
   comment: 'merged: (0.0029,0.0299) + stat_fallback (0.0275,0.0616) → full deny zone. MeanRR=-0.60, BadRate=51.8%'
   locked: true
   lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利
+- id: gate_tpc_vol_leverage_asymmetry_mid
+  tag: HARD_TPC_VOL_LEVERAGE_ASYMMETRY
+  phase: system_safety
+  priority: 13
+  reason: 与 BPC/ME/SRB 对齐：波动杠杆非对称严重时趋势容易被拖垮
+  when:
+    all_of:
+    - vol_leverage_asymmetry:
+        value_gt: 0.0558
+    - vol_leverage_asymmetry:
+        value_lt: 0.1482
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true
+  lock_reason: 波动杠杆非对称安全门

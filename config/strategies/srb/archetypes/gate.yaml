@@ -1,4 +1,4 @@
-# SRB Gate：复刻 20260422_212338 slow-good 统计兜底门。
+# SRB Gate：本轮上线前简化对照，只保留 chop / 低波噪声安全门。
 schema:
   phases:
     - system_safety
@@ -15,46 +15,49 @@ hard_gates:
     tag: HARD_SRB_TPC_SEMANTIC_CHOP
     phase: hard_gate
     priority: 6
-    reason: SRB 借用 TPC soft phase：同品种 chop 滚动分位高 → 相对近期偏来回扫，不做 SR 突破延续
+    reason: SRB 借用 TPC soft phase：同品种 tpc_semantic_chop 高 → 相对近期偏来回扫，不做 SR 突破延续
     when:
-      tpc_semantic_chop_ts_q:
-        value_gt: 0.25
+      tpc_semantic_chop:
+        value_gt: 0.4
     then:
       action: deny
-    comment: "20260428–30: tpc_semantic_chop_ts_q>0.25（1200bar/min150 滚动分位）；替代 raw tpc_semantic_chop>0.40"
+    comment: "本轮与 BPC/ME/TPC 对齐：高 chop 拒单（>0.40）；暂不使用 SR 统计兜底门"
     locked: true
     frozen: true
     promote_never_disable: true
     lock_reason: 波动区过滤（标准），减少 SR 附近 chop 开仓
 
-  - id: gate_stat_cvd_change_5_normalized
-    tag: HARD_STAT_1
-    phase: hard_gate
-    priority: 20
-    reason: 统计法兜底规则（tree gate 为空）
-    when:
-      cvd_change_5_normalized:
-        value_gt: -0.0006
-    then:
-      action: deny
-    locked: true
-    promote_never_disable: true
-    comment: "20260422_212338 stat_fallback gate_score=0.088, tail_capture=0.312, good_deny=0.224"
-  - id: gate_stat_macro_tp_vwap_1200_position_macro_tp_vwap_1200_position
-    tag: HARD_STAT_2
-    phase: hard_gate
-    priority: 21
-    reason: 统计法兜底规则（tree gate 为空）
+guardrails: []
+system_safety:
+  - id: gate_srb_vol_persistence_mid
+    tag: HARD_SRB_VOL_PERSISTENCE
+    phase: system_safety
+    priority: 12
+    reason: 与 BPC/TPC/ME 对齐：低波噪声切换/拖泥带水期不做趋势延续
     when:
       all_of:
-        - macro_tp_vwap_1200_position:
-            value_gt: 0.1036
-        - macro_tp_vwap_1200_position:
-            value_lt: 0.1543
+        - vol_persistence:
+            value_gt: 0.0029
+        - vol_persistence:
+            value_lt: 0.0616
     then:
       action: deny
     locked: true
     promote_never_disable: true
-    comment: "20260422_212338 stat_fallback gate_score=0.080, tail_capture=0.206, good_deny=0.126"
-guardrails: []
-system_safety: []
+    lock_reason: 波动率持久性安全门
+  - id: gate_srb_vol_leverage_asymmetry_mid
+    tag: HARD_SRB_VOL_LEVERAGE_ASYMMETRY
+    phase: system_safety
+    priority: 13
+    reason: 与 BPC/ME 对齐：波动杠杆非对称严重时趋势容易被拖垮
+    when:
+      all_of:
+        - vol_leverage_asymmetry:
+            value_gt: 0.0558
+        - vol_leverage_asymmetry:
+            value_lt: 0.1482
+    then:
+      action: deny
+    locked: true
+    promote_never_disable: true
+    lock_reason: 波动杠杆非对称安全门
