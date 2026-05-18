@@ -4,7 +4,7 @@
 #   quant-feature-bus 监听 Binance WebSocket 并写磁盘 Feature Bus；
 #   quant-trend-fattail 与 quant-hedge-multileg 分别消费磁盘 bus，且各自使用独立账户。
 # systemd 需在宿主机映射（见 deploy.yml）：
-#   9192→feature-bus，9190→trend/fattail，9191→hedge multi-leg。
+#   9192→feature-bus，9190→trend/fattail，9191→hedge multi-leg，9193→spot_accum_simple。
 # 注意：Prometheus 运行在 Docker 内，不能抓取只绑定宿主 127.0.0.1 的端口。
 # monitoring 栈通过 host.docker.internal 访问宿主（compose 已为 prometheus 配 extra_hosts）。
 
@@ -47,6 +47,17 @@ scrape_configs:
       - source_labels: [__name__]
         regex: "^(mlbot_multi_leg_.+|mlbot_strategy_symbol_bar_ohlc|mlbot_strategy_feature_value|mlbot_strategy_event_total|mlbot_strategy_event_price|mlbot_dashboard_catalog|mlbot_funnel_total|mlbot_orders_total|mlbot_signals_total|mlbot_account_balance|mlbot_account_margin_ratio|mlbot_unrealized_pnl_total|mlbot_account_update_success|mlbot_account_update_age_seconds|mlbot_position_notional_usdt|mlbot_position_qty|mlbot_cpu_percent|mlbot_memory_mb|mlbot_memory_rss_mb|mlbot_uptime_seconds)$"
         action: keep
+
+  - job_name: "quant-spot-accum"
+    static_configs:
+      - targets: ["host.docker.internal:9193"]
+        labels:
+          instance: "live"
+          workload: "spot_accum_simple_consumer"
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "^mlbot_multi_leg_.+"
+        action: drop
 
   # Prometheus 自身
   - job_name: "prometheus"

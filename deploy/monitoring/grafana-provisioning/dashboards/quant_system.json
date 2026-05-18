@@ -22,7 +22,7 @@
       "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "up{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
+        { "refId": "A", "expr": "up{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg|quant-spot-accum\"}", "legendFormat": "{{job}}" }
       ],
       "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] }
     },
@@ -33,7 +33,7 @@
       "gridPos": { "h": 6, "w": 8, "x": 8, "y": 1 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_cpu_percent{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
+        { "refId": "A", "expr": "mlbot_cpu_percent{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg|quant-spot-accum\"}", "legendFormat": "{{job}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
     },
@@ -44,7 +44,7 @@
       "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_memory_rss_mb{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
+        { "refId": "A", "expr": "mlbot_memory_rss_mb{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg|quant-spot-accum\"}", "legendFormat": "{{job}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "decmbytes" }, "overrides": [] }
     },
@@ -55,7 +55,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 7 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_memory_mb{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
+        { "refId": "A", "expr": "mlbot_memory_mb{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg|quant-spot-accum\"}", "legendFormat": "{{job}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "decmbytes" }, "overrides": [] }
     },
@@ -66,7 +66,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 7 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_uptime_seconds{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg\"}", "legendFormat": "{{job}}" }
+        { "refId": "A", "expr": "mlbot_uptime_seconds{job=~\"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg|quant-spot-accum\"}", "legendFormat": "{{job}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
     },
@@ -90,12 +90,12 @@
     },
     {
       "type": "timeseries",
-      "title": "Feature Bus Snapshot Age (trend consumer view)",
+      "title": "Feature Bus Snapshot Age (trend + spot view)",
       "id": 109,
       "gridPos": { "h": 7, "w": 8, "x": 8, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "mlbot_feature_bus_snapshot_age_seconds{job=\"quant-trend-fattail\"}", "legendFormat": "{{symbol}}" }
+        { "refId": "A", "expr": "mlbot_feature_bus_snapshot_age_seconds{job=~\"quant-trend-fattail|quant-spot-accum\"}", "legendFormat": "{{job}} {{symbol}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
     },

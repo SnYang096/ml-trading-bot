@@ -56,7 +56,7 @@ LIVE_STRATEGIES = LIVE_CONFIG / "strategies"
 LIVE_ROOT = PROJECT_ROOT / "live"
 
 # 默认部署集合（不含 SRB/me：研究策略默认不自动同步至 live）。
-DEFAULT_STRATEGIES = ["bpc", "tpc", "chop_grid", "dual_add_trend"]
+DEFAULT_STRATEGIES = ["bpc", "tpc", "spot_accum_simple", "chop_grid", "dual_add_trend"]
 
 # 研究侧策略目录覆盖（slug -> 绝对路径）；其余仍使用 config/strategies/<slug>/
 STRATEGY_RESEARCH_PATH_OVERRIDES = {}

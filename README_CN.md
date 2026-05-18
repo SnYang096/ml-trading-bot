@@ -1145,6 +1145,12 @@ MLBOT_LIVE_SYMBOLS=BTCUSDT \
 MLBOT_LIVE_USE_FUTURES=true \
 MLBOT_ORDER_MANAGEMENT_DB_PATH=data/order_management.db \
 python scripts/run_live.py
+
+# spot_accum_simple（spot-only，独立进程/独立 key）
+MLBOT_SPOT_SHADOW_MODE=false \
+BINANCE_SPOT_API_KEY=*** \
+BINANCE_SPOT_API_SECRET=*** \
+python scripts/run_spot_accum_live.py
 ```
 
 ### 连接订单 SQLite（trend vs 多腿）
@@ -1154,6 +1160,7 @@ python scripts/run_live.py
 | 用途 | 环境变量或参数 | 默认路径（仓库根 cwd） |
 | --- | --- | --- |
 | trend / PCM | `MLBOT_ORDER_MANAGEMENT_DB_PATH`（与 `live/highcap/config/constitution/constitution.yaml` 里 `persist_to` 应对齐） | `data/order_management.db` |
+| spot_accum_simple | `MLBOT_SPOT_DB_PATH` + `MLBOT_SPOT_LEDGER_DB_PATH` | `live/highcap/data/spot_order_management.db` + `live/highcap/data/spot_accum_ledger.db` |
 | 多腿 | `run_multi_leg_live.py` 的 `--multi-leg-db-path` | `data/multi_leg_order_management.db` |
 
 DDL 拆分为 `src/order_management/database/schema_trend.sql`（trend）与 `schema_multi_leg.sql`（多腿）。
@@ -1198,7 +1205,7 @@ ssh -i "C:\Users\hanse\.ssh\awskeypair.pem" `
 
 ### 打开 Grafana
 
-部署流水线里 Grafana 暴露在监控主机：**`http://<主机 IP>:3000`**（若只绑在服务器 `127.0.0.1`，同样要 SSH 转发）。Compose 初次默认 **`admin / admin`**，上线后请立即改密码。Prometheus 常见为 `:9091`（以你服务器 `docker compose` / `deploy/monitoring` 实际映射为准）。
+部署流水线里 Grafana 暴露在监控主机：**`http://<主机 IP>:3000`**（若只绑在服务器 `127.0.0.1`，同样要 SSH 转发）。Compose 初次默认 **`admin / admin`**，上线后请立即改密码。Prometheus 常见为 `:9091`（以你服务器 `docker compose` / `deploy/monitoring` 实际映射为准）。四进程推荐 metrics 端口：`9192(feature-bus)` / `9190(trend)` / `9191(hedge)` / `9193(spot_accum_simple)`。
 
 **只转 Grafana（Bash）：**
 

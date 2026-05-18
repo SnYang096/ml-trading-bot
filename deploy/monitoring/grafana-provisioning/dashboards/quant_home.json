@@ -215,24 +215,24 @@
     },
     {
       "type": "timeseries",
-      "title": "Open Position Qty by Symbol (Trend/Hedge)",
+      "title": "Open Position Qty by Symbol (Trend/Hedge/Spot)",
       "id": 18,
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 23 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "sum by (scope, symbol, side) (mlbot_position_qty{job=~\"quant-trend-fattail|quant-hedge-multileg\"})", "legendFormat": "{{scope}} {{symbol}} {{side}}" }
+        { "refId": "A", "expr": "sum by (scope, symbol, side) (mlbot_position_qty{job=~\"quant-trend-fattail|quant-hedge-multileg|quant-spot-accum\"})", "legendFormat": "{{scope}} {{symbol}} {{side}}" }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
     },
     {
       "type": "timeseries",
-      "title": "Open Position Notional USD by Symbol (Trend/Hedge)",
+      "title": "Open Position Notional USD by Symbol (Trend/Hedge/Spot)",
       "id": 19,
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 23 },
       "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
       "targets": [
-        { "refId": "A", "expr": "sum by (scope, symbol, side) (mlbot_position_notional_usdt{job=~\"quant-trend-fattail|quant-hedge-multileg\"})", "legendFormat": "{{scope}} {{symbol}} {{side}}" }
+        { "refId": "A", "expr": "sum by (scope, symbol, side) (mlbot_position_notional_usdt{job=~\"quant-trend-fattail|quant-hedge-multileg|quant-spot-accum\"})", "legendFormat": "{{scope}} {{symbol}} {{side}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } }

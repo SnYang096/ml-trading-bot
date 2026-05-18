@@ -1,0 +1,18 @@
+[Unit]
+Description=quant spot_accum_simple consumer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/quant-engine
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/quant-engine/live/scripts/start_spot_live.sh highcap
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/quant-engine/live/highcap/logs/spot_live.out.log
+StandardError=append:/opt/quant-engine/live/highcap/logs/spot_live.err.log
+
+[Install]
+WantedBy=multi-user.target
