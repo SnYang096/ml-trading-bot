@@ -467,6 +467,28 @@ class TestComputeRiskEquityCurve:
         # trade2: risk=1010*0.01=10.1 (fallback), pnl=+20.2, equity=1030.2
         assert result["final_equity"] == pytest.approx(1030.2)
 
+    def test_monthly_soft_loss_derates_risk_before_hard_stop(self):
+        """月亏超过软阈值后，后续交易使用降档风险但不直接停单。"""
+        idx = pd.to_datetime(["2026-01-01", "2026-01-02"])
+        r_returns = pd.Series([-9.0, -1.0], index=idx)
+        result = compute_risk_equity_curve(
+            r_returns,
+            initial_cash=1000.0,
+            risk_per_slot=0.01,
+            kill_switch={
+                "monthly_soft_loss_limit": 0.08,
+                "derated_risk_per_slot": 0.005,
+                "monthly_loss_limit": 0.12,
+                "daily_loss_limit": 1.0,
+                "weekly_loss_limit": 1.0,
+                "max_dd": 1.0,
+            },
+        )
+
+        # trade1: -9% => equity 910; trade2 derates to 0.5% risk => -4.55
+        assert result["final_equity"] == pytest.approx(905.45)
+        assert result["kill_switch_stats"]["derated_trades"] == 1
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. _load_constitution_constraints — 宪法加载

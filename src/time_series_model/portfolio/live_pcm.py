@@ -62,6 +62,15 @@ def _calendar_day_utc_str(
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _trend_side_token(raw: Any) -> str:
+    side = str(raw or "").strip().lower()
+    if side in {"long", "buy"}:
+        return "long"
+    if side in {"short", "sell"}:
+        return "short"
+    return ""
+
+
 # ────────────────────────────────────────────────────
 # Strategy 接口协议（duck typing）
 # ────────────────────────────────────────────────────
@@ -559,16 +568,29 @@ class LivePCM:
         self._trend_pool_require_anchor_first = bool(
             self._trend_pool_guard.get("require_anchor_first", False)
         )
+        _corr_guard = self._trend_pool_guard.get("symbol_correlation_guard") or {}
+        if not isinstance(_corr_guard, dict):
+            _corr_guard = {}
+        self._trend_pool_corr_enabled = bool(_corr_guard.get("enabled", False))
+        self._trend_pool_corr_threshold = float(_corr_guard.get("threshold", 0.80))
+        self._trend_pool_corr_same_direction_only = bool(
+            _corr_guard.get("same_direction_only", True)
+        )
+        self._trend_pool_corr_pairs = self._normalize_symbol_correlations(
+            _corr_guard.get("pairs") or {}
+        )
         if self._trend_pool_guard_enabled and self._trend_pool_max_unprotected > 0:
             logger.info(
                 "PCM: trend_pool_guard enabled "
                 "(max_unprotected_symbols=%d, unlock_on=%s, max_symbols_after_unlock=%d, "
-                "anchor_symbol=%s, require_anchor_first=%s)",
+                "anchor_symbol=%s, require_anchor_first=%s, corr_guard=%s, corr_threshold=%.2f)",
                 self._trend_pool_max_unprotected,
                 self._trend_pool_unlock_on,
                 self._trend_pool_max_symbols_after_unlock,
                 self._trend_pool_anchor_symbol,
                 self._trend_pool_require_anchor_first,
+                self._trend_pool_corr_enabled,
+                self._trend_pool_corr_threshold,
             )
 
         # 可选: 监控统计收集器
@@ -666,6 +688,72 @@ class LivePCM:
             )
         return bool(slot.get("breakeven_locked"))
 
+    def _normalize_symbol_correlations(self, raw: Any) -> Dict[tuple[str, str], float]:
+        out: Dict[tuple[str, str], float] = {}
+
+        def _put(left: Any, right: Any, value: Any) -> None:
+            a = str(left or "").upper().strip()
+            b = str(right or "").upper().strip()
+            if not a or not b or a == b:
+                return
+            try:
+                corr = float(value)
+            except Exception:
+                return
+            out[tuple(sorted((a, b)))] = corr
+
+        if isinstance(raw, dict):
+            for left, vals in raw.items():
+                if isinstance(vals, dict):
+                    for right, value in vals.items():
+                        _put(left, right, value)
+                elif isinstance(vals, (list, tuple, set)):
+                    for right in vals:
+                        _put(left, right, 1.0)
+        elif isinstance(raw, (list, tuple)):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                _put(
+                    item.get("left") or item.get("symbol_a"),
+                    item.get("right") or item.get("symbol_b"),
+                    item.get("correlation", item.get("corr", 1.0)),
+                )
+        return out
+
+    def _configured_symbol_correlation(self, left: str, right: str) -> Optional[float]:
+        a = str(left or "").upper().strip()
+        b = str(right or "").upper().strip()
+        if not a or not b or a == b:
+            return None
+        return self._trend_pool_corr_pairs.get(tuple(sorted((a, b))))
+
+    def _trend_pool_correlation_reject_reason(
+        self, intent: TradeIntent, slots: List[Dict[str, Any]]
+    ) -> str:
+        if (
+            not self._trend_pool_corr_enabled
+            or not self._trend_pool_corr_pairs
+            or bool(intent.add_position)
+        ):
+            return ""
+        sym = str(intent.symbol or "").upper().strip()
+        side = _trend_side_token(intent.action)
+        for slot in slots:
+            open_sym = str(slot.get("symbol", "")).upper().strip()
+            if not open_sym or open_sym == sym:
+                continue
+            if self._trend_pool_corr_same_direction_only:
+                open_side = _trend_side_token(slot.get("side") or slot.get("action"))
+                if side and open_side and side != open_side:
+                    continue
+            corr = self._configured_symbol_correlation(sym, open_sym)
+            if corr is None:
+                continue
+            if abs(float(corr)) > self._trend_pool_corr_threshold:
+                return f"symbol_correlation:{open_sym}:{corr:.2f}"
+        return ""
+
     def _open_trend_slots(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         if self._get_open_trend_positions is not None:
@@ -685,6 +773,9 @@ class LivePCM:
                         {
                             "symbol": sym,
                             "archetype": arch,
+                            "side": _trend_side_token(
+                                row.get("side") or row.get("action")
+                            ),
                             "breakeven_locked": bool(row.get("breakeven_locked")),
                             "stop_risk_nonnegative": bool(
                                 row.get("stop_risk_nonnegative")
@@ -704,6 +795,7 @@ class LivePCM:
                 {
                     "symbol": str(sym).upper().strip(),
                     "archetype": str(arch).lower().strip(),
+                    "side": "",
                     "breakeven_locked": False,
                     "stop_risk_nonnegative": False,
                 }
@@ -749,6 +841,9 @@ class LivePCM:
         unprotected_symbols.discard("")
         if len(unprotected_symbols) >= self._trend_pool_max_unprotected:
             return "unprotected_cap"
+        corr_reject = self._trend_pool_correlation_reject_reason(intent, slots)
+        if corr_reject:
+            return corr_reject
         if self._trend_pool_max_symbols_after_unlock > 0 and len(open_symbols) >= int(
             self._trend_pool_max_symbols_after_unlock
         ):
@@ -1062,6 +1157,9 @@ class LivePCM:
             "drop_daily_limit": 0,
             "drop_slot": 0,
             "drop_trend_pool_anchor_first": 0,
+            "drop_trend_pool_unprotected_cap": 0,
+            "drop_trend_pool_post_unlock_cap": 0,
+            "drop_trend_pool_symbol_correlation": 0,
         }
         if not self._strategies:
             return []
@@ -1343,6 +1441,8 @@ class LivePCM:
                     _trace_key = "drop_trend_pool_unprotected_cap"
                 elif _pool_reject == "anchor_first":
                     _trace_key = "drop_trend_pool_anchor_first"
+                elif _pool_reject.startswith("symbol_correlation:"):
+                    _trace_key = "drop_trend_pool_symbol_correlation"
                 else:
                     _trace_key = "drop_trend_pool_post_unlock_cap"
                 self._last_decide_trace[_trace_key] = (

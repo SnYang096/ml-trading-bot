@@ -4,7 +4,7 @@
 
 ---
 
-## 一、结构性风险（当前配置的隐含上界）
+## 一、结构性风险（落地前的隐含上界）
 
 宪法与 PCM 当前关键参数：
 
@@ -41,14 +41,14 @@ unlock 后最多 3 个 symbol 同时持仓：
 ### 第一层：同时暴露的 symbol 数量
 
 - `max_unprotected_symbols: 1` 方向正确：在至少一笔达到 breakeven lock 之前，只允许 1 个 symbol 承担未保护趋势风险。
-- `max_symbols_after_unlock: 3` 在趋势行情里可提高参与度，但必须配合 **symbol 相关性过滤**。
+- `max_symbols_after_unlock: 2` 是当前落地值；在趋势行情里保留扩展，但避免 3 个高 beta symbol 叠满。
 - **建议**：已有仓位与候选 symbol 收益相关性 > **0.8**（同向）时，PCM 拒绝新开（例如 `reject_pcm_symbol_correlation_cap`）。
 - 高相关组合（BTC/ETH/SOL）≈ 同一方向开三倍，不是分散。
 
 ### 第二层：加仓腿的 risk 预算
 
 - `require_locked_profit: true` 已对齐：加仓前要求母仓利润锁定（breakeven lock）。
-- 当前 `add_size_multipliers: [1, 2]` 是 **放大** 第二腿风险，与「递减 risk」目标相反。
+- 落地后 `add_size_multipliers: [0.5, 0.25]`，加仓腿按主仓 1% 的 50% / 25% 递减。
 - **建议 risk 阶梯**（占 equity）：
   - 主仓：**1%**（TPC 触发为主入口语义）
   - 第一加仓：**0.5%**（BPC + `require_locked_profit`）
@@ -77,7 +77,7 @@ unlock 后最多 3 个 symbol 同时持仓：
 - 仍允许开仓，但降低单笔伤害；
 - 月亏回落至阈值以下后恢复 1%。
 
-需在 `ConstitutionExecutor` / `LivePCM` / 回测 `kill_switch` 路径增加 **derating** 状态机（与 `kill_on_any_hard_violation` 硬停并存）。
+PCM 回测风险曲线已支持 `monthly_soft_loss_limit` + `derated_risk_per_slot` 软降风险；实盘硬停仍由 constitution runtime 负责。
 
 ---
 
@@ -109,10 +109,10 @@ max_symbols_after_unlock: 2         # 从 3 降到 2
 
 | 建议项 | 配置/代码落点 | 状态（见下节审计） |
 |--------|----------------|-------------------|
-| `max_symbols_after_unlock: 2` | `constitution.yaml` → `trend_pool_guard` | 待改 |
-| 相关性 > 0.8 拒开 | `live_pcm.py` 新 guard；或 `pcm_regime.yaml` | 未实现 |
-| 加仓 risk 递减 | `execution.yaml` `add_size_multipliers` +/或 `per_strategy_limits` | 未对齐（当前 [1,2] 递增） |
-| 月亏 8% 软降 risk | `constitution_executor` / `live_pcm` / 回测 kill 路径 | 未实现 |
+| `max_symbols_after_unlock: 2` | `constitution.yaml` → `trend_pool_guard` | 已落地 |
+| 相关性 > 0.8 拒开 | `live_pcm.py` + `symbol_correlation_guard` | 已落地 |
+| 加仓 risk 递减 | `execution.yaml` `add_size_multipliers` | 已落地（[0.5, 0.25]） |
+| 月亏 8% 软降 risk | `kill_switch.monthly_soft_loss_limit` + 回测风险曲线 | 已落地（PCM/回测） |
 | TPC 主仓 / BPC 加仓分工 | PCM `enabled_archetypes` 顺序 + 各策略 `allow_add_on` | 部分（优先级有，无强制分工） |
 
 相关已有文档：

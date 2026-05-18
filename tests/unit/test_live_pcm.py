@@ -1153,6 +1153,7 @@ def _write_trend_pool_guard_constitution(
     max_after_unlock: int = 3,
     anchor_symbol: str = "",
     require_anchor_first: bool = False,
+    correlation_guard: bool = False,
 ) -> str:
     constitution = tmp_path / "constitution_guard.yaml"
     anchor_lines = []
@@ -1160,6 +1161,17 @@ def _write_trend_pool_guard_constitution(
         anchor_lines = [
             f"      anchor_symbol: {anchor_symbol}",
             f"      require_anchor_first: {str(bool(require_anchor_first)).lower()}",
+        ]
+    correlation_lines = []
+    if correlation_guard:
+        correlation_lines = [
+            "      symbol_correlation_guard:",
+            "        enabled: true",
+            "        threshold: 0.8",
+            "        same_direction_only: true",
+            "        pairs:",
+            "          BTCUSDT:",
+            "            ETHUSDT: 0.9",
         ]
     constitution.write_text(
         "\n".join(
@@ -1178,6 +1190,7 @@ def _write_trend_pool_guard_constitution(
                 "      unlock_on: breakeven_locked",
                 f"      max_symbols_after_unlock: {int(max_after_unlock)}",
                 *anchor_lines,
+                *correlation_lines,
                 "  archetype_groups:",
                 "    trend: [bpc, tpc, me]",
                 "  per_strategy_limits:",
@@ -1318,5 +1331,78 @@ def test_trend_pool_guard_anchor_unlocks_after_btc_protected(tmp_path):
         get_open_trend_positions=_open_trend_positions,
     )
     pcm.register("bpc", FakeStrategy(intents=[_intent_with_symbol("BPC", "ETHUSDT")]))
+    got = pcm.decide(features=FEATURES, symbol="ETHUSDT")
+    assert len(got) == 1
+
+
+def test_trend_pool_guard_blocks_correlated_same_direction_symbol(tmp_path):
+    cy = _write_trend_pool_guard_constitution(
+        tmp_path,
+        max_after_unlock=3,
+        correlation_guard=True,
+    )
+
+    def _open_trend_positions():
+        return [
+            {
+                "symbol": "BTCUSDT",
+                "archetype": "bpc",
+                "side": "long",
+                "breakeven_locked": True,
+                "stop_risk_nonnegative": True,
+            }
+        ]
+
+    pcm = LivePCM(
+        constitution_yaml=cy,
+        get_open_slot_count=lambda: 1,
+        get_open_trend_positions=_open_trend_positions,
+    )
+    pcm.register("bpc", FakeStrategy(intents=[_intent_with_symbol("BPC", "ETHUSDT")]))
+    got = pcm.decide(features=FEATURES, symbol="ETHUSDT")
+    assert got == []
+    assert (
+        int(pcm._last_decide_trace.get("drop_trend_pool_symbol_correlation", 0) or 0)
+        >= 1
+    )
+
+
+def test_trend_pool_guard_allows_correlated_opposite_direction_symbol(tmp_path):
+    cy = _write_trend_pool_guard_constitution(
+        tmp_path,
+        max_after_unlock=3,
+        correlation_guard=True,
+    )
+
+    def _open_trend_positions():
+        return [
+            {
+                "symbol": "BTCUSDT",
+                "archetype": "bpc",
+                "side": "long",
+                "breakeven_locked": True,
+                "stop_risk_nonnegative": True,
+            }
+        ]
+
+    pcm = LivePCM(
+        constitution_yaml=cy,
+        get_open_slot_count=lambda: 1,
+        get_open_trend_positions=_open_trend_positions,
+    )
+    pcm.register(
+        "bpc",
+        FakeStrategy(
+            intents=[
+                TradeIntent(
+                    action="SHORT",
+                    symbol="ETHUSDT",
+                    archetype="BPC",
+                    execution_strategy="bpc",
+                    confidence=0.8,
+                )
+            ]
+        ),
+    )
     got = pcm.decide(features=FEATURES, symbol="ETHUSDT")
     assert len(got) == 1

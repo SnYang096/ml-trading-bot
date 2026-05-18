@@ -1,8 +1,8 @@
 # TPC execution: 与 BPC 相同（EMA1200 structural exit, 增量加仓）
 add_position:
   add_size_multipliers:
-    - 1
-    - 2
+    - 0.5
+    - 0.25
   inherit_parent_stop: true
   min_current_r_by_add:
     - 2

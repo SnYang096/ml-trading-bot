@@ -324,6 +324,8 @@ def compute_risk_equity_curve(
             - daily_loss_limit: 日亏损限制 (0.04 = 4%)
             - weekly_loss_limit: 周亏损限制 (0.08 = 8%)
             - monthly_loss_limit: 月亏损限制 (0.12 = 12%)
+            - monthly_soft_loss_limit: 月亏达到该阈值后降低单笔风险 (0.08 = 8%)
+            - derated_risk_per_slot: 软限制触发后的风险上限 (0.005 = 0.5%)
             - cooldown_bars: kill switch 触发后冷却 bar 数 (默认 60 = ~10天4H)
             当任一限制被突破时，后续新入场被跳过直到冷却期结束
 
@@ -361,6 +363,14 @@ def compute_risk_equity_curve(
     ks_monthly = (
         float(kill_switch.get("monthly_loss_limit", 1.0)) if ks_enabled else 1.0
     )
+    ks_monthly_soft = (
+        float(kill_switch.get("monthly_soft_loss_limit", 0.0)) if ks_enabled else 0.0
+    )
+    ks_derated_risk = (
+        float(kill_switch.get("derated_risk_per_slot", risk_per_slot))
+        if ks_enabled
+        else risk_per_slot
+    )
     ks_cooldown = int(kill_switch.get("cooldown_bars", 60)) if ks_enabled else 0
 
     # Kill switch 状态跟踪
@@ -368,6 +378,7 @@ def compute_risk_equity_curve(
     ks_triggers: list = []
     ks_skipped = 0
     ks_executed = 0
+    ks_derated_trades = 0
 
     # Period loss 跟踪 (基于 index 的日期)
     has_datetime_idx = hasattr(valid.index, "date") or hasattr(
@@ -419,6 +430,18 @@ def compute_risk_equity_curve(
             v = risk_arr[i]
             if v is not None and not (isinstance(v, float) and v != v):  # not NaN
                 risk_frac = float(v)
+        if (
+            ks_enabled
+            and ks_monthly_soft > 0
+            and period_equity_start_monthly > 0
+            and ks_derated_risk > 0
+        ):
+            monthly_loss_before_trade = (
+                period_equity_start_monthly - equity
+            ) / period_equity_start_monthly
+            if monthly_loss_before_trade >= ks_monthly_soft:
+                risk_frac = min(float(risk_frac), float(ks_derated_risk))
+                ks_derated_trades += 1
         risk_usd = equity * risk_frac
         pnl = risk_usd * float(rr) / stop_loss_r
         equity += pnl
@@ -492,6 +515,7 @@ def compute_risk_equity_curve(
             "trades_executed": ks_executed,
             "triggers": ks_triggers,
             "trigger_count": len(ks_triggers),
+            "derated_trades": ks_derated_trades,
         }
     return result
 
@@ -3944,6 +3968,12 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
                     "monthly_loss_limit": float(
                         _ks_raw.get("monthly_loss_limit", 0.12)
                     ),
+                    "monthly_soft_loss_limit": float(
+                        _ks_raw.get("monthly_soft_loss_limit", 0.0)
+                    ),
+                    "derated_risk_per_slot": float(
+                        _ks_raw.get("derated_risk_per_slot", risk_per_slot)
+                    ),
                     "cooldown_bars": int(_ks_raw.get("cooldown_minutes", 240))
                     // 240,  # 4H bars
                 }
@@ -3971,6 +4001,8 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
         print(f"      触发次数: {ks_stats['trigger_count']}")
         print(f"      跳过交易: {ks_stats['trades_skipped']}")
         print(f"      实际执行: {ks_stats['trades_executed']}")
+        if int(ks_stats.get("derated_trades", 0) or 0) > 0:
+            print(f"      软降风险交易: {ks_stats['derated_trades']}")
         for trig in ks_stats["triggers"][:5]:  # 最多显示前5次
             print(
                 f"      │ {trig['timestamp']}: {', '.join(trig['reasons'])} (eq=${trig['equity']:.0f}, dd={trig['dd']:.1%})"
@@ -6104,6 +6136,12 @@ def main() -> int:
                     "daily_loss_limit": float(_ks_r.get("daily_loss_limit", 0.04)),
                     "weekly_loss_limit": float(_ks_r.get("weekly_loss_limit", 0.08)),
                     "monthly_loss_limit": float(_ks_r.get("monthly_loss_limit", 0.12)),
+                    "monthly_soft_loss_limit": float(
+                        _ks_r.get("monthly_soft_loss_limit", 0.0)
+                    ),
+                    "derated_risk_per_slot": float(
+                        _ks_r.get("derated_risk_per_slot", effective_risk)
+                    ),
                     "cooldown_bars": int(_ks_r.get("cooldown_minutes", 240)) // 240,
                 }
         except Exception:
@@ -6127,6 +6165,8 @@ def main() -> int:
         print(
             f"\n   🚨 Kill Switch: {ks['trigger_count']} triggers, {ks['trades_skipped']} skipped, {ks['trades_executed']} executed"
         )
+        if int(ks.get("derated_trades", 0) or 0) > 0:
+            print(f"      软降风险交易: {ks['derated_trades']}")
         for trig in ks["triggers"][:3]:
             print(f"      │ {trig['timestamp']}: {', '.join(trig['reasons'])}")
 

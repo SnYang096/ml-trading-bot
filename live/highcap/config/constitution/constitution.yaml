@@ -15,6 +15,8 @@ kill_switch:
   daily_loss_limit: 0.06 # -6% => stop new risk for the day (was 4%; raised to accommodate 5-slot ME)
   weekly_loss_limit: 0.08 # -8% => stop new risk for the week
   monthly_loss_limit: 0.12 # -12% => stop new risk for the month
+  monthly_soft_loss_limit: 0.08 # -8% => keep trading but cap effective risk per slot.
+  derated_risk_per_slot: 0.005 # 0.5% risk after monthly soft limit until month reset.
   # Cooldown after a hard stop (minutes). Recovery requires cooldown + metrics OK.
   cooldown_minutes: 720 # 12h = 6x 2h bars (was 240min; extended for ME 2h decision cycle)
   # Daily loss reset is evaluated in this timezone.
@@ -177,7 +179,21 @@ resource_allocation:
       enabled: true # Cap concurrent symbols until at least one position is risk-reduced.
       max_unprotected_symbols: 1 # Max symbols with open trend risk before any has breakeven/stop protection.
       unlock_on: breakeven_locked # Condition to widen symbol cap: breakeven_locked | stop_risk_nonnegative.
-      max_symbols_after_unlock: 3 # Max concurrent trend symbols after unlock_on satisfied on one position.
+      max_symbols_after_unlock: 2 # Max concurrent trend symbols after unlock_on satisfied on one position.
+      symbol_correlation_guard:
+        enabled: true # Block new same-direction trend symbols that are effectively the same crypto beta.
+        threshold: 0.8
+        same_direction_only: true
+        pairs:
+          BTCUSDT:
+            ETHUSDT: 0.9
+            SOLUSDT: 0.85
+            BNBUSDT: 0.82
+          ETHUSDT:
+            SOLUSDT: 0.88
+            BNBUSDT: 0.84
+          SOLUSDT:
+            BNBUSDT: 0.82
 
   archetype_groups:
     trend: # Named pool for slot_policy.trend_group; members share per-symbol slot rules.
@@ -208,7 +224,7 @@ resource_allocation:
     srb:
       max_risk_per_trade: 0.01
       allow_add_position: true
-      max_add_times: 3
+      max_add_times: 2
       require_locked_profit: true
 
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。

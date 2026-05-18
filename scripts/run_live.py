@@ -249,6 +249,7 @@ def _open_trend_positions_snapshot_from_manager(
                 {
                     "symbol": str(pos.get("symbol", sym) or sym).upper().strip(),
                     "archetype": archetype,
+                    "side": side,
                     "breakeven_locked": bool(pos.get("breakeven_locked", False)),
                     "stop_risk_nonnegative": bool(stop_nonnegative),
                 }

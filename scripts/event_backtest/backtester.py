@@ -333,6 +333,7 @@ class EventBacktester:
                     {
                         "symbol": str(pos.get("symbol", "")).upper().strip(),
                         "archetype": str(pos.get("archetype", "")).lower().strip(),
+                        "side": side.lower(),
                         "breakeven_locked": bool(pos.get("breakeven_locked", False)),
                         "stop_risk_nonnegative": bool(stop_nonnegative),
                     }
