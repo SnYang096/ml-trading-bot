@@ -2362,6 +2362,8 @@ class BacktestResult:
     trade_map_audit_rows: List[Dict[str, Any]] = field(default_factory=list)
     # spot_accum inventory-first KPI（pre-bull inventory / deploy curve / exit mix）
     spot_inventory_metrics: Optional[Dict[str, Any]] = None
+    # BTC / EW basket fee-free benchmarks vs same anchor + timeline as equity_curve_ts
+    spot_benchmarks: Optional[Dict[str, Any]] = None
 
     @property
     def n_trades(self) -> int:
@@ -2522,6 +2524,43 @@ class BacktestResult:
                 or 0
             )
             print(f"    risk_off exits: {ro}")
+            aud = inv.get("accumulation_audit") or {}
+            sh = aud.get("shares_eval_count") or {}
+            if isinstance(sh, dict) and sum(float(v or 0) for v in sh.values()) > 0:
+                nrows = aud.get("eval_rows_used", 0)
+                print("\n  🧭 spot_accum funnel (share of PCM eval rows):")
+                print(f"    funnel rows (spot_accum): {int(nrows)}")
+                for k in (
+                    "bull_exposure_stop",
+                    "transition_override_path",
+                    "prefilter_recent_alignment_only",
+                    "prefilter_pass",
+                    "prefilter_hard_deny",
+                    "other_unknown",
+                ):
+                    if k in sh:
+                        print(f"    {k:36s}: {float(sh[k] or 0.0):.1%}")
+
+        if self.spot_benchmarks:
+            bm = self.spot_benchmarks
+            if bm.get("status") == "ok":
+                print(
+                    "\n  📈 Spot benchmarks (fee-free, anchored to constitution cash):"
+                )
+                print(
+                    f"    btc_buy_hold_final: "
+                    f"${float(bm.get('btc_hold_final_equity_usdt') or 0.0):.0f}"
+                    f" ({float(bm.get('btc_hold_total_return_pct') or 0.0):+.1f}% vs t0)"
+                )
+                ew = bm.get("ew_basket_symbols") or []
+                print(
+                    f"    ew_basket_hold_final ({'+'.join(ew)}): "
+                    f"${float(bm.get('ew_hold_final_equity_usdt') or 0.0):.0f}"
+                    f" ({float(bm.get('ew_hold_total_return_pct') or 0.0):+.1f}% vs t0)"
+                )
+                print(
+                    f"    benchmark anchor cash: ${float(bm.get('initial_cash_usdt') or 0.0):.0f}"
+                )
 
         self._print_add_position_diagnostics_footer()
 
@@ -4309,6 +4348,16 @@ class EventBacktester:
                     _frow["direction_reason"] = lf.get("direction_reason")
                 if lf.get("entry_filter_reason") is not None:
                     _frow["entry_filter_reason"] = lf.get("entry_filter_reason")
+                for _ak in (
+                    "accumulation_policy",
+                    "accumulation_score",
+                    "accumulation_transition_override",
+                    "prefilter_alignment_override",
+                    "alignment_used",
+                    "prefilter_recent_pass",
+                ):
+                    if _ak in lf:
+                        _frow[_ak] = lf[_ak]
                 _frow["kill_switch_blocked"] = bool(
                     _ks_blocked
                     and _executor is not None
@@ -4941,6 +4990,28 @@ class EventBacktester:
             result.equity_curve_ts = None
         else:
             result.equity_curve_ts = None
+
+        # spot_accum：BTC/EW BH 基准 + 吸筹漏斗占比 + 已开仓 quote vs 预算曲线（对齐 equity_curve_ts）
+        if isinstance(_spot_cap_budget, dict):
+            _inv_agg = dict(result.spot_inventory_metrics or {})
+            _inv_agg["accumulation_audit"] = _compute_spot_accum_accumulation_audit(
+                _funnel_per_bar_rows,
+            )
+            if result.equity_curve_ts:
+                _inv_agg["deploy_quote_pct_series"] = _compute_deploy_quote_pct_series(
+                    result.trades,
+                    result.open_positions_end,
+                    _spot_cap_budget,
+                    result.equity_curve_ts,
+                )
+            result.spot_inventory_metrics = _inv_agg
+            result.spot_benchmarks = _compute_spot_buy_hold_benchmarks(
+                equity_ts_iso=result.equity_curve_ts,
+                bars_by_sym=result.bars_1min,
+                spot_budget=_spot_cap_budget,
+            )
+        else:
+            result.spot_benchmarks = None
 
         if _executor:
             try:
@@ -6458,6 +6529,365 @@ def _ts_utc(value: Any) -> Optional[pd.Timestamp]:
     return ts
 
 
+def _bucket_spot_accum_funnel_row(row: Mapping[str, Any]) -> str:
+    """离线 bucket：与 GenericLiveStrategy spot_accum funnel 语义对齐。"""
+    if str(row.get("accumulation_policy") or "") == "bull_exposure_stop_deploy":
+        return "bull_exposure_stop"
+    pf = row.get("prefilter")
+    if pf is True:
+        return "prefilter_pass"
+    if pf is False:
+        if bool(row.get("accumulation_transition_override")):
+            return "transition_override_path"
+        if bool(row.get("prefilter_alignment_override")):
+            return "prefilter_recent_alignment_only"
+        if not bool(row.get("alignment_used")):
+            return "prefilter_hard_deny"
+    return "other_unknown"
+
+
+def _compute_spot_accum_accumulation_audit(
+    funnel_rows: List[Dict[str, Any]],
+    *,
+    strategy_key: str = "spot_accum",
+) -> Dict[str, Any]:
+    """按 PCM eval 行的占比统计（每桶互斥计数 / 总行数）。
+
+    Shares are **evaluation counts** aligned to the recorded ``funnel_per_bar`` cadence,
+    not wall-clock durations (intervals vary by timeframe / symbols).
+    """
+    key_lc = strategy_key.strip().lower()
+    rows = [
+        r
+        for r in (funnel_rows or [])
+        if str(r.get("strategy") or "").strip().lower() == key_lc
+    ]
+    n = len(rows)
+    if n <= 0:
+        return {
+            "status": "no_rows",
+            "eval_rows_used": 0,
+            "note": (
+                "No funnel_per_bar snapshots for spot_accum (strategy idle or PCM "
+                "did not propagate _last_funnel)."
+            ),
+        }
+    counts: Dict[str, int] = defaultdict(int)
+    for r in rows:
+        counts[_bucket_spot_accum_funnel_row(r)] += 1
+    denom = float(n)
+    shares = {k: float(v) / denom for k, v in sorted(counts.items())}
+    return {
+        "status": "ok",
+        "eval_rows_used": int(n),
+        "counts": dict(sorted(counts.items())),
+        "shares_eval_count": shares,
+        "bucket_definitions": {
+            "bull_exposure_stop": "accumulation_policy stops new deploy after bull_seen",
+            "transition_override_path": "prefilter fail but accumulation_transition_override",
+            "prefilter_recent_alignment_only": "recent prefilter pass alignment without "
+            "exclusive transition_override flag",
+            "prefilter_pass": "prefilter True on this evaluation",
+            "prefilter_hard_deny": "prefilter False and alignment_used=False",
+            "other_unknown": "missing/ambiguous funnel fields",
+        },
+    }
+
+
+def _open_spot_accum_quote_deploy_tails(
+    open_rows_end: Optional[List[Dict[str, Any]]],
+    *,
+    last_equity_ts: pd.Timestamp,
+) -> Tuple[
+    List[Tuple[pd.Timestamp, float, str]], List[Tuple[pd.Timestamp, float, str]]
+]:
+    """开仓未平：在回放末尾用 sentinel 时间戳收口 quote delta（仍为半开区间语义）."""
+    tails_plus: List[Tuple[pd.Timestamp, float, str]] = []
+    tails_minus: List[Tuple[pd.Timestamp, float, str]] = []
+    sent = pd.Timestamp(last_equity_ts) + pd.Timedelta(microseconds=1)
+    if sent.tzinfo is None:
+        sent = sent.tz_localize("UTC")
+    else:
+        sent = sent.tz_convert("UTC")
+
+    for row in open_rows_end or []:
+        if not isinstance(row, dict):
+            continue
+        pos = row.get("position")
+        if not isinstance(pos, dict):
+            continue
+        if str(pos.get("archetype", "") or "").strip().lower() != "spot_accum":
+            continue
+        sym_u = str(row.get("symbol") or pos.get("symbol") or "").strip().upper()
+        try:
+            n = float(pos.get("_spot_quote_deployed", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            n = 0.0
+        if sym_u == "" or n <= 0.0:
+            continue
+        entry_ts = _ts_utc(pos.get("entry_time"))
+        if entry_ts is None:
+            continue
+        tails_plus.append((entry_ts, n, sym_u))
+        tails_minus.append((sent, -n, sym_u))
+    return tails_plus, tails_minus
+
+
+def _compute_deploy_quote_pct_series(
+    trades: List[ClosedTrade],
+    open_rows_end: List[Dict[str, Any]],
+    spot_budget: Dict[str, Any],
+    equity_ts_iso: List[str],
+) -> Dict[str, Any]:
+    """与 equity_curve_ts 对齐的 deployed quote（入场名义）占总/分 symbol budget 的比。"""
+    if not equity_ts_iso:
+        return {"status": "empty_timeline"}
+
+    budgets_raw = spot_budget.get("symbol_budgets_usdt") or {}
+    if not isinstance(budgets_raw, dict) or not budgets_raw:
+        return {"status": "no_symbol_budgets"}
+    budgets: Dict[str, float] = {}
+    for k, v in budgets_raw.items():
+        kk = str(k or "").strip().upper()
+        try:
+            budgets[kk] = float(v or 0.0)
+        except (TypeError, ValueError):
+            continue
+    total_budget = float(sum(budgets.values()))
+    if total_budget <= 0.0:
+        return {"status": "bad_total_budget"}
+
+    spot_closed = [
+        t
+        for t in (trades or [])
+        if str(t.archetype or "") == "spot_accum" and str(t.symbol or "").strip() != ""
+    ]
+
+    equity_ts_list = [_ts_utc(x) for x in equity_ts_iso]
+    equity_ts_clean = [tt for tt in equity_ts_list if tt is not None]
+    if not equity_ts_clean:
+        return {"status": "bad_equity_ts"}
+    last_eq = equity_ts_clean[-1]
+
+    events: List[Tuple[pd.Timestamp, float, str]] = []
+    for t in spot_closed:
+        et = _ts_utc(t.entry_time)
+        xt = _ts_utc(t.exit_time)
+        if et is None or xt is None:
+            continue
+        try:
+            n = float(t.notional_usdt or 0.0)
+        except (TypeError, ValueError):
+            n = 0.0
+        if n <= 0:
+            continue
+        sym_u = str(t.symbol or "").strip().upper()
+        events.append((et, n, sym_u))
+        events.append((xt, -n, sym_u))
+
+    _tp, _tm = _open_spot_accum_quote_deploy_tails(
+        open_rows_end, last_equity_ts=last_eq
+    )
+    events.extend(_tp)
+    events.extend(_tm)
+
+    events.sort(key=lambda item: item[0])
+    j = 0
+    active_by_sym: Dict[str, float] = defaultdict(float)
+
+    pct_total_out: List[float] = []
+    pct_sym_out: Dict[str, List[float]] = {sym: [] for sym in sorted(budgets.keys())}
+
+    for ts_eq in equity_ts_clean:
+        while j < len(events) and events[j][0] <= ts_eq:
+            _tse, dn, dsym = events[j]
+            if dsym in budgets:
+                active_by_sym[dsym] = max(0.0, active_by_sym[dsym] + float(dn))
+            j += 1
+        active_total = float(sum(active_by_sym.values()))
+        pct_total_out.append(
+            (100.0 * active_total / total_budget) if total_budget > 0 else 0.0
+        )
+        for sym in sorted(budgets.keys()):
+            denom = budgets[sym]
+            numer = active_by_sym.get(sym, 0.0)
+            pct_sym_out[sym].append((100.0 * numer / denom) if denom > 0 else 0.0)
+
+    return {
+        "status": "ok",
+        "note": (
+            "Open quote ~= sum(notional_usdt on still-open trades from merges). Sentinel "
+            "close at equity end includes open_positions_end overlays."
+        ),
+        "curve_ts_iso": [t.isoformat() for t in equity_ts_clean],
+        "total_deployed_quote_pct_of_sum_budget": [
+            round(float(x), 4) for x in pct_total_out
+        ],
+        "per_symbol_pct_of_symbol_budget": {
+            sym: [round(float(x), 4) for x in xs] for sym, xs in pct_sym_out.items()
+        },
+    }
+
+
+def _bar_close_asof_backward(
+    bars: pd.DataFrame, ts_eval: pd.Timestamp
+) -> Optional[float]:
+    """无未来函数：用最晚一根 bar.close (index <= ts_eval)。"""
+    if bars is None or getattr(bars, "empty", True) or ts_eval is None:
+        return None
+    bx = bars["close"].astype(float)
+    ts = pd.Timestamp(ts_eval)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    mask = bx.index <= ts
+    if hasattr(mask, "any") and not bool(mask.any()):
+        return None
+    out = float(bx.loc[mask].iloc[-1])
+    return out if out == out and out > 0.0 else None
+
+
+def _compute_spot_buy_hold_benchmarks(
+    *,
+    equity_ts_iso: Optional[List[str]],
+    bars_by_sym: Dict[str, pd.DataFrame],
+    spot_budget: Dict[str, Any],
+) -> Dict[str, Any]:
+    """BTC 全仓买入持有 + constitution symbol 篮子等权买入持有（无手续费）。
+
+    Curve 与时间轴：**与 equity_curve_ts 等长对齐**；早于 basket 可用的 t0 前保持锚定现金不变。
+    """
+    if not isinstance(spot_budget, dict):
+        return {"status": "no_spot_budget"}
+    budgets = spot_budget.get("symbol_budgets_usdt") or {}
+    if not isinstance(budgets, dict) or not budgets:
+        return {"status": "no_symbol_budgets"}
+
+    try:
+        init = float(spot_budget.get("equity_usdt") or 0.0)
+    except (TypeError, ValueError):
+        init = 0.0
+    budget_sum = float(sum(float(v or 0.0) for v in budgets.values()))
+    if init <= 0 and budget_sum > 0:
+        init = budget_sum
+    if init <= 0:
+        return {"status": "bad_initial_cash"}
+
+    syms_sorted = sorted(
+        str(k).strip().upper() for k in budgets.keys() if str(k).strip()
+    )
+    btc_sym = "BTCUSDT" if "BTCUSDT" in budgets else ""
+    ew_syms = [s for s in syms_sorted if s in (bars_by_sym or {})]
+
+    if not ew_syms:
+        return {"status": "missing_bars", "symbols": syms_sorted}
+
+    # t0：所有篮子 symbol 都能在各自 1m bars 中取到收盘价的最晚首日
+    dfs = {s: bars_by_sym[s] for s in ew_syms if s in bars_by_sym}
+    t0_ok = [
+        tt
+        for tt in (_ts_utc(df.index.min()) for df in dfs.values() if not df.empty)
+        if tt is not None
+    ]
+    if not t0_ok:
+        return {"status": "empty_bars_index"}
+    t0 = max(t0_ok)
+
+    p0_map: Dict[str, float] = {}
+    missing: List[str] = []
+    for s in ew_syms:
+        df = dfs.get(s)
+        if df is None or getattr(df, "empty", True):
+            missing.append(s)
+            continue
+        p0 = _bar_close_asof_backward(df, t0)
+        if p0 is None or p0 <= 0:
+            missing.append(s)
+            continue
+        p0_map[s] = p0
+
+    if not p0_map:
+        return {
+            "status": "no_prices_at_t0",
+            "missing_symbols": missing,
+            "t0": t0.isoformat(),
+        }
+
+    n_ew = float(len([s for s in ew_syms if s in p0_map]))
+    per_alloc = init / max(n_ew, 1.0)
+
+    btc_wbase: Optional[float] = None
+    if btc_sym and btc_sym in p0_map:
+        btc_wbase = float(init) / float(p0_map[btc_sym])
+
+    weights_ew_base: Dict[str, float] = {
+        s: (per_alloc / p0_map[s]) for s in ew_syms if s in p0_map
+    }
+
+    if equity_ts_iso is None or len(equity_ts_iso) == 0:
+        return {"status": "no_equity_timeline", "t0_iso": t0.isoformat()}
+
+    btc_eq: List[float] = []
+    ew_eq: List[float] = []
+    equity_ts_iso_out: List[str] = []
+    for iso in equity_ts_iso:
+        ts_ev = _ts_utc(iso)
+        if ts_ev is None:
+            continue
+
+        btc_eq.append(float(init))
+        ew_eq.append(float(init))
+        equity_ts_iso_out.append(ts_ev.isoformat())
+
+        if ts_ev < t0:
+            continue
+
+        if btc_wbase is not None and btc_sym in p0_map:
+            df_b = dfs.get(btc_sym)
+            if df_b is not None and not getattr(df_b, "empty", True):
+                pb = _bar_close_asof_backward(df_b, ts_ev)
+                if pb is not None and pb > 0.0:
+                    btc_eq[-1] = float(btc_wbase * pb)
+
+        basket_val = 0.0
+        for sym_bb, qty_b in weights_ew_base.items():
+            df_s = dfs.get(sym_bb)
+            if df_s is None or getattr(df_s, "empty", True):
+                continue
+            px = _bar_close_asof_backward(df_s, ts_ev)
+            if px is None or px <= 0.0:
+                continue
+            basket_val += qty_b * px
+        if basket_val > 0.0:
+            ew_eq[-1] = float(basket_val)
+
+    btc_fin = btc_eq[-1] if btc_eq else float(init)
+    ew_fin = ew_eq[-1] if ew_eq else float(init)
+    btc_pct = (100.0 * (btc_fin - init) / init) if init > 1e-9 else 0.0
+    ew_pct = (100.0 * (ew_fin - init) / init) if init > 1e-9 else 0.0
+
+    return {
+        "status": "ok",
+        "note": (
+            "Fee-free buy-and-hold benchmarks using 1min close "
+            "(as-of backward without lookahead)."
+        ),
+        "initial_cash_usdt": float(init),
+        "t0_iso": t0.isoformat(),
+        "curve_ts_iso": equity_ts_iso_out,
+        "btc_symbol": btc_sym or None,
+        "ew_basket_symbols": ew_syms,
+        "symbols_priced_t0": sorted(p0_map.keys()),
+        "btc_hold_equity_usdt_curve": btc_eq,
+        "ew_hold_equity_usdt_curve": ew_eq,
+        "btc_hold_final_equity_usdt": float(btc_fin),
+        "btc_hold_total_return_pct": float(btc_pct),
+        "ew_hold_final_equity_usdt": float(ew_fin),
+        "ew_hold_total_return_pct": float(ew_pct),
+    }
+
+
 def _compute_spot_inventory_metrics(
     trades: List[ClosedTrade], spot_budget: Optional[Dict[str, Any]]
 ) -> Dict[str, Any]:
@@ -6598,6 +7028,7 @@ def _save_json(result: BacktestResult, path: str):
         "add_position_stats": result.add_position_stats or {},
         "add_trigger_types": result.add_trigger_types,
         "spot_inventory_metrics": _json_safe(result.spot_inventory_metrics or {}),
+        "spot_benchmarks": _json_safe(result.spot_benchmarks or {}),
         "open_positions_end": result.open_positions_end,
         "funnel_per_bar": _json_safe(result.funnel_per_bar or []),
         "equity_curve": result.equity_curve,
