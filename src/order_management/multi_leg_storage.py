@@ -202,8 +202,10 @@ class MultiLegStorage:
 
         Candidates include:
         - non-terminal rows with exchange ids (still expected to evolve),
-        - filled rows missing avg/filled_at,
-        - canceled/rejected/expired rows missing error_message.
+        - filled rows missing avg/filled_at.
+
+        Terminal cancels often have no exchange error text. Treat them as done;
+        otherwise REST snapshots with a null reason are written every interval.
         """
         conn = self._connect()
         try:
@@ -235,10 +237,6 @@ class MultiLegStorage:
                         OR (
                             LOWER(TRIM(COALESCE(status, ''))) = 'filled'
                             AND (average_price IS NULL OR filled_at IS NULL)
-                        )
-                        OR (
-                            LOWER(TRIM(COALESCE(status, ''))) IN ('canceled', 'rejected', 'expired')
-                            AND error_message IS NULL
                         )
                     )
                     {where_extra}
@@ -408,6 +406,41 @@ class MultiLegStorage:
             )
             conn.commit()
             return leg_id
+        finally:
+            conn.close()
+
+    def close_absent_positions(
+        self,
+        *,
+        strategy: str,
+        symbol: str,
+        active_leg_ids: Iterable[str],
+        run_id: Optional[str] = None,
+    ) -> int:
+        """Close open DB rows no longer present in the engine inventory snapshot."""
+        active = [str(x) for x in active_leg_ids if str(x)]
+        conn = self._connect()
+        try:
+            params: list[Any] = [run_id, str(strategy), str(symbol), *active]
+            not_in = ""
+            if active:
+                not_in = f"AND leg_id NOT IN ({','.join('?' for _ in active)})"
+            cur = conn.execute(
+                f"""
+                UPDATE multi_leg_positions
+                SET status = 'closed',
+                    run_id = COALESCE(?, run_id),
+                    closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE strategy = ?
+                  AND symbol = ?
+                  AND LOWER(TRIM(COALESCE(status, ''))) = 'open'
+                  {not_in}
+                """,
+                params,
+            )
+            conn.commit()
+            return int(cur.rowcount or 0)
         finally:
             conn.close()
 

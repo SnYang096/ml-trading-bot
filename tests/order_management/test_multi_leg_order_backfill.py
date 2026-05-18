@@ -183,6 +183,20 @@ def test_multi_leg_storage_backfill_candidates(tmp_path) -> None:
             "filled_at": "2026-05-16T00:00:00",
         }
     )
+    storage.upsert_order(
+        {
+            "local_order_id": "canceled_no_reason",
+            "run_id": "run",
+            "strategy": "chop_grid",
+            "symbol": "ETHUSDT",
+            "side": "BUY",
+            "order_type": "limit",
+            "quantity": 0.1,
+            "exchange_order_id": "444",
+            "client_order_id": "cg_444",
+            "status": "canceled",
+        }
+    )
 
     rows = storage.get_recent_orders_for_backfill(lookback_hours=24, limit=10)
     ids = {row["local_order_id"] for row in rows}

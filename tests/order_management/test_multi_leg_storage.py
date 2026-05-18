@@ -91,3 +91,49 @@ def test_multi_leg_storage_creates_isolated_tables_and_records(tmp_path) -> None
         )
     finally:
         conn.close()
+
+
+def test_close_absent_positions_marks_stale_open_rows_closed(tmp_path) -> None:
+    db_path = tmp_path / "multi_leg.db"
+    storage = MultiLegStorage(str(db_path))
+    storage.upsert_position(
+        {
+            "run_id": "run_1",
+            "strategy": "chop_grid",
+            "leg_id": "stale_leg",
+            "symbol": "BNBUSDT",
+            "side": "LONG",
+            "entry_price": 650.0,
+            "quantity": 0.1,
+            "status": "open",
+        }
+    )
+    storage.upsert_position(
+        {
+            "run_id": "run_1",
+            "strategy": "chop_grid",
+            "leg_id": "active_leg",
+            "symbol": "BNBUSDT",
+            "side": "LONG",
+            "entry_price": 640.0,
+            "quantity": 0.1,
+            "status": "open",
+        }
+    )
+
+    changed = storage.close_absent_positions(
+        strategy="chop_grid",
+        symbol="BNBUSDT",
+        active_leg_ids=["active_leg"],
+        run_id="run_2",
+    )
+
+    assert changed == 1
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = dict(
+            conn.execute("SELECT leg_id, status FROM multi_leg_positions").fetchall()
+        )
+        assert rows == {"active_leg": "open", "stale_leg": "closed"}
+    finally:
+        conn.close()

@@ -205,3 +205,43 @@ def test_chop_grid_records_reconciliation_issues(tmp_path: Path) -> None:
     assert engine.state.last_reconciliation_issues == [
         "position_mismatch:BTCUSDT:LONG:0.0->0.01"
     ]
+
+
+def test_chop_grid_resets_empty_active_state_before_new_entry(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        """
+{
+  "grid_id": "BTCUSDT_stale",
+  "symbol": "BTCUSDT",
+  "active": true,
+  "center": 100.0,
+  "spacing": 1.0,
+  "realized_pnl": 0.0,
+  "pending_orders": [],
+  "inventory": [],
+  "last_timestamp": "2026-01-01T00:00:00Z",
+  "current_regime": "chop_grid"
+}
+""",
+        encoding="utf-8",
+    )
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=state_path,
+        level_notional=100.0,
+    )
+
+    actions = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T02:00:00Z",
+        high=100.0,
+        low=100.0,
+        close=100.0,
+        atr=2.0,
+        features={"semantic_chop": 0.8, "box_prefilter": False},
+    )
+
+    assert [a["action"] for a in actions] == ["place", "place"]
+    assert engine.state.active is True
+    assert engine.state.grid_id == "BTCUSDT_2026-01-01T02:00:00Z"

@@ -419,6 +419,19 @@ class ChopGridLiveEngine:
         )
         is_box = bool(features.get("box_prefilter", False))
         wanted_enter = chop >= self.cfg.entry_chop_min and not is_box
+        if (
+            self.state.active
+            and self.state.symbol == symbol
+            and not self.state.pending_orders
+            and not self.state.inventory
+        ):
+            logger.warning(
+                "chop_grid stale active state reset: symbol=%s grid_id=%s",
+                symbol,
+                self.state.grid_id,
+            )
+            self.state.active = False
+            self.state.current_regime = "idle"
         active_at_open = self.state.active and self.state.symbol == symbol
         should_enter = wanted_enter and not self.state.active
         should_exit = self.state.active and chop < self.cfg.exit_chop_below

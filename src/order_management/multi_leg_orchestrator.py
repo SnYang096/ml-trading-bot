@@ -306,10 +306,12 @@ class MultiLegLiveOrchestrator:
             return
         state = getattr(self.engine, "state", None)
         inventory = list(getattr(state, "inventory", []) or [])
+        active_leg_ids = []
         for idx, pos in enumerate(inventory):
             leg_id = str(
                 getattr(pos, "leg_id", "") or f"{self.strategy_name}_{self.symbol}_{idx}"
             )
+            active_leg_ids.append(leg_id)
             self.storage.upsert_position(
                 {
                     "run_id": self.run_id,
@@ -323,6 +325,14 @@ class MultiLegLiveOrchestrator:
                     "protection_order_ids": getattr(pos, "protection_order_ids", []),
                     "raw": getattr(pos, "__dict__", {}),
                 }
+            )
+        close_absent = getattr(self.storage, "close_absent_positions", None)
+        if callable(close_absent):
+            close_absent(
+                strategy=self.strategy_name,
+                symbol=self.symbol,
+                active_leg_ids=active_leg_ids,
+                run_id=self.run_id,
             )
 
 
