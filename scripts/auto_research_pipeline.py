@@ -78,6 +78,13 @@ from src.config.strategy_layout import (
 from src.config.multileg_config import update_multileg_calibration_candidate
 
 
+def _strategy_packaged_config_rel(slug: str) -> str:
+    """Repo-relative posix path → packaged strategy dir (incl. bad-candidates fallback)."""
+
+    p = strategy_packaged_root(PROJECT_ROOT, str(slug).strip())
+    return p.relative_to(PROJECT_ROOT).as_posix()
+
+
 def _strategy_prepare_features_yaml(scfg: Dict[str, Any]) -> str:
     """Prepare / SHAP basename：候选特征定义来自 ``prepare_features``（如 ``features.yaml``）。
 
@@ -5552,7 +5559,7 @@ def _run_grid_backtest_stage(
             )
             continue
         strat_cfg_dir = PROJECT_ROOT / str(
-            scfg.get("config", f"config/strategies/{strat}")
+            scfg.get("config", _strategy_packaged_config_rel(strat))
         )
         strat_symbols = _resolve_strategy_symbols_from_meta(strat, scfg, symbols)
         if not strat_symbols:
@@ -5778,7 +5785,7 @@ def _run_dual_add_backtest_stage(
             )
             continue
         strat_cfg_dir = PROJECT_ROOT / str(
-            scfg.get("config", f"config/strategies/{strat}")
+            scfg.get("config", _strategy_packaged_config_rel(strat))
         )
         base_symbols = str(dual_cfg.get("symbols", symbols) or symbols)
         strat_symbols = _resolve_strategy_symbols_from_meta(strat, scfg, base_symbols)

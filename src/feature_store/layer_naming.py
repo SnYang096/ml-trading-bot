@@ -149,12 +149,23 @@ def detect_layer_for_strategy(
                 meta_tf = meta.get("timeframe", "")
                 # strategy filter — exact match to avoid me-short matching me-short-240T
                 if strategy:
-                    _marker = f"/strategies/{strategy}"
-                    _idx = config_dir.find(_marker)
-                    if _idx < 0:
-                        continue
-                    _after = config_dir[_idx + len(_marker):]
-                    if _after and not _after.startswith("/"):
+                    _markers = (
+                        f"/strategies/{strategy}/",
+                        f"/strategies/{strategy}",
+                        f"/bad-candidates/{strategy}/",
+                        f"/bad-candidates/{strategy}",
+                    )
+                    ok = False
+                    for _marker in _markers:
+                        _idx = config_dir.find(_marker)
+                        if _idx < 0:
+                            continue
+                        _after = config_dir[_idx + len(_marker) :]
+                        if _after and not _after.startswith("/"):
+                            continue
+                        ok = True
+                        break
+                    if not ok:
                         continue
                 # timeframe filter
                 if timeframe and meta_tf and meta_tf != timeframe:

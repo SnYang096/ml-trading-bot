@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Callable, Dict, List, Set, Tuple
 
+from src.config.strategy_layout import resolve_strategy_package_under_root
 from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
@@ -75,7 +77,6 @@ def build_extra_feature_computers_for_symbol(
     *,
     strategies_root: str,
     registry_tf_map: Dict[str, str],
-    me_pkg: str,
     tf_bpc: str,
     fer_feat: Set[str],
     fer_nodes: List[str],
@@ -87,8 +88,10 @@ def build_extra_feature_computers_for_symbol(
     for rk, tf in registry_tf_map.items():
         if rk == "bpc" or tf == tf_bpc:
             continue
-        disk = me_pkg if rk == me_pkg else rk
-        adir = os.path.join(strategies_root, disk, "archetypes")
+        pkg = resolve_strategy_package_under_root(
+            Path(strategies_root), rk, allow_bad_candidates=False
+        )
+        adir = str(pkg / "archetypes")
         if not os.path.isdir(adir):
             logger.warning("extra FC: skip %s (no %s)", rk, adir)
             continue
@@ -110,7 +113,7 @@ def build_extra_feature_computers_for_symbol(
             fc.live_feature_nodes = sorted(
                 set(fc.live_feature_nodes) | set(merged_n)
             )
-        if fer_feat and any(m[0] == me_pkg for m in members):
+        if fer_feat and any(m[0] == "me" for m in members):
             fc.live_feature_set |= fer_feat
             fc.live_feature_nodes = sorted(
                 set(fc.live_feature_nodes) | set(fer_nodes)

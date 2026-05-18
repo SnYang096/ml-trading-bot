@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from src.config.strategy_layout import resolve_strategy_package_under_root
 from src.live_data_stream import MultiSymbolManager, StorageManager
 from src.live_data_stream.gap_filler import GapFiller
 from src.live_data_stream.constitution_config import (
@@ -28,7 +29,6 @@ from src.live_data_stream.feature_bus import FeatureBusWriter
 from src.live_data_stream.strategy_runtime_config import (
     load_strategy_timeframe,
     me_enabled_in_allowlist,
-    me_strategy_package_name,
 )
 from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
@@ -126,17 +126,16 @@ def _extract_plan(archetypes_dir: str) -> Tuple[set, List[str]]:
         return set(), []
 
 
-def _disk_package(archetype: str, strategies_root: str, me_pkg: str) -> Optional[str]:
+def _disk_package(archetype: str, strategies_root: str) -> Optional[str]:
     a = archetype.lower().strip()
     if a == "fer":
         return None
-    if me_enabled_in_allowlist([a]) or a == me_pkg:
-        if Path(strategies_root, me_pkg, "archetypes").is_dir():
-            return me_pkg
-        return None
-    base = Path(strategies_root, a)
-    if (base / "archetypes").is_dir() or (base / "meta.yaml").is_file():
-        return a
+    slug = "me" if me_enabled_in_allowlist([a]) else a
+    pkg = resolve_strategy_package_under_root(
+        Path(strategies_root), slug, allow_bad_candidates=False
+    )
+    if (pkg / "archetypes").is_dir() or (pkg / "meta.yaml").is_file():
+        return slug
     return None
 
 
@@ -153,7 +152,6 @@ def _collect_secondary_specs(
     enabled: List[str],
     primary_arch: str,
     strategies_root: str,
-    me_pkg: str,
 ) -> List[_ArcSpec]:
     out: List[_ArcSpec] = []
     seen: set[str] = set()
@@ -161,10 +159,13 @@ def _collect_secondary_specs(
         a = str(raw).lower().strip()
         if not a or a == "fer" or a == primary_arch:
             continue
-        disk = _disk_package(a, strategies_root, me_pkg)
+        disk = _disk_package(a, strategies_root)
         if not disk or disk in seen:
             continue
-        adir = os.path.join(strategies_root, disk, "archetypes")
+        adir_pkg = resolve_strategy_package_under_root(
+            Path(strategies_root), disk, allow_bad_candidates=False
+        )
+        adir = str(adir_pkg / "archetypes")
         if not os.path.isdir(adir):
             logger.warning(
                 "publisher: skip archetype %s (no archetypes under %s)", a, adir
@@ -177,18 +178,28 @@ def _collect_secondary_specs(
 
 
 def _pick_primary_archetype(
-    enabled: List[str], strategies_root: str, me_pkg: str
+    enabled: List[str], strategies_root: str
 ) -> str:
     pref = os.getenv("MLBOT_PUBLISHER_PRIMARY_ARCHETYPE", "bpc").lower().strip()
     if pref in enabled:
-        d = _disk_package(pref, strategies_root, me_pkg)
-        if d and os.path.isdir(os.path.join(strategies_root, d, "archetypes")):
+        d = _disk_package(pref, strategies_root)
+        if d and (
+            resolve_strategy_package_under_root(
+                Path(strategies_root), d, allow_bad_candidates=False
+            )
+            / "archetypes"
+        ).is_dir():
             return pref
     for a in enabled:
         if a == "fer":
             continue
-        d = _disk_package(a, strategies_root, me_pkg)
-        if d and os.path.isdir(os.path.join(strategies_root, d, "archetypes")):
+        d = _disk_package(a, strategies_root)
+        if d and (
+            resolve_strategy_package_under_root(
+                Path(strategies_root), d, allow_bad_candidates=False
+            )
+            / "archetypes"
+        ).is_dir():
             logger.info(
                 "publisher: primary archetype fallback %s (wanted %s)", a, pref or "bpc"
             )
@@ -217,11 +228,13 @@ def build_feature_bus_manager(
         constitution_path,
     )
 
-    me_pkg = me_strategy_package_name(strategies_root)
-    primary_arch = _pick_primary_archetype(enabled, strategies_root, me_pkg)
-    primary_disk = _disk_package(primary_arch, strategies_root, me_pkg)
+    primary_arch = _pick_primary_archetype(enabled, strategies_root)
+    primary_disk = _disk_package(primary_arch, strategies_root)
     assert primary_disk
-    primary_dir = os.path.join(strategies_root, primary_disk, "archetypes")
+    primary_pkg = resolve_strategy_package_under_root(
+        Path(strategies_root), primary_disk, allow_bad_candidates=False
+    )
+    primary_dir = str(primary_pkg / "archetypes")
     tf_primary = load_strategy_timeframe(strategies_root, primary_disk)
     bm_primary = timeframe_to_bar_minutes(tf_primary)
 
@@ -252,7 +265,6 @@ def build_feature_bus_manager(
         enabled=enabled,
         primary_arch=primary_arch,
         strategies_root=strategies_root,
-        me_pkg=me_pkg,
     )
     same_tf_as_primary: List[_ArcSpec] = []
     rest_secondaries: List[_ArcSpec] = []
@@ -325,7 +337,7 @@ def build_feature_bus_manager(
                 fc.live_feature_nodes = sorted(
                     set(fc.live_feature_nodes) | set(merged_nodes)
                 )
-            if fer_set and any(g.disk == me_pkg for g in group):
+            if fer_set and any(g.disk == "me" for g in group):
                 fc.live_feature_set |= fer_set
                 fc.live_feature_nodes = sorted(
                     set(fc.live_feature_nodes) | set(fer_nodes)

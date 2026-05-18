@@ -55,8 +55,8 @@ LIVE_CONFIG = PROJECT_ROOT / "live" / "highcap" / "config"
 LIVE_STRATEGIES = LIVE_CONFIG / "strategies"
 LIVE_ROOT = PROJECT_ROOT / "live"
 
-# 部署的策略列表 (不含 LV, 暂缓)。SRB 已迁入 bad-candidates，默认不同步至 live。
-DEFAULT_STRATEGIES = ["bpc", "me", "tpc", "chop_grid", "dual_add_trend"]
+# 默认部署集合（不含 SRB/me：已归入 bad-candidates，不同步至 live）。
+DEFAULT_STRATEGIES = ["bpc", "tpc", "chop_grid", "dual_add_trend"]
 
 # 研究侧策略目录覆盖（slug -> 绝对路径）；其余仍使用 config/strategies/<slug>/
 STRATEGY_RESEARCH_PATH_OVERRIDES = {
@@ -65,11 +65,17 @@ STRATEGY_RESEARCH_PATH_OVERRIDES = {
 
 
 def research_strategy_dir(strat: str) -> Path:
-    """Resolve packaged strategy root under config/strategies/ (or bad-candidates)."""
+    """Resolve packaged strategy root under ``config/strategies`` (canonical or bad-candidates)."""
     s = _normalize_deploy_strategy(strat)
     if s in STRATEGY_RESEARCH_PATH_OVERRIDES:
         return STRATEGY_RESEARCH_PATH_OVERRIDES[s]
-    return RESEARCH_STRATEGIES / s
+    primary = RESEARCH_STRATEGIES / s
+    if primary.is_dir():
+        return primary
+    bc = RESEARCH_STRATEGIES / "bad-candidates" / s
+    if bc.is_dir():
+        return bc
+    return primary
 
 
 # Multi-leg strategies: archetypes/*.yaml (any name). Runtime/research profiles are
@@ -83,7 +89,7 @@ def _is_multi_leg_deploy(strat: str) -> bool:
 
 
 def _normalize_deploy_strategy(slug: str) -> str:
-    """研究仓目录为 config/strategies/me/；``me-long`` 视为别名。"""
+    """统一 slug（例如 ``me-long`` → ``me``）；目录由 research_strategy_dir 解析。"""
     s = str(slug).strip().lower()
     return "me" if s == "me-long" else s
 

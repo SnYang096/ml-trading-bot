@@ -85,7 +85,7 @@ strategies:
     has_prefilter: true
     has_direction: true
   me_swing:
-    config: config/strategies/me_swing
+    config: config/strategies/bad-candidates/me_swing
     timeframe: 120T
     prepare_features: features.yaml
     labels_gate: labels.yaml

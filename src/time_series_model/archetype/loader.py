@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from src.config.strategy_layout import resolve_strategy_package_under_root
 
 # =============================================================================
 # Gate Config
@@ -729,6 +730,7 @@ def load_strategy_archetype(
     strategies_root: str | Path = "config/strategies",
     *,
     gate_path: str | Path | None = None,
+    live_layout: bool = False,
 ) -> StrategyArchetype:
     """
     加载单个策略的 Archetype 配置
@@ -740,12 +742,18 @@ def load_strategy_archetype(
         strategies_root: 策略配置根目录
         gate_path: 自定义 gate YAML 路径 (如 gate_draft.yaml)，
                    默认 None 表示读取 archetypes/gate.yaml
+        live_layout: ``True`` 时按实盘树解析（不向 ``bad-candidates/`` 回退）。
 
     Returns:
         StrategyArchetype 实例
     """
     root = Path(strategies_root)
-    arch_dir = root / strategy / "archetypes"
+    pkg = resolve_strategy_package_under_root(
+        root,
+        strategy,
+        allow_bad_candidates=not live_layout,
+    )
+    arch_dir = pkg / "archetypes"
 
     if not arch_dir.exists():
         raise FileNotFoundError(f"Archetype directory not found: {arch_dir}")

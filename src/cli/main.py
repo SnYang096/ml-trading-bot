@@ -3784,13 +3784,24 @@ def multileg():
 
 
 def _multileg_default_config(profile: str, strategy: str = "") -> str:
-    """Packaged research profile stem/filename → path under ``config/strategies/<slug>/research/``."""
-    from src.config.strategy_layout import packaged_research_yaml_name
+    """Packaged research profile stem/filename → path under ``.../<slug>/research/``."""
+    from pathlib import Path as _Path
+
+    from src.config.strategy_layout import (
+        packaged_research_yaml_name,
+        strategy_packaged_root,
+    )
 
     fname = packaged_research_yaml_name(str(profile).strip() or None)
     s = str(strategy or "").strip()
     if s:
-        return f"config/strategies/{s}/research/{fname}"
+        root = _Path.cwd().resolve()
+        pkg = strategy_packaged_root(root, s)
+        prof = pkg / "research" / fname
+        try:
+            return str(prof.relative_to(root))
+        except ValueError:
+            return str(prof)
     return "config/pipelines/multileg_orchestrate_2h.yaml"
 
 
@@ -10583,13 +10594,16 @@ def backtest_strategy(
 ):
     """Run strategy backtest with trained model (train+backtest via pipeline)."""
     use_workspace_prefix = False  # CLI typically run with --no-docker
+    from pathlib import Path as _Path
+
+    from src.config.strategy_layout import strategy_packaged_root
+
+    root = _Path.cwd().resolve()
+    pkg = strategy_packaged_root(root, str(strategy))
+    cfg_arg = pkg.relative_to(root).as_posix()
     args = [
         "--config",
-        (
-            f"/workspace/config/strategies/{strategy}"
-            if use_workspace_prefix
-            else f"config/strategies/{strategy}"
-        ),
+        (f"/workspace/{cfg_arg}" if use_workspace_prefix else cfg_arg),
         "--symbol",
         symbol,
         "--data-path",

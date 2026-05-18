@@ -20,6 +20,20 @@ def test_strategy_packaged_root():
     assert strategy_packaged_root(root, "bpc") == root / "config" / "strategies" / "bpc"
 
 
+def test_strategy_packaged_root_me_via_bad_candidates():
+    root = _repo_root()
+    p = strategy_packaged_root(root, "me")
+    assert p == root / "config" / "strategies" / "bad-candidates" / "me"
+
+
+def test_resolve_me_turbo_single_file_via_bad_candidates():
+    root = _repo_root()
+    p, warns = resolve_default_pipeline_config(root, "me", None)
+    assert p.name == "calibrate_roll.default.yaml"
+    assert p.parts[-4:-1] == ("bad-candidates", "me", "research")
+    assert not warns
+
+
 def test_resolve_chop_grid_turbo_is_single_file():
     root = _repo_root()
     p, warns = resolve_default_pipeline_config(root, "chop_grid", None)

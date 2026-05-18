@@ -22,6 +22,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from src.config.strategy_layout import resolve_strategy_package_under_root
+
 # ================================================================
 # Operator mapping (条件运算符 → 函数)
 # ================================================================
@@ -56,22 +58,28 @@ def load_entry_filters_config(
     strategies_root: str = "config/strategies",
     *,
     research: bool = False,
+    live_layout: bool = False,
 ) -> Dict[str, Any]:
     """加载 entry_filters.yaml 配置。
 
     Args:
         research: True → 读根目录研究文件 (含全部候选 + disabled);
                   False → 读 archetypes/ 生产文件 (默认, backtest/live 用).
+        live_layout: ``True`` 不向 ``bad-candidates/`` 回退（与实盘磁盘布局一致）。
     """
-    base = Path(strategies_root) / strategy
+    pkg = resolve_strategy_package_under_root(
+        Path(strategies_root),
+        strategy,
+        allow_bad_candidates=not live_layout,
+    )
     if research:
         # 研究文件: config/strategies/{strategy}/entry_filters.yaml
-        path = base / "entry_filters.yaml"
+        path = pkg / "entry_filters.yaml"
         if not path.exists():
             # fallback to archetypes
-            path = base / "archetypes" / "entry_filters.yaml"
+            path = pkg / "archetypes" / "entry_filters.yaml"
     else:
-        path = base / "archetypes" / "entry_filters.yaml"
+        path = pkg / "archetypes" / "entry_filters.yaml"
     if not path.exists():
         return {}
     with open(path, "r", encoding="utf-8") as f:

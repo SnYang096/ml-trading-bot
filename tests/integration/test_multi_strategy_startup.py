@@ -58,46 +58,57 @@ def test_current_strategy_status():
         in content
     )
     fer_imported = "GenericLiveStrategy" in content and 'strategy_name="fer"' in content
-    me_imported = "GenericLiveStrategy" in content and 'strategy_name="me"' in content
-
     pcm_yaml_loop = (
         "for arch in enabled_archetypes" in content and "pcm.register(_name" in content
     )
+    me_runtime_ok = pcm_yaml_loop and "strategy_name=rk" in content
+
     pcm_registered_bpc = pcm_yaml_loop or 'pcm.register("bpc", bpc)' in content
     pcm_registered_fer = 'pcm.register("fer", fer)' in content
     pcm_registered_me = pcm_yaml_loop or 'pcm.register("me", me)' in content
 
     print(f"   BPC 导入 (GenericLiveStrategy): {'✅' if bpc_imported else '❌'}")
     print(f"   FER 导入 (GenericLiveStrategy): {'✅' if fer_imported else '❌'}")
-    print(f"   ME 导入 (GenericLiveStrategy): {'✅' if me_imported else '❌'}")
+    print(f"   ME 宪法驱动装载 (strategy_name=rk): {'✅' if me_runtime_ok else '❌'}")
     print()
     print(f"   PCM 宪法驱动注册循环: {'✅' if pcm_yaml_loop else '❌'}")
     print(f"   BPC 注册: {'✅' if pcm_registered_bpc else '❌'}")
     print(f"   FER 注册: {'✅' if pcm_registered_fer else '❌'}")
-    print(f"   ME 注册: {'✅' if pcm_registered_me else '❌'}")
+    print(
+        f"   ME（若 constitution 启用且磁盘存在则会注册）: {'✅' if pcm_registered_me else '⚠️'}"
+    )
     print()
 
-    # 3. 检查配置文件同步状态
+    # 3. 配置文件同步状态
     print("3. 配置文件同步状态:")
 
     config_dirs = {
         "BPC": "config/strategies/bpc/archetypes/",
         "FER": "config/strategies/fer/archetypes/",
-        "ME": "config/strategies/me/archetypes/",
+        "ME": "config/strategies/bad-candidates/me/archetypes/",
     }
 
     live_dirs = {
         "BPC": "live/highcap/config/strategies/bpc/archetypes/",
         "FER": "live/highcap/config/strategies/fer/archetypes/",
-        "ME": "live/highcap/config/strategies/me/archetypes/",
+        "ME": None,  # ME 已归档到研究侧 bad-candidates，不再镜像到 live/highcap
     }
 
     for strategy in ["BPC", "FER", "ME"]:
         config_exists = os.path.exists(config_dirs[strategy])
-        live_exists = os.path.exists(live_dirs[strategy])
+        live_path = live_dirs[strategy]
+        live_exists = bool(live_path) and os.path.exists(live_path)
 
         config_count = len(os.listdir(config_dirs[strategy])) if config_exists else 0
-        live_count = len(os.listdir(live_dirs[strategy])) if live_exists else 0
+        live_count = len(os.listdir(live_path)) if (live_path and live_exists) else 0
+
+        if strategy == "ME":
+            ok = config_exists and config_count > 0
+            status = "✅" if ok else "❌"
+            print(
+                f"   {strategy}: {status} (研究归档:{config_count}文件, live: 不使用)"
+            )
+            continue
 
         status = (
             "✅"
@@ -118,17 +129,17 @@ def test_current_strategy_status():
         ]
     )
 
-    registered_count = sum([pcm_registered_bpc, pcm_registered_me])
+    registered_count = int(pcm_registered_bpc) + int(bool(pcm_registered_me))
     if pcm_registered_fer:
         registered_count += 1
 
     print("4. 总体结论:")
-    print(f"   ✅ 已实现策略: {implemented_count}/3")
-    print(f"   ✅ PCM 注册路径: {registered_count}/2 (BPC+ME 必须; FER 可选)")
+    print(f"   ✅ GenericLiveStrategy 代码路径: {implemented_count}/3")
+    print(f"   ✅ PCM 注册路径点数: {registered_count}（BPC 必须；ME 仅在启用时加载）")
     print()
 
-    if implemented_count == 3 and pcm_registered_bpc and pcm_registered_me:
-        print("🎉 结论: BPC+ME 多策略路径就绪（FER 为可选/历史）")
+    if implemented_count == 3 and pcm_registered_bpc:
+        print("🎉 结论: BPC 主路径就绪；ME/FER 由宪法与磁盘决定是否参与")
         return True
     else:
         print("❌ 结论: 无法同时启动")
@@ -140,12 +151,9 @@ def test_current_strategy_status():
                 if not os.path.exists(v["live_strategy"])
             ]
             print(f"     - 缺少实现实盘策略: {', '.join(missing)}")
-        if not pcm_registered_bpc or not pcm_registered_me:
-            print("     - run_live.py 未检测到 BPC/ME 的 PCM 注册路径")
+        if not pcm_registered_bpc:
+            print("     - run_live.py 未检测到 BPC PCM 注册路径")
         return False
-
-
-def test_pcm_priority_configuration():
     """检查 PCM 仲裁优先级配置"""
 
     print("=== PCM 仲裁优先级检查 ===\n")
@@ -154,7 +162,7 @@ def test_pcm_priority_configuration():
     priority_configs = {
         "BPC": "config/strategies/bpc/meta.yaml",
         "FER": "config/strategies/fer/meta.yaml",
-        "ME": "config/strategies/me/meta.yaml",
+        "ME": "config/strategies/bad-candidates/me/meta.yaml",
     }
 
     priorities = {}

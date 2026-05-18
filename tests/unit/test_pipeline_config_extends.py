@@ -84,7 +84,8 @@ def test_load_bpc_slow_from_strategy_research():
 
 def test_load_me_slow_full_history_from_strategy_research():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/me/research/research_roll.features_on.yaml"
+        _root()
+        / "config/strategies/bad-candidates/me/research/research_roll.features_on.yaml"
     )
     assert "me" in (cfg.get("strategies") or {})
     w = cfg["rolling"]["windows"]
@@ -312,7 +313,8 @@ def test_load_bpc_non_rolling_extends_slow():
 
 def test_load_me_non_rolling_extends_slow():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/me/research/validate_static.full_study.yaml"
+        _root()
+        / "config/strategies/bad-candidates/me/research/validate_static.full_study.yaml"
     )
     assert "me" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
@@ -364,7 +366,8 @@ def test_load_bpc_validate_static_constrained_history_dir():
 
 def test_load_me_validate_static_constrained_history_dir():
     cfg = load_pipeline_config(
-        _root() / "config/strategies/me/research/validate_static.constrained.yaml"
+        _root()
+        / "config/strategies/bad-candidates/me/research/validate_static.constrained.yaml"
     )
     assert (
         cfg.get("output", {}).get("history_dir")

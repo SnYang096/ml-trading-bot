@@ -778,7 +778,7 @@ class TestAtrNodeAlwaysIncluded:
         )
         from pathlib import Path
 
-        me_dir = Path("config/strategies/me/archetypes")
+        me_dir = Path("config/strategies/bad-candidates/me/archetypes")
         if not me_dir.exists():
             pytest.skip("ME archetypes not found")
 

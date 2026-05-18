@@ -28,10 +28,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from src.config.strategy_layout import resolve_strategy_package_under_root
 from src.live_data_stream import StorageManager, GapFiller, MultiSymbolManager
 from src.live_data_stream.classic_feature_bus_provider import ClassicFeatureBusProvider
 from src.live_data_stream.constitution_config import (
@@ -50,11 +52,9 @@ from src.live_data_stream.classic_listener_feature_stack import (
 from src.live_data_stream.strategy_runtime_config import (
     load_strategy_timeframe,
     me_enabled_in_allowlist,
-    me_strategy_package_name,
 )
 from src.time_series_model.live.stats_collector import StatsCollector
 from src.time_series_model.live.metrics_exporter import start_metrics_server, METRICS
-from pathlib import Path as _Path
 from scripts.live_audit_file import configure_audit_from_env_defaults
 from src.live_data_stream.terminal_order_backfill import (
     periodic_terminal_order_backfill,
@@ -304,7 +304,6 @@ def _setup_three_strategies(
     )
 
     # ── 1. BPC 主周期（主 FC 时钟）；其余 timeframe 来自各已注册策略 meta.yaml ──
-    me_pkg = me_strategy_package_name(strategies_root)
     tf_bpc = load_strategy_timeframe(strategies_root, "bpc")  # 默认 240T
 
     def _tf_to_bar_minutes(tf: str) -> int:
@@ -321,18 +320,19 @@ def _setup_three_strategies(
     _strategy_map: Dict[str, Any] = {}
     _tf_map: Dict[str, str] = {}
     for arch in enabled_archetypes:
-        rk = pcm_resolve_registry_key(str(arch), me_pkg, me_enabled_in_allowlist)
+        rk = pcm_resolve_registry_key(str(arch), "me", me_enabled_in_allowlist)
         if not rk or rk in _strategy_map:
             continue
-        disk = me_pkg if rk == me_pkg else rk
-        strat_dir = os.path.join(strategies_root, disk)
-        if not os.path.isdir(strat_dir):
-            logger.warning("PCM: skip %s (missing directory %s)", arch, strat_dir)
+        pkg = resolve_strategy_package_under_root(
+            Path(strategies_root), rk, allow_bad_candidates=False
+        )
+        if not pkg.is_dir():
+            logger.warning("PCM: skip %s (missing directory %s)", arch, pkg)
             continue
-        tf = load_strategy_timeframe(strategies_root, disk)
+        tf = load_strategy_timeframe(strategies_root, rk)
         bm = _tf_to_bar_minutes(tf)
         _strategy_map[rk] = GenericLiveStrategy(
-            strategy_name=disk,
+            strategy_name=rk,
             strategies_root=strategies_root,
             trade_size=trade_size,
             primary_timeframe=tf,
@@ -358,7 +358,7 @@ def _setup_three_strategies(
     pcm_priority = pcm_archetype_priority_for_registry(
         _const_cfg,
         registry_keys=set(_strategy_map.keys()),
-        me_pkg=me_pkg,
+        me_pkg="me",
         me_enabled_in_allowlist_fn=me_enabled_in_allowlist,
     )
     # 实盘 trend_pool_guard 需要读取「当前开仓是否已 breakeven 锁盈」；
@@ -404,10 +404,14 @@ def _setup_three_strategies(
     for rk, tf in _tf_map.items():
         if rk == "bpc" or tf != tf_bpc:
             continue
-        disk = me_pkg if rk == me_pkg else rk
-        ad = os.path.join(strategies_root, disk, "archetypes")
-        if os.path.isdir(ad):
-            same_tf_other_dirs.append(ad)
+        ad = (
+            resolve_strategy_package_under_root(
+                Path(strategies_root), rk, allow_bad_candidates=False
+            )
+            / "archetypes"
+        )
+        if ad.is_dir():
+            same_tf_other_dirs.append(str(ad))
     if same_tf_other_dirs:
         logger.info(
             "  primary FC also merges archetypes dirs (same tf as BPC): %s",
@@ -483,7 +487,6 @@ def _setup_three_strategies(
         _xf = build_extra_feature_computers_for_symbol(
             strategies_root=strategies_root,
             registry_tf_map=_tf_map,
-            me_pkg=me_pkg,
             tf_bpc=tf_bpc,
             fer_feat=fer_extra_feat_set,
             fer_nodes=fer_extra_feat_nodes,
@@ -526,7 +529,7 @@ def _run_retrain_check() -> None:
         load_live_trades,
     )
 
-    project_root = _Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "pipelines" / "pcm_orchestrate_2h.yaml"
     if not config_path.exists():
         logger.warning("[retrain-check] config not found: %s", config_path)
@@ -546,7 +549,7 @@ def _run_retrain_check() -> None:
 
     strategy_names = list(cfg.get("strategies", {}).keys())
     if not strategy_names:
-        strategy_names = ["bpc", "me", "tpc"]
+        strategy_names = ["bpc", "tpc"]
 
     for strat in strategy_names:
         try:
@@ -651,7 +654,7 @@ def _resolve_feature_bus_timeframes_for_disk(
 
     from src.live_data_stream.feature_bus import normalize_timeframe
 
-    feat_root = _Path(feature_bus_root) / "features"
+    feat_root = Path(feature_bus_root) / "features"
     mp_n = normalize_timeframe(manager_primary)
     preferred = feat_root / mp_n
     legacy_primary = feat_root / "primary"
@@ -985,7 +988,7 @@ async def main() -> None:
 
     storage_base = os.getenv("MLBOT_LIVE_STORAGE_BASE", "data/live_storage")
     configure_audit_from_env_defaults(
-        default_log_file=_Path(storage_base) / "logs" / "trend_live_audit.log",
+        default_log_file=Path(storage_base) / "logs" / "trend_live_audit.log",
         disable_env="MLBOT_LIVE_AUDIT_DISABLE",
         path_env="MLBOT_LIVE_AUDIT_LOG",
         retention_env="MLBOT_LIVE_AUDIT_RETENTION_DAYS",

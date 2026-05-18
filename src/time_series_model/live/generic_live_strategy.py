@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import yaml
 
+from src.config.strategy_layout import resolve_strategy_package_under_root
 from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.archetype.loader import (
     StrategyArchetype,
@@ -662,12 +663,21 @@ class GenericLiveStrategy:
         # 加载配置
         self.load_configs()
 
+    def _strategy_package_root(self) -> Path:
+        """Live tree resolution only: never probe ``bad-candidates/`` (research archive)."""
+
+        return resolve_strategy_package_under_root(
+            Path(self.strategies_root),
+            self.strategy_name,
+            allow_bad_candidates=False,
+        )
+
     def load_configs(self) -> None:
         """加载所有配置文件"""
         try:
             # 1. 加载 Archetype (Gate + Evidence + Execution)
             self.archetype = load_strategy_archetype(
-                self.strategy_name, self.strategies_root
+                self.strategy_name, self.strategies_root, live_layout=True
             )
             logger.info(
                 f"\u2705 Archetype loaded: "
@@ -676,12 +686,7 @@ class GenericLiveStrategy:
             )
 
             # 2. 加载 Direction 配置
-            dir_path = (
-                Path(self.strategies_root)
-                / self.strategy_name
-                / "archetypes"
-                / "direction.yaml"
-            )
+            dir_path = self._strategy_package_root() / "archetypes" / "direction.yaml"
             if dir_path.exists():
                 with open(dir_path, "r", encoding="utf-8") as f:
                     direction_cfg = yaml.safe_load(f) or {}
@@ -697,7 +702,9 @@ class GenericLiveStrategy:
 
             # 3. 加载 Entry Filter 配置
             self.entry_filter_checker = EntryFilterChecker(
-                load_entry_filters_config(self.strategy_name, self.strategies_root)
+                load_entry_filters_config(
+                    self.strategy_name, self.strategies_root, live_layout=True
+                )
             )
             logger.info("✅ Entry filter config loaded")
 
@@ -727,7 +734,7 @@ class GenericLiveStrategy:
             "layers_allow_recent_window": [],
             "layers_required_same_bar": [],
         }
-        meta_path = Path(self.strategies_root) / self.strategy_name / "meta.yaml"
+        meta_path = self._strategy_package_root() / "meta.yaml"
         if not meta_path.exists():
             return cfg
 

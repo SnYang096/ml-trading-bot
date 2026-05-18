@@ -367,14 +367,15 @@ def resolve_multi_leg_risk_limits_from_constitution(
 
 
 def pcm_resolve_registry_key(
-    archetype_token: str, me_pkg: str, me_enabled_in_allowlist_fn
+    archetype_token: str, _me_logical: str, me_enabled_in_allowlist_fn
 ) -> str:
     """Map a constitution archetype token to the key used in ``LivePCM.register``."""
+    del _me_logical  # legacy signature; ME always registers as logical ``me``
     tl = str(archetype_token).lower().strip()
     if not tl:
         return ""
     if me_enabled_in_allowlist_fn([tl]):
-        return me_pkg
+        return "me"
     return tl.split("-", 1)[0]
 
 
@@ -401,7 +402,7 @@ def pcm_archetype_priority_for_registry(
         seen_rk.add(rk)
         out.append(rk)
     if not out:
-        for lk in ("tpc", "srb", me_pkg, "bpc", "lv"):
+        for lk in ("tpc", "srb", "me", "bpc", "lv"):
             if lk in registry_keys and lk not in seen_rk:
                 seen_rk.add(lk)
                 out.append(lk)

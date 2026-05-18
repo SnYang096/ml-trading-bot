@@ -56,7 +56,7 @@ download:
 
 strategies:
   me:
-    config: config/strategies/me
+    config: config/strategies/bad-candidates/me
     timeframe: 120T
     prepare_features: features.yaml
     labels_gate: labels_rr_extreme.yaml

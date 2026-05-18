@@ -111,6 +111,52 @@ def resolve_strategy_profile_path(
     return config_dir / "research" / packaged_research_yaml_name(profile)
 
 
+def resolve_strategy_package_under_root(
+    strategies_parent: Path,
+    strategy_slug: str,
+    *,
+    allow_bad_candidates: bool = True,
+) -> Path:
+    """Resolve ``strategies_parent/<slug>`` using optional fallbacks.
+
+    Research tree (repo ``config/strategies``): unless disabled, prefers
+    ``<parent>/bad-candidates/<slug>/`` after the canonical path so archived slugs
+    stay addressable via ``--strategy <slug>``.
+
+    Live deployment tree (``live/highcap/config/strategies``): pass
+    ``allow_bad_candidates=False`` so ``bad-candidates/`` is never loaded on
+    ticker paths—those bundles are research-only archives.
+
+    After primary (and optionally bad-candidates), legacy ``me-long/`` resolves
+    the ``me`` slug when present.
+    """
+
+    parent = strategies_parent.expanduser().resolve()
+    slug = str(strategy_slug).strip()
+    primary = (parent / slug).resolve()
+    if primary.is_dir():
+        return primary
+    if allow_bad_candidates:
+        cand = parent / "bad-candidates" / slug
+        if cand.is_dir():
+            return cand.resolve()
+    if slug == "me":
+        legacy_long = parent / "me-long"
+        if legacy_long.is_dir():
+            return legacy_long.resolve()
+    return primary
+
+
+def packaged_strategy_rel_path(project_root: Path, strategy_slug: str) -> str:
+    """Repo-relative posix path under ``project_root`` to the packaged strategy directory."""
+    p = strategy_packaged_root(project_root, strategy_slug)
+    root = project_root.resolve()
+    try:
+        return p.relative_to(root).as_posix()
+    except ValueError:
+        return p.as_posix()
+
+
 def resolve_strategy_config_input(
     path: Path, *, default_profile: str | None = None
 ) -> Tuple[Path, Optional[Path], Optional[Path]]:
@@ -132,8 +178,9 @@ def resolve_strategy_config_input(
 
 
 def strategy_packaged_root(project_root: Path, strategy_slug: str) -> Path:
-    """Return ``config/strategies/<strategy_slug>/`` (folder name as in pipeline YAML keys)."""
-    return (project_root / "config" / "strategies" / strategy_slug).resolve()
+    """Packaged strategy tree under ``config/strategies/<slug>/`` (with bad-candidates fallback)."""
+    base = project_root / "config" / "strategies"
+    return resolve_strategy_package_under_root(base, strategy_slug)
 
 
 def resolve_default_pipeline_config(
