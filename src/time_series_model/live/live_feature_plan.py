@@ -256,7 +256,19 @@ def extract_features_from_archetypes(
     if dir_path.exists():
         feature_columns |= _extract_features_from_direction(_load_yaml(dir_path))
 
-    if not feature_columns:
+    # 6. Execution (structural_exit → exit-signal feature nodes)
+    exec_path = d / "execution.yaml"
+    if exec_path.exists():
+        feature_columns |= _extract_features_from_execution(_load_yaml(exec_path))
+
+    # 7. Strategy features.yaml (research contract; event backtest merges baseline nodes)
+    strategy_feature_nodes = _feature_nodes_from_strategy_features_yaml(d.parent)
+    for node in strategy_feature_nodes:
+        feature_columns |= _node_to_output_columns(
+            nodes=[node], feature_deps=_load_yaml(feature_deps_path)
+        )
+
+    if not feature_columns and not strategy_feature_nodes:
         return set(), []
 
     feature_columns -= _NON_COMPUTED_LIVE_COLUMNS
@@ -322,9 +334,60 @@ def extract_features_from_archetypes(
         best = min(atr_candidates, key=lambda x: x[1])
         selected_nodes.add(best[0])
 
+    # Strategy features.yaml + execution structural_exit nodes (not only archetype columns)
+    for node in strategy_feature_nodes:
+        selected_nodes.add(node)
+    exec_path = d / "execution.yaml"
+    if exec_path.exists():
+        for node in _execution_structural_exit_nodes(_load_yaml(exec_path)):
+            selected_nodes.add(node)
+
+    live_feature_set |= _node_to_output_columns(nodes=selected_nodes, feature_deps=deps)
+    live_feature_set |= feature_columns
+    live_feature_set -= _NON_NUMERIC_LIVE_OUTPUT_COLUMNS
+
     # Deduplicated ordered list
     ordered = sorted(selected_nodes)
     return live_feature_set, ordered
+
+
+# structural_exit enum in execution.yaml → feature node (event/live must compute signal)
+_STRUCTURAL_EXIT_FEATURE_NODES: Dict[str, str] = {
+    "weekly_macro_cycle": "weekly_macro_cycle_exit_f",
+}
+
+
+def _feature_nodes_from_strategy_features_yaml(strategy_dir: Path) -> List[str]:
+    """Baseline feature nodes listed in config/strategies/<name>/features.yaml."""
+    path = Path(strategy_dir) / "features.yaml"
+    if not path.exists():
+        return []
+    cfg = _load_yaml(path)
+    nodes: List[str] = []
+    groups = cfg.get("feature_groups") or {}
+    if isinstance(groups, dict):
+        for group in groups.values():
+            if isinstance(group, list):
+                nodes.extend(str(x) for x in group if x)
+    return nodes
+
+
+def _execution_structural_exit_nodes(exec_raw: Dict[str, Any]) -> List[str]:
+    sl = (
+        exec_raw.get("stop_loss") if isinstance(exec_raw.get("stop_loss"), dict) else {}
+    )
+    key = str(sl.get("structural_exit") or "").strip().lower()
+    node = _STRUCTURAL_EXIT_FEATURE_NODES.get(key)
+    return [node] if node else []
+
+
+def _extract_features_from_execution(exec_raw: Dict[str, Any]) -> Set[str]:
+    """Output columns required by execution.stop_loss.structural_exit."""
+    deps = _load_yaml("config/feature_dependencies.yaml")
+    cols: Set[str] = set()
+    for node in _execution_structural_exit_nodes(exec_raw):
+        cols |= _node_to_output_columns(nodes=[node], feature_deps=deps)
+    return cols
 
 
 def load_live_feature_plan(

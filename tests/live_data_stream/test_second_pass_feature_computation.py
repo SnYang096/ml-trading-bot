@@ -746,6 +746,24 @@ features:
         assert "box_regime_label" not in feat_set
 
 
+class TestSpotAccumStructuralExitFeatures:
+    def test_spot_accum_includes_weekly_macro_exit_node(self):
+        from src.time_series_model.live.live_feature_plan import (
+            extract_features_from_archetypes,
+        )
+        from pathlib import Path
+
+        arch = Path("config/strategies/spot_accum/archetypes")
+        if not arch.exists():
+            pytest.skip("spot_accum archetypes not found")
+
+        feat_set, nodes = extract_features_from_archetypes(arch)
+        assert "weekly_macro_cycle_exit_f" in nodes
+        assert "weekly_macro_cycle_exit_signal" in feat_set
+        assert "rsi_f" in nodes
+        assert "rsi" in feat_set
+
+
 class TestAtrNodeAlwaysIncluded:
     """验证 extract_features_from_archetypes 始终包含 atr_f 节点。
 

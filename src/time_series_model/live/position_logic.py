@@ -29,6 +29,135 @@ from src.time_series_model.live.execution_profile_apply import (
     pick_atr,
 )
 
+_REGIME_LIFECYCLE_EXIT_MODES = frozenset(
+    {"abc_macro_regime_lifecycle", "abc_macro_regime_risk_on"}
+)
+_REGIME_STATE_MODES = _REGIME_LIFECYCLE_EXIT_MODES | frozenset({"weekly_macro_cycle"})
+
+
+def _regime_lifecycle_cfg(pos: Dict[str, Any]) -> Dict[str, Any]:
+    raw = pos.get("regime_lifecycle_exit")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def update_regime_lifecycle_state(
+    pos: Dict[str, Any],
+    *,
+    macro_regime_score: Optional[float],
+    now: Optional[datetime] = None,
+) -> None:
+    """Track peak score + bull phase while spot_accum position is open."""
+    if macro_regime_score is None:
+        return
+    try:
+        rs = float(macro_regime_score)
+    except (TypeError, ValueError):
+        return
+    if rs != rs:
+        return
+    cfg = _regime_lifecycle_cfg(pos)
+    bull_min = float(cfg.get("bull_min_score", 4.0) or 4.0)
+    peak = float(pos.get("_regime_peak_score", rs) or rs)
+    peak = max(peak, rs)
+    pos["_regime_peak_score"] = peak
+    if peak >= bull_min:
+        if not pos.get("_regime_saw_bull") and now is not None:
+            pos["_regime_first_bull_time"] = now
+        pos["_regime_saw_bull"] = True
+    phase = str(pos.get("_regime_lifecycle_phase") or "accumulating")
+    enter_max = float(cfg.get("accumulate_max_score", 2.0) or 2.0)
+    if rs < enter_max:
+        phase = "accumulating"
+    elif pos.get("_regime_saw_bull"):
+        phase = "post_bull"
+    else:
+        phase = "holding"
+    pos["_regime_lifecycle_phase"] = phase
+
+
+def regime_lifecycle_risk_off_exit(
+    pos: Dict[str, Any], *, macro_regime_score: Optional[float]
+) -> Optional[str]:
+    """Exit after bull (peak≥bull_min) on macro risk-off: drop from peak or floor breach."""
+    mode = str(pos.get("structural_exit") or "").strip().lower()
+    if mode not in _REGIME_LIFECYCLE_EXIT_MODES:
+        return None
+    cfg = _regime_lifecycle_cfg(pos)
+    if cfg and not bool(cfg.get("allow_regime_risk_off", True)):
+        return None
+    if not cfg and mode == "abc_macro_regime_risk_on":
+        try:
+            min_sc = float(pos.get("regime_exit_min_score", 5.0) or 5.0)
+        except (TypeError, ValueError):
+            min_sc = 5.0
+        if macro_regime_score is not None:
+            try:
+                rs = float(macro_regime_score)
+                if rs == rs and rs >= min_sc:
+                    return "structural_exit_abc_macro_regime_risk_on"
+            except (TypeError, ValueError):
+                pass
+        return None
+    if not pos.get("_regime_saw_bull"):
+        return None
+    if macro_regime_score is None:
+        return None
+    try:
+        rs = float(macro_regime_score)
+    except (TypeError, ValueError):
+        return None
+    if rs != rs:
+        return None
+    peak = float(pos.get("_regime_peak_score", rs) or rs)
+    bull_min = float(cfg.get("bull_min_score", 4.0) or 4.0)
+    drop_min = float(cfg.get("risk_off_drop_min", 1.0) or 1.0)
+    floor_sc = float(cfg.get("risk_off_floor_score", 3.0) or 3.0)
+    try:
+        arm_peak = float(cfg.get("arm_risk_off_min_peak", 0) or 0)
+    except (TypeError, ValueError):
+        arm_peak = 0.0
+    if peak < bull_min:
+        return None
+    # Hold through transition: risk-off only after peak reached arm_risk_off_min_peak (e.g. 5).
+    if arm_peak > 0 and peak < arm_peak:
+        return None
+    if (peak - rs) >= drop_min:
+        return "structural_exit_abc_macro_regime_risk_off"
+    if rs < floor_sc:
+        return "structural_exit_abc_macro_regime_risk_off"
+    return None
+
+
+def weekly_macro_cycle_exit_allowed(
+    pos: Dict[str, Any], *, now: Optional[datetime] = None
+) -> bool:
+    """Gate A-layer cycle death so bear/transition noise cannot liquidate inventory."""
+    cfg = _regime_lifecycle_cfg(pos)
+    if not bool(cfg.get("cycle_exit_requires_bull", False)):
+        return True
+    if not bool(pos.get("_regime_saw_bull", False)):
+        return False
+    bull_min = float(cfg.get("bull_min_score", 4.0) or 4.0)
+    try:
+        arm_peak = float(cfg.get("arm_cycle_exit_min_peak", bull_min) or bull_min)
+    except (TypeError, ValueError):
+        arm_peak = bull_min
+    peak = float(pos.get("_regime_peak_score", 0.0) or 0.0)
+    if peak < arm_peak:
+        return False
+    min_days_raw = cfg.get("cycle_exit_min_days_after_bull", 0)
+    try:
+        min_days = float(min_days_raw or 0.0)
+    except (TypeError, ValueError):
+        min_days = 0.0
+    if min_days <= 0:
+        return True
+    first_bull = pos.get("_regime_first_bull_time")
+    if not isinstance(first_bull, datetime) or now is None:
+        return False
+    elapsed_days = (now - first_bull).total_seconds() / 86400.0
+    return elapsed_days >= min_days
+
 
 def build_position_dict(
     intent: Any,
@@ -317,6 +446,21 @@ def build_position_dict(
     _structural_exit = rr_constraints.get("structural_exit")
     if _structural_exit:
         pos["structural_exit"] = str(_structural_exit)
+    _regime_exit_min = rr_constraints.get("regime_exit_min_score")
+    if _regime_exit_min is not None:
+        try:
+            pos["regime_exit_min_score"] = float(_regime_exit_min)
+        except (TypeError, ValueError):
+            pass
+    _rlc = rr_constraints.get("regime_lifecycle_exit")
+    if isinstance(_rlc, dict) and _rlc:
+        pos["regime_lifecycle_exit"] = dict(_rlc)
+    if str(pos.get("structural_exit") or "").strip().lower() in _REGIME_STATE_MODES:
+        pos["_regime_peak_score"] = float(
+            rr_constraints.get("entry_regime_score", 0.0) or 0.0
+        )
+        pos["_regime_lifecycle_phase"] = "accumulating"
+        pos["_regime_saw_bull"] = False
     if str(pos.get("structural_exit") or "").strip().lower() == "sr_break_level":
         _sp = rr_constraints.get("sr_exit_price")
         if _sp is not None:
@@ -366,6 +510,7 @@ def enforce_position(
     macro_tp_vwap_position: Optional[float] = None,
     ema_1200_position: Optional[float] = None,
     macro_cycle_exit_signal: Optional[float] = None,
+    macro_regime_score: Optional[float] = None,
     primary_tf_atr: Optional[float] = None,
     wide_sr_upper_px: Optional[float] = None,
     wide_sr_lower_px: Optional[float] = None,
@@ -608,6 +753,11 @@ def enforce_position(
         except (TypeError, ValueError):
             pass
 
+    if str(pos.get("structural_exit") or "").strip().lower() in _REGIME_STATE_MODES:
+        update_regime_lifecycle_state(
+            pos, macro_regime_score=macro_regime_score, now=now
+        )
+
     # ── 3g. Structural exit (weekly macro-cycle signal) ──
     if (
         close_reason is None
@@ -617,11 +767,28 @@ def enforce_position(
     ):
         try:
             mcs = float(macro_cycle_exit_signal)
-            if mcs == mcs and mcs >= 0.5:
+            if (
+                mcs == mcs
+                and mcs >= 0.5
+                and weekly_macro_cycle_exit_allowed(pos, now=now)
+            ):
                 close_reason = "structural_exit_weekly_macro_cycle"
                 exit_price = price_close
         except (TypeError, ValueError):
             pass
+
+    # ── 3h. Structural exit (macro regime lifecycle: accumulate → bull → risk-off) ──
+    if (
+        close_reason is None
+        and str(pos.get("structural_exit") or "").strip().lower()
+        in _REGIME_LIFECYCLE_EXIT_MODES
+    ):
+        _lc_reason = regime_lifecycle_risk_off_exit(
+            pos, macro_regime_score=macro_regime_score
+        )
+        if _lc_reason:
+            close_reason = _lc_reason
+            exit_price = price_close
 
     # ── 4. Activation trailing ──
     if close_reason is None and pos.get("activation_r") is not None and pos_atr > 0:

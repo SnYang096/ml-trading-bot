@@ -4,15 +4,47 @@ add_position:
 execution_constraints:
   accumulate_same_archetype: true
   allow_add_on: false
-  # Must be <= spacing of decision bars (strategy meta timeframe 120T) or merges never fire between bars.
+  max_deploy_legs_per_day: 1
   min_order_interval_minutes: 120
+  entry_order:
+    type: limit
+    limit_offset_bps: 25
+  regime_deploy_scale:
+    enabled: true
+    feature: abc_macro_regime_score
+    tiers:
+      - max_score_exclusive: 1.0
+        unit_multiplier: 2.0
+        label: extreme_panic
+      - max_score_exclusive: 2.0
+        unit_multiplier: 1.5
+        label: deep_bear
+      - max_score_exclusive: 999.0
+        unit_multiplier: 1.0
+        label: transition_catchup
+accumulation_policy:
+  score_feature: abc_macro_regime_score
+  deep_bear_max_score: 2.0
+  transition_max_score: 5.0
+  allow_transition_deploy: true
+  transition_unit_multiplier: 1.0
+  stop_deploy_after_bull_exposure: true
 holding:
   max_holding_bars: 0
   time_stop_bars: 0
 stop_loss:
   type: fixed
   initial_r: 0.0
+  # A lifecycle: accumulate before bull, hold inventory, exit only after bull exposure
+  # when weekly macro cycle death is armed. No B-style risk-off/floor cleanup.
   structural_exit: weekly_macro_cycle
+  regime_lifecycle_exit:
+    accumulate_max_score: 2.0
+    bull_min_score: 5.0
+    cycle_exit_requires_bull: true
+    arm_cycle_exit_min_peak: 5.0
+    cycle_exit_min_days_after_bull: 180
+    allow_regime_risk_off: false
   breakeven:
     enabled: false
     trigger_r: 0.0

@@ -286,7 +286,7 @@ spot:
     spot_accum:
       allow_add_position: false # No B/C-style child add legs; use accumulate_same_archetype in execution.yaml.
       require_locked_profit: false # Spot deploy does not require breakeven lock before next slice.
-      max_new_entries_per_day: 2 # Max new deploy events per UTC day (mother positions + merges count toward funnel).
+      max_new_entries_per_day: 1 # Max new PCM intents per UTC day (deploy legs also capped in execution.yaml).
   risk_limits:
     max_gross_notional_pct: 1.00 # Portfolio-wide spot gross cap vs equity (1.0 = up to full anchor).
     max_daily_deploy_pct: 1.00 # Per-UTC-day deploy cap vs equity; 1.0 = may deploy full anchor in one day.

@@ -1,12 +1,15 @@
 filters:
 - id: ef_spot_accum_weak_regime_reclaim_ema200
   enabled: true
-  description: 弱势 regime 下仅在价格靠近 EMA200 带（相对位置 [-0.01, 0.03]）时分批入场
+  description: 弱势 regime 下 EMA200 带略宽至 -3%（配合 RSI<35 超卖，避免贴带过窄）
   conditions:
   - feature: ema_200_position
     operator: '>='
-    value: -0.01
+    value: -0.03
   - feature: ema_200_position
     operator: <=
     value: 0.03
+  - feature: rsi
+    operator: <
+    value: 35
 combination_mode: or

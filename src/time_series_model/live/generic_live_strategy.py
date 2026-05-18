@@ -522,6 +522,8 @@ class ExecutionParamGenerator:
             "max_holding_bars": _tsb,
             "size_multiplier": 1.0,
             "structural_exit": sl_cfg.get("structural_exit"),
+            "regime_exit_min_score": sl_cfg.get("regime_exit_min_score"),
+            "regime_lifecycle_exit": sl_cfg.get("regime_lifecycle_exit") or {},
             "min_stop_pct": guardrails.get("min_stop_pct"),
             "max_stop_pct": guardrails.get("max_stop_pct"),
             "breakeven_enabled": breakeven_enabled,
@@ -654,6 +656,7 @@ class GenericLiveStrategy:
             "layers_required_same_bar": [],
         }
         self._prefilter_recent_state: Dict[str, deque] = {}
+        self._accumulation_bull_seen_by_symbol: Dict[str, bool] = {}
 
         # 加载配置
         self.load_configs()
@@ -793,6 +796,66 @@ class GenericLiveStrategy:
             return False
         return any(q)
 
+    def _accumulation_policy(self) -> Dict[str, Any]:
+        raw = (self.archetype.execution.raw or {}) if self.archetype else {}
+        policy = raw.get("accumulation_policy") or {}
+        return dict(policy) if isinstance(policy, dict) else {}
+
+    @staticmethod
+    def _policy_float(policy: Dict[str, Any], key: str, default: float) -> float:
+        try:
+            return float(policy.get(key, default))
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _accumulation_policy_score(
+        self, features: Dict[str, Any], policy: Dict[str, Any]
+    ) -> Optional[float]:
+        feature_name = str(
+            policy.get("score_feature") or "abc_macro_regime_score"
+        ).strip()
+        try:
+            score = float(features.get(feature_name))
+        except (TypeError, ValueError):
+            return None
+        return score if score == score else None
+
+    def _accumulation_policy_blocks_deploy(
+        self, symbol: str, score: Optional[float], policy: Dict[str, Any]
+    ) -> bool:
+        if not policy or score is None:
+            return False
+        key = str(symbol or "")
+        deep_max = self._policy_float(policy, "deep_bear_max_score", 2.0)
+        bull_min = self._policy_float(
+            policy,
+            "bull_exposure_min_score",
+            self._policy_float(policy, "transition_max_score", 4.0),
+        )
+        reset_below = self._policy_float(
+            policy, "reset_bull_seen_below_score", deep_max
+        )
+        if score < reset_below:
+            self._accumulation_bull_seen_by_symbol[key] = False
+        if score >= bull_min:
+            self._accumulation_bull_seen_by_symbol[key] = True
+        return bool(policy.get("stop_deploy_after_bull_exposure", True)) and bool(
+            self._accumulation_bull_seen_by_symbol.get(key, False)
+        )
+
+    def _allows_transition_accumulation(
+        self, symbol: str, score: Optional[float], policy: Dict[str, Any]
+    ) -> bool:
+        if not policy or score is None:
+            return False
+        if not bool(policy.get("allow_transition_deploy", False)):
+            return False
+        if bool(self._accumulation_bull_seen_by_symbol.get(str(symbol or ""), False)):
+            return False
+        deep_max = self._policy_float(policy, "deep_bear_max_score", 2.0)
+        transition_max = self._policy_float(policy, "transition_max_score", 4.0)
+        return deep_max <= score < transition_max
+
     def decide(
         self,
         *,
@@ -826,6 +889,25 @@ class GenericLiveStrategy:
         # 漏斗跟踪 (bool 标记 + 丰富元数据)
         funnel: Dict[str, Any] = {}
         _sig_ts = features.get("timestamp")
+        accumulation_policy = self._accumulation_policy()
+        accumulation_score = self._accumulation_policy_score(
+            features, accumulation_policy
+        )
+        if self._accumulation_policy_blocks_deploy(
+            symbol, accumulation_score, accumulation_policy
+        ):
+            funnel["accumulation_policy"] = "bull_exposure_stop_deploy"
+            funnel["accumulation_score"] = accumulation_score
+            self._last_funnel = funnel
+            record_fer_entry_eval(
+                strategy=self.strategy_name,
+                symbol=symbol,
+                signal_ts=_sig_ts,
+                outcome="accumulation_policy_bull_seen",
+                funnel=funnel,
+                features=features,
+            )
+            return []
 
         # ── 0. Prefilter 前置条件检查 ──
         if self.archetype and self.archetype.prefilter.rules:
@@ -834,8 +916,14 @@ class GenericLiveStrategy:
             self._update_prefilter_recent_state(symbol, pf_passed)
             if not pf_passed:
                 alignment_used = self._has_recent_prefilter_pass(symbol)
+                accumulation_override = self._allows_transition_accumulation(
+                    symbol, accumulation_score, accumulation_policy
+                )
                 funnel["prefilter_recent_pass"] = alignment_used
-                funnel["alignment_used"] = alignment_used
+                funnel["alignment_used"] = alignment_used or accumulation_override
+                funnel["accumulation_transition_override"] = accumulation_override
+                if accumulation_override:
+                    funnel["accumulation_score"] = accumulation_score
                 logger.debug(f"❌ Prefilter denied: {pf_reason}")
                 if alignment_used:
                     logger.debug(
@@ -846,7 +934,7 @@ class GenericLiveStrategy:
                 else:
                     funnel["prefilter_alignment_override"] = False
                 funnel["prefilter_reason"] = pf_reason
-                if not alignment_used:
+                if not (alignment_used or accumulation_override):
                     self._last_funnel = funnel
                     record_fer_entry_eval(
                         strategy=self.strategy_name,
@@ -1082,6 +1170,8 @@ class GenericLiveStrategy:
                         "max_holding_bars", exec_params.get("time_stop_bars", 0)
                     ),
                     "structural_exit": exec_params.get("structural_exit"),
+                    "regime_lifecycle_exit": exec_params.get("regime_lifecycle_exit")
+                    or {},
                     "sr_exit_price": exec_params.get("sr_exit_price"),
                     "sr_exit_buffer_atr": exec_params.get("sr_exit_buffer_atr"),
                     "min_stop_pct": exec_params.get("min_stop_pct"),

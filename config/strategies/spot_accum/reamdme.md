@@ -35,11 +35,11 @@
 
 | 层 | 职责（思想） | 当前 `config/strategies/spot_accum/archetypes/` | 符合度 |
 |----|----------------|--------------------------------------------------|--------|
-| **prefilter** | **Regime**：只允许在定义的「弱势/积累区」考虑建仓；用 **慢变量**，避免和 B/C 抢同一类入场触发 | `abc_macro_regime_score < 3`（弱侧/非「转换期以上」） | ✅ 与「熊市侧 accumulation」一致；阈值 3 与 `abc_macro_regime_score_f` 内 `score_threshold_transition` 对齐 |
+| **prefilter** | **Regime**：只允许在定义的「弱势/积累区」考虑建仓；用 **慢变量**，避免和 B/C 抢同一类入场触发 | `abc_macro_regime_score < 2`（仅明确弱势；过渡/牛市 score≥2 不新开仓） | ✅ 与「熊市吸筹」一致；比 `<3` 更严，2023–2024 牛市段几乎不买 |
 | **gate** | 仅保留 **硬风控**（流动性、极端 evt、系统安全）；**宜少宜粗** | 空列表 | ✅ **简单**；若以后要加，应只加「否决灾难状态」类规则，忌微观 alpha gate |
-| **entry_filters** | **极简单**：价格/结构「允许开仓」的窄条件，避免做成第二套 B 策略 | `ema_200_position` 在 **[-0.01, 0.03]**（靠近 EMA200 带） | ✅ 简单、非突破机；若过窄会导致样本极少，属 **调参/放宽** 问题而非方向错误 |
+| **entry_filters** | **极简单**：价格/结构「允许开仓」的窄条件，避免做成第二套 B 策略 | `ema_200_position` **[-0.03, 0.03]** + **RSI < 35**（AND） | ✅ 简单、非突破机；**prebull 实验表明 entry 边际收益低**（见 §13） |
 | **direction** | **固定多头**（囤现货 beta） | `fixed_direction: long` | ✅ |
-| **execution** | **极简**：无日内 alpha 止损链；**出场**由 **宏观周期/结构** 定义，而非 ATR trailing | `initial_r: 0`、`trailing/tp 关闭`、`structural_exit: weekly_macro_cycle`、`execution_constraints.accumulate_same_archetype: true`、`allow_add_on: false`、`add_position.trigger=disabled`（**同账本多次买入并入持仓**，不使用子仓 add-leg） | ✅ 与「不要 ATR/trailing 当主退出」一致 |
+| **execution** | **极简**：无日内 alpha 止损链；**出场**由 **regime lifecycle**（非 B 式 risk-off 洗盘）定义 | `structural_exit: abc_macro_regime_lifecycle`、`regime_lifecycle_exit`、`regime_deploy_scale`（低 score 加大档位）、`accumulate_same_archetype: true`、每日 1 档 + 限价偏移 | ⚠️ **identity 仍在演进**：当前 lifecycle 仍偏 B 思维，见 §13–§14 |
 
 ---
 
@@ -65,7 +65,7 @@
   - 与 B/C **同构**，损害组合分散度；  
   - 引入大量 **可优化参数** → overfit。
 
-**当前 `execution.yaml`**：`trailing.enabled: false`、`breakeven: false`、`take_profit: false`，主退出走 `structural_exit: weekly_macro_cycle`，**与上述一致**。
+**当前 `execution.yaml`**：`trailing` / `breakeven` / `take_profit` 关闭；主退出为 **`abc_macro_regime_lifecycle`**（持仓内跟踪 peak score，bull 后 risk-off 才平；可选 `arm_risk_off_min_peak`）。`weekly_macro_cycle` 仍可作为 **Cycle Death** 候选，但不应在 transition 段替代 inventory 持有。
 
 ---
 
@@ -73,17 +73,17 @@
 
 - 该分数由 **`ema_1200_position`、`ema_1200_slope_10`、`atr_percentile`、`oi_zscore`、`funding_rate_zscore_50`** 等 **0–5 分** 合成（见 `abc_macro_regime_score_f` / `compute_abc_macro_regime_score_from_series`）。  
 - **文档化语义（示意）**：高分偏 risk-on；**`score < 3`** 表示未到「转换期」阈值一侧，适合作为 **「仅弱势侧才建仓」** 的门。  
-- **当前 prefilter**：`< 3` → 仅在 **相对弱势/未进入转换强势** 时进入漏斗，符合 **「熊市积累、不简单追涨 risk-on」** 的研究设定。  
-- **可调但需记录**：若改为 `<=2` 或加入「连续 N 根」条件，属于 **明确假设变更**，应单变量回测。
+- **当前 prefilter**：`< 2` → 仅在 **明确弱势** 时新开仓；`2 ≤ score < 5` 为 transition/bull，**只允许持币/补仓语义，不应默认清仓**（见 §14）。  
+- **分数上界为 5**：静态「`score >= 5` 才平仓」在急跌里常失效（peak 仅 4 即回落）；应用 **状态机**（先见过 bull，再 risk-off），见 `position_logic.regime_lifecycle_risk_off_exit`。
 
 ---
 
 ## 7. 「熊市 accumulation」在本配置里如何定义（可操作层面）
 
-1. **宏观**：`abc_macro_regime_score < 3`（当前实现）。  
-2. **入手结构**：弱势下价格 **回到 EMA200 附近**（`ema_200_position` 窄带）——表达「不深追突破、在均带附近补」。  
+1. **宏观**：`abc_macro_regime_score < 2`（当前实现）。  
+2. **入手结构**：弱势下 **EMA200 带 + RSI 超卖**（避免在均线上方追涨）。  
 3. **方向**：只做多优质标的（`meta.symbol_include`）。  
-4. **退出**：**周级宏观周期破坏**（`weekly_macro_cycle`），而非短周期止损。  
+4. **退出**：**regime lifecycle**（inventory 框架），而非 transition 段的 B 式 risk-off / floor。  
 
 这是一条 **可写进 YAML 的、与 B/C 解耦** 的 A 层定义；**不等于**「全市场任意时刻 DCA」，而是 **带 regime 与结构边界的 accumulation**。
 
@@ -99,7 +99,7 @@
 - `ema_1200_position_f` / `ema_1200_slope_f`、`atr_percentile_f` — 分数输入与波动上下文  
 - `oi_features_f`、`funding_rate_features_f`、`funding_oi_crowding_f` — 流动性/拥挤度  
 - `ema_200_position_f` — entry 带  
-- `weekly_macro_cycle_exit_f` — 与 `execution.structural_exit: weekly_macro_cycle` 配合  
+- `weekly_macro_cycle_exit_f` — 候选 **Cycle Death**（Regime 4），勿在 transition 单独作为主退出  
 
 **一般不必**：为 A 层单独塞 **微观 order-flow 点火**（除非研究明确需要）；那会向 B 靠拢。
 
@@ -109,10 +109,11 @@
 
 | 项目 | 说明 |
 |------|------|
-| **入场可能过窄** | 仅 `ema_200_position` 窄带时，**事件回测里成交可能极少**；属 **样本量** 问题，可放宽带或加「OR 轨」但保持简单 |
+| **瓶颈在 persistence，不在 entry** | prebull 实验：去 RSI / 加快 deploy **未提高** 2023 初仓位与收益；主因是 **lifecycle 过早 liquidation**（§13–§14） |
+| **Lifecycle vs identity** | `risk_off` / `floor exit` / transition 清仓是 **B 系统逻辑**；accumulate 应优先 **inventory retention**（§15–§16） |
 | **Gate 全空** | 符合「极简」；若上生产可再议 **流动性/熔断级** 硬门 |
-| **研究与实盘 symbol** | `meta.symbol_include` 限制标的；若回测 CLI 仍扫 6 标的，需在脚本层对齐，否则归因混淆 |
-| **定投式加仓** | 当前为 **signal-driven 同账本累加**；若要严格日历 DCA，应新增 spot 专用触发器，避免抄 B/C 子仓加仓机 |
+| **研究与实盘 symbol** | 宪法 `symbol_budgets_usdt` 与 `meta.symbol_include` 应对齐（BTC/BNB/SOL） |
+| **核心 KPI** | 对 accumulate，首要指标是 **`bull market inventory exposure`**（牛市前囤了多少），不是 Sharpe |
 
 ---
 
@@ -120,7 +121,7 @@
 
 - `spot` 是独立账户域：与 `resource_allocation`（trend/fat-tail）和 `multi_leg` 分开管理。  
 - `spot.account.backtest_equity_usdt` 仅用于回测与离线报告锚点；**实盘资金必须来自远程账户同步**。  
-- 以 `$10k` 为例：`spot.accumulation.tranche_count=4` + `unit_notional=2500` 表示「分四档逐步部署」，不是单笔满仓。  
+- 以 `$10k` 为例：`symbol_budgets_usdt`（BTC 5000 / BNB+SOL 各 2500）+ `tranches_per_symbol: 20` + 固定 `symbol_unit_notional_usdt` 表示「分档部署」，不是单笔满仓。  
 - 若未显式传 `--initial-capital`，事件回测可从 `spot.account.backtest_equity_usdt` 自动取资金锚点。
 
 ---
@@ -146,4 +147,122 @@
 
 ---
 
-*文件路径：`config/strategies/spot_accum/reamdme.md` — 与 `archetypes/*.yaml` 同步维护。*
+## 13. 核心发现：不是「怎么买更多」，而是 lifecycle 阻止长期 accumulation
+
+2022-01～2026-05 事件回测（`backtest_equity_usdt=10k`，BTC/BNB/SOL 预算 5k+2.5k+2.5k）表明：
+
+**真正的问题不是「怎么买得更多」，而是「lifecycle 正在阻止长期 accumulation」。**
+
+| 常见误区 | 实际情况 |
+|----------|----------|
+| 优化 deploy、限价、RSI、entry 带 | **持仓持久性（position persistence）** 决定能否囤到牛市 |
+| 「买不到」 | 多数是 **「留不住」** — score 2–4 transition 被 risk_off / floor 洗掉 |
+| 首要优化 Sharpe | accumulate 更应看 **bull market inventory exposure** |
+
+**v4 盈利主要来自 BTC 长持 exposure**，而非高频 deploy。说明：真正赚钱的是 **长周期 exposure**；不是 deploy 优化、entry 微调、RSI、限价、execution 微调。
+
+### Strategy identity conflict
+
+- **目标**：accumulate（熊市增 inventory → 牛市持 inventory → 周期末清 inventory）。
+- **实现残留**：risk_off、floor exit、lifecycle cleanup、transition 平仓 — **B 系统逻辑**。
+- **Accumulate 核心**：熊市 **尽量保留 exposure**，而不是 equity smoothness。
+
+Crypto 大收益来自 **长期持有极少数趋势资产**；过早 risk_off / cleanup 会 **永远拿不住超级周期**。牛熊转换区（score 2–4）最易被洗掉，也往往是大行情启动段。
+
+---
+
+## 14. 实验记录（同窗口 2022-01-01 → 2026-05-01）
+
+**脚本**：`scripts/run_spot_accum_prebull_ablation.py`  
+**汇总表**：`results/120T/spot_accum/prebull_ablation/comparison_table.csv`  
+**基线**：`results/120T/spot_accum/retest_v4_lifecycle/`
+**A-simple 落地回测**：`results/120T/spot_accum/retest_a_simple/`
+
+### 14.1 牛市前库存快照（v4 基线，截止 2023-01-01）
+
+| 币种 | 预算 | 仍持仓 | 占预算 |
+|------|------|--------|--------|
+| BTC | 5000 U | 5000 U | 100% |
+| BNB | 2500 U | 375 U | 15% |
+| SOL | 2500 U | 0 U | 0% |
+| **合计** | **10000 U** | **5375 U** | **53.8%** |
+
+### 14.2 单变量消融（相对 v4）
+
+| 变体 | 2023-01 持仓占比 | 终值权益 | 总回报 | 结论 |
+|------|------------------|----------|--------|------|
+| **A-simple（当前落地）** | **85.6%** | **11,220** | **+12.2%** | transition 可补齐；risk_off=0；cycle death 延后 arm |
+| **v4 基线** | **53.8%** | 10,632 | **+6.3%** | 2023 初库存最高 |
+| lifecycle_relaxed | 2.0% | 10,269 | +2.7% | 未改善囤仓 |
+| deploy_fast | 2.0% | 10,199 | +2.0% | 加快 deploy 无效 |
+| entry_relaxed（去 RSI） | 15.0% | 10,123 | +1.2% | 信号 465→8985，更差 |
+| hoard_all（三者叠加） | 3.0% | 10,350 | +3.5% | 仍未牛市前满仓 |
+
+**实验结论**：
+
+1. **Entry filtering 边际收益极低** — 瓶颈不在 signal generation。  
+2. **Deploy 优化无法替代 inventory persistence**。  
+3. 决定 2023 初仓位的，是 **lifecycle liquidation + transition 补齐权限**，不是「怎么进」。  
+4. A-simple 把 2023-01 库存从 **53.8% → 85.6%**，risk_off exit 从 26 → 0。  
+5. 优化方向：从 **trade optimization** → **cycle participation / inventory optimization**。
+
+### 14.3 实现备注
+
+- 事件回测须合并 `features.yaml` 与 `archetypes` 特征（含 `weekly_macro_cycle_exit_f`）。  
+- A-simple 当前语义：`score < 2` 加速吸筹；`2 <= score < 5` 用剩余预算慢速补齐；`score >= 5` 后停止新增；见 bull 后至少 180 天才允许 `weekly_macro_cycle` 清仓。  
+- 静态 `score>=5` risk-on exit 已移除；`score>=5` 仅用于 arm bull exposure，不直接平仓。
+
+---
+
+## 15. Inventory 框架（目标语义）
+
+| 阶段 | 宏观（示意） | 目标 |
+|------|--------------|------|
+| **熊市 / deep bear** | score ≤ 2 | **增加 inventory** — 持续 deploy；**禁止** risk_off / floor / cleanup |
+| **持有 / transition** | score 上升，2–5 | **补齐/维持 inventory** — **禁止主动减仓**；允许剩余预算慢速补仓 |
+| **牛市** | score ≥ 5 / 已 `_regime_saw_bull` | **持有 inventory** — 停止新增，禁止短周期止盈 |
+| **周期死亡** | bull 后足够久 + 周线结构破坏 | **清 inventory** — 允许 `weekly_macro_cycle` 清仓，reset lifecycle |
+
+**核心 KPI**：`pre_bull_inventory_pct`、`bull_market_inventory_exposure` — **不是** Sharpe。
+
+---
+
+## 16. 建议下一版：彻底 regime 化 lifecycle（设计草案）
+
+**A-simple 已部分落地**；后续优化必须继续以 inventory KPI 为主。
+
+### Regime 1 — Deep Bear（score ≤ 2）
+
+- 目标：accumulation only。  
+- 规则：禁止 risk_off；禁止 floor exit；禁止 lifecycle cleanup；允许持续 deploy；不减仓。
+
+### Regime 2 — Transition（2 < score < 5）
+
+- 目标：maintain inventory。  
+- 规则：**禁止主动减仓**；允许剩余预算慢速补仓；不允许清仓。
+
+### Regime 3 — Bull（score ≥ 5 或已 `_regime_saw_bull`）
+
+- 目标：ride convexity。  
+- 规则：禁止短周期止盈；长期持有；停止新增；不主动减仓。
+
+### Regime 4 — Cycle Death
+
+- 触发：周线连续 LH/LL、周 EMA50 breakdown、breadth collapse 等（可组合 `weekly_macro_cycle_exit_f`）。  
+- 目标：distribute inventory。  
+- 规则：仅在 bull exposure 已 arm 且最短持有窗口满足后，允许 `weekly_macro_cycle` 清仓；reset lifecycle。
+
+**已实现可复用**：`regime_lifecycle_exit.allow_regime_risk_off: false`、`cycle_exit_requires_bull`、`arm_cycle_exit_min_peak`、`cycle_exit_min_days_after_bull` — `position_logic.py`，`tests/unit/test_regime_lifecycle_exit.py`，`tests/unit/test_spot_accum_cycle_death_only.py`。
+
+---
+
+## 17. 维护者优先级（实验后）
+
+1. **先改 lifecycle / inventory persistence**，再动 entry、限价、RSI。  
+2. 每条退出规则问：是在 **叠 beta**，还是在做 **B 式 swing**？  
+3. 回测必报：**2023-01-01 三币库存占比** + 全窗口 PnL。  
+4. 勿做成「带 accumulation 风味的 swing」— 否则与 B/C 相关、长期凸性消失。
+
+---
+
+*文件路径：`config/strategies/spot_accum/reamdme.md` — 与 `archetypes/*.yaml`、§14 实验产物同步维护。最后更新：2026-05（prebull ablation + v4 lifecycle + inventory 框架）。*
