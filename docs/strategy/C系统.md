@@ -39,7 +39,7 @@ Portfolio 分工（与 A/B 对照）：
 |------|-----|------|
 | `unit_notional` | 200 USDT | 每格 / 每腿名义（@ 10k 锚定约 2%/腿） |
 | `equity_usdt` | 10,000 | 离线预算锚定 |
-| `max_drawdown_pct` | 12% | 多腿账户硬停 |
+| `max_drawdown_pct` | 5% | 多腿账户硬停（相对 trend_scalp 实验 portfolio_dd ~3.9% 留缓冲） |
 | `max_gross_notional_pct` | 20% | 组合总 gross 上限 |
 | `max_net_notional_pct` | 10% | 组合净敞口上限 |
 | `max_symbol_gross_notional_pct` | 8% | 单币 gross 上限 |

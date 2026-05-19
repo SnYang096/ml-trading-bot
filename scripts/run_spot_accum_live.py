@@ -19,6 +19,7 @@ from src.live_data_stream.classic_feature_bus_provider import ClassicFeatureBusP
 from src.live_data_stream.constitution_config import (
     load_constitution_dict,
     resolve_constitution_yaml,
+    spot_account_equity_anchor_usdt,
     spot_strategies_from_constitution,
 )
 from src.order_management.spot_binance_api import SpotBinanceAPI
@@ -253,7 +254,7 @@ def _load_spot_budget_config(
     max_new = int(strategy_limits.get("max_new_entries_per_day", 1) or 1)
 
     return SpotBudgetConfig(
-        equity_anchor_usdt=float(account.get("backtest_equity_usdt", 10000) or 10000),
+        equity_anchor_usdt=spot_account_equity_anchor_usdt(account),
         target_deploy_pct=float(accumulation.get("target_deploy_pct", 1.0) or 1.0),
         max_gross_notional_pct=float(
             risk_limits.get("max_gross_notional_pct", 1.0) or 1.0

@@ -13,6 +13,7 @@ from src.live_data_stream.constitution_config import (
     load_constitution_dict,
     multi_leg_strategies_from_constitution,
     partition_pipeline_strategies_by_type,
+    spot_account_equity_anchor_usdt,
     validate_classic_slot_capacity,
     validate_pipeline_constitution_alignment,
 )
@@ -141,6 +142,42 @@ def test_classic_slot_policy_uses_archetype_groups_without_duplicate_list() -> N
     policy = classic_slot_policy_from_constitution(cfg)
     assert policy["trend_archetypes"] == ["bpc", "tpc", "me"]
     assert policy["max_trend_slots_per_symbol"] == 1
+
+
+def test_classic_slot_policy_intersects_group_with_enabled_archetypes() -> None:
+    """Research: full trend taxonomy ∩ enabled whitelist."""
+    cfg = {
+        "resource_allocation": {
+            "enabled_archetypes": ["tpc"],
+            "slot_policy": {"trend_group": "trend"},
+            "archetype_groups": {"trend": ["tpc", "bpc", "me", "srb"]},
+        }
+    }
+    policy = classic_slot_policy_from_constitution(cfg)
+    assert policy["trend_archetypes"] == ["tpc"]
+
+
+def test_classic_slot_policy_uses_enabled_when_groups_omitted() -> None:
+    """Live constitution: no archetype_groups; trend pool = enabled_archetypes."""
+    cfg = {
+        "resource_allocation": {
+            "enabled_archetypes": ["tpc"],
+            "slot_policy": {"trend_group": "trend"},
+        }
+    }
+    policy = classic_slot_policy_from_constitution(cfg)
+    assert policy["trend_archetypes"] == ["tpc"]
+
+
+def test_spot_account_equity_anchor_prefers_equity_usdt() -> None:
+    assert spot_account_equity_anchor_usdt({"equity_usdt": 8000}) == 8000.0
+    assert spot_account_equity_anchor_usdt({"backtest_equity_usdt": 7000}) == 7000.0
+    assert (
+        spot_account_equity_anchor_usdt(
+            {"equity_usdt": 9000, "backtest_equity_usdt": 7000}
+        )
+        == 9000.0
+    )
 
 
 def test_validate_classic_slot_capacity_rejects_too_few_slots() -> None:

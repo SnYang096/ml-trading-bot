@@ -167,7 +167,7 @@ resource_allocation:
     - srb # Structural Range Breakout (research PCM candidate).
 
   # trend/fat-tail 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
-  # trend 集合只在 archetype_groups.trend 定义一次，避免 slot_policy 重复维护名单。
+  # 运行时 trend 槽成员 = archetype_groups.trend ∩ enabled_archetypes（见 constitution_config）。
   slot_policy:
     trend_group: trend # Key into archetype_groups; names the slot-sharing pool.
     min_trend_slots_per_symbol: 1 # At least one trend slot may target each symbol when signals compete.
@@ -258,9 +258,10 @@ multi_leg:
     # Offline budget anchor for pct-based risk_limits and validation reports.
     # In live trading, actual equity/drawdown should come from account sync / exchange
     # state; this value is not a replacement for real account balance.
-    equity_usdt: 10000 # Notional anchor for pct caps and backtest capital reports (multi-leg account).
+    equity_usdt: 10000 # Offline anchor for pct caps (same key as spot.account; live uses exchange sync).
     # Live/shadow kill-switch threshold; checked against synced or supplied drawdown.
-    max_drawdown_pct: 0.12 # Halt new multi-leg risk if account drawdown from peak exceeds 12%.
+    # trend_scalp ablation portfolio_cum_dd ~3.9% (docs/strategy/trend_scalp_翻转reseed实验.md); 5% headroom.
+    max_drawdown_pct: 0.05 # Halt new multi-leg risk if account drawdown from peak exceeds 5%.
   risk_limits:
     # Pct limits are resolved against account.equity_usdt unless absolute notional
     # limits are supplied. Example: 0.20 * 10000 = 2000 USDT max gross exposure.
@@ -280,9 +281,8 @@ spot:
     - spot_accum_simple # Weekly EMA200 deep-bear DCA + profit-multiple ladder sell (A-layer).
   account:
     account_label: spot_accum # Label for logs, reports, and account routing (informational).
-    equity_source: remote_live_account # Live equity from exchange sync; backtest uses backtest_equity_usdt.
-    # Offline anchor for backtests / reports only; live must sync from exchange.
-    backtest_equity_usdt: 10000 # Starting cash (USDT) for spot event backtest and capital_report anchor.
+    equity_source: remote_live_account # Live equity from exchange sync; offline anchor is equity_usdt below.
+    equity_usdt: 10000 # Starting cash (USDT) for spot backtest / deploy pct (same key as multi_leg.account).
   accumulation:
     target_deploy_pct: 1.00 # Fraction of equity_usdt intended for spot deploy cap (1.0 = full anchor).
     min_order_interval_minutes: 360 # Min minutes between deploy legs on same symbol (6h on 120T ≈ 3 bars).

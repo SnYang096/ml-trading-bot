@@ -363,7 +363,7 @@ class EventBacktester:
 
         equity_anchor_usdt:
           若为 None则内部权益锚点仍为 1000；CLI 传入与 --initial-capital（及 constitution
-          spot.account.backtest_equity_usdt 默认覆盖）对齐，并与 spot_accum 名义 deploy 上限共用。
+          spot.account.equity_usdt 默认覆盖）对齐，并与 spot_accum 名义 deploy 上限共用。
         """
         result = BacktestResult(strategy="+".join(self.strategy_names))
         funnel = defaultdict(int)

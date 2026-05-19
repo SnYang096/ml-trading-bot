@@ -158,18 +158,17 @@ slots:
 #   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
+  # Live production: TPC-only. Research / joint PCM still uses four archetypes in
+  # config/constitution/constitution.yaml (tpc, bpc, me, srb).
   # trend/fat-tail LivePCM 注册 + Step 9.5 PCM 联合回测白名单（与 pipeline strategy_scope 交集）唯一来源
   # 列表顺序 = 同 bar 多 archetype 时 PCM 仲裁优先级（除非另写 intent_selection_policy.archetype_priority）
   enabled_archetypes:
-    - tpc # Trend Pullback Continuation (primary production trend archetype).
-    - bpc # Breakout Pullback Continuation (research PCM candidate).
-    - me # Momentum Expansion (research PCM candidate).
-    - srb # Structural Range Breakout (research PCM candidate).
+    - tpc # Trend Pullback Continuation (live production trend archetype).
 
   # trend/fat-tail 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
-  # trend 集合只在 archetype_groups.trend 定义一次，避免 slot_policy 重复维护名单。
+  # Live 无 archetype_groups 时，trend 槽成员 = enabled_archetypes（见 constitution_config）。
   slot_policy:
-    trend_group: trend # Key into archetype_groups; names the slot-sharing pool.
+    trend_group: trend # Used when archetype_groups.trend is set (research); else enabled_archetypes.
     min_trend_slots_per_symbol: 1 # At least one trend slot may target each symbol when signals compete.
     max_trend_slots_per_symbol: 1 # At most one trend archetype position per symbol at a time.
     # Optional tail-risk guard for trend/fattail pool:
@@ -195,12 +194,8 @@ resource_allocation:
           SOLUSDT:
             BNBUSDT: 0.82
 
-  archetype_groups:
-    trend: # Named pool for slot_policy.trend_group; members share per-symbol slot rules.
-      - tpc
-      - bpc
-      - me
-      - srb
+  # archetype_groups omitted on live — trend pool follows enabled_archetypes above.
+  # Research taxonomy: config/constitution/constitution.yaml archetype_groups.trend
 
   per_strategy_limits:
     # ── TPC（Trend Pullback Continuation）──
@@ -211,21 +206,22 @@ resource_allocation:
       allow_add_position: true
       max_add_times: 2
       require_locked_profit: true
-    bpc:
-      max_risk_per_trade: 0.01
-      allow_add_position: true
-      max_add_times: 2
-      require_locked_profit: true
-    me:
-      max_risk_per_trade: 0.01
-      allow_add_position: true
-      max_add_times: 2
-      require_locked_profit: true
-    srb:
-      max_risk_per_trade: 0.01
-      allow_add_position: true
-      max_add_times: 2
-      require_locked_profit: true
+    # Not registered on live (enabled_archetypes is TPC-only). See config/constitution for bpc/me/srb.
+    # bpc:
+    #   max_risk_per_trade: 0.01
+    #   allow_add_position: true
+    #   max_add_times: 2
+    #   require_locked_profit: true
+    # me:
+    #   max_risk_per_trade: 0.01
+    #   allow_add_position: true
+    #   max_add_times: 2
+    #   require_locked_profit: true
+    # srb:
+    #   max_risk_per_trade: 0.01
+    #   allow_add_position: true
+    #   max_add_times: 2
+    #   require_locked_profit: true
 
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。
   # 若要在 PCM 层用 BTC close vs ema_200 再挡逆势单，可恢复 resource_allocation.direction_policy.enabled
@@ -258,9 +254,10 @@ multi_leg:
     # Offline budget anchor for pct-based risk_limits and validation reports.
     # In live trading, actual equity/drawdown should come from account sync / exchange
     # state; this value is not a replacement for real account balance.
-    equity_usdt: 10000 # Notional anchor for pct caps and backtest capital reports (multi-leg account).
+    equity_usdt: 10000 # Offline anchor for pct caps (same key as spot.account; live uses exchange sync).
     # Live/shadow kill-switch threshold; checked against synced or supplied drawdown.
-    max_drawdown_pct: 0.12 # Halt new multi-leg risk if account drawdown from peak exceeds 12%.
+    # trend_scalp ablation portfolio_cum_dd ~3.9% (docs/strategy/trend_scalp_翻转reseed实验.md); 5% headroom.
+    max_drawdown_pct: 0.05 # Halt new multi-leg risk if account drawdown from peak exceeds 5%.
   risk_limits:
     # Pct limits are resolved against account.equity_usdt unless absolute notional
     # limits are supplied. Example: 0.20 * 10000 = 2000 USDT max gross exposure.
@@ -280,9 +277,8 @@ spot:
     - spot_accum_simple # Weekly EMA200 deep-bear DCA + profit-multiple ladder sell (A-layer).
   account:
     account_label: spot_accum # Label for logs, reports, and account routing (informational).
-    equity_source: remote_live_account # Live equity from exchange sync; backtest uses backtest_equity_usdt.
-    # Offline anchor for backtests / reports only; live must sync from exchange.
-    backtest_equity_usdt: 10000 # Starting cash (USDT) for spot event backtest and capital_report anchor.
+    equity_source: remote_live_account # Live equity from exchange sync; offline anchor is equity_usdt below.
+    equity_usdt: 10000 # Starting cash (USDT) for spot backtest / deploy pct (same key as multi_leg.account).
   accumulation:
     target_deploy_pct: 1.00 # Fraction of equity_usdt intended for spot deploy cap (1.0 = full anchor).
     min_order_interval_minutes: 360 # Min minutes between deploy legs on same symbol (6h on 120T ≈ 3 bars).

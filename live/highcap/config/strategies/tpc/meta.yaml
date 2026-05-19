@@ -16,6 +16,8 @@ strategy:
   archetype: TrendPullbackContinuationLong
 
   timeframe: "120T"
+  symbol_include: []
+  symbol_exclude: []
 
   macro_tp_vwap_anchor:
     enabled: false

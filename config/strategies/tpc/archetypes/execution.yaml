@@ -5,8 +5,8 @@ add_position:
     - 0.25
   inherit_parent_stop: true
   min_current_r_by_add:
-    - 2
-    - 4
+    - 0.5
+    - 1
   min_current_r_unit: atr
   sizing_mode: fixed_multiplier
   trigger:

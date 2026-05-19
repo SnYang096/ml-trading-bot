@@ -61,6 +61,12 @@ def enabled_archetypes_from_constitution(cfg: Dict[str, Any]) -> List[str]:
     return [a.lower() for a in _ALL]
 
 
+def enabled_archetypes_key_present(cfg: Dict[str, Any]) -> bool:
+    """True when YAML explicitly sets enabled_archetypes (live/research whitelist)."""
+    ra = cfg.get("resource_allocation") or {}
+    return "enabled_archetypes" in ra or "enabled_archetypes" in cfg
+
+
 def intent_archetype_priority_tokens(cfg: Dict[str, Any]) -> List[str]:
     """Tokens for PCM archetype ordering (same-bar intent sort + LivePCM.register order helper).
 
@@ -117,6 +123,31 @@ def spot_account_from_constitution(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return dict(account) if isinstance(account, dict) else {}
 
 
+def spot_account_equity_anchor_usdt(
+    account: Optional[Dict[str, Any]],
+    *,
+    default: float = 10000.0,
+) -> float:
+    """Offline equity anchor for spot backtest / deploy pct (live uses exchange sync).
+
+    Accepts ``equity_usdt`` (canonical, same key as multi_leg.account) or legacy
+    ``backtest_equity_usdt``.
+    """
+    if not isinstance(account, dict):
+        return float(default)
+    for key in ("equity_usdt", "backtest_equity_usdt"):
+        raw = account.get(key)
+        if raw is None:
+            continue
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if val > 0:
+            return val
+    return float(default)
+
+
 def spot_strategy_limits_from_constitution(cfg: Dict[str, Any]) -> Dict[str, Any]:
     raw = (spot_section(cfg) or {}).get("strategy_limits")
     return dict(raw) if isinstance(raw, dict) else {}
@@ -154,6 +185,13 @@ def classic_slot_policy_from_constitution(cfg: Dict[str, Any]) -> Dict[str, Any]
             trend = [p.strip().lower() for p in legacy.split(",") if p.strip()]
         else:
             trend = [str(x).strip().lower() for x in legacy if str(x).strip()]
+    # Trend slot pool: archetype_groups.trend ∩ enabled_archetypes, or enabled-only when
+    # groups omitted (live constitution).
+    if trend:
+        enabled_set = set(enabled_archetypes_from_constitution(cfg))
+        trend = [a for a in trend if a in enabled_set]
+    elif enabled_archetypes_key_present(cfg):
+        trend = list(enabled_archetypes_from_constitution(cfg))
     policy["trend_archetypes"] = trend
     policy["min_trend_slots_per_symbol"] = int(
         policy.get("min_trend_slots_per_symbol", 1) or 1

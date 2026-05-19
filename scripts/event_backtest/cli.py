@@ -267,14 +267,15 @@ def main():
     if "--initial-capital" not in sys.argv and spot_cfg:
         spot_account = spot_cfg.get("account") or {}
         if isinstance(spot_account, dict):
-            try:
-                bt_anchor = float(spot_account.get("backtest_equity_usdt", 0.0) or 0.0)
-            except Exception:
-                bt_anchor = 0.0
+            from src.live_data_stream.constitution_config import (
+                spot_account_equity_anchor_usdt,
+            )
+
+            bt_anchor = spot_account_equity_anchor_usdt(spot_account, default=0.0)
             if bt_anchor > 0:
                 initial_capital = bt_anchor
                 print(
-                    f"  资金锚点: spot.account.backtest_equity_usdt={initial_capital:.2f} "
+                    f"  资金锚点: spot.account.equity_usdt={initial_capital:.2f} "
                     "(未显式传 --initial-capital)"
                 )
 
