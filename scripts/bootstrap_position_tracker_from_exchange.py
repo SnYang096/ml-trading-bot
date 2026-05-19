@@ -33,6 +33,9 @@ if str(_SRC) not in sys.path:
 
 from src.order_management.binance_api import BinanceAPI
 from src.time_series_model.core.trade_intent import TradeIntent
+from src.time_series_model.live.execution_profile_apply import (
+    rr_constraints_from_exec_params,
+)
 from src.time_series_model.live.generic_live_strategy import ExecutionParamGenerator
 from src.time_series_model.live.position_logic import build_position_dict
 
@@ -124,10 +127,8 @@ def _build_position_from_exchange(
 
     gen = ExecutionParamGenerator(execution_cfg)
     exec_params = gen.generate_params(evidence_score=0.5)
-    rr = dict(exec_params.get("rr_constraints") or {})
+    rr = rr_constraints_from_exec_params(exec_params)
     ep = {"rr_constraints": rr, "strategy_specific": {}}
-    if exec_params.get("structural_exit"):
-        ep["strategy_specific"] = {"structural_exit": exec_params["structural_exit"]}
 
     intent = TradeIntent(
         action=action,

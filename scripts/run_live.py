@@ -276,6 +276,39 @@ def _restore_position_trackers_from_disk(
     )
 
 
+def _ensure_exchange_stop_losses_after_restore(
+    *,
+    manager,
+    symbols: List[str],
+) -> None:
+    """Place missing exchange STOP_MARKET for restored positions with software SL."""
+    placed_total = 0
+    for sym in symbols:
+        try:
+            listener = manager.get_listener(sym)
+        except Exception:
+            continue
+        if listener is None:
+            continue
+        tracker = getattr(listener, "_position_tracker", None)
+        if tracker is None or not hasattr(tracker, "ensure_exchange_stop_losses"):
+            continue
+        try:
+            placed_total += int(tracker.ensure_exchange_stop_losses() or 0)
+        except Exception as exc:
+            logger.warning(
+                "[%s] ensure_exchange_stop_losses failed: %s",
+                sym,
+                exc,
+            )
+    if placed_total > 0:
+        logger.info(
+            "PositionTracker 交易所 SL 补齐: placed=%d symbols=%s",
+            placed_total,
+            symbols,
+        )
+
+
 def _open_trend_positions_snapshot_from_manager(
     manager: Optional[Any], symbols: List[str]
 ) -> List[Dict[str, Any]]:
@@ -553,6 +586,10 @@ def _setup_three_strategies(
     _restore_position_trackers_from_disk(
         manager=manager,
         order_manager=order_manager,
+        symbols=symbols,
+    )
+    _ensure_exchange_stop_losses_after_restore(
+        manager=manager,
         symbols=symbols,
     )
     # 进程重启后 PCM 内存槽位为空；用持久化 constitution slot 回填，避免下一信号误当「新开」

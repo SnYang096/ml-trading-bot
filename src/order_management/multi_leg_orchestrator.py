@@ -144,9 +144,18 @@ class MultiLegLiveOrchestrator:
         reconciliation = None
         reconciliation_results: List[MultiLegExecutionResult] = []
         if reconcile:
+            # Reconcile against post-execution exchange truth. Pre-trade snapshots
+            # (``orders`` / ``positions`` above) are only for risk projection; passing
+            # them here marks freshly placed ids as missing and orphans on the next
+            # cancel pass.
+            reconcile_orders = orders
+            reconcile_positions = positions
+            if execution_results:
+                reconcile_orders = self.adapter.sync_open_orders(None)
+                reconcile_positions = self.adapter.sync_positions(None)
             reconciliation, reconciliation_results = self.reconcile(
-                exchange_orders=orders,
-                exchange_positions=positions,
+                exchange_orders=reconcile_orders,
+                exchange_positions=reconcile_positions,
             )
         self._persist_positions()
         return OrchestrationReport(

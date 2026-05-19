@@ -234,6 +234,64 @@ def test_run_actions_uses_exchange_positions_for_risk_projection() -> None:
     adapter.execute_actions.assert_not_called()
 
 
+def test_run_actions_reconcile_refreshes_exchange_orders_after_place() -> None:
+    """Post-place reconcile must not reuse the pre-trade open-order snapshot."""
+    engine = FakeEngine()
+    adapter = _adapter()
+    sync_calls = {"n": 0}
+
+    def _sync_open_orders(_symbol: Any) -> list[dict[str, Any]]:
+        sync_calls["n"] += 1
+        if sync_calls["n"] == 1:
+            return []
+        return [
+            {
+                "order_id": "ex_new",
+                "client_order_id": "cg_new",
+                "symbol": "BTCUSDT",
+            }
+        ]
+
+    adapter.sync_open_orders.side_effect = _sync_open_orders
+
+    def _on_execution_results(results: list[GridExecutionResult]) -> None:
+        engine.execution_results.append(list(results))
+        if results and results[0].action == "place":
+            engine.orders = [
+                LocalOrderSnapshot(
+                    order_id="local_1",
+                    symbol="BTCUSDT",
+                    side="BUY",
+                    quantity=0.01,
+                    price=50_000.0,
+                    exchange_order_id="ex_new",
+                    client_order_id="cg_new",
+                )
+            ]
+
+    engine.on_execution_results = _on_execution_results  # type: ignore[method-assign]
+    orchestrator = _orchestrator(engine, adapter)
+
+    report = orchestrator.run_actions(
+        [
+            {
+                "action": "place",
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "quantity": 0.01,
+                "price": 50_000.0,
+                "client_order_id": "cg_new",
+            }
+        ]
+    )
+
+    assert report.reconciliation is not None
+    assert report.reconciliation.ok
+    assert sync_calls["n"] >= 2
+    assert adapter.execute_actions.call_count == 1
+    assert engine.orders and engine.orders[0].exchange_order_id == "ex_new"
+
+
 def test_run_actions_passes_drawdown_provider_to_governor() -> None:
     engine = FakeEngine()
     adapter = _adapter()

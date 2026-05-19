@@ -32,6 +32,9 @@ from src.time_series_model.execution.entry_filter import (
     check_entry_filters_or_single,
     load_entry_filters_config,
 )
+from src.time_series_model.live.execution_profile_apply import (
+    rr_constraints_from_exec_params,
+)
 from src.time_series_model.live.fer_diagnostics import record_fer_entry_eval
 from src.time_series_model.live.srb_regime import (
     pick_srb_true_sr_level,
@@ -1192,69 +1195,7 @@ class GenericLiveStrategy:
             size_multiplier=_exec_sm,
             execution_tags=[self.strategy_name, side_str],
             execution_profile={
-                "rr_constraints": {
-                    "stop_loss_r": exec_params.get("initial_r", 2.0),
-                    "take_profit_r": exec_params.get("take_profit_r", 2.5),
-                    "stop_loss_type": exec_params.get("stop_loss_type", "fixed"),
-                    "take_profit_type": exec_params.get("take_profit_type", "fixed"),
-                    "box_window": exec_params.get("box_window", 120),
-                    "box_stop_buffer_frac": exec_params.get(
-                        "box_stop_buffer_frac", 0.25
-                    ),
-                    "box_target_edge_frac": exec_params.get(
-                        "box_target_edge_frac", 0.15
-                    ),
-                    "box_hi": exec_params.get("box_hi"),
-                    "box_lo": exec_params.get("box_lo"),
-                    "box_width_pct": exec_params.get("box_width_pct"),
-                    "box_pos": exec_params.get("box_pos"),
-                    "box_hi_120": exec_params.get("box_hi_120"),
-                    "box_lo_120": exec_params.get("box_lo_120"),
-                    "box_width_pct_120": exec_params.get("box_width_pct_120"),
-                    "box_pos_120": exec_params.get("box_pos_120"),
-                    "allow_trailing": bool(exec_params.get("allow_trailing", True)),
-                    "activation_r": exec_params.get("activation_r"),
-                    "trailing_atr": exec_params.get("trail_r"),
-                    "trail_r_far": exec_params.get("trail_r_far"),
-                    "trail_r_near": exec_params.get("trail_r_near"),
-                    "l3_near_threshold_atr": exec_params.get("l3_near_threshold_atr"),
-                    "max_holding_bars": exec_params.get(
-                        "max_holding_bars", exec_params.get("time_stop_bars", 0)
-                    ),
-                    "structural_exit": exec_params.get("structural_exit"),
-                    "regime_lifecycle_exit": exec_params.get("regime_lifecycle_exit")
-                    or {},
-                    "profit_take_ladder": exec_params.get("profit_take_ladder") or {},
-                    "sr_exit_price": exec_params.get("sr_exit_price"),
-                    "sr_exit_buffer_atr": exec_params.get("sr_exit_buffer_atr"),
-                    "min_stop_pct": exec_params.get("min_stop_pct"),
-                    "max_stop_pct": exec_params.get("max_stop_pct"),
-                    "trail_expand_primary_atr": bool(
-                        exec_params.get("trail_expand_primary_atr", False)
-                    ),
-                    "structural_sl": exec_params.get("structural_sl") or {},
-                    # Unified breakeven block（2026-04-22 重构）
-                    "breakeven_enabled": bool(
-                        exec_params.get("breakeven_enabled", False)
-                    ),
-                    "breakeven_trigger_r": float(
-                        exec_params.get("breakeven_trigger_r", 1.0) or 1.0
-                    ),
-                    "breakeven_lock_level_r": float(
-                        exec_params.get("breakeven_lock_level_r", 0.0) or 0.0
-                    ),
-                    "breakeven_measure": str(
-                        exec_params.get("breakeven_measure", "initial_risk")
-                    ),
-                    # 2026-04-23 E1: time_stop 分层；E2: L3 结构化退出
-                    "time_stop_uncap_mfe_r": exec_params.get("time_stop_uncap_mfe_r"),
-                    "l3_structural_exit_enabled": bool(
-                        exec_params.get("l3_structural_exit_enabled", False)
-                    ),
-                    "l3_structural_exit_buffer_atr": float(
-                        exec_params.get("l3_structural_exit_buffer_atr", 0.25) or 0.25
-                    ),
-                },
+                "rr_constraints": rr_constraints_from_exec_params(exec_params),
                 "strategy_specific": {
                     "direction_rule": rule_id,
                     "gate_weight": gate_weight,

@@ -358,6 +358,32 @@ class TestSyncExchangeSL:
         om.cancel_order.assert_not_called()
         om.place_order.assert_not_called()
 
+    def test_sync_exchange_sl_initial_place_without_old_exchange_price(self):
+        """有 software SL 但无 _exchange_sl_price 时仍应首次挂 STOP_MARKET"""
+        om = _make_om()
+        tracker = _make_tracker(om)
+        pos = _make_pos(stop_loss_r=3.0)
+        assert pos.get("stop_loss_price") is not None
+        tracker.add("pid1", pos)
+
+        tracker.sync_exchange_sl("pid1")
+
+        om.cancel_order.assert_not_called()
+        om.place_order.assert_called_once()
+        assert tracker.get("pid1")["_exchange_sl_price"] == pos["stop_loss_price"]
+        assert tracker.get("pid1")["_exchange_sl_order_id"] == "SL_NEW"
+
+    def test_ensure_exchange_stop_losses_places_missing(self):
+        om = _make_om()
+        tracker = _make_tracker(om)
+        pos = _make_pos(stop_loss_r=3.0)
+        tracker.add("pid1", pos)
+
+        n = tracker.ensure_exchange_stop_losses()
+
+        assert n == 1
+        om.place_order.assert_called_once()
+
     def test_enforce_all_auto_syncs_trailing_sl(self):
         """enforce_all 时 trailing SL 变化自动同步到交易所"""
         om = _make_om()

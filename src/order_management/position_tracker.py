@@ -113,6 +113,20 @@ class PositionTracker:
             logger.info("[%s] restored %d persisted position(s)", sym, len(restored))
         return len(restored)
 
+    def ensure_exchange_stop_losses(self) -> int:
+        """Place exchange STOP_MARKET for positions that have software SL but no exchange SL."""
+        placed = 0
+        for pid, pos in list(self._positions.items()):
+            if pos.get("stop_loss_price") is None:
+                continue
+            if pos.get("_exchange_sl_price") is not None:
+                continue
+            before_oid = pos.get("_exchange_sl_order_id")
+            self._maybe_sync_exchange_sl(pid, pos)
+            if pos.get("_exchange_sl_order_id") and not before_oid:
+                placed += 1
+        return placed
+
     def __len__(self) -> int:
         return len(self._positions)
 
@@ -368,18 +382,33 @@ class PositionTracker:
     # ------------------------------------------------------------------
 
     def _maybe_sync_exchange_sl(self, pid: str, pos: Dict[str, Any]) -> None:
-        """若 SL 价格发生变化，cancel+replace 交易所 STOP_MARKET 挂单"""
+        """Place or refresh exchange STOP_MARKET when software stop_loss_price is set."""
         if self.order_manager is None:
             return
 
-        new_sl = pos.get("stop_loss_price")
-        old_sl = pos.get("_exchange_sl_price")
-        if new_sl is None or old_sl is None:
+        new_sl_raw = pos.get("stop_loss_price")
+        if new_sl_raw is None:
             return
-        if abs(new_sl - old_sl) < 1e-8:
-            return  # 价格未变，不操作
+        try:
+            new_sl = float(new_sl_raw)
+        except (TypeError, ValueError):
+            return
+        if new_sl <= 0:
+            return
 
-        # cancel 旧挂单
+        old_sl_raw = pos.get("_exchange_sl_price")
+        if old_sl_raw is not None:
+            try:
+                old_sl = float(old_sl_raw)
+            except (TypeError, ValueError):
+                old_sl = None
+            else:
+                if abs(new_sl - old_sl) < 1e-8:
+                    return  # 价格未变，不操作
+        else:
+            old_sl = None
+
+        # cancel 旧挂单（仅更新路径；首次挂单无旧单）
         old_oid = pos.get("_exchange_sl_order_id")
         if old_oid:
             try:
@@ -409,13 +438,22 @@ class PositionTracker:
                 close_position=True,
                 position_id=pid,
             )
-            logger.info(
-                "[%s] 交易所 SL 同步: %.4f → %.4f order=%s",
-                self.symbol,
-                old_sl,
-                new_sl,
-                new_order.order_id,
-            )
+            if old_sl is None:
+                logger.info(
+                    "[%s] 交易所 SL 首次挂单: %.4f order=%s pid=%s",
+                    self.symbol,
+                    new_sl,
+                    new_order.order_id,
+                    pid,
+                )
+            else:
+                logger.info(
+                    "[%s] 交易所 SL 同步: %.4f → %.4f order=%s",
+                    self.symbol,
+                    old_sl,
+                    new_sl,
+                    new_order.order_id,
+                )
             pos["_exchange_sl_order_id"] = new_order.order_id
             pos["_exchange_sl_price"] = new_sl
             self._persist_state()

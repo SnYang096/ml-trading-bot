@@ -4,7 +4,9 @@ from src.time_series_model.live.execution_profile_apply import (
     compute_rr_prices,
     compute_trailing_stop,
     holding_expired,
+    rr_constraints_from_exec_params,
 )
+from src.time_series_model.live.generic_live_strategy import ExecutionParamGenerator
 
 
 def test_compute_rr_prices_long() -> None:
@@ -43,3 +45,23 @@ def test_holding_expired() -> None:
     assert holding_expired(
         entry_time=entry, now=now, max_holding_bars=2, bar_minutes=240
     )
+
+
+def test_rr_constraints_from_exec_params_includes_stop_and_structural() -> None:
+    execution_cfg = {
+        "stop_loss": {
+            "initial_r": 4.0,
+            "structural_exit": "ema1200",
+            "trailing": {"enabled": True, "activation_r": 3.5, "trail_r": 6.0},
+            "guardrails": {"min_stop_pct": 0.01, "max_stop_pct": 0.2},
+            "breakeven": {"enabled": True, "trigger_r": 10.0, "lock_level_r": 2},
+        },
+        "take_profit": {"enabled": False},
+        "execution_constraints": {"allow_add_on": True},
+    }
+    exec_params = ExecutionParamGenerator(execution_cfg).generate_params(0.5)
+    rr = rr_constraints_from_exec_params(exec_params)
+    assert rr["stop_loss_r"] == 4.0
+    assert rr["structural_exit"] == "ema1200"
+    assert rr["allow_trailing"] is True
+    assert rr["activation_r"] == 3.5
