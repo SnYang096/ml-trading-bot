@@ -381,9 +381,86 @@ class PositionTracker:
     # 内部辅助
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _position_side_from_pos(pos: Dict[str, Any]) -> str:
+        side_str = str(pos.get("side", "")).upper()
+        return "LONG" if side_str in {"LONG", "BUY"} else "SHORT"
+
+    def _should_skip_exchange_sl_sync(self, pos: Dict[str, Any]) -> bool:
+        """Add legs that inherit parent stop must not place a second closePosition SL."""
+        return bool(pos.get("_is_add_position", False)) and bool(
+            pos.get("_inherit_parent_stop", False)
+        )
+
+    @staticmethod
+    def _order_info_close_position(order: Dict[str, Any]) -> bool:
+        info = order.get("info") if isinstance(order.get("info"), dict) else {}
+        raw = info.get("closePosition", order.get("closePosition"))
+        return raw is True or str(raw).lower() == "true"
+
+    @staticmethod
+    def _order_is_stop_type(order: Dict[str, Any]) -> bool:
+        info = order.get("info") if isinstance(order.get("info"), dict) else {}
+        otype = str(info.get("type") or order.get("type") or "").upper()
+        return "STOP" in otype
+
+    def _cancel_open_close_position_stops(self, *, position_side: str) -> int:
+        """Cancel exchange closePosition STOP orders so a new SL can be placed (-4130 guard)."""
+        api = getattr(self.order_manager, "binance_api", None)
+        if api is None:
+            return 0
+        close_side = "sell" if position_side == "LONG" else "buy"
+        cancelled = 0
+        try:
+            open_orders = api.get_open_orders(self.symbol) or []
+        except Exception as exc:
+            logger.warning(
+                "[%s] fetch open orders for SL cleanup failed: %s",
+                self.symbol,
+                exc,
+            )
+            return 0
+        for order in open_orders:
+            if not isinstance(order, dict):
+                continue
+            if not self._order_info_close_position(order):
+                continue
+            if not self._order_is_stop_type(order):
+                continue
+            info = order.get("info") if isinstance(order.get("info"), dict) else {}
+            order_pos_side = str(info.get("positionSide") or "BOTH").upper()
+            if order_pos_side not in {"", "BOTH"} and order_pos_side != position_side:
+                continue
+            if order_pos_side in {"", "BOTH"}:
+                if str(order.get("side") or "").lower() != close_side:
+                    continue
+            ex_id = str(order.get("order_id") or "").strip()
+            if not ex_id:
+                continue
+            try:
+                api.cancel_order(ex_id, self.symbol)
+                cancelled += 1
+            except Exception as exc:
+                logger.warning(
+                    "[%s] cancel closePosition stop %s failed: %s",
+                    self.symbol,
+                    ex_id,
+                    exc,
+                )
+        if cancelled:
+            logger.info(
+                "[%s] cleared %d closePosition stop(s) before SL sync (%s)",
+                self.symbol,
+                cancelled,
+                position_side,
+            )
+        return cancelled
+
     def _maybe_sync_exchange_sl(self, pid: str, pos: Dict[str, Any]) -> None:
         """Place or refresh exchange STOP_MARKET when software stop_loss_price is set."""
         if self.order_manager is None:
+            return
+        if self._should_skip_exchange_sl_sync(pos):
             return
 
         new_sl_raw = pos.get("stop_loss_price")
@@ -408,6 +485,8 @@ class PositionTracker:
         else:
             old_sl = None
 
+        position_side = self._position_side_from_pos(pos)
+
         # cancel 旧挂单（仅更新路径；首次挂单无旧单）
         old_oid = pos.get("_exchange_sl_order_id")
         if old_oid:
@@ -419,6 +498,7 @@ class PositionTracker:
                     self.symbol,
                     old_oid,
                 )
+        self._cancel_open_close_position_stops(position_side=position_side)
 
         # place 新挂单
         side_str = str(pos.get("side", "")).upper()
@@ -427,42 +507,65 @@ class PositionTracker:
         if qty <= 0:
             return
 
-        try:
-            new_order = self.order_manager.place_order(
-                symbol=self.symbol,
-                side=close_side,
-                order_type=OrderType.STOP_MARKET,
-                quantity=qty,
-                stop_price=new_sl,
-                reduce_only=True,
-                close_position=True,
-                position_id=pid,
-            )
-            if old_sl is None:
-                logger.info(
-                    "[%s] 交易所 SL 首次挂单: %.4f order=%s pid=%s",
+        new_order = None
+        last_exc: Optional[Exception] = None
+        for attempt in range(2):
+            try:
+                new_order = self.order_manager.place_order(
+                    symbol=self.symbol,
+                    side=close_side,
+                    order_type=OrderType.STOP_MARKET,
+                    quantity=qty,
+                    stop_price=new_sl,
+                    reduce_only=True,
+                    close_position=True,
+                    position_id=pid,
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 0 and "-4130" in str(exc):
+                    logger.warning(
+                        "[%s] exchange SL rejected (-4130), clearing closePosition stops and retrying",
+                        self.symbol,
+                    )
+                    self._cancel_open_close_position_stops(
+                        position_side=position_side
+                    )
+                    continue
+                logger.error(
+                    "[%s] place 新 SL 挂单失败 (%.4f)，软件 SL 仍生效",
                     self.symbol,
                     new_sl,
-                    new_order.order_id,
-                    pid,
                 )
-            else:
-                logger.info(
-                    "[%s] 交易所 SL 同步: %.4f → %.4f order=%s",
+                return
+        if new_order is None:
+            if last_exc is not None:
+                logger.error(
+                    "[%s] place 新 SL 挂单失败 (%.4f)，软件 SL 仍生效",
                     self.symbol,
-                    old_sl,
                     new_sl,
-                    new_order.order_id,
                 )
-            pos["_exchange_sl_order_id"] = new_order.order_id
-            pos["_exchange_sl_price"] = new_sl
-            self._persist_state()
-        except Exception:
-            logger.error(
-                "[%s] place 新 SL 挂单失败 (%.4f)，软件 SL 仍生效",
+            return
+        if old_sl is None:
+            logger.info(
+                "[%s] 交易所 SL 首次挂单: %.4f order=%s pid=%s",
                 self.symbol,
                 new_sl,
+                new_order.order_id,
+                pid,
             )
+        else:
+            logger.info(
+                "[%s] 交易所 SL 同步: %.4f → %.4f order=%s",
+                self.symbol,
+                old_sl,
+                new_sl,
+                new_order.order_id,
+            )
+        pos["_exchange_sl_order_id"] = new_order.order_id
+        pos["_exchange_sl_price"] = new_sl
+        self._persist_state()
 
     @staticmethod
     def _resolve_now(features: Dict[str, Any]) -> datetime:

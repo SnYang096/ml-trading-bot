@@ -284,21 +284,30 @@ class TradeExecutor:
                 logger.warning("[%s] 下 TP 挂单失败，软件 TP 仍生效", self.symbol)
 
         if stop_loss_price is not None:
-            try:
-                sl_order = self.order_manager.place_order(
-                    symbol=self.symbol,
-                    side=close_side,
-                    order_type=OrderType.STOP_MARKET,
-                    quantity=qty,
-                    stop_price=stop_loss_price,
-                    reduce_only=True,
-                    close_position=True,
-                    position_id=position_id,
+            skip_exchange_sl = bool(
+                add_ctx is not None and add_ctx.get("inherit_parent_stop", False)
+            )
+            if skip_exchange_sl:
+                logger.info(
+                    "[%s] add leg inherits parent stop — skip exchange closePosition SL",
+                    self.symbol,
                 )
-                pos["_exchange_sl_order_id"] = sl_order.order_id
-                pos["_exchange_sl_price"] = stop_loss_price
-            except Exception:
-                logger.warning("[%s] 下 SL 挂单失败，软件 SL 仍生效", self.symbol)
+            else:
+                try:
+                    sl_order = self.order_manager.place_order(
+                        symbol=self.symbol,
+                        side=close_side,
+                        order_type=OrderType.STOP_MARKET,
+                        quantity=qty,
+                        stop_price=stop_loss_price,
+                        reduce_only=True,
+                        close_position=True,
+                        position_id=position_id,
+                    )
+                    pos["_exchange_sl_order_id"] = sl_order.order_id
+                    pos["_exchange_sl_price"] = stop_loss_price
+                except Exception:
+                    logger.warning("[%s] 下 SL 挂单失败，软件 SL 仍生效", self.symbol)
 
         # ── 7. 统计 ──
         if self.stats_collector is not None:

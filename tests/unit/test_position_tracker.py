@@ -30,6 +30,8 @@ from src.time_series_model.live.position_logic import build_position_dict
 def _make_om():
     om = MagicMock()
     om.place_order.return_value = MagicMock(order_id="SL_NEW")
+    om.binance_api = MagicMock()
+    om.binance_api.get_open_orders.return_value = []
     return om
 
 
@@ -383,6 +385,50 @@ class TestSyncExchangeSL:
 
         assert n == 1
         om.place_order.assert_called_once()
+
+    def test_sync_exchange_sl_skips_add_inheriting_parent_stop(self):
+        om = _make_om()
+        tracker = _make_tracker(om)
+        pos = _make_pos(stop_loss_r=3.0)
+        pos["_is_add_position"] = True
+        pos["_inherit_parent_stop"] = True
+        pos["stop_loss_price"] = float(pos["stop_loss_price"]) + 100.0
+        tracker.add("add1", pos)
+
+        tracker.sync_exchange_sl("add1")
+
+        om.place_order.assert_not_called()
+        om.binance_api.get_open_orders.assert_not_called()
+
+    def test_sync_exchange_sl_retries_after_4130(self):
+        om = _make_om()
+        om.place_order.side_effect = [
+            Exception('binance {"code":-4130,"msg":"existing"}'),
+            MagicMock(order_id="SL_RETRY"),
+        ]
+        om.binance_api.get_open_orders.return_value = [
+            {
+                "order_id": "999",
+                "side": "sell",
+                "type": "stop_market",
+                "info": {
+                    "closePosition": True,
+                    "positionSide": "LONG",
+                    "type": "STOP_MARKET",
+                },
+            }
+        ]
+        tracker = _make_tracker(om)
+        pos = _make_pos(stop_loss_r=3.0)
+        tracker.add("pid1", pos)
+        pos["stop_loss_price"] = float(pos["stop_loss_price"]) + 50.0
+        pos["_exchange_sl_price"] = float(pos["stop_loss_price"]) - 50.0
+
+        tracker.sync_exchange_sl("pid1")
+
+        assert om.place_order.call_count == 2
+        om.binance_api.cancel_order.assert_called_with("999", "BTCUSDT")
+        assert tracker.get("pid1")["_exchange_sl_order_id"] == "SL_RETRY"
 
     def test_enforce_all_auto_syncs_trailing_sl(self):
         """enforce_all 时 trailing SL 变化自动同步到交易所"""
