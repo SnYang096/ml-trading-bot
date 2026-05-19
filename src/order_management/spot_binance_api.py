@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import ccxt
 
@@ -106,3 +106,23 @@ class SpotBinanceAPI:
 
     def price_to_precision(self, symbol: str, price: float) -> float:
         return float(self.exchange.price_to_precision(symbol.upper(), price))
+
+    def fetch_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        sym = symbol.upper() if symbol else None
+        return list(self.exchange.fetch_open_orders(sym) or [])
+
+    def fetch_order(self, symbol: str, exchange_order_id: str) -> Dict[str, Any]:
+        sym = symbol.upper()
+        oid = str(exchange_order_id)
+        try:
+            return dict(self.exchange.fetch_order(oid, sym) or {})
+        except Exception:
+            return dict(self.exchange.fetch_order(oid) or {})
+
+    def cancel_order(self, symbol: str, exchange_order_id: str) -> Dict[str, Any]:
+        sym = symbol.upper()
+        oid = str(exchange_order_id)
+        try:
+            return dict(self.exchange.cancel_order(oid, sym) or {})
+        except Exception:
+            return dict(self.exchange.cancel_order(oid) or {})

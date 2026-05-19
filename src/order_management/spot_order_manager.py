@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from src.order_management.spot_binance_api import SpotBinanceAPI
 
@@ -23,7 +24,8 @@ class SpotOrderResult:
     price: Optional[float]
     status: str
     exchange_order_id: Optional[str]
-    payload: Dict[str, Any]
+    client_order_id: str = ""
+    payload: Optional[Dict[str, Any]] = None
 
 
 class SpotOrderManager:
@@ -70,7 +72,20 @@ class SpotOrderManager:
                 )
                 """
             )
+            self._ensure_order_columns(conn)
             conn.commit()
+
+    def _ensure_order_columns(self, conn: sqlite3.Connection) -> None:
+        cursor = conn.execute("PRAGMA table_info(spot_orders)")
+        existing = {str(row[1]) for row in cursor.fetchall()}
+        alters = [
+            ("filled_quantity", "REAL DEFAULT 0"),
+            ("filled_quote_usdt", "REAL DEFAULT 0"),
+            ("updated_at", "TEXT"),
+        ]
+        for col, ddl in alters:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE spot_orders ADD COLUMN {col} {ddl}")
 
     def _client_order_id(self) -> str:
         return f"{self.client_prefix}_{uuid.uuid4().hex}"[:36]
@@ -107,13 +122,27 @@ class SpotOrderManager:
             if not exchange_order_id:
                 exchange_order_id = None
 
+        filled_qty = 0.0
+        filled_quote = 0.0
+        if payload:
+            try:
+                filled_qty = float(payload.get("filled") or 0.0)
+            except (TypeError, ValueError):
+                filled_qty = 0.0
+            try:
+                cost = payload.get("cost")
+                filled_quote = float(cost) if cost is not None else 0.0
+            except (TypeError, ValueError):
+                filled_quote = 0.0
+
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO spot_orders (
                     order_id, created_at, symbol, side, order_type, quantity, price,
-                    status, exchange_order_id, client_order_id, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, exchange_order_id, client_order_id, raw_json,
+                    filled_quantity, filled_quote_usdt, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     oid,
@@ -126,7 +155,12 @@ class SpotOrderManager:
                     status,
                     exchange_order_id,
                     client_order_id,
-                    str(payload) if payload else None,
+                    json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+                    if payload
+                    else None,
+                    filled_qty,
+                    filled_quote,
+                    now,
                 ),
             )
             conn.commit()
@@ -140,5 +174,97 @@ class SpotOrderManager:
             price=float(price) if price is not None else None,
             status=status,
             exchange_order_id=exchange_order_id,
+            client_order_id=client_order_id,
             payload=payload,
         )
+
+    def update_order_record(
+        self,
+        local_order_id: str,
+        *,
+        status: str,
+        filled_quantity: Optional[float] = None,
+        filled_quote_usdt: Optional[float] = None,
+        raw_json: Optional[str] = None,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE spot_orders
+                SET status = ?, filled_quantity = COALESCE(?, filled_quantity),
+                    filled_quote_usdt = COALESCE(?, filled_quote_usdt),
+                    raw_json = COALESCE(?, raw_json),
+                    updated_at = ?
+                WHERE order_id = ?
+                """,
+                (
+                    str(status).lower(),
+                    filled_quantity,
+                    filled_quote_usdt,
+                    raw_json,
+                    now,
+                    local_order_id,
+                ),
+            )
+            conn.commit()
+
+    def find_order_id(
+        self,
+        *,
+        exchange_order_id: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+    ) -> Optional[str]:
+        clauses = []
+        params: List[Any] = []
+        if exchange_order_id:
+            clauses.append("exchange_order_id = ?")
+            params.append(str(exchange_order_id))
+        if client_order_id:
+            clauses.append("client_order_id = ?")
+            params.append(str(client_order_id))
+        if not clauses:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT order_id FROM spot_orders WHERE {' OR '.join(clauses)} "
+                "ORDER BY created_at DESC LIMIT 1",
+                params,
+            ).fetchone()
+        return str(row["order_id"]) if row else None
+
+    def list_orders_for_symbols(
+        self,
+        symbols: Iterable[str],
+        *,
+        sides: Optional[Iterable[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        syms = [str(s).upper() for s in symbols]
+        if not syms:
+            return []
+        placeholders = ",".join("?" for _ in syms)
+        params: List[Any] = list(syms)
+        side_clause = ""
+        if sides is not None:
+            side_list = [str(s).lower() for s in sides]
+            if side_list:
+                side_clause = f" AND side IN ({','.join('?' for _ in side_list)})"
+                params.extend(side_list)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT order_id, created_at, symbol, side, order_type, quantity, price,
+                       status, exchange_order_id, client_order_id, raw_json,
+                       filled_quantity, filled_quote_usdt, updated_at
+                FROM spot_orders
+                WHERE symbol IN ({placeholders}){side_clause}
+                ORDER BY created_at ASC
+                """,
+                params,
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def cancel_exchange_order(self, symbol: str, exchange_order_id: str) -> Dict[str, Any]:
+        if self.shadow or self.api is None:
+            return {"status": "shadow"}
+        return self.api.cancel_order(symbol, exchange_order_id)

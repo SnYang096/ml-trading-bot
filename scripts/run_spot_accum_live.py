@@ -23,6 +23,27 @@ from src.live_data_stream.constitution_config import (
     spot_strategies_from_constitution,
 )
 from src.order_management.spot_binance_api import SpotBinanceAPI
+from src.order_management.spot_live_recovery import (
+    OPEN_BUY_STATUSES,
+    apply_buy_fill_to_position,
+    apply_sell_fill_to_position,
+    clear_pending_buy,
+    effective_symbol_deployed,
+    has_blocking_pending_buy,
+    merge_rebuilt_deploy_into_positions,
+    mark_pending_fill_recorded,
+    new_position_shell,
+    normalize_spot_symbol,
+    parse_ccxt_fill,
+    pending_buy_count_for_day,
+    pending_buy_age_hours,
+    pending_buy_quote_for_day,
+    pending_fill_delta,
+    rebuild_positions_from_filled_orders,
+    set_pending_buy,
+    sync_position_qty_from_balance,
+    iso_now,
+)
 from src.order_management.spot_order_manager import SpotOrderManager
 from src.time_series_model.live.metrics_exporter import METRICS, start_metrics_server
 from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
@@ -294,6 +315,7 @@ def _planned_buy_quote_usdt(
     budget: SpotBudgetConfig,
     positions: Dict[str, Dict[str, Any]],
     deploy_today: float,
+    day_key: str,
 ) -> float:
     sym = symbol.upper()
     unit = float(budget.symbol_units_usdt.get(sym, 0.0) or 0.0)
@@ -305,7 +327,7 @@ def _planned_buy_quote_usdt(
         return 0.0
 
     pos = positions.get(sym) or {}
-    deployed_symbol = float(pos.get("_spot_quote_deployed", 0.0) or 0.0)
+    deployed_symbol = effective_symbol_deployed(pos)
     if budget.deploy_decay_cfg.get("enabled", False):
         leg *= deploy_decay_multiplier(
             deployed_symbol, symbol_budget, budget.deploy_decay_cfg
@@ -317,58 +339,394 @@ def _planned_buy_quote_usdt(
         * float(budget.max_gross_notional_pct)
     )
     global_deployed = sum(
-        float((p or {}).get("_spot_quote_deployed", 0.0) or 0.0)
-        for p in positions.values()
+        effective_symbol_deployed(p or {}) for p in positions.values()
     )
     daily_cap = float(budget.equity_anchor_usdt) * float(budget.max_daily_deploy_pct)
 
     remain_symbol = max(0.0, symbol_budget - deployed_symbol)
     remain_global = max(0.0, global_cap - global_deployed)
-    remain_daily = max(0.0, daily_cap - deploy_today)
+    pending_today = pending_buy_quote_for_day(positions, day_key=day_key)
+    remain_daily = max(0.0, daily_cap - deploy_today - pending_today)
     return max(0.0, min(leg, remain_symbol, remain_global, remain_daily))
 
 
-def _sync_positions_with_exchange(
+def _pending_buy_max_age_hours() -> float:
+    return max(1.0, _env_float("MLBOT_SPOT_PENDING_BUY_MAX_HOURS", 24.0))
+
+
+def _apply_buy_fill(
     *,
-    api: Optional[SpotBinanceAPI],
-    symbols: Iterable[str],
+    sym: str,
     positions: Dict[str, Dict[str, Any]],
+    ledger: SpotAccumLedger,
+    budget: SpotBudgetConfig,
+    day_key: str,
+    fill_qty: float,
+    fill_quote: float,
+    filled_at: str,
 ) -> None:
-    if api is None:
+    quote = apply_buy_fill_to_position(
+        positions.setdefault(
+            sym,
+            new_position_shell(
+                sym, profit_take_ladder_cfg=budget.profit_take_ladder_cfg
+            ),
+        ),
+        fill_qty=fill_qty,
+        fill_quote_usdt=fill_quote,
+        profit_take_ladder_cfg=budget.profit_take_ladder_cfg,
+        filled_at=filled_at,
+    )
+    if quote > 0.0:
+        ledger.add_buy(day_key, sym, quote)
+
+
+def _finalize_buy_fill_from_order(
+    *,
+    sym: str,
+    local_order_id: str,
+    om: SpotOrderManager,
+    positions: Dict[str, Dict[str, Any]],
+    ledger: SpotAccumLedger,
+    budget: SpotBudgetConfig,
+    day_key: str,
+    payload: Dict[str, Any],
+) -> bool:
+    status, filled_qty, fill_quote, _avg = parse_ccxt_fill(payload)
+    pos = positions.get(sym)
+    pending = pos.get("_pending_buy") if isinstance(pos, dict) else None
+    if isinstance(pending, dict):
+        delta_qty, delta_quote = pending_fill_delta(
+            pending, filled_qty=filled_qty, filled_quote=fill_quote
+        )
+    else:
+        delta_qty, delta_quote = filled_qty, fill_quote
+    om.update_order_record(
+        local_order_id,
+        status=status,
+        filled_quantity=filled_qty,
+        filled_quote_usdt=fill_quote,
+        raw_json=json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+    )
+    if delta_qty > 0.0 and delta_quote > 0.0:
+        _apply_buy_fill(
+            sym=sym,
+            positions=positions,
+            ledger=ledger,
+            budget=budget,
+            day_key=day_key,
+            fill_qty=delta_qty,
+            fill_quote=delta_quote,
+            filled_at=str(payload.get("datetime") or payload.get("timestamp") or ""),
+        )
+        logger.info(
+            "[%s] buy fill delta qty=%.8f quote=%.2f status=%s",
+            sym,
+            delta_qty,
+            delta_quote,
+            status,
+        )
+    pos = positions.get(sym)
+    pending = pos.get("_pending_buy") if isinstance(pos, dict) else None
+    if isinstance(pending, dict):
+        mark_pending_fill_recorded(
+            pending, filled_qty=filled_qty, filled_quote=fill_quote
+        )
+    if status in OPEN_BUY_STATUSES:
+        return delta_qty > 0.0
+    if pos is not None:
+        clear_pending_buy(pos)
+    return status in {"closed", "filled"} or delta_qty > 0.0
+
+
+def _cancel_stale_pending_buy(
+    *,
+    sym: str,
+    pos: Dict[str, Any],
+    om: SpotOrderManager,
+    max_age_hours: float,
+    now: datetime,
+) -> bool:
+    pending = pos.get("_pending_buy")
+    if not isinstance(pending, dict):
+        return False
+    age_h = pending_buy_age_hours(pending, now=now)
+    if age_h < max_age_hours:
+        return False
+    ex_id = str(pending.get("exchange_order_id") or "")
+    if ex_id and om.api is not None and not om.shadow:
+        try:
+            om.cancel_exchange_order(sym, ex_id)
+            logger.warning(
+                "[%s] canceled stale pending buy after %.1fh exchange_order_id=%s",
+                sym,
+                age_h,
+                ex_id,
+            )
+        except Exception as exc:
+            logger.warning("[%s] cancel stale pending buy failed: %s", sym, exc)
+            return False
+    local_id = str(pending.get("local_order_id") or "")
+    if local_id:
+        om.update_order_record(local_id, status="canceled")
+    clear_pending_buy(pos)
+    return True
+
+
+def _refresh_pending_buy_from_exchange(
+    *,
+    sym: str,
+    pos: Dict[str, Any],
+    om: SpotOrderManager,
+    positions: Dict[str, Dict[str, Any]],
+    ledger: SpotAccumLedger,
+    budget: SpotBudgetConfig,
+    day_key: str,
+) -> None:
+    pending = pos.get("_pending_buy")
+    if not isinstance(pending, dict) or om.api is None or om.shadow:
         return
-    balances = api.get_total_balances()
-    for symbol in symbols:
-        sym = str(symbol).upper()
-        base = _symbol_base_asset(sym)
+    ex_id = str(pending.get("exchange_order_id") or "")
+    if not ex_id:
+        return
+    try:
+        payload = om.api.fetch_order(sym, ex_id)
+    except Exception as exc:
+        logger.debug("[%s] fetch pending buy failed: %s", sym, exc)
+        return
+    status, filled_qty, fill_quote, _avg = parse_ccxt_fill(payload)
+    local_id = str(pending.get("local_order_id") or "")
+    if local_id:
+        om.update_order_record(
+            local_id,
+            status=status,
+            filled_quantity=filled_qty,
+            filled_quote_usdt=fill_quote,
+            raw_json=json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+        )
+    if status in {"closed", "filled"} or filled_qty > 0.0:
+        _finalize_buy_fill_from_order(
+            sym=sym,
+            local_order_id=local_id,
+            om=om,
+            positions=positions,
+            ledger=ledger,
+            budget=budget,
+            day_key=day_key,
+            payload=payload,
+        )
+    elif status in {"canceled", "cancelled", "expired", "rejected"}:
+        clear_pending_buy(pos)
+
+
+def _spot_startup_recovery(
+    *,
+    om: SpotOrderManager,
+    ledger: SpotAccumLedger,
+    positions: Dict[str, Dict[str, Any]],
+    budget: SpotBudgetConfig,
+    symbols: List[str],
+) -> None:
+    """Load ledger, rebuild deploy from filled orders, reconcile pending limits."""
+    max_age_h = _pending_buy_max_age_hours()
+    now = datetime.now(timezone.utc)
+    day_key = _utc_day_key(now)
+
+    order_rows = om.list_orders_for_symbols(symbols)
+    orders_by_id = {str(row.get("order_id") or ""): row for row in order_rows}
+    rebuilt = rebuild_positions_from_filled_orders(
+        order_rows,
+        symbols=symbols,
+        profit_take_ladder_cfg=budget.profit_take_ladder_cfg,
+    )
+    merge_rebuilt_deploy_into_positions(
+        positions,
+        rebuilt,
+        profit_take_ladder_cfg=budget.profit_take_ladder_cfg,
+    )
+
+    if om.api is not None and not om.shadow:
+        prefix = om.client_prefix
+        symbol_set = {s.upper() for s in symbols}
+        try:
+            open_orders = om.api.fetch_open_orders()
+        except Exception as exc:
+            logger.warning("spot startup: fetch_open_orders failed: %s", exc)
+            open_orders = []
+        for order in open_orders:
+            info = order.get("info") if isinstance(order.get("info"), dict) else {}
+            sym = normalize_spot_symbol(str(order.get("symbol") or ""))
+            if sym not in symbol_set:
+                continue
+            side = str(order.get("side") or "").lower()
+            if side != "buy":
+                continue
+            cid = str(
+                order.get("clientOrderId")
+                or order.get("client_order_id")
+                or info.get("clientOrderId")
+                or info.get("client_order_id")
+                or ""
+            )
+            if prefix and cid and not cid.startswith(prefix):
+                continue
+            ex_id = str(
+                order.get("id") or order.get("orderId") or info.get("orderId") or ""
+            )
+            local_id = (
+                om.find_order_id(
+                    exchange_order_id=ex_id,
+                    client_order_id=cid,
+                )
+                or f"exchange_{ex_id}"
+            )
+            local_row = orders_by_id.get(local_id) or {}
+            qty = float(order.get("amount") or order.get("origQty") or 0.0)
+            px = float(order.get("price") or 0.0)
+            quote_reserved = qty * px if px > 0 else 0.0
+            ts_ms = order.get("timestamp")
+            placed_at = (
+                pd.Timestamp(int(ts_ms), unit="ms", tz="UTC").isoformat()
+                if ts_ms
+                else iso_now()
+            )
+            pos = positions.setdefault(
+                sym,
+                new_position_shell(
+                    sym, profit_take_ladder_cfg=budget.profit_take_ladder_cfg
+                ),
+            )
+            old_pending = pos.get("_pending_buy") if isinstance(pos, dict) else {}
+            old_recorded_qty = 0.0
+            old_recorded_quote = 0.0
+            if isinstance(old_pending, dict) and (
+                str(old_pending.get("exchange_order_id") or "") == ex_id
+                or str(old_pending.get("client_order_id") or "") == cid
+            ):
+                old_recorded_qty = float(
+                    old_pending.get("filled_quantity_recorded", 0.0) or 0.0
+                )
+                old_recorded_quote = float(
+                    old_pending.get("filled_quote_recorded", 0.0) or 0.0
+                )
+            set_pending_buy(
+                pos,
+                local_order_id=local_id,
+                exchange_order_id=ex_id,
+                client_order_id=cid,
+                quantity=qty,
+                price=px if px > 0 else None,
+                quote_reserved=quote_reserved,
+                placed_at=placed_at,
+                filled_quantity_recorded=max(
+                    old_recorded_qty,
+                    float(local_row.get("filled_quantity", 0.0) or 0.0),
+                ),
+                filled_quote_recorded=max(
+                    old_recorded_quote,
+                    float(local_row.get("filled_quote_usdt", 0.0) or 0.0),
+                ),
+            )
+            _status, filled_qty, fill_quote, _avg = parse_ccxt_fill(order)
+            if filled_qty > 0.0 and fill_quote > 0.0:
+                _finalize_buy_fill_from_order(
+                    sym=sym,
+                    local_order_id=local_id,
+                    om=om,
+                    positions=positions,
+                    ledger=ledger,
+                    budget=budget,
+                    day_key=day_key,
+                    payload=order,
+                )
+            pending_after_fill = pos.get("_pending_buy")
+            if not isinstance(pending_after_fill, dict):
+                continue
+            age_h = pending_buy_age_hours(pending_after_fill, now=now)
+            if age_h >= max_age_h and ex_id:
+                _cancel_stale_pending_buy(
+                    sym=sym, pos=pos, om=om, max_age_hours=max_age_h, now=now
+                )
+
+    for sym in symbols:
+        sym_u = sym.upper()
+        pos = positions.get(sym_u)
+        if pos is not None:
+            _cancel_stale_pending_buy(
+                sym=sym_u, pos=pos, om=om, max_age_hours=max_age_h, now=now
+            )
+            _refresh_pending_buy_from_exchange(
+                sym=sym_u,
+                pos=pos,
+                om=om,
+                positions=positions,
+                ledger=ledger,
+                budget=budget,
+                day_key=day_key,
+            )
+
+    if om.api is None:
+        return
+    balances = om.api.get_total_balances()
+    for sym in symbols:
+        sym_u = sym.upper()
+        base = _symbol_base_asset(sym_u)
         qty_live = float(balances.get(base, 0.0) or 0.0)
-        pos = positions.get(sym)
+        if qty_live <= 0.0 and sym_u not in positions:
+            continue
         if qty_live <= 0.0:
-            if pos:
-                del positions[sym]
+            pos = positions.get(sym_u)
+            if pos is not None and not has_blocking_pending_buy(pos):
+                positions.pop(sym_u, None)
             continue
-        px = api.get_last_price(sym)
+        px = om.api.get_last_price(sym_u)
+        pos = positions.setdefault(
+            sym_u,
+            new_position_shell(
+                sym_u, profit_take_ladder_cfg=budget.profit_take_ladder_cfg
+            ),
+        )
+        sync_position_qty_from_balance(pos, qty_live=qty_live, mark_price=px)
+        deploy = float(pos.get("_spot_quote_deployed", 0.0) or 0.0)
+        qty = float(pos.get("_qty_base", 0.0) or 0.0)
+        if qty > 0.0 and deploy <= 0.0:
+            logger.warning(
+                "[%s] exchange qty=%.8f but ledger deploy=0; check spot_orders history",
+                sym_u,
+                qty,
+            )
+
+
+def _spot_process_pending_buys(
+    *,
+    om: SpotOrderManager,
+    positions: Dict[str, Dict[str, Any]],
+    ledger: SpotAccumLedger,
+    budget: SpotBudgetConfig,
+    symbols: List[str],
+    day_key: str,
+) -> None:
+    max_age_h = _pending_buy_max_age_hours()
+    now = datetime.now(timezone.utc)
+    for sym in symbols:
+        sym_u = sym.upper()
+        pos = positions.get(sym_u)
         if pos is None:
-            cost = qty_live * max(px, 0.0)
-            positions[sym] = {
-                "symbol": sym,
-                "_qty_base": qty_live,
-                "_entry_notional_usdt": cost,
-                "_spot_quote_deployed": cost,
-                "structural_exit": "spot_simple_profit_ladder",
-                "profit_take_ladder": {},
-            }
             continue
-        old_qty = float(pos.get("_qty_base", 0.0) or 0.0)
-        old_cost = float(pos.get("_entry_notional_usdt", 0.0) or 0.0)
-        if old_qty > 0.0:
-            pos["_entry_notional_usdt"] = old_cost * (qty_live / old_qty)
-            pos["_spot_quote_deployed"] = float(
-                pos.get("_spot_quote_deployed", old_cost) or old_cost
-            ) * (qty_live / old_qty)
-        else:
-            pos["_entry_notional_usdt"] = qty_live * max(px, 0.0)
-            pos["_spot_quote_deployed"] = pos["_entry_notional_usdt"]
-        pos["_qty_base"] = qty_live
+        if has_blocking_pending_buy(pos):
+            _refresh_pending_buy_from_exchange(
+                sym=sym_u,
+                pos=pos,
+                om=om,
+                positions=positions,
+                ledger=ledger,
+                budget=budget,
+                day_key=day_key,
+            )
+        if _cancel_stale_pending_buy(
+            sym=sym_u, pos=pos, om=om, max_age_hours=max_age_h, now=now
+        ):
+            continue
 
 
 def _build_spot_order_manager() -> SpotOrderManager:
@@ -514,7 +872,13 @@ def main() -> int:
         os.getenv("MLBOT_SPOT_LEDGER_DB_PATH", "data/spot_accum_ledger.db")
     )
     positions = ledger.load_positions()
-    _sync_positions_with_exchange(api=om.api, symbols=symbols, positions=positions)
+    _spot_startup_recovery(
+        om=om,
+        ledger=ledger,
+        positions=positions,
+        budget=budget,
+        symbols=symbols,
+    )
     ledger.save_positions(positions)
 
     logger.info(
@@ -536,6 +900,15 @@ def main() -> int:
         try:
             METRICS.update_system_health()
             events = provider.poll()
+            loop_day_key = _utc_day_key(datetime.now(timezone.utc))
+            _spot_process_pending_buys(
+                om=om,
+                positions=positions,
+                ledger=ledger,
+                budget=budget,
+                symbols=symbols,
+                day_key=loop_day_key,
+            )
             for event in events:
                 sym = event.symbol.upper()
                 features = dict(event.features or {})
@@ -599,17 +972,27 @@ def main() -> int:
                             if sell_qty < float(limits.get("min_amount", 0.0) or 0.0):
                                 sell_qty = 0.0
                         if sell_qty > 0.0:
-                            om.place_order(
+                            sell_result = om.place_order(
                                 symbol=sym,
                                 side="sell",
                                 order_type="market",
                                 quantity=sell_qty,
                             )
-                            apply_partial_sell_to_position(
+                            payload = sell_result.payload or {}
+                            st, filled_qty, _fill_quote, _avg = parse_ccxt_fill(payload)
+                            actual_sell = apply_sell_fill_to_position(
                                 pos,
-                                sell_qty=sell_qty,
+                                fill_qty=float(
+                                    filled_qty if filled_qty > 0 else sell_qty
+                                ),
                                 exit_price=close_px,
                             )
+                            if actual_sell <= 0.0:
+                                apply_partial_sell_to_position(
+                                    pos,
+                                    sell_qty=sell_qty,
+                                    exit_price=close_px,
+                                )
                             pos["_profit_ladder_last_sell_day"] = day_key
                             logger.info(
                                 "[%s] partial sell qty=%.8f px=%.6f reason=%s",
@@ -663,12 +1046,20 @@ def main() -> int:
                         float(intent.size_multiplier or 1.0),
                     )
 
-                if ledger.buy_entries_today(day_key) >= budget.max_new_entries_per_day:
+                entries_today = ledger.buy_entries_today(day_key)
+                pending_entries_today = pending_buy_count_for_day(
+                    positions, day_key=day_key
+                )
+                if (
+                    entries_today + pending_entries_today
+                    >= budget.max_new_entries_per_day
+                ):
                     if chain_debug:
                         logger.info(
-                            "[%s] buy-skip day limit reached: entries_today=%d max=%d",
+                            "[%s] buy-skip day limit reached: entries_today=%d pending_today=%d max=%d",
                             sym,
-                            ledger.buy_entries_today(day_key),
+                            entries_today,
+                            pending_entries_today,
                             budget.max_new_entries_per_day,
                         )
                     continue
@@ -693,6 +1084,12 @@ def main() -> int:
                             )
                         continue
 
+                cur_pos = positions.get(sym)
+                if has_blocking_pending_buy(cur_pos):
+                    if chain_debug:
+                        logger.info("[%s] buy-skip open pending limit buy", sym)
+                    continue
+
                 deploy_today = ledger.deploy_today_usdt(day_key)
                 planned = _planned_buy_quote_usdt(
                     symbol=sym,
@@ -700,6 +1097,7 @@ def main() -> int:
                     budget=budget,
                     positions=positions,
                     deploy_today=deploy_today,
+                    day_key=day_key,
                 )
                 if planned <= 0.0 or close_px <= 0.0:
                     if chain_debug:
@@ -746,47 +1144,79 @@ def main() -> int:
                         logger.info("[%s] buy-skip qty<=0 after precision", sym)
                     continue
 
-                om.place_order(
+                buy_result = om.place_order(
                     symbol=sym,
                     side="buy",
                     order_type=order_type,
                     quantity=qty,
                     price=(entry_px if order_type == "limit" else None),
                 )
-                pos = positions.get(sym) or {
-                    "symbol": sym,
-                    "_qty_base": 0.0,
-                    "_entry_notional_usdt": 0.0,
-                    "_spot_quote_deployed": 0.0,
-                    "structural_exit": "spot_simple_profit_ladder",
-                    "profit_take_ladder": dict(budget.profit_take_ladder_cfg),
-                }
-                pos["_qty_base"] = float(pos.get("_qty_base", 0.0) or 0.0) + float(qty)
-                pos["_entry_notional_usdt"] = float(
-                    pos.get("_entry_notional_usdt", 0.0) or 0.0
-                ) + float(planned)
-                pos["_spot_quote_deployed"] = float(
-                    pos.get("_spot_quote_deployed", 0.0) or 0.0
-                ) + float(planned)
-                pos["_last_buy_ts"] = ts.isoformat()
+                pos = positions.get(sym) or new_position_shell(
+                    sym, profit_take_ladder_cfg=budget.profit_take_ladder_cfg
+                )
                 positions[sym] = pos
-                ledger.add_buy(day_key, sym, planned)
+                payload = buy_result.payload or {}
+                st, filled_qty, fill_quote, _avg = parse_ccxt_fill(payload)
+                if order_type == "market" or st in {"closed", "filled"}:
+                    if filled_qty > 0.0 and fill_quote > 0.0:
+                        _apply_buy_fill(
+                            sym=sym,
+                            positions=positions,
+                            ledger=ledger,
+                            budget=budget,
+                            day_key=day_key,
+                            fill_qty=filled_qty,
+                            fill_quote=fill_quote,
+                            filled_at=ts.isoformat(),
+                        )
+                    else:
+                        logger.warning(
+                            "[%s] market buy submitted but no fill in response status=%s",
+                            sym,
+                            st,
+                        )
+                else:
+                    set_pending_buy(
+                        pos,
+                        local_order_id=buy_result.order_id,
+                        exchange_order_id=buy_result.exchange_order_id,
+                        client_order_id=buy_result.client_order_id,
+                        quantity=qty,
+                        price=entry_px,
+                        quote_reserved=planned,
+                        placed_at=ts.isoformat(),
+                    )
+                    om.update_order_record(
+                        buy_result.order_id,
+                        status=st or "open",
+                        raw_json=(
+                            json.dumps(
+                                payload, ensure_ascii=True, separators=(",", ":")
+                            )
+                            if payload
+                            else None
+                        ),
+                    )
                 logger.info(
-                    "[%s] buy intent=%s qty=%.8f px=%.6f quote=%.2f type=%s",
+                    "[%s] buy intent=%s qty=%.8f px=%.6f quote=%.2f type=%s status=%s",
                     sym,
                     intent.action,
                     qty,
                     entry_px,
                     planned,
                     order_type,
+                    st or buy_result.status,
                 )
                 if chain_debug:
                     logger.info(
-                        "[%s] ledger after buy qty=%.8f deployed=%.2f cost=%.2f day_deploy=%.2f",
+                        "[%s] ledger after buy qty=%.8f deployed=%.2f pending_reserved=%.2f day_deploy=%.2f",
                         sym,
                         float(pos.get("_qty_base", 0.0) or 0.0),
                         float(pos.get("_spot_quote_deployed", 0.0) or 0.0),
-                        float(pos.get("_entry_notional_usdt", 0.0) or 0.0),
+                        float(
+                            (pos.get("_pending_buy") or {}).get("quote_reserved", 0.0)
+                            or 0.0
+                        ),
                         ledger.deploy_today_usdt(day_key),
                     )
                 METRICS.orders_total.labels(strategy=strategy_name).inc()
