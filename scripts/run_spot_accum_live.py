@@ -856,11 +856,23 @@ def main() -> int:
         strategy_name=strategy_name,
         strategy=strategy,
     )
+    from src.live_data_stream.feature_bus import (
+        list_feature_bus_timeframe_dirs,
+        resolve_disk_primary_timeframe,
+    )
+
+    bus_tf, bus_legacy = resolve_disk_primary_timeframe(feature_bus_root, tf)
+    if bus_legacy:
+        logger.warning(
+            "spot feature bus: reading legacy features/primary/ (strategy tf=%s)",
+            tf,
+        )
+    bus_dirs = list_feature_bus_timeframe_dirs(feature_bus_root)
     provider = ClassicFeatureBusProvider(
         feature_bus_root=feature_bus_root,
         symbols=symbols,
-        primary_timeframe=tf,
-        timeframes=[tf],
+        primary_timeframe=bus_tf,
+        timeframes=[bus_tf] if bus_tf == tf else [bus_tf, tf],
         max_staleness_seconds=max_stale,
     )
     om = _build_spot_order_manager()
@@ -888,9 +900,12 @@ def main() -> int:
     ledger.save_positions(positions)
 
     logger.info(
-        "spot runner started: strategy=%s tf=%s symbols=%s shadow=%s bus=%s metrics_port=%s",
+        "spot runner started: strategy=%s meta_tf=%s bus_tf=%s bus_dirs=%s symbols=%s "
+        "shadow=%s bus=%s metrics_port=%s",
         strategy_name,
         tf,
+        bus_tf,
+        bus_dirs,
         symbols,
         om.shadow,
         feature_bus_root,
@@ -901,11 +916,31 @@ def main() -> int:
             "spot chain debug enabled: prints signal->order->ledger->sell checks"
         )
     last_account_sync = 0.0
+    last_bus_status_log = 0.0
+    bus_status_interval = max(
+        60.0, float(os.getenv("MLBOT_SPOT_BUS_STATUS_LOG_SECONDS", "600"))
+    )
 
     while True:
         try:
             METRICS.update_system_health()
             events = provider.poll()
+            if not events:
+                now_mono = time.monotonic()
+                if now_mono - last_bus_status_log >= bus_status_interval:
+                    last_bus_status_log = now_mono
+                    ages = {}
+                    for sym in symbols:
+                        age = provider.reader.latest_snapshot_age_seconds(
+                            symbol=sym, timeframe=bus_tf
+                        )
+                        ages[sym] = None if age is None else round(float(age), 1)
+                    logger.info(
+                        "spot bus idle: no new %s rows (poll=%.0fs); snapshot_age_s=%s",
+                        bus_tf,
+                        poll_seconds,
+                        ages,
+                    )
             loop_day_key = _utc_day_key(datetime.now(timezone.utc))
             _spot_process_pending_buys(
                 om=om,

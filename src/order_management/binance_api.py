@@ -577,6 +577,44 @@ class BinanceAPI:
             )
         return data
 
+    def _fapi_signed_delete(self, path: str, params: Dict[str, Any]) -> Any:
+        """签名 DELETE ``/fapi/v1/...``."""
+        p = dict(params)
+        if "timestamp" not in p:
+            p["timestamp"] = int(time.time() * 1000) + getattr(
+                self, "time_offset", 0
+            )
+        query = urlencode(sorted((k, v) for k, v in p.items() if v is not None))
+        sig = hmac.new(
+            self.api_secret.encode(),
+            query.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        url = f"{self._get_futures_base_url()}{path}?{query}&signature={sig}"
+        resp = _call_binance_read(
+            f"DELETE {path}",
+            lambda: requests.delete(
+                url,
+                headers={"X-MBX-APIKEY": self.api_key},
+                timeout=30,
+                proxies=self._get_requests_proxies(),
+            ),
+        )
+        resp.raise_for_status()
+        text = (resp.text or "").strip()
+        if not text:
+            return {}
+        data = resp.json()
+        if isinstance(data, dict) and "code" in data and "msg" in data:
+            try:
+                if int(data.get("code")) < 0:
+                    raise RuntimeError(
+                        f"Binance futures API error {data.get('code')}: {data.get('msg')}"
+                    )
+            except (TypeError, ValueError):
+                pass
+        return data
+
     def set_dual_side_position(self, enabled: bool) -> Dict[str, Any]:
         """切换 USD-M 持仓模式：``True``=Hedge（双向），``False``=One-way。
 
@@ -635,6 +673,71 @@ class BinanceAPI:
             for x in raw
             if isinstance(x, dict)
         ]
+
+    def _open_algo_order_from_binance_rest(self, o: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize ``/fapi/v1/openAlgoOrders`` row for SL cleanup (-4130)."""
+        algo_id = o.get("algoId") or o.get("orderId")
+        return {
+            "order_id": str(algo_id or ""),
+            "client_order_id": o.get("clientAlgoId") or o.get("clientOrderId"),
+            "symbol": o.get("symbol"),
+            "side": (o.get("side") or "").lower(),
+            "type": (o.get("orderType") or o.get("type") or "algo").lower(),
+            "status": (o.get("algoStatus") or o.get("status") or "open").lower(),
+            "quantity": float(o.get("quantity") or o.get("origQty") or 0),
+            "price": None,
+            "filled": 0.0,
+            "remaining": float(o.get("quantity") or o.get("origQty") or 0),
+            "created_at": self._normalize_timestamp(
+                o.get("createTime") or o.get("updateTime")
+            ),
+            "info": o,
+            "_is_algo_order": True,
+        }
+
+    def _get_open_algo_orders_fapi_rest(
+        self, symbol: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {}
+        mid = self._futures_market_id(symbol)
+        if mid:
+            params["symbol"] = mid
+        try:
+            raw = self._fapi_signed_get("/fapi/v1/openAlgoOrders", params)
+        except Exception as exc:
+            logger.debug("openAlgoOrders unavailable: %s", exc)
+            return []
+        if not isinstance(raw, list):
+            return []
+        return [
+            self._open_algo_order_from_binance_rest(x)
+            for x in raw
+            if isinstance(x, dict)
+        ]
+
+    def get_open_orders_for_sl_cleanup(
+        self, symbol: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Open orders via fapi REST + algo channel (closePosition lives in either)."""
+        orders = self._get_open_orders_fapi_rest(symbol)
+        seen = {str(o.get("order_id") or "") for o in orders if o.get("order_id")}
+        for row in self._get_open_algo_orders_fapi_rest(symbol):
+            oid = str(row.get("order_id") or "")
+            if oid and oid not in seen:
+                orders.append(row)
+                seen.add(oid)
+        return orders
+
+    def cancel_algo_order(self, algo_id: str, symbol: str) -> bool:
+        """Cancel one open algo/conditional order by ``algoId``."""
+        mid = self._futures_market_id(symbol)
+        if not mid or not str(algo_id or "").strip():
+            return False
+        self._fapi_signed_delete(
+            "/fapi/v1/algoOrder",
+            {"symbol": mid, "algoId": str(algo_id).strip()},
+        )
+        return True
 
     def _check_time_sync(self) -> None:
         """

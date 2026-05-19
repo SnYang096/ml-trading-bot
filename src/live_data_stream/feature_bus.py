@@ -11,7 +11,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
@@ -19,6 +19,39 @@ import pandas as pd
 def normalize_timeframe(timeframe: str) -> str:
     """Return a filesystem-safe timeframe key."""
     return str(timeframe or "").strip().replace("/", "_").replace(" ", "")
+
+
+def list_feature_bus_timeframe_dirs(feature_bus_root: str | Path) -> List[str]:
+    """Return timeframe keys under ``features/`` that have at least one parquet file."""
+    feat_root = Path(feature_bus_root) / "features"
+    if not feat_root.is_dir():
+        return []
+    out: List[str] = []
+    for child in sorted(feat_root.iterdir()):
+        if child.is_dir() and any(child.glob("*.parquet")):
+            out.append(child.name)
+    return out
+
+
+def resolve_disk_primary_timeframe(
+    feature_bus_root: str | Path,
+    strategy_timeframe: str,
+) -> Tuple[str, bool]:
+    """Pick reader primary key: ``120T``/``2h`` from meta, or legacy ``primary`` dir.
+
+    Returns:
+        (disk_timeframe_key, used_legacy_primary)
+    """
+    feat_root = Path(feature_bus_root) / "features"
+    meta_tf = str(strategy_timeframe or "").strip() or "120T"
+    mp_n = normalize_timeframe(meta_tf)
+    preferred = feat_root / mp_n
+    legacy_primary = feat_root / "primary"
+    if preferred.is_dir() and any(preferred.glob("*.parquet")):
+        return meta_tf, False
+    if legacy_primary.is_dir() and any(legacy_primary.glob("*.parquet")):
+        return "primary", True
+    return meta_tf, False
 
 
 def _utc_timestamp(value: Any) -> pd.Timestamp:

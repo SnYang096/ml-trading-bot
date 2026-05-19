@@ -201,3 +201,54 @@ def test_multi_leg_storage_backfill_candidates(tmp_path) -> None:
     rows = storage.get_recent_orders_for_backfill(lookback_hours=24, limit=10)
     ids = {row["local_order_id"] for row in rows}
     assert ids == {"open_1", "filled_missing"}
+
+
+def test_apply_execution_report_skips_unchanged_row(tmp_path) -> None:
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    storage.upsert_order(
+        {
+            "local_order_id": "open_1",
+            "run_id": "run",
+            "strategy": "chop_grid",
+            "symbol": "ETHUSDT",
+            "side": "BUY",
+            "order_type": "limit",
+            "quantity": 0.1,
+            "exchange_order_id": "111",
+            "client_order_id": "cg_111",
+            "status": "open",
+        }
+    )
+    assert (
+        storage.apply_execution_report(
+            {
+                "order_id": "111",
+                "client_order_id": "cg_111",
+                "status": "open",
+                "filled_qty": 0.0,
+            }
+        )
+        == 0
+    )
+    assert (
+        storage.apply_execution_report(
+            {
+                "order_id": "111",
+                "client_order_id": "cg_111",
+                "status": "partially_filled",
+                "filled_qty": 0.05,
+            }
+        )
+        == 1
+    )
+    assert (
+        storage.apply_execution_report(
+            {
+                "order_id": "111",
+                "client_order_id": "cg_111",
+                "status": "partially_filled",
+                "filled_qty": 0.05,
+            }
+        )
+        == 0
+    )

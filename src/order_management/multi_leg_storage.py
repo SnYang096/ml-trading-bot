@@ -289,6 +289,36 @@ class MultiLegStorage:
             where = " OR ".join(clauses)
             cur = conn.execute(
                 f"""
+                SELECT status, filled_quantity, average_price, error_message
+                FROM multi_leg_orders
+                WHERE {where}
+                """,
+                tuple(params),
+            )
+            existing = cur.fetchone()
+            if existing is None:
+                changed = 0
+            else:
+                old_status = str(existing["status"] or "").strip().lower()
+                old_filled = _optional_float(existing["filled_quantity"])
+                old_avg = _optional_float(existing["average_price"])
+                old_err = _none_if_blank(existing["error_message"])
+                same_status = old_status == status
+                same_filled = filled_qty is None or (
+                    old_filled is not None
+                    and filled_qty is not None
+                    and abs(old_filled - filled_qty) < 1e-12
+                )
+                same_avg = avg_price is None or (
+                    old_avg is not None
+                    and avg_price is not None
+                    and abs(old_avg - avg_price) < 1e-12
+                )
+                same_err = error_message is None or old_err == error_message
+                if same_status and same_filled and same_avg and same_err:
+                    return 0
+            cur = conn.execute(
+                f"""
                 UPDATE multi_leg_orders
                 SET status = ?,
                     filled_quantity = COALESCE(?, filled_quantity),

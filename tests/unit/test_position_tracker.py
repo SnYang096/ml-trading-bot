@@ -32,6 +32,9 @@ def _make_om():
     om.place_order.return_value = MagicMock(order_id="SL_NEW")
     om.binance_api = MagicMock()
     om.binance_api.get_open_orders.return_value = []
+    om.binance_api.get_open_orders_for_sl_cleanup = (
+        lambda symbol=None: om.binance_api.get_open_orders(symbol)
+    )
     return om
 
 

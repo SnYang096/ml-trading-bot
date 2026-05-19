@@ -266,13 +266,32 @@ class StatsCollector:
             f"(gr={d.get('gate_rejected', 0)})"
             for s, d in self._by_strategy.items()
         )
-        logger.info(
+        gate_rejected = sum(
+            d.get("gate_rejected", 0) for d in self._by_strategy.values()
+        )
+        has_activity = any(
+            [
+                self._bars_processed,
+                self._direction_assigned,
+                self._gate_passed,
+                gate_rejected,
+                self._entry_filter_passed,
+                self._evidence_passed,
+                self._pcm_selected,
+                self._orders_placed,
+            ]
+        )
+        log_mode = os.getenv("MLBOT_STATS_FLUSH_LOG", "quiet").strip().lower()
+        should_log = log_mode in {"verbose", "always", "1", "true", "on"}
+        if not should_log and log_mode not in {"off", "0", "false", "never"}:
+            should_log = has_activity
+        log_fn = logger.info if should_log else logger.debug
+        log_fn(
             "📊 [%s] 15min Stats: dir=%d gate=%d/%d ef=%d ev=%d pcm=%d order=%d | %s",
             symbol or "ALL",
             self._direction_assigned,
             self._gate_passed,
-            self._gate_passed
-            + sum(d.get("gate_rejected", 0) for d in self._by_strategy.values()),
+            self._gate_passed + gate_rejected,
             self._entry_filter_passed,
             self._evidence_passed,
             self._pcm_selected,

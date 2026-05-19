@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import json
+import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -30,6 +32,8 @@ class PositionTracker:
         symbol: 当前交易对（如 "BTCUSDT"）
         default_bar_minutes: 信号时钟分钟数（默认 240 = 4h）
     """
+
+    _exchange_sl_fail_last_log: Dict[str, float] = {}
 
     def __init__(
         self,
@@ -424,6 +428,15 @@ class PositionTracker:
         candidates.sort(key=lambda x: x[0])
         return candidates[0][1]
 
+    def _fetch_open_orders_for_sl_cleanup(self) -> List[Dict[str, Any]]:
+        api = getattr(self.order_manager, "binance_api", None)
+        if api is None:
+            return []
+        fetch = getattr(api, "get_open_orders_for_sl_cleanup", None)
+        if callable(fetch):
+            return list(fetch(self.symbol) or [])
+        return list(api.get_open_orders(self.symbol) or [])
+
     def _cancel_open_close_position_conditionals(
         self, *, position_side: str
     ) -> int:
@@ -434,7 +447,7 @@ class PositionTracker:
         close_side = "sell" if position_side == "LONG" else "buy"
         cancelled = 0
         try:
-            open_orders = api.get_open_orders(self.symbol) or []
+            open_orders = self._fetch_open_orders_for_sl_cleanup()
         except Exception as exc:
             logger.warning(
                 "[%s] fetch open orders for SL cleanup failed: %s",
@@ -458,7 +471,10 @@ class PositionTracker:
             if not ex_id:
                 continue
             try:
-                api.cancel_order(ex_id, self.symbol)
+                if order.get("_is_algo_order") and hasattr(api, "cancel_algo_order"):
+                    api.cancel_algo_order(ex_id, self.symbol)
+                else:
+                    api.cancel_order(ex_id, self.symbol)
                 cancelled += 1
             except Exception as exc:
                 logger.warning(
@@ -475,6 +491,47 @@ class PositionTracker:
                 position_side,
             )
         return cancelled
+
+    def _log_exchange_sl_failure(
+        self,
+        new_sl: float,
+        exc: Optional[Exception],
+        *,
+        log_key: str,
+    ) -> None:
+        """Rate-limit repeated -4130 / place SL errors (enforce_all runs often)."""
+        try:
+            interval = float(
+                os.getenv("MLBOT_EXCHANGE_SL_FAIL_LOG_SECONDS", "300")
+            )
+        except ValueError:
+            interval = 300.0
+        interval = max(30.0, interval)
+        now = time.monotonic()
+        last = PositionTracker._exchange_sl_fail_last_log.get(log_key, 0.0)
+        is_4130 = exc is not None and "-4130" in str(exc)
+        if now - last < interval:
+            logger.debug(
+                "[%s] exchange SL still failing (%.4f) — suppressed repeat (%s)",
+                self.symbol,
+                new_sl,
+                type(exc).__name__ if exc else "unknown",
+            )
+            return
+        PositionTracker._exchange_sl_fail_last_log[log_key] = now
+        if is_4130:
+            logger.warning(
+                "[%s] place 新 SL 挂单失败 (%.4f) — closePosition slot busy; "
+                "软件 SL 仍生效",
+                self.symbol,
+                new_sl,
+            )
+        else:
+            logger.error(
+                "[%s] place 新 SL 挂单失败 (%.4f)，软件 SL 仍生效",
+                self.symbol,
+                new_sl,
+            )
 
     def _maybe_sync_exchange_sl(self, pid: str, pos: Dict[str, Any]) -> None:
         """Place or refresh exchange STOP_MARKET when software stop_loss_price is set."""
@@ -529,6 +586,7 @@ class PositionTracker:
 
         new_order = None
         last_exc: Optional[Exception] = None
+        _4130_log_key = f"{self.symbol}:{position_side}"
         for attempt in range(2):
             try:
                 new_order = self.order_manager.place_order(
@@ -554,24 +612,17 @@ class PositionTracker:
                     )
                     if n_cleared == 0:
                         logger.warning(
-                            "[%s] -4130 retry: no closePosition conditional found in openOrders (%s)",
+                            "[%s] -4130 retry: no closePosition conditional in "
+                            "openOrders/openAlgoOrders (%s); cancel orphans on exchange",
                             self.symbol,
                             position_side,
                         )
                     continue
-                logger.error(
-                    "[%s] place 新 SL 挂单失败 (%.4f)，软件 SL 仍生效",
-                    self.symbol,
-                    new_sl,
-                )
+                self._log_exchange_sl_failure(new_sl, last_exc, log_key=_4130_log_key)
                 return
         if new_order is None:
             if last_exc is not None:
-                logger.error(
-                    "[%s] place 新 SL 挂单失败 (%.4f)，软件 SL 仍生效",
-                    self.symbol,
-                    new_sl,
-                )
+                self._log_exchange_sl_failure(new_sl, last_exc, log_key=_4130_log_key)
             return
         if old_sl is None:
             logger.info(

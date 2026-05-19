@@ -791,24 +791,22 @@ def _resolve_feature_bus_timeframes_for_disk(
 ) -> Tuple[str, List[str]]:
     """Pick ``features/<tf>/`` keys present on disk (legacy ``primary`` vs meta tf)."""
 
-    from src.live_data_stream.feature_bus import normalize_timeframe
+    from src.live_data_stream.feature_bus import (
+        normalize_timeframe,
+        resolve_disk_primary_timeframe,
+    )
 
     feat_root = Path(feature_bus_root) / "features"
-    mp_n = normalize_timeframe(manager_primary)
-    preferred = feat_root / mp_n
-    legacy_primary = feat_root / "primary"
-    primary_tf: str
-    if preferred.is_dir() and any(preferred.glob("*.parquet")):
-        primary_tf = manager_primary
-    elif legacy_primary.is_dir() and any(legacy_primary.glob("*.parquet")):
-        primary_tf = "primary"
+    primary_tf, used_legacy = resolve_disk_primary_timeframe(
+        feature_bus_root, manager_primary
+    )
+    if used_legacy:
         logger.warning(
             "🚌 Reading Feature Bus primary rows from legacy features/primary/ "
             "(strategy metadata timeframe is %s). Align publisher timeframe keys.",
             manager_primary,
         )
-    else:
-        primary_tf = manager_primary
+    mp_n = normalize_timeframe(manager_primary)
 
     requested = _manager_feature_timeframes(manager, pcm, manager_primary)
     out: List[str] = []
