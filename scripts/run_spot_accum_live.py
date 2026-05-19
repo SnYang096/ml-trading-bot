@@ -1026,7 +1026,16 @@ def main() -> int:
                 )
                 if not intents:
                     if chain_debug:
-                        logger.info("[%s] signal-check no intent", sym)
+                        funnel = dict(getattr(strategy, "_last_funnel", None) or {})
+                        wk = features.get("weekly_ema_200_position")
+                        logger.info(
+                            "[%s] signal-check no intent weekly_ema_200_position=%s "
+                            "simple_deep_bear=%s funnel=%s",
+                            sym,
+                            wk,
+                            funnel.get("simple_deep_bear"),
+                            funnel,
+                        )
                     continue
                 intent = intents[0]
                 if str(intent.action or "").upper() != "LONG":
