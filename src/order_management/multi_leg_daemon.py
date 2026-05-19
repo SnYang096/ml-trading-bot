@@ -11,6 +11,10 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol
 
 from src.order_management.multi_leg_orchestrator import MultiLegLiveOrchestrator
 from src.order_management.multi_leg_risk_governor import RiskRejection
+from src.time_series_model.live.decision_chain_debug import (
+    chain_debug_enabled,
+    log_multileg_bar_no_actions,
+)
 from src.time_series_model.live.metrics_exporter import METRICS
 
 logger = logging.getLogger(__name__)
@@ -184,6 +188,14 @@ class MultiLegLiveDaemon:
                                 exc_info=True,
                             )
                 action_count += len(actions)
+                if not actions and chain_debug_enabled("multi_leg"):
+                    log_multileg_bar_no_actions(
+                        strategy=str(rt.name),
+                        symbol=str(bar.symbol),
+                        timestamp=str(bar.timestamp),
+                        engine=rt.engine,
+                        features=dict(bar.features or {}),
+                    )
                 should_reconcile = bool(actions) or bool(reconcile_due_symbols.get(sym))
                 exchange_orders = None
                 exchange_positions = None

@@ -45,6 +45,10 @@ from src.live_data_stream.system_mode import SystemMode
 from src.features.cross_symbol.macro_tp_vwap_anchor import (
     apply_live_macro_tp_vwap_overlay,
 )
+from src.time_series_model.live.decision_chain_debug import (
+    chain_debug_enabled,
+    log_trend_no_intent,
+)
 
 
 class OrderFlowListener:
@@ -1048,7 +1052,12 @@ class OrderFlowListener:
                     )
 
         if not intents:
-            logger.info("[%s] 无交易信号", self.symbol)
+            if chain_debug_enabled("trend"):
+                log_trend_no_intent(
+                    self.symbol, self.decision_handler, all_features
+                )
+            else:
+                logger.info("[%s] 无交易信号", self.symbol)
         elif trading_enabled:
             executor = self._get_trade_executor()
             for intent in intents:

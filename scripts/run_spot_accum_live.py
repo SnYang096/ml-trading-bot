@@ -46,6 +46,7 @@ from src.order_management.spot_live_recovery import (
 )
 from src.order_management.spot_order_manager import SpotOrderManager
 from src.time_series_model.live.metrics_exporter import METRICS, start_metrics_server
+from src.time_series_model.live.decision_chain_debug import chain_debug_enabled
 from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
 from src.time_series_model.live.spot_accum_simple import (
     apply_partial_sell_to_position,
@@ -836,7 +837,9 @@ def main() -> int:
     feature_bus_root = os.getenv("MLBOT_FEATURE_BUS_ROOT", "live/shared_feature_bus")
     poll_seconds = _env_float("MLBOT_SPOT_FEATURE_BUS_POLL_SECONDS", 5.0)
     max_stale = _env_float("MLBOT_SPOT_FEATURE_BUS_MAX_STALENESS_SECONDS", 1800.0)
-    chain_debug = _env_bool("MLBOT_SPOT_CHAIN_DEBUG", True)
+    chain_debug = chain_debug_enabled("spot") or _env_bool(
+        "MLBOT_SPOT_CHAIN_DEBUG", True
+    )
 
     strategy = GenericLiveStrategy(
         strategy_name=strategy_name,

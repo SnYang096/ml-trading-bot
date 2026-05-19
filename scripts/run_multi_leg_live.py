@@ -45,6 +45,8 @@ lose recent history as long as ``--state-dir`` points at a **mounted volume**
   ``MLBOT_AUDIT_ROTATION``) or ``day`` / ``midnight`` for once-per-day rollover.
 - ``MLBOT_HEDGE_BAR_TICK_METRICS`` — if truthy, record ``bar_tick`` on
   ``mlbot_strategy_event_total`` once per processed bar (default: **off**, less noise).
+- ``MLBOT_MULTI_LEG_CHAIN_DEBUG`` or ``MLBOT_CHAIN_DEBUG`` — on each **new closed bar**
+  with zero engine actions, log inventory/chop/trend snapshot (one line per bar).
 - ``MLBOT_MULTI_LEG_RECONCILE_WARN_COOLDOWN_SECONDS`` — minimum seconds between
   WARNING logs for repeated ``reconcile not ok`` (default ``300``; set ``0`` to log
   every time at WARNING).
