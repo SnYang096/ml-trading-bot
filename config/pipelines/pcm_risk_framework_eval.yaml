@@ -1,0 +1,115 @@
+# PCM 风险框架评估 — 固定 prod 配置，单次联合事件回测（不做月度 rolling 标定）
+#
+# 用途：验证 constitution trend_pool_guard / 递减加仓 / 相关性过滤 下的
+# BPC+ME+TPC+SRB 联合 PCM 表现（与 rolling_sim 的 26×标定链分离）。
+#
+# 运行:
+#   mlbot pipeline run --all \
+#     --config config/pipelines/pcm_risk_framework_eval.yaml \
+#     --stage pcm_joint
+#
+# 可选缩短窗口:
+#   ... --pcm-window-start 2024-03-01 --pcm-window-end 2024-12-31
+
+dates:
+  start_date: "2022-01-01"
+  end_date: "2026-05-01"
+  holdout_months: 26
+  calibration_months: 6
+
+strategy_scope:
+  direction: all
+
+global_toggles:
+  locked_threshold_tuning_enabled: false
+
+threshold_calibration:
+  enable_model_training: false
+  prefilter:
+    optimize: false
+  gate:
+    optimize: false
+  entry_filter:
+    optimize: false
+  execution_opt:
+    enabled: false
+  pcm_eval:
+    enabled: true
+  direction_tuning:
+    enabled: false
+
+rolling:
+  mode: turbo_fixed_features
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: true
+
+rolling_calibration:
+  step_months: 1
+  threshold_calibration:
+    enabled: false
+  symbol_threshold_calibration:
+    enabled: false
+  prefilter:
+    optimize: false
+  gate:
+    optimize: false
+  entry_filter:
+    optimize: false
+  execution_opt:
+    enabled: false
+  pcm_eval:
+    enabled: true
+  direction_tuning:
+    enabled: false
+
+event_backtest:
+  enabled: true
+  promote: false
+  map_extra_months: 4
+
+download:
+  enabled: false
+
+data_path: data/parquet_data
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+strategies:
+  bpc:
+    config: config/strategies/bpc
+    timeframe: 120T
+    prepare_features: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+  me:
+    config: config/strategies/me
+    timeframe: 120T
+    prepare_features: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+  tpc:
+    config: config/strategies/tpc
+    timeframe: 120T
+    prepare_features: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+  srb:
+    config: config/strategies/srb
+    timeframe: 120T
+    prepare_features: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+
+shap_feature_selection:
+  enabled: false
+
+output:
+  history_dir: results/120T/risk_framework_eval
