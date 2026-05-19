@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import logging
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.order_management.models import OrderSide, OrderType
@@ -34,11 +36,13 @@ class PositionTracker:
         order_manager: Any,
         symbol: str,
         default_bar_minutes: int = 240,
+        state_path: Optional[str | Path] = None,
     ) -> None:
         self.order_manager = order_manager
         self.symbol = symbol
         self.default_bar_minutes = default_bar_minutes
         self._positions: Dict[str, Dict[str, Any]] = {}
+        self.state_path = Path(state_path) if state_path else None
 
     # ------------------------------------------------------------------
     # 公共接口
@@ -52,6 +56,7 @@ class PositionTracker:
             pos: build_position_dict() 产出的持仓字典（已含 qty）
         """
         self._positions[position_id] = pos
+        self._persist_state()
         logger.info(
             "[%s] 记录持仓: %s side=%s entry=%.4f sl=%.4f",
             self.symbol,
@@ -66,6 +71,47 @@ class PositionTracker:
 
     def all_positions(self) -> Dict[str, Dict[str, Any]]:
         return dict(self._positions)
+
+    def restore_from_disk(self, *, live_symbols: Optional[set[str]] = None) -> int:
+        """Restore persisted position dictionaries after process restart.
+
+        The tracker stores the full ``build_position_dict`` output, including
+        trailing/breakeven/structural-exit state. Restore is intentionally
+        conservative: if exchange-backed ``live_symbols`` is supplied and this
+        symbol is absent, persisted positions are cleared instead of adopted.
+        """
+        if self.state_path is None or not self.state_path.exists():
+            return 0
+        sym = str(self.symbol or "").upper().strip()
+        if live_symbols is not None and sym not in live_symbols:
+            self._positions = {}
+            self._persist_state()
+            logger.info("[%s] persisted positions skipped: no exchange position", sym)
+            return 0
+        try:
+            raw = json.loads(self.state_path.read_text(encoding="utf-8")) or {}
+        except Exception as exc:
+            logger.warning("[%s] failed to load persisted positions: %s", sym, exc)
+            return 0
+        if str(raw.get("symbol") or "").upper().strip() not in {"", sym}:
+            logger.warning(
+                "[%s] persisted positions ignored: symbol mismatch %s",
+                sym,
+                raw.get("symbol"),
+            )
+            return 0
+        positions_raw = raw.get("positions") or {}
+        if not isinstance(positions_raw, dict):
+            return 0
+        restored: Dict[str, Dict[str, Any]] = {}
+        for pid, pos in positions_raw.items():
+            if not isinstance(pos, dict) or not str(pid).strip():
+                continue
+            restored[str(pid)] = self._from_json_safe(pos)
+        self._positions = restored
+        if restored:
+            logger.info("[%s] restored %d persisted position(s)", sym, len(restored))
+        return len(restored)
 
     def __len__(self) -> int:
         return len(self._positions)
@@ -101,8 +147,12 @@ class PositionTracker:
             ema_1200_pos = self._resolve_ema_1200_position(pos, features)
 
             # L3 dynamic trailing 读取当前 feature 中的 wide_sr 价格位。
-            _w_up = features.get("wide_sr_upper_px") if isinstance(features, dict) else None
-            _w_lo = features.get("wide_sr_lower_px") if isinstance(features, dict) else None
+            _w_up = (
+                features.get("wide_sr_upper_px") if isinstance(features, dict) else None
+            )
+            _w_lo = (
+                features.get("wide_sr_lower_px") if isinstance(features, dict) else None
+            )
             try:
                 _w_up_f = float(_w_up) if _w_up is not None and _w_up == _w_up else None
             except (TypeError, ValueError):
@@ -159,6 +209,8 @@ class PositionTracker:
 
         for pid in set(closed):
             self._positions.pop(pid, None)
+
+        self._persist_state()
 
         return closed
 
@@ -274,6 +326,7 @@ class PositionTracker:
         pos = self._positions.pop(position_id, None)
         if pos is None:
             return False
+        self._persist_state()
         # 交易所已触发时，挂单通常已终态；尝试清理本地引用即可。
         pos["_exchange_close_reason"] = reason
         if exit_price is not None:
@@ -308,6 +361,7 @@ class PositionTracker:
         if pos is None:
             return
         self._maybe_sync_exchange_sl(position_id, pos)
+        self._persist_state()
 
     # ------------------------------------------------------------------
     # 内部辅助
@@ -364,6 +418,7 @@ class PositionTracker:
             )
             pos["_exchange_sl_order_id"] = new_order.order_id
             pos["_exchange_sl_price"] = new_sl
+            self._persist_state()
         except Exception:
             logger.error(
                 "[%s] place 新 SL 挂单失败 (%.4f)，软件 SL 仍生效",
@@ -393,6 +448,66 @@ class PositionTracker:
                 except (TypeError, ValueError):
                     pass
         return None
+
+    def _persist_state(self) -> None:
+        if self.state_path is None:
+            return
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "symbol": self.symbol,
+                "positions": self._to_json_safe(self._positions),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            tmp = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+            tmp.write_text(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2),
+                encoding="utf-8",
+            )
+            tmp.replace(self.state_path)
+        except Exception:
+            logger.warning("[%s] persist position tracker state failed", self.symbol)
+
+    @classmethod
+    def _to_json_safe(cls, value: Any) -> Any:
+        if isinstance(value, datetime):
+            return {"__datetime__": value.isoformat()}
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {str(k): cls._to_json_safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._to_json_safe(v) for v in value]
+        if hasattr(value, "item") and callable(value.item):
+            try:
+                return cls._to_json_safe(value.item())
+            except Exception:
+                pass
+        if hasattr(value, "value"):
+            try:
+                return cls._to_json_safe(value.value)
+            except Exception:
+                pass
+        return str(value)
+
+    @classmethod
+    def _from_json_safe(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            if set(value.keys()) == {"__datetime__"}:
+                raw = value.get("__datetime__")
+                if isinstance(raw, str):
+                    try:
+                        dt = datetime.fromisoformat(raw)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        return dt
+                    except Exception:
+                        return raw
+            return {str(k): cls._from_json_safe(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [cls._from_json_safe(v) for v in value]
+        return value
 
     @staticmethod
     def _resolve_structural_price(

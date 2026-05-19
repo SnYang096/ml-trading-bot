@@ -141,6 +141,64 @@ class TestAddAndRetrieve:
         tracker = _make_tracker()
         assert tracker.get("nonexistent") is None
 
+    def test_persist_and_restore_position_dict(self, tmp_path):
+        state_path = tmp_path / "BTCUSDT.json"
+        tracker = PositionTracker(
+            order_manager=_make_om(),
+            symbol="BTCUSDT",
+            default_bar_minutes=240,
+            state_path=state_path,
+        )
+        pos = _make_pos(
+            entry_time=datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+            allow_trailing=True,
+            trailing_atr=3.0,
+        )
+        pos["trailing_activated"] = True
+        pos["high_water_mark"] = 53000.0
+        tracker.add("pid1", pos)
+
+        restored = PositionTracker(
+            order_manager=_make_om(),
+            symbol="BTCUSDT",
+            default_bar_minutes=240,
+            state_path=state_path,
+        )
+        assert restored.restore_from_disk(live_symbols={"BTCUSDT"}) == 1
+        got = restored.get("pid1")
+        assert got is not None
+        assert got["trailing_activated"] is True
+        assert got["high_water_mark"] == pytest.approx(53000.0)
+        assert isinstance(got["entry_time"], datetime)
+        assert got["entry_time"].tzinfo is not None
+
+    def test_restore_skips_and_clears_when_exchange_has_no_symbol(self, tmp_path):
+        state_path = tmp_path / "BTCUSDT.json"
+        tracker = PositionTracker(
+            order_manager=_make_om(),
+            symbol="BTCUSDT",
+            default_bar_minutes=240,
+            state_path=state_path,
+        )
+        tracker.add("pid1", _make_pos())
+
+        restored = PositionTracker(
+            order_manager=_make_om(),
+            symbol="BTCUSDT",
+            default_bar_minutes=240,
+            state_path=state_path,
+        )
+        assert restored.restore_from_disk(live_symbols={"ETHUSDT"}) == 0
+        assert restored.all_positions() == {}
+
+        restored_again = PositionTracker(
+            order_manager=_make_om(),
+            symbol="BTCUSDT",
+            default_bar_minutes=240,
+            state_path=state_path,
+        )
+        assert restored_again.restore_from_disk(live_symbols={"BTCUSDT"}) == 0
+
 
 class TestEnforceAll:
 

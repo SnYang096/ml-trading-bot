@@ -153,10 +153,19 @@ class OrderFlowListener:
         ).strip().lower() not in {"0", "false", "no"}
 
         # 持仓管理层（由 PositionTracker + TradeExecutor 接管）
+        position_state_dir = os.getenv(
+            "MLBOT_POSITION_TRACKER_STATE_DIR",
+            os.path.join(
+                os.getenv("MLBOT_LIVE_BASE", "live/highcap"),
+                "data",
+                "position_tracker",
+            ),
+        )
         self._position_tracker = PositionTracker(
             order_manager=order_manager,
             symbol=symbol,
             default_bar_minutes=feature_4h_interval_hours * 60,
+            state_path=os.path.join(position_state_dir, f"{symbol.upper()}.json"),
         )
         self._trade_executor: TradeExecutor | None = (
             None  # 延迟建立，等 risk_per_slot 注入完成
@@ -205,9 +214,8 @@ class OrderFlowListener:
             OrderStatus.EXPIRED,
         ):
             needs_rest_backfill = (
-                (order.status == OrderStatus.FILLED and order.average_price is None)
-                or (order.status != OrderStatus.FILLED and not order.error_message)
-            )
+                order.status == OrderStatus.FILLED and order.average_price is None
+            ) or (order.status != OrderStatus.FILLED and not order.error_message)
             if needs_rest_backfill and order.binance_order_id:
                 try:
                     self.order_manager.sync_order_status(order.order_id)
@@ -1014,9 +1022,7 @@ class OrderFlowListener:
         # 使用 decision_handler（GenericLiveStrategy / LivePCM 等）
         # 即使不交易也执行决策，以收集漏斗统计
         if self.decision_handler is not None:
-            _bars = (
-                self.memory_window.get_latest(240) if self.memory_window else []
-            )
+            _bars = self.memory_window.get_latest(240) if self.memory_window else []
             try:
                 intents = self.decision_handler.decide(
                     features=all_features,

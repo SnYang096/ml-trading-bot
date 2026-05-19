@@ -205,6 +205,77 @@ def _sync_slots_with_exchange(
         )
 
 
+def _exchange_live_symbols(order_manager) -> Optional[set[str]]:
+    """Return exchange symbols with non-zero positions, or None if unavailable."""
+    if order_manager is None:
+        return None
+    api = getattr(order_manager, "binance_api", None)
+    if api is None:
+        return None
+    try:
+        exchange_positions = api.get_positions()
+    except Exception as e:
+        logger.warning("PositionTracker 恢复: 查询 Binance 持仓失败: %s", e)
+        return None
+    live_symbols: set[str] = set()
+    for p in exchange_positions:
+        raw_sym = _ccxt_symbol_to_raw(p.get("symbol", ""))
+        if raw_sym:
+            live_symbols.add(raw_sym)
+    return live_symbols
+
+
+def _restore_position_trackers_from_disk(
+    *,
+    manager,
+    order_manager,
+    symbols: List[str],
+) -> None:
+    """Restore per-symbol PositionTracker state after restart.
+
+    Only restores symbols that still have an exchange-backed position. This
+    avoids adopting orphan JSON state after a manual close or exchange SL fill.
+    """
+    live_symbols = _exchange_live_symbols(order_manager)
+    if live_symbols is None:
+        logger.warning(
+            "PositionTracker 恢复: 跳过（无法确认交易所持仓，避免误接管孤儿仓）"
+        )
+        return
+    restored_total = 0
+    restored_by_symbol: dict[str, int] = {}
+    for sym in symbols:
+        try:
+            listener = manager.get_listener(sym)
+        except Exception:
+            continue
+        if listener is None:
+            continue
+        tracker = getattr(listener, "_position_tracker", None)
+        if tracker is None or not hasattr(tracker, "restore_from_disk"):
+            continue
+        n = int(tracker.restore_from_disk(live_symbols=live_symbols) or 0)
+        restored_by_symbol[str(sym).upper().strip()] = n
+        restored_total += n
+    missing_snapshots = sorted(
+        s
+        for s in live_symbols
+        if s in {str(x).upper().strip() for x in symbols}
+        and int(restored_by_symbol.get(s, 0) or 0) <= 0
+    )
+    if missing_snapshots:
+        logger.warning(
+            "PositionTracker 恢复: 交易所有仓但无本地执行快照，软件 trailing/结构出场"
+            "无法完整恢复: %s",
+            missing_snapshots,
+        )
+    logger.info(
+        "PositionTracker 恢复完成: restored=%d live_symbols=%s",
+        restored_total,
+        sorted(live_symbols),
+    )
+
+
 def _open_trend_positions_snapshot_from_manager(
     manager: Optional[Any], symbols: List[str]
 ) -> List[Dict[str, Any]]:
@@ -478,6 +549,12 @@ def _setup_three_strategies(
 
     # ── 启动时 slot 同步: 从 Binance 查真实持仓，清理残留 stale slot ──
     _sync_slots_with_exchange(order_manager, constitution_exec, runtime_st, symbols)
+    # 恢复重启前的完整持仓执行状态（trailing/breakeven/结构出场等）。
+    _restore_position_trackers_from_disk(
+        manager=manager,
+        order_manager=order_manager,
+        symbols=symbols,
+    )
     # 进程重启后 PCM 内存槽位为空；用持久化 constitution slot 回填，避免下一信号误当「新开」
     pcm.hydrate_slot_evidence_from_constitution_slots(runtime_st)
 
