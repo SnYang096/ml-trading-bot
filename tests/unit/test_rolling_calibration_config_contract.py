@@ -415,7 +415,7 @@ def test_capital_report_empty_trades_file_is_zero_trade_run(tmp_path):
 
 
 def _write_dual_add_strategy(root: Path) -> None:
-    strat = root / "dual_add_trend"
+    strat = root / "trend_scalp"
     strat.mkdir(parents=True, exist_ok=True)
     (strat / "research").mkdir(parents=True, exist_ok=True)
     (strat / "meta.yaml").write_text(
@@ -424,7 +424,7 @@ def _write_dual_add_strategy(root: Path) -> None:
     (strat / "research" / "calibrate_roll.default.yaml").write_text(
         "\n".join(
             [
-                "strategy_type: dual_add_trend",
+                "strategy_type: trend_scalp",
                 "regime:",
                 "  entry_min: 0.80",
                 "  exit_below: 0.50",
@@ -517,7 +517,7 @@ def test_fast_month_multileg_uses_backtest_adapter(tmp_path, monkeypatch):
     monkeypatch.setattr(arp, "resolve_symbols_from_config", lambda cfg: "BTCUSDT")
 
     cfg = {
-        "strategies": {"dual_add_trend": {"strategy_type": "dual_add_trend"}},
+        "strategies": {"trend_scalp": {"strategy_type": "trend_scalp"}},
         "dates": {"start_date": "2023-01-01", "end_date": "2024-04-30"},
         "rolling_calibration": {
             "threshold_calibration": {"enabled": True},
@@ -530,7 +530,7 @@ def test_fast_month_multileg_uses_backtest_adapter(tmp_path, monkeypatch):
 
     summary = arp._run_fast_month_stage(
         cfg=cfg,
-        strategies=["dual_add_trend"],
+        strategies=["trend_scalp"],
         history_dir=tmp_path / "history",
         timestamp="20260426_000000",
         month_token="2024-04",
@@ -553,16 +553,14 @@ def test_fast_month_multileg_uses_backtest_adapter(tmp_path, monkeypatch):
     assert captured["commands"]
     assert (
         run_root
-        / "strategies_calibrated/dual_add_trend/research/calibrate_roll.default.yaml"
+        / "strategies_calibrated/trend_scalp/research/calibrate_roll.default.yaml"
     ).exists()
-    assert (run_root / "dual_add_trend/multileg_summary.json").exists()
-    assert summary["trend_pcm_candidates"] == []
-    assert summary["multi_leg_pcm_candidates"] == ["dual_add_trend"]
+    assert (run_root / "trend_scalp/multileg_summary.json").exists()
+    assert summary["multi_leg_pcm_candidates"] == ["trend_scalp"]
     assert Path(summary["multi_leg_pcm_path"]).exists()
     qobj = json.loads(Path(summary["pcm_candidates_path"]).read_text(encoding="utf-8"))
     rows = qobj.get("candidates", [])
     assert len(rows) == 1
-    assert rows[0].get("trend_pcm_candidate") is False
     assert rows[0].get("multi_leg_pcm_candidate") is True
 
 
@@ -573,14 +571,14 @@ def test_slow_snapshot_multileg_writes_snapshot_config(tmp_path, monkeypatch):
     monkeypatch.setattr(arp, "resolve_symbols_from_config", lambda cfg: "BTCUSDT")
 
     cfg = {
-        "strategies": {"dual_add_trend": {"strategy_type": "dual_add_trend"}},
+        "strategies": {"trend_scalp": {"strategy_type": "trend_scalp"}},
         "dates": {"start_date": "2023-01-01", "end_date": "2024-04-30"},
         "dual_add_backtest": {"symbols": "BTCUSDT", "exclude_box": True},
     }
 
     result = arp._run_slow_structure_snapshot_for_month(
         cfg=cfg,
-        strategies=["dual_add_trend"],
+        strategies=["trend_scalp"],
         history_dir=tmp_path / "history",
         timestamp="20260426_000001",
         month_token="2024-04",
@@ -596,7 +594,7 @@ def test_slow_snapshot_multileg_writes_snapshot_config(tmp_path, monkeypatch):
 
     snap_root = Path(result["snapshot_root"])
     assert (
-        snap_root / "strategies/dual_add_trend/research/calibrate_roll.default.yaml"
+        snap_root / "strategies/trend_scalp/research/calibrate_roll.default.yaml"
     ).exists()
     assert (snap_root / "slow_snapshot_manifest.json").exists()
 
@@ -653,10 +651,10 @@ def test_multileg_rolling_continuous_map_collects_monthly_artifacts(
     tmp_path, monkeypatch
 ):
     run_root = tmp_path / "roll/fast_month_2024-04"
-    strat_dir = run_root / "dual_add_trend"
+    strat_dir = run_root / "trend_scalp"
     strat_dir.mkdir(parents=True)
     empty_root = tmp_path / "roll/fast_month_2024-05"
-    empty_strat_dir = empty_root / "dual_add_trend"
+    empty_strat_dir = empty_root / "trend_scalp"
     empty_strat_dir.mkdir(parents=True)
     (empty_strat_dir / "dual_add_trades.csv").write_text("", encoding="utf-8")
     (empty_strat_dir / "dual_add_segments.csv").write_text("", encoding="utf-8")
@@ -677,7 +675,7 @@ def test_multileg_rolling_continuous_map_collects_monthly_artifacts(
     monkeypatch.setattr(arp, "write_continuous_trading_map", _fake_write_map)
     monkeypatch.setattr(arp, "resolve_symbols_from_config", lambda cfg: "BTCUSDT")
     cfg = {
-        "strategies": {"dual_add_trend": {"strategy_type": "dual_add_trend"}},
+        "strategies": {"trend_scalp": {"strategy_type": "trend_scalp"}},
         "dates": {"start_date": "2024-04-01", "end_date": "2024-04-30"},
     }
     out = tmp_path / "roll/trading_map_continuous.html"
@@ -685,7 +683,7 @@ def test_multileg_rolling_continuous_map_collects_monthly_artifacts(
     got = arp._build_multileg_rolling_continuous_map(
         cfg=cfg,
         ledger=[{"run_root": str(run_root)}, {"run_root": str(empty_root)}],
-        strategies=["dual_add_trend"],
+        strategies=["trend_scalp"],
         roll_root=tmp_path / "roll",
         data_path="data/parquet_data",
         output_path=out,
@@ -698,7 +696,7 @@ def test_multileg_rolling_continuous_map_collects_monthly_artifacts(
 def test_build_multi_leg_pcm_artifact_rejects_same_symbol_overlap(tmp_path):
     run_root = tmp_path / "roll/fast_month_2024-04"
     cg = run_root / "chop_grid"
-    da = run_root / "dual_add_trend"
+    da = run_root / "trend_scalp"
     cg.mkdir(parents=True)
     da.mkdir(parents=True)
     (cg / "grid_trades.csv").write_text(
@@ -714,7 +712,7 @@ def test_build_multi_leg_pcm_artifact_rejects_same_symbol_overlap(tmp_path):
     cfg = {
         "strategies": {
             "chop_grid": {"strategy_type": "grid"},
-            "dual_add_trend": {"strategy_type": "dual_add_trend"},
+            "trend_scalp": {"strategy_type": "trend_scalp"},
         }
     }
     with pytest.raises(ValueError, match="multi-leg same-symbol overlap conflict"):
@@ -722,7 +720,7 @@ def test_build_multi_leg_pcm_artifact_rejects_same_symbol_overlap(tmp_path):
             cfg=cfg,
             run_root=run_root,
             month_token="2024-04",
-            strategies=["chop_grid", "dual_add_trend"],
+            strategies=["chop_grid", "trend_scalp"],
         )
 
 

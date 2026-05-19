@@ -1,4 +1,4 @@
-name: dual_add_trend_prefilter
+name: trend_scalp_prefilter
 description: |
   Candidate features for dual_add_trend regime eligibility tuning.
   This keeps the same pipeline stage naming as BPC, but optimization

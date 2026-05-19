@@ -31,4 +31,4 @@ Set under `dual_add_backtest`:
 
 Pipeline-wide defaults for multi-leg orchestration live in `config/pipelines/multileg_orchestrate_2h.yaml` under `dual_add_backtest` (same 1m + scaling + cost fields).
 
-Rolling exports adoptable bundles under `results/dual_add_trend/<history>/dual_add_trend/<timestamp>/strategies/dual_add_trend/` (see `auto_research_pipeline` multileg export).
+Rolling exports adoptable bundles under `results/trend_scalp/<history>/dual_add_trend/<timestamp>/strategies/dual_add_trend/` (see `auto_research_pipeline` multileg export).

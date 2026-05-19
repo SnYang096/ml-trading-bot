@@ -18,7 +18,7 @@ class StrategyValidationIssue:
     path: str = ""
 
 
-_MULTILEG_TYPES = frozenset({"grid", "dual_add_trend"})
+_MULTILEG_TYPES = frozenset({"grid", "dual_add_trend", "trend_scalp"})
 
 
 def strategy_type_from_entry(entry: Any) -> str:

@@ -3809,7 +3809,7 @@ def _multileg_stage_for_strategy(strategy: str) -> str:
     s = str(strategy or "").strip().lower()
     if s == "chop_grid":
         return "grid_backtest"
-    if s == "dual_add_trend":
+    if s in ("dual_add_trend", "trend_scalp"):
         return "dual_add_backtest"
     return "rolling_sim"
 
@@ -3845,7 +3845,7 @@ def multileg_validate_config(config_path: str, constitution_yaml: str):
 
 
 @multileg.command("research")
-@click.option("--strategy", default="", help="单策略 (chop_grid/dual_add_trend)")
+@click.option("--strategy", default="", help="单策略 (chop_grid/trend_scalp)")
 @click.option("--all", "run_all", is_flag=True, help="跑 config 里的全部多腿策略")
 @click.option(
     "--profile",
@@ -3999,7 +3999,7 @@ def multileg_monitor(
 
 
 @multileg.command("shadow")
-@click.option("--strategies", default="chop_grid,dual_add_trend", show_default=True)
+@click.option("--strategies", default="chop_grid,trend_scalp", show_default=True)
 @click.option("--bar-source", default="feature-store", show_default=True)
 @click.option("--once", is_flag=True, help="仅跑一次")
 @click.option("--poll-seconds", type=float, default=60.0, show_default=True)
@@ -4036,7 +4036,7 @@ def multileg_shadow(
     show_default=True,
     type=click.Choice(["testnet", "mainnet"]),
 )
-@click.option("--strategies", default="chop_grid,dual_add_trend", show_default=True)
+@click.option("--strategies", default="chop_grid,trend_scalp", show_default=True)
 @click.option("--bar-source", default="feature-store", show_default=True)
 @click.option("--poll-seconds", type=float, default=60.0, show_default=True)
 @click.option("--allow-shared-account", is_flag=True)

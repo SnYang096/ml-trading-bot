@@ -106,11 +106,11 @@ def test_multi_leg_strategies_from_constitution_supports_list_and_string() -> No
         multi_leg_strategies_from_constitution({"multi_leg": {"strategies": []}}) == []
     )
     assert multi_leg_strategies_from_constitution(
-        {"multi_leg": {"strategies": ["chop_grid", "dual_add_trend"]}}
-    ) == ["chop_grid", "dual_add_trend"]
+        {"multi_leg": {"strategies": ["chop_grid", "trend_scalp"]}}
+    ) == ["chop_grid", "trend_scalp"]
     assert multi_leg_strategies_from_constitution(
-        {"multi_leg": {"strategies": "chop_grid, dual_add_trend"}}
-    ) == ["chop_grid", "dual_add_trend"]
+        {"multi_leg": {"strategies": "chop_grid, trend_scalp"}}
+    ) == ["chop_grid", "trend_scalp"]
 
 
 def test_partition_pipeline_strategies_by_type() -> None:
@@ -119,12 +119,12 @@ def test_partition_pipeline_strategies_by_type() -> None:
             "bpc": {"strategy_type": "single"},
             "me": {},
             "chop_grid": {"strategy_type": "grid"},
-            "dual_add_trend": {"strategy_type": "dual_add_trend"},
+            "trend_scalp": {"strategy_type": "trend_scalp"},
         }
     }
     got = partition_pipeline_strategies_by_type(cfg)
     assert got["classic"] == {"bpc", "me"}
-    assert got["multi_leg"] == {"chop_grid", "dual_add_trend"}
+    assert got["multi_leg"] == {"chop_grid", "trend_scalp"}
 
 
 def test_classic_slot_policy_uses_archetype_groups_without_duplicate_list() -> None:
@@ -180,18 +180,18 @@ def test_validate_pipeline_constitution_alignment_ok() -> None:
             "tpc": {},
             "me": {},
             "chop_grid": {"strategy_type": "grid"},
-            "dual_add_trend": {"strategy_type": "dual_add_trend"},
+            "trend_scalp": {"strategy_type": "trend_scalp"},
         }
     }
     constitution = {
         "resource_allocation": {"enabled_archetypes": ["bpc", "tpc", "me"]},
-        "multi_leg": {"strategies": ["chop_grid", "dual_add_trend"]},
+        "multi_leg": {"strategies": ["chop_grid", "trend_scalp"]},
     }
     got = validate_pipeline_constitution_alignment(
         pipeline_cfg=cfg, constitution_cfg=constitution, context_label="unit_test"
     )
     assert got["classic"] == ["bpc", "me", "tpc"]
-    assert got["multi_leg"] == ["chop_grid", "dual_add_trend"]
+    assert got["multi_leg"] == ["chop_grid", "trend_scalp"]
 
 
 def test_validate_pipeline_constitution_alignment_allows_constitution_superset() -> (
@@ -200,7 +200,7 @@ def test_validate_pipeline_constitution_alignment_allows_constitution_superset()
     cfg = {"strategies": {"bpc": {}}}
     constitution = {
         "resource_allocation": {"enabled_archetypes": ["bpc", "me", "tpc"]},
-        "multi_leg": {"strategies": ["chop_grid", "dual_add_trend"]},
+        "multi_leg": {"strategies": ["chop_grid", "trend_scalp"]},
     }
     got = validate_pipeline_constitution_alignment(
         pipeline_cfg=cfg, constitution_cfg=constitution, context_label="unit_test"
@@ -219,7 +219,7 @@ def test_validate_pipeline_constitution_alignment_raises_on_mismatch() -> None:
     }
     constitution = {
         "resource_allocation": {"enabled_archetypes": ["bpc", "tpc"]},
-        "multi_leg": {"strategies": ["dual_add_trend"]},
+        "multi_leg": {"strategies": ["trend_scalp"]},
     }
     with pytest.raises(ValueError, match="pipeline strategy not allowed"):
         validate_pipeline_constitution_alignment(

@@ -1,4 +1,4 @@
-"""Live/shadow engine for the standalone dual_add_trend strategy.
+"""Live/shadow engine for trend_scalp (C-layer; formerly dual_add_trend).
 
 The engine owns multi-leg inventory state and emits exchange-facing action
 dicts. Execution, portfolio risk, and reconciliation are handled by
@@ -46,6 +46,7 @@ class DualAddEngineConfig:
     catastrophic_stop_atr_mult: float = 8.0
     catastrophic_stop_tp_mult: float = 8.0
     flip_action: str = "close_offside_all"
+    reseed_on_flip: bool = True
     initial_hedge: bool = True
     entry_order_type: str = "marketable_limit"
     add_order_type: str = "marketable_limit"
@@ -103,6 +104,7 @@ class DualAddTrendState:
     bar_index: int = 0
     last_reconciliation_ok: bool = True
     last_reconciliation_issues: List[str] = field(default_factory=list)
+    block_reseed_after_flip: bool = False
 
 
 def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
@@ -110,7 +112,7 @@ def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
     config_dir, profile_path, engine_path = resolve_strategy_config_input(cfg_path)
     obj = load_multileg_effective_config(
         config_dir=config_dir,
-        strategy_type="dual_add_trend",
+        strategy_type="trend_scalp",
         profile_path=profile_path,
         engine_path=engine_path,
     )
@@ -140,6 +142,7 @@ def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
         catastrophic_stop_atr_mult=float(risk.get("catastrophic_stop_atr_mult", 8.0)),
         catastrophic_stop_tp_mult=float(risk.get("catastrophic_stop_tp_mult", 8.0)),
         flip_action=str(inv.get("flip_action", "close_offside_all")),
+        reseed_on_flip=bool(inv.get("reseed_on_flip", True)),
         initial_hedge=set(inv.get("initial_legs", ["LONG", "SHORT"]))
         == {"LONG", "SHORT"},
         entry_order_type=str(order_model.get("entry_order_type", "marketable_limit")),
@@ -157,8 +160,8 @@ class DualAddTrendLiveEngine:
         *,
         config_path: (
             str | Path
-        ) = "config/strategies/dual_add_trend/research/calibrate_roll.default.yaml",
-        state_path: str | Path = "results/dual_add_trend/live_state.json",
+        ) = "config/strategies/trend_scalp/research/calibrate_roll.default.yaml",
+        state_path: str | Path = "results/trend_scalp/live_state.json",
         unit_notional: float = 1.0,
         metrics_strategy: str = "",
     ) -> None:
@@ -180,7 +183,7 @@ class DualAddTrendLiveEngine:
         record_multi_leg_engine_bar_outcome(
             metrics_strategy=self.metrics_strategy,
             symbol=symbol,
-            engine="dual_add_trend",
+            engine="trend_scalp",
             outcome=outcome,
         )
 
@@ -294,7 +297,13 @@ class DualAddTrendLiveEngine:
                     actions.extend(
                         self._handle_trend_flip(close, timestamp, trend_side)
                     )
-                if not self.state.inventory and not self.state.pending_orders:
+                    if not self.cfg.reseed_on_flip:
+                        self.state.block_reseed_after_flip = True
+                if (
+                    not self.state.inventory
+                    and not self.state.pending_orders
+                    and not self.state.block_reseed_after_flip
+                ):
                     actions.extend(
                         self._seed_inventory_orders(close, timestamp, trend_side)
                     )
@@ -499,6 +508,7 @@ class DualAddTrendLiveEngine:
             trend_side=trend_side,
             last_timestamp=timestamp,
             bar_index=0,
+            block_reseed_after_flip=False,
         )
         return self._seed_inventory_orders(close, timestamp, trend_side)
 

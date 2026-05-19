@@ -1,0 +1,33 @@
+# =============================================================================
+# Dual Add Trend · non_rolling — full-window dual-add validation
+# -----------------------------------------------------------------------------
+# 与 BPC non_rolling 对齐：整段静态 holdout 上做一次全周期验收/上线候选评估。
+# 多腿不走 BPC compare_runs/deploy_gate；上线判断由 mlbot multileg gate 读取
+# dual-add metrics / segment 风险 / constitution.multi_leg 风控后给出结论。
+# -----------------------------------------------------------------------------
+
+extends: calibrate_roll.default.yaml
+
+dates:
+  # non_rolling/static_holdout 专用窗口，区别于 turbo/slow 的月度 rolling calibration。
+  # Train: 更早历史；Val: 最近测试窗之前 6 个月调阈值；Test: 最近 6 个月纯 OOS 验收。
+  nonrolling_validation_months: 6
+  nonrolling_test_months: 6
+
+rolling:
+  mode: non_rolling
+  time_split_policy: static_holdout
+
+strategies:
+  trend_scalp:
+    multileg_feature_selection:
+      enabled: true
+      protected_nodes:
+        - atr_f
+
+dual_add_backtest:
+  output_dir: results/trend_scalp/non-rolling-full-cycle
+
+output:
+  history_dir: results/trend_scalp/validate_static.full_study
+  latest_dir: results/trend_scalp/latest

@@ -8,6 +8,8 @@ inventory:
   trend_direction_source: dynamic_bar
   # 趋势翻转处理：close_offside_all = 平掉新趋势反向的所有腿（含初始腿和加仓腿）。
   flip_action: close_offside_all
+  # 翻转后不在同一段内立即按新方向 reseed；等下一 regime 段再开仓（实验 2026-05 优于 reseed）。
+  reseed_on_flip: false
   # 单方向最多加仓次数；不含初始 TREND 腿。
   max_adds_per_side: 3
   # 最大总腿数（long + short）；限制总风险敞口。

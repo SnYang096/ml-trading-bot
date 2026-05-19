@@ -56,7 +56,7 @@ LIVE_STRATEGIES = LIVE_CONFIG / "strategies"
 LIVE_ROOT = PROJECT_ROOT / "live"
 
 # 默认部署集合（不含 SRB/me：研究策略默认不自动同步至 live）。
-DEFAULT_STRATEGIES = ["bpc", "tpc", "spot_accum_simple", "chop_grid", "dual_add_trend"]
+DEFAULT_STRATEGIES = ["bpc", "tpc", "spot_accum_simple", "chop_grid", "trend_scalp"]
 
 # 研究侧策略目录覆盖（slug -> 绝对路径）；其余仍使用 config/strategies/<slug>/
 STRATEGY_RESEARCH_PATH_OVERRIDES = {}
@@ -79,7 +79,7 @@ def research_strategy_dir(strat: str) -> Path:
 # Multi-leg strategies: archetypes/*.yaml (any name). Runtime/research profiles are
 # intentionally not deployed to live/highcap; live packages contain only
 # ``meta.yaml`` plus ``archetypes/``.
-MULTI_LEG_STRATEGIES = frozenset({"chop_grid", "dual_add_trend"})
+MULTI_LEG_STRATEGIES = frozenset({"chop_grid", "trend_scalp", "dual_add_trend"})
 
 
 def _is_multi_leg_deploy(strat: str) -> bool:

@@ -82,7 +82,7 @@ def main() -> int:
     strategy_issues = validate_pipeline_strategy_packages(
         pipeline_cfg=cfg,
         project_root=PROJECT_ROOT,
-        allow_strategy_types={"grid", "dual_add_trend"},
+        allow_strategy_types={"grid", "dual_add_trend", "trend_scalp"},
     )
     errors.extend(
         [f"strategies.{it.strategy_name}: {it.message}" for it in strategy_issues]

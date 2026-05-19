@@ -235,14 +235,14 @@ resource_allocation:
 # -----------------------------------------------------------------------------
 # Trend/fat-tail live uses slots/per_strategy_limits above; hedge multi-leg uses a separate account budget here.
 # Notional caps are exposure ceilings for the dedicated multi-leg account, not trend/fat-tail risk slots.
-# hedge multi-leg 合约约束：同一 symbol 同时最多 1 个 multi-leg 策略占用（chop_grid / dual_add_trend 互斥）。
+# hedge multi-leg 合约约束：同一 symbol 同时最多 1 个 multi-leg 策略占用（chop_grid / trend_scalp 互斥）。
 multi_leg:
   strategies:
-    - chop_grid # C-layer chop grid (mean-reversion inventory); mutually exclusive per symbol with dual_add.
-    - dual_add_trend # C-layer dual-add trend legs; mutually exclusive per symbol with chop_grid.
+    - chop_grid # C-layer chop grid (mean-reversion inventory); mutually exclusive per symbol with trend_scalp.
+    - trend_scalp # C-layer regime trend scalp legs; mutually exclusive per symbol with chop_grid.
   # Per-order / per-leg USDT notional used by multi-leg engines.
   # - chop_grid: each grid level places qty = unit_notional / current_price.
-  # - dual_add_trend: each seed/add leg places qty = unit_notional / order_price.
+  # - trend_scalp: each seed/add leg places qty = unit_notional / order_price.
   # Portfolio/symbol caps below can still reject orders after this sizing step.
   #
   # Default 100.0 is a conservative live starting point, not a tuned strategy knob.
@@ -250,7 +250,7 @@ multi_leg:
   # with max_symbol_gross_notional_pct / max_gross_notional_pct caps, inventory
   # can grow in layers without immediately hitting account ceilings (e.g.
   # chop_grid max_open_levels_total=6 -> ~600 USDT/symbol vs 8% -> ~800 USDT;
-  # dual_add max_gross_exposure_units=4 -> ~400 USDT gross footprint before caps).
+  # trend_scalp max_gross_exposure_units=4 -> ~400 USDT gross footprint before caps).
   # Scale unit_notional when equity changes (e.g. 2000 -> ~20, 5000 -> ~50);
   # rule of thumb: start around 0.5%–1.0% equity per leg and keep hard limits below.
   unit_notional: 200.0 # USDT quote per grid level / dual-add leg before portfolio caps (see block comment above).

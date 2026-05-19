@@ -27,7 +27,7 @@ multi_leg:
     (tmp_path / "strategies").mkdir()
 
     args = argparse.Namespace(
-        strategies="dual_add_trend",
+        strategies="trend_scalp",
         unit_notional=100.0,
         max_gross_notional=2000.0,
         max_net_notional=1000.0,
@@ -85,7 +85,7 @@ def test_apply_multi_leg_strategies_as_yaml_list(tmp_path, monkeypatch) -> None:
 multi_leg:
   strategies:
     - chop_grid
-    - dual_add_trend
+    - trend_scalp
   unit_notional: 10
 """,
         encoding="utf-8",
@@ -107,5 +107,5 @@ multi_leg:
         constitution_yaml="",
     )
     apply_multi_leg_args_from_constitution(args)
-    assert args.strategies == "chop_grid,dual_add_trend"
+    assert args.strategies == "chop_grid,trend_scalp"
     assert args.unit_notional == 10.0

@@ -107,7 +107,7 @@ def _load_strategy_gate_metrics(
         return metrics
     if strategy_type == "grid":
         return _grid_metrics_from_standalone(run_dir / strategy / "metrics.json")
-    if strategy_type == "dual_add_trend":
+    if strategy_type in ("dual_add_trend", "trend_scalp"):
         out = _dual_add_metrics_from_standalone(run_dir / strategy / "summary.csv")
         if out:
             out["sharpe_r"] = _trade_sharpe_from_csv(
@@ -197,7 +197,7 @@ def main() -> int:
     rows: List[Dict[str, Any]] = []
     for strategy, scfg in (cfg.get("strategies") or {}).items():
         st = _strategy_type(scfg)
-        if st not in {"grid", "dual_add_trend"}:
+        if st not in {"grid", "dual_add_trend", "trend_scalp"}:
             continue
         metrics = _load_strategy_gate_metrics(
             run_dir=run_dir,

@@ -1,0 +1,103 @@
+# ============================================================
+# Dual Add Trend standalone pipeline (2H, slow_realistic rolling)
+# ============================================================
+
+extends: calibrate_roll.default.yaml
+
+dates:
+  start_date: "2022-01-01"
+  end_date: "2026-05-01"
+  holdout_months: 26
+
+rolling:
+  mode: slow_realistic
+  windows:
+    calibration_months: 6
+    structure_lookback_months: 12
+  slow_realistic:
+    cadence_months: 3
+    triggered_retrain_enabled: true
+    adoption_gate:
+      enabled: true
+      validation_months: 1
+      adopt_ratio: 1.0
+      min_improvement: 0.0
+      score_weights:
+        sharpe_r: 1.0
+        max_drawdown_r: 0.15
+        near_stop_rate: 0.5
+      undertrade:
+        target_trades_soft: 10
+        penalty: 0.15
+      cash_score_when_no_trades: 0.0
+      hard_reject:
+        sharpe_floor: -0.5
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: false
+
+threshold_calibration:
+  enable_model_training: true
+
+rolling_calibration:
+  threshold_calibration:
+    enabled: true
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: false
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  trend_scalp:
+    strategy_type: trend_scalp
+    config: config/strategies/trend_scalp
+    timeframe: 120T
+    prepare_features: features.yaml
+    has_prefilter: true
+    multileg_feature_selection:
+      enabled: true
+      protected_nodes:
+        - atr_f
+
+event_backtest:
+  enabled: false
+
+dual_add_backtest:
+  enabled: true
+  output_dir: results/trend_scalp/slow-full-cycle
+  costs:
+    fee_bps: 20.0
+    market_exit_slippage_bps: 5.0
+    intrabar_touch_buffer_bps: 5.0
+  execution_timeframe: 1min
+  scale_max_loser_hold_to_signal: true
+  start_date: "2022-01-01"
+  end_date: "2026-03-31"
+  symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+  timeframe: 2h
+  regime: trend
+  add_mode: trend
+  flip_action: close_offside_all
+  exclude_box: true
+  step_atr_mult: 1.00
+  tp_atr_mult: 0.75
+  tp_pct: 0.0015
+  max_loss_per_segment: 0.02
+  risk_stop_mode: regime_only
+  max_gross_exposure: 4
+  max_net_exposure: 2
+  max_adds_per_side: 3
+  map_symbols: BTCUSDT
+  continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+
+output:
+  history_dir: results/trend_scalp/research_roll.features_on
+  latest_dir: results/trend_scalp/latest

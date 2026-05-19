@@ -5785,7 +5785,7 @@ def _run_dual_add_backtest_stage(
     for strat in strategies:
         scfg = (cfg.get("strategies", {}) or {}).get(strat, {}) or {}
         strategy_type = str(scfg.get("strategy_type", "") or "").lower()
-        if strategy_type != "dual_add_trend":
+        if strategy_type not in ("dual_add_trend", "trend_scalp"):
             print(
                 f"   ⏭️  skip {strat}: strategy_type={strategy_type or 'single_position'}"
             )
@@ -6292,10 +6292,10 @@ def _strategy_type(cfg: Dict[str, Any], strategy: str) -> str:
 
 
 def _is_multi_leg_strategy(cfg: Dict[str, Any], strategy: str) -> bool:
-    return _strategy_type(cfg, strategy) in {"grid", "dual_add_trend"}
+    return _strategy_type(cfg, strategy) in {"grid", "trend_scalp", "dual_add_trend"}
 
 
-_MULTILEG_PROD_SLUGS = frozenset({"chop_grid", "dual_add_trend"})
+_MULTILEG_PROD_SLUGS = frozenset({"chop_grid", "trend_scalp", "dual_add_trend"})
 
 
 def _export_multileg_adopt_bundle_after_rolling(
@@ -6391,7 +6391,7 @@ def _multileg_calibration_candidates(
                 "exclude_box_prefilter": False,
             },
         ]
-    if strategy_type == "dual_add_trend":
+    if strategy_type in ("dual_add_trend", "trend_scalp"):
         return [
             {
                 "entry_min": 0.75,
@@ -6570,7 +6570,7 @@ def _run_multileg_backtest_command(
         _append_chop_grid_cost_args(cmd, grid_cfg)
         return cmd, {"metrics_path": str(out_dir / "metrics.json")}
 
-    if strategy_type == "dual_add_trend":
+    if strategy_type in ("dual_add_trend", "trend_scalp"):
         dual_cfg = cfg.get("dual_add_backtest", {}) or {}
         runtime_cfg = _resolve_multileg_runtime_config_path(
             config_dir=config_dir,

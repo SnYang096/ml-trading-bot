@@ -206,7 +206,7 @@ def main() -> int:
     strategy_types: Dict[str, str] = {}
     for name, scfg in (cfg.get("strategies") or {}).items():
         st = str((scfg or {}).get("strategy_type", "") or "").strip().lower()
-        if st in {"grid", "dual_add_trend"}:
+        if st in {"grid", "dual_add_trend", "trend_scalp"}:
             strategies.append(name)
             strategy_types[name] = st
 

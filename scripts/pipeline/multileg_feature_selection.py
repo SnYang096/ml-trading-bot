@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 _DEFAULT_REQUIRED_NODES_BY_TYPE = {
     "grid": {"bpc_soft_phase_f", "atr_f"},
+    "trend_scalp": {"trend_confidence_f", "bpc_soft_phase_f", "atr_f"},
     "dual_add_trend": {"trend_confidence_f", "bpc_soft_phase_f", "atr_f"},
 }
 
@@ -486,7 +487,7 @@ def _semantic_note(node: str | None, strategy_type: str) -> str:
     if not n:
         if st == "grid":
             return "Core semantic chop + ATR baseline."
-        if st == "dual_add_trend":
+        if st in ("dual_add_trend", "trend_scalp"):
             return "Core trend confidence + chop/ATR baseline."
         return "Core required strategy features."
     return "Candidate feature has no dedicated semantic note yet."

@@ -1,47 +1,21 @@
 # ============================================================
-# Dual Add Trend standalone pipeline (2H, slow_realistic rolling)
+# Dual Add Trend standalone research pipeline (2H, turbo fixed features)
 # ============================================================
-
-extends: calibrate_roll.default.yaml
 
 dates:
   start_date: "2022-01-01"
-  end_date: "2026-05-01"
+  end_date: "2026-03-31"
   holdout_months: 26
+  validation_months: 3
 
 rolling:
-  mode: slow_realistic
+  mode: turbo_fixed_features
   windows:
     calibration_months: 6
     structure_lookback_months: 12
-  slow_realistic:
-    cadence_months: 3
-    triggered_retrain_enabled: true
-    adoption_gate:
-      enabled: true
-      validation_months: 1
-      adopt_ratio: 1.0
-      min_improvement: 0.0
-      score_weights:
-        sharpe_r: 1.0
-        max_drawdown_r: 0.15
-        near_stop_rate: 0.5
-      undertrade:
-        target_trades_soft: 10
-        penalty: 0.15
-      cash_score_when_no_trades: 0.0
-      hard_reject:
-        sharpe_floor: -0.5
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
-    disable_feature_search: false
-
-threshold_calibration:
-  enable_model_training: true
-
-rolling_calibration:
-  threshold_calibration:
-    enabled: true
+    disable_feature_search: true
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
@@ -56,23 +30,19 @@ download:
   parquet_dir: data/parquet_data
 
 strategies:
-  dual_add_trend:
-    strategy_type: dual_add_trend
-    config: config/strategies/dual_add_trend
+  trend_scalp:
+    strategy_type: trend_scalp
+    config: config/strategies/trend_scalp
     timeframe: 120T
-    prepare_features: features.yaml
-    has_prefilter: true
-    multileg_feature_selection:
-      enabled: true
-      protected_nodes:
-        - atr_f
+    features_gate: features.yaml
+    has_prefilter: false
 
 event_backtest:
   enabled: false
 
 dual_add_backtest:
   enabled: true
-  output_dir: results/dual_add_trend/slow-full-cycle
+  # output_dir: omit to write under output.history_dir / _rolling_sim/<run_id>/dual_add_full_window/
   costs:
     fee_bps: 20.0
     market_exit_slippage_bps: 5.0
@@ -99,5 +69,5 @@ dual_add_backtest:
   continuous_map_symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
 
 output:
-  history_dir: results/dual_add_trend/research_roll.features_on
-  latest_dir: results/dual_add_trend/latest
+  history_dir: results/trend_scalp/turbo_operational_2h
+  latest_dir: results/trend_scalp/latest

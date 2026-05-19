@@ -1,0 +1,19 @@
+# Trend scalp (formerly dual_add_trend): regime-driven trend legs with fee-aware basket TP.
+
+strategy:
+  name: trend-scalp-120T
+  description: |
+    Regime-confirmed trend direction; open one TREND leg per segment, add on drift,
+    basket TP. On intra-segment trend_flip, close offside inventory and wait for
+    the next regime segment (no immediate reverse re-entry).
+  owner: quant_team
+  archetype: TrendScalp
+  timeframe: "120T"
+  bidirectional: true
+  symbol_include:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
+  symbol_exclude: []

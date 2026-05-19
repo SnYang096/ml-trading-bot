@@ -1,0 +1,30 @@
+name: trend_scalp_prefilter
+description: |
+  Candidate features for dual_add_trend regime eligibility tuning.
+  This keeps the same pipeline stage naming as BPC, but optimization
+  is evaluated with multi-leg metrics and writes regime keys.
+
+feature_pipeline:
+  requested_features:
+    - bpc_soft_phase_f
+    # Shared box function; price-unit hi/lo outputs are globally excluded via raw_scale_columns.
+    - box_structure_f
+    - trend_confidence_f
+    - ema_1200_position_f
+    - ema_1200_slope_f
+    - atr_f
+    - atr_percentile_f
+    - volatility_regime_f
+    - bb_width_normalized_pct_f
+
+    # Experimental confirmation features for trend inventory eligibility.
+    - wpt_scene_semantic_scores_f
+    - hurst_price_f
+    - hurst_cvd_f
+    - hilbert_phase_f
+    - vpin_scene_semantic_scores_f
+    - cvd_change_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f

@@ -1059,7 +1059,15 @@ class Metrics:
         except Exception:
             return
 
-        known = {"bpc", "tpc", "fer", "me", "chop_grid", "dual_add_trend"}
+        known = {
+            "bpc",
+            "tpc",
+            "fer",
+            "me",
+            "chop_grid",
+            "dual_add_trend",
+            "trend_scalp",
+        }
         all_strategy_keys = sorted(
             known.union({str(k).lower() for k in archetype_counts.keys()})
         )
@@ -1218,7 +1226,7 @@ def _initialize_default_series() -> None:
             METRICS.loss.labels(period=period).set(0)
         for balance_type in ("total", "available", "margin"):
             METRICS.account_balance.labels(type=balance_type).set(0)
-        for strategy in ("bpc", "tpc", "fer", "me", "chop_grid", "dual_add_trend"):
+        for strategy in ("bpc", "tpc", "fer", "me", "chop_grid", "trend_scalp"):
             METRICS.strategy_slots_active.labels(strategy=strategy).set(0)
             METRICS.strategy_slots_max.labels(strategy=strategy).set(0)
     except Exception:

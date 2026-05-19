@@ -407,12 +407,12 @@ def test_load_chop_grid_non_rolling_extends_turbo():
 def test_load_dual_add_non_rolling_extends_turbo():
     cfg = load_pipeline_config(
         _root()
-        / "config/strategies/dual_add_trend/research/validate_static.full_study.yaml"
+        / "config/strategies/trend_scalp/research/validate_static.full_study.yaml"
     )
-    assert "dual_add_trend" in (cfg.get("strategies") or {})
+    assert "trend_scalp" in (cfg.get("strategies") or {})
     assert cfg.get("rolling", {}).get("mode") == "non_rolling"
     assert cfg.get("rolling", {}).get("time_split_policy") == "static_holdout"
-    assert "results/dual_add_trend/validate_static.full_study" in str(
+    assert "results/trend_scalp/validate_static.full_study" in str(
         cfg.get("output", {}).get("history_dir", "")
     )
     assert cfg["dual_add_backtest"]["enabled"] is True
@@ -421,7 +421,7 @@ def test_load_dual_add_non_rolling_extends_turbo():
     assert cfg["dual_add_backtest"]["scale_max_loser_hold_to_signal"] is True
     dates = resolve_strategy_dates(
         cfg,
-        strategy="dual_add_trend",
+        strategy="trend_scalp",
         default_end_date=cfg["dates"]["end_date"],
     )
     assert dates["holdout_start"] == "2025-05-01"
@@ -435,7 +435,7 @@ def test_load_multileg_slow_profiles_extend_turbo_metadata():
     )
     dual_cfg = load_pipeline_config(
         _root()
-        / "config/strategies/dual_add_trend/research/research_roll.features_on.yaml"
+        / "config/strategies/trend_scalp/research/research_roll.features_on.yaml"
     )
 
     assert chop_cfg.get("rolling", {}).get("mode") == "slow_realistic"
@@ -454,7 +454,7 @@ def test_load_multileg_slow_profiles_extend_turbo_metadata():
     assert "study" not in dual_cfg
     assert "threshold_search" not in dual_cfg
     assert (
-        dual_cfg["strategies"]["dual_add_trend"]["kpi_gates"]["backtest"]["min_trades"]
+        dual_cfg["strategies"]["trend_scalp"]["kpi_gates"]["backtest"]["min_trades"]
         == 60
     )
     assert dual_cfg["dual_add_backtest"]["costs"]["fee_bps"] == 20.0
@@ -497,15 +497,12 @@ def test_multileg_backtest_dates_mismatch_raises(tmp_path: Path):
 
 def test_load_dual_turbo_uses_bpc_style_strategy_blocks():
     cfg = load_pipeline_config(
-        _root()
-        / "config/strategies/dual_add_trend/research/calibrate_roll.default.yaml"
+        _root() / "config/strategies/trend_scalp/research/calibrate_roll.default.yaml"
     )
-    assert "dual_add_trend" in (cfg.get("strategies") or {})
+    assert "trend_scalp" in (cfg.get("strategies") or {})
     assert "study" not in cfg
     assert "threshold_search" not in cfg
-    assert isinstance(
-        cfg["strategies"]["dual_add_trend"]["kpi_gates"]["backtest"], dict
-    )
+    assert isinstance(cfg["strategies"]["trend_scalp"]["kpi_gates"]["backtest"], dict)
 
 
 def test_time_split_policy_invalid_raises(tmp_path: Path):

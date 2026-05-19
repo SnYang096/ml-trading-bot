@@ -42,9 +42,9 @@ strategies:
         min_trades: 100
         max_forced_exit_rate: 0.35
         max_drawdown_floor: -0.08
-  dual_add_trend:
-    strategy_type: dual_add_trend
-    config: config/strategies/dual_add_trend
+  trend_scalp:
+    strategy_type: trend_scalp
+    config: config/strategies/trend_scalp
     timeframe: 120T
     prepare_features: features.yaml
     has_prefilter: true

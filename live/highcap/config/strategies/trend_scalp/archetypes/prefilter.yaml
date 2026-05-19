@@ -21,4 +21,4 @@ last_multileg_evaluation:
     stitched_total_trades: 8272
     stitched_max_drawdown_r: -0.6262063382661447
     count_months: 27
-  source_path: "results/dual_add_trend/validate_static.full_study/_rolling_sim/20260511_094225/stitched_summary.json"
+  source_path: "results/trend_scalp/validate_static.full_study/_rolling_sim/20260511_094225/stitched_summary.json"

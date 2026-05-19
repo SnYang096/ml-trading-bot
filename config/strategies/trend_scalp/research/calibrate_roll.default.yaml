@@ -36,9 +36,9 @@ download:
   parquet_dir: data/parquet_data
 
 strategies:
-  dual_add_trend:
-    strategy_type: dual_add_trend
-    config: config/strategies/dual_add_trend
+  trend_scalp:
+    strategy_type: trend_scalp
+    config: config/strategies/trend_scalp
     timeframe: 120T
     prepare_features: features.yaml
     has_prefilter: true
@@ -83,7 +83,7 @@ event_backtest:
 
 dual_add_backtest:
   enabled: true
-  output_dir: results/dual_add_trend/turbo-full-cycle
+  output_dir: results/trend_scalp/turbo-full-cycle
   # Research/report cost assumption. Live execution should use exchange fills
   # and fees from the adapter, not this static diagnostic default.
   costs:
@@ -108,5 +108,5 @@ dual_add_backtest:
   max_adds_per_side: 3
 
 output:
-  history_dir: results/dual_add_trend/calibrate_roll.default
-  latest_dir: results/dual_add_trend/latest
+  history_dir: results/trend_scalp/calibrate_roll.default
+  latest_dir: results/trend_scalp/latest

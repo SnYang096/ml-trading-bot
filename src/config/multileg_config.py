@@ -144,7 +144,7 @@ def update_multileg_calibration_candidate(
         if "max_open_levels_total" in candidate:
             risk = exe.setdefault("risk", {})
             risk["max_open_levels_total"] = int(candidate["max_open_levels_total"])
-    elif strategy_type == "dual_add_trend":
+    elif strategy_type in ("dual_add_trend", "trend_scalp"):
         regime = pre.setdefault("regime", {})
         inv = exe.setdefault("inventory", {})
         spacing = exe.setdefault("add_spacing", {})

@@ -1,7 +1,7 @@
 # Dual Add Trend feature configuration.
 # Research-only multi-leg strategy using trend confidence plus box/chop filters.
 
-name: dual_add_trend
+name: trend_scalp
 description: |
   Initial dual-open inventory in non-chop / non-box regimes. Add-ons follow the
   current trend direction only, with explicit gross/net exposure caps.

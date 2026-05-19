@@ -48,8 +48,7 @@ from src.features.time_series.baseline_features import (  # noqa: E402
 )
 
 DEFAULT_DUAL_ADD_CONFIG = (
-    PROJECT_ROOT
-    / "config/strategies/dual_add_trend/research/calibrate_roll.default.yaml"
+    PROJECT_ROOT / "config/strategies/trend_scalp/research/calibrate_roll.default.yaml"
 )
 
 
@@ -59,7 +58,7 @@ def _load_dual_add_defaults(path: Path) -> dict:
     cfg_dir, profile_path, engine_path = resolve_strategy_config_input(path)
     cfg = load_multileg_effective_config(
         config_dir=cfg_dir,
-        strategy_type="dual_add_trend",
+        strategy_type="trend_scalp",
         profile_path=profile_path,
         engine_path=engine_path,
     )
@@ -164,6 +163,7 @@ class DualAddConfig:
     regime: str = "trend"
     add_mode: str = "both"
     flip_action: str = "keep"
+    reseed_on_flip: bool = True
     chop_signal: str = "raw"
     chop_ts_window: int = 1200
     chop_ts_min_periods: int = 150
@@ -298,6 +298,7 @@ def simulate_dual_add_segment(
     trend_flips = 0
     flip_forced = 0
     last_flat_bar = -1
+    block_reseed_after_flip = False
 
     def seed_positions(px: float, ts: pd.Timestamp, bar_i: int) -> None:
         nonlocal last_add_long, last_add_short
@@ -426,7 +427,12 @@ def simulate_dual_add_segment(
             )
 
         seeded_this_bar = False
-        if actionable and not positions and bar_i > last_flat_bar:
+        if (
+            actionable
+            and not positions
+            and bar_i > last_flat_bar
+            and not block_reseed_after_flip
+        ):
             seed_positions(close, ts, bar_i)
             seeded_this_bar = True
 
@@ -467,6 +473,8 @@ def simulate_dual_add_segment(
                 trend_flips += 1
                 flip_forced += close_offside_positions(close, ts, trend_side)
                 last_trend_side = trend_side
+                if not cfg.reseed_on_flip:
+                    block_reseed_after_flip = True
                 enforce_net_cap(close, ts)
 
             # Do not let the initial hedge's losing leg become an unbounded anchor.
@@ -608,6 +616,7 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         regime=args.regime,
         add_mode=args.add_mode,
         flip_action=args.flip_action,
+        reseed_on_flip=bool(args.reseed_on_flip),
         chop_signal=args.chop_signal,
         chop_ts_window=args.chop_ts_window,
         chop_ts_min_periods=args.chop_ts_min_periods,
@@ -998,6 +1007,16 @@ def main() -> None:
         choices=["keep", "close_offside_adds", "close_offside_all"],
         default=defaults.get("flip_action", "close_offside_all"),
     )
+    ap.add_argument(
+        "--reseed-on-flip",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "When enabled (default), an intra-segment flat book after trend_flip "
+            "re-opens in the new trend_direction. When disabled, trend_flip only "
+            "closes offside inventory and waits for the next regime segment entry."
+        ),
+    )
     ap.add_argument("--chop-min", type=float, default=defaults.get("chop_min", 0.40))
     ap.add_argument(
         "--exit-chop-min", type=float, default=defaults.get("exit_chop_min", 0.25)
@@ -1179,7 +1198,7 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=defaults.get("exclude_box", True),
     )
-    ap.add_argument("--out-dir", default="results/dual_add_trend_diagnostic")
+    ap.add_argument("--out-dir", default="results/trend_scalp_diagnostic")
     ap.add_argument("--map-symbols", default="BTCUSDT")
     ap.add_argument("--continuous-map-symbols", default="")
     ap.add_argument("--no-maps", action="store_true")

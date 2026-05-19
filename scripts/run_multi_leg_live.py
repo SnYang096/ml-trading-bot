@@ -2,7 +2,7 @@
 """Shadow/testnet daemon for standalone multi-leg strategies.
 
 This runner is separate from ``scripts/run_live.py`` because ``chop_grid`` and
-``dual_add_trend`` own multi-leg inventory instead of single ``TradeIntent``
+``trend_scalp`` own multi-leg inventory instead of single ``TradeIntent``
 positions.
 
 **Parallel with directional trend/fat-tail live (BPC / TPC / ME / SRB, etc.)**
@@ -509,7 +509,7 @@ def _resolve_live_strategy_symbols(
     cfg_path = ""
     if strategy == "chop_grid":
         cfg_path = str(getattr(args, "chop_grid_config", "") or "").strip()
-    elif strategy == "dual_add_trend":
+    elif strategy in ("dual_add_trend", "trend_scalp"):
         cfg_path = str(getattr(args, "dual_add_config", "") or "").strip()
     if not cfg_path:
         return list(base_symbols)
@@ -530,10 +530,10 @@ def _make_engine(strategy: str, *, symbol: str, args: argparse.Namespace) -> Any
             level_notional=args.unit_notional,
             metrics_strategy=strategy,
         )
-    if strategy == "dual_add_trend":
+    if strategy in ("dual_add_trend", "trend_scalp"):
         return DualAddTrendLiveEngine(
             config_path=args.dual_add_config,
-            state_path=state_dir / f"dual_add_trend_{symbol}.json",
+            state_path=state_dir / f"trend_scalp_{symbol}.json",
             unit_notional=args.unit_notional,
             metrics_strategy=strategy,
         )
@@ -563,7 +563,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument("--mode", choices=["shadow", "testnet", "mainnet"], default="shadow")
-    p.add_argument("--strategies", default="chop_grid,dual_add_trend")
+    p.add_argument("--strategies", default="chop_grid,trend_scalp")
     p.add_argument(
         "--universe",
         default="highcap",
@@ -626,7 +626,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--dual-add-config",
-        default="config/strategies/dual_add_trend/research/calibrate_roll.default.yaml",
+        default="config/strategies/trend_scalp/research/calibrate_roll.default.yaml",
     )
     return p.parse_args()
 

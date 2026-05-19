@@ -89,7 +89,7 @@ python scripts/experiment_dual_add_max_adds_ablation.py \
   --out-root results/dual_add_ablation_max_adds_q1_2024_2h \
   --max-adds-grid 0,1,2,3 \
   -- \
-  --config config/strategies/dual_add_trend/research/calibrate_roll.default.yaml \
+  --config config/strategies/trend_scalp/research/calibrate_roll.default.yaml \
   --symbols BTCUSDT,ETHUSDT,SOLUSDT \
   --start 2024-01-01 --end 2024-03-31 \
   --timeframe 2h --execution-timeframe 2h \
@@ -104,7 +104,7 @@ python scripts/experiment_dual_add_max_adds_ablation.py \
   --out-root results/dual_add_ablation_max_adds_q1_2024_1min_exec \
   --max-adds-grid 0,1,2,3 \
   -- \
-  --config config/strategies/dual_add_trend/research/calibrate_roll.default.yaml \
+  --config config/strategies/trend_scalp/research/calibrate_roll.default.yaml \
   --symbols BTCUSDT,ETHUSDT,SOLUSDT \
   --start 2024-01-01 --end 2024-03-31 \
   --timeframe 2h --execution-timeframe 1min \
@@ -153,7 +153,7 @@ python scripts/diagnose_dual_add_trend.py \
   --max-net-exposure 2 \
   --max-adds-per-side 3 \
   --exclude-box \
-  --out-dir results/dual_add_trend/turbo-full-cycle
+  --out-dir results/trend_scalp/turbo-full-cycle
 ```
 
 Full cycle: `2022-01-01..2026-03-31`, 2H, BTC/ETH/SOL/BNB/XRP/ADA.

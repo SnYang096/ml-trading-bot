@@ -9,7 +9,7 @@ Example (trend-only open + basket TP + regime_only; align with stress-test notes
       --out-root results/dual_add_ablation_max_adds_2024q1 \\
       --max-adds-grid 0,1,2,3 \\
       -- \\
-      --config config/strategies/dual_add_trend/research/calibrate_roll.default.yaml \\
+      --config config/strategies/trend_scalp/research/calibrate_roll.default.yaml \\
       --symbols BTCUSDT,ETHUSDT,SOLUSDT \\
       --start 2024-01-01 --end 2024-03-31 \\
       --timeframe 2h --execution-timeframe 1min \\

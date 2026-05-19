@@ -19,15 +19,15 @@ rolling:
   time_split_policy: static_holdout
 
 strategies:
-  dual_add_trend:
+  trend_scalp:
     multileg_feature_selection:
       enabled: true
       protected_nodes:
         - atr_f
 
 dual_add_backtest:
-  output_dir: results/dual_add_trend/non-rolling-full-cycle
+  output_dir: results/trend_scalp/non-rolling-full-cycle
 
 output:
-  history_dir: results/dual_add_trend/validate_static.full_study
-  latest_dir: results/dual_add_trend/latest
+  history_dir: results/trend_scalp/validate_static.full_study
+  latest_dir: results/trend_scalp/latest

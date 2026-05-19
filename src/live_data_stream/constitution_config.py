@@ -7,7 +7,7 @@ import os
 from typing import Any, Dict, Iterable, List, Optional, Set, Union
 
 logger = logging.getLogger(__name__)
-MULTI_LEG_STRATEGY_TYPES = frozenset({"grid", "dual_add_trend"})
+MULTI_LEG_STRATEGY_TYPES = frozenset({"grid", "dual_add_trend", "trend_scalp"})
 SPOT_STRATEGY_TYPES = frozenset({"spot", "spot_accum"})
 
 
