@@ -46,7 +46,10 @@ from src.order_management.spot_live_recovery import (
 )
 from src.order_management.spot_order_manager import SpotOrderManager
 from src.time_series_model.live.metrics_exporter import METRICS, start_metrics_server
-from src.time_series_model.live.decision_chain_debug import chain_debug_enabled
+from src.time_series_model.live.decision_chain_debug import (
+    chain_debug_enabled,
+    log_spot_no_intent,
+)
 from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
 from src.time_series_model.live.spot_accum_simple import (
     apply_partial_sell_to_position,
@@ -1029,16 +1032,7 @@ def main() -> int:
                 )
                 if not intents:
                     if chain_debug:
-                        funnel = dict(getattr(strategy, "_last_funnel", None) or {})
-                        wk = features.get("weekly_ema_200_position")
-                        logger.info(
-                            "[%s] signal-check no intent weekly_ema_200_position=%s "
-                            "simple_deep_bear=%s funnel=%s",
-                            sym,
-                            wk,
-                            funnel.get("simple_deep_bear"),
-                            funnel,
-                        )
+                        log_spot_no_intent(sym, strategy, features)
                     continue
                 intent = intents[0]
                 if str(intent.action or "").upper() != "LONG":
