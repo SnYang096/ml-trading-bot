@@ -8,7 +8,14 @@ the shared account beyond gross/net exposure or resting-order limits.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+
+from src.time_series_model.core.constitution.account_risk_guard import (
+    AccountRiskSnapshot,
+    evaluate_account_risk,
+    resolve_account_risk_limits,
+    snapshot_for_backtest,
+)
 
 
 Action = Dict[str, Any]
@@ -29,6 +36,7 @@ class MultiLegRiskLimits:
     max_resting_orders: Optional[int] = None
     account_equity_usdt: Optional[float] = None
     max_drawdown_pct: Optional[float] = None
+    account_risk_limits: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -73,8 +81,17 @@ class MultiLegPortfolioRiskGovernor:
     resulting projected exposure remains within configured limits.
     """
 
-    def __init__(self, limits: MultiLegRiskLimits) -> None:
+    def __init__(
+        self,
+        limits: MultiLegRiskLimits,
+        *,
+        account_snapshot_provider: Optional[Callable[[], AccountRiskSnapshot]] = None,
+    ) -> None:
         self.limits = limits
+        self._account_risk_limits = resolve_account_risk_limits(
+            limits.account_risk_limits
+        )
+        self._account_snapshot_provider = account_snapshot_provider
 
     def check_actions(
         self,
@@ -137,7 +154,9 @@ class MultiLegPortfolioRiskGovernor:
             elif side == "SELL":
                 next_short[symbol] = next_short.get(symbol, 0.0) + notional
             else:
-                rejected.append(RiskRejection(dict(action), f"unsupported place side: {side}"))
+                rejected.append(
+                    RiskRejection(dict(action), f"unsupported place side: {side}")
+                )
                 continue
 
             reason = self._limit_violation(next_long, next_short, symbol)
@@ -145,11 +164,59 @@ class MultiLegPortfolioRiskGovernor:
                 rejected.append(RiskRejection(dict(action), reason))
                 continue
 
+            account_reason = self._account_risk_violation(
+                proposed_notional=notional,
+                projected_gross=sum(next_long.values()) + sum(next_short.values()),
+            )
+            if account_reason:
+                rejected.append(RiskRejection(dict(action), account_reason))
+                continue
+
             approved.append(dict(action))
             long_by_symbol, short_by_symbol = next_long, next_short
             resting_orders += 1
 
         return RiskCheckResult(approved_actions=approved, rejected=rejected)
+
+    def _account_risk_violation(
+        self,
+        *,
+        proposed_notional: float,
+        projected_gross: float,
+    ) -> str:
+        if not bool(self._account_risk_limits.get("enabled", False)):
+            return ""
+        equity = float(self.limits.account_equity_usdt or 0.0)
+        snap: Optional[AccountRiskSnapshot] = None
+        if self._account_snapshot_provider is not None:
+            try:
+                snap = self._account_snapshot_provider()
+                if snap is not None and float(snap.equity or 0.0) > 0:
+                    equity = float(snap.equity)
+            except Exception:
+                if bool(self._account_risk_limits.get("fail_closed", True)):
+                    return "account_risk_snapshot_unavailable"
+                return ""
+        if equity <= 0:
+            if bool(self._account_risk_limits.get("fail_closed", True)):
+                return "account_equity_unavailable"
+            return ""
+        if snap is None:
+            snap = snapshot_for_backtest(
+                equity_usdt=equity,
+                gross_notional=max(0.0, projected_gross - proposed_notional),
+                margin_stress_leverage=float(
+                    self._account_risk_limits.get("margin_stress_leverage", 5.0) or 5.0
+                ),
+            )
+        violations = evaluate_account_risk(
+            limits=self._account_risk_limits,
+            snapshot=snap,
+            proposed_notional=proposed_notional,
+        )
+        if violations:
+            return "account_risk_limit: " + violations[0]
+        return ""
 
     def _limit_violation(
         self,
@@ -165,7 +232,9 @@ class MultiLegPortfolioRiskGovernor:
             return f"max_net_notional exceeded: {net:.8f} > {self.limits.max_net_notional:.8f}"
 
         sym_gross = long_by_symbol.get(symbol, 0.0) + short_by_symbol.get(symbol, 0.0)
-        sym_net = abs(long_by_symbol.get(symbol, 0.0) - short_by_symbol.get(symbol, 0.0))
+        sym_net = abs(
+            long_by_symbol.get(symbol, 0.0) - short_by_symbol.get(symbol, 0.0)
+        )
         if (
             self.limits.max_symbol_gross_notional is not None
             and sym_gross > self.limits.max_symbol_gross_notional

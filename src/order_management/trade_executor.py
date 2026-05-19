@@ -14,7 +14,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 import pandas as pd
 
@@ -23,6 +23,11 @@ from src.order_management.position_tracker import PositionTracker
 from src.time_series_model.core.constitution.add_position_rules import (
     resolve_add_position_size_multiplier,
     validate_add_position_trigger,
+)
+from src.time_series_model.core.constitution.account_risk_guard import (
+    evaluate_account_risk,
+    resolve_account_risk_limits,
+    snapshot_from_binance_balance,
 )
 from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.time_series_model.core.trade_intent import TradeIntent
@@ -99,6 +104,7 @@ class TradeExecutor:
         risk_per_trade: Optional[float] = None,
         trade_size: Optional[float] = None,
         per_strategy_limits: Optional[Dict[str, Any]] = None,
+        account_risk_limits: Optional[Dict[str, Any]] = None,
         stats_collector: Optional[Any] = None,
     ) -> None:
         self.order_manager = order_manager
@@ -111,6 +117,7 @@ class TradeExecutor:
         self.risk_per_trade = risk_per_trade
         self.trade_size = trade_size
         self.per_strategy_limits = per_strategy_limits or {}
+        self.account_risk_limits = account_risk_limits or {}
         self.stats_collector = stats_collector
 
     # ------------------------------------------------------------------
@@ -201,6 +208,11 @@ class TradeExecutor:
                 "order_manager is None — 检查 MLBOT_ORDER_MANAGER_ENABLED "
                 "和 BINANCE_API_KEY/BINANCE_API_SECRET 环境变量"
             )
+        self._enforce_account_risk_limits(
+            qty=qty,
+            entry_price=entry_price,
+            features=features,
+        )
         # ── 2. slot 预留（enforce_before_order 在 place_order 前调用）──
         position_id = intent.position_id
         enforce_before_order(
@@ -746,6 +758,75 @@ class TradeExecutor:
                     pass
 
         return qty
+
+    def _enforce_account_risk_limits(
+        self,
+        *,
+        qty: float,
+        entry_price: Optional[float],
+        features: Mapping[str, Any],
+    ) -> None:
+        """Hard account-level exposure guard before opening or adding risk."""
+        cfg = resolve_account_risk_limits(self.account_risk_limits)
+        if not bool(cfg.get("enabled", False)):
+            return
+        proposed_notional = float(max(0.0, qty) * max(0.0, float(entry_price or 0.0)))
+        if proposed_notional <= 0:
+            return
+
+        fail_closed = bool(cfg.get("fail_closed", True))
+        try:
+            snap = self._account_risk_snapshot(features=features)
+        except Exception as exc:
+            if fail_closed:
+                raise ConstitutionViolation(
+                    code="ACCOUNT_RISK_SNAPSHOT_UNAVAILABLE",
+                    message=f"Account risk snapshot unavailable: {exc}",
+                    context={"symbol": self.symbol, "account_risk_limits": cfg},
+                ) from exc
+            logger.warning(
+                "[%s] account risk snapshot unavailable: %s", self.symbol, exc
+            )
+            return
+
+        violations = evaluate_account_risk(
+            limits=cfg,
+            snapshot=snap,
+            proposed_notional=proposed_notional,
+        )
+        logger.info(
+            "[%s] account risk guard: equity=%.2f gross=%.2f proposed=%.2f violations=%s",
+            self.symbol,
+            float(snap.equity),
+            float(snap.gross_notional),
+            proposed_notional,
+            violations or "ok",
+        )
+        if violations:
+            raise ConstitutionViolation(
+                code="ACCOUNT_RISK_LIMIT",
+                message="Account risk limit exceeded: " + ", ".join(violations),
+                context={
+                    "symbol": self.symbol,
+                    "proposed_notional": proposed_notional,
+                    "equity": float(snap.equity),
+                    "current_gross_notional": float(snap.gross_notional),
+                    "account_risk_limits": cfg,
+                    "violations": violations,
+                },
+            )
+
+    def _account_risk_snapshot(self, *, features: Mapping[str, Any]):
+        api = getattr(self.order_manager, "binance_api", None)
+        if api is None:
+            raise RuntimeError("binance_api unavailable")
+        positions = api.get_positions()
+        balance = api.get_account_balance()
+        return snapshot_from_binance_balance(
+            balance=balance,
+            positions=positions,
+            features_fallback=features,
+        )
 
     def _release_leaked_slot(self, intent: TradeIntent) -> None:
         """释放因 enforce_before_order 预留但未完成开仓的 slot

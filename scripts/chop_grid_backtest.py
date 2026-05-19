@@ -46,6 +46,9 @@ from scripts.multi_leg_trading_map import write_continuous_trading_map  # noqa: 
 from scripts.pipeline.multileg_prefilter_rules import (  # noqa: E402
     apply_prefilter_rules,
 )
+from src.live_data_stream.constitution_config import (  # noqa: E402
+    load_multi_leg_backtest_risk_context,
+)
 from src.time_series_model.grid.chop_grid_engine import (  # noqa: E402
     ChopGridEngine,
     GridEngineConfig,
@@ -266,6 +269,8 @@ def collect_chop_grid_trades_for_symbol(
     engine: ChopGridEngine,
     *,
     exclude_box: bool,
+    account_risk_tracker=None,
+    unit_notional_usdt: float = 0.0,
 ) -> Tuple[List[dict], List[dict], int, float]:
     """Simulate chop grid for one symbol given pre-built feature ``df`` (signal timeframe).
 
@@ -315,6 +320,8 @@ def collect_chop_grid_trades_for_symbol(
                 anchor_close=anchor_c,
                 anchor_atr=anchor_a,
                 regime_chop_col=chop_col,
+                account_risk_tracker=account_risk_tracker,
+                unit_notional_usdt=unit_notional_usdt,
             )
         else:
             result = engine.simulate_segment(
@@ -323,6 +330,8 @@ def collect_chop_grid_trades_for_symbol(
                 regime=regime,
                 segment_id=seg_id,
                 regime_chop_col=chop_col,
+                account_risk_tracker=account_risk_tracker,
+                unit_notional_usdt=unit_notional_usdt,
             )
         trades_out.extend(t.to_dict() for t in result.trades)
         summaries_out.append(result.summary)
@@ -402,6 +411,9 @@ def run_backtest(
 
     all_trades: List[dict] = []
     all_segments: List[dict] = []
+    risk_tracker, unit_notional = load_multi_leg_backtest_risk_context(
+        initial_capital=float(getattr(args, "initial_capital", 10_000.0) or 10_000.0)
+    )
 
     for symbol in symbols:
         raw = _load_symbol_1m(data_dir, symbol, warmup_start, end)
@@ -433,6 +445,8 @@ def run_backtest(
             cfg,
             engine,
             exclude_box=bool(args.exclude_box),
+            account_risk_tracker=risk_tracker,
+            unit_notional_usdt=unit_notional,
         )
         print(f"{symbol}: segments={n_seg}, entry_rate={entry_rate:.1%}")
         all_trades.extend(tlist)

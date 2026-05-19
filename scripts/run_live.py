@@ -570,8 +570,10 @@ def _setup_three_strategies(
         # 从宪法注入 risk_per_slot + per_strategy_limits
         risk_per_slot = pcm.constitution.get("risk_per_slot", 0.01)
         per_strategy_limits = pcm.constitution.get("per_strategy_limits", {})
+        account_risk_limits = pcm.constitution.get("account_risk_limits", {})
         listener.risk_per_slot = risk_per_slot
         listener.per_strategy_limits = per_strategy_limits
+        listener.account_risk_limits = account_risk_limits
         if trade_size > 0:
             listener.trade_size = trade_size
         if risk_per_trade > 0:

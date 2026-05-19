@@ -142,6 +142,7 @@ class OrderFlowListener:
         self.risk_per_trade = risk_per_trade
         self.risk_per_slot: float = 0.0  # 从宪法注入 (equity 的比例, 如 0.01 = 1%)
         self.per_strategy_limits: Dict[str, Any] = {}  # 从宪法注入
+        self.account_risk_limits: Dict[str, Any] = {}  # 从宪法注入
         self.decision_handler = decision_handler
         self.stats_collector = None  # 可选: StatsCollector 实例，由外部注入
         self.extra_feature_computers: Dict[str, "IncrementalFeatureComputer"] = {}
@@ -1099,12 +1100,14 @@ class OrderFlowListener:
                 risk_per_trade=self.risk_per_trade,
                 trade_size=self.trade_size,
                 per_strategy_limits=self.per_strategy_limits,
+                account_risk_limits=self.account_risk_limits,
                 stats_collector=self.stats_collector,
             )
         else:
             # 动态更新可变配置（risk_per_slot 由宪法注入后可能改变）
             self._trade_executor.risk_per_slot = self.risk_per_slot
             self._trade_executor.per_strategy_limits = self.per_strategy_limits
+            self._trade_executor.account_risk_limits = self.account_risk_limits
             self._trade_executor.stats_collector = self.stats_collector
         return self._trade_executor
 

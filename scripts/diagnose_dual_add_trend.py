@@ -33,6 +33,9 @@ from scripts.diagnose_chop_grid import (
     resolve_optional_repo_path,
 )
 from scripts.capital_report import write_capital_report_from_trades
+from src.live_data_stream.constitution_config import (
+    load_multi_leg_backtest_risk_context,
+)
 from scripts.diagnose_crf_edge import _load_symbol_1m, _resample_ohlcv
 from src.time_series_model.grid.subbar_replay import (
     merge_signal_features_onto_execution_bars,
@@ -198,6 +201,8 @@ class DualAddConfig:
     risk_stop_mode: str = "mtm"
     initial_hedge: bool = True
     prefilter_rules: Tuple[Dict[str, Any], ...] = ()
+    unit_notional_usdt: float = 0.0
+    account_risk_tracker: Any = None
 
 
 def _max_drawdown(values: List[float]) -> float:
@@ -304,6 +309,11 @@ def simulate_dual_add_segment(
         nonlocal last_add_long, last_add_short
         sides = ["LONG", "SHORT"] if cfg.initial_hedge else [trend_side]
         for side in sides:
+            if cfg.account_risk_tracker is not None and cfg.unit_notional_usdt > 0:
+                ok, _ = cfg.account_risk_tracker.allow_open(cfg.unit_notional_usdt)
+                if not ok:
+                    continue
+                cfg.account_risk_tracker.on_open(cfg.unit_notional_usdt)
             entry_px = _entry_price_with_slippage(side, px, cfg.entry_slippage_bps)
             positions.append(
                 {
@@ -323,6 +333,8 @@ def simulate_dual_add_segment(
     max_gross_units = len(positions)
 
     def record(pos: dict, exit_px: float, exit_ts: pd.Timestamp, reason: str) -> None:
+        if cfg.account_risk_tracker is not None and cfg.unit_notional_usdt > 0:
+            cfg.account_risk_tracker.on_close(cfg.unit_notional_usdt)
         slippage_bps = (
             0.0 if reason == "tp" else max(float(cfg.market_exit_slippage_bps), 0.0)
         )
@@ -357,10 +369,15 @@ def simulate_dual_add_segment(
     def can_add(side: str) -> bool:
         hypothetical = positions + [{"side": side}]
         _, _, net_units = _exposure_units(hypothetical)
-        return (
+        if not (
             len(hypothetical) <= cfg.max_gross_exposure
             and abs(net_units) <= cfg.max_net_exposure
-        )
+        ):
+            return False
+        if cfg.account_risk_tracker is not None and cfg.unit_notional_usdt > 0:
+            ok, _ = cfg.account_risk_tracker.allow_open(cfg.unit_notional_usdt)
+            return bool(ok)
+        return True
 
     def enforce_net_cap(px: float, ts: pd.Timestamp) -> None:
         _, _, net_units = _exposure_units(positions)
@@ -512,6 +529,8 @@ def simulate_dual_add_segment(
                         "entry_slippage_bps": cfg.add_slippage_bps,
                     }
                 )
+                if cfg.account_risk_tracker is not None and cfg.unit_notional_usdt > 0:
+                    cfg.account_risk_tracker.on_open(cfg.unit_notional_usdt)
             while (
                 cfg.add_mode in {"both", "trend"}
                 and (cfg.add_mode == "both" or trend_side == "SHORT")
@@ -534,6 +553,8 @@ def simulate_dual_add_segment(
                         "entry_slippage_bps": cfg.add_slippage_bps,
                     }
                 )
+                if cfg.account_risk_tracker is not None and cfg.unit_notional_usdt > 0:
+                    cfg.account_risk_tracker.on_open(cfg.unit_notional_usdt)
             enforce_net_cap(close, ts)
 
         _, _, net_units = _exposure_units(positions)
@@ -612,6 +633,9 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         x.strip() for x in str(args.trend_return_horizons).split(",") if x.strip()
     ]
     trend_horizons = tuple(int(x) for x in hparts) if hparts else (3, 5, 10)
+    risk_tracker, unit_notional = load_multi_leg_backtest_risk_context(
+        initial_capital=float(getattr(args, "initial_capital", 10_000.0) or 10_000.0)
+    )
     cfg = DualAddConfig(
         regime=args.regime,
         add_mode=args.add_mode,
@@ -655,6 +679,8 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
             for x in (defaults.get("prefilter_rules", []) or [])
             if isinstance(x, dict)
         ),
+        unit_notional_usdt=float(unit_notional),
+        account_risk_tracker=risk_tracker,
     )
     grid_cfg = GridConfig(
         box_window=cfg.box_window,

@@ -195,6 +195,22 @@ resource_allocation:
           SOLUSDT:
             BNBUSDT: 0.82
 
+  # Account-level last line of defense for trend/fat-tail live orders.
+  # Evaluated from live Binance balance + open positions immediately before every
+  # new open/add order. Close/reduce-only orders are not routed through this path.
+  account_risk_limits:
+    enabled: true
+    # Projected gross exposure after the order: sum(abs(position_notional)) / account equity.
+    # Prevents bug loops from compounding the whole account toward exchange max leverage.
+    max_gross_leverage: 3.0
+    # Conservative projected initial margin usage. The order is stress-estimated as
+    # notional / margin_stress_leverage even if the Binance symbol slider allows more.
+    margin_stress_leverage: 5.0
+    max_projected_initial_margin_pct: 0.65
+    min_projected_available_margin_pct: 0.30
+    # If REST account/position reads fail, reject new risk instead of failing open.
+    fail_closed: true
+
   archetype_groups:
     trend: # Named pool for slot_policy.trend_group; members share per-symbol slot rules.
       - tpc
@@ -262,6 +278,15 @@ multi_leg:
     # Live/shadow kill-switch threshold; checked against synced or supplied drawdown.
     # trend_scalp ablation portfolio_cum_dd ~3.9% (docs/strategy/trend_scalp_翻转reseed实验.md); 5% headroom.
     max_drawdown_pct: 0.05 # Halt new multi-leg risk if account drawdown from peak exceeds 5%.
+  # Account-level hard stop for multi-leg live orders (separate API keys from trend).
+  account_risk_limits:
+    enabled: true
+    max_gross_leverage: 3.0
+    margin_stress_leverage: 5.0
+    max_projected_initial_margin_pct: 0.65
+    min_projected_available_margin_pct: 0.30
+    fail_closed: true
+
   risk_limits:
     # Pct limits are resolved against account.equity_usdt unless absolute notional
     # limits are supplied. Example: 0.20 * 10000 = 2000 USDT max gross exposure.

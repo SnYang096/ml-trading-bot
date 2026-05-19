@@ -366,6 +366,30 @@ def _literal_from_env(name: str) -> Optional[float]:
     return _float_or_none(raw)
 
 
+def load_multi_leg_backtest_risk_context(
+    *,
+    strategies_root: Optional[str] = None,
+    constitution_yaml: Optional[str] = None,
+    initial_capital: Optional[float] = None,
+):
+    """Build BacktestAccountRiskTracker + unit_notional for multi-leg research scripts."""
+    from src.time_series_model.core.constitution.account_risk_guard import (
+        BacktestAccountRiskTracker,
+    )
+
+    sr = strategies_root or os.getenv("MLBOT_STRATEGIES_ROOT", "live/highcap/config/strategies")
+    path = resolve_constitution_yaml(sr, override=constitution_yaml)
+    ml = multi_leg_section(load_constitution_dict(path))
+    account = ml.get("account") or {}
+    equity = float(initial_capital if initial_capital is not None else account.get("equity_usdt", 10000.0) or 10000.0)
+    unit = float(ml.get("unit_notional", 0.0) or 0.0)
+    tracker = BacktestAccountRiskTracker(
+        limits=dict(ml.get("account_risk_limits") or {}),
+        equity_usdt=equity,
+    )
+    return tracker, unit
+
+
 def resolve_multi_leg_risk_limits_from_constitution(
     cfg: Dict[str, Any],
 ) -> Dict[str, Optional[float]]:
@@ -401,6 +425,7 @@ def resolve_multi_leg_risk_limits_from_constitution(
         "max_symbol_gross_notional": _resolve_abs("max_symbol_gross_notional"),
         "max_symbol_net_notional": _resolve_abs("max_symbol_net_notional"),
         "max_resting_orders": _float_or_none(rs.get("max_resting_orders")),
+        "account_risk_limits": dict(ml.get("account_risk_limits") or {}),
     }
 
 

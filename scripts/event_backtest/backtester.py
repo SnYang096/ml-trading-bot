@@ -827,12 +827,23 @@ class EventBacktester:
             if hasattr(self.pcm, "_constitution") and self.pcm._constitution
             else 0.01
         )
+        _account_risk_limits = dict(
+            self.pcm._constitution.get("account_risk_limits", {})
+            if hasattr(self.pcm, "_constitution") and self.pcm._constitution
+            else {}
+        )
         try:
             _initial_cash = (
                 float(equity_anchor_usdt) if equity_anchor_usdt is not None else 1000.0
             )
         except (TypeError, ValueError):
             _initial_cash = 1000.0
+        if bool(_account_risk_limits.get("enabled", False)):
+            _peer_sims = list(self._simulators.values())
+            for _sim_ar in _peer_sims:
+                _sim_ar._account_risk_limits = dict(_account_risk_limits)
+                _sim_ar._account_risk_peer_sims = _peer_sims
+                _sim_ar._account_risk_equity = float(_initial_cash)
         _shared_account_ledger = AccountLedger(
             account="event_backtest",
             initial_cash_usdt=_initial_cash,
@@ -1421,6 +1432,9 @@ class EventBacktester:
                         elif _dup_open and not _lor_open:
                             funnel.setdefault("reject_open_duplicate_archetype", 0)
                             funnel["reject_open_duplicate_archetype"] += 1
+                        elif _lor_open.startswith("account_risk"):
+                            funnel.setdefault("reject_account_risk_limit", 0)
+                            funnel["reject_account_risk_limit"] += 1
                         # 已有持仓，尝试加仓（trigger.type=float_r_ladder_only 时仅走下方阶梯逻辑）
                         elif _add_pos_enabled and _executor:
                             _win_lc = str(winning_arch or "").strip().lower()
@@ -1515,6 +1529,11 @@ class EventBacktester:
                                 elif _why == "constitution_reject":
                                     funnel.setdefault("reject_add_constitution", 0)
                                     funnel["reject_add_constitution"] += 1
+                                elif str(_why).startswith("account_risk"):
+                                    funnel.setdefault(
+                                        "reject_add_account_risk_limit", 0
+                                    )
+                                    funnel["reject_add_account_risk_limit"] += 1
                                 elif _why in (
                                     "trigger_not_met",
                                     "add_min_current_r",

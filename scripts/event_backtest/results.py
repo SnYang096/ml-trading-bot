@@ -279,6 +279,8 @@ class BacktestResult:
             ("reject_pcm_struct_pass_no_intent", "结构全过但无候选intent(极少)"),
             ("reject_open_atr_nonpositive", "开仓时ATR≤0拒单"),
             ("reject_open_duplicate_archetype", "同symbol同archetype已持仓拒新开"),
+            ("reject_account_risk_limit", "账户级杠杆/保证金红线拒新开"),
+            ("reject_add_account_risk_limit", "账户级杠杆/保证金红线拒加仓"),
             (
                 "reject_spot_capital_budget",
                 "spot_accum 名义/日额度 deploy 预算用尽",

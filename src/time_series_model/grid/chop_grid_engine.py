@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -118,6 +118,8 @@ class ChopGridEngine:
         anchor_close: float | None = None,
         anchor_atr: float | None = None,
         regime_chop_col: str | None = None,
+        account_risk_tracker: Any = None,
+        unit_notional_usdt: float = 0.0,
     ) -> GridSegmentResult:
         if seg.empty:
             return GridSegmentResult(
@@ -168,6 +170,8 @@ class ChopGridEngine:
         max_open = 0
         risk_exit = False
 
+        leg_notional = float(max(0.0, unit_notional_usdt))
+
         def _record(
             *,
             side: str,
@@ -178,6 +182,8 @@ class ChopGridEngine:
             exit_time: pd.Timestamp,
             exit_reason: str,
         ) -> None:
+            if account_risk_tracker is not None and leg_notional > 0:
+                account_risk_tracker.on_close(leg_notional)
             gross_pnl_pct = (
                 (exit_price - entry_price) / entry_price
                 if side == "LONG"
@@ -262,9 +268,19 @@ class ChopGridEngine:
 
             for level_i, px in enumerate(long_levels):
                 if level_i not in open_longs and low <= px:
+                    if account_risk_tracker is not None and leg_notional > 0:
+                        ok, _ = account_risk_tracker.allow_open(leg_notional)
+                        if not ok:
+                            continue
+                        account_risk_tracker.on_open(leg_notional)
                     open_longs[level_i] = (px, ts, bar_i)
             for level_i, px in enumerate(short_levels):
                 if level_i not in open_shorts and high >= px:
+                    if account_risk_tracker is not None and leg_notional > 0:
+                        ok, _ = account_risk_tracker.allow_open(leg_notional)
+                        if not ok:
+                            continue
+                        account_risk_tracker.on_open(leg_notional)
                     open_shorts[level_i] = (px, ts, bar_i)
 
             realized = sum(t.pnl_pct for t in trades)

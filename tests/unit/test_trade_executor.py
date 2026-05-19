@@ -75,12 +75,14 @@ def _make_executor(
     risk_per_trade=None,
     trade_size=None,
     slot_active_pids=None,
+    account_risk_limits=None,
 ) -> tuple[TradeExecutor, MagicMock, MagicMock, PositionTracker]:
     """创建 TradeExecutor 及其依赖 mock"""
     om = MagicMock()
     om.place_order.return_value = _make_mock_order()
 
     ce = MagicMock()
+    ce.resolve_safety_db_path.side_effect = RuntimeError("no safety db in unit test")
     rs = MagicMock()
     # 模拟 active slots
     rs.slots.active = {}
@@ -101,6 +103,7 @@ def _make_executor(
         risk_per_slot=risk_per_slot,
         risk_per_trade=risk_per_trade,
         trade_size=trade_size,
+        account_risk_limits=account_risk_limits,
     )
     return ex, om, ce, pt
 
@@ -183,6 +186,73 @@ class TestQtyCalculation:
 
         qty = om.place_order.call_args_list[0].kwargs["quantity"]
         assert abs(qty - 0.123) < 1e-9
+
+
+class TestAccountRiskLimits:
+
+    @staticmethod
+    def _attach_account_snapshot(om, *, gross_notional=0.0, equity=10000.0):
+        om.binance_api = MagicMock()
+        om.binance_api.get_positions.return_value = [
+            {"symbol": "ETH/USDT:USDT", "notional": gross_notional}
+        ]
+        om.binance_api.get_account_balance.return_value = {
+            "USDT": {"total": equity, "free": equity * 0.8, "used": equity * 0.2},
+            "info": {
+                "totalMarginBalance": str(equity),
+                "availableBalance": str(equity * 0.8),
+                "totalPositionInitialMargin": str(equity * 0.2),
+            },
+        }
+
+    def test_account_gross_leverage_limit_blocks_new_risk(self):
+        ex, om, ce, pt = _make_executor(
+            risk_per_slot=0.01,
+            account_risk_limits={
+                "enabled": True,
+                "max_gross_leverage": 3.0,
+                "fail_closed": True,
+            },
+        )
+        # Normal risk sizing produces ~5000 notional; 29000 + 5000 > 3x equity.
+        self._attach_account_snapshot(om, gross_notional=29000.0, equity=10000.0)
+
+        result = ex.execute(intent=_make_intent(), features=_make_features())
+
+        assert result is False
+        om.place_order.assert_not_called()
+
+    def test_account_risk_limit_allows_order_under_caps(self):
+        ex, om, ce, pt = _make_executor(
+            risk_per_slot=0.01,
+            account_risk_limits={
+                "enabled": True,
+                "max_gross_leverage": 3.0,
+                "max_projected_initial_margin_pct": 0.80,
+                "min_projected_available_margin_pct": 0.20,
+                "margin_stress_leverage": 5.0,
+                "fail_closed": True,
+            },
+        )
+        self._attach_account_snapshot(om, gross_notional=10000.0, equity=10000.0)
+
+        result = ex.execute(intent=_make_intent(), features=_make_features())
+
+        assert result is True
+        om.place_order.assert_called()
+
+    def test_account_risk_limit_fail_closed_when_snapshot_missing(self):
+        ex, om, ce, pt = _make_executor(
+            risk_per_slot=0.01,
+            account_risk_limits={"enabled": True, "fail_closed": True},
+        )
+        om.binance_api = MagicMock()
+        om.binance_api.get_positions.side_effect = RuntimeError("rate limited")
+
+        result = ex.execute(intent=_make_intent(), features=_make_features())
+
+        assert result is False
+        om.place_order.assert_not_called()
 
 
 class TestSlotManagement:

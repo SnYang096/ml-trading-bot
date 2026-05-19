@@ -133,6 +133,39 @@ def test_processes_batch_incrementally_for_symbol_caps() -> None:
     assert "max_symbol_gross_notional exceeded" in result.rejected[0].reason
 
 
+def test_rejects_place_when_account_risk_limit_exceeded() -> None:
+    governor = MultiLegPortfolioRiskGovernor(
+        MultiLegRiskLimits(
+            max_gross_notional=10_000.0,
+            max_net_notional=10_000.0,
+            account_equity_usdt=1000.0,
+            account_risk_limits={
+                "enabled": True,
+                "max_gross_leverage": 3.0,
+                "margin_stress_leverage": 5.0,
+            },
+        )
+    )
+
+    result = governor.check_actions(
+        [
+            {
+                "action": "place",
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "quantity": 0.05,
+                "price": 60_000.0,
+            }
+        ],
+        positions=[
+            ExposureSnapshot("ETHUSDT", "SHORT", 1.0, 2900.0),
+        ],
+    )
+
+    assert result.approved_actions == []
+    assert "account_risk_limit" in result.rejected[0].reason
+
+
 def test_rejects_new_places_when_drawdown_limit_is_reached() -> None:
     governor = MultiLegPortfolioRiskGovernor(
         MultiLegRiskLimits(

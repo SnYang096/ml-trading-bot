@@ -118,6 +118,13 @@ from src.order_management.multi_leg_risk_governor import (  # noqa: E402
 )
 from src.live_data_stream.constitution_config import (  # noqa: E402
     apply_multi_leg_args_from_constitution,
+    load_constitution_dict,
+    multi_leg_section,
+    resolve_constitution_yaml,
+    resolve_multi_leg_risk_limits_from_constitution,
+)
+from src.time_series_model.core.constitution.account_risk_guard import (  # noqa: E402
+    snapshot_from_binance_balance,
 )
 from src.time_series_model.live.metrics_exporter import (  # noqa: E402
     start_metrics_server,
@@ -326,6 +333,16 @@ def _make_api(mode: str, *, allow_shared_account: bool = False) -> Any:
     )
 
 
+def _multi_leg_account_snapshot_provider(api: Any):
+    def provider():
+        return snapshot_from_binance_balance(
+            balance=api.get_account_balance(),
+            positions=api.get_positions(),
+        )
+
+    return provider
+
+
 def build_daemon(
     args: argparse.Namespace,
 ) -> Tuple[MultiLegLiveDaemon, Any, MultiLegStorage | None, str | None]:
@@ -403,6 +420,13 @@ def build_daemon(
             ),
             config=vars(args),
         )
+    _const_path = resolve_constitution_yaml(
+        os.getenv("MLBOT_STRATEGIES_ROOT", "live/highcap/config/strategies"),
+        override=getattr(args, "constitution_yaml", None),
+    )
+    _ml_limits = resolve_multi_leg_risk_limits_from_constitution(
+        {"multi_leg": multi_leg_section(load_constitution_dict(_const_path))}
+    )
     risk_limits = MultiLegRiskLimits(
         max_gross_notional=args.max_gross_notional,
         max_net_notional=args.max_net_notional,
@@ -411,7 +435,11 @@ def build_daemon(
         max_resting_orders=args.max_resting_orders,
         account_equity_usdt=getattr(args, "account_equity_usdt", None),
         max_drawdown_pct=getattr(args, "max_drawdown_pct", None),
+        account_risk_limits=dict(_ml_limits.get("account_risk_limits") or {}),
     )
+    _account_snapshot_provider = None
+    if args.mode in ("mainnet", "testnet") and isinstance(api, BinanceAPI):
+        _account_snapshot_provider = _multi_leg_account_snapshot_provider(api)
 
     def _drawdown_pct_from_env() -> float | None:
         raw = os.getenv("MULTI_LEG_CURRENT_DRAWDOWN_PCT", "")
@@ -459,7 +487,10 @@ def build_daemon(
                 run_id=run_id,
                 strategy_name=strategy,
             )
-            governor = MultiLegPortfolioRiskGovernor(risk_limits)
+            governor = MultiLegPortfolioRiskGovernor(
+                risk_limits,
+                account_snapshot_provider=_account_snapshot_provider,
+            )
             sym_u = str(symbol).strip().upper()
             reconciler = MultiLegReconciler(
                 ReconciliationPolicy(

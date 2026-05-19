@@ -114,6 +114,9 @@ class PositionSimulator:
         # Phase D 加仓形态门 recent_momentum 所需：近 N 根 primary close 滚动缓存（净位移用）
         self._primary_close_buffer: List[float] = []
         self._primary_close_buffer_max: int = 16
+        self._account_risk_limits: Dict[str, Any] = {}
+        self._account_risk_peer_sims: Optional[List["PositionSimulator"]] = None
+        self._account_risk_equity: float = 0.0
 
     @property
     def has_positions(self) -> bool:
@@ -175,6 +178,58 @@ class PositionSimulator:
             if isinstance(rlc, dict) and rlc and not pos.get("regime_lifecycle_exit"):
                 pos["regime_lifecycle_exit"] = dict(rlc)
         return loaded
+
+    def _gross_notional_peer_total(self) -> float:
+        total = 0.0
+        peers = self._account_risk_peer_sims or [self]
+        seen: set[int] = set()
+        for sim in peers:
+            sid = id(sim)
+            if sid in seen:
+                continue
+            seen.add(sid)
+            for pos in sim._positions.values():
+                if bool(pos.get("_is_add_position", False)):
+                    continue
+                total += abs(float(pos.get("_entry_notional_usdt", 0.0) or 0.0))
+        return total
+
+    def _reject_account_risk(self, proposed_notional: float, *, for_add: bool) -> bool:
+        from src.time_series_model.core.constitution.account_risk_guard import (
+            evaluate_account_risk,
+            resolve_account_risk_limits,
+            snapshot_for_backtest,
+        )
+
+        cfg = resolve_account_risk_limits(self._account_risk_limits)
+        if not bool(cfg.get("enabled", False)):
+            return False
+        equity = float(self._account_risk_equity or 0.0)
+        if equity <= 0:
+            reason = "account_risk_equity_unavailable"
+            if for_add:
+                self.last_add_reject_reason = reason
+            else:
+                self.last_open_reject_reason = reason
+            return True
+        snap = snapshot_for_backtest(
+            equity_usdt=equity,
+            gross_notional=self._gross_notional_peer_total(),
+            margin_stress_leverage=float(cfg.get("margin_stress_leverage", 5.0) or 5.0),
+        )
+        violations = evaluate_account_risk(
+            limits=cfg,
+            snapshot=snap,
+            proposed_notional=float(proposed_notional),
+        )
+        if violations:
+            reason = "account_risk_limit:" + violations[0]
+            if for_add:
+                self.last_add_reject_reason = reason
+            else:
+                self.last_open_reject_reason = reason
+            return True
+        return False
 
     def _estimate_entry_notional_usdt(
         self,
@@ -610,6 +665,9 @@ class PositionSimulator:
             else 0.0
         )
         entry_fee_usdt = entry_notional * max(0.0, float(self.fee_rate or 0.0))
+
+        if self._reject_account_risk(float(entry_notional), for_add=False):
+            return None
 
         pos["_spot_quote_deployed"] = float(leg_usdt)
         pos["_entry_notional_usdt"] = float(entry_notional)
@@ -1423,6 +1481,16 @@ class PositionSimulator:
         self.max_observed_notional_frac = max(
             self.max_observed_notional_frac, projected_notional
         )
+        _eq_anchor = float(
+            self._account_risk_equity or signal.get("equity_usd", 0.0) or 0.0
+        )
+        _add_notional_usd = (
+            _eq_anchor * float(_risk_frac) * float(parent_mult) * float(add_mult)
+            if _eq_anchor > 0
+            else 0.0
+        )
+        if self._reject_account_risk(_add_notional_usd, for_add=True):
+            return None
 
         # 4. 记录加仓 (更新 ConstitutionRuntimeState — 同实盘 record_add_position)
         executor.record_add_position(

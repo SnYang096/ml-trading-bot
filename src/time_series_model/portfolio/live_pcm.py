@@ -356,6 +356,7 @@ def _load_constitution_constraints(
         "direction_policy": {},
         "slot_policy": {},
         "resource_allocation": {},
+        "account_risk_limits": {},
     }
     if not constitution_yaml:
         return defaults
@@ -392,6 +393,7 @@ def _load_constitution_constraints(
         "intent_selection_policy": dict(ra.get("intent_selection_policy") or {}),
         "direction_policy": dict(ra.get("direction_policy") or {}),
         "slot_policy": slot_policy,
+        "account_risk_limits": dict(ra.get("account_risk_limits") or {}),
         "evidence_min_score": float(ra.get("evidence_min_score", 0.0)),
         "evidence_position_scale": bool(ra.get("evidence_position_scale", True)),
         # Full RA for intent_archetype_priority_tokens (enabled_archetypes order fallback)
@@ -1767,6 +1769,7 @@ class LivePCM:
                 "risk_per_slot": self._constitution.get("risk_per_slot"),
                 "per_strategy_limits": self._constitution.get("per_strategy_limits"),
                 "slot_policy": self._constitution.get("slot_policy"),
+                "account_risk_limits": self._constitution.get("account_risk_limits"),
             },
         }
         if self._regime_detector is not None:
