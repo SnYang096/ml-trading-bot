@@ -588,10 +588,6 @@ def _setup_three_strategies(
         order_manager=order_manager,
         symbols=symbols,
     )
-    _ensure_exchange_stop_losses_after_restore(
-        manager=manager,
-        symbols=symbols,
-    )
     # 进程重启后 PCM 内存槽位为空；用持久化 constitution slot 回填，避免下一信号误当「新开」
     pcm.hydrate_slot_evidence_from_constitution_slots(runtime_st)
 
@@ -602,6 +598,9 @@ def _setup_three_strategies(
             continue
         listener.decision_handler = pcm
         listener.order_manager = order_manager
+        tracker = getattr(listener, "_position_tracker", None)
+        if tracker is not None:
+            tracker.order_manager = order_manager
         listener.constitution_executor = constitution_exec
         listener.runtime_state = runtime_st
         # 从宪法注入 risk_per_slot + per_strategy_limits
@@ -628,6 +627,11 @@ def _setup_three_strategies(
         listener.extra_feature_computers = _xf
         if logged_extra_timeframes is None:
             logged_extra_timeframes = list(_xf.keys())
+
+    _ensure_exchange_stop_losses_after_restore(
+        manager=manager,
+        symbols=symbols,
+    )
 
     logger.info(
         "✅ 多策略实盘启动完成: %s symbols primary=%s/%s extras_tf=%s window=%smin pcm=%s",
