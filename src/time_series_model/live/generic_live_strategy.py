@@ -890,12 +890,32 @@ class GenericLiveStrategy:
         transition_max = self._policy_float(policy, "transition_max_score", 4.0)
         return deep_max <= score < transition_max
 
+    @staticmethod
+    def _merge_features_for_decide(
+        features: Dict[str, Any],
+        *,
+        features_by_timeframe: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Merge primary features with optional multi-timeframe rows (non-destructive)."""
+        merged = dict(features or {})
+        if not features_by_timeframe:
+            return merged
+        for row in features_by_timeframe.values():
+            if not isinstance(row, dict):
+                continue
+            for key, val in row.items():
+                if key not in merged or merged.get(key) is None:
+                    merged[key] = val
+        return merged
+
     def decide(
         self,
         *,
         features: Dict[str, Any],
         symbol: str,
         bars: Optional[List[Dict[str, Any]]] = None,
+        features_by_timeframe: Optional[Dict[str, Dict[str, Any]]] = None,
+        decision_time: Any = None,
     ) -> List[TradeIntent]:
         """
         核心决策接口 - 通用策略解析引擎
@@ -908,7 +928,7 @@ class GenericLiveStrategy:
           4. Evidence: 可选，从 archetype.evidence 计算综合分 → TradeIntent.confidence（不调仓位倍数）
           5. Execution: 从 execution.yaml 生成参数；TradeIntent.size_multiplier 仅来自此处（含 regime_execution）
         """
-        if not features:
+        if not features and not features_by_timeframe:
             self._last_funnel = {}
             record_fer_entry_eval(
                 strategy=self.strategy_name,
@@ -920,9 +940,15 @@ class GenericLiveStrategy:
             )
             return []
 
+        features = self._merge_features_for_decide(
+            features, features_by_timeframe=features_by_timeframe
+        )
+
         # 漏斗跟踪 (bool 标记 + 丰富元数据)
         funnel: Dict[str, Any] = {}
-        _sig_ts = features.get("timestamp")
+        _sig_ts = (
+            decision_time if decision_time is not None else features.get("timestamp")
+        )
         simple_policy = self._simple_accumulation_policy()
         use_simple_accum = bool(simple_policy.get("enabled", False))
         accumulation_policy = self._accumulation_policy()
