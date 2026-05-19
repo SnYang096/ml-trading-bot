@@ -386,11 +386,16 @@ class PositionTracker:
         side_str = str(pos.get("side", "")).upper()
         return "LONG" if side_str in {"LONG", "BUY"} else "SHORT"
 
-    def _should_skip_exchange_sl_sync(self, pos: Dict[str, Any]) -> bool:
+    def _should_skip_exchange_sl_sync(self, pid: str, pos: Dict[str, Any]) -> bool:
         """Add legs that inherit parent stop must not place a second closePosition SL."""
-        return bool(pos.get("_is_add_position", False)) and bool(
+        if bool(pos.get("_is_add_position", False)) and bool(
             pos.get("_inherit_parent_stop", False)
-        )
+        ):
+            return True
+        # One closePosition SL per symbol+side: only the designated owner may sync.
+        side = self._position_side_from_pos(pos)
+        owner_pid = self._exchange_sl_owner_pid(side)
+        return owner_pid is not None and owner_pid != pid
 
     @staticmethod
     def _order_info_close_position(order: Dict[str, Any]) -> bool:
@@ -398,14 +403,31 @@ class PositionTracker:
         raw = info.get("closePosition", order.get("closePosition"))
         return raw is True or str(raw).lower() == "true"
 
-    @staticmethod
-    def _order_is_stop_type(order: Dict[str, Any]) -> bool:
-        info = order.get("info") if isinstance(order.get("info"), dict) else {}
-        otype = str(info.get("type") or order.get("type") or "").upper()
-        return "STOP" in otype
+    def _exchange_sl_owner_pid(self, position_side: str) -> Optional[str]:
+        """Pick one position per symbol+side to own the closePosition exchange SL."""
+        candidates: List[Tuple[int, str]] = []
+        for pid, pos in self._positions.items():
+            if self._position_side_from_pos(pos) != position_side:
+                continue
+            if bool(pos.get("_is_add_position", False)) and bool(
+                pos.get("_inherit_parent_stop", False)
+            ):
+                continue
+            rank = 0
+            if pos.get("_exchange_sl_order_id"):
+                rank -= 10
+            if not bool(pos.get("_is_add_position", False)):
+                rank -= 5
+            candidates.append((rank, str(pid)))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda x: x[0])
+        return candidates[0][1]
 
-    def _cancel_open_close_position_stops(self, *, position_side: str) -> int:
-        """Cancel exchange closePosition STOP orders so a new SL can be placed (-4130 guard)."""
+    def _cancel_open_close_position_conditionals(
+        self, *, position_side: str
+    ) -> int:
+        """Cancel closePosition STOP/TP conditionals so a new SL can be placed (-4130 guard)."""
         api = getattr(self.order_manager, "binance_api", None)
         if api is None:
             return 0
@@ -425,8 +447,6 @@ class PositionTracker:
                 continue
             if not self._order_info_close_position(order):
                 continue
-            if not self._order_is_stop_type(order):
-                continue
             info = order.get("info") if isinstance(order.get("info"), dict) else {}
             order_pos_side = str(info.get("positionSide") or "BOTH").upper()
             if order_pos_side not in {"", "BOTH"} and order_pos_side != position_side:
@@ -442,14 +462,14 @@ class PositionTracker:
                 cancelled += 1
             except Exception as exc:
                 logger.warning(
-                    "[%s] cancel closePosition stop %s failed: %s",
+                    "[%s] cancel closePosition conditional %s failed: %s",
                     self.symbol,
                     ex_id,
                     exc,
                 )
         if cancelled:
             logger.info(
-                "[%s] cleared %d closePosition stop(s) before SL sync (%s)",
+                "[%s] cleared %d closePosition conditional(s) before SL sync (%s)",
                 self.symbol,
                 cancelled,
                 position_side,
@@ -460,7 +480,7 @@ class PositionTracker:
         """Place or refresh exchange STOP_MARKET when software stop_loss_price is set."""
         if self.order_manager is None:
             return
-        if self._should_skip_exchange_sl_sync(pos):
+        if self._should_skip_exchange_sl_sync(pid, pos):
             return
 
         new_sl_raw = pos.get("stop_loss_price")
@@ -498,7 +518,7 @@ class PositionTracker:
                     self.symbol,
                     old_oid,
                 )
-        self._cancel_open_close_position_stops(position_side=position_side)
+        self._cancel_open_close_position_conditionals(position_side=position_side)
 
         # place 新挂单
         side_str = str(pos.get("side", "")).upper()
@@ -529,9 +549,15 @@ class PositionTracker:
                         "[%s] exchange SL rejected (-4130), clearing closePosition stops and retrying",
                         self.symbol,
                     )
-                    self._cancel_open_close_position_stops(
+                    n_cleared = self._cancel_open_close_position_conditionals(
                         position_side=position_side
                     )
+                    if n_cleared == 0:
+                        logger.warning(
+                            "[%s] -4130 retry: no closePosition conditional found in openOrders (%s)",
+                            self.symbol,
+                            position_side,
+                        )
                     continue
                 logger.error(
                     "[%s] place 新 SL 挂单失败 (%.4f)，软件 SL 仍生效",

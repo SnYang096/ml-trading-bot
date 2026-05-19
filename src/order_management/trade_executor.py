@@ -276,7 +276,9 @@ class TradeExecutor:
                     quantity=qty,
                     stop_price=take_profit_price,
                     reduce_only=True,
-                    close_position=True,
+                    # Do not use closePosition on TP: Binance allows only one
+                    # closePosition GTE conditional per symbol+positionSide (SL or TP).
+                    close_position=False,
                     position_id=position_id,
                 )
                 pos["_exchange_tp_order_id"] = tp_order.order_id

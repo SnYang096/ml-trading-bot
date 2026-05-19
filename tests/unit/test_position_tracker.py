@@ -400,6 +400,49 @@ class TestSyncExchangeSL:
         om.place_order.assert_not_called()
         om.binance_api.get_open_orders.assert_not_called()
 
+    def test_sync_exchange_sl_cancels_close_position_tp_before_replace(self):
+        """closePosition TP occupies the same Binance slot as closePosition SL."""
+        om = _make_om()
+        om.binance_api.get_open_orders.return_value = [
+            {
+                "order_id": "888",
+                "side": "sell",
+                "type": "take_profit_market",
+                "info": {
+                    "closePosition": True,
+                    "positionSide": "LONG",
+                    "type": "TAKE_PROFIT_MARKET",
+                },
+            }
+        ]
+        tracker = _make_tracker(om)
+        pos = _make_pos(stop_loss_r=3.0)
+        tracker.add("pid1", pos)
+        pos["stop_loss_price"] = float(pos["stop_loss_price"]) + 50.0
+        pos["_exchange_sl_price"] = float(pos["stop_loss_price"]) - 50.0
+
+        tracker.sync_exchange_sl("pid1")
+
+        om.binance_api.cancel_order.assert_called_with("888", "BTCUSDT")
+        om.place_order.assert_called_once()
+
+    def test_sync_exchange_sl_skips_non_owner_when_parent_has_exchange_sl(self):
+        om = _make_om()
+        tracker = _make_tracker(om)
+        parent = _make_pos(stop_loss_r=3.0)
+        parent["_exchange_sl_order_id"] = "PARENT_SL"
+        parent["_exchange_sl_price"] = parent["stop_loss_price"]
+        child = _make_pos(stop_loss_r=3.0)
+        child["_is_add_position"] = True
+        child["_inherit_parent_stop"] = False
+        child["stop_loss_price"] = float(parent["stop_loss_price"]) + 100.0
+        tracker.add("parent", parent)
+        tracker.add("child", child)
+
+        tracker.sync_exchange_sl("child")
+
+        om.place_order.assert_not_called()
+
     def test_sync_exchange_sl_retries_after_4130(self):
         om = _make_om()
         om.place_order.side_effect = [
