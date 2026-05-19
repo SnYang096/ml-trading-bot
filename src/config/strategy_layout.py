@@ -2,10 +2,38 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import yaml
+
+# Never copy these when cloning a strategy package (research / rolling / feature search).
+STRATEGY_PACKAGE_SKIP_DIR_NAMES = frozenset(
+    {
+        "data",
+        "results",
+        "docker",
+        "feature_store",
+        "live",
+        "vendor",
+        "cache",
+        ".git",
+        "__pycache__",
+        ".pytest_cache",
+        "node_modules",
+    }
+)
+
+STRATEGY_PACKAGE_SKIP_FILE_SUFFIXES = (
+    ".zip",
+    ".whl",
+    ".parquet",
+    ".db",
+    ".sqlite",
+    ".pkl",
+    ".pickle",
+)
 
 # 全局默认（无 --strategy）：多策略 PCM 编排；历史遗留单体研究包仍可用 ``pipelines/research_pipeline.yaml`` 显式传入。
 DEFAULT_PCM_ORCHESTRATE_REL = Path("config/pipelines/pcm_orchestrate_2h.yaml")
@@ -266,4 +294,36 @@ def deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str
         else:
             out[k] = v
     return out
+
+
+def strategy_package_copy_ignore(_directory: str, names: List[str]) -> Set[str]:
+    """``copytree`` ignore callback: skip repo-scale dirs and bulky artifacts."""
+    ignored: Set[str] = set()
+    for name in names:
+        if name in STRATEGY_PACKAGE_SKIP_DIR_NAMES:
+            ignored.add(name)
+            continue
+        lower = str(name).lower()
+        if any(lower.endswith(suffix) for suffix in STRATEGY_PACKAGE_SKIP_FILE_SUFFIXES):
+            ignored.add(name)
+    return ignored
+
+
+def copy_strategy_package(
+    src: Path,
+    dst: Path,
+    *,
+    dirs_exist_ok: bool = False,
+    ignore: Optional[Callable[[str, List[str]], Set[str]]] = None,
+) -> None:
+    """Copy a strategy directory without dragging data/results/docker artifacts."""
+    src_path = Path(src).resolve()
+    dst_path = Path(dst).resolve()
+    if not src_path.is_dir():
+        raise FileNotFoundError(f"strategy package not found: {src_path}")
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    if dst_path.exists() and not dirs_exist_ok:
+        shutil.rmtree(dst_path)
+    ignore_cb = ignore or strategy_package_copy_ignore
+    shutil.copytree(src_path, dst_path, ignore=ignore_cb, dirs_exist_ok=dirs_exist_ok)
 

@@ -26,13 +26,25 @@ def pytest_collection_modifyitems(config, items):
     """
     Auto-mark known heavy tests as `slow` so they can be skipped in fast dev loops.
 
-    Usage:
-      pytest -m "not slow and not integration"
+    Default (see pytest.ini): ``pytest -m "not slow and not integration"``.
+    Full suite: ``pytest -m ""`` or ``pytest -o addopts=``.
     """
     for item in items:
+        path = str(item.fspath)
         # Heaviest suite: advanced features (DTW/EVT/GARCH/etc.)
-        if "tests/features/test_advanced_features.py" in str(item.fspath):
+        if "tests/features/test_advanced_features.py" in path:
             item.add_marker(pytest.mark.slow)
+        if "test_rsi_inf_full_pipeline.py" in path:
+            item.add_marker(pytest.mark.slow)
+            item.add_marker(pytest.mark.integration)
+        for heavy in (
+            "test_vpin_adaptive_bucket.py",
+            "test_vpin_ofi_chain_diagnostic.py",
+            "test_feature_diagnostic.py",
+        ):
+            if heavy in path:
+                item.add_marker(pytest.mark.slow)
+                item.add_marker(pytest.mark.integration)
 
 
 @pytest.fixture

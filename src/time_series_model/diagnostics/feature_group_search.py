@@ -215,7 +215,9 @@ def _make_temp_strategy(
     out_dir = tmp_root / f"{base_name}__{safe_suffix}"
     if out_dir.exists():
         shutil.rmtree(out_dir)
-    shutil.copytree(base_dir, out_dir)
+    from src.config.strategy_layout import copy_strategy_package
+
+    copy_strategy_package(base_dir, out_dir)
 
     feats = _load_yaml(out_dir / "features.yaml")
     feats["name"] = f"{feats.get('name', base_name)}__{safe_suffix}"
@@ -241,8 +243,12 @@ def _run_one_seed(
     _ensure_dir(out_root)
     # Resume behavior: if this seed output already has exactly one results.json, reuse it.
     # This is important for long searches that can be interrupted (or crash on a single candidate).
+    strat_name = _strategy_name(strategy_dir)
+    direct = out_root / strat_name / "results.json"
+    if direct.is_file():
+        return direct
     try:
-        existing = list(out_root.rglob("results.json"))
+        existing = list(out_root.glob(f"{strat_name}/**/results.json"))
         if len(existing) == 1:
             return existing[0]
     except Exception:
@@ -337,7 +343,7 @@ def _run_one_seed(
         )
         return placeholder
 
-    results = list(out_root.rglob("results.json"))
+    results = list(out_root.glob(f"{strat_name}/**/results.json"))
     if len(results) != 1:
         # Safety net:
         # Even if the training pipeline decides to skip a run (e.g. insufficient samples),

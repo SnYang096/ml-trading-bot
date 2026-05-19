@@ -569,6 +569,8 @@ class TestFullChainDiagnostic:
         assert interaction_nonzero > 0, "compression_energy_x_ofi_short 不应全为零"
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 class TestRealDataDiagnostic:
     """真实数据诊断测试（需要实际 tick 数据）"""
 

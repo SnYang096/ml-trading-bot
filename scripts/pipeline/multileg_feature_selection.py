@@ -767,7 +767,9 @@ def select_multileg_feature_subset(
             )
             candidate_cfg_dir = candidates_root / name / "strategy_config"
             shutil.rmtree(candidate_cfg_dir, ignore_errors=True)
-            shutil.copytree(config_dir, candidate_cfg_dir, dirs_exist_ok=True)
+            from src.config.strategy_layout import copy_strategy_package
+
+            copy_strategy_package(config_dir, candidate_cfg_dir, dirs_exist_ok=True)
             _write_prefilter_yaml(
                 candidate_cfg_dir=candidate_cfg_dir,
                 base_prefilter=base_prefilter,

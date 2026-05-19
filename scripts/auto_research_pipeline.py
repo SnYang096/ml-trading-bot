@@ -70,6 +70,7 @@ from src.config.strategy_layout import (
     PIPELINE_CALIBRATE_ROLL_MARKER,
     PIPELINE_RESEARCH_ROLL_MARKER,
     RESEARCH_PIPELINE_PROBE_NAMES,
+    copy_strategy_package,
     is_research_turbo_or_slow_yaml,
     resolve_strategy_profile_path,
     resolve_default_pipeline_config,
@@ -2418,7 +2419,7 @@ def run_strategy_pipeline(
         _copy_from = _src_strategy_dir
     else:
         _copy_from = _prod_config_abs
-    shutil.copytree(_copy_from, exp_config_dir, dirs_exist_ok=True)
+    copy_strategy_package(_copy_from, exp_config_dir, dirs_exist_ok=True)
     config_dir = str(exp_config_dir)  # 后续命令全部用实验目录
     strategies_root = str(exp_strategies_root)
     print(f"\n📦 实验配置隔离: {exp_config_dir} (source={_copy_from})")
@@ -5615,7 +5616,7 @@ def _run_grid_backtest_stage(
                 cand_cfg_dir = calib_root / f"candidate_{idx:02d}" / "config"
                 cand_out_dir = calib_root / f"candidate_{idx:02d}" / "results"
                 shutil.rmtree(cand_cfg_dir, ignore_errors=True)
-                shutil.copytree(strat_cfg_dir, cand_cfg_dir, dirs_exist_ok=True)
+                copy_strategy_package(strat_cfg_dir, cand_cfg_dir, dirs_exist_ok=True)
                 _apply_multileg_candidate(strategy_type, cand_cfg_dir, tuned_candidate)
                 cmd, _ = _run_multileg_backtest_command(
                     cfg=cfg,
@@ -6322,7 +6323,7 @@ def _export_multileg_adopt_bundle_after_rolling(
         dst = history_dir / strat / timestamp / "strategies" / strat
         shutil.rmtree(dst, ignore_errors=True)
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dst, dirs_exist_ok=True)
+        copy_strategy_package(src, dst, dirs_exist_ok=True)
         repo_arch = PROJECT_ROOT / "config" / "strategies" / strat / "archetypes"
         dst_arch = dst / "archetypes"
         if repo_arch.is_dir():
@@ -6797,7 +6798,7 @@ def _run_multileg_month_strategy(
     )
     calibrated_dir = month_strategies_root / strategy
     shutil.rmtree(calibrated_dir, ignore_errors=True)
-    shutil.copytree(source_dir, calibrated_dir, dirs_exist_ok=True)
+    copy_strategy_package(source_dir, calibrated_dir, dirs_exist_ok=True)
 
     best: Dict[str, Any] = {"candidate": {}, "metrics": {}, "score": 0.0}
     calib_dir = run_root / strategy / "multileg_calibration"
@@ -6815,7 +6816,7 @@ def _run_multileg_month_strategy(
             )
             cand_cfg_dir = calib_dir / f"candidate_{idx:02d}" / "config"
             cand_out_dir = calib_dir / f"candidate_{idx:02d}" / "results"
-            shutil.copytree(source_dir, cand_cfg_dir, dirs_exist_ok=True)
+            copy_strategy_package(source_dir, cand_cfg_dir, dirs_exist_ok=True)
             _apply_multileg_candidate(strategy_type, cand_cfg_dir, tuned_candidate)
             cmd, _ = _run_multileg_backtest_command(
                 cfg=cfg,
@@ -6865,7 +6866,7 @@ def _run_multileg_month_strategy(
         )
         if best["metrics"]:
             shutil.rmtree(calibrated_dir, ignore_errors=True)
-            shutil.copytree(source_dir, calibrated_dir, dirs_exist_ok=True)
+            copy_strategy_package(source_dir, calibrated_dir, dirs_exist_ok=True)
             _apply_multileg_candidate(
                 strategy_type,
                 calibrated_dir,
@@ -8034,7 +8035,7 @@ def _run_slow_snapshot_adoption_gate(
         dst = adopted_root / strat
         if src.exists():
             shutil.rmtree(dst, ignore_errors=True)
-            shutil.copytree(src, dst, dirs_exist_ok=True)
+            copy_strategy_package(src, dst, dirs_exist_ok=True)
 
     report = {
         "month": month_token,
@@ -8285,7 +8286,7 @@ def _run_fast_month_stage(
             if exp_cfg_dir.exists():
                 dst = month_strategies_root / strat
                 shutil.rmtree(dst, ignore_errors=True)
-                shutil.copytree(exp_cfg_dir, dst, dirs_exist_ok=True)
+                copy_strategy_package(exp_cfg_dir, dst, dirs_exist_ok=True)
     else:
         for strat in strategies:
             # 同上：优先尊重 strategies.<strat>.config 的显式 per-strategy 覆盖。
@@ -8306,7 +8307,7 @@ def _run_fast_month_stage(
             dst = month_strategies_root / strat
             if src is not None and src.exists():
                 shutil.rmtree(dst, ignore_errors=True)
-                shutil.copytree(src, dst, dirs_exist_ok=True)
+                copy_strategy_package(src, dst, dirs_exist_ok=True)
 
     # B) Calibrate execution on prior window and promote into month_strategies_root.
     if _calibrate_threshold_layers and execution_opt_enabled:
@@ -8573,7 +8574,7 @@ def _run_slow_structure_snapshot_for_month(
             source_dir = _resolve_strategy_config_dir(cfg, strategy, base_root)
             snap_cfg_dir = snap_strategies_root / strategy
             shutil.rmtree(snap_cfg_dir, ignore_errors=True)
-            shutil.copytree(source_dir, snap_cfg_dir, dirs_exist_ok=True)
+            copy_strategy_package(source_dir, snap_cfg_dir, dirs_exist_ok=True)
             strategy_type = _strategy_type(cfg, strategy)
             scfg = (cfg.get("strategies", {}) or {}).get(strategy, {}) or {}
             kpi_backtest = (scfg.get("kpi_gates", {}) or {}).get("backtest", {}) or {}
@@ -8648,7 +8649,7 @@ def _run_slow_structure_snapshot_for_month(
                     dst = strat_dir / child.name
                     if child.is_dir():
                         shutil.rmtree(dst, ignore_errors=True)
-                        shutil.copytree(child, dst, dirs_exist_ok=True)
+                        copy_strategy_package(child, dst, dirs_exist_ok=True)
                     else:
                         dst.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(child, dst)
@@ -8690,7 +8691,7 @@ def _run_slow_structure_snapshot_for_month(
         if exp_cfg_dir.exists():
             dst = snap_strategies_root / strategy
             shutil.rmtree(dst, ignore_errors=True)
-            shutil.copytree(exp_cfg_dir, dst, dirs_exist_ok=True)
+            copy_strategy_package(exp_cfg_dir, dst, dirs_exist_ok=True)
 
     manifest = {
         "run_id": timestamp,

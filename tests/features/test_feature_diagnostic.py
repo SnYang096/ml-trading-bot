@@ -452,6 +452,8 @@ class TestIntegrationDiagnostic:
             print("   修复: 需要正确配置并加载 tick 数据")
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 class TestTickDataIntegration:
     """Tick 数据集成测试：验证 VPIN 特征计算"""
 

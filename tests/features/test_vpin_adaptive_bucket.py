@@ -170,8 +170,10 @@ class TestVPINAdaptiveBucket:
         print("✅ K值测试完成")
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 class TestVPINAdaptiveBucketRealData:
-    """使用真实数据测试自适应VPIN"""
+    """使用真实 tick parquet；默认 pytest 会跳过（见 pytest.ini）。"""
 
     @pytest.fixture
     def real_tick_data(self):

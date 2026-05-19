@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import time
+
+pytestmark = [pytest.mark.slow, pytest.mark.integration]
 from typing import Dict, List
 import warnings
 

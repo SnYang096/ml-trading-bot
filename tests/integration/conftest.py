@@ -21,14 +21,20 @@ if str(PROJECT_ROOT) not in sys.path:
 
 def pytest_collection_modifyitems(config, items):
     """
-    Automatically mark everything under tests/integration as `integration`.
+    Mark only tests under ``tests/integration/`` as ``integration``.
 
-    This keeps the workflow ergonomic:
-    - Fast dev loop:  pytest -m "not integration"
-    - Integration:    pytest -m integration
+    Scope the path check: this conftest is loaded for the full ``tests/`` tree,
+    so a blind loop over *all* collected items would tag the entire suite and
+    make ``pytest -m "not integration"`` collect nothing.
     """
+    integration_root = Path(__file__).resolve().parent
     for item in items:
-        item.add_marker(pytest.mark.integration)
+        try:
+            item_path = Path(str(item.fspath)).resolve()
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if integration_root in item_path.parents or item_path == integration_root:
+            item.add_marker(pytest.mark.integration)
 
 
 def _write_yaml(path: Path, content: str) -> None:
