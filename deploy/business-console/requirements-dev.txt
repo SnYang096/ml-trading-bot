@@ -1,0 +1,5 @@
+# Dev/test extras (not installed in production Docker image)
+-r requirements.txt
+httpx>=0.27.0
+pytest-playwright>=0.4.0
+playwright>=1.40.0

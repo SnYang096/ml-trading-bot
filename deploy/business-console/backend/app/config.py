@@ -8,7 +8,15 @@ from pathlib import Path
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+    """Best-effort repo root; production paths come from MLBOT_CONSOLE_* env."""
+    p = Path(__file__).resolve()
+    if len(p.parents) > 4:
+        cand = p.parents[4]
+        if (cand / "src").is_dir() or (cand / "live").is_dir():
+            return cand
+    if len(p.parents) > 2:
+        return p.parents[2]
+    return p.parent
 
 
 @dataclass(frozen=True)

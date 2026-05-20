@@ -6,7 +6,7 @@ Read-only FastAPI console for **Trade Map Live** and lightweight ops views over 
 
 ```bash
 cd /path/to/ml_trading_bot
-pip install -r deploy/business-console/requirements.txt
+pip install -r deploy/business-console/requirements-dev.txt
 # Optional e2e: playwright install chromium
 chmod +x deploy/business-console/run_console.sh
 ./deploy/business-console/run_console.sh
@@ -60,7 +60,7 @@ export MLBOT_CONSOLE_BASIC_AUTH_PASSWORD=change-me
 ## Tests
 
 ```bash
-pip install -r deploy/business-console/requirements.txt
+pip install -r deploy/business-console/requirements-dev.txt
 pytest tests/business_console -q
 # E2E (needs Node for core JS + Playwright chromium for browser):
 pytest tests/business_console/test_web_e2e.py -m integration -v
