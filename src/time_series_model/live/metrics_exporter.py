@@ -491,6 +491,17 @@ class Metrics:
             ["symbol"],
         )
 
+        self.pipeline_data_age_seconds = Gauge(
+            "mlbot_pipeline_data_age_seconds",
+            "Seconds since last update for a disk data pipeline stage",
+            ["pipeline", "symbol"],
+        )
+        self.pipeline_data_fresh = Gauge(
+            "mlbot_pipeline_data_fresh",
+            "1 if pipeline age is within stale threshold else 0",
+            ["pipeline", "symbol"],
+        )
+
         self.feature_loader_errors = Counter(
             "mlbot_feature_loader_errors_total",
             "Feature loader/compute errors that were silently caught",
@@ -628,6 +639,42 @@ class Metrics:
         except Exception:
             pass
         self.update_disk_health()
+        self.update_pipeline_health_from_env()
+
+    def update_pipeline_health_from_env(self) -> None:
+        """Publisher: ticks/bars/bus features/macro seed freshness (quant-feature-bus job)."""
+        if not _PROM_AVAILABLE:
+            return
+        raw = os.getenv("MLBOT_LIVE_SYMBOLS", "")
+        symbols = [s.strip().upper() for s in raw.split(",") if s.strip()]
+        if not symbols:
+            return
+        try:
+            from src.live_data_stream.pipeline_freshness import (
+                update_pipeline_freshness_metrics,
+            )
+
+            live_base = Path(os.getenv("MLBOT_LIVE_BASE", "live/highcap"))
+            storage = Path(
+                os.getenv("MLBOT_LIVE_STORAGE_BASE", str(live_base / "data"))
+            )
+            bus = Path(os.getenv("MLBOT_FEATURE_BUS_ROOT", "live/shared_feature_bus"))
+            seed_raw = os.getenv("MLBOT_WEEKLY_EMA_SEED_ROOT", "").strip()
+            seed = seed_raw or str(storage / "macro" / "spot_weekly_ema200")
+            tfs = [
+                t.strip()
+                for t in os.getenv("MLBOT_PIPELINE_FEATURE_TFS", "120T,240T").split(",")
+                if t.strip()
+            ]
+            update_pipeline_freshness_metrics(
+                symbols,
+                storage_base=storage,
+                bus_root=bus,
+                seed_root=seed,
+                feature_timeframes=tfs,
+            )
+        except Exception as exc:
+            logger.debug("pipeline freshness metrics skipped: %s", exc)
 
     def update_disk_health(self) -> None:
         """更新根分区与各数据目录占用（供 Grafana 提醒清理日志 / warmup）。"""
@@ -1298,11 +1345,13 @@ def _disk_monitor_volumes() -> List[Tuple[str, Path]]:
             return out
 
     live_base = Path(os.getenv("MLBOT_LIVE_BASE", "live/highcap"))
+    storage_base = Path(os.getenv("MLBOT_LIVE_STORAGE_BASE", str(live_base / "data")))
     return [
         ("root", Path("/")),
         ("logs", live_base / "logs"),
-        ("ticks", live_base / "data" / "ticks"),
-        ("bars", live_base / "data" / "bars"),
+        ("ticks", storage_base / "ticks"),
+        ("bars", storage_base / "bars"),
+        ("macro_seed", storage_base / "macro"),
         (
             "feature_bus",
             Path(os.getenv("MLBOT_FEATURE_BUS_ROOT", "live/shared_feature_bus")),

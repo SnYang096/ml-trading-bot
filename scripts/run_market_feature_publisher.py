@@ -404,6 +404,8 @@ async def async_main() -> None:
     symbols = _parse_symbols(args.symbols)
     live_storage_base = _resolve_project_path(args.live_storage_base)
     _configure_feature_bus_audit(live_storage_base)
+    os.environ.setdefault("MLBOT_LIVE_STORAGE_BASE", str(live_storage_base))
+    os.environ.setdefault("MLBOT_FEATURE_BUS_ROOT", str(args.feature_bus_root))
     metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
     start_metrics_server(port=metrics_port)
     _refresh_funding_oi_on_startup(symbols)

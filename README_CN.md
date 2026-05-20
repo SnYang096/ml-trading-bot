@@ -1204,6 +1204,16 @@ sudo systemctl restart quant-spot-accum
 bash scripts/check_live_spot_feature_bus.sh
 ```
 
+**Grafana「Disk · 数据管线新鲜度」**（`quant_system` 看板，`quant-feature-bus` job）：
+
+| 指标 | 含义 |
+|------|------|
+| `mlbot_pipeline_data_fresh` | 1=新鲜，0=滞后（按 pipeline：ticks_1m、bars_1m、bus_bars_1min、features_120T/240T、macro_seed） |
+| `mlbot_pipeline_data_age_seconds` | 距上次更新的秒数 |
+| `mlbot_dir_size_gb` / `mlbot_disk_used_percent` | 目录占用与根分区（约 5min 刷新 `du`） |
+
+若整行 **No data**：在 Prometheus **Targets** 确认 `host.docker.internal:9192`（`quant-feature-bus`）为 **UP**；部署后需重启 monitoring 栈以加载新 `prometheus.yml` 指标白名单。
+
 **本地 / 容器内手动准备 seed（不启动 bus）：**
 
 ```bash

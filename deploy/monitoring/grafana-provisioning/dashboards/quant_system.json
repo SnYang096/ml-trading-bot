@@ -181,7 +181,7 @@
     },
     {
       "type": "row",
-      "title": "Disk · 日志与 Warmup",
+      "title": "Disk · 日志与数据管线新鲜度 (feature-bus)",
       "id": 114,
       "gridPos": {
         "h": 1,
@@ -193,13 +193,95 @@
     },
     {
       "type": "stat",
+      "title": "管线新鲜 (1=OK)",
+      "id": 119,
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min by (pipeline) (mlbot_pipeline_data_fresh{job=\"quant-feature-bus\"})",
+          "legendFormat": "{{pipeline}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "数据管线滞后 (秒)",
+      "id": 120,
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_pipeline_data_age_seconds{job=\"quant-feature-bus\"}",
+          "legendFormat": "{{pipeline}} {{symbol}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
       "title": "根分区已用 %",
       "id": 115,
       "gridPos": {
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 14
+        "y": 19
       },
       "datasource": {
         "type": "prometheus",
@@ -255,7 +337,7 @@
         "h": 6,
         "w": 12,
         "x": 6,
-        "y": 14
+        "y": 19
       },
       "datasource": {
         "type": "prometheus",
@@ -279,13 +361,13 @@
     },
     {
       "type": "timeseries",
-      "title": "目录占用 GB（日志 / ticks / bars / bus）",
+      "title": "目录占用 GB（ticks / bars / bus / macro）",
       "id": 117,
       "gridPos": {
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 14
+        "y": 19
       },
       "datasource": {
         "type": "prometheus",
@@ -313,11 +395,11 @@
         "h": 3,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 25
       },
       "options": {
         "mode": "markdown",
-        "content": "**>80%** 告警：删 `live/highcap/logs` 旧 `*.log`（`find … -mtime +14 -delete`）、`journalctl --vacuum-time=7d`。**ticks/bars** 只删确认过期的 warmup 月份。**>90%** 立即处理，避免 feature-bus / warmup 写盘失败。指标 job=`quant-feature-bus`，约每 5min 刷新目录 `du`。"
+        "content": "**管线新鲜度**（`quant-feature-bus` 每 ~30s）：`ticks_1m`/`bars_1m`/`bus_bars_1min` &lt;5min；`features_120T` &lt;20min；`features_240T` &lt;4.5h；`macro_seed` &lt;48h。**磁盘** &gt;80% 删旧日志；ticks/bars 只删确认过期月份。目录 `du` 约 5min 刷新。若整行 No data：查 Prometheus Targets `quant-feature-bus:9192` 是否 UP。"
       }
     },
     {
@@ -328,7 +410,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 28
       },
       "collapsed": false
     },
@@ -340,7 +422,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 24
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -369,7 +451,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 24
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -397,7 +479,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 24
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -426,7 +508,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 36
       },
       "datasource": {
         "type": "prometheus",
@@ -457,7 +539,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 36
       },
       "datasource": {
         "type": "prometheus",
@@ -488,7 +570,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 37
+        "y": 42
       },
       "datasource": {
         "type": "prometheus",

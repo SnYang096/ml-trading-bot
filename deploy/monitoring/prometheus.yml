@@ -26,7 +26,7 @@ scrape_configs:
     # publisher 只代表行情 WebSocket / 进程健康，不承载交易账户或策略决策指标。
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: "^(mlbot_ws_connected|mlbot_cpu_percent|mlbot_memory_mb|mlbot_memory_rss_mb|mlbot_uptime_seconds|mlbot_disk_used_percent|mlbot_disk_free_gb|mlbot_dir_size_gb)$"
+        regex: "^(mlbot_ws_connected|mlbot_cpu_percent|mlbot_memory_mb|mlbot_memory_rss_mb|mlbot_uptime_seconds|mlbot_disk_used_percent|mlbot_disk_free_gb|mlbot_dir_size_gb|mlbot_pipeline_data_age_seconds|mlbot_pipeline_data_fresh)$"
         action: keep
 
   - job_name: "quant-trend-fattail"
