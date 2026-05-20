@@ -1,0 +1,4 @@
+feature_groups:
+  baseline:
+    - weekly_ema_200_position_f
+    - atr_percentile_f

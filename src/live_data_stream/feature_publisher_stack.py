@@ -23,7 +23,9 @@ from src.live_data_stream.gap_filler import GapFiller
 from src.live_data_stream.constitution_config import (
     enabled_archetypes_from_constitution,
     load_constitution_dict,
+    multi_leg_strategies_from_constitution,
     resolve_constitution_yaml,
+    spot_strategies_from_constitution,
 )
 from src.live_data_stream.feature_bus import FeatureBusWriter
 from src.live_data_stream.strategy_runtime_config import (
@@ -145,6 +147,74 @@ class _ArcSpec:
     disk: str
     timeframe: str
     archetypes_dir: str
+
+
+def _constitution_consumer_strategy_slugs(cfg: Dict[str, Any]) -> List[str]:
+    """Non-PCM live consumers declared in constitution (spot + multi_leg)."""
+    seen: set[str] = set()
+    out: List[str] = []
+    for slug in (
+        *spot_strategies_from_constitution(cfg),
+        *multi_leg_strategies_from_constitution(cfg),
+    ):
+        key = str(slug).strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def _merge_consumer_features_for_primary(
+    *,
+    cfg: Dict[str, Any],
+    strategies_root: str,
+    primary_tf: str,
+) -> Tuple[set, List[str], List[_ArcSpec]]:
+    """Merge spot / multi_leg strategy features into publisher FCs.
+
+    Same bar clock as primary → union into primary FC.
+    Different clock → returned as extra ``_ArcSpec`` for ``extra_feature_computers``.
+    """
+    merged_set: set = set()
+    merged_nodes: List[str] = []
+    other_tf: List[_ArcSpec] = []
+    for slug in _constitution_consumer_strategy_slugs(cfg):
+        pkg = resolve_strategy_package_under_root(
+            Path(strategies_root), slug, allow_bad_candidates=False
+        )
+        adir = pkg / "archetypes"
+        if not adir.is_dir():
+            logger.warning(
+                "publisher: consumer strategy %s has no archetypes under %s",
+                slug,
+                adir,
+            )
+            continue
+        tf = load_strategy_timeframe(strategies_root, slug)
+        adir_s = str(adir)
+        if tf != primary_tf:
+            logger.info(
+                "publisher: consumer %s tf=%s != primary %s (extra FC)",
+                slug,
+                tf,
+                primary_tf,
+            )
+            other_tf.append(
+                _ArcSpec(archetype=slug, disk=slug, timeframe=tf, archetypes_dir=adir_s)
+            )
+            continue
+        s_m, n_m = _extract_plan(adir_s)
+        if s_m or n_m:
+            logger.info(
+                "publisher: merge consumer %s into primary (%d cols, %d nodes)",
+                slug,
+                len(s_m),
+                len(n_m),
+            )
+        merged_set |= s_m
+        merged_nodes.extend(n_m)
+    return merged_set, sorted(set(merged_nodes)), other_tf
 
 
 def _collect_secondary_specs(
@@ -277,11 +347,20 @@ def build_feature_bus_manager(
         s_m, n_m = _extract_plan(spec.archetypes_dir)
         primary_feat_extra |= s_m
         primary_nodes_extra.extend(n_m)
+    consumer_s, consumer_n, consumer_other_tf = _merge_consumer_features_for_primary(
+        cfg=cfg,
+        strategies_root=strategies_root,
+        primary_tf=tf_primary,
+    )
+    primary_feat_extra |= consumer_s
+    primary_nodes_extra.extend(consumer_n)
     if primary_feat_extra:
         primary_nodes_extra = sorted(set(primary_nodes_extra))
 
     tf_groups: Dict[str, List[_ArcSpec]] = {}
     for spec in rest_secondaries:
+        tf_groups.setdefault(spec.timeframe, []).append(spec)
+    for spec in consumer_other_tf:
         tf_groups.setdefault(spec.timeframe, []).append(spec)
 
     storage = StorageManager(args.live_storage_base)
