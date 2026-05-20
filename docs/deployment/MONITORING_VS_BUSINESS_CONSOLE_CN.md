@@ -12,7 +12,7 @@
 
 | 需求 | 更合适的技术 |
 |------|----------------|
-| 进程存活、CPU、错误率、漏斗/拒因 **时序** | 应用 `/metrics` → **Prometheus** → **Grafana** |
+| 进程存活、CPU、**磁盘/日志/warmup 目录**、错误率、漏斗/拒因 **时序** | 应用 `/metrics`（`quant-feature-bus` 暴露 `mlbot_disk_*`）→ **Prometheus** → **Grafana** |
 | **告警**（Target down、拒因突增、账户更新失败） | Prometheus **Alertmanager** 或 Grafana 告警 |
 | **K 线（OHLCV）**、Parquet **逐列特征**、大时间窗浏览 | **小后台**：读 Parquet/API + 图表库（Lightweight Charts / ECharts） |
 | 订单/持仓/审计 **行级明细**、下钻单次决策 | **小后台 + 结构化存储**（SQLite/JSONL/审计日志），按需查询 |

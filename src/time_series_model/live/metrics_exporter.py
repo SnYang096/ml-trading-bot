@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import subprocess
 import time
+from pathlib import Path
 from typing import Any, Iterable, Mapping, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
@@ -93,6 +96,9 @@ class Metrics:
             self.gate_reject_reasons_total = _NOOP
             self.direction_total = _NOOP
             self.memory_rss_mb = _NOOP
+            self.disk_used_percent = _NOOP
+            self.disk_free_gb = _NOOP
+            self.dir_size_gb = _NOOP
             self.funding_rate = _NOOP
             self.mark_price = _NOOP
             self.open_interest_usd = _NOOP
@@ -147,6 +153,7 @@ class Metrics:
             self.strategy_event_price = _NOOP
             self.dashboard_catalog = _NOOP
             self._cpu_percent_primed = False
+            self._last_dir_size_ts = 0.0
             return
 
         # ── Counters (累计值，只增不减) ──
@@ -343,6 +350,22 @@ class Metrics:
         self.memory_rss_mb = Gauge(
             "mlbot_memory_rss_mb",
             "Process RSS memory in MB",
+        )
+
+        self.disk_used_percent = Gauge(
+            "mlbot_disk_used_percent",
+            "Filesystem used percent for a monitored volume mount",
+            ["volume"],
+        )
+        self.disk_free_gb = Gauge(
+            "mlbot_disk_free_gb",
+            "Filesystem free space in GB for a monitored volume mount",
+            ["volume"],
+        )
+        self.dir_size_gb = Gauge(
+            "mlbot_dir_size_gb",
+            "On-disk directory size in GB (logs, warmup ticks/bars, feature bus, etc.)",
+            ["volume"],
         )
 
         # ── Market Data (公开 API) ──
@@ -584,9 +607,10 @@ class Metrics:
         self._account_last_success_ts: dict[str, float] = {}
         self._position_labelsets: Set[Tuple[str, str, str, str]] = set()
         self._cpu_percent_primed: bool = False
+        self._last_dir_size_ts: float = 0.0
 
     def update_system_health(self) -> None:
-        """读取 psutil 更新 CPU / 内存 / uptime"""
+        """读取 psutil 更新 CPU / 内存 / uptime / 磁盘"""
         try:
             import psutil
 
@@ -603,6 +627,34 @@ class Metrics:
             self.memory_rss_mb.set(round(proc.memory_info().rss / 1024 / 1024, 1))
         except Exception:
             pass
+        self.update_disk_health()
+
+    def update_disk_health(self) -> None:
+        """更新根分区与各数据目录占用（供 Grafana 提醒清理日志 / warmup）。"""
+        if not _PROM_AVAILABLE:
+            return
+        now = time.time()
+        dir_interval = float(os.getenv("MLBOT_DISK_DIR_SIZE_INTERVAL_SECONDS", "300"))
+        refresh_dir_sizes = (now - self._last_dir_size_ts) >= dir_interval
+        if refresh_dir_sizes:
+            self._last_dir_size_ts = now
+
+        for volume, path in _disk_monitor_volumes():
+            try:
+                usage = shutil.disk_usage(path)
+            except OSError:
+                continue
+            used_pct = (usage.used / max(usage.total, 1)) * 100.0
+            self.disk_used_percent.labels(volume=volume).set(round(used_pct, 2))
+            self.disk_free_gb.labels(volume=volume).set(
+                round(usage.free / (1024**3), 2)
+            )
+            if refresh_dir_sizes and path.is_dir():
+                size_bytes = _directory_size_bytes(path)
+                if size_bytes is not None:
+                    self.dir_size_gb.labels(volume=volume).set(
+                        round(size_bytes / (1024**3), 3)
+                    )
 
     # ── Market & Account Data ───────────────────────────────────
 
@@ -1225,6 +1277,66 @@ class Metrics:
         self.pcm_notional_hard_cap.set(
             float(pol.get("hard_max_total_notional_pct", 0.0) or 0.0)
         )
+
+
+def _disk_monitor_volumes() -> List[Tuple[str, Path]]:
+    """Return (volume_label, path) pairs for disk / directory monitoring."""
+    raw = (os.getenv("MLBOT_DISK_MONITOR_VOLUMES") or "").strip()
+    if raw:
+        out: List[Tuple[str, Path]] = []
+        for part in raw.split(","):
+            piece = part.strip()
+            if not piece or ":" not in piece:
+                continue
+            label, path_str = piece.split(":", 1)
+            label = label.strip()
+            path_str = path_str.strip()
+            if not label or not path_str:
+                continue
+            out.append((label, Path(path_str)))
+        if out:
+            return out
+
+    live_base = Path(os.getenv("MLBOT_LIVE_BASE", "live/highcap"))
+    return [
+        ("root", Path("/")),
+        ("logs", live_base / "logs"),
+        ("ticks", live_base / "data" / "ticks"),
+        ("bars", live_base / "data" / "bars"),
+        (
+            "feature_bus",
+            Path(os.getenv("MLBOT_FEATURE_BUS_ROOT", "live/shared_feature_bus")),
+        ),
+        ("engine_data", Path(os.getenv("MLBOT_ENGINE_DATA_ROOT", "data"))),
+    ]
+
+
+def _directory_size_bytes(path: Path) -> Optional[float]:
+    """Best-effort directory size; prefers ``du -sb`` on Linux."""
+    try:
+        proc = subprocess.run(
+            ["du", "-sb", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=int(os.getenv("MLBOT_DISK_DU_TIMEOUT_SECONDS", "120")),
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return float(proc.stdout.split()[0])
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+
+    total = 0.0
+    try:
+        for root, _dirs, files in os.walk(path, followlinks=False):
+            for name in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return total
 
 
 # ── 全局单例 ──────────────────────────────────────────────────

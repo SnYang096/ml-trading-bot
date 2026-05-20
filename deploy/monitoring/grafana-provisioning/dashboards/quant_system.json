@@ -181,13 +181,154 @@
     },
     {
       "type": "row",
+      "title": "Disk · 日志与 Warmup",
+      "id": 114,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "根分区已用 %",
+      "id": 115,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_disk_used_percent{job=\"quant-feature-bus\",volume=\"root\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "磁盘已用 %（各挂载）",
+      "id": 116,
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 6,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_disk_used_percent{job=\"quant-feature-bus\"}",
+          "legendFormat": "{{volume}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "目录占用 GB（日志 / ticks / bars / bus）",
+      "id": 117,
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_dir_size_gb{job=\"quant-feature-bus\"}",
+          "legendFormat": "{{volume}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decgbytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "text",
+      "title": "清理提示",
+      "id": 118,
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**>80%** 告警：删 `live/highcap/logs` 旧 `*.log`（`find … -mtime +14 -delete`）、`journalctl --vacuum-time=7d`。**ticks/bars** 只删确认过期的 warmup 月份。**>90%** 立即处理，避免 feature-bus / warmup 写盘失败。指标 job=`quant-feature-bus`，约每 5min 刷新目录 `du`。"
+      }
+    },
+    {
+      "type": "row",
       "title": "Feature Bus and Runtime Health",
       "id": 107,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 23
       },
       "collapsed": false
     },
@@ -199,7 +340,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 14
+        "y": 24
       },
       "datasource": {
         "type": "prometheus",
@@ -228,7 +369,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 14
+        "y": 24
       },
       "datasource": {
         "type": "prometheus",
@@ -256,7 +397,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 14
+        "y": 24
       },
       "datasource": {
         "type": "prometheus",
@@ -285,7 +426,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 21
+        "y": 31
       },
       "datasource": {
         "type": "prometheus",
@@ -316,7 +457,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 21
+        "y": 31
       },
       "datasource": {
         "type": "prometheus",
@@ -347,7 +488,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 37
       },
       "datasource": {
         "type": "prometheus",
@@ -378,7 +519,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 44
       },
       "collapsed": false
     },
@@ -390,7 +531,7 @@
         "h": 4,
         "w": 8,
         "x": 0,
-        "y": 35
+        "y": 45
       },
       "datasource": {
         "type": "prometheus",
@@ -459,7 +600,7 @@
         "h": 5,
         "w": 16,
         "x": 8,
-        "y": 35
+        "y": 45
       },
       "datasource": {
         "type": "prometheus",
@@ -500,5 +641,5 @@
   "timezone": "utc",
   "title": "System · Process / Machine / Bus",
   "uid": "quant-system",
-  "version": 1
+  "version": 2
 }

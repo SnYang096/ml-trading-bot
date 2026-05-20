@@ -1,0 +1,57 @@
+# 磁盘与数据目录告警 — 提醒清理日志与旧 warmup 数据
+# 指标由 quant-feature-bus 的 /metrics 暴露（mlbot_disk_* / mlbot_dir_size_gb）
+
+groups:
+  - name: quant_disk
+    interval: 1m
+    rules:
+      - alert: QuantDiskSpaceWarning
+        expr: mlbot_disk_used_percent{volume="root", job="quant-feature-bus"} > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "根分区磁盘使用率 > 80%，请安排清理"
+          description: |
+            根分区已用 {{ $value | printf "%.1f" }}%。
+            建议：清理 live/highcap/logs 下旧 *.log；journalctl --vacuum-time=7d；
+            检查 live/highcap/data/ticks|bars 是否可删过期 warmup 分区；
+            feature_bus 与 /opt/quant-engine/data 大目录用 du -sh 定位。
+            Grafana: System · Process / Machine / Bus → Disk 行。
+
+      - alert: QuantDiskSpaceCritical
+        expr: mlbot_disk_used_percent{volume="root", job="quant-feature-bus"} > 90
+        for: 5m
+        labels:
+          severity: critical
+          component: storage
+        annotations:
+          summary: "根分区磁盘使用率 > 90%，需立即清理"
+          description: |
+            根分区已用 {{ $value | printf "%.1f" }}%，可能影响 warmup 写入与日志。
+            优先：删旧日志、压缩/移走过期 ticks parquet、确认 quant-warmup-prepare 未重复灌满盘。
+
+      - alert: QuantLogsDirLarge
+        expr: mlbot_dir_size_gb{volume="logs", job="quant-feature-bus"} > 2
+        for: 30m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "日志目录 > 2GB，建议轮转或删除旧文件"
+          description: |
+            live/highcap/logs 约 {{ $value | printf "%.2f" }} GB。
+            示例: find /opt/quant-engine/live/highcap/logs -type f -name '*.log' -mtime +14 -delete
+
+      - alert: QuantWarmupTicksLarge
+        expr: mlbot_dir_size_gb{volume="ticks", job="quant-feature-bus"} > 50
+        for: 1h
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Warmup ticks 目录 > 50GB，检查是否可删过期月份"
+          description: |
+            data/ticks 约 {{ $value | printf "%.1f" }} GB。保留近期 warmup 所需月份即可；
+            勿删正在使用的当月分区。大文件迁移见实盘部署文档 scp/tar 流程。
