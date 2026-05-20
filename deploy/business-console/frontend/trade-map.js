@@ -28,7 +28,11 @@ const defaultLayout = () => ({
 
 function loadLayout() {
   const stored = Core.parseStoredLayout(localStorage.getItem(LAYOUT_KEY));
-  return { ...defaultLayout(), ...(stored || {}) };
+  const merged = { ...defaultLayout(), ...(stored || {}) };
+  if (!Array.isArray(merged.features) || !merged.features.length) {
+    merged.features = defaultLayout().features;
+  }
+  return merged;
 }
 
 function saveLayout() {
@@ -106,9 +110,31 @@ function initMainChart() {
       });
     }
   };
-  window.addEventListener("resize", resize);
+  window.addEventListener("resize", () => {
+    resize();
+    resizeAllSubcharts();
+  });
   resize();
   bindTimeScaleSync();
+}
+
+function resizeAllSubcharts() {
+  for (const pane of subcharts.values()) {
+    if (!pane.host) continue;
+    const w = pane.host.clientWidth;
+    const h = pane.host.clientHeight;
+    if (w > 0 && h > 0) {
+      pane.chart.applyOptions({ width: w, height: h });
+    }
+  }
+}
+
+function fitFeatureSubcharts() {
+  for (const pane of subcharts.values()) {
+    if (pane.kind === "feature") {
+      pane.chart.timeScale().fitContent();
+    }
+  }
 }
 
 function bindTimeScaleSync() {
@@ -171,10 +197,7 @@ function ensureVolumePane(show, candles) {
     .filter((x) => x.volume != null)
     .map((x) => ({ time: x.time, value: x.volume, color: "#546e7a" }));
   pane.series.setData(data);
-  pane.chart.applyOptions({
-    width: pane.host.clientWidth,
-    height: pane.host.clientHeight,
-  });
+  requestAnimationFrame(() => resizeAllSubcharts());
 }
 
 function ensureFeaturePane(column, overlay, colorIndex) {
@@ -220,9 +243,9 @@ function ensureFeaturePane(column, overlay, colorIndex) {
     const y = overlay.reference_y ?? 0;
     pane.refSeries.setData(pts.map((p) => ({ time: p.time, value: y })));
   }
-  pane.chart.applyOptions({
-    width: pane.host.clientWidth,
-    height: pane.host.clientHeight,
+  requestAnimationFrame(() => {
+    resizeAllSubcharts();
+    pane.chart.timeScale().fitContent();
   });
 }
 
@@ -237,6 +260,21 @@ function syncSubcharts(candles, overlays) {
     ensureFeaturePane(col, overlays?.[col], idx);
     idx += 1;
   }
+  requestAnimationFrame(() => {
+    resizeAllSubcharts();
+    if (subcharts.size) fitFeatureSubcharts();
+  });
+}
+
+function formatOverlayStatus(overlays) {
+  if (!selectedFeatureColumns.length) return " · 特征:未选";
+  const parts = selectedFeatureColumns.map((col) => {
+    const o = overlays?.[col];
+    if (!o) return `${col}:?`;
+    if (!o.available) return `${col}:无数据`;
+    return `${col}:${o.point_count ?? o.points?.length ?? 0}pts`;
+  });
+  return ` · 特征:${parts.join(",")}`;
 }
 
 function applyMarkers(lwcMarkers) {
@@ -294,10 +332,14 @@ async function loadFeatureColumns() {
     if (!selectedFeatureColumns.length && defaults.length) {
       selectedFeatureColumns = [...defaults];
     }
+    if (!selectedFeatureColumns.length && availableFeatureColumns.length) {
+      selectedFeatureColumns = [availableFeatureColumns[0]];
+    }
   } catch (_) {
     availableFeatureColumns = [];
   }
   renderFeaturePicker();
+  saveLayout();
 }
 
 async function loadEligibility() {
@@ -372,15 +414,12 @@ async function refreshBundle() {
       : "";
   const clipHint = meta.range_clipped ? ` · clipped ${meta.max_ohlcv_days || ""}d` : "";
   const busRows = meta.bars_1min_rows ? ` · 1m=${meta.bars_1min_rows}` : "";
-  const featHint = meta.feature_columns?.length
-    ? ` · 附图:${meta.feature_columns.length}`
-    : "";
   setStatus(
     `${symbol} ${timeframe} · ${candles.length} bars · ${(data.markers || []).length} markers` +
       busRows +
       rangeHint +
       clipHint +
-      featHint +
+      formatOverlayStatus(data.overlays || {}) +
       (deg ? " · OHLC degraded" : "") +
       ` · ${new Date().toLocaleTimeString()}`
   );

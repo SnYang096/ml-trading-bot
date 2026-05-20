@@ -9,11 +9,19 @@ import pandas as pd
 
 # UI timeframe -> candidate feature bus directories (first existing wins)
 FEATURE_DIRS: Dict[str, List[str]] = {
-    "2h": ["120T", "2h"],
-    "120T": ["120T", "2h"],
-    "15min": ["15min"],
-    "1min": [],
-    "1d": ["240T", "1d"],
+    "2h": ["120T", "2h", "primary"],
+    "120T": ["120T", "2h", "primary"],
+    "15min": ["15min", "120T", "primary"],
+    "1min": ["15min", "120T", "primary"],
+    "1d": ["240T", "1d", "120T", "primary"],
+}
+
+# UI / policy name -> parquet column candidates (first hit wins)
+COLUMN_ALIASES: Dict[str, List[str]] = {
+    "weekly_ema_200_position": [
+        "weekly_ema_200_position",
+        "weekly_ema_200_position_f",
+    ],
 }
 
 # Not useful as standalone sub-chart series
@@ -42,7 +50,43 @@ def _resolve_feature_path(feature_bus_root: Path, symbol: str, timeframe: str) -
         path = feature_bus_root / "features" / sub / f"{sym}.parquet"
         if path.is_file():
             return path
+    feat_root = feature_bus_root / "features"
+    if feat_root.is_dir():
+        for child in sorted(feat_root.iterdir()):
+            if not child.is_dir():
+                continue
+            path = child / f"{sym}.parquet"
+            if path.is_file():
+                return path
     return None
+
+
+def _resolve_parquet_column(df: pd.DataFrame, column: str) -> Optional[str]:
+    if column in df.columns:
+        return column
+    for alt in COLUMN_ALIASES.get(column, []):
+        if alt in df.columns:
+            return alt
+    suffixed = f"{column}_f"
+    if suffixed in df.columns:
+        return suffixed
+    return None
+
+
+def _default_columns_for_parquet(columns: List[str]) -> List[str]:
+    colset = set(columns)
+    defaults: List[str] = []
+    for want in DEFAULT_SUBCHART_COLUMNS:
+        if want in colset:
+            defaults.append(want)
+            continue
+        for alt in COLUMN_ALIASES.get(want, [f"{want}_f"]):
+            if alt in colset:
+                defaults.append(alt)
+                break
+    if not defaults and columns:
+        defaults = [columns[0]]
+    return defaults
 
 
 def _utc_ts(value: Any) -> pd.Timestamp:
@@ -86,9 +130,7 @@ def list_feature_columns(
             "timeframe_dir": path.parent.name,
         }
     columns = _numeric_columns(df)
-    defaults = [c for c in DEFAULT_SUBCHART_COLUMNS if c in columns]
-    if not defaults and columns:
-        defaults = [columns[0]]
+    defaults = _default_columns_for_parquet(columns)
     return {
         "available": True,
         "columns": columns,
@@ -168,29 +210,34 @@ def load_feature_overlays(
 
     for col in requested:
         ref_y = REFERENCE_Y_BY_COLUMN.get(col)
-        if col not in df.columns:
+        parquet_col = _resolve_parquet_column(df, col)
+        if parquet_col is None:
             out[col] = {
                 "available": False,
                 "column": col,
                 "points": [],
+                "point_count": 0,
                 "reference_y": ref_y,
                 "path": str(path),
             }
             continue
         points: List[Dict[str, Any]] = []
         for _, row in df.iterrows():
-            val = row.get(col)
+            val = row.get(parquet_col)
             if val is None or (isinstance(val, float) and val != val):
                 continue
             ts = _utc_ts(row["timestamp"])
             points.append({"time": int(ts.timestamp()), "value": float(val)})
         latest_val = points[-1]["value"] if points else None
         out[col] = {
-            "available": True,
+            "available": bool(points),
             "column": col,
+            "parquet_column": parquet_col,
             "points": points,
+            "point_count": len(points),
             "reference_y": ref_y,
             "latest": latest_val,
             "path": str(path),
+            "timeframe_dir": path.parent.name,
         }
     return out

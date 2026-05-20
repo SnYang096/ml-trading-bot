@@ -27,6 +27,35 @@ def test_list_feature_columns(bus_root):
     assert "regime_score" in meta["columns"]
 
 
+def test_resolve_weekly_ema_alias_column(tmp_path):
+    import pandas as pd
+
+    feat_dir = tmp_path / "features" / "primary"
+    feat_dir.mkdir(parents=True)
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    rows = [
+        {
+            "timestamp": start + pd.Timedelta(hours=i * 2),
+            "weekly_ema_200_position_f": -0.1 + i * 0.01,
+        }
+        for i in range(5)
+    ]
+    pd.DataFrame(rows).to_parquet(feat_dir / "ETHUSDT.parquet", index=False)
+
+    overlays = load_feature_overlays(
+        tmp_path,
+        "ETHUSDT",
+        "2h",
+        ["weekly_ema_200_position"],
+        start=start,
+        end=start + pd.Timedelta(days=1),
+    )
+    data = overlays["weekly_ema_200_position"]
+    assert data["available"] is True
+    assert data["parquet_column"] == "weekly_ema_200_position_f"
+    assert data["point_count"] >= 1
+
+
 def test_load_multiple_overlays(bus_root):
     overlays = load_feature_overlays(
         bus_root,
