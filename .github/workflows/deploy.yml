@@ -392,7 +392,7 @@ jobs:
                 --weekly-ema-seed-root live/highcap/data/macro/spot_weekly_ema200 \
                 --macro-kline-root live/highcap/data/macro/spot_klines \
                 --skip-macro-warmup \
-                --max-rows 3000 \
+                --max-rows 259200 \
                 --fast-bar-threshold-pct 0.03 \
                 --fast-bar-bucket-seconds 10
             ExecStop=/usr/bin/docker stop quant-feature-bus

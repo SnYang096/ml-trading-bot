@@ -27,7 +27,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.live_data_stream.feature_publisher_stack import (  # noqa: E402
     build_feature_bus_manager,
 )
-from src.live_data_stream.feature_bus import FeatureBusWriter  # noqa: E402
+from src.live_data_stream.feature_bus import (  # noqa: E402
+    FeatureBusWriter,
+    effective_max_rows_for_warmup,
+)
 from src.live_data_stream.websocket_client import (  # noqa: E402
     BinanceTick,
     BinanceWebSocketClient,
@@ -411,7 +414,15 @@ async def async_main() -> None:
     _refresh_funding_oi_on_startup(symbols)
     _prepare_macro_weekly_ema_seed(args)
     _prepare_live_warmup(args)
-    writer = FeatureBusWriter(args.feature_bus_root, max_rows=args.max_rows)
+    max_rows = effective_max_rows_for_warmup(args.max_rows, args.warmup_days)
+    if max_rows != int(args.max_rows):
+        logger.info(
+            "feature-bus max_rows raised %s -> %s (warmup-days=%s)",
+            args.max_rows,
+            max_rows,
+            args.warmup_days,
+        )
+    writer = FeatureBusWriter(args.feature_bus_root, max_rows=max_rows)
     manager = build_feature_bus_manager(args, writer)
     fast_emitter = FastMoveBarEmitter(
         writer,

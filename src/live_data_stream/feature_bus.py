@@ -16,6 +16,16 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import pandas as pd
 
 
+def effective_max_rows_for_warmup(max_rows: int, warmup_days: int) -> int:
+    """Parquet rolling cap must cover warmup window or console only sees ~2d of 1m bars."""
+    cap = int(max_rows)
+    days = int(warmup_days)
+    if days <= 0:
+        return cap
+    need = days * 24 * 60
+    return max(cap, need)
+
+
 def normalize_timeframe(timeframe: str) -> str:
     """Return a filesystem-safe timeframe key."""
     return str(timeframe or "").strip().replace("/", "_").replace(" ", "")

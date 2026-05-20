@@ -157,6 +157,8 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 **P1 规范（业务控制台 MVP）**：主 K 线 **一律** 从 `live/shared_feature_bus/bars_1min/<SYMBOL>.parquet` 读取，在 CMS 内重采样为 UI 周期；`features/<tf>` **不** 作为主 OHLC 源（行内可能缺 `open/high/low`）。`features/<tf>` 与 `latest/features/*` 仅用于叠加层、最新特征卡片、新鲜度对账。
 
+**K 线根数上限（常见误解）**：控制台默认 `full_range` 会读完 Parquet 内全部 1m 行；若图上只有 ~27 根 2h K 线，通常是 **`quant-feature-bus` 的 `--max-rows` 只保留约 3000 行 1m（≈2 天）**，与 `--warmup-days 180` 无关。2h 根数 ≈ `bars_1min 行数 / 120`。生产应对齐：`max_rows ≥ warmup_days × 1440`（180 天 → 259200）。
+
 | UI 周期 | 内部 key | P1 主数据源 | 备注 |
 |---------|----------|-------------|------|
 | **2h**（默认） | `2h` / `120T` | `bars_1min` → `2h` | — |

@@ -55,7 +55,9 @@ export MLBOT_CONSOLE_BASIC_AUTH_PASSWORD=change-me
 | `MLBOT_CONSOLE_FEATURE_BUS_ROOT` | `live/shared_feature_bus` |
 | `MLBOT_CONSOLE_LIVE_DATA_ROOT` | `live/highcap/data` |
 | `MLBOT_CONSOLE_ENGINE_DATA_ROOT` | `data` |
-| `MLBOT_CONSOLE_MAX_OHLCV_DAYS` | `90` |
+| `MLBOT_CONSOLE_MAX_OHLCV_DAYS` | `180` |
+
+K-line bar count is limited by **feature-bus** `bars_1min` parquet rows (`quant-feature-bus --max-rows`, should be ≥ `warmup-days × 1440`), not by the console UI.
 | `MLBOT_CONSOLE_MAP_POLL_SECONDS` | `10` |
 | `MLBOT_CONSOLE_GRAFANA_URL` | `http://127.0.0.1:3000` |
 
