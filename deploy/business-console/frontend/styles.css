@@ -1,0 +1,67 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #0f1419;
+  color: #e6edf3;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #30363d;
+  background: #161b22;
+}
+.toolbar h1 { font-size: 1.1rem; margin: 0 8px 0 0; }
+.ext-links a {
+  color: #58a6ff;
+  font-size: 0.8rem;
+  margin-right: 10px;
+  text-decoration: none;
+}
+.toolbar label { font-size: 0.85rem; }
+.toolbar select, .toolbar button {
+  margin-left: 6px;
+  background: #21262d;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+.toolbar button { cursor: pointer; }
+.layers label { margin-right: 8px; }
+.status { font-size: 0.8rem; color: #8b949e; margin-left: auto; }
+main {
+  display: flex;
+  height: calc(100vh - 56px);
+}
+.chart-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.chart-pane { flex: 1; min-height: 120px; }
+.volume-pane, .ema-pane { flex: 0 0 120px; border-top: 1px solid #30363d; }
+.hidden { display: none !important; }
+.side-panels {
+  width: 300px;
+  border-left: 1px solid #30363d;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  background: #161b22;
+}
+.panel {
+  padding: 12px;
+  border-bottom: 1px solid #30363d;
+}
+.panel h3 { margin: 0 0 8px; font-size: 0.9rem; }
+.panel pre {
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}

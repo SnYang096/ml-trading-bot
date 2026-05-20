@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MLBot Trade Map Live</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <header class="toolbar">
+    <h1>Trade Map Live</h1>
+    <nav class="ext-links" id="extLinks"></nav>
+    <label>Symbol
+      <select id="symbolSelect"></select>
+    </label>
+    <label>周期
+      <select id="timeframeSelect">
+        <option value="2h" selected>2h</option>
+        <option value="15min">15min</option>
+        <option value="1min">1min</option>
+        <option value="1d">1d</option>
+      </select>
+    </label>
+    <span class="layers">
+      <label><input type="checkbox" id="layerTrend" checked /> Trend</label>
+      <label><input type="checkbox" id="layerSpot" checked /> Spot</label>
+      <label><input type="checkbox" id="layerMultiLeg" /> Multi-leg</label>
+      <label><input type="checkbox" id="layerPending" /> Pending</label>
+    </span>
+    <span class="layers">
+      <label><input type="checkbox" id="overlayVolume" /> 成交量</label>
+      <label><input type="checkbox" id="overlayWeeklyEma" checked /> weekly_ema</label>
+    </span>
+    <button id="refreshBtn" type="button">刷新</button>
+    <span id="statusLine" class="status">—</span>
+  </header>
+  <main>
+    <div class="chart-stack">
+      <div id="chart" class="chart-pane"></div>
+      <div id="volumeChart" class="chart-pane volume-pane hidden"></div>
+      <div id="emaChart" class="chart-pane ema-pane hidden"></div>
+    </div>
+    <aside class="side-panels">
+      <section id="detailPanel" class="panel hidden">
+        <h3>标记详情</h3>
+        <pre id="detailBody"></pre>
+      </section>
+      <section id="eligibilityPanel" class="panel">
+        <h3>Spot Eligibility</h3>
+        <pre id="eligibilityBody">—</pre>
+      </section>
+    </aside>
+  </main>
+  <script src="/static/trade-map-core.js"></script>
+  <script src="/static/trade-map.js"></script>
+</body>
+</html>

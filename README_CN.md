@@ -1278,6 +1278,8 @@ ssh -i "C:\Users\hanse\.ssh\awskeypair.pem" `
 
 更细的存储语义与各库主要表说明见 `docs/deployment/LIVE_CADENCE_AND_STORAGE_CN.md`；**字段与索引的 DDL** 以 `src/order_management/database/schema_trend.sql`、`schema_multi_leg.sql` 为准。
 
+**业务 CMS（规划中，区别于 Grafana）**：只读展示订单/漏斗/Spot 吸筹等；**核心页为全 symbol 互动 K 线 + 实盘交易地图**（默认 2h，可切 15m/1m/日线，开平仓箭头标记，实时刷新），设计见 `docs/deployment/BUSINESS_CONSOLE_DESIGN_CN.md` §4.2；与监控栈分工见 `docs/deployment/MONITORING_VS_BUSINESS_CONSOLE_CN.md`。
+
 ### 打开 Grafana
 
 部署流水线里 Grafana 暴露在监控主机：**`http://<主机 IP>:3000`**（若只绑在服务器 `127.0.0.1`，同样要 SSH 转发）。Compose 初次默认 **`admin / admin`**，上线后请立即改密码。Prometheus 常见为 `:9091`（以你服务器 `docker compose` / `deploy/monitoring` 实际映射为准）。四进程推荐 metrics 端口：`9192(feature-bus)` / `9190(trend)` / `9191(hedge)` / `9193(spot_accum_simple)`。

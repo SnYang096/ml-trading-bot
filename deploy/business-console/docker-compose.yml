@@ -1,0 +1,30 @@
+# Business console (read-only Trade Map + ops APIs)
+# Usage: cd deploy/business-console && docker compose up -d
+#
+# UI: http://localhost:8800/trade-map
+# Set MLBOT_CONSOLE_BASIC_AUTH_USER/PASSWORD in .env for Basic Auth.
+
+services:
+  business-console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mlbot-business-console:latest
+    container_name: mlbot-business-console
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8800:8800"
+    environment:
+      - MLBOT_CONSOLE_PORT=8800
+      - MLBOT_CONSOLE_FEATURE_BUS_ROOT=/data/feature_bus
+      - MLBOT_CONSOLE_LIVE_DATA_ROOT=/data/live_data
+      - MLBOT_CONSOLE_ENGINE_DATA_ROOT=/data/engine
+      - MLBOT_CONSOLE_LIVE_ROOT=/data/live_root
+      - MLBOT_CONSOLE_GRAFANA_URL=http://host.docker.internal:3000
+    volumes:
+      - /opt/quant-engine/live/shared_feature_bus:/data/feature_bus:ro
+      - /opt/quant-engine/live/highcap:/data/live_root:ro
+      - /opt/quant-engine/live/highcap/data:/data/live_data:ro
+      - /opt/quant-engine/data:/data/engine:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

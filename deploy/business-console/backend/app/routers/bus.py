@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+from typing import Optional
+
+import pandas as pd
+from fastapi import APIRouter, HTTPException, Query
+
+from app.config import SETTINGS
+from app.responses import ok
+from app.services import ohlcv_reader
+from app.services.ohlcv_reader import OhlcvWindowError
+
+router = APIRouter(tags=["bus"])
+
+
+def _parse_range(
+    from_: Optional[str],
+    to: Optional[str],
+) -> tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+    start = pd.Timestamp(from_, tz="UTC") if from_ else None
+    end = pd.Timestamp(to, tz="UTC") if to else None
+    return start, end
+
+
+@router.get("/api/bus/ohlcv")
+def bus_ohlcv(
+    symbol: str = Query(...),
+    timeframe: str = Query("2h"),
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+) -> dict:
+    start, end = _parse_range(from_, to)
+    try:
+        data = ohlcv_reader.fetch_ohlcv(
+            SETTINGS.feature_bus_root,
+            symbol,
+            timeframe,
+            start=start,
+            end=end,
+            max_days=SETTINGS.max_ohlcv_days,
+        )
+    except OhlcvWindowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ok(data, meta={"degraded_ohlc": data.get("degraded_ohlc", False)})

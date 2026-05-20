@@ -1,5 +1,7 @@
 # 监控栈（Grafana + Prometheus）与小后台（业务控制台）职责划分
 
+> **业务 CMS 详细设计**（页面、API、库表、分期）：见 [BUSINESS_CONSOLE_DESIGN_CN.md](./BUSINESS_CONSOLE_DESIGN_CN.md)。
+
 本文档回答：
 
 - K 线等业务数据在 **Parquet 磁盘**时，与 **Prometheus 指标**如何分工；
@@ -78,7 +80,7 @@
 ## 5. 实施阶段（建议）
 
 1. **P0**：网络可达性（SSH 隧道 / VPN / HTTPS 反代），确保至少能打开 Grafana；Prometheus Target 全 UP。
-2. **P1**：小后台 **只读 Parquet → OHLCV JSON** + 静态页一条 K 线；路径与 `quant-feature-bus` 写出目录约定一致。
+2. **P1**：业务 CMS **Trade Map Live**（全 symbol、默认 2h、可切 15m/1m/1d、实盘开平仓标记、轮询刷新）；详见 [BUSINESS_CONSOLE_DESIGN_CN.md §4.2](./BUSINESS_CONSOLE_DESIGN_CN.md#42-实盘互动交易地图trade-map-live--核心能力)。
 3. **P2**：审计/SQLite 只读 API（分页、按 symbol/time 过滤）；不与写路径竞争锁。
 4. **P3**（可选）：Grafana 增加 **Loki** 采集审计日志 —— 仍建议「检索用 Loki，分析用后台」。
 
@@ -89,6 +91,7 @@
 - 部署与卷约定：`.github/workflows/deploy.yml` 头部注释  
 - 监控 compose：`deploy/monitoring/docker-compose.monitoring.yml`  
 - 策略地图指标说明：`docs/deployment/STRATEGY_MAP_METRICS_CN.md`  
+- 业务 CMS 设计（页面 / API / 数据源）：`docs/deployment/BUSINESS_CONSOLE_DESIGN_CN.md`  
 
 ---
 
