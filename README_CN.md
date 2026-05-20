@@ -1254,12 +1254,13 @@ Docker 镜像内挂载常见为 `-v …/quant-engine/data:/app/data`，则在容
 生产宿主机上一份典型绝对路径：`/opt/quant-engine/data/order_management.db`、`/opt/quant-engine/data/multi_leg_order_management.db`。  
 若需从历史污染库里迁出混入的表列，可使用仓库脚本：`scripts/split_order_management_db.py`（先备份，建议 `--dry-run`）。
 
-监控栈中带 **sqlite-web 只读 Web 界面**（无登录，`deploy.yml` 部署注释）：`8871`=live_monitor 统计库、`8872`=trend `order_management`、`8873`=多腿 `multi_leg_order_management`。监听在 **服务器本机**（`127.0.0.1`）时，需经 SSH 端口转发到笔记本再打开浏览器，且 **勿对公网裸暴露**。
+监控栈中带 **sqlite-web 只读 Web 界面**（无登录，`deploy.yml` 部署注释）：`8871`=live_monitor 统计库、`8872`=trend `order_management`、`8873`=多腿 `multi_leg_order_management`。**业务控制台 Trade Map**（`deploy/business-console`）：`8800`。上述服务均监听 **服务器本机**（`127.0.0.1`）时，需经 SSH 端口转发到笔记本再打开浏览器，且 **勿对公网裸暴露**。
 
 **Windows PowerShell（多端口一次转发，会话保持不要关窗口）：**
 
 ```powershell
 ssh -i "C:\Users\hanse\.ssh\awskeypair.pem" `
+  -L 8800:127.0.0.1:8800 `
   -L 8871:127.0.0.1:8871 `
   -L 8872:127.0.0.1:8872 `
   -L 8873:127.0.0.1:8873 `
@@ -1272,6 +1273,7 @@ ssh -i "C:\Users\hanse\.ssh\awskeypair.pem" `
 
 | 用途 | 示例 URL |
 | --- | --- |
+| Trade Map Live（业务控制台） | http://127.0.0.1:8800/trade-map |
 | 多腿订单表（只读查询页） | http://127.0.0.1:8873/multi_leg_orders/query/ |
 | trend 订单表 | http://127.0.0.1:8872/orders/query/ |
 | live_monitor | 视库内表而定，例如 `http://127.0.0.1:8871/<表名>/query/` |
