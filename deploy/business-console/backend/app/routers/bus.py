@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.config import SETTINGS
 from app.responses import ok
 from app.services import ohlcv_reader
+from app.services.feature_overlay import list_feature_columns
 from app.services.ohlcv_reader import OhlcvWindowError
 
 router = APIRouter(tags=["bus"])
@@ -28,6 +29,7 @@ def bus_ohlcv(
     timeframe: str = Query("2h"),
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
+    full_range: bool = Query(True),
 ) -> dict:
     start, end = _parse_range(from_, to)
     try:
@@ -38,7 +40,17 @@ def bus_ohlcv(
             start=start,
             end=end,
             max_days=SETTINGS.max_ohlcv_days,
+            full_range=full_range and not from_ and not to,
         )
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ok(data, meta={"degraded_ohlc": data.get("degraded_ohlc", False)})
+
+
+@router.get("/api/bus/features/columns")
+def bus_feature_columns(
+    symbol: str = Query(...),
+    timeframe: str = Query("2h"),
+) -> dict:
+    data = list_feature_columns(SETTINGS.feature_bus_root, symbol, timeframe)
+    return ok(data)

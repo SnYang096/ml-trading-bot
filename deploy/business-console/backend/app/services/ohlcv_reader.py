@@ -64,6 +64,20 @@ def latest_bar_meta(feature_bus_root: Path, symbol: str) -> Optional[Dict[str, A
         return None
 
 
+def bars_1min_bounds(path: Path) -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp], int]:
+    """Min/max timestamp and row count without loading full OHLC columns."""
+    if not path.is_file():
+        return None, None, 0
+    try:
+        df = pd.read_parquet(path, columns=["timestamp"])
+    except (OSError, ValueError, KeyError):
+        return None, None, 0
+    if df.empty or "timestamp" not in df.columns:
+        return None, None, 0
+    ts = pd.to_datetime(df["timestamp"], utc=True)
+    return _utc_ts(ts.min()), _utc_ts(ts.max()), int(len(df))
+
+
 def load_bars_1min(
     feature_bus_root: Path,
     symbol: str,
@@ -74,7 +88,11 @@ def load_bars_1min(
     path = _bars_path(feature_bus_root, symbol)
     if not path.is_file():
         return pd.DataFrame()
-    df = pd.read_parquet(path)
+    cols = ["timestamp", "open", "high", "low", "close", "volume"]
+    try:
+        df = pd.read_parquet(path, columns=cols)
+    except (OSError, ValueError, KeyError):
+        df = pd.read_parquet(path)
     if df.empty or "timestamp" not in df.columns:
         return pd.DataFrame()
     df = df.copy()
@@ -154,6 +172,44 @@ def ohlcv_to_candles(df: pd.DataFrame) -> List[Dict[str, Any]]:
     return rows
 
 
+def _resolve_window(
+    path: Path,
+    *,
+    start: Optional[pd.Timestamp],
+    end: Optional[pd.Timestamp],
+    max_days: int,
+    full_range: bool,
+) -> Tuple[pd.Timestamp, pd.Timestamp, bool, int]:
+    """Return (start_ts, end_ts, clipped_to_max_days, bars_1min_rows_in_file)."""
+    file_start, file_end, row_count = bars_1min_bounds(path)
+    explicit = start is not None or end is not None
+    if end is not None:
+        end_ts = _utc_ts(end)
+    elif file_end is not None:
+        end_ts = file_end
+    else:
+        end_ts = pd.Timestamp.now(tz="UTC")
+
+    clipped = False
+    if start is not None:
+        start_ts = _utc_ts(start)
+    elif full_range or not explicit:
+        start_ts = file_start if file_start is not None else end_ts - pd.Timedelta(days=max_days)
+        span_days = (end_ts - start_ts).total_seconds() / 86400.0
+        if span_days > float(max_days):
+            start_ts = end_ts - pd.Timedelta(days=float(max_days))
+            clipped = True
+    else:
+        start_ts = end_ts - pd.Timedelta(days=max_days)
+
+    span_days = (end_ts - start_ts).total_seconds() / 86400.0
+    if explicit and span_days > float(max_days) + 1e-6:
+        raise OhlcvWindowError(
+            f"range {span_days:.1f}d exceeds max_ohlcv_days={max_days}"
+        )
+    return start_ts, end_ts, clipped, row_count
+
+
 def fetch_ohlcv(
     feature_bus_root: Path,
     symbol: str,
@@ -161,21 +217,19 @@ def fetch_ohlcv(
     *,
     start: Optional[pd.Timestamp] = None,
     end: Optional[pd.Timestamp] = None,
-    max_days: int = 90,
+    max_days: int = 180,
+    full_range: bool = True,
 ) -> Dict[str, Any]:
-    end_ts = _utc_ts(end) if end is not None else pd.Timestamp.now(tz="UTC")
-    if start is None:
-        start_ts = end_ts - pd.Timedelta(days=max_days)
-    else:
-        start_ts = _utc_ts(start)
-    span_days = (end_ts - start_ts).total_seconds() / 86400.0
-    if span_days > float(max_days) + 1e-6:
-        raise OhlcvWindowError(
-            f"range {span_days:.1f}d exceeds max_ohlcv_days={max_days}"
-        )
+    path = _bars_path(feature_bus_root, symbol)
+    start_ts, end_ts, clipped, bars_1min_rows = _resolve_window(
+        path,
+        start=start,
+        end=end,
+        max_days=max_days,
+        full_range=full_range and start is None and end is None,
+    )
     raw = load_bars_1min(feature_bus_root, symbol, start=start_ts, end=end_ts)
     resampled, degraded = resample_ohlcv(raw, timeframe)
-    path = _bars_path(feature_bus_root, symbol)
     mtime = path.stat().st_mtime if path.is_file() else None
     return {
         "symbol": symbol.upper(),
@@ -185,4 +239,9 @@ def fetch_ohlcv(
         "source": "bars_1min",
         "source_mtime": mtime,
         "row_count": len(resampled),
+        "bars_1min_rows": bars_1min_rows,
+        "range_start": start_ts.isoformat(),
+        "range_end": end_ts.isoformat(),
+        "range_clipped": clipped,
+        "max_ohlcv_days": max_days,
     }

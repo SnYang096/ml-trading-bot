@@ -23,7 +23,7 @@ def bus_root(tmp_path: Path) -> Path:
     bars_dir.mkdir(parents=True)
     start = pd.Timestamp("2024-01-01", tz="UTC")
     rows = []
-    for i in range(24 * 60):
+    for i in range(24 * 60 * 3):
         ts = start + pd.Timedelta(minutes=i)
         price = 100.0 + i * 0.01
         rows.append(
@@ -49,6 +49,7 @@ def bus_root(tmp_path: Path) -> Path:
                 "timestamp": ts,
                 "close": 100.0 + i * 0.02,
                 "weekly_ema_200_position": -0.05 if i < 600 else 0.12,
+                "regime_score": 0.1 + (i % 100) * 0.001,
             }
         )
     pd.DataFrame(feat_rows).to_parquet(feat_dir / f"{sym}.parquet", index=False)
@@ -97,8 +98,12 @@ def trend_db(tmp_path: Path) -> Path:
             symbol TEXT,
             side TEXT,
             status TEXT,
+            order_type TEXT,
+            quantity REAL,
+            price REAL,
             filled_at TEXT,
             created_at TEXT,
+            updated_at TEXT,
             average_price REAL,
             filled_quantity REAL,
             position_id TEXT
@@ -117,9 +122,10 @@ def trend_db(tmp_path: Path) -> Path:
     conn.execute(
         """
         INSERT INTO orders VALUES (
-            'ord_pending', 'ETHUSDT', 'BUY', 'pending',
-            NULL, '2024-01-01T11:00:00+00:00',
-            101.0, 0.0, NULL
+            'ord_pending', 'ETHUSDT', 'BUY', 'pending', 'limit',
+            0.1, 101.0,
+            NULL, '2024-01-01T11:00:00+00:00', '2024-01-01T11:00:00+00:00',
+            NULL, 0.0, NULL
         )
         """
     )
@@ -260,6 +266,7 @@ def client(console_settings, monkeypatch):
         "app.routers.health",
         "app.routers.constitution",
         "app.routers.spot",
+        "app.routers.orders",
         "app.routers.links",
     ):
         monkeypatch.setattr(f"{mod}.SETTINGS", console_settings)

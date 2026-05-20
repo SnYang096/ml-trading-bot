@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.auth import BasicAuthMiddleware
 from app.config import SETTINGS
-from app.routers import bus, constitution, health, links, spot, trade_map
+from app.routers import bus, constitution, health, links, orders, spot, trade_map
 
 app = FastAPI(
     title="MLBot Business Console",
@@ -30,6 +30,7 @@ app.include_router(constitution.router)
 app.include_router(bus.router)
 app.include_router(trade_map.router)
 app.include_router(spot.router)
+app.include_router(orders.router)
 app.include_router(links.router)
 
 _FRONTEND = Path(__file__).resolve().parents[2] / "frontend"

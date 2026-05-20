@@ -8,7 +8,10 @@ from fastapi import APIRouter, HTTPException, Query
 from app.config import SETTINGS
 from app.responses import ok
 from app.services import ohlcv_reader
-from app.services.feature_overlay import load_feature_overlay
+from app.services.feature_overlay import (
+    DEFAULT_SUBCHART_COLUMNS,
+    load_feature_overlays,
+)
 from app.services.marker_detail import marker_detail
 from app.services.ohlcv_reader import OhlcvWindowError
 from app.services.trade_markers import collect_markers
@@ -31,6 +34,18 @@ def _parse_ts_param(raw: Optional[str]) -> Optional[int]:
 
 def _scopes_list(scopes: str) -> List[str]:
     return [s.strip().lower() for s in scopes.split(",") if s.strip()]
+
+
+def _feature_columns_list(
+    feature_columns: Optional[str],
+    *,
+    overlay_weekly_ema: bool,
+) -> List[str]:
+    if feature_columns and feature_columns.strip():
+        return [c.strip() for c in feature_columns.split(",") if c.strip()]
+    if overlay_weekly_ema:
+        return list(DEFAULT_SUBCHART_COLUMNS)
+    return []
 
 
 def _marker_kwargs(
@@ -64,6 +79,7 @@ def trade_map_ohlcv(
     timeframe: str = Query("2h"),
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
+    full_range: bool = Query(True),
 ) -> dict:
     start = pd.Timestamp(from_, tz="UTC") if from_ else None
     end = pd.Timestamp(to, tz="UTC") if to else None
@@ -75,6 +91,7 @@ def trade_map_ohlcv(
             start=start,
             end=end,
             max_days=SETTINGS.max_ohlcv_days,
+            full_range=full_range and not from_ and not to,
         )
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -123,7 +140,9 @@ def trade_map_bundle(
     to: Optional[str] = Query(None),
     since: Optional[str] = Query(None),
     include_pending: bool = Query(False),
-    overlay_weekly_ema: bool = Query(True),
+    feature_columns: Optional[str] = Query(None),
+    overlay_weekly_ema: bool = Query(False),
+    full_range: bool = Query(True),
 ) -> dict:
     start = pd.Timestamp(from_, tz="UTC") if from_ else None
     end = pd.Timestamp(to, tz="UTC") if to else None
@@ -135,12 +154,17 @@ def trade_map_bundle(
             start=start,
             end=end,
             max_days=SETTINGS.max_ohlcv_days,
+            full_range=full_range and not from_ and not to,
         )
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     mk = _marker_kwargs(
         from_=from_, to=to, since=since, include_pending=include_pending
     )
+    if not from_ and ohlcv.get("range_start"):
+        mk["start_ts"] = _parse_ts_param(str(ohlcv["range_start"]))
+    if not to and ohlcv.get("range_end"):
+        mk["end_ts"] = _parse_ts_param(str(ohlcv["range_end"]))
     markers = collect_markers(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
@@ -149,14 +173,22 @@ def trade_map_bundle(
         scopes=_scopes_list(scopes),
         **mk,
     )
-    overlays = {}
-    if overlay_weekly_ema:
-        overlays["weekly_ema_200_position"] = load_feature_overlay(
+    cols = _feature_columns_list(feature_columns, overlay_weekly_ema=overlay_weekly_ema)
+    overlays: dict = {}
+    if cols:
+        overlay_start = start
+        overlay_end = end
+        if overlay_start is None and ohlcv.get("range_start"):
+            overlay_start = pd.Timestamp(str(ohlcv["range_start"]))
+        if overlay_end is None and ohlcv.get("range_end"):
+            overlay_end = pd.Timestamp(str(ohlcv["range_end"]))
+        overlays = load_feature_overlays(
             SETTINGS.feature_bus_root,
             symbol,
             timeframe,
-            start=start,
-            end=end,
+            cols,
+            start=overlay_start,
+            end=overlay_end,
         )
     return ok(
         {
@@ -167,5 +199,10 @@ def trade_map_bundle(
         meta={
             "poll_seconds": SETTINGS.map_poll_seconds,
             "degraded_ohlc": ohlcv.get("degraded_ohlc", False),
+            "bars_1min_rows": ohlcv.get("bars_1min_rows"),
+            "range_start": ohlcv.get("range_start"),
+            "range_end": ohlcv.get("range_end"),
+            "range_clipped": ohlcv.get("range_clipped", False),
+            "feature_columns": cols,
         },
     )

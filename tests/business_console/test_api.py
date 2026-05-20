@@ -28,6 +28,20 @@ def test_trade_map_symbols(client):
     assert "ETHUSDT" in syms
 
 
+def test_trade_map_bundle_full_range_default(client):
+    r = client.get(
+        "/api/trade-map/bundle",
+        params={"symbol": "ETHUSDT", "timeframe": "2h", "scopes": "trend"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    meta = body["meta"]
+    candles = body["data"]["ohlcv"]["candles"]
+    assert meta["bars_1min_rows"] == 24 * 60 * 3
+    assert len(candles) >= 30
+    assert meta["range_clipped"] is False
+
+
 def test_trade_map_bundle(client):
     r = client.get(
         "/api/trade-map/bundle",
@@ -38,6 +52,7 @@ def test_trade_map_bundle(client):
             "from": "2024-01-01T00:00:00Z",
             "to": "2024-01-02T00:00:00Z",
             "include_pending": "true",
+            "feature_columns": "weekly_ema_200_position",
         },
     )
     assert r.status_code == 200
@@ -45,6 +60,7 @@ def test_trade_map_bundle(client):
     assert data["ohlcv"]["source"] == "bars_1min"
     assert len(data["ohlcv"]["candles"]) >= 1
     assert len(data["markers"]) >= 2
+    assert "weekly_ema_200_position" in data["overlays"]
     assert data["overlays"]["weekly_ema_200_position"]["available"] is True
 
 

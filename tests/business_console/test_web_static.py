@@ -10,6 +10,9 @@ def test_trade_map_html_served(client):
     assert "Trade Map Live" in body
     assert "trade-map-core.js" in body
     assert "layerMultiLeg" in body
+    assert "module-accounts" in body
+    assert "featureColumnList" in body
+    assert "subchartStack" in body
     assert "eligibilityPanel" in body
 
 

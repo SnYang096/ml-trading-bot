@@ -104,7 +104,7 @@ class ConsoleSettings:
                     str(engine_data / "multi_leg_order_management.db"),
                 )
             ),
-            max_ohlcv_days=int(os.getenv("MLBOT_CONSOLE_MAX_OHLCV_DAYS", "90")),
+            max_ohlcv_days=int(os.getenv("MLBOT_CONSOLE_MAX_OHLCV_DAYS", "180")),
             map_poll_seconds=float(
                 os.getenv("MLBOT_CONSOLE_MAP_POLL_SECONDS", "10")
             ),

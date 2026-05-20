@@ -77,6 +77,32 @@
     return (link && link.url) || "";
   }
 
+  const SUBCHART_COLORS = [
+    "#ffeb3b",
+    "#58a6ff",
+    "#f78166",
+    "#7ee787",
+    "#d2a8ff",
+    "#ffa657",
+  ];
+
+  function subchartColor(index) {
+    return SUBCHART_COLORS[Math.abs(index) % SUBCHART_COLORS.length];
+  }
+
+  function featureColumnsParam(selected) {
+    return (selected || []).filter(Boolean).join(",");
+  }
+
+  function parseStoredLayout(raw) {
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
   root.MLBotTradeMapCore = {
     scopesFromLayers,
     markersToLwc,
@@ -85,5 +111,8 @@
     formatEligibility,
     browserLocalUrl,
     resolveLinkUrl,
+    subchartColor,
+    featureColumnsParam,
+    parseStoredLayout,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

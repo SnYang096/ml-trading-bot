@@ -1,0 +1,163 @@
+"""Read-only order list queries (trend / spot / multi-leg)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from app.services.db import query_rows
+from app.services.trade_markers import _marker_id, _parse_ts
+
+
+def _row_time(row: Dict[str, Any]) -> int:
+    for key in ("filled_at", "updated_at", "created_at", "operation_time"):
+        ts = _parse_ts(row.get(key))
+        if ts is not None:
+            return ts
+    return 0
+
+
+def _normalize(
+    scope: str,
+    row: Dict[str, Any],
+    *,
+    id_field: str = "order_id",
+) -> Dict[str, Any]:
+    oid = str(row.get(id_field) or "")
+    sym = str(row.get("symbol") or "").upper()
+    status = str(row.get("status") or "").lower()
+    side = str(row.get("side") or "")
+    filled_qty = float(row.get("filled_quantity") or 0)
+    t = _row_time(row)
+    source = {
+        "trend": "orders",
+        "spot": "spot_orders",
+        "multi_leg": "multi_leg_orders",
+    }.get(scope, "orders")
+    marker_key = oid
+    return {
+        "scope": scope,
+        "order_id": oid,
+        "symbol": sym,
+        "side": side,
+        "status": status,
+        "order_type": row.get("order_type") or row.get("purpose"),
+        "quantity": row.get("quantity"),
+        "price": row.get("price") or row.get("average_price"),
+        "filled_quantity": filled_qty,
+        "average_price": row.get("average_price"),
+        "created_at": row.get("created_at"),
+        "filled_at": row.get("filled_at"),
+        "updated_at": row.get("updated_at"),
+        "strategy": row.get("strategy") or row.get("strategy_id"),
+        "time": t,
+        "marker_id": _marker_id(scope, source, marker_key) if oid else None,
+    }
+
+
+def trend_orders(
+    db_path: Path,
+    symbol: str,
+    *,
+    status: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    sym = symbol.upper()
+    sql = """
+        SELECT order_id, symbol, side, status, order_type, quantity, price,
+               filled_quantity, average_price, created_at, updated_at, filled_at,
+               position_id
+        FROM orders
+        WHERE symbol = ?
+        ORDER BY COALESCE(filled_at, created_at) DESC
+        LIMIT ?
+    """
+    rows = query_rows(db_path, sql, (sym, int(limit)))
+    out = [_normalize("trend", r) for r in rows]
+    if status:
+        st = status.lower()
+        out = [r for r in out if r["status"] == st]
+    return out
+
+
+def spot_orders_list(
+    db_path: Path,
+    symbol: str,
+    *,
+    status: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    sym = symbol.upper()
+    sql = """
+        SELECT order_id, symbol, side, status, order_type, quantity, price,
+               filled_quantity, filled_quote_usdt, created_at, updated_at
+        FROM spot_orders
+        WHERE symbol = ?
+        ORDER BY COALESCE(updated_at, created_at) DESC
+        LIMIT ?
+    """
+    rows = query_rows(db_path, sql, (sym, int(limit)))
+    out = [_normalize("spot", r) for r in rows]
+    if status:
+        st = status.lower()
+        out = [r for r in out if r["status"] == st]
+    return out
+
+
+def multi_leg_orders_list(
+    db_path: Path,
+    symbol: str,
+    *,
+    status: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    sym = symbol.upper()
+    sql = """
+        SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
+               quantity, price, filled_quantity, average_price, created_at, filled_at,
+               strategy
+        FROM multi_leg_orders
+        WHERE symbol = ?
+        ORDER BY COALESCE(filled_at, created_at) DESC
+        LIMIT ?
+    """
+    rows = query_rows(db_path, sql, (sym, int(limit)))
+    out = []
+    for r in rows:
+        item = _normalize("multi_leg", r)
+        if r.get("purpose"):
+            item["order_type"] = r.get("purpose")
+        out.append(item)
+    if status:
+        st = status.lower()
+        out = [r for r in out if r["status"] == st]
+    return out
+
+
+def collect_orders(
+    *,
+    trend_db: Path,
+    spot_db: Path,
+    multi_leg_db: Path,
+    symbol: str,
+    scopes: List[str],
+    status: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    scope_set = {s.strip().lower() for s in scopes if s.strip()}
+    per_scope = max(int(limit), 1)
+    if "trend" in scope_set and trend_db.is_file():
+        merged.extend(
+            trend_orders(trend_db, symbol, status=status, limit=per_scope)
+        )
+    if "spot" in scope_set and spot_db.is_file():
+        merged.extend(
+            spot_orders_list(spot_db, symbol, status=status, limit=per_scope)
+        )
+    if "multi_leg" in scope_set and multi_leg_db.is_file():
+        merged.extend(
+            multi_leg_orders_list(multi_leg_db, symbol, status=status, limit=per_scope)
+        )
+    merged.sort(key=lambda r: r.get("time") or 0, reverse=True)
+    return merged[: int(limit)]

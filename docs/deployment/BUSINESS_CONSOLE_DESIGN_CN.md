@@ -140,6 +140,9 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 | **交易地图** | 在 K 线上叠加**成功开仓/平仓**（及可选 pending），多空有向箭头，平仓有区分图标 |
 | **按账户层筛选** | Trend / Multi-leg / Spot 可勾选显示（默认可叠层或分色） |
 | **实时更新** | 新 bar、新成交后标记自动追加/刷新，无需整页重载（SSE 或 WebSocket + 图表 `setData` / `setMarkers`） |
+| **订单列表（同页）** | Trade Map 右侧 **表格**展示当前 symbol、当前图层（Trend/Spot/Multi-leg）下的 `orders` / `spot_orders` / `multi_leg_orders`；点击行打开标记详情，与 K 线标记 `marker_id` 对齐 |
+
+> **说明**：§4.3 / §4.5 中的「订单列表」在 **P1 MVP 仅实现了 Trade Map 主图**；列表视图在 **P2+** 以 Trade Map **同页侧栏** 交付（`/api/orders/list`），完整分页/筛选的独立 Trend/Spot 页仍可按 §4.3 分期扩展。
 
 **与滚动回测地图的差异**：
 
@@ -165,10 +168,11 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 **OHLC 列约定**：Parquet 行须映射为 `{ time, open, high, low, close, volume? }`（UTC 秒或毫秒，与 Lightweight Charts 一致）。若 feature 表仅有 `close`，则 `open/high/low` 用 `close` 填充并打 `meta.degraded_ohlc=true`（前端灰字提示）。
 
-**可选叠加层**（Toggle，不占主周期）：
+**附图特征列**（不占主周期，见 §4.2.5 多选副图）：
 
-- `weekly_ema_200_position` 阈值线（Spot prefilter，`y=0` 参考线 + 当前值标注）
-- 策略特征列（如 `ema_1200`，仅 2h/15min 表内有列时）
+- `GET /api/bus/features/columns` 列出 `features/<tf>` 数值列；bundle 传 `feature_columns=col1,col2`
+- 默认推荐 `weekly_ema_200_position`（Spot prefilter，`y=0` 参考线）
+- 其余策略列（如 `ema_1200`）仅在对应 TF Parquet 有列时出现
 
 #### 4.2.3 交易标记视觉规范（对齐回测地图）
 
@@ -201,23 +205,38 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 **可选窄表（P2 推荐）**：各进程在成交回调写 `trade_map_events(symbol, ts, scope, strategy, event, side, price, qty, order_id)`，CMS 查询更快、与日志解耦。
 
-#### 4.2.5 前端交互（单页「地图工作台」）
+#### 4.2.5 前端交互（模块化「地图工作台」）
 
 ```
 /trade-map
-  ├─ Symbol 选择器（universe 全量）
-  ├─ 周期：2h | 15min | 1min | 1d
-  ├─ 图层：☑ Trend  ☑ Spot  ☑ Multi-leg  ☐ Pending
-  ├─ 主图：Lightweight Charts candlestick + markers + 可选持仓连线
-  ├─ 副图（可选 P2）：成交量 / weekly_ema_200_position 阶梯
-  └─ 右侧抽屉：点击标记 → 订单详情、当时 eligibility / funnel 摘要
+  ├─ [数据] Symbol + 周期（2h | 15min | 1min | 1d）
+  ├─ [账户层 A/B/C] ☑ B·Trend  ☑ A·Spot  ☑ C·Multi-leg  ☐ Pending
+  │     → 控制主图 K 线上的成交/挂单标记（信号落在主图）
+  ├─ [附图] ☑ 成交量 + 特征列多选（来自 features/<tf> Parquet 数值列）
+  │     → 每列独立副图；`weekly_ema_200_position` 带 y=0 参考线
+  ├─ [侧栏] ☑ A·Spot 资格  ☑ 订单列表（可单独关闭）
+  ├─ 主图：candlestick + 所选账户层 markers
+  ├─ 副图栈：动态创建/销毁，与主图 timeScale 联动缩放
+  └─ 标记详情抽屉：点击主图标记或订单行
 ```
+
+**模块化原则**：
+
+| 模块 | 展示位置 | 数据源 |
+|------|----------|--------|
+| 账户层标记 | **主图** | `orders` / `spot_orders` / `multi_leg_*` |
+| 成交量 | **附图**（可选） | `bars_1min` 重采样 `volume` |
+| 特征列 | **附图**（多选） | `GET /api/bus/features/columns` 列清单 + bundle `feature_columns=` |
+| Spot 资格 | **侧栏**（可选） | `GET /api/spot/eligibility` |
+| 订单列表 | **侧栏**（可选） | `GET /api/orders/list` |
+
+布局偏好写入浏览器 `localStorage`（`mlbot_trade_map_layout_v1`）。
 
 **实时刷新**：
 
-1. **K 线**：轮询 `GET /api/trade-map/bundle`（默认最近 `MLBOT_CONSOLE_MAX_OHLCV_DAYS` 天，由 `bars_1min` 重采样）；新鲜度可对账 `latest/bars_1min/<SYMBOL>.json`。
-2. **标记**：每 `MLBOT_CONSOLE_MAP_POLL_SECONDS`（默认 **10s**）请求 `GET /api/trade-map/markers?symbol=&since=`；仅增量 `since` 之后的事件。
-3. **首屏**：`GET /api/trade-map/bundle?symbol=ETHUSDT&timeframe=2h` 一次返回 ohlcv + markers + meta。
+1. **K 线**：轮询 `GET /api/trade-map/bundle?full_range=true`（默认加载 **Parquet 文件内全部 1m bar**，上限 `MLBOT_CONSOLE_MAX_OHLCV_DAYS` 默认 180 天，超出则保留最近 N 天）；显式 `from`/`to` 可缩窄。前端可拖动/缩放查看历史；新鲜度对账 `latest/bars_1min/<SYMBOL>.json`。
+2. **标记**：当前实现为 bundle **全量** markers（每 10s 与 K 线同 poll）；`GET /api/trade-map/markers?since=` 增量 API 已就绪，前端 `since` 轮询为 **P3**（降带宽）。
+3. **首屏**：`GET /api/trade-map/bundle?symbol=ETHUSDT&timeframe=2h&full_range=true&feature_columns=...` 一次返回 ohlcv + markers + overlays + meta。
 
 **研究地图入口（只读）**：P3 可在同页增加「历史回测」Tab，iframe 或链接到 `results/.../trading_map_continuous.html`（`mlbot rolling-dashboard`），与实盘地图并列，不混数据源。
 
@@ -310,9 +329,11 @@ deploy/business-console/
 | GET | `/api/spot/ledger` | `daily_counters` + positions KV |
 | GET | `/api/bus/ohlcv` | `?symbol=&timeframe=&from=&to=` → Parquet（§4.2.2） |
 | GET | `/api/bus/features/latest` | 读 `latest/features/...json` |
+| GET | `/api/bus/features/columns` | `?symbol=&timeframe=` → Parquet 可附图数值列清单 + `defaults` |
 | GET | `/api/trade-map/symbols` | universe 列表 + 各 symbol 最新 bar 时间 |
-| GET | `/api/trade-map/bundle` | `?symbol=&timeframe=2h&from=&to=&scopes=trend,spot,hedge` → OHLCV + markers 一次返回 |
+| GET | `/api/trade-map/bundle` | `?symbol=&timeframe=2h&from=&to=&scopes=&feature_columns=col1,col2` → OHLCV + markers + 多列 `overlays` |
 | GET | `/api/trade-map/markers` | `?symbol=&from=&to=&since=&scopes=` 仅成交标记（增量轮询） |
+| GET | `/api/orders/list` | `?symbol=&scopes=trend,spot,multi_leg&status=&limit=` **Trade Map 侧栏订单表**（已实现） |
 | GET | `/api/trade-map/ohlcv` | 与 `/api/bus/ohlcv` 同实现，别名便于前端 |
 | GET | `/api/trade-map/stream` | **SSE**：`bar_update` / `marker_update`（可选 P2） |
 | GET | `/api/constitution/summary` | 解析 YAML 摘要（非完整编辑） |
@@ -351,7 +372,7 @@ deploy/business-console/
 |------|------|------|
 | **P0** | 部署骨架 + `/api/health` + 首页（DB 可达性、constitution 摘要） | SSH 隧道可开；三库 file exists |
 | **P1** | **Trade Map Live MVP**：全 symbol、默认 **2h** K 线、周期切换（2h/15m/1m/1d）、Trend+Spot **filled** 标记、10s 轮询刷新 | ETH/SOL 上能看到最近开多△与 bus 最新 bar 对齐 |
-| **P2** | Multi-leg 标记、pending 空心标、点击标记订单抽屉、增量 `since`、可选 `weekly_ema` 副图 | 三账户层同图或分色可切换；新成交 30s 内上图 |
+| **P2** | Multi-leg 标记、pending 空心标、点击标记订单抽屉、**Trade Map 同页订单列表**（`/api/orders/list`）、增量 `since`、可选 `weekly_ema` 副图 | 三账户层同图或分色可切换；列表与 K 线标记可互跳；新成交 30s 内上图 |
 | **P3** | SSE 推送、漏斗副图、链到回测 `trading_map_continuous.html`、审计检索 | 替代 sqlite-web 日常查单 |
 
 **不建议一期做**：下单/撤单、改 constitution、Prometheus 自研、在 CMS 内复刻 Bokeh 全量回测权益曲线（可链出静态 HTML）。
@@ -363,7 +384,7 @@ deploy/business-console/
 - **只读挂载**所有数据目录；SQLite `mode=ro`；Parquet 不写。
 - **鉴权**：内网 VPN + 反代 Basic Auth / OIDC；禁止公网裸奔（与 sqlite-web 相同纪律）。
 - **审计**：CMS 访问日志（谁查了哪张表）；无写接口则无需交易二次确认。
-- **性能**：Parquet 查询必须带 `from/to` 上限（如 90 天）；大表分页默认 50 行。
+- **性能**：Parquet 默认 `full_range` 读文件全跨度，上限 `MLBOT_CONSOLE_MAX_OHLCV_DAYS`（默认 **180** 天）；显式 `from/to` 可缩窄。大表分页默认 50 行。
 - **多环境**：`MLBOT_CONSOLE_DATA_ROOT=/opt/quant-engine` 统一前缀，本地开发指向仓库 `live/`。
 
 ---
@@ -407,3 +428,4 @@ deploy/business-console/
 |------|------|
 | 2026-05-20 | 初版：定位、数据源、IA、API 草案、分期、与 Grafana/sqlite-web 分工 |
 | 2026-05-20 | 增补 §4.2 全 symbol 互动 K 线 + 实盘交易地图（周期切换、标记规范、实时刷新、API） |
+| 2026-05-20 | Trade Map：full_range OHLCV、模块化附图/侧栏、`/api/bus/features/columns`、`/api/orders/list` |

@@ -11,44 +11,83 @@
   <header class="toolbar">
     <h1>Trade Map Live</h1>
     <nav class="ext-links" id="extLinks"></nav>
-    <label>Symbol
-      <select id="symbolSelect"></select>
-    </label>
-    <label>周期
-      <select id="timeframeSelect">
-        <option value="2h" selected>2h</option>
-        <option value="15min">15min</option>
-        <option value="1min">1min</option>
-        <option value="1d">1d</option>
-      </select>
-    </label>
-    <span class="layers">
-      <label><input type="checkbox" id="layerTrend" checked /> Trend</label>
-      <label><input type="checkbox" id="layerSpot" checked /> Spot</label>
-      <label><input type="checkbox" id="layerMultiLeg" /> Multi-leg</label>
+
+    <div class="module module-data">
+      <span class="module-label">数据</span>
+      <label>Symbol
+        <select id="symbolSelect"></select>
+      </label>
+      <label>周期
+        <select id="timeframeSelect">
+          <option value="2h" selected>2h</option>
+          <option value="15min">15min</option>
+          <option value="1min">1min</option>
+          <option value="1d">1d</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="module module-accounts" title="账户层 A/B/C：控制主图成交标记">
+      <span class="module-label">账户层</span>
+      <label><input type="checkbox" id="layerTrend" checked /> B·Trend</label>
+      <label><input type="checkbox" id="layerSpot" checked /> A·Spot</label>
+      <label><input type="checkbox" id="layerMultiLeg" /> C·Multi-leg</label>
       <label><input type="checkbox" id="layerPending" /> Pending</label>
-    </span>
-    <span class="layers">
-      <label><input type="checkbox" id="overlayVolume" /> 成交量</label>
-      <label><input type="checkbox" id="overlayWeeklyEma" checked /> weekly_ema</label>
-    </span>
+    </div>
+
+    <div class="module module-subcharts">
+      <span class="module-label">附图</span>
+      <label><input type="checkbox" id="paneVolume" /> 成交量</label>
+      <details class="feature-picker" id="featurePickerDetails">
+        <summary>特征列 <span id="featurePickerHint" class="muted"></span></summary>
+        <div id="featureColumnList" class="feature-column-list muted">加载中…</div>
+      </details>
+    </div>
+
+    <div class="module module-side-toggles">
+      <span class="module-label">侧栏</span>
+      <label><input type="checkbox" id="paneEligibility" checked /> Spot 资格</label>
+      <label><input type="checkbox" id="paneOrders" checked /> 订单列表</label>
+    </div>
+
     <button id="refreshBtn" type="button">刷新</button>
     <span id="statusLine" class="status">—</span>
   </header>
+
   <main>
     <div class="chart-stack">
-      <div id="chart" class="chart-pane"></div>
-      <div id="volumeChart" class="chart-pane volume-pane hidden"></div>
-      <div id="emaChart" class="chart-pane ema-pane hidden"></div>
+      <div id="chart" class="chart-pane main-pane" title="主图：K 线 + 所选账户层成交标记"></div>
+      <div id="subchartStack" class="subchart-stack"></div>
     </div>
-    <aside class="side-panels">
+    <aside class="side-panels" id="sidePanels">
       <section id="detailPanel" class="panel hidden">
         <h3>标记详情</h3>
         <pre id="detailBody"></pre>
       </section>
       <section id="eligibilityPanel" class="panel">
-        <h3>Spot Eligibility</h3>
+        <h3>A·Spot 资格</h3>
         <pre id="eligibilityBody">—</pre>
+      </section>
+      <section id="ordersPanel" class="panel orders-panel">
+        <h3>订单列表 <span id="ordersCount" class="muted"></span></h3>
+        <div class="orders-table-wrap">
+          <table id="ordersTable" class="orders-table">
+            <thead>
+              <tr>
+                <th>scope</th>
+                <th>时间</th>
+                <th>side</th>
+                <th>status</th>
+                <th>qty</th>
+                <th>price</th>
+                <th>id</th>
+              </tr>
+            </thead>
+            <tbody id="ordersBody">
+              <tr><td colspan="7" class="muted">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
       </section>
     </aside>
   </main>

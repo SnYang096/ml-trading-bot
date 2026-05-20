@@ -20,8 +20,9 @@ chmod +x deploy/business-console/run_console.sh
 - Multi-leg markers (`multi_leg_orders`, `multi_leg_execution_reports`)
 - Pending order markers (hollow/circle)
 - Marker detail drawer (`GET /api/trade-map/marker-detail`)
+- **Order list table** on Trade Map page (`GET /api/orders/list`, per-scope `/api/trend/orders`, `/api/spot/orders`, `/api/multileg/orders`)
 - Spot eligibility panel (`GET /api/spot/eligibility`)
-- `weekly_ema_200_position` overlay from `features/<tf>` parquet
+- Modular Trade Map: account layers (A/B/C) on main chart; sub-charts for volume + user-selected feature columns (`GET /api/bus/features/columns`, bundle `feature_columns=`)
 - Optional volume sub-chart
 
 ## P3 deployment
