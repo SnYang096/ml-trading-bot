@@ -70,6 +70,7 @@ on:
       - 'deploy/monitoring/**'
       - 'deploy/business-console/**'
       - 'deploy/systemd/quant-business-console.service'
+      - 'live/highcap/universe.yaml'
 
 # 同一时间只允许一个部署
 concurrency:
@@ -662,7 +663,10 @@ jobs:
             echo "Metrics: 宿主 9192=feature-bus / 9190=trend-fattail / 9191=hedge-multileg / 9193=spot-accum（Prometheus 经 host.docker.internal，见 deploy/monitoring/prometheus.yml）。"
 
       - name: 📦 Pack business console (Trade Map)
-        run: tar czf mlbot-business-console.tgz -C deploy business-console systemd/quant-business-console.service
+        run: |
+          tar czf mlbot-business-console.tgz \
+            -C deploy business-console systemd/quant-business-console.service \
+            -C .. live/highcap/universe.yaml
 
       - name: 📤 Upload business console bundle
         uses: appleboy/scp-action@v0.1.7
@@ -695,4 +699,5 @@ jobs:
             echo "=== 📊 Business console ==="
             docker ps --filter name=mlbot-business-console --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
             echo "Trade Map: http://127.0.0.1:8800/trade-map （仅本机或 SSH -L 8800:127.0.0.1:8800）"
+            echo "universe.yaml → /opt/quant-engine/live/highcap/universe.yaml（宿主 runtime 树默认只有 data/，由 CI 同步）"
             echo "可选 Basic Auth: 在 compose 环境变量中设置 MLBOT_CONSOLE_BASIC_AUTH_USER/PASSWORD 后 docker compose up -d"
