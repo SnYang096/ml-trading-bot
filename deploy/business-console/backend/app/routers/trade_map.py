@@ -14,6 +14,7 @@ from app.services.feature_overlay import (
 )
 from app.services.marker_detail import marker_detail
 from app.services.ohlcv_reader import OhlcvWindowError
+from app.services.signal_overview import build_signal_overview
 from app.services.trade_markers import collect_markers
 from app.services.universe import load_universe_symbols
 
@@ -206,3 +207,21 @@ def trade_map_bundle(
             "feature_columns": cols,
         },
     )
+
+
+@router.get("/api/trade-map/signals")
+def trade_map_signals(
+    timeframe: str = Query("2h"),
+    lookback_days: int = Query(7, ge=1, le=90),
+) -> dict:
+    symbols = load_universe_symbols(SETTINGS.universe_yaml)
+    rows = build_signal_overview(
+        symbols,
+        feature_bus_root=SETTINGS.feature_bus_root,
+        trend_db=SETTINGS.trend_order_db,
+        spot_db=SETTINGS.spot_order_db,
+        multi_leg_db=SETTINGS.multi_leg_db,
+        timeframe=timeframe,
+        lookback_days=lookback_days,
+    )
+    return ok(rows, meta={"count": len(rows), "timeframe": timeframe})

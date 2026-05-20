@@ -76,6 +76,6 @@ def test_trade_map_page_loads(live_server):
         status = page.locator("#statusLine").text_content() or ""
         assert "bars" in status or "markers" in status
         assert page.locator("#symbolSelect").input_value() in {"ETHUSDT", "SOLUSDT"}
-        elig = page.locator("#eligibilityBody").text_content()
-        assert "can_buy" in elig
+        assert page.locator("#appNav").text_content()
+        assert "策略信号" in (page.locator("#appNav").text_content() or "")
         browser.close()

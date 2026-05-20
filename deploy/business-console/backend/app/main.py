@@ -51,3 +51,8 @@ def trade_map_page() -> FileResponse:
 @app.get("/orders")
 def orders_page() -> FileResponse:
     return FileResponse(_FRONTEND / "orders.html")
+
+
+@app.get("/signals")
+def signals_page() -> FileResponse:
+    return FileResponse(_FRONTEND / "signals.html")

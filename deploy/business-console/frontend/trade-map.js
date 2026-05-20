@@ -23,7 +23,6 @@ let selectedFeatureColumns = [];
 const defaultLayout = () => ({
   volume: false,
   features: ["weekly_ema_200_position"],
-  paneEligibility: true,
 });
 
 function loadLayout() {
@@ -39,7 +38,6 @@ function saveLayout() {
   const layout = {
     volume: document.getElementById("paneVolume").checked,
     features: [...selectedFeatureColumns],
-    paneEligibility: document.getElementById("paneEligibility").checked,
   };
   localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
   Shell.setScopesState(layersState());
@@ -47,9 +45,7 @@ function saveLayout() {
 
 function applyLayoutToControls(layout) {
   document.getElementById("paneVolume").checked = !!layout.volume;
-  document.getElementById("paneEligibility").checked = layout.paneEligibility !== false;
   selectedFeatureColumns = Array.isArray(layout.features) ? [...layout.features] : [];
-  applySidePanels();
 }
 
 function applyScopesFromStorage() {
@@ -282,12 +278,6 @@ function applyMarkers(lwcMarkers) {
   candleSeries.setMarkers(lwcMarkers);
 }
 
-function applySidePanels() {
-  const showElig = document.getElementById("paneEligibility").checked;
-  document.getElementById("eligibilityPanel").classList.toggle("hidden", !showElig);
-  document.getElementById("sidePanels").classList.toggle("collapsed", !showElig);
-}
-
 function renderFeaturePicker() {
   const list = document.getElementById("featureColumnList");
   const hint = document.getElementById("featurePickerHint");
@@ -340,20 +330,6 @@ async function loadFeatureColumns() {
   }
   renderFeaturePicker();
   saveLayout();
-}
-
-async function loadEligibility() {
-  if (!document.getElementById("paneEligibility").checked) return;
-  const symbol = document.getElementById("symbolSelect").value;
-  const timeframe = document.getElementById("timeframeSelect").value;
-  try {
-    const { data } = await Shell.api(
-      `/api/spot/eligibility?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
-    );
-    document.getElementById("eligibilityBody").textContent = Core.formatEligibility(data);
-  } catch (e) {
-    document.getElementById("eligibilityBody").textContent = String(e);
-  }
 }
 
 async function showMarkerDetail(markerId) {
@@ -423,8 +399,6 @@ async function refreshBundle() {
       (deg ? " · OHLC degraded" : "") +
       ` · ${new Date().toLocaleTimeString()}`
   );
-  await loadEligibility();
-
   const markerId = pageUrl.searchParams.get("marker_id");
   if (markerId && markerById.has(markerId)) {
     showMarkerDetail(markerId);
@@ -454,15 +428,8 @@ function bindControls() {
     "layerMultiLeg",
     "layerPending",
     "paneVolume",
-    "paneEligibility",
   ].forEach((id) =>
     document.getElementById(id).addEventListener("change", () => {
-      if (id === "paneEligibility") {
-        applySidePanels();
-        saveLayout();
-        loadEligibility().catch(() => {});
-        return;
-      }
       if (id === "paneVolume") {
         saveLayout();
         rerun();
@@ -473,6 +440,9 @@ function bindControls() {
     })
   );
   document.getElementById("refreshBtn").addEventListener("click", rerunAll);
+  document.getElementById("detailCloseBtn").addEventListener("click", () => {
+    document.getElementById("detailPanel").classList.add("hidden");
+  });
   Shell.bindSymbolPersist("symbolSelect");
 
   chart.subscribeClick((param) => {

@@ -45,30 +45,22 @@
       </details>
     </div>
 
-    <div class="module module-side-toggles">
-      <span class="module-label">侧栏</span>
-      <label><input type="checkbox" id="paneEligibility" checked /> Spot 资格</label>
-    </div>
-
     <button id="refreshBtn" type="button">刷新</button>
     <span id="statusLine" class="status">—</span>
   </header>
 
-  <main>
+  <main class="trade-map-main">
     <div class="chart-stack">
       <div id="chart" class="chart-pane main-pane" title="主图：K 线 + 所选账户层成交标记"></div>
       <div id="subchartStack" class="subchart-stack"></div>
-    </div>
-    <aside class="side-panels" id="sidePanels">
-      <section id="detailPanel" class="panel hidden">
-        <h3>标记详情</h3>
+      <section id="detailPanel" class="marker-detail-drawer hidden">
+        <div class="drawer-head">
+          <h3>标记详情</h3>
+          <button type="button" id="detailCloseBtn" class="drawer-close">关闭</button>
+        </div>
         <pre id="detailBody"></pre>
       </section>
-      <section id="eligibilityPanel" class="panel">
-        <h3>A·Spot 资格</h3>
-        <pre id="eligibilityBody">—</pre>
-      </section>
-    </aside>
+    </div>
   </main>
   <script src="/static/console-shell.js"></script>
   <script src="/static/trade-map-core.js"></script>

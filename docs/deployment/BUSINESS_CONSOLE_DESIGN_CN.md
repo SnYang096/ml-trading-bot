@@ -207,13 +207,14 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 #### 4.2.5 前端交互（多页面 + 模块化）
 
-顶栏 **应用菜单** 切换页面（`console-shell.js`）；Symbol / 账户层勾选跨页同步（`localStorage`）。
+顶栏 **应用菜单** 切换页面（`console-shell.js`）；Symbol / 账户层勾选跨页同步（`localStorage`）。**无右侧固定侧栏**。
 
 | 路由 | 页面 | 内容 |
 |------|------|------|
-| `/trade-map` | **交易地图** | K 线、账户层标记、附图、Spot 资格侧栏、标记详情 |
-| `/orders` | **订单** | 全屏订单表、状态筛选、订单/标记详情；可链到地图 `?marker_id=` |
-| `/` | 重定向 | → `/trade-map` |
+| `/signals` | **策略信号** | 全 universe 表格：最新 bar、B/A/C 策略信号摘要、链到地图 |
+| `/trade-map` | **交易地图** | 全宽 K 线、账户层标记、附图；标记详情为底部抽屉 |
+| `/orders` | **订单** | 全屏订单表、状态筛选、订单/标记详情 |
+| `/` | 重定向 | → `/signals` |
 
 **交易地图** `/trade-map`：
 
@@ -237,7 +238,7 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 |------|------|--------|
 | 账户层标记 | 交易地图·主图 | 三库成交 |
 | 成交量 / 特征列 | 交易地图·附图 | bus Parquet |
-| Spot 资格 | 交易地图·侧栏 | `/api/spot/eligibility` |
+| Spot / Trend / Multi-leg 信号 | **策略信号页·表格** | `GET /api/trade-map/signals` |
 | 订单列表 | **订单页** | `/api/orders/list` |
 
 布局：`mlbot_trade_map_layout_v1`（附图）；`mlbot_console_symbol` / `mlbot_console_scopes`（跨页）。
@@ -342,6 +343,7 @@ deploy/business-console/
 | GET | `/api/bus/features/columns` | `?symbol=&timeframe=` → Parquet 可附图数值列清单 + `defaults` |
 | GET | `/api/trade-map/symbols` | universe 列表 + 各 symbol 最新 bar 时间 |
 | GET | `/api/trade-map/bundle` | `?symbol=&timeframe=2h&from=&to=&scopes=&feature_columns=col1,col2` → OHLCV + markers + 多列 `overlays` |
+| GET | `/api/trade-map/signals` | `?timeframe=2h&lookback_days=7` → 全 symbol 策略信号表（地图页入口） |
 | GET | `/api/trade-map/markers` | `?symbol=&from=&to=&since=&scopes=` 仅成交标记（增量轮询） |
 | GET | `/api/orders/list` | `?symbol=&scopes=trend,spot,multi_leg&status=&limit=` **Trade Map 侧栏订单表**（已实现） |
 | GET | `/api/trade-map/ohlcv` | 与 `/api/bus/ohlcv` 同实现，别名便于前端 |

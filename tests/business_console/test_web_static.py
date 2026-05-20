@@ -14,8 +14,9 @@ def test_trade_map_html_served(client):
     assert "appNav" in body
     assert "featureColumnList" in body
     assert "subchartStack" in body
-    assert "eligibilityPanel" in body
-    assert "ordersPanel" not in body
+    assert "marker-detail-drawer" in body
+    assert "side-panels" not in body
+    assert "eligibilityPanel" not in body
 
 
 def test_orders_html_served(client):
@@ -28,10 +29,10 @@ def test_orders_html_served(client):
     assert "appNav" in body
 
 
-def test_root_redirects_to_trade_map(client):
+def test_root_redirects_to_signals(client):
     r = client.get("/", follow_redirects=False)
     assert r.status_code == 200
-    assert "trade-map" in r.text
+    assert "/signals" in r.text
 
 
 def test_static_core_js(client):
