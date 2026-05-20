@@ -138,6 +138,10 @@ class Metrics:
             self.account_update_age_seconds = _NOOP
             self.position_notional_usdt = _NOOP
             self.position_qty = _NOOP
+            self.reconciliation_ok = _NOOP
+            self.reconciliation_issue_count = _NOOP
+            self.reconciliation_last_success_ts = _NOOP
+            self.reconciliation_last_error_ts = _NOOP
             self.strategy_feature_value = _NOOP
             self.strategy_event_total = _NOOP
             self.strategy_event_price = _NOOP
@@ -397,6 +401,26 @@ class Metrics:
             "mlbot_position_qty",
             "Open position quantity by scope/strategy/symbol/side",
             ["scope", "strategy", "symbol", "side"],
+        )
+        self.reconciliation_ok = Gauge(
+            "mlbot_reconciliation_ok",
+            "Reconciliation state by scope/strategy/symbol: 1=ok 0=issue",
+            ["scope", "strategy", "symbol"],
+        )
+        self.reconciliation_issue_count = Gauge(
+            "mlbot_reconciliation_issue_count",
+            "Current reconciliation issue counts by issue bucket",
+            ["scope", "strategy", "symbol", "issue"],
+        )
+        self.reconciliation_last_success_ts = Gauge(
+            "mlbot_reconciliation_last_success_timestamp_seconds",
+            "Unix timestamp of last successful reconciliation",
+            ["scope", "strategy", "symbol"],
+        )
+        self.reconciliation_last_error_ts = Gauge(
+            "mlbot_reconciliation_last_error_timestamp_seconds",
+            "Unix timestamp of last failed reconciliation",
+            ["scope", "strategy", "symbol"],
         )
 
         # ── System Mode ──
@@ -742,6 +766,8 @@ class Metrics:
         raw = str(scope or "").strip().lower()
         if raw in {"multi_leg", "multi-leg", "multileg", "hedge"}:
             return "hedge"
+        if raw in {"spot", "spot_accum", "spot-accum"}:
+            return "spot"
         return "trend"
 
     def _mark_account_update(self, *, scope: str, success: bool) -> None:
@@ -825,6 +851,54 @@ class Metrics:
             ).set(0)
         self._position_labelsets.difference_update(stale)
         self._position_labelsets.update(seen)
+
+    def update_reconciliation_metrics(
+        self,
+        *,
+        scope: str,
+        strategy: str,
+        symbol: str,
+        ok: bool,
+        issue_counts: Optional[Mapping[str, Any]] = None,
+        ts_seconds: Optional[float] = None,
+    ) -> None:
+        """Update reconciliation health gauges with low-cardinality issue buckets."""
+        scope_label = self._normalize_scope(scope)
+        strategy_label = str(strategy or "all").lower()
+        symbol_label = str(symbol or "all").upper()
+        now_ts = float(ts_seconds or time.time())
+
+        self.reconciliation_ok.labels(
+            scope=scope_label, strategy=strategy_label, symbol=symbol_label
+        ).set(1 if ok else 0)
+        if ok:
+            self.reconciliation_last_success_ts.labels(
+                scope=scope_label, strategy=strategy_label, symbol=symbol_label
+            ).set(now_ts)
+        else:
+            self.reconciliation_last_error_ts.labels(
+                scope=scope_label, strategy=strategy_label, symbol=symbol_label
+            ).set(now_ts)
+
+        buckets = dict(issue_counts or {})
+        for issue in (
+            "missing_exchange_order",
+            "orphan_exchange_order",
+            "stale_local_order",
+            "position_mismatch",
+            "api_error",
+        ):
+            raw = buckets.get(issue, 0)
+            try:
+                count = float(raw or 0)
+            except (TypeError, ValueError):
+                count = 0.0
+            self.reconciliation_issue_count.labels(
+                scope=scope_label,
+                strategy=strategy_label,
+                symbol=symbol_label,
+                issue=issue,
+            ).set(max(0.0, count))
 
     def record_strategy_event(
         self,
@@ -1219,9 +1293,28 @@ def _initialize_default_series() -> None:
         METRICS.pcm_notional_total.set(0)
         METRICS.pcm_notional_soft_cap.set(0)
         METRICS.pcm_notional_hard_cap.set(0)
-        for scope in ("trend", "hedge"):
+        for scope in ("trend", "hedge", "spot"):
             METRICS.account_update_success.labels(scope=scope).set(0)
             METRICS.account_update_age_seconds.labels(scope=scope).set(-1)
+            METRICS.reconciliation_ok.labels(
+                scope=scope, strategy="all", symbol="ALL"
+            ).set(1)
+            METRICS.reconciliation_last_success_ts.labels(
+                scope=scope, strategy="all", symbol="ALL"
+            ).set(0)
+            METRICS.reconciliation_last_error_ts.labels(
+                scope=scope, strategy="all", symbol="ALL"
+            ).set(0)
+            for issue in (
+                "missing_exchange_order",
+                "orphan_exchange_order",
+                "stale_local_order",
+                "position_mismatch",
+                "api_error",
+            ):
+                METRICS.reconciliation_issue_count.labels(
+                    scope=scope, strategy="all", symbol="ALL", issue=issue
+                ).set(0)
         for period in ("daily", "weekly", "monthly"):
             METRICS.loss.labels(period=period).set(0)
         for balance_type in ("total", "available", "margin"):

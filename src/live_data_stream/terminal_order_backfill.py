@@ -19,6 +19,8 @@ import os
 from functools import partial
 from typing import Any
 
+from src.time_series_model.live.metrics_exporter import METRICS
+
 logger = logging.getLogger(__name__)
 
 
@@ -114,6 +116,22 @@ async def periodic_terminal_order_backfill(
                     limit=max(1, limit),
                 ),
             )
+            stats = getattr(order_manager, "_last_terminal_backfill_stats", {}) or {}
+            stale_marked = int(stats.get("stale_marked", 0) or 0)
+            api_error = int(stats.get("api_error", 0) or 0)
+            try:
+                METRICS.update_reconciliation_metrics(
+                    scope="trend",
+                    strategy="all",
+                    symbol="ALL",
+                    ok=(stale_marked == 0 and api_error == 0),
+                    issue_counts={
+                        "stale_local_order": stale_marked,
+                        "api_error": api_error,
+                    },
+                )
+            except Exception:
+                logger.debug("terminal backfill reconciliation metrics skipped", exc_info=True)
             if updated:
                 logger.info(
                     "Terminal order REST backfill: updated %s row(s)",

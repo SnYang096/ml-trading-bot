@@ -1,0 +1,52 @@
+# 订单对账健康告警 — 需人工介入检查 DB vs 交易所
+# 评估间隔见 prometheus.yml global.evaluation_interval（默认 15s）
+# for: 3m 避免短暂 API 抖动误报
+
+groups:
+  - name: quant_reconciliation
+    interval: 30s
+    rules:
+      - alert: QuantTrendReconciliationManualCheck
+        expr: |
+          (min(mlbot_reconciliation_ok{scope="trend"}) == 0)
+          or (sum(mlbot_reconciliation_issue_count{scope="trend"}) > 0)
+        for: 3m
+        labels:
+          severity: warning
+          component: trend
+        annotations:
+          summary: "Trend 订单对账异常，需人工检查"
+          description: |
+            本地 order_management.db 与币安 open/algo 订单不一致。
+            检查: sqlite-web order_management、journalctl quant-trend-fattail、
+            指标 mlbot_reconciliation_issue_count{scope="trend"}。
+
+      - alert: QuantHedgeReconciliationManualCheck
+        expr: |
+          (min(mlbot_reconciliation_ok{scope="hedge"}) == 0)
+          or (sum(mlbot_reconciliation_issue_count{scope="hedge"}) > 0)
+        for: 3m
+        labels:
+          severity: warning
+          component: hedge
+        annotations:
+          summary: "Multi-leg 订单对账异常，需人工检查"
+          description: |
+            多腿 engine/DB 与交易所挂单或仓位不一致。
+            检查: multi_leg_order_management.db、journalctl quant-hedge-multileg、
+            日志 multi-leg reconcile not ok / REST backfill。
+
+      - alert: QuantSpotReconciliationManualCheck
+        expr: |
+          (min(mlbot_reconciliation_ok{scope="spot"}) == 0)
+          or (sum(mlbot_reconciliation_issue_count{scope="spot"}) > 0)
+        for: 3m
+        labels:
+          severity: warning
+          component: spot
+        annotations:
+          summary: "Spot 对账异常，需人工检查"
+          description: |
+            Spot pending/ledger 与交易所 open 订单或余额不一致。
+            检查: spot_order_management.db、journalctl quant-spot-accum、
+            指标 stale_local_order / position_mismatch / api_error。

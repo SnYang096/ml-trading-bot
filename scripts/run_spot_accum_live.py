@@ -709,14 +709,18 @@ def _spot_process_pending_buys(
     budget: SpotBudgetConfig,
     symbols: List[str],
     day_key: str,
-) -> None:
+) -> Dict[str, int]:
     max_age_h = _pending_buy_max_age_hours()
     now = datetime.now(timezone.utc)
+    stats = {"pending_open": 0, "stale_local_order": 0, "api_error": 0}
     for sym in symbols:
         sym_u = sym.upper()
         pos = positions.get(sym_u)
         if pos is None:
             continue
+        pending = pos.get("_pending_buy") if isinstance(pos, dict) else None
+        if isinstance(pending, dict):
+            stats["pending_open"] += 1
         if has_blocking_pending_buy(pos):
             _refresh_pending_buy_from_exchange(
                 sym=sym_u,
@@ -731,6 +735,60 @@ def _spot_process_pending_buys(
             sym=sym_u, pos=pos, om=om, max_age_hours=max_age_h, now=now
         ):
             continue
+        pending_after = pos.get("_pending_buy") if isinstance(pos, dict) else None
+        if (
+            isinstance(pending_after, dict)
+            and pending_buy_age_hours(pending_after, now=now) >= max_age_h
+        ):
+            stats["stale_local_order"] += 1
+            if (
+                str(pending_after.get("exchange_order_id") or "").strip()
+                and om.api is not None
+                and not om.shadow
+            ):
+                stats["api_error"] += 1
+    return stats
+
+
+def _publish_spot_reconciliation_metrics(
+    *,
+    strategy_name: str,
+    symbols: List[str],
+    positions: Dict[str, Dict[str, Any]],
+    om: SpotOrderManager,
+    pending_stats: Dict[str, int],
+) -> None:
+    issue_counts: Dict[str, float] = {
+        "stale_local_order": float(pending_stats.get("stale_local_order", 0) or 0),
+        "api_error": float(pending_stats.get("api_error", 0) or 0),
+        "position_mismatch": 0.0,
+    }
+    if om.api is not None:
+        try:
+            balances = om.api.get_total_balances()
+            abs_tol = float(os.getenv("MLBOT_SPOT_RECON_QTY_ABS_TOL", "0.000001"))
+            rel_tol = float(os.getenv("MLBOT_SPOT_RECON_QTY_REL_TOL", "0.02"))
+            for sym in symbols:
+                sym_u = sym.upper()
+                base = _symbol_base_asset(sym_u)
+                live_qty = float(balances.get(base, 0.0) or 0.0)
+                local_qty = float(
+                    ((positions.get(sym_u) or {}).get("_qty_base", 0.0) or 0.0)
+                )
+                tol = max(abs_tol, rel_tol * max(abs(live_qty), abs(local_qty), 1.0))
+                if abs(live_qty - local_qty) > tol:
+                    issue_counts["position_mismatch"] += 1.0
+        except Exception:
+            issue_counts["api_error"] += 1.0
+            logger.warning("spot reconcile: balance check failed", exc_info=True)
+    ok = all(float(v or 0.0) <= 0.0 for v in issue_counts.values())
+    METRICS.update_reconciliation_metrics(
+        scope="spot",
+        strategy=strategy_name,
+        symbol="ALL",
+        ok=ok,
+        issue_counts=issue_counts,
+    )
 
 
 def _build_spot_order_manager() -> SpotOrderManager:
@@ -917,6 +975,10 @@ def main() -> int:
         )
     last_account_sync = 0.0
     last_bus_status_log = 0.0
+    last_reconcile_metrics_sync = 0.0
+    reconcile_metrics_interval = max(
+        10.0, float(os.getenv("MLBOT_SPOT_RECONCILE_METRICS_SECONDS", "30"))
+    )
     bus_status_interval = max(
         60.0, float(os.getenv("MLBOT_SPOT_BUS_STATUS_LOG_SECONDS", "3600"))
     )
@@ -942,7 +1004,7 @@ def main() -> int:
                         ages,
                     )
             loop_day_key = _utc_day_key(datetime.now(timezone.utc))
-            _spot_process_pending_buys(
+            pending_stats = _spot_process_pending_buys(
                 om=om,
                 positions=positions,
                 ledger=ledger,
@@ -950,6 +1012,16 @@ def main() -> int:
                 symbols=symbols,
                 day_key=loop_day_key,
             )
+            now_ts = time.time()
+            if now_ts - last_reconcile_metrics_sync >= reconcile_metrics_interval:
+                _publish_spot_reconciliation_metrics(
+                    strategy_name=strategy_name,
+                    symbols=symbols,
+                    positions=positions,
+                    om=om,
+                    pending_stats=pending_stats,
+                )
+                last_reconcile_metrics_sync = now_ts
             for event in events:
                 sym = event.symbol.upper()
                 features = dict(event.features or {})

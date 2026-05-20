@@ -135,6 +135,98 @@ def test_run_backfill_once_skips_bad_candidate_and_continues() -> None:
     assert [p["order_id"] for p in storage.payloads] == ["ok"]
 
 
+def test_run_backfill_marks_stale_missing_order_expired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLBOT_MULTI_LEG_STALE_OPEN_GRACE_SECONDS", "0")
+
+    class _API:
+        def get_order(self, _order_id: str, _symbol: str):
+            return None
+
+        def get_open_orders(self, _symbol: str):
+            return []
+
+    class _Storage:
+        def __init__(self) -> None:
+            self.payloads = []
+
+        def get_recent_orders_for_backfill(self, **_kwargs):
+            return [
+                {
+                    "run_id": "mlr_1",
+                    "strategy": "chop_grid",
+                    "symbol": "BNBUSDT",
+                    "exchange_order_id": "90414532831",
+                    "client_order_id": "cg_abc",
+                    "status": "open",
+                    "updated_at": "2026-05-19 13:41:12",
+                    "created_at": "2026-05-19 13:41:12",
+                }
+            ]
+
+        def apply_execution_report(self, payload):
+            self.payloads.append(dict(payload))
+            return 1
+
+    storage = _Storage()
+    changed = run_multi_leg_backfill_once(
+        api=_API(),
+        storage=storage,
+        lookback_hours=24,
+        limit=100,
+    )
+    assert changed == 1
+    assert storage.payloads
+    assert storage.payloads[0]["status"] == "expired"
+    assert storage.payloads[0]["reject_reason"] == "exchange_order_missing"
+
+
+def test_run_backfill_skips_stale_when_get_open_orders_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLBOT_MULTI_LEG_STALE_OPEN_GRACE_SECONDS", "0")
+
+    class _API:
+        def get_order(self, _order_id: str, _symbol: str):
+            return None
+
+        def get_open_orders(self, _symbol: str):
+            raise RuntimeError("rate limit")
+
+    class _Storage:
+        def __init__(self) -> None:
+            self.payloads = []
+
+        def get_recent_orders_for_backfill(self, **_kwargs):
+            return [
+                {
+                    "run_id": "mlr_1",
+                    "strategy": "chop_grid",
+                    "symbol": "BNBUSDT",
+                    "exchange_order_id": "90414532831",
+                    "client_order_id": "cg_abc",
+                    "status": "open",
+                    "updated_at": "2026-05-19 13:41:12",
+                    "created_at": "2026-05-19 13:41:12",
+                }
+            ]
+
+        def apply_execution_report(self, payload):
+            self.payloads.append(dict(payload))
+            return 1
+
+    storage = _Storage()
+    changed = run_multi_leg_backfill_once(
+        api=_API(),
+        storage=storage,
+        lookback_hours=24,
+        limit=100,
+    )
+    assert changed == 0
+    assert storage.payloads == []
+
+
 def test_multi_leg_storage_backfill_candidates(tmp_path) -> None:
     storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
     storage.upsert_order(

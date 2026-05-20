@@ -1,19 +1,41 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "graphTooltip": 1,
   "id": null,
   "links": [
-    { "title": "Home", "url": "/d/quant-home", "type": "link", "targetBlank": false },
-    { "title": "Trend map", "url": "/d/quant-strategy-map-trend", "type": "link", "targetBlank": false },
-    { "title": "Hub", "url": "/d/quant-strategy-map", "type": "link", "targetBlank": false }
+    {
+      "title": "Home",
+      "url": "/d/quant-home",
+      "type": "link",
+      "targetBlank": false
+    },
+    {
+      "title": "Trend map",
+      "url": "/d/quant-strategy-map-trend",
+      "type": "link",
+      "targetBlank": false
+    },
+    {
+      "title": "Hub",
+      "url": "/d/quant-strategy-map",
+      "type": "link",
+      "targetBlank": false
+    }
   ],
   "panels": [
     {
       "type": "text",
       "title": "",
       "id": 891,
-      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "options": {
         "mode": "markdown",
         "content": "### Multi-leg hedge → Prometheus（本页无 K 线）\n\n| 环节 | 频率 / 说明 |\n|------|-------------|\n| **Prometheus scrape** | **15s** |\n| **首行 Stat** | `bars/min` / `uptime` / poll 次数见各自说明 |\n| **上半：管道三条** | `bars`/`actions`/`exec`：**Counter 每秒增量** ≠ trend 漏斗。右上「经典 funnel」仍为 **Trend 独占指标**，与本页下部 **不相交**。 |\n| **下半常为 No data** | 多数是 **正常现象**（无否决、无量、无持仓），详见下表 |\n\n| 下面板 | 指标 | **No data / 平胸**常见原因 |\n|--------|------|---------------------------|\n| **Risk veto by code** | `mlbot_multi_leg_risk_reject_codes_total` | **veto**：**组合风控州长**否决下单（爆仓/限额等）或 **symbol 抢仓**；`code` 为粗分桶。**中文/全文原因**：审计里搜 **`multi-leg risk veto:`**（每条约一次）。**整场无 veto → 本面板空** ✅ |\n| **Cancel 原因桶** | `mlbot_multi_leg_cancel_reason_bucket_total` | **撤单归因**：`reason_bucket`= `orphan_exchange` / `reconcile` / `unspecified` / `other`；**订单级原文**见日志 **`multi-leg cancel ... reason=`**。 |\n| **市价减仓（关仓）** | `mlbot_multi_leg_market_exit_total` + **`mlbot_multi_leg_market_exit_reason_bucket_total`** | 次数 + **`reason_bucket`**（`regime_exit`/`risk_stop`/…，来自引擎 `market_exit` 的 `reason=`）；原文仍见 **`multi-leg market_exit requested`** 日志。 |\n| **引擎 bar 归因（推荐）** | `mlbot_multi_leg_engine_bar_outcome_total` | **为何本轮不下单**：chop 的 `flat_blocked_box`、`flat_blocked_chop_low`；dual 的 `flat_blocked_trend_low`、`flat_blocked_chop_high`、`flat_blocked_box`。**开仓**：`open_grid_placed` / `segment_open_placed`。**运行中**：`active_holding` / `active_manage` / `active_seed_inventory`。**平仓类**：`exit_close`。与 **风控 veto**、**交易所撤单** 是不同层——需对照着看。 |\n| **事件 …** | `mlbot_strategy_event_total{scope=\"hedge\"}` | 默认 **关闭** `bar_tick` 事件计数（省 TSDB/表格噪点）；需要心跳时设 env **`MLBOT_HEDGE_BAR_TICK_METRICS=1`**。其余 `place`/`risk_reject`/`execution` 不变。 |\n| **最近事件价** | `mlbot_strategy_event_price` | **给策略地图打点价**：仅在 **`record_strategy_event` 传了 price**（如获批 `place`、`execution`）。**只做观察、不参与决策**。**无挂单/未成序列 → 必空**。 |\n| **持仓快照** | `mlbot_position_*{scope=\"hedge\"}` | 来自 **exchange 持仓 reconcile**。**空仓或从未写出非零仓位**→ Prometheus 可能没有该标签序列 ⇒ **表格空**。 |\n| **事件计数表** | `sum by(strategy,symbol,event,side)` | `place`=州长批准挂单；仅 `bar_tick` 常为未挂单；表含交易对列。 |\n\n**strategy / symbol 变量**：`mlbot_multi_leg_bars_processed_total`。"
@@ -25,34 +47,95 @@
       "title": "Hedge · daemon poll tick 次数（累计）",
       "description": "主循环 **`run_forever`** 每轮末尾 **`daemon_polls_total`+1**。**粗算**「轮询节奏」若 `poll_seconds=30` → 约 **`次数×30s` 的 wall 时间**，但 **≠ 精确运行时长**（有 `run_once` 耗时、调度误差）。**请看「进程运行时长」。**",
       "id": 890,
-      "gridPos": { "h": 3, "w": 5, "x": 0, "y": 11 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 3,
+        "w": 5,
+        "x": 0,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
-        { "refId": "A", "expr": "mlbot_multi_leg_daemon_polls_total{job=~\"$job\"}", "instant": true }
+        {
+          "refId": "A",
+          "expr": "mlbot_multi_leg_daemon_polls_total{job=~\"$job\"}",
+          "instant": true
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
     },
     {
       "type": "stat",
       "title": "Hedge · 进程运行时长（mlbot_uptime_seconds）",
       "description": "从 **本进程 metrics/uptime 计时起点**算起的秒数；Grafana 可按「秒」读出，再心算分钟/小时，**比 poll×30s 可信**（和部署里 `poll_seconds` 是否改过无关）。",
       "id": 897,
-      "gridPos": { "h": 3, "w": 5, "x": 5, "y": 11 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 3,
+        "w": 5,
+        "x": 5,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
-        { "refId": "A", "expr": "mlbot_uptime_seconds{job=~\"$job\"}", "instant": true }
+        {
+          "refId": "A",
+          "expr": "mlbot_uptime_seconds{job=~\"$job\"}",
+          "instant": true
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 }, "overrides": [] },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
     },
     {
       "type": "stat",
       "title": "Hedge · bars/min（近5m 平均，≈每分钟几根 bar）",
       "description": "**`60 × rate(bars_processed_total[5m])` 之和**。与 **0.017 根/秒**同一信息：÷60 即得；这样直读「每分钟几根」更直观。",
       "id": 893,
-      "gridPos": { "h": 3, "w": 5, "x": 10, "y": 11 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 3,
+        "w": 5,
+        "x": 10,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -60,68 +143,200 @@
           "instant": true
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "none", "decimals": 3 }, "overrides": [] },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
     },
     {
       "type": "stat",
       "title": "Hedge · CPU %（当前点）",
       "description": "**瞬时值**；看趋势用下面 **CPU 时间序列**。asyncio 休眠多时常贴 0%。",
       "id": 894,
-      "gridPos": { "h": 3, "w": 5, "x": 15, "y": 11 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 3,
+        "w": 5,
+        "x": 15,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
-        { "refId": "A", "expr": "mlbot_cpu_percent{job=~\"$job\"}", "instant": true }
+        {
+          "refId": "A",
+          "expr": "mlbot_cpu_percent{job=~\"$job\"}",
+          "instant": true
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
     },
     {
       "type": "stat",
       "title": "Hedge · 进程 RSS（MB，当前点）",
       "description": "看趋势用下面 **RSS 时间序列**（与 Stat 同源指标）。",
       "id": 895,
-      "gridPos": { "h": 3, "w": 4, "x": 20, "y": 11 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 20,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
-        { "refId": "A", "expr": "mlbot_memory_rss_mb{job=~\"$job\"}", "instant": true }
+        {
+          "refId": "A",
+          "expr": "mlbot_memory_rss_mb{job=~\"$job\"}",
+          "instant": true
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · CPU %（历史）",
       "description": "按抓取间隔连续打点；可看尖峰。**与瞬时 Stat 同一 `mlbot_cpu_percent`。**",
       "id": 337,
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 14 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
-        { "refId": "A", "expr": "mlbot_cpu_percent{job=~\"$job\"}", "legendFormat": "CPU %" }
+        {
+          "refId": "A",
+          "expr": "mlbot_cpu_percent{job=~\"$job\"}",
+          "legendFormat": "CPU %"
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "custom": { "stacking": { "mode": "none" } } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · 进程 RSS MB（历史）",
       "description": "RSS 取自 exporter；可看内存爬坡/回收。**与瞬时 Stat 同一 `mlbot_memory_rss_mb`。**",
       "id": 338,
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 14 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
-        { "refId": "A", "expr": "mlbot_memory_rss_mb{job=~\"$job\"}", "legendFormat": "RSS MB" }
+        {
+          "refId": "A",
+          "expr": "mlbot_memory_rss_mb{job=~\"$job\"}",
+          "legendFormat": "RSS MB"
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "stacking": { "mode": "none" } } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · 管道：bars（闭合 bar 吞吐）",
       "description": "**仅** `mlbot_multi_leg_bars_processed_total`。**不**单独表示 prefilter 是否通过。",
       "id": 312,
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -129,16 +344,40 @@
           "legendFormat": "bars {{strategy}}/{{symbol}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 4, "custom": { "stacking": { "mode": "none" } } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 4,
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · 管道：actions（引擎→编排器意图）",
       "description": "引擎产出的动作（place/cancel/…）进入 orchestrator 的 **批次速率**。**>0 表示在尝试挂单类动作**，不等于一定成交或被风控放行。",
       "id": 332,
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -146,16 +385,40 @@
           "legendFormat": "actions {{strategy}}/{{symbol}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 4, "custom": { "stacking": { "mode": "none" } } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 4,
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · 管道：exec + portfolio risk 否决",
       "description": "**exec**：执行管道结果；**risk_rejected**：已通过引擎但被 **组合风控**打的次数。**加仓/开仓**可看下方「事件」面板的 `place` 与本品 **actions/exec** 是否同向抬升（需版本含打点）。",
       "id": 333,
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -168,15 +431,39 @@
           "legendFormat": "risk_rejected {{strategy}}/{{symbol}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 4, "custom": { "stacking": { "mode": "none" } } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 4,
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · 经典漏斗 / orders（多腿不写 trend funnel → 多为 No data）",
       "id": 313,
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 28 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -190,18 +477,39 @@
         }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "ops", "custom": { "stacking": { "mode": "normal", "group": "C" } } },
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "stacking": {
+              "mode": "normal",
+              "group": "C"
+            }
+          }
+        },
         "overrides": []
       },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · ATR / 波动（atr、atr14）",
       "description": "与价格同量级（USDT）的波动代理；**勿**与 0~1 的 chop/box 同轴。",
       "id": 334,
-      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 35 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -209,16 +517,40 @@
           "legendFormat": "{{strategy}}/{{symbol}} · {{feature}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2, "custom": { "stacking": { "mode": "none" } } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · Chop / 语义（0~1 及 trend_confidence）",
       "description": "`semantic_chop` / `bpc_semantic_chop` 与 `trend_confidence` 同图（量级相近）。**无** trend 的独立「prefilter 通过/拒绝」计数；`trend_direction` 为离散编码。",
       "id": 335,
-      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 35 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -226,16 +558,40 @@
           "legendFormat": "{{strategy}}/{{symbol}} · {{feature}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 3, "custom": { "stacking": { "mode": "none" } } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 3,
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · Box prefilter（0/1）",
       "description": "特征里 **box_prefilter** 的数值化展示；**1≈通过盒滤、0≈未通过**（以引擎写入语义为准）。",
       "id": 336,
-      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 35 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -244,18 +600,41 @@
         }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "short", "min": 0, "max": 1, "decimals": 0, "custom": { "stacking": { "mode": "none" } } },
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "decimals": 0,
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
         "overrides": []
       },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · Risk veto（≈被拒原因：组合风控州长 / symbol 抢仓）",
       "description": "**risk veto**：资金侧 **MultiLegPortfolioRiskGovernor** 否决（超 gross/net/symbol、回撤、挂单数等），或 daemon 丢弃 **symbol 抢占**开仓。打点进 `mlbot_multi_leg_risk_reject_codes_total{code}`。**当前没有任何否决 → Grafana 整块 No data 正常**。\n与前图 **exec 线上的 risk_rejected**同源信息，是按 **code** 归类展示。",
       "id": 319,
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 42 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -263,16 +642,34 @@
           "legendFormat": "{{strategy}} {{symbol}} {{code}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · 策略事件（Counter，≠ trend 漏斗）：bar_tick / place / …",
       "description": "**不是** trend 漏斗。此处 `mlbot_strategy_event_total{scope=\"hedge\"}`：`bar_tick`=每条 bar；`place`=州长批准后挂单；按 **symbol** 分线。\n前半段平胸多为升级/重启前。",
       "id": 315,
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 49 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -280,16 +677,35 @@
           "legendFormat": "{{strategy}}/{{symbol}} {{event}}/{{side}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 3 }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · 最近事件价（策略地图标记用，非交易信号）",
       "description": "Gauge **`mlbot_strategy_event_price`**：把 **最后一次带价位的事件**记在图上。\n仅在 **`record_strategy_event(..., price=…)`** 时更新（一般是 **approved place** / **exec 回填**）。**观望、仅有 bar_tick、或 shadow 不写价** ⇒ **应为 No data**。\n与「漏斗/prefilter」无直接关系。",
       "id": 316,
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 57 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 57
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -297,16 +713,34 @@
           "legendFormat": "{{strategy}} {{event}} {{side}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · 交易所持仓 qty（历史 · 按引擎 reconcile）",
       "description": "**同一数据源**与下方持仓表：`mlbot_position_qty{scope=\"hedge\"}`，按引擎 **`strategy`** 标签与 **symbol/side** 分线。**纵轴 >0 ≈ 当时 reconcile 读到该合约净仓**（两引擎同 symbol 时常 **两条线数值相同**）。\n\n**限制**：粒度 ≤ bar / scrape；retention 受 Prometheus 配置约束；**不含**订单级明细。",
       "id": 320,
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 63 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -319,19 +753,36 @@
           "unit": "short",
           "min": 0,
           "decimals": 4,
-          "custom": { "stacking": { "mode": "none" } }
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
         },
         "overrides": []
       },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "table",
       "title": "Hedge · 交易所持仓（按引擎 reconcile；同合约多引擎会重复一行）",
       "description": "来自 **`MultiLegDaemon`** 每条 bar 后对 **`adapter.sync_positions(symbol)`** 的 **`METRICS.update_position_metrics(scope='hedge', strategy=运行时名)`**。\n\n**`strategy` 标签** = **进程内引擎名**，**不是 clientOrderId 级别的归因**。数据仍是 **交易所该 **`symbol` 合约的净持仓** —— 因而 **同一账户、同一 symbol、两个网格/多腿共存**时，两行 **数量通常相同**，都等于交易所净仓之和；**不能与「仅某引擎自认仓」逐项对齐**。\n\n**Stale 占位 0**：reconcile 对旧标签会 `set(0)`，instant 表里曾出现 qty=0 行。**已用 PromQL `> 0`** 仅在表上隐藏空仓占位。空仓且从未有过非零序列 ⇒ **仍 No data**（正常现象）。趋势侧另见账户级 `strategy=all` 面板。",
       "id": 317,
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 69 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 69
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -346,16 +797,29 @@
           "instant": true
         }
       ],
-      "fieldConfig": { "defaults": {}, "overrides": [] },
-      "options": { "showHeader": true }
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
     },
     {
       "type": "table",
       "title": "Hedge · 事件计数（区间内合计，同源 counter）",
       "description": "同上 counter：`increase` 按 strategy、symbol、event、side 分列；`place` 为 0 常为无获批挂单；`bar_tick` 仍可大于 0。",
       "id": 318,
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 77 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -364,16 +828,29 @@
           "instant": true
         }
       ],
-      "fieldConfig": { "defaults": {}, "overrides": [] },
-      "options": { "showHeader": true }
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · 引擎 bar 归因（空仓/开仓/持仓/平仓意图）",
       "description": "**`mlbot_multi_leg_engine_bar_outcome_total`**：每个 **闭合 bar** 至多 **一条** outcome（`engine`= chop_grid / dual_add_trend）。\n\n**与 `risk_reject` 区别**：这里是 **策略引擎门禁**（feature 与状态机）；`mlbot_multi_leg_risk_reject_codes_total` 是 **账户组合风控州长**。\n\n**与 cancel 指标区别**：`cancel_reason_bucket` 是 **交易所撤单**；本条不含对账孤儿撤单。",
       "id": 322,
-      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 84 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 84
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -381,16 +858,34 @@
           "legendFormat": "{{strategy}}/{{symbol}} · {{engine}} · {{outcome}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Hedge · market_exit 原因桶（引擎 reason=）",
       "description": "**`mlbot_multi_leg_market_exit_reason_bucket_total`**：与 `mlbot_multi_leg_market_exit_total` 同源增量，多一维 **`reason_bucket`**（`regime_exit`/`risk_stop`/`trend_flip`/…）。\n细因仍以审计日志 **`multi-leg market_exit requested`** 为准。",
       "id": 323,
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 84 },
-      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 84
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
       "targets": [
         {
           "refId": "A",
@@ -398,50 +893,300 @@
           "legendFormat": "{{strategy}} · {{reason_bucket}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Hedge · 订单对账（engine/DB vs 交易所）",
+      "id": 901,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 92
+      },
+      "collapsed": false
+    },
+    {
+      "type": "text",
+      "title": "",
+      "id": 902,
+      "gridPos": {
+        "h": 2,
+        "w": 24,
+        "x": 0,
+        "y": 93
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**频率**：daemon reconcile 每 **60s**（有新 bar 时）；REST backfill **60s** 修正 DB stale open。任一 issue>0 → **需人工检查**。"
+      },
+      "transparent": true
+    },
+    {
+      "type": "stat",
+      "title": "Hedge · 对账 OK (min)",
+      "id": 903,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 95
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(mlbot_reconciliation_ok{job=~\"$job\",scope=\"hedge\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "需人工检查",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "正常",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Hedge · 问题总数",
+      "id": 904,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 95
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(mlbot_reconciliation_issue_count{job=~\"$job\",scope=\"hedge\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Hedge · 对账问题 by strategy/symbol/issue",
+      "id": 906,
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 99
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_reconciliation_issue_count{job=~\"$job\",scope=\"hedge\"} > 0",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge · 对账问题趋势",
+      "id": 907,
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 99
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, symbol, issue) (mlbot_reconciliation_issue_count{job=~\"$job\",scope=\"hedge\"})",
+          "legendFormat": "{{strategy}}/{{symbol}} {{issue}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     }
   ],
   "schemaVersion": 39,
   "style": "dark",
-  "tags": ["quant", "strategy", "hedge", "multi-leg"],
+  "tags": [
+    "quant",
+    "strategy",
+    "hedge",
+    "multi-leg"
+  ],
   "templating": {
     "list": [
       {
         "name": "job",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus-monitoring"
+        },
         "query": "label_values(mlbot_multi_leg_daemon_polls_total{job=~\"quant-hedge-.+\"}, job)",
         "refresh": 1,
         "multi": false,
         "includeAll": false,
-        "current": { "text": "quant-hedge-multileg", "value": "quant-hedge-multileg", "selected": true }
+        "current": {
+          "text": "quant-hedge-multileg",
+          "value": "quant-hedge-multileg",
+          "selected": true
+        }
       },
       {
         "name": "strategy",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus-monitoring"
+        },
         "query": "label_values(mlbot_multi_leg_bars_processed_total{job=~\"$job\"}, strategy)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
         "allValue": ".+",
-        "current": { "text": "All", "value": "$__all", "selected": true }
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": true
+        }
       },
       {
         "name": "symbol",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus-monitoring"
+        },
         "query": "label_values(mlbot_multi_leg_bars_processed_total{job=~\"$job\"}, symbol)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
         "allValue": ".+",
-        "current": { "text": "All", "value": "$__all", "selected": true }
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": true
+        }
       }
     ]
   },
-  "time": { "from": "now-6h", "to": "now" },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "utc",
   "title": "Strategy Map · Multi-leg Hedge",

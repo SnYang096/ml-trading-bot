@@ -5,8 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
+from datetime import datetime, timezone
 from functools import partial
 from typing import Any
+
+from src.time_series_model.live.metrics_exporter import METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +70,44 @@ def _env_int(name: str, default: int) -> int:
         return int(default)
 
 
+def _parse_utc_ts(raw: Any) -> float | None:
+    txt = str(raw or "").strip()
+    if not txt:
+        return None
+    try:
+        return datetime.fromisoformat(txt.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return (
+                datetime.strptime(txt, fmt).replace(tzinfo=timezone.utc).timestamp()
+            )
+        except ValueError:
+            continue
+    return None
+
+
+def _is_stale_missing_exchange_order(
+    row: dict[str, Any],
+    *,
+    now_ts: float,
+    grace_seconds: float,
+    open_exchange_ids: set[str],
+) -> bool:
+    status = str(row.get("status") or "").strip().lower()
+    if status not in {"submitted", "open", "pending", "partially_filled", "unknown", "new"}:
+        return False
+    ex_id = str(row.get("exchange_order_id") or "").strip()
+    if not ex_id or ex_id in open_exchange_ids:
+        return False
+    age_ref = row.get("updated_at") or row.get("created_at")
+    age_ts = _parse_utc_ts(age_ref)
+    if age_ts is None:
+        return False
+    return now_ts - age_ts >= max(0.0, grace_seconds)
+
+
 def run_multi_leg_backfill_once(
     *,
     api: Any,
@@ -75,10 +117,45 @@ def run_multi_leg_backfill_once(
 ) -> int:
     """Run one REST backfill pass; return updated row count."""
     updated_rows = 0
+    stale_marked = 0
+    api_error_count = 0
     candidates = storage.get_recent_orders_for_backfill(
         lookback_hours=max(1, int(lookback_hours)),
         limit=max(1, int(limit)),
     )
+    now_ts = time.time()
+    stale_grace_seconds = float(
+        max(
+            0,
+            _env_int("MLBOT_MULTI_LEG_STALE_OPEN_GRACE_SECONDS", 6 * 3600),
+        )
+    )
+    symbols = sorted(
+        {
+            str(row.get("symbol") or "").strip().upper()
+            for row in candidates
+            if str(row.get("symbol") or "").strip()
+        }
+    )
+    # None = open snapshot unavailable (API error); do not treat as empty exchange.
+    open_exchange_ids_by_symbol: dict[str, set[str] | None] = {}
+    for symbol in symbols:
+        try:
+            rows = api.get_open_orders(symbol) or []
+            open_exchange_ids_by_symbol[symbol] = {
+                str(o.get("order_id") or "").strip()
+                for o in rows
+                if str(o.get("order_id") or "").strip()
+            }
+        except Exception:
+            api_error_count += 1
+            logger.debug(
+                "multi-leg REST backfill: get_open_orders failed symbol=%s",
+                symbol,
+                exc_info=True,
+            )
+            open_exchange_ids_by_symbol[symbol] = None
+
     for row in candidates:
         ex_id = str(row.get("exchange_order_id") or "").strip()
         symbol = str(row.get("symbol") or "").strip().upper()
@@ -87,6 +164,43 @@ def run_multi_leg_backfill_once(
         try:
             snap = api.get_order(ex_id, symbol)
             if not snap:
+                open_exchange_ids = open_exchange_ids_by_symbol.get(symbol)
+                if open_exchange_ids is None:
+                    continue
+                if _is_stale_missing_exchange_order(
+                    row,
+                    now_ts=now_ts,
+                    grace_seconds=stale_grace_seconds,
+                    open_exchange_ids=open_exchange_ids,
+                ):
+                    payload = {
+                        "run_id": row.get("run_id"),
+                        "strategy": row.get("strategy"),
+                        "symbol": symbol,
+                        "order_id": ex_id,
+                        "client_order_id": row.get("client_order_id"),
+                        "status": "expired",
+                        "event_time": datetime.now(timezone.utc).isoformat(),
+                        "reject_reason": "exchange_order_missing",
+                        "error_message": "exchange_order_missing",
+                        "raw": {
+                            "source": "periodic_multi_leg_order_backfill",
+                            "reason": "exchange_order_missing",
+                            "exchange_order_id": ex_id,
+                            "symbol": symbol,
+                        },
+                    }
+                    changed = int(storage.apply_execution_report(payload) or 0)
+                    if changed > 0:
+                        stale_marked += changed
+                        updated_rows += changed
+                        logger.warning(
+                            "multi-leg REST backfill: mark stale local open as expired "
+                            "symbol=%s exchange_order_id=%s strategy=%s",
+                            symbol,
+                            ex_id,
+                            row.get("strategy"),
+                        )
                 continue
             event_time = snap.get("update_time") or snap.get("timestamp")
             payload = {
@@ -108,6 +222,7 @@ def run_multi_leg_backfill_once(
             changed = int(storage.apply_execution_report(payload) or 0)
             updated_rows += max(0, changed)
         except Exception:
+            api_error_count += 1
             logger.debug(
                 "multi-leg REST backfill skipped row local=%s exchange=%s symbol=%s",
                 row.get("local_order_id"),
@@ -115,6 +230,20 @@ def run_multi_leg_backfill_once(
                 symbol,
                 exc_info=True,
             )
+    try:
+        METRICS.update_reconciliation_metrics(
+            scope="hedge",
+            strategy="all",
+            symbol="ALL",
+            ok=(stale_marked == 0 and api_error_count == 0),
+            issue_counts={
+                "stale_local_order": stale_marked,
+                "api_error": api_error_count,
+            },
+            ts_seconds=now_ts,
+        )
+    except Exception:
+        logger.debug("multi-leg backfill reconciliation metrics skipped", exc_info=True)
     return updated_rows
 
 

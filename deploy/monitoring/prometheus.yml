@@ -12,6 +12,9 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/rules/reconciliation_alerts.yml
+
 scrape_configs:
   - job_name: "quant-feature-bus"
     static_configs:
@@ -45,7 +48,7 @@ scrape_configs:
     # hedge multi-leg 使用独立账户：保留多腿专用、OHLC、账户和进程健康指标；其余趋势同名策略指标丢弃。
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: "^(mlbot_multi_leg_.+|mlbot_strategy_symbol_bar_ohlc|mlbot_strategy_feature_value|mlbot_strategy_event_total|mlbot_strategy_event_price|mlbot_dashboard_catalog|mlbot_funnel_total|mlbot_orders_total|mlbot_signals_total|mlbot_account_balance|mlbot_account_margin_ratio|mlbot_unrealized_pnl_total|mlbot_account_update_success|mlbot_account_update_age_seconds|mlbot_position_notional_usdt|mlbot_position_qty|mlbot_cpu_percent|mlbot_memory_mb|mlbot_memory_rss_mb|mlbot_uptime_seconds)$"
+        regex: "^(mlbot_multi_leg_.+|mlbot_reconciliation_.+|mlbot_strategy_symbol_bar_ohlc|mlbot_strategy_feature_value|mlbot_strategy_event_total|mlbot_strategy_event_price|mlbot_dashboard_catalog|mlbot_funnel_total|mlbot_orders_total|mlbot_signals_total|mlbot_account_balance|mlbot_account_margin_ratio|mlbot_unrealized_pnl_total|mlbot_account_update_success|mlbot_account_update_age_seconds|mlbot_position_notional_usdt|mlbot_position_qty|mlbot_cpu_percent|mlbot_memory_mb|mlbot_memory_rss_mb|mlbot_uptime_seconds)$"
         action: keep
 
   - job_name: "quant-spot-accum"

@@ -87,6 +87,88 @@ def test_order_manager_reconcile_recent_terminal_orders_updates(tmp_path) -> Non
     assert again.filled_at is not None
 
 
+def test_reconcile_recent_terminal_orders_keeps_algo_stop_open(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MLBOT_TERMINAL_STALE_OPEN_GRACE_SECONDS", "0")
+    db_path = tmp_path / "om_algo.db"
+    storage = Storage(str(db_path))
+    o = Order(
+        order_id="order_algo_1",
+        binance_order_id="4000001352133210",
+        client_order_id="tl_bea7e8e7234f452892b331faf013f43b",
+        symbol="ETHUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.STOP_MARKET,
+        quantity=0.2,
+        status=OrderStatus.PENDING,
+        stop_price=2244.96,
+        created_at=datetime.now(),
+    )
+    assert storage.create_order(o)
+
+    api = Mock()
+    api.get_order = Mock(return_value=None)
+    api.get_open_orders_for_sl_cleanup = Mock(
+        return_value=[
+            {
+                "order_id": "4000001352133210",
+                "client_order_id": "tl_bea7e8e7234f452892b331faf013f43b",
+                "symbol": "ETHUSDT",
+            }
+        ]
+    )
+
+    om = OrderManager(storage, api, shadow=False)
+    om.storage.get_recent_orders_for_backfill = (  # type: ignore[method-assign]
+        lambda **kw: [storage.get_order("order_algo_1")]
+    )
+    updated = om.reconcile_recent_terminal_orders(lookback_hours=1, limit=10)
+    assert updated == []
+    loaded = storage.get_order("order_algo_1")
+    assert loaded is not None
+    assert loaded.status == OrderStatus.PENDING
+
+
+def test_reconcile_skips_stale_when_open_orders_snapshot_fails(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MLBOT_TERMINAL_STALE_OPEN_GRACE_SECONDS", "0")
+    db_path = tmp_path / "om_open_fail.db"
+    storage = Storage(str(db_path))
+    o = Order(
+        order_id="order_open_fail",
+        binance_order_id="999888777",
+        client_order_id="tl_open_fail",
+        symbol="ETHUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=0.1,
+        status=OrderStatus.PENDING,
+        created_at=datetime.now(),
+    )
+    assert storage.create_order(o)
+
+    api = Mock()
+    api.get_order = Mock(return_value=None)
+    api.get_open_orders_for_sl_cleanup = Mock(
+        side_effect=RuntimeError("open orders unavailable")
+    )
+
+    om = OrderManager(storage, api, shadow=False)
+    om.storage.get_recent_orders_for_backfill = (  # type: ignore[method-assign]
+        lambda **kw: [storage.get_order("order_open_fail")]
+    )
+    updated = om.reconcile_recent_terminal_orders(lookback_hours=1, limit=10)
+    assert updated == []
+    loaded = storage.get_order("order_open_fail")
+    assert loaded is not None
+    assert loaded.status == OrderStatus.PENDING
+    stats = getattr(om, "_last_terminal_backfill_stats", {})
+    assert int(stats.get("api_error", 0) or 0) >= 1
+    assert int(stats.get("stale_marked", 0) or 0) == 0
+
+
 def test_handle_execution_report_commissions_accumulate(tmp_path) -> None:
     db_path = tmp_path / "om2.db"
     storage = Storage(str(db_path))

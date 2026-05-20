@@ -482,13 +482,49 @@ class OrderManager:
             lookback_hours=int(lookback_hours),
             limit=int(limit),
         )
+        stale_grace_seconds = float(
+            max(
+                0,
+                int(os.getenv("MLBOT_TERMINAL_STALE_OPEN_GRACE_SECONDS", str(6 * 3600))),
+            )
+        )
         updated: List[Order] = []
+        stale_marked = 0
+        api_error_count = 0
+        open_snapshot_cache: Dict[str, tuple[set[str], set[str]] | None] = {}
+
+        def _open_ids_for_symbol(sym: str) -> tuple[set[str], set[str]] | None:
+            nonlocal api_error_count
+            key = str(sym or "").upper()
+            if key in open_snapshot_cache:
+                return open_snapshot_cache[key]
+            by_id: set[str] = set()
+            by_client: set[str] = set()
+            try:
+                rows = self.binance_api.get_open_orders_for_sl_cleanup(key) or []
+                for row in rows:
+                    oid = str(row.get("order_id") or "").strip()
+                    cid = str(row.get("client_order_id") or "").strip()
+                    if oid:
+                        by_id.add(oid)
+                    if cid:
+                        by_client.add(cid)
+            except Exception as exc:
+                api_error_count += 1
+                logger.debug("terminal backfill open-orders snapshot failed: %s", exc)
+                open_snapshot_cache[key] = None
+                return None
+            snapshot = (by_id, by_client)
+            open_snapshot_cache[key] = snapshot
+            return snapshot
+
         for order in candidates:
             if not order.binance_order_id:
                 continue
             try:
                 snap = self.binance_api.get_order(order.binance_order_id, order.symbol)
             except Exception as exc:
+                api_error_count += 1
                 logger.debug(
                     "recent terminal backfill get_order failed: %s (%s)",
                     order.order_id,
@@ -496,6 +532,41 @@ class OrderManager:
                 )
                 continue
             if not snap:
+                order_status = str(getattr(order.status, "value", order.status) or "").lower()
+                if order_status in {"pending", "partially_filled"}:
+                    age_seconds = (
+                        (datetime.now() - (order.updated_at or order.created_at)).total_seconds()
+                        if (order.updated_at or order.created_at) is not None
+                        else 0.0
+                    )
+                    open_snapshot = _open_ids_for_symbol(order.symbol)
+                    if open_snapshot is None:
+                        continue
+                    ex_open_ids, ex_open_clients = open_snapshot
+                    in_exchange_open = (
+                        str(order.binance_order_id or "").strip() in ex_open_ids
+                        or str(order.client_order_id or "").strip() in ex_open_clients
+                    )
+                    if age_seconds >= stale_grace_seconds and not in_exchange_open:
+                        order.status = OrderStatus.EXPIRED
+                        order.canceled_at = order.canceled_at or datetime.now()
+                        emsg = str(order.error_message or "").strip()
+                        if "exchange_order_missing" not in emsg:
+                            order.error_message = (
+                                f"{emsg};exchange_order_missing".strip(";")
+                                if emsg
+                                else "exchange_order_missing"
+                            )
+                        order.updated_at = datetime.now()
+                        self.storage.update_order(order)
+                        updated.append(order)
+                        stale_marked += 1
+                        logger.warning(
+                            "terminal backfill: mark stale local open as expired symbol=%s order_id=%s binance_order_id=%s",
+                            order.symbol,
+                            order.order_id,
+                            order.binance_order_id,
+                        )
                 continue
             before = (
                 order.status,
@@ -518,6 +589,11 @@ class OrderManager:
                 order.updated_at = datetime.now()
                 self.storage.update_order(order)
                 updated.append(order)
+        self._last_terminal_backfill_stats = {
+            "updated_rows": len(updated),
+            "stale_marked": stale_marked,
+            "api_error": api_error_count,
+        }
         return updated
 
     def _apply_binance_order_snapshot(
