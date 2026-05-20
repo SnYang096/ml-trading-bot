@@ -61,11 +61,29 @@
     return lines.join("\n");
   }
 
+  function browserLocalUrl(port, path) {
+    const host =
+      (typeof globalThis !== "undefined" &&
+        globalThis.location &&
+        globalThis.location.hostname) ||
+      "127.0.0.1";
+    return `http://${host}:${port}${path || ""}`;
+  }
+
+  function resolveLinkUrl(link) {
+    if (link && link.id === "grafana") {
+      return browserLocalUrl(3000);
+    }
+    return (link && link.url) || "";
+  }
+
   root.MLBotTradeMapCore = {
     scopesFromLayers,
     markersToLwc,
     markerColor,
     markerShape,
     formatEligibility,
+    browserLocalUrl,
+    resolveLinkUrl,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

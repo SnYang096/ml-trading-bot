@@ -28,7 +28,8 @@ const markers = [
 ];
 const lwc = Core.markersToLwc(markers);
 const scopes = Core.scopesFromLayers({ trend: true, spot: false, multiLeg: true, pending: false });
-console.log(JSON.stringify({ scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape }));
+const grafana = Core.resolveLinkUrl({ id: "grafana", url: "http://host.docker.internal:3000/" });
+console.log(JSON.stringify({ scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape, grafana }));
 """
 
 

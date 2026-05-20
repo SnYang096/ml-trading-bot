@@ -1261,6 +1261,7 @@ Docker 镜像内挂载常见为 `-v …/quant-engine/data:/app/data`，则在容
 ```powershell
 ssh -i "C:\Users\hanse\.ssh\awskeypair.pem" `
   -L 8800:127.0.0.1:8800 `
+  -L 3000:127.0.0.1:3000 `
   -L 8871:127.0.0.1:8871 `
   -L 8872:127.0.0.1:8872 `
   -L 8873:127.0.0.1:8873 `
@@ -1274,6 +1275,7 @@ ssh -i "C:\Users\hanse\.ssh\awskeypair.pem" `
 | 用途 | 示例 URL |
 | --- | --- |
 | Trade Map Live（业务控制台） | http://127.0.0.1:8800/trade-map |
+| Grafana | http://127.0.0.1:3000 |
 | 多腿订单表（只读查询页） | http://127.0.0.1:8873/multi_leg_orders/query/ |
 | trend 订单表 | http://127.0.0.1:8872/orders/query/ |
 | live_monitor | 视库内表而定，例如 `http://127.0.0.1:8871/<表名>/query/` |

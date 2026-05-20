@@ -120,6 +120,27 @@ function togglePane(id, show) {
   document.getElementById(id).classList.toggle("hidden", !show);
 }
 
+function browserLocalUrl(port, path = "") {
+  const host = window.location.hostname || "127.0.0.1";
+  return `http://${host}:${port}${path}`;
+}
+
+function resolveLinkUrl(link) {
+  if (link.id === "grafana") {
+    return browserLocalUrl(3000);
+  }
+  const raw = link.url || "";
+  if (raw.includes("host.docker.internal")) {
+    try {
+      const u = new URL(raw);
+      return browserLocalUrl(u.port || "3000", u.pathname);
+    } catch (_) {
+      return browserLocalUrl(3000);
+    }
+  }
+  return raw;
+}
+
 async function loadLinks() {
   try {
     const { data } = await api("/api/links");
@@ -127,7 +148,7 @@ async function loadLinks() {
     nav.innerHTML = "";
     for (const link of data.links || []) {
       const a = document.createElement("a");
-      a.href = link.url;
+      a.href = resolveLinkUrl(link);
       a.target = "_blank";
       a.rel = "noopener";
       a.textContent = link.label;

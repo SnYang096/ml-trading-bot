@@ -20,7 +20,8 @@ services:
       - MLBOT_CONSOLE_LIVE_DATA_ROOT=/data/live_data
       - MLBOT_CONSOLE_ENGINE_DATA_ROOT=/data/engine
       - MLBOT_CONSOLE_LIVE_ROOT=/data/live_root
-      - MLBOT_CONSOLE_GRAFANA_URL=http://host.docker.internal:3000
+      # Browser-facing URL (user opens via SSH -L 3000:127.0.0.1:3000)
+      - MLBOT_CONSOLE_GRAFANA_URL=http://127.0.0.1:3000
     volumes:
       - /opt/quant-engine/live/shared_feature_bus:/data/feature_bus:ro
       - /opt/quant-engine/live/highcap:/data/live_root:ro
