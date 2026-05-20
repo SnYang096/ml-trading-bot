@@ -19,6 +19,12 @@
       "targetBlank": false
     },
     {
+      "title": "Spot map",
+      "url": "/d/quant-strategy-map-spot",
+      "type": "link",
+      "targetBlank": false
+    },
+    {
       "title": "Hub",
       "url": "/d/quant-strategy-map",
       "type": "link",

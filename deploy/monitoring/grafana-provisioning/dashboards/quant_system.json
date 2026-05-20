@@ -17,6 +17,12 @@
       "url": "/d/quant-strategy-map",
       "type": "link",
       "targetBlank": false
+    },
+    {
+      "title": "Spot Map",
+      "url": "/d/quant-strategy-map-spot",
+      "type": "link",
+      "targetBlank": false
     }
   ],
   "panels": [
@@ -372,7 +378,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 34
       },
       "collapsed": false
     },
@@ -384,7 +390,7 @@
         "h": 4,
         "w": 8,
         "x": 0,
-        "y": 28
+        "y": 35
       },
       "datasource": {
         "type": "prometheus",
@@ -453,7 +459,7 @@
         "h": 5,
         "w": 16,
         "x": 8,
-        "y": 28
+        "y": 35
       },
       "datasource": {
         "type": "prometheus",

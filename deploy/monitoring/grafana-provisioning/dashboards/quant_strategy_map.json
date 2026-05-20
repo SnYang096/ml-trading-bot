@@ -18,6 +18,13 @@
       "targetBlank": false,
       "icon": "dashboard"
     },
+    {
+      "title": "Spot accum",
+      "url": "/d/quant-strategy-map-spot",
+      "type": "link",
+      "targetBlank": false,
+      "icon": "dashboard"
+    },
     { "title": "Home", "url": "/d/quant-home", "type": "link", "targetBlank": false },
     { "title": "System", "url": "/d/quant-system", "type": "link", "targetBlank": false }
   ],
@@ -29,7 +36,7 @@
       "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "## Strategy Map hub\n\nTwo dashboards (separate Prometheus `job`):\n\n- **[Strategy Map · Trend](/d/quant-strategy-map-trend)** — funnel `mlbot_funnel_*`, gate reasons, direction, **entry / exit / signal / order** 事件，`quant-trend-fattail` 等。**无 K 线**。\n- **[Strategy Map · Multi-leg Hedge](/d/quant-strategy-map-hedge)** — `mlbot_multi_leg_*` 管道与 hedge 事件/持仓。**无 K 线**。\n\n**Prometheus 全局抓取间隔**：`scrape_interval: 15s`（见 `deploy/monitoring/prometheus.yml`）。指标先有 `/metrics` 暴露才有 TSDB。"
+        "content": "## Strategy Map hub\n\n三个策略看板（各自 Prometheus `job`）：\n\n- **[Strategy Map · Trend](/d/quant-strategy-map-trend)** — funnel `mlbot_funnel_*`，`quant-trend-fattail` :9190\n- **[Strategy Map · Multi-leg Hedge](/d/quant-strategy-map-hedge)** — `mlbot_multi_leg_*`，`quant-hedge-multileg` :9191\n- **[Strategy Map · Spot Accum](/d/quant-strategy-map-spot)** — pending/持仓/对账，`quant-spot-accum` :9193\n\n**Prometheus 全局抓取间隔**：`scrape_interval: 15s`（见 `deploy/monitoring/prometheus.yml`）。指标先有 `/metrics` 暴露才有 TSDB。"
       },
       "transparent": false
     }

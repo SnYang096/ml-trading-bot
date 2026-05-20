@@ -1,0 +1,373 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    { "title": "Home", "url": "/d/quant-home", "type": "link", "targetBlank": false },
+    { "title": "Trend map", "url": "/d/quant-strategy-map-trend", "type": "link", "targetBlank": false },
+    { "title": "Hedge map", "url": "/d/quant-strategy-map-hedge", "type": "link", "targetBlank": false },
+    { "title": "Hub", "url": "/d/quant-strategy-map", "type": "link", "targetBlank": false },
+    { "title": "System", "url": "/d/quant-system", "type": "link", "targetBlank": false }
+  ],
+  "panels": [
+    {
+      "type": "text",
+      "title": "",
+      "id": 1,
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "### Spot accum → Prometheus（`quant-spot-accum` :9193）\n\n| 环节 | 频率 |\n|------|------|\n| **Scrape** | 15s |\n| **主循环 / pending 对账** | `MLBOT_SPOT_FEATURE_BUS_POLL_SECONDS` 默认 **5s** |\n| **对账指标上报** | `MLBOT_SPOT_RECONCILE_METRICS_SECONDS` 默认 **30s** |\n\n`reconciliation_ok=0` 或 issue>0 → **需人工检查**（DB pending vs 交易所 open / 余额）。告警：`QuantSpotReconciliationManualCheck`。"
+      },
+      "transparent": false
+    },
+    {
+      "type": "stat",
+      "title": "Spot · uptime (s)",
+      "id": 2,
+      "gridPos": { "h": 3, "w": 4, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [{ "refId": "A", "expr": "mlbot_uptime_seconds{job=~\"$job\"}", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "Spot · CPU %",
+      "id": 3,
+      "gridPos": { "h": 3, "w": 4, "x": 4, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [{ "refId": "A", "expr": "mlbot_cpu_percent{job=~\"$job\"}", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "Spot · bars/min (5m)",
+      "id": 4,
+      "gridPos": { "h": 3, "w": 4, "x": 8, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "60 * sum(rate(mlbot_bars_processed_total{job=~\"$job\"}[5m]))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "decimals": 3 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "Spot · Feature Bus max lag (s)",
+      "id": 5,
+      "gridPos": { "h": 3, "w": 4, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(mlbot_feature_bus_snapshot_age_seconds{job=~\"$job\",symbol=~\"${symbol:regex}\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "type": "stat",
+      "title": "Spot · 对账 OK",
+      "id": 6,
+      "gridPos": { "h": 3, "w": 4, "x": 16, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(mlbot_reconciliation_ok{job=~\"$job\",scope=\"spot\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "需人工检查", "color": "red", "index": 0 },
+                "1": { "text": "正常", "color": "green", "index": 1 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spot · target up",
+      "id": 7,
+      "gridPos": { "h": 3, "w": 4, "x": 20, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [{ "refId": "A", "expr": "up{job=~\"$job\"}", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "DOWN", "color": "red", "index": 0 },
+                "1": { "text": "UP", "color": "green", "index": 1 }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "background", "graphMode": "none" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spot · CPU / RSS",
+      "id": 10,
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        { "refId": "A", "expr": "mlbot_cpu_percent{job=~\"$job\"}", "legendFormat": "cpu %" },
+        { "refId": "B", "expr": "mlbot_memory_rss_mb{job=~\"$job\"}", "legendFormat": "rss MB" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spot · signals / orders rate",
+      "id": 11,
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(mlbot_signals_total{job=~\"$job\",strategy=~\"${strategy:regex}\"}[5m]))",
+          "legendFormat": "signals/s"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(mlbot_orders_total{job=~\"$job\",strategy=~\"${strategy:regex}\"}[5m]))",
+          "legendFormat": "orders/s"
+        }
+      ],
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "row",
+      "title": "Spot · 事件与持仓",
+      "id": 20,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "collapsed": false
+    },
+    {
+      "type": "table",
+      "title": "Spot · strategy events (sum)",
+      "id": 21,
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, symbol, event, side) (mlbot_strategy_event_total{job=~\"$job\",scope=\"spot\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}) > 0",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spot · event rate",
+      "id": 22,
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event) (rate(mlbot_strategy_event_total{job=~\"$job\",scope=\"spot\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[5m]))",
+          "legendFormat": "{{event}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "table",
+      "title": "Spot · positions (qty / notional)",
+      "id": 23,
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_position_qty{job=~\"$job\",scope=\"spot\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"} > 0",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "mlbot_position_notional_usdt{job=~\"$job\",scope=\"spot\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"} > 0",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "row",
+      "title": "Spot · 订单对账（DB vs 交易所）",
+      "id": 30,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "collapsed": false
+    },
+    {
+      "type": "text",
+      "title": "",
+      "id": 31,
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 29 },
+      "options": {
+        "mode": "markdown",
+        "content": "**频率**：pending 检查 ~5s；指标 `mlbot_reconciliation_*` 每 **30s**。issue 类型：`stale_local_order` / `position_mismatch` / `api_error`。"
+      },
+      "transparent": true
+    },
+    {
+      "type": "stat",
+      "title": "Spot · 问题总数",
+      "id": 32,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 31 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(mlbot_reconciliation_issue_count{job=~\"$job\",scope=\"spot\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Spot · 对账问题 by issue",
+      "id": 33,
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_reconciliation_issue_count{job=~\"$job\",scope=\"spot\"} > 0",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spot · 对账问题趋势",
+      "id": 34,
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (issue) (mlbot_reconciliation_issue_count{job=~\"$job\",scope=\"spot\"})",
+          "legendFormat": "{{issue}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    }
+  ],
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["quant", "strategy", "spot"],
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "query": "label_values(mlbot_cpu_percent{job=~\"quant-spot.+\"}, job)",
+        "refresh": 1,
+        "multi": false,
+        "includeAll": false,
+        "current": {
+          "text": "quant-spot-accum",
+          "value": "quant-spot-accum",
+          "selected": true
+        }
+      },
+      {
+        "name": "strategy",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "query": "label_values(mlbot_dashboard_catalog{job=~\"$job\",role=\"strategy\"}, name)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      },
+      {
+        "name": "symbol",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus-monitoring" },
+        "query": "label_values(mlbot_dashboard_catalog{job=~\"$job\",role=\"symbol\"}, name)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "Strategy Map · Spot Accum",
+  "uid": "quant-strategy-map-spot",
+  "version": 1
+}

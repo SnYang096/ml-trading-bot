@@ -1116,7 +1116,7 @@ def main() -> int:
                             )
                             METRICS.orders_total.labels(strategy=strategy_name).inc()
                             METRICS.record_strategy_event(
-                                scope="trend",
+                                scope="spot",
                                 strategy=strategy_name,
                                 symbol=sym,
                                 event="spot_partial_sell",
@@ -1334,7 +1334,7 @@ def main() -> int:
                     )
                 METRICS.orders_total.labels(strategy=strategy_name).inc()
                 METRICS.record_strategy_event(
-                    scope="trend",
+                    scope="spot",
                     strategy=strategy_name,
                     symbol=sym,
                     event="spot_buy",
@@ -1358,7 +1358,7 @@ def main() -> int:
                     }
                 )
             METRICS.update_position_metrics(
-                scope="trend",
+                scope="spot",
                 strategy=strategy_name,
                 positions=pos_rows,
             )
@@ -1368,13 +1368,19 @@ def main() -> int:
                     try:
                         bal = om.api.get_total_balances()
                         usdt = float(bal.get("USDT", 0.0) or 0.0)
+                        holdings_usdt = sum(
+                            float((p or {}).get("_entry_notional_usdt", 0.0) or 0.0)
+                            for p in positions.values()
+                            if float((p or {}).get("_qty_base", 0.0) or 0.0) > 0.0
+                        )
+                        equity_usdt = usdt + holdings_usdt
                         METRICS.account_balance.labels(type="total").set(usdt)
                         METRICS.account_balance.labels(type="available").set(usdt)
-                        METRICS.account_balance.labels(type="margin").set(0.0)
-                        METRICS.account_update_success.labels(scope="trend").set(1)
-                        METRICS.account_update_age_seconds.labels(scope="trend").set(0)
+                        METRICS.account_balance.labels(type="margin").set(equity_usdt)
+                        METRICS.account_update_success.labels(scope="spot").set(1)
+                        METRICS.account_update_age_seconds.labels(scope="spot").set(0)
                     except Exception:
-                        METRICS.account_update_success.labels(scope="trend").set(0)
+                        METRICS.account_update_success.labels(scope="spot").set(0)
                 last_account_sync = now
             time.sleep(max(0.5, poll_seconds))
         except KeyboardInterrupt:

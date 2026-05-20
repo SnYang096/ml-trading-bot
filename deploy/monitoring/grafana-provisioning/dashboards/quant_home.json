@@ -17,13 +17,19 @@
       "url": "/d/quant-strategy-map",
       "type": "link",
       "targetBlank": false
+    },
+    {
+      "title": "Spot Map",
+      "url": "/d/quant-strategy-map-spot",
+      "type": "link",
+      "targetBlank": false
     }
   ],
   "panels": [
     {
       "type": "row",
-      "title": "Trend Account",
-      "id": 1,
+      "title": "Portfolio Summary",
+      "id": 100,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -34,13 +40,215 @@
     },
     {
       "type": "stat",
+      "title": "Total Equity (all)",
+      "id": 101,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(mlbot_account_balance{job=~\"quant-trend-fattail|quant-hedge-multileg|quant-spot-accum\",type=\"margin\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Total Unrealized PnL",
+      "id": 102,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(mlbot_unrealized_pnl_total{job=~\"quant-trend-fattail|quant-hedge-multileg\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Trend Equity",
+      "id": 103,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"margin\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Hedge Equity",
+      "id": 104,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"margin\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spot Equity",
+      "id": 105,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_balance{job=\"quant-spot-accum\",type=\"margin\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "row",
+      "title": "Trend Account",
+      "id": 1,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
       "title": "Trend Wallet",
       "id": 2,
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 0,
-        "y": 1
+        "y": 6
       },
       "datasource": {
         "type": "prometheus",
@@ -75,9 +283,9 @@
       "id": 3,
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
-        "y": 1
+        "w": 3,
+        "x": 3,
+        "y": 6
       },
       "datasource": {
         "type": "prometheus",
@@ -108,13 +316,51 @@
     },
     {
       "type": "stat",
+      "title": "Trend Account Equity",
+      "id": 203,
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"margin\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
       "title": "Trend Margin Ratio",
       "id": 4,
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 1
+        "w": 3,
+        "x": 9,
+        "y": 6
       },
       "datasource": {
         "type": "prometheus",
@@ -149,9 +395,9 @@
       "id": 5,
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 12,
-        "y": 1
+        "y": 6
       },
       "datasource": {
         "type": "prometheus",
@@ -186,9 +432,9 @@
       "id": 6,
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 16,
-        "y": 1
+        "w": 3,
+        "x": 15,
+        "y": 6
       },
       "datasource": {
         "type": "prometheus",
@@ -224,9 +470,9 @@
       "id": 7,
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 20,
-        "y": 1
+        "w": 3,
+        "x": 18,
+        "y": 6
       },
       "datasource": {
         "type": "prometheus",
@@ -263,7 +509,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 10
       },
       "datasource": {
         "type": "prometheus",
@@ -284,6 +530,11 @@
           "refId": "C",
           "expr": "mlbot_unrealized_pnl_total{job=\"quant-trend-fattail\"}",
           "legendFormat": "unrealized_pnl"
+        },
+        {
+          "refId": "D",
+          "expr": "mlbot_account_balance{job=\"quant-trend-fattail\",type=\"margin\"}",
+          "legendFormat": "equity"
         }
       ],
       "fieldConfig": {
@@ -307,7 +558,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 16
       },
       "collapsed": false
     },
@@ -317,9 +568,9 @@
       "id": 10,
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 0,
-        "y": 12
+        "y": 17
       },
       "datasource": {
         "type": "prometheus",
@@ -354,9 +605,9 @@
       "id": 11,
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
-        "y": 12
+        "w": 3,
+        "x": 3,
+        "y": 17
       },
       "datasource": {
         "type": "prometheus",
@@ -387,13 +638,51 @@
     },
     {
       "type": "stat",
+      "title": "Hedge Account Equity",
+      "id": 204,
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 17
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"margin\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
       "title": "Hedge Margin Ratio",
       "id": 12,
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 12
+        "w": 3,
+        "x": 9,
+        "y": 17
       },
       "datasource": {
         "type": "prometheus",
@@ -428,9 +717,9 @@
       "id": 13,
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 12,
-        "y": 12
+        "y": 17
       },
       "datasource": {
         "type": "prometheus",
@@ -465,9 +754,9 @@
       "id": 14,
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 16,
-        "y": 12
+        "w": 3,
+        "x": 15,
+        "y": 17
       },
       "datasource": {
         "type": "prometheus",
@@ -503,9 +792,9 @@
       "id": 15,
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 20,
-        "y": 12
+        "w": 3,
+        "x": 18,
+        "y": 17
       },
       "datasource": {
         "type": "prometheus",
@@ -542,7 +831,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 21
       },
       "datasource": {
         "type": "prometheus",
@@ -563,6 +852,365 @@
           "refId": "C",
           "expr": "mlbot_unrealized_pnl_total{job=\"quant-hedge-multileg\"}",
           "legendFormat": "unrealized_pnl"
+        },
+        {
+          "refId": "D",
+          "expr": "mlbot_account_balance{job=\"quant-hedge-multileg\",type=\"margin\"}",
+          "legendFormat": "equity"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Spot Account",
+      "id": 30,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Spot USDT",
+      "id": 31,
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_balance{job=\"quant-spot-accum\",type=\"total\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spot Available",
+      "id": 32,
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_balance{job=\"quant-spot-accum\",type=\"available\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spot Equity",
+      "id": 33,
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_balance{job=\"quant-spot-accum\",type=\"margin\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spot Holdings (USDT)",
+      "id": 34,
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(mlbot_position_notional_usdt{job=\"quant-spot-accum\",scope=\"spot\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spot · 对账状态",
+      "id": 35,
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(mlbot_reconciliation_ok{job=\"quant-spot-accum\",scope=\"spot\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "需人工检查",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "正常",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spot Account Update OK",
+      "id": 36,
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_update_success{job=\"quant-spot-accum\",scope=\"spot\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spot Account Age (s)",
+      "id": 37,
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_update_age_seconds{job=\"quant-spot-accum\",scope=\"spot\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spot Balance Timeline",
+      "id": 38,
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_balance{job=\"quant-spot-accum\",type=\"total\"}",
+          "legendFormat": "usdt"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(mlbot_position_notional_usdt{job=\"quant-spot-accum\",scope=\"spot\"})",
+          "legendFormat": "holdings_usdt"
+        },
+        {
+          "refId": "C",
+          "expr": "mlbot_account_balance{job=\"quant-spot-accum\",type=\"margin\"}",
+          "legendFormat": "equity"
         }
       ],
       "fieldConfig": {
@@ -586,7 +1234,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 38
       },
       "collapsed": false
     },
@@ -598,7 +1246,7 @@
         "h": 2,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 39
       },
       "options": {
         "mode": "markdown",
@@ -614,7 +1262,7 @@
         "h": 4,
         "w": 8,
         "x": 0,
-        "y": 25
+        "y": 41
       },
       "datasource": {
         "type": "prometheus",
@@ -683,7 +1331,7 @@
         "h": 4,
         "w": 8,
         "x": 8,
-        "y": 25
+        "y": 41
       },
       "datasource": {
         "type": "prometheus",
@@ -745,75 +1393,6 @@
       }
     },
     {
-      "type": "stat",
-      "title": "Spot · 对账状态",
-      "id": 25,
-      "gridPos": {
-        "h": 4,
-        "w": 8,
-        "x": 16,
-        "y": 25
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus-monitoring"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "min(mlbot_reconciliation_ok{job=\"quant-spot-accum\",scope=\"spot\"})",
-          "instant": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "min": 0,
-          "max": 1,
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": {
-                  "text": "需人工检查",
-                  "color": "red",
-                  "index": 0
-                },
-                "1": {
-                  "text": "正常",
-                  "color": "green",
-                  "index": 1
-                }
-              }
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "values": false
-        },
-        "colorMode": "background",
-        "graphMode": "none"
-      }
-    },
-    {
       "type": "table",
       "title": "对账问题明细 (issue_count > 0)",
       "id": 26,
@@ -821,7 +1400,7 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 45
       },
       "datasource": {
         "type": "prometheus",
@@ -851,7 +1430,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 50
       },
       "collapsed": false
     },
@@ -863,7 +1442,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 35
+        "y": 51
       },
       "datasource": {
         "type": "prometheus",
@@ -895,7 +1474,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 35
+        "y": 51
       },
       "datasource": {
         "type": "prometheus",
@@ -929,7 +1508,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 57
       },
       "datasource": {
         "type": "prometheus",
