@@ -28,7 +28,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "Target and Process Health",
+      "title": "全局 · 四进程总览",
       "id": 101,
       "gridPos": {
         "h": 1,
@@ -404,7 +404,7 @@
     },
     {
       "type": "row",
-      "title": "Feature Bus and Runtime Health",
+      "title": "Feature Bus · 行情发布 (quant-feature-bus)",
       "id": 107,
       "gridPos": {
         "h": 1,
@@ -416,11 +416,11 @@
     },
     {
       "type": "timeseries",
-      "title": "WebSocket Connected (publisher)",
+      "title": "WebSocket 连接",
       "id": 108,
       "gridPos": {
-        "h": 7,
-        "w": 8,
+        "h": 6,
+        "w": 12,
         "x": 0,
         "y": 29
       },
@@ -444,13 +444,13 @@
       }
     },
     {
-      "type": "timeseries",
-      "title": "Feature Bus Snapshot Age (trend + spot view)",
-      "id": 109,
+      "type": "stat",
+      "title": "Publisher · Target UP",
+      "id": 1081,
       "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 8,
+        "h": 6,
+        "w": 4,
+        "x": 12,
         "y": 29
       },
       "datasource": {
@@ -460,8 +460,184 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "mlbot_feature_bus_snapshot_age_seconds{job=~\"quant-trend-fattail|quant-spot-accum\"}",
-          "legendFormat": "{{job}} {{symbol}}"
+          "expr": "up{job=\"quant-feature-bus\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Publisher · CPU / RSS",
+      "id": 1082,
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 29
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_cpu_percent{job=\"quant-feature-bus\"}",
+          "legendFormat": "cpu %"
+        },
+        {
+          "refId": "B",
+          "expr": "mlbot_memory_rss_mb{job=\"quant-feature-bus\"}",
+          "legendFormat": "rss MB"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rss MB"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decmbytes"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cpu %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "title": "Trend · 方向账户 (quant-trend-fattail)",
+      "id": 3010,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Trend · Target UP",
+      "id": 301,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 36
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"quant-trend-fattail\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Trend · Feature Bus 滞后 (读 bus)",
+      "id": 302,
+      "gridPos": {
+        "h": 6,
+        "w": 10,
+        "x": 4,
+        "y": 36
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_feature_bus_snapshot_age_seconds{job=\"quant-trend-fattail\"}",
+          "legendFormat": "{{symbol}}"
         }
       ],
       "fieldConfig": {
@@ -473,13 +649,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Trend System Mode",
-      "id": 110,
+      "title": "Trend · System Mode",
+      "id": 303,
       "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 16,
-        "y": 29
+        "h": 6,
+        "w": 5,
+        "x": 14,
+        "y": 36
       },
       "datasource": {
         "type": "prometheus",
@@ -502,12 +678,12 @@
     },
     {
       "type": "timeseries",
-      "title": "Bars Throughput",
-      "id": 111,
+      "title": "Trend · CPU / RSS",
+      "id": 304,
       "gridPos": {
         "h": 6,
-        "w": 12,
-        "x": 0,
+        "w": 5,
+        "x": 19,
         "y": 36
       },
       "datasource": {
@@ -517,13 +693,13 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(mlbot_bars_processed_total{job=\"quant-trend-fattail\"}[5m])",
-          "legendFormat": "trend bars/s"
+          "expr": "mlbot_cpu_percent{job=\"quant-trend-fattail\"}",
+          "legendFormat": "cpu"
         },
         {
           "refId": "B",
-          "expr": "sum(rate(mlbot_multi_leg_bars_processed_total{job=\"quant-hedge-multileg\"}[5m]))",
-          "legendFormat": "hedge bars/s"
+          "expr": "mlbot_memory_rss_mb{job=\"quant-trend-fattail\"}",
+          "legendFormat": "rss"
         }
       ],
       "fieldConfig": {
@@ -533,13 +709,160 @@
     },
     {
       "type": "timeseries",
-      "title": "Daemon and Actions Throughput (hedge)",
-      "id": 112,
+      "title": "Trend · Bars 吞吐",
+      "id": 305,
       "gridPos": {
-        "h": 6,
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(mlbot_bars_processed_total{job=\"quant-trend-fattail\"}[5m])",
+          "legendFormat": "bars/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Trend · 账户刷新",
+      "id": 306,
+      "gridPos": {
+        "h": 5,
         "w": 12,
         "x": 12,
-        "y": 36
+        "y": 42
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_update_age_seconds{job=\"quant-trend-fattail\"}",
+          "legendFormat": "age {{scope}}"
+        },
+        {
+          "refId": "B",
+          "expr": "mlbot_account_update_success{job=\"quant-trend-fattail\"}",
+          "legendFormat": "ok {{scope}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "Multi-leg · 对冲账户 (quant-hedge-multileg)",
+      "id": 4010,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 47
+      },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Multi-leg · Target UP",
+      "id": 401,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 48
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"quant-hedge-multileg\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Multi-leg · Bars 吞吐",
+      "id": 402,
+      "gridPos": {
+        "h": 6,
+        "w": 10,
+        "x": 4,
+        "y": 48
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(mlbot_multi_leg_bars_processed_total{job=\"quant-hedge-multileg\"}[5m]))",
+          "legendFormat": "bars/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Multi-leg · Daemon / Actions",
+      "id": 403,
+      "gridPos": {
+        "h": 6,
+        "w": 10,
+        "x": 14,
+        "y": 48
       },
       "datasource": {
         "type": "prometheus",
@@ -564,13 +887,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Account Update Age and Success",
-      "id": 113,
+      "title": "Multi-leg · CPU / RSS",
+      "id": 404,
       "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 42
+        "h": 6,
+        "w": 4,
+        "x": 19,
+        "y": 48
       },
       "datasource": {
         "type": "prometheus",
@@ -579,13 +902,44 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "mlbot_account_update_age_seconds{job=~\"quant-trend-fattail|quant-hedge-multileg\"}",
-          "legendFormat": "age {{job}} {{scope}}"
+          "expr": "mlbot_cpu_percent{job=\"quant-hedge-multileg\"}",
+          "legendFormat": "cpu"
         },
         {
           "refId": "B",
-          "expr": "mlbot_account_update_success{job=~\"quant-trend-fattail|quant-hedge-multileg\"}",
-          "legendFormat": "ok {{job}} {{scope}}"
+          "expr": "mlbot_memory_rss_mb{job=\"quant-hedge-multileg\"}",
+          "legendFormat": "rss"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Multi-leg · 账户刷新",
+      "id": 405,
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_account_update_age_seconds{job=\"quant-hedge-multileg\"}",
+          "legendFormat": "age {{scope}}"
+        },
+        {
+          "refId": "B",
+          "expr": "mlbot_account_update_success{job=\"quant-hedge-multileg\"}",
+          "legendFormat": "ok {{scope}}"
         }
       ],
       "fieldConfig": {
@@ -595,25 +949,105 @@
     },
     {
       "type": "row",
-      "title": "Spot · 订单对账",
-      "id": 201,
+      "title": "Spot · 现货吸筹 (quant-spot-accum)",
+      "id": 5010,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 44
+        "y": 59
       },
       "collapsed": false
     },
     {
       "type": "stat",
-      "title": "Spot · 对账 OK",
-      "id": 202,
+      "title": "Spot · Target UP",
+      "id": 501,
       "gridPos": {
         "h": 4,
-        "w": 8,
+        "w": 4,
         "x": 0,
-        "y": 45
+        "y": 60
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"quant-spot-accum\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spot · Feature Bus 滞后 (读 bus)",
+      "id": 502,
+      "gridPos": {
+        "h": 6,
+        "w": 10,
+        "x": 4,
+        "y": 60
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_feature_bus_snapshot_age_seconds{job=\"quant-spot-accum\"}",
+          "legendFormat": "{{symbol}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spot · 对账 OK",
+      "id": 503,
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 14,
+        "y": 60
       },
       "datasource": {
         "type": "prometheus",
@@ -675,14 +1109,45 @@
       }
     },
     {
+      "type": "timeseries",
+      "title": "Spot · CPU / RSS",
+      "id": 504,
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 60
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mlbot_cpu_percent{job=\"quant-spot-accum\"}",
+          "legendFormat": "cpu"
+        },
+        {
+          "refId": "B",
+          "expr": "mlbot_memory_rss_mb{job=\"quant-spot-accum\"}",
+          "legendFormat": "rss"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
       "type": "table",
-      "title": "Spot · 对账问题",
-      "id": 203,
+      "title": "Spot · 对账问题明细",
+      "id": 505,
       "gridPos": {
         "h": 5,
-        "w": 16,
-        "x": 8,
-        "y": 45
+        "w": 24,
+        "x": 0,
+        "y": 66
       },
       "datasource": {
         "type": "prometheus",
@@ -703,6 +1168,21 @@
       "options": {
         "showHeader": true
       }
+    },
+    {
+      "type": "text",
+      "title": "看板说明",
+      "id": 506,
+      "gridPos": {
+        "h": 2,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**分区说明**：上方为全局与 **feature-bus 发布端**；下方三块按进程拆分 — **Trend**（`quant-trend-fattail`）、**Multi-leg**（`quant-hedge-multileg`）、**Spot**（`quant-spot-accum`）。某块 Target UP 变红或 Bus 滞后尖峰时，优先查对应容器 `docker logs`。"
+      }
     }
   ],
   "schemaVersion": 39,
@@ -721,7 +1201,7 @@
   },
   "timepicker": {},
   "timezone": "utc",
-  "title": "System · Process / Machine / Bus",
+  "title": "System · Bus / Trend / Multi-leg / Spot",
   "uid": "quant-system",
-  "version": 2
+  "version": 3
 }

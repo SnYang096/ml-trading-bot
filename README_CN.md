@@ -1204,6 +1204,8 @@ sudo systemctl restart quant-spot-accum
 bash scripts/check_live_spot_feature_bus.sh
 ```
 
+**Grafana `System · Bus / Trend / Multi-leg / Spot` 看板**：按进程分块 — **feature-bus 发布**、**Trend**、**Multi-leg**、**Spot**（每块含 Target UP、Bus 滞后、CPU 等）；不再把 trend+spot 混在同一张图里。
+
 **Grafana「Disk · 数据管线新鲜度」**（`quant_system` 看板，`quant-feature-bus` job）：
 
 | 指标 | 含义 |
