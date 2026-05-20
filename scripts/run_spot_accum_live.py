@@ -918,7 +918,7 @@ def main() -> int:
     last_account_sync = 0.0
     last_bus_status_log = 0.0
     bus_status_interval = max(
-        60.0, float(os.getenv("MLBOT_SPOT_BUS_STATUS_LOG_SECONDS", "600"))
+        60.0, float(os.getenv("MLBOT_SPOT_BUS_STATUS_LOG_SECONDS", "3600"))
     )
 
     while True:
