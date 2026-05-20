@@ -19,6 +19,8 @@ const subcharts = new Map();
 
 let availableFeatureColumns = [];
 let selectedFeatureColumns = [];
+let featureSearchQuery = "";
+const MAX_FEATURE_SUBCHARTS = 8;
 
 const defaultLayout = () => ({
   volume: false,
@@ -78,11 +80,27 @@ function chartBaseOptions() {
   return {
     layout: { background: { color: "#0f1419" }, textColor: "#8b949e" },
     grid: { vertLines: { color: "#21262d" }, horzLines: { color: "#21262d" } },
-    timeScale: { timeVisible: true, secondsVisible: false },
+    timeScale: {
+      timeVisible: true,
+      secondsVisible: false,
+      barSpacing: 3,
+      minBarSpacing: 0.5,
+      rightOffset: 8,
+    },
     rightPriceScale: { borderColor: "#30363d" },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true },
     handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
   };
+}
+
+function applyChartViewport(barCount) {
+  const spacing = Core.barSpacingForCount(barCount);
+  chart.timeScale().applyOptions({
+    barSpacing: spacing,
+    minBarSpacing: 0.5,
+    rightOffset: 8,
+  });
+  chart.timeScale().fitContent();
 }
 
 function initMainChart() {
@@ -251,8 +269,9 @@ function syncSubcharts(candles, overlays) {
   for (const id of [...subcharts.keys()]) {
     if (id.startsWith("feat:") && !wantFeatures.has(id.slice(5))) destroySubchart(id);
   }
+  const colsForPanes = selectedFeatureColumns.slice(0, MAX_FEATURE_SUBCHARTS);
   let idx = 0;
-  for (const col of selectedFeatureColumns) {
+  for (const col of colsForPanes) {
     ensureFeaturePane(col, overlays?.[col], idx);
     idx += 1;
   }
@@ -278,31 +297,133 @@ function applyMarkers(lwcMarkers) {
   candleSeries.setMarkers(lwcMarkers);
 }
 
+function escHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;");
+}
+
+function toggleFeaturePanel(forceOpen) {
+  const panel = document.getElementById("featurePanel");
+  const btn = document.getElementById("featurePanelBtn");
+  const open = forceOpen ?? panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function setSelectedFeatures(cols, { refresh = true } = {}) {
+  selectedFeatureColumns = [...new Set(cols.filter(Boolean))];
+  renderFeaturePicker();
+  saveLayout();
+  if (refresh) refreshBundle().catch((e) => setStatus(String(e)));
+}
+
+function renderSelectedChips() {
+  const el = document.getElementById("featureSelectedChips");
+  if (!selectedFeatureColumns.length) {
+    el.innerHTML = '<span class="muted">点击下方列名添加；或点「推荐」</span>';
+    return;
+  }
+  el.innerHTML = selectedFeatureColumns
+    .map(
+      (col) =>
+        `<span class="feature-chip">${escHtml(col)}<button type="button" data-remove-col="${escHtml(col)}" aria-label="移除">×</button></span>`
+    )
+    .join("");
+  el.querySelectorAll("[data-remove-col]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const col = btn.getAttribute("data-remove-col");
+      setSelectedFeatures(selectedFeatureColumns.filter((c) => c !== col));
+    });
+  });
+}
+
 function renderFeaturePicker() {
   const list = document.getElementById("featureColumnList");
   const hint = document.getElementById("featurePickerHint");
+  renderSelectedChips();
   if (!availableFeatureColumns.length) {
-    list.innerHTML = '<span class="muted">当前周期无 features Parquet</span>';
-    hint.textContent = "";
+    list.innerHTML = '<p class="muted">当前周期无 features Parquet</p>';
+    hint.textContent = "0";
     return;
   }
-  hint.textContent = `(${selectedFeatureColumns.length}/${availableFeatureColumns.length})`;
-  list.innerHTML = availableFeatureColumns
-    .map((col) => {
-      const checked = selectedFeatureColumns.includes(col) ? "checked" : "";
-      return `<label><input type="checkbox" data-feature-col="${col}" ${checked} /> ${col}</label>`;
+  hint.textContent = `${selectedFeatureColumns.length}/${availableFeatureColumns.length}`;
+  const filtered = Core.filterFeatureColumns(availableFeatureColumns, featureSearchQuery);
+  if (!filtered.length) {
+    list.innerHTML = '<p class="muted">无匹配列</p>';
+    return;
+  }
+  const groups = Core.groupFeatureColumns(filtered);
+  list.innerHTML = groups
+    .map(([title, cols]) => {
+      const items = cols
+        .map((col) => {
+          const on = selectedFeatureColumns.includes(col);
+          return `<label class="feature-item${on ? " selected" : ""}">
+            <input type="checkbox" data-feature-col="${escHtml(col)}" ${on ? "checked" : ""} />
+            <span>${escHtml(col)}</span>
+          </label>`;
+        })
+        .join("");
+      return `<section class="feature-group"><h4 class="feature-group-title">${escHtml(title)} (${cols.length})</h4><div class="feature-grid">${items}</div></section>`;
     })
     .join("");
   list.querySelectorAll("input[data-feature-col]").forEach((inp) => {
     inp.addEventListener("change", () => {
       const col = inp.getAttribute("data-feature-col");
+      let next = [...selectedFeatureColumns];
       if (inp.checked) {
-        if (!selectedFeatureColumns.includes(col)) selectedFeatureColumns.push(col);
+        if (!next.includes(col)) next.push(col);
       } else {
-        selectedFeatureColumns = selectedFeatureColumns.filter((c) => c !== col);
+        next = next.filter((c) => c !== col);
       }
-      saveLayout();
-      refreshBundle().catch((e) => setStatus(String(e)));
+      setSelectedFeatures(next);
+    });
+  });
+}
+
+function bindFeaturePanel() {
+  const btn = document.getElementById("featurePanelBtn");
+  const panel = document.getElementById("featurePanel");
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    toggleFeaturePanel(panel.classList.contains("hidden"));
+  });
+  document.addEventListener("click", (ev) => {
+    if (!panel.classList.contains("hidden") && !panel.contains(ev.target) && ev.target !== btn) {
+      toggleFeaturePanel(false);
+    }
+  });
+  panel.addEventListener("click", (ev) => ev.stopPropagation());
+  document.getElementById("featureSearch").addEventListener("input", (ev) => {
+    featureSearchQuery = ev.target.value;
+    renderFeaturePicker();
+  });
+  panel.querySelectorAll("[data-feature-action]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const action = el.getAttribute("data-feature-action");
+      if (action === "clear") {
+        setSelectedFeatures([]);
+        return;
+      }
+      if (action === "preset-default") {
+        const picks = [];
+        for (const name of Core.FEATURE_PRESETS.default) {
+          if (availableFeatureColumns.includes(name)) picks.push(name);
+        }
+        const fromApi = availableFeatureColumns.filter((c) =>
+          String(c).toLowerCase().includes("weekly_ema")
+        );
+        for (const c of fromApi) {
+          if (!picks.includes(c)) picks.push(c);
+        }
+        if (!picks.length && availableFeatureColumns.length) {
+          picks.push(availableFeatureColumns[0]);
+        }
+        setSelectedFeatures(picks.slice(0, MAX_FEATURE_SUBCHARTS));
+      }
     });
   });
 }
@@ -378,7 +499,7 @@ async function refreshBundle() {
   candleSeries.setData(candles);
   applyMarkers(Core.markersToLwc(data.markers || []));
   if (chartFitPending) {
-    chart.timeScale().fitContent();
+    applyChartViewport(candles.length);
     chartFitPending = false;
   }
   syncSubcharts(candles, data.overlays || {});
@@ -390,12 +511,17 @@ async function refreshBundle() {
       : "";
   const clipHint = meta.range_clipped ? ` · clipped ${meta.max_ohlcv_days || ""}d` : "";
   const busRows = meta.bars_1min_rows ? ` · 1m=${meta.bars_1min_rows}` : "";
+  const featCap =
+    selectedFeatureColumns.length > MAX_FEATURE_SUBCHARTS
+      ? ` · 附图限${MAX_FEATURE_SUBCHARTS}列`
+      : "";
   setStatus(
     `${symbol} ${timeframe} · ${candles.length} bars · ${(data.markers || []).length} markers` +
       busRows +
       rangeHint +
       clipHint +
       formatOverlayStatus(data.overlays || {}) +
+      (featCap || "") +
       (deg ? " · OHLC degraded" : "") +
       ` · ${new Date().toLocaleTimeString()}`
   );
@@ -420,6 +546,10 @@ function bindControls() {
     await loadFeatureColumns();
     rerun();
   };
+  document.getElementById("refreshBtn").addEventListener("click", () => {
+    chartFitPending = true;
+    rerunAll();
+  });
   [
     "symbolSelect",
     "timeframeSelect",
@@ -439,7 +569,6 @@ function bindControls() {
       rerunAll();
     })
   );
-  document.getElementById("refreshBtn").addEventListener("click", rerunAll);
   document.getElementById("detailCloseBtn").addEventListener("click", () => {
     document.getElementById("detailPanel").classList.add("hidden");
   });
@@ -459,6 +588,7 @@ function bindControls() {
     applyScopesFromStorage();
     applyLayoutToControls(loadLayout());
     initMainChart();
+    bindFeaturePanel();
     bindControls();
     await Shell.loadExtLinks();
     await Shell.loadSymbols("symbolSelect");

@@ -38,11 +38,23 @@
 
     <div class="module module-subcharts">
       <span class="module-label">附图</span>
-      <label><input type="checkbox" id="paneVolume" /> 成交量</label>
-      <details class="feature-picker" id="featurePickerDetails" open>
-        <summary>特征列 <span id="featurePickerHint" class="muted"></span></summary>
-        <div id="featureColumnList" class="feature-column-list muted">加载中…</div>
-      </details>
+      <label class="chk-pill"><input type="checkbox" id="paneVolume" /> 成交量</label>
+      <div class="feature-panel-wrap">
+        <button type="button" id="featurePanelBtn" class="feature-panel-btn" aria-expanded="false">
+          特征 <span id="featurePickerHint" class="feature-count-badge">…</span>
+        </button>
+        <div id="featurePanel" class="feature-panel hidden" role="dialog" aria-label="特征列选择">
+          <div class="feature-panel-head">
+            <input type="search" id="featureSearch" class="feature-search" placeholder="搜索特征列…" autocomplete="off" />
+            <div class="feature-panel-actions">
+              <button type="button" class="btn-ghost" data-feature-action="preset-default">推荐</button>
+              <button type="button" class="btn-ghost" data-feature-action="clear">清空</button>
+            </div>
+          </div>
+          <div id="featureSelectedChips" class="feature-chips"></div>
+          <div id="featureColumnList" class="feature-column-list">加载中…</div>
+        </div>
+      </div>
     </div>
 
     <button id="refreshBtn" type="button">刷新</button>

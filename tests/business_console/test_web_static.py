@@ -13,6 +13,8 @@ def test_trade_map_html_served(client):
     assert "layerMultiLeg" in body
     assert "appNav" in body
     assert "featureColumnList" in body
+    assert "featurePanelBtn" in body
+    assert "featureSearch" in body
     assert "subchartStack" in body
     assert "marker-detail-drawer" in body
     assert "side-panels" not in body

@@ -29,7 +29,9 @@ const markers = [
 const lwc = Core.markersToLwc(markers);
 const scopes = Core.scopesFromLayers({ trend: true, spot: false, multiLeg: true, pending: false });
 const grafana = Core.resolveLinkUrl({ id: "grafana", url: "http://host.docker.internal:3000/" });
-console.log(JSON.stringify({ scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape, grafana }));
+const spacing = Core.barSpacingForCount(500);
+const grouped = Core.groupFeatureColumns(["weekly_ema_200_position", "vpin_x"]);
+console.log(JSON.stringify({ scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape, grafana, spacing, groupCount: grouped.length }));
 """
 
 
@@ -48,3 +50,5 @@ def test_trade_map_core_node():
     assert out["scopes"] == "trend,multi_leg"
     assert out["lwcCount"] == 2
     assert out["pendingShape"] == "circle"
+    assert out["spacing"] == 2
+    assert out["groupCount"] >= 1

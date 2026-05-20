@@ -103,6 +103,47 @@
     }
   }
 
+  function filterFeatureColumns(columns, query) {
+    const q = String(query || "")
+      .trim()
+      .toLowerCase();
+    if (!q) return columns || [];
+    return (columns || []).filter((c) => String(c).toLowerCase().includes(q));
+  }
+
+  function groupFeatureColumns(columns) {
+    const groups = { 推荐: [], vpin: [], ema: [], 其他: [] };
+    for (const col of columns || []) {
+      const c = String(col);
+      const lc = c.toLowerCase();
+      if (lc.includes("weekly_ema") || lc.includes("regime")) {
+        groups.推荐.push(c);
+      } else if (lc.startsWith("vpin")) {
+        groups.vpin.push(c);
+      } else if (lc.includes("ema") || lc.includes("macd") || lc.includes("rsi")) {
+        groups.ema.push(c);
+      } else {
+        groups.其他.push(c);
+      }
+    }
+    return Object.entries(groups).filter(([, items]) => items.length > 0);
+  }
+
+  /** Tighter spacing => more bars visible on screen. */
+  function barSpacingForCount(barCount) {
+    const n = Math.max(0, Number(barCount) || 0);
+    if (n > 800) return 1;
+    if (n > 400) return 2;
+    if (n > 200) return 3;
+    if (n > 80) return 4;
+    if (n > 30) return 5;
+    return 6;
+  }
+
+  const FEATURE_PRESETS = {
+    default: ["weekly_ema_200_position", "weekly_ema_200_position_f"],
+  };
+
   root.MLBotTradeMapCore = {
     scopesFromLayers,
     markersToLwc,
@@ -114,5 +155,9 @@
     subchartColor,
     featureColumnsParam,
     parseStoredLayout,
+    filterFeatureColumns,
+    groupFeatureColumns,
+    barSpacingForCount,
+    FEATURE_PRESETS,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);
