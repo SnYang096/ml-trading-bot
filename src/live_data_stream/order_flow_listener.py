@@ -847,6 +847,35 @@ class OrderFlowListener:
             features_by_timeframe=features_by_timeframe,
         )
 
+        try:
+            from src.live_data_stream.feature_bus_audit import audit_published_features
+
+            audit_published_features(
+                features=features,
+                symbol=self.symbol,
+                timeframe=primary_tf,
+                feature_computer=self.feature_computer,
+            )
+            for tf, extra_features in features_by_timeframe.items():
+                if tf == primary_tf:
+                    continue
+                extra_fc = self.extra_feature_computers.get(tf)
+                if extra_fc and extra_features:
+                    audit_published_features(
+                        features=extra_features,
+                        symbol=self.symbol,
+                        timeframe=tf,
+                        feature_computer=extra_fc,
+                    )
+        except Exception as audit_exc:
+            from src.live_data_stream.feature_bus_audit import FeatureBusAuditError
+
+            if isinstance(audit_exc, FeatureBusAuditError):
+                raise
+            logger.warning(
+                "[%s] feature-bus audit skipped: %s", self.symbol, audit_exc
+            )
+
         # ── 6. 保存 + 决策 ──
         all_features = dict(features_by_timeframe[primary_tf])
         all_features["timestamp"] = now

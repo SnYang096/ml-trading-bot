@@ -1650,6 +1650,23 @@ class IncrementalFeatureComputer:
                 return True
         return False
 
+    def _missing_or_nan_features(self, features: Dict[str, Any]) -> List[str]:
+        """Expected live features that are absent or hold NaN/None."""
+        if not self.live_feature_set:
+            return []
+        bad: List[str] = []
+        for key in sorted(self.live_feature_set):
+            if key not in features:
+                bad.append(key)
+                continue
+            val = features.get(key)
+            try:
+                if val is None or (np.isscalar(val) and pd.isna(val)):
+                    bad.append(key)
+            except (TypeError, ValueError):
+                bad.append(key)
+        return bad
+
     def report_feature_health(
         self,
         features: Dict[str, float],
@@ -1673,11 +1690,7 @@ class IncrementalFeatureComputer:
 
         expected = len(self.live_feature_set) if self.live_feature_set else 0
         total = len(features)
-        missing = (
-            sorted(k for k in self.live_feature_set if k not in features)
-            if self.live_feature_set
-            else []
-        )
+        missing = self._missing_or_nan_features(features)
         missing_count = len(missing)
         nan_ratio = missing_count / expected if expected > 0 else 0.0
 

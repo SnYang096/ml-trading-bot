@@ -37,6 +37,7 @@ from src.time_series_model.live.metrics_exporter import (  # noqa: E402
     start_metrics_server,
 )
 from live.scripts.prepare_warmup_ticks import prepare_warmup_dataset  # noqa: E402
+from scripts.live_audit_file import configure_audit_from_env_defaults  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +208,34 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _refresh_funding_oi_on_startup(symbols: List[str]) -> None:
+    """REST 增量补最近 funding/OI（长历史仍靠 Vision parquet + 挂卷）。"""
+    flag = os.getenv("MLBOT_FUNDING_OI_REFRESH_ON_START", "1").strip().lower()
+    if flag in ("0", "false", "off", "no"):
+        logger.info("quant-feature-bus: funding/OI startup refresh disabled")
+        return
+    lookback = int(os.getenv("MLBOT_FUNDING_OI_LOOKBACK_DAYS", "60"))
+    data_root = os.getenv("MLBOT_DATA_ROOT", "data")
+    try:
+        from scripts.refresh_funding_oi_data import refresh_all
+
+        logger.info(
+            "quant-feature-bus: refreshing funding/OI (lookback=%d days, root=%s)...",
+            lookback,
+            data_root,
+        )
+        result = refresh_all(symbols, data_root=data_root, lookback_days=lookback)
+        logger.info(
+            "quant-feature-bus: funding/OI refresh done FR=%d files, OI=%d files",
+            result["funding_rate_files"],
+            result["oi_files"],
+        )
+    except Exception as exc:
+        logger.warning(
+            "quant-feature-bus: funding/OI refresh failed (non-fatal): %s", exc
+        )
+
+
 def _prepare_live_warmup(args: argparse.Namespace) -> None:
     if args.skip_warmup_prepare or int(args.warmup_months) <= 0:
         logger.warning("quant-feature-bus: warmup prepare skipped by config")
@@ -222,6 +251,52 @@ def _prepare_live_warmup(args: argparse.Namespace) -> None:
         force_full=False,
         skip_download=False,
     )
+
+
+def _configure_feature_bus_audit(live_storage_base: Path) -> None:
+    os.environ.setdefault("MLBOT_FEATURE_BUS_AUDIT", "1")
+    audit_root = _resolve_project_path(
+        os.getenv("MLBOT_FEATURE_BUS_AUDIT_BASE", str(live_storage_base))
+    )
+    configure_audit_from_env_defaults(
+        default_log_file=audit_root / "logs" / "feature_bus_audit.log",
+        disable_env="MLBOT_FEATURE_BUS_AUDIT_DISABLE",
+        path_env="MLBOT_FEATURE_BUS_AUDIT_LOG",
+        retention_env="MLBOT_FEATURE_BUS_AUDIT_RETENTION_DAYS",
+        rotation_env="MLBOT_FEATURE_BUS_AUDIT_ROTATION",
+        banner="quant-feature-bus audit file",
+    )
+
+
+async def _startup_feature_audit(manager: Any) -> None:
+    """One-shot compute after warmup to catch OI/FR gaps before WS goes live."""
+    if os.getenv("MLBOT_FEATURE_BUS_AUDIT_POST_WARMUP", "1").strip().lower() in (
+        "0",
+        "false",
+        "off",
+        "no",
+    ):
+        return
+    logger.info(
+        "quant-feature-bus: post-warmup feature audit (one compute per symbol)..."
+    )
+    loop = asyncio.get_running_loop()
+
+    def _run_one(listener: Any) -> None:
+        listener._compute_and_save_15min_features()
+
+    for symbol, listener in manager.listeners.items():
+        try:
+            await loop.run_in_executor(None, _run_one, listener)
+        except Exception as exc:
+            from src.live_data_stream.feature_bus_audit import FeatureBusAuditError
+
+            if isinstance(exc, FeatureBusAuditError):
+                raise
+            logger.warning(
+                "quant-feature-bus: post-warmup audit failed for %s: %s", symbol, exc
+            )
+    logger.info("quant-feature-bus: post-warmup feature audit done")
 
 
 async def _periodic_process_metrics() -> None:
@@ -246,8 +321,12 @@ async def async_main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     args = parse_args()
+    symbols = _parse_symbols(args.symbols)
+    live_storage_base = _resolve_project_path(args.live_storage_base)
+    _configure_feature_bus_audit(live_storage_base)
     metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
     start_metrics_server(port=metrics_port)
+    _refresh_funding_oi_on_startup(symbols)
     _prepare_live_warmup(args)
     writer = FeatureBusWriter(args.feature_bus_root, max_rows=args.max_rows)
     manager = build_feature_bus_manager(args, writer)
@@ -258,16 +337,14 @@ async def async_main() -> None:
     )
     if args.warmup_days > 0:
         await manager.warmup_all(days=args.warmup_days, use_gap_filler=True)
+        await _startup_feature_audit(manager)
     else:
         now = pd.Timestamp.now(tz="UTC")
         for listener in manager.listeners.values():
             listener.last_feature_compute_time = now
     await manager.start_all()
 
-    ws_client = BinanceWebSocketClient(
-        symbols=_parse_symbols(args.symbols), use_futures=args.use_futures
-    )
-    symbols = _parse_symbols(args.symbols)
+    ws_client = BinanceWebSocketClient(symbols=symbols, use_futures=args.use_futures)
 
     def _set_ws_connected(value: int) -> None:
         for symbol in symbols:

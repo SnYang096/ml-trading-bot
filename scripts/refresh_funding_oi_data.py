@@ -160,6 +160,11 @@ def _fetch_oi_page(
     limit: int = 500,
 ) -> List[dict]:
     """Fetch one page of OI history."""
+    period_ms = _period_ms(period)
+    start_ms = _align_floor_ms(start_ms, period_ms)
+    end_ms = _align_ceil_ms(end_ms, period_ms)
+    if start_ms >= end_ms:
+        return []
     params = {
         "symbol": symbol,
         "period": period,
@@ -189,8 +194,36 @@ def _fetch_oi_page(
         return []
 
 
-# Binance /futures/data/openInterestHist 对 5m period 限制查询范围 ~30 天
+# Binance /futures/data/openInterestHist (5m) 仅保留约 30 天；startTime 早于保留窗会 -1130
+_OI_RETENTION_DAYS = 29
 _OI_MAX_RANGE_DAYS = 29
+
+_PERIOD_MS: dict[str, int] = {
+    "5m": 5 * 60 * 1000,
+    "15m": 15 * 60 * 1000,
+    "30m": 30 * 60 * 1000,
+    "1h": 60 * 60 * 1000,
+    "2h": 2 * 60 * 60 * 1000,
+    "4h": 4 * 60 * 60 * 1000,
+    "6h": 6 * 60 * 60 * 1000,
+    "12h": 12 * 60 * 60 * 1000,
+    "1d": 24 * 60 * 60 * 1000,
+}
+
+
+def _period_ms(period: str) -> int:
+    ms = _PERIOD_MS.get(period)
+    if ms is None:
+        raise ValueError(f"unsupported OI period: {period}")
+    return ms
+
+
+def _align_floor_ms(ms: int, period_ms: int) -> int:
+    return (ms // period_ms) * period_ms
+
+
+def _align_ceil_ms(ms: int, period_ms: int) -> int:
+    return ((ms + period_ms - 1) // period_ms) * period_ms
 
 
 def refresh_open_interest(
@@ -205,8 +238,16 @@ def refresh_open_interest(
     """
     session = requests.Session()
     now = datetime.now(tz=timezone.utc)
-    global_start = now - timedelta(days=lookback_days)
-    end_ms = int(now.timestamp() * 1000)
+    period_ms = _period_ms(period)
+    effective_days = min(int(lookback_days), _OI_RETENTION_DAYS)
+    if effective_days < int(lookback_days):
+        logger.info(
+            "OI lookback capped: %d -> %d days (Binance retention)",
+            lookback_days,
+            effective_days,
+        )
+    global_start = now - timedelta(days=effective_days)
+    end_ms = _align_ceil_ms(int(now.timestamp() * 1000), period_ms)
     files_written = 0
 
     for sym in symbols:
@@ -215,8 +256,11 @@ def refresh_open_interest(
         seg_start = global_start
         while seg_start < now:
             seg_end = min(seg_start + timedelta(days=_OI_MAX_RANGE_DAYS), now)
-            seg_start_ms = int(seg_start.timestamp() * 1000)
-            seg_end_ms = int(seg_end.timestamp() * 1000)
+            seg_start_ms = _align_floor_ms(int(seg_start.timestamp() * 1000), period_ms)
+            seg_end_ms = _align_ceil_ms(int(seg_end.timestamp() * 1000), period_ms)
+            if seg_start_ms >= seg_end_ms:
+                seg_start = seg_end
+                continue
             cursor = seg_start_ms
 
             while cursor < seg_end_ms:
@@ -227,7 +271,7 @@ def refresh_open_interest(
                 last_ts = max(int(r["timestamp"]) for r in page)
                 if last_ts <= cursor:
                     break
-                cursor = last_ts + 1
+                cursor = last_ts + period_ms
                 time.sleep(0.3)
 
             seg_start = seg_end
@@ -304,8 +348,9 @@ def refresh_all(
     logger.info("📊 刷新 Funding Rate (最近 %d 天)...", lookback_days)
     fr_count = refresh_funding_rate(symbols, fr_dir, lookback_days)
 
-    logger.info("📊 刷新 Open Interest (最近 %d 天)...", lookback_days)
-    oi_count = refresh_open_interest(symbols, oi_dir, lookback_days=lookback_days)
+    oi_days = min(int(lookback_days), _OI_RETENTION_DAYS)
+    logger.info("📊 刷新 Open Interest (最近 %d 天)...", oi_days)
+    oi_count = refresh_open_interest(symbols, oi_dir, lookback_days=oi_days)
 
     return {"funding_rate_files": fr_count, "oi_files": oi_count}
 
