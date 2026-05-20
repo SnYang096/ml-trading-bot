@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>订单 · MLBot Console</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="page-orders">
+  <header class="toolbar">
+    <h1>业务控制台</h1>
+    <nav class="app-nav" id="appNav"></nav>
+    <nav class="ext-links" id="extLinks"></nav>
+
+    <div class="module module-data">
+      <span class="module-label">筛选</span>
+      <label>Symbol
+        <select id="symbolSelect"></select>
+      </label>
+      <label>状态
+        <select id="statusFilter">
+          <option value="">全部</option>
+          <option value="filled">filled</option>
+          <option value="pending">pending</option>
+          <option value="canceled">canceled</option>
+          <option value="expired">expired</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="module module-accounts">
+      <span class="module-label">账户层</span>
+      <label><input type="checkbox" id="layerTrend" checked /> B·Trend</label>
+      <label><input type="checkbox" id="layerSpot" checked /> A·Spot</label>
+      <label><input type="checkbox" id="layerMultiLeg" checked /> C·Multi-leg</label>
+    </div>
+
+    <button id="refreshBtn" type="button">刷新</button>
+    <span id="statusLine" class="status">—</span>
+  </header>
+
+  <main class="orders-main">
+    <section class="panel orders-page-panel">
+      <h3>订单列表 <span id="ordersCount" class="muted"></span></h3>
+      <p class="muted orders-hint">点击行查看详情；有标记时可跳转 <a href="/trade-map">交易地图</a> 定位。</p>
+      <div class="orders-table-wrap orders-table-full">
+        <table id="ordersTable" class="orders-table">
+          <thead>
+            <tr>
+              <th>scope</th>
+              <th>时间</th>
+              <th>side</th>
+              <th>status</th>
+              <th>qty</th>
+              <th>price</th>
+              <th>id</th>
+            </tr>
+          </thead>
+          <tbody id="ordersBody">
+            <tr><td colspan="7" class="muted">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <aside class="orders-detail-aside">
+      <section id="orderDetailPanel" class="panel">
+        <h3>订单 / 标记详情</h3>
+        <div id="orderMapLink" class="order-map-link"></div>
+        <pre id="orderDetailBody" class="muted">选择一行…</pre>
+      </section>
+    </aside>
+  </main>
+  <script src="/static/console-shell.js"></script>
+  <script src="/static/trade-map-core.js"></script>
+  <script src="/static/orders-page.js"></script>
+</body>
+</html>

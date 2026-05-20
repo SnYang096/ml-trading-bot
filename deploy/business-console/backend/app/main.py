@@ -45,4 +45,9 @@ def index() -> FileResponse:
 
 @app.get("/trade-map")
 def trade_map_page() -> FileResponse:
-    return FileResponse(_FRONTEND / "index.html")
+    return FileResponse(_FRONTEND / "trade-map.html")
+
+
+@app.get("/orders")
+def orders_page() -> FileResponse:
+    return FileResponse(_FRONTEND / "orders.html")

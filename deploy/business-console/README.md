@@ -22,7 +22,8 @@ chmod +x deploy/business-console/run_console.sh
 - Marker detail drawer (`GET /api/trade-map/marker-detail`)
 - **Order list table** on Trade Map page (`GET /api/orders/list`, per-scope `/api/trend/orders`, `/api/spot/orders`, `/api/multileg/orders`)
 - Spot eligibility panel (`GET /api/spot/eligibility`)
-- Modular Trade Map: account layers (A/B/C) on main chart; sub-charts for volume + user-selected feature columns (`GET /api/bus/features/columns`, bundle `feature_columns=`)
+- **Pages**: `/trade-map` (K-line + markers), `/orders` (order table); top nav switches views
+- Trade Map: account layers (A/B/C) on main chart; sub-charts for volume + feature columns (`GET /api/bus/features/columns`)
 - Optional volume sub-chart
 
 ## P3 deployment

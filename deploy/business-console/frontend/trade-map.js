@@ -1,8 +1,9 @@
 /**
- * Trade Map Live — modular layout: account layers (A/B/C), dynamic sub-charts, side panels.
+ * Trade Map page — K线 + 账户层标记 + 动态附图 + Spot 资格侧栏。
  */
 
 const Core = globalThis.MLBotTradeMapCore;
+const Shell = globalThis.MLBotConsole;
 const POLL_MS = 10000;
 const LAYOUT_KEY = "mlbot_trade_map_layout_v1";
 
@@ -13,7 +14,7 @@ let markerById = new Map();
 let chartFitPending = true;
 let timeSyncBound = false;
 
-/** @type {Map<string, { chart, series, refSeries?, label, kind }>} */
+/** @type {Map<string, { chart, series, refSeries?, label, kind, host }>} */
 const subcharts = new Map();
 
 let availableFeatureColumns = [];
@@ -23,7 +24,6 @@ const defaultLayout = () => ({
   volume: false,
   features: ["weekly_ema_200_position"],
   paneEligibility: true,
-  paneOrders: true,
 });
 
 function loadLayout() {
@@ -36,17 +36,25 @@ function saveLayout() {
     volume: document.getElementById("paneVolume").checked,
     features: [...selectedFeatureColumns],
     paneEligibility: document.getElementById("paneEligibility").checked,
-    paneOrders: document.getElementById("paneOrders").checked,
   };
   localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+  Shell.setScopesState(layersState());
 }
 
 function applyLayoutToControls(layout) {
   document.getElementById("paneVolume").checked = !!layout.volume;
   document.getElementById("paneEligibility").checked = layout.paneEligibility !== false;
-  document.getElementById("paneOrders").checked = layout.paneOrders !== false;
   selectedFeatureColumns = Array.isArray(layout.features) ? [...layout.features] : [];
   applySidePanels();
+}
+
+function applyScopesFromStorage() {
+  const saved = Shell.getScopesDefault();
+  if (!saved) return;
+  if (saved.trend != null) document.getElementById("layerTrend").checked = !!saved.trend;
+  if (saved.spot != null) document.getElementById("layerSpot").checked = !!saved.spot;
+  if (saved.multiLeg != null) document.getElementById("layerMultiLeg").checked = !!saved.multiLeg;
+  if (saved.pending != null) document.getElementById("layerPending").checked = !!saved.pending;
 }
 
 function layersState() {
@@ -64,13 +72,6 @@ function scopesParam() {
 
 function setStatus(msg) {
   document.getElementById("statusLine").textContent = msg;
-}
-
-async function api(path) {
-  const r = await fetch(path);
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.error?.message || r.statusText || "API error");
-  return j;
 }
 
 function chartBaseOptions() {
@@ -125,7 +126,8 @@ function destroySubchart(id) {
   const pane = subcharts.get(id);
   if (!pane) return;
   pane.chart.remove();
-  pane.host.remove();
+  const hostEl = document.getElementById(`subchart-${id}`);
+  if (hostEl) hostEl.remove();
   subcharts.delete(id);
 }
 
@@ -225,17 +227,11 @@ function ensureFeaturePane(column, overlay, colorIndex) {
 }
 
 function syncSubcharts(candles, overlays) {
-  const wantVolume = document.getElementById("paneVolume").checked;
-  ensureVolumePane(wantVolume, candles);
-
+  ensureVolumePane(document.getElementById("paneVolume").checked, candles);
   const wantFeatures = new Set(selectedFeatureColumns);
   for (const id of [...subcharts.keys()]) {
-    if (id.startsWith("feat:")) {
-      const col = id.slice(5);
-      if (!wantFeatures.has(col)) destroySubchart(id);
-    }
+    if (id.startsWith("feat:") && !wantFeatures.has(id.slice(5))) destroySubchart(id);
   }
-
   let idx = 0;
   for (const col of selectedFeatureColumns) {
     ensureFeaturePane(col, overlays?.[col], idx);
@@ -250,11 +246,8 @@ function applyMarkers(lwcMarkers) {
 
 function applySidePanels() {
   const showElig = document.getElementById("paneEligibility").checked;
-  const showOrders = document.getElementById("paneOrders").checked;
   document.getElementById("eligibilityPanel").classList.toggle("hidden", !showElig);
-  document.getElementById("ordersPanel").classList.toggle("hidden", !showOrders);
-  const aside = document.getElementById("sidePanels");
-  aside.classList.toggle("collapsed", !showElig && !showOrders);
+  document.getElementById("sidePanels").classList.toggle("collapsed", !showElig);
 }
 
 function renderFeaturePicker() {
@@ -290,7 +283,7 @@ async function loadFeatureColumns() {
   const symbol = document.getElementById("symbolSelect").value;
   const timeframe = document.getElementById("timeframeSelect").value;
   try {
-    const { data } = await api(
+    const { data } = await Shell.api(
       `/api/bus/features/columns?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
     );
     availableFeatureColumns = data.columns || [];
@@ -307,113 +300,12 @@ async function loadFeatureColumns() {
   renderFeaturePicker();
 }
 
-function browserLocalUrl(port, path = "") {
-  const host = window.location.hostname || "127.0.0.1";
-  return `http://${host}:${port}${path}`;
-}
-
-function resolveLinkUrl(link) {
-  if (link.id === "grafana") return browserLocalUrl(3000);
-  const raw = link.url || "";
-  if (raw.includes("host.docker.internal")) {
-    try {
-      const u = new URL(raw);
-      return browserLocalUrl(u.port || "3000", u.pathname);
-    } catch (_) {
-      return browserLocalUrl(3000);
-    }
-  }
-  return raw;
-}
-
-async function loadLinks() {
-  try {
-    const { data } = await api("/api/links");
-    const nav = document.getElementById("extLinks");
-    nav.innerHTML = "";
-    for (const link of data.links || []) {
-      const a = document.createElement("a");
-      a.href = resolveLinkUrl(link);
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.textContent = link.label;
-      nav.appendChild(a);
-    }
-  } catch (_) {
-    /* optional */
-  }
-}
-
-async function loadSymbols() {
-  const { data } = await api("/api/trade-map/symbols");
-  const sel = document.getElementById("symbolSelect");
-  sel.innerHTML = "";
-  const list = data.length ? data : [{ symbol: "ETHUSDT" }];
-  for (const row of list) {
-    const sym = row.symbol || row;
-    const opt = document.createElement("option");
-    opt.value = sym;
-    opt.textContent = sym;
-    sel.appendChild(opt);
-  }
-  if (!sel.value && list[0]) sel.value = list[0].symbol || "ETHUSDT";
-}
-
-function formatOrderTime(ts) {
-  if (!ts) return "—";
-  const d = new Date(Number(ts) * 1000);
-  return d.toISOString().slice(0, 16).replace("T", " ");
-}
-
-async function refreshOrders() {
-  if (!document.getElementById("paneOrders").checked) return;
-  const symbol = document.getElementById("symbolSelect").value;
-  const scopes = scopesParam();
-  const tbody = document.getElementById("ordersBody");
-  const countEl = document.getElementById("ordersCount");
-  try {
-    const { data, meta } = await api(
-      `/api/orders/list?symbol=${encodeURIComponent(symbol)}&scopes=${encodeURIComponent(scopes)}&limit=200`
-    );
-    const rows = data || [];
-    countEl.textContent = `(${meta.count ?? rows.length})`;
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted">无订单</td></tr>';
-      return;
-    }
-    tbody.innerHTML = rows
-      .map(
-        (r) => `<tr data-marker-id="${r.marker_id || ""}">
-          <td>${r.scope}</td>
-          <td>${formatOrderTime(r.time)}</td>
-          <td>${r.side || ""}</td>
-          <td>${r.status || ""}</td>
-          <td>${r.filled_quantity ?? r.quantity ?? ""}</td>
-          <td>${r.average_price ?? r.price ?? ""}</td>
-          <td class="id-cell" title="${r.order_id || ""}">${r.order_id || ""}</td>
-        </tr>`
-      )
-      .join("");
-    tbody.querySelectorAll("tr[data-marker-id]").forEach((tr) => {
-      tr.addEventListener("click", () => {
-        tbody.querySelectorAll("tr").forEach((x) => x.classList.remove("selected"));
-        tr.classList.add("selected");
-        const mid = tr.getAttribute("data-marker-id");
-        if (mid) showMarkerDetail(mid);
-      });
-    });
-  } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="7" class="muted">${e}</td></tr>`;
-    countEl.textContent = "";
-  }
-}
-
 async function loadEligibility() {
   if (!document.getElementById("paneEligibility").checked) return;
   const symbol = document.getElementById("symbolSelect").value;
   const timeframe = document.getElementById("timeframeSelect").value;
   try {
-    const { data } = await api(
+    const { data } = await Shell.api(
       `/api/spot/eligibility?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
     );
     document.getElementById("eligibilityBody").textContent = Core.formatEligibility(data);
@@ -429,7 +321,7 @@ async function showMarkerDetail(markerId) {
   const raw = markerById.get(markerId);
   body.textContent = JSON.stringify(raw || { id: markerId }, null, 2);
   try {
-    const { data } = await api(
+    const { data } = await Shell.api(
       `/api/trade-map/marker-detail?marker_id=${encodeURIComponent(markerId)}`
     );
     body.textContent = JSON.stringify({ marker: raw, db: data }, null, 2);
@@ -440,10 +332,10 @@ async function showMarkerDetail(markerId) {
 
 async function refreshBundle() {
   const symbol = document.getElementById("symbolSelect").value;
+  Shell.setSymbol(symbol);
   const timeframe = document.getElementById("timeframeSelect").value;
-  const layers = layersState();
-  const scopes = Core.scopesFromLayers(layers);
-  const pending = layers.pending;
+  const scopes = scopesParam();
+  const pending = layersState().pending;
   const featParam = Core.featureColumnsParam(selectedFeatureColumns);
   setStatus("加载中…");
   const q = new URLSearchParams({
@@ -463,7 +355,7 @@ async function refreshBundle() {
     q.set("to", pageUrl.searchParams.get("to"));
     q.set("full_range", "false");
   }
-  const { data, meta } = await api(`/api/trade-map/bundle?${q}`);
+  const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
   const candles = data.ohlcv?.candles || [];
   candleSeries.setData(candles);
   applyMarkers(Core.markersToLwc(data.markers || []));
@@ -471,7 +363,6 @@ async function refreshBundle() {
     chart.timeScale().fitContent();
     chartFitPending = false;
   }
-
   syncSubcharts(candles, data.overlays || {});
 
   const deg = meta.degraded_ohlc || data.ohlcv?.degraded_ohlc;
@@ -494,14 +385,17 @@ async function refreshBundle() {
       ` · ${new Date().toLocaleTimeString()}`
   );
   await loadEligibility();
-  await refreshOrders();
+
+  const markerId = pageUrl.searchParams.get("marker_id");
+  if (markerId && markerById.has(markerId)) {
+    showMarkerDetail(markerId);
+  }
 }
 
 function startPoll() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => {
     refreshBundle().catch((e) => setStatus(String(e)));
-    refreshOrders().catch(() => {});
   }, POLL_MS);
 }
 
@@ -512,7 +406,6 @@ function bindControls() {
     saveLayout();
     await loadFeatureColumns();
     rerun();
-    refreshOrders().catch(() => {});
   };
   [
     "symbolSelect",
@@ -523,23 +416,25 @@ function bindControls() {
     "layerPending",
     "paneVolume",
     "paneEligibility",
-    "paneOrders",
-  ].forEach((id) => document.getElementById(id).addEventListener("change", () => {
-    if (id === "paneEligibility" || id === "paneOrders") {
-      applySidePanels();
-      saveLayout();
-      if (id === "paneEligibility") loadEligibility().catch(() => {});
-      if (id === "paneOrders") refreshOrders().catch(() => {});
-      return;
-    }
-    if (id === "paneVolume") {
-      saveLayout();
-      rerun();
-      return;
-    }
-    rerunAll();
-  }));
+  ].forEach((id) =>
+    document.getElementById(id).addEventListener("change", () => {
+      if (id === "paneEligibility") {
+        applySidePanels();
+        saveLayout();
+        loadEligibility().catch(() => {});
+        return;
+      }
+      if (id === "paneVolume") {
+        saveLayout();
+        rerun();
+        return;
+      }
+      if (id === "symbolSelect") Shell.setSymbol(document.getElementById("symbolSelect").value);
+      rerunAll();
+    })
+  );
   document.getElementById("refreshBtn").addEventListener("click", rerunAll);
+  Shell.bindSymbolPersist("symbolSelect");
 
   chart.subscribeClick((param) => {
     if (!param || param.time === undefined) return;
@@ -551,11 +446,22 @@ function bindControls() {
 
 (async () => {
   try {
+    Shell.initAppNav("trade-map");
+    applyScopesFromStorage();
     applyLayoutToControls(loadLayout());
     initMainChart();
     bindControls();
-    await loadLinks();
-    await loadSymbols();
+    await Shell.loadExtLinks();
+    await Shell.loadSymbols("symbolSelect");
+    const pageUrl = new URL(window.location.href);
+    const symParam = pageUrl.searchParams.get("symbol");
+    if (symParam) {
+      const sel = document.getElementById("symbolSelect");
+      if ([...sel.options].some((o) => o.value === symParam)) {
+        sel.value = symParam;
+        Shell.setSymbol(symParam);
+      }
+    }
     await loadFeatureColumns();
     await refreshBundle();
     startPoll();

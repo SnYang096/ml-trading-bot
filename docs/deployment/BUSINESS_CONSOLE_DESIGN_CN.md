@@ -205,32 +205,42 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 **可选窄表（P2 推荐）**：各进程在成交回调写 `trade_map_events(symbol, ts, scope, strategy, event, side, price, qty, order_id)`，CMS 查询更快、与日志解耦。
 
-#### 4.2.5 前端交互（模块化「地图工作台」）
+#### 4.2.5 前端交互（多页面 + 模块化）
+
+顶栏 **应用菜单** 切换页面（`console-shell.js`）；Symbol / 账户层勾选跨页同步（`localStorage`）。
+
+| 路由 | 页面 | 内容 |
+|------|------|------|
+| `/trade-map` | **交易地图** | K 线、账户层标记、附图、Spot 资格侧栏、标记详情 |
+| `/orders` | **订单** | 全屏订单表、状态筛选、订单/标记详情；可链到地图 `?marker_id=` |
+| `/` | 重定向 | → `/trade-map` |
+
+**交易地图** `/trade-map`：
 
 ```
-/trade-map
-  ├─ [数据] Symbol + 周期（2h | 15min | 1min | 1d）
-  ├─ [账户层 A/B/C] ☑ B·Trend  ☑ A·Spot  ☑ C·Multi-leg  ☐ Pending
-  │     → 控制主图 K 线上的成交/挂单标记（信号落在主图）
-  ├─ [附图] ☑ 成交量 + 特征列多选（来自 features/<tf> Parquet 数值列）
-  │     → 每列独立副图；`weekly_ema_200_position` 带 y=0 参考线
-  ├─ [侧栏] ☑ A·Spot 资格  ☑ 订单列表（可单独关闭）
-  ├─ 主图：candlestick + 所选账户层 markers
-  ├─ 副图栈：动态创建/销毁，与主图 timeScale 联动缩放
-  └─ 标记详情抽屉：点击主图标记或订单行
+  ├─ [数据] Symbol + 周期
+  ├─ [账户层 A/B/C] → 主图 markers
+  ├─ [附图] 成交量 + 特征列多选
+  ├─ [侧栏] Spot 资格（可选）
+  └─ 标记详情（点击主图）
 ```
 
-**模块化原则**：
+**订单** `/orders`：
 
-| 模块 | 展示位置 | 数据源 |
-|------|----------|--------|
-| 账户层标记 | **主图** | `orders` / `spot_orders` / `multi_leg_*` |
-| 成交量 | **附图**（可选） | `bars_1min` 重采样 `volume` |
-| 特征列 | **附图**（多选） | `GET /api/bus/features/columns` 列清单 + bundle `feature_columns=` |
-| Spot 资格 | **侧栏**（可选） | `GET /api/spot/eligibility` |
-| 订单列表 | **侧栏**（可选） | `GET /api/orders/list` |
+```
+  ├─ Symbol + 状态筛选 + 账户层 scope
+  ├─ 全页表格 GET /api/orders/list
+  └─ 右侧详情；有 marker_id 时附地图深链
+```
 
-布局偏好写入浏览器 `localStorage`（`mlbot_trade_map_layout_v1`）。
+| 模块 | 页面 | 数据源 |
+|------|------|--------|
+| 账户层标记 | 交易地图·主图 | 三库成交 |
+| 成交量 / 特征列 | 交易地图·附图 | bus Parquet |
+| Spot 资格 | 交易地图·侧栏 | `/api/spot/eligibility` |
+| 订单列表 | **订单页** | `/api/orders/list` |
+
+布局：`mlbot_trade_map_layout_v1`（附图）；`mlbot_console_symbol` / `mlbot_console_scopes`（跨页）。
 
 **实时刷新**：
 

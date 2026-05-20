@@ -7,13 +7,31 @@ def test_trade_map_html_served(client):
     r = client.get("/trade-map")
     assert r.status_code == 200
     body = r.text
-    assert "Trade Map Live" in body
+    assert "交易地图" in body or "trade-map" in body
+    assert "console-shell.js" in body
     assert "trade-map-core.js" in body
     assert "layerMultiLeg" in body
-    assert "module-accounts" in body
+    assert "appNav" in body
     assert "featureColumnList" in body
     assert "subchartStack" in body
     assert "eligibilityPanel" in body
+    assert "ordersPanel" not in body
+
+
+def test_orders_html_served(client):
+    r = client.get("/orders")
+    assert r.status_code == 200
+    body = r.text
+    assert "订单" in body
+    assert "orders-page.js" in body
+    assert "ordersTable" in body
+    assert "appNav" in body
+
+
+def test_root_redirects_to_trade_map(client):
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 200
+    assert "trade-map" in r.text
 
 
 def test_static_core_js(client):
