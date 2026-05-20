@@ -66,6 +66,7 @@ class IncrementalFeatureComputer:
         live_feature_plan_path: Optional[str] = None,
         primary_timeframe: Optional[str] = None,
         archetypes_dir: Optional[str] = None,
+        weekly_ema_seed_root: Optional[str] = None,
     ):
         """
         Args:
@@ -118,6 +119,11 @@ class IncrementalFeatureComputer:
         # Persist for live cross-symbol helpers (e.g. macro_tp_vwap anchor overlay).
         self.archetypes_dir_path: Optional[str] = (
             str(archetypes_dir) if archetypes_dir else None
+        )
+        self.weekly_ema_seed_root: Optional[str] = (
+            str(weekly_ema_seed_root).strip()
+            if weekly_ema_seed_root and str(weekly_ema_seed_root).strip()
+            else os.getenv("MLBOT_WEEKLY_EMA_SEED_ROOT", "").strip() or None
         )
 
         # Strategy A: archetypes auto-detect (preferred — no NN dependency)
@@ -1512,6 +1518,45 @@ class IncrementalFeatureComputer:
                 f"请运行: bash live/scripts/prepare_warmup_ticks.sh highcap 6"
             )
 
+    def _apply_weekly_ema_seed_override(
+        self,
+        bars_tf: pd.DataFrame,
+        features: Dict[str, float],
+    ) -> Dict[str, float]:
+        """Override weekly_ema_200_position from Vision spot macro seed when configured."""
+        col = "weekly_ema_200_position"
+        if col not in self.live_feature_set:
+            return features
+        root = self.weekly_ema_seed_root
+        if not root:
+            return features
+        sym = getattr(self, "_current_symbol", "") or ""
+        if not sym or bars_tf is None or bars_tf.empty:
+            return features
+        try:
+            from src.live_data_stream.spot_weekly_ema_seed import (
+                weekly_ema_position_from_seed,
+            )
+
+            last = bars_tf.iloc[-1]
+            close = float(last.get("close", np.nan))
+            if not np.isfinite(close):
+                return features
+            bar_ts = bars_tf.index[-1]
+            pos = weekly_ema_position_from_seed(
+                close=close,
+                bar_ts=bar_ts,
+                seed_root=root,
+                symbol=sym,
+            )
+            if pos is None:
+                return features
+            out = dict(features)
+            out[col] = float(pos)
+            return out
+        except Exception:
+            return features
+
     # ── 公开接口 ─────────────────────────────────────────────
     def compute_features_batch(
         self,
@@ -1551,6 +1596,9 @@ class IncrementalFeatureComputer:
 
         # ── 5. 校验大窗口百分位特征 (基于 feature_dependencies 元数据) ──
         self._validate_warmup(bars_tf, features)
+
+        # ── 5b. Live macro seed override for weekly_ema_200_position ──
+        features = self._apply_weekly_ema_seed_override(bars_tf, features)
 
         # 缓存结果（用于 get_features() 兼容接口）
         self._batch_features = features

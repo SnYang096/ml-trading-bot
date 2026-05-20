@@ -317,12 +317,17 @@ def build_feature_bus_manager(
         primary_feat_extra |= fer_set
         primary_nodes_extra.extend(fer_nodes)
 
+    weekly_ema_seed_root = getattr(args, "weekly_ema_seed_root", None) or os.getenv(
+        "MLBOT_WEEKLY_EMA_SEED_ROOT", ""
+    ).strip()
+
     def _primary_factory(_symbol: str) -> IncrementalFeatureComputer:
         fc = IncrementalFeatureComputer(
             tick_window_minutes=bm_primary,
             bar_window_size=bm_primary * 2,
             archetypes_dir=primary_dir,
             primary_timeframe=tf_primary,
+            weekly_ema_seed_root=weekly_ema_seed_root or None,
         )
         if primary_feat_extra:
             fc.live_feature_set |= primary_feat_extra

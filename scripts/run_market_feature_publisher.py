@@ -205,6 +205,26 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fast-bar-threshold-pct", type=float, default=0.03)
     p.add_argument("--fast-bar-bucket-seconds", type=int, default=10)
     p.add_argument("--use-futures", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--macro-kline-root",
+        default="live/highcap/data/macro/spot_klines",
+        help="Cache for Binance Vision spot 1d klines (weekly EMA macro lane).",
+    )
+    p.add_argument(
+        "--weekly-ema-seed-root",
+        default="live/highcap/data/macro/spot_weekly_ema200",
+        help="Output/read path for weekly EMA200 seed parquets.",
+    )
+    p.add_argument(
+        "--skip-macro-warmup",
+        action="store_true",
+        help="Skip Vision spot daily download and weekly EMA seed build.",
+    )
+    p.add_argument(
+        "--macro-seed-start-date",
+        default="2017-01-01",
+        help="Start date for spot daily kline seed (YYYY-MM-DD).",
+    )
     return p.parse_args()
 
 
@@ -233,6 +253,66 @@ def _refresh_funding_oi_on_startup(symbols: List[str]) -> None:
     except Exception as exc:
         logger.warning(
             "quant-feature-bus: funding/OI refresh failed (non-fatal): %s", exc
+        )
+
+
+def _prepare_macro_weekly_ema_seed(args: argparse.Namespace) -> None:
+    symbols = _parse_symbols(args.symbols)
+    seed_root = _resolve_project_path(args.weekly_ema_seed_root)
+    os.environ["MLBOT_WEEKLY_EMA_SEED_ROOT"] = str(seed_root)
+
+    skip_flag = os.getenv("MLBOT_SKIP_MACRO_WARMUP", "").strip().lower()
+    skip_env = skip_flag in ("1", "true", "yes", "on")
+    if getattr(args, "skip_macro_warmup", False) or skip_env:
+        try:
+            from src.live_data_stream.spot_weekly_ema_seed import macro_seeds_ready
+
+            ready, missing = macro_seeds_ready(symbols, seed_root)
+            if ready:
+                logger.info(
+                    "quant-feature-bus: macro seed download skipped; using existing seeds at %s",
+                    seed_root,
+                )
+            else:
+                logger.warning(
+                    "quant-feature-bus: macro seed skipped but not ready for: %s "
+                    "(run quant-macro-seed-prepare or scripts/prepare_spot_weekly_ema_seed.py)",
+                    ",".join(missing),
+                )
+        except Exception:
+            logger.warning(
+                "quant-feature-bus: macro weekly EMA seed download skipped by config"
+            )
+        return
+
+    kline_root = _resolve_project_path(args.macro_kline_root)
+    try:
+        from datetime import date
+
+        from src.live_data_stream.spot_weekly_ema_seed import (
+            prepare_spot_weekly_ema_seed,
+        )
+
+        start = date.fromisoformat(str(args.macro_seed_start_date))
+        logger.info(
+            "quant-feature-bus: preparing spot weekly EMA seed for %s (root=%s)...",
+            ",".join(symbols),
+            seed_root,
+        )
+        written = prepare_spot_weekly_ema_seed(
+            symbols,
+            kline_root=kline_root,
+            seed_root=seed_root,
+            start_date=start,
+        )
+        logger.info(
+            "quant-feature-bus: macro seed done (%d symbols, seed_root=%s)",
+            len(written),
+            seed_root,
+        )
+    except Exception as exc:
+        logger.warning(
+            "quant-feature-bus: macro weekly EMA seed failed (non-fatal): %s", exc
         )
 
 
@@ -327,6 +407,7 @@ async def async_main() -> None:
     metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
     start_metrics_server(port=metrics_port)
     _refresh_funding_oi_on_startup(symbols)
+    _prepare_macro_weekly_ema_seed(args)
     _prepare_live_warmup(args)
     writer = FeatureBusWriter(args.feature_bus_root, max_rows=args.max_rows)
     manager = build_feature_bus_manager(args, writer)

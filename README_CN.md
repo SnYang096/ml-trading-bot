@@ -1153,6 +1153,69 @@ BINANCE_SPOT_API_SECRET=*** \
 python scripts/run_spot_accum_live.py
 ```
 
+### Feature Bus 与周线 EMA200 macro seed（生产四进程）
+
+实盘推荐拆成 **四条独立线路**（见 `.github/workflows/deploy.yml` 注释）：
+
+| 进程 / unit | 作用 |
+| --- | --- |
+| `quant-warmup-prepare` | Vision **futures aggTrades** → ticks/bars（约 6 个月），供 180d 高频特征 warmup |
+| `quant-macro-seed-prepare` + **`.timer`** | Vision **spot 1d** → `weekly_ema_200` seed parquet（**不阻塞 bus**；timer 默认每日 **UTC 02:00** 刷新最近日 K） |
+| `quant-feature-bus` | 唯一行情 WS + 180d warmup + 特征计算 + 写 `live/shared_feature_bus`；**`--skip-macro-warmup`**，只读已有 seed |
+| `quant-trend-fattail` / `quant-hedge-multileg` / `quant-spot-accum` | **只读** Feature Bus，不算特征、不下 Vision |
+
+**两条 warmup 线路互不连通：**
+
+```text
+tick 线路:  180d ticks/bars → VPIN/订单流/TPC 等 intraday 特征
+macro 线路: spot 1d (Vision) → W-SUN 周线 EMA200 → seed parquet → bus 覆盖 weekly_ema_200_position
+```
+
+macro seed **不会**从 live ticks 自动生成；tick 线路也 **不会**回写 macro parquet。因此 macro 用 **oneshot + 每日 timer**，不需要常驻下载进程。
+
+**共享数据路径（宿主机，与 bus 同卷挂载）：**
+
+- 日 K 缓存：`/opt/quant-engine/live/highcap/data/macro/spot_klines/<SYMBOL>/…`
+- 周线 seed：`/opt/quant-engine/live/highcap/data/macro/spot_weekly_ema200/<SYMBOL>.parquet`
+- Feature Bus：`/opt/quant-engine/live/shared_feature_bus`
+
+**`weekly_ema_200_position` 语义：** `(当前 base close - 周线 EMA200_ffill) / 当前 close`；历史不足时为 **NaN**（不再静默填 `0.0`）。spot 深熊门控：`weekly_ema_200_position < 0`（见 `spot_accum_simple/archetypes/prefilter.yaml`）。
+
+**trend / 多腿以后要用周线 EMA200：** 数据层已是按 symbol 的通用 macro seed；策略侧只需在 `features.yaml` / bus consumer merge 里声明 `weekly_ema_200_position_f`，由 **feature-bus** 写入 bus 后各消费者只读同一列（当前 spot 已通过 consumer merge 进 120T primary）。
+
+**常用运维（服务器）：**
+
+```bash
+# 立即刷新 macro seed（首次部署或补档）
+sudo systemctl restart quant-macro-seed-prepare
+sudo journalctl -u quant-macro-seed-prepare -f
+
+# 查看每日 timer
+systemctl list-timers quant-macro-seed-prepare.timer
+
+# seed 就绪后让 bus 用新值（或等约 15 分钟特征周期）
+sudo systemctl restart quant-feature-bus
+
+# 再重启只读消费者
+sudo systemctl restart quant-spot-accum
+# sudo systemctl restart quant-trend-fattail quant-hedge-multileg
+
+# 一键检查 seed + bus + spot 日志
+bash scripts/check_live_spot_feature_bus.sh
+```
+
+**本地 / 容器内手动准备 seed（不启动 bus）：**
+
+```bash
+python scripts/prepare_spot_weekly_ema_seed.py \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT \
+  --kline-root live/highcap/data/macro/spot_klines \
+  --seed-root live/highcap/data/macro/spot_weekly_ema200
+
+# 或
+bash live/scripts/prepare_spot_macro_seed.sh
+```
+
 ### 连接订单 SQLite（trend vs 多腿）
 
 趋势 / PCM（`Storage`）与多腿（`MultiLegStorage`）使用 **两个独立的库文件**，不要混用同一个路径读写：

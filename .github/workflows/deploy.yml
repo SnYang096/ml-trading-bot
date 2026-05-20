@@ -18,7 +18,9 @@
 # 单机约 4G RAM: 三容器 cgroup 上限合计约 3.5G（余量给内核/Docker）；首启 feature-bus 做大窗 warmup 可能吃满一段时间。
 # 「不重跑 warmup prepare」（Actions 勾选 skip_warmup_prepare）只适合 quant-warmup-prepare.service 已经成功跑过一次，
 #     即 systemctl is-active quant-warmup-prepare == active（Type=oneshot RemainAfterExit）；全新宿主勿勾选，否则 Requires 链会卡住。
-#   quant-feature-bus — 唯一行情 WS + warmup(≈180d)+GapFiller 补数 + 特征 + FeatureBus；`docker logs quant-feature-bus` 可看 WS/重连
+#   quant-macro-seed-prepare — oneshot：Vision spot 1d → weekly EMA200 seed（不阻塞 bus）
+#   quant-macro-seed-prepare.timer — 每日刷新最近日 K + 重算 seed（trend/spot/多腿共用 bus 列时读同一份 parquet）
+#   quant-feature-bus — 唯一行情 WS + warmup(≈180d)+GapFiller 补数 + 特征 + FeatureBus；`--skip-macro-warmup` 只读已有 seed
 #   quant-trend-fattail — 方向性趋势 / fat-tail 账户，只读 bus。
 #   quant-hedge-multileg — Hedge 多腿账户；`MLBOT_MULTI_LEG_SKIP_HEDGE_ON_START=1` 可临时跳过。
 #   quant-spot-accum — 现货吸筹 A 层（spot_accum_simple）；需 BINANCE_SPOT_* Secrets，只读 feature-bus。
@@ -310,11 +312,51 @@ jobs:
             WantedBy=multi-user.target
             EOF
 
+            # Macro weekly EMA200 seed：独立 oneshot + 每日 timer（不阻塞 bus；与 tick 线路分离）。
+            # seed 为按 symbol 的共享数据层；bus 写入 weekly_ema_200_position 后 trend/spot/多腿均可读 bus。
+            sudo tee /etc/systemd/system/quant-macro-seed-prepare.service >/dev/null <<'EOF'
+            [Unit]
+            Description=Quant weekly EMA200 macro seed (Binance Vision spot 1d)
+            After=docker.service network-online.target
+            Requires=docker.service
+
+            [Service]
+            Type=oneshot
+            Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+            ExecStartPre=-/usr/bin/docker rm -f quant-macro-seed-prepare
+            ExecStart=/usr/bin/docker run --rm --name quant-macro-seed-prepare \
+              --memory=1024m --memory-swap=4096m \
+              -e MLBOT_LIVE_SYMBOLS \
+              -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
+              quant-engine:latest \
+              python scripts/prepare_spot_weekly_ema_seed.py \
+                --symbols ${MLBOT_LIVE_SYMBOLS} \
+                --kline-root live/highcap/data/macro/spot_klines \
+                --seed-root live/highcap/data/macro/spot_weekly_ema200
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            sudo tee /etc/systemd/system/quant-macro-seed-prepare.timer >/dev/null <<'EOF'
+            [Unit]
+            Description=Daily refresh of weekly EMA200 macro seed parquets
+
+            [Timer]
+            OnCalendar=*-*-* 02:00:00 UTC
+            Persistent=true
+            RandomizedDelaySec=300
+
+            [Install]
+            WantedBy=timers.target
+            EOF
+
             sudo tee /etc/systemd/system/quant-feature-bus.service >/dev/null <<'EOF'
             [Unit]
             Description=Quant market feature publisher
             After=docker.service network-online.target quant-warmup-prepare.service
             Requires=docker.service quant-warmup-prepare.service
+            Wants=quant-macro-seed-prepare.service
 
             [Service]
             Restart=always
@@ -325,6 +367,8 @@ jobs:
               --memory=1536m --memory-swap=1536m \
               -p 9192:9090 \
               -e MLBOT_LIVE_SYMBOLS \
+              -e MLBOT_WEEKLY_EMA_SEED_ROOT=/app/live/highcap/data/macro/spot_weekly_ema200 \
+              -e MLBOT_SKIP_MACRO_WARMUP=1 \
               -v /opt/quant-engine/live/shared_feature_bus:/app/live/shared_feature_bus \
               -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
               -v /opt/quant-engine/data:/app/data \
@@ -338,6 +382,9 @@ jobs:
                 --warmup-raw-dir data/warmup_raw/highcap \
                 --skip-warmup-prepare \
                 --warmup-days 180 \
+                --weekly-ema-seed-root live/highcap/data/macro/spot_weekly_ema200 \
+                --macro-kline-root live/highcap/data/macro/spot_klines \
+                --skip-macro-warmup \
                 --max-rows 3000 \
                 --fast-bar-threshold-pct 0.03 \
                 --fast-bar-bucket-seconds 10
@@ -457,13 +504,13 @@ jobs:
             WantedBy=multi-user.target
             EOF
 
-            sudo sed -i 's/^            //' /etc/systemd/system/quant-warmup-prepare.service /etc/systemd/system/quant-feature-bus.service /etc/systemd/system/quant-trend-fattail.service /etc/systemd/system/quant-hedge-multileg.service /etc/systemd/system/quant-spot-accum.service
+            sudo sed -i 's/^            //' /etc/systemd/system/quant-warmup-prepare.service /etc/systemd/system/quant-macro-seed-prepare.service /etc/systemd/system/quant-macro-seed-prepare.timer /etc/systemd/system/quant-feature-bus.service /etc/systemd/system/quant-trend-fattail.service /etc/systemd/system/quant-hedge-multileg.service /etc/systemd/system/quant-spot-accum.service
             sudo systemctl daemon-reload
             sudo systemctl disable --now quant-engine quant-multi-leg 2>/dev/null || true
             sudo rm -f /etc/systemd/system/quant-engine.service /etc/systemd/system/quant-multi-leg.service
             sudo systemctl daemon-reload
             docker rm -f quant-engine quant-multi-leg 2>/dev/null || true
-            sudo systemctl enable quant-warmup-prepare quant-feature-bus quant-trend-fattail quant-hedge-multileg
+            sudo systemctl enable quant-warmup-prepare quant-macro-seed-prepare quant-macro-seed-prepare.timer quant-feature-bus quant-trend-fattail quant-hedge-multileg
             if [ -f /opt/quant-engine/live/binance_spot_mainnet.env ]; then
               sudo systemctl enable quant-spot-accum
               echo "✅ quant-spot-accum enabled (binance_spot_mainnet.env present)"
@@ -490,6 +537,11 @@ jobs:
                 exit 1
               fi
             fi
+            # Macro seed：restart 保证每次部署都会跑 oneshot；日常由 timer 每日 02:00 UTC 刷新。
+            sudo systemctl enable --now quant-macro-seed-prepare.timer || true
+            if ! sudo systemctl restart --no-block quant-macro-seed-prepare; then
+              echo "::warning::quant-macro-seed-prepare 未能排队启动（可稍后: sudo systemctl restart quant-macro-seed-prepare）"
+            fi
             # Requires=warmup：bus/consumers restart jobs 会在 warmup 成功完成后才实际拉起容器。
             sudo systemctl restart --no-block quant-feature-bus || true
             sudo systemctl restart --no-block quant-trend-fattail || true
@@ -503,7 +555,7 @@ jobs:
             sleep 5
             sudo systemctl list-jobs --no-pager 2>/dev/null || true
             docker ps -a --filter name=quant --format 'table {{.Names}}\t{{.Status}}\t{{.State}}' || true
-            for svc in quant-warmup-prepare quant-feature-bus quant-trend-fattail quant-hedge-multileg quant-spot-accum; do
+            for svc in quant-warmup-prepare quant-macro-seed-prepare quant-macro-seed-prepare.timer quant-feature-bus quant-trend-fattail quant-hedge-multileg quant-spot-accum; do
               st=$(sudo systemctl is-active "$svc" 2>/dev/null || true)
               echo "   $svc: ${st:-unknown}"
             done

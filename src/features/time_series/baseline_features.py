@@ -4590,10 +4590,51 @@ def compute_weekly_ema_position_from_ohlc(
     low: pd.Series,
     ema_span_weeks: int = 200,
     output_column: str = "weekly_ema_200_position",
+    weekly_ema_context_dir: Optional[str] = None,
+    weekly_ema_seed_path: Optional[str] = None,
+    symbol: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Weekly close vs weekly EMA, projected to base bar index (causal ffill)."""
+    """(current close - weekly EMA200) / current close on each base bar.
+
+    Weekly EMA is computed on W-SUN aggregated closes (200-week span), then
+    forward-filled to the base timeframe. Position uses the **live** base close
+    at each bar, not the stale weekly close-only ratio.
+
+    When ``weekly_ema_context_dir`` / ``weekly_ema_seed_path`` is set, load a
+    long-history macro seed (Binance Vision spot daily) instead of inferring EMA
+    from the short live bar buffer. Rows without a valid seeded EMA stay NaN
+    (not 0.0) so missing macro history is not mistaken for "at EMA".
+    """
     idx = close.index
     c = pd.to_numeric(close, errors="coerce").astype(float)
+
+    wk_ema_on_bar: Optional[pd.Series] = None
+    if weekly_ema_seed_path or weekly_ema_context_dir:
+        try:
+            from pathlib import Path
+
+            from src.live_data_stream.spot_weekly_ema_seed import (
+                load_weekly_ema_seed,
+                weekly_ema_position_series,
+            )
+
+            seed_df = None
+            if weekly_ema_seed_path:
+                p = Path(str(weekly_ema_seed_path))
+                if p.is_file():
+                    seed_df = pd.read_parquet(p)
+                    if "week_ts" in seed_df.columns:
+                        ts = pd.to_datetime(seed_df["week_ts"], utc=True, errors="coerce")
+                        seed_df = seed_df.set_index(ts).sort_index()
+            elif weekly_ema_context_dir and symbol:
+                seed_df = load_weekly_ema_seed(weekly_ema_context_dir, str(symbol))
+            if seed_df is not None and not seed_df.empty and "weekly_ema_200" in seed_df.columns:
+                ema = seed_df["weekly_ema_200"].dropna()
+                out = weekly_ema_position_series(close=c, weekly_ema=ema)
+                return pd.DataFrame({output_column: out.astype(float)}, index=idx)
+        except Exception:
+            pass
+
     weekly = (
         pd.DataFrame({"close": c}, index=idx)
         .sort_index()
@@ -4603,14 +4644,20 @@ def compute_weekly_ema_position_from_ohlc(
     weekly = weekly.dropna(subset=["close"])
     span = max(2, int(ema_span_weeks))
     if weekly.empty:
-        z = pd.Series(0.0, index=idx)
-        return pd.DataFrame({output_column: z}, index=idx)
-    wk_ema = weekly["close"].ewm(span=span, adjust=False, min_periods=max(2, span // 5)).mean()
-    wk_close = weekly["close"]
-    wk_safe = wk_close.replace(0, np.nan)
-    wk_pos = ((wk_close - wk_ema) / wk_safe).replace([np.inf, -np.inf], np.nan)
-    wk_pos = wk_pos.clip(-1.0, 1.0).fillna(0.0)
-    out = wk_pos.reindex(idx, method="ffill").fillna(0.0)
+        out = pd.Series(np.nan, index=idx, dtype=float)
+        return pd.DataFrame({output_column: out}, index=idx)
+    wk_ema = weekly["close"].ewm(
+        span=span, adjust=False, min_periods=max(2, span // 5)
+    ).mean()
+    try:
+        from src.live_data_stream.spot_weekly_ema_seed import weekly_ema_position_series
+
+        out = weekly_ema_position_series(close=c, weekly_ema=wk_ema)
+    except Exception:
+        wk_ema_on_bar = wk_ema.reindex(idx, method="ffill")
+        close_safe = c.replace(0, np.nan)
+        out = ((c - wk_ema_on_bar) / close_safe).replace([np.inf, -np.inf], np.nan)
+        out = out.where(wk_ema_on_bar.notna()).clip(-1.0, 1.0)
     return pd.DataFrame({output_column: out.astype(float)}, index=idx)
 
 
