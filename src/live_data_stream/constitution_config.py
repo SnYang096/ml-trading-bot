@@ -91,6 +91,55 @@ def multi_leg_section(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return sec if isinstance(sec, dict) else {}
 
 
+def resolve_constitution_yaml_path(*, override: Optional[str] = None) -> str:
+    """Path to constitution.yaml for metrics / tooling (env > override > live > config)."""
+    raw = (override or os.getenv("MLBOT_CONSTITUTION_YAML", "")).strip()
+    if raw and os.path.isfile(raw):
+        return raw
+    for candidate in (
+        "live/highcap/config/constitution/constitution.yaml",
+        "config/constitution/constitution.yaml",
+    ):
+        if os.path.isfile(candidate):
+            return candidate
+    return raw or "config/constitution/constitution.yaml"
+
+
+def per_strategy_limits_from_constitution(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    ra = cfg.get("resource_allocation") or {}
+    raw = ra.get("per_strategy_limits") or {}
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def strategies_for_slot_metrics_from_constitution(
+    cfg: Optional[Dict[str, Any]] = None,
+    *,
+    constitution_path: Optional[str] = None,
+) -> List[str]:
+    """Strategy names for Prometheus slot gauge bootstrap (read from constitution, not hardcoded)."""
+    if cfg is None:
+        path = resolve_constitution_yaml_path(override=constitution_path)
+        cfg = load_constitution_dict(path)
+    seen: Set[str] = set()
+    out: List[str] = []
+
+    def _add(items: Iterable[Any]) -> None:
+        for item in items:
+            key = str(item or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+
+    _add(enabled_archetypes_from_constitution(cfg))
+    _add(per_strategy_limits_from_constitution(cfg).keys())
+    _add(multi_leg_strategies_from_constitution(cfg))
+    _add(spot_strategies_from_constitution(cfg))
+    for members in archetype_groups_from_constitution(cfg).values():
+        _add(members)
+    return out
+
+
 def multi_leg_strategies_from_constitution(cfg: Dict[str, Any]) -> List[str]:
     raw = (multi_leg_section(cfg) or {}).get("strategies")
     if raw is None or raw == "":

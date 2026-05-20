@@ -14,6 +14,7 @@ from src.live_data_stream.constitution_config import (
     multi_leg_strategies_from_constitution,
     partition_pipeline_strategies_by_type,
     spot_account_equity_anchor_usdt,
+    strategies_for_slot_metrics_from_constitution,
     validate_classic_slot_capacity,
     validate_pipeline_constitution_alignment,
 )
@@ -262,3 +263,21 @@ def test_validate_pipeline_constitution_alignment_raises_on_mismatch() -> None:
         validate_pipeline_constitution_alignment(
             pipeline_cfg=cfg, constitution_cfg=constitution, context_label="rolling"
         )
+
+
+def test_strategies_for_slot_metrics_unions_trend_multi_leg_spot() -> None:
+    cfg = {
+        "resource_allocation": {
+            "enabled_archetypes": ["tpc"],
+            "per_strategy_limits": {"tpc": {"max_risk_per_trade": 0.01}},
+            "archetype_groups": {"trend": ["tpc"]},
+        },
+        "multi_leg": {"strategies": ["chop_grid", "trend_scalp"]},
+        "spot": {"strategies": ["spot_accum_simple"]},
+    }
+    assert strategies_for_slot_metrics_from_constitution(cfg) == [
+        "tpc",
+        "chop_grid",
+        "trend_scalp",
+        "spot_accum_simple",
+    ]

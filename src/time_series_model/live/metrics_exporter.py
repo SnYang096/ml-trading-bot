@@ -620,8 +620,10 @@ class Metrics:
         self._cpu_percent_primed: bool = False
         self._last_dir_size_ts: float = 0.0
 
-    def update_system_health(self) -> None:
-        """读取 psutil 更新 CPU / 内存 / uptime / 磁盘"""
+    def update_process_health(self) -> None:
+        """Lightweight CPU / memory gauges only (safe before HTTP metrics server binds)."""
+        if not _PROM_AVAILABLE:
+            return
         try:
             import psutil
 
@@ -638,6 +640,10 @@ class Metrics:
             self.memory_rss_mb.set(round(proc.memory_info().rss / 1024 / 1024, 1))
         except Exception:
             pass
+
+    def update_system_health(self) -> None:
+        """读取 psutil 更新 CPU / 内存 / uptime / 磁盘 / pipeline 新鲜度"""
+        self.update_process_health()
         self.update_disk_health()
         self.update_pipeline_health_from_env()
 
@@ -1480,8 +1486,13 @@ def _initialize_default_series() -> None:
             METRICS.loss.labels(period=period).set(0)
         for balance_type in ("total", "available", "margin"):
             METRICS.account_balance.labels(type=balance_type).set(0)
-        for strategy in ("bpc", "tpc", "fer", "me", "chop_grid", "trend_scalp"):
+        from src.live_data_stream.constitution_config import (
+            strategies_for_slot_metrics_from_constitution,
+        )
+
+        for strategy in strategies_for_slot_metrics_from_constitution():
             METRICS.strategy_slots_active.labels(strategy=strategy).set(0)
             METRICS.strategy_slots_max.labels(strategy=strategy).set(0)
+        METRICS.update_process_health()
     except Exception:
         logger.debug("default metrics initialization skipped", exc_info=True)

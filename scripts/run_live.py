@@ -948,6 +948,11 @@ async def _run_external_feature_bus_mode(
                 )
 
             try:
+                await loop.run_in_executor(None, METRICS.update_system_health)
+            except Exception:
+                logger.debug("进程健康指标更新异常", exc_info=True)
+
+            try:
                 await loop.run_in_executor(None, METRICS.update_market_data, symbols)
             except Exception:
                 logger.warning(
@@ -1152,6 +1157,10 @@ async def main() -> None:
     # ── Prometheus metrics server ──
     metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
     start_metrics_server(port=metrics_port)
+    try:
+        METRICS.update_process_health()
+    except Exception:
+        logger.debug("initial process health metrics skipped", exc_info=True)
 
     manager, pcm = _setup_three_strategies(
         symbols, storage, gap_filler, trade_size, risk_per_trade

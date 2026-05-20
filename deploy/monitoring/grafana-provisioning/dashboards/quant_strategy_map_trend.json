@@ -790,15 +790,9 @@
     "list": [
       {
         "name": "job",
-        "type": "query",
-        "datasource": {
-          "type": "prometheus",
-          "uid": "prometheus-monitoring"
-        },
-        "query": "label_values(mlbot_cpu_percent{job=~\"quant-trend-.+\"}, job)",
-        "refresh": 1,
-        "multi": false,
-        "includeAll": false,
+        "type": "constant",
+        "hide": 2,
+        "query": "quant-trend-fattail",
         "current": {
           "text": "quant-trend-fattail",
           "value": "quant-trend-fattail",
@@ -830,7 +824,7 @@
           "type": "prometheus",
           "uid": "prometheus-monitoring"
         },
-        "query": "label_values(mlbot_dashboard_catalog{job=~\"$job\",role=\"symbol\"}, name)",
+        "query": "label_values(mlbot_feature_bus_snapshot_age_seconds{job=~\"$job\"}, symbol)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,

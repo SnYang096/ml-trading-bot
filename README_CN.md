@@ -1289,3 +1289,15 @@ ssh -i ~/.ssh/your_key.pem -L 3000:127.0.0.1:3000 -N <用户>@<主机>
 ```
 
 浏览器打开 `http://127.0.0.1:3000`。需要同时开 sqlite-web 时，可把上面的 PowerShell 例子里再加上一行 ``-L 3000:127.0.0.1:3000``（或单独再开一个 `ssh -L` 会话）。
+
+**Strategy Map · Trend 整页 No data**（含 CPU / uptime）：多半是 Prometheus 未抓到 `job=quant-trend-fattail`，不是策略没交易。在服务器执行：
+
+```bash
+cd /opt/quant-engine && bash scripts/check_trend_prometheus_metrics.sh
+# 或手动：
+curl -sS http://127.0.0.1:9190/metrics | head
+# Prometheus → Status → Targets：host.docker.internal:9190 须 UP
+cd /opt/quant-engine/monitoring && docker compose -f docker-compose.monitoring.yml restart prometheus grafana
+```
+
+仅漏斗/事件曲线空、但 CPU 有数：说明 scrape 正常，检查 `quant-feature-bus` 是否在写 bus、`quant-trend-fattail` 日志里是否有 bus 轮询与 `StatsCollector` flush。

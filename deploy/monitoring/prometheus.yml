@@ -35,10 +35,11 @@ scrape_configs:
         labels:
           instance: "live"
           workload: "trend_fattail_consumer"
+    # 与 hedge 对齐：显式保留 Strategy Map / 账户 / 进程指标；丢弃 multi_leg 专用序列。
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: "^mlbot_multi_leg_.+"
-        action: drop
+        regex: "^(mlbot_reconciliation_.+|mlbot_strategy_symbol_bar_ohlc|mlbot_strategy_feature_value|mlbot_strategy_event_total|mlbot_strategy_event_price|mlbot_dashboard_catalog|mlbot_funnel_total|mlbot_direction_total|mlbot_gate_rejected_total|mlbot_gate_reject_reasons_total|mlbot_gate_reject_rate|mlbot_bars_processed_total|mlbot_orders_total|mlbot_signals_total|mlbot_account_balance|mlbot_account_margin_ratio|mlbot_unrealized_pnl_total|mlbot_account_update_success|mlbot_account_update_age_seconds|mlbot_position_notional_usdt|mlbot_position_qty|mlbot_cpu_percent|mlbot_memory_mb|mlbot_memory_rss_mb|mlbot_uptime_seconds|mlbot_feature_bus_snapshot_age_seconds|mlbot_last_bar_age_seconds|mlbot_system_mode|mlbot_positions_active|mlbot_ws_connected|mlbot_funding_rate|mlbot_mark_price|mlbot_open_interest_usd|mlbot_disk_used_percent|mlbot_disk_free_gb|mlbot_dir_size_gb)$"
+        action: keep
 
   - job_name: "quant-hedge-multileg"
     static_configs:
