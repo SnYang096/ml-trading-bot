@@ -5,7 +5,7 @@ It records where the currently adopted archetype bundle came from.
 
 ## Source
 - Strategy: `tpc`
-- Target: `research`
+- Target: `live/highcap`
 - Run ID: `20260511_235112`
 - Pipeline config: `/home/yin/trading/ml_trading_bot/config/strategies/tpc/research/validate_static.full_study.yaml`
 - Report: `results/tpc/validate_static.full_study/tpc/20260511_235112/report.json`

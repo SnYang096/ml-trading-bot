@@ -41,6 +41,7 @@ def _budget() -> SpotBudgetConfig:
         entry_order_type="limit",
         entry_limit_offset_bps=10.0,
         deploy_decay_cfg={},
+        deploy_schedule_cfg={},
         profit_take_ladder_cfg={},
     )
 

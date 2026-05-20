@@ -951,6 +951,14 @@ class GenericLiveStrategy:
         )
         simple_policy = self._simple_accumulation_policy()
         use_simple_accum = bool(simple_policy.get("enabled", False))
+        # spot_accum_simple: buy gate lives in prefilter.yaml when rules are present.
+        if use_simple_accum and self.archetype and self.archetype.prefilter.rules:
+            from src.time_series_model.live.spot_accum_simple import (
+                is_spot_accum_archetype,
+            )
+
+            if is_spot_accum_archetype(self.strategy_name):
+                use_simple_accum = False
         accumulation_policy = self._accumulation_policy()
         accumulation_score = self._accumulation_policy_score(
             features, accumulation_policy

@@ -1,19 +1,70 @@
+# spot_accum_simple — 执行与 A 层吸筹/减仓规则（主配置面）
+#
+# 与 B/C 的差异（不必强行套四层 YAML）：
+#   - B/C：prefilter → gate → direction → entry_filter，每层独立 archetype + 研究管线调阈值。
+#   - A 层：买入门控在 prefilter.yaml；gate/entry 为空；
+#     卖出在 stop_loss.profit_take_ladder；资金切片在 constitution.yaml 的 spot.accumulation。
+#
+# 逻辑实现位置（改行为时对照）：
+#   - 买入环境：archetypes/prefilter.yaml → PrefilterConfig.evaluate()
+#   - （遗留）execution.simple_accumulation_policy + deep_bear_allows_buy：仅当 enabled 且无 prefilter 规则
+#   - 每笔 deploy 金额缩放：execution.deploy_decay
+#       → spot_accum_simple.py :: deploy_decay_multiplier
+#       → scripts/event_backtest/spot/budget.py（回测）/ scripts/run_spot_accum_live.py（实盘）
+#   - 阶梯减仓：stop_loss.structural_exit: spot_simple_profit_ladder + profit_take_ladder
+#       → spot_accum_simple.py :: maybe_spot_simple_partial_sell
+#   - 方向：archetypes/direction.yaml fixed_direction: long（现货只做多）
+#   - 单笔名义、三币预算、全局 deploy 上限：config/constitution/constitution.yaml → spot.*
+#
+# 回测：python scripts/event_backtest.py --strategy spot_accum_simple ...
+#   （无 research/calibrate_roll 管线；见 config/strategies/spot_accum_simple/readme.md）
+#
+# ─── 加仓 / 入场节奏（无 trend 式 add-on）────────────────────────────────────
+
+# A 层不做「结构加仓」；每笔新 deploy 是独立 leg（受 deploy_decay 与宪法预算约束）。
 add_position:
   trigger:
     type: disabled
+
 execution_constraints:
   accumulate_same_archetype: true
+  # 同 archetype 下累积库存（多 leg 合成母仓），与 spot 预算账本一致。
   allow_add_on: false
+  # 禁止 B 系统意义的 pyramiding；仅通过「每日最多 1 笔 deploy leg」吸筹。
   max_deploy_legs_per_day: 1
+  # 每个 symbol、每个 UTC 日最多 1 次新 deploy（与宪法 spot.accumulation 可并存，取更严）。
   min_order_interval_minutes: 1440
+  # 两笔 deploy 最小间隔 1440 分钟 = 1 天（2h 策略上约 1 根 bar 触发一次买意）。
   entry_order:
     type: limit
     limit_offset_bps: 25
+  # 限价相对 2h bar 收盘价下方 25 bps 挂单（maker 倾向；是否免 taker 费取决于交易所成交路径）。
   regime_deploy_scale:
     enabled: false
+  # 关闭按 regime 动态放大单笔；A 层用 deploy_decay 按「已部署占预算%」减速即可。
+
+# ─── 实盘：何时提交「新」限价买单（回测 event_backtest 不读此块）──────────────
+#
+# 逻辑在 scripts/run_spot_accum_live.py：
+#   - 每根 2h feature-bus bar 收盘后评估一次能否买
+#   - 仅当本窗口内才 place_order(buy, limit)；窗口外跳过（pending 仍会被刷新/撤单）
+#   - 未成交限价超过 pending_max_age_hours → 撤单，下一窗口可重挂
+#
+# 环境变量可覆盖 pending 时效：MLBOT_SPOT_PENDING_BUY_MAX_HOURS（默认 24）
+
+deploy_schedule:
+  enabled: true
+  timezone: Europe/London
+  new_order_local_start: "08:00"
+  new_order_local_end: "11:00"
+  pending_max_age_hours: 24
+
+# ─── 越买越慢（相对该 symbol 在宪法里的 symbol_budgets_usdt）────────────────
+
 deploy_decay:
   enabled: true
   tiers:
+  # deployed_pct = 100 * (该币已部署 quote / symbol 预算)。落在哪一档就用对应 unit_multiplier。
     - max_deployed_pct_exclusive: 30.0
       unit_multiplier: 1.0
     - max_deployed_pct_exclusive: 60.0
@@ -22,33 +73,54 @@ deploy_decay:
       unit_multiplier: 0.4
     - max_deployed_pct_exclusive: 999.0
       unit_multiplier: 0.2
+
+# ─── 买入门控：已迁至 archetypes/prefilter.yaml ─────────────────────────────
+#
+# 周线 EMA200 深熊条件见 prefilter.rules（weekly_ema_200_position < 0）。
+# 下列块仅保留给旧脚本/对照；enabled: false 时 decide() 不再走此短路。
+
 simple_accumulation_policy:
-  enabled: true
+  enabled: false
   regime_feature: weekly_ema_200_position
   deep_bear_max_position: 0.0
+
+# ─── 持仓时间 / 止损（A 层无结构止损）────────────────────────────────────────
+
 holding:
   max_holding_bars: 0
+  # 0 = 不按 bar 数强平；靠 profit ladder 减仓，否则长期持有。
   time_stop_bars: 0
+
 stop_loss:
   type: fixed
   initial_r: 0.0
+  # 无 R 倍数止损；哲学是周期持仓，退出靠盈利阶梯而非波动止损。
   structural_exit: spot_simple_profit_ladder
+  # 必须为该字符串，position 模拟器才会走 spot_accum_simple 减仓分支。
   profit_take_ladder:
     enabled: true
     min_profit_multiple: 5.0
+    # 持仓市值/成本 ≥ 5x 后才开始按日减仓（人工可 per-symbol 调）。
     per_symbol_min_profit_multiple:
       BTCUSDT: 5.0
       BNBUSDT: 5.0
       SOLUSDT: 5.0
+      ETHUSDT: 5.0
     base_daily_sell_fraction: 0.05
+    # 达到 trigger 后，每个 UTC 日最多卖「剩余仓位」的 5% × speed_mult。
     acceleration:
       type: power
+      # speed_mult = min(max_speed_multiplier, (mtm/trigger)^exponent)
       exponent: 0.75
       max_speed_multiplier: 4.0
+      # 可选 type: exponential + 参数 k（见 spot_accum_simple.profit_ladder_speed_multiplier）
   breakeven:
     enabled: false
   trailing:
     enabled: false
+
 take_profit:
   enabled: false
+  # 单笔 TP 关闭；与 profit_take_ladder 分工，避免重复出场逻辑。
+
 version: 1

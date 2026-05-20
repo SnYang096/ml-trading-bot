@@ -158,17 +158,15 @@ slots:
 #   per_strategy_limits.*.max_risk_per_trade 省略时 = risk_per_slot, 显式设置时必须 ≤ risk_per_slot
 #   运行时实际风险 = min(risk_per_slot, strategy.max_risk_per_trade)
 resource_allocation:
-  # Live production: TPC-only. Research / joint PCM still uses four archetypes in
-  # config/constitution/constitution.yaml (tpc, bpc, me, srb).
   # trend/fat-tail LivePCM 注册 + Step 9.5 PCM 联合回测白名单（与 pipeline strategy_scope 交集）唯一来源
   # 列表顺序 = 同 bar 多 archetype 时 PCM 仲裁优先级（除非另写 intent_selection_policy.archetype_priority）
   enabled_archetypes:
-    - tpc # Trend Pullback Continuation (live production trend archetype).
+    - tpc # Trend Pullback Continuation (primary production trend archetype).
 
   # trend/fat-tail 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
-  # Live 无 archetype_groups 时，trend 槽成员 = enabled_archetypes（见 constitution_config）。
+  # 运行时 trend 槽成员 = archetype_groups.trend ∩ enabled_archetypes（见 constitution_config）。
   slot_policy:
-    trend_group: trend # Used when archetype_groups.trend is set (research); else enabled_archetypes.
+    trend_group: trend # Key into archetype_groups; names the slot-sharing pool.
     min_trend_slots_per_symbol: 1 # At least one trend slot may target each symbol when signals compete.
     max_trend_slots_per_symbol: 1 # At most one trend archetype position per symbol at a time.
     # Optional tail-risk guard for trend/fattail pool:
@@ -210,8 +208,9 @@ resource_allocation:
     # If REST account/position reads fail, reject new risk instead of failing open.
     fail_closed: true
 
-  # archetype_groups omitted on live — trend pool follows enabled_archetypes above.
-  # Research taxonomy: config/constitution/constitution.yaml archetype_groups.trend
+  archetype_groups:
+    trend: # Named pool for slot_policy.trend_group; members share per-symbol slot rules.
+      - tpc
 
   per_strategy_limits:
     # ── TPC（Trend Pullback Continuation）──
@@ -222,22 +221,6 @@ resource_allocation:
       allow_add_position: true
       max_add_times: 2
       require_locked_profit: true
-    # Not registered on live (enabled_archetypes is TPC-only). See config/constitution for bpc/me/srb.
-    # bpc:
-    #   max_risk_per_trade: 0.01
-    #   allow_add_position: true
-    #   max_add_times: 2
-    #   require_locked_profit: true
-    # me:
-    #   max_risk_per_trade: 0.01
-    #   allow_add_position: true
-    #   max_add_times: 2
-    #   require_locked_profit: true
-    # srb:
-    #   max_risk_per_trade: 0.01
-    #   allow_add_position: true
-    #   max_add_times: 2
-    #   require_locked_profit: true
 
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。
   # 若要在 PCM 层用 BTC close vs ema_200 再挡逆势单，可恢复 resource_allocation.direction_policy.enabled
@@ -303,20 +286,22 @@ spot:
   account:
     account_label: spot_accum # Label for logs, reports, and account routing (informational).
     equity_source: remote_live_account # Live equity from exchange sync; offline anchor is equity_usdt below.
-    equity_usdt: 10000 # Starting cash (USDT) for spot backtest / deploy pct (same key as multi_leg.account).
+    equity_usdt: 12500 # Spot deploy anchor (USDT); sum of symbol_budgets_usdt below.
   accumulation:
     target_deploy_pct: 1.00 # Fraction of equity_usdt intended for spot deploy cap (1.0 = full anchor).
     min_order_interval_minutes: 360 # Min minutes between deploy legs on same symbol (6h on 120T ≈ 3 bars).
     # Per-symbol hard budgets + fixed tranche size (recharge = raise budget, not unit size).
     symbol_budgets_usdt:
-      BTCUSDT: 5000.0 # 50% of 10k deploy cap (20 × 250 USDT).
-      BNBUSDT: 2500.0 # 25%
-      SOLUSDT: 2500.0 # 25%
+      BTCUSDT: 5000.0 # 40% (20 × 250 USDT).
+      BNBUSDT: 2500.0
+      SOLUSDT: 2500.0
+      ETHUSDT: 2500.0
     tranches_per_symbol: 20 # Planned slice count per symbol; used with budgets to derive unit size.
     symbol_unit_notional_usdt:
       BTCUSDT: 250.0
       BNBUSDT: 125.0
       SOLUSDT: 125.0
+      ETHUSDT: 125.0
   strategy_limits:
     spot_accum_simple:
       allow_add_position: false

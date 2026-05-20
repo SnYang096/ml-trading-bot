@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
+
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +238,191 @@ def log_trend_no_intent(
         feat,
         funnel,
     )
+
+
+def spot_eligibility_log_enabled() -> bool:
+    """Default on; set MLBOT_SPOT_ELIGIBILITY_LOG=false to silence."""
+    raw = os.getenv("MLBOT_SPOT_ELIGIBILITY_LOG")
+    if raw is None:
+        return True
+    return _env_truthy("MLBOT_SPOT_ELIGIBILITY_LOG")
+
+
+def collect_spot_new_buy_report(
+    *,
+    symbol: str,
+    ts: Any,
+    features: Dict[str, Any],
+    strategy: Any,
+    deploy_schedule_cfg: Dict[str, Any],
+    budget: Any,
+    positions: Dict[str, Any],
+    ledger: Any,
+    day_key: str,
+    intents: List[Any],
+    om_shadow: bool,
+    planned_usdt: float = 0.0,
+) -> Dict[str, Any]:
+    """Dry-run all spot new-buy gates; used for one-line eligibility logging."""
+    from src.time_series_model.live.spot_accum_simple import (
+        deploy_schedule_allows_new_buy,
+    )
+    from src.order_management.spot_live_recovery import (
+        has_blocking_pending_buy,
+        pending_buy_count_for_day,
+    )
+
+    sym = str(symbol or "").upper()
+    wk_raw = features.get("weekly_ema_200_position")
+    try:
+        weekly_ema = float(wk_raw) if wk_raw is not None else None
+    except (TypeError, ValueError):
+        weekly_ema = None
+    below_weekly_ema200 = (
+        weekly_ema is not None and weekly_ema == weekly_ema and weekly_ema < 0.0
+    )
+
+    pf_pass: Optional[bool] = None
+    pf_reason: Optional[str] = None
+    archetype = getattr(strategy, "archetype", None)
+    if archetype is not None and getattr(archetype, "prefilter", None) is not None:
+        pf_pass, pf_reason = archetype.prefilter.evaluate(features)
+
+    sched_ok, sched_detail = deploy_schedule_allows_new_buy(
+        (
+            pd.Timestamp(ts).to_pydatetime()
+            if ts is not None
+            else datetime.now(timezone.utc)
+        ),
+        deploy_schedule_cfg or {},
+    )
+    if sched_ok and not sched_detail:
+        sched_detail = "in_window_or_schedule_disabled"
+
+    signal_long = (
+        bool(intents) and str(getattr(intents[0], "action", "") or "").upper() == "LONG"
+    )
+    funnel = dict(getattr(strategy, "_last_funnel", None) or {})
+
+    blockers: List[str] = []
+    if weekly_ema is None or weekly_ema != weekly_ema:
+        blockers.append("missing_weekly_ema_200_position")
+    elif not below_weekly_ema200:
+        blockers.append(
+            f"weekly_ema_200_position={weekly_ema:.4f} (need < 0, below weekly EMA200)"
+        )
+    if pf_pass is False:
+        blockers.append(f"prefilter_deny:{pf_reason or 'unknown'}")
+    if not signal_long:
+        blockers.append(f"no_long_signal:{infer_block_stage(funnel)}")
+    if not sched_ok:
+        blockers.append(f"deploy_schedule:{sched_detail}")
+
+    entries_today = int(ledger.buy_entries_today(day_key))
+    pending_today = int(pending_buy_count_for_day(positions, day_key=day_key))
+    if entries_today + pending_today >= int(budget.max_new_entries_per_day):
+        blockers.append(
+            f"day_limit:entries={entries_today} pending={pending_today} "
+            f"max={budget.max_new_entries_per_day}"
+        )
+
+    cur = positions.get(sym) or {}
+    raw_last = cur.get("_last_buy_ts")
+    if raw_last and budget.min_order_interval_minutes > 0:
+        try:
+            last_buy_ts = pd.Timestamp(raw_last, tz="UTC")
+            mins = (pd.Timestamp(ts) - last_buy_ts).total_seconds() / 60.0
+            if mins < float(budget.min_order_interval_minutes):
+                blockers.append(
+                    f"min_interval:mins={mins:.0f}<{budget.min_order_interval_minutes}"
+                )
+        except Exception:
+            pass
+
+    if has_blocking_pending_buy(cur):
+        blockers.append("open_pending_limit_buy")
+
+    close_px = float(features.get("close") or 0.0)
+    planned = max(0.0, float(planned_usdt or 0.0))
+    if signal_long and not blockers and planned <= 0.0:
+        blockers.append("planned_quote_zero(budget_cap_or_decay)")
+
+    can_submit = signal_long and not blockers and planned > 0.0 and close_px > 0.0
+    return {
+        "symbol": sym,
+        "ts": ts,
+        "weekly_ema_200_position": weekly_ema,
+        "below_weekly_ema200": below_weekly_ema200,
+        "prefilter_pass": pf_pass,
+        "prefilter_reason": pf_reason,
+        "deploy_schedule_ok": sched_ok,
+        "deploy_schedule_detail": sched_detail,
+        "signal_long": signal_long,
+        "layers": summarize_layers(funnel),
+        "block_stage": infer_block_stage(funnel),
+        "planned_usdt": round(planned, 2),
+        "close": round(close_px, 6) if close_px > 0 else None,
+        "can_submit_new_buy": can_submit,
+        "shadow_mode": bool(om_shadow),
+        "blockers": blockers,
+        "features": pick_features(features, SPOT_FEATURE_KEYS),
+    }
+
+
+def log_spot_new_buy_eligibility(report: Dict[str, Any]) -> None:
+    """One INFO line per symbol per 2h bar: feature regime + can submit + reasons."""
+    if not spot_eligibility_log_enabled():
+        return
+    sym = str(report.get("symbol") or "")
+    ts = report.get("ts")
+    key = f"spot_elig:{sym}:{_bar_dedupe_key(ts)}"
+    if key in _BAR_DEDUPE_KEYS:
+        return
+    if len(_BAR_DEDUPE_KEYS) >= _BAR_DEDUPE_MAX:
+        _BAR_DEDUPE_KEYS.clear()
+    _BAR_DEDUPE_KEYS.add(key)
+    can = bool(report.get("can_submit_new_buy"))
+    wk = report.get("weekly_ema_200_position")
+    wk_s = "nan" if wk is None else f"{float(wk):.4f}"
+    below = report.get("below_weekly_ema200")
+    sched_ok = report.get("deploy_schedule_ok")
+    sched_d = report.get("deploy_schedule_detail") or ""
+    blockers = report.get("blockers") or []
+    if can:
+        logger.info(
+            "[%s] spot-eligibility ts=%s CAN_SUBMIT_NEW_BUY weekly_ema=%s below_wk_ema200=%s "
+            "prefilter=%s schedule_ok=%s planned_usdt=%.2f close=%s shadow=%s features=%s",
+            sym,
+            ts,
+            wk_s,
+            below,
+            report.get("prefilter_pass"),
+            sched_ok,
+            float(report.get("planned_usdt") or 0.0),
+            report.get("close"),
+            report.get("shadow_mode"),
+            report.get("features"),
+        )
+    else:
+        logger.info(
+            "[%s] spot-eligibility ts=%s NO_NEW_BUY weekly_ema=%s below_wk_ema200=%s "
+            "prefilter=%s prefilter_reason=%s schedule_ok=%s schedule=%s signal_long=%s "
+            "layers=%s block_stage=%s shadow=%s reasons=%s features=%s",
+            sym,
+            ts,
+            wk_s,
+            below,
+            report.get("prefilter_pass"),
+            report.get("prefilter_reason"),
+            sched_ok,
+            sched_d,
+            report.get("signal_long"),
+            report.get("layers"),
+            report.get("block_stage"),
+            report.get("shadow_mode"),
+            "; ".join(str(x) for x in blockers) or "unknown",
+            report.get("features"),
+        )
 
 
 def log_spot_no_intent(

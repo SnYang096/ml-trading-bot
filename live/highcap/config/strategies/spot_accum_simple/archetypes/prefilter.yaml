@@ -1,1 +1,14 @@
-rules: []
+# A 层「可交易环境」：与 B/C 一样由 prefilter 定义，不再用 execution.simple_accumulation_policy。
+#
+# weekly_ema_200_position = (close - 周线EMA200) / close
+#   < 0  → 收盘价在周线 EMA200 下方（深熊吸筹区）
+# 调买入带：改 operator/value（例如 value: 0.02 允许略在 EMA 上方仍通过）
+# 特征节点：features.yaml → weekly_ema_200_position_f
+
+rules:
+  - feature: weekly_ema_200_position
+    operator: <
+    value: 0.0
+    rationale: 周线深熊：价在周线 EMA200 下方才允许新 deploy
+    locked: true
+    lock_reason: A 层核心 regime；与历史 simple_accumulation_policy deep_bear_max_position=0 等价

@@ -1,2 +1,31 @@
+# entry_filters：仅支持「特征条件」过滤（见 src/time_series_model/execution/entry_filter.py）。
+#
+# 下列行为不在此文件配置，而在 execution.yaml：
+#   - 限价 vs 市价、offset bps     → execution_constraints.entry_order
+#   - 伦敦（或任意 TZ）下单窗口   → execution.deploy_schedule
+#   - 24h 未成交撤单重挂          → deploy_schedule.pending_max_age_hours
+#     （或环境变量 MLBOT_SPOT_PENDING_BUY_MAX_HOURS）
+#
+# 实盘何时尝试下单（摘要）：
+#   1. quant-feature-bus 写入新 2h K 线 → run_spot_accum_live 收到 event
+#   2. prefilter 周线熊 + direction long
+#   3. 当日 deploy 额度 / 间隔 / deploy_schedule 窗口
+#   4. 通过则挂 limit（默认低于收盘价 25bps）
+#
+# 日志看不到成交时，先开 chain debug：
+#   export MLBOT_SPOT_CHAIN_DEBUG=true
+#   或 MLBOT_CHAIN_DEBUG=true
+# 常见 skip：prefilter_deny（周线不在熊市区）、outside_deploy_window、
+#   buy-skip day limit、shadow=true（只记 shadow 不下交易所单）。
+
 filters: []
 combination_mode: or
+
+# 可选：用 2h EMA200 附近带做「择时」（需 features.yaml 增加 ema_200_position_f、rsi 等）
+# - id: ef_near_2h_ema200_oversold
+#   enabled: false
+#   description: 归档 spot_accum 风格；与周线 prefilter 叠加
+#   conditions:
+#     - { feature: ema_200_position, operator: ">=", value: -0.03 }
+#     - { feature: ema_200_position, operator: "<=", value: 0.03 }
+#     - { feature: rsi, operator: "<", value: 35 }

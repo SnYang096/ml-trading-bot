@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, time, timezone
 from typing import Any, Dict, Mapping, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -18,6 +19,77 @@ def is_spot_accum_archetype(name: str) -> bool:
 def simple_accumulation_policy(raw_execution: Mapping[str, Any]) -> Dict[str, Any]:
     policy = raw_execution.get("simple_accumulation_policy") or {}
     return dict(policy) if isinstance(policy, dict) else {}
+
+
+def deploy_schedule_policy(raw_execution: Mapping[str, Any]) -> Dict[str, Any]:
+    policy = raw_execution.get("deploy_schedule") or {}
+    return dict(policy) if isinstance(policy, dict) else {}
+
+
+def _parse_hhmm(token: Any) -> Optional[time]:
+    raw = str(token or "").strip()
+    if not raw:
+        return None
+    parts = raw.split(":")
+    try:
+        if len(parts) == 2:
+            return time(int(parts[0]), int(parts[1]))
+        if len(parts) == 3:
+            return time(int(parts[0]), int(parts[1]), int(parts[2]))
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def deploy_schedule_allows_new_buy(
+    now: datetime,
+    schedule: Mapping[str, Any],
+) -> Tuple[bool, str]:
+    """Whether a new limit/market deploy may be submitted at ``now``.
+
+    Config (execution.deploy_schedule):
+      enabled, timezone (IANA, e.g. Europe/London),
+      new_order_local_start / new_order_local_end (HH:MM, inclusive window in local TZ).
+
+    Pending cancel age uses pending_max_age_hours (fallback: env MLBOT_SPOT_PENDING_BUY_MAX_HOURS).
+    """
+    if not schedule.get("enabled", False):
+        return True, ""
+    tz_name = str(schedule.get("timezone") or "UTC").strip()
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        return True, f"invalid_timezone:{tz_name}"
+    start_t = _parse_hhmm(schedule.get("new_order_local_start"))
+    end_t = _parse_hhmm(schedule.get("new_order_local_end"))
+    if start_t is None or end_t is None:
+        return True, "schedule_window_unset"
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    local_now = now.astimezone(tz)
+    local_t = local_now.time()
+    if start_t <= end_t:
+        in_window = start_t <= local_t <= end_t
+    else:
+        # overnight window, e.g. 22:00–06:00
+        in_window = local_t >= start_t or local_t <= end_t
+    if not in_window:
+        return (
+            False,
+            f"outside_deploy_window local={local_now.strftime('%H:%M')} "
+            f"window={start_t.strftime('%H:%M')}-{end_t.strftime('%H:%M')} tz={tz_name}",
+        )
+    return True, ""
+
+
+def pending_buy_max_age_hours(
+    schedule: Mapping[str, Any], *, default: float = 24.0
+) -> float:
+    try:
+        v = float(schedule.get("pending_max_age_hours", default) or default)
+    except (TypeError, ValueError):
+        v = default
+    return max(1.0, v)
 
 
 def profit_take_ladder_cfg(pos: Mapping[str, Any]) -> Dict[str, Any]:

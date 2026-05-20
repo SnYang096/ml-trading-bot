@@ -10,6 +10,7 @@ strategy:
     - BTCUSDT
     - BNBUSDT
     - SOLUSDT
+    - ETHUSDT
   symbol_exclude: []
   macro_tp_vwap_anchor:
     enabled: false

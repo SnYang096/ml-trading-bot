@@ -48,13 +48,19 @@ from src.order_management.spot_order_manager import SpotOrderManager
 from src.time_series_model.live.metrics_exporter import METRICS, start_metrics_server
 from src.time_series_model.live.decision_chain_debug import (
     chain_debug_enabled,
+    collect_spot_new_buy_report,
+    log_spot_new_buy_eligibility,
     log_spot_no_intent,
+    spot_eligibility_log_enabled,
 )
 from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
 from src.time_series_model.live.spot_accum_simple import (
     apply_partial_sell_to_position,
     deploy_decay_multiplier,
+    deploy_schedule_allows_new_buy,
+    deploy_schedule_policy,
     maybe_spot_simple_partial_sell,
+    pending_buy_max_age_hours as schedule_pending_buy_max_age_hours,
     resolve_min_profit_multiple,
 )
 
@@ -112,6 +118,7 @@ class SpotBudgetConfig:
     entry_order_type: str
     entry_limit_offset_bps: float
     deploy_decay_cfg: Dict[str, Any]
+    deploy_schedule_cfg: Dict[str, Any]
     profit_take_ladder_cfg: Dict[str, Any]
 
 
@@ -270,6 +277,7 @@ def _load_spot_budget_config(
     decay_cfg = exec_raw.get("deploy_decay")
     if not isinstance(decay_cfg, dict):
         decay_cfg = {}
+    schedule_cfg = deploy_schedule_policy(exec_raw)
 
     min_interval = max(
         _env_int("MLBOT_SPOT_MIN_ORDER_INTERVAL_MINUTES", 0),
@@ -292,6 +300,7 @@ def _load_spot_budget_config(
         entry_order_type=str(entry_order.get("type", "market")).strip().lower(),
         entry_limit_offset_bps=float(entry_order.get("limit_offset_bps", 0.0) or 0.0),
         deploy_decay_cfg=decay_cfg,
+        deploy_schedule_cfg=schedule_cfg,
         profit_take_ladder_cfg=ladder,
     )
 
@@ -354,8 +363,11 @@ def _planned_buy_quote_usdt(
     return max(0.0, min(leg, remain_symbol, remain_global, remain_daily))
 
 
-def _pending_buy_max_age_hours() -> float:
-    return max(1.0, _env_float("MLBOT_SPOT_PENDING_BUY_MAX_HOURS", 24.0))
+def _pending_buy_max_age_hours(schedule_cfg: Optional[Dict[str, Any]] = None) -> float:
+    env_default = max(1.0, _env_float("MLBOT_SPOT_PENDING_BUY_MAX_HOURS", 24.0))
+    if isinstance(schedule_cfg, dict) and schedule_cfg:
+        return schedule_pending_buy_max_age_hours(schedule_cfg, default=env_default)
+    return env_default
 
 
 def _apply_buy_fill(
@@ -532,7 +544,7 @@ def _spot_startup_recovery(
     symbols: List[str],
 ) -> None:
     """Load ledger, rebuild deploy from filled orders, reconcile pending limits."""
-    max_age_h = _pending_buy_max_age_hours()
+    max_age_h = _pending_buy_max_age_hours(budget.deploy_schedule_cfg)
     now = datetime.now(timezone.utc)
     day_key = _utc_day_key(now)
 
@@ -710,7 +722,7 @@ def _spot_process_pending_buys(
     symbols: List[str],
     day_key: str,
 ) -> Dict[str, int]:
-    max_age_h = _pending_buy_max_age_hours()
+    max_age_h = _pending_buy_max_age_hours(budget.deploy_schedule_cfg)
     now = datetime.now(timezone.utc)
     stats = {"pending_open": 0, "stale_local_order": 0, "api_error": 0}
     for sym in symbols:
@@ -973,6 +985,21 @@ def main() -> int:
         logger.info(
             "spot chain debug enabled: prints signal->order->ledger->sell checks"
         )
+    logger.info(
+        "spot eligibility log: %s (MLBOT_SPOT_ELIGIBILITY_LOG=false to disable)",
+        "on" if spot_eligibility_log_enabled() else "off",
+    )
+    sched = budget.deploy_schedule_cfg or {}
+    if sched.get("enabled"):
+        logger.info(
+            "spot deploy_schedule: tz=%s window=%s-%s pending_max_age_h=%.1f",
+            sched.get("timezone"),
+            sched.get("new_order_local_start"),
+            sched.get("new_order_local_end"),
+            _pending_buy_max_age_hours(sched),
+        )
+    else:
+        logger.info("spot deploy_schedule: disabled (new limit may fire on any 2h bar)")
     last_account_sync = 0.0
     last_bus_status_log = 0.0
     last_reconcile_metrics_sync = 0.0
@@ -1137,11 +1164,44 @@ def main() -> int:
                     features_by_timeframe=event.features_by_timeframe,
                     bars=event.bars,
                 )
+
+                planned = 0.0
+                intent = None
+                if intents:
+                    intent = intents[0]
+                    if str(intent.action or "").upper() == "LONG":
+                        deploy_today = ledger.deploy_today_usdt(day_key)
+                        planned = _planned_buy_quote_usdt(
+                            symbol=sym,
+                            size_multiplier=float(intent.size_multiplier or 1.0),
+                            budget=budget,
+                            positions=positions,
+                            deploy_today=deploy_today,
+                            day_key=day_key,
+                        )
+
+                elig = collect_spot_new_buy_report(
+                    symbol=sym,
+                    ts=ts,
+                    features=features,
+                    strategy=strategy,
+                    deploy_schedule_cfg=budget.deploy_schedule_cfg,
+                    budget=budget,
+                    positions=positions,
+                    ledger=ledger,
+                    day_key=day_key,
+                    intents=intents,
+                    om_shadow=om.shadow,
+                    planned_usdt=planned,
+                )
+                log_spot_new_buy_eligibility(elig)
+
                 if not intents:
                     if chain_debug:
                         log_spot_no_intent(sym, strategy, features)
                     continue
-                intent = intents[0]
+                if intent is None:
+                    continue
                 if str(intent.action or "").upper() != "LONG":
                     if chain_debug:
                         logger.info(
@@ -1151,75 +1211,11 @@ def main() -> int:
                         )
                     continue
                 METRICS.signals_total.labels(strategy=strategy_name).inc()
-                if chain_debug:
-                    logger.info(
-                        "[%s] signal LONG confidence=%.4f size_mult=%.4f",
-                        sym,
-                        float(intent.confidence or 0.0),
-                        float(intent.size_multiplier or 1.0),
-                    )
-
-                entries_today = ledger.buy_entries_today(day_key)
-                pending_entries_today = pending_buy_count_for_day(
-                    positions, day_key=day_key
-                )
-                if (
-                    entries_today + pending_entries_today
-                    >= budget.max_new_entries_per_day
-                ):
-                    if chain_debug:
-                        logger.info(
-                            "[%s] buy-skip day limit reached: entries_today=%d pending_today=%d max=%d",
-                            sym,
-                            entries_today,
-                            pending_entries_today,
-                            budget.max_new_entries_per_day,
-                        )
+                if not elig.get("can_submit_new_buy"):
                     continue
 
-                last_buy_ts = None
-                cur = positions.get(sym) or {}
-                raw_last = cur.get("_last_buy_ts")
-                if raw_last:
-                    try:
-                        last_buy_ts = pd.Timestamp(raw_last, tz="UTC")
-                    except Exception:
-                        last_buy_ts = None
-                if last_buy_ts is not None and budget.min_order_interval_minutes > 0:
-                    mins = (ts - last_buy_ts).total_seconds() / 60.0
-                    if mins < float(budget.min_order_interval_minutes):
-                        if chain_debug:
-                            logger.info(
-                                "[%s] buy-skip min_interval: mins_since_last=%.1f required=%d",
-                                sym,
-                                mins,
-                                budget.min_order_interval_minutes,
-                            )
-                        continue
-
-                cur_pos = positions.get(sym)
-                if has_blocking_pending_buy(cur_pos):
-                    if chain_debug:
-                        logger.info("[%s] buy-skip open pending limit buy", sym)
-                    continue
-
-                deploy_today = ledger.deploy_today_usdt(day_key)
-                planned = _planned_buy_quote_usdt(
-                    symbol=sym,
-                    size_multiplier=float(intent.size_multiplier or 1.0),
-                    budget=budget,
-                    positions=positions,
-                    deploy_today=deploy_today,
-                    day_key=day_key,
-                )
+                planned = float(elig.get("planned_usdt") or 0.0)
                 if planned <= 0.0 or close_px <= 0.0:
-                    if chain_debug:
-                        logger.info(
-                            "[%s] buy-skip planned_quote=%.4f close=%.6f",
-                            sym,
-                            planned,
-                            close_px,
-                        )
                     continue
 
                 order_type = budget.entry_order_type
