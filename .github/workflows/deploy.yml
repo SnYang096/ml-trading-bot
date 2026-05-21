@@ -667,12 +667,17 @@ jobs:
 
       - name: 📦 Pack business console (Trade Map)
         run: |
+          set -euo pipefail
+          ROOT="${GITHUB_WORKSPACE}"
+          for p in src/mlbot_console src/time_series_model live/highcap/universe.yaml config/strategies; do
+            test -e "${ROOT}/${p}" || { echo "::error::missing ${ROOT}/${p}"; exit 1; }
+          done
           tar czf mlbot-business-console.tgz \
             -C deploy business-console systemd/quant-business-console.service \
-            -C .. src/mlbot_console \
-            -C .. src/time_series_model \
-            -C .. live/highcap/universe.yaml \
-            -C .. config/strategies
+            -C "${ROOT}" src/mlbot_console \
+            -C "${ROOT}" src/time_series_model \
+            -C "${ROOT}" live/highcap/universe.yaml \
+            -C "${ROOT}" config/strategies
 
       - name: 📤 Upload business console bundle
         uses: appleboy/scp-action@v0.1.7
