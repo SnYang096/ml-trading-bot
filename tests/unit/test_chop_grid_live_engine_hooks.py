@@ -7,7 +7,10 @@ from src.order_management.multi_leg_reconciliation import (
     PositionMismatch,
     ReconciliationReport,
 )
-from src.time_series_model.live.chop_grid_live_engine import ChopGridLiveEngine
+from src.time_series_model.live.chop_grid_live_engine import (
+    ChopGridLiveEngine,
+    GridPosition,
+)
 
 
 def _config(tmp_path: Path) -> Path:
@@ -128,6 +131,35 @@ def test_chop_grid_execution_report_moves_filled_order_to_inventory(
     assert tp_action["price"] == tp_action["trigger_price"]
 
 
+def test_chop_grid_order_snapshots_include_protection_ids(tmp_path: Path) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        level_notional=100.0,
+    )
+    engine.state.spacing = 1.5
+    engine.state.inventory.append(
+        GridPosition(
+            symbol="BNBUSDT",
+            side="SHORT",
+            level=1,
+            entry_price=645.0,
+            quantity=0.31,
+            entry_time="2026-05-21T00:00:00Z",
+            leg_id="BNBUSDT_grid_S1",
+            protection_order_ids=["90489849398"],
+        )
+    )
+
+    snapshots = engine.local_order_snapshots()
+
+    protection = next(s for s in snapshots if s.exchange_order_id == "90489849398")
+    assert protection.order_id == "90489849398"
+    assert protection.side == "BUY"
+    assert protection.symbol == "BNBUSDT"
+    assert protection.quantity == 0.31
+
+
 def test_chop_grid_keeps_local_only_missing_pending_orders(tmp_path: Path) -> None:
     engine = ChopGridLiveEngine(
         config_path=_config(tmp_path),
@@ -184,6 +216,36 @@ def test_chop_grid_prunes_mapped_missing_pending_orders(tmp_path: Path) -> None:
     )
 
     assert all(o.order_id != target.order_id for o in engine.state.pending_orders)
+
+
+def test_chop_grid_prunes_missing_protection_ids(tmp_path: Path) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        level_notional=100.0,
+    )
+    engine.state.inventory.append(
+        GridPosition(
+            symbol="BNBUSDT",
+            side="SHORT",
+            level=1,
+            entry_price=645.0,
+            quantity=0.31,
+            entry_time="2026-05-21T00:00:00Z",
+            leg_id="BNBUSDT_grid_S1",
+            protection_order_ids=["stale_tp", "live_sl"],
+        )
+    )
+
+    engine.on_reconciliation_report(
+        ReconciliationReport(
+            missing_exchange_orders=[
+                engine.local_order_snapshots()[0],
+            ]
+        )
+    )
+
+    assert engine.state.inventory[0].protection_order_ids == ["live_sl"]
 
 
 def test_chop_grid_records_reconciliation_issues(tmp_path: Path) -> None:

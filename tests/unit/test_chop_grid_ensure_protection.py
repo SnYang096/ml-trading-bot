@@ -175,3 +175,36 @@ def test_plain_grid_entry_is_not_counted_as_protection(tmp_path: Path) -> None:
     )
     tp_actions = [a for a in actions if a.get("protection_type") == "take_profit"]
     assert len(tp_actions) == 1
+
+
+def test_stale_protection_id_does_not_block_replacement_tp(tmp_path: Path) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        bar_simulation=False,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BNBUSDT"
+    engine.state.spacing = 6.4355
+    engine.state.inventory.append(
+        GridPosition(
+            symbol="BNBUSDT",
+            side="SHORT",
+            level=1,
+            entry_price=649.99,
+            quantity=0.31,
+            entry_time="2026-05-21T00:00:00+00:00",
+            leg_id="BNBUSDT_grid_S1",
+            protection_order_ids=["stale_tp"],
+        )
+    )
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[],
+    )
+
+    assert engine.state.inventory[0].protection_order_ids == []
+    tp_actions = [a for a in actions if a.get("protection_type") == "take_profit"]
+    assert len(tp_actions) == 1
+    assert tp_actions[0]["side"] == "SHORT"

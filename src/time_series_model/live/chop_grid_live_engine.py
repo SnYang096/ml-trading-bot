@@ -99,6 +99,25 @@ def _exchange_position_quantity(row: Mapping[str, Any]) -> float:
     )
 
 
+def _exchange_order_keys(order: Mapping[str, Any]) -> set[str]:
+    info = order.get("info") if isinstance(order.get("info"), dict) else {}
+    return {
+        str(
+            order.get("order_id")
+            or order.get("orderId")
+            or order.get("id")
+            or info.get("orderId")
+            or ""
+        ),
+        str(
+            order.get("client_order_id")
+            or order.get("clientOrderId")
+            or info.get("clientOrderId")
+            or ""
+        ),
+    } - {""}
+
+
 def _load_grid_config(path: str | Path) -> GridEngineConfig:
     cfg_path = Path(path)
     config_dir, profile_path, engine_path = resolve_strategy_config_input(cfg_path)
@@ -272,7 +291,7 @@ class ChopGridLiveEngine:
 
     def local_order_snapshots(self) -> List[LocalOrderSnapshot]:
         """Expose pending orders for exchange reconciliation."""
-        return [
+        snapshots = [
             LocalOrderSnapshot(
                 order_id=o.order_id,
                 symbol=o.symbol,
@@ -285,6 +304,22 @@ class ChopGridLiveEngine:
             for o in self.state.pending_orders
             if o.status not in {"filled", "canceled"}
         ]
+        for pos in self.state.inventory:
+            for protection_id in pos.protection_order_ids:
+                pid = str(protection_id or "").strip()
+                if not pid:
+                    continue
+                snapshots.append(
+                    LocalOrderSnapshot(
+                        order_id=pid,
+                        symbol=pos.symbol,
+                        side="SELL" if str(pos.side).upper() == "LONG" else "BUY",
+                        quantity=pos.quantity,
+                        price=self._tp_price_for_position(pos) or 0.0,
+                        exchange_order_id=pid,
+                    )
+                )
+        return snapshots
 
     def local_position_snapshots(self) -> List[LocalPositionSnapshot]:
         """Expose inventory for exchange position reconciliation."""
@@ -360,6 +395,25 @@ class ChopGridLiveEngine:
                         dropped,
                         sorted(prunable_ids)[:12],
                     )
+            missing_protection_ids = {
+                str(pid)
+                for pos in self.state.inventory
+                for pid in pos.protection_order_ids
+                if str(pid) in missing_ids
+            }
+            if missing_protection_ids:
+                for pos in self.state.inventory:
+                    pos.protection_order_ids = [
+                        str(pid)
+                        for pid in pos.protection_order_ids
+                        if str(pid) not in missing_protection_ids
+                    ]
+                logger.warning(
+                    "chop_grid: pruned %d stale protection order id(s) missing on exchange "
+                    "(reconcile): %s",
+                    len(missing_protection_ids),
+                    sorted(missing_protection_ids)[:12],
+                )
         issues: List[str] = []
         issues.extend(
             f"missing_exchange_order:{o.order_id}"
@@ -581,13 +635,27 @@ class ChopGridLiveEngine:
     def _has_open_protection(
         self, pos: GridPosition, open_orders: List[Dict[str, Any]]
     ) -> bool:
-        if pos.protection_order_ids:
-            return True
         tp_px = self._tp_price_for_position(pos)
         if tp_px is None:
             return False
+        protection_ids = {str(oid) for oid in pos.protection_order_ids if str(oid)}
+        if protection_ids:
+            live_ids = {
+                key
+                for order in open_orders
+                for key in _exchange_order_keys(order)
+                if key
+            }
+            pos.protection_order_ids = [
+                oid for oid in pos.protection_order_ids if str(oid) in live_ids
+            ]
+            protection_ids = {str(oid) for oid in pos.protection_order_ids if str(oid)}
         pos_side = str(pos.side).upper()
         for order in open_orders:
+            if protection_ids and _exchange_order_keys(order).isdisjoint(
+                protection_ids
+            ):
+                continue
             o_side = str(order.get("side") or "").lower()
             o_pos = str(
                 order.get("position_side")
